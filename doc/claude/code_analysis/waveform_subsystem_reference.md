@@ -2166,6 +2166,84 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     Suites: `test_wave_modes.tcl` `MV*` (both arms), `test_wave_drag_preview.tcl`
     `DV8`-`DV12` + `DM*`, `test_wave_trace_menu.tcl` `MM*` (display).
 
+50. **A `regenerate` that carries the current strips forward MUST fold the live
+    rect state back first — "it is only a window option" excuses `push_undo`,
+    never the capture** (2026-08-01, issue 0194).
+    Ctrl-G deselected the selected trace, and the same defect sat on eleven
+    other commands.
+
+    **(a) The mechanism, and why no behavioural leg had ever caught it.**
+    `wviewer::regenerate` does `xschem clear_drawing` and re-places every graph
+    rect purely from `graph_props`, i.e. from the Tcl MODEL. The selection is
+    not in the model: `graph_sel_waves_set` (`draw.c`) writes `hilight_wave` +
+    `sel_waves` straight into the rect's `prop_ptr` and nothing pushes them back
+    — 0175 deliberately declined the marker-style C→Tcl hook, on the grounds
+    that losing view state on a resize is "a cosmetic annoyance". A one-key
+    gesture is not. `clear_drawing` keeps no selection anywhere in `xctx`
+    (`graph_struct.hilight_wave` is scratch, refilled by `setup_graph_data`), so
+    the answer is total: after a non-capturing regenerate the selection is GONE.
+
+    **(b) The rule, applied to all 22 call sites.** Capture when the model you
+    hand to regenerate is meant to carry forward the strips that are on the
+    canvas *now* — whether the command is a window OPTION (`grid_toggle`,
+    `sharedx_toggle`), a pure repaint (`configure_apply`, i.e. a plain window
+    RESIZE), a view gesture (`wheel_zoom`, `pan_x`, `apply_range`, `axes_ok`), a
+    data swap (`attach_raw`, `display_raw`) or a structural add (`add_trace`,
+    `add_graph`, `plot_signals`). Do NOT capture in the three that replace the
+    model wholesale — `restore`, `state_apply` (its caller `history_step`
+    captures, and capturing inside would fold pre-undo rect state on top of the
+    snapshot being restored) and `clear_all` — nor in `delete_all_markers`,
+    which must not regenerate at all (the landmine in that proc's own header).
+    The seven content gestures that already captured keep the FULL capture.
+    ⚠ `push_undo` is a SEPARATE question and the two must not be bundled: window
+    options stay outside the undo stack (spec §14), so `grid_toggle` and
+    `sharedx_toggle` capture and do not push. Adding a push would make Ctrl-G
+    undoable, which nobody asked for and which an existing leg forbids.
+    ⚠ **The rule is about `regenerate`, not about `wave_viewer.tcl`.** A 13th
+    site lives in `ase_window.tcl` (`ase::ui::auto_plot`'s no-plottable-rows
+    branch calls `wviewer::regenerate $key`), and BOTH a file-scoped audit and a
+    source leg matching `regenerate \$token` walk straight past it.
+
+    **(c) The fold must not write the RANGES AT ALL — hence `skip_ranges`,** and
+    a capture that "only refreshes an already-pinned axis" is not a safe middle
+    ground. Two independent failures:
+    *pinning.* `graph_props` always emits a concrete `x1/x2/y1/y2` (substituting
+    a placeholder for a model `{}`) and regenerate's autozoom overwrites them
+    with the fit, so `xschem getprop rect 2 $gi x1` is NEVER empty. Capturing
+    unconditionally on a RESIZE converts every `{}` axis — "autozoom on every
+    regenerate" — into a frozen number for every strip, empty ones included, and
+    the next Direct Plot into an auto strip lands off-screen.
+    *Shared X.* `regenerate` forces graph 0's x onto every other strip's RECT
+    when `sharedx 1`, in a LOCAL list, so the model keeps each strip's own — that
+    is what makes un-sharing non-destructive. Refreshing a pinned axis off the
+    rect therefore copies graph 0's window into every strip's model permanently,
+    with no undo point, and turning Shared X on and straight back off silently
+    destroys every per-strip x window. This one survived the first round of
+    review-by-reading and was caught only by executing the sequence with a
+    control.
+    So `wviewer::capture_live_view_state` = capture with `skip_ranges 1`: the
+    selection (and markers) fold, the axes are not touched, and range lifetime
+    stays exactly what spec §17.4 says it is. The flag gates the RANGES ONLY —
+    gating the selection with it would reinstate the whole bug and would read
+    identically in a single-strip test.
+
+    **(d) The witness rules this bug class needs.** `hilight_wave` is per-RECT,
+    so a leg that reads only the strip it clicked cannot see a selection wrongly
+    surviving — or wrongly appearing — on its neighbour; read EVERY strip.
+    Select on a strip that is not 0 and a node that is not 0 (`atoi("")` reads a
+    destroyed token as node 0, so a strip-0/node-0 witness passes on the bug).
+    Plant the selection on the RECT, never through the model: a model-side plant
+    survives a regenerate whether or not the fix is present, which is
+    green-but-hollow by construction. And use a MULTI-trace selection — a
+    head-only fold passes every single-selection leg (measured: sabotage SAB-3
+    left the single-selection leg green and killed only the multi ones).
+
+    Spec: `doc/claude/specs/waveform_viewer_modes.md` §15.5 (+ §14) and the
+    Ctrl-G section of `doc/claude/specs/waveform_viewer.md`; issue
+    `doc/claude/issues/0194-ctrlg-grid-toggle-deselects-trace.md`.
+    Suite: `tests/headless/test_wave_grid.tcl` `GX*` (source, both arms) and
+    `GS*` (behavioural, display).
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

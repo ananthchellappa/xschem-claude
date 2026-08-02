@@ -1073,6 +1073,17 @@ The capture is **required**, not optional: `regenerate` rebuilds every rect from
 the model and runs from ~18 sites including a plain window RESIZE, so without it
 a multi-select would silently collapse to one trace on the next resize.
 
+⚠ **Made true 2026-08-01 (issue 0194).** Until then this was a rule the code did
+not keep: of the 22 `regenerate` call sites only 7 captured, so a plain Ctrl-G —
+and Shared X, a wheel zoom, an X pan, an axes edit, an added trace, an added
+strip, a re-run, and the RESIZE named above — all destroyed the selection. The
+rule now has a name and a shape: **a regenerate that carries the current strips
+forward must fold the live rect state back first** (`wviewer::capture_live_view_state`,
+12 sites); the only exemptions are the three that replace the model wholesale
+(`restore`, `state_apply`, `clear_all`) and the seven content gestures that
+already took the FULL capture. "It is only a window option" is a reason to skip
+`push_undo`, never a reason to skip the capture.
+
 Structural edits remap the set rather than dropping it — a stale node index bolds
 the WRONG trace, which is worse than losing the selection. A trace moved to
 another strip takes its selected-ness with it and is **added** to whatever the
@@ -1514,9 +1525,16 @@ All four decided as §17.4 decided them (D-35 = D-14/D-15/D-16 verbatim):
 * no `set_modify()` and no `push_undo()` — a zoom is view state, the whole of
   `waves_callback` contains zero of either (landmine 19), and the ASE viewer's
   buffer is read-only for life so a dirty flag there would be a lie;
-* no `wviewer::push_undo`, no `capture_live_graph_state`, no `with_edit` — window
-  view state is deliberately outside a viewer undo snapshot (§14.1), and a single
-  `u` after a zoom would otherwise revert an unrelated model edit.
+* no `wviewer::push_undo` and no `with_edit` — window view state is deliberately
+  outside a viewer undo snapshot (§14.1), and a single `u` after a zoom would
+  otherwise revert an unrelated model edit.
+  ⚠ CORRECTED 2026-08-01 (issue 0194): this bullet also said "no
+  `capture_live_graph_state`". The Tcl arm (`wviewer::wheel_zoom`) regenerates,
+  and a regenerate that carries the current strips forward owes the SELECTION
+  fold (§15.5) — it now calls `wviewer::capture_live_view_state` at the top. That
+  fold writes no ranges, so nothing in §17.4's range lifetime changes; and it is
+  still not an undo point. The **C** arm is unaffected: a C-side gesture reaches
+  no `regenerate` at all.
 
 **Logging is asymmetric, on purpose (D-37).** The **C engine** path logs exactly
 one `xschem graph_axis_zoom <gi> x|y <lo> <hi>` line at `%.17g` — for free,

@@ -748,11 +748,21 @@ state, or `{}` plus a CIW error. Initial state from `wviewer_grid_show`
   whose 0 *must* be written because its default is not the shipped value.)
   In C, `gr->grid` defaults to **1** and is set before the `RECT_OUTSIDE` early
   return.
-- **Not an undo point.** This is a window OPTION (like plot mode, sharedx,
-  cursors), and window options are deliberately outside the model snapshot —
-  so no `push_undo`, no `capture`, matching `sharedx_toggle`/`set_plot_mode`.
-  It keeps the rest of the contract: refuse-a-no-op-without-logging, verified
-  `switch_ctx`, ONE regenerate, ONE log line.
+- **Not an undo point — but it MUST capture.** ⚠ CORRECTED 2026-08-01
+  (issue 0194). This bullet used to read "so no `push_undo`, **no `capture`**,
+  matching `sharedx_toggle`/`set_plot_mode`", and the second half was wrong: it
+  is what made Ctrl-G deselect the selected trace. The two are separable and
+  answer different questions. `push_undo` is about the UNDO STACK, and a window
+  OPTION (plot mode, sharedx, cursors) is deliberately outside the model
+  snapshot (`waveform_viewer_modes.md` §14) — so still no `push_undo`.
+  `capture_live_graph_state` is about surviving `clear_drawing`: this command
+  regenerates, regenerate re-places every rect purely from the Tcl model, and
+  the selection lives in the RECT until something folds it back. So it captures,
+  in the `skip_ranges` form (`wviewer::capture_live_view_state`) that folds the
+  selection and leaves every axis exactly as it was. `set_plot_mode` needs neither —
+  it does not regenerate at all. The rest of the contract is unchanged:
+  refuse-a-no-op-without-logging, verified `switch_ctx`, ONE regenerate, ONE
+  log line.
 - **The menu mirror is PUSHED, not polled.** `sync_grid_mirror` runs on every
   change, so the checkbutton is right however the state changed (key, command,
   restore) — the staleness `plot_mode_menu_post` has to solve with a

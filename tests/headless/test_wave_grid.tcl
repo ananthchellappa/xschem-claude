@@ -213,6 +213,139 @@ check "GT17 no draw_string call sits behind the grid gate" \
 if {$save_gs ne {}} { set ::wviewer_grid_show $save_gs }
 
 # ============================================================================
+# GX* — issue 0194: WHICH regenerate sites owe capture_live_graph_state
+#
+# regenerate does `xschem clear_drawing` and re-places every rect from the Tcl
+# model, so C-written rect state (the 0175 selection, an MMB pan, an RMB box
+# zoom) dies unless it was folded back first. Ctrl-G was one of 15 sites that
+# did not fold. These are SOURCE-level legs because the rule is about code
+# SHAPE — the behavioural half is GS* below, and neither can replace the other:
+# a behavioural leg cannot see the eleven sibling sites, and these cannot see
+# whether the fold actually preserves anything.
+# ============================================================================
+set wv [file join $repo src wave_viewer.tcl]
+set fp [open $wv r]; set wsrc [read $fp]; close $fp
+
+# body of a named proc up to the closing brace in column 0, CODE LINES ONLY
+# — the bodies here carry comments naming the very calls being counted, and a
+# leg that counts prose is a leg that goes green on a deleted call.
+proc wvproc_body {src name} {
+  set i [string first "\nproc $name \{" $src]
+  if {$i < 0} { return {} }
+  set j [string first "\n\}\n" $src $i]
+  if {$j < 0} { set j end }
+  set out {}
+  foreach line [split [string range $src $i $j] "\n"] {
+    if {[regexp {^\s*#} $line]} { continue }
+    lappend out $line
+  }
+  return [join $out "\n"]
+}
+
+# THE RULE: a regenerate that carries the current strips forward must capture
+# first. These twelve do; the three below replace the model wholesale and must
+# not. 12 + 3 + the seven that already captured pre-0194 = every call site.
+set gx_must {configure_apply display_raw attach_raw add_trace add_graph
+             plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
+             pan_x axes_ok}
+set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
+             split_strip delete_empty_strips delete_items}
+set gx_exempt {restore state_apply clear_all}
+
+foreach p $gx_must {
+  set b [wvproc_body $wsrc wviewer::$p]
+  set ci [string first {wviewer::capture_live_view_state $token} $b]
+  set ri [string first {wviewer::regenerate $token} $b]
+  # ORDER, not presence: a capture placed after the regenerate (or after a
+  # structural mutation, where the 1:1 guard silently refuses it) reads as
+  # installed and folds nothing.
+  check_true "GX1 $p folds the live rect state BEFORE it regenerates" \
+    [expr {$ci >= 0 && $ri >= 0 && $ci < $ri}]
+}
+foreach p $gx_exempt {
+  # the body must actually have been FOUND: wvproc_body returns {} on a rename
+  # or a reformatted signature, and `regexp -all` over {} is 0 — this leg is the
+  # only one of the three that a miss would make vacuously green
+  check_true "GX2 $p was found in the source" \
+    [expr {[wvproc_body $wsrc wviewer::$p] ne {}}]
+  check "GX2 $p is exempt — it replaces the model wholesale" \
+    [regexp -all {capture_live_(view|graph)_state} [wvproc_body $wsrc wviewer::$p]] 0
+}
+foreach p $gx_pre {
+  # the seven pre-0194 sites keep the FULL capture (a content edit means to
+  # freeze the view it is editing); 0194 must not have converted them. ANCHORED:
+  # `capture_live_graph_state $token` is a strict PREFIX of the auto-safe
+  # `... $token 0 1`, so a `string first` would report green on exactly the
+  # conversion this leg exists to forbid.
+  check "GX3 $p still takes the full capture, not the selection-only one" \
+    [regexp -all {capture_live_graph_state \$token *(;#[^\n]*)?\n} \
+       [wvproc_body $wsrc wviewer::$p]] 1
+}
+# no unclassified site: 12 + 7 + 3 accounts for every `regenerate $token` call
+check "GX4 every regenerate call site is classified by the rule" \
+  [pcall {count_emitters $wv {wviewer::regenerate \$token}}] \
+  [expr {[llength $gx_must] + [llength $gx_pre] + [llength $gx_exempt]}]
+
+check "GX5 the selection-only wrapper is the ONLY new capture flavour" \
+  [count_emitters $wv {proc wviewer::capture_live_view_state}] 1
+check_true "GX5 ...and it asks for skip_ranges" \
+  [regexp {capture_live_graph_state \$token 0 1} \
+     [wvproc_body $wsrc wviewer::capture_live_view_state]]
+check "GX6 skip_ranges is the third arg" \
+  [info args wviewer::capture_live_graph_state] {token skip_markers skip_ranges}
+# ...defaulting OFF, so the seven content sites and marker_changed are unchanged.
+# pcall'd: `info default` THROWS on a missing argument, and a throw here would
+# abort the whole script — including the behavioural legs that are the point.
+check "GX6 ...and defaults to 0" \
+  [pcall {lindex [info default wviewer::capture_live_graph_state skip_ranges gxd; \
+                  set gxd] 0}] 0
+# THE TWO hazards skip_ranges exists for, and it must not write the ranges at
+# ALL: (1) graph_props always emits a concrete x1/x2/y1/y2, so folding an axis
+# the model left on `{}` would PIN it — autozoom lost on every resize; (2) under
+# `sharedx 1` regenerate puts graph 0's x on every other strip's RECT while the
+# model keeps each strip's own, so folding a PINNED axis back would overwrite
+# every strip's stored window with graph 0's, permanently and with no undo
+# point. Hence a plain `continue`, not a cleverer test.
+check_true "GX7 skip_ranges skips the range fold outright" \
+  [regexp {if \{\$skip_ranges\} \{ continue \}} \
+     [wvproc_body $wsrc wviewer::capture_live_graph_state]]
+# ...and it gates the RANGES ONLY. The selection and the markers are
+# absent-means-absent and must be folded at all twelve sites, so exactly two
+# mentions may exist in the body: the argument and that one guard. A third
+# would mean someone gated the selection with it, which reads identical in a
+# single-strip fixture and would silently reinstate the whole bug.
+check "GX7 skip_ranges gates the ranges and nothing else" \
+  [regexp -all {skip_ranges} \
+     [wvproc_body $wsrc wviewer::capture_live_graph_state]] 2
+# a window OPTION captures but must NEVER push undo (spec waveform_viewer_modes
+# §14: window options are outside the snapshot). The fix is "capture, not push".
+foreach p {grid_toggle sharedx_toggle} {
+  check "GX8 $p captures but takes NO undo point" \
+    [regexp -all {wviewer::push_undo} [wvproc_body $wsrc wviewer::$p]] 0
+}
+
+# THE RULE IS ABOUT regenerate, NOT ABOUT THIS FILE. `wviewer::regenerate` is
+# called from src/ase_window.tcl too, with a different token variable, so GX4's
+# count cannot see it and neither could an audit that only read wave_viewer.tcl.
+set aw [file join $repo src ase_window.tcl]
+set fp [open $aw r]; set asrc [read $fp]; close $fp
+check "GX9 ase_window.tcl has exactly the two known regenerate sites" \
+  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 2
+# auto_plot's no-plottable-rows branch clears the AUTO strip's traces and
+# regenerates — every other strip carries forward, so it owes the fold, and it
+# must take it BEFORE clear_graph_traces (the model mutation).
+set gx_ap [wvproc_body $asrc ase::ui::auto_plot]
+check_true "GX9 auto_plot folds before it clears the auto strip" \
+  [expr {[string first {wviewer::capture_live_view_state $key} $gx_ap] >= 0 &&
+         [string first {wviewer::capture_live_view_state $key} $gx_ap] <
+         [string first {wviewer::clear_graph_traces $key $gi} $gx_ap]}]
+# the OTHER site (the re-plot path) is safe transitively: attach_raw captured a
+# few lines above it. Pin that, or a reordering silently reopens the hole.
+check_true "GX9 the re-plot path still regenerates after attach_raw" \
+  [expr {[string first {wviewer::attach_raw $key} $gx_ap] <
+         [string last {wviewer::regenerate $key} $gx_ap]}]
+
+# ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)
 # ============================================================================
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -380,6 +513,324 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
   } else {
     puts "SKIPPED: GT29 (viewer menubar not found)"
+  }
+
+  # ==========================================================================
+  # GS* — issue 0194: a window option must not eat the trace SELECTION
+  #
+  # THE FIXTURE RULE, and it is the whole point: the selection is planted on
+  # the RECTS ONLY, never through the model. That is what the C click arm does
+  # (callback.c graph_sel_waves_set writes the prop and nothing else), and a
+  # selection that is already in the model survives a regenerate whether or not
+  # the bug is fixed — a model-side plant would be a green-but-hollow leg.
+  #
+  # PROBE PLACEMENT: every leg selects on strip 1, NOT strip 0, and on node 2,
+  # NOT node 0 — `atoi("")` reads an absent token as node 0, so a strip-0 /
+  # node-0 witness passes on a destroyed token. Every leg reads back EVERY
+  # strip, because hilight_wave is per-RECT and a one-rect witness cannot see a
+  # selection wrongly surviving, or wrongly appearing, on its neighbour.
+  # ==========================================================================
+  xschem new_schematic switch $vdrw
+  pcall {xschem raw new wvgrid.raw dc vsweep 0 1.0 0.02}
+  foreach {v ex} {vec_a {vsweep 1 +} vec_b {vsweep 3 +} vec_c {vsweep 5 +}
+                  vec_d {vsweep 7 +} vec_e {vsweep 9 +} vec_f {vsweep 11 +}} {
+    pcall {xschem raw add $v $ex}
+  }
+  set gs_vars [split [pcall {xschem raw list}] "\n"]
+  check_true "GS0 the fixture raw knows the vectors the traces use" \
+    [expr {[lsearch -exact $gs_vars vec_a] >= 0 && [lsearch -exact $gs_vars vec_f] >= 0}]
+
+  # every strip's selection SET, off the RECTS. `-` = nothing (never node 0).
+  proc gs_sels {vdrw} {
+    xschem new_schematic switch $vdrw
+    set o {}
+    set n 0; catch {set n [xschem get graph_rects]}
+    for {set k 0} {$k < $n} {incr k} {
+      set s [wviewer::selected_waves $vdrw $k]
+      lappend o [expr {[llength $s] ? $s : "-"}]
+    }
+    return $o
+  }
+  # ...and the same question asked of the MODEL, so a fix that updates one
+  # store and not the other cannot pass
+  proc gs_msels {tok} {
+    set o {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      set s [wviewer::model_sel $G]
+      lappend o [expr {[llength $s] ? $s : "-"}]
+    }
+    return $o
+  }
+  # the RAW token pair of one strip — the third witness: `hilight_wave` is the
+  # HEAD and `sel_waves` carries the rest, and a fix that folded only the head
+  # would leave a multi-select silently collapsed to one trace
+  proc gs_tokens {vdrw gi} {
+    xschem new_schematic switch $vdrw
+    set h {}; catch {set h [xschem getprop rect 2 $gi hilight_wave]}
+    set s {}; catch {set s [xschem getprop rect 2 $gi sel_waves]}
+    return [list $h $s]
+  }
+  proc gs_fill {tok} {
+    wviewer::set_graphs $tok [list [wviewer::empty_graph] [wviewer::empty_graph]]
+    foreach {gi vec} {0 vec_a 0 vec_b 0 vec_c 1 vec_d 1 vec_e 1 vec_f} {
+      set e [wviewer::add_trace $tok $gi $vec]
+      if {$e ne {}} { puts "  gs_fill: add_trace $vec -> $e" }
+    }
+    wviewer::regenerate $tok
+  }
+  # wipe both stores, then write the selection onto the RECT alone
+  proc gs_plant {tok vdrw gi sel} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      lappend out [wviewer::model_sel_set $G {}]
+    }
+    wviewer::set_graphs $tok $out
+    wviewer::regenerate $tok
+    xschem new_schematic switch $vdrw
+    wviewer::with_edit $tok {
+      set n 0; catch {set n [xschem get graph_rects]}
+      for {set k 0} {$k < $n} {incr k} {
+        catch {xschem setprop rect 2 $k hilight_wave -1}
+      }
+      if {[llength $sel]} {
+        xschem setprop rect 2 $gi hilight_wave [lindex $sel 0]
+        if {[llength $sel] >= 2} { xschem setprop rect 2 $gi sel_waves $sel }
+      }
+    }
+  }
+
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  # the fixture itself is asserted, or every leg below rests on an assumption:
+  # the rect really carries the pair, and the model really does NOT.
+  check "GS1 the plant put the SET on strip 1's rect" [gs_sels $vdrw] {- {0 2}}
+  check "GS1 head + companion, as the C click arm writes them" \
+    [gs_tokens $vdrw 1] {0 {0 2}}
+  check "GS1 ...and the MODEL has not heard of it (else the leg is hollow)" \
+    [gs_msels $tok] {- -}
+
+  set nlog [llength $::wvg_log]
+  check "GS2 Ctrl-G turned the grid off" [pcall {wviewer::grid_toggle {} $tok}] 0
+  check "GS2 ...it really regenerated (grid=0 reached every rect)" \
+    [list [pcall {xschem getprop rect 2 0 grid}] \
+          [pcall {xschem getprop rect 2 1 grid}]] {0 0}
+  # THE BUG (issue 0194): before the fix this came back `- -`
+  check "GS2 the multi-trace selection SURVIVED the grid toggle" \
+    [gs_sels $vdrw] {- {0 2}}
+  check "GS2 both tokens survived, not just the head" [gs_tokens $vdrw 1] {0 {0 2}}
+  check "GS2 the fold reached the model too" [gs_msels $tok] {- {0 2}}
+  check "GS2 still exactly one replayable line (capture, do not log twice)" \
+    [expr {[llength $::wvg_log] - $nlog}] 1
+  # capture, do NOT push: a window option stays outside the undo stack (spec
+  # waveform_viewer_modes.md §14), so Ctrl-G must not become undoable
+  check "GS2 and still NOT an undo point" [pcall {wviewer::history_depth $tok}] {0 0}
+  check "GS2 the viewer buffer is still unmodified" [xschem get modified] 0
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # a SINGLE selection on a non-zero strip at a NON-ZERO node: `sel_waves` is
+  # absent here, so this is the leg that a head-only fold would still pass and
+  # a fold that promoted a single selection into a set would fail
+  gs_plant $tok $vdrw 1 {2}
+  check "GS3 a single selection is head-only" [gs_tokens $vdrw 1] {2 {}}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GS3 it survives Ctrl-G" [gs_sels $vdrw] {- 2}
+  check "GS3 ...still head-only, never promoted to a set" [gs_tokens $vdrw 1] {2 {}}
+  check "GS3 ...and strip 0 did NOT acquire one" [gs_tokens $vdrw 0] {{} {}}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # THE PREDICTION (issue 0194): Shared X is the sibling window option and had
+  # the identical shape — regenerate with no fold. Nobody reported it because
+  # nobody toggles it as often.
+  gs_plant $tok $vdrw 1 {0 2}
+  set gs_sx [expr {[info exists ::wviewer::sharedx($tok)] && $::wviewer::sharedx($tok) ? 1 : 0}]
+  set ::wviewer::sharedx($tok) [expr {!$gs_sx}]
+  pcall {wviewer::sharedx_toggle $tok}
+  check "GS4 Shared X really flipped in the model" \
+    [wviewer::dget [wviewer::layout_for $tok] sharedx 0] [expr {!$gs_sx}]
+  check "GS4 the selection survived the Shared-X toggle" [gs_sels $vdrw] {- {0 2}}
+  set ::wviewer::sharedx($tok) $gs_sx
+  pcall {wviewer::sharedx_toggle $tok}
+  check "GS4 ...and the toggle back" [gs_sels $vdrw] {- {0 2}}
+
+  # the same defect on the view gestures: they froze the RANGES by hand and
+  # nothing else, so a wheel zoom / an X pan deselected too
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS5 a wheel zoom reports it changed something" \
+    [pcall {wviewer::wheel_zoom $tok in 1}] 1
+  check "GS5 the selection survived the zoom" [gs_sels $vdrw] {- {0 2}}
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS5 an X pan reports it changed something" [pcall {wviewer::pan_x $tok right}] 1
+  check "GS5 the selection survived the pan" [gs_sels $vdrw] {- {0 2}}
+
+  # ...and on a plain window RESIZE, which is the widest exposure of the class
+  # (spec §15.5 names this path). Driven through configure_apply with the
+  # fillwh no-change gate defeated, since the canvas is not really resized here.
+  gs_plant $tok $vdrw 1 {0 2}
+  set ::wviewer::fillwh($tok) {1 1}
+  pcall {wviewer::configure_apply $tok}
+  check "GS6 the selection survived a resize refit" [gs_sels $vdrw] {- {0 2}}
+
+  # adding a trace must not deselect either — and this is the structural site,
+  # where the capture has to run BEFORE the model grows or its 1:1 rect/model
+  # guard refuses it and folds nothing
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS7 add_trace succeeded" [pcall {wviewer::add_trace $tok 0 vec_e}] {}
+  check "GS7 the selection survived a new trace on the OTHER strip" \
+    [gs_sels $vdrw] {- {0 2}}
+  # RE-PLANT, or this leg is inert: GS7's fold has already put the selection in
+  # the model, and a regenerate re-emits it from there whether or not add_graph
+  # captured. Every site needs its own rect-only plant to be under test.
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS8 add_graph succeeded" [pcall {wviewer::add_graph $tok}] 1
+  check "GS8 the selection survived a new strip" [lrange [gs_sels $vdrw] 0 1] {- {0 2}}
+
+  # the Axes dialog's apply path (apply_range is the seam wheel/menu/dialog all
+  # reach) — a range edit must not deselect either
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS11 apply_range wrote the range" [pcall {wviewer::apply_range $tok 0 0.0 0.5 {} {}}] 1
+  check "GS11 the selection survived a range edit" [gs_sels $vdrw] {- {0 2}}
+  # ...and a refused apply is still the pure no-op it was before the fold was
+  # added: nothing written, nothing folded
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS11 a bad graph index is refused" [pcall {wviewer::apply_range $tok 99 0 1 {} {}}] 0
+  check "GS11 ...and the refusal folded nothing into the model" [gs_msels $tok] {- -}
+
+  # display_raw with no rawfile — the trace-recording half of the ASE plot seam
+  # (`attach_raw` needs a real .raw on disk, which needs a simulator run, so it
+  # stays pinned by GX1 alone; see the issue doc's "what no check can see")
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS12 display_raw recorded the trace" \
+    [pcall {wviewer::display_raw $tok {} {} vec_f 6}] 1
+  check "GS12 the selection survived it" [gs_sels $vdrw] {- {0 2}}
+  # ...and the Direct-Plot batch seam, which owns its own capture precisely
+  # because add_trace's is refused mid-batch once the strips have grown
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  check "GS12 plot_signals landed the batch" [pcall {wviewer::plot_signals $tok {vec_e}}] {}
+  check "GS12 the selection survived a Direct Plot" \
+    [lrange [gs_sels $vdrw] 0 1] {- {0 2}}
+
+  # THE REGRESSION REVIEW CAUGHT (see the issue doc §7). regenerate forces
+  # graph 0's x onto every other strip's RECT under Shared X, while the MODEL
+  # deliberately keeps each strip's own — that is what makes un-sharing
+  # non-destructive. So the fold must not write ranges AT ALL: a version that
+  # merely "refreshed an already-pinned axis" copied graph 0's window into
+  # every strip's model, permanently and with no undo point.
+  gs_fill $tok
+  pcall {wviewer::apply_range $tok 0 0.0 1e-3 {} {}}
+  pcall {wviewer::apply_range $tok 1 0.0 1e-6 {} {}}
+  set gs_sx0 [expr {[info exists ::wviewer::sharedx($tok)] && $::wviewer::sharedx($tok) ? 1 : 0}]
+  # NUMERIC, not textual: the model stores what the caller wrote, verbatim
+  # ("1e-3"), and Tcl's own formatting of the same number is "0.001".
+  proc gs_modelx {tok gi} {
+    set G [lindex [dict get [wviewer::layout_for $tok] graphs] $gi]
+    set o {}
+    foreach k {x1 x2} {
+      set v [wviewer::dget $G $k {}]
+      lappend o [expr {[string is double -strict $v] ? double($v) : $v}]
+    }
+    return $o
+  }
+  check "GS13 the two strips start with their OWN x windows" \
+    [list [gs_modelx $tok 0] [gs_modelx $tok 1]] {{0.0 0.001} {0.0 1e-6}}
+  set ::wviewer::sharedx($tok) 1
+  pcall {wviewer::sharedx_toggle $tok}
+  check "GS13 Shared X does not touch the stored per-strip x" \
+    [gs_modelx $tok 1] {0.0 1e-6}
+  # ...and neither does any other fold while sharing is in force
+  gs_plant $tok $vdrw 1 {0}
+  pcall {wviewer::grid_toggle {} $tok}
+  pcall {wviewer::grid_toggle 1 $tok}
+  set ::wviewer::fillwh($tok) {1 1}
+  pcall {wviewer::configure_apply $tok}
+  check "GS13 Ctrl-G and a resize under Shared X leave strip 1's x alone" \
+    [gs_modelx $tok 1] {0.0 1e-6}
+  set ::wviewer::sharedx($tok) 0
+  pcall {wviewer::sharedx_toggle $tok}
+  set gs_rx2 [pcall {xschem getprop rect 2 1 x2}]
+  if {[string is double -strict $gs_rx2]} { set gs_rx2 [expr {double($gs_rx2)}] }
+  check "GS13 un-sharing brings strip 1's own window back" \
+    [list [gs_modelx $tok 1] $gs_rx2] {{0.0 1e-6} 1e-6}
+  set ::wviewer::sharedx($tok) $gs_sx0
+  pcall {wviewer::sharedx_toggle $tok}
+
+  # THE REGRESSION GUARD for skip_ranges, on a FRESH fixture: a strip is
+  # created with `{}` ranges (= autozoom on every regenerate) and a fold that
+  # does not mean to change the view must not pin them — a bare capture would
+  # freeze the whole window on the first resize and the next Direct Plot into
+  # an auto strip would then land off-screen. Deliberately excludes wheel_zoom
+  # and pan_x: those PIN by their own D7 contract, which predates 0194.
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  pcall {wviewer::grid_toggle {} $tok}
+  pcall {wviewer::grid_toggle 1 $tok}
+  set ::wviewer::sharedx($tok) [expr {!$gs_sx}]
+  pcall {wviewer::sharedx_toggle $tok}
+  set ::wviewer::sharedx($tok) $gs_sx
+  pcall {wviewer::sharedx_toggle $tok}
+  set ::wviewer::fillwh($tok) {1 1}
+  pcall {wviewer::configure_apply $tok}
+  pcall {wviewer::add_trace $tok 0 vec_e}
+  pcall {wviewer::add_graph $tok}
+  set gs_auto 1
+  foreach G [dict get [wviewer::layout_for $tok] graphs] {
+    foreach k {x1 x2 y1 y2} {
+      if {[string is double -strict [wviewer::dget $G $k {}]]} { set gs_auto 0 }
+    }
+  }
+  check_true "GS9 every auto axis is STILL auto after the non-view folds" $gs_auto
+  # ⚠ this half is a CHAIN, and a chain only tests its FIRST link: the first
+  # fold puts the selection in the model and every later regenerate re-emits it
+  # from there. So it is stated as what it is — an end-to-end sanity check —
+  # and the per-site teeth are GS2/GS4/GS6/GS7/GS8, each with its own plant.
+  check "GS9 ...and the selection came through the chain (end-to-end only)" \
+    [lrange [gs_sels $vdrw] 0 1] {- {0 2}}
+  # ...while a pinned axis is refreshed from the live rect rather than left stale
+  gs_fill $tok
+  pcall {wviewer::apply_range $tok 1 0.0 0.5 -1.0 1.0}
+  set gs_G1 [lindex [dict get [wviewer::layout_for $tok] graphs] 1]
+  check "GS9 an explicitly pinned range stays pinned" \
+    [list [wviewer::dget $gs_G1 x1 {}] [wviewer::dget $gs_G1 x2 {}]] {0.0 0.5}
+
+  # SYMPTOM 2 (issue 0194): "the trace that was moved across strips gets bolded /
+  # unbolded with each CTRL-G". A cross-strip move CAPTURES, so the moved trace
+  # is the one trace whose selectedness is in the MODEL — and a non-capturing
+  # regenerate therefore RESURRECTS it instead of destroying it. Deselect it and
+  # press Ctrl-G and the bold comes back; deselect again, and again. Measured
+  # both ways in tests/headless/probe_0194_symptom2.tcl.
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0}
+  # strip 0 already holds three traces, so the moved one lands at node 3
+  check "GS14 move_trace folds the selection into the model" \
+    [pcall {wviewer::move_trace 1 0 0 $tok}] 3
+  check "GS14 ...so the model now knows about the moved trace" \
+    [lindex [gs_msels $tok] 0] 3
+  # the user deselects it — a click writes the RECT only
+  wviewer::with_edit $tok {
+    set gs_n 0; catch {set gs_n [xschem get graph_rects]}
+    for {set k 0} {$k < $gs_n} {incr k} { catch {xschem setprop rect 2 $k hilight_wave -1} }
+  }
+  check "GS14 the deselect took on the rect" [lindex [gs_sels $vdrw] 0] {-}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GS14 Ctrl-G does NOT resurrect the deselected trace" \
+    [lindex [gs_sels $vdrw] 0] {-}
+  pcall {wviewer::grid_toggle 1 $tok}
+  check "GS14 ...and not on the toggle back either" [lindex [gs_sels $vdrw] 0] {-}
+  check "GS14 the stale model entry was corrected, not just overridden" \
+    [lindex [gs_msels $tok] 0] {-}
+
+  # end-to-end through the REAL key, not the command behind it
+  gs_fill $tok
+  gs_plant $tok $vdrw 1 {0 2}
+  set gs_del [send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 0}]
+  if {!$gs_del} {
+    puts "SKIPPED: GS10 real-key leg (focus never confirmed)"
+  } else {
+    check "GS10 a REAL Ctrl-G keeps the selection" [gs_sels $vdrw] {- {0 2}}
+    check "GS10 ...both tokens" [gs_tokens $vdrw 1] {0 {0 2}}
+    send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 1}
   }
 
   rename wviewer::log_action {}

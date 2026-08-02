@@ -1567,6 +1567,12 @@ proc wviewer::configure_apply {token} {
   if {[catch {winfo width $wp} w] || $w <= 1} { return }
   set cur [list $w [winfo height $wp]]
   if {[info exists fillwh($token)] && $fillwh($token) eq $cur} { return }
+  # issue 0194: a plain RESIZE regenerates, so it destroys the live selection
+  # unless it is folded back first — the exposure capture_live_graph_state's
+  # header and spec §15.5 both name by this path. skip_ranges keeps the refit
+  # semantics a resize is FOR: the axes are not touched at all, so an auto strip
+  # still re-autozooms into its new band and a pinned one keeps its own window.
+  wviewer::capture_live_view_state $token
   wviewer::regenerate $token
 }
 
@@ -1928,6 +1934,10 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set wp [dict get $windows $token win_path]
+  # issue 0194: fold FIRST — before the trace append below (the 1:1 rect/model
+  # guard would refuse a capture placed after it, silently) and before the `gs`
+  # read (capture writes through set_graphs).
+  wviewer::capture_live_view_state $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }
   set G [lindex $gs 0]
@@ -1958,6 +1968,11 @@ proc wviewer::attach_raw {token rawfile sim_type} {
   if {![dict exists $windows $token]} { return 0 }
   if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }   ;# never clear a foreign ctx
+  # issue 0194: a re-run replaces the DATA, not the plot — the strips, the
+  # traces and which of them the user had selected all carry forward, so the
+  # regenerate below owes the fold. skip_ranges is what keeps a fresh run
+  # autozooming instead of being drawn in the outgoing run's window.
+  wviewer::capture_live_view_state $token
   catch {xschem raw clear}
   if {$sim_type ne {}} {
     xschem raw read $rawfile $sim_type
@@ -2072,6 +2087,11 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
   if {$rpn eq {}} { return "empty expression - type one or pick a raw variable" }
+  # issue 0194: fold before the append and before the `gs` read. NOTE for
+  # plot_signals, which calls this in a loop: by then the strip count has
+  # already grown, so this capture's 1:1 guard refuses and returns 0 — which is
+  # exactly why plot_signals captures on its own instead of relying on this one.
+  wviewer::capture_live_view_state $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }
   if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
@@ -2123,6 +2143,7 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
 proc wviewer::add_graph {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
+  wviewer::capture_live_view_state $token   ;# issue 0194: before the append
   set gs [dict get [wviewer::layout_for $token] graphs]
   lappend gs [wviewer::empty_graph]
   wviewer::set_graphs $token $gs
@@ -2482,7 +2503,33 @@ proc wviewer::empty_strips_to_delete {gs {auto -1}} {
 # wants the LIVE ranges/bold folded in before it takes its undo snapshot, but
 # the snapshot must still hold the PRE-change markers, or `u` would restore the
 # very marker it was meant to remove.
-proc wviewer::capture_live_graph_state {token {skip_markers 0}} {
+#
+# `skip_ranges` 1 folds the SELECTION (and the markers) and does not touch
+# x1/x2/y1/y2 at all (issue 0194). It is what makes this proc usable from the
+# regenerate sites that are not content edits, and both halves of that are
+# load-bearing:
+#
+#   * it must not PIN. The ranges do not follow the absent-means-absent rule the
+#     other keys do: graph_props always emits a concrete x1/x2/y1/y2
+#     (substituting a placeholder for a model `{}`) and regenerate's autozoom
+#     overwrites them with the fullx/fullyzoom fit, so `xschem getprop rect 2
+#     $gi x1` is NEVER empty. An unconditional capture therefore turns every
+#     `{}` axis — "autozoom on every regenerate" — into a frozen number for
+#     EVERY strip, empty ones included, and the next Direct Plot into an auto
+#     strip lands off-screen. The seven pre-0194 callers are content gestures
+#     that accept that (move_trace_in_graphs even re-blanks the destination
+#     afterwards because of it); a window option or a resize must not.
+#   * it must not REFRESH A PINNED AXIS EITHER, which is subtler and was caught
+#     in review. Under `sharedx 1` regenerate writes graph 0's x into every
+#     other strip's RECT while the model deliberately keeps each strip's own —
+#     that non-destructiveness is the whole point of Shared X. Reading a pinned
+#     x back off the rect therefore copies graph 0's window over every other
+#     strip's stored one, permanently and with no undo point, so un-sharing
+#     would no longer reveal the per-strip ranges. Ranges are a separate class
+#     with its own documented lifetime (spec §17.4): a C-written pan/zoom the
+#     model never saw is discarded by the next regenerate, exactly as before
+#     this issue. 0194 changes what happens to the SELECTION and nothing else.
+proc wviewer::capture_live_graph_state {token {skip_markers 0} {skip_ranges 0}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }
@@ -2498,6 +2545,11 @@ proc wviewer::capture_live_graph_state {token {skip_markers 0}} {
   set gi 0
   foreach G $gs {
     foreach tok {x1 x2 y1 y2} {
+      # issue 0194: the ranges are the CONTENT-gesture half of this proc. See
+      # the header for why a selection fold must not write them at all — an
+      # auto axis would be pinned, and a pinned one would be overwritten with
+      # graph 0's window whenever Shared X is on.
+      if {$skip_ranges} { continue }
       set v {}
       catch {set v [xschem getprop rect 2 $gi $tok]}
       if {[string is double -strict $v]} { dict set G $tok $v }
@@ -2543,6 +2595,40 @@ proc wviewer::capture_live_graph_state {token {skip_markers 0}} {
   wviewer::set_graphs $token $out
   return 1
 }
+
+# THE FOLD EVERY NON-STRUCTURAL REGENERATE OWES (issue 0194).
+#
+# The rule, stated once so the next window option does not have to rediscover
+# it: regenerate does `xschem clear_drawing` and re-places every rect purely
+# from the Tcl model, so ANY state the C engine wrote straight into a rect —
+# the selection (`hilight_wave` + `sel_waves`, issue 0175), an MMB pan, an RMB
+# box zoom — dies unless it was folded back first. A command that means to
+# CARRY FORWARD the strips currently on the canvas must therefore capture,
+# whatever else it is: a window OPTION (grid, Shared X), a pure repaint
+# (configure_apply, i.e. a plain window RESIZE), a range edit or a trace/strip
+# addition. "It is only a window option, not model content" is a valid reason
+# to skip `push_undo` — window options stay outside the undo stack, spec
+# waveform_viewer_modes.md §14 — and NEVER a reason to skip the capture: the
+# capture is about surviving clear_drawing, not about undo.
+# The three exemptions are the procs that REPLACE the model wholesale and would
+# fold the outgoing window's rects on top of the incoming model: `restore`,
+# `state_apply` (its caller history_step captures) and `clear_all`. Plus
+# `delete_all_markers`, which must not regenerate at all.
+#
+# The `skip_ranges` form is what makes this safe here (see the header above):
+# it folds the SELECTION and leaves every axis exactly as it was, so nothing
+# about range lifetime changes — an auto axis is not pinned, and a pinned one is
+# not overwritten with graph 0's window under Shared X.
+#
+# Ordering, and it is mechanical: call this AFTER any `switch_ctx` guard, BEFORE
+# any structural mutation (its 1:1 rect-vs-model guard fails SILENTLY, so a
+# capture placed after an add/remove is a no-op that looks installed), and
+# BEFORE reading `$gs`/`$lay` — it writes through set_graphs, so a list read
+# earlier is stale and writing it back would revert the capture.
+proc wviewer::capture_live_view_state {token} {
+  return [wviewer::capture_live_graph_state $token 0 1]
+}
+
 
 # --- the C -> Tcl marker push hook -------------------------------------------
 
@@ -4566,6 +4652,10 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   if {![dict exists $windows $token]} {
     return [list [list {} "unknown viewer window"]]
   }
+  # issue 0194: the ONE capture for the whole batch, before any strip is
+  # created. add_trace's own capture cannot serve here — it runs after the
+  # strips were added, where the 1:1 rect/model guard refuses it.
+  wviewer::capture_live_view_state $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
   set auto [wviewer::auto_graph_index $token]
@@ -4694,9 +4784,20 @@ proc wviewer::grid_shown {token} {
 # principled: this changes a WINDOW OPTION, not the model's content. Window
 # options (plot mode, sharedx, cursors, the loaded raw) are deliberately
 # OUTSIDE the undo snapshot -- see the undo/redo header -- so there is no
-# push_undo and no capture here, exactly as sharedx_toggle and set_plot_mode
-# do it. What it does share: refuse-a-no-op-without-logging, verified
-# switch_ctx, ONE regenerate, ONE log line.
+# push_undo here, exactly as sharedx_toggle and set_plot_mode do it.
+#
+# ⚠ CORRECTED 2026-08-01 (issue 0194). This paragraph used to end "...so there
+# is no push_undo AND NO CAPTURE here", and that second half was the bug: the
+# user reported that Ctrl-G deselected the selected trace. The two are separate
+# questions. push_undo is about the undo STACK, which a window option stays out
+# of. capture_live_graph_state is about surviving `clear_drawing`: this command
+# regenerates, regenerate re-places every rect from the MODEL, and the selection
+# lives in the RECT until something folds it back. So it captures -- in the
+# skip_ranges form, which folds the selection and leaves every axis alone -- and
+# still takes no undo point. (set_plot_mode needs neither: it does not
+# regenerate at all.) What it does share with move_strip:
+# refuse-a-no-op-without-logging, verified switch_ctx, ONE regenerate, ONE log
+# line.
 proc wviewer::grid_toggle {{want {}} {token {}}} {
   variable windows
   variable layouts
@@ -4723,6 +4824,9 @@ proc wviewer::grid_toggle {{want {}} {token {}}} {
   # not worth a replay line).
   if {$new == $cur} { return $cur }
   if {![wviewer::switch_ctx $token]} { return {} }
+  # issue 0194: BEFORE the `lay` read below — capture writes through set_graphs,
+  # so reading the layout first and writing it back after would revert the fold.
+  wviewer::capture_live_view_state $token
   set lay [wviewer::layout_for $token]
   dict set lay grid $new
   dict set layouts $token $lay
@@ -5351,6 +5455,10 @@ proc wviewer::sharedx_toggle {token} {
   variable layouts
   variable sharedx
   if {![dict exists $windows $token]} { return }
+  # issue 0194, same as grid_toggle: a window option regenerates, so it owes the
+  # fold, and it owes it BEFORE the `lay` read (capture writes through
+  # set_graphs). capture_live_view_state does its own verified switch_ctx.
+  wviewer::capture_live_view_state $token
   set lay [wviewer::layout_for $token]
   dict set lay sharedx \
     [expr {[info exists sharedx($token)] && $sharedx($token) ? 1 : 0}]
@@ -5710,6 +5818,13 @@ proc wviewer::apply_range {token gi x1 x2 y1 y2} {
   if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
     return 0
   }
+  # issue 0194: the D7 freeze this proc performs covers the RANGES and nothing
+  # else — it regenerates, so the selection needs the fold too. AFTER the
+  # validation above (a refused call must stay the pure no-op it always was:
+  # capture mutates the model and switches the xschem context) and BEFORE the
+  # `gs` re-read below, since capture writes through set_graphs.
+  wviewer::capture_live_view_state $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
   set G [lindex $gs $gi]
   foreach {k v} [list x1 $x1 x2 $x2 y1 $y1 y2 $y2] {
     if {$v ne {}} { dict set G $k $v }
@@ -5789,6 +5904,10 @@ proc wviewer::axis_wheel_window {token gi axis p dir} {
 proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
+  # issue 0194: the per-strip range read-back below is a RANGE capture only, so
+  # a zoom still dropped the selection on its regenerate. Fold at the top,
+  # before the `gs` read (capture writes through set_graphs).
+  wviewer::capture_live_view_state $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   # ⚠ MIRRORED IN C: src/xschem.h GRAPH_AXIS_WHEEL_FACTOR carries this same 0.8,
@@ -5883,6 +6002,7 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
 proc wviewer::pan_x {token dir} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
+  wviewer::capture_live_view_state $token   ;# issue 0194, as wheel_zoom
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   set changed 0
@@ -6294,13 +6414,27 @@ proc wviewer::axes_ok {token} {
     $w.err configure -text "no such graph '$gi'"
     return
   }
-  set G [lindex $gs $gi]
+  # every entry is validated BEFORE anything is written, so a typo leaves the
+  # dialog up with nothing changed. The capture below must sit on the same side
+  # of that line: it mutates the model and moves the xschem context, and this
+  # error path was a pure no-op before issue 0194.
+  set vals {}
   foreach en {x1 x2 y1 y2} {
     set v [string trim [$w.$en get]]
     if {$v ne {} && ![string is double -strict $v]} {
       $w.err configure -text "not a number: $en '$v' (blank = auto)"
       return
     }
+    lappend vals $v
+  }
+  # issue 0194: the dialog edits ONE strip's axes; every other strip's selection
+  # must survive the regenerate. skip_ranges is load-bearing here — a blank
+  # entry means auto, and a fold that wrote ranges would pin every OTHER strip's
+  # auto axes, quietly turning this dialog into a window-wide freeze.
+  wviewer::capture_live_view_state $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set G [lindex $gs $gi]
+  foreach en {x1 x2 y1 y2} v $vals {
     set G [dict replace $G $en $v]
   }
   set G [dict replace $G \

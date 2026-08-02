@@ -3419,6 +3419,14 @@ proc ase::ui::auto_plot {key} {
     if {[wviewer::window_for $key] ne {}} {
       set gi [wviewer::auto_graph_index $key]
       if {$gi >= 0} {
+        # issue 0194: this regenerate carries every OTHER strip forward, so it
+        # owes the fold — clear_graph_traces drops the selection of the auto
+        # strip alone, and without this the rebuild-from-model would take the
+        # user's selection on every other strip with it. Same rule, and the
+        # same helper, as the twelve sites inside wave_viewer.tcl; it is only
+        # the FILE that differs. Must run BEFORE clear_graph_traces (that is
+        # the model mutation) and it does its own verified switch_ctx.
+        wviewer::capture_live_view_state $key
         wviewer::clear_graph_traces $key $gi
         wviewer::regenerate $key
       }

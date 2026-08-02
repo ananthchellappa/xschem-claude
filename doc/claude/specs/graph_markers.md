@@ -1296,11 +1296,22 @@ rects: `wviewer::regenerate` does `xschem clear_drawing` and re-places every rec
 from `wviewer::graph_props`. Markers are written into the rect by **C**, so
 without a mirror the next `regenerate` would erase them.
 
-`regenerate` is called from **~18 sites**, of which only **three**
-(`move_strip`, `move_trace`, `history_step`) first call
-`capture_live_graph_state`. The unguarded ones include `configure_apply` — a
+`regenerate` is called from **22 sites** in `wave_viewer.tcl` (plus two in
+`ase_window.tcl`), and when this hook was designed only **three**
+(`move_strip`, `move_trace`, `history_step`) first called
+`capture_live_graph_state`. The unguarded ones included `configure_apply` — a
 plain **window resize**. So a pull-only design means: create M1, drag the window
 edge, M1 is gone, with no user action that reads as destructive.
+
+⚠ **Updated 2026-08-01 (issue 0194), and the hook is still required.** 19 of the
+22 sites now fold before regenerating, `configure_apply` among them, so the
+sentence above no longer describes the tree. The push hook is NOT redundant: the
+fold at those sites is a *pull*, and a pull only runs when a Tcl command runs.
+A marker created or dragged with the mouse, followed by nothing but another
+mouse gesture, still reaches no capture — and the three sites that legitimately
+never fold (`restore`, `state_apply`, `clear_all`) would still lose it. Pushing
+on change keeps the model current at all times, which is the property this
+section actually needs.
 
 Therefore **C notifies Tcl the moment a marker changes**:
 
