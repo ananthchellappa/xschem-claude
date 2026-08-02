@@ -268,6 +268,17 @@ doc/claude/code_analysis/waveform_subsystem_reference.md   landmine 50
 
 ---
 
+## 5b. EYEBALLED — PASS (2026-08-01)
+
+User confirmed on screen, in the real mode (`src/xschem --script
+src/cadence_style_rc --logdir /tmp`, ASE waveform window): selecting a trace and
+pressing **CTRL-G** keeps the trace selected. Issue RESOLVED.
+
+This is the part no check reaches — the suite asserts the tokens the renderer
+reads (`hilight_wave`, `sel_waves`), never the pixels that come out (§8).
+
+---
+
 ## 6. SYMPTOM 2 — the alternating bold: EXPLAINED, and it is the same root
 
 > Plot signals A, B, C to three strips. Move **B from strip 2 to strip 1**. Press
