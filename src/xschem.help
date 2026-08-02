@@ -52,7 +52,9 @@ Options:
   --log <file>         Set a log file.
   --logdir <path>      Directory for the action log (Xschem.log[.N], a replayable
                        log of user actions). Created if absent (fatal if it
-                       cannot be created). Default: current working directory.
+                       cannot be created). Default: $TMPDIR, else /tmp (the log
+                       is a disposable artifact -- issue 0038); the current
+                       working directory only if no temp dir is usable.
   --nolog              Disable the action log and the CIW (live log window)
                        auto-open. For test/automation runs. Mutually exclusive
                        with --logdir (fatal if both are given).

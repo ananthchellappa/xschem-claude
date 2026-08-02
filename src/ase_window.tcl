@@ -238,7 +238,7 @@ proc ase::ui::open {key lib cell view} {
 }
 
 # Session > Close / WM close: drop trace bookkeeping, unregister the session
-# (v1 contract: close DISCARDS unsaved edits — a ciw_echo notice, no modal
+# (v1 contract: close DISCARDS unsaved edits — an ase::echo notice, no modal
 # save-nag), destroy the toplevel and every per-key record. The log toplevel
 # is a child of the session toplevel, so it dies with it.
 proc ase::ui::close {key} {
@@ -249,7 +249,7 @@ proc ase::ui::close {key} {
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
   if {[ase::session_dirty $key]} {
-    catch {ciw_echo "ase: closed $key with unsaved state edits (discarded)"}
+    catch {::ase::echo "ase: closed $key with unsaved state edits (discarded)"}
   }
   ase::session_close $key
   dict unset wins $key
@@ -759,7 +759,7 @@ proc ase::ui::delete_selection {key} {
     ase::ui::populate $key
     return
   }
-  catch {ciw_echo "ase: nothing selected"}
+  catch {::ase::echo "ase: nothing selected"}
 }
 
 # --- pure cell helpers (Tk-free — headless tests drive these directly) -------
@@ -1248,7 +1248,7 @@ proc ase::ui::temp_commit {key} {
   if {![string is double -strict $v]} {
     $top.tb.temp delete 0 end
     $top.tb.temp insert 0 [ase::state_get [ase::session_state $key] temperature 27]
-    catch {ciw_echo "ase: temperature must be numeric" error}
+    catch {::ase::echo "ase: temperature must be numeric" error}
     return
   }
   set st [ase::session_state $key]
@@ -1335,14 +1335,14 @@ proc ase::ui::add_variable_ok {key} {
   set name [string trim [$w.name get]]
   set value [string trim [$w.value get]]
   if {$name eq {}} {
-    catch {ciw_echo "ase: variable name must not be empty" error}
+    catch {::ase::echo "ase: variable name must not be empty" error}
     return
   }
   set st [ase::session_state $key]
   set rows [ase::state_get $st variables]
   foreach v $rows {
     if {[ase::state_get $v name] eq $name} {
-      catch {ciw_echo "ase: variable '$name' already exists" error}
+      catch {::ase::echo "ase: variable '$name' already exists" error}
       return
     }
   }
@@ -1386,7 +1386,7 @@ proc ase::ui::variable_editor_ok {key} {
   set name [string trim [$w.name get]]
   set value [string trim [$w.value get]]
   if {$name eq {}} {
-    catch {ciw_echo "ase: variable name must not be empty" error}
+    catch {::ase::echo "ase: variable name must not be empty" error}
     return
   }
   set idx $edrow($key,var)
@@ -1464,7 +1464,7 @@ proc ase::ui::output_editor_ok {key} {
   set name [string trim [$w.name get]]
   set ex [string trim [$w.expr get]]
   if {$ex eq {}} {
-    catch {ciw_echo "ase: output expression must not be empty" error}
+    catch {::ase::echo "ase: output expression must not be empty" error}
     return
   }
   set plot [expr {[info exists edchk($key,plot)] && $edchk($key,plot) ? 1 : 0}]
@@ -1584,7 +1584,7 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   }
   set cv [xschem get current_win_path]
   if {![winfo exists $cv]} {
-    catch {ciw_echo "ase: no design canvas to select on ($cv)" error}
+    catch {::ase::echo "ase: no design canvas to select on ($cv)" error}
     return 0
   }
   set sod($key,canvas)    $cv
@@ -1608,7 +1608,8 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   # (mouse picking still works, ESC does not). Give the canvas keyboard focus.
   catch {focus $cv}
   # Bottom-status-line prompt (the schematic window's own mode line, distinct
-  # from the CIW ciw_echo log below): set it now and keep it up via sod_prompt_pump
+  # from the CIW/action-log ase::echo notice below): set it now and keep it
+  # up via sod_prompt_pump
   # (the C engine blanks .statusbar.10 on every event — see that proc). Cleared
   # and the pump cancelled in sod_end.
   if {$mode eq {plot}} {
@@ -1620,10 +1621,10 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   ase::ui::sod_prompt_set $cv $sod($key,prompt)
   ase::ui::sod_prompt_pump $key
   if {$mode eq {plot}} {
-    catch {ciw_echo "ase: Direct Plot — click wires/net labels for voltage\
+    catch {::ase::echo "ase: Direct Plot — click wires/net labels for voltage\
  traces, sources for current traces; ESC plots"}
   } else {
-    catch {ciw_echo "ase: Select On Design — click wires/net labels for\
+    catch {::ase::echo "ase: Select On Design — click wires/net labels for\
  voltages, sources for currents; ESC ends"}
   }
   return 1
@@ -1669,11 +1670,11 @@ proc ase::ui::sod_end {key} {
   array unset sod $key,*
   if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
   if {$mode eq {plot}} {
-    catch {ciw_echo "ase: Direct Plot — $n trace(s) queued"}
+    catch {::ase::echo "ase: Direct Plot — $n trace(s) queued"}
     ase::ui::dp_finish $key $queue $qcolors
     return
   }
-  catch {ciw_echo "ase: Select On Design ended — $n output(s) queued"}
+  catch {::ase::echo "ase: Select On Design ended — $n output(s) queued"}
   if {[dict exists $wins $key]} {
     set top [dict get $wins $key]
     if {[winfo exists $top]} {
@@ -1728,7 +1729,7 @@ proc ase::ui::sod_resume {{canvas {}}} {
     # Nowhere left to come back to (the window was closed while suspended). Drop the
     # mode rather than leave an unreachable record behind; do not plot a queue the user
     # can no longer see or extend.
-    catch {ciw_echo "ase: the design window the pick mode was on is gone — mode dropped" error}
+    catch {::ase::echo "ase: the design window the pick mode was on is gone — mode dropped" error}
     array unset sod $key,*
     unset -nocomplain sod(active)
     return 0
@@ -1872,7 +1873,7 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     # this became the late return — a pick mode that scolded every miss-click
     # would be noise (issue 0160).
     if {$hit eq {}} { return }
-    catch {ciw_echo "ase: v1 queues source currents only — click a wire, a\
+    catch {::ase::echo "ase: v1 queues source currents only — click a wire, a\
  net label or a voltage source/ammeter"}
     return
   }
@@ -1951,14 +1952,14 @@ proc ase::ui::sod_queue {key ex} {
   lassign [ase::ui::sod_merge [ase::state_get $st outputs] $ex \
              $sod($key,flavor)] rows status
   if {$status eq {nochange}} {
-    catch {ciw_echo "ase: output '$ex' already queued"}
+    catch {::ase::echo "ase: output '$ex' already queued"}
     return
   }
   dict set st outputs $rows
   ase::session_update $key $st
   ase::ui::populate $key
   incr sod($key,count)
-  catch {ciw_echo "ase: queued output '$ex' ($status)"}
+  catch {::ase::echo "ase: queued output '$ex' ($status)"}
 }
 
 # Direct Plot queue step (item 13, D1/D2): collect the trace expression into
@@ -1975,7 +1976,7 @@ proc ase::ui::dp_queue {key ex {kind {}} {token {}}} {
   variable sod
   if {![info exists sod($key,queue)]} { return }
   if {[lsearch -exact $sod($key,queue) $ex] >= 0} {
-    catch {ciw_echo "ase: trace '$ex' already queued"}
+    catch {::ase::echo "ase: trace '$ex' already queued"}
     return
   }
   lappend sod($key,queue) $ex
@@ -1984,7 +1985,7 @@ proc ase::ui::dp_queue {key ex {kind {}} {token {}}} {
   catch {set col [lindex [wviewer::predict_colors $key [llength $sod($key,queue)]] end]}
   lappend sod($key,qcolors) $col
   ase::ui::dp_hilight $kind $token $col
-  catch {ciw_echo "ase: queued trace '$ex'"}
+  catch {::ase::echo "ase: queued trace '$ex'"}
 }
 
 # Direct Plot finish (item 13, D3): runs AFTER sod_end restored the canvas
@@ -2001,18 +2002,18 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   set st [ase::session_state $key]
   set sim_t [ase::plot_sim_type $st]
   if {$sim_t eq {op}} {
-    catch {ciw_echo "ase: op results have no sweep — nothing to plot"}
+    catch {::ase::echo "ase: op results have no sweep — nothing to plot"}
     return
   }
   if {![wviewer::open $key]} {
-    catch {ciw_echo "ase: cannot open the waveform viewer for $key" error}
+    catch {::ase::echo "ase: cannot open the waveform viewer for $key" error}
     return
   }
   set rf [ase::last_rawfile $key]
   if {$rf ne {}} {
     wviewer::attach_raw $key $rf $sim_t
   } else {
-    catch {ciw_echo "ase: no simulation results yet — run first (queued\
+    catch {::ase::echo "ase: no simulation results yet — run first (queued\
  traces are recorded and resolve after the run)"}
   }
   if {![llength $queue]} { return }
@@ -2026,7 +2027,7 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   # color. Empty (a scripted/replayed call) -> plot_signals derives them itself.
   foreach pair [wviewer::plot_signals $key $queue $qcolors] {
     lassign $pair ex err
-    catch {ciw_echo "ase: cannot plot '$ex': $err" error}
+    catch {::ase::echo "ase: cannot plot '$ex': $err" error}
   }
 }
 
@@ -2065,7 +2066,7 @@ proc ase::ui::edit_variable_first {key} {
   set sel {}
   if {[winfo exists $tv]} { set sel [$tv selection] }
   if {$sel eq {}} {
-    catch {ciw_echo "ase: nothing selected"}
+    catch {::ase::echo "ase: nothing selected"}
     return
   }
   ase::ui::variable_editor $key [lindex $sel 0]
@@ -2079,7 +2080,7 @@ proc ase::ui::edit_output_first {key} {
   set sel {}
   if {[winfo exists $tv]} { set sel [$tv selection] }
   if {$sel eq {}} {
-    catch {ciw_echo "ase: nothing selected"}
+    catch {::ase::echo "ase: nothing selected"}
     return
   }
   ase::ui::output_editor $key [lindex $sel 0]
@@ -2096,7 +2097,7 @@ proc ase::ui::edit_analysis_first {key} {
   set sel {}
   if {[winfo exists $tv]} { set sel [$tv selection] }
   if {$sel eq {}} {
-    catch {ciw_echo "ase: nothing selected"}
+    catch {::ase::echo "ase: nothing selected"}
     return
   }
   set rows [ase::state_get [ase::session_state $key] analyses]
@@ -2288,7 +2289,7 @@ proc ase::ui::chana_ok {key} {
   if {$en} {
     foreach f [ase::ui::chana_fields $type] {
       if {![dict exists $vals $f] || [dict get $vals $f] eq {}} {
-        catch {ciw_echo "ase: enabled $type analysis needs a non-empty '$f'" error}
+        catch {::ase::echo "ase: enabled $type analysis needs a non-empty '$f'" error}
         return
       }
     }
@@ -2398,7 +2399,7 @@ proc ase::ui::chana_x_add {key} {
   set n [string trim [$w.row.name get]]
   set v [string trim [$w.row.value get]]
   if {$n eq {}} {
-    catch {ciw_echo "ase: option name must not be empty" error}
+    catch {::ase::echo "ase: option name must not be empty" error}
     return
   }
   dict set dlg($key,anextra) $n $v
@@ -2553,11 +2554,11 @@ proc ase::ui::design_ok {key} {
   set c [string trim [$w.cell get]]
   set v [string trim [$w.view get]]
   if {$l eq {} || $c eq {} || $v eq {}} {
-    catch {ciw_echo "ase: Library, Cell and View are all required" error}
+    catch {::ase::echo "ase: Library, Cell and View are all required" error}
     return
   }
   if {[lsearch -exact [ase::ui::design_sch_views $l $c] $v] < 0} {
-    catch {ciw_echo "ase: '$v' is not a schematic view of $l/$c" error}
+    catch {::ase::echo "ase: '$v' is not a schematic view of $l/$c" error}
     return
   }
   set st [ase::session_state $key]
@@ -2696,7 +2697,7 @@ proc ase::ui::listdlg_edit_first {key which} {
   set sel {}
   if {[winfo exists $tv]} { set sel [$tv selection] }
   if {$sel eq {}} {
-    catch {ciw_echo "ase: nothing selected"}
+    catch {::ase::echo "ase: nothing selected"}
     return
   }
   ase::ui::listdlg_editor $key $which [lindex $sel 0]
@@ -2711,7 +2712,7 @@ proc ase::ui::listdlg_ok {key which} {
   set cols [dict get $cfg cols]
   set first [string trim [$w.[lindex $cols 0] get]]
   if {$first eq {}} {
-    catch {ciw_echo "ase: '[lindex [dict get $cfg heads] 0]' must not be empty" error}
+    catch {::ase::echo "ase: '[lindex [dict get $cfg heads] 0]' must not be empty" error}
     return
   }
   set idx $dlg($key,$which)
@@ -2752,7 +2753,7 @@ proc ase::ui::listdlg_delete {key which} {
   if {![winfo exists $tv]} { return }
   set sel [$tv selection]
   if {$sel eq {}} {
-    catch {ciw_echo "ase: nothing selected"}
+    catch {::ase::echo "ase: nothing selected"}
     return
   }
   set st [ase::session_state $key]
@@ -2942,7 +2943,7 @@ proc ase::ui::load_state_ok {key} {
 # the session's own file. No session retargeting, no key juggling.
 proc ase::ui::do_load_state_from {key path} {
   if {[catch {ase::state_load $path} st]} {
-    catch {ciw_echo $st error}
+    catch {::ase::echo $st error}
     return 0
   }
   ase::session_update $key $st
@@ -3028,7 +3029,7 @@ proc ase::ui::save_state_ok {key} {
   set c [string trim [$w.cell get]]
   set v [string trim [$w.view get]]
   if {$l eq {} || $c eq {} || $v eq {}} {
-    catch {ciw_echo "ase: Library, Cell and View are all required" error}
+    catch {::ase::echo "ase: Library, Cell and View are all required" error}
     return
   }
   if {[ase::ui::save_as_needs_confirm $key $l $c $v]} {
@@ -3077,7 +3078,7 @@ proc ase::ui::viewer_snapshot {key} {
 # IFF it exists; else fall back to ase::last_rawfile (file existence == "has
 # results"). sim_type from ase::plot_sim_type (NO op-only gate: restoring an
 # op raw is harmless, unlike plotting into it). No rawfile at all -> the
-# viewer still opens with its layout, traces draw empty, ciw_echo notice, no
+# viewer still opens with its layout, traces draw empty, ase::echo notice, no
 # crash. Returns wviewer::restore's rc (0 headless: wviewer::open bails).
 proc ase::ui::viewer_restore {key} {
   set st [ase::session_state $key]
@@ -3095,7 +3096,7 @@ proc ase::ui::viewer_restore {key} {
   set sim_t [ase::plot_sim_type $st]
   set rc [wviewer::restore $key $vd $rf $sim_t]
   if {$rc && $rf eq {}} {
-    catch {ciw_echo "ase: no simulation results for this state — viewer\
+    catch {::ase::echo "ase: no simulation results for this state — viewer\
  restored, traces will fill after a run"}
   }
   return $rc
@@ -3127,23 +3128,23 @@ proc ase::ui::do_save_state_as {key l c v} {
   if {$target ne {} && $own ne {} \
       && [file normalize $target] eq [file normalize $own]} {
     if {[catch {ase::session_save $key} err]} {
-      catch {ciw_echo "ase: cannot save $l/$c/$v: $err" error}
+      catch {::ase::echo "ase: cannot save $l/$c/$v: $err" error}
       return 0
     }
   } else {
     if {$target eq {}} {
       if {[catch {library_new_view $l $c $v ngspice_state1} err]} {
-        catch {ciw_echo "ase: cannot create view $l/$c/$v: $err" error}
+        catch {::ase::echo "ase: cannot create view $l/$c/$v: $err" error}
         return 0
       }
       set target [xschem cellview_path "$l/$c" $v]
       if {$target eq {}} {
-        catch {ciw_echo "ase: created view $l/$c/$v did not resolve" error}
+        catch {::ase::echo "ase: created view $l/$c/$v did not resolve" error}
         return 0
       }
     }
     if {[catch {ase::state_save $target [ase::session_state $key]} err]} {
-      catch {ciw_echo "ase: cannot write $target: $err" error}
+      catch {::ase::echo "ase: cannot write $target: $err" error}
       return 0
     }
   }
@@ -3160,7 +3161,7 @@ proc ase::ui::do_save_state_as {key l c v} {
     ase::session_adopt $key $target
   }
   catch {libmgr::refresh_after $l $c $v}
-  catch {ciw_echo "ase: state saved to $l/$c/$v"}
+  catch {::ase::echo "ase: state saved to $l/$c/$v"}
   # item 16 (D3): signal a COMPLETED save to save_state_modal's tkwait. Guarded
   # by info-exists so the ordinary menu Save State path (which never seeds the
   # flag) is byte-identical.
@@ -3322,7 +3323,7 @@ proc ase::ui::raise_window_entry {e} {
 proc ase::ui::design_window {key} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
-    catch {ciw_echo "ase: cannot resolve the session's design cellview" error}
+    catch {::ase::echo "ase: cannot resolve the session's design cellview" error}
     return 0
   }
   if {[ase::ui::raise_design_editor $dpath]} { return 1 }
@@ -3443,7 +3444,7 @@ proc ase::ui::show_log {key} {
     set sim [ase::state_get $st simulator]
     set f [[ase::backend_hook $sim log_file] $st]
   } err]} {
-    catch {ciw_echo $err error}
+    catch {::ase::echo $err error}
     return
   }
   if {[file isfile $f]} {
@@ -3453,7 +3454,7 @@ proc ase::ui::show_log {key} {
     close $fh
     ase::ui::log_append $key $data
   } else {
-    catch {ciw_echo "ase: no simulation log yet: $f"}
+    catch {::ase::echo "ase: no simulation log yet: $f"}
   }
 }
 
@@ -3494,13 +3495,13 @@ proc ase::ui::log_trace {key id args} {
 # --- Simulation menu ---------------------------------------------------------
 
 # Simulation > Netlist > Recreate: regenerate the circuit netlist artifact,
-# report via ciw_echo — no viewer (that is Display's job).
+# report via ase::echo — no viewer (that is Display's job).
 proc ase::ui::do_netlist_recreate {key} {
   if {[catch {ase::netlist [ase::session_state $key]} nl]} {
-    catch {ciw_echo $nl error}
+    catch {::ase::echo $nl error}
     return
   }
-  catch {ciw_echo "ase: netlist written: $nl"}
+  catch {::ase::echo "ase: netlist written: $nl"}
 }
 
 # Auto-plot after a successful run (item 13, D5): every outputs row with
@@ -3534,14 +3535,14 @@ proc ase::ui::auto_plot {key} {
   }
   set sim_t [ase::plot_sim_type $st]
   if {$sim_t eq {op}} {
-    catch {ciw_echo "ase: op results have no sweep — nothing to auto-plot"}
+    catch {::ase::echo "ase: op results have no sweep — nothing to auto-plot"}
     return
   }
   if {![wviewer::open $key]} { return }
   set rf [ase::last_rawfile $key]
   if {$rf eq {}} {
     # the run just succeeded, so this is exceptional (raw write failed?)
-    catch {ciw_echo "ase: no raw file from the run — nothing to auto-plot"}
+    catch {::ase::echo "ase: no raw file from the run — nothing to auto-plot"}
     return
   }
   wviewer::attach_raw $key $rf $sim_t
@@ -3554,7 +3555,7 @@ proc ase::ui::auto_plot {key} {
     if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }
     set err [wviewer::add_trace $key $gi $ex $nm]
     if {$err ne {}} {
-      catch {ciw_echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
+      catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
     }
   }
 }
@@ -3619,7 +3620,7 @@ proc ase::ui::run_started {key id} {
 proc ase::ui::do_run {key} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
-    catch {ciw_echo "ase: cannot resolve the session's design cellview" error}
+    catch {::ase::echo "ase: cannot resolve the session's design cellview" error}
     ase::ui::set_status $key fail
     return
   }
@@ -3629,13 +3630,13 @@ proc ase::ui::do_run {key} {
     ase::ui::design_window $key
     update
     if {[file normalize [xschem get schname]] ne $dpath} {
-      catch {ciw_echo "ase: design is not the current schematic; open it via Session > Design Window first" error}
+      catch {::ase::echo "ase: design is not the current schematic; open it via Session > Design Window first" error}
       ase::ui::set_status $key fail
       return
     }
   }
   if {[catch {ase::run [ase::session_state $key] [list ase::ui::run_finished $key]} id]} {
-    catch {ciw_echo $id error}
+    catch {::ase::echo $id error}
     ase::ui::set_status $key fail
     return
   }
@@ -3647,7 +3648,7 @@ proc ase::ui::do_run {key} {
 # works with the design window closed.
 proc ase::ui::do_run_existing {key} {
   if {[catch {ase::run_existing [ase::session_state $key] [list ase::ui::run_finished $key]} id]} {
-    catch {ciw_echo $id error}
+    catch {::ase::echo $id error}
     ase::ui::set_status $key fail
     return
   }
@@ -3663,11 +3664,11 @@ proc ase::ui::do_stop {key} {
   global OS
   set id [ase::session_getattr $key run_id {}]
   if {$id eq {} || ![string is integer -strict $id] || ![info exists ::execute(pipe,$id)]} {
-    catch {ciw_echo "ase: no simulation running for this session"}
+    catch {::ase::echo "ase: no simulation running for this session"}
     return
   }
   if {[regexp -nocase {windows} $OS]} {
-    catch {ciw_echo "ase: Stop is not available on Windows"}
+    catch {::ase::echo "ase: Stop is not available on Windows"}
     return
   }
   catch {kill_running_cmds $id -9}
@@ -3678,10 +3679,10 @@ proc ase::ui::do_stop {key} {
 proc ase::ui::view_netlist {key} {
   set st [ase::session_state $key]
   if {[catch {dict get $st design cell} cell]} {
-    catch {ciw_echo "ase: state has no design cell" error}
+    catch {::ase::echo "ase: state has no design cell" error}
     return
   }
   set f [file join [ase::rundir $st] $cell.spice]
   if {[file isfile $f]} { textwindow $f ro } \
-  else { catch {ciw_echo "ase: no netlist yet: $f"} }
+  else { catch {::ase::echo "ase: no netlist yet: $f"} }
 }

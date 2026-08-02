@@ -3727,9 +3727,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, xctx->current_name, TCL_VOLATILE); /* copies before restore */
             net_hilight_restore_ctx(borrowed);
           }
-          else if(!strcmp(argv[2], "actionlog_filename")) { /* resolved action-log path, "" if logging off */
-            Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
-          }
+          /* (issue 0207) a byte-equivalent `actionlog_filename` arm used to sit here, under
+           * `case 'c':`. The outer switch is on argv[2][0], so this arm was unreachable dead
+           * code -- the live one is under `case 'a':` above. Removed, not moved. */
           else if(!strcmp(argv[2], "current_win_path")) { /* path of current tab/window (.drw, .x1.drw, ...) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->current_win_path, TCL_VOLATILE);
@@ -6893,6 +6893,18 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       /* -reset: clear the dedup flag before a wrapper evaluates a command. */
       else if(argc > 2 && !strcmp(argv[2], "-reset")) actionlog_cmd_logged = 0;
+      /* (issue 0207) A value-taking flag with its VALUE MISSING must NOT fall through to the
+       * bare-line arm below. Every flag arm above is gated on argc > 3, so
+       * `xschem log_action -result` with no text used to write the literal line `-result`
+       * into Xschem.log -- and replaying that file then executes `-result` as a command and
+       * aborts the `source`. The ASE seam (ase::echo, src/ase.tcl) calls this API from ~80
+       * catch-wrapped sites with variable-derived text, so a legitimately empty variable made
+       * it reachable. A missing value now logs NOTHING, which is the honest meaning of an
+       * empty message. Only the KNOWN value-taking flags are swallowed: an unrecognised
+       * argv[2] still reaches the bare-line arm, as before. */
+      else if(argc > 2 && (!strcmp(argv[2], "-noecho")       || !strcmp(argv[2], "-result") ||
+                           !strcmp(argv[2], "-error")        || !strcmp(argv[2], "-suppressecho") ||
+                           !strcmp(argv[2], "-suppress"))) { /* flag without a value: no-op */ }
       else if(argc > 2) log_action("%s", argv[2]);
       Tcl_ResetResult(interp);
     }
