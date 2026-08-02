@@ -1,7 +1,10 @@
 # 0200 — descend has no verb-noun arm: `e` with nothing selected gives up instead of asking which instance
 
-Status: **FIXED** (2026-08-01), sabotage-verified and smoke-tested end to end. Awaiting the
-human eyeball. Filed the same day from a user report.
+Status: ✅ **RESOLVED** (2026-08-01) — sabotage-verified, smoke-tested end to end, and
+confirmed by user eyeball testing. Filed the same day from a user report.
+Two things were deliberately left open and are *not* regressions of this fix: **D7**
+(a `target=new_window` / `new_tab` descend still clobbers the parent context's selection)
+and **D3** (no hover cue during the armed pick — the status-bar prompt carries the mode).
 Area: `src/xschem.h` (new `MENUSTARTDESCEND`), `src/findnet.c` (new
 `find_closest_instance()`), `src/callback.c` (one new arm in
 `check_menu_start_commands()`), `src/scheduler.c` (new `xschem descend_pick`,
@@ -292,10 +295,16 @@ Regressions: `tests/headless/test_hi_descend.tcl` still `all checks passed`.
 
 - **Resuming the interrupted command** ([0201](0201-no-command-suspend-resume-contract.md)).
   This issue makes the descend *reachable* from inside a click-driven mode; it does not put
-  that mode back afterwards.
+  that mode back afterwards. **Done 2026-08-01** — `hi_descend_pick_arm` now suspends the
+  interrupted command before arming, and every terminal of the pick resumes it.
 - **Nesting the pick above an active seize** ([0202](0202-canvas-gesture-seize-has-no-stack.md)).
   With ASE Direct Plot live, Button-1 is still seized by `sod_click`, so the armed pick
   never sees the press. The arm, the probe and the continuation are all in place for it.
+  **Superseded 2026-08-01**: 0201 made the pick *sequential* rather than nested — the
+  interrupted mode hands the canvas back before `xschem descend_pick` arms — so no gesture
+  stack was needed. 0202 stays open as a latent hazard on its own merits.
+  0201 also added the missing ESC continuation this issue's `VN8` leg could only observe
+  from the C side: `abort_operation` now calls `hi_descend_pick_cancel`.
 - **The stale-`sel_array` guard** ([0203](0203-stale-sel_array-descends-a-deselected-instance.md)).
   The Tcl arm branches on `xschem selected_set` (which is `lastsel`-driven and correct), so
   this fix does not depend on 0203 — but `xschem descend` remains wrong on its own.

@@ -1,8 +1,10 @@
 # 0202 — canvas Button-1 and Escape are single ownership slots with no stack, so no pick mode can nest inside another
 
-Status: **OPEN**. Filed 2026-08-01, spawned by
-[0201](0201-no-command-suspend-resume-contract.md) — it is 0201's mechanical blocker.
-Established by reading; **not measured**.
+Status: **OPEN**, and **no longer a blocker** — see "0201 shipped without it" below.
+Filed 2026-08-01, spawned by [0201](0201-no-command-suspend-resume-contract.md) on the
+reasoning that it was 0201's mechanical blocker. Established by reading; the defect itself
+is still **not measured** (no reproducer for the LIFO violation), but the hand-back
+invariant it rests on now *is* — see the same section.
 Area: `src/ase_window.tcl` (`select_on_design` 1595-1602, `sod_end` 1644-1646),
 `src/xschem.tcl` (`addpin::grab_esc` / `release_esc` 10817-10820,
 `addlabel::grab_esc` / `release_esc` 11159-11162, the `<ButtonRelease>` drop hooks
@@ -85,11 +87,41 @@ Pure Tcl. The C side already has its own mode teardown (`abort_operation()`,
 `callback.c:246`) and its own ESC arm (`callback.c:6918`), and neither is displaced by
 Tk-level seizes — the `break` is what keeps them apart.
 
-### D4 — is this worth fixing on its own merits? — OPEN
+### D4 — is this worth fixing on its own merits? — OPEN, and now the *only* question
 Standalone, it is a latent hazard with no known user-visible symptom (nobody has reported
-ASE and Add-Pin fighting). It becomes mandatory the moment
-[0201](0201-no-command-suspend-resume-contract.md) is attempted. Filing it separately so
-that decision is explicit rather than smuggled into a feature branch.
+ASE and Add-Pin fighting). The claim that it "becomes mandatory the moment 0201 is
+attempted" was **wrong**, and 0201 shipping without it is the proof — see below. So this
+issue now stands or falls purely on its own merits, which is the honest place for it.
+
+## 0201 shipped without it (2026-08-01)
+
+The blocker reasoning was: a descend pick would have to **nest** above ASE's live Button-1
+seize, and the slots hold one predecessor each.
+
+The pick does not nest. `hi_descend_pick_arm` calls `cmdmode::suspend_all` **before**
+`xschem descend_pick`, so SOD has already handed the canvas back by the time the pick is
+armed. The two owners are strictly sequential; each slot still only ever has one occupant.
+A stack would have been dead weight on that path.
+
+Two things this changes for *this* issue:
+
+**The hand-back invariant is now measured.** `tests/headless/test_cmdmode_descend_0201.tcl`
+legs `CS3a`-`CS3c` assert that suspending a seized mode restores all three slots
+**string-identically**, trailing `break` included — the exact property the "`break` is
+load-bearing" section says the whole scheme rides on, previously asserted by nobody. Any
+future stack must keep those legs green.
+
+**A third aggravating fact, found while doing 0201.** `clone_canvas_bindings`
+(`xschem.tcl:13897`) copies `.drw`'s bindings verbatim onto every new canvas at creation
+(`xinit.c:2036`, `2252`), and `set_bindings` binds only the *generic* `<ButtonPress>` /
+`<ButtonRelease>` / `<KeyPress>` — never `<ButtonPress-1>`, `<ButtonRelease-1>` or
+`<Key-Escape>`. So a seize that is live when a window or tab is created is **cloned onto
+the child with the owner's key already substituted**: clicks there queue into the parent's
+mode, but the child's ESC calls a `sod_end` that restores bindings on the *parent* canvas
+only, leaving the child permanently seized with dead scripts. 0201 dodges this by
+suspending before any window is created (leg `DS6d` pins it), but a per-canvas stack (D2)
+has to handle it head-on: `push` must not inherit a cloned foreign script as its
+"predecessor".
 
 ## Merge note
 
