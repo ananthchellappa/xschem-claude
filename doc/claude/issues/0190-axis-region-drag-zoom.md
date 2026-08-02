@@ -299,6 +299,30 @@ test can see).
 
 ---
 
+## 4b. EYEBALLED — PASS (2026-08-01)
+
+Verified by the user on a real ASE waveform window, together with 0191. Closes
+the eyeball list in §5, and in particular the **one risk this issue's own
+remediation introduced and reported on itself**:
+
+* **No stale rubber band.** `graph_axis_drag_abort()` clears `graph_rubber_active`
+  *without* erasing an already-painted band — unlike the release path at
+  `callback.c`, which calls `drawtemprect(gctiled)` first — and the new call site
+  in `waves_selected()`'s `!is_inside` branch has no guaranteed redraw of its own.
+  `AG15` proves the STATE is dropped; only this look could confirm no outline
+  survives on screen. It does not.
+* The band itself renders and erases cleanly during the drag, across the
+  un-dragged axis.
+* **3 px of travel is accepted** as the click-vs-drag threshold for a margin
+  gesture (`GRAPH_CLICK_TOL`, reused but compared in SCREEN pixels here rather
+  than world units — it is a parameter of `graph_axis_map()`, so raising it for
+  the axis drag alone stays a one-line change if that ever changes).
+* The deliberate **absence of a pointer-cursor change** while an axis drag is
+  armed is accepted (the strip reorder sets `sb_v_double_arrow`, the trace drag
+  sets `hand2`, this sets nothing).
+* Axis tick labels remain legible after a zoom, and **losing the two axis margins
+  from the ASE viewer's strip drag-reorder grab area is not noticeable in use**.
+
 ## 5. NOT COVERED BY ANY CHECK (the eyeball list)
 
 The rubber band's pixels; the drag *feel*; whether the tick labels are still

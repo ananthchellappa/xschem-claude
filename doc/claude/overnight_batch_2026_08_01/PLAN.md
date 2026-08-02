@@ -51,7 +51,29 @@ or source fundamentally contradicts the request.
   never `git commit -a`, never `git reset --hard`, **never `git push`**.
 - Strictly sequential. One item in flight at a time.
 
-## DRIVER QUEUE (state on disk — survives compaction)
+## ROUND COMPLETE — 2026-08-01
+
+**All five items are `[x]`.** Every one was eyeballed by the user on a real ASE
+waveform window and passed with no change requested: 01 and 05 first, then 02,
+then 03 and 04 together. Nothing in the round remains `[E]`, `[D]` or `[F]`.
+
+Every recorded spec-hole decision therefore stands as accepted — including the
+three that changed or withheld behaviour the user might have wanted otherwise:
+item 01's removal of the 20-px marker halo, item 04's narrowing of a margin
+Ctrl+wheel from both axes to one, and item 05's D-50 (carried traces shrink in
+place on their own strips rather than gathering at the pointer).
+
+**Not pushed.** 13 commits on `fluid-editing`.
+
+Two gaps survive the round and are NOT closed by any eyeball, recorded so they
+are not mistaken for covered ground:
+- the `<MouseWheel>` / `%D` wheel arrival path (Windows, Tcl > 8.7) is matched by
+  **zero** legs — every wheel leg is X11 Button-4/5;
+- `test_palette` has no `RESULT:` footer, so `full_audit.sh` scores it
+  FAIL/NORESULT whenever its synthetic event is lost to the WSLg flake.
+
+<details>
+<summary>Historical: the driver queue this round ran from</summary>
 
 Remaining order, as of items 01–04 being resolved:
 
@@ -71,6 +93,8 @@ Remaining order, as of items 01–04 being resolved:
 All three touch `tests/headless/test_wave_axis_zoom.tcl` (03's latch leg, 04's
 off-centre Y legs) or the shared waveform sources, so they run **strictly
 sequentially**. Two writers on one suite file lose edits.
+
+</details>
 
 ### STOP-RULE DEVIATION, recorded by the driver 2026-08-01
 
@@ -246,8 +270,8 @@ one day; out of scope here.
 
 - [x] 01 marker-anywhere-in-plotbox — `m` (and `d`) place a marker anywhere inside the strip's plot box, at the diamond cursor's snapped point; no trace-proximity requirement -> **DONE, EYEBALLED PASS** (user, 2026-08-01, on a real ASE waveform window: "it works clean"). The 20-px halo removal is ACCEPTED. Scope ruling by the user at the same time: the embedded-graph-in-a-schematic-window case is **explicitly not a concern** — "if users wish to submit tickets on that case, we can address" — so do not spend effort there unprompted.
 - [x] 02 dblclick-delta-marker-selects-pair — double-clicking a difference marker selects it **and** the marker its deltas are derived from -> **DONE, EYEBALLED PASS** (user, 2026-08-01: "eyeball on (2) is pass. All ok"). Closes the batch's single largest blind spot: a predicate bounded to the head — rendering the PARTNER unselected — passes all 979 checks, so only this look could confirm both members ring. Also confirms the cross-strip repaint, the D-15 collapse-on-click rule, the rigid label-drag latch on the partner, one-undo delete, and that the deliberate ABSENCE of a distinct head cue still reads as "these two go together".
-- [E] 03 axis-region-drag-zoom — LMB press-and-drag in the X or Y axis-number region zooms that axis only; forward drag = zoom in, reverse drag = zoom out -> DONE, EYEBALL PENDING: no check reads the canvas, so the rubber band's pixels — including whether the new abort path leaves a stale outline on screen — are unverified (latch coverage gap closed, fixup 33e3512b8c31c3779d5582d3e24abc29cfe9a36d)
-- [E] 04 axis-region-ctrl-wheel-zoom — CTRL+wheel in an axis region zooms that axis only, about the pointer (the data point under the pointer does not move) -> DONE, EYEBALL PENDING: no leg reads the canvas, so the trace visibly staying put under the pointer and the repainted Y axis numbers are inferred from the model, never seen (latch coverage gap closed, fixup 42e2fdfc)
+- [x] 03 axis-region-drag-zoom — LMB press-and-drag in the X or Y axis-number region zooms that axis only; forward drag = zoom in, reverse drag = zoom out -> **DONE, EYEBALLED PASS** (user, 2026-08-01). Confirms **no stale rubber band survives the new abort path** — the one risk this item's own remediation introduced and self-reported — plus clean band render/erase, 3 px travel accepted, the deliberate absence of a cursor change accepted, and losing the axis margins from the viewer's strip-reorder grab area unnoticeable. (latch coverage gap closed, fixup 33e3512b)
+- [x] 04 axis-region-ctrl-wheel-zoom — CTRL+wheel in an axis region zooms that axis only, about the pointer (the data point under the pointer does not move) -> **DONE, EYEBALLED PASS** (user, 2026-08-01). Confirms the pixel result matches the maths (trace stays put, axis numbers + grid repaint in agreement), 20 %/click accepted beside the deliberately-different Shift+wheel step, and **the behaviour change accepted**: Ctrl+wheel in a margin used to zoom BOTH axes and now zooms one. Untouched: the `<MouseWheel>`/`%D` path (Windows, Tcl > 8.7) is still matched by ZERO legs — X11 only. (Y-half coverage gap closed, fixup 42e2fdfc)
 - [x] 05 multi-trace-drag-to-strip — dragging one selected trace drags the whole selection to the destination strip, with a shrink preview during the drag -> **DONE, EYEBALLED PASS** (user, 2026-08-01: "all working as expected. No issues seen. Legibility OK."). Confirms four things no check could: N traces really do render shrunk at once; **`::wviewer_drag_shrink = 0.7` is right for a BUNDLE too**, not just the single trace it was tuned on; **D-50 accepted** — traces shrinking in place about their own strip's centre, never gathering at the pointer, reads correctly; and destination frame + N shrunk traces + `hand2` is legible at real window sizes.
 
 ---

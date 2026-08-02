@@ -315,6 +315,32 @@ exists to prevent. Recorded in `doc/claude/issues/0190-axis-region-drag-zoom.md`
 
 ---
 
+## 4b. EYEBALLED — PASS (2026-08-01)
+
+Verified by the user on a real ASE waveform window, together with 0190. Closes
+the eyeball list in §5:
+
+* **The pixel result matches the maths.** Every fixed-point leg asserts a DATA
+  coordinate from `xschem graph_coord`; nothing reads a drawn pixel. The trace
+  under the pointer visibly stays put, and the axis NUMBERS and grid repaint in
+  agreement with the new window — neither was observable to any check.
+* **`GRAPH_AXIS_WHEEL_FACTOR` = 0.8 (20 % per click) is accepted**, including
+  sitting beside the Shift+wheel arm, which is deliberately a *different* and
+  non-reversible step (measured: ×0.8 in but ×1.2 out, losing 4 % of the range per
+  in–out round trip; this gesture is exactly reversible).
+* **The BEHAVIOUR CHANGE is accepted**: Ctrl+wheel in an axis margin used to zoom
+  BOTH axes and now zooms one. It reads as a feature, not a dead zone.
+* `need_all_redraw` on every wheel click is acceptable interactively — a
+  performance property with no harness.
+* Discoverability is accepted as-is: the axis margins carry no hover cue, no
+  cursor change and no status text, so nothing advertises that either margin
+  gesture (this or 0190's drag) exists.
+
+**Still untested by construction, and unchanged by this eyeball:** the
+`<MouseWheel>` / `%D` arrival path (Windows, Tcl > 8.7) is matched by ZERO legs —
+every leg synthesises `xschem callback .drw 4/5` or Tk `<Button-4>`. Verified on
+X11 only.
+
 ## 5. NOT COVERED BY ANY CHECK (the eyeball list)
 
 The item introduces **no new rendering** — no band, no glyph, no chrome. What no
