@@ -312,6 +312,25 @@ void abort_operation(int deselect)
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
 
+  /* ESC while a verb-noun descend pick is armed (doc/claude/issues/0200-...). The blanket
+   * `ui_state = 0` at the bottom of this function already drops the arm, but it does so
+   * SILENTLY -- and since 0201 the Tcl side has, by then, SUSPENDED whatever command mode
+   * was interrupted to make the pick possible (ASE Direct Plot's Button-1 seize, which
+   * had to let go before an armed pick could ever see a click). With no continuation that
+   * command stays suspended forever: its bindings never come back and its queued traces
+   * are unreachable. Route ESC to the same terminal the click-on-empty-space cancel uses.
+   * Clearing MENUSTARTDESCEND is hygiene rather than necessity -- every arming site
+   * ASSIGNS ui_state2 wholesale, so a stale bit cannot be misread as a live arm -- but it
+   * keeps `xschem get ui_state2` an honest report of what is armed, which is what the
+   * 0200/0201 tests assert on.
+   * Placed here, above the DESEL_MODE early return, because that arm returns. */
+  if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 &= ~MENUSTARTDESCEND;
+    if(has_x) statusmsg(" ", 1);
+    tcleval("hi_descend_pick_cancel");
+  }
+
   /* leaving interactive net-(un)highlight mode: clear its persistent statusbar prompt
    * (abort_operation does not otherwise refresh the statusbar) */
   if(xctx->ui_state & (NET_HILIGHT | NET_UNHILIGHT))
@@ -3463,6 +3482,33 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->mx_double_save=xctx->mousex;
     xctx->my_double_save=xctx->mousey;
     xctx->ui_state |= DESEL_AREA;
+    return 1;
+  }
+  if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+    /* verb-noun descend (doc/claude/issues/0200-descend-has-no-verb-noun-pick.md): the
+     * descend verb fired with an empty selection armed this, so THIS click names the
+     * instance to descend into. Unlike the move/copy/rotate arms below, the click does
+     * NOT select what it picks -- the user asked for "information to one command", not a
+     * selection change -- so find_closest_instance() (read-only) resolves it and nothing
+     * touches .sel / sel_array / the hilight tables.
+     * override_lock=1: selection IS the lock (issue 0160), and a pick that never selects
+     * cannot make a locked instance editable -- but it must still be descendable.
+     * Non-mutating, hence deliberately NOT in the read-only backstop mask below: browsing
+     * a read-only schematic must still descend.
+     * The chooser dialog is modal (grab + tkwait); opening it from inside this callback
+     * would pump a nested event loop and land every later event at semaphore >= 2, so the
+     * Tcl continuation defers it to `after idle`. */
+    int n;
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 &= ~MENUSTARTDESCEND;
+    n = find_closest_instance(xctx->mousex, xctx->mousey, 1);
+    if(n >= 0) {
+      statusmsg(" ", 1);
+      tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
+    } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
+      statusmsg("Descend: cancelled (no instance there)", 1);
+      tcleval("hi_descend_pick_cancel");
+    }
     return 1;
   }
   /* read-only backstop: any armed object-mutating command is refused here (the

@@ -5897,7 +5897,34 @@ proc hi_descend_newwin {instname row dest iter mode} {
 }
 
 # Headless entry point shared by the dialog and by scripted calls.
+#
+# 0201 S2/R3. This is the one choke point every real descend passes through -- the bare
+# dialog, `hi_descend view=... target=...`, and the deferred verb-noun continuation all
+# land here -- and it is downstream of the modal dialog's tkwait, so a suspend taken here
+# cannot be stranded by a Cancel. The suspend is a no-op when the verb-noun arm already
+# took one (S1); the resume is unconditional and covers every failure path in the whole
+# subtree (bad view, non-subcircuit, CADMAXHIER, a cancelled Save-As or iteration prompt,
+# schematic_in_new_window refusing, load_schematic failing) because they are all inner
+# frames -- D4, "descend cancelled or failed resumes in place", as a finally, not a
+# success path.
+#
+# resume_all reads the canvas ITSELF, here, after the body: that is what makes D2 come
+# out right for all three destinations. target=current returns the unchanged parent path;
+# new_window/new_tab return the child path, which alloc_xschem_data already installed as
+# current_win_path inside `xschem schematic_in_new_window`. Read any earlier and the mode
+# resumes on the window the user just left.
+#
+# Split into a wrapper + _body (rather than reindenting the body into a catch) to keep
+# the diff off every line of a proc that lives in an actively-edited file.
 proc hi_descend_do {instname view type target iter mode} {
+  cmdmode::suspend_all
+  set rc [catch {hi_descend_do_body $instname $view $type $target $iter $mode} res opts]
+  cmdmode::resume_all
+  if {$rc} { return -options $opts $res }
+  return $res
+}
+
+proc hi_descend_do_body {instname view type target iter mode} {
   set rows [hi_descend_enum_views $instname]
   if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
   set row [hi_descend_pick_view $rows $view $type]
@@ -5974,12 +6001,99 @@ proc hi_descend_dlg_pathupd {args} {
   .hi_descend.view.path configure -text {}
 }
 
+# --- verb-noun descend: pick the instance AFTER the verb ----------------------------
+# doc/claude/issues/0200-descend-has-no-verb-noun-pick.md
+#
+# `E` (or Edit > Push schematic) with NOTHING selected used to be a dead end: the
+# resolver had two arms only -- an explicit inst=, or the current selection -- so it
+# answered "select an instance to descend into" and stopped. It now arms a one-shot
+# canvas pick; the next click names the instance and the chooser opens on it.
+#
+# The pick is NOT a selection. `xschem descend_pick` arms MENUSTARTDESCEND, and the C arm
+# resolves the click with find_closest_instance() -- read-only -- before calling back
+# here. The user's selection, the highlight tables and the modified flag all survive a
+# descend steered by a click, because the click supplies an argument to one command
+# rather than changing what is selected.
+#
+# Why this is more than convenience: while another mode owns Button-1 (ASE Direct Plot,
+# Ctrl-4, seizes it) no instance CAN be selected, so this is the only way to descend at
+# all. Resuming that interrupted mode afterwards is issue 0201, deliberately not here.
+
+# Arm the pick. Headless (no Tk, so no click will ever arrive) keeps the old message.
+proc hi_descend_pick_arm {} {
+  if {![info exists ::has_x]} {
+    ciw_echo "hi_descend: select an instance to descend into" error
+    return 0
+  }
+  # 0201 S1. The interrupted command must let go of Button-1 BEFORE the pick is armed:
+  # ASE Direct Plot's seize `break`s on <ButtonPress-1> ahead of the generic dispatcher,
+  # so with it still up the armed pick would never see the click at all. Suspending here
+  # (rather than nesting a pick above a live seize) is also what keeps the binding slots
+  # strictly LIFO with no overlap, so this needs no gesture stack -- issue 0202 stays a
+  # latent hazard rather than a blocker.
+  #
+  # Placed AFTER the has_x guard on purpose: headless never arms, so headless never
+  # suspends, so there is nothing stranded on the arm-failed path.
+  #
+  # The matching resume is whichever terminal this pick reaches: hi_descend_do (a real
+  # descend, on the descended canvas), hi_descend_dialog (Cancel / no views), or
+  # hi_descend_pick_cancel (clicked empty space, or ESC). cmdmode's latch makes the
+  # first one to arrive the only one that acts.
+  cmdmode::suspend_all
+  xschem descend_pick
+  ciw_echo "hi_descend: click the instance to descend into (ESC to cancel)"
+  return 1
+}
+
+# Called from C when the armed click landed on an instance. The chooser is modal (grab +
+# tkwait) and we are still inside callback(): opening it here would pump a nested event
+# loop and leave every subsequent event at semaphore >= 2 -- which gates the hover
+# outline, the fly-lines, the ESC abort and the button-chord dispatcher. One idle turn
+# puts the dialog outside the callback.
+proc hi_descend_pick_done {instname} {
+  after idle [list hi_descend_dialog $instname]
+}
+
+# Called from C when the armed click hit no instance: no dialog, no descend, and (since
+# the pick never selected anything) nothing to undo.
+#
+# 0201 R4/R5: this is the single terminal for BOTH cancels -- the click on empty space
+# (callback.c check_menu_start_commands) and ESC while the pick was armed
+# (callback.c abort_operation, which had no Tcl continuation at all before 0201).
+# Nothing was descended, so the interrupted command comes back on the current canvas,
+# which is still the one it was seized on.
+proc hi_descend_pick_cancel {} {
+  cmdmode::resume_all
+  ciw_echo "hi_descend: descend cancelled"
+}
+
 # The modal chooser dialog (bare `hi_descend`). Drop-downs for the view (and, for a
 # bussed instance, the iteration), plus Mode (read-only browse default / edit) and
 # Destination radios; then runs the shared hi_descend_do path.
-proc hi_descend_dialog {} {
-  set instname [hi_descend_target_inst {}]
-  if {$instname eq {}} { return 0 }
+# With no argument it resolves the target from the selection -- or, with nothing
+# selected, arms the verb-noun pick (0200) and returns; the pick calls back with the
+# instance name, which is what the optional argument carries.
+#
+# 0201 R2. The target resolution moved up into this wrapper so the arm-the-pick return is
+# OUTSIDE the resume: that return means "the descend has not happened yet, a click is
+# pending", and resuming there would put the seize straight back and eat the very click
+# the pick is waiting for. Every other way out of the body -- no views, Cancel, Escape on
+# the dialog, the WM closing it, or a Tk error building it -- is a terminal, and resumes.
+# The success path delegates to hi_descend_do, which owns its own resume (R3); cmdmode's
+# latch makes that inner one the winner and this one a no-op.
+proc hi_descend_dialog {{instname {}}} {
+  if {$instname eq {}} {
+    if {[llength [xschem selected_set]] == 0} { return [hi_descend_pick_arm] }
+    set instname [hi_descend_target_inst {}]
+    if {$instname eq {}} { cmdmode::resume_all; return 0 }
+  }
+  set rc [catch {hi_descend_dialog_body $instname} res opts]
+  cmdmode::resume_all
+  if {$rc} { return -options $opts $res }
+  return $res
+}
+
+proc hi_descend_dialog_body {instname} {
   set rows [hi_descend_enum_views $instname]
   if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
 
@@ -14167,6 +14281,10 @@ source $XSCHEM_SHAREDIR/library_manager.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+# Generic command-mode suspend/resume registry (cmdmode; no Tk, no ASE knowledge).
+# doc/claude/issues/0201-no-command-suspend-resume-contract.md. MUST precede ase_window.tcl,
+# which calls cmdmode::register at source time.
+source $XSCHEM_SHAREDIR/cmdmode.tcl
 # ASE-L analog simulation environment core (doc/claude/specs/ase_l.md)
 source $XSCHEM_SHAREDIR/ase.tcl
 # ASE-L session window GUI (ase::ui; proc definitions only at source time)

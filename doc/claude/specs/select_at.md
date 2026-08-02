@@ -98,6 +98,64 @@ what replaying that click means.
 - Move-survival (reselect the same object after it moved) needs the handle-primary
   tier (`select @id`, causal-chain replay, row 53) — out of scope here.
 
+## The read-only twins (issue 0204)
+
+`select_at` is mutating **by construction** — that is the whole point of it, and the
+reason it can log a replayable gesture. But a caller that only wants to know *what
+is under this point* must not pay for that: a leftover selection is read by other
+subsystems as a statement of user intent. Issue 0204 is the exact failure — the
+Ctrl-4 signal pick classified its clicks with `select_at`, so every plot click left
+its target selected, and `hi_descend` then read that residue as a noun-verb descend
+target instead of arming the verb-noun pick.
+
+So each mutating coordinate verb has a read-only twin. Same hit test, same
+classification, no `.sel`, no `sel_array`, no `draw_selection`, no log line:
+
+| ask | mutating | read-only twin |
+|---|---|---|
+| what object is at (x,y)? | `select_at x y` | **`object_at x y`** |
+| which instance is at (x,y)? | `select_at` + filter | `instance_at x y` (issue 0200) |
+| what net is on the wire at (x,y)? | `select_at` + `nets -selected` | **`net_name_at x y`** |
+
+- **`xschem object_at <x> <y>`** returns the same bare `type index col id` row
+  `select_at` returns, or `""` on a miss. `col` is *reconstructed*, not read from
+  `sel_array` (which a probe has no business rebuilding): `rebuild_selected_array`
+  (move.c) stores `WIRELAYER` for wires and instances and `TEXTLAYER` for texts, and
+  the four per-layer types already carry their layer out of `find_closest_obj`. So
+  the row is field-for-field identical to an `xschem selection` row without a
+  selection ever existing.
+- **`xschem net_name_at <x> <y>`** / **`xschem net_name_at -wire <index>`** returns
+  the RAW net token (`#` intact, original case) of a **wire**, or `""`. Not
+  `net_at` — that name was already taken by an unrelated on-copper predicate.
+  The WIRE-only gate is load-bearing, not a convenience: on a device *body*
+  `nets -selected` reports every net the device touches, and a two-pin device shorted
+  onto one net reports exactly one, so a count test alone misclassified a non-source
+  device click as a voltage pick (`test_ase_unnamed_net` AN7b). A wire lies on
+  exactly one net by construction. It runs `prepare_netlist_structs(0)` **before**
+  the pick, like `flylines at`, so it is cold-correct and no `.node` pointer is
+  captured across the prep that frees them.
+
+  **A caller that already hit-tested should use `-wire <index>`**, feeding it the
+  index out of an `object_at` row. The coordinate form runs a *second, independent*
+  `find_closest_obj`, and `find_closest_text` expands floater text through Tcl on
+  every pass — so a floater whose expansion changed between the two passes can win
+  the cascade the second time and turn a resolved wire into a silent `""`. Indices
+  survive the prep (`prepare_netlist_structs` names nodes; it never stores, splits or
+  trims wires), so an index taken before it still names the same wire after it. This
+  is what `ase::ui::sod_net_at` does.
+
+`object_at` and `net_name_at`'s **coordinate** form use `override_lock=0`, matching
+`select_at` exactly, so classification is unchanged for locked objects. That is
+deliberately *not* the obvious choice for a probe — a lock gates edits, and a probe
+cannot make anything editable (issue 0160's own argument) — but relaxing it changes
+what a locked vsource and a locked unnamed wire classify as. That is a user-visible
+decision, so it stays a separate one rather than a side effect (issue 0205).
+
+`net_name_at -wire <index>` has no lock semantics at all: the lock lives only inside
+`find_closest_obj`, which the index form does not run, so it returns a locked wire's
+token. Consistent rather than inconsistent — the verb cannot edit — and invisible to
+the ASE pick, whose index always comes from an `override_lock=0` `object_at` row.
+
 ## Tests
 
 `tests/headless/test_select_at.tcl` (needs X + `--logdir`; established

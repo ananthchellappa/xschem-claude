@@ -46,6 +46,78 @@ namespace eval ase {
   variable session_notify {}
 }
 
+# --- the user-visible-message seam (issue 0207) ------------------------------
+# ASE's notices used to be bare `ciw_echo` calls. `ciw_echo` (src/ciw.tcl) is a
+# pure Tk widget append: the CIW pane is the action log's MIRROR (C log_action()
+# writes Xschem.log, then mirrors into the pane via log_action_echo), so writing
+# to the pane put 66 user-visible ASE messages (10 here + 56 in ase_window.tcl) in
+# the mirror of a file they were never in. Route them through here and they land in BOTH.
+#
+# D1 (issue 0207): a SEAM, not a tee inside ciw_echo. ciw_echo is also the sink
+# log_action_echo() calls for lines that are ALREADY in the file, so teeing there
+# would double-write every action line unless guarded for re-entrancy.
+# Mirrors wviewer::log_action (src/wave_viewer.tcl) and the "both places" idiom
+# at src/action_registry.tcl:199-200.
+#
+# D2: the file half goes through `xschem log_action -result|-error`, i.e.
+# log_output() in src/util.c -> `#= ` / `#! ` COMMENT lines, keyed off the same
+# pane tag the call site already passes. Comments keep the log source-able (its
+# invariant, doc/claude/specs/action_logging.md), and log_output prefixes every
+# embedded newline -- which a hand-built `# ase: $msg` line would not, so a
+# multi-line message would become live Tcl on replay.
+#
+# D3: BOTH halves are catch'd here, so a broken message can never break a pick,
+# whether or not the call site kept its own catch.
+# D4: correct with no Tk and with logging off (log_output no-ops on a NULL
+# actionlog_fp), and with both. MEASURED, and it corrected an assumption: ciw.tcl
+# IS sourced under --nogui, so `::ciw_echo` exists there and self-no-ops on its
+# own `winfo`/`.ciw.l.t` check -- the thing that used to suppress ASE's notices
+# headless was the call sites' `[info exists ::has_x]` guard ($::has_x is UNSET
+# under --nogui), not the command's absence. Those guards are gone: the pane half
+# stays a no-op headless, the file half now runs, which is what makes this
+# testable under `--nogui --logdir`. The existence check is a cheap belt: ciw.tcl is
+# sourced 37 lines AFTER this file (xschem.tcl:14273 vs 14312), so a future SOURCE-TIME
+# ASE notice would otherwise lose its pane half silently.
+# It is also the rename-able spy point ASE's tests stub -- they stub ::ciw_echo,
+# which this resolves by NAME at call time, so they still intercept. Measured: 5
+# ase::echo calls produce exactly 5 ::ciw_echo calls, which is what keeps the
+# exact-count assertions in test_ase_locked_wire_pick_0160 / test_sod_pick_no_select_0204
+# green -- a tee inside ciw_echo would have doubled them.
+#
+# Call it as `::ase::echo`, absolutely qualified. The 56 sites in ase_window.tcl run
+# inside `namespace eval ase::ui`, where the relative name `ase::echo` resolves against
+# the CURRENT namespace first -- a future `ase::ui::ase` namespace would silently hijack
+# every one of them, and the tests' ::ciw_echo stubs would not notice.
+#
+# Two replay landmines, both guarded here:
+#  - `xschem log_action -result` with a MISSING value fell through the dispatcher's
+#    argc>3 gates to the bare-line arm and wrote the literal line `-result` into
+#    Xschem.log, aborting a replay `source`. Many call sites pass a variable that
+#    can legitimately be empty, so: an empty message logs NOTHING. (The C side is
+#    now a backstop too -- see the log_action arm in src/scheduler.c.)
+#  - a Tcl comment whose line ends in a BACKSLASH continues onto the next line, so a
+#    message ending in `\` would swallow the FOLLOWING log line on replay. Measured:
+#    `#= foo\` + newline + `puts X` never runs `puts X`. An EMBEDDED backslash-newline
+#    is harmless (it just extends the comment over the next `#= ` continuation line,
+#    which is already comment text) -- but a TRAILING one is not, and it hides behind a
+#    trailing newline too: log_output() emits no prefix after the last newline, so
+#    "foo\\\n" also lands as `#= foo\`. Hence trimright BEFORE the test. The pad goes on
+#    the logged copy only; the pane copy stays byte-identical to before.
+#    No format gate catches this: test_selflog_output's source-ability leg accumulates
+#    with `info complete`, which treats a leading `#` as a comment and returns 1 even
+#    for a trailing backslash. Only test_ase_log_seam_0207's PS12 sees it.
+proc ase::echo {msg {tag {}}} {
+  # pane half first, unconditionally and unchanged: the tests that capture ASE
+  # notices rename ::ciw_echo, and an empty message still echoed a blank line.
+  if {[info commands ::ciw_echo] ne {}} { catch {::ciw_echo $msg $tag} }
+  if {$msg eq {}} return
+  set msg [string trimright $msg "\n"]            ;# log_output supplies the terminator
+  if {$msg eq {}} return
+  if {[string index $msg end] eq "\\"} { append msg { } }
+  if {$tag eq {error}} { catch {xschem log_action -error $msg} } \
+  else                 { catch {xschem log_action -result $msg} }
+}
+
 # dict get with a default (states are open dicts: keys may be absent).
 proc ase::state_get {state key {dflt {}}} {
   if {[dict exists $state $key]} { return [dict get $state $key] }
@@ -465,9 +537,7 @@ proc ase::run_done {logpath state callback} {
     set results [[ase::backend_hook $sim result_probe] $state $data]
   }
   set last_run [dict create results $results exitcode $exitcode log $logpath]
-  if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
-    ciw_echo "ase: simulation finished (exit $exitcode), log: $logpath"
-  }
+  ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
 
@@ -694,17 +764,13 @@ proc ase::session_getattr {key name {dflt {}}} {
 proc ase::open_state {lib cell view {ro 0}} {
   set path [xschem cellview_path $lib/$cell $view]
   if {$path eq {}} {
-    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
-      ciw_echo "ase: no '$view' view for $lib/$cell" error
-    }
+    ::ase::echo "ase: no '$view' view for $lib/$cell" error
     return 0
   }
   set key [ase::session_key $lib $cell $view]
   if {[catch {ase::session_open $key $path} err]} {
     # view exists but its state file is unloadable: clean report, no throw
-    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
-      ciw_echo $err error
-    }
+    ::ase::echo $err error
     return 0
   }
   # D7: both the fresh-open and the raise arm pass through here, so every
@@ -746,13 +812,13 @@ proc ase::design_of_path {abspath} {
   return [list $lib $cell $view]
 }
 
-# {lib cell view} of the CURRENT schematic, or {} after a ciw_echo'd honest
+# {lib cell view} of the CURRENT schematic, or {} after an ase::echo'd honest
 # error (symbol view / unsaved / outside every library).
 proc ase::design_of_current {} {
   set p {}
   catch {set p [file normalize [xschem get schname]]}
   if {[catch {ase::design_of_path $p} r]} {
-    if {[info commands ::ciw_echo] ne {}} { catch {ciw_echo $r error} }
+    catch {::ase::echo $r error}
     return {}
   }
   return $r
@@ -819,7 +885,9 @@ proc ase::session_for_current {} {
 #     parents were searched too, so a descended user is not left thinking the
 #     parent's session was ignored.
 proc ase::no_session_notice {} {
-  if {[info commands ::ciw_echo] eq {}} { return }
+  # (issue 0207) no `[info commands ::ciw_echo] eq {}` early return any more: the
+  # notice now goes to the action log as well as the pane, and the log exists
+  # under --nogui, where ciw_echo does not. ase::echo self-guards on the pane half.
   set lvl 0
   catch {set lvl [xschem get currsch]}
   if {![string is integer -strict $lvl] || $lvl < 0} { set lvl 0 }
@@ -835,15 +903,15 @@ proc ase::no_session_notice {} {
   if {!$resolved} {
     set p {}
     catch {set p [file normalize [xschem get schname]]}
-    if {[catch {ase::design_of_path $p} r]} { catch {ciw_echo $r error} }
+    if {[catch {ase::design_of_path $p} r]} { catch {::ase::echo $r error} }
     return
   }
   if {$lvl > 0} {
-    catch {ciw_echo "ase: no ASE-L session for this design nor for any of its\
+    catch {::ase::echo "ase: no ASE-L session for this design nor for any of its\
  $lvl parent level(s) -- Launch ASE-L (Tools menu) or open its ngspice_state\
  view first" error}
   } else {
-    catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
+    catch {::ase::echo "ase: no ASE-L session for this design -- Launch ASE-L\
  (Tools menu) or open its ngspice_state view first" error}
   }
 }
@@ -901,7 +969,7 @@ proc ase::launch_for_current {} {
 # it then hands off to ase::ui::direct_plot -- the click mode where a wire/net-label
 # queues a voltage trace, a source/ammeter queues a current trace, and ESC plots
 # the queue into the session's waveform viewer (opening it if closed). Honest
-# no-op with a ciw_echo when the current view is not a schematic or nothing in
+# no-op with an ase::echo when the current view is not a schematic or nothing in
 # the stack has an ASE session yet (ase::no_session_notice tells the two apart).
 # Headless-safe: the Tk click mode is behind the has_x guard. Returns the session
 # key, or {}.
@@ -919,7 +987,7 @@ proc ase::direct_plot_for_current {} {
 # single | multi | invert (default invert — the chord flips). Resolution is
 # the Ctrl-4 path: ase::session_for_current (hierarchy-aware) -> the session key
 # IS the viewer token. Returns the resolved mode, or {} with an honest
-# ciw_echo when the current view is not a schematic, no session is bound, or
+# ase::echo when the current view is not a schematic, no session is bound, or
 # that session has no viewer WINDOW open (the mode is per-window state — there
 # is nothing to flip until the window exists).
 proc ase::plot_mode_for_current {{mode invert}} {
@@ -927,21 +995,19 @@ proc ase::plot_mode_for_current {{mode invert}} {
   if {$r eq {}} { ase::no_session_notice; return {} }
   set key [lindex $r 0]
   if {[wviewer::plot_mode $key] eq {}} {
-    if {[info commands ::ciw_echo] ne {}} {
-      catch {ciw_echo "ase: no waveform viewer open for $key -- open it first\
+    catch {::ase::echo "ase: no waveform viewer open for $key -- open it first\
  (ASE-L Tools > Waveform Viewer, or the ~ button)" error}
-    }
     return {}
   }
   set new [wviewer::set_plot_mode $mode $key]
-  if {$new ne {} && [info commands ::ciw_echo] ne {}} {
-    catch {ciw_echo "ase: waveform viewer plot mode = $new ($key)"}
+  if {$new ne {}} {
+    catch {::ase::echo "ase: waveform viewer plot mode = $new ($key)"}
   }
   return $new
 }
 
 # The window NUMBER of the ASE-L window bound to the CURRENT schematic, or {}
-# (issue 0151). Same resolution chain as above; {} with an honest ciw_echo for
+# (issue 0151). Same resolution chain as above; {} with an honest ase::echo for
 # a non-schematic view, no bound session, or a session whose window is not
 # built (headless, or the session was only registered).
 proc ase::window_number_for_current {} {
@@ -949,8 +1015,8 @@ proc ase::window_number_for_current {} {
   if {$r eq {}} { ase::no_session_notice; return {} }
   set key [lindex $r 0]
   set n [ase::ui::number_for $key]
-  if {$n eq {} && [info commands ::ciw_echo] ne {}} {
-    catch {ciw_echo "ase: session $key has no ASE-L window open" error}
+  if {$n eq {}} {
+    catch {::ase::echo "ase: session $key has no ASE-L window open" error}
   }
   return $n
 }

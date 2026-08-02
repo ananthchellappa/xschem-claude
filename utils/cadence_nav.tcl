@@ -164,6 +164,12 @@ proc cadence::return_one_level {} {
   }
   if {$parent ne {} && [cadence::win_live $parent]} {
     cadence::focus_window $parent   ;# step out to the parent window; leave this child open
+    # issue 0201 D7: a live command mode (ASE Direct Plot) follows the user across the
+    # hop instead of being left seized on a canvas she is no longer looking at. This is
+    # a re-home, not a suspend: the command was never interrupted, so the queue, the
+    # count and the prompt carry over untouched. A no-op when nothing is armed, and a
+    # no-op while a descend's own suspend is in flight.
+    catch {cmdmode::rehome [xschem get current_win_path]}
     return
   }
   if {$parent ne {}} { cadence::forget_window $win }   ;# stale link: parent gone -> fall back

@@ -2872,6 +2872,23 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* descend_pick
+     *   Arm the verb-noun descend pick: the next canvas click names the instance to
+     *   descend into, WITHOUT selecting it, and the C arm then calls the Tcl
+     *   continuation `hi_descend_pick_done <instname>` (or `hi_descend_pick_cancel`
+     *   on a click that hits no instance). ESC drops the arm like any other MENUSTART.
+     *   This is the headless-drivable half of the feature: arm here, then deliver the
+     *   click with `xschem callback`.
+     *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
+    else if(!strcmp(argv[1], "descend_pick"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTDESCEND; /* assign, like every other arming site */
+      statusmsg("Descend: click the instance to descend into (ESC to cancel)", 1);
+      Tcl_ResetResult(interp);
+    }
+
     /* destroy_all [force]
      *   Close all additional windows/tabs. If 'force' is given do not ask for
      *   confirmation for changed schematics
@@ -3710,9 +3727,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, xctx->current_name, TCL_VOLATILE); /* copies before restore */
             net_hilight_restore_ctx(borrowed);
           }
-          else if(!strcmp(argv[2], "actionlog_filename")) { /* resolved action-log path, "" if logging off */
-            Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
-          }
+          /* (issue 0207) a byte-equivalent `actionlog_filename` arm used to sit here, under
+           * `case 'c':`. The outer switch is on argv[2][0], so this arm was unreachable dead
+           * code -- the live one is under `case 'a':` above. Removed, not moved. */
           else if(!strcmp(argv[2], "current_win_path")) { /* path of current tab/window (.drw, .x1.drw, ...) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->current_win_path, TCL_VOLATILE);
@@ -4633,6 +4650,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "ui_state")) { /* return UI state */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp,  my_itoa(xctx->ui_state), TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "ui_state2")) { /* return the MENUSTART* sub-state word */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp,  my_itoa(xctx->ui_state2), TCL_VOLATILE);
           }
           break;
           case 'v':
@@ -6077,6 +6098,27 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, placed ? "1" : "0", TCL_STATIC); /* issue 0125: 1-placed / 0-refused */
     }
 
+    /* instance_at <x> <y>
+     *   The name of the instance whose bounding box contains the schematic-coordinate
+     *   point (x,y), or "" if there is none. READ-ONLY: it selects nothing and changes
+     *   nothing -- this is the probe half of the verb-noun descend pick, and the
+     *   deliberate opposite of `select_at`, which is the mutating coordinate pick.
+     *   Locked instances are reported (selection is the lock, issue 0160; a probe that
+     *   never selects cannot make one editable).
+     *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
+    else if(!strcmp(argv[1], "instance_at"))
+    {
+      int i;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem instance_at: x and y required", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      i = find_closest_instance(atof(argv[2]), atof(argv[3]), 1);
+      Tcl_ResetResult(interp);
+      if(i >= 0 && xctx->inst[i].instname) Tcl_AppendResult(interp, xctx->inst[i].instname, NULL);
+    }
+
     /* instance_bbox inst
      *   return instance and symbol bounding boxes
      *   'inst' can be an instance name or number */
@@ -7151,6 +7193,18 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       /* -reset: clear the dedup flag before a wrapper evaluates a command. */
       else if(argc > 2 && !strcmp(argv[2], "-reset")) actionlog_cmd_logged = 0;
+      /* (issue 0207) A value-taking flag with its VALUE MISSING must NOT fall through to the
+       * bare-line arm below. Every flag arm above is gated on argc > 3, so
+       * `xschem log_action -result` with no text used to write the literal line `-result`
+       * into Xschem.log -- and replaying that file then executes `-result` as a command and
+       * aborts the `source`. The ASE seam (ase::echo, src/ase.tcl) calls this API from ~80
+       * catch-wrapped sites with variable-derived text, so a legitimately empty variable made
+       * it reachable. A missing value now logs NOTHING, which is the honest meaning of an
+       * empty message. Only the KNOWN value-taking flags are swallowed: an unrecognised
+       * argv[2] still reaches the bare-line arm, as before. */
+      else if(argc > 2 && (!strcmp(argv[2], "-noecho")       || !strcmp(argv[2], "-result") ||
+                           !strcmp(argv[2], "-error")        || !strcmp(argv[2], "-suppressecho") ||
+                           !strcmp(argv[2], "-suppress"))) { /* flag without a value: no-op */ }
       else if(argc > 2) log_action("%s", argv[2]);
       Tcl_ResetResult(interp);
     }
@@ -7956,6 +8010,86 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* net_name_at <x> <y> | net_name_at -wire <index>
+     *   The RAW net token of a WIRE, or "" if there is none there. READ-ONLY: it selects
+     *   nothing and changes nothing -- the probe half of the ASE signal pick, and the
+     *   deliberate opposite of `select_at` + `nets -selected`, which was the mutating way
+     *   to ask the same question.
+     *
+     *   Coordinate form: "" unless the closest object at (x,y) is a wire. Index form: the
+     *   token of wire <index> directly -- for a caller that has ALREADY hit-tested and
+     *   holds the row (`xschem object_at` returns `wire <index> ...`). Prefer it: the
+     *   coordinate form runs a SECOND, independent hit test, and `find_closest_text`
+     *   expands floater text through Tcl on every pass, so a floater whose expansion
+     *   changed between the two passes could win the cascade the second time and turn a
+     *   resolved wire into a silent "". Wire indices are stable across
+     *   prepare_netlist_structs (it names nodes; it never stores, splits or trims wires),
+     *   so an index taken before the prep is still the same wire after it.
+     *
+     *   "" also when the wire has no node at all -- i.e. one the ACTIVE netlist type skips
+     *   (spice_ignore / lvs_ignore, netlist.c skip_wire). Note a merely dangling wire is
+     *   NOT that case: name_unlabeled_nets gives it a `#netN` token like any other.
+     *   doc/claude/issues/0204-sod-pick-mutates-the-selection.md
+     *
+     *   NOT `net_at`: that name was already taken by the branch immediately above -- an
+     *   on-copper boolean PREDICATE, nothing to do with naming a net.
+     *
+     *   Three details are copied from the selection-based idiom it replaces, and each one
+     *   is load-bearing:
+     *   - WIRE ONLY. On a device BODY `nets -selected` reports every net the device
+     *     touches, and a two-pin device shorted onto one net reports exactly one -- so a
+     *     count test alone misclassified a non-source device click as a voltage pick
+     *     (test_ase_unnamed_net AN7b). A wire lies on exactly one net by construction, so
+     *     the type gate IS the correctness argument. The COORDINATE form enforces it here
+     *     rather than leaving it to the caller; the index form cannot -- addressing
+     *     xctx->wire[n] IS the gate, and it is the caller's job to have got that index
+     *     from a wire row (as sod_net_at does, from its `$hit`).
+     *   - find_closest_obj, not find_closest_wire: the caller asked "what is under this
+     *     point", and a wire crossing a symbol must NOT win over the symbol. Restricting
+     *     the cascade would resolve a net for clicks that did not land on a wire at all.
+     *   - override_lock 0 in the COORDINATE form, matching select_at exactly, so a
+     *     lock=true wire still resolves nothing there and issue 0160's locked-wire path
+     *     keeps going through `xschem flylines at` (which does override the lock) exactly
+     *     as it does today. The index form has no lock semantics at all -- the lock lives
+     *     only inside find_closest_obj, which it does not run -- so `-wire <n>` on a
+     *     locked wire DOES return its token. That is consistent, not an oversight: a lock
+     *     gates edits, and this verb cannot edit. It is invisible to the ASE pick, whose
+     *     index always comes from an override_lock=0 `object_at` row. Making the whole
+     *     family agree on override_lock=1 is issue 0205, because that changes what a
+     *     locked object CLASSIFIES as, which is user-visible.
+     *
+     *   The token is returned with its `#` and in its original case -- the same string
+     *   `xschem nets` reports as the descriptor `name`, since both read xctx->wire[].node
+     *   verbatim. prepare_netlist_structs(0) first, so a COLD call on a freshly loaded
+     *   schematic is correct (the same reason `nets` does it). */
+    else if(!strcmp(argv[1], "net_name_at"))
+    {
+      int n = -1;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "usage: xschem net_name_at x y | xschem net_name_at -wire n",
+                      TCL_STATIC);
+        return TCL_ERROR;
+      }
+      /* prepare FIRST, pick SECOND -- the order `flylines at` uses, and it matters:
+       * prepare_netlist_structs() runs delete_netlist_structs() internally, which frees
+       * every .node string, so a pointer taken before the call could not be trusted
+       * after it. (An INDEX can: prep never changes xctx->wires or the wire order.) */
+      prepare_netlist_structs(0);
+      if(!strcmp(argv[2], "-wire")) {
+        n = atoi(argv[3]);
+      } else {
+        Selected s = find_closest_obj(atof(argv[2]), atof(argv[3]), 0);
+        if(s.type == WIRE) n = s.n;
+      }
+      /* Reset AFTER the pick, not before: find_closest_text() expands floater text
+       * (get_text_floater -> translate), which evaluates Tcl and can leave a result
+       * behind. prepare_netlist_structs itself now ends clean (issue 0155). */
+      Tcl_ResetResult(interp);
+      if(n >= 0 && n < xctx->wires && xctx->wire[n].node && xctx->wire[n].node[0])
+        Tcl_AppendResult(interp, xctx->wire[n].node, NULL);
+    }
+
     /* net_pin_mismatch
      *   Highlight nets attached to selected symbols with
      *   a different name than symbol pin */
@@ -8272,6 +8406,54 @@ static int xschem_cmds_o(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, row, TCL_VOLATILE);
       }
       /* else: leave the result empty — a dangling/unknown reference */
+    }
+
+    /* object_at <x> <y>
+     *   The object closest to schematic coordinate (x,y) as one BARE `type index col id`
+     *   row -- byte-identical to what `xschem select_at <x> <y>` returns -- or "" on a
+     *   miss. READ-ONLY: it selects nothing, draws nothing and logs nothing. This is the
+     *   probe half of a click: the same pairing `instance_at` is to the instance pick
+     *   (issue 0200), generalised to all seven drawable types.
+     *   doc/claude/issues/0204-sod-pick-mutates-the-selection.md
+     *
+     *   Identical classification to select_at, on purpose: same find_closest_obj cascade,
+     *   same override_lock=0 (so a lock=true object still reads as a miss here, and every
+     *   locked-object contract issue 0160 pinned stays exactly where it is).
+     *
+     *   `col` is reconstructed rather than read from sel_array, which a probe has no
+     *   business rebuilding: rebuild_selected_array (move.c) stores WIRELAYER for wires
+     *   and instances and TEXTLAYER for texts, and the per-layer types already carry
+     *   their own layer out of find_closest_obj. So the row matches an `xschem selection`
+     *   row field for field without a selection ever existing. */
+    else if(!strcmp(argv[1], "object_at"))
+    {
+      Selected s;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem object_at: x and y required", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      s = find_closest_obj(atof(argv[2]), atof(argv[3]), 0);
+      /* load-bearing: find_closest_text() expands floater text (get_text_floater ->
+       * translate), which evaluates Tcl and can leave a result behind. */
+      Tcl_ResetResult(interp);
+      if(s.type) {
+        const char *tname;
+        int id = -1, n = s.n, c = (int)s.col;
+        char row[100];
+        switch(s.type) {
+          case WIRE:    tname = "wire";     c = WIRELAYER; id = (int)xctx->wire[n].id; break;
+          case ELEMENT: tname = "instance"; c = WIRELAYER; id = (int)xctx->inst[n].id; break;
+          case xTEXT:   tname = "text";     c = TEXTLAYER; id = (int)xctx->text[n].id; break;
+          case xRECT:   tname = "rect";     id = (int)xctx->rect[c][n].id; break;
+          case LINE:    tname = "line";     id = (int)xctx->line[c][n].id; break;
+          case POLYGON: tname = "poly";     id = (int)xctx->poly[c][n].id; break;
+          case ARC:     tname = "arc";      id = (int)xctx->arc[c][n].id; break;
+          default:      tname = "unknown";  break;
+        }
+        my_snprintf(row, S(row), "%s %d %d %d", tname, n, c, id);
+        Tcl_SetResult(interp, row, TCL_VOLATILE);
+      }
     }
 
     /* objects [-type T] [-selected] [-layer L]
