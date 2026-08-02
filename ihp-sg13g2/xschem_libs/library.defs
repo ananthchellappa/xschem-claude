@@ -1,0 +1,12 @@
+# ihp-sg13g2 workarea registry (cds.lib analog).
+# Paths are relative to THIS file. The five general libs + devices are shared
+# with the rest of the repo rather than duplicated here.
+DEFINE devices ../../xschem_libs_newsym/devices
+DEFINE analyses ../../xschem_libs_newsym/analyses
+DEFINE examples ../../xschem_libs_newsym/examples
+DEFINE ngspice ../../xschem_libs_newsym/ngspice
+DEFINE ngspice_verilog_cosim ../../xschem_libs_newsym/ngspice_verilog_cosim
+DEFINE xschem_simulator ../../xschem_libs_newsym/xschem_simulator
+DEFINE sg13g2_pr sg13g2_pr
+DEFINE sg13g2_stdcells sg13g2_stdcells
+DEFINE sg13g2_tests sg13g2_tests

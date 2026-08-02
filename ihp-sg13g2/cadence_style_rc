@@ -1,0 +1,75 @@
+# ihp-sg13g2/cadence_style_rc
+# Launch:  xschem --script /path/to/ihp-sg13g2/cadence_style_rc [cell.sch]
+#
+# Cadence-style IHP SG13G2 (130 nm BiCMOS) design workarea. Layers three things:
+#   1. the repo's Cadence UX + keybindings + forms (find_helper Ctrl+Shift+G,
+#      instance_update Ctrl+Shift+I, connected stretch/move, crosshair, ...);
+#   2. the migrated SG13G2 library registry in ./xschem_libs (Library Manager);
+#   3. the SG13G2 ngspice models in ./models + the IHP helper procs/menu.
+# Sibling of sky130A/ and gf180mcuD/. See doc/claude/specs/ihp_sg13g2_workarea.md.
+
+# Anchor on this file's own directory (repo/ihp-sg13g2), so the workarea is
+# relocatable within the repo.
+set _ws [file dirname [file normalize [info script]]]
+
+# --- 1. Cadence UX + keybindings + forms (from the repo) --------------------
+# The repo rc sets its own OA registry (xschem_libs_newsym); we override it below.
+source [file join $_ws .. src cadence_style_rc]
+
+# --- 2. Library registry = the migrated SG13G2 tree -------------------------
+# Registry-only (Cadence): the Library Manager shows exactly the DEFINEs in this
+# tree's library.defs (sg13g2_pr, sg13g2_stdcells, sg13g2_tests) plus devices and
+# the five general libs -> ../../xschem_libs_newsym/. To add a library to the
+# manager, add a DEFINE line to xschem_libs/library.defs — this file needs no
+# change.
+set XSCHEM_LIBRARY_DEFS [file join $_ws xschem_libs library.defs]
+set library_registry_defs_only 1
+set XSCHEM_LIBRARY_PATH {}
+set library_default_layout nested
+set launch_library_manager 1
+
+# --- 3. Models + IHP helper procs -------------------------------------------
+# The migrated testbenches embed `.lib $::MODELS_NGSPICE/cornerMOSlv.lib mos_tt`
+# and friends (27 references across sg13g2_tests), so this variable is what makes
+# a bench simulate. $::SG13G2_MODELS is the PDK's own alias for the same path —
+# set both, so a schematic written against either name resolves.
+set ::MODELS_NGSPICE [file join $_ws models]
+set ::SG13G2_MODELS  [file join $_ws models]
+
+# ASE-L default corner: preload the SG13G2 typical MOS models in every fresh
+# session / state view. Stored in the PORTABLE $::VAR form (ase::expand_path
+# resolves it at deck time) so state files stay git-portable.
+set ::ASE_DEFAULT_MODELS [list \
+  [list file {$::MODELS_NGSPICE/cornerMOSlv.lib} section mos_tt] \
+  [list file {$::MODELS_NGSPICE/cornerMOShv.lib} section mos_tt]]
+
+# PDK/PDK_ROOT are referenced by a couple of the helper procs' status strings.
+if {![info exists ::env(PDK)]} { set ::env(PDK) ihp-sg13g2 }
+source [file join $_ws sg13g2_procs.tcl]
+
+# Run the IHP menu builder after each window is created (append, don't clobber
+# any startup command the repo rc may have set).
+if {[info exists user_startup_commands]} {
+  append user_startup_commands "\nsg13g2_menupdk\n"
+} else {
+  set user_startup_commands "sg13g2_menupdk\n"
+}
+
+# ...and build it for the window that ALREADY exists.
+#
+# user_startup_commands alone is not enough for an rc loaded with `--script`:
+# xinit.c runs `eval_user_startup_commands` (xinit.c:3789) BEFORE it sources the
+# --script file (xinit.c:3793), so appending to that variable here only ever
+# affects windows created LATER — the first window would come up with no IHP
+# menu at all. Deferred to `after idle` so it runs once the menubar is settled.
+# sg13g2_menupdk is idempotent, so the later hook firing for this same window is
+# harmless.
+if {[info exists ::has_x]} {
+  after idle {catch {sg13g2_menupdk}}
+}
+
+# ASE-L shows values in engineering notation (e.g. 104u). To recover
+# scientific notation, uncomment:
+# set ase_eng_notation 0
+
+unset _ws

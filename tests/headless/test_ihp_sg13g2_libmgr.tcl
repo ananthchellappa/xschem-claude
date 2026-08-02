@@ -1,0 +1,160 @@
+# Library-Manager smoke for the ihp-sg13g2 migrated workarea
+# (doc/claude/specs/ihp_sg13g2_workarea.md).
+#
+# Verifies the shipped ihp-sg13g2/ registry the way the Library Manager consumes it:
+#   - ihp-sg13g2/xschem_libs/library.defs registers exactly the intended libraries;
+#   - devices + the general libs are wired to the repo's xschem_libs_newsym/<lib>
+#     (not duplicated);
+#   - representative cells resolve to real <lib>/<cell>/{symbol,schematic}/<cell>.<ext>
+#     files, including cross-lib (devices);
+#   - the model vendoring and the two migration-time rewrites that make this
+#     workarea self-contained (proc namespacing, model-path normalization) are
+#     still in place.
+# Registry-only, no Tk: does NOT source cadence_style_rc (that binds .drw). It sets the
+# same registry vars the rc sets, then reads `library_list` (what the Library Manager shows).
+# Also greps the shipped rc so the wiring itself can't silently regress.
+#
+# Pure headless. Run from the repo ROOT (or via run_regression.tcl):
+#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ihp_sg13g2_libmgr.tcl
+# Prints "OVERALL: ok" on success.
+
+set fail 0; set npass 0
+proc check {name got exp} {
+  global fail npass
+  if {$got eq $exp} { puts "ok:   $name"; incr npass } \
+  else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
+}
+proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
+
+# Path of a registered library, or {} if it is not registered at all. Every later
+# check goes through this: a bare $libpath(x) would raise a Tcl error the moment
+# a DEFINE goes missing, and the run would die with no OVERALL line — a sabotage
+# that the log grep could mistake for silence rather than failure.
+proc lp {name} {
+  upvar #0 libpath a
+  if {[info exists a($name)]} { return $a($name) }
+  return {}
+}
+
+# --- locate the shipped workarea relative to THIS script (cwd-independent) ---
+set here   [file normalize [file dirname [info script]]]        ;# tests/headless
+set repo   [file normalize [file join $here .. ..]]             ;# repo root
+set ws     [file join $repo ihp-sg13g2]
+set wsdefs [file join $ws xschem_libs library.defs]
+set wsrc   [file join $ws cadence_style_rc]
+set wsprocs [file join $ws sg13g2_procs.tcl]
+
+check_true "library.defs exists"    [file isfile $wsdefs]
+check_true "cadence_style_rc exists" [file isfile $wsrc]
+check_true "sg13g2_procs.tcl exists" [file isfile $wsprocs]
+check_true "run.sh is executable"    [file executable [file join $ws run.sh]]
+
+# --- set the registry the same way ihp-sg13g2/cadence_style_rc does ---
+set ::XSCHEM_LIBRARY_DEFS $wsdefs
+set ::library_registry_defs_only 1
+set ::XSCHEM_LIBRARY_PATH {}
+
+# --- what the Library Manager will list ---
+array set libpath {}
+set names {}
+foreach pair [library_list] {
+  lassign $pair nm pth
+  lappend names $nm
+  set libpath($nm) $pth
+}
+set names [lsort $names]
+set expect [lsort {devices sg13g2_pr sg13g2_stdcells sg13g2_tests \
+                   analyses examples ngspice ngspice_verilog_cosim xschem_simulator}]
+check "library_list = exactly the 9 intended libs" $names $expect
+
+# --- general libs wired to the repo's already-migrated newsym copy (not duplicated) ---
+foreach L {devices analyses examples ngspice ngspice_verilog_cosim xschem_simulator} {
+  set p [lp $L]
+  check_true "$L -> xschem_libs_newsym/$L (outside ihp-sg13g2/)" \
+    [expr {$p ne {} && [string match *xschem_libs_newsym/$L $p] \
+           && ![string match */ihp-sg13g2/* $p]}]
+}
+# --- the three PDK libs live INSIDE the workarea ---
+foreach L {sg13g2_pr sg13g2_stdcells sg13g2_tests} {
+  set p [lp $L]
+  check_true "$L lives inside ihp-sg13g2/xschem_libs" \
+    [expr {$p ne {} && [string match */ihp-sg13g2/xschem_libs/$L $p]}]
+}
+
+# --- representative cells resolve to real files ---
+proc symfile {base cell} { return [file join $base $cell symbol $cell.sym] }
+proc schfile {base cell} { return [file join $base $cell schematic $cell.sch] }
+
+foreach c {sg13_lv_nmos sg13_hv_nmos cap_cmim dantenna annotate_fet_params annotate_bip_params} {
+  check_true "sg13g2_pr/$c symbol resolves" [file isfile [symfile [lp sg13g2_pr] $c]]
+}
+foreach c {dc_lv_nmos dc_hbt_13g2 ac_mim_cap} {
+  check_true "sg13g2_tests/$c schematic resolves" [file isfile [schfile [lp sg13g2_tests] $c]]
+}
+check_true "sg13g2_stdcells/IHP130_stdcells schematic resolves" \
+  [file isfile [schfile [lp sg13g2_stdcells] IHP130_stdcells]]
+# cross-lib: the benches instantiate devices/ cells from the shared newsym tree
+foreach c {code_shown vsource gnd lab_pin} {
+  check_true "devices/$c (cross-lib) resolves" [file isfile [symfile [lp devices] $c]]
+}
+
+# --- vendored models ---
+set models [file join $ws models]
+foreach m {cornerMOSlv.lib cornerMOShv.lib cornerHBT.lib cornerRES.lib cornerCAP.lib cornerDIO.lib} {
+  check_true "models/$m vendored" [file isfile [file join $models $m]]
+}
+
+# --- rc wiring (grep-guard: these lines ARE the integration) ---
+set rc [read [open $wsrc]]
+check_true "rc points the registry at this workarea"  [string match {*XSCHEM_LIBRARY_DEFS*xschem_libs*library.defs*} $rc]
+check_true "rc is registry-only"                      [string match {*library_registry_defs_only 1*} $rc]
+check_true "rc clears XSCHEM_LIBRARY_PATH"            [string match {*XSCHEM_LIBRARY_PATH {}*} $rc]
+check_true "rc sets ::MODELS_NGSPICE (benches need it)" [string match {*set ::MODELS_NGSPICE*} $rc]
+check_true "rc sets ::SG13G2_MODELS alias"            [string match {*set ::SG13G2_MODELS*} $rc]
+check_true "rc sources sg13g2_procs.tcl"              [string match {*sg13g2_procs.tcl*} $rc]
+check_true "rc appends the IHP menu builder"          [string match {*sg13g2_menupdk*} $rc]
+check_true "rc layers the repo Cadence UX"            [string match {*src cadence_style_rc*} $rc]
+
+# --- the procs file defines the NAMESPACED procs the migrated symbols call ---
+set procs [read [open $wsprocs]]
+foreach p {sg13g2_fet_drc sg13g2_res_drc sg13g2_mim_drc sg13g2_hbt_drc sg13g2_diode_drc
+           sg13g2_svaricap_drc sg13g2_save_params sg13g2_display_fet_params
+           sg13g2_display_bip_params sg13g2_menupdk} {
+  check_true "sg13g2_procs.tcl defines $p" [string match "*proc $p *" $procs]
+}
+
+# --- migration invariants: symbols call the PREFIXED procs, never the bare PDK names ---
+# A bare `drc="fet_drc ...` would silently break every DRC check, because the
+# workarea only ever defines the sg13g2_-prefixed name.
+set nbaredrc 0; set npfxdrc 0
+foreach f [glob -nocomplain [file join [lp sg13g2_pr] * symbol *.sym]] {
+  set t [read [open $f]]
+  if {[regexp {drc="sg13g2_[a-z]+_drc} $t]} { incr npfxdrc }
+  if {[regexp {drc="(fet|res|mim|hbt|diode|svaricap)_drc} $t]} { incr nbaredrc }
+}
+check_true "sg13g2_pr symbols carry prefixed drc= calls" [expr {$npfxdrc > 0}]
+check "no sg13g2_pr symbol still calls a BARE *_drc"     $nbaredrc 0
+
+# --- model paths are self-resolving: no bare `.lib cornerXXX.lib` left in a bench ---
+# These would netlist fine and then fail to simulate unless ngspice happened to
+# run with the models dir on its sourcepath (issue documented in the spec).
+set modelnames {}
+foreach p [glob -nocomplain [file join $models *]] { lappend modelnames [file tail $p] }
+set nbarelib 0; set nvarlib 0; set nsave 0
+foreach f [glob -nocomplain [file join [lp sg13g2_tests] * schematic *.sch]] {
+  set t [read [open $f]]
+  foreach ln [split $t \n] {
+    foreach m $modelnames {
+      if {[regexp "\\.(lib|include)\\s+\\\$::MODELS_NGSPICE/[string map {. \\.} $m]" $ln]} { incr nvarlib }
+      if {[regexp "\\.(lib|include)\\s+[string map {. \\.} $m]\\M" $ln]} { incr nbarelib }
+    }
+  }
+  # .save includes are netlist_dir-relative and MUST stay bare
+  if {[regexp {\.include\s+[a-zA-Z0-9_]+\.save} $t]} { incr nsave }
+}
+check_true "benches reference models via \$::MODELS_NGSPICE" [expr {$nvarlib > 0}]
+check "no bench still has a BARE model .lib/.include"        $nbarelib 0
+check_true "the .save includes were left bare (correct)"     [expr {$nsave > 0}]
+
+puts ""
+if {$fail} { puts "OVERALL: $fail FAILED ($npass passed)" } else { puts "OVERALL: ok ($npass checks)" }
