@@ -221,6 +221,12 @@ proc sky130_menupdk {} {
   if { [info exist has_x] } {
     set topwin [xschem get top_path]
 
+    # Idempotent: the rc calls this directly for the window that already exists
+    # AND leaves it in user_startup_commands for windows created later, so for
+    # any one window it can be reached twice; a second `menu` command on the same
+    # path would error out.
+    if {[winfo exists $topwin.menubar.sky130]} { return }
+
     # insert before the 'Netlist' menu
     $topwin.menubar insert Netlist cascade -label SKY130 -menu $topwin.menubar.sky130
     menu $topwin.menubar.sky130 -tearoff 0

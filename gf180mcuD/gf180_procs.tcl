@@ -17,6 +17,11 @@ proc gf180_menupdk {} {
   if { ![info exists has_x] } { return }
   set topwin [xschem get top_path]
 
+  # Idempotent: the rc calls this directly for the window that already exists AND
+  # leaves it in user_startup_commands for windows created later, so for any one
+  # window it can be reached twice; a second `menu` on the same path would error.
+  if {[winfo exists $topwin.menubar.gf180mcu]} { return }
+
   # insert before the 'Netlist' menu
   $topwin.menubar insert Netlist cascade -label GF180MCU -menu $topwin.menubar.gf180mcu
   menu $topwin.menubar.gf180mcu -tearoff 0

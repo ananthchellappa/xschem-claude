@@ -61,6 +61,15 @@ if {[info exists user_startup_commands]} {
   set user_startup_commands "gf180_menupdk\n"
 }
 
+# ...and build it for the window that ALREADY exists. user_startup_commands alone
+# is not enough for an rc loaded with `--script`: xinit.c runs
+# eval_user_startup_commands (xinit.c:3789) BEFORE sourcing the --script file
+# (xinit.c:3793), so appending here only affects windows created LATER — the
+# first window came up with no GF180MCU menu at all. gf180_menupdk is idempotent.
+if {[info exists ::has_x]} {
+  after idle {catch {gf180_menupdk}}
+}
+
 # ASE-L shows values in engineering notation (e.g. 104u). To recover
 # scientific notation, uncomment:
 # set ase_eng_notation 0
