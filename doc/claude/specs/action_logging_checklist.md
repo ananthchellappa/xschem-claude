@@ -8,7 +8,7 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 
 | # | Spec | Implemented? |
 |---|------|--------------|
-| 1 | Log written to `Xschem.log` in the launch cwd | yes |
+| 1 | Log written to `Xschem.log` in the default directory | yes — but the DEFAULT MOVED: issue 0038 changed it from the launch cwd to `$TMPDIR`, else `/tmp` (cwd only if no temp dir is usable), so interactive runs launched from the source tree stop littering it. `util.c:363-374`. `action_logging.md` §1 and decision 4.2 still say "cwd" and are stale; `xschem.help` was corrected with issue 0207 |
 | 2 | Name taken → first free `Xschem.log.1`, `.2`, … | yes |
 | 3 | `--logdir <dir>` overrides the log directory | yes |
 | 4 | `--logdir` directory created if absent | yes |
@@ -30,7 +30,7 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 | # | Spec | Implemented? |
 |---|------|--------------|
 | 11 | Every user action is logged | partial — bounded by design: click-select (issue 0005, row 17), stdin-REPL/TCP commands (issue 0003), non-File menus, and keys still living in the un-migrated C switch (they never reach `dispatch_input_action`; they log only where a Layer B/C/file-menu hook covers their effect) |
-| 12 | Each logged action line is an executable `xschem …` Tcl command (replayable) | yes |
+| 12 | Each logged action line is an executable `xschem …` Tcl command (replayable) | **partial — measured false at 32 sites** (issue [0209](../issues/0209-log-format-rule-and-practice-have-drifted.md)): `wave_viewer.tcl` (14), `library_manager.tcl` (14) and `xschem.tcl` (4) log bare namespaced proc calls (`wviewer::set_plot_mode single K`, `libmgr::do_new_cell …`) and one bare `set`. They ARE executable in the live interp `replay_action_log` sources into, so replay works — but they fail `test_selflog_output.tcl`'s prefix rule, and no test catches it because the scan never runs in a process that opened the viewer or LibMgr. Decision pending: narrow the practice or amend locked decision 4.1 |
 | 13 | Granularity = the action's effect; multi-event gestures collapse to one command | yes (Layer C: one command/marker per completed gesture; manhattan wire = one line per stored segment) |
 | 14 | RMB click → context-menu pick logged as the chosen action's command | yes (replayable subset, row 25; dialogs/object-ref picks = `#` markers) |
 | 15 | RMB press+drag+release logged as `xschem zoom_box x1 y1 x2 y2` | yes |
@@ -100,6 +100,26 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 | 72 | Quit (menu Close/Quit, WM close, typed exit) logged as `xschem exit closewindow force`, the log's final line | yes |
 | 73 | Plain File-menu picks logged verbatim via the `build_menu_from_table` wrapper, after evaluation, csv-nolog gated; confirmed reload logged inside `action_reload` | yes |
 | 74 | Dialog/process-spawning File rows (delete_files, new_process, merge pick, component_browser, image exports) silent in v1 | yes (documented) |
+
+## 8. ASE-L / Direct Plot / signal picking (issue 0207)
+
+ASE was absent from every row of this checklist until 2026-08-02, which is why ~66
+user-visible messages sat in the CIW pane — the log's **mirror** — without ever being in
+the log. `ciw_echo` (`src/ciw.tcl:113`) is a pure Tk widget append; only C `log_action()`
+(`src/util.c:489`) writes the file, and it mirrors INTO the pane afterwards. The flow is
+file → pane, one way.
+
+| # | Spec | Implemented? |
+|---|------|--------------|
+| 75 | ASE's user-visible messages reach the action log, not only the CIW pane | yes — the `ase::echo` seam (`src/ase.tcl`), 66 call sites in `ase.tcl` (10) + `ase_window.tcl` (56) |
+| 76 | They are carried as source-able `#= ` / `#! ` comment lines, keyed off the pane tag | yes (`xschem log_action -result\|-error` → `log_output()`, `util.c:536`) |
+| 77 | The pane still gets each message, exactly once (no double-echo, no re-entrancy) | yes — a SEAM, not a tee inside `ciw_echo`; `log_output()` writes the file only |
+| 78 | An EMPTY message logs nothing rather than a stray flag line | yes — guarded in the seam AND in the C dispatcher (a value-less `log_action -result` no longer falls through to the bare-line arm) |
+| 79 | A **replayable** line for the Ctrl-4 pick itself (0204's left-undone item 1) | no — deferred to issue 0208; a `#=` comment is not replayable by design, and the gesture-vs-outcome altitude is unresolved |
+| 80 | The waveform viewer's own ~75 `ciw_echo` sites (`src/wave_viewer.tcl`) | no — out of scope here (owned by the `fluid-editing` branch); `wviewer::log_action` already exists as its seam |
+| 81 | C code calling `ciw_echo` directly (`hilight.c`, `draw.c`, `scheduler.c`, `actions.c`, `move.c`, `paste.c`, `callback.c`) | no — same pane-only class, not surveyed |
+
+Test: `tests/headless/test_ase_log_seam_0207.tcl` (X + `--logdir`; PS/RP legs).
 
 ## 7. Explicitly not v1 (spec §6)
 
