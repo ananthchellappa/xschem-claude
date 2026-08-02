@@ -311,10 +311,44 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 #                        Anything outside (0, 1] falls back to 0.7.
 # set wviewer_drag_shrink 0.7
 #
+# 9 / 8 / 0 INSIDE the waveform viewer : highlight traces, in exactly the styles
+# the same three keys give NETS in a schematic (the binds at the top of this
+# file). A trace is a polyline with no junctions and no direction, so the whole
+# net-highlight vocabulary -- colour, width, dash pattern, blink, marching ants
+# -- applies to it unchanged, out of the SAME `net_hilight_style` table: a style
+# you wrote for wires works on traces as it is. The style CURSOR is per window,
+# though, so the viewer keeps its own place in the table and the Alt-minus bind
+# above (a `bind .drw`) does not reach it -- to pick a particular style in the
+# viewer, name it with the ad-hoc form at the end of this block.
+#   9 : apply the current style to the SELECTED trace(s), then step the cursor
+#       on, so pressing it again gives the next style. Unlike the schematic 9
+#       there is no click-to-pick mode: the viewer already has a first-class
+#       trace selection (click a trace or its legend name, Ctrl+click to add),
+#       so with nothing selected 9 says so and does nothing.
+#   8 : remove the highlight from the selected trace(s).
+#   0 : remove EVERY trace highlight in this window (no selection needed).
+# The style is stroked ON TOP of the curve, so the palette colour still names it
+# in the legend. It is window chrome: never saved, never exported, and it dies
+# with the window. Same bindtag rules as Ctrl-D / `e` / Ctrl-G above -- a line
+# here WINS over the shipped default:
+# bind WaveViewer <Key-9> {break}
+# bind WaveViewer <Key-h> {wviewer::hilight_traces_at %W; break}
+#
+# ...and the AD-HOC form, the viewer twin of the F5 apply_hilight bind at the
+# bottom of this file: write the style out instead of taking whatever the cursor
+# is on. Named fields in any order, a Tcl dict, or a positional row; omitted
+# fields take their defaults. Needs utils/apply_hilight.tcl, which this file
+# sources. Edit the style and the key to taste -- e.g.
+# {color cyan thickness 4 pattern {10 4} march march_fwd rate 2} to make it crawl.
+# bind WaveViewer <Key-F5> \
+#   {wviewer::apply_style_traces_at %W {color purple thickness 3 pattern {20 20}}; break}
+#
 # NOTE Ctrl-G in a SCHEMATIC window still toggles the dot grid (draw_grid,
 # below) -- these do not collide: the viewer key is on the WaveViewer bindtag,
 # which schematic canvases do not carry, and the viewer suppresses the dot grid
-# for life anyway.
+# for life anyway. The same is true of 9/8/0: the `bind .drw` versions at the top
+# of this file are cloned onto every new canvas, but the viewer sweeps every
+# widget-level binding off its own, so only the WaveViewer tag reaches it.
 
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click

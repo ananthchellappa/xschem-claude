@@ -2908,11 +2908,13 @@ double net_hilight_march_offset(NetHilightStyle *st, double now)
  * by net_hilight_has_animation() and draw_hilight_region() so the two never drift (esp. once
  * Pass 2b extends net_hilight_style_animates). */
 static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, double *next_ms,
-                                   double *bx1, double *by1, double *bx2, double *by2)
+                                   double *bx1, double *by1, double *bx2, double *by2,
+                                   int *only_waves)
 {
-  int i, found = 0;
+  int i, found = 0, waves = 0, others = 0;
   int predicate = (!sig && !maxw && !next_ms && !bx1); /* only wants "does any animate?" */
   Hilight_hashentry *entry;
+  if(only_waves) *only_waves = 0;
   prepare_netlist_structs(0);
   for(i = 0; i < xctx->wires; ++i) {
     NetHilightStyle *st;
@@ -2943,6 +2945,7 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
       if(!found || b > *by2) *by2 = b;
     }
     found = 1;
+    others = 1;
   }
   for(i = 0; i < xctx->instances; ++i) {
     NetHilightStyle *st;
@@ -2965,6 +2968,7 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
       if(!found || xctx->inst[i].y2 > *by2) *by2 = xctx->inst[i].y2;
     }
     found = 1;
+    others = 1;
   }
   /* Buried-net cue (doc/claude/specs/buried_net_hilight.md): the ancestor-instance rectangle is
    * drawn as styled wire edges (draw_hilight_net), so unlike a colored symbol it can BOTH blink
@@ -2994,7 +2998,52 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
       if(!found || xctx->inst[i].yy2 + m > *by2) *by2 = xctx->inst[i].yy2 + m;
     }
     found = 1;
+    others = 1;
   }
+  /* THE FOURTH LOOP: highlighted waveform TRACES
+   * (doc/claude/specs/wave_trace_hilight.md §6). A trace overlay is stroked as
+   * a polyline, so like the buried cue it can BOTH blink AND march -- hence
+   * net_hilight_style_animates and the wire loop's two-term signature, not the
+   * blink-only instance form.
+   *
+   * ⚠ The bbox contribution is the STRIP'S CONTAINER RECT, not its plot box.
+   * The box is a strict subset of the rect, so the union is still a correct
+   * clip -- and it is FREE, where the plot box would cost a setup_graph_data()
+   * per animating trace per frame, plus landmine 37's hcursor bracket, on the
+   * one path this design exists to keep cheap. It is used only when the frame
+   * has to go through draw() anyway (a schematic window that embeds a graph AND
+   * animates a wire); the trace-only frame never reads it. */
+  for(i = 0; i < xctx->wave_hilight_n; ++i) {
+    NetHilightStyle *st;
+    int gi = xctx->wave_hilight_gi[i];
+    st = get_hilight_style(xctx->wave_hilight_style[i]);
+    if(!net_hilight_style_animates(st)) continue;
+    if(predicate) return 1;
+    if(sig) {
+      unsigned int term = (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
+      term = term * 31u + (unsigned int)(int)net_hilight_march_offset(st, now);
+      *sig = *sig * 1000003u + term;
+    }
+    if(maxw && st->width > *maxw) *maxw = st->width;
+    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
+    if(bx1 && gi >= 0 && gi < xctx->rects[GRIDLAYER]) {
+      xRect *r = &xctx->rect[GRIDLAYER][gi];
+      double a = r->x1, b = r->x2;
+      if(a > b) { double tt = a; a = b; b = tt; }
+      if(!found || a < *bx1) *bx1 = a;
+      if(!found || b > *bx2) *bx2 = b;
+      a = r->y1; b = r->y2; if(a > b) { double tt = a; a = b; b = tt; }
+      if(!found || a < *by1) *by1 = a;
+      if(!found || b > *by2) *by2 = b;
+    }
+    found = 1;
+    waves = 1;
+  }
+  /* "only traces animate here" is what lets draw_hilight_region take the cheap
+   * frame. It is deliberately NOT computed in predicate mode: that mode returns
+   * on the first animating object of any kind, and its one caller
+   * (net_hilight_has_animation) does not ask. */
+  if(only_waves) *only_waves = (waves && !others);
   return found;
 }
 
@@ -3108,10 +3157,15 @@ int net_hilight_ctx_gesturing(void)
  * skips that frame (returns 2 = keep ticking) rather than stopping. */
 int net_hilight_has_animation(void)
 {
-  if(!has_x || !xctx->hilight_nets) return 0;
+  /* ⚠ `!xctx->hilight_nets` alone would make the whole trace-highlight feature
+   * silently dead in the ONLY window that has it: an ASE waveform viewer has no
+   * highlighted NETS, ever. The `wave_hilight_n` term is what lets a viewer arm
+   * its tick (doc/claude/specs/wave_trace_hilight.md §6); draw_hilight_region()
+   * carries the twin of this line and both are load-bearing. */
+  if(!has_x || (!xctx->hilight_nets && !xctx->wave_hilight_n)) return 0;
   if(!tclgetboolvar("net_hilight_animate")) return 0;
   if(net_hilight_ctx_gesturing()) return 0;
-  return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
+  return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
 }
 
 /* One animation frame (the tick's only C call). Regional-redraws just the union bbox of the
@@ -3128,13 +3182,18 @@ int net_hilight_has_animation(void)
 int draw_hilight_region(double *next_ms)
 {
   int maxw = 1;
+  int only_waves = 0;
   double now, x1u = 0.0, y1u = 0.0, x2u = 0.0, y2u = 0.0, marg;
   double next = NET_HILIGHT_TICK_MAX; /* min next-edge across animating styles (scan lowers it) */
   unsigned int sig = 2166136261u; /* FNV offset basis: a nonzero seed so a real signature
                                    * never collides with the 0 "no frame drawn yet" sentinel
                                    * (e.g. a single OFF-phase style-0 net would hash to 0) */
   if(next_ms) *next_ms = NET_HILIGHT_TICK_BUSY;
-  if(!has_x || !xctx->hilight_nets) return 0;
+  /* ⚠ the twin of net_hilight_has_animation()'s gate, and it fails the same
+   * way: a viewer has no highlighted NETS, so without the wave term this
+   * returns 0, the Tcl tick reads 0 as "stop, do not reschedule", and a
+   * marching trace overlay never advances a frame. */
+  if(!has_x || (!xctx->hilight_nets && !xctx->wave_hilight_n)) return 0;
   /* a borrowed background window (multi-window anim) may not have been exposed/sized yet, so its
    * save_pixmap is still 0; draw() would then XFillRectangle into Drawable 0 (BadDrawable). Stop
    * the tick until the window is drawn at least once. (The front window always has one.) */
@@ -3143,7 +3202,8 @@ int draw_hilight_region(double *next_ms)
    * `xschem redraw_hilight_region` call must not bypass it (and must stop the tick -> 0). */
   if(!tclgetboolvar("net_hilight_animate")) return 0;
   now = net_hilight_now_ms();
-  if(!scan_animating_hilights(now, &sig, &maxw, &next, &x1u, &y1u, &x2u, &y2u)) return 0; /* stop */
+  if(!scan_animating_hilights(now, &sig, &maxw, &next, &x1u, &y1u, &x2u, &y2u,
+                              &only_waves)) return 0; /* stop */
   /* pause (but keep ticking, retrying soon) while a draw is in progress or a gesture owns the
    * screen -- keep *next_ms at the short busy retry so we resume promptly after the gesture. */
   if(net_hilight_ctx_busy()) return 2;
@@ -3154,6 +3214,30 @@ int draw_hilight_region(double *next_ms)
   if(next_ms) *next_ms = next;
   if(sig == xctx->net_hilight_anim_sig) return 2; /* no blink edge since the last frame */
   xctx->net_hilight_anim_sig = sig;
+  /* ⚠ THE FRAME SPLIT, and it is the reason this feature is not a 50-line patch
+   * (doc/claude/specs/wave_trace_hilight.md §6). Everything below this block
+   * renders a frame as bbox(SET) + draw() -- a CLIPPED FULL REDRAW. A wire's
+   * bbox is small, so that is cheap for the shipped feature. A TRACE's bbox is
+   * the whole strip, so reusing it would re-walk every sample of every trace on
+   * that strip, every tick -- precisely the cost the envelope design exists to
+   * avoid. So when the animating set contains ONLY trace highlights, paint the
+   * window-only overlay directly and never call draw().
+   *
+   * in_hilight_anim_frame is set around it for the same reason draw() sets it:
+   * it is what tells draw_wave_hilight() to advance the blink/march phase (an
+   * ordinary redraw renders the overlay steady, i.e. deterministic).
+   *
+   * The MIXED case -- possible only in a schematic window that embeds a graph
+   * and also animates a wire, an instance or a buried cue -- falls through to
+   * the draw() frame below, and needs no extra re-stroke here: draw()'s own
+   * tail calls draw_wave_hilight(0) as its very last act, which is what "the
+   * overlay is always painted last" means. */
+  if(only_waves) {
+    xctx->in_hilight_anim_frame = 1;
+    draw_wave_hilight(1);   /* erase each entry's previous bbox, then re-stroke */
+    xctx->in_hilight_anim_frame = 0;
+    return 1;
+  }
   /* Grow the clip (schematic units) by the widest in-use highlight half-width + endpoint dot
    * radius so thick highlights and dots are fully covered. mooz = screen px / schematic unit. */
   marg = xctx->cadhalfdotsize + (INT_BUS_WIDTH(xctx->lw) * (double)maxw) / (2.0 * xctx->mooz);

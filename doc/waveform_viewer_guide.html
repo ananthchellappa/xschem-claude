@@ -379,8 +379,9 @@ in an axis margin or on the reorder grip changes nothing.</li>
 already-selected one keeps it.</li>
 </ul>
 <p>What a selection is <i>for</i>: <kbd>Delete</kbd> deletes it, a drag carries
-all of it to another strip, and the bold is a way of keeping track of one curve
-in a crowded strip.</p>
+all of it to another strip, <kbd>9</kbd> highlights it in a style of its own
+(<a href="#ref-viewer-keys">§9.1</a>), and the bold is a way of keeping track of
+one curve in a crowded strip.</p>
 
 <p>Markers have their own, separate selection — one marker, or a delta pair. It
 is set by clicking a marker and cleared by clicking empty space.</p>
@@ -456,7 +457,43 @@ change). 50 deep, per window.</td>
 <td>Redo.</td>
 <td class="where">whole window</td>
 <td>—</td></tr>
+<tr data-seq="Key-9">
+<td><kbd>9</kbd></td>
+<td>Highlight the <b>selected</b> trace(s) in the current highlight style — the
+same styles and the same table a schematic uses (the cursor into it is this
+window's own). The style is stroked <i>on top of</i> the curve, so the palette
+colour still identifies it in the legend, and the cursor then steps on, so
+pressing <kbd>9</kbd> again gives the next style. With nothing selected it says
+so and does nothing.</td>
+<td class="where">whole window</td>
+<td>—</td></tr>
+<tr data-seq="Key-8">
+<td><kbd>8</kbd></td>
+<td>Remove the highlight from the selected trace(s).</td>
+<td class="where">whole window</td>
+<td>—</td></tr>
+<tr data-seq="Key-0">
+<td><kbd>0</kbd></td>
+<td>Remove every trace highlight in this window. Needs no selection.</td>
+<td class="where">whole window</td>
+<td>—</td></tr>
 </table>
+
+<div class="note">
+<b>What a trace highlight is, and what it is not.</b> It is <i>window chrome</i>:
+it is never saved, never exported (a printed or SVG plot carries the trace, not
+the highlight), and it dies with the window. Highlighting a trace does not
+highlight the matching net in the schematic, and vice versa. A blinking or
+marching style is drawn from a cached per-pixel envelope of the curve rather
+than from the samples, so it costs the same on a 200-sample trace and on a
+200 000-sample one — with three visible consequences, all deliberate: a
+repainting highlight briefly rubs out the snap diamond where they overlap (it
+comes back on the next mouse move), the marching phase follows the drawn band
+rather than the exact curve length, and the dashes scroll in whole pixels, just
+as a marching wire highlight already does. Digital and bus traces are drawn as
+bands, not curves, so <kbd>9</kbd> refuses them and highlights the analog
+members of the selection instead.
+</div>
 
 <h3 id="ref-window-keys">9.2 Window keys (handled by the viewer, not remappable today)</h3>
 <table>
@@ -660,9 +697,9 @@ pointer.</td>
 </div>
 
 <h3 id="ref-collisions">9.5 The same key in a schematic window</h3>
-<p>Three of the viewer's keys are also shortcuts in a schematic, and they mean
-completely different things. They do not collide — a viewer canvas does not carry
-the schematic bindings — but knowing both meanings saves a surprise:</p>
+<p>Six of the viewer's keys are also shortcuts in a schematic, and they mean
+different things. They do not collide — a viewer canvas does not carry the
+schematic bindings — but knowing both meanings saves a surprise:</p>
 <table>
 <tr><th>Key</th><th>In a schematic window</th><th>In the viewer</th></tr>
 <tr><td><kbd>Ctrl-E</kbd></td><td>Go back one level of hierarchy</td>
@@ -671,7 +708,35 @@ the schematic bindings — but knowing both meanings saves a surprise:</p>
 <td>Delete empty strips</td></tr>
 <tr><td><kbd>Ctrl-G</kbd></td><td>Toggle the global dot grid of the drawing</td>
 <td>Toggle this window's graph grid</td></tr>
+<tr><td><kbd>9</kbd></td><td>Highlight the selected net, or click nets to
+highlight them (with <code>cadence_style_rc</code>)</td>
+<td>Highlight the selected trace(s)</td></tr>
+<tr><td><kbd>8</kbd></td><td>Un-highlight the selected net, or click nets to
+un-highlight them (with <code>cadence_style_rc</code>)</td>
+<td>Un-highlight the selected trace(s)</td></tr>
+<tr><td><kbd>0</kbd></td><td>Un-highlight every net (with
+<code>cadence_style_rc</code>); toggle a pin's logic level otherwise</td>
+<td>Un-highlight every trace</td></tr>
 </table>
+
+<p>The last three do the <i>same</i> job on the other kind of line, out of the
+<i>same</i> style table — the one <code>net_hilight_style</code> table an rc
+defines, so a style you wrote for wires is available to traces unchanged. Three
+differences are worth knowing:</p>
+<ul>
+<li>In a schematic those keys exist only if you load
+<code>src/cadence_style_rc</code>; in the viewer they are shipped defaults.</li>
+<li>A schematic <kbd>9</kbd> with nothing selected starts a click-to-pick mode.
+The viewer's refuses instead — it already has a first-class trace selection, so
+there is nothing to pick.</li>
+<li>The <b>style cursor is per window</b>, so the viewer keeps its own place in
+the table and pressing <kbd>9</kbd> there does not move the schematic's. There is
+no <kbd>Alt</kbd>+<kbd>-</kbd> in the viewer either (that is a
+<code>bind .drw</code> in the rc, and viewer canvases do not carry
+<code>.drw</code>'s bindings) — to reach a particular style from the viewer, name
+it: bind a key to <code>wviewer::apply_style_traces_at %W {…}</code>
+(<a href="#rebind-tag">§10.1</a>).</li>
+</ul>
 <p>The viewer has no dot grid at all — it is suppressed for the window's whole
 life — so <kbd>Ctrl-G</kbd> there can only mean the graph grid.</p>
 
@@ -683,7 +748,7 @@ a <code>./.xschemrc</code> beside your design, or any file passed with
 example, and it carries commented-out versions of all of these).</p>
 
 <h3 id="rebind-tag">10.1 The <code>WaveViewer</code> binding tag</h3>
-<p>The six viewer keys of <a href="#ref-viewer-keys">§9.1</a> are bound on a Tk
+<p>The nine viewer keys of <a href="#ref-viewer-keys">§9.1</a> are bound on a Tk
 binding tag called <code>WaveViewer</code>. The defaults are installed <b>once</b>,
 at the first viewer open, and <b>only for a sequence nothing has bound yet</b> —
 so an rc that binds first <b>wins</b>, even though it runs long before any viewer
@@ -703,7 +768,24 @@ keyboard focus disagree:</p>
 <tr><td><kbd>Ctrl-G</kbd></td><td><code>wviewer::grid_toggle_at %W</code></td></tr>
 <tr><td><kbd>u</kbd></td><td><code>wviewer::undo_at %W</code></td></tr>
 <tr><td><kbd>U</kbd></td><td><code>wviewer::redo_at %W</code></td></tr>
+<tr><td><kbd>9</kbd></td><td><code>wviewer::hilight_traces_at %W</code></td></tr>
+<tr><td><kbd>8</kbd></td><td><code>wviewer::unhilight_traces_at %W</code></td></tr>
+<tr><td><kbd>0</kbd></td><td><code>wviewer::unhilight_all_at %W</code></td></tr>
 </table>
+
+<p>One command has no default key of its own: an <b>ad-hoc</b> highlight style,
+written out in the binding instead of picked off the style table. It takes the
+same three argument forms <code>apply_hilight</code> takes for nets — named
+fields in any order, a Tcl dict, or a positional style row — and any field you
+leave out takes its default:</p>
+
+<pre>bind WaveViewer &lt;Key-F5&gt; \
+  {wviewer::apply_style_traces_at %W {color purple thickness 3 pattern {20 20}}; break}</pre>
+
+<p>That needs <code>utils/apply_hilight.tcl</code> sourced, which
+<code>src/cadence_style_rc</code> does. The style is installed into the table
+once (an identical row is reused, so a key you press fifty times does not grow
+it fifty rows) and applied by its index like any other.</p>
 
 <div class="note">
 <b>Disable with <code>{break}</code>, never with <code>{}</code>.</b> An empty

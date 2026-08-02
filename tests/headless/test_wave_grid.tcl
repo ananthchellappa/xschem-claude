@@ -382,8 +382,8 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the six documented viewer keys" \
-  [llength $gh_seqs] 6
+check "GH0 the guide's §9.1 carries the nine documented viewer keys" \
+  [llength $gh_seqs] 9
 check "GH0 ...and five documented menu accelerators" [llength $gh_menus] 5
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]

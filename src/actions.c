@@ -1938,6 +1938,17 @@ void clear_drawing(void)
  /* issue 0192: the SET joins the same reset class for the same reason -- a
   * surviving arm would shrink whatever traces land at those indices next. */
  xctx->graph_preview_n = 0;
+ /* Trace highlights (doc/claude/specs/wave_trace_hilight.md §4.2): the same
+  * reset class again, and the entry that makes it load-bearing rather than
+  * tidy. wviewer::regenerate calls `xschem clear_drawing` and re-places every
+  * strip -- and a plain window RESIZE calls regenerate (landmine 50) -- so a
+  * surviving (gi, ni) would highlight whatever trace lands at that index in
+  * the rebuilt stack. The set is re-applied from its Tcl authority right after,
+  * which is exactly why D4 puts the authority there and not here.
+  * The envelope cache goes with it: it is keyed on the raw and the geometry,
+  * both of which this clear invalidates, and losing it is a rebuild. */
+ xctx->wave_hilight_n = 0;
+ wave_hilight_cache_free();
  del_inst_table();
  del_wire_table();
  my_free(_ALLOC_ID_, &xctx->schtedaxprop);

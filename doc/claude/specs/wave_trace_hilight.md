@@ -1,6 +1,7 @@
 # Net-highlight styles on waveform traces
 
-**Status:** specified 2026-08-01, not implemented.
+**Status:** specified 2026-08-01, **IMPLEMENTED 2026-08-01** (§13 records what
+shipped and where it differs from this text).
 **Load first:** `doc/claude/code_analysis/waveform_subsystem_reference.md` (§4 render,
 §5 interaction, landmines 11/19/33/37/38/40/43/44/46/50), then
 `doc/claude/specs/net_hilight_styles.md` (the style table) and
@@ -391,3 +392,94 @@ rows turns the suite red.
 Also: §5.5's accepted imperfections belong in the guide in one sentence, and the
 §9.3 note that these keys mean something else in a schematic window belongs in
 §9.5's collision table.
+
+---
+
+## 13. As shipped (2026-08-01)
+
+Implemented per §4-§8. Where the code differs from the text above, this section
+is the authority.
+
+### 13.1 What landed where
+
+| Piece | Where |
+|---|---|
+| The set (3 fixed arrays + count) + `GRAPH_MAX_HILIGHT_WAVES 16` + `WaveHilightEnv` | `xschem.h` |
+| `wave_hilight_write` (THE writer) / `_set` / `_clear` / `_style_of` (THE predicate) / `_points` / `_cache_free` | `draw.c`, beside `graph_preview_arm`/`graph_preview_has` |
+| `wave_hilight_envelope()` + the 16-slot cache | `draw.c`, beside `graph_point_at` |
+| `draw_wave_hilight(erase)` — the overlay painter | `draw.c`; called from the tail of `draw()` and from the cheap frame |
+| the 4th scan loop, the two gate terms, the frame split | `hilight.c` |
+| the resets | `clear_drawing()` (`actions.c`), `alloc_xschem_data()` + `free_xschem_data()` (`xinit.c`) |
+| the verbs | `xschem_cmds_w` (`wave_hilight`), `get` case `'w'` (three getters), `get` case `'h'` (`hilight_color`) |
+| `wavehl` + 13 procs + 8 remap adapters + keys 9/8/0 | `wave_viewer.tcl` |
+| `net_hilight_style_index_for` (factored out of `net_hilight_apply`) | `xschem.tcl` |
+| suite | `tests/headless/test_wave_hilight.tcl` (139 checks `--nogui`, 196 under a DISPLAY) |
+
+### 13.2 Deltas from the spec, and why
+
+- **§7.1 `get wave_hilight_points` BUILDS the envelope** when the cache has
+  none, rather than answering 0. The paint path that would otherwise fill the
+  cache opens with `if(!has_x) return;`, so a pure cache read answers 0 forever
+  under `--nogui` — and the WD cost witnesses are the point of the file. It goes
+  through the same KEYED lookup the painter uses; an identity-only pre-scan was
+  written first, shipped a stale count for a zoomed/reloaded/deleted strip, and
+  is now `SAB-8`.
+- **A new getter, `xschem get hilight_color`.** §7.2 says the style defaults to
+  "the current style cursor" and there was no way to read it: `set
+  hilight_color` has always existed, but the only reads were the return values
+  of `incr_hilight_color` / `decr_hilight_color`, both of which MOVE it.
+- **`9` advances the cursor ONCE per press**, not once per selected trace (the
+  spec is silent). A multi-trace selection is one user act; rainbowing it would
+  surprise, and never advancing would make two successive highlights
+  indistinguishable — the thing the schematic `9` deliberately avoids.
+- **The scan's bbox contribution is the strip's CONTAINER RECT**, not its plot
+  box. The box is a strict subset, so the union is still a correct clip, and it
+  is free — the plot box would cost a `setup_graph_data()` per animating trace
+  per frame (plus landmine 37's bracket) on the one path this design exists to
+  keep cheap. It is read only by the MIXED frame, which goes through `draw()`
+  anyway.
+- **The cache key is the rect's WHOLE `prop_ptr` string**, not a field list.
+  `node`, `sweep`, `%N`, `rawfile`, `sim_type`, `digital`, `logx`, `logy` and
+  `dataset` all steer the walk, they all live in that one string, and it is
+  rewritten in place by paths that never touch this cache. One strdup per
+  cached envelope buys immunity to the whole class.
+- **An `npt == 0` entry is a NEGATIVE cache hit** ("walked, nothing of this node
+  is in this window"), so a trace zoomed off-screen does not re-walk its samples
+  on every tick.
+- **The overlay stroke is clipped to the plot box** (`XSetClipRectangles` on
+  `gc_hilight`, released after). The envelope's y values are `S_Y()` of real
+  samples, clamped only to the 16-bit `XPoint` range — the real trace is
+  confined by `draw_graph`'s `bbox(SET)`, and this overlay is painted outside
+  any such bracket. Without the clip, a trace leaving the y window is stroked
+  across its neighbours while the erase (which IS box-clamped) leaves residue.
+- **The erase is a WHOLE PASS before the paint pass**, not per entry: the erase
+  is a copy-back over a bbox, so an interleaved loop lets entry k+1 wipe entry
+  k wherever the bboxes overlap — i.e. whenever two traces of one strip are
+  highlighted.
+- **An ordinary (non-animation) overlay paint invalidates
+  `net_hilight_anim_sig`**, mirroring `draw_hilight_net`. It cannot be left to
+  that function: it returns early on `!xctx->hilight_nets`, and a viewer has
+  none — the same shape as the two gate terms.
+- **`undo`/`redo` DROP the set** rather than carrying it. D4 keeps it out of the
+  undo unit, but the snapshot being applied is a different graph list, so a
+  surviving `(gi, ni)` would paint the wrong trace. Same call `restore` makes.
+- **`wviewer::apply_style_traces` logs `net_hilight_style_index_for <row>`
+  before the set line**, so a replay installs the ad-hoc style before the index
+  that names it is used (the `apply_hilight` precedent).
+- **`clear_graph_traces` drops the emptied strip's entries** — it is the ASE
+  auto-plot rebuild's entry point, so it runs on every simulation run.
+- **§8's split rule is implemented via the SHIPPED PURE `target_after_split`**
+  for every strip other than the split one; the split strip's node *k* lands on
+  strip `src + k` at node 0.
+
+### 13.3 Known limits (not defects, stated so nobody re-derives them)
+
+- The overlay is not in any export, by construction (window-only). §11 keeps
+  that deferred.
+- `gr->dataset` is not honoured by the envelope walk — it is not honoured by
+  `graph_point_at` either, which §5.2 named as the template. The two agree.
+- The erase transiently clears other window-only chrome inside its bbox — today
+  the snap diamond, which repaints on the next motion event. §5.5, and the
+  guide says so.
+- The marching phase follows the ENVELOPE's arc length. §5.5.
+- Cross-probe to the schematic net is D3/§11 and is not implemented.

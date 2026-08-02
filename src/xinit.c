@@ -521,6 +521,11 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->fly_last_net);
   my_free(_ALLOC_ID_, &xctx->fly_seg);
   my_free(_ALLOC_ID_, &xctx->fly_hub_mem);   /* H2 hub-cluster member cache */
+  wave_hilight_cache_free();  /* trace-highlight envelopes (the feature's only malloc).
+                               * delete_schematic_data() runs clear_drawing() first, which
+                               * already freed them, so this is normally a no-op -- but
+                               * free_xschem_data is also reached from the scratch-context
+                               * path, and my_free tolerates a NULL. */
   for(i=0;i<CADMAXHIER; ++i) {
     if(xctx->portmap[i].table) str_hash_free(&xctx->portmap[i]);
     if(xctx->sch[i]) my_free(_ALLOC_ID_, &xctx->sch[i]);
@@ -690,6 +695,13 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
    * surviving arm would shrink whatever traces land at those indices in the NEW
    * document. The pair arrays need no clearing: graph_preview_n bounds them. */
   xctx->graph_preview_n = 0;
+  /* trace highlights (doc/claude/specs/wave_trace_hilight.md §4.2). 0 IS "no
+   * trace highlighted" and the my_calloc already covers it -- written
+   * explicitly anyway, beside the marker/preview state it belongs with, so a
+   * future non-zero default cannot slip in silently. The three pair arrays and
+   * the envelope cache need no clearing: wave_hilight_n bounds the first, and
+   * every cache slot's `valid` starts 0 with a NULL `pt`. */
+  xctx->wave_hilight_n = 0;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;

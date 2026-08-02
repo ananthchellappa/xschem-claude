@@ -636,8 +636,18 @@ proc net_hilight_style_show {} {
 # NOTE: the named-net form works for any table size; the current-selection form relies on
 # 'xschem set hilight_color', which clamps the index to < cadlayers, so it is reliable only while
 # the table has fewer than cadlayers (~20) rows -- pass net names explicitly for larger tables.
-proc net_hilight_apply {styledef args} {
-  global net_hilight_style incr_hilight
+# THE DEDUP-OR-APPEND HALF, on its own: install a literal style row into the table (reusing an
+# identical existing row, so repeated calls do not grow it) and return its INDEX, applying it to
+# nothing. Factored out of net_hilight_apply below, which is unchanged in behaviour and still the
+# entry point for nets -- the split exists because a consumer that applies the style ITSELF must
+# not be forced through either of net_hilight_apply's two application arms. The waveform viewer's
+# ad-hoc trace-highlight form (wviewer::apply_style_traces) is the first such consumer: its
+# selection is trace nodes, not nets, and the current-selection arm below would additionally push
+# the index through `xschem set hilight_color`, which CLAMPS anything >= cadlayers to 4 -- and an
+# ad-hoc style is always past cadlayers, because the default table already holds one row per active
+# layer. See doc/claude/specs/wave_trace_hilight.md §7.2.
+proc net_hilight_style_index_for {styledef} {
+  global net_hilight_style
   set want [net_hilight_style_norm $styledef 0]
   set t [net_hilight_style_current]
   set idx -1
@@ -650,6 +660,12 @@ proc net_hilight_apply {styledef args} {
     set net_hilight_style $t
     xschem update_net_hilight_style
   }
+  return $idx
+}
+
+proc net_hilight_apply {styledef args} {
+  global incr_hilight
+  set idx [net_hilight_style_index_for $styledef]
   if {[llength $args]} {
     # Batch the cross-window descend-child sync: without this each net would rebuild+repaint every
     # linked descend window (M nets -> M child repaints, a visible stall). Suspend the per-net sync,

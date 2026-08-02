@@ -471,6 +471,20 @@ typedef int Tcl_Size;
  * graph_preview_set` and never needs the cap (the GRAPH_MARKER_MAX_SEL rule). */
 #define GRAPH_MAX_PREVIEW_WAVES  64
 
+/* NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+ * (doc/claude/specs/wave_trace_hilight.md). How many traces of a window can
+ * carry a highlight style at once. A trace is a polyline with no junctions and
+ * no direction, so the whole net-highlight vocabulary -- colour, width, dash,
+ * blink, marching ants -- applies to it unchanged; the SET of highlighted
+ * traces lives in xctx as three parallel FIXED arrays (the
+ * GRAPH_MARKER_MAX_SEL rule: xctx is reset, never freed, at clear_drawing()
+ * and alloc_xschem_data(), and a pointer would add a free path for nothing).
+ * 16 is the user-facing cap the viewer refuses past, with one CIW line.
+ * MIRRORED IN TCL: tests/headless/test_wave_hilight.tcl asserts the refusal at
+ * exactly this number, and reads it out of this header rather than freezing a
+ * copy (landmine 45(a): a value copied to a second seam drifts silently). */
+#define GRAPH_MAX_HILIGHT_WAVES  16
+
 /* Axis-region drag zoom (issue 0190,
  * doc/claude/specs/waveform_viewer_modes.md §17). Which axis-number margin of a
  * strip a canvas pixel is in -- the BOTTOM margin owns X, the LEFT margin owns
@@ -1257,6 +1271,54 @@ typedef struct {
                      * (landmine 11: gr is the shared xctx->graph_struct). */
 } Graph_ctx;
 
+/* ONE CACHED TRACE ENVELOPE (doc/claude/specs/wave_trace_hilight.md §5.2).
+ *
+ * The whole point of the trace-highlight feature is that an ANIMATED frame
+ * costs the same on a 200-sample trace and on a 200 000-sample one. That is
+ * only true if the frame never walks samples, so the overlay does not stroke
+ * the real polyline: it strokes a MIN/MAX ENVELOPE at one screen column per
+ * pixel of the plot box, built once and cached. On a dense trace that
+ * reproduces the same solid band the real draw produces; on a sparse one
+ * (fewer samples than columns) it degenerates to the samples themselves and is
+ * exact. Either way it is <= 2 * plotbox_width_px points.
+ *
+ * `pt` is the ONLY malloc in this feature. It is freed by
+ * wave_hilight_cache_free(), called from clear_drawing() (actions.c) and from
+ * free_xschem_data() (xinit.c). Losing the cache is a REBUILD, never a
+ * behaviour change -- which is why the key can be conservative.
+ *
+ * THE KEY is everything a rebuild would depend on: the trace identity, the
+ * data window, the plot box in screen pixels, the raw's identity+shape (a
+ * `raw clear` + reload can change nvars/npoints under an unchanged (gi, ni),
+ * and neither reset site fires for that) -- and THE RECT'S WHOLE `prop_ptr`.
+ * That last one is not laziness: `node`, `sweep`, `%N`, `rawfile`, `sim_type`,
+ * `digital`, `logx`, `logy` and `dataset` all steer the walk, they are all in
+ * that one string, and it is rewritten IN PLACE by paths that never touch this
+ * cache (`graph_add_nodes_from_list`, `edit_wave_attributes`, `setprop rect`).
+ * One strdup per cached envelope buys immunity to the whole class instead of a
+ * field-by-field list that the next token added to a graph would silently
+ * outgrow. A marching frame changes NONE of it, so a tick costs zero rebuilds.
+ *
+ * An envelope with npt == 0 is a NEGATIVE cache entry -- "walked, found nothing
+ * in this window" -- and it is a real answer, kept for the same reason the
+ * positive ones are: without it a trace zoomed off-screen would re-walk every
+ * sample on every animation tick, which is precisely the cost being avoided. */
+typedef struct {
+  int valid;                  /* 0 = empty slot (the my_calloc default) */
+  int gi, ni;                 /* rect index + NODE index this envelope is of */
+  double gx1, gx2, gy1, gy2;  /* KEY: the data window */
+  double bx1, by1, bx2, by2;  /* KEY: the plot box, SCREEN pixels */
+  char *prop;                 /* KEY: a copy of the rect's whole prop_ptr */
+  int digital, dataset;       /* decoded, for the painter (not part of the key) */
+  const void *raw;            /* KEY: raw identity ... */
+  int rawpoints, rawsets, rawvars; /* ... and its shape (the generation surrogate) */
+  XPoint *pt;                 /* the envelope, screen pixels; my_malloc'd */
+  int npt;                    /* points in use */
+  int alloc;                  /* points allocated */
+  int painted;                /* 1 while the overlay's pixels are on the window */
+  int px1, py1, px2, py2;     /* and the bbox they occupy, for the copy-back erase */
+} WaveHilightEnv;
+
 /* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
  * graph rect's `markers` prop token, one record per line, fields in this order.
  * x/y are the UNSCALED sample values -- never mylog10()'ed even on a log axis,
@@ -1802,6 +1864,37 @@ typedef struct {
   int graph_preview_set_gi[GRAPH_MAX_PREVIEW_WAVES];   /* the WHOLE carried set, as */
   int graph_preview_set_wave[GRAPH_MAX_PREVIEW_WAVES]; /* (gi, node) pairs, HEAD FIRST */
   int graph_preview_n;        /* 0 <=> graph_preview_scale == 0.0 */
+  /* NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+   * (doc/claude/specs/wave_trace_hilight.md §4.2). The SET of highlighted
+   * traces of this window, as (rect index, NODE index, style index) triples --
+   * three parallel FIXED arrays, never pointers, for exactly the reason
+   * graph_marker_sel_set and graph_preview_set_* are (landmine 46(b)): xctx is
+   * reset, not freed, so a pointer would add a free path to clear_drawing() for
+   * nothing. `ni` is a NODE index, not a model trace index (landmine 34).
+   *
+   * SESSION-ONLY VIEW STATE (D4): no prop token, no undo point, not in a
+   * snapshot. The AUTHORITY is a per-window Tcl array (wviewer's `wavehl`),
+   * because wviewer::regenerate runs `xschem clear_drawing` -- and a plain
+   * window RESIZE calls it (landmine 50) -- so a set held only here would
+   * vanish on a resize. regenerate re-applies it to the fresh rects.
+   *
+   * ONE WRITER (wave_hilight_write, draw.c) and ONE draw-side predicate
+   * (wave_hilight_style_of, draw.c). With a single highlighted trace a bare
+   * `gi == ... && ni == ...` comparison and the predicate agree exactly, so a
+   * missed call site is invisible to any behavioural leg -- which is why
+   * test_wave_hilight.tcl asserts the call sites at SOURCE level (the LS5/MS13
+   * idiom) and plants TWO highlighted traces wherever it can.
+   * The two document-lifetime resets are inline in clear_drawing() (actions.c)
+   * and alloc_xschem_data() (xinit.c), the gesture-state class above. */
+  int wave_hilight_gi[GRAPH_MAX_HILIGHT_WAVES];    /* rect[GRIDLAYER] index */
+  int wave_hilight_ni[GRAPH_MAX_HILIGHT_WAVES];    /* NODE index within it */
+  int wave_hilight_style[GRAPH_MAX_HILIGHT_WAVES]; /* net_hilight_style index */
+  int wave_hilight_n;         /* 0 = no trace in this window is highlighted */
+  /* the envelope cache (§5.2). Slot k is NOT bound to set entry k: it is found
+   * by (gi, ni) + the geometry key, and the whole cache is invalidated by any
+   * set write -- a rebuild costs what a fresh highlight costs anyway, and an
+   * ANIMATION frame never writes the set, which is the case that must be free. */
+  WaveHilightEnv wave_hilight_env[GRAPH_MAX_HILIGHT_WAVES];
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
@@ -2081,6 +2174,47 @@ extern int  wave_is_hilighted(Graph_ctx *gr, int wcnt);
  *                       armed, so at rest it costs one compare. */
 extern void graph_preview_arm(const int *gis, const int *waves, int n, double scale);
 extern int  graph_preview_has(int gi, int wcnt);
+/* NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+ * (doc/claude/specs/wave_trace_hilight.md). Same one-writer/one-predicate
+ * discipline as the two sets above, for the same measured reason: with ONE
+ * highlighted trace a bare `gi == .. && ni == ..` and the predicate agree
+ * exactly, so a missed site is invisible behaviourally.
+ *   wave_hilight_write     THE ONE WRITER. Copies at most
+ *                          GRAPH_MAX_HILIGHT_WAVES (gi, ni, style) triples,
+ *                          drops negatives, dedupes on (gi, ni) keeping the LAST
+ *                          style given, sets the count -- and invalidates the
+ *                          envelope cache, so a stale envelope can never outlive
+ *                          the entry it belonged to.
+ *   wave_hilight_set       add / re-style / (style < 0) remove ONE trace.
+ *                          Returns 1 when the set changed, 0 otherwise (an
+ *                          unknown trace to remove, or the cap already full).
+ *   wave_hilight_clear     drop every entry of graph `gi`, or ALL for gi < 0.
+ *                          Returns how many entries went.
+ *   wave_hilight_style_of  THE ONE DRAW/QUERY-SIDE TEST: the style index of
+ *                          (gi, ni), or -1. 0 immediately when nothing is
+ *                          highlighted, so at rest it costs one compare.
+ *   wave_hilight_points    how many points the envelope of (gi, ni) holds, 0
+ *                          when there is no envelope to have. The seam a
+ *                          headless leg uses to assert that decimation really
+ *                          happened -- so it BUILDS one when the cache has none
+ *                          (the paint path that would fill it is has_x-gated,
+ *                          and a pure cache read would answer 0 forever under
+ *                          --nogui), and it goes through the SAME keyed lookup
+ *                          the painter does, never a looser (gi, ni)-only one.
+ *   wave_hilight_cache_free  free every cached envelope (clear_drawing,
+ *                          free_xschem_data). Losing the cache is a rebuild.
+ *   draw_wave_hilight      THE OVERLAY PAINTER, window-only chrome. `erase`
+ *                          copies each entry's previous bbox back from
+ *                          save_pixmap first -- that is the standalone
+ *                          animation frame; a frame that went through draw()
+ *                          passes 0, because the region was just repainted. */
+extern int  wave_hilight_write(const int *gis, const int *nis, const int *styles, int n);
+extern int  wave_hilight_set(int gi, int ni, int style);
+extern int  wave_hilight_clear(int gi);
+extern int  wave_hilight_style_of(int gi, int ni);
+extern int  wave_hilight_points(int gi, int ni);
+extern void wave_hilight_cache_free(void);
+extern void draw_wave_hilight(int erase);
 /* Which LEGEND entry of graph `i` is under the CANVAS PIXEL (px, py)? The NODE
  * index, or -1. Fails closed. doc/claude/issues/0175-*.md D5. */
 extern int  graph_legend_at(int i, double px, double py);

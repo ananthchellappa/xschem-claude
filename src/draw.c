@@ -2988,6 +2988,138 @@ int graph_preview_has(int gi, int wcnt)
   return 0;
 }
 
+/* --- NET-HIGHLIGHT STYLES ON WAVEFORM TRACES -------------------------------
+ * doc/claude/specs/wave_trace_hilight.md. A trace is a polyline with no
+ * junctions and no direction, so the whole net-highlight vocabulary applies to
+ * it unchanged. The SET of highlighted traces is (gi, ni, style) triples in
+ * xctx (xschem.h), with the storage and the discipline of graph_marker_sel_set
+ * and graph_preview_set_*: FIXED arrays, ONE writer, ONE predicate.
+ *
+ * The highlight is an OVERLAY (D2): the trace is drawn normally, in its palette
+ * colour, and the style is stroked ON TOP. That is what keeps the legend colour
+ * meaningful AND what makes the cheap animation frame possible -- the base draw
+ * path is never touched, so the overlay can be erased with one XCopyArea
+ * instead of a redraw. */
+
+/* Free every cached envelope. Losing the cache is a REBUILD, never a behaviour
+ * change, so this is safe to call at any time and any number of times.
+ * my_free() NULLs its argument, so a second call is a no-op. */
+void wave_hilight_cache_free(void)
+{
+  int k;
+  if(!xctx) return;
+  for(k = 0; k < GRAPH_MAX_HILIGHT_WAVES; ++k) {
+    WaveHilightEnv *e = &xctx->wave_hilight_env[k];
+    if(e->pt) my_free(_ALLOC_ID_, &e->pt);
+    if(e->prop) my_free(_ALLOC_ID_, &e->prop);
+    e->npt = e->alloc = 0;
+    e->valid = 0;
+    e->painted = 0;
+  }
+}
+
+/* THE WRITER. Copies at most GRAPH_MAX_HILIGHT_WAVES triples, dropping a
+ * negative gi/ni/style and de-duplicating on (gi, ni) with the LAST style given
+ * winning, then sets the count -- together, so nothing can drift.
+ *
+ * It also drops the whole envelope cache. That is deliberate and it is free
+ * where it matters: an ANIMATION frame never writes the set (which is the case
+ * that must cost nothing), while a set change is a fresh highlight that would
+ * have to build its envelope anyway. Keying cache slots to set entries instead
+ * would buy nothing and would need its own invalidation rules.
+ * Returns the resulting count. */
+int wave_hilight_write(const int *gis, const int *nis, const int *styles, int n)
+{
+  int k, w = 0;
+  if(!xctx) return 0;
+  for(k = 0; k < n && w < GRAPH_MAX_HILIGHT_WAVES; k++) {
+    int j, dup = -1;
+    if(!gis || !nis || !styles) break;
+    if(gis[k] < 0 || nis[k] < 0 || styles[k] < 0) continue;
+    for(j = 0; j < w; j++) {
+      if(xctx->wave_hilight_gi[j] == gis[k] && xctx->wave_hilight_ni[j] == nis[k]) { dup = j; break; }
+    }
+    if(dup >= 0) { xctx->wave_hilight_style[dup] = styles[k]; continue; }
+    xctx->wave_hilight_gi[w] = gis[k];
+    xctx->wave_hilight_ni[w] = nis[k];
+    xctx->wave_hilight_style[w] = styles[k];
+    w++;
+  }
+  xctx->wave_hilight_n = w;
+  wave_hilight_cache_free();
+  return w;
+}
+
+/* Add, re-style, or (style < 0) REMOVE one trace. 1 when the set changed.
+ * Routed through the writer so the cache invalidation has one home. */
+int wave_hilight_set(int gi, int ni, int style)
+{
+  int gis[GRAPH_MAX_HILIGHT_WAVES], nis[GRAPH_MAX_HILIGHT_WAVES];
+  int sty[GRAPH_MAX_HILIGHT_WAVES];
+  int k, n = 0, hit = 0;
+  if(!xctx || gi < 0 || ni < 0) return 0;
+  for(k = 0; k < xctx->wave_hilight_n; ++k) {
+    if(xctx->wave_hilight_gi[k] == gi && xctx->wave_hilight_ni[k] == ni) {
+      hit = 1;
+      if(style < 0) continue;                 /* the removal: simply not copied */
+      if(xctx->wave_hilight_style[k] == style) return 0; /* already exactly this */
+      gis[n] = gi; nis[n] = ni; sty[n] = style; n++;
+      continue;
+    }
+    gis[n] = xctx->wave_hilight_gi[k];
+    nis[n] = xctx->wave_hilight_ni[k];
+    sty[n] = xctx->wave_hilight_style[k];
+    n++;
+  }
+  if(!hit) {
+    if(style < 0) return 0;                   /* nothing to remove */
+    if(n >= GRAPH_MAX_HILIGHT_WAVES) return 0; /* the cap: refuse, do not evict */
+    gis[n] = gi; nis[n] = ni; sty[n] = style; n++;
+  }
+  wave_hilight_write(gis, nis, sty, n);
+  return 1;
+}
+
+/* Drop every entry of graph `gi`, or ALL of them for gi < 0. Returns how many
+ * entries went. Routed through the writer, like wave_hilight_set. */
+int wave_hilight_clear(int gi)
+{
+  int gis[GRAPH_MAX_HILIGHT_WAVES], nis[GRAPH_MAX_HILIGHT_WAVES];
+  int sty[GRAPH_MAX_HILIGHT_WAVES];
+  int k, n = 0, was;
+  if(!xctx) return 0;
+  was = xctx->wave_hilight_n;
+  if(was <= 0) return 0;
+  for(k = 0; k < was; ++k) {
+    if(gi < 0 || xctx->wave_hilight_gi[k] == gi) continue;
+    gis[n] = xctx->wave_hilight_gi[k];
+    nis[n] = xctx->wave_hilight_ni[k];
+    sty[n] = xctx->wave_hilight_style[k];
+    n++;
+  }
+  if(n == was) return 0;
+  wave_hilight_write(gis, nis, sty, n);
+  return was - n;
+}
+
+/* THE ONE DRAW/QUERY-SIDE TEST: the style index of NODE `ni` of graph `gi`, or
+ * -1 when that trace carries no highlight. The graph_preview_has shape, and for
+ * the same reason -- a surviving bare `gi == .. && ni == ..` comparison is
+ * invisible to any leg that highlights a SINGLE trace, so the count is asserted
+ * at source level. The empty-set test comes first so the resting cost is one
+ * compare. */
+int wave_hilight_style_of(int gi, int ni)
+{
+  int k;
+  if(!xctx || gi < 0 || ni < 0) return -1;
+  if(xctx->wave_hilight_n <= 0) return -1;
+  for(k = 0; k < xctx->wave_hilight_n; ++k) {
+    if(xctx->wave_hilight_gi[k] == gi && xctx->wave_hilight_ni[k] == ni)
+      return xctx->wave_hilight_style[k];
+  }
+  return -1;
+}
+
 /* Parse graph rect `i`'s selection into `out` (at most `max` entries, ascending,
  * de-duplicated); returns how many were written, 0 for "nothing selected".
  *
@@ -5920,6 +6052,520 @@ int graph_wave_at(int i, double px, double py, double tol)
 int graph_near_wave(int i, double px, double py, double tol)
 {
   return graph_wave_at(i, px, py, tol) >= 0 ? 1 : 0;
+}
+
+/* --- the trace-highlight ENVELOPE (wave_trace_hilight.md §5.2) --------------
+ *
+ * THE COST CLAIM IS THE FEATURE. A blinking or marching highlight must cost the
+ * same on a 200-sample trace and on a 200 000-sample one, so the overlay does
+ * NOT stroke the real polyline: it strokes a min/max envelope at ONE SCREEN
+ * COLUMN PER PIXEL of the plot box, built once and cached.
+ *
+ *   for each screen column x in [plotbox_x1 .. plotbox_x2]:
+ *       emit (x, ymin of the samples in that column)
+ *       emit (x, ymax of them)      -- only when it differs from ymin
+ *
+ * <= 2 * plotbox_width_px points regardless of sample count. On a dense trace
+ * that reproduces the same solid band the real draw produces (which is why the
+ * user cannot catch it out); on a SPARSE one -- fewer samples than columns --
+ * every column holds one sample, ymax == ymin, and the envelope degenerates to
+ * the samples themselves, so it is exact there too. `xschem get
+ * wave_hilight_points` exposes the count precisely so a headless leg can assert
+ * both halves of that.
+ *
+ * The walk below is graph_point_at()'s, not a fresh one, and the three rules it
+ * carries are not optional:
+ *   - CONSUME THE SWEEP TOKEN BEFORE ANY `continue` (landmine 38): `sweep=` is
+ *     routinely shorter than `node=` and carries its last entry forward, so a
+ *     skip above the pull silently measures against the wrong x column;
+ *   - switch to the graph's own `rawfile`/`sim_type` ONCE, above the node loop,
+ *     and unwind only if the switch TOOK (landmine 40) -- mode 5 is a SWAP, not
+ *     a stack pop, so an unpaired call repoints the session's current raw;
+ *   - bracket graph_flags 128|256 around setup_graph_data (landmine 37): this is
+ *     a query and must not leave the session describing another strip's
+ *     hcursors.
+ */
+
+/* Find the cache slot holding (gi, ni)'s envelope for exactly this geometry, or
+ * NULL. The key is everything a rebuild would depend on -- a marching frame
+ * changes none of it, which is what makes a tick cost zero rebuilds. */
+static WaveHilightEnv *wave_hilight_cache_find(int gi, int ni, Graph_ctx *gr,
+                                               double bx1, double by1, double bx2, double by2,
+                                               const char *prop)
+{
+  int k;
+  for(k = 0; k < GRAPH_MAX_HILIGHT_WAVES; ++k) {
+    WaveHilightEnv *e = &xctx->wave_hilight_env[k];
+    if(!e->valid || e->gi != gi || e->ni != ni) continue;
+    if(e->gx1 != gr->gx1 || e->gx2 != gr->gx2) continue;
+    if(e->gy1 != gr->gy1 || e->gy2 != gr->gy2) continue;
+    if(e->bx1 != bx1 || e->by1 != by1 || e->bx2 != bx2 || e->by2 != by2) continue;
+    /* the rect's WHOLE prop string: node / sweep / %N / rawfile / sim_type /
+     * digital / logx / logy / dataset all steer the walk and all live in it */
+    if(!e->prop || !prop || strcmp(e->prop, prop)) continue;
+    if(e->raw != (const void *)xctx->raw) continue;
+    if(!xctx->raw) continue;
+    if(e->rawpoints != xctx->raw->allpoints || e->rawsets != xctx->raw->datasets ||
+       e->rawvars != xctx->raw->nvars) continue;
+    return e;
+  }
+  return NULL;
+}
+
+/* The slot a rebuild should land in: the one already claimed by (gi, ni) if
+ * there is one (its geometry key just went stale), else a free one, else slot 0.
+ * The cache has exactly as many slots as the set has entries, so "else slot 0"
+ * is unreachable while wave_hilight_write owns the count -- it is the fail-safe,
+ * not the policy. */
+static WaveHilightEnv *wave_hilight_cache_slot(int gi, int ni)
+{
+  int k;
+  for(k = 0; k < GRAPH_MAX_HILIGHT_WAVES; ++k) {
+    WaveHilightEnv *e = &xctx->wave_hilight_env[k];
+    if(e->valid && e->gi == gi && e->ni == ni) return e;
+  }
+  for(k = 0; k < GRAPH_MAX_HILIGHT_WAVES; ++k) {
+    if(!xctx->wave_hilight_env[k].valid) return &xctx->wave_hilight_env[k];
+  }
+  return &xctx->wave_hilight_env[0];
+}
+
+/* Build (or reuse) the envelope of NODE `ni` of graph `gi`. Returns the cache
+ * entry, or NULL when the trace cannot be walked at all -- no raw, an off-screen
+ * or digital strip, a `rawfile=` that does not resolve, an unknown vector.
+ * `gr_out` (may be NULL) receives the local Graph_ctx, which the caller needs
+ * for the plot-box clamp. */
+static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  WaveHilightEnv *e;
+  xRect *r;
+  char *node = NULL, *sweep = NULL;
+  char *saven, *saves, *nptr, *sptr;
+  const char *ntok, *stok;
+  char *ntok_copy = NULL;
+  char *express = NULL;
+  char *custom_rawfile = NULL;
+  char *sim_type = NULL;
+  const char *ptr;
+  short *cmin = NULL, *cmax = NULL;
+  char *cseen = NULL;
+  int sweep_idx = 0, idx = -1, expression = 0, autoload;
+  int node_dataset = -1;
+  int wcnt = -1, found = 0;
+  int valid_rawfile = 1, switched = 0, saveflags;
+  int ncol, col, ix1, ix2, iy1, iy2, npt = 0;
+  int keypoints = 0, keysets = 0, keyvars = 0;
+  const void *keyraw = NULL;
+  double bx1, by1, bx2, by2, t, start, end;
+
+  if(!xctx) return NULL;
+  if(gi < 0 || gi >= xctx->rects[GRIDLAYER]) return NULL;
+  r = &xctx->rect[GRIDLAYER][gi];
+  if(!(r->flags & 1)) return NULL;
+  if(!xctx->raw || sch_waves_loaded() == -1) return NULL;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  /* landmine 37: this is a QUERY, so the hcursor bits setup_graph_data rewrites
+   * from the rect must be put back. */
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(gi, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return NULL;  /* off-screen: no transform */
+  if(gr->digital) return NULL;                       /* D8: analog polylines only */
+  if(gr_out) *gr_out = gr_ctx;
+
+  /* the plot box in SCREEN pixels. gr->cy is NEGATIVE (landmine 3), so S_Y(gy1)
+   * and S_Y(gy2) come back in the opposite order to S_X(gx1)/S_X(gx2) -- both
+   * pairs are normalised rather than assumed, exactly as graph_plotbox_at does. */
+  bx1 = S_X(gr->gx1); bx2 = S_X(gr->gx2);
+  by1 = S_Y(gr->gy1); by2 = S_Y(gr->gy2);
+  if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
+  if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
+
+  e = wave_hilight_cache_find(gi, ni, gr, bx1, by1, bx2, by2, r->prop_ptr);
+  if(e) return e->npt > 0 ? e : NULL;  /* the whole point: no walk. npt == 0 is a
+                                        * NEGATIVE hit -- "walked, nothing here" */
+
+  ix1 = (int)floor(bx1); ix2 = (int)ceil(bx2);
+  iy1 = (int)floor(by1); iy2 = (int)ceil(by2);
+  if(ix2 < ix1) return NULL;
+  ncol = ix2 - ix1 + 1;
+  if(ncol <= 0 || ncol > 100000) return NULL;        /* a degenerate transform */
+
+  cmin = my_malloc(_ALLOC_ID_, (size_t)ncol * sizeof(short));
+  cmax = my_malloc(_ALLOC_ID_, (size_t)ncol * sizeof(short));
+  cseen = my_calloc(_ALLOC_ID_, (size_t)ncol, sizeof(char));
+  if(!cmin || !cmax || !cseen) {
+    if(cmin) my_free(_ALLOC_ID_, &cmin);
+    if(cmax) my_free(_ALLOC_ID_, &cmax);
+    if(cseen) my_free(_ALLOC_ID_, &cseen);
+    return NULL;
+  }
+
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  else if(autoload == 1) autoload = 33;
+
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr,"node", 0));
+  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr,"sweep", 0));
+  ptr = get_tok_value(r->prop_ptr,"rawfile", 0);
+  if(!ptr[0]) {
+    if(xctx->raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, xctx->raw->rawfile);
+    else my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
+  } else {
+    my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
+  }
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
+
+  /* landmine 40: `rawfile`/`sim_type` are GRAPH-level tokens, so the switch is
+   * made ONCE here, and unwound below only when it actually took. */
+  if(custom_rawfile[0]) {
+    if(extra_rawfile(autoload, custom_rawfile,
+       sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
+       -1.0, -1.0) == 0) {
+      valid_rawfile = 0;
+    } else {
+      switched = 1;
+    }
+  }
+
+  start = (gr->gx1 <= gr->gx2) ? gr->gx1 : gr->gx2;
+  end   = (gr->gx1 <= gr->gx2) ? gr->gx2 : gr->gx1;
+
+  nptr = node;
+  sptr = sweep;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    char *nd = NULL;
+    wcnt++;
+    /* landmine 38: the sweep token and the strtok seeds are consumed for EVERY
+     * entry, above the bus skip and above the node restriction below. */
+    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
+    nptr = sptr = NULL;
+    if(strstr(ntok, ",")) {
+      if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* D8: a bus is not a polyline */
+    }
+    if(stok && stok[0]) {
+      sweep_idx = get_raw_index(stok, NULL);
+      if(sweep_idx == -1) sweep_idx = 0;
+    }
+    if(wcnt != ni) continue;
+    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
+    if(nd[0]) {
+      int pos = 1;
+      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+      if(pos == 2) node_dataset = atoi(nd);
+      else node_dataset = -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
+    } else {
+      node_dataset = -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    }
+    my_free(_ALLOC_ID_, &nd);
+
+    idx = -1;
+    expression = 0;
+    if(xctx->raw->values) {
+      if(strstr(ntok_copy, ";")) {
+        my_strdup2(_ALLOC_ID_, &express, find_nth(ntok_copy, ";", "\"", 0, 2));
+      } else {
+        my_strdup2(_ALLOC_ID_, &express, ntok_copy);
+      }
+      if(strpbrk(express, " \n\t")) expression = 1;
+    }
+    if(expression) idx = xctx->raw->nvars; /* the scratch column (values has nvars+1) */
+    else if(express) idx = get_raw_index(express, NULL);
+
+    if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
+      int p, dset, ofs = 0, ofs_end;
+      double xx, yy;
+      for(dset = 0; dset < xctx->raw->datasets; dset++) {
+        SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
+        SPICE_DATA *gvy;
+        ofs_end = ofs + xctx->raw->npoints[dset];
+        if(node_dataset != -1 && node_dataset != dset) { ofs = ofs_end; continue; }
+        /* plot_raw_custom_data() returns -1 without touching the scratch column,
+         * so a malformed RPN must skip the dataset rather than measure whatever
+         * the previous expression left there. */
+        if(expression &&
+           plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
+          ofs = ofs_end;
+          continue;
+        }
+        gvy = xctx->raw->values[idx];
+        for(p = ofs; p < ofs_end; p++) {
+          double sx, sy;
+          short sh;
+          if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
+          if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
+          if(xx < start || xx > end) continue;     /* the draw's own x window */
+          sx = S_X(xx);
+          sy = S_Y(yy);
+          if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) continue;
+          col = (int)floor(sx) - ix1;
+          if(col < 0) col = 0;
+          if(col >= ncol) col = ncol - 1;
+          /* clamp to the 16-bit signed short XPoint carries, exactly as
+           * draw_graph_points does -- an out-of-range value would WRAP. */
+          sh = (short)CLIP(sy, -30000.0, 30000.0);
+          if(!cseen[col]) { cmin[col] = cmax[col] = sh; cseen[col] = 1; }
+          else { if(sh < cmin[col]) cmin[col] = sh; if(sh > cmax[col]) cmax[col] = sh; }
+          found = 1;
+        }
+        ofs = ofs_end;
+      }
+    }
+    if(express) my_free(_ALLOC_ID_, &express);
+    break;                                  /* the restricted walk found its node */
+  }
+
+  /* The KEY's raw identity is captured HERE, while the graph's own `rawfile=`
+   * is still switched in, so it describes the data actually walked rather than
+   * whatever the session happens to be pointing at afterwards. */
+  keyraw    = (const void *)xctx->raw;
+  keypoints = xctx->raw ? xctx->raw->allpoints : 0;
+  keysets   = xctx->raw ? xctx->raw->datasets  : 0;
+  keyvars   = xctx->raw ? xctx->raw->nvars     : 0;
+  /* landmine 40 again: restore ONLY if the switch actually took. */
+  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &sweep);
+
+  /* A slot is claimed and keyed EVEN WHEN NOTHING WAS FOUND. That npt == 0
+   * entry is a NEGATIVE cache hit -- "walked, no sample of this node is in this
+   * window" -- and it is what stops a trace zoomed off-screen, or one whose
+   * vector the raw does not know, from re-walking every sample on every
+   * animation tick. Without it the cheap frame is only cheap for traces that
+   * happen to be visible, which is not the guarantee. */
+  e = wave_hilight_cache_slot(gi, ni);
+  if(found) {
+    if(e->alloc < 2 * ncol) {
+      if(e->pt) my_free(_ALLOC_ID_, &e->pt);
+      e->pt = my_malloc(_ALLOC_ID_, (size_t)(2 * ncol) * sizeof(XPoint));
+      e->alloc = e->pt ? 2 * ncol : 0;
+    }
+    if(e->pt) {
+      for(col = 0; col < ncol; ++col) {
+        if(!cseen[col]) continue;
+        e->pt[npt].x = (short)CLIP((double)(ix1 + col), -30000.0, 30000.0);
+        e->pt[npt].y = cmin[col];
+        npt++;
+        /* ONE point where min == max: that is what makes a SPARSE trace's
+         * envelope exactly its samples, which WD2 asserts as an exact count. */
+        if(cmax[col] != cmin[col]) {
+          e->pt[npt].x = e->pt[npt - 1].x;
+          e->pt[npt].y = cmax[col];
+          npt++;
+        }
+      }
+    }
+  }
+  my_free(_ALLOC_ID_, &cmin);
+  my_free(_ALLOC_ID_, &cmax);
+  my_free(_ALLOC_ID_, &cseen);
+
+  e->npt = npt;
+  e->gi = gi; e->ni = ni;
+  e->gx1 = gr->gx1; e->gx2 = gr->gx2; e->gy1 = gr->gy1; e->gy2 = gr->gy2;
+  e->bx1 = bx1; e->by1 = by1; e->bx2 = bx2; e->by2 = by2;
+  e->digital = gr->digital; e->dataset = gr->dataset;
+  my_strdup2(_ALLOC_ID_, &e->prop, r->prop_ptr ? r->prop_ptr : "");
+  e->raw = keyraw;
+  e->rawpoints = keypoints;
+  e->rawsets = keysets;
+  e->rawvars = keyvars;
+  e->valid = 1;
+  dbg(1, "wave_hilight_envelope(): gi=%d ni=%d cols=%d -> %d points\n", gi, ni, ncol, npt);
+  return npt > 0 ? e : NULL;
+}
+
+/* How many points the envelope of (gi, ni) holds; 0 when there is no envelope
+ * to have -- a bad index, a non-graph rect, no loaded raw, an off-screen strip,
+ * a digital strip, a bus entry, or a vector the raw does not know.
+ *
+ * Backs `xschem get wave_hilight_points`, and it is THE COST SEAM: it is what
+ * lets a leg assert that a >= 50 000-sample trace really decimated to <= 2W
+ * points and that a sparse one did not decimate at all. It therefore BUILDS the
+ * envelope when the cache does not hold one -- because the paint path that
+ * would otherwise fill the cache is `if(!has_x) return;`, so under --nogui a
+ * pure cache read could only ever answer 0 and the whole group would pass
+ * vacuously in the arm that matters most. The build is the same one the paint
+ * does, cached identically, and no animation path ever calls this. */
+int wave_hilight_points(int gi, int ni)
+{
+  WaveHilightEnv *e;
+  if(!xctx) return 0;
+  /* Straight through the builder, with NO (gi, ni)-only pre-scan of its own: a
+   * shortcut that matched on the identity alone would answer with a count built
+   * for a data window or a raw that no longer exists -- the exact staleness the
+   * geometry key is there to prevent, reintroduced in the one function whose
+   * whole job is to report the truth. The builder's own lookup is keyed, and a
+   * hit costs one loop over 16 slots. */
+  e = wave_hilight_envelope(gi, ni, NULL);
+  return e ? e->npt : 0;
+}
+
+/* Copy one entry's previous overlay bbox back from save_pixmap, which is the
+ * whole erase (D6). The graph_snap_erase() mechanism: save_pixmap is maintained
+ * by the ordinary double-buffered draw() and the overlay is NEVER written into
+ * it (draw_pixmap is 0 for the whole cadence), so the patch underneath is always
+ * the clean plot. */
+static void wave_hilight_erase(WaveHilightEnv *e)
+{
+  int w, h;
+  if(!e->painted) return;
+  e->painted = 0;
+  if(!has_x || !xctx->save_pixmap) return;
+  w = e->px2 - e->px1 + 1;
+  h = e->py2 - e->py1 + 1;
+  if(w <= 0 || h <= 0) return;
+  MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
+              e->px1, e->py1, (unsigned int)w, (unsigned int)h, e->px1, e->py1);
+}
+
+/* THE OVERLAY PAINTER (§5.1/§5.3). Window-only chrome, stroked at the TAIL of
+ * draw() and again by the cheap animation frame.
+ *
+ * Landmine 44's rule: the "does this context have wave highlights" test lives
+ * INSIDE the drawer, never in a caller's local, or the erase paths and the paint
+ * paths drift apart. Consequence, and it is the desired one: EXPORTS never carry
+ * the overlay -- SVG/PS/PNG go through their own callers and never touch the
+ * window, the same doctrine as draw_graph bit 16.
+ *
+ * `erase` copies each entry's previous bbox back from save_pixmap first. That is
+ * the standalone animation frame; a frame that went through draw() passes 0,
+ * because the region was just repainted wholesale.
+ *
+ * Cost per animating trace per tick: one XCopyArea + one GC change + one
+ * XDrawLines of <= 2W cached points. No sample walk, no draw(), no pixmap write. */
+void draw_wave_hilight(int erase)
+{
+  int k, anim;
+  double now = 0.0;
+  int prev_pixmap, prev_window;
+  if(!has_x) return;
+  if(!xctx) return;
+  if(xctx->wave_hilight_n <= 0) return;     /* landmine 44: the test is HERE */
+
+  /* the blink/march phase is advanced ONLY in an animation frame or under the
+   * test hook, exactly as draw_hilight_net gates it -- so an ordinary redraw and
+   * every hardcopy path render the overlay steady, i.e. deterministic. */
+  anim = (xctx->in_hilight_anim_frame || xctx->net_hilight_test_active) &&
+         tclgetboolvar("net_hilight_animate");
+  if(anim) now = net_hilight_now_ms();
+  else {
+    /* An ordinary draw paints the overlay steady-ON but does not advance the
+     * blink phase, so the tick's change-detection signature is now describing a
+     * frame nobody rendered. Invalidate it, exactly as draw_hilight_net does and
+     * for exactly its reason -- otherwise a redraw that lands during an OFF
+     * phase leaves the next tick seeing a stale-matching signature, skipping,
+     * and the highlight is stuck ON.
+     * ⚠ It cannot be left to draw_hilight_net: that function opens with
+     * `if(!xctx->hilight_nets) return;`, and a waveform viewer has no
+     * highlighted NETS -- the same shape as the two gate terms in hilight.c. */
+    xctx->net_hilight_anim_sig = 0;
+  }
+
+  /* ERASE EVERY ENTRY FIRST, THEN PAINT. Not per entry: the erase is a
+   * copy-back from save_pixmap over a whole bbox, so an interleaved loop lets
+   * entry k+1's erase wipe entry k's freshly painted pixels wherever the two
+   * bboxes overlap -- which is every time two traces of the SAME strip are
+   * highlighted, i.e. the ordinary case. */
+  if(erase) {
+    for(k = 0; k < GRAPH_MAX_HILIGHT_WAVES; ++k) {
+      WaveHilightEnv *pe = &xctx->wave_hilight_env[k];
+      if(pe->painted) wave_hilight_erase(pe);
+    }
+  }
+
+  prev_pixmap = xctx->draw_pixmap;
+  prev_window = xctx->draw_window;
+  xctx->draw_pixmap = 0;   /* window only: the overlay must never enter save_pixmap,
+                            * or the copy-back erase above would restore it */
+  xctx->draw_window = 1;
+  for(k = 0; k < xctx->wave_hilight_n; ++k) {
+    WaveHilightEnv *e;
+    NetHilightStyle *st;
+    GC gc = xctx->gc_hilight;
+    XRectangle clipr;
+    int gi = xctx->wave_hilight_gi[k];
+    int ni = xctx->wave_hilight_ni[k];
+    int width, half, x, offset, size, i;
+    int mnx, mny, mxx, mxy;
+    e = wave_hilight_envelope(gi, ni, NULL);
+    if(!e || e->npt <= 0) continue;
+    st = get_hilight_style(xctx->wave_hilight_style[k]);
+    /* blink OFF this instant: the erase above already exposed the plain trace */
+    if(anim && !net_hilight_style_on_now(st, now)) continue;
+
+    width = XLINEWIDTH(xctx->lw) * ((st && st->width >= 1) ? st->width : 1);
+    XSetForeground(display, gc, get_hilight_pixel(xctx->wave_hilight_style[k]));
+    if(st && st->dash_len > 0) {
+      /* the marching phase, in the flat Xlib path's whole-pixel units and with
+       * draw_hilight_wire()'s direction correction: XSetDashes' phase advances
+       * the pattern toward the polyline START as it grows, so a march_fwd style
+       * must be fed (period - offset) to crawl the same way a wire does. */
+      double period = net_hilight_dash_period(st);
+      double off = anim ? net_hilight_march_offset(st, now) : 0.0;
+      int phase = (period > 0.0) ? (int)fmod(period - off, period) : 0;
+      XSetLineAttributes(display, gc, width, xDashType, LINECAP, LINEJOIN);
+      XSetDashes(display, gc, phase, st->dash_arr, st->dash_len);
+    } else {
+      XSetLineAttributes(display, gc, width, LineSolid, LINECAP, LINEJOIN);
+    }
+    /* CLIP TO THE PLOT BOX. The envelope's y values are S_Y() of real samples,
+     * clamped only to the 16-bit XPoint range -- so a trace that leaves the y
+     * window is stroked far outside its strip, across its neighbours. The real
+     * trace does not do that because draw_graph runs inside a bbox(SET) whose
+     * clip covers the graph; this overlay is painted at the tail of draw(),
+     * outside any such bracket, so it needs its own. It also has to match the
+     * erase, which IS clamped to the box -- an unclipped stroke with a clamped
+     * copy-back leaves permanent residue on the neighbour.
+     * The restore is XSetClipMask(None), which is exactly what set_clip_mask(END)
+     * leaves behind: the overlay is the last thing drawn either way. */
+    clipr.x = (short)floor(e->bx1);
+    clipr.y = (short)floor(e->by1);
+    clipr.width  = (unsigned short)(ceil(e->bx2) - floor(e->bx1) + 1);
+    clipr.height = (unsigned short)(ceil(e->by2) - floor(e->by1) + 1);
+    XSetClipRectangles(display, gc, 0, 0, &clipr, 1, Unsorted);
+    /* chunked at MAX_POLY_POINTS with the last point of a chunk repeated as the
+     * first of the next (landmine 16) -- an off-by-one here is a visible gap. */
+    offset = 0;
+    while(1) {
+      XPoint *pt = e->pt + offset;
+      size = e->npt - offset;
+      if(size > MAX_POLY_POINTS) size = MAX_POLY_POINTS;
+      XDrawLines(display, xctx->window, gc, pt, size, CoordModeOrigin);
+      if(offset + size >= e->npt) break;
+      offset += MAX_POLY_POINTS - 1;
+    }
+    XSetClipMask(display, gc, None);
+    /* record the painted bbox for the next frame's erase, grown by the half
+     * width the stroke spills and clamped to the plot box the envelope came
+     * from -- the erase must never restore pixels outside this strip. */
+    mnx = mxx = e->pt[0].x; mny = mxy = e->pt[0].y;
+    for(i = 1; i < e->npt; ++i) {
+      if(e->pt[i].x < mnx) mnx = e->pt[i].x;
+      if(e->pt[i].x > mxx) mxx = e->pt[i].x;
+      if(e->pt[i].y < mny) mny = e->pt[i].y;
+      if(e->pt[i].y > mxy) mxy = e->pt[i].y;
+    }
+    half = width / 2 + 2;
+    x = (int)floor(e->bx1) - half; if(mnx - half > x) x = mnx - half;
+    e->px1 = x;
+    x = (int)ceil(e->bx2) + half;  if(mxx + half < x) x = mxx + half;
+    e->px2 = x;
+    x = (int)floor(e->by1) - half; if(mny - half > x) x = mny - half;
+    e->py1 = x;
+    x = (int)ceil(e->by2) + half;  if(mxy + half < x) x = mxy + half;
+    e->py2 = x;
+    e->painted = 1;
+  }
+  xctx->draw_pixmap = prev_pixmap;
+  xctx->draw_window = prev_window;
 }
 
 /* ===========================================================================
@@ -9015,6 +9661,17 @@ void draw(void)
      * above. No-op when nothing is shown. See draw_flylines() / hover_flylines.md (Track B). */
     flyline_restamp();
     if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0); /* what = 1(clear) + 2(draw) */
+    /* THE TRACE-HIGHLIGHT OVERLAY IS PAINTED LAST, and into the WINDOW ONLY
+     * (doc/claude/specs/wave_trace_hilight.md §5.1). Last, because it is chrome
+     * on top of the plot; window-only, because that is what lets an animation
+     * frame erase it with one XCopyArea from save_pixmap instead of a redraw.
+     * `erase` is 0 here: this redraw has just repainted the whole region, so
+     * there is nothing stale to copy back. It is also what satisfies §6's
+     * "the overlay is always painted last" for the MIXED animation frame, where
+     * draw_hilight_region runs a real draw() -- this call is that re-stroke, so
+     * no separate one is owed there. No-op when this context has no wave
+     * highlights (the test is inside the drawer -- landmine 44). */
+    draw_wave_hilight(0);
   } /* if(has_x) */
 }
 

@@ -4170,6 +4170,21 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(hierarchy_modified()),TCL_VOLATILE);
           }
+          /* xschem get hilight_color -> THE CURRENT NET-HIGHLIGHT STYLE CURSOR.
+           * `xschem set hilight_color <i>` has existed forever; there was no
+           * matching read, so the only way Tcl could observe the cursor was the
+           * RETURN VALUE of `incr_hilight_color` / `decr_hilight_color` -- both
+           * of which MUTATE it. The waveform viewer's `9` needs "the current
+           * style" without moving it (it advances the cursor itself, once, after
+           * applying), and a read-modify-read round trip is neither atomic nor
+           * safe if it errors in between. Builds the table first, like its two
+           * mutating siblings, so a cold read is a real index and not 0 by
+           * default. doc/claude/specs/wave_trace_hilight.md D1. */
+          else if(!strcmp(argv[2], "hilight_color")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(!xctx->net_hilight_style || xctx->n_net_hilight_styles <= 0) build_net_hilight_styles();
+            Tcl_SetResult(interp, my_itoa(xctx->hilight_color), TCL_VOLATILE);
+          }
           break;
           case 'i':
           if(!strcmp(argv[2], "infowindow_text")) { /* ERC messages */
@@ -4626,12 +4641,71 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'w':
+          /* ---- net-highlight styles on waveform TRACES ----------------------
+           * doc/claude/specs/wave_trace_hilight.md §7.1. Three read-only
+           * getters, all FAIL SOFT (a sentinel + TCL_OK on a short or bad
+           * query, never an error): the ASE viewer wraps them in `catch` and
+           * must read a missing verb as "nothing there", never as "locked out"
+           * -- the same contract graph_marker_* and graph_axis_* carry. */
+
+          /* xschem get wave_hilights
+           * The whole set as `{gi ni style} ...` Tcl sublists, in set order;
+           * "" when no trace is highlighted. The `graph_marker list` shape
+           * rather than graph_preview_set's flat one, because a triple read
+           * back as a flat list is one transcription slip away from a silent
+           * off-by-one. */
+          if(!strcmp(argv[2], "wave_hilights")) {
+            int k;
+            Tcl_Obj *lst;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            lst = Tcl_NewListObj(0, NULL);
+            for(k = 0; k < xctx->wave_hilight_n; k++) {
+              Tcl_Obj *e = Tcl_NewListObj(0, NULL);
+              Tcl_ListObjAppendElement(interp, e, Tcl_NewIntObj(xctx->wave_hilight_gi[k]));
+              Tcl_ListObjAppendElement(interp, e, Tcl_NewIntObj(xctx->wave_hilight_ni[k]));
+              Tcl_ListObjAppendElement(interp, e, Tcl_NewIntObj(xctx->wave_hilight_style[k]));
+              Tcl_ListObjAppendElement(interp, lst, e);
+            }
+            Tcl_SetObjResult(interp, lst);
+          }
+          /* xschem get wave_hilight_at <gi> <ni>
+           * The style index of that trace, or -1. Goes through
+           * wave_hilight_style_of(), THE predicate -- a second bare comparison
+           * here is exactly the drift the source-level leg forbids. */
+          else if(!strcmp(argv[2], "wave_hilight_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 4) {
+              Tcl_SetResult(interp, my_itoa(wave_hilight_style_of(atoi(argv[3]), atoi(argv[4]))),
+                            TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            }
+          }
+          /* xschem get wave_hilight_points <gi> <ni>
+           * How many points that trace's decimated envelope holds; 0 when there
+           * is no envelope to have (bad index, non-graph rect, no raw, an
+           * off-screen or digital strip, a bus entry, an unknown vector).
+           * THE COST SEAM: it is what lets a headless leg assert that a
+           * >= 50 000-sample trace really decimated to <= 2W points and that a
+           * sparse one did not decimate at all. It BUILDS the envelope when the
+           * cache has none -- the paint path that normally fills the cache is
+           * has_x-gated, so a pure cache read would answer 0 forever under
+           * --nogui and the whole cost group would pass vacuously. */
+          else if(!strcmp(argv[2], "wave_hilight_points")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 4) {
+              Tcl_SetResult(interp, my_itoa(wave_hilight_points(atoi(argv[3]), atoi(argv[4]))),
+                            TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
           /* xschem get wave_viewer
            * per-window "this context is a waveform viewer, not a schematic" (issue
            * 0172). Set by wviewer::open; the witness a test uses to prove that a
            * viewer window is excluded from the pristine-untitled reuse path while
            * every schematic window still answers 0. */
-          if(!strcmp(argv[2], "wave_viewer")) {
+          else if(!strcmp(argv[2], "wave_viewer")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->wave_viewer != 0 ? "1" : "0", TCL_STATIC);
           } else if(!strcmp(argv[2], "wirelayer")) { /* layer used for wires */
@@ -12474,6 +12548,65 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         warning_overlapped_symbols(atoi(argv[2]));
       } else {
         warning_overlapped_symbols(0);
+      }
+    }
+    /* xschem wave_hilight <gi> <ni> <style>
+     * xschem wave_hilight -clear [<gi>]
+     *
+     * NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+     * (doc/claude/specs/wave_trace_hilight.md §7.1). THE mutation, and the
+     * replay form of the viewer's `9`/`8`/`0` keys.
+     *   <gi> <ni> <style>  1 when the set changed, 0 when it did not (that
+     *                      trace already carried exactly this style, an unknown
+     *                      trace was asked to be un-highlighted, or the
+     *                      GRAPH_MAX_HILIGHT_WAVES cap is full). `style` -1
+     *                      CLEARS that trace.
+     *   -clear [<gi>]      drop every highlight of strip <gi>, or of the whole
+     *                      window when <gi> is omitted; returns the count.
+     * Fails LOUD on a usage error (the graph_marker / graph_axis_zoom
+     * convention: a script wants a catchable error, a gesture must not raise a
+     * modal).
+     *
+     * ⚠ Deliberately NOT scheduler_readonly_reject()ed, and for exactly the
+     * reason graph_axis_zoom is not (landmine 17 names the box zoom): this is
+     * session-only VIEW state -- no prop token, no undo point, no dirty flag --
+     * the engine has always been allowed to write into a read-only rect, the
+     * ASE viewer is read-only for its whole life, and rejecting would abort
+     * every replay of the line the viewer logs. A marker is durable CONTENT and
+     * is gated; a highlight is not.
+     *
+     * It does NOT redraw: the caller owns that (wviewer::set_wave_hilights does
+     * one `xschem redraw` for the whole batch, the delete_all_markers shape).
+     * It DOES re-arm the animation tick, because a style that blinks or marches
+     * must start moving the moment it is applied and must stop the moment the
+     * last animating highlight goes. */
+    else if(!strcmp(argv[1], "wave_hilight"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem wave_hilight: usage: <gi> <ni> <style> | -clear [<gi>]",
+                      TCL_STATIC);
+        return TCL_ERROR;
+      }
+      {
+        int n;
+        if(!strcmp(argv[2], "-clear")) {
+          n = wave_hilight_clear((argc > 3) ? atoi(argv[3]) : -1);
+        } else if(argc > 4) {
+          n = wave_hilight_set(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]));
+        } else {
+          Tcl_SetResult(interp, "xschem wave_hilight: usage: <gi> <ni> <style> | -clear [<gi>]",
+                        TCL_STATIC);
+          return TCL_ERROR;
+        }
+        /* ⚠ ORDER. net_hilight_anim_update() runs `tclvareval("net_hilight_anim_update
+         * {<win>}")` per open window, and a Tcl eval OVERWRITES the interp result --
+         * the landmine-24 class, measured here: with the result set first, this verb
+         * returned the tick proc's empty answer instead of its own count, and it did so
+         * ONLY under a real DISPLAY (the fan-out opens with `if(!has_x) return;`, so the
+         * headless arm could not see it). Re-arm first, answer second. */
+        net_hilight_anim_update(); /* a blinking/marching style must start (or stop) now */
+        Tcl_SetResult(interp, my_itoa(n), TCL_VOLATILE);
       }
     }
     /* windowid topwin_path

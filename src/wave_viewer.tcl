@@ -401,6 +401,20 @@ namespace eval wviewer {
   variable redo_hist;   array set redo_hist {}
   # how many edits back `u` can go, per window
   variable undo_depth 50
+  # NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+  # (doc/claude/specs/wave_trace_hilight.md D4). token -> list of {gi ni style},
+  # `ni` a NODE index (landmine 34). Same lifetime class as the drag/undo arrays
+  # above: created in open, dropped by forget, NEVER serialized -- it is not a
+  # prop token, not part of `layouts`, not in `snapshot` and not in the undo
+  # unit. It dies with the window.
+  #
+  # ⚠ THIS ARRAY IS THE AUTHORITY, and that is not a stylistic choice. The C
+  # engine holds the live set (xctx->wave_hilight_*), but `wviewer::regenerate`
+  # runs `xschem clear_drawing`, which resets it -- and a plain window RESIZE
+  # calls regenerate (landmine 50). A set held only in C would therefore vanish
+  # when the user drags the window edge, which reads as a bug. So regenerate
+  # re-applies this array to the fresh rects (wviewer::wave_hilight_push).
+  variable wavehl;      array set wavehl {}
   # 1 while a plain MMB press was accepted as a GRAPH pan (btn2_filter). The
   # press is what decides; the motions and the release just follow it, so a
   # press the filter refused can never leak a canvas pan mid-gesture.
@@ -528,7 +542,7 @@ proc wviewer::forget {token} {
   catch {unset drag_y0($token)}
   catch {unset drag_active($token)}
   foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active tdrag_pairs
-             undo_hist redo_hist} {
+             undo_hist redo_hist wavehl} {
     catch {unset ::wviewer::${a}($token)}
   }
   catch {unset mmb($token)}
@@ -704,6 +718,8 @@ proc wviewer::open {token} {
   wviewer::trace_drag_clear $token
   # a freshly opened window has nothing to undo
   wviewer::clear_history $token
+  # ...and nothing highlighted (D4: the set dies with the window)
+  wviewer::wave_hilight_clear_set $token
   set mmb($token) 0
   # readout bar (D9): a BOTTOM BAR on the viewer toplevel (not an
   # always-on-top toplevel — WSLg raise/focus pain, receipts/06/11), built
@@ -1500,6 +1516,11 @@ proc wviewer::clear_graph_traces {token gi} {
   # `sel_waves` (issue 0175) rides with `hilight_wave` here for the same reason:
   # every node index is gone, so both keys go rather than dangle.
   set G [dict remove [dict replace $G traces {}] markers hilight_wave sel_waves]
+  # ...and so does every TRACE HIGHLIGHT on this strip (§8). Same rule as the two
+  # keys above: the node indices they name no longer exist, and this proc is the
+  # ASE auto-plot rebuild's entry point, so it runs on every simulation run.
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_strip_clear [wviewer::wave_hilights $token] $gi]
   set gs [lreplace $gs $gi $gi $G]
   # the numbers that just disappeared may be the `prev` partner of a delta block
   # on ANOTHER strip — markers are numbered window-wide, so the sweep is too
@@ -1903,6 +1924,14 @@ proc wviewer::regenerate {token} {
   }
   dict set graphbb $wp $bbs
   xschem new_schematic switch $wp
+  # THE D4 RE-APPLY BRACKET (doc/claude/specs/wave_trace_hilight.md §4.1). The
+  # with_edit block above ran `xschem clear_drawing`, which resets the C
+  # engine's trace-highlight set along with everything else bound to a rect
+  # index -- and a plain window RESIZE reaches here (landmine 50). The Tcl array
+  # is the authority precisely so this line can put the set back on the FRESH
+  # rects. It must sit after the rects exist and BEFORE the single `xschem
+  # redraw` below, so that one redraw paints the overlay too.
+  catch {wviewer::wave_hilight_push $token}
   # item 18 (D4): NO `xschem zoom_full` — the graph fills the viewport by
   # construction, so canvas zoom must NOT re-frame (shrink) it. Just redraw;
   # clear_drawing/redraw never touch zoom/origin, so the viewport stays pinned
@@ -2048,6 +2077,10 @@ proc wviewer::restore {token vdict rawfile sim_type} {
   # the model has just been replaced wholesale: any undo point describes a
   # layout this window no longer has
   wviewer::clear_history $token
+  # ...and so does any trace highlight, whose (gi, ni) addressed the strips that
+  # were just discarded. D4 keeps the set out of the state dict, so there is
+  # nothing to restore either -- it dies with the layout that produced it.
+  wviewer::wave_hilight_clear_set $token
   if {$rawfile ne {} && [file isfile $rawfile] \
       && [wviewer::switch_ctx $token]} {
     catch {xschem raw clear}
@@ -2767,6 +2800,12 @@ proc wviewer::move_strip {from to {token {}}} {
     set target($token) \
       [wviewer::reordered_index [wviewer::target_index $token] $from $to]
   }
+  # the trace highlights are keyed by (gi, ni) and `gi` just moved (§8). Remapped
+  # IN PLACE, never through set_wave_hilights, for the same reason the target is:
+  # that proc emits its own replay line, and this is an internal consequence of
+  # the reorder, not a second user action.
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_strip_move [wviewer::wave_hilights $token] $from $to]
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::move_strip $from $to $token]
   return $to
@@ -3476,8 +3515,17 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
   wviewer::capture_live_graph_state $token
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
+  # the two NODE indices the highlight remap needs, measured BEFORE the edit --
+  # exactly where move_trace_in_graphs measures its own (landmine 34)
+  set hl_moved [wviewer::node_index_of_trace [lindex $gs $from_gi] $from_ti]
+  set hl_dst   [wviewer::node_count [lindex $gs $to_gi]]
   wviewer::set_graphs $token \
     [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $to_gi]
+  if {$hl_moved >= 0} {
+    wviewer::wavehl_remap_apply $token \
+      [wviewer::wavehl_after_trace_move [wviewer::wave_hilights $token] \
+         $from_gi $hl_moved $to_gi $hl_dst]
+  }
   set target($token) $to_gi
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::move_trace $from_gi $from_ti $to_gi $token]
@@ -3620,11 +3668,42 @@ proc wviewer::move_traces {pairs to_gi {token {}}} {
   wviewer::capture_live_graph_state $token
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
+  # the highlight set follows the traces, folded in the SAME order and with the
+  # SAME per-SOURCE index adjustment move_traces_in_graphs uses (landmine 49(a)).
+  # It is a second fold rather than a term inside that one because the pure fold
+  # only ever sees `graphs`, and the highlight set is not in the model.
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_traces_move [wviewer::wave_hilights $token] $gs $norm $to_gi]
   wviewer::set_graphs $token [wviewer::move_traces_in_graphs $gs $norm $to_gi]
   set target($token) $to_gi
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::move_traces $norm $to_gi $token]
   return [llength $norm]
+}
+
+# PURE: the highlight-set half of move_traces_in_graphs. Walks the SAME
+# normalised pairs in the SAME order, applies the SAME `- $done($gi)` per-source
+# adjustment, and remaps the set one step at a time — so the two folds cannot
+# disagree about which trace moved where. `graphs` is the PRE-move model and is
+# advanced step by step alongside, because each step's destination node index is
+# `node_count` of the destination AS IT IS AT THAT STEP.
+proc wviewer::wavehl_after_traces_move {set graphs pairs to_gi} {
+  set done [dict create]
+  foreach p $pairs {
+    if {[llength $p] != 2} { continue }
+    lassign $p gi ti
+    set d 0
+    if {[dict exists $done $gi]} { set d [dict get $done $gi] }
+    set sti [expr {$ti - $d}]
+    set moved_ni [wviewer::node_index_of_trace [lindex $graphs $gi] $sti]
+    set dst_ni [wviewer::node_count [lindex $graphs $to_gi]]
+    if {$moved_ni >= 0} {
+      set set [wviewer::wavehl_after_trace_move $set $gi $moved_ni $to_gi $dst_ni]
+    }
+    set graphs [wviewer::move_trace_in_graphs $graphs $gi $sti $to_gi]
+    dict set done $gi [expr {$d + 1}]
+  }
+  return $set
 }
 
 # --- give one trace a strip of its own (viewer plan item 7) -------------------
@@ -3777,14 +3856,38 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
   # auto-plot strip — D-D), else insert one
   set at [wviewer::reuse_strip_for_trace_move $gs $from_gi \
             [wviewer::auto_graph_index $token] [wviewer::reuse_max_distance]]
+  set inserted 0
   if {$at < 0} {
     set at [expr {$from_gi + 1}]
     # the insert is BELOW the source, so `from_gi` still addresses the source
     # afterwards and no source-side index needs remapping
     set gs [linsert $gs $at [wviewer::empty_graph]]
+    set inserted 1
+  }
+  # §8: the highlight set is keyed by (gi, ni), so an INSERT shifts every entry
+  # at or below `at` down one, and the moved trace then follows its own trace.
+  # Measured BEFORE the model edit, like the two node indices below it.
+  set hlset [wviewer::wave_hilights $token]
+  if {$inserted} {
+    set shifted {}
+    foreach e $hlset {
+      lassign $e egi eni est
+      if {$egi >= $at} { lappend shifted [list [expr {$egi + 1}] $eni $est] } \
+      else { lappend shifted $e }
+    }
+    set hlset $shifted
+  }
+  set hl_moved [wviewer::node_index_of_trace [lindex $gs $from_gi] $from_ti]
+  set hl_dst   [wviewer::node_count [lindex $gs $at]]
+  if {$hl_moved >= 0} {
+    set hlset [wviewer::wavehl_after_trace_move $hlset $from_gi $hl_moved $at $hl_dst]
   }
   wviewer::set_graphs $token \
     [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $at]
+  # AFTER set_graphs: wavehl_remap_apply validates `gi` against the LIVE strip
+  # count, and this command can have just GROWN it — applying first would drop
+  # the entry that moved onto the brand-new strip.
+  wviewer::wavehl_remap_apply $token $hlset
   set target($token) $at
   wviewer::regenerate $token
   wviewer::log_action \
@@ -4017,8 +4120,12 @@ proc wviewer::split_strip {gi {token {}}} {
   # PRE-split index space (the plan's `take` indices are), and target_index
   # clamps against the live strip count
   set tgt [wviewer::target_index $token]
+  # §8: the highlight set is read in the SAME pre-split index space, for the same
+  # reason, and applied after set_graphs because a split GROWS the strip count
+  set hlset [wviewer::wave_hilights $token]
   wviewer::set_graphs $token \
     [wviewer::split_graph_in_graphs $gs $gi $auto $maxdist]
+  wviewer::wavehl_remap_apply $token [wviewer::wavehl_after_split $hlset $plan $gi]
   if {[info exists target($token)]} {
     set target($token) [wviewer::target_after_split $tgt $plan]
   }
@@ -4144,6 +4251,14 @@ proc wviewer::history_step {dir token} {
   set snap [lindex $from($token) end]
   set from($token) [lrange $from($token) 0 end-1]
   lappend to($token) [wviewer::state_snapshot $token]
+  # THE TRACE HIGHLIGHTS GO (doc/claude/specs/wave_trace_hilight.md D4). The set
+  # is deliberately NOT in the undo unit -- it is view state, like the plot mode
+  # and the cursors, and spec §14 keeps window state out of a snapshot. But the
+  # snapshot about to be applied is a DIFFERENT graph list, and a (gi, ni) that
+  # addressed the old one would come back pointing at some other strip's other
+  # trace. Losing a highlight across an undo is a cosmetic annoyance; painting
+  # the WRONG trace is a lie. Same call `restore` makes, for the same reason.
+  wviewer::wave_hilight_clear_set $token
   wviewer::state_apply $token $snap
   wviewer::log_action [list wviewer::$dir $token]
   return 1
@@ -4681,6 +4796,15 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
       set cur [wviewer::target_index $token]
       wviewer::set_graphs $token [concat $fresh $gs]
       if {[llength $gs]} { set target($token) [expr {$cur + $nnew}] }
+      # §8: a FRONT insert renumbers every strip already on the canvas, so the
+      # highlight set owes the identical +nnew shift the target just took --
+      # otherwise a batch plotted into a window with a highlighted trace moves
+      # the highlight onto a different strip. After set_graphs, because the
+      # remap validates `gi` against the LIVE strip count.
+      if {[llength $gs]} {
+        wviewer::wavehl_remap_apply $token \
+          [wviewer::wavehl_after_prepend [wviewer::wave_hilights $token] $nnew]
+      }
     } else {
       wviewer::set_graphs $token [concat $gs $fresh]
     }
@@ -4754,6 +4878,10 @@ proc wviewer::clear_all {{token {}}} {
   dict set lay graphs [list [wviewer::empty_graph]]
   dict set layouts $token $lay
   set target($token) 0
+  # §8: every strip is gone, so the whole highlight set goes with it. Dropped
+  # here rather than remapped, and WITHOUT its own log line -- clear_all logs one
+  # line for the whole destruction and a replay of it re-runs this.
+  wviewer::wave_hilight_clear_set $token
   wviewer::regenerate $token
   # every strip is gone, so a selected marker number now points at nothing.
   # `empty_graph` has no `markers` key, so the markers themselves die by
@@ -5027,6 +5155,10 @@ proc wviewer::delete_empty_strips {{token {}}} {
   if {[info exists target($token)]} {
     set tgt [wviewer::index_after_removal [wviewer::target_index $token] $kill]
   }
+  # §8: entries on a doomed strip are DROPPED and the rest shift down, through
+  # the same PURE index_after_removal the target above just went through.
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
   wviewer::set_graphs $token \
     [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
   if {$tgt ne {}} { set target($token) $tgt }
@@ -5281,6 +5413,26 @@ proc wviewer::delete_items {graphs pairs {markers {}} {token {}}} {
   if {[llength $delg] && [info exists target($token)]} {
     set tgt [wviewer::index_after_removal [wviewer::target_index $token] $delg]
   }
+  # §8: the highlight set, in the SAME pre-deletion index space `delg`/`delt`
+  # speak. The TRACE half runs first, per source strip and in NODE indices
+  # measured before any trace leaves (landmine 34, exactly as delete_in_graphs
+  # measures its own `doomed`); the STRIP half then drops whole strips and shifts
+  # the rest, through the same PURE index_after_removal the target used.
+  set hlset [wviewer::wave_hilights $token]
+  foreach dgi [lsort -integer [dict keys $delt]] {
+    set doomed {}
+    foreach ti [dict get $delt $dgi] {
+      set ni [wviewer::node_index_of_trace [lindex $gs $dgi] $ti]
+      if {$ni >= 0} { lappend doomed $ni }
+    }
+    if {[llength $doomed]} {
+      set hlset [wviewer::wavehl_after_trace_delete $hlset $dgi $doomed]
+    }
+  }
+  if {[llength $delg]} {
+    set hlset [wviewer::wavehl_after_strip_removal $hlset $delg]
+  }
+  wviewer::wavehl_remap_apply $token $hlset
   lassign [wviewer::delete_in_graphs $gs $delg $delt] out gone
   foreach nm $delm { lappend gone $nm }
   # ONE sweep does both jobs: markers_drop_number REMOVES the record whose
@@ -5368,6 +5520,537 @@ proc wviewer::delete_selection_at {W px py} {
   return [wviewer::delete_items {} $pairs $marks $token]
 }
 
+# ============================================================================
+# NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+# doc/claude/specs/wave_trace_hilight.md
+#
+# A trace is a polyline with no junctions and no direction, so the whole
+# net-highlight vocabulary — colour, width, dash pattern, blink, marching ants —
+# applies to it unchanged, from the SAME `net_hilight_style` table and the SAME
+# current-style cursor the schematic `9` uses (D1). The highlight is an OVERLAY
+# stroked on top of the trace (D2), so the palette colour still identifies the
+# curve in the legend.
+#
+# THE SET IS SESSION-ONLY VIEW STATE (D4): `wavehl($token)`, a list of
+# {gi ni style} in NODE index space. Not a prop token, not in `layouts`, not in
+# `snapshot`, not an undo point. It is pushed into the C engine
+# (xctx->wave_hilight_*) and re-pushed by `regenerate`, which is what keeps it
+# alive across the `xschem clear_drawing` a plain window RESIZE performs
+# (landmine 50).
+#
+# `9`/`8` act on the SELECTION (D5), never on a pick: the viewer already has a
+# first-class trace selection (§7 of the guide), so there is no pick mode and no
+# modal — with nothing selected they refuse with one ciw_echo line and change
+# nothing.
+# ============================================================================
+
+# Drop this window's whole set, in Tcl AND in C. The clear_history shape: called
+# from open (a fresh window highlights nothing), from restore (the model was
+# replaced wholesale) and from clear_all (every strip is gone). Never logs — its
+# callers own their own replay line.
+proc wviewer::wave_hilight_clear_set {token} {
+  variable wavehl
+  set wavehl($token) {}
+  catch {wviewer::in_ctx $token {xschem wave_hilight -clear}}
+  return 1
+}
+
+# The current set of `token`, as {gi ni style} sublists. The read a test drives
+# and the read `regenerate` re-applies. Fails soft: an unknown token is {}.
+proc wviewer::wave_hilights {{token {}}} {
+  variable wavehl
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists wavehl($token)]} { return {} }
+  return $wavehl($token)
+}
+
+# PURE: normalise a caller's {gi ni style} list against a strip count — integers
+# only, in range, style >= 0, de-duplicated on (gi, ni) with the LAST style
+# winning, and capped at GRAPH_MAX_HILIGHT_WAVES. The C writer applies the same
+# rules; doing it here too is what lets the LOG LINE carry the pairs that were
+# actually applied rather than the caller's raw list, so a replay cannot
+# re-derive a different set (the move_traces rule).
+proc wviewer::wave_hilight_norm {set ngraphs} {
+  set out {}
+  foreach e $set {
+    if {[llength $e] != 3} { continue }
+    lassign $e gi ni st
+    if {![string is integer -strict $gi] || $gi < 0} { continue }
+    if {$ngraphs >= 0 && $gi >= $ngraphs} { continue }
+    if {![string is integer -strict $ni] || $ni < 0} { continue }
+    if {![string is integer -strict $st] || $st < 0} { continue }
+    set hit -1
+    for {set k 0} {$k < [llength $out]} {incr k} {
+      lassign [lindex $out $k] ogi oni
+      if {$ogi == $gi && $oni == $ni} { set hit $k; break }
+    }
+    if {$hit >= 0} { set out [lreplace $out $hit $hit [list $gi $ni $st]] } \
+    else { lappend out [list $gi $ni $st] }
+  }
+  if {[llength $out] > [wviewer::wave_hilight_cap]} {
+    set out [lrange $out 0 [expr {[wviewer::wave_hilight_cap] - 1}]]
+  }
+  return $out
+}
+
+# GRAPH_MAX_HILIGHT_WAVES, read out of src/xschem.h rather than frozen as a
+# literal here — landmine 45(a): a constant copied to a second seam drifts
+# silently, and the refusal message and the C cap must agree. Falls back to the
+# shipped 16 if the header cannot be read (an installed tree without sources).
+proc wviewer::wave_hilight_cap {} {
+  variable wavehl_cap
+  if {[info exists wavehl_cap]} { return $wavehl_cap }
+  set wavehl_cap 16
+  set h [file join $::XSCHEM_SHAREDIR xschem.h]
+  if {[file isfile $h] && ![catch {open $h r} fh]} {
+    set src [read $fh]
+    close $fh
+    if {[regexp {#define\s+GRAPH_MAX_HILIGHT_WAVES\s+(\d+)} $src -> v]} { set wavehl_cap $v }
+  }
+  return $wavehl_cap
+}
+
+# Push `wavehl($token)` into the C engine. THE re-apply half of D4: regenerate
+# has just run `xschem clear_drawing`, which reset the C set, so without this a
+# window RESIZE would silently drop every highlight. Silent, unlogged and
+# non-mutating from the model's point of view; the caller owns the redraw.
+proc wviewer::wave_hilight_push {token} {
+  variable wavehl
+  if {![info exists wavehl($token)]} { return 0 }
+  set n 0
+  catch {xschem wave_hilight -clear}
+  foreach e $wavehl($token) {
+    lassign $e gi ni st
+    if {[catch {xschem wave_hilight $gi $ni $st} r]} { continue }
+    # `string is integer` before the boolean test, not because the verb lies but
+    # because a THROW here would abandon the rest of the set half-pushed and the
+    # window would come back from a resize with only some of its highlights.
+    # (Measured: it really happened, when net_hilight_anim_update's Tcl fan-out
+    # was clobbering the verb's result under a DISPLAY.)
+    if {[string is integer -strict $r] && $r} { incr n }
+  }
+  return $n
+}
+
+# THE ONE MUTATION, and the replay form every key routes through: set this
+# window's highlight set to exactly `pairs` ({gi ni style} sublists).
+#
+# No `push_undo` and no `capture_live_graph_state` (D4): the set is neither in
+# the model nor in the undo unit, and this command does not regenerate — it
+# repaints with a single `xschem redraw`, the delete_all_markers shape. A
+# no-op (the set is already exactly this) refuses WITHOUT logging, the
+# move_strip `from == to` rule.
+proc wviewer::set_wave_hilights {pairs {token {}}} {
+  variable windows
+  variable wavehl
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to highlight traces in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set norm [wviewer::wave_hilight_norm $pairs [llength $gs]]
+  set cur {}
+  if {[info exists wavehl($token)]} { set cur $wavehl($token) }
+  if {$norm eq $cur} { return [llength $norm] }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set wavehl($token) $norm
+  wviewer::wave_hilight_push $token
+  catch {xschem redraw}
+  wviewer::log_action [list wviewer::set_wave_hilights $norm $token]
+  return [llength $norm]
+}
+
+# The SELECTION of every strip, as {gi ni} pairs in NODE space. selection_pairs'
+# sibling: that one crosses into MODEL space for the delete/drag commands, this
+# one does not, because everything about a highlight — the C set, `hilight_wave`,
+# `graph_trace_at` — speaks NODE (landmine 34).
+proc wviewer::selected_node_pairs {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set wp [dict get $windows $token win_path]
+  set out {}
+  set gi 0
+  foreach G [dict get [wviewer::layout_for $token] graphs] {
+    foreach ni [wviewer::selected_waves $wp $gi] { lappend out [list $gi $ni] }
+    incr gi
+  }
+  return $out
+}
+
+# Is NODE `ni` of model graph `G` something this feature can stroke? D8: analog
+# polyline traces only in v1. A BUS entry (`a,b,c` in its vec) renders as a
+# ribbon of rails and hex labels, and a DIGITAL strip renders as bands — neither
+# is a polyline, and `graph_wave_at` already answers -1 across their whole body
+# (landmine 33). Returns {} when it is fine, else the reason for the CIW line.
+proc wviewer::wave_hilight_refusal {G ni} {
+  if {[wviewer::dget $G digital 0]} { return "a digital strip" }
+  set ti [wviewer::trace_index_of_node $G $ni]
+  if {$ti < 0} { return {} }
+  set tr [lindex [wviewer::dget $G traces {}] $ti]
+  if {[string first , [wviewer::dget $tr vec {}]] >= 0} { return "a bus trace" }
+  return {}
+}
+
+# `9` — apply a style to the SELECTED traces of every strip.
+#
+# `style` defaults to the CURRENT STYLE CURSOR, the same one the schematic `9`
+# uses and the same one Alt+- / the style editor move (D1). After applying, the
+# cursor advances ONCE — not once per trace: a multi-trace selection is one user
+# act, and rainbowing it would be a surprise, while never advancing would make
+# two successive highlights indistinguishable (which is the thing the schematic
+# `9` deliberately avoids).
+proc wviewer::hilight_traces {{style {}} {token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to highlight traces in" error
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set sel [wviewer::selected_node_pairs $token]
+  if {![llength $sel]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: select a trace first (click it, or its legend name)" error
+    }
+    return 0
+  }
+  set advance 0
+  if {$style eq {}} {
+    set style 0
+    catch {set style [xschem get hilight_color]}
+    if {![string is integer -strict $style] || $style < 0} { set style 0 }
+    set advance 1
+  }
+  if {![string is integer -strict $style] || $style < 0} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad highlight style '$style'" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set add {}
+  set refused {}
+  foreach p $sel {
+    lassign $p gi ni
+    set why [wviewer::wave_hilight_refusal [lindex $gs $gi] $ni]
+    if {$why ne {}} { lappend refused [list $gi $ni $why]; continue }
+    lappend add [list $gi $ni $style]
+  }
+  # the analog members are still highlighted — a refusal is per trace, never
+  # per gesture (§9 of the spec)
+  foreach r $refused {
+    lassign $r gi ni why
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      set nm [wviewer::trace_label \
+                [lindex [wviewer::dget [lindex $gs $gi] traces {}] \
+                        [wviewer::trace_index_of_node [lindex $gs $gi] $ni]]]
+      if {$nm eq {}} { set nm "trace $ni" }
+      ciw_echo "wviewer: $nm is $why — highlighting is analog-only" error
+    }
+  }
+  if {![llength $add]} { return 0 }
+  # the cap is on the WINDOW, so it is the merged set that has to fit
+  set merged [wviewer::wave_hilight_merge [wviewer::wave_hilights $token] $add]
+  if {[llength $merged] > [wviewer::wave_hilight_cap] &&
+      [info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+    ciw_echo "wviewer: at most [wviewer::wave_hilight_cap] highlighted traces" error
+  }
+  set r [wviewer::set_wave_hilights $merged $token]
+  if {$advance} { catch {xschem incr_hilight_color} }
+  return $r
+}
+
+# PURE: `add` applied over `base`, LAST style winning per (gi, ni). Kept apart
+# from wave_hilight_norm so the cap refusal can see the pre-cap length.
+proc wviewer::wave_hilight_merge {base add} {
+  set out $base
+  foreach e $add {
+    lassign $e gi ni st
+    set hit -1
+    for {set k 0} {$k < [llength $out]} {incr k} {
+      lassign [lindex $out $k] ogi oni
+      if {$ogi == $gi && $oni == $ni} { set hit $k; break }
+    }
+    if {$hit >= 0} { set out [lreplace $out $hit $hit [list $gi $ni $st]] } \
+    else { lappend out [list $gi $ni $st] }
+  }
+  return $out
+}
+
+# `8` — drop the highlight from the SELECTED traces. Same selection and the same
+# refusal-with-no-selection as `9`; a selected trace that carries no highlight is
+# simply not in the set to begin with, so it costs nothing.
+proc wviewer::unhilight_traces {{token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to un-highlight traces in" error
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set sel [wviewer::selected_node_pairs $token]
+  if {![llength $sel]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: select a trace first (click it, or its legend name)" error
+    }
+    return 0
+  }
+  set out {}
+  foreach e [wviewer::wave_hilights $token] {
+    lassign $e gi ni st
+    set drop 0
+    foreach p $sel { if {[lindex $p 0] == $gi && [lindex $p 1] == $ni} { set drop 1; break } }
+    if {!$drop} { lappend out $e }
+  }
+  return [wviewer::set_wave_hilights $out $token]
+}
+
+# `0` — drop EVERY trace highlight in this window. Unlike `8` it needs no
+# selection, and unlike wave_hilight_clear_set it goes through the one mutation,
+# so it logs its replay line like any other user-visible change.
+proc wviewer::unhilight_all {{token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to un-highlight traces in" error
+    }
+    return {}
+  }
+  return [wviewer::set_wave_hilights {} $token]
+}
+
+# The AD-HOC style form, exactly as it already works for nets:
+#   wviewer::apply_style_traces_at %W {color purple thickness 3 pattern {20 20}}
+# `aphl::parse` accepts all three shapes (named key=value, native dict,
+# positional row); `net_hilight_apply`'s dedup-or-append installs it once and
+# hands back a table INDEX — so an ad-hoc style is just an index like any other
+# and nothing new is stored.
+#
+# ⚠ It calls `net_hilight_style_index_for`, the INSTALL-AND-RETURN-THE-INDEX half
+# factored out of net_hilight_apply, NOT net_hilight_apply itself: that proc's
+# no-trailing-args arm applies the style to the SCHEMATIC selection through
+# `xschem set hilight_color`, which CLAMPS any index >= cadlayers to 4 — and an
+# ad-hoc style always lands past cadlayers, because the default table already has
+# one row per active layer.
+proc wviewer::apply_style_traces {styledef {token {}}} {
+  set token [wviewer::resolve_token $token]
+  if {$token eq {}} { return {} }
+  # utils/apply_hilight.tcl is sourced by an rc (cadence_style_rc does), not by
+  # the core, so say which file is missing rather than leaking Tcl's
+  # "invalid command name".
+  if {[info commands ::aphl::parse] eq {}} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: ad-hoc styles need utils/apply_hilight.tcl sourced (see cadence_style_rc)" error
+    }
+    return {}
+  }
+  if {[catch {aphl::parse $styledef} row]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: cannot parse highlight style: $row" error
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  if {[catch {net_hilight_style_index_for $row} idx]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: cannot install highlight style: $idx" error
+    }
+    return {}
+  }
+  # REPLAY FIDELITY. set_wave_hilights logs style INDICES, which is the right
+  # shape for a table row that exists -- but an ad-hoc style is INSTALLED by this
+  # call, so on a replay the index would name whatever row happened to sit there
+  # and the trace would come back in a different style. Log the install first,
+  # exactly as apply_hilight does for nets (`xschem log_action [list
+  # net_hilight_apply $row]`): the two lines then replay in order and the index
+  # resolves to the same row it did here. `_index_for` is idempotent -- an
+  # identical row is reused, never appended twice.
+  wviewer::log_action [list net_hilight_style_index_for $row]
+  return [wviewer::hilight_traces $idx $token]
+}
+
+# --- the `_at` wrappers: resolve the token from the EVENT's canvas (%W), never
+# from the current xschem ctx (the clear_all_at rule), and `catch` so no error
+# can escape a Tk binding and pop bgerror over a read-only plot window.
+proc wviewer::hilight_traces_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {[catch {wviewer::hilight_traces {} $token} e]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: highlight refused: $e" error}
+    }
+    return {}
+  }
+  return $e
+}
+
+proc wviewer::unhilight_traces_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {[catch {wviewer::unhilight_traces $token} e]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: un-highlight refused: $e" error}
+    }
+    return {}
+  }
+  return $e
+}
+
+proc wviewer::unhilight_all_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {[catch {wviewer::unhilight_all $token} e]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: un-highlight refused: $e" error}
+    }
+    return {}
+  }
+  return $e
+}
+
+proc wviewer::apply_style_traces_at {W styledef} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {[catch {wviewer::apply_style_traces $styledef $token} e]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: highlight refused: $e" error}
+    }
+    return {}
+  }
+  return $e
+}
+
+# --- INDEX REMAPS (§8) ------------------------------------------------------
+# The set is keyed by (gi, ni) and BOTH spaces move under ordinary editing. Each
+# adapter below delegates the arithmetic to the SHIPPED pure helper that already
+# remaps the model selection for the same event — `reordered_index`,
+# `index_after_removal`, `remap_hilight_after_trace_move`,
+# `remap_node_after_trace_delete` — so the highlight set and the selection can
+# never disagree about where a trace went. All PURE.
+
+# A strip REORDER: only `gi` moves, by exactly the rule the target index moves.
+proc wviewer::wavehl_after_strip_move {set from to} {
+  set out {}
+  foreach e $set {
+    lassign $e gi ni st
+    lappend out [list [wviewer::reordered_index $gi $from $to] $ni $st]
+  }
+  return $out
+}
+
+# Strips DELETED: entries on them are dropped, the rest shift down.
+proc wviewer::wavehl_after_strip_removal {set removed} {
+  set out {}
+  foreach e $set {
+    lassign $e gi ni st
+    if {[lsearch -exact $removed $gi] >= 0} { continue }
+    lappend out [list [wviewer::index_after_removal $gi $removed] $ni $st]
+  }
+  return $out
+}
+
+# A TRACE moved from strip `from_gi` (node `moved_ni`) to strip `to_gi`, where it
+# lands at node `dst_ni`: the entry FOLLOWS its trace, and every entry above the
+# hole in the SOURCE strip shifts down — the same two halves
+# `remap_sel_after_trace_move` performs on the selection.
+proc wviewer::wavehl_after_trace_move {set from_gi moved_ni to_gi dst_ni} {
+  set out {}
+  foreach e $set {
+    lassign $e gi ni st
+    if {$gi != $from_gi} { lappend out $e; continue }
+    if {$ni == $moved_ni} { lappend out [list $to_gi $dst_ni $st]; continue }
+    set n [wviewer::remap_hilight_after_trace_move $ni $moved_ni]
+    if {$n eq {}} { continue }
+    lappend out [list $gi $n $st]
+  }
+  return $out
+}
+
+# TRACES deleted from strip `gi` at node indices `doomed`: the entries on them
+# go, every entry above a hole shifts down.
+proc wviewer::wavehl_after_trace_delete {set gi doomed} {
+  set out {}
+  foreach e $set {
+    lassign $e egi ni st
+    if {$egi != $gi} { lappend out $e; continue }
+    set n [wviewer::remap_node_after_trace_delete $ni $doomed]
+    if {$n eq {}} { continue }
+    lappend out [list $egi $n $st]
+  }
+  return $out
+}
+
+# A strip SPLIT into one strip per drawn trace. Entries follow their traces into
+# the new strips: strip `gi`'s node k lands on strip `src + k` — alone, hence at
+# node 0 — while every OTHER strip's index goes through the SHIPPED PURE
+# `target_after_split`, which is the same removal-then-insertion the stored
+# target strip goes through, so the two can never disagree about what moved
+# where. `plan` is plan_split's own output, computed once by the caller.
+proc wviewer::wavehl_after_split {set plan gi} {
+  if {![dict exists $plan ok] || ![dict get $plan ok]} { return $set }
+  set src [dict get $plan src]
+  set out {}
+  foreach e $set {
+    lassign $e egi eni est
+    if {$egi == $gi} {
+      # node 0 stays on the (now single-trace) source strip, also at node 0
+      lappend out [list [expr {$src + $eni}] 0 $est]
+    } else {
+      lappend out [list [wviewer::target_after_split $egi $plan] $eni $est]
+    }
+  }
+  return $out
+}
+
+# A strip EMPTIED in place (clear_graph_traces, i.e. the ASE auto-plot rebuild
+# on every simulation run). The strip stays, so no index shifts; every node
+# index ON it is gone, so its entries go — the same rule that drops the strip's
+# `hilight_wave` / `sel_waves` / `markers` keys in that proc.
+proc wviewer::wavehl_after_strip_clear {set gi} {
+  set out {}
+  foreach e $set {
+    if {[lindex $e 0] == $gi} { continue }
+    lappend out $e
+  }
+  return $out
+}
+
+# Strips INSERTED at the FRONT (multi-plot prepends its fresh strips, so every
+# existing index moves by the same amount — plot_signals shifts the stored target
+# by exactly this and the highlight set owes the identical shift).
+proc wviewer::wavehl_after_prepend {set count} {
+  if {![string is integer -strict $count] || $count <= 0} { return $set }
+  set out {}
+  foreach e $set {
+    lassign $e gi ni st
+    lappend out [list [expr {$gi + $count}] $ni $st]
+  }
+  return $out
+}
+
+# Apply a remapped set to `token` WITHOUT a log line: the caller is a command
+# that already logs its own (one gesture, one line — landmine 49(b)), and the
+# remap is an internal consequence of it, not a second user action.
+proc wviewer::wavehl_remap_apply {token new} {
+  variable wavehl
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  if {![info exists wavehl($token)]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set new [wviewer::wave_hilight_norm $new [llength $gs]]
+  if {$new eq $wavehl($token)} { return 0 }
+  set wavehl($token) $new
+  return 1
+}
+
 # Install the viewer's default key bindings on the shared `WaveViewer` BINDTAG
 # (issue 0171). Not on the canvas widget: strip_bindings sweeps every
 # widget-level sequence on a viewer canvas (including anything
@@ -5434,6 +6117,32 @@ proc wviewer::install_default_binds {} {
   }
   if {[bind WaveViewer <Key-U>] eq {}} {
     bind WaveViewer <Key-U> {wviewer::redo_at %W; break}
+  }
+  # NET-HIGHLIGHT STYLES ON WAVEFORM TRACES
+  # (doc/claude/specs/wave_trace_hilight.md §7.3): the schematic's own three
+  # keys, on the selection instead of on a pick.
+  #   9 apply the current style to the selected trace(s)
+  #   8 remove it from them
+  #   0 remove every trace highlight in this window
+  # COLLISION CHECK, done and clean on all three paths a key can reach this
+  # window by:
+  #   * keysyms 57/56/48 are NOT in `graphkeys` {97 98 100 115 109 116 65 66 77},
+  #     so key_filter forwards nothing and the C dispatcher never sees them --
+  #     which matters, because bare `0` in the C dispatcher toggles pin logic
+  #     level and would be nonsense here;
+  #   * cadence_style_rc DOES `bind .drw <Key-9|8|0>` (the schematic net
+  #     highlighting), and clone_canvas_bindings copies those onto every new
+  #     canvas -- but strip_bindings sweeps every widget-level sequence off a
+  #     viewer canvas, so the clones cannot reach this window;
+  #   * the `break` keeps it that way whatever the tags below this one carry.
+  if {[bind WaveViewer <Key-9>] eq {}} {
+    bind WaveViewer <Key-9> {wviewer::hilight_traces_at %W; break}
+  }
+  if {[bind WaveViewer <Key-8>] eq {}} {
+    bind WaveViewer <Key-8> {wviewer::unhilight_traces_at %W; break}
+  }
+  if {[bind WaveViewer <Key-0>] eq {}} {
+    bind WaveViewer <Key-0> {wviewer::unhilight_all_at %W; break}
   }
   return 1
 }
