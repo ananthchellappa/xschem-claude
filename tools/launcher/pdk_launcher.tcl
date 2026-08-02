@@ -124,6 +124,14 @@ proc refresh_preview {args} {
     .f.prev configure -state normal
     .f.prev delete 1.0 end
     .f.prev insert 1.0 [join [build_cmd] " "]
+    # Grow to fit. A fixed height silently CLIPS the tail of the command — and the
+    # tail is where the schematic and the flags land, i.e. exactly what you came to
+    # check. Long workarea paths plus a long --logdir overflow 4 lines easily.
+    # Counted in DISPLAY lines (post-wrap), not logical lines, which are always 1.
+    set dl [.f.prev count -displaylines 1.0 end]
+    if {$dl < 2} { set dl 2 }
+    if {$dl > 8} { set dl 8 }   ;# cap, then it scrolls rather than eating the window
+    .f.prev configure -height $dl
     .f.prev configure -state disabled
 }
 
@@ -194,11 +202,28 @@ wm resizable . 1 0
 # and draws all three properly; fall back silently if a build lacks it.
 catch {ttk::style theme use clam}
 
+# Type scale: body 12 pt, heading 14 pt (Tk's stock defaults are 10 and 12).
+# Configuring the NAMED fonts is what makes this stick — every ttk style resolves
+# its -font to TkDefaultFont, so setting it here moves labels, radios,
+# checkbuttons, buttons and entries together instead of per-widget. These named
+# fonts are process-local, so nothing outside this launcher is affected.
+font configure TkDefaultFont -size 12   ;# labels, radios, checks, buttons, entries
+font configure TkTextFont    -size 12
+font configure TkHeadingFont -size 12
+font configure TkFixedFont   -size 12   ;# the Command preview text widget
+
+# The heading is a named font derived from TkDefaultFont rather than the partial
+# spec `{-weight bold}` it used before: a partial spec makes Tk fill family and
+# size from the X resource default, which is why that label rendered 12 pt while
+# everything around it was 10 — inconsistent by accident, not by intent.
+font create PdkHeadingFont {*}[font actual TkDefaultFont]
+font configure PdkHeadingFont -size 14 -weight bold
+
 set f [ttk::frame .f -padding 10]
 pack $f -fill both -expand 1
 
 set r 0
-ttk::label $f.lpdk -text "PDK" -font {-weight bold}
+ttk::label $f.lpdk -text "PDK" -font PdkHeadingFont
 grid $f.lpdk -row $r -column 0 -sticky w -pady {0 2}
 incr r
 
@@ -267,7 +292,7 @@ incr r
 
 ttk::label $f.lprev -text "Command"
 grid $f.lprev -row $r -column 0 -sticky nw
-text $f.prev -height 3 -width 52 -wrap word -relief flat -background [ttk::style lookup TFrame -background]
+text $f.prev -height 4 -width 52 -wrap word -relief flat -background [ttk::style lookup TFrame -background]
 grid $f.prev -row $r -column 1 -columnspan 3 -sticky ew -padx 4
 incr r
 
