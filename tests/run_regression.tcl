@@ -42,6 +42,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_instance_update" \
                  "headless/test_sky130a_libmgr" \
                  "headless/test_gf180mcud_libmgr" \
+                 "headless/test_ihp_sg13g2_libmgr" \
+                 "headless/test_pdk_launcher" \
                  "headless/test_ciw_actionlog_output"]
 set log_fn "results.log"
 
