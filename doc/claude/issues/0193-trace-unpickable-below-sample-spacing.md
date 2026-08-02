@@ -1,6 +1,7 @@
 # 0193 — a trace is unpickable, and the diamond vanishes, once the zoom is tighter than the sample spacing
 
-**Status:** FIXED (not eyeballed)
+**Status:** RESOLVED — fixed `12bc3fef`, **eyeballed PASS by the user 2026-08-02**
+("the snap issue at high zoom is fixed")
 **Reported:** 2026-08-02, by the user, on the ASE Waveform Viewer
 **Area:** `src/draw.c` (`graph_point_at`, `draw_graph_snap_cursor`, the
 trace-highlight envelope), `src/callback.c` (the marker drag),
