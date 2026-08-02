@@ -3171,6 +3171,33 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->ui_state |= DESEL_AREA;
     return 1;
   }
+  if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+    /* verb-noun descend (doc/claude/issues/0200-descend-has-no-verb-noun-pick.md): the
+     * descend verb fired with an empty selection armed this, so THIS click names the
+     * instance to descend into. Unlike the move/copy/rotate arms below, the click does
+     * NOT select what it picks -- the user asked for "information to one command", not a
+     * selection change -- so find_closest_instance() (read-only) resolves it and nothing
+     * touches .sel / sel_array / the hilight tables.
+     * override_lock=1: selection IS the lock (issue 0160), and a pick that never selects
+     * cannot make a locked instance editable -- but it must still be descendable.
+     * Non-mutating, hence deliberately NOT in the read-only backstop mask below: browsing
+     * a read-only schematic must still descend.
+     * The chooser dialog is modal (grab + tkwait); opening it from inside this callback
+     * would pump a nested event loop and land every later event at semaphore >= 2, so the
+     * Tcl continuation defers it to `after idle`. */
+    int n;
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 &= ~MENUSTARTDESCEND;
+    n = find_closest_instance(xctx->mousex, xctx->mousey, 1);
+    if(n >= 0) {
+      statusmsg(" ", 1);
+      tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
+    } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
+      statusmsg("Descend: cancelled (no instance there)", 1);
+      tcleval("hi_descend_pick_cancel");
+    }
+    return 1;
+  }
   /* read-only backstop: any armed object-mutating command is refused here (the
    * keyboard/context-menu sites already guard at arming time; this catches any
    * other MENUSTART path). DESEL/ZOOM above are non-mutating and pass through. */

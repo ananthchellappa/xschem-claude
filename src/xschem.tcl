@@ -5958,12 +5958,62 @@ proc hi_descend_dlg_pathupd {args} {
   .hi_descend.view.path configure -text {}
 }
 
+# --- verb-noun descend: pick the instance AFTER the verb ----------------------------
+# doc/claude/issues/0200-descend-has-no-verb-noun-pick.md
+#
+# `E` (or Edit > Push schematic) with NOTHING selected used to be a dead end: the
+# resolver had two arms only -- an explicit inst=, or the current selection -- so it
+# answered "select an instance to descend into" and stopped. It now arms a one-shot
+# canvas pick; the next click names the instance and the chooser opens on it.
+#
+# The pick is NOT a selection. `xschem descend_pick` arms MENUSTARTDESCEND, and the C arm
+# resolves the click with find_closest_instance() -- read-only -- before calling back
+# here. The user's selection, the highlight tables and the modified flag all survive a
+# descend steered by a click, because the click supplies an argument to one command
+# rather than changing what is selected.
+#
+# Why this is more than convenience: while another mode owns Button-1 (ASE Direct Plot,
+# Ctrl-4, seizes it) no instance CAN be selected, so this is the only way to descend at
+# all. Resuming that interrupted mode afterwards is issue 0201, deliberately not here.
+
+# Arm the pick. Headless (no Tk, so no click will ever arrive) keeps the old message.
+proc hi_descend_pick_arm {} {
+  if {![info exists ::has_x]} {
+    ciw_echo "hi_descend: select an instance to descend into" error
+    return 0
+  }
+  xschem descend_pick
+  ciw_echo "hi_descend: click the instance to descend into (ESC to cancel)"
+  return 1
+}
+
+# Called from C when the armed click landed on an instance. The chooser is modal (grab +
+# tkwait) and we are still inside callback(): opening it here would pump a nested event
+# loop and leave every subsequent event at semaphore >= 2 -- which gates the hover
+# outline, the fly-lines, the ESC abort and the button-chord dispatcher. One idle turn
+# puts the dialog outside the callback.
+proc hi_descend_pick_done {instname} {
+  after idle [list hi_descend_dialog $instname]
+}
+
+# Called from C when the armed click hit no instance: no dialog, no descend, and (since
+# the pick never selected anything) nothing to undo.
+proc hi_descend_pick_cancel {} {
+  ciw_echo "hi_descend: descend cancelled"
+}
+
 # The modal chooser dialog (bare `hi_descend`). Drop-downs for the view (and, for a
 # bussed instance, the iteration), plus Mode (read-only browse default / edit) and
 # Destination radios; then runs the shared hi_descend_do path.
-proc hi_descend_dialog {} {
-  set instname [hi_descend_target_inst {}]
-  if {$instname eq {}} { return 0 }
+# With no argument it resolves the target from the selection -- or, with nothing
+# selected, arms the verb-noun pick (0200) and returns; the pick calls back with the
+# instance name, which is what the optional argument carries.
+proc hi_descend_dialog {{instname {}}} {
+  if {$instname eq {}} {
+    if {[llength [xschem selected_set]] == 0} { return [hi_descend_pick_arm] }
+    set instname [hi_descend_target_inst {}]
+    if {$instname eq {}} { return 0 }
+  }
   set rows [hi_descend_enum_views $instname]
   if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
 

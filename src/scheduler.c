@@ -2872,6 +2872,23 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* descend_pick
+     *   Arm the verb-noun descend pick: the next canvas click names the instance to
+     *   descend into, WITHOUT selecting it, and the C arm then calls the Tcl
+     *   continuation `hi_descend_pick_done <instname>` (or `hi_descend_pick_cancel`
+     *   on a click that hits no instance). ESC drops the arm like any other MENUSTART.
+     *   This is the headless-drivable half of the feature: arm here, then deliver the
+     *   click with `xschem callback`.
+     *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
+    else if(!strcmp(argv[1], "descend_pick"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTDESCEND; /* assign, like every other arming site */
+      statusmsg("Descend: click the instance to descend into (ESC to cancel)", 1);
+      Tcl_ResetResult(interp);
+    }
+
     /* destroy_all [force]
      *   Close all additional windows/tabs. If 'force' is given do not ask for
      *   confirmation for changed schematics
@@ -4485,6 +4502,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp,  my_itoa(xctx->ui_state), TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "ui_state2")) { /* return the MENUSTART* sub-state word */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp,  my_itoa(xctx->ui_state2), TCL_VOLATILE);
+          }
           break;
           case 'v':
           if(!strcmp(argv[2], "version")) { /* return xschem version */
@@ -5775,6 +5796,27 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
        * this rides the same transaction. See doc/claude/specs/wire_segment_splitting.md (W3). */
       if(placed && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
       Tcl_SetResult(interp, placed ? "1" : "0", TCL_STATIC); /* issue 0125: 1-placed / 0-refused */
+    }
+
+    /* instance_at <x> <y>
+     *   The name of the instance whose bounding box contains the schematic-coordinate
+     *   point (x,y), or "" if there is none. READ-ONLY: it selects nothing and changes
+     *   nothing -- this is the probe half of the verb-noun descend pick, and the
+     *   deliberate opposite of `select_at`, which is the mutating coordinate pick.
+     *   Locked instances are reported (selection is the lock, issue 0160; a probe that
+     *   never selects cannot make one editable).
+     *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
+    else if(!strcmp(argv[1], "instance_at"))
+    {
+      int i;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem instance_at: x and y required", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      i = find_closest_instance(atof(argv[2]), atof(argv[3]), 1);
+      Tcl_ResetResult(interp);
+      if(i >= 0 && xctx->inst[i].instname) Tcl_AppendResult(interp, xctx->inst[i].instname, NULL);
     }
 
     /* instance_bbox inst

@@ -1,13 +1,15 @@
 # 0200 — descend has no verb-noun arm: `e` with nothing selected gives up instead of asking which instance
 
-Status: **OPEN**. Filed 2026-08-01, from a user report. Confirmed by reading and by a
-`--nogui` measurement; **not fixed**, no code changed.
-Area: `src/xschem.tcl` (`hi_descend_target_inst` 5661, `hi_descend` 5919,
-`hi_descend_dialog` 5964), `src/callback.c` (`case 'e'` 5812,
-`check_menu_start_commands()` 3159), `src/xschem.h` (`ui_state2` sub-codes 264-295),
-`src/findnet.c` (`find_closest_obj` 526), `src/scheduler.c` (the read-only probes 2453 /
-5328 / 3533).
-Tests: none yet.
+Status: **FIXED** (2026-08-01), sabotage-verified and smoke-tested end to end. Awaiting the
+human eyeball. Filed the same day from a user report.
+Area: `src/xschem.h` (new `MENUSTARTDESCEND`), `src/findnet.c` (new
+`find_closest_instance()`), `src/callback.c` (one new arm in
+`check_menu_start_commands()`), `src/scheduler.c` (new `xschem descend_pick`,
+`xschem instance_at`, `xschem get ui_state2`), `src/xschem.tcl` (`hi_descend_dialog` takes
+an optional instname; new `hi_descend_pick_arm` / `_done` / `_cancel`).
+Tests: `tests/headless/test_verb_noun_descend_0200.tcl` — `VN1`..`VN10d` (20 checks,
+DISPLAY-gated, new file). Sabotage-verified: making the C arm `select_element()` what it
+picks turns `VN6b` red.
 Numbering: opened at 0200 (not 0188) deliberately — the `fluid-editing` agent owns the
 0188-01xx range and this work must merge into it later.
 Related: [0201](0201-no-command-suspend-resume-contract.md) (the resume half of the same
@@ -210,32 +212,105 @@ save/restore around the newwin arm, or thread the instance down without selectin
 ### D8 — bussed instances keep the iteration menu
 `hi_descend_iters` (5758) is name-driven; nothing changes.
 
-## Direction (not decided)
+## The fix
 
-1. `xschem instance_at <x> <y>` — a read-only `scheduler.c` probe over
-   `find_closest_obj()`, returning the instance name (or `""`), selecting nothing. Gives
-   the whole feature a headless-testable model layer.
-2. `MENUSTARTDESCEND` in `xschem.h`, armed in the `hi_descend` path when the selection is
-   empty, consumed in `check_menu_start_commands()` — the pick resolves the instance,
-   clears the mode, and hands the name to Tcl.
-3. `hi_descend_target_inst` grows a third arm: empty selection → arm the pick and return a
-   sentinel that means *"not failed, ask again later"* rather than today's `{}` = error.
-4. `hi_descend_dialog` is entered from the pick continuation with the instname already
-   known — no change to its body.
+Five files, all additive; nothing existing was rewritten.
 
-## Tests (proposed leg IDs)
+**1. `src/findnet.c` — `find_closest_instance(mx, my, override_lock)`.** The instance-only
+point query: index of the instance whose bbox contains the point, or `-1`. Read-only,
+resetting the file-static scratch exactly as `find_closest_obj()` does.
 
-Headless (`--nogui`), the model layer: **VN1** `instance_at` hits an instance and returns
-its name; **VN2** it selects nothing (`selected_set` empty, `lastsel` 0 before and after);
-**VN3** empty space → `""`; **VN4** `hi_descend inst=<name>` still works unchanged.
-DISPLAY-gated (`xschem callback`, self-skipping banner, the
-`tests/headless/test_verb_noun_copy_move.tcl:41-48` coordinate idiom): **VN5** `e` with an
-empty selection arms the mode (`ui_state` bit set) and does not descend; **VN6** the next
-click descends into the clicked instance and leaves `selected_set` empty; **VN7** a click
-on empty space cancels; **VN8** ESC cancels and restores the prior canvas state; **VN9**
-`e` with an instance already selected takes the noun-verb path with no pick.
-Every leg must be sabotage-verified (prove it can go red) per
-`doc/claude/suggestions/green_but_hollow_tests.md`.
+Deliberately *not* `find_closest_obj()` + "is it an ELEMENT?": that cascade returns the
+closest object of **any** type, so a wire or a text crossing the symbol wins the distance
+comparison and the caller sees a miss where the user plainly clicked a device.
+
+**2. `src/xschem.h` — `MENUSTARTDESCEND 32768U`** (the next free `ui_state2` bit) plus the
+declaration. The comment records why it is absent from the read-only backstop mask.
+
+**3. `src/callback.c` — one arm in `check_menu_start_commands()`,** placed after the
+`MENUSTARTDESEL` arm and *before* the read-only backstop. Clears the arm, resolves the
+click with `find_closest_instance(..., 1)`, and calls the Tcl continuation. It is the only
+`MENUSTART*` arm in the file that does not `select_object()` what it picks — D1.
+`override_lock=1` because selection *is* the lock (issue 0160) and a pick that never
+selects cannot make a locked instance editable, but it must still be descendable. Being
+non-mutating, it is deliberately outside the backstop mask: browsing a read-only schematic
+must still descend.
+
+**4. `src/scheduler.c` — three subcommands.** `xschem descend_pick` arms the mode (the
+headless-drivable half: arm here, deliver the click with `xschem callback`).
+`xschem instance_at <x> <y>` is the read-only probe — the deliberate opposite of
+`select_at`. `xschem get ui_state2` exposes the sub-state word, which had no getter.
+
+**5. `src/xschem.tcl` — `hi_descend_dialog` grew an optional `instname`.** With no
+argument and nothing selected it calls `hi_descend_pick_arm` instead of erroring;
+otherwise it resolves from the selection exactly as before. `hi_descend_pick_done` defers
+the dialog by one `after idle` turn — D6: the chooser is modal (`grab` + `tkwait`), and
+opening it inside `callback()` would pump a nested event loop and leave every later event
+at `semaphore >= 2`, which gates the hover outline, the fly-lines, the ESC abort and the
+chord dispatcher.
+
+`hi_descend_target_inst` was **not** touched: the `inst=` path and the noun-verb path
+still resolve through it unchanged (D5). Nothing in `hi_descend_do` / `_current` /
+`_newwin` / `_enum_views` changed.
+
+### Measured, end to end (real dialog, no stubs)
+
+```
+BEFORE: name=0_examples_top.sch currsch=0 sel=||
+hi_descend (nothing selected) -> 1
+armed: ui_state=65536 ui_state2=32768
+DIALOG title: Descend into x1  view=schematic target=current mode=readonly
+AFTER:  name=poweramp.sch currsch=1 path=.x1. readonly=1
+SMOKE: PASS
+```
+
+## Tests
+
+`tests/headless/test_verb_noun_descend_0200.tcl`, DISPLAY-gated with a self-skip banner,
+driving the real dispatch through `xschem callback` → `check_menu_start_commands()`.
+`hi_descend_enum_views` is stubbed to return `{}` so all the real resolution and arming
+logic runs while the dialog bails one line before creating its modal toplevel — and the
+stub doubles as the observer of *which* instance was resolved.
+
+**VN1**-**VN3** the probe: hits the instance, selects nothing, misses empty space.
+**VN4** `hi_descend inst=` unchanged. **VN5** the verb with an empty selection arms
+(`MENUSTART|MENUSTARTDESCEND`) and does not descend. **VN6** the armed click resolves the
+instance — **VN6b** is the load-bearing leg: the pick left `selected_set` empty and
+`lastsel` 0. **VN7** a click on empty space cancels. **VN8** ESC disarms, and a later click
+resolves nothing. **VN9** noun-verb takes the old path with no pick. **VN10** an unrelated
+pre-existing selection survives a pick of a *different* instance.
+
+**Sabotage-verified.** Adding `select_element(n, SELECTED, 0, 1)` to the C arm — i.e.
+making the pick behave like every other verb-noun arm — turns **VN6b** red
+(`got {{x1}} 1 want {} 0`) and nothing else. That run also exposed a hole: `VN10` had
+pre-selected the *same* instance it clicked, so it passed under sabotage; it now selects a
+different one and asserts the picked instance is absent from the selection.
+
+Regressions: `tests/headless/test_hi_descend.tcl` still `all checks passed`.
+
+## Not done here (deliberately)
+
+- **Resuming the interrupted command** ([0201](0201-no-command-suspend-resume-contract.md)).
+  This issue makes the descend *reachable* from inside a click-driven mode; it does not put
+  that mode back afterwards.
+- **Nesting the pick above an active seize** ([0202](0202-canvas-gesture-seize-has-no-stack.md)).
+  With ASE Direct Plot live, Button-1 is still seized by `sod_click`, so the armed pick
+  never sees the press. The arm, the probe and the continuation are all in place for it.
+- **The stale-`sel_array` guard** ([0203](0203-stale-sel_array-descends-a-deselected-instance.md)).
+  The Tcl arm branches on `xschem selected_set` (which is `lastsel`-driven and correct), so
+  this fix does not depend on 0203 — but `xschem descend` remains wrong on its own.
+- **D3's hover cue — not implemented, and not half-implemented.** `draw_hover`
+  (`callback.c:2830`) suppresses the outline whenever any `ui_state` bit outside
+  `SELECTION | NET_HILIGHT | NET_UNHILIGHT` is set, so `MENUSTART` turns it off while the
+  pick is armed. The net pick modes are masked off there precisely because "during a pick
+  mode the hover outline is exactly what tells the user which net/label they are about to
+  click", and the same argument applies here — but `draw_hover` probes with
+  `find_closest_obj()`, i.e. **every** object type. Masking `MENUSTART` in alone would
+  outline wires and texts that this pick then rejects, which is worse than no cue. Doing it
+  properly means teaching `draw_hover` to use `find_closest_instance()` while
+  `MENUSTARTDESCEND` is armed. The status-bar prompt ("Descend: click the instance to
+  descend into (ESC to cancel)") carries the mode in the meantime. Every other verb-noun
+  arm in the file has the same gap.
 
 ## What is NOT wrong here
 

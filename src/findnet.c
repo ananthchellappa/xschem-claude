@@ -539,6 +539,26 @@ Selected find_closest_obj(double mx, double my, int override_lock)
  return sel;    /*sel.type = 0 if nothing found */
 }
 
+/* Instance-only point query (doc/claude/issues/0200-descend-has-no-verb-noun-pick.md):
+ * the index of the instance whose bbox contains (mx,my), or -1.
+ *
+ * Deliberately NOT find_closest_obj() + "is it an ELEMENT?": that cascade returns the
+ * closest object of ANY type, so a wire or a text crossing the symbol would win the
+ * comparison and the caller would see a miss where the user clearly clicked a device.
+ * The verb-noun descend pick wants "which instance did she click", nothing else.
+ *
+ * Read-only: like find_closest_obj() it writes neither .sel nor sel_array -- picking an
+ * instance to descend into is not selecting it. Resets the file-static scratch the same
+ * way find_closest_obj() does. */
+int find_closest_instance(double mx, double my, int override_lock)
+{
+ sel.n = 0L; sel.col = 0; sel.type = 0;
+ distance = DBL_MAX;
+ find_closest_element(mx, my, override_lock);
+ if(sel.type == ELEMENT) return sel.n;
+ return -1;
+}
+
 /* Pin selection (doc/claude/specs/pin_selection.md): find the instance pin whose
  * point is within a tight pick radius of (mx,my). On hit, fill *r with
  * type=INST_PIN, n=instance index, col=pin index and return 1; else return 0.

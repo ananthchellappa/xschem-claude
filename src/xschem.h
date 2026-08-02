@@ -285,6 +285,15 @@ typedef int Tcl_Size;
                                 * xctx->menu_pending_transform to it (plain: no attached-net grab,
                                 * wires are NOT kept connected).
                                 * see doc/claude/specs/rotate_keep_connected_stretch.md */
+#define MENUSTARTDESCEND 32768U /* a pending verb-noun descend: the descend verb (`E` /
+                                * hi_descend) fired with nothing selected arms this, so the
+                                * next canvas click PICKS the instance under the cursor and
+                                * hands its name to the Tcl chooser. Unlike every other
+                                * MENUSTART* arm the click does NOT select the picked object:
+                                * the pick is an argument to one command, not a selection
+                                * change. Non-mutating, so it is deliberately absent from the
+                                * read-only backstop mask in check_menu_start_commands().
+                                * see doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
 
 /* xctx->menu_pending_transform codes: which transform a pending MENUSTARTROTATE applies */
 #define PENDING_TR_NONE      0
@@ -2197,6 +2206,9 @@ extern int action_cmd_unbind(int argc, const char **argv);
 extern int action_cmd_bindings(int argc, const char **argv);
 extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h);
 extern Selected find_closest_obj(double mx,double my, int override_lock);
+/* instance-only, read-only point query: index of the instance under (mx,my), or -1.
+ * Selects nothing. See doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
+extern int find_closest_instance(double mx, double my, int override_lock);
 /* Hover fly-lines (flyline.c, doc/claude/specs/hover_flylines.md). Read-only (invariant C1). */
 extern const char *flyline_net_of(unsigned short type, int n, unsigned int col);
 extern void flyline_compute(const char *netname, int have_pick, const Selected *pick,
