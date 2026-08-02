@@ -337,7 +337,16 @@ session</span>.</p>
 window repurposed: read-only for its whole life, editor toolbar and bindings
 removed, its own menubar installed. Title: <b>Waveforms &lt;design cell&gt;
 (&lt;state view&gt;)</b>. Open or raise it with the <code>~</code> strip
-button (opening it this way adds no traces).</p>
+button or <span class="menu">Tools &gt; Waveform Viewer</span> (opening it that
+way adds no traces).</p>
+
+<div class="note">
+<b>The viewer has a user guide of its own:
+<a href="waveform_viewer_guide.html">The ASE Waveform Viewer</a></b> — strips and
+traces, cursors, markers, zooming and organising, the complete keyboard and
+mouse reference, and how to rebind its keys. This section is only the
+orientation you need to get a plot on screen.
+</div>
 
 <h3>Two ways traces get there</h3>
 <ul>
@@ -348,14 +357,15 @@ mirrors the current Plot column. With zero Plot rows no viewer is opened (and
 an already-open viewer's auto graph is emptied). If the run produced only
 <code>op</code> results there is nothing to sweep:
 <span class="msg">ase: op results have no sweep — nothing to auto-plot</span>.</li>
-<li><b>Direct Plot</b>: <span class="menu">Results &gt; Direct Plot</span>
-enters a Select-On-Design variant (<span class="msg">ase: Direct Plot — click
-wires/net labels for voltage traces, sources for current traces; ESC
-plots</span>). Clicks queue trace expressions <i>without touching the session
-outputs</i>. On <kbd>ESC</kbd>, <b>one new stacked graph</b> is appended and
-all queued traces are added to it. Direct-Plot graphs are never touched by
-subsequent auto-plots, so their indices stay stable. If no run has produced a
-raw file yet the traces are recorded and resolve after the next run.</li>
+<li><b>Direct Plot</b>: <span class="menu">Results &gt; Direct Plot</span> (or
+<kbd>Ctrl-4</kbd> on the schematic) enters a Select-On-Design variant
+(<span class="msg">ase: Direct Plot — click wires/net labels for voltage traces,
+sources for current traces; ESC plots</span>). Clicks queue trace expressions
+<i>without touching the session outputs</i>. On <kbd>ESC</kbd> the queue is
+plotted, into the target strip or into one strip per signal depending on the
+viewer's plot mode. Direct-Plot graphs are never touched by subsequent
+auto-plots. If no run has produced a raw file yet the traces are recorded and
+resolve after the next run.</li>
 </ul>
 <p>Each run overwrites <code>&lt;cell&gt;_ase.raw</code> in place and
 re-attaches it, so auto-plot and Direct&nbsp;Plot graphs simply show fresh
@@ -364,99 +374,25 @@ data. One exception: expression traces you added manually through
 computed vector on the re-attach and draw empty after the next run —
 re-add the trace, or save and reload the state, to re-materialize them.</p>
 
-<h3>Viewer menus</h3>
+<h3>Viewer menus, at a glance</h3>
 <ul>
 <li><span class="menu">File</span>: <b>Close</b> (<kbd>Ctrl+W</kbd>)</li>
 <li><span class="menu">View</span>: <b>Fit</b>, <b>Zoom In</b>, <b>Zoom Out</b>,
-<b>Redraw</b> — all act on the <b>graph</b> content, never on the window: the
-graph always fills the viewer, and these commands change only the graph axes,
-so they can never shrink the graph. <b>Zoom In</b>/<b>Zoom Out</b> zoom the graph
-x-axis about its centre.</li>
-<li><span class="menu">Graph</span>: <b>Add Graph</b>, <b>Add Trace...</b>,
-<b>Delete...</b>, <b>Axes...</b>, checkbutton <b>Shared X Axis</b></li>
+<b>Redraw</b></li>
+<li><span class="menu">Graph</span>: <b>Add Graph</b>, <b>Add Trace…</b>,
+<b>Delete…</b>, <b>Axes…</b>, <b>Clear All</b>, <b>Delete All Markers</b>,
+<b>Delete Empty Strips</b>, <b>Split Strip</b>, and the checkbuttons
+<b>Shared X Axis</b> and <b>Grid</b></li>
 <li><span class="menu">Cursors</span>: checkbuttons <b>Cursor A</b>,
 <b>Cursor B</b>, <b>Readout</b></li>
+<li><span class="menu">Options</span>: <b>Plot Mode</b> (single / multi)</li>
 </ul>
 <p>Graphs stack vertically; trace colors auto-cycle through the layer palette.
-<b>Shared X Axis</b> makes all graphs inherit graph&nbsp;0's x range. <b>Fit</b>
-runs the engine full-zoom on the graph data (full x + y) and reads the resulting
-ranges back — it fits the <b>graph</b>, it does not reframe the window.</p>
-
-<h3>Adding traces and expression waves</h3>
-<p><span class="menu">Graph &gt; Add Trace...</span> opens the <b>Add Trace</b>
-dialog: a <b>Graph:</b> combobox (shown when there are at least two graphs;
-defaults to the last one), <b>Expression:</b>, <b>Name (optional):</b>, and a
-listbox labeled <b>Raw variables (double-click to use):</b> — double-click
-copies a raw variable into the Expression entry, and OK with an empty entry
-uses the listbox selection directly.</p>
-<p>Expression syntax:</p>
-<ul>
-<li>A <b>single token</b> is a raw-vector reference (case-insensitive;
-<code>v(tok)</code> wrapping applied automatically where needed).</li>
-<li><b>Multiple whitespace-separated tokens</b> form an RPN expression,
-validated before acceptance. Operators:
-<code>+ - * / ** == != &gt; &lt; &gt;= &lt;= ?</code>. Functions:</li>
-</ul>
-<pre>atan() cph() asin() acos() tan() sin() cos() abs() sgn() sqrt() tanh()
-cosh() sinh() atanh() acosh() asinh() exp() ln() log10() integ() avg()
-ravg() max() min() im() re() pi() k() e() q() del() db20() deriv()
-deriv0() deriv2() deriv20() prev() exch() dup() idx()</pre>
-<p>Numbers follow the strtod-prefix rule, SPICE suffixes included
-(<code>1k</code> is fine). RPN traces materialize as new raw vectors under your
-name (or <code>expr&lt;N&gt;</code>). ASE outputs shaped like
-<code>-i(v1)</code> are automatically mapped to the RPN
-<code>i(v1) -1 *</code> for plotting. Errors keep the dialog open — e.g.
-<span class="msg">unknown token '&lt;t&gt;' (not an operator/function, number
-or raw variable)</span>, <span class="msg">empty expression - type one or pick
-a raw variable</span>, <span class="msg">no raw data loaded - cannot evaluate
-an expression</span>.</p>
-<p><span class="menu">Graph &gt; Delete...</span> opens <b>Delete Traces /
-Graphs</b>: one list of <code>graph &lt;N&gt;</code> and
-<code>graph &lt;N&gt;: &lt;name&gt; (&lt;expr&gt;)</code> rows,
-extended selection, OK deletes.</p>
-
-<h3>Axes</h3>
-<p><span class="menu">Graph &gt; Axes...</span> opens the <b>Axes</b> dialog:
-<b>Graph:</b> combobox, <b>X min (blank=auto):</b>, <b>X max (blank=auto):</b>,
-<b>Y min (blank=auto):</b>, <b>Y max (blank=auto):</b>, and checkbuttons
-<b>Log X</b> / <b>Log Y</b>. Blank means auto-range.</p>
-
-<h3>Cursors and readout</h3>
-<p>Enable <b>Cursor A</b> and/or <b>Cursor B</b> from the
-<span class="menu">Cursors</span> menu; the cursor is parked mid-range of
-graph&nbsp;0 and the readout bar auto-shows. The <b>Readout</b> bar at the
-bottom shows, per enabled cursor, the cursor x plus the interpolated y of every
-trace, engineering-formatted — e.g.
-<code>A: x=905m&nbsp;&nbsp; v(g)=905m&nbsp;&nbsp; ...</code> — refreshed after
-each mouse-button release. Cursor state is not saved with the session.</p>
-
-<h3>Viewer keyboard</h3>
-<table>
-<tr><th>Key</th><th>Action</th></tr>
-<tr><td><kbd>f</kbd></td><td>fit the graph (full x + y)</td></tr>
-<tr><td><kbd>Z</kbd> / <kbd>Ctrl-z</kbd></td><td>zoom the <b>graph</b> x-axis in / out
-(about the centre; never the window)</td></tr>
-<tr><td>arrows</td><td>pan / zoom the graph x-axis</td></tr>
-<tr><td><kbd>a</kbd> <kbd>b</kbd> <kbd>s</kbd> <kbd>m</kbd> <kbd>t</kbd> <kbd>A</kbd> <kbd>B</kbd></td>
-<td>cursor A/B toggle, swap, measure etc. — only while the pointer is over a graph</td></tr>
-<tr><td><kbd>Ctrl-W</kbd></td><td>close the viewer</td></tr>
-<tr><td><kbd>ESC</kbd></td><td>abort + redraw (never closes the viewer)</td></tr>
-</table>
-
-<h3>Viewer mouse / wheel</h3>
-<p>The wheel mirrors the schematic wheel scheme, but acts on the <b>graph</b>
-content — it never pans or zooms the window (the graph always fills the viewer):</p>
-<table>
-<tr><th>Gesture</th><th>Action</th></tr>
-<tr><td>wheel up / down</td><td>vertical pan of the graph (shifts the y range)</td></tr>
-<tr><td><kbd>Shift</kbd> + wheel</td><td>horizontal pan of the graph (shifts the x range)</td></tr>
-<tr><td><kbd>Ctrl</kbd> + wheel</td><td>zoom the graph x-axis in / out</td></tr>
-<tr><td>right-button drag</td><td>rubber-band a box, release to zoom the graph
-x-axis to that box (like a schematic zoom-box, but on the graph)</td></tr>
-</table>
-<p>Right-click drag zooms the graph and leaves the window untouched;
-double-clicks are swallowed — axis editing belongs to the <b>Axes</b> dialog.
-All other editor keys and mouse verbs are disabled in the viewer.</p>
+Every zoom and pan command acts on the <b>graph data range</b>, never on the
+window: the graph always fills the viewer, so a canvas zoom would only shrink
+the plot. The rest — what each entry does, the dialogs, the gestures and the
+keys — is in
+<a href="waveform_viewer_guide.html">the Waveform Viewer guide</a>.</p>
 
 <h2 id="dcsweep">7. Worked example: a DC sweep</h2>
 <p>Turn the quick-start op point into an Id–Vgs curve.</p>

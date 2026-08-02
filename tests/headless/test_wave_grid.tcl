@@ -346,6 +346,91 @@ check_true "GX9 the re-plot path still regenerates after attach_raw" \
          [string last {wviewer::regenerate $key} $gx_ap]}]
 
 # ============================================================================
+# GH* — the USER GUIDE's shortcut table must match the shipped bindings
+#
+# doc/waveform_viewer_guide.html §9 is an inventory of every key and gesture the
+# viewer answers. A doc table that silently rots is worse than no table, so the
+# table itself is the INPUT here: each row of §9.1 carries machine-readable
+# attributes (`data-seq` = the Tk sequence, `data-menu`/`data-accel` = the menu
+# twin and the accelerator it advertises), and these legs assert both directions
+# — every documented binding exists, and every shipped binding is documented.
+# The second direction is the one that catches a NEW key added without a doc
+# row, which is how the tables in ase_l_tutorial.html went stale in the first
+# place.
+#
+# Source-level, so they run in BOTH arms: `bind WaveViewer` needs Tk, and under
+# --nogui there is none. The live-widget half is GH5/GH6 inside the GG block.
+# ============================================================================
+set guide [file join $repo doc waveform_viewer_guide.html]
+check_true "GH0 the guide exists where doc/Makefile's *.html glob will ship it" \
+  [file isfile $guide]
+set fp [open $guide r]; set gsrc [read $fp]; close $fp
+set fp [open [file join $repo doc Makefile] r]; set gmk [read $fp]; close $fp
+check_true "GH0 doc/Makefile installs *.html (the guide is not a special case)" \
+  [regexp {install -f -d \*\.svg \*\.html} $gmk]
+
+# the documented WaveViewer sequences, in the order the guide lists them
+set gh_seqs {}
+foreach {gh_all gh_s} [regexp -all -inline {data-seq="([^"]+)"} $gsrc] {
+  lappend gh_seqs $gh_s
+}
+# ...and the documented (menu label, accelerator) pairs
+set gh_menus {}
+foreach {gh_all gh_m gh_a} \
+    [regexp -all -inline {data-menu="([^"]+)" data-accel="([^"]+)"} $gsrc] {
+  lappend gh_menus [list $gh_m $gh_a]
+}
+# a guide whose attributes were stripped by an edit would make every loop below
+# vacuously green — assert the extraction FOUND something first
+check "GH0 the guide's §9.1 carries the six documented viewer keys" \
+  [llength $gh_seqs] 6
+check "GH0 ...and five documented menu accelerators" [llength $gh_menus] 5
+
+set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
+check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]
+foreach gh_s $gh_seqs {
+  check_true "GH1 the guide's <$gh_s> really is a WaveViewer default" \
+    [expr {[string first "bind WaveViewer <$gh_s>" $gh_idb] >= 0}]
+}
+# THE OTHER DIRECTION. Count only the bind STATEMENTS: the `if {[bind WaveViewer
+# <seq>] eq {}}` rc-wins guard above each one mentions the same words.
+set gh_nb 0
+foreach gh_line [split $gh_idb "\n"] {
+  if {[regexp {^\s*bind WaveViewer <} $gh_line]} { incr gh_nb }
+}
+check "GH2 every shipped WaveViewer default has a guide row" $gh_nb [llength $gh_seqs]
+
+# the menu twins: label + accelerator, spelled exactly as the guide claims. The
+# source writes the label braced or bare depending on whether it has a space, so
+# both spellings are accepted — the ACCELERATOR string is the part under test.
+set gh_mb [wvproc_body $wsrc wviewer::build_menubar]
+check_true "GH3 build_menubar was found in the source" [expr {$gh_mb ne {}}]
+foreach gh_p $gh_menus {
+  lassign $gh_p gh_lab gh_acc
+  check_true "GH3 the menu entry '$gh_lab' advertises $gh_acc, as documented" \
+    [expr {[string first "-label \{$gh_lab\} -accelerator $gh_acc" $gh_mb] >= 0 ||
+           [string first "-label $gh_lab -accelerator $gh_acc" $gh_mb] >= 0}]
+}
+set gh_nacc 0
+foreach gh_line [split $gh_mb "\n"] { incr gh_nacc [regexp -all {\-accelerator } $gh_line] }
+check "GH4 every menu accelerator in the viewer menubar is documented" \
+  $gh_nacc [llength $gh_menus]
+
+# dead-link guard: the guide cross-links the tutorial and the embedded-graph
+# manual page, and doc/index.html must reach the guide (both were unlinked
+# before this guide was written)
+foreach {gh_tag gh_rel} {GH7 ase_l_tutorial.html GH7 xschem_man/graphs.html} {
+  check_true "$gh_tag the guide's link to $gh_rel resolves" \
+    [expr {[string first "href=\"$gh_rel\"" $gsrc] >= 0 &&
+           [file isfile [file join $repo doc $gh_rel]]}]
+}
+set fp [open [file join $repo doc index.html] r]; set gh_idx [read $fp]; close $fp
+foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
+  check_true "GH7 doc/index.html links $gh_rel" \
+    [expr {[string first "href=\"$gh_rel\"" $gh_idx] >= 0}]
+}
+
+# ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)
 # ============================================================================
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -831,6 +916,50 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "GS10 a REAL Ctrl-G keeps the selection" [gs_sels $vdrw] {- {0 2}}
     check "GS10 ...both tokens" [gs_tokens $vdrw 1] {0 {0 2}}
     send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 1}
+  }
+
+  # ==========================================================================
+  # GH5/GH6 — the guide's table against the LIVE window (the widget half of GH*)
+  #
+  # GH1..GH4 read the source; these read the running viewer, so a default that
+  # is installed but never reaches the tag (a swept bindtag, a menubar rebuilt
+  # without an accelerator) still fails. The tag defaults are installed at the
+  # first viewer open, which this block has already done.
+  # ==========================================================================
+  foreach gh_s $gh_seqs {
+    check_true "GH5 <$gh_s> is bound on the live WaveViewer tag" \
+      [expr {[bind WaveViewer <$gh_s>] ne {}}]
+  }
+  # find a labelled entry anywhere in the viewer menubar; {} = not there
+  proc gh_find_entry {mb lab} {
+    foreach sub {file view graph cursors options} {
+      set m $mb.$sub
+      if {![winfo exists $m]} continue
+      set last {}
+      catch {set last [$m index end]}
+      if {![string is integer -strict $last]} continue
+      for {set i 0} {$i <= $last} {incr i} {
+        if {[catch {$m entrycget $i -label} l]} continue
+        if {$l eq $lab} { return [list $m $i] }
+      }
+    }
+    return {}
+  }
+  set gh_bar $vtop.wvmenubar
+  if {[winfo exists $gh_bar]} {
+    foreach gh_p $gh_menus {
+      lassign $gh_p gh_lab gh_acc
+      set gh_hit [gh_find_entry $gh_bar $gh_lab]
+      check_true "GH6 the menubar really has a '$gh_lab' entry" \
+        [expr {$gh_hit ne {}}]
+      if {$gh_hit ne {}} {
+        lassign $gh_hit gh_m gh_i
+        check "GH6 '$gh_lab' shows the accelerator the guide documents" \
+          [$gh_m entrycget $gh_i -accelerator] $gh_acc
+      }
+    }
+  } else {
+    puts "SKIPPED: GH6 (viewer menubar not found)"
   }
 
   rename wviewer::log_action {}

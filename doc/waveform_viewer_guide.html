@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ASE Waveform Viewer — user guide</title>
+<meta name="description" content="User guide for the ASE Waveform Viewer in xschem: strips and traces, cursors, markers, zooming, and the complete keyboard and mouse reference">
+<style type="text/css">
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #ffffee;
+    color: #222;
+    max-width: 60em;
+    margin: 0 auto;
+    padding: 1em 2em;
+    line-height: 1.45;
+  }
+  h1 { border-bottom: 3px solid #883322; padding-bottom: 0.2em; }
+  h2 { border-bottom: 1px solid #aa8855; padding-bottom: 0.15em; margin-top: 1.8em; }
+  h3 { margin-top: 1.4em; }
+  code, kbd, pre {
+    font-family: "DejaVu Sans Mono", Consolas, monospace;
+    background: #f4f0e0;
+  }
+  code, kbd { padding: 0 0.25em; border-radius: 2px; }
+  kbd { border: 1px solid #bbaa88; background: #faf6ea; }
+  pre {
+    border: 1px solid #ccbb99;
+    padding: 0.6em 0.9em;
+    overflow-x: auto;
+    border-radius: 3px;
+  }
+  table { border-collapse: collapse; margin: 0.7em 0; }
+  th, td { border: 1px solid #bbaa88; padding: 0.25em 0.6em; text-align: left; vertical-align: top; }
+  th { background: #eee4cc; }
+  .menu { font-weight: bold; white-space: nowrap; }
+  .msg { font-style: italic; }
+  .note {
+    background: #f6eed8;
+    border-left: 4px solid #aa8855;
+    padding: 0.4em 0.9em;
+    margin: 0.8em 0;
+  }
+  .where { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>The ASE Waveform Viewer</h1>
+<p><i>A user guide for the waveform window of ASE-L, xschem's analog simulation
+environment. Written for someone opening it for the first time. The simulation
+cockpit itself — analyses, outputs, running — is covered by the
+<a href="ase_l_tutorial.html">ASE-L tutorial</a>.</i></p>
+
+<div class="note">
+This guide is about the <b>ASE Waveform Viewer</b>: a window of its own that
+plots a <code>.raw</code> file. It is <i>not</i> about graphs embedded in a
+schematic drawing, which are a different surface with their own manual page —
+see <a href="xschem_man/graphs.html">Graphs in schematics</a>. The two share the
+same drawing engine, so many gestures feel the same, but the window around them
+is not the same window and the keys are not the same keys.
+</div>
+
+<h2 id="what">1. What the viewer is</h2>
+
+<p>The viewer is a real xschem editor window that has been repurposed as a
+plotting window:</p>
+<ul>
+<li>it is <b>read-only for its whole life</b> — nothing you do in it can dirty a
+file, and no save prompt can ever appear;</li>
+<li>the editor toolbar and the editor menus are gone and replaced by a small
+menubar of its own: <span class="menu">File</span>,
+<span class="menu">View</span>, <span class="menu">Graph</span>,
+<span class="menu">Cursors</span>, <span class="menu">Options</span>;</li>
+<li>every editor key and mouse gesture has been stripped off its canvas, so the
+keys listed in <a href="#reference">§9</a> are the whole vocabulary of the
+window. Anything not listed there does nothing at all, silently;</li>
+<li>the plot fills the window. Nothing in the viewer scrolls or zooms the
+<i>canvas</i> — every zoom and pan changes the <i>data range</i> of a plot.</li>
+</ul>
+
+<p>The title bar reads <b>Waveforms &lt;cell&gt; (&lt;state view&gt;)</b>. Each
+ASE session owns <b>at most one</b> viewer: asking for it again raises the window
+you already have.</p>
+
+<h3>Four ways it opens</h3>
+<table>
+<tr><th>How</th><th>What you get</th></tr>
+<tr><td>The <code>~</code> button at the bottom of the ASE window's right-hand
+action strip</td>
+<td>Raise or open the viewer, adding nothing. This is the way to get the window
+back after closing it.</td></tr>
+<tr><td><span class="menu">Tools &gt; Waveform Viewer</span> in the ASE window</td>
+<td>Exactly the same thing — the menu twin of the <code>~</code> button.</td></tr>
+<tr><td><b>Auto-plot</b>, after a successful run</td>
+<td>Every <b>Outputs</b> row with the <b>Plot</b> box ticked is plotted into one
+dedicated <i>auto-plot strip</i>. It is rebuilt from scratch after each run, so
+it always mirrors the current Plot column. With no Plot rows ticked, no viewer is
+opened.</td></tr>
+<tr><td><b>Direct Plot</b> — <span class="menu">Results &gt; Direct Plot</span>,
+or <kbd>Ctrl-4</kbd> on the schematic</td>
+<td>A click-on-the-design mode: click wires and net labels for voltages, sources
+and ammeters for currents, then press <kbd>ESC</kbd> to plot the queue. Opens the
+viewer if it is not up.</td></tr>
+</table>
+
+<p><kbd>Ctrl-4</kbd> is a binding from <code>cadence_style_rc</code>, so it exists
+only if you started xschem with that rc (<code>sky130A/run.sh</code> and
+<code>gf180mcuD/run.sh</code> both do). The menu entry always works.</p>
+
+<div class="note">
+Direct Plot works after descending into an instance: it finds the ASE session of
+the nearest <i>ancestor</i> schematic, so you can run at the top, descend, and
+probe internal nodes. It writes no <code>.save</code> cards of its own, though —
+a descended internal node is only plottable if the run actually saved it (an
+explicit output, or the save-all-voltages option).
+</div>
+
+<h2 id="strips">2. Strips, traces and the target strip</h2>
+
+<p>The window is a vertical stack of <b>strips</b>. A strip is one plot box with
+its own axes; the strips are laid out as equal horizontal bands filling the
+window, so adding a strip makes them all shorter. A strip holds any number of
+<b>traces</b>. Trace names are listed along the <b>top of each strip</b> — that
+band is the <i>legend</i>, and it is clickable (<a href="#selection">§7</a>).</p>
+
+<p>One strip is the <b>target strip</b>: the one new signals land in. When more
+than one strip is up, the target is marked by a dull-yellow bar at its right-hand
+edge. <b>Clicking anywhere in a strip makes it the target.</b></p>
+
+<h3>Single-plot and multi-plot mode</h3>
+<p>Where a Direct Plot batch lands is decided by the window's <b>plot mode</b>:</p>
+<table>
+<tr><th>Mode</th><th>A Direct Plot of three signals gives you</th></tr>
+<tr><td><b>single</b> (the default)</td><td>all three traces in the target
+strip.</td></tr>
+<tr><td><b>multi</b></td><td>three strips, one signal each, stacked
+<i>newest on top</i>.</td></tr>
+</table>
+<p>Switch modes with <span class="menu">Options &gt; Plot Mode</span> (one entry,
+which always offers the <i>other</i> mode), or with <kbd>Ctrl-Shift-4</kbd> on the
+schematic window. The bottom status bar shows the current mode
+(<code>Plot: single</code>). An empty strip left behind by
+<b>Clear All</b> or <b>Add Graph</b> is reused before a new one is appended, in
+both modes. The auto-plot strip is never used as a landing site.</p>
+
+<p>The initial mode of a newly opened viewer comes from the config variable
+<code>wviewer_plot_mode</code>; once a window is open, that window's own mode is
+what counts.</p>
+
+<h2 id="traces">3. Getting traces in</h2>
+
+<h3>From the Outputs table</h3>
+<p>Tick <b>Plot</b> on an Outputs row in the ASE window. After the next
+successful run that expression is plotted into the auto-plot strip. Untick it and
+it disappears from that strip after the following run. Nothing else in the window
+is touched.</p>
+
+<h3>Direct Plot</h3>
+<p>Enter the mode, click the nets and devices you want, press <kbd>ESC</kbd>.
+Each clicked net is painted on the schematic in the colour its trace is about to
+get, so you can tell which curve is which before the plot exists. Direct Plot
+does <i>not</i> add anything to the session Outputs, and its strips are never
+rebuilt by a later auto-plot.</p>
+
+<h3>Graph &gt; Add Trace…</h3>
+<p>The <b>Add Trace</b> dialog has a <b>Graph:</b> combobox (shown only when there
+are at least two strips; it defaults to the last one), an <b>Expression:</b>
+entry, an optional <b>Name (optional):</b> entry, and a listbox headed <b>Raw
+variables (double-click to use):</b>. Double-clicking a variable copies it into
+the expression entry; pressing OK with an empty entry uses the listbox selection.
+<kbd>Return</kbd> in either entry is OK.</p>
+
+<p><b>A single token</b> is a raw-vector reference. It is matched
+case-insensitively and <code>v(...)</code> wrapping is applied where needed, so
+<code>out</code> finds <code>v(out)</code>.</p>
+
+<p><b>Several whitespace-separated tokens</b> are an <b>RPN expression</b>, and it
+is validated before it is accepted — a bad token keeps the dialog open with a
+message such as <span class="msg">unknown token '&lt;t&gt;' (not an
+operator/function, number or raw variable)</span>. Operators:</p>
+<pre>+ - * / ** == != &gt; &lt; &gt;= &lt;= ?</pre>
+<p>Functions:</p>
+<pre>atan() cph() asin() acos() tan() sin() cos() abs() sgn() sqrt() tanh()
+cosh() sinh() atanh() acosh() asinh() exp() ln() log10() integ() avg()
+ravg() max() min() im() re() pi() k() e() q() del() db20() deriv()
+deriv0() deriv2() deriv20() prev() exch() dup() idx()</pre>
+<p>Numbers may carry SPICE suffixes (<code>1k</code> is fine). An RPN expression
+is materialised as a <b>new raw vector</b> named after your <b>Name</b> (or
+<code>expr&lt;N&gt;</code>) and then plots like any other variable.</p>
+
+<div class="note">
+<b>The re-run caveat.</b> Each run overwrites the session's <code>.raw</code> file
+and the viewer re-attaches it. Ordinary traces simply show fresh data. An
+<b>RPN expression trace</b> loses its computed vector on the re-attach and draws
+<b>empty</b> after the next run — the vector it referred to no longer exists.
+Re-add the trace, or save the state and load it again (the reload
+re-materialises every expression trace).
+</div>
+
+<h2 id="reading">4. Reading values off the plot</h2>
+
+<h3>The snap diamond and the status bar</h3>
+<p>Move the pointer across a strip and a small diamond follows it, sitting on the
+<b>nearest real sample</b> of the nearest trace. The bottom status bar shows that
+sample's <code>x</code> and <code>y</code> in engineering notation. The diamond is
+what tells you where a marker would be created — it and the <kbd>m</kbd> key ask
+the engine the same question. It disappears while any drag is in progress.</p>
+
+<h3>Cursors A and B</h3>
+<p>Turn a vertical cursor on from <span class="menu">Cursors</span> (checkbuttons
+<b>Cursor A</b>, <b>Cursor B</b>) or with <kbd>a</kbd> / <kbd>b</kbd> over a
+strip. From the menu the cursor is parked at the middle of strip 0's x range;
+from the key it lands at the pointer. Cursors are shared by every strip, which is
+what makes them useful on a stack of time-aligned plots.</p>
+<ul>
+<li><b>Drag</b> a cursor by pressing near its line and moving the mouse. The grab
+band is generous — a few tens of pixels — and a press that lands in it belongs to
+the cursor, whatever else is underneath.</li>
+<li><b>Set one numerically</b>: right-click in that same band and a
+<code>Pos:</code> input appears.</li>
+<li><kbd>s</kbd> <b>swaps</b> A and B (both must be on).</li>
+<li><kbd>A</kbd> and <kbd>B</kbd> (shifted) put <b>horizontal</b> cursors on the
+strip under the pointer, at the pointer's y. Those are per-strip, not shared, and
+they drag and set numerically the same way.</li>
+</ul>
+
+<h3>The readout bar</h3>
+<p><span class="menu">Cursors &gt; Readout</span> shows a bar at the bottom of the
+window with one line per enabled cursor: the cursor's x, then the interpolated y
+of every trace in the window, engineering-formatted —</p>
+<pre>A: x=905m   v(g)=905m   v(d)=1.02   i(v1)=-409.7u</pre>
+<p>It refreshes on every mouse-button release. Enabling a cursor from the menu
+turns the bar on automatically. Cursor state is <b>not</b> saved with the
+session.</p>
+
+<h3>The measurement tooltip</h3>
+<p><kbd>M</kbd> (Shift+m) over a strip toggles a small floating readout that
+follows the pointer and shows the x and y <i>of the pointer</i> — not of a
+sample. Press <kbd>M</kbd> again to turn it off; it also stops when the pointer
+leaves the strip.</p>
+
+<h3>Markers</h3>
+<p>A <b>marker</b> is a permanent annotation pinned to one sample of one trace: a
+dot on the trace, a leader line, and a callout box reading</p>
+<pre>M3:1.2u,905m</pre>
+<p>Press <kbd>m</kbd> anywhere inside a strip's plot box and a marker is created
+at the sample the diamond is showing. Press <kbd>d</kbd> instead and the new
+marker also carries a <b>delta block</b> against the previously created marker:</p>
+<pre>M4:2.4u,1.51
+&#916;x:1.2u,&#916;y:605m
+slope:504.2k</pre>
+<p>Both markers keep their own identity, and the pair is a unit for selection:
+double-clicking either one selects both, even when they sit on different strips.
+Deleting a marker that another one measures against silently degrades that
+partner to a plain callout.</p>
+<ul>
+<li><b>Drag the dot</b> and the marker slides <i>along its own trace</i>, snapping
+from sample to sample; the readout follows as you drag.</li>
+<li><b>Drag the callout</b> of an unselected marker and only the box moves.</li>
+<li><b>Drag the callout</b> of a <i>selected</i> marker and the whole marker
+translates — the dot re-snaps along the trace and the box keeps its offset.</li>
+<li><kbd>ESC</kbd> mid-drag cancels; nothing is committed.</li>
+<li><kbd>Delete</kbd> over the strip deletes the selected marker (see
+<a href="#organise">§6</a>).</li>
+<li><kbd>Ctrl-E</kbd> deletes <b>every</b> marker in the window, leaving the
+strips, traces and ranges alone.</li>
+</ul>
+<p>Markers are saved with the session state; cursors are not.</p>
+
+<h2 id="navigating">5. Navigating</h2>
+
+<table>
+<tr><th>You want</th><th>Do this</th></tr>
+<tr><td>Everything on screen</td><td><kbd>f</kbd>, or
+<span class="menu">View &gt; Fit</span> — full X <i>and</i> Y on every strip that
+has traces.</td></tr>
+<tr><td>Zoom in / out</td><td><kbd>Z</kbd> / <kbd>Ctrl-z</kbd>,
+<kbd>Ctrl</kbd>+wheel, or <span class="menu">View &gt; Zoom In</span> /
+<b>Zoom Out</b>.</td></tr>
+<tr><td>Zoom to a region</td><td>Right-button drag a box inside the plot. Drag
+right-and-down to zoom in; hold <kbd>Shift</kbd> to zoom out.</td></tr>
+<tr><td>Zoom one axis only</td><td>Left-button drag <i>in that axis's number
+margin</i> — the strip below the plot box for X, to the left of it for Y. Or
+<kbd>Ctrl</kbd>+wheel in the same margin.</td></tr>
+<tr><td>Pan</td><td>Middle-button drag, the arrow keys, or the wheel.</td></tr>
+<tr><td>Type exact ranges</td><td><span class="menu">Graph &gt; Axes…</span></td></tr>
+</table>
+
+<h3>What is shared and what is per-strip</h3>
+<p>The X axis is the axis the strips have in common, so <b>every X change hits
+every strip</b>: an X zoom, an X pan, a box zoom's X half. Y is the opposite —
+each strip carries its own signal scale, so <b>Y changes only the strip under the
+pointer</b>. That rule holds for the wheel, the keys, the menu and the box
+zoom alike, and it is why the stack never slides out of step with itself.</p>
+
+<p><span class="menu">Graph &gt; Shared X Axis</span> goes one step further and
+forces every strip to <i>show</i> strip 0's x window. Turning it off gives every
+strip its own window back — the per-strip settings are kept while sharing is on,
+not overwritten.</p>
+
+<h3>The Axes dialog</h3>
+<p><span class="menu">Graph &gt; Axes…</span> opens a dialog with a <b>Graph:</b>
+combobox and four entries — <b>X min (blank=auto):</b>, <b>X max
+(blank=auto):</b>, <b>Y min (blank=auto):</b>, <b>Y max (blank=auto):</b> — plus
+<b>Log X</b> and <b>Log Y</b> checkbuttons. Changing the combobox loads that
+strip's current values. A blank field means <i>auto-range</i>: that axis is
+re-fitted to the data every time the window is rebuilt.</p>
+
+<h2 id="organise">6. Organising the window</h2>
+
+<table>
+<tr><th>Task</th><th>How</th></tr>
+<tr><td>Add an empty strip</td><td><span class="menu">Graph &gt; Add Graph</span></td></tr>
+<tr><td>Reorder the stack</td><td>Left-button drag a strip by its
+<b>reorder grip</b> (the 14-pixel column at its right edge) or by <b>empty plot
+space</b>. Crossing another strip's midpoint picks the new slot;
+<kbd>ESC</kbd> cancels.</td></tr>
+<tr><td>Move a trace to another strip</td><td>Left-button press <b>on the
+trace</b> and drag. The pointer becomes a grab hand, the trace shrinks while it
+travels, and the destination strip is framed. Dropping on the source strip or
+outside every strip cancels. If several traces are selected and you grab one of
+them, <b>the whole selection moves</b>.</td></tr>
+<tr><td>Give one trace a strip of its own</td><td>Right-click the trace &rarr;
+<b>Move to Separate Strip</b>. An existing empty strip near the source is reused
+if there is one.</td></tr>
+<tr><td>Explode a strip, one trace per strip</td><td>Right-click <b>empty space</b>
+in the strip &rarr; <b>Split Strip</b>, or
+<span class="menu">Graph &gt; Split Strip</span> (which acts on the target
+strip). Needs at least two traces.</td></tr>
+<tr><td>Delete traces or strips, in bulk</td><td><span class="menu">Graph &gt;
+Delete…</span> — one list of <code>graph &lt;N&gt;</code> and
+<code>graph &lt;N&gt;: &lt;name&gt; (&lt;expr&gt;)</code> rows, multiple
+selection, OK deletes.</td></tr>
+<tr><td>Delete what is selected</td><td><kbd>Delete</kbd> with the pointer over a
+strip — the selected marker, the selected traces, or both, in one go. Deleting a
+trace takes its markers with it.</td></tr>
+<tr><td>Tidy up blank bands</td><td><kbd>e</kbd>, or
+<span class="menu">Graph &gt; Delete Empty Strips</span>. The auto-plot strip and
+the last remaining strip are never removed, so a window showing one empty strip
+is left alone.</td></tr>
+<tr><td>Remove all annotation</td><td><kbd>Ctrl-E</kbd>, or
+<span class="menu">Graph &gt; Delete All Markers</span>.</td></tr>
+<tr><td>Start over</td><td><kbd>Ctrl-D</kbd>, or
+<span class="menu">Graph &gt; Clear All</span>.</td></tr>
+</table>
+
+<h3>Clear All is not "close and reopen"</h3>
+<p><b>Clear All</b> drops every strip and every trace and leaves one empty strip.
+It deliberately <b>keeps</b> the plot mode, Shared X, the cursors and — the point
+of the whole thing — <b>the loaded raw data</b>, so you can immediately pick new
+signals from the same results without re-running the simulation.</p>
+
+<h3>Undo and redo</h3>
+<p><kbd>u</kbd> undoes the last structural edit and <kbd>U</kbd> (Shift+u) redoes
+it: strip reorders, trace moves, splits, deletes and marker changes, up to 50
+deep per window. A pan, zoom or selection made with the mouse in between comes
+back with the undone edit rather than being thrown away.</p>
+<p><b>Window options are outside the history on purpose</b> — the plot mode,
+Shared X, the grid, the cursors and the loaded raw are not undoable, and
+<kbd>Ctrl-G</kbd> is not an undo step. The history is per window and is never
+saved: it is cleared when the window opens and when a state is loaded.</p>
+
+<h2 id="selection">7. Selecting traces</h2>
+
+<p>A selected trace is drawn <b>bold</b>, on the plot and in the legend. The
+selection is a <b>set</b> and it is <b>window-wide</b>, not per strip.</p>
+<ul>
+<li><b>Click a trace</b> (within about 10 pixels of the curve) and the selection
+<i>becomes</i> that trace — including clearing a selection on another strip.</li>
+<li><b>Click its name in the legend</b> for the same effect. On a digital or bus
+strip this is the only way, because their bodies are drawn as bands rather than
+curves and answer "no trace here" everywhere.</li>
+<li><b>Ctrl+click</b> adds an unselected trace to the set or removes a selected
+one, and touches nothing else — this is how a selection spanning two strips is
+built.</li>
+<li><b>Click empty plot space</b> and the selection is cleared. A click that lands
+in an axis margin or on the reorder grip changes nothing.</li>
+<li>A plain click never deselects the trace it lands on; clicking the
+already-selected one keeps it.</li>
+</ul>
+<p>What a selection is <i>for</i>: <kbd>Delete</kbd> deletes it, a drag carries
+all of it to another strip, and the bold is a way of keeping track of one curve
+in a crowded strip.</p>
+
+<p>Markers have their own, separate selection — one marker, or a delta pair. It
+is set by clicking a marker and cleared by clicking empty space.</p>
+
+<h2 id="state">8. Saving and reloading</h2>
+
+<p>The viewer layout is part of the ASE <b>simulation state</b>, not a file of its
+own. <b>Save State</b> in the ASE window stores, per session: whether the viewer
+was open, the strips and their traces (expressions, names, colours, axis ranges,
+log flags and markers), the Shared-X flag, the plot mode and the target strip.</p>
+<p>Loading a state whose viewer was open brings the window back, re-attaches the
+raw file if it is still on disk, and <b>re-materialises the RPN expression
+traces</b> — which is why a save/load cycle is a working repair for the empty
+expression traces described in <a href="#traces">§3</a>.</p>
+<p>Not saved: the cursors, the grid on/off state, the undo history, and the raw
+samples themselves (only the path to the <code>.raw</code> file is kept).</p>
+
+<h2 id="reference">9. Keyboard and mouse reference</h2>
+
+<p>Some gestures work anywhere in the window and some only over a particular part
+of a strip. That distinction is real and it is the usual reason a gesture "does
+not work", so it has a column of its own. The regions of a strip are:</p>
+
+<table>
+<tr><th>Region</th><th>Where it is</th></tr>
+<tr><td><b>plot box</b></td><td>the framed area the curves are drawn in.</td></tr>
+<tr><td><b>legend band</b></td><td>the trace names along the top of the
+strip.</td></tr>
+<tr><td><b>X-number margin</b></td><td>below the plot box, where the x-axis
+numbers are.</td></tr>
+<tr><td><b>Y-number margin</b></td><td>left of the plot box, where the y-axis
+numbers are.</td></tr>
+<tr><td><b>reorder grip</b></td><td>the rightmost 14 pixels of the strip, at any
+height.</td></tr>
+</table>
+
+<h3 id="ref-viewer-keys">9.1 Viewer keys (remappable, see <a href="#rebinding">§10</a>)</h3>
+<p>These live on the <code>WaveViewer</code> binding tag and work anywhere in the
+window.</p>
+<table>
+<tr><th>Key</th><th>What it does</th><th>Where it works</th><th>Menu twin</th></tr>
+<tr data-seq="Control-Key-d" data-menu="Clear All" data-accel="Ctrl+D">
+<td><kbd>Ctrl-D</kbd></td>
+<td>Clear All — drop every strip and trace, leave one empty strip. Plot mode,
+Shared X, cursors and the loaded raw are kept.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; Clear All</span></td></tr>
+<tr data-seq="Control-Key-e" data-menu="Delete All Markers" data-accel="Ctrl+E">
+<td><kbd>Ctrl-E</kbd></td>
+<td>Delete every marker in the window. Strips, traces and ranges survive.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; Delete All Markers</span></td></tr>
+<tr data-seq="Key-e" data-menu="Delete Empty Strips" data-accel="e">
+<td><kbd>e</kbd></td>
+<td>Delete every strip that holds no traces — except the auto-plot strip and the
+last strip standing.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; Delete Empty Strips</span></td></tr>
+<tr data-seq="Control-Key-g" data-menu="Grid" data-accel="Ctrl+G">
+<td><kbd>Ctrl-G</kbd></td>
+<td>Show/hide the dashed grid of this window. The axes, the box, the ticks, the
+axis numbers and the zero lines stay either way.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; Grid</span> (a checkbutton)</td></tr>
+<tr data-seq="Key-u">
+<td><kbd>u</kbd></td>
+<td>Undo the last structural edit (reorder, trace move, split, delete, marker
+change). 50 deep, per window.</td>
+<td class="where">whole window</td>
+<td>—</td></tr>
+<tr data-seq="Key-U">
+<td><kbd>U</kbd> (Shift+u)</td>
+<td>Redo.</td>
+<td class="where">whole window</td>
+<td>—</td></tr>
+</table>
+
+<h3 id="ref-window-keys">9.2 Window keys (handled by the viewer, not remappable today)</h3>
+<table>
+<tr><th>Key</th><th>What it does</th><th>Where it works</th></tr>
+<tr><td><kbd>f</kbd></td>
+<td>Fit: full X and Y on every strip that has traces.</td>
+<td class="where">whole window</td></tr>
+<tr><td><kbd>Z</kbd> (Shift+z)</td>
+<td>Zoom in about the pointer: X on every strip, Y on the strip under the
+pointer.</td>
+<td class="where">whole window</td></tr>
+<tr><td><kbd>Ctrl-z</kbd></td>
+<td>Zoom out, same rule.</td>
+<td class="where">whole window</td></tr>
+<tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td>
+<td>Pan the X axis by 5% of its span, on every strip.</td>
+<td class="where">whole window</td></tr>
+<tr><td><kbd>&uarr;</kbd> <kbd>&darr;</kbd></td>
+<td>Pan the Y axis by 5% of its span, on the strip under the pointer.</td>
+<td class="where">whole window</td></tr>
+<tr><td>modified arrows</td>
+<td>Nothing. <kbd>Shift</kbd>, <kbd>Ctrl</kbd> and <kbd>Alt</kbd> + arrow are
+swallowed, so they cannot scroll the canvas out from under the plot.</td>
+<td class="where">whole window</td></tr>
+<tr><td><kbd>Delete</kbd></td>
+<td>Delete the selection: the selected marker, the selected traces, or both, as
+one undo step.</td>
+<td class="where">over a strip</td></tr>
+<tr><td><kbd>ESC</kbd></td>
+<td>Cancel a strip or trace drag in progress; otherwise abort and redraw. It
+<b>never</b> closes the window.</td>
+<td class="where">whole window</td></tr>
+<tr data-menu="Close" data-accel="Ctrl+W">
+<td><kbd>Ctrl-W</kbd></td>
+<td>Close the viewer (<span class="menu">File &gt; Close</span>). The session and
+its data are untouched; the <code>~</code> button brings the window back.</td>
+<td class="where">whole window</td></tr>
+</table>
+
+<h3 id="ref-graph-keys">9.3 Graph-engine keys — only while the pointer is over a strip</h3>
+<p>These are handed to the drawing engine. Off a strip they do nothing (in a
+schematic window the same letters are editing commands, which is exactly why the
+viewer refuses to pass them on).</p>
+<table>
+<tr><th>Key</th><th>What it does</th><th>Where it works</th></tr>
+<tr><td><kbd>a</kbd></td><td>Cursor A on/off, placed at the pointer's x.</td>
+<td class="where">over a strip</td></tr>
+<tr><td><kbd>b</kbd></td><td>Cursor B on/off at the pointer's x. With live
+back-annotation enabled this is also what drives the values shown on the
+schematic.</td>
+<td class="where">over a strip</td></tr>
+<tr><td><kbd>s</kbd></td><td>Swap cursors A and B (both must be on).</td>
+<td class="where">over a strip</td></tr>
+<tr><td><kbd>A</kbd> (Shift+a)</td><td>Horizontal cursor 1 on/off, at the
+pointer's y.</td>
+<td class="where">over a strip, that strip only</td></tr>
+<tr><td><kbd>B</kbd> (Shift+b)</td><td>Horizontal cursor 2, same.</td>
+<td class="where">over a strip, that strip only</td></tr>
+<tr><td><kbd>m</kbd></td><td>Create a marker at the sample the snap diamond is
+showing.</td>
+<td class="where">inside the plot box</td></tr>
+<tr><td><kbd>d</kbd></td><td>Create a marker carrying a delta block against the
+most recently created marker.</td>
+<td class="where">inside the plot box</td></tr>
+<tr><td><kbd>M</kbd> (Shift+m)</td><td>Measurement tooltip on/off — a floating
+readout of the <i>pointer</i> position.</td>
+<td class="where">over a strip</td></tr>
+<tr><td><kbd>t</kbd></td><td>Dataset tracking: show only the sweep family
+(dataset) nearest the pointer. Press again to show them all. Meaningful for
+multi-sweep DC runs; ignored on digital strips.</td>
+<td class="where">over a strip</td></tr>
+</table>
+<p>Every key in this table is also gated by the global option
+<code>graph_use_ctrl_key</code>. It defaults to 0, which is what the table
+describes; set to 1 it makes all of them require <kbd>Ctrl</kbd>.</p>
+
+<h3 id="ref-mouse">9.4 Mouse</h3>
+<p>Precedence matters when several things sit under one pixel. On a left-button
+press the order is: a <b>marker</b> first, then an <b>axis margin</b>, then a
+<b>cursor</b>, then a <b>trace</b>, and only then the <b>strip reorder</b>. The
+reorder grip wins over all of them.</p>
+
+<table>
+<tr><th>Gesture</th><th>What it does</th><th>Where it works</th></tr>
+
+<tr><td>LMB press</td><td>Makes that strip the <b>target strip</b>.</td>
+<td class="where">anywhere in a strip</td></tr>
+
+<tr><td>LMB click (no travel)</td><td><b>Select</b> that trace; the selection
+becomes exactly it.</td>
+<td class="where">within 10 px of a trace</td></tr>
+
+<tr><td>LMB click</td><td><b>Select</b> the named trace.</td>
+<td class="where">legend band</td></tr>
+
+<tr><td><kbd>Ctrl</kbd>+LMB click</td><td>Add the trace to the selection, or
+remove it. Nothing else changes.</td>
+<td class="where">on a trace or its legend entry</td></tr>
+
+<tr><td>LMB click</td><td><b>Clear</b> the trace selection.</td>
+<td class="where">empty plot box</td></tr>
+
+<tr><td>LMB click</td><td><b>Select</b> that marker; clicking the only selected
+marker again deselects it.</td>
+<td class="where">marker dot or callout</td></tr>
+
+<tr><td>LMB double-click</td><td>Select that marker <b>and its delta partner</b>,
+even on another strip. Every other double-click does nothing.</td>
+<td class="where">marker dot or callout</td></tr>
+
+<tr><td>LMB drag</td><td>Slide the marker along its own trace, snapping to
+samples.</td>
+<td class="where">marker dot</td></tr>
+
+<tr><td>LMB drag</td><td>Move the callout. If the marker is selected, the whole
+marker translates instead.</td>
+<td class="where">marker callout</td></tr>
+
+<tr><td>LMB drag</td><td><b>Move the trace</b> (or the whole selection, if the
+pressed trace is part of one) to the strip you drop it on. The destination is
+framed while you hover it.</td>
+<td class="where">within 10 px of a trace</td></tr>
+
+<tr><td>LMB drag</td><td><b>Reorder the strip</b>. Crossing another strip's
+midpoint picks the destination.</td>
+<td class="where">reorder grip, or empty plot box</td></tr>
+
+<tr><td>LMB drag</td><td>Drag that cursor.</td>
+<td class="where">near a cursor line</td></tr>
+
+<tr><td>LMB drag</td><td><b>Zoom that axis only</b>, to the dragged span. Dragging
+backwards zooms out. A live band shows the span.</td>
+<td class="where">X- or Y-number margin</td></tr>
+
+<tr><td><kbd>Shift</kbd>/<kbd>Alt</kbd>+LMB</td><td>Nothing — these are
+schematic-only gestures (rubber-band select, copy-drag) and are swallowed.</td>
+<td class="where">whole window</td></tr>
+
+<tr><td>MMB drag</td><td><b>Pan</b> the X window, on every participating strip.
+The press must land well inside a strip — the outermost few pixels of a band are
+not graph space.</td>
+<td class="where">plot box</td></tr>
+
+<tr><td>MMB drag</td><td><b>Pan</b> the Y window of that strip only.</td>
+<td class="where">Y-number margin</td></tr>
+
+<tr><td>MMB drag</td><td><b>Jump</b> the X window: the pointer's position along
+the full sweep becomes the centre of the visible window, keeping its width. A
+fast way across a long transient.</td>
+<td class="where">X-number margin</td></tr>
+
+<tr><td><kbd>Ctrl</kbd>/<kbd>Alt</kbd>+MMB</td><td>Nothing.</td>
+<td class="where">whole window</td></tr>
+
+<tr><td>RMB drag</td><td><b>Box zoom</b>: the X window goes to every participating
+strip, the Y window to the strip you dragged in. Hold <kbd>Shift</kbd> to zoom
+out instead.</td>
+<td class="where">inside the plot box</td></tr>
+
+<tr><td>RMB drag</td><td>Y-only box zoom.</td>
+<td class="where">Y-number margin</td></tr>
+
+<tr><td>RMB click (no travel)</td><td>Context menu: <b>Move to Separate
+Strip</b>.</td>
+<td class="where">on a trace, or its legend entry</td></tr>
+
+<tr><td>RMB click (no travel)</td><td>Context menu: <b>Split Strip</b> — one strip
+per trace. Needs at least two traces.</td>
+<td class="where">empty plot box</td></tr>
+
+<tr><td>RMB press</td><td>A <code>Pos:</code> input line to set that cursor
+numerically.</td>
+<td class="where">within ~10 units of a cursor line</td></tr>
+
+<tr><td>modified RMB</td><td>No menu. <kbd>Shift</kbd>, <kbd>Ctrl</kbd> and
+<kbd>Alt</kbd>+RMB post nothing.</td>
+<td class="where">whole window</td></tr>
+
+<tr><td>wheel</td><td>Pan Y by 5% of the span, on the strip under the
+pointer.</td>
+<td class="where">over a strip</td></tr>
+
+<tr><td><kbd>Shift</kbd>+wheel</td><td>Pan X by 5% of the span, on every
+strip.</td>
+<td class="where">over a strip</td></tr>
+
+<tr><td><kbd>Ctrl</kbd>+wheel</td><td>Zoom about the pointer: X on every strip,
+Y on the pointed strip.</td>
+<td class="where">inside the plot box</td></tr>
+
+<tr><td><kbd>Ctrl</kbd>+wheel</td><td>Zoom <b>that axis only</b>, about the
+pointer.</td>
+<td class="where">X- or Y-number margin</td></tr>
+</table>
+
+<div class="note">
+<b>One boundary worth knowing.</b> A right-button press that is both within
+10 units of a drawn cursor <i>and</i> on a trace opens the numeric
+<code>Pos:</code> input first; the context menu posts when you dismiss it.
+<kbd>ESC</kbd> closes both.
+</div>
+
+<h3 id="ref-collisions">9.5 The same key in a schematic window</h3>
+<p>Three of the viewer's keys are also shortcuts in a schematic, and they mean
+completely different things. They do not collide — a viewer canvas does not carry
+the schematic bindings — but knowing both meanings saves a surprise:</p>
+<table>
+<tr><th>Key</th><th>In a schematic window</th><th>In the viewer</th></tr>
+<tr><td><kbd>Ctrl-E</kbd></td><td>Go back one level of hierarchy</td>
+<td>Delete all markers</td></tr>
+<tr><td><kbd>e</kbd></td><td>Descend into the selected instance</td>
+<td>Delete empty strips</td></tr>
+<tr><td><kbd>Ctrl-G</kbd></td><td>Toggle the global dot grid of the drawing</td>
+<td>Toggle this window's graph grid</td></tr>
+</table>
+<p>The viewer has no dot grid at all — it is suppressed for the window's whole
+life — so <kbd>Ctrl-G</kbd> there can only mean the graph grid.</p>
+
+<h2 id="rebinding">10. Changing the keys and the defaults</h2>
+
+<p>Everything in this section goes in an rc file: <code>~/.xschem/xschemrc</code>,
+a <code>./.xschemrc</code> beside your design, or any file passed with
+<code>--script</code> (<code>src/cadence_style_rc</code> is the shipped
+example, and it carries commented-out versions of all of these).</p>
+
+<h3 id="rebind-tag">10.1 The <code>WaveViewer</code> binding tag</h3>
+<p>The six viewer keys of <a href="#ref-viewer-keys">§9.1</a> are bound on a Tk
+binding tag called <code>WaveViewer</code>. The defaults are installed <b>once</b>,
+at the first viewer open, and <b>only for a sequence nothing has bound yet</b> —
+so an rc that binds first <b>wins</b>, even though it runs long before any viewer
+window exists.</p>
+
+<pre>bind WaveViewer &lt;Control-Key-d&gt; {break}                  ;# drop the default
+bind WaveViewer &lt;Control-Key-r&gt; {wviewer::clear_all_at %W; break}</pre>
+
+<p>The commands each key calls, all taking the event's own widget
+(<code>%W</code>) so the right window is edited even if the pointer and the
+keyboard focus disagree:</p>
+<table>
+<tr><th>Default</th><th>Command</th></tr>
+<tr><td><kbd>Ctrl-D</kbd></td><td><code>wviewer::clear_all_at %W</code></td></tr>
+<tr><td><kbd>Ctrl-E</kbd></td><td><code>wviewer::delete_all_markers_at %W</code></td></tr>
+<tr><td><kbd>e</kbd></td><td><code>wviewer::delete_empty_strips_at %W</code></td></tr>
+<tr><td><kbd>Ctrl-G</kbd></td><td><code>wviewer::grid_toggle_at %W</code></td></tr>
+<tr><td><kbd>u</kbd></td><td><code>wviewer::undo_at %W</code></td></tr>
+<tr><td><kbd>U</kbd></td><td><code>wviewer::redo_at %W</code></td></tr>
+</table>
+
+<div class="note">
+<b>Disable with <code>{break}</code>, never with <code>{}</code>.</b> An empty
+script <i>deletes</i> the binding, and a deleted binding reads as "nothing has
+bound this yet" — so the default is installed over it at the next viewer open and
+the key comes back. <code>{break}</code> leaves a real, do-nothing binding in
+place.
+</div>
+
+<p><b>Why a tag and not the canvas widget.</b> The viewer sweeps <i>every</i>
+binding off its own canvas when the window is built — that is how the editor's
+keys and any <code>bind .drw</code> lines from your rc are kept out of a read-only
+plot window. A <code>bind $canvas</code> of your own would be swept with them.
+The tag is not swept, and it exists before any viewer window does.</p>
+
+<p>The menu entries in <a href="#ref-viewer-keys">§9.1</a> keep working whatever
+you rebind: their accelerator text is a static label, not a dispatch, so after a
+remap the label is the one thing that goes stale. Change it in your rc too if it
+bothers you, or use the menu.</p>
+
+<h3 id="rebind-vars">10.2 Config variables — behaviour without rebinding</h3>
+<p>All of these are read <b>lazily</b>, so setting them in an rc works. The three
+appearance ones are written as per-strip properties by the viewer's own strip
+generator, so schematics with embedded graphs are not affected by any of
+them.</p>
+<table>
+<tr><th>Variable</th><th>Default</th><th>What it changes</th></tr>
+<tr><td><code>wviewer_plot_mode</code></td><td><code>single</code></td>
+<td>The plot mode a <i>newly opened</i> viewer starts in
+(<code>single</code>|<code>multi</code>). An open window's own mode wins
+afterwards.</td></tr>
+<tr><td><code>wviewer_grid_show</code></td><td><code>1</code></td>
+<td>Whether a newly opened viewer starts with its graph grid drawn. Anything that
+is not a boolean reads as 1.</td></tr>
+<tr><td><code>wviewer_grid_dash_off</code></td><td><code>3</code></td>
+<td>The off-run of the grid dash against a 1-pixel on-run: 3 gives a quarter of
+the pixels lit, 0 restores the older, heavier grid. Clamped 0..32.</td></tr>
+<tr><td><code>wviewer_legend_textmag</code></td><td><code>1.63</code></td>
+<td>Size multiplier for the legend text. 1.63 is what matches the Y-axis numbers
+at the viewer's default axis divisions. Clamped 0.25..6.0.</td></tr>
+<tr><td><code>wviewer_legend_bold</code></td><td><code>0</code></td>
+<td>0 = bold marks the <i>selected</i> trace only. 1 = every legend entry is
+bold, and the selected one is then bold italic.</td></tr>
+<tr><td><code>wviewer_drag_shrink</code></td><td><code>0.7</code></td>
+<td>How much a trace shrinks while it is being dragged to another strip. 1.0
+turns the effect off without disabling the drag; anything outside (0,&nbsp;1]
+falls back to the default.</td></tr>
+</table>
+<pre>set wviewer_plot_mode multi
+set wviewer_grid_dash_off 0
+set wviewer_legend_bold 1</pre>
+
+<h3 id="rebind-registry">10.3 The action registry and the bindings files</h3>
+<p>xschem has a general remapping mechanism —
+<code>xschem bind key &lt;keysym&gt; &lt;mods&gt; &lt;context&gt;
+&lt;action&gt;</code>, and the <code>keybindings.csv</code> /
+<code>mousebindings.csv</code> files that are replayed through it at startup.
+Stated plainly, because guessing wrong here costs an evening:</p>
+<ul>
+<li><b>It does not reach the viewer's own keys.</b> A row in the
+<code>canvas</code> context is dispatched by the C engine, and the viewer never
+hands the engine anything except the nine graph keys of
+<a href="#ref-graph-keys">§9.3</a>. Rebinding <code>canvas</code> changes the
+schematic, not this window.</li>
+<li><b>It does reach the graph keys.</b> A row in the <code>graph</code> context
+does take effect over a viewer strip, because those keys really are forwarded to
+the engine. For example
+<code>xschem bind key 116 0 graph &lt;action&gt;</code> would change what
+<kbd>t</kbd> does over a strip, in the viewer and in an embedded schematic graph
+alike.</li>
+<li><b>It never reaches a wheel gesture over a plot.</b> A wheel event whose
+pointer is inside a plot is claimed by the graph engine before the binding table
+is consulted, so <code>mousebindings.csv</code> wheel rows cannot change any of
+the wheel behaviour in <a href="#ref-mouse">§9.4</a>.</li>
+<li><b>The window keys of <a href="#ref-window-keys">§9.2</a> are not remappable
+today.</b> They are handled inside the viewer before anything else sees them.
+A <code>bind WaveViewer</code> on one of those sequences <i>runs</i>, but it runs
+<i>in addition to</i> the built-in behaviour, not instead of it — so you can add
+an effect, not replace one.</li>
+</ul>
+
+<h3 id="rebind-cannot">10.4 What cannot be rebound</h3>
+<ul>
+<li><b>The mouse-button roles inside the engine</b> — left = pick and drag,
+middle = pan, right = box zoom and menu — are compiled in. There is no
+configuration for them, and no error either: there is simply nowhere to say
+otherwise.</li>
+<li><b>The pick and click tolerances</b> (10 pixels to a trace, 8 to a marker,
+3 pixels of travel before a click becomes a drag, the 14-pixel reorder grip) are
+compile-time constants shared by the drawing and the hit-testing, so that what is
+drawn and what is clickable cannot drift apart.</li>
+<li><b>The viewer's read-only-ness.</b> The window cannot be made editable; that
+is what guarantees no plotting session can ever modify a schematic.</li>
+</ul>
+
+<h2 id="trouble">11. Troubleshooting</h2>
+
+<table>
+<tr><th>Symptom</th><th>Why, and what to do</th></tr>
+
+<tr><td>Nothing plotted after a run, and no viewer opened</td>
+<td>No <b>Outputs</b> row has <b>Plot</b> ticked. Auto-plot has nothing to do and
+deliberately does not open a window. Tick a Plot box and re-run, or use Direct
+Plot.</td></tr>
+
+<tr><td><span class="msg">ase: op results have no sweep — nothing to
+auto-plot</span></td>
+<td>The run produced only an operating point. There is no x axis to plot against.
+Enable a <code>dc</code>, <code>ac</code> or <code>tran</code> analysis; op values
+are read in the Outputs table's <b>Value</b> column instead.</td></tr>
+
+<tr><td>The traces went empty after a re-run</td>
+<td>Those are RPN <b>expression</b> traces. Their computed vector does not survive
+the re-attach of the new <code>.raw</code>. Re-add the trace, or save the state
+and load it back — the reload re-materialises them (<a href="#traces">§3</a>).</td></tr>
+
+<tr><td>A Direct Plot pick produced no trace</td>
+<td>The node was not in the raw file. Direct Plot writes no <code>.save</code>
+cards, so an internal node is only plottable if the run saved it. Add it as an
+output, or turn on save-all-voltages, and re-run.</td></tr>
+
+<tr><td>The viewer will not open</td>
+<td>The viewer belongs to an ASE <i>session</i>: open the cell's
+<code>ngspice_state</code> view first. Without a session there is nothing for the
+window to belong to and you get
+<span class="msg">ase: cannot open the waveform viewer for &lt;session&gt;</span>.</td></tr>
+
+<tr><td>A key "does nothing"</td>
+<td>Most likely it is one of the <a href="#ref-graph-keys">§9.3</a> keys and the
+pointer is not over a strip — those are gated on pointer position, not on
+keyboard focus. Move the pointer onto a plot and try again.</td></tr>
+
+<tr><td>A drag reorders the stack when you meant to move a trace</td>
+<td>The press must land within about 10 pixels of the curve. Further out is
+"empty plot space", which is the strip-reorder grab. Watch the pointer: it turns
+into a grab hand for a trace drag and into a vertical double-arrow for a strip
+drag.</td></tr>
+
+<tr><td>Clicking a trace on a digital or bus strip selects nothing</td>
+<td>Those are drawn as bands, not curves, so there is no curve to be near. Click
+the name in the legend instead — that always works.</td></tr>
+
+<tr><td>A zoom or pan came back after resizing the window</td>
+<td>Resizing rebuilds the strips from the stored layout. Ranges you set through
+<span class="menu">Graph &gt; Axes…</span>, the wheel or the keys are stored;
+some engine-side gestures are view state that a rebuild discards. Use
+<b>Axes…</b> when a range has to stick.</td></tr>
+
+<tr><td>The window title reverted to <code>untitled.sch</code></td>
+<td>Cosmetic. Move the pointer over the viewer and the title is restored.</td></tr>
+</table>
+
+<h2 id="seealso">12. See also</h2>
+<ul>
+<li><a href="ase_l_tutorial.html">ASE-L tutorial</a> — the simulation environment
+this viewer belongs to: analyses, outputs, running, session states.</li>
+<li><a href="xschem_man/graphs.html">Graphs in schematics</a> — the other
+plotting surface: graph rectangles drawn <i>into</i> a schematic. Same drawing
+engine, different window, different keys.</li>
+</ul>
+
+</body>
+</html>
