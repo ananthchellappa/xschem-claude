@@ -24,14 +24,24 @@
 # hit only ends the click if nothing classified. An empty-canvas click stays
 # silent exactly as before -- that is the `hit eq {}` arm at the bottom.
 #
+# ISSUE 0204 finished the sentence this file started. 0160 said "a read-only probe
+# must resolve the net WITHOUT selecting the object" and then applied it to the
+# LOCKED half only, leaving the unlocked half selecting as before (old LK7b). That
+# leftover selection is what made `e` descend into a just-picked net label, so
+# sod_click now classifies with `xschem object_at` and resolves nets with
+# `xschem net_name_at` -- read-only twins of select_at / `nets -selected`. Both are
+# deliberately still override_lock=0, so every locked-object leg here (LK2, LK4-LK6,
+# LK10-LK12) means exactly what it meant before; only LK7b flipped.
+#
 # Legs (LK*):
 #   LK1-LK3   fixture + the engine invariants this must NOT change: the wire is
 #             locked, select_at still refuses it, flylines still resolves it.
 #   LK4-LK6   the fix: a locked wire queues its net, on both pick modes, and the
 #             wire is still NOT selected afterwards (lock integrity).
-#   LK7-LK9   controls: an unlocked wire still queues AND selects; an
-#             empty-canvas click still queues nothing; a locked wire's net still
-#             takes the 0153 colour cue (hilight_netname does not honour lock).
+#   LK7-LK9   controls: an unlocked wire still queues and (since issue 0204) does
+#             NOT get selected either; an empty-canvas click still queues nothing;
+#             a locked wire's net still takes the 0153 colour cue (hilight_netname
+#             does not honour lock).
 #   LK8c-LK8d a non-source instance body still queues nothing but DOES get the
 #             v1-scope notice -- the late return must not swallow it.
 #   LK11-LK12 a LOCKED voltage source still queues nothing (find_closest_element
@@ -136,8 +146,18 @@ xschem unselect_all
 set ::queued {}
 ase::ui::sod_click k 100 100
 check "LK7 (control) an unlocked wire still queues" $::queued {v(free)}
-check_true "LK7b (control) ... and IS still selected, as before" \
-  [expr {[llength [xschem nets -selected]] == 1}]
+## LK7b INVERTED by issue 0204. It used to read "and IS still selected, as before",
+## pinning select_at's side effect as the intended behaviour for the UNLOCKED case --
+## the asymmetry this file's own header calls out (a locked wire resolves without being
+## selected, an unlocked one gets selected). That asymmetry turned out to be the bug the
+## user hit: the pick's leftover selection made `hi_descend` read a Ctrl-4 click as
+## noun-verb, so the next `e` descended into the net label instead of arming the
+## verb-noun pick. sod_click now classifies with `xschem object_at` and resolves nets
+## with `xschem net_name_at`, both read-only, so NO pick selects anything -- which is
+## also what LK6 has always required of the locked half. Same rule now, both halves.
+check_true "LK7b (control) ... and (0204) does NOT select it either -- a pick is not a\
+ selection, for locked and unlocked alike" \
+  [expr {[llength [xschem nets -selected]] == 0}]
 
 xschem unselect_all
 set ::queued {} ; set ::notices {}

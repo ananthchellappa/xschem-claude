@@ -1765,15 +1765,23 @@ cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume
 # "source currents only" notice. A6 is NOT relaxed — the overlay, the query and
 # tests/headless/test_flylines.sh keep it exactly as shipped.
 #
-# The fallback reads the selection `select_at` already made, via
-# `xschem nets -selected` (cold-correct: that verb resets the interp result
-# AFTER prepare_netlist_structs, unlike `resolved_net`). Restricted to WIRE
-# hits on purpose: on a device BODY `nets -selected` reports every net the
-# device touches (2 for a vsource, 3 for a mosfet), and a two-pin device with
-# both pins on one net would report exactly one — so an llength test alone
-# would misclassify a non-source device click as a voltage pick and break the
-# "non-source click queues nothing" contract (test_ase_interact I6). A wire
-# lies on exactly one net by construction.
+# The fallback is `xschem net_name_at`, the READ-ONLY net probe (issue 0204):
+# the wire's raw node token, resolved straight from the coordinate, with no
+# selection anywhere in the path. It replaces `select_at` + `xschem nets
+# -selected`, which could only answer this question by first SELECTING the
+# wire — and that leftover selection is what made the next `e` descend into a
+# net label instead of arming the verb-noun pick.
+#
+# Both halves of the old idiom live on inside net_name_at, because both were
+# load-bearing. It is cold-correct (prepare_netlist_structs first, exactly as
+# `nets` does), and it is restricted to WIRE hits: on a device BODY
+# `nets -selected` reported every net the device touches (2 for a vsource, 3
+# for a mosfet), and a two-pin device with both pins on one net reported
+# exactly one — so an llength test alone would misclassify a non-source device
+# click as a voltage pick and break the "non-source click queues nothing"
+# contract (test_ase_interact I6, test_ase_unnamed_net AN7b). A wire lies on
+# exactly one net by construction. The `$hit` type gate below is kept as well:
+# it is this caller's own statement of that contract, and it costs nothing.
 #
 # Returns the token WITH its `#` and in its original case: dp_hilight needs
 # that form (`xschem hilight_netname net1` finds nothing, `#net1` works). The
@@ -1783,44 +1791,64 @@ proc ase::ui::sod_net_at {x y hit} {
   catch {set net [dict get [xschem flylines at $x $y] net]}
   if {$net ne {}} { return $net }
   if {[lindex $hit 0] ne {wire}} { return {} }
-  set rows {}
-  catch {set rows [xschem nets -selected]}
-  if {[llength $rows] != 1} { return {} }
+  # by INDEX, not by coordinate: `$hit` was already hit-tested, and the coordinate form
+  # would run a second, independent find_closest_obj — which re-expands floater text
+  # through Tcl and could hand the pick to a different object on that second pass.
   set name {}
-  catch {set name [dict get [lindex $rows 0] name]}
+  catch {set name [xschem net_name_at -wire [lindex $hit 1]]}
   return $name
 }
 
 # One mode click. Bare x/y (the canvas binding) read the last snapped mouse
 # position — kept current by the generic <Motion> binding that still flows to
 # C; tests pass explicit schematic coordinates (replayable). Classification
-# (D4): select_at miss -> nothing; source-class instance -> current output;
+# (D4): object_at miss -> nothing; source-class instance -> current output;
 # anything resolving to a net under the click (wires, net labels, labeled
 # pins — via sod_net_at) -> voltage output; else the v1 scope notice.
-# select_at doubles as the Cadence-like click feedback and logs its own
-# replayable action-log line.
+#
+# issue 0204: the pick is READ-ONLY. It used to classify with `xschem select_at`,
+# the MUTATING coordinate pick, so every plot click left its target selected —
+# and `hi_descend` reads a non-empty `xschem selected_set` as "noun-verb", so the
+# next `e` descended into the net label the user had just picked a signal from
+# instead of arming the verb-noun pick (issue 0200). A pick is not a selection:
+# `xschem object_at` classifies identically (same find_closest_obj cascade, same
+# override_lock=0) and selects, draws and logs nothing.
+#
+# What that costs, recorded rather than glossed: (a) the stashed
+# `xschem select_at x y` action-log line is gone. It logged a selection that no
+# longer happens, so keeping it would have been a lie — and replaying it never
+# re-created the pick anyway (it re-selects an object; it does not re-enter
+# Direct Plot or queue anything). An honest SOD-pick log line is a separate
+# piece of work. (b) In `plot` flavour dp_hilight still paints the picked object
+# in its future trace colour (issue 0153), but `outputs` flavour paints nothing,
+# so there the selection highlight WAS the only on-canvas acknowledgement; its
+# feedback is now the CIW echo and the Outputs pane only.
 proc ase::ui::sod_click {key {x {}} {y {}}} {
   variable sod
   if {![info exists sod($key,flavor)]} { return }
   if {$x eq {}} { set x [xschem get mousex_snap] }
   if {$y eq {}} { set y [xschem get mousey_snap] }
-  # issue 0160: an EMPTY hit is not the end of the click. `xschem select_at`
-  # selects with override_lock=0, so a `lock=true` wire returns nothing even
-  # though its net resolves perfectly (`xschem flylines at` uses override_lock=1
-  # and never had a problem with it) — the pick died before classification, so
-  # not even the notice below fired.
+  # issue 0160: an EMPTY hit is not the end of the click. The hit test runs with
+  # override_lock=0, so a `lock=true` wire returns nothing even though its net
+  # resolves perfectly (`xschem flylines at` uses override_lock=1 and never had a
+  # problem with it) — the pick died before classification, so not even the
+  # notice below fired.
   #
-  # The fix is deliberately NOT to override the lock here. `lock` is enforced in
+  # The fix was deliberately NOT to override the lock here, and 0204 did not
+  # change that even though object_at could now afford to. `lock` is enforced in
   # exactly two files, select.c and findnet.c; there is no lock check in move.c,
   # actions.c or any delete path, because every edit acts on the SELECTION.
-  # Selection IS the lock, so making a locked wire selectable would make it
-  # deletable. A read-only probe must resolve the net WITHOUT selecting the
-  # object, which is precisely what falling through to sod_net_at does.
+  # Selection IS the lock — that argument was about SELECTING a locked object,
+  # and it no longer applies to a probe that selects nothing. But relaxing it
+  # here would silently change what a locked vsource body and a locked unnamed
+  # wire classify as (test_ase_locked_wire_pick_0160 LK11 pins the first), so it
+  # stays a separate, deliberate decision rather than a side effect of 0204 —
+  # doc/claude/issues/0205-read-only-probes-still-honour-the-lock.md.
   #
-  # The empty-hit return therefore moves to the bottom (see `$hit eq {}` there),
+  # The empty-hit return therefore stays at the bottom (see `$hit eq {}` there),
   # where it only ends a click that classified as nothing — so an empty-canvas
   # click stays silent exactly as before.
-  set hit [xschem select_at $x $y]
+  set hit [xschem object_at $x $y]
   set kind {}
   set token {}
   if {[lindex $hit 0] eq {instance}} {
