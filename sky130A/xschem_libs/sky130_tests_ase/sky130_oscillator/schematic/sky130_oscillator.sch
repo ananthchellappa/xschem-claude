@@ -85,8 +85,8 @@ N 1040 -330 1040 -170 {
 lab=RSTB}
 N 1410 -330 1410 -170 {
 lab=RSTA}
-C {sky130_tests/lvnand} 520 -360 2 1 {name=x9 WidthN=0.5 LenN=0.15 WidthP=1 LenP=0.15 m=1}
-C {sky130_tests/lvnand} 520 -160 0 0 {name=x1 WidthN=0.5 LenN=0.15 WidthP=1 LenP=0.15 m=1}
+C {sky130_tests_ase/lvnand} 520 -360 2 1 {name=x9 WidthN=0.5 LenN=0.15 WidthP=1 LenP=0.15 m=1}
+C {sky130_tests_ase/lvnand} 520 -160 0 0 {name=x1 WidthN=0.5 LenN=0.15 WidthP=1 LenP=0.15 m=1}
 C {sky130_fd_pr/pfet_01v8} 1170 -330 0 0 {name=M1
 W=4
 L=0.15
@@ -111,8 +111,8 @@ spiceprefix=X
 }
 C {sky130_tests/not} 700 -360 0 0 {name=x2 m=1 VCCPIN=VCC VSSPIN=VSS W_N=0.5 L_N=0.15 W_P=1 L_P=0.15}
 C {sky130_tests/not} 700 -160 0 0 {name=x3 m=1 VCCPIN=VCC VSSPIN=VSS W_N=0.5 L_N=0.15 W_P=1 L_P=0.15}
-C {sky130_tests/lvnand} 340 -380 2 1 {name=x4 WidthN=0.5 LenN=1 WidthP=1 LenP=0.3 m=1}
-C {sky130_tests/lvnand} 340 -140 0 0 {name=x5 WidthN=0.5 LenN=1 WidthP=1 LenP=0.3 m=1}
+C {sky130_tests_ase/lvnand} 340 -380 2 1 {name=x4 WidthN=0.5 LenN=1 WidthP=1 LenP=0.3 m=1}
+C {sky130_tests_ase/lvnand} 340 -140 0 0 {name=x5 WidthN=0.5 LenN=1 WidthP=1 LenP=0.3 m=1}
 C {sky130_fd_pr/pfet_01v8} 1540 -330 0 0 {name=M3
 W=4
 L=0.15

@@ -8,8 +8,8 @@ variables {{name VCM value 1} {name VDD value 1.8}}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 1 start 1k stop 10k points 1} {type tran enabled 0}}
 outputs {{name gain15 expr gain save 1 plot 1}}
 save_all_v 1
-save_all_i 0
+save_all_i 1
 options {{name savecurrents value 1}}
-includes {{file cmos_ac_sweep.save}}
+includes {}
 pre_commands {}
 viewer {}

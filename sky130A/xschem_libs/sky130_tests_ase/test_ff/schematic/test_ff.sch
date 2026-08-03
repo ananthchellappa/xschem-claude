@@ -183,8 +183,8 @@ C {devices/lab_pin} 1570 -950 0 0 {name=l31 sig_type=std_logic lab=D}
 C {devices/lab_pin} 890 -850 2 1 {name=l28 sig_type=std_logic lab=CLK}
 C {devices/lab_pin} 1480 -790 0 0 {name=l29 sig_type=std_logic lab=RESETB}
 C {devices/lab_pin} 1860 -890 0 1 {name=l30 sig_type=std_logic lab=Q3}
-C {sky130_tests/srlatch} 350 -330 0 0 {name=x1}
-C {sky130_tests/srlatch} 580 -330 0 0 {name=x2}
+C {sky130_tests_ase/srlatch} 350 -330 0 0 {name=x1}
+C {sky130_tests_ase/srlatch} 580 -330 0 0 {name=x2}
 C {sky130_tests/lvtnot} 200 -200 0 0 {name=x4 m=1 
 + W_N=1 L_N=0.15 W_P=2 L_P=0.35 
 + VCCPIN=VDD VSSPIN=GND}

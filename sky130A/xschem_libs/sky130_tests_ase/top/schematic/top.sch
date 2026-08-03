@@ -146,12 +146,12 @@ T {Ctrl-Click to open link} 420 -1010 0 0 0.3 0.3 {layer=11}
 T {Photodiode} 2750 -250 0 0 0.4 0.4 {}
 T {Verilog-A example} 30 -610 0 0 0.6 0.6 {layer=8}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
-C {sky130_tests/test_nmos} 190 -1560 0 0 {name=x1}
-C {sky130_tests/test_pmos} 190 -1520 0 0 {name=x2}
-C {sky130_tests/test_inv} 190 -1480 0 0 {name=x5}
-C {sky130_tests/test_res} 190 -1600 0 0 {name=x3}
-C {sky130_tests/test_bipolar} 190 -1640 0 0 {name=x4}
-C {sky130_tests/test_diode} 190 -1680 0 0 {name=x6}
+C {sky130_tests_ase/test_nmos} 190 -1560 0 0 {name=x1}
+C {sky130_tests_ase/test_pmos} 190 -1520 0 0 {name=x2}
+C {sky130_tests_ase/test_inv} 190 -1480 0 0 {name=x5}
+C {sky130_tests_ase/test_res} 190 -1600 0 0 {name=x3}
+C {sky130_tests_ase/test_bipolar} 190 -1640 0 0 {name=x4}
+C {sky130_tests_ase/test_diode} 190 -1680 0 0 {name=x6}
 C {sky130_fd_pr/diode} 2260 -150 0 0 {name=D1
 model=diode_pw2nd_05v5
 }
@@ -308,7 +308,7 @@ nf=1 mult=1
 model=pfet_g5v0d16v0
 spiceprefix=X
 }
-C {sky130_tests/test_comparator} 190 -1440 0 0 {name=x7}
+C {sky130_tests_ase/test_comparator} 190 -1440 0 0 {name=x7}
 C {sky130_fd_pr/pfet_20v0} 2130 -970 0 0 {name=M13
 L=0.5
 W=60
@@ -320,14 +320,14 @@ C {sky130_tests/gates} 190 -910 0 0 {name=x8}
 C {sky130_fd_pr/cap_mim_m3_1} 1910 -1180 0 0 {name=C1 model=cap_mim_m3_1 W=1 L=1 MF=1 spiceprefix=X}
 C {sky130_fd_pr/cap_mim_m3_2} 2070 -1180 0 0 {name=C2 model=cap_mim_m3_2 W=1 L=1 MF=1 spiceprefix=X}
 C {sky130_tests/test_format_override} 190 -870 0 0 {name=x9}
-C {sky130_tests/test_nmos_sizes} 190 -1400 0 0 {name=x11}
+C {sky130_tests_ase/test_nmos_sizes} 190 -1400 0 0 {name=x11}
 C {sky130_tests/gates_sky130} 190 -830 0 0 {name=x10}
-C {sky130_tests/test_stdcells} 190 -950 0 0 {name=x12}
+C {sky130_tests_ase/test_stdcells} 190 -950 0 0 {name=x12}
 C {sky130_tests/all_sky130_gates} 190 -790 0 0 {name=x13}
 C {sky130_fd_pr/cap_var_lvt} 1910 -1320 0 0 {name=C3 model=cap_var_lvt W=0.5 L=0.5 VM=1 spiceprefix=X}
 C {sky130_fd_pr/cap_var_hvt} 2070 -1320 0 0 {name=C4 model=cap_var_hvt W=0.5 L=0.5 VM=1 spiceprefix=X}
-C {sky130_tests/test_varactor} 190 -1720 0 0 {name=x14}
-C {sky130_tests/test_vpp_cap} 190 -1760 0 0 {name=x15}
+C {sky130_tests_ase/test_varactor} 190 -1720 0 0 {name=x14}
+C {sky130_tests_ase/test_vpp_cap} 190 -1760 0 0 {name=x15}
 C {sky130_fd_pr/vpp_cap} 1960 -1440 0 0 {name=C5
 model=cap_vpp_11p5x11p7_l1m1m2m3m4_shieldm5
 W=1
@@ -431,10 +431,10 @@ nf=1 mult=1
 model=pfet_20v0
 spiceprefix=X
 }
-C {sky130_tests/test_mim_cap} 190 -1800 0 0 {name=x18}
-C {sky130_tests/LACG} 190 -710 0 0 {name=x19}
-C {sky130_tests/test_ff} 190 -670 0 0 {name=x20}
-C {sky130_tests/test_analog} 190 -1360 0 0 {name=x21}
+C {sky130_tests_ase/test_mim_cap} 190 -1800 0 0 {name=x18}
+C {sky130_tests_ase/LACG} 190 -710 0 0 {name=x19}
+C {sky130_tests_ase/test_ff} 190 -670 0 0 {name=x20}
+C {sky130_tests_ase/test_analog} 190 -1360 0 0 {name=x21}
 C {sky130_tests/simulate_ff} 190 -630 0 0 {name=x22}
 C {sky130_fd_pr/nfet_20v0} 2130 -750 0 0 {name=M7
 L=0.5
@@ -472,9 +472,9 @@ mult=1
 model=nfet_20v0_zvt
 spiceprefix=X
 }
-C {sky130_tests/tb_ft_test} 190 -1320 0 0 {name=x23}
-C {sky130_tests/tb_ft_test_2} 190 -1280 0 0 {name=x24}
-C {sky130_tests/tb_bandgap} 480 -1760 0 0 {name=x25}
+C {sky130_tests_ase/tb_ft_test} 190 -1320 0 0 {name=x23}
+C {sky130_tests_ase/tb_ft_test_2} 190 -1280 0 0 {name=x24}
+C {sky130_tests_ase/tb_bandgap} 480 -1760 0 0 {name=x25}
 C {sky130_fd_pr/res_generic_m1} 2140 -550 0 0 {name=R13
 L=1
 model=res_generic_m1
@@ -502,7 +502,7 @@ L=5.73
 model=res_xhigh_po_5p73
 spiceprefix=X
  mult=1}
-C {sky130_tests/logic_ngspice} 190 -1240 0 0 {name=x26}
+C {sky130_tests_ase/logic_ngspice} 190 -1240 0 0 {name=x26}
 C {sky130_fd_pr/nfet_01v8_esd} 2970 -1300 0 0 {name=M30
 L=0.165
 W=20.35
@@ -610,7 +610,7 @@ nf=1 mult=1
 model=pfet_g5v0d16v0
 spiceprefix=X
 }
-C {sky130_tests/test_carry_lookahead} 480 -1680 0 0 {name=x28}
+C {sky130_tests_ase/test_carry_lookahead} 480 -1680 0 0 {name=x28}
 C {sky130_fd_pr/npn_05v5} 2570 -50 0 0 {name=Q2
 model=npn_05v5_w1p00l2p00
 spiceprefix=X
@@ -636,31 +636,31 @@ L=1
 model=res_generic_l1
 spiceprefix=X
 mult=1}
-C {sky130_tests/test_s_xfer} 480 -1600 0 0 {name=x30}
-C {sky130_tests/test_multisim} 480 -1560 0 0 {name=x31}
-C {sky130_tests/test_ac} 480 -1520 0 0 {name=x32}
-C {sky130_tests/test_mos_binning} 480 -1480 0 0 {name=x33}
+C {sky130_tests_ase/test_s_xfer} 480 -1600 0 0 {name=x30}
+C {sky130_tests_ase/test_multisim} 480 -1560 0 0 {name=x31}
+C {sky130_tests_ase/test_ac} 480 -1520 0 0 {name=x32}
+C {sky130_tests_ase/test_mos_binning} 480 -1480 0 0 {name=x33}
 C {sky130_fd_pr/res_generic_m5} 2770 -550 0 0 {name=R22
 W=1
 L=1
 model=res_generic_m5
 mult=1}
-C {sky130_tests/test_sweep_mos_w} 480 -1440 0 0 {name=x34}
-C {sky130_tests/tb_bandgap_opamp} 480 -1800 0 0 {name=x17}
-C {sky130_tests/tb_charge_pump} 480 -1320 0 0 {name=x35}
-C {sky130_tests/cmos_ac_sweep} 480 -1280 0 0 {name=x36}
-C {sky130_tests/test_hvl_cells} 480 -1240 0 0 {name=x37}
+C {sky130_tests_ase/test_sweep_mos_w} 480 -1440 0 0 {name=x34}
+C {sky130_tests_ase/tb_bandgap_opamp} 480 -1800 0 0 {name=x17}
+C {sky130_tests_ase/tb_charge_pump} 480 -1320 0 0 {name=x35}
+C {sky130_tests_ase/cmos_ac_sweep} 480 -1280 0 0 {name=x36}
+C {sky130_tests_ase/test_hvl_cells} 480 -1240 0 0 {name=x37}
 C {sky130_tests/test_short_option} 480 -1200 0 0 {name=x40}
 C {sky130_tests/test_lvs_ignore} 480 -1160 0 0 {name=x41}
 C {sky130_tests/test_generators} 480 -1120 0 0 {name=x38}
-C {sky130_tests/optimize_delay} 190 -1200 0 0 {name=x39}
-C {sky130_tests/test_customplot} 480 -1360 0 0 {name=x42}
+C {sky130_tests_ase/optimize_delay} 190 -1200 0 0 {name=x39}
+C {sky130_tests_ase/test_customplot} 480 -1360 0 0 {name=x42}
 C {devices/intuitive_interface_cheatsheet} 1060 -1660 0 0 {name=x43}
-C {sky130_tests/sky130_oscillator} 190 -1160 0 0 {name=x44}
+C {sky130_tests_ase/sky130_oscillator} 190 -1160 0 0 {name=x44}
 C {sky130_fd_pr/photodiode} 2800 -150 0 0 {name=D3
 model=photodiode
 }
-C {sky130_tests/sky130_mismatch} 190 -1120 0 0 {name=x45}
-C {sky130_tests/test_sweep_res_l} 480 -1400 0 0 {name=x46}
-C {sky130_tests/tb_diff_amp} 190 -550 0 0 {name=x47}
-C {sky130_tests/montecarlo_mismatch_sim} 190 -1080 0 0 {name=x48}
+C {sky130_tests_ase/sky130_mismatch} 190 -1120 0 0 {name=x45}
+C {sky130_tests_ase/test_sweep_res_l} 480 -1400 0 0 {name=x46}
+C {sky130_tests_ase/tb_diff_amp} 190 -550 0 0 {name=x47}
+C {sky130_tests_ase/montecarlo_mismatch_sim} 190 -1080 0 0 {name=x48}

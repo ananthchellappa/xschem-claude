@@ -7,8 +7,9 @@ models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt_mm}}
 variables {{name ABSVAR value 0.03} {name VCCGAUSS value {agauss(1.8, 'ABSVAR', 1)}} {name VCC value VCCGAUSS}}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 200u step 10n}}
 outputs {{name VBG expr VBG save 1 plot 1} {name ENN expr EN_N save 1 plot 1} {name START expr START save 1 plot 1} {name Icc expr i(VCC) save 1 plot 1} {name TEMPERAT expr TEMPERAT save 1 plot 1}}
-save_all_v 0
+save_all_v 1
 save_all_i 0
 options {{name method value gear}}
 includes {}
-viewer {}
+pre_commands {}
+viewer {open 1 sharedx 0 rawfile {} graphs {{traces {{expr v(x1.net3) name {} vec v(x1.net3) color 4}} logx 0 logy 0 x1 0 x2 0.0002 y1 -0.0013 y2 0.9} {traces {{expr v(x1.x1.net6) name {} vec v(x1.x1.net6) color 5}} logx 0 logy 0 x1 0 x2 0.0002 y1 -2.9e-16 y2 1.5}} mode multi target 0}

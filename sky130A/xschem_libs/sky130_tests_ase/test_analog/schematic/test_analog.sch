@@ -78,8 +78,8 @@ N 460 -200 460 -170 { lab=OUT}
 N 430 -480 460 -480 { lab=OUT2}
 N 430 -200 460 -200 { lab=OUT}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
-C {sky130_tests/n_diffamp} 330 -200 0 0 {name=x1}
-C {sky130_tests/n_diffamp} 330 -480 0 0 {name=x2}
+C {sky130_tests_ase/n_diffamp} 330 -200 0 0 {name=x1}
+C {sky130_tests_ase/n_diffamp} 330 -480 0 0 {name=x2}
 C {devices/lab_pin} 280 -90 0 0 {name=l2 sig_type=std_logic lab=BIAS}
 C {devices/lab_pin} 280 -370 0 0 {name=l3 sig_type=std_logic lab=BIAS2}
 C {devices/lab_pin} 120 -160 0 0 {name=l5 sig_type=std_logic lab=IN}

@@ -63,7 +63,7 @@ C {devices/lab_pin} 1190 -270 0 0 {name=p8 lab=RESET_B}
 C {devices/lab_pin} 1490 -250 0 1 {name=p9 lab=XSCHEM}
 C {devices/lab_pin} 1190 -250 0 0 {name=p10 lab=VCC}
 C {devices/lab_pin} 1190 -230 0 0 {name=p11 lab=VSS}
-C {sky130_tests/stdcells_xspice} 1340 -130 0 0 {name=x1}
+C {sky130_tests_ase/stdcells_xspice} 1340 -130 0 0 {name=x1}
 C {devices/lab_pin} 1490 -180 0 1 {name=p1 lab=X_QLATCH}
 C {devices/lab_pin} 1190 -180 0 0 {name=p2 lab=A}
 C {devices/lab_pin} 1490 -160 0 1 {name=p3 lab=X_X}

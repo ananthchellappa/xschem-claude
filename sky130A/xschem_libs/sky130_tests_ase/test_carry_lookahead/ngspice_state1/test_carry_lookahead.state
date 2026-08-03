@@ -10,6 +10,6 @@ outputs {{name a255 expr {a[255]} save 1 plot 1} {name a254 expr {a[254]} save 1
 save_all_v 0
 save_all_i 0
 options {}
-includes {{file {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}} {file stimuli_test_carry_lookahead.cir}}
+includes {{file {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}}}
 pre_commands {}
 viewer {}

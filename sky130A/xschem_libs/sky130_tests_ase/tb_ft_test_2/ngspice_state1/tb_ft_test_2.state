@@ -8,8 +8,8 @@ variables {}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 1 start 1000 stop 1000G points 10} {type tran enabled 1 stop 2n step 0.001n}}
 outputs {{name ivg expr i(vg) save 1 plot 1} {name ivd expr i(vd) save 1 plot 1} {name dbivdivg expr db(i(vd)/i(vg)) save 1 plot 1}}
 save_all_v 1
-save_all_i 0
+save_all_i 1
 options {{name wnflag value 1} {name method value gear} {name savecurrents value 1}}
-includes {{file tb_ft_test_2.save}}
+includes {}
 pre_commands {}
 viewer {}

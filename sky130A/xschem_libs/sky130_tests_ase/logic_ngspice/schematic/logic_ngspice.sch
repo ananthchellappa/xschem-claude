@@ -32,7 +32,7 @@ N 230 -170 230 -150 { lab=BB}
 N 340 -410 340 -390 { lab=0}
 N 340 -490 340 -470 { lab=VSS}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
-C {sky130_tests/lvnand} 580 -460 0 0 {name=x1 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 VCCPIN=VCC VSSPIN=VSS m=1}
+C {sky130_tests_ase/lvnand} 580 -460 0 0 {name=x1 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 VCCPIN=VCC VSSPIN=VSS m=1}
 C {devices/lab_wire} 680 -460 0 0 {name=l2 sig_type=std_logic lab=ZN}
 C {devices/lab_wire} 810 -460 0 0 {name=l3 sig_type=std_logic lab=ZZ}
 C {devices/lab_pin} 490 -480 0 0 {name=l4 sig_type=std_logic lab=AA}

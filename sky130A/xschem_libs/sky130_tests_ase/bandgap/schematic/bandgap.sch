@@ -95,7 +95,7 @@ C {devices/ammeter} 330 -250 0 0 {name=Vc2 }
 C {devices/lab_pin} 80 -540 0 1 {name=l26 sig_type=std_logic lab=PLUS}
 C {devices/lab_pin} 330 -350 0 1 {name=l27 sig_type=std_logic lab=E2}
 C {devices/lab_pin} 330 -480 0 1 {name=l28 sig_type=std_logic lab=MINUS}
-C {sky130_tests/bandgap_opamp} 610 -500 0 0 {name=x1}
+C {sky130_tests_ase/bandgap_opamp} 610 -500 0 0 {name=x1}
 C {devices/lab_pin} 530 -370 0 0 {name=l30 sig_type=std_logic lab=VCC}
 C {devices/lab_pin} 530 -350 0 0 {name=l31 sig_type=std_logic lab=VSS}
 C {devices/lab_pin} 530 -390 0 0 {name=l32 sig_type=std_logic lab=EN_N}
@@ -134,8 +134,8 @@ C {devices/lab_pin} 1640 -880 0 1 {name=l243 sig_type=std_logic lab=F2}
 C {devices/lab_pin} 1640 -700 0 1 {name=l244 sig_type=std_logic lab=F1}
 C {devices/lab_pin} 1720 -930 0 1 {name=l61 sig_type=std_logic lab=F2N}
 C {devices/lab_pin} 1720 -630 0 1 {name=l62 sig_type=std_logic lab=F1N}
-C {sky130_tests/lvnand} 1170 -860 0 0 {name=x8 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
-C {sky130_tests/lvnand} 1170 -700 2 1 {name=x9 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
+C {sky130_tests_ase/lvnand} 1170 -860 0 0 {name=x8 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
+C {sky130_tests_ase/lvnand} 1170 -700 2 1 {name=x9 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
 C {sky130_tests/not} 1080 -680 0 0 {name=x10 m=1 VCCPIN=VCC VSSPIN=VSS W_N=1 L_N=0.15 W_P=2 L_P=0.15}
 C {sky130_tests/not} 1600 -860 0 0 {name=x11 m=1 VCCPIN=VCC VSSPIN=VSS W_N=1 L_N=0.15 W_P=2 L_P=0.15}
 C {sky130_tests/not} 1280 -860 0 0 {name=x12 m=1 VCCPIN=VCC VSSPIN=VSS W_N=0.5 L_N=1 W_P=1 L_P=1}

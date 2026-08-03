@@ -75,7 +75,7 @@ N 1730 -620 1730 -600 {
 lab=GND}
 N 60 -620 60 -590 {
 lab=VCC}
-C {sky130_tests/charge_pump} 1480 -210 0 0 {name=x1}
+C {sky130_tests_ase/charge_pump} 1480 -210 0 0 {name=x1}
 C {sky130_tests/charge_pump_phasegen} 1230 -120 0 0 {name=x2}
 C {devices/vsource} 60 -560 0 0 {name=V1 value='VCC'}
 C {devices/lab_pin} 60 -510 0 0 {name=p9 sig_type=std_logic lab=GND}
@@ -103,7 +103,7 @@ C {devices/isource} 1730 -110 0 0 {name=I0 value="pwl 0 0
 + 4u 200u 4.01u 250u"}
 C {devices/lab_pin} 1730 -60 0 0 {name=p10 sig_type=std_logic lab=GND}
 C {devices/ammeter} 1730 -170 0 0 {name=Vload}
-C {sky130_tests/charge_pump2} 1480 -390 0 0 {name=x3}
+C {sky130_tests_ase/charge_pump2} 1480 -390 0 0 {name=x3}
 C {devices/vsource} 60 -300 0 0 {name=V3 value="pulse \{VCC\} 0 0 100p 100p
 + \{PER/2-0.1n\} \{PER\}"}
 C {devices/lab_pin} 60 -250 0 0 {name=p11 sig_type=std_logic lab=GND}

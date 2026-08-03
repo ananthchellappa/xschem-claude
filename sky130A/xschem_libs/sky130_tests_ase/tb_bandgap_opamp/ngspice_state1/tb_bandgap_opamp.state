@@ -10,6 +10,6 @@ outputs {{name run expr run save 1 plot 0} {name mx1xmlmsky130fdprpfet01v8lvtvth
 save_all_v 1
 save_all_i 0
 options {{name method value gear} {name savecurrents value 1} {name wnflag value 1} {name temp value 'TEMPGAUSS'}}
-includes {{file stimuli_tb_bandgap_opamp.cir}}
+includes {}
 pre_commands {}
 viewer {}

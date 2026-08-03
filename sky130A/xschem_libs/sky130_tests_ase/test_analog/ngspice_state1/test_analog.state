@@ -8,8 +8,8 @@ variables {}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
 outputs {{name mx2xm5msky130fdprnfet01v8vth expr {@m.x2.xm5.msky130_fd_pr__nfet_01v8[vth]} save 1 plot 0}}
 save_all_v 1
-save_all_i 0
+save_all_i 1
 options {{name savecurrents value 1}}
-includes {{file test_analog.save}}
+includes {}
 pre_commands {}
 viewer {}

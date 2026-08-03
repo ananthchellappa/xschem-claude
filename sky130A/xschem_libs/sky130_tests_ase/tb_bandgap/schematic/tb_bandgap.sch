@@ -48,7 +48,7 @@ lab=START}
 N 240 -480 300 -480 {
 lab=CLK}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
-C {sky130_tests/bandgap} 450 -460 0 0 {name=x1}
+C {sky130_tests_ase/bandgap} 450 -460 0 0 {name=x1}
 C {devices/lab_pin} 600 -500 0 1 {name=p1 lab=VBG}
 C {devices/lab_pin} 240 -460 0 0 {name=p2 lab=EN_N}
 C {devices/vsource} 240 -290 0 0 {name=V1 value=0}
