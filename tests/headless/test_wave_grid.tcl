@@ -247,10 +247,18 @@ proc wvproc_body {src name} {
 # not. 12 + 3 + the seven that already captured pre-0194 = every call site.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
-             pan_x axes_ok}
+             pan_x axes_ok
+             select_tab new_tab close_tab paste_traces paste_payload}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
+# TABS (doc/claude/specs/waveform_viewer_tabs.md). All five carry the fold and
+# then regenerate, so they are gx_must, not exemptions -- and the reason is NOT
+# the one the exemptions give. `restore`/`state_apply`/`clear_all` replace the
+# model wholesale from a source that owes the outgoing rects nothing; a tab
+# switch replaces it from a source (the stash) that is ABOUT TO BE WRITTEN with
+# those very rects, so the fold is what carries the outgoing tab's selection
+# into the record being frozen. `paste_*` are ordinary content mutations.
 
 foreach p $gx_must {
   set b [wvproc_body $wsrc wviewer::$p]
@@ -382,9 +390,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the nine documented viewer keys" \
-  [llength $gh_seqs] 9
-check "GH0 ...and five documented menu accelerators" [llength $gh_menus] 5
+check "GH0 the guide's §9.1 carries the fourteen documented viewer keys" \
+  [llength $gh_seqs] 14
+check "GH0 ...and nine documented menu accelerators" [llength $gh_menus] 9
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]

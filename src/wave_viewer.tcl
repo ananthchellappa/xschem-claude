@@ -451,6 +451,54 @@ namespace eval wviewer {
   # window is holding a semaphore across a viewer refresh, which is worth
   # knowing but is not itself actionable at the call site.
   variable ctx_restore_refused 0
+  # ---- TABS (doc/claude/specs/waveform_viewer_tabs.md) ----------------------
+  # THE STASH (D2). Every per-view-content array above keeps its session-token
+  # key and always describes the ACTIVE tab; the INACTIVE tabs live frozen
+  # here, so not one existing proc changes its key and a Direct Plot lands in
+  # the active tab for free. One record per tab, in bar order:
+  #   {id N name S layout L mode M target T cva a cvb b cvr r
+  #    undo U redo R wavehl W view V}
+  variable tabstash; array set tabstash {}
+  # token -> the ACTIVE tab's INDEX into that list
+  variable curtab;   array set curtab {}
+  # token -> next tab id to mint. Monotonic and NEVER reused: the id is inert
+  # (nothing behavioural reads it) and exists so a test can witness "it landed
+  # in the tab that was second" independently of "the tabs got reordered".
+  variable tabseq;   array set tabseq {}
+  # The trace CLIPBOARD (D12). One per session, not per window, so a copy can
+  # cross windows as well as tabs. Shape:
+  #   {from {<token> <tabid>} raw {<rawfile> <sim_type>}
+  #    items {{gi <source model strip> tr {expr .. name .. vec .. color ..}} ...}}
+  # The per-item SOURCE STRIP INDEX is the whole of what "keep their
+  # separateness" needs -- the groups are derived from it, so nothing else
+  # about the source layout has to be copied. Deliberately NOT graph dicts:
+  # those carry `auto`, `markers`, `hilight_wave`/`sel_waves` and axis ranges,
+  # all meaningless or harmful in another strip.
+  variable clip {}
+}
+
+# --- the message seam (R6 / issue 0207) --------------------------------------
+#
+# ⚠ `ciw_echo` ALONE DOES NOT SATISFY "logged to the CIW and the log file".
+# Issue 0207 measured exactly that: a pane message reaches the CIW's mirror and
+# never the log FILE. This is the ase::echo shape (src/ase.tcl) -- both halves,
+# both catch'd, and NO `::has_x` guard on the pane half, because that guard is
+# precisely what 0207 identified as the suppressor.
+#
+# Scope, deliberately: only the TAB messages route through here. Converting the
+# ~120 pane-only ciw_echo sites in this file is 0207's own deferred item 2 and
+# would collide with everything else in flight.
+proc wviewer::echo {msg {tag {}}} {
+  # pane half first, unconditionally: the tests that capture notices rename
+  # ::ciw_echo, and an empty message still echoes a blank line.
+  if {[info commands ::ciw_echo] ne {}} { catch {::ciw_echo $msg $tag} }
+  if {$msg eq {}} return
+  set msg [string trimright $msg "\n"]        ;# log_output supplies the terminator
+  if {$msg eq {}} return
+  # a TRAILING BACKSLASH would make the logged `#= ` line swallow the next one
+  if {[string index $msg end] eq "\\"} { append msg { } }
+  if {$tag eq {error}} { catch {xschem log_action -error $msg} } \
+  else                 { catch {xschem log_action -result $msg} }
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
@@ -540,6 +588,10 @@ proc wviewer::forget {token} {
     dict unset graphbb $wp_
     dict unset windows $token
   }
+  # tabs: the stash, the active index and the id counter die with the window
+  # (doc/claude/specs/waveform_viewer_tabs.md D3). The bar itself is a child of
+  # $top and goes with it.
+  wviewer::tabs_forget $token
   dict unset layouts $token
   catch {unset cva($token)}
   catch {unset cvb($token)}
@@ -776,6 +828,14 @@ proc wviewer::open {token} {
   # running; on_configure debounces to `after idle` and re-fills only on a real
   # size change (D6).
   bind $wp <Configure> "+[list wviewer::on_configure $token]"
+  # TABS (doc/claude/specs/waveform_viewer_tabs.md): seed the bookkeeping from
+  # the live arrays this proc has just written -- the window opens with exactly
+  # ONE tab holding them -- then build the bar UNPACKED. A one-tab viewer never
+  # packs it, so its widget tree and its canvas geometry stay byte-identical to
+  # the pre-tabs viewer (D7, the issue-0151 "only when there is a choice" rule).
+  wviewer::tabs_init $token
+  wviewer::tabbar_build $token $top
+  wviewer::tabbar_refresh $token
   wviewer::retitle $token
   bind $top <FocusIn> "+[list wviewer::retitle $token]"
   # WM-close (or any external destroy) must also clean the registry; every
@@ -2038,9 +2098,91 @@ proc wviewer::attach_raw {token rawfile sim_type} {
 # its graphs KEPT (last-known layout: wviewer::forget wiped the live model
 # with the window, so the state dict is the only survivor); no previous dict
 # -> {} (a session that never opened a viewer keeps a clean `viewer {}`).
+# The other half of D19. `vdict` with no `tabs` key leaves the one-tab stash
+# `open` seeded (and `restore`'s own flat-key writes are that tab's content),
+# so old state files load exactly as they always did. With `tabs`, rebuild the
+# stash from it and thaw whichever record `activetab` names.
+proc wviewer::restore_tabs {token vdict} {
+  variable tabstash; variable curtab; variable tabseq
+  set tabs [wviewer::dget $vdict tabs {}]
+  if {[llength $tabs] < 2} { return 0 }
+  set recs {}
+  set id 1
+  foreach t $tabs {
+    lappend recs [dict create id $id \
+                    name [wviewer::dget $t name "Tab $id"] \
+                    layout [wviewer::dget $t layout [dict create sharedx 0 graphs {}]] \
+                    mode   [wviewer::dget $t mode single] \
+                    target [wviewer::dget $t target 0] \
+                    cva 0 cvb 0 cvr 0 undo {} redo {} wavehl {} view {}]
+    incr id
+  }
+  set tabseq($token) $id
+  set cur [wviewer::dget $vdict activetab 0]
+  if {![string is integer -strict $cur] || $cur < 0 || $cur >= [llength $recs]} {
+    set cur 0
+  }
+  set tabstash($token) $recs
+  set curtab($token) $cur
+  # the caller has just written the FLAT keys into the live arrays; they
+  # describe the tab that was active when the state was saved, which is exactly
+  # $cur -- but thaw it anyway, so a hand-edited state whose flat keys disagree
+  # with tabs[activetab] resolves in favour of the tab list.
+  wviewer::tab_thaw $token [lindex $recs $cur]
+  wviewer::tabbar_refresh $token
+  return 1
+}
+
+# PURE-ish: the whole tab list as SERIALISABLE records (no `view`, no history,
+# no highlight set -- a saved layout carries the state, not the transient chrome
+# or the history that produced it). The ACTIVE tab is taken from the LIVE
+# arrays, the others from the stash. Deliberately does NOT call tab_freeze:
+# that reads the rects and would switch the xschem context inside what the ASE
+# state save expects to be a pure read.
+proc wviewer::tabs_serialize {token} {
+  set recs [wviewer::tab_records $token]
+  if {[llength $recs] < 2} { return {} }
+  set cur [wviewer::tab_index $token]
+  set out {}
+  set i 0
+  foreach r $recs {
+    if {$i == $cur} {
+      lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
+                     layout [wviewer::layout_for $token] \
+                     mode   [wviewer::plot_mode $token] \
+                     target [wviewer::target_index $token]]
+    } else {
+      lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
+                     layout [wviewer::dget $r layout [dict create sharedx 0 graphs {}]] \
+                     mode   [wviewer::dget $r mode single] \
+                     target [wviewer::dget $r target 0]]
+    }
+    incr i
+  }
+  return $out
+}
+
 proc wviewer::snapshot {token prev} {
   if {[wviewer::window_for $token] ne {}} {
     set lay [wviewer::layout_for $token]
+    # TABS (D19): the flat keys keep describing the ACTIVE tab VERBATIM, and
+    # `tabs`/`activetab` are emitted ONLY when the window has two or more. So a
+    # single-tab viewer serialises byte-identically to the pre-tabs one -- which
+    # matters beyond compatibility: ase::ui::viewer_snapshot's difference test
+    # would otherwise mark every session dirty. An older build reading a new
+    # file sees the active tab and ignores `tabs`; a new build reading an old
+    # file finds no `tabs` and builds a one-tab viewer. No version bump.
+    set tabs [wviewer::tabs_serialize $token]
+    if {[llength $tabs]} {
+      return [dict create open 1 \
+                          sharedx [wviewer::dget $lay sharedx 0] \
+                          rawfile {} \
+                          graphs  [wviewer::dget $lay graphs {}] \
+                          mode    [wviewer::plot_mode $token] \
+                          target  [wviewer::target_index $token] \
+                          tabs      $tabs \
+                          activetab [wviewer::tab_index $token]]
+    }
     return [dict create open 1 \
                         sharedx [wviewer::dget $lay sharedx 0] \
                         rawfile {} \
@@ -2085,6 +2227,13 @@ proc wviewer::restore {token vdict rawfile sim_type} {
   set mode($token) $m
   set target($token) [wviewer::target_clamp [wviewer::dget $vdict target 0] \
                         [llength [wviewer::dget $vdict graphs {}]]]
+  # TABS (D19): a `tabs` key rebuilds the whole stash; its absence (every state
+  # file written before tabs) leaves the single tab `open` already seeded, whose
+  # content the flat keys above have just overwritten. Either way the ACTIVE
+  # tab's live arrays are already correct, so this only has to (a) install the
+  # OTHER tabs and (b) point `curtab` at the right one -- and when `activetab`
+  # is not the last record, hand the live arrays that record instead.
+  wviewer::restore_tabs $token $vdict
   # the model has just been replaced wholesale: any undo point describes a
   # layout this window no longer has
   wviewer::clear_history $token
@@ -6238,6 +6387,51 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Key-0>] eq {}} {
     bind WaveViewer <Key-0> {wviewer::unhilight_all_at %W; break}
   }
+  # ---- TABS (doc/claude/specs/waveform_viewer_tabs.md D10) ------------------
+  # Five chords, all here rather than in key_filter, because this tag is the
+  # only rc-remappable, sweep-proof binding table in the viewer. Each `break`s,
+  # which is what guarantees the chord never travels on to the toplevel, the
+  # `all` tag or a future canvas binding.
+  #
+  # COLLISION CHECK, done on all three paths a key can reach this window by,
+  # and one of them would be catastrophic:
+  #   * Ctrl-N is `file.clear_schematic` in the C binding table
+  #     (src/keybindings.csv key,110,ctrl,canvas,...) and
+  #     `cadence::new_blank_window` in cadence_style_rc (`bind .drw`). Neither
+  #     reaches here: key_filter forwards nothing for keysym 110, and
+  #     strip_bindings sweeps the cloned widget-level bind. The Ctrl-E shape.
+  #   * ⚠ Ctrl-Q in the C dispatcher is `quit_xschem` -- it QUITS THE
+  #     APPLICATION (callback.c case 'q' under ControlMask), and it is live on
+  #     a schematic canvas. It cannot reach a viewer (113 is not in `graphkeys`
+  #     and has no intercept arm) and the `break` keeps it that way. This is
+  #     the one collision in the set that would be catastrophic if the swallow
+  #     ever regressed, hence its own test leg.
+  #   * Ctrl-C / Ctrl-V: bare `c` is the Cadence copy and bare `v` the vertical
+  #     drag constraint; a forward of Ctrl-V would pop readonly_block()'s modal
+  #     over the plot, which is the failure the Ctrl-D carve-out in key_filter
+  #     was written to prevent. Neither has a canvas row; both are swallowed.
+  # None of them is added to `graphkeys` and none gets a key_filter forward arm.
+  if {[bind WaveViewer <Control-Key-n>] eq {}} {
+    bind WaveViewer <Control-Key-n> {wviewer::new_tab_at %W; break}
+  }
+  # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
+  # and with only one tab it does NOTHING but say so. It never closes a window
+  # any more -- that is Ctrl-Q. The hardcoded key_filter arm that used to
+  # destroy the window is gone; leaving it would have fired too, because
+  # key_filter is on the WIDGET (bindtags index 0) and returns without `break`,
+  # so one keystroke would have closed the tab and then killed the window.
+  if {[bind WaveViewer <Control-Key-w>] eq {}} {
+    bind WaveViewer <Control-Key-w> {wviewer::close_tab_at %W; break}
+  }
+  if {[bind WaveViewer <Control-Key-q>] eq {}} {
+    bind WaveViewer <Control-Key-q> {wviewer::close_window_at %W; break}
+  }
+  if {[bind WaveViewer <Control-Key-c>] eq {}} {
+    bind WaveViewer <Control-Key-c> {wviewer::copy_traces_at %W; break}
+  }
+  if {[bind WaveViewer <Control-Key-v>] eq {}} {
+    bind WaveViewer <Control-Key-v> {wviewer::paste_traces_at %W; break}
+  }
   return 1
 }
 
@@ -7279,10 +7473,15 @@ proc wviewer::over_graph {wp} {
 #   everything else: swallowed silently (readonly backstops any miss).
 proc wviewer::key_filter {W T x y N K s} {
   variable graphkeys
-  if {($s & 4) && ($N == 119 || $N == 87)} {          ;# Ctrl-W / Ctrl-Shift-W
-    if {$T == 2} { wviewer::close [wviewer::token_for_canvas $W] }
-    return
-  }
+  # ⚠ THE Ctrl-W / Ctrl-Shift-W ARM THAT LIVED HERE IS GONE
+  # (doc/claude/specs/waveform_viewer_tabs.md D11, 2026-08-03). It called
+  # `wviewer::close`, i.e. destroyed the WINDOW. Ctrl-W now closes a TAB and is
+  # a spoken no-op when there is only one, and it lives on the `WaveViewer`
+  # BINDTAG with the other four tab chords -- which is also what makes it
+  # rc-remappable, as a hardcoded arm here never was. It could not stay in both
+  # places: this proc is bound on the WIDGET (bindtags index 0) and returns
+  # WITHOUT `break`, so the tag binding fires too and one keystroke would have
+  # closed the tab and then killed the window.
   # item 19 (D4): f / Z / Ctrl-z act on the GRAPH, not the canvas. Intercept
   # them here (act on KeyPress, T==2; swallow the matching KeyRelease) instead
   # of forwarding to the C canvas-zoom keys. `f` = FIT (full x+y = wviewer::fit,
@@ -7939,6 +8138,902 @@ proc wviewer::strip_bindings {wp} {
   bind $wp <Control-MouseWheel> {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] ctrl %x %y;  break}
 }
 
+# =============================================================================
+# TABS  (doc/claude/specs/waveform_viewer_tabs.md)
+# =============================================================================
+#
+# A tab is a MODEL, not a context (D1). The window keeps exactly ONE xschem
+# context, one toplevel, one canvas and one loaded raw; a tab is another value
+# of the Tcl model, painted by the `regenerate` that already exists. One
+# xschem context per tab is not merely more expensive, it is unavailable:
+# create_new_tab/switch_tab hardcode a tab's render target to
+# save_xctx[0]->window (xinit.c), so a tab minted for THIS toplevel would draw
+# onto the main schematic window's .drw, and doc/claude/specs/multi_window_detach.md
+# ("A tab cannot belong to a second top-level") is still `proposed`.
+#
+# THE STASH (D2), and it is why this feature is small. Every per-view-content
+# array -- layouts, mode, target, sharedx, gridshow, undo_hist, redo_hist,
+# wavehl, cva, cvb, cvr -- KEEPS its session-token key and always describes the
+# ACTIVE tab. The inactive tabs live FROZEN in `tabstash`. So not one line of
+# existing viewer code changes its key: layout_for, with_edit, switch_ctx,
+# token_for_canvas, current_token, regenerate, every *_at %W bindtag wrapper,
+# every menubar -command that captured $token at build time, and every call
+# from ase_window.tcl are all correct, untouched, by construction -- and a
+# Direct Plot lands in the ACTIVE tab for free, because the arrays it writes
+# ARE the active tab. The alternative (a <token>#N key space) would have needed
+# a redirect at the head of ~40 procs, and a single missed one is a silent
+# cross-tab write that no single-tab test could see.
+#
+# One frozen record:
+#   {id N name S layout L mode M target T cva a cvb b cvr r
+#    undo U redo R wavehl W view V}
+# `id` is inert, stable and never reused: nothing behavioural reads it, it
+# exists so a test can witness "the paste landed in the tab that was second"
+# independently of "the tabs got reordered" (the `sdid` lesson).
+#
+# `view` (D6) is the TRANSIENT per-strip {x1 x2 y1 y2} read off the rects at
+# freeze time and pushed back after the thaw's regenerate. Without it a tab
+# switch would discard the pan/zoom the user made with the mouse -- the model
+# still says {} = auto, so regenerate re-autozooms. It is never the model and
+# never serialized (the `wavehl` shape), so it pins no auto axis and cannot
+# copy strip 0's window over every strip under Shared X, which is exactly what
+# landmine 50(c) forbids a range FOLD from doing.
+
+# The frozen tab records of `token`, in bar order ({} when the window has none).
+proc wviewer::tab_records {{token {}}} {
+  variable tabstash
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists tabstash($token)]} { return {} }
+  return $tabstash($token)
+}
+
+# How many tabs `token`'s window has (0 = not a viewer).
+proc wviewer::tab_count {{token {}}} {
+  return [llength [wviewer::tab_records $token]]
+}
+
+# The ACTIVE tab's index, or -1.
+proc wviewer::tab_index {{token {}}} {
+  variable curtab
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists curtab($token)]} { return -1 }
+  return $curtab($token)
+}
+
+# PURE: the index of tab `id` in `recs`, or -1. The id is the stable handle a
+# log line carries; the index is what everything internal uses.
+proc wviewer::tab_index_of_id {recs id} {
+  set i 0
+  foreach r $recs {
+    if {[wviewer::dget $r id {}] eq $id} { return $i }
+    incr i
+  }
+  return -1
+}
+
+# The ACTIVE tab's id, or {}.
+proc wviewer::tab_id {{token {}}} {
+  set i [wviewer::tab_index $token]
+  set recs [wviewer::tab_records $token]
+  if {$i < 0 || $i >= [llength $recs]} { return {} }
+  return [wviewer::dget [lindex $recs $i] id {}]
+}
+
+# The display name of tab `id`, or {}.
+proc wviewer::tab_name {id {token {}}} {
+  set recs [wviewer::tab_records $token]
+  set i [wviewer::tab_index_of_id $recs $id]
+  if {$i < 0} { return {} }
+  return [wviewer::dget [lindex $recs $i] name {}]
+}
+
+# PURE: which tab becomes active when the one at `idx` is removed from a list of
+# `n` -- the neighbour to the RIGHT, or the LEFT when the closed tab was last.
+# Callers pass the PRE-removal n.
+proc wviewer::tab_index_after_close {idx n} {
+  if {$n <= 1} { return 0 }
+  if {$idx >= $n - 1} { return [expr {$n - 2}] }
+  return $idx
+}
+
+# Read the LIVE per-strip ranges off the rects (D6). One 4-element sublist per
+# graph rect, `{}` for a range the engine has no number for. Read-only
+# (getprop), so no with_edit. Returns {} when the context refuses.
+proc wviewer::tab_view_read {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set out {}
+  set n 0
+  catch {set n [xschem get graph_rects]}
+  if {![string is integer -strict $n]} { return {} }
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set row {}
+    foreach tok {x1 x2 y1 y2} {
+      set v {}
+      catch {set v [xschem getprop rect 2 $gi $tok]}
+      if {![string is double -strict $v]} { set v {} }
+      lappend row $v
+    }
+    lappend out $row
+  }
+  return $out
+}
+
+# Push a `tab_view_read` result back onto the fresh rects after a regenerate
+# (D6). Guarded on the strip count matching -- the same rect-vs-model 1:1 guard
+# capture_live_graph_state and marker_changed carry, and a mismatch SKIPS
+# silently rather than attaching one strip's window to another. Writes only
+# ranges the engine can already hold in a read-only rect (landmine 19), so it
+# needs with_edit only for the setprop gate.
+proc wviewer::tab_view_apply {token view} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  if {![llength $view]} { return 0 }
+  set n -1
+  catch {set n [xschem get graph_rects]}
+  if {![string is integer -strict $n] || $n != [llength $view]} { return 0 }
+  set applied 0
+  catch {
+    wviewer::with_edit $token {
+      set gi_ 0
+      foreach row_ $view {
+        foreach tok_ {x1 x2 y1 y2} v_ $row_ {
+          if {$v_ eq {}} { continue }
+          catch { xschem setprop -fast rect 2 $gi_ $tok_ $v_ }
+        }
+        incr gi_
+      }
+    }
+    set applied 1
+  }
+  if {$applied} { catch {xschem redraw} }
+  return $applied
+}
+
+# Freeze the LIVE arrays of `token` into a tab record. `base` is the record
+# being replaced, so `id` and `name` survive a freeze/thaw round trip.
+proc wviewer::tab_freeze {token base} {
+  variable layouts
+  variable mode; variable target
+  variable cva; variable cvb; variable cvr
+  variable undo_hist; variable redo_hist
+  set rec $base
+  dict set rec layout [wviewer::layout_for $token]
+  dict set rec mode   [expr {[info exists mode($token)] ? $mode($token) : [wviewer::default_plot_mode]}]
+  dict set rec target [expr {[info exists target($token)] ? $target($token) : 0}]
+  foreach {k a} {cva cva cvb cvb cvr cvr} {
+    dict set rec $k [expr {[info exists ::wviewer::${a}($token)] ? [set ::wviewer::${a}($token)] : 0}]
+  }
+  dict set rec undo   [expr {[info exists undo_hist($token)] ? $undo_hist($token) : {}}]
+  dict set rec redo   [expr {[info exists redo_hist($token)] ? $redo_hist($token) : {}}]
+  dict set rec wavehl [wviewer::wave_hilights $token]
+  dict set rec view   [wviewer::tab_view_read $token]
+  return $rec
+}
+
+# Thaw a tab record into the LIVE arrays. Does NOT regenerate -- the caller owns
+# the single regenerate (the ONE-of-everything rule). Three things beyond the
+# plain array writes, each of which the record cannot carry by itself:
+#   - the sharedx and gridshow MENU MIRRORS are re-synced from the incoming
+#     LAYOUT, which is their authority (the arrays exist only because Tk's
+#     -variable needs a global);
+#   - the engine CURSORS are re-driven, because one xctx means one pair of
+#     cursors for every tab and the outgoing tab's would otherwise stay drawn;
+#   - the readout bar follows its own mirror.
+proc wviewer::tab_thaw {token rec} {
+  variable layouts
+  variable mode; variable target
+  variable cva; variable cvb; variable cvr
+  variable sharedx; variable gridshow
+  variable undo_hist; variable redo_hist
+  variable wavehl
+  set lay [wviewer::dget $rec layout [dict create sharedx 0 graphs {}]]
+  dict set layouts $token $lay
+  set m [wviewer::resolve_mode single [wviewer::dget $rec mode {}]]
+  if {$m eq {}} { set m [wviewer::default_plot_mode] }
+  set mode($token)   $m
+  set target($token) [wviewer::target_clamp [wviewer::dget $rec target 0] \
+                        [llength [wviewer::dget $lay graphs {}]]]
+  set undo_hist($token) [wviewer::dget $rec undo {}]
+  set redo_hist($token) [wviewer::dget $rec redo {}]
+  set wavehl($token)    [wviewer::dget $rec wavehl {}]
+  set sharedx($token)   [expr {[wviewer::dget $lay sharedx 0] ? 1 : 0}]
+  wviewer::sync_grid_mirror $token
+  set cva($token) [expr {[wviewer::dget $rec cva 0] ? 1 : 0}]
+  set cvb($token) [expr {[wviewer::dget $rec cvb 0] ? 1 : 0}]
+  set cvr($token) [expr {[wviewer::dget $rec cvr 0] ? 1 : 0}]
+  catch {wviewer::cursor_toggle $token 1}
+  catch {wviewer::cursor_toggle $token 2}
+  catch {wviewer::readout_show $token}
+  return 1
+}
+
+# Everything a tab switch must ABANDON, because it addresses the outgoing tab's
+# strips by INDEX and those indices are silently valid in the incoming one:
+# a half-armed strip or trace drag, the marker selection, and the three modeless
+# dialogs plus both context menus, whose listboxes were built from the outgoing
+# graph count.
+proc wviewer::tab_drop_transients {token} {
+  variable windows
+  catch {wviewer::strip_drag_reset $token}
+  catch {wviewer::trace_drag_clear $token}
+  catch {set ::wviewer::mmb($token) 0}
+  catch {wviewer::trace_menu_unpost $token}
+  catch {wviewer::strip_menu_unpost $token}
+  catch {
+    if {[wviewer::switch_ctx $token]} { xschem graph_marker select -none }
+  }
+  if {[dict exists $windows $token]} {
+    set top [dict get $windows $token top]
+    foreach w {wvadd wvdel wvaxes} { catch {destroy $top.$w} }
+    array unset ::wviewer::axl ${token},*
+    catch {unset ::wviewer::delmap($token)}
+  }
+  return 1
+}
+
+# Seed the tab bookkeeping of a freshly opened window: exactly ONE tab, holding
+# whatever `open` has already put in the live arrays. Called from wviewer::open
+# AFTER those arrays are seeded.
+proc wviewer::tabs_init {token} {
+  variable tabstash; variable curtab; variable tabseq
+  set tabseq($token) 2
+  set rec [wviewer::tab_freeze $token [dict create id 1 name {Tab 1}]]
+  set tabstash($token) [list $rec]
+  set curtab($token) 0
+  return 1
+}
+
+# Drop every tab structure of `token` (called from forget).
+proc wviewer::tabs_forget {token} {
+  variable tabstash; variable curtab; variable tabseq
+  catch {unset tabstash($token)}
+  catch {unset curtab($token)}
+  catch {unset tabseq($token)}
+  return {}
+}
+
+# --- the tab bar (D7) --------------------------------------------------------
+#
+# A plain Tk frame of buttons, the shape xschem's own `.tabs` uses
+# (setup_tabbed_interface, xschem.tcl) -- but NOT its code: those buttons'
+# identity IS their -command string, which tab_ctx_cmd/tab_context_menu parse
+# back out with `lindex ... 3` and prev_tab/next_tab scavenge with hardcoded
+# `.tabs.x$i` + `winfo rootx`. Not a ttk::notebook either: a notebook manages
+# its panes' geometry, and this "pane" is a single C-drawn X canvas that must
+# not be reparented or duplicated. One canvas, N models.
+#
+# It lives on $top, OUTSIDE $wp, so strip_bindings -- which enumerates only
+# [bind $wp] -- never sees it, and the existing `bind $top <Destroy>` %W guard
+# already tolerates extra descendants. -takefocus 0 everywhere (the .tabs.x0
+# precedent) and the select command ends in `focus <win_path>`, because
+# autofocus_mainwindow defaults to 0 and keys only reach key_filter while the
+# canvas holds focus.
+#
+# ⚠ It is PACKED ONLY WHILE THE WINDOW HAS >= 2 TABS -- the issue-0151
+# precedent ("the active-strip marker only exists while there is a choice to
+# make"). That is what keeps a one-tab viewer byte-identical to the shipped one,
+# geometry included, so no shipped band or pixel assertion moves. The 1<->2
+# transition goes through <Configure> -> configure_apply, which is the shipped
+# window-resize path and already captures before it regenerates.
+
+proc wviewer::tabbar_build {token top} {
+  set f $top.wvtabs
+  catch {destroy $f}
+  frame $f -background [ase::theme panel] -takefocus 0
+  return $f
+}
+
+# Rebuild the buttons, pack or unpack the bar, and refresh File > Close Tab.
+# ONE function owns "the tab count changed", so the bar, the button states and
+# the menu entry cannot disagree (the graph_marker_label_box doctrine).
+proc wviewer::tabbar_refresh {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set wp  [dict get $windows $token win_path]
+  set f $top.wvtabs
+  if {[catch {winfo exists $f} ex] || !$ex} { return 0 }
+  foreach c [winfo children $f] { catch {destroy $c} }
+  set recs [wviewer::tab_records $token]
+  set cur  [wviewer::tab_index $token]
+  set panel  [ase::theme panel]
+  set header [ase::theme header]
+  set i 0
+  foreach r $recs {
+    set id [wviewer::dget $r id $i]
+    set bg [expr {$i == $cur ? $header : $panel}]
+    button $f.t$id -padx 6 -pady 0 -anchor nw -takefocus 0 \
+      -font AseLabelFont -background $bg -activebackground $header \
+      -text [wviewer::dget $r name "Tab $id"] \
+      -command [list wviewer::select_tab_click $token $id]
+    pack $f.t$id -side left
+    incr i
+  }
+  button $f.add -padx 4 -pady 0 -takefocus 0 -text { + } \
+    -font AseLabelFont -background $panel -activebackground $header \
+    -command [list wviewer::new_tab $token]
+  pack $f.add -side left
+  catch {balloon $f.add {Create a new tab}}
+  # pack / unpack. -before $top.drw is mandatory: the canvas is packed
+  # -fill both -expand true, so anything packed AFTER it gets zero height.
+  if {[llength $recs] >= 2} {
+    if {[catch {pack info $f}]} { catch {pack $f -side top -fill x -before $top.drw} }
+  } else {
+    catch {pack forget $f}
+  }
+  # ... and the menu entry that says the same thing (D9a).
+  set m $top.wvmenubar.file
+  if {![catch {winfo exists $m} me] && $me} {
+    catch {
+      $m entryconfigure {Close Tab} \
+        -state [expr {[llength $recs] >= 2 ? {normal} : {disabled}}]
+    }
+  }
+  return 1
+}
+
+# A tab button was clicked: switch, then give the canvas the focus back.
+proc wviewer::select_tab_click {token id} {
+  wviewer::select_tab $id $token
+  catch {focus [dict get $::wviewer::windows $token win_path]}
+  return {}
+}
+
+# --- the three tab commands --------------------------------------------------
+
+# Make tab `id` active. `token` {} = the viewer owning the current xschem ctx.
+# Returns 1 on a switch, 0 when it was already active or nothing resolves.
+#
+# THE ORDERING IS THE CONTRACT and every step is load-bearing:
+#   verified switch_ctx (landmine 17)
+#   -> capture_live_view_state: regenerate does clear_drawing, and the SELECTION
+#      lives only in the rect's hilight_wave/sel_waves tokens (landmine 50), so
+#      a switch without the fold destroys the selection of the tab being left.
+#      skip_ranges, per landmine 50(c) -- an unconditional range fold pins every
+#      auto axis and, under Shared X, copies strip 0's window onto every strip's
+#      MODEL permanently
+#   -> freeze (which reads the live ranges into the record's transient `view`)
+#   -> drop the transients that address the outgoing tab by index
+#   -> thaw -> ONE regenerate -> push the incoming `view` back
+# A tab switch is NAVIGATION: no push_undo (the set_plot_mode precedent).
+proc wviewer::select_tab {id {token {}}} {
+  variable windows
+  variable tabstash; variable curtab
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window" error
+    return 0
+  }
+  set recs [wviewer::tab_records $token]
+  set to [wviewer::tab_index_of_id $recs $id]
+  if {$to < 0} {
+    wviewer::echo "wviewer: no tab '$id'" error
+    return 0
+  }
+  set from [wviewer::tab_index $token]
+  if {$to == $from} { return 0 }
+  if {![wviewer::switch_ctx $token]} {
+    wviewer::echo "wviewer: cannot switch to the viewer window (context busy)" error
+    return 0
+  }
+  wviewer::capture_live_view_state $token
+  set recs [lreplace $recs $from $from \
+              [wviewer::tab_freeze $token [lindex $recs $from]]]
+  wviewer::tab_drop_transients $token
+  set tabstash($token) $recs
+  set curtab($token) $to
+  set rec [lindex $recs $to]
+  wviewer::tab_thaw $token $rec
+  wviewer::regenerate $token
+  wviewer::tab_view_apply $token [wviewer::dget $rec view {}]
+  wviewer::tabbar_refresh $token
+  wviewer::retitle $token
+  catch {wviewer::status_refresh $token}
+  wviewer::echo "wviewer: tab '[wviewer::dget $rec name $id]'"
+  wviewer::log_action [list wviewer::select_tab $id $token]
+  return 1
+}
+
+# Open a new tab and make it active. It starts with ONE empty strip -- exactly
+# what clear_all leaves behind, so the tab reads as a graph window and the next
+# plot has somewhere to land. The plot MODE and Shared X are INHERITED from the
+# window's current tab (the clear_all precedent: a user working in multi-plot
+# keeps working in multi-plot). Returns the new tab's id, or {}.
+proc wviewer::new_tab {{token {}}} {
+  variable windows
+  variable tabstash; variable curtab; variable tabseq
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window" error
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} {
+    wviewer::echo "wviewer: cannot switch to the viewer window (context busy)" error
+    return {}
+  }
+  wviewer::capture_live_view_state $token
+  set recs [wviewer::tab_records $token]
+  set from [wviewer::tab_index $token]
+  if {$from >= 0 && $from < [llength $recs]} {
+    set recs [lreplace $recs $from $from \
+                [wviewer::tab_freeze $token [lindex $recs $from]]]
+  }
+  if {![info exists tabseq($token)]} { set tabseq($token) [expr {[llength $recs] + 1}] }
+  set id $tabseq($token)
+  incr tabseq($token)
+  set inherit_sx 0
+  set inherit_grid [wviewer::grid_shown $token]
+  if {$from >= 0 && $from < [llength $recs]} {
+    set inherit_sx [wviewer::dget \
+      [wviewer::dget [lindex $recs $from] layout {}] sharedx 0]
+  }
+  set lay [dict create sharedx $inherit_sx grid $inherit_grid \
+                       graphs [list [wviewer::empty_graph]]]
+  set rec [dict create id $id name "Tab $id" layout $lay \
+             mode [wviewer::plot_mode $token] target 0 \
+             cva 0 cvb 0 cvr [expr {[info exists ::wviewer::cvr($token)] \
+                                     ? $::wviewer::cvr($token) : 0}] \
+             undo {} redo {} wavehl {} view {}]
+  lappend recs $rec
+  wviewer::tab_drop_transients $token
+  set tabstash($token) $recs
+  set curtab($token) [expr {[llength $recs] - 1}]
+  wviewer::tab_thaw $token $rec
+  wviewer::regenerate $token
+  wviewer::tabbar_refresh $token
+  wviewer::retitle $token
+  catch {wviewer::status_refresh $token}
+  wviewer::echo "wviewer: new tab '[dict get $rec name]' ([llength $recs] tabs)"
+  wviewer::log_action [list wviewer::new_tab $token]
+  return $id
+}
+
+# Close tab `id` ({} = the active one). Returns 1 when a tab was closed.
+#
+# ⚠ D9a, USER RULING 2026-08-03: with only ONE tab this does NOTHING. It is a
+# REFUSAL, not a fall-through to a window close -- Ctrl-W never closes a viewer
+# window; Ctrl-Q, File > Close Window, the WM button and the programmatic
+# wviewer::close are the only ways one dies. The refusal is SPOKEN (a key that
+# silently does nothing reads as broken) and writes NO log line, because nothing
+# changed -- the change-only rule.
+proc wviewer::close_tab {{id {}} {token {}}} {
+  variable windows
+  variable tabstash; variable curtab
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window" error
+    return 0
+  }
+  set recs [wviewer::tab_records $token]
+  set n [llength $recs]
+  if {$n <= 1} {
+    wviewer::echo "wviewer: only one tab - nothing to close"
+    return 0
+  }
+  if {$id eq {}} { set id [wviewer::tab_id $token] }
+  set idx [wviewer::tab_index_of_id $recs $id]
+  if {$idx < 0} {
+    wviewer::echo "wviewer: no tab '$id'" error
+    return 0
+  }
+  if {![wviewer::switch_ctx $token]} {
+    wviewer::echo "wviewer: cannot switch to the viewer window (context busy)" error
+    return 0
+  }
+  # fold FIRST, unconditionally, before deciding anything: the live rect state
+  # belongs to the ACTIVE tab, and in the not-the-active-tab branch below that
+  # tab survives and must keep its selection (landmine 50). Wasted only in the
+  # branch where the active tab is the one being discarded.
+  wviewer::capture_live_view_state $token
+  set cur  [wviewer::tab_index $token]
+  set name [wviewer::dget [lindex $recs $idx] name "Tab $id"]
+  if {$idx != $cur} {
+    # ⚠ closing a tab that is NOT on screen (reachable from a replayed log line
+    # carrying an explicit id, and from the menu once a rename exists). The
+    # visible tab does not change, so there is no thaw and NO REGENERATE: the
+    # canvas already shows the right model, and a needless clear_drawing here
+    # would throw away the live pan/zoom for nothing.
+    set recs [lreplace $recs $idx $idx \
+                [wviewer::tab_freeze $token [lindex $recs $idx]]]
+    set recs [lreplace $recs $idx $idx]
+    set tabstash($token) $recs
+    set curtab($token) [expr {$idx < $cur ? $cur - 1 : $cur}]
+    wviewer::tabbar_refresh $token
+    wviewer::echo "wviewer: closed tab '$name' ([llength $recs] left)"
+    wviewer::log_action [list wviewer::close_tab $id $token]
+    return 1
+  }
+  set to [wviewer::tab_index_after_close $idx $n]
+  set recs [lreplace $recs $idx $idx]
+  wviewer::tab_drop_transients $token
+  set tabstash($token) $recs
+  set curtab($token) $to
+  set rec [lindex $recs $to]
+  wviewer::tab_thaw $token $rec
+  wviewer::regenerate $token
+  wviewer::tab_view_apply $token [wviewer::dget $rec view {}]
+  wviewer::tabbar_refresh $token
+  wviewer::retitle $token
+  catch {wviewer::status_refresh $token}
+  wviewer::echo "wviewer: closed tab '$name' ([llength $recs] left)"
+  wviewer::log_action [list wviewer::close_tab $id $token]
+  return 1
+}
+
+# --- copy / paste of TRACES (D12-D17) ----------------------------------------
+#
+# Copy is a TRACE-level operation, never a strip-level one. It copies the four
+# trace keys {expr name vec color} plus, per item, the SOURCE STRIP INDEX -- and
+# that index is the whole of what "keep their separateness" needs, because the
+# groups are derived from it. It must NOT copy graph dicts: those carry `auto`,
+# `markers`, `hilight_wave`/`sel_waves` and axis ranges, all of which are
+# meaningless or actively harmful in another strip.
+
+# PURE: clipboard items -> GROUPS, one per distinct source strip, in source
+# order, each an ordered list of trace dicts. The grouping IS the separateness.
+proc wviewer::clip_groups {items} {
+  set order {}
+  array set byg {}
+  foreach it $items {
+    set gi [wviewer::dget $it gi {}]
+    set tr [wviewer::dget $it tr {}]
+    if {$gi eq {} || ![string is integer -strict $gi] || ![llength $tr]} { continue }
+    if {![info exists byg($gi)]} { set byg($gi) {}; lappend order $gi }
+    lappend byg($gi) $tr
+  }
+  set out {}
+  foreach gi $order { lappend out $byg($gi) }
+  return $out
+}
+
+# PURE: where `ngroups` pasted groups land. The plan_plot shape, and the one
+# place the landing policy is expressed.
+#
+#  multi  -- one group per strip: reuse empty non-auto strips first, lowest
+#            index first (empty_graph_indices, the issue-0171 follow-up rule),
+#            and APPEND the shortfall at the bottom.
+#  single -- every group flattens into the clamped, non-auto target strip.
+#
+# ⚠ A PASTE APPENDS; IT DOES NOT FRONT-INSERT. plot_signals' multi arm grows the
+# stack UPWARD and lays a batch out newest-first, because a plot batch is "the
+# newest thing you asked for" -- and it therefore owes the +nnew shift of the
+# stored target AND of the highlight set. A paste is a copy of a layout fragment
+# and must READ THE SAME WAY IT DID in the source tab, so it appends and owes
+# neither shift. The deviation is deliberate; do not "fix" it. (Reused empties
+# keep indices < ngraphs and appended strips take indices >= ngraphs, so group
+# order survives either way.)
+proc wviewer::plan_paste {mode ngraphs target ngroups {auto -1} {empties {}}} {
+  if {$ngroups <= 0} { return [dict create new 0 sites {}] }
+  set free {}
+  foreach gi $empties {
+    if {[string is integer -strict $gi] && $gi >= 0 && $gi < $ngraphs \
+        && $gi != $auto && [lsearch -exact $free $gi] < 0} {
+      lappend free $gi
+    }
+  }
+  set free [lsort -integer $free]
+  if {$mode eq {multi}} {
+    set reuse [lrange $free 0 [expr {$ngroups - 1}]]
+    set nreuse [llength $reuse]
+    set new [expr {$ngroups - $nreuse}]
+    set sites {}
+    for {set k 0} {$k < $ngroups} {incr k} {
+      if {$k < $nreuse} {
+        lappend sites [lindex $reuse $k]
+      } else {
+        lappend sites [expr {$ngraphs + $k - $nreuse}]
+      }
+    }
+    return [dict create new $new sites $sites]
+  }
+  set gi [wviewer::target_clamp $target $ngraphs]
+  set new 0
+  if {$ngraphs <= 0 || ($auto >= 0 && $gi == $auto)} {
+    if {[llength $free]} { set gi [lindex $free 0] } else { set gi $ngraphs; set new 1 }
+  }
+  set sites {}
+  for {set k 0} {$k < $ngroups} {incr k} { lappend sites $gi }
+  return [dict create new $new sites $sites]
+}
+
+# PURE: the colour every pasted trace gets, as a list parallel to `groups`.
+#
+# D14: a pasted trace KEEPS its source colour when that colour is not already
+# used in the strip it lands on, else it takes the next unused palette entry.
+# Keeping it is what makes a trace recognisable across tabs -- the point of
+# copying it -- while keeping it blindly puts two indistinguishable traces on
+# one strip, precisely the failure issue 0153 fixed. The walk is per LANDING
+# strip and the `used` set GROWS as the group is placed, so two source traces
+# that shared a colour and land together still separate.
+proc wviewer::paste_colors {graphs groups sites} {
+  array set used {}
+  set out {}
+  foreach grp $groups site $sites {
+    if {![info exists used($site)]} {
+      set used($site) [wviewer::graph_colors [lindex $graphs $site]]
+    }
+    set row {}
+    foreach tr $grp {
+      set c [wviewer::dget $tr color {}]
+      if {$c eq {} || [lsearch -exact $used($site) $c] >= 0} {
+        set c [wviewer::first_unused_color $used($site)]
+      }
+      lappend used($site) $c
+      lappend row $c
+    }
+    lappend out $row
+  }
+  return $out
+}
+
+# PURE: append every group's traces to its landing strip. `graphs` must ALREADY
+# carry the strips `plan_paste` asked for (the caller appends them), because
+# `sites` indexes that extended list.
+#
+# ⚠ This is NOT move_traces_in_graphs and must not become it: that proc's
+# `- $done($gi)` per-source index adjustment (landmine 49(a)) exists only
+# because a MOVE removes from its source. A paste removes from nothing.
+#
+# D15: a destination that had NO traces gets its ranges blanked back to auto,
+# because capture_live_view_state has just frozen whatever window was last
+# fitted and a uA trace dropped into a 0-2 V window draws off-screen and reads
+# as "the paste failed" (landmine 34(a)). A destination that already holds
+# traces keeps its window -- and a second group landing on the same strip in
+# single mode sees the first group's traces, so it correctly does not re-blank.
+proc wviewer::paste_traces_in_graphs {graphs groups sites colors} {
+  foreach grp $groups site $sites cols $colors {
+    if {![string is integer -strict $site] || $site < 0 || $site >= [llength $graphs]} {
+      continue
+    }
+    set D [lindex $graphs $site]
+    set trs [wviewer::dget $D traces {}]
+    set was_empty [expr {[llength $trs] == 0}]
+    foreach tr $grp col $cols {
+      if {$col ne {}} { dict set tr color $col }
+      lappend trs $tr
+    }
+    dict set D traces $trs
+    if {$was_empty} {
+      foreach k {x1 x2 y1 y2} { dict set D $k {} }
+    }
+    set graphs [lreplace $graphs $site $site $D]
+  }
+  return $graphs
+}
+
+# The current clipboard (test seam).
+proc wviewer::clipboard {} {
+  variable clip
+  return $clip
+}
+
+# Ctrl-C: copy the CURRENT trace selection. Mutates no model, so it takes no
+# undo point, does not regenerate and writes NO replayable command line -- its
+# record is the echo line, which reaches BOTH channels and so satisfies R6.
+#
+# Three steps are load-bearing and in this order:
+#   VERIFIED switch_ctx  -- `selected_waves` only catches its OWN switch, so a
+#     refused one would read a FOREIGN window's rects;
+#   capture_live_view_state -- the selection lives ONLY on the rect until it is
+#     folded (landmine 50);
+#   selection_pairs -- the one shared NODE->MODEL fold (landmine 34).
+proc wviewer::copy_traces {{token {}}} {
+  variable windows
+  variable clip
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window" error
+    return 0
+  }
+  if {![wviewer::switch_ctx $token]} {
+    wviewer::echo "wviewer: cannot switch to the viewer window (context busy)" error
+    return 0
+  }
+  wviewer::capture_live_view_state $token
+  set wp [dict get $windows $token win_path]
+  set pairs [wviewer::selection_pairs $wp]
+  if {![llength $pairs]} {
+    # ⚠ the clipboard is LEFT UNTOUCHED: a failed copy must never destroy a
+    # good one.
+    wviewer::echo "wviewer: nothing selected to copy"
+    return 0
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set items {}
+  set strips {}
+  foreach p $pairs {
+    lassign $p gi ti
+    set G [lindex $gs $gi]
+    set tr [lindex [wviewer::dget $G traces {}] $ti]
+    if {![llength $tr]} { continue }
+    lappend items [dict create gi $gi tr $tr]
+    if {[lsearch -exact $strips $gi] < 0} { lappend strips $gi }
+  }
+  if {![llength $items]} {
+    wviewer::echo "wviewer: nothing selected to copy"
+    return 0
+  }
+  set rawf {}; set simt {}
+  catch {set rawf [xschem raw rawfile]}
+  catch {set simt [xschem raw sim_type]}
+  set clip [dict create from [list $token [wviewer::tab_id $token]] \
+                       raw [list $rawf $simt] items $items]
+  wviewer::echo "wviewer: copied [llength $items] trace(s) from [llength $strips] strip(s)"
+  return [llength $items]
+}
+
+# Ctrl-V: paste the clipboard into the ACTIVE tab.
+#
+# ONE of everything (D17, landmines 46(c)/49(b)): one verified switch_ctx, one
+# capture_live_view_state, one push_undo, one regenerate, one fully-resolved log
+# line carrying the descriptors ACTUALLY pasted.
+proc wviewer::paste_traces {{token {}}} {
+  variable windows
+  variable clip
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window" error
+    return 0
+  }
+  set items [wviewer::dget $clip items {}]
+  if {![llength $items]} {
+    wviewer::echo "wviewer: clipboard is empty"
+    return 0
+  }
+  if {![wviewer::switch_ctx $token]} {
+    wviewer::echo "wviewer: cannot switch to the viewer window (context busy)" error
+    return 0
+  }
+  set groups [wviewer::clip_groups $items]
+  if {![llength $groups]} {
+    wviewer::echo "wviewer: clipboard is empty"
+    return 0
+  }
+  wviewer::capture_live_view_state $token
+  set gs   [dict get [wviewer::layout_for $token] graphs]
+  set mode [wviewer::plot_mode $token]
+  set auto [wviewer::auto_graph_index $token]
+  set plan [wviewer::plan_paste $mode [llength $gs] \
+              [wviewer::target_index $token] [llength $groups] $auto \
+              [wviewer::empty_graph_indices $gs $auto]]
+  set nnew [dict get $plan new]
+  set sites [dict get $plan sites]
+  set ext $gs
+  for {set k 0} {$k < $nnew} {incr k} { lappend ext [wviewer::empty_graph] }
+  # D16: a viewer trace carries only a NAME -- graph_props emits no `rawfile=`
+  # or `sim_type=` -- so every trace resolves against THIS context's raw. Inside
+  # one window (the R5 case) that is the same raw the copy came from and there
+  # is nothing to do. Across windows it is a NAME REBIND, so: re-materialise
+  # every expression trace the way `restore` does, warn about names the
+  # destination raw does not have, and ⚠ RENAME an expression vector whose name
+  # is already taken here -- otherwise `raw_add_vector` recomputes the
+  # DESTINATION's own vector in place and silently changes a trace already on
+  # screen.
+  set same_win [expr {[lindex [wviewer::dget $clip from {}] 0] eq $token}]
+  set missing {}
+  set g 0
+  foreach grp $groups {
+    set t 0
+    foreach tr $grp {
+      set ex  [wviewer::dget $tr expr {}]
+      set vec [wviewer::dget $tr vec {}]
+      set multi [expr {[llength [regexp -all -inline {\S+} $ex]] > 1}]
+      if {$vec ne {} && $multi} {
+        if {!$same_win} {
+          set idx -1
+          catch {set idx [xschem raw index $vec]}
+          if {$idx >= 0} {
+            set vec [wviewer::auto_expr_name $token]
+            dict set tr vec $vec
+            set grp [lreplace $grp $t $t $tr]
+            set groups [lreplace $groups $g $g $grp]
+          }
+        }
+        catch {xschem raw add $vec $ex}
+      } elseif {$vec ne {} && !$same_win} {
+        set idx -1
+        catch {set idx [xschem raw index $vec]}
+        if {$idx < 0 && [lsearch -exact $missing $vec] < 0} { lappend missing $vec }
+      }
+      incr t
+    }
+    incr g
+  }
+  set colors [wviewer::paste_colors $ext $groups $sites]
+  # AFTER the capture, BEFORE the mutation: one undo point for the whole paste,
+  # so `u` takes it all back rather than one trace at a time.
+  wviewer::push_undo $token
+  wviewer::set_graphs $token \
+    [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
+  wviewer::regenerate $token
+  wviewer::tabbar_refresh $token
+  if {[llength $missing]} {
+    wviewer::echo "wviewer: [llength $missing] vector(s) not in this window's raw: [join $missing { }]"
+  }
+  set ntr 0
+  foreach grp $groups { incr ntr [llength $grp] }
+  set nsite [llength [lsort -unique $sites]]
+  wviewer::echo "wviewer: pasted $ntr trace(s) into $nsite strip(s)"
+  # the payload is in the LINE, not a clipboard reference, so a replay does not
+  # depend on live session state (landmine 49(b)'s normalised-arguments rule).
+  wviewer::log_action [list wviewer::paste_payload $groups $sites $colors $token]
+  return $ntr
+}
+
+# The replay form of a paste: land an explicit payload, no clipboard involved.
+proc wviewer::paste_payload {groups sites colors {token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  wviewer::capture_live_view_state $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set need 0
+  foreach s $sites { if {$s >= $need} { set need [expr {$s + 1}] } }
+  set ext $gs
+  while {[llength $ext] < $need} { lappend ext [wviewer::empty_graph] }
+  wviewer::push_undo $token
+  wviewer::set_graphs $token \
+    [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
+  wviewer::regenerate $token
+  return 1
+}
+
+# --- the %W wrappers the WaveViewer bindtag calls ----------------------------
+# Every one resolves its token from the WIDGET, never from the current xschem
+# context: the bindtag is process-global.
+
+proc wviewer::new_tab_at {W} {
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { return {} }
+  if {[catch {wviewer::new_tab $tok} e]} {
+    wviewer::echo "wviewer: new tab refused: $e" error
+  }
+  return {}
+}
+
+proc wviewer::close_tab_at {W} {
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { return {} }
+  if {[catch {wviewer::close_tab {} $tok} e]} {
+    wviewer::echo "wviewer: close tab refused: $e" error
+  }
+  return {}
+}
+
+proc wviewer::copy_traces_at {W} {
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { return {} }
+  if {[catch {wviewer::copy_traces $tok} e]} {
+    wviewer::echo "wviewer: copy refused: $e" error
+  }
+  return {}
+}
+
+proc wviewer::paste_traces_at {W} {
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { return {} }
+  if {[catch {wviewer::paste_traces $tok} e]} {
+    wviewer::echo "wviewer: paste refused: $e" error
+  }
+  return {}
+}
+
+proc wviewer::close_window_at {W} {
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { return {} }
+  set n [wviewer::tab_count $tok]
+  if {[catch {wviewer::close $tok} e]} {
+    wviewer::echo "wviewer: close refused: $e" error
+    return {}
+  }
+  wviewer::echo "wviewer: closed the waveform viewer ($n tab(s))"
+  wviewer::log_action [list wviewer::close $tok]
+  return {}
+}
+
 # --- menubar (D7) ------------------------------------------------------------
 
 # Build the viewer menubar $top.wvmenubar and attach it (replacing the editor
@@ -7959,8 +9054,27 @@ proc wviewer::build_menubar {token top} {
     menu $mb.$sub -tearoff 0 -takefocus 0 \
       -font AseLabelFont -background $panel -activebackground $header
   }
-  $mb.file add command -label Close -accelerator Ctrl+W \
+  # File menu (doc/claude/specs/waveform_viewer_tabs.md D11). The shipped single
+  # `Close  Ctrl+W` entry (which killed the WINDOW) is replaced by the tab pair:
+  # leaving it would contradict both the key and D9a. Accelerator labels are
+  # inert display strings -- Tk does not dispatch them, and an rc that remaps the
+  # WaveViewer bindtag changes the key, not this label.
+  # ⚠ No new top-level cascade: test_wave_viewer G2 asserts the cascade set is
+  # exactly {File View Graph Cursors Options}, and a `Tabs` menu would buy
+  # nothing a File entry does not.
+  $mb.file add command -label {New Tab} -accelerator Ctrl+N \
+    -command [list wviewer::new_tab $token]
+  # -state is refreshed by tabbar_refresh, the ONE owner of "the tab count
+  # changed", so the bar, the buttons and this entry cannot disagree.
+  $mb.file add command -label {Close Tab} -accelerator Ctrl+W -state disabled \
+    -command [list wviewer::close_tab {} $token]
+  $mb.file add command -label {Close Window} -accelerator Ctrl+Q \
     -command [list wviewer::close $token]
+  $mb.file add separator
+  $mb.file add command -label {Copy Traces} -accelerator Ctrl+C \
+    -command [list wviewer::copy_traces $token]
+  $mb.file add command -label {Paste Traces} -accelerator Ctrl+V \
+    -command [list wviewer::paste_traces $token]
   # View menu (item 19, D6): Fit / Zoom In / Zoom Out all act on the GRAPH data
   # range, never the canvas viewport (item-18 pins the canvas, so canvas zoom
   # would SHRINK the graph). Fit = fullx/fullyzoom + model read-back (de-canvased

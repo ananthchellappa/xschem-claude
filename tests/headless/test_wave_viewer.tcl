@@ -612,10 +612,51 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     xschem new_schematic switch $vdrw
     check "G8 window number unchanged" [xschem get window_number] $wnum
 
-    # --- G9: Ctrl-W closes with NO prompt; reopen builds fresh ---------------
+    # --- G9: closing the window, and Ctrl-W's NEW meaning --------------------
+    #
+    # ⚠ REWRITTEN 2026-08-03 for tabs (doc/claude/specs/waveform_viewer_tabs.md
+    # D9a, user ruling). Ctrl-W used to close the WINDOW and this group asserted
+    # it eight times. It now closes a TAB, and on a one-tab viewer it does
+    # NOTHING but say so. Every property the old group guarded — no prompt, a
+    # clean registry, a fresh re-open — still matters and is still asserted;
+    # they simply hang off Ctrl-Q now, which is the key that closes a window.
+    #
+    # G9a first: the REFUSAL. This is the leg that would have passed vacuously
+    # if Ctrl-W had merely stopped being delivered, so it checks the window is
+    # still up AND that the key really arrived, by watching the CIW notice.
     set mbh_before $::mb_hits
-    set d4 [send_key $vdrw <Control-Key-w> {![winfo exists $vtop]}]
-    check "G9 Ctrl-W closed the viewer" $d4 1
+    set ::g9_notice {}
+    if {[info commands ::ciw_echo] ne {}} {
+      rename ::ciw_echo ::g9_real_ciw_echo
+      proc ::ciw_echo {msg args} {
+        if {[string match {*only one tab*} $msg]} { set ::g9_notice $msg }
+        uplevel 1 [list ::g9_real_ciw_echo $msg {*}$args]
+      }
+    }
+    check "G9a one tab up before the refusal" [wviewer::tab_count $tok] 1
+    set d4a [send_key $vdrw <Control-Key-w> {$::g9_notice ne {}}]
+    check "G9a Ctrl-W was delivered (the CIW notice arrived)" $d4a 1
+    check_true "G9a ...and it REFUSED: the window is still up" \
+      [expr {[winfo exists $vtop]}]
+    check "G9a ...and the registry still holds it" \
+      [wviewer::window_for $tok] $vtop
+    check "G9a ...and it is still one tab" [wviewer::tab_count $tok] 1
+    check "G9a the refusal popped no dialog" [expr {$::mb_hits - $mbh_before}] 0
+    if {[info commands ::g9_real_ciw_echo] ne {}} {
+      rename ::ciw_echo {}
+      rename ::g9_real_ciw_echo ::ciw_echo
+    }
+    # G9b: with TWO tabs the same key closes one and leaves the window alone.
+    check_true "G9b a second tab opened" \
+      [expr {[wviewer::new_tab $tok] ne {}}]
+    check "G9b two tabs now" [wviewer::tab_count $tok] 2
+    set d4b [send_key $vdrw <Control-Key-w> {[wviewer::tab_count $tok] == 1}]
+    check "G9b Ctrl-W closed the TAB" $d4b 1
+    check_true "G9b ...and the window survived" [expr {[winfo exists $vtop]}]
+    # G9c: Ctrl-Q is what closes the window — the old G9 properties, moved.
+    set mbh_before $::mb_hits
+    set d4 [send_key $vdrw <Control-Key-q> {![winfo exists $vtop]}]
+    check "G9 Ctrl-Q closed the viewer" $d4 1
     check_true "G9 toplevel destroyed" [expr {![winfo exists $vtop]}]
     check "G9 close popped no dialog/prompt" \
       [expr {$::mb_hits - $mbh_before}] 0
