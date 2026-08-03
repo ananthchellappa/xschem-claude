@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerCAP.lib} section cap_typ}}
 variables {}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 1 start 1e6 stop 1e9 points 1000} {type tran enabled 0}}
-outputs {{name C expr C save 1 plot 0} {name mag expr mag save 1 plot 1}}
+outputs {{name C expr C save 0 plot 0} {name mag expr mag save 0 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

@@ -262,3 +262,12 @@ body=B}
 C {devices/lab_pin} 2080 -660 2 0 {name=p71 lab=S}
 C {devices/ammeter} 2080 -530 0 1 {name=Vd12}
 C {devices/lab_pin} 2020 -610 0 0 {name=p73 lab=G5v0}
+C {devices/code} 0 -1290 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+.opton wnflag=1
+vg G1v8 0 -1.8
+vs s 0 0
+vd D1v8 0 -1.8
+vb b 0 0
+"}

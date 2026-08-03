@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerCAP.lib} section cap_typ} {file {$::MODELS_NGSPICE/cornerRES.lib} section res_typ} {file {$::MODELS_NGSPICE/cornerMOShv.lib} section mos_tt}}
 variables {{name temp value 27}}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 10u step 1n}}
-outputs {{name Ctot expr Ctot save 1 plot 1}}
+outputs {{name Ctot expr Ctot save 0 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

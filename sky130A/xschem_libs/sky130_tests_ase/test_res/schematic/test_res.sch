@@ -277,3 +277,10 @@ L=57.3
 model=res_high_po_5p73
 spiceprefix=X
 mult=1}
+C {devices/code} 60 -770 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+vp P 0 1.8
+vm M 0 0
+vb B 0 0
+"}

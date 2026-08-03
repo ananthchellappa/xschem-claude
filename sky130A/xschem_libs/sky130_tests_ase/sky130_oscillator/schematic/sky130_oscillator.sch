@@ -177,3 +177,10 @@ mult=1}
 C {devices/gnd} 1170 -250 0 1 {name=l7 lab=VSS}
 C {devices/ammeter} 1190 -390 0 0 {name=VB savecurrent=false}
 C {devices/ammeter} 1560 -390 0 0 {name=VA savecurrent=false}
+C {devices/code} 20 -550 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+vvcc vcc 0 'VCC'
+vvss vss 0 0
+venab enab 0 pwl 0 0 100n 0 101n 'VCC'500n 'VCC' 501n 0
+"}

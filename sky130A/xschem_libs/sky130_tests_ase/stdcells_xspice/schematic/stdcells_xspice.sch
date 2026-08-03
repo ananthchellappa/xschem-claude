@@ -44,3 +44,20 @@ C {devices/noconn} 360 -610 0 0 {name=l9}
 C {devices/noconn} 360 -590 0 0 {name=l10}
 C {devices/noconn} 360 -570 0 0 {name=l11}
 C {devices/noconn} 360 -550 0 0 {name=l12}
+C {devices/code} 750 -620 0 0 {name=ASE_KEEP1
+only_toplevel=false
+value="
+A1 [A B] IX d_lut_sky130_fd_sc_hd__nand2_1
+A2 A CLK NULL ~RESET_B IQ NULL ddflop
+A3 [A B] IY d_lut_sky130_fd_sc_hd__nor2b_1
+A4 A ~CLK NULL ~RESET_B IQLATCH net1 dlatch
+A5 [IY B] net2 d_lut_sky130_fd_sc_hd__nor2b_1
+A6 [net2 IQLATCH] net4 d_lut_sky130_fd_sc_hd__nand2_1
+A7 [net3 net4 IQ RESET_B] IXSCHEM d_lut_sky130_fd_sc_hd__a31o_2
+A8 [IY] net3 d_lut_sky130_fd_sc_hd__inv_2
+A13 [IY] Y d_lut_sky130_fd_sc_hd__buf_2
+A9 [IX] X d_lut_sky130_fd_sc_hd__buf_2
+A14 [IQ] Q d_lut_sky130_fd_sc_hd__buf_2
+A15 [IQLATCH] QLATCH d_lut_sky130_fd_sc_hd__buf_2
+A11 [IXSCHEM] XSCHEM d_lut_sky130_fd_sc_hd__buf_2
+"}

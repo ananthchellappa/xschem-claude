@@ -56,3 +56,10 @@ C {devices/ammeter} 330 -390 0 0 {name=V1}
 C {devices/lab_pin} 280 -420 0 0 {name=p7 lab=D}
 C {devices/lab_pin} 50 -160 0 0 {name=p8 lab=G}
 C {devices/noconn} 50 -160 0 1 {name=l2}
+C {devices/code} 840 -200 0 0 {name=ASE_KEEP1
+only_toplevel=true
+place=end
+value="
+vd d 0 0
+vg g 0 0
+"}

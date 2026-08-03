@@ -37,6 +37,37 @@ set ::SKYWATER_MODELS [file join $_ws models libs.tech combined]
 set ::ASE_DEFAULT_MODELS [list [list file {$::SKYWATER_MODELS/sky130.lib.spice} section tt]]
 # PDK/PDK_ROOT are referenced by a couple of the helper procs' status strings.
 if {![info exists ::env(PDK)]}      { set ::env(PDK) sky130A }
+
+# --- 3b. Standard-cell SPICE decks (NOT vendored here) ----------------------
+# Seven migrated benches include a stdcell subcircuit deck rather than a model
+# .lib: LACG / optimize_delay / tb_charge_pump / test_carry_lookahead / test_ff /
+# test_stdcells want `$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice`, test_hvl_cells
+# wants `$PDK_ROOT/$PDK/libs.ref/sky130_fd_sc_hvl/spice/sky130_fd_sc_hvl.spice`.
+# This repo vendors only ./models (libs.tech) and libs.ref/sky130_fd_pr, so those
+# decks come from an open_pdks sky130A install.
+#
+# These globals are set UNCONDITIONALLY, even when no install is found. That is
+# the point: ase::expand_path is `subst` at global level (src/ase.tcl:140), so an
+# UNSET name makes the whole deck render throw
+# `can't read "::SKYWATER_STDCELLS": no such variable` before ngspice starts and
+# the bench cannot run at all — whereas a set-but-wrong path fails later, inside
+# ngspice, as an honest `Could not find include file: <path>` that names what to
+# install. ase_migrate.py's Pdk("sky130").env_vars lists these three names, and
+# that list is only sound because this file always defines them
+# (doc/claude/issues/0210-…, bucket A).
+if {![info exists ::PDK_ROOT]} {
+  set ::PDK_ROOT [file join $::env(HOME) eda tools share pdk]
+  foreach _c [list $::PDK_ROOT [file join $::env(HOME) dev open_pdks sky130] \
+                   /usr/local/share/pdk /usr/share/pdk /opt/pdk] {
+    if {[file isdir [file join $_c $::env(PDK)]]} { set ::PDK_ROOT $_c; break }
+  }
+  unset -nocomplain _c
+}
+if {![info exists ::PDK]} { set ::PDK $::env(PDK) }
+if {![info exists ::SKYWATER_STDCELLS]} {
+  set ::SKYWATER_STDCELLS \
+      [file join $::PDK_ROOT $::PDK libs.ref sky130_fd_sc_hd spice]
+}
 source [file join $_ws sky130_procs.tcl]
 
 # Run the SKY130 menu builder after each window is created (append, don't clobber

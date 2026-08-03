@@ -94,3 +94,9 @@ C {devices/bus_tap} 1190 -300 3 1 {name=l12 lab=[3]}
 C {devices/bus_tap} 1270 -300 3 1 {name=l13 lab=[4]}
 C {devices/bus_tap} 1350 -300 3 1 {name=l14 lab=[5]}
 C {devices/bus_tap} 1430 -300 3 1 {name=l15 lab=[6]}
+C {devices/code} 10 -840 0 0 {name=ASE_KEEP1
+only_toplevel=false
+value="
+vvss vss 0 dc 0
+vvcc vcc 0 pwl 0 0 10n 0 10.1n 'VCC' 20n 'VCC' 20.1n 0
+"}

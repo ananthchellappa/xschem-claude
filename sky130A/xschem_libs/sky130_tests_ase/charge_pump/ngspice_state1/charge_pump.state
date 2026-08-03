@@ -3,7 +3,7 @@ simulator ngspice
 design {lib sky130_tests_ase cell charge_pump view schematic}
 rundir {}
 temperature 27
-models {}
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
 variables {}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
 outputs {{name hv expr hv save 1 plot 1} {name x1HV2A expr x1.HV2A save 1 plot 1} {name x1G3A expr x1.G3A save 1 plot 1} {name a expr a save 1 plot 1} {name b expr b save 1 plot 1} {name c expr c save 1 plot 1} {name d expr d save 1 plot 1} {name x1g2b expr x1.g2b save 1 plot 1} {name x1g2a expr x1.g2a save 1 plot 1} {name mx1xm10msky130fdprnfetg5v0d10v5id expr {@m.x1.xm10.msky130_fd_pr__nfet_g5v0d10v5[id]} save 1 plot 1} {name mx1xm3msky130fdprnfetg5v0d10v5id expr {@m.x1.xm3.msky130_fd_pr__nfet_g5v0d10v5[id]} save 1 plot 1}}

@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerHBT.lib} section hbt_typ_stat}}
 variables {{name temp value 27} {name mc_ok value 1}}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 1 start 10k stop 1000meg points 10} {type tran enabled 0}}
-outputs {{name freq3dB expr freq_3dB save 1 plot 0}}
+outputs {{name freq3dB expr freq_3dB save 0 plot 0}}
 save_all_v 1
 save_all_i 0
 options {}

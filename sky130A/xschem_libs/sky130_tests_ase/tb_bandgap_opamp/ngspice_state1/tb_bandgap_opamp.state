@@ -6,10 +6,10 @@ temperature 27
 models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt_mm}}
 variables {{name VCCGAUSS value {agauss(1.8, 0.05, 1)}} {name VCC value 'VCCGAUSS'} {name TEMPGAUSS value {agauss(40, 30, 1)}}}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 2500n step 1n}}
-outputs {{name run expr run save 1 plot 0} {name mx1xmlmsky130fdprpfet01v8lvtvth expr {@m.x1.xml.msky130_fd_pr__pfet_01v8_lvt[vth]} save 1 plot 0} {name mx1xmrmsky130fdprpfet01v8lvtvth expr {@m.x1.xmr.msky130_fd_pr__pfet_01v8_lvt[vth]} save 1 plot 0} {name ADJ expr ADJ save 1 plot 1} {name OUT expr OUT save 1 plot 1} {name out expr out save 1 plot 1} {name PLUS expr PLUS save 1 plot 1} {name MINUS expr MINUS save 1 plot 1} {name START expr START save 1 plot 1} {name ENN expr EN_N save 1 plot 1} {name iVVCC expr i(VVCC) save 1 plot 1} {name ivvcc expr i(vvcc) save 1 plot 1} {name vth1 expr vth1 save 1 plot 1} {name vth2 expr vth2 save 1 plot 1} {name VCC expr VCC save 1 plot 1} {name diffoutn expr diffout_n save 1 plot 1} {name temperat expr temperat save 1 plot 1}}
+outputs {{name run expr run save 0 plot 0} {name mx1xmlmsky130fdprpfet01v8lvtvth expr {@m.x1.xml.msky130_fd_pr__pfet_01v8_lvt[vth]} save 1 plot 0} {name mx1xmrmsky130fdprpfet01v8lvtvth expr {@m.x1.xmr.msky130_fd_pr__pfet_01v8_lvt[vth]} save 1 plot 0} {name ADJ expr ADJ save 1 plot 1} {name OUT expr OUT save 1 plot 1} {name out expr out save 1 plot 1} {name PLUS expr PLUS save 1 plot 1} {name MINUS expr MINUS save 1 plot 1} {name START expr START save 1 plot 1} {name ENN expr EN_N save 1 plot 1} {name iVVCC expr i(VVCC) save 1 plot 1} {name ivvcc expr i(vvcc) save 1 plot 1} {name vth1 expr vth1 save 1 plot 1} {name vth2 expr vth2 save 1 plot 1} {name VCC expr VCC save 1 plot 1} {name diffoutn expr diffout_n save 1 plot 1} {name temperat expr temperat save 1 plot 1}}
 save_all_v 1
 save_all_i 0
-options {{name method value gear} {name savecurrents value 1} {name wnflag value 1} {name temp value 'TEMPGAUSS'}}
+options {{name method value gear} {name savecurrents value 1} {name wnflag value 1}}
 includes {}
 pre_commands {}
 viewer {}

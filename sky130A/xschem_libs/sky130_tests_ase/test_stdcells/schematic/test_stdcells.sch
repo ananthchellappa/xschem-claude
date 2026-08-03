@@ -89,3 +89,22 @@ C {devices/parax_cap} 1660 -190 1 0 {name=C2 gnd=0 value=4f m=1}
 C {devices/parax_cap} 1720 -170 1 0 {name=C3 gnd=0 value=4f m=1}
 C {devices/parax_cap} 1660 -150 1 0 {name=C4 gnd=0 value=4f m=1}
 C {devices/parax_cap} 1720 -130 1 0 {name=C5 gnd=0 value=4f m=1}
+C {devices/code} 1440 -930 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+.model ddflop d_dff(ic=0 rise_delay=200p fall_delay=200p clk_delay=20p reset_delay=20p data_load=10f reset_load=10f clk_load=10f)
+.model dlatch d_dlatch(ic=0 rise_delay=200p fall_delay=200p data_delay = 20p enable_delay=20p reset_delay=200p data_load=10f reset_load=10f enable_load=10f)
+.model dzero d_pulldown(load=10f)
+.model done d_pullup(load=10f)
+.model d_lut_sky130_fd_sc_hd__nand2_1 d_lut (rise_delay=200p fall_delay=200p input_load=10f table_values \\"1110\\")
+.model d_lut_sky130_fd_sc_hd__nor2b_1 d_lut (rise_delay=200p fall_delay=200p input_load=10f table_values \\"0010\\")
+.model d_lut_sky130_fd_sc_hd__a31o_2 d_lut (rise_delay=200p fall_delay=200p input_load=10f table_values \\"0000000111111111\\")
+.model d_lut_sky130_fd_sc_hd__inv_2 d_lut (rise_delay=200p fall_delay=200p input_load=10f table_values \\"10\\")
+.model d_lut_sky130_fd_sc_hd__buf_2 d_lut (rise_delay=200p fall_delay=200p input_load=10f table_values \\"01\\")
+"}
+C {devices/code} 1430 -1470 0 0 {name=ASE_KEEP2
+only_toplevel=true
+value="
+vvcc vcc 0 dc 'vcc'
+vvss vss 0 0
+"}

@@ -89,3 +89,10 @@ C {devices/opin} 630 -320 0 0 {name=p3 lab=Y}
 C {devices/lab_wire} 440 -200 0 0 {name=l4 sig_type=std_logic lab=S}
 C {devices/lab_pin} 250 -470 2 1 {name=p179 lab=VCCPIN}
 C {devices/lab_pin} 440 -110 2 1 {name=p4 lab=VSSPIN}
+C {devices/code} 840 -200 0 0 {name=ASE_KEEP1
+only_toplevel=true
+place=end
+value="
+vd d 0 0
+vg g 0 0
+"}

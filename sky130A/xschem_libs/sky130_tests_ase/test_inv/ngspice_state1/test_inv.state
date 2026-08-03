@@ -5,7 +5,7 @@ rundir {}
 temperature 27
 models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
 variables {{name VCC value 1.8} {name WN value 1} {name WP value 2}}
-analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 30n step 0.01n}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 30n step 0.02n}}
 outputs {{name z618V expr {z[6]} save 1 plot 1} {name z5 expr {z[5]} save 1 plot 1} {name z4 expr {z[4]} save 1 plot 1} {name z3 expr {z[3]} save 1 plot 1} {name z2 expr {z[2]} save 1 plot 1} {name z1 expr {z[1]} save 1 plot 1} {name z0 expr {z[0]} save 1 plot 1} {name y6 expr {y[6]} save 1 plot 1} {name y5 expr {y[5]} save 1 plot 1} {name y4 expr {y[4]} save 1 plot 1} {name y3 expr {y[3]} save 1 plot 1} {name y2 expr {y[2]} save 1 plot 1} {name y1 expr {y[1]} save 1 plot 1} {name y0 expr {y[0]} save 1 plot 1}}
 save_all_v 1
 save_all_i 0

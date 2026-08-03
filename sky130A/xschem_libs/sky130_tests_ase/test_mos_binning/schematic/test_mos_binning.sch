@@ -57,3 +57,11 @@ C {devices/lab_pin} 300 -170 0 0 { name=p3 lab=G }
 C {devices/lab_pin} 300 -210 0 0 { name=p5 lab=B }
 C {devices/noconn} 300 -210 0 1 {name=l2}
 C {devices/noconn} 300 -170 0 1 {name=l3}
+C {devices/code} 20 -190 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+vd d 0 \{VGATE\}
+vg g 0 \{VGATE\}
+vs s 0 0
+vb b 0 0
+"}

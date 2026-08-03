@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {{name temp value 27} {name iso_w value 3u} {name iso_l value 3u}}
 analyses {{type op enabled 0} {type dc enabled 1 source I0 start -1m stop 1m step 1u} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name vbkpos expr vbk_pos save 1 plot 0} {name vbkneg expr vbk_neg save 1 plot 0}}
+outputs {{name vbkpos expr vbk_pos save 0 plot 0} {name vbkneg expr vbk_neg save 0 plot 0}}
 save_all_v 0
 save_all_i 0
 options {}

@@ -363,3 +363,11 @@ C {devices/lab_pin} 2840 -70 0 1 {name=p58 lab=S}
 C {devices/lab_pin} 2860 -120 0 1 {name=p60 lab=B}
 C {devices/lab_pin} 2800 -120 0 0 {name=p64 lab=G5v0}
 C {devices/ammeter} 2840 -210 0 0 {name=Vd17 current=5.4633e-04}
+C {devices/code} -10 -1390 0 0 {name=ASE_KEEP1
+only_toplevel=true
+value="
+vg G1v8 0 1.8
+vs s 0 0
+vd D1v8 0 1.8
+vb b 0 0
+"}

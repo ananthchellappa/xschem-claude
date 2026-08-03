@@ -45,3 +45,10 @@ C {sky130_tests_ase/lvnand} 290 -540 0 0 {name=x5 WidthN=1 LenN=0.15 WidthP=1 Le
 C {sky130_tests_ase/lvnand} 290 -380 2 1 {name=x1 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
 C {sky130_tests_ase/lvnand} 500 -400 2 1 {name=x2 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
 C {sky130_tests_ase/lvnand} 500 -520 0 0 {name=x3 WidthN=1 LenN=0.15 WidthP=1 LenP=0.15 m=1}
+C {devices/code} 840 -200 0 0 {name=ASE_KEEP1
+only_toplevel=true
+place=end
+value="
+vd d 0 0
+vg g 0 0
+"}
