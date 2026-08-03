@@ -418,6 +418,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
            [lsearch -exact [pack slaves $vtop] $vdrw]}]
   check "TG3 one button per tab, plus the +" \
     [llength [winfo children $vtop.wvtabs]] 3
+  # TG-BAR: the ACTIVE tab must be distinguishable, and by MORE THAN a
+  # background. This leg exists because the first implementation used the ASE
+  # palette's `header` vs `panel` -- #e8e8e8 vs #f2f2f2, ten levels apart -- and
+  # on screen the three buttons were identical while every other check passed.
+  # A background-only assertion would have passed too (the two values DO
+  # differ), so all THREE cues are pinned.
+  set wt_act $vtop.wvtabs.t[wviewer::tab_id $tok]
+  set wt_ina $vtop.wvtabs.t1
+  check_true "TG-BAR the active tab and an inactive one really are two widgets" \
+    [expr {$wt_act ne $wt_ina && [winfo exists $wt_act] && [winfo exists $wt_ina]}]
+  check_true "TG-BAR ...their backgrounds differ" \
+    [expr {[$wt_act cget -background] ne [$wt_ina cget -background]}]
+  check_true "TG-BAR ...their foregrounds differ (the accent cue)" \
+    [expr {[$wt_act cget -foreground] ne [$wt_ina cget -foreground]}]
+  check_true "TG-BAR ...and their reliefs differ (the third cue)" \
+    [expr {[$wt_act cget -relief] ne [$wt_ina cget -relief]}]
+  check "TG-BAR the active tab is the palette's white, not a near-grey" \
+    [$wt_act cget -background] [ase::theme table]
   check "TG3 File > Close Tab is enabled at two tabs" \
     [pcall {$vtop.wvmenubar.file entrycget {Close Tab} -state}] normal
   check "TG3 exactly one new_tab log line" \
@@ -694,9 +712,9 @@ set wt_haslog [expr {[pcall {xschem get actionlog_filename}] ne {}}]
 if {$::arm eq {nogui}} {
   set wt_expect 56
 } elseif {$wt_haslog} {
-  set wt_expect 169
+  set wt_expect 174
 } else {
-  set wt_expect 167
+  set wt_expect 172
 }
 if {$fail == 0 && $npass != $wt_expect} {
   puts "FAIL: TZ1 expected $wt_expect checks on the $::arm arm\

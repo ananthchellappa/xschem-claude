@@ -8440,12 +8440,27 @@ proc wviewer::tabbar_refresh {token} {
   set cur  [wviewer::tab_index $token]
   set panel  [ase::theme panel]
   set header [ase::theme header]
+  # ⚠ THE ACTIVE TAB NEEDS MORE THAN A BACKGROUND, and this is an EYEBALL
+  # finding, not a review one: the first cut used `header` for the active tab
+  # and `panel` for the rest, which are #e8e8e8 and #f2f2f2 -- TEN levels apart
+  # in the ASE locked palette. On screen all three buttons were
+  # indistinguishable and the user could not tell which tab they were on, with
+  # 167 checks green (a `-background` leg would have passed: the two values DO
+  # differ). So the active tab carries THREE simultaneous cues, all from the
+  # locked palette: the white `table` background, the `accent` foreground, and
+  # `raised` against the others' `flat`. TG-BAR asserts all three, so a future
+  # edit cannot collapse it back to one near-invisible difference.
+  set table  [ase::theme table]
+  set accent [ase::theme accent]
   set i 0
   foreach r $recs {
     set id [wviewer::dget $r id $i]
-    set bg [expr {$i == $cur ? $header : $panel}]
+    set on [expr {$i == $cur}]
     button $f.t$id -padx 6 -pady 0 -anchor nw -takefocus 0 \
-      -font AseLabelFont -background $bg -activebackground $header \
+      -font AseLabelFont -activebackground $header \
+      -background  [expr {$on ? $table  : $header}] \
+      -foreground  [expr {$on ? $accent : {black}}] \
+      -relief      [expr {$on ? {raised} : {flat}}] \
       -text [wviewer::dget $r name "Tab $id"] \
       -command [list wviewer::select_tab_click $token $id]
     pack $f.t$id -side left

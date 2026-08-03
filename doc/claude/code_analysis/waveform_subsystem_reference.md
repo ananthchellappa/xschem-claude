@@ -560,6 +560,58 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   arriving by the other door. Hence `capture_live_graph_state {token
   {skip_markers 0}}`: a mutating command captures the live state it did **not**
   produce and leaves out the one key it is about to write.
+- **TABS (2026-08-03, `doc/claude/specs/waveform_viewer_tabs.md`).** One viewer
+  window can hold several independent stacks of strips. **A tab is a MODEL, not
+  a context**: one xschem ctx, one canvas and one loaded raw per WINDOW, and a
+  tab switch is the `regenerate` that already exists, pointed at a different
+  model. One ctx per tab is not merely costlier, it is *unavailable* —
+  `create_new_tab`/`switch_tab` hardcode a tab's render target to
+  `save_xctx[0]->window` (`xinit.c`), so a tab minted for the viewer toplevel
+  would draw onto the MAIN schematic window's `.drw`, and
+  `multi_window_detach.md`'s "A tab cannot belong to a second top-level" is
+  still `proposed`.
+  **THE STASH is the whole design.** Every per-view-content array — `layouts`,
+  `mode`, `target`, `sharedx`, `gridshow`, `undo_hist`, `redo_hist`, `wavehl`,
+  `cva`/`cvb`/`cvr` — KEEPS its session-token key and always describes the
+  ACTIVE tab; the inactive tabs live frozen in `tabstash` (+ `curtab`,
+  `tabseq`). So `layout_for`, `with_edit`, `switch_ctx`, `token_for_canvas`,
+  `current_token`, `regenerate`, every `*_at %W` wrapper, every menubar
+  `-command` that captured `$token` at build time and every call from
+  `ase_window.tcl` are correct **untouched**, and a Direct Plot lands in the
+  active tab for free because the arrays it writes ARE the active tab. The
+  rejected alternative — a `<token>#N` key space — needed a redirect at the
+  head of ~40 procs, and one missed proc is a silent cross-tab write that no
+  single-tab test can see (landmine 46(a)'s shape).
+  A switch is `switch_ctx` (verified) → `capture_live_view_state` (landmine 50;
+  `skip_ranges`, per 50(c)) → `tab_freeze` → `tab_drop_transients` → `tab_thaw`
+  → ONE `regenerate` → `tab_view_apply`. `tab_drop_transients` is not optional:
+  a half-armed strip/trace drag, the marker selection and the three modeless
+  dialogs all address the OUTGOING tab **by index**, and those indices are
+  silently valid in the incoming one.
+  `view` is a TRANSIENT per-tab range cache (the `wavehl` shape, never the
+  model, never serialised) so a mouse pan/zoom survives a switch without
+  pinning an auto axis or letting Shared X copy strip 0's window over every
+  strip — the two traps landmine 50(c) forbids a range FOLD from springing.
+  Keys, all on the `WaveViewer` bindtag: `Ctrl-N` new tab, `Ctrl-W` close TAB
+  (⚠ **a spoken no-op when there is only one — it never closes a window any
+  more**, and the hardcoded `key_filter` arm that used to is DELETED, because
+  `key_filter` is on the widget and returns without `break`, so both would have
+  fired), `Ctrl-Q` close window, `Ctrl-C`/`Ctrl-V` copy/paste traces.
+  ⚠ `Ctrl-Q` in the C dispatcher is `quit_xschem` (`callback.c` case `'q'` under
+  ControlMask) and is live on a schematic canvas; it is safe here only because
+  `key_filter` swallows it, which is why the suite carries a "the process is
+  still alive" leg.
+  Copy is TRACE-level (the four keys `{expr name vec color}` plus the SOURCE
+  STRIP INDEX, which is the whole of what "separateness" needs) and never
+  copies graph dicts. Paste **appends and does not front-insert** — the
+  deliberate deviation from `plot_signals`, whose multi arm grows upward and
+  owes a `+nnew` shift of the target and the highlight set; a paste is a copy
+  of a layout fragment and must read the way it did in the source, so it owes
+  neither. The tab bar (`$top.wvtabs`) is packed only at ≥ 2 tabs, the
+  issue-0151 "only when there is a choice" rule, which is what keeps a one-tab
+  viewer byte-identical — geometry included. Suite:
+  `tests/headless/test_wave_tabs.tcl` (56 `--nogui` / 167 DISPLAY / 169
+  `--logdir`, nine sabotages in its header).
 - **Clear All + the `WaveViewer` bindtag (issue 0171,
   `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
   and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
@@ -2340,6 +2392,33 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     Spec: `graph_markers.md` D2/D8/D11 + the record grammar (amended).
     Suite: `test_wave_snap.tcl` `SZ*`/`SZS*`, `test_wave_markers.tcl` `MX6b`
     plus eight legs rewritten from "== the sample" to "on the segment".
+
+53. **`ciw_echo` DOES NOT satisfy "logged to the CIW and the log file", and the
+    obvious sabotage for that cannot fire** (2026-08-03, viewer tabs).
+    Two lessons, and the second is the reusable one.
+
+    **(a)** Issue 0207 measured that a message sent through the pane helper
+    reaches the CIW's MIRROR and never the log FILE. There are ~120 pane-only
+    `ciw_echo` sites in `wave_viewer.tcl` and converting them is 0207's own
+    deferred item 2 — so anything NEW that owes both channels needs the
+    `ase::echo` shape instead (`ase.tcl`): the pane half gated on
+    `[info commands ::ciw_echo]` and **not** on `::has_x` (that guard is the
+    suppressor 0207 identified), then `xschem log_action -error`/`-result`,
+    both halves catch'd. `wviewer::echo` is that seam.
+
+    **(b) ⚠ The sabotage that "obviously" proves it is HOLLOW, and it took a
+    measurement to find out.** Re-adding the `[info exists ::has_x]` guard —
+    the literal 0207 shape — leaves the suite at its full count. Under a
+    DISPLAY `::has_x` exists, so the guard never fires; and the legs that watch
+    the log file only run under a DISPLAY, because a viewer needs `has_x` to
+    open at all. The property is real and the guard is the real historical bug,
+    but **the two arms do not intersect**, so that edit can never be witnessed
+    by that suite. The sabotage that works deletes the `log_action` half
+    outright: it kills the FILE leg and leaves the PANE leg green, which is
+    also the only thing that proves the pair is a pair. Generalise: a sabotage
+    aimed at an arm-gated line has to be checked against the arm the assertion
+    actually runs in — "this edit reintroduces the historical bug" is not the
+    same claim as "this edit is visible to this test".
 
 ---
 
