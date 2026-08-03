@@ -128,8 +128,10 @@ adversarially verified.
   does nothing; the `--library` branch returns before the verify block.
 - **`drop-only-cells-skipped`** — the scan trigger tests three of the four
   clutter categories, so a cell whose only clutter is a launcher is skipped.
-- **`sky130_tests_ase` is NOT regenerated** — it still carries defects 2 and 3
-  above (10 cells reference migrated siblings in the cluttered tree, 0 symbol
-  views, 8 dangling `.save` includes). Deliberately left alone: one of its
-  states carries a hand-added waveform-viewer layout that a regeneration would
-  wipe. Regenerating it is a separate, decided step.
+`sky130_tests_ase` **has since been regenerated** (a3c0e2f1): 56 refs rebound,
+78 correctly left at the source library, 44 symbol views added, 8 dangling
+includes dropped; tb_bandgap's hand-added viewer layout and `save_all_v 1`
+lifted off the pre-regeneration file through `ase::state_load`/`state_save` and
+preserved byte-for-byte. Old vs new under identical conditions: 22 → 29 passing,
+zero regressions. The 19 that still fail fail identically in both trees and are
+exactly the residue above.
