@@ -943,13 +943,28 @@ proc libmgr::commit_dialog {title} {
 }
 
 # --- copy / rename (destination library + new name dialog) ---
+# RMB > Copy on a cell now opens the Cadence-style Copy form (src/copy_form.tcl,
+# doc/claude/specs/copy_hierarchical.md) instead of the two-field cell_dialog.
+# It returns a PLAN dict. Pass 1 executes only the plan the old dialog could
+# already express — flat copy, all views — and reports the rest as not yet
+# implemented; the plan itself is the pass-2 handoff. cell_dialog stays as-is:
+# Rename still uses it.
 proc libmgr::ctx_copy_cell {} {
   set lc [libmgr::current_cell]
   if {$lc eq {}} return
   lassign $lc lib cell
-  set r [libmgr::cell_dialog "Copy cell" $lib $cell]
-  if {$r eq {}} return
-  lassign $r dl dc
+  set plan {}
+  if {[catch {copyform::open $lib $cell} plan]} { libmgr::status "copy form failed: $plan"; return }
+  if {$plan eq {}} return
+  lassign [dict get $plan dst] dl dc
+  if {[dict get $plan hier]} {
+    libmgr::status "hierarchical copy not implemented yet (pass 1: form only) — $lib/$cell -> $dl/$dc"
+    return
+  }
+  if {[dict get $plan viewmode] ne "all"} {
+    libmgr::status "per-view copy not implemented yet (pass 1: form only) — views: [join [dict get $plan views] { }]"
+    return
+  }
   libmgr::do_copy_cell $lib $cell $dl $dc
 }
 proc libmgr::do_copy_cell {sl sc dl dc} {
