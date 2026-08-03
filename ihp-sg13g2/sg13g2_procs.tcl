@@ -606,18 +606,31 @@ proc sg13g2_menupdk {} {
     }
 
     # Absolute model paths through $::MODELS_NGSPICE — see header note 3.
+    #
+    # The `.control pre_osdi ... .endc` preamble registers the Verilog-A modules
+    # (psp103 for the MOS devices, r3_cmc for the resistors, mosvar for the
+    # varicaps) BEFORE the deck is parsed. Without it every MOS / resistor /
+    # varicap instance dies at "Unable to find definition of model". `pre_osdi`
+    # rather than `osdi` because a plain `osdi` inside .control runs after
+    # parsing, and ngspice has no `.osdi` dot-card.
     $topwin.menubar.ihp add command -label {Add Ngspice models symbol} -command {
-      xschem place_symbol devices/simulator_commands_shown {
+      xschem place_symbol devices/code_shown {
 name=Libs_Ngspice
-simulator=ngspice
 only_toplevel=false
-value="tcleval(
+format="tcleval( @value )"
+value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
 .lib $::MODELS_NGSPICE/cornerMOSlv.lib mos_tt
 .lib $::MODELS_NGSPICE/cornerMOShv.lib mos_tt
 .lib $::MODELS_NGSPICE/cornerHBT.lib hbt_typ
 .lib $::MODELS_NGSPICE/cornerRES.lib res_typ
 .lib $::MODELS_NGSPICE/cornerCAP.lib cap_typ
-)"
+"
       }
     }
 

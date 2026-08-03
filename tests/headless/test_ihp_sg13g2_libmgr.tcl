@@ -156,5 +156,40 @@ check_true "benches reference models via \$::MODELS_NGSPICE" [expr {$nvarlib > 0
 check "no bench still has a BARE model .lib/.include"        $nbarelib 0
 check_true "the .save includes were left bare (correct)"     [expr {$nsave > 0}]
 
+# --- compiled Verilog-A (OSDI) modules ---------------------------------------
+# SG13G2's MOS models are psp103va, its resistors r3_cmc, its varicaps mosvar --
+# all Verilog-A, which ngspice loads as compiled OSDI. Without these, 25 of the
+# 49 benches netlist cleanly and then die at "could not find a valid modelname".
+set osdi [file join $ws osdi]
+foreach m {psp103 psp103_nqs r3_cmc mosvar} {
+  check_true "osdi/$m.osdi built" [file isfile [file join $osdi $m.osdi]]
+}
+check_true "build_ihp_osdi.sh is executable" \
+  [file executable [file join $repo tools migrate build_ihp_osdi.sh]]
+check_true "rc sets ::SG13G2_OSDI" [string match {*set ::SG13G2_OSDI*} $rc]
+
+# EVERY bench that pulls in a model library must also register the modules, and
+# via pre_osdi -- a plain `osdi` inside .control runs AFTER the deck is parsed,
+# and ngspice has no `.osdi` dot-card. Gating this injection on "a path had to be
+# rewritten" (rather than "this block references a model") is exactly the bug
+# that left the 5 svaricap/r3_cmc benches unsimulatable.
+set nmodelblocks 0; set nmissing 0; set nwrongverb 0
+foreach f [glob -nocomplain [file join [lp sg13g2_tests] * schematic *.sch]] {
+  set t [read [open $f]]
+  set usesmodel 0
+  foreach m $modelnames {
+    if {[regexp "\\.(lib|include)\\s+(\\\$::MODELS_NGSPICE/)?[string map {. \\.} $m]" $t]} {
+      set usesmodel 1 ; break
+    }
+  }
+  if {!$usesmodel} { continue }
+  incr nmodelblocks
+  if {![regexp {pre_osdi \$::SG13G2_OSDI/} $t]} { incr nmissing }
+  if {[regexp {(^|\n)\s*osdi \$::SG13G2_OSDI/} $t]} { incr nwrongverb }
+}
+check_true "some benches pull in a model library" [expr {$nmodelblocks > 0}]
+check "every model-using bench registers the OSDI modules" $nmissing 0
+check "none uses a bare `osdi` (must be pre_osdi)"         $nwrongverb 0
+
 puts ""
 if {$fail} { puts "OVERALL: $fail FAILED ($npass passed)" } else { puts "OVERALL: ok ($npass checks)" }

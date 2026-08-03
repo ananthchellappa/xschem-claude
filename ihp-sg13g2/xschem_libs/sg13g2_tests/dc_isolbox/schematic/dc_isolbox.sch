@@ -50,6 +50,13 @@ C {devices/gnd} -500 50 0 0 {name=l2 lab=GND}
 C {devices/code_shown} -580 -490 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .include $::MODELS_NGSPICE/diodes.lib
 "}
 C {devices/code_shown} -580 -390 0 0 {name=NGSPICE only_toplevel=true 

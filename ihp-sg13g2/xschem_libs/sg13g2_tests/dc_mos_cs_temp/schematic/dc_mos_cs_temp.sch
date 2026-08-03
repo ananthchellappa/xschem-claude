@@ -114,6 +114,13 @@ lab=Vgs2}
 C {devices/code_shown} -320 -630 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerMOSlv.lib mos_tt
 .lib $::MODELS_NGSPICE/cornerMOShv.lib mos_tt
 "}

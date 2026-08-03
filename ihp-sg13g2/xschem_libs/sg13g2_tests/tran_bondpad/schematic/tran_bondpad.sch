@@ -61,6 +61,13 @@ N -270 0 -240 -0 {lab=in}
 C {devices/code_shown} -330 -490 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .include $::MODELS_NGSPICE/diodes.lib
 .include $::MODELS_NGSPICE/sg13g2_bondpad.lib
 "}

@@ -28,6 +28,13 @@ N 80 -35 80 0 {lab=GND}
 C {devices/code_shown} -517.5 382.5 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerCAP.lib cap_typ
 .lib $::MODELS_NGSPICE/cornerRES.lib res_typ
 .lib $::MODELS_NGSPICE/cornerMOShv.lib mos_tt

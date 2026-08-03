@@ -36,6 +36,18 @@ set launch_library_manager 1
 set ::MODELS_NGSPICE [file join $_ws models]
 set ::SG13G2_MODELS  [file join $_ws models]
 
+# Compiled Verilog-A (OSDI) modules. SG13G2's MOS models are psp103va and its
+# resistors r3_cmc -- Verilog-A, which ngspice loads as compiled OSDI. Without
+# these, every bench with a MOS, varicap or r3_cmc resistor netlists fine and then
+# dies at `could not find a valid modelname`. The migrated benches emit
+#   .control
+#   pre_osdi $::SG13G2_OSDI/psp103.osdi ...
+#   .endc
+# `pre_osdi` (not `osdi`) because the modules must be loaded BEFORE the deck is
+# parsed; a `.osdi` dot-card does not exist in ngspice.
+# Rebuild the modules with tools/migrate/build_ihp_osdi.sh.
+set ::SG13G2_OSDI [file join $_ws osdi]
+
 # ASE-L default corner: preload the SG13G2 typical MOS models in every fresh
 # session / state view. Stored in the PORTABLE $::VAR form (ase::expand_path
 # resolves it at deck time) so state files stay git-portable.

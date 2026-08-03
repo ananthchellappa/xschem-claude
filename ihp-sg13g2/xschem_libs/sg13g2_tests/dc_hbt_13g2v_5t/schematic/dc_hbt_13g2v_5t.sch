@@ -122,6 +122,13 @@ write dc_hbt_13g2v_5t.raw
 C {devices/code_shown} -660 -480 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerHBT.lib hbt_typ
 "}
 C {sg13g2_pr/annotate_bip_params} 490 60 0 0 {name=annot1 ref=Q1}

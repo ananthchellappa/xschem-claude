@@ -68,6 +68,13 @@ format="tcleval( @value )"
 simulator=ngspice
 only_toplevel=false 
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerRES.lib res_typ
 "}
 C {devices/launcher} -160 -330 0 0 {name=h3

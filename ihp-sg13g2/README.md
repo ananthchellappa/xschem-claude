@@ -38,40 +38,65 @@ or pick it from the GUI launcher, which fills in the flags for you:
   ngspice models symbol, add a FET or BIP parameter annotator.
 - **DRC checks** on primitive dimensions (MOS, resistor, MiM cap, HBT, diode, S-varicap)
   and operating-point annotation, ported from the PDK's `xschem-drc` / `xschem-menu`.
-- **Vendored models** in `models/` (436 KB), referenced through `$::MODELS_NGSPICE`.
+- **Vendored models** in `models/` (436 KB), referenced through `$::MODELS_NGSPICE`,
+  plus prebuilt **OSDI** modules in `osdi/` so the Verilog-A devices simulate as shipped.
 
 ## Layout
 
 ```
 xschem_libs/     library.defs + the three migrated PDK libraries
 models/          verbatim copy of the PDK's libs.tech/ngspice/models
+osdi/            compiled Verilog-A modules (psp103, psp103_nqs, r3_cmc, mosvar)
 cadence_style_rc the launch rc (registry + models + procs + menu)
 sg13g2_procs.tcl DRC / annotate / menu procs, namespaced sg13g2_*
 run.sh
 ```
 
-## Simulation: what works today
+## Simulation
 
-All 49 testbenches **netlist** with zero unresolved symbols. Of those, **22 simulate
-clean** in ngspice — HBT, diodes, MiM and parasitic caps, taps, schottky, isolbox.
+All 49 testbenches **netlist** with zero unresolved symbols, and **47 of 49 simulate
+clean** in ngspice 46.
 
-The other 25 need something this PDK checkout does not ship. SG13G2's MOS models are
-`psp103va` — Verilog-A, which ngspice loads as compiled **OSDI** modules. There is no
-`osdi/` directory in `IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/`, only the Verilog-A
-sources under `libs.tech/verilog-a/`. Until those are compiled, any bench with a MOS,
-varicap or `r3_cmc` resistor stops at `could not find a valid modelname`.
+The two that do not are upstream bench quirks, not model problems: `IHP_testcases` is the
+gallery index page rather than a real bench, and `dc_esd_diodes` has a vector-name bug in
+its own `.control` block.
 
-To enable them:
+### Verilog-A / OSDI
+
+SG13G2's MOS devices are `psp103va`, its resistors `r3_cmc` and its varicaps `mosvar` —
+all Verilog-A, which ngspice loads as compiled **OSDI** modules. They are prebuilt here in
+`osdi/` and each bench registers them itself, so simulation works out of the box.
+
+Rebuild them (needed after a change of machine/architecture, or an ngspice upgrade that
+bumps the OSDI ABI):
 
 ```sh
-cd /home/qflow/dev/IHP-Open-PDK/ihp-sg13g2/libs.tech/verilog-a
-./openvaf-compile-va.sh            # needs openvaf on PATH
-# then load the modules for your ngspice runs, e.g. in the .spiceinit used for the run:
-#   osdi /path/to/psp103.osdi
+tools/migrate/build_ihp_osdi.sh          # needs openvaf-r or openvaf on PATH
 ```
 
-Nothing in this workarea needs to change when you do — the models and netlists are
-already correct.
+Each bench carries, ahead of its `.lib` lines:
+
+```
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+```
+
+`pre_osdi`, not `osdi`: the modules must be registered **before** the deck is parsed, or
+the device lines are read while the model names are still unknown. A plain `osdi` inside
+`.control` runs too late, and ngspice has no `.osdi` dot-card (`unimplemented dot
+command`). Carrying it in the netlist rather than in a `.spiceinit` is what makes a bench
+portable — `.spiceinit` is only read from the cwd or `$HOME`, and the directory ngspice
+runs in is your `netlist_dir`.
+
+The **IHP > Add Ngspice models symbol** menu entry places a block with the same preamble,
+so new designs get it too.
+
+Sanity check: `sg13_lv_nmos` W=1 µm, L=0.45 µm at Vgs=1.2 V, Vds=1.5 V draws
+**Id ≈ 259 µA**.
 
 ## Regenerating from the original source
 
@@ -84,7 +109,10 @@ hand-written files in this directory (`cadence_style_rc`, `sg13g2_procs.tcl`, `r
 this README). The PDK sources are staged into a scratch directory and only the copies
 are edited, so the PDK tree is never modified.
 
-Two rewrites happen during the build, and both are load-bearing — see the spec for the
+`osdi/` is NOT rebuilt by that script — the compiled modules have their own
+(`build_ihp_osdi.sh`), so a library re-migration does not require a Verilog-A toolchain.
+
+Three rewrites happen during the build, and all are load-bearing — see the spec for the
 full reasoning:
 
 1. **Proc namespacing.** The PDK injects very generic proc names (`fet_drc`,
@@ -96,6 +124,11 @@ full reasoning:
    `PDK_ROOT`. They are rewritten to `$::MODELS_NGSPICE/<file>` so they resolve from
    anywhere. `.include <cell>.save` lines are deliberately left bare — those are relative
    to the netlist directory.
+3. **OSDI registration.** Every block that pulls in a model library also gets the
+   `.control pre_osdi … .endc` preamble above. The trigger is "this block references a
+   model library", NOT "a path had to be rewritten" — gating it on the rewrite skipped the
+   15 benches that already used `$::MODELS_NGSPICE`, which then failed with *Unable to
+   find definition of model* for every r3_cmc resistor and mosvar varicap.
 
 ## Tests
 
@@ -103,7 +136,8 @@ full reasoning:
 ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ihp_sg13g2_libmgr.tcl
 ```
 
-57 checks: the registry lists exactly the 9 intended libraries, the shared libraries
+66 checks: the registry lists exactly the 9 intended libraries, the shared libraries
 resolve outside this directory, representative cells resolve, the models are present, the
-rc wiring is intact, and the two migration rewrites above are still in place. Registered
+rc wiring is intact, the two migration rewrites above are still in place, and every
+model-using bench registers the OSDI modules. Registered
 in `tests/run_regression.tcl`.

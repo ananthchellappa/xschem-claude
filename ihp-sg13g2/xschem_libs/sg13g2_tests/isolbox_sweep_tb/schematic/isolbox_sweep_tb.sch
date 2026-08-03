@@ -124,6 +124,13 @@ C {devices/gnd} 110 -160 0 0 {name=l6 lab=GND}
 C {devices/code_shown} 90 -400 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .include $::MODELS_NGSPICE/diodes.lib
 "}
 C {devices/isource} 110 -210 2 0 {name=I0 value=1m}

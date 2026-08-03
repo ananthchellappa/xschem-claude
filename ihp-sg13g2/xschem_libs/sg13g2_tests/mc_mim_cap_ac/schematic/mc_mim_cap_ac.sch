@@ -65,6 +65,13 @@ C {devices/vsource} 70 -330 0 0 {name=V1 value="dc 0 ac 1"}
 C {devices/code_shown} 30 -140 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerCAP.lib cap_typ_stat
 "}
 C {devices/gnd} 70 -270 0 0 {name=l4 lab=GND}

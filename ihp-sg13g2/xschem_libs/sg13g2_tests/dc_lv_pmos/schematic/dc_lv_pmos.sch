@@ -55,6 +55,13 @@ lab=#net3}
 C {devices/code_shown} -200 160 0 0 {name=MODEL only_toplevel=true
 format="tcleval( @value )"
 value="
+.control
+pre_osdi $::SG13G2_OSDI/psp103.osdi
+pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi
+pre_osdi $::SG13G2_OSDI/r3_cmc.osdi
+pre_osdi $::SG13G2_OSDI/mosvar.osdi
+.endc
+
 .lib $::MODELS_NGSPICE/cornerMOSlv.lib mos_tt
 "}
 C {devices/code_shown} 220 -10 0 0 {name=NGSPICE only_toplevel=true 

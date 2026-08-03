@@ -39,6 +39,24 @@ import os, re, sys, glob
 
 FMT_LINE = 'format="tcleval( @value )"'
 
+# Verilog-A modules every SG13G2 deck may need: psp103[_nqs] for the MOS devices,
+# r3_cmc for the resistors, mosvar for the varicaps.
+OSDI_MODULES = ["psp103", "psp103_nqs", "r3_cmc", "mosvar"]
+
+# Emitted at the head of a bench's models block.
+#
+# `pre_osdi`, not `osdi`: the modules have to be registered BEFORE the deck is
+# parsed, or the device lines are read while the model names are still unknown.
+# ngspice has no `.osdi` dot-card (it answers "unimplemented dot command"), and a
+# plain `osdi` inside .control runs too late — `pre_`-prefixed control commands
+# are the documented way to run something ahead of parsing.
+#
+# Putting this in the NETLIST rather than in a .spiceinit is what makes a bench
+# portable: .spiceinit is only picked up from the cwd or $HOME, and the directory
+# ngspice runs in is the user's netlist_dir, which this workarea does not control.
+OSDI_PREAMBLE = ".control\n" + "".join(
+    "pre_osdi $::SG13G2_OSDI/%s.osdi\n" % m for m in OSDI_MODULES) + ".endc\n"
+
 
 def model_names(models_dir):
     """Basenames of the vendored model files — the only names we may rewrite."""
@@ -85,9 +103,29 @@ def fix_text(text, names):
             if new != lines[i]:
                 lines[i] = new
                 hit = True
-        if not hit:
+        # Does this block pull in a model library at all? Note this is deliberately
+        # NOT `hit`: `hit` is true only where a path had to be REWRITTEN, and the
+        # benches that already used $::MODELS_NGSPICE need the OSDI preamble just
+        # as much. Gating on `hit` silently skipped 5 of them (every svaricap and
+        # r3_cmc resistor bench), which then failed with "Unable to find definition
+        # of model" — the OSDI type was never registered for those decks.
+        block = "\n".join(lines[s:e])
+        refs_model = any(
+            re.search(r"\.(?:lib|include)\s+(?:\$::MODELS_NGSPICE/)?" + re.escape(m), block)
+            for m in names)
+        if not (hit or refs_model):
             continue
         changed = True
+
+        # Register the Verilog-A modules at the head of this block's value.
+        # Done BEFORE the format insert below so it is a pure string mutation and
+        # cannot shift the line indices that insert relies on.
+        if refs_model and "pre_osdi" not in block:
+            for i in range(s, e):
+                if 'value="' in lines[i]:
+                    lines[i] = lines[i].replace('value="', 'value="\n' + OSDI_PREAMBLE, 1)
+                    break
+            block = "\n".join(lines[s:e])
 
         # Ensure the value is actually tcleval'd with $-substitution ON.
         #
