@@ -14277,6 +14277,8 @@ source $XSCHEM_SHAREDIR/library_defs.tcl
 source $XSCHEM_SHAREDIR/library_git.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl
+# Library Manager Copy form, flat + hierarchical (doc/claude/specs/copy_hierarchical.md)
+source $XSCHEM_SHAREDIR/copy_form.tcl
 # Create Instance browser (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md)
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
