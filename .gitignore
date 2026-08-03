@@ -61,3 +61,26 @@ config.h
 # (issue 0148).
 _*_[0-9]*/
 tests/headless/.scratch/
+
+# test-run DROPPINGS. A suite run from the repo root (rather than through
+# full_audit.sh, which uses a temp dir) leaves its own log next to the .tcl --
+# tests/headless/test_<name>.log -- plus a few older harnesses that write into
+# tests/ or src/. None is an input to anything: the trustworthy record is the
+# RESULT: line on stdout and, under --logdir, the action log. 32 of these had
+# accumulated as untracked noise, which is exactly how a real change gets lost
+# in `git status`.
+tests/headless/*.log
+tests/*.log
+tests/*/results.log
+src/*.log
+
+# ...and the same class from run_regression.tcl, which writes each case's
+# generated output next to the case rather than into a temp dir. Listed
+# together because covering two of the three cases and not the third is worse
+# than covering none: the odd one out reads as "this one is tracked on purpose".
+tests/create_save/results/
+tests/netlisting/results/
+tests/open_close/results/
+tests/create_save_output.txt
+tests/netlisting_output.txt
+tests/open_close_output.txt
