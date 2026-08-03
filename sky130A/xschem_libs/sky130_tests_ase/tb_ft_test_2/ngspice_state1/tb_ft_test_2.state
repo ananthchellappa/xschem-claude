@@ -11,4 +11,5 @@ save_all_v 1
 save_all_i 0
 options {{name wnflag value 1} {name method value gear} {name savecurrents value 1}}
 includes {{file tb_ft_test_2.save}}
+pre_commands {}
 viewer {}

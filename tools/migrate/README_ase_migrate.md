@@ -58,11 +58,11 @@ Migrate a **whole `*_tests` library** (every cell that carries clutter):
 
 | Option | Meaning |
 |---|---|
-| `--pdk {sky130,gf180}` | **required** — the technology profile (corner→model map, `$::<var>` model path). |
+| `--pdk {sky130,gf180,sg13g2}` | **required** — the technology profile (corner→model map, `$::<var>` model path). |
 | `--sch FILE` | a single cluttered `<cell>.sch` to migrate. |
 | `--library DIR` | a lib/cell/view library root; migrate every testbench cell under it. |
-| `--out DIR` | destination **library-root** directory; the cell is written under `DIR/<cell>/…`. Default: `<source-lib>_ase`. |
-| `--lib NAME` | library name recorded in the state's `design=` (default: inferred from the path). |
+| `--out DIR` | destination **library-root** directory (both modes); the cell is written under `DIR/<cell>/…`. Default: `<source-lib>_ase`. |
+| `--lib NAME` | library name recorded in the state's `design=` (default: the **destination** library's name, i.e. `basename(--out)`). |
 | `--hoist-sources` | lift numeric `vsource` values into named design variables (`value=1.65` → `.param V1=1.65`, schematic uses `value=V1`). Opt-in heuristic; **off** by default (values kept literal). |
 | `--dry-run` | report only; write nothing. |
 | `--verify` | run before/after through `xschem`+`ngspice` and compare Id. |
@@ -124,7 +124,7 @@ no-op. Example (gf180 `nfet_test_claude`):
 
     version 1
     simulator ngspice
-    design {lib gf180mcu_tests cell nfet_test_claude view schematic}
+    design {lib gf180mcu_tests_ase cell nfet_test_claude view schematic}
     rundir {}
     temperature 27
     models {{file {$::180MCU_MODELS/sm141064.ngspice} section typical}}
@@ -135,7 +135,32 @@ no-op. Example (gf180 `nfet_test_claude`):
     save_all_i 0
     options {{name savecurrents value 1}}
     includes {{file {$::180MCU_MODELS/design.ngspice}}}
+    pre_commands {}
     viewer {}
+
+A `--library` run also writes `<out_root>/library.tag` (`NAME <libname>`) and
+prints the one line it cannot write itself:
+
+    REGISTER: add `DEFINE sg13g2_tests_ase sg13g2_tests_ase` to <workarea>/xschem_libs/library.defs
+
+A Cadence-style workarea rc sets `library_registry_defs_only 1`, so the registry
+takes **only** the DEFINEs in `library.defs`. Until that line exists,
+`xschem cellview_path <lib>/<cell> schematic` returns `""` and every migrated
+state's `design {lib …}` is unresolvable.
+
+### Nothing in the destination may point back at the source library
+
+Three things carry a library reference, and all three are re-pointed:
+
+| | rule |
+|---|---|
+| the state's `design {lib …}` | names the **destination** library (`--lib`, else `basename(--out)`). |
+| a `C {<srclib>/<cell>}` symref | rebound to `<dstlib>/<cell>` **when `<cell>` is itself migrated**; a reference to a clutter-free sibling that has no `_ase` counterpart keeps naming the source library, which stays registered beside the destination one. |
+| the cell's `symbol/<cell>.sym` | copied into the destination and rebound the same way — `cellview_resolve` needs `<libpath>/<cell>/symbol/<cell>.sym`, so without it a rebound symref would resolve to nothing. |
+
+The report line `rebound N ref(s): a->b, …` names every rewrite. Getting this
+wrong is silent: the migrated bench opens and looks clean, then netlists the
+**cluttered** sibling one level down.
 
 ---
 
@@ -161,7 +186,7 @@ built-in fixtures: **sky130 ≈ 409.7 µA**, **gf180 ≈ 484.35 µA** (before ==
   `nfet_test_claude` is *electrically* equal to the hand-built `test_nfet_final`
   but not byte-identical (which symbolized `Vds`/`Vgs`). Use `--hoist-sources` to
   lift them into `.param`s named after the instance (`V1`, `V2`, …).
-- **Per-PDK profiles.** Only `sky130` and `gf180` are built in. A different PDK
+- **Per-PDK profiles.** `sky130`, `gf180` and `sg13g2` are built in. A different PDK
   needs a `Pdk(...)` entry in `PDKS` (name, `$::<model_var>`, and — if it uses a
   `corner` symbol — the corner→`.lib` mapping). gf180-style `code_shown` blocks
   need no corner mapping (the `.include`/`.lib` are parsed straight from the text).
@@ -189,7 +214,13 @@ built-in fixtures: **sky130 ≈ 409.7 µA**, **gf180 ≈ 484.35 µA** (before ==
 
     python3 tools/migrate/test_ase_migrate.py
 
-41 checks: the Tcl-list serializer (byte-identical to the committed gf180 golden),
-the SPICE/`.control` parser, classification, graph recovery, source hoisting, and
-an integration leg (auto-skipped without `./src/xschem` + `ngspice`) that migrates
+110 checks: the Tcl-list serializer (byte-identical to the committed gf180
+golden, plus a tclsh differential fuzz), the SPICE/`.control` parser,
+classification, graph recovery, source hoisting, the library walk (destination
+naming, sibling rebinding, symbol view, `library.tag`), the sg13g2 profile
+(`pre_*`, `+` continuations, dangling includes, unmappable analyses), and an
+integration leg (auto-skipped without `./src/xschem` + `ngspice`) that migrates
 the real gf180 `nfet_test_claude` and asserts `Id_before == Id_after`.
+
+The ASE-side `pre_commands` rendering is covered by `D6` in
+`tests/headless/test_ase_core.tcl`.

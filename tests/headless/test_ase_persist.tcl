@@ -1,7 +1,7 @@
 # Waveform-viewer persistence + ROUND-3 ACCEPTANCE GATE (item 14 of
 # doc/claude/ase_l_batch, spec doc/claude/specs/waveform_viewer.md
 # "Persistence" + "Item 14 notes"):
-#   R1   ase::state_default carries `viewer {}` + exactly the 14 schema keys
+#   R1   ase::state_default carries `viewer {}` + exactly the 15 schema keys
 #        (headless, pure)
 #   R2   viewer-key round-trip byte-stability: a state with a full viewer
 #        dict (auto-marked graph w/ RPN trace + plain graph) save->load->save
@@ -138,9 +138,10 @@ ase::state_save $clonestate $cst
 # --- R1: state_default gained the viewer key ---------------------------------
 set d [ase::state_default]
 check "R1 state_default has viewer {}" [dict get $d viewer] {}
-check "R1 exactly the 14 schema keys" [lsort [dict keys $d]] \
+check "R1 exactly the 15 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator design rundir temperature models variables \
-          analyses outputs save_all_v save_all_i options includes viewer}]
+          analyses outputs save_all_v save_all_i options includes \
+          pre_commands viewer}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------
 set vgraphs [list \

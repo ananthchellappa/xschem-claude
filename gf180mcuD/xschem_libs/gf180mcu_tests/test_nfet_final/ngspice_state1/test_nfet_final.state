@@ -11,4 +11,5 @@ save_all_v 0
 save_all_i 0
 options {{name savecurrents value 1}}
 includes {{file {$::180MCU_MODELS/design.ngspice}}}
+pre_commands {}
 viewer {}

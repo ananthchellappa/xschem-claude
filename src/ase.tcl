@@ -27,9 +27,15 @@ namespace eval ase {
   # saving semantics they modify; deck mapping allv -> `.save all`, alli ->
   # `.options savecurrents` in the ngspice render_deck; `viewer` = the item-14
   # waveform-viewer persistence dict, doc/claude/specs/waveform_viewer.md)
+  # `pre_commands` sits beside `includes` because it is the same kind of thing —
+  # deck preamble the state owns — but it renders INSIDE the .control block:
+  # ngspice's `pre_*` family (`pre_osdi <file>.osdi`, `pre_set`, …) runs before
+  # the netlist is parsed, which is the only way to load a compiled Verilog-A
+  # module; there is no `.osdi` dot-card. IHP SG13G2 needs four of them for its
+  # psp103va/mosvar/r3_cmc models (ihp-sg13g2/cadence_style_rc:40-49).
   variable schema_keys {version simulator design rundir temperature models
                         variables analyses outputs save_all_v save_all_i
-                        options includes viewer}
+                        options includes pre_commands viewer}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -215,6 +221,8 @@ proc ase::state_default {} {
     save_all_i 0 \
     options   {} \
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
+    pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
+                        $::ASE_DEFAULT_PRE_COMMANDS : {}}] \
     viewer    {}]
 }
 
@@ -1095,6 +1103,20 @@ namespace eval ase::backend::ngspice {
       }
     }
     lappend lines ".control"
+    # `pre_*` first, before anything that could need the modules they load.
+    # Position inside the block does not actually matter — ngspice runs every
+    # pre_ command before parsing the netlist, probe-verified on ngspice-46 with
+    # psp103.osdi in this trailing block — but first reads as what it is.
+    # v1 schema: each entry is a {cmd <text>} dict; a bare string (hand-written
+    # state) is taken verbatim. Same $::VAR-expansion contract as models.
+    foreach pc [ase::state_get $state pre_commands] {
+      if {[llength $pc] >= 2 && [dict exists $pc cmd]} {
+        set cmdtext [dict get $pc cmd]
+      } else {
+        set cmdtext $pc
+      }
+      lappend lines [ase::expand_path $cmdtext]
+    }
     foreach type {op dc ac tran} {
       foreach a [ase::state_get $state analyses] {
         if {[ase::state_get $a type] ne $type} { continue }

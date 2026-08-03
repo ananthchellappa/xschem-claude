@@ -11,4 +11,5 @@ save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}
 includes {{file test_sweep_mos_w.save}}
+pre_commands {}
 viewer {}

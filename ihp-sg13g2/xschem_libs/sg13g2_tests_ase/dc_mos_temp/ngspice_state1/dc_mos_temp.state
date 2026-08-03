@@ -1,0 +1,15 @@
+version 1
+simulator ngspice
+design {lib sg13g2_tests_ase cell dc_mos_temp view schematic}
+rundir {}
+temperature 27
+models {{file {$::MODELS_NGSPICE/cornerMOSlv.lib} section mos_tt} {file {$::MODELS_NGSPICE/cornerMOShv.lib} section mos_tt}}
+variables {{name temp value 27}}
+analyses {{type op enabled 0} {type dc enabled 1 source temp start -40 stop 125 step 1} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name ivm2 expr i(vm2) save 1 plot 1} {name ivm1 expr i(vm1) save 1 plot 1} {name ivm3 expr i(vm3) save 1 plot 1} {name ivm4 expr i(vm4) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/r3_cmc.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/mosvar.osdi}}}
+viewer {}

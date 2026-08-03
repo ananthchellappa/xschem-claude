@@ -11,4 +11,5 @@ save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}
 includes {{file tb_ft_test.save}}
+pre_commands {}
 viewer {}

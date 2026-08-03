@@ -90,8 +90,8 @@ if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
 set d [ase::state_default]
-check "R1 default has exactly the 14 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes viewer}]
+check "R1 default has exactly the 15 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands viewer}]
 check "R1 version is 1" [dict get $d version] 1
 check "R1 temperature default 27" [dict get $d temperature] 27
 check "R1 save_all_v and save_all_i default 0" \
@@ -251,6 +251,39 @@ set deck5offi [$render $st $netlist_text]
 check_true "D5 blankets off leave no blanket lines" \
   [expr {![regexp -line {^\.save all$} $deck5off] &&
          ![regexp -line {^\.options savecurrents$} $deck5offi]}]
+
+# --- D6: pre_commands -> the head of the .control block ----------------------
+# ngspice's `pre_*` family runs BEFORE the netlist is parsed — the only way to
+# load a compiled Verilog-A module (`pre_osdi x.osdi`; there is no `.osdi`
+# dot-card). IHP SG13G2 needs four of them or every bench with a MOS/varicap/
+# r3_cmc dies at "could not find a valid modelname".
+set ::ASE_TEST_OSDI_DIR /tmp/osdi_fixture
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st pre_commands {{cmd {pre_osdi $::ASE_TEST_OSDI_DIR/psp103.osdi}}
+                          {cmd {pre_osdi $::ASE_TEST_OSDI_DIR/r3_cmc.osdi}}}
+set deck6 [$render $st $netlist_text]
+check_true "D6 pre_ command rendered with its \$::VAR expanded" \
+  [regexp -line {^pre_osdi /tmp/osdi_fixture/psp103\.osdi$} $deck6]
+set ctlpos [string first "\n.control\n" $deck6]
+set prepos [string first "\npre_osdi /tmp/osdi_fixture/psp103.osdi\n" $deck6]
+set oppos  [string first "\nop\n" $deck6]
+check_true "D6 pre_ commands sit inside .control, ahead of the analyses" \
+  [expr {$ctlpos >= 0 && $prepos > $ctlpos && $oppos > $prepos}]
+check_true "D6 both entries rendered, in order" \
+  [expr {[string first "psp103.osdi" $deck6] <
+         [string first "r3_cmc.osdi" $deck6]}]
+# a bare string entry (hand-written state) is taken verbatim, like `includes`
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st pre_commands {{pre_set foo=1}}
+check_true "D6 a bare-string entry renders verbatim" \
+  [regexp -line {^pre_set foo=1$} [$render $st $netlist_text]]
+# default state carries none, so no stray line leaks into an ordinary deck
+check_true "D6 no pre_ line when the state has none" \
+  [expr {![regexp -line {^pre_} [$render \
+      [nfet_state /models/sky130.lib.spice {}] $netlist_text]]}]
+check "D6 pre_commands is in the canonical schema order" \
+  [lsearch -exact $ase::schema_keys pre_commands] \
+  [expr {[lsearch -exact $ase::schema_keys includes] + 1}]
 
 # --- P1: result_probe keying (UI v2 Outputs Value column) --------------------
 # unnamed outputs (no `name` key) are keyed by their expr; named outputs stay

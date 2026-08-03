@@ -11,4 +11,5 @@ save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}
 includes {{file {$::180MCU_MODELS/design.ngspice}}}
+pre_commands {}
 viewer {open 1 sharedx 0 rawfile {} graphs {{traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}} {traces {{expr v(g) name {} vec v(g) color 4} {expr v(d) name {} vec v(d) color 5}} logx 0 logy 0 x1 0 x2 2e-07 y1 0 y2 3.3}}}

@@ -1,0 +1,46 @@
+v {xschem version=3.4.5 file_version=1.2
+}
+G {}
+K {}
+V {}
+S {}
+E {}
+N -500 20 -500 40 {
+lab=GND}
+N -500 -100 -500 -40 {
+lab=#net1}
+N -500 -100 -350 -100 {
+lab=#net1}
+N -350 40 -350 50 {
+lab=GND}
+N -170 40 -170 50 {
+lab=GND}
+N -350 -30 -350 -20 {
+lab=#net2}
+N -350 -100 -350 -90 {
+lab=#net1}
+N -170 -30 -170 -20 {
+lab=#net3}
+N -170 -100 -170 -90 {
+lab=#net1}
+N -350 -100 -170 -100 {
+lab=#net1}
+C {devices/gnd} -500 40 0 0 {name=l2 lab=GND}
+C {devices/title} -360 130 0 0 {name=l5 author="Copyright 2023 IHP PDK Authors"}
+C {devices/gnd} -170 50 0 0 {name=l3 lab=GND}
+C {devices/gnd} -350 50 0 0 {name=l1 lab=GND}
+C {devices/vsource} -500 -10 0 0 {name=V1 value=0.7}
+C {devices/ammeter} -350 -60 0 0 {name=Vmda}
+C {devices/ammeter} -170 -60 0 0 {name=Vmdp}
+C {sg13g2_pr/dpantenna} -350 10 2 0 {name=D2
+model=dpantenna
+l=0.78u
+w=0.78u
+spiceprefix=X
+}
+C {sg13g2_pr/dantenna} -170 10 2 0 {name=D1
+model=dantenna
+l=0.78u
+w=0.78u
+spiceprefix=X
+}
