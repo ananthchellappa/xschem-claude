@@ -56,10 +56,10 @@ foreach p [discover_pdks $repo] {
 # --- command construction --------------------------------------------------
 proc cmdfor {pdk args} {
   global S repo
-  array set o {logdir {} netdir {} cell {} extra {} quiet 0 norecent 0}
+  array set o {logdir {} netdir {} cell {} extra {} norecent 0}
   array set o $args
   set S(pdk) $pdk
-  foreach k {logdir netdir cell extra quiet norecent} { set S($k) $o($k) }
+  foreach k {logdir netdir cell extra norecent} { set S($k) $o($k) }
   return [build_cmd]
 }
 
@@ -87,9 +87,18 @@ check "netlist directory becomes --netlist_path" \
   [cmdfor sky130A netdir /tmp/nl] \
   [list $xs --script [file join $repo sky130A cadence_style_rc] --netlist_path /tmp/nl]
 
-check "checkboxes add -q and --norecent" \
-  [cmdfor sky130A quiet 1 norecent 1] \
-  [list $xs --script [file join $repo sky130A cadence_style_rc] -q --norecent]
+check "the checkbox adds --norecent" \
+  [cmdfor sky130A norecent 1] \
+  [list $xs --script [file join $repo sky130A cadence_style_rc] --norecent]
+
+# -q is xschem's --quit ("quit after doing things"), NOT a quiet flag. The launcher
+# once offered it as "quiet (-q)" and defaulted it ON, so every launch opened a
+# window and closed it again. Nothing may put it in the command line.
+foreach pdk {sky130A gf180mcuD ihp-sg13g2} {
+  set c [cmdfor $pdk logdir /tmp norecent 1]
+  check_true "$pdk: never emits -q (that is --quit)" [expr {[lsearch -exact $c -q] < 0}]
+  check_true "$pdk: never emits --quit"              [expr {[lsearch -exact $c --quit] < 0}]
+}
 
 # Blank fields must vanish entirely. Passing `--logdir {}` would make xschem
 # swallow the NEXT argument as the log directory.

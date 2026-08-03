@@ -38,15 +38,27 @@ and the editor are independent.
 | Netlist directory | `--netlist_path <dir>` | created silently if missing |
 | Schematic (opt.) | positional arg | must come LAST; existence checked before launch |
 | Extra args | split on whitespace | escape hatch for any other xschem flag |
-| quiet | `-q` | |
 | don't touch Open Recent | `--norecent` | keeps throwaway sessions out of Open Recent |
 
 Blank fields are omitted entirely rather than passed as empty strings — a bare
 `--logdir {}` would make xschem swallow the next argument as the log directory.
 
+### There is no quiet flag — `-q` means QUIT
+
+The launcher originally offered a **"quiet (-q)"** checkbox, defaulted ON. In xschem `-q`
+is `--quit`, *"Quit after doing things (no interactive mode)"* (`src/xschem.help`), so
+every launch opened a window and immediately closed it. With *quit launcher after
+starting xschem* also ticked, both windows vanished and nothing was left to explain why.
+xschem has no quiet option at all; the checkbox was invented, not verified against the
+help text.
+
+The option is gone, and `do_launch` now warns if `-q`/`--quit` reaches the command line
+through **Extra args**, because the symptom gives no hint of the cause. The test asserts
+the flag is never emitted for any PDK.
+
 ## Verification
 
-`tests/headless/test_pdk_launcher.tcl` (24 checks, registered in `run_regression.tcl`
+`tests/headless/test_pdk_launcher.tcl` (30 checks, registered in `run_regression.tcl`
 hcases). It sources the launcher with `::PDK_LAUNCHER_NO_UI` set, which skips
 `package require Tk` and returns before any widget is built — so the command-building
 logic is testable under a plain `tclsh` with no display. It checks discovery (including
@@ -54,9 +66,16 @@ that `src/` is not listed), the rc mapping for each PDK, flag construction, blan
 omission, and that the schematic stays last. Sabotage-verified: dropping the
 `library.defs` discovery filter → 2 FAILED; dropping the blank-`logdir` trim → 10 FAILED.
 
-End-to-end, the real UI was driven programmatically (set the fields, call `do_launch`)
-with `HOME` redirected to a scratch dir: xschem started, wrote its action log into the
-chosen `--logdir` with the expected launch line, and the config file was written.
+End-to-end, the real UI is driven programmatically (set the fields, call `do_launch`) with
+`HOME` redirected to a scratch dir, in the reported configuration — *quit launcher after
+starting xschem* ticked — and xschem is then asserted to be **still running** several
+seconds after the launcher has exited.
+
+That liveness assertion is the point. The first version of this check concluded "launched"
+from the existence of `Xschem.log` in the target directory. xschem writes that header and
+*then* honours `-q` by exiting, so the artifact was produced by a run that had already
+died — a green check on a broken launcher. An artifact proves a process started, never
+that it survived.
 
 ## Known environment quirk (not a defect in this code)
 

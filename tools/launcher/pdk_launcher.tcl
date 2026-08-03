@@ -59,7 +59,6 @@ set S(logdir)   /tmp
 set S(netdir)   ""
 set S(cell)     ""
 set S(extra)    ""
-set S(quiet)    1
 set S(norecent) 1
 set S(quit)     0
 
@@ -86,7 +85,7 @@ proc save_conf {} {
     catch {file mkdir [file dirname $CONF]}
     if {[catch {set f [open $CONF w]}]} { return }
     puts $f "# xschem PDK launcher settings"
-    foreach k {pdk logdir netdir cell extra quiet norecent} {
+    foreach k {pdk logdir netdir cell extra norecent} {
         puts $f "$k $S($k)"
     }
     close $f
@@ -108,7 +107,10 @@ proc build_cmd {} {
     }
     if {[string trim $S(logdir)] ne ""} { lappend cmd --logdir [string trim $S(logdir)] }
     if {[string trim $S(netdir)] ne ""} { lappend cmd --netlist_path [string trim $S(netdir)] }
-    if {$S(quiet)}    { lappend cmd -q }
+    # NOTE: there is deliberately no -q option here. In xschem `-q` is --quit
+    # ("Quit after doing things (no interactive mode)"), NOT "quiet" -- this
+    # launcher used to offer it as a quiet flag and default it ON, so every
+    # launch opened a window and immediately exited. There is no quiet flag.
     if {$S(norecent)} { lappend cmd --norecent }
     foreach a [string trim $S(extra)] { lappend cmd $a }
     if {[string trim $S(cell)] ne ""} { lappend cmd [string trim $S(cell)] }
@@ -165,10 +167,20 @@ proc do_launch {} {
         tk_messageBox -icon error -title "No such file" -message "Schematic not found:\n$cell"
         return
     }
+    set cmd [build_cmd]
+    # -q / --quit makes xschem "quit after doing things (no interactive mode)": the
+    # window flashes up and disappears. Nothing here adds it, but it can still
+    # arrive through Extra args, and the symptom (a launcher that appears to do
+    # nothing) gives no hint of the cause — so name it.
+    if {[lsearch -exact $cmd -q] >= 0 || [lsearch -exact $cmd --quit] >= 0} {
+        if {[tk_messageBox -icon warning -type okcancel -title "-q means QUIT" -message \
+             "The command contains -q / --quit.\n\nIn xschem that means \"quit after\
+              doing things\" -- it is NOT a quiet flag. The window will open and close\
+              immediately.\n\nLaunch anyway?"] ne "ok"} { return }
+    }
     save_conf
     # Detached: the launcher must not die with the editor, and vice versa. stderr
     # is folded into the log dir when one was given, else left on the terminal.
-    set cmd [build_cmd]
     if {[catch {exec {*}$cmd &} e]} {
         tk_messageBox -icon error -title "Launch failed" -message $e
         return
@@ -279,11 +291,9 @@ grid $f.eex -row $r -column 1 -columnspan 2 -sticky ew -padx 4
 bind $f.eex <KeyRelease> refresh_preview
 incr r
 
-ttk::checkbutton $f.cq -text "quiet (-q)" -variable S(quiet) -command refresh_preview
-grid $f.cq -row $r -column 1 -sticky w -padx 4 -pady {6 0}
 ttk::checkbutton $f.cr -text "don't touch Open Recent (--norecent)" \
     -variable S(norecent) -command refresh_preview
-grid $f.cr -row $r -column 2 -columnspan 2 -sticky w -pady {6 0}
+grid $f.cr -row $r -column 1 -columnspan 3 -sticky w -padx 4 -pady {6 0}
 incr r
 
 ttk::separator $f.sep2 -orient horizontal
