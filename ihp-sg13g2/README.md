@@ -30,10 +30,11 @@ or pick it from the GUI launcher, which fills in the flags for you:
 
 ## What you get
 
-- **9 libraries in the Library Manager**: the three migrated PDK libraries —
+- **10 libraries in the Library Manager**: the three migrated PDK libraries —
   `sg13g2_pr` (41 primitives), `sg13g2_stdcells` (80), `sg13g2_tests` (49 testbenches) —
-  plus `devices` and the five general libraries, which are **shared** with the rest of
-  the repo (`../xschem_libs_newsym/<lib>`) rather than duplicated here.
+  plus `sg13g2_tests_ase` (48 ASE-L testbenches, see below), `devices` and the five
+  general libraries, which are **shared** with the rest of the repo
+  (`../xschem_libs_newsym/<lib>`) rather than duplicated here.
 - **The IHP menu**, inserted before `Netlist`: create a FET/BIP `.save` file, add the
   ngspice models symbol, add a FET or BIP parameter annotator.
 - **DRC checks** on primitive dimensions (MOS, resistor, MiM cap, HBT, diode, S-varicap)
@@ -44,7 +45,7 @@ or pick it from the GUI launcher, which fills in the flags for you:
 ## Layout
 
 ```
-xschem_libs/     library.defs + the three migrated PDK libraries
+xschem_libs/     library.defs + the migrated PDK libraries (+ sg13g2_tests_ase)
 models/          verbatim copy of the PDK's libs.tech/ngspice/models
 osdi/            compiled Verilog-A modules (psp103, psp103_nqs, r3_cmc, mosvar)
 cadence_style_rc the launch rc (registry + models + procs + menu)
@@ -60,6 +61,41 @@ clean** in ngspice 46.
 The two that do not are upstream bench quirks, not model problems: `IHP_testcases` is the
 gallery index page rather than a real bench, and `dc_esd_diodes` has a vector-name bug in
 its own `.control` block.
+
+### The ASE-L library (`sg13g2_tests_ase`)
+
+`sg13g2_tests_ase` is `sg13g2_tests` run through `tools/migrate/ase_migrate.py
+--pdk sg13g2`: each bench split into a **clean schematic** (circuit only — no
+models, no `.control`, no graphs, no launcher buttons) plus an
+**`ngspice_state1` state view** carrying the extracted setup. Open the state
+view, or **Tools > Launch ASE-L** on the clean schematic.
+
+48 of the 49 cells migrate (`IHP_testcases` is the gallery index page, correctly
+skipped as having no clutter to extract). Regenerate with:
+
+```sh
+python3 tools/migrate/ase_migrate.py --library ihp-sg13g2/xschem_libs/sg13g2_tests \
+    --pdk sg13g2 --out ihp-sg13g2/xschem_libs/sg13g2_tests_ase
+```
+
+**All 48 render a deck that runs to completion in ngspice 46**, and where a
+before/after comparison is possible the migrated bench reproduces the cluttered
+original's raw output *bit-identically* (10 of 10 comparable cells; the two
+`res_typ_stat` benches differ only by their own model-level Monte-Carlo draw,
+which is larger run-to-run than the before/after gap). Twelve benches actually
+run *better* than the original, whose `.include <cell>.save` needs the IHP menu's
+"Create FET and BIP .save file" pressed first — the migrator drops that dangling
+include and turns on `save_all_i` instead.
+
+Known lossy classes, all reported by the migrator, none silent:
+
+- the three `sp_*` benches use ngspice's S-parameter analysis, which the ASE
+  state schema cannot express: they migrate with **every analysis disabled**
+  (rather than a fabricated `op` that would run and look healthy) — pick an
+  analysis in ASE-L before running;
+- `dc <src1> … <src2> …` two-source family sweeps keep only the first source;
+- `let` / `meas` / `dowhile` post-processing is preserved in the migration
+  report for hand-porting, not in the state.
 
 ### Verilog-A / OSDI
 

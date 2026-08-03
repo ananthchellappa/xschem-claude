@@ -55,6 +55,16 @@ set ::ASE_DEFAULT_MODELS [list \
   [list file {$::MODELS_NGSPICE/cornerMOSlv.lib} section mos_tt] \
   [list file {$::MODELS_NGSPICE/cornerMOShv.lib} section mos_tt]]
 
+# ...and the OSDI preload that makes those models resolvable. render_deck emits
+# these verbatim at the top of its .control block, so a fresh ASE-L session gets
+# the same Verilog-A modules the migrated benches carry in their own
+# `pre_commands`. Portable $::VAR form, expanded at deck time.
+set ::ASE_DEFAULT_PRE_COMMANDS [list \
+  {cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}} \
+  {cmd {pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi}} \
+  {cmd {pre_osdi $::SG13G2_OSDI/r3_cmc.osdi}} \
+  {cmd {pre_osdi $::SG13G2_OSDI/mosvar.osdi}}]
+
 # PDK/PDK_ROOT are referenced by a couple of the helper procs' status strings.
 if {![info exists ::env(PDK)]} { set ::env(PDK) ihp-sg13g2 }
 source [file join $_ws sg13g2_procs.tcl]

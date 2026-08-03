@@ -11,4 +11,5 @@ save_all_v 1
 save_all_i 0
 options {}
 includes {{file {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}}}
+pre_commands {}
 viewer {}

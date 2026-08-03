@@ -1,0 +1,15 @@
+version 1
+simulator ngspice
+design {lib sg13g2_tests_ase cell mc_lv_pmos_cs_loop view schematic}
+rundir {}
+temperature 27
+models {{file {$::MODELS_NGSPICE/cornerMOSlv.lib} section mos_tt_stat}}
+variables {{name mm_ok value 1} {name mc_ok value 1} {name temp value 27}}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+outputs {}
+save_all_v 0
+save_all_i 0
+options {}
+includes {}
+pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/psp103_nqs.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/r3_cmc.osdi}} {cmd {pre_osdi $::SG13G2_OSDI/mosvar.osdi}}}
+viewer {}

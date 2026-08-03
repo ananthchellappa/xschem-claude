@@ -10,3 +10,4 @@ DEFINE xschem_simulator ../../xschem_libs_newsym/xschem_simulator
 DEFINE sg13g2_pr sg13g2_pr
 DEFINE sg13g2_stdcells sg13g2_stdcells
 DEFINE sg13g2_tests sg13g2_tests
+DEFINE sg13g2_tests_ase sg13g2_tests_ase

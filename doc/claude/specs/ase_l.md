@@ -56,6 +56,7 @@ analyses    {{type op enabled 1}
 outputs     {{name id expr -i(v1) save 1 plot 0}}
 options     {{name savecurrents value 1}}
 includes    {}
+pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}}}
 ```
 
 - `variables` become `.param` lines; schematic references them symbolically
@@ -70,6 +71,17 @@ includes    {}
   as the path). Needed for PDKs whose corner section is not self-contained —
   e.g. gf180's `sm141064` `typical` references `design.ngspice`'s switch params
   (`sw_stat_global`, `mc_skew`, `fnoicor`, …); see `gf180mcuD/README.md`.
+- `pre_commands` render at the **head of the `.control` block**, ahead of the
+  analyses. ngspice runs its `pre_*` family before the netlist is parsed, which
+  is the only way to load a compiled Verilog-A module — `pre_osdi <file>.osdi`;
+  there is no `.osdi` dot-card. IHP SG13G2 needs four of them (psp103,
+  psp103_nqs, r3_cmc, mosvar) or every bench with a MOS, varicap or `r3_cmc`
+  resistor netlists fine and then dies at `could not find a valid modelname`.
+  Same entry shape and `$::VAR`-expansion contract as `includes`: a
+  `{cmd <text>}` dict, or a bare string taken verbatim. `::ASE_DEFAULT_PRE_COMMANDS`
+  seeds it for a fresh session (ihp-sg13g2/cadence_style_rc), mirroring
+  `::ASE_DEFAULT_MODELS`/`::ASE_DEFAULT_INCLUDES`. Position inside the block does
+  not matter to ngspice (probed, ngspice-46); first is where it reads honestly.
 - Loader/saver in `ase.tcl`; unknown keys preserved round-trip (forward compat).
 
 ## Deck assembly (no C changes)
