@@ -503,6 +503,14 @@ proc wviewer::forget {token} {
   variable graphbb
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
+  # `gridshow` was unset below (viewer plan item 3) without ever being declared
+  # here, so `unset gridshow($token)` addressed a LOCAL array, failed, and was
+  # swallowed by its own `catch` -- the namespace entry survived every close.
+  # Benign only by luck: `open` re-seeds it unconditionally, so the stale value
+  # was always overwritten before anything read it. Declared now, so `forget`
+  # really does leave the token's array family empty (which the tab teardown
+  # below relies on being true).
+  variable gridshow
   variable mode; variable target
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
