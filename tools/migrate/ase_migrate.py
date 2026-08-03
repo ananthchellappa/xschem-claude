@@ -154,15 +154,34 @@ SCHEMA_KEYS = ["version", "simulator", "design", "rundir", "temperature",
 # PDK profiles — the per-technology knowledge the migrator needs
 # --------------------------------------------------------------------------- #
 
+# Tcl globals xschem itself always defines, so a path naming one of these is
+# resolvable in ANY workarea and must never be flagged. (xinit.c / xschem.tcl:
+# `USER_CONF_DIR`, `XSCHEM_SHAREDIR`, … are set before any rc is sourced.)
+_XSCHEM_GLOBALS = frozenset((
+    "USER_CONF_DIR", "XSCHEM_SHAREDIR", "XSCHEM_LIBRARY_PATH", "netlist_dir",
+    "XSCHEM_START_WINDOW", "env"))
+
+
 class Pdk(object):
     """Per-technology profile: the model-path variable, and how a `corner`
     symbol's corner= value maps to a `.lib file section` model entry."""
 
-    def __init__(self, name, model_var, corner_lib=None, corner_default=None):
+    def __init__(self, name, model_var, corner_lib=None, corner_default=None,
+                 env_vars=(), device_libs=()):
         self.name = name
         self.model_var = model_var                # e.g. '180MCU_MODELS' (no $::)
         self.corner_lib = corner_lib              # portable .lib path for corner sym
         self.corner_default = corner_default      # fallback section if corner= absent
+        # Tcl globals the workarea rc GUARANTEES at run time. A migrated path may
+        # name one of these (or an _XSCHEM_GLOBALS name) and nothing else: a
+        # `$::SKYWATER_STDCELLS/...` include makes ase::expand_path throw
+        # ("can't read ...: no such variable") before ngspice ever starts, so the
+        # cell cannot run at all. See _resolvable_path / issue 0210 bucket A.
+        self.env_vars = frozenset(env_vars) | {model_var}
+        # symbol libraries whose instances are PDK devices: a cell that
+        # instantiates one of these and extracted NO model entry has nothing to
+        # resolve `sky130_fd_pr__nfet_…` against (issue 0210 bucket D).
+        self.device_libs = frozenset(device_libs)
 
     def corner_model(self, corner_value):
         """(file, section) model entry for a `corner` symbol, or None if this PDK
@@ -174,20 +193,29 @@ class Pdk(object):
 
 
 PDKS = {
+    # SKYWATER_STDCELLS / PDK_ROOT / PDK are set unconditionally by
+    # sky130A/cadence_style_rc ("3b. Standard-cell SPICE decks") — seven benches
+    # include a stdcell deck from an open_pdks install rather than a model .lib,
+    # and dropping those includes would only trade `no such variable` for
+    # `unknown subckt: sky130_fd_sc_hd__*`.
     "sky130": Pdk("sky130", "SKYWATER_MODELS",
                   corner_lib="$::SKYWATER_MODELS/sky130.lib.spice",
-                  corner_default="tt"),
+                  corner_default="tt",
+                  env_vars=("SKYWATER_STDCELLS", "PDK_ROOT", "PDK"),
+                  device_libs=("sky130_fd_pr",)),
     # gf180 embeds `.include design.ngspice` + `.lib sm141064 typical` in a
     # code_shown block already in portable $::180MCU_MODELS form, so there is no
     # corner symbol to map — models/includes are parsed straight from the block.
-    "gf180": Pdk("gf180", "180MCU_MODELS"),
+    "gf180": Pdk("gf180", "180MCU_MODELS", device_libs=("gf180mcu_pr",)),
     # IHP SG13G2: same shape as gf180 — a code_shown block already in portable
     # `$::MODELS_NGSPICE/corner*.lib <section>` form, no corner symbol. What is
     # specific to it is the OSDI preload: its MOS (psp103va), varicap and
     # r3_cmc resistor models are Verilog-A, loaded by `pre_osdi` lines inside the
     # block's .control section (ihp-sg13g2/cadence_style_rc:40-49). Those are
     # carried through to the state's `pre_commands` field, see _parse_control_line.
-    "sg13g2": Pdk("sg13g2", "MODELS_NGSPICE"),
+    "sg13g2": Pdk("sg13g2", "MODELS_NGSPICE",
+                  env_vars=("SG13G2_MODELS", "SG13G2_OSDI"),
+                  device_libs=("sg13g2_pr", "sg13g2_stdcells")),
 }
 
 
@@ -340,6 +368,19 @@ class SpiceDeck(object):
         self.pre_commands = []  # `pre_*` .control lines (osdi preload etc.)
         self.raw_control = []  # unmappable .control lines (preserved in report)
         self.unmapped_analyses = []   # analysis heads with no ASE schema equivalent
+        # deck text with no ASE-state destination that is still REAL netlist
+        # content: circuit element lines (`vd d 0 0`, XSPICE `A…` devices) and
+        # the `.model`/`.ic`/`.nodeset`/`.subckt`/`.global` family. These used to
+        # fall off the end of _parse_top_line with no destination and no warning
+        # — 54 lines across 15 of the 48 sky130 cells, taking four benches'
+        # swept sources and test_jfet's `.MODEL 2N3459` with them (issue 0210
+        # `embedded-nondot-lines-silently-dropped`). CellMigrator re-emits them
+        # onto the CLEAN SCHEMATIC as a `devices/code` netlist_commands record,
+        # which is where circuit content belongs: the ASE state schema has no
+        # field for literal deck text, and render_deck (src/ase.tcl) builds the
+        # deck as [schematic netlist] + [state cards], so a netlist_commands
+        # record reaches the simulator unchanged.
+        self.residue = []
         self.warnings = []
 
     def _add_output(self, expr, plot):
@@ -370,7 +411,12 @@ class SpiceDeck(object):
                 % (corner_value, pdk.name))
 
     def parse(self, text):
-        """Parse an embedded SPICE blob (top level + any .control block)."""
+        """Parse an embedded SPICE blob (top level + any .control block).
+
+        Returns the residue lines THIS blob contributed, in source order, so the
+        caller can re-emit them as one netlist_commands record per source block
+        (preserving that block's only_toplevel/place scope)."""
+        mark = len(self.residue)
         in_control = False
         for line in self._logical_lines(text):
             low = line.lower()
@@ -384,6 +430,7 @@ class SpiceDeck(object):
                 self._parse_control_line(line)
             else:
                 self._parse_top_line(line)
+        return self.residue[mark:]
 
     @staticmethod
     def _logical_lines(text):
@@ -453,11 +500,32 @@ class SpiceDeck(object):
         if re.match(r"^\.(op|dc|ac|tran)\b", low):
             self._parse_analysis(line.lstrip("."))
             return
-        if low.startswith((".end", ".title", ".global", ".model", ".subckt",
-                           ".ends", ".ic", ".nodeset")):
-            return                                # structural / handled elsewhere
-        if line.startswith("."):
-            self.warnings.append("unmapped top-level card: %s" % line)
+        # `.end` terminates the deck and `.title` names it — render_deck emits
+        # its own, and re-emitting either into the netlist body would truncate or
+        # rename the run. They are the ONLY two cards that are pure deck framing.
+        if low.startswith(".end") and not low.startswith(".ends"):
+            self.warnings.append("deck-framing card dropped (ASE emits its "
+                                 "own): %s" % line)
+            return
+        if low.startswith(".title"):
+            self.warnings.append("deck-framing card dropped (ASE emits its "
+                                 "own): %s" % line)
+            return
+        # Everything else with no state destination is REAL deck content and goes
+        # to the residue: `.model`/`.ic`/`.nodeset` are simulation setup (test_jfet
+        # lost its `.MODEL 2N3459`, test_stdcells its nine XSPICE d_lut models),
+        # `.subckt`/`.ends`/`.global` are structure the cell defines locally, and
+        # an unrecognised dot-card is by definition something we cannot prove is
+        # droppable. LOSSLESS-OR-LOUD: keep it AND say so.
+        self._to_residue(line, "dot-card" if line.startswith(".")
+                         else "circuit element")
+
+    def _to_residue(self, line, what):
+        """Keep a deck line that has no ASE-state destination, loudly."""
+        self.residue.append(line)
+        self.warnings.append(
+            "%s has no ASE state field, kept on the clean schematic as a "
+            "netlist_commands block: %s" % (what, line))
 
     # -- inside .control ------------------------------------------------------
     def _parse_control_line(self, line):
@@ -510,6 +578,15 @@ class SpiceDeck(object):
     def _parse_analysis(self, body):
         toks = body.split()
         t = toks[0].lower()
+        # The ASE schema holds ONE row per analysis type, so a second card of the
+        # same type overwrites the first. test_inv's ngspice block carries
+        # `tran 0.004n 30n` and then `tran 0.02n 30n`; only the last survived, and
+        # in silence. Last-wins matches ngspice's own .control semantics (the
+        # later card is the one that runs last), so keep it — but say so.
+        if t in self.analyses:
+            self.warnings.append(
+                "a later %s card replaces the one already migrated (ASE holds "
+                "one row per type): %s" % (t, body))
         if t == "op":
             self.analyses["op"] = {"type": "op", "enabled": "1"}
         elif t == "dc" and len(toks) >= 5:
@@ -559,6 +636,20 @@ class SpiceDeck(object):
                 continue
             if not _OPT_NAME_RE.match(name):
                 self.warnings.append("non-identifier option token dropped: %s" % tok)
+                continue
+            # `.option temp=<T>` is the simulation temperature, the same knob as
+            # `.temp`. Left in `options` it was silently overridden: render_deck
+            # (src/ase.tcl) emits the options rows first and `.temp <temperature>`
+            # LAST, and ngspice lets the last one win — so a bench that asked for
+            # -40 C ran at the default 27 (issue 0210
+            # `temperature-overrides-options-temp`).
+            if name.lower() == "temp":
+                if val is not None and _NUM_RE.match(val):
+                    self.temperature = val
+                else:
+                    self.warnings.append(
+                        "non-numeric option temp not migrated (ASE needs a "
+                        "number; the deck's .temp would override it): %s" % tok)
                 continue
             self.options.append((name, val))
 
@@ -697,6 +788,30 @@ _EMBED_CELLS = frozenset((
     "simulator_commands", "simulator_commands_shown", "spice", "ngspice"))
 
 
+# --------------------------------------------------------------------------- #
+# .sch record writing — the inverse of migrate_pin_names' scanner
+# --------------------------------------------------------------------------- #
+# Two nested escape layers, and BOTH have to be right or the residue block comes
+# back as garbage (or unparseable) on the next read:
+#   * value layer   — an attribute value containing whitespace is `"…"`-quoted,
+#                     and `\` / `"` inside it are backslash-escaped. This is the
+#                     layer get_tok_value (src/token.c ~516) undoes.
+#   * record layer  — the whole property string sits inside the record's `{…}`,
+#                     so `\`, `{` and `}` each get a backslash (src/save.c:2542).
+#                     This is the layer _read_braced (migrate_pin_names) undoes.
+# Applied in that order, `table_values "1110"` becomes `table_values \\"1110\\"`,
+# which is byte-for-byte how xschem itself stores test_stdcells' d_lut card.
+
+def _attr_quote(v):
+    """Value layer: a `"`-quoted attribute value."""
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _sch_escape(props):
+    """Record layer: escape a property string for a record's `{…}` field."""
+    return re.sub(r"([\\{}])", r"\\\1", props)
+
+
 def _cell_of(symref):
     """Bare cell name from a C symref (`gf180mcu_pr/nfet_03v3` -> `nfet_03v3`,
     `sky130_fd_pr/corner` -> `corner`), extension stripped."""
@@ -742,8 +857,13 @@ _VSOURCE_CELLS = frozenset(("vsource", "isource", "vpulse", "ipulse"))
 _NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 # a lib-qualified `schematic=<lib>/<cell>` override inside an instance's props
 _SCHEMATIC_ATTR_RE = re.compile(r"(\bschematic=)([^\s}]+)")
-# `$NAME` without the `::` qualifier — ase::expand_path cannot resolve it
-_UNQUAL_VAR_RE = re.compile(r"\$(?!::)\{?([A-Za-z_][A-Za-z0-9_]*)")
+# Every `$VAR` / `$::VAR` / `${VAR}` a path names. Leading digits are legal in a
+# Tcl variable name and gf180's model var IS `180MCU_MODELS`, so the name class
+# cannot exclude them.
+_VAR_RE = re.compile(r"\$(?:::)?\{?([A-Za-z0-9_]+)")
+# ngspice `dc` accepts these in the source slot instead of a circuit element
+# (`dc temp -40 125 5` is a temperature sweep — test_res, and five IHP benches).
+_DC_SPECIAL_SOURCES = frozenset(("temp",))
 
 
 class MigrationReport(object):
@@ -797,6 +917,24 @@ class CellMigrator(object):
         self.clean_sch = None
         self.clean_sym = None
         self.state = None
+        self.residue_recs = []              # synthesized netlist_commands records
+        self._circuit_names = set()         # name= of every kept C record (lowercased)
+
+    @staticmethod
+    def _embed_skip_reason(props):
+        """Why the ngspice netlister would NOT emit this embedded block.
+
+        Parsing a block xschem never emits is worse than useless: test_multisim's
+        two `spice_ignore=true` code_shown blocks are Tcl (`[if [sim_is_ngspice]
+        {return {`), and its `simulator=xyce` block is a different simulator's
+        deck. Both used to be parsed as if they were live ngspice text."""
+        found, ign = get_tok(props, "spice_ignore")
+        if found and ign.strip().lower() in ("true", "1"):
+            return "spice_ignore=true"
+        found, sim = get_tok(props, "simulator")
+        if found and sim.strip() and sim.strip().lower() != "ngspice":
+            return "simulator=%s" % sim.strip()
+        return None
 
     def migrate(self):
         recs = scan_records(self.sch_text)
@@ -808,14 +946,29 @@ class CellMigrator(object):
             if cat in ("header", "circuit", "other"):
                 kept.append(rec)
                 self.report.kept += 1
+                if rec.tag == "C":
+                    _f, nm = get_tok(rec.fields[5].content, "name")
+                    if nm:
+                        self._circuit_names.add(nm.strip().lower())
             elif cat == "corner":
                 _f, cv = get_tok(rec.fields[5].content, "corner")
                 deck.add_corner(self.pdk, cv)
                 self.report.dropped.append(("corner", cv))
             elif cat == "embedded":
-                _f, val = get_tok(rec.fields[5].content, "value")
+                props = rec.fields[5].content
+                skip = self._embed_skip_reason(props)
+                if skip:
+                    self.report.warnings.append(
+                        "embedded block %s not parsed: the ngspice netlister "
+                        "would not emit it" % skip)
+                    self.report.dropped.append(
+                        ("embedded", _cell_of(rec.fields[0].content)))
+                    continue
+                _f, val = get_tok(props, "value")
                 if val:
-                    deck.parse(val)
+                    res = deck.parse(val)
+                    if res:
+                        self._add_residue(rec, props, res)
                 self.report.dropped.append(("embedded", _cell_of(rec.fields[0].content)))
             elif cat == "graph":
                 g_outputs.extend(graph_outputs(rec.fields[5].content,
@@ -832,6 +985,42 @@ class CellMigrator(object):
         self.clean_sym = self._rebind_text(self.sym_text) if self.sym_text else None
         self.state = self._build_state(deck, g_outputs)
         return self
+
+    # -- residue: deck lines with no state field, kept on the schematic --------
+    def _add_residue(self, rec, props, lines):
+        """One `devices/code` netlist_commands record carrying `lines`.
+
+        Placed at the source block's own coordinates and inheriting its
+        `only_toplevel` / `place` scope, so a source that was `only_toplevel=true`
+        stays out of a parent's netlist and a `place=end` block stays at the end.
+        `devices/code` (not `code_shown`) keeps the clean schematic visually
+        clean, and its symbol `format` is a bare `@value` — no `tcleval(…)`
+        wrapper — so a line like the XSPICE `A1 [A B] IX …` survives with its
+        brackets intact instead of being read as Tcl command substitution."""
+        _f, srcname = get_tok(props, "name")
+        _f, otl = get_tok(props, "only_toplevel")
+        _f, place = get_tok(props, "place")
+        n = len(self.residue_recs) + 1
+        name = "ASE_KEEP%d" % n
+        attrs = ["name=" + name]
+        if otl and otl.strip():
+            attrs.append("only_toplevel=" + otl.strip())
+        if place and place.strip():
+            attrs.append("place=" + place.strip())
+        attrs.append("value=" + _attr_quote("\n" + "\n".join(lines) + "\n"))
+        x, y = rec.fields[1].text, rec.fields[2].text
+        self.residue_recs.append(
+            "C {devices/code} %s %s 0 0 {%s}" % (x, y, _sch_escape("\n".join(attrs))))
+        # a kept element line DECLARES a circuit element, so the analyses
+        # cross-check below must see its name (`vd d 0 0` -> `vd`)
+        for ln in lines:
+            if not ln.startswith("."):
+                self._circuit_names.add(ln.split()[0].strip().lower())
+        self.report.extracted["residue_lines"] = (
+            self.report.extracted.get("residue_lines", 0) + len(lines))
+        self.report.warnings.append(
+            "%d line(s) from embedded block %s kept as netlist_commands %s"
+            % (len(lines), srcname or "?", name))
 
     # -- source-library reference rebinding -----------------------------------
     def _rebind_ref(self, ref):
@@ -910,6 +1099,7 @@ class CellMigrator(object):
                 parts.append(rec.raw)
             else:
                 parts.append(self.sch_text[rec.start:rec.end])
+        parts.extend(self.residue_recs)
         return "\n".join(parts) + "\n"
 
     # -- state assembly -------------------------------------------------------
@@ -917,6 +1107,12 @@ class CellMigrator(object):
         # ahead of the literal: _includes may set deck.save_all_i when it removes
         # an unresolvable `.save` include, and the flag is read below
         includes = self._includes(deck)
+        includes = self._resolvable("includes", includes, drop=True)
+        models = self._resolvable("models", _dedup(deck.models), drop=True,
+                                  key=lambda m: m[0])
+        models = self._default_models(models)
+        pre_cmds = self._resolvable("pre_commands", _dedup(deck.pre_commands),
+                                    drop=True)
         st = {
             "version": "1",
             "simulator": "ngspice",
@@ -924,7 +1120,7 @@ class CellMigrator(object):
                        "view", "schematic"],
             "rundir": "",
             "temperature": deck.temperature or "27",
-            "models": [["file", f, "section", s] for (f, s) in _dedup(deck.models)],
+            "models": [["file", f, "section", s] for (f, s) in models],
             "variables": [["name", n, "value", v] for (n, v) in deck.params],
             "analyses": self._analyses(deck),
             "outputs": self._outputs(deck, g_outputs),
@@ -932,24 +1128,87 @@ class CellMigrator(object):
             "save_all_i": "1" if deck.save_all_i else "0",
             "options": [self._option_entry(n, v) for (n, v) in deck.options],
             "includes": [["file", f] for f in includes],
-            "pre_commands": [["cmd", c] for c in _dedup(deck.pre_commands)],
+            "pre_commands": [["cmd", c] for c in pre_cmds],
             "viewer": "",
         }
         for f in ("models", "variables", "outputs", "options", "includes",
                   "pre_commands"):
             if st[f]:
                 self.report.extracted[f] = len(st[f])
-        # ase::expand_path substitutes at GLOBAL level, so `$PDK_ROOT/...` only
-        # resolves if ::PDK_ROOT exists — an unqualified name (or one the
-        # workarea rc never sets) makes render_deck hard-error at Run time.
-        for f, path in ([("models", m[1]) for m in st["models"]]
-                        + [("includes", i[1]) for i in st["includes"]]
-                        + [("pre_commands", c[1]) for c in st["pre_commands"]]):
-            for var in _UNQUAL_VAR_RE.findall(path):
-                self.report.warnings.append(
-                    "%s path uses unqualified $%s (ase::expand_path resolves at "
-                    "global level): %s" % (f, var, path))
         return st
+
+    # -- $VAR resolvability ---------------------------------------------------
+    def _resolvable(self, field, items, drop=False, key=None):
+        """Drop the entries whose `$VAR`s no workarea rc will ever set.
+
+        `ase::expand_path` is `subst -nocommands -nobackslashes` at GLOBAL level
+        (src/ase.tcl:140), so a path is only resolvable if every variable it names
+        is a Tcl global at Run time: one the PDK's workarea rc guarantees
+        (Pdk.env_vars) or one xschem itself defines (_XSCHEM_GLOBALS). Anything
+        else — an UNqualified `$VAR` (never a global by construction) or a
+        qualified `$::SKYWATER_STDCELLS` nobody sets — makes ase::expand_path
+        THROW, and it throws while rendering the deck, so the whole cell cannot
+        run: seven migrated sky130 benches died at
+        `can't read "::SKYWATER_STDCELLS": no such variable` before ngspice
+        started (issue 0210 bucket A). Failing loudly at MIGRATION time and
+        shipping a runnable state beats shipping one that detonates at Run."""
+        out = []
+        for item in items:
+            path = key(item) if key else item
+            bad = sorted(set(v for v in _VAR_RE.findall(path)
+                             if v not in self.pdk.env_vars
+                             and v not in _XSCHEM_GLOBALS))
+            if not bad:
+                out.append(item)
+                continue
+            msg = ("%s path names $%s, which no workarea rc sets — "
+                   "ase::expand_path would abort the run: %s"
+                   % (field, "/$".join(bad), path))
+            if drop:
+                self.report.warnings.append(msg + " [DROPPED]")
+            else:
+                self.report.warnings.append(msg)
+                out.append(item)
+        return out
+
+    def _default_models(self, models):
+        """Seed the PDK's default corner when a cell has devices but no models.
+
+        `bandgap`, `bandgap_opamp`, `charge_pump` and `charge_pump2` carry only a
+        graph block — no corner symbol, no `.lib`, no embedded models — so they
+        migrated with `models {}` and ngspice answered `unknown subckt:
+        sky130_fd_pr__…` for every device (issue 0210 bucket D). A loaded state's
+        explicit empty `models` also OVERRIDES the workarea's ::ASE_DEFAULT_MODELS
+        (ase::state_load is a `dict merge` with the loaded value winning), so the
+        rc default cannot rescue them either.
+
+        Deliberately narrow: only when the cell instantiates a symbol from the
+        PDK's own device library, and only for a PDK that HAS a corner mapping.
+        Of the ten migrated sky130 cells with empty models this fires on exactly
+        the four that need it."""
+        if models or not self.pdk.corner_lib:
+            return models
+        if not self._uses_pdk_devices():
+            return models
+        m = self.pdk.corner_model(None)
+        self.report.warnings.append(
+            "no model card found but the cell instantiates %s devices; seeded "
+            "the PDK default corner %s %s" % ("/".join(sorted(self.pdk.device_libs)),
+                                              m[0], m[1]))
+        return [m]
+
+    def _uses_pdk_devices(self):
+        """Does the CLEAN schematic instantiate a symbol from a PDK device lib?"""
+        if not self.pdk.device_libs or self.clean_sch is None:
+            return False
+        for rec in scan_records(self.clean_sch):
+            if rec.tag != "C":
+                continue
+            ref = rec.fields[0].content
+            lib = ref.rsplit("/", 1)[0] if "/" in ref else ""
+            if lib in self.pdk.device_libs:
+                return True
+        return False
 
     def _includes(self, deck):
         """Includes that will still resolve after the move.
@@ -1006,14 +1265,59 @@ class CellMigrator(object):
         out = []
         for t in order:
             if t in found:
-                d = found[t]
+                d = dict(found[t])
+                self._check_analysis_source(d)
                 out.append(_dict_to_list(d, ["type", "enabled", "source",
                                              "start", "stop", "step", "points"]))
             else:
                 out.append(["type", t, "enabled", "0"])
         return out
 
+    def _check_analysis_source(self, d):
+        """Refuse to ship a sweep naming a source that is not in the circuit.
+
+        `dc <source> …` hard-FATALs ngspice when <source> is absent —
+        "DC Transfer Function: Voltage source, current source, or resistor named
+        \"vd\" is not in the circuit" — and the migration itself used to be what
+        removed it (issue 0210 bucket B): the source was declared as a non-dot
+        line inside the same block whose `.control dc vd …` supplied the analysis.
+        With the residue kept the name is normally found; this is the backstop
+        that turns any remaining case into a disabled row plus a loud warning
+        instead of a state that detonates at Run."""
+        src = d.get("source")
+        if not src or d.get("enabled") != "1":
+            return
+        s = src.strip().lower()
+        if s in _DC_SPECIAL_SOURCES or s in self._circuit_names:
+            return
+        d["enabled"] = "0"
+        self.report.warnings.append(
+            "%s sweeps '%s', which is not an element of the migrated circuit — "
+            "ngspice would hard-fatal, so the analysis is shipped DISABLED "
+            "(fix the source, then re-enable it in ASE-L)" % (d.get("type"), src))
+
+    @staticmethod
+    def _control_defined(deck):
+        """Vector names DEFINED by a .control line the migration does not carry.
+
+        `let gain_dB = vdb(inv_out)` / `meas ac fc_l when …` go to raw_control
+        (report only), so in the migrated deck those names do not exist. A
+        `print gain_dB` in the same block still made an output row with
+        `save 1`, i.e. a `.save gain_dB` + `print gain_dB` naming nothing
+        (issue 0210 `nonvector-output-exprs`)."""
+        names = set()
+        for line in deck.raw_control:
+            toks = line.split()
+            head = toks[0].lower() if toks else ""
+            if head == "let" and len(toks) >= 2:
+                names.add(toks[1].split("=")[0].split("[")[0].strip().lower())
+            elif head in ("meas", "measure") and len(toks) >= 3:
+                names.add(toks[2].strip().lower())     # meas <ac|dc|tran> <name>
+        names.discard("")
+        return names
+
     def _outputs(self, deck, g_outputs):
+        derived = self._control_defined(deck)
         seen = {}
         order = []
         for item in list(deck.outputs) + list(g_outputs):
@@ -1040,7 +1344,16 @@ class CellMigrator(object):
                     used.add(cand)
             if name is None:
                 name = _mk_name(expr, i, used)
-            out.append(["name", name, "expr", e["expr"], "save", "1",
+            save = "1"
+            if expr.lower() in derived:
+                # keep the ROW (it records what the bench wanted to look at) but
+                # do not emit a `.save`/`print` for a vector the deck never makes
+                save = "0"
+                self.report.warnings.append(
+                    "output '%s' is defined by a .control let/meas that has no "
+                    "ASE equivalent; kept with save=0 (re-derive it in ASE-L)"
+                    % expr)
+            out.append(["name", name, "expr", e["expr"], "save", save,
                         "plot", e["plot"]])
         return out
 
@@ -1182,7 +1495,16 @@ class LibraryMigrator(object):
                 continue
             cats = [classify(r) for r in recs]
             if not any(c in ("corner", "embedded", "graph") for c in cats):
-                self.skipped.append((cell, "no clutter to extract"))
+                # A launcher ('drop') on its own is deliberately NOT a trigger:
+                # it is a GUI button, not simulation setup, so the migration
+                # would have nothing to put in the state, and triggering on it
+                # would sweep in pure index/gallery cells (sg13g2_tests'
+                # IHP_testcases, gf180's 0_top). Such a cell simply stays in the
+                # source library, where _rebind_ref correctly keeps pointing at
+                # it (issue 0210 `drop-only-cells-skipped`).
+                self.skipped.append(
+                    (cell, "launcher only, nothing to extract" if "drop" in cats
+                     else "no clutter to extract"))
                 continue
             sym = os.path.join(self.libroot, cell, "symbol", cell + ".sym")
             self.cells.append((cell, CellMigrator(
@@ -1392,6 +1714,25 @@ def _report_define(out_root, libname):
         print("  REGISTER: add `%s` to your workarea's library.defs" % line)
 
 
+# $::<model_var> points at the dir that CONTAINS the corner .lib; the in-repo
+# workareas differ in where that dir lives. Every PDKS key must have an entry, or
+# adding a profile turns --verify into a KeyError traceback instead of an honest
+# message — _models_dir checks that.
+_DEFAULT_MODELS = {
+    "gf180": ("gf180mcuD", "models"),
+    "sky130": ("sky130A", "models", "libs.tech", "combined"),
+    "sg13g2": ("ihp-sg13g2", "models"),
+}
+
+
+def _models_dir(repo, pdkname, override):
+    if override:
+        return override
+    if pdkname not in _DEFAULT_MODELS:
+        return None
+    return os.path.join(repo, *_DEFAULT_MODELS[pdkname])
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="De-clutter a testbench schematic into the ASE-L clean form.")
@@ -1406,6 +1747,9 @@ def main(argv=None):
                                   "(default: the DESTINATION library's name)")
     ap.add_argument("--hoist-sources", action="store_true",
                     help="lift numeric vsource values into named design variables (heuristic)")
+    ap.add_argument("--declare-var", action="append", default=[], metavar="NAME",
+                    help="an extra Tcl global your workarea rc sets, so a path "
+                         "naming it is not treated as unresolvable; repeatable")
     ap.add_argument("--dry-run", action="store_true", help="report only; write nothing")
     ap.add_argument("--verify", action="store_true",
                     help="run before/after through xschem+ngspice and compare Id")
@@ -1413,6 +1757,11 @@ def main(argv=None):
     ap.add_argument("--models-dir", help="absolute models dir for --verify ($::<var>)")
     args = ap.parse_args(argv)
     pdk = PDKS[args.pdk]
+    if args.declare_var:
+        # the migrator cannot introspect a workarea rc, so an operator with a
+        # non-stock one says what it sets rather than being blocked by the
+        # unresolvable-path drop
+        pdk.env_vars = pdk.env_vars | frozenset(args.declare_var)
 
     if args.library:
         lm = LibraryMigrator(args.library, pdk, libname=args.lib,
@@ -1429,12 +1778,43 @@ def main(argv=None):
         if not args.dry_run and results:
             print("  wrote %s" % os.path.join(out_root, "library.tag"))
             _report_define(out_root, lm.libname)
+        rc = 0
         if lm.failed:
             print("  FAILED %d cell(s):" % len(lm.failed))
             for cell, err in lm.failed:
                 print("    %s: %s" % (cell, err))
-            return 1
-        return 0
+            rc = 1
+        # --verify used to be ACCEPTED AND IGNORED here: the --library branch
+        # returned before the verify block below, so a whole-library run with
+        # --verify printed a clean report and proved nothing (issue 0210
+        # `library-verify-silently-ignored`).
+        if args.verify:
+            if args.dry_run:
+                print("  verify: --dry-run wrote no tree to verify")
+                return 1
+            repo = os.getcwd()
+            models_dir = _models_dir(repo, args.pdk, args.models_dir)
+            if not models_dir:
+                print("  verify: no default models dir for pdk %s — pass "
+                      "--models-dir" % args.pdk)
+                return 1
+            nok = nbad = nskip = 0
+            for cell, _rep in results:
+                before = os.path.join(args.library, cell, "schematic",
+                                      cell + ".sch")
+                idb, ida, ok = verify(repo, pdk, lm.libname, cell,
+                                      os.path.abspath(before), out_root,
+                                      models_dir, xschem=args.xschem)
+                tag = "OK" if ok else ("MISMATCH" if ok is False else "skipped")
+                print("  verify %s: Id_before=%s Id_after=%s -> %s"
+                      % (cell, idb, ida, tag))
+                nok, nbad, nskip = (nok + (ok is True), nbad + (ok is False),
+                                    nskip + (ok is None))
+            print("  verify: %d ok, %d mismatch, %d skipped"
+                  % (nok, nbad, nskip))
+            if nbad:
+                rc = 1
+        return rc
 
     srclib, cell = _guess_lib_cell(args.sch)
     # --out is a LIBRARY-ROOT directory (consistent with --library): the cell is
@@ -1465,20 +1845,11 @@ def main(argv=None):
         print("  wrote %s" % stt)
     if args.verify:
         repo = os.getcwd()
-        # $::<model_var> points at the dir that CONTAINS the corner .lib; the two
-        # in-repo workareas differ in where that dir lives.
-        default_models = {
-            "gf180": os.path.join(repo, "gf180mcuD", "models"),
-            "sky130": os.path.join(repo, "sky130A", "models", "libs.tech", "combined"),
-            "sg13g2": os.path.join(repo, "ihp-sg13g2", "models"),
-        }
-        # every PDKS key must have an entry, or adding a profile turns --verify
-        # into a KeyError traceback instead of an honest message
-        if args.pdk not in default_models and not args.models_dir:
+        models_dir = _models_dir(repo, args.pdk, args.models_dir)
+        if not models_dir:
             print("  verify: no default models dir for pdk %s — pass --models-dir"
                   % args.pdk)
             return 1
-        models_dir = args.models_dir or default_models[args.pdk]
         idb, ida, ok = verify(repo, pdk, lib, cell, os.path.abspath(args.sch),
                                out_root, models_dir, xschem=args.xschem)
         print("  verify: Id_before=%s Id_after=%s -> %s" % (

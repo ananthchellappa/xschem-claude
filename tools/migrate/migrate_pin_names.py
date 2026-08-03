@@ -199,9 +199,22 @@ def scan_records(text):
 # --------------------------------------------------------------------------- #
 
 def get_tok(props, tok):
-    """Return (found, value) for `tok=value` in a prop string. Whole-token match;
-    handles a quoted value. Mirrors xschem get_tok_value closely enough for the
-    simple values (name/dir/type/font/show_pinname) migration reads."""
+    """Return (found, value) for `tok=value` in a prop string. Whole-token match.
+
+    Mirrors get_tok_value (src/token.c ~489-548) exactly, because "close enough"
+    was not: `"` TOGGLES a quote flag there, and the value only ends at a space
+    seen while that flag is OFF. Reading it as "quoted value ends at the next `"`"
+    truncated any value with a balanced inner quote — e.g. the XSPICE card
+    `.model … table_values "1110"` inside a code block ended at the `1110`'s
+    opening quote, and two IHP benches lost most of their value silently
+    (doc/claude/issues/0210-…, `gettok-quote-truncation`).
+
+    The character rules, likewise from token.c:
+      * an unescaped `\\` or `"` is a syntax character and is NOT part of the
+        value; anything escaped by a preceding `\\` is kept verbatim;
+      * `escape` means "the PREVIOUS character was an unescaped backslash", so
+        `\\\\` is a literal backslash and does not escape what follows.
+    """
     i = 0
     n = len(props)
     while i < n:
@@ -218,21 +231,18 @@ def get_tok(props, tok):
             while i < n and props[i].isspace():   # value starts at next non-space
                 i += 1
             val = []
-            if i < n and props[i] == '"':
+            quote = False
+            esc = False
+            while i < n:
+                c = props[i]
+                if c.isspace() and not quote and not esc:
+                    break                          # TOK_VALUE -> TOK_END
+                if c == '"' and not esc:
+                    quote = not quote
+                if esc or (c != '\\' and c != '"'):
+                    val.append(c)
+                esc = (c == '\\' and not esc)
                 i += 1
-                while i < n and props[i] != '"':
-                    if props[i] == '\\' and i + 1 < n:
-                        i += 1
-                    val.append(props[i])
-                    i += 1
-                if i < n:
-                    i += 1
-            else:
-                while i < n and not props[i].isspace():
-                    if props[i] == '\\' and i + 1 < n:   # unescape like get_tok_value
-                        i += 1
-                    val.append(props[i])
-                    i += 1
             if name == tok:
                 return True, ''.join(val)
         # else: a bare flag token -> skip, keep scanning

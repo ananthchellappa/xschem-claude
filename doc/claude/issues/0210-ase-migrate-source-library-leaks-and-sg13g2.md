@@ -101,6 +101,9 @@ Result — `ihp-sg13g2/xschem_libs/sg13g2_tests_ase`, 48 of 49 cells
 
 ## Residue — confirmed by audit, NOT fixed here
 
+**All of the below are now closed — see
+`doc/claude/issues/0211-ase-migrate-residue-closeout.md`.**
+
 Named so they are not rediscovered from scratch. Each was reproduced and
 adversarially verified.
 

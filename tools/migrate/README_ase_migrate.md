@@ -64,8 +64,9 @@ Migrate a **whole `*_tests` library** (every cell that carries clutter):
 | `--out DIR` | destination **library-root** directory (both modes); the cell is written under `DIR/<cell>/…`. Default: `<source-lib>_ase`. |
 | `--lib NAME` | library name recorded in the state's `design=` (default: the **destination** library's name, i.e. `basename(--out)`). |
 | `--hoist-sources` | lift numeric `vsource` values into named design variables (`value=1.65` → `.param V1=1.65`, schematic uses `value=V1`). Opt-in heuristic; **off** by default (values kept literal). |
+| `--declare-var NAME` | an extra Tcl global your workarea rc sets, so a `$NAME` path is not treated as unresolvable (see "Unresolvable `$VAR` paths"). Repeatable. |
 | `--dry-run` | report only; write nothing. |
-| `--verify` | run before/after through `xschem`+`ngspice` and compare Id. |
+| `--verify` | run before/after through `xschem`+`ngspice` and compare Id. Works with `--library` too (every migrated cell). |
 | `--xschem PATH` | xschem binary for `--verify` (default `./src/xschem`). |
 | `--models-dir DIR` | absolute dir the `$::<model_var>` resolves to for `--verify` (default: the in-repo workarea models dir). |
 
@@ -93,6 +94,48 @@ schema (`let`, `meas`, `foreach`, `while`, …) is **preserved verbatim in the
 migration report's warnings**, so you can port it by hand. The per-cell report
 (printed by the CLI) lists what was kept, extracted, dropped, hoisted, and every
 warning.
+
+### Deck text with no state field: the residue block
+
+The state schema has no field for literal deck text, but an embedded block can
+carry lines that *are* real circuit or setup content: element lines
+(`vd d 0 0`, XSPICE `A`-devices) and the `.model` / `.ic` / `.nodeset` /
+`.subckt` / `.ends` / `.global` family. Those are re-emitted onto the **clean
+schematic** as a `devices/code` (`netlist_commands`) record per source block —
+at that block's coordinates, inheriting its `only_toplevel` and `place` — so
+they reach the deck through the netlist, which `render_deck` consumes verbatim.
+Every such line is also reported.
+
+`.end` and `.title` are the only cards dropped: they are deck framing, ASE emits
+its own, and re-emitting `.end` would truncate the deck.
+
+A block the ngspice netlister would **not** emit is not parsed at all, and says
+so: `spice_ignore=true` (the instance is skipped), or `simulator=<not ngspice>`
+(that is a different simulator's deck).
+
+### Unresolvable `$VAR` paths
+
+`ase::expand_path` is `subst` at global level, so `$FOO` and `$::FOO` name the
+same global and an **unset** one makes the whole deck render throw before ngspice
+starts. Each `Pdk` profile therefore declares the globals its workarea rc
+guarantees (`env_vars`), on top of the ones xschem itself always defines
+(`USER_CONF_DIR`, …). A `models` / `includes` / `pre_commands` entry naming
+anything else is DROPPED with a loud warning at migration time rather than
+shipped as a state that detonates at Run. Use `--declare-var` for a non-stock rc.
+
+### Analyses are cross-checked against the circuit
+
+An enabled sweep whose source is neither on the clean schematic, nor declared by
+the residue block, nor an ngspice special (`temp`), ships `enabled 0` with a
+warning — `dc <missing>` is a hard ngspice fatal.
+
+### A cell with devices but no models
+
+If nothing was extracted into `models` and the cell instantiates a symbol from
+the PDK's own device library, the PDK's default corner is seeded (warned). An
+explicit empty `models` in a state file **overrides** the workarea's
+`::ASE_DEFAULT_MODELS` — `ase::state_load` is a dict merge where the loaded value
+wins — so the rc default cannot rescue such a cell.
 
 ### Graph `node=` is a trace mini-language, not a list of signals
 

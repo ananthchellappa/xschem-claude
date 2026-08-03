@@ -654,6 +654,236 @@ if HAVE:
           str(cm3.report.warnings))
 
 # --------------------------------------------------------------------------- #
+# 6f. issue 0210 residue: nothing with a real destination is dropped in silence
+# --------------------------------------------------------------------------- #
+# The headline hole: a line that does not start with '.' fell off the end of
+# _parse_top_line with no destination and NO warning, taking four benches' swept
+# sources, test_jfet's `.MODEL 2N3459` and stdcells_xspice's 13 XSPICE devices.
+if HAVE:
+    d = m.SpiceDeck()
+    d.parse("vd d 0 0\n"
+            ".model 2N3459 NJF(VTO=-1.4)\n"
+            ".ic v(out)=0\n"
+            ".nodeset v(x)=1\n"
+            ".global vdd\n"
+            ".subckt sub a b\n"
+            "r1 a b 1k\n"
+            ".ends\n"
+            ".opton wnflag=1\n"
+            ".title mydeck\n"
+            ".end\n")
+    check("R1 non-dot element line kept as residue, loudly",
+          "vd d 0 0" in d.residue
+          and any("vd d 0 0" in w and "no ASE state field" in w
+                  for w in d.warnings), str(d.residue))
+    check("R2 .model/.ic/.nodeset/.global/.subckt/.ends are residue, not swallowed",
+          [r for r in d.residue if r.startswith(".")] ==
+          [".model 2N3459 NJF(VTO=-1.4)", ".ic v(out)=0", ".nodeset v(x)=1",
+           ".global vdd", ".subckt sub a b", ".ends", ".opton wnflag=1"],
+          str(d.residue))
+    check("R3 the subckt BODY stays with it, in order",
+          d.residue.index("r1 a b 1k") == d.residue.index(".subckt sub a b") + 1,
+          str(d.residue))
+    check("R4 .end/.title are the ONLY cards dropped (ASE emits its own)",
+          not any(r.lower().startswith((".end ", ".title")) or r.lower() == ".end"
+                  for r in d.residue)
+          and sum("deck-framing" in w for w in d.warnings) == 2, str(d.warnings))
+    check("R5 parse() returns just THIS blob's residue",
+          m.SpiceDeck().parse("vx a 0 1\n.op\n") == ["vx a 0 1"])
+
+    # the residue lands on the clean schematic as a devices/code record, and it
+    # must survive the two nested escape layers (record `{...}` + value `"..."`)
+    RES = (
+        "v {xschem version=3.4.7RC file_version=1.2}\n"
+        "G {}\nK {}\nV {}\nS {}\nE {}\n"
+        "C {sky130_fd_pr/nfet_01v8} 400 -300 0 0 {name=M1 L=0.15 W=1}\n"
+        "C {devices/code} 60 -600 0 0 {name=XM only_toplevel=true place=end "
+        "value=\"vd d 0 0\n"
+        ".model d_lut_x d_lut (input_load=10f table_values \\\\\"1110\\\\\")\n"
+        ".param p=\\{1.8\\}\n\"}\n")
+    cmr = m.CellMigrator(RES, m.PDKS["sky130"], "L", "c").migrate()
+    recs = m.scan_records(cmr.clean_sch)      # must re-parse cleanly
+    code = [r for r in recs if r.tag == "C"
+            and r.fields[0].content == "devices/code"]
+    check("R6 exactly one residue record emitted", len(code) == 1,
+          "%d" % len(code))
+    if code:
+        props = code[0].fields[5].content
+        _f, val = m.get_tok(props, "value")
+        want = ('\nvd d 0 0\n'
+                '.model d_lut_x d_lut (input_load=10f table_values "1110")\n')
+        check("R7 residue round-trips byte-identically through the escapes",
+              val == want, repr(val))
+        check("R8 residue inherits only_toplevel and place from its source block",
+              m.get_tok(props, "only_toplevel")[1] == "true"
+              and m.get_tok(props, "place")[1] == "end", props[:120])
+    # devices/code, never code_shown: code_shown's `format` is the same bare
+    # `@value`, but the residue must not be re-displayed on the clean schematic,
+    # and a synthesized record must not carry a symbol we did not verify
+    check("R9 residue record is devices/code, not code_shown",
+          "C {devices/code}" in cmr.clean_sch
+          and "code_shown" not in cmr.clean_sch,
+          cmr.clean_sch[-160:])
+    check("R10 a mapped card does NOT reappear in the residue",
+          ".param" not in (cmr.clean_sch.split("value=")[-1] if code else ""),
+          "")
+
+    # a block the ngspice netlister would not emit must not be parsed at all
+    for attr, why in (("spice_ignore=true", "spice_ignore=true"),
+                      ("simulator=xyce", "simulator=xyce")):
+        SK = (RES.replace("name=XM", "name=XM " + attr))
+        cs = m.CellMigrator(SK, m.PDKS["sky130"], "L", "c").migrate()
+        check("R11 %s block not parsed" % why,
+              "devices/code" not in cs.clean_sch
+              and any(why in w and "would not emit it" in w
+                      for w in cs.report.warnings), str(cs.report.warnings)[:200])
+    SN = RES.replace("name=XM", "name=XM simulator=ngspice")
+    check("R12 an explicit simulator=ngspice block IS parsed",
+          "devices/code" in m.CellMigrator(SN, m.PDKS["sky130"], "L", "c")
+          .migrate().clean_sch)
+
+    # analyses cross-check: a sweep naming a source the circuit does not have
+    BASE = ("v {xschem version=3.4.7RC file_version=1.2}\n"
+            "G {}\nK {}\nV {}\nS {}\nE {}\n"
+            "C {devices/vsource} 600 -300 0 0 {name=V1 value=1.65}\n"
+            "C {devices/code} 60 -600 0 0 {name=X value=\"%s\"}\n")
+    cdang = m.CellMigrator(BASE % ".control\ndc vnope 0 1 0.1\n.endc\n",
+                           m.PDKS["sky130"], "L", "c").migrate()
+    dc = [a for a in cdang.state["analyses"] if a[1] == "dc"][0]
+    check("R13 dangling dc source ships DISABLED, loudly",
+          dc[3] == "0" and any("not an element of the migrated circuit" in w
+                               for w in cdang.report.warnings), str(dc))
+    cok = m.CellMigrator(BASE % ".control\ndc V1 0 1 0.1\n.endc\n",
+                         m.PDKS["sky130"], "L", "c").migrate()
+    check("R14 a source that IS on the schematic stays enabled",
+          [a for a in cok.state["analyses"] if a[1] == "dc"][0][3] == "1")
+    ctemp = m.CellMigrator(BASE % ".control\ndc temp -40 125 5\n.endc\n",
+                           m.PDKS["sky130"], "L", "c").migrate()
+    check("R15 `dc temp` is a legitimate ngspice sweep, not a dangling source",
+          [a for a in ctemp.state["analyses"] if a[1] == "dc"][0][3] == "1")
+    cres = m.CellMigrator(BASE % "vd d 0 0\n.control\ndc vd 0 1 0.1\n.endc\n",
+                          m.PDKS["sky130"], "L", "c").migrate()
+    check("R16 a source restored BY the residue satisfies the cross-check",
+          [a for a in cres.state["analyses"] if a[1] == "dc"][0][3] == "1",
+          str(cres.state["analyses"]))
+
+    # unresolvable $VAR paths (bucket A)
+    cvar = m.CellMigrator(
+        BASE % (".include $::SKYWATER_MODELS/a.lib\n"
+                ".include $::NOBODY_SETS_THIS/b.lib\n"
+                ".include $USER_CONF_DIR/c.lib\n"), m.PDKS["sky130"], "L", "c").migrate()
+    inc = [i[1] for i in cvar.state["includes"]]
+    check("R17 unresolvable $VAR include dropped; rc- and xschem-provided kept",
+          inc == ["$::SKYWATER_MODELS/a.lib", "$USER_CONF_DIR/c.lib"]
+          and any("NOBODY_SETS_THIS" in w and "DROPPED" in w
+                  for w in cvar.report.warnings), str(inc))
+    check("R18 sky130 declares the stdcell globals its rc sets",
+          {"SKYWATER_STDCELLS", "PDK_ROOT", "PDK"} <= m.PDKS["sky130"].env_vars)
+    check("R19 sg13g2 declares SG13G2_OSDI (all 48 IHP pre_commands use it)",
+          "SG13G2_OSDI" in m.PDKS["sg13g2"].env_vars)
+    check("R20 an unqualified $VAR resolves the same as a qualified one "
+          "(ase::expand_path substs at global level)",
+          m._VAR_RE.findall("$PDK_ROOT/$::PDK/x") == ["PDK_ROOT", "PDK"],
+          str(m._VAR_RE.findall("$PDK_ROOT/$::PDK/x")))
+    check("R21 a leading-digit var name is seen (gf180's is 180MCU_MODELS)",
+          m._VAR_RE.findall("$::180MCU_MODELS/x") == ["180MCU_MODELS"])
+
+    # bucket D: seed the PDK corner only when the cell has PDK devices
+    NOMOD = ("v {xschem version=3.4.7RC file_version=1.2}\n"
+             "G {}\nK {}\nV {}\nS {}\nE {}\n"
+             "C {%s} 400 -300 0 0 {name=M1}\n"
+             "B 2 0 0 10 10 {flags=graph\nnode=i(vd)}\n")
+    cdev = m.CellMigrator(NOMOD % "sky130_fd_pr/nfet_01v8", m.PDKS["sky130"],
+                          "L", "c").migrate()
+    check("R22 empty models + PDK devices -> default corner seeded, loudly",
+          cdev.state["models"] == [["file", "$::SKYWATER_MODELS/sky130.lib.spice",
+                                    "section", "tt"]]
+          and any("seeded the PDK default corner" in w
+                  for w in cdev.report.warnings), str(cdev.state["models"]))
+    cnodev = m.CellMigrator(NOMOD % "devices/res", m.PDKS["sky130"],
+                            "L", "c").migrate()
+    check("R23 ...but NOT for a cell with no PDK device (test_jfet, test_s_xfer)",
+          cnodev.state["models"] == [], str(cnodev.state["models"]))
+    cg = m.CellMigrator(NOMOD % "gf180mcu_pr/nfet_03v3", m.PDKS["gf180"],
+                        "L", "c").migrate()
+    check("R24 ...and never for a PDK with no corner mapping (gf180/sg13g2)",
+          cg.state["models"] == [], str(cg.state["models"]))
+
+    # .option temp= is the same knob as .temp, and render_deck emits .temp LAST
+    d = m.SpiceDeck()
+    d.parse(".options temp=-40 savecurrents\n")
+    check("R25 `.option temp=` becomes the temperature, not an overridden option",
+          d.temperature == "-40" and ("savecurrents", None) in d.options
+          and not any(n.lower() == "temp" for n, _v in d.options), str(d.options))
+
+    # get_tok: token.c TOGGLES the quote flag, so an UNESCAPED inner quote pair
+    # is data, not the end of the value. The real shape (sg13g2_tests/
+    # dc_esd_diodes): `value="…echo "---------diodevdd_2kv---------"…"` — the old
+    # reader stopped at `echo ` and lost the whole rest of the block.
+    UQ = 'name=NGSPICE value="dc V1 -1 1 1m\necho "-----pad-----"\nop" only_toplevel=true'
+    check("R26 an UNESCAPED inner quote pair does not end the value",
+          m.get_tok(UQ, "value")[1] == 'dc V1 -1 1 1m\necho -----pad-----\nop',
+          repr(m.get_tok(UQ, "value")[1]))
+    check("R27 ...and the token AFTER such a value is still found",
+          m.get_tok(UQ, "only_toplevel") == (True, "true"),
+          str(m.get_tok(UQ, "only_toplevel")))
+    check("R27b an ESCAPED inner quote stays in the value as data",
+          m.get_tok('value="table_values \\"1110\\"" n=x', "value")[1]
+          == 'table_values "1110"',
+          repr(m.get_tok('value="table_values \\"1110\\"" n=x', "value")[1]))
+
+    # an output whose vector is defined by a dropped let/meas is not saveable
+    dlet = m.SpiceDeck()
+    dlet.parse(".control\nlet gain_dB = vdb(out)\nmeas ac fcl when x = 1\n"
+               "print gain_dB fcl v(out)\n.endc\n")
+    cl2 = m.CellMigrator(CL, m.PDKS["sky130"], "L", "c")
+    cl2.report = m.MigrationReport()
+    outs = cl2._outputs(dlet, [])
+    save = dict((o[3], o[5]) for o in outs)
+    check("R28 let/meas-derived outputs kept with save=0, real vectors save=1",
+          save.get("gain_dB") == "0" and save.get("fcl") == "0"
+          and save.get("v(out)") == "1", str(save))
+
+# a launcher on its own is NOT a migration trigger (it is a GUI button)
+if HAVE:
+    tmp = tempfile.mkdtemp(prefix="ase_mig_drop_")
+    try:
+        d = os.path.join(tmp, "lib", "gallery", "schematic")
+        os.makedirs(d)
+        with open(os.path.join(d, "gallery.sch"), "w") as f:
+            f.write("v {xschem version=3.4.7 file_version=1.2}\n"
+                    "G {}\nK {}\nV {}\nS {}\nE {}\n"
+                    "C {devices/launcher} 0 0 0 0 {name=h1 descr=x}\n")
+        lm = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"]).scan()
+        check("R29 launcher-only cell skipped, with an honest reason",
+              lm.cells == [] and lm.skipped
+              and "launcher only" in lm.skipped[0][1], str(lm.skipped))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+# `--library --verify` used to be accepted and silently ignored
+if HAVE:
+    tmp = tempfile.mkdtemp(prefix="ase_mig_ver_")
+    try:
+        for cell in ("a", "b"):
+            d = os.path.join(tmp, "lib", cell, "schematic")
+            os.makedirs(d)
+            with open(os.path.join(d, cell + ".sch"), "w") as f:
+                f.write(CL)
+        seen = []
+        real = m.verify
+        m.verify = lambda *a, **k: (seen.append(a[3]), ("1", "1", True))[1]
+        try:
+            rc = m.main(["--library", os.path.join(tmp, "lib"), "--pdk", "sky130",
+                         "--out", os.path.join(tmp, "out"), "--verify"])
+        finally:
+            m.verify = real
+        check("R30 --library --verify actually verifies every migrated cell",
+              sorted(seen) == ["a", "b"] and rc == 0, "%s rc=%s" % (seen, rc))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+# --------------------------------------------------------------------------- #
 # 7. INTEGRATION — migrate the real gf180 before-cell, verify Id (gated)
 # --------------------------------------------------------------------------- #
 XS = os.path.join(REPO, "src", "xschem")
