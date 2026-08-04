@@ -617,6 +617,59 @@ proc wviewer::forget {token} {
   return {}
 }
 
+# wviewer::ctx_verdict  wp  tops0  tops1  ninst  nwires
+#   Decides, from window paths alone, whether the context that
+#   `xschem load_new_window -window {}` was supposed to move actually moved, and
+#   onto WHICH toplevel the viewer may be built. Extracted from wviewer::open so
+#   it is drivable HEADLESS (wviewer::open returns 0 without ::has_x, and
+#   everything past the brands is Tk) -- issue 0187.
+#     wp     : current_win_path AFTER the create, already repaired by open's
+#              recovery loop (which only ever assigns a VERIFIED value)
+#     tops0  : `winfo children .` BEFORE the create
+#     tops1  : `winfo children .` AFTER  the create
+#     ninst  : `xschem get instances` in the landed context
+#     nwires : `xschem get wires`     in the landed context
+#   Returns {ok <toplevel>} or {err <message>}. The message carries NO "wviewer: "
+#   prefix -- wviewer::open owns the prefix, so there is one site for it.
+#
+# WHY NOT `if {[xschem get current_win_path] ne $wp}`: that WAS the guard until
+# 0187, and it compares a value with a re-read of the source it came from, with no
+# update and no event loop in between -- it can NEVER fire. Measured trigger: with
+# all MAX_NEW_WINDOWS (20, xschem.h:158) slots used, create_new_window() returns
+# before creating anything and before (*window_count)++ (xinit.c:1990-1991), rc 0
+# and no Tcl error -- so no toplevel exists, the recovery loop finds nothing, the
+# context never moved, and wviewer::open branded the user's live schematic
+# readonly/no_grid/no_snap/graph_snap_cursor/wave_viewer and registered it as the
+# viewer. The intended target is not a path anybody hands us; it is "a toplevel
+# THIS call created", so that is what we test.
+#
+# Sound in BOTH window models: `-window` sets force_window=1 and an empty file arg
+# takes new_schematic("create_window",...) (scheduler.c), which in xinit.c ALWAYS
+# calls create_new_window regardless of tabbed_interface, and create_new_window
+# does `toplevel .xN` -- a direct child of `.` either way. So "appeared in
+# `winfo children .`" is not a non-tabbed-only test.
+proc wviewer::ctx_verdict {wp tops0 tops1 ninst nwires} {
+  regsub {\.drw$} $wp {} top
+  if {$top eq {}} { set top . }
+  # (1) pre-existing rule, unchanged: a viewer on the ROOT window cannot work --
+  #     its widgets are `$top.<name>`, which for `.` concatenates to `..<name>`.
+  if {$top eq {.}} {
+    return [list err "could not give the waveform viewer its own window"]
+  }
+  # (2) THE 0187 REPAIR: the context must have landed on a toplevel that did not
+  #     exist before this call.
+  if {[lsearch -exact $tops1 $top] < 0 || [lsearch -exact $tops0 $top] >= 0} {
+    return [list err "the waveform window did not take the context, refusing"]
+  }
+  # (3) THE BELT (0187 "Direction", third option): a viewer buffer never holds a
+  #     schematic. Pure belt -- a create_window buffer is measured 0/0 -- so it
+  #     cannot false-refuse, but it stops a brand dead if (2) is ever weakened.
+  if {$ninst != 0 || $nwires != 0} {
+    return [list err "refusing to brand a window that holds a schematic"]
+  }
+  return [list ok $top]
+}
+
 # Raise-or-open the ONE viewer window of ASE session `token`. Returns 1 when
 # the viewer is up (raised or freshly built), 0 on an unknown token (ciw_echo
 # under has_x, never a throw — ase::open_state style) and 0 headless (the
@@ -672,36 +725,23 @@ proc wviewer::open {token} {
       if {[xschem get current_win_path] eq "$t.drw"} { set wp $t.drw; break }
     }
   }
-  # derive the toplevel from win_path (.xN.drw -> .xN) rather than
+  set tops1 [winfo children .]
+  # ⚠ EVERYTHING BELOW STAMPS PER-CONTEXT C STATE, SO VERIFY THE CONTEXT FIRST
+  # (issue 0187). The verdict is a pure proc so the rules are testable headless;
+  # its three rules and the reasoning behind each live on ctx_verdict itself.
+  # `wviewer::open` owns the "wviewer: " prefix so there is exactly one site for
+  # it, and the caller already treats 0 as "no viewer" and says so in the CIW.
+  set v [wviewer::ctx_verdict $wp $tops0 $tops1 \
+           [xschem get instances] [xschem get wires]]
+  if {[lindex $v 0] ne {ok}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: [lindex $v 1]" error
+    }
+    return 0
+  }
+  # the toplevel comes from win_path (.xN.drw -> .xN) rather than
   # `xschem get top_path`, which reports {} under the tabbed interface
-  regsub {\.drw$} $wp {} top
-  if {$top eq {}} { set top . }
-  # A viewer on the ROOT window cannot work: its widgets are `$top.<name>`, and
-  # for `.` that concatenates to `..<name>`, which is not a legal Tk path. Rather
-  # than throw out of build_menubar, refuse cleanly — the caller already treats
-  # 0 as "no viewer" and says so in the CIW.
-  if {$top eq {.}} {
-    if {[info commands ::ciw_echo] ne {}} {
-      ciw_echo "wviewer: could not give the waveform viewer its own window" error
-    }
-    return 0
-  }
-  # ⚠ EVERYTHING BELOW STAMPS PER-CONTEXT C STATE, SO VERIFY THE CONTEXT ONCE
-  # MORE HERE (issue 0177 review). The landmine-17 comment above records that the
-  # switch is MEASURED to no-op ~3 times in 10 under a raised semaphore, and the
-  # recovery loop's own `xschem new_schematic switch` can fail the same way. The
-  # only guard until now was `$top eq {.}`, which catches the ROOT window and
-  # nothing else — so if the previously-current window was a DETACHED editor
-  # `.xN`, all four settings below (readonly, no_grid, no_snap, graph_snap_cursor)
-  # would be branded onto a real schematic the user is editing: it would go
-  # read-only, lose its grid AND lose its snap. Refusing is strictly better than
-  # that, and the caller already treats 0 as "no viewer" and says so in the CIW.
-  if {[xschem get current_win_path] ne $wp} {
-    if {[info commands ::ciw_echo] ne {}} {
-      ciw_echo "wviewer: the waveform window did not take the context, refusing" error
-    }
-    return 0
-  }
+  set top [lindex $v 1]
   # D1: readonly for the window's life — modified becomes unsettable, so no
   # save prompt can ever appear on close
   xschem set readonly 1

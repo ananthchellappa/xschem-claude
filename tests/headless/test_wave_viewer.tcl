@@ -351,6 +351,71 @@ check "H6 bare net d accepted via the v() wrap rule" \
 check "H6 number tokens accepted (1k 2.5 -3)" \
   [wviewer::validate_rpn {1k 2.5 -3 + +} {v(d)}] {}
 
+# --- X1-X9: issue 0187, wviewer::ctx_verdict (BOTH arms) ---------------------
+# `wviewer::open`'s "did the context follow?" guard was
+#   `if {[xschem get current_win_path] ne $wp}`
+# and `wp` had just been READ from current_win_path, with no update and no event
+# loop in between -- a value compared with itself, which can never fire. The five
+# per-context brands below it (readonly / no_grid / no_snap / graph_snap_cursor /
+# wave_viewer) could therefore land on a user's live schematic. The decision now
+# lives in the pure proc `wviewer::ctx_verdict`, which is why X1-X7 need no
+# window at all and run in the true-headless arm too.
+set X_ok0 {ok .x2}
+check "X1 ctx_verdict ok on a toplevel this call created" \
+  [wviewer::ctx_verdict .x2.drw {.drw .menubar .x1} {.drw .menubar .x1 .x2} 0 0] \
+  $X_ok0
+check "X2 ctx_verdict refuses the ROOT window" \
+  [wviewer::ctx_verdict .drw {} {.drw} 0 0] \
+  {err {could not give the waveform viewer its own window}}
+# 0187 trigger A: all MAX_NEW_WINDOWS slots used, create_new_window() returns
+# before creating anything, rc 0 and no Tcl error -> no new toplevel, context
+# never moved. This is the shape the old guard sailed straight through.
+set X3v [wviewer::ctx_verdict .x19.drw {.drw .x19} {.drw .x19} 0 0]
+check "X3 ctx_verdict refuses when NO new toplevel appeared (0187 trigger A)" \
+  $X3v {err {the waveform window did not take the context, refusing}}
+# the semaphore-lag shape: a new toplevel DID appear, but the context stayed on
+# a pre-existing one (measured: the switch no-ops, and can even land backwards)
+check "X4 ctx_verdict refuses a PRE-EXISTING toplevel even when a new one appeared" \
+  [wviewer::ctx_verdict .x5.drw {.x1 .x5} {.x1 .x5 .x9} 0 0] \
+  {err {the waveform window did not take the context, refusing}}
+check "X5 ctx_verdict refuses a context holding instances" \
+  [wviewer::ctx_verdict .x2.drw {.x1} {.x1 .x2} 6 0] \
+  {err {refusing to brand a window that holds a schematic}}
+check "X6 ctx_verdict refuses a context holding wires" \
+  [wviewer::ctx_verdict .x2.drw {.x1} {.x1 .x2} 0 10] \
+  {err {refusing to brand a window that holds a schematic}}
+check "X7 ctx_verdict messages carry no wviewer: prefix (open owns it)" \
+  [string match {wviewer:*} [lindex $X3v 1]] 0
+
+# X8: the C precondition behind trigger A -- create_new_window() is SILENT when
+# the slots run out (no Tcl error, rc 0, context unmoved). DISPLAY arm skips it:
+# it costs ~57s and 19 real toplevels there versus ~65ms true-headless, and it
+# would also eat every free slot for anything that ran after it. It asserts C
+# behaviour this Tcl fix does not change, so the cheap arm is enough.
+if {![info exists ::has_x]} {
+  set X8prev [xschem get current_win_path]
+  set X8rc 1; set X8err {}; set X8stuck 0; set X8n 0
+  for {set i 1} {$i <= 25} {incr i} {
+    set X8rc [catch {xschem load_new_window -window {}} X8err]
+    set X8now [xschem get current_win_path]
+    if {$X8now eq $X8prev} { set X8stuck 1; set X8n $i; break }
+    set X8prev $X8now
+  }
+  check_true "X8 0187 trigger A precondition: create_new_window is silent when slots are full" \
+    [expr {$X8stuck && $X8rc == 0 && $X8err eq {}}]
+} else {
+  puts "SKIPPED: X8 slot-exhaustion probe (DISPLAY arm; ~57s + 19 toplevels)"
+}
+
+# X9 is a SOURCE-SHAPE PIN, deliberately brittle: it is the only check that can
+# catch a reintroduction of the circular guard, which by construction changes no
+# behaviour and so cannot be caught by any behavioural check. A later refactor
+# that merely re-wraps that line will trip it for the wrong reason -- if that
+# happens, confirm the comparison is really gone and update the regexp.
+set X9body [info body ::wviewer::open]
+check "X9 wviewer::open no longer compares current_win_path with itself" \
+  [regexp {xschem get current_win_path\] ne \$wp} $X9body] 0
+
 # --- GUI legs (DISPLAY-guarded self-SKIP) ------------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 

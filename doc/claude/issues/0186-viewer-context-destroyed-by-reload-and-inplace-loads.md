@@ -2,6 +2,58 @@
 
 Status: **OPEN**. Filed 2026-07-31, spawned by the fix for
 `doc/claude/issues/0172-viewer-buffer-hijacked-by-pristine-untitled-reuse.md`.
+**Re-measured and re-anchored 2026-08-03** (Signal Browser batch item 00) — still
+reproduces verbatim; deferred there because it needs C. See "Re-measurement" below.
+
+## Re-measurement, 2026-08-03 at `ccd5f30a`
+
+Reproduced verbatim with the recipe in §1, `--nogui`, with a raw loaded as well:
+
+```
+before wv=1 ro=1 rects2=1 rawvars=424 rawpoints=20503
+after  wv=1 ro=0 rects2=0 rawvars=424 rawpoints=20503
+```
+
+Three things this adds to the original filing:
+
+* **the raw survives intact** — 424 vars / 20503 points before and after. The blast
+  radius is the **graph-rect model**, not the loaded waveform data. Anything that
+  derives its state from `xschem raw list` rather than from the rects is immune.
+* **reload frees no Tk widget.** Measured under a real `DISPLAY` with a `frame
+  $top.wvbrowser` packed `-side left -fill y -before $top.drw` and carrying a child:
+  `sidebar=1 sidebar_packed=1 child=1 toplevel=1 drw=1` **both before and after**.
+  `clear_drawing()` clears the C document model; it has no reach into the Tk widget
+  tree. A viewer's widgets are not orphaned by a reload — they are left sitting on an
+  empty document.
+* **under X it also HANGS.** The original measurement was `--nogui`. Under a real
+  `DISPLAY`, `load_schematic()`'s fopen-failure path runs `update; alert_ {Unable to
+  open file: …}` (`src/save.c:3814`) — a **modal** with nobody to dismiss it. A
+  scripted probe sat there until killed at 200 s. Whatever fixes this must account for
+  the modal, not only for the model wipe.
+
+### Line numbers re-anchored
+
+* the `reload` branch has **moved** from `src/scheduler.c:9494` to **`:10036`**; its
+  body at `:10039-10041` is still `unselect_all(1); remove_symbols();
+  load_schematic(1, xctx->sch[xctx->currsch], 1, 1);` with no guard of any kind.
+* `src/save.c:3734` (the `readonly = 0` reset), `:3810` (the fopen failure), `:3814`
+  (the message) and `:3827` (`clear_drawing()`) are all still **exact**.
+
+### Disposition
+
+Deferred `[D]` by Signal Browser batch item 00, for two independent reasons:
+
+1. it needs **C** at two families of site (`scheduler.c:10036` and the routing-exempt
+   in-place loads), and that batch's decision 8 forbids new C. `src/xschem.tcl` holds
+   only a `xschem reload` *caller* (`:13074`, plus `action_registry.tcl:183`), so no
+   Tcl edit can close it;
+2. its §2 is an **undecided design question by this document's own words** — the
+   in-place loads are "arguably correct as it stands".
+
+The split-out `readonly`-cleared-on-failed-load defect is still unfiled. Next free
+issue number is **0212** (0188-0194 and 0200-0211 are taken).
+
+Receipt: `doc/claude/signal_browser_batch/receipts/00_precondition.md`.
 
 ## What 0172 fixed, and what it did not
 

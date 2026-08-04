@@ -1,7 +1,40 @@
 # 0187 — `wviewer::open`'s "did the context follow?" guard compares a value with itself, so the viewer brand can land on a user's schematic
 
-Status: **OPEN**. Filed 2026-07-31, found by the adversarial review of the issue-0172 fix
-and reproduced twice, independently, on the real binary.
+Status: **FIXED** 2026-08-03 (Signal Browser batch item 00), `src/wave_viewer.tcl`.
+Filed 2026-07-31, found by the adversarial review of the issue-0172 fix and reproduced
+twice, independently, on the real binary.
+
+## The fix (2026-08-03)
+
+The decision moved out of `wviewer::open` into a **pure** proc,
+`wviewer::ctx_verdict wp tops0 tops1 ninst nwires` -> `{ok <toplevel>}` | `{err <msg>}`,
+so the rules are drivable in the true-headless arm (`wviewer::open` returns 0 without
+`::has_x`, and everything past the brands is Tk). Three rules, in order:
+
+1. `$top eq {.}` — the pre-existing ROOT-window refusal, unchanged.
+2. **the repair**: the context must have landed on a toplevel that was *not* in
+   `winfo children .` before the create and *is* in it after. The intended target is
+   not a path anybody hands us; it is "a toplevel THIS call created", so that is what
+   is tested. Sound in both window models — `-window` sets `force_window=1` and an empty
+   file arg takes `new_schematic("create_window",...)`, which in `xinit.c` always calls
+   `create_new_window` regardless of `tabbed_interface`, and that does `toplevel .xN`,
+   a direct child of `.` either way. Confirmed empirically: `winfo children .` in a
+   tabbed session lists `.tabs .x1 .x2 ...`.
+3. the belt from "Direction" below: refuse to stamp a context holding instances or wires.
+
+`wviewer::open` keeps the `"wviewer: "` prefix so there is one site for it; the two
+pre-existing CIW strings are byte-for-byte unchanged and a third is added for rule 3.
+`create_new_window`'s silent no-free-slots return was **not** changed — that is C, and
+this batch is Tcl-only (batch decision 8). Rule 2 does not need it: it detects the
+absence of the toplevel rather than the absence of an error.
+
+Tests: `tests/headless/test_wave_viewer.tcl` X1-X9 (57 checks true-headless, 400 under a
+real `DISPLAY` — X8 exhausts all 20 window slots, so it self-skips in the DISPLAY arm
+where it costs ~57s and 19 real toplevels instead of ~65ms). X9 is a source-shape pin on
+`info body ::wviewer::open`: reinstating the circular comparison changes no behaviour, so
+no behavioural check can catch it. Sabotage-verified SB-A (rule 2 defeated -> exactly
+X3+X4), SB-B (rule 3 deleted -> exactly X5+X6), SB-C (circular guard reinstated alongside
+-> exactly X9).
 
 ## The guard
 
