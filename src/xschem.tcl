@@ -4521,6 +4521,19 @@ proc graph_delete_nodes {} {
 # `v` matching every voltage, and `^…$` failing on a wrapped name). All four are
 # pinned by GS08/GS12/GS13/GS14 in tests/headless/test_wave_sigsearch.tcl.
 #
+# ⚠ THAT "ONLY TWO" IS MACHINE-CHECKED, not asserted. `tests/headless/
+# test_wave_sigsearch.tcl` carries a DIFFERENTIAL PROPERTY ORACLE (checks
+# GSO01-GSO06, driver ruling 17): a FROZEN copy of the pre-retrofit body
+# (`git show afdd44a0^:src/xschem.tcl`) is run beside this proc over a generated
+# 51-name x 84-pattern matrix in both sort directions — 9,072 comparisons — and
+# ZERO differences are permitted beyond (e) and (f), each excluded by its own
+# narrow predicate. So ANY behaviour-changing edit to this proc — the strip
+# regsub, the wrap, the sort mapping, the split, the err arm — fails GSO01 with
+# a printed name/pattern/got/exp repro, including edits nobody anticipated. If
+# you MEANT to change the dialog's behaviour, GSO01 is not an obstacle to route
+# around: it is telling you that you need a driver ruling and a third sanctioned
+# difference. Do not edit the frozen reference proc to agree with your change.
+#
 # ⚠ This is the FIRST src/xschem.tcl -> wviewer:: call in the tree, so
 # wave_viewer.tcl is now load-bearing for the legacy Graph dialog. It is sourced
 # unconditionally at xschem.tcl:14352. Do NOT add an `info procs` fallback: it
