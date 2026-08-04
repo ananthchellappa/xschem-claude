@@ -195,7 +195,10 @@ are stable reference text and carry no checkbox.
 - [x] 0 — PRECONDITION: 0187 FIXED (Tcl-only); 0186 carried forward as `[D]`; the
       items-8-15 auto-defer is RECOMMENDED NOT TO FIRE — its premise is measured false
       (see `receipts/00_precondition.md` §3). Driver's call. -> DONE (3098afa0)
-- [x] 1 — `wviewer::sig_match` — the shared matcher (33 checks, 3/3 sabotages;
+- [x] 1 — `wviewer::sig_match` — the shared matcher (34 checks, 5/5 sabotages
+      after the verifier's coverage-hole FIXUP: the regexp arm's case-INsensitive
+      DEFAULT is now pinned by SM27, and sabotage (b) legitimately fails TWO
+      case-default checks, SM09+SM27 — see `receipts/01_sig_match.md` §8/§11;
       the item's "regexp `l*` matches everything" test bullet is OVERRULED by
       settled decision 3 and asserted INVERTED — see `receipts/01_sig_match.md` §1)
 - [ ] 2 — `wviewer::signal_list` — typed signal inventory

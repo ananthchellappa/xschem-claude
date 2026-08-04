@@ -2,10 +2,13 @@
 # (doc/claude/signal_browser_batch/PLAN.md items 1-7 — per settled decision 9
 # this ONE file carries every item-1..7 check; each item APPENDS its group).
 #
-#   SM01-SM26  wviewer::sig_match — the shared matcher (item 1).
+#   SM01-SM27  wviewer::sig_match — the shared matcher (item 1).
 #              Shape; shell `*` `?` `[range]` and the literal-bracket escape;
 #              regexp WHOLE-NAME anchoring (SM04, the ViVA trap, see below);
-#              case default vs -case 1 on both syntax arms; -type filtering
+#              case default vs -case 1 on BOTH syntax arms (shell SM09/SM10/SM11,
+#              regexp SM27/SM25 — the default is checked per-arm because the two
+#              arms carry SEPARATE -nocase flags in the implementation and one
+#              can regress without the other); -type filtering
 #              alone and combined with a pattern; empty pattern = everything on
 #              both arms; an invalid regexp -> {err ...} and NOT the whole list;
 #              -sort 0/1/-1; the shell default; a bad option throws.
@@ -130,16 +133,17 @@ check {SM21 -sort 1 is -increasing -dictionary} \
 check {SM22 -sort -1 is -decreasing -dictionary} \
   [lindex [sig_match $SIGS {} -sort -1] 1] [lsort -decreasing -dictionary $SIGS]
 
-# decision 7. Deliberately NOT also asserting it differs from the regexp
-# result — that would give sabotage (a) a second target.
+# decision 7, asserted against an INDEPENDENT literal (not against another
+# sig_match call): under the shell default `l*` is a glob and takes l1/l2; if the
+# default flipped to regexp, `^(?:l*)$` takes nothing. Deliberately NOT also
+# asserting it differs from the regexp result — that would give sabotage (a) a
+# second target.
 check {SM23 default syntax is shell} \
-  [sig_match $SIGS {l*}] [sig_match $SIGS {l*} -syntax shell]
+  [sig_match $SIGS {l*}] [list ok [list l1 l2]]
 
 check {SM24 an unknown option throws} \
   [catch {sig_match $SIGS x -bogus 1}] 1
 
-# regexp-arm case coverage that is insensitive to the -case DEFAULT, so
-# sabotage (b) keeps exactly one target (SM09).
 check {SM25 regexp arm honours -case 1} \
   [lindex [sig_match $SIGS {v\(.*\)} -syntax regexp -case 1] 1] \
   [list v(out) v(l1) v(x1.x2.net5) v(net_name\[3\])]
@@ -148,6 +152,19 @@ check {SM25 regexp arm honours -case 1} \
 # `v(out)` the way the legacy stripped dialog would.
 check {SM26 subject is the full raw name, never the stripped form} \
   [lindex [sig_match $SIGS {out}] 1] [list]
+
+# SM27 — the regexp arm's case-INsensitive DEFAULT (decision 6), with NO -case
+# flag. REQUIRED, and it may not be traded away for sabotage hygiene: the shell
+# and regexp arms carry two SEPARATE `-nocase` flags (wave_viewer.tcl:1571 and
+# :1577), so deleting the regexp one alone makes RegExp-mode search
+# case-SENSITIVE by default while every shell check stays green — measured, a
+# real coverage hole that shipped past 33 green checks. Item 4's search bar
+# ships Shell+RegExp with Match-case OFF, so this is the exact default a user
+# hits. Consequence, declared: sabotage (b) (flip the -case default) now fails
+# TWO checks, SM09 and SM27 — both of them case-DEFAULT checks and nothing else.
+# That is correct scoping, not leakage; coverage wins over a one-target count.
+check {SM27 regexp arm is case-INsensitive by DEFAULT} \
+  [lindex [sig_match $SIGS {V\(OUT\)} -syntax regexp] 1] [list v(out)]
 
 check {ST01 sig_type v(out) -> v}      [sig_type {v(out)}] v
 check {ST02 sig_type V(OUT) -> v}      [sig_type {V(OUT)}] v

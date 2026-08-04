@@ -1,14 +1,14 @@
 # Item 1 receipt — `wviewer::sig_match`, the shared matcher
 
-**Status:** DONE. 33 checks, all green; 3 sabotages, each fired on exactly one
-check and nothing else.
+**Status:** DONE (after one verifier-driven FIXUP — see §11). 34 checks, all
+green; 5 sabotages, each fired on exactly its target check(s) and nothing else.
 
 **Files**
 - `src/wave_viewer.tcl` — one new section at line 1447 (immediately after
   `wviewer::grid_dash_off` closes, before `wviewer::target_clamp`'s comment),
   inside the existing pure-helper cluster. Two new procs: `wviewer::sig_type`,
   `wviewer::sig_match`. No dialog, no widget, no ctx, no C.
-- `tests/headless/test_wave_sigsearch.tcl` — NEW. 33 checks (SM01-SM26 minus
+- `tests/headless/test_wave_sigsearch.tcl` — NEW. 34 checks (SM01-SM27 minus
   SM03, ST01-ST08). Writes nothing, so no `test_scratch` dir. Auto-globbed by
   `full_audit.sh`; deliberately NOT added to `nogui_tests` even though item 1's
   checks need no X, because items 4-7 append dialog checks to this same file and
@@ -134,12 +134,22 @@ and each revert was a `cp` back followed by `diff -q` proving identity.
 
 | # | sabotage | expected target | measured |
 |---|----------|-----------------|----------|
-| a | `set rx $pattern` instead of `set rx "^(?:$pattern)\$"` | SM04 only | **1 FAILED / 32 passed — SM04 only.** Returned all 13 names (the ViVA trap, measured) |
-| b | default `set nocase 0` | SM09 only | **1 FAILED / 32 passed — SM09 only.** `V(OUT)` → `{}` |
-| c | `set pattern {} ; set rx {}` (legacy `xschem.tcl:4478`) instead of `return [list err $e]` | SM18 only | **1 FAILED / 32 passed — SM18 only.** `{ok 1}` vs `{err 0}` — both halves fired |
+| a | `set rx $pattern` instead of `set rx "^(?:$pattern)\$"` | SM04 only | **1 FAILED / 33 passed — SM04 only.** Returned all 13 names (the ViVA trap, measured) |
+| b | default `set nocase 0` | SM09 **and** SM27 (both case-DEFAULT checks) | **2 FAILED / 32 passed — SM09 + SM27, nothing else.** `V(OUT)` → `{}` on both arms |
+| c | `set pattern {} ; set rx {}` (legacy `xschem.tcl:4478`) instead of `return [list err $e]` | SM18 only | **1 FAILED / 33 passed — SM18 only.** `{ok 1}` vs `{err 0}` — both halves fired |
+| d | drop `-nocase` from the **regexp** arm (`:1577`) — *the verifier's sabotage, the one that used to survive* | SM27 only | **1 FAILED / 33 passed — SM27 only** |
+| e | drop `-nocase` from the **shell** arm (`:1571`) — d's mirror, added so both arms are pinned symmetrically | SM09 only | **1 FAILED / 33 passed — SM09 only** |
 
-Each sabotage was followed by a revert and a clean
-`tests/headless/run_suites.sh test_wave_sigsearch` → `RESULT: ALL PASS (33 checks)`.
+Sabotage (b) fails **two** checks by design, and that is the correct scoping, not
+leakage: there are two case-DEFAULT checks because the implementation carries two
+independent `-nocase` flags (`:1571` shell, `:1577` regexp), and (d)/(e) prove
+each one is individually pinned. The item's original "(b) → the case check fails"
+assumed a single arm. Coverage wins over a one-target count — see §11.
+
+Each sabotage was followed by a `git checkout -- src/wave_viewer.tcl` (HEAD now
+carries the item, so the targeted checkout is exact), a `git diff --quiet` proving
+the file held nothing but the sabotage, and a clean re-run →
+`RESULT: ALL PASS (34 checks)`.
 
 ## 9. Verification
 
@@ -192,3 +202,113 @@ that all evaporated when the suite was re-run solo. This is the
 `pgrep -f full_audit.sh` before starting one.** Also: pipe the audit to a FILE,
 not `| tail -40` — the summary line prints *before* the per-failure dumps, so
 `tail` eats exactly the number you need.
+
+---
+
+## 11. FIXUP after the adversarial verifier (2026-08-04)
+
+The verifier ran a sabotage of its own — **delete `-nocase` from the regexp arm
+at `src/wave_viewer.tcl:1577`**, making RegExp-mode search case-SENSITIVE by
+default in violation of settled decision 6 — and the suite stayed
+`ALL PASS (33 checks)`. **That is a real coverage hole and the verdict was
+correct**, so this fixup closes it rather than arguing:
+
+**BLOCKER — fixed.** The two syntax arms carry two *independent* `-nocase`
+flags (`:1571` shell, `:1577` regexp). The original test covered the DEFAULT only
+on the shell arm (SM09/SM10/SM11) and covered the regexp arm only with an
+explicit `-case 1` (SM25); every other regexp check dodged case entirely (SM04
+returns `{}`, SM05 is all-lowercase, SM17 short-circuits on the empty pattern,
+SM18 errors). New check:
+
+```tcl
+check {SM27 regexp arm is case-INsensitive by DEFAULT} \
+  [lindex [sig_match $SIGS {V\(OUT\)} -syntax regexp] 1] [list v(out)]
+```
+
+The trade the original made — SM25's comment said it used `-case 1` "so sabotage
+(b) keeps exactly one target" — was **the wrong trade, and it is reversed here**:
+one-target sabotage hygiene is a bookkeeping convenience, coverage of a shipping
+default is not. Consequence, declared in the test file and in §8: **sabotage (b)
+now fails two checks, SM09 + SM27**, both of them case-DEFAULT checks and nothing
+else. Two new sabotages (d) and (e) drop `-nocase` from one arm each and fire on
+exactly SM27 / exactly SM09, proving the arms are pinned individually. This
+matters beyond the unit: item 4's search bar ships Shell+RegExp with Match-case
+OFF, so the regexp default is exactly what a user hits.
+
+**Test-quality note — fixed.** SM23 ("default syntax is shell") asserted one
+`sig_match` call against another `sig_match` call. It now asserts an independent
+literal, `[list ok [list l1 l2]]`. It still gives sabotage (a) no second target
+(the shell arm is untouched by the anchoring wrapper).
+
+**Verifier notes that are NOT code problems, itemised for the driver:**
+
+- **SM04's inversion** (regexp `l*` matches nothing, not everything) — the
+  verifier independently reproduced the conflict, confirmed
+  `references/viva_cadence_waveform_viewer.md` is internally inconsistent
+  (:207 vs :211 vs :943), and agreed the resolution favours the Settled section.
+  Unchanged; still §1's declared `[D]`-shaped call for the driver to affirm.
+- **Decisions 12/13 in the PLAN diff** — the implementer did not author them;
+  they were already in the working tree at item-1 start (the commit message says
+  so). Driver confirmation only, no repo change possible from this side.
+- **Baseline re-baselining** — a driver process recommendation, not an item-1
+  defect. See §12 for this fixup's own audit, which reproduces the point.
+
+## 12. Re-verification of the FIXUP
+
+- `cd src && make` → *Nothing to be done for 'all'* (Tcl-only).
+- `tests/headless/run_suites.sh test_wave_sigsearch` →
+  `RESULT: ALL PASS (34 checks)`, under the GUI gate.
+- All **five** sabotages re-run on the fixed tree, each reverted with a targeted
+  `git checkout -- src/wave_viewer.tcl` after `git diff` showed one hunk only —
+  see the §8 table for the measured per-sabotage failure sets.
+- `tests/headless/full_audit.sh` (solo — `pgrep -f full_audit.sh` checked first,
+  piped to a FILE): **`SUMMARY: 247 pass  28 fail  1 crash/timeout  7 skip
+  (total 283)`**, `WIREEDIT: PASS`, `SCRATCH: 0 leaked dir(s)`.
+  16 of the 18 baseline fails reproduced (`test_remap` and
+  `test_resolved_net_hash_bus_0158` happened to pass). **13 names outside the
+  baseline, every one cleared:**
+
+  | name(s) | verdict |
+  |---------|---------|
+  | test_ase_unnamed_net, test_close_window_force, test_deselect_mode, test_fluid_editing, test_hover_highlight, test_lib_manager_bold, test_multi_window, test_wave_modes | re-ran through `run_suites.sh` → **all 8 PASS** (28/–/18/26/–/–/15/485 checks). Load flakes. |
+  | test_altf5_ciw, test_lib_manager_checkin (TIMEOUT in the audit) | re-ran → **PASS**. The documented WSLg raise/focus flake. |
+  | test_ase_plot | the documented P4/P6 gesture flake — failed on exactly the documented P4/P6 checks. |
+  | test_prop_form_field_width_0170 | **ISOLATION-PROVED**: fails IDENTICALLY (same 2 checks) with `src/wave_viewer.tcl` reverted to `3098afa0`, i.e. with item 1 physically absent (`grep -c sig_match` = 0). |
+  | test_wave_axis_zoom | **ISOLATION-PROVED, see below.** |
+
+  All **7 SKIPs** (`test_graph_box_zoom_xy`, `test_drag_keeps_selection`,
+  `test_fluid_loop_0088`, `test_fluid_reversal_0089`,
+  `test_fluid_drag_through_anchor_0109`,
+  `test_connected_drag_group_transform_0114`, `test_flylines_render`) **PASS**
+  when re-run individually. A SKIP is a self-declared banner, not a failure.
+
+- **`test_wave_axis_zoom` — flaky, and NOT this item's** (it is the only
+  non-baseline name that lives in the file item 1 touched, so it got the full
+  bisect). Always the same 5 axis-grab gesture checks. Measured by reverting
+  `src/wave_viewer.tcl` alone and re-running under `run_suites.sh`:
+
+  | tree | wave_viewer.tcl content | runs |
+  |------|-------------------------|------|
+  | HEAD | item 1 present | 1 pass / 3 fail |
+  | `3098afa0` | item 0 only, **no `sig_match` at all** | 1 pass / 3 fail |
+  | `ccd5f30a` | pre-batch | 5 pass / 1 fail |
+
+  It fails on a tree carrying **neither** item, so it is not item 1's and not a
+  hard regression. ⚠ **FOR THE DRIVER:** the observed rate is visibly higher on
+  the two batch trees than on the pre-batch one. At n=4/4/6 that is not
+  separable from chance or machine load, but item 0 (`3098afa0`, the 0187 viewer
+  ctx guard) is the only candidate and it is worth a look before item 2 —
+  item 1 is excluded by construction (`grep -rn 'wviewer::sig_' src/ tests/`
+  outside its own test file and proc: **zero callers**, so the new code cannot
+  execute in any other suite).
+
+- **BASELINE RECOMMENDATION (seconding the verifier).** Three audits of the same
+  item produced three different non-baseline sets — implementer 9, verifier 8,
+  this fixup 13, sharing only a few names. The "18 fails / 0 crash / 0 skip"
+  preflight was a lucky run. The rule *"any new fail is the current item's
+  problem, full stop"* will keep firing on every later item and cost each one an
+  hour of re-runs. The driver should re-baseline as a fail SET **plus** a
+  known-flaky set: `test_altf5_ciw`, `test_ase_plot` (P4/P6/P8),
+  `test_geometry_sanity`, `test_prop_form_field_width_0170`,
+  `test_wave_axis_zoom`, `test_wave_trace_menu` (TG9), `test_lib_manager_*`
+  (timeouts), plus "any SKIP is not a FAIL".
