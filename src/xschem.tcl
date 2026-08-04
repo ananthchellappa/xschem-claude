@@ -4466,21 +4466,51 @@ proc graph_delete_nodes {} {
   }
 }
 
+# The Graph dialog's signal-list filter, retrofitted onto the shared matcher
+# `wviewer::sig_match` (doc/claude/signal_browser_batch/PLAN.md item 3, settled
+# decisions 2/3/4). Five things here are load-bearing:
+#
+#  (a) `-sort $direction` mirrors the legacy `-decreasing`/`-increasing` mapping
+#      LINE FOR LINE — same truth test on `graph_sort`, same throw on a junk
+#      value. Do NOT collapse it to `[expr {$graph_sort ? 1 : -1}]`.
+#  (b) `.*(?:$pattern).*` is THE COMPAT DEVICE. sig_match's regexp arm is
+#      WHOLE-NAME anchored (decision 3), the legacy `regexp $pattern $i` was
+#      UNANCHORED. Wrapping the user's pattern makes sig_match compute
+#      `^(?:.*(?:$pattern).*)$`, which IS the unanchored semantics — without it,
+#      typing `out` returns NOTHING where it returns `about x1.out` today.
+#      The non-capturing group is not cosmetic: it keeps a user's alternation
+#      whole (`x|y` over {xa ay zz} is {ay xa} with it, {} without). The EMPTY
+#      pattern is passed through UNTOUCHED so sig_match's own documented
+#      "empty pattern matches everything" short-circuit is what fires.
+#  (c) The strip is the legacy `regsub {^v\((.*)\)$}`, NOT `wviewer::sig_bare`.
+#      sig_bare strips any `<fn>(...)` wrapper and would put `v1` on screen
+#      where the dialog shows `i(v1)`.
+#  (d) The sort runs on the FULL names and the strip happens AFTER it, exactly
+#      as the legacy body did (it lsorted, then stripped inside the loop).
+#      Strip-then-sort reorders the listbox.
+#  (e) An invalid regexp now yields {} — settled decision 4. This is the ONE
+#      deliberate on-screen change: today `[` shows the entire signal list.
+#
+# The match SUBJECT is now the full raw name (`v(out)`), not the stripped form,
+# per settled decision 2. Three residual on-screen deltas follow and are pinned
+# by checks GS12/GS13/GS14 in tests/headless/test_wave_sigsearch.tcl.
+#
+# ⚠ This is the FIRST src/xschem.tcl -> wviewer:: call in the tree, so
+# wave_viewer.tcl is now load-bearing for the legacy Graph dialog. It is sourced
+# unconditionally at xschem.tcl:14295. Do NOT add an `info procs` fallback: it
+# would be an untestable branch.
 proc graph_get_signal_list {siglist pattern } {
   global graph_sort
-  set siglist [split $siglist \n]
-  set direction {-decreasing}
-  if {$graph_sort} {set direction {-increasing}}
+  set direction -1
+  if {$graph_sort} {set direction 1}
+  if {$pattern ne {}} { set pattern ".*(?:$pattern).*" }
+  set r [wviewer::sig_match [split $siglist \n] $pattern \
+           -syntax regexp -case 1 -sort $direction]
+  if {[lindex $r 0] ne {ok}} { return {} }
   set result {}
-  set siglist [lsort $direction -dictionary $siglist]
-  # just check if pattern is a valid regexp
-  set err [catch {regexp $pattern {12345}} res]
-  if {$err} {set pattern {}}
-  foreach i $siglist {
+  foreach i [lindex $r 1] {
     regsub {^v\((.*)\)$} $i {\1} i
-    if {[regexp $pattern $i] } {
-       lappend result $i
-    }
+    lappend result $i
   }
   return $result
 }

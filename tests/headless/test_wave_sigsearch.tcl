@@ -23,6 +23,15 @@
 #              the no-raw answer, the raw inventory, the 0173 loan discipline
 #              (the context comes back), the landmine-17 refusal, and the
 #              unknown-token guard.
+#   GS01-GS15  the LEGACY Graph dialog's `::graph_get_signal_list`, retrofitted
+#              onto wviewer::sig_match (item 3, src/xschem.tcl). Both sort
+#              directions; the legacy `v(...)` DISPLAY strip (and that `i(...)`
+#              is NOT stripped — it is the legacy regsub, not sig_bare); that
+#              the sort runs on FULL names and the strip after; unanchored,
+#              case-sensitive matching preserved via the caller-side
+#              `.*(?:$pat).*` wrap; the one sanctioned change (an invalid
+#              regexp -> {} instead of everything); and the three DECLARED
+#              residual deltas GS12/GS13/GS14.
 #
 # Standalone repro (every check in this file is `--nogui`-safe today; later
 # items' will not be, which is why both spellings stay documented):
@@ -47,6 +56,9 @@
 # and two `::wviewer::windows` entries, `wvsl` and `wvsl_bogus`. The group ends
 # by switching the context back to the main one. Do not assume a pristine
 # process below this line.
+# The item-3 group additionally leaves the global `graph_sort` DEFINED and set
+# to 0 — the value `set_ne graph_sort 0` gives it when .graphdialog opens, so
+# nothing downstream can tell the difference. It must be left at 0, not 1.
 #
 # This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
 # is in-memory — no `.raw` file appears (verified with `git status`).
@@ -191,8 +203,10 @@ check {SM26 subject is the full raw name, never the stripped form} \
 
 # SM27 — the regexp arm's case-INsensitive DEFAULT (decision 6), with NO -case
 # flag. REQUIRED, and it may not be traded away for sabotage hygiene: the shell
-# and regexp arms carry two SEPARATE `-nocase` flags (wave_viewer.tcl:1571 and
-# :1577), so deleting the regexp one alone makes RegExp-mode search
+# and regexp arms carry two SEPARATE `-nocase` flags (wave_viewer.tcl:1584 and
+# :1590 — re-measured by item 3; item 2's insertion drifted them +13 from the
+# :1571/:1577 this comment used to cite), so deleting the regexp one alone
+# makes RegExp-mode search
 # case-SENSITIVE by default while every shell check stays green — measured, a
 # real coverage hole that shipped past 33 green checks. Item 4's search bar
 # ships Shell+RegExp with Match-case OFF, so this is the exact default a user
@@ -344,6 +358,66 @@ check {SL15 an unknown token -> {} (the dict-exists guard)} \
   [pcall ::wviewer::signal_list nosuchtoken] {}
 
 xschem new_schematic switch $SLMAIN
+
+# --- item 3: graph_get_signal_list retrofitted onto the shared matcher -------
+# `::graph_get_signal_list` (src/xschem.tcl) is the LEGACY Graph-dialog filter.
+# Item 3 reimplements its body as a `wviewer::sig_match` call; its ON-SCREEN
+# behaviour must not change except where a check below says DECLARED.
+#
+# `graph_sort` does not exist until .graphdialog is built, and the proc reads it
+# as a global — measured: an unset graph_sort throws "can't read graph_sort".
+# This group sets it explicitly and leaves it at 0 (which is what
+# `set_ne graph_sort 0` would have made it anyway).
+#
+# ⚠ FIXTURE RULE, same discipline as SM05: GSPLAIN deliberately carries NO
+# `v(...)`-wrapped name, so the named sabotage (revert the display strip) fails
+# GS03 and ONLY GS03. GS05/GS12/GS13/GS14 are strip-INSENSITIVE by construction
+# (they assert a length or a strip-invariant element) for the same reason. Do
+# not "improve" these fixtures by folding them together or reusing a wrapped
+# list — that silently hands the strip sabotage extra targets.
+set GSPLAIN "time\nabout\ni(v1)\nx1.out\nnet5\nOut"
+proc gsl {blob pat} { uplevel 1 [list pcall graph_get_signal_list $blob $pat] }
+
+set ::graph_sort 1
+check {GS01 graph_sort 1 is -increasing -dictionary} \
+  [gsl $GSPLAIN {}] [list about i(v1) net5 Out time x1.out]
+set ::graph_sort 0
+check {GS02 graph_sort 0 is -decreasing -dictionary} \
+  [gsl $GSPLAIN {}] [list x1.out time Out net5 i(v1) about]
+set ::graph_sort 1
+# NAMED SABOTAGE TARGET: revert the strip -> this check alone fails.
+check {GS03 the legacy v(...) display strip still happens} \
+  [gsl {v(out)} {}] out
+check {GS04 i(...) is NOT stripped (the legacy regsub, not sig_bare)} \
+  [gsl {i(v1)} {}] {i(v1)}
+# strip-insensitive on purpose: `mm` sorts before `v(aa)` but AFTER `aa`, so
+# this sees the sort/strip ORDER without ever looking at a stripped element.
+check {GS05 the sort runs on FULL names, the strip after} \
+  [lindex [gsl "v(aa)\nmm" {}] 0] mm
+check {GS06 matching stays UNANCHORED (legacy semantics)} \
+  [gsl $GSPLAIN {out}] [list about x1.out]
+check {GS07 matching stays case-SENSITIVE (-case 1)} \
+  [gsl $GSPLAIN {Out}] [list Out]
+# the ONE sanctioned on-screen change (settled decision 4). Legacy returned all
+# six names here, which is the worst possible failure for a search box.
+check {GS08 an invalid regexp yields {} and NOT the whole list} \
+  [gsl $GSPLAIN {[}] {}
+check {GS09 an empty signal blob -> {} and no throw} [gsl {} {}] {}
+check {GS10 the unanchor wrap keeps a user ALTERNATION whole} \
+  [gsl "xa\nay\nzz" {x|y}] [list ay xa]
+check {GS11 a user's own ^...$ anchors still work on an unwrapped name} \
+  [gsl $GSPLAIN {^time$}] [list time]
+# GS12/GS13/GS14 pin the three DECLARED residual deltas (receipt D3). They
+# assert LENGTHS so they can never become second targets for the strip sabotage.
+check {GS12 DECLARED: the match subject is the FULL raw name} \
+  [llength [gsl "v(out)\nzz" {v\(}]] 1
+check {GS13 DECLARED: an embedded ARE option (?i) is now an error -> {}} \
+  [llength [gsl "Out\nzz" {(?i)out}]] 0
+check {GS14 DECLARED: ^out$ no longer matches the wrapped v(out)} \
+  [llength [gsl "v(out)\nzz" {^out$}]] 0
+check {GS15 the blob is split on NEWLINES, not on whitespace} \
+  [gsl "a b\nc" {}] [list {a b} c]
+set ::graph_sort 0
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
