@@ -1444,6 +1444,145 @@ proc wviewer::grid_dash_off {} {
   return $v
 }
 
+# --- SIGNAL SEARCH: the shared matcher (signal browser batch item 1) --------
+# doc/claude/signal_browser_batch/PLAN.md item 1 + settled decisions 2/3/4/6/7;
+# references/viva_cadence_waveform_viewer.md §3.2 (the search bar) and §3.3
+# (wildcard semantics). PURE: no Tk, no `xschem`, no ctx — argument in, value
+# out, so the whole matching half of the signal browser is unit-testable
+# headless (tests/headless/test_wave_sigsearch.tcl).
+#
+# THE ONE matcher. Every consumer — the legacy Graph "signals" dialog (item 3),
+# the search bar (item 4), the Add Trace picker (item 5), the browser sidebar
+# (items 8+) — calls this. Nothing else may re-implement matching; that is the
+# whole point of putting it here rather than in a dialog proc.
+#
+# Item 2 appends `wviewer::signal_list` to this section.
+
+# Classify a raw signal name: `v` | `i` | `other`, on a leading `v(` / `i(`,
+# case-insensitively. Used by sig_match's `-type` filter.
+#
+# THE SUBJECT IS THE FULL RAW NAME (settled decision 2) — `v(out)`, never the
+# stripped `out`. That is exactly why the type filter can exist at all: the
+# legacy `graph_get_signal_list` (xschem.tcl:4480) strips the `v(...)` wrapper
+# before matching, which destroys the very prefix this classifier reads.
+#
+# ⚠ DELIBERATE DIVERGENCE, flagged for item 9's type dropdown: ngspice's
+# `@m.x1.m1[id]` terminal-current form classifies `other` HERE, because item 1's
+# contract says "classifying on a leading `v(` / `i(`" and this implements the
+# contract verbatim. The neighbouring `ase::ui::output_kind`
+# (src/ase_window.tcl:791) calls a leading `@` `current`. So two classifiers in
+# this codebase disagree about `@`, on purpose and visibly (check ST05 pins it).
+# A real raw carries @-form currents, so a user picking "Current" in item 9's
+# dropdown will not see them — item 9 decides whether to widen this or not.
+proc wviewer::sig_type {name} {
+  if {[string match -nocase {v(*} $name]} { return v }
+  if {[string match -nocase {i(*} $name]} { return i }
+  return other
+}
+
+# wviewer::sig_match  siglist  pattern  ?opts?
+#   -syntax   shell|regexp    default shell
+#   -case     0|1             default 0  (0 = case-INsensitive, ViVA default)
+#   -type     all|v|i|other   default all
+#   -sort     0|1|-1          0 = raw order (default), 1 = -increasing, -1 = -decreasing
+# Returns: {ok  {matched names...}}   on success
+#          {err {message}}            on an invalid regexp
+# Matching is WHOLE-NAME anchored. shell -> `string match`; regexp -> `^(?:$pat)$`.
+# The subject is the FULL raw name (`v(out)`), never the stripped form.
+# An empty pattern matches everything (that is a cleared box, not a typo).
+#
+# (contract block above is verbatim from the PLAN; the three notes below are
+# additions the implementation forces:)
+#
+# * `siglist` is a Tcl LIST, not a newline blob. Splitting `xschem raw list` is
+#   the CALLER's job (`split [xschem raw list] "\n"`) — item 2's `signal_list`
+#   becomes the one place that does it.
+# * The pattern is NEVER trimmed and NEVER eval'd. It is passed as data to
+#   `string match` / `regexp` only, so a leading `-` or a `[` cannot become an
+#   option or a command substitution. (`--` guards the regexp arm; the shell arm
+#   is safe by arity — `string match $pat $n` is objc==3 and parses no options.)
+# * The `^(?:...)$` wrapper makes two Tcl-only regexp forms an ERROR that would
+#   compile raw: ARE directors (`***=foo`) and embedded options (`(?i)x`) are
+#   legal only at the very START of an RE, so wrapped they raise "quantifier
+#   operand invalid". That surfaces as an ordinary `{err ...}`, which is the
+#   right shape — but it means `(?i)foo` gets an error instead of a
+#   case-insensitive match. Acceptable: `-case`/the Match-case box is the
+#   supported way to ask for that. Do not file it as a bug.
+#
+# An invalid regexp is an ERROR (settled decision 4). It must NOT degrade into
+# the legacy `if {$err} {set pattern {}}` of xschem.tcl:4478, which widens a
+# typo into "show everything" — the worst possible failure for a search box.
+proc wviewer::sig_match {siglist pattern args} {
+  # Defaults. `nocase 1` IS decision 6's case-INsensitive default; the `-case`
+  # option is its INVERSE, so it is validated as a boolean before inverting
+  # (a junk value must throw cleanly here, not inside `expr`).
+  set syntax shell
+  set nocase 1
+  set type   all
+  set sort   0
+  if {[llength $args] % 2} {
+    return -code error "wviewer::sig_match: options must come in -opt value pairs"
+  }
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -syntax { set syntax [string tolower [string trim $v]] }
+      -case {
+        if {![string is boolean -strict $v]} {
+          return -code error "wviewer::sig_match: -case wants a boolean, got \"$v\""
+        }
+        set nocase [expr {[string is true -strict $v] ? 0 : 1}]
+      }
+      -type   { set type [string tolower [string trim $v]] }
+      -sort   { set sort $v }
+      default { return -code error "wviewer::sig_match: unknown option $o" }
+    }
+  }
+  if {[lsearch -exact {shell regexp} $syntax] < 0} {
+    return -code error "wviewer::sig_match: -syntax wants shell|regexp, got \"$syntax\""
+  }
+  if {[lsearch -exact {all v i other} $type] < 0} {
+    return -code error "wviewer::sig_match: -type wants all|v|i|other, got \"$type\""
+  }
+  # Sort the INPUT, as the legacy dialog does — for a pure filter that is the
+  # same result as sorting the output, and it keeps "raw order" honest.
+  # The `--` is REQUIRED: `-1` is a legal value and would otherwise be eaten as
+  # a switch option.
+  switch -exact -- $sort {
+    0  { }
+    1  { set siglist [lsort -increasing -dictionary $siglist] }
+    -1 { set siglist [lsort -decreasing -dictionary $siglist] }
+    default { return -code error "wviewer::sig_match: -sort wants 0|1|-1, got \"$sort\"" }
+  }
+  # Compile + validate the regexp ONCE, up front, on the WRAPPED pattern —
+  # wrapping never masks a compile error, so this is the only validation point.
+  set rx {}
+  if {$syntax eq {regexp} && $pattern ne {}} {
+    set rx "^(?:$pattern)\$"
+    if {[catch {regexp -- $rx {}} e]} { return [list err $e] }
+  }
+  set out {}
+  foreach n $siglist {
+    if {$type ne {all} && [wviewer::sig_type $n] ne $type} { continue }
+    # MANDATORY short-circuit: "an empty pattern matches everything" is CODED,
+    # not a consequence — `string match {} x` is 0 and `regexp {^(?:)$} x` is 0.
+    if {$pattern eq {}} { lappend out $n ; continue }
+    if {$syntax eq {shell}} {
+      if {$nocase} {
+        if {[string match -nocase $pattern $n]} { lappend out $n }
+      } else {
+        if {[string match $pattern $n]} { lappend out $n }
+      }
+    } else {
+      if {$nocase} {
+        if {[regexp -nocase -- $rx $n]} { lappend out $n }
+      } else {
+        if {[regexp -- $rx $n]} { lappend out $n }
+      }
+    }
+  }
+  return [list ok $out]
+}
+
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
 # non-integer or an empty layout all collapse to 0 — the target is stored raw
 # and clamped on every read, so deleting strips can never dangle it.

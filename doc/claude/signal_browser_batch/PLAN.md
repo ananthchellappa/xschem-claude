@@ -148,6 +148,24 @@ with the reason; it may not silently substitute its own.
    `xschem raw list` / `xschem raw` verb family. If a scout concludes an item needs a
    `scheduler.c` branch, that is a `[D]` — the C surface is a separate batch.
 
+12. **DRIVER RULING 2026-08-03 (item 0): the items-8-15 auto-defer is WAIVED.**
+   Items 8-15 proceed. The auto-defer's premise — "anything that adds state makes 0186
+   strictly worse — a reload that destroys the context now also orphans a sidebar" — was
+   MEASURED FALSE under a real DISPLAY (`receipts/00_precondition.md` §3): across an
+   `xschem reload` on a viewer context the toplevel, `$top.drw`, a sidebar packed with
+   the exact item-8 idiom, its packing and its child all survive; the raw survives
+   424 vars -> 424 vars; and snapshot/restore state is token-keyed **Tcl**, outside
+   `xctx`, so a context wipe cannot reach it. The real "more state = worse" mechanism
+   belonged to **0187** (viewer flags branded onto somebody else's live schematic), and
+   0187 is FIXED in 3098afa0.
+
+13. **0186 stays OPEN, and items 8+ must route around it.** `xschem reload` typed in the
+   CIW while a viewer holds the context still blanks the document, still silently clears
+   `readonly`, and under X still pops a modal nobody can dismiss. Therefore: **browser
+   state is derived from `xschem raw list` / `xschem raw`, NEVER from the rect model.**
+   Any item that derives browser content from rects inherits 0186 and must instead
+   verdict `[D]` and say so.
+
 9. **Two test files, not seventeen.** `tests/headless/test_wave_sigsearch.tcl` (items
    1-7) and `tests/headless/test_wave_sigbrowser.tcl` (items 8-15). Each item APPENDS
    its checks to the right file and both files are re-run whole by every later item's
@@ -176,8 +194,10 @@ are stable reference text and carry no checkbox.
 
 - [x] 0 — PRECONDITION: 0187 FIXED (Tcl-only); 0186 carried forward as `[D]`; the
       items-8-15 auto-defer is RECOMMENDED NOT TO FIRE — its premise is measured false
-      (see `receipts/00_precondition.md` §3). Driver's call.
-- [ ] 1 — `wviewer::sig_match` — the shared matcher
+      (see `receipts/00_precondition.md` §3). Driver's call. -> DONE (3098afa0)
+- [x] 1 — `wviewer::sig_match` — the shared matcher (33 checks, 3/3 sabotages;
+      the item's "regexp `l*` matches everything" test bullet is OVERRULED by
+      settled decision 3 and asserted INVERTED — see `receipts/01_sig_match.md` §1)
 - [ ] 2 — `wviewer::signal_list` — typed signal inventory
 - [ ] 3 — retrofit the legacy dialog onto the shared matcher
 - [ ] 4 — PIXEL — `wviewer::searchbar` reusable widget
