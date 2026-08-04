@@ -1444,19 +1444,32 @@ proc wviewer::grid_dash_off {} {
   return $v
 }
 
-# --- SIGNAL SEARCH: the shared matcher (signal browser batch item 1) --------
-# doc/claude/signal_browser_batch/PLAN.md item 1 + settled decisions 2/3/4/6/7;
+# --- SIGNAL SEARCH: the shared matcher + the signal inventory ---------------
+# (signal browser batch items 1 and 2)
+# doc/claude/signal_browser_batch/PLAN.md items 1-2 + settled decisions 2/3/4/6/7;
 # references/viva_cadence_waveform_viewer.md §3.2 (the search bar) and §3.3
-# (wildcard semantics). PURE: no Tk, no `xschem`, no ctx — argument in, value
-# out, so the whole matching half of the signal browser is unit-testable
-# headless (tests/headless/test_wave_sigsearch.tcl).
+# (wildcard semantics). Unit-testable headless
+# (tests/headless/test_wave_sigsearch.tcl).
+#
+# THE SECTION HAS TWO HALVES, and they are NOT alike:
+#
+#  * the MATCHER half — `sig_type`, `sig_match` (item 1) — is PURE: no Tk, no
+#    `xschem`, no ctx. Argument in, value out.
+#  * the INVENTORY half — `sig_bare`, `sig_split`, `signal_entry`,
+#    `signal_list` (item 2) — is pure EXCEPT for `signal_list`, which is the
+#    one ctx-touching accessor in this section: it brackets a
+#    `xschem raw list` read with enter_ctx/leave_ctx. Everything else here
+#    stays pure, deliberately, so the split/classify rules stay testable
+#    without a context.
 #
 # THE ONE matcher. Every consumer — the legacy Graph "signals" dialog (item 3),
 # the search bar (item 4), the Add Trace picker (item 5), the browser sidebar
 # (items 8+) — calls this. Nothing else may re-implement matching; that is the
-# whole point of putting it here rather than in a dialog proc.
-#
-# Item 2 appends `wviewer::signal_list` to this section.
+# whole point of putting it here rather than in a dialog proc. Same rule for
+# `signal_list`: nothing else may open-code `split [xschem raw list] "\n"`.
+# (Three such sites still exist at :2566, :6798 and :7458 — items 3 and 5
+# retire them; item 2 deliberately retires none, so that the accessor lands
+# with zero blast radius.)
 
 # Classify a raw signal name: `v` | `i` | `other`, on a leading `v(` / `i(`,
 # case-insensitively. Used by sig_match's `-type` filter.
@@ -1581,6 +1594,82 @@ proc wviewer::sig_match {siglist pattern args} {
     }
   }
   return [list ok $out]
+}
+
+# --- item 2: the typed signal inventory --------------------------------------
+# PLAN item 2. `wviewer::signal_list {token}` is THE accessor every consumer
+# uses instead of open-coding `split [xschem raw list] "\n"`.
+
+# Strip ONE `<fn>(...)` wrapper: `v(x1.x2.net5)` -> `x1.x2.net5`.
+#
+# ⚠ FOR path/leaf SPLITTING ONLY. The `name` field of a signal_list entry is
+# ALWAYS the full raw name (settled decision 2), and the type filter still
+# reads the `v(`/`i(` prefix off the full name via sig_type. Nothing here
+# feeds sig_match.
+#
+# DECLARED DIVERGENCE from the PLAN's contract line, which reads
+# "leaf <last dot-segment> path <all but last>". Taken literally against the
+# FULL raw name, `v(x1.x2.net5)` splits into path `v(x1` and leaf `net5)` —
+# so item 8's hierarchy tree would grow a node literally called `v(x1`.
+# Unwrapping first gives `x1.x2` / `net5`, which is the tree the user means.
+# See doc/claude/signal_browser_batch/receipts/02_receipt.md.
+#
+# The trailing `$` anchor is load-bearing: `v(a)b` has no wrapper to strip and
+# must come back unchanged.
+proc wviewer::sig_bare {name} {
+  if {[regexp {^[A-Za-z_][A-Za-z_0-9]*\((.*)\)$} $name -> inner]} { return $inner }
+  return $name
+}
+
+# {path leaf} for a raw signal name, split on the LAST dot of the UNWRAPPED
+# form. A name with no dot is all leaf and an empty path (a top-level signal).
+proc wviewer::sig_split {name} {
+  set bare [wviewer::sig_bare $name]
+  set parts [split $bare .]
+  if {[llength $parts] < 2} { return [list {} $bare] }
+  return [list [join [lrange $parts 0 end-1] .] [lindex $parts end]]
+}
+
+# ONE raw name -> the item-2 dict {name type leaf path}.
+# `type` comes from wviewer::sig_type — never re-implemented here, so the
+# browser's type dropdown and the matcher's -type filter can never disagree.
+proc wviewer::signal_entry {name} {
+  lassign [wviewer::sig_split $name] path leaf
+  return [dict create name $name type [wviewer::sig_type $name] leaf $leaf path $path]
+}
+
+# wviewer::signal_list  token  ->  list of dicts
+#     {name <full raw name> type <v|i|other> leaf <last dot-segment> path <rest>}
+# Returns {} when the token is unknown, when the context switch is REFUSED, or
+# when the viewer's context has no raw loaded. Never throws for "nothing to
+# browse" — that is an ANSWER, and it is what produces the legacy dialog's
+# "no raw data loaded" note (:7455-7456 / the C arm at scheduler.c:9727, which
+# raises "No raw file loaded").
+#
+# THE BRACKET SHAPE IS LOAD-BEARING, do not "simplify" it:
+#  * enter_ctx/leave_ctx, not a bare `new_schematic switch`: switching INTO a
+#    viewer is a LOAN (issue 0173) — a read must put the context back and
+#    re-assert the clobbered title. wviewer::readout_refresh is the template.
+#  * the `![lindex $ticket 0]` bail is landmine 17 (a refused switch silently
+#    no-ops), and it is what stops this returning SOMEBODY ELSE'S raw.
+#  * NOT wviewer::in_ctx: its body runs at `uplevel #0`, so a body that
+#    produces a value pollutes globals.
+#  * catch the body and re-raise AFTER leave_ctx: an unexpected throw must not
+#    escape past the restore and leak the foreign context.
+proc wviewer::signal_list {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return {} }
+  set names {}
+  set code [catch {
+    if {![catch {xschem raw list} rl]} { set names [split $rl "\n"] }
+  } cres]
+  wviewer::leave_ctx $token $ticket
+  if {$code} { return -code error $cres }
+  set out {}
+  foreach n $names { lappend out [wviewer::signal_entry $n] }
+  return $out
 }
 
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
