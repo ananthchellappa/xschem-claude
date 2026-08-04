@@ -4468,12 +4468,33 @@ proc graph_delete_nodes {} {
 
 # The Graph dialog's signal-list filter, retrofitted onto the shared matcher
 # `wviewer::sig_match` (doc/claude/signal_browser_batch/PLAN.md item 3, settled
-# decisions 2/3/4). Five things here are load-bearing:
+# decisions 3/4, and DRIVER RULING 16, which fixed the match subject).
 #
-#  (a) `-sort $direction` mirrors the legacy `-decreasing`/`-increasing` mapping
-#      LINE FOR LINE — same truth test on `graph_sort`, same throw on a junk
-#      value. Do NOT collapse it to `[expr {$graph_sort ? 1 : -1}]`.
-#  (b) `.*(?:$pattern).*` is THE COMPAT DEVICE. sig_match's regexp arm is
+# This dialog is a COMPAT surface: the point of the retrofit is code-sharing and
+# the invalid-regexp fix, NOT behaviour change. Its on-screen result must equal
+# the pre-retrofit body's for every pattern, with exactly the two RULED
+# exceptions (e) and (f) below. Six things here are load-bearing:
+#
+#  (a) THE MATCH SUBJECT IS THE STRIPPED NAME (`out`), not the full raw name
+#      (`v(out)`) — driver ruling 16. The legacy body regsub'd and only THEN ran
+#      `regexp $pattern $i` (`afdd44a0^:src/xschem.tcl:4479-4483`), so a
+#      full-raw-name subject cannot reproduce it: it silently broke a user's
+#      `^out$` against a `v()`-wrapped name, and made a bare `v` return every
+#      voltage in the raw. Settled decision 2's full-name subject governs the
+#      NEW search surfaces (PLAN items 4-15), where the type filter derives from
+#      the `v(`/`i(` prefix and so needs it; THIS dialog has no type filter, so
+#      it strips first and matches — and displays — the same stripped list.
+#      `wviewer::sig_match` is NOT touched by any of this and stays whole-name
+#      anchored (decision 3).
+#  (b) THE SORT RUNS ON THE FULL NAMES, BEFORE THE STRIP, exactly as the legacy
+#      body did (it `lsort`ed, then stripped inside the loop). The legacy
+#      `-decreasing`/`-increasing` mapping is kept LINE FOR LINE — same truth
+#      test on `graph_sort`, same throw on a junk value; do NOT collapse it.
+#      Because the sort has already happened by the time sig_match is called,
+#      sig_match is called with `-sort 0` and MUST NOT be handed `$direction`:
+#      that would re-sort the STRIPPED list. Measured — "v(aa)\nmm" with
+#      graph_sort 1 displays `mm aa`; sorting the stripped list gives `aa mm`.
+#  (c) `.*(?:$pattern).*` is THE COMPAT DEVICE. sig_match's regexp arm is
 #      WHOLE-NAME anchored (decision 3), the legacy `regexp $pattern $i` was
 #      UNANCHORED. Wrapping the user's pattern makes sig_match compute
 #      `^(?:.*(?:$pattern).*)$`, which IS the unanchored semantics — without it,
@@ -4482,37 +4503,43 @@ proc graph_delete_nodes {} {
 #      whole (`x|y` over {xa ay zz} is {ay xa} with it, {} without). The EMPTY
 #      pattern is passed through UNTOUCHED so sig_match's own documented
 #      "empty pattern matches everything" short-circuit is what fires.
-#  (c) The strip is the legacy `regsub {^v\((.*)\)$}`, NOT `wviewer::sig_bare`.
+#  (d) The strip is the legacy `regsub {^v\((.*)\)$}`, NOT `wviewer::sig_bare`.
 #      sig_bare strips any `<fn>(...)` wrapper and would put `v1` on screen
-#      where the dialog shows `i(v1)`.
-#  (d) The sort runs on the FULL names and the strip happens AFTER it, exactly
-#      as the legacy body did (it lsorted, then stripped inside the loop).
-#      Strip-then-sort reorders the listbox.
-#  (e) An invalid regexp now yields {} — settled decision 4. This is the ONE
-#      deliberate on-screen change: today `[` shows the entire signal list.
+#      where the dialog shows `i(v1)`. The trailing `$` is load-bearing too:
+#      without it `v(a)x` would become `ax`.
+#  (e) RULED CHANGE — an invalid regexp yields {} (settled decision 4), where
+#      the legacy `if {$err} {set pattern {}}` showed the ENTIRE signal list.
+#  (f) RULED DIVERGENCE (ruling 16, delta 3) — ARE directors and embedded
+#      options (`(?i)out`, `***=foo`) are legal only at the very START of an RE,
+#      so the (c) wrap turns them into an error and the dialog shows {} where
+#      the legacy body matched. ACCEPTED rather than hoisted out of the wrap:
+#      vanishingly rare in a signal-name box, and it now fails VISIBLY instead
+#      of misbehaving silently. Pinned by GS13 so it cannot drift back unnoticed.
 #
-# The match SUBJECT is now the full raw name (`v(out)`), not the stripped form,
-# per settled decision 2. Three residual on-screen deltas follow and are pinned
-# by checks GS12/GS13/GS14 in tests/headless/test_wave_sigsearch.tcl.
+# (e) and (f) are the ONLY two permitted on-screen differences from the
+# pre-retrofit body; ruling 16 reversed the other two this retrofit had (a bare
+# `v` matching every voltage, and `^…$` failing on a wrapped name). All four are
+# pinned by GS08/GS12/GS13/GS14 in tests/headless/test_wave_sigsearch.tcl.
 #
 # ⚠ This is the FIRST src/xschem.tcl -> wviewer:: call in the tree, so
 # wave_viewer.tcl is now load-bearing for the legacy Graph dialog. It is sourced
-# unconditionally at xschem.tcl:14295. Do NOT add an `info procs` fallback: it
+# unconditionally at xschem.tcl:14352. Do NOT add an `info procs` fallback: it
 # would be an untestable branch.
 proc graph_get_signal_list {siglist pattern } {
   global graph_sort
-  set direction -1
-  if {$graph_sort} {set direction 1}
-  if {$pattern ne {}} { set pattern ".*(?:$pattern).*" }
-  set r [wviewer::sig_match [split $siglist \n] $pattern \
-           -syntax regexp -case 1 -sort $direction]
-  if {[lindex $r 0] ne {ok}} { return {} }
-  set result {}
-  foreach i [lindex $r 1] {
+  set direction {-decreasing}
+  if {$graph_sort} {set direction {-increasing}}
+  # (b) sort the FULL names, then (a)/(d) strip — the stripped list is both the
+  # match subject and what goes on screen, as in the legacy body.
+  set names {}
+  foreach i [lsort $direction -dictionary [split $siglist \n]] {
     regsub {^v\((.*)\)$} $i {\1} i
-    lappend result $i
+    lappend names $i
   }
-  return $result
+  if {$pattern ne {}} { set pattern ".*(?:$pattern).*" }
+  set r [wviewer::sig_match $names $pattern -syntax regexp -case 1 -sort 0]
+  if {[lindex $r 0] ne {ok}} { return {} }
+  return [lindex $r 1]
 }
 
 proc touches {sel tag} {

@@ -23,15 +23,20 @@
 #              the no-raw answer, the raw inventory, the 0173 loan discipline
 #              (the context comes back), the landmine-17 refusal, and the
 #              unknown-token guard.
-#   GS01-GS15  the LEGACY Graph dialog's `::graph_get_signal_list`, retrofitted
-#              onto wviewer::sig_match (item 3, src/xschem.tcl). Both sort
-#              directions; the legacy `v(...)` DISPLAY strip (and that `i(...)`
-#              is NOT stripped — it is the legacy regsub, not sig_bare); that
-#              the sort runs on FULL names and the strip after; unanchored,
-#              case-sensitive matching preserved via the caller-side
-#              `.*(?:$pat).*` wrap; the one sanctioned change (an invalid
-#              regexp -> {} instead of everything); and the three DECLARED
-#              residual deltas GS12/GS13/GS14.
+#   GS01-GS16  the LEGACY Graph dialog's `::graph_get_signal_list`, retrofitted
+#              onto wviewer::sig_match (item 3, src/xschem.tcl; match subject
+#              fixed by DRIVER RULING 16). Both sort directions; the legacy
+#              `v(...)` strip (and that `i(...)` is NOT stripped — it is the
+#              legacy regsub, not sig_bare — and that its trailing `$` anchor
+#              holds, GS16); that the sort runs on FULL names and the strip
+#              after; that the strip happens BEFORE the match, so the subject is
+#              the STRIPPED name (ruling 16); unanchored, case-sensitive
+#              matching preserved via the caller-side `.*(?:$pat).*` wrap; and
+#              the only two permitted on-screen differences from the
+#              pre-retrofit body — GS08 (an invalid regexp -> {} instead of
+#              everything) and GS13 (the RULED divergence: an ARE director
+#              inside the wrap is an error). GS12/GS14 pin the two deltas
+#              ruling 16 REVERSED; they must not drift back.
 #
 # Standalone repro (every check in this file is `--nogui`-safe today; later
 # items' will not be, which is why both spellings stay documented):
@@ -385,7 +390,10 @@ set ::graph_sort 0
 check {GS02 graph_sort 0 is -decreasing -dictionary} \
   [gsl $GSPLAIN {}] [list x1.out time Out net5 i(v1) about]
 set ::graph_sort 1
-# NAMED SABOTAGE TARGET: revert the strip -> this check alone fails.
+# NAMED SABOTAGE TARGET: delete the strip -> this check fails (and, since
+# ruling 16, so do GS12/GS14 — one strip now serves BOTH the match subject and
+# the display, so deleting it is two defects at once. MOVING it back after the
+# match, which is the pre-ruling-16 body, fails GS12+GS14 and leaves this green).
 check {GS03 the legacy v(...) display strip still happens} \
   [gsl {v(out)} {}] out
 check {GS04 i(...) is NOT stripped (the legacy regsub, not sig_bare)} \
@@ -407,16 +415,27 @@ check {GS10 the unanchor wrap keeps a user ALTERNATION whole} \
   [gsl "xa\nay\nzz" {x|y}] [list ay xa]
 check {GS11 a user's own ^...$ anchors still work on an unwrapped name} \
   [gsl $GSPLAIN {^time$}] [list time]
-# GS12/GS13/GS14 pin the three DECLARED residual deltas (receipt D3). They
-# assert LENGTHS so they can never become second targets for the strip sabotage.
-check {GS12 DECLARED: the match subject is the FULL raw name} \
-  [llength [gsl "v(out)\nzz" {v\(}]] 1
-check {GS13 DECLARED: an embedded ARE option (?i) is now an error -> {}} \
+# GS12/GS13/GS14 pin the three deltas DRIVER RULING 16 ruled on (receipt 03 D3).
+# GS12 and GS14 pin the two it REVERSED — the match subject is the STRIPPED name
+# again, as in the pre-retrofit body — and GS13 pins the one it ACCEPTED. All
+# three assert LENGTHS so they can never become second targets for the strip
+# sabotage. Do NOT "fix" GS13 by hoisting directors out of the `.*(?:$pat).*`
+# wrap: it is a RULED, documented divergence, and this check is what stops it
+# drifting back silently in either direction.
+check {GS12 RULED 16: a bare `v` does NOT return every voltage (subject is STRIPPED)} \
+  [llength [gsl "v(out)\nzz" {v}]] 0
+check {GS13 RULED 16 (accepted divergence): an embedded ARE option (?i) is an error -> {}} \
   [llength [gsl "Out\nzz" {(?i)out}]] 0
-check {GS14 DECLARED: ^out$ no longer matches the wrapped v(out)} \
-  [llength [gsl "v(out)\nzz" {^out$}]] 0
+check {GS14 RULED 16: a user's own ^out$ matches the wrapped v(out) again} \
+  [llength [gsl "v(out)\nzz" {^out$}]] 1
 check {GS15 the blob is split on NEWLINES, not on whitespace} \
   [gsl "a b\nc" {}] [list {a b} c]
+# The ONE fixture element with a `v(...)` prefix AND trailing text. Without it,
+# dropping the regsub's trailing `$` anchor left every check green (receipt 03
+# P2). Deliberately its own one-element blob, so it does not hand the strip
+# sabotage extra targets via GSPLAIN (see the FIXTURE RULE above).
+check {GS16 the display strip is END-ANCHORED: v(a)x is NOT stripped to ax} \
+  [gsl {v(a)x} {}] {v(a)x}
 set ::graph_sort 0
 
 } bigerr]} {
