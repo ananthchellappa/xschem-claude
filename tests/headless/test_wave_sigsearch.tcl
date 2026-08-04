@@ -23,20 +23,22 @@
 #              the no-raw answer, the raw inventory, the 0173 loan discipline
 #              (the context comes back), the landmine-17 refusal, and the
 #              unknown-token guard.
-#   GS01-GS16  the LEGACY Graph dialog's `::graph_get_signal_list`, retrofitted
+#   GS01-GS21  the LEGACY Graph dialog's `::graph_get_signal_list`, retrofitted
 #              onto wviewer::sig_match (item 3, src/xschem.tcl; match subject
 #              fixed by DRIVER RULING 16). Both sort directions; the legacy
-#              `v(...)` strip (and that `i(...)` is NOT stripped — it is the
-#              legacy regsub, not sig_bare — and that its trailing `$` anchor
-#              holds, GS16); that the sort runs on FULL names and the strip
-#              after; that the strip happens BEFORE the match, so the subject is
-#              the STRIPPED name (ruling 16); unanchored, case-sensitive
-#              matching preserved via the caller-side `.*(?:$pat).*` wrap; and
-#              the only two permitted on-screen differences from the
-#              pre-retrofit body — GS08 (an invalid regexp -> {} instead of
-#              everything) and GS13 (the RULED divergence: an ARE director
-#              inside the wrap is an error). GS12/GS14 pin the two deltas
-#              ruling 16 REVERSED; they must not drift back.
+#              `v(...)` strip PINNED ELEMENT BY ELEMENT (see the GS17-GS21 block
+#              — under ruling 16 that regsub is not cosmetic, it produces the
+#              MATCH SUBJECT, so every piece of it is load-bearing); that
+#              `i(...)` is NOT stripped — it is the legacy regsub, not sig_bare;
+#              that the sort runs on FULL names and the strip after; that the
+#              strip happens BEFORE the match, so the subject is the STRIPPED
+#              name (ruling 16); unanchored, case-sensitive matching preserved
+#              via the caller-side `.*(?:$pat).*` wrap; and the only two
+#              permitted on-screen differences from the pre-retrofit body —
+#              GS08 (an invalid regexp -> {} instead of everything) and GS13
+#              (the RULED divergence: an ARE director inside the wrap is an
+#              error). GS12/GS14 pin the two deltas ruling 16 REVERSED; they
+#              must not drift back.
 #
 # Standalone repro (every check in this file is `--nogui`-safe today; later
 # items' will not be, which is why both spellings stay documented):
@@ -376,10 +378,20 @@ xschem new_schematic switch $SLMAIN
 #
 # ⚠ FIXTURE RULE, same discipline as SM05: GSPLAIN deliberately carries NO
 # `v(...)`-wrapped name, so the named sabotage (revert the display strip) fails
-# GS03 and ONLY GS03. GS05/GS12/GS13/GS14 are strip-INSENSITIVE by construction
-# (they assert a length or a strip-invariant element) for the same reason. Do
-# not "improve" these fixtures by folding them together or reusing a wrapped
-# list — that silently hands the strip sabotage extra targets.
+# GS03 and ONLY GS03; GS05 stays strip-INSENSITIVE by construction (it asserts a
+# strip-invariant element) for the same reason. Do not "improve" these fixtures
+# by folding them together or reusing a wrapped list — that silently hands the
+# strip sabotage extra targets. Every check that DOES need a wrapped name gets
+# its own one-element blob (GS03, GS16-GS21) or its own tiny blob (GS12/GS14),
+# so the fixtures stay separable.
+#
+# ⚠ WHAT CHANGED UNDER RULING 16, and why the old "assert a length" trick is
+# now wrong: the regsub is no longer a cosmetic display step run after the
+# match — it produces the MATCH SUBJECT. GS12/GS13/GS14 used to assert only
+# `llength` precisely so the strip sabotage would gain no extra targets; that
+# reasoning is dead (the strip SHOULD gain targets now), and a count-only
+# assertion is strictly weaker — GS14's "length 1" was equally satisfied by the
+# WRONG element. They assert CONTENT below.
 set GSPLAIN "time\nabout\ni(v1)\nx1.out\nnet5\nOut"
 proc gsl {blob pat} { uplevel 1 [list pcall graph_get_signal_list $blob $pat] }
 
@@ -418,16 +430,22 @@ check {GS11 a user's own ^...$ anchors still work on an unwrapped name} \
 # GS12/GS13/GS14 pin the three deltas DRIVER RULING 16 ruled on (receipt 03 D3).
 # GS12 and GS14 pin the two it REVERSED — the match subject is the STRIPPED name
 # again, as in the pre-retrofit body — and GS13 pins the one it ACCEPTED. All
-# three assert LENGTHS so they can never become second targets for the strip
-# sabotage. Do NOT "fix" GS13 by hoisting directors out of the `.*(?:$pat).*`
-# wrap: it is a RULED, documented divergence, and this check is what stops it
-# drifting back silently in either direction.
-check {GS12 RULED 16: a bare `v` does NOT return every voltage (subject is STRIPPED)} \
-  [llength [gsl "v(out)\nzz" {v}]] 0
+# three assert CONTENT, not `llength`: see the ruling-16 note in the group header
+# for why the old count-only form was both moot and weaker. Do NOT "fix" GS13 by
+# hoisting directors out of the `.*(?:$pat).*` wrap: it is a RULED, documented
+# divergence, and this check is what stops it drifting back silently in either
+# direction.
+#
+# GS12's blob carries `vv` so the check pins WHICH name a bare `v` returns, not
+# merely how many. Delta 1 reintroduced (match the FULL name) would return
+# `out vv`; the shipping subject is the stripped name, so only `vv` carries a v.
+check {GS12 RULED 16: a bare `v` finds vv only, NOT the stripped v(out)} \
+  [gsl "v(out)\nzz\nvv" {v}] [list vv]
 check {GS13 RULED 16 (accepted divergence): an embedded ARE option (?i) is an error -> {}} \
-  [llength [gsl "Out\nzz" {(?i)out}]] 0
-check {GS14 RULED 16: a user's own ^out$ matches the wrapped v(out) again} \
-  [llength [gsl "v(out)\nzz" {^out$}]] 1
+  [gsl "Out\nzz" {(?i)out}] {}
+# content, not `llength 1`: the count alone was equally satisfied by `zz`.
+check {GS14 RULED 16: a user's own ^out$ matches the wrapped v(out) again, and shows `out`} \
+  [gsl "v(out)\nzz" {^out$}] out
 check {GS15 the blob is split on NEWLINES, not on whitespace} \
   [gsl "a b\nc" {}] [list {a b} c]
 # The ONE fixture element with a `v(...)` prefix AND trailing text. Without it,
@@ -436,6 +454,52 @@ check {GS15 the blob is split on NEWLINES, not on whitespace} \
 # sabotage extra targets via GSPLAIN (see the FIXTURE RULE above).
 check {GS16 the display strip is END-ANCHORED: v(a)x is NOT stripped to ax} \
   [gsl {v(a)x} {}] {v(a)x}
+
+# --- GS17-GS21: the strip regsub, pinned ELEMENT BY ELEMENT ------------------
+#
+# `regsub {^v\((.*)\)$} $i {\1} i` has five moving parts — a leading anchor, a
+# trailing anchor, the `v` literal, the two paren literals, and the capture
+# group. Under DRIVER RULING 16 that regsub is NOT a cosmetic display step run
+# after the match: it produces the MATCH SUBJECT, so a mutation to any one part
+# is a silent on-screen AND on-search regression. GS16 alone pinned the trailing
+# anchor (receipt 03 P2, closed by the ruling-16 fixup); the LEADING anchor was
+# the same hole one element over, and it survived a full green run of all 77
+# checks. Map of part -> the named check that fails when it is mutated:
+#
+#   leading `^`    GS17 (display) + GS18 (subject). Verifier-measured: with the
+#                  `^` dropped, `xv(b)` displays as `xb` and a user's `^xv`
+#                  returns {} — 1872 differing comparisons against the legacy
+#                  body in the 22560-comparison differential fuzz — while every
+#                  one of the 77 pre-fixup checks stayed GREEN.
+#   trailing `$`   GS16 (display) + GS21 (subject).
+#   the `v`        GS03 (drop or alter it and `v(out)` stops stripping),
+#                  GS04 (widen it to `[vi]`/`.` and `i(v1)` starts stripping),
+#                  GS20 (case-fold it and `V(OUT)` starts stripping — the legacy
+#                  regsub is case-SENSITIVE, and `V(OUT)` is a name real
+#                  simulators emit).
+#   the parens     GS03 (drop `\(` -> `(out`; drop `\)` -> `out)`).
+#   the capture    GS03 (replacement `\1` -> `&` or a non-capturing group)
+#                  + GS19 (narrow `.*` to any class excluding a dot or a bracket
+#                  and the ordinary hierarchical/bus name stops stripping).
+#
+# Each gets its OWN one-element blob, per the FIXTURE RULE, so they stay
+# separable. GS17, GS18, GS20 and GS21 are strip-DELETION-insensitive by
+# construction — an absent strip leaves `xv(b)`, `V(OUT)` and `v(a)x` unchanged,
+# which is exactly what they assert — so the named GS03 sabotage gains nothing
+# from them. DECLARED consequence: GS19 alone DOES become a further target for
+# it, because its fixture really is `v(...)`-wrapped. That is correct under
+# ruling 16, where deleting the strip is two defects at once (see GS03's own
+# comment, which already records the same widening onto GS12/GS14).
+check {GS17 the display strip is START-ANCHORED: xv(b) is NOT stripped to xb} \
+  [gsl {xv(b)} {}] {xv(b)}
+check {GS18 RULED 16: the START anchor is in the MATCH SUBJECT too (^xv finds xv(b))} \
+  [gsl {xv(b)} {^xv}] {xv(b)}
+check {GS19 the capture takes ANY content — dots and brackets alike} \
+  [gsl {v(x1.x2.net_name[3])} {}] [list {x1.x2.net_name[3]}]
+check {GS20 the strip regsub is case-SENSITIVE: V(OUT) is NOT stripped} \
+  [gsl {V(OUT)} {}] {V(OUT)}
+check {GS21 RULED 16: the END anchor is in the MATCH SUBJECT too} \
+  [gsl {v(a)x} {^v\(a\)x$}] {v(a)x}
 set ::graph_sort 0
 
 } bigerr]} {
