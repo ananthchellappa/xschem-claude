@@ -1925,14 +1925,60 @@ check {DS04 replace whose plan appends a strip clears nothing (single index spac
   [list [dict create new 1 targets {0} clear {}] \
         [dict create new 1 targets {3 3} clear {}]]
 
-# INDEX SPACE, multi arm: targets are POST-INSERT, so the strips this plan makes
-# are 0..new-1 and only `t >= new` pre-existed. Two sub-cases: a mix (one new
-# strip + two reused) and an all-reuse plan.
-check {DS05 replace in multi clears only the pre-existing landing strips} \
+# THE SINGLE ARM'S **REUSE** PATH, which DS04 does NOT reach (both of its cases
+# APPEND a strip; neither passes a non-empty empties list). Here the stored
+# target is the tool-owned auto strip, so the plan REUSES empty strip 2 instead
+# of appending — and a reused-empty strip holds nothing, so clearing it would be
+# a no-op clear_graph_traces call: a wavehl remap, a marker sweep and a redraw
+# for nothing. `clear` must be EMPTY.
+check {DS04b replace that REUSES an empty strip clears nothing (single arm)} \
+  [list [::wviewer::plan_plot single 3 1 2 1 {1 2} replace] \
+        [::wviewer::plan_plot single 3 0 1 0 {1} replace]] \
+  [list [dict create new 0 targets {2 2} clear {}] \
+        [dict create new 0 targets {1} clear {}]]
+
+# ...and the NEGATIVE half of that claim, because "clears nothing" is only worth
+# anything beside a case that clears something. IDENTICAL call but for the
+# target: an EMPTY target strip is not listed, an OCCUPIED one is. This is the
+# pair that separates "knows which strips are empty" from "never clears".
+check {DS04c the empties list is a FILTER, not an off switch: empty target -> {}, occupied target -> {1}} \
+  [list [::wviewer::plan_plot single 3 0 2 -1 {0 2} replace] \
+        [::wviewer::plan_plot single 3 1 2 -1 {0 2} replace] \
+        [::wviewer::plan_plot single 3 1 2 -1 {} replace]] \
+  [list [dict create new 0 targets {0 0} clear {}] \
+        [dict create new 0 targets {1 1} clear {1}] \
+        [dict create new 0 targets {1 1} clear {1}]]
+
+# ⚠ INDEX SPACE, multi arm — AND THE DECLARED LIMIT OF THE WHOLE POLICY.
+# multi-plot lands every signal either in a strip it CREATES or in a REUSED
+# EMPTY one; it never lands on an occupied strip, for any destination. So there
+# is by construction nothing for Replace to clear there: the key is present (the
+# shape still tracks the destination) and it is ALWAYS EMPTY. That is what
+# plan_plot's ⚠⚠ declares, and this is where it is pinned. Two sub-cases: a mix
+# (one new strip + two reused) and an all-reuse plan.
+check {DS05 replace in multi clears NOTHING: every landing strip is new or reused-empty} \
   [list [::wviewer::plan_plot multi 2 0 3 -1 {0 1} replace] \
         [::wviewer::plan_plot multi 3 0 2 -1 {0 1 2} replace]] \
-  [list [dict create new 1 targets {2 1 0} clear {1 2}] \
-        [dict create new 0 targets {1 0} clear {0 1}]]
+  [list [dict create new 1 targets {2 1 0} clear {}] \
+        [dict create new 0 targets {1 0} clear {}]]
+
+# DIFFERENTIAL, and it is the honest statement of the narrowed claim: under
+# multi, `replace` IS `append` plus an empty `clear` key — over the mix, the
+# all-new, the all-reuse and the auto-strip arms. If a later change ever makes
+# multi land on an occupied strip, this check fails and the declaration in
+# plan_plot's ⚠⚠ has to be revisited rather than quietly outliving its reason.
+set dsdiff {}
+foreach dscase {{multi 2 0 3 -1 {0 1}} {multi 3 0 2 -1 {0 1 2}} \
+                {multi 2 0 3 -1 {}}    {multi 3 0 1 -1 {2}} \
+                {multi 3 0 2 1 {0 1 2}}} {
+  set dsapp [::wviewer::plan_plot {*}$dscase append]
+  set dsrep [::wviewer::plan_plot {*}$dscase replace]
+  lappend dsdiff [expr {[dict remove $dsrep clear] eq $dsapp}] \
+                 [dict exists $dsrep clear] [::wviewer::dget $dsrep clear MISSING]
+}
+check {DS05b DIFFERENTIAL: in multi, replace == append + an empty clear key, on every arm} \
+  $dsdiff [list 1 1 {} 1 1 {} 1 1 {} 1 1 {} 1 1 {}]
+unset dsdiff dscase dsapp dsrep
 
 check {DS06 newstrip in single forces ONE fresh strip and IGNORES the target} \
   [list [::wviewer::plan_plot single 2 0 2 -1 {} newstrip] \
@@ -1952,8 +1998,13 @@ check {DS08 newstrip ignores reusable empty strips entirely} \
   [list [dict create new 1 targets {3 3}] \
         [dict create new 1 targets {0 0}]]
 
-# newtab collapses to append INSIDE plan_plot: dest_prepare has already made the
-# tab, and the layout being planned against is the NEW tab's.
+# newtab reaches the append policy INSIDE plan_plot: dest_prepare has already
+# made the tab, and the layout being planned against is the NEW tab's.
+# ⚠ BY FALL-THROUGH, not by a collapse statement — plan_plot's body names only
+# `newstrip` and `replace`. An explicit `set dest append` line used to sit at the
+# top of the proc; it was measured to change nothing and removed, so this check
+# is what the callers actually rely on. It is a BEHAVIOUR assertion and it holds
+# either way; nothing credits it to a line.
 check {DS09 newtab behaves as append inside plan_plot} \
   [list [expr {[::wviewer::plan_plot single 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot single 1 0 2]}] \
         [expr {[::wviewer::plan_plot multi 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot multi 1 0 2]}] \
@@ -2049,6 +2100,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     return $o
   }
+  # ⚠ A CALL RECORDER for clear_graph_traces, because "the target ended up with
+  # the right traces" and "clear_graph_traces ran on exactly the right strips"
+  # are DIFFERENT claims, and only the second one can see a NO-OP clear.
+  # Clearing an ALREADY-EMPTY strip changes no trace list, so no count check
+  # anywhere in this file can catch it — but it is not free: that proc runs
+  # wavehl_remap_apply, markers_sweep_numbers and set_graphs (a redraw), which is
+  # precisely the "real work with real side effects" plan_replace_clear's header
+  # promises never happens. The wrapper DELEGATES to the real proc (nothing is
+  # stubbed out) and is torn down immediately; the pcall inside each gesture
+  # wrapper guarantees the restore is reached even when the gesture throws.
+  proc ds_spy_on {} {
+    set ::ds_cgt {}
+    rename ::wviewer::clear_graph_traces ::ds_cgt_real
+    proc ::wviewer::clear_graph_traces {token gi} {
+      lappend ::ds_cgt $gi
+      ::ds_cgt_real $token $gi
+    }
+  }
+  proc ds_spy_off {} {
+    rename ::wviewer::clear_graph_traces {}
+    rename ::ds_cgt_real ::wviewer::clear_graph_traces
+  }
+  proc ds_spy_ok {} {
+    ds_spy_on ; set r [pcall ::wviewer::add_trace_ok wvms] ; ds_spy_off ; return $r
+  }
+  proc ds_spy_plot {exprs} {
+    ds_spy_on ; set r [pcall ::wviewer::plot_signals wvms $exprs] ; ds_spy_off ; return $r
+  }
   # pick rows 2 and 3 of the inventory: v(out) and i(v1)
   proc ds_pick2 {w} {
     $w.vars selection clear 0 end
@@ -2090,9 +2169,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set dsw [ds_open 2 {1 net1}] ; update
   $dsw.dest set Replace
   ds_pick2 $dsw
-  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain} \
-    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec]] \
-    [list {} [list 0 2] [list v(out) i(v1)]]
+  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain, one clear call} \
+    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
+
+  # ...and the same gesture onto a target that is ALREADY EMPTY: the traces land
+  # identically and NO clear call is made. Counts alone cannot tell these two
+  # worlds apart — the recorder can, and this is the ONLY check that reaches the
+  # empty-strip list add_trace_ok now hands plan_plot.
+  set dsw [ds_open 2 {}] ; update
+  $dsw.dest set Replace
+  ds_pick2 $dsw
+  check {DS23b REPLACE onto an ALREADY-EMPTY target lands the same and clears nothing} \
+    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] {}]
 
   # --- NEW STRIP: a fresh strip appears and the seed is untouched ----------
   set dsw [ds_open 2 {1 net1}] ; update
@@ -2211,11 +2301,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ::wviewer::add_trace wvms 1 net1 {}
   ::wviewer::set_target_strip 1 wvms
   ::wviewer::set_plot_dest replace wvms
-  set dsperrs [pcall ::wviewer::plot_signals wvms [list v(out) i(v1)]]
+  set dsperrs [ds_spy_plot [list v(out) i(v1)]]
   update
-  check {DS30 plot_signals honours the window destination (Replace empties the target)} \
-    [list $dsperrs [ds_counts] [ms_field 1 vec]] \
-    [list {} [list 0 2] [list v(out) i(v1)]]
+  # the POSITIVE control for the recorder: an occupied target IS cleared, once,
+  # by index. Without this row the two zero-call checks below would prove only
+  # that the recorder never sees anything.
+  check {DS30 plot_signals honours the window destination (Replace empties the target, exactly once)} \
+    [list $dsperrs [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
   # ...and the same seam under append is the unchanged behaviour
   ::wviewer::set_plot_dest append wvms
   set dsperrs [pcall ::wviewer::plot_signals wvms [list net1]]
@@ -2223,6 +2316,47 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {DS30b plot_signals under append still accumulates} \
     [list $dsperrs [ds_counts] [ms_field 1 vec]] \
     [list {} [list 0 3] [list v(out) i(v1) net1]]
+
+  # --- REPLACE under MULTI-plot: the DECLARED limit, exercised LIVE ---------
+  # ⚠ The pure DS05/DS05b say the plan carries an empty `clear`. This says what
+  # that MEANS at the seam: with the window in multi-plot mode, a Replace gesture
+  # lands the batch in the reusable empty strip and the OCCUPIED strip beside it
+  # keeps all three of its traces. Replace is a single-mode policy (plan_plot's
+  # ⚠⚠) and the honest statement of that is a check that shows nothing was
+  # destroyed — not the absence of a check.
+  # mode is seeded first because set_plot_mode speaks only for a window that
+  # already has one (its {} truthfully means "no window"); the real accessor is
+  # then used, and its answer asserted, rather than writing the array twice.
+  set ::wviewer::mode(wvms) single
+  set dsmode [pcall ::wviewer::set_plot_mode multi wvms]
+  ::wviewer::set_plot_dest replace wvms
+  set dsperrs [ds_spy_plot [list v(out)]]
+  update
+  # THE ZERO-CALL half is what the trace counts cannot see: the landing strip is
+  # a REUSED EMPTY one, so a Replace that listed it would destroy nothing and
+  # every count below would still match — it would just do a wavehl remap, a
+  # marker sweep and a redraw for nothing, which is exactly what
+  # plan_replace_clear's header promises it does not do.
+  check {DS30c REPLACE under multi-plot destroys NOTHING and clears NOTHING (zero calls)} \
+    [list $dsmode $dsperrs [ds_counts] [ms_field 0 vec] [ms_field 1 vec] $::ds_cgt] \
+    [list multi {} [list 1 3] [list v(out)] [list v(out) i(v1) net1] {}]
+  pcall ::wviewer::set_plot_mode single wvms
+
+  # ...and the SINGLE arm's own no-op case, which is the one a user meets by
+  # simply pressing Replace twice, or Replace into a fresh strip: the target is
+  # already empty, so there is nothing to clear.
+  dict set ::wviewer::layouts wvms \
+    [dict create sharedx 0 graphs [list [::wviewer::empty_graph] [::wviewer::empty_graph]]]
+  ::wviewer::set_target_strip 0 wvms
+  ::wviewer::set_plot_dest replace wvms
+  set dsperrs [ds_spy_plot [list v(out)]]
+  update
+  check {DS30d REPLACE onto an ALREADY-EMPTY target makes no clear call at all} \
+    [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list {} [list 1 0] [list v(out)] {}]
+  rename ds_spy_on {} ; rename ds_spy_off {}
+  rename ds_spy_ok {} ; rename ds_spy_plot {}
+  catch {unset ::ds_cgt}
 
   # --- teardown ------------------------------------------------------------
   # Same shape as MS18's, and for the same reason: `with_edit` leaves the ctx
@@ -2234,15 +2368,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   dict unset ::wviewer::layouts wvms
   catch {unset ::wviewer::dest(wvms)}
   catch {unset ::wviewer::target(wvms)}
+  # DS30c seeded a plot MODE on this token; it did not exist before the DS group
+  # and must not outlive it either
+  catch {unset ::wviewer::mode(wvms)}
   xschem new_schematic switch $SLMAIN
   xschem set readonly 0
   xschem clear_drawing
   xschem set_modify 0
-  check {DS31 teardown leaves the main context empty and writable, and no tab state} \
+  check {DS31 teardown leaves the main context empty and writable, and no tab/dest/mode state} \
     [list [xschem get rects 2] [xschem get readonly] \
           [pcall ::wviewer::tab_count wvms] \
-          [info exists ::wviewer::dest(wvms)]] \
-    [list 0 0 0 0]
+          [info exists ::wviewer::dest(wvms)] \
+          [info exists ::wviewer::mode(wvms)]] \
+    [list 0 0 0 0 0]
 
 } else {
   # WORDING IS LOAD-BEARING — see the ⚠ in the file header.

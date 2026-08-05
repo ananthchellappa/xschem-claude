@@ -1797,26 +1797,42 @@ proc wviewer::empty_graph_indices {gs {auto -1}} {
 # ⚠ `newtab` BEHAVES AS `append` INSIDE plan_plot, AND THAT IS NOT A BUG. By the
 # time plan_plot is called for a New Tab gesture, dest_prepare has already made
 # the tab and the layout it is asked about is the NEW tab's, which holds exactly
-# one empty strip — which `append` lands in. Collapsing it here is what keeps the
-# tab-making out of a pure function.
+# one empty strip — which `append` lands in. Keeping the tab-making out of this
+# pure proc is what makes that true. ⚠ AND THERE IS NO `newtab` STATEMENT BELOW
+# TO CREDIT IT TO: the body names only `newstrip` and `replace`, so `newtab`
+# reaches the append policy BY FALL-THROUGH. (An explicit `set dest append`
+# collapse used to sit here; it was MEASURED to change nothing over every
+# mode/ngraphs/target/empties combination and removed, because a line that
+# cannot fail reads as a guard and is not one. DS09 pins the BEHAVIOUR, which is
+# what the callers depend on either way.)
 #
 # `append` keeps the 6-argument answer BYTE-IDENTICAL to what it has always been
 # (no `clear` key at all), which is why the ~25 whole-dict comparisons in
 # test_wave_modes.tcl are this extension's regression oracle.
 #
-# THE `clear` KEY IS EMITTED IFF dest eq replace: the list of ALREADY-EXISTING
-# landing strips the caller must empty first (wviewer::plan_replace_clear).
-# Callers read it with `wviewer::dget $plan clear {}` — the graph_props
-# precedent for "emit a key only when it means something".
+# THE `clear` KEY IS EMITTED IFF dest eq replace: the list of ALREADY-EXISTING,
+# NON-EMPTY landing strips the caller must empty first
+# (wviewer::plan_replace_clear). Callers read it with
+# `wviewer::dget $plan clear {}` — the graph_props precedent for "emit a key only
+# when it means something".
+#
+# ⚠⚠ REPLACE IS A SINGLE-MODE POLICY, AND THAT IS STRUCTURAL, NOT AN OVERSIGHT.
+# The multi arm below lands every signal either in a strip it CREATES or in a
+# REUSED EMPTY strip — it never lands on an occupied one, for any destination.
+# So under multi-plot there is by construction nothing for `replace` to clear:
+# the `clear` key is present (the shape still tracks the destination) but it is
+# ALWAYS EMPTY, and Replace is behaviourally identical to Append there. Declared,
+# not fixed: making Replace mean "wipe the whole plot area" under multi would be
+# a different policy from "clear the target graph's traces first", which is the
+# one item 7 was given. DS05/DS05b pin it as a differential.
 proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}} {dest append}} {
   # FIRST, and it must stay first: an empty gesture is a no-op for EVERY
   # destination — a New Tab / Replace with nothing to plot must not make a tab,
   # clear a strip or produce a `clear` key.
   if {$n <= 0} { return [dict create new 0 targets {}] }
   set dest [wviewer::dest_norm $dest]
-  # see the ⚠ above: the tab already exists, and its one empty strip is where
-  # `append` lands
-  if {$dest eq {newtab}} { set dest append }
+  # (`newtab` is deliberately not named from here on — see the ⚠ above: it
+  # reaches the append policy by fall-through, and DS09 pins that.)
   # defensive: keep only in-range, non-auto, deduped indices, lowest first —
   # the callers derive this list from the model, but plan_plot is the pure
   # policy and a bad index here would silently plot into nothing
@@ -1884,39 +1900,60 @@ proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}} {dest appe
   # ...and ONLY here does the answer's SHAPE ever change: every non-replace
   # destination returns exactly the dict this proc has always returned.
   if {$dest eq {replace}} {
-    dict set plan clear [wviewer::plan_replace_clear $mode $ngraphs $plan]
+    # `free` and not `$empties`: the sanitized list is the one the arms above
+    # planned against, so it is the one that says which landing strips are known
+    # to be empty already.
+    dict set plan clear [wviewer::plan_replace_clear $mode $ngraphs $plan $free]
   }
   return $plan
 }
 
-# PURE: which of `plan`'s landing strips ALREADY EXIST — i.e. exactly the strips
-# a `replace` gesture must empty before it adds. Deduped, ascending.
+# PURE: which of `plan`'s landing strips ALREADY EXIST **AND HOLD TRACES** —
+# i.e. exactly the strips a `replace` gesture must empty before it adds. Deduped,
+# ascending, in the PLAN's own index space (post-insert for multi), because that
+# is the space plot_signals runs the clear loop in.
+#
+# `free` is plan_plot's sanitized empty-strip list, in the PRE-insert space.
 #
 # ⚠ THE TWO ARMS LIVE IN DIFFERENT INDEX SPACES, and getting this wrong clears
 # the WRONG strip (silently — the traces just vanish from a strip nobody was
 # looking at):
 #   multi  -> targets are POST-INSERT (see plan_plot's contract), so the strips
-#             this plan CREATES are exactly 0..new-1 and a target `t >= new` is
-#             a pre-existing strip.
+#             this plan CREATES are exactly 0..new-1, and a target `t >= new` is
+#             the pre-existing strip `t - new`.
 #   single -> `new` is 0 or 1, and when it is 1 the single landing strip IS the
-#             one just appended (or the empty one just reused) — nothing
-#             pre-exists, so the list is empty.
-# A brand-new or reused-empty strip is therefore NEVER listed, and no no-op
-# clear_graph_traces call is made. That is not just tidiness: that proc runs
-# wavehl_remap_apply and markers_sweep_numbers, so calling it on a strip with
-# nothing to clear is real work with real side effects.
-proc wviewer::plan_replace_clear {mode ngraphs plan} {
+#             one just appended, so nothing pre-exists; when it is 0 the target
+#             is a live strip in the UNSHIFTED space.
+#
+# ⚠ A BRAND-NEW **OR REUSED-EMPTY** STRIP IS NEVER LISTED, and that second half
+# is why `free` is an argument at all. It is not tidiness: clear_graph_traces
+# runs wavehl_remap_apply, markers_sweep_numbers and set_graphs (a redraw), so
+# calling it on a strip with nothing to clear is real work with real side
+# effects. Both arms reach reused-empty strips — multi always (every landing
+# site it does not create is a reused empty), single whenever the target
+# resolved onto one (empty stack, auto-strip target, or a target that simply is
+# an empty strip). Both were listed before this filter existed, and the single
+# arm's reuse path is now pinned by DS04b/DS04c.
+#
+# ⚠ CONSEQUENCE, DECLARED: under multi this ALWAYS returns {} — see plan_plot's
+# ⚠⚠. The filter is written generally anyway, so a future multi arm that could
+# land on an occupied strip gets the right answer instead of a silent no-clear.
+proc wviewer::plan_replace_clear {mode ngraphs plan {free {}}} {
   set new [wviewer::dget $plan new 0]
   set out {}
   foreach t [wviewer::dget $plan targets {}] {
     if {![string is integer -strict $t]} { continue }
     if {$mode eq {multi}} {
       if {$t < $new} { continue }
+      set pre [expr {$t - $new}]
     } else {
-      # single: a plan that created/reused a strip lands ONLY there
+      # single: a plan that created its strip lands ONLY there
       if {$new > 0} { continue }
       if {$t >= $ngraphs} { continue }
+      set pre $t
     }
+    # ...and a strip that was REUSED because it was empty has nothing to clear
+    if {[lsearch -exact $free $pre] >= 0} { continue }
     if {[lsearch -exact $out $t] < 0} { lappend out $t }
   }
   return [lsort -integer $out]
@@ -5522,7 +5559,10 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   # item 7 `replace`: empty the landing strips that ALREADY EXISTED, AFTER the
   # new strips were created (so the multi arm's post-insert indices are the live
   # ones) and BEFORE anything is added. The key is present only under `replace`,
-  # and it never names a strip this plan just made — see plan_replace_clear.
+  # and it never names a strip this plan just made OR reused because it was
+  # already empty, so this loop never makes a no-op clear_graph_traces call —
+  # see plan_replace_clear. Under multi it is therefore always empty (declared
+  # in plan_plot's ⚠⚠: Replace is a single-mode policy).
   foreach ci [wviewer::dget $plan clear {}] {
     wviewer::clear_graph_traces $token $ci
   }
@@ -8126,7 +8166,20 @@ proc wviewer::add_trace_ok {token} {
   # The dialog is a SINGLE-plot gesture whatever the window's plot mode says
   # (it names one Graph), so plan_plot is asked in `single` — the destination is
   # the only thing that moves the landing.
-  set plan [wviewer::plan_plot single [llength $gs] $gi $n -1 {} $dest]
+  #
+  # ⚠ The 6th argument is the EMPTY-strip list and it is NOT {} any more. It
+  # cannot change where this gesture lands (the single arm consults it only when
+  # the stack is empty, where it is empty too, and `auto` stays -1 on purpose:
+  # the dialog NAMES its graph, so it may name the auto strip), but it is what
+  # lets plan_replace_clear tell "Replace onto a strip holding traces" from
+  # "Replace onto a strip that is already empty" — without it, Replace onto an
+  # empty target made a no-op clear_graph_traces call (a wavehl remap, a marker
+  # sweep and a redraw for nothing). DS04c pins the pure half; DS23b is THE
+  # oracle for this line and nothing else is (it records the clear calls the OK
+  # actually made), so do not delete it thinking counts cover it — they cannot:
+  # clearing an empty strip changes no count.
+  set plan [wviewer::plan_plot single [llength $gs] $gi $n \
+                               -1 [wviewer::empty_graph_indices $gs -1] $dest]
   set nnew [dict get $plan new]
   if {$nnew > 0} {
     set fresh {}
