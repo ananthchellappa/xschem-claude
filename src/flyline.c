@@ -133,7 +133,10 @@ static int flyline_bit_in_list(const char *needle, const char *hay)
  * scalars/buses; otherwise expandlabel() both into comma-separated bit lists and test overlap.
  * This is the bus aggregate-per-label rule: a bus label matches every object sharing any of its
  * bits (e.g. A[1:0] links A[0]), yet stays bit-precise (A[1] does not match A[0]). Read-only. */
-static int flyline_same_net(const char *a, const char *b)
+/* Not static: the pin-rename propagation needs the same bit-precise comparator to
+ * detect a bus label that overlaps a renamed pin without matching it exactly
+ * (doc/claude/specs/pin_rename_propagation.md). Behaviour unchanged. */
+int flyline_same_net(const char *a, const char *b)
 {
   int ma, mb, match = 0;
   char *ea = NULL, *eb = NULL;

@@ -919,6 +919,175 @@ int pin_scope_targets(int primary_n, const char *scope, int *targets)
   return n;
 }
 
+/* ===== Cadence-style pin-rename label propagation ==========================
+ * doc/claude/specs/pin_rename_propagation.md
+ *
+ * Renaming an interface PIN rewrites every NET LABEL on the same sheet that
+ * carried the old name, so the connectivity the user drew survives the rename.
+ * Without it the rename silently disconnects: the pin joins a new net, the
+ * labels stay on the old one, and nothing on the canvas says so.
+ *
+ * Split into a PURE decision (pin_rename_targets) and a thin mutation shell
+ * (propagate_pin_rename) so every rule is inspectable without mutating, and so
+ * the rule that decides and the rule that acts cannot drift apart.
+ *
+ * Every ambiguity REFUSES the whole propagation and warns, rather than
+ * propagating part of it. A partial rewrite leaves the sheet looking
+ * self-consistent while the netlist is wrong -- and it erases the very ERC
+ * evidence (sym_vs_sch_pins orphan-label errors) that would otherwise report
+ * the damage. Refusing restores the loud pre-feature failure. */
+
+const char *pin_rename_status_str(int status)
+{
+  switch(status) {
+    case PRR_OK:         return "ok";
+    case PRR_MERGE:      return "merge";
+    case PRR_NOT_PIN:    return "not a pin";
+    case PRR_SAME:       return "unchanged";
+    case PRR_EMPTY_OLD:  return "no previous name";
+    case PRR_EMPTY_NEW:  return "no new name";
+    case PRR_AMBIGUOUS:  return "another pin still has that name";
+    case PRR_GLOBAL_OLD: return "old name is a global net";
+    case PRR_GLOBAL_NEW: return "new name is a global net";
+    case PRR_BUSOVERLAP: return "a bus label overlaps that name";
+    case PRR_SELECTED:   return "a matching label is selected";
+    default:             return "not applicable";
+  }
+}
+
+/* Is <name> a global net on this sheet? "0" is ground by definition (netlist.c),
+ * otherwise a name is global when some label instance carrying it declares
+ * global=true|ground -- looked up on the instance first, then on its symbol, the
+ * same two-step the netlister uses (netlist.c: the tok_size test tells the two
+ * apart, an absent token leaving tok_size 0). */
+static int pin_rename_is_global_name(const char *name)
+{
+  int i;
+  if(!name || !name[0]) return 0;
+  if(!strcmp(name, "0")) return 1;
+  for(i = 0; i < xctx->instances; ++i) {
+    const char *g;
+    char *t;
+    if(xctx->inst[i].ptr < 0) continue;
+    t = xctx->sym[xctx->inst[i].ptr].type;
+    if(!t || strcmp(t, "label")) continue;
+    if(strcmp(get_tok_value(xctx->inst[i].prop_ptr, "lab", 0), name)) continue;
+    g = get_tok_value(xctx->inst[i].prop_ptr, "global", 0);
+    if(!xctx->tok_size) g = get_tok_value(xctx->sym[xctx->inst[i].ptr].prop_ptr, "global", 0);
+    if(!strcmp(g, "ground") || !strboolcmp(g, "true")) return 1;
+  }
+  return 0;
+}
+
+int pin_rename_targets(int src_inst, const char *oldlab, const char *newlab,
+                       int *targets, int *status)
+{
+  int i, n = 0, merge = 0;
+  char *type;
+  char *cand = NULL;   /* private copy: get_tok_value's buffer is reused below */
+
+  *status = PRR_BAD_INST;
+  if(src_inst < 0 || src_inst >= xctx->instances || xctx->inst[src_inst].ptr < 0) return 0;
+  type = xctx->sym[xctx->inst[src_inst].ptr].type;
+  if(!type || !IS_PIN(type))            { *status = PRR_NOT_PIN;   return 0; }
+  if(!oldlab || !oldlab[0])             { *status = PRR_EMPTY_OLD; return 0; }
+  if(!newlab || !newlab[0])             { *status = PRR_EMPTY_NEW; return 0; }
+  if(!strcmp(newlab, oldlab))           { *status = PRR_SAME;      return 0; }
+  /* Globals span the hierarchy while this rewrite is sheet-local: moving the vdd
+   * instances on one sheet would split the power net from the rest of the design,
+   * and dragging a signal net onto ground is a design-wide short no ERC reports. */
+  if(pin_rename_is_global_name(oldlab)) { *status = PRR_GLOBAL_OLD; return 0; }
+  if(pin_rename_is_global_name(newlab)) { *status = PRR_GLOBAL_NEW; return 0; }
+
+  for(i = 0; i < xctx->instances; ++i) {
+    char *t;
+    int is_pin, is_label;
+    if(i == src_inst || xctx->inst[i].ptr < 0) continue;
+    t = xctx->sym[xctx->inst[i].ptr].type;
+    if(!t) continue;
+    is_pin = IS_PIN(t);
+    is_label = !strcmp(t, "label");
+    if(!is_pin && !is_label) continue;
+    my_strdup2(_ALLOC_ID_, &cand, get_tok_value(xctx->inst[i].prop_ptr, "lab", 0));
+    if(!strcmp(cand, oldlab)) {
+      /* another PORT still declares this net: the labels belong to both, and
+       * following one of them silently disconnects the other */
+      if(is_pin)                        { *status = PRR_AMBIGUOUS; n = 0; goto done; }
+      /* a selected label is one the user is editing directly; skipping just that
+       * one would split the net (xschem connects by name across disjoint
+       * geometry), so refuse the lot -- this is also what keeps change_index.tcl's
+       * +/- keys from bumping the same label twice */
+      if(xctx->inst[i].sel == SELECTED)  { *status = PRR_SELECTED;  n = 0; goto done; }
+      targets[n++] = i;
+      continue;
+    }
+    if(!strcmp(cand, newlab)) merge = 1;
+    /* a bus label that shares bits with OLD but is not OLD (A[2] vs A[3:0]) has no
+     * defined partial rename: renaming the exact label alone would strand it */
+    if(is_label && flyline_same_net(cand, oldlab)) { *status = PRR_BUSOVERLAP; n = 0; goto done; }
+  }
+  *status = merge ? PRR_MERGE : PRR_OK;
+  done:
+  my_free(_ALLOC_ID_, &cand);
+  return n;
+}
+
+int propagate_pin_rename(int src_inst, const char *oldlab)
+{
+  int i, n, status = PRR_BAD_INST;
+  int *targets = NULL;
+  char *newlab_cmp = NULL;  /* evaluated: the net identity, what we MATCH on   */
+  char *newlab_raw = NULL;  /* raw text: what we WRITE, so expressions track   */
+  char *newprop = NULL;
+  char msg[512];
+
+  if(src_inst < 0 || src_inst >= xctx->instances) return 0;
+  if(!tclgetboolvar("pin_rename_propagate")) return 0;
+  /* with_quotes 0 = the value the netlister sees (tcl_hook2 applied), 3 = the
+   * literal text with backslashes/quotes kept and no evaluation. Writing the
+   * evaluated form into the labels would freeze them to a snapshot of an
+   * expression-valued pin name and let the two diverge later. */
+  my_strdup2(_ALLOC_ID_, &newlab_cmp, get_tok_value(xctx->inst[src_inst].prop_ptr, "lab", 0));
+  my_strdup2(_ALLOC_ID_, &newlab_raw, get_tok_value(xctx->inst[src_inst].prop_ptr, "lab", 3));
+
+  targets = my_malloc(_ALLOC_ID_, (xctx->instances + 1) * sizeof(int));
+  n = pin_rename_targets(src_inst, oldlab, newlab_cmp, targets, &status);
+
+  /* Warn on everything a user would notice; stay silent on the no-ops that every
+   * property Apply passes through. Both channels: the status bar is what a GUI
+   * user sees, the info buffer is what a headless test can read back. */
+  if(status == PRR_AMBIGUOUS || status == PRR_GLOBAL_OLD || status == PRR_GLOBAL_NEW ||
+     status == PRR_BUSOVERLAP || status == PRR_SELECTED) {
+    my_snprintf(msg, S(msg), "pin rename %s -> %s: net labels NOT renamed (%s)",
+                oldlab, newlab_cmp, pin_rename_status_str(status));
+    statusmsg(msg, 1);
+    statusmsg(msg, 2);
+  } else if(status == PRR_MERGE && n > 0) {
+    my_snprintf(msg, S(msg), "pin rename %s -> %s: %d net label(s) renamed onto the existing net %s",
+                oldlab, newlab_cmp, n, newlab_cmp);
+    statusmsg(msg, 1);
+    statusmsg(msg, 2);
+  }
+  if(n > 0) {
+    for(i = 0; i < n; ++i) {
+      int t = targets[i];
+      my_strdup(_ALLOC_ID_, &newprop, subst_token(xctx->inst[t].prop_ptr, "lab", newlab_raw));
+      my_strdup(_ALLOC_ID_, &xctx->inst[t].prop_ptr, newprop);
+      set_inst_flags(&xctx->inst[t]);
+      symbol_bbox(t, &xctx->inst[t].x1, &xctx->inst[t].y1, &xctx->inst[t].x2, &xctx->inst[t].y2);
+    }
+    xctx->prep_hash_inst = 0;
+    xctx->prep_net_structs = 0;
+    xctx->prep_hi_structs = 0;
+    dbg(1, "propagate_pin_rename(): %s -> %s on %d label(s)\n", oldlab, newlab_raw, n);
+  }
+  my_free(_ALLOC_ID_, &newprop);
+  my_free(_ALLOC_ID_, &newlab_cmp);
+  my_free(_ALLOC_ID_, &newlab_raw);
+  my_free(_ALLOC_ID_, &targets);
+  return n;
+}
+
 /* keep_name: when nonzero, do NOT rewrite the instance name's first character to the
  * new symbol's template prefix on a symbol change (the slick Edit Properties form treats
  * the dedicated Name field as authoritative -- an instance name is arbitrary and a source
@@ -940,6 +1109,7 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
   int ntargets = 0;
   int *ii = &xctx->edit_sym_i; /* static var */
   int modified = 0;
+  char *old_lab = NULL;      /* pin `lab` before this target's edit (propagation) */
 
   dbg(1, "apply_symbol_prop(): displayed_inst=%d scope=%s\n", displayed_inst, scope);
   *ii = displayed_inst;
@@ -968,6 +1138,9 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
   for(k=0;k<ntargets; ++k) {
     dbg(1, "apply_symbol_prop(): for k loop: k=%d\n", k);
     *ii=targets[k];
+    /* the pin name BEFORE this edit -- propagate_pin_rename() compares against it
+     * after the property write below (get_tok_value's buffer is rotating, so copy) */
+    my_strdup2(_ALLOC_ID_, &old_lab, get_tok_value(xctx->inst[*ii].prop_ptr, "lab", 0));
     old_prefix=(get_tok_value(xctx->sym[xctx->inst[*ii].ptr].templ, "name",0))[0];
     /* 20171220 calculate bbox before changes to correctly redraw areas */
     /* must be recalculated as cairo text extents vary with zoom factor. */
@@ -1060,6 +1233,17 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
       my_free(_ALLOC_ID_, &old_name);
     }
     set_inst_flags(&xctx->inst[*ii]);
+    /* A renamed interface pin drags its net labels along, in this same undo slot
+     * (doc/claude/specs/pin_rename_propagation.md). No-op unless the edit really
+     * renamed a pin, so it is safe on every Apply.
+     *
+     * ONLY for a single target. A fan-out Apply (scope=selected/all, and Shift+Q
+     * which hardcodes "selected") gives every pin in the set the SAME new name:
+     * pins A,B,C each with a label, set to Z, would propagate three times and
+     * merge three distinct nets sheet-wide -- and the propagation then erases the
+     * evidence, because sym_vs_sch_pins no longer sees orphan labels and
+     * signal_short never fires on two nets that merely share a name. */
+    if(ntargets == 1) propagate_pin_rename(*ii, old_lab);
   }  /* end for(k=0;k<ntargets; ++k) */
 
   if(pushed) modified = 1;
@@ -1081,6 +1265,7 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
   my_free(_ALLOC_ID_, &name);
   my_free(_ALLOC_ID_, &ptr);
   my_free(_ALLOC_ID_, &targets);
+  my_free(_ALLOC_ID_, &old_lab);
   return modified;
 }
 
