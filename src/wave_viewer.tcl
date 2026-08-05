@@ -7633,11 +7633,21 @@ proc wviewer::searchbar_destroyed {w W} {
   wviewer::searchbar_forget $w
 }
 
-# Drop every trace of the bar from the namespace. The `-variable {}` first is
-# NOT optional: Tk's checkbutton keeps a write/unset trace on its -variable and
-# RE-CREATES the element when it is unset out from under a live widget, so
-# unsetting `sbcase($w)` while `$w.case` still exists would silently leak the
-# entry back. Detaching the variable removes the trace first.
+# Drop every trace of the bar from the namespace. What the `-variable {}` first
+# actually buys, MEASURED on Tk 8.6.14 rather than assumed (an earlier version of
+# this comment overstated it in both directions):
+#   * on the <Destroy> route it is a NO-OP. Tk destroys a frame's children
+#     BEFORE the frame's own <Destroy> fires, so `$w.case` is already gone by the
+#     time the trampoline gets here and the configure errors into its own catch.
+#     It is NOT what makes the destroy path leak-free — the two `unset`s are;
+#   * unsetting the element while the widget is live does NOT re-create it on the
+#     spot (Tk's var trace only re-establishes itself on TCL_TRACE_UNSETS). The
+#     NEXT toggle does: `invoke` writes on/offvalue back into the name.
+# So this line is load-bearing on exactly ONE path — a consumer calling
+# `searchbar_forget` by hand on a still-live bar (which is why this is a separate
+# proc from the trampoline). Detached, a later toggle has nowhere to write and
+# the forget stays final. That path is pinned by BAR29 in
+# tests/headless/test_wave_sigsearch.tcl.
 proc wviewer::searchbar_forget {w} {
   variable sbcfg
   variable sbcase

@@ -68,23 +68,28 @@
 #              sanctioned classes actually exercised; the frozen reference is
 #              still the legacy body and not a call to the shipping one; the
 #              required real-name classes are still present).
-#   BAR01-BAR26 (+BAR18b, +BAR22b, no BAR25 — 27 checks; the two `b` names are
+#   BAR01-BAR29 (+BAR18b, +BAR22b, no BAR25 — 30 checks; the two `b` names are
 #              anti-vacuity guards, added because their partners were MEASURED
-#              to pass without the code they claimed to pin; and BAR25 does not
-#              exist — see the ⚠ below)
+#              to pass without the code they claimed to pin; BAR27-BAR29 are the
+#              same story a round later, added in the item-4 FIXUP after a
+#              verifier measured three lines of shipped code that no check
+#              touched; and BAR25 does not exist — see the ⚠ below)
 #              `wviewer::searchbar` — the ViVA Search toolbar megawidget
-#              (item 4, src/wave_viewer.tcl). REAL Tk widgets on two throwaway
+#              (item 4, src/wave_viewer.tcl). REAL Tk widgets on three throwaway
 #              toplevels: the child set and ViVA §3.2's pack order; the three
 #              DEFAULTS pinned INDEPENDENTLY (type All / syntax Shell / case
 #              OFF, one check each, one widget each — see the group header);
 #              the `-showbutton 0` variant; the label->code mappers; the
-#              callback contract (four args, mapped codes, reached from the
-#              KeyRelease binding, the Search button and a <<ComboboxSelected>>
-#              — NOT from a real X key press, see below); decision 4's error
-#              label populating
+#              callback contract (four args, mapped codes, reached from ALL
+#              FOUR live routes — the KeyRelease binding, the Search button,
+#              and a <<ComboboxSelected>> on EACH dropdown, plus the Match-case
+#              checkbutton's -command — but NOT from a real X key press, see
+#              below); decision 4's error label populating
 #              VERBATIM from sig_match and clearing on the next valid
-#              keystroke; that the label cannot resize the bar; the theme; and
-#              that a destroyed bar leaves no namespace state.
+#              keystroke; that the label cannot resize the bar; the theme; that
+#              a destroyed bar leaves no namespace state; and that a forget on a
+#              still-LIVE bar detaches the checkbutton variable so a later
+#              toggle cannot resurrect it.
 #              ⚠ THERE IS NO BAR25. An end-to-end "a REAL generated KeyRelease
 #              reaches the callback" check was written, soaked 8/8 green, and
 #              then FAILED inside a full 283-test audit under load. It was
@@ -103,7 +108,7 @@
 # The skip banner is worded `SKIPPED: BAR group (Tk/X arm only)` ON PURPOSE:
 # `full_audit.sh:109 is_skip()` matches `RESULT: SKIP`, `skipped: no X` and
 # `SKIP: no X connection` ANYWHERE in the output and runs BEFORE `is_pass`, so
-# any of those three spellings would score this whole 116-check suite as SKIP
+# any of those three spellings would score this whole 119-check suite as SKIP
 # and silently discard every item-1/2/3 check with it.
 #
 # Standalone repro (SM/ST/SB/SL/GS/GSO are `--nogui`-safe; BAR is not):
@@ -134,11 +139,12 @@
 # nothing downstream can tell the difference. It must be left at 0, not 1.
 # It also leaves the oracle's procs and globals defined: `gsl_frozen_ref` and
 # the `gso_*` predicates/counters/lists. Items 4-7 must not reuse those names.
-# The item-4 group leaves NO widget state: both throwaway toplevels (`.wvsb1`,
-# `.wvsb2`) are destroyed and `::barargs` is unset at group end, and BAR24 is
-# the check that a destroyed bar drops its `::wviewer::sbcfg` / `sbcase`
-# entries. It DOES leave `::bgerror` overridden and the `bar_*` helper procs
-# defined, for items 5-7 which want both.
+# The item-4 group leaves NO widget state: all three throwaway toplevels
+# (`.wvsb1`, `.wvsb2`, `.wvsb3`) are destroyed and `::barargs` is unset at group
+# end, and BAR24 is the check that a destroyed bar drops its
+# `::wviewer::sbcfg` / `sbcase` entries. It DOES leave `::bgerror` overridden
+# (items 5-7 want it) and the proc `barcb` defined — there are no `bar_*` helper
+# procs any more, `bar_send_key` went with BAR25.
 #
 # This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
 # is in-memory — no `.raw` file appears (verified with `git status`).
@@ -1117,6 +1123,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BAR17 a ComboboxSelected on the syntax dropdown reaches the callback} \
     $::barargs [list {^v.*} regexp 1 v]
 
+  # BAR27/BAR28 exist because the gap was MEASURED, not suspected: deleting BOTH
+  # the type dropdown's <<ComboboxSelected>> binding AND the checkbutton's
+  # -command left all 116 checks green, while the shipped contract comment, the
+  # commit message and the receipt all claimed FOUR routes converge on
+  # searchbar_fire. BAR17 covered the SYNTAX combobox only, and nothing ran the
+  # checkbutton's -command at all — `$w.case select` (used above) writes the
+  # variable WITHOUT invoking the command, which is exactly why the hole was
+  # invisible. Ruling 17's corollary: widen the coverage. Each of the two changes
+  # ONE selector and fires ONE route, so each route is pinned on its own.
+  set ::barargs {}
+  $w.type set Current
+  event generate $w.type <<ComboboxSelected>>
+  update
+  check {BAR27 a ComboboxSelected on the TYPE dropdown reaches the callback} \
+    $::barargs [list {^v.*} regexp 1 i]
+
+  # `invoke` IS the -command route: it toggles the variable and then runs
+  # -command. Case is 1 coming in (BAR11's `select`), so the callback must see
+  # the TOGGLED value 0 — which also proves the callback read the post-toggle
+  # state and not a stale snapshot.
+  set ::barargs {}
+  $w.case invoke
+  update
+  check {BAR28 the Match-case checkbutton's -command reaches the callback} \
+    $::barargs [list {^v.*} regexp 0 i]
+
   # --- decision 4's error label: THIS widget owns it (item 3's D4) ---
   # The expectation is COMPUTED from sig_match at test time, never a hard-coded
   # Tcl message string: the check is "the label shows the matcher's message
@@ -1200,6 +1232,39 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   eval [bind $w.pat <KeyRelease>]
   check {BAR26 the callback still fires when the pattern is INVALID} \
     $::barargs [list {[} regexp 0 all]
+
+  # --- searchbar_forget on a LIVE bar: the `-variable {}` detach, pinned ---
+  # The comment above `searchbar_forget` used to claim this line is what stops
+  # BAR24 seeing the entry leak back. That is FALSE, and the probe that measured
+  # it (Tk 8.6.14, this box) is worth restating because the shape is
+  # counter-intuitive:
+  #   * at the frame's own <Destroy>, `winfo exists $w.case` is already 0 — Tk
+  #     destroys children first — so on THAT route the configure just errors into
+  #     its catch and BAR24 passes with or without it;
+  #   * a bare `unset` of a live checkbutton's variable does NOT re-create it;
+  #     the next `invoke` does.
+  # The line is therefore load-bearing on exactly one path: a consumer calling
+  # `searchbar_forget` by hand on a still-live bar (D3's reason for splitting it
+  # from the trampoline). This check is that path, on its OWN throwaway bar so
+  # that nothing above is disturbed. Delete the detach and the `invoke` below
+  # writes ::wviewer::sbcase($w3) straight back.
+  destroy .wvsb3
+  toplevel .wvsb3
+  wm title .wvsb3 {item4 searchbar forget}
+  wm geometry .wvsb3 +100+420
+  set w3 [wviewer::searchbar_build .wvsb3 -command barcb]
+  pack $w3 -fill x
+  update
+  wviewer::searchbar_forget $w3
+  $w3.case invoke
+  update
+  # the `1` is the anti-vacuity guard: the widget really was still ALIVE across
+  # the forget, so this is the live-bar path and not a second copy of BAR24.
+  check {BAR29 forget on a LIVE bar detaches the var, so a later toggle cannot resurrect it} \
+    [list [winfo exists $w3.case] [info exists ::wviewer::sbcfg($w3)] \
+          [info exists ::wviewer::sbcase($w3)]] [list 1 0 0]
+  destroy .wvsb3
+  update
 
   # --- teardown, and what teardown must leave behind: nothing ---
   destroy .wvsb1
