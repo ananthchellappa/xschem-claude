@@ -365,6 +365,17 @@ namespace eval wviewer {
   # switch. Items 9-15 inherit this.
   variable browser;     array set browser {}
   variable browsershow; array set browsershow {}
+  # signal-browser PLAN item 9: the sidebar's CONTENT state, per window.
+  #   browsersigs($token) = the raw inventory SNAPSHOT (full raw names, settled
+  #     decision 2), taken by browser_reload each time the sidebar is shown.
+  #     `atdsigs`-shaped and for the same reason: a snapshot means a keystroke
+  #     in either bar costs no 0173 context loan. Its declared limit is that a
+  #     raw loaded AFTER the sidebar was shown needs a re-show (item 13/15).
+  #   browserrows($token) = the row list currently in the treeview, so the plot
+  #     gestures can turn a row id back into full raw names without re-deriving
+  #     anything from the widget.
+  variable browsersigs; array set browsersigs {}
+  variable browserrows; array set browserrows {}
   # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
   # graph index). Window properties, not graph properties — hence arrays
   # keyed by session token like the mirrors above, NOT layout-dict keys (the
@@ -608,6 +619,9 @@ proc wviewer::forget {token} {
   # `gridshow` are -- an undeclared `variable` makes the unsets below address a
   # LOCAL array, so the namespace entries survive every close.
   variable browser; variable browsershow
+  # signal-browser item 9: the inventory SNAPSHOT and the last row list, same
+  # rule -- an undeclared `variable` leaks one entry per closed window forever.
+  variable browsersigs; variable browserrows
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -651,6 +665,8 @@ proc wviewer::forget {token} {
   catch {unset dest($token)}
   catch {unset browser($token)}
   catch {unset browsershow($token)}
+  catch {unset browsersigs($token)}
+  catch {unset browserrows($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -5775,22 +5791,458 @@ proc wviewer::grid_toggle_at {W} {
 # from the rect model (issue 0186 is still open and blanks the document under a
 # CIW `xschem reload`).
 
+# --- item 9: the PURE half — what the tree SHOULD contain --------------------
+# plan_plot/plot_signals' split, reused: the row list is computed by a proc that
+# touches no widget, so grouping, de-duplication and the search/filter AND are
+# all testable in `--nogui`, where there is no Tk at all. Only the insertion
+# needs a display.
+
+# `entries` are item-2 dicts {name type leaf path}. Returns an ORDERED list of
+# row dicts {id .. parent .. text .. kind group|leaf .. name ..}, parents always
+# BEFORE their children (which is what lets browser_populate insert them in
+# order without a second pass).
+#
+# ⚠ THE `g:` / `s:` ID PREFIXES ARE LOAD-BEARING, not decoration. A raw signal
+# literally named `x1.x2` and the GROUP `x1.x2` minted by `v(x1.x2.net5)` would
+# otherwise claim the same treeview id — and a duplicate id THROWS
+# (`Item ... already exists`, measured on Tk 8.6.14). A throw here lands on the
+# searchbar's <KeyRelease> pump, i.e. bgerror, i.e. a modal dialog under X.
+# The `#<n>` de-dup below is mandatory for the same reason: two identical names
+# in one raw file are legal.
+#
+# Grouping is per DOT SEGMENT of the entry's `path` (ruling 14: `path`/`leaf`
+# split the UNWRAPPED name, so `v(x1.x2.net5)` -> path `x1.x2`, leaf `net5`,
+# and the tree reads `x1 > x2 > net5` rather than growing a node called `v(x1`).
+# Groups are minted lazily, in first-appearance order.
+#
+# FLAT when NO entry has a path (the PLAN's clause). An entry with an empty path
+# stays at top level even when other entries are grouped.
+proc wviewer::browser_rows {entries} {
+  set anypath 0
+  foreach e $entries {
+    if {[wviewer::dget $e path {}] ne {}} { set anypath 1 ; break }
+  }
+  set rows {}
+  array set seen {}
+  array set grp {}
+  foreach e $entries {
+    set name [wviewer::dget $e name {}]
+    set leaf [wviewer::dget $e leaf $name]
+    set path [wviewer::dget $e path {}]
+    set parent {}
+    if {$anypath && $path ne {}} {
+      set pfx {}
+      foreach seg [split $path .] {
+        set pfx [expr {$pfx eq {} ? $seg : "$pfx.$seg"}]
+        set gid "g:$pfx"
+        if {![info exists grp($gid)]} {
+          set grp($gid) 1
+          set seen($gid) 1
+          lappend rows [dict create id $gid parent $parent text $seg \
+                          kind group name {}]
+        }
+        set parent $gid
+      }
+    } else {
+      # ungrouped: the row text is the whole name, not the last dot-segment —
+      # a flat list that showed only `net5` for `v(x1.x2.net5)` would be lying
+      set leaf $name
+    }
+    set id "s:$name"
+    if {[info exists seen($id)]} {
+      set n 2
+      set cand "s:$name#$n"
+      while {[info exists seen($cand)]} { incr n ; set cand "s:$name#$n" }
+      set id $cand
+    }
+    set seen($id) 1
+    lappend rows [dict create id $id parent $parent text $leaf \
+                    kind leaf name $name]
+  }
+  return $rows
+}
+
+# The row `id`'s kind (`group` / `leaf`), or {} when no such row. PURE.
+proc wviewer::browser_kind {rows id} {
+  foreach r $rows {
+    if {[wviewer::dget $r id {}] eq $id} { return [wviewer::dget $r kind {}] }
+  }
+  return {}
+}
+
+# Every FULL RAW NAME at or under row `id`, in row order. A leaf answers with
+# itself; a group answers with every leaf beneath it, however deep. PURE — which
+# is what makes "the Plot button plots a whole group" testable without Tk.
+#
+# ⚠ "ROW ORDER" IS browser_rows' FIRST-APPEARANCE ORDER — i.e. RAW-FILE ORDER —
+# and that is NOT always the tree's visual top-to-bottom order. ttk re-parents a
+# late arrival under the group it belongs to, so a raw listing
+# `v(x1.x2.n) v(x1.y3.n) i(x1.x2.n)` DRAWS the two `x1.x2` leaves adjacent while
+# this proc still returns them first-and-last. Plotting a group therefore plots
+# in raw order, not in the order the rows appear on screen. Declared (receipt
+# D7) rather than silently ordered either way.
+#
+# Rows are ordered parent-before-child, so ONE forward pass propagates
+# membership: a row is included when it IS the id or when its parent already is.
+proc wviewer::browser_leaf_names {rows id} {
+  array set inc {}
+  set inc($id) 1
+  set out {}
+  foreach r $rows {
+    set rid [wviewer::dget $r id {}]
+    set par [wviewer::dget $r parent {}]
+    if {$par ne {} && [info exists inc($par)]} { set inc($rid) 1 }
+    if {![info exists inc($rid)]} { continue }
+    if {[wviewer::dget $r kind {}] ne {leaf}} { continue }
+    lappend out [wviewer::dget $r name {}]
+  }
+  return $out
+}
+
+# ONE searchbar dict applied to a name list. `{}` (a torn-down or absent bar)
+# is the identity, so a browser whose filter bar has gone still searches.
+# Returns sig_match's own {ok <names>} / {err <msg>}.
+proc wviewer::browser_match_one {sigs d} {
+  if {![llength $d]} { return [list ok $sigs] }
+  return [wviewer::sig_match $sigs [wviewer::dget $d pattern {}] \
+            -syntax [wviewer::dget $d syntax shell] \
+            -case   [wviewer::dget $d case 0] \
+            -type   [wviewer::dget $d type all]]
+}
+
+# ⚠⚠ THE AND, AND THE ONLY PLACE IT LIVES. `d1` is the top Search bar, `d2` the
+# bottom Filter bar (settled decision 5 / ruling 20).
+#
+# The AND *IS* THE CHAINING: the second bar filters the FIRST BAR'S OUTPUT,
+# never the original list. Written as two explicit calls rather than a loop so
+# that the one line carrying the whole claim — `[lindex $r1 1]` as the second
+# call's input — is visible, greppable and singly sabotageable. Feeding `$sigs`
+# there instead turns the AND into "whatever the filter bar says", which no
+# count of rows can see when the two patterns happen to overlap.
+#
+# It also ANDs the two `-type` dropdowns for free, because each call applies its
+# own bar's type to the survivors of the other's.
+#
+# An `err` from EITHER bar short-circuits with that bar's message (decision 4:
+# an invalid regexp is an ERROR, never a silent match-all).
+proc wviewer::browser_and {sigs d1 d2} {
+  set r1 [wviewer::browser_match_one $sigs $d1]
+  if {[lindex $r1 0] ne {ok}} { return $r1 }
+  set r2 [wviewer::browser_match_one [lindex $r1 1] $d2]
+  return $r2
+}
+
 # Build the (HIDDEN) sidebar. Out of `open` for the same reason `tabbar_build`
 # is: a viewer that never opens the browser keeps its canvas geometry
 # BYTE-IDENTICAL to the pre-item-8 viewer, which every viewport-derived
 # assertion in the wave suites (band_geometry, graphbb, viewport_rect) depends
 # on. Returns 1.
+#
+# item 9 fills it: the top Search bar, a Plot toolbar, the tree, the bottom
+# Filter bar, and item 8's placeholder label REPURPOSED as the status/error
+# line at the very bottom (which is also decision 4's second display surface —
+# see browser_refresh).
 proc wviewer::browser_build {token top} {
   variable browser
+  variable browsersigs
+  variable browserrows
   catch {destroy $top.wvbrowser}
-  frame $top.wvbrowser -background [ase::theme panel] -takefocus 0
-  label $top.wvbrowser.ph -anchor nw -justify left -width 22 \
+  set f $top.wvbrowser
+  frame $f -background [ase::theme panel] -takefocus 0
+  label $f.ph -anchor nw -justify left -width 22 \
     -font AseLabelFont -background [ase::theme panel] \
     -text "Signal Browser\n(empty)"
-  pack $top.wvbrowser.ph -side top -fill x -padx 4 -pady 4
+  # THE TOP BAR KEEPS ITS SEARCH BUTTON (ruling 20); the BOTTOM one is the
+  # `-showbutton 0` variant that ruling reserved, and item 9 is its first user.
+  # `-fill x` on both is item 4's stated requirement.
+  wviewer::searchbar_build $f -command [list wviewer::browser_search_cb $token]
+  frame $f.tb -background [ase::theme panel]
+  button $f.tb.plot -text Plot -font AseLabelFont \
+    -command [list wviewer::browser_plot_selection $token]
+  pack $f.tb.plot -side left -padx {6 4} -pady 2
+  frame $f.tvf -background [ase::theme panel]
+  ttk::treeview $f.tvf.tv -show tree -selectmode extended -style Ase.Treeview \
+    -yscrollcommand [list $f.tvf.sb set]
+  $f.tvf.tv column #0 -width 200 -minwidth 80 -stretch 1
+  scrollbar $f.tvf.sb -command [list $f.tvf.tv yview]
+  pack $f.tvf.sb -side right -fill y
+  pack $f.tvf.tv -side left -fill both -expand 1
+  wviewer::searchbar_build $f -name wvfilter -showbutton 0 \
+    -command [list wviewer::browser_filter_cb $token]
+  pack $f.wvsearch -side top -fill x
+  pack $f.tb       -side top -fill x
+  # bottom-up: the status line last of all, the Filter bar just above it
+  pack $f.ph       -side bottom -fill x -padx 4 -pady 4
+  pack $f.wvfilter -side bottom -fill x
+  pack $f.tvf      -side top -fill both -expand 1
+  # ⚠ NO `break` ON EITHER, and that is MEASURED rather than assumed: the
+  # bindtags of a treeview inside a viewer toplevel are {<tv> Treeview <top>
+  # all}. The CANVAS is not among them (set_bindings binds win_path, not the
+  # toplevel), so xschem.tcl's canvas-level <Double-Button-1> cannot fire here;
+  # the toplevel carries only Expose/Visibility/FocusIn; and `bind all` has
+  # nothing relevant. Letting ttk's own Double-1 run is therefore harmless, and
+  # it is exactly what keeps group expand/collapse working. Pinned by BT34.
+  #
+  # The trailing 0/1 is the GROUPS flag: a double-click on a group must NOT
+  # plot (ttk's expand/collapse owns that gesture), MMB and the Plot button do.
+  bind $f.tvf.tv <Double-Button-1> \
+    [list wviewer::browser_plot_at $token %W %x %y 0]
+  bind $f.tvf.tv <Button-2> \
+    [list wviewer::browser_plot_at $token %W %x %y 1]
+  set browsersigs($token) {}
+  set browserrows($token) {}
   set browser($token) 0
   wviewer::sync_browser_mirror $token
+  ase::ui::apply_theme $f
   return 1
+}
+
+# --- item 9: state + refresh --------------------------------------------------
+
+# Re-read the window's raw inventory into the SNAPSHOT. THE ONLY raw read in the
+# browser, and it goes through `wviewer::signal_list` — settled decision 13: the
+# browser's content derives from `xschem raw list`, NEVER from the rect model
+# (issue 0186 is open and blanks the document under a CIW `xschem reload`).
+#
+# A SNAPSHOT rather than a live read, `atdsigs`-shaped (item 5's precedent), is
+# also why a keystroke in either bar costs no context loan: the 0173 bracket is
+# taken HERE, once per show, not once per character.
+proc wviewer::browser_reload {token} {
+  variable windows
+  variable browsersigs
+  if {![dict exists $windows $token]} { return 0 }
+  set names {}
+  foreach e [wviewer::signal_list $token] { lappend names [dict get $e name] }
+  set browsersigs($token) $names
+  return [llength $names]
+}
+
+# Both bars -> browser_and. Returns {ok <names>} / {err <msg>}.
+#
+# ⚠ IT READS BOTH BARS ITSELF and the callback's own `pat/syn/case/type`
+# arguments are DELIBERATELY IGNORED (see browser_search_cb). That is what makes
+# it structurally impossible for one route to apply one bar and not the other —
+# a callback that used its own arguments would apply whichever bar fired.
+proc wviewer::browser_match {token} {
+  variable windows
+  variable browsersigs
+  if {![dict exists $windows $token]} { return [list ok {}] }
+  if {![info exists browsersigs($token)]} { return [list ok {}] }
+  set f [dict get $windows $token top].wvbrowser
+  set d1 [wviewer::searchbar_get $f.wvsearch]
+  set d2 [wviewer::searchbar_get $f.wvfilter]
+  return [wviewer::browser_and $browsersigs($token) $d1 $d2]
+}
+
+# The status/error line — item 8's `.ph` label, repurposed. It keeps saying
+# `Signal Browser` (BS22 asserts the label says what it is) and carries the
+# count, or the matcher's message.
+proc wviewer::browser_status {token msg} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set l [dict get $windows $token top].wvbrowser.ph
+  if {[catch {winfo exists $l} e] || !$e} { return 0 }
+  catch {$l configure -text "Signal Browser\n$msg"}
+  return 1
+}
+
+# match -> browser_rows -> the treeview -> the status line. `reload` 1 re-reads
+# the raw first (the show path); 0 re-filters the snapshot (every keystroke).
+# Returns 1 when the tree was rewritten, 0 when it was deliberately held.
+#
+# ⚠ THIS PROC MUST NOT THROW. It rides both searchbars' <KeyRelease> pump, and
+# a Tcl error there pops bgerror — modal under X, which HANGS a headless run.
+# Same discipline as add_trace_filter and readout_refresh: EVERY exit is a
+# guard, never an error.
+#
+# On `{err msg}` it HOLDS the last good tree (item 5's ruling) and mirrors the
+# message into the status label. The mirror is not redundant: the bar's own
+# `err` label is the FIRST widget to clip in a sidebar this narrow (receipt D1),
+# so the status line is what actually keeps settled decision 4 visible.
+proc wviewer::browser_refresh {token {reload 0}} {
+  variable windows
+  variable browsersigs
+  variable browserrows
+  if {![dict exists $windows $token]} { return 0 }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f.tvf.tv} e] || !$e} { return 0 }
+  if {$reload} { catch {wviewer::browser_reload $token} }
+  if {![info exists browsersigs($token)]} { set browsersigs($token) {} }
+  set total [llength $browsersigs($token)]
+  if {[catch {wviewer::browser_match $token} r]} {
+    wviewer::browser_status $token $r
+    return 0
+  }
+  if {[lindex $r 0] ne {ok}} {
+    wviewer::browser_status $token [lindex $r 1]
+    return 0
+  }
+  set names [lindex $r 1]
+  set entries {}
+  foreach n $names { lappend entries [wviewer::signal_entry $n] }
+  if {[catch {wviewer::browser_rows $entries} rows]} {
+    wviewer::browser_status $token $rows
+    return 0
+  }
+  if {[catch {wviewer::browser_populate $f.tvf.tv $rows} pe]} {
+    wviewer::browser_status $token $pe
+    return 0
+  }
+  set browserrows($token) $rows
+  wviewer::browser_status $token "[llength $names] of $total signals"
+  return 1
+}
+
+# Apply a row list to a treeview. Groups are inserted OPEN, so the hierarchy is
+# what the user sees rather than something they have to go looking for.
+proc wviewer::browser_populate {tv rows} {
+  $tv delete [$tv children {}]
+  foreach r $rows {
+    $tv insert [dict get $r parent] end -id [dict get $r id] \
+      -text [dict get $r text] -open 1
+  }
+  return [llength $rows]
+}
+
+# The two searchbar consumers. `args` swallows the bar's
+# `<pat> <syn> <case> <type>` AND IS NEVER READ — see browser_match's ⚠.
+proc wviewer::browser_search_cb {token args} {
+  wviewer::browser_refresh $token
+  return
+}
+proc wviewer::browser_filter_cb {token args} {
+  wviewer::browser_refresh $token
+  return
+}
+
+# --- item 9: the three plot gestures (ViVA §3.4) ------------------------------
+# double-click, middle-click, and the Plot toolbar button. ALL THREE converge on
+# `wviewer::plot_signals`, which is where item 7's destination policy lives
+# (ruling 24: `plot_dest` is THE accessor and nothing re-implements it). Nothing
+# below reads plot_dest, plan_plot or the layout.
+#
+# ⚠ DECLARED LIMIT, INHERITED NOT INTRODUCED (ruling 24): under MULTI-plot a
+# destination of `Replace` really Appends, because plan_plot emits no clear key
+# there. A browser gesture offering Replace in multi mode is therefore offering
+# Append. Surfaced in receipts/09_receipt.md; not item 9's to fix.
+
+# Row ids -> full raw names -> plot_signals. Returns the number of names
+# plotted, 0 for a refused/empty gesture (which SPEAKS rather than sitting
+# silent). Names are deduplicated but keep ROW ORDER, so a selection spanning a
+# group and one of its leaves plots that leaf once.
+proc wviewer::browser_plot_ids {token ids} {
+  variable windows
+  variable browserrows
+  if {![dict exists $windows $token]} { return 0 }
+  if {![info exists browserrows($token)]} { return 0 }
+  set rows $browserrows($token)
+  set names {}
+  foreach id $ids {
+    foreach n [wviewer::browser_leaf_names $rows $id] {
+      if {[lsearch -exact $names $n] < 0} { lappend names $n }
+    }
+  }
+  if {![llength $names]} {
+    wviewer::echo {signal browser: nothing selected to plot} error
+    return 0
+  }
+  set errs {}
+  if {[catch {wviewer::plot_signals $token $names} errs]} {
+    wviewer::echo "signal browser: $errs" error
+    return 0
+  }
+  foreach e $errs {
+    wviewer::echo "signal browser: [lindex $e 0]: [lindex $e 1]" error
+  }
+  return [llength $names]
+}
+
+# The Plot toolbar button: whatever is selected, in row order.
+proc wviewer::browser_plot_selection {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  set sel {}
+  catch {set sel [$tv selection]}
+  return [wviewer::browser_plot_ids $token $sel]
+}
+
+# The double-click and middle-click bodies. `groups` 1 = a group row plots its
+# leaves (MMB), 0 = a group row plots NOTHING (double-click, where ttk's own
+# expand/collapse owns the gesture).
+#
+# ⚠ SELECTION-INDEPENDENT BY DESIGN. The row comes from `identify row %x %y`,
+# not from `$tv selection`, because `event generate <Double-Button-1>` does not
+# reliably set the selection first — a handler that read the selection would
+# make the gesture untestable AND would surprise a user who double-clicked a row
+# other than the selected one. When the clicked row IS in the selection the
+# WHOLE selection plots (the ViVA behaviour); otherwise just that row.
+proc wviewer::browser_plot_at {token W x y {groups 1}} {
+  variable windows
+  variable browserrows
+  if {![dict exists $windows $token]} { return 0 }
+  if {[catch {winfo exists $W} e] || !$e} { return 0 }
+  set row {}
+  catch {set row [$W identify row $x $y]}
+  if {$row eq {}} { return 0 }
+  set sel {}
+  catch {set sel [$W selection]}
+  if {[lsearch -exact $sel $row] >= 0} { set ids $sel } else { set ids [list $row] }
+  if {!$groups && [info exists browserrows($token)]} {
+    set keep {}
+    foreach id $ids {
+      if {[wviewer::browser_kind $browserrows($token) $id] eq {group}} { continue }
+      lappend keep $id
+    }
+    if {![llength $keep]} { return 0 }
+    set ids $keep
+  }
+  return [wviewer::browser_plot_ids $token $ids]
+}
+
+# --- item 9: THE WIDTH RULE ---------------------------------------------------
+# MEASURED, and it is a rule rather than a magic number because both halves are
+# forced. One searchbar wants 755 px (type 97, pat 204, syntax 87, case 92,
+# search 69, err 172, plus padding); with pack propagation ON, a 700 px toplevel
+# came back with sidebar width 700 AND canvas width 700 — a BROKEN layout, not a
+# narrow one. So propagation goes off and the width is derived:
+#
+#  * the `err`-label subtraction is what keeps settled decision 5's Search
+#    button MAPPED when the cap does not bind (at 583 px it is on-screen; the
+#    error label is the one thing allowed to clip, and browser_refresh mirrors
+#    its message into the status line so decision 4 survives the clip);
+#  * the 45% cap is what stops the sidebar eating the canvas on a small window;
+#  * the 240 px floor stops a tiny window collapsing it to nothing.
+#
+# It runs from browser_show's PACK branch ONLY, never from browser_build: the
+# toplevel is mapped there (so `winfo width` is real), and build must stay
+# geometry-neutral or item 8's BS21 — "built but not packed, nothing moved" —
+# stops meaning anything.
+proc wviewer::browser_width {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set f $top.wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return 0 }
+  # ⚠ MEASURED, AND THE WHOLE RULE DEPENDS ON IT: a frame's `reqwidth` is
+  # computed by the packer on the IDLE queue, so straight after `pack $f` the
+  # searchbar still reports 1 and the derivation below collapses to the 240 px
+  # floor -- which clips the entry so hard that Tk will not even deliver a
+  # synthetic <KeyRelease> to it (the bar's own widgets are unmapped). Idle
+  # tasks only; this is a gesture path, never an event pump, so nothing
+  # re-enters.
+  catch {update idletasks}
+  catch {pack propagate $f 0}
+  set w 280
+  catch {set w [expr {[winfo reqwidth $f.wvsearch] -
+                      [winfo reqwidth $f.wvsearch.err]}]}
+  set cap 0
+  catch {set cap [expr {int(0.45 * [winfo width $top])}]}
+  if {$cap > 0 && $w > $cap} { set w $cap }
+  if {$w < 240} { set w 240 }
+  catch {$f configure -width $w}
+  return $w
 }
 
 # 1 when this window's sidebar is showing. An unknown token, or one whose
@@ -5829,7 +6281,15 @@ proc wviewer::browser_show {token} {
   if {[info exists browser($token)] && $browser($token)} {
     if {[catch {pack info $f}]} {
       pack $f -side left -fill y -before $top.drw
+      # item 9: sizing belongs HERE, not in browser_build — the toplevel is
+      # mapped on this branch, so `winfo width` is a real number.
+      catch {wviewer::browser_width $token}
     }
+    # item 9: SHOW = REPOPULATE. The inventory is a snapshot taken here (see
+    # browser_reload), so showing the sidebar is the one moment a raw read is
+    # owed. `catch`ed: a refresh that cannot read must not stop the sidebar
+    # appearing.
+    catch {wviewer::browser_refresh $token 1}
   } else {
     catch {pack forget $f}
   }
@@ -5847,8 +6307,15 @@ proc wviewer::sync_browser_mirror {token} {
 # state, or {} plus a CIW error when no viewer resolves or the word is bad.
 #
 # grid_toggle's contract MINUS the model half, and the subtraction is
-# principled: this changes WIDGET GEOMETRY only -- no rect token, no C state, no
-# context switch (issue 0173: do not take a context loan you do not need). It
+# principled: THIS PROC changes widget geometry only -- no rect token, no C
+# state, no context switch of its own.
+#
+# ⚠ NARROWED BY ITEM 9 (ruling 17: never let a claim outrun its coverage).
+# Toggling ON now REPOPULATES the tree, and that read DOES take a 0173 context
+# loan -- but one level down, inside `wviewer::signal_list`, which owns the
+# enter_ctx/leave_ctx bracket. So "no context switch" remains literally true of
+# this proc's body (which is all BS08 greps), and is NOT true of the gesture as
+# a whole. The loan lives in signal_list; the rest of the paragraph stands. It
 # must NOT capture or regenerate either: packing the sidebar resizes the canvas,
 # which already goes <Configure> -> wviewer::on_configure -> configure_apply,
 # and that path captures and regenerates. A second one here would double-fold
