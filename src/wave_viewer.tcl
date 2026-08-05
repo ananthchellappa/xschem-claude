@@ -352,6 +352,19 @@ namespace eval wviewer {
   variable sharedx; array set sharedx {}
   # viewer plan item 3: Graph > Grid checkbutton mirror, per window
   variable gridshow; array set gridshow {}
+  # signal-browser PLAN item 8: the LEFT SIDEBAR's per-window state. TWO arrays,
+  # deliberately the `gridshow` shape: `browser` is the AUTHORITY (0/1 = the
+  # sidebar is packed) and `browsershow` exists ONLY because Tk's checkbutton
+  # -variable needs a global it can write. Collapsing them into one would make
+  # the menu variable the state, and a key press would then have no way to be
+  # wrong about it -- which sounds like a feature and is actually the loss of an
+  # observable seam (tab_thaw's wording, :9330).
+  # PER TOKEN AND DELIBERATELY NOT PER TAB: `layouts` and `cvr` are frozen and
+  # thawed by tab_freeze/tab_thaw, and a sidebar listing the WINDOW's raw
+  # inventory (one xctx, one raw, shared by every tab) must not blink on a tab
+  # switch. Items 9-15 inherit this.
+  variable browser;     array set browser {}
+  variable browsershow; array set browsershow {}
   # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
   # graph index). Window properties, not graph properties — hence arrays
   # keyed by session token like the mirrors above, NOT layout-dict keys (the
@@ -591,6 +604,10 @@ proc wviewer::forget {token} {
   # what an undeclared `variable` costs (a silent per-token leak that survives
   # every close).
   variable dest
+  # signal-browser item 8: DECLARED here for the same reason `dest` and
+  # `gridshow` are -- an undeclared `variable` makes the unsets below address a
+  # LOCAL array, so the namespace entries survive every close.
+  variable browser; variable browsershow
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -632,6 +649,8 @@ proc wviewer::forget {token} {
   catch {unset mode($token)}
   catch {unset target($token)}
   catch {unset dest($token)}
+  catch {unset browser($token)}
+  catch {unset browsershow($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -894,6 +913,11 @@ proc wviewer::open {token} {
   # editor bind: the readout's <ButtonRelease> comment applies verbatim).
   bind $wp <Motion> "+[list wviewer::status_refresh $token]"
   wviewer::status_refresh $token
+  # signal-browser item 8: the LEFT sidebar, built HIDDEN (browser_build seeds
+  # `browser($token) 0` and the mirror with it). Unpacked, so a viewer that
+  # never opens it has the canvas geometry it always had -- the tabbar_build
+  # rule, for the same reason.
+  wviewer::browser_build $token $top
   # item 18: refit the graph(s) to the new viewport on any canvas resize so the
   # graph ALWAYS fills the window. APPEND (never replace) — <Configure> is in
   # keepseqs and the editor's own resize handler (resetwin+draw) MUST keep
@@ -5739,6 +5763,155 @@ proc wviewer::grid_toggle_at {W} {
   return [wviewer::grid_toggle {} $token]
 }
 
+# --- the Signal Browser sidebar (signal-browser PLAN item 8) -----------------
+#
+# SETTLED DECISION 1: the browser is a LEFT SIDEBAR inside the viewer toplevel,
+# not a separate toplevel and not a floating assistant. xschem has no
+# dockable-assistant framework and building one buys this batch nothing.
+#
+# Item 8 ships the SHELL ONLY: the frame, a placeholder label, the pack/unpack
+# pair, the menu twin and the key. Items 9-15 fill it, and per settled decision
+# 13 they must derive its content from `xschem raw list` / `xschem raw`, NEVER
+# from the rect model (issue 0186 is still open and blanks the document under a
+# CIW `xschem reload`).
+
+# Build the (HIDDEN) sidebar. Out of `open` for the same reason `tabbar_build`
+# is: a viewer that never opens the browser keeps its canvas geometry
+# BYTE-IDENTICAL to the pre-item-8 viewer, which every viewport-derived
+# assertion in the wave suites (band_geometry, graphbb, viewport_rect) depends
+# on. Returns 1.
+proc wviewer::browser_build {token top} {
+  variable browser
+  catch {destroy $top.wvbrowser}
+  frame $top.wvbrowser -background [ase::theme panel] -takefocus 0
+  label $top.wvbrowser.ph -anchor nw -justify left -width 22 \
+    -font AseLabelFont -background [ase::theme panel] \
+    -text "Signal Browser\n(empty)"
+  pack $top.wvbrowser.ph -side top -fill x -padx 4 -pady 4
+  set browser($token) 0
+  wviewer::sync_browser_mirror $token
+  return 1
+}
+
+# 1 when this window's sidebar is showing. An unknown token, or one whose
+# window was never built, reads 0 -- the sidebar does not exist before the
+# window does, and "no window" must be an ANSWER, not a throw.
+proc wviewer::browser_shown {token} {
+  variable browser
+  if {$token eq {}} { return 0 }
+  if {![info exists browser($token)]} { return 0 }
+  return [expr {$browser($token) ? 1 : 0}]
+}
+
+# Pack / unpack the sidebar to match the mirror -- `readout_show` (:7080)
+# verbatim in shape, turned through 90 degrees.
+#
+# ⚠ `-before $top.drw` IS MANDATORY AND ITS EXACT SPELLING IS LOAD-BEARING.
+# The canvas is packed `-side right -fill both -expand true` (xschem.tcl), so a
+# plain `-side left` AFTER it in the packing order gets whatever is left, i.e.
+# nothing -- the sidebar collapses, not the canvas. This is also the precise
+# line item 0 MEASURED surviving an `xschem reload` on a viewer context
+# (doc/claude/signal_browser_batch/receipts/00_precondition.md §3), which is
+# what waived the items-8-15 auto-defer. Diverging from it invalidates that
+# waiver.
+#
+# The editor's own toolbar can want the same LEFT slot (`pack $topwin.toolbar
+# -side left -fill y -before $topwin.drw`, xschem.tcl) -- `open` already
+# `pack forget`s it per window and nothing re-shows it in a viewer, so the two
+# left bars cannot stack today.
+proc wviewer::browser_show {token} {
+  variable windows
+  variable browser
+  if {![dict exists $windows $token]} { return }
+  set top [dict get $windows $token top]
+  set f $top.wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return }
+  if {[info exists browser($token)] && $browser($token)} {
+    if {[catch {pack info $f}]} {
+      pack $f -side left -fill y -before $top.drw
+    }
+  } else {
+    catch {pack forget $f}
+  }
+}
+
+# Keep the View-menu checkbutton's variable in step with the authority, so the
+# menu is right however the state last changed (key, command, build) --
+# sync_grid_mirror's push-don't-poll rule.
+proc wviewer::sync_browser_mirror {token} {
+  variable browsershow
+  set browsershow($token) [wviewer::browser_shown $token]
+}
+
+# Toggle (or set) the sidebar. `want` {} = invert, else 0/1. Returns the NEW
+# state, or {} plus a CIW error when no viewer resolves or the word is bad.
+#
+# grid_toggle's contract MINUS the model half, and the subtraction is
+# principled: this changes WIDGET GEOMETRY only -- no rect token, no C state, no
+# context switch (issue 0173: do not take a context loan you do not need). It
+# must NOT capture or regenerate either: packing the sidebar resizes the canvas,
+# which already goes <Configure> -> wviewer::on_configure -> configure_apply,
+# and that path captures and regenerates. A second one here would double-fold
+# and double-draw. Kept from grid_toggle: refuse-a-no-op-without-logging, and
+# exactly ONE replay line carrying the resolved state and the explicit token.
+proc wviewer::browser_toggle {{want {}} {token {}}} {
+  variable windows
+  variable browser
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to toggle the signal browser in" error
+    }
+    return {}
+  }
+  set cur [wviewer::browser_shown $token]
+  if {$want eq {}} {
+    set new [expr {$cur ? 0 : 1}]
+  } elseif {[string is boolean -strict $want]} {
+    set new [expr {[string is true -strict $want] ? 1 : 0}]
+  } else {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad signal browser state '$want' (expected 0/1 or {})" error
+    }
+    return {}
+  }
+  if {$new == $cur} { return $cur }
+  set browser($token) $new
+  wviewer::sync_browser_mirror $token
+  wviewer::browser_show $token
+  wviewer::log_action [list wviewer::browser_toggle $new $token]
+  return $new
+}
+
+# View > Signal Browser checkbutton -command. Tk has ALREADY written the new
+# value into the mirror by the time this runs, so it must SET that value -- a
+# plain toggle here would invert twice and the menu would appear dead
+# (grid_toggle_from_menu's lesson).
+proc wviewer::browser_from_menu {token} {
+  variable windows
+  variable browsershow
+  set want [expr {[info exists browsershow($token)] && $browsershow($token) ? 1 : 0}]
+  set r [wviewer::browser_toggle $want $token]
+  # a refused toggle must not leave the checkbutton lying -- but only re-sync a
+  # token that still HAS a window: re-syncing a dead one would CREATE the very
+  # stray array entry `forget` exists to prevent. (A deliberate tightening of
+  # the grid_toggle_from_menu precedent; a dead token has no menubar anyway,
+  # its toplevel died with it.)
+  if {$r eq {} && [dict exists $windows $token]} {
+    wviewer::sync_browser_mirror $token
+  }
+  return $r
+}
+
+# The Ctrl-L binding body -- the grid_toggle_at / clear_all_at pattern: resolve
+# the window the KEY went to (%W), never the current xschem context. Silent on a
+# foreign canvas.
+proc wviewer::browser_toggle_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::browser_toggle {} $token]
+}
+
 # The Ctrl-D binding body (issue 0171). Resolves the token from the EVENT's
 # canvas (%W), not from the current xschem context: a key can arrive on a
 # viewer Tk has focused before the C side switched context to it, and clearing
@@ -6855,6 +7028,27 @@ proc wviewer::install_default_binds {} {
   # drawn in this window. The `break` keeps the key from travelling further.
   if {[bind WaveViewer <Control-Key-g>] eq {}} {
     bind WaveViewer <Control-Key-g> {wviewer::grid_toggle_at %W; break}
+  }
+  # Signal Browser sidebar on/off (signal-browser PLAN item 8). COLLISION
+  # CHECK, done and clean on all three of the paths a key can reach this window
+  # by:
+  #   * keysym 108 is NOT in `graphkeys` {97 98 100 115 109 116 65 66 77}, so
+  #     key_filter forwards nothing and the C dispatcher never sees it.
+  #     src/keybindings.csv holds exactly ONE row for 108,
+  #     `key,108,0,canvas,edit.add_wire_label,1` -- BARE l, ctx=canvas, which a
+  #     Ctrl chord does not match and a viewer canvas could not reach anyway.
+  #     (callback.c `case 'l'` under ControlMask makes a schematic from the
+  #     selected symbol; that is behind the same forward and stays unreachable.)
+  #     ⚠ Ctrl-B WAS CONSIDERED AND REJECTED: 98 IS a graphkeys member,
+  #     membership is unconditional on modifiers (see key_filter's note), the
+  #     csv carries `key,98,ctrl,graph,graph.forward`, and callback.c toggles
+  #     cursor B on 'b' -- one keystroke would have done both.
+  #   * NO rc binds <Control-Key-l> on .drw (cadence_style_rc and every src
+  #     *.tcl are clean), so clone_canvas_bindings has nothing to copy onto a
+  #     viewer canvas -- and strip_bindings would sweep it if it ever did.
+  #   * the `break` keeps it that way whatever the tags below this one carry.
+  if {[bind WaveViewer <Control-Key-l>] eq {}} {
+    bind WaveViewer <Control-Key-l> {wviewer::browser_toggle_at %W; break}
   }
   # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
   # this window otherwise: key_filter forwards only the waves_callback key set
@@ -10112,6 +10306,16 @@ proc wviewer::build_menubar {token top} {
     -command [list wviewer::graph_zoom $token out]
   $mb.view add command -label Redraw \
     -command [list wviewer::in_ctx $token {xschem redraw}]
+  # signal-browser item 8: the menu twin of the Ctrl-L bindtag default. A
+  # checkbutton, not a command, because this is a STATE -- and its variable is
+  # PUSHED by sync_browser_mirror on every change rather than polled by a
+  # -postcommand, so it cannot go stale when the key is used (the Grid entry's
+  # rule). ⚠ `-label {Signal Browser} -accelerator Ctrl+L` must stay ADJACENT
+  # on one source line: test_wave_grid GH3 greps this proc's body for exactly
+  # that string.
+  $mb.view add checkbutton -label {Signal Browser} -accelerator Ctrl+L \
+    -variable ::wviewer::browsershow($token) \
+    -command [list wviewer::browser_from_menu $token]
   # Graph menu (item 12, live): model editing, always through regenerate
   $mb.graph add command -label {Add Graph} \
     -command [list wviewer::add_graph $token]
