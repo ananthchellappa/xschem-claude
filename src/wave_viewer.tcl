@@ -7714,8 +7714,8 @@ proc wviewer::add_trace_dialog {token} {
   grid rowconfigure $w 5 -weight 1
   label $w.err -text {} -font AseLabelFont -anchor w
   grid $w.err -row 6 -column 0 -columnspan 3 -sticky we -padx 8
-  # `extended` so item 6 can add several traces from one pick (PLAN item 5).
-  # add_trace_ok still reads `lindex $sel 0`, so today's behaviour is unchanged.
+  # `extended` so several traces can be added from one pick (PLAN items 5+6).
+  # add_trace_ok now adds ONE TRACE PER SELECTED ROW, in listbox order (item 6).
   $w.vars configure -selectmode extended
   # INVENTORY FIRST, and through wviewer::signal_list — THE accessor (settled
   # decisions 2 and 13). It is also the issue-0173 loan bracket, which the bare
@@ -7818,22 +7818,56 @@ proc wviewer::add_trace_pick {token} {
   $w.expr insert 0 [$w.vars get [lindex $sel 0]]
 }
 
+# Add Trace > OK. A typed Expression WINS and adds exactly ONE trace (the RPN
+# path is untouched, so `xschem raw add` stays single-shot). With the Expression
+# empty, the listbox selection drives the add: ONE TRACE PER SELECTED ROW, in
+# LISTBOX order (PLAN item 6).
 proc wviewer::add_trace_ok {token} {
   variable windows
   if {![dict exists $windows $token]} { return }
   set w [dict get $windows $token top].wvadd
   if {![winfo exists $w]} { return }
-  set gi [$w.graph get]
-  set rpn [string trim [$w.expr get]]
-  if {$rpn eq {}} {
-    set sel [$w.vars curselection]
-    if {$sel ne {}} { set rpn [$w.vars get [lindex $sel 0]] }
-  }
+  set gi   [$w.graph get]
+  set rpn  [string trim [$w.expr get]]
   set name [string trim [$w.name get]]
-  set err [wviewer::add_trace $token $gi $rpn $name]
-  if {$err ne {}} {
-    $w.err configure -text $err
+  if {$rpn ne {}} {
+    set err [wviewer::add_trace $token $gi $rpn $name]
+    if {$err ne {}} { $w.err configure -text $err ; return }
+    destroy $w
     return
+  }
+  # Empty Expression: one trace per SELECTED ROW. `curselection` returns its
+  # indices ASCENDING (Tk contract), so reading the names back through
+  # `$w.vars get` IS "listbox order" — no sort is needed, and adding one would
+  # be a bug. Snapshot by NAME, never by index (item 5's AT14 lesson: a
+  # repopulate invalidates indices, names survive it).
+  set names {}
+  foreach i [$w.vars curselection] { lappend names [$w.vars get $i] }
+  if {[llength $names] > 1 && $name ne {}} {
+    $w.err configure -text \
+      "one Name cannot cover [llength $names] traces - clear the Name field, or select a single row"
+    return
+  }
+  # Nothing typed and nothing picked: hand the EMPTY rpn to add_trace so its own
+  # "empty expression - type one or pick a raw variable" stays the single owner
+  # of that string. Duplicating it here would be a second place to keep in sync.
+  if {![llength $names]} { set names [list {}] }
+  set n [llength $names]
+  set added 0
+  foreach nm $names {
+    set err [wviewer::add_trace $token $gi $nm $name]
+    if {$err ne {}} {
+      # DELIBERATE NON-ROLLBACK (PLAN item 6 + driver note (f); settled decision
+      # 11's rollback rule governs the hierarchy-sync items, not this one). The
+      # traces already added STAY, so the message must say HOW MANY, or the user
+      # cannot tell what state the graph is in. The suffix appears only when
+      # there really was a batch — a single pick keeps add_trace's message
+      # byte-for-byte as it has always been.
+      if {$n > 1} { append err " (added $added of $n, stopped at '$nm')" }
+      $w.err configure -text $err
+      return
+    }
+    incr added
   }
   destroy $w
 }

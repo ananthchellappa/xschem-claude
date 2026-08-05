@@ -129,17 +129,40 @@
 #              asserts `ismapped` alongside the record. Do NOT "simplify" it back
 #              to a bare `update` + `focus -lastfor`: that form failed 3 times in
 #              22 solo runs and was repaired, not invented, in the item-5 FIXUP.
+#   MS00-MS18  MULTI-SELECT ADD from the Add Trace dialog (item 6,
+#              `wviewer::add_trace_ok`). 19 checks on a REAL dialog, over the
+#              MAIN xschem context — NOT the AT group's, see the ⚠ FIXTURE note
+#              at the group head (the AT token's win_path is a TAB, and
+#              `add_trace` -> `regenerate` -> `viewport_rect` throws on it).
+#              An empty Expression adds ONE TRACE PER SELECTED ROW in listbox
+#              order, observed through three independent oracles (the model's
+#              `vec` list, the trace colors, and the graph rect's `node` text on
+#              the CANVAS); a typed Expression still wins and still adds exactly
+#              one; the Name field is refused for N>1 with a verbatim contract
+#              string and applies at exactly N=1; and the first error aborts the
+#              rest while the already-added traces STAY — a DELIBERATE
+#              NON-rollback (PLAN item 6), whose message must therefore say how
+#              far it got.
+#              ⚠ MS01 PINS THE PREMISE OF "LISTBOX ORDER" — that `curselection`
+#              answers in DISPLAY order, not click order — so MS03 can assert a
+#              hand-written literal instead of recomputing its expectation from
+#              the very selection it set. Do not "simplify" MS03 into a loop
+#              over `curselection`: that asserts the list against itself.
+#              ⚠ EVERY SCENARIO OPENS ITS OWN DIALOG. A successful multi-add
+#              DESTROYS the dialog, so a shared handle turns any sabotage that
+#              changes the success/refuse verdict into a file-wide abort.
 #
-# ⚠ THE BAR **AND AT** GROUPS ARE DISPLAY-ARM ONLY — 49 of this file's 139
+# ⚠ THE BAR, AT **AND MS** GROUPS ARE DISPLAY-ARM ONLY — 68 of this file's 158
 # checks. They self-skip without X, so the `--nogui` repro below exercises
-# NEITHER item 4 NOR item 5: a green `--nogui` run (90 checks) proves nothing
-# about the search bar OR the Add Trace filter, and a maintainer debugging there
-# must not read it as coverage. `full_audit.sh` runs this file in the DISPLAY
-# arm (it is not in `nogui_tests`), so audit coverage is real.
+# NONE of items 4, 5 and 6: a green `--nogui` run (90 checks) proves nothing
+# about the search bar, the Add Trace filter OR the multi-select add, and a
+# maintainer debugging there must not read it as coverage. `full_audit.sh` runs
+# this file in the DISPLAY arm (it is not in `nogui_tests`), so audit coverage
+# is real.
 # The skip banners are worded `SKIPPED: <group> group (Tk/X arm only)` ON PURPOSE:
 # `full_audit.sh:109 is_skip()` matches `RESULT: SKIP`, `skipped: no X` and
 # `SKIP: no X connection` ANYWHERE in the output and runs BEFORE `is_pass`, so
-# any of those three spellings would score this whole 119-check suite as SKIP
+# any of those three spellings would score this whole 158-check suite as SKIP
 # and silently discard every item-1/2/3 check with it.
 #
 # Standalone repro (SM/ST/SB/SL/GS/GSO are `--nogui`-safe; BAR is not):
@@ -184,6 +207,19 @@
 # `at_throwcb` defined: item 6 appends to this file and reuses the same dialog
 # fixture. It creates NO third xschem context — AT23's no-raw arm gets its empty
 # inventory from signal_list's landmine-17 refusal, not from a new window.
+# The item-6 group is the FIRST that really DRAWS, so it leaves the most behind
+# and ITEM 7 INHERITS IT. It EXTENDS the MAIN context's `sl_main.raw` from 2
+# vectors to 10 — the 7 SLFIX names plus `db1`, materialized by the RPN check —
+# and it does NOT `raw new` (that would drop `wrong_ctx_var`, which SL12 above
+# still names in this same process). `regenerate` draws graph rects into the
+# MAIN schematic and `with_edit` leaves it `readonly 1`; the group's teardown
+# switches back to $SLMAIN, clears readonly, clears the drawing and clears the
+# modify flag, and MS18 is the check that it really did (rects=0, readonly=0).
+# The raw stays extended — that is deliberate and cannot be undone in place.
+# `.wvms1` is destroyed and the `wvms` entries are dict-unset from
+# `::wviewer::windows` / `::wviewer::layouts`; it leaves the procs `ms_open` and
+# `ms_field` defined, and the globals `MSALL` / `MSREF`. It creates NO third
+# xschem context either.
 #
 # This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
 # is in-memory — no `.raw` file appears (verified with `git status`).
@@ -1602,6 +1638,218 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # full_audit.sh:109's three skip spellings may appear here, or the whole
   # suite is scored SKIP instead of PASS.
   puts "SKIPPED: AT group (Tk/X arm only)"
+}
+
+# --- item 6: multi-select plot from Add Trace (GROUP MS) ---------------------
+#
+# `wviewer::add_trace_ok` with an EMPTY Expression now adds ONE TRACE PER
+# SELECTED ROW, in listbox order, each through the existing
+# `wviewer::add_trace`. A typed Expression still WINS and still adds exactly
+# one. The Name field applies only to a single row. The first error aborts the
+# rest and the already-added traces STAY (a deliberate NON-rollback).
+#
+# ⚠ FIXTURE: THIS GROUP CANNOT REUSE THE AT GROUP'S CONTEXT, and the reason is
+# worth spelling out because it is invisible until `add_trace` actually runs.
+# The AT token's win_path is $SLVWP = `.x1.drw`, which is a TAB, not a Tk
+# widget (`tabbed_interface` is 1, so `winfo exists .x1.drw` is 0). The DIALOG
+# half is fine — it never touches the canvas — but `add_trace` ->
+# `wviewer::regenerate` -> `wviewer::viewport_rect` does `winfo width $wp` and
+# THROWS `bad window path name ".x1.drw"`, AFTER `set_graphs` has already
+# written the trace into the model. Isolated: `viewport_rect .x1.drw` rc=1 vs
+# `viewport_rect .drw` rc=0. So the MS token's win_path is $SLMAIN (`.drw`),
+# a real mapped canvas. (D1.)
+#
+# ⚠ EACH SCENARIO OPENS ITS OWN DIALOG (D2). Non-negotiable: on a successful
+# multi-add the dialog is DESTROYED, so a shared handle would make the next
+# bare `$w.vars selection clear` THROW into the outer catch and turn a
+# 5-check sabotage into a file-wide abort (item 3's lesson).
+#
+# ⚠ ORDER IS ASSERTED AS A LITERAL, NOT RECOMPUTED (driver note (d)). MS03's
+# expectation is spelled out by hand; recomputing it from `curselection` would
+# assert the selection list against itself and pin nothing. MS01 pins the
+# premise separately — that `curselection` comes back ASCENDING, i.e. in
+# DISPLAY order and not in click order.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # EXTEND the MAIN context's sl_main.raw (no `raw new` — that would drop
+  # wrong_ctx_var, which SL12 above still refers to in this same process).
+  foreach n $SLFIX { xschem raw add $n {vsweep 1 +} }
+  set MSALL [linsert $SLFIX 0 vsweep wrong_ctx_var]
+  #  0 vsweep         3 i(v1)            6 @m.x1.m1[id]
+  #  1 wrong_ctx_var  4 v(x1.x2.net5)    7 I(V2)
+  #  2 v(out)         5 net1             8 v(net_name[3])
+
+  destroy .wvms1
+  toplevel .wvms1 ; wm geometry .wvms1 +140+460
+  # `top` MUST be a REAL toplevel (like the AT group's): leave_ctx -> retitle
+  # does a `wm title` on it.
+  dict set ::wviewer::windows wvms [dict create top .wvms1 win_path $SLMAIN]
+
+  proc ms_open {ngraphs} {
+    set gs {}
+    for {set i 0} {$i < $ngraphs} {incr i} { lappend gs [::wviewer::empty_graph] }
+    dict set ::wviewer::layouts wvms [dict create sharedx 0 graphs $gs]
+    xschem new_schematic switch $::SLMAIN
+    return [pcall ::wviewer::add_trace_dialog wvms]
+  }
+  # ⚠ THE OTHER HALF OF D2, AND IT WAS MEASURED, NOT GUESSED. The in-dialog
+  # error label must be read through THIS, never as a bare `$w.err cget -text`.
+  # Every check below that reads the label is preceded by a check that the
+  # dialog is still up — and a sabotage that flips a refusal or an abort into a
+  # SUCCESS destroys the dialog, so the bare form throws into the outer catch
+  # and turns a 5-check sabotage into a file-wide abort. Sabotage (a)-narrow did
+  # exactly that on the first measurement: MS03/MS05/MS07/MS13 failed, and then
+  # MS14's bare `cget` aborted MS15-MS18 with `invalid command name
+  # ".wvms1.wvadd.err"` instead of failing. Returning NO-DIALOG makes "the
+  # dialog vanished" an ASSERTABLE VALUE rather than a crash (item 3's lesson).
+  proc ms_err {w} {
+    if {![winfo exists $w.err]} { return NO-DIALOG }
+    return [$w.err cget -text]
+  }
+  # one model field of every trace on graph $gi, in model order
+  proc ms_field {gi key} {
+    set G [lindex [dict get [::wviewer::layout_for wvms] graphs] $gi]
+    set o {}
+    foreach tr [::wviewer::dget $G traces {}] {
+      lappend o [::wviewer::dget $tr $key {}]
+    }
+    return $o
+  }
+
+  # --- scenario A: three rows, empty Expression, no Name ---------------------
+  set msw [ms_open 2] ; update
+  check {MS00 the dialog opens on the real-canvas ctx with the whole inventory} \
+    [list [winfo exists $msw] [$msw.vars size] [$msw.graph get]] \
+    [list 1 9 1]
+  # THE PREMISE OF "LISTBOX ORDER", pinned as a fact rather than assumed:
+  # selecting 7 then 3 then 4 must read back {3 4 7}.
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 7
+  $msw.vars selection set 3
+  $msw.vars selection set 4
+  check {MS01 curselection comes back ASCENDING, not in click order} \
+    [$msw.vars curselection] [list 3 4 7]
+  check {MS02 OK on 3 selected rows does not throw} \
+    [pcall ::wviewer::add_trace_ok wvms] {}
+  update
+  # LITERAL expectation (driver note (d)) — display order, NOT click order.
+  check {MS03 three traces land on the selected graph, in LISTBOX order} \
+    [ms_field 1 vec] [list i(v1) v(x1.x2.net5) I(V2)]
+  check {MS04 the other graph got nothing} [llength [ms_field 0 vec]] 0
+  check {MS05 the batch paints the three traces in DISTINCT colors} \
+    [llength [lsort -unique [ms_field 1 color]]] 3
+  check {MS06 the dialog closes on a fully successful multi-add} \
+    [winfo exists $msw] 0
+  # the CANVAS, not just the model: regenerate really ran for every trace
+  xschem new_schematic switch $SLMAIN
+  check {MS07 the graph rect on the canvas carries all three names} \
+    [split [xschem getprop rect 2 1 node] "\n"] \
+    [list i(v1) v(x1.x2.net5) I(V2)]
+
+  # --- scenario B: a typed Expression WINS over the selection ---------------
+  set msw [ms_open 2] ; update
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 2 ; $msw.vars selection set 3
+  $msw.vars selection set 4
+  $msw.expr delete 0 end ; $msw.expr insert 0 {v(out) db20()}
+  $msw.name delete 0 end ; $msw.name insert 0 db1
+  check {MS08 a typed expression beats 3 selected rows: exactly ONE trace} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ms_field 1 vec] \
+          [ms_field 1 name] [ms_field 1 expr]] \
+    [list {} [list db1] [list db1] [list {v(out) db20()}]]
+  check {MS09 the RPN path still closes the dialog} [winfo exists $msw] 0
+
+  # --- scenario C: Name + several rows is REFUSED ---------------------------
+  set msw [ms_open 2] ; update
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 2 ; $msw.vars selection set 5
+  $msw.name delete 0 end ; $msw.name insert 0 mysig
+  check {MS10 Name + 2 rows is refused: dialog stays up and NOTHING is added} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [winfo exists $msw] \
+          [llength [ms_field 1 vec]] [llength [ms_field 0 vec]]] \
+    [list {} 1 0 0]
+  # EXACT match, like MS15 — the message is the contract, not just "non-empty"
+  check {MS11 the refusal message is the contract string, verbatim} \
+    [ms_err $msw] \
+    {one Name cannot cover 2 traces - clear the Name field, or select a single row}
+  destroy $msw ; update
+
+  # --- scenario D: the boundary — Name + EXACTLY ONE row still applies ------
+  set msw [ms_open 2] ; update
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 5
+  $msw.name delete 0 end ; $msw.name insert 0 mysig
+  check {MS12 Name + exactly ONE row still applies the Name} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ms_field 1 vec] \
+          [ms_field 1 name]] \
+    [list {} [list net1] [list mysig]]
+
+  # --- scenario E: the first failure aborts the rest, earlier adds STAY -----
+  set msw [ms_open 2] ; update
+  # a name the raw does not carry, injected INTO the listbox at index 4 so the
+  # batch is {good bad good} and the abort is observable from both sides
+  $msw.vars insert 4 nosuchvar
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 3 ; $msw.vars selection set 4
+  $msw.vars selection set 6
+  check {MS13 the first failure aborts the rest and KEEPS the earlier adds} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [winfo exists $msw] \
+          [ms_field 1 vec]] \
+    [list {} 1 [list i(v1)]]
+  # driver note (f): the NON-rollback is only defensible if the message says
+  # how far it got, so the user can tell what state the graph is in
+  check {MS14 the message reports how many were added before the failure} \
+    [list [regexp {added 1 of 3} [ms_err $msw]] \
+          [regexp {nosuchvar} [ms_err $msw]]] [list 1 1]
+  destroy $msw ; update
+
+  # --- scenario F: nothing typed and nothing picked ------------------------
+  set msw [ms_open 2] ; update
+  $msw.vars selection clear 0 end
+  # D3: routed through add_trace with an EMPTY rpn, so that string has ONE
+  # owner. This check is what makes that a claim and not a hope.
+  check {MS15 no expression and no pick yields add_trace's own message} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ms_err $msw] \
+          [llength [ms_field 1 vec]]] \
+    [list {} {empty expression - type one or pick a raw variable} 0]
+  destroy $msw ; update
+
+  # --- scenario G: a SINGLE failing pick keeps the message UNSUFFIXED -------
+  # DIFFERENTIAL (D4). R7: add_trace returns at validate_rpn before any model
+  # write, but it DOES run capture_live_view_state — so the reference is
+  # computed into a variable HERE, and the scenario's own layout is built
+  # afterwards by ms_open, rather than inlining a mutating call into an
+  # expectation.
+  set MSREF [pcall ::wviewer::add_trace wvms 1 nosuchvar {}]
+  set msw [ms_open 2] ; update
+  $msw.vars insert 4 nosuchvar
+  $msw.vars selection clear 0 end
+  $msw.vars selection set 4
+  check {MS16 a single failing pick keeps add_trace's message with NO suffix} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ms_err $msw]] \
+    [list {} $MSREF]
+  destroy $msw ; update
+
+  # the multi-add path plots EXISTING vectors; only the RPN path materializes
+  # a new one (`db1`, from scenario B)
+  xschem new_schematic switch $SLMAIN
+  check {MS17 the multi-add path creates NO raw vectors; only the RPN path did} \
+    [split [xschem raw list] "\n"] [concat $MSALL db1]
+
+  # teardown: `with_edit` leaves the ctx readonly and the graph rects drawn
+  destroy .wvms1 ; update
+  dict unset ::wviewer::windows wvms
+  dict unset ::wviewer::layouts wvms
+  xschem new_schematic switch $SLMAIN
+  xschem set readonly 0
+  xschem clear_drawing
+  xschem set_modify 0
+  check {MS18 teardown leaves the main context empty and writable} \
+    [list [xschem get rects 2] [xschem get readonly]] [list 0 0]
+
+} else {
+  # WORDING IS LOAD-BEARING — see the ⚠ in the file header.
+  puts "SKIPPED: MS group (Tk/X arm only)"
 }
 
 } bigerr]} {
