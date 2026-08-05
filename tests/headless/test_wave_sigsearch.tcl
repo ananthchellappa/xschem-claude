@@ -43,16 +43,20 @@
 #   GSO01-06   THE DIFFERENTIAL PROPERTY ORACLE for `::graph_get_signal_list`
 #              (item 3, DRIVER RULING 17). A FROZEN copy of the pre-item-3 body
 #              (`git show afdd44a0^:src/xschem.tcl`) run beside the shipping one
-#              over a generated 51-name x 84-pattern matrix (54 blobs — 51
+#              over a generated 52-name x 94-pattern matrix (55 blobs — 52
 #              single-name, the whole set, and 2 ordering blobs) x both sort
-#              directions = 9,072 comparisons in ~0.29 s, asserting ZERO
-#              differences except the two SANCTIONED ones (decision 4's
+#              directions = 10,340 comparisons (whole file ~0.34 s), asserting
+#              ZERO differences except the two SANCTIONED ones (decision 4's
 #              invalid-regexp -> {}, and ruling 16 delta 3's ARE director ->
 #              error), each excluded by its own narrow three-conjunct predicate.
-#              This — not the GS fixtures — is what makes the coverage claim on
-#              the strip regsub and the `.*(?:$pat).*` wrap COMPLETE: every
-#              behaviour-changing mutation fails GSO01 automatically, with the
-#              differing name/pattern/got/exp PRINTED as a repro. GSO02-GSO06
+#              This — not the GS fixtures — is what carries the coverage claim on
+#              the strip regsub and the `.*(?:$pat).*` wrap. That claim is
+#              BOUNDED, and the bound is measured, not asserted: ANY narrowing of
+#              the capture that excludes a PRINTABLE ASCII character fails GSO01
+#              — all 95 of them, swept one at a time. The residue it cannot see
+#              is item 4 of the "WHAT THIS ORACLE STILL CANNOT SEE" list below.
+#              Failures print the differing name/pattern/got/exp as a repro.
+#              GSO02-GSO06
 #              stop the oracle passing vacuously (matrix ran whole; both
 #              sanctioned classes actually exercised; the frozen reference is
 #              still the legacy body and not a call to the shipping one; the
@@ -491,10 +495,17 @@ check {GS16 the display strip is END-ANCHORED: v(a)x is NOT stripped to ax} \
 #     written: `(.*)` -> `[^,]*` / `[^)]*` / `.+` / `[a-zA-Z0-9_.\[\]]*` /
 #     `[\w.\[\]]*`, `\(` -> `.`, and `v` -> `v?` ALL stayed green here while
 #     changing between 144 and 1966 real comparisons.
-#   * COMPLETENESS IS PROVED BY GSO01 (the differential property oracle below),
+#   * COVERAGE IS CARRIED BY GSO01 (the differential property oracle below),
 #     and by nothing in this block. Every one of those seven mutations, plus
 #     `v`->`v+`, `[^ ]*`, `[[:print:]]*`, `[vV]`, `-nocase`, and the two anchors,
-#     now fails GSO01 with a printed repro.
+#     now fails GSO01 with a printed repro. GSO01's coverage of the capture is
+#     BOUNDED and the bound is MEASURED: any narrowing that excludes a printable
+#     ASCII character fails it — all 95 swept individually as `(.*)` -> `([^c]*)`,
+#     95/95 caught. It does NOT extend past printable ASCII; see item 4 of the
+#     oracle's "WHAT THIS ORACLE STILL CANNOT SEE" list. Do not restore the word
+#     "COMPLETE" here — that was the false claim this block was rewritten to kill,
+#     and it was re-committed once already in 5f1de36a on an axis that was missing
+#     `"`, `\` and backtick.
 #   * What this block still buys, and why it is kept: GSO01 tells you THAT the
 #     dialog diverged from its pre-item-3 self and hands you one differing
 #     name/pattern; GS17-GS21 tell you WHICH PART of the regsub you broke,
@@ -528,9 +539,27 @@ check {GS16 the display strip is END-ANCHORED: v(a)x is NOT stripped to ax} \
 #   the capture    GS03 (replacement `\1` -> `&`, or a non-capturing group)
 #                  + GS19, which pins a DOT and a BRACKET and nothing else.
 #                  NOT caught here: any other narrowing of `.*`. GSO01 catches
-#                  them, via a name axis that carries a comma, a bang, a hash, a
-#                  hyphen, a space, a tab, a nested paren, empty content, and a
-#                  full printable-punctuation sweep.
+#                  every narrowing that excludes a PRINTABLE ASCII character —
+#                  measured, all 95 swept one at a time, 95/95 caught — via a
+#                  name axis carrying a comma, a bang, a hash, a hyphen, a space,
+#                  a tab, a nested paren, empty content, an all-32-character
+#                  ASCII punctuation sweep and an all-62-character alphanumeric
+#                  sweep. It does NOT catch a narrowing that excludes only
+#                  characters OUTSIDE printable ASCII; that residue is item 4 of
+#                  the oracle's "WHAT THIS ORACLE STILL CANNOT SEE" list, and
+#                  ruling 17 deliberately withdrew chasing it.
+#                  ⚠ As committed in 5f1de36a this sentence read "a full
+#                  printable-punctuation sweep" while the sweep name was in fact
+#                  missing `"`, `\` and backtick — so it green-lit exactly the
+#                  "maintainer tidies `(.*)` into an explicit class and ships the
+#                  regression" scenario ruling 17 named, on the authority of a
+#                  property the oracle did not have. `[^\\]*`, `[^"]*` and
+#                  ``[^`]*`` each changed real behaviour (review measured 150, 84
+#                  and 104 differing cells) yet stayed 88/88 GREEN. Re-measured
+#                  after widening the axis: each now FAILS GSO01 with 144
+#                  unsanctioned differences and a printed repro.
+#                  If you widen or trim the axis, RE-MEASURE this claim; do not
+#                  reason about it.
 #
 # Each gets its OWN one-element blob, per the FIXTURE RULE, so they stay
 # separable. GS17, GS18, GS20 and GS21 are strip-DELETION-insensitive by
@@ -575,14 +604,23 @@ check {GS21 RULED 16: the END anchor is in the MATCH SUBJECT too} \
 #   implementation, exercised over a generated name x pattern matrix, asserting
 #   ZERO differences except the explicitly sanctioned ones.
 #
-# That is strictly stronger than any finite fixture set: EVERY behaviour-changing
-# mutation of `graph_get_signal_list` — the strip regsub, the `.*(?:$pat).*`
-# wrap, the sort mapping, the split, the err arm — fails GSO01 automatically,
-# including the mutations nobody thought of. The GS fixtures are KEPT because
-# they NAME the defect (GS17 tells you WHICH part broke; GSO01 only tells you
-# that something did, plus the exact repro), but the COMPLETENESS claim now
-# rests here and nowhere else. See the GS17-GS21 map above, which is explicitly
-# labelled as a naming aid and NOT as a complete part->check map.
+# That is far stronger than any finite fixture set: a behaviour-changing mutation
+# of `graph_get_signal_list` — the strip regsub, the `.*(?:$pat).*` wrap, the sort
+# mapping, the split, the err arm — fails GSO01 automatically as soon as the
+# matrix contains one cell that distinguishes it, including mutations nobody
+# thought of. The GS fixtures are KEPT because they NAME the defect (GS17 tells
+# you WHICH part broke; GSO01 only tells you that something did, plus the exact
+# repro), but the COVERAGE claim now rests here and nowhere else. See the
+# GS17-GS21 map above, which is explicitly labelled as a naming aid and NOT as a
+# complete part->check map.
+#
+# ⚠ "EVERY behaviour-changing mutation" IS THE WRONG WORD AND IT WAS COMMITTED
+# ONCE (5f1de36a). An oracle is only as wide as its axes: a mutation the matrix
+# cannot distinguish passes, however real it is. The capture's bound is stated
+# and measured — every narrowing excluding a printable ASCII character fails,
+# 95/95 swept — and the part it does NOT reach is item 4 below. Say "fails GSO01"
+# of things you have MEASURED failing GSO01; the whole reason this oracle exists
+# is that the previous unmeasured completeness claim was false.
 #
 # WHAT THIS ORACLE STILL CANNOT SEE, stated so nobody over-reads GSO01:
 #  1. A mutation that REMOVES a sanctioned difference — e.g. restoring the
@@ -602,6 +640,18 @@ check {GS21 RULED 16: the END anchor is in the MATCH SUBJECT too} \
 #  3. Anything outside `graph_get_signal_list` itself. `wviewer::sig_match` has
 #     its own group (SM01-SM27); this oracle would not notice a sig_match change
 #     that the dialog's call happens not to reach.
+#  4. A capture narrowing that excludes ONLY characters outside printable ASCII.
+#     The name axis sweeps all 95 printable ASCII characters (0x20-0x7E) through
+#     the wrapper, so every `(.*)` -> `([^c]*)` for printable c fails GSO01 —
+#     measured, 95/95. Beyond that the axis carries exactly ONE non-printable, a
+#     TAB, which is what kills `[[:print:]]*`. So a narrowing that admits every
+#     printable character and TAB but excludes, say, a newline, a NUL, a control
+#     character or a non-ASCII/UTF-8 byte would still pass. This is the finite-axis
+#     regress DRIVER RULING 17 deliberately withdrew — the mutation space of a
+#     regex is unbounded, so "find a green mutation" always eventually succeeds
+#     and has no fixed point. It is recorded as the honest residue, NOT as a bug
+#     and NOT as work: do not open a round to chase it. If a real `.raw` is ever
+#     found emitting such a name, THAT is the trigger to widen the axis.
 #
 # ⚠⚠ `gsl_frozen_ref` IS A FROZEN ORACLE — DO NOT EDIT IT TO MAKE A TEST PASS.
 # It is the pre-retrofit body, copied verbatim from
@@ -685,14 +735,26 @@ proc gso_sanctioned {pat got exp every} {
 #   xv(b) / v(a)x v(a)b   text before / after the wrapper (the two anchors).
 #   V(OUT) V(out)         upper case (the regsub is case-SENSITIVE).
 #   vv(a)                 a DOUBLED `v` (kills `v` -> `v+`).
-#   v(a b!#$%...)         the PUNCTUATION SWEEP — every printable ASCII
-#                         punctuation char inside one wrapper, so that ANY
-#                         narrowing of the capture to a character class fails,
-#                         not just the six classes review happened to try. This
-#                         one name is what makes "the capture takes ANY content"
-#                         a true statement rather than an aspiration; it is the
-#                         difference between pinning a property and pinning a
-#                         list of examples. Do not "clean up" its punctuation.
+#   v(a b!"#$%...)        the PUNCTUATION SWEEP — all 32 ASCII punctuation
+#   v(0123..zA..Z)        characters, and the ALPHANUMERIC SWEEP — all 62 letters
+#                         and digits. Together with the space in the first name
+#                         these two cover all 95 printable ASCII characters
+#                         (0x20-0x7E) inside a wrapper, which is what makes the
+#                         bounded claim TRUE: any narrowing of the capture that
+#                         excludes a printable ASCII character fails GSO01.
+#                         MEASURED, not reasoned: `(.*)` -> `([^c]*)` was swept
+#                         for all 95 c, 95/95 caught.
+#                         ⚠ DO NOT "CLEAN UP" EITHER NAME. As committed in
+#                         5f1de36a the punctuation name was missing `"`, `\` and
+#                         backtick — no other name carried them — so `[^"]*`,
+#                         `[^\\]*` and ``[^`]*`` changed real behaviour and stayed
+#                         88/88 GREEN, while six comments called the sweep
+#                         complete. The alphanumeric name was added for the same
+#                         reason: without it 40 narrowings (`[^q]*`, `[^Z]*`, `[^7]*`
+#                         …) stayed green, because no wrapped name contained
+#                         those characters. If you touch either, re-run the
+#                         95-character sweep — the claim is only as good as the
+#                         last time somebody measured it.
 #   v(a<TAB>b)            a NON-PRINTABLE inside the wrapper, so that even
 #                         `[[:print:]]*` — the narrowest class that survives the
 #                         sweep above — is caught.
@@ -706,7 +768,8 @@ set GSO_NAMES [list \
   {v(x-y)} {x-y} \
   {v(x1.x2.net5)} {v(net_name[3])} {v(x[3:0])} \
   {v()} {v(a)x} {v(a)b} {xv(b)} {vx(y)} {(x)} {v(a(b))} {v((y))} {vv(a)} \
-  {v(a b)} {v(a b!#$%&'*+,-./:;<=>?@[]^_{|}~)} "v(a\tb)" \
+  {v(a b)} {v(a b!"#$%&'*+,-./:;<=>?@[\]^_`{|}~)} "v(a\tb)" \
+  {v(0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ)} \
   {i(v1)} {I(V2)} {i(x1.v2)} {@m.x1.m1[id]} \
   {out} {Out} {OUT} {about} {x1.out} {time} {net1} {net5} {vv} {zz} {tmp} \
   {l1} {l2} {xl1} {a b} {}]
@@ -714,17 +777,32 @@ set GSO_NAMES [list \
 # THE PATTERN AXIS: anchored, unanchored, bracket/class, wildcard, quantifier,
 # alternation, backreference, escape, case-varying, INVALID, and DIRECTOR forms.
 #
-# ⚠ DELIBERATE MATRIX BOUNDARY, declared rather than hidden: no pattern here
-# STARTS WITH `-`. The legacy validity probe is `regexp $pattern {12345}` with
-# no `--` (see gsl_frozen_ref), so a leading `-` is parsed there as a SWITCH and
-# the legacy body widens to "show everything"; the new body passes the pattern
-# as data (`sig_match` guards with `--`) and filters on it. That is a genuine
-# third difference class, but it is an artefact of the legacy PROBE's missing
-# `--`, not of the strip regsub or the wrap that this oracle exists to pin, and
-# ruling 17 sanctions exactly two classes. It is recorded as a divergence in
-# doc/claude/signal_browser_batch/receipts/03_round3_oracle.md §5; do not "fix"
-# it by broadening gso_sanctioned. Hyphen
-# MATCHING is still covered, by `[-]`, `\-` and `x-y` below.
+# LEADING-HYPHEN PATTERNS ARE IN THE MATRIX, and the "third difference class"
+# that once excluded them DOES NOT EXIST. As committed in 5f1de36a this spot
+# carried a "⚠ DELIBERATE MATRIX BOUNDARY" block asserting that no pattern may
+# start with `-`, on the premise that the legacy validity probe
+# `regexp $pattern {12345}` lacks `--`, so a leading hyphen is parsed there as a
+# SWITCH and the legacy body throws / widens to "show everything". THAT PREMISE
+# IS FALSE, and it cost the oracle a whole pattern class. Tcl 8.6.14, measured:
+#
+#   regexp $p {12345}      p = - -- -nocase -zz -line -all -x -expanded -a- -.*
+#                          -> err=0, result 0, for EVERY one of them.
+#   regexp -nocase {12345} (the same word as a LITERAL)  -> error, wrong # args
+#   regexp {*}$p {12345} / eval regexp ...                -> error, bad option
+#
+# i.e. switch parsing happens for a LITERAL option word, or when the command is
+# re-dispatched at runtime by `eval` / `{*}` expansion — NOT for a pattern
+# arriving through a variable inside a compiled proc, which is exactly how both
+# `gsl_frozen_ref` and the shipping body spell it. Differentially measured on
+# the blob "v(x-y)\nzz\nv(out)\n-lead\nv(-a-)", 10 leading-hyphen patterns x
+# both sort directions = 20 comparisons: ZERO differences; pattern `-` returns
+# {-lead -a- x-y} from BOTH bodies. There is no third class, there is no driver
+# decision owed, and `gso_sanctioned` stays at exactly the two classes ruling 17
+# sanctions. Putting these patterns in ADDS coverage the oracle was forgoing.
+#
+# THE PATTERN AXIS: anchored, unanchored, bracket/class, wildcard, quantifier,
+# alternation, backreference, escape, case-varying, LEADING-HYPHEN, INVALID, and
+# DIRECTOR forms.
 set GSO_PATS [list \
   {} {out} {Out} {OUT} {v} {V} {i} {I} {net} {net5} {vv} {time} \
   {.} {.*} {.+} {^} {$} {^$} {^.*$} \
@@ -734,6 +812,7 @@ set GSO_PATS [list \
   {x1\.out} {a\.b} {x|y} {(a|b)} {time|net} {^(?:out)$} {(?:out)} \
   {\[} {\[3\]} {net\[0-9\]} {[[:alpha:]]+} {o.t} {a{2}} {{2}} \
   {(a)\1} {\1} {\y} {\A} {\Z} {\m} \
+  {-} {--} {-nocase} {-all} {-line} {-zz} {-x} {-out} {-.*} {-a-} \
   {(?i)out} {(?i)OUT} {(?i)} {(?x)out} {***=out} {***:out} \
   {v\(a,b\)} {a,b} {x-y} {vdd} {net_name} {sub} {@m} {[3:0]}]
 
@@ -781,10 +860,23 @@ set ::graph_sort 1
 
 # The repro is printed, not just counted: whoever trips this gets the exact
 # name/pattern/got/exp to paste into a one-liner, instead of a bare number.
+#
+# ⚠ THE LOOP VARIABLE IS `gso_line`, NOT `gso_b`, AND THAT IS LOAD-BEARING. It
+# was `gso_b` as committed in 5f1de36a, which is the class-(b) exercised COUNTER
+# that GSO04 asserts on. On any FAILING run this loop overwrote the counter with
+# a string like `name={v(a,b)} pat={} ...`; GSO04's `expr {$gso_b > 0}` then
+# resolved by STRING comparison, yielded 1, and printed "ok" — so the
+# anti-vacuity check went vacuous in exactly the state a reader is inspecting it.
+# Measured before the rename (capture `(.*)` -> `([^,]*)` injected): GSO01 FAILED
+# while GSO02-GSO06 all printed "ok". The DECISIVE measurement, which is what
+# proves the rename is a fix and not a tidy: with the director patterns also
+# removed from GSO_PATS so class (b) is exercised ZERO times, the old `gso_b`
+# spelling still printed `ok: GSO04`, while `gso_line` correctly FAILS it with
+# `{0} (exp {1})`. Do not reuse a counter name here.
 if {[llength $gso_bad]} {
   puts "GSORACLE: [llength $gso_bad] UNSANCTIONED difference(s) out of $gso_cmp\
  comparisons. First [expr {[llength $gso_bad] > 8 ? 8 : [llength $gso_bad]}]:"
-  foreach gso_b [lrange $gso_bad 0 7] { puts "  GSORACLE DIFF $gso_b" }
+  foreach gso_line [lrange $gso_bad 0 7] { puts "  GSORACLE DIFF $gso_line" }
 } else {
   puts "GSORACLE: $gso_cmp comparisons, $gso_diff differences, all sanctioned\
  (a=$gso_a decision-4 invalid-regexp, b=$gso_b ruling-16 director), 0 unexplained."
@@ -818,7 +910,8 @@ set gso_missing {}
 foreach gso_n [list {v(a,b)} {v(out,outb)} {v(vdd!)} {v(net#1)} {v(x-y)} \
                     {v(x1.x2.net5)} {v(net_name[3])} {i(v1)} {out} {} \
                     {v()} {(x)} {vx(y)} {v(a(b))} {v(a)x} {xv(b)} {V(OUT)} \
-                    {vv(a)} {v(a b)} {v(a b!#$%&'*+,-./:;<=>?@[]^_{|}~)}] {
+                    {vv(a)} {v(a b)} {v(a b!"#$%&'*+,-./:;<=>?@[\]^_`{|}~)} \
+                    {v(0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ)}] {
   if {[lsearch -exact $GSO_NAMES $gso_n] < 0} { lappend gso_missing $gso_n }
 }
 check {GSO06 the name axis still carries every required real-name class} \

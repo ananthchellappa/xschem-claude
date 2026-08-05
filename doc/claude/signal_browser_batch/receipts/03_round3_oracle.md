@@ -52,22 +52,32 @@ every claim the oracle does not support was narrowed in place.
   It carries a ⚠⚠ header saying it must never be edited to make a failing implementation
   pass, and naming that act for what it is — *deleting the test while leaving it green, on
   purpose* — so a reviewer reads any diff touching it as sabotage until proven otherwise.
-* **The matrix**: 51 names × 84 patterns. Blobs are the 51 single-name blobs (so a failure
+* **The matrix**: 52 names × 94 patterns. Blobs are the 52 single-name blobs (so a failure
   names the exact signal), the whole set in one blob, and 2 ordering blobs (a single-name
-  blob cannot see a sort or a sort/strip ORDER defect) — 54 blobs × 84 patterns × **both**
-  `graph_sort` directions = **9,072 comparisons**, 1,036 of them differences, **0
+  blob cannot see a sort or a sort/strip ORDER defect) — 55 blobs × 94 patterns × **both**
+  `graph_sort` directions = **10,340 comparisons**, 1,054 of them differences, **0
   unexplained**.
+  > ⚠ **Superseded numbers.** As first committed in `5f1de36a` this read 51 × 84 = 9,072.
+  > The cleanup commit (§10) widened both axes — the punctuation sweep was missing three
+  > characters, an alphanumeric sweep was added, and the leading-hyphen patterns that §5
+  > had wrongly excluded were put in.
 * **The name axis** carries every class ruling 17 named, because that is exactly how the
   seven holes stayed green: `v(a,b)` and `v(out,outb)` (ngspice DIFFERENTIAL voltage —
   an ordinary line in a real `.raw`), `v(vdd!)`, `v(net#1)`, `v(x-y)`, dotted hierarchical,
   bracketed bus, `i()`-wrapped, bare, `@m…[id]`, and empty. Plus five added by this round's
   own defeat attempts: `v()` (empty wrapper content), `v(a(b))` (a paren INSIDE), `(x)` (no
   `v`), `vx(y)` (`v` + non-paren + parens), `vv(a)` (doubled `v`), a name with a SPACE, a
-  name with a TAB, and a **printable-punctuation sweep** `v(a b!#$%&'*+,-./:;<=>?@[]^_{|}~)`
-  that makes *any* narrowing of the capture to a character class fail rather than just the
-  six classes review happened to try.
+  name with a TAB, a **punctuation sweep** `v(a b!"#$%&'*+,-./:;<=>?@[\]^_`{|}~)` (all 32
+  ASCII punctuation characters) and an **alphanumeric sweep**
+  `v(0123456789abc…xyzABC…XYZ)` (all 62).
+  > ⚠ **Corrected.** `5f1de36a` shipped the punctuation sweep as
+  > `v(a b!#$%&'*+,-./:;<=>?@[]^_{|}~)` — **missing `"`, `\` and backtick** — and no other
+  > name carried them, so `[^"]*`, `[^\\]*` and ``[^`]*`` changed real behaviour and stayed
+  > 88/88 green. The alphanumeric sweep did not exist at all, which left 40 further
+  > narrowings (`[^q]*`, `[^Z]*`, `[^7]*` …) green. See §10.
 * **The pattern axis**: anchored, unanchored, bracket/class, wildcard, quantifier,
-  alternation, backreference, escape, case-varying, INVALID, and DIRECTOR forms.
+  alternation, backreference, escape, case-varying, **leading-hyphen**, INVALID, and
+  DIRECTOR forms.
 * **The sanctioned-difference predicate is narrow, three conjuncts each**, not a broad
   "ignore anything that errors":
   * **(a) decision 4** — the LEGACY validity probe must reject the pattern **AND** the
@@ -77,7 +87,8 @@ every claim the oracle does not support was narrowed in place.
   * **(b) ruling 16 delta 3** — the RAW pattern must be valid **AND** the WRAPPED pattern
     invalid **AND** the pattern must actually BE a director/embedded-option form **AND** the
     shipping body must return exactly `{}`.
-  Exercised counts are printed every run: `a=848`, `b=188`.
+  Exercised counts are printed every run: `a=864`, `b=190` (`a=848`, `b=188` before §10's
+  axis widening).
 * **On failure the check prints the repro**, not a count: `name={…} pat={…} graph_sort=… got={…} exp={…}`,
   up to 8 cases, and the first case is also the `got` of the GSO01 FAIL line itself.
 * **GSO02-GSO06 stop the oracle passing vacuously**: the matrix ran whole and nothing was
@@ -139,25 +150,45 @@ those two and are not redundant); it is blind to genuinely behaviour-preserving 
 (above); and it sees nothing outside `graph_get_signal_list` itself (`sig_match` has its
 own group, SM01-SM27).
 
-## 5. Divergence — a THIRD difference class, declared and deliberately out of matrix
+## 5. ~~Divergence — a THIRD difference class~~ — RETRACTED: it does not exist
 
-`graph_get_signal_list`'s legacy validity probe is `regexp $pattern {12345}` with **no
-`--`** (`afdd44a0^:src/xschem.tcl:4477`). A pattern that STARTS WITH `-` is therefore
-parsed there as a *switch*, the probe throws, and the legacy body widens to "show
-everything". The shipping body passes the pattern as data (`sig_match` guards its `regexp`
-with `--`), so it filters on it: for pattern `-`, legacy shows the whole list and the
-retrofit shows the names containing a hyphen.
+**This section was WRONG as committed in `5f1de36a`, and being wrong cost the oracle an
+entire pattern class. No driver decision is owed. Nothing here needed a ruling.**
 
-That is a real third difference class. It is **out of the matrix, declared in a ⚠ block on
-`GSO_PATS`** rather than swallowed by a broadened predicate, because (i) it is an artefact
-of the legacy PROBE's missing `--`, not of the strip regsub or the wrap the oracle exists
-to pin, and (ii) ruling 17 sanctions exactly two classes and forbids opening a new axis.
-Hyphen MATCHING is still covered, by the patterns `[-]`, `\-` and `x-y`.
+What it claimed: `graph_get_signal_list`'s legacy validity probe is `regexp $pattern
+{12345}` with **no `--`** (`afdd44a0^:src/xschem.tcl:4477`), so a pattern STARTING WITH `-`
+is parsed there as a *switch*, the probe throws, and the legacy body widens to "show
+everything" — a genuine third difference class, therefore leading-hyphen patterns were
+**excluded from `GSO_PATS`** behind a ⚠ "DELIBERATE MATRIX BOUNDARY" block, and the driver
+was offered a decision about it.
 
-**Driver decision owed only if it wants one.** The retrofit's behaviour here is arguably
-the better one (a leading `-` is data in a signal-name box), it is unreachable except by a
-user who types a pattern beginning with `-`, and item 3's behaviour is otherwise closed.
-No code was changed for it.
+**The premise is false.** Re-measured independently on this machine (Tcl **8.6.14**):
+
+| how the pattern reaches `regexp` | `-` `--` `-nocase` `-zz` `-line` `-all` `-x` `-expanded` `-a-` `-.*` |
+|---|---|
+| `regexp $p {12345}` — **through a variable**, which is how BOTH `gsl_frozen_ref` and the shipping body spell it | **err=0, result 0, every one** |
+| `regexp -nocase {12345}` — the same word as a **literal** | error (`wrong # args`) |
+| `regexp {*}$p {12345}` / `eval regexp …` — **re-dispatched at runtime** | error (`bad option "-zz"`) |
+
+Switch parsing happens for a **literal** option word, or when the command is re-dispatched
+by `eval` / `{*}` expansion — *not* for a pattern arriving through a variable in a compiled
+proc. So the legacy probe never throws on a leading hyphen and never widens.
+
+**Differential measurement**, verbatim frozen reference vs shipping body, blob
+`"v(x-y)\nzz\nv(out)\n-lead\nv(-a-)"`, 10 leading-hyphen patterns × both sort directions =
+**20 comparisons, ZERO differences**. Pattern `-` returns `{-lead -a- x-y}` from **both**
+bodies — not "the whole list" from one and "hyphenated names" from the other.
+
+**Fix applied (§10):** the ⚠ block and the exclusion are deleted and ten leading-hyphen
+patterns (`-`, `--`, `-nocase`, `-all`, `-line`, `-zz`, `-x`, `-out`, `-.*`, `-a-`) are now
+**in** `GSO_PATS`. This *adds* 1,080 comparisons of coverage the oracle had been forgoing,
+all of them clean. `gso_sanctioned` is untouched and still recognises exactly the two
+classes ruling 17 sanctions.
+
+**Lesson, and it is the same one as §6:** this claim was reasoned about and written into a
+⚠ block and a receipt, but never executed. One `catch` would have refuted it. The oracle
+exists precisely because unmeasured claims about regex behaviour had already been wrong
+twice — and the artifact built to cure that shipped a third.
 
 ## 6. The claim corrections
 
@@ -172,8 +203,9 @@ No code was changed for it.
 ## 7. Verification
 
 * `./src/xschem --pipe -q --nolog --nogui --script tests/headless/test_wave_sigsearch.tcl`
-  → `RESULT: ALL PASS (88 checks)`, **0.34 s**, `GSORACLE: 9072 comparisons, 1036
-  differences, all sanctioned (a=848, b=188), 0 unexplained.`
+  → `RESULT: ALL PASS (88 checks)`, **0.34 s**, `GSORACLE: 10340 comparisons, 1054
+  differences, all sanctioned (a=864, b=190), 0 unexplained.` (As `5f1de36a` shipped it:
+  9,072 / 1,036 / a=848 / b=188 — see §10.)
 * No droppings: `git status` shows only the two intended modified files.
 * No `make` was run while any suite was running.
 
@@ -241,3 +273,117 @@ Ruling 17 makes this the last coverage round on item 3. The oracle landed: it ca
 seven round-2 holes, 21 of the 24 further mutations tried against it, and the three it does
 not catch are provably behaviour-preserving. **No further mutation-hunting on item 3 is
 authorised, and none is needed** — the next reviewer's time is better spent on item 4.
+
+---
+
+## 10. The scoped cleanup — three proven defects IN the oracle (DRIVER RULING 18)
+
+Ruling 18 authorised **exactly** this and bounded it: fix the three defects `5f1de36a`'s own
+verify stage found in the artifact, then item 3 CLOSES regardless of outcome. This is
+finishing round 3, not a fourth mutation-hunting round. **No new mutation hunt was run and
+none is reported below as a finding.**
+
+### Defect 1 — the axis was three characters short, and six comments said otherwise
+
+The punctuation sweep shipped as `v(a b!#$%&'*+,-./:;<=>?@[]^_{|}~)`, missing `"`, `\` and
+backtick; no other name in `GSO_NAMES` carried any of them. Three capture narrowings were
+therefore behaviour-changing and **88/88 GREEN**. Re-injected after widening the axis:
+
+| mutation of `regsub {^v\((.*)\)$}` | before | after |
+|---|---|---|
+| `(.*)` → `([^\\]*)` | GREEN 88/88 | **GSO01 FAIL**, 144 unsanctioned, repro printed |
+| `(.*)` → `([^"]*)` | GREEN 88/88 | **GSO01 FAIL**, 144 unsanctioned, repro printed |
+| ``(.*)`` → ``([^`]*)`` | GREEN 88/88 | **GSO01 FAIL**, 144 unsanctioned, repro printed |
+
+The sweep is now `v(a b!"#$%&'*+,-./:;<=>?@[\]^_`{|}~)` — all 32 ASCII punctuation
+characters — changed in both places it occurs (the `GSO_NAMES` axis and `GSO06`'s required
+list), and **confirmed by running it**, not by reading it: the Tcl brace-quoted literal was
+executed and its 32-character punctuation content asserted before it was pasted in.
+
+**A DIVERGENCE FROM THE INSTRUCTION, DELIBERATE AND MEASURED.** Ruling 18 directed that the
+true claim be written as *"any narrowing of the capture that excludes a printable ASCII
+character fails GSO01"*. Rather than assert it, I **measured** it — swept all 95 printable
+ASCII characters (0x20-0x7E) as `(.*)` → `([^c]*)`, one run each:
+
+* with only the widened punctuation sweep: **55 caught, 40 GREEN.** Every one of the 40 was
+  alphanumeric (`[^q]*`, `[^Z]*`, `[^7]*` …) — no wrapped name in the axis contained those
+  characters. **The authorised claim would have been false as written.**
+* ruling 17's own rule is *"either the coverage widens to match the claim or the claim
+  narrows to match the coverage — never neither"*. I widened, since it is one line: added
+  `v(0123456789abc…xyzABC…XYZ)`, all 62 alphanumerics.
+* re-swept: **95/95 caught, 0 green.** The authorised claim is now TRUE **as measured**.
+
+This is the only step beyond the literal instruction, and it exists so the sentence ruling
+18 asked for could be written honestly. Cost: one name, +188 comparisons.
+
+The six false claim sites are corrected and each now states the **bounded, measured** claim
+plus a pointer to the residue:
+
+| site | now reads |
+|---|---|
+| `test_wave_sigsearch.tcl:43-59` (header GSO row) | 52 × 94 = 10,340; "carries the coverage claim", bound stated as printable-ASCII, 95/95 measured |
+| `:498` (GS17-GS21 block, bullet 2) | "COMPLETENESS IS PROVED BY" → "COVERAGE IS CARRIED BY"; bound + 95/95; explicit *do not restore the word "COMPLETE"* |
+| `:530-533` (**the dangerous one**) | the sentence that green-lit *"tidy `(.*)` into an explicit class and ship the regression"* now states the printable-ASCII bound, names the residue, records that the old wording rested on a property the oracle did not have, and says **re-measure, do not reason** |
+| `:607-614` (oracle rationale) | "EVERY behaviour-changing mutation" retired — an oracle is only as wide as its axes; a ⚠ says say "fails GSO01" only of things measured failing GSO01 |
+| `:688` (name-axis sweep note) | both sweeps described, 95/95 recorded, ⚠ *do not clean up either name* with the exact history of what went green |
+| `src/xschem.tcl:4524` (**COMMENT ONLY**) | 52 × 94 = 10,340; "ANY behaviour-changing edit" corrected to a bounded, measured guarantee + the residue |
+| this receipt §2 | superseded numbers marked as such |
+
+A **fourth entry** was added to the file's *"WHAT THIS ORACLE STILL CANNOT SEE"* list for the
+honest residue: narrowings excluding only characters outside printable ASCII (the axis
+carries exactly one non-printable, a TAB, which is what kills `[[:print:]]*`). It is
+labelled the finite-axis regress ruling 17 **deliberately withdrew** — *not a bug, not work,
+do not open a round to chase it* — with the one legitimate trigger to revisit named: a real
+`.raw` observed emitting such a name.
+
+### Defect 2 — a whole pattern class excluded on a false premise
+
+See **§5**, retracted in full above, with my own independent re-measurement (Tcl 8.6.14; 20
+differential comparisons; zero differences; literal-vs-variable switch-parsing table). The
+⚠ "DELIBERATE MATRIX BOUNDARY" block and the exclusion are **deleted**, ten leading-hyphen
+patterns are **in** the matrix (+1,080 comparisons, all clean), and the driver is owed **no
+decision**. `gso_sanctioned` still recognises exactly two classes.
+
+### Defect 3 — the anti-vacuity check defeated itself
+
+`foreach gso_b [lrange $gso_bad 0 7]` reused `gso_b`, the class-(b) exercised counter, so on
+any FAILING run the counter was clobbered with `name={…} pat={…} …` and GSO04's
+`expr {$gso_b > 0}` resolved by **string** comparison to 1. Renamed to `gso_line`.
+
+**Proved by injection, in four states** — a rename nobody tested is not a fix. The decisive
+one is the middle pair: the director patterns were removed from `GSO_PATS` so class (b) is
+genuinely exercised **zero** times, while a `(.*)` → `([^,]*)` capture narrowing keeps the
+run failing.
+
+| state | GSO01 | GSO04 | verdict |
+|---|---|---|---|
+| committed `gso_b`, mutation only | FAIL | `ok` | GSO02-GSO06 all "ok", as reported |
+| committed `gso_b`, mutation + class (b) exercised **0** times | FAIL | **`ok`** | **VACUOUS — the defect, reproduced** |
+| renamed `gso_line`, mutation + class (b) exercised **0** times | FAIL | **`FAIL {0} (exp {1})`** | **fix works** |
+| renamed `gso_line`, mutation only (directors restored) | FAIL | `ok` | legitimately ok — counter really is 190 |
+
+A ⚠ comment above the loop now records that the loop variable must not reuse a counter name,
+with the measurement.
+
+### What was run — and what this is NOT
+
+* `./src/xschem --pipe -q --nolog --nogui --script tests/headless/test_wave_sigsearch.tcl`
+  → **`RESULT: ALL PASS (88 checks)`**, `GSORACLE: 10340 comparisons, 1054 differences, all
+  sanctioned (a=864, b=190), 0 unexplained`, ~0.34 s.
+* The wave/graph-related suites through the gated `run_suites.sh` under a real DISPLAY — see
+  the run table in the report accompanying this commit.
+* **This round is NOT a full 283-test audit and must not be read as one.** `5f1de36a`
+  already carries the batch's clean 283 (§8), and this cleanup changes **no product logic**:
+  the entire `src/` diff is Tcl **comment**, `git diff` confirms zero non-comment lines, and
+  `src/wave_viewer.tcl` is untouched. Audit scope was set deliberately by ruling 18.
+* Every sabotage was reverted with `git checkout -- src/xschem.tcl` and confirmed clean with
+  `git diff --quiet` before the next measurement. The test file, which carried uncommitted
+  work throughout, was never `git checkout`-ed — it was restored from a scratchpad copy.
+
+### Termination
+
+Item 3 is **CLOSED**. Ruling 18 closes it after this cleanup *regardless of outcome*, and
+the outcome was: three defects fixed, each proved by injecting the mutation it exists to
+catch, plus one measured widening so the authorised claim is true rather than merely
+authorised. **No eighth green mutation is reported, because none was hunted.** The batch
+proceeds to item 4.
