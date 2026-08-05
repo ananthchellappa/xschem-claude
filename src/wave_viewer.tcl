@@ -363,6 +363,15 @@ namespace eval wviewer {
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
+  # per-SEARCHBAR state (signal browser batch item 4), keyed by the megawidget's
+  # own frame path — NOT by session token, because a searchbar is not a per-window
+  # singleton: item 5 puts one in the Add Trace dialog and item 8 another in the
+  # browser sidebar of the SAME viewer window. Dropped by the bar's own <Destroy>
+  # handler (wviewer::searchbar_destroyed), so a destroyed bar leaves nothing.
+  #   sbcfg($w)  = {command <cb prefix> showbutton <0|1>}
+  #   sbcase($w) = the Match-case checkbutton's -variable (0 = ViVA's default)
+  variable sbcfg;   array set sbcfg  {}
+  variable sbcase;  array set sbcase {}
   # strip drag-reorder (doc/claude/specs/waveform_viewer_modes.md §12): TRANSIENT
   # per-window gesture state, keyed by session token. Created in open, dropped by
   # forget, NEVER serialized (a half-finished drag is not part of a saved layout).
@@ -7403,6 +7412,238 @@ proc wviewer::arrow_pan {token wp N s} {
     default { return 0 }
   }
   return 1
+}
+
+# --- SIGNAL SEARCH BAR: the ViVA Search toolbar as a megawidget (item 4) -----
+# doc/claude/signal_browser_batch/PLAN.md item 4;
+# references/viva_cadence_waveform_viewer.md §3.2 (the widget order) and §3.3
+# (whole-name wildcards). Settled decisions 3, 4, 5, 6, 7 — and decision 2 in
+# full: this is a NEW search surface, so the match subject is the FULL raw name
+# (`v(out)`), NOT the stripped form. DRIVER RULING 16's stripped-subject
+# carve-out is for the LEGACY `.graphdialog` compat surface ONLY and does not
+# reach here; that is exactly why the type dropdown below can exist, since it
+# reads the `v(`/`i(` prefix that stripping would destroy.
+#
+# WHY THIS LIVES HERE AND NOT IN THE `:1447` SIGNAL SEARCH SECTION: that
+# section's header promises "PURE: no Tk", and this half is all Tk. The two
+# label->code mappers are here rather than there for the same reason in reverse
+# — they are the WIDGET's private vocabulary (the on-screen English), and
+# `sig_match` must never see a label.
+#
+# THIS SECTION SHIPS WITH ZERO CONSUMERS, on purpose, exactly as items 1 and 2
+# did: item 5 wires the bar into `add_trace_dialog` (12 lines below), item 8
+# into the browser sidebar. `grep -rn searchbar_build src/` outside this section
+# returns nothing today, so item 4 has no blast radius on shipping UI.
+#
+# ⚠ DECLARED DIVERGENCE FROM ViVA §3.2, not a silent omission: ViVA's toolbar
+# has SIX controls and this one has five. The dropped one is the fifth, the
+# `All DBs` checkbox. An xschem viewer window has exactly ONE raw loaded, so the
+# box would have nothing to widen the search to. If a multi-raw viewer ever
+# lands it re-enters HERE, as widget six, immediately before `Search`.
+#
+# WHAT OWNS THE ERROR MESSAGE. Settled decision 4 says an invalid regexp is an
+# ERROR, never a silent match-all, and that items 3 and 4 surface it. Item 3
+# surfaces it as an EMPTY listbox only (its D4 — `.graphdialog` has no error
+# widget). **`$w.err` here is the real error label**, and it is the only place
+# in the batch that shows `sig_match`'s message text to a user.
+
+# `All`/`Voltage`/`Current`/`Other` -> sig_match's `-type` codes. PURE.
+# Anything unrecognised falls back to `all`, which is the safe direction for a
+# filter: a widened list is visible, a silently emptied one looks like "no such
+# signal".
+proc wviewer::sb_type_code {label} {
+  switch -exact -- $label {
+    Voltage { return v }
+    Current { return i }
+    Other   { return other }
+  }
+  return all
+}
+
+# `Shell`/`RegExp` -> sig_match's `-syntax` codes. PURE. Unrecognised -> shell,
+# settled decision 7's default, and again the safe direction: a shell pattern
+# cannot raise a compile error, so a fallback can never turn into a stuck error
+# label.
+proc wviewer::sb_syntax_code {label} {
+  if {$label eq {RegExp}} { return regexp }
+  return shell
+}
+
+# wviewer::searchbar_build parent ?-command cb? ?-showbutton 0|1? ?-name child?
+#   -> the megawidget's frame path (default `$parent.wvsearch`).
+#
+# `-command` is called as `<cb> <pattern> <syntax> <case> <type>` — the last
+# three already mapped to sig_match's codes — on every live keystroke in the
+# entry, on either dropdown's selection, on the Match-case toggle, and on the
+# Search button. Settled decision 5 ships BOTH the live filter and the button.
+# `-showbutton 0` omits the button entirely (the Filter-bar variant of item 8);
+# it is not merely unpacked, so `winfo exists $w.search` is a truthful test of
+# the variant. `-name` lets two bars share one parent.
+#
+# Widget order is ViVA §3.2's, left to right:
+#   [type ▾] [pattern________] [syntax ▾] [x] Match case  [Search]   <error>
+# Defaults: type `All`, syntax `Shell` (decision 7), case OFF (decision 6).
+#
+# `$w.err` carries a FIXED `-width 24` and no `-expand`, so its requested width
+# is the same whether the message is empty or 200 characters. That is the
+# mechanism behind "the error label does not resize the bar" — a long message
+# CLIPS at ~24 characters rather than pushing `Search` off the end. The clip
+# budget is deliberate; if a consumer needs the full text, the right answer is a
+# tooltip, not an elastic label.
+proc wviewer::searchbar_build {parent args} {
+  variable sbcfg
+  variable sbcase
+  set cb {}
+  set showbutton 1
+  set child wvsearch
+  if {[llength $args] % 2} {
+    return -code error "wviewer::searchbar_build: options must come in -opt value pairs"
+  }
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -command { set cb $v }
+      -showbutton {
+        if {![string is boolean -strict $v]} {
+          return -code error \
+            "wviewer::searchbar_build: -showbutton wants a boolean, got \"$v\""
+        }
+        set showbutton [expr {[string is true -strict $v] ? 1 : 0}]
+      }
+      -name    { set child $v }
+      default  { return -code error "wviewer::searchbar_build: unknown option $o" }
+    }
+  }
+  set w [expr {$parent eq {.} ? ".$child" : "$parent.$child"}]
+  destroy $w
+  # `ase::theme` FIRST, for its side effect: it lazily creates AseLabelFont /
+  # AseEntryFont. The widgets below name those fonts at CREATION time (not only
+  # via apply_theme at the end), so they must already exist.
+  ase::theme
+  frame $w
+  ttk::combobox $w.type -state readonly -width 8 \
+    -values {All Voltage Current Other}
+  $w.type set All
+  entry $w.pat -width 20 -font AseEntryFont
+  ttk::combobox $w.syntax -state readonly -width 7 -values {Shell RegExp}
+  $w.syntax set Shell
+  # set the var BEFORE the checkbutton exists, so the widget adopts decision 6's
+  # OFF rather than defining the element itself
+  set sbcase($w) 0
+  checkbutton $w.case -text {Match case} -variable ::wviewer::sbcase($w)
+  if {$showbutton} { button $w.search -text Search }
+  label $w.err -text {} -font AseLabelFont -anchor w -width 24
+  pack $w.type   -side left -padx {6 4} -pady 3
+  pack $w.pat    -side left -padx {0 4} -pady 3 -fill x -expand 1
+  pack $w.syntax -side left -padx {0 4} -pady 3
+  pack $w.case   -side left -padx {0 4} -pady 3
+  if {$showbutton} { pack $w.search -side left -padx {0 6} -pady 3 }
+  pack $w.err    -side left -padx {0 6} -pady 3
+  set sbcfg($w) [dict create command $cb showbutton $showbutton]
+  # EVERY route converges on the one handler, so there is exactly one place a
+  # consumer's callback can be invoked from and exactly one place the error
+  # label is written.
+  bind $w.pat    <KeyRelease>         [list wviewer::searchbar_fire $w]
+  bind $w.type   <<ComboboxSelected>> [list wviewer::searchbar_fire $w]
+  bind $w.syntax <<ComboboxSelected>> [list wviewer::searchbar_fire $w]
+  $w.case configure -command [list wviewer::searchbar_fire $w]
+  if {$showbutton} {
+    $w.search configure -command [list wviewer::searchbar_fire $w]
+  }
+  # The `%W` guard is belt-and-braces: a frame path is NOT in its children's
+  # bindtags (a child's tags are {child Class Toplevel all}), so today only the
+  # frame's own <Destroy> can reach this. It costs nothing and it is the one
+  # thing standing between a consumer that adds `$w` to a child's bindtags and a
+  # bar that de-registers itself the first time its entry is destroyed.
+  bind $w <Destroy> [list wviewer::searchbar_destroyed $w %W]
+  ase::ui::apply_theme $w
+  $w.err configure -foreground [ase::theme accent]
+  return $w
+}
+
+# The bar's four values as a dict {pattern .. syntax .. case .. type ..}, with
+# syntax/case/type already in sig_match's codes so a consumer can splat them
+# straight into `sig_match`. `{}` for a widget that is not a live searchbar —
+# consumers poll this from `after` handlers and snapshot code, where a hard
+# error on a torn-down widget would be the wrong answer.
+proc wviewer::searchbar_get {w} {
+  variable sbcfg
+  variable sbcase
+  if {![info exists sbcfg($w)]} { return {} }
+  if {![winfo exists $w]} { return {} }
+  return [dict create \
+    pattern [$w.pat get] \
+    syntax  [wviewer::sb_syntax_code [$w.syntax get]] \
+    case    [expr {[info exists sbcase($w)] && $sbcase($w) ? 1 : 0}] \
+    type    [wviewer::sb_type_code [$w.type get]]]
+}
+
+# THE handler. Body order is load-bearing:
+#   1. read the four values (searchbar_get, the one reader);
+#   2. VALIDATE through THE ONE matcher — `sig_match` on an EMPTY signal list,
+#      so the match loop never runs and only the `^(?:$pat)$` compile at
+#      `:1573-1574` happens. Nothing here re-implements matching; that is the
+#      `:1465` rule and it is why an error message shown to a user is always
+#      byte-identical to the one the consumer's own sig_match call will produce;
+#   3. write the error label — the message on `{err ...}`, EMPTY otherwise,
+#      which is decision 4's "clears on the next valid keystroke" clause;
+#   4. invoke the consumer callback ALWAYS, invalid pattern included. The
+#      consumer calls sig_match itself and gets the same `{err ...}`; deciding
+#      whether to blank a list or hold the last good one is item 5's and item
+#      8's call, not this widget's.
+#
+# ⚠ THIS PROC MUST NOT THROW. It rides a <KeyRelease> pump, and a Tcl error
+# there pops bgerror, which is modal under X and HANGS a headless run. Both the
+# validation and the user callback are catch-wrapped; a throwing consumer
+# callback puts its own message in `$w.err`, so it is visible and never silent.
+# Same discipline as `readout_refresh`, for the same reason.
+proc wviewer::searchbar_fire {w} {
+  variable sbcfg
+  if {![info exists sbcfg($w)]} { return }
+  set d [wviewer::searchbar_get $w]
+  if {$d eq {}} { return }
+  set pat  [dict get $d pattern]
+  set syn  [dict get $d syntax]
+  set case [dict get $d case]
+  set type [dict get $d type]
+  set msg {}
+  if {![catch {wviewer::sig_match {} $pat -syntax $syn -case $case} r]} {
+    if {[lindex $r 0] eq {err}} { set msg [lindex $r 1] }
+  } else {
+    set msg $r
+  }
+  wviewer::searchbar_error $w $msg
+  set cb [dict get $sbcfg($w) command]
+  if {$cb ne {}} {
+    if {[catch {uplevel #0 [linsert $cb end $pat $syn $case $type]} e]} {
+      wviewer::searchbar_error $w $e
+    }
+  }
+  return
+}
+
+# Set (or, with an empty `msg`, clear) the bar's error label.
+proc wviewer::searchbar_error {w msg} {
+  if {![winfo exists $w.err]} { return }
+  $w.err configure -text $msg
+}
+
+# <Destroy> trampoline: act only on the BAR's own destruction, never a child's.
+proc wviewer::searchbar_destroyed {w W} {
+  if {$W ne $w} { return }
+  wviewer::searchbar_forget $w
+}
+
+# Drop every trace of the bar from the namespace. The `-variable {}` first is
+# NOT optional: Tk's checkbutton keeps a write/unset trace on its -variable and
+# RE-CREATES the element when it is unset out from under a live widget, so
+# unsetting `sbcase($w)` while `$w.case` still exists would silently leak the
+# entry back. Detaching the variable removes the trace first.
+proc wviewer::searchbar_forget {w} {
+  variable sbcfg
+  variable sbcase
+  catch {$w.case configure -variable {}}
+  catch {unset sbcfg($w)}
+  catch {unset sbcase($w)}
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------

@@ -2,7 +2,7 @@
 # (doc/claude/signal_browser_batch/PLAN.md items 1-7 — per settled decision 9
 # this ONE file carries every item-1..7 check; each item APPENDS its group).
 #
-#   SM01-SM27  wviewer::sig_match — the shared matcher (item 1).
+#   SM01-SM28  wviewer::sig_match — the shared matcher (item 1).
 #              Shape; shell `*` `?` `[range]` and the literal-bracket escape;
 #              regexp WHOLE-NAME anchoring (SM04, the ViVA trap, see below);
 #              case default vs -case 1 on BOTH syntax arms (shell SM09/SM10/SM11,
@@ -12,6 +12,13 @@
 #              alone and combined with a pattern; empty pattern = everything on
 #              both arms; an invalid regexp -> {err ...} and NOT the whole list;
 #              -sort 0/1/-1; the shell default; a bad option throws.
+#              SM28 is APPENDED OUT OF PLACE, at the bottom of the file beside
+#              the BAR group, by item 4: settled decision 9 makes this file
+#              append-only, and item 1's receipt §6 cross-references the name
+#              `SM28`, so it keeps that name rather than a BAR one. It
+#              discharges item 1's surviving mutation gap D8/U1 — dropping the
+#              non-capturing group from the `^(?:$pat)$` wrap survived all 88
+#              pre-item-4 checks.
 #   ST01-ST08  wviewer::sig_type (item 1) — v / i / other, incl. the deliberate
 #              `@m...[id]` -> other divergence from ase::ui::output_kind.
 #   SB01-SB12  the PURE half of item 2 — sig_bare / sig_split / signal_entry.
@@ -61,16 +68,53 @@
 #              sanctioned classes actually exercised; the frozen reference is
 #              still the legacy body and not a call to the shipping one; the
 #              required real-name classes are still present).
+#   BAR01-BAR26 (+BAR18b, +BAR22b, no BAR25 — 27 checks; the two `b` names are
+#              anti-vacuity guards, added because their partners were MEASURED
+#              to pass without the code they claimed to pin; and BAR25 does not
+#              exist — see the ⚠ below)
+#              `wviewer::searchbar` — the ViVA Search toolbar megawidget
+#              (item 4, src/wave_viewer.tcl). REAL Tk widgets on two throwaway
+#              toplevels: the child set and ViVA §3.2's pack order; the three
+#              DEFAULTS pinned INDEPENDENTLY (type All / syntax Shell / case
+#              OFF, one check each, one widget each — see the group header);
+#              the `-showbutton 0` variant; the label->code mappers; the
+#              callback contract (four args, mapped codes, reached from the
+#              KeyRelease binding, the Search button and a <<ComboboxSelected>>
+#              — NOT from a real X key press, see below); decision 4's error
+#              label populating
+#              VERBATIM from sig_match and clearing on the next valid
+#              keystroke; that the label cannot resize the bar; the theme; and
+#              that a destroyed bar leaves no namespace state.
+#              ⚠ THERE IS NO BAR25. An end-to-end "a REAL generated KeyRelease
+#              reaches the callback" check was written, soaked 8/8 green, and
+#              then FAILED inside a full 283-test audit under load. It was
+#              REMOVED, not made conditional: its only oracle is "did the
+#              callback fire", which cannot distinguish a WSLg key-delivery
+#              stall from a genuinely broken binding, so a self-skipping version
+#              would mask the very regression it exists to catch. The claim is
+#              narrowed to match: the handler and the binding are pinned
+#              (BAR13+BAR14); end-to-end X key delivery is NOT.
 #
-# Standalone repro (every check in this file is `--nogui`-safe today; later
-# items' will not be, which is why both spellings stay documented):
+# ⚠ THE BAR GROUP IS DISPLAY-ARM ONLY. It self-skips without X, so the
+# `--nogui` repro below no longer exercises item 4 AT ALL — a green `--nogui`
+# run proves nothing about the search bar. `full_audit.sh` runs this file in the
+# DISPLAY arm (it is not in `nogui_tests`), so audit coverage is real; a
+# maintainer debugging with `--nogui` must not read that green as coverage.
+# The skip banner is worded `SKIPPED: BAR group (Tk/X arm only)` ON PURPOSE:
+# `full_audit.sh:109 is_skip()` matches `RESULT: SKIP`, `skipped: no X` and
+# `SKIP: no X connection` ANYWHERE in the output and runs BEFORE `is_pass`, so
+# any of those three spellings would score this whole 116-check suite as SKIP
+# and silently discard every item-1/2/3 check with it.
+#
+# Standalone repro (SM/ST/SB/SL/GS/GSO are `--nogui`-safe; BAR is not):
 #   ./src/xschem --pipe -q --nolog --nogui --script tests/headless/test_wave_sigsearch.tcl
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_wave_sigsearch.tcl
 #
-# NOTE for items 4-7: items 1-2 install NO `after` handlers and no dialog, so
-# this file needs no bgerror override yet. The moment a dialog arrives, add one
-# — a Tcl error inside an `after` handler pops bgerror and HANGS the headless
-# run.
+# bgerror IS overridden (below), as the NOTE that stood here for items 4-7 asked
+# for: item 4 builds real widgets with real bindings, and a Tcl error reaching
+# background level pops a MODAL bgerror dialog under X and HANGS the run. The
+# override swallows it, prints it and COUNTS IT AS A FAILURE — the only
+# formulation that can neither hang nor hide.
 #
 # EXPECTED STDOUT NOISE from the item-2 group, harmless and NOT a failure:
 #   can't read "toolbar_visible": no such variable     (xschem new_schematic create, --nogui)
@@ -90,6 +134,11 @@
 # nothing downstream can tell the difference. It must be left at 0, not 1.
 # It also leaves the oracle's procs and globals defined: `gsl_frozen_ref` and
 # the `gso_*` predicates/counters/lists. Items 4-7 must not reuse those names.
+# The item-4 group leaves NO widget state: both throwaway toplevels (`.wvsb1`,
+# `.wvsb2`) are destroyed and `::barargs` is unset at group end, and BAR24 is
+# the check that a destroyed bar drops its `::wviewer::sbcfg` / `sbcase`
+# entries. It DOES leave `::bgerror` overridden and the `bar_*` helper procs
+# defined, for items 5-7 which want both.
 #
 # This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
 # is in-memory — no `.raw` file appears (verified with `git status`).
@@ -110,6 +159,13 @@ proc pcall {args} {
   if {[catch {uplevel 1 $args} r]} { return "ERR:$r" }
   return $r
 }
+
+# bgerror override (item 4). REQUIRED from here on: the BAR group builds real Tk
+# widgets with real bindings, and any error that escapes to background level
+# would pop the stock bgerror dialog — MODAL under X, which HANGS a headless
+# run. Swallow it, print it, and COUNT IT AS A FAILURE: a silent swallow would
+# hide a defect, a re-throw would hang, and only this shape does neither.
+proc ::bgerror {msg} { puts "BGERROR: $msg"; incr ::fail }
 
 # recent-files gate (issue 0119)
 set no_recent_files 1
@@ -917,6 +973,253 @@ foreach gso_n [list {v(a,b)} {v(out,outb)} {v(vdd!)} {v(net#1)} {v(x-y)} \
 check {GSO06 the name axis still carries every required real-name class} \
   $gso_missing {}
 set ::graph_sort 0
+
+# --- item 4: wviewer::searchbar — the ViVA Search toolbar megawidget ---------
+# PLAN item 4 (PIXEL). Two of the three things the item asks a human to eyeball
+# ARE convertible to checks and are converted here — the widget ORDER (BAR03,
+# `pack slaves` is exactly what the eye reads left-to-right) and "the error
+# label does not resize the bar" (BAR21, `winfo reqwidth` across a 200-char
+# message). BAR22+BAR22b pin the theme hookup. What is NOT convertible, and is
+# therefore still owed to the human queue: the SPACING as it looks (BAR03 proves
+# order, not that no two widgets touch) and the LEGIBILITY of the dark-red
+# message and the Match-case indicator against the #f2f2f2 panel.
+#
+# ⚠ THE DEFAULTS ARE PINNED ONE CHECK PER WIDGET, ON PURPOSE (item 3's P2
+# lesson). BAR04 reads ONLY `$w.type get`, BAR05 ONLY `$w.syntax get`, BAR06
+# ONLY `sbcase($w)`; every OTHER check that depends on a selector sets it
+# explicitly first. That is what makes the named sabotage (syntax default ->
+# RegExp) fail BAR05 and nothing else. A "searchbar_get at defaults" check was
+# deliberately NOT written: it would duplicate BAR04-06 and hand each of those
+# three sabotages a second target.
+
+# SM28 belongs to item 1's group and is appended HERE only because settled
+# decision 9 makes this file append-only; it keeps the name item 1's receipt §6
+# cross-references. It discharges item 1's D8/U1 gap: dropping the non-capturing
+# group from sig_match's `^(?:$pattern)$` wrap (wave_viewer.tcl:1573) survived
+# all 88 pre-item-4 checks. An ALTERNATION is what separates them — `^(?:out|l1)$`
+# is anchored as a whole and takes `l1` alone, while `^out|l1$` binds `^` to the
+# first branch and `$` to the last, so it also takes anything ENDING in l1
+# (`xl1`). PURE: it runs in the --nogui arm too.
+check {SM28 regexp arm anchors an ALTERNATION as a whole} \
+  [lindex [sig_match $SIGS {out|l1} -syntax regexp] 1] [list l1]
+
+# BAR12 is the label->code vocabulary. PURE (no Tk), so it too runs in BOTH
+# arms and sits outside the X guard. It sweeps the WHOLE table plus the
+# fallbacks, because a mapper that is right for three of four labels is a bug
+# that only shows up for the user who picks the fourth.
+check {BAR12 sb_type_code / sb_syntax_code map the whole label table} \
+  [list [wviewer::sb_type_code All] [wviewer::sb_type_code Voltage] \
+        [wviewer::sb_type_code Current] [wviewer::sb_type_code Other] \
+        [wviewer::sb_type_code zzz] \
+        [wviewer::sb_syntax_code Shell] [wviewer::sb_syntax_code RegExp] \
+        [wviewer::sb_syntax_code zzz]] \
+  [list all v i other all shell regexp shell]
+
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # the recorder: the LAST callback invocation, verbatim
+  set ::barargs {}
+  proc barcb {args} { set ::barargs $args }
+
+  # distinctive toplevel names: this process already carries a second xschem
+  # context (`.x1.drw`, left by the item-2 group), so nothing here may assume a
+  # pristine widget tree.
+  destroy .wvsb1 .wvsb2
+  toplevel .wvsb1
+  wm title .wvsb1 {item4 searchbar}
+  wm geometry .wvsb1 +60+60
+  update
+  set w [wviewer::searchbar_build .wvsb1 -command barcb]
+  # THE CONTRACT RETURNS AN UNMANAGED FRAME — geometry management is the
+  # consumer's (item 5 grids it into a dialog, item 8 packs it above the tree).
+  # The test must therefore pack it itself, and not only for looks: an unpacked
+  # frame is UNMAPPED, its entry is unmapped with it, and `focus -force` on an
+  # unmapped window silently leaves the focus on the toplevel — which is exactly
+  # why BAR25 could never see a generated key until this line existed.
+  pack $w -fill x
+  update
+
+  check {BAR01 searchbar_build returns the frame path, and it is a Frame} \
+    [list $w [winfo exists $w] [winfo class $w]] [list .wvsb1.wvsearch 1 Frame]
+
+  set barkids {}
+  foreach c {type pat syntax case search err} {
+    lappend barkids [winfo exists $w.$c]
+  }
+  check {BAR02 the six children exist under the contract names} \
+    $barkids [list 1 1 1 1 1 1]
+
+  check {BAR03 pack order is ViVA §3.2's: type pat syntax case search err} \
+    [pack slaves $w] \
+    [list $w.type $w.pat $w.syntax $w.case $w.search $w.err]
+
+  # --- the three defaults, one widget each (see the group header) ---
+  check {BAR04 type dropdown default is All} [$w.type get] All
+  check {BAR05 syntax dropdown default is Shell} [$w.syntax get] Shell
+  check {BAR06 Match case default is OFF} $::wviewer::sbcase($w) 0
+
+  check {BAR07 the type dropdown offers exactly All Voltage Current Other} \
+    [$w.type cget -values] [list All Voltage Current Other]
+  check {BAR08 the syntax dropdown offers exactly Shell RegExp} \
+    [$w.syntax cget -values] [list Shell RegExp]
+  check {BAR09 the pattern entry starts empty} [$w.pat get] {}
+
+  # the Filter-bar variant: the button is NOT CREATED, not merely unpacked, so
+  # `winfo exists` is a truthful test of which variant a consumer got
+  toplevel .wvsb2
+  wm geometry .wvsb2 +80+240
+  set w2 [wviewer::searchbar_build .wvsb2 -command barcb -showbutton 0]
+  pack $w2 -fill x
+  check {BAR10 -showbutton 0 omits the button and keeps the other five} \
+    [list [winfo exists $w2.search] [pack slaves $w2]] \
+    [list 0 [list $w2.type $w2.pat $w2.syntax $w2.case $w2.err]]
+
+  # --- the callback contract ---
+  # BAR13 asserts the BINDING SHAPE only. Together with BAR14 (the handler's
+  # behaviour when that script is run) it pins the KeyRelease route without
+  # depending on X key delivery at all. That is ALL the KeyRelease coverage
+  # there is — the end-to-end leg was removed; see the block where BAR25 used
+  # to be.
+  check {BAR13 the pattern entry's KeyRelease binding names searchbar_fire} \
+    [bind $w.pat <KeyRelease>] [list wviewer::searchbar_fire $w]
+
+  set ::barargs {}
+  $w.pat delete 0 end
+  $w.pat insert 0 abc
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR14 the callback gets exactly 4 args, pattern first} \
+    [list [llength $::barargs] [lindex $::barargs 0]] [list 4 abc]
+
+  # explicit non-default selectors, so BAR11/BAR15 cannot be tripped by a
+  # mutated DEFAULT (that is BAR04/05/06's job, and only theirs)
+  $w.type set Voltage
+  $w.syntax set RegExp
+  $w.case select
+  $w.pat delete 0 end
+  $w.pat insert 0 {^v.*}
+  check {BAR11 searchbar_get returns the 4-key dict in sig_match codes} \
+    [wviewer::searchbar_get $w] \
+    [list pattern {^v.*} syntax regexp case 1 type v]
+
+  set ::barargs {}
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR15 the four callback args are the MAPPED codes} \
+    $::barargs [list {^v.*} regexp 1 v]
+
+  set ::barargs {}
+  $w.search invoke
+  check {BAR16 the Search button reaches the same callback} \
+    $::barargs [list {^v.*} regexp 1 v]
+
+  set ::barargs {}
+  event generate $w.syntax <<ComboboxSelected>>
+  update
+  check {BAR17 a ComboboxSelected on the syntax dropdown reaches the callback} \
+    $::barargs [list {^v.*} regexp 1 v]
+
+  # --- decision 4's error label: THIS widget owns it (item 3's D4) ---
+  # The expectation is COMPUTED from sig_match at test time, never a hard-coded
+  # Tcl message string: the check is "the label shows the matcher's message
+  # VERBATIM", and hard-coding it would instead pin the Tcl version's wording.
+  $w.syntax set RegExp
+  $w.pat delete 0 end
+  $w.pat insert 0 {[}
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR18 an invalid regexp puts sig_match's message VERBATIM in the label} \
+    [$w.err cget -text] [lindex [wviewer::sig_match {} {[} -syntax regexp] 1]
+
+  set barerrmsg [$w.err cget -text]
+  check {BAR18b (guard) that message is non-empty, so BAR18 is not vacuous} \
+    [expr {$barerrmsg ne {}}] 1
+
+  $w.pat delete 0 end
+  $w.pat insert 0 {v.*}
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR19 the label clears on the next VALID keystroke} \
+    [$w.err cget -text] {}
+
+  # mirrors SM19: `[` is a perfectly ordinary shell pattern, so the SAME
+  # keystroke must NOT raise an error in Shell mode
+  $w.syntax set Shell
+  $w.pat delete 0 end
+  $w.pat insert 0 {[}
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR20 in Shell mode `\[` is not an error and the label stays empty} \
+    [$w.err cget -text] {}
+
+  # THE eyeball property, converted: the label's fixed -width means a message
+  # of ANY length leaves the bar's requested width untouched.
+  update idletasks
+  set barw0 [winfo reqwidth $w]
+  wviewer::searchbar_error $w [string repeat x 200]
+  update idletasks
+  set barw1 [winfo reqwidth $w]
+  wviewer::searchbar_error $w {}
+  update idletasks
+  check {BAR21 a 200-char error message does not change the bar's reqwidth} \
+    [list [expr {$barw0 > 0}] [expr {$barw1 == $barw0}]] [list 1 1]
+
+  check {BAR22 theme: entry font is AseEntryFont, error label is the accent} \
+    [list [$w.pat cget -font] [$w.err cget -foreground]] \
+    [list AseEntryFont [ase::theme accent]]
+
+  # BAR22b exists because BAR22 does NOT pin `ase::ui::apply_theme` — MEASURED,
+  # not assumed: deleting that call leaves BAR22 green, since the entry names
+  # AseEntryFont at creation and the accent is configured on the line AFTER it.
+  # The panel BACKGROUND is apply_theme's own contribution and nothing else sets
+  # it, so this is the check that goes red when the theming call goes away. It
+  # is also the closest a headless check gets to the eyeball line "the Match
+  # case indicator is legible against the #f2f2f2 panel" — it pins the
+  # background, never the legibility.
+  check {BAR22b apply_theme really ran: frame/checkbutton/button/label on panel} \
+    [list [$w cget -background] [$w.case cget -background] \
+          [$w.search cget -background] [$w.err cget -background]] \
+    [lrepeat 4 [ase::theme panel]]
+
+  # BAR25 IS DELIBERATELY ABSENT — see the group header. The end-to-end
+  # X-key-delivery leg was written, measured green 8/8 in a `run_suites.sh -n 8`
+  # soak, and then FAILED inside a full 283-test audit (`{0 {}}` — the key was
+  # never delivered under load). It was REMOVED rather than made conditional:
+  # its only oracle is "did the callback fire", which cannot tell a WSLg
+  # delivery stall from a genuinely broken binding, so a self-skipping version
+  # would mask exactly the regression it exists to catch. BAR13 (the binding
+  # names the handler) and BAR14 (running that script calls the callback
+  # correctly) keep the KeyRelease route pinned without an ambiguous oracle.
+  # THE NARROWED CLAIM: the handler and the binding are pinned; end-to-end X key
+  # delivery into this widget is NOT.
+
+  # the documented contract: the consumer is told about an invalid pattern too,
+  # and decides for itself what to display (item 5 / item 8's call, not the
+  # bar's)
+  set ::barargs {}
+  $w.type set All
+  $w.syntax set RegExp
+  $w.case deselect
+  $w.pat delete 0 end
+  $w.pat insert 0 {[}
+  eval [bind $w.pat <KeyRelease>]
+  check {BAR26 the callback still fires when the pattern is INVALID} \
+    $::barargs [list {[} regexp 0 all]
+
+  # --- teardown, and what teardown must leave behind: nothing ---
+  destroy .wvsb1
+  destroy .wvsb2
+  update
+  check {BAR23 searchbar_get returns {} for a foreign or destroyed widget} \
+    [list [wviewer::searchbar_get .nosuchbar] [wviewer::searchbar_get $w]] \
+    [list {} {}]
+  check {BAR24 destroy drops both sbcfg and sbcase — no namespace leak} \
+    [list [info exists ::wviewer::sbcfg($w)] [info exists ::wviewer::sbcase($w)] \
+          [info exists ::wviewer::sbcfg($w2)] [info exists ::wviewer::sbcase($w2)]] \
+    [list 0 0 0 0]
+  unset ::barargs
+
+} else {
+  # WORDING IS LOAD-BEARING — see the ⚠ in the file header. None of
+  # full_audit.sh:109's three skip spellings may appear here, or the whole
+  # suite is scored SKIP instead of PASS.
+  puts "SKIPPED: BAR group (Tk/X arm only)"
+}
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
