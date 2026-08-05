@@ -10,7 +10,7 @@
 # GROUP PREFIXES: one two-letter prefix per item, never reused.
 #     item  8  BS   the sidebar shell (this file's first group)
 #     item  9  BT   the browser tree
-#     item 10  BM   ...
+#     item 10  BM   the row context menu
 #     item 11  BH   ...
 #     item 12  BX   ...
 #     item 13  BR   ...
@@ -1039,9 +1039,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # paired with a NEGATIVE control that must record ZERO.
   proc bt_spy_on {} {
     set ::bt_plot_calls {}
+    set ::bt_plot_dest {}
     rename ::wviewer::plot_signals ::wviewer::__bt_real_plot_signals
-    proc ::wviewer::plot_signals {token exprs {colors {}}} {
+    # ⚠ THE 4th PARAMETER IS ITEM 10's, AND THE SPY MUST CARRY IT. plot_signals
+    # grew a one-shot `destover`; a 3-parameter spy would take the real 4-arg
+    # call as "too many arguments", browser_plot_ids' own catch would swallow it,
+    # and every BT gesture check below would read as "the gesture did nothing".
+    # It is RECORDED as well as accepted so item 10's own checks can assert what
+    # the cascade passed (BM30/BM31) on this same recorder.
+    proc ::wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
       lappend ::bt_plot_calls [list $token $exprs]
+      lappend ::bt_plot_dest [list $token $destover]
       return {}
     }
   }
@@ -1485,7 +1493,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check {BT44 the window's destination really is newstrip now} \
       [pcall ::wviewer::plot_dest $tok] newstrip
     pcall $BTVTV selection set [list {s:i(x1.x2.net5)}]
-    pcall ::wviewer::browser_plot_selection $tok
+    # ⚠ ITEM 10's CARRIED-FORWARD FIX (driver note b), and it is one word per
+    # line. These two checks are NAMED as "gestures" but used to call
+    # `browser_plot_selection` DIRECTLY — the handler, not the Tk route — which
+    # ruling 17 counts as a defect in the NAME even though the coverage was not
+    # missing (BT30/31/32 pin the real `invoke` route, BT43 drives real MMB and
+    # double-click). SWAPPED rather than renamed, because ruling 17 prefers
+    # WIDENING: `$BTVF.tb.plot invoke` is the real button route, is synchronous
+    # with no focus or mapping dependence (so it adds zero WSLg flake), the
+    # selection is already set by the line above so the semantics are
+    # byte-identical, and it closes the exact gap item 9's verifier exposed —
+    # no single check spanned real-button-route -> real-trace. RULING-23
+    # SUPERSET DECLARED: a future sabotage severing the Plot button's -command
+    # now fails BT30/31/32 AND these two, instead of leaving these two green.
+    pcall $BTVF.tb.plot invoke
     update
     check_true {BT44 a Plot-button gesture under newstrip created a new strip} \
       [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] > $bt_g0}]
@@ -1498,7 +1519,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     pcall ::wviewer::set_plot_dest replace $tok
     set bt_n2 [bt_traces $tok]
     pcall $BTVTV selection set [list {s:v(x1.y3.net5)}]
-    pcall ::wviewer::browser_plot_selection $tok
+    pcall $BTVF.tb.plot invoke                    ;# the real route, see above
     update
     check_true {BT44 under multi, a Replace gesture APPENDS (declared limit D2)} \
       [expr {[bt_traces $tok] > $bt_n2}]
@@ -1525,6 +1546,853 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
 } else {
   puts "SKIPPED: BTV group (Tk/X arm only)"
+}
+
+# ============================================================================
+# BM — item 10, the RMB context menu on a browser row.
+#   BM01-BM15 source/pure (BOTH arms), BM20-BM36 the throwaway fixture,
+#   BM40-BM47 the REAL viewer.
+#
+# ⚠ WHAT THIS GROUP DOES AND DOES NOT CLAIM, stated up front because the PLAN's
+# own wording does not survive contact with the widget.
+#
+#  * THE PLAN SAID "follow the Tcl-only Button3 swallow issue 0178 established
+#    for the legend — the canvas RMB must not also fire". The swallow is real
+#    (wviewer::btn3_filter) but it DOES NOT TRANSFER, and nothing here needs it:
+#    ttk's Treeview class binds no <Button-3>, `bind all <Button-3>` is empty,
+#    the viewer toplevel carries only FocusIn/Destroy, and the CANVAS IS NOT IN
+#    THE TREE'S BINDTAGS. So the `break` on the tree's binding is DEFENCE IN
+#    DEPTH and the ONLY check it can fail is BM01's second leg, which is named
+#    to say exactly that. The negative claim itself is carried by BM35
+#    (structure) and BM42 (behaviour, with a positive AND a negative control).
+#
+#  * A MENU IS NOT A WIDGET TREE. `winfo children` sees nothing, `entrycget
+#    -label` THROWS on a separator, and `$m index end` answers the literal
+#    string `none` on an empty menu. So this group ships TWO never-throwing
+#    readers: `bm_entries` (type|label|state per index) and `bm_menu_state`,
+#    whose FIVE values — absent / empty / built:N / posted:N / unreadable — make
+#    "no menu", "an empty menu", "a built menu", "a posted menu" and "a menu I
+#    could not read" four different assertable answers instead of one. All of
+#    absent, empty, built:N and posted:N are OBSERVED FOR REAL (BM20, BM22,
+#    BM34), and `dismissed` is the built:N that FOLLOWS a posted:N.
+#
+#  * tk_popup TAKES A GLOBAL GRAB and is SPIED for both display groups. Exactly
+#    ONE real popup is taken, in the throwaway fixture, as the last thing BM34
+#    does, immediately unposted. That one post is what makes `posted:N` a
+#    measurement rather than an inference.
+# ============================================================================
+
+# --- BM01-BM09: the SOURCE arm ---------------------------------------------
+set bm_build [wvproc_body $wsrc wviewer::browser_build]
+set bm_mb    [wvproc_body $wsrc wviewer::browser_menu_build]
+set bm_gate  [wvproc_body $wsrc wviewer::browser_menu_ids]
+set bm_post  [wvproc_body $wsrc wviewer::browser_menu_post]
+set bm_ps    [wvproc_body $wsrc wviewer::plot_signals]
+set bm_pids  [wvproc_body $wsrc wviewer::browser_plot_ids]
+check {BM00 every item-10 proc this group greps was found in the source} \
+  [list [expr {$bm_build ne {}}] [expr {$bm_mb ne {}}] [expr {$bm_gate ne {}}] \
+        [expr {$bm_post ne {}}] [expr {$bm_ps ne {}}] [expr {$bm_pids ne {}}]] \
+  [list 1 1 1 1 1 1]
+
+check {BM01 browser_build binds <Button-3> on the TREE, exactly once} \
+  [list [regexp -all {bind \$f\.tvf\.tv <Button-3>} $bm_build] \
+        [regexp -all {wviewer::browser_menu_post \$token} $bm_build]] \
+  [list 1 1]
+check_true {BM01 ...and it forwards the event's widget, pixel AND root coords} \
+  [expr {[string first {%W %x %y %X %Y} $bm_build] >= 0}]
+# ⚠ SABOTAGE (a)'s ONLY TARGET, and it is named for what it really pins. The
+# `break` fails NO behavioural check on this surface, because the bindtag chain
+# has no other <Button-3> handler in it. BM35 and BM42 are what keep the canvas
+# out; this leg keeps the guard against a FUTURE toplevel/all-level binding.
+check_true {BM01 the tree's Button-3 body ends in `break` (defence in depth; BM35/BM42 are what keep the canvas out)} \
+  [expr {[string first {%W %x %y %X %Y ; break} $bm_build] >= 0}]
+
+check {BM02 `Descend to here` is added exactly once, disabled} \
+  [regexp -all {add command -label \{Descend to here\} -state disabled} $bm_mb] 1
+check_true {BM02 ...and it is the LAST `add` in the body — item 11's reserved slot} \
+  [expr {[string last {$m add } $bm_mb] ==
+         [string first {$m add command -label {Descend to here}} $bm_mb]}]
+# it must carry NO -command: item 11 flips -state and -command, and an entry
+# that already had one would be a live command hiding behind a grey label
+check_true {BM02 ...and it is minted with no -command at all} \
+  [expr {![regexp {\{Descend to here\}[^\n]*-command} $bm_mb]}]
+
+check {BM03 the cascade's entries come from dest_labels — one call, zero literals} \
+  [list [regexp -all {wviewer::dest_labels} $bm_mb] \
+        [regexp -all {New Strip} $bm_mb] \
+        [regexp -all {New Tab} $bm_mb]] \
+  [list 1 0 0]
+check {BM03 ...and each cascade -command carries the CODE, not the label} \
+  [regexp -all {browser_plot_ids \$token \$ids \$code} $bm_mb] 1
+
+# ⚠ SABOTAGE (c)'s SOURCE TARGET. A `Plot to` implemented as save / set /
+# restore would put set_plot_dest here and would be invisible to any check that
+# only counted traces.
+check {BM04 the menu build never writes the window's destination (the override is ONE-SHOT)} \
+  [regexp -all {set_plot_dest} $bm_mb] 0
+# ONE shared label proc, so the top `Plot (...)` entry and the cascade's Replace
+# entry can never disagree about the multi-plot limit
+check {BM04 both the Plot entry and the cascade label through dest_menu_label} \
+  [regexp -all {wviewer::dest_menu_label \$token} $bm_mb] 2
+
+check {BM05 plot_signals resolves the destination ONCE, defaulting to plot_dest} \
+  [list [regexp -all {wviewer::plot_dest \$token} $bm_ps] \
+        [regexp -all {wviewer::dest_norm \$destover} $bm_ps] \
+        [regexp -all {set dest \[expr} $bm_ps]] \
+  [list 1 1 1]
+check_true {BM05 ...and the override is an ARGUMENT that never writes dest($token)} \
+  [expr {[regexp -all {set_plot_dest|set dest\(} $bm_ps] == 0}]
+check_true {BM05 the signature really carries the optional destover} \
+  [expr {[string first "proc wviewer::plot_signals \{token exprs \{colors \{\}\} \{destover \{\}\}\}" \
+           $wsrc] >= 0}]
+# ruling 24 / BT06 stay literally true: browser_plot_ids only FORWARDS it
+check {BM05 browser_plot_ids forwards destover and reads no destination itself} \
+  [list [regexp -all {wviewer::plot_signals \$token \$names \{\} \$destover} $bm_pids] \
+        [regexp -all {plot_dest|plan_plot|dest_prepare|dest_norm} $bm_pids]] \
+  [list 1 0]
+
+set bm_forget [wvproc_body $wsrc wviewer::forget]
+set bm_tdt    [wvproc_body $wsrc wviewer::tab_drop_transients]
+check {BM06 BOTH teardown sites unpost the browser menu (a third tk_popup grab)} \
+  [list [regexp -all {wviewer::browser_menu_unpost \$token} $bm_forget] \
+        [regexp -all {wviewer::browser_menu_unpost \$token} $bm_tdt]] \
+  [list 1 1]
+
+check {BM07 the widget comes from ctx_menu_widget and nothing mints a bare `menu`} \
+  [list [regexp -all {wviewer::ctx_menu_widget \$token wvbrowsermenu} $bm_mb] \
+        [regexp -all {(^|\s)menu \$} $bm_mb]] \
+  [list 1 0]
+check {BM07 ...and the cascade's submenu comes from the ctx_menu_child sibling} \
+  [regexp -all {wviewer::ctx_menu_child \$m dest} $bm_mb] 1
+
+check {BM08 browser_menu_post routes through ctx_menu_popup and never calls tk_popup} \
+  [list [regexp -all {wviewer::ctx_menu_popup} $bm_post] \
+        [regexp -all {tk_popup} $bm_post]] \
+  [list 1 0]
+# ⚠ TOTAL BY CONSTRUCTION: it rides a Tk binding, where a throw pops a MODAL
+# bgerror. Three guarded rungs, and NOT one big catch — a `return` inside a
+# catch script is CAUGHT (TCL_RETURN) and would fall through to the post.
+check {BM08 every rung of the post is a guarded `catch {set ...}`} \
+  [list [regexp -all {catch \{set } $bm_post] [regexp -all {return 0} $bm_post]] \
+  [list 3 2]
+
+check {BM09 the gate READS the tree selection and never writes it} \
+  [list [regexp -all {\$W selection\]} $bm_gate] \
+        [regexp -all {selection (set|add|remove|toggle)} $bm_gate]] \
+  [list 1 0]
+check {BM09 ...and it fails closed on a blank-space click (no row -> no ids)} \
+  [regexp -all {if \{\$row eq \{\}\} \{ return \{\} \}} $bm_gate] 1
+
+# ⚠⚠ A REAL DEFECT THIS ITEM SHIPPED AND BM33 CAUGHT. This namespace already
+# owns a `wviewer::clipboard` (the trace clipboard's 0-argument test seam), and
+# Tcl resolves an unqualified command in the ENCLOSING NAMESPACE FIRST — so a
+# bare `clipboard clear -displayof $top` here calls THAT, throws, is swallowed
+# by the proc's own catch, and the entry silently does nothing. Pinned at the
+# source as well as behaviourally, because the behavioural check needs a real X
+# clipboard and this one does not.
+set bm_copy [wvproc_body $wsrc wviewer::browser_copy_names]
+check_true {BM09 browser_copy_names was found in the source} [expr {$bm_copy ne {}}]
+check {BM09 it calls the GLOBAL ::clipboard, never the same-namespace 0-arg seam} \
+  [list [regexp -all {::clipboard (clear|append)} $bm_copy] \
+        [regexp -all {(^|\s)clipboard (clear|append)} $bm_copy]] \
+  [list 2 0]
+
+# --- BM10-BM15: the PURE arm ------------------------------------------------
+# every accessor answers on rubbish rather than throwing: pcall turns a throw
+# into an `ERR:` string, so a throw here is a VISIBLE wrong value
+check {BM10 browser_menu_ids on an unknown token answers {}} \
+  [pcall ::wviewer::browser_menu_ids __bm_nope .nope 1 1] {}
+check {BM10 browser_menu_names on an unknown token answers {}} \
+  [pcall ::wviewer::browser_menu_names __bm_nope {s:v(out)}] {}
+check {BM10 browser_menu_build on an unknown token answers {}} \
+  [pcall ::wviewer::browser_menu_build __bm_nope {s:v(out)}] {}
+check {BM10 browser_menu_post / _unpost on an unknown token answer 0} \
+  [list [pcall ::wviewer::browser_menu_post __bm_nope .nope 1 1] \
+        [pcall ::wviewer::browser_menu_unpost __bm_nope]] \
+  [list 0 0]
+check {BM10 browser_copy_names / browser_send_to_add_trace on an unknown token answer 0} \
+  [list [pcall ::wviewer::browser_copy_names __bm_nope {s:v(out)}] \
+        [pcall ::wviewer::browser_send_to_add_trace __bm_nope {s:v(out)}]] \
+  [list 0 0]
+check {BM10 ...and the EMPTY token is an answer too, never a throw} \
+  [list [pcall ::wviewer::browser_menu_names {} {s:v(out)}] \
+        [pcall ::wviewer::browser_menu_post {} .nope 1 1] \
+        [pcall ::wviewer::browser_menu_unpost {}]] \
+  [list {} 0 0]
+
+# a hand-set row snapshot: no Tk, no window, just the accessor's real input
+set ::wviewer::browserrows(__bm_pure) [wviewer::browser_rows [bt_ents $BTFIX]]
+check {BM11 a LEAF id answers with its own full raw name} \
+  [pcall ::wviewer::browser_menu_names __bm_pure {s:v(out)}] {v(out)}
+check {BM11 a GROUP id answers with every leaf beneath it} \
+  [pcall ::wviewer::browser_menu_names __bm_pure {g:x1.x2}] \
+  {v(x1.x2.net5) i(x1.x2.net5)}
+check {BM11 a group PLUS one of its own leaves does not repeat that leaf} \
+  [pcall ::wviewer::browser_menu_names __bm_pure {g:x1.x2 s:v(x1.x2.net5)}] \
+  {v(x1.x2.net5) i(x1.x2.net5)}
+check {BM11 an UNKNOWN row id contributes nothing and does not throw} \
+  [pcall ::wviewer::browser_menu_names __bm_pure {s:not.a.row}] {}
+check {BM11 a mixed selection keeps row order and drops the duplicate} \
+  [pcall ::wviewer::browser_menu_names __bm_pure {s:net1 g:x1.x2 s:net1}] \
+  {net1 v(x1.x2.net5) i(x1.x2.net5)}
+
+# ⚠ DECLARED LIMIT D7, PINNED ON THE EXACT CASE THAT MAKES IT VISIBLE. In this
+# raw listing the two `x1.x2` leaves DRAW adjacent (ttk re-parents the late
+# arrival) while the accessor returns them FIRST AND LAST. The menu acts in RAW
+# order, and the check name says so rather than claiming "the order you see".
+set ::wviewer::browserrows(__bm_d7) \
+  [wviewer::browser_rows [bt_ents {v(x1.x2.n) v(x1.y3.n) i(x1.x2.n)}]]
+check {BM12 a group's names come back in RAW-FILE order, not the tree's visual order (limit D7)} \
+  [pcall ::wviewer::browser_menu_names __bm_d7 {g:x1}] \
+  {v(x1.x2.n) v(x1.y3.n) i(x1.x2.n)}
+check {BM12 ...and the two x1.x2 leaves really are first-and-last, not adjacent} \
+  [pcall ::wviewer::browser_menu_names __bm_d7 {g:x1.x2}] {v(x1.x2.n) i(x1.x2.n)}
+array unset ::wviewer::browserrows __bm_pure
+array unset ::wviewer::browserrows __bm_d7
+
+set bm_codes {}
+foreach bm_l [wviewer::dest_labels] { lappend bm_codes [wviewer::dest_norm $bm_l] }
+check {BM13 every dropdown label normalises to a real, distinct code, in order} \
+  $bm_codes {append replace newstrip newtab}
+check {BM13 dest_menu_label round-trips each code back to its plain label off multi} \
+  [list [wviewer::dest_menu_label __bm_nope append] \
+        [wviewer::dest_menu_label __bm_nope replace] \
+        [wviewer::dest_menu_label __bm_nope newstrip] \
+        [wviewer::dest_menu_label __bm_nope newtab]] \
+  [list Append Replace {New Strip} {New Tab}]
+
+# ⚠ THE DECLARED LIMIT SURFACED IN THE LABEL (ruling 24 / item 9's D2): under
+# multi-plot, `Replace` really Appends. The menu still OFFERS it — dropping the
+# entry would make the cascade disagree with the Add Trace dropdown — and says
+# so instead.
+set ::wviewer::mode(__bm_multi) multi
+set ::wviewer::mode(__bm_single) single
+check {BM14 under MULTI the Replace label admits it appends} \
+  [wviewer::dest_menu_label __bm_multi replace] {Replace -> appends}
+check {BM14 ...and under SINGLE it does not} \
+  [wviewer::dest_menu_label __bm_single replace] {Replace}
+check {BM14 the suffix is on Replace ALONE, not on the other three} \
+  [list [wviewer::dest_menu_label __bm_multi append] \
+        [wviewer::dest_menu_label __bm_multi newstrip] \
+        [wviewer::dest_menu_label __bm_multi newtab]] \
+  [list Append {New Strip} {New Tab}]
+array unset ::wviewer::mode __bm_multi
+array unset ::wviewer::mode __bm_single
+
+check {BM15 plot_signals with an override on a bogus token still answers the unknown-window pair} \
+  [pcall ::wviewer::plot_signals __bm_nope {v(out)} {} newstrip] \
+  {{{} {unknown viewer window}}}
+
+# ============================================================================
+# BMF — BM20-BM36, the throwaway fixture. Item 8's idiom: a real toplevel, a
+# real tree, NO xschem context, tk_popup spied.
+# ============================================================================
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # --- the two never-throwing menu readers (driver note c) ------------------
+  # type|label|state per index. `entrycget -label` THROWS on a separator and
+  # `-state` throws on one too, so BOTH go through pcall and an ERR: reads as
+  # the empty string — which makes `separator||` a legal, assertable row rather
+  # than an abort.
+  proc bm_entries {m} {
+    if {[catch {winfo exists $m} e] || !$e} { return absent }
+    if {[catch {$m index end} n]} { return unreadable }
+    if {$n eq {none}} { return {} }
+    set out {}
+    for {set i 0} {$i <= $n} {incr i} {
+      set ty [pcall $m type $i]
+      set lb [pcall $m entrycget $i -label]
+      set st [pcall $m entrycget $i -state]
+      foreach v {ty lb st} {
+        if {[string match ERR:* [set $v]]} { set $v {} }
+      }
+      lappend out "$ty|$lb|$st"
+    }
+    return $out
+  }
+  # THE FOUR-VALUE ORACLE (plus `unreadable` as the fifth escape). `absent` and
+  # `empty` are DIFFERENT answers — a gate that posted an empty menu instead of
+  # refusing would look identical to one that refused, to any reader that only
+  # asked `winfo exists`.
+  proc bm_menu_state {m} {
+    if {[catch {winfo exists $m} e] || !$e} { return absent }
+    if {[catch {$m index end} n]} { return unreadable }
+    if {$n eq {none}} { return empty }
+    set mp 0
+    if {[catch {winfo ismapped $m} mp]} { return unreadable }
+    return [expr {$mp ? "posted:[expr {$n + 1}]" : "built:[expr {$n + 1}]"}]
+  }
+  proc bm_centre {tv id} {
+    if {[catch {$tv bbox $id} bb] || [llength $bb] != 4} { return {} }
+    return [list [expr {[lindex $bb 0] + [lindex $bb 2]/2}] \
+                 [expr {[lindex $bb 1] + [lindex $bb 3]/2}]]
+  }
+  # a plot recorder that also keeps the DESTOVER argument, which is the only
+  # thing that can see a one-shot override
+  proc bm_spy_on {} {
+    set ::bm_plot_calls {}
+    rename ::wviewer::plot_signals ::wviewer::__bm_real_plot_signals
+    proc ::wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+      lappend ::bm_plot_calls [list $token $exprs $destover]
+      return {}
+    }
+  }
+  proc bm_spy_off {} {
+    rename ::wviewer::plot_signals {}
+    rename ::wviewer::__bm_real_plot_signals ::wviewer::plot_signals
+  }
+  # the action-log recorder: a save/restore `Plot to` would leave TWO
+  # set_plot_dest lines here, which no trace count can see
+  proc bm_log_on {} {
+    set ::bm_log_calls {}
+    rename ::wviewer::log_action ::wviewer::__bm_real_log_action
+    proc ::wviewer::log_action {line} { lappend ::bm_log_calls $line ; return }
+  }
+  proc bm_log_off {} {
+    rename ::wviewer::log_action {}
+    rename ::wviewer::__bm_real_log_action ::wviewer::log_action
+  }
+
+  # ⚠ tk_popup SPIED for the whole group but ONE deliberate real post (BM34).
+  rename ::tk_popup ::__bm_real_tk_popup
+  proc ::tk_popup {m x y args} { set ::bm_popped [list $m $x $y] ; return {} }
+  set ::bm_popped {}
+
+  catch {destroy .wvbm1}
+  toplevel .wvbm1
+  wm title .wvbm1 {item10 browser context-menu fixture}
+  wm geometry .wvbm1 1400x500+40+40
+  canvas .wvbm1.drw -background white -width 1200 -height 460
+  pack .wvbm1.drw -side right -fill both -expand true
+  dict set ::wviewer::windows wvbm [dict create top .wvbm1 win_path .wvbm1.drw]
+  update
+  bs_wait_mapped .wvbm1.drw
+
+  set BMF  .wvbm1.wvbrowser
+  set BMTV $BMF.tvf.tv
+  set BMM  .wvbm1.wvbrowsermenu
+  set BMS  $BMM.dest
+  pcall ::wviewer::browser_build wvbm .wvbm1
+  bm_log_on
+  pcall ::wviewer::browser_toggle 1 wvbm
+  bm_log_off
+  set ::wviewer::browsersigs(wvbm) $BTFIX
+  pcall ::wviewer::browser_refresh wvbm
+  update
+  bs_wait_mapped $BMTV
+
+  check {BM20 the fixture really is a populated tree before any menu exists} \
+    [list [winfo exists $BMTV] [expr {[bt_tree $BMTV] ne {empty}}]] [list 1 1]
+  # ORACLE VALUE 1 of 4
+  check {BM20 with no menu ever built the oracle says `absent`} \
+    [bm_menu_state $BMM] absent
+  check {BM20 ...and bm_entries agrees, with its own distinct word} \
+    [bm_entries $BMM] absent
+  # ORACLE VALUE 2 of 4, observed on a menu built BY HAND — proving `absent`
+  # and `empty` are genuinely different answers and not one symptom
+  catch {destroy .wvbm1.__bmempty}
+  menu .wvbm1.__bmempty -tearoff 0
+  check {BM20 an EMPTY menu reads `empty`, which is NOT `absent`} \
+    [list [bm_menu_state .wvbm1.__bmempty] [bm_entries .wvbm1.__bmempty]] \
+    [list empty {}]
+  destroy .wvbm1.__bmempty
+
+  # --- BM21: the gate FAILS CLOSED -----------------------------------------
+  set ::bm_popped {}
+  check {BM21 an RMB on BLANK tree space below the last row refuses} \
+    [pcall ::wviewer::browser_menu_post wvbm $BMTV 20 \
+       [expr {[winfo height $BMTV] - 3}] 100 100] 0
+  check {BM21 ...and posts NOTHING — still `absent`, never an empty menu} \
+    [list [bm_menu_state $BMM] $::bm_popped] [list absent {}]
+
+  # --- BM22: a post on a real leaf -----------------------------------------
+  set bm_c [bm_centre $BMTV {s:v(out)}]
+  if {$bm_c eq {}} {
+    puts "SKIPPED: BM22-BM34 (row s:v(out) never mapped)"
+  } else {
+    set bm_x [lindex $bm_c 0] ; set bm_y [lindex $bm_c 1]
+    set ::bm_popped {}
+    check {BM22 an RMB on a leaf row posts, and returns 1} \
+      [pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 771 553] 1
+    # ORACLE VALUE 3 of 4
+    check {BM22 the oracle now says `built:8` — present, eight entries, not mapped} \
+      [bm_menu_state $BMM] built:8
+    # THE ROOT-COORD CONTRACT: tk_popup gets %X/%Y, never the widget pixels
+    check {BM22 tk_popup was handed the menu and the ROOT coords, not the tree pixels} \
+      $::bm_popped [list $BMM 771 553]
+    # ...and when the caller has no root coords they are DERIVED from the tree
+    set ::bm_popped {}
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y
+    check {BM22 with no root coords supplied they are derived from the tree's origin} \
+      $::bm_popped \
+      [list $BMM [expr {[winfo rootx $BMTV] + $bm_x}] \
+                 [expr {[winfo rooty $BMTV] + $bm_y}]]
+
+    # --- BM23: the whole entry table, BY INDEX ------------------------------
+    check {BM23 the menu is the exact eight-entry table, by index, types and states} \
+      [bm_entries $BMM] \
+      [list {command|v(out)|disabled} \
+            {separator||} \
+            {command|Plot (Append)|normal} \
+            {cascade|Plot to|normal} \
+            {command|Send to Add Trace...|normal} \
+            {command|Copy name|normal} \
+            {separator||} \
+            {command|Descend to here|disabled}]
+    check {BM23 the header names the row the gate picked, and is the only greyed entry bar the last} \
+      [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 0 -state] \
+            [pcall $BMM entrycget 2 -state] [pcall $BMM entrycget 5 -state]] \
+      [list {v(out)} disabled normal normal]
+
+    # --- BM24: the cascade --------------------------------------------------
+    check {BM24 the `Plot to` entry really is a cascade pointing at the submenu} \
+      [list [pcall $BMM type 3] [pcall $BMM entrycget 3 -menu]] [list cascade $BMS]
+    check {BM24 the submenu carries the four destinations, in dest_labels order} \
+      [bm_entries $BMS] \
+      [list {command|Append|normal} {command|Replace|normal} \
+            {command|New Strip|normal} {command|New Tab|normal}]
+    check {BM24 every cascade -command is fully resolved: token, ids AND code} \
+      [list [pcall $BMS entrycget 0 -command] [pcall $BMS entrycget 1 -command] \
+            [pcall $BMS entrycget 2 -command] [pcall $BMS entrycget 3 -command]] \
+      [list [list wviewer::browser_plot_ids wvbm {s:v(out)} append] \
+            [list wviewer::browser_plot_ids wvbm {s:v(out)} replace] \
+            [list wviewer::browser_plot_ids wvbm {s:v(out)} newstrip] \
+            [list wviewer::browser_plot_ids wvbm {s:v(out)} newtab]]
+    # the TOP Plot entry passes NO override — it is the window's own policy
+    check {BM24 the top Plot entry passes no override at all} \
+      [pcall $BMM entrycget 2 -command] \
+      [list wviewer::browser_plot_ids wvbm {s:v(out)}]
+
+    # --- BM25: item 11's reserved slot --------------------------------------
+    check {BM25 `Descend to here` is LAST, disabled, and its -command is EMPTY} \
+      [list [pcall $BMM index end] [pcall $BMM entrycget 7 -label] \
+            [pcall $BMM entrycget 7 -state] [pcall $BMM entrycget 7 -command]] \
+      [list 7 {Descend to here} disabled {}]
+
+    # --- BM26: a multi-row target ------------------------------------------
+    pcall $BMTV selection set [list {s:v(out)} {s:net1} {s:vsweep}]
+    set bm_c2 [bm_centre $BMTV {s:net1}]
+    if {$bm_c2 eq {}} {
+      puts "SKIPPED: BM26 (row s:net1 never mapped)"
+    } else {
+      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+        [lindex $bm_c2 0] [lindex $bm_c2 1] 10 10
+      check {BM26 a 3-row target headers `3 signals` and offers `Copy names (3)`} \
+        [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 5 -label]] \
+        [list {3 signals} {Copy names (3)}]
+      check {BM26 ...and the entries act on all three ids, in row order} \
+        [pcall $BMM entrycget 2 -command] \
+        [list wviewer::browser_plot_ids wvbm {s:v(out) s:net1 s:vsweep}]
+    }
+
+    # --- BM27: the GROUP decision, made deliberately and stated -------------
+    # RMB on a group DOES post and DOES act on its leaves — MMB's semantics,
+    # not the double-click's refusal (item 9's D3 exists only to yield the
+    # double-click to ttk's expand/collapse, and ttk owns no Button-3).
+    pcall $BMTV selection set {}
+    set bm_c3 [bm_centre $BMTV {g:x1.x2}]
+    if {$bm_c3 eq {}} {
+      puts "SKIPPED: BM27 (group row g:x1.x2 never mapped)"
+    } else {
+      check {BM27 an RMB on a GROUP posts (unlike the double-click, which refuses)} \
+        [pcall ::wviewer::browser_menu_post wvbm $BMTV \
+           [lindex $bm_c3 0] [lindex $bm_c3 1] 10 10] 1
+      check {BM27 ...and it acts on the group's leaves, headered as `2 signals`} \
+        [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 2 -command]] \
+        [list {2 signals} [list wviewer::browser_plot_ids wvbm {g:x1.x2}]]
+    }
+
+    # --- BM28: the RMB never mutates the selection --------------------------
+    pcall $BMTV selection set [list {s:net1}]
+    set bm_sel0 [pcall $BMTV selection]
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    check {BM28 an RMB on an UNSELECTED row leaves the selection untouched} \
+      [pcall $BMTV selection] $bm_sel0
+    set bm_c4 [bm_centre $BMTV {s:net1}]
+    if {$bm_c4 ne {}} {
+      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+        [lindex $bm_c4 0] [lindex $bm_c4 1] 10 10
+      check {BM28 ...and on a SELECTED row it leaves it untouched too} \
+        [pcall $BMTV selection] $bm_sel0
+    }
+
+    # --- BM29: item 9's in/out-of-selection rule, on the gate ---------------
+    pcall $BMTV selection set [list {s:v(out)} {s:net1}]
+    check {BM29 an RMB on a row INSIDE the selection targets the whole selection} \
+      [pcall ::wviewer::browser_menu_ids wvbm $BMTV $bm_x $bm_y] \
+      {s:v(out) s:net1}
+    if {[bm_centre $BMTV {s:vsweep}] ne {}} {
+      set bm_c5 [bm_centre $BMTV {s:vsweep}]
+      check {BM29 ...and on a row OUTSIDE it targets that row alone} \
+        [pcall ::wviewer::browser_menu_ids wvbm $BMTV \
+           [lindex $bm_c5 0] [lindex $bm_c5 1]] \
+        {s:vsweep}
+    }
+    pcall $BMTV selection set {}
+
+    # --- BM30: the Plot entry, on a recorder with both controls -------------
+    bm_spy_on
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    set ::bm_plot_calls {}
+    pcall $BMM invoke 2
+    check {BM30 invoking `Plot` plots that row with NO override (the window's policy)} \
+      $::bm_plot_calls [list [list wvbm {v(out)} {}]]
+    # NEGATIVE CONTROL: a DISABLED entry records nothing...
+    set ::bm_plot_calls {}
+    pcall $BMM invoke 0
+    pcall $BMM invoke 7
+    check {BM30 invoking either DISABLED entry records nothing} $::bm_plot_calls {}
+    # ...and the very next real invoke still records, so that zero is a rule
+    set ::bm_plot_calls {}
+    pcall $BMM invoke 2
+    check {BM30 ...and the next real invoke still records (the recorder is alive)} \
+      $::bm_plot_calls [list [list wvbm {v(out)} {}]]
+
+    # --- BM31: THE ONE-SHOT, WITH TEETH ------------------------------------
+    # ⚠ SABOTAGE (c)'s BEHAVIOURAL TARGET. A save / set_plot_dest / restore
+    # implementation would pass the same code to plot_signals and plot the same
+    # trace — invisible to any count. The three legs below are what see it:
+    # the window's policy is UNCHANGED, dest($token) was never even created,
+    # and the action log recorded ZERO set_plot_dest lines.
+    bm_log_on
+    set ::bm_plot_calls {}
+    array unset ::wviewer::dest wvbm
+    pcall $BMS invoke 2
+    check {BM31 `Plot to -> New Strip` passes newstrip as a ONE-SHOT override} \
+      $::bm_plot_calls [list [list wvbm {v(out)} newstrip]]
+    check {BM31 ...and the window's own destination is untouched, never even created} \
+      [list [pcall ::wviewer::plot_dest wvbm] \
+            [info exists ::wviewer::dest(wvbm)]] \
+      [list append 0]
+    # ⚠ NAME NARROWED TO WHAT IT PINS (ruling 17): the recorder holds every
+    # log_action line, and this leg asserts only that none of them is a
+    # set_plot_dest — not that the log is empty.
+    check {BM31 ...and NO set_plot_dest line reached the action log} \
+      [lsearch -glob $::bm_log_calls {*set_plot_dest*}] -1
+    # all four cascade entries, one after another, still leave the policy alone
+    set ::bm_plot_calls {}
+    foreach bm_i {0 1 3} { pcall $BMS invoke $bm_i }
+    check {BM31 the other three cascade entries pass their own codes} \
+      $::bm_plot_calls \
+      [list [list wvbm {v(out)} append] [list wvbm {v(out)} replace] \
+            [list wvbm {v(out)} newtab]]
+    check {BM31 ...and after all four the policy is STILL the untouched default} \
+      [list [pcall ::wviewer::plot_dest wvbm] [info exists ::wviewer::dest(wvbm)] \
+            [lsearch -glob $::bm_log_calls {*set_plot_dest*}]] \
+      [list append 0 -1]
+    bm_log_off
+
+    # --- BM32: the multi-plot Replace label, live ---------------------------
+    set ::wviewer::mode(wvbm) single
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    set bm_lab_single [list [pcall $BMS entrycget 1 -label] \
+                            [pcall $BMM entrycget 2 -label]]
+    set ::wviewer::mode(wvbm) multi
+    pcall ::wviewer::set_plot_dest replace wvbm
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    set bm_lab_multi [list [pcall $BMS entrycget 1 -label] \
+                           [pcall $BMM entrycget 2 -label]]
+    check {BM32 under SINGLE both Replace surfaces read plainly} \
+      $bm_lab_single [list Replace {Plot (Append)}]
+    check {BM32 under MULTI both admit the declared limit, from the ONE shared proc} \
+      $bm_lab_multi [list {Replace -> appends} {Plot (Replace -> appends)}]
+    array unset ::wviewer::dest wvbm
+    array unset ::wviewer::mode wvbm
+
+    # --- BM33: Copy really reaches the clipboard ----------------------------
+    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    catch {clipboard clear -displayof .wvbm1}
+    catch {clipboard append -displayof .wvbm1 {__bm_sentinel__}}
+    check {BM33 the sentinel proves the fixture can read its own clipboard} \
+      [pcall clipboard get -displayof .wvbm1] {__bm_sentinel__}
+    pcall $BMM invoke 5
+    check {BM33 `Copy name` puts the full raw name on the clipboard} \
+      [pcall clipboard get -displayof .wvbm1] {v(out)}
+    check {BM33 ...and it says so on the sidebar's status line} \
+      [string match {*copied 1 name*} [pcall $BMF.ph cget -text]] 1
+    pcall $BMTV selection set [list {s:v(out)} {s:net1} {s:vsweep}]
+    if {[bm_centre $BMTV {s:net1}] ne {}} {
+      set bm_c6 [bm_centre $BMTV {s:net1}]
+      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+        [lindex $bm_c6 0] [lindex $bm_c6 1] 10 10
+      pcall $BMM invoke 5
+      check {BM33 `Copy names (3)` joins the three names with newlines, in row order} \
+        [pcall clipboard get -displayof .wvbm1] "v(out)\nnet1\nvsweep"
+      check {BM33 ...and the status line pluralises} \
+        [string match {*copied 3 names*} [pcall $BMF.ph cget -text]] 1
+    }
+    pcall $BMTV selection set {}
+    bm_spy_off
+
+    # --- BM34: THE ONE REAL POPUP, and the fourth oracle value --------------
+    # ⚠ LAST THING THIS GROUP DOES WITH THE MENU, catch-wrapped, with an
+    # UNCONDITIONAL teardown after it: a live tk_popup takes a GLOBAL GRAB that
+    # would swallow every later leg's events. This single post is what makes
+    # `posted:N` a MEASUREMENT rather than an inference.
+    rename ::tk_popup {}
+    rename ::__bm_real_tk_popup ::tk_popup
+    # from a KNOWN-CLEAN start: the previous legs left a BUILT menu lying about
+    # (a build is not a post), and the sequence below is only a measurement if
+    # its first value is `absent` for a reason rather than by luck
+    pcall ::wviewer::browser_menu_unpost wvbm
+    update
+    set bm_seq {}
+    lappend bm_seq [bm_menu_state $BMM]
+    catch {
+      set bm_m [wviewer::browser_menu_build wvbm [list {s:v(out)}]]
+      lappend bm_seq [bm_menu_state $BMM]
+      tk_popup $bm_m [expr {[winfo rootx $BMTV] + 40}] \
+                     [expr {[winfo rooty $BMTV] + 40}]
+      update
+      lappend bm_seq [bm_menu_state $BMM]
+      $bm_m unpost
+      update
+      lappend bm_seq [bm_menu_state $BMM]
+    }
+    set bm_un1 [pcall ::wviewer::browser_menu_unpost wvbm]
+    set bm_un2 [pcall ::wviewer::browser_menu_unpost wvbm]
+    update
+    lappend bm_seq [bm_menu_state $BMM]
+    # ORACLE VALUE 4 of 4, and `dismissed` as the built:N that FOLLOWS it
+    check {BM34 all four oracle values are observed for real: absent, built, posted, dismissed, absent} \
+      $bm_seq [list absent built:8 posted:8 built:8 absent]
+    check {BM34 unpost answers 1 when there was a menu and 0 when there was not} \
+      [list $bm_un1 $bm_un2] [list 1 0]
+    # re-spy for anything that follows
+    rename ::tk_popup ::__bm_real_tk_popup
+    proc ::tk_popup {m x y args} { set ::bm_popped [list $m $x $y] ; return {} }
+  }
+
+  # --- BM35: THE STRUCTURAL NEGATIVE ---------------------------------------
+  # ⚠ THIS, NOT THE `break`, IS WHAT KEEPS THE CANVAS OUT. Four bindtags, no
+  # <Button-3> on any of the other three, and no canvas among them.
+  check {BM35 nothing else in the tree's bindtag chain binds Button-3 at all} \
+    [list [bind Treeview <Button-3>] [bind all <Button-3>] \
+          [bind .wvbm1 <Button-3>] [bind .wvbm1 <ButtonPress-3>] \
+          [bind .wvbm1 <ButtonPress>]] \
+    [list {} {} {} {} {}]
+  check {BM35 the tree's bindtags are the measured four, and the canvas is not one of them} \
+    [list [bindtags $BMTV] \
+          [expr {[lsearch -exact [bindtags $BMTV] .wvbm1.drw] >= 0}]] \
+    [list [list $BMTV Treeview .wvbm1 all] 0]
+  check {BM35 the tree DOES carry the item-10 binding, so the zeros above are a rule} \
+    [expr {[string first {wviewer::browser_menu_post wvbm} [bind $BMTV <Button-3>]] >= 0}] 1
+
+  # --- BM36: teardown -------------------------------------------------------
+  catch {wviewer::browser_menu_unpost wvbm}
+  pcall ::wviewer::forget wvbm
+  check {BM36 forget leaves no browser menu widget behind} \
+    [list [winfo exists $BMM] [bm_menu_state $BMM]] [list 0 absent]
+  destroy .wvbm1
+  rename ::tk_popup {}
+  rename ::__bm_real_tk_popup ::tk_popup
+  check {BM36 the real tk_popup is back in place} \
+    [list [expr {[info commands ::tk_popup] ne {}}] \
+          [expr {[info commands ::__bm_real_tk_popup] eq {}}]] \
+    [list 1 1]
+
+} else {
+  puts "SKIPPED: BMF group (Tk/X arm only)"
+}
+
+# ============================================================================
+# BMV — BM40-BM47, the REAL VIEWER: a real canvas with a real xschem context,
+# a real raw, and a REAL <Button-3>. The only arm that can carry the negative
+# claim, because it is the only one where a canvas RMB handler exists at all.
+# ============================================================================
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  check {BM40 re-opening the viewer returns 1} [pcall ::wviewer::open $tok] 1
+  set vtop3 [wviewer::window_for $tok]
+  set vdrw3 $vtop3.drw
+  if {![viewer_ready $vtop3]} {
+    puts "SKIPPED: BMV group (viewer canvas never mapped)"
+    catch {wviewer::close $tok}
+  } else {
+    set BMVF  $vtop3.wvbrowser
+    set BMVTV $BMVF.tvf.tv
+    set BMVM  $vtop3.wvbrowsermenu
+    set BMVS  $BMVM.dest
+    proc bm_traces {token} {
+      set n 0
+      foreach G [dict get [wviewer::layout_for $token] graphs] {
+        incr n [llength [wviewer::dget $G traces {}]]
+      }
+      return $n
+    }
+    # tk_popup SPIED for this whole arm — a live grab here would swallow every
+    # later leg AND the suite's own teardown.
+    rename ::tk_popup ::__bm_real_tk_popup
+    proc ::tk_popup {m x y args} { set ::bm_popped [list $m $x $y] ; return {} }
+    # the canvas RMB handler, RENAME-RECORDED and DELEGATING: a recorder that
+    # swallowed would make the positive control meaningless.
+    set ::bm_b3_calls 0
+    rename ::wviewer::btn3_filter ::wviewer::__bm_real_btn3
+    proc ::wviewer::btn3_filter {args} {
+      incr ::bm_b3_calls
+      return [::wviewer::__bm_real_btn3 {*}$args]
+    }
+
+    set BMMAIN [xschem get current_win_path]
+    xschem new_schematic switch $vdrw3
+    xschem raw new bm_item10.raw dc vsweep 0 1.0 0.5
+    foreach bm_n {v(out) v(x1.x2.net5) i(x1.x2.net5)} {
+      xschem raw add $bm_n {vsweep 1 +}
+    }
+    xschem new_schematic switch $BMMAIN
+    pcall ::wviewer::browser_toggle 1 $tok
+    update
+    bs_wait_mapped $BMVTV
+    check {BM40 the real sidebar populated from the real raw} \
+      [bt_tree $BMVTV] \
+      [list {s:vsweep|vsweep} {s:v(out)|v(out)} {g:x1|x1} {g:x1.x2|x2} \
+            {s:v(x1.x2.net5)|net5} {s:i(x1.x2.net5)|net5}]
+    check {BM40 and no menu exists yet on the real toplevel} \
+      [bm_menu_state $BMVM] absent
+
+    # --- BM41: THE POSITIVE CONTROL ----------------------------------------
+    # ⚠ WITHOUT THIS, BM42's ZERO IS VACUOUS: "btn3_filter did not run" reads
+    # identically when btn3_filter was never wired to the canvas at all. Prove
+    # a real press/release on the REAL canvas records exactly 2 first.
+    set bm_ok41 0
+    for {set bm_i 0} {$bm_i < 5 && !$bm_ok41} {incr bm_i} {
+      set ::bm_b3_calls 0
+      catch {focus -force $vdrw3}
+      update
+      event generate $vdrw3 <ButtonPress-3>   -x 60 -y 60
+      event generate $vdrw3 <ButtonRelease-3> -x 60 -y 60
+      update
+      if {$::bm_b3_calls == 2} { set bm_ok41 1 } else { after 40 }
+    }
+    check {BM41 a REAL press+release on the REAL canvas records 2 btn3_filter calls} \
+      [list $bm_ok41 $::bm_b3_calls] [list 1 2]
+
+    # --- BM42: THE NEGATIVE CONTROL, both halves in ONE tuple ---------------
+    # "the gesture did nothing at all" is NOT a passing answer here.
+    set bm_c [bm_centre $BMVTV {s:v(out)}]
+    if {$bm_c eq {}} {
+      puts "SKIPPED: BM42-BM45 (real row s:v(out) never mapped)"
+    } else {
+      set ::bm_b3_calls 0
+      set ::bm_popped {}
+      event generate $BMVTV <Button-3> -x [lindex $bm_c 0] -y [lindex $bm_c 1]
+      update
+      check {BM42 a REAL RMB on a browser row posts the menu and reaches the canvas ZERO times} \
+        [list $::bm_b3_calls [expr {[lindex $::bm_popped 0] eq $BMVM}] \
+              [bm_menu_state $BMVM]] \
+        [list 0 1 built:8]
+
+      # --- BM43: the real header, and a real trace -------------------------
+      check {BM43 the real menu's header is the real raw name from `xschem raw list`} \
+        [pcall $BMVM entrycget 0 -label] {v(out)}
+      set bm_n0 [bm_traces $tok]
+      pcall $BMVM invoke 2
+      update
+      check_true {BM43 ...and invoking its Plot entry added a REAL trace} \
+        [expr {[bm_traces $tok] == $bm_n0 + 1}]
+
+      # --- BM44: the one-shot, on the real model ---------------------------
+      set bm_g0 [llength [dict get [wviewer::layout_for $tok] graphs]]
+      pcall $BMVS invoke 2
+      update
+      check_true {BM44 `Plot to -> New Strip` really created a strip on the real model} \
+        [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] > $bm_g0}]
+      check {BM44 ...and the window's own destination is STILL the untouched default} \
+        [list [pcall ::wviewer::plot_dest $tok] [info exists ::wviewer::dest($tok)]] \
+        [list append 0]
+      # ⚠ THE NEW TAB LEG IS pcall-GUARDED ON PURPOSE. Its -command runs
+      # dest_prepare -> new_tab -> tab_drop_transients, which now unposts (and
+      # DESTROYS) the very menu whose entry is executing. Down the REAL route
+      # Tk has already unposted before invoking, so this is safe; a direct
+      # `$m invoke` is the one path where it is not, so it is guarded and only
+      # the tab count and the untouched policy are asserted.
+      set bm_t0 [pcall ::wviewer::tab_count $tok]
+      set bm_nt [pcall $BMVS invoke 3]
+      update
+      check {BM44 `Plot to -> New Tab` added a tab and still left the policy alone} \
+        [list [expr {[pcall ::wviewer::tab_count $tok] == $bm_t0 + 1}] \
+              [pcall ::wviewer::plot_dest $tok] \
+              [info exists ::wviewer::dest($tok)]] \
+        [list 1 append 0]
+      # and the teardown really did take the menu with it — BM46's claim,
+      # observed on the route that actually calls tab_drop_transients
+      # ⚠ BUILT, not POSTED: tk_popup is spied for this whole arm, so what the
+      # teardown removed is a built menu. The NAME says built (ruling 17); the
+      # only REAL post anywhere in this file is BM34's.
+      check {BM46 the tab switch inside New Tab took the built menu down with it} \
+        [bm_menu_state $BMVM] absent
+
+      # --- BM45: Send to Add Trace -----------------------------------------
+      set bm_c7 [bm_centre $BMVTV {s:i(x1.x2.net5)}]
+      if {$bm_c7 eq {}} {
+        puts "SKIPPED: BM45 (real row s:i(x1.x2.net5) never mapped)"
+      } else {
+        catch {destroy $vtop3.wvadd}
+        event generate $BMVTV <Button-3> \
+          -x [lindex $bm_c7 0] -y [lindex $bm_c7 1]
+        update
+        pcall $BMVM invoke 4
+        update
+        check {BM45 `Send to Add Trace...` opens the dialog with the EXACT raw name prefilled} \
+          [list [winfo exists $vtop3.wvadd] [pcall $vtop3.wvadd.expr get]] \
+          [list 1 {i(x1.x2.net5)}]
+        # ⚠ DECLARED LIMIT, ASSERTED AS A LIMIT: the Expression entry holds ONE
+        # expression, so a multi-row target prefills the FIRST name only. A
+        # batch goes through the dialog's own multi-select listbox (item 6).
+        pcall $BMVTV selection set [list {s:v(out)} {s:i(x1.x2.net5)}]
+        catch {destroy $vtop3.wvadd}
+        pcall ::wviewer::browser_send_to_add_trace $tok \
+          [list {s:v(out)} {s:i(x1.x2.net5)}]
+        update
+        check {BM45 with a MULTI-row target only the FIRST name is prefilled (declared limit)} \
+          [list [winfo exists $vtop3.wvadd] [pcall $vtop3.wvadd.expr get]] \
+          [list 1 {v(out)}]
+        pcall $BMVTV selection set {}
+        catch {destroy $vtop3.wvadd}
+      }
+
+      # --- BM46: the OTHER teardown route, a real tab switch ---------------
+      event generate $BMVTV <Button-3> -x [lindex $bm_c 0] -y [lindex $bm_c 1]
+      update
+      set bm_pre [bm_menu_state $BMVM]
+      set bm_recs [pcall ::wviewer::tab_records $tok]
+      set bm_other {}
+      if {![string match ERR:* $bm_recs]} {
+        set bm_cur [pcall ::wviewer::tab_index $tok]
+        for {set bm_i 0} {$bm_i < [llength $bm_recs]} {incr bm_i} {
+          if {$bm_i != $bm_cur} {
+            catch {set bm_other [dict get [lindex $bm_recs $bm_i] id]}
+            break
+          }
+        }
+      }
+      if {$bm_other eq {}} {
+        puts "SKIPPED: BM46 real tab-switch leg (only one tab)"
+      } else {
+        pcall ::wviewer::select_tab $bm_other $tok
+        update
+        check {BM46 a REAL tab switch takes the built menu down (it was there first)} \
+          [list $bm_pre [bm_menu_state $BMVM]] [list built:8 absent]
+      }
+    }
+
+    # --- BM47: close ---------------------------------------------------------
+    rename ::wviewer::btn3_filter {}
+    rename ::wviewer::__bm_real_btn3 ::wviewer::btn3_filter
+    check {BM47 closing the viewer returns 1} [pcall ::wviewer::close $tok] 1
+    check {BM47 ...and no browser menu survived the close} \
+      [list [winfo exists $BMVM] [bm_menu_state $BMVM]] [list 0 absent]
+    rename ::tk_popup {}
+    rename ::__bm_real_tk_popup ::tk_popup
+    check {BM47 the real btn3_filter and tk_popup are both back} \
+      [list [expr {[info commands ::wviewer::__bm_real_btn3] eq {}}] \
+            [expr {[info commands ::__bm_real_tk_popup] eq {}}] \
+            [expr {[info commands ::tk_popup] ne {}}]] \
+      [list 1 1 1]
+  }
+
+} else {
+  puts "SKIPPED: BMV group (Tk/X arm only)"
 }
 
 } bigerr]} {

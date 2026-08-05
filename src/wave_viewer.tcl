@@ -634,6 +634,9 @@ proc wviewer::forget {token} {
     # widget-keyed press state with the widget it belongs to.
     catch {wviewer::trace_menu_unpost $token}
     catch {wviewer::strip_menu_unpost $token}
+    # item 10: the browser's row menu is a THIRD tk_popup grab that must not
+    # outlive its widget.
+    catch {wviewer::browser_menu_unpost $token}
     catch {unset b3x0($wp_)}
     catch {unset b3y0($wp_)}
     catch {unset b3mk($wp_)}
@@ -5529,7 +5532,16 @@ proc wviewer::btn2_filter {W T px py state} {
 # it is {} the colors are derived here from the same policy (plan_colors), which
 # is what makes multi-plot cycle colors instead of giving every fresh strip the
 # palette head — so any caller gets that fix, not just the picker.
-proc wviewer::plot_signals {token exprs {colors {}}} {
+#
+# `destover` (item 10) is a ONE-SHOT destination override — the browser's
+# `Plot to →` cascade, which must land this ONE batch somewhere else without
+# changing where the NEXT gesture lands. Ruling 24 is intact and this is why it
+# is an ARGUMENT and not a save/restore around `set_plot_dest`: `plot_dest`
+# remains THE accessor for the window's policy, the override never writes
+# `dest($token)`, and a save/restore would log two spurious replay lines and
+# leave the window on the wrong policy if anything below threw. `{}` = use the
+# window's policy, which is every pre-item-10 caller.
+proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   variable windows
   if {![dict exists $windows $token]} {
     return [list [list {} "unknown viewer window"]]
@@ -5543,7 +5555,11 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   # gestures) shares, so the policy is implemented once here and nowhere else.
   # The WINDOW half runs first and may replace the whole layout (New Tab), hence
   # the re-read below.
-  set dest [wviewer::plot_dest $token]
+  # ⚠ ONE resolution, BEFORE dest_prepare, so the override governs the window
+  # half (New Tab) and plan_plot alike. A second read anywhere below would be a
+  # place the two could disagree.
+  set dest [expr {$destover eq {} ? [wviewer::plot_dest $token]
+                                  : [wviewer::dest_norm $destover]}]
   if {![wviewer::dest_prepare $token $dest]} {
     return [list [list {} "cannot open a new tab for this plot"]]
   }
@@ -5989,6 +6005,14 @@ proc wviewer::browser_build {token top} {
     [list wviewer::browser_plot_at $token %W %x %y 0]
   bind $f.tvf.tv <Button-2> \
     [list wviewer::browser_plot_at $token %W %x %y 1]
+  # item 10: the RMB context menu. ⚠ THE `break` IS DEFENCE IN DEPTH, NOT THE
+  # MECHANISM — see browser_menu_ids' block comment. What keeps xschem's canvas
+  # RMB out of this widget is the bindtag chain ({<tv> Treeview <top> all}, no
+  # canvas in it, no Button-3 on any of the other three), measured by BM35 and
+  # BM42; the `break` guards only against a future toplevel/all-level Button-3.
+  # Kept, and named honestly in BM01, rather than quietly dropped.
+  bind $f.tvf.tv <Button-3> \
+    "[list wviewer::browser_menu_post $token] %W %x %y %X %Y ; break"
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
@@ -6130,7 +6154,11 @@ proc wviewer::browser_filter_cb {token args} {
 # plotted, 0 for a refused/empty gesture (which SPEAKS rather than sitting
 # silent). Names are deduplicated but keep ROW ORDER, so a selection spanning a
 # group and one of its leaves plots that leaf once.
-proc wviewer::browser_plot_ids {token ids} {
+#
+# `destover` (item 10) is handed straight to plot_signals and read NOWHERE here:
+# the one-shot override is plot_signals' business, and BT06's "nothing in the
+# browser re-reads plot_dest / plan_plot / dest_prepare" stays literally true.
+proc wviewer::browser_plot_ids {token ids {destover {}}} {
   variable windows
   variable browserrows
   if {![dict exists $windows $token]} { return 0 }
@@ -6147,7 +6175,7 @@ proc wviewer::browser_plot_ids {token ids} {
     return 0
   }
   set errs {}
-  if {[catch {wviewer::plot_signals $token $names} errs]} {
+  if {[catch {wviewer::plot_signals $token $names {} $destover} errs]} {
     wviewer::echo "signal browser: $errs" error
     return 0
   }
@@ -6199,6 +6227,211 @@ proc wviewer::browser_plot_at {token W x y {groups 1}} {
     set ids $keep
   }
   return [wviewer::browser_plot_ids $token $ids]
+}
+
+# --- item 10: the RMB context menu on a browser row ---------------------------
+# Shape borrowed WHOLE from the trace/strip menus (item 7/8): a fail-closed
+# GATE, a BUILD that is redone on every post so the entries carry THIS click's
+# ids, a POST that returns 1/0, and an UNPOST that is idempotent.
+#
+# ⚠ WHAT KEEPS THE CANVAS OUT, MEASURED RATHER THAN ASSUMED (PLAN wording vs.
+# reality). The PLAN asked for "the Tcl-only Button3 swallow that issue 0178
+# established for the legend". That swallow is real (wviewer::btn3_filter) but it
+# does not transfer to this surface and NOTHING here needs it: the tree's
+# bindtags are {<tv> Treeview <top> all}; ttk's Treeview class binds no Button-3
+# at all; `bind all <Button-3>` is empty; the viewer toplevel carries only
+# FocusIn/Destroy; and the CANVAS is not in the chain (set_bindings binds
+# win_path, not the toplevel). So the `break` on the binding below is DEFENCE IN
+# DEPTH against a future toplevel- or all-level Button-3, and is NOT what keeps
+# xschem's canvas RMB from firing. BM35 pins the bindtag structure and BM42
+# pins the behaviour with a positive AND a negative control; BM01 pins only the
+# `break` itself, and is named to say exactly that.
+
+# THE GATE: the row ids an RMB at tree pixel (x,y) of `W` acts on, or {}.
+# Fails closed at every rung, like trace_menu_pick — including RMB on BLANK tree
+# space below the last row, which posts NOTHING rather than a menu of dead
+# entries.
+#
+# Item 9's rule VERBATIM (browser_plot_at): the clicked row when it is not in the
+# selection, the WHOLE selection when it is. And like item 9's gestures this
+# NEVER MUTATES the selection — a right-click that silently re-selected would
+# make "Plot" mean something different from what the user is looking at.
+#
+# ⚠ GROUPS: an RMB on a group DOES post and DOES act on its leaves, i.e. the
+# `groups`-1 semantics of MMB and the Plot button, NOT the double-click's
+# refusal. That refusal (item 9's D3) exists solely to yield the double-click
+# gesture to ttk's expand/collapse; ttk owns no Button-3, so there is nothing to
+# yield here. Deliberate, and pinned by BM27.
+proc wviewer::browser_menu_ids {token W x y} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  if {[catch {winfo exists $W} e] || !$e} { return {} }
+  set row {}
+  catch {set row [$W identify row $x $y]}
+  if {$row eq {}} { return {} }
+  set sel {}
+  catch {set sel [$W selection]}
+  if {[lsearch -exact $sel $row] >= 0} { return $sel }
+  return [list $row]
+}
+
+# Row ids -> the full raw names the menu acts on, deduplicated, in ROW ORDER.
+#
+# ⚠ "ROW ORDER" IS RAW-FILE ORDER (item 9's declared limit D7), which is not the
+# tree's visual top-to-bottom order once ttk has re-parented a late arrival under
+# its group. A multi-row menu target therefore acts in raw order. Same accessor,
+# same order, as browser_plot_ids — they must not be able to disagree about what
+# "these rows" means. An unknown id contributes nothing and NEVER throws.
+proc wviewer::browser_menu_names {token ids} {
+  variable browserrows
+  if {![info exists browserrows($token)]} { return {} }
+  set rows $browserrows($token)
+  set names {}
+  foreach id $ids {
+    foreach n [wviewer::browser_leaf_names $rows $id] {
+      if {[lsearch -exact $names $n] < 0} { lappend names $n }
+    }
+  }
+  return $names
+}
+
+# Build (do not post) the menu for `ids`. Returns the widget path, or {} when
+# there is no window, no name behind the ids, or Tk refused the widget.
+#
+# REBUILT ON EVERY POST, trace_menu_build's rule: every -command below closes
+# over THIS click's ids, and a stale entry would act on the previous click's
+# rows. The header is a DISABLED entry naming what the gate picked, so the user
+# can see which rows the menu is about before invoking anything.
+#
+# ⚠ `Descend to here` is item 11's RESERVED SLOT: disabled, with NO -command, at
+# the bottom. Reserving it here is why item 11 flips `-state`/`-command` only and
+# never re-touches menu construction. BM25 pins all three properties.
+#
+# DEVIATION FROM THE PLAN, recorded: the PLAN spells the copy entry `Copy name`
+# unconditionally. A fixed singular label over a 3-row selection is exactly the
+# ruling-17 defect (a name that overstates what it does), so the label is
+# DYNAMIC — `Copy name` / `Copy names (N)`, matching the header.
+proc wviewer::browser_menu_build {token ids} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set names [wviewer::browser_menu_names $token $ids]
+  if {![llength $names]} { return {} }
+  set m [wviewer::ctx_menu_widget $token wvbrowsermenu]
+  if {$m eq {}} { return {} }
+  set n [llength $names]
+  $m add command -state disabled \
+    -label [expr {$n == 1 ? [lindex $names 0] : "$n signals"}]
+  $m add separator
+  # the WINDOW's policy, spelled out — a `Plot` that silently means `New Tab`
+  # is the same defect as an unlabelled Replace under multi
+  $m add command \
+    -label "Plot ([wviewer::dest_menu_label $token [wviewer::plot_dest $token]])" \
+    -command [list wviewer::browser_plot_ids $token $ids]
+  # the ONE-SHOT override. Entries come from dest_labels (the combobox's own
+  # source), never from literals, so the cascade and the Add Trace dropdown
+  # cannot drift; and each -command carries the CODE, never the label.
+  set sub [wviewer::ctx_menu_child $m dest]
+  if {$sub ne {}} {
+    foreach lab [wviewer::dest_labels] {
+      set code [wviewer::dest_norm $lab]
+      $sub add command -label [wviewer::dest_menu_label $token $code] \
+        -command [list wviewer::browser_plot_ids $token $ids $code]
+    }
+  }
+  # added even when the submenu could not be minted, so the entry INDICES are a
+  # fixed table (BM23 asserts them by index) rather than a function of Tk's mood
+  $m add cascade -label {Plot to} -menu $sub
+  $m add command -label {Send to Add Trace...} \
+    -command [list wviewer::browser_send_to_add_trace $token $ids]
+  $m add command -command [list wviewer::browser_copy_names $token $ids] \
+    -label [expr {$n == 1 ? {Copy name} : "Copy names ($n)"}]
+  $m add separator
+  $m add command -label {Descend to here} -state disabled
+  return $m
+}
+
+# Post the menu for an RMB at tree pixel (x,y), at ROOT pixel (rx,ry) — the
+# event's %X/%Y. Returns 1 when Tk posted it, 0 when the gate refused or Tk
+# could not.
+#
+# ⚠ TOTAL BY CONSTRUCTION. This rides a Tk binding, and a throw inside a binding
+# pops bgerror — MODAL under X, which HANGS a headless run. Every rung is
+# guarded and every refusal is a `return 0`. Note the guards are `catch {set ...}`
+# and not one big `catch` around a body containing `return`: a `return` inside a
+# catch script is CAUGHT (TCL_RETURN), so that shape would silently fall through
+# to the post.
+proc wviewer::browser_menu_post {token W x y {rx -1} {ry -1}} {
+  set ids {}
+  catch {set ids [wviewer::browser_menu_ids $token $W $x $y]}
+  if {![llength $ids]} { return 0 }
+  set m {}
+  catch {set m [wviewer::browser_menu_build $token $ids]}
+  if {$m eq {}} { return 0 }
+  set r 0
+  catch {set r [wviewer::ctx_menu_popup $W $m $x $y $rx $ry]}
+  return $r
+}
+
+# Take the browser menu down and drop tk_popup's global grab. Idempotent.
+proc wviewer::browser_menu_unpost {token} {
+  return [wviewer::ctx_menu_drop $token wvbrowsermenu]
+}
+
+# `Copy name(s)`: the raw names, newline-joined, on the X CLIPBOARD (not the
+# PRIMARY selection — a menu entry called Copy means Ctrl-V). Returns the count.
+#
+# Feedback goes to the sidebar's own status line and NOT through wviewer::echo:
+# echo writes an action-log `-result` line, and a clipboard copy is not a
+# replayable edit. The count is restored by the next browser_refresh.
+#
+# ⚠⚠ `::clipboard` IS FULLY QUALIFIED AND MUST STAY THAT WAY — MEASURED, not
+# stylistic. This namespace ALREADY has a `wviewer::clipboard` (the trace
+# clipboard's test seam, ~4500 lines below), which takes NO arguments; Tcl
+# resolves an unqualified command in the enclosing namespace FIRST, so a bare
+# `clipboard clear -displayof $top` calls THAT, throws "called with too many
+# arguments", is swallowed by the catch below, and this proc silently returns 0
+# with nothing copied and no message. That is exactly what the first cut did,
+# and only BM33's real `clipboard get` saw it.
+proc wviewer::browser_copy_names {token ids} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set names [wviewer::browser_menu_names $token $ids]
+  if {![llength $names]} { return 0 }
+  set top [dict get $windows $token top]
+  if {[catch {
+    ::clipboard clear -displayof $top
+    ::clipboard append -displayof $top [join $names "\n"]
+  }]} { return 0 }
+  set n [llength $names]
+  catch {wviewer::browser_status $token \
+           "copied $n name[expr {$n == 1 ? {} : {s}}]"}
+  return $n
+}
+
+# `Send to Add Trace...`: open the modeless Add Trace dialog (items 5/6) with the
+# name prefilled into its Expression entry. Returns 1/0, never throws.
+#
+# ⚠ DECLARED LIMIT: with a MULTI-ROW target only the FIRST name is prefilled.
+# The Expression entry holds ONE expression — that is the point of it, since the
+# whole reason to route a name through this dialog is to edit it into an
+# expression or give it a name. A batch goes through the dialog's own
+# multi-select listbox (item 6) or through Plot. Asserted AS a limit (BM45),
+# not hidden.
+proc wviewer::browser_send_to_add_trace {token ids} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set names [wviewer::browser_menu_names $token $ids]
+  if {![llength $names]} { return 0 }
+  set w {}
+  if {[catch {wviewer::add_trace_dialog $token} w]} { return 0 }
+  if {$w eq {}} { return 0 }
+  if {[catch {winfo exists $w.expr} e] || !$e} { return 0 }
+  catch {
+    $w.expr delete 0 end
+    $w.expr insert end [lindex $names 0]
+    focus $w.expr
+  }
+  return 1
 }
 
 # --- item 9: THE WIDTH RULE ---------------------------------------------------
@@ -8408,6 +8641,27 @@ proc wviewer::dest_labels {} {
   return [list Append Replace {New Strip} {New Tab}]
 }
 
+# item 10: the label a MENU shows for `code` on THIS window — dest_label plus
+# the one thing a combobox does not have room to say.
+#
+# ⚠ THE DECLARED LIMIT, SURFACED RATHER THAN PRETENDED AWAY (ruling 24, item 9's
+# D2): under MULTI-plot `replace` clears nothing, because plan_plot emits no
+# clear key there — so an entry reading `Replace` really means Append. The
+# browser menu OFFERS the entry anyway (removing it would make the cascade
+# disagree with the Add Trace dialog's dropdown, which offers all four), and
+# says so in the label instead.
+#
+# ONE PLACE, used by BOTH the top `Plot (...)` entry and the cascade's Replace
+# entry, so those two can never drift apart. PURE apart from the mode read.
+proc wviewer::dest_menu_label {token code} {
+  set code [wviewer::dest_norm $code]
+  set lab [wviewer::dest_label $code]
+  if {$code eq {replace} && [wviewer::plot_mode $token] eq {multi}} {
+    append lab { -> appends}
+  }
+  return $lab
+}
+
 # wviewer::searchbar_build parent ?-command cb? ?-showbutton 0|1? ?-name child?
 #   -> the megawidget's frame path (default `$parent.wvsearch`).
 #
@@ -9429,6 +9683,29 @@ proc wviewer::ctx_menu_widget {token name} {
   return $m
 }
 
+# item 10: a SUBMENU of an already-minted context menu `m`, for a `-menu`
+# cascade. Returns the path, or {} when Tk refused.
+#
+# A SIBLING of ctx_menu_widget rather than a parameter on it, deliberately: that
+# proc is shared by the trace and strip menus and hangs its widget off the
+# TOPLEVEL by name, which is exactly wrong for a cascade (a submenu must be a
+# child of its parent menu or Tk unposts it at the wrong moment). Extending the
+# shared proc to do both would put a branch in the path items 7 and 8 depend on.
+#
+# No explicit destroy: ctx_menu_widget already destroyed the parent, and Tk
+# destroys a menu's children with it, so `m` is always freshly empty here.
+proc wviewer::ctx_menu_child {m name} {
+  if {$m eq {} || ![winfo exists $m]} { return {} }
+  set s $m.$name
+  catch {destroy $s}
+  if {[catch {menu $s -tearoff 0 -takefocus 0}]} { return {} }
+  catch {
+    $s configure -font AseLabelFont -background [ase::theme panel] \
+                 -activebackground [ase::theme header]
+  }
+  return $s
+}
+
 # Take a context menu down and drop the grab tk_popup took. Idempotent, and safe
 # when nothing was ever posted. Returns 1 when a widget was there to remove.
 proc wviewer::ctx_menu_drop {token name} {
@@ -10021,8 +10298,8 @@ proc wviewer::tab_thaw {token rec} {
 # Everything a tab switch must ABANDON, because it addresses the outgoing tab's
 # strips by INDEX and those indices are silently valid in the incoming one:
 # a half-armed strip or trace drag, the marker selection, and the three modeless
-# dialogs plus both context menus, whose listboxes were built from the outgoing
-# graph count.
+# dialogs plus all three context menus (item 10 added the browser's), whose
+# listboxes and row ids were built from the outgoing tab.
 proc wviewer::tab_drop_transients {token} {
   variable windows
   catch {wviewer::strip_drag_reset $token}
@@ -10030,6 +10307,9 @@ proc wviewer::tab_drop_transients {token} {
   catch {set ::wviewer::mmb($token) 0}
   catch {wviewer::trace_menu_unpost $token}
   catch {wviewer::strip_menu_unpost $token}
+  # item 10: same argument as the two above — the browser menu's entries carry
+  # the OUTGOING tab's row ids, and its grab must not survive the switch.
+  catch {wviewer::browser_menu_unpost $token}
   catch {
     if {[wviewer::switch_ctx $token]} { xschem graph_marker select -none }
   }
