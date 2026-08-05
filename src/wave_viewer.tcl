@@ -372,6 +372,12 @@ namespace eval wviewer {
   #   sbcase($w) = the Match-case checkbutton's -variable (0 = ViVA's default)
   variable sbcfg;   array set sbcfg  {}
   variable sbcase;  array set sbcase {}
+  # Add Trace dialog's signal inventory (item 5), keyed by SESSION TOKEN — the
+  # dialog IS a per-window singleton (`$top.wvadd`), unlike the searchbar above.
+  # The FULL raw names (settled decision 2), snapshotted once when the dialog
+  # opens so the live filter never re-enters the context on every keystroke.
+  # Dropped by the dialog's own <Destroy> (wviewer::add_trace_forget).
+  variable atdsigs; array set atdsigs {}
   # strip drag-reorder (doc/claude/specs/waveform_viewer_modes.md §12): TRANSIENT
   # per-window gesture state, keyed by session token. Created in open, dropped by
   # forget, NEVER serialized (a half-finished drag is not part of a saved layout).
@@ -7430,10 +7436,17 @@ proc wviewer::arrow_pan {token wp N s} {
 # — they are the WIDGET's private vocabulary (the on-screen English), and
 # `sig_match` must never see a label.
 #
-# THIS SECTION SHIPS WITH ZERO CONSUMERS, on purpose, exactly as items 1 and 2
-# did: item 5 wires the bar into `add_trace_dialog` (12 lines below), item 8
-# into the browser sidebar. `grep -rn searchbar_build src/` outside this section
-# returns nothing today, so item 4 has no blast radius on shipping UI.
+# CONSUMERS. This section shipped with ZERO of them (item 4, on purpose, exactly
+# as items 1 and 2 did). Item 5 added the FIRST: `wviewer::add_trace_dialog`
+# builds a bar with `-command wviewer::add_trace_filter`. Item 8 will add the
+# browser sidebar. `grep -n searchbar_build src/wave_viewer.tcl` finds every
+# call site — deliberately a grep and not a line number, because line numbers in
+# this file have already rotted twice.
+#
+# ⚠ SO THIS IS NO LONGER BLAST-RADIUS-FREE. A change to the -command contract,
+# to the widget paths, or to the four callback arguments now reaches shipping UI
+# (the Graph > Add Trace… dialog) and is pinned by the AT group in
+# tests/headless/test_wave_sigsearch.tcl.
 #
 # ⚠ DECLARED DIVERGENCE FROM ViVA §3.2, not a silent omission: ViVA's toolbar
 # has SIX controls and this one has five. The dropped one is the fifth, the
@@ -7670,9 +7683,9 @@ proc wviewer::searchbar_forget {w} {
 # stays up, nothing is added.
 proc wviewer::add_trace_dialog {token} {
   variable windows
+  variable atdsigs
   if {![dict exists $windows $token]} { return {} }
   set top [dict get $windows $token top]
-  set wp  [dict get $windows $token win_path]
   set w [ase::ui::dialog_frame $top.wvadd {Add Trace}]
   set gcount [llength [dict get [wviewer::layout_for $token] graphs]]
   label $w.lgraph -text Graph: -font AseLabelFont -anchor w
@@ -7696,20 +7709,41 @@ proc wviewer::add_trace_dialog {token} {
     -background [ase::theme table] -yscrollcommand [list $w.vsb set]
   scrollbar $w.vsb -command [list $w.vars yview]
   grid $w.lvars -row 3 -column 0 -columnspan 2 -sticky w -padx 8 -pady {6 0}
-  grid $w.vars  -row 4 -column 0 -columnspan 2 -sticky nsew -padx {8 0}
-  grid $w.vsb   -row 4 -column 2 -sticky ns -padx {0 8}
-  grid rowconfigure $w 4 -weight 1
+  grid $w.vars  -row 5 -column 0 -columnspan 2 -sticky nsew -padx {8 0}
+  grid $w.vsb   -row 5 -column 2 -sticky ns -padx {0 8}
+  grid rowconfigure $w 5 -weight 1
   label $w.err -text {} -font AseLabelFont -anchor w
-  grid $w.err -row 5 -column 0 -columnspan 3 -sticky we -padx 8
-  set rawnote {}
-  xschem new_schematic switch $wp
-  if {[catch {xschem raw list} rl]} {
-    set rawnote {no raw data loaded - variable list unavailable}
-  } else {
-    foreach v [split $rl "\n"] { $w.vars insert end $v }
+  grid $w.err -row 6 -column 0 -columnspan 3 -sticky we -padx 8
+  # `extended` so item 6 can add several traces from one pick (PLAN item 5).
+  # add_trace_ok still reads `lindex $sel 0`, so today's behaviour is unchanged.
+  $w.vars configure -selectmode extended
+  # INVENTORY FIRST, and through wviewer::signal_list — THE accessor (settled
+  # decisions 2 and 13). It is also the issue-0173 loan bracket, which the bare
+  # `new_schematic switch $wp` this replaces was NOT: that switch never switched
+  # back, leaving the viewer's wm title clobbered. Declared as D1.
+  set atdsigs($token) {}
+  foreach e [wviewer::signal_list $token] {
+    lappend atdsigs($token) [dict get $e name]
   }
+  set rawnote {}
+  if {![llength $atdsigs($token)]} {
+    set rawnote {no raw data loaded - variable list unavailable}
+  }
+  set sb [wviewer::searchbar_build $w -command [list wviewer::add_trace_filter $token]]
+  grid $sb -row 4 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 2}
+  # The OPEN population goes through the SAME route the live filter uses, reading
+  # the bar's REAL defaults — so the opening list can never drift from decisions
+  # 6/7 the way a separate `foreach ... insert` would.
+  wviewer::searchbar_fire $sb
+  # ⚠ THE `%W` GUARD IS MANDATORY HERE, unlike the searchbar's. `$w` is a
+  # TOPLEVEL, and a toplevel IS in its children's bindtags — MEASURED on Tk
+  # 8.6.14: `bindtags .p1.kid` = {.p1.kid Label .p1 all}, so destroying ANY
+  # child of this dialog fires this binding with %W set to that child. Item 4's
+  # note that its own guard is dead code is about a plain FRAME and does NOT
+  # transfer. Pinned by AT20.
+  bind $w <Destroy> [list wviewer::add_trace_forget $token %W $w]
   bind $w.vars <Double-Button-1> [list wviewer::add_trace_pick $token]
-  ase::ui::dialog_buttons $w 6 [list wviewer::add_trace_ok $token] \
+  ase::ui::dialog_buttons $w 7 [list wviewer::add_trace_ok $token] \
     [list destroy $w]
   bind $ee <Return> [list wviewer::add_trace_ok $token]
   bind $ne <Return> [list wviewer::add_trace_ok $token]
@@ -7718,6 +7752,57 @@ proc wviewer::add_trace_dialog {token} {
   if {$rawnote ne {}} { $w.err configure -text $rawnote }
   focus $ee
   return $w
+}
+
+# The Add Trace dialog's searchbar consumer (item 5). Repopulate the raw-vars
+# listbox with the subset of the snapshotted inventory that matches the bar.
+#
+# ⚠ MUST NOT THROW. It is invoked from wviewer::searchbar_fire, which rides the
+# entry's <KeyRelease> pump; a Tcl error there pops bgerror, which is modal under
+# X and HANGS a headless run. Every exit below is a guard, never an error.
+#
+# The match subject is the FULL raw name (settled decision 2) — `atdsigs` holds
+# what signal_list's `name` field gave, never the sig_bare-stripped form, because
+# the type dropdown derives from the `v(`/`i(` prefix.
+proc wviewer::add_trace_filter {token pat syn case type} {
+  variable windows
+  variable atdsigs
+  if {![dict exists $windows $token]} { return }
+  if {![info exists atdsigs($token)]} { return }
+  set w [dict get $windows $token top].wvadd
+  if {![winfo exists $w.vars]} { return }
+  # Snapshot the selection BY NAME: the repopulate below invalidates indices,
+  # so a user's picks would silently move to different rows (or vanish) if this
+  # were kept as integers.
+  set keep {}
+  foreach i [$w.vars curselection] { lappend keep [$w.vars get $i] }
+  set r [wviewer::sig_match $atdsigs($token) $pat \
+           -syntax $syn -case $case -type $type]
+  # Settled decision 4: an invalid pattern is an ERROR, and the BAR has already
+  # written it to its own error label. HOLD the last good list rather than
+  # blanking it — item 4's contract comment explicitly delegates this choice to
+  # here. (The legacy .graphdialog blanks; ruling 16 makes that surface the
+  # exception.) Declared as D3.
+  if {[lindex $r 0] ne {ok}} { return }
+  $w.vars delete 0 end
+  set i 0
+  foreach n [lindex $r 1] {
+    $w.vars insert end $n
+    if {[lsearch -exact $keep $n] >= 0} { $w.vars selection set $i }
+    incr i
+  }
+  return
+}
+
+# Drop the dialog's inventory snapshot when the dialog itself goes away.
+# See the ⚠ at the `bind $w <Destroy>` site: the `%W ne $w` guard is REQUIRED,
+# because a toplevel is in its own children's bindtags and every child destroy
+# would otherwise evaporate the cache while the dialog is still up.
+proc wviewer::add_trace_forget {token W w} {
+  variable atdsigs
+  if {$W ne $w} { return }
+  catch {unset atdsigs($token)}
+  return
 }
 
 # Double-click in the raw-vars listbox: copy the picked var into the

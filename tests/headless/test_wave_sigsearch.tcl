@@ -99,13 +99,44 @@
 #              would mask the very regression it exists to catch. The claim is
 #              narrowed to match: the handler and the binding are pinned
 #              (BAR13+BAR14); end-to-end X key delivery is NOT.
+#   AT01-AT23  the searchbar INSIDE the Add Trace dialog (item 5,
+#              src/wave_viewer.tcl `wviewer::add_trace_dialog`). 20 checks on a
+#              REAL dialog over the item-2 group's second xschem context. Two
+#              halves: the PLAN's "do not redesign the dialog" regression guard
+#              (every pre-existing child still at its contract path, the
+#              renumbered grid rows 3-7 with no hole, the Graph combobox on BOTH
+#              its arms, the Expression entry still winning focus, and the 0173
+#              loan restored); and the filter itself (open = whole inventory,
+#              shell pattern shrinks, cleared pattern grows back, invalid regexp
+#              -> the BAR's label and NOT the dialog's while HOLDING the last
+#              good list, the type dropdown, Match case, and the selection
+#              surviving a repopulate by NAME rather than by index).
+#              ⚠ THERE IS NO AT05, AT06 or AT15 — those names were never
+#              written, nothing was deleted. The gap is inherited from the
+#              plan's own numbering; do not go looking for removed checks.
+#              ⚠ ROUTES, NOT VARIABLES (item 4's rejection lesson): AT09 drives
+#              the Search button's -command, AT12 a real <<ComboboxSelected>>
+#              and AT13 `$w.case invoke` — because `select` sets the variable
+#              WITHOUT running -command. The <KeyRelease> leg is driven at
+#              `searchbar_fire`, NOT by a generated key (see BAR25 below), so
+#              end-to-end X key delivery into the dialog is NOT pinned either.
+#              AT21 closes item 4's surviving verifier sabotage V-U2 (a THROWING
+#              consumer callback lands in the bar's error label) — item 5 is the
+#              first item that installs a real consumer, so it is the first that
+#              can pin it.
+#              ⚠ AT18 READS A FOCUS RECORD, AND A FOCUS RECORD NEEDS A MAPPED
+#              TOPLEVEL. It sits behind `at_wait_mapped` (see the ⚠ there) and
+#              asserts `ismapped` alongside the record. Do NOT "simplify" it back
+#              to a bare `update` + `focus -lastfor`: that form failed 3 times in
+#              22 solo runs and was repaired, not invented, in the item-5 FIXUP.
 #
-# ⚠ THE BAR GROUP IS DISPLAY-ARM ONLY. It self-skips without X, so the
-# `--nogui` repro below no longer exercises item 4 AT ALL — a green `--nogui`
-# run proves nothing about the search bar. `full_audit.sh` runs this file in the
-# DISPLAY arm (it is not in `nogui_tests`), so audit coverage is real; a
-# maintainer debugging with `--nogui` must not read that green as coverage.
-# The skip banner is worded `SKIPPED: BAR group (Tk/X arm only)` ON PURPOSE:
+# ⚠ THE BAR **AND AT** GROUPS ARE DISPLAY-ARM ONLY — 49 of this file's 139
+# checks. They self-skip without X, so the `--nogui` repro below exercises
+# NEITHER item 4 NOR item 5: a green `--nogui` run (90 checks) proves nothing
+# about the search bar OR the Add Trace filter, and a maintainer debugging there
+# must not read it as coverage. `full_audit.sh` runs this file in the DISPLAY
+# arm (it is not in `nogui_tests`), so audit coverage is real.
+# The skip banners are worded `SKIPPED: <group> group (Tk/X arm only)` ON PURPOSE:
 # `full_audit.sh:109 is_skip()` matches `RESULT: SKIP`, `skipped: no X` and
 # `SKIP: no X connection` ANYWHERE in the output and runs BEFORE `is_pass`, so
 # any of those three spellings would score this whole 119-check suite as SKIP
@@ -145,6 +176,14 @@
 # `::wviewer::sbcfg` / `sbcase` entries. It DOES leave `::bgerror` overridden
 # (items 5-7 want it) and the proc `barcb` defined — there are no `bar_*` helper
 # procs any more, `bar_send_key` went with BAR25.
+# The item-5 group likewise leaves NO widget state (`.wvat1`/`.wvat2`/`.wvat3`
+# destroyed, the `wvat` and `wvat_noraw` entries dict-unset from
+# `::wviewer::windows` / `::wviewer::layouts`, and AT19 is the check that a
+# closed dialog drops `::wviewer::atdsigs`), and it ends by switching the
+# context back to $SLMAIN. It DOES leave the procs `at_open`, `at_lb` and
+# `at_throwcb` defined: item 6 appends to this file and reuses the same dialog
+# fixture. It creates NO third xschem context — AT23's no-raw arm gets its empty
+# inventory from signal_list's landmine-17 refusal, not from a new window.
 #
 # This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
 # is in-memory — no `.raw` file appears (verified with `git status`).
@@ -1284,6 +1323,285 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # full_audit.sh:109's three skip spellings may appear here, or the whole
   # suite is scored SKIP instead of PASS.
   puts "SKIPPED: BAR group (Tk/X arm only)"
+}
+
+# GROUP AT — item 5: the searchbar INSIDE the Add Trace dialog.
+#
+# Two halves, and they are different kinds of claim:
+#   * the REGRESSION GUARD (AT01-AT04, AT16-AT18, AT22) — the PLAN's "do not
+#     redesign the dialog" clause. Every pre-existing widget still at its
+#     contract path, the renumbered grid with NO hole, the Graph combobox on
+#     both its arms, the Expression entry still winning focus.
+#   * the FILTER (AT07-AT14, AT19-AT21, AT23) — the bar actually drives the
+#     listbox, through the REAL Tk routes.
+#
+# ⚠ ROUTES, NOT VARIABLES. Item 4 was rejected because two of its four callback
+# routes were pinned by nothing, and the hole was invisible because
+# `$w.case select` sets the checkbutton variable WITHOUT running its `-command`.
+# So AT09 drives `$atb.search invoke`, AT12 drives
+# `event generate $atb.type <<ComboboxSelected>>` and AT13 drives
+# `$atb.case invoke` — each the real route, each confirmed to fail when severed.
+# The `<KeyRelease>` leg is driven at `searchbar_fire`, NOT by a generated key:
+# item 4 measured a generated-key check non-deterministic under audit load and
+# deleted it (its BAR25/D9). The claim is narrowed to match — end-to-end X key
+# delivery INTO THIS DIALOG IS NOT PINNED.
+#
+# The fixture reuses the item-2 group's second real xschem context ($SLVWP,
+# carrying sl_view.raw), so the inventory, the ctx switch and the 0173 restore
+# are all genuine. `top` MUST be a REAL toplevel here (unlike the SL group's
+# deliberately fake one): the dialog is built as `$top.wvadd`.
+#
+# `at_open` is left DEFINED ON PURPOSE — item 6 appends to this file and needs
+# the same dialog fixture.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  destroy .wvat1 .wvat2 .wvat3
+  toplevel .wvat1 ; wm geometry .wvat1 +100+420
+  dict set ::wviewer::windows wvat [dict create top .wvat1 win_path $SLVWP]
+
+  # Open the Add Trace dialog on a layout of `ngraphs` strips, from the MAIN
+  # context (so the 0173 loan really has somewhere to return to). `pcall` so a
+  # sabotage that makes the dialog THROW degrades to one ERR: value instead of
+  # aborting every remaining check through the outer catch (item 3's lesson).
+  proc at_open {ngraphs} {
+    set gs {}
+    for {set i 0} {$i < $ngraphs} {incr i} { lappend gs [::wviewer::empty_graph] }
+    dict set ::wviewer::layouts wvat [dict create sharedx 0 graphs $gs]
+    xschem new_schematic switch $::SLMAIN
+    return [pcall ::wviewer::add_trace_dialog wvat]
+  }
+  # the listbox as a Tcl list, in display order
+  proc at_lb {w} {
+    set o {}
+    for {set i 0} {$i < [$w size]} {incr i} { lappend o [$w get $i] }
+    return $o
+  }
+  # ⚠ REQUIRED BY AT18, AND THE REASON IT IS NOT A FLAKE. `focus $ee` at the end
+  # of add_trace_dialog runs while the brand-new toplevel is still UNMAPPED, so
+  # Tk cannot apply it yet: it records the request and re-applies it at MAP time.
+  # Until then `focus -lastfor <toplevel>` answers with the TOPLEVEL, because no
+  # per-toplevel focus record exists. Once `winfo ismapped` turns 1 the record
+  # IS the entry — Tk applies the deferred request at map time (measured 12/12
+  # in a standalone Tk probe, including the iterations that were unmapped after
+  # a bare `update`).
+  # A single `update` is therefore an UNSOUND wait, and reading AT18 behind one
+  # is exactly the flake the item-5 verifier measured (3 fails in 22 solo runs,
+  # always `.wvat1.wvadd` vs `.wvat1.wvadd.expr`). Instrumented here on an idle
+  # machine, 25 solo runs: 3 of them were still unmapped after the `update`
+  # (i.e. the old form would have failed those 3, matching the verifier's rate),
+  # and those 3 needed **1.9 s, 3.2 s and 3.5 s** of further waiting to map.
+  # Hence the 15 s budget: 4x the worst measurement, and still an eighth of
+  # full_audit.sh's 120 s per-test timeout. It costs ~10 ms when the map is
+  # prompt, which is the other 22 runs.
+  # This polls the PRECONDITION (mapping), never the asserted value — it is not
+  # a "wait until green" loop; AT18 still asserts the focus record cold, and
+  # still carries `ismapped` in its own tuple so a budget expiry reads as
+  # "never mapped" rather than as "the bar stole the focus".
+  proc at_wait_mapped {w {budget 1500}} {
+    for {set t 0} {$t < $budget && ![winfo ismapped $w]} {incr t} {
+      after 10 ; update
+    }
+    update
+    return [winfo ismapped $w]
+  }
+
+  set atw [at_open 2] ; set atb $atw.wvsearch ; update
+  at_wait_mapped $atw
+
+  # the whole inventory: 7 SLFIX names + the implicit `vsweep` from `raw new`
+  set ATALL [list vsweep v(out) i(v1) v(x1.x2.net5) net1 @m.x1.m1\[id\] I(V2) \
+                  v(net_name\[3\])]
+  set ATV   [list v(out) v(x1.x2.net5) v(net_name\[3\])]
+
+  # --- the regression guard: "do not redesign the dialog" --------------------
+  # ⚠ AT01 IS THE ONLY CHECK IN THIS GROUP THAT READS $atw.name / $atw.lname.
+  # That is deliberate (D4): a second reader would give named sabotage (b) a
+  # second target and stop it failing EXACTLY one check.
+  check {AT01 every pre-existing dialog child survives at its contract path} \
+    [list [winfo exists $atw.graph] [winfo exists $atw.lgraph] \
+          [winfo exists $atw.expr]  [winfo exists $atw.lexpr] \
+          [winfo exists $atw.name]  [winfo exists $atw.lname] \
+          [winfo exists $atw.lvars] [winfo exists $atw.vars] \
+          [winfo exists $atw.vsb]   [winfo exists $atw.err] \
+          [winfo exists $atw.btns]] \
+    [list 1 1 1 1 1 1 1 1 1 1 1]
+  # the PLAN's "renumber every grid call, do not leave a hole": rows 3..7
+  # consecutive, all distinct, searchbar between the label and the listbox.
+  check {AT02 grid rows renumbered with no hole: lvars/bar/vars/err/btns} \
+    [list [dict get [grid info $atw.lvars]    -row] \
+          [dict get [grid info $atw.wvsearch] -row] \
+          [dict get [grid info $atw.vars]     -row] \
+          [dict get [grid info $atw.err]      -row] \
+          [dict get [grid info $atw.btns]     -row]] \
+    [list 3 4 5 6 7]
+  check {AT03 Graph combobox still gridded and populated (2-graph arm)} \
+    [list [dict get [grid info $atw.graph] -row] [$atw.graph cget -values] \
+          [$atw.graph get]] \
+    [list 0 [list 0 1] 1]
+  check {AT16 the bar is the dialog's child at the contract path, and MANAGED} \
+    [list [expr {[winfo parent $atb] eq $atw}] [winfo class $atb] \
+          [winfo manager $atb]] \
+    [list 1 Frame grid]
+  check {AT17 the raw-vars listbox is selectmode extended} \
+    [$atw.vars cget -selectmode] extended
+  # the PLAN's eyeball clause, as far as a headless check can carry it: the bar
+  # must NOT steal focus from the Expression entry. This pins Tk's focus RECORD
+  # ONCE THE DIALOG IS MAPPED (see at_wait_mapped above — the record does not
+  # exist before that, and reading it behind a bare `update` was measured
+  # non-deterministic). That the visible CARET is there, and that the WM then
+  # hands the focus to this toplevel at all, remain the eyeball's job.
+  check {AT18 mapped, and focus goes to the Expression entry not the search bar} \
+    [list [winfo ismapped $atw] [focus -lastfor $atw]] [list 1 $atw.expr]
+  # D1: population moved to wviewer::signal_list, which is the 0173 loan
+  # bracket. The bare `new_schematic switch` it replaces never switched back.
+  check {AT22 opening the dialog leaves the context where it found it (0173)} \
+    [xschem get current_win_path] $SLMAIN
+
+  # --- the filter ------------------------------------------------------------
+  check {AT07 the dialog opens showing the WHOLE inventory, in raw order} \
+    [list [at_lb $atw.vars] [$atw.vars size]] [list $ATALL 8]
+  $atb.pat delete 0 end ; $atb.pat insert 0 {v(*)}
+  ::wviewer::searchbar_fire $atb ; update
+  check {AT08 a shell pattern SHRINKS the listbox to the matching set} \
+    [at_lb $atw.vars] $ATV
+  # decision 5's other half: the Search BUTTON, driven through its real -command
+  $atb.pat delete 0 end ; $atb.search invoke ; update
+  check {AT09 clearing the pattern GROWS it back (via the Search button route)} \
+    [list [at_lb $atw.vars] [$atw.vars size]] [list $ATALL 8]
+
+  # decision 4: an invalid regexp is an ERROR shown in the SEARCH BAR. It must
+  # not land in $w.err, which stays the dialog's RPN/no-raw channel.
+  $atb.pat delete 0 end ; $atb.pat insert 0 {v(*)}
+  ::wviewer::searchbar_fire $atb ; update
+  set atpre [at_lb $atw.vars]
+  $atb.syntax set RegExp ; event generate $atb.syntax <<ComboboxSelected>> ; update
+  check {AT10 an invalid regexp lands in the BAR err label, NOT the dialog's} \
+    [list [expr {[$atb.err cget -text] ne {}}] [$atw.err cget -text]] \
+    [list 1 {}]
+  # D3: HOLD the last good list rather than blanking. Anti-vacuity is real —
+  # $atpre is the 3-name v(*) set, not the whole 8.
+  check {AT11 an invalid regexp HOLDS the last good list (D3)} \
+    [list [at_lb $atw.vars] $atpre] [list $ATV $ATV]
+
+  # THE DECISION-2 WITNESS. The type dropdown works only because the match
+  # subject is the FULL raw name: sig_type reads the `v(`/`i(` prefix, which
+  # sig_bare-stripping would destroy. Driven through <<ComboboxSelected>>.
+  $atb.syntax set Shell ; $atb.pat delete 0 end
+  ::wviewer::searchbar_fire $atb ; update
+  $atb.type set Current ; event generate $atb.type <<ComboboxSelected>> ; update
+  check {AT12 the type dropdown filters on the FULL raw name (decision 2)} \
+    [at_lb $atw.vars] [list i(v1) I(V2)]
+
+  # Match case, off -> on, through `invoke` — `select` would set the variable
+  # WITHOUT running -command, which is exactly the hole item 4 shipped.
+  $atb.type set All ; event generate $atb.type <<ComboboxSelected>>
+  $atb.pat delete 0 end ; $atb.pat insert 0 {I(*)}
+  ::wviewer::searchbar_fire $atb ; update
+  set atcaseoff [at_lb $atw.vars]
+  $atb.case invoke ; update
+  check {AT13 Match case off->on narrows I(*) from both to I(V2)} \
+    [list $atcaseoff [at_lb $atw.vars]] \
+    [list [list i(v1) I(V2)] [list I(V2)]]
+  $atb.case invoke ; update                       ;# back to decision 6's default
+
+  # NAMED SABOTAGE (a)'s target. The teeth are real: v(out) moves 1 -> 0,
+  # v(x1.x2.net5) moves 3 -> 1, and net1 is filtered away entirely — so an
+  # index-based snapshot would land on the wrong rows, not merely survive.
+  $atb.pat delete 0 end ; ::wviewer::searchbar_fire $atb ; update
+  $atw.vars selection clear 0 end
+  foreach atn [list v(out) v(x1.x2.net5) net1] {
+    $atw.vars selection set [lsearch -exact [at_lb $atw.vars] $atn]
+  }
+  set atselpre [$atw.vars curselection]
+  $atb.pat insert 0 {v(*)} ; ::wviewer::searchbar_fire $atb ; update
+  set atselnm {}
+  foreach i [$atw.vars curselection] { lappend atselnm [$atw.vars get $i] }
+  check {AT14 the selection SURVIVES the filter, by name not by index} \
+    [list $atselpre [$atw.vars curselection] $atselnm] \
+    [list [list 1 3 4] [list 0 1] [list v(out) v(x1.x2.net5)]]
+
+  # THE %W GUARD (R2, MEASURED on Tk 8.6.14: `bindtags .top.kid` is
+  # {.top.kid Label .top all}, so a CHILD's destroy fires the TOPLEVEL's
+  # <Destroy> binding). Without the guard the inventory evaporates here and the
+  # filter below silently returns on its `info exists` bail.
+  # The listbox is deliberately reset to the FULL list FIRST. Without it the
+  # "filter still works" half is vacuous: AT14 leaves the box already showing
+  # $ATV, so a filter that bails out on the missing cache leaves exactly the
+  # expected content behind and only the `info exists` half has teeth. MEASURED
+  # — sabotage E2 initially failed on one half of this check, not two.
+  $atb.pat delete 0 end ; ::wviewer::searchbar_fire $atb ; update
+  set atfullagain [at_lb $atw.vars]
+  label $atw.junk -text x ; destroy $atw.junk ; update
+  $atb.pat delete 0 end ; $atb.pat insert 0 {v(*)}
+  ::wviewer::searchbar_fire $atb ; update
+  check {AT20 destroying a CHILD does not drop the inventory (%W guard)} \
+    [list [info exists ::wviewer::atdsigs(wvat)] $atfullagain [at_lb $atw.vars]] \
+    [list 1 $ATALL $ATV]
+
+  set atbsaved $atb
+  destroy $atw ; update
+  check {AT19 closing the dialog leaves no namespace state behind} \
+    [list [info exists ::wviewer::atdsigs(wvat)] \
+          [info exists ::wviewer::sbcfg($atbsaved)] \
+          [info exists ::wviewer::sbcase($atbsaved)]] \
+    [list 0 0 0]
+
+  # DRIVER NOTE (c) / item 4's verifier sabotage V-U2, closed here. Item 4
+  # shipped the claim "a throwing consumer callback puts its own message in
+  # $w.err, so it is visible and never silent" — MEASURED true but pinned by
+  # nothing, because item 4 had no consumer. Item 5 is the first one.
+  # Anti-vacuity: the label is asserted EMPTY before the throw.
+  toplevel .wvat2
+  proc at_throwcb {args} { error "consumer blew up: $args" }
+  set atb2 [::wviewer::searchbar_build .wvat2 -command at_throwcb]
+  pack $atb2 -fill x                              ;# item 4's eyeball trap
+  update
+  set atb2pre [$atb2.err cget -text]
+  $atb2.pat delete 0 end ; $atb2.pat insert 0 abc
+  ::wviewer::searchbar_fire $atb2 ; update
+  check {AT21 a THROWING consumer surfaces in the bar's own error label} \
+    [list $atb2pre [$atb2.err cget -text]] \
+    [list {} {consumer blew up: abc shell 0 all}]
+  destroy .wvat2 ; update
+
+  # D2: the "no raw data loaded" note now triggers on an EMPTY INVENTORY rather
+  # than on `xschem raw list` throwing. Same user-visible result. Driven through
+  # a token whose win_path does not exist, so signal_list's landmine-17 refusal
+  # returns {} — no third xschem context is created.
+  toplevel .wvat3
+  dict set ::wviewer::windows wvat_noraw \
+    [dict create top .wvat3 win_path .wvsl_nosuch.drw]
+  dict set ::wviewer::layouts wvat_noraw \
+    [dict create sharedx 0 graphs [list [::wviewer::empty_graph]]]
+  set atnw [pcall ::wviewer::add_trace_dialog wvat_noraw] ; update
+  check {AT23 an empty inventory still yields the no-raw note (D2)} \
+    [list [$atnw.vars size] [$atnw.err cget -text]] \
+    [list 0 {no raw data loaded - variable list unavailable}]
+  destroy .wvat3 ; update
+  dict unset ::wviewer::windows wvat_noraw
+  dict unset ::wviewer::layouts wvat_noraw
+
+  # The 1-graph arm, REOPENED rather than freshly built — which also exercises
+  # the ordering trap (R6): ase::ui::dialog_frame destroys the old dialog first,
+  # firing the old <Destroy> and its cache-forget DURING the new open. The cache
+  # is written after dialog_frame returns, so it survives; measured n=8.
+  set atw [at_open 1] ; update
+  check {AT04 below 2 graphs the Graph combobox exists but is NOT gridded} \
+    [list [winfo exists $atw.graph] [grid info $atw.graph] \
+          [llength [grid info $atw.graph]]] \
+    [list 1 {} 0]
+
+  destroy $atw .wvat1 .wvat2 .wvat3
+  update
+  dict unset ::wviewer::windows wvat
+  dict unset ::wviewer::layouts wvat
+  xschem new_schematic switch $SLMAIN
+
+} else {
+  # WORDING IS LOAD-BEARING — see the ⚠ in the file header. None of
+  # full_audit.sh:109's three skip spellings may appear here, or the whole
+  # suite is scored SKIP instead of PASS.
+  puts "SKIPPED: AT group (Tk/X arm only)"
 }
 
 } bigerr]} {
