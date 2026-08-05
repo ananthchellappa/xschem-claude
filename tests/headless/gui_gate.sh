@@ -26,6 +26,24 @@ GATE_DIR="${GUI_GATE_DIR:-$HOME/.claude/gui_test_gate}"
 _GATE_PID="$$"
 _GATE_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --- v6 tunables (see "The launch is ASYNCHRONOUS and TRACKED" below) -------
+# How long a launch is watched synchronously before it is left to be adopted
+# later. 3 s is generous for a HEALTHY X server: measured fork -> pidfile is
+# 106 ms idle and 76-92 ms with 20 CPU hogs running on a 14-core box (loadavg
+# 10-16) -- ~33x of headroom. Load was never what broke this.
+_GATE_LAUNCH_POLL="${GUI_GATE_LAUNCH_POLL:-20}"        # x 0.15 s
+# How long a pidfile-less wish is given before it is reaped as an orphan.
+# Worst case actually observed end to end was 134 s (a weston restart whose
+# Xwayland respawn was itself 54 s late); 180 s keeps ~35% headroom.
+_GATE_PENDING_DEADLINE="${GUI_GATE_PENDING_DEADLINE:-180}"
+# How long a widget.pid.crashed corpse marker keeps authorising revives.
+_GATE_CRASH_TTL="${GUI_GATE_CRASH_TTL:-1800}"
+# Age at which revive.lock is broken even though its owner still looks alive.
+_GATE_LOCK_TTL="${GUI_GATE_LOCK_TTL:-300}"
+_GATE_LOCK_DEPTH=0
+
+_gate_now() { date +%s; }
+
 _gate_enabled() {
   [ "${GUI_GATE:-1}" = "0" ] && return 1
   [ -z "${DISPLAY:-}" ] && return 1
@@ -70,20 +88,193 @@ _gate_log() {
 # An unreadable /proc is accepted, not treated as a mismatch: unverifiable is
 # not the same as wrong, and guessing "dead" there would launch a second panel
 # on every single call.
-_gate_widget_alive() {
-  local pf="$GATE_DIR/widget.pid"
-  [ -f "$pf" ] || return 1
-  local wp; wp="$(cat "$pf" 2>/dev/null)"
-  [ -n "$wp" ] || return 1
-  kill -0 "$wp" 2>/dev/null || return 1
-  if [ -r "/proc/$wp/cmdline" ]; then
-    tr '\0' ' ' < "/proc/$wp/cmdline" 2>/dev/null | grep -q gui_gate_widget || return 1
+_gate_is_panel_pid() {
+  local p="${1:-}"
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$p" 2>/dev/null || return 1
+  # A backgrounded wish that exited leaves a ZOMBIE until this shell reaps it,
+  # and `kill -0` succeeds on a zombie. Its /proc/<pid>/cmdline is empty, so the
+  # identity test below reads it as dead -- which is what we want.
+  if [ -r "/proc/$p/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q gui_gate_widget || return 1
   fi
   return 0
 }
 
-_gate_ensure_widget() {
-  _gate_widget_alive && return 0
+_gate_widget_alive() {
+  local pf="$GATE_DIR/widget.pid"
+  [ -f "$pf" ] || return 1
+  local wp; wp="$(cat "$pf" 2>/dev/null)"
+  _gate_is_panel_pid "$wp"
+}
+
+# --- v6: markers -----------------------------------------------------------
+# widget.launching     "<pid> <epoch>" -- a wish we forked that has not written
+#                      widget.pid yet. Its existence is what stops a second one.
+# widget.pid.crashed   "<pid> <epoch>" -- the corpse of a panel we are trying to
+#                      revive. v4/v5 DELETED widget.pid before relaunching and
+#                      never put it back, so one failed attempt tripped the
+#                      revive's own "[ -f widget.pid ] || return 1" precondition
+#                      (the deliberate-close rule) and silenced every later
+#                      attempt for the rest of the run, with no log line at all.
+#                      Measured: weston aborted again 80 s into the same 283-test
+#                      audit and events.log has no gate event for it.
+_gate_marker_pid()   { local v; v="$(cat "$1" 2>/dev/null)"; printf '%s' "${v%% *}"; }
+_gate_marker_epoch() {
+  local v e; v="$(cat "$1" 2>/dev/null)"; e="${v##* }"
+  case "$e" in ''|*[!0-9]*) e=0 ;; esac; printf '%s' "$e"
+}
+_gate_marker_age()   { echo $(( $(_gate_now) - $(_gate_marker_epoch "$1") )); }
+
+_gate_kill_pid() {
+  local p="${1:-}" i
+  _gate_is_panel_pid "$p" || return 0
+  kill "$p" 2>/dev/null
+  for i in $(seq 1 20); do _gate_is_panel_pid "$p" || return 0; sleep 0.1; done
+  kill -9 "$p" 2>/dev/null
+  return 0
+}
+
+# --- v6: the revive lock ---------------------------------------------------
+# The control dir is shared by the main session AND every worktree/subagent run,
+# and events.log routinely shows several suite pids alive at once. The throttle
+# was a non-atomic read-then-write and nothing serialised the corpse handling or
+# the launch, so two suites in the same second could both pass the throttle,
+# both drop the pid file and both fork a panel. Re-entrant (depth counter) so
+# _gate_revive_widget can call _gate_ensure_widget while holding it.
+# SELF-EXPIRING: a lock whose owner is dead, or simply older than _GATE_LOCK_TTL,
+# is broken -- a SIGKILLed suite must not disable revives for everyone else.
+_gate_lock() {
+  local d="$GATE_DIR/revive.lock" tries="${1:-0}" own opid oep now
+  if [ "${_GATE_LOCK_DEPTH:-0}" -gt 0 ]; then
+    _GATE_LOCK_DEPTH=$((_GATE_LOCK_DEPTH + 1)); return 0
+  fi
+  mkdir -p "$GATE_DIR" 2>/dev/null
+  while : ; do
+    if mkdir "$d" 2>/dev/null; then
+      printf '%s %s' "$_GATE_PID" "$(_gate_now)" > "$d/owner" 2>/dev/null
+      _GATE_LOCK_DEPTH=1
+      return 0
+    fi
+    own="$(cat "$d/owner" 2>/dev/null)"
+    opid="${own%% *}"; oep="${own##* }"
+    case "$oep" in ''|*[!0-9]*) oep=0 ;; esac
+    now="$(_gate_now)"
+    if [ -z "$opid" ] || ! kill -0 "$opid" 2>/dev/null \
+       || [ "$((now - oep))" -ge "$_GATE_LOCK_TTL" ]; then
+      _gate_log "breaking stale revive lock (owner=${opid:-?})"
+      rm -rf "$d" 2>/dev/null
+      continue
+    fi
+    [ "$tries" -gt 0 ] || return 1
+    tries=$((tries - 1))
+    sleep 0.2
+  done
+}
+
+_gate_unlock() {
+  [ "${_GATE_LOCK_DEPTH:-0}" -gt 0 ] || return 0
+  _GATE_LOCK_DEPTH=$((_GATE_LOCK_DEPTH - 1))
+  [ "$_GATE_LOCK_DEPTH" -eq 0 ] && rm -rf "$GATE_DIR/revive.lock" 2>/dev/null
+  return 0
+}
+
+# _gate_reconcile — called when a panel IS alive: settle the markers.
+# This is where a LATE launch is adopted (the thing that used to happen by
+# accident: on 2026-08-04 a wish declared "FAILED" wrote its pidfile 134 s later
+# and became the real panel, unsupervised, while the suite ran ungated).
+_gate_reconcile() {
+  local f="$GATE_DIR/widget.launching" wp pend age
+  wp="$(cat "$GATE_DIR/widget.pid" 2>/dev/null)"
+  if [ -f "$f" ]; then
+    pend="$(_gate_marker_pid "$f")"; age="$(_gate_marker_age "$f")"
+    if [ -n "$pend" ] && [ "$pend" = "$wp" ]; then
+      _gate_log "panel revived late (+${age}s) pid=$pend -- adopted"
+    elif _gate_is_panel_pid "$pend"; then
+      # someone else's panel won the race: never leave two
+      _gate_kill_pid "$pend"
+      _gate_log "duplicate panel pid=$pend reaped (live panel is ${wp:-?})"
+    fi
+    rm -f "$f" 2>/dev/null
+  fi
+  rm -f "$GATE_DIR/widget.pid.crashed" 2>/dev/null
+  return 0
+}
+
+# _gate_pending_state — 0: a launch is still in flight, do NOT fork another.
+#                       1: nothing pending (any corpse has been reaped).
+# Call under the lock.
+_gate_pending_state() {
+  local f="$GATE_DIR/widget.launching" pid age
+  [ -f "$f" ] || return 1
+  pid="$(_gate_marker_pid "$f")"; age="$(_gate_marker_age "$f")"
+  if ! _gate_is_panel_pid "$pid"; then
+    rm -f "$f" 2>/dev/null
+    _gate_log "pending panel launch gone after ${age}s -- will retry"
+    return 1
+  fi
+  if [ "$age" -ge "$_GATE_PENDING_DEADLINE" ]; then
+    # THE anti-orphan clause, and the only place a wish is killed for being
+    # slow. A pidfile-less wish this old is one that will map a window nobody
+    # asked for, minutes after the suite gave up on it.
+    _gate_kill_pid "$pid"
+    rm -f "$f" 2>/dev/null
+    _gate_log "panel launch abandoned after ${age}s (no usable X server); orphan wish pid=$pid reaped"
+    return 1
+  fi
+  return 0
+}
+
+# _gate_revive_authorised — may we (re)build a panel at all?
+# widget.pid present         -> a panel died without running on_close (crash)
+# widget.pid.crashed present -> we are already mid-revive after such a death
+# widget.launching present   -> we already forked one; adopt or reap it
+# NONE of them -> the user CLOSED the panel (on_close deletes all three) and
+# "get out of the way" is exactly what that means.
+_gate_revive_authorised() {
+  [ -f "$GATE_DIR/widget.pid" ] && return 0
+  [ -f "$GATE_DIR/widget.launching" ] && return 0
+  if [ -f "$GATE_DIR/widget.pid.crashed" ]; then
+    if [ "$(_gate_marker_age "$GATE_DIR/widget.pid.crashed")" -ge "$_GATE_CRASH_TTL" ]; then
+      rm -f "$GATE_DIR/widget.pid.crashed" 2>/dev/null
+      _gate_log "crash marker expired -- no further revives until the next gate_start"
+      return 1
+    fi
+    return 0
+  fi
+  return 1
+}
+
+# _gate_launch_widget — fork ONE wish and TRACK it. Call under the lock.
+#
+# THE LAUNCH IS ASYNCHRONOUS (v6, 2026-08-04). v4/v5 polled for 3.0 s
+# (20 x 0.15) and, if widget.pid had not appeared, declared "panel launch
+# FAILED", continued UNGATED and walked away from a live wish. That happened
+# SEVEN times in one day. The 3 s were never wish's:
+#
+#   * WSLg dies two ways. (A) Xwayland alone exits ("xserver exited, code 134")
+#     with weston alive -- weston respawns it in 2-60 MILLISECONDS, and every
+#     revive in that mode succeeded. (B) weston itself SIGABRTs and WSLGd
+#     restarts the compositor; the fresh weston binds :0 at once but spawns
+#     Xwayland LAZILY: 2.83, 2.89, 2.91, 2.91, 3.05 s later -- and once 54.4 s.
+#     Every "revive FAILED" was a mode-B abort; the one mode-B whose respawn was
+#     instant (20 ms) is the one revive that succeeded.
+#   * wish does not fail fast against a socket that accepts but never completes
+#     the X handshake -- it BLOCKS, writes nothing to stderr, and never reaches
+#     the line that writes widget.pid. Measured: 25 s with zero output; against
+#     a display with no listener at all, 269 s (Xlib's TCP fallback retrying
+#     SYNs). So "empty widget.log + no widget.pid + a live wish" is the NORMAL
+#     outcome of launching into a restarting compositor, not an anomaly.
+#   * wish itself is never the problem: fork -> pidfile is 106-107 ms idle and
+#     113-121 ms under 20 busy loops plus exec churn on a 14-core box. 3 s is 25x
+#     that. Lengthening the poll to cover the observed 134 s would block a pause
+#     point for 134 s and break the one rule.
+#
+# So the fast path keeps its 3 s, and a launch that is still in flight is
+# RECORDED (widget.launching) instead of abandoned: the suite carries on
+# ungated -- honestly, and saying so -- and a later pause point adopts the panel
+# when it finally connects, or reaps it at _GATE_PENDING_DEADLINE.
+_gate_launch_widget() {
   mkdir -p "$GATE_DIR/req" "$GATE_DIR/status"
   # A plain `( wish ... & )` leaves the panel in the LAUNCHING SUITE'S process
   # group, so anything that kills that group -- which is how a background/CI
@@ -98,20 +289,63 @@ _gate_ensure_widget() {
   # that would have named the killer ("X connection to :0 broken") went nowhere.
   # Truncated per launch, so it cannot grow without bound; the durable trail is
   # events.log (_gate_log), which a relaunch does not erase.
-  local log="$GATE_DIR/widget.log"
+  #
+  # Backgrounded DIRECTLY (not inside `( ... & )`) so that $! names the wish:
+  # `setsid cmd &` from a non-job-control shell is not a process-group leader,
+  # so setsid execs in place rather than forking (verified: pid == pgid == sid,
+  # /proc/<pid>/cmdline is the wish command line). Without that pid there is
+  # nothing to adopt and nothing to reap.
+  local log="$GATE_DIR/widget.log" pid i
   if command -v setsid >/dev/null 2>&1; then
-    ( setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 & )
+    setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
   else
-    ( wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 & )
+    wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
   fi
-  # wait briefly for it to write its pid
-  local i
-  for i in $(seq 1 20); do
-    _gate_widget_alive && { _gate_log "panel launched pid=$(cat "$GATE_DIR/widget.pid" 2>/dev/null)"; return 0; }
+  pid=$!
+  printf '%s %s' "$pid" "$(_gate_now)" > "$GATE_DIR/widget.launching"
+
+  # wait briefly for it to write its pid (the healthy case: ~0.11 s)
+  for i in $(seq 1 "$_GATE_LAUNCH_POLL"); do
+    if _gate_widget_alive; then
+      rm -f "$GATE_DIR/widget.launching" "$GATE_DIR/widget.pid.crashed" 2>/dev/null
+      _gate_log "panel launched pid=$(cat "$GATE_DIR/widget.pid" 2>/dev/null)"
+      return 0
+    fi
+    _gate_is_panel_pid "$pid" || break     # wish exited outright: nothing to wait for
     sleep 0.15
   done
-  _gate_log "panel launch FAILED (see $log)"
-  _gate_widget_alive
+
+  # 2 = PENDING (a live wish we will adopt or reap later)
+  # 1 = FAILED   (wish is gone; nothing to adopt, nothing leaked)
+  if _gate_is_panel_pid "$pid"; then
+    _gate_log "panel launch PENDING pid=$pid (X server may be restarting) -- suite continues UNGATED for now; will adopt at a later pause point"
+    return 2
+  fi
+  rm -f "$GATE_DIR/widget.launching" 2>/dev/null
+  _gate_log "panel launch FAILED (wish exited, see $log)"
+  return 1
+}
+
+# _gate_ensure_widget — a panel exists, or one is on its way. Never two.
+_gate_ensure_widget() {
+  _gate_widget_alive && { _gate_reconcile; return 0; }
+  if ! _gate_lock 0; then
+    # another suite is launching RIGHT NOW: wait for its panel rather than fork
+    # a second one. Same 3 s budget, spent on somebody else's wish.
+    local i
+    for i in $(seq 1 "$_GATE_LAUNCH_POLL"); do
+      _gate_widget_alive && { _gate_reconcile; return 0; }
+      sleep 0.15
+    done
+    return 1
+  fi
+  local rc
+  if _gate_widget_alive; then _gate_reconcile; rc=0
+  elif _gate_pending_state;  then rc=1       # in flight: adopt/reap it later
+  else _gate_launch_widget; rc=$?; if [ "$rc" -ne 0 ]; then rc=1; fi
+  fi
+  _gate_unlock
+  return "$rc"
 }
 
 # _gate_revive_widget — bring the panel back MID-SUITE.
@@ -131,31 +365,63 @@ _gate_ensure_widget() {
 #
 # THROTTLED, never once-only: three aborts in one session, and a soak outlives
 # several. GUI_GATE_REVIVE_EVERY overrides the interval (seconds).
+# Throttle. Read-then-write, so it is only sound under the revive lock.
+_gate_throttle_ok() {
+  local stamp="$GATE_DIR/last_revive" now prev
+  now="$(_gate_now)"
+  if [ -f "$stamp" ]; then
+    prev="$(cat "$stamp" 2>/dev/null || echo 0)"
+    case "$prev" in ''|*[!0-9]*) prev=0 ;; esac
+    [ "$((now - prev))" -lt "${GUI_GATE_REVIVE_EVERY:-30}" ] && return 1
+  fi
+  printf '%s' "$now" > "$stamp"
+  return 0
+}
+
 _gate_revive_widget() {
-  # ONLY revive a panel that CRASHED, never one the user closed.
+  # Free win first, and unthrottled: a launch we started earlier may have
+  # connected in the meantime. Adopting it is the whole point of v6.
+  if _gate_widget_alive; then _gate_reconcile; return 0; fi
+
+  # ONLY revive a panel that CRASHED (or a launch we already own), never one the
+  # user closed.
   #
   # Those two are distinguishable, and the distinction is the whole forensic
   # signature of the 07-30 death: on_close (WM_DELETE_WINDOW) deletes
   # widget.pid, whereas a signalled/X-severed panel cannot run on_close at all
-  # and leaves the file behind. So a MISSING widget.pid means "the user shut me
+  # and leaves the file behind. So NO marker at all means "the user shut me
   # down" -- which the spec defines as "get out of the way" -- and resurrecting
-  # it one pause point later would be the gate arguing with the user.
-  [ -f "$GATE_DIR/widget.pid" ] || return 1
+  # it one pause point later would be the gate arguing with the user. on_close
+  # deletes all three markers precisely so that a close during a failed revive
+  # still means stay away.
+  _gate_revive_authorised || return 1
 
-  local stamp="$GATE_DIR/last_revive" now prev
-  now="$(date +%s)"
-  if [ -f "$stamp" ]; then
-    prev="$(cat "$stamp" 2>/dev/null || echo 0)"
-    [ "$((now - prev))" -lt "${GUI_GATE_REVIVE_EVERY:-30}" ] && return 1
+  _gate_lock 0 || return 1          # another suite is already on it
+  local rc=1
+  if _gate_widget_alive; then _gate_reconcile; rc=0
+  elif _gate_pending_state; then rc=1            # in flight; stay ungated, quietly
+  elif ! _gate_revive_authorised; then rc=1      # marker expired under us
+  elif ! _gate_throttle_ok; then rc=1
+  else
+    _gate_log "panel death detected -- reviving"
+    # Rename the corpse, NEVER delete it: widget.pid is the only evidence that
+    # this panel crashed rather than being closed, and v4/v5 destroyed it before
+    # every launch. One failed launch then made _gate_revive_authorised's own
+    # precondition false for the rest of the run -- silently.
+    if [ -f "$GATE_DIR/widget.pid" ]; then
+      printf '%s %s' "$(cat "$GATE_DIR/widget.pid" 2>/dev/null)" "$(_gate_now)" \
+        > "$GATE_DIR/widget.pid.crashed" 2>/dev/null
+      rm -f "$GATE_DIR/widget.pid"
+    fi
+    _gate_launch_widget; local lrc=$?
+    case "$lrc" in
+      0) _gate_log "panel revived"; rc=0 ;;
+      2) _gate_log "revive PENDING -- suite continues UNGATED until that wish connects"; rc=1 ;;
+      *) _gate_log "revive FAILED -- suite continues UNGATED"; rc=1 ;;
+    esac
   fi
-  printf '%s' "$now" > "$stamp"
-  _gate_log "panel death detected -- reviving"
-  # drop the corpse's pid file first, or _gate_ensure_widget's own liveness
-  # check could race a pid that is being reaped
-  rm -f "$GATE_DIR/widget.pid"
-  if _gate_ensure_widget; then _gate_log "panel revived"; return 0; fi
-  _gate_log "revive FAILED -- suite continues UNGATED"
-  return 1
+  _gate_unlock
+  return "$rc"
 }
 
 _gate_control() { cat "$GATE_DIR/control" 2>/dev/null; }
@@ -197,6 +463,12 @@ _gate_attention() {
     kill "$wp" 2>/dev/null
     for i in $(seq 1 10); do _gate_widget_alive || break; sleep 0.1; done
     _gate_widget_alive && kill -9 "$wp" 2>/dev/null
+    # v6: leave a CORPSE, not a hole. This path kills a healthy panel on
+    # purpose, and if the relaunch lands during a compositor restart it goes
+    # PENDING like any other -- without the marker, the "no marker = the user
+    # closed it" rule would then block every later revive and the user would be
+    # left with no panel at all. (Same defect, same code path, as the revive.)
+    printf '%s %s' "$wp" "$(_gate_now)" > "$GATE_DIR/widget.pid.crashed" 2>/dev/null
     rm -f "$GATE_DIR/widget.pid"
   fi
   _gate_ensure_widget
@@ -319,7 +591,11 @@ gate_pause_point() {
   # Best-effort BY CONSTRUCTION: the result is deliberately discarded. A gate
   # that turned a missing panel into a blocked suite would have broken its own
   # one rule to fix a lesser bug.
-  _gate_widget_alive || _gate_revive_widget || true
+  #
+  # v6: when the panel IS alive this also settles the markers -- adopting a
+  # launch that connected late, or reaping the duplicate that lost a race. That
+  # is why the healthy branch is no longer a bare no-op.
+  if _gate_widget_alive; then _gate_reconcile; else _gate_revive_widget || true; fi
 
   while true; do
     local c; c="$(cat "$GATE_DIR/control" 2>/dev/null)"

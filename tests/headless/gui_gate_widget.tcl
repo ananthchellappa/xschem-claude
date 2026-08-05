@@ -552,14 +552,38 @@ up front — no prompt per suite."
 }
 
 proc on_close {} {
-  global PIDFILE REQDIR
+  global PIDFILE REQDIR GATE_DIR
   # closing the panel must never wedge blocked suites: release every
   # go-ahead request and set RUN so paused suites resume, then exit. (Closing
   # is "get out of the way", NOT "abort the suite" — that is the Stop button.)
   clear_deadline
   write_control RUN
   foreach r [pending_reqs] { catch {file delete [file join $REQDIR $r]} }
+  # A DELIBERATE CLOSE MUST LEAVE NO MARKER AT ALL (v6).
+  #
+  # The shell side revives a panel that CRASHED and never one that was closed,
+  # and it tells them apart by what is left on disk: a crash cannot run this
+  # handler. v6 added two more such markers -- widget.pid.crashed (the corpse of
+  # a panel a revive is already working on) and widget.launching (a wish that
+  # was forked but has not connected to the X server yet) -- and EITHER of them
+  # left behind here would authorise a revive one pause point after the user
+  # closed the panel: the endless relaunch loop, which is the worst possible
+  # regression in this file. So clear all three.
+  #
+  # widget.launching may also name a SECOND wish still trying to start (the user
+  # can close this panel while a stale launch is in flight); killing it is the
+  # same rule -- "get out of the way" must mean no window comes back.
   catch {file delete $PIDFILE}
+  catch {file delete ${PIDFILE}.crashed}
+  set lf [file join $GATE_DIR widget.launching]
+  if {[file exists $lf]} {
+    catch {
+      set fp [open $lf r]; set v [string trim [read $fp]]; close $fp
+      set p [lindex [split $v " "] 0]
+      if {[string is integer -strict $p] && $p ne [pid]} { catch {exec kill $p} }
+    }
+    catch {file delete $lf}
+  }
   destroy .
   exit 0
 }

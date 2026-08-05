@@ -1,11 +1,11 @@
 # GUI-test control gate — warn / Snooze / Pause the headless GUI test suite
 
-Status: SHIPPED **v5** (2026-07-30; v4 2026-07-30, v3 2026-07-29, v2 2026-07-25,
-v1 2026-07-22)
+Status: SHIPPED **v6** (2026-08-04; v5 2026-07-30, v4 2026-07-30, v3 2026-07-29,
+v2 2026-07-25, v1 2026-07-22)
 Files: tests/headless/gui_gate_widget.tcl, tests/headless/gui_gate.sh,
 wired into tests/headless/full_audit.sh **and tests/headless/run_suites.sh**,
 plus tests/headless/gated_xschem.sh (enrolment wrapper for bare loops).
-Self-tests: tests/headless/test_gui_gate_revive.sh (v4),
+Self-tests: tests/headless/test_gui_gate_revive.sh (v4 + **v6**),
 tests/headless/test_gui_gate_batch.sh (v5).
 
 ## THE ONE RULE (v3)
@@ -72,8 +72,19 @@ because the hook was simply gone).
   *writes* this file but never *reads* it back at startup, so a relaunch — which
   `_gate_attention` does routinely — silently downgrades a user's Snooze 30m to
   a fresh 2-minute autostart.
+- `widget.launching` — v6. `"<pid> <epoch>"` of a `wish` that has been forked
+  but has not written `widget.pid` yet. Its presence is what stops a second one
+  being forked, and what lets a later pause point adopt or reap it.
+- `widget.pid.crashed` — v6. `"<pid> <epoch>"`, the corpse of a panel a revive
+  is working on. v4/v5 *deleted* `widget.pid` before relaunching, which
+  destroyed the crashed-vs-closed evidence (below).
+- `revive.lock/` — v6. `mkdir` mutex around the whole revive (throttle read +
+  corpse rename + launch + pending write), holding `owner` = `"<pid> <epoch>"`.
+  Broken if the owner is dead or the lock is older than `GUI_GATE_LOCK_TTL`
+  (300 s), so a SIGKILLed suite cannot disable revives for everyone else.
 - `events.log` — v4. Timestamped shell-side trail: panel launched / launch
-  failed / death detected / revived / fail-open taken. Capped at ~200 lines.
+  PENDING / launch abandoned / revived late / death detected / revived /
+  fail-open taken. Capped at ~200 lines.
   **This is the durable record**; `widget.log` is not (below).
 - `widget.log` — v4. The panel's own stdout+stderr, replacing `>/dev/null 2>&1`.
   Truncated on *every* launch, so a revive erases the log of the death that
@@ -89,7 +100,8 @@ because the hook was simply gone).
   waiting. **Warns before EVERY suite** (user choice): each suite re-arms a
   request.
 - `gate_pause_point "<status>"` — call BETWEEN atomic tests: writes status,
-  **revives a dead panel (v4)**, holds while `control==PAUSE` (the in-flight
+  **revives a dead panel (v4)** and **adopts or reaps a launch still in flight
+  (v6)**, holds while `control==PAUSE` (the in-flight
   test always finishes first), returns 2 on `STOP`.
 - `gate_finish` — remove this suite's status/request files.
 
@@ -123,7 +135,9 @@ which is precisely the failure this gate exists to prevent.
 
 v4:
 
-- **`_gate_revive_widget`** — drops the stale pid file and relaunches.
+- **`_gate_revive_widget`** — drops the stale pid file and relaunches (**v6
+  renames it to `widget.pid.crashed` instead** — deleting it is what silenced
+  every later revive in a run).
   **Throttled (`last_revive`, default 30 s, `GUI_GATE_REVIVE_EVERY`), never
   once-only**: three aborts in one session, and a soak outlives several.
 - **Called from `gate_pause_point`, ahead of reading `control`** — between every
@@ -135,7 +149,9 @@ v4:
   distinguishable, and it is the same signature that identified the 07-30 death:
   `on_close` deletes `widget.pid`; a signalled or X-severed panel cannot run
   `on_close` and leaves the file behind. So `_gate_revive_widget` returns early
-  when `widget.pid` is **absent** — closing the panel means "get out of the way"
+  when **no marker at all** is present (v4: when `widget.pid` was absent; v6
+  adds `widget.pid.crashed` and `widget.launching`, and `on_close` deletes all
+  three) — closing the panel means "get out of the way"
   (see Panel, above), and bringing it back one pause point later would be the
   gate arguing with the user.
 - **Reviving while `control==PAUSE` is correct**, and is not a contradiction of
@@ -159,6 +175,103 @@ v4:
 **Not fixed here:** the Xwayland abort itself (a WSLg fd-marshalling bug in
 software-render mode — `Failed to initialize glamor, falling back to sw`). Treat
 any long-lived X client on this box as mortal.
+
+## The revive that could not (v6, 2026-08-04) — the launch is ASYNCHRONOUS
+
+v4's revive **failed seven times in one day**, each time logging
+`revive FAILED -- suite continues UNGATED` and each time exactly 3 s after
+`panel death detected`. A 283-test audit ran with no Pause button and the user
+relaunched the panel by hand twice. The 3 s were never `wish`'s.
+
+**WSLg dies in TWO ways, and only one of them is survivable at 3 s.**
+
+- **Mode A — Xwayland alone exits** (`weston.log: xserver exited, code 134`)
+  with weston alive. Weston respawns it in **2–60 ms**. Every revive in mode A
+  succeeded, all eight of them.
+- **Mode B — weston itself SIGABRTs** (`stderr.log: WSLGd: ... terminated with
+  signal 6`) and WSLGd restarts the whole compositor. The fresh weston binds
+  `:0` **immediately** but spawns Xwayland **lazily**: measured 2.83, 2.89,
+  2.91, 2.91, 3.05 s — and once **54.4 s**. Every `revive FAILED` was a mode-B
+  abort, timestamped within one second of the weston restart. The one mode-B
+  abort whose respawn happened to be instant (20 ms) is the one revive that
+  succeeded. The discriminator is perfect.
+
+**And `wish` does not fail against a half-up X server — it BLOCKS, silently.**
+`connect()` into a restarting compositor succeeds and the X handshake never
+completes: measured 25 s with **zero bytes** on stderr and no pidfile (that line
+— `gui_gate_widget.tcl`'s `open $PIDFILE w` — runs *after* Tk initialises X, so
+an X-less `wish` never reaches it); against a display with no listener at all,
+269 s of Xlib TCP-fallback SYN retries. So "empty `widget.log` + absent
+`widget.pid` + a live `wish`" is the NORMAL outcome of launching into mode B,
+not an anomaly. **`wish` itself is never slow**: fork → pidfile is 106 ms idle,
+**76–92 ms under 20 busy loops** on a 14-core box — the 3 s budget has ~33x of
+headroom whenever an X server actually exists.
+
+**Two defects, one of which silenced the rest of every run.**
+
+1. The 3 s poll declared `FAILED` and **walked away from a live `wish`**. One of
+   those leaked processes wrote its pidfile **134.2 s later** and became the real
+   panel — unsupervised, hours after the suite that spawned it had gone ungated.
+2. `_gate_revive_widget` deleted `widget.pid` before launching and never put it
+   back, so its own precondition `[ -f widget.pid ] || return 1` — the "the user
+   closed it deliberately" rule — was false from then on and **suppressed every
+   later revive in that run, with no log line at all**. Proof: weston aborted
+   again 80 s into the same 283-test audit and `events.log` has no gate event of
+   any kind for it.
+
+**The fix is not a longer poll.** The number that would have covered the
+observed cases is 134 s, and holding a pause point for 134 s would break THE ONE
+RULE. Instead the launch became asynchronous and **tracked**:
+
+- The healthy path keeps its 3 s (33x the measured need).
+- A launch still in flight is **recorded in `widget.launching`, not abandoned**:
+  the log says `panel launch PENDING (X server may be restarting) -- suite
+  continues UNGATED for now`. It is honest — during a compositor restart there
+  is genuinely no panel and the suite genuinely is ungated for a few seconds;
+  the gate can only make that window short and stop lying about it.
+- Later pause points (`gate_pause_point` runs for the suite's whole life)
+  **adopt** it the moment `widget.pid` appears → `panel revived late (+Ns)`.
+  This is what used to happen by accident at +134 s; now it is deliberate and
+  logged.
+- A pidfile-less `wish` past **`GUI_GATE_PENDING_DEADLINE` (180 s)** is TERMed,
+  then KILLed → `panel launch abandoned`. Justified against the 134 s worst case
+  end-to-end with ~35% headroom, and against a *retryable* consequence: after
+  reaping, the next attempt (throttled) starts at once. **This is the only place
+  a `wish` is killed for being slow**, and it is the anti-orphan clause.
+- **Never a second `wish`** while `widget.launching` names a live one; a reviver
+  that loses the `revive.lock` waits for the winner's panel instead of forking.
+- The corpse is **renamed, not deleted** (`widget.pid` → `widget.pid.crashed`),
+  so a failed attempt no longer silences the ones after it. Revive is authorised
+  by `widget.pid` **OR** `widget.pid.crashed` **OR** `widget.launching`.
+- `_gate_attention` had the same defect on the same path (it kills a healthy
+  panel on purpose, then relaunched into the same window) and now leaves the
+  same corpse marker.
+
+**The deliberate-close rule survives all of that — it had to.** `on_close` now
+deletes **all three** markers and kills any launch still in flight, so a close
+still leaves the "no marker" state that means *stay away*, even if it lands in
+the middle of a failed revive. Get this wrong and the panel resurrects itself
+every time the user closes it; that is the worst regression this file can have,
+so it is asserted from both sides (shell arm X3, widget arm W3). A
+`widget.pid.crashed` older than `GUI_GATE_CRASH_TTL` (1800 s) expires rather
+than authorising revives forever.
+
+**Reproducing mode B without killing the compositor.** Never SIGKILL weston or
+Xwayland to test this — it takes down the user's desktop and every X client,
+which is what the gate exists to prevent. Two safe stand-ins, both used:
+`tests/headless/test_gui_gate_revive.sh`'s PENDING arm puts a stub `wish` on
+`PATH` that stays alive, silent and pidfile-less for as long as the test likes;
+and for a *real* `wish`, a TCP proxy on `127.0.0.1:6099` that accepts at once,
+stays quiet for N seconds and only then relays to `/tmp/.X11-unix/X0`
+(`DISPLAY=127.0.0.1:99`) reproduces the blocked handshake exactly — verified
+against v4, which logs `revive FAILED` at 3 s and leaks the wish, and against
+v6, which logs PENDING and adopts the same wish at +12 s.
+
+**Verified (v6, under load — 20 spinners on 14 cores, loadavg 10→16):**
+`test_gui_gate_revive.sh` **51/51** including the new X1–X5 and W3; the same new
+arms run against the v4 file (`git show HEAD:...gui_gate.sh` into a scratch dir)
+fail **10** checks, so they are not hollow; `test_gui_gate_batch.sh` green,
+unchanged.
 
 ## The approval window (v5) — "batch the batches"
 

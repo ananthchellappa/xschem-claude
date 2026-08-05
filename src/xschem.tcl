@@ -4545,8 +4545,10 @@ proc graph_delete_nodes {} {
 #
 # ⚠ This is the FIRST src/xschem.tcl -> wviewer:: call in the tree, so
 # wave_viewer.tcl is now load-bearing for the legacy Graph dialog. It is sourced
-# unconditionally at xschem.tcl:14352. Do NOT add an `info procs` fallback: it
-# would be an untestable branch.
+# unconditionally -- see the `source ... wave_viewer.tcl` line further down this
+# file (a bare line number rots: it has been wrong three times running, because
+# every edit above it moves it). Do NOT add an `info procs` fallback: it would
+# be an untestable branch.
 proc graph_get_signal_list {siglist pattern } {
   global graph_sort
   set direction {-decreasing}

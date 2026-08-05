@@ -74,6 +74,174 @@ kill "$IMPOSTOR" 2>/dev/null; wait "$IMPOSTOR" 2>/dev/null
 ck "G3 a live non-panel pid in widget.pid reads as DEAD" \
    "$([ "$alive_rc" != "0" ] && echo 1 || echo 0)"
 
+echo "=== PENDING arm (v6: a launch into an X server that is not there yet) ==="
+# WHY (2026-08-04). The revive logged "FAILED -- suite continues UNGATED" SEVEN
+# times in one day, always exactly 3 s after "death detected". Those 3 s were
+# never wish's: WSLg dies two ways, and in the bad one weston itself SIGABRTs,
+# WSLGd restarts the compositor, and the fresh weston binds :0 IMMEDIATELY but
+# spawns Xwayland lazily -- 2.83/2.89/2.91/2.91/3.05 s later, once 54.4 s. wish
+# launched into that window does NOT fail: connect() succeeds, the handshake
+# never completes, and it blocks with no stderr and no pidfile (measured: 25 s
+# silent; 269 s against a display with no listener). The gate declared failure
+# at the exact moment the X server was being created, then LEAKED that wish --
+# one of them wrote its pidfile 134.2 s later and became a real, unsupervised
+# panel.
+#
+# The stub below is that wish: alive, silent, no pidfile, for as long as we
+# like. Reproducing it by killing weston would take down the user's desktop and
+# every X client on the box -- precisely what this gate exists to prevent.
+STUB="$TMP/stub"; mkdir -p "$STUB"
+cat > "$STUB/wish" <<'EOF'
+#!/bin/sh
+# stub `wish`: $1 = widget script, $2 = gate dir. Writes the pidfile after
+# `stub_delay` tenths of a second ("never" = never), like a wish stuck in the X
+# handshake. argv keeps gui_gate_widget.tcl, so the gate's identity check sees
+# it exactly as it sees the real panel.
+trap 'exit 0' TERM INT
+d="$(cat "$2/stub_delay" 2>/dev/null || echo never)"
+i=0
+while [ "$i" -lt 3000 ]; do
+  if [ "$d" != "never" ] && [ "$i" = "$d" ]; then printf '%s' "$$" > "$2/widget.pid"; fi
+  i=$((i + 1)); sleep 0.1
+done
+EOF
+chmod +x "$STUB/wish"
+
+panel_procs() { pgrep -f "gui_gate_widget[.]tcl $1\$" 2>/dev/null | wc -l | tr -d ' '; }
+
+# THE orphan test. "No orphan" does not mean "no wish": a revive that reaps a
+# stuck launch is allowed to try again at once, and that retry is a live wish.
+# It means no wish that NOBODY IS TRACKING -- the 2026-08-04 leak, where a
+# "FAILED" launch left a process that mapped a panel 134 s later with no file on
+# disk naming it. Anything not in widget.pid and not in widget.launching is one.
+untracked_procs() {
+  local d="$1" p wp lp u=0
+  wp="$(cat "$d/widget.pid" 2>/dev/null)"
+  lp="$(cut -d' ' -f1 "$d/widget.launching" 2>/dev/null)"
+  for p in $(pgrep -f "gui_gate_widget[.]tcl $d\$" 2>/dev/null); do
+    [ "$p" = "$wp" ] && continue
+    [ "$p" = "$lp" ] && continue
+    u=$((u + 1))
+  done
+  echo "$u"
+}
+
+kill_panels() {   # kill every stub for a dir and WAIT for them to go
+  local d="$1" i
+  pkill -f "gui_gate_widget[.]tcl $d\$" 2>/dev/null || true
+  for i in $(seq 1 50); do [ "$(panel_procs "$d")" = "0" ] && return 0; sleep 0.1; done
+  return 0
+}
+
+# run gui_gate.sh code against a throwaway dir with the stub as `wish` and a
+# DISPLAY that does not exist (nothing here ever touches the real X server)
+in_gate() {   # $1 = gate dir, rest = shell code
+  local d="$1"; shift
+  ( export GUI_GATE_DIR="$d" DISPLAY=:99 PATH="$STUB:$PATH" \
+           GUI_GATE_REVIVE_EVERY="${REVIVE_EVERY:-1}" \
+           GUI_GATE_PENDING_DEADLINE="${PEND_DEADLINE:-180}"
+    . "$SELF/gui_gate.sh"
+    eval "$@" ) 2>/dev/null
+}
+
+# X1 a launch that connects LATE is ADOPTED, not abandoned -- exactly one panel
+X1="$TMP/x1"; mkdir -p "$X1/req" "$X1/status"
+printf '%s' 40 > "$X1/stub_delay"          # pidfile at 4.0 s: past the 3 s poll
+printf '%s' 999999999 > "$X1/widget.pid"   # crashed panel: stale pid, dead
+in_gate "$X1" '_gate_revive_widget; echo rc=$?' > "$TMP/x1.out"
+eqck "X1 the 3 s fast path does not claim success" "$(cat "$TMP/x1.out")" "rc=1"
+ck   "X1 ...and does not claim FAILURE either (PENDING)" \
+     "$(grep -q 'launch PENDING' "$X1/events.log" && echo 1 || echo 0)"
+ck   "X1 the in-flight wish is TRACKED (widget.launching)" \
+     "$([ -f "$X1/widget.launching" ] && echo 1 || echo 0)"
+ck   "X1 the corpse is kept as widget.pid.crashed, not deleted" \
+     "$([ -f "$X1/widget.pid.crashed" ] && echo 1 || echo 0)"
+eqck "X1 exactly one wish was forked" "$(panel_procs "$X1")" "1"
+eqck "X1 ...and it is TRACKED, not leaked" "$(untracked_procs "$X1")" "0"
+# a later pause point must adopt it
+sleep 3
+in_gate "$X1" 'gate_pause_point "later"; echo rc=$?' >/dev/null
+ck   "X1 the late panel is ADOPTED at a later pause point" \
+     "$(grep -q 'revived late' "$X1/events.log" && echo 1 || echo 0)"
+ck   "X1 ...widget.pid now names it" \
+     "$(in_gate "$X1" '_gate_widget_alive && echo 1 || echo 0' | tail -1)"
+eqck "X1 ...still exactly one wish (no second launch)" "$(panel_procs "$X1")" "1"
+ck   "X1 ...and the markers are cleared" \
+     "$([ ! -f "$X1/widget.launching" ] && [ ! -f "$X1/widget.pid.crashed" ] && echo 1 || echo 0)"
+eqck "X1 ...nothing untracked left behind" "$(untracked_procs "$X1")" "0"
+kill_panels "$X1"
+
+# X2 a launch that NEVER connects is reaped at the deadline -- NO ORPHAN
+X2="$TMP/x2"; mkdir -p "$X2/req" "$X2/status"
+printf '%s' never > "$X2/stub_delay"
+printf '%s' 999999999 > "$X2/widget.pid"
+PEND_DEADLINE=4 in_gate "$X2" '_gate_revive_widget' >/dev/null
+eqck "X2 a stuck launch is pending, one wish alive" "$(panel_procs "$X2")" "1"
+STUCK="$(cut -d' ' -f1 "$X2/widget.launching" 2>/dev/null)"
+sleep 5
+PEND_DEADLINE=4 in_gate "$X2" 'gate_pause_point "later"' >/dev/null
+ck   "X2 the stuck wish is REAPED at the deadline" \
+     "$(grep -q 'launch abandoned' "$X2/events.log" && echo 1 || echo 0)"
+ck   "X2 ...the abandoned wish is really dead" \
+     "$([ -n "$STUCK" ] && ! kill -0 "$STUCK" 2>/dev/null && echo 1 || echo 0)"
+eqck "X2 ...and nothing untracked survives it" "$(untracked_procs "$X2")" "0"
+# and the run is NOT silenced afterwards: v4/v5 deleted widget.pid before every
+# launch, so one failure tripped the deliberate-close guard and killed every
+# later attempt for the rest of the run -- with no log line at all.
+printf '%s' 5 > "$X2/stub_delay"
+sleep 1
+PEND_DEADLINE=180 in_gate "$X2" '_gate_revive_widget' >/dev/null
+ck   "X2 a LATER revive still runs (a failed attempt does not silence the run)" \
+     "$([ "$(grep -c 'death detected' "$X2/events.log")" -ge 2 ] && echo 1 || echo 0)"
+kill_panels "$X2"
+
+# X3 the subtlest rule: a DELIBERATE CLOSE leaves no marker, and no marker must
+# mean no relaunch -- ever. Get this wrong and the panel resurrects itself every
+# time the user closes it.
+X3="$TMP/x3"; mkdir -p "$X3/req" "$X3/status"
+printf '%s' 5 > "$X3/stub_delay"
+in_gate "$X3" 'for i in 1 2 3 4 5; do gate_pause_point "p$i"; done' >/dev/null
+eqck "X3 no markers -> NO panel is launched (deliberate close honoured)" \
+     "$(panel_procs "$X3")" "0"
+ck   "X3 ...and nothing was even attempted" \
+     "$([ ! -f "$X3/events.log" ] || ! grep -q 'death detected' "$X3/events.log" && echo 1 || echo 0)"
+# ...including a close that lands DURING a failed revive: on_close deletes all
+# three markers, so what it leaves behind is the same "no marker" state.
+printf '%s' never > "$X3/stub_delay"
+printf '%s' 999999999 > "$X3/widget.pid"
+PEND_DEADLINE=3 in_gate "$X3" '_gate_revive_widget' >/dev/null
+kill_panels "$X3"
+rm -f "$X3/widget.pid" "$X3/widget.pid.crashed" "$X3/widget.launching"   # <- on_close
+printf '%s' 5 > "$X3/stub_delay"
+in_gate "$X3" 'for i in 1 2 3 4 5; do gate_pause_point "p$i"; done' >/dev/null
+eqck "X3 a close DURING a failed revive is still a close" "$(panel_procs "$X3")" "0"
+
+# X4 two suites reviving in the same instant: one launch, never two panels
+X4="$TMP/x4"; mkdir -p "$X4/req" "$X4/status"
+printf '%s' 40 > "$X4/stub_delay"
+printf '%s' 999999999 > "$X4/widget.pid"
+in_gate "$X4" '_gate_revive_widget' >/dev/null &
+R1=$!
+in_gate "$X4" '_gate_revive_widget' >/dev/null &
+R2=$!
+wait "$R1" "$R2" 2>/dev/null
+eqck "X4 two racing revivers fork exactly ONE wish" "$(panel_procs "$X4")" "1"
+eqck "X4 ...and only one of them announced a revive" \
+     "$(grep -c 'death detected' "$X4/events.log" 2>/dev/null)" "1"
+eqck "X4 ...and the loser left nothing untracked" "$(untracked_procs "$X4")" "0"
+kill_panels "$X4"
+
+# X5 the lock cannot wedge the gate: an owner that was SIGKILLed must not stop
+# every other suite from ever reviving again.
+X5="$TMP/x5"; mkdir -p "$X5/req" "$X5/status/"
+printf '%s' 5 > "$X5/stub_delay"; printf '%s' 999999999 > "$X5/widget.pid"
+mkdir -p "$X5/revive.lock"; printf '%s %s' 999999999 "$(date +%s)" > "$X5/revive.lock/owner"
+in_gate "$X5" '_gate_revive_widget' >/dev/null
+sleep 1
+eqck "X5 a lock held by a dead owner is broken, the revive proceeds" \
+     "$(panel_procs "$X5")" "1"
+kill_panels "$X5"
+
 if [ -z "${DISPLAY:-}" ] || ! command -v wish >/dev/null 2>&1; then
   echo "-- no DISPLAY/wish: skipping the live arms"
   echo "RESULT fails=$FAILS"; exit $((FAILS ? 1 : 0))
@@ -230,6 +398,34 @@ got="$(run_widget_arm req "$WB")"
 n="$(printf '%s' "$got" | awk '{print $2+0}')"
 ck "W2 a real go-ahead request still announces itself" \
    "$([ "${n:-0}" -ge 1 ] && echo 1 || echo 0)"
+
+# W3 the panel's half of the deliberate-close rule (v6). The shell revives a
+# panel that CRASHED and never one that was CLOSED, and it tells them apart by
+# what is left on disk. v6 added two more markers, and EITHER of them left here
+# would authorise a revive one pause point after the user closed the panel --
+# the endless relaunch loop, the worst regression this file can have.
+WC="$TMP/wa_close"; mkdir -p "$WC/req" "$WC/status"; printf '%s' RUN > "$WC/control"
+printf '%s %s' 999999999 "$(date +%s)" > "$WC/widget.pid.crashed"
+sleep 300 & PENDW=$!            # stands in for a launch still in flight
+printf '%s %s' "$PENDW" "$(date +%s)" > "$WC/widget.launching"
+cat > "$TMP/wc.tcl" <<'EOF'
+set argv [list [lindex $::argv 0]]; set argc 1
+source gui_gate_widget.tcl
+after 500 { on_close }
+EOF
+( cd "$SELF" && timeout 20 wish "$TMP/wc.tcl" "$WC" ) >/dev/null 2>&1
+ck "W3 a deliberate close clears ALL THREE revive markers" \
+   "$([ ! -f "$WC/widget.pid" ] && [ ! -f "$WC/widget.pid.crashed" ] \
+      && [ ! -f "$WC/widget.launching" ] && echo 1 || echo 0)"
+sleep 0.5
+ck "W3 ...and disposes of a launch that was still in flight" \
+   "$(! kill -0 "$PENDW" 2>/dev/null && echo 1 || echo 0)"
+kill "$PENDW" 2>/dev/null; wait "$PENDW" 2>/dev/null
+# and the shell agrees: nothing left to revive from
+out="$(GUI_GATE_DIR="$WC" DISPLAY=:99 PATH="$STUB:$PATH" GUI_GATE_REVIVE_EVERY=1 \
+       bash -c ". '$SELF/gui_gate.sh'; _gate_revive_widget && echo REVIVED || echo LEFT_ALONE" 2>/dev/null)"
+eqck "W3 ...so the shell will not resurrect it" "$out" "LEFT_ALONE"
+eqck "W3 ...and forked nothing" "$(panel_procs "$WC")" "0"
 
 echo "RESULT fails=$FAILS"
 exit $((FAILS ? 1 : 0))
