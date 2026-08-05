@@ -1461,19 +1461,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [winfo exists $atw.vsb]   [winfo exists $atw.err] \
           [winfo exists $atw.btns]] \
     [list 1 1 1 1 1 1 1 1 1 1 1]
-  # the PLAN's "renumber every grid call, do not leave a hole": rows 3..7
+  # the PLAN's "renumber every grid call, do not leave a hole": rows 4..8
   # consecutive, all distinct, searchbar between the label and the listbox.
+  # ⚠ SHIFTED +1 BY ITEM 7, which inserts a Destination row at row 0. The CLAIM
+  # is unchanged and is RE-ASSERTED, not weakened: the same five widgets, still
+  # consecutive, still in the same order, still with no hole — only the origin
+  # moved. This is the identical renumber the PLAN told item 5 to perform when
+  # it inserted the search bar.
   check {AT02 grid rows renumbered with no hole: lvars/bar/vars/err/btns} \
     [list [dict get [grid info $atw.lvars]    -row] \
           [dict get [grid info $atw.wvsearch] -row] \
           [dict get [grid info $atw.vars]     -row] \
           [dict get [grid info $atw.err]      -row] \
           [dict get [grid info $atw.btns]     -row]] \
-    [list 3 4 5 6 7]
+    [list 4 5 6 7 8]
   check {AT03 Graph combobox still gridded and populated (2-graph arm)} \
     [list [dict get [grid info $atw.graph] -row] [$atw.graph cget -values] \
           [$atw.graph get]] \
-    [list 0 [list 0 1] 1]
+    [list 1 [list 0 1] 1]
   check {AT16 the bar is the dialog's child at the contract path, and MANAGED} \
     [list [expr {[winfo parent $atb] eq $atw}] [winfo class $atb] \
           [winfo manager $atb]] \
@@ -1850,6 +1855,398 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 } else {
   # WORDING IS LOAD-BEARING — see the ⚠ in the file header.
   puts "SKIPPED: MS group (Tk/X arm only)"
+}
+
+# --- item 7: the PLOT-DESTINATION policy (DS01-DS31) -------------------------
+# ViVA's Append / Replace / NewSubWin / NewWin, mapped onto xschem's model as
+# `append` `replace` `newstrip` `newtab` and split in two halves:
+#   the LANDING half  -> wviewer::plan_plot's 7th argument (PURE, DS01-DS13)
+#   the WINDOW half   -> wviewer::dest_prepare (makes the tab; DS26/DS27)
+# plus the per-window accessor pair plot_dest / set_plot_dest (DS14, DS28).
+#
+# ⚠ WHAT CARRIES THE REGRESSION CLAIM IS NOT THIS GROUP. Under `append`,
+# plan_plot's answer is BYTE-IDENTICAL to the 6-argument answer it has always
+# given — no `clear` key at all — and that is what keeps test_wave_modes' ~25
+# whole-dict comparisons and test_wave_viewer's G11/G12/G12b green. DS01/DS02
+# state that invariant HERE so a change to the dict shape fails in this file
+# too, rather than only in a file a maintainer might not think to run.
+#
+# ⚠ FIXTURE: the MS group's teardown DESTROYED `.wvms1` and dict-unset BOTH the
+# `::wviewer::windows wvms` and the `::wviewer::layouts wvms` entries, so its
+# helper procs (`ms_open`, `ms_err`, `ms_field`) are live procs pointing at a
+# DEAD token. They are reused UNCHANGED — driver note (d) forbids inventing a
+# third waiting/error idiom — but the token must first be RE-REGISTERED against
+# a fresh toplevel. win_path is $SLMAIN (`.drw`), a real mapped canvas, for the
+# reason spelled out in the MS group's header: $SLVWP is a TAB and every draw
+# path throws on it.
+#
+# ⚠ THE INVENTORY IS 10 ROWS HERE, NOT 9. The MS group's scenario B
+# materialized `db1` via the RPN path, so the raw this group sees is MSALL + db1
+# (that is exactly what MS17 pins). Row indices below are therefore:
+#   0 vsweep  1 wrong_ctx_var  2 v(out)  3 i(v1)  4 v(x1.x2.net5)
+#   5 net1    6 @m.x1.m1[id]   7 I(V2)   8 v(net_name[3])  9 db1
+# and the listbox order is the RAW order, unsorted — MS03 pinned that premise.
+# This group adds NO raw vectors, so MS17's inventory claim above stays true.
+
+# ===== PURE checks: both arms (no Tk) ========================================
+
+# THE SHAPE CLAIM. Two literals, and `clear` ABSENT — the absence is half the
+# claim, so it is asserted, not assumed.
+check {DS01 plan_plot with 6 args is unchanged, single AND multi, and emits NO clear key} \
+  [list [::wviewer::plan_plot single 2 1 3] \
+        [::wviewer::plan_plot multi  2 0 3] \
+        [dict exists [::wviewer::plan_plot single 2 1 3] clear] \
+        [dict exists [::wviewer::plan_plot multi  2 0 3] clear]] \
+  [list [dict create new 0 targets {1 1 1}] \
+        [dict create new 3 targets {2 1 0}] 0 0]
+
+# DIFFERENTIAL: an explicit `append` must be indistinguishable from omitting the
+# argument, over every arm of the policy (multi, single-with-target,
+# empty-stack, empty-reuse, auto-strip).
+check {DS02 an explicit append is byte-identical to the 6-arg answer on every arm} \
+  [list [expr {[::wviewer::plan_plot single 2 1 3] eq [::wviewer::plan_plot single 2 1 3 -1 {} append]}] \
+        [expr {[::wviewer::plan_plot multi  2 0 3] eq [::wviewer::plan_plot multi  2 0 3 -1 {} append]}] \
+        [expr {[::wviewer::plan_plot single 0 0 2] eq [::wviewer::plan_plot single 0 0 2 -1 {} append]}] \
+        [expr {[::wviewer::plan_plot single 3 0 2 -1 {1 2}] eq [::wviewer::plan_plot single 3 0 2 -1 {1 2} append]}] \
+        [expr {[::wviewer::plan_plot single 3 1 2 1] eq [::wviewer::plan_plot single 3 1 2 1 {} append]}] \
+        [expr {[::wviewer::plan_plot multi  3 0 2 -1 {0 1}] eq [::wviewer::plan_plot multi  3 0 2 -1 {0 1} append]}]] \
+  [list 1 1 1 1 1 1]
+
+check {DS03 replace keeps new/targets and adds clear {1}} \
+  [::wviewer::plan_plot single 2 1 2 -1 {} replace] \
+  [dict create new 0 targets {1 1} clear {1}]
+
+# INDEX SPACE, single arm: when the plan CREATES its landing strip there is
+# nothing pre-existing to empty, so `clear` is EMPTY — not {0}, which would
+# wipe an unrelated strip.
+check {DS04 replace whose plan appends a strip clears nothing (single index space)} \
+  [list [::wviewer::plan_plot single 0 0 1 -1 {} replace] \
+        [::wviewer::plan_plot single 3 1 2 1 {} replace]] \
+  [list [dict create new 1 targets {0} clear {}] \
+        [dict create new 1 targets {3 3} clear {}]]
+
+# INDEX SPACE, multi arm: targets are POST-INSERT, so the strips this plan makes
+# are 0..new-1 and only `t >= new` pre-existed. Two sub-cases: a mix (one new
+# strip + two reused) and an all-reuse plan.
+check {DS05 replace in multi clears only the pre-existing landing strips} \
+  [list [::wviewer::plan_plot multi 2 0 3 -1 {0 1} replace] \
+        [::wviewer::plan_plot multi 3 0 2 -1 {0 1 2} replace]] \
+  [list [dict create new 1 targets {2 1 0} clear {1 2}] \
+        [dict create new 0 targets {1 0} clear {0 1}]]
+
+check {DS06 newstrip in single forces ONE fresh strip and IGNORES the target} \
+  [list [::wviewer::plan_plot single 2 0 2 -1 {} newstrip] \
+        [::wviewer::plan_plot single 2 1 2 -1 {} newstrip]] \
+  [list [dict create new 1 targets {2 2}] \
+        [dict create new 1 targets {2 2}]]
+
+# THE point of New Strip in multi: ONE strip for the whole batch, not one per
+# signal the way plot mode would give.
+check {DS07 newstrip in multi is ONE strip for the whole batch, not three} \
+  [::wviewer::plan_plot multi 3 0 3 -1 {} newstrip] \
+  [dict create new 1 targets {0 0 0}]
+
+check {DS08 newstrip ignores reusable empty strips entirely} \
+  [list [::wviewer::plan_plot single 3 1 2 -1 {0 2} newstrip] \
+        [::wviewer::plan_plot multi  3 0 2 -1 {0 1 2} newstrip]] \
+  [list [dict create new 1 targets {3 3}] \
+        [dict create new 1 targets {0 0}]]
+
+# newtab collapses to append INSIDE plan_plot: dest_prepare has already made the
+# tab, and the layout being planned against is the NEW tab's.
+check {DS09 newtab behaves as append inside plan_plot} \
+  [list [expr {[::wviewer::plan_plot single 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot single 1 0 2]}] \
+        [expr {[::wviewer::plan_plot multi 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot multi 1 0 2]}] \
+        [dict exists [::wviewer::plan_plot single 1 0 2 -1 {} newtab] clear]] \
+  [list 1 1 0]
+
+check {DS10 an unknown destination falls back to append, not to a destructive one} \
+  [list [expr {[::wviewer::plan_plot single 2 1 3 -1 {} bogus] eq [::wviewer::plan_plot single 2 1 3]}] \
+        [expr {[::wviewer::plan_plot single 2 1 3 -1 {} {}] eq [::wviewer::plan_plot single 2 1 3]}] \
+        [dict exists [::wviewer::plan_plot single 2 1 3 -1 {} bogus] clear]] \
+  [list 1 1 0]
+
+# The n<=0 guard runs FIRST, so an empty gesture makes no strip, clears nothing
+# and produces no `clear` key, WHATEVER the destination says.
+check {DS11 an empty gesture is a no-op for every destination} \
+  [list [::wviewer::plan_plot single 2 1 0 -1 {} append] \
+        [::wviewer::plan_plot single 2 1 0 -1 {} replace] \
+        [::wviewer::plan_plot single 2 1 0 -1 {} newstrip] \
+        [::wviewer::plan_plot multi  2 1 0 -1 {} newtab] \
+        [::wviewer::plan_plot single 2 1 -3 -1 {} replace]] \
+  [list [dict create new 0 targets {}] [dict create new 0 targets {}] \
+        [dict create new 0 targets {}] [dict create new 0 targets {}] \
+        [dict create new 0 targets {}]]
+
+# The mapper accepts LABELS (the combobox) and CODES (a CIW line, a replayed log
+# line, item 9's toolbar), case-insensitively, with the space forms; ViVA's own
+# NewSubWin/NewWin are deliberately NOT aliases and land on the fallback.
+check {DS12 dest_norm maps 4 labels + 4 codes + case + space forms; junk -> append} \
+  [list [::wviewer::dest_norm Append]    [::wviewer::dest_norm Replace] \
+        [::wviewer::dest_norm {New Strip}] [::wviewer::dest_norm {New Tab}] \
+        [::wviewer::dest_norm append]    [::wviewer::dest_norm replace] \
+        [::wviewer::dest_norm newstrip]  [::wviewer::dest_norm newtab] \
+        [::wviewer::dest_norm REPLACE]   [::wviewer::dest_norm NeWsTrIp] \
+        [::wviewer::dest_norm {new strip}] [::wviewer::dest_norm {new tab}] \
+        [::wviewer::dest_norm {  Replace  }] \
+        [::wviewer::dest_norm NewSubWin]  [::wviewer::dest_norm NewWin] \
+        [::wviewer::dest_norm {}]        [::wviewer::dest_norm zzz]] \
+  [list append replace newstrip newtab \
+        append replace newstrip newtab \
+        replace newstrip newstrip newtab replace \
+        append append append append]
+
+check {DS13 dest_label round-trips every code, and junk -> Append} \
+  [list [::wviewer::dest_label append] [::wviewer::dest_label replace] \
+        [::wviewer::dest_label newstrip] [::wviewer::dest_label newtab] \
+        [::wviewer::dest_label zzz] [::wviewer::dest_label {}] \
+        [::wviewer::dest_labels] \
+        [expr {[::wviewer::dest_norm [::wviewer::dest_label newstrip]] eq {newstrip}}] \
+        [expr {[::wviewer::dest_norm [::wviewer::dest_label newtab]] eq {newtab}}]] \
+  [list Append Replace {New Strip} {New Tab} Append Append \
+        [list Append Replace {New Strip} {New Tab}] 1 1]
+
+# An unknown token gets the HARMLESS policy, and setting on one is a spoken
+# refusal ({}), never a throw.
+check {DS14 plot_dest defaults to append on an unknown token; set_plot_dest refuses without throwing} \
+  [list [pcall ::wviewer::plot_dest ds_nosuch_token] \
+        [pcall ::wviewer::set_plot_dest replace ds_nosuch_token] \
+        [pcall ::wviewer::plot_dest ds_nosuch_token]] \
+  [list append {} append]
+
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # RE-REGISTER the `wvms` token the MS teardown unset, against a FRESH
+  # toplevel, so ms_open / ms_err / ms_field work again unchanged.
+  destroy .wvds1
+  toplevel .wvds1 ; wm geometry .wvds1 +160+480
+  dict set ::wviewer::windows wvms [dict create top .wvds1 win_path $SLMAIN]
+  # needed only by the New Tab checks, but registered up front so no check has
+  # to care whether it runs before or after them
+  pcall ::wviewer::tabs_init wvms
+
+  # ms_open plus PRE-PLANTED traces: `seeds` is a flat {gi {name ...} ...} list.
+  # The seeds go in through the REAL wviewer::add_trace rather than by writing a
+  # hand-built trace dict, so a seeded strip is indistinguishable from one the
+  # user filled — which is the whole point of Replace and New Strip checks. It
+  # is a layout BUILDER, not a third waiting or error idiom (driver note (d)).
+  proc ds_open {ngraphs seeds} {
+    set gs {}
+    for {set i 0} {$i < $ngraphs} {incr i} { lappend gs [::wviewer::empty_graph] }
+    dict set ::wviewer::layouts wvms [dict create sharedx 0 graphs $gs]
+    xschem new_schematic switch $::SLMAIN
+    foreach {gi names} $seeds {
+      foreach nm $names { ::wviewer::add_trace wvms $gi $nm {} }
+    }
+    return [pcall ::wviewer::add_trace_dialog wvms]
+  }
+  # how many traces on each strip of wvms, in strip order — the one number every
+  # destination check is really about
+  proc ds_counts {} {
+    set o {}
+    foreach G [dict get [::wviewer::layout_for wvms] graphs] {
+      lappend o [llength [::wviewer::dget $G traces {}]]
+    }
+    return $o
+  }
+  # pick rows 2 and 3 of the inventory: v(out) and i(v1)
+  proc ds_pick2 {w} {
+    $w.vars selection clear 0 end
+    $w.vars selection set 2
+    $w.vars selection set 3
+  }
+
+  # --- the form ------------------------------------------------------------
+  set dsw [ds_open 2 {}] ; update
+  check {DS20 the dialog carries the Destination pair, the 4 labels, default Append} \
+    [list [winfo exists $dsw.ldest] [winfo exists $dsw.dest] \
+          [$dsw.dest cget -values] [$dsw.dest get] [$dsw.dest cget -state]] \
+    [list 1 1 [list Append Replace {New Strip} {New Tab}] Append readonly]
+  # the +1 renumber, END TO END and with no hole: nine widgets, rows 0..8.
+  check {DS21 every grid row renumbered with no hole: dest 0 ... btns 8} \
+    [list [dict get [grid info $dsw.ldest]    -row] \
+          [dict get [grid info $dsw.dest]     -row] \
+          [dict get [grid info $dsw.lgraph]   -row] \
+          [dict get [grid info $dsw.graph]    -row] \
+          [dict get [grid info $dsw.lexpr]    -row] \
+          [dict get [grid info $dsw.lname]    -row] \
+          [dict get [grid info $dsw.lvars]    -row] \
+          [dict get [grid info $dsw.wvsearch] -row] \
+          [dict get [grid info $dsw.vars]     -row] \
+          [dict get [grid info $dsw.err]      -row] \
+          [dict get [grid info $dsw.btns]     -row]] \
+    [list 0 0 1 1 2 3 4 5 6 7 8]
+  destroy $dsw ; update
+
+  # --- APPEND: the seed survives and the batch joins it --------------------
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set Append
+  ds_pick2 $dsw
+  check {DS22 APPEND lands beside the seed on the target strip} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec]] \
+    [list {} [list 0 3] [list net1 v(out) i(v1)]]
+
+  # --- REPLACE: the seed is GONE, the strip count does not move ------------
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set Replace
+  ds_pick2 $dsw
+  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec]] \
+    [list {} [list 0 2] [list v(out) i(v1)]]
+
+  # --- NEW STRIP: a fresh strip appears and the seed is untouched ----------
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set {New Strip}
+  ds_pick2 $dsw
+  check {DS24 NEW STRIP appends one strip and leaves the seeded strip alone} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] \
+          [ms_field 1 vec] [ms_field 2 vec]] \
+    [list {} [list 0 1 2] [list net1] [list v(out) i(v1)]]
+
+  # the Graph combobox has NO effect under New Strip — that is what "force a
+  # fresh graph regardless" means, and it is the half of the policy a
+  # target-respecting implementation would silently get wrong
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set {New Strip}
+  $dsw.graph set 0
+  ds_pick2 $dsw
+  check {DS25 NEW STRIP ignores the Graph combobox} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 2 vec]] \
+    [list {} [list 0 1 2] [list v(out) i(v1)]]
+
+  # ⚠ THE REFUSAL MUST RUN BEFORE dest_prepare, and NOTHING ELSE IN THIS BATCH
+  # CAN SEE THAT. MS10/MS11 exercise the same refusal, but the MS window's
+  # destination is `append`, where dest_prepare does nothing at all — so moving
+  # the refusal after it fails NOTHING there. Ruling 17: widen the coverage
+  # rather than narrow the claim. Under New Tab a refused OK must leave no tab,
+  # no trace and the dialog still up, with the contract string verbatim.
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set {New Tab}
+  ds_pick2 $dsw
+  $dsw.name delete 0 end ; $dsw.name insert 0 mysig
+  check {DS25b a REFUSED OK under New Tab makes no tab and adds nothing} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [winfo exists $dsw] \
+          [::wviewer::tab_count wvms] [ds_counts] [ms_err $dsw]] \
+    [list {} 1 1 [list 0 1] \
+          {one Name cannot cover 2 traces - clear the Name field, or select a single row}]
+  destroy $dsw ; update
+
+  # --- NEW TAB -------------------------------------------------------------
+  set dsw [ds_open 2 {1 net1}] ; update
+  $dsw.dest set {New Tab}
+  ds_pick2 $dsw
+  set dstabs0 [::wviewer::tab_count wvms]
+  set dsok [pcall ::wviewer::add_trace_ok wvms]
+  update
+  check {DS26 NEW TAB makes a tab, raises it, and lands the batch in its one strip} \
+    [list $dsok $dstabs0 [::wviewer::tab_count wvms] [::wviewer::tab_index wvms] \
+          [ds_counts] [ms_field 0 vec]] \
+    [list {} 1 2 1 [list 2] [list v(out) i(v1)]]
+  # ⚠ ASSERTABLE VALUE, NOT AN EXCEPTION (driver note (e)(2)): the dialog is
+  # destroyed by new_tab's tab_drop_transients BEFORE the adds happen, so
+  # "the error label vanished" must read back as NO-DIALOG. A bare
+  # `$dsw.err cget -text` here would throw into the outer catch and silently
+  # abort every remaining check in this file.
+  #
+  # ⚠ AND IT IS THE **ERROR** PATH THAT CARRIES THE CLAIM, ON PURPOSE. Written
+  # against a SUCCESSFUL OK this check discriminated NOTHING — a successful OK
+  # ends in its own `destroy $w`, so the dialog is gone either way. MEASURED:
+  # sabotage U3 (dest_prepare never makes the tab) left the success-path form
+  # GREEN. On a FAILING add the two worlds separate cleanly: with the tab really
+  # made, the dialog is already gone when the failure is reported and the
+  # message can ONLY go to wviewer::echo; without it, the dialog is still up
+  # holding the text. Ruling 17 — widen the coverage, do not narrow the claim.
+  set dsw [ds_open 2 {}] ; update
+  $dsw.dest set {New Tab}
+  $dsw.expr delete 0 end ; $dsw.expr insert 0 {v(nosuchnet) db20()}
+  set dstabs1 [::wviewer::tab_count wvms]
+  check {DS27 NEW TAB destroys the dialog BEFORE the add, so a failure can only reach the CIW} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [winfo exists $dsw] [ms_err $dsw] \
+          [expr {[::wviewer::tab_count wvms] - $dstabs1}]] \
+    [list {} 0 NO-DIALOG 1]
+  # back to the original tab: its two strips and its seed are exactly as left.
+  # ⚠ select_tab takes the tab's ID, NOT its index — tabs_init seeds id 1, and
+  # passing the index 0 is a silent no-op that looks like a broken restore.
+  pcall ::wviewer::select_tab 1 wvms ; update
+  check {DS28a the original tab is intact after select_tab back} \
+    [list [::wviewer::tab_index wvms] [ds_counts] [ms_field 1 vec]] \
+    [list 0 [list 0 1] [list net1]]
+
+  # --- persistence: the dropdown IS the per-window setting -----------------
+  # (the New Tab OK just above already wrote `newtab`, so this also proves the
+  # write happens on the OK of a destination that destroys its own dialog)
+  check {DS28b the window's destination persisted through the New Tab OK} \
+    [::wviewer::plot_dest wvms] newtab
+  set dsw [ds_open 2 {}] ; update
+  $dsw.dest set Replace
+  ds_pick2 $dsw
+  pcall ::wviewer::add_trace_ok wvms ; update
+  set dsw [ds_open 2 {}] ; update
+  check {DS28 reopening the dialog shows the persisted choice, not the default} \
+    [list [::wviewer::plot_dest wvms] [$dsw.dest get]] [list replace Replace]
+  destroy $dsw ; update
+
+  # --- REPLACE + a failing pick: the DECLARED non-rollback -----------------
+  # The target was already emptied when the add failed, so the strip ends up
+  # with FEWER traces than it started with. That is deliberate (item 6's
+  # non-rollback, extended); it is pinned so it cannot change silently.
+  set dsw [ds_open 2 {1 {net1 v(out)}}] ; update
+  $dsw.dest set Replace
+  $dsw.vars insert 4 nosuchvar
+  $dsw.vars selection clear 0 end
+  $dsw.vars selection set 2
+  $dsw.vars selection set 4
+  check {DS29 REPLACE + a failing pick: the target IS cleared and the message says how far it got} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec] \
+          [string match {*added 1 of 2, stopped at 'nosuchvar'*} [ms_err $dsw]]] \
+    [list {} [list 0 1] [list v(out)] 1]
+  destroy $dsw ; update
+
+  # --- plot_signals honours the WINDOW destination -------------------------
+  # THE seam item 9's three browser gestures will come through, so it is pinned
+  # independently of the dialog.
+  dict set ::wviewer::layouts wvms \
+    [dict create sharedx 0 graphs [list [::wviewer::empty_graph] [::wviewer::empty_graph]]]
+  xschem new_schematic switch $SLMAIN
+  ::wviewer::add_trace wvms 1 net1 {}
+  ::wviewer::set_target_strip 1 wvms
+  ::wviewer::set_plot_dest replace wvms
+  set dsperrs [pcall ::wviewer::plot_signals wvms [list v(out) i(v1)]]
+  update
+  check {DS30 plot_signals honours the window destination (Replace empties the target)} \
+    [list $dsperrs [ds_counts] [ms_field 1 vec]] \
+    [list {} [list 0 2] [list v(out) i(v1)]]
+  # ...and the same seam under append is the unchanged behaviour
+  ::wviewer::set_plot_dest append wvms
+  set dsperrs [pcall ::wviewer::plot_signals wvms [list net1]]
+  update
+  check {DS30b plot_signals under append still accumulates} \
+    [list $dsperrs [ds_counts] [ms_field 1 vec]] \
+    [list {} [list 0 3] [list v(out) i(v1) net1]]
+
+  # --- teardown ------------------------------------------------------------
+  # Same shape as MS18's, and for the same reason: `with_edit` leaves the ctx
+  # readonly with graph rects drawn, and new_tab left BOTH. Item 8 starts a new
+  # file, but this process is still shared.
+  destroy .wvds1 ; update
+  ::wviewer::tabs_forget wvms
+  dict unset ::wviewer::windows wvms
+  dict unset ::wviewer::layouts wvms
+  catch {unset ::wviewer::dest(wvms)}
+  catch {unset ::wviewer::target(wvms)}
+  xschem new_schematic switch $SLMAIN
+  xschem set readonly 0
+  xschem clear_drawing
+  xschem set_modify 0
+  check {DS31 teardown leaves the main context empty and writable, and no tab state} \
+    [list [xschem get rects 2] [xschem get readonly] \
+          [pcall ::wviewer::tab_count wvms] \
+          [info exists ::wviewer::dest(wvms)]] \
+    [list 0 0 0 0]
+
+} else {
+  # WORDING IS LOAD-BEARING — see the ⚠ in the file header.
+  puts "SKIPPED: DS group (Tk/X arm only)"
 }
 
 } bigerr]} {

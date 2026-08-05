@@ -360,6 +360,18 @@ namespace eval wviewer {
   # deleting a strip can never leave a dangling target.
   variable mode;    array set mode {}
   variable target;  array set target {}
+  # signal browser batch item 7: per-window PLOT DESTINATION
+  # (append|replace|newstrip|newtab) — ViVA's Append/Replace/NewSubWin/NewWin
+  # mapped onto xschem's model. Keyed by session token like `mode`/`target`
+  # above, and for the same reason: it is a WINDOW property, not a layout key.
+  #
+  # ⚠ DELIBERATELY NOT a per-TAB field, unlike `mode` and `target`, which
+  # tab_freeze/tab_thaw carry in the tab record. The settled wording is
+  # "persisted per WINDOW": ONE destination governs every tab of the window, so
+  # switching tabs cannot silently change where the next plot lands. The
+  # asymmetry with mode/target is intentional — do not "fix" it by adding a
+  # `dest` key to the tab record without changing that decision first.
+  variable dest;    array set dest {}
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
@@ -575,6 +587,10 @@ proc wviewer::forget {token} {
   # below relies on being true).
   variable gridshow
   variable mode; variable target
+  # item 7: DECLARED here on purpose — see the `gridshow` note just above for
+  # what an undeclared `variable` costs (a silent per-token leak that survives
+  # every close).
+  variable dest
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -615,6 +631,7 @@ proc wviewer::forget {token} {
   catch {unset gridshow($token)}
   catch {unset mode($token)}
   catch {unset target($token)}
+  catch {unset dest($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -1771,8 +1788,35 @@ proc wviewer::empty_graph_indices {gs {auto -1}} {
 # the next run, and it would break the shipped invariant that Direct-Plot
 # graphs and the auto graph never touch each other
 # (doc/claude/specs/waveform_viewer.md, item 13 notes).
-proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}} {
+# --- item 7: the DESTINATION argument -----------------------------------------
+# `dest` (append|replace|newstrip|newtab, settled item 7) is the LANDING half of
+# the plot-destination policy; the WINDOW half — anything that must happen before
+# this proc can speak, which today is exactly "make the new tab" — lives in
+# wviewer::dest_prepare and has already run by the time we get here.
+#
+# ⚠ `newtab` BEHAVES AS `append` INSIDE plan_plot, AND THAT IS NOT A BUG. By the
+# time plan_plot is called for a New Tab gesture, dest_prepare has already made
+# the tab and the layout it is asked about is the NEW tab's, which holds exactly
+# one empty strip — which `append` lands in. Collapsing it here is what keeps the
+# tab-making out of a pure function.
+#
+# `append` keeps the 6-argument answer BYTE-IDENTICAL to what it has always been
+# (no `clear` key at all), which is why the ~25 whole-dict comparisons in
+# test_wave_modes.tcl are this extension's regression oracle.
+#
+# THE `clear` KEY IS EMITTED IFF dest eq replace: the list of ALREADY-EXISTING
+# landing strips the caller must empty first (wviewer::plan_replace_clear).
+# Callers read it with `wviewer::dget $plan clear {}` — the graph_props
+# precedent for "emit a key only when it means something".
+proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}} {dest append}} {
+  # FIRST, and it must stay first: an empty gesture is a no-op for EVERY
+  # destination — a New Tab / Replace with nothing to plot must not make a tab,
+  # clear a strip or produce a `clear` key.
   if {$n <= 0} { return [dict create new 0 targets {}] }
+  set dest [wviewer::dest_norm $dest]
+  # see the ⚠ above: the tab already exists, and its one empty strip is where
+  # `append` lands
+  if {$dest eq {newtab}} { set dest append }
   # defensive: keep only in-range, non-auto, deduped indices, lowest first —
   # the callers derive this list from the model, but plan_plot is the pure
   # policy and a bad index here would silently plot into nothing
@@ -1784,7 +1828,22 @@ proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}} {
     }
   }
   set free [lsort -integer $free]
-  if {$mode eq {multi}} {
+  if {$dest eq {newstrip}} {
+    # FORCE exactly ONE fresh strip and land the whole batch in it: the target is
+    # ignored, and so is every reusable empty strip ("force a fresh graph
+    # regardless of plot mode" — that is the whole point of the policy).
+    # WHERE the strip goes is still the MODE's own rule, because plot_signals is
+    # what inserts it and inserts BY MODE:
+    #   multi  front-inserts -> the fresh strip is at post-insert index 0
+    #   single appends       -> the fresh strip is at index $ngraphs
+    # Choosing the index this way is what lets plot_signals' strip-creation
+    # block stay COMPLETELY UNCHANGED, and it is why the New Strip check can be
+    # written against a graph COUNT plus one strip's trace list.
+    set gi [expr {$mode eq {multi} ? 0 : $ngraphs}]
+    set t {}
+    for {set k 0} {$k < $n} {incr k} { lappend t $gi }
+    set plan [dict create new 1 targets $t]
+  } elseif {$mode eq {multi}} {
     # at most n empty strips are reused; the shortfall becomes NEW top strips
     set reuse [lrange $free 0 [expr {$n - 1}]]
     set new [expr {$n - [llength $reuse]}]
@@ -1801,25 +1860,66 @@ proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}} {
     for {set k 0} {$k < $n} {incr k} {
       lappend t [lindex $sites [expr {$last - $k}]]
     }
-    return [dict create new $new targets $t]
-  }
-  set gi [wviewer::target_clamp $target $ngraphs]
-  if {$ngraphs <= 0 || ($auto >= 0 && $gi == $auto)} {
-    # the target is unusable: reuse an empty strip if there is one, else append
-    if {[llength $free]} {
-      set gi [lindex $free 0]
-      set new 0
+    set plan [dict create new $new targets $t]
+  } else {
+    set gi [wviewer::target_clamp $target $ngraphs]
+    if {$ngraphs <= 0 || ($auto >= 0 && $gi == $auto)} {
+      # the target is unusable: reuse an empty strip if there is one, else append
+      if {[llength $free]} {
+        set gi [lindex $free 0]
+        set new 0
+      } else {
+        set gi $ngraphs
+        set new 1
+      }
+      set t {}
+      for {set k 0} {$k < $n} {incr k} { lappend t $gi }
+      set plan [dict create new $new targets $t]
     } else {
-      set gi $ngraphs
-      set new 1
+      set t {}
+      for {set k 0} {$k < $n} {incr k} { lappend t $gi }
+      set plan [dict create new 0 targets $t]
     }
-    set t {}
-    for {set k 0} {$k < $n} {incr k} { lappend t $gi }
-    return [dict create new $new targets $t]
   }
-  set t {}
-  for {set k 0} {$k < $n} {incr k} { lappend t $gi }
-  return [dict create new 0 targets $t]
+  # ...and ONLY here does the answer's SHAPE ever change: every non-replace
+  # destination returns exactly the dict this proc has always returned.
+  if {$dest eq {replace}} {
+    dict set plan clear [wviewer::plan_replace_clear $mode $ngraphs $plan]
+  }
+  return $plan
+}
+
+# PURE: which of `plan`'s landing strips ALREADY EXIST — i.e. exactly the strips
+# a `replace` gesture must empty before it adds. Deduped, ascending.
+#
+# ⚠ THE TWO ARMS LIVE IN DIFFERENT INDEX SPACES, and getting this wrong clears
+# the WRONG strip (silently — the traces just vanish from a strip nobody was
+# looking at):
+#   multi  -> targets are POST-INSERT (see plan_plot's contract), so the strips
+#             this plan CREATES are exactly 0..new-1 and a target `t >= new` is
+#             a pre-existing strip.
+#   single -> `new` is 0 or 1, and when it is 1 the single landing strip IS the
+#             one just appended (or the empty one just reused) — nothing
+#             pre-exists, so the list is empty.
+# A brand-new or reused-empty strip is therefore NEVER listed, and no no-op
+# clear_graph_traces call is made. That is not just tidiness: that proc runs
+# wavehl_remap_apply and markers_sweep_numbers, so calling it on a strip with
+# nothing to clear is real work with real side effects.
+proc wviewer::plan_replace_clear {mode ngraphs plan} {
+  set new [wviewer::dget $plan new 0]
+  set out {}
+  foreach t [wviewer::dget $plan targets {}] {
+    if {![string is integer -strict $t]} { continue }
+    if {$mode eq {multi}} {
+      if {$t < $new} { continue }
+    } else {
+      # single: a plan that created/reused a strip lands ONLY there
+      if {$new > 0} { continue }
+      if {$t >= $ngraphs} { continue }
+    }
+    if {[lsearch -exact $out $t] < 0} { lappend out $t }
+  }
+  return [lsort -integer $out]
 }
 
 # --- auto-plot graph (item 13, D4) -------------------------------------------
@@ -2697,6 +2797,70 @@ proc wviewer::set_plot_mode {req {token {}}} {
   catch {wviewer::status_refresh $token}
   wviewer::log_action [list wviewer::set_plot_mode $new $token]
   return $new
+}
+
+# --- item 7: the per-window plot DESTINATION ----------------------------------
+# THE accessor. Everything that decides where a plot gesture lands must call
+# this — the Add Trace dialog, plot_signals, and (item 9) the browser toolbar's
+# three plot gestures. Nothing may re-implement the policy, exactly as nothing
+# may re-implement sig_match.
+#
+# ⚠ Unlike plot_mode, this DEFAULTS rather than returning {} for an unset token:
+# `mode` is seeded at `open` time and its {} truthfully means "no window", but
+# there is no open-time seed for the destination, so the default lives here.
+# `append` is the answer for an unknown token too, and that is deliberate: a
+# caller that asked for the destination of a window that is not there must get
+# the harmless policy, not a policy that destroys traces.
+proc wviewer::plot_dest {{token {}}} {
+  variable dest
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists dest($token)]} { return append }
+  return $dest($token)
+}
+
+# Set the destination. `req` is a LABEL or a CODE (wviewer::dest_norm). Returns
+# the RESOLVED code, or {} plus a CIW error when the token resolves to no open
+# viewer — the set_plot_mode shape, deliberately.
+#
+# Logs `wviewer::set_plot_dest <code> <token>` ON AN ACTUAL CHANGE ONLY, and
+# always the resolved CODE (never the label) with an explicit token: the same
+# rule set_plot_mode and set_target_strip follow, so a replay does not fill with
+# redundant lines and does not depend on which window is active at replay time.
+proc wviewer::set_plot_dest {req {token {}}} {
+  variable dest
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to set the plot destination on" error
+    }
+    return {}
+  }
+  set new [wviewer::dest_norm $req]
+  set cur [wviewer::plot_dest $token]
+  if {$new eq $cur} { return $cur }
+  set dest($token) $new
+  wviewer::log_action [list wviewer::set_plot_dest $new $token]
+  return $new
+}
+
+# The WINDOW-level half of the destination policy: everything that must happen
+# BEFORE plan_plot can speak. Today that is exactly `newtab`; the other three
+# destinations have nothing to prepare and succeed trivially.
+#
+# Returns 1 on success (INCLUDING "nothing to do"), 0 when the tab could not be
+# made — in which case the caller must report and abort rather than plot into
+# the wrong tab.
+#
+# ⚠ MEASURED: new_tab calls tab_drop_transients, which DESTROYS $top.wvadd. Any
+# caller that still needs something out of the Add Trace dialog must have read
+# it BEFORE calling this, and must guard every widget access afterwards. That is
+# not theoretical — it is why add_trace_ok snapshots its picks by name first and
+# routes its errors through wviewer::echo when the label is gone.
+proc wviewer::dest_prepare {token dest} {
+  if {[wviewer::dest_norm $dest] ne {newtab}} { return 1 }
+  if {[wviewer::new_tab $token] eq {}} { return 0 }
+  return 1
 }
 
 # The EFFECTIVE target strip index of `token`: the stored value clamped to the
@@ -5297,12 +5461,22 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   # created. add_trace's own capture cannot serve here — it runs after the
   # strips were added, where the 1:1 rect/model guard refuses it.
   wviewer::capture_live_view_state $token
+  # item 7: THE window destination governs this seam, and this seam ONLY — it is
+  # the one route every plot gesture (Direct Plot, and item 9's three browser
+  # gestures) shares, so the policy is implemented once here and nowhere else.
+  # The WINDOW half runs first and may replace the whole layout (New Tab), hence
+  # the re-read below.
+  set dest [wviewer::plot_dest $token]
+  if {![wviewer::dest_prepare $token $dest]} {
+    return [list [list {} "cannot open a new tab for this plot"]]
+  }
   set gs [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
   set auto [wviewer::auto_graph_index $token]
   set plan [wviewer::plan_plot $mode [llength $gs] \
                                [wviewer::target_index $token] [llength $exprs] \
-                               $auto [wviewer::empty_graph_indices $gs $auto]]
+                               $auto [wviewer::empty_graph_indices $gs $auto] \
+                               $dest]
   if {![llength $colors]} {
     # `gs` is the PRE-batch strip list, which is what plan_colors expects
     set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
@@ -5344,6 +5518,13 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   # the target (spec §3.3).
   if {$mode ne {multi} && [llength [dict get $plan targets]]} {
     wviewer::set_target_strip [lindex [dict get $plan targets] 0] $token
+  }
+  # item 7 `replace`: empty the landing strips that ALREADY EXISTED, AFTER the
+  # new strips were created (so the multi arm's post-insert indices are the live
+  # ones) and BEFORE anything is added. The key is present only under `replace`,
+  # and it never names a strip this plan just made — see plan_replace_clear.
+  foreach ci [wviewer::dget $plan clear {}] {
+    wviewer::clear_graph_traces $token $ci
   }
   set errs {}
   foreach ex $exprs gi [dict get $plan targets] col $colors {
@@ -7482,6 +7663,50 @@ proc wviewer::sb_syntax_code {label} {
   return shell
 }
 
+# --- item 7: the plot-destination codes ---------------------------------------
+# `Append` `Replace` `New Strip` `New Tab` <-> append replace newstrip newtab.
+#
+# dest_norm accepts BOTH spellings ON PURPOSE and case-insensitively: the
+# combobox hands it the LABEL (`New Strip`), while a CIW line, a replayed action
+# log or item 9's toolbar hands it the CODE (`newstrip`). The space forms
+# (`new strip`, `new tab`) are accepted too, since that is what a human types.
+#
+# ⚠ ViVA's OWN NAMES ARE DELIBERATELY NOT ALIASES. `NewSubWin`/`NewWin` are not
+# accepted, because the mapping is not a rename: ViVA's `NewWin` means a WINDOW
+# and ours means a TAB. Accepting the ViVA spelling would promise a fidelity
+# this does not have.
+#
+# UNRECOGNISED -> `append`, the same argument sb_type_code's `all` fallback
+# makes: Append is the ONLY policy that destroys nothing, so a value we cannot
+# parse must land there. A fallback to `replace` or `newstrip` would turn a typo
+# into data loss or into a strip nobody asked for. PURE.
+proc wviewer::dest_norm {v} {
+  switch -exact -- [string tolower [string trim $v]] {
+    replace           { return replace }
+    newstrip -
+    {new strip}       { return newstrip }
+    newtab -
+    {new tab}         { return newtab }
+  }
+  return append
+}
+
+# code -> the combobox LABEL. Unrecognised -> `Append`, same argument. PURE.
+proc wviewer::dest_label {code} {
+  switch -exact -- [string tolower [string trim $code]] {
+    replace  { return Replace }
+    newstrip { return {New Strip} }
+    newtab   { return {New Tab} }
+  }
+  return Append
+}
+
+# The four labels, in ViVA's order — the combobox's `-values` and the Options
+# cascade's entries read from HERE, so the two can never drift apart.
+proc wviewer::dest_labels {} {
+  return [list Append Replace {New Strip} {New Tab}]
+}
+
 # wviewer::searchbar_build parent ?-command cb? ?-showbutton 0|1? ?-name child?
 #   -> the megawidget's frame path (default `$parent.wvsearch`).
 #
@@ -7688,6 +7913,20 @@ proc wviewer::add_trace_dialog {token} {
   set top [dict get $windows $token top]
   set w [ase::ui::dialog_frame $top.wvadd {Add Trace}]
   set gcount [llength [dict get [wviewer::layout_for $token] graphs]]
+  # item 7's PIXEL deliverable: the plot-DESTINATION dropdown, at row 0, ABOVE
+  # `Graph:` — every existing row shifted by +1.
+  # WHY A ROW AND NOT A COLUMN: the form's measured grid is 3 columns wide and
+  # column 2 holds ONLY the listbox scrollbar, so a `Destination:` label parked
+  # there would detach the scrollbar from the listbox by the label's width.
+  # Every free cell in this form is in column >= 2; a new row is the only clean
+  # cell there is.
+  # It shows the PERSISTED per-window choice, so reopening the dialog shows what
+  # was chosen last (wviewer::plot_dest, which defaults to Append).
+  label $w.ldest -text Destination: -font AseLabelFont -anchor w
+  ttk::combobox $w.dest -state readonly -width 10 -values [wviewer::dest_labels]
+  $w.dest set [wviewer::dest_label [wviewer::plot_dest $token]]
+  grid $w.ldest -row 0 -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.dest  -row 0 -column 1 -sticky w -padx {0 8} -pady 2
   label $w.lgraph -text Graph: -font AseLabelFont -anchor w
   ttk::combobox $w.graph -state readonly -width 6
   if {$gcount > 1} {
@@ -7695,25 +7934,25 @@ proc wviewer::add_trace_dialog {token} {
     for {set i 0} {$i < $gcount} {incr i} { lappend vals $i }
     $w.graph configure -values $vals
     $w.graph set [expr {$gcount - 1}]
-    grid $w.lgraph -row 0 -column 0 -sticky w -padx {8 6} -pady 2
-    grid $w.graph  -row 0 -column 1 -sticky w -padx {0 8} -pady 2
+    grid $w.lgraph -row 1 -column 0 -sticky w -padx {8 6} -pady 2
+    grid $w.graph  -row 1 -column 1 -sticky w -padx {0 8} -pady 2
   } else {
     $w.graph configure -values 0
     $w.graph set [expr {$gcount > 0 ? $gcount - 1 : 0}]
   }
-  set ee [ase::ui::dialog_row $w 1 Expression: expr]
-  set ne [ase::ui::dialog_row $w 2 {Name (optional):} name]
+  set ee [ase::ui::dialog_row $w 2 Expression: expr]
+  set ne [ase::ui::dialog_row $w 3 {Name (optional):} name]
   label $w.lvars -text {Raw variables (double-click to use):} \
     -font AseLabelFont -anchor w
   listbox $w.vars -height 8 -font AseEntryFont -exportselection 0 \
     -background [ase::theme table] -yscrollcommand [list $w.vsb set]
   scrollbar $w.vsb -command [list $w.vars yview]
-  grid $w.lvars -row 3 -column 0 -columnspan 2 -sticky w -padx 8 -pady {6 0}
-  grid $w.vars  -row 5 -column 0 -columnspan 2 -sticky nsew -padx {8 0}
-  grid $w.vsb   -row 5 -column 2 -sticky ns -padx {0 8}
-  grid rowconfigure $w 5 -weight 1
+  grid $w.lvars -row 4 -column 0 -columnspan 2 -sticky w -padx 8 -pady {6 0}
+  grid $w.vars  -row 6 -column 0 -columnspan 2 -sticky nsew -padx {8 0}
+  grid $w.vsb   -row 6 -column 2 -sticky ns -padx {0 8}
+  grid rowconfigure $w 6 -weight 1
   label $w.err -text {} -font AseLabelFont -anchor w
-  grid $w.err -row 6 -column 0 -columnspan 3 -sticky we -padx 8
+  grid $w.err -row 7 -column 0 -columnspan 3 -sticky we -padx 8
   # `extended` so several traces can be added from one pick (PLAN items 5+6).
   # add_trace_ok now adds ONE TRACE PER SELECTED ROW, in listbox order (item 6).
   $w.vars configure -selectmode extended
@@ -7730,7 +7969,7 @@ proc wviewer::add_trace_dialog {token} {
     set rawnote {no raw data loaded - variable list unavailable}
   }
   set sb [wviewer::searchbar_build $w -command [list wviewer::add_trace_filter $token]]
-  grid $sb -row 4 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 2}
+  grid $sb -row 5 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 2}
   # The OPEN population goes through the SAME route the live filter uses, reading
   # the bar's REAL defaults — so the opening list can never drift from decisions
   # 6/7 the way a separate `foreach ... insert` would.
@@ -7743,7 +7982,7 @@ proc wviewer::add_trace_dialog {token} {
   # transfer. Pinned by AT20.
   bind $w <Destroy> [list wviewer::add_trace_forget $token %W $w]
   bind $w.vars <Double-Button-1> [list wviewer::add_trace_pick $token]
-  ase::ui::dialog_buttons $w 7 [list wviewer::add_trace_ok $token] \
+  ase::ui::dialog_buttons $w 8 [list wviewer::add_trace_ok $token] \
     [list destroy $w]
   bind $ee <Return> [list wviewer::add_trace_ok $token]
   bind $ne <Return> [list wviewer::add_trace_ok $token]
@@ -7822,6 +8061,18 @@ proc wviewer::add_trace_pick {token} {
 # path is untouched, so `xschem raw add` stays single-shot). With the Expression
 # empty, the listbox selection drives the add: ONE TRACE PER SELECTED ROW, in
 # LISTBOX order (PLAN item 6).
+#
+# item 7 gave this proc a DESTINATION and, with it, a mandatory ORDER:
+#   read the dialog -> refuse -> prepare the window -> plan -> create -> clear
+#   -> add -> report
+# Each step of that order is load-bearing and the reasons are inline below.
+#
+# ⚠ UNDER `append` THE RESULT IS BYTE-IDENTICAL TO WHAT IT WAS: plan_plot's
+# single arm with a valid target returns `new 0`, no `clear` key, and every
+# target equal to `$gi` — so the add loop below runs exactly the adds the old
+# straight-line code ran, in the same order, with the same messages. That is
+# why MS00-MS18 and test_wave_viewer's G11/G12/G12b are this rewrite's real
+# regression oracle, not the new DS checks.
 proc wviewer::add_trace_ok {token} {
   variable windows
   if {![dict exists $windows $token]} { return }
@@ -7830,32 +8081,68 @@ proc wviewer::add_trace_ok {token} {
   set gi   [$w.graph get]
   set rpn  [string trim [$w.expr get]]
   set name [string trim [$w.name get]]
-  if {$rpn ne {}} {
-    set err [wviewer::add_trace $token $gi $rpn $name]
-    if {$err ne {}} { $w.err configure -text $err ; return }
-    destroy $w
-    return
-  }
-  # Empty Expression: one trace per SELECTED ROW. `curselection` returns its
-  # indices ASCENDING (Tk contract), so reading the names back through
-  # `$w.vars get` IS "listbox order" — no sort is needed, and adding one would
-  # be a bug. Snapshot by NAME, never by index (item 5's AT14 lesson: a
-  # repopulate invalidates indices, names survive it).
+  # The dropdown IS the setting: choosing it in the dialog and pressing OK
+  # persists it for the window (item 7's "persisted per window").
+  set dest [wviewer::dest_norm [$w.dest get]]
+  wviewer::set_plot_dest $dest $token
+  # SNAPSHOT THE PICKS NOW, BY NAME. Two independent reasons, both measured:
+  # item 5's AT14 (a repopulate invalidates listbox indices, names survive it)
+  # and item 7's New Tab (dest_prepare DESTROYS this dialog — after that point
+  # `$w.vars` does not exist at all).
   set names {}
-  foreach i [$w.vars curselection] { lappend names [$w.vars get $i] }
+  if {$rpn eq {}} {
+    foreach i [$w.vars curselection] { lappend names [$w.vars get $i] }
+  }
+  # THE REFUSAL RUNS BEFORE dest_prepare, and it must: a refused OK may not
+  # leave a stray new tab (or a fresh empty strip) behind. Refusing after the
+  # preparation would make "one Name cannot cover N traces" a destructive
+  # gesture.
   if {[llength $names] > 1 && $name ne {}} {
-    $w.err configure -text \
+    wviewer::atok_report $w \
       "one Name cannot cover [llength $names] traces - clear the Name field, or select a single row"
     return
   }
-  # Nothing typed and nothing picked: hand the EMPTY rpn to add_trace so its own
-  # "empty expression - type one or pick a raw variable" stays the single owner
-  # of that string. Duplicating it here would be a second place to keep in sync.
-  if {![llength $names]} { set names [list {}] }
+  # ⚠ AFTER THIS LINE `$w` MAY BE GONE (New Tab destroys the dialog — MEASURED).
+  # Every widget read above is done; every message below goes through
+  # atok_report, which survives a vanished dialog.
+  if {![wviewer::dest_prepare $token $dest]} {
+    wviewer::atok_report $w "cannot open a new tab for this plot"
+    return
+  }
+  # RE-READ the strip list: a New Tab replaced the whole layout.
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$rpn eq {}} {
+    # Nothing typed and nothing picked: hand the EMPTY rpn to add_trace so its
+    # own "empty expression - type one or pick a raw variable" stays the single
+    # owner of that string. Duplicating it here would be a second place to keep
+    # in sync.
+    if {![llength $names]} { set names [list {}] }
+  } else {
+    # A typed expression wins and is exactly ONE trace (item 6's MS08/MS09).
+    # The destination governs BOTH paths — it is about WHERE, not about WHICH.
+    set names [list $rpn]
+  }
   set n [llength $names]
+  # The dialog is a SINGLE-plot gesture whatever the window's plot mode says
+  # (it names one Graph), so plan_plot is asked in `single` — the destination is
+  # the only thing that moves the landing.
+  set plan [wviewer::plan_plot single [llength $gs] $gi $n -1 {} $dest]
+  set nnew [dict get $plan new]
+  if {$nnew > 0} {
+    set fresh {}
+    for {set k 0} {$k < $nnew} {incr k} { lappend fresh [wviewer::empty_graph] }
+    # the single arm always appends at the BOTTOM — that is the index its
+    # targets name (plan_plot's newstrip comment)
+    wviewer::set_graphs $token [concat $gs $fresh]
+  }
+  # CLEAR AFTER creation, BEFORE the adds. Only `replace` ever emits the key,
+  # and it never names a strip this plan just made.
+  foreach ci [wviewer::dget $plan clear {}] {
+    wviewer::clear_graph_traces $token $ci
+  }
   set added 0
-  foreach nm $names {
-    set err [wviewer::add_trace $token $gi $nm $name]
+  foreach nm $names ti [dict get $plan targets] {
+    set err [wviewer::add_trace $token $ti $nm $name]
     if {$err ne {}} {
       # DELIBERATE NON-ROLLBACK (PLAN item 6 + driver note (f); settled decision
       # 11's rollback rule governs the hierarchy-sync items, not this one). The
@@ -7863,13 +8150,43 @@ proc wviewer::add_trace_ok {token} {
       # cannot tell what state the graph is in. The suffix appears only when
       # there really was a batch — a single pick keeps add_trace's message
       # byte-for-byte as it has always been.
+      # ⚠ item 7 EXTENDS the non-rollback: under Replace the target has ALREADY
+      # been emptied by the time an add fails, so a failed Replace can leave the
+      # strip with FEWER traces than it started with. Declared, not fixed —
+      # rolling back here would need a snapshot/restore this policy does not
+      # have (DS29 pins the behaviour so it cannot change silently).
       if {$n > 1} { append err " (added $added of $n, stopped at '$nm')" }
-      $w.err configure -text $err
+      wviewer::atok_report $w $err
       return
     }
     incr added
   }
-  destroy $w
+  # `catch` so a destination that already took the dialog down (New Tab) does
+  # not throw here — and an EXPLICIT empty return, because `catch`'s own 0 would
+  # otherwise become this proc's result and break every caller that asserts a
+  # successful OK returns nothing.
+  catch {destroy $w}
+  return {}
+}
+
+# Show an Add Trace error. THE dialog may be GONE — New Tab's dest_prepare
+# destroys it (tab_drop_transients), MEASURED — so "the label I want to write to
+# has vanished" must be an ASSERTABLE VALUE, never an exception: a bare
+# `$w.err configure` there would throw out of add_trace_ok, up through whatever
+# called it, and (in a test) into the outer catch, silently skipping the rest of
+# the file while the failure count still looked plausible.
+#
+# The fallback is wviewer::echo, the CIW+logfile seam the tab commands already
+# use. That makes New Tab's error reporting ASYMMETRIC with the other three
+# destinations (CIW, not the dialog's red label) — a declared consequence of the
+# dialog being destroyed, not an oversight.
+proc wviewer::atok_report {w msg} {
+  if {[winfo exists $w.err]} {
+    $w.err configure -text $msg
+    return dialog
+  }
+  wviewer::echo "wviewer: $msg" error
+  return echo
 }
 
 # Graph > Delete… (D3): ONE listbox with a row per graph ("graph N") and
@@ -9804,5 +10121,19 @@ proc wviewer::build_menubar {token top} {
   $mb.options.plotmode add command -label {Set Multi-plot Mode} \
     -command [list wviewer::set_plot_mode invert $token]
   $mb.options add cascade -label {Plot Mode} -menu $mb.options.plotmode
+  # item 7: the plot DESTINATION, the menu route to the same per-window setting
+  # the Add Trace dropdown writes.
+  # ⚠ PLAIN COMMANDS, NOT RADIOBUTTONS, and that is not a style choice: Tk
+  # writes a radiobutton's `-variable` BEFORE it fires `-command`, so
+  # set_plot_dest would always see the new value already in place, find "no
+  # change" and never write its replayable log line. The `gridshow` mirror
+  # comment documents the same trap.
+  menu $mb.options.plotdest -tearoff 0 -takefocus 0 \
+    -font AseLabelFont -background $panel -activebackground $header
+  foreach lbl [wviewer::dest_labels] {
+    $mb.options.plotdest add command -label $lbl \
+      -command [list wviewer::set_plot_dest [wviewer::dest_norm $lbl] $token]
+  }
+  $mb.options add cascade -label {Plot Destination} -menu $mb.options.plotdest
   $top configure -menu $mb
 }
