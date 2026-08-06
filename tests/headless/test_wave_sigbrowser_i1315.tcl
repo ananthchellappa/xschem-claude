@@ -19,8 +19,9 @@
 #
 # GROUP PREFIX: item 13 is `BR`, and `BD` (14) / `BP` (15) are RESERVED here so
 # a later item cannot collide. Numbers are BLOCKED by arm:
-#   01-19  SOURCE + PURE      both arms
-#   20-39  throwaway toplevel Tk/X only
+#   01-18  SOURCE + PURE      both arms
+#   19     one `--nogui` CHILD PROCESS (the startup restore), both arms
+#   20-39  throwaway toplevels Tk/X only
 #   40-59  REAL viewer + REAL raw files, Tk/X only
 #
 # ⚠ THE FOOTPRINT CLAIM, MADE EXPLICITLY BECAUSE RULING 30 WAS CUT ON IT.
@@ -33,6 +34,12 @@
 # 400-byte files, i.e. strictly less than BH5x/BX4x. RAW LOADS ARE A NEW AXIS
 # NOBODY HAD MEASURED, which is why the raws are hand-written 3-point files
 # rather than a simulator run.
+# ⚠ TWO SMALL ADDITIONS TO THAT FOOTPRINT, both deliberate and both OUTSIDE the
+# real-viewer group: BR19 spawns ONE `--nogui` child (no X connection at all,
+# ~1 s, the only way to observe a STARTUP read), and BR28/BR29 raise a SECOND
+# THROWAWAY TOPLEVEL — 400x300, no canvas traffic, destroyed in the same block —
+# because a per-window widget fanned out from a GLOBAL list cannot be checked
+# with one window. Neither touches the real viewer or a design window.
 # ⚠ ITEMS 14 AND 15 MUST RE-MEASURE BEFORE APPENDING HERE. Item 14 holds two
 # raw DBs open at once and item 15 adds destroy/restore cycles; both are new
 # axes on the very dimension ruling 30 was cut on, and neither inherits this
@@ -48,10 +55,11 @@
 # `ls "$HERE"/test_*.tcl`, so a prelude with that name would run as a case,
 # score zero checks, print no RESULT and be a permanent FAIL).
 #
-# ⚠ THE ARM STATEMENT. The `--nogui` arm runs BR01-BR19 only — the source greps
-# and the pure-Tcl history algebra. Every behavioural claim (the widget row, the
+# ⚠ THE ARM STATEMENT. The `--nogui` arm runs BR01-BR19 only — the source greps,
+# the pure-Tcl history algebra and the child-process startup restore. Every
+# WIDGET claim (the row, the entry text, the balloon, the dropdown fanout, the
 # real load, the tree refresh, the 0119 gate end to end) needs real Tk and real
-# X, so A GREEN `--nogui` RUN PROVES NOTHING ABOUT THE LOCATION BAR.
+# X, so A GREEN `--nogui` RUN PROVES ALMOST NOTHING ABOUT THE LOCATION BAR.
 #
 # ⚠ SKIP-BANNER WORDING IS LOAD-BEARING. The X-gated groups print
 # `SKIPPED: <group> (Tk/X arm only)`. NEVER `RESULT: SKIP`, never
@@ -91,9 +99,16 @@ source [file join [file dirname [info script]] wvbs_common.tcl]
 set br_gate0 {UNSET}
 if {[info exists ::update_recent_files]} { set br_gate0 $::update_recent_files }
 set br_conf0 $::USER_CONF_DIR
-# THE USER'S REAL STORE, recorded up front: BR54 asserts this test never created
-# or touched it (issue 0119 is exactly a verification run polluting a user file).
-set br_home_pre [file exists [file join $br_conf0 raw_history]]
+# THE USER'S REAL STORE, recorded up front — EXISTENCE AND CONTENT: BR54 asserts
+# this test never created or touched it (issue 0119 is exactly a verification run
+# polluting a user file). Content, not just existence, because on a machine where
+# the file already exists an existence check alone would pass over a rewrite.
+set br_home_file [file join $br_conf0 raw_history]
+set br_home_pre  [file exists $br_home_file]
+set br_home_txt  {}
+if {$br_home_pre} {
+  set fd [open $br_home_file r] ; set br_home_txt [read $fd] ; close $fd
+}
 
 # --- the fixture writer -----------------------------------------------------
 # A WELL-FORMED ASCII rawfile, hand-written. MEASURED to read cleanly
@@ -103,11 +118,15 @@ set br_home_pre [file exists [file join $br_conf0 raw_history]]
 #
 # ⚠ THE TRAILING EMPTY LINE AFTER EACH POINT IS MANDATORY, and not cosmetically:
 # a `Values:` block whose points are not terminated that way drives
-# `read_raw_ascii_point` (src/save.c) past the end of its buffer and xschem dies
-# with `FATAL: signal 11`. That is a PRE-EXISTING C defect this item found while
+# `read_raw_ascii_point` (src/save.c:406) past the end of the `tmp` buffer
+# `read_raw_data_block` allocated for it, and xschem dies — `FATAL: signal 11`,
+# or `double free or corruption` on the next `free_rawfile`, depending on what
+# the overflow lands on. That is a PRE-EXISTING C defect this item found while
 # probing and must not fix (settled decision 8: no new C code); it is filed as
-# its own issue. BR46 therefore uses a PLAIN TEXT file for the malformed case —
-# measured SAFE, returns 0 cleanly — never a truncated Values: block.
+# **issue 0213** (`doc/claude/issues/0213-read-raw-ascii-point-overruns-its-
+# buffer.md`), which carries the standalone repro. BR46 therefore uses a PLAIN
+# TEXT file for the malformed case — measured SAFE, returns 0 cleanly — never a
+# truncated Values: block.
 proc br_mkraw {path names npts} {
   set f [open $path w]
   puts $f "Title: signal browser item 13 fixture"
@@ -385,6 +404,71 @@ pcall ::wviewer::rawhist_add $br_in /r
 check {BR18 rawhist_add does not mutate its input list} $br_in {/p /q}
 
 # ============================================================================
+# BR19 — THE OTHER HALF OF PERSISTENCE: THE PRODUCT READS THE STORE BACK, and
+# it is proven IN A FRESH PROCESS, both arms.
+#
+# ⚠⚠ WHY A CHILD PROCESS AND NOT A CHEAPER CHECK. BR50/BR51 prove the WRITE by
+# reading the file off disk; on their own they leave "the history is written
+# every session and NEVER restored — the dropdown is empty at every startup"
+# indistinguishable from a working feature. The read happens EXACTLY ONCE, at
+# startup, before any test in this process could observe it, so nothing in this
+# interpreter can assert it: by the time the file runs, `rawhist_load` has
+# already been called (or has already not been). A verifier deleted the single
+# `wviewer::rawhist_load` line from xschem.tcl's startup block and the whole
+# file stayed green — this group is the answer, and it FAILS with that line gone
+# because the child comes back with an EMPTY history.
+#
+# The lever is `HOME`: `xinit.c` :3035 derives `USER_CONF_DIR` from it, so a
+# child started with HOME inside our scratch dir has a scratch config dir and
+# CANNOT touch the user's (issue 0119's rule, applied to the child too). Leg 1
+# is the control that proves exactly that redirection happened — without it, an
+# empty history would be indistinguishable from "the override silently failed
+# and the child read the real ~/.xschem".
+# ============================================================================
+set br_seed {/tmp/br/seed_one.raw /tmp/br/seed_two.raw}
+set br_home  [file join $scratch fakehome]
+set br_hconf [file join $br_home .xschem]
+file mkdir $br_hconf
+set fd [open [file join $br_hconf raw_history] w]
+puts $fd "set ::wviewer::rawhist {$br_seed}"
+close $fd
+
+# ⚠ THE SITE, NAMED. The behavioural legs below say the restore HAPPENED; this
+# says WHERE from, so a deletion localises in one line instead of a bisect. It
+# must be at COLUMN 0 — inside a proc body it would be a definition nobody runs.
+set fd [open [file join $repo src xschem.tcl] r] ; set br_xsrc [read $fd] ; close $fd
+check {BR19 xschem.tcl calls rawhist_load ONCE, at top level (startup)} \
+  [regexp -all -line {^wviewer::rawhist_load$} $br_xsrc] 1
+
+set br_child [file join $scratch br_startup_probe.tcl]
+set fd [open $br_child w]
+puts $fd {
+  puts "PROBE_CONF=$::USER_CONF_DIR"
+  puts "PROBE_HIST=[wviewer::rawhist_get]"
+  puts "PROBE_DONE"
+  flush stdout
+  exit 0
+}
+close $fd
+set br_out [file join $scratch br_startup_probe.out]
+set br_env_home $::env(HOME)
+set ::env(HOME) $br_home
+catch {exec timeout 60 [info nameofexecutable] --nogui --pipe -q --nolog \
+         --script $br_child >& $br_out}
+set ::env(HOME) $br_env_home
+set br_body {}
+if {[file exists $br_out]} { set fd [open $br_out r] ; set br_body [read $fd] ; close $fd }
+set br_cconf {} ; regexp {PROBE_CONF=(\S*)}    $br_body -> br_cconf
+set br_chist {} ; regexp {PROBE_HIST=([^\n]*)} $br_body -> br_chist
+
+check {BR19 (CONTROL) the child ran and its USER_CONF_DIR is the scratch home} \
+  [list [expr {[string first PROBE_DONE $br_body] >= 0}] \
+        [expr {$br_cconf eq {} ? {} : [file normalize $br_cconf]}]] \
+  [list 1 [file normalize $br_hconf]]
+check {BR19 a FRESH xschem RESTORES the persisted history at startup} \
+  $br_chist $br_seed
+
+# ============================================================================
 # BR20-BR29 — the THROWAWAY TOPLEVEL. Item 8's `.wvbs1` fixture shape: a real
 # frame, a real canvas packed the way the viewer packs its own, a fake windows
 # dict entry. No xschem context, no raw — widget structure only.
@@ -485,6 +569,48 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall ::wviewer::rawbar_sync nosuch]] \
     [list 0 0 0 0]
 
+  # ==========================================================================
+  # BR28/BR29 — TWO WINDOWS, ONE HISTORY. `rawhist` is a single GLOBAL list but
+  # the dropdown is a PER-WINDOW widget whose `-values` are set once at
+  # browser_build time, so a second viewer built earlier would keep its
+  # build-time (usually empty) dropdown for the rest of the session while the
+  # user opens raw after raw in the first. That is why `rawbar_sync` fans the
+  # -values out; these two checks are the only thing that can see it, since one
+  # window cannot distinguish "fanned out" from "refreshed itself".
+  #
+  # ⚠ AND THE LIMIT OF THE FANOUT IS ASSERTED TOO (BR29): the ENTRY TEXT and the
+  # balloon stay per-window. Window 2 did not load that raw, and a dropdown
+  # refresh that also rewrote its Location bar would be telling the user window
+  # 2 is showing a raw it is not.
+  # ==========================================================================
+  catch {destroy .wvbr2}
+  toplevel .wvbr2
+  wm title .wvbr2 {item13 second viewer fixture}
+  wm geometry .wvbr2 400x300+520+90
+  canvas .wvbr2.drw -background white -width 300 -height 260
+  pack .wvbr2.drw -side right -fill both -expand true
+  dict set ::wviewer::windows wvbr2 [dict create top .wvbr2 win_path .wvbr2.drw]
+  set BRF2 .wvbr2.wvbrowser
+  set br_h2save $::wviewer::rawhist
+  set ::wviewer::rawhist {}
+  check {BR28 (FIXTURE) a second window's sidebar builds with an EMPTY dropdown} \
+    [list [pcall ::wviewer::browser_build wvbr2 .wvbr2] \
+          [$BRF2.loc.cb cget -values] [$BRF2.loc.cb get]] \
+    [list 1 {} {}]
+  update
+  # the history moves (as an ungated load would move it) and window ONE syncs
+  set ::wviewer::rawhist [list /tmp/br/three.raw /tmp/br/four.raw]
+  check {BR28 a sync in window 1 fans the shared history out to window 2's dropdown} \
+    [list [pcall ::wviewer::rawbar_sync wvbr /tmp/br/three.raw] \
+          [$BRF2.loc.cb cget -values] [$BRF.loc.cb cget -values]] \
+    [list 1 {/tmp/br/three.raw /tmp/br/four.raw} {/tmp/br/three.raw /tmp/br/four.raw}]
+  check {BR29 ...but window 2 keeps its OWN (blank) Location text and balloon} \
+    [list [$BRF2.loc.cb get] [bind $BRF2.loc.cb <Enter>] [$BRF.loc.cb get]] \
+    [list {} {} /tmp/br/three.raw]
+  set ::wviewer::rawhist $br_h2save
+  dict unset ::wviewer::windows wvbr2
+  destroy .wvbr2
+
   dict unset ::wviewer::windows wvbr
   destroy .wvbr1
 
@@ -552,10 +678,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall xschem raw read $brA] [pcall xschem raw list]] \
     [list 1 "time\nv(out)\nv(in)"]
 
+  # ⚠⚠ THE CONTROL FOR EVERY LOCATION-BAR ASSERTION BELOW, taken BEFORE the
+  # first load: the bar is blank and carries NO balloon at all. Without it,
+  # "the bar shows A" cannot be told from "the bar was showing A all along",
+  # and "the balloon names A" cannot be told from a tooltip baked in at build
+  # time — which is the exact bug BR08's grep exists to prevent and which only
+  # these legs can actually observe.
+  check {BR42 (CONTROL) before any load the bar is blank and has no balloon} \
+    [list [$BVF.loc.cb get] [bind $BVF.loc.cb <Enter>]] [list {} {}]
+
   # a fresh window state: back to A through the product's own path
   check {BR42 rawbar_load A returns 1} [pcall ::wviewer::rawbar_load $tok $brA] 1
   wviewer::switch_ctx $tok
   check {BR42 ...and the ENGINE's current raw is A} [pcall xschem raw rawfile] $brA
+  # ⚠⚠ THE WIDGET THE ITEM *IS*. rawbar_load's LAST act is `rawbar_sync`, and a
+  # verifier deleted that single call with the whole suite staying green: the
+  # engine still loaded, the tree still refreshed, and the Location bar simply
+  # never followed. These two legs are what fails when it goes. Leg 2 reads the
+  # BALLOON off the real <Enter> binding — `balloon` substitutes its string in
+  # at bind time, so a full path present here is a full path in the tooltip,
+  # which is the whole of the long-path Eyeball answer (the entry shows the tail
+  # only).
+  check {BR42 ...and the LOCATION BAR followed the load: it now reads A} \
+    [$BVF.loc.cb get] $brA
+  check {BR42 ...and the full-path balloon now names A} \
+    [expr {[string first $brA [bind $BVF.loc.cb <Enter>]] >= 0}] 1
   # D6: the inventory the sidebar shows must be the raw that is loaded.
   check {BR43 ...and the browser inventory is A's signal set} \
     [lsort $::wviewer::browsersigs($tok)] [lsort {time v(out) v(in)}]
@@ -569,6 +716,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list 1 $brB]
   check {BR44 ...and the inventory FOLLOWED it to B's signal set} \
     [lsort $::wviewer::browsersigs($tok)] [lsort {time v(zzz) v(qqq)}]
+  # ⚠ RE-ATTACHED, NOT ATTACHED ONCE. A balloon bound at build time would still
+  # name A here; asserting B's presence AND A's absence is what makes this a
+  # claim about re-attachment rather than about A ever having been there.
+  check {BR44 ...and so did the bar and its balloon: B now, A gone} \
+    [list [$BVF.loc.cb get] \
+          [expr {[string first $brB [bind $BVF.loc.cb <Enter>]] >= 0}] \
+          [expr {[string first $brA [bind $BVF.loc.cb <Enter>]] >= 0}]] \
+    [list $brB 1 0]
 
   # THE TWO REFUSALS. Each asserts the SAME three legs, so "it refused" can
   # never be confused with "it wiped the window".
@@ -585,6 +740,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [br_rawfile $tok] \
           [lsort $::wviewer::browsersigs($tok)]] \
     [list 0 $brB [lsort {time v(zzz) v(qqq)}]]
+  # ⚠ AND THE BAR IS NOT REWRITTEN BY A REFUSAL — `rawbar_sync` is inside the
+  # success path. A Location bar reading the path that FAILED, over waveforms
+  # that are still B's, would be the widget lying about what is loaded.
+  check {BR46 ...and the Location bar still names the raw that IS loaded} \
+    [list [$BVF.loc.cb get] \
+          [expr {[string first $brB [bind $BVF.loc.cb <Enter>]] >= 0}]] \
+    [list $brB 1]
   check {BR47 the status line NAMES the failure instead of going silent} \
     [expr {[string first {could not read} [$BVF.ph cget -text]] >= 0 ||
            [string first {no such file} [$BVF.ph cget -text]] >= 0}] 1
@@ -612,12 +774,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BR50 ...and the store FILE now exists} [file exists $br_store] 1
   check {BR50 ...and SOURCING it yields a list headed by A} \
     [br_store_read $br_store] [list $brA]
+  # ⚠ THE DROPDOWN IS THE DELIVERABLE, not the list variable. `-values` is set
+  # at browser_build time and refreshed in ONE place — rawbar_sync — so with
+  # that call gone the history would grow, be written, be restored, and the
+  # user's dropdown would still be empty for the whole session.
+  check {BR50 ...and the DROPDOWN now offers it} \
+    [$BVF.loc.cb cget -values] [list $brA]
 
   check {BR51 a second ungated load rewrites the store, newest first} \
     [list [pcall ::wviewer::rawbar_load $tok $brB] [wviewer::rawhist_get]] \
     [list 1 [list $brB $brA]]
   check {BR51 ...and the file on disk says the same} \
     [br_store_read $br_store] [list $brB $brA]
+  check {BR51 ...and the dropdown offers BOTH, newest first} \
+    [$BVF.loc.cb cget -values] [list $brB $brA]
 
   # THE NEGATIVE CLAIM, now that its positive twin is proven on THIS fixture.
   set br_mem_pre [wviewer::rawhist_get]
@@ -643,12 +813,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # TEARDOWN, AND ITS OWN CHECK: the user's real ~/.xschem/raw_history must be
   # exactly as this test found it. Issue 0119 is precisely a verification run
   # writing a user file.
+  # ⚠ WHAT THIS LEG MAY NOT DO IS ASSERT A VALUE THE TEARDOWN JUST ASSIGNED —
+  # `$::USER_CONF_DIR eq $br_conf0` two lines after setting it cannot fail and
+  # measures nothing. The three legs below are all readings of the WORLD: the
+  # user's store is exactly as this test found it (existence AND bytes), and
+  # the writes it did make landed in the SCRATCH store — which is what stops
+  # "nothing was ever written anywhere" from passing as "nothing was written to
+  # the user's file".
+  set br_home_post {}
+  set br_home_now [file exists $br_home_file]
+  if {$br_home_now} {
+    set fd [open $br_home_file r] ; set br_home_post [read $fd] ; close $fd
+  }
   set ::USER_CONF_DIR $br_conf0
   set ::update_recent_files $br_gate0
   set ::wviewer::rawhist {}
-  check {BR54 (TEARDOWN) the user's real config was never written} \
-    [list $::USER_CONF_DIR [file exists [file join $br_conf0 raw_history]]] \
-    [list $br_conf0 $br_home_pre]
+  check {BR54 (TEARDOWN) the user's real store is byte-for-byte as it was found} \
+    [list $br_home_now $br_home_post] [list $br_home_pre $br_home_txt]
+  check {BR54 ...while this run's writes DID land, in the scratch store} \
+    [list [file exists $br_store] [expr {[file normalize $br_store] ne
+                                         [file normalize $br_home_file]}]] \
+    [list 1 1]
 
   catch {wviewer::close $tok}
   }

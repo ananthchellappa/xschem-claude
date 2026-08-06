@@ -6095,19 +6095,38 @@ proc wviewer::rawhist_push {path} {
 # a balloon attached at build time would forever show the path the bar held when
 # the sidebar was built. The full path in the tooltip is the whole answer to the
 # Eyeball clause: the entry itself shows only the tail.
+#
+# ⚠ IT FANS THE DROPDOWN OUT TO EVERY OTHER OPEN VIEWER, and that is not a
+# nicety: `rawhist` is ONE GLOBAL LIST, so a second viewer window whose sidebar
+# was built earlier would otherwise keep its build-time `-values` for the rest of
+# the session — the user opens a raw in window A and window B's "last 20 raws"
+# never hears about it. Only the -values are fanned out. The ENTRY TEXT and the
+# BALLOON stay per-window because they name THAT window's OWN current raw, which
+# a load in another window did not change. BR28/BR29 assert both halves.
 proc wviewer::rawbar_sync {token {path {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set cb [dict get $windows $token top].wvbrowser.loc.cb
-  if {[catch {winfo exists $cb} e] || !$e} { return 0 }
-  if {$path ne {}} {
-    catch {$cb set $path}
-  } else {
-    catch {set path [$cb get]}
+  set rc 0
+  if {![catch {winfo exists $cb} e] && $e} {
+    if {$path ne {}} {
+      catch {$cb set $path}
+    } else {
+      catch {set path [$cb get]}
+    }
+    catch {$cb configure -values [wviewer::rawhist_get]}
+    catch {balloon $cb [expr {$path eq {} ? {(no raw file loaded)} : $path}]}
+    set rc 1
   }
-  catch {$cb configure -values [wviewer::rawhist_get]}
-  catch {balloon $cb [expr {$path eq {} ? {(no raw file loaded)} : $path}]}
-  return 1
+  foreach t [dict keys $windows] {
+    if {$t eq $token} { continue }
+    set c2 {}
+    catch {set c2 [dict get $windows $t top].wvbrowser.loc.cb}
+    if {$c2 eq {}} { continue }
+    if {[catch {winfo exists $c2} e2] || !$e2} { continue }
+    catch {$c2 configure -values [wviewer::rawhist_get]}
+  }
+  return $rc
 }
 
 # LOAD the raw named by the Location bar. Returns 1 on success, 0 on every

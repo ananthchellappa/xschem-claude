@@ -5,10 +5,17 @@ visual claim is made** (driver note (a): this is a PIXEL item, so the eyeball in
 §9 is owed to a human and nothing in the suite substitutes for it).
 
 Implemented in **Tcl only** — settled decision 8 honoured, no `.c` file touched.
-**Four sabotages** injected (the PLAN's two, plus one the PLAN did not name that
-carries the D6 load, plus one added to prove a check was not vacuous); each fired
-its predicted target plus, where it happened, a **declared superset** (ruling 23);
-each reverted; clean re-run green.
+**Seven sabotages** injected in total (the PLAN's two, one the PLAN did not name
+that carries the D6 load, one added to prove a check was not vacuous, and **three
+more in the fixup round** — §12); each fired its predicted target plus, where it
+happened, a **declared superset** (ruling 23); each reverted; clean re-run green.
+
+⚠ **THIS RECEIPT HAS BEEN REPAIRED ONCE. READ §12 WITH §6-§8.** An adversarial
+verifier found that the first shipping's suite stayed **fully green with the
+Location bar's own `rawbar_sync` call deleted** and with the startup
+`rawhist_load` deleted — i.e. the two lines the headline deliverable *is* were
+uncovered — plus a false "filed as its own issue" claim, an undeclared
+per-window limit and one tautological check leg. §12 is what was done about each.
 
 **A REAL DEFECT WAS FOUND BY A WORLD-ASSERTING CHECK — see §5.** `rawhist_write`'s
 bare `open`/`close` resolved to this namespace's own `wviewer::open {token}` /
@@ -221,8 +228,10 @@ and sources `wvbs_common.tcl` exactly as `_i11` and `_i12` do. **No `gold/` entr
 machinery applies. Skip banners are `SKIPPED: <group> (Tk/X arm only)`, never one
 of `is_skip`'s three fatal strings.
 
-**Checks: X arm 71, `--nogui` arm 37.** Every check name is distinct, so a
-sabotage is attributable to exactly one.
+**Checks: X arm 85, `--nogui` arm 40** (71/37 as first shipped; **+14/+3 added by
+the fixup round — §12**, which is also where `BR19` and `BR28/BR29` below come
+from). Every check name is distinct, so a sabotage is attributable to exactly
+one.
 
 * **BR01-BR09** source, both arms — every proc body FOUND first (the `wvproc_body`
   vacuity trap), `rawhist_add` is pure, the gate is spelled and **ordered before**
@@ -234,13 +243,19 @@ sabotage is attributable to exactly one.
   `browser_build`, both bindings and Browse end in the same loader, and BT09's
   no-bump claim restated for item 13's own bodies.
 * **BR10-BR18** pure, both arms — the whole history algebra.
-* **BR20-BR27** throwaway toplevel — the child set, the six-slave recipe with
+* **BR19** (fixup round, §12) both arms — the STARTUP RESTORE, proven in a
+  `--nogui` CHILD PROCESS started with `HOME` inside the scratch dir, plus the
+  source leg naming the one top-level call site in `xschem.tcl`.
+* **BR20-BR29** throwaway toplevels — the child set, the six-slave recipe with
   `.loc` first, the combobox's state/justify/width, Browse packed FIRST and to the
   right, `-values` mirroring, `<Return>` and `<<ComboboxSelected>>` reaching the
   same commit proc through a **proc spy** (so what is observed is the binding, not
-  a re-reading of what it is believed to say), and every entry point answering 0
-  for an unknown token rather than throwing.
-* **BR40-BR54** real viewer + two hand-written 3-point ASCII raws.
+  a re-reading of what it is believed to say), every entry point answering 0
+  for an unknown token rather than throwing, and (fixup round) **BR28/BR29 — a
+  SECOND window**, proving the dropdown fans out and the Location text does not.
+* **BR40-BR54** real viewer + two hand-written 3-point ASCII raws. The fixup
+  round added the legs that read the **Location widget itself** after a real
+  load — entry text, `<Enter>` balloon and `-values` — see §12.
 
 ⚠ **THE FOOTPRINT CLAIM, STATED AND MEASURED RATHER THAN INHERITED.** Ruling 30's
 split point was the fixture cost, not the check count: the deaths landed in `BH5x`
@@ -330,14 +345,28 @@ green** with the change in.
    `file normalize`d forms, so a relative path typed into the bar comes back
    absolute. That is what makes the dedup real; it is a visible behaviour, so it
    is declared.
+7. **A load in one viewer refreshes every viewer's DROPDOWN but only the loading
+   viewer's Location TEXT and balloon.** `rawhist` is one global list, so the
+   `-values` fan out (`rawbar_sync`, and `BR28` is the only thing that can see
+   it); the entry text and the tooltip name the raw *that window* is showing, and
+   a load elsewhere did not change that. ⚠ **This was an UNDECLARED limit in the
+   first shipping** — the fanout did not exist at all, so a second viewer built
+   earlier kept its build-time dropdown for the whole session. Fixed and covered
+   in the fixup round (§12, defect **P4**).
 
-**NEW ISSUE TO FILE (C, therefore out of scope under decision 8 — filed, not
-fixed):** a **malformed ASCII `Values:` block** (point values not terminated by an
-empty line) drives `read_raw_ascii_point` (`src/save.c`) past the end of its `tmp`
-buffer and xschem dies with `FATAL: signal 11`. A Location bar lets a user type
-**any** path straight into `xschem raw read`, which widens exposure to this hole.
-The well-formed-but-not-a-raw case is **safe** (measured: returns 0 cleanly), which
-is why `BR46` uses a plain text file and never a truncated `Values:` block.
+**ISSUE 0213, FILED** —
+`doc/claude/issues/0213-read-raw-ascii-point-overruns-its-buffer.md`. C, therefore
+out of scope under decision 8: a **malformed ASCII `Values:` block** (point values
+not terminated by an empty line) drives `read_raw_ascii_point` (`src/save.c:406`)
+past the end of the `tmp` buffer `read_raw_data_block` sized at one slot per
+variable, and xschem dies — `FATAL: signal 11`, or `double free or corruption` in
+the next `free_rawfile`, depending on what the overflow lands on. A Location bar
+lets a user type **any** path straight into `xschem raw read`, which widens
+exposure to this hole. The well-formed-but-not-a-raw case is **safe** (measured:
+returns 0 cleanly), which is why `BR46` uses a plain text file and never a
+truncated `Values:` block. ⚠ **The first shipping SAID this was filed when it was
+not** (in this section, and in a comment in the test file); the issue exists now,
+with the standalone repro and the mechanism — see §12, defect **P3**.
 
 ---
 
@@ -376,6 +405,9 @@ width is stated as mechanism, not as an observed result:
 Authorization epoch checked with `date +%s` before every run (grant expires
 1786020948; every run in this receipt was well inside it). Every log grepped for
 `X connection to :0 broken` before being interpreted.
+
+⚠ **The counts in this table are the FIRST SHIPPING's.** The fixup round moved
+them to **85 / 40** and re-ran everything — §12.
 
 | run | result |
 |---|---|
@@ -485,6 +517,12 @@ the throwaway `conf/` dir.
 
 ## 11. COMMIT
 
+⚠ **TWO commits now**: the original below, plus the FIXUP commit
+`fix(wviewer): cover the Location bar's own sync + startup restore`
+(4 files: `src/wave_viewer.tcl`, `tests/headless/test_wave_sigbrowser_i1315.tcl`,
+the new `doc/claude/issues/0213-…md`, and this receipt), also **NOT pushed** —
+see §12.
+
 ONE commit on `fluid-editing`, subject
 `feat(wviewer): Location bar + last-20 raw history` (49 chars), **NOT pushed**.
 Six files staged as an explicit list; no `git add -A`, no `git commit -a`.
@@ -509,3 +547,203 @@ driver instead; `git log --oneline --grep 'Location bar + last-20'` resolves it.
 **No `.c` file** — settled decision 8 honoured. The batch bookkeeping files
 (`PLAN.md`, other receipts, `DRIVER_PROMPT.md`, `item_pipeline.js`, the baseline
 logs) are **not** in this commit; the driver's ledger commit picks them up.
+
+---
+
+## 12. THE FIXUP ROUND — what the adversarial verifier found, and the repair
+
+One repair attempt on six reported problems. **Four were real defects in this
+item, one was a real documentation falsehood, one is not item 13's.** Nothing was
+argued away; every fix is pinned by a sabotage that was RUN.
+
+### P1 (decisive) — the item's headline call was UNCOVERED
+
+The verifier deleted `wviewer::rawbar_sync $token $path` from `rawbar_load` — the
+**only** call site in the tree — and **all 71 checks stayed green**. What that
+silently killed: the Location entry never follows a load, the full-path balloon
+(the PLAN's explicit Eyeball requirement) is never attached at all, and the
+dropdown's `-values` never refresh within a session. Every existing leg was blind
+to it: `BR24` calls `rawbar_sync` **directly** on a hand-made token, and no
+behavioural leg after the real `BR42/BR44/BR50` loads ever read the widget.
+
+Driver note (e)'s rule — *assert on the WORLD, never on "the command returned"* —
+had been applied to the disk write and **not** to the widget the feature IS.
+
+**Repair — six new legs, all reading the real combobox in the real viewer:**
+
+| leg | reads |
+|---|---|
+| `BR42 (CONTROL) before any load the bar is blank and has no balloon` | `[$cb get]` = `{}`, `bind $cb <Enter>` = `{}` — without this, "the bar shows A" cannot be told from "it always showed A", and "there is a balloon" cannot be told from one baked in at build time |
+| `BR42 …the LOCATION BAR followed the load: it now reads A` | `[$cb get]` |
+| `BR42 …and the full-path balloon now names A` | the real `<Enter>` script (`balloon` substitutes its string in at bind time, so the path being *in the binding* is the path being *in the tooltip*) |
+| `BR44 …and so did the bar and its balloon: B now, A gone` | B present **and A absent** — which is what makes it a RE-ATTACHMENT claim rather than "A was there once" |
+| `BR46 …and the Location bar still names the raw that IS loaded` | a REFUSED load must not rewrite the bar |
+| `BR50/BR51 …and the DROPDOWN now offers it / offers BOTH, newest first` | `[$cb cget -values]` after the two ungated loads |
+
+**Sabotage V3 re-run (the verifier's own injection, reproduced):** delete
+`wviewer::rawbar_sync $token $path` from `rawbar_load` →
+**`6 FAILED (79 passed)`, exactly those six legs and nothing else.** Reverted from
+the pristine copy, clean re-run **85/85**.
+
+### P2 — persistence was only half-proven: nothing read the store back
+
+Deleting `wviewer::rawhist_load` from `src/xschem.tcl`'s startup block also left
+the suite fully green: `BR50/BR51` prove the WRITE, `BR03` only greps the reader's
+body. With that line gone the history is written every session and never
+restored, and the dropdown is empty at every startup.
+
+**Why no check in this file could see it:** the read happens **once, at process
+startup, before the test script is sourced**. By the time any check runs it has
+already happened or already not.
+
+**Repair — `BR19`, a `--nogui` CHILD PROCESS.** `xinit.c:3035` derives
+`USER_CONF_DIR` from `$HOME`, so the test seeds
+`<scratch>/fakehome/.xschem/raw_history`, sets `::env(HOME)` to that scratch home
+for exactly one `exec`, runs
+`[info nameofexecutable] --nogui --pipe -q --nolog --script <probe>`
+(the `test_undo_link_symbols.tcl` child-process idiom), restores `HOME`, and reads
+the child's stdout:
+
+* `BR19 xschem.tcl calls rawhist_load ONCE, at top level (startup)` — a
+  `^wviewer::rawhist_load$` line count, so a deletion **localises in one line**;
+* `BR19 (CONTROL) the child ran and its USER_CONF_DIR is the scratch home` —
+  without it, an empty history could not be told from "the `HOME` override
+  silently failed"; it also proves the child never read the user's real config;
+* `BR19 a FRESH xschem RESTORES the persisted history at startup` — the child
+  prints back the exact seeded list.
+
+**Sabotage V4:** delete the startup call → **`2 FAILED (83 passed)`** — the source
+leg and the restore leg, with the CONTROL leg **green** (so the failure is the
+restore, not a broken fixture). Reverted, clean re-run **85/85**.
+
+### P3 — "filed as its own issue" WAS FALSE. It is filed now: 0213
+
+The C SIGSEGV claim was true; the claim that it had been *filed* was not.
+Reproduced independently before writing anything:
+
+```
+Warning: ascii block is not of correct size
+…
+free_rawfile(): clearing data
+double free or corruption (out)      ← same defect, other landing site than SIGSEGV
+```
+
+`doc/claude/issues/0213-read-raw-ascii-point-overruns-its-buffer.md` now carries
+the standalone repro, the mechanism (`read_raw_ascii_point` takes `tmp` but **not
+its capacity**; its loop ends only on a blank line or EOF, so an unterminated
+point walks into the next one, writing past a `rawvars`-element buffer — the
+`!= rawvars` warning at `save.c:504/531` is a post-mortem, not a guard) and the
+shape of a fix. The test-file comment and §8 now name **0213** instead of claiming
+an unfiled filing. **No `.c` file was touched** (decision 8).
+
+### P4 — the per-window limit was real, and is now FIXED rather than declared
+
+`rawhist` is one **global** list; `-values` was set per window at `browser_build`
+time and refreshed only for the **loading** window. A second viewer whose sidebar
+was built earlier kept its build-time dropdown for the rest of the session, which
+contradicted the receipt's own "every viewer window offers the same dropdown".
+
+`rawbar_sync` now fans the `-values` out to every other open viewer whose
+Location row exists, and **only** the `-values`: the entry text and the balloon
+stay per-window, because they name the raw *that* window is showing and a load
+elsewhere did not change it. Both halves are asserted, and they need a second
+window to be visible at all:
+
+* `BR28 (FIXTURE) a second window's sidebar builds with an EMPTY dropdown` — the
+  positive control, so `BR28` cannot pass on a dropdown that was already right;
+* `BR28 a sync in window 1 fans the shared history out to window 2's dropdown`;
+* `BR29 …but window 2 keeps its OWN (blank) Location text and balloon`.
+
+**Sabotage V5:** delete the fanout loop → **`1 FAILED (84 passed)`**, exactly the
+fanout leg. Reverted, clean re-run **85/85**.
+
+### P5 — the `BR54` tautology, replaced by two readings of the world
+
+`BR54`'s first leg asserted `$::USER_CONF_DIR eq $br_conf0` two lines after the
+teardown assigned exactly that — it could not fail. Removed. `BR54` now:
+
+* captures the user's real store's **existence AND bytes** up front and compares
+  both at teardown (existence alone would pass over a rewrite on a machine where
+  the file already exists);
+* adds `BR54 …while this run's writes DID land, in the scratch store`, so
+  "nothing was ever written anywhere" cannot pass as "nothing was written to the
+  user's file".
+
+**That the new `BR54` has force is not an argument — it FIRED.** Re-running PLAN
+sabotage **(b)** (delete the 0119 gate) produced **`5 FAILED`**: `BR02` ×2,
+`BR52` legs 2-3 and **`BR54`**, because the ungated `BR42/BR44` loads — which run
+*before* `::USER_CONF_DIR` is repointed — wrote **`/home/qflow/.xschem/raw_history`,
+the user's real file**. Issue 0119 reproduced live. ⚠ **Anyone re-running
+sabotage (b) writes that file**: it is created only by the sabotage, it did not
+exist before (proof: the file the sabotage wrote contains *only* the two scratch
+paths — a non-empty startup history would have been carried into it), a copy was
+kept in the scratchpad, and it was **deleted immediately after**; the shipped code
+leaves it absent, which `BR54` re-asserts.
+
+### P6 — the two off-baseline audit names are NOT item 13's
+
+`test_cmdmode_descend_0201` and `test_lib_manager_checkin` appear on neither the
+HARD 16 nor the FLAKY list; the verifier's own re-runs cleared both 3/3, and one
+of the two died on `XIO: fatal IO error 22 … on X server ":0"`. **For the
+driver's FLAKY list**, with the same status as §10.1's `BT45`.
+
+### The re-run PLAN sabotages, after the fixup
+
+| # | injection | fired |
+|---|---|---|
+| **(a)** | drop the `file normalize` dedup | **4**: `BR12` ×2, `BR17` ×2 — unchanged by the fixup |
+| **(b)** | delete the `update_recent_files` gate | **5**: `BR02` ×2, `BR52` ×2, **`BR54`** (see P5) |
+| **V3** | delete the `rawbar_sync` call | **6**: the P1 legs |
+| **V4** | delete the startup `rawhist_load` | **2**: the P2 legs |
+| **V5** | delete the fanout loop | **1**: the P4 leg |
+
+Every injection was `diff`ed against the scratchpad pristine copies before its
+run and restored from them afterwards (`git checkout --` was not used: the fixup
+was uncommitted, and it would have discarded it).
+
+### Fixup verification
+
+| run | result |
+|---|---|
+| `test_wave_sigbrowser_i1315` X arm | **85/85** (×4 clean, plus every post-sabotage revert) |
+| `test_wave_sigbrowser_i1315` `--nogui` arm | **40/40** |
+| `test_wave_sigbrowser` (FROZEN, untouched by the fixup) | 6 runs incl. the audit's: **5 PASS**, 1 × `BT45 not-narrower (w=400 240 160 settled)` — §10.1's exact shape and numbers, verbatim including the widths |
+| `test_wave_sigbrowser` with `src/wave_viewer.tcl` restored to HEAD | **6/6 PASS** (the ruling-22 A/B: 1-in-6 with, 0-in-6 without — rates indistinguishable at these counts, and a combobox `-values` fanout cannot reach a toplevel the WM never grew) |
+| `test_wave_grid` | **251/251** ×2, plus the audit's |
+| `full_audit.sh` | §12.1 |
+
+### 12.1 The fixup's full audit
+
+`scratchpad/audit1.log`, **`grep -c 'X connection to :0 broken'` = 0**, so it is a
+measurement. `date +%s` = 1786014975 at launch, inside the grant (1786020948).
+
+```
+SUMMARY: 253 pass  23 fail  0 crash/timeout  11 skip  (total 287)
+WIREEDIT: PASS
+SCRATCH:  0 leaked dir(s)
+```
+
+**NON-BASELINE FAILS: NONE** — sets compared, not counts.
+
+* **15 of the HARD 16.** `test_rotate_stretch_short_0104` **SKIPPED** this run
+  (the environmental self-skip family the baseline warns flaps in name and
+  count); it did not fail.
+* **8 more, every one on the FLAKY list**: `test_ase_unnamed_net` (on its
+  documented `AN8 empty-space click queues nothing`), `test_graph_context`,
+  `test_launch_context`, `test_palette`, `test_pristine_untitled_viewer_0172`,
+  `test_remap`, `test_sod_pick_no_select_0204`, `test_wave_hilight` (on its
+  documented `WD2`/`WD2c`).
+* **The two names the verifier could not place both PASSED here** —
+  `test_cmdmode_descend_0201` and `test_lib_manager_checkin` — as did
+  `test_hover_highlight`, which died on an X error in the verifier's run. Their
+  status is unchanged: **for the driver's FLAKY list, not item 13's.**
+* **Every file this item touches PASSED**: `test_wave_sigbrowser`,
+  `test_wave_grid`, `test_wave_sigbrowser_i11`, `_i12` and
+  **`test_wave_sigbrowser_i1315`** — and `0 leaked scratch dir(s)`, so `BR19`'s
+  throwaway `fakehome/.xschem` (which the child process *creates*, template
+  `xschemrc` and all) is cleaned up with the rest.
+
+**Files the fixup touched:** `src/wave_viewer.tcl` (the fanout, +18),
+`tests/headless/test_wave_sigbrowser_i1315.tcl` (+14 X-arm / +3 `--nogui` checks),
+`doc/claude/issues/0213-…md` (new), this receipt. **No `.c` file, and the frozen
+`test_wave_sigbrowser.tcl` and `test_wave_grid.tcl` were NOT re-touched.**
