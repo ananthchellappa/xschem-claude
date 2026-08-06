@@ -19,13 +19,21 @@ Newest entries on top.
 - **Asked:** 2026-08-06
 - **Project state:** branch `open_pdk` @ `aabf354e` + uncommitted — issue **0230** fix.
 
-**It cancels the wire you were drawing, then opens the Add Wire Label form.** That is the
+**It cancels the wire you were drawing — or just leaves wire mode if no segment is in progress —
+then opens the Add Wire Label form.** That is the
 user-ratified behaviour as of 2026-08-06 (the alternatives considered were: ignore `l` with a
 statusbar hint, or silently *finish* the wire at the current point). Nothing is committed — an
 abandoned draw leaves no copper, burns no undo baseline, and the statusbar says
 `Add Wire Label: in-progress wire abandoned`. A wire armed from the **menu** but not yet clicked is
 dropped too, and wire *command* mode is left, so the next click does not restart a wire underneath
 the new label preview.
+
+That last part matters more than it sounds. After you end a segment with a double-click you are
+still in wire mode (the diamond snap cursor is up) even though no wire is in progress — and with
+`persistent_command` on (`cadence_style_rc`) the next canvas click is claimed by the wire command
+*before* any placement can see it. So arming a label there without leaving the mode meant every
+click started a new wire while the label preview kept following the mouse. `l` now leaves the mode
+in all three of its states: live draw, menu-armed, and resting.
 
 Why it cannot just let both run: `end_place_move_copy_zoom()` tests `STARTWIRE`
 (`callback.c:2809`) **before** the placement arm (`:2864`), so while a wire draw is live every

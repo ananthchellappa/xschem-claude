@@ -491,7 +491,10 @@ void start_line(double mx, double my)
     new_line(PLACE, mx, my);
 }
 
-/* Leave any live (or menu-armed) wire/line DRAW before a modal PLACEMENT is armed on top of it
+static void draw_snap_cursor(int action);   /* defined below; used by the gate right here */
+
+/* Leave any live (or menu-armed) wire/line DRAW, or the RESTING wire/line command mode, before a
+ * modal PLACEMENT is armed on top of it
  * (issue 0230). Two modal gestures at once is not a usable state even when every flag is
  * consistent: end_place_move_copy_zoom() tests STARTWIRE (:2872) BEFORE the placement arm
  * (:2927), so while a wire draw is live every click feeds the wire and the label/pin preview can
@@ -523,12 +526,24 @@ int abort_wire_line_command(void)
     xctx->ui_state2 = 0;
     aborted = 1;
   }
+  /* THE RESTING COMMAND MODE -- the state a user is in after ending a segment with a double
+   * click: no STARTWIRE in ui_state, no rubber band, but `last_command` still owns the next
+   * click and the diamond snap cursor is still up. Under `persistent_command` (set by
+   * cadence_style_rc) the press handler at :7843 tests `last_command` ALONE and calls
+   * start_wire() before any placement is offered the click -- so a label armed here can never
+   * be dropped: every click starts a new wire while the preview rides the cursor (the reported
+   * symptom, user 2026-08-06; ui_state has no STARTWIRE, which is why gating on ui_state alone
+   * missed it). last_command only ever holds 0 / STARTWIRE / STARTLINE (:541, :476). */
+  if(xctx->last_command) aborted = 1;
   if(aborted) {
     /* leave wire/line COMMAND mode too: keeping last_command armed would restart a wire on the
-     * next press (:7828-7841, persistent_command) while the placement preview is still attached */
+     * next press (:7843-7856, persistent_command) while the placement preview is still attached */
     xctx->last_command = 0;
     xctx->constr_mv = 0;
     tcleval("set constr_mv 0");
+    /* the diamond snap cursor is drawn while `wire_draw_active` (:8665 -- STARTWIRE, or
+     * persistent_command with last_command) and would otherwise linger until the next motion */
+    if(has_x && tclgetintvar("snap_cursor")) draw_snap_cursor(1);
   }
   return aborted;
 }

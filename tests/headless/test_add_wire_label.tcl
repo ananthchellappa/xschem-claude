@@ -229,6 +229,27 @@ xschem abort_operation
 check "0230 plain wire: 2nd ESC exits"     [getq last_command] 0
 check "0230 plain wire: nothing committed" [xschem get wires] 0
 
+# G4 -- the RESTING wire command mode: the segment is finished (`ui_state` has no STARTWIRE) but
+#       `last_command` still owns the next click. This is what a user sees after ending a segment
+#       with a double-click -- the diamond snap cursor is still up. With `persistent_command 1`
+#       (cadence_style_rc:60) callback.c:7828 seizes the next press and calls start_wire() BEFORE
+#       any placement can be offered the click, so a label armed in this state can never be
+#       dropped: the click starts a new wire and the preview keeps riding the cursor.
+#       Reached here by the two-stage ESC, which is exactly the same resting state (G3 pins it).
+xschem clear force
+xschem wire 0 0 100 0
+xschem unselect_all
+xschem wire gui
+xschem abort_operation                     ;# segment over, wire COMMAND mode still armed
+check "0230 resting: no STARTWIRE"          [startwire] 0
+check "0230 resting: wire mode still armed" [getq last_command] 1
+set ::label_new_name RST
+xschem add_wire_label -place
+check "0230 resting: arm label leaves mode" [getq last_command] 0
+check "0230 resting: preview armed"         [placing] 1
+check "0230 resting: drop commits"          [xschem add_wire_label -drop 50 0] 1
+check "0230 resting: no wire committed"     [xschem get wires] 1
+
 set ::infix_interface $saved_infix
 
 # ---------------------------------------------------------------------------

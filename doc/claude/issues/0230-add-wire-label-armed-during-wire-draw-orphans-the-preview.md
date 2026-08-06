@@ -3,7 +3,7 @@
 Status: **FIXED** — two independent defects, two disjoint fixes, 23 new headless checks.
 Area: `src/callback.c` `abort_operation()` (`:350-378`), new `abort_wire_line_command()` (`:494-534`);
 `src/scheduler.c` `add_wire_label` branch (`:1831-1848`)
-Tests: `tests/headless/test_add_wire_label.tcl` section **G** (59 → 82 checks)
+Tests: `tests/headless/test_add_wire_label.tcl` section **G** (59 → 88 checks)
 Found: 2026-08-06 (user report, `cadence_style_rc` session). Evidence: `doc/claude/evidence/0230/`
 Related: **0123** (the `sympin_preview`-without-`STARTMOVE` desync this reproduces), **0122** E1
 (`sympin_drops` witness), `doc/claude/specs/add_wire_label.md`, `doc/claude/specs/wire_stub_netlabel.md`
@@ -163,13 +163,40 @@ accelerator, the form's re-arm and a scripted `xschem add_wire_label` in one pla
 `TRAP 7`: had `edit.add_wire_label` been made C-backed and allowed to *decline*, dispatch would fall
 through to the legacy `case 'l'` (`callback.c:6383`) and silently start a graphic **line**.
 
+### Follow-up 2026-08-06 — the gate missed the RESTING command mode (user-reported, fixed)
+
+The first cut gated on `ui_state & (STARTWIRE|STARTLINE)` plus the menu arms, and that is only
+*half* of "wire-draw mode". After ending a segment with a **double-click** the user is still in
+wire mode — the diamond snap cursor is up — but `ui_state` has **no** `STARTWIRE`; only
+`xctx->last_command` is armed. `cadence_style_rc:60` sets `persistent_command 1`, and the press
+handler at `callback.c:7843` tests `last_command` **alone**:
+
+```c
+if(!xctx->readonly && tclgetboolvar("persistent_command") && xctx->last_command) {
+  … start_wire(xctx->mousex_snap, xctx->mousey_snap); …
+  return;                                   /* the placement is never offered the click */
+}
+```
+
+So `l` armed the label, the gate found nothing to abort, and every click started a **new wire**
+while the preview rode the cursor — exactly the original symptom, one state to the left. The user's
+own report distinguishes the two precisely: *"If one vertex of a wire has been placed and the
+command is waiting for the next vertex, then the abort-when-entering-label-command works
+properly."* Their trace confirms it: `FLTRACE move: fluid_gesture_arm ui=SELECTION|STARTMOVE
+sympin_preview=1` — **no `STARTWIRE`** at the moment the preview was live.
+
+`abort_wire_line_command()` now also treats a non-zero `last_command` as live (it only ever holds
+`0`/`STARTWIRE`/`STARTLINE`, `callback.c:541`/`:476`) and erases the stale snap cursor. Check
+`0230 resting: arm label leaves mode` in section **G4**; sabotaging that one predicate reddens
+exactly it.
+
 **Two read-only getters** were added so the invariant is directly assertable rather than inferred
 from a fluid trace: `xschem get last_command` (`scheduler.c:4239`) and `xschem get sympin_preview`
 (`scheduler.c:4513`). `sympin_preview` must never outlive `START_SYMPIN`.
 
 ## Tests
 
-`tests/headless/test_add_wire_label.tcl` section **G**, 23 checks, 59 → **82**. RED-first: 11 failed
+`tests/headless/test_add_wire_label.tcl` section **G**, 29 checks, 59 → **88**. RED-first: 11 failed
 before the fix. Placed before section F because F loads a `.sym` view (where `add_wire_label`
 short-circuits) and never returns to a schematic.
 
@@ -180,15 +207,19 @@ short-circuits) and never returns to a schematic.
   preview instance, clears `STARTWIRE`, leaves nothing selected, and *keeps* wire command mode; the
   second ESC leaves it.
 - **G3** (5) — the plain wire draw is untouched: two-stage ESC, nothing committed.
+- **G4** (6) — the **resting** command mode (`ui_state` clear, `last_command` armed — the state
+  after a double-click ends a segment): arming the label leaves wire mode, the preview arms, and
+  the drop commits. See the follow-up above.
 
 **Sabotage variants** (`WIRING.md` §10), red sets disjoint as required:
 
 | sabotage | red checks |
 |---|---|
 | `if(0 && …)` on the (B) gate call | exactly 2: `arm label clears STARTWIRE`, `arm label clears last_command` |
+| `if(0 && xctx->last_command)` on the resting-mode predicate | exactly 1: `resting: arm label leaves mode` |
 | `if(1)` on the (A) fall-through guard | exactly 3: `ESC clears sympin_preview`, `ESC deletes preview instance`, `ESC leaves nothing selected` |
 
-Green tiers after the fix: `test_add_wire_label` **82**, `test_label_ride` **157**,
+Green tiers after the fix: `test_add_wire_label` **88**, `test_label_ride` **157**,
 `test_label_strand_oracle` **32**, `test_wire_split` **119**, `wireedit/run_wireedit.sh` **58/58**,
 `headless/run.sh` 6/6 goldens, `tclsh run_regression.tcl` → the same **3 FAIL lines from the one
 pre-existing `test_ihp_sg13g2_libmgr` defect** (expects 9 libs, tree has 10) and nothing else. The 20

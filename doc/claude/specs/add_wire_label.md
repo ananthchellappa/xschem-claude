@@ -120,6 +120,15 @@ re-arm and a scripted `xschem add_wire_label` all pass through it. Nothing is co
 stranded baseline), a menu-armed-but-unclicked wire/line is dropped too, `last_command` is cleared
 so no press restarts a wire under the fresh preview, and the statusbar says what happened.
 
+**"Wire-draw mode" is three states, not one**, and the gate must catch all three: a LIVE draw
+(`ui_state & STARTWIRE`, rubber band up); a MENU-armed draw whose first click has not landed
+(`MENUSTART` + `MENUSTARTWIRE`); and the **RESTING** command mode after a double-click ends a
+segment — `ui_state` has no `STARTWIRE` at all, only `last_command`, and the diamond snap cursor
+is the only tell. The resting state is the dangerous one: under `persistent_command`
+(`cadence_style_rc:60`) `callback.c:7843` tests `last_command` alone and calls `start_wire()`
+*before* any placement is offered the click, so a label armed there can never be dropped. Gating
+on `ui_state` alone shipped that bug (issue 0230 follow-up, 2026-08-06).
+
 It is **not** `abort_operation()`: on a `-place` re-arm a preview is already live, and tearing that
 down would clear `sympin_preview` and make the next `-place` push a **second** undo baseline for
 one gesture (see #8 and the one-baseline rule below). `-drop` is not gated — by then the wire is
