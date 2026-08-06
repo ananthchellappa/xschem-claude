@@ -15754,6 +15754,15 @@ if {[info exists no_recent_files] && $no_recent_files} {
 } else {
   set_ne update_recent_files 1
 }
+# Waveform-viewer Location bar history (signal_browser_batch item 13): how many
+# raw files the Location dropdown remembers. Kept HERE, in the user-history
+# cluster, because that is what it is -- its store is $USER_CONF_DIR/raw_history
+# and it is gated on the SAME update_recent_files flag set just above. That flag
+# is the only one covering both the hard-gated --nogui/--pipe session and the
+# 0119 --script-BODY window (xinit.c saves/zeroes/restores it around
+# source_tcl_file); a private flag would miss the --script case, i.e. reopen
+# 0119. Consumed by wviewer::rawhist_max.
+set_ne raw_history_max 20
 # Fluid editing: first-click tip/edge grab + incremental wire rip-up-reroute on drag
 # (doc/claude/specs/fluid_editing.md, nice_drag_rerouting.md). Default ON as of the
 # 0091-0096 reroute chain. The drag-to-move gesture itself still needs the intuitive/
@@ -16173,6 +16182,13 @@ set_ne copy_cell 0
 
 load_recent_file
 load_net_hilight_conf
+# signal_browser_batch item 13: the waveform viewer's Location-bar raw history,
+# read from its own store ($USER_CONF_DIR/raw_history) -- NEVER the recent-files
+# list. Sits with the other two loaders because it has their lifetime: read once
+# at startup, written back only from an ungated interactive load. wave_viewer.tcl
+# is sourced unconditionally at :14376, so the proc exists here; it never throws
+# (a corrupt store just leaves the dropdown empty).
+wviewer::rawhist_load
 # schematic to preload in new windows 20090708
 set_ne XSCHEM_START_WINDOW {}
 

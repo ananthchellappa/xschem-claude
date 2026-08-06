@@ -300,11 +300,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [winfo exists .wvbs1.wvbrowser.ph] [winfo class .wvbs1.wvbrowser.ph] \
           [lindex [winfo children .wvbs1.wvbrowser] 0]] \
     [list 1 Label .wvbs1.wvbrowser.ph]
-  check {BS22 the frame's children are exactly item 9's set} \
+  # ⚠ WIDENED AGAIN BY ITEM 13, NOT DELETED (ruling 17, and item 9's own
+  # precedent eight lines up). Item 13 adds the LOCATION ROW `.loc` to the
+  # sidebar, which falsifies any claim that names the item-9 child set — so the
+  # SET is extended and the check NAME is corrected with it. A name that says
+  # "item 9's set" while pinning item 13's is itself a defect.
+  check {BS22 the frame's children are exactly item 13's set} \
     [lsort [winfo children .wvbs1.wvbrowser]] \
     [lsort [list .wvbs1.wvbrowser.ph .wvbs1.wvbrowser.wvsearch \
                  .wvbs1.wvbrowser.tb .wvbs1.wvbrowser.tvf \
-                 .wvbs1.wvbrowser.wvfilter]]
+                 .wvbs1.wvbrowser.wvfilter .wvbs1.wvbrowser.loc]]
   check_true {BS22 ...and it says what it is} \
     [expr {[string first {Signal Browser} [.wvbs1.wvbrowser.ph cget -text]] >= 0}]
   check {BS23 a freshly built sidebar is hidden, and the mirror says so} \
@@ -1076,9 +1081,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [bt_tree $BTTV]] \
     [list 1 1 empty]
 
-  check {BT21 the sidebar's children are exactly the item-9 set} \
+  # ⚠ WIDENED BY ITEM 13, NOT DELETED (ruling 17): the Location row `.loc` is a
+  # new child of the sidebar, so the SET grows and the NAME is corrected with it.
+  check {BT21 the sidebar's children are exactly the item-13 set} \
     [lsort [winfo children $BTF]] \
-    [lsort [list $BTF.ph $BTF.wvsearch $BTF.tb $BTF.tvf $BTF.wvfilter]] 
+    [lsort [list $BTF.ph $BTF.wvsearch $BTF.tb $BTF.tvf $BTF.wvfilter $BTF.loc]]
   check {BT21 the tree is a ttk::treeview, extended-select, with a scrollbar} \
     [list [winfo class $BTTV] [$BTTV cget -selectmode] [winfo exists $BTF.tvf.sb]] \
     [list Treeview extended 1]
@@ -1096,17 +1103,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # that the tree (packed last, -expand 1) takes whatever is left BETWEEN them.
   # Asserting the whole list plus each slave's -side pins the layout that
   # actually produces search / toolbar / tree / filter / status top to bottom.
-  check {BT21 the sidebar's packing recipe is the exact five-slave stack} \
+  # ⚠ WIDENED BY ITEM 13: `.loc` is packed FIRST of all (the Location row sits
+  # above the Search bar, ViVA §3.1), so the recipe is a SIX-slave stack and the
+  # name says six. The `-side` leg below gains `.loc -> top` for the same reason.
+  check {BT21 the sidebar's packing recipe is the exact six-slave stack} \
     [pack slaves $BTF] \
-    [list $BTF.wvsearch $BTF.tb $BTF.ph $BTF.wvfilter $BTF.tvf]
+    [list $BTF.loc $BTF.wvsearch $BTF.tb $BTF.ph $BTF.wvfilter $BTF.tvf]
   check {BT21 ...with the sides that put the tree between the toolbar and the filter} \
-    [list [dict get [pack info $BTF.wvsearch] -side] \
+    [list [dict get [pack info $BTF.loc] -side] \
+          [dict get [pack info $BTF.wvsearch] -side] \
           [dict get [pack info $BTF.tb] -side] \
           [dict get [pack info $BTF.ph] -side] \
           [dict get [pack info $BTF.wvfilter] -side] \
           [dict get [pack info $BTF.tvf] -side] \
           [dict get [pack info $BTF.tvf] -expand]] \
-    [list top top bottom bottom top 1]
+    [list top top top bottom bottom top 1]
 
   # the measured 755-px blowout, made assertable
   check {BT22 pack propagation is OFF on the sidebar} \

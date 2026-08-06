@@ -376,6 +376,17 @@ namespace eval wviewer {
   #     anything from the widget.
   variable browsersigs; array set browsersigs {}
   variable browserrows; array set browserrows {}
+  # signal-browser PLAN item 13: the Location bar's RAW HISTORY. A single
+  # GLOBAL list (newest first, deduped on the normalised path, capped at
+  # $::raw_history_max), NOT a per-token array: "the last raws I opened" is a
+  # property of the USER, exactly like $tctx::recentfile, and every viewer
+  # window offers the same dropdown. Persisted to $USER_CONF_DIR/raw_history
+  # as a Tcl-sourceable line -- the recent_files shape, because the PLAN's
+  # "the same way other viewer prefs are" turned out to be a FALSE PREMISE:
+  # `grep USER_CONF_DIR wave_viewer.tcl` had zero hits before this item, i.e.
+  # NO viewer pref was persisted anywhere. Never written from a gated
+  # (--nogui/--pipe/--script) session -- issue 0119, see rawhist_push.
+  variable rawhist {}
   # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
   # graph index). Window properties, not graph properties — hence arrays
   # keyed by session token like the mirrors above, NOT layout-dict keys (the
@@ -5948,6 +5959,234 @@ proc wviewer::browser_and {sigs d1 d2} {
   return $r2
 }
 
+# === signal-browser PLAN item 13: the LOCATION BAR + the last-20 raw history ==
+#
+# ViVA's Location field (§3.1): an editable path entry at the top of the sidebar
+# whose <Return> LOADS that raw, a dropdown of the last 20 raws opened (newest
+# first, deduped, persisted), and `select_raw` KEPT as the Browse... button
+# beside it — this item replaces nothing.
+#
+# ⚠ THE PLAN'S PERSISTENCE PREMISE WAS FALSE and the substitution is deliberate.
+# "persisted in the config the same way other viewer prefs are" describes a
+# mechanism that does not exist: no wviewer pref was persisted anywhere before
+# this item. The nearest REAL house precedent is the recent-files cluster
+# (xschem.tcl load_recent_file / update_recent_file / write_recent_file): a
+# Tcl-sourceable file under $USER_CONF_DIR, loaded once at startup, written
+# through a gated writer. That shape is what is copied here, including its gate.
+
+# The store's file. Derived at CALL TIME, never cached: a test can repoint
+# $::USER_CONF_DIR at a scratch dir and get a real end-to-end write without ever
+# touching the user's ~/.xschem (test_wave_sigbrowser_i1315.tcl BR50/BR54).
+proc wviewer::rawhist_path {} {
+  if {![info exists ::USER_CONF_DIR] || $::USER_CONF_DIR eq {}} { return {} }
+  return [file join $::USER_CONF_DIR raw_history]
+}
+
+# The cap. $::raw_history_max (registered in xschem.tcl beside the other
+# user-history vars); anything that is not a positive integer falls back to 20
+# rather than truncating the list to nothing or throwing.
+proc wviewer::rawhist_max {} {
+  if {![info exists ::raw_history_max]} { return 20 }
+  set m $::raw_history_max
+  if {![string is integer -strict $m] || $m <= 0} { return 20 }
+  return $m
+}
+
+# PURE: `hist` with `path` moved to the FRONT, deduped on the NORMALISED path,
+# truncated to `max`. No widget, no `xschem`, no file I/O and no namespace
+# variable — which is what lets every ordering/dedup/cap claim be checked in the
+# `--nogui` arm, where there is no Tk and no raw at all.
+#
+# ⚠ THE DEDUP COMPARES `file normalize`D FORMS, not literals. `/a/b`, `/a/./b`
+# and `/a/b/` are one raw file and must be ONE entry; a literal `ne` would let
+# the same file occupy all twenty slots. Sabotage (a) removes exactly this.
+proc wviewer::rawhist_add {hist path {max 20}} {
+  if {$path eq {}} { return $hist }
+  set p [file normalize $path]
+  if {$p eq {}} { return $hist }
+  set out [list $p]
+  foreach i $hist {
+    if {$i eq {}} { continue }
+    if {[file normalize $i] eq $p} { continue }
+    lappend out $i
+  }
+  if {![string is integer -strict $max] || $max <= 0} { set max 20 }
+  # tcl8.4 errors if using lreplace past the last element (update_recent_file)
+  if {[llength $out] > $max} { set out [lreplace $out $max end] }
+  return $out
+}
+
+proc wviewer::rawhist_get {} {
+  variable rawhist
+  return $rawhist
+}
+
+# Read the store at startup. NEVER THROWS and never warns: a corrupt or
+# half-written raw_history must not stop xschem starting, and unlike
+# recent_files there is no user-visible menu whose absence would go unnoticed —
+# the dropdown simply comes up empty.
+proc wviewer::rawhist_load {} {
+  variable rawhist
+  set f [wviewer::rawhist_path]
+  if {$f eq {} || ![file exists $f]} { return 0 }
+  if {[catch {source $f}]} { return 0 }
+  if {![info exists rawhist]} { set rawhist {} }
+  return [llength $rawhist]
+}
+
+# Write the store. Same `set <fully qualified var> {<list>}` line shape as
+# write_recent_file, so the file is plain `source`able (and readable by a test
+# into a throwaway namespace).
+#
+# ⚠⚠ `::open` AND `::close` ARE FULLY QUALIFIED ON PURPOSE, AND THIS WAS A REAL
+# BUG BEFORE IT WAS A COMMENT. This namespace defines `wviewer::open {token}`
+# and `wviewer::close {token}`, and Tcl resolves an unqualified command name in
+# the CURRENT NAMESPACE FIRST — so a bare `open $f w` here called
+# `wviewer::open` with two arguments, threw "wrong # args", and the `catch`
+# swallowed it: `rawhist_write` returned 0 forever and no store was ever
+# written, while every structural check stayed green. Exactly item 10's
+# `clipboard clear` defect (its bare call resolved to `wviewer::clipboard`), and
+# it was caught the same way — by a check that READ THE FILE BACK OFF DISK
+# rather than one that observed a non-throwing return.
+proc wviewer::rawhist_write {} {
+  variable rawhist
+  set f [wviewer::rawhist_path]
+  if {$f eq {}} { return 0 }
+  if {[catch {::open $f w} fd]} { return 0 }
+  catch {puts $fd "set ::wviewer::rawhist {$rawhist}"}
+  catch {::close $fd}
+  return 1
+}
+
+# THE ONLY GATED SITE. Returns 1 when the history actually moved.
+#
+# ⚠ THE GATE IS `update_recent_files`, DELIBERATELY THE SAME FLAG THE
+# RECENT-FILES CLUSTER USES, and a private flag would REOPEN ISSUE 0119. That
+# flag is the only one covering BOTH halves of the problem: C forces it 0 for a
+# hard-gated automation session (--nogui / --pipe / --norecent, xschem.tcl
+# :15752 off `no_recent_files`) AND toggles it 0 around `source_tcl_file` for
+# the duration of a --script BODY in an otherwise ungated GUI session
+# (xinit.c :3809). A verification run must not rewrite the user's history.
+#
+# It suppresses the IN-MEMORY append as well as the disk write — update_recent_file
+# parity. A gated session that appended in memory and merely declined to write
+# would still hand the next interactive write a polluted list.
+proc wviewer::rawhist_push {path} {
+  variable rawhist
+  # the recent-views list belongs to the user: no-op in gated (test/automation)
+  # sessions -- issue 0119, the same flag update_recent_file gates on
+  if {[info exists ::update_recent_files] && !$::update_recent_files} { return 0 }
+  set new [wviewer::rawhist_add $rawhist $path [wviewer::rawhist_max]]
+  if {$new eq $rawhist} { return 0 }
+  set rawhist $new
+  wviewer::rawhist_write
+  return 1
+}
+
+# Push the current path into the combobox, refresh its -values from the history
+# and RE-ATTACH the balloon.
+#
+# ⚠ MUST NOT THROW: it rides <Return> and <<ComboboxSelected>>, and a Tcl error
+# on a binding pops bgerror — modal under X, which hangs a headless run. Same
+# discipline as browser_refresh and searchbar_fire: every step `catch`ed.
+#
+# ⚠ THE BALLOON IS RE-ATTACHED, NOT ATTACHED ONCE. `balloon` BAKES ITS STRING IN
+# at bind time (xschem.tcl :12551 builds the <Enter> script by substitution), so
+# a balloon attached at build time would forever show the path the bar held when
+# the sidebar was built. The full path in the tooltip is the whole answer to the
+# Eyeball clause: the entry itself shows only the tail.
+proc wviewer::rawbar_sync {token {path {}}} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set cb [dict get $windows $token top].wvbrowser.loc.cb
+  if {[catch {winfo exists $cb} e] || !$e} { return 0 }
+  if {$path ne {}} {
+    catch {$cb set $path}
+  } else {
+    catch {set path [$cb get]}
+  }
+  catch {$cb configure -values [wviewer::rawhist_get]}
+  catch {balloon $cb [expr {$path eq {} ? {(no raw file loaded)} : $path}]}
+  return 1
+}
+
+# LOAD the raw named by the Location bar. Returns 1 on success, 0 on every
+# refusal — and every refusal leaves the previous raw AND the tree exactly as
+# they were.
+#
+# ⚠ IT DOES NOT `raw clear` FIRST, and that is a DELIBERATE DIVERGENCE from
+# `attach_raw` (:2529), whose first act is `catch {xschem raw clear}`. MEASURED:
+# with A current, `xschem raw read <garbage>` returns 0 and leaves both
+# `raw rawfile` and `raw list` on A — the engine's read is atomic as long as
+# nothing cleared the old data first. Clearing would turn a typo in an editable
+# path entry into "your waveforms are gone". The cost is declared: raws
+# ACCUMULATE in xctx->extra_raw_arr rather than replacing one another.
+#
+# ⚠ THE `browser_refresh $token 1` IS NOT OPTIONAL — item 9's declared limit D6
+# says the inventory is a SNAPSHOT taken when the sidebar is SHOWN, and
+# `browser_show`'s pack branch was its ONLY caller. Without this line the user
+# gets the new raw's waveforms under the OLD raw's signal list. It is placed
+# after the successful read and inside it, so a failed read cannot replace a
+# good tree with an empty one (item 12's improve-or-restore guarantee, reached
+# here by never starting the reload at all).
+proc wviewer::rawbar_load {token path} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set path [string trim $path]
+  if {$path eq {}} {
+    wviewer::browser_status $token {Location: type the path of a raw file}
+    return 0
+  }
+  if {![file isfile $path]} {
+    wviewer::browser_status $token "Location: no such file '[file tail $path]'"
+    return 0
+  }
+  # attach_raw's precedent: a MOVE, not a 0173 loan. `regenerate` goes through
+  # `with_edit`, which deliberately does not restore the context.
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  # issue 0194 / test_wave_grid's GX1 rule: a Location-bar load replaces the
+  # DATA, not the plot — strips, traces and the selection all carry forward, so
+  # the regenerate below owes the fold, and skip_ranges is what keeps the new
+  # raw autozooming instead of being drawn in the outgoing raw's window.
+  wviewer::capture_live_view_state $token
+  set rc 0
+  catch {set rc [xschem raw read $path]}
+  if {$rc != 1} {
+    wviewer::browser_status $token "Location: could not read '[file tail $path]'"
+    return 0
+  }
+  wviewer::regenerate $token
+  catch {wviewer::browser_refresh $token 1}
+  wviewer::rawhist_push $path
+  wviewer::rawbar_sync $token $path
+  wviewer::log_action [list wviewer::rawbar_load $token $path]
+  return 1
+}
+
+# ONE COMMIT PATH (searchbar_fire's rule): both bindings and the Browse button
+# end in `rawbar_load`, so no route can apply a policy another route skips.
+proc wviewer::rawbar_commit {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set cb [dict get $windows $token top].wvbrowser.loc.cb
+  set p {}
+  if {[catch {set p [$cb get]}]} { return 0 }
+  return [wviewer::rawbar_load $token $p]
+}
+
+# Browse... — `select_raw` (xschem.tcl :14290) REUSED, not reimplemented. It is
+# `tk_getOpenFile`, i.e. MODAL, so this route is never exercised headlessly;
+# only its wiring is assertable (declared limit).
+proc wviewer::rawbar_browse {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set p {}
+  if {[catch {select_raw $top} p]} { return 0 }
+  if {$p eq {}} { return 0 }
+  return [wviewer::rawbar_load $token $p]
+}
+
 # Build the (HIDDEN) sidebar. Out of `open` for the same reason `tabbar_build`
 # is: a viewer that never opens the browser keeps its canvas geometry
 # BYTE-IDENTICAL to the pre-item-8 viewer, which every viewport-derived
@@ -5968,6 +6207,28 @@ proc wviewer::browser_build {token top} {
   label $f.ph -anchor nw -justify left -width 22 \
     -font AseLabelFont -background [ase::theme panel] \
     -text "Signal Browser\n(empty)"
+  # --- item 13: the LOCATION ROW ---------------------------------------------
+  # ⚠ `-side right` FIRST, and it is forced by item 9's D1, not taste.
+  # `browser_width` sets `pack propagate $f 0` and then FIXES the frame's width
+  # (a measured 583 px, floored at 240), so a child wider than that is CLIPPED,
+  # never accommodated. The packer serves slaves in packing order, so the
+  # fixed-width Browse button must claim its slot before the stretchy entry.
+  #
+  # ⚠ THE COMBOBOX IS `-width 18` AND `-justify right`, which is the whole of
+  # the long-path answer: the fixed width stops the packer's reqwidth growing
+  # with the text (a full raw path is easily 120 characters), and right
+  # justification means the part that stays on screen is the TAIL — the file
+  # name — rather than a useless run of leading directories. The full path
+  # lives in the balloon, re-attached by rawbar_sync on every load.
+  frame $f.loc -background [ase::theme panel]
+  button $f.loc.br -text {Browse...} -font AseLabelFont \
+    -command [list wviewer::rawbar_browse $token]
+  ttk::combobox $f.loc.cb -width 18 -justify right \
+    -values [wviewer::rawhist_get]
+  pack $f.loc.br -side right -padx {0 6} -pady 2
+  pack $f.loc.cb -side left -fill x -expand 1 -padx {6 4} -pady 2
+  bind $f.loc.cb <Return>             [list wviewer::rawbar_commit $token]
+  bind $f.loc.cb <<ComboboxSelected>> [list wviewer::rawbar_commit $token]
   # THE TOP BAR KEEPS ITS SEARCH BUTTON (ruling 20); the BOTTOM one is the
   # `-showbutton 0` variant that ruling reserved, and item 9 is its first user.
   # `-fill x` on both is item 4's stated requirement.
@@ -5985,6 +6246,8 @@ proc wviewer::browser_build {token top} {
   pack $f.tvf.tv -side left -fill both -expand 1
   wviewer::searchbar_build $f -name wvfilter -showbutton 0 \
     -command [list wviewer::browser_filter_cb $token]
+  # item 13: the Location row sits ABOVE the Search bar (ViVA §3.1's order)
+  pack $f.loc      -side top -fill x
   pack $f.wvsearch -side top -fill x
   pack $f.tb       -side top -fill x
   # bottom-up: the status line last of all, the Filter bar just above it

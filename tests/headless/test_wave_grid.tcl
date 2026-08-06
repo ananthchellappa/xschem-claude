@@ -243,12 +243,22 @@ proc wvproc_body {src name} {
 }
 
 # THE RULE: a regenerate that carries the current strips forward must capture
-# first. These twelve do; the three below replace the model wholesale and must
-# not. 12 + 3 + the seven that already captured pre-0194 = every call site.
+# first. The gx_must list does; the three exemptions below replace the model
+# wholesale and must not. gx_must + gx_exempt + the gx_pre sites that already
+# captured pre-0194 = every call site, and GX4 asserts exactly that sum, so the
+# three lists have to be kept in step with the source rather than approximated.
+#
+# ⚠ `rawbar_load` ADDED BY SIGNAL_BROWSER_BATCH ITEM 13 (the Location bar). It
+# is a textbook gx_must: a Location-bar load swaps the DATA under a plot the
+# user built, carrying the strips, the traces and the selection forward, which
+# is attach_raw's documented 0194 case reached by a different gesture. Adding it
+# is what keeps GX4's count claim true AND puts the new site under GX1's
+# capture-before-regenerate order check.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok
-             select_tab new_tab close_tab paste_traces paste_payload}
+             select_tab new_tab close_tab paste_traces paste_payload
+             rawbar_load}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -289,7 +299,8 @@ foreach p $gx_pre {
     [regexp -all {capture_live_graph_state \$token *(;#[^\n]*)?\n} \
        [wvproc_body $wsrc wviewer::$p]] 1
 }
-# no unclassified site: 12 + 7 + 3 accounts for every `regenerate $token` call
+# no unclassified site: 18 + 7 + 3 accounts for every `regenerate $token` call
+# (18 since item 13 added rawbar_load; the sum is computed below, not hardcoded)
 check "GX4 every regenerate call site is classified by the rule" \
   [pcall {count_emitters $wv {wviewer::regenerate \$token}}] \
   [expr {[llength $gx_must] + [llength $gx_pre] + [llength $gx_exempt]}]
