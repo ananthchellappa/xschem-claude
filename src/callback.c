@@ -290,6 +290,7 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
  * replay seam (replay_action_log) + the general push/pop primitive instead. */
 void abort_operation(int deselect)
 {
+  int keep_last_command = 0;
   xctx->no_draw = 0;
   xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
   xctx->pin_pending_add = 0; /* and any armed SHIFT+pin additive gesture (D6) */
@@ -351,10 +352,30 @@ void abort_operation(int deselect)
     if(xctx->ui_state & STARTWIRE) new_wire(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
     if(xctx->ui_state & STARTLINE) new_line(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
     if(tclgetboolvar("draw_crosshair")) draw_crosshair(2, 0);
-    xctx->ui_state = 0;
-    return;
+    /* The `return` below is the two-stage ESC of commit a797bc59 and exists for ONE reason: to
+     * jump over `xctx->last_command=0;` so persistent wire/line COMMAND mode survives the first
+     * ESC (the second one leaves it). But it also jumped over every teardown below -- and a
+     * placement gesture can be armed ON TOP of a live wire draw (Add-Wire-Label / Add-Pin form,
+     * symbol/text placement: none of them clears STARTWIRE, and unselect_all() only zeroes
+     * ui_state when something was selected). One ESC then zeroed ui_state WHOLESALE, dropping
+     * START_SYMPIN without ever running the delete() at :393 or the sympin_preview /
+     * wirelabel_preview clears at :398-399. Result: the preview instance stays committed in
+     * xctx->inst[] and sympin_preview stays 1 with ui_state == 0 -- the issue 0123 desync, here
+     * terminal: :7878's click-select guard requires !sympin_preview, so no press can select,
+     * grab or complete anything ever again, and wire_label_try_commit() (:2843) refuses forever
+     * because START_SYMPIN is gone. Issue 0230; WIRING.md §8 class D (decline residue).
+     * So: keep skipping last_command=0, stop skipping the teardown. Only the states that HAVE
+     * teardown below fall through; a bare wire/line draw still returns here, unchanged.
+     * The rubber CLEAR above must stay FIRST: it erases by tiling from save_pixmap, which
+     * delete()'s trailing full draw() (select.c:790) regenerates. */
+    if(!(xctx->ui_state & (STARTMOVE | STARTCOPY | STARTMERGE))) {
+      xctx->ui_state = 0;
+      return;
+    }
+    xctx->ui_state &= ~(STARTWIRE | STARTLINE);
+    keep_last_command = 1;
   }
-  xctx->last_command=0;
+  if(!keep_last_command) xctx->last_command=0;
   /* xctx->manhattan_lines = 0; */
   if(xctx->ui_state & STARTMOVE)
   {
@@ -468,6 +489,48 @@ void start_line(double mx, double my)
       xctx->my_double_save=my;
     }
     new_line(PLACE, mx, my);
+}
+
+/* Leave any live (or menu-armed) wire/line DRAW before a modal PLACEMENT is armed on top of it
+ * (issue 0230). Two modal gestures at once is not a usable state even when every flag is
+ * consistent: end_place_move_copy_zoom() tests STARTWIRE (:2872) BEFORE the placement arm
+ * (:2927), so while a wire draw is live every click feeds the wire and the label/pin preview can
+ * never reach its drop gate -- "you want to place the label, but XSCHEM wants to keep drawing
+ * wire". User-ratified policy: entering Add-Wire-Label CANCELS the in-progress wire (nothing is
+ * committed -- new_wire() pushes undo and stores only at PLACE, so an abandoned draw strands no
+ * undo baseline and no copper) and then opens the form.
+ * Surgical on purpose: it touches ONLY the wire/line gesture. abort_operation() cannot be reused
+ * here -- on a form's per-keystroke `-place` RE-ARM a preview is already live, and tearing that
+ * down would clear sympin_preview and make the next -place push a SECOND undo baseline for one
+ * gesture (add_wire_label.md: one baseline per gesture).
+ * Returns 1 if something was actually abandoned. */
+int abort_wire_line_command(void)
+{
+  int aborted = 0;
+  if(!xctx) return 0;
+  if(xctx->ui_state & (STARTWIRE | STARTLINE)) {
+    if(xctx->ui_state & STARTWIRE) new_wire(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    if(xctx->ui_state & STARTLINE) new_line(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    if(tclgetboolvar("draw_crosshair")) draw_crosshair(2, 0);
+    xctx->ui_state &= ~(STARTWIRE | STARTLINE);
+    aborted = 1;
+  }
+  /* a MENU-armed wire/line whose first click has not landed yet: left armed, the next canvas
+   * press would start a wire UNDER the fresh preview and re-create the clash with no keystroke */
+  if((xctx->ui_state & MENUSTART) &&
+     (xctx->ui_state2 & (MENUSTARTWIRE | MENUSTARTSNAPWIRE | MENUSTARTLINE))) {
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 = 0;
+    aborted = 1;
+  }
+  if(aborted) {
+    /* leave wire/line COMMAND mode too: keeping last_command armed would restart a wire on the
+     * next press (:7828-7841, persistent_command) while the placement preview is still attached */
+    xctx->last_command = 0;
+    xctx->constr_mv = 0;
+    tcleval("set constr_mv 0");
+  }
+  return aborted;
 }
 
 void start_wire(double mx, double my)

@@ -1834,6 +1834,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * open over a symbol view does not push a no-op undo baseline + wipe the selection on every
        * keystroke (add_wire_label.md). Also declines the bare form-open there. */
       if(editing_symbol_view()) { Tcl_ResetResult(interp); return TCL_OK; }
+      /* issue 0230: `l` pressed WITHOUT first leaving wire-draw mode armed two modal placement
+       * gestures at once -- and with STARTWIRE live every click feeds the wire, so the label
+       * could never be dropped (callback.c:2872 is tested before :2927) and one ESC then left
+       * the preview orphaned. Entering Add-Wire-Label abandons the in-progress wire/line first
+       * (user-ratified; nothing is committed, no undo baseline is burnt). Placed here so the
+       * keyboard, the menu accelerator and a scripted `xschem add_wire_label` all pass through
+       * it -- `l` is Tcl-backed, so dispatch_input_action() cannot gate it (callback.c:5249).
+       * NOT applied to -drop: that is the pure commit seam, and by then the wire is long gone. */
+      if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) {
+        if(abort_wire_line_command() && has_x)
+          statusmsg("Add Wire Label: in-progress wire abandoned", 1);
+      }
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
         if(!nm) nm = "";
@@ -4224,6 +4236,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "last_created_window")) { /* return win_path of last created tab or window */
             Tcl_SetResult(interp, get_last_created_window_path(), TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "last_command")) { /* armed wire/line COMMAND mode (issue 0230) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->last_command), TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "lastsel")) { /* number of selected objects */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             rebuild_selected_array();
@@ -4493,6 +4509,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "sympin_drops")) { /* issue 0122 E1: committed Add-Pin/Add-Wire-Label drop count */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->sympin_drops),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "sympin_preview")) { /* issue 0230: live form preview flag; it must
+                                                         * never outlive START_SYMPIN (issue 0123 desync) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_preview),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "schname")) /* get full path of current sch. if 'n' given get sch of level 'n' */
           {

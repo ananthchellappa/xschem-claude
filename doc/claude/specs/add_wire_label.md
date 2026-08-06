@@ -107,6 +107,27 @@ and the status line explains why. Predicate: `point_on_wire_or_pin(x, y)` (check
 
 All defaults are reconfigurable from a user's loadable rc/script via `bind`/`keybindings.csv`.
 
+### Entering the form CANCELS an in-progress wire/line draw (issue 0230, user-ratified 2026-08-06)
+
+`l` pressed **without** first leaving wire-draw mode used to arm two modal gestures at once, and
+that is not a usable state at any flag setting: `end_place_move_copy_zoom()` tests `STARTWIRE`
+(`callback.c:2809`) **before** the placement arm (`:2864`), so every click fed the wire and the
+label could never reach its drop gate. Add-Wire-Label therefore **abandons the in-progress
+wire/line first** — `abort_wire_line_command()` (`callback.c:494`), called from the scheduler
+branch (`scheduler.c:1846`) so the key, the menu accelerator, the form's per-keystroke `-place`
+re-arm and a scripted `xschem add_wire_label` all pass through it. Nothing is committed
+(`new_wire()` stores and pushes undo only at `PLACE`, so an abandoned draw leaves no copper and no
+stranded baseline), a menu-armed-but-unclicked wire/line is dropped too, `last_command` is cleared
+so no press restarts a wire under the fresh preview, and the statusbar says what happened.
+
+It is **not** `abort_operation()`: on a `-place` re-arm a preview is already live, and tearing that
+down would clear `sympin_preview` and make the next `-place` push a **second** undo baseline for
+one gesture (see #8 and the one-baseline rule below). `-drop` is not gated — by then the wire is
+long gone.
+
+Note `p` (Add Pin) and the symbol-placement dialogs still permit the same double-arm; issue 0230
+made it *recoverable* (ESC now tears the preview down) but did not gate them.
+
 ## Implementation map
 
 C:

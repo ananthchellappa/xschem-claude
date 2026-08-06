@@ -166,6 +166,72 @@ check "clear_drawing clears label gate"    $r 0
 xschem abort_operation
 
 # ---------------------------------------------------------------------------
+# G. Issue 0230: `l` pressed while a WIRE DRAW is still live (two modal gestures armed at once).
+#    Two independent fixes, two disjoint red sets:
+#      G1/G3 -- arming the label ABORTS the live wire/line draw (scheduler add_wire_label gate);
+#      G2    -- abort_operation() tears down a co-armed placement preview instead of returning
+#               early with `ui_state = 0` (which orphaned sympin_preview/wirelabel_preview and
+#               left the preview instance committed -> the unrecoverable state of the report).
+#    `getq` tolerates a missing getter so a pre-fix binary reports FAIL, not a script abort.
+# ---------------------------------------------------------------------------
+proc getq {k} { if {[catch {xschem get $k} r]} { return ? } ; return $r }
+proc startwire {} { return [expr {([xschem get ui_state] & 1) ? 1 : 0}] }
+set saved_infix $::infix_interface
+set ::infix_interface 1   ;# `xschem wire gui` then arms a real STARTWIRE draw, headless
+
+# G1 -- arming a net label while a wire draw is live: the wire gesture is abandoned (nothing
+#       committed), the label preview arms cleanly, and it can still be dropped on copper.
+xschem clear force
+xschem wire 0 0 100 0
+xschem unselect_all
+xschem wire gui
+check "0230 wire draw armed"               [startwire] 1
+check "0230 wire draw owns last_command"   [getq last_command] 1
+set ::label_new_name FOO
+xschem add_wire_label -place
+check "0230 arm label clears STARTWIRE"    [startwire] 0
+check "0230 arm label clears last_command" [getq last_command] 0
+check "0230 label preview armed"           [placing] 1
+check "0230 aborted wire committed none"   [xschem get wires] 1
+check "0230 drop on copper after clash"    [xschem add_wire_label -drop 50 0] 1
+check "0230 drop clears placing"           [placing] 0
+check "0230 drop leaves preview clean"     [getq sympin_preview] 0
+check "0230 one label committed"           [xschem get instances] 1
+
+# G2 -- ESC with BOTH armed (reachable via the menu Wire path on top of a live preview).
+#       Pre-fix: ui_state=0 with sympin_preview=1 and the lab_pin left in the drawing forever.
+xschem clear force
+xschem wire 0 0 100 0
+xschem unselect_all
+set ::label_new_name BAR
+xschem add_wire_label -place
+xschem wire gui
+check "0230 both gestures armed"           [expr {[startwire] && [placing]}] 1
+xschem abort_operation
+check "0230 ESC clears sympin_preview"     [getq sympin_preview] 0
+check "0230 ESC clears START_SYMPIN"       [placing] 0
+check "0230 ESC deletes preview instance"  [xschem get instances] 0
+check "0230 ESC clears STARTWIRE"          [startwire] 0
+check "0230 ESC leaves nothing selected"   [xschem get lastsel] 0
+check "0230 ESC keeps wire command mode"   [getq last_command] 1
+xschem abort_operation
+check "0230 second ESC leaves wire mode"   [getq last_command] 0
+
+# G3 -- the plain wire draw is untouched: two-stage ESC (commit a797bc59) still ends the
+#       segment first and the wire COMMAND mode only on the second press.
+xschem clear force
+xschem wire gui
+check "0230 plain wire armed"              [startwire] 1
+xschem abort_operation
+check "0230 plain wire: ESC ends segment"  [startwire] 0
+check "0230 plain wire: mode survives"     [getq last_command] 1
+xschem abort_operation
+check "0230 plain wire: 2nd ESC exits"     [getq last_command] 0
+check "0230 plain wire: nothing committed" [xschem get wires] 0
+
+set ::infix_interface $saved_infix
+
+# ---------------------------------------------------------------------------
 # F. Symbol-view guard (review #6): in a .sym view add_wire_label -place is a no-op -- it must NOT
 #    push an undo baseline or wipe the selection (place_symbol refuses instances there anyway).
 # ---------------------------------------------------------------------------

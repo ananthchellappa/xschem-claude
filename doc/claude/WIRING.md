@@ -416,7 +416,13 @@ contact matrix {endpoint-on-pin, pin-on-span, endpoint-on-span, collinear} × {o
 × {moving/stationary} × {perp/parallel} was never enumerated; each cell found by a user
 (0083/0085/0094/0098/0105/0106/0109; 0112 found by the A3 audit fold-in) · C **Stale anchor** — pristine-anchor-by-design +
 no liveness concept for vacated points (0103/0104/0108/0111) · D **Decline residue** —
-cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111) · E **Transform
+cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111; **0230**: `abort_operation()`'s
+STARTWIRE/STARTLINE arm returned early to preserve persistent command mode and thereby skipped the
+WHOLE teardown below — with a placement preview co-armed on top of a live wire draw, `ui_state = 0`
+dropped `START_SYMPIN` before `delete()` could run, orphaning the preview instance in the drawing
+with `sympin_preview`/`wirelabel_preview` stuck at 1 → callback.c's click-select guard
+(`!sympin_preview`) false forever = unrecoverable UI. **An early return inside a teardown function
+is a class-D generator: gate the ONE step you meant to skip, do not `return`.**) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
 follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others

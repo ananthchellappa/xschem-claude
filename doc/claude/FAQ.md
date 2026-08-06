@@ -14,6 +14,40 @@ Newest entries on top.
 
 ---
 
+## Q35. I pressed `l` while still drawing a wire and everything broke. What does `l` do mid-draw now?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `aabf354e` + uncommitted — issue **0230** fix.
+
+**It cancels the wire you were drawing, then opens the Add Wire Label form.** That is the
+user-ratified behaviour as of 2026-08-06 (the alternatives considered were: ignore `l` with a
+statusbar hint, or silently *finish* the wire at the current point). Nothing is committed — an
+abandoned draw leaves no copper, burns no undo baseline, and the statusbar says
+`Add Wire Label: in-progress wire abandoned`. A wire armed from the **menu** but not yet clicked is
+dropped too, and wire *command* mode is left, so the next click does not restart a wire underneath
+the new label preview.
+
+Why it cannot just let both run: `end_place_move_copy_zoom()` tests `STARTWIRE`
+(`callback.c:2809`) **before** the placement arm (`:2864`), so while a wire draw is live every
+click is consumed by the wire and the label can never reach its drop gate — exactly the
+"XSCHEM wants to keep drawing wire" the report described. Two modal placement gestures at once has
+no good meaning; one of them has to yield, and the one you just asked for wins.
+
+The second half of that bug was worse and is also fixed: `ESC` used to *return early* out of
+`abort_operation()` to preserve persistent wire mode, skipping the teardown below it. With a label
+preview co-armed, that dropped `START_SYMPIN` while leaving `sympin_preview = 1` and the preview
+instance committed in the drawing — after which the click-select guard
+(`… && !xctx->sympin_preview`, `callback.c:7815`) was false forever and nothing could be selected,
+dropped or cancelled again. The grey wire-shaped ghost lines and the dead zoom were the same thing:
+the rubber bands are only ever erased while their `ui_state` bit is set. ESC now tears down both
+gestures; the two-stage ESC for a *plain* wire draw (first press ends the segment, second leaves
+wire mode) is unchanged.
+
+Note `p` (Add Pin) and the component-placement dialogs can still be armed mid-draw. They are now
+*recoverable* — one ESC cleans up properly — but they do not yet cancel the wire the way `l` does.
+
+---
+
 ## Q34. Now a net label follows the wire when I move it, and it rotates with it. What changed, and can I turn it off?
 
 - **Asked:** 2026-08-06

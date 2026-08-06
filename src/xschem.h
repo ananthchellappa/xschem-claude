@@ -2481,6 +2481,7 @@ extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);
+extern int abort_wire_line_command(void); /* issue 0230 */
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
