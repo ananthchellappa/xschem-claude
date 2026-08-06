@@ -6,19 +6,40 @@ crosses a WSLg threshold and that is a driver decision, not an item-12 defect. I
 file touched. Four sabotages injected, each fired its predicted target **plus a
 declared superset** (ruling 23), each reverted, clean re-run green.
 
-**Files touched — 6:** `src/wave_viewer.tcl` (+~240, the viewer half),
-`src/ase.tcl` (+~90, the command), `src/xschem.tcl` (+6, the Tools entry),
-`src/cadence_style_rc` (+13, the key), `tests/headless/test_wave_sigbrowser.tcl`
-(+~430, prefix **BX**), and this receipt.
+**Commit: `35d9e18ff60c9c1ec7212a3232f41004777c2ee1`** (`35d9e18f`) — ONE commit,
+**NOT pushed**, subject `feat(ase): Show in Signal Browser, schematic->browser` on
+`fluid-editing`. Staged as an explicit file list; no `git add -A`.
+
+**Files touched — 6, from `git show --numstat 35d9e18f` re-run at the ledger
+stage and by the verifier, no scope leak and NO `.c` file (settled decision 8
+honoured):** `src/wave_viewer.tcl` (+273), `src/ase.tcl` (+92),
+`src/cadence_style_rc` (+12), `src/xschem.tcl` (+6),
+`tests/headless/test_wave_sigbrowser.tcl` (+782, prefix **BX**), and this receipt
+(+437). **1602 insertions, 0 deletions** — every hunk is an append, nothing
+existing was rewritten. `src/ase_window.tcl` is **NOT** in the commit (§1's
+substitution). `tests/headless/test_wave_grid.tcl` is **NOT** in it either (§1's
+last row — the baseline's bump claim is false for this item).
+
+⚠ **§11-§13 below were written by the LEDGER stage, after the commit, and are
+therefore not inside `35d9e18f` itself** (the same arrangement as
+`11_receipt.md` §12-§14). §1-§10 are the implementer's, as committed.
+
+**FAILED-item triage: not applicable.** The verdict is DONE; nothing is owed to a
+human as a failure diagnosis. What IS owed — and it is the reason to read this
+receipt at all — is the **two driver actions** in §10.2 and §12.4, neither of
+which is an item-12 code defect.
 
 **Test file:** `tests/headless/test_wave_sigbrowser.tcl` (appended, decision 9;
 prefix **BX**, which the file header at :22 already reserved).
 Checks: **X arm 489** (was 397 after item 11, **+92**); **`--nogui` arm 214**
 (was 185, **+29**).
 
-**Non-baseline fails: NONE** — §10 for the audit, §10.2 for the X-death
-measurement and §10.3 for the two one-check flakes it turned up (one mine, fixed;
-one item 11's, named for the driver's FLAKY list).
+**Non-baseline fails: NONE, in BOTH audits** — §10 for the implementer's
+(258/22/4), §12.4 for the verifier's independent one (256/25/3) and the two
+off-list names he cleared in isolation. §10.2 + §12.2/§12.4 for the X-death
+measurement, §10.4 + §12.2 for the **three** one-check flakes turned up (one the
+implementer's own, fixed; `BH54` item 11's; `BT45` item 9's) — all owed to the
+driver's FLAKY list, none of them item 12's code.
 
 ---
 
@@ -411,7 +432,13 @@ line of item-12 code runs** — and unrelated shorter suites (`test_wave_grid` 2
 
 **Across the whole item the file ran clean — `ALL PASS (489 checks)` — twelve
 separate times**, and every failing run carried an X death with **zero** `BX`
-failures. §10.2 is where the conclusion lives; this section exists so nobody
+failures. ⚠ **LEDGER-STAGE QUALIFIER, added after the verifier measured it
+independently: the `ALL PASS` half of that sentence did NOT reproduce.** The
+verifier completed the file **once in twelve attempts**, and that one completion
+scored **488 pass / 1 FAIL** — the failure being `BT45`, item 9's geometry leg,
+which executes before a single line of `BX` code. Read the claim as **"no `BX`
+check ever failed"**, which is what both stages could confirm; §12.2.
+§10.2 is where the conclusion lives; this section exists so nobody
 repeats the confounded A/B and concludes from `4/4 vs 1/4` that item 12's code
 is at fault.
 
@@ -435,3 +462,176 @@ is at fault.
   to `tail`). **ACTION FOR THE DRIVER: it is `BH54`, and it belongs on the FLAKY
   list.** `BH50`'s two checks flap the same way, but only ever in runs that also
   carried an X death (2 of 11 runs; green in all 9 clean ones).
+
+---
+
+## 11. SABOTAGE TABLE — ledger form (`failedExactly` / `reverted` per row)
+
+**Seven injections in total**: the implementer's four (§5) — one of them
+SUBSTITUTED and one ADDED, both declared under ruling 23 — plus the verifier's
+**two own unnamed** ones and his reproduction of (a) (§12.3). Every one was
+reverted and followed by a clean re-run.
+
+**Revert method.** The implementer worked against a then-uncommitted item, so a
+`git checkout --` would have discarded the whole item: a pristine copy of all
+five files was taken in the scratchpad **before the first injection**, every
+injection was `diff`ed against it, and the revert was a `cp` back plus a `diff`
+to zero. The verifier, working against the committed tree, used
+`git checkout -- <file>` — but only after `git diff` confirmed the file held
+**nothing but the injection** — and confirmed `git diff --name-only -- src/ tests/`
+empty at exit.
+
+| # | origin | injection | predicted targets | observed | `failedExactly` | `reverted` |
+|---|---|---|---|---|---|---|
+| (a) | PLAN, **SUBSTITUTED** (§5.1, ruling 23) | delete `if {[catch {$tv see $id}]} { set ok 0 }` from `browser_reveal` | the visibility checks only | X arm **3**: BX31 (`collapsed`, not `visible`), BX32 (`offscreen`), BX42 (SECOND INVOKE). **Every selection leg stayed GREEN** — the built-in control excluding "the command did nothing". `--nogui` untouched at **214/214**, correct for an X-only claim | **yes** | **yes** |
+| (b) | PLAN, **REPHRASED** (§5.3) | `browser_node_for`: `if {$hit eq {}} { break }` → `return [list {} 0]`, i.e. delete the deepest-ancestor fallback | BX04, BX34, the BX42/BX48 fallback legs | X arm **8**: BX04 ×2, BX07 (leaf leg), BX34 ×2, BX37 (partial sentence), BX42 (SECOND INVOKE), BX50 (D6 snapshot control). `--nogui` **3**: BX04 ×2, BX07. A **declared superset**, every member a genuine fallback check | **yes** (superset declared) | **yes** |
+| (c) | PLAN | delete the `browser_toggle 1` un-hide from `ase::show_in_browser_for_current` | BX42's shown leg only | X arm **8**: BX42 (SIDEBAR / VISIBLE / DECLARED / SECOND INVOKE), BX43, BX44, BX45, BX46. BX40 asserts `browser_shown` 0 **AND** absent from `pack info` **AND** `winfo exists` 1 **before** the command, so none of these can be "it did nothing". `--nogui` untouched | **yes** (superset declared) | **yes** |
+| (d) | **ADDED** by the implementer (§5, ruling 23) | delete the `-nocase` candidate line from `browser_node_for` | BX02 + BX42's selection leg | X arm **6**: BX02, BX04, BX42 (SELECTION), BX42 (status line), BX42 (SECOND INVOKE), BX43. `--nogui` **2**: BX02, BX04. **BX03 (exact-first) stayed GREEN** — the control proving exact matching still works | **yes** (superset declared) | **yes** |
+| (v1) | **VERIFIER, UNNAMED** (§12.3) | `browser_show_path`'s IMPROVE-OR-RESTORE → unconditional accept (`if {1}`) — i.e. keep whatever the miss-retry reload answered | undeclared to the implementer; aimed at §6's late-found defect | **10**: BX39 **both legs**, BX34 **both legs**, BX35 (selection-survives), BX37, BX38 and the rest of the restore family | **yes** | **yes** |
+| (v2) | **VERIFIER, UNNAMED** (§12.3) | `browser_origin_drop` → always `0` | undeclared; aimed at the 0168 origin arithmetic | BX08 ×2 **in BOTH arms**, plus BX48 (ORIGIN) and BX48 (NEGATIVE DROP) **behaviourally** — so the arithmetic is pinned by more than its own unit test | **yes** | **yes** |
+| (a′) | **VERIFIER, reproduction of (a)** | as row (a) | reproduce the implementer's claim | **exactly 3**, all visibility (BX31, BX32, BX42 SECOND INVOKE); every selection leg green — **the implementer's row (a) reproduced byte for byte** | **yes** | **yes** |
+
+**Two things this table is deliberately not hiding.** Row (a) is a
+**substitution**, not the PLAN's sabotage, because the PLAN's state is
+unreachable by deletion (§5.1). Rows (b)/(c)/(d) fired **more** than predicted;
+each superset is enumerated above and every member is a real check of the
+injected mechanism, which is the ruling-23 bar — not "exactly one check" for its
+own sake.
+
+---
+
+## 12. VERIFIER STAGE — `ok: true`, `scopeClean: true`
+
+Everything in this section was **re-run by the verifier in a fresh context**, not
+read off §1-§10.
+
+### 12.1 Re-runs that reproduced the claims
+
+| what | result |
+|---|---|
+| `git show --stat / --name-only 35d9e18f` | **6 files, 0 `.c` files**, `ase_window.tcl` NOT touched — the substitution is real and declared |
+| `git status --porcelain` | only `doc/claude` batch bookkeeping dirty; **`src/` and `tests/` clean** before and after every injection |
+| `--nogui` arm | **214 passed / 0 failed** — matches the +29 claim exactly |
+| the anchors, re-read from source | `scheduler.c` `sim_sch_path` body (reads `sch_path[currsch]+1`, skips `sch_waves_loaded()` levels); `callback.c:5975 case '5'`; `keybindings.csv` has **no keysym-53 row**; `grep -rn Control-Key-5 src/` = **exactly one** line, in `cadence_style_rc`; `xschem.tcl:14933 Launch ASE-L` with the new entry immediately after; `ase_window.tcl` builds the **session** window (PLAN's file list wrong, divergence justified); `test_wave_grid` GH0/GH2 scope to `install_default_binds` / `build_menubar`, so **16/11 correctly stay** and the baseline's bump claim is **FALSE**; `ase::ui::sod_rel_path` reads `sch_path`, so **BX49 is correctly declared a test-only oracle**; `ase::session_for_current` returns `{key level lib cell view}`; `xschem raw loaded` returns **−1** with no raw |
+| the whole BX block (lines 2989-3760) read line by line hunting tautologies | **none found.** The source-regex legs (BX09-BX13) are **declared** guards; BX48/BX49 pin computed values against literals; BX50's snapshot control uses `browser_node_for` as its own oracle **but is paired with an independent behavioural leg** |
+| every other test that touches `.menubar.tools` (`test_ase_launch`, `test_lib_manager_launch`, `test_nh_editor_discover`, `test_create_instance`) | all index **BY LABEL**, so the inserted Tools entry is safe; `test_palette` asserts no counts |
+| a **BX-isolating probe copy** (BT/BM/BH-X groups gated off, 334 checks incl. all 92 BX) ×3 | 2 completions, **0 fails**; BX43's real `Ctrl-5` **was delivered** (no self-skip) |
+
+### 12.2 ⚠ THE X-ARM "489/0" NUMBER IS NOT ROUTINELY REPRODUCIBLE
+
+The verifier could complete the shipped file under X **1 run in 12**
+(`gated_xschem.sh` ×7, then `run_suites.sh -n 5`). **`grep '^FAIL: BX'` returned
+ZERO in all twelve.** The single completion scored **488 pass / 1 FAIL**, and the
+failure is **`BT45`** — *"the sidebar is narrower than the canvas on a real
+viewer"*, **item 9's geometry leg**.
+
+`BT45` is **not attributable to item 12**, on three independent grounds recorded
+by the verifier: it **executes before any BX code runs**; item 12 **adds no viewer
+widget and touches no geometry**; and the **same `src/` is under both arms of the
+A/B** below. It flapped in **2 of the verifier's 9 HEAD runs that reached it** and
+**0 of 8 item-11-version runs** — a newly observed WSLg layout-timing flake for
+the FLAKY list, not a regression. §10.3 now carries the qualifier.
+
+### 12.3 The verifier's own UNNAMED sabotages — and their outcomes
+
+Rows **(v1)** and **(v2)** in §11, both undeclared to the implementer, both aimed
+at the parts of the item the implementer had most reason to be proud of.
+
+* **(v1) — kill IMPROVE-OR-RESTORE** (`browser_show_path`, unconditional accept).
+  **10 checks fired**, including **both** BX39 legs, **both** BX34 legs, BX35's
+  selection-survives leg, BX37 and BX38. The defect the implementer found by
+  probe (§6) is therefore **genuinely pinned**, not merely described in prose.
+* **(v2) — `browser_origin_drop` → always 0.** Fired **BX08 ×2 in BOTH arms** and
+  — the point of the probe — **BX48 (ORIGIN) and BX48 (NEGATIVE DROP)
+  behaviourally**. The 0168 origin arithmetic is not resting on its own unit test.
+* **(a′) — reproduction of the substituted sabotage (a).** Exactly **3** fails,
+  all visibility, every selection leg green. The implementer's row (a) reproduced.
+
+All three reverted with `git checkout --` after confirming the file held only the
+injection; `src/` diff empty at exit; both probe copies deleted, no scratch dirs
+leaked.
+
+### 12.4 ⚠⚠ THE VERIFIER'S ADVISORY — the environment has degraded FURTHER, and only the driver can act
+
+**This is an advisory, not an item-12 code defect** — but it is the reason the
+verifier's `problems` array is non-empty on an `ok: true` verdict.
+
+| measurement | implementer | verifier |
+|---|---|---|
+| shipped file (489 checks) completes under X | ~1 in 6 | **1 in 12** |
+| `BX` failures across every aborted run | **0** | **0** |
+| the SAME file at `b81ee0c9` (397 checks), same window | 6/6 clean | **8/8 clean, 0 X deaths** (3 runs flapping `BH50` only) |
+| BX-only probe (334 checks) | halves 3/3 clean amplified 10-12× | **2/3 complete, 0 fails** |
+| `/mnt/wslg/stderr.log` marshalling fatals this session | 79 | **102** |
+
+The A/B is **ruling-22 shape**: same window, same `src/`, only the test file
+version differs. **§10.2's finding is CONFIRMED independently and is if anything
+understated.** The consequence the driver must own: *from now on
+`test_wave_sigbrowser` will report FAIL in nearly every audit, and item 12's X-arm
+claims are not routinely re-verifiable.* **Settled decision 9 ("two test files,
+not seventeen") is what forces the append, so only the driver can fix it.**
+
+**The full audit, run start to finish by the verifier: 256 pass / 25 fail /
+0 crash / 3 skip (284).** Sets compared, not counts (the baseline says the totals
+are not reproducible). The fail set diffed against the **16 HARD names** + the
+**FLAKY list**; **3 X deaths** attributed by line to `test_ase_persist`,
+`test_wave_sigbrowser` (died after **BX44**, with **zero BX fails**) and
+`test_wave_sigsearch`. The two names he could not attribute to the baseline were
+each cleared in isolation through `run_suites.sh`:
+
+* **`test_prop_form_field_width_0170` — on NEITHER the HARD nor the FLAKY list.**
+  Failed the audit (`pinned to 1px (precondition) -> {921} (exp {1})`), then
+  **3/3 `ALL PASS` (12 checks)** in isolation. **ACTION: FLAKY list.**
+* `test_wave_sigsearch` — failed the audit on an X death, **2/2 `ALL PASS`
+  (194 checks)** in isolation, exactly as §10 says.
+
+**`nonBaselineFails` therefore stands EMPTY in BOTH audits** — the implementer's
+258/22/4 and the verifier's 256/25/3 reconcile to the same set. **Three names are
+owed to the FLAKY list before item 13: `BH54` (item 11's, §10.4), `BT45`
+(item 9's, §12.2) and `test_prop_form_field_width_0170` (nobody's).**
+
+### 12.5 One observation on a declared limit — recorded so nobody re-derives it as a defect
+
+**The sidebar un-hide is NOT rolled back on a failed sync**: the `err` and
+no-raw branches leave the sidebar shown. That **matches the PLAN** ("show it as
+part of the command") and **BX46 asserts it deliberately**, so it is **not** a
+settled-decision-11 violation. The verifier flagged it only to stop a future
+reader rediscovering it as a bug.
+
+### 12.6 Bookkeeping drift, pre-existing and not from this commit
+
+`receipts/10_receipt.md` and `11_receipt.md` (and, at the ledger stage,
+`02`-`07_receipt.md` as well) arrive as **MODIFIED TRACKED** files while the
+baseline block lists them as untracked. **Not from `35d9e18f`** — its `--stat`
+shows only `12_receipt.md` — and nothing under `src/` or `tests/` is dirty.
+Recorded for the driver's bookkeeping pass, not acted on here.
+
+### 12.7 Gating
+
+The GUI gate was **waited out, never bypassed**, by both stages. One request sat
+unanswered for **67 minutes**. `GUI_GATE=0` was never set and no gate file was
+hand-written; every X run went through `gated_xschem.sh` or `run_suites.sh`, no
+bare loop.
+
+---
+
+## 13. DIVERGENCES FROM THE PLAN — the complete list, each with its reason
+
+| # | divergence | reason |
+|---|---|---|
+| 1 | **PLAN FILE LIST WRONG.** `src/ase_window.tcl` was NOT modified; `src/ase.tcl` (the command) + `src/xschem.tcl` (the Tools entry) substituted. | `ase_window.tcl:388 ase::ui::build` builds the ASE-L **session** window's menubar; the **design** window's Tools cascade is `src/xschem.tcl:14933` (`Launch ASE-L`). Caught by the scout, re-verified by the implementer and again by the verifier. `ase_window.tcl` used **READ-ONLY**. |
+| 2 | **BASELINE CLAIM FALSE — no `test_wave_grid` bump, and no `data-seq` guide row.** BX13 pins 16/11 **plus** a control that item 11's `Key-E` row is still there. | GH0/GH2 count only `bind WaveViewer` inside `wviewer::install_default_binds` and `-accelerator` inside `wviewer::build_menubar`. Item 12's key is a **schematic `.drw`** bind and its menu entry is on **xschem.tcl's** Tools cascade — neither is in scope, and adding a `data-seq`/`data-accel` guide row would have **broken** GH0 and GH2. Verified independently by the verifier. |
+| 3 | **SABOTAGE (a) SUBSTITUTED** (ruling 23): "select without expanding ancestors" → **delete `$tv see $id`**. | Not a state this implementation can be put into by deletion: **`see` IS the expansion** (ttk opens every ancestor) and `browser_populate` inserts every row `-open 1` anyway. An explicit expand loop would have been dead code no sabotage could reach. |
+| 4 | **SABOTAGE (d) ADDED**: delete the `-nocase` candidate line from `browser_node_for`. | Without it the item finds **nothing on any real ngspice raw** — the raw says `x1.x2`, `sim_sch_path` says `X1.X2`. The same defect item 11 hit one layer up. |
+| 5 | **SABOTAGE (b) REPHRASED**, and the failed first attempt **recorded rather than relabelled** (§5.3). | The PLAN's phrasing (delete only the `partial` **return** arm) fired the WRONG thing — just BX34 leg 1 + BX37 — because `browser_reveal` runs **before** the branch, so the ancestor was still selected. That injection tests the *reporting*, not the fallback; discarded and replaced with deleting the fallback itself. |
+| 6 | **A REAL DEFECT WAS FOUND BY PROBE, NOT BY REASONING, AND FIXED BEFORE IT SHIPPED**: the miss-retry `browser_refresh $token 1` could **destroy a good tree**. Now **IMPROVE-OR-RESTORE**; **BX39** is the check. | `browser_reload` sets the inventory to whatever `signal_list` answered, and a **failed read answers with nothing**. Observed turning a `partial` into an `err` and emptying the widget. The reload is now kept only if it matches **more** of the path; otherwise `browsersigs`, `browserrows`, the widget **and the selection** are restored. Verifier sabotage (v1) fired **10** checks on it. |
+| 7 | **BX48 MEASURED BY SPY** rather than by a second real viewer toplevel. | Its claim is exactly "which PATH does the command compute". A second viewer added only WSLg fragility (the first cut self-skipped when it would not map). BX42 already proves the chain end to end; BX48 runs **both** session levels from the **same** hierarchy position, so the two answers discriminate. |
+| 8 | **DECLARED ASYMMETRY WITH ITEM 11** — driver note (f) answered as a **finding**, not as agreement. | Item 11's `hier_origin_ok` **REFUSES** when the design window sits on an **ancestor** of the session's design; item 12 **MAPS** that case by dropping `level` segments (BX48 proves it works, BX49 proves it equals `sod_rel_path`). Browser→schematic refuses what schematic→browser handles. **Closing it would mean changing item 11 — out of scope.** |
+| 9 | **CLAIM NARROWED (ruling 17):** decision 10's **PIVOT CHOICE is NOT claimed as behaviourally proven**. | With no raw in the design window `sch_waves_loaded()` is −1 and the two getters are **byte-identical**, so swapping them fires nothing — item 11 hit the same wall. What IS proven: the **level>0 ORIGIN MAPPING behaviourally** (BX48) plus a **source guard** that three shipped bodies contain **zero** `sch_path` reads (BX09). |
+| 10 | **A TEST DEFECT OF THE IMPLEMENTER'S OWN WAS FOUND AND FIXED**: `BX42 (SECOND INVOKE)` read `unmapped` 1 run in 4. | A freshly raised viewer reports `winfo ismapped` 0 for a few ms. Fixed with `bx_vis_m`, which polls the **PRECONDITION** (the mapping, bounded at 2 s) and then asks the oracle **once** — item 5's rule; the asserted value is never polled. **Sabotage (a) was re-run afterwards and still fires exactly its 3 targets — and now reports `collapsed`, the real defect, instead of `unmapped`.** The oracle got sharper, not blunter. |
+| 11 | **A VACUOUS CHECK WAS FOUND BY *RUNNING* A SABOTAGE AND STRENGTHENED, NOT RENAMED** (§5.2) — driver note (c)'s discipline paying off a third time in this batch. | BX42's first visibility leg stayed GREEN under sabotage (a): the command's first invoke un-hides the sidebar, which repopulates an **all-open** tree, so the node is visible whether or not anything expanded it. A **second** invoke now runs on an already-shown, deliberately collapsed tree, with a positive control asserting `collapsed` first. |
+| 12 | **THREE FLAKY-LIST ENTRIES OWED TO THE DRIVER**, two of them found while measuring, one of them nobody's. | `BH54` — **item 11's**, `winfo ismapped .`, reproduced **1 in 4 at `b81ee0c9` with item 12 entirely absent**; this is the un-named ~20% flap `11_receipt.md` §13.4 recorded but could not identify (`BH50`'s two checks flap the same way but only in runs that also carried an X death). `BT45` — **item 9's** sidebar-geometry leg (§12.2). `test_prop_form_field_width_0170` — on **neither** list, cleared 3/3 in isolation (§12.4). |
+| 13 | ⚠⚠ **A DRIVER DECISION RAISED, NOT TAKEN**: `test_wave_sigbrowser.tcl` at 489 X-arm checks crosses a WSLg Xwayland threshold. | The process is killed mid-run — implementer ~5 of 6, **verifier 11 of 12** — with **ZERO BX failures**, while the **same file at 397 checks is 6/6 and 8/8 clean in the same windows** and both of item 12's halves are 3/3 clean amplified 10-12× standalone. It is the file's **CUMULATIVE** footprint (six toplevels in one process, up from four), not item-12 code. **ACTION: re-measure after `wsl --shutdown`, then revisit settled decision 9 before item 13** — items 13-15 make it monotonically worse, and decision 9 is what forces the append. |
+| 14 | **A PERFORMANCE DEFECT WAS FIXED WHILE CHASING THAT**, and is worth keeping regardless: `bx_ctx_to` called `update` unconditionally at ~25 sites, each `update` redrawing BOTH canvases (one run died reporting `after 68129 requests`). | The fast path now pumps no events at all (the switch is synchronous). **32 s → 5.9 s per run.** It did **NOT** cure the aborts — itself evidence that raw request count is not the mechanism — but it is a 5× reduction in exposure. |
+| 15 | **DECLARED LIMIT, asserted rather than pretended away:** the sidebar un-hide is **not rolled back** on a failed sync. | Matches the PLAN ("show it as part of the command"); **BX46 asserts it deliberately**. The verifier confirmed it is not a decision-11 violation and asked that it be recorded so nobody re-derives it as a defect (§12.5). |
+| 16 | **ISSUE 0212 NOT DUPLICATED** (driver note (h)). | Item 12 matches raw-derived paths against **tree node ids**; it never feeds a path back to `descend -inst`, so the vector-slice limitation does not arise in this direction. |

@@ -368,3 +368,230 @@ were in the same window and also re-ran ALL PASS.
 **Targeted re-runs, all through `tests/headless/run_suites.sh`** (never a bare
 loop): `test_wave_sigbrowser_i14` ALL PASS (83), `test_wave_sigbrowser` ALL PASS
 (324), and the eleven casualties above.
+
+---
+
+## 9. LEDGER STAGE — written AFTER `a37a620c` landed, and after the verifier
+
+Everything below is the pipeline's ledger stage, not the implementer's. It is
+written once the commit is in history and immutable (which is why it can name a
+hash where §1-§8, written *inside* the commit they would have had to name, could
+not), and it records the verifier's independent re-measurements — which differ
+from §8's in one direction only: **cleaner**.
+
+### 9.1 Verdict and commit
+
+**Verdict: `[x]` — DONE.** Not DONE-PIXEL: this item's deliverable is a search
+SCOPE, not an appearance. The one visual change is a 7th child in the search bar
+(§6 D8), which the item deliberately does not claim as a pixel deliverable, and
+the driver assigned **no eyeball-queue row**.
+
+| commit | subject | branch | pushed? |
+|---|---|---|---|
+| `a37a620c531ff51a0e2f1aef781c6c7e633934ea` (`a37a620c`) | `feat(wviewer): All DBs search in the browser` | `fluid-editing` | **no** |
+
+One commit, files staged as an explicit list. The verifier ran `git show --stat
+a37a620c` and confirmed the commit touches **exactly** the three scoped files,
+with **no other tracked diff under `src/` or `tests/`** after all of its own
+sabotage injections and reverts.
+
+### 9.2 Files touched
+
+| file | + | − | note |
+|---|---|---|---|
+| `src/wave_viewer.tcl` | 324 | 6 | the whole feature — 6 new procs, 8 changed, 2 new namespace arrays |
+| `tests/headless/test_wave_sigbrowser_i14.tcl` | 783 | 0 | NEW file, group `BD` |
+| `doc/claude/signal_browser_batch/receipts/14_receipt.md` | 370 | 0 | §1-§8 (this §9 is a later, uncommitted edit) |
+
+**No `.c`/`.h` file in the commit** — settled decision 8, confirmed independently
+by the verifier from `git show --stat`, and `cd src && make` is a no-op
+(`Nothing to be done for 'all'`). No frozen test file was edited: the BT05
+collision of §4b was repaired on item 14's side by re-ordering an option, so
+`tests/headless/test_wave_sigbrowser.tcl` stays byte-identical to ruling 30's
+freeze.
+
+### 9.3 Test file and check counts
+
+**`tests/headless/test_wave_sigbrowser_i14.tcl`** — NEW file, prefix `BD`, its own
+process (not an append to `_i1315.tcl`; see divergence 3). No `gold/` entry.
+
+| arm | added by this item | total in the file | verifier's independent re-measure |
+|---|---|---|---|
+| X (Tk), via `gated_xschem.sh` | **83** | **83** (new file ⇒ added = total) | `RESULT: ALL PASS (83 checks)`, 0 `X connection` in the log — **matches exactly** |
+| `--nogui` | **47** | **47** | `RESULT: ALL PASS (47 checks)` — **matches exactly** |
+
+Counts moved during the item: 80 X-arm checks on arrival → 83 shipped (+3 added
+because sabotage S3 proved BD44/BD45 vacuous for the DB restore; 3 further checks
+were *hardened*, not added, because S2 made them throw). The `--nogui` arm was
+unchanged at 47 throughout. The verifier also read the whole new file looking for
+tautologies and self-computed expectations and **found none**: expected values are
+literals or fixture paths, BD44's two legs are each asserted against `$bdB` rather
+than against one another, and the source greps are guarded by BD01's
+"every proc body was found" anti-vacuity leg.
+
+### 9.4 SABOTAGE TABLE — ledger form, `failedExactly` / `reverted` per row
+
+Four injections: the PLAN's one, plus three the implementer added, because the
+PLAN's single named sabotage targets a NEGATIVE and driver note (d) is right that
+one negative is thin cover. **Every row was RUN** (ruling 29), every run's log was
+grepped for `X connection to :0 broken` first (**0 in all eight sabotage runs**),
+and each injection was diffed against a pristine post-implementation scratchpad
+copy before the run and restored from that copy after — *not* `git checkout --`,
+which while the item was still uncommitted would have discarded the item itself.
+
+| # | origin | injection | predicted | ACTUAL | `failedExactly` | `reverted` |
+|---|---|---|---|---|---|---|
+| **S1** | PLAN | `browser_refresh`: `if {[wviewer::browser_alldbs $token]}` → `if {1}` — the checkbox is ignored | BD46b (the PLAN's named negative) + the status-OFF leg | **7 FAILED (76 passed)**: BD06 ×2 (source — the one reader is called once, in `browser_refresh`; now zero calls), **BD46b**, BD47 (its positive control, now seeing foreign rows too), BD52 (status text OFF must stay byte-identical to item 9's), BD53 + BD53c (the REAL `$w.alldb invoke` gesture, both directions). File completed. | **false** — DECLARED superset, and a legitimate one: every one of the 7 is about search SCOPE | true |
+| **S2** (THE VACUITY KILLER) | implementer | `signal_list_all`: `if {$idx != $cur} { continue }` — only the current DB is ever scanned | BD43/BD43b/BD48/BD50/BD51b fail, **BD46b PREDICTED TO STAY GREEN** | **11 FAILED (72 passed)**: BD43, BD43b, BD47b, BD48, BD50, BD50b, BD51b, BD51c, BD52b, BD53b, BD54 — **and BD46b GREEN, exactly as predicted**. File completed. | **false** — declared superset | true |
+| **S3** | implementer | `signal_list_all`: delete the unconditional restore `catch {xschem raw switch $cur}` | BD44/BD45 fail; the scout's own contingency: *"if NOTHING fails, a check must be added before shipping"* | **first run: 1 FAILED — only the SOURCE grep BD03.** BD44/BD45 were **VACUOUS** (fixture reads A then B ⇒ the current DB is the LAST slot visited, so the pointer is already home). BD44b/BD45b/BD45c added; re-run: **3 FAILED (80 passed)** — BD03, BD44b, BD45b | **false** — the first run failed *less* than predicted, which is why the file grew | true |
+| **S4** | implementer | `browser_rows_multi`: foreign rows emitted flat, `parent {}`, with no header row | BD20/BD21 + BD48's label leg — pins *labelled with their source* as distinct from *found* | **12 FAILED (71 passed)**: BD20, BD21, BD22, BD23, BD25b, BD25c, BD48, BD50, BD50b, BD51b, BD51c, BD53b — **BD46b stayed GREEN** (the foreign signal is still FOUND, merely unlabelled and unparented), which is the separation this row exists to prove. File completed. | **false** — declared superset | true |
+
+**Two of these changed the shipping test file, and both changes are attribution
+repairs, not weakened claims** (§5, §7): S2 exposed three checks that THREW rather
+than failed — the outer `catch` fired, the run ended `FATAL … 1 FAILED (52
+passed)` and **27 later checks never ran**, i.e. the sabotage deleted the evidence
+that would have attributed it — now read through the total accessors `bd_e`/
+`pcall`; S3 exposed BD44/BD45 as blind to a missing restore. The 11-fail and
+3-fail figures above are the **post-fix** measurements, re-run against the FINAL
+test file.
+
+**The headline this table buys:** under S2 the PLAN's own named negative BD46b is
+**green** while the feature is gutted to a single-DB scan. Shipped alone it would
+have proved nothing — driver note (d) / ruling 29 confirmed outright, the fourth
+time in this batch.
+
+### 9.5 The verifier's own UNNAMED sabotages, and their outcomes
+
+The verifier injected **three sabotages the implementer never named**, from a
+pristine copy, reverting each with `git checkout -- src/wave_viewer.tcl` and
+confirming `git diff --stat` byte-clean under `src/` and `tests/headless/` before
+the audit ran. All three failed **exactly** their target check and nothing else —
+no collateral, no vacuity.
+
+| # | injection | outcome | what it settles |
+|---|---|---|---|
+| **V1** (aimed at the item's core) | `signal_list_all`'s pointer tracking: `$idx != $here` → `$idx != $cur` — i.e. re-introduce §4's real bug | **failed EXACTLY BD43b**, nothing else (82 passed, 1 failed), file completed | Confirms §4's claim in the code comment: BD43b's *per-DB own-names* leg is what catches the "same inventory twice" bug. A count-only check would not have |
+| **V2** | `browser_rows_reparent` drops the prefix when a row already has a parent | **failed EXACTLY BD18**, nothing else (46 passed, 1 failed, `--nogui` arm) | The pure re-keying helper is covered on its own terms, on the arm that always completes |
+| **V3** (item-13 interaction) | delete `set browserdbsigs($token) $keepdbs` from `browser_show_path`'s improve-or-restore | **failed EXACTLY BD55b**, nothing else (82 passed, 1 failed) | The new per-token array really is carried through item 12/13's improve-or-restore path, not just written once at reload |
+
+The verifier additionally re-verified the anchors **from source** rather than from
+this receipt (`save.c:1456` `what==4`; `scheduler.c:9517` / `:9537` / `:9554`; the
+`else if(raw && raw->values)` gate at `:9576` with `raw list` at **`:9692`** —
+confirming §1's recorded 9-line drift from the PLAN's `:9683`; `xschem.h:1804`;
+`save.c:406`), checked that `/home/qflow/.xschem/raw_history` **still does not
+exist** after all of its runs including three injections (issue 0119, driver note
+(e1)), and traced the declared `extra_prev_idx` clobber (D3) to its only consumer
+`src/xschem.tcl:4743`, confirming that consumer pairs `switch_back` immediately
+with its own load — **the limit is real but unreachable in practice**, as
+declared.
+
+### 9.6 Non-baseline fails
+
+**NONE.** `nonBaselineFails` is **EMPTY**, and the verifier's audit is cleaner
+than the implementer's — sets compared, never counts.
+
+| audit | summary | X deaths | fail set |
+|---|---|---|---|
+| implementer, shipping tree (gated) | `270 pass  18 fail  0 crash/timeout  0 skip  (288)`, `WIREEDIT: PASS`, `SCRATCH: 0 leaked dir(s)` | 0 in the browser files | the **16 HARD baseline names exactly**, plus `test_window_switch_bogus_enter` (its own log carries `X connection to :0 broken` — not a measurement) and `test_fluid_bodyshove_guards_0132` (on the FLAKY list). Both re-ran **3/3 ALL PASS** |
+| verifier, independent (gated, live panel grant) | `273 pass  15 fail  0 crash/timeout  0 skip  (288)`, `WIREEDIT: PASS`, `SCRATCH: 0 leaked dir(s)` | **`grep -c 'X connection to :0 broken'` = 0 over the WHOLE log** | a **STRICT SUBSET** of the HARD 16 — only `test_fluid_editing` passed, which the baseline explicitly permits. No extras at all |
+
+The verifier did not stop at the fail *set*: it checked each baseline name's
+**check shape** against PLAN.md's Baseline block — `test_ase_window`=W7,
+`test_reopen_readonly`=R10 (`-lastopened resolved to the prior file (fa)`),
+`test_rotate_stretch_short_0104`=`rot180-ip (-30,70): no NEW dangling`,
+`test_lib_manager_locate`=LM-LOC3, `test_lib_sweep`=P1-P4, the action-log cluster,
+the 3 PDK `library_list` extras — **all match; none failed on a different check.**
+All six browser test files pass in-audit (`test_wave_sigbrowser`, `_i11`, `_i12`,
+`_i1315`, `_i14`, `test_wave_sigsearch`).
+
+⚠ **Recorded for the driver, not as a fail:** the pre-fix audit (run 1, §4b) is
+the run that caught this item's one genuine non-baseline fail — item 9's frozen
+`BT05`. It is **fixed, not carried**. Nothing goes onto the FLAKY list from this
+item.
+
+### 9.7 DIVERGENCES FROM THE PLAN — the complete list, each with its reason
+
+1. **ARRIVAL STATE: the item was already implemented and an 80-check test file
+   already written, both UNCOMMITTED**, by an agent that died before
+   sabotage-verifying or committing. *Reason / disposition:* ruling 25 — a dead
+   agent is not a verdict. Every anchor was re-verified from source
+   independently, then that work was verified, extended and sabotage-verified
+   rather than rewritten. **§7 and §8 of this receipt were empty on arrival and
+   are the surviving agent's.**
+2. **PLAN §C-d's `-alldbs 1` went AFTER `-command`, not in front of it.**
+   *Reason:* the original order turned item 9's `BT05` red — a **SOURCE grep**
+   pinned to the literal `searchbar_build $f -command [list
+   wviewer::browser_search_cb`, in a file ruling 30 FROZE. `searchbar_build`
+   parses `foreach {o v}`, so appending is order-independent to the product and
+   leaves item 9's coverage byte-for-byte. BD08 now pins the order **with the
+   reason in the comment** so it cannot silently drift back. §4b.
+3. **The test lives in `tests/headless/test_wave_sigbrowser_i14.tcl`, its own
+   process — NOT appended to `_i1315.tcl` as PLAN §D said.** *Reason:* superseded
+   by ruling 30. The footprint was then **MEASURED** rather than assumed (driver
+   note (c)): 14 of 16 standalone Tk/X runs reached `RESULT`, and **both**
+   non-completions carry `X connection to :0 broken` from the same X-server death
+   that also took out seven unrelated audit cases. **Verdict: two live raw DBs is
+   NOT a footprint hazard** — its own file was still the cheap, reversible call.
+   §5.
+4. **Three checks HARDENED and three checks ADDED, after the file was written.**
+   *Reason:* sabotage S2 made three checks THROW instead of fail, aborting the
+   file and deleting 27 later checks' evidence (now `bd_e`/`pcall`); sabotage S3
+   proved BD44/BD45 vacuous for the DB restore (now BD44b/BD45b/BD45c, which put
+   the current DB in the FIRST registry slot so the restore is the only thing
+   that can bring the pointer home). **80 → 83 X-arm checks; `--nogui` unchanged
+   at 47.** §5, §7.
+5. **PLAN-declared limit D5 IS FALSE, and this receipt says so rather than
+   restating it.** The PLAN predicted a foreign-DB row would be REFUSED by
+   `add_trace`'s pre-existing validation. **Measured: it is not.**
+   `browser_plot_ids` plots a foreign row exactly like a current one (both return
+   1) and the trace resolves against the **CURRENT** DB — drawing nothing for a
+   name only the other DB has, or the CURRENT DB's data for a name both have
+   (`v(shared)`). BD54/BD54b pin the behaviour that EXISTS; item 14 adds no guard
+   (out of scope, and a refusal is not obviously the right answer). **Flagged as
+   needing its own issue.** §6 D5.
+6. **The source of truth is the ENGINE REGISTRY, not item 13's history** — a
+   choice driver note (f) left open. *Reason:* `attach_raw` (the ASE re-run path)
+   pushes nothing to the history, yet its DB is open; a DB the history never
+   recorded is still a DB the user has open. Consequence declared, not defaulted:
+   ASE `attach_raw` DBs ARE searched even though they never enter the Location
+   dropdown. §2, §6 D1.
+7. **`signal_list_all` is a SIBLING of `signal_list`, not a generalisation of
+   it.** *Reason:* `signal_list`'s contract is "the current raw, mutating
+   nothing", and twelve shipped call sites across items 8-13 rest on it;
+   All-DBs **must** move the engine's current-DB pointer and restore it, which
+   introduces a failure mode (a refused restore) that must not leak into those
+   call sites. §3.
+8. **Anchor drift recorded, not silently absorbed:** `raw list` is
+   `scheduler.c:9692`, not the PLAN's `:9683`. Independently re-confirmed by the
+   verifier. §1.
+9. **The user's 8-hour GUI authorization LAPSED mid-item** (epoch 1786020948,
+   ~10 minutes in). *Reason / disposition:* everything after that ran through
+   `tests/headless/full_audit.sh` / `run_suites.sh` / `gated_xschem.sh` under the
+   panel, including a wait for its go-ahead on the final audit. **`GUI_GATE=0`
+   was never set and no gate file was hand-written** — by the implementer or the
+   verifier.
+
+### 9.8 If this had FAILED — what a human would look at first
+
+It did not fail; this section exists because the ledger schema asks for it, and
+because two of this item's most useful findings came from *injections*, not from
+a green suite. Should item 14 come back:
+
+1. **Re-run S2 before reading anything else.** It is the vacuity killer: if it
+   stops failing 11 named checks — or worse, if the file stops *completing* under
+   it — the coverage has rotted back to the state where the PLAN's single named
+   negative (BD46b, green under S2) was the only thing standing.
+2. **Then S3.** If BD44b/BD45b stop firing, the DB-restore is unmeasured again
+   and `xschem raw switch` is being left pointing at whichever DB the scan
+   visited last — which is item 15's problem too, since a snapshot taken then
+   captures the wrong current DB.
+3. **`src/wave_viewer.tcl`'s `browser_alldbs` is the ONE reader of the checkbox**
+   (BD06 pins the call count at 1). Any second reader is a bug in the making —
+   S1's whole failure signature is "the scope decision was made somewhere else".
+4. **D5 is a real, open gap, not a regression.** A foreign-DB row plotted into
+   the current DB draws nothing, or draws the wrong DB's `v(shared)`. If the
+   complaint is *"All DBs found it but the trace is wrong/empty"*, that is D5 —
+   file it as its own issue; item 14 never claimed the guard.
+5. **A `BT05`-shaped fail in a file item 14 does not own** means someone
+   re-ordered the `searchbar_build` options again (§4b / divergence 2), not that
+   the browser broke.

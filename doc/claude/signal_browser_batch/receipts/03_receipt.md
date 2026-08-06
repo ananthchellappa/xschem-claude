@@ -1,3 +1,280 @@
+# Item 03 — retrofit the legacy dialog onto the shared matcher — LEDGER RECEIPT
+
+Batch `signal_browser_batch`, branch `fluid-editing`. HEAD at item start `6a3f8e42`.
+Date 2026-08-04. Written by the ledger stage from the implementer result **and** the
+independent verifier result. The implementer's own long-form receipt (committed inside
+`afdd44a0`) is preserved **verbatim** as the appendix at the bottom of this file —
+nothing it said was dropped. Where the two disagree, §1-§9 wins.
+
+---
+
+## 1. Verdict
+
+**DONE.** Verified: `ok: true`, `scopeClean: true`. The verifier did not take the
+implementer's table on trust: it re-ran the build and the suite, wrote **its own unnamed
+sabotage aimed at the item core** (plus a bonus coverage probe), built **two independent
+oracles** — a hand-picked 80-comparison equivalence probe and an 8000-comparison fuzz of
+legacy-vs-new — re-verified every cited anchor from source, ran a full solo audit, and
+isolation-tested against the pre-item source every fail it could not immediately clear.
+
+**Committed, NOT pushed.**
+
+| | |
+|---|---|
+| commit | `afdd44a059d60e7d7c3280a50d7b2fb04c1da8db` (short `afdd44a0`), *"refactor(graph): dialog filter onto sig_match"* |
+| parent / item-start HEAD | `6a3f8e42` |
+| scope | **3 files, +444 / -13.** No C, no new test file, **`src/wave_viewer.tcl` untouched** — item 1's sabotage-pinned `sig_match` ships exactly as committed, zero blast radius (`git show --stat`, re-run by the verifier) |
+| blast radius | **contained to `.graphdialog`.** Repo-wide grep: `graph_get_signal_list`'s only callers are `graph_fill_listbox:4691` and `:4696`; the only test files mentioning `.graphdialog` / `graph_fill_listbox` / `graph_get_signal_list` are `test_wave_sigsearch.tcl` and `test_wave_markers.tcl` (which only asserts the dialog does NOT exist). No other suite can reach the changed proc. |
+| the ⚠ (load order) | **checked, not assumed.** `source $XSCHEM_SHAREDIR/wave_viewer.tcl` is column 0, unconditional, top-level; both call sites are runtime-only. Confirmed from source by the verifier and at runtime under `--nogui`. `sig_match` did not move. |
+
+## 2. Files touched
+
+| file | what |
+|---|---|
+| `src/xschem.tcl` | +52/-13. `graph_get_signal_list`'s body is now a `wviewer::sig_match` call (proc moves `:4469` -> `:4502` behind a +30-line comment block). Signature, proc name, the `graph_sort` global and both call sites UNCHANGED. **First `src/xschem.tcl` -> `wviewer::` call in the tree.** |
+| `tests/headless/test_wave_sigsearch.tcl` | +78. Group **GS** (15 checks) appended per settled decision 9, plus one declared one-line comment correction (E6). |
+| `doc/claude/signal_browser_batch/receipts/03_receipt.md` | the implementer long-form — now the appendix of this file. |
+| `doc/claude/signal_browser_batch/PLAN.md` | ledger tick only, left **UNSTAGED** (driver's file; item-2 D6 precedent). Not part of the commit. |
+
+Body as shipped:
+
+```tcl
+proc graph_get_signal_list {siglist pattern } {
+  global graph_sort
+  set direction -1
+  if {$graph_sort} {set direction 1}
+  if {$pattern ne {}} { set pattern ".*(?:$pattern).*" }
+  set r [wviewer::sig_match [split $siglist \n] $pattern \
+           -syntax regexp -case 1 -sort $direction]
+  if {[lindex $r 0] ne {ok}} { return {} }
+  set result {}
+  foreach i [lindex $r 1] {
+    regsub {^v\((.*)\)$} $i {\1} i
+    lappend result $i
+  }
+  return $result
+}
+```
+
+## 3. Tests
+
+| | |
+|---|---|
+| test file | `/home/qflow/dev/xschem/claude_1/xschem/tests/headless/test_wave_sigsearch.tcl` (settled decision 9: one file, appended) |
+| checks added | **15** (GS01-GS15) |
+| checks total | **61 -> 76** |
+| verified how | the verifier counted GS01-GS15 by hand (15 added, 61 -> 76 — *"claim matches exactly"*) and re-ran `./src/xschem --pipe -q --nolog --nogui --script tests/headless/test_wave_sigsearch.tcl` -> `RESULT: ALL PASS (76 checks)`. Green under `--nogui` **and** under a real X via `run_suites.sh`; in the PASS column of both full audits. |
+| build | `make` at repo root -> *"Nothing to be done for all"* on every subdir; binary unchanged (Tcl-only item). |
+
+**Behaviour was measured, not reasoned.** The implementer ran the same 15-case probe
+in-binary against the SHIPPING legacy body and then against the retrofit: **11 of 15
+byte-identical**, 1 sanctioned change (invalid regexp `[` -> `{}` instead of the whole
+signal list — settled decision 4), 3 declared deltas (D3, pinned by GS12/GS13/GS14).
+
+**The verifier built its own oracles rather than re-reading that table:**
+
+* **Equivalence probe** (pure `tclsh`; matcher procs extracted from `wave_viewer.tcl`,
+  legacy body reconstructed verbatim from `afdd44a0^`): 20 hand-picked patterns × 2
+  signal lists × both sort directions = **80 comparisons. 66 identical, 14 different,
+  and every difference falls in a declared class.**
+* **Fuzz**: 4000 random regexp-ish patterns × 2 sort directions = **8000 legacy-vs-new
+  comparisons** over a realistic raw name set. `same=4830`, `classA` (invalid pattern,
+  the sanctioned decision-4 change) `=3104`, `classB` (fully explained by the
+  full-raw-name match subject, checked against an independently computed model) `=66`,
+  **`UNEXPLAINED = 0`.** No hidden on-screen delta beyond the sanctioned one and D3's.
+
+**Fixture rule, stated in the group header and worth carrying forward:** `GSPLAIN`
+deliberately carries NO `v(...)`-wrapped name, and GS05/GS12/GS13/GS14 assert a length or
+a strip-invariant element. That is what makes the NAMED sabotage single-target. A later
+item that "tidies" these fixtures into one shared wrapped list silently hands that
+sabotage extra targets.
+
+**EYEBALLED** (not skipped, though the item is not PIXEL-tagged): `.graphdialog` opened
+for real under a DISPLAY on `poweramp.sch` with an in-memory raw, and the **actual Tk
+listbox contents read back out of the widget**. `v(out)` displays as `out` while sorting
+in its full-name slot; `i(v1)` is not stripped; `out` still matches unanchored; `[` gives
+an EMPTY listbox; `Incr. sort` still flips the order. Window capture confirms it renders.
+
+## 4. Sabotage table — implementer's round
+
+Nine injections, every one `diff`-confirmed to be the sabotage and nothing else BEFORE
+the run, every one measured, every one **reverted** (see D5 for the revert mechanism and
+why it was not `git checkout --`; final md5 `53c567ac8f82ecb548303915206d23c2`, re-run
+`ALL PASS (76)`).
+
+| # | sabotage | predicted target | measured | failedExactly | reverted |
+|---|---|---|---|---|---|
+| **NAMED** | delete the display strip (`regsub {^v\((.*)\)$} $i {\1} i`) | GS03 | **GS03 alone**, 1 FAILED / 75 passed (`v(out)` instead of `out`) | **yes** | **yes** |
+| u1 | delete the `.*(?:$pattern).*` unanchor wrap — i.e. inject **the PLAN's literal call composition** | GS06+GS10+GS12 | **exactly the predicted three.** THE sabotage that proves D1 is load-bearing: pattern `out` returns `{}` where the shipping dialog returns `about x1.out` | **yes** | **yes** |
+| u2 | drop the non-capturing group (`.*$pattern.*`) | GS10 | **GS10 alone** — a user's alternation `x\|y` collapses to `{}` | **yes** | **yes** |
+| u3 | swap the legacy strip for `wviewer::sig_bare` | GS04 | GS01, GS02, **GS04** — superset. `GSPLAIN` contains `i(v1)` and GS01/GS02 assert the WHOLE list, so a wrapper strip that eats `i(...)` shows up there too | no (honest superset) | **yes** |
+| u4 | drop `-case 1` | GS06+GS07 | **exactly the predicted two**; both become `about Out x1.out` | **yes** | **yes** |
+| u5 | invert the sort mapping | GS01+GS02 | GS01, GS02, GS05, GS06, GS10, GS15 — superset: a direction flip changes every multi-element result, not just the two checks that name the direction | no (honest superset) | **yes** |
+| u6 | restore the legacy widening (on `err`, return the whole sorted+stripped list) | GS08 | GS08 + GS13 — superset of 2, **both decision-4 checks**: `(?i)out` is also invalid under the wrapper, so the widening un-empties it too | no (honest superset) | **yes** |
+| u7 | strip BEFORE `sig_match` (strip-then-sort) | GS05 | GS05, **GS12, GS14** — superset: stripping first also changes the MATCH SUBJECT. Same defect, three symptoms | no (honest superset) | **yes** |
+| u8 | pass the blob instead of `[split $siglist \n]` | GS15 | **GS15 alone**: `a b c` (3 elements) instead of `{a b} c` | **yes** | **yes** |
+
+**The NAMED sabotage fired on exactly one check.** Five of nine were single- or
+exactly-predicted; the four supersets are honest scoping, not leakage — see D6.
+
+## 5. The verifier's own sabotages, and their outcomes
+
+The verifier wrote its own, aimed at the item core and **absent from the list of nine**.
+Both were reverted from a byte-exact snapshot with the md5 (`53c567ac…`) restored and a
+green re-run.
+
+| # | sabotage | outcome |
+|---|---|---|
+| **V1 — the verifier's own unnamed sabotage** | **half-anchor the compat device**: `.*(?:$pattern).*` -> `.*(?:$pattern)`. Deliberately subtle — it leaves the wrap *present*, so every "the wrap exists" reading still looks right, and only breaks trailing-context matching | **CAUGHT. 2 FAILED / 74 passed** — GS10 (alternation: `{ay}` instead of `{ay xa}`) and GS12 (0 instead of 1). Verdict: *"the tests really do cover the feature."* Reverted, md5 restored, re-run `ALL PASS (76)`. |
+| **V2 — bonus coverage probe** (a dead-mutation hunt, not a defect hunt) | drop the display strip's **trailing anchor**: `regsub {^v\((.*)\)$}` -> `regsub {^v\((.*)\)}` | **SURVIVED — ALL 76 PASS.** An uncovered mutation: no fixture carries a `v(...)`-prefixed name with trailing text. Irrelevant for real raw names, but the strip is pinned only *up to that anchor*. Carried forward as P2. Reverted, md5 restored, green. |
+
+The verifier also re-verified every cited anchor from the shipping tree rather than
+trusting line numbers: `xschem.tcl:4502` (proc), `:4691`/`:4696` (call sites),
+`wave_viewer.tcl:1490` `sig_type`, `:1528` `sig_match`, `:1573` the `^(?:$pat)$` wrapper,
+`:1581` the empty-pattern short-circuit, `:1584`/`:1590` the two separate `-nocase` flags
+(**E6's correction is correct**), `:1596` the return. All exact.
+
+## 6. Non-baseline fails
+
+**Implementer:** `nonBaselineFails: []`. One solo `full_audit.sh` (held 34 minutes by a
+live human Pause on the GUI control panel, **not overridden**) ->
+`SUMMARY: 265 pass  18 fail  0 crash/timeout  0 skip  (total 283)`, `WIREEDIT PASS`,
+`SCRATCH 0 leaked dirs`, `grep -c "X connection to :0 broken"` = **0** (so that run *is* a
+measurement). 16 of the 18 fails are the 16 HARD baseline names on their recorded checks.
+Two names outside the baseline, both chased to the ground:
+
+| name | disposition |
+|---|---|
+| `test_verb_noun_descend_0200` | `run_suites.sh -n 3` -> **3/3 PASS**. Flake. |
+| `test_hover_highlight` | **pre-existing ~30% environmental flake, proven by an INTERLEAVED A/B** — see below. |
+
+`test_hover_highlight` nearly fooled the implementer: the naive sequential comparison was
+15/15 PASS reverted vs 7/9 present (Fisher p≈0.05) — the shape of a real regression. That
+was a **time-ordering confound** (item-present batches ran straight after a 283-test
+audit, when WSLg has degraded). Re-run interleaved, 10 rounds, arms swapped by
+`git checkout <sha> -- src/xschem.tcl` between *every single run*: **3/10 failures in BOTH
+arms, failing in the SAME rounds (4, 7, 10), on different checks each time.** Mechanically
+it also cannot be item 3 — every caller of `graph_fill_listbox` is a `.graphdialog`
+binding or the dialog build, and `test_hover_highlight` never opens that dialog.
+
+**Verifier: independently ran its own solo audit** (also Pause-held ~50 minutes by a
+human, also **not** overridden) ->
+`SUMMARY: 261 pass  21 fail  0 crash/timeout  1 skip  (total 283)`, `WIREEDIT PASS`,
+`SCRATCH 0 leaked dirs`, `test_wave_sigsearch` in the PASS column. Fail-list diff vs the
+2026-08-04 HARD baseline: **all 16 HARD names present, each on the check the PLAN block
+records** (spot-verified PS0/W7/FE8/R10/GUI8+GUI9/LM-LOC3/P1-P4/`library_list`×3/
+rot180-ip/SA5-SA8b/6 self-log keys), plus 2 FLAKY-list names and 3 names on neither list.
+Every name on neither list was re-run 3×:
+
+| name | disposition |
+|---|---|
+| `test_getprop_index_bounds` | 3/3 PASS. Its audit "fail" was the run's single `X connection to :0 broken` — zero checks ran. |
+| `test_graph_context` | 3/3 PASS |
+| `test_wave_modes` | 3/3 PASS |
+| `test_nh_anim_rearm` (FLAKY list) | 3/3 PASS — excused |
+| `test_palette` (FLAKY list) | fails on its recorded flaky signature *"EVENT opens palette: NO"* — excused |
+| `test_cadence_drag` (HARD list, **different checks**) | **isolation-proved**: `git checkout 6a3f8e42 -- src/xschem.tcl` (item ABSENT) -> fails the identical 2 checks, 2/2 runs. Not item 3's. See P3. |
+
+**Ledger conclusion: NO regression is attributable to item 3.** `nonBaselineFails: []`
+survives the independent check — with the disclosure in P4 that the verifier's audit was
+repaired by targeted re-runs rather than re-run pristine.
+
+## 7. Verifier problems (all NON-BLOCKING) — carried forward
+
+* **P1 — a stale citation is now baked into shipped code.** The new comment block in
+  `src/xschem.tcl` says `wave_viewer.tcl` *"is sourced unconditionally at
+  `xschem.tcl:14295`"*. That was the **pre-edit** line; the item's own +30-line comment
+  block pushed the `source` to **`:14325`**. §8 of the appendix is internally consistent
+  (it deliberately cites pre-edit numbers), but the comment a future reader will follow
+  points at an unrelated line. One-character-class fix, no behavioural impact.
+* **P2 — the display strip's trailing anchor is not pinned** (found by the verifier's
+  bonus probe V2, not stated by the implementer). Changing `regsub {^v\((.*)\)$}` to
+  `regsub {^v\((.*)\)}` leaves **all 76 checks green**, because no fixture carries a
+  `v(...)`-prefixed name with trailing text. The appendix's claims (c)+(d) pin the strip
+  only up to that anchor. **One fixture element closes it** — items 4/5 append to this
+  same file and can take it in passing.
+* **P3 — the PLAN's baseline anchor for `test_cadence_drag` is wrong, and will trip the
+  next verifier.** The PLAN records 12 fails whose first is *"plain click selects
+  instance 0"*; the verifier measured 2 fails (Ctrl+drag / non-cadence plain drag *"leaves
+  wires behind"*) and the PLAN's anchor check **PASSED**. Under the stated rule (*"fails
+  on a DIFFERENT check => treat it as new and yours"*) that reads as a new regression; it
+  is not (isolation-proved against `6a3f8e42`). The recorded anchor is a flakier variant
+  of the same test. **The driver should re-anchor that baseline name.**
+* **P4 — disclosure on the verifier's own audit status.** Its log contains exactly one
+  `X connection to :0 broken` (inside `test_getprop_index_bounds`, zero checks run — a
+  pure WSLg Xwayland casualty). By the letter of the baseline rules that makes the run
+  *"not a measurement"*. The verifier did not spend another hour on a second full
+  283-test pass; it instead re-ran every non-baseline and flaky name 3× (all green) and
+  isolation-tested the one anchor mismatch. The implementer's separate audit **did** have
+  zero X deaths, so between the two runs the item is covered — but no single pristine
+  283-test pass exists for this commit from the verifier's side.
+* **P5 — neutral on the BASELINE FEEDBACK.** `test_hover_highlight` PASSED in the
+  verifier's audit, so it neither confirms nor refutes the implementer's measured ~30%
+  flake rate. The interleaved-A/B methodology point stands on its own regardless.
+* **D3 remains OWED by the driver.** The verifier independently reproduced all three
+  residual deltas on a realistic raw name set and confirmed the root cause from
+  `afdd44a0^` (the legacy body stripped BEFORE it matched). Its judgement, adopted here:
+  *"a flagged divergence, not a silent one, so it is not a verification failure — but the
+  item's bolded 'On-screen behaviour must not change' is NOT fully satisfied and the
+  driver must rule."*
+
+## 8. Divergences from the PLAN
+
+| # | divergence | reason |
+|---|---|---|
+| **D1** | The PLAN's literal call spelling (`sig_match -syntax regexp` with the user's pattern AS-IS) is **MEASURED to break the dialog**, so the caller pre-wraps a non-empty pattern as `.*(?:$pattern).*`. | Under the literal reading, typing `out` returns `{}` where the dialog returns `about x1.out` today. `sig_match`'s regexp arm is whole-name anchored (settled decision 3, the `^(?:$pattern)$` wrapper at `wave_viewer.tcl:1573`); the legacy `regexp $pattern $i` was NOT. Wrapping makes `sig_match` compute `^(?:.*(?:$pattern).*)$` — the unanchored semantics. **`sig_match` is UNCHANGED; decision 3 is NOT overturned** — the legacy dialog is simply a caller that always searches with an implicit `.*…*`, a legal pattern under decision 3. The item's bolded *"On-screen behaviour must not change"* wins over the call spelling. Pinned by sabotage **u1**, which injects exactly the literal reading, and by the verifier's V1, which half-breaks it. |
+| **D2** | Decision 2's *"compat flag"* is implemented **caller-side** (pattern wrap in, legacy strip out), not as a flag inside `sig_match`. | Explicitly permitted by driver note (d). `src/wave_viewer.tcl` is not touched at all, so item 1's sabotage-pinned proc keeps **zero blast radius** and items 4-15 inherit `sig_match` exactly as item 1 shipped it. |
+| **D3** | **DRIVER RULING OWED. Three residual on-screen deltas** beyond the sanctioned invalid-regexp one, all measured and all pinned (GS12/GS13/GS14): (1) a user's `^…$` no longer matches a `v()`-wrapped name; (2) patterns that see the wrapper text (a bare `v`) now hit; (3) ARE directors / embedded options (`(?i)x`) are an error. | **Root cause, which the item's scope line does not state:** the LEGACY body stripped BEFORE it matched (`xschem.tcl:4479-4483` — `regsub`, then `regexp $pattern $i`), so a full-raw-name subject cannot reproduce it. Driver note (d)'s two halves — *"the MATCH still runs against the full raw name"* AND *"do not change what the dialog puts on screen"* — are therefore in **genuine tension**; this item took the subject clause because it is the one note (d) states positively. The byte-exact alternative (strip the input list before matching, `-sort 0`) violates note (d) AND the item's own `-sort $graph_sort` instruction, so it was not taken. **Two lines + five check expectations** if the driver rules the other way. Independently reproduced by the verifier. |
+| **D4** | Decision 4 says *"items 3/4 surface"* the error; item 3 surfaces it as an **EMPTY listbox only**. | The `.graphdialog` left pane has no error widget; adding one is outside the item's Files line, and a live message would fire on every partial pattern (`[`, `[a`, …). **Item 4's search bar owns the error label.** |
+| **D5** | Sabotages were reverted from a byte-exact snapshot + md5, **not** `git checkout -- src/xschem.tcl`. | The scout asserted a git checkout was safe *"because `src/xschem.tcl` is committed and clean"* — true only BEFORE the item's edit landed; afterwards a checkout would have destroyed the ITEM along with the sabotage (item 2's D5 situation). Each injection was `diff`-confirmed to be the sabotage and nothing else before the run; each restore `diff`-confirmed IDENTICAL after it, md5-matched, green re-run. (The verifier's own round ran post-commit and could use `git checkout --`.) |
+| **D6** | Four of nine sabotages (u3, u5, u6, u7) fired on **supersets** of the scout's predicted targets. | Honest scoping, explained per-sabotage in §4 and the appendix §5 — the shared `GSPLAIN` fixture plus the full-list assertions GS01/GS02 mean one wrong answer trips more than the check that names it. The NAMED sabotage still fires on **exactly one** check, which is the property the item asked for. |
+| **E5** | Item 3 retires **NONE** of the three open-coded `split [xschem raw list]` sites (`:2566`, `:6798`, `:7458`). | Driver note (c) answered: none of them is `graph_get_signal_list`, whose input is `xschem raw_query list` arriving as an *argument* from `graph_fill_listbox`. `:7458` is `wviewer::add_trace_dialog` — **item 5's**. Scope deliberately not widened. |
+| **E6** | One declared one-line comment correction INSIDE the test file: SM27's stale `wave_viewer.tcl:1571`/`:1577` -> `:1584`/`:1590`. | Item 2's insertion drifted them +13. Declared rather than silent because items 4+ read that comment. It is the only edit outside the item's own appended group. **Verified correct by the verifier from source.** |
+| **PROCESS** | The solo `full_audit.sh` was held 34 minutes at 15/283 by a live Pause on the GUI control panel (pressed 25 s after it started). | **NOT overridden** — `GUI_GATE=0` or a hand-written control write would have flooded the user's display and broken the one rule the gate exists to enforce. It completed on Resume. The commit was made before the audit landed (green build, 76/76, 9 sabotages) and then **amended** with the completed receipt. The verifier's audit was likewise Pause-held ~50 minutes and likewise not overridden. |
+| **BASELINE FEEDBACK** | **`test_hover_highlight` should be ADDED TO THE FLAKY LIST** — measured **3/10 failures with this item ABSENT**, by interleaved A/B. | It is in neither the 16 HARD nor the 9 FLAKY names because it happened to pass both re-baseline runs. Items 4+ will hit it and should not spend an hour on it again. `test_verb_noun_descend_0200` is a milder case (1 audit fail, then 3/3 clean). Carried alongside **P3** (`test_cadence_drag`'s anchor is on the wrong check) as the two baseline corrections this item earned. |
+| **D9** *(this stage)* | The ledger line carries the item's open flags inline rather than a bare `-> DONE (afdd44a0)`, and this file **merged** the implementer long-form instead of clobbering it. | Item 1's/item 2's ledger precedent: D3 is a ruling the driver owes and a bare tick would bury it. Because the implementer wrote its long-form straight to the pipeline path `receipts/03_receipt.md` (and committed it inside `afdd44a0`), this stage put the ledger receipt on top and preserved the long-form verbatim as the appendix — nothing lost, no second file. The receipt is consequently **dirty vs `afdd44a0`**, like `PLAN.md` and `receipts/02_receipt.md`; nothing was committed by this stage. |
+
+**Carried forward, NOT item 3's to fix:** item 2's P2 (the two dead lines in
+`signal_list` — still uncovered; item 3 added no coverage and did not touch them), and
+item 2's D2 (the three open-coded sites, and which item owes each).
+
+## 9. If a human looks at one thing
+
+Item 3 is **DONE** and nothing here is a failure, so this is a queue for the driver, in
+order:
+
+1. **D3 — rule on the match subject.** Driver note (d) asks for two things the legacy
+   body's own order of operations makes incompatible (it stripped BEFORE matching). This
+   item took the subject clause and pinned all three consequences so they can never be
+   silent. **The one users will meet:** in a real raw every voltage is `v(...)`, so a user
+   who types a bare `v` in the Graph dialog now gets **every voltage** instead of only
+   names containing a literal `v`. Arguably better, definitely different. Two lines and
+   five check expectations to reverse — and the longer it sits the more items build on it.
+2. **The baseline, twice over: P3** (`test_cadence_drag`'s recorded anchor check is one
+   that now PASSES — the next verifier will read its real 2-check failure as a new
+   regression) and the **BASELINE FEEDBACK** row (`test_hover_highlight` belongs on the
+   FLAKY list at ~30%).
+
+To hand to item 4 when it starts: **P1** (the stale `:14295` citation inside the shipped
+comment), **P2** (one fixture element pins the strip's trailing anchor), **D4** (item 4's
+search bar owns the invalid-pattern error label — item 3 shows an empty listbox only), and
+the **fixture rule** in §3 (do not tidy `GSPLAIN` into a wrapped list).
+
+---
+
+---
+
+# APPENDIX — implementer long-form receipt, preserved verbatim
+
+Below is the receipt as committed inside `afdd44a0` (file
+`doc/claude/signal_browser_batch/receipts/03_receipt.md`, 327 lines), unedited. Where it
+and §1-§9 above disagree, **§1-§9 wins** — specifically, its §6/§8 citation of
+`src/xschem.tcl:14295` for the `source` line is the PRE-edit number (post-edit `:14325`,
+see P1), and its §5/§7 claims about sabotage coverage are qualified by P2 (the display
+strip's trailing anchor survives mutation).
+
+---
+
 # Item 03 — retrofit the legacy dialog onto the shared matcher — receipt
 
 Batch `signal_browser_batch`, branch `fluid-editing`. HEAD at item start `6a3f8e42`.

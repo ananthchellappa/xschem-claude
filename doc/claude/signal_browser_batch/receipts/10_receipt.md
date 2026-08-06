@@ -1,12 +1,23 @@
 # Item 10 — RMB context menu on a browser row — receipt
 
-**Verdict: `[E]`** (PIXEL item — never `[x]`). Implemented, suites green, three
-sabotages run and reverted. The pixels are NOT claimed from the suite; the owed
-Eyeball note is at the bottom.
+**Verdict: `[E]` — DONE-PIXEL** (PIXEL item — never `[x]`). Implemented, suites
+green, three implementer sabotages plus one unnamed verifier sabotage run and
+reverted. The pixels are NOT claimed from the suite; the owed Eyeball note is at
+the bottom (§10).
 
-Files: `src/wave_viewer.tcl`, `tests/headless/test_wave_sigbrowser.tcl`.
-Prefix `BM`. Checks: **323** in the X arm (was 216, **+107**), **134** in
-`--nogui` (was 91, **+43**).
+**Commit: `809cb979b047a9cb1bd434826d018157308712c8`** — one commit, NOT pushed.
+`git show --stat` re-run by the verifier: the commit touches EXACTLY these three
+files, no scope leak, and no C (settled decision 8 honoured).
+
+Files touched: `src/wave_viewer.tcl`, `tests/headless/test_wave_sigbrowser.tcl`,
+`doc/claude/signal_browser_batch/receipts/10_receipt.md`.
+Test file: `tests/headless/test_wave_sigbrowser.tcl` (appended, decision 9;
+prefix `BM`). Checks: **+107 added, 323 total** in the X arm (was 216); **134**
+in `--nogui` (was 91, +43). Both counts re-measured independently by the
+verifier and matched exactly.
+
+**Non-baseline fails: NONE** (§9 for the implementer's audit, §12.4 for the
+verifier's independent one and the `test_wave_axis_zoom` A/B that cleared it).
 
 ---
 
@@ -318,3 +329,202 @@ The suite cannot see any of this. What a human must look at:
 5. The submenu carries the ASE palette (it is a separate widget from the parent
    menu; `ctx_menu_child` re-applies the theme, but only an eyeball can say it
    matches).
+
+**If the eyeball FAILS, it does not un-do the ledger mark** — it files the defect
+and the item returns. Nothing in §1-§9 is a pixel claim.
+
+---
+
+## 11. Sabotage table (ledger form)
+
+`failedExactly` = the measured fail-set was EXACTLY the predicted one. A `no` is
+qualified in the note; per ruling 23 a strict SUPERSET whose every extra member
+is the same claim observed at another level is sanctioned, and no check was
+weakened to manufacture a smaller number.
+
+| # | injection | predicted | measured | failedExactly | reverted |
+|---|---|---|---|---|---|
+| (a) | **PLAN-NAMED** — drop the `break` from the tree's `<Button-3>` body | BM01's third leg only, and NO behavioural check | `1 FAILED (322 passed)` — exactly `BM01 the tree's Button-3 body ends in 'break' (defence in depth; BM35/BM42 are what keep the canvas out)`; same single name in `--nogui` | **yes** | **yes** |
+| (b) | **SUBSTITUTE** — sever the whole `bind $f.tvf.tv <Button-3>` | BM42's posted half + everything downstream of a real post, with BM42's canvas-calls half staying GREEN | `10 FAILED (312 passed)` — BM01 ×3, BM35's positive leg, BM42, BM43 ×2, BM44 ×2, BM45 | **no** (ruling-23 superset) | **yes** |
+| (c) | **SUBSTITUTE** — make `Plot to` PERMANENT (cascade `-command` calls `set_plot_dest` first) | BM04 + BM31 | `11 FAILED (312 passed)` — BM03's code-not-label leg, BM04, BM24, BM31 ×5 (all three teeth), BM32's single-mode leg, BM44 ×2 | **no** (ruling-23 superset) | **yes** |
+| (v) | **VERIFIER, UNNAMED** — in `plot_signals` flip the one-shot resolution from `$destover eq {}` to `$destover ne {}`, so the override is silently discarded while every source grep still matches | (verifier's own, undeclared to the implementer) | `4 FAILED (318 passed)` — BM44 `Plot to → New Strip`, BM44 `Plot to → New Tab`, BT44 under `newstrip`, BM46's tab switch | — | **yes**, `git checkout --` then `diff -q` against the pristine copy → IDENTICAL, clean re-run green |
+
+Row-by-row notes:
+
+* **(a) is the honest negative result and it is the point.** The PLAN's named
+  sabotage CANNOT fire behaviourally on this surface (§2). It was run anyway,
+  and BM01 is named to claim only what it pins. No check in this file is called
+  "the swallow keeps the canvas out".
+* **(b)'s decisive value** is the tuple `{0 0 absent}` against `{0 1 built:8}`:
+  the canvas-calls ZERO SURVIVED while the posted half and the state failed —
+  the measurement that proves the negative control is not vacuous (§4). BM46
+  self-SKIPPED ("only one tab") because BM44's New Tab leg never ran — a printed
+  skip, not a fail. The `browser_menu_post` SEAM group (BM20-BM36) stayed green
+  throughout, correctly: it is a different level from the Tk ROUTE group.
+* **(c)'s teeth are aimed WIDER than the injected shape** — a save/set/RESTORE
+  variant would leave `plot_dest` back at `append` and beat a naive "still
+  append" check, but would still have CREATED `dest($token)` and written TWO
+  `set_plot_dest` lines, which BM31's other two teeth catch.
+* **(v) is the one that matters most for hollowness** (§12.2).
+
+Revert method, stated not glossed: injections (a)-(c) were taken while the item
+was UNCOMMITTED, so `git checkout --` would have discarded the whole item;
+pristine post-implementation copies were kept in the scratchpad and each
+injection diffed against **them**. The verifier, working against commit
+`809cb979`, used `git checkout --` normally and confirmed the revert
+byte-for-byte.
+
+---
+
+## 12. Independent verification (verifier stage)
+
+**Result: `ok: true`, `scopeClean: true`.** Every number below was re-measured by
+the verifier, not read off this receipt.
+
+### 12.1 Re-runs that reproduced the claims
+
+* `git show --stat 809cb979` → EXACTLY 3 files; no scope leak, no C.
+* `--nogui` arm → `RESULT: ALL PASS (134 checks)`.
+* X arm, gated (`run_suites.sh`) → `RESULT: ALL PASS (323 checks)`. 323 − 216
+  (item 9's baseline) = **107 added**, confirmed by measurement, and again after
+  all sabotage/A-B work.
+* All 876 added test lines READ hunting tautologies and self-computed
+  assertions: **none found**. Expected values are hard-coded literals; the one
+  derived expectation (BM22's root-coord fallback) checks a real derivation rule
+  against an independent computation. Recorders carry positive AND negative
+  controls in both directions (BM30's disabled-entry zero is followed by a live
+  re-record; BM41 proves the canvas handler fires 2× before BM42 asserts zero).
+* Anchors re-verified FROM SOURCE rather than from this receipt:
+  `ctx_menu_popup` really takes `{W m px py rx ry}` and derives root coords when
+  `rx/ry < 0`; `ctx_menu_widget` mints with `-tearoff 0` (so BM23's index table
+  is right); `browser_menu_unpost` sits INSIDE `forget`'s `dict exists $windows`
+  block, BEFORE `dict unset windows`, so `ctx_menu_drop` can still resolve
+  `$top`; `set_plot_dest` really routes through `wviewer::log_action` (so
+  BM31's action-log leg is well-aimed); `wviewer::clipboard` really is a
+  0-argument proc in the same namespace, so §7's `::clipboard` qualification is
+  a genuine fix, not style.
+* The PLAN's central premise independently re-measured: `btn3_filter` is at
+  `src/wave_viewer.tcl:9879` — NOT the PLAN's `:7680`, and not the scout's
+  `:9656` either; a stale citation twice over. It is a CANVAS-level filter that
+  swallows the C forward on a legend press, structurally inapplicable to a
+  separate `ttk::treeview`. **The verifier's ruling: the downgrade of sabotage
+  (a) to "one source check, no behavioural check" is correct and honest, not an
+  excuse.**
+* Droppings: no `bm_item10.raw` anywhere in the tree,
+  `git status --porcelain -- src tests/headless` EMPTY, 0 `xschem` and 0
+  gated/`run_suites` processes left alive.
+
+### 12.2 The verifier's own UNNAMED sabotage — and its outcome
+
+Aimed at the item core and **deliberately designed to evade every source-level
+check**: in `plot_signals`, `$destover eq {}` → `$destover ne {}`, so the
+one-shot override is silently discarded while all three of BM05's greps
+(`wviewer::plot_dest $token` ×1, `dest_norm $destover` ×1, `set dest [expr` ×1)
+still match.
+
+**Outcome — X arm: `4 FAILED (318 passed)`**: BM44 `Plot to → New Strip` really
+created a strip (0 vs 1), BM44 `Plot to → New Tab` added a tab (0 vs 1), BT44
+the Plot-button gesture under `newstrip`, BM46 the tab switch inside New Tab.
+`--nogui` stayed `ALL PASS (134)` — **correctly**, that arm is source/pure by
+declared design.
+
+**Reading: the behavioural coverage is REAL, not hollow.** A defect that no grep
+could see was caught by four independent behavioural legs on the real viewer.
+Reverted and re-run green.
+
+### 12.3 Gating
+
+Every X-arm run went through `run_suites.sh` / `gated_xschem.sh` /
+`full_audit.sh`, on BOTH sides. The implementer's 6-hour authorization had
+lapsed, so normal gating applied in full: the panel PAUSED twice mid-item and
+was WAITED OUT (~35 min); when the window lapsed again mid-verification the
+verifier WAITED it out (~8 min on the sigsearch re-run). **`GUI_GATE=0` was
+never set and no gate file was ever hand-written, on either side.** One stale
+gated process on each side was confirmed dead / killed rather than left
+stalled, and re-run. The source and pure halves of all sabotages were taken in
+the `--nogui` arm, which needs no display and no gate — which is why the pauses
+cost minutes, not the item.
+
+### 12.4 The verifier's full audit, and `test_wave_axis_zoom`
+
+`full_audit.sh` run start to finish by the verifier: **284 classified,
+255 PASS / 26 FAIL / 3 SKIP**, compared as SETS.
+
+* **All 16 HARD names present and nothing else HARD-shaped** (`ase_log_seam_0207`,
+  `ase_window`, `cadence_drag`, `ciw`, `fluid_editing`, `gf180mcud_libmgr`,
+  `ihp_sg13g2_libmgr`, `lib_manager_gui`, `lib_manager_locate`, `lib_sweep`,
+  `phase3_mints`, `reopen_readonly`, `rotate_stretch_short_0104`, `select_at`,
+  `selflog_output`, `sky130a_libmgr`).
+* **8 documented FLAKY names** (`altf5_ciw`, `ase_persist`, `ase_unnamed_net`,
+  `nh_anim_rearm`, `wave_hilight`, `wave_markers`, `wave_snap`,
+  `wave_trace_menu`). **3 SKIP** = the environmental self-skip family.
+* **4 VOID runs** carrying `X connection to :0 broken`
+  (`test_add_pin_lib_symbol_view`, `test_ase_unnamed_net`, `test_wave_snap`,
+  `test_wave_trace_menu`), CORROBORATED in `/mnt/wslg/stderr.log` by
+  `weston_wm_handle_map_request: Assertion !window->shsurf failed` + a WSLGd
+  weston restart at **15:49:32**, inside the audit's window (ruling 19). Those
+  runs are not measurements. Re-run solo, gated:
+  `test_add_pin_lib_symbol_view` → `PASS=12 FAIL=0 / OVERALL: ok` (confirming
+  the harness FORMAT claim — it prints `OVERALL:`, not `RESULT:`, so
+  `run_suites.sh` scores it `NORESULT`); `test_wave_sigsearch` → 2/2
+  `ALL PASS (194)`; `test_wave_split_strip` → `ALL PASS (221)`;
+  `test_wave_tabs` → `ALL PASS (172)`.
+* ⚠ **`test_wave_axis_zoom` FAILED in the verifier's audit (CV7 ×2) and is on
+  NEITHER the HARD nor the FLAKY list** — by the letter of the brief, the
+  verifier's to explain. Explained per **ruling 22 by A/B, not by re-run count**:
+  `src/wave_viewer.tcl` reverted to `46f89349` → 4/4 `ALL PASS (370 checks)`;
+  restored to item-10 HEAD → 6/6 `ALL PASS (370 checks)`. Every failing shape is
+  the `graph_at_pointer` probe=-1,-1 / CV1-CV7-CV8 root-coords family (the
+  documented TG9 class), which item 10 **cannot reach**: it adds no canvas
+  binding and no pointer code. Cleared as environmental.
+  **`nonBaselineFails` therefore stands EMPTY** — the two audits simply drew
+  different flakes (the implementer's drew `test_wave_split_strip` SG10).
+  **DRIVER ACTION CARRIED FORWARD:** add `test_wave_axis_zoom` (CV1/CV7/CV8) to
+  the PLAN's FLAKY list so item 11 does not re-derive this.
+
+### 12.5 Two MINOR open notes (no coverage missing, nothing to redo)
+
+1. **Ruling-17 self-consistency.** The item narrowed BM46's name from "posted
+   menu" to "built menu", but left the same overstatement in **BM42** ("a REAL
+   RMB … POSTS the menu…") and **BM30** ("invoking `Plot` PLOTS that row") — in
+   both, `tk_popup` / `plot_signals` is spied for that whole arm, so what is
+   really pinned is "`tk_popup` was called with the menu" and "the recorder saw
+   the call". The asserted TUPLES are honest (BM42 asserts `built:8`, not
+   `posted:8`) and the real trace is covered by BM43. A naming inconsistency in
+   applying its own declared fix, not a defect in what is pinned.
+2. **A leg with no positive control.** BM31's action-log tooth asserts
+   `lsearch -glob $::bm_log_calls {*set_plot_dest*}` == −1, but nothing in that
+   window proves the `bm_log_on` recorder captured anything at all, so on
+   correct code the −1 is vacuous; it only discriminates under the exact defect
+   shape it targets. The verifier confirmed FROM SOURCE that `set_plot_dest`
+   really calls `wviewer::log_action`, so the leg IS correctly aimed, and
+   BM31's other two teeth carry the claim independently. **Worth a one-line
+   positive control if this file is touched again** (item 11 touches this menu).
+
+---
+
+## 13. Divergences from the PLAN — the complete list, each with its reason
+
+Every one of these is recorded, none silent. §-references point at where the
+divergence is argued in full.
+
+| # | divergence | reason |
+|---|---|---|
+| 1 | **The PLAN's central premise is void**: "follow the Tcl-only Button3 swallow issue 0178 established for the legend (`wave_viewer.tcl:7680`)". | The swallow does not transfer to a `ttk::treeview`, measured three ways (§2). The cited line number is also stale — the mechanism is in `btn3_filter`, a CANVAS-level filter. The `break` is kept as defence in depth against a future toplevel/`all`-level binding, and BM01 is NAMED to claim only that. |
+| 2 | **PLAN sabotage (1) does not fire behaviourally.** | Direct consequence of #1. Run anyway and reported honestly: 1 source check, 0 behavioural checks (§11 row (a)). Two substitutes (b)/(c) carry the real load, per the scout's warning. |
+| 3 | **Driver note (b) carried-forward fix: SWAPPED both BT44 legs to `$BTVF.tb.plot invoke`** rather than narrowing the check names. | Ruling 17 prefers WIDENING. `invoke` is the real button route, synchronous, with no focus/mapping dependence (zero added WSLg flake); the selection is already set by the preceding line so semantics are byte-identical; and it closes the exact gap item 9's verifier exposed — no single check spanned *real button route → real trace*. Ruling-23 superset declared (§0). |
+| 4 | **FORCED test-side change**, not opportunistic: item 9's `bt_spy_on` recorder now carries and records `destover`. | `plot_signals` grew a 4th parameter. A 3-parameter spy would have taken the real call as "too many arguments", `browser_plot_ids`' own catch would have swallowed it, and EVERY BT gesture check would have read as "the gesture did nothing" (§0). |
+| 5 | **`Copy name` is a DYNAMIC label** (`Copy name` / `Copy names (N)`), not the PLAN's fixed `Copy name`. | A singular label over a 3-row selection is precisely the ruling-17 defect (§5). |
+| 6 | **ASCII, not UTF-8, in the two new labels**: `Replace -> appends` and `Send to Add Trace...` (PLAN wrote `→` and `…`). | Keeps the labels free of any source-encoding question (§5). |
+| 7 | **GROUP DECISION, deliberate**: an RMB on a GROUP row DOES post and DOES act on its leaves (`groups`-1, like MMB and the Plot button) — NOT the double-click's refusal. | Item 9's D3 exists solely to yield the DOUBLE-CLICK gesture to ttk's expand/collapse; **ttk owns no `<Button-3>`**, so there is nothing to yield. Pinned by BM27 (§5). |
+| 8 | **The cascade is added UNCONDITIONALLY** (`-menu $sub`, possibly empty). | So the entry INDICES are a fixed table BM23 can assert BY INDEX, instead of a function of whether Tk minted the submenu. (Eyeball clause 4 exists because of this.) |
+| 9 | **BM34's oracle sequence differs from the PLAN's** `unpost → built:N (dismissed)`. | `ctx_menu_drop` DESTROYS the widget, so unpost yields `absent`. The MEASURED five-step sequence is `absent → built:8 → posted:8 → built:8` (a bare `$m unpost`, i.e. dismissed) `→ absent` (`browser_menu_unpost`). `empty` is observed separately on a hand-built menu (BM20) — which is what proves `absent` and `empty` are two answers, not one symptom (§3). |
+| 10 | **BM08's second leg was narrowed** from a `\n\s+return 0` regexp to a plain `return 0` count of 2. | The regexp measured 0: the `return 0`s live on `if {...} { return 0 }` lines, not at line starts. Caught by the first `--nogui` run, BEFORE any claim was made on it. |
+| 11 | **Two check NAMES narrowed post-hoc under ruling 17**: BM31's log leg ("NOTHING was written to the action log" → it only pins "no `set_plot_dest` line"); BM46's first leg ("posted menu" → "built menu", since `tk_popup` is spied for that whole arm). | Names must claim only what is pinned. See §12.5 note 1 for the two places the same narrowing was NOT applied. |
+| 12 | **One comment edited outside the strict diff**: `tab_drop_transients`' "both context menus" → "all three context menus (item 10 added the browser's)". | One line, inside a proc this item edits, to stop the prose contradicting the code. |
+| 13 | **Receipt filename**: the PLAN's Receipt line for item 10 says `receipts/10_receipt.md` and that is what exists. | No divergence — recorded because items 7-9 all had wrong Receipt lines; item 10's is correct and the scout confirmed it. |
+
+**Not applicable — the FAILED clause.** The verdict is `[E]`, not FAILED, so
+there is no "what a human must look at first to triage a failure". The human
+attention this item DOES owe is the eyeball list in §10, and the one driver
+action in §12.4 (add `test_wave_axis_zoom` to the FLAKY list).

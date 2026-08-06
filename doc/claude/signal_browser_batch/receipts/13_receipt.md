@@ -747,3 +747,217 @@ SCRATCH:  0 leaked dir(s)
 `tests/headless/test_wave_sigbrowser_i1315.tcl` (+14 X-arm / +3 `--nogui` checks),
 `doc/claude/issues/0213-…md` (new), this receipt. **No `.c` file, and the frozen
 `test_wave_sigbrowser.tcl` and `test_wave_grid.tcl` were NOT re-touched.**
+
+---
+
+## 13. LEDGER STAGE — the record, written AFTER both commits landed
+
+Everything below is the pipeline's ledger stage, not the implementer's. It is
+written after `8655fd3b` and `76bd7c04` are both in history and immutable, which
+is why it can name hashes where §11 deliberately could not: §11 was written
+*inside* the commit it would have had to name.
+
+### 13.1 Verdict and commits
+
+**Verdict: `[E]` — DONE-PIXEL.** Not `[x]`. The deliverable is visible UI; the
+suite pins mechanism, ordering and world-state, and **no check in it can say the
+Location bar looks right**. §9 is owed to a human and is queued in `PLAN.md`'s
+Eyeball queue.
+
+| commit | subject | pushed? |
+|---|---|---|
+| `8655fd3b` | `feat(wviewer): Location bar + last-20 raw history` | **no** |
+| `76bd7c04` | `fix(wviewer): cover the Location bar's own sync + startup restore` | **no** |
+
+Both on `fluid-editing`, files staged as explicit lists (no `git add -A`, no
+`git commit -a`). Verifier confirmed `git status --short src/ tests/headless/`
+clean after its own seven sabotage injections and reverts.
+
+### 13.2 Files touched — the union of both commits
+
+| file | `8655fd3b` | `76bd7c04` |
+|---|---|---|
+| `src/wave_viewer.tcl` | +263 −0 | +27 −8 (the `-values` fanout) |
+| `src/xschem.tcl` | +16 −0 | — |
+| `tests/headless/test_wave_sigbrowser_i1315.tcl` | new, 662 lines | +200 −15 |
+| `tests/headless/test_wave_sigbrowser.tcl` | +19 −8 (3 checks WIDENED, ruling 17) | — |
+| `tests/headless/test_wave_grid.tcl` | +15 −4 (`gx_must` gains `rawbar_load`) | — |
+| `doc/claude/issues/0213-read-raw-ascii-point-overruns-its-buffer.md` | — | new, +114 |
+| `doc/claude/signal_browser_batch/receipts/13_receipt.md` | new, +511 | +256 −18 |
+
+**No `.c` file in either commit** — settled decision 8, confirmed independently by
+the verifier with `git show --stat` on both hashes.
+
+### 13.3 Test file and check counts
+
+**`tests/headless/test_wave_sigbrowser_i1315.tcl`** — NEW file, prefix `BR`, with
+`BD` (item 14) and `BP` (item 15) reserved in its header. No `gold/` entry.
+
+| arm | added by this item | total in the file |
+|---|---|---|
+| X (Tk) | **85** (71 first shipping + 14 fixup) | **85** — the file is new, so added = total |
+| `--nogui` | **40** (37 + 3) | **40** |
+
+Both arms green at `76bd7c04`, re-measured by the verifier from a clean tree
+before it touched anything. Two OTHER files gained checks under ruling 17, and
+they are widenings of existing claims, not item-13 coverage:
+`test_wave_sigbrowser.tcl` (3 checks — item 9's sidebar child-SET claim was
+falsified by the new `.loc` row) and `test_wave_grid.tcl` (`gx_must` gains
+`rawbar_load` so `GX4`'s count claim stays true).
+
+### 13.4 SABOTAGE TABLE — ledger form, `failedExactly` / `reverted` per row
+
+Seven injections in total: the PLAN's two, two the implementer added in the first
+round, and three in the fixup round (two of them the verifier's own, reproduced
+rather than accepted on report). **Every row was RUN** (ruling 29).
+
+| # | round | injection | predicted | fired | `failedExactly` | `reverted` |
+|---|---|---|---|---|---|---|
+| **(a)** PLAN | first + re-run | drop the `file normalize` dedup from `rawhist_add` | `BR12` ×2, `BR17` ×2 | **4** — exactly those; `BR13`/`BR51` did NOT move, so the declared superset did not materialise and that is reported rather than the prediction renamed | **true** | true |
+| **(b)** PLAN | first + re-run | delete the `update_recent_files` 0119 gate from `rawhist_push` | `BR02` ×2 (source), `BR52` legs 2-3 | **5** — the four predicted **plus `BR54`** | **false** (DECLARED superset) | true |
+| **(c)** implementer, substituted | first | delete `browser_refresh $token 1` from `rawbar_load` | `BR07` + `BR44` | **7** — `BR07` ×2, `BR43`, `BR44`, `BR45`, `BR46`, `BR52` leg 4 | **false** (DECLARED superset: no refresh at all ⇒ an EMPTY inventory, so every leg reading it moves) | true |
+| **(d)** implementer, added | first | make the refresh conditional on an EMPTY inventory (the `browser_show_path` miss-only shape) | `BR44` leg 2 only | **3** — `BR44` leg 2, `BR45`, `BR46` (the same inventory re-asserted); **`BR43` stayed GREEN** | **false** (declared superset, same assertion thrice) | true |
+| **V3** verifier's, reproduced | fixup | delete the only `wviewer::rawbar_sync $token $path` call from `rawbar_load` | the 6 new widget legs | **6** — `BR42` bar-follows-load, `BR42` balloon-names-A, `BR44` bar+balloon-followed-to-B, `BR46` refusal-leaves-bar, `BR50` dropdown-offers-A, `BR51` dropdown-offers-both (79 passed) | **true** | true |
+| **V4** verifier's, reproduced | fixup | delete `wviewer::rawhist_load` from `src/xschem.tcl`'s startup block | `BR19` source leg + `BR19` behavioural leg | **2** (83 passed); `BR19`'s CONTROL leg stayed GREEN, so it reads as "the restore did not happen", not "the child/`HOME` fixture broke" | **true** | true |
+| **V5** implementer's, new | fixup | delete the `-values` fanout loop from `rawbar_sync` | `BR28` fanout leg | **1** (84 passed); `BR28`'s FIXTURE leg (window 2 builds with an EMPTY dropdown) is the positive control that stops it passing on an already-correct value | **true** | true |
+
+**Revert method** (stated, not glossed): during the first round the item was
+UNCOMMITTED, so `git checkout --` would have discarded it — a pristine
+post-implementation copy was kept in the scratchpad, each injection `diff`ed
+against it before the run and restored from it after. The verifier, working
+against a commit, used targeted `git checkout -- <file>` after confirming with
+`git diff` that the file held nothing but the injection.
+
+⚠ **Row (b) has a footprint outside the repo.** With the gate gone the ungated
+`BR42/BR44` fixture loads run *before* `::USER_CONF_DIR` is repointed and write
+`/home/qflow/.xschem/raw_history` — **the user's real file**, i.e. issue 0119
+reproduced live. It did not exist beforehand (proof: the file the sabotage wrote
+contained only the two scratch paths; a non-empty startup history would have been
+carried into it), a copy was kept in the scratchpad, and it was deleted
+immediately. **Verified absent again by the verifier after all seven of its own
+runs.** Anyone re-running (b) recreates it.
+
+### 13.5 The verifier's own UNNAMED sabotages, and their outcomes
+
+Beyond reproducing V3/V4/V5, the verifier injected **four sabotages the repair did
+not claim** — the point being that a repair aimed at a named hole can close that
+hole and leave a differently-shaped one beside it.
+
+| # | injection | outcome | what it settles |
+|---|---|---|---|
+| **V6** | keep the startup call site but **gut the read inside the proc** — `if {[catch {source $f}]}` → `if {[catch {list $f}]}` | **2 FAILED**, and critically the `BR19` SOURCE-count leg stayed **GREEN** while the `BR19` behavioural leg fired | The discriminator for P2. A grep-proxy dressed as behaviour would have failed both legs together; this proves `BR19`'s new leg is a real reading of a fresh process |
+| **V7** | delete `catch {wviewer::browser_refresh $token 1}` from `rawbar_load` (item 9's D6, driver note (f)) | **7 FAILED** — `BR07` ×2 (source + ordering), `BR43`, `BR44` inventory, `BR45`, `BR46`, `BR52` | Independently reproduces the implementer's row (c); the D6 tree-refresh deliverable is genuinely covered, not covered-by-assertion |
+| **V8** | delete the `catch {balloon $cb ...}` line from `rawbar_sync` — i.e. kill **the PLAN's Eyeball deliverable** (the full-path tooltip) while leaving entry text and `-values` intact | **4 FAILED** — `BR08` (structural) plus the `BR42`/`BR44`/`BR46` balloon legs | The tooltip is covered BEHAVIOURALLY (the real `<Enter>` script), not by a source grep. This is the one the eyeball-owed item most needed |
+| **V9** | narrower than V3: remove only `catch {$cb configure -values [wviewer::rawhist_get]}` **for the loading window**, keeping the fanout loop | **4 FAILED** — `BR24`, `BR28`'s own-window leg, `BR50`, `BR51` | The own-window dropdown is covered INDEPENDENTLY of the new fanout; the P4 fix did not become the only thing holding `BR50/BR51` up. No hollow spot |
+
+Final state after all injections: **X arm 85/85, `--nogui` arm 40/40, `git status
+--short src/` empty.**
+
+### 13.6 Non-baseline fails
+
+**NONE.** Two full audits, sets compared and never counts.
+
+| audit | summary | X deaths | verdict |
+|---|---|---|---|
+| first shipping (`audit_i13_run1.log`) | `252 pass  23 fail  0 crash/timeout  12 skip` | `grep -c 'X connection to :0 broken'` = **0** | 15 of the HARD 16 + 8 FLAKY names |
+| fixup (`scratchpad/audit1.log`, launched epoch 1786014975, inside the grant) | `253 pass  23 fail  0 crash/timeout  11 skip  (total 287)`, `WIREEDIT: PASS`, `SCRATCH: 0 leaked dir(s)` | **0** | 15 of the HARD 16 (`test_rotate_stretch_short_0104` **self-SKIPPED**, did not fail) + 8 FLAKY: `test_ase_unnamed_net`, `test_graph_context`, `test_launch_context`, `test_palette`, `test_pristine_untitled_viewer_0172`, `test_remap`, `test_sod_pick_no_select_0204`, `test_wave_hilight` |
+
+The verifier read `audit1.log` itself rather than accepting the table. **Every
+file this item touches PASSED** in it — `test_wave_sigbrowser`, `test_wave_grid`,
+`test_wave_sigbrowser_i11`, `_i12` and `test_wave_sigbrowser_i1315` — as did
+`test_cmdmode_descend_0201`, `test_lib_manager_checkin` and
+`test_hover_highlight`, the three names the verifier could not place in its own
+earlier run. **`0 leaked scratch dir(s)`**; `tests/headless/.scratch` holds only
+`0211`, dated Aug 3, i.e. predating this item.
+
+**One flake reported, not chased:** `test_wave_sigbrowser` (FROZEN, untouched by
+the fixup) failed `BT45` once in 6 runs with `not-narrower (w=400 240 160
+settled)` — §10.1's shape and numbers verbatim. Ruling-22 A/B: 1-in-6 with the
+fixup, 0-in-6 with `src/wave_viewer.tcl` restored to HEAD, and it PASSED in the
+full audit. A combobox `-values` fanout cannot reach a toplevel the WM never grew.
+**For the driver's FLAKY list; the mechanism is item 9's `browser_width`.**
+
+### 13.7 DIVERGENCES FROM THE PLAN — the complete list, each with its reason
+
+1. **The persistence premise was FALSE, and `recent_files`' shape was substituted.**
+   PLAN: "persisted in the config the same way other viewer prefs are". Measured:
+   `grep -n USER_CONF_DIR src/wave_viewer.tcl` = **0 hits**; no wviewer pref is
+   persisted anywhere. *Reason:* the named mechanism does not exist. The real
+   house precedent is `load_recent_file` / `update_recent_file` /
+   `write_recent_file` (newest-first, deduped, capped, Tcl-sourceable file under
+   `USER_CONF_DIR`), so the store is its own `$USER_CONF_DIR/raw_history` with
+   `$::raw_history_max` registered in `xschem.tcl` beside the other viewer vars.
+   §2.
+2. **The test lives in a NEW file, not appended to `test_wave_sigbrowser.tcl`.**
+   *Reason:* superseded by driver ruling 30 / commit `18c45a16` — that file is
+   FROZEN at items 8/9/10 (324 X checks). `_i1315.tcl` follows `_i11`/`_i12`'s
+   pattern and sources `wvbs_common.tcl`. §7.
+3. **Seven sabotages, not the PLAN's two.** *Reason:* (c) carries driver note
+   (f)'s D6 load, which the PLAN never named; (d) exists to prove `BR44` is not
+   vacuous by producing a STALE tree rather than an empty one; V3/V4/V5 come from
+   the fixup round. §6, §12.
+4. **P4 — the undeclared per-window limit was FIXED, not merely declared.**
+   `rawbar_sync` now fans the dropdown `-values` out to every other open viewer,
+   and only the `-values`. *Reason:* ruling 17 says widen the coverage or narrow
+   the claim; the receipt's existing claim ("every viewer window offers the same
+   dropdown") was the honest one, so the code was made true rather than the claim
+   shrunk. `BR28`/`BR29` + sabotage V5. §12 P4, declared limit 7.
+5. **P3 — fixed by ACTUALLY FILING the issue, not by deleting the sentence.**
+   `doc/claude/issues/0213-read-raw-ascii-point-overruns-its-buffer.md`. *Reason:*
+   the C defect is real and was reproduced independently here (`Warning: ascii
+   block is not of correct size` → `double free or corruption (out)` in
+   `free_rawfile`; SIGSEGV in the verifier's variant), and a Location bar widens
+   exposure to it. **No `.c` file touched** — settled decision 8. §12 P3.
+6. **`BR19` spawns a `--nogui` CHILD PROCESS with `::env(HOME)` pointed at a
+   scratch fakehome** (the `test_undo_link_symbols.tcl` idiom), and `BR28/BR29`
+   build a SECOND throwaway toplevel. *Reason:* the startup read happens before
+   the test script is sourced, so nothing in-process can observe it — a source
+   grep alone is exactly what let sabotage V4 pass. Both are footprint axes the
+   file's header did not originally claim; the header now declares them (no X
+   connection, ~1.5 s). §12 P2.
+7. **Two FROZEN test files were touched, +3 checks and one `gx_must` entry.**
+   PLAN's Files line named only `src/wave_viewer.tcl` and `src/xschem.tcl`.
+   *Reason:* ruling 17 — the new `.loc` row falsified item 9's sidebar child-SET
+   claim in `test_wave_sigbrowser.tcl`, and `test_wave_grid.tcl`'s `GX4` count
+   claim needed `rawbar_load` classified in `gx_must`. Widenings of existing
+   claims, declared; both files PASS. §7.
+8. **The BX39 divergence** — item 12's improve-or-restore refresh shape was not
+   copied; `rawbar_load` gets the same guarantee **earlier and more strongly** by
+   not clearing the previous raw at all. *Reason:* a failed read then cannot have
+   replaced anything. §4, declared limit 5.
+9. **`attach_raw` (the ASE re-run path) does NOT enter the history**, so the
+   dropdown is not literally "the last 20 raw files opened". *Reason:* blast
+   radius — `attach_raw` is referenced by `test_wave_grid`'s `gx_must`/`GX9` and
+   two `ase_window.tcl` call sites. Offered as a follow-up issue, not hidden.
+   Declared limit 1.
+10. **The full audit was launched detached** (`nohup` + background poll).
+    *Reason:* the Bash tool caps a foreground command at 10 minutes and the audit
+    takes ~33; the first attempt was killed by that cap and **discarded**, not
+    interpreted. (An earlier attempt was discarded for a different reason —
+    weston aborted ten seconds in; §10.2.)
+11. **`BT45` reported, not chased.** *Reason:* ruling 22 A/B says it reproduces
+    with item 13 reverted, and the honest repair is a rewrite of item 9's
+    `browser_width` (the sidebar width is computed once at toggle time and never
+    recomputed) — outside item 13's scope. §10.1.
+12. **Anchor drift, recorded for the next items:** `select_raw` is
+    `xschem.tcl:14290`, not the PLAN's `:14209`; item 15's
+    `wviewer::snapshot`/`restore` are `wave_viewer.tcl:2628`/`:2675`, ~460 lines
+    off the PLAN's `:2165`/`:2212`. And, measured for free while probing:
+    **`xschem raw info` DOES enumerate the extra raws**, which removes item 14's
+    "`[D]` if there is no getter" risk. §1.
+
+### 13.8 If this had FAILED — what a human would look at first
+
+It did not fail; this row is here because the ledger schema asks for it, and
+because the two coverage holes §12 describes were *found by a verifier and not by
+a suite*. Should anything about item 13 come back:
+
+1. **`§12` before `§6`.** The first shipping was fully green with the feature's
+   own `rawbar_sync` call deleted. Any future doubt about this item should start
+   by re-running V3 and V4 — if they stop firing exactly 6 and exactly 2, the
+   coverage has rotted back to where it was.
+2. **`/home/qflow/.xschem/raw_history` must not exist** unless the user has
+   really opened raws from the bar in a GUI session. Its presence after a
+   headless run means the 0119 gate is gone.
+3. **Issue `0213` is still open and is C.** A crash reached through the Location
+   bar is most likely a malformed ASCII raw, not this item's Tcl.

@@ -1,3 +1,321 @@
+# Item 04 — `wviewer::searchbar`, the reusable ViVA Search bar — LEDGER RECEIPT
+
+Batch `signal_browser_batch`, branch `fluid-editing`. HEAD at item start `89565388`.
+Date 2026-08-04. Written by the ledger stage from the implementer result **and** the
+independent verifier result. The implementer's own long-form receipt (committed inside
+`43bf6d94`, amended inside `9c1bfa60`) is preserved **verbatim** as the appendix at the
+bottom of this file — nothing it said was dropped. Where the two disagree, §1-§10 wins.
+
+---
+
+## 1. Verdict
+
+**DONE-PIXEL — ledger mark `[E]`, NOT `[x]`.** The deliverable is visible UI that no
+headless check can judge; the eyeball is **owed**, not waived (appendix §9 is the note,
+and it is unchanged by the fixup round — the three fixup checks are event routing and
+namespace hygiene, not pixels).
+
+Verified after a **rejection and a fixup round**: the adversarial verifier first returned
+three defects; all three were repaired in `9c1bfa60`; the re-verification returned
+`ok: true`, `scopeClean: true`. The verifier did not take the fixup on trust — it re-ran
+both arms of the suite before and after its own sabotage round, re-injected all three
+fixup sabotages plus the NAMED one and both required extras, wrote **two of its own
+unnamed sabotages** (one a plausible re-implementation rather than a deletion), ran **two
+independent Tk 8.6.14 probes** re-measuring every Tk claim in the rewritten comment from
+scratch, re-derived the check-count arithmetic from `git show`, and proved the item inert
+against the one non-baseline fail it could not re-run.
+
+**Committed, NOT pushed** (HEAD `9c1bfa60`, 24 commits ahead of `github/fluid-editing`).
+
+| | |
+|---|---|
+| commits | `43bf6d94` *"feat(wviewer): searchbar, the ViVA Search bar"* (+965/-7, 3 files) and `9c1bfa60` *"fixup(wviewer): pin the two unpinned routes, correct a false comment"* (+324/-36, 3 files) |
+| parent / item-start HEAD | `89565388` |
+| scope | **3 files per commit, no C** (settled decision 8), **no new test file** (decision 9), **no consumer** — `grep -rn searchbar_build src/` returns only the definition, its own error strings and its own comment |
+| blast radius | **zero, statically proven by the verifier.** `git show --numstat 43bf6d94` on `src/wave_viewer.tcl` = **241/0 — a PURE INSERTION, no pre-existing line touched**; `git diff 43bf6d94 9c1bfa60 -- src/wave_viewer.tcl \| grep -vE '^[+-]\s*#'` = **zero non-comment lines** (the fixup's only source edit is a comment block; product logic byte-identical); `grep -rn` for all ten new identifiers (`sb_type_code`, `sb_syntax_code`, `searchbar_build/get/fire/error/destroyed/forget`, `sbcfg`, `sbcase`) = **0 hits outside `src/wave_viewer.tcl`** — no shadowing, no consumer |
+| driver note (d) | **honoured byte-exactly.** The frozen oracle (`gsl_frozen_ref`, the GSO block, `GSO_NAMES`, `GSO_PATS`, `GSO_BLOBS`, `GSPLAIN`) is untouched by BOTH commits — independently re-verified by the verifier |
+
+## 2. Commits and files touched
+
+| file | what |
+|---|---|
+| `src/wave_viewer.tcl` | `43bf6d94`: **+241 / -0**, two insertion sites — two arrays in the `namespace eval wviewer` block (`sbcfg`, `sbcase`, keyed by the megawidget's own frame path, not by session token) and a seven-proc section before the `# --- Graph menu dialogs` banner. `9c1bfa60`: **comment block only** (the `searchbar_forget` mechanism comment, rewritten to the measured truth). |
+| `tests/headless/test_wave_sigsearch.tcl` | `43bf6d94`: +317/-7 (group **BAR** + `SM28` + the `bgerror` override + header). `9c1bfa60`: +3 checks (BAR27, BAR28, BAR29) and four stale header claims fixed. |
+| `doc/claude/signal_browser_batch/receipts/04_receipt.md` | the implementer long-form — now the appendix of this file. |
+| `doc/claude/signal_browser_batch/PLAN.md` | ledger tick + eyeball-queue row only, left **UNSTAGED** (driver's file; item-2 D6 / item-3 D9 precedent). Not part of either commit. |
+
+Seven procs ship: `sb_type_code`, `sb_syntax_code` (both PURE), `searchbar_build`,
+`searchbar_get`, `searchbar_fire`, `searchbar_error`, `searchbar_destroyed` +
+`searchbar_forget`. Five widgets in ViVA §3.2's order (`[All ▾] [entry] [Shell ▾]
+[ ] Match case [Search]`) plus a fixed-width error label; `$w` is a plain `frame`, not
+`ttk::frame`, because `ase::ui::apply_theme` has no `TFrame` arm.
+
+## 3. Tests
+
+| | |
+|---|---|
+| test file | `/home/qflow/dev/xschem/claude_1/xschem/tests/headless/test_wave_sigsearch.tcl` (settled decision 9: one file, appended) |
+| checks added | **31** |
+| checks total | **88 -> 119** in the DISPLAY arm; **90** in the `--nogui` arm (88 + `SM28` + `BAR12`, the two PURE ones) |
+| verified how | the verifier re-derived the arithmetic itself rather than trusting it: `git show 89565388:tests/headless/test_wave_sigsearch.tcl \| grep -c '^ *check {'` = **88**, current file = **119**, and 31 = 30 BAR (BAR01-BAR29 **minus the absent BAR25**, plus BAR18b and BAR22b) + SM28. *"Receipt's corrected figures match."* |
+| green | `run_suites.sh test_wave_sigsearch` -> **ALL PASS (119 checks)** — run by the verifier **twice, before and after its whole sabotage round**; `--nogui` -> **ALL PASS (90 checks)**; runtime unchanged (`--nogui` 378 ms, DISPLAY ~3 s) |
+| build | Tcl-only; `make` -> *"Nothing to be done for 'all'"* |
+
+`SM28` discharges item 1's surviving D8/U1 mutation gap (the regexp arm anchors an
+ALTERNATION as a whole) and carries item 1's name because item 1's receipt §6
+cross-references it.
+
+**Driver note (f) survives the widening, and it was re-measured, not argued.** Each of
+the three defaults still fails **exactly one** check (BAR04 / BAR05 / BAR06); BAR27 and
+BAR28 set their own selectors explicitly and BAR29 reads no default, so the three fixup
+checks add **no second target** to any of the three default sabotages.
+
+**One check was written, measured non-deterministic, and DELETED** — `BAR25`, the
+end-to-end generated-`<KeyRelease>` leg. It soaked 8/8 green, then failed inside a clean
+283-test audit under WSLg focus-round-trip stall. It was not made conditional, because
+its only oracle (*"did the callback fire"*) cannot distinguish a delivery stall from a
+broken binding, so a self-skip would mask the very regression it exists to catch.
+**The claim was narrowed to match** (appendix §8): the handler and the binding are
+pinned (BAR13 + BAR14); **end-to-end X key delivery into this widget is NOT**.
+
+## 4. Sabotage table — round 1 (implementer, 12 injections on the then-116-check file)
+
+Counts are as measured at the time. Every injection was `diff`-confirmed to be the
+sabotage and nothing else BEFORE the run; every revert was `diff -q` IDENTICAL and
+md5-matched (`c60b4ff9b1670a95b4909d8a07d91cf6`) with a clean green re-run — a byte-exact
+snapshot, **not** `git checkout --`, because the item was still uncommitted (item 3's D5).
+
+| # | sabotage | predicted | measured | failedExactly | reverted |
+|---|---|---|---|---|---|
+| **NAMED** | `$w.syntax set Shell` -> `RegExp` | BAR05 | **BAR05 alone**, 1 FAILED / 115 passed | **yes** | **yes** |
+| **E1** *(required extra)* | `$w.type set All` -> `Voltage` | BAR04 | **BAR04 alone** | **yes** | **yes** |
+| **E2** *(required extra)* | `set sbcase($w) 0` -> `1` | BAR06 | **BAR06 alone** | **yes** | **yes** |
+| u1 | delete the `sig_match` validation call in `searchbar_fire` | BAR18 (+BAR19) | BAR18 + BAR18b — the declared guard pair; BAR19 correctly did NOT fire | yes (2, declared pair) | **yes** |
+| u2 | invert `sb_type_code` (`Voltage` -> `i`) | BAR12, BAR15 | BAR12, BAR11, BAR15, BAR16, BAR17 | no (honest superset — all read the same explicitly-set Voltage state) | **yes** |
+| u3 | drop the `-showbutton` branch (always create the button) | BAR10 | **BAR10 alone** | **yes** | **yes** |
+| u4 (round 1) | delete `ase::ui::apply_theme $w` | BAR22 | **SURVIVED — ALL PASS** | — (see §6) | **yes** |
+| u4 (round 2, after BAR22b) | same | BAR22b | **BAR22b alone**, `grey80` vs `#f2f2f2` | **yes** | **yes** |
+| u5 | `$w.err -width 24` -> `-width 0` | BAR21 | **BAR21 alone** — the mutation that proves the non-resizing eyeball property is really pinned | **yes** | **yes** |
+| u6 | drop the `%W eq $w` guard on `<Destroy>` | nothing today | **SURVIVED — ALL PASS.** Declared gap, kept deliberately | — (see §6) | **yes** |
+| u7 | drop `unset sbcfg($w)` from `searchbar_forget` | BAR24 | **BAR24 alone** (`{1 0 1 0}`) | **yes** | **yes** |
+| u8 | swap the `syntax`/`case` pack order | BAR03 | BAR03 + BAR10 | no (honest superset — BAR10 asserts the second bar's whole pack list) | **yes** |
+| u9 | invoke the callback only when `$msg eq {}` | BAR26 | **BAR26 alone** | **yes** | **yes** |
+
+## 5. Sabotage table — fixup round (implementer, 6 injections on the 119-check file)
+
+Same discipline; pristine md5 `3817b5a06d98591e76234c302fbe9aab`, every revert
+`diff -q` IDENTICAL, clean green re-run at the end (`ALL PASS (119)` / `ALL PASS (90)`).
+
+| # | sabotage | predicted | measured | failedExactly | reverted |
+|---|---|---|---|---|---|
+| **S_A** *(the verifier's S2)* | delete `bind $w.type <<ComboboxSelected>> [list wviewer::searchbar_fire $w]` (`:7546`) | BAR27 | **BAR27 alone**, 1 FAILED / 118 passed, got `{}` | **yes** | **yes** |
+| **S_B** *(the verifier's S3)* | delete `$w.case configure -command [list wviewer::searchbar_fire $w]` (`:7548`) | BAR28 | **BAR28 alone**, got `{}` | **yes** | **yes** |
+| **S_C** *(the verifier's S4)* | delete `catch {$w.case configure -variable {}}` (`:7654`) | BAR29 | **BAR29 alone**, got `{1 0 1}` — the array element resurrected by the later `invoke`, exactly the predicted mechanism | **yes** | **yes** |
+| **NAMED** *(re-run)* | `$w.syntax set Shell` -> `RegExp` | BAR05 | **BAR05 alone** | **yes** | **yes** |
+| **E1** *(re-run)* | `$w.type set All` -> `Voltage` | BAR04 | **BAR04 alone** | **yes** | **yes** |
+| **E2** *(re-run)* | `set sbcase($w) 0` -> `1` | BAR06 | **BAR06 alone** | **yes** | **yes** |
+
+All three of S_A / S_B / S_C were **ALL-GREEN before the fixup** — that is the coverage
+gap the verifier found, reproduced by the implementer before repairing it.
+
+## 6. The verifier's own sabotages, and their outcomes
+
+The verifier re-injected S_A, S_B, S_C, NAMED, E1 and E2 itself (`sed -i` on the exact
+lines, each `git diff`-confirmed as the only change, each reverted with
+`git checkout -- src/wave_viewer.tcl`) and reproduced every result above, then wrote
+**two of its own, absent from every implementer list**:
+
+| # | sabotage | outcome |
+|---|---|---|
+| **U1 — a plausible RE-IMPLEMENTATION, not a deletion** | rewrite `:7548` as `bind $w.case <ButtonRelease-1> [list wviewer::searchbar_fire $w]` — the "equivalent" a maintainer might actually write | **CAUGHT. 1 FAILED — BAR28 alone.** The `-command` route is pinned against a plausible substitution, not merely against deletion. Reverted. |
+| **U2 — the unnamed one that SURVIVED** | replace `wviewer::searchbar_error $w $e` (`:7618`, the error-label write in `searchbar_fire`'s consumer-callback `catch`) with a comment | **SURVIVED — ALL PASS (119 checks).** See below. |
+
+**U2 is a real, recorded coverage gap — but on a TRUE claim, which is why it did not
+block.** The shipped comment above `searchbar_fire` asserts *"a throwing consumer
+callback puts its own message in `$w.err`, so it is visible and never silent"*, and
+appendix §2 repeats it. The verifier **measured the claim rather than reasoning about
+it** (probe through `gated_xschem.sh`: a `-command` that throws leaves
+`consumer blew up: abc shell 0 all` in the label) and found it TRUE. So this is an
+unpinned defensive path, not a false statement to a maintainer — the class ruling 17 was
+withdrawn over (*"no green mutation anywhere" has no fixed point*).
+
+**Carried to item 5 as V-U2:** item 5 is the first item that actually installs a consumer
+callback, so it is the natural place to close this with one check.
+
+**The verifier also re-measured every Tk claim in the rewritten comment from scratch**
+(`scratchpad/verify04_tkprobe.tcl`, Tk 8.6.14, through `gated_xschem.sh`) rather than
+re-reading the implementer's probe: P1 children are destroyed FIRST, so at a frame's own
+`<Destroy>` `winfo exists` on its child is already **0**; P2 the same during a TOPLEVEL
+destroy; P3 a bare `unset` of a live checkbutton's `-variable` element leaves it absent —
+**the NEXT `invoke` resurrects it**, not the unset; P4 `configure -variable {}` on a live
+widget is `rc=0`, and detach+unset+invoke leaves the element absent; P5 `select` returns
+`{}` but `invoke` runs the `-command` — **which is exactly why the coverage hole was
+invisible** (BAR11 used `select`). **Every Tk assertion in the new comment CONFIRMED.**
+
+## 7. Non-baseline fails
+
+**Implementer, fixup audit** (solo, gated; the panel Paused it twice, ~10 min and ~30 min,
+**both waited out**):
+
+```
+SUMMARY: 262 pass  20 fail  0 crash/timeout  1 skip  (total 283)
+WIREEDIT: PASS      SCRATCH: 0 leaked dir(s)
+grep -c "X connection to :0 broken"  ->  0     <- a real measurement
+test_wave_sigsearch: PASS
+```
+
+20 = **16 HARD** baseline names each on its PLAN-recorded check + **3 FLAKY-list** names
+(`test_hover_highlight` HV5, `test_remap`, `test_wave_markers` MF1) + **1 non-list name**:
+
+| name | disposition |
+|---|---|
+| `test_altf5_ciw` | **environmental.** Fails its single check *"Alt-F5 raises/opens the CIW"* while the other three in the file (including *"rebound Alt-F5 raises CIW again"*) pass — only the raise round-trip misses. **Re-run 3x solo: 3/3 PASS.** Not new to this batch: 4 fails / 9 passes across the 13 audit logs of this session, and item 3's session already isolated it at 2 FAIL / 2 PASS in four solo runs. Item 4 ships seven procs with **zero consumers** plus a comment and cannot reach it. |
+
+The 1 SKIP is `test_fluid_backbone_short_vertical_0098` self-skipping on *"no viewable X
+window"* — environmental.
+
+**Implementer, round-1 audits (two runs).** Run 1 is **DISCARDED as a non-measurement**
+(one `X connection to :0 broken`, and it ran ungated from 18:36:58 — §8); every
+non-baseline name it produced was chased anyway (`test_ase_hier_plot_0168` 3/3,
+`test_wire_vertex_grab` 3/3, `test_cmdmode_descend_0201` and `test_graph_context` 5/5
+each). Run 2 is the measurement: `260 pass 19 fail 0 crash 4 skip`, 0 X deaths — 16 HARD
++ `test_nh_anim_rearm` (FLAKY) + `test_graph_context` (non-list, cleared 5/5) + **1 that
+was item 4's own: `test_wave_sigsearch` on BAR25**, fixed by deleting BAR25 rather than
+re-running until green.
+
+**Verifier, independent solo gated audit — INCOMPLETE BY GATE, and disclosed as such.**
+It reached **277 of 283** before a human's Pause held it at a pause point (~44 min at
+time of writing, waited out in full, no control file ever hand-written, `GUI_GATE` never
+set), so its `SUMMARY` / `WIREEDIT` / `SCRATCH` lines never printed. Of the 277 that ran:
+**19 FAIL + 1 SKIP, 0 CRASH/TIMEOUT, `grep -c "X connection to :0 broken"` = 0.** 19 =
+all 16 HARD names + 2 FLAKY-list names (`test_deselect_mode`,
+`test_pristine_untitled_viewer_0172`) + 1 non-list name. `test_wave_sigsearch` PASSED
+inside it; `test_altf5_ciw` PASSED.
+
+| name | disposition |
+|---|---|
+| `test_hier_close_prompt` | **ruled environmental on evidence gathered WITHOUT re-running** (the verifier was barred from re-running by the revive rule and by the human's Pause). On neither list; **PASSED 15/15 in every prior run inspectable** — both 2026-08-04 baseline runs and all 13 audit logs of this session, *including an audit of the exact commit under test*. It failed at log position 117, **inside the 3-second window in which the gate panel died and the revive failed** (22:18:22 death / 22:18:25 revive-fail; surrounding log lines 22:18:22-22:18:27) — a `wish` client dying on the same X display while a window-prompt test runs. Item 4 is **statically inert** with respect to it (pure-insertion diff, 0 non-comment fixup lines, 0 identifier hits outside `wave_viewer.tcl`). **Item 5's session should re-run it 3x off a healthy panel**; if it reproduces there it is a genuine new FLAKY name. |
+
+The 6 tests that never ran are alphabetically after `test_wave_*`
+(`test_window_numbering`, the `test_wire_*` family) and the same static proof covers them.
+
+**Ledger conclusion: NO regression is attributable to item 4.** `nonBaselineFails` is
+clean after the BAR25 deletion, and the item's one self-inflicted audit fail was removed
+by deleting the non-deterministic check, not by re-running.
+
+## 8. Verifier problems (all NON-BLOCKING) — carried forward
+
+* **G1 — the GUI gate's revive race cost a verifier a completed measurement, and it is
+  the SEVENTH occurrence today.** At `2026-08-04T22:18:25` `events.log` recorded
+  `revive FAILED -- suite continues UNGATED` for the verifier's audit (pid 1002912:
+  panel death 22:18:22 -> panel launch FAILED -> revive FAILED). Per its instructions the
+  verifier launched **no further suite**; a new panel came up at 22:20:36 (pid 1008879)
+  and a human pressed Pause at 22:27:35, correctly blocking the audit ever since. The
+  implementer's own round-1 audit hit the same race at `18:36:58`
+  (`refresh error: error reading "file6": no such process` -> `panel launch FAILED`),
+  running ungated for part of a 40-minute audit. **The driver should fix this before item
+  5** — it is chronic (six occurrences visible in `events.log` today by the verifier's
+  count, seven including its own), and it has now progressed from "a run was ungated" to
+  "a verification could not be completed".
+* **G2 — the round-1 receipt overstated the gate discipline, and the correction is the
+  record.** The earlier wording *"no further suite was launched after this was noticed"*
+  was corrected against `events.log`, which shows launches at **18:54:02, 18:54:34 and
+  18:55:01** after the 18:36:58 revive failure (all three enrolled and gated — the panel
+  had self-recovered — with discovery happening after 18:55). The verifier verified the
+  correction against the log. `GUI_GATE=0` was never set and no control file was ever
+  hand-written in any session of this item.
+* **V-U2 — one surviving unpinned (but TRUE) claim**, §6. Item 5 closes it.
+* **u6 — a declared, deliberate gap.** The `%W eq $w` `<Destroy>` guard is dead code
+  today by Tk's bindtag rules (a frame path is not in its children's bindtags) and stays;
+  it is the one thing between a future consumer that adds `$w` to a child's bindtags and
+  a bar that de-registers itself when its entry is destroyed. Declared, not deleted to
+  make the sabotage table prettier. The verifier did not dispute it.
+* **P1 (item 3's, drifted a SECOND time) — still NOT fixed, deliberately.**
+  `src/xschem.tcl:4548` says `wave_viewer.tcl` is *"sourced unconditionally at
+  xschem.tcl:14352"*; the `source` is at **`:14374`**. `src/xschem.tcl` is outside item
+  4's Files line, so fixing it would be a silent scope widening. **Recommendation to the
+  driver: replace the number with a grep-able phrase** — it has now rotted twice in two
+  items.
+* **BASELINE FEEDBACK — two names to add to the FLAKY list before item 5's verifier trips
+  on them, both endorsed by BOTH sessions:**
+  * **`test_graph_context`** — failed both round-1 audits, passed 5/5 solo; item 3's
+    verifier hit it and cleared it 3/3; the verifier of this item reproduced it under
+    audit load on the same *"over-graph wheel leaves canvas zoom"* check. Four
+    independent data points, the expected shape of a load flake.
+  * **`test_altf5_ciw`** — 4 fails / 10 passes across this batch's audit logs; **PASSED
+    in the verifier's audit**, which is why the count moved. WSLg window-raise flake.
+  * Plus a note the driver may want to record: **the environmental self-skip name flaps**
+    — documented as `test_alt_transform_group_0116`, seen here as
+    `test_fluid_backbone_short_vertical_0098` (implementer) and
+    `test_fluid_relay_manhattanize_0107` (verifier).
+
+## 9. Divergences from the PLAN
+
+| # | divergence | reason |
+|---|---|---|
+| **D1** | ViVA §3.2's **fifth control, the `All DBs` checkbox, is DROPPED** — five widgets, not six. | An xschem viewer window has exactly ONE raw loaded, so the box has nothing to widen the search to. **Declared in the shipped comment block AND the receipt**, per the scout's requirement (the scout flagged that a silent omission here would be indistinguishable from an oversight). If a multi-raw viewer lands it re-enters as widget six, immediately before `Search`. Item 14 (`All DBs search`) inherits this. |
+| **D2** | **Two checks beyond the PLAN's 26 in round 1 (BAR18b, BAR22b), three more in the fixup (BAR27-BAR29): 31 added, not 26.** | Every one is an anti-vacuity or anti-hole widening under ruling 17's corollary (*widen the coverage or narrow the claim, never neither*): BAR22b because deleting `apply_theme` left everything green; BAR18b because BAR18 computes its expectation from `sig_match` at test time and is self-satisfying if that message is ever empty; BAR27/BAR28/BAR29 because the verifier measured the gaps. |
+| **D3** | The PLAN listed one `<Destroy>` cleanup proc; shipped are **two**, `searchbar_destroyed {w W}` (the `%W` trampoline) and `searchbar_forget {w}` (the drop). | The trampoline needs `%W`; the drop must also be callable directly by a consumer tearing a bar down by hand. That second path is exactly what BAR29 now pins. |
+| **D4 — CORRECTED BY THE FIXUP** | `searchbar_forget` detaches (`$w.case configure -variable {}`) before unsetting `sbcase($w)`. Not in the PLAN — and the round-1 justification for it was **measurably FALSE in both halves.** | The verifier disproved it and the implementer re-measured independently on Tk 8.6.14: (a) at a frame's own `<Destroy>` the children are already gone, so on the destroy route the configure errors into its own `catch` and BAR24 passes with or without it; (b) a bare `unset` does not resurrect the element — the **next `invoke`** does. The line is load-bearing on exactly ONE path (a direct `searchbar_forget` on a still-LIVE bar) and **the line was KEPT with the claim narrowed to that path**, pinned by BAR29 on its own throwaway toplevel `.wvsb3` with a `winfo exists $w3.case` anti-vacuity term. The shipped comment is rewritten to the measured mechanism, including an explicit *"on the `<Destroy>` route this is a NO-OP"*. |
+| **D5** | `-showbutton 0` **does not create the button at all**, where the PLAN said "hides". | `winfo exists $w.search` then answers *which variant a consumer got* — a truthful test; "packed or not" is not. BAR10 asserts it. |
+| **D6** | Round-1 sabotages reverted from a byte-exact snapshot + md5, **not** `git checkout --`. | Item 3's D5 verbatim: the item was uncommitted, so a checkout would have destroyed the item with the sabotage. (The fixup round and the verifier's round ran post-commit and could use `git checkout --`.) |
+| **D7** | The test file **stops being fully `--nogui`-safe**: 90 of 119 checks run there, and item 4 is exercised only through SM28/BAR12. | The BAR group needs real Tk. **Stated in the file header AND the receipt**, because a maintainer debugging with `--nogui` would otherwise read a green run as coverage of the search bar. The audit runs this file in the DISPLAY arm, so audit coverage is real. |
+| **D8** | The not-run banner is exactly `SKIPPED: BAR group (Tk/X arm only)`. | `full_audit.sh:109 is_skip()` matches `RESULT: SKIP`, `skipped: no X` and `SKIP: no X connection` ANYWHERE in the output and runs BEFORE `is_pass` — any of those spellings would score the whole 119-check suite as SKIP and silently discard every item-1/2/3 check with it. |
+| **D9** | **BAR25 was written and then DELETED**, and the claim narrowed in three places (test header, the code where it used to be, the receipt). | Measured non-deterministic under audit load, with an oracle that cannot separate a WSLg stall from a broken binding. The scout's pre-authorised fallback, taken for the scout's stated reason (*rather than shipping a flake*). |
+| **E1** | `bgerror` is now overridden in this test file (`puts` + `incr ::fail`). | The file's own header NOTE asked for it *"the moment a dialog arrives"*. Real widgets with real bindings have arrived; swallow-and-count is the only shape that can neither hang nor hide. |
+| **F1** *(fixup)* | The three defects were repaired by **WIDENING** rather than narrowing, in both cases where either was permitted. | Ruling 17's corollary permits either; widening is stronger and was cheap. BAR27 fires the type dropdown's `<<ComboboxSelected>>`; BAR28 fires the checkbutton `-command` via `$w.case invoke` (**`select`, which the older checks used, sets the variable WITHOUT running `-command` — precisely why the hole was invisible**); BAR29 pins the surviving narrow `searchbar_forget` claim. |
+| **F2** *(fixup)* | For defect 2 the implementer did **both halves** — comment rewritten AND the surviving true claim pinned — rather than rewording alone. | Same corollary. Rewording alone would have left the one real path unpinned. |
+| **F3** *(fixup)* | The Tk claims were **re-measured from scratch** through `tests/headless/gated_xschem.sh` before anything was written, rather than accepting the verifier's disproof. | A receipt that adopts someone else's measurement inherits its errors. Both parties independently landed on the same five results (§6). |
+| **F4** *(fixup)* | §4's sabotage table was **left at the counts it was measured at** (116 checks) and relabelled *"round 1"*, rather than retro-edited. | Retro-editing measurements is how a receipt stops being evidence. §16.2 is the re-measured round; §16.3 tabulates every stale figure corrected. |
+| **F5** *(fixup)* | Two extra stale claims in the test-file header were fixed while there (*"116-check suite"*, *"leaves the `bar_*` helper procs defined"* — `bar_send_key` went with BAR25 and no `bar_*` proc remains). | Same defect class as the one being repaired; leaving them would have re-seeded it for item 5. |
+| **F6** *(fixup)* | Deliberately NOT changed: u6 stays a declared gap; BAR25 stays deleted; the frozen oracle stays byte-untouched; P1 stays unfixed as out-of-scope; **the verdict stays `[E]`**. | The three fixup checks are event routing and namespace hygiene, not pixels — appendix §9's eyeball note is still owed in full. |
+| **L1** *(this stage)* | The ledger line carries the item's open flags inline rather than a bare `-> DONE-PIXEL (…)`, and this file **merged** the implementer long-form as an appendix instead of clobbering it. | Item 1/2/3 ledger precedent. The implementer wrote its long-form straight to the pipeline path `receipts/04_receipt.md` and committed it inside both commits, so this stage put the ledger receipt on top and preserved the long-form verbatim — nothing lost, no second file. The receipt is consequently **dirty vs `9c1bfa60`**, like `PLAN.md`, `receipts/02_receipt.md` and `receipts/03_receipt.md`; **this stage committed nothing.** |
+| **L2** *(this stage)* | The Eyeball queue's empty placeholder row was **replaced** by item 4's row rather than appended after it. | It is the table's stub, not data; item 4 is the batch's first `[E]`. Later `[E]` items append below. |
+
+## 10. If a human looks at one thing
+
+Item 4 is **DONE-PIXEL** and nothing here is a failure, so this is a queue rather than a
+post-mortem. In order:
+
+1. **The eyeball itself — appendix §9.** This is why the mark is `[E]` and not `[x]`.
+   Three of its five properties have **no headless proxy at all**: the 6/4/3-px spacing,
+   whether the `#8b0000` message is legible on the `#f2f2f2` panel, and whether the
+   24-character clip budget is acceptable. Build the bar on a throwaway toplevel
+   (`pack $w -fill x` is **required** — an unmanaged frame is unmapped, appendix §8),
+   type `[` with `RegExp` selected, and confirm the bar's width does not change. If the
+   clip is not acceptable the right fix is a **tooltip in item 5, not an elastic label** —
+   an elastic label re-introduces exactly the resizing BAR21 forbids.
+2. **The GUI gate (G1).** Seventh revive failure today; it has now cost a verifier a
+   completed 283-test measurement. Fix before item 5, or item 5's verifier inherits the
+   same hole.
+3. **The two FLAKY-list additions** (`test_graph_context`, `test_altf5_ciw`) and the
+   `test_hier_close_prompt` re-run item 5 owes off a healthy panel.
+
+To hand to item 5 when it starts: **V-U2** (one check closes the
+`searchbar_error`-on-throwing-consumer path — item 5 is the first item with a real
+consumer callback), **D7** (`--nogui` no longer covers this file's Tk half), **P1** (the
+twice-rotted line number in `src/xschem.tcl:4548`), item 3's **D4** (the search bar owns
+the invalid-pattern error label — the legacy dialog shows an empty listbox only), and the
+lesson §6 of the appendix hands forward: **audit the CODE COMMENTS and the COMMIT MESSAGE
+against coverage, not just the check names — a maintainer acts on a comment exactly as
+readily as on a check name.**
+
+---
+
+---
+
+# APPENDIX — implementer long-form receipt, preserved verbatim
+
+Below is the receipt as committed inside `43bf6d94` and amended inside `9c1bfa60`
+(file `doc/claude/signal_browser_batch/receipts/04_receipt.md`, 627 lines), unedited —
+`diff` against `git show 9c1bfa60:…/04_receipt.md` is EMPTY.
+Where it and §1-§10 above disagree, **§1-§10 wins** — specifically, its §11 gate
+disclosure is superseded by **G1** (the verifier's session hit the same race a seventh
+time, at 22:18:25, and could not complete its audit because of it), and its §15 baseline
+feedback is extended by the verifier's independent endorsement of both names.
+
+---
+
 # Item 04 — `wviewer::searchbar`, the reusable ViVA Search bar — receipt
 
 Batch `signal_browser_batch`, branch `fluid-editing`. HEAD at item start `89565388`.
