@@ -2797,22 +2797,26 @@ proc wviewer::snapshot {token prev} {
     # file sees the active tab and ignores `tabs`; a new build reading an old
     # file finds no `tabs` and builds a one-tab viewer. No version bump.
     set tabs [wviewer::tabs_serialize $token]
+    set d [dict create open 1 \
+                       sharedx [wviewer::dget $lay sharedx 0] \
+                       rawfile {} \
+                       graphs  [wviewer::dget $lay graphs {}] \
+                       mode    [wviewer::plot_mode $token] \
+                       target  [wviewer::target_index $token]]
     if {[llength $tabs]} {
-      return [dict create open 1 \
-                          sharedx [wviewer::dget $lay sharedx 0] \
-                          rawfile {} \
-                          graphs  [wviewer::dget $lay graphs {}] \
-                          mode    [wviewer::plot_mode $token] \
-                          target  [wviewer::target_index $token] \
-                          tabs      $tabs \
-                          activetab [wviewer::tab_index $token]]
+      dict set d tabs      $tabs
+      dict set d activetab [wviewer::tab_index $token]
     }
-    return [dict create open 1 \
-                        sharedx [wviewer::dget $lay sharedx 0] \
-                        rawfile {} \
-                        graphs  [wviewer::dget $lay graphs {}] \
-                        mode    [wviewer::plot_mode $token] \
-                        target  [wviewer::target_index $token]]
+    # SIGNAL BROWSER (item 15): the sidebar's own state, and GATED ON BEING
+    # NON-DEFAULT for exactly the reason the two tabs keys are. A window nobody
+    # opened the browser in serialises byte-identically to the pre-item-15 one,
+    # so `test_wave_modes.tcl` MG9's fixed key list still holds and
+    # `ase::ui::viewer_snapshot`'s difference test does not mark every session
+    # dirty. The gate lives in `browser_state_is_default`, which also answers 1
+    # for the {} a window with no sidebar returns.
+    set bs [wviewer::browser_state $token]
+    if {![wviewer::browser_state_is_default $bs]} { dict set d browser $bs }
+    return $d
   }
   if {$prev eq {}} { return {} }
   return [dict replace $prev open 0]
@@ -2885,6 +2889,13 @@ proc wviewer::restore {token vdict rawfile sim_type} {
     }
   }
   wviewer::regenerate $token
+  # SIGNAL BROWSER (item 15): LAST, and after the regenerate rather than before
+  # it. Packing the sidebar resizes the canvas, and that already goes
+  # <Configure> -> wviewer::on_configure -> configure_apply, which captures and
+  # regenerates on its own (browser_toggle's ⚠) — doing it before would fold a
+  # layout the window is about to be given again. An absent `browser` key (every
+  # state file written before this item) makes this a no-op.
+  catch {wviewer::browser_state_apply $token [wviewer::dget $vdict browser {}]}
   return 1
 }
 
@@ -6283,6 +6294,42 @@ proc wviewer::rawhist_push {path} {
   return 1
 }
 
+# item 15: fold a SAVED history back into the live one. THE SECOND GATED SITE,
+# and it carries `rawhist_push`'s gate line VERBATIM and for the identical
+# reason: a restore is something a `--script` verification run does constantly,
+# and issue 0119 is precisely such a run rewriting a user file. Without this
+# line, restoring a state dict in a headless suite would write
+# `~/.xschem/raw_history`.
+#
+# ⚠ IT MERGES, IT DOES NOT REPLACE. `rawhist` is ONE GLOBAL disk-backed list
+# shared by every open viewer (rawbar_sync fans the dropdown out to all of
+# them), so a restore that assigned the saved list would silently delete raws
+# opened in another window since the snapshot was taken.
+#
+# Every ordering/dedup/cap rule comes from item 13's PURE `rawhist_add` — folded
+# OLDEST-FIRST so the saved list's newest entry ends up nearest the front, with
+# the live entries it does not mention keeping their relative order behind it.
+# Nothing here re-implements normalise, dedup or the 20-cap.
+#
+# ⚠ AN INDEX LOOP, NOT `lreverse`: `lreverse` is Tcl 8.5+ and this repo targets
+# 8.4-8.6 (see rawhist_add's own 8.4 note on `lreplace`).
+# Returns 1 when the live list actually moved.
+proc wviewer::rawhist_merge {saved} {
+  variable rawhist
+  # the recent-views list belongs to the user: no-op in gated (test/automation)
+  # sessions -- issue 0119, the same flag rawhist_push and update_recent_file gate on
+  if {[info exists ::update_recent_files] && !$::update_recent_files} { return 0 }
+  if {![llength $saved]} { return 0 }
+  set new $rawhist
+  for {set i [expr {[llength $saved] - 1}]} {$i >= 0} {incr i -1} {
+    set new [wviewer::rawhist_add $new [lindex $saved $i] [wviewer::rawhist_max]]
+  }
+  if {$new eq $rawhist} { return 0 }
+  set rawhist $new
+  wviewer::rawhist_write
+  return 1
+}
+
 # Push the current path into the combobox, refresh its -values from the history
 # and RE-ATTACH the balloon.
 #
@@ -7715,7 +7762,17 @@ proc wviewer::browser_say {token kind {a {}} {b {}} {c {}}} {
 # toplevel is mapped there (so `winfo width` is real), and build must stay
 # geometry-neutral or item 8's BS21 — "built but not packed, nothing moved" —
 # stops meaning anything.
-proc wviewer::browser_width {token} {
+#
+# ⚠ ITEM 15 WIDENED IT, IT DID NOT REPLACE IT. `want` {} (every pre-item-15
+# caller, and browser_show is still the only one) derives the base width exactly
+# as before; a positive integer REPLACES the derived base and then goes through
+# THE SAME cap and floor. That shape is forced: a restored width must not be
+# able to exceed 45% of a toplevel that is now smaller than the one it was
+# measured on, and the clamp may not be factored out into a shared helper
+# either — test_wave_sigbrowser.tcl's BT08 greps four literals inside THIS body
+# and that file is FROZEN (ruling 30). Consequence, declared in the receipt: the
+# dict field round-trips exactly, the PIXELS do not when the window changed size.
+proc wviewer::browser_width {token {want {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set top [dict get $windows $token top]
@@ -7733,6 +7790,10 @@ proc wviewer::browser_width {token} {
   set w 280
   catch {set w [expr {[winfo reqwidth $f.wvsearch] -
                       [winfo reqwidth $f.wvsearch.err]}]}
+  # item 15: an explicit want REPLACES the derived base, then takes the same
+  # cap/floor below. Non-integer / non-positive is ignored, so `{}` is literally
+  # the pre-item-15 path.
+  if {[string is integer -strict $want] && $want > 0} { set w $want }
   set cap 0
   catch {set cap [expr {int(0.45 * [winfo width $top])}]}
   if {$cap > 0 && $w > $cap} { set w $cap }
@@ -7873,6 +7934,228 @@ proc wviewer::browser_toggle_at {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
   return [wviewer::browser_toggle {} $token]
+}
+
+# =============================================================================
+# item 15 — THE BROWSER'S SLICE OF snapshot / restore
+# doc/claude/signal_browser_batch/PLAN.md item 15, receipts/15_receipt.md.
+#
+# One sub-dict under the `browser` key of the ASE `viewer` state, so a restored
+# session lands where the user left it: sidebar shown/width, BOTH searchbars,
+# the plot destination, the tree's expanded set and selection, and the raw-file
+# history.
+#
+# ⚠⚠ IT IS EMITTED ONLY WHEN IT IS NON-DEFAULT, and that gate is load-bearing
+# OUTSIDE this file: `test_wave_modes.tcl` MG9 pins `[dict keys $snap]` to
+# exactly {open sharedx rawfile graphs mode target}, and
+# `ase::ui::viewer_snapshot`'s difference test would mark every session dirty if
+# a new key appeared unconditionally (the same argument the TABS keys are gated
+# on). `browser_state_is_default` is the gate.
+#
+# ⚠ EVERYTHING IS READ THROUGH THE OWNING ITEM'S ACCESSOR — `browser_shown`
+# (item 8), `searchbar_get` (items 4/9/14), `plot_dest` (item 7, ruling 24),
+# `rawhist_get` (item 13). Nothing here touches `sbcase(`, `sbcfg(`, `dest(` or
+# the RECT MODEL: settled decision 13 says browser state derives from
+# `xschem raw list` / `xschem raw`, never from graph rects (issue 0186 is open).
+#
+# ⚠ DELIBERATE EXCLUSIONS KEPT (the PLAN's "do not fix that here"): undo/redo
+# history, wave highlights (D4, and WH9j greps this file for `wavehl`) and the
+# per-tab `view` range cache all stay out.
+# =============================================================================
+
+# The canonical no-op value: what a FRESHLY OPENED window's browser really is.
+# PURE. Every field is spelled explicitly rather than derived, so a default that
+# drifts in the widgets is a FAILING CHECK (BP41 asserts a real fresh window
+# equals this) instead of a gate that quietly stops emitting.
+#
+# `dest append` is spelled out because item 7 has no open-time seed — `plot_dest`
+# answers `append` for a token it has never heard of, so that IS the default.
+# The search sub-dict carries `alldbs` and the filter sub-dict does NOT: that is
+# item 14's conditional-key contract (only a bar built `-alldbs 1` has it), and
+# the two shapes must match `searchbar_get`'s output EXACTLY, key order included,
+# or the equality test below can never be true.
+proc wviewer::browser_state_default {} {
+  return [dict create \
+    shown  0 \
+    width  0 \
+    search [dict create pattern {} syntax shell case 0 type all alldbs 0] \
+    filter [dict create pattern {} syntax shell case 0 type all] \
+    dest   append \
+    open   {} \
+    sel    {} \
+    hist   {}]
+}
+
+# 1 when `d` says nothing a fresh window does not already say. PURE.
+#
+# ⚠ `hist` IS EXCLUDED ON PURPOSE (declared divergence D-A). The raw history is
+# a GLOBAL, DISK-BACKED store that already outlives the session on its own; if
+# it counted here, whether a state file grew a `browser` key would depend on the
+# developer's home directory, and MG9 would go red on any machine that had ever
+# opened a raw. So the history RIDES ALONG when the sub-dict is emitted for some
+# other reason, and an all-default browser simply records no history — which
+# costs nothing, because `rawhist_load` reads the same store back at startup.
+proc wviewer::browser_state_is_default {d} {
+  if {$d eq {}} { return 1 }
+  if {[catch {dict remove $d hist} a]} { return 0 }
+  return [expr {$a eq [dict remove [wviewer::browser_state_default] hist]}]
+}
+
+# --- the tree's own two fields ------------------------------------------------
+# Every row that HAS CHILDREN, depth-first. Group rows are exactly the rows with
+# children (item 14 kept DB headers `kind group` rather than inventing a kind),
+# so this needs no row-model lookup and works on a tree the model no longer
+# describes. Tk-only, never throws.
+proc wviewer::browser_tree_nodes {tv {id {}}} {
+  set out {}
+  if {[catch {$tv children $id} kids]} { return {} }
+  foreach k $kids {
+    set gk {}
+    catch {set gk [$tv children $k]}
+    if {![llength $gk]} { continue }
+    lappend out $k
+    foreach d [wviewer::browser_tree_nodes $tv $k] { lappend out $d }
+  }
+  return $out
+}
+
+# `{open <group ids currently expanded> sel <the selection>}`, or {} when there
+# is no window / no tree. NEVER throws — it is read from `snapshot`, which runs
+# on a window that may be halfway through teardown.
+#
+# ⚠ THE DEFAULT IS ALL-OPEN AND EMPTY-SELECTION, because `browser_populate`
+# inserts every row `-open 1` and clears the selection. So a COLLAPSED group and
+# a NON-EMPTY selection are the genuinely non-default values a round-trip
+# fixture has to set (driver note (d): a default-valued field proves nothing).
+proc wviewer::browser_tree_state {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return {} }
+  set sel {}
+  catch {set sel [$tv selection]}
+  set op {}
+  foreach id [wviewer::browser_tree_nodes $tv] {
+    set o 0
+    if {[catch {$tv item $id -open} o]} { continue }
+    if {[string is boolean -strict $o] && [string is true -strict $o]} {
+      lappend op $id
+    }
+  }
+  return [dict create open $op sel $sel]
+}
+
+# The inverse. Ids that no longer exist are skipped (the raw may have changed
+# between snapshot and restore), so a stale state can never throw.
+#
+# ⚠⚠ THE ORDER IS LOAD-BEARING AND NOT OBVIOUS: SELECTION FIRST, OPEN-SET LAST.
+# `$tv see` sets EVERY ANCESTOR's `-open` to true (that is browser_reveal's
+# central finding), so applying the collapse first and then revealing the
+# selection would silently re-expand exactly the groups the user had collapsed.
+# For the same reason `browser_reveal` is NOT reused here: it also force-opens
+# the node it lands on.
+#
+# ⚠ It must run AFTER `browser_show`, never before: showing the sidebar calls
+# `browser_refresh $token 1`, and `browser_populate` deletes every row, re-inserts
+# them all `-open 1` and clears the selection.
+proc wviewer::browser_tree_apply {token d} {
+  variable windows
+  if {$d eq {}} { return 0 }
+  if {![dict exists $windows $token]} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  set keep {}
+  foreach id [wviewer::dget $d sel {}] {
+    if {$id eq {}} { continue }
+    if {![catch {$tv exists $id} ex] && $ex} { lappend keep $id }
+  }
+  if {[llength $keep]} {
+    catch {$tv selection set $keep}
+    catch {$tv focus [lindex $keep 0]}
+    catch {update idletasks}
+    catch {$tv see [lindex $keep 0]}
+  }
+  # ...and only NOW the expanded set, over the top of whatever `see` opened. An
+  # absent `open` key (a state written before this item) leaves the tree as
+  # `browser_populate` built it, i.e. all open.
+  if {[dict exists $d open]} {
+    set op [dict get $d open]
+    foreach id [wviewer::browser_tree_nodes $tv] {
+      catch {$tv item $id -open [expr {[lsearch -exact $op $id] >= 0 ? 1 : 0}]}
+    }
+  }
+  return 1
+}
+
+# --- the reader and the writer ------------------------------------------------
+# THE READER. {} for a token with no window / no sidebar, which
+# `browser_state_is_default` reads as "default" so `snapshot` emits nothing.
+proc wviewer::browser_state {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return {} }
+  set d [wviewer::browser_state_default]
+  dict set d shown [wviewer::browser_shown $token]
+  set w 0
+  catch {set w [$f cget -width]}
+  if {![string is integer -strict $w] || $w < 0} { set w 0 }
+  dict set d width $w
+  set s {}
+  catch {set s [wviewer::searchbar_get $f.wvsearch]}
+  if {$s ne {}} { dict set d search $s }
+  set fl {}
+  catch {set fl [wviewer::searchbar_get $f.wvfilter]}
+  if {$fl ne {}} { dict set d filter $fl }
+  dict set d dest [wviewer::plot_dest $token]
+  set t [wviewer::browser_tree_state $token]
+  dict set d open [wviewer::dget $t open {}]
+  dict set d sel  [wviewer::dget $t sel  {}]
+  dict set d hist [wviewer::rawhist_get]
+  return $d
+}
+
+# THE WRITER. `{}` -> 0 immediately, and that is the pre-item-15 back-compat
+# arm: a state file with no `browser` key leaves the fresh window exactly as
+# `open` built it.
+#
+# ⚠ STEP ORDER IS FORCED, TWICE OVER:
+#   * the width goes AFTER `browser_show`, because the pack branch recomputes it;
+#   * the tree state goes AFTER `browser_show` too, because that call repopulates
+#     the tree from `xschem raw list` and wipes both fields.
+# And both go only when the sidebar restores SHOWN (item 9's D6 — there is no
+# populated tree while it is hidden; declared divergence D-D).
+#
+# ⚠ IT WRITES `dest` AND `browser` DIRECTLY rather than through `set_plot_dest`
+# / `browser_toggle`, which BOTH `log_action`. That is `restore`'s own precedent
+# for `mode`/`target`: a rebuild must not fill the replay log with lines nobody
+# typed. The VALUE still goes through item 7's normaliser, so a garbage `dest`
+# in a hand-edited state lands on the harmless policy. Declared as D-F.
+proc wviewer::browser_state_apply {token d} {
+  variable windows
+  variable browser
+  variable dest
+  if {$d eq {}} { return 0 }
+  if {![dict exists $windows $token]} { return 0 }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return 0 }
+  catch {wviewer::searchbar_set $f.wvsearch [wviewer::dget $d search {}]}
+  catch {wviewer::searchbar_set $f.wvfilter [wviewer::dget $d filter {}]}
+  catch {set dest($token) [wviewer::dest_norm [wviewer::dget $d dest append]]}
+  set shown [wviewer::dget $d shown 0]
+  if {![string is boolean -strict $shown]} { set shown 0 }
+  set shown [expr {[string is true -strict $shown] ? 1 : 0}]
+  set browser($token) $shown
+  catch {wviewer::sync_browser_mirror $token}
+  catch {wviewer::browser_show $token}
+  if {$shown} {
+    catch {wviewer::browser_width $token [wviewer::dget $d width 0]}
+    set ts [dict create sel [wviewer::dget $d sel {}]]
+    if {[dict exists $d open]} { dict set ts open [dict get $d open] }
+    catch {wviewer::browser_tree_apply $token $ts}
+  }
+  catch {wviewer::rawhist_merge [wviewer::dget $d hist {}]}
+  return 1
 }
 
 # The Ctrl-D binding body (issue 0171). Resolves the token from the EVENT's
@@ -9886,6 +10169,29 @@ proc wviewer::sb_syntax_code {label} {
   return shell
 }
 
+# --- item 15: the two INVERSES ------------------------------------------------
+# code -> the combobox LABEL, so `searchbar_set` can write back exactly what
+# `searchbar_get` read. PURE, and both fall back to the DEFAULT label rather
+# than throwing: a hand-edited state file carrying `syntax posix` must restore a
+# usable bar, and settled decisions 6/7 name Shell/All as the defaults. The pair
+# is deliberately total (every input maps), which is what makes
+# `sb_*_label [sb_*_code $x]` an identity on every LABEL the comboboxes offer —
+# and those are the only values the widgets can hold (`-state readonly`).
+proc wviewer::sb_syntax_label {code} {
+  if {[string tolower [string trim $code]] eq {regexp}} { return RegExp }
+  return Shell
+}
+
+# `v`/`i`/`other` -> `Voltage`/`Current`/`Other`; anything else -> `All`.
+proc wviewer::sb_type_label {code} {
+  switch -exact -- [string tolower [string trim $code]] {
+    v     { return Voltage }
+    i     { return Current }
+    other { return Other }
+  }
+  return All
+}
+
 # --- item 7: the plot-destination codes ---------------------------------------
 # `Append` `Replace` `New Strip` `New Tab` <-> append replace newstrip newtab.
 #
@@ -10090,6 +10396,55 @@ proc wviewer::searchbar_get {w} {
       [expr {[info exists sballdb($w)] && $sballdb($w) ? 1 : 0}]
   }
   return $d
+}
+
+# --- item 15: THE MISSING TWIN ------------------------------------------------
+# `searchbar_get`'s inverse: put a bar back into a state that reader described.
+# `d` is searchbar_get's OWN dict shape, so get/set compose to an identity and
+# there is no second spelling of the bar's state anywhere.
+#
+# ⚠ IT WRITES THROUGH THE WIDGETS, and the two `set`s below are NOT a reach-in:
+# `sbcase($w)` and `sballdb($w)` ARE the checkbuttons' `-variable`, i.e. the
+# widgets' own storage, so writing them is exactly what a click does. Everything
+# else goes through the entry and the two comboboxes.
+#
+# ⚠ IT MUST NOT THROW, for `searchbar_get`'s reason turned around: its callers
+# are restore paths that run after a DESTROY, where a half-built or torn-down
+# bar is a legal input and a hard error would abort the whole rebuild. 1 when
+# the bar was written, 0 when there is no live bar to write.
+#
+# ⚠ MISSING KEYS FALL BACK TO THE DEFAULTS, not to "leave it alone": restoring a
+# dict that predates a field must leave the bar in the state a FRESH bar is in,
+# or a restore would inherit whatever the previous session left in the widget.
+# `alldbs` is the ONE exception and it is item 14's conditional-key contract: it
+# is written only when the caller's dict HAS it AND this bar was built
+# `-alldbs 1`, so restoring a Filter-bar dict onto the Filter bar cannot invent
+# a scope box, and restoring an old four-key dict onto the Search bar leaves the
+# box where the fresh window put it (off).
+#
+# It ends on ONE `searchbar_fire`, deliberately: the consumer callback then runs
+# exactly once for the whole restored state (never once per field), and decision
+# 4's error label ends up describing the pattern that is actually in the bar.
+proc wviewer::searchbar_set {w d} {
+  variable sbcfg
+  variable sbcase
+  variable sballdb
+  if {![info exists sbcfg($w)]} { return 0 }
+  if {[catch {winfo exists $w} e] || !$e} { return 0 }
+  catch {$w.pat delete 0 end}
+  catch {$w.pat insert 0 [wviewer::dget $d pattern {}]}
+  catch {$w.syntax set [wviewer::sb_syntax_label [wviewer::dget $d syntax shell]]}
+  catch {$w.type   set [wviewer::sb_type_label   [wviewer::dget $d type   all]]}
+  set c [wviewer::dget $d case 0]
+  if {![string is boolean -strict $c]} { set c 0 }
+  set sbcase($w) [expr {[string is true -strict $c] ? 1 : 0}]
+  if {[wviewer::dget $sbcfg($w) alldbs 0] && [dict exists $d alldbs]} {
+    set a [dict get $d alldbs]
+    if {![string is boolean -strict $a]} { set a 0 }
+    set sballdb($w) [expr {[string is true -strict $a] ? 1 : 0}]
+  }
+  catch {wviewer::searchbar_fire $w}
+  return 1
 }
 
 # THE handler. Body order is load-bearing:
