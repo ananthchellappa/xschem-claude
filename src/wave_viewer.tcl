@@ -376,6 +376,14 @@ namespace eval wviewer {
   #     anything from the widget.
   variable browsersigs; array set browsersigs {}
   variable browserrows; array set browserrows {}
+  #   browserdbsigs($token) = signal-browser item 14 (All DBs). The FOREIGN
+  #     results databases' inventories — one entry per NON-current raw in
+  #     `xctx->extra_raw_arr`, {id d:<idx> label <file (analysis)> names {..}} —
+  #     taken by the SAME snapshot browsersigs is (item 9's D6, extended). It is
+  #     filled UNCONDITIONALLY on reload so that the All-DBs checkbox has exactly
+  #     ONE reader, in browser_refresh, and the snapshot cost does not depend on
+  #     widget state.
+  variable browserdbsigs; array set browserdbsigs {}
   # signal-browser PLAN item 13: the Location bar's RAW HISTORY. A single
   # GLOBAL list (newest first, deduped on the normalised path, capped at
   # $::raw_history_max), NOT a per-token array: "the last raws I opened" is a
@@ -417,8 +425,11 @@ namespace eval wviewer {
   # handler (wviewer::searchbar_destroyed), so a destroyed bar leaves nothing.
   #   sbcfg($w)  = {command <cb prefix> showbutton <0|1>}
   #   sbcase($w) = the Match-case checkbutton's -variable (0 = ViVA's default)
+  #   sballdb($w) = the All-DBs checkbutton's -variable, on the bars built with
+  #     `-alldbs 1` only (signal-browser item 14). Same lifecycle as sbcase.
   variable sbcfg;   array set sbcfg  {}
   variable sbcase;  array set sbcase {}
+  variable sballdb; array set sballdb {}
   # Add Trace dialog's signal inventory (item 5), keyed by SESSION TOKEN — the
   # dialog IS a per-window singleton (`$top.wvadd`), unlike the searchbar above.
   # The FULL raw names (settled decision 2), snapshotted once when the dialog
@@ -633,6 +644,8 @@ proc wviewer::forget {token} {
   # signal-browser item 9: the inventory SNAPSHOT and the last row list, same
   # rule -- an undeclared `variable` leaks one entry per closed window forever.
   variable browsersigs; variable browserrows
+  # signal-browser item 14: the foreign-DB inventory snapshot, same rule again.
+  variable browserdbsigs
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -681,6 +694,7 @@ proc wviewer::forget {token} {
   catch {unset browsershow($token)}
   catch {unset browsersigs($token)}
   catch {unset browserrows($token)}
+  catch {unset browserdbsigs($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -1756,6 +1770,142 @@ proc wviewer::signal_list {token} {
   set out {}
   foreach n $names { lappend out [wviewer::signal_entry $n] }
   return $out
+}
+
+# === signal-browser PLAN item 14: the ALL-DBs REGISTRY READER =================
+#
+# xschem keeps EVERY raw ever read in one per-context registry,
+# `xctx->extra_raw_arr[]` (src/xschem.h:1804, manipulated by `extra_rawfile()`
+# in src/save.c:1225). `xschem raw list` and friends only ever see the CURRENT
+# entry (the `else if(raw && raw->values)` gate, src/scheduler.c:9576), so the
+# only Tcl-visible way to read a NON-current DB's inventory is to move the
+# engine's current-DB pointer, read, and put it back.
+#
+# ⚠ THE SOURCE OF TRUTH IS THE ENGINE REGISTRY, NOT item 13's raw HISTORY
+# (receipt D1). They are genuinely different sets: `rawbar_load` pushes to the
+# history AND leaves the previous raw in the registry, while `attach_raw` (the
+# ASE re-run path) pushes NOTHING and starts with `xschem raw clear`. A DB the
+# history never recorded is still a DB the user has open, and All-DBs searches
+# it.
+
+# PURE. `xschem raw info`'s output -> {cur <int> dbs {{idx .. path .. type ..} ..}}.
+# The engine prints (src/save.c:1456-1465) `<extra_idx> current` and then one
+# `<i> <rawfile> <sim_type-or-<NULL>>` line per registry slot — and NOTHING AT
+# ALL when no raw is loaded, which is why the empty text has to answer
+# `cur -1` rather than throw.
+#
+# ⚠ A DELIBERATE IMPROVEMENT ON THE LEGACY PARSE. xschem.tcl:4801 reads the same
+# blob as `foreach {n f t} [lrange [xschem raw info] 2 end]`, i.e. by WORD — so a
+# rawfile path containing a space shifts every field after it and the listbox
+# fills with garbage. Parsing per LINE, anchored, with a greedy path and a
+# trailing `\S+` type, gets that case right (pinned by BD13).
+# An unparseable line is SKIPPED, never fatal: this rides the browser refresh
+# path, which must not throw.
+proc wviewer::rawinfo_parse {text} {
+  set cur -1
+  set dbs {}
+  foreach line [split $text "\n"] {
+    if {[regexp {^\s*(\d+)\s+current\s*$} $line -> n]} { set cur $n ; continue }
+    if {[regexp {^\s*(\d+)\s+(.*\S)\s+(\S+)\s*$} $line -> n p t]} {
+      lappend dbs [dict create idx $n path $p type $t]
+    }
+  }
+  return [dict create cur $cur dbs $dbs]
+}
+
+# PURE. The tree header text for one results database: the FILE TAIL plus the
+# analysis in parentheses, e.g. `bd_a.raw (tran)`.
+#
+# The parens are load-bearing twice over. They disambiguate the real case of the
+# SAME rawfile registered twice under two analyses (`extra_rawfile()` keys its
+# switch on file AND sim_type), and they guarantee the header text can never be
+# mistaken for a hierarchy segment by `browser_node_for` — a design-hierarchy
+# instance name contains neither a space nor a bracket. `<NULL>`, the engine's
+# spelling for "no analysis", reads as no analysis rather than as a name.
+proc wviewer::db_label {path type} {
+  if {$path eq {}} { return "?" }
+  set t $type
+  if {$t eq {<NULL>}} { set t {} }
+  set tail [file tail $path]
+  if {$t eq {}} { return $tail }
+  return "$tail ($t)"
+}
+
+# EVERY loaded results database's inventory, current one FIRST:
+#   {{idx .. path .. type .. cur 0|1 label .. names {..}} ...}
+#
+# ⚠ WHY THIS IS NOT `signal_list` GENERALISED (driver note (f)). signal_list's
+# contract is "the current raw of this token, MUTATING NOTHING", and items 8-13
+# all lean on that: no browser read has ever been able to move the user's
+# current DB. All-DBs cannot be written that way — it MUST move the engine's
+# current-DB pointer and put it back, which adds a failure mode signal_list does
+# not have (a REFUSED restore). Keeping them separate is what stops that hazard
+# leaking into the twelve existing call sites. signal_list stays the authority
+# for the current DB.
+#
+# The 0173 bracket is signal_list's, verbatim in shape: enter_ctx, bail on a
+# refused ticket, catch the whole body, leave_ctx, re-raise after the restore.
+# On top of it the DB restore is ITS OWN unconditional step — a throw inside the
+# scan must not leave the user looking at somebody else's raw.
+#
+# NOTHING here calls `update` or `after`: a redraw running while the current DB
+# is swapped would draw the wrong waveforms. And nothing calls `xschem raw
+# clear` — item 13's atomicity rule, inherited.
+proc wviewer::signal_list_all {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return {} }
+  set out {}
+  set code [catch {
+    set info {}
+    catch {set info [xschem raw info]}
+    set pi [wviewer::rawinfo_parse $info]
+    set cur [dict get $pi cur]
+    if {$cur >= 0} {
+      # ⚠ `here` TRACKS WHERE THE ENGINE ACTUALLY IS, and it is not decoration.
+      # The first cut skipped the switch whenever `idx == cur` — correct only on
+      # the FIRST iteration. After visiting a foreign DB the pointer is on THAT
+      # DB, so the current DB's own turn read the previous DB's names and the
+      # scan answered the same inventory twice. Caught by BD43b's per-DB names
+      # leg; a check that had only counted the entries would have gone green.
+      set here $cur
+      set lcode [catch {
+        foreach db [dict get $pi dbs] {
+          set idx [dict get $db idx]
+          set reached 1
+          if {$idx != $here} {
+            set sw 0
+            catch {set sw [xschem raw switch $idx]}
+            if {$sw != 1} { set reached 0 } else { set here $idx }
+          }
+          if {!$reached} { continue }
+          set names {}
+          if {![catch {xschem raw list} rl]} { set names [split $rl "\n"] }
+          lappend out [dict create \
+            idx   $idx \
+            path  [dict get $db path] \
+            type  [dict get $db type] \
+            cur   [expr {$idx == $cur ? 1 : 0}] \
+            label [wviewer::db_label [dict get $db path] [dict get $db type]] \
+            names $names]
+        }
+      } lerr]
+      # THE RESTORE, unconditional and outside the loop's own catch: a refused
+      # switch, an empty DB or a throw all still land back on the DB the user
+      # was on. Pinned by BD34.
+      catch {xschem raw switch $cur}
+      if {$lcode} { return -code error $lerr }
+    }
+  } cres]
+  wviewer::leave_ctx $token $ticket
+  if {$code} { return -code error $cres }
+  set head {}
+  set rest {}
+  foreach e $out {
+    if {[dict get $e cur]} { lappend head $e } else { lappend rest $e }
+  }
+  return [concat $head $rest]
 }
 
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
@@ -5889,6 +6039,56 @@ proc wviewer::browser_rows {entries} {
   return $rows
 }
 
+# PURE (item 14). Re-key a row list so it can be nested under a DB header:
+# every `id` gains `$prefix`, a row whose `parent` is {} adopts `$parent`, and a
+# row that already had a parent keeps it — PREFIXED, so no child is left
+# pointing at an id that is no longer in the list. Without the second half a
+# grouped foreign inventory (`v(x1.out)`) would insert under a `g:x1` that only
+# exists unprefixed in the CURRENT DB's rows, and ttk would either steal the
+# node or throw.
+proc wviewer::browser_rows_reparent {rows prefix parent} {
+  set out {}
+  foreach r $rows {
+    set par [wviewer::dget $r parent {}]
+    dict set r id "$prefix[wviewer::dget $r id {}]"
+    dict set r parent [expr {$par eq {} ? $parent : "$prefix$par"}]
+    lappend out $r
+  }
+  return $out
+}
+
+# PURE (item 14). Several inventories -> ONE row list. `groups` is a list of
+# {id label entries}; a group whose LABEL is empty is emitted FLAT and
+# UNPREFIXED — that is the CURRENT DB, and it goes first.
+#
+# ⚠ TWO PROPERTIES THE REST OF THE BROWSER DEPENDS ON, both deliberate:
+#  * the header row's kind is `group`, NOT a new kind. browser_plot_at's
+#    `!$groups` guard, browser_leaf_names' parent walk and browser_menu_ids then
+#    all work UNCHANGED — a double-click on a DB header expands it, Plot/MMB
+#    plots its leaves, and item 14 adds no new row vocabulary;
+#  * the current DB's rows are FIRST and UNPREFIXED, so `browser_node_for`'s
+#    hierarchy walk (item 12) still lands on the current DB's nodes: it scans in
+#    row order and breaks on the first exact match.
+# A group with NO entries emits NO header: an empty `bd_a.raw (tran)` node would
+# claim a DB matched when it did not.
+proc wviewer::browser_rows_multi {groups} {
+  set rows {}
+  foreach g $groups {
+    lassign $g gid glab gent
+    if {$glab eq {}} {
+      foreach r [wviewer::browser_rows $gent] { lappend rows $r }
+      continue
+    }
+    if {![llength $gent]} { continue }
+    lappend rows [dict create id $gid parent {} text $glab kind group name {}]
+    foreach r [wviewer::browser_rows_reparent \
+                 [wviewer::browser_rows $gent] "$gid|" $gid] {
+      lappend rows $r
+    }
+  }
+  return $rows
+}
+
 # The row `id`'s kind (`group` / `leaf`), or {} when no such row. PURE.
 proc wviewer::browser_kind {rows id} {
   foreach r $rows {
@@ -6251,7 +6451,17 @@ proc wviewer::browser_build {token top} {
   # THE TOP BAR KEEPS ITS SEARCH BUTTON (ruling 20); the BOTTOM one is the
   # `-showbutton 0` variant that ruling reserved, and item 9 is its first user.
   # `-fill x` on both is item 4's stated requirement.
-  wviewer::searchbar_build $f -command [list wviewer::browser_search_cb $token]
+  # item 14: `-alldbs 1` on the TOP bar ONLY. The bottom Filter bar narrows a
+  # list that has ALREADY been fetched, so a DB scope there would mean nothing —
+  # and two boxes would be two answers to one question.
+  # ⚠ IT GOES AFTER `-command`, NOT BEFORE. Options are order-independent to
+  # searchbar_build (a `foreach {o v}` loop), but item 9's BT05 is a SOURCE grep
+  # pinned to the literal `searchbar_build $f -command [list
+  # wviewer::browser_search_cb`, and test_wave_sigbrowser.tcl is FROZEN by
+  # ruling 30. Inserting an option in front of `-command` turned that check red
+  # for no behavioural reason; appending keeps item 9's coverage exactly as
+  # shipped and costs nothing.
+  wviewer::searchbar_build $f -command [list wviewer::browser_search_cb $token] -alldbs 1
   frame $f.tb -background [ase::theme panel]
   button $f.tb.plot -text Plot -font AseLabelFont \
     -command [list wviewer::browser_plot_selection $token]
@@ -6323,11 +6533,42 @@ proc wviewer::browser_build {token top} {
 proc wviewer::browser_reload {token} {
   variable windows
   variable browsersigs
+  variable browserdbsigs
   if {![dict exists $windows $token]} { return 0 }
   set names {}
   foreach e [wviewer::signal_list $token] { lappend names [dict get $e name] }
   set browsersigs($token) $names
+  # item 14: the FOREIGN databases' inventories, in the SAME snapshot. Taken
+  # UNCONDITIONALLY — the checkbox is read in exactly one place (browser_refresh)
+  # and this proc is not it, so the tree can be re-scoped on a toggle without
+  # re-entering the engine. With a single raw loaded this costs one `raw info`
+  # and no DB switch at all.
+  set foreign {}
+  catch {
+    foreach db [wviewer::signal_list_all $token] {
+      if {[wviewer::dget $db cur 0]} { continue }
+      lappend foreign [dict create \
+        id    "d:[wviewer::dget $db idx {}]" \
+        label [wviewer::dget $db label {}] \
+        names [wviewer::dget $db names {}]]
+    }
+  }
+  set browserdbsigs($token) $foreign
   return [llength $names]
+}
+
+# 1 when THIS window's Search bar has its All-DBs box ticked. THE ONE AND ONLY
+# READ OF THAT CHECKBOX — every scoping decision goes through here, so there is
+# a single place a sabotage can land and a single place to look when the scope
+# is wrong. `dget ... 0` because the key is present only on a bar built with
+# `-alldbs 1` (BAR11 pins the plain bar's dict to exactly four keys).
+proc wviewer::browser_alldbs {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set d {}
+  catch {set d [wviewer::searchbar_get $top.wvbrowser.wvsearch]}
+  return [expr {[wviewer::dget $d alldbs 0] ? 1 : 0}]
 }
 
 # Both bars -> browser_and. Returns {ok <names>} / {err <msg>}.
@@ -6376,6 +6617,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable windows
   variable browsersigs
   variable browserrows
+  variable browserdbsigs
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f.tvf.tv} e] || !$e} { return 0 }
@@ -6393,7 +6635,34 @@ proc wviewer::browser_refresh {token {reload 0}} {
   set names [lindex $r 1]
   set entries {}
   foreach n $names { lappend entries [wviewer::signal_entry $n] }
-  if {[catch {wviewer::browser_rows $entries} rows]} {
+  # item 14: the CURRENT DB is always group 0, flat and unprefixed (label {}),
+  # so with the box off the row list is byte-identical to what item 9 shipped.
+  set groups [list [list {} {} $entries]]
+  set extra 0
+  set ndbs 0
+  if {[wviewer::browser_alldbs $token]} {
+    # the SAME two bar dicts the current DB was matched with — the foreign
+    # inventories go through browser_and, not through a second matcher, so the
+    # AND, the type dropdowns and decision 4's error arm cannot drift per DB.
+    set d1 [wviewer::searchbar_get $f.wvsearch]
+    set d2 [wviewer::searchbar_get $f.wvfilter]
+    if {![info exists browserdbsigs($token)]} { set browserdbsigs($token) {} }
+    foreach db $browserdbsigs($token) {
+      set dr {}
+      if {[catch {wviewer::browser_and [wviewer::dget $db names {}] $d1 $d2} dr]} {
+        continue
+      }
+      if {[lindex $dr 0] ne {ok}} { continue }
+      set dnames [lindex $dr 1]
+      if {![llength $dnames]} { continue }
+      set dent {}
+      foreach n $dnames { lappend dent [wviewer::signal_entry $n] }
+      lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] $dent]
+      incr extra [llength $dnames]
+      incr ndbs
+    }
+  }
+  if {[catch {wviewer::browser_rows_multi $groups} rows]} {
     wviewer::browser_status $token $rows
     return 0
   }
@@ -6402,7 +6671,11 @@ proc wviewer::browser_refresh {token {reload 0}} {
     return 0
   }
   set browserrows($token) $rows
-  wviewer::browser_status $token "[llength $names] of $total signals"
+  set st "[llength $names] of $total signals"
+  if {$ndbs > 0} {
+    append st ", +$extra from $ndbs other DB[expr {$ndbs == 1 ? {} : {s}}]"
+  }
+  wviewer::browser_status $token $st
   return 1
 }
 
@@ -7293,6 +7566,10 @@ proc wviewer::browser_show_path {token path} {
   variable windows
   variable browsersigs
   variable browserrows
+  # item 14: browserdbsigs is part of the SAME snapshot and therefore part of
+  # the same improve-or-restore below — a failed sync that put browsersigs back
+  # while leaving an emptied foreign inventory would silently switch All-DBs off.
+  variable browserdbsigs
   if {![dict exists $windows $token]} {
     return [wviewer::browser_say $token err {no waveform viewer window is open}]
   }
@@ -7329,6 +7606,8 @@ proc wviewer::browser_show_path {token path} {
     # both arrays and the widget are put back exactly as they were.
     set keepsigs $browsersigs($token)
     set keeprows $rows
+    set keepdbs {}
+    if {[info exists browserdbsigs($token)]} { set keepdbs $browserdbsigs($token) }
     # ...and the SELECTION with them: `browser_populate` clears it, so without
     # this an `err` would silently drop the user's selection — the one thing
     # decision 11's "leave the user where they were" forbids on this branch.
@@ -7343,6 +7622,7 @@ proc wviewer::browser_show_path {token path} {
     } else {
       set browsersigs($token) $keepsigs
       set browserrows($token) $keeprows
+      set browserdbsigs($token) $keepdbs
       catch {wviewer::browser_populate $tv $keeprows}
       catch {$tv selection set $keepsel}
     }
@@ -9672,6 +9952,7 @@ proc wviewer::dest_menu_label {token code} {
 }
 
 # wviewer::searchbar_build parent ?-command cb? ?-showbutton 0|1? ?-name child?
+#                                 ?-alldbs 0|1?
 #   -> the megawidget's frame path (default `$parent.wvsearch`).
 #
 # `-command` is called as `<cb> <pattern> <syntax> <case> <type>` — the last
@@ -9683,8 +9964,12 @@ proc wviewer::dest_menu_label {token code} {
 # the variant. `-name` lets two bars share one parent.
 #
 # Widget order is ViVA §3.2's, left to right:
-#   [type ▾] [pattern________] [syntax ▾] [x] Match case  [Search]   <error>
+#   [type ▾] [pattern________] [syntax ▾] [x] Match case [x] All DBs [Search] <error>
 # Defaults: type `All`, syntax `Shell` (decision 7), case OFF (decision 6).
+# `-alldbs 1` adds the All-DBs scope box between Match case and Search (item 14,
+# ViVA §3.2); without it the widget does not exist and `searchbar_get` does not
+# emit the key. The bar itself does nothing with the value — scoping a search
+# across results databases is the CONSUMER's business (browser_refresh's).
 #
 # `$w.err` carries a FIXED `-width 24` and no `-expand`, so its requested width
 # is the same whether the message is empty or 200 characters. That is the
@@ -9695,8 +9980,10 @@ proc wviewer::dest_menu_label {token code} {
 proc wviewer::searchbar_build {parent args} {
   variable sbcfg
   variable sbcase
+  variable sballdb
   set cb {}
   set showbutton 1
+  set alldbs 0
   set child wvsearch
   if {[llength $args] % 2} {
     return -code error "wviewer::searchbar_build: options must come in -opt value pairs"
@@ -9710,6 +9997,13 @@ proc wviewer::searchbar_build {parent args} {
             "wviewer::searchbar_build: -showbutton wants a boolean, got \"$v\""
         }
         set showbutton [expr {[string is true -strict $v] ? 1 : 0}]
+      }
+      -alldbs {
+        if {![string is boolean -strict $v]} {
+          return -code error \
+            "wviewer::searchbar_build: -alldbs wants a boolean, got \"$v\""
+        }
+        set alldbs [expr {[string is true -strict $v] ? 1 : 0}]
       }
       -name    { set child $v }
       default  { return -code error "wviewer::searchbar_build: unknown option $o" }
@@ -9732,15 +10026,23 @@ proc wviewer::searchbar_build {parent args} {
   # OFF rather than defining the element itself
   set sbcase($w) 0
   checkbutton $w.case -text {Match case} -variable ::wviewer::sbcase($w)
+  # item 14 (ViVA §3.2): the All-DBs scope box, on the bars that asked for it.
+  # Same "set the var BEFORE the widget" rule as Match case, and same OFF
+  # default — searching every open results database is opt-in.
+  if {$alldbs} {
+    set sballdb($w) 0
+    checkbutton $w.alldb -text {All DBs} -variable ::wviewer::sballdb($w)
+  }
   if {$showbutton} { button $w.search -text Search }
   label $w.err -text {} -font AseLabelFont -anchor w -width 24
   pack $w.type   -side left -padx {6 4} -pady 3
   pack $w.pat    -side left -padx {0 4} -pady 3 -fill x -expand 1
   pack $w.syntax -side left -padx {0 4} -pady 3
   pack $w.case   -side left -padx {0 4} -pady 3
+  if {$alldbs} { pack $w.alldb -side left -padx {0 4} -pady 3 }
   if {$showbutton} { pack $w.search -side left -padx {0 6} -pady 3 }
   pack $w.err    -side left -padx {0 6} -pady 3
-  set sbcfg($w) [dict create command $cb showbutton $showbutton]
+  set sbcfg($w) [dict create command $cb showbutton $showbutton alldbs $alldbs]
   # EVERY route converges on the one handler, so there is exactly one place a
   # consumer's callback can be invoked from and exactly one place the error
   # label is written.
@@ -9748,6 +10050,7 @@ proc wviewer::searchbar_build {parent args} {
   bind $w.type   <<ComboboxSelected>> [list wviewer::searchbar_fire $w]
   bind $w.syntax <<ComboboxSelected>> [list wviewer::searchbar_fire $w]
   $w.case configure -command [list wviewer::searchbar_fire $w]
+  if {$alldbs} { $w.alldb configure -command [list wviewer::searchbar_fire $w] }
   if {$showbutton} {
     $w.search configure -command [list wviewer::searchbar_fire $w]
   }
@@ -9770,13 +10073,23 @@ proc wviewer::searchbar_build {parent args} {
 proc wviewer::searchbar_get {w} {
   variable sbcfg
   variable sbcase
+  variable sballdb
   if {![info exists sbcfg($w)]} { return {} }
   if {![winfo exists $w]} { return {} }
-  return [dict create \
+  set d [dict create \
     pattern [$w.pat get] \
     syntax  [wviewer::sb_syntax_code [$w.syntax get]] \
     case    [expr {[info exists sbcase($w)] && $sbcase($w) ? 1 : 0}] \
     type    [wviewer::sb_type_code [$w.type get]]]
+  # item 14: `alldbs` is CONDITIONAL — present only on a bar built with
+  # `-alldbs 1`. An unconditional fifth key would break the shipped contract
+  # that this dict has exactly these four (test_wave_sigsearch.tcl BAR11), so
+  # every consumer reads it with `dget ... alldbs 0`.
+  if {[wviewer::dget $sbcfg($w) alldbs 0]} {
+    dict set d alldbs \
+      [expr {[info exists sballdb($w)] && $sballdb($w) ? 1 : 0}]
+  }
+  return $d
 }
 
 # THE handler. Body order is load-bearing:
@@ -9853,9 +10166,14 @@ proc wviewer::searchbar_destroyed {w W} {
 proc wviewer::searchbar_forget {w} {
   variable sbcfg
   variable sbcase
+  variable sballdb
   catch {$w.case configure -variable {}}
+  # item 14: exact parity with Match case — the All-DBs element must not outlive
+  # the bar either, or a per-window array grows one entry per closed viewer.
+  catch {$w.alldb configure -variable {}}
   catch {unset sbcfg($w)}
   catch {unset sbcase($w)}
+  catch {unset sballdb($w)}
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------
