@@ -6862,6 +6862,279 @@ proc wviewer::browser_descend_at {W} {
   return [wviewer::browser_descend_here $tok]
 }
 
+# =============================================================================
+# item 12 — HIERARCHY SYNC, SCHEMATIC -> BROWSER ("Show in Signal Browser")
+# doc/claude/signal_browser_batch/PLAN.md item 12, receipts/12_receipt.md.
+#
+# THE MIRROR of item 11. Item 11 turns a browser row into an xschem descend;
+# item 12 turns the schematic's own hierarchy position into a browser node that
+# is selected AND VISIBLE. The pivot is the same one settled decision 10 names —
+# `xschem get sim_sch_path`, via item 11's `hier_now`/`hier_split`; NOTHING here
+# reads `sch_path`, and nothing here writes a second normaliser.
+#
+# The entry point is `ase::show_in_browser_for_current` (src/ase.tcl), reached
+# from the design window's Tools menu and Ctrl-5. The three procs below are the
+# viewer-side half: PURE match, Tk reveal, and the one command that sequences
+# them and SPEAKS on every branch (settled decision 11 — neither direction ever
+# fails silently).
+# =============================================================================
+
+# A segment list -> the DEEPEST browser GROUP row it reaches, plus HOW MANY
+# segments matched. `{<id> <matched>}`; `{{} 0}` when the very first segment
+# misses. PURE — no Tk, no xschem — which is what makes the deepest-ancestor
+# fallback testable in the `--nogui` arm.
+#
+# ONE call answers BOTH questions the caller has ("is this exactly the node?"
+# and "what is the deepest ancestor that does exist?"), so there is no second
+# walk that could disagree with the first.
+#
+# ⚠ EXACT WINS WITHIN A LEVEL, `-nocase` IS THE FALLBACK — item 11's
+# `hier_resolve` rule, one layer over, and it is a MEASURED necessity rather
+# than politeness: ngspice lowercases, so the raw (and therefore the tree) says
+# `x1.x2` while `sim_sch_path` reports the schematic's own `X1.X2`. Without the
+# case-insensitive candidate this item finds nothing on any real raw. Keeping
+# exact FIRST is what stops a design carrying both `x1` and `X1` from folding
+# them together — the same reason `hier_common` is byte-exact.
+#
+# ⚠ GROUPS ONLY, DECLARED LIMIT. A leaf row is a SIGNAL, not an instance, so a
+# path segment must never match one: `v(x1.out)` must not make `out` look like
+# a descendable instance.
+proc wviewer::browser_node_for {rows segs} {
+  set parent {}
+  set cur {}
+  set matched 0
+  foreach seg $segs {
+    set exact {}
+    set ci {}
+    foreach r $rows {
+      if {[wviewer::dget $r kind {}] ne {group}} { continue }
+      if {[wviewer::dget $r parent {}] ne $parent} { continue }
+      set t [wviewer::dget $r text {}]
+      if {$t eq $seg} { set exact [wviewer::dget $r id {}] ; break }
+      if {$ci eq {} && [string equal -nocase $t $seg]} {
+        set ci [wviewer::dget $r id {}]
+      }
+    }
+    set hit [expr {$exact ne {} ? $exact : $ci}]
+    if {$hit eq {}} { break }
+    set parent $hit
+    set cur $hit
+    incr matched
+  }
+  return [list $cur $matched]
+}
+
+# How many leading segments of `hier_now` must be dropped to turn the DESIGN
+# window's position into a path measured from the ORIGIN the browser's own
+# names use. PURE, and it is a separate proc precisely so the arithmetic is
+# assertable without a loaded design.
+#
+#   `level`    — where the session's design sits in THIS window's hierarchy
+#                stack (`ase::session_for_current`'s second element, issue 0168).
+#   `rawlevel` — `xschem raw loaded` in the DESIGN context: -1 for the ordinary
+#                case (ASE reads raws into the VIEWER context only), else the
+#                stack level `sim_sch_path` is already measured from.
+#
+# ⚠ MEASURED IDENTITY, not reasoned: with no raw loaded `sim_sch_path` degrades
+# to the window's whole path (settled decision 10's corollary — `sch_waves_
+# loaded()` is -1 so the C skip loop never runs), so dropping `level` segments
+# reproduces `ase::ui::sod_rel_path $level` exactly — WITHOUT reading sch_path,
+# which decision 10 forbids this batch. Asserted as a value by BX49.
+#
+# A NEGATIVE answer means the raw was read BELOW the session's design: the two
+# origins cannot be reconciled and the caller REFUSES rather than guessing.
+proc wviewer::browser_origin_drop {level rawlevel} {
+  if {![string is integer -strict $level] || $level < 0} { set level 0 }
+  set base 0
+  if {[string is integer -strict $rawlevel] && $rawlevel >= 0} {
+    set base $rawlevel
+  }
+  return [expr {$level - $base}]
+}
+
+# Select row `id`, focus it, and make it VISIBLE. 1/0, NEVER throws (it rides a
+# menu entry and a key; a throw pops bgerror, modal under X).
+#
+# ⚠ `$tv see $id` IS THE EXPANSION, and that is the fact this proc is shaped
+# around. ttk's `see` sets EVERY ancestor's `-open` to true and then scrolls —
+# so an explicit expand-ancestors loop here would be dead code no sabotage could
+# reach, and "select without expanding" (the PLAN's sabotage (a)) is not a state
+# this implementation can be put into by deletion. Deleting `see` itself is, and
+# that is what the substituted sabotage (a) does.
+#
+# Opening the TARGET is the one thing `see` does NOT do (it opens ancestors),
+# and it is wanted: landing on `x1.x2` should show what is inside it.
+#
+# ⚠ `$tv exists {}` IS TRUE (the root), so the empty id is refused explicitly —
+# otherwise `selection set {}` would silently CLEAR the selection and report
+# success. The sim-root case is `browser_show_path`'s `root` branch, which
+# clears deliberately and says so.
+proc wviewer::browser_reveal {token id} {
+  variable windows
+  if {$id eq {}} { return 0 }
+  if {![dict exists $windows $token]} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  if {[catch {$tv exists $id} ex] || !$ex} { return 0 }
+  set ok 1
+  if {[catch {$tv selection set [list $id]}]} { set ok 0 }
+  catch {$tv focus $id}
+  catch {update idletasks}
+  if {[catch {$tv see $id}]} { set ok 0 }
+  catch {$tv item $id -open 1}
+  return $ok
+}
+
+# THE COMMAND's viewer half. A dotted, browser-origin instance path -> the tree
+# selection, scrolled into view. Returns, and NEVER throws:
+#
+#   {ok      <id> <path>}            exact node, selected and visible
+#   {partial <id> <landed> <asked>}  deepest ancestor that exists (PLAN: "say so
+#                                    and select the deepest ancestor")
+#   {root    <asked>}                the sim root itself — selection CLEARED and
+#                                    the tree scrolled home, which IS the answer
+#   {err     <reason>}               nothing to show; the SELECTION IS LEFT
+#                                    ALONE (decision 11's mirror: a failed sync
+#                                    leaves the user where they were)
+#
+# Every branch writes the status line AND echoes, so the report exists whether
+# the user is looking at the sidebar or at the CIW.
+#
+# ⚠ D6 AND THE RELOAD, decided deliberately (item 9: "the inventory is a
+# SNAPSHOT taken when the sidebar is SHOWN"). A snapshot taken before the raw
+# was read has no node for anything. So a MISS — and ONLY a miss — spends one
+# `browser_refresh $token 1` and retries. A HIT never reloads, because
+# `browser_populate` re-inserts every row `-open 1` and clears the selection: an
+# unconditional reload would erase the very collapse state the user built and
+# would make this item's own visibility claim untestable.
+proc wviewer::browser_show_path {token path} {
+  variable windows
+  variable browsersigs
+  variable browserrows
+  if {![dict exists $windows $token]} {
+    return [wviewer::browser_say $token err {no waveform viewer window is open}]
+  }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f.tvf.tv} e] || !$e} {
+    return [wviewer::browser_say $token err {the Signal Browser is not built}]
+  }
+  set tv $f.tvf.tv
+  # decision 13: browser state derives from the raw inventory, NEVER from the
+  # rect model (0186 stays open, items 8+ route around it).
+  if {![info exists browsersigs($token)] || ![llength $browsersigs($token)]} {
+    catch {wviewer::browser_refresh $token 1}
+  }
+  if {![info exists browsersigs($token)] || ![llength $browsersigs($token)]} {
+    return [wviewer::browser_say $token err \
+      {no simulation data loaded - read a raw file first}]
+  }
+  set segs [wviewer::hier_split $path]
+  if {![llength $segs]} {
+    catch {$tv selection set {}}
+    catch {$tv yview moveto 0}
+    return [wviewer::browser_say $token root {} {} {}]
+  }
+  set rows {}
+  if {[info exists browserrows($token)]} { set rows $browserrows($token) }
+  lassign [wviewer::browser_node_for $rows $segs] id matched
+  if {$matched < [llength $segs]} {
+    # ⚠ IMPROVE-OR-RESTORE, and it is a MEASURED necessity, not caution.
+    # `browser_reload` sets the inventory to whatever `signal_list` answered —
+    # and a read that FAILS answers with nothing, so a bare retry can replace a
+    # perfectly good tree with an empty one and turn a `partial` into an `err`.
+    # Observed on the first cut of this proc. So the reload's result is kept
+    # ONLY when it matches MORE of the path than the snapshot did; otherwise
+    # both arrays and the widget are put back exactly as they were.
+    set keepsigs $browsersigs($token)
+    set keeprows $rows
+    # ...and the SELECTION with them: `browser_populate` clears it, so without
+    # this an `err` would silently drop the user's selection — the one thing
+    # decision 11's "leave the user where they were" forbids on this branch.
+    set keepsel {}
+    catch {set keepsel [$tv selection]}
+    catch {wviewer::browser_refresh $token 1}
+    set rows2 {}
+    if {[info exists browserrows($token)]} { set rows2 $browserrows($token) }
+    lassign [wviewer::browser_node_for $rows2 $segs] id2 matched2
+    if {$matched2 > $matched} {
+      set rows $rows2 ; set id $id2 ; set matched $matched2
+    } else {
+      set browsersigs($token) $keepsigs
+      set browserrows($token) $keeprows
+      catch {wviewer::browser_populate $tv $keeprows}
+      catch {$tv selection set $keepsel}
+    }
+  }
+  set asked [join $segs .]
+  if {$matched == 0} {
+    set m "no signals under '$asked'"
+    # the Search and Filter bars can hide a node that IS in the raw, which is
+    # otherwise indistinguishable from "the raw has no such node". Naming them
+    # is the fix; CLEARING them behind the user's back is not (declared limit).
+    if {[wviewer::browser_bars_active $token]} {
+      append m " (the Search/Filter bar may be hiding it)"
+    }
+    return [wviewer::browser_say $token err $m]
+  }
+  wviewer::browser_reveal $token $id
+  set landed [string range $id 2 end]
+  if {$matched < [llength $segs]} {
+    return [wviewer::browser_say $token partial $id $landed $asked]
+  }
+  return [wviewer::browser_say $token ok $id $landed $asked]
+}
+
+# 1 when either searchbar carries a non-empty pattern. Never throws.
+proc wviewer::browser_bars_active {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set f [dict get $windows $token top].wvbrowser
+  foreach bar {wvsearch wvfilter} {
+    set d {}
+    catch {set d [wviewer::searchbar_get $f.$bar]}
+    if {[llength $d] && [wviewer::dget $d pattern {}] ne {}} { return 1 }
+  }
+  return 0
+}
+
+# THE ONE PLACE the four outcome messages are spelled. PURE: a
+# `browser_show_path` RESULT -> the sentence for it, so the sidebar's status
+# line, the CIW echo and the ASE-side echo cannot drift apart into three
+# slightly different accounts of the same event. BX37 pins the strings verbatim.
+proc wviewer::browser_msg {res} {
+  switch -- [lindex $res 0] {
+    ok      { return "showing [lindex $res 2]" }
+    partial { return "no signals under '[lindex $res 3]' - showing\
+                      [lindex $res 2] instead" }
+    root    { return {showing the simulation top level} }
+  }
+  return [lindex $res 1]
+}
+
+# Build the result, then SAY it on both viewer surfaces. Returns the result list
+# `browser_show_path` returns.
+#
+# `a`/`b`/`c` are positional because their meaning is per-kind:
+#   ok/partial -> a=<row id>   b=<landed path>  c=<asked path>
+#   err        -> a=<message>
+#   root       -> nothing.
+proc wviewer::browser_say {token kind {a {}} {b {}} {c {}}} {
+  switch -- $kind {
+    ok      { set r [list ok $a $b] }
+    partial { set r [list partial $a $b $c] }
+    root    { set r [list root {}] }
+    default { set r [list err $a] }
+  }
+  set m [wviewer::browser_msg $r]
+  catch {wviewer::browser_status $token $m}
+  if {[lindex $r 0] eq {err}} {
+    catch {wviewer::echo "signal browser: $m" error}
+  } else {
+    catch {wviewer::echo "signal browser: $m"}
+  }
+  return $r
+}
+
 # --- item 9: THE WIDTH RULE ---------------------------------------------------
 # MEASURED, and it is a rule rather than a magic number because both halves are
 # forced. One searchbar wants 755 px (type 97, pat 204, syntax 87, case 92,

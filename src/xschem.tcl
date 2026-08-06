@@ -14931,6 +14931,12 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
+  # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
+  # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
+  # (`{}` for the main window, so `.drw`) — the command switches context there
+  # and verifies, rather than trusting whatever context happens to be current.
+  $topwin.menubar.tools add command -label "Show in Signal Browser" \
+     -accelerator Ctrl+5 -command "ase::show_in_browser_for_current ${topwin}.drw"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W

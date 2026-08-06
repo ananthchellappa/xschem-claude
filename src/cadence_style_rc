@@ -231,6 +231,18 @@ bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 # replace "dollar" with whatever your Shift-4 produces (`xev`).
 bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
 bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
+# Ctrl-5 : "Show in Signal Browser" (PLAN item 12) -- the MIRROR of the waveform
+# viewer's `Descend to here` (E). Wherever the schematic is standing, top level
+# or three levels down, this opens/raises that session's viewer, un-hides the
+# Signal Browser sidebar and selects + scrolls into view the tree node for THIS
+# hierarchy position; with no node for it, the deepest ancestor that does exist,
+# and it says which. Same issue-0168 resolution as Ctrl-4 above, so a descended
+# invocation resolves against the ancestor that owns the raw. Also Tools >
+# "Show in Signal Browser". `%W` is the window the key arrived in -- the command
+# switches the context there and VERIFIES, never assuming.
+# Overrides the C default (Ctrl+5 = select drawing layer 5), the same arm Ctrl-4
+# above already overrides, so it ends in `break` for the same reason.
+bind .drw <Control-Key-5>       {ase::show_in_browser_for_current %W; break}
 
 # Ctrl-D INSIDE the waveform viewer : Clear All -- delete every graph and every
 # trace and start from scratch (one empty strip remains). The plot mode, Shared

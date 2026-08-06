@@ -1014,6 +1014,98 @@ proc ase::plot_mode_for_current {{mode invert}} {
   return $new
 }
 
+# Ctrl-5 / Tools > "Show in Signal Browser" — THE MIRROR of the waveform
+# viewer's `Descend to here` (PLAN item 12; item 11 is the other direction).
+# From wherever the schematic is standing — top level or three levels down —
+# open/raise the session's viewer, un-hide the Signal Browser sidebar, and
+# select + SCROLL INTO VIEW the tree node for this hierarchy position.
+# Returns the session key, or {} when nothing could be reached.
+#
+# THE ALGORITHM, written out because the ORDER of two of these steps is
+# load-bearing and a plausible reordering is silently wrong:
+#
+#  0. CONTEXT. A menu/key body knows which window it fired in (`%W`); switch
+#     there and VERIFY BY READBACK (landmine 17 — `new_schematic switch`
+#     silently no-ops under a raised semaphore).
+#  1. SESSION: `ase::session_for_current` — issue 0168's hierarchy-aware
+#     resolution, the SAME entry point Ctrl-4's Direct Plot uses, so a descended
+#     invocation resolves against the ancestor that owns the raw. `level` is
+#     where that design sits in this window's stack.
+#  2. ⚠ THE PIVOT IS READ NOW, BEFORE THE VIEWER IS TOUCHED. `wviewer::open`
+#     and the sidebar show both MOVE the xschem context to the viewer window
+#     (measured), and `sim_sch_path` read there answers about the viewer's own
+#     untitled buffer. Reading it after the raise is the defect this comment
+#     exists to prevent.
+#     `wviewer::hier_now` is item 11's reader: `sim_sch_path` (settled decision
+#     10), trailing-dot normalised by `hier_split`. NOTHING here reads sch_path.
+#  3. ORIGIN: turn the window-relative position into a browser-relative one by
+#     dropping `browser_origin_drop` segments. A negative drop (the raw was read
+#     BELOW the session's design) is REFUSED, never guessed.
+#  4. `wviewer::open $key` — already raise-or-open, 0 for an unknown token and
+#     0 headless. Not re-implemented here.
+#  5. SIDEBAR: un-hide it if it is hidden (item 8's mirror). `browser_toggle`
+#     returns early when the state already matches, so an already-shown sidebar
+#     is deliberately NOT repopulated — see browser_show_path's D6 note.
+#  6. `wviewer::browser_show_path`, which speaks on every branch; its message is
+#     echoed on the ASE side too, because the user is looking at the SCHEMATIC.
+#  7. CONTEXT IS LEFT ON THE VIEWER. Declared, not accidental: the exact mirror
+#     of item 11 leaving it on the design window, and consistent with the raise
+#     — the window the user is now looking at is the one the context points at.
+proc ase::show_in_browser_for_current {{win {}}} {
+  # 0. the window the gesture happened in
+  if {$win ne {}} {
+    set cur {}
+    catch {set cur [xschem get current_win_path]}
+    if {$cur ne $win} {
+      catch {xschem new_schematic switch $win}
+      set cur {}
+      catch {set cur [xschem get current_win_path]}
+      if {$cur ne $win} {
+        catch {::ase::echo "ase: could not switch to the design window $win" error}
+        return {}
+      }
+    }
+  }
+  # 1. the session (issue 0168: nearest ANCESTOR wins)
+  set r [ase::session_for_current]
+  if {$r eq {}} { ase::no_session_notice ; return {} }
+  set key [lindex $r 0]
+  set level [lindex $r 1]
+  # 2. THE PIVOT — read in the DESIGN context, before anything raises a viewer
+  set segs [wviewer::hier_now]
+  # 3. the origin mapping
+  set lv -1
+  catch {set lv [xschem raw loaded]}
+  set drop [wviewer::browser_origin_drop $level $lv]
+  if {$drop < 0} {
+    catch {::ase::echo "ase: the simulation data is read below this session's\
+ design; cannot map the schematic position onto the Signal Browser" error}
+    return {}
+  }
+  set segs [lrange $segs $drop end]
+  # 4. the viewer (raise-or-open; 0 headless or unknown)
+  if {![wviewer::open $key]} {
+    catch {::ase::echo "ase: no waveform viewer could be opened for $key" error}
+    return {}
+  }
+  # 5. the sidebar (item 8's mirror)
+  if {![wviewer::browser_shown $key]} {
+    catch {wviewer::browser_toggle 1 $key}
+  }
+  # 6. the node
+  set res [wviewer::browser_show_path $key [join $segs .]]
+  # ⚠ THE SAME SENTENCE, from the SAME formatter, as the sidebar's status line —
+  # a second wording composed here would drift from it (a `partial` reported as
+  # a plain success is exactly the silent failure decision 11 forbids).
+  set m [wviewer::browser_msg $res]
+  if {[lindex $res 0] eq {err}} {
+    catch {::ase::echo "ase: signal browser: $m" error}
+  } else {
+    catch {::ase::echo "ase: signal browser: $m"}
+  }
+  return $key
+}
+
 # The window NUMBER of the ASE-L window bound to the CURRENT schematic, or {}
 # (issue 0151). Same resolution chain as above; {} with an honest ase::echo for
 # a non-schematic view, no bound session, or a session whose window is not
