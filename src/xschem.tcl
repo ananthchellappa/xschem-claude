@@ -13801,7 +13801,7 @@ set tctx::global_list {
  graph_sel_wave graph_selected graph_sort graph_unlocked graph_use_ctrl_key 
  graph_vlegend hide_empty_graphs
  hide_symbols incr_hilight incremental_select infix_interface infowindow_text intuitive_interface
- keep_symbols label_splits_wires launcher_default_program light_colors line_width
+ keep_symbols label_ride label_splits_wires launcher_default_program light_colors line_width
  live_cursor2_backannotate
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
@@ -15745,6 +15745,26 @@ set_ne autotrim_wires 0
 # Only has any effect when autotrim_wires is on (which cadence_compat force-enables); with
 # auto join/trim off nothing splits at any pin and this variable is inert.
 set_ne label_splits_wires 0
+# Does a net label RIDE the copper it names when that copper moves, rotates or flips?
+# 1 (default, doc/claude/specs/wire_label_ride.md R3/S3): yes -- moving a wire carries every net
+# label attached to it, and rotating or flipping the wire rotates and flips the label's own text
+# with it, the Cadence behaviour. This is what closes issue 0227: before S3 the label was simply
+# left behind and the net silently reverted to an auto #netN name, on stock defaults and (as of
+# S2, which removed the split that accidentally masked it) under cadence_compat too.
+# The switch also owns connect_by_kissing()'s wire-endpoint TETHER -- the zero-length stub that
+# used to hold an END-OF-STUB label to a wire being dragged away. The two are a matched pair and
+# must never be split: the ride replaces the stub, so 1 gives the ride and no stub, and 0 gives
+# the stub and no ride (pre-S3 behaviour, byte-for-byte). Half of each would leave an end-of-stub
+# label with neither.
+# Deliberately NOT under cadence_compat_sync: 0227 reproduces on stock defaults too (measured --
+# autotrim_wires 0 strands the label just the same), so this is a correctness fix for everyone,
+# not a Cadence-compatibility mode. It is a one-release escape hatch, like label_splits_wires,
+# and has no menu entry for the same reason.
+# Two scope rules worth knowing: a label the user has ALSO selected is placed by the normal move
+# commit and never ridden -- the explicit selection wins, which matters under Alt-R/Alt-F (each
+# object turns about its own origin) and when the wire only stretches; and a label whose copper
+# only PARTLY moves stays put, because it is still connected to the part that stayed.
+set_ne label_ride 1
 set_ne auto_set_wire_bus 0
 # autosave: every genuine edit immediately writes a cellName~.sch backup; saving
 # the real file removes it. Persists unsaved edits across descend and crashes

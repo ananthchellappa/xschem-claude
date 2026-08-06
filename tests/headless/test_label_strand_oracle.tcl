@@ -42,6 +42,13 @@ proc scene {} {
 # ---------------------------------------------------------------------------
 # A. The defect: a label tapping the SPAN INTERIOR is stranded by a translation.
 #    (issue 0227's measured repro, stock defaults.)
+#
+#    RE-AUTHORED for S3 (R3 = RIDE, changes #8/#9/#10). The oracle is unchanged; what changed is
+#    the schematic it is measuring. S0 built this counter precisely so 0227 would be audible while
+#    S1/S3 were built, and S3 is the stage that silences it: the wire now carries the label, so
+#    the anchor is never left behind and the net keeps its name. The 0-strand answer here is
+#    therefore a claim about the RIDE, not about the oracle -- AL below re-runs the identical
+#    gesture with `label_ride 0` and still scores 1, which is what keeps the counter honest.
 # ---------------------------------------------------------------------------
 scene
 xschem wire 0 0 200 0
@@ -50,14 +57,33 @@ xschem unselect_all
 xschem select wire 0
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "A0 the net really was lost (0227 still reproduces)" [xschem getprop wire 0 lab] {#net1}
-check "A1 mid-span label stranded -> 1"                    [strands] 1
+check "A0 S3: the label rode, so the net survives"         [xschem getprop wire 0 lab] {VOUT}
+check "A0b ... and it really moved with the wire"          [lrange [xschem instance_pin_coord l1 name p] 1 2] {100 100}
+check "A1 S3: no strand"                                   [strands] 0
 check "A2 the blind counter stays 0 (why we needed A1)"    [v fluid_last_move_violations] 0
+
+# AL the same gesture with the S3 escape hatch off: this is the pre-S3 world, and it is the
+#    POSITIVE witness the oracle needs. If the strand test ever degrades into "count labels that
+#    are off copper" or stops being published, AL goes red while A stays green.
+scene
+set label_ride 0
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "AL0 legacy: the net really was lost (0227)"          [xschem getprop wire 0 lab] {#net1}
+check "AL1 legacy: mid-span label stranded -> 1"            [strands] 1
+set label_ride 1
 
 # ---------------------------------------------------------------------------
 # B. Controls that must NOT fire.
 # ---------------------------------------------------------------------------
-# B1 label at an ENDPOINT: connect_by_kissing mints a tether stub, so it stays on copper.
+# B1 label at an ENDPOINT stays on copper. RE-AUTHORED for S3: it used to stay because
+#    connect_by_kissing() minted a tether stub at the coincident endpoint; change #8 removed that
+#    for labels and the RIDE carries it instead. Same 0 either way -- which is the claim, since the
+#    end-of-stub case is the one #8 must not regress (test_label_ride.tcl V13/U4).
 scene
 xschem wire 0 0 200 0
 xschem instance {lab_pin.sym} 0 0 0 0 {name=l1 lab=VOUT}
@@ -130,19 +156,29 @@ check "B5 fluid_editing off -> not published" [expr {![info exists ::fluid_last_
 set fluid_editing 1
 
 # ---------------------------------------------------------------------------
-# C. A stranded label is reported even when the gesture also moves other copper,
-#    and the count is per-label, not per-gesture.
+# C. The count is per-LABEL, not per-gesture. RE-AUTHORED for S3: under the ride both labels now
+#    travel with their own wire, so the S3 answer is 0 and the per-label claim moves to CL, where
+#    the hatch is off and the count must be 2 rather than 1.
 # ---------------------------------------------------------------------------
-scene
-xschem wire 0 0 200 0
-xschem wire 0 -100 200 -100
-xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=A}
-xschem instance {lab_pin.sym} 100 -100 0 0 {name=l2 lab=B}
-xschem unselect_all
-xschem select wire 0
-xschem select wire 1
-xschem move_objects 0 200 stretch kissing
-check "C two mid-span labels stranded -> 2" [strands] 2
+proc twolabels {} {
+  scene
+  xschem wire 0 0 200 0
+  xschem wire 0 -100 200 -100
+  xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=A}
+  xschem instance {lab_pin.sym} 100 -100 0 0 {name=l2 lab=B}
+  xschem unselect_all
+  xschem select wire 0
+  xschem select wire 1
+  xschem move_objects 0 200 stretch kissing
+}
+twolabels
+check "C S3: both labels rode their own wire -> 0" [strands] 0
+check "C0b ... l1 landed on its wire"              [lrange [xschem instance_pin_coord l1 name p] 1 2] {100 200}
+check "C0c ... l2 landed on its wire"              [lrange [xschem instance_pin_coord l2 name p] 1 2] {100 100}
+set label_ride 0
+twolabels
+check "CL legacy: two mid-span labels stranded -> 2 (per-label)" [strands] 2
+set label_ride 1
 
 # ---------------------------------------------------------------------------
 # D. The user's real environment: cadence_compat forces autotrim_wires on
@@ -167,7 +203,29 @@ check "C two mid-span labels stranded -> 2" [strands] 2
 #      autotrim 1, label_splits_wires 0      wires 1  strands 1  net #net1  <- S2, == default
 #    RIDE (S3) is what closes it, for both configs at once. Until then `label_splits_wires 1`
 #    restores the mask, and DM below keeps that promise honest.
+#
+#    RE-AUTHORED AGAIN for S3 (2026-08-06), which is the "until then" arriving. The ride closes
+#    this cell in BOTH configs, so the three-row table above collapses to one row:
+#      autotrim 0, label_ride 1            wires 1  strands 0  net VOUT   <- A above
+#      autotrim 1, label_ride 1            wires 1  strands 0  net VOUT   <- D below
+#      any config,  label_ride 0           wires as before, strands 1, net #net1  <- AL / DL
+#    The escalation on issue 0227 is therefore lifted, and `label_splits_wires 1` stops being a
+#    load-bearing mitigation and goes back to being the one-release escape hatch S2 intended.
+#    DM is kept, but it can no longer witness the SPLIT+TETHER mask on its own -- with the ride on,
+#    the label stays connected for a completely different reason -- so it now carries its own
+#    `label_ride 0` leg (DM3/DM4) to keep testing the thing it was written to test.
 # ---------------------------------------------------------------------------
+proc cadence_midspan {} {
+  scene
+  set ::autotrim_wires 1
+  xschem wire 0 0 200 0
+  xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+  xschem trim_wires
+  xschem unselect_all
+  for {set i 0} {$i < [xschem get wires]} {incr i} { xschem select wire $i }
+  xschem move_objects 0 100 stretch kissing
+  xschem resolved_net 0
+}
 scene
 set autotrim_wires 1
 set label_splits_wires 0
@@ -179,13 +237,23 @@ xschem unselect_all
 xschem select wire 0
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "D1 S2 unmasks 0227: moving the wire strands it -> 1" [strands] 1
-check "D2 ... and the net really was lost (S3 owed)"        [xschem getprop wire 0 lab] {#net1}
+check "D1 S3 closes 0227 for the cadence user too -> 0"     [strands] 0
+check "D2 ... and the net keeps its name"                   [xschem getprop wire 0 lab] {VOUT}
+check "D2b ... the label rode"                              [lrange [xschem instance_pin_coord l1 name p] 1 2] {100 100}
 
-# DM the mask itself, under the escape hatch: `label_splits_wires 1` must restore the pre-S2
-#    result exactly, or the switch is not a switch. This is also the sabotage variant of A1
-#    (WIRING.md §10: every predicate needs one) -- if the strand test ever degrades into an
-#    absolute count of off-copper labels, DM1 goes red.
+# DL the S2 measurement, preserved: with the ride off this is exactly the row S2 recorded, and it
+#    is what issue 0227's escalation note was about.
+set label_ride 0
+cadence_midspan
+check "DL1 legacy (label_ride 0): S2's unmasked strand -> 1" [strands] 1
+check "DL2 legacy: ... and the net really was lost"          [xschem getprop wire 0 lab] {#net1}
+set label_ride 1
+
+# DM the pre-S2 data model under the escape hatch: `label_splits_wires 1` must still restore the
+#    split, or the switch is not a switch. Under S3 the label stays connected either way, so the
+#    connectivity half of this claim is no longer a mask witness -- DM3/DM4 withhold the ride to
+#    get that back. DM1 is also the sabotage variant of A1 (WIRING.md §10: every predicate needs
+#    one): if the strand test ever degrades into an absolute count of off-copper labels it goes red.
 scene
 set label_splits_wires 1
 xschem wire 0 0 200 0
@@ -197,13 +265,21 @@ xschem select wire 0
 xschem select wire 1
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "DM1 legacy: the split+tether mask keeps it connected -> 0" [strands] 0
+check "DM1 legacy: the label is carried -> 0"                    [strands] 0
 check "DM2 legacy: ... and the net name survives"                [xschem getprop wire 0 lab] {VOUT}
+set label_ride 0
+cadence_midspan
+check "DM3 legacy split + no ride: the TETHER mask still works" [strands] 0
+check "DM4 legacy: ... which is the pre-S2 row, restored"        [xschem getprop wire 0 lab] {VOUT}
+set label_ride 1
 set label_splits_wires 0
 
 # D3 the hole autotrim never masked, in either setting: the keyboard stretch paths do not arm
 #    kissing (issue 0228), so there is no tether to mint. Same repro, kissing withheld. Asserted
 #    under `label_splits_wires 1` so it stays the 0228 claim and not a restatement of D1.
+#    RE-AUTHORED for S3: this is the case the spec's §8 disposition means by "the label half of
+#    0228 is subsumed by S3" -- RIDE is deliberately NOT gated on connect_by_kissing, so it fires
+#    here where neither the tether nor S1's leash ever could. D3L keeps the 0228 measurement.
 scene
 set label_splits_wires 1
 xschem wire 0 0 200 0
@@ -214,8 +290,22 @@ xschem select wire 0
 xschem select wire 1
 xschem move_objects 0 100 stretch
 xschem resolved_net 0
-check "D3 autotrim, kissing NOT armed (0228) -> 1" [strands] 1
-check "D4 ... and the net really was lost"         [xschem getprop wire 0 lab] {#net1}
+check "D3 S3: no kissing needed, the label rides (0228) -> 0" [strands] 0
+check "D4 ... and the net keeps its name"                    [xschem getprop wire 0 lab] {VOUT}
+set label_ride 0
+scene
+set label_splits_wires 1
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem trim_wires
+xschem unselect_all
+xschem select wire 0
+xschem select wire 1
+xschem move_objects 0 100 stretch
+xschem resolved_net 0
+check "D3L legacy: autotrim, kissing NOT armed (0228) -> 1"  [strands] 1
+check "D4L legacy: ... and the net really was lost"          [xschem getprop wire 0 lab] {#net1}
+set label_ride 1
 set label_splits_wires 0
 set autotrim_wires 0
 

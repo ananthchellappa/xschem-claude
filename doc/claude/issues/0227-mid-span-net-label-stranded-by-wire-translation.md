@@ -1,10 +1,44 @@
 # 0227 — a net label tapping a wire's span interior is stranded when the wire translates; the net silently reverts to `#netN`
 
-Status: **OPEN — do not implement the fix below.** Superseded by
-`doc/claude/specs/wire_label_ride.md` §8: that spec deletes the rescue stub instead of extending
-it, and replaces it with a per-gesture rider set (S1/S3). Closes when S3 lands.
+Status: **CLOSED 2026-08-06 — superseded and fixed by `doc/claude/specs/wire_label_ride.md` S3
+(R3 = RIDE).** Not implemented as filed: the fix drafted below extends `connect_by_kissing()` to
+*rescue* the stranded label with another stub, and the spec deletes the stub instead and replaces it
+with a per-gesture rider set. The escalation notice below is therefore **lifted** — it stood for
+exactly one day.
 
-> ### ⚠ ESCALATED 2026-08-06 by S2: this issue now reproduces for the `cadence_compat` user too
+> ### ✅ FIXED 2026-08-06 by S3. Measured on this issue's own repro
+>
+> `label_ride_capture()` (`src/move.c`) now registers a rider for a STATIONARY net label whose copper
+> the gesture is about to move, and `label_ride_apply_ride()` carries it at move END and on every
+> live drag step — position **and** orientation, so rotating or flipping the wire rotates and flips
+> the label's text with it (R3, the Cadence behaviour). It is behind `label_ride` (default 1) and is
+> **not** gated on `connect_by_kissing`, so the keyboard stretch paths get it too.
+>
+> Wire count is after the gesture; the label rides in every row and the net survives in every row.
+>
+> | config | wires | `fluid_last_move_label_strands` | resolved net |
+> |---|---|---|---|
+> | `autotrim_wires 0` (stock default) | 1 | **0** | `VOUT` |
+> | `autotrim_wires 1`, `label_splits_wires 0` | 1 | **0** | `VOUT` |
+> | `autotrim_wires 1`, `label_splits_wires 1` | 1 | **0** | `VOUT` |
+> | `label_ride 0`, stock or `label_splits_wires 0` | 1 | **1** | `#net1` |
+> | `label_ride 0`, `label_splits_wires 1` (the old accident) | 3 | 0 | `VOUT` |
+>
+> The last two rows are the pre-S3 world: the loss, and the split-plus-tether accident that used to
+> hide it from `cadence_compat` users at the cost of two extra wire records.
+>
+> The same commit removes `connect_by_kissing()`'s wire-endpoint TETHER for net labels (spec change
+> #8) — the two are a matched pair behind the one preference, because the tether was the only thing
+> holding an END-OF-STUB label and removing it alone would have widened the loss rather than closed
+> it.
+>
+> Regressions: `tests/headless/test_label_ride.tcl` sections **V** and **U** (89 → 157 checks),
+> `tests/headless/test_label_strand_oracle.tcl` **A/AL, C/CL, D1–D2b/DL, DM1–DM4, D3–D4/D3L–D4L**
+> (19 → 32), `tests/headless/test_wire_split.tcl` **W7b2** (115 → 119). Every re-authored case kept a
+> `label_ride 0` legacy leg, so the pre-fix numbers below are still executed on every run.
+> Spec: `wire_label_ride.md` **§7 S3** and **§16**; `WIRING.md` §9 "P1 label ride", landmine 16.
+
+> ### ⚠ ESCALATED 2026-08-06 by S2, LIFTED the same day by S3 (kept for the record)
 >
 > Until today, `autotrim_wires` (which `cadence_compat` force-enables) **masked** this issue — see
 > "Instrumented" below, and `wire_label_ride.md` §13.5 row 2. The mask was never a feature: the
@@ -38,9 +72,10 @@ it, and replaces it with a per-gesture rider set (S1/S3). Closes when S3 lands.
 LEASH, not the ride.** `connect_by_kissing()`'s ELEMENT arm skips `type=label` instances
 (`inst_is_netlabel()`), and a MOVING label whose anchor lands off copper is projected back onto its
 owner span at move END. That covers the *label-dragged* direction of this issue's contact-matrix
-cell. **This issue's own repro — the label is stationary and the WIRE translates — is untouched and
+cell. ~~**This issue's own repro — the label is stationary and the WIRE translates — is untouched and
 still scores `fluid_last_move_label_strands = 1`;** it needs RIDE (S3), which is where change #8
-(the wire-endpoint arm's tether) is finally removed too. Do not remove #8 before then.
+(the wire-endpoint arm's tether) is finally removed too. Do not remove #8 before then.~~
+**S3 landed 2026-08-06 and did exactly that** — see the FIXED box at the top.
 
 **Instrumented 2026-08-05 (spec S0).** The defect is now *audible*: the move END publishes
 `fluid_last_move_label_strands` (`fluid_count_label_strands()`, `src/move.c`) — labels that sat on

@@ -1,5 +1,12 @@
 # RED-first regression for wire_label_ride S1 = R1 (no extruded copper) + LEASH
-# (doc/claude/specs/wire_label_ride.md §7 S1; changes #1, #2, #4, #5).
+# and S3 = R3 (RIDE: the wire moves, the label follows, orientation included)
+# (doc/claude/specs/wire_label_ride.md §7 S1/S3; changes #1, #2, #4, #5, #8, #9, #10).
+#
+# S3 (section V below) adds the OTHER direction of the same contact-matrix cell: S1 covers "the
+# LABEL is dragged and its copper stays", S3 covers "the copper is dragged and the label stays".
+# The selection predicate is inverted between the two and the placement math is not shared --
+# LEASH corrects an origin the ELEMENT commit already wrote (spec §14.3), RIDE has no committed
+# origin to correct and must solve for one (spec §11 hazard D).
 #
 # TWO claims, and they must ship together (spec §7): change #4 stops connect_by_kissing()
 # minting a zero-length stub at a NET LABEL's pin, and the LEASH puts the label back on its
@@ -305,6 +312,30 @@ xschem select instance 0
 xschem copy_objects 0 -100 kissing
 check "Q3 copying a DEVICE still kisses"               [xschem get wires] 2
 
+# Q4-Q7 S3 EXTENDS THE SAME POLICY TO THE OTHER KISSING ARM ON THIS PATH, and it is recorded here
+#    because copy_objects() calls connect_by_kissing() directly. Copying a WIRE whose endpoint sits
+#    on a stationary net label used to mint a tether stub from the label to the COPY -- copper
+#    invented for a name that was never asked to move, which is the artifact §5.1 exists to delete
+#    and the same call S1 made for the ELEMENT arm above. There is no ride here (copy_objects never
+#    goes through move_objects, §14.9), and none is wanted: copy propagation is R8/S6.
+#    A DEVICE pin still kisses on the copy, which is the fence.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 0 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem copy_objects 0 100 kissing
+check "Q4 copying a wire past a label invents no stub"  [xschem get wires] 2
+check "Q5 ... just the original and the copy"           [spans] {{0 0 200 0} {0 100 200 100}}
+scene
+xschem wire 0 0 200 0
+xschem instance {res.sym} 0 30 0 0 {name=R1 value=1k}     ;# pin P lands at (0,0)
+xschem unselect_all
+xschem select wire 0
+xschem copy_objects 0 100 kissing
+check "Q6 copying a wire past a DEVICE pin still kisses" [xschem get wires] 3
+check "Q7 ... and the tether stub is the perpendicular"  [spans] {{0 0 0 100} {0 0 200 0} {0 100 200 100}}
+
 # ---------------------------------------------------------------------------
 # P. R7: THE OWNER NEVER CHANGES.  §5.4 -- "If the projected anchor happens to land on a different
 #    wire, that is irrelevant -- the label stays bound to the wire it started on.  No
@@ -488,6 +519,374 @@ check "R3 fluid off: the label still slides"              [lp] {150 0}
 check "R4 fluid off: and the net keeps its name"          [xschem getprop wire 0 lab] {VOUT}
 check "R5 fluid off: the S0 oracle stays unpublished"     [st] {<unset>}
 set fluid_editing 1
+
+# ===========================================================================
+# V. S3 = R3, THE RIDE.  The label is STATIONARY and the copper it names moves, rotates or flips;
+#    the label follows, its own orientation included.  This is issue 0227's own repro, and it is
+#    the direction S1's leash deliberately did not cover.
+#
+#    RED before the implementation (measured 2026-08-06 against the a72ddb34 tree, every case
+#    below reproduced by hand first):
+#      V1  0227 stock defaults          label stayed at (100,0), net #net1, strands 1
+#      V2  0227 under autotrim (S2)     identical -- S2 removed the split that masked it
+#      V3  0228 cell, no kissing        identical
+#      V4  END-OF-STUB label            2 wires: the kissing TETHER stub, label left at (0,0)
+#      V5/V6/V7 rotate / flip           label not moved and not re-oriented at all
+#    and every U control below was green on both sides.
+#
+#    THREE THINGS SHIP TOGETHER and none of them is optional:
+#      #8  connect_by_kissing()'s wire-endpoint TETHER stops firing for a net label,
+#      RIDE carries the label instead,
+#      `label_ride` (default 1) switches BOTH -- 0 gives the stub and no ride, i.e. pre-S3.
+#    Shipping #8 without RIDE would take the end-of-stub label (V4 -- the dominant topology the
+#    wire-stub+netlabel idiom produces) from "ugly but connected" to "silently orphaned", which is
+#    strictly worse than either state.  V4 + U1 are the pair that keeps that honest.
+# ===========================================================================
+# rot/flip as it reaches DISK -- the honest oracle for "the text rotates with the wire" (R3).
+# draw.c orients the symbol's `T {@lab}` record from this same pair, so asserting the pair asserts
+# the text.  There is no `getprop instance <n> rot`.
+set ::rfsch [file join [file dirname [info script]] _label_ride_rf.sch]
+proc rotflip {nm} {
+  file delete -force $::rfsch
+  xschem saveas $::rfsch
+  set fh [open $::rfsch r]; set txt [read $fh]; close $fh
+  foreach line [split $txt \n] {
+    if {[string match "C \{*" $line] && [string match "*name=$nm*" $line]} {
+      set t [split $line]
+      return [list [lindex $t 4] [lindex $t 5]]
+    }
+  }
+  return "?"
+}
+# 0227's own fixture: mid-span label, and the WIRE is what gets selected.
+proc ridescene {} {
+  scene
+  xschem wire 0 0 200 0
+  xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+  xschem unselect_all
+  xschem select wire 0
+}
+
+# V1 issue 0227's measured repro, STOCK DEFAULTS (autotrim off, so no split has ever masked it).
+ridescene
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "V1 the label rides the wire (0227)"           [lp] {100 100}
+check "V2 ... and no copper is invented for it"      [xschem get wires] 1
+check "V3 ... the span just translated"              [spans] {{0 100 200 100}}
+check "V4 ... the net keeps its name"                [xschem getprop wire 0 lab] {VOUT}
+check "V5 ... and the S0 oracle scores no strand"    [st] 0
+
+# V6 the same under the target environment (cadence_compat => autotrim_wires 1).  S2 removed the
+#    split that used to mask 0227 here by putting the label on an endpoint where the tether found
+#    it; the ride replaces that accident with the real rule, and the answer is now identical in
+#    both configs -- which is the point.
+scene
+set autotrim_wires 1
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem trim_wires
+check "V6 S2: still one wire at rest"                [xschem get wires] 1
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "V7 autotrim: the label rides"                 [lp] {100 100}
+check "V8 ... net keeps its name"                    [xschem getprop wire 0 lab] {VOUT}
+check "V9 ... no strand"                             [st] 0
+set autotrim_wires 0
+
+# V10 issue 0228's cell: `stretch` with kissing NOT armed (the keyboard entry points).  RIDE is
+#     deliberately NOT gated on connect_by_kissing -- spec §8, "the rider does not need kissing
+#     armed" -- which is exactly how 0228's label half closes for this direction.  The LEASH's gate
+#     is untouched (K1/K2 above still pin the rigid detach), so this is not a widening of it.
+ridescene
+xschem move_objects 0 100 stretch
+xschem resolved_net 0
+check "V10 no kissing: the label still rides (0228)"  [lp] {100 100}
+check "V11 ... and the net keeps its name"            [xschem getprop wire 0 lab] {VOUT}
+check "V12 ... no strand"                             [st] 0
+
+# V13 TRAP 1, the case that makes #8 and RIDE inseparable: an END-OF-STUB label sits exactly on the
+#     moving wire's endpoint, so connect_by_kissing()'s wire-endpoint arm DOES see it and used to
+#     mint a tether stub.  That stub is the only thing that ever held such a label -- and the
+#     wire-stub-plus-netlabel idiom produces this topology far more often than the mid-span one.
+#     After #8 there is no stub at all and the ride must carry it.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 0 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "V13 end-of-stub label: no tether stub"        [xschem get wires] 1
+check "V14 ... the label rode instead"               [lp] {0 100}
+check "V15 ... the span is untouched"                [spans] {{0 100 200 100}}
+check "V16 ... the net keeps its name"               [xschem getprop wire 0 lab] {VOUT}
+
+# V17 R3's headline claim: ROTATE the wire and the label's own ORIENTATION rotates with it.  The
+#     reference is the ELEMENT commit's own result for the SAME gesture with the label selected --
+#     asserting against that rather than a literal makes this a "the ride and the normal move agree"
+#     claim, which is what "as in Cadence" actually means here.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all; xschem select wire 0; xschem select instance 0
+xschem move_objects 0 0 1 0 -anchor 0 0 kissing
+set v_rot_ref [list [lp] [rotflip l1] [spans]]
+ridescene
+xschem move_objects 0 0 1 0 -anchor 0 0 kissing
+check "V17 rotate 90: ride == the selected-label commit" [list [lp] [rotflip l1] [spans]] $v_rot_ref
+check "V18 ... and it really rotated the text"           [rotflip l1] {1 0}
+check "V19 ... the label landed on the rotated span"     [lp] {0 100}
+
+# V20 FLIP, same shape.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all; xschem select wire 0; xschem select instance 0
+xschem move_objects 0 0 0 1 -anchor 0 0 kissing
+set v_flip_ref [list [lp] [rotflip l1] [spans]]
+ridescene
+xschem move_objects 0 0 0 1 -anchor 0 0 kissing
+check "V20 flip: ride == the selected-label commit"  [list [lp] [rotflip l1] [spans]] $v_flip_ref
+check "V21 ... and it really flipped the text"       [rotflip l1] {0 1}
+
+# V22 THE `+2` TERM (spec §5.3 note 3, trap 3).  The rot composition is
+#       rot = (rot + (move_flip && (rot & 1) ? move_rot+2 : move_rot)) & 3
+#     and a naive (rot + move_rot) & 3 differs ONLY for a label that is already at an ODD rotation
+#     when a FLIP is applied.  Sweep every starting orientation against every transform and require
+#     the ride to agree with the ELEMENT commit on all of them; drop the `+2` and the odd-rotation
+#     flipped cells go red while every even cell stays green.
+set v_plus2 0
+foreach {r0 f0} {0 0 1 0 2 0 3 0 0 1 1 1 2 1 3 1} {
+  foreach {mr mf} {1 0 0 1 1 1 2 1 3 1} {
+    scene
+    xschem wire 0 0 200 0
+    xschem instance {lab_pin.sym} 100 0 $r0 $f0 {name=l1 lab=V}
+    xschem unselect_all; xschem select wire 0; xschem select instance 0
+    xschem move_objects 0 0 $mr $mf -anchor 0 0 kissing
+    set ref [rotflip l1]
+    scene
+    xschem wire 0 0 200 0
+    xschem instance {lab_pin.sym} 100 0 $r0 $f0 {name=l1 lab=V}
+    xschem unselect_all; xschem select wire 0
+    xschem move_objects 0 0 $mr $mf -anchor 0 0 kissing
+    if {$ref ne [rotflip l1]} { incr v_plus2 }
+  }
+}
+check "V22 40 orientation x transform cells all agree" $v_plus2 0
+
+# V23 SPEC §11 HAZARD (D): an OFF-ORIGIN pin under rotation.  bus_connect.sym is a type=label symbol
+#     whose pin centre is at (10,-10), so rotating it moves its pin ~28 units.  The ride must pick
+#     the TARGET PIN coordinate first, apply rot/flip second and solve for the origin last;
+#     translate-then-rotate slides such a label off its copper, which R7 forbids.  Assert on the
+#     PIN via get_inst_pin_coord() -- the forward authority -- never on the origin.
+scene
+xschem wire 0 0 200 0
+xschem instance {bus_connect.sym} 90 10 0 0 {name=b1}
+check "V23 the off-origin pin starts on the wire"    [lrange [xschem instance_pin_coord b1 name p] 1 2] {100 0}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 0 1 0 -anchor 0 0 kissing
+check "V24 rotated wire: the off-origin pin follows" [lrange [xschem instance_pin_coord b1 name p] 1 2] {0 100}
+check "V25 ... and it really is on copper"           [xschem net_at 0 100] 1
+check "V26 ... and no copper was invented"           [xschem get wires] 1
+
+# V27 hazard (E): a label the user ALSO selected is moved by the ELEMENT commit.  Riding it as well
+#     would move it TWICE -- silent, because a 2x delta only looks wrong when the delta is large.
+ridescene
+xschem select instance 0
+xschem move_objects 0 100 kissing
+check "V27 selected label is not moved twice"        [lp] {100 100}
+check "V28 ... and the span moved once"              [spans] {{0 100 200 100}}
+
+# V29a/V29b the two gestures where "skip a selected label" is not merely belt-and-braces. On a
+#   plain rigid translate the ride's ABSOLUTE placement and the ELEMENT commit agree exactly (V27
+#   is green with or without the guard, which is worth knowing: what actually prevents a DOUBLE
+#   move is solving for the origin rather than accumulating into it). They disagree in two places:
+#     - ROTATELOCAL (ALT-R): the ELEMENT commit turns each instance about ITS OWN origin, so a
+#       selected label does not travel with the wire at all; the ride's target is on the rotated
+#       wire. The user selected the label, so the commit's answer wins.
+#     - a PARTIALLY selected owner: the commit gives the label the full delta, the ride would clamp
+#       it onto the reshaped span.
+#   These are the sabotage anchors for hazard (E): register a RIDE rider for a selected label and
+#   both go red while every other case in this file stays green.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=V}
+xschem unselect_all; xschem select wire 0; xschem select instance 0
+xschem move_objects 0 0 1 0 local kissing
+check "V29a ROTATELOCAL: the commit owns a selected label" [lp] {100 0}
+check "V29b ... and the wire turned about its own end"     [spans] {{0 0 0 200}}
+scene
+xschem wire 0 0 200 0
+xschem instance {res.sym} 0 30 0 0 {name=R1 value=1k}
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=V}
+xschem unselect_all; xschem select instance 0; xschem select instance 1
+xschem move_objects 0 -100 stretch kissing
+check "V29c partial owner + selected label: commit wins"   [lp] {100 -100}
+check "V29d ... and the owner really did reshape"          [spans] {{0 -100 200 0}}
+
+# V29 CONSERVATION, the mirror of the whole feature: when only PART of the copper under the label
+#     moves, the label stays.  It is still connected to what stayed, and carrying it off would be
+#     the same strand this stage exists to stop, just in the other direction.
+scene
+xschem wire 0 0 200 0
+xschem wire 100 0 100 200
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "V29 stationary crossing wire holds the label" [lp] {100 0}
+check "V30 ... and it is not a strand"               [st] 0
+
+# V31 the same rule for a stationary DEVICE pin under the anchor (the gnd/vdd-on-a-pin idiom).
+scene
+xschem wire 0 0 200 0
+xschem instance {res.sym} 100 30 0 0 {name=R1 value=1k}   ;# pin P lands at (100,0)
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+check "V31 the device pin is under the anchor"       [lrange [xschem instance_pin_coord R1 name P] 1 2] {100 0}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "V32 a stationary device pin holds it too"     [lp] {100 0}
+
+# V33 a PARTIALLY selected owner does not translate -- it changes SHAPE (spec §5.3 note 2, trap 6).
+#     Dragging a device pin relays the wire into a diagonal here; the transformed anchor lands off
+#     it, so the closed-form target is CLAMPED onto the final run by label_ride_project().  A
+#     parametric-t-from-endpoint-1 scheme instead of the rotation form mirrors the label to the
+#     wrong end (ORDER()/order_wire_points canonicalize endpoints on commit), so the literal here
+#     is the measured clamp, and it must be ON the wire -- which V35 asserts independently.
+scene
+xschem wire 0 0 200 0
+xschem instance {res.sym} 0 30 0 0 {name=R1 value=1k}      ;# pin P lands at (0,0)
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select instance 0
+xschem move_objects 0 -100 stretch kissing
+xschem resolved_net 0
+check "V33 reshaped owner: the span really moved"    [spans] {{0 -100 200 0}}
+check "V34 ... the label was clamped onto it"        [lp] {80 -60}
+check "V35 ... i.e. it is on copper"                 [xschem net_at 80 -60] 1
+check "V36 ... and the net keeps its name"           [xschem getprop wire 0 lab] {VOUT}
+check "V37 ... no strand"                            [st] 0
+
+# V38 every label on the moving copper rides, not just the first.
+scene
+xschem wire 0 0 300 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=A}
+xschem instance {lab_pin.sym} 200 0 0 0 {name=l2 lab=A}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "V38 first label rode"                         [lp l1] {100 100}
+check "V39 second label rode"                        [lrange [xschem instance_pin_coord l2 name p] 1 2] {200 100}
+check "V40 ... and neither stranded"                 [st] 0
+
+# V41 ABORT drops the rider set and leaves the label exactly where it started.
+ridescene
+xschem move_objects start 0 0 kissing stretch
+xschem move_objects step 0 -50
+xschem move_objects abort
+check "V41 aborted ride leaves the label alone"      [lp] {100 0}
+check "V42 ... and the wire too"                     [spans] {{0 0 200 0}}
+
+# V43 SPEC §12 OPEN QUESTION 1, THE RIDE HALF -- and the reason the clamp/ride is applied LIVE
+#     (§5.4) rather than only at release.  The apply now runs on every live RUBBER commit as well
+#     as at the real END, so a multi-step drag must land exactly where the same drag committed in
+#     one shot does.  `stretch` is REQUIRED: without it stretch_select stays 0, no fluid_reroute
+#     snapshot is taken, the RUBBER live-commit gate can never fire, and the equality would hold
+#     for ANY implementation, including none (the S1 lesson at N8).
+#     Measured 2026-08-06: byte-identical, so live riding needs no restore of its own -- every
+#     RUBBER step fluid_reroute_restore()s instances to pristine and re-derives from the total.
+ridescene
+xschem move_objects start 0 0 kissing stretch
+xschem move_objects step 10 -20
+xschem move_objects step 20 -40
+xschem move_objects step 30 -60
+xschem move_objects step 40 -80
+xschem move_objects step 50 -100
+xschem move_objects end
+set v8_stepwise [list [lp] [xschem get wires] [spans]]
+ridescene
+xschem move_objects 50 -100 kissing stretch
+check "V43 RIDE stepwise == one-shot (live commit)"  $v8_stepwise [list [lp] [xschem get wires] [spans]]
+check "V44 ... and the one-shot really rode"         [lp] {150 -100}
+
+# V45 spec §11 hazard (C): refuse/rollback and undo cover instances whole-struct, rot/flip included,
+#     so a ridden AND rotated label needs no bespoke rollback.  One Ctrl-Z puts everything back.
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 0 1 0 -anchor 0 0 kissing
+check "V45 rotated ride happened"                    [list [lp] [rotflip l1]] {{0 100} {1 0}}
+xschem undo
+check "V46 undo restores position AND orientation"   [list [lp] [rotflip l1]] {{100 0} {0 0}}
+check "V47 ... and the wire"                         [spans] {{0 0 200 0}}
+
+# V48 the ride is not part of the fluid engine (capture hangs off move START, apply off the shared
+#     commit), so a default-config user with fluid_editing OFF gets it too.  Spec §12: the matrix
+#     must cover both settings rather than assume the default path exercises them.
+set fluid_editing 0
+ridescene
+xschem move_objects 0 100 stretch kissing
+check "V48 fluid off: the label still rides"         [lp] {100 100}
+check "V49 fluid off: no copper invented"            [xschem get wires] 1
+set fluid_editing 1
+file delete -force $::rfsch
+
+# ===========================================================================
+# U. THE `label_ride` SWITCH AND THE SCOPE FENCE AROUND CHANGE #8.
+#    The preference owns the tether and the ride TOGETHER (they are a replacement pair), and #8 is
+#    scoped to `type=label` exactly like #4 -- a device pin or a hierarchy port at a moving wire's
+#    endpoint must still be tethered, or S3 would silently disconnect every one of them.
+# ===========================================================================
+# U1 the escape hatch restores pre-S3 BYTE-FOR-BYTE, in both topologies.  This is also the sabotage
+#    variant for "#8 shipped without RIDE": with label_ride 0 the stub is back AND the ride is off,
+#    which is a coherent state; half of each is the state the pairing exists to prevent.
+set label_ride 0
+ridescene
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "U1 label_ride 0: mid-span label is left behind" [lp] {100 0}
+check "U2 ... the net reverts to an auto name"         [xschem getprop wire 0 lab] {#net1}
+check "U3 ... and the S0 oracle reports the strand"    [st] 1
+scene
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 0 0 0 0 {name=l1 lab=VOUT}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "U4 label_ride 0: the kissing TETHER is back"    [xschem get wires] 2
+check "U5 ... as the perpendicular stub"               [spans] {{0 0 0 100} {0 100 200 100}}
+check "U6 ... which is what kept the label attached"   [lp] {0 0}
+set label_ride 1
+
+# U7 a hierarchy PORT at a moving wire's endpoint still kisses: inst_is_netlabel() is
+#    strcmp(type,"label"), deliberately not IS_LABEL_OR_PIN, so ipin/opin/iopin keep every
+#    behaviour they had.
+scene
+xschem wire 0 0 200 0
+xschem instance {ipin.sym} 0 0 0 0 {name=p1 lab=IN}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "U7 ipin at the endpoint still kisses"         [xschem get wires] 2
+check "U8 ... the tether stub is the perpendicular"  [spans] {{0 0 0 100} {0 100 200 100}}
+
+# U9 and so does a real DEVICE pin -- the case change #8 must not touch.
+scene
+xschem wire 0 -100 200 -100
+xschem instance {res.sym} 0 -70 0 0 {name=R1 value=1k}    ;# pin P lands at (0,-100)
+check "U9 the resistor pin is on the endpoint"       [lrange [xschem instance_pin_coord R1 name P] 1 2] {0 -100}
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+check "U10 device pin at the endpoint still kisses"  [xschem get wires] 2
+check "U11 ... the tether stub is the perpendicular" [spans] {{0 -100 0 0} {0 0 200 0}}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

@@ -14,6 +14,45 @@ Newest entries on top.
 
 ---
 
+## Q34. Now a net label follows the wire when I move it, and it rotates with it. What changed, and can I turn it off?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `a72ddb34` + uncommitted — `wire_label_ride.md`
+  **S3 (R3 = RIDE)** just landed on top of S0 + S1 + S2.
+
+That is the fix for issue **0227**, and it supersedes Q33 below — read this one first.
+
+Before S3, moving a wire out from under a net label left the label behind and the net silently
+reverted to `#netN`. Now the label rides: at move START the gesture records which copper each
+*stationary* label is sitting on, and at every drag step (and at release) that label is placed on
+its copper's new geometry. Rotating or flipping the wire rotates and flips the **label's own text**
+too, which is the Cadence behaviour and the part of R3 that is not just a translation.
+
+Three things worth knowing:
+
+- **It is not a Cadence mode.** 0227 reproduced on stock defaults as well — nothing ever split
+  there, so the label was never on an endpoint and nothing ever rescued it. `label_ride` defaults to
+  **1** for everybody.
+- **It replaces the little rescue wire, it does not add to it.** `connect_by_kissing()` used to mint
+  a zero-length stub wherever a moving wire's endpoint coincided with a stationary label's pin, and
+  the drag rubber-banded that into a real wire. That is gone for labels (device pins and
+  `ipin`/`opin`/`iopin` keep it). The same preference switches both, on purpose: `label_ride 0`
+  gives you the old stub **and** no ride, so you get the pre-S3 behaviour exactly rather than a
+  label with neither.
+- **A label whose copper only PARTLY moves stays put.** If it sits at a crossing or an L-corner and
+  only one of the wires is in the move, it is still connected to the one that stayed, so it does not
+  travel. Same for a label sitting on a stationary device pin.
+
+Escape hatch: `set label_ride 0`. As with `label_splits_wires` there is no menu entry — it is a
+one-release hatch, not a feature toggle.
+
+What is *not* covered, so you know where the edge is: dragging the **label itself** with the
+keyboard stretch (`m` / Ctrl-m) still detaches it, because those paths do not arm
+`connect_by_kissing` and the leash that would catch it is deliberately gated on that. That is issue
+**0228**'s own one-line fix, still open. The mouse connected drag has been leashed since S1.
+
+---
+
 ## Q32. Clicking either side of a net label used to select just that piece of wire, and now it selects the whole run. Did something break?
 
 - **Asked:** 2026-08-06
@@ -42,12 +81,19 @@ Three things worth knowing about it:
   independent nets. Measured: four resistors on one net before, two after.
 
 Escape hatch if you want the old boundaries back: `set label_splits_wires 1`. It restores the pre-S2
-behaviour exactly, including the crossing short. There is one other reason you might want it right
-now — see Q33.
+behaviour exactly, including the crossing short. ~~There is one other reason you might want it right
+now — see Q33.~~ (That second reason was the issue-0227 mask; **S3 removed the need for it the same
+day** — see Q34.)
 
 ---
 
 ## Q33. Since that change, dragging a wire out from under a net label loses the net name. That used to work. Why?
+
+> **SUPERSEDED 2026-08-06 by Q34 above — S3 landed the same day and this no longer reproduces.** The
+> answer is kept because the *mechanism* generalises and is worth reading: it is the worked example
+> of "removing manufactured endpoint coincidence removes rescues you did not know keyed on it"
+> (`WIRING.md` landmine 15). All three rows of the table below now read `strands 0` / `VOUT`, and
+> `label_splits_wires 1` is no longer a mitigation for anything.
 
 - **Asked:** 2026-08-06
 - **Project state:** branch `open_pdk` @ `8fee6129` + uncommitted — `wire_label_ride.md` S2 landed,

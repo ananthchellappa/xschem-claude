@@ -503,12 +503,12 @@ having.
 | 2 | `src/xschem.h` | `extern int inst_is_netlabel(int);` near `point_on_wire_or_pin`. `Label_ride` typedef + `label_ride`, `label_ride_n`, `fluid_last_move_label_strands` in `xctx`, beside `fluid_startsel_id`. **DONE (S1)** — `t` and `wsel` dropped, `ox/oy` deferred to S3; see §14.4. | small |
 | 3 | `src/move.c:7997-8020` | `fluid_count_label_shorts()` — add the missing arm. Today the `for(w…)` loop `break`s on the first touching wire and counts nothing when **no** wire touches. Add: label had `node[0]` at START, touches no copper at END → `++fluid_last_move_label_strands`. **This is the RED oracle; it fails today.** **DONE**, as a separate `fluid_count_label_strands()` + a START baseline — the `node[0]` half of the rule does not work, see §13.1. | small |
 | 4 | `src/actions.c:2061-2063` | R1. `if(inst_is_netlabel(inst)) continue;` right after `symbol = xctx->sym + xctx->inst[inst].ptr;`. Kills the `:2101` stub. **DONE (S1).** | small |
-| 5 | `src/move.c` (new statics) | `label_ride_capture()` at `:8189`, `label_ride_apply()` immediately after `:9372` (**not** `:9377` — §11 A), `label_ride_free()` in the `!commit_now` block and on ABORT. **DONE (S1)** — the free must run **after** the apply, not beside `my_free(&fluid_startsel_id)` which precedes it; also called from `clear_schematic`. | large |
+| 5 | `src/move.c` (new statics) | `label_ride_capture()` at `:8189`, `label_ride_apply()` immediately after `:9372` (**not** `:9377` — §11 A), `label_ride_free()` in the `!commit_now` block and on ABORT. **DONE (S1)** — the free must run **after** the apply, not beside `my_free(&fluid_startsel_id)` which precedes it; also called from `clear_schematic`. **RIDE DONE (S3)** — capture gained the inverse arm plus `label_ride_anchor_held()`; `label_ride_owner()`/`label_ride_run()` were *parameterised* (`…_at(anchor, direction)`) rather than duplicated, so RIDE reuses hazard (B)'s one resolver; `label_ride_apply_ride()` carries the four-step placement. A second apply call, gated on `commit_now`, makes both modes **live** (§5.4). | large |
 | 6 | `src/check.c:708` | R2. `if(inst_is_netlabel(k)) continue;` after `if(xctx->inst[k].ptr < 0) continue;`. **DONE (S2)** — as `if(!label_splits && inst_is_netlabel(k))`, `label_splits` read once per sweep. | small |
 | 7 | `src/check.c:173-180` | R2 matched pair. `any_inst_pin_at()` gains a skip-labels arg; label-blind at `:405` and `:795`. **Mandatory with #6.** `point_on_wire_or_pin()` unchanged. **DONE (S2)** — `:405` is the only LIVE consumer; the `:795` edit is consistency only (§15.7), and the pair's asymmetry is §15.1. | small |
-| 8 | `src/actions.c:2131` | R3. `&& !inst_is_netlabel(ii)` on the instpin test, killing the tether at `:2158`. **Must ship with RIDE, never before.** | small |
-| 9 | `src/move.c:6255` | `fluid_ml_hazards()` block 3b: `if(xctx->inst[i].sel \|\| label_is_rider(i)) continue;`. A label registered to ride is not a stationary merge hazard. | small |
-| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), `set_ne label_ride 1` under `cadence_compat_sync`. ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. **`label_splits_wires` DONE (S2)** — `set_ne` beside `autotrim_wires`, plus `tctx::global_list` so it survives a tab switch like `autotrim_wires` does. No menu entry: it is an escape hatch, not a feature toggle. `label_ride` is S3's. | small |
+| 8 | `src/actions.c:2131` | R3. `&& !inst_is_netlabel(ii)` on the instpin test, killing the tether at `:2158`. **Must ship with RIDE, never before.** **DONE (S3)** — as `&& !(label_ride_on && inst_is_netlabel(ii))`, `label_ride_on` read once per sweep, so the *preference* switches the stub and the ride together and `0` is a coherent pre-S3 state rather than "neither" (§16.2). | small |
+| 9 | `src/move.c:6255` | `fluid_ml_hazards()` block 3b: `if(xctx->inst[i].sel \|\| label_is_rider(i)) continue;`. A label registered to ride is not a stationary merge hazard. **DONE (S3)**, at the anchor exactly — after `base = k; k += npins;`, so the instance×pin walk stays aligned (landmine 5). | small |
+| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), ~~`set_ne label_ride 1` under `cadence_compat_sync`~~ — **DONE (S3) at FILE SCOPE instead**, beside `label_splits_wires`, plus the `tctx::global_list` entry. Not under `cadence_compat_sync`: 0227 reproduces on stock defaults too (measured, §13.5 row 1), so R3 is a correctness fix for every user rather than a Cadence-compatibility mode, and the one-directional trace would make it sticky (§16.2). ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. **`label_splits_wires` DONE (S2)** — `set_ne` beside `autotrim_wires`, plus `tctx::global_list` so it survives a tab switch like `autotrim_wires` does. No menu entry: it is an escape hatch, not a feature toggle. `label_ride` is S3's. | small |
 | 11 | `src/select.c:1705`, `:1797` | **Comment only.** `wire_through_tap_arm()` goes moot for labels — a mid-span label pin no longer coincides with any endpoint, so `endpoint_near` never fires. Stays live for device pins. `select_attached_nets()` itself is **not edited**. | small |
 | 12 | `tests/headless/test_wire_split.tcl` | 21 `lab_wire`/`lab_pin` references and **zero** `res.sym` taps — the entire suite uses a label as the split source. Re-author the tap fixtures onto a device pin; add mirror cases (label does NOT split; two stubs under a label DO re-weld; `.sch` stays one `N`). **PARTLY DONE (S1, forced):** the W7 block and its wireedit twin `wireedit/test_wireedit_20_F1_netlabel_tap.tcl` both assert the *label rescue stub* and went red on change #4 — re-authored to the S1 result (no stub, label leashed back, halves weld). **DONE (S2):** every fixture moved to a `devices/res` P-pin tap, each phase gained a label mirror and a `label_splits_wires 1` legacy leg, and a new Phase S2 holds the claims that are new rather than amended (S2a merge, S2b splitter, S2c disk, S2d the §4.4 netlist fix, S2e the D2 gate). 66 → **115 checks**; §15.6. | large |
 | 13 | `tests/headless/test_label_ride.tcl` (new) | R1 in both modes (the along-wire repro **must** use `autotrim_wires = 0`), R2, R3, rotate, leash, strand counter. **DONE for S1** (82 checks); R2/R3 legs land with S2/S3. | medium |
@@ -606,13 +606,40 @@ witness); folding the label rule into `split_active` reddens only the 10 legacy-
 re-asserted by S2c), `run_regression.tcl` unchanged at the 3 pre-existing
 `test_ihp_sg13g2_libmgr` FAILs.
 
-**S3 — R3 RIDE, with live clamping.**
-Changes #8, #9 plus RIDE mode in #5, with the rotation closed form from the start so translate,
-rotate and flip are one code path, and writing `rot`/`flip` per R3. Behind `label_ride`.
+**S3 — R3 RIDE, with live clamping. — LANDED 2026-08-06.**
+Changes #8, #9, #10's second half plus RIDE mode in #5, with the rotation closed form from the start
+so translate, rotate and flip are one code path, and writing `rot`/`flip` per R3. Behind
+`label_ride` (default **1**). This closes issue **0227** and the wire-moving direction of **0228**'s
+label half, and it lifts the S2 escalation recorded in §15.3.
 
 Live clamping (§5.4) is **in this stage, not deferred** — with clamping as the permanent model,
 release-only apply means the label tracks the cursor perpendicular for the whole drag and then
-jumps back. That is a worse experience than today's stub. Open question 1 gates it.
+jumps back. That is a worse experience than today's stub. Open question 1 gated it and is now
+**settled both halves** (§16.5): a second `label_ride_apply()` call, gated on `commit_now`, runs on
+every live RUBBER commit, and stepwise == one-shot for LEASH and RIDE alike.
+
+*As built* — see §16 for the nine points the implementation had to settle:
+
+| what | where |
+|---|---|
+| `label_ride`, default 1, `set_ne` at file scope + `tctx::global_list` (**not** under `cadence_compat_sync`, §16.2) | `src/xschem.tcl` beside `label_splits_wires` |
+| #8: `&& !(label_ride_on && inst_is_netlabel(ii))` on the WIRE-ENDPOINT arm's instpin test | `src/actions.c` `connect_by_kissing()` |
+| #9: `if(xctx->inst[i].sel \|\| label_is_rider(i)) continue;` in block (3b), after the index bookkeeping | `src/move.c` `fluid_ml_hazards()` |
+| capture's inverse arm (stationary label, moving owner) + `label_ride_anchor_held()`, the conservation veto (§16.3) | `src/move.c` `label_ride_capture()` |
+| `label_ride_owner_at()` / `label_ride_run_at()` — hazard (B)'s resolver *parameterised*, not duplicated (§16.1) | `src/move.c` |
+| `label_ride_apply_ride()` — target-pin → rot/flip → solve-for-origin, the verbatim `+2` bake, the span-length sanity gate | `src/move.c` |
+| the live apply: `if(commit_now) label_ride_apply();` at the tail of the shared commit block (§16.5) | `src/move.c` |
+| tests | `test_label_ride.tcl` 89 → **157** (sections V and U, plus Q4–Q7 for §16.8); `test_label_strand_oracle.tcl` 19 → **32** (A/C/D re-authored, AL/CL/DL/DM3-4/D3L legacy legs); `test_wire_split.tcl` 115 → **119** (W7b2 + its legacy leg; W7b itself re-authored in comment only, §16.7) |
+
+RED-first: every V case was measured against the `a72ddb34` tree first and the whole S3 claim set was
+red there, with every U/H/I/J/K/L/P/Q control green on both sides. Five sabotage variants are pinned
+and their red sets are pairwise disjoint apart from the two noted in §16.9: translate-then-rotate
+reddens only the `bus_connect.sym` pair; dropping the `+2` term reddens only the 40-cell orientation
+sweep; riding an already-selected label reddens only the ROTATELOCAL / partial-owner / neighbour-wire
+cells; dropping the stationary-copper veto reddens only the two conservation cells; and shipping #8
+with the RIDE arm removed reddens 44 checks including the strand oracle's end-of-stub control — which
+is trap 1 measured rather than argued. `tests/headless/wireedit/` 58/58, `tests/headless/run.sh` 6/6,
+`run_regression.tcl` unchanged at the 3 pre-existing `test_ihp_sg13g2_libmgr` FAILs.
 
 **S5 — R6 wire extension** (§5.5). Small on its own, but it is a wire mutation driven by a label
 gesture, so it lands after the ride is stable and after the trim-ordering hazard (B) is closed.
@@ -632,8 +659,8 @@ scheduled whenever. Interacts with issue **0229**.
 | **0221** first-writer-wins by record order | Not on the critical path — nothing here moves an anchor at netlist time — but it is *why* a naming regression would be silent. Keep open; reference from this spec. |
 | **0223** `place_net_label` commits off copper | **Policy DECIDED in S1 (§14.6), and it does NOT close 0223.** The invariant is *conservation* — no gesture takes a label off copper that was on copper — not *prohibition*: R9 already tolerates 91 shipped labels that sit off copper by design. A newly placed label was never on copper, so it breaks no rule the leash enforces. 0223 stays a UX inconsistency between the two placement paths, to be closed on its own merits under its `cadence_compat` gate. |
 | **0225** wire `lab=` back-annotation invisible to modify flag | Independent, though it touches the same `netlist.c:1117` writer. Fix separately; do not fold in. |
-| **0227** mid-span label stranded by wire translation | **Close as superseded. Do not implement as filed** — it proposes extending kissing to *rescue* a stranded label with a stub; S1/S3 delete the stub and replace it with the ride. |
-| **0228** keyboard stretch paths do not arm kissing | **Split.** The label half is subsumed by S3 (the rider does not need kissing armed). The **device-pin** half remains a real, independent bug — keep it open. |
+| **0227** mid-span label stranded by wire translation | **CLOSED 2026-08-06 as superseded by S3.** Not implemented as filed — it proposed extending kissing to *rescue* a stranded label with a stub; S1/S3 deleted the stub and replaced it with the ride. Measured after S3, the issue's own repro: label rides, net keeps `VOUT`, `fluid_last_move_label_strands` 0, in **both** configs. |
+| **0228** keyboard stretch paths do not arm kissing | **Split, and the split turned out to be finer than this row assumed.** The label half has TWO directions: *the wire moves and the label stays* is closed by S3 (RIDE is not gated on kissing — strand-oracle D3/D4 flipped), but *the label moves and the wire stays, `stretch` without `kissing`* is **not** — RIDE does not apply and the LEASH's kissing gate is policy (§14.6), so it closes with this issue's own one-line fix instead. Measured: `test_wire_split.tcl` W7b is byte-identical before and after S3 (§16.7). The **device-pin** half remains a real, independent bug. Keep open. |
 | **0229** `select_dangling_nets` doc vs code | Unaffected. Its note that the label exclusion is deliberate is consistent with this design. |
 | **0222 / 0224 / 0226** | Untouched. |
 
@@ -656,7 +683,11 @@ scheduled whenever. Interacts with issue **0229**.
    device pins still need it.
 4. **`test_wire_split.tcl` must be re-authored, not re-run.** 21 label references and zero
    `res.sym` taps: the suite has no device-pin tap fixture to swap to. **Done in S2** (§15.6).
-5. **The issue-0227 mask, and this one is a REGRESSION for the target user.** Added
+5. ~~**The issue-0227 mask, and this one is a REGRESSION for the target user.**~~ **RESOLVED
+   2026-08-06 by S3, the same day it was recorded — this is no longer given up.** The ride closes
+   0227 in every config, so the mask is not needed and `label_splits_wires 1` is back to being an
+   escape hatch rather than a mitigation. The measurement below is kept as the record of why S2 and
+   S3 had to be sequenced, and of the general lesson (WIRING.md landmine 15). Original text: Added
    2026-08-06 after measuring S2; it was missing from this list and it is the most important
    entry in it. The split put a mid-span label on a wire ENDPOINT, and *two* separate rescues key
    on endpoint coincidence — `connect_by_kissing()`'s wire-endpoint tether (change #8, alive
@@ -843,6 +874,17 @@ Required order of operations:
 The shared ELEMENT commit at `move.c:8974-8995` already moves a user-selected label. The ride
 must **skip labels already in the selection**, or they move twice.
 
+**Resolved in S3, and the shape of the risk is not what this paragraph assumed** — see §16.4. The
+exclusion is in the capture (the two arms split on `xctx->inst[i].sel`, opposite predicates) and
+re-asserted in the apply. But a *double move* is not actually what a missing guard produces: the
+ride places the label by **solving for the origin from an absolute target**, never by accumulating a
+delta into it, so on a rigid translate the ride's answer and the ELEMENT commit's answer are
+identical and a duplicate rider is a no-op. Where the guard has real content is where the two
+answers legitimately differ: **ROTATELOCAL** (the commit turns each instance about its own origin,
+so a selected label does not travel with the wire at all) and a **partially selected owner** (the
+commit gives the label the full delta, the ride would clamp it onto the reshaped span). Those two
+cells are the sabotage anchors (`test_label_ride.tcl` V29a–V29d).
+
 ---
 
 ## 12. Open questions
@@ -878,7 +920,15 @@ Still open:
    **LEASH half SETTLED 2026-08-05 (S1): byte-identical.** A 3-step RUBBER drag and the one-shot
    drag with the same total delta produce the same label position, wire count and span set
    (`test_label_ride.tcl` N8). So live riding is a pure UX addition for the leash, not a
-   correctness prerequisite. RIDE (S3), which moves an *unselected* label, is still unmeasured.
+   correctness prerequisite. ~~RIDE (S3), which moves an *unselected* label, is still unmeasured.~~
+   **RIDE half SETTLED 2026-08-06 (S3): byte-identical too, and the apply is now LIVE for both
+   modes.** Measured with a 5-step RUBBER drag vs the one-shot at the same total delta
+   (`test_label_ride.tcl` V43/V44), first with the END-only apply and again after making it live —
+   equal in both. `fluid_reroute_restore()` does return *instance* coordinates to pristine on every
+   step (`mem_restore_slot` rebuilds instances whole-struct), so live riding needed no restore of
+   its own: the implementation is one extra `if(commit_now) label_ride_apply();` at the tail of the
+   shared commit block. See §16.5 for why that is a different site from the END call rather than a
+   hoist of it.
 2. **Does the corrected placement order handle an off-origin label under rotation?** Hazard
    (D) specifies target-pin-then-rotate-then-solve; it is designed, not measured. → Fixture using
    `xschem_library/devices/bus_connect.sym` (pin at (10, −10)) and
@@ -888,7 +938,15 @@ Still open:
    See §14.3: LEASH corrects the origin the ELEMENT commit already wrote, by the *anchor* delta, so
    it is exact for any pin offset under any rot/flip without ever solving for an origin. Measured
    with `bus_connect.sym` (pin at (10, −10)) translated and rotated 90° (`test_label_ride.tcl`
-   N0–N5). RIDE still owes the ordering — it has no committed origin to correct.
+   N0–N5). ~~RIDE still owes the ordering — it has no committed origin to correct.~~
+   **RIDE half SETTLED 2026-08-06 (S3): the prescribed order is correct, and step 3 is written by
+   using the forward map rather than inverting it.** `label_ride_apply_ride()` computes the target
+   pin coordinate, bakes rot/flip, then reads the pin back with `get_inst_pin_coord()` and
+   translates the origin by `target − pin`. That is the solve of hazard (D) step 3, but expressed so
+   it cannot drift from `get_inst_pin_coord()` — there is no inverse-rotation formula anywhere in
+   the ride. Measured on `bus_connect.sym` (pin (10, −10)) with the host wire rotated 90°: the pin
+   lands exactly on the rotated span (`test_label_ride.tcl` V23–V26). Sabotage-verified: swapping
+   steps 3 and 4 into translate-then-rotate reddens exactly V24/V25 and nothing else.
 3. ~~**Does the on-disk `.sch` actually change today when labels split?**~~ **SETTLED 2026-08-05
    (S0). `save.c:3886-3889` is right; no golden regeneration is owed.** Measured two ways.
 
@@ -1344,6 +1402,16 @@ Recommended sequencing consequence: either ship S2 and S3 together, or default
 prose: `test_label_strand_oracle.tcl` D0–D2 (the unmask) and DM0–DM2 (the hatch restoring it),
 `test_wire_split.tcl` `W7b/S2` + `W7b legacy`.
 
+> **ESCALATION LIFTED 2026-08-06 — S3 landed the same day.** The recommendation above was taken in
+> its first form: S3 shipped immediately after S2 rather than `label_splits_wires` being re-defaulted.
+> The three-row table collapses to one row — `strands 0`, net `VOUT`, in every config — because the
+> ride does not care whether the wire was split. `label_splits_wires 1` is no longer a mitigation and
+> §9 loss 5 is struck. The ground-truth anchors were re-authored to the S3 result and each kept a
+> `label_ride 0` legacy leg so the pre-S3 measurement above is still executed on every run:
+> `test_label_strand_oracle.tcl` A/AL, C/CL, D1–D2b/DL, DM1–DM4, D3–D4/D3L–D4L. What does **not**
+> change is the general lesson this section exists for — removing manufactured endpoint coincidence
+> removes rescues you did not know keyed on it (`WIRING.md` landmine 15).
+
 ### 15.4 The label still NAMES what it no longer cuts, and that is asserted rather than assumed
 
 The whole design rests on `touch()` being interior-inclusive in `name_attached_inst_to_net()`
@@ -1402,3 +1470,194 @@ corpus, `S2c` asserts the invariant directly — the same source file saved unde
 `tests/headless/run.sh`'s 6 netlist goldens are green unchanged. The one file §12.3 found keeping a
 label-pin split on disk (`xschem_library/pcb/pcb_test1.sch`, via issue **0225**'s divergent
 `prop_ptr`) is now strictly unreachable through a label, which is the "S2 retires it" of §14.8.
+
+---
+
+## 16. Settled while building S3
+
+### 16.1 Hazard (B)'s resolver is PARAMETERISED, not duplicated — and the question it answers is inverted between the modes
+
+LEASH asks "does the captured owner still contain the **START** anchor?" and DECLINES when it does
+not, because a `no` means the owner moved with the label. RIDE asks the same function about the
+**transformed** anchor along the **transformed** direction, and a `no` from the LEASH form is its
+entry condition. Same two mandatory steps (resolve the id, `touch()`-verify, else geometrically
+re-find a collinear wire), same failure modes, one implementation:
+`label_ride_owner_at(wid, ax, ay, dx, dy)` and `label_ride_run_at(ax, ay, dx, dy, wi, …)`, with the
+S1 signatures kept as thin wrappers that pass the START pair. §11 (B) says "do not write a second
+resolver" and the only way to honour that across two opposite questions is to make the question an
+argument.
+
+Two RIDE-specific differences that are not shared:
+
+- **The run is seeded from a point ON the owner, not from the anchor.** LEASH may seed from its
+  anchor because it verified `touch()` first. Under a reshaping stretch the transformed anchor is
+  not on the line at all, so RIDE seeds `label_ride_run_at()` at `wire[wi].x1/y1` along the wire's
+  **own** END direction. Seeding at an off-line point makes the growth loop's "same infinite line"
+  cross-product test reject the owner's own collinear neighbours.
+- **The sanity gate has a different natural bound.** LEASH's is "the correction cannot exceed the
+  anchor's travel", which holds by construction because the START anchor lies on the span. RIDE has
+  no such identity, so the bound is the **captured owner span's own length**: a label rides a span,
+  so the largest clamp it can legitimately need is endpoint-to-endpoint. Anything larger means the
+  resolution bound to copper the label was never on, and it declines rather than teleporting.
+
+### 16.2 `label_ride` is a file-scope default-**on** preference, not a `cadence_compat` mode — and it owns the tether
+
+Change #10 proposed `set_ne label_ride 1` under `cadence_compat_sync`, which would read as
+"force-enabled by cadence_compat like `autotrim_wires`". Rejected, for two measured reasons and one
+structural one:
+
+- **0227 reproduces on stock defaults.** §13.5 row 1 and the strand oracle's A case: `autotrim_wires
+  0`, no split ever, label stranded, net `#net1`. Gating the fix on `cadence_compat` would leave the
+  default-config user with the bug the issue was filed about.
+- **The trace is one-directional** (`xschem.tcl`, `cadence_compat_sync`): turning `cadence_compat`
+  off later leaves the flag on. That is tolerable for `autotrim_wires`, which is a preference; it is
+  confusing for a correctness switch.
+- So it takes `label_splits_wires`' shape instead: `set_ne` at file scope, default **1**, plus the
+  `tctx::global_list` entry so it survives a tab switch, and **no menu entry** — it is a one-release
+  escape hatch, not a feature toggle.
+
+**The preference deliberately owns BOTH halves of the replacement.** Change #8 removes
+`connect_by_kissing()`'s wire-endpoint tether *for net labels only*, and the tether is the only thing
+that ever held an **end-of-stub** label — pin exactly on the moving wire's endpoint, which is the
+dominant topology the wire-stub-plus-netlabel idiom produces. So #8 is written as
+`&& !(label_ride_on && inst_is_netlabel(ii))`, with the flag read once per `connect_by_kissing()`
+sweep. `1` = ride, no stub. `0` = stub, no ride, i.e. pre-S3 byte-for-byte. There is no setting that
+gives neither, which is the state trap 1 warns about and the state a separate flag would have made
+reachable. Pinned by `test_label_ride.tcl` U1–U6 and by the sabotage variant that removes the RIDE
+arm while leaving #8 in place (44 red, including the strand oracle's end-of-stub control B1).
+
+### 16.3 RIDE needs a CONSERVATION veto that LEASH does not: `label_ride_anchor_held()`
+
+"The owner is moving" is a selection question (`WIRING.md` §8 class **F**), and the honest form of it
+is not "is *some* copper under the anchor moving" but "is *all* of it". A label at an L-corner or a
+crossing sits on two wires; if only one is in the move set, carrying the label off the one that
+stayed is the same strand this stage exists to prevent, mirrored. So RIDE captures only when a
+non-degenerate **moving** wire touches the anchor **and** nothing stationary still holds it:
+
+- any non-degenerate wire with `sel == 0` touching the anchor, or
+- any stationary non-label instance pin exactly at it (the gnd/vdd-on-a-device-pin idiom, 36 % of
+  shipped labels).
+
+Labels are excluded on both sides for the §5.2 reason: a naming anchor is not copper. Note this is a
+**third** point question, distinct from `fluid_point_on_copper()`'s "is there copper here" and from
+S2's `any_inst_pin_at()` "is this pin a segment boundary" — it asks "is any of that copper
+*staying*". It is kept local rather than folded into either; none of the three answers another's
+question, which is now a four-way version of the §15.5 note. Pinned by V29–V32; sabotage-verified
+(removing the veto reddens exactly those two cells and nothing else).
+
+RIDE also has **no bare-pin-anchor arm**, deliberately. A label on a moving *device*'s pin is still
+carried by `connect_by_kissing()`'s ELEMENT instpin walk — change #4 skips only a moving **label**'s
+own pins — so inventing a second mechanism for it would be the double-move #4 avoided. R3 is about
+the wire moving.
+
+### 16.4 Hazard (E) is real but its failure mode is not a double move — absolute placement already prevents that
+
+The ride writes `inst.x0/y0` by **solving from an absolute target**, never by accumulating a delta,
+so for a rigid translate the ride's answer and the ELEMENT commit's answer are the same coordinate
+and a label that got both treatments lands in the same place. The classic "2× delta" symptom §11 (E)
+predicts belongs to a relative implementation. The guard still ships (in the capture's arm split and
+re-asserted in the apply) because the two answers *do* diverge in two gestures, and there the user's
+explicit selection must win:
+
+- **ROTATELOCAL** (ALT-R/ALT-F): the ELEMENT commit rotates each instance about **its own** origin,
+  so a selected label does not travel with the wire at all, while the ride's target is on the rotated
+  wire. Measured: label pin stays at (100, 0) with the guard, moves to (0, 100) without it.
+- **A partially selected owner**: the commit gives the selected label the full delta; the ride would
+  clamp it onto the reshaped span.
+
+Those are V29a–V29d, and they are the sabotage anchor for this hazard. Recorded because the obvious
+test for (E) — a plain translate with label and wire both selected (V27) — is green *with or without*
+the guard, i.e. it is exactly the green-but-hollow shape `WIRING.md` §10 warns about.
+
+### 16.5 The live apply is a SECOND call site, not a hoist of the END one
+
+§5.4 requires the clamp live under the cursor; the END apply sits inside `if(!commit_now)` and is
+structurally END-only. The fix is one line — `if(commit_now) label_ride_apply();` at the tail of the
+shared geometry-commit block, immediately before the `if(!commit_now)` finalizers — and the two calls
+must both exist:
+
+- at that point `move_rot`/`move_flip`/`x1`/`y1`/`deltax`/`deltay`/`rotatelocal` are all still live
+  (the diagonal decomposition restores the accumulated totals after the attempt loop), and the
+  geometry for the step is final;
+- but the END call **cannot** be moved there, because it must also precede the ROLLBACK-OR-REFUSE
+  block and the state zeroing — hazard (A) and `WIRING.md` landmine 13 are unchanged.
+
+The rider set is **not** freed on a live step (the gesture is still open), which is the same
+`fluid_startsel_id` lifecycle rule as before. Correctness across steps is the "absolute, never `+=`"
+rule of §5.3 doing its job: every RUBBER step `fluid_reroute_restore()`s to pristine — including
+instance coordinates, `mem_restore_slot` rebuilds instances whole-struct — and re-derives from the
+TOTAL delta, so the apply is never compounded. Measured both ways (open question 1, §12): a 5-step
+RUBBER drag equals the one-shot for LEASH (N8) and for RIDE (V43), before and after making it live.
+
+`WIRING.md` §8 class **I** is satisfied without new work: the ride writes committed geometry, and the
+live-step redraw already zeroes `deltax`/`deltay` around `draw()`/`draw_selection()` because the
+committed geometry includes the transform. No new move-preview state was added, so there is nothing
+new to neutralise in that wrapper.
+
+### 16.6 A partially selected owner changes SHAPE, and that is where parametric `t` legitimately reappears
+
+§5.3 note 2 makes the rotation closed form primary and confines parametric `t` to the clamp. S3 is
+where that distinction becomes load-bearing rather than theoretical. For a fully selected owner the
+transformed anchor is on the final span by construction and the clamp is the identity. For a
+`SELECTED1`/`SELECTED2` follow wire the span is relaid — a device-pin drag turns it diagonal — the
+transformed anchor lands off it, and `label_ride_project()` puts it back. Measured: wire
+(0,0)-(200,0) with a label at (100,0), the resistor at one end dragged by (0,−100), gives the span
+(0,−100)-(200,0) and the label clamped to (80,−60), which is on it; the net keeps its name and the
+strand oracle scores 0 (V33–V37). Building `t`-from-endpoint-1 as the *primary* rule instead would
+mirror the label to the wrong end as soon as `ORDER()`/`order_wire_points()` canonicalize the
+endpoints, which is why the closed form comes first and the clamp second.
+
+The owner resolution has a matching fallback: when no wire contains the transformed anchor, RIDE
+falls back to the surviving record for the captured id and lets the clamp place the label, with the
+span-length gate of §16.1 bounding a hazard-(B) wrong half.
+
+### 16.7 W7b does NOT change, and that refines §8's disposition of issue 0228
+
+The S3 session prompt listed `test_wire_split.tcl` `W7b/S2` among the anchors expected to flip from
+`{#net1}` to `GB`. Measured, it does not, and the reason is worth recording because it splits
+0228's "label half" in two:
+
+| direction | gesture | S3 |
+|---|---|---|
+| the **wire** moves, the label stays | `select wire; move_objects … stretch` (no kissing) | **CLOSED** — RIDE is not gated on kissing (strand oracle D3/D4: `1`/`#net1` → `0`/`VOUT`) |
+| the **label** moves, the wire stays | `select instance; move_objects … stretch` (no kissing) — this is W7b | **unchanged** — RIDE does not apply (nothing the gesture moves is under the anchor) and the LEASH is gated on `connect_by_kissing`, which §14.6 pins as policy |
+
+Widening the LEASH gate to cover the second row was considered and rejected: §14.6's gate is what
+makes the rigid move and the Ctrl+LMB detach a *deliberate* detach, and `test_label_ride.tcl` K1/K2
+exist to stop exactly that drift. The second row closes instead with issue **0228**'s own one-line
+fix — arm kissing at `callback.c:6445`/`:6466` like every other stretch entry point — after which
+the leash fires there for free. W7b was therefore re-authored **in comment only**, and a new
+`W7b2` leg records the direction S3 *does* close on the same fixture, with a `label_ride 0` legacy
+twin.
+
+### 16.8 Change #8 reaches the COPY path too, and that is the same call §14.9 already made
+
+`copy_objects()` calls `connect_by_kissing()` directly, so #8's gate applies there as well: copying a
+WIRE whose endpoint sits on a stationary net label no longer mints a tether stub from the label to
+the **copy**. Measured — 2 wires (original + copy) where the pre-S3 tree produced 3, with a device
+pin at the same coordinate still producing 3.
+
+This was not in the change list, and it is kept rather than gated away because it is exactly the
+policy §14.9 settled for the ELEMENT arm one stage earlier: `copy_objects()` never runs
+`label_ride_capture()`, so there is no ride to pair with a stub on that path, and inventing copper
+for a name nobody asked to move is the artifact §5.1 exists to delete. Copy propagation (R8) is S6's
+job and will reproduce the *label*, not a wire to it. Pinned by `test_label_ride.tcl` Q4–Q7, with
+Q6/Q7 as the device-pin fence.
+
+### 16.9 Five sabotage variants; the overlaps are the two you would predict
+
+`WIRING.md` §10 asks for disjoint red sets. Measured:
+
+| sabotage | red |
+|---|---|
+| translate-then-rotate (hazard D order inverted) | 2 — the `bus_connect.sym` pair V24/V25 |
+| drop the `+2` rot-composition term | 1 — the 40-cell orientation sweep V22 |
+| ride a label that is already selected (hazard E) | 8 — V29a/V29c plus the P1–P3 leash cells and V17/V20/V22 |
+| drop the stationary-copper veto (§16.3) | 2 — V29/V32 |
+| change #8 ships without the RIDE arm (trap 1) | 44 — the whole feature, including strand-oracle B1 |
+
+Pairwise disjoint except: everything overlaps the last one, which is deliberate — "the feature is
+off" is a superset variant and exists to measure trap 1, not to isolate a predicate; and V22 is
+shared by the `+2` and hazard-(E) variants, because V22's reference leg is itself an
+ELEMENT-committed selected label and the (E) sabotage perturbs the reference as well as the subject.
+Both are stated rather than engineered away.

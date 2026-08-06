@@ -670,8 +670,21 @@ check "W7: no stub leaves the run (R1)" $w7_off 0
 # This is the SAME root cause as the strand-oracle D1 case: the split was masking two separate
 # endpoint-keyed rescues (this ELEMENT arm, and connect_by_kissing's wire-endpoint tether), and
 # S2 removes the mask for both. It is not a new defect class -- a stock-config user (autotrim
-# off, no split, ever) has had this exact result all along. RIDE (S3) is what closes it.
+# off, no split, ever) has had this exact result all along.
 # Measured 2026-08-06; the legacy leg below keeps the escape hatch's promise honest.
+#
+# S3 (RIDE) LANDED AND THIS CASE IS DELIBERATELY UNCHANGED -- re-measured, not assumed. Issue
+# 0228's label half has two directions and S3 closes exactly one of them:
+#   (a) the WIRE moves and the label stays  -> RIDE, which is not gated on kissing. CLOSED (the
+#       strand oracle's D3/D4 flipped from 1/#net1 to 0/VOUT).
+#   (b) THIS case: the LABEL moves and the wire stays, with `stretch` but no `kissing`. RIDE does
+#       not apply (nothing the gesture moves is under the anchor) and the LEASH is gated on
+#       connect_by_kissing -- policy, spec §14.6, pinned by test_label_ride.tcl K1/K2, and NOT
+#       widened by S3. This direction closes when issue 0228's own one-line fix lands (arm kissing
+#       at callback.c:6445/:6466 like every other stretch entry point), at which point the leash
+#       fires here for free. Until then `label_splits_wires 1` still restores the old rescue,
+#       which is what the legacy leg below asserts.
+# So: `#net1` here is the S3 result, measured, and it is the same as the S2 result.
 catch {xschem clear force}
 xschem wire -100 -60 110 -60
 xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
@@ -690,6 +703,27 @@ xschem move_objects 0 -50 stretch
 check "W7b legacy: label_splits_wires 1 restores the endpoint-arm rescue (net GB)" \
       [all_wire_nets] GB
 set ::label_splits_wires 0
+
+# W7b2 -- the OTHER direction of the same cell on the same fixture, and the one S3 does close: the
+# WIRE is what moves and the label stays put. Recorded here so this file carries the measurement
+# rather than only the prose above. No kissing, so nothing but the ride can save it.
+catch {xschem clear force}
+xschem wire -100 -60 110 -60
+xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
+xschem unselect_all; xschem select wire 0
+xschem move_objects 0 -50 stretch
+check "W7b2/S3: the wire moves, the label rides, the net survives" [all_wire_nets] GB
+check "W7b2/S3: ... and the label really moved with it" \
+      [lrange [xschem instance_pin_coord l8 name p] 1 2] {-80 -110}
+check "W7b2/S3: ... with no copper invented" [segset] [list [nwire {-100 -110 110 -110}]]
+set ::label_ride 0
+catch {xschem clear force}
+xschem wire -100 -60 110 -60
+xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
+xschem unselect_all; xschem select wire 0
+xschem move_objects 0 -50 stretch
+check "W7b2 legacy: label_ride 0 leaves it behind (pre-S3)" [all_wire_nets] [list "#net1"]
+set ::label_ride 1
 
 # W7c -- 4-way (+) cross tapped by a moving label stays on one net (no orphan/short). Under S2
 # the cross is not split, so the two wires are two objects joined only by the label's NAME -- and

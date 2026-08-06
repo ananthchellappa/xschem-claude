@@ -2046,6 +2046,9 @@ int connect_by_kissing(void)
   double x0,y0, pinx0, piny0;
   int kissing, changed = 0;
   int k, ii, done_undo = 0;
+  /* doc/claude/specs/wire_label_ride.md R3 (S3, change #8): read the ride preference ONCE per
+   * sweep -- the wire-endpoint arm below consults it per candidate pin. */
+  int label_ride_on = tclgetboolvar("label_ride");
   Wireentry *wptr;
   Instpinentry *iptr;
   int sqx, sqy;
@@ -2141,7 +2144,23 @@ int connect_by_kissing(void)
         ii = iptr->n;
         dbg(1, "connect_by_kissing(): ii=%d, x0=%g, y0=%g,  iptr->x0=%g, iptr->y0=%g\n",
                ii, x0, y0, iptr->x0, iptr->y0);
-        if( iptr->x0 == x0 && iptr->y0 == y0  &&  xctx->inst[ii].sel == 0) {
+        /* doc/claude/specs/wire_label_ride.md R3 (S3, change #8): the TETHER. This arm is
+         * wire-endpoint driven, so the instance tested through iptr is the STATIONARY one -- a net
+         * label sitting on the endpoint of a wire this gesture is about to move. The stub minted
+         * below is what has kept such a label attached; RIDE replaces it by carrying the label
+         * itself, orientation included, which is the Cadence behaviour and what R1/§5.1 mean by
+         * "no invented copper".
+         * MUST NOT SHIP WITHOUT RIDE. Post-S2 a mid-span label is interior to one wire and this arm
+         * never sees it, but an END-OF-STUB label -- the dominant topology the wire-stub+netlabel
+         * idiom produces -- is exactly on the endpoint, and this stub is the only thing holding it.
+         * Removing it without the rider widens S2's unmask from mid-span labels to ALL of them.
+         * Hence the shared `label_ride` gate: the preference switches the stub and the ride
+         * together, so 0 restores pre-S3 behaviour rather than leaving the label with neither.
+         * ipin/opin/iopin and every device pin are untouched (inst_is_netlabel is strcmp "label",
+         * not IS_LABEL_OR_PIN), and so is the ELEMENT arm above, which handles the mirrored case
+         * (a moving DEVICE carrying a stationary label on its pin). */
+        if( iptr->x0 == x0 && iptr->y0 == y0  &&  xctx->inst[ii].sel == 0 &&
+            !(label_ride_on && inst_is_netlabel(ii)) ) {
           kissing = 1;
           break;
         }

@@ -1390,10 +1390,15 @@ typedef struct {
  * "which copper was this label sitting on when the drag started, and where was its anchor".
  * The set exists only between move START and move END/ABORT, is never in sel_array, never in
  * inst[].sel and never on disk; no xWire / xInstance / xSymbol field changes.
- * S1 implements LEASH only (the LABEL is the object being dragged; an anchor that lands off
- * copper is projected back onto the owner span). S3 adds RIDE (the WIRE moves and the label
- * follows, orientation included) and with it the START origin, which LEASH does not need --
- * LEASH corrects the origin the ELEMENT commit already wrote. */
+ * S1 implements LEASH (the LABEL is the object being dragged; an anchor that lands off copper is
+ * projected back onto the owner span). S3 adds RIDE (the WIRE moves and the label follows,
+ * orientation included). The two arms split on xctx->inst[].sel -- SET means LEASH, CLEAR means
+ * RIDE -- and getting that predicate backwards is silent.
+ * NO START ORIGIN FIELD, in either mode, and that is a result rather than an omission: LEASH
+ * corrects the origin the ELEMENT commit already wrote, and RIDE solves for a new one from the
+ * TARGET PIN by reading get_inst_pin_coord() back after baking rot/flip (spec §11 hazard D, §16.1).
+ * Neither ever needs to know where the instance started, so the field the spec reserved for S3 is
+ * not carried -- WIRING.md §7.9's rule about unread per-gesture scratch. */
 #define LABEL_RIDE_LEASH 1
 #define LABEL_RIDE_RIDE  2
 typedef struct {

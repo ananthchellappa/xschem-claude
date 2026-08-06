@@ -1,9 +1,34 @@
 # 0228 — the keyboard stretch paths call `select_attached_nets()` without arming kissing, so even an endpoint net label is stranded
 
-Status: **OPEN** — measured repro, one-line fix per site, not implemented. User-visible behaviour change: needs a release note.
+Status: **OPEN, and narrowed twice** — measured repro, one-line fix per site, not implemented.
+User-visible behaviour change: needs a release note.
 **Split** per `doc/claude/specs/wire_label_ride.md` §8: the *label* half is subsumed by that
 spec's S3 (the rider does not need kissing armed); the **device-pin** half below stays a real,
 independent bug and this issue tracks it.
+
+> ### ✅ PARTLY CLOSED 2026-08-06 by `wire_label_ride.md` S3 — and the "label half" turns out to have TWO directions
+>
+> S3's RIDE is deliberately **not** gated on `connect_by_kissing`, so it fires on these very paths.
+> That closes the direction this issue's own repro exercises. Measured, same fixture as "Measured"
+> below, `move_objects 0 100 stretch` with no `kissing`:
+>
+> | direction | gesture | before S3 | after S3 |
+> |---|---|---|---|
+> | the **WIRE** moves, the label stays (this issue's repro) | `select wire; move_objects … stretch` | `#net1`, strands 1 | **`VOUT`, strands 0** |
+> | the **LABEL** moves, the wire stays (the S2 widening below) | `select instance; move_objects … stretch` | `#net1` | `#net1` — **unchanged** |
+>
+> The second row is not something RIDE can reach: nothing the gesture moves is under the label's
+> anchor, so there is no rider, and S1's LEASH is gated on `connect_by_kissing` — which
+> `wire_label_ride.md` §14.6 pins as *policy* (it is what makes the rigid move and the Ctrl+LMB
+> detach a deliberate detach, `test_label_ride.tcl` K1/K2). Widening that gate was considered and
+> rejected. **The second row closes with THIS issue's own one-line fix below**: arm kissing before
+> the follow-grab, and the leash fires there for free. So the fix is unchanged, its label
+> justification is now only the second row, and the device-pin justification is untouched.
+>
+> Witnesses: `tests/headless/test_label_strand_oracle.tcl` **D3/D4** (flipped to `0`/`VOUT`) with
+> **D3L/D4L** keeping the pre-S3 measurement under `label_ride 0`; `tests/headless/test_wire_split.tcl`
+> **W7b** (unchanged, re-authored in comment only) and the new **W7b2** for the closed direction.
+> Spec `wire_label_ride.md` **§16.7**.
 **S1 (2026-08-05) does NOT cover these paths, by design.** The leash that replaces the kissing stub
 for a moving label is gated on `xctx->connect_by_kissing` (spec §5.6, §14.5) — precisely so that S1
 is a *replacement* on the connected drag and a no-op everywhere else. The two keyboard entry points

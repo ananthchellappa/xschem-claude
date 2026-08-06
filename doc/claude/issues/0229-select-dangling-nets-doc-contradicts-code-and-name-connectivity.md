@@ -6,6 +6,14 @@ Tests: none — this is a doc/comment change plus one guard
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
 Related: none. `select_dangling_nets` has **zero** hits anywhere under `doc/claude/`; the many issues using the word "dangling" (0040, 0092, 0103, 0109, 0132) are all about wire ends left by fluid drag/rotate, not this function.
 
+> **Noted 2026-08-06, still unaffected.** `wire_label_ride.md` S3 (RIDE) landed: a net label now
+> follows the copper it names when that copper moves, rotates or flips. Nothing here changes —
+> S3 is per-gesture and move-scoped, it adds no propagation rule, and it never creates or destroys
+> a label. This issue's *deliberate* label exclusion stays consistent with that design. The stage
+> that will actually touch this function is **S6** (R8, delete/copy propagation, `wire_label_ride.md`
+> §5.7): "delete a wire deletes its labels" has to reconcile with `select_dangling_nets()`
+> semantics, and open question 4 flags `select.c:780` as the site. Not scheduled.
+
 ## First, what is *not* a defect
 
 The initial suspicion was that excluding `type=="label"` from the connectivity pass is an
