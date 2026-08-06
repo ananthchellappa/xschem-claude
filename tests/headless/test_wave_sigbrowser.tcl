@@ -1,24 +1,45 @@
-# tests/headless/test_wave_sigbrowser.tcl — the Signal Browser sidebar
-# (doc/claude/signal_browser_batch/PLAN.md items 8-15 — per settled decision 9
-# this ONE file carries every item-8..15 check; each item APPENDS its group,
-# exactly as test_wave_sigsearch.tcl does for items 1-7).
+# tests/headless/test_wave_sigbrowser.tcl — the Signal Browser sidebar,
+# PLAN items 8, 9 and 10 (doc/claude/signal_browser_batch/PLAN.md).
+#
+# ⚠⚠ THIS FILE NO LONGER CARRIES EVERY BROWSER CHECK — DRIVER RULING 30.
+# Settled decision 9 originally put items 8-15 here. At 489 checks the file was
+# killed mid-run by WSLg with ZERO check failures (measured 2026-08-06: 0 of 9
+# completions, against 2 of 4 for the 194-check items-1-7 file in the SAME
+# window), which made every later item's verification unmeasurable. Ruling 30
+# revised decision 9 and SPLIT the checks BY ITEM RANGE:
+#
+#   test_wave_sigbrowser.tcl       items 8, 9, 10   BS BT BM   <- THIS FILE
+#   test_wave_sigbrowser_i11.tcl   item 11          BH
+#   test_wave_sigbrowser_i12.tcl   item 12          BX
+#   (items 13-15 create ONE more file; item 13 owns that decision)
+#
+# ⚠ WHERE THE SPLIT WAS CUT, AND WHY IT WAS CUT THERE. Not by check count — by
+# FIXTURE COST, which is the mechanism. In the 8 pre-split runs NOT ONE died
+# inside BS, BT or BM; three died inside BH5x and five inside BX4x/BX5x. Those
+# two groups are precisely the ones that hold a REAL VIEWER AND THE REAL DESIGN
+# WINDOW AT THE SAME TIME, each with its own loaded schematic and hierarchy
+# walk. This file keeps the three VIEWER-ONLY items — it opens no design-window
+# schematic and never has two live document windows at once — and items 11 and
+# 12 get one file each precisely because each is a two-window item.
 #
 # ============================================================================
-# CONVENTIONS THIS FILE ESTABLISHES — items 9-15 inherit them
+# CONVENTIONS — SHARED WITH EVERY OTHER BROWSER FILE (wvbs_common.tcl)
 # ============================================================================
+# `check`, `check_true`, `pcall`, the counting `::bgerror`, `wvproc_body`,
+# `bs_packed`, `bs_order`, `bs_wait_mapped`, `bs_wait_mapped_top`,
+# `bs_wait_widths`, `send_key`, `viewer_ready`, `$wsrc` and `wvbs_finish` now
+# live in `tests/headless/wvbs_common.tcl`, which every browser file sources.
+# It is deliberately NOT named `test_*.tcl`: full_audit.sh selects cases with
+# `ls test_*.tcl`, so a shared prelude with that name would be run as a case and
+# scored FAIL forever. Item-8-specific helpers (`bs_spy_on`/`bs_spy_off`) stay
+# here, with the item that reasons about them.
 #
 # GROUP PREFIXES: one two-letter prefix per item, never reused.
 #     item  8  BS   the sidebar shell (this file's first group)
 #     item  9  BT   the browser tree
 #     item 10  BM   the row context menu
-#     item 11  BH   hierarchy sync, browser -> schematic
-#           ⚠ DECLARED DEVIATION from the block rule below: the BH2x/BH3x block
-#           runs against a REAL LOADED SCHEMATIC FIXTURE in BOTH arms, not
-#           against a throwaway Tk toplevel. Item 11's subject is the xschem
-#           hierarchy walk, which needs no Tk at all — gating it on X would
-#           have made the item's central claim (the rollback) X-only for no
-#           reason. The Tk half is BH4x/BH5x, gated as usual.
-#     item 12  BX   ...
+#     item 11  BH   hierarchy sync, browser -> schematic   (-> _i11.tcl)
+#     item 12  BX   hierarchy sync, schematic -> browser   (-> _i12.tcl)
 #     item 13  BR   ...
 #     item 14  BD   ...
 #     item 15  BP   ...
@@ -66,11 +87,9 @@
 # PROCESS STATE LEFT BEHIND: the item-8 groups clean up after themselves —
 # `.wvbs1` is destroyed and `wviewer::forget wvbs` drops its registry and array
 # entries (BS37), the real viewer is closed (BS48 is the check that its arrays
-# went with it). It DOES leave `::bgerror` overridden and the helper procs
-# (`bs_packed`, `bs_order`, `bs_wait_mapped`, `bs_spy_on`/`bs_spy_off`,
-# `send_key`, `viewer_ready`, `wvproc_body`) defined — items 9-15 append to this
-# file and reuse them. It writes nothing to the tree beyond the standard
-# `test_scratch` dir, which it removes on its last line.
+# went with it). It DOES leave `::bgerror` overridden and the shared helpers
+# defined. It writes nothing to the tree beyond the standard `test_scratch`
+# dir, which `wvbs_finish` removes on its last line.
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_wave_sigbrowser.tcl
@@ -78,80 +97,19 @@
 # (the first is the one that measures anything; the second runs the source and
 # pure arms only)
 
-set fail 0; set npass 0
-proc check {name got exp} {
-  global fail npass
-  if {$got eq $exp} { puts "ok:   $name"; incr npass } \
-  else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
-}
-proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
-
-# Error-guarded call (test_wave_sigsearch's `pcall`, same `{args}` +
-# `uplevel 1 $args` shape). REQUIRED, not stylistic: a sabotage can make the
-# code under test THROW, and an unguarded throw hits the outer catch and aborts
-# every remaining check — turning a one-target sabotage into a file-wide abort.
-proc pcall {args} {
-  if {[catch {uplevel 1 $args} r]} { return "ERR:$r" }
-  return $r
-}
-
-# bgerror override. REQUIRED: the fixture groups build real Tk widgets with real
-# bindings, and an error that escapes to background level pops the stock bgerror
-# dialog — MODAL under X, which HANGS a headless run. Swallow it, print it, and
-# COUNT IT AS A FAILURE: a silent swallow hides a defect, a re-throw hangs, only
-# this shape does neither.
-proc ::bgerror {msg} { puts "BGERROR: $msg"; incr ::fail }
-
-# recent-files gate (issue 0119)
-set no_recent_files 1
-set here [file normalize [file dirname [info script]]]
-set repo [file normalize [file join $here .. ..]]
-source [file join $here scratch.tcl]
-set scratch [test_scratch wvsigbrowser]
-
-# body of a named proc up to the closing brace in column 0, CODE LINES ONLY
-# (test_wave_grid's helper, verbatim) — the bodies here carry comments naming
-# the very strings being grepped, and a leg that counts prose is a leg that goes
-# green on a deleted line of code.
-proc wvproc_body {src name} {
-  set i [string first "\nproc $name \{" $src]
-  if {$i < 0} { return {} }
-  set j [string first "\n\}\n" $src $i]
-  if {$j < 0} { set j end }
-  set out {}
-  foreach line [split [string range $src $i $j] "\n"] {
-    if {[regexp {^\s*#} $line]} { continue }
-    lappend out $line
-  }
-  return [join $out "\n"]
-}
-
-# --- the two answers to the widget-state masquerade -------------------------
-# NEVER THROWS: a destroyed widget and a hidden one both read 0, which is why
-# every use of it is PAIRED with a `winfo exists` assertion.
-proc bs_packed {w} { expr {[catch {pack info $w}] ? 0 : 1} }
-# An ASSERTABLE STRING, never a boolean and never an exception. `pack info` does
-# not report -before; the SLAVE ORDER is what -before set (the house oracle,
-# test_wave_tabs.tcl). "a was never packed", "b was never packed", "there is no
-# toplevel" and "they are packed the wrong way round" are FOUR DIFFERENT values.
-proc bs_order {top a b} {
-  if {[catch {pack slaves $top} sl]} { return "no-top" }
-  set ia [lsearch -exact $sl $a]; set ib [lsearch -exact $sl $b]
-  if {$ia < 0} { return "a-missing" }
-  if {$ib < 0} { return "b-missing" }
-  return [expr {$ia < $ib ? "a-before-b" : "a-after-b"}]
-}
+set ::wvbs_tag  wvsigbrowser
+set ::wvbs_name test_wave_sigbrowser
+source [file join [file dirname [info script]] wvbs_common.tcl]
 
 if {[catch {
+
 
 # ============================================================================
 # BS01-BS09 — SOURCE arm. Runs in BOTH arms: these read src/wave_viewer.tcl and
 # doc/waveform_viewer_guide.html as text, so they need neither Tk nor X. They
 # are the only item-8 checks a `--nogui` run can honour.
 # ============================================================================
-set wv [file join $repo src wave_viewer.tcl]
-set fp [open $wv r]; set wsrc [read $fp]; close $fp
-
+# `$wsrc` (src/wave_viewer.tcl as text) is read once by wvbs_common.tcl.
 set bs_show [wvproc_body $wsrc wviewer::browser_show]
 check_true {BS00 browser_show was found in the source} [expr {$bs_show ne {}}]
 
@@ -278,17 +236,8 @@ check {BS14 browser_toggle_at on a canvas in no registry is silent} \
 # ============================================================================
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
-  # the `at_wait_mapped` idiom (item 5). Polls the PRECONDITION — mapping —
-  # never the asserted value, and RETURNS the mapping so every caller can carry
-  # it in its own tuple: a budget expiry then reads as "never mapped" and cannot
-  # masquerade as a real failure.
-  proc bs_wait_mapped {w {budget 1500}} {
-    for {set t 0} {$t < $budget && ![winfo ismapped $w]} {incr t} {
-      after 10 ; update
-    }
-    update
-    return [winfo ismapped $w]
-  }
+  # `bs_wait_mapped` — the item-5 `at_wait_mapped` idiom — now lives in
+  # wvbs_common.tcl so the item-11 and item-12 files can reach it too.
 
   # ⚠ A CALL RECORDER (item 7's ds_spy_* idiom), because "the sidebar ended up
   # packed" and "browser_show ran" are DIFFERENT claims, and only the second one
@@ -526,37 +475,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set ::library_registry_defs_only 1
   set ::XSCHEM_LIBRARY_PATH {}
 
-  # WSLg-robust key delivery (test_wave_grid's helper): a bare `event generate`
-  # loses the key when the focus round-trip has not completed (~1 run in 5).
-  # Gate on Tk reporting the canvas as focus owner and retry until the effect
-  # shows; report whether delivery was ever CONFIRMED so a stall can self-skip
-  # rather than masquerade as a broken binding (the BAR25 rule).
-  proc send_key {w ev done} {
-    for {set i 0} {$i < 200} {incr i} {
-      update
-      if {[uplevel 1 [list expr $done]]} { return 1 }
-      if {![winfo exists $w]} { return 0 }
-      focus -force $w
-      update
-      if {[uplevel 1 [list expr $done]]} { return 1 }
-      if {[focus -displayof $w] eq $w} {
-        event generate $w $ev
-        update
-        if {[uplevel 1 [list expr $done]]} { return 1 }
-      }
-      after 50
-    }
-    puts "  send_key: $ev delivery to $w never confirmed (WSLg focus stall)"
-    return 0
-  }
-  proc viewer_ready {top} {
-    for {set i 0} {$i < 300} {incr i} {
-      update
-      if {[winfo exists $top.drw] && [winfo ismapped $top.drw]} { return 1 }
-      after 20
-    }
-    return 0
-  }
+  # `send_key` (WSLg-robust key delivery, test_wave_grid's helper) and
+  # `viewer_ready` now live in wvbs_common.tcl — items 11 and 12 use them too.
 
   set st [ase::state_load $statefile]
   dict set st rundir [file join $scratch run]
@@ -1556,8 +1476,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
             [expr {[winfo width $vdrw2] > 1}] [expr {[winfo height $vdrw2] > 1}] \
             [bs_order $vtop2 $BTVF $vdrw2]] \
       [list 1 pack 1 1 a-before-b]
+    # ⚠⚠ THE NAMED FLAKY CHECK, WIDENED PER RULINGS 30 AND 17 — NOT deleted and
+    # NOT weakened. It failed 2 of 9 HEAD runs and 0 of 8 item-11 runs, and it
+    # runs before any item-12 code, so it is OURS. The ruling-30 round MEASURED
+    # the mechanism instead of guessing it, and it is not "the widths are zero":
+    #   settled read : top 1067  sidebar 480  canvas 587   -> narrower, PASS
+    #   flapping read: top  400  sidebar 240  canvas 160   -> WIDER,   FAIL
+    # `wviewer::browser_width` caps the sidebar at `0.45 * winfo width $top` but
+    # FLOORS it at 240 px, so on a toplevel the WM has not yet grown to its final
+    # size the FLOOR wins and the sidebar is legitimately wider than the canvas.
+    # The old leg read the two widths once, mid-resize, and asserted a claim that
+    # is only true once the 45% cap governs.
+    #
+    # `bs_wait_widths` therefore polls the real PRECONDITION — the TOPLEVEL's
+    # width has stopped changing — and RETURNS the settled triple plus
+    # `settled`/`unsettled`, never a verdict. The comparison is still made here,
+    # on real numbers, so an inverted or equal layout still FAILS; a budget
+    # expiry is visible in the printed tuple rather than masquerading as a
+    # layout verdict (item 5's `bs_wait_mapped` rule). The verdict itself is an
+    # ASSERTABLE STRING, the house idiom (`bs_order`, `bm_menu_state`,
+    # `bx_vis`), so the failure line carries the widths instead of a bare `0`.
+    set bt_w45 [bs_wait_widths $vtop2 $BTVF $vdrw2]
+    puts "  BT45 widths: top/sidebar/canvas/state = $bt_w45"
     check {BT45 the sidebar is narrower than the canvas on a real viewer} \
-      [expr {[winfo width $BTVF] < [winfo width $vdrw2]}] 1
+      [expr {[lindex $bt_w45 1] < [lindex $bt_w45 2] \
+               ? {narrower} : "not-narrower (w=$bt_w45)"}] \
+      narrower
     check {BT46 the REAL tree's bindtags contain no canvas either} \
       [expr {[lsearch -exact [bindtags $BTVTV] $vdrw2] >= 0}] 0
     check {BT46 ...and the real viewer toplevel carries no Button binding} \
@@ -1639,7 +1583,8 @@ check_true {BM01 the tree's Button-3 body ends in `break` (defence in depth; BM3
 # body. Rewriting an inherited check is exactly the shape that hides a
 # regression, so the replacement pins BOTH arms and pins that the entry is
 # still the LAST thing added — which is what item 10's reservation was for, and
-# what BM25's successor BH40/BH41 assert on the live widget.
+# what BM25's successor BH40/BH41 assert on the live widget (item 11's own file,
+# test_wave_sigbrowser_i11.tcl -- ruling 30).
 check {BM02 `Descend to here` is minted in both arms, live and disabled, exactly once each} \
   [list [regexp -all {add command -label \{Descend to here\} \\?\n?\s*-command} $bm_mb] \
         [regexp -all {add command -label \{Descend to here\} -state disabled} $bm_mb]] \
@@ -1970,7 +1915,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # single row the target path is unambiguous, so `Descend to here` is now
     # `normal`. The rest of the table is byte-identical to item 10's, which is
     # the point of the reservation. The still-`disabled` state has NOT been
-    # dropped from coverage — BH41 pins it for a disagreeing multi-row target.
+    # dropped from coverage — BH41 pins it for a disagreeing multi-row target
+    # (item 11's own file, test_wave_sigbrowser_i11.tcl — ruling 30).
     check {BM23 the menu is the exact eight-entry table, by index, types and states} \
       [bm_entries $BMM] \
       [list {command|v(out)|disabled} \
@@ -2011,7 +1957,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # is the shape that hides a regression, so what it pins is UNCHANGED except
     # for the two properties item 11 owns: still LAST, still index 7, still
     # labelled `Descend to here` — now live, and wired to THIS click's ids. The
-    # DISABLED state it used to pin is not lost: BH41 asserts it for a
+    # DISABLED state it used to pin is not lost: BH41 (in
+    # test_wave_sigbrowser_i11.tcl, ruling 30) asserts it for a
     # disagreeing multi-row target, which is the only case that still greys it.
     check {BM25 `Descend to here` is LAST and item 11 has made it LIVE on this click's ids} \
       [list [pcall $BMM index end] [pcall $BMM entrycget 7 -label] \
@@ -2446,1345 +2393,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 }
 
 
-# ============================================================================
-# BH — signal-browser PLAN item 11: HIERARCHY SYNC, browser -> schematic
-# ("Descend to here"). The user picks a browser row and the session's DESIGN
-# window ends up at that point in the hierarchy, raised — or exactly where it
-# started, with a reason, if any step fails.
-#
-# ⚠ THE POSITIVE CONTROL COMES FIRST, AND IT IS NOT DECORATION. The item's
-# defining behaviour is a NEGATIVE claim — "sim_sch_path is EXACTLY as it
-# started" — and that reads identically whether the rollback worked, the
-# descend never started, or the fixture could not descend at all. BH20/BH21
-# prove the SAME fixture in the SAME process DOES move; only then do BH23-BH25
-# mean anything.
-#
-# ⚠ EVERY BEHAVIOURAL LEG ASSERTS ON THE WORLD (`xschem get sim_sch_path` read
-# back), never on "the proc returned without throwing" — item 10's swallowed
-# `clipboard clear` is the shape being defended against, and item 11 calls bare
-# `xschem ...` verbs inside `catch` in exactly the same way.
-#
-# ⚠ THE PIVOT IS `sim_sch_path`, NEVER `sch_path` (settled decision 10), and
-# with NO raw loaded the two getters are BYTE-IDENTICAL — which is why the
-# PLAN's sabotage (b) as written would have fired nothing. BH29-BH31 read a raw
-# and set raw_level so the divergence exists at all; they are the only teeth
-# that sabotage has.
-# ============================================================================
-
-# --- BH01-BH09: PURE + SOURCE, both arms ------------------------------------
-
-check {BH01 hier_split strips the trailing dot sim_sch_path really carries} \
-  [list [pcall ::wviewer::hier_split {x1.x2.}] \
-        [pcall ::wviewer::hier_split {x1.}] \
-        [pcall ::wviewer::hier_split {x1.x2}]] \
-  [list {x1 x2} {x1} {x1 x2}]
-check {BH01 ...and the sim root, which sim_sch_path returns EMPTY, is {}} \
-  [list [pcall ::wviewer::hier_split {}] [pcall ::wviewer::hier_split {.}]] \
-  [list {} {}]
-
-# EXACT, deliberately: this is what makes "an exact hit always wins" survive a
-# design carrying both `x1` and `X1` (the wvhier fixture does).
-check {BH02 hier_common is BYTE-exact: {X1} and {x1} share no prefix} \
-  [list [pcall ::wviewer::hier_common {X1} {x1}] \
-        [pcall ::wviewer::hier_common {X1 X2} {X1 y3}] \
-        [pcall ::wviewer::hier_common {X1 X2} {X1 X2 z}]] \
-  [list 0 1 2]
-
-check {BH03 hier_plan: two ascends to the root, no descends} \
-  [pcall ::wviewer::hier_plan {x1 x2} {}] [list 2 {}]
-check {BH03 ...from the root, no ascends and two descends} \
-  [pcall ::wviewer::hier_plan {} {x1 x2}] [list 0 {x1 x2}]
-check {BH03 ...equal paths are {0 {}}, and a sibling is one up + one down} \
-  [list [pcall ::wviewer::hier_plan {x1 x2} {x1 x2}] \
-        [pcall ::wviewer::hier_plan {x1 x2} {x1 y3}]] \
-  [list [list 0 {}] [list 1 {y3}]]
-
-# THE MEASURED TRAP. ngspice lowercases, so a correct walk of `x1.x2` lands on
-# the schematic's own `x1.X2`; a byte-exact final verify rejects its own
-# correct result and rolls back (reproduced before the code was written).
-check {BH04 hier_same, the FINAL VERIFY, is case-INSENSITIVE} \
-  [list [pcall ::wviewer::hier_same {X1 X2} {x1 x2}] \
-        [pcall ::wviewer::hier_same {x1 X2} {x1 x2}] \
-        [pcall ::wviewer::hier_same {} {}]] \
-  [list 1 1 1]
-check {BH04 ...but it is still a comparison: different paths are NOT the same} \
-  [list [pcall ::wviewer::hier_same {X1 X2} {x1 y3}] \
-        [pcall ::wviewer::hier_same {X1} {x1 x2}] \
-        [pcall ::wviewer::hier_same {X1} {}]] \
-  [list 0 0 0]
-
-# browser_target_path against a synthetic row snapshot (PURE — no Tk, no raw)
-set ::wviewer::browserrows(wvbh) [wviewer::browser_rows [list \
-  [wviewer::signal_entry {v(out)}] \
-  [wviewer::signal_entry {v(x1.x2.net5)}] \
-  [wviewer::signal_entry {i(x1.x2.net5)}] \
-  [wviewer::signal_entry {v(x1.y3.net5)}]]]
-check {BH05 a GROUP id IS the dotted instance path (decision 14)} \
-  [list [pcall ::wviewer::browser_target_path wvbh {g:x1.x2}] \
-        [pcall ::wviewer::browser_target_path wvbh {g:x1}]] \
-  [list {ok x1.x2} {ok x1}]
-check {BH05 a LEAF id resolves through its row's raw name, not through the id} \
-  [pcall ::wviewer::browser_target_path wvbh {s:v(x1.x2.net5)}] {ok x1.x2}
-check {BH05 a TOP-LEVEL signal is {ok {}} — a legitimate ascend to the sim root} \
-  [pcall ::wviewer::browser_target_path wvbh {s:v(out)}] [list ok {}]
-check {BH05 rows that AGREE on one path resolve; two leaves of the same group} \
-  [pcall ::wviewer::browser_target_path wvbh {s:v(x1.x2.net5) s:i(x1.x2.net5)}] \
-  {ok x1.x2}
-# ruling 17: a disagreeing set is refused, NOT silently first-wins
-check {BH05 rows that DISAGREE are an err, never a silent first-wins} \
-  [pcall ::wviewer::browser_target_path wvbh {s:v(x1.x2.net5) s:v(x1.y3.net5)}] \
-  {err {those rows are in different parts of the hierarchy}}
-check {BH05 an empty selection and an unknown id are both errs, never a throw} \
-  [list [lindex [pcall ::wviewer::browser_target_path wvbh {}] 0] \
-        [lindex [pcall ::wviewer::browser_target_path wvbh {s:nosuch}] 0] \
-        [lindex [pcall ::wviewer::browser_target_path wvNOSUCH {g:x1}] 0]] \
-  [list err err err]
-unset ::wviewer::browserrows(wvbh)
-
-# THE DECISION-10 SOURCE GUARD, named as such: hier_now is the ONE pivot read
-# and it must not be able to reach for sch_path.
-set bh_now [wvproc_body $wsrc wviewer::hier_now]
-check_true {BH06 hier_now was found in the source} [expr {$bh_now ne {}}]
-check {BH06 hier_now reads sim_sch_path and NEVER sch_path (decision 10)} \
-  [list [expr {[string first {sim_sch_path} $bh_now] >= 0}] \
-        [regexp -all {(^|[^_])sch_path} $bh_now]] \
-  [list 1 0]
-
-set bh_idb [wvproc_body $wsrc wviewer::install_default_binds]
-check_true {BH07 install_default_binds carries `bind WaveViewer <Key-E>`} \
-  [expr {[string first {bind WaveViewer <Key-E>} $bh_idb] >= 0}]
-check_true {BH07 ...calling browser_descend_at, and it BREAKs} \
-  [regexp {bind WaveViewer <Key-E> \{wviewer::browser_descend_at %W; break\}} $bh_idb]
-
-set bh_bb [wvproc_body $wsrc wviewer::browser_build]
-check_true {BH08 browser_build binds <Key-E> on the TREE ITSELF (the tag cannot reach it)} \
-  [regexp {bind \$f\.tvf\.tv <Key-E> \{wviewer::browser_descend_at %W ; break\}} $bh_bb]
-
-set bh_mb [wvproc_body $wsrc wviewer::build_menubar]
-check_true {BH09 build_menubar carries `-label {Descend to here} -accelerator E`} \
-  [expr {[string first {-label {Descend to here} -accelerator E} $bh_mb] >= 0}]
-check_true {BH09 ...on the VIEW cascade, calling browser_descend_here} \
-  [expr {[string first "\$mb.view add command -label {Descend to here} -accelerator E" $bh_mb] >= 0 &&
-         [string first {wviewer::browser_descend_here $token} $bh_mb] >= 0}]
-
-# --- BH20-BH39: THE WALK, on a REAL fixture, in BOTH ARMS -------------------
-# fixtures/wvhier: top holds `X1` AND `x1` (both instances of mid — this is
-# what gives exact-first TEETH) plus the non-subcircuit `V9`; mid holds `X2`;
-# leaf is a leaf.
-set bh_fix [file join $repo tests headless fixtures wvhier]
-set XSCHEM_LIBRARY_PATH "$bh_fix:[file join $repo xschem_library]"
-set bh_load [pcall xschem load [file join $bh_fix wvhier_top.sch]]
-proc bh_sim {} { set p {} ; catch {set p [xschem get sim_sch_path]} ; return $p }
-check {BH20 (FIXTURE) the 3-level fixture loads and starts at its top} \
-  [list [expr {![string match ERR:* $bh_load]}] [bh_sim] [pcall xschem get currsch]] \
-  [list 1 {} 0]
-
-# ⚠⚠ THE POSITIVE CONTROL. Without this the four rollback checks below are
-# vacuous — "unmoved" would look identical to "could never move".
-check {BH20 (POSITIVE CONTROL) hier_walk X1.X2 really MOVES the hierarchy} \
-  [list [pcall ::wviewer::hier_walk X1.X2] [bh_sim]] \
-  [list {ok X1.X2} {X1.X2.}]
-
-# a sibling sync: no common prefix at all, so this is TWO ascends AND a
-# descend — a leg a descend-only implementation cannot pass
-check {BH21 sibling-to-sibling: X1.X2 -> x1 ascends twice, then descends} \
-  [list [pcall ::wviewer::hier_walk x1] [bh_sim] [pcall xschem get currsch]] \
-  [list {ok x1} {x1.} 1]
-
-set bh_sel0 [pcall xschem selected_set]
-set bh_cur0 [pcall xschem get currsch]
-check {BH22 already-at-target is {ok already}, byte-exactly where it was} \
-  [list [pcall ::wviewer::hier_walk x1] [bh_sim]] [list {ok already x1} {x1.}]
-check {BH22 ...and it TOUCHED NOTHING: same selection, same level} \
-  [list [pcall xschem selected_set] [pcall xschem get currsch]] \
-  [list $bh_sel0 $bh_cur0]
-
-# --- the ROLLBACK, the item's defining behaviour ----------------------------
-# ⚠ THE TARGET IS CHOSEN SO THAT MOVEMENT REALLY HAPPENS FIRST. `X1.X2` ->
-# `x1.nosuch` shares NO byte-exact prefix, so the walk ascends TWICE, descends
-# into `x1`, and only then fails — a rollback that has to undo three steps. The
-# obvious `X1` -> `X1.nosuch` would have been VACUOUS: the plan is a single
-# descend that never happens, so "unmoved" is true whether the rollback exists
-# or not (measured — that first cut passed with the rollback deleted).
-pcall ::wviewer::hier_walk X1.X2
-check {BH23 (fixture) we are two levels down, at X1.X2} \
-  [list [bh_sim] [pcall xschem get currsch]] [list {X1.X2.} 2]
-check {BH23 (ROLLBACK, AFTER REAL MOVEMENT) a bad last segment errs and names it} \
-  [pcall ::wviewer::hier_walk x1.nosuch] \
-  {err {no instance 'nosuch'} X1.X2}
-check {BH23 ...and sim_sch_path is EXACTLY as it started — two ascends and a descend undone} \
-  [list [bh_sim] [pcall xschem get currsch]] [list {X1.X2.} 2]
-
-pcall ::wviewer::hier_walk {}
-check {BH24 (fixture) we are back at the sim root} [list [bh_sim] [pcall xschem get currsch]] [list {} 0]
-check {BH24 (ROLLBACK from the root) a bad segment errs and rolls back to the root} \
-  [list [pcall ::wviewer::hier_walk X1.nosuch] [bh_sim] [pcall xschem get currsch]] \
-  [list {err {no instance 'nosuch'} {}} {} 0]
-
-# ⚠ THE NON-THROWING REFUSAL, driver note (d)'s exact shape: `descend -inst V9`
-# resolves the instance fine (V9 exists), returns the STRING `0`, throws
-# NOTHING, and does not move. A `catch`-only implementation reads that as
-# success. Only the sim_sch_path readback sees it.
-check {BH25 (ROLLBACK, NON-THROWING) descend -inst on a non-subcircuit is refused} \
-  [pcall ::wviewer::hier_walk V9] {err {descend refused at 'V9'} {}}
-check {BH25 ...and the raw verb really did return `0` without throwing} \
-  [list [pcall xschem descend -inst V9] [bh_sim]] [list 0 {}]
-
-# --- case, and exact-first ---------------------------------------------------
-# ONE leg exercising all three: exact-first (`x1` exists byte-exactly),
-# the case-insensitive retry (`x2` -> `X2`) and the case-insensitive final
-# verify (landed `x1.X2` vs target `x1.x2`).
-check {BH26 (CASE) a lowercased ngspice path lands, and reports the SCHEMATIC spelling} \
-  [list [pcall ::wviewer::hier_walk x1.x2] [bh_sim]] [list {ok x1.X2} {x1.X2.}]
-
-pcall ::wviewer::hier_walk {}
-check {BH27 (EXACT-FIRST) X1 lands on X1, not on its lowercase twin} \
-  [list [pcall ::wviewer::hier_walk X1] [bh_sim]] [list {ok X1} {X1.}]
-pcall ::wviewer::hier_walk {}
-check {BH27 ...and x1 lands on x1: a design with BOTH still resolves each} \
-  [list [pcall ::wviewer::hier_walk x1] [bh_sim]] [list {ok x1} {x1.}]
-
-# --- the declared [D]: vector instances (issue 0212) ------------------------
-pcall ::wviewer::hier_walk {}
-check {BH28 (VECTOR, declared [D]) a bracketed segment is REFUSED, naming 0212} \
-  [pcall ::wviewer::hier_walk {x1[3].x2}] \
-  {err {vector instance 'x1[3]' cannot be addressed (issue 0212)} {}}
-# this one has ROLLBACK TEETH too: `X1` descends fine and only `X2[0]` refuses,
-# so a missing rollback leaves the tree parked one level down
-check {BH28 ...and a bracketed segment DEEPER in the path rolls back too} \
-  [list [pcall ::wviewer::hier_walk {X1.X2[0]}] [bh_sim]] \
-  [list {err {vector instance 'X2[0]' cannot be addressed (issue 0212)} {}} {}]
-pcall ::wviewer::hier_walk {}
-check {BH28 hier_resolve answers the VECTOR sentinel, not a wrong instance} \
-  [list [pcall ::wviewer::hier_resolve {x1[3]}] [pcall ::wviewer::hier_resolve X1] \
-        [pcall ::wviewer::hier_resolve x2]] \
-  [list VECTOR X1 {}]
-
-# --- BH29-BH31: SETTLED DECISION 10, and the ONLY teeth for sabotage (b) ----
-# With no raw loaded `sch_waves_loaded()` is -1, the skip loop in the C getter
-# never runs, and sim_sch_path is sch_path-minus-its-leading-dot BYTE FOR BYTE.
-# So every leg above would pass just as happily on sch_path. These three read a
-# raw and move raw_level so the two getters actually diverge.
-pcall ::wviewer::hier_walk X1.X2
-set bh_rawnew [pcall xschem raw new bh_item11.raw dc vsweep 0 1.0 0.5]
-pcall xschem raw add {v(x1.x2.net5)} {vsweep 1 +}
-# MEASURED: `xschem raw new` stamps the raw at the CURRENT level (2 here), so
-# the level is set explicitly rather than assumed — an assumed 0 would have made
-# BH29's "the two getters agree" leg pass for the wrong reason.
-pcall xschem set raw_level 0
-check {BH29 (fixture) a raw is loaded at level 0, at hierarchy depth 2} \
-  [list $bh_rawnew [pcall xschem raw loaded] [pcall xschem get currsch]] \
-  [list 1 0 2]
-check {BH29 at raw_level 0 the two getters AGREE — this is why the PLAN's sabotage (b) fired nothing} \
-  [list [bh_sim] [pcall xschem get sch_path]] [list {X1.X2.} {.X1.X2.}]
-
-check {BH30 raw_level 1 makes them DIVERGE: sim `X2.` vs sch `.X1.X2.`} \
-  [list [pcall xschem set raw_level 1] [bh_sim] [pcall xschem get sch_path]] \
-  [list 1 {X2.} {.X1.X2.}]
-check {BH30 ...and hier_now follows the SIM origin, one segment not two} \
-  [pcall ::wviewer::hier_now] {X2}
-
-# THE DISCRIMINATOR. Under the sim origin we are already at `X2`, so this is a
-# no-op that touches nothing. Under sch_path we would read {X1 X2}, ascend
-# twice and try to descend into an `X2` that does not exist at the top — an
-# err and a rollback.
-check {BH31 (DECISION 10) `X2` under the sim origin is a NO-OP, not a two-level move} \
-  [list [pcall ::wviewer::hier_walk X2] [bh_sim] [pcall xschem get currsch]] \
-  [list {ok already X2} {X2.} 2]
-
-pcall xschem set raw_level 0
-pcall ::wviewer::hier_walk {}
-
-# --- BH32: THE ORIGIN GUARD --------------------------------------------------
-# The item's only claim a readback cannot check: when the design window's top
-# is ABOVE the session's design and no raw is loaded there, the pivot and the
-# verify share the same wrong origin. Only the guard can see it.
-check {BH32 with a raw loaded in THIS context the origin is genuinely sim-relative} \
-  [list [pcall xschem raw loaded] [pcall ::wviewer::hier_origin_ok bh_notasession]] \
-  [list 0 1]
-pcall xschem raw clear
-check {BH32 (control) the raw really is gone, so the branch below is the other one} \
-  [pcall xschem raw loaded] -1
-
-set bh_defs [file join $scratch bh_library.defs]
-set bh_f [open $bh_defs w]
-puts $bh_f "DEFINE wvhier $bh_fix"
-close $bh_f
-set XSCHEM_LIBRARY_DEFS $bh_defs
-set bh_stTOP [dict merge [ase::state_default] \
-  [dict create design [dict create lib wvhier cell wvhier_top view schematic]]]
-set bh_stMID [dict merge [ase::state_default] \
-  [dict create design [dict create lib wvhier cell wvhier_mid view schematic]]]
-pcall ase::state_save [file join $scratch bh_top.state] $bh_stTOP
-pcall ase::state_save [file join $scratch bh_mid.state] $bh_stMID
-pcall ase::session_open bh/wvhier_top/schematic [file join $scratch bh_top.state]
-pcall ase::session_open bh/wvhier_mid/schematic [file join $scratch bh_mid.state]
-check {BH32 (control) both sessions' designs really resolve to the fixture files} \
-  [list [file tail [pcall ase::ui::design_path bh/wvhier_top/schematic]] \
-        [file tail [pcall ase::ui::design_path bh/wvhier_mid/schematic]]] \
-  [list wvhier_top.sch wvhier_mid.sch]
-check {BH32 at the top, with the session's design AS the top, the guard passes} \
-  [list [pcall ase::ui::sod_base_level bh/wvhier_top/schematic] \
-        [pcall ::wviewer::hier_origin_ok bh/wvhier_top/schematic]] \
-  [list 0 1]
-pcall ::wviewer::hier_walk X1
-check {BH32 (THE ANCESTOR CASE) design at stack level 1 -> the guard REFUSES} \
-  [list [pcall ase::ui::sod_base_level bh/wvhier_mid/schematic] \
-        [pcall ::wviewer::hier_origin_ok bh/wvhier_mid/schematic]] \
-  [list 1 0]
-pcall ::wviewer::hier_walk {}
-# DECLARED LIMIT, asserted rather than pretended away: sod_base_level answers 0
-# when the session's design is not in the stack AT ALL (its own documented
-# rule, which keeps a scripted/stubbed pick on the shipped path), so the guard
-# passes there too. That hole is sod_base_level's, is pre-existing, and item 11
-# does not restructure ase_window.tcl to close it.
-check {BH32 (DECLARED LIMIT) design not in the stack at all -> sod_base_level 0, guard passes} \
-  [list [pcall ase::ui::sod_base_level bh/wvhier_mid/schematic] \
-        [pcall ::wviewer::hier_origin_ok bh/wvhier_mid/schematic]] \
-  [list 0 1]
-
-# --- BH40-BH54: the Tk half -------------------------------------------------
-if {[info exists ::has_x] && [info commands winfo] ne {}} {
-
-  # BH40/BH41 are BM25's SUCCESSOR — item 11 consumes the reserved slot, so the
-  # inherited check has to be rewritten, and the replacement pins BOTH states.
-  toplevel .wvbh1
-  wm withdraw .wvbh1
-  pcall ::wviewer::browser_build wvbh1 .wvbh1
-  dict set ::wviewer::windows wvbh1 [dict create top .wvbh1 win_path .wvbh1.drw]
-  set BHTV .wvbh1.wvbrowser.tvf.tv
-  set ::wviewer::browserrows(wvbh1) [wviewer::browser_rows [list \
-    [wviewer::signal_entry {v(out)}] \
-    [wviewer::signal_entry {v(x1.x2.net5)}] \
-    [wviewer::signal_entry {v(x1.y3.net5)}]]]
-  set BHM [pcall ::wviewer::browser_menu_build wvbh1 {g:x1.x2}]
-  check {BH40 `Descend to here` is STILL last and still index 7} \
-    [list [pcall $BHM index end] [pcall $BHM entrycget 7 -label]] \
-    [list 7 {Descend to here}]
-  check {BH40 ...and item 11 has made it LIVE, wired to browser_descend_to} \
-    [list [pcall $BHM entrycget 7 -state] [pcall $BHM entrycget 7 -command]] \
-    [list normal [list wviewer::browser_descend_to wvbh1 {g:x1.x2}]]
-  set BHM2 [pcall ::wviewer::browser_menu_build wvbh1 \
-              {s:v(x1.x2.net5) s:v(x1.y3.net5)}]
-  check {BH41 a DISAGREEING multi-row target leaves it disabled with NO command} \
-    [list [pcall $BHM2 entrycget 7 -label] [pcall $BHM2 entrycget 7 -state] \
-          [pcall $BHM2 entrycget 7 -command]] \
-    [list {Descend to here} disabled {}]
-  set BHM3 [pcall ::wviewer::browser_menu_build wvbh1 \
-              {s:v(x1.x2.net5) g:x1.x2}]
-  check {BH41 ...but an AGREEING multi-row target is live} \
-    [list [pcall $BHM3 entrycget 7 -state] [pcall $BHM3 entrycget 7 -command]] \
-    [list normal [list wviewer::browser_descend_to wvbh1 {s:v(x1.x2.net5) g:x1.x2}]]
-
-  # ⚠ THE REAL-KEY LEGS ARE NOT HERE, AND THAT IS MEASURED, NOT TASTE. A
-  # throwaway toplevel is not the WM's active window, so `focus -displayof`
-  # never reports its widgets as the focus owner and `send_key` correctly
-  # reports `delivery ... never confirmed (WSLg focus stall)` — the gate doing
-  # its job, not a broken binding. Item 10's Button-3 legs work here because
-  # pointer events need no focus; keys do. BH43-BH45 therefore run on the REAL
-  # viewer below, which is also where the user actually is.
-  # What DOES belong here is the structural reason the item binds twice.
-  check {BH42 the canvas is NOT in the tree's bindtags, which is why both binds exist} \
-    [list [expr {[lsearch -exact [bindtags $BHTV] .wvbh1.drw] >= 0}] \
-          [expr {[lsearch -exact [bindtags $BHTV] WaveViewer] >= 0}]] \
-    [list 0 0]
-  check {BH42 the tree DOES carry item 11's own <Key-E>, so the zeros above are a rule} \
-    [expr {[string first {wviewer::browser_descend_at} [bind $BHTV <Key-E>]] >= 0}] 1
-  check {BH42 the WaveViewer tag carries <Key-E> on the LIVE tag too} \
-    [expr {[string first {browser_descend_at} [bind WaveViewer <Key-E>]] >= 0}] 1
-
-  pcall ::wviewer::forget wvbh1
-  catch {unset ::wviewer::browserrows(wvbh1)}
-  destroy .wvbh1
-
-} else {
-  puts "SKIPPED: BH4x group (Tk/X arm only)"
-}
-
-# --- BH50-BH54: END TO END, a real viewer AND a real design window ----------
-if {[info exists ::has_x] && [info commands winfo] ne {}} {
-
-  set bh_tok [ase::session_key wvhier wvhier_top schematic]
-  pcall ase::session_open $bh_tok [file join $scratch bh_top.state]
-  set bh_open [pcall ::wviewer::open $bh_tok]
-  set bh_vtop [wviewer::window_for $bh_tok]
-  if {$bh_open ne 1 || $bh_vtop eq {} || ![viewer_ready $bh_vtop]} {
-    puts "SKIPPED: BH5x group (the wvhier viewer never opened/mapped)"
-    catch {wviewer::close $bh_tok}
-  } else {
-    # a REAL raw in the VIEWER's own context (the BTV/BMV idiom), carrying both
-    # a two-level path and a one-level one
-    set bh_main [xschem get current_win_path]
-    xschem new_schematic switch $bh_vtop.drw
-    pcall xschem raw new bh_e2e.raw dc vsweep 0 1.0 0.5
-    foreach bh_n {v(out) v(x1.x2.net5) v(x1.topsig)} {
-      pcall xschem raw add $bh_n {vsweep 1 +}
-    }
-    xschem new_schematic switch $bh_main
-    pcall ::wviewer::browser_toggle 1 $bh_tok
-    update
-    set bh_rows0 {}
-    catch {set bh_rows0 $::wviewer::browserrows($bh_tok)}
-    check {BH50 (fixture) the browser populated from the real raw, x1.x2 among them} \
-      [list [expr {[llength $bh_rows0] > 0}] \
-            [lindex [pcall ::wviewer::browser_target_path $bh_tok {g:x1.x2}] 1]] \
-      [list 1 x1.x2]
-
-    # THE ITEM, END TO END: invoke the REAL menu entry, then assert on THE
-    # WORLD — the design window's own sim_sch_path, read back.
-    set bh_m [pcall ::wviewer::browser_menu_build $bh_tok {g:x1.x2}]
-    set bh_inv [pcall $bh_m invoke 7]
-    update
-    set bh_dwin {}
-    catch {set bh_dwin [xschem get current_win_path]}
-    check {BH50 invoking `Descend to here` lands the DESIGN window at x1.X2} \
-      [list [pcall xschem get sim_sch_path] [pcall xschem get currsch]] \
-      [list {x1.X2.} 2]
-    check {BH50 ...and the context really is the DESIGN window, not the viewer} \
-      [list [expr {$bh_dwin ne {} && $bh_dwin ne "$bh_vtop.drw"}] \
-            [file tail [pcall xschem get schname 0]]] \
-      [list 1 wvhier_top.sch]
-    # the status line SAYS SO, in the SCHEMATIC's spelling, so a case fold is
-    # visible to the user rather than silent
-    check {BH50 the browser status line reports the landing} \
-      [pcall $bh_vtop.wvbrowser.ph cget -text] \
-      "Signal Browser\ndescended to x1.X2"
-
-    # item 9's D6: the tree is a SNAPSHOT of the VIEWER's raw, and a design
-    # descend touches neither — so nothing went stale.
-    set bh_rows1 {}
-    catch {set bh_rows1 $::wviewer::browserrows($bh_tok)}
-    check {BH52 the browser tree is UNCHANGED by the sync (item 9's D6 holds)} \
-      [expr {$bh_rows1 eq $bh_rows0}] 1
-
-    check {BH53 the design window's toplevel is mapped after the raise} \
-      [list [bs_wait_mapped .] [winfo ismapped .]] [list 1 1]
-
-    # already-at-target: a byte-exact target this time (`x1` exists exactly),
-    # so this really is the no-op path — and it STILL raises and STILL says so.
-    set bh_m2 [pcall ::wviewer::browser_menu_build $bh_tok {g:x1}]
-    pcall $bh_m2 invoke 7
-    update
-    check {BH54 (fixture) a one-level sync first moves there} \
-      [pcall xschem get sim_sch_path] {x1.}
-    pcall $bh_m2 invoke 7
-    update
-    check {BH54 already-at-target is a no-op that still lands and still reports} \
-      [list [pcall xschem get sim_sch_path] \
-            [pcall $bh_vtop.wvbrowser.ph cget -text]] \
-      [list {x1.} "Signal Browser\nalready at x1"]
-    check {BH54 ...and it still raised the design window} [winfo ismapped .] 1
-
-    # A bad path through the REAL command surface: refused, reported, rolled
-    # back. ⚠ THE TARGET IS `X1.nosuch` WHILE WE SIT AT `x1`, deliberately: the
-    # byte-exact prefix is EMPTY, so the walk really ascends out of `x1` and
-    # descends into `X1` before failing. `x1.nosuch` would have been the vacuous
-    # shape §3.5 of the receipt describes — measured: with the rollback deleted,
-    # a `x1.nosuch` target left this check GREEN.
-    set ::wviewer::browserrows($bh_tok) [wviewer::browser_rows [list \
-      [wviewer::signal_entry {v(X1.nosuch.net5)}]]]
-    set bh_m3 [pcall ::wviewer::browser_menu_build $bh_tok {g:X1.nosuch}]
-    set bh_bad [pcall $bh_m3 invoke 7]
-    update
-    check {BH51 a bad path through the REAL entry ROLLS BACK and says why} \
-      [list $bh_bad [pcall xschem get sim_sch_path] \
-            [pcall $bh_vtop.wvbrowser.ph cget -text]] \
-      [list 0 {x1.} "Signal Browser\ndescend to 'X1.nosuch' failed: no instance 'nosuch' (returned to x1)"]
-    set ::wviewer::browserrows($bh_tok) $bh_rows0
-
-    # --- BH43/BH44/BH45: THE REAL KEY, on the REAL viewer --------------------
-    # ⚠ A DELEGATING rename recorder (item 10's shape), so both halves are
-    # observable: that the binding fired AND that the world moved. A swallowing
-    # recorder would have made the world half untestable, and a world-only
-    # assertion could not tell the key from the menu.
-    set ::bh_calls 0
-    rename ::wviewer::browser_descend_at ::wviewer::__bh_real_descend_at
-    proc ::wviewer::browser_descend_at {W} {
-      incr ::bh_calls
-      return [::wviewer::__bh_real_descend_at $W]
-    }
-    set BHVTV $bh_vtop.wvbrowser.tvf.tv
-    set BHVE  $bh_vtop.wvbrowser.wvsearch.pat
-    # ⚠ REQUIRED BETWEEN LEGS, and it is the item's own doing: a successful sync
-    # RAISES AND ACTIVATES THE DESIGN WINDOW, which takes the WM focus away from
-    # the viewer. Without this the next `send_key` correctly reports a delivery
-    # stall and the leg self-skips (observed). Re-raise the viewer first, the
-    # same idiom the item itself uses.
-    proc bh_focus_viewer {top} {
-      catch {raise_activate_toplevel $top}
-      catch {focus -force $top}
-      update
-      return [bs_wait_mapped $top]
-    }
-    bh_focus_viewer $bh_vtop
-    pcall ::wviewer::hier_walk {}
-    pcall $BHVTV selection set {g:x1.x2}
-    set ::bh_calls 0
-    # the CANVAS route (the `WaveViewer` bindtag). Waiting on the WORLD, not on
-    # the recorder: the key has not done its job until sim_sch_path has moved.
-    set bh_k1 [send_key $bh_vtop.drw <Key-E> {[xschem get sim_sch_path] eq {x1.X2.}}]
-    if {!$bh_k1} {
-      puts "SKIPPED: BH43 (WSLg key-delivery stall on the viewer canvas)"
-    } else {
-      check {BH43 a REAL <Key-E> on the CANVAS descends the design window} \
-        [list [expr {$::bh_calls > 0}] [pcall xschem get sim_sch_path]] \
-        [list 1 {x1.X2.}]
-      # NEGATIVE CONTROL: same recorder, same widget, a key that is not bound
-      set bh_c1 $::bh_calls
-      for {set bh_i 0} {$bh_i < 6} {incr bh_i} {
-        focus -force $bh_vtop.drw ; update
-        catch {event generate $bh_vtop.drw <Key-D>} ; update
-      }
-      check {BH43 (NEGATIVE CONTROL) the same recorder reads ZERO more for an unbound <Key-D>} \
-        [expr {$::bh_calls - $bh_c1}] 0
-    }
-    # the TREE route — the one a WaveViewer-only bind could never serve, since
-    # the canvas is not in the tree's bindtags (BH42)
-    bh_focus_viewer $bh_vtop
-    pcall ::wviewer::hier_walk {}
-    pcall $BHVTV selection set {g:x1}
-    set ::bh_calls 0
-    set bh_k2 [send_key $BHVTV <Key-E> {[xschem get sim_sch_path] eq {x1.}}]
-    if {!$bh_k2} {
-      puts "SKIPPED: BH44 (WSLg key-delivery stall on the browser tree)"
-    } else {
-      check {BH44 a REAL <Key-E> on the TREE descends the design window too} \
-        [list [expr {$::bh_calls > 0}] [pcall xschem get sim_sch_path]] \
-        [list 1 {x1.}]
-    }
-    # the searchbar Entry carries no WaveViewer tag and is not the tree, so
-    # typing E there must NOT fire the command — with the delivery PROVEN by
-    # the entry's own text, so a stalled key cannot masquerade as a refusal
-    if {![winfo exists $BHVE]} {
-      puts "SKIPPED: BH45 (the viewer's searchbar pattern entry was not found)"
-    } else {
-      bh_focus_viewer $bh_vtop
-      pcall $BHVE delete 0 end
-      set bh_c2 $::bh_calls
-      set bh_k3 [send_key $BHVE <Key-E> {[string length [$BHVE get]] > 0}]
-      if {!$bh_k3} {
-        puts "SKIPPED: BH45 (WSLg key-delivery stall on the search entry)"
-      } else {
-        check {BH45 `E` TYPED INTO THE SEARCH ENTRY does not fire the command...} \
-          [expr {$::bh_calls - $bh_c2}] 0
-        check {BH45 ...and the key really WAS delivered — the entry now holds it} \
-          [pcall $BHVE get] E
-      }
-      pcall $BHVE delete 0 end
-      pcall ::wviewer::browser_refresh $bh_tok
-    }
-    rename ::wviewer::browser_descend_at {}
-    rename ::wviewer::__bh_real_descend_at ::wviewer::browser_descend_at
-    check {BH45 the real browser_descend_at is back in place} \
-      [list [expr {[info commands ::wviewer::__bh_real_descend_at] eq {}}] \
-            [expr {[info commands ::wviewer::browser_descend_at] ne {}}]] \
-      [list 1 1]
-
-    catch {wviewer::close $bh_tok}
-  }
-
-} else {
-  puts "SKIPPED: BH5x group (Tk/X arm only)"
-}
-
-# ============================================================================
-# BX01-BX52 — item 12: hierarchy sync SCHEMATIC -> BROWSER
-# ("Show in Signal Browser", Tools menu + Ctrl-5). The MIRROR of item 11.
-#
-# ⚠⚠ THE ORACLE, and it is the reason this block can make the claim at all
-# (driver note (d) / ruling 26). "The node is VISIBLE" has FOUR failure modes
-# that `selection` cannot tell apart and that `bbox` alone reports IDENTICALLY:
-#   * the node is not in the tree at all              -> `absent`
-#   * it is there but an ancestor is COLLAPSED        -> `collapsed`
-#   * ancestors are open but the tree is SCROLLED off -> `offscreen`
-#   * the widget itself was never mapped / was
-#     withdrawn (bbox answers for a once-mapped,
-#     now-withdrawn tree, so bbox CANNOT see this)    -> `unmapped`
-# plus `root` (id {}, which `exists` reports TRUE) and `no-tree`. SEVEN
-# assertable strings, every one of them measured on this fixture, in the shape
-# item 9's `bs_order` and item 10's `bm_menu_state` established. It never throws.
-#
-# ⚠ THE VACUOUS-CHECK TRAP (driver note (c)) — all three PLAN sabotages look
-# identical to "the command did nothing". The POSITIVE CONTROLS come FIRST and
-# are named as such: BX30 proves collapsed->visible really happens on the good
-# path, BX32 proves offscreen->visible, BX34 asserts the selection is EMPTY
-# before claiming the fallback moved it, and BX40 asserts the sidebar is
-# `browser_shown` 0 AND absent from `pack info` before claiming it un-hid.
-#
-# ⚠ WHAT THIS BLOCK DOES NOT CLAIM, stated rather than hidden: settled decision
-# 10's PIVOT CHOICE is NOT behaviourally proven here, for the same reason item
-# 11 could not prove it — in the DESIGN window no raw is loaded, so
-# `sim_sch_path` and `sch_path` are byte-identical and swapping the getter fires
-# nothing. What IS proven is the level>0 ORIGIN MAPPING (BX48: the same
-# hierarchy position answers `x1.x2` under a level-0 session and `x2` under a
-# level-1 one) plus a source guard that the shipped bodies contain zero
-# `sch_path` reads (BX09). Claim narrowed, not check invented (ruling 17).
-# ============================================================================
-
-# SEVEN-VALUED, NEVER THROWS. `unmapped` is checked BEFORE bbox precisely
-# because bbox cannot see it.
-proc bx_vis {tv id} {
-  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
-  if {$id eq {}} { return root }
-  if {[catch {$tv exists $id} ex] || !$ex} { return absent }
-  set p $id
-  while {1} {
-    set par {}
-    if {[catch {$tv parent $p} par]} { return absent }
-    if {$par eq {}} break
-    set o 0
-    catch {set o [$tv item $par -open]}
-    if {!$o} { return collapsed }
-    set p $par
-  }
-  set m 0
-  catch {set m [winfo ismapped $tv]}
-  if {!$m} { return unmapped }
-  set bb {}
-  catch {set bb [$tv bbox $id]}
-  if {$bb eq {}} { return offscreen }
-  return visible
-}
-
-# ⚠ THE MAPPING-AWARE WRAPPER, and it is item 5's rule not a fudge: POLL THE
-# PRECONDITION, NEVER THE ASSERTED VALUE. Under WSLg a freshly raised viewer can
-# still report `winfo ismapped` 0 for a few milliseconds, and `bx_vis` would then
-# answer `unmapped` for a node that is perfectly visible a moment later.
-# MEASURED: BX42's second leg flaked exactly that way, 1 run in 4 — the same
-# shape as item 11's own BH54 `winfo ismapped .` flap. This waits for the
-# MAPPING (the precondition) and then asks the oracle once; a genuinely unmapped
-# widget still reads `unmapped` after the budget, so no failure mode is hidden.
-# The throwaway-toplevel group deliberately keeps the RAW `bx_vis`, because
-# BX33's whole point is to observe `unmapped` on purpose.
-proc bx_vis_m {tv id} {
-  if {![catch {winfo ismapped $tv} m] && $m} { return [bx_vis $tv $id] }
-  # a BOUNDED wait -- 2s is orders of magnitude more than a map race needs, and
-  # bs_wait_mapped's 1500-iteration default would spin `update` (and therefore
-  # redraws) for 15 SECONDS on a widget that is genuinely unmapped
-  catch {bs_wait_mapped $tv 200}
-  return [bx_vis $tv $id]
-}
-
-# --- BX01-BX14: PURE + SOURCE, BOTH ARMS ------------------------------------
-# `browser_node_for` and `browser_origin_drop` take no Tk and no xschem, which
-# is exactly why the deepest-ancestor fallback and the origin arithmetic — the
-# two things sabotages (b) and (d) attack — are provable in `--nogui`.
-set bx_rows [wviewer::browser_rows [list \
-  [wviewer::signal_entry {v(x1.x2.net5)}] \
-  [wviewer::signal_entry {v(x1.y3.net7)}] \
-  [wviewer::signal_entry {v(out)}]]]
-check {BX01 (fixture) the row set really carries the two group levels} \
-  [list [wviewer::browser_kind $bx_rows g:x1] \
-        [wviewer::browser_kind $bx_rows g:x1.x2] \
-        [wviewer::browser_kind $bx_rows {s:v(out)}]] \
-  [list group group leaf]
-check {BX01 an EXACT two-segment path finds the deep group} \
-  [pcall ::wviewer::browser_node_for $bx_rows {x1 x2}] {g:x1.x2 2}
-# ⚠ THE CASE LEG, and it is the one that decides whether this item works on a
-# real ngspice raw at all: ngspice lowercases the raw while sim_sch_path reports
-# the SCHEMATIC's own `X1.X2`. Sabotage (d) deletes the -nocase candidate.
-check {BX02 (CASE) the SCHEMATIC's X1.X2 finds the raw's lowercase x1.x2} \
-  [pcall ::wviewer::browser_node_for $bx_rows {X1 X2}] {g:x1.x2 2}
-set bx_rows2 [wviewer::browser_rows [list \
-  [wviewer::signal_entry {v(x1.a)}] \
-  [wviewer::signal_entry {v(X1.b)}]]]
-check {BX03 (EXACT-FIRST) a level carrying BOTH x1 and X1 resolves each to itself} \
-  [list [pcall ::wviewer::browser_node_for $bx_rows2 {x1}] \
-        [pcall ::wviewer::browser_node_for $bx_rows2 {X1}]] \
-  [list {g:x1 1} {g:X1 1}]
-# ⚠ THE DEEPEST-ANCESTOR FALLBACK — sabotage (b)'s pure target. The PLAN's
-# "select the deepest ancestor that does exist" IS this return value.
-check {BX04 (FALLBACK) a path one segment too deep answers the deepest ancestor} \
-  [pcall ::wviewer::browser_node_for $bx_rows {X1 X2 X9}] {g:x1.x2 2}
-check {BX04 ...and two segments too deep answers the same node, matched 2} \
-  [pcall ::wviewer::browser_node_for $bx_rows {x1 x2 x9 x8}] {g:x1.x2 2}
-check {BX05 a path with nothing in common answers {} and matched 0} \
-  [pcall ::wviewer::browser_node_for $bx_rows {Z9 Q1}] {{} 0}
-check {BX06 an EMPTY segment list is {} 0 — the sim-root case, handled elsewhere} \
-  [pcall ::wviewer::browser_node_for $bx_rows {}] {{} 0}
-# a leaf is a SIGNAL, not an instance: `v(out)` must not make `out` descendable,
-# and `net5` must not extend the path past its own group
-check {BX07 (DECLARED LIMIT) leaves are NOT matched — a top-level signal name} \
-  [pcall ::wviewer::browser_node_for $bx_rows {out}] {{} 0}
-check {BX07 ...nor a leaf under a real group: x1.x2.net5 stops at x1.x2} \
-  [pcall ::wviewer::browser_node_for $bx_rows {x1 x2 net5}] {g:x1.x2 2}
-# THE ORIGIN ARITHMETIC (issue 0168's mapping, without touching sch_path)
-check {BX08 browser_origin_drop: no raw in the design ctx -> drop `level` segments} \
-  [list [pcall ::wviewer::browser_origin_drop 0 -1] \
-        [pcall ::wviewer::browser_origin_drop 1 -1] \
-        [pcall ::wviewer::browser_origin_drop 2 -1]] \
-  [list 0 1 2]
-check {BX08 ...a raw AT the session's level cancels out; below it is NEGATIVE (refused)} \
-  [list [pcall ::wviewer::browser_origin_drop 1 1] \
-        [pcall ::wviewer::browser_origin_drop 2 1] \
-        [pcall ::wviewer::browser_origin_drop 0 1]] \
-  [list 0 1 -1]
-check {BX08 ...and junk from either getter degrades to the level-0/no-raw case} \
-  [list [pcall ::wviewer::browser_origin_drop {} {}] \
-        [pcall ::wviewer::browser_origin_drop -3 xx]] \
-  [list 0 0]
-
-# --- BX09-BX13: the SOURCE guards -------------------------------------------
-set bx_ap [file join $repo src ase.tcl]
-set bx_fp [open $bx_ap r]; set bx_asrc [read $bx_fp]; close $bx_fp
-set bx_sib [wvproc_body $bx_asrc ase::show_in_browser_for_current]
-check_true {BX09 ase::show_in_browser_for_current was found in the source} \
-  [expr {$bx_sib ne {}}]
-# THE DECISION-10 SOURCE GUARD, item 11's BH06 one layer over. It is a SOURCE
-# check on purpose: with no raw in the design window the two getters are
-# byte-identical, so no behavioural check can tell them apart (see the block
-# header's narrowed claim).
-check {BX09 it pivots on hier_now (sim_sch_path) and NEVER reads sch_path} \
-  [list [expr {[string first {wviewer::hier_now} $bx_sib] >= 0}] \
-        [regexp -all {(^|[^_])sch_path} $bx_sib]] \
-  [list 1 0]
-set bx_bsp [wvproc_body $wsrc wviewer::browser_show_path]
-set bx_bnf [wvproc_body $wsrc wviewer::browser_node_for]
-check {BX09 ...and neither viewer-side body reads sch_path either} \
-  [list [regexp -all {(^|[^_])sch_path} $bx_bsp] \
-        [regexp -all {(^|[^_])sch_path} $bx_bnf]] \
-  [list 0 0]
-# ⚠ ORDER, not merely presence: `wviewer::open` and the sidebar show both move
-# the xschem context to the VIEWER, so a pivot read after them measures the
-# viewer's own untitled buffer. Measured in the scout's probes; the check is
-# what stops a future edit reordering the two lines.
-set bx_i1 [string first {wviewer::hier_now} $bx_sib]
-set bx_i2 [string first {wviewer::open} $bx_sib]
-check {BX10 the PIVOT is read BEFORE wviewer::open moves the context} \
-  [list [expr {$bx_i1 >= 0}] [expr {$bx_i2 > $bx_i1}]] [list 1 1]
-check {BX10 ...and it does NOT re-implement an opener — wviewer::open is the only one} \
-  [regexp -all {load_new_window|window_for \$key} $bx_sib] 0
-# THE KEY, in the file the PLAN names
-set bx_rcp [file join $repo src cadence_style_rc]
-set bx_fp [open $bx_rcp r]; set bx_rc [read $bx_fp]; close $bx_fp
-set bx_rcline {}
-foreach bx_l [split $bx_rc "\n"] {
-  if {[string first {<Control-Key-5>} $bx_l] >= 0} { set bx_rcline $bx_l ; break }
-}
-check {BX11 cadence_style_rc binds .drw <Control-Key-5> to the command, and BREAKs} \
-  [regexp {^bind \.drw <Control-Key-5>\s+\{ase::show_in_browser_for_current %W; break\}$} \
-     $bx_rcline] 1
-check {BX11 ...and it is the ONLY Control-Key-5 line in the rc (no double-bind)} \
-  [regexp -all {<Control-Key-5>} $bx_rc] 1
-# THE MENU, in src/xschem.tcl (the PLAN said ase_window.tcl; that file builds
-# the ASE-L SESSION window's menubar, not the design window's — see the receipt)
-set bx_xp [file join $repo src xschem.tcl]
-set bx_fp [open $bx_xp r]; set bx_xsrc [read $bx_fp]; close $bx_fp
-check {BX12 the design window's Tools cascade carries `Show in Signal Browser`} \
-  [regexp {menubar\.tools add command -label "Show in Signal Browser" \\\n\s+-accelerator Ctrl\+5 -command "ase::show_in_browser_for_current \$\{topwin\}\.drw"} \
-     $bx_xsrc] 1
-check {BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE block)} \
-  [list [regexp -all {Show in Signal Browser} $bx_xsrc] \
-        [expr {[string first {Show in Signal Browser} $bx_xsrc] >
-               [string first {Launch ASE-L} $bx_xsrc]}]] \
-  [list 1 1]
-# ⚠ THE BUMP THAT MUST NOT HAPPEN. test_wave_grid's GH0 counts VIEWER keys
-# (`bind WaveViewer ...` in install_default_binds) and VIEWER menu accelerators
-# (build_menubar). Item 12's key is a SCHEMATIC `.drw` bind and its menu entry
-# is on xschem.tcl's Tools cascade, so 16/11 must stay put and the guide must
-# gain no data-seq row — adding one would break GH0 and GH2.
-set bx_fp [open [file join $repo tests headless test_wave_grid.tcl] r]
-set bx_gsrc [read $bx_fp]; close $bx_fp
-check {BX13 test_wave_grid's GH0 literals are UNCHANGED at 16/11} \
-  [list [regexp {\[llength \$gh_seqs\] 16} $bx_gsrc] \
-        [regexp {\[llength \$gh_menus\] 11} $bx_gsrc]] \
-  [list 1 1]
-set bx_fp [open [file join $repo doc waveform_viewer_guide.html] r]
-set bx_gd [read $bx_fp]; close $bx_fp
-check {BX13 ...and the guide gained NO data-seq/data-menu row for the schematic key} \
-  [list [regexp -all {data-seq="Control-Key-5"} $bx_gd] \
-        [regexp -all {data-menu="Show in Signal Browser"} $bx_gd]] \
-  [list 0 0]
-check {BX13 (control) the guide DOES still carry item 11's viewer key row} \
-  [regexp {data-seq="Key-E"} $bx_gd] 1
-# the four sentences, PURE — one formatter, so the status line, the CIW echo and
-# the ASE-side echo cannot drift into three accounts of one event
-check {BX14 browser_msg: ok} [pcall ::wviewer::browser_msg {ok g:x1.x2 x1.x2}] \
-  {showing x1.x2}
-check {BX14 browser_msg: partial names BOTH the asked path and the landing} \
-  [pcall ::wviewer::browser_msg {partial g:x1.x2 x1.x2 x1.x2.x9}] \
-  {no signals under 'x1.x2.x9' - showing x1.x2 instead}
-check {BX14 browser_msg: root} [pcall ::wviewer::browser_msg {root {}}] \
-  {showing the simulation top level}
-check {BX14 browser_msg: err passes its own reason through} \
-  [pcall ::wviewer::browser_msg {err {no simulation data loaded - read a raw file first}}] \
-  {no simulation data loaded - read a raw file first}
-
-# --- BX20-BX39: the REVEAL, on a throwaway toplevel (X only) -----------------
-if {[info exists ::has_x] && [info commands winfo] ne {}} {
-
-  catch {destroy .wvbx1}
-  toplevel .wvbx1
-  wm title .wvbx1 {item12 show-in-browser fixture}
-  wm geometry .wvbx1 900x400+40+40
-  canvas .wvbx1.drw -background white -width 700 -height 360
-  pack .wvbx1.drw -side right -fill both -expand true
-  dict set ::wviewer::windows wvbx [dict create top .wvbx1 win_path .wvbx1.drw]
-  pcall ::wviewer::browser_build wvbx .wvbx1
-  set BXF .wvbx1.wvbrowser
-  set BXTV $BXF.tvf.tv
-  pack $BXF -side left -fill y -before .wvbx1.drw
-  set bx_mapped [bs_wait_mapped .wvbx1.drw]
-  catch {bs_wait_mapped $BXTV}
-  update
-
-  # seed the inventory + the tree DIRECTLY (the BT2x idiom): this fixture has no
-  # xschem raw behind it, which is also what makes BX39's restore leg real.
-  proc bx_seed {names} {
-    global BXTV
-    set ::wviewer::browsersigs(wvbx) $names
-    set e {}
-    foreach n $names { lappend e [wviewer::signal_entry $n] }
-    set r [wviewer::browser_rows $e]
-    set ::wviewer::browserrows(wvbx) $r
-    wviewer::browser_populate $BXTV $r
-    update
-    return [llength $r]
-  }
-  set bx_names {v(x1.x2.net5) v(x1.y3.net7) v(out)}
-  check {BX20 (FIXTURE) the sidebar built, is mapped, and the tree is seeded} \
-    [list $bx_mapped [winfo exists $BXTV] [expr {[bx_seed $bx_names] > 0}]] \
-    [list 1 1 1]
-
-  # ⚠⚠ POSITIVE CONTROL #1, and without it every "not visible" claim below is
-  # worthless: prove the fixture can be put into `collapsed` at all, and that
-  # `collapsed` is a DIFFERENT value from `visible` on the very same node.
-  check {BX30 (POSITIVE CONTROL) a freshly populated tree reads `visible`} \
-    [bx_vis $BXTV g:x1.x2] visible
-  pcall $BXTV item g:x1 -open 0
-  pcall $BXTV selection set {}
-  update
-  check {BX30 (POSITIVE CONTROL) collapsing the ancestor reads `collapsed`, selection empty} \
-    [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV selection]] [list collapsed {}]
-
-  # THE ITEM, on the HIT path (sidebar already shown, node present) — so no
-  # repopulate can intervene and erase the evidence.
-  check {BX31 browser_show_path returns ok with the exact node} \
-    [pcall ::wviewer::browser_show_path wvbx x1.x2] {ok g:x1.x2 x1.x2}
-  update
-  check {BX31 ...the node is SELECTED} [pcall $BXTV selection] {g:x1.x2}
-  # ⚠ SABOTAGE (a)'s TARGET. `selection` above stays GREEN under it — that is
-  # the built-in control that excludes "the command did nothing".
-  check {BX31 ...and it is VISIBLE: `see` re-opened the collapsed ancestor} \
-    [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV item g:x1 -open]] [list visible 1]
-
-  # THE SCROLL LEG — a node whose ancestors are ALL open and which is still not
-  # on screen. `collapsed` cannot see this one; only the bbox can.
-  set bx_fill {}
-  for {set bx_i 0} {$bx_i < 60} {incr bx_i} { lappend bx_fill "v(zz$bx_i)" }
-  bx_seed [concat $bx_names $bx_fill]
-  pcall $BXTV yview moveto 1.0
-  pcall $BXTV selection set {}
-  update
-  check {BX32 (POSITIVE CONTROL) scrolled to the bottom, x1.x2 reads `offscreen`} \
-    [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV item g:x1 -open]] [list offscreen 1]
-  check {BX32 browser_reveal scrolls it back into view} \
-    [list [pcall ::wviewer::browser_reveal wvbx g:x1.x2] [bx_vis $BXTV g:x1.x2]] \
-    [list 1 visible]
-  bx_seed $bx_names
-
-  # F4: `see`/`selection set`/`bbox` THROW on a missing id, and `exists {}` is
-  # TRUE (the root) — both are refused rather than swallowed into a false 1.
-  set bx_f0 $::fail
-  check {BX33 revealing a MISSING id returns 0 and does not throw} \
-    [list [pcall ::wviewer::browser_reveal wvbx g:nope] [bx_vis $BXTV g:nope]] \
-    [list 0 absent]
-  check {BX33 revealing the EMPTY id returns 0 — `exists {}` is TRUE, so this is explicit} \
-    [list [pcall ::wviewer::browser_reveal wvbx {}] [pcall $BXTV exists {}]] \
-    [list 0 1]
-  check {BX33 ...and neither raised a bgerror} [expr {$::fail - $bx_f0}] 0
-
-  # ⚠ THE FALLBACK, on the widget — sabotage (b)'s behavioural target. The
-  # selection is CLEARED first and asserted empty, so "it selected the ancestor"
-  # cannot be satisfied by a leftover.
-  pcall $BXTV selection set {}
-  update
-  check {BX34 (control) the selection really is empty before the fallback runs} \
-    [pcall $BXTV selection] {}
-  check {BX34 a path one segment too deep answers `partial` naming BOTH paths} \
-    [pcall ::wviewer::browser_show_path wvbx x1.x2.x9] \
-    {partial g:x1.x2 x1.x2 x1.x2.x9}
-  update
-  check {BX34 ...and the DEEPEST ANCESTOR is selected and visible} \
-    [list [pcall $BXTV selection] [bx_vis $BXTV g:x1.x2]] [list {g:x1.x2} visible]
-
-  # the sim root: an ANSWER, not a failure — the selection is cleared and the
-  # tree scrolled home on purpose
-  pcall $BXTV selection set {g:x1.x2}
-  check {BX36 an EMPTY path is the `root` branch} \
-    [pcall ::wviewer::browser_show_path wvbx {}] {root {}}
-  check {BX36 ...and it CLEARS the selection deliberately} \
-    [pcall $BXTV selection] {}
-
-  # THE FOUR SENTENCES, on the real status label
-  bx_seed $bx_names
-  pcall ::wviewer::browser_show_path wvbx x1.x2
-  check {BX37 the status line says `showing <path>` on a hit} \
-    [pcall $BXF.ph cget -text] "Signal Browser\nshowing x1.x2"
-  pcall ::wviewer::browser_show_path wvbx x1.x2.x9
-  check {BX37 ...names both paths on the fallback} \
-    [pcall $BXF.ph cget -text] \
-    "Signal Browser\nno signals under 'x1.x2.x9' - showing x1.x2 instead"
-  pcall ::wviewer::browser_show_path wvbx {}
-  check {BX37 ...and says so at the sim root} \
-    [pcall $BXF.ph cget -text] "Signal Browser\nshowing the simulation top level"
-  # ⚠ the SELECTION IS LEFT ALONE on an outright miss (decision 11's mirror:
-  # a failed sync leaves the user where they were)
-  bx_seed $bx_names
-  pcall $BXTV selection set {g:x1}
-  check {BX35 a path matching nothing is an `err` that names what was asked} \
-    [pcall ::wviewer::browser_show_path wvbx z9.q1] {err {no signals under 'z9.q1'}}
-  check {BX35 ...the status line carries it} \
-    [pcall $BXF.ph cget -text] "Signal Browser\nno signals under 'z9.q1'"
-  check {BX35 ...and the user's SELECTION SURVIVED the refusal} \
-    [pcall $BXTV selection] {g:x1}
-  # the Search/Filter clause: a bar CAN hide a node that is really in the raw,
-  # which is otherwise indistinguishable from "the raw has no such node"
-  check {BX38 (control) with both bars EMPTY the message carries no bar clause} \
-    [expr {[string first {Search/Filter} [pcall $BXF.ph cget -text]] >= 0}] 0
-  pcall $BXF.wvsearch.pat insert 0 zzz
-  check {BX38 with a bar non-empty the message NAMES the bars} \
-    [pcall ::wviewer::browser_show_path wvbx z9.q1] \
-    {err {no signals under 'z9.q1' (the Search/Filter bar may be hiding it)}}
-  check {BX38 ...and the bars were NOT cleared behind the user's back (declared limit)} \
-    [pcall $BXF.wvsearch.pat get] zzz
-  pcall $BXF.wvsearch.pat delete 0 end
-
-  # ⚠ IMPROVE-OR-RESTORE. This fixture has no xschem raw behind it, so the
-  # miss-retry's `browser_refresh $token 1` genuinely FAILS and would otherwise
-  # replace a good tree with an empty one — measured on the first cut of
-  # browser_show_path, which turned BX34's `partial` into an `err`. The guard is
-  # what makes BX34 and BX35 mean anything at all here.
-  bx_seed $bx_names
-  set bx_rows_before $::wviewer::browserrows(wvbx)
-  pcall ::wviewer::browser_show_path wvbx x1.x2.x9
-  check {BX39 a MISS whose reload fails RESTORES the rows byte-for-byte} \
-    [expr {$::wviewer::browserrows(wvbx) eq $bx_rows_before}] 1
-  check {BX39 ...and the widget still holds them, so the tree is not emptied} \
-    [list [pcall $BXTV exists g:x1.x2] [bx_vis $BXTV g:x1.x2]] [list 1 visible]
-
-  # `unmapped` — the value bbox CANNOT produce (a withdrawn-but-once-mapped tree
-  # still answers bbox), which is why the oracle checks ismapped first
-  wm withdraw .wvbx1
-  update
-  check {BX33 (ORACLE) a withdrawn tree reads `unmapped`, and bbox still answers} \
-    [list [bx_vis $BXTV g:x1.x2] [expr {[pcall $BXTV bbox g:x1.x2] ne {}}]] \
-    [list unmapped 1]
-
-  destroy .wvbx1
-  catch {unset ::wviewer::browsersigs(wvbx)}
-  catch {unset ::wviewer::browserrows(wvbx)}
-  catch {dict unset ::wviewer::windows wvbx}
-  check {BX39 (teardown) the throwaway toplevel and its registry entry are gone} \
-    [list [winfo exists .wvbx1] [dict exists $::wviewer::windows wvbx]] [list 0 0]
-
-} else {
-  puts "SKIPPED: BX2x/BX3x group (Tk/X arm only)"
-}
-
-# --- BX40-BX52: END TO END — real viewer, real design window, real key -------
-if {[info exists ::has_x] && [info commands winfo] ne {}} {
-
-  # item 11 left the design window loaded on the wvhier fixture (at `x1`) with
-  # TWO sessions registered — bh/wvhier_top/schematic AND bh/wvhier_mid/schematic
-  # — and session_for_design returns the FIRST match in insertion order. That is
-  # exploited below rather than fought: closing/reopening the MID session is how
-  # this block moves `level` between 0 and 1 without a second fixture.
-  # ⚠ THE DESIGN WINDOW IS NAMED, NOT INHERITED. item 11's BH5x block closes its
-  # viewer last, so `current_win_path` on arrival may still point at a window
-  # that no longer exists — reading the fixture through it produces a skip that
-  # looks like "the viewer would not open". The fixture was loaded into the MAIN
-  # window (BH20's `xschem load`), so that is the one, and the switch is
-  # VERIFIED like every other switch in this file.
-  set bx_dwin .drw
-  # ⚠ AND THE SWITCH IS RETRIED AND VERIFIED, never fired once and trusted. An
-  # `update` between a raise and a context read can deliver an Enter/FocusIn on
-  # some other canvas, which switches the context straight back — measured: the
-  # first cut of this block read `.x1.drw` (the viewer) after switching to
-  # `.drw`, and self-skipped the whole group. So: DRAIN, switch, RE-READ.
-  # ⚠ THE FAST PATH PUMPS NO EVENTS, AND THAT IS A MEASURED REQUIREMENT, not
-  # tidiness. `xschem new_schematic switch` is synchronous, so `current_win_path`
-  # is already true on return; the `update` retry exists only for the rare bounce
-  # above. An unconditional `update` per call redraws BOTH canvases, and with ~25
-  # call sites that pushed this file's X-request count from ~5k to ~68k — enough
-  # to trip WSLg's Xwayland `can't send file descriptor` abort on nearly every
-  # run (receipt §10.2). Measured: 32s and 0/6 completions before, ~4s after.
-  proc bx_ctx_to {w} {
-    if {[xschem get current_win_path] eq $w} { return 1 }
-    catch {xschem new_schematic switch $w}
-    if {[xschem get current_win_path] eq $w} { return 1 }
-    for {set i 0} {$i < 10} {incr i} {
-      update
-      catch {xschem new_schematic switch $w}
-      if {[xschem get current_win_path] eq $w} { return 1 }
-      after 20
-    }
-    return 0
-  }
-  bx_ctx_to $bx_dwin
-  set bx_tok bh/wvhier_top/schematic
-  set bx_mid bh/wvhier_mid/schematic
-  pcall ::wviewer::hier_walk {}
-  check {BX40 (FIXTURE) the design window is on wvhier_top, at its top level} \
-    [list [file tail [pcall xschem get schname 0]] [pcall xschem get sim_sch_path] \
-          [pcall xschem get currsch]] \
-    [list wvhier_top.sch {} 0]
-
-  set bx_open [pcall ::wviewer::open $bx_tok]
-  set bx_vtop [wviewer::window_for $bx_tok]
-  # wviewer::open leaves the context ON THE VIEWER (measured) — go back before
-  # reading anything hierarchical, and VERIFY the switch followed
-  bx_ctx_to $bx_dwin
-  set bx_ready [expr {$bx_vtop ne {} && [viewer_ready $bx_vtop]}]
-  set bx_ctx [expr {[bx_ctx_to $bx_dwin] ? $bx_dwin : [xschem get current_win_path]}]
-  if {$bx_open ne 1 || !$bx_ready || $bx_ctx ne $bx_dwin} {
-    # name WHICH precondition failed — a bare skip line hides a broken fixture
-    puts "SKIPPED: BX4x/BX5x group (open=$bx_open top='$bx_vtop'\
- ready=$bx_ready ctx='$bx_ctx' want='$bx_dwin')"
-    catch {wviewer::close $bx_tok}
-  } else {
-    set BXVTV $bx_vtop.wvbrowser.tvf.tv
-    # ⚠⚠ POSITIVE CONTROL #3 (sabotage (c)): the sidebar is HIDDEN before the
-    # command runs, asserted TWO ways — the authority and the packing order —
-    # because `pack info` alone cannot tell "hidden" from "never built".
-    check {BX40 (POSITIVE CONTROL) a fresh viewer's sidebar is HIDDEN, but BUILT} \
-      [list [pcall ::wviewer::browser_shown $bx_tok] \
-            [bs_packed $bx_vtop.wvbrowser] \
-            [winfo exists $bx_vtop.wvbrowser]] \
-      [list 0 0 1]
-
-    # a REAL raw in the VIEWER's own context (the BTV/BMV/BH5x idiom): a
-    # two-level path, a one-level one, and a top-level `x2.` — the last so that
-    # a level-1 origin has somewhere real to land as well as a level-0 one.
-    bx_ctx_to $bx_vtop.drw
-    pcall xschem raw new bx_item12.raw dc vsweep 0 1.0 0.5
-    foreach bx_n {v(out) v(x1.x2.net5) v(x1.topsig) v(x2.deep)} {
-      pcall xschem raw add $bx_n {vsweep 1 +}
-    }
-    bx_ctx_to $bx_dwin
-    check {BX40 (control) the context is back on the DESIGN window} \
-      [expr {[pcall xschem get current_win_path] eq $bx_dwin}] 1
-
-    # WHICH session resolves, asserted before anything is claimed about the
-    # viewer (the scout's risk: item 11's two sessions are still live)
-    pcall ase::session_close $bx_mid
-    pcall ::wviewer::hier_walk X1.X2
-    set bx_sfc [pcall ase::session_for_current]
-    check {BX41 at X1.X2 with the MID session closed, the TOP session resolves at level 0} \
-      [list [lindex $bx_sfc 0] [lindex $bx_sfc 1]] [list $bx_tok 0]
-
-    # ==== THE ITEM, END TO END ====
-    set bx_r [pcall ase::show_in_browser_for_current $bx_dwin]
-    # ⚠ READ THE CONTEXT WITH NO EVENT PUMP IN BETWEEN — an `update` here can
-    # deliver a stray Enter and move it, which would make the DECLARED context
-    # rule below untestable rather than false.
-    set bx_ctxafter [xschem get current_win_path]
-    update
-    check {BX42 the command returns the session key} $bx_r $bx_tok
-    # ← sabotage (c)
-    check {BX42 (SIDEBAR) it UN-HID the sidebar — authority AND packing agree} \
-      [list [pcall ::wviewer::browser_shown $bx_tok] \
-            [bs_packed $bx_vtop.wvbrowser] \
-            [bs_order $bx_vtop $bx_vtop.wvbrowser $bx_vtop.drw]] \
-      [list 1 1 a-before-b]
-    # ← sabotage (d): X1.X2 must find the raw's lowercase x1.x2
-    check {BX42 (SELECTION) the node for X1.X2 is selected — the raw's x1.x2} \
-      [pcall $BXVTV selection] {g:x1.x2}
-    # ← sabotage (a)
-    check {BX42 (VISIBLE) and it is on screen with its ancestors open} \
-      [bx_vis_m $BXVTV g:x1.x2] visible
-    check {BX42 the browser status line reports the landing} \
-      [pcall $bx_vtop.wvbrowser.ph cget -text] "Signal Browser\nshowing x1.x2"
-    # THE DECLARED CONTEXT RULE (item 11's mirror): the viewer was raised, so
-    # the context is left there. Asserted, not accidental.
-    check {BX42 (DECLARED) the context is LEFT ON THE VIEWER, the raised window} \
-      [expr {$bx_ctxafter eq "$bx_vtop.drw"}] 1
-    bx_ctx_to $bx_dwin
-    check {BX42 ...and the DESIGN window never moved: still wvhier_top, still at X1.X2} \
-      [list [file tail [pcall xschem get schname 0]] \
-            [pcall xschem get sim_sch_path]] \
-      [list wvhier_top.sch {X1.X2.}]
-
-    # ⚠⚠ THE FIRST INVOKE CANNOT PROVE THE EXPANSION, and that was MEASURED, not
-    # reasoned: un-hiding the sidebar repopulates the tree, and `browser_populate`
-    # inserts every group `-open 1`, so the node is visible whether or not
-    # anything expanded it. Sabotage (a) (delete `$tv see`) left the leg above
-    # GREEN. The SECOND invoke is the real one — sidebar already shown, so no
-    # repopulate intervenes, and the ancestor deliberately collapsed first.
-    pcall $BXVTV item g:x1 -open 0
-    pcall $BXVTV selection set {}
-    update
-    check {BX42 (POSITIVE CONTROL) with its ancestor collapsed the node reads `collapsed`} \
-      [list [bx_vis_m $BXVTV g:x1.x2] [pcall $BXVTV selection]] [list collapsed {}]
-    bx_ctx_to $bx_dwin
-    pcall ase::show_in_browser_for_current $bx_dwin
-    update
-    check {BX42 (SECOND INVOKE) on an already-shown COLLAPSED tree it still lands VISIBLE} \
-      [list [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1.x2] \
-            [pcall $BXVTV item g:x1 -open]] \
-      [list {g:x1.x2} visible 1]
-    bx_ctx_to $bx_dwin
-
-    # THE 0168 AGREEMENT, as a VALUE rather than an assumption (driver note (f)).
-    # sod_rel_path is the ASE session side's own answer to the same question;
-    # this asserts the two agree at level 0 AND level 1. ⚠ TEST-ONLY: the shipped
-    # path never calls it (it reads sch_path, which decision 10 forbids us) —
-    # BX09 is what guards that.
-    set bx_segs [pcall ::wviewer::hier_now]
-    check {BX49 (0168 AGREEMENT) drop-0 equals sod_rel_path 0, byte for byte} \
-      [list "[join [lrange $bx_segs 0 end] .]." [pcall ase::ui::sod_rel_path 0]] \
-      [list {X1.X2.} {X1.X2.}]
-    check {BX49 ...and drop-1 equals sod_rel_path 1 — the ancestor-owned-raw case} \
-      [list "[join [lrange $bx_segs 1 end] .]." [pcall ase::ui::sod_rel_path 1]] \
-      [list {X2.} {X2.}]
-
-    # ==== BX48: THE LEVEL>0 MAPPING — the one behavioural proof of the origin
-    # arithmetic. SAME hierarchy position, DIFFERENT session level, DIFFERENT
-    # browser path: x1.x2 at level 0 (BX42 above), x2 at level 1.
-    # ⚠ MEASURED BY SPY, and the spy is the RIGHT instrument here rather than a
-    # shortcut. The claim is exactly "which PATH does the command compute", and
-    # a second real viewer toplevel adds only WSLg fragility to it (the first cut
-    # self-skipped when the mid session's window would not map). BX42 already
-    # proves the whole chain end to end at level 0; this isolates the ORIGIN
-    # ARITHMETIC and runs BOTH levels from the SAME hierarchy position, so the
-    # two answers are a genuine discriminator rather than one value in a vacuum.
-    set ::bx_paths {}
-    rename ::wviewer::open ::wviewer::__bx_open
-    proc ::wviewer::open {token} { return 1 }
-    rename ::wviewer::browser_show_path ::wviewer::__bx_bsp
-    proc ::wviewer::browser_show_path {token path} {
-      lappend ::bx_paths [list $token $path]
-      return [list err {spy}]
-    }
-    bx_ctx_to $bx_dwin
-    pcall ::wviewer::hier_walk X1.X2
-    # leg 1 — the level-0 session (mid still closed): the WHOLE path
-    set ::bx_paths {}
-    pcall ase::show_in_browser_for_current $bx_dwin
-    set bx_p0 $::bx_paths
-    # leg 2 — the level-1 session: the SAME position, one segment shorter
-    pcall ase::session_open $bx_mid [file join $scratch bh_mid.state]
-    bx_ctx_to $bx_dwin
-    set bx_sfc2 [pcall ase::session_for_current]
-    check {BX48 (control) with the MID session back, X1.X2 resolves it at level 1} \
-      [list [lindex $bx_sfc2 0] [lindex $bx_sfc2 1]] [list $bx_mid 1]
-    set ::bx_paths {}
-    pcall ase::show_in_browser_for_current $bx_dwin
-    set bx_p1 $::bx_paths
-    check {BX48 (ORIGIN) one position, two session levels, two DIFFERENT browser paths} \
-      [list $bx_p0 $bx_p1] \
-      [list [list [list $bx_tok X1.X2]] [list [list $bx_mid X2]]]
-    # leg 3 — a raw loaded IN THE DESIGN CONTEXT at level 1. sim_sch_path is then
-    # already `X2.`, so the level-1 session needs NO drop and lands identically —
-    # while the level-0 session is a NEGATIVE drop and must be REFUSED outright
-    # rather than guessed at.
-    pcall xschem raw new bx_dsgn.raw dc vsweep 0 1.0 0.5
-    pcall xschem raw add {v(zz)} {vsweep 1 +}
-    pcall xschem set raw_level 1
-    check {BX48 (control) the design ctx now really has a raw at level 1} \
-      [list [pcall xschem raw loaded] [pcall xschem get sim_sch_path]] [list 1 {X2.}]
-    set ::bx_paths {}
-    pcall ase::show_in_browser_for_current $bx_dwin
-    check {BX48 a raw at the session's OWN level needs no drop — same path, no double-strip} \
-      $::bx_paths [list [list $bx_mid X2]]
-    pcall ase::session_close $bx_mid
-    bx_ctx_to $bx_dwin
-    set ::bx_paths {}
-    set bx_neg [pcall ase::show_in_browser_for_current $bx_dwin]
-    check {BX48 (NEGATIVE DROP) a raw read BELOW the session's design is REFUSED, not guessed} \
-      [list $bx_neg $::bx_paths] [list {} {}]
-    pcall xschem raw clear
-    rename ::wviewer::browser_show_path {}
-    rename ::wviewer::__bx_bsp ::wviewer::browser_show_path
-    rename ::wviewer::open {}
-    rename ::wviewer::__bx_open ::wviewer::open
-    check {BX48 (teardown) both spied procs are back in place} \
-      [list [expr {[info commands ::wviewer::__bx_bsp] eq {}}] \
-            [expr {[info commands ::wviewer::__bx_open] eq {}}] \
-            [expr {[info commands ::wviewer::browser_show_path] ne {}}] \
-            [expr {[info commands ::wviewer::open] ne {}}]] \
-      [list 1 1 1 1]
-    bx_ctx_to $bx_dwin
-
-    # ==== BX44: the REAL Tools entry, found BY LABEL ====
-    set bx_tm .menubar.tools
-    if {![winfo exists $bx_tm]} {
-      puts "SKIPPED: BX44 (the main window has no Tools menu)"
-    } else {
-      set bx_ti -1
-      catch {set bx_ti [$bx_tm index {Show in Signal Browser}]}
-      check {BX44 the Tools entry exists, with its accelerator and its command} \
-        [list [expr {$bx_ti >= 0}] \
-              [pcall $bx_tm entrycget $bx_ti -accelerator] \
-              [pcall $bx_tm entrycget $bx_ti -command]] \
-        [list 1 {Ctrl+5} {ase::show_in_browser_for_current .drw}]
-      # invoke it FOR REAL from a different hierarchy position and assert the
-      # world moved to match
-      bx_ctx_to $bx_dwin
-      pcall ::wviewer::hier_walk x1
-      pcall $BXVTV selection set {}
-      update
-      pcall $bx_tm invoke $bx_ti
-      update
-      check {BX44 invoking it really re-targets the browser at x1} \
-        [list [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1] \
-              [pcall $bx_vtop.wvbrowser.ph cget -text]] \
-        [list {g:x1} visible "Signal Browser\nshowing x1"]
-      bx_ctx_to $bx_dwin
-    }
-
-    # ==== BX45: at the TOP -> the `root` branch; the sidebar STAYS shown ====
-    bx_ctx_to $bx_dwin
-    pcall ::wviewer::hier_walk {}
-    pcall $BXVTV selection set {g:x1.x2}
-    update
-    pcall ase::show_in_browser_for_current $bx_dwin
-    update
-    check {BX45 at the sim top the selection is cleared and the reason given} \
-      [list [pcall $BXVTV selection] \
-            [pcall $bx_vtop.wvbrowser.ph cget -text]] \
-      [list {} "Signal Browser\nshowing the simulation top level"]
-    check {BX45 ...and the sidebar is STILL shown (a no-op must not re-hide it)} \
-      [list [pcall ::wviewer::browser_shown $bx_tok] \
-            [bs_packed $bx_vtop.wvbrowser]] \
-      [list 1 1]
-    bx_ctx_to $bx_dwin
-
-    # ==== BX50: RELOAD-ON-MISS (item 9's D6, decided deliberately) ====
-    # a signal added to the raw BEHIND the browser's back is invisible to the
-    # snapshot; a MISS spends one reload and finds it. A HIT must NOT reload —
-    # a repopulate would clear the selection and re-open every group.
-    bx_ctx_to $bx_dwin
-    pcall ::wviewer::hier_walk X1
-    set bx_rows_a $::wviewer::browserrows($bx_tok)
-    pcall ase::show_in_browser_for_current $bx_dwin
-    update
-    bx_ctx_to $bx_dwin
-    check {BX50 (control) a HIT does not reload — the row snapshot is byte-identical} \
-      [expr {$::wviewer::browserrows($bx_tok) eq $bx_rows_a}] 1
-    bx_ctx_to $bx_vtop.drw
-    pcall xschem raw add {v(x1.x2.x7.late)} {vsweep 1 +}
-    bx_ctx_to $bx_dwin
-    check {BX50 (control) the browser has NOT seen the new signal yet (D6 snapshot)} \
-      [lindex [pcall ::wviewer::browser_node_for $::wviewer::browserrows($bx_tok) \
-                 {x1 x2 x7}] 1] 2
-    pcall ::wviewer::hier_walk X1.X2
-    # there is no X7 instance in the fixture, so walk there by hand-feeding the
-    # path — what is under test is the RELOAD, not the descend
-    set bx_r3 [pcall ::wviewer::browser_show_path $bx_tok x1.x2.x7]
-    update
-    check {BX50 a MISS reloads once and FINDS the late signal's group} \
-      [list $bx_r3 [expr {[llength $::wviewer::browserrows($bx_tok)] >
-                          [llength $bx_rows_a]}]] \
-      [list {ok g:x1.x2.x7 x1.x2.x7} 1]
-
-    # ==== BX46: NO RAW AT ALL -> the honest report, sidebar untouched ====
-    bx_ctx_to $bx_vtop.drw
-    pcall xschem raw clear
-    bx_ctx_to $bx_dwin
-    catch {unset ::wviewer::browsersigs($bx_tok)}
-    pcall $BXVTV selection set {}
-    update
-    pcall ase::show_in_browser_for_current $bx_dwin
-    update
-    check {BX46 with no raw loaded it says so rather than doing nothing} \
-      [pcall $bx_vtop.wvbrowser.ph cget -text] \
-      "Signal Browser\nno simulation data loaded - read a raw file first"
-    check {BX46 ...nothing is selected, and the sidebar is still shown} \
-      [list [pcall $BXVTV selection] [pcall ::wviewer::browser_shown $bx_tok] \
-            [bs_packed $bx_vtop.wvbrowser]] \
-      [list {} 1 1]
-    bx_ctx_to $bx_dwin
-
-    # ==== BX43: THE REAL KEY, on the REAL design canvas ====
-    # ⚠ NOT `source`d from cadence_style_rc (that installs every cadence bind and
-    # sources eight util files, perturbing later groups) — the exact line is
-    # grepped in BX11 and bound HERE, verbatim, the test_cadence_window_hop_log
-    # idiom.
-    set ::bx_calls 0
-    rename ::ase::show_in_browser_for_current ::ase::__bx_real
-    proc ::ase::show_in_browser_for_current {{win {}}} {
-      incr ::bx_calls
-      return [uplevel 1 [list ::ase::__bx_real $win]]
-    }
-    bind .drw <Control-Key-5> {ase::show_in_browser_for_current %W; break}
-    bx_ctx_to $bx_dwin
-    # rebuild the inventory the raw clear above emptied
-    bx_ctx_to $bx_vtop.drw
-    pcall xschem raw new bx_key.raw dc vsweep 0 1.0 0.5
-    foreach bx_n {v(out) v(x1.x2.net5)} { pcall xschem raw add $bx_n {vsweep 1 +} }
-    bx_ctx_to $bx_dwin
-    pcall ::wviewer::browser_refresh $bx_tok 1
-    bx_ctx_to $bx_dwin
-    pcall ::wviewer::hier_walk X1.X2
-    pcall $BXVTV selection set {}
-    catch {raise_activate_toplevel .}
-    catch {focus .drw}
-    update
-    set bx_c0 $::bx_calls
-    if {![send_key .drw <Control-Key-5> {$::bx_calls > $bx_c0}]} {
-      puts "SKIPPED: BX43 (WSLg key-delivery stall on the design canvas)"
-    } else {
-      update
-      check {BX43 a REAL Ctrl-5 on the design canvas targets the browser at x1.x2} \
-        [list [expr {$::bx_calls - $bx_c0}] \
-              [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1.x2]] \
-        [list 1 {g:x1.x2} visible]
-      # NEGATIVE CONTROL on the SAME recorder: an unbound chord must read ZERO,
-      # which is what stops the recorder passing vacuously
-      bx_ctx_to $bx_dwin
-      catch {raise_activate_toplevel .}
-      catch {focus -force .drw}
-      update
-      set bx_c1 $::bx_calls
-      catch {event generate .drw <Control-Key-6>}
-      update
-      check {BX43 (NEGATIVE CONTROL) an unbound Ctrl-6 records ZERO on the same spy} \
-        [expr {$::bx_calls - $bx_c1}] 0
-    }
-    catch {bind .drw <Control-Key-5> {}}
-    rename ::ase::show_in_browser_for_current {}
-    rename ::ase::__bx_real ::ase::show_in_browser_for_current
-    check {BX43 the real ase::show_in_browser_for_current is back in place} \
-      [list [expr {[info commands ::ase::__bx_real] eq {}}] \
-            [expr {[info commands ::ase::show_in_browser_for_current] ne {}}]] \
-      [list 1 1]
-
-    # ==== BX47: NO SESSION AT ALL -> an honest notice, and no viewer opened ==
-    bx_ctx_to $bx_dwin
-    set bx_tops0 [llength [winfo children .]]
-    pcall ase::session_close $bx_tok
-    pcall ase::session_close wvhier/wvhier_top/schematic
-    set bx_none [pcall ase::show_in_browser_for_current $bx_dwin]
-    update
-    check {BX47 with no session bound the command returns {} and opens nothing} \
-      [list $bx_none [expr {[llength [winfo children .]] - $bx_tops0}]] \
-      [list {} 0]
-    pcall ase::session_open $bx_tok [file join $scratch bh_top.state]
-    bx_ctx_to $bx_dwin
-    catch {wviewer::close $bx_tok}
-  }
-
-} else {
-  puts "SKIPPED: BX4x/BX5x group (Tk/X arm only)"
-}
-
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
   puts "$::errorInfo"
   incr fail
 }
 
-catch {test_scratch_drop $scratch}
-
-puts "----"
-puts "test_wave_sigbrowser: $npass passed, $fail failed"
-if {$fail == 0} {
-  puts "RESULT: ALL PASS ($npass checks)"
-  flush stdout
-  exit 0
-} else {
-  puts "RESULT: $fail FAILED ($npass passed)"
-  flush stdout
-  exit 1
-}
+wvbs_finish
