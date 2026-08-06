@@ -4,6 +4,36 @@ Status: **OPEN — do not implement the fix below.** Superseded by
 `doc/claude/specs/wire_label_ride.md` §8: that spec deletes the rescue stub instead of extending
 it, and replaces it with a per-gesture rider set (S1/S3). Closes when S3 lands.
 
+> ### ⚠ ESCALATED 2026-08-06 by S2: this issue now reproduces for the `cadence_compat` user too
+>
+> Until today, `autotrim_wires` (which `cadence_compat` force-enables) **masked** this issue — see
+> "Instrumented" below, and `wire_label_ride.md` §13.5 row 2. The mask was never a feature: the
+> split put the mid-span label on a wire ENDPOINT, and *two* separate rescues fire only on endpoint
+> coincidence — `connect_by_kissing()`'s wire-endpoint tether (`actions.c`, spec change #8, still
+> alive; it goes with S3) and `select_attached_nets()`' `endpoint_near` ELEMENT arm (`select.c`).
+>
+> **S2 (`wire_label_ride.md` R2, landed 2026-08-06) removes the split, so it removes both rescues.**
+> Measured, this issue's own repro (label stationary, wire translates, kissing armed):
+>
+> | config | wires | `fluid_last_move_label_strands` | resolved net |
+> |---|---|---|---|
+> | `autotrim_wires 0` (stock default) | 1 | **1** | `#net1` |
+> | `autotrim_wires 1`, `label_splits_wires 1` (pre-S2) | 3 | **0** | `VOUT` |
+> | `autotrim_wires 1`, `label_splits_wires 0` (**S2**) | 1 | **1** | `#net1` |
+>
+> So the blast radius of this issue **grew** from "stock-config users" to "everyone", and it grew
+> for the person who filed it. It is not a new defect — the cadence user was accidentally
+> protected, not correctly served — but the practical effect is a regression until **S3/RIDE**
+> lands. That makes S3 the other half of S2, not merely the next stage.
+>
+> **Mitigation available now:** `set label_splits_wires 1` restores the pre-S2 mask exactly
+> (verified: `tests/headless/test_label_strand_oracle.tcl` DM0–DM2). Consider defaulting it to 1
+> until S3 ships, and flipping it with S3.
+>
+> Regression witnesses for the unmasked state: `test_label_strand_oracle.tcl` **D0–D2**,
+> `test_wire_split.tcl` **W7b/S2** (the same mask removal on the `stretch`-without-`kissing` path,
+> which is issue **0228**'s cell). Spec: `wire_label_ride.md` **§15.3**, §9 loss 5.
+
 **S1 landed 2026-08-05 — the rescue stub is now GONE, and the half of the fix that exists is the
 LEASH, not the ride.** `connect_by_kissing()`'s ELEMENT arm skips `type=label` instances
 (`inst_is_netlabel()`), and a MOVING label whose anchor lands off copper is projected back onto its

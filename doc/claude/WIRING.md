@@ -371,6 +371,24 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     split point where TWO wires contain its anchor, so binding to one makes the result depend on
     `xctx->wire[]` order (§14.4). Anything that consumes a captured owner id has all three
     obligations.
+14. **A net label pin is not a segment boundary (`wire_label_ride.md` S2), and the two guards that
+    say so are a matched pair with ASYMMETRIC symptoms.** `break_wires_at_attach_points()` skips
+    `inst_is_netlabel()` and `any_inst_pin_at(x, y, skip_labels)` skips it too, both behind
+    `label_splits_wires` (default 0). Relaxing only the merge is loudly visible (two abutting
+    halves at a label never weld — a permanent fragment). Relaxing only the splitter is **not**:
+    `maintain_wire_segments()` splits and welds inside one call, so `xschem get wires` looks right
+    while every edit churns `set_modify(1)`. The witness for that direction is a label at a wire
+    **CROSSING**, where four endpoints make `end1/end2` non-zero, the merge is refused before
+    `any_inst_pin_at()` is consulted, and the split becomes permanent — plus the §4.4 short.
+    `label_splits_wires` must keep its **own** gate: `trim_wires`' `split_active`
+    (`autotrim_wires`, cached once) exists for spec D2 byte-stability, and folding the two makes
+    the escape hatch stop switching while every default-path test stays green (spec §15.1–15.2).
+15. **Removing manufactured endpoint coincidence removes rescues you did not know keyed on it.**
+    The S2 mask removal (§9, P1 label strand) is the worked example: the split placed a mid-span
+    label on a wire endpoint, and *both* `connect_by_kissing()`'s wire-endpoint tether and
+    `select_attached_nets()`' `endpoint_near` ELEMENT arm fired only because of that coincidence.
+    Before deleting any geometry-manufacturing pass, grep for consumers of the coincidence it
+    manufactures, not just for callers of the pass.
 
 ## 8. Root-cause classes from issues 0079–0111 (name the class before fixing)
 
@@ -460,6 +478,19 @@ spec digest). Enforcement TODAY:
   `fluid_point_on_copper(x, y, skip)`, whose pin arm **skips net labels** — a naming anchor is not
   copper (§5.2). Without that, two labels at one coordinate each read the other as copper, so both
   can be dragged off a wire with the leash declining and the strand oracle scoring 0.
+- P1 **label strand, `cadence_compat` regression as of S2**: `wire_label_ride.md` S2 (2026-08-06)
+  stops a `type=label` pin splitting a wire (`break_wires_at_attach_points`) and stops it blocking
+  the collinear rejoin (`any_inst_pin_at`'s new skip-labels arg), behind
+  `label_splits_wires` (default 0). Connectivity at rest is unchanged — `touch()` is
+  interior-inclusive, corpus-verified — and the leash is unaffected. **But the split was MASKING
+  issue 0227 for the autotrim user, and S2 removes the mask.** Two rescues key on the endpoint
+  coincidence the split manufactured: `connect_by_kissing()`'s wire-endpoint tether (still alive;
+  it goes with S3) and `select_attached_nets()`' `endpoint_near` ELEMENT arm. Measured, one gesture
+  (label stationary, wire translates, kissing armed): autotrim-off `strands 1`; autotrim-on
+  pre-S2 `strands 0`; autotrim-on S2 `strands 1`. So the cadence user now matches the default user
+  instead of being accidentally protected — no new failure class, but strictly worse than before
+  until **S3/RIDE** lands. Mitigation: `set label_splits_wires 1` restores the mask exactly. Ground
+  truth: `test_label_strand_oracle.tcl` D0–D2 / DM0–DM2, `test_wire_split.tcl` `W7b`. Spec §15.3.
 - P4: never asserted; relay may legally save diagonals ("electrically correct beats pretty").
 - P3/P5/P6/no-dead-copper: produced procedurally by the healer ladder, never verified.
 - P7: approximated by prot[] + novelty; never asserted globally.

@@ -1,8 +1,15 @@
 # Wire-label ride-along: a net label names copper, it does not cut it
 
 Status: **S0 LANDED** 2026-08-05 (instrumentation, no behaviour change).
-**S1 LANDED** 2026-08-05 (R1 + LEASH). S2–S7 not implemented.
+**S1 LANDED** 2026-08-05 (R1 + LEASH). **S2 LANDED** 2026-08-06 (R2, behind
+`label_splits_wires`, default 0). S3–S7 not implemented.
 Designed 2026-08-05.
+
+> ⚠ **S2 removes a mask that was protecting issue 0227 for the `cadence_compat` user, and §9
+> did not list it.** The split put a mid-span label on a wire ENDPOINT, and two separate rescues
+> key on endpoint coincidence; without the split neither fires, so the user's original complaint
+> gets strictly worse until **S3** lands. Measured, bounded, and switchable — see **§15.3**.
+> Mitigation until S3: `set label_splits_wires 1`.
 Area: `src/check.c`, `src/actions.c`, `src/move.c`, `src/select.c` (comment only), `src/xschem.tcl`
 Related analysis: `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
 Related issues: **0220** (prerequisite), **0223** (policy overlap), **0227** (superseded by this),
@@ -497,13 +504,13 @@ having.
 | 3 | `src/move.c:7997-8020` | `fluid_count_label_shorts()` — add the missing arm. Today the `for(w…)` loop `break`s on the first touching wire and counts nothing when **no** wire touches. Add: label had `node[0]` at START, touches no copper at END → `++fluid_last_move_label_strands`. **This is the RED oracle; it fails today.** **DONE**, as a separate `fluid_count_label_strands()` + a START baseline — the `node[0]` half of the rule does not work, see §13.1. | small |
 | 4 | `src/actions.c:2061-2063` | R1. `if(inst_is_netlabel(inst)) continue;` right after `symbol = xctx->sym + xctx->inst[inst].ptr;`. Kills the `:2101` stub. **DONE (S1).** | small |
 | 5 | `src/move.c` (new statics) | `label_ride_capture()` at `:8189`, `label_ride_apply()` immediately after `:9372` (**not** `:9377` — §11 A), `label_ride_free()` in the `!commit_now` block and on ABORT. **DONE (S1)** — the free must run **after** the apply, not beside `my_free(&fluid_startsel_id)` which precedes it; also called from `clear_schematic`. | large |
-| 6 | `src/check.c:708` | R2. `if(inst_is_netlabel(k)) continue;` after `if(xctx->inst[k].ptr < 0) continue;`. | small |
-| 7 | `src/check.c:173-180` | R2 matched pair. `any_inst_pin_at()` gains a skip-labels arg; label-blind at `:405` and `:795`. **Mandatory with #6.** `point_on_wire_or_pin()` unchanged. | small |
+| 6 | `src/check.c:708` | R2. `if(inst_is_netlabel(k)) continue;` after `if(xctx->inst[k].ptr < 0) continue;`. **DONE (S2)** — as `if(!label_splits && inst_is_netlabel(k))`, `label_splits` read once per sweep. | small |
+| 7 | `src/check.c:173-180` | R2 matched pair. `any_inst_pin_at()` gains a skip-labels arg; label-blind at `:405` and `:795`. **Mandatory with #6.** `point_on_wire_or_pin()` unchanged. **DONE (S2)** — `:405` is the only LIVE consumer; the `:795` edit is consistency only (§15.7), and the pair's asymmetry is §15.1. | small |
 | 8 | `src/actions.c:2131` | R3. `&& !inst_is_netlabel(ii)` on the instpin test, killing the tether at `:2158`. **Must ship with RIDE, never before.** | small |
 | 9 | `src/move.c:6255` | `fluid_ml_hazards()` block 3b: `if(xctx->inst[i].sel \|\| label_is_rider(i)) continue;`. A label registered to ride is not a stationary merge hazard. | small |
-| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), `set_ne label_ride 1` under `cadence_compat_sync`. ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. | small |
+| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), `set_ne label_ride 1` under `cadence_compat_sync`. ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. **`label_splits_wires` DONE (S2)** — `set_ne` beside `autotrim_wires`, plus `tctx::global_list` so it survives a tab switch like `autotrim_wires` does. No menu entry: it is an escape hatch, not a feature toggle. `label_ride` is S3's. | small |
 | 11 | `src/select.c:1705`, `:1797` | **Comment only.** `wire_through_tap_arm()` goes moot for labels — a mid-span label pin no longer coincides with any endpoint, so `endpoint_near` never fires. Stays live for device pins. `select_attached_nets()` itself is **not edited**. | small |
-| 12 | `tests/headless/test_wire_split.tcl` | 21 `lab_wire`/`lab_pin` references and **zero** `res.sym` taps — the entire suite uses a label as the split source. Re-author the tap fixtures onto a device pin; add mirror cases (label does NOT split; two stubs under a label DO re-weld; `.sch` stays one `N`). **PARTLY DONE (S1, forced):** the W7 block and its wireedit twin `wireedit/test_wireedit_20_F1_netlabel_tap.tcl` both assert the *label rescue stub* and went red on change #4 — re-authored to the S1 result (no stub, label leashed back, halves weld). The rest is still S2's. | large |
+| 12 | `tests/headless/test_wire_split.tcl` | 21 `lab_wire`/`lab_pin` references and **zero** `res.sym` taps — the entire suite uses a label as the split source. Re-author the tap fixtures onto a device pin; add mirror cases (label does NOT split; two stubs under a label DO re-weld; `.sch` stays one `N`). **PARTLY DONE (S1, forced):** the W7 block and its wireedit twin `wireedit/test_wireedit_20_F1_netlabel_tap.tcl` both assert the *label rescue stub* and went red on change #4 — re-authored to the S1 result (no stub, label leashed back, halves weld). **DONE (S2):** every fixture moved to a `devices/res` P-pin tap, each phase gained a label mirror and a `label_splits_wires 1` legacy leg, and a new Phase S2 holds the claims that are new rather than amended (S2a merge, S2b splitter, S2c disk, S2d the §4.4 netlist fix, S2e the D2 gate). 66 → **115 checks**; §15.6. | large |
 | 13 | `tests/headless/test_label_ride.tcl` (new) | R1 in both modes (the along-wire repro **must** use `autotrim_wires = 0`), R2, R3, rotate, leash, strand counter. **DONE for S1** (82 checks); R2/R3 legs land with S2/S3. | medium |
 | 14 | `doc/claude/specs/wire_segment_splitting.md`, `doc/claude/WIRING.md` | Amend: a `type=label` pin is a naming anchor, not a segment boundary — which the save path already argues at `src/check.c:771-772`. New WIRING § for the rider. Answers WIRING open risk 5 (`:477-480`). | small |
 
@@ -571,10 +578,33 @@ reverts a slide by wire record order (S2left red); dropping the **label filter**
 `tests/headless/wireedit/` 58/58, `tests/headless/run.sh` 6/6, `run_regression.tcl` unchanged at the
 3 pre-existing `test_ihp_sg13g2_libmgr` FAILs.
 
-**S2 — R2.**
+**S2 — R2. — LANDED 2026-08-06.**
 Changes #6, #7, #12, behind `label_splits_wires` (default 0) so the existing suite can be run
 both ways during the rewrite and any netlist diff has a switch rather than a bisect. Also
 fixes the measured nameless-label-shorts-a-crossing bug (§4.4).
+
+*As built* — see §15 for the eight points the implementation had to settle, one of which
+(§15.3, the 0227 mask) is a **behaviour regression for the target user** and is the reason the
+S2/S3 sequencing deserves a second look:
+
+| what | where |
+|---|---|
+| `label_splits_wires`, default 0, `set_ne` + `tctx::global_list` | `src/xschem.tcl` beside `autotrim_wires` |
+| #6: `if(!label_splits && inst_is_netlabel(k)) continue;` | `src/check.c` `break_wires_at_attach_points()` |
+| #7: `any_inst_pin_at(x, y, skip_labels)`; its own `label_splits` gate in `trim_wires`, NOT a reuse of `split_active` (§15.2) | `src/check.c` |
+| #7 consistency-only twin (the arm is unreachable, §15.7) | `src/check.c` `merge_collinear_wires()` |
+| tests | `test_wire_split.tcl` 66 → 115 checks (Phase S2 = S2a–S2e); `test_label_ride.tcl` +7 (D re-authored, DL legacy leg); `test_label_strand_oracle.tcl` +3 (D unmask, DM escape hatch); `wireedit/test_wireedit_20` re-authored |
+
+RED-first: a 12-check probe of the S2 claims was verified red on the S1 tree with every control
+green, and the §4.4 short reproduced as `#net1 == #net1` before / `#net1` vs `#net2` after. Four
+sabotage variants are pinned and their red sets are **disjoint**: reverting #7 alone reddens only
+the two label-weld checks; reverting #6 alone reddens only the CROSSING cases (§15.1 — a plain
+mid-span label is silently repaired by the now-label-blind merge, so the crossing is the only
+witness); folding the label rule into `split_active` reddens only the 10 legacy-leg checks
+(§15.2); and dropping the `!split_active ||` short-circuit reddens only the default-mode checks.
+`tests/headless/wireedit/` 58/58, `tests/headless/run.sh` 6/6 (no golden regeneration owed, §12.3
+re-asserted by S2c), `run_regression.tcl` unchanged at the 3 pre-existing
+`test_ihp_sg13g2_libmgr` FAILs.
 
 **S3 — R3 RIDE, with live clamping.**
 Changes #8, #9 plus RIDE mode in #5, with the rotation closed form from the start so translate,
@@ -625,7 +655,17 @@ scheduled whenever. Interacts with issue **0229**.
 3. **`wire_through_tap_arm()` becomes moot for labels** — dead code to annotate, not delete;
    device pins still need it.
 4. **`test_wire_split.tcl` must be re-authored, not re-run.** 21 label references and zero
-   `res.sym` taps: the suite has no device-pin tap fixture to swap to.
+   `res.sym` taps: the suite has no device-pin tap fixture to swap to. **Done in S2** (§15.6).
+5. **The issue-0227 mask, and this one is a REGRESSION for the target user.** Added
+   2026-08-06 after measuring S2; it was missing from this list and it is the most important
+   entry in it. The split put a mid-span label on a wire ENDPOINT, and *two* separate rescues key
+   on endpoint coincidence — `connect_by_kissing()`'s wire-endpoint tether (change #8, alive
+   until S3) and `select_attached_nets()`' `endpoint_near` ELEMENT arm. Removing the split
+   removes both, so a `cadence_compat` user's mid-span label now strands when the wire moves,
+   where before it silently survived. It becomes identical to stock-default behaviour rather than
+   a new failure mode, and it is exactly what **S3/RIDE** exists to fix — but it is the *filer of
+   0227*'s own complaint getting worse in the interim. Full measurement, both endpoint-keyed
+   rescues, and the mitigation (`label_splits_wires 1`) in **§15.3**.
 
 **Migration: none. Zero files change on disk.**
 
@@ -1205,3 +1245,160 @@ commit satisfied them (now `-anchor 100 0` + a delta that clears the span); and 
 omitted `stretch`, so no `fluid_reroute` snapshot was taken and no RUBBER step could live-commit —
 the equality held for any implementation, including none. Both are sabotage-verified against a
 stubbed `label_ride_apply()`.
+
+---
+
+## 15. Settled while building S2
+
+Eight things §5.2/§6/§7 stated in one line, that the implementation had to decide. All measured
+2026-08-06 against the S1 tree at `8fee6129` and then against the S2 build. **§15.3 is the one
+that changes a decision, not just a detail.**
+
+### 15.1 Changes #6 and #7 must ship together, but their symptoms are NOT symmetric — the witness is a CROSSING
+
+§6 marks #7 "**Mandatory with #6**" and §5.2 gives the reason: splitting without relaxing the
+merge yields a wire that can never re-weld. That half is directly observable — two abutting
+collinear wires with a label at the joint simply never weld, and sabotage-verified it reddens
+exactly two checks (`W0/S2`, `S2a`).
+
+The other half is not, and that was worth learning before writing the test. **Reverting #6 alone —
+splitter still cuts at labels, merge now label-blind — leaves a plain mid-span label at ONE wire
+anyway.** `maintain_wire_segments()` is `break_wires_at_attach_points()` then `trim_wires()`, so
+the split is created and welded back inside the same call and `xschem get wires` looks correct. It
+is not correct: the sheet is being cut and re-welded on every edit, with `trim_wires`' `changed`
+arm firing `set_modify(1)` for nothing.
+
+The case that cannot be repaired that way is a label at a wire **CROSSING**: four wire endpoints
+meet at the joint, so `end1`/`end2` are non-zero, the merge is refused on the cheap test before
+`any_inst_pin_at()` is ever consulted, and the split is **permanent** — 4 segments and the §4.4
+short. So the test that enforces "must ship together" in the #6 direction is the crossing case
+(`S2b`, `S2d`, `W5 T3c`), not the mid-span one. Sabotage-verified: reverting #6 alone reddens
+exactly those four checks and nothing else.
+
+### 15.2 `label_splits_wires` needs its own gate; folding it into `split_active` breaks the ESCAPE HATCH, not the default
+
+`trim_wires()` caches `autotrim_wires` once per call as `split_active`, and the merge refusal is
+gated on it so the default (autotrim-off) trim/join stays byte-for-byte unchanged and the
+`O(inst·pins)` probe is short-circuited off that path — `wire_segment_splitting.md` **D2**, and it
+is load-bearing. The obvious economy is to pass `split_active` as the new skip-labels argument.
+
+It is wrong, and it is wrong in the direction that testing the *default* cannot catch: the S2
+default behaviour is still correct and every S2 check stays green. What breaks is
+`label_splits_wires 1` — labels are skipped there too, so the switch no longer restores pre-S2
+behaviour. A one-release escape hatch that does not switch is worse than no hatch, because the
+next netlist difference gets bisected instead of toggled. Sabotage-verified: folding the gate
+reddens **10 legacy-leg checks across three files** (`W0/S2 legacy`, `W1/S2 legacy`,
+`W2 T2 legacy`, `W3 T4 legacy`, `W7b legacy`, `DL0`, `DL6`, `DM0`, `DM1`, `DM2`) and nothing else.
+So the two gates are independent: `split_active` decides *whether pins are boundaries at all*,
+`label_splits` decides *which pins count*. Device-pin behaviour is unchanged in either autotrim
+mode, asserted by `S2e`.
+
+### 15.3 S2 removes the mask that was protecting issue 0227 for the `cadence_compat` user
+
+**This is a regression for the person who filed 0227, it was not in §9, and it is the strongest
+argument for landing S3 alongside S2 rather than after it.**
+
+§13.5 row 2 already recorded the mechanism without naming it a dependency: under
+`autotrim_wires`, "the split puts the label on an endpoint; kissing tethers it; net stays `VOUT`;
+strands **0**". That is not a property of the label — it is a property of the **split**, and S2
+deletes the split. Two *separate* rescues key on endpoint coincidence and both stop firing for a
+mid-span label:
+
+- `connect_by_kissing()`'s **wire-endpoint arm** (`actions.c`, change #8, deliberately alive until
+  S3) minted the tether stub only because the stationary label's pin coincided with the moving
+  halves' shared endpoint. Interior to a single wire, the arm finds nothing.
+- `select_attached_nets()`' **ELEMENT arm** fires only on `endpoint_near` (`select.c`) — which §6
+  change #11 already predicted "goes moot for labels", filed there as a *comment-only* change.
+  That arm is what used to make a `stretch`-without-`kissing` drag of a mid-span label carry its
+  wire along.
+
+Measured 2026-08-06, one gesture — **issue 0227's own repro: label stationary, wire translates,
+kissing armed** — across three configurations:
+
+| config | wires | `fluid_last_move_label_strands` | resolved net |
+|---|---|---|---|
+| `autotrim_wires 0` (stock default) | 1 | **1** | `#net1` |
+| `autotrim_wires 1`, `label_splits_wires 1` (pre-S2) | 3 | **0** | `VOUT` |
+| `autotrim_wires 1`, `label_splits_wires 0` (**S2**) | 1 | **1** | `#net1` |
+
+And the same three rows for a label-moving `stretch` without `kissing` (the `W7b` fixture, issue
+**0228**'s cell): pre-S2 `GB`, S2 `#net1`, stock default `#net1`.
+
+What that does and does not mean:
+
+- **Not a new defect class.** S2 makes the `cadence_compat` user behave *exactly* like a
+  stock-config user, who has stranded on this gesture since forever. No new failure mode is
+  invented and nothing that was correct becomes incorrect.
+- **But it is strictly worse than yesterday for the target user**, whose whole environment is
+  `cadence_compat`, and whose original complaint is 0227.
+- **The LEASH is untouched**, which was the prediction and is now measured: the label-*dragged*
+  direction scores 0 strands in all three configs, because `label_ride_run()` already grew the
+  owner across collinear split points on purpose (§14.4). S2 is a no-op for S1, confirmed by
+  running `test_label_ride.tcl` with `label_splits_wires` both ways.
+- **Mitigation, and it is now load-bearing rather than insurance:** `set label_splits_wires 1`
+  restores the mask exactly. §9's closing line ("insurance rather than a gate") was written
+  before this was known and is superseded for as long as S3 is outstanding.
+
+Recommended sequencing consequence: either ship S2 and S3 together, or default
+`label_splits_wires` to **1** until S3 is in and flip it with S3. Recorded as ground truth, not
+prose: `test_label_strand_oracle.tcl` D0–D2 (the unmask) and DM0–DM2 (the hatch restoring it),
+`test_wire_split.tcl` `W7b/S2` + `W7b legacy`.
+
+### 15.4 The label still NAMES what it no longer cuts, and that is asserted rather than assumed
+
+The whole design rests on `touch()` being interior-inclusive in `name_attached_inst_to_net()`
+(`netlist.c`), so removing the split must not remove the name. Cheap to assert and easy to lose,
+so it is asserted at four independent places: the welded run keeps `lab=GB` (`W0/S2`), two
+mid-span labels still name an unsplit run (`W1/S2`), a label placed mid-span names it without
+splitting (`W3 T4b/S2`), and the exact-vs-near distinction still governs naming with no split in
+either case (`W5 T8/S2`, `T8b/S2`). `W2 T2 legacy` closes the loop by asserting the resistor's
+node map is byte-identical across the `label_splits_wires` switch — which is what "§9,
+connectivity-neutral" means operationally.
+
+### 15.5 `point_on_wire_or_pin()` was not touched, and the two point predicates still disagree on purpose
+
+§5.2 keeps it label-aware (a label landing on another label's pin is a legitimate Add-Wire-Label
+drop target) while S1's `fluid_point_on_copper(px, py, skip)` is label-**blind** (a naming anchor
+is not copper, §14.1). S2 adds a third, unrelated axis — whether a pin is a *segment boundary* —
+and it belongs to neither: `any_inst_pin_at()` owns it. All three now carry a comment naming which
+question they answer, because the failure mode of picking the wrong one is silent in every
+direction.
+
+### 15.6 Change #12 was a re-author of the whole suite, and the legacy legs are how "run it both ways" is actually realised
+
+§6 sized it right: 21 `lab_wire`/`lab_pin` references, **zero** `res.sym` taps, so there was no
+device-pin fixture to swap to and each had to be authored. `devices/res` at `(X, T+30)` rot 0
+flip 0 taps `(X, T)` with pin `P` and dangles `M` at `(X, T+60)`; every fixture keeps that `M`
+coordinate clear of other copper on purpose, and `S2d` asserts two of the tap coordinates so a
+future `res.sym` geometry change cannot make the case vacuous instead of red.
+
+Each phase now carries up to three legs — the device-pin leg (the machinery, unchanged), the label
+mirror (the S2 claim), and a `label_splits_wires 1` legacy leg. The legacy legs are not
+redundancy: they are the only remaining coverage for two things. (a) The escape hatch really
+switching (§15.2). (b) **Hazard (B)'s geometric re-find.** §14.8's transient weld was what
+destroyed the captured owner id, and it only happened *because* the wire was split at the label;
+under the S2 default no split exists, the owner id survives, and `test_label_ride.tcl` D2 stopped
+exercising the re-find at all. `DL2` (and `DM1` in the strand oracle) carry it now. 66 → **115
+checks** in `test_wire_split.tcl`; `test_label_ride.tcl` 82 → 89; `test_label_strand_oracle.tcl`
+16 → 19.
+
+### 15.7 `merge_collinear_wires()`' pin-aware arm is still dead code; its edit is consistency only
+
+`any_inst_pin_at()` has exactly two call sites. `check.c`'s `trim_wires` merge refusal is the
+**only live one**; `merge_collinear_wires()`' arm is unreachable on the current call graph because
+its sole caller (`save_wire()`, `save.c`) passes `ignore_pins = 1` — that pin-blindness is what
+makes the save coalesce collapse the split, i.e. §12.3's "nothing reaches disk". The skip-labels
+argument is threaded through it so a future unification of the two merge sites cannot silently
+inherit the pre-S2 rule, and the `tclgetboolvar()` read is skipped when `ignore_pins` is set so the
+save path costs nothing. **No behaviour change is claimed for it and no test pretends to exercise
+it.**
+
+### 15.8 Nothing new reaches disk, re-asserted by test rather than re-measured
+
+§12.3 settled this and S2 does not reopen it: the save-time coalescer is pin-blind, so the label
+split never persisted, and removing it cannot change a golden. Rather than re-run the 120-file
+corpus, `S2c` asserts the invariant directly — the same source file saved under
+`label_splits_wires` 0 and 1 produces one `N` record and **byte-identical output** — and
+`tests/headless/run.sh`'s 6 netlist goldens are green unchanged. The one file §12.3 found keeping a
+label-pin split on disk (`xschem_library/pcb/pcb_test1.sch`, via issue **0225**'s divergent
+`prop_ptr`) is now strictly unreachable through a label, which is the "S2 retires it" of §14.8.

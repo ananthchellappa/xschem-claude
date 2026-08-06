@@ -14,6 +14,80 @@ Newest entries on top.
 
 ---
 
+## Q32. Clicking either side of a net label used to select just that piece of wire, and now it selects the whole run. Did something break?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `8fee6129` + uncommitted — `wire_label_ride.md`
+  S2 (R2) just landed on top of S0 + S1.
+
+No — that is the feature, and it is the one thing S2 deliberately gives up. `wire_segment_splitting.md`
+made xschem split a wire in memory at every **attachment point** so each inter-attachment span became
+an independent click target, and it counted a net label's `PINLAYER` rect as an attachment. S2 says a
+net label is a **name**, not a terminal: it no longer cuts the wire it taps. A **device** pin still
+does, so the resistor-tap case the splitting feature was built for is untouched — on the original
+fixture (a run tapped by a label at x=−80 and a resistor at x=0) you now get **2** clickable segments
+instead of 3, and the resistor's boundary is still there.
+
+Three things worth knowing about it:
+
+- **It only affects you if Auto Join/Trim Wires is on** (`autotrim_wires`, which `cadence_compat`
+  force-enables). With stock defaults nothing ever split at a label, so nothing changes.
+- **Nothing on disk changes, and connectivity does not change.** What binds a label to a net is
+  `touch()` in `name_attached_inst_to_net()` (`src/netlist.c`), which is interior-inclusive — the
+  split was never what made the connection. The save path's coalescer was always pin-blind, so the
+  split never reached a `.sch` either.
+- **It fixes a real bug in the other direction.** Splitting *both* wires where they cross gives four
+  segments a coincident endpoint, and coincident endpoints *are* connectivity. So a label with an
+  **empty** `lab=` sitting on a crossing — a label that names nothing at all — silently merged two
+  independent nets. Measured: four resistors on one net before, two after.
+
+Escape hatch if you want the old boundaries back: `set label_splits_wires 1`. It restores the pre-S2
+behaviour exactly, including the crossing short. There is one other reason you might want it right
+now — see Q33.
+
+---
+
+## Q33. Since that change, dragging a wire out from under a net label loses the net name. That used to work. Why?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `8fee6129` + uncommitted — `wire_label_ride.md` S2 landed,
+  **S3 not yet**.
+
+It used to work **by accident**, and S2 removed the accident. This is issue **0227**, and until S2 it
+only reproduced for stock-config users; now it reproduces for `cadence_compat` users too.
+
+The mechanism is worth understanding because it generalises. Splitting the wire at the label's pin
+put the label on a wire **endpoint**, and two entirely separate rescues fire only on endpoint
+coincidence:
+
+- `connect_by_kissing()`'s **wire-endpoint arm** (`src/actions.c`) found the stationary label in
+  `instpin_spatial_table` at the moving wire's endpoint and minted a tether stub. Interior to a
+  single unsplit wire, there is no endpoint there to find.
+- `select_attached_nets()`' **ELEMENT arm** (`src/select.c`) fires only on `endpoint_near`, which is
+  what used to make a `stretch` drag of a mid-span label carry its wire along (issue **0228**'s
+  cell).
+
+Neither was designed to protect a label; both did, as a side effect of geometry the splitter
+manufactured. Measured on 0227's own repro — label stationary, wire translates, connected drag:
+
+| config | wires | strands | net |
+|---|---|---|---|
+| `autotrim_wires 0` (stock default) | 1 | 1 | `#net1` |
+| `autotrim_wires 1`, `label_splits_wires 1` (pre-S2) | 3 | 0 | `VOUT` |
+| `autotrim_wires 1`, `label_splits_wires 0` (S2) | 1 | 1 | `#net1` |
+
+So no new failure mode was invented — you now get the same result a default-config user has always
+had — but if you were relying on the mask, it is gone. The real fix is **S3 (RIDE)**: the label
+follows its wire's new geometry, orientation included, for every config at once. Until S3 lands,
+`set label_splits_wires 1` restores the mask exactly.
+
+Note what is *not* affected: dragging the **label itself** on a connected drag. That is S1's LEASH,
+it is gated on `connect_by_kissing`, and it measures 0 strands in all three configs above — S2 is a
+no-op for it, because the leash always resolved its owner as the whole **collinear run** rather than
+one wire record, precisely so split points were invisible to it.
+
+---
+
 ## Q31. Dragging a net label used to leave a little wire behind, and now it doesn't. What changed, and how is the label still connected?
 
 - **Asked:** 2026-08-05

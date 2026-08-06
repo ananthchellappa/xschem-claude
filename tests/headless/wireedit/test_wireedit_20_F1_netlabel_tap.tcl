@@ -20,12 +20,17 @@
 #   - the label is projected back onto its owner span at move END (R7), returning to (-80,-60)
 #     rather than committing off the run;
 #   - with the label transiently away from the -80 split point, maintain_wire_segments welds the
-#     two collinear halves, so the run is left split only at the RESISTOR pin. That weld is
-#     transient under autotrim (the next edit re-splits) until S2 removes the label split.
+#     two collinear halves, so the run is left split only at the RESISTOR pin.
 # P1 connectivity is unchanged, which is the point: the stub was never what connected the label
-# (name_attached_inst_to_net binds a pin to any wire it touch()es, interior included). P7's
-# stable set shrinks to the pieces that still exist as objects -- the two halves either side of
-# x=-80 are the SAME copper, merely no longer split there.
+# (name_attached_inst_to_net binds a pin to any wire it touch()es, interior included).
+#
+# AMENDED AGAIN for S2 (R2, changes #6/#7, `label_splits_wires` default 0): the label never
+# splits the run in the first place, so the fixture starts at 2 segments (split at the RESISTOR
+# only) instead of 3, and S1's transient weld is now the resting state. Every post-drag assertion
+# below is BYTE-IDENTICAL to the S1 result -- which is the S2 claim worth having here: removing the
+# split changes what the fixture looks like at rest, not what the drag does to it. The two halves
+# either side of x=-80 are now genuinely one object all along, so BOTH run pieces belong in the P7
+# stable set. Set `label_splits_wires 1` to get the 3-segment pre-S2 fixture back.
 #
 # Uses devices/res + devices/lab_wire (not the fixtures.tcl res.sym/lab_pin helpers): the
 # mid-span split needs an INLINE net label (lab_wire), and this reproduces the proven-green
@@ -61,14 +66,15 @@ xschem wire -100 -60 110 -60                                   ;# horizontal thr
 xschem instance devices/res     0 -30 0 1 {name=R7 m=1 value=320} ;# resistor taps the run at x=0
 xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}  ;# net-label taps mid-span at x=-80
 
-check "F1: mid-span tap split the run into 3 clickable segments" [expr {[xschem get wires] == 3}]
+# S2: the RESISTOR pin still splits the run at x=0; the net LABEL at x=-80 does not (R2).
+check "F1: the device tap alone splits the run into 2 clickable segments" [expr {[xschem get wires] == 2}]
 
 # capture connectivity + the run segments that must stay untouched (P7 stable set)
 set snap [net_snapshot]
-# P7 stable set: the run piece the label never touched. The two halves either side of x=-80 weld
-# into {-100 -60 0 -60} once the label leaves that split point (see the header), so they are
-# asserted below by geometry rather than as "untouched objects".
-set run_segs {{0 -60 110 -60}}
+# P7 stable set: BOTH run pieces. Under S2 the label never cut the run, so neither half is a
+# gesture artifact -- dragging the label must leave every existing wire object alone (it did
+# already under S1, where the -100..0 piece was instead a weld of two halves).
+set run_segs {{-100 -60 0 -60} {0 -60 110 -60}}
 
 # --- drag the net-label up (0,-50) via the faithful cadence stretch+kissing drag ---
 set li [inst_by_name l8]

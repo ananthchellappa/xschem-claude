@@ -146,29 +146,66 @@ check "C two mid-span labels stranded -> 2" [strands] 2
 
 # ---------------------------------------------------------------------------
 # D. The user's real environment: cadence_compat forces autotrim_wires on
-#    (cadence_compat_sync, xschem.tcl:16260-16264), so the wire IS split at the label pin and
-#    the label ends up on an ENDPOINT of both halves -- which is what MASKS issue 0227 for this
-#    user (spec §4.2). The oracle must agree: no strand here, because the label really is still
-#    connected. This is the sabotage variant of A1 (WIRING.md §10: every predicate needs one) --
-#    if the strand test ever degrades to "absolute count of off-copper labels", D1 goes red.
+#    (cadence_compat_sync, xschem.tcl:16260-16264). This is issue 0227's OWN repro -- the label
+#    is STATIONARY and the WIRE translates out from under it -- so it is the RIDE case (S3) and
+#    neither S1's leash (which needs the label to be the moving object) nor S2 addresses it.
+#
+#    RE-AUTHORED for S2 (R2, changes #6/#7). Pre-S2 the split put the label on an ENDPOINT of both
+#    halves, so connect_by_kissing()'s WIRE-endpoint arm (actions.c, change #8 -- deliberately NOT
+#    removed until S3) found it in instpin_spatial_table and minted a TETHER stub, and the label
+#    stayed connected. That accident is what MASKED 0227 for the cadence_compat user (spec §4.2,
+#    §13.5 row 2). With `label_splits_wires 0` the label is strictly INTERIOR to one wire, the
+#    wire's endpoints are 100 units away, the tether arm finds nothing, and the label strands.
+#
+#    So S2 removes the mask. That is a real, measured behaviour change for the cadence user and it
+#    is recorded here as ground truth rather than smoothed over -- but it is NOT a new defect
+#    class: it makes them behave exactly like a stock-config user, who has stranded on this
+#    gesture all along (case A1 above, autotrim off, same fixture, strands 1). Measured
+#    2026-08-06, all three configs, same gesture:
+#      autotrim 0 (stock default)            wires 1  strands 1  net #net1
+#      autotrim 1, label_splits_wires 1      wires 3  strands 0  net VOUT   <- the pre-S2 mask
+#      autotrim 1, label_splits_wires 0      wires 1  strands 1  net #net1  <- S2, == default
+#    RIDE (S3) is what closes it, for both configs at once. Until then `label_splits_wires 1`
+#    restores the mask, and DM below keeps that promise honest.
 # ---------------------------------------------------------------------------
 scene
 set autotrim_wires 1
+set label_splits_wires 0
 xschem wire 0 0 200 0
 xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
 xschem trim_wires
-check "D0 autotrim really split the wire at the label pin" [xschem get wires] 2
+check "D0 S2: the label does not split the wire (R2)"      [xschem get wires] 1
+xschem unselect_all
+xschem select wire 0
+xschem move_objects 0 100 stretch kissing
+xschem resolved_net 0
+check "D1 S2 unmasks 0227: moving the wire strands it -> 1" [strands] 1
+check "D2 ... and the net really was lost (S3 owed)"        [xschem getprop wire 0 lab] {#net1}
+
+# DM the mask itself, under the escape hatch: `label_splits_wires 1` must restore the pre-S2
+#    result exactly, or the switch is not a switch. This is also the sabotage variant of A1
+#    (WIRING.md §10: every predicate needs one) -- if the strand test ever degrades into an
+#    absolute count of off-copper labels, DM1 goes red.
+scene
+set label_splits_wires 1
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+xschem trim_wires
+check "DM0 legacy: autotrim splits the wire at the label pin" [xschem get wires] 2
 xschem unselect_all
 xschem select wire 0
 xschem select wire 1
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "D1 autotrim+kissing keeps the label connected -> 0" [strands] 0
-check "D2 ... and the net name survives"                   [xschem getprop wire 0 lab] {VOUT}
+check "DM1 legacy: the split+tether mask keeps it connected -> 0" [strands] 0
+check "DM2 legacy: ... and the net name survives"                [xschem getprop wire 0 lab] {VOUT}
+set label_splits_wires 0
 
-# D3 the hole autotrim does NOT mask: the keyboard stretch paths never arm kissing (issue 0228),
-#    so even a split-to-endpoint label is stranded. Same repro, kissing withheld.
+# D3 the hole autotrim never masked, in either setting: the keyboard stretch paths do not arm
+#    kissing (issue 0228), so there is no tether to mint. Same repro, kissing withheld. Asserted
+#    under `label_splits_wires 1` so it stays the 0228 claim and not a restatement of D1.
 scene
+set label_splits_wires 1
 xschem wire 0 0 200 0
 xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
 xschem trim_wires
@@ -179,6 +216,7 @@ xschem move_objects 0 100 stretch
 xschem resolved_net 0
 check "D3 autotrim, kissing NOT armed (0228) -> 1" [strands] 1
 check "D4 ... and the net really was lost"         [xschem getprop wire 0 lab] {#net1}
+set label_splits_wires 0
 set autotrim_wires 0
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \

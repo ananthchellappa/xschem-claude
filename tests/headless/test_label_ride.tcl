@@ -104,31 +104,58 @@ check "C1 perpendicular + follow set: still one N"  [xschem get wires] 1
 check "C2 ... leash put the label back"             [lp] {100 0}
 check "C3 ... the wire is untouched"                [spans] {{0 0 200 0}}
 
-# D. the user's real environment: cadence_compat forces autotrim_wires on, so placing the label
-#    already SPLIT the wire at its pin.  S1 does not remove that split -- that is S2, change #6.
-#    Measured consequence worth pinning: the apply site is necessarily AFTER
-#    maintain_wire_segments (spec §11 hazard A: the last geometry mutation must precede it), so
-#    the cleanup pass runs while the label is transiently off the split point and WELDS the two
-#    halves back; the leash then puts the label back mid-span.  The weld destroys the captured
-#    owner wire id, which makes D2 the live exercise of hazard B's geometric re-find -- an
-#    id-only implementation binds to the wrong half here and D2 goes red.
-#    The weld is TRANSIENT: the next edit's maintain_wire_segments splits again (D6).  When S2
-#    lands, D6 becomes a single wire and must be updated deliberately.
+# D. the user's real environment: cadence_compat forces autotrim_wires on.  RE-AUTHORED for S2
+#    (R2, changes #6/#7): the label no longer splits the wire at its pin, so `label_splits_wires`
+#    (default 0) makes this whole block a single-wire story and D6's weld is the RESTING state,
+#    not a transient.  The leash result is BYTE-IDENTICAL either way -- D0/D6 are the only lines
+#    that move -- because label_ride_run() already grew the owner across collinear split points on
+#    purpose (spec §14.4), which is exactly what S2 makes true of the data model itself.  The
+#    pre-S2 numbers are kept as the DL legacy leg below, and they are not redundant: they are the
+#    only live exercise of hazard B's geometric re-find in this file.
 scene
 set autotrim_wires 1
+set label_splits_wires 0
 xschem wire 0 0 200 0
 xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
-check "D0 autotrim really split the wire at the pin" [xschem get wires] 2
+check "D0 S2: the label does NOT split the wire (R2)"  [xschem get wires] 1
 xschem unselect_all
 xschem select instance 0
 xschem move_objects 0 -100 stretch kissing
 check "D1 autotrim: no third wire extruded"          [xschem get wires] 1
-check "D2 ... leash put the label back (hazard B)"   [lp] {100 0}
-check "D3 ... the halves welded while it was away"   [spans] {{0 0 200 0}}
+check "D2 ... leash put the label back"              [lp] {100 0}
+check "D3 ... the run is untouched"                  [spans] {{0 0 200 0}}
 check "D4 ... the net keeps its name"                [xschem getprop wire 0 lab] {VOUT}
 check "D5 ... no strand"                             [st] 0
 xschem wire 400 0 500 0
-check "D6 ... and the weld is transient (S2 owed)"   [spans] {{0 0 100 0} {100 0 200 0} {400 0 500 0}}
+check "D6 ... and it STAYS one wire (S2: no re-split)" [spans] {{0 0 200 0} {400 0 500 0}}
+
+# DL. the same gesture with the S2 escape hatch OFF, i.e. the pre-S2 data model.  Two jobs:
+#     (a) it proves `label_splits_wires 1` restores the old behaviour exactly, so a netlist
+#         difference blamed on S2 has a switch rather than a bisect;
+#     (b) it is the ONLY case here that still destroys the captured owner wire id, so it is what
+#         keeps hazard B honest.  The apply site is mandatorily AFTER maintain_wire_segments
+#         (§11 A), so the cleanup pass runs while the label is transiently off the split point,
+#         welds the two collinear halves and frees one id; DL2 then needs the geometric re-find.
+#         An id-only label_ride_owner() binds to the wrong half and DL2 goes red.  Under
+#         `label_splits_wires 0` no split exists, the owner id survives, and D2 above no longer
+#         exercises that path at all -- which is why this leg is not optional.
+scene
+set autotrim_wires 1
+set label_splits_wires 1
+xschem wire 0 0 200 0
+xschem instance {lab_pin.sym} 100 0 0 0 {name=l1 lab=VOUT}
+check "DL0 legacy: autotrim splits the wire at the pin" [xschem get wires] 2
+xschem unselect_all
+xschem select instance 0
+xschem move_objects 0 -100 stretch kissing
+check "DL1 legacy: no third wire extruded"             [xschem get wires] 1
+check "DL2 legacy: leash put the label back (hazard B)" [lp] {100 0}
+check "DL3 legacy: the halves welded while it was away" [spans] {{0 0 200 0}}
+check "DL4 legacy: the net keeps its name"             [xschem getprop wire 0 lab] {VOUT}
+check "DL5 legacy: no strand"                          [st] 0
+xschem wire 400 0 500 0
+check "DL6 legacy: the weld is transient (re-splits)"  [spans] {{0 0 100 0} {100 0 200 0} {400 0 500 0}}
+set label_splits_wires 0
 set autotrim_wires 0
 
 # ---------------------------------------------------------------------------

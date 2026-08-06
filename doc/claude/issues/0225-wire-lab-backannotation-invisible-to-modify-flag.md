@@ -1,6 +1,17 @@
 # 0225 — netlist/highlight back-annotates `lab=` into wire records without setting modified, and `#netN` renumbers on every topology change
 
-Status: **OPEN** — measured repro, fix drafted, not implemented.
+Status: **OPEN** — measured repro, fix drafted, not implemented. Unchanged by
+`wire_label_ride.md` S1/S2, but **strictly rarer as of S2** (2026-08-06) and worth recording why:
+`trim_wires`' in-place collinear merge keeps `wire[i]`'s `prop_ptr` with **no comparison**
+(`check.c`, the merge branch), so when two halves weld, a diverged `lab=` on one of them is
+dropped — this issue's class. S1 made that newly *reachable* at a net label (the kissing stub that
+used to block the degree-2 merge was removed, spec §14.8); S2 removes the label split outright, so
+there are no halves to diverge at a label and the only remaining way in is a **device**-pin
+boundary. Concretely, the one file spec §12.3 found keeping a label-pin split on disk
+(`xschem_library/pcb/pcb_test1.sch`, `lab_wire lab=A` at `(700,-460)` — one half `{}`, the other
+`{lab=A}`, so `merge_collinear_wires`' byte-equal-`prop_ptr` gate refused the weld) can no longer
+reach that state through a label. **Do not fold this into that spec** — it is an independent writer
+bug in `netlist.c` and the fix below is unchanged.
 Area: `src/netlist.c` `wirecheck()` (`:1093`), `name_attached_nets()` (`:1117`), `set_unnamed_net()` (`:1584-1588`); `set_modify(-2)` at `:1765`
 Tests: none yet — proposed `tests/headless/test_wire_lab_backannot_0225.tcl`
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`

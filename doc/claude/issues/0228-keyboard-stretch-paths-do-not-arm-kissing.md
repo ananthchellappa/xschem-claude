@@ -9,6 +9,20 @@ for a moving label is gated on `xctx->connect_by_kissing` (spec §5.6, §14.5) �
 is a *replacement* on the connected drag and a no-op everywhere else. The two keyboard entry points
 below never arm kissing, so they get neither the old stub nor the new leash and behave exactly as
 they do today. That is another reason to fix them here rather than widen the leash's gate.
+**WIDENED 2026-08-06 by S2 (`wire_label_ride.md` R2).** This issue's shape was "the *keyboard*
+stretch paths never arm kissing". The label half now also reaches **any** `stretch` without
+`kissing` on a MID-SPAN label, because S2 removed the split that used to rescue it by a second
+route: with the wire split at the label pin, `select_attached_nets()`' ELEMENT arm — which fires
+only on `endpoint_near` (`select.c`) — grabbed both halves and stretched them to follow the label,
+so the net survived even with kissing withheld. Interior to one unsplit wire that arm never fires
+(spec §6 change #11 predicted exactly this, filed there as comment-only), so the label commits off
+copper and the net reverts to `#netN`. Measured 2026-08-06: same fixture, `label_splits_wires 1` →
+net `GB`, `label_splits_wires 0` → `#net1`; a stock-config user (autotrim off, never split) has had
+the `#net1` result all along. Witness: `tests/headless/test_wire_split.tcl` **W7b/S2** plus its
+legacy leg. This does not change the fix below — widening the leash's gate is still the wrong
+answer (§14.6 pins that as policy) — but it does raise the priority, and it is the same mask
+removal that escalated issue **0227**. Spec §15.3.
+
 **Instrumented 2026-08-05 (spec S0):** the label half now has an oracle —
 `tests/headless/test_label_strand_oracle.tcl` case D3 drives a stretch with kissing withheld
 under `autotrim_wires 1` and scores `fluid_last_move_label_strands` = 1, which is this issue's

@@ -13801,7 +13801,8 @@ set tctx::global_list {
  graph_sel_wave graph_selected graph_sort graph_unlocked graph_use_ctrl_key 
  graph_vlegend hide_empty_graphs
  hide_symbols incr_hilight incremental_select infix_interface infowindow_text intuitive_interface
- keep_symbols launcher_default_program light_colors line_width live_cursor2_backannotate
+ keep_symbols label_splits_wires launcher_default_program light_colors line_width
+ live_cursor2_backannotate
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
  no_ask_save no_ask_simulate no_change_attrs nolist_libs noprint_libs only_probes
@@ -15731,6 +15732,19 @@ set_ne escape_deselects 0
 set_ne intuitive_interface 1
 set_ne use_cursor_for_selection 0
 set_ne autotrim_wires 0
+# Does a type=label instance's pin CUT the wire it taps into two clickable segments?
+# 0 (default, doc/claude/specs/wire_label_ride.md R2/S2): no -- a net label NAMES copper, it
+# does not cut it. Its PINLAYER rect is a naming anchor, so it neither splits a wire
+# (break_wires_at_attach_points) nor blocks trim_wires' collinear rejoin (any_inst_pin_at).
+# A DEVICE pin still does both: wire_segment_splitting.md's per-segment click granularity is
+# unchanged for the resistor-tap case that motivated it, and only lost at a net label.
+# 1 restores the pre-S2 behaviour byte-for-byte, as a one-release escape hatch -- it also
+# restores the measured bug it exists to fix: an EMPTY lab= label sitting on a wire CROSSING
+# splits both wires there, and four coincident endpoints ARE connectivity, so two independent
+# nets silently merge (spec 4.4).
+# Only has any effect when autotrim_wires is on (which cadence_compat force-enables); with
+# auto join/trim off nothing splits at any pin and this variable is inert.
+set_ne label_splits_wires 0
 set_ne auto_set_wire_bus 0
 # autosave: every genuine edit immediately writes a cellName~.sch backup; saving
 # the real file removes it. Persists unsaved edits across descend and crashes
