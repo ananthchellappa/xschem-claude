@@ -422,7 +422,12 @@ WHOLE teardown below — with a placement preview co-armed on top of a live wire
 dropped `START_SYMPIN` before `delete()` could run, orphaning the preview instance in the drawing
 with `sympin_preview`/`wirelabel_preview` stuck at 1 → callback.c's click-select guard
 (`!sympin_preview`) false forever = unrecoverable UI. **An early return inside a teardown function
-is a class-D generator: gate the ONE step you meant to skip, do not `return`.**) · E **Transform
+is a class-D generator: gate the ONE step you meant to skip, do not `return`.** The same teardown
+has three more class-D holes, each filed with a measured headless repro: **0231** it deletes the
+SELECTION rather than the preview, so a `Ctrl+A` in between wipes the schematic; **0232** every
+other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
+paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
+**0233** the ESC path still leaks `STARTWIRE|STARTRECT|STARTPOLYGON` when `last_command == 0`.) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
 follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others

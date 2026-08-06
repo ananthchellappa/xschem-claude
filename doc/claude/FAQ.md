@@ -44,7 +44,9 @@ gestures; the two-stage ESC for a *plain* wire draw (first press ends the segmen
 wire mode) is unchanged.
 
 Note `p` (Add Pin) and the component-placement dialogs can still be armed mid-draw. They are now
-*recoverable* — one ESC cleans up properly — but they do not yet cancel the wire the way `l` does.
+*recoverable* — one ESC cleans up properly — but they do not yet cancel the wire the way `l` does
+(issue **0233**). Related open items found while fixing this: **0231**, **0232**, **0234**, **0235**,
+**0236**.
 
 ---
 

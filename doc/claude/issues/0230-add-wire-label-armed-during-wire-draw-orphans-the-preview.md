@@ -195,46 +195,44 @@ pre-existing `test_ihp_sg13g2_libmgr` defect** (expects 9 libs, tree has 10) and
 headless tests that touch `abort_operation` plus the 5 known-red ones were run against the pre-fix
 and post-fix binaries and the per-test failure counts are **byte-identical**.
 
-## Still open (deliberately out of scope)
+## Still open — now filed as their own issues
 
-1. **`p` (Add Pin) has the identical clash.** `addpin::abort_if_placing` uses the same
-   `START_SYMPIN`-only gate (`xschem.tcl:10881`) and `p` is registered the same way
-   (`callback.c:5010`), so an Add-Pin preview can still be armed mid-wire-draw. Fix (A) makes it
-   **recoverable** (ESC now tears it down), but the gesture is still unusable while `STARTWIRE`
-   wins every click. The one-line remedy is the same `abort_wire_line_command()` call in the
-   `add_sch_pin` / `add_symbol_pin` branches; it changes commands this report did not name, so it
-   waits for a decision. Same for `PLACE_SYMBOL` (component placement dialogs).
-2. **Three more callers reach `abort_operation` with both live** and are now correct by (A), but
-   were never the reported path: the context-menu *abort & redraw* pick (`callback.c:4332`), the
-   cadence double-click transient teardown (`:8354`), and the **ungated** `.load` dialog
-   Cancel/Escape (`xschem.tcl:7160`, `:7317`).
-3. **ESC does not reach C while the form is open.** `addlabel::grab_esc` binds `<Key-Escape>` on
-   `.drw` with `break` (`xschem.tcl:11370`) while the generic dispatcher is bound on the toplevel
-   (`:14164`), so `callback.c`'s `XK_Escape` siblings — the `MENUSTARTWIRE` clear (`:7289`) and the
-   cadence `last_command &= ~STARTWIRE` fixup (`:7293`) — are bypassed. Harmless now that
-   `abort_operation()` itself is complete, but it means the one pre-existing mitigation for a stuck
-   `last_command` never ran on the exact path that needed it.
-4. **`::sympin_place` is a write-only Tcl owner latch** with no clear site (`xschem.tcl:10985`,
-   `:11350`). Untouched here; `add_wire_label.md` #8 still applies.
+All four were verified independently on 2026-08-06 (measured headless repros, one agent per item)
+and filed. Two of the verdicts below changed under measurement.
+
+1. **`p` (Add Pin) has the identical clash** → issue **0233**. The census came back much wider than
+   this note assumed: the gate exists at **1 of 13** placement arm sites, and the reverse direction
+   (`w` on top of a live preview) is open too. 0233 also found an ESC hole this fix does not close —
+   arms that zero `last_command` while leaving `STARTWIRE` set (`r`, `P`, `t`, bare `place_symbol`)
+   leave `ui=3 [STARTWIRE|STARTRECT]` after ESC, i.e. **the "grey lines" symptom survives**.
+2. **Three more callers reach `abort_operation` with both live** and are correct by (A). The
+   `.load` dialog Cancel/Escape (`xschem.tcl:7160`, `:7317`) is still ungated by `ui_state`; no
+   separate issue, it is covered by 0233's F1/F3.
+3. **ESC does not reach C while the form is open** → issue **0235**. **The "harmless now" verdict
+   above is wrong** and 0235 supersedes it: Tk picks the most specific binding *per bindtag*, and
+   both the grab and the dispatcher are on `.drw`, so `<Key-Escape>` wins regardless of `break`.
+   With the form **idle** the Escape aborts *nothing* — a menu-armed wire, a keyboard move and a
+   live wire draw all survive, and the next canvas click acts on them.
+4. **`::sympin_place` is a write-only Tcl owner latch** → issue **0236**, with a measured A/B: a
+   stale latch makes the two forms swap identities at the shared `sympin_drops` witness (Add-Pin
+   drains a name it never placed and re-arms an `iopin.sym` port on a user who is placing labels).
 
 ## Pre-existing defects found while reviewing this fix (NOT introduced by it)
 
 A 4-lens adversarial review of the diff (21 findings raised, **0 survived refutation** as
 regressions) surfaced these. All were verified to exist at `aabf354e` too, on code paths this
-change does not touch. Filed here so they are not lost; each deserves its own issue.
+change does not touch. All four have since been reproduced independently and filed:
 
-1. **`Ctrl+A` then `ESC` with a preview armed deletes the whole schematic.** `select_all` makes the
-   preview teardown's `delete(0)` (`callback.c:393`) operate on the *entire* selection, and with
-   `to_push_undo == 0` there is no baseline to undo it with. Severe; entirely pre-existing.
-2. **Any other placement armed on top of a live label/pin preview orphans it** — `Ctrl+V` /
-   Edit ▸ Merge is the shortest GUI route. Same class-D residue as defect 2 above, different door:
-   the new arm clears `START_SYMPIN`/`STARTMOVE` without running the preview teardown, so the
-   `lab_pin` stays committed and `sympin_preview` stays 1. Fix (A) closes only the ESC door.
-3. **The clash is gated in one direction only.** `l` now cancels a live wire, but starting a *wire*
-   (`w` / menu) on top of a live label preview re-arms both — and, as defect 1 explains, the label
-   is then undroppable until ESC. The symmetric gate belongs in `start_wire()`/`start_line()`, which
-   is a wider change than this report warrants.
-4. **`abort_operation()`'s merge/paste arms clobber the document dirty flag.** `callback.c:404`
-   and `:415` call `set_modify(0)` unconditionally instead of the save/restore idiom the placement
-   arm uses (`save = xctx->modified; … set_modify(save);`, `:385`/`:394`), so cancelling a paste
-   marks an already-dirty document clean. Reachable on several pre-existing routes.
+1. **`Ctrl+A` then `ESC` with a preview armed deletes the whole schematic** → issue **0231**.
+   `select_all` makes the teardown's `delete(0)` (`callback.c:393`) operate on the *entire*
+   selection. Correction to the note as first written: `undo` *does* restore the simple case (the
+   arm pushed a baseline), but recovery is lossy or wrong on three of four doors — and
+   `set_modify(save)` then reports the emptied document **clean**, so nothing prompts. The shortest
+   route contains no ESC at all: arm the form, `Ctrl+A`, close the form.
+2. **Any other placement armed on top of a live preview orphans it** → issue **0232**, which also
+   closes issue **0123**'s open residual (*"desync ROOT open — no headless repro"*). 17 doors
+   measured; 6 leave the terminal desync, 9 commit a label the user never dropped.
+3. **The clash is gated in one direction only** → folded into issue **0233** (see above).
+4. **`abort_operation()`'s merge/paste arms clobber the document dirty flag** → issue **0234**. Note
+   the obvious fix is wrong: `merge_file()` already `set_modify(1)`s, so the pre-merge value has to
+   be latched, not read at abort time.

@@ -111,7 +111,7 @@ All defaults are reconfigurable from a user's loadable rc/script via `bind`/`key
 
 `l` pressed **without** first leaving wire-draw mode used to arm two modal gestures at once, and
 that is not a usable state at any flag setting: `end_place_move_copy_zoom()` tests `STARTWIRE`
-(`callback.c:2809`) **before** the placement arm (`:2864`), so every click fed the wire and the
+(`callback.c:2872`) **before** the placement arm (`:2927`), so every click fed the wire and the
 label could never reach its drop gate. Add-Wire-Label therefore **abandons the in-progress
 wire/line first** — `abort_wire_line_command()` (`callback.c:494`), called from the scheduler
 branch (`scheduler.c:1846`) so the key, the menu accelerator, the form's per-keystroke `-place`
@@ -126,7 +126,11 @@ one gesture (see #8 and the one-baseline rule below). `-drop` is not gated — b
 long gone.
 
 Note `p` (Add Pin) and the symbol-placement dialogs still permit the same double-arm; issue 0230
-made it *recoverable* (ESC now tears the preview down) but did not gate them.
+made it *recoverable* (ESC now tears the preview down) but did not gate them — the full census is
+issue **0233** (the gate exists at 1 of 13 arm sites, and the reverse direction is open too).
+Beware when testing this class: `xschem add_wire_label -drop` calls `wire_label_try_commit()`
+directly and bypasses `end_place_move_copy_zoom()`, so headlessly a label DOES drop while
+`STARTWIRE` is live, where the GUI click cannot. Assert on the flags, not on `-drop`'s return.
 
 ## Implementation map
 
