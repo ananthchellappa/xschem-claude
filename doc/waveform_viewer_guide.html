@@ -488,6 +488,24 @@ until you ask for the sidebar. Showing or hiding it resizes the canvas, and the
 graphs re-fit to the new width.</td>
 <td class="where">whole window</td>
 <td><span class="menu">View &gt; Signal Browser</span> (a checkbutton)</td></tr>
+<tr data-seq="Key-E" data-menu="Descend to here" data-accel="E">
+<td><kbd>E</kbd> (Shift+e)</td>
+<td><b>Descend to here</b>: move this session's <i>schematic</i> window to the
+point in the hierarchy the selected Signal Browser row(s) name, raising and
+activating that window. The path is read from the row, so a group row
+<code>x1.x2</code> and any signal under it both go to the same place; a
+top-level signal goes back to the top. Instance names are matched
+case-insensitively (an exact match always wins first), because ngspice
+lowercases the names the raw file carries. <b>If any step fails the window is
+returned to exactly where it started</b> and the reason is reported in the
+browser's status line — you are never left part-way down a hierarchy you did not
+ask for. Rows in different parts of the hierarchy leave the command disabled
+rather than silently picking one, and a vector-instance slice
+(<code>x1[3]</code>) is refused (issue 0212). Works with the browser tree or the
+plot canvas focused.</td>
+<td class="where">whole window</td>
+<td><span class="menu">View &gt; Descend to here</span>, and the browser's
+right-click menu</td></tr>
 <tr data-seq="Key-u">
 <td><kbd>u</kbd></td>
 <td>Undo the last structural edit (reorder, trace move, split, delete, marker

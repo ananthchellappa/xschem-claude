@@ -6013,6 +6013,13 @@ proc wviewer::browser_build {token top} {
   # Kept, and named honestly in BM01, rather than quietly dropped.
   bind $f.tvf.tv <Button-3> \
     "[list wviewer::browser_menu_post $token] %W %x %y %X %Y ; break"
+  # item 11: `Descend to here` ON THE TREE ITSELF. Required, not duplicated for
+  # taste: the tree's bindtags are {<tv> Treeview <top> all} and the CANVAS is
+  # not among them, so the WaveViewer-tag <Key-E> only fires while the canvas
+  # has focus — and the user pressing this key has just clicked a row, i.e. the
+  # tree has focus. Both routes resolve the same target (the tree's selection)
+  # through browser_descend_at. The `break` stops ttk seeing it.
+  bind $f.tvf.tv <Key-E> {wviewer::browser_descend_at %W ; break}
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
@@ -6346,7 +6353,18 @@ proc wviewer::browser_menu_build {token ids} {
   $m add command -command [list wviewer::browser_copy_names $token $ids] \
     -label [expr {$n == 1 ? {Copy name} : "Copy names ($n)"}]
   $m add separator
-  $m add command -label {Descend to here} -state disabled
+  # item 11 CONSUMES the reservation: state + command only, menu construction
+  # otherwise untouched (which is what the reservation bought). LIVE when every
+  # picked row agrees on ONE hierarchy path; still DISABLED with no command when
+  # they disagree — browser_target_path's declared multi-row rule, surfaced here
+  # rather than silently first-winning.
+  set tp [wviewer::browser_target_path $token $ids]
+  if {[lindex $tp 0] eq {ok}} {
+    $m add command -label {Descend to here} \
+      -command [list wviewer::browser_descend_to $token $ids]
+  } else {
+    $m add command -label {Descend to here} -state disabled
+  }
   return $m
 }
 
@@ -6432,6 +6450,416 @@ proc wviewer::browser_send_to_add_trace {token ids} {
     focus $w.expr
   }
   return 1
+}
+
+# =============================================================================
+# item 11: HIERARCHY SYNC, browser -> schematic ("Descend to here")
+# doc/claude/signal_browser_batch/PLAN.md item 11, spec
+# doc/claude/specs/waveform_viewer.md §"hierarchy sync".
+#
+# The user picks a row in the Signal Browser and the ASE-L session's DESIGN
+# window ends up at that point in the hierarchy — raised, activated, and rolled
+# back to exactly where it started if any step of the walk fails.
+#
+# ⚠⚠ THE PIVOT IS `xschem get sim_sch_path`, NEVER `xschem get sch_path`
+# (settled decision 10). MEASURED on tests/headless/fixtures/wvhier, currsch 2,
+# sch_path `.X1.X2.`:
+#     raw_level 0 -> sim_sch_path `X1.X2.`
+#     raw_level 1 -> sim_sch_path `X2.`
+#     raw_level 2 -> sim_sch_path ``
+# i.e. sim_sch_path is measured from the level where the raw was LOADED, which
+# is the same origin the raw's own signal names use — so `v(x1.x2.net5)`'s path
+# `x1.x2` and sim_sch_path are in the same coordinate system and sch_path is
+# not. With NO raw loaded `sch_waves_loaded()` is -1, the skip loop never runs
+# and the two getters agree byte for byte; that is why the divergence can only
+# be seen (and only be sabotage-tested) with a raw actually read. Hence
+# hier_origin_ok below.
+#
+# THE FIVE PLAN DEFECTS THIS BLOCK REPAIRS, all measured (receipts/11_receipt.md):
+#  1. `sim_sch_path` carries a TRAILING DOT and is EMPTY at the sim root. The
+#     PLAN's algorithm compares it to a dotted path with neither. hier_split.
+#  2. Exact-first + case-insensitive-retry is NOT sufficient on its own: a
+#     lowercase target `x1.x2` legitimately lands on `x1.X2`, and a byte-exact
+#     final verify then rejects its own correct result and rolls back. The
+#     verify must be case-insensitive. hier_same.
+#  3. `descend -inst` returns the STRING `0` WITHOUT THROWING for a
+#     non-subcircuit instance (measured on `V9`) or a raised semaphore, so
+#     `catch` alone sees success. Every step is confirmed by READBACK.
+#  4. `go_back` returns void and returns WITHOUT ascending on a Cancel at the
+#     save prompt (actions.c) — again only the readback is truth.
+#  5. `descend_schematic()` extends `sch_path` BEFORE `load_schematic()`, so a
+#     failed load leaves the tree one level deep while returning 0. The
+#     rollback is therefore by READBACK of where we actually are, never by
+#     counting the steps we thought we took.
+# =============================================================================
+
+# --- A1: the PURE planners (no xschem, no Tk) --------------------------------
+
+# A hierarchy path string -> its segment list. THE TRAILING-DOT NORMALISER:
+# `xschem get sim_sch_path` answers `x1.x2.`, `x1.` and `` (the sim root), and
+# the PLAN's algorithm compares those directly against a dotted browser path
+# that has no trailing dot. `x1.x2.` -> {x1 x2}; `` -> {}.
+proc wviewer::hier_split {p} {
+  set p [string trimright $p .]
+  if {$p eq {}} { return {} }
+  return [split $p .]
+}
+
+# Length of the EXACT (byte) common prefix of two segment lists.
+#
+# ⚠ DELIBERATELY NOT CASE-INSENSITIVE, and that is the whole reason "an exact
+# hit always wins" survives a design carrying BOTH `x1` and `X1` (which the
+# wvhier fixture does): from `X1.X2`, a target of `x1` must share NO prefix and
+# so must ascend twice and descend into the OTHER instance. A -nocase prefix
+# here would keep it inside `X1` and land on the wrong subtree while reporting
+# success.
+proc wviewer::hier_common {a b} {
+  set n 0
+  set lim [llength $a]
+  if {[llength $b] < $lim} { set lim [llength $b] }
+  while {$n < $lim && [lindex $a $n] eq [lindex $b $n]} { incr n }
+  return $n
+}
+
+# {<levels to ascend> <segments to descend>} to get from `cur` to `target`.
+# {0 {}} when already there. PURE.
+proc wviewer::hier_plan {cur target} {
+  set c [wviewer::hier_common $cur $target]
+  return [list [expr {[llength $cur] - $c}] [lrange $target $c end]]
+}
+
+# THE FINAL-VERIFY COMPARATOR, and it is `-nocase` for a MEASURED reason rather
+# than a stylistic one. ngspice lowercases: the raw carries `x1.x2` while the
+# schematic instance is `X2`, and `get_instance()` (scheduler.c) is a plain
+# strcmp — so a correct walk of the lowercase target legitimately lands on the
+# schematic's own spelling `x1.X2`. A byte-exact verify rejects that correct
+# result and rolls the user back for no reason. Reproduced before this line was
+# written: `CASE hgo x1.x2 -> {err {verify failed} {}}`.
+proc wviewer::hier_same {a b} {
+  return [string equal -nocase [join $a .] [join $b .]]
+}
+
+# --- A2: the CONTEXT-LEVEL walk (xschem verbs, no Tk) ------------------------
+
+# Where the CURRENT xschem context sits, as a segment list. THE ONLY PIVOT READ
+# IN THE ITEM, and it never throws.
+#
+# ⚠ `xschem get sch_path` IS FORBIDDEN HERE (settled decision 10). MEASURED at
+# raw_level 1, currsch 2: sim_sch_path `x2.` vs sch_path `.X1.X2.` — using
+# sch_path puts the sync one or more levels off, silently and plausibly.
+proc wviewer::hier_now {} {
+  set p {}
+  catch {set p [xschem get sim_sch_path]}
+  return [wviewer::hier_split $p]
+}
+
+# One path segment -> the SCHEMATIC's own spelling of that instance name, or {}
+# when nothing at this level matches. The sentinel `VECTOR` for a bracketed
+# segment (see hier_walk's refusal and issue 0212).
+#
+# EXACT WINS, ALWAYS, and the case-insensitive candidate is only returned when
+# the whole pass found no exact hit — so a level carrying both `x1` and `X1`
+# resolves each of them to itself. That ordering is the reason hier_common is
+# byte-exact too; the two must agree about what "the same segment" means.
+#
+# ⚠ THE SCAN IS BY INDEX, never `xschem getprop instance <name> name`, and that
+# is measured: `get_instance()` (scheduler.c) treats an ALL-DIGIT argument as an
+# INDEX, so a by-name lookup of a numeric segment would silently answer with
+# some other instance. Declared limit, not guarded: a raw file's hierarchy path
+# segments are SPICE instance names, which cannot be all digits, so the case is
+# unreachable from the browser.
+proc wviewer::hier_resolve {seg} {
+  if {[string first {[} $seg] >= 0} { return VECTOR }
+  set n 0
+  catch {set n [xschem get instances]}
+  if {![string is integer -strict $n]} { return {} }
+  set ci {}
+  for {set i 0} {$i < $n} {incr i} {
+    set nm {}
+    if {[catch {xschem getprop instance $i name} nm]} { continue }
+    if {$nm eq $seg} { return $nm }
+    if {$ci eq {} && [string equal -nocase $nm $seg]} { set ci $nm }
+  }
+  return $ci
+}
+
+# THE ITEM. Walk the CURRENT context to `target` (a dotted, sim-root-relative
+# instance path; {} = the sim root itself). Returns
+#     {ok <landed path>}            moved, verified
+#     {ok already <path>}           was already there, NOTHING was touched
+#     {err <reason> <path>}         refused; `path` is where we actually are
+# and NEVER throws.
+#
+# ALGORITHM, written here so nobody re-derives it wrong:
+#  0. start = hier_now. If start and the target are BYTE-identical, return
+#     `already` without touching anything — no selection change, no redraw.
+#     (A case-MISMATCHED already-at-target deliberately re-walks and lands
+#     correctly, reporting the schematic's spelling. Declared limit.)
+#  1. hier_plan -> {nup segs}.
+#  2. ASCEND nup times with `xschem go_back`, RE-READING hier_now after each and
+#     requiring the depth to have DECREASED. `go_back` returns void, is a silent
+#     no-op at semaphore != 0, and returns WITHOUT ascending when the user
+#     cancels the save prompt — the readback is the only truth. Default what=1
+#     is used deliberately: the PLAN forbids bypassing the existing guard, and
+#     on a rollback the levels we just descended into are unmodified so no
+#     prompt can fire.
+#  3. DESCEND each remaining segment: hier_resolve, then `xschem descend -inst`,
+#     requiring BOTH the result string `1` AND hier_now to have GROWN. Measured:
+#     `descend -inst V9` (a non-subcircuit) returns the STRING `0` with no throw
+#     and no movement, so `catch` alone sees nothing.
+#  4. VERIFY hier_same (case-insensitive, see its header).
+#  5. ANY failure and `rollback` -> re-walk to `start` with rollback OFF (the
+#     walk is idempotent, so the rollback IS the same primitive), then report.
+#     BY READBACK, never by counting: descend_schematic() extends sch_path
+#     BEFORE load_schematic(), so a failed load leaves the tree one level deep
+#     while returning 0.
+#
+# ⚠ A SUCCESSFUL WALK CLEARS THE SELECTION at every level it traverses, because
+# both `descend -inst` and `go_back` call unselect_all(1) in C. The `already`
+# path does not. Declared, not hidden.
+proc wviewer::hier_walk {target {rollback 1}} {
+  set tgt   [wviewer::hier_split $target]
+  set start [wviewer::hier_now]
+  if {[join $start .] eq [join $tgt .]} {
+    return [list ok already [join $start .]]
+  }
+  lassign [wviewer::hier_plan $start $tgt] nup segs
+  set problem {}
+  for {set i 0} {$i < $nup} {incr i} {
+    set before [llength [wviewer::hier_now]]
+    catch {xschem go_back}
+    if {[llength [wviewer::hier_now]] >= $before} {
+      set problem "could not ascend from [join [wviewer::hier_now] .]"
+      break
+    }
+  }
+  if {$problem eq {}} {
+    foreach seg $segs {
+      set real [wviewer::hier_resolve $seg]
+      if {$real eq {VECTOR}} {
+        set problem "vector instance '$seg' cannot be addressed (issue 0212)"
+        break
+      }
+      if {$real eq {}} { set problem "no instance '$seg'" ; break }
+      set before [llength [wviewer::hier_now]]
+      set r {}
+      catch {xschem descend -inst $real} r
+      if {$r ne {1} || [llength [wviewer::hier_now]] <= $before} {
+        set problem "descend refused at '$real'"
+        break
+      }
+    }
+  }
+  set now [wviewer::hier_now]
+  if {$problem eq {} && ![wviewer::hier_same $now $tgt]} {
+    set problem "verify failed at [join $now .]"
+  }
+  if {$problem ne {}} {
+    if {$rollback} { wviewer::hier_walk [join $start .] 0 }
+    return [list err $problem [join [wviewer::hier_now] .]]
+  }
+  return [list ok [join $now .]]
+}
+
+# --- A3: THE ORIGIN GUARD ----------------------------------------------------
+
+# 1 iff `sim_sch_path` in the CURRENT context really is measured from the same
+# origin the browser's paths are, else 0 and the caller REFUSES rather than
+# guesses.
+#
+# ⚠ THIS IS THE ITEM'S ONLY CLAIM A READBACK CANNOT CHECK. ASE reads the raw
+# into the VIEWER context only (the `raw read` sites in this file), so in the
+# DESIGN window `sch_waves_loaded()` is -1 and `sim_sch_path` degrades to
+# `sch_path` minus its leading dot. That degraded getter is CORRECT exactly when
+# the design window's top IS the session's design — and when it is not, the
+# pivot and the verify share the same wrong origin, so the walk would land N
+# levels off and report success. Only this guard can see it.
+#
+# NEITHER BRANCH READS `sch_path` (settled decision 10).
+proc wviewer::hier_origin_ok {token} {
+  set lv -1
+  catch {set lv [xschem raw loaded]}
+  if {[string is integer -strict $lv] && $lv >= 0} { return 1 }
+  set b 0
+  catch {set b [ase::ui::sod_base_level $token]}
+  if {![string is integer -strict $b]} { return 1 }
+  return [expr {$b == 0 ? 1 : 0}]
+}
+
+# --- A4: the Tk entry layer --------------------------------------------------
+
+# Browser row ids -> {ok <dotted path>} / {err <message>}. A group id `g:x1.x2`
+# IS the dotted instance path (item 9's tree groups one node per dot segment,
+# settled decision 14); a leaf id resolves through the ROW's stored name — not
+# through the id — because browser_rows disambiguates a duplicate id with a
+# `#N` suffix that is not part of the raw name. A top-level signal yields
+# `{ok {}}`, which is a legitimate ascend-only sync to the sim root.
+#
+# ⚠ THE MULTI-ROW RULE, chosen against a silent first-wins (ruling 17): a set of
+# rows resolves ONLY when every row yields the SAME path. A disagreeing set is
+# an `err`, and the menu entry stays DISABLED. Declared, not hidden.
+proc wviewer::browser_target_path {token ids} {
+  variable browserrows
+  if {![info exists browserrows($token)]} {
+    return [list err {the Signal Browser has nothing to descend to}]
+  }
+  if {![llength $ids]} {
+    return [list err {select a row in the Signal Browser first}]
+  }
+  set rows $browserrows($token)
+  set path {}
+  set first 1
+  foreach id $ids {
+    set row {}
+    foreach r $rows {
+      if {[wviewer::dget $r id {}] eq $id} { set row $r ; break }
+    }
+    if {$row eq {}} { return [list err "unknown row '$id'"] }
+    if {[wviewer::dget $row kind {}] eq {group}} {
+      set p [string range $id 2 end]
+    } else {
+      set p [lindex [wviewer::sig_split [wviewer::dget $row name {}]] 0]
+    }
+    if {$first} { set path $p ; set first 0 } \
+    elseif {$p ne $path} {
+      return [list err {those rows are in different parts of the hierarchy}]
+    }
+  }
+  return [list ok $path]
+}
+
+# THE COMMAND. Returns 1/0 and NEVER throws (it rides a menu entry and a key
+# binding; a throw in either pops bgerror, which is modal under X).
+#
+# ⚠ EVERY RUNG ASSERTS ON THE WORLD, never on "the call returned without
+# throwing" — the item-10 lesson (a bare `clipboard clear` resolved to this
+# namespace's own zero-argument proc, threw, was swallowed by a catch, and the
+# menu entry silently did nothing while every structural check stayed green).
+# So: the context switch is confirmed by re-reading `current_win_path`, and the
+# hierarchy move is confirmed by re-reading `sim_sch_path`.
+#
+# Context is LEFT ON THE DESIGN WINDOW on success, matching Direct Plot and
+# `ase::ui::raise_window_entry`; the viewer's own later reads take their usual
+# 0173 loan.
+proc wviewer::browser_descend_to {token ids} {
+  set r [wviewer::browser_target_path $token $ids]
+  if {[lindex $r 0] ne {ok}} {
+    catch {wviewer::browser_status $token [lindex $r 1]}
+    return 0
+  }
+  set path [lindex $r 1]
+
+  # 2. the session's design window: raise it (opening it if it is not open)
+  set opened 0
+  catch {set opened [ase::ui::design_window $token]}
+  if {!$opened} {
+    catch {wviewer::browser_status $token {could not reach the design window}}
+    return 0
+  }
+
+  # 3. VERIFY THE CONTEXT FOLLOWED — PLAN step 3 / landmine 17, and it is real
+  # work: ase::ui::raise_window_entry does a bare `xschem new_schematic switch`
+  # with NO verify, and a switch under a raised semaphore silently no-ops. The
+  # scan mirrors raise_design_editor's (current_name first, then the 7th
+  # `xschem windows` field, which is the window's whole hierarchy stack, so a
+  # window already DESCENDED into the design still matches — issue 0168).
+  set dpath {} ; catch {set dpath [ase::ui::design_path $token]}
+  set want {} ; set wtop {}
+  if {$dpath ne {}} {
+    catch {
+      foreach e [xschem windows] {
+        foreach s [concat [list [lindex $e 4]] [lindex $e 6]] {
+          if {$s eq {}} continue
+          if {[file normalize $s] eq $dpath} {
+            set want [lindex $e 0] ; set wtop [lindex $e 1] ; break
+          }
+        }
+        if {$want ne {}} break
+      }
+    }
+  }
+  set cur {} ; catch {set cur [xschem get current_win_path]}
+  if {$want eq {} || $cur ne $want} {
+    catch {wviewer::browser_status $token {could not reach the design window}}
+    catch {wviewer::echo {signal browser: could not reach the design window} error}
+    return 0
+  }
+  if {$wtop eq {}} { set wtop . }
+
+  # 4. THE ORIGIN GUARD. Refuse, never guess — see hier_origin_ok.
+  if {![wviewer::hier_origin_ok $token]} {
+    set m {the design window is opened on an ancestor of this session's design; cannot map the browser path}
+    catch {wviewer::browser_status $token $m}
+    catch {wviewer::echo "signal browser: $m" error}
+    return 0
+  }
+
+  # 5. the walk
+  set res [wviewer::hier_walk $path]
+
+  # 6. raise + activate, ALSO on the already-there path (the PLAN: "a no-op that
+  # still raises the window, and says so"). raise_activate_toplevel is the WSLg
+  # idiom — a bare deiconify/raise is a no-op there (issue 0054) — and it
+  # no-ops entirely without ::has_x, which is why every raise assertion is
+  # X-arm only.
+  catch {raise_activate_toplevel $wtop}
+  catch {focus $wtop}
+
+  # 7. say what happened, both surfaces, never silently
+  if {[lindex $res 0] ne {ok}} {
+    set m "descend to '$path' failed: [lindex $res 1] (returned to [lindex $res 2])"
+    catch {wviewer::browser_status $token $m}
+    catch {wviewer::echo "signal browser: $m" error}
+    return 0
+  }
+  if {[llength $res] == 3} {
+    set where [lindex $res 2]
+    set m "already at [expr {$where eq {} ? {the top level} : $where}]"
+  } else {
+    set where [lindex $res 1]
+    set m "descended to [expr {$where eq {} ? {the top level} : $where}]"
+  }
+  catch {wviewer::browser_status $token $m}
+  catch {wviewer::echo "signal browser: $m"}
+  return 1
+}
+
+# The key/menubar target: the tree's CURRENT SELECTION (a menu entry and a key
+# have no pointer position to resolve, unlike the RMB entry).
+proc wviewer::browser_descend_here {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  set sel {}
+  catch {set sel [$tv selection]}
+  if {![llength $sel]} {
+    catch {wviewer::browser_status $token {select a row in the Signal Browser first}}
+    return 0
+  }
+  return [wviewer::browser_descend_to $token $sel]
+}
+
+# Bindtag shim. `%W` is the CANVAS when the key came through the `WaveViewer`
+# tag and the TREEVIEW when it came through the tree's own binding, so both
+# lookups are tried — the treeview's bindtags are {<tv> Treeview <top> all} and
+# the canvas is NOT among them (measured, item 9 BT34 / item 10 BM35), which is
+# exactly why a WaveViewer-only bind would be a key that never fires where the
+# user actually is.
+proc wviewer::browser_descend_at {W} {
+  variable windows
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} {
+    set tp {}
+    catch {set tp [winfo toplevel $W]}
+    if {$tp ne {}} {
+      dict for {t rec} $windows {
+        if {[dict exists $rec top] && [dict get $rec top] eq $tp} { set tok $t ; break }
+      }
+    }
+  }
+  if {$tok eq {}} { return 0 }
+  return [wviewer::browser_descend_here $tok]
 }
 
 # --- item 9: THE WIDTH RULE ---------------------------------------------------
@@ -7749,6 +8177,32 @@ proc wviewer::install_default_binds {} {
   #   * the `break` keeps it that way whatever the tags below this one carry.
   if {[bind WaveViewer <Control-Key-l>] eq {}} {
     bind WaveViewer <Control-Key-l> {wviewer::browser_toggle_at %W; break}
+  }
+  # `Descend to here` — sync the ASE-L session's DESIGN window to the hierarchy
+  # path of the browser row(s) selected here (signal-browser PLAN item 11).
+  # Shift-E is the free member of the descend family in this window: bare `e`
+  # is Delete Empty Strips and Ctrl-E is Delete All Markers, and `E` matches the
+  # schematic's own hierarchy keys.
+  # THE WRITTEN THREE-PATH COLLISION CHECK, run and clean on all three of the
+  # paths a key can reach this window by:
+  #   * keysym 69 is NOT in `graphkeys` {97 98 100 115 109 116 65 66 77}, so
+  #     key_filter forwards nothing and the C dispatcher never sees it.
+  #     src/keybindings.csv has NO row for 69 at all (the shifted rows it does
+  #     carry are 65,66,72,75,76,79,80,84,85,90 — verified). callback.c's
+  #     `case 'E'` fires only under EQUAL_MODMASK with Alt (schematic in a new
+  #     window); bare Shift-E has no arm there.
+  #   * NO rc binds <Key-E> on .drw: a grep for `Key-E>` over src/*.tcl,
+  #     src/*.c and src/cadence_style_rc returns exactly ONE hit,
+  #     src/cadence_style_rc's `# bind .drw <Control-Shift-Key-E>`, and it is
+  #     COMMENTED OUT. So clone_canvas_bindings has nothing to copy onto a
+  #     viewer canvas — and strip_bindings sweeps every widget-level sequence
+  #     off a viewer canvas anyway.
+  #   * the `break` keeps it that way whatever the tags below this one carry.
+  # ⚠ THIS TAG CANNOT REACH THE TREE. A treeview's bindtags are {<tv> Treeview
+  # <top> all} (measured), so this binding only fires with the CANVAS focused;
+  # browser_build carries the tree's own <Key-E> for where the user actually is.
+  if {[bind WaveViewer <Key-E>] eq {}} {
+    bind WaveViewer <Key-E> {wviewer::browser_descend_at %W; break}
   }
   # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
   # this window otherwise: key_filter forwards only the waves_callback key set
@@ -11063,6 +11517,15 @@ proc wviewer::build_menubar {token top} {
   $mb.view add checkbutton -label {Signal Browser} -accelerator Ctrl+L \
     -variable ::wviewer::browsershow($token) \
     -command [list wviewer::browser_from_menu $token]
+  # signal-browser item 11: the menubar twin of the Shift-E bindtag default and
+  # of the browser's RMB entry. It acts on the tree's SELECTION, because a
+  # menubar entry has no pointer position to resolve. No new top-level cascade:
+  # test_wave_viewer G2 pins the cascade set to {File View Graph Cursors
+  # Options}. ⚠ `-label {Descend to here} -accelerator E` must stay ADJACENT on
+  # one source line: test_wave_grid GH3 greps this proc's body for exactly that
+  # string.
+  $mb.view add command -label {Descend to here} -accelerator E \
+    -command [list wviewer::browser_descend_here $token]
   # Graph menu (item 12, live): model editing, always through regenerate
   $mb.graph add command -label {Add Graph} \
     -command [list wviewer::add_graph $token]
