@@ -942,7 +942,225 @@ drawn and what is clickable cannot drift apart.</li>
 is what guarantees no plotting session can ever modify a schematic.</li>
 </ul>
 
-<h2 id="trouble">11. Troubleshooting</h2>
+<h2 id="browser">11. The Signal Browser</h2>
+
+<p>The <b>Signal Browser</b> is a sidebar down the left edge of the viewer window
+listing every signal in the loaded <code>.raw</code> file, with a search box, a
+hierarchy tree, and gestures that plot straight from it. Open and close it with
+<kbd>Ctrl</kbd>+<kbd>L</kbd> or <span class="menu">View &gt; Signal
+Browser</span>. It starts hidden, and a viewer that never opens it draws exactly
+as it did before the browser existed.</p>
+
+<p>It is the xschem port of the Cadence ViVA signal browser. Where it differs
+from ViVA it differs on purpose; the reasons, the measurements behind them and
+the internal contracts are written up in the design spec
+<code>doc/claude/specs/waveform_signal_browser.md</code> in the source tree (a
+developer document, not installed with this guide).</p>
+
+<h3 id="browser-search">11.1 Searching</h3>
+
+<p>The <b>Search</b> bar across the top of the sidebar is, left to right: a
+<b>type</b> drop-down, the <b>pattern</b> entry, a <b>syntax</b> drop-down, the
+<b>Match case</b> box, the <b>All DBs</b> box, the <b>Search</b> button, and an
+error label.</p>
+
+<table>
+<tr><th>Control</th><th>What it does</th></tr>
+
+<tr><td><b>Type</b></td><td><b>All</b>, <b>Voltage</b>, <b>Current</b> or
+<b>Other</b>. The type is read off the name's <code>v(</code> / <code>i(</code>
+prefix. ngspice's <code>@m.x1.m1[id]</code> terminal-current form has neither, so
+it counts as <b>Other</b> — if a current you expected is missing, look under
+Other or All.</td></tr>
+
+<tr><td><b>Pattern</b></td><td>Filters as you type. An empty box shows
+everything.</td></tr>
+
+<tr><td><b>Syntax</b></td><td><b>Shell</b> (the default) or <b>RegExp</b>.</td></tr>
+
+<tr><td><b>Match case</b></td><td>Off by default, so <code>OUT</code> finds
+<code>v(out)</code>.</td></tr>
+
+<tr><td><b>All DBs</b></td><td>Widens the search to every results database loaded
+in this window, not just the current one. Each gets its own top-level group in the
+tree, headed with the file name and the analysis, e.g. <code>bd_a.raw
+(tran)</code>.</td></tr>
+
+<tr><td><b>Search</b></td><td>Applies the pattern. You rarely need it — the
+filter is already live — but it is there for the habit.</td></tr>
+</table>
+
+<p><b>Patterns match the whole name, and the name includes the wrapper.</b> The
+subject is <code>v(out)</code>, not <code>out</code>, so <code>out</code> on its
+own matches nothing and <code>*out*</code> is usually what you want. In Shell
+syntax <code>*</code> is any run of characters, <code>?</code> is one character,
+and <code>[a-z]</code> is a range. In RegExp syntax the pattern is anchored at
+both ends for you.</p>
+
+<p><b>A pattern that will not compile is an error, not a wildcard.</b> A broken
+regular expression turns the error label red and puts the message on the status
+line at the bottom of the sidebar; the list is left alone. It never silently
+widens into "show everything" — which is what the older embedded-graph dialog
+did, and what made a typo look like a successful search. The message appears on
+the status line because the sidebar is usually too narrow to show the error label
+itself.</p>
+
+<p>One Tcl-specific consequence: a leading ARE director or embedded option such
+as <code>(?i)foo</code> is reported as an error rather than honoured, because the
+pattern gets anchored and those are only legal at the very start of an
+expression. Use the <b>Match case</b> box instead.</p>
+
+<p>The second, button-less bar along the <i>bottom</i> of the sidebar is the
+<b>Filter</b> bar. It has the same controls minus the button and the DB scope,
+and it narrows what the Search bar already found — the two are ANDed.</p>
+
+<h3 id="browser-tree">11.2 The tree</h3>
+
+<p>Signals are grouped by hierarchy: <code>v(x1.x2.net5)</code> appears as
+<code>net5</code> inside <code>x2</code> inside <code>x1</code>. The grouping
+uses the name with its <code>v(</code>/<code>i(</code> wrapper removed, which is
+why there is no group called <code>v(x1</code>.</p>
+
+<p>Selection is extended — <kbd>Shift</kbd> and <kbd>Ctrl</kbd> work as usual.
+Three things plot:</p>
+
+<table>
+<tr><th>Gesture</th><th>What it plots</th></tr>
+<tr><td>Double-click a <b>signal</b></td><td>That signal.</td></tr>
+<tr><td>Middle-click</td><td>The row under the pointer, or the whole group's
+signals if it is a group.</td></tr>
+<tr><td>The <b>Plot</b> button</td><td>Everything selected, groups
+included.</td></tr>
+</table>
+
+<p><b>Double-clicking a group does not plot it</b> — that gesture belongs to the
+tree widget, which uses it to expand and collapse. Use middle-click or the Plot
+button on a group.</p>
+
+<p>When a group is plotted, its signals go in <b>raw-file order</b>, which is not
+always the order they are drawn in the tree: a signal that arrives late in the
+file is filed under the group it belongs to, so the tree shows it beside its
+siblings while the plot order still follows the file.</p>
+
+<p>The tree is a <b>snapshot</b> taken when the sidebar is shown, not a live
+view. If a raw file is loaded by some other route while the sidebar is already
+open, close and reopen the sidebar to pick it up. Loading through the Location
+bar (<a href="#browser-loc">§11.4</a>) refreshes it for you.</p>
+
+<h3 id="browser-menu">11.3 Right-click, and where traces land</h3>
+
+<p>Right-clicking the tree posts a menu: <b>Plot</b>, a destination cascade,
+<b>Copy names</b>, <b>Send to Add Trace</b> and <b>Descend to here</b>. The
+destination is the same one the Add Trace dialog offers — <b>Append</b>,
+<b>Replace</b>, <b>New Strip</b>, <b>New Tab</b> — and it is remembered per
+window.</p>
+
+<p>In <b>multi-plot</b> mode an entry reads <b>Replace &rarr; appends</b>. That
+is not a slip. Multi-plot always puts each signal in a strip it creates or an
+empty one it reuses, never in an occupied strip, so there is nothing for Replace
+to clear and it behaves exactly like Append. The label says so rather than
+pretending otherwise.</p>
+
+<h3 id="browser-loc">11.4 The Location bar</h3>
+
+<p>The row at the very top of the sidebar shows which <code>.raw</code> file is
+loaded and lets you change it: type a path and press <kbd>Return</kbd>, pick one
+from the drop-down, or use <b>Browse...</b>. The last twenty raw files you loaded
+this way are in the drop-down; the field is right-justified so the part you can
+read is the file name, and the full path is in the tooltip.</p>
+
+<p>A path that does not exist, or a file the reader rejects, leaves the previous
+raw and the whole plot exactly as they were and says why on the status line — a
+typo cannot lose your waveforms. The cost of that guarantee is that raw files
+<b>accumulate</b> in the window rather than replacing one another, which is
+precisely what <b>All DBs</b> then searches across.</p>
+
+<p>Raw files attached automatically by an ASE re-run do not appear in the
+drop-down; only the ones you loaded here do.</p>
+
+<h3 id="browser-hier">11.5 Moving between the browser and the schematic</h3>
+
+<p>Two commands keep the schematic and the browser pointing at the same place in
+the design.</p>
+
+<p><b>Descend to here</b> takes the browser to the schematic: select a row and
+press <kbd>E</kbd> (see <a href="#ref-viewer-keys">§9.1</a>), or use <span
+class="menu">View &gt; Descend to here</span> or the right-click menu. The design
+window descends to the instance that row lives in. Selecting several rows works
+only if they all live in the same place; rows from different parts of the
+hierarchy leave the entry disabled.</p>
+
+<p><b>Show in Signal Browser</b> takes the schematic to the browser: from a
+design window press <kbd>Ctrl</kbd>+<kbd>5</kbd>, or use <span class="menu">Tools
+&gt; Show in Signal Browser</span>. The session's viewer is raised, the sidebar is
+un-hidden, and the tree node for wherever the schematic is standing is selected
+and scrolled into view.</p>
+
+<p>Both say what happened, every time. If the exact node does not exist the
+deepest ancestor that does is selected and the message says so. If the move
+cannot be made the schematic is <b>put back where it was</b> and nothing is left
+half-done.</p>
+
+<p>Two limits worth knowing:</p>
+<ul>
+<li>A <b>vector instance slice</b> such as <code>x1[3]</code> cannot be descended
+into, and is refused by name.</li>
+<li>The two directions are not quite symmetric. When the design window is
+standing <i>above</i> the schematic the results belong to, <b>Show in Signal
+Browser</b> works out the offset and succeeds, while <b>Descend to here</b>
+refuses rather than risk landing on the wrong level. Descend from a window that
+is already on (or inside) the simulated cell.</li>
+</ul>
+
+<p>A successful descend clears the schematic's selection, because moving up and
+down the hierarchy always does.</p>
+
+<h3 id="browser-mouse">11.6 Mouse and keys in the browser</h3>
+
+<p>These belong to the sidebar's own widgets, not to the plot canvas, so they are
+not part of the remappable <code>WaveViewer</code> tag described in <a
+href="#rebinding">§10</a>.</p>
+
+<table>
+<tr><th>Where</th><th>Gesture</th><th>What it does</th></tr>
+
+<tr data-bseq="loc.cb &lt;Return&gt;">
+<td class="where">Location field</td><td><kbd>Return</kbd></td>
+<td>Load the raw file named in the field.</td></tr>
+
+<tr data-bseq="loc.cb &lt;&lt;ComboboxSelected&gt;&gt;">
+<td class="where">Location drop-down</td><td>pick an entry</td>
+<td>Load that raw file from the history.</td></tr>
+
+<tr data-bseq="tvf.tv &lt;Double-Button-1&gt;">
+<td class="where">tree</td><td>double-click</td>
+<td>Plot that signal. On a <i>group</i> it expands or collapses instead.</td></tr>
+
+<tr data-bseq="tvf.tv &lt;Button-2&gt;">
+<td class="where">tree</td><td>middle-click</td>
+<td>Plot the row under the pointer, groups included.</td></tr>
+
+<tr data-bseq="tvf.tv &lt;Button-3&gt;">
+<td class="where">tree</td><td>right-click</td>
+<td>Post the browser's context menu (<a href="#browser-menu">§11.3</a>).</td></tr>
+
+<tr data-bseq="tvf.tv &lt;Key-E&gt;">
+<td class="where">tree</td><td><kbd>E</kbd></td>
+<td><b>Descend to here</b> on the selected rows. The same key works over the
+plot canvas (<a href="#ref-viewer-keys">§9.1</a>); this binding is what makes it
+work while the tree has focus.</td></tr>
+</table>
+
+<h3 id="browser-state">11.7 What is remembered</h3>
+
+<p>The browser is part of the saved simulation state (<a
+href="#state">§8</a>): whether the sidebar was shown, its width, both bars'
+settings, the plot destination, which groups were expanded, what was selected,
+and the raw-file history. Restoring into a smaller window re-applies the width
+through the same 45%-of-the-window cap a fresh sidebar uses, so the number is
+kept but the pixels may not be.</p>
+
+<h2 id="trouble">12. Troubleshooting</h2>
 
 <table>
 <tr><th>Symptom</th><th>Why, and what to do</th></tr>
@@ -999,13 +1217,18 @@ some engine-side gestures are view state that a rebuild discards. Use
 <td>Cosmetic. Move the pointer over the viewer and the title is restored.</td></tr>
 </table>
 
-<h2 id="seealso">12. See also</h2>
+<h2 id="seealso">13. See also</h2>
 <ul>
 <li><a href="ase_l_tutorial.html">ASE-L tutorial</a> — the simulation environment
 this viewer belongs to: analyses, outputs, running, session states.</li>
 <li><a href="xschem_man/graphs.html">Graphs in schematics</a> — the other
 plotting surface: graph rectangles drawn <i>into</i> a schematic. Same drawing
 engine, different window, different keys.</li>
+<li><code>doc/claude/specs/waveform_signal_browser.md</code>, in the xschem
+source tree — the design spec behind <a href="#browser">§11</a>: the divergences
+from Cadence ViVA and the measurements behind each one, the hierarchy-sync
+algorithm, and every declared limit. A developer document; it is not installed
+alongside this guide.</li>
 </ul>
 
 </body>

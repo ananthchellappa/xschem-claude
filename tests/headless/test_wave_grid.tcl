@@ -449,6 +449,115 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
     [expr {[string first "href=\"$gh_rel\"" $gh_idx] >= 0}]
 }
 
+# --- GH8/GH9 — the SIGNAL BROWSER's own widget gestures (item 16) -------------
+# The direct analogue of GH1/GH2 one layer over. The §9.1 table documents the
+# `bind WaveViewer` defaults; the browser's six gestures are bound on the
+# SIDEBAR's widgets inside `browser_build` and are NOT on that tag, so they need
+# their own attribute and their own pair of legs.
+#
+# ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
+# whole reason GH0's `== 16` above still holds: `data-bseq="` does not contain
+# the substring `data-seq="`, so GH0's unanchored extractor cannot see these
+# rows. GH0 is itself the standing guard on that — pick a colliding name and
+# GH0 goes red, not silently wrong.
+set gh_bb [wvproc_body $wsrc wviewer::browser_build]
+check_true "GH8 browser_build was found in the source" [expr {$gh_bb ne {}}]
+set gh_bseqs {}
+foreach {gh_all gh_v} [regexp -all -inline {data-bseq="([^"]+)"} $gsrc] {
+  lappend gh_bseqs [string map {&lt; < &gt; >} $gh_v]
+}
+# THE POSITIVE-EXTRACTION CONTROL, same job GH0 does for §9.1: without it every
+# per-row leg below is vacuously green on a guide whose attributes were stripped
+# or whose table was deleted outright. It also distinguishes "one row was
+# removed" (5) from "nothing parsed" (0).
+check "GH8 the guide's browser table carries the six browser gestures" \
+  [llength $gh_bseqs] 6
+foreach gh_v $gh_bseqs {                                  ;# doc -> source
+  check_true "GH8 the guide's browser bind \$f.$gh_v really is in browser_build" \
+    [expr {[string first "bind \$f.$gh_v" $gh_bb] >= 0}]
+}
+# THE OTHER DIRECTION. Count only the first line of each bind STATEMENT — three
+# of the six are `\`-continued, and the bodies mention the same widgets.
+set gh_nbb 0
+foreach gh_line [split $gh_bb "\n"] {
+  if {[regexp {^\s*bind \$f\.} $gh_line]} { incr gh_nbb }
+}
+check "GH9 every gesture browser_build binds has a guide row" \
+  $gh_nbb [llength $gh_bseqs]
+
+# --- GH10 — every prose §N names a real heading IN THIS FILE ------------------
+# Item 16 inserted a whole section, which renumbers the two below it. This leg
+# is the self-defence for that edit and for every later one.
+#
+# ⚠ NARROWED CLAIM (ruling 17): this pins prose<->heading CONSISTENCY inside one
+# file. It does NOT pin that the numbering is the one a reader wants, and it
+# cannot see a §-ref that points at a real heading about the wrong topic.
+set gh_heads {}
+foreach {gh_a gh_n} [regexp -all -inline {<h[23][^>]*>([0-9]+(?:\.[0-9]+)?)\.?\s} $gsrc] {
+  lappend gh_heads $gh_n
+}
+check_true "GH10 the guide's numbered headings were found" \
+  [expr {[llength $gh_heads] >= 12}]
+set gh_refs {}
+foreach {gh_a gh_n} [regexp -all -inline {§([0-9]+(?:\.[0-9]+)?)} $gsrc] {
+  lappend gh_refs $gh_n
+}
+check_true "GH10 the guide's prose section references were found" \
+  [expr {[llength $gh_refs] >= 8}]
+foreach gh_n [lsort -unique $gh_refs] {
+  check_true "GH10 the guide's §$gh_n names a real heading" \
+    [expr {[lsearch -exact $gh_heads $gh_n] >= 0}]
+}
+
+# ============================================================================
+# GS* — the SIGNAL BROWSER SPEC's contract list vs the source (item 16)
+# ============================================================================
+# Same justification as the GH block's own: a doc table that silently rots is
+# worse than none, and this one is now the batch's ONLY durable record of what
+# 15 items measured. The spec names its procs in a machine-checkable list, so
+# the list is checked — in BOTH directions, because a one-way check would go
+# green on a spec that simply stopped naming things.
+set gs_p [file join $repo doc claude specs waveform_signal_browser.md]
+check_true "GS0 the signal-browser spec exists" [file isfile $gs_p]
+set gs_src {}
+if {[file isfile $gs_p]} {
+  set fp [open $gs_p r]; set gs_src [read $fp]; close $fp
+}
+# ONLY the contract-list lines (`- `wviewer::name` — ...`), never a prose
+# mention: a namespace VARIABLE or a proc named mid-sentence must not be
+# mistaken for an entry in the contract list.
+set gs_names {}
+foreach gs_ln [split $gs_src "\n"] {
+  if {[regexp {^- `wviewer::([a-z0-9_]+)`} $gs_ln -> gs_n]} { lappend gs_names $gs_n }
+}
+check_true "GS0 the spec's contract list was found" [expr {[llength $gs_names] >= 20}]
+foreach gs_n $gs_names {                                  ;# spec -> source
+  check_true "GS1 the spec's wviewer::$gs_n exists in src/wave_viewer.tcl" \
+    [expr {[regexp "\nproc wviewer::${gs_n}\\s" $wsrc]}]
+}
+set gs_want {sig_type sig_match sig_split signal_entry signal_list signal_list_all
+             rawinfo_parse db_label attach_raw plot_dest rawbar_load rawbar_commit
+             browser_build browser_show browser_toggle browser_state
+             browser_state_apply hier_split hier_common hier_same hier_now
+             searchbar_build searchbar_get}
+foreach gs_n $gs_want {                                   ;# source -> spec
+  check_true "GS2 the spec's contract list names wviewer::$gs_n" \
+    [expr {[lsearch -exact $gs_names $gs_n] >= 0}]
+}
+# Every issue the spec cites must be a file. The batch filed six and cited them
+# by path; a renamed or never-created issue file is exactly the rot this catches.
+set gs_iss {}
+foreach {gs_a gs_i} [regexp -all -inline {doc/claude/issues/(0[0-9]{3})-} $gs_src] {
+  lappend gs_iss $gs_i
+}
+check_true "GS3 the spec cites at least the batch's six issues" \
+  [expr {[llength [lsort -unique $gs_iss]] >= 6}]
+foreach gs_i [lsort -unique $gs_iss] {
+  check_true "GS3 the spec's issue $gs_i resolves to exactly one file" \
+    [expr {[llength [glob -nocomplain \
+       [file join $repo doc claude issues ${gs_i}-*.md]]] == 1}]
+}
+
 # ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)
 # ============================================================================
