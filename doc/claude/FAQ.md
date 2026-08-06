@@ -14,6 +14,66 @@ Newest entries on top.
 
 ---
 
+## Q31. Dragging a net label used to leave a little wire behind, and now it doesn't. What changed, and how is the label still connected?
+
+- **Asked:** 2026-08-05
+- **Project state:** branch `open_pdk` @ `74ef1aed` + uncommitted — `wire_label_ride.md`
+  S1 (R1 + LEASH) just landed on top of S0's strand oracle.
+
+The little wire was never the connection. It was `connect_by_kissing()`
+(`src/actions.c`) dropping a **zero-length `SELECTED1` stub** at every moving instance pin that
+started on stationary copper; the drag then rubber-banded that stub into real wire. For a device
+pin that is exactly right — the pin *is* a terminal and it must stay wired. For a `type=label`
+instance it is an artifact with three costs:
+
+- sliding the label **along** its own wire leaked a duplicate collinear `N` record;
+- dragging it **off** the wire left a permanent perpendicular stub, and that stub is a genuine
+  third endpoint, so `merge_collinear_wires` refuses to weld across it — one `N` record on disk
+  became three;
+- under `autotrim_wires` a *nameless* label at a wire crossing silently merged two nets.
+
+What actually binds a label to a net is `touch()`: `name_attached_inst_to_net()`
+(`src/netlist.c:1034`) binds an instance pin to any wire whose span contains that pin coordinate,
+**interior included**. So a label sitting mid-wire is connected without any split, any stub, or
+any endpoint coincidence. Measured on the shipped corpus: split and unsplit produce byte-identical
+SPICE across 244 schematics.
+
+S1 therefore skips labels in that kissing arm (`inst_is_netlabel()`, `src/check.c` — deliberately
+`strcmp(type,"label")`, so `ipin`/`opin`/`iopin`/`bus_tap` keep every behaviour they have) and
+replaces the stub with a **leash**: at move START the gesture records which copper each *selected*
+label was sitting on, and at move END a label whose pin left that copper is projected back onto
+it, clamped to its endpoints (`label_ride_capture` / `label_ride_apply`, `src/move.c`). So you can
+slide a label along its wire, you cannot drag it off, and neither gesture creates copper.
+
+Four scoping facts worth knowing:
+
+- **The rule is "it may not leave its OWN copper", not "it must end up on some copper".** Those
+  differ whenever the drag lands on a *neighbouring* wire, a device pin, or another label's anchor:
+  under the weak rule the label would quietly desert its net and rename what it landed on. The
+  owner never changes (spec R7 / §5.4). The owner is the whole **collinear run** through the
+  anchor, so the segment splits `autotrim_wires` introduces are invisible to it — the label slides
+  across them freely.
+- **It only applies to the connected drag.** The leash is gated on `xctx->connect_by_kissing`, so
+  `m` (and every mouse stretch) leashes; Shift-M / the Ctrl+LMB detach do not, and there a label
+  still detaches — that is what the modifier means, and it is how you deliberately move a label to
+  a different net.
+- **A label on a bare device pin is leashed to that pin**, not to a wire. 36 % of shipped labels
+  sit on a device pin with no wire under them (the gnd/vdd idiom); without this they would have
+  been silently orphaned by the same change.
+- **A label that was already off copper is left alone.** The rule is *conservation* — no gesture
+  takes a label off copper that was on copper — not prohibition. 91 labels across 21 shipped files
+  sit off copper on purpose (`verilog_type=` declaration blocks parked off-sheet, `type=label`
+  symbols used as pure graphics, wireless flyline fixtures).
+
+Not yet done: a label does **not** follow its wire when the *wire* moves (that is RIDE, S3, and
+issue **0227**'s own repro), and sliding past the end clamps rather than extending the wire
+(R6, S5). See `doc/claude/specs/wire_label_ride.md` §7 and §14.
+
+This supersedes the label half of **Q27** (W7's "keep the through-wire, drop one stub"): the
+through-wire rule stands, the stub is gone.
+
+---
+
 ## Q30. Ctrl+MMB cycles a pin's type (in/out/inout). How do I rebind that gesture to something else?
 
 - **Asked:** 2026-07-19

@@ -160,6 +160,25 @@ double timer(int start)
 
 static int touches_inst_pin(double x, double y, int inst); /* defined below; reused here */
 
+/* doc/claude/specs/wire_label_ride.md §5.2: is instance i a NET LABEL, i.e. an instance whose
+ * symbol type is exactly "label"? A net label's PINLAYER rect is a NAMING ANCHOR, not copper
+ * geometry: it must not mint a connecting stub during a drag (R1), must not split a wire (R2,
+ * S2) and must not block a collinear merge -- its own connection is carried by the per-gesture
+ * rider set instead (§5.3).
+ * Deliberately strcmp(type, "label") and NOT the IS_LABEL_OR_PIN macro: ipin / opin / iopin are
+ * real hierarchy terminals and every current behaviour of theirs is preserved. Deliberately not
+ * IS_LABEL_SH_OR_PIN either -- `scope` and `show_label` are out of scope here, and `bus_tap` is a
+ * genuine two-pin copper object.
+ * Exported: the three consumers live in check.c, actions.c and move.c. */
+int inst_is_netlabel(int i)
+{
+  const char *type;
+  if(i < 0 || i >= xctx->instances) return 0;
+  if(xctx->inst[i].ptr < 0) return 0;               /* unlinked symbol: no type to ask about */
+  type = (xctx->inst[i].ptr + xctx->sym)->type;
+  return type && !strcmp(type, "label");
+}
+
 /* Return 1 if any instance PIN coincides EXACTLY with (x, y). Net-labels, pin-labels
  * and bus_taps are just instances carrying PINLAYER pins, so they are covered too.
  * Used by trim_wires' collinear-rejoin to REFUSE welding two segments across an

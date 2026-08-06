@@ -2061,6 +2061,19 @@ int connect_by_kissing(void)
   for(j=0;j<k; ++j) if(xctx->sel_array[j].type==ELEMENT) {
     int inst = xctx->sel_array[j].n;
     symbol = xctx->sym + xctx->inst[inst].ptr;
+    /* doc/claude/specs/wire_label_ride.md R1 (S1, change #4): a NET LABEL's pin is a naming
+     * anchor, not copper. The stub minted below is a gesture artifact -- it is rubber-banded
+     * into real copper by the drag, which is what leaks a duplicate collinear N record when the
+     * label slides ALONG its wire and leaves a permanent perpendicular stub when it is dragged
+     * OFF it (spec §4.1). Nothing reads that stub as the label-to-net connection: the label is
+     * bound to the wire by touch() at netlist time (netlist.c:1034), interior included.
+     * What replaces it is the LEASH (label_ride_capture/apply, move.c): the label is projected
+     * back onto its owner's span at move END, so it can slide along the wire but never leave it.
+     * NEVER ship this skip without that leash -- alone it turns an ugly-but-connected stub into
+     * a silent orphan. ipin/opin/iopin and every device pin are untouched (inst_is_netlabel is
+     * strcmp "label", not IS_LABEL_OR_PIN), and so is the wire-endpoint arm below (change #8,
+     * which must ship with RIDE in S3). */
+    if(inst_is_netlabel(inst)) continue;
     npin = symbol->rects[PINLAYER];
     for(i=0;i<npin; ++i) {
       get_inst_pin_coord(inst, i, &pinx0, &piny0);
@@ -3885,6 +3898,9 @@ void clear_schematic(int cancel, int symbol)
         my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
         xctx->fluid_startsel_nid = 0;                   /* issue 0091: drop the user-selected id set */
         my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
+        label_ride_free();  /* wire_label_ride.md S1: a teardown mid-gesture must drop the label
+                             * rider set too, else a later move END would leash instance ids that
+                             * belong to a different buffer. */
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both on-disk files and names already open

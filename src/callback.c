@@ -2559,7 +2559,15 @@ static void end_move_copy_logged(int is_copy)
   int ui = xctx->ui_state;
   double dx = xctx->deltax, dy = xctx->deltay;
   int rot = xctx->move_rot, flip = xctx->move_flip;
-  int kissing = xctx->kissing;
+  /* Log the ARMED flag, not the OUTCOME flag. xctx->kissing is connect_by_kissing()'s return --
+   * "at least one rescue stub was stored" -- and it used to be a safe stand-in for "the gesture
+   * was a connected drag", because arming with nothing to kiss changed nothing.
+   * wire_label_ride.md S1 broke that equivalence: a connected drag of a NET LABEL deliberately
+   * stores no stub (change #4) yet the LEASH keys off the arming flag, so logging the outcome
+   * would emit a bare `move_objects dx dy` whose replay is a RIGID move -- which detaches the
+   * label and renames its net (the K1 policy). Both flags are still live here: move_objects(END)
+   * below is what resets connect_by_kissing. */
+  int kissing = xctx->connect_by_kissing || xctx->kissing;
   /* paste/merge drop (issue 0069): reset/overwritten by move_objects(END) below, capture
    * now. The source test is merge_source == clip_file (bare `xschem paste`) vs anything
    * else (-file rider) -- NOT paste_from, which any failed/cancelled mid-gesture

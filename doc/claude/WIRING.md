@@ -357,6 +357,20 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     skipped the snapshot silently degrades to naive routing (log-only backstop only).
 12. Zero-delta early-out (move.c:6187) tests deltas only — currently transform-blind
     (risk §11.8) and skips kissing cleanup.
+13. **The label rider set (`xctx->label_ride`, `wire_label_ride.md` S1) has TWO site constraints,
+    both silent when broken.** (a) `label_ride_apply()` must sit between the last geometry mutation
+    and the `move_rot=move_flip=0; x1=y1=deltax=deltay=0.;` pair — it is the first statement after
+    `xctx->ui_state &= ~STARTMERGE;`. Four lines later, beside `pin_views_reconcile_after_move()`,
+    it reads zeroed gesture state and becomes a no-op **that still looks correct on an unrotated
+    pure translate**. (b) `label_ride_free()` must run AFTER the apply, not beside
+    `my_free(&xctx->fluid_startsel_id)` a few lines above it, which would destroy the riders first.
+    Owner resolution is likewise two mandatory steps — resolve the id, then `touch()`-verify, else
+    geometrically re-find the collinear wire through the START anchor: `wire_store_split` keeps the
+    source id on the TAIL, so an id-only lookup binds to the wrong half (spec §11 B, §14.8). And
+    the resolved wire must then be grown into its collinear RUN — under autotrim a label sits at a
+    split point where TWO wires contain its anchor, so binding to one makes the result depend on
+    `xctx->wire[]` order (§14.4). Anything that consumes a captured owner id has all three
+    obligations.
 
 ## 8. Root-cause classes from issues 0079–0111 (name the class before fixing)
 
@@ -417,6 +431,35 @@ spec digest). Enforcement TODAY:
 - P1 disconnect: still **log-only** (Tcl var `fluid_last_move_disconnects`). NOT part of the
   refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
   and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
+- P1 **label strand**: also log-only (`fluid_last_move_label_strands`, `fluid_count_label_strands`,
+  wire_label_ride.md S0 / issue 0227). A net label that sat on copper at START and touches none at
+  END — the wire translated out from under it and the net silently reverted to `#netN`. A DELTA
+  against a START baseline of label instance **ids** (`fluid_g.strand_id`, captured in
+  `fluid_snapshot_partition`, freed in `fluid_discard_snapshot`), because 1.7% of the shipped
+  corpus parks labels off copper on purpose. "On copper" is **pin-aware** — a wire span OR another
+  instance's pin at the same coordinate; 36% of shipped labels sit on a device pin with no wire.
+  Deliberately NOT in the refuse signal: S0 is instrumentation, and the rider that will actually
+  prevent the strand is S1/S3. This oracle is the only diagnostic those stages have.
+- P1 **label leash**: ENFORCED as of `wire_label_ride.md` S1 — and it is the first P1 sub-signal
+  that is. `connect_by_kissing()` no longer mints a rescue stub at a `type=label` instance's pin
+  (`inst_is_netlabel()`, check.c); instead a per-gesture **rider set** (`xctx->label_ride`,
+  `label_ride_capture/apply/free` in move.c) remembers which copper each MOVING label sat on at
+  START, and at END a label that left it is projected back on. Three things about that sentence
+  are load-bearing and each was a bug in a draft: the test is **"left ITS OWNER"**, not "is off
+  all copper" — the weak form lets a drag onto a neighbour's wire, a device pin or another
+  label's anchor silently re-attach the label to a different net (R7, spec §14.1); the owner is
+  the **collinear RUN** through the anchor, not one wire record, because autotrim splits at every
+  attachment point and binding to one half makes the clamp depend on wire array order (§14.4);
+  and an owner that no longer contains the START anchor means the owner MOVED (a stretch pulling
+  the wire along with the label), where the leash must DECLINE, not fight it.
+  Scope, deliberately narrow: LEASH is gated on `xctx->connect_by_kissing`, so only the CONNECTED
+  drag changes; the rigid move, the Ctrl+LMB detach and the issue-0228 keyboard stretch paths are
+  byte-identical and still strand (the S0 oracle above still reports them). The label ride for a
+  moving WIRE (RIDE) is S3 and does not exist yet.
+  Related predicate change: `fluid_label_on_copper()` (S0) now delegates to
+  `fluid_point_on_copper(x, y, skip)`, whose pin arm **skips net labels** — a naming anchor is not
+  copper (§5.2). Without that, two labels at one coordinate each read the other as copper, so both
+  can be dragged off a wire with the leash declining and the strand oracle scoring 0.
 - P4: never asserted; relay may legally save diagonals ("electrically correct beats pretty").
 - P3/P5/P6/no-dead-copper: produced procedurally by the healer ladder, never verified.
 - P7: approximated by prot[] + novelty; never asserted globally.
@@ -433,6 +476,12 @@ spec digest). Enforcement TODAY:
   ALT-R; self-skip without X) · **test_fluid_editing** (tip-grab basics).
 - Net readback: `xschem resolved_net 0` then `getprop wire <i> lab` — **bare
   `resolved_net` stamps every wire with the selected net and hides shorts**.
+- ERC readback: `xschem set infowindow_text {}` then the command, then
+  `xschem get infowindow_text` — `statusmsg(str,2)` appends there. Do **not** assert "the net is
+  highlighted" after a netlist run: `traverse_node_hash()` highlights every undriven/open net too,
+  so the assertion passes with the highlight code deleted. Probe through `xschem list_hilights`,
+  which runs `prepare_netlist_structs(1)` without that pass
+  (tests/headless/test_signal_short_nohier_0220.tcl).
 - `wire_coord` endpoint order is not canonical — normalize before compare.
 - Fixture conventions (`tests/from_user/`): `before_N.sch` user pre-state (N = fixture
   generation: before_3→0085-0090, before_7→0099-0104, before_8→0105-0111); `after_M.sch`

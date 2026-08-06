@@ -572,18 +572,33 @@ xschem unselect_all
 xschem select instance $li
 xschem move_objects 0 -50 stretch kissing
 
-# DESIRED: the through-run stays at y=-60 (3 pieces, split at -80 and 0) + ONE vertical
-# stub -80,-110 -> -80,-60. The pre-fix bug jogged the left arm into a 5-wire U-detour.
-check "W7: run intact + single stub (no through-wire drag)" [segset] \
-  [lsort [list [nwire {0 -60 110 -60}] [nwire {-80 -60 0 -60}] [nwire {-100 -60 -80 -60}] [nwire {-80 -110 -80 -60}]]]
-check "W7: exactly 4 wires (pre-fix bug produced 5 = U-detour)" [xschem get wires] 4
+# DESIRED: the through-run stays at y=-60. The pre-fix bug jogged the left arm into a 5-wire
+# U-detour; that claim is what W7 exists to defend and it still holds.
+#
+# RE-AUTHORED for doc/claude/specs/wire_label_ride.md S1 (change #4 + LEASH). This fixture's tap
+# is a NET LABEL, and a net label's pin is now a naming anchor rather than copper geometry:
+#   - connect_by_kissing() no longer mints the vertical rescue stub -80,-110 -> -80,-60, so the
+#     drag creates NO new copper (R1);
+#   - the label is projected back onto its owner span at move END (R7), so it returns to
+#     (-80,-60) instead of committing off the run;
+#   - with the label transiently away from the -80 split point, maintain_wire_segments welds the
+#     two collinear halves, leaving the run split only at the RESISTOR pin (0,-60). That weld is
+#     transient under autotrim (the next edit re-splits) and it is what S2/change #6 will make
+#     permanent.
+# Connectivity and the netlist node map are unchanged -- which is the whole point: the stub was
+# never what connected the label (name_attached_inst_to_net binds a pin to any wire it touch()es,
+# interior included).  A DEVICE-pin tap is untouched by all of this: see W7c below.
+check "W7: run intact, no stub, no through-wire drag" [segset] \
+  [lsort [list [nwire {0 -60 110 -60}] [nwire {-100 -60 0 -60}]]]
+check "W7: exactly 2 wires (pre-fix bug produced 5 = U-detour)" [xschem get wires] 2
+check "W7: the leash put the label back on the run" [lrange [xschem instance_pin_coord l8 name p] 1 2] {-80 -60}
 check "W7: connectivity preserved -- every wire still on net GB" [all_wire_nets] GB
 check "W7: netlist invariant -- R7 node map unchanged by the move (INV-1)" [xschem instance_nodemap R7] $w7_net_before
 
-# Guard: exactly ONE new stub segment sits off the y=-60 run (endpoint at the label's new pos).
+# Guard: NO segment leaves the y=-60 run -- the label drag extruded no copper at all (R1).
 set w7_off 0
 foreach w [segset] { lassign $w a b x y; if {$b != -60 || $y != -60} { incr w7_off } }
-check "W7: exactly one stub leaves the run" $w7_off 1
+check "W7: no stub leaves the run (R1)" $w7_off 0
 
 # W7b -- the skip is gated on kissing: a stretch move WITHOUT kissing must NOT leave the
 # moved tap disconnected. Without the gate, skipping both through-arms with no stub dropped

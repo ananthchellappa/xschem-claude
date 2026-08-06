@@ -1386,6 +1386,28 @@ typedef struct {
   double savexor, saveyor, savezoom, savelw;
 } Zoom_info;
 
+/* doc/claude/specs/wire_label_ride.md §5.3: one entry of the per-gesture net-label RIDER SET --
+ * "which copper was this label sitting on when the drag started, and where was its anchor".
+ * The set exists only between move START and move END/ABORT, is never in sel_array, never in
+ * inst[].sel and never on disk; no xWire / xInstance / xSymbol field changes.
+ * S1 implements LEASH only (the LABEL is the object being dragged; an anchor that lands off
+ * copper is projected back onto the owner span). S3 adds RIDE (the WIRE moves and the label
+ * follows, orientation included) and with it the START origin, which LEASH does not need --
+ * LEASH corrects the origin the ELEMENT commit already wrote. */
+#define LABEL_RIDE_LEASH 1
+#define LABEL_RIDE_RIDE  2
+typedef struct {
+  unsigned int lid;            /* label instance id (session-stable id, NOT an array index) */
+  unsigned int wid;            /* owner WIRE id at capture; 0 => the owner is a bare PIN ANCHOR
+                                * (the gnd/vdd-on-a-device-pin idiom: 36% of shipped labels sit
+                                * on a device pin with no wire under them, spec §5.8) */
+  double ax, ay;               /* label pin anchor, START coordinates. Also the owner-resolution
+                                * key: the captured owner must still contain this point. */
+  double sx1, sy1, sx2, sy2;   /* owner SPAN at capture -- the collinearity key for the geometric
+                                * re-find (§11 hazard B). Degenerate (== the anchor) for wid==0. */
+  int mode;                    /* LABEL_RIDE_LEASH | LABEL_RIDE_RIDE */
+} Label_ride;
+
 typedef struct {
   xWire *wire;
   xText *text;
@@ -1693,6 +1715,13 @@ typedef struct {
    * intact. Allocated in select_attached_nets, freed with the move (mirrors stretch_grabbed_xy). */
   unsigned int *fluid_startsel_id;
   int fluid_startsel_nid;
+  /* doc/claude/specs/wire_label_ride.md §5.3 (S1): the per-gesture net-label rider set. Captured
+   * at move START (label_ride_capture, move.c) BEFORE fluid_gesture_arm, consumed at the real
+   * move END (label_ride_apply) and freed at END / ABORT / clear (label_ride_free) -- the
+   * fluid_startsel_id lifecycle exactly. A live fluid RUBBER step (commit_now) must NOT free it:
+   * the gesture is still open and END re-derives from the total delta. */
+  Label_ride *label_ride;
+  int label_ride_n;
   /* Cadence deferred-selection: a plain (no-modifier) press-drag-release of an object that was NOT
    * already selected must MOVE it without changing the selection membership -- if nothing was
    * selected it ends unselected, and a pre-existing selection is preserved untouched. A CLICK (no
@@ -2670,6 +2699,7 @@ extern void place_net_label(int type);
 extern int place_sch_pin(const char *name, const char *dir);
 extern int place_wire_label(const char *name);
 extern int point_on_wire_or_pin(double x, double y);
+extern int inst_is_netlabel(int i);  /* wire_label_ride.md §5.2: symbol type is exactly "label" */
 extern int wire_label_try_commit(void);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
@@ -2752,6 +2782,10 @@ extern void fluid_reroute_discard(void);
  * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
  * gesture (else the next move START's arm assert would see a leaked-armed context). */
 extern void fluid_gesture_free(void);
+/* wire_label_ride.md §5.3 (S1): free the per-gesture net-label rider set. Called at move
+ * END/ABORT and by clear_schematic() alongside fluid_gesture_free(), so a buffer teardown
+ * mid-gesture cannot leak it or apply it to unrelated geometry. */
+extern void label_ride_free(void);
 /* D6 single-pass harness (scheduler `xschem fluid_snapshot arm` / `xschem fluid_pass <name>`):
  * run one END-cleanup pass in isolation, no gesture/X. arm returns 1 if a valid START snapshot was
  * taken (needs fluid_editing on + >=1 instance pin), else 0; run_pass returns the pass's

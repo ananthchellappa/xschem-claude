@@ -24,6 +24,19 @@
 
 static int for_netlist = 0;
 static int netlist_lvs_ignore = 0;
+/* issue 0220: the ERC double-print gate, hoisted from a local of
+ * name_nodes_of_pins_labels_and_propagate() to file scope so signal_short() can read it.
+ * Assigned once per prepare_netlist_structs() run at its single site below (search print_erc =),
+ * inside the FIRST naming pass prepare_netlist_structs calls (:1776), i.e. before any
+ * signal_short() call in the same run. Safe as hidden cross-call state on the same grounds
+ * `startlevel` already is: netlisting is not interruptable. */
+static int print_erc = 0;
+/* issue 0220: `incr_hilight` cached per run instead of read per short. signal_short() owns no
+ * loop of its own (six call sites inside the per-object naming walk), so it cannot hoist the
+ * lookup the way traverse_node_hash() does at node_hash.c:200-202; upstream 0805802b already
+ * removed one per-short Tcl call from this function for exactly this reason. Refreshed beside
+ * netlist_lvs_ignore in prepare_netlist_structs(). */
+static int erc_incr_hilight = 0;
 static void instdelete(int n, int x, int y)
 {
   Instentry *saveptr, **prevptr, *ptr;
@@ -767,6 +780,14 @@ void get_inst_pin_coord(int i, int j, double *x, double *y)
     *x=inst[i].x0+rx1;
     *y=inst[i].y0+ry1;
   } else {
+    /* Out-of-range pin index. The (0,0) answer is silent and looks like a real coordinate: every
+     * caller that then asks "is there copper here?" gets the answer for the WORLD ORIGIN, so a
+     * symbol with fewer PINLAYER rects than the caller assumed reads as connected on any
+     * schematic with a wire through (0,0). Callers must gate on rects[PINLAYER] themselves (the
+     * flyline.c:80-83 pattern); this makes the ones that forgot findable.
+     * See doc/claude/specs/wire_label_ride.md S0. */
+    dbg(1, "get_inst_pin_coord(): pin %d out of range on instance %d (%s, %d PINLAYER pins) -- "
+           "returning (0,0)\n", j, i, inst[i].instname ? inst[i].instname : "?", rects);
     *x = 0;
     *y = 0;
   }
@@ -924,7 +945,19 @@ static int signal_short( const char *tag, const char *n1, const char *n2)
 {
  int err = 0;
  char str[2048];
- if( xctx->netlist_count && n1 && n2 && strcmp( n1, n2) )
+ /* issue 0220: gate on print_erc, not on netlist_count.
+  * `xctx->netlist_count &&` (upstream 590b6fb3, "better ERC messaging") was a stand-in for "this
+  * is not the second, re-name-only pass over the reloaded top level". It over-fires as a
+  * suppressor: netlist_count stays 0 for the WHOLE run whenever the hierarchy is not descended
+  * -- `xschem netlist -nohier` (scheduler.c:8145) and the Shift-N current-level netlist
+  * (callback.c:6561) -- so those two paths merged two differently-named nets and said nothing.
+  * print_erc is the flag that actually means "first ERC-bearing pass" and it is already computed
+  * for every run; it also carries the `&& for_netlist` term, so the prepare_netlist_structs(0)
+  * callers (fluid engine, hilight) stay silent exactly as they do today.
+  * The inner `if(!xctx->netlist_count)` below is LEFT ALONE deliberately: it now means "highlight
+  * only on the top-level pass", which is what it was written for. Under the old outer gate the
+  * two conditions were mutually exclusive and the highlight was unreachable dead code. */
+ if( print_erc && n1 && n2 && strcmp( n1, n2) )
  {
    err |= 1;
    my_snprintf(str, S(str), "Error: %s shorted: %s - %s", tag, n1, n2);
@@ -932,9 +965,9 @@ static int signal_short( const char *tag, const char *n1, const char *n2)
    statusmsg(str,2);
    if(!xctx->netlist_count) {
       bus_hilight_hash_lookup(n1, xctx->hilight_color, XINSERT);
-      if(tclgetboolvar("incr_hilight")) incr_hilight_color();
+      if(erc_incr_hilight) incr_hilight_color();
       bus_hilight_hash_lookup(n2, xctx->hilight_color, XINSERT);
-      if(tclgetboolvar("incr_hilight")) incr_hilight_color();
+      if(erc_incr_hilight) incr_hilight_color();
    }
  }
  return err;
@@ -1411,7 +1444,6 @@ static int name_nodes_of_pins_labels_and_propagate()
   char *value=NULL;
   char *class=NULL;
   char *global_node=NULL;
-  int print_erc;
   xInstance * const inst = xctx->inst;
   int const instances = xctx->instances;
   static int startlevel = 0; /* safe to keep even with multiple schematic windows, netlist is not interruptable */
@@ -1754,6 +1786,7 @@ int prepare_netlist_structs(int for_netl)
   int err = 0;
   char nn[PATH_MAX+30];
   netlist_lvs_ignore=tclgetboolvar("lvs_ignore");
+  erc_incr_hilight=tclgetboolvar("incr_hilight");   /* issue 0220: once per run, not per short */
   for_netlist = for_netl;
   if(for_netlist>0 && xctx->prep_net_structs) return 0;
   else if(!for_netlist && xctx->prep_hi_structs) return 0;
