@@ -7875,6 +7875,43 @@ proc wviewer::hier_origin_ok {token} {
 
 # --- A4: the Tk entry layer --------------------------------------------------
 
+# A browser ROW ID -> the dotted instance path it names. PURE.
+#
+# ⚠⚠ THIS PROC EXISTS BECAUSE THERE WERE TWO IDENTICAL COPIES OF IT AND THEY
+# WERE BOTH WRONG (spec §4.3). `browser_target_path` and `browser_show_path`
+# each did `[string range $id 2 end]`, which strips the `g:`/`s:` namespace but
+# NOT the All-DBs `d:<N>|` prefix that `browser_rows_reparent` adds — so
+# `d:0|g:x1.x2` decoded to `0|g:x1.x2`, "Descend to here" was ENABLED on foreign
+# rows, and it fired a garbage instance path. Six characters of string
+# arithmetic earn their own proc here for exactly one reason: two copies drifted
+# once and would drift again.
+#
+# `g:` and `d:0|g:` both decode to `{}` — the design root, i.e. the legitimate
+# sim-root ascend, which is what makes item 2's choice of `g:` for the root id
+# free of any change to the callers.
+proc wviewer::browser_id_path {id} {
+  regsub {^d:[0-9]+\|} $id {} id
+  return [string range $id 2 end]
+}
+
+# The CURRENT DB's design-root id: `g:` normally, `d:0|g:` when All-DBs has put
+# the current DB under a header (item 15). `{}` when the row list has no root at
+# all — every shipped caller today — and that absence is an ANSWER, so a caller
+# can tell "there is no root" from "the root is `g:`".
+#
+# The current DB's rows are always FIRST (browser_rows_multi's ⚠), so the first
+# match in row order is the current DB's. A DB HEADER (`d:0`, no `|g:`) is not a
+# design root and must never be mistaken for one — its text is a file name, not
+# an instance.
+proc wviewer::browser_root_id {rows} {
+  foreach r $rows {
+    if {[wviewer::dget $r kind {}] ne {group}} { continue }
+    set id [wviewer::dget $r id {}]
+    if {$id eq {g:} || [regexp {^d:[0-9]+\|g:$} $id]} { return $id }
+  }
+  return {}
+}
+
 # Browser row ids -> {ok <dotted path>} / {err <message>}. A group id `g:x1.x2`
 # IS the dotted instance path (item 9's tree groups one node per dot segment,
 # settled decision 14); a leaf id resolves through the ROW's stored name — not
@@ -7903,7 +7940,7 @@ proc wviewer::browser_target_path {token ids} {
     }
     if {$row eq {}} { return [list err "unknown row '$id'"] }
     if {[wviewer::dget $row kind {}] eq {group}} {
-      set p [string range $id 2 end]
+      set p [wviewer::browser_id_path $id]
     } else {
       set p [lindex [wviewer::sig_split [wviewer::dget $row name {}]] 0]
     }
@@ -8086,8 +8123,16 @@ proc wviewer::browser_descend_at {W} {
 # ⚠ GROUPS ONLY, DECLARED LIMIT. A leaf row is a SIGNAL, not an instance, so a
 # path segment must never match one: `v(x1.out)` must not make `out` look like
 # a descendable instance.
-proc wviewer::browser_node_for {rows segs} {
-  set parent {}
+# ⚠ `start` (item 8) IS LOAD-BEARING, NOT DEFENSIVE. The walk below scans for a
+# group whose `parent` is `$parent`, seeded `{}`. Once item 2's design root
+# exists EVERY real instance hangs off `g:`, so a walk seeded `{}` dead-ends on
+# the first segment and answers `{{} 0}` — item 12's whole "Show in Signal
+# Browser" would stop working on every raw the moment the tree grew its root.
+# The caller passes `[browser_root_id $rows]`, which answers `g:` normally and
+# `d:0|g:` when All-DBs put the current DB under a header. The DEFAULT stays
+# `{}` so every shipped caller and BX01-BX08 are unchanged.
+proc wviewer::browser_node_for {rows segs {start {}}} {
+  set parent $start
   set cur {}
   set matched 0
   foreach seg $segs {
@@ -8271,7 +8316,7 @@ proc wviewer::browser_show_path {token path} {
     return [wviewer::browser_say $token err $m]
   }
   wviewer::browser_reveal $token $id
-  set landed [string range $id 2 end]
+  set landed [wviewer::browser_id_path $id]
   if {$matched < [llength $segs]} {
     return [wviewer::browser_say $token partial $id $landed $asked]
   }

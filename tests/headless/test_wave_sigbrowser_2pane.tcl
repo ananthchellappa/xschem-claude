@@ -755,6 +755,99 @@ check {TP39 a device-only design filters to nothing yet STILL emits its root row
                       [pcall ::wviewer::browser_rows $tp_devonly design]]]] \
   {0 g:||design|group}
 
+# --- TP40-TP45 — item 8: the root-skip, browser_root_id, the `d:N|` decode ---
+#
+# ⚠ THE ROOT-SKIP IS LOAD-BEARING, NOT DEFENSIVE. browser_node_for's walk scans
+# for a group whose `parent` is `{}`. Once item 2's root exists, EVERY real
+# instance hangs off `g:`, so a walk that starts at `{}` finds nothing and
+# answers `{{} 0}` — "Show in Signal Browser" would stop working on every raw
+# the moment the tree grew its root. TP40's three legs are one fixture seen
+# three ways, and the middle one is the only one that would be green either way.
+
+# a rooted, all-labelled multi list — item 15's shape, where even the CURRENT
+# DB sits under a header and its root is therefore PREFIXED.
+set tp_multi2 [pcall ::wviewer::browser_rows_multi \
+                 [list [list {d:0} {a.raw (tran)} $tp_ents] \
+                       [list {d:1} {b.raw (tran)} \
+                         [list [pcall ::wviewer::signal_entry {v(x9.beta)}]]]] \
+                 tb_bandgap]
+
+check {TP40 (STANDING CONTROL) an UNROOTED row list still resolves with the
+       DEFAULT start — BX01's local twin, and it must never move} \
+  [pcall ::wviewer::browser_node_for $tp_rows4 {x1 xr1}] {g:x1.xr1 2}
+check {TP40 a ROOTED list resolves the same path when the walk STARTS at the root} \
+  [pcall ::wviewer::browser_node_for $tp_rooted {x1 xr1} {g:}] {g:x1.xr1 2}
+check {TP40 ...and started at {} it does NOT — the root-skip is load-bearing} \
+  [pcall ::wviewer::browser_node_for $tp_rooted {x1 xr1}] {{} 0}
+# the deepest-ancestor fallback and the case rule must survive the new argument,
+# or item 12's whole hierarchy sync regresses silently one layer down.
+check {TP40 ...the -nocase fallback and the deepest-ancestor rule still hold
+       from a non-default start} \
+  [list [pcall ::wviewer::browser_node_for $tp_rooted {X1 XR1} {g:}] \
+        [pcall ::wviewer::browser_node_for $tp_rooted {x1 xr1 zz} {g:}]] \
+  {{g:x1.xr1 2} {g:x1.xr1 2}}
+
+check {TP41 browser_root_id finds the UNPREFIXED root} \
+  [pcall ::wviewer::browser_root_id $tp_rooted] {g:}
+check {TP41 ...and the CURRENT DB's PREFIXED root when every DB has a header} \
+  [pcall ::wviewer::browser_root_id $tp_multi2] {d:0|g:}
+# ⚠ AN ASSERTABLE ABSENCE, not a throw and not a lie. A row list with no root
+# (every shipped caller today) must answer {} so the caller can tell "there is
+# no root" from "the root is `g:`".
+check {TP41 ...and {} on a row list that has no root at all} \
+  [pcall ::wviewer::browser_root_id $tp_rows4] {}
+check {TP41 ...it never mistakes a DB HEADER for a design root} \
+  [pcall ::wviewer::browser_root_id \
+     [pcall ::wviewer::browser_rows_multi \
+        [list [list {d:0} {a.raw (tran)} $tp_ents]]]] {}
+
+# --- the `d:N|` mis-decode, spec §4.3 — a PRE-EXISTING defect ----------------
+#
+# `[string range $id 2 end]` mis-decodes `d:0|g:x1.x2` into `0|g:x1.x2`, so
+# "Descend to here" was ENABLED on foreign All-DBs rows and fired a garbage
+# instance path. There were TWO identical copies (browser_target_path and
+# browser_show_path); the fix is ONE decoder both call, so they cannot drift
+# apart again — which is the only reason a third proc is worth minting for six
+# characters of string arithmetic.
+check {TP42 browser_id_path decodes both id shapes, and both ROOTS, to a path} \
+  [list [pcall ::wviewer::browser_id_path {g:x1.x2}] \
+        [pcall ::wviewer::browser_id_path {d:0|g:x1.x2}] \
+        [pcall ::wviewer::browser_id_path {g:}] \
+        [pcall ::wviewer::browser_id_path {d:0|g:}]] {x1.x2 x1.x2 {} {}}
+check {TP42 ...a MULTI-DIGIT db index, and a `d:` that is not a prefix at all} \
+  [list [pcall ::wviewer::browser_id_path {d:12|g:x1}] \
+        [pcall ::wviewer::browser_id_path {g:d:0}]] {x1 d:0}
+
+set ::wviewer::browserrows(tp8) $tp_multi2
+check {TP43 browser_target_path decodes a PREFIXED group id} \
+  [pcall ::wviewer::browser_target_path tp8 {d:0|g:x1.xr1}] {ok x1.xr1}
+check {TP43 (POSITIVE CONTROL) ...the unprefixed form still decodes} \
+  [list [pcall ::wviewer::browser_target_path tp8 {d:1|g:x9}] \
+        [pcall ::wviewer::browser_target_path tp8 {d:0|g:}]] {{ok x9} {ok {}}}
+# ⚠ TRAP 12 IS STALE AND THE MEASUREMENT IS WHY. The plan wanted the leaf arm to
+# read a stored `path` key instead of re-parsing the raw name. Since M1 landed,
+# `signal_entry`'s `path` IS `[lindex [sig_split $name] 0]` — the same call the
+# leaf arm already makes, and `sig_split` already declasses. The two agree by
+# construction, so adding a `path` key to every leaf row would be pure row-
+# vocabulary blast radius for no behaviour. Pinned as an equivalence instead.
+check {TP43 a LEAF id resolves to the DECLASSED path, identical to the entry's
+       own `path` key — which is why no stored key was added} \
+  [list [pcall ::wviewer::browser_target_path tp8 {d:0|s:i(@m.x1.xm1.mod[id])}] \
+        [pcall dict get [lindex $tp_ents 2] path]] {{ok x1.xm1} x1.xm1}
+array unset ::wviewer::browserrows tp8
+
+# ⚠ SOURCE, and it is the only leg that sees the SECOND site. A fix applied to
+# browser_target_path alone leaves browser_show_path's `landed` mis-decoded, and
+# the only behavioural witness is an X-arm reveal onto a foreign node.
+set tp_tp   [wvproc_body $wsrc wviewer::browser_target_path]
+set tp_sp   [wvproc_body $wsrc wviewer::browser_show_path]
+check {TP44 (SOURCE) NEITHER site strips two characters by hand any more...} \
+  [list [regexp -all {string range \$id 2 end} $tp_tp] \
+        [regexp -all {string range \$id 2 end} $tp_sp]] {0 0}
+check {TP44 (SOURCE, THE POSITIVE CONTROL) ...and BOTH now call the one decoder} \
+  [list [regexp -all {browser_id_path} $tp_tp] \
+        [regexp -all {browser_id_path} $tp_sp]] {1 1}
+
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
   puts "$::errorInfo"

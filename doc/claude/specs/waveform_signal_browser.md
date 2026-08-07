@@ -735,6 +735,25 @@ report success.
 yields the same path**. A disagreeing set is an `err` and the menu entry stays DISABLED.
 Chosen against a silent first-wins (ruling 17), and declared rather than hidden.
 
+### 10.10 Decoding an id (the two-pane rebuild, item 8)
+
+- `wviewer::browser_id_path` — `{id}` -> the dotted instance path an id names. ⚠ **It
+  exists because there were two identical copies of it and both were WRONG.**
+  `browser_target_path` and `browser_show_path` each did `[string range $id 2 end]`, which
+  strips the `g:`/`s:` namespace but **not** the All-DBs `d:<N>|` prefix that
+  `browser_rows_reparent` adds — so `d:0|g:x1.x2` decoded to `0|g:x1.x2`, "Descend to
+  here" was *enabled* on foreign rows, and it fired a garbage instance path (two-pane spec
+  §4.3). Both `g:` and `d:0|g:` decode to `{}`, the sim root.
+- `wviewer::browser_root_id` — `{rows}` -> the **current DB's** design-root id: `g:`, or
+  `d:0|g:` when All-DBs has put the current DB under a header. `{}` when the row list has
+  no root — an *answer*, so a caller can tell "there is no root" from "the root is `g:`".
+  A DB header (`d:0`) is never mistaken for a design root.
+- `wviewer::browser_node_for` gains `{rows segs {start {}}}`. ⚠ **`start` is load-bearing.**
+  The walk scans for a group whose parent is `$parent`; once the design root exists every
+  instance hangs off `g:`, so a walk seeded `{}` dead-ends on the first segment and item
+  12's whole hierarchy sync stops working. The caller passes `[browser_root_id $rows]`.
+  The default stays `{}`, so BX01-BX08 and BD25 are unchanged.
+
 ---
 
 ## 11. All DBs (item 14)
