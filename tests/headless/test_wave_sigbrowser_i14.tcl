@@ -517,7 +517,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # A NAMED FIXTURE CHECK, so a dead prologue FAILS A CHECK instead of vanishing
   # into a silent skip that scores green.
   check {BD40 (FIXTURE) the sidebar toggles on and the tree is real} \
-    [list [pcall ::wviewer::browser_toggle 1 $tok] [winfo exists $BVF.tvf.tv]] \
+    [list [pcall ::wviewer::browser_toggle 1 $tok] [winfo exists $BVF.pw.tvf.tv]] \
     [list 1 1]
   update
 
@@ -650,9 +650,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # regression that removes the row must FAIL THIS CHECK, not abort the file and
   # take the nine checks after it with it (the S2 lesson, twice over).
   check {BD50b box ON: the treeview really holds the header and the foreign leaf} \
-    [list [$BVF.tvf.tv exists {d:0}] [$BVF.tvf.tv exists {d:0|s:v(alpha)}] \
-          [pcall $BVF.tvf.tv parent {d:0|s:v(alpha)}] \
-          [pcall $BVF.tvf.tv item {d:0} -text]] \
+    [list [$BVF.pw.tvf.tv exists {d:0}] [$BVF.pw.tvf.tv exists {d:0|s:v(alpha)}] \
+          [pcall $BVF.pw.tvf.tv parent {d:0|s:v(alpha)}] \
+          [pcall $BVF.pw.tvf.tv item {d:0} -text]] \
     [list 1 1 {d:0} {bd_a.raw (tran)}]
 
   # --- per-DB matching: the header only appears when that DB matched ---------
@@ -663,19 +663,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   bd_pat $BSB {*beta*}
   check {BD51 (THE NEGATIVE) ON + `*beta*`: the other DB matched nothing so it gets NO header row at all} \
-    [list [$BVF.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(beta)}]] \
+    [list [$BVF.pw.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(beta)}]] \
     [list 0 {s:v(beta)}]
   # ⚠ POSITIVE CONTROL for BD51 on the SAME bar and the SAME fixture: a pattern
   # the other DB DOES match brings the header straight back — and this is also
   # the PLAN's headline case, a signal found ONLY in the second database.
   bd_pat $BSB {*alpha*}
   check {BD51b (POSITIVE CONTROL) ON + `*alpha*`: the current DB matches NOTHING and the row comes from the other DB alone} \
-    [list [$BVF.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(alpha)}] \
+    [list [$BVF.pw.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(alpha)}] \
           [bd_ids_for [bd_rows $tok] {v(beta)}]] \
     [list 1 {d:0|s:v(alpha)} {}]
   bd_pat $BSB {}
   check {BD51c (CONTROL) clearing the pattern brings everything back} \
-    [list [$BVF.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]
+    [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]
 
   # --- the status line -------------------------------------------------------
   # ⚠ BYTE-IDENTICAL WITH THE BOX OFF. test_wave_sigbrowser.tcl:1173/1182/1199
@@ -699,17 +699,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set ::wviewer::sballdb($BSB) 0
   wviewer::browser_refresh $tok
   check {BD53 (CONTROL) before the gesture the box is off and A is not shown} \
-    [list $::wviewer::sballdb($BSB) [$BVF.tvf.tv exists {d:0}]] [list 0 0]
+    [list $::wviewer::sballdb($BSB) [$BVF.pw.tvf.tv exists {d:0}]] [list 0 0]
   $BSB.alldb invoke
   update
   check {BD53b the real click turns All DBs ON and the other DB APPEARS} \
-    [list $::wviewer::sballdb($BSB) [$BVF.tvf.tv exists {d:0}] \
+    [list $::wviewer::sballdb($BSB) [$BVF.pw.tvf.tv exists {d:0}] \
           [bd_ids_for [bd_rows $tok] {v(alpha)}]] \
     [list 1 1 {d:0|s:v(alpha)}]
   $BSB.alldb invoke
   update
   check {BD53c ...and clicking it again takes it straight back off} \
-    [list $::wviewer::sballdb($BSB) [$BVF.tvf.tv exists {d:0}] \
+    [list $::wviewer::sballdb($BSB) [$BVF.pw.tvf.tv exists {d:0}] \
           [bd_ids_for [bd_rows $tok] {v(alpha)}]] \
     [list 0 0 {}]
 

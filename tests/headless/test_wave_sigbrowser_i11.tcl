@@ -191,7 +191,7 @@ check_true {BH07 ...calling browser_descend_at, and it BREAKs} \
 
 set bh_bb [wvproc_body $wsrc wviewer::browser_build]
 check_true {BH08 browser_build binds <Key-E> on the TREE ITSELF (the tag cannot reach it)} \
-  [regexp {bind \$f\.tvf\.tv <Key-E> \{wviewer::browser_descend_at %W ; break\}} $bh_bb]
+  [regexp {bind \$f\.pw\.tvf\.tv <Key-E> \{wviewer::browser_descend_at %W ; break\}} $bh_bb]
 
 set bh_mb [wvproc_body $wsrc wviewer::build_menubar]
 check_true {BH09 build_menubar carries `-label {Descend to here} -accelerator E`} \
@@ -410,7 +410,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   wm withdraw .wvbh1
   pcall ::wviewer::browser_build wvbh1 .wvbh1
   dict set ::wviewer::windows wvbh1 [dict create top .wvbh1 win_path .wvbh1.drw]
-  set BHTV .wvbh1.wvbrowser.tvf.tv
+  set BHTV .wvbh1.wvbrowser.pw.tvf.tv
   set ::wviewer::browserrows(wvbh1) [wviewer::browser_rows [list \
     [wviewer::signal_entry {v(out)}] \
     [wviewer::signal_entry {v(x1.x2.net5)}] \
@@ -606,7 +606,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       incr ::bh_calls
       return [::wviewer::__bh_real_descend_at $W]
     }
-    set BHVTV $bh_vtop.wvbrowser.tvf.tv
+    set BHVTV $bh_vtop.wvbrowser.pw.tvf.tv
     set BHVE  $bh_vtop.wvbrowser.wvsearch.pat
     # ⚠ REQUIRED BETWEEN LEGS, and it is the item's own doing: a successful sync
     # RAISES AND ACTIVATES THE DESIGN WINDOW, which takes the WM focus away from

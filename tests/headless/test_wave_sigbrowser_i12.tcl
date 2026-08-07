@@ -366,7 +366,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   dict set ::wviewer::windows wvbx [dict create top .wvbx1 win_path .wvbx1.drw]
   pcall ::wviewer::browser_build wvbx .wvbx1
   set BXF .wvbx1.wvbrowser
-  set BXTV $BXF.tvf.tv
+  set BXTV $BXF.pw.tvf.tv
   pack $BXF -side left -fill y -before .wvbx1.drw
   set bx_mapped [bs_wait_mapped .wvbx1.drw]
   catch {bs_wait_mapped $BXTV}
@@ -592,7 +592,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  ready=$bx_ready ctx='$bx_ctx' want='$bx_dwin')"
     catch {wviewer::close $bx_tok}
   } else {
-    set BXVTV $bx_vtop.wvbrowser.tvf.tv
+    set BXVTV $bx_vtop.wvbrowser.pw.tvf.tv
     # ⚠⚠ POSITIVE CONTROL #3 (sabotage (c)): the sidebar is HIDDEN before the
     # command runs, asserted TWO ways — the authority and the packing order —
     # because `pack info` alone cannot tell "hidden" from "never built".

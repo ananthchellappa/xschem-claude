@@ -587,6 +587,8 @@ BN71-BN78 are red today. BN70 must pass from the first run and never move — it
 
 ### Item 9 — The paned skeleton, M4's scrollbars, `browse`, INERT checkboxes
 
+> **DONE.** Receipt: `09_receipt.md`. ⚠ **Two of the checks sketched below were WRONG and were replaced after being run** — see §"Corrections" at the end of this item. The band as built is BW01-BW14 (`--nogui`) + BW20-BW35 (X).
+
 > **This is the pinned-surface move, and it happens exactly ONCE.** Everything the layout checks pin moves here; items 10-13 add behaviour to a shape that has already stopped moving.
 
 **Scope.** `src/wave_viewer.tcl` `browser_build` (`:6542-6660`):
@@ -691,6 +693,14 @@ check {BW14 the sash reads a FRACTION strictly between 0 and 1 on a MAPPED pane}
 - Wire the checkbuttons now → **BW06 red**, and item 12 loses its own attribution.
 
 **Done when** the eight `--nogui` files are green after the literal edits, and the `BW` file's X arm passes under **one** `Allow 2h` window via `tests/headless/run_suites.sh`.
+
+#### Corrections — measured while building item 9, not argued
+
+1. ⚠⚠ **BW10 above is RED ON A CORRECT WIDGET, and it contradicts this plan's own trap row 9.** `$tv selection set {a b}` under `-selectmode browse` really does select **two**: `-selectmode` is read in exactly one place, `ttk::treeview::SelectOp` (`/usr/share/tcltk/tk8.6/ttk/treeview.tcl:262-275`), which only the **class bindings** call. As built, the pair is a REAL GESTURE — `<Button-1>` then `<Shift-Button-1>`, which dispatches `select.extend.<mode>`: `BrowseTo` (1) under `browse`, `selection set [between …]` (2) under `extended`. **BW26 + BW27**, same widget, same rows, same events. **BW26b** keeps the measured fact itself assertable, because it is the live hazard trap 9 names: a shipped two-id `sel` restores straight through `selection set`, so R4 is false from the first restore until item 13/14 narrows it.
+2. ⚠⚠ **BW12/BW13 above are wrong: DEPTH IS NOT THE DISCRIMINATOR.** `ttk::treeview` does **not** auto-grow column `#0` for deep or long items. Measured on Tk 8.6.14, a six-level tree of 32-char names in a 570 px pane reports `xview {0.0 1.0}` under **both** stretch settings. What differs: `-stretch 0` leaves `#0` at 200 while `-stretch 1` grows it to 568, and `#0` wider than the pane gives `{0.0 0.79}`. As built: **BW28** (the column does not track the pane), **BW29** (its control — the same widget as `-stretch 1` **does** track it and has nothing to scroll, the exact state M4 forbids), **BW30** (the `-xscrollcommand` wiring reaches the scrollbar: widen `#0` past the pane and the scrollbar's own `get` moves off `{0 1}`).
+3. **The red-list above is short by four.** `bind $f.tvf.tv` is also a SOURCE grep in **BT04 (×2), BM01 and BH08**; all four red on the path move.
+4. **BT31 and BM21 red for a reason that is not the gate.** They spelled blank tree space as `[winfo height $tv] - 3`, which was blank only while the tree was as tall as the sidebar. MEASURED after the split: sidebar 500 → panedwindow 286 → tree **144 px** against ~220 px of rows, so that y lands ON A ROW. `bs_blank_y` (new, in `wvbs_common.tcl`) finds a provably blank y and answers a negative code rather than 0; both sites now assert the precondition.
+5. **`pcall` returns the STRING `ERR:<msg>`, so `expr {[pcall winfo width $w] > 1}` THROWS.** Under sabotage 2 that aborted the BW file at check 17 of 34 — and BW31/BW32, the two checks written to catch that very sabotage, never ran. `bs_num`/`bs_set` and a non-throwing `bs_wait_mapped` fix it. **Any later item writing an X-arm check must use them**, or the same sabotage will pass silently again.
 
 ---
 

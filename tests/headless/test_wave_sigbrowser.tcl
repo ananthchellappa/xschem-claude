@@ -305,10 +305,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # sidebar, which falsifies any claim that names the item-9 child set — so the
   # SET is extended and the check NAME is corrected with it. A name that says
   # "item 9's set" while pinning item 13's is itself a defect.
-  check {BS22 the frame's children are exactly item 13's set} \
+  # ⚠ WIDENED A THIRD TIME BY THE TWO-PANE ITEM 9, same rule. `.tvf` is no
+  # longer a child of the sidebar at all — it moved INSIDE the new
+  # `ttk::panedwindow` `.pw` — and `.opt` (R11's two checkbuttons) is new. This
+  # is the batch's ONLY pinned-surface move and it happens exactly once.
+  check {BS22 the frame's children are exactly the two-pane set} \
     [lsort [winfo children .wvbs1.wvbrowser]] \
     [lsort [list .wvbs1.wvbrowser.ph .wvbs1.wvbrowser.wvsearch \
-                 .wvbs1.wvbrowser.tb .wvbs1.wvbrowser.tvf \
+                 .wvbs1.wvbrowser.tb .wvbs1.wvbrowser.opt .wvbs1.wvbrowser.pw \
                  .wvbs1.wvbrowser.wvfilter .wvbs1.wvbrowser.loc]]
   check_true {BS22 ...and it says what it is} \
     [expr {[string first {Signal Browser} [.wvbs1.wvbrowser.ph cget -text]] >= 0}]
@@ -713,9 +717,9 @@ set bt_build [wvproc_body $wsrc wviewer::browser_build]
 check_true {BT04 browser_build was found in the source} [expr {$bt_build ne {}}]
 # ⚠ THE TARGET OF SABOTAGE (b).
 check {BT04 the tree binds Button-2 (MMB) exactly once, to browser_plot_at} \
-  [regexp -all {bind \$f\.tvf\.tv <Button-2>} $bt_build] 1
+  [regexp -all {bind \$f\.pw\.tvf\.tv <Button-2>} $bt_build] 1
 check {BT04 ...and Double-Button-1 exactly once, to the same proc} \
-  [regexp -all {bind \$f\.tvf\.tv <Double-Button-1>} $bt_build] 1
+  [regexp -all {bind \$f\.pw\.tvf\.tv <Double-Button-1>} $bt_build] 1
 # the GROUPS flag is what makes the two gestures differ (D3): MMB plots a
 # group's leaves, a double-click leaves the group to ttk's expand/collapse
 check_true {BT04 double-click passes groups=0 and MMB groups=1} \
@@ -1071,7 +1075,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set bt_mapped [bs_wait_mapped .wvbt1.drw]
 
   set BTF .wvbt1.wvbrowser
-  set BTTV $BTF.tvf.tv
+  set BTTV $BTF.pw.tvf.tv
   set BTSB $BTF.wvsearch
   set BTFB $BTF.wvfilter
   # ⚠ "NEVER BUILT" IS A DISTINCT VALUE FROM "BUILT AND EMPTY" (trap 1).
@@ -1083,12 +1087,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # ⚠ WIDENED BY ITEM 13, NOT DELETED (ruling 17): the Location row `.loc` is a
   # new child of the sidebar, so the SET grows and the NAME is corrected with it.
-  check {BT21 the sidebar's children are exactly the item-13 set} \
+  # ⚠ WIDENED AGAIN BY THE TWO-PANE ITEM 9: `.tvf` is now a child of `.pw`, and
+  # `.opt` carries R11's two checkbuttons.
+  check {BT21 the sidebar's children are exactly the two-pane set} \
     [lsort [winfo children $BTF]] \
-    [lsort [list $BTF.ph $BTF.wvsearch $BTF.tb $BTF.tvf $BTF.wvfilter $BTF.loc]]
-  check {BT21 the tree is a ttk::treeview, extended-select, with a scrollbar} \
-    [list [winfo class $BTTV] [$BTTV cget -selectmode] [winfo exists $BTF.tvf.sb]] \
-    [list Treeview extended 1]
+    [lsort [list $BTF.ph $BTF.wvsearch $BTF.tb $BTF.opt $BTF.pw $BTF.wvfilter \
+                 $BTF.loc]]
+  # R4: single selection. M4: BOTH scrollbars — the h-scrollbar is what
+  # `-stretch 0` on column #0 makes non-decorative (proven by BW02/BW12/BW13).
+  check {BT21 the tree is a ttk::treeview, browse-select, with BOTH scrollbars} \
+    [list [winfo class $BTTV] [$BTTV cget -selectmode] \
+          [winfo exists $BTF.pw.tvf.sb] [winfo exists $BTF.pw.tvf.hsb]] \
+    [list Treeview browse 1 1]
   check {BT21 the Plot button exists on the toolbar} \
     [list [winfo exists $BTF.tb.plot] [$BTF.tb.plot cget -text]] [list 1 Plot]
   pcall ::wviewer::browser_toggle 1 wvbt
@@ -1106,18 +1116,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ WIDENED BY ITEM 13: `.loc` is packed FIRST of all (the Location row sits
   # above the Search bar, ViVA §3.1), so the recipe is a SIX-slave stack and the
   # name says six. The `-side` leg below gains `.loc -> top` for the same reason.
-  check {BT21 the sidebar's packing recipe is the exact six-slave stack} \
+  # ⚠ WIDENED BY THE TWO-PANE ITEM 9: SEVEN slaves. `.opt` is packed `-side top`
+  # AFTER the two `-side bottom` rows, which is what puts R11's checkboxes
+  # directly under the Plot toolbar and above the panedwindow; `.pw` takes the
+  # `-expand 1` slot `.tvf` used to hold.
+  check {BT21 the sidebar's packing recipe is the exact seven-slave stack} \
     [pack slaves $BTF] \
-    [list $BTF.loc $BTF.wvsearch $BTF.tb $BTF.ph $BTF.wvfilter $BTF.tvf]
-  check {BT21 ...with the sides that put the tree between the toolbar and the filter} \
+    [list $BTF.loc $BTF.wvsearch $BTF.tb $BTF.ph $BTF.wvfilter $BTF.opt $BTF.pw]
+  check {BT21 ...with the sides that put the panes between the checkboxes and the filter} \
     [list [dict get [pack info $BTF.loc] -side] \
           [dict get [pack info $BTF.wvsearch] -side] \
           [dict get [pack info $BTF.tb] -side] \
           [dict get [pack info $BTF.ph] -side] \
           [dict get [pack info $BTF.wvfilter] -side] \
-          [dict get [pack info $BTF.tvf] -side] \
-          [dict get [pack info $BTF.tvf] -expand]] \
-    [list top top top bottom bottom top 1]
+          [dict get [pack info $BTF.opt] -side] \
+          [dict get [pack info $BTF.pw] -side] \
+          [dict get [pack info $BTF.pw] -expand]] \
+    [list top top top bottom bottom top top 1]
 
   # the measured 755-px blowout, made assertable
   check {BT22 pack propagation is OFF on the sidebar} \
@@ -1292,11 +1307,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BT31 the Plot button with an EMPTY selection plots nothing} \
     $::bt_plot_calls {}
   # ...and a click on empty canvas below the last row records zero too
+  # ⚠ THE COORDINATE IS NO LONGER FREE, and the PRECONDITION is now asserted.
+  # This was `[winfo height $BTTV] - 3`, which was blank only because the tree
+  # was as tall as the sidebar. The two-pane item 9 made it one pane of a
+  # panedwindow — MEASURED on this fixture: sidebar 500, panedwindow 286, tree
+  # 144 px against ~220 px of rows — so that y lands ON A ROW and this check
+  # went red reporting a plot. `bs_blank_y` finds a provably blank y (growing
+  # the pane, then collapsing, only as far as it must) and answers a NEGATIVE
+  # CODE rather than 0 when it cannot, so "there was nowhere blank to click"
+  # can never masquerade as "the gesture correctly plotted nothing".
+  set bt_bl [bs_blank_y $BTTV $BTF.pw]
+  set bt_by [lindex $bt_bl 0]
+  check {BT31 (PRECONDITION) there really is blank tree space below the last row} \
+    [list [expr {$bt_by > 0}] [pcall $BTTV identify row 20 $bt_by]] {1 {}}
   set ::bt_plot_calls {}
-  event generate $BTTV <Button-2> -x 20 -y [expr {[winfo height $BTTV] - 3}]
+  event generate $BTTV <Button-2> -x 20 -y $bt_by
   update
   check {BT31 a middle-click below the last row plots nothing} \
     $::bt_plot_calls {}
+  bs_blank_undo [lindex $bt_bl 1]
   # THE POSITIVE CONTROL, on the same spy, immediately after: the zeros above
   # are a rule, not a broken recorder.
   pcall $BTTV selection set [list {s:vsweep}]
@@ -1384,7 +1413,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {wviewer::close $tok}
   } else {
     set BTVF $vtop2.wvbrowser
-    set BTVTV $BTVF.tvf.tv
+    set BTVTV $BTVF.pw.tvf.tv
     # a REAL raw, built on the VIEWER's own context (the SL idiom)
     set BTMAIN [xschem get current_win_path]
     xschem new_schematic switch $vdrw2
@@ -1576,7 +1605,7 @@ check {BM00 every item-10 proc this group greps was found in the source} \
   [list 1 1 1 1 1 1]
 
 check {BM01 browser_build binds <Button-3> on the TREE, exactly once} \
-  [list [regexp -all {bind \$f\.tvf\.tv <Button-3>} $bm_build] \
+  [list [regexp -all {bind \$f\.pw\.tvf\.tv <Button-3>} $bm_build] \
         [regexp -all {wviewer::browser_menu_post \$token} $bm_build]] \
   [list 1 1]
 check_true {BM01 ...and it forwards the event's widget, pixel AND root coords} \
@@ -1862,7 +1891,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   bs_wait_mapped .wvbm1.drw
 
   set BMF  .wvbm1.wvbrowser
-  set BMTV $BMF.tvf.tv
+  set BMTV $BMF.pw.tvf.tv
   set BMM  .wvbm1.wvbrowsermenu
   set BMS  $BMM.dest
   pcall ::wviewer::browser_build wvbm .wvbm1
@@ -1891,12 +1920,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   destroy .wvbm1.__bmempty
 
   # --- BM21: the gate FAILS CLOSED -----------------------------------------
+  # ⚠ SAME COORDINATE REPAIR AS BT31, and for the same measured reason: the
+  # two-pane item 9 made the tree ONE PANE (144 px against ~220 px of rows on
+  # this fixture), so `[winfo height $BMTV] - 3` stopped being blank and this
+  # check went red reporting a POSTED MENU. The precondition is now asserted, so
+  # "nowhere blank to click" is a failure with its own value rather than a
+  # refusal that never happened.
+  set bm_bl [bs_blank_y $BMTV $BMF.pw]
+  set bm_by [lindex $bm_bl 0]
+  check {BM21 (PRECONDITION) there really is blank tree space below the last row} \
+    [list [expr {$bm_by > 0}] [pcall $BMTV identify row 20 $bm_by]] {1 {}}
   set ::bm_popped {}
   check {BM21 an RMB on BLANK tree space below the last row refuses} \
-    [pcall ::wviewer::browser_menu_post wvbm $BMTV 20 \
-       [expr {[winfo height $BMTV] - 3}] 100 100] 0
+    [pcall ::wviewer::browser_menu_post wvbm $BMTV 20 $bm_by 100 100] 0
   check {BM21 ...and posts NOTHING — still `absent`, never an empty menu} \
     [list [bm_menu_state $BMM] $::bm_popped] [list absent {}]
+  bs_blank_undo [lindex $bm_bl 1]
 
   # --- BM22: a post on a real leaf -----------------------------------------
   set bm_c [bm_centre $BMTV {s:v(out)}]
@@ -2218,7 +2257,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {wviewer::close $tok}
   } else {
     set BMVF  $vtop3.wvbrowser
-    set BMVTV $BMVF.tvf.tv
+    set BMVTV $BMVF.pw.tvf.tv
     set BMVM  $vtop3.wvbrowsermenu
     set BMVS  $BMVM.dest
     proc bm_traces {token} {

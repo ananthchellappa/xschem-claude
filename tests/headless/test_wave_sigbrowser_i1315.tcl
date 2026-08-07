@@ -510,12 +510,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   # the LOCAL twin of the widened BS22/BT21 — this file must fail on its own if
   # the row is dropped, not only the frozen one.
-  check {BR20 the sidebar's children are exactly the item-13 set} \
+  # ⚠ WIDENED BY THE TWO-PANE ITEM 9 in lockstep with BS22/BT21: `.tvf` moved
+  # inside the new `ttk::panedwindow` `.pw`, and `.opt` (R11's two INERT
+  # checkbuttons) joined the sidebar. Widened, not deleted — the Location row
+  # this check exists for is still named in both lists.
+  check {BR20 the sidebar's children are exactly the two-pane set} \
     [lsort [winfo children $BRF]] \
-    [lsort [list $BRF.ph $BRF.wvsearch $BRF.tb $BRF.tvf $BRF.wvfilter $BRF.loc]]
-  check {BR21 the packing recipe is the six-slave stack with .loc FIRST} \
+    [lsort [list $BRF.ph $BRF.wvsearch $BRF.tb $BRF.opt $BRF.pw $BRF.wvfilter \
+                 $BRF.loc]]
+  check {BR21 the packing recipe is the seven-slave stack with .loc FIRST} \
     [pack slaves $BRF] \
-    [list $BRF.loc $BRF.wvsearch $BRF.tb $BRF.ph $BRF.wvfilter $BRF.tvf]
+    [list $BRF.loc $BRF.wvsearch $BRF.tb $BRF.ph $BRF.wvfilter $BRF.opt $BRF.pw]
   check {BR21 ...and the Location row is packed -side top -fill x} \
     [list [dict get [pack info $BRF.loc] -side] \
           [dict get [pack info $BRF.loc] -fill]] \
@@ -1129,7 +1134,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set BPF $vtop.wvbrowser
   set BPS $BPF.wvsearch
   set BPL $BPF.wvfilter
-  set BPT $BPF.tvf.tv
+  set BPT $BPF.pw.tvf.tv
   check {BP40 (FIXTURE) the sidebar's two bars and its tree are real widgets} \
     [list [winfo exists $BPS] [winfo exists $BPL] [winfo exists $BPT]] \
     [list 1 1 1]
@@ -1257,7 +1262,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [pcall ::wviewer::restore $tok $snap1 $brP {}] 1
   set vtop [wviewer::window_for $tok]
   set BPF $vtop.wvbrowser ; set BPS $BPF.wvsearch
-  set BPL $BPF.wvfilter   ; set BPT $BPF.tvf.tv
+  set BPL $BPF.wvfilter   ; set BPT $BPF.pw.tvf.tv
   check {BP47 ...on a mapped canvas} [viewer_ready $vtop] 1
   update
 

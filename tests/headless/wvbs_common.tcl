@@ -137,12 +137,22 @@ proc bs_order {top a b} {
 # never the asserted value, and RETURNS the mapping so every caller can carry
 # it in its own tuple: a budget expiry then reads as "never mapped" and cannot
 # masquerade as a real failure.
+# ⚠ NEVER THROWS, and that is a WIDENING rather than a weakening (ruling 17,
+# and the same argument bs_wait_mapped_top already carries). `winfo ismapped`
+# on a widget that does not exist THROWS, and an unguarded throw here lands in
+# the calling file's outer catch and deletes every remaining check — measured:
+# the item-9 trap-1 sabotage stopped the panes file at check 22 of 34, so the
+# two checks written to CATCH that sabotage never ran. A missing widget now
+# reads 0, which still FAILS every caller's own comparison.
 proc bs_wait_mapped {w {budget 1500}} {
-  for {set t 0} {$t < $budget && ![winfo ismapped $w]} {incr t} {
+  for {set t 0} {$t < $budget} {incr t} {
+    if {[catch {winfo ismapped $w} m]} { return 0 }
+    if {$m} { break }
     after 10 ; update
   }
   update
-  return [winfo ismapped $w]
+  if {[catch {winfo ismapped $w} m]} { return 0 }
+  return $m
 }
 
 # ⚠ THE TOPLEVEL TWIN OF bs_wait_mapped, ADDED BY THE RULING-30 SPLIT and the
@@ -202,6 +212,120 @@ proc bs_wait_widths {top a b {budget 300} {settle 12}} {
   catch {set wa [winfo width $a]}
   catch {set wb [winfo width $b]}
   return [list $wt $wa $wb unsettled]
+}
+
+# --- the two-pane SASH readers (two-pane PLAN item 9) -----------------------
+# ⚠ AN ASSERTABLE VALUE, NEVER A THROW AND NEVER A BARE 0. The sash is stored
+# and restored as a FRACTION (M3), and a fraction read on a panedwindow that is
+# not yet MAPPED is the batch's ranked silent-green trap #1: MEASURED on this
+# machine, an unmapped `ttk::panedwindow` reports `winfo height` 1 and
+# `sashpos 0` 0, so `fraction x height` collapses the tree pane to nothing and
+# every fraction reads 0.0 — indistinguishable from "the sash really is at the
+# top" unless the two failures have their OWN values. They do:
+#     -1  there is no panedwindow there at all
+#     -2  there is one, but its height is not real yet (unmapped / mid-map)
+# so a mid-map read is visible in the log instead of masquerading as 0.0.
+proc bs_sash_frac {pw} {
+  if {[catch {winfo exists $pw} e] || !$e} { return -1 }
+  if {[catch {winfo class $pw} c] || $c ne {TPanedwindow}} { return -1 }
+  set h 0
+  catch {set h [winfo height $pw]}
+  if {$h <= 1} { return -2 }
+  set p 0
+  if {[catch {$pw sashpos 0} p]} { return -1 }
+  return [expr {$p * 1.0 / $h}]
+}
+# `bs_wait_widths`' settle poll, turned on the sash. Polls the PRECONDITION —
+# the panedwindow has a real height and the fraction has stopped moving — and
+# RETURNS THE FRACTION, never a verdict, so an expired budget still fails the
+# caller's own comparison rather than being rescued by the helper.
+proc bs_wait_sash {pw {budget 300} {settle 12}} {
+  set last -99 ; set same 0 ; set f -2
+  for {set t 0} {$t < $budget} {incr t} {
+    set f [bs_sash_frac $pw]
+    if {$f > 0} {
+      if {abs($f - $last) < 0.0005} { incr same } else { set same 0 ; set last $f }
+      if {$same >= $settle} { return $f }
+    }
+    after 10 ; update
+  }
+  return [bs_sash_frac $pw]
+}
+
+# --- REDUCING A `pcall` RESULT TO SOMETHING `expr` CAN EAT --------------------
+# ⚠ REQUIRED, NOT TIDINESS. `pcall` answers the STRING `ERR:<msg>` when the call
+# threw, and `expr {[pcall winfo width $w] > 1}` on that string throws AGAIN --
+# straight past the check and into the file's outer catch, which deletes every
+# remaining check. That is exactly the failure the item-9 trap-1 sabotage
+# produced: the run stopped at check 17 and the two checks written to CATCH the
+# sabotage never ran at all. These two turn a throw into a VALUE instead.
+proc bs_num {v} { if {[string is double -strict $v]} { return $v } ; return -1 }
+proc bs_set {v} { expr {$v ne {} && [string range $v 0 3] ne {ERR:}} }
+
+# --- BLANK TREE SPACE, WHICH STOPPED BEING FREE (two-pane item 9) ------------
+# ⚠⚠ WHY THIS EXISTS. Two checks — BT31's "a middle-click below the last row
+# plots nothing" and BM21's "an RMB on BLANK tree space refuses" — spelled the
+# blank coordinate as `[winfo height $tv] - 3`. That was sound while the tree
+# was as tall as the sidebar. The two-pane item 9 made it ONE PANE of a
+# panedwindow at a 0.55 sash, so on the 500 px fixtures the eleven rows FILL the
+# tree and `height - 3` lands ON A ROW: both checks went red reporting a plot
+# and a posted menu. The gate never stopped refusing — there was no blank space
+# left to click. Fixing the coordinate without asserting the precondition would
+# have re-armed exactly that trap for the next person who changes the layout.
+#
+# So: find a y that is PROVABLY blank, escalating only as far as it must, and
+# report failure as a VALUE rather than as a plausible-looking 0.
+#   -1  no such widget
+#   -2  no real height yet (unmapped / mid-map)
+#   -3  the rows fill it even with the tree pane at its tallest and every
+#       top-level group collapsed — the fixture genuinely cannot express the case
+# Returns {y undo}; hand `undo` to `bs_blank_undo` AFTER the gesture.
+# ⚠ `identify row` TAKES BOTH COORDINATES — `$tv identify row $x $y`, exactly as
+# browser_plot_at and browser_menu_post call it. The one-argument spelling is
+# parsed as the legacy `identify $x $y` and throws `expected integer but got
+# "row"`, which `catch` would have turned into a plausible-looking -1.
+proc bs_scan_blank {tv {x 20}} {
+  set h 0
+  catch {set h [winfo height $tv]}
+  if {$h <= 4} { return -2 }
+  for {set y [expr {$h - 3}]} {$y > 2} {incr y -4} {
+    if {[catch {$tv identify row $x $y} r]} { return -1 }
+    if {$r eq {}} { return $y }
+  }
+  return -3
+}
+proc bs_blank_y {tv {pw {}}} {
+  if {[catch {winfo exists $tv} e] || !$e} { return [list -1 {}] }
+  set y [bs_scan_blank $tv]
+  if {$y > 0} { return [list $y {}] }
+  set undo {}
+  # 1) give the tree pane the whole panedwindow
+  if {$pw ne {} && ![catch {winfo class $pw} c] && $c eq {TPanedwindow}} {
+    if {![catch {$pw sashpos 0} was]} {
+      lappend undo [list $pw sashpos 0 $was]
+      catch {$pw sashpos 0 [expr {[winfo height $pw] - 24}]}
+      update idletasks ; update
+      set y [bs_scan_blank $tv]
+      if {$y > 0} { return [list $y $undo] }
+    }
+  }
+  # 2) collapse the top-level groups
+  foreach id [$tv children {}] {
+    if {![catch {$tv item $id -open} o] && $o} {
+      lappend undo [list $tv item $id -open 1]
+      catch {$tv item $id -open 0}
+    }
+  }
+  update idletasks ; update
+  return [list [bs_scan_blank $tv] $undo]
+}
+# ⚠ Applied in REVERSE order, and NOT with `lreverse`: the repo targets Tcl
+# 8.4-8.6 (rawhist_add's own note, and BP06 pins the same rule in src).
+proc bs_blank_undo {undo} {
+  for {set i [expr {[llength $undo] - 1}]} {$i >= 0} {incr i -1} {
+    catch {eval [lindex $undo $i]}
+  }
+  update idletasks ; update
 }
 
 # WSLg-robust key delivery (test_wave_grid's helper): a bare `event generate`

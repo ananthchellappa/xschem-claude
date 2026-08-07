@@ -283,6 +283,13 @@ tag must still classify `devnode`, or the check proves nothing).
   error. `{}` inverts, `0`/`1` set. Returns early when the state already matches — which is
   why an already-shown sidebar is deliberately not repopulated by item 12's command.
 - `wviewer::browser_width` — `{token {want {}}}`. §6. **The width is derived, not fixed.**
+- `wviewer::browser_sea_build` — `{parent}` -> `$parent.sea`, the two-pane rebuild's LOWER
+  pane: a `canvas` plus a **horizontal** scrollbar and no vertical one. Empty until the sea
+  of names is filled. See `doc/claude/specs/waveform_signal_browser_two_pane.md` §5.
+- `wviewer::browser_sash` — `{token {want {}}}` -> the split between the instance tree and
+  the sea, as a **fraction** of the panedwindow's height (never pixels), or `0` when it
+  could not be applied. ⚠ **Only ever applied on a MAPPED panedwindow** — on an unmapped
+  one `winfo height` is 1 and `sashpos` computes fraction x 0, collapsing the tree pane.
 - `wviewer::browser_rows` / `_reparent` / `_multi` — the tree model. §8.
 - `wviewer::browser_menu_build` — `{token ids}` — the RMB menu. §9.
 - `wviewer::browser_state` — `{token}` -> the persistence dict. §13.

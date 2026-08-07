@@ -384,6 +384,24 @@ namespace eval wviewer {
   #     ONE reader, in browser_refresh, and the snapshot cost does not depend on
   #     widget state.
   variable browserdbsigs; array set browserdbsigs {}
+  # TWO-PANE item 9: the paned skeleton's three per-token pieces.
+  #   browsersash($token) = the split between the instance tree and the sea of
+  #     names, as a FRACTION of the panedwindow's height (M3), never pixels. A
+  #     fraction because the sidebar's height is the toplevel's and the toplevel
+  #     is resized freely; and because `browser_state` validates `width` with
+  #     `string is integer -strict`, so the sash could not have ridden inside it
+  #     (spec §9). Applied only on a MAPPED pane -- `sashpos` on an unmapped one
+  #     computes fraction x 0 and collapses the tree pane (MEASURED: unmapped
+  #     `winfo height` 1, `sashpos 0` 0).
+  #   browserdev($token) / browsersrc($token) = R11's two independent class
+  #     filters, `Show device internals` (default 0) and `Show source currents`
+  #     (default 1). ⚠ PER TOKEN, not namespace globals: two viewers showing two
+  #     raws must be able to disagree. INERT in item 9 -- the checkbuttons are
+  #     built and packed with NO `-command`; item 12 wires them.
+  # Persistence of all three is item 14, deliberately not here.
+  variable browsersash; array set browsersash {}
+  variable browserdev;  array set browserdev  {}
+  variable browsersrc;  array set browsersrc  {}
   # signal-browser PLAN item 13: the Location bar's RAW HISTORY. A single
   # GLOBAL list (newest first, deduped on the normalised path, capped at
   # $::raw_history_max), NOT a per-token array: "the last raws I opened" is a
@@ -646,6 +664,9 @@ proc wviewer::forget {token} {
   variable browsersigs; variable browserrows
   # signal-browser item 14: the foreign-DB inventory snapshot, same rule again.
   variable browserdbsigs
+  # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
+  # a third time.
+  variable browsersash; variable browserdev; variable browsersrc
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -695,6 +716,9 @@ proc wviewer::forget {token} {
   catch {unset browsersigs($token)}
   catch {unset browserrows($token)}
   catch {unset browserdbsigs($token)}
+  catch {unset browsersash($token)}
+  catch {unset browserdev($token)}
+  catch {unset browsersrc($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -6789,6 +6813,12 @@ proc wviewer::browser_build {token top} {
   variable browser
   variable browsersigs
   variable browserrows
+  # TWO-PANE item 9: R11's two class filters. DECLARED, or the seeding below
+  # writes a LOCAL array and the checkbuttons bind to a namespace variable that
+  # nothing ever set -- which reads as (b) defaulting OFF, the one value R11
+  # rules against.
+  variable browserdev
+  variable browsersrc
   catch {destroy $top.wvbrowser}
   set f $top.wvbrowser
   frame $f -background [ase::theme panel] -takefocus 0
@@ -6835,13 +6865,68 @@ proc wviewer::browser_build {token top} {
   button $f.tb.plot -text Plot -font AseLabelFont \
     -command [list wviewer::browser_plot_selection $token]
   pack $f.tb.plot -side left -padx {6 4} -pady 2
-  frame $f.tvf -background [ase::theme panel]
-  ttk::treeview $f.tvf.tv -show tree -selectmode extended -style Ase.Treeview \
-    -yscrollcommand [list $f.tvf.sb set]
-  $f.tvf.tv column #0 -width 200 -minwidth 80 -stretch 1
-  scrollbar $f.tvf.sb -command [list $f.tvf.tv yview]
-  pack $f.tvf.sb -side right -fill y
-  pack $f.tvf.tv -side left -fill both -expand 1
+  # --- TWO-PANE item 9: R11's TWO CLASS FILTERS, BUILT INERT ------------------
+  # Two independent boxes with two DIFFERENT defaults (spec R11): device
+  # internals OFF, source currents ON. They are seeded BEFORE the widgets are
+  # created, because a ttk::checkbutton whose -variable does not exist yet
+  # creates it at the OFF value -- which would silently give (b) the wrong
+  # default and no check would see the difference between "ruled 1" and
+  # "happened to be 0".
+  #
+  # ⚠ NO `-command`. Item 12 wires them; item 9 only pins the shape. A
+  # checkbutton uses -command rather than `bind $f.`, so neither box moves the
+  # guide's GH8/GH9 gesture count when item 12 does wire them.
+  #
+  # ⚠ They are OPTIONS ON THE SIDEBAR, not options on searchbar_build: BAR11
+  # pins the plain bar's dict to exactly four keys and `searchbar_get` already
+  # emits one conditional key, so a fifth would be blast radius for no gain
+  # (spec §6).
+  set browserdev($token) 0
+  set browsersrc($token) 1
+  frame $f.opt -background [ase::theme panel]
+  ttk::checkbutton $f.opt.dev -text {Show device internals} \
+    -variable ::wviewer::browserdev($token)
+  ttk::checkbutton $f.opt.src -text {Show source currents} \
+    -variable ::wviewer::browsersrc($token)
+  pack $f.opt.dev -side top -anchor w -padx 6
+  pack $f.opt.src -side top -anchor w -padx 6
+  # --- TWO-PANE item 9: THE PANED SKELETON ------------------------------------
+  # M3: STACKED, not side by side, and the reason is measured rather than
+  # aesthetic -- `browser_width` already caps the sidebar at 0.45 x window
+  # (~450 px at the 1000x829 spawn size), so a side-by-side split halves an
+  # already-narrow pane. Stacked fits 14+18 rows spawned, 23+36 maximized.
+  #
+  # ⚠ `$f.pw` IS A CHILD OF `$f`, AND THAT IS LOAD-BEARING RATHER THAN
+  # INCIDENTAL. `browser_width` fixes the width of `$f` with `pack propagate 0`;
+  # every pane inherits it because every pane is inside `$f`. Re-parent `$f.pw`
+  # to the toplevel and BT08's and BP07's four width literals -- all SOURCE
+  # greps -- stay green while the sidebar silently stops governing the panes.
+  # That sabotage was RUN; the checks that catch it are BW31/BW32, which read a
+  # live widget (doc/claude/signal_browser_2pane_batch/PLAN.md §3 trap 1).
+  ttk::panedwindow $f.pw -orient vertical
+  frame $f.pw.tvf -background [ase::theme panel]
+  # R4: `browse`, i.e. exactly one node selected at all times.
+  # ⚠ M4: `-stretch 0` WITH AN EXPLICIT WIDTH, and `-xscrollcommand`, as ONE
+  # change. Inside `pack propagate 0` a `-stretch 1` column always fits the
+  # widget, so an h-scrollbar added without the stretch change scrolls nothing
+  # and is pure decoration. MEASURED on Tk 8.6.14: at a 570 px tree, `-stretch 1`
+  # grows column #0 from 200 to 568 and `xview` is `{0.0 1.0}` whatever the tree
+  # holds; `-stretch 0` leaves it at 200. ⚠ ttk does NOT auto-grow #0 for deep
+  # or long items either -- depth is not the discriminator, the stretch flag is.
+  ttk::treeview $f.pw.tvf.tv -show tree -selectmode browse -style Ase.Treeview \
+    -yscrollcommand [list $f.pw.tvf.sb set] \
+    -xscrollcommand [list $f.pw.tvf.hsb set]
+  $f.pw.tvf.tv column #0 -width 200 -minwidth 80 -stretch 0
+  scrollbar $f.pw.tvf.sb -command [list $f.pw.tvf.tv yview]
+  scrollbar $f.pw.tvf.hsb -orient horizontal -command [list $f.pw.tvf.tv xview]
+  pack $f.pw.tvf.sb  -side right  -fill y
+  pack $f.pw.tvf.hsb -side bottom -fill x
+  pack $f.pw.tvf.tv  -side left   -fill both -expand 1
+  wviewer::browser_sea_build $f.pw
+  # tree on TOP (M3), both panes stretchy so the sash starts where
+  # `browser_sash` puts it rather than where the request sizes land.
+  $f.pw add $f.pw.tvf -weight 1
+  $f.pw add $f.pw.sea -weight 1
   wviewer::searchbar_build $f -name wvfilter -showbutton 0 \
     -command [list wviewer::browser_filter_cb $token]
   # item 13: the Location row sits ABOVE the Search bar (ViVA §3.1's order)
@@ -6851,7 +6936,14 @@ proc wviewer::browser_build {token top} {
   # bottom-up: the status line last of all, the Filter bar just above it
   pack $f.ph       -side bottom -fill x -padx 4 -pady 4
   pack $f.wvfilter -side bottom -fill x
-  pack $f.tvf      -side top -fill both -expand 1
+  # ⚠ `.opt` IS PACKED `-side top` AFTER THE TWO `-side bottom` ROWS, and the
+  # order is the layout. `pack slaves` reports PACKING order, which for a mixed
+  # top/bottom stack is not the visual order: packing `.opt` here puts R11's two
+  # boxes directly under the Plot toolbar, and `.pw` -- packed last with
+  # `-expand 1` -- then takes everything left between the boxes and the Filter
+  # bar. Pinned as a whole recipe by BT21 and its local twin BR21.
+  pack $f.opt      -side top -fill x
+  pack $f.pw       -side top -fill both -expand 1
   # ⚠ NO `break` ON EITHER, and that is MEASURED rather than assumed: the
   # bindtags of a treeview inside a viewer toplevel are {<tv> Treeview <top>
   # all}. The CANVAS is not among them (set_bindings binds win_path, not the
@@ -6862,9 +6954,9 @@ proc wviewer::browser_build {token top} {
   #
   # The trailing 0/1 is the GROUPS flag: a double-click on a group must NOT
   # plot (ttk's expand/collapse owns that gesture), MMB and the Plot button do.
-  bind $f.tvf.tv <Double-Button-1> \
+  bind $f.pw.tvf.tv <Double-Button-1> \
     [list wviewer::browser_plot_at $token %W %x %y 0]
-  bind $f.tvf.tv <Button-2> \
+  bind $f.pw.tvf.tv <Button-2> \
     [list wviewer::browser_plot_at $token %W %x %y 1]
   # item 10: the RMB context menu. ⚠ THE `break` IS DEFENCE IN DEPTH, NOT THE
   # MECHANISM — see browser_menu_ids' block comment. What keeps xschem's canvas
@@ -6872,7 +6964,7 @@ proc wviewer::browser_build {token top} {
   # canvas in it, no Button-3 on any of the other three), measured by BM35 and
   # BM42; the `break` guards only against a future toplevel/all-level Button-3.
   # Kept, and named honestly in BM01, rather than quietly dropped.
-  bind $f.tvf.tv <Button-3> \
+  bind $f.pw.tvf.tv <Button-3> \
     "[list wviewer::browser_menu_post $token] %W %x %y %X %Y ; break"
   # item 11: `Descend to here` ON THE TREE ITSELF. Required, not duplicated for
   # taste: the tree's bindtags are {<tv> Treeview <top> all} and the CANVAS is
@@ -6880,13 +6972,86 @@ proc wviewer::browser_build {token top} {
   # has focus — and the user pressing this key has just clicked a row, i.e. the
   # tree has focus. Both routes resolve the same target (the tree's selection)
   # through browser_descend_at. The `break` stops ttk seeing it.
-  bind $f.tvf.tv <Key-E> {wviewer::browser_descend_at %W ; break}
+  bind $f.pw.tvf.tv <Key-E> {wviewer::browser_descend_at %W ; break}
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
   wviewer::sync_browser_mirror $token
   ase::ui::apply_theme $f
   return 1
+}
+
+# --- TWO-PANE item 9: the LOWER pane's widgets --------------------------------
+# Build `$parent.sea`, the "sea of names" -- the lower pane of the two-pane
+# browser. EMPTY in item 9: this is the container and its scrolling, nothing
+# draws into it until item 11.
+#
+# ⚠ A `canvas`, and the alternatives were enumerated and REJECTED against
+# Tk 8.6.14 rather than skipped (spec §5.1): `ttk::treeview` with N columns has
+# NO cell selection in 8.6, so an N-column layout could only ever select N
+# unrelated signals at once; side-by-side `listbox`es have no per-item font and
+# each owns its own selection, so Shift-click cannot cross a column; a `text`
+# widget yields character-range selection. The canvas gives column-major flow,
+# multi-select, per-item styling and O(1) hit-testing (the flow is a regular
+# grid, so `browser_flow_hit` is arithmetic, not `find closest`).
+#
+# ⚠ HORIZONTAL SCROLLING ONLY, AND NO `-yscrollcommand` AT ALL (R3). It is not
+# an omission: the flow is column-major and the scrollregion's height is clamped
+# to the widget, so a name is never below the fold -- it is only ever to the
+# right. A vertical scrollbar here would be a silent design change.
+#
+# Returns the pane's path, so the caller adds it to the panedwindow without
+# respelling it.
+proc wviewer::browser_sea_build {parent} {
+  set w $parent.sea
+  catch {destroy $w}
+  frame $w -background [ase::theme panel]
+  canvas $w.c -takefocus 1 -highlightthickness 0 \
+    -background [ase::theme table] \
+    -xscrollcommand [list $w.hsb set]
+  scrollbar $w.hsb -orient horizontal -command [list $w.c xview]
+  pack $w.hsb -side bottom -fill x
+  pack $w.c   -side top -fill both -expand 1
+  return $w
+}
+
+# The split between the two panes, as a FRACTION of the panedwindow's height
+# (M3). `want` {} reads/re-applies the current one; a fraction strictly inside
+# (0,1) sets it. Returns the fraction in force, or 0 when it could not be
+# applied. PERSISTENCE IS ITEM 14 -- this is only the accessor and the apply.
+#
+# ⚠⚠ A FRACTION, NEVER PIXELS, and both halves of that were forced by reading
+# the code rather than by taste:
+#   * the sidebar's height is the toplevel's, and the toplevel is resized
+#     freely, so a pixel split restored onto a shorter window puts the sash
+#     off the bottom;
+#   * `browser_state` validates `width` with `string is integer -strict` and
+#     zeroes anything else, so the sash could NOT have ridden inside that key as
+#     a `{450 0.4}` list -- it would have been silently discarded (spec §9).
+#
+# ⚠⚠ IT MAY ONLY BE APPLIED ON A MAPPED PANEDWINDOW. MEASURED on this machine:
+# before mapping, `winfo height` on a ttk::panedwindow is 1 and `sashpos 0` is
+# 0, so `fraction x height` is 0 and the tree pane COLLAPSES to nothing. The
+# height guard below is what makes "not mapped yet" a NO-OP returning 0 rather
+# than a wrong answer that looks like a user preference.
+proc wviewer::browser_sash {token {want {}}} {
+  variable windows
+  variable browsersash
+  if {![dict exists $windows $token]} { return 0 }
+  set pw [dict get $windows $token top].wvbrowser.pw
+  if {[catch {winfo exists $pw} e] || !$e} { return 0 }
+  if {[string is double -strict $want] && $want > 0 && $want < 1} {
+    set browsersash($token) $want
+  }
+  # 0.55 gives the tree the larger share, which is the pane the user navigates
+  # with; the sea reflows to whatever is left (its rows-per-column is derived
+  # from the height, so it has no preferred size to honour).
+  if {![info exists browsersash($token)]} { set browsersash($token) 0.55 }
+  set h 0
+  catch {set h [winfo height $pw]}
+  if {$h <= 1} { return 0 }
+  catch {$pw sashpos 0 [expr {int($browsersash($token) * $h)}]}
+  return $browsersash($token)
 }
 
 # --- item 9: state + refresh --------------------------------------------------
@@ -6989,7 +7154,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browserdbsigs
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
-  if {[catch {winfo exists $f.tvf.tv} e] || !$e} { return 0 }
+  if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} { return 0 }
   if {$reload} { catch {wviewer::browser_reload $token} }
   if {![info exists browsersigs($token)]} { set browsersigs($token) {} }
   set total [llength $browsersigs($token)]
@@ -7035,7 +7200,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
     wviewer::browser_status $token $rows
     return 0
   }
-  if {[catch {wviewer::browser_populate $f.tvf.tv $rows} pe]} {
+  if {[catch {wviewer::browser_populate $f.pw.tvf.tv $rows} pe]} {
     wviewer::browser_status $token $pe
     return 0
   }
@@ -7120,7 +7285,7 @@ proc wviewer::browser_plot_ids {token ids {destover {}}} {
 proc wviewer::browser_plot_selection {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
-  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return 0 }
   set sel {}
   catch {set sel [$tv selection]}
@@ -7753,7 +7918,7 @@ proc wviewer::browser_descend_to {token ids} {
 proc wviewer::browser_descend_here {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
-  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return 0 }
   set sel {}
   catch {set sel [$tv selection]}
@@ -7897,7 +8062,7 @@ proc wviewer::browser_reveal {token id} {
   variable windows
   if {$id eq {}} { return 0 }
   if {![dict exists $windows $token]} { return 0 }
-  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return 0 }
   if {[catch {$tv exists $id} ex] || !$ex} { return 0 }
   set ok 1
@@ -7943,10 +8108,10 @@ proc wviewer::browser_show_path {token path} {
     return [wviewer::browser_say $token err {no waveform viewer window is open}]
   }
   set f [dict get $windows $token top].wvbrowser
-  if {[catch {winfo exists $f.tvf.tv} e] || !$e} {
+  if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} {
     return [wviewer::browser_say $token err {the Signal Browser is not built}]
   }
-  set tv $f.tvf.tv
+  set tv $f.pw.tvf.tv
   # decision 13: browser state derives from the raw inventory, NEVER from the
   # rect model (0186 stays open, items 8+ route around it).
   if {![info exists browsersigs($token)] || ![llength $browsersigs($token)]} {
@@ -8163,6 +8328,18 @@ proc wviewer::browser_show {token} {
       # item 9: sizing belongs HERE, not in browser_build — the toplevel is
       # mapped on this branch, so `winfo width` is a real number.
       catch {wviewer::browser_width $token}
+      # TWO-PANE item 9: the SASH, for the same reason and one step further
+      # along. It is a FRACTION of the panedwindow's height, and that height is
+      # only real once the pane is MAPPED — on an unmapped one `winfo height`
+      # is 1 and `sashpos 0` computes fraction x 0, collapsing the tree pane.
+      # `browser_width` has already flushed the idle queue once, but its own
+      # `$f configure -width` has not been serviced when it returns, so the
+      # queue is flushed again here AND the apply is repeated on the idle queue.
+      # Both calls are idempotent and both land before the user can touch the
+      # sash, so neither can clobber a drag.
+      catch {update idletasks}
+      catch {wviewer::browser_sash $token}
+      catch {after idle [list wviewer::browser_sash $token]}
     }
     # item 9: SHOW = REPOPULATE. The inventory is a snapshot taken here (see
     # browser_reload), so showing the sidebar is the one moment a raw read is
@@ -8352,7 +8529,7 @@ proc wviewer::browser_tree_nodes {tv {id {}}} {
 proc wviewer::browser_tree_state {token} {
   variable windows
   if {![dict exists $windows $token]} { return {} }
-  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return {} }
   set sel {}
   catch {set sel [$tv selection]}
@@ -8384,7 +8561,7 @@ proc wviewer::browser_tree_apply {token d} {
   variable windows
   if {$d eq {}} { return 0 }
   if {![dict exists $windows $token]} { return 0 }
-  set tv [dict get $windows $token top].wvbrowser.tvf.tv
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return 0 }
   set keep {}
   foreach id [wviewer::dget $d sel {}] {
