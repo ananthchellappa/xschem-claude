@@ -6351,19 +6351,59 @@ proc wviewer::browser_flow_scrollregion {cols colw paneh} {
 #
 # FLAT when NO entry has a path (the PLAN's clause). An entry with an empty path
 # stays at top level even when other entries are grouped.
-proc wviewer::browser_rows {entries} {
-  set anypath 0
-  foreach e $entries {
-    if {[wviewer::dget $e path {}] ne {}} { set anypath 1 ; break }
+#
+# --- item 2: the two OPTIONAL arguments (two-pane spec R2, M6) ----------------
+#
+# `root` — when non-empty, ONE extra group row is emitted FIRST, id `g:` (the
+# empty prefix), text `$root`, and everything that would have been top level
+# hangs off it instead. That is spec R2's "exactly one root node, named for the
+# design, selected when the browser opens", and `g:` is the id BECAUSE the
+# SHIPPED two-character strip in browser_target_path decodes it to the empty
+# path — the legitimate sim-root ascend — with zero change to that proc. (`r:`
+# and `root:` were both rejected; `root:` decodes to `ot:`.)
+#
+# ⚠ THE RE-PARENT MUST REACH THE EMPTY-PATH LEAVES TOO, not only the groups.
+# `v(vbg)` never enters the segment loop, so seeding `parent` — rather than
+# patching the group rows afterwards — is what makes R2's "top-level signals are
+# the root's own-level signals" true, and what makes R6's recursive plot on the
+# root reach every name. TP28/TP29 are the two halves.
+#
+# `anypath` — overrides the flat-mode gate; a non-integer (the `{}` default)
+# means "compute it here", which is what keeps every shipped caller unchanged.
+#
+# ⚠⚠ MEASURED, AND NARROWER THAN M6 CLAIMS. The flat/hierarchical choice is
+# ALSO gated per entry on `$path ne {}`, so forcing the gate to 1 on a set whose
+# entries all have empty paths changes NOTHING — there are no segments to mint.
+# The override is observable in exactly ONE direction: forcing 0 flattens a
+# PATHED set. M6's stated failure mode ("designs flip to flat mode if the gate
+# is computed after the class filter") therefore cannot arise: when the filter
+# leaves no pathed entry the rows are identical either way, and when it leaves
+# one the auto-gate already answers 1. TP32 pins that as a value rather than
+# leaving it an assumption. The argument stays because browser_refresh passes
+# the PRE-filter gate deliberately (M6's source-order claim), not because the
+# post-filter value would differ.
+proc wviewer::browser_rows {entries {root {}} {anypath {}}} {
+  if {![string is integer -strict $anypath]} {
+    set anypath 0
+    foreach e $entries {
+      if {[wviewer::dget $e path {}] ne {}} { set anypath 1 ; break }
+    }
   }
   set rows {}
   array set seen {}
   array set grp {}
+  set rootid {}
+  if {$root ne {}} {
+    set rootid {g:}
+    set seen($rootid) 1
+    set grp($rootid) 1
+    lappend rows [dict create id $rootid parent {} text $root kind group name {}]
+  }
   foreach e $entries {
     set name [wviewer::dget $e name {}]
     set leaf [wviewer::dget $e leaf $name]
     set path [wviewer::dget $e path {}]
-    set parent {}
+    set parent $rootid
     if {$anypath && $path ne {}} {
       set pfx {}
       foreach seg [split $path .] {
@@ -6428,18 +6468,26 @@ proc wviewer::browser_rows_reparent {rows prefix parent} {
 #    row order and breaks on the first exact match.
 # A group with NO entries emits NO header: an empty `bd_a.raw (tran)` node would
 # claim a DB matched when it did not.
-proc wviewer::browser_rows_multi {groups} {
+#
+# `root` (item 2, OPTIONAL) is threaded into EVERY group, so each DB gets its
+# own design root: the current DB's stays `g:`, and a foreign one goes through
+# browser_rows_reparent, which re-keys it to `d:N|g:` and re-parents it (its
+# parent is {}) onto the DB header. That is what lets R7 give one design root
+# PER DB without an id collision — and a shared `g:` THROWS in ttk
+# (`Item ... already exists`), on the searchbar's <KeyRelease> pump, i.e.
+# bgerror, i.e. a modal dialog under X.
+proc wviewer::browser_rows_multi {groups {root {}}} {
   set rows {}
   foreach g $groups {
     lassign $g gid glab gent
     if {$glab eq {}} {
-      foreach r [wviewer::browser_rows $gent] { lappend rows $r }
+      foreach r [wviewer::browser_rows $gent $root] { lappend rows $r }
       continue
     }
     if {![llength $gent]} { continue }
     lappend rows [dict create id $gid parent {} text $glab kind group name {}]
     foreach r [wviewer::browser_rows_reparent \
-                 [wviewer::browser_rows $gent] "$gid|" $gid] {
+                 [wviewer::browser_rows $gent $root] "$gid|" $gid] {
       lappend rows $r
     }
   }

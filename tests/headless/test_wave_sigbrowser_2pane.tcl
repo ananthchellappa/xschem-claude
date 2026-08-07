@@ -391,6 +391,202 @@ check {TP25 an empty pane still has a valid, non-degenerate scrollregion} \
 check {TP26 content taller than the pane does NOT grow the scrollregion height} \
   [lindex [pcall ::wviewer::browser_flow_scrollregion 1 80 100] 3] 100
 
+# --- TP27-TP33 — item 2: browser_rows gains `root` and `anypath` -------------
+#
+# R2: the tree has EXACTLY ONE root node, named for the design, and it is
+# selected when the browser opens. That root is a GROUP ROW whose id is `g:`
+# (the empty prefix) — chosen so the SHIPPED two-character strip in
+# `browser_target_path` decodes it to the empty path, i.e. the legitimate
+# sim-root ascend, with zero change to that proc. (`r:` and `root:` were both
+# rejected: `root:` decodes to `ot:`.)
+#
+# ⚠ BOTH NEW ARGUMENTS ARE OPTIONAL, and that is what keeps BT10-BT13, BD19,
+# BD22 and BX01-BX08 green BY CONSTRUCTION — every shipped caller passes a bare
+# list. TP27's first check is the standing guard on exactly that, and it must be
+# green from the first run and never move.
+
+# ⚠ NEVER `foreach` A `pcall` RESULT WITHOUT THIS GUARD. `pcall` answers the
+# STRING `ERR:<msg>` on a throw, and `dict get` on a word of that string throws
+# again — into the file's outer catch, deleting every remaining check. The item-9
+# sabotage runs measured that exact shape: 17 of 34 checks ran and the file
+# printed a plausible `3 FAILED`. "The row list could not be computed" is
+# therefore its own assertable value here, distinct from "an empty row list".
+proc tp_rowsig {rows} {
+  if {[string match {ERR:*} $rows]} { return $rows }
+  set out {}
+  foreach w $rows {
+    if {[catch {dict get $w id} id]} { return NOT-A-ROW-LIST }
+    lappend out "$id|[dict get $w parent]|[dict get $w text]|[dict get $w kind]"
+  }
+  return $out
+}
+proc tp_parent_of {rows id} {
+  if {[string match {ERR:*} $rows]} { return $rows }
+  foreach w $rows {
+    if {[catch {dict get $w id} rid]} { return NOT-A-ROW-LIST }
+    if {$rid eq $id} { return [dict get $w parent] }
+  }
+  return no-such-row
+}
+proc tp_kinds {rows} {
+  if {[string match {ERR:*} $rows]} { return $rows }
+  set out {}
+  foreach w $rows {
+    if {[catch {dict get $w kind} k]} { return NOT-A-ROW-LIST }
+    lappend out $k
+  }
+  return $out
+}
+proc tp_ids {rows} {
+  if {[string match {ERR:*} $rows]} { return $rows }
+  set out {}
+  foreach w $rows {
+    if {[catch {dict get $w id} i]} { return NOT-A-ROW-LIST }
+    lappend out $i
+  }
+  return $out
+}
+
+# THE FROZEN SHIPPED PROJECTION. Spelled out rather than digested: a digest that
+# changed would say only "something moved", and the whole value of this check is
+# naming WHAT. Built with `list` so its string form is canonical and the
+# comparison cannot fail on whitespace instead of on content.
+set tp_frozen [list \
+  {g:x1||x1|group} \
+  {s:v(x1.net1)|g:x1|net1|leaf} \
+  {g:x1.xm1|g:x1|xm1|group} \
+  {s:v(m.x1.xm1.mod#body)|g:x1.xm1|mod#body|leaf} \
+  {s:i(@m.x1.xm1.mod[id])|g:x1.xm1|mod[id]|leaf} \
+  {g:x1.xr1|g:x1|xr1|group} \
+  {g:x1.xr1.x0|g:x1.xr1|x0|group} \
+  {s:v(x1.xr1.x0.t1)|g:x1.xr1.x0|t1|leaf} \
+  {s:i(@r.x1.xr1.x0.r0[i])|g:x1.xr1.x0|r0[i]|leaf} \
+  {s:i(v.x1.v1)|g:x1|v1|leaf} \
+  {s:v(vbg)||v(vbg)|leaf}]
+check {TP27 (STANDING CONTROL) with NO root arg the row list is byte-identical
+       to the shipped one — every existing caller is unchanged} \
+  [tp_rowsig [pcall ::wviewer::browser_rows $tp_ents]] $tp_frozen
+
+set tp_rooted [pcall ::wviewer::browser_rows $tp_ents tb_bandgap]
+check {TP27 a root arg mints ONE row, id `g:`, parent {}, kind group, text the design} \
+  [lindex $tp_rooted 0] \
+  {id g: parent {} text tb_bandgap kind group name {}}
+check {TP27 ...and it is exactly ONE extra row, prepended} \
+  [list [llength $tp_rooted] [llength [pcall ::wviewer::browser_rows $tp_ents]]] {12 11}
+
+# ⚠ THE DISCRIMINATING PAIR. An implementation that re-parents only the GROUPS
+# passes the first leg and fails the second: `v(vbg)` has an EMPTY path, so it
+# never enters the group-minting loop and keeps whatever parent it was seeded
+# with. R2 says top-level SIGNALS are the root's own-level signals, so it must
+# hang off the root too.
+check {TP28 BOTH a former top-level group AND a former top-level LEAF hang off it} \
+  [list [tp_parent_of $tp_rooted {g:x1}] [tp_parent_of $tp_rooted {s:v(vbg)}]] \
+  {g: g:}
+check {TP28 ...while a DEEPER row's parent is untouched} \
+  [tp_parent_of $tp_rooted {g:x1.xr1.x0}] {g:x1.xr1}
+
+# The behavioural consequence, and the reason TP28's second leg matters: R6's
+# recursive plot on the ROOT must reach every name, including the top-level one.
+# A root that adopted only the groups answers SIX here, not seven, and nothing
+# else in the file would notice.
+check {TP29 (R6, BEHAVIOURAL) browser_leaf_names on the root reaches EVERY name} \
+  [pcall ::wviewer::browser_leaf_names $tp_rooted {g:}] \
+  [tp_names_of $tp_ents]
+check {TP29 (CONTROL) ...while g:x1 still answers only its own subtree (6 of 7)} \
+  [llength [pcall ::wviewer::browser_leaf_names $tp_rooted {g:x1}]] 6
+check {TP29 the root row is a GROUP, so browser_kind, browser_plot_at's
+       `!$groups` guard and browser_menu_ids need no new vocabulary} \
+  [pcall ::wviewer::browser_kind $tp_rooted {g:}] group
+
+# R4 needs something to select AT ALL TIMES, including on an inventory that
+# matched nothing. The no-root call is the control: without it this check is
+# green on a proc that emits a root unconditionally, which would red BT10, BD19
+# and BX01 in three other files.
+check {TP30 an EMPTY inventory still emits the root — and without a root arg, nothing} \
+  [list [llength [pcall ::wviewer::browser_rows {} tb_bandgap]] \
+        [llength [pcall ::wviewer::browser_rows {}]]] {1 0}
+
+# --- the `anypath` override (M6) ---------------------------------------------
+#
+# ⚠⚠ MEASURED, AND IT CONTRADICTS M6's STATED REMEDY IN ONE DIRECTION.
+# The flat/hierarchical choice is gated PER ENTRY on `$anypath && $path ne {}`,
+# so an entry with an EMPTY path takes the flat branch whatever the gate says.
+# Therefore:
+#   * forcing the gate to 0 on a PATHED set really does flatten it — groups gone,
+#     full raw names as row text. That is the ONE observable direction, TP31.
+#   * forcing it to 1 on a set whose entries all have empty paths changes
+#     NOTHING — there are no segments to mint. TP32 pins that as a VALUE rather
+#     than leaving it as an assumption, because M6's stated failure mode ("9 of
+#     22 designs flip to flat mode if the gate is computed after the class
+#     filter") cannot arise: when the filter leaves no pathed entry the rows are
+#     identical either way, and when it leaves one the auto-gate already answers
+#     1. Recorded here, not silently relied on.
+set tp_p1   [list [pcall ::wviewer::signal_entry {v(x1.net5)}] \
+                  [pcall ::wviewer::signal_entry {v(out)}]]
+set tp_pre  [list [pcall ::wviewer::signal_entry {v(out)}] \
+                  [pcall ::wviewer::signal_entry {v(m.x1.xm1.mod#body)}]]
+set tp_post [pcall ::wviewer::browser_class_filter $tp_pre 0 1]
+
+check {TP31 (FIXTURE CONTROL) the filter really does strip every PATHED entry} \
+  [list [llength $tp_pre] [llength $tp_post] \
+        [pcall dict get [lindex $tp_post 0] path]] {2 1 {}}
+check {TP31 the gate FORCED 0 flattens a pathed set: no group rows, full raw text} \
+  [list [tp_kinds [pcall ::wviewer::browser_rows $tp_p1 {} 0]] \
+        [tp_rowsig [pcall ::wviewer::browser_rows $tp_p1 {} 0]]] \
+  {{leaf leaf} {s:v(x1.net5)||v(x1.net5)|leaf s:v(out)||v(out)|leaf}}
+check {TP31 (CONTROL) ...and with the gate AUTO the same set is hierarchical} \
+  [list [tp_kinds [pcall ::wviewer::browser_rows $tp_p1]] \
+        [tp_parent_of [pcall ::wviewer::browser_rows $tp_p1] {s:v(x1.net5)}]] \
+  {{group leaf leaf} g:x1}
+check {TP31 the override composes with the root: forced 0, the flat leaves still
+       hang off `g:`} \
+  [tp_parent_of [pcall ::wviewer::browser_rows $tp_p1 design 0] {s:v(x1.net5)}] {g:}
+check {TP32 forcing the gate on a PATH-FREE set is a measured NO-OP, BOTH ways} \
+  [list [expr {[tp_rowsig [pcall ::wviewer::browser_rows $tp_post {} 1]] eq \
+               [tp_rowsig [pcall ::wviewer::browser_rows $tp_post]]}] \
+        [expr {[tp_rowsig [pcall ::wviewer::browser_rows $tp_post {} 0]] eq \
+               [tp_rowsig [pcall ::wviewer::browser_rows $tp_post]]}]] {1 1}
+# ⚠ a NON-INTEGER anypath must fall back to the auto-computation, never be
+# treated as false — `{}` is the default and it is not an integer.
+check {TP32 a non-integer gate falls back to AUTO, it does not read as 0} \
+  [tp_kinds [pcall ::wviewer::browser_rows $tp_p1 {} {}]] {group leaf leaf}
+
+# --- browser_rows_multi threads the root (item 15's caller depends on it) -----
+#
+# The unlabelled group is the CURRENT DB: it stays flat and unprefixed, so its
+# root is `g:`. A LABELLED group goes through browser_rows_reparent, which
+# re-keys `g:` to `d:0|g:` and re-parents the root row (whose parent is {}) onto
+# the DB header. That is what makes one design root PER DB possible without an
+# id collision — and a shared `g:` THROWS in ttk (`Item ... already exists`).
+set tp_multi [pcall ::wviewer::browser_rows_multi \
+                [list [list {} {} $tp_ents] \
+                      [list {d:0} {bd_a.raw (tran)} \
+                        [list [pcall ::wviewer::signal_entry {v(x1.alpha)}]]]] \
+                tb_bandgap]
+check {TP33 the CURRENT DB's root is unprefixed and first} \
+  [lindex [tp_rowsig $tp_multi] 0] {g:||tb_bandgap|group}
+check {TP33 ...a FOREIGN DB gets its own root, prefixed, under its header} \
+  [list [tp_parent_of $tp_multi {d:0|g:}] [tp_parent_of $tp_multi {d:0|g:x1}]] \
+  {d:0 d:0|g:}
+# ⚠ THIS CHECK WAS VACUOUS IN ITS FIRST FORM AND THE RED RUN IS WHAT SHOWED IT.
+# Spelled `[llength [lsort -unique $ids]] == [llength $rows]`, it compared the
+# `ERR:wrong # args` STRING against itself and went GREEN before the code
+# existed. Naming the duplicates AND pinning the row count makes both halves
+# assertable: the error string has neither 16 rows nor an empty duplicate set.
+proc tp_dupes {ids} {
+  if {[string match {ERR:*} $ids]} { return $ids }
+  set out {} ; array set n {}
+  foreach i $ids { if {[info exists n($i)]} { lappend out $i } ; set n($i) 1 }
+  return $out
+}
+check {TP33 ...and every id in the rooted multi list is UNIQUE — a shared `g:`
+       THROWS in ttk (`Item ... already exists`) on the searchbar's key pump} \
+  [list [tp_dupes [tp_ids $tp_multi]] [llength [tp_ids $tp_multi]]] {{} 16}
+# BD19's LOCAL TWIN and the guard that the multi arg is optional too.
+check {TP33 (STANDING CONTROL) with no root, one unlabelled group == browser_rows} \
+  [tp_rowsig [pcall ::wviewer::browser_rows_multi [list [list {} {} $tp_ents]]]] \
+  [tp_rowsig [pcall ::wviewer::browser_rows $tp_ents]]
+
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
   puts "$::errorInfo"

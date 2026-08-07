@@ -291,6 +291,17 @@ tag must still classify `devnode`, or the check proves nothing).
   could not be applied. ⚠ **Only ever applied on a MAPPED panedwindow** — on an unmapped
   one `winfo height` is 1 and `sashpos` computes fraction x 0, collapsing the tree pane.
 - `wviewer::browser_rows` / `_reparent` / `_multi` — the tree model. §8.
+  ⚠ `browser_rows` is `{entries {root {}} {anypath {}}}` and `browser_rows_multi` is
+  `{groups {root {}}}` (the two-pane rebuild, item 2). **Both extra arguments are
+  OPTIONAL and every shipped caller passes a bare list**, which is what keeps BT10-BT13,
+  BD19-BD25 and BX01-BX08 green by construction. A non-empty `root` prepends ONE group
+  row, id `g:` (the empty prefix, so the shipped two-character strip in
+  `browser_target_path` decodes it to the sim root), and **everything that would have
+  been top level — groups AND empty-path leaves — hangs off it** (spec
+  `waveform_signal_browser_two_pane.md` R2). `anypath` overrides the flat-mode gate;
+  a non-integer means "compute it here". ⚠ MEASURED: the override is observable in
+  exactly ONE direction — forcing `0` flattens a pathed set — because the flat branch is
+  *also* gated per entry on `$path ne {}`. See §8 and the two-pane spec M6.
 - `wviewer::browser_menu_build` — `{token ids}` — the RMB menu. §9.
 - `wviewer::browser_state` — `{token}` -> the persistence dict. §13.
 - `wviewer::browser_state_apply` — `{token d}` -> 1/0. §13.
