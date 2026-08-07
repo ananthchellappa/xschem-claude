@@ -1,6 +1,6 @@
 # The Signal Browser, two-pane — SPEC
 
-Status: **SPEC — NOT YET BUILT.** Written 2026-08-07 on branch `fluid-editing`, before any
+Status: **SPEC — IN BUILD.** Items 1-2 landed (`422b3f55`, `d30f8f99`). Written 2026-08-07 on branch `fluid-editing`, before any
 code. Every number in it was measured on this machine during the recon that preceded it;
 nothing is inherited unverified.
 
@@ -94,7 +94,7 @@ draggable.
 
 ## 2. Rulings
 
-All 22 are settled. A later change needs a new ruling, not a code review. **R** = ruled by
+All 23 are settled. A later change needs a new ruling, not a code review. **R** = ruled by
 the driver; **M** = ruled by the implementer under delegated authority, and each M-ruling
 names the measurement that forced it.
 
@@ -124,8 +124,9 @@ names the measurement that forced it.
 | **M3** | The panes are **stacked** in a vertical `ttk::panedwindow`; the sash persists as a **fraction**, never pixels. | The sidebar is already width-capped at `0.45 × window` (≈450 px at the spawn size of 1000×829), so a side-by-side split halves an already-narrow pane. Stacked fits 14+18 rows spawned, 23+36 maximized. |
 | **M4** | The tree's column `#0` becomes **`-stretch 0` with an explicit width**, and gains `-xscrollcommand`. | `#0` is `-stretch 1` inside a `pack propagate 0` fixed-width frame, so it **always fits** — an h-scrollbar added without this change is decorative. Longest full raw name is 63 chars ≈ 537 px at the measured 8.53 px mean advance. |
 | **M5** | **`browser_width` is untouched** — the 0.45 cap, the 240 floor and all four source literals stay. | Pinned twice: BT08 (`test_wave_sigbrowser.tcl:784-797`) and BP07 (`_i1315.tcl:730-745`), whose own comment forbids factoring the clamp into a helper. |
-| **M6** | `browser_rows`' **anypath flat-mode gate is computed on the PRE-filter set**. | 11 of 22 corpus designs flip to flat mode — tree gone, full raw names as row text — if internals and source currents are hidden and the gate is computed after. |
+| **M6** | `browser_rows`' **anypath flat-mode gate is computed on the PRE-filter set**. | 9 of 22 corpus designs flip to flat mode — tree gone, full raw names as row text — if internals and source currents are hidden and the gate is computed after. |
 | **M7** | **No legacy single-pane mode.** | A dual mode doubles the layout-coupled test surface, which recon measured at 79 of 933 checks concentrated almost entirely in one item. |
+| **M11** | The tree's **design root is inserted `-open 1`**; every other node `-open 0`. | "Collapsed by default" taken literally including the root renders the whole tree as one line, which is not navigation. Ruled after the plan pass flagged it. |
 | **M8** | The **sweep variable is not special-cased** in v1; it stays an ordinary row. | 8 of 22 raws are Operating-Point and have **no** sweep variable at all — index 0 is an ordinary signal (`i(vc1)`). "Index 0 is the sweep var" would hide a real signal in 8 designs. |
 | **M9** | Vector slices `xm1[0]`..`xm1[9]` are **ten sibling nodes**; params parse from a **trailing** bracket only. | 30 corpus signals carry an *embedded* bracket inside a path segment. A naive "first `[..]` is the param" parser reads `[0]`..`[9]` as params. Issue 0212's descend refusal (`hier_resolve`'s `VECTOR` sentinel) is already correct and stays. |
 | **M10** | `tests/headless/test_wave_sigbrowser.tcl` **may be widened.** | Ruling 30's purpose was to stop one 489-check file being killed mid-run by WSLg ~90% of the time, not to freeze its assertions. Item 13 already widened BS22/BT21's child set. Files stay under ~150 checks. |
@@ -195,6 +196,20 @@ and only if **every signal at or under it is device-classed** (`devnode` or `dev
 That formulation is deliberate. `xr1.x0` in the corpus carries design nets `t1`/`t2` **and**
 `@r…[i]` measurements, so a set-subtraction rule would wrongly delete a node holding real
 nets. The "every signal" rule keeps it.
+
+**What the rule actually hides**, measured by running R1's own quantifier over the corpus —
+kept iff **any** signal at-or-under the node is `net` or `srcbranch`:
+
+| design | nodes total | kept (tree shows) | hidden as device-only |
+|---|---|---|---|
+| `tb_bandgap` | 128 | **44** | **84** |
+| `tb_charge_pump` | 316 | **13** | **303** |
+
+⚠ These are **not** the 78 / 278 that §14 quotes from the older work order. That figure is a
+different metric — nodes minted *only* by device paths — and it undercounts, because a node
+minted by a real net's path can still be hidden when every signal under it turns out to be
+device-classed. Both numbers are right about their own question; only the table above is
+right about **what the user will see**.
 
 ⚠ **Pure ancestors.** 18 of `tb_bandgap`'s 128 nodes and 25 of `tb_charge_pump`'s 316 have
 **no own-level signals at all** — they exist only because a descendant does. The rule
@@ -335,9 +350,35 @@ the user guide — see §12.2.
 | `i(@c.x1.c1[i])` | `c1:i` | devmeas |
 | `v(m.x1.xm1.msky130_fd_pr__nfet_01v8#body)` | `xm1:#body` | devnode |
 
-The instance half is the **last path segment** (the wrapper), not the leaf — the leaf is
-the model name, which R8 drops. The param half is the content of the **trailing** bracket
-(M9), or `i` when there is none.
+⚠⚠ **THE RULE BELOW REPLACES A WRONG ONE, AND THE CORRECTION WAS MEASURED, NOT ARGUED.**
+The first draft of this section said "the instance half is the **last path segment**". That
+contradicts this section's own table: `i(@c.x1.c1[i])` has last path segment `x1`, giving
+`x1:i`, not the `c1:i` the table demands. Both candidate rules were run over all 2656
+corpus names:
+
+| candidate rule | reproduces the 7 rows above | label collisions **within one own-level node** |
+|---|---|---|
+| last path segment (as first written) | 6 of 7 | **29** (`n_diffamp` `xr1`, `test_analog`, `montecarlo_mismatch_sim`, …) |
+| **the hybrid, below** | **7 of 7** | **0** |
+
+**The rule.** For a device-classed signal the instance half is the **leaf's base** — unless
+that base is *model-shaped*, in which case it is the **last path segment**. A base is
+model-shaped when it contains `_`.
+
+The asymmetry is not arbitrary: sky130 names the device *inside* a pcell wrapper after its
+model (`msky130_fd_pr__nfet_01v8`), so there the wrapper `xm1` is the instance the user
+drew. A discrete `c1`/`r1`/`q1` has no wrapper and **is** its own instance. One rule, two
+shapes, because the corpus genuinely has two shapes.
+
+The param half is the content of the **trailing** bracket (M9), or `i` when there is none.
+
+⚠ **Strip one leading `@` from the instance half.** 25 of 2656 corpus names are untagged
+single-segment `@`-forms (11 of them in `cmos_ac_sweep`), and `i(@ibias[current])` would
+otherwise render `@ibias:current`.
+
+If a per-class table is ever preferred to the `_` heuristic — `@m`/`@n` carry a model
+segment, `@c`/`@r`/`@l`/`@b`/`@q` do not — it is a one-proc swap and nothing downstream
+moves.
 
 ⚠ Only nine distinct params exist in the whole corpus: `[id]` 356, `[i]` 114,
 `[current]` 11, `[vth]` 3, `[is]`/`[ie]`/`[ic]`/`[ib]` 2 each, `[vbe]` 2, `[gm]` 1. No
