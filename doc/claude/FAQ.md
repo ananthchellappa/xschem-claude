@@ -51,9 +51,11 @@ the rubber bands are only ever erased while their `ui_state` bit is set. ESC now
 gestures; the two-stage ESC for a *plain* wire draw (first press ends the segment, second leaves
 wire mode) is unchanged.
 
-Note `p` (Add Pin) and the component-placement dialogs can still be armed mid-draw. They are now
-*recoverable* — one ESC cleans up properly — but they do not yet cancel the wire the way `l` does
-(issue **0233**). Related open items found while fixing this: **0231**, **0232**, **0234**, **0235**,
+**`p` (Add Pin) and component insert now do the same** (ratified 2026-08-07, issue **0233** F1):
+arming either abandons a live wire/line draw, in all three states, through the one shared
+`leave_wire_draw_for()` gate. The remaining placement verbs — `t` (text), `r`/`P` (rect/polygon),
+`Alt+L`/`Ctrl+P` (`net_label`), graph/image insert, `Ctrl+V` merge — are still ungated and tracked
+in 0233. Related open items found while fixing this: **0231**, **0232**, **0234**, **0235**,
 **0236**.
 
 ---

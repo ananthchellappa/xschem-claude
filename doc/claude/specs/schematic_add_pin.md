@@ -67,6 +67,17 @@ spec adds multi-name to the **shared** dialog, so both views gain it (decision D
 4. **Ctrl+MMB** at any time during a preview cycles the direction/type and re-arms the current
    name — no need to touch the Direction combobox between differently-typed pins.
 5. Esc (on canvas while placing) or Close ends the gesture and dismisses the form.
+6. **Arming a pin ABANDONS an in-progress wire/line draw** (`leave_wire_draw_for()`,
+   `scheduler.c`, issue **0233** F1, user-ratified 2026-08-07 — same policy `l` got in issue
+   **0230**). Two modal gestures cannot coexist: `end_place_move_copy_zoom()` tests `STARTWIRE`
+   before the placement arm, and under `persistent_command` the press handler seizes the click
+   one step earlier still, so a pin armed over a live wire mode could never be dropped — every
+   click would draw wire while the preview rode the cursor. Nothing is committed (`new_wire()`
+   stores and pushes undo only at `PLACE`) and the statusbar says what happened. Wire mode is
+   left in **all three** of its states: live draw, menu-armed, and the RESTING mode after a
+   double-click ends a segment (`ui_state` clear, only `last_command` armed). The scripted
+   coordinate form `add_symbol_pin <x> <y> …` is deliberately NOT gated — it commits outright,
+   arms no cursor placement, and is the replay/test seam.
 
 The bottom status line reflects state and advertises Ctrl+MMB + the multi-name convention.
 

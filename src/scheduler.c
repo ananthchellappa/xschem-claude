@@ -51,6 +51,30 @@ void statusmsg(char str[],int n)
   }
 }
 
+/* A modal PLACEMENT and a wire/line draw cannot usefully coexist: end_place_move_copy_zoom()
+ * tests STARTWIRE (callback.c:2872) BEFORE the placement arm (:2927), and under
+ * `persistent_command` the press handler (callback.c:7843) seizes the click one step earlier
+ * still -- so while wire mode is armed in ANY of its three states (live draw / menu-armed /
+ * resting, see abort_wire_line_command()) a placement preview can never be dropped: every click
+ * draws wire while the preview rides the cursor. Entering a placement therefore ABANDONS the
+ * wire/line first. Nothing is committed -- new_wire() stores and pushes undo only at PLACE, so an
+ * abandoned draw leaves no copper and no stranded undo baseline.
+ * User-ratified for `l` (issue 0230, 2026-08-06) and for `p` / component insert (issue 0233 F1,
+ * 2026-08-07). Called from the scheduler branch of each verb so the key, the menu, the toolbar,
+ * a form's per-keystroke re-arm and a scripted `xschem <verb>` all pass through one gate.
+ * NOT called from the pure-commit / scripted coordinate sub-forms (`add_wire_label -drop`,
+ * `add_symbol_pin <x> <y> ...`): those commit an object outright, arm no cursor placement, and
+ * are the replay/test seams -- aborting a live gesture there would be a silent mutation. */
+static void leave_wire_draw_for(const char *what)
+{
+  char msg[128];
+  if(!abort_wire_line_command()) return;
+  if(has_x) {
+    my_snprintf(msg, S(msg), "%s: in-progress wire abandoned", what);
+    statusmsg(msg, 1);
+  }
+}
+
 static int get_text(const char *s)
 {
   int i, found=0;
@@ -1724,6 +1748,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *dr = tclgetvar("pin_new_dir");
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
+        /* issue 0233 F1 -- see leave_wire_draw_for(). In a symbol view the modal draw this
+         * collides with is the graphic LINE (`l`/`L`), which the same helper covers. */
+        leave_wire_draw_for("Add Pin");
         /* this arms a symbol PIN preview, never a net-label: clear wirelabel_preview so a
          * still-live Add-Wire-Label preview (both modeless forms open) cannot leak its
          * drop-on-copper gate onto this pin's drop (add_wire_label.md invariant). */
@@ -1775,6 +1802,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc == 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("pin_new_name");
         const char *dr = tclgetvar("pin_new_dir");
+        leave_wire_draw_for("Add Pin");   /* issue 0233 F1 -- see leave_wire_draw_for() */
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
         /* arming a schematic PIN preview, never a net-label: clear wirelabel_preview so a
@@ -1842,10 +1870,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * keyboard, the menu accelerator and a scripted `xschem add_wire_label` all pass through
        * it -- `l` is Tcl-backed, so dispatch_input_action() cannot gate it (callback.c:5249).
        * NOT applied to -drop: that is the pure commit seam, and by then the wire is long gone. */
-      if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) {
-        if(abort_wire_line_command() && has_x)
-          statusmsg("Add Wire Label: in-progress wire abandoned", 1);
-      }
+      if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_wire_draw_for("Add Wire Label");
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
         if(!nm) nm = "";
@@ -8916,6 +8941,10 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       int ret;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "place_symbol")) return TCL_ERROR;
+      /* issue 0233 F1 -- see leave_wire_draw_for(). ALL three arg forms arm a cursor placement
+       * (they differ only in whether the symbol/prop is given up front), so all three are gated;
+       * scripted instantiation that commits outright goes through `xschem instance`, not here. */
+      leave_wire_draw_for("Insert symbol");
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {

@@ -1,14 +1,29 @@
 # 0233 — the wire-draw ↔ placement mutual exclusion is enforced at 1 of 13 arm sites, in one direction only, and ESC cannot always clean up after the other 12
 
-Status: **OPEN** — measured headless repro + 9-door forward census + 4-door reverse census, fix
-sketched in three independent pieces, not implemented. **Major**: the reported issue-0230 gesture is
-still fully reachable through `p`, `t`, `r`, component insert, `Alt+L`, `Ctrl+P`, `Ctrl+V` and the
-graph/image menus; on one sub-family ESC leaves the wire rubber band armed, which is 0230's "grey
-lines" symptom surviving the fix.
-Area: the single call site of `abort_wire_line_command()` (`src/scheduler.c:1846`) vs the twelve
-ungated placement arms; `start_wire()`/`start_line()` (`src/callback.c:536`, `:473`) have no
+Status: **PARTIAL** — **F1 done for `p` (Add Pin, both views) and component insert
+(`place_symbol`)**, user-ratified 2026-08-07; 3 of 13 arm sites are now gated (4 counting
+`add_wire_label`). **F2 (the reverse door) and F3 (the ESC hole) are still OPEN**, and so are the
+nine remaining forward doors — `t` (text), `r`/`P` (rect/polygon), `Alt+L` / `Ctrl+P`
+(`net_label 0/2/3`), `add_graph`, `add_image`, `Ctrl+V` merge, and the two context-menu inserts.
+**F3 is the one that still bites**: `r`/`P`/`t`/bare `place_symbol` zero `last_command` while
+leaving `STARTWIRE` set, so ESC leaves `ui=3 [STARTWIRE|STARTRECT]` and 0230's "grey lines"
+symptom survives.
+
+What landed (commit on `open_pdk`, 2026-08-07): a shared `leave_wire_draw_for(const char *what)`
+in `src/scheduler.c` wrapping `abort_wire_line_command()` + a statusbar line, called from the
+`add_wire_label -place`/bare, `add_sch_pin -place`, `add_symbol_pin -place` and `place_symbol`
+branches. It leaves wire/line mode in **all three** of its states (live / menu-armed / resting —
+the resting one was itself a 0230 follow-up bug, see that issue). The scripted coordinate forms
+(`add_wire_label -drop`, `add_symbol_pin <x> <y> …`) are deliberately NOT gated: they commit
+outright, arm no cursor placement, and are the replay/test seams. Tests:
+`tests/headless/test_placement_wire_gate.tcl`, **29 checks**, registered in `run_regression.tcl`;
+three sabotage runs give disjoint red sets (`p` 4 checks, insert 4, symbol-view `p` 2).
+
+Area: the call sites of `abort_wire_line_command()` (one at filing, four since 2026-08-07, via
+`leave_wire_draw_for()`) vs the still-ungated placement arms; `start_wire()`/`start_line()` (`src/callback.c:536`, `:473`) have no
 placement gate; the `xctx->last_command &&` conjunct at `src/callback.c:351`
-Tests: **0230's section G2 depends on this state being reachable** — see *Landmines*
+Tests: `tests/headless/test_placement_wire_gate.tcl` (29, the F1 slice); **0230's section G2
+depends on the double-armed state staying reachable** — see *Landmines*
 Found: 2026-08-06, verifying issue **0230**'s out-of-scope list
 Related: **0230** (parent — this is its "Still open" items 1 and 3, verified and widened), **0231**,
 **0232**, `doc/claude/specs/add_wire_label.md`, `WIRING.md` §8 classes **D** and **H**.
@@ -48,8 +63,8 @@ D is the clean control. A/B/C are the same keystroke shape with a different verb
 
 | arm (GUI route) | `ui_state` after the arm | `lc` | ESC #1 |
 |---|---|---|---|
-| `add_sch_pin -place` (**`p`**) | 16425 `STARTWIRE\|SEL\|STARTMOVE\|START_SYMPIN` | 1 | clean |
-| `place_symbol` (component insert) | 8233 `STARTWIRE\|SEL\|STARTMOVE\|PLACE_SYMBOL` | 1 | clean |
+| `add_sch_pin -place` (**`p`**) — **GATED 2026-08-07** | 16424 (no `STARTWIRE`) | 0 | clean |
+| `place_symbol` (component insert) — **GATED 2026-08-07** | 8232 (no `STARTWIRE`) | 0 | clean |
 | `add_graph` (menu) | 16425 | 1 | clean |
 | `net_label 0` (**Alt+L**) | 16425 | 1 | clean |
 | `net_label 2` (**Ctrl+P**) | 16425 | 1 | clean |
@@ -73,15 +88,18 @@ D is the clean control. A/B/C are the same keystroke shape with a different verb
 
 ## Root cause
 
-**One gate, thirteen arm sites.** `abort_wire_line_command()` (`callback.c:507`) has exactly one
-caller:
+**One gate, thirteen arm sites** — as measured at filing (2026-08-06). `abort_wire_line_command()`
+(`callback.c:507`) then had exactly one caller; since 2026-08-07 it has four, all through
+`leave_wire_draw_for()` (`p` in both views, component insert, and the original `l`). The census
+below is the pre-fix measurement and is kept as the record of what the other nine still do:
 
 ```
 $ grep -n "abort_wire_line_command()" src/*.c
 src/scheduler.c:1846:        if(abort_wire_line_command() && has_x)
 ```
 
-The other twelve arms are ungated: `paste.c:683` (merge), `actions.c:2477` (`net_label 0/1/2/3`),
+The other twelve arms were ungated (nine still are; `add_symbol_pin -place`, `add_sch_pin -place`
+and `place_symbol` have since been gated): `paste.c:683` (merge), `actions.c:2477` (`net_label 0/1/2/3`),
 `draw.c:305` (screen-grab image), `callback.c:469` (`start_place_symbol` / ctx-menu 1), `:4319`
 (ctx-menu Insert text), `:6968` (`t`), `scheduler.c:1753` (`add_symbol_pin -place`), `:1802`
 (`add_sch_pin -place` = the `p` key), `:1932` (`add_graph`), `:1963` (`add_image`), `:8940`
