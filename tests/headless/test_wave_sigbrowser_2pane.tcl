@@ -207,6 +207,190 @@ check {TP13 x1 is never a device node — it owns a design net} \
 check {TP13 browser_device_paths {} -> {} and does not throw} \
   [pcall ::wviewer::browser_device_paths {}] {}
 
+# --- TP14: browser_level_names — R3's OWN-LEVEL selector ---------------------
+#
+# ⚠ THIS IS A SECOND PROC AND NOT A CHANGE TO `browser_leaf_names`, and that is
+# ruling R6, not an accident. `browser_leaf_names` is RECURSIVE BY CONTRACT (its
+# own header: "a group answers with every leaf beneath it, however deep") and
+# the driver explicitly kept it that way: plotting everything under a block is
+# how you find what is coupling into a signal you can see a kink on. MEASURED on
+# tb_bandgap's `x1`: own-level 43, recursive 406. Two questions, two procs.
+check {TP14 browser_level_names x1 -> only the signals AT x1, not below it} \
+  [pcall ::wviewer::browser_level_names $tp_ents x1] \
+  [list {v(x1.net1)} {i(v.x1.v1)}]
+check {TP14 the ROOT level is the empty path — top-level signals} \
+  [pcall ::wviewer::browser_level_names $tp_ents {}] [list {v(vbg)}]
+check {TP14 a deeper level answers only for itself} \
+  [pcall ::wviewer::browser_level_names $tp_ents x1.xr1.x0] \
+  [list {v(x1.xr1.x0.t1)} {i(@r.x1.xr1.x0.r0[i])}]
+# ⚠ A PURE ANCESTOR IS LEGITIMATELY EMPTY, and it must be `{}` rather than a
+# throw or an error string. MEASURED: 18 of tb_bandgap's 128 nodes and 25 of
+# tb_charge_pump's 316 own no signals at all — they exist only because a
+# descendant does. §7.2 makes that state legible in the status line; here it
+# just has to be an ANSWER.
+check {TP15 a PURE ANCESTOR (x1.xr1) answers {} — an answer, not an error} \
+  [pcall ::wviewer::browser_level_names $tp_ents x1.xr1] {}
+check {TP15 a path that does not exist at all also answers {}} \
+  [pcall ::wviewer::browser_level_names $tp_ents nosuch.node] {}
+# ⚠ CASE-INSENSITIVE, and this is not decoration: ngspice lowercases, so the raw
+# says `x1.x2` while the schematic says `X1`. Item 12's whole hierarchy sync
+# turns on this (spec §10.3-10.4: exact-first, then -nocase, and the FINAL
+# VERIFY must be -nocase too or a correct walk of `x1.x2` lands on `x1.X2` and
+# is rejected by its own verify).
+check {TP16 the level match is CASE-INSENSITIVE (X1 finds x1)} \
+  [pcall ::wviewer::browser_level_names $tp_ents X1] \
+  [list {v(x1.net1)} {i(v.x1.v1)}]
+# ...and its control: a name that differs by more than case must NOT match.
+check {TP16 positive control — x2 is not x1} \
+  [pcall ::wviewer::browser_level_names $tp_ents x2] {}
+
+# --- TP17-TP19: browser_label — R8's Cadence labels --------------------------
+#
+# ⚠⚠ THE INSTANCE HALF IS *NOT* SIMPLY THE LAST PATH SEGMENT. The spec said so
+# in its first draft and its own worked examples contradicted it:
+# `i(@c.x1.c1[i])` has last path segment `x1`, which gives `x1:i`, not the
+# `c1:i` the table demands. Both rules were run over all 2656 corpus names:
+#
+#   last path segment  -> reproduces 6 of 7 spec rows, 29 label COLLISIONS
+#   the hybrid (below) -> reproduces 7 of 7,            0 collisions
+#
+# THE RULE: the instance half is the LEAF'S BASE, unless that base is
+# MODEL-SHAPED (contains `_`), in which case it is the LAST PATH SEGMENT.
+# sky130 names the device inside a pcell wrapper after its model
+# (`msky130_fd_pr__nfet_01v8`), so there the wrapper `xm1` is the instance the
+# user drew; a discrete `c1`/`r1`/`q1` has no wrapper and IS its own instance.
+# TP18 and TP19 are the two halves, and neither proves the rule alone.
+proc tp_lbl {n} { return [pcall ::wviewer::browser_label [pcall ::wviewer::signal_entry $n]] }
+
+# Voltages render BARE. The discriminator is `class net AND type ne i` -- NOT
+# type alone, because a device internal node has type `v` and must not render
+# bare (TP18's third leg is that oracle).
+check {TP17 a top-level voltage renders bare}        [tp_lbl {v(vbg)}]      vbg
+check {TP17 a hierarchical voltage renders its LEAF} [tp_lbl {v(x1.adj)}]   adj
+# ⚠ a REAL design net ending in `#` renders BARE -- it is a net, not a device
+# node (the 0217:44 backward trap, one layer up from DC25).
+check {TP17 a real auto-named net ending in # renders bare} \
+  [tp_lbl {v(x2.x1.a_27_47#)}] {a_27_47#}
+check {TP17 the sweep variable renders bare (M8: not special-cased)} \
+  [tp_lbl {time}] time
+
+# Currents render <instance>:<param>.
+check {TP18 a TOP-LEVEL source current -> v1:i} [tp_lbl {i(v1)}] {v1:i}
+check {TP18 an INTERNAL source branch current -> v1:i} [tp_lbl {i(v.x1.v1)}] {v1:i}
+# ⚠ THE MODEL-SHAPED LEG: the leaf is the model name, so the instance is the
+# pcell WRAPPER one level up.
+check {TP18 a device measurement -> the WRAPPER, not the model} \
+  [tp_lbl {i(@m.x1.xm1.msky130_fd_pr__nfet_01v8[id])}] {xm1:id}
+check {TP18 a device internal NODE -> wrapper:#node, and NOT bare} \
+  [tp_lbl {v(m.x1.xm1.msky130_fd_pr__nfet_01v8#body)}] {xm1:#body}
+# ⚠ THE DISCRETE LEG -- the one the first rule got wrong. `c1` has no `_`, so it
+# is its own instance and the path segment `x1` must NOT be used.
+check {TP19 a discrete capacitor current -> c1:i, NOT x1:i} \
+  [tp_lbl {i(@c.x1.c1[i])}] {c1:i}
+check {TP19 a discrete resistor current -> r0:i, NOT x0:i} \
+  [tp_lbl {i(@r.x2.xr4.x0.r0[i])}] {r0:i}
+# every param observed in the corpus passes through verbatim -- only nine exist
+# ([id] 356, [i] 114, [current] 11, [vth] 3, [is]/[ie]/[ic]/[ib] 2 each, [vbe] 2,
+# [gm] 1) so no translation table is needed or wanted.
+check {TP19 the param passes through verbatim (gm, not a translated name)} \
+  [tp_lbl {i(@m.x1.xm1.msky130_fd_pr__nfet_01v8[gm])}] {xm1:gm}
+# ⚠ one leading `@` is stripped: 25 corpus names are untagged single-segment
+# @-forms (11 in cmos_ac_sweep) and would otherwise render `@ibias:current`.
+check {TP19 a leading @ is stripped from the instance half} \
+  [tp_lbl {i(@ibias[current])}] {ibias:current}
+# The FULL raw name stays reachable -- the label is a DISPLAY, never an identity.
+# Two signals CAN render to the same label; every gesture resolves through the
+# row index into this value, and the tooltip shows it.
+check {TP19 browser_label_full returns the untouched raw name} \
+  [pcall ::wviewer::browser_label_full \
+     [pcall ::wviewer::signal_entry {i(@c.x1.c1[i])}]] {i(@c.x1.c1[i])}
+
+# ⚠⚠ THE MEASURED COLLISION, PINNED SO IT IS DOCUMENTED BEHAVIOUR RATHER THAN A
+# SURPRISE. Running this rule over all 2656 corpus names gives EXACTLY FOUR
+# label collisions within one own-level node, and all four are the same shape:
+# an element's `@`-form device measurement and its bare branch current render
+# identically. Measured instances: `i(@be5[i])`/`i(be5)` in tb_bandgap_opamp,
+# `i(@l1[i])`/`i(l1)` and `i(@l2[i])`/`i(l2)` in tb_ft_test_2, `i(@l1[i])`/`i(l1)`
+# in test_ac.
+#
+# ⚠ The batch plan claimed this rule collides ZERO times. It does not — it
+# collides four times, and the difference matters because a collision is only
+# harmless while the label is a DISPLAY. Every gesture resolves through the row
+# INDEX into browser_label_full, and TP19's `_full` check above is what keeps
+# that true. Declared limit 2 in the spec.
+check {TP19 the measured collision pair renders identically — declared, not fixed} \
+  [list [tp_lbl {i(@be5[i])}] [tp_lbl {i(be5)}]] [list {be5:i} {be5:i}]
+check {TP19 ...but their FULL names stay distinct, which is what gestures use} \
+  [list [pcall ::wviewer::browser_label_full [pcall ::wviewer::signal_entry {i(@be5[i])}]] \
+        [pcall ::wviewer::browser_label_full [pcall ::wviewer::signal_entry {i(be5)}]]] \
+  [list {i(@be5[i])} {i(be5)}]
+
+# --- TP20-TP26 are the flow arithmetic (M2/R3) — PURE, no canvas needed ------
+#
+# ⚠ THESE ARE NUMBERED IN THE PURE BAND ON PURPOSE. The flow is the one part of
+# a canvas megawidget that CAN be tested without a display, and testing it here
+# is what stops the X-arm checks having to prove arithmetic and geometry at the
+# same time. Only the drawing needs Tk.
+#
+# Column-major: fill a column top to bottom, then start the next to the RIGHT.
+# itemsPerColumn comes from the pane's height, so dragging the sash reflows.
+check {TP20 flow_layout 10 items, rowh 20, pane 100 -> 5 per column, 2 columns} \
+  [pcall ::wviewer::browser_flow_layout 10 20 100] [list 5 2]
+check {TP20 a partial last column still counts as a column} \
+  [pcall ::wviewer::browser_flow_layout 11 20 100] [list 5 3]
+check {TP21 zero items -> 0 columns, and it does not divide by zero} \
+  [pcall ::wviewer::browser_flow_layout 0 20 100] [list 5 0]
+# ⚠ A PANE TOO SHORT FOR ONE ROW MUST STILL YIELD ONE PER COLUMN, or every
+# subsequent division is by zero. IconList's own Arrange does this
+# (/usr/share/tcltk/tk8.6/iconlist.tcl:370-373) and it is the reason it does.
+check {TP21 a pane shorter than one row still gives 1 per column} \
+  [pcall ::wviewer::browser_flow_layout 3 20 5] [list 1 3]
+check {TP21 a zero-height pane does not divide by zero either} \
+  [pcall ::wviewer::browser_flow_layout 3 20 0] [list 1 3]
+
+# cell placement: index -> {x y}, column-major.
+check {TP22 index 0 -> the origin}          [pcall ::wviewer::browser_flow_cell 0 5 80 20] [list 0 0]
+check {TP22 index 4 -> bottom of column 0}  [pcall ::wviewer::browser_flow_cell 4 5 80 20] [list 0 80]
+check {TP22 index 5 -> TOP of column 1 (column-major, not row-major)} \
+  [pcall ::wviewer::browser_flow_cell 5 5 80 20] [list 80 0]
+check {TP22 index 9 -> bottom of column 1}  [pcall ::wviewer::browser_flow_cell 9 5 80 20] [list 80 80]
+
+# ⚠ HIT-TESTING IS ARITHMETIC, NOT `find closest`. IconList uses `find closest`,
+# which is O(n) in canvas items AND cannot miss -- it always returns SOMETHING,
+# so a click in the gutter between columns silently selects a neighbour. The
+# grid is regular, so `col*itemsPerColumn + row` is O(1) and can honestly answer
+# "nothing here". TP24 is that check and it is the whole reason for diverging.
+check {TP23 a hit inside cell 0}            [pcall ::wviewer::browser_flow_hit 3 3 5 80 20 10] 0
+check {TP23 a hit inside cell 5 (column 1)} [pcall ::wviewer::browser_flow_hit 83 3 5 80 20 10] 5
+check {TP23 a hit inside the last cell}     [pcall ::wviewer::browser_flow_hit 83 83 5 80 20 10] 9
+# ⚠ THE MISS CASES. Each is a DIFFERENT way to be outside, and `find closest`
+# gets all three wrong in the same silent way.
+check {TP24 below the last row of a full column -> MISS, not the nearest cell} \
+  [pcall ::wviewer::browser_flow_hit 3 105 5 80 20 10] -1
+check {TP24 right of the last column -> MISS} \
+  [pcall ::wviewer::browser_flow_hit 200 3 5 80 20 10] -1
+check {TP24 past the last item in a PARTIAL column -> MISS} \
+  [pcall ::wviewer::browser_flow_hit 83 63 5 80 20 8] -1
+check {TP24 positive control — the cell just before it IS a hit} \
+  [pcall ::wviewer::browser_flow_hit 83 43 5 80 20 8] 7
+check {TP24 negative coordinates -> MISS, never a wrapped index} \
+  [list [pcall ::wviewer::browser_flow_hit -5 3 5 80 20 10] \
+        [pcall ::wviewer::browser_flow_hit 3 -5 5 80 20 10]] [list -1 -1]
+
+# ⚠ THE SCROLLREGION'S HEIGHT IS CLAMPED TO THE PANE, and that clamp is the
+# ENTIRE mechanism behind R3's "horizontal scrollbar only". Let the height be
+# the content height and Tk gives the canvas a vertical range to scroll, which
+# is the one thing R3 forbids. IconList clamps it the same way
+# (iconlist.tcl:359-368).
+check {TP25 the scrollregion width is ncols*colw, height CLAMPED to the pane} \
+  [pcall ::wviewer::browser_flow_scrollregion 3 80 100] [list 0 0 240 100]
+check {TP25 an empty pane still has a valid, non-degenerate scrollregion} \
+  [pcall ::wviewer::browser_flow_scrollregion 0 80 100] [list 0 0 0 100]
+# ⚠ THE SABOTAGE ORACLE for the clamp: content taller than the pane must NOT
+# raise the scrollregion's height.
+check {TP26 content taller than the pane does NOT grow the scrollregion height} \
+  [lindex [pcall ::wviewer::browser_flow_scrollregion 1 80 100] 3] 100
+
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
   puts "$::errorInfo"

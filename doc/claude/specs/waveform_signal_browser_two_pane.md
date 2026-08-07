@@ -359,7 +359,7 @@ corpus names:
 | candidate rule | reproduces the 7 rows above | label collisions **within one own-level node** |
 |---|---|---|
 | last path segment (as first written) | 6 of 7 | **29** (`n_diffamp` `xr1`, `test_analog`, `montecarlo_mismatch_sim`, …) |
-| **the hybrid, below** | **7 of 7** | **0** |
+| **the hybrid, below** | **7 of 7** | **4** |
 
 **The rule.** For a device-classed signal the instance half is the **leaf's base** — unless
 that base is *model-shaped*, in which case it is the **last path segment**. A base is
@@ -384,10 +384,17 @@ moves.
 `[current]` 11, `[vth]` 3, `[is]`/`[ie]`/`[ic]`/`[ib]` 2 each, `[vbe]` 2, `[gm]` 1. No
 translation table is needed or wanted — the param is passed through verbatim.
 
-⚠ **Two signals can render to the same label** when one wrapper holds two devices of the
-same class whose model names differ. The label is a *display*, never an identity: every
-gesture resolves through the row index into the full raw name, and the tooltip shows it.
-The status line reports the count of names, not of labels, so a collision is visible.
+⚠ **Two signals can render to the same label.** Measured over all 2656 corpus names, this
+rule collides **exactly four times within one own-level node**, and all four are the same
+shape: an element's `@`-form device measurement and its bare branch current render
+identically — `i(@be5[i])`/`i(be5)` in `tb_bandgap_opamp`, `i(@l1[i])`/`i(l1)` and
+`i(@l2[i])`/`i(l2)` in `tb_ft_test_2`, `i(@l1[i])`/`i(l1)` in `test_ac`. Pinned by TP19.
+
+The batch plan claimed this rule collides **zero** times; it does not, and the correction
+was made by re-running the measurement rather than by trusting it. Four is acceptable
+because the label is a *display*, never an identity: every gesture resolves through the row
+index into `browser_label_full`, the tooltip shows the raw name, and the status line counts
+names rather than labels, so a collision stays visible.
 
 ⚠ **Cadence's exact spelling, for the record.** The prompt's `/I0/M1:d` exists in neither
 Cadence namespace. The real forms are `/I0/M1/D` (schematic/OSS: leading slash, all slash)

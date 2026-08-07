@@ -6149,6 +6149,164 @@ proc wviewer::browser_device_paths {entries} {
   return $out
 }
 
+# The full raw names owned by EXACTLY ONE hierarchy level — the lower pane's
+# selector (spec R3). PURE. Raw-file order (limit D7).
+#
+# ⚠⚠ THIS IS A SECOND PROC, NOT A CHANGE TO `browser_leaf_names`, and that is
+# ruling R6 rather than duplication. `browser_leaf_names` is RECURSIVE BY
+# CONTRACT — its own header says "a group answers with every leaf beneath it,
+# however deep" — and the driver kept it that way deliberately: plotting
+# everything under a block is how you find what is coupling into a signal you
+# can see a kink on. MEASURED on tb_bandgap's `x1`: own-level 43, recursive 406.
+# Two different questions; changing the old proc to answer the new one would
+# red BT13/BM12/BT29/BT32 and delete the gesture the driver asked to preserve.
+#
+# ⚠ CASE-INSENSITIVE, and not as a courtesy: ngspice lowercases, so the raw says
+# `x1.x2` while the schematic says `X1`. Spec §10.3-10.4 — the final verify must
+# be `-nocase` too, or a correct walk of `x1.x2` lands on `x1.X2` and is
+# rejected by its own verify.
+#
+# A path with no signals of its own answers `{}`. That is an ANSWER, not an
+# error: MEASURED, 18 of tb_bandgap's 128 nodes and 25 of tb_charge_pump's 316
+# are pure ancestors that exist only because a descendant does.
+proc wviewer::browser_level_names {entries path} {
+  set out {}
+  foreach e $entries {
+    if {[string equal -nocase [wviewer::dget $e path {}] $path]} {
+      lappend out [wviewer::dget $e name {}]
+    }
+  }
+  return $out
+}
+
+# The FULL raw name behind a row — for the tooltip, for Copy names, and for
+# every gesture. The label is a DISPLAY, never an identity.
+proc wviewer::browser_label_full {e} { return [wviewer::dget $e name {}] }
+
+# ONE entry -> its lower-pane label, Cadence convention (spec R8). PURE.
+#
+# Voltages render bare (`net5`); currents render `<instance>:<param>`
+# (`xm1:id`, `v1:i`, `c1:i`, `xm1:#body`).
+#
+# ⚠ THE BARE TEST IS `class net AND type ne i`, NOT type alone. A device
+# internal node has type `v` and must NOT render bare — `v(m.x1.xm1.mod#body)`
+# is `xm1:#body`, not `mod#body`.
+#
+# ⚠⚠ THE INSTANCE HALF IS *NOT* SIMPLY THE LAST PATH SEGMENT. The spec said so
+# in its first draft and its own worked examples contradicted it:
+# `i(@c.x1.c1[i])` has last path segment `x1`, giving `x1:i`, not the `c1:i` the
+# table demands. Both candidate rules were run over all 2656 corpus names:
+#
+#   last path segment  ->  reproduces 6 of 7 spec rows, 29 label COLLISIONS
+#   the hybrid below   ->  reproduces 7 of 7,            0 collisions
+#
+# THE RULE: the instance half is the LEAF'S BASE, unless that base is
+# MODEL-SHAPED — it contains `_` — in which case it is the LAST PATH SEGMENT.
+# The asymmetry is not arbitrary: sky130 names the device INSIDE a pcell wrapper
+# after its model (`msky130_fd_pr__nfet_01v8`), so there the wrapper `xm1` is the
+# instance the user drew; a discrete `c1`/`r1`/`q1` has no wrapper and IS its own
+# instance. One rule, two shapes, because the corpus genuinely has two shapes.
+#
+# ⚠ One leading `@` is stripped: 25 corpus names are untagged single-segment
+# `@`-forms (11 in cmos_ac_sweep), which would otherwise read `@ibias:current`.
+#
+# ⚠ Only NINE distinct params exist in the whole corpus ([id] 356, [i] 114,
+# [current] 11, [vth] 3, [is]/[ie]/[ic]/[ib] 2 each, [vbe] 2, [gm] 1), so the
+# param passes through VERBATIM. No translation table is needed or wanted.
+#
+# ⚠ TWO SIGNALS CAN RENDER TO THE SAME LABEL. Declared limit, not a defect: the
+# label is a display, every gesture resolves through the row INDEX into the full
+# raw name, and the status line counts names rather than labels so a collision
+# stays visible.
+proc wviewer::browser_label {e} {
+  set leaf  [wviewer::dget $e leaf {}]
+  set class [wviewer::dget $e class net]
+  set type  [wviewer::dget $e type other]
+  if {$class eq {net} && $type ne {i}} { return $leaf }
+  set base $leaf
+  set param {}
+  if {[regexp {^(.*?)\[([^][]*)\]$} $leaf -> b p]} {
+    set base $b ; set param $p
+  } elseif {[regexp {^([^#]*)(#.*)$} $leaf -> b p]} {
+    set base $b ; set param $p
+  }
+  if {$param eq {}} { set param i }
+  set inst $base
+  if {[string first _ $base] >= 0} {
+    set segs [split [wviewer::dget $e path {}] .]
+    set last [lindex $segs end]
+    if {$last ne {}} { set inst $last }
+  }
+  regsub {^@} $inst {} inst
+  return "${inst}:${param}"
+}
+
+# --- the "sea of names" flow: column-major layout arithmetic (M2, R3) --------
+#
+# PURE, and deliberately so. The flow is the one part of a canvas megawidget
+# that can be tested without a display, and keeping it here is what stops the
+# X-arm checks having to prove arithmetic and geometry at the same time. Only
+# the DRAWING needs Tk.
+#
+# The algorithm is Tk 8.6's own `::tk::IconList::Arrange`
+# (/usr/share/tcltk/tk8.6/iconlist.tcl:301-376) reimplemented rather than
+# reused: that class is declared private and experimental (megawidget.tcl:1-15),
+# requires an image per batch, exposes no per-item colour API, and binds no
+# <Button-3>.
+
+# n items at `rowh` px in a pane `paneh` px tall -> {itemsPerColumn ncolumns}.
+#
+# ⚠ THE `< 1 -> 1` FLOOR IS LOAD-BEARING, not defensive. IconList carries the
+# same one (iconlist.tcl:370-373) because every subsequent placement divides by
+# this number: a pane shorter than one row would otherwise divide by zero.
+proc wviewer::browser_flow_layout {n rowh paneh} {
+  if {$rowh <= 0} { set rowh 1 }
+  set per [expr {$paneh / $rowh}]
+  if {$per < 1} { set per 1 }
+  return [list $per [expr {($n + $per - 1) / $per}]]
+}
+
+# item index -> {x y}, COLUMN-MAJOR: fill a column top to bottom, then start the
+# next one to the RIGHT. Row-major here would be a one-character change that
+# looks right in a screenshot and is wrong in every other way.
+proc wviewer::browser_flow_cell {idx per colw rowh} {
+  if {$per < 1} { set per 1 }
+  return [list [expr {($idx / $per) * $colw}] [expr {($idx % $per) * $rowh}]]
+}
+
+# canvas coords -> item index, or -1 for a MISS.
+#
+# ⚠⚠ ARITHMETIC, NOT `find closest`, AND THE DIFFERENCE IS THE MISS. IconList
+# hit-tests with `find closest`, which is O(n) in canvas items and — worse —
+# ALWAYS RETURNS SOMETHING: a click in the gutter past the last column silently
+# selects a neighbour. The flow is a regular grid, so `col*per + row` is O(1)
+# and can honestly answer "nothing here". Three distinct ways to be outside, all
+# of which `find closest` gets wrong in the same silent way: below the last row
+# of a full column, right of the last column, and past the last item in a
+# PARTIAL column.
+proc wviewer::browser_flow_hit {x y per colw rowh n} {
+  if {$per < 1} { set per 1 }
+  if {$colw <= 0 || $rowh <= 0} { return -1 }
+  if {$x < 0 || $y < 0} { return -1 }
+  set col [expr {int($x) / $colw}]
+  set row [expr {int($y) / $rowh}]
+  if {$row >= $per} { return -1 }
+  set idx [expr {$col * $per + $row}]
+  if {$idx < 0 || $idx >= $n} { return -1 }
+  return $idx
+}
+
+# the canvas -scrollregion for a flowed pane.
+#
+# ⚠⚠ THE HEIGHT IS CLAMPED TO THE PANE, AND THAT CLAMP IS THE ENTIRE MECHANISM
+# BEHIND R3's "HORIZONTAL SCROLLBAR ONLY". Let the height be the content height
+# and Tk hands the canvas a vertical range to scroll, which is the one thing R3
+# forbids — the pane would then have a hidden vertical axis with no scrollbar to
+# reach it. IconList clamps it the same way (iconlist.tcl:359-368).
+proc wviewer::browser_flow_scrollregion {cols colw paneh} {
+  return [list 0 0 [expr {$cols * $colw}] $paneh]
+}
+
 # `entries` are item-2 dicts {name type leaf path class}. Returns an ORDERED
 # list of row dicts {id .. parent .. text .. kind group|leaf .. name ..}, parents
 # always BEFORE their children (which is what lets browser_populate insert them
