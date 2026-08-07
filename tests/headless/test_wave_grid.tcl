@@ -470,8 +470,8 @@ foreach {gh_all gh_v} [regexp -all -inline {data-bseq="([^"]+)"} $gsrc] {
 # per-row leg below is vacuously green on a guide whose attributes were stripped
 # or whose table was deleted outright. It also distinguishes "one row was
 # removed" (5) from "nothing parsed" (0).
-check "GH8 the guide's browser table carries the six browser gestures" \
-  [llength $gh_bseqs] 6
+check "GH8 the guide's browser table carries the seven browser gestures" \
+  [llength $gh_bseqs] 7
 foreach gh_v $gh_bseqs {                                  ;# doc -> source
   check_true "GH8 the guide's browser bind \$f.$gh_v really is in browser_build" \
     [expr {[string first "bind \$f.$gh_v" $gh_bb] >= 0}]

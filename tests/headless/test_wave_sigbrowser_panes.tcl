@@ -138,6 +138,49 @@ proc bw_setsel2 {tv a b} {
   return $n
 }
 
+# --- item 10's three "the selection is never empty" routes --------------------
+# ⚠ THE PLAN'S `begin {...}` IDIOM IS NOT A REAL PROC. Item 9 hit this too. Each
+# of these is a NAMED helper that does one thing, answers a VALUE (never a
+# throw), and RESTORES whatever it changed — a helper that leaves the fixture
+# altered makes the next check's result depend on the order of the file.
+proc bw_nonempty_sel {tv} {
+  if {[catch {$tv selection} sel]} { return no-tree }
+  return [expr {[llength $sel] > 0 ? 1 : 0}]
+}
+# a programmatic clear, then the next populate — which is the only thing that
+# owes the invariant. See BW50's ⚠ for why the clear ALONE is not asserted.
+proc bw_sel_after_clear_and_refresh {tok tv} {
+  catch {$tv selection set {}}
+  if {[catch {::wviewer::browser_refresh $tok 0}]} { return refresh-threw }
+  update
+  return [bw_nonempty_sel $tv]
+}
+proc bw_sel_after_refresh {tok tv} {
+  if {[catch {::wviewer::browser_refresh $tok 0}]} { return refresh-threw }
+  update
+  return [bw_nonempty_sel $tv]
+}
+# a real keystroke through the bar's own <KeyRelease> pump, restored afterwards.
+proc bw_sel_after_keystroke {tok tv bar} {
+  set was {}
+  catch {set was [$bar.pat get]}
+  if {[bs_type $bar {v}] eq {no-bar}} { return no-bar }
+  set r [bw_nonempty_sel $tv]
+  bs_type $bar $was
+  update
+  return $r
+}
+# THE MEASURED FACT the invariant does NOT cover, asserted so nobody assumes it
+# does: a bare programmatic `selection set {}` really does leave the tree with
+# nothing selected until the next populate. The user cannot reach that state —
+# under `-selectmode browse` ttk's BrowseTo always lands ON a row — but a script
+# can, and pretending otherwise would make BW50 a claim about code nobody wrote.
+proc bw_sel_after_bare_clear {tv} {
+  catch {$tv selection set {}}
+  update
+  return [bw_nonempty_sel $tv]
+}
+
 if {[catch {
 
 # ============================================================================
@@ -383,18 +426,244 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [expr {abs([bs_wait_sash $F.pw] - 0.30) < 0.05}]] {0.30 1}
   pcall ::wviewer::browser_sash $tok 0.55
 
-  # --- BW34: "NO BEHAVIOUR CHANGES" MADE ASSERTABLE -------------------------
-  # The tree is still populated exactly as it was. Without this the item could
-  # ship a beautiful skeleton with a tree nothing fills any more.
+  # --- BW34: THE TREE IS REALLY FILLED --------------------------------------
+  # Item 9's version of this check asserted "populated exactly as before",
+  # naming a LEAF id. Item 10 takes the leaves out of the tree, so the claim is
+  # restated: the tree is filled, it holds the design root and the instance
+  # nodes, and the leaf is now an ASSERTABLE ABSENCE rather than a presence.
   set ::wviewer::browsersigs($tok) {v(out) v(x1.x2.net5) v(x1.y3.net5)}
   pcall ::wviewer::browser_refresh $tok 0
   update
   set bw_ids [pcall $TV children {}]
-  check {BW34 (NO BEHAVIOUR CHANGE) the tree is still populated exactly as before} \
+  check {BW34 (item 10) the tree is filled with NODES and the design root} \
     [list [expr {[bs_set $bw_ids] && [llength $bw_ids] > 0}] \
-          [pcall $TV exists {s:v(out)}] [pcall $TV exists {g:x1}]] {1 1 1}
-  check {BW35 ...and the sea is still EMPTY — item 11 fills it, not item 9} \
+          [pcall $TV exists {g:x1}] [pcall $TV exists {g:}]] {1 1 1}
+  check {BW35 ...and the sea is still EMPTY — item 11 fills it, not item 9/10} \
     [llength [pcall $F.pw.sea.c find all]] 0
+
+  # ==========================================================================
+  # BW40-BW53 — TWO-PANE ITEM 10: THE UPPER PANE GOES LIVE
+  # ==========================================================================
+  #
+  # The fixture above is the whole inventory for this block:
+  #   v(out)          path {}      -> the design root's own level
+  #   v(x1.x2.net5)   path x1.x2
+  #   v(x1.y3.net5)   path x1.y3
+  # so the NODES are exactly {g: g:x1 g:x1.x2 g:x1.y3} and the leaves are three
+  # rows that must NOT be in the tree.
+  #
+  # ⚠ EVERY READ BELOW GOES THROUGH `pcall` + `bs_num`/`bs_set`/an assertable
+  # sentinel. Item 9 paid for that rule: an unguarded `expr` on a `pcall` result
+  # threw into the outer catch and deleted 17 of 34 checks while the file still
+  # printed a plausible failure count.
+
+  # "the tree holds no leaf rows" as a SET of id namespaces, not a count.
+  #   no-tree / empty / the sorted unique two-character prefixes present
+  proc bw_kinds_in_tree {tv} {
+    if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+    set ids [bs_tree_ids $tv]
+    if {![llength $ids]} { return empty }
+    set out {}
+    foreach id $ids { lappend out [string range $id 0 1] }
+    return [lsort -unique $out]
+  }
+  #   -1 no tree / 0 empty / the deepest nesting level, root = 1
+  proc bw_depth {tv {id {}} {d 0}} {
+    if {$d == 0} {
+      if {[catch {winfo exists $tv} e] || !$e} { return -1 }
+      if {![llength [bs_tree_ids $tv]]} { return 0 }
+    }
+    set best $d
+    if {[catch {$tv children $id} kids]} { return $best }
+    foreach k $kids {
+      set sub [bw_depth $tv $k [expr {$d + 1}]]
+      if {$sub > $best} { set best $sub }
+    }
+    return $best
+  }
+
+  # --- R2 / R4: one root, and it is selected --------------------------------
+  # ⚠ THE EXPECTED LITERALS IN THIS BAND ARE STRING REPS, NOT NESTED LISTS, and
+  # the difference cost a whole red run. `check` compares STRINGS, and
+  # `[list {g:} 0]` has the string rep `g: 0` — Tcl brace-quotes an element only
+  # when it must. Writing `{{g:} 0}` therefore asserts the two-character string
+  # `{g:}` as the first element and is red on a CORRECT widget. Every literal
+  # below is the measured string rep.
+  check {BW40 (R2) the tree's top level is exactly ONE node, id `g:`, and it IS
+         the selection — R4 is satisfied from the very first populate} \
+    [list [pcall $TV children {}] [pcall $TV selection] \
+          [pcall $TV item {g:} -text]] {g: g: design}
+  # ⚠ THE SET, NEVER A COUNT (M11). "1 open" is the same number for a correct
+  # tree and for one where the root is shut and a child is open.
+  check {BW41 (M11) the ROOT is open and EVERY other node is closed} \
+    [list [bs_open_set $TV] [pcall $TV item {g:x1} -open]] {g: 0}
+
+  # --- R1/R3: the tree is nodes only ----------------------------------------
+  check {BW42 (R1) every id in the tree is a GROUP id — no `s:` namespace at all} \
+    [bw_kinds_in_tree $TV] {g:}
+  # ⚠ AN ASSERTABLE ABSENCE, and its POSITIVE CONTROL on the same line: the leaf
+  # is gone from the TREE while the same name is still in the ROW MODEL. One of
+  # those two legs alone is green on a browser that lost the signal entirely.
+  check {BW43 ...`$tv exists` on a leaf id is 0, while browserrows still has it} \
+    [list [pcall $TV exists {s:v(x1.x2.net5)}] \
+          [llength [pcall ::wviewer::browser_leaf_names \
+                      $::wviewer::browserrows($tok) {s:v(x1.x2.net5)}]]] {0 1}
+  # ⚠⚠ THE R6 CONTROL, AND THE SINGLE MOST LIKELY WRONG EDIT IN THE BATCH is
+  # putting browser_tree_rows' output into browserrows as well. Everything would
+  # still LOOK right and nothing would be plottable. Three values, one check:
+  # the root reaches all three names, g:x1 reaches its two, and the model still
+  # holds more rows than the tree shows.
+  check {BW44 (R6) browserrows keeps the LEAVES, so the recursive plot still works} \
+    [list [llength [pcall ::wviewer::browser_leaf_names \
+                      $::wviewer::browserrows($tok) {g:}]] \
+          [llength [pcall ::wviewer::browser_leaf_names \
+                      $::wviewer::browserrows($tok) {g:x1}]] \
+          [expr {[llength $::wviewer::browserrows($tok)] > [llength [bs_tree_ids $TV]]}]] \
+    {3 2 1}
+  # M11 again, behaviourally: a collapsed tree is still a TREE. Depth 1 would
+  # mean the root swallowed everything, which is what "collapsed by default"
+  # taken literally including the root produces.
+  check {BW45 (M11) the tree still has real depth under the root} \
+    [list [bw_depth $TV] [pcall $TV children {g:}]] {3 g:x1}
+
+  # --- R5 / spec §7.1: THE BARS DO NOT TOUCH THE TREE AT ALL ----------------
+  #
+  # ⚠⚠ THIS BLOCK FOUND TWO REAL DEFECTS, both by being RUN.
+  #
+  # (1) THE HELPER LIED. `bs_type` had no focus loop, and Tk delivers KEY events
+  #     to the toplevel's FOCUS widget rather than to the window named in
+  #     `event generate` — so the bar ended up HOLDING the pattern, the helper
+  #     cheerfully ANSWERED it, and `browser_refresh` ran ZERO times (measured).
+  #     Every R5 claim below was green and hollow. See bs_type's ⚠ in
+  #     wvbs_common.tcl. THE PRECONDITION BELOW IS WHAT STOPS THAT RECURRING:
+  #     it asserts the STATUS LINE moved off its unfiltered count, so a dead bar
+  #     can no longer make "the tree did not change" trivially true.
+  #
+  # (2) THE TREE WAS BEING FILTERED BY THE BARS, which spec §7.1 forbids in so
+  #     many words. Typing `v(x1.x2*` one character at a time — as a user does —
+  #     makes the shell pattern `v` on the FIRST keystroke, which matches
+  #     nothing, so the tree emptied, `g:x1` was deleted, and the remaining
+  #     seven keystrokes rebuilt it CLOSED. No amount of open-set carrying
+  #     inside `browser_populate` can survive that: the node was not there to
+  #     carry. The fix is in `browser_refresh` (the tree is built from the
+  #     bar-UNFILTERED inventory); this check is its live witness.
+  #
+  # The fixture EXPANDS a node first, so "the open set survived" is not
+  # vacuously green on a tree that was collapsed anyway.
+  pcall $TV item {g:x1} -open 1
+  update
+  set bw_ids0  [bs_tree_ids $TV]
+  set bw_open0 [bs_open_set $TV]
+  set bw_stat0 [pcall $F.ph cget -text]
+  set bw_typed [bs_type $F.wvsearch {v(x1.x2*}]
+  update
+  # ⚠ THE ANTI-VACUITY GUARD FOR THE CHECK BELOW, and it is load-bearing: the
+  # status line is the ONE surface the bars are still allowed to move in this
+  # item, so it is the only proof available here that the search RAN at all.
+  check {BW46 (R5, PRECONDITION) the tree really was expanded, the keystrokes
+         really reached the bar, and the search really RAN — the status line
+         moved off its unfiltered count} \
+    [list $bw_typed $bw_open0 [llength $bw_ids0] \
+          [string match {*3 of 3 signals*} $bw_stat0] \
+          [string match {*1 of 3 signals*} [pcall $F.ph cget -text]]] \
+    [list {v(x1.x2*} {g: g:x1} 4 1 1]
+  check {BW46 (R5, spec §7.1) ...and it left the tree's NODE SET and its OPEN SET
+         byte-identical — the bars narrow the lower pane, never the tree} \
+    [list [bs_tree_ids $TV] [bs_open_set $TV]] [list $bw_ids0 $bw_open0]
+  # BOTH SIGNS, ON ONE LINE. R5's letter is "never auto-OPENS"; auto-CLOSING is
+  # the same defect wearing the other sign and is the one this rebuild could
+  # have introduced.
+  check {BW47 (R5) ...neither auto-OPENING a node nor auto-CLOSING one} \
+    [list [expr {[lsearch -exact [bs_open_set $TV] {g:x1.x2}] < 0}] \
+          [pcall $TV item {g:x1} -open]] {1 1}
+  bs_type $F.wvsearch {}
+  update
+
+  # --- R4: the selection survives, and is never empty -----------------------
+  check {BW48 (R4) a refresh PRESERVES an existing valid selection} \
+    [list [pcall $TV selection set [list {g:x1}]] \
+          [pcall ::wviewer::browser_refresh $tok 0] [pcall $TV selection]] \
+    {{} 1 g:x1}
+  # ...and falls back to the root when the selected node stops existing.
+  #
+  # ⚠ THE DRIVER HAD TO CHANGE, AND THE REASON IS THE POINT OF THE CHECK ABOVE.
+  # This used to type a no-match pattern into the Search bar. After §7.1 a
+  # search CANNOT remove a node from the tree — that is now BW46's claim — so
+  # driving it that way would assert nothing and go green on the root fallback
+  # never running. The only honest way for a selected node to stop existing is
+  # for it to leave the INVENTORY, so that is what the fixture does, and the
+  # PRECONDITION leg proves the node really went (otherwise "the selection is
+  # still g:x1, which is also the root" could pass by accident).
+  set bw_sigs0 $::wviewer::browsersigs($tok)
+  set ::wviewer::browsersigs($tok) {v(out)}
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  check {BW49 (R4, PRECONDITION) the selected node really left the tree} \
+    [list [pcall $TV exists {g:x1}] [bs_tree_ids $TV]] {0 g:}
+  check {BW49 (R4) ...so the selection fell back to the ROOT, never to empty} \
+    [pcall $TV selection] {g:}
+  set ::wviewer::browsersigs($tok) $bw_sigs0
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  check {BW49 (R4, RESTORE) the fixture inventory is back, so the checks below
+         start where BW48 left them} \
+    [bs_tree_ids $TV] $bw_ids0
+  # ⚠ THE INVARIANT IS ABOUT POPULATE, AND THE FOURTH LEG SAYS SO. Trap 10 names
+  # the real hazard: `$tv delete` drops the selection silently and
+  # browser_refresh runs on every character typed in either bar. That is legs
+  # 1-3. Leg 4 is the boundary — a bare programmatic clear DOES leave the tree
+  # unselected until the next populate, which no user gesture can reach
+  # (`-selectmode browse` makes ttk's BrowseTo land on a row) but a script can.
+  # Asserting it as 0 is what stops BW50 claiming an invariant nobody wrote.
+  check {BW50 (R4) the selection survives a clear+refresh, a refresh and a
+         keystroke — and a BARE clear is the declared boundary} \
+    [list [bw_sel_after_clear_and_refresh $tok $TV] \
+          [bw_sel_after_refresh $tok $TV] \
+          [bw_sel_after_keystroke $tok $TV $F.wvsearch] \
+          [bw_sel_after_bare_clear $TV]] {1 1 1 0}
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+
+  # --- browser_show_path's sim-root branch ----------------------------------
+  # It used to CLEAR the selection, which R4 now forbids: there is a row that
+  # means "the whole design" and it is the answer.
+  check {BW51 browser_show_path at the sim root SELECTS the root, never clears} \
+    [list [pcall ::wviewer::browser_show_path $tok {}] [pcall $TV selection]] \
+    {{root {}} g:}
+
+  # --- the state helper's premise, which item 10 invalidated ----------------
+  # ⚠ browser_tree_nodes used to mean "rows WITH CHILDREN", which was the same
+  # set as "groups" only while leaves were in the tree. `g:x1.x2`'s children
+  # were all signals, so after item 10 it has none — and the old predicate would
+  # have dropped it, silently un-persisting the collapse state of exactly the
+  # leaf-most nodes.
+  check {BW52 browser_tree_nodes reaches the LEAF-MOST nodes, which have no
+         children of their own any more} \
+    [lsort [pcall ::wviewer::browser_tree_nodes $TV]] {g: g:x1 g:x1.x2 g:x1.y3}
+  check {BW53 (SOURCE) the populate path never calls `see` — that is R5's fix} \
+    [list [regexp -all {\$tv see} [wvproc_body $wsrc wviewer::browser_populate]] \
+          [regexp -all {\$tv see} [wvproc_body $wsrc wviewer::browser_reveal]]] \
+    {0 1}
+  # ⚠⚠ AND THE BEHAVIOURAL TWIN, WHICH THE SOURCE CHECK ALONE DOES NOT GIVE YOU.
+  # MEASURED: adding `$tv see $want` to `browser_populate` reds BW53 and NOTHING
+  # ELSE across this whole band, because every check above restores a selection
+  # that is either the top-level root or a child of the already-open root — and
+  # `see` on a row whose ancestors are all open changes nothing. The hazard only
+  # bites when the restored selection sits under a CLOSED ancestor, which is
+  # precisely the state R5 protects: the user collapses x1, types a character,
+  # and `see` silently re-opens it. So the fixture MAKES that state, and the
+  # PRE leg is carried in the tuple so "the ancestor was open all along" cannot
+  # masquerade as "the repopulate left it alone".
+  pcall $TV item {g:x1} -open 0
+  pcall $TV selection set [list {g:x1.x2}]
+  update
+  set bw_deep0 [list [pcall $TV item {g:x1} -open] [pcall $TV selection]]
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  check {BW53 (BEHAVIOURAL) a repopulate that restores a selection under a CLOSED
+         ancestor must NOT re-open it — `see` would, and that is R5} \
+    [list $bw_deep0 [pcall $TV item {g:x1} -open] [pcall $TV selection]] \
+    [list {0 g:x1.x2} 0 g:x1.x2]
 
   catch {destroy .wvbw1}
   catch {dict unset ::wviewer::windows wvbw}

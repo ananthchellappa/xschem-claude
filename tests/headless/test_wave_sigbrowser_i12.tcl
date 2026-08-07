@@ -66,7 +66,7 @@
 # 01-19 source/pure (BOTH arms), 20-39 the throwaway toplevel, 40-59 the REAL
 # viewer + the REAL design window.
 #
-# ⚠ THE ARM STATEMENT. The `--nogui` arm runs BX01-BX14 only — the source greps
+# ⚠ THE ARM STATEMENT. The `--nogui` arm runs BX01-BX15 only — the source greps
 # and the pure-Tcl reads. Every behavioural claim (the reveal, the scroll, the
 # Tools entry, the real Ctrl-5) needs real Tk and real X, so A GREEN `--nogui`
 # RUN PROVES NOTHING ABOUT "Show in Signal Browser".
@@ -209,7 +209,7 @@ proc bx_vis_m {tv id} {
   return [bx_vis $tv $id]
 }
 
-# --- BX01-BX14: PURE + SOURCE, BOTH ARMS ------------------------------------
+# --- BX01-BX15: PURE + SOURCE, BOTH ARMS ------------------------------------
 # `browser_node_for` and `browser_origin_drop` take no Tk and no xschem, which
 # is exactly why the deepest-ancestor fallback and the origin arithmetic — the
 # two things sabotages (b) and (d) attack — are provable in `--nogui`.
@@ -354,6 +354,28 @@ check {BX14 browser_msg: err passes its own reason through} \
   [pcall ::wviewer::browser_msg {err {no simulation data loaded - read a raw file first}}] \
   {no simulation data loaded - read a raw file first}
 
+# ⚠ THE ROOTED ROW LIST — item 2's design root, and item 8's `start` argument
+# which exists for it. BX01-BX07 above walk a ROOT-LESS list on purpose: that is
+# the All-DBs shape and it is what every pre-item-2 caller produced. Nothing
+# pinned what the SAME walk does once the root is there, and the answer is
+# `{} 0` — every real instance hangs off `g:`, so a walk seeded `{}` dead-ends
+# on the first segment (the only group whose parent is `{}` is the ROOT ROW, and
+# its text is a design name, not an instance). That is not a defect to be
+# papered over with a default: it is the fact that makes passing
+# `browser_root_id` LOAD-BEARING at every call site, and BX50's D6 snapshot
+# control is the same fact on the real viewer.
+set bx_rrows [wviewer::browser_rows [list \
+  [wviewer::signal_entry {v(x1.x2.net5)}] \
+  [wviewer::signal_entry {v(out)}]] bx_root]
+set bx_rid0 [pcall ::wviewer::browser_root_id $bx_rrows]
+check {BX15 (fixture) the rooted list carries `g:`; the root-less one answers {} — absence is an ANSWER} \
+  [list $bx_rid0 [pcall ::wviewer::browser_root_id $bx_rows]] \
+  [list {g:} {}]
+check {BX15 (ITEM 8) a ROOTED list walked with NO start DEAD-ENDS — declared, not defended} \
+  [pcall ::wviewer::browser_node_for $bx_rrows {x1 x2}] {{} 0}
+check {BX15 ...and seeded with browser_root_id the same walk finds the same node} \
+  [pcall ::wviewer::browser_node_for $bx_rrows {x1 x2} $bx_rid0] {g:x1.x2 2}
+
 # --- BX20-BX39: the REVEAL, on a throwaway toplevel (X only) -----------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
@@ -385,20 +407,66 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     return [llength $r]
   }
+  # THE TREE'S ITEM COUNT, as a value that CANNOT throw — used at BX32, where 63
+  # ids would be unreadable. `no-tree` and `empty` are kept DISTINCT from a
+  # number because they are three different facts and a bare `0` says two of
+  # them at once. `bs_tree_ids` is the shared depth-first walk and returns {}
+  # rather than throwing, so nothing here can blow past a check.
+  proc bx_nodes {tv} {
+    if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+    set ids [bs_tree_ids $tv]
+    if {![llength $ids]} { return empty }
+    return [llength $ids]
+  }
   set bx_names {v(x1.x2.net5) v(x1.y3.net7) v(out)}
   check {BX20 (FIXTURE) the sidebar built, is mapped, and the tree is seeded} \
     [list $bx_mapped [winfo exists $BXTV] [expr {[bx_seed $bx_names] > 0}]] \
     [list 1 1 1]
 
+  # ⚠⚠ THIS FIXTURE IS DELIBERATELY THE NO-ROOT SHAPE, and saying so is what
+  # stops the next reader "fixing" it. `bx_seed` calls `browser_rows` with NO
+  # root argument, so the rows carry no `g:` — the All-DBs shape, and the shape
+  # every pre-item-2 caller produced. THREE later checks rest on it: BX36's
+  # "an EMPTY path CLEARS the selection" is browser_show_path's no-root FALLBACK
+  # arm (the rooted arm selects the root, and BX45 on the real viewer is where
+  # that is proven); BX30's control has to OPEN a node by hand because there is
+  # no root to be the one node item 10 inserts open; BX31/BX34 walk seeded `{}`
+  # and still resolve. And two-pane item 10 keeps LEAVES OUT of the tree
+  # entirely, so `s:v(out)` is in `browserrows` and NOT in the widget.
+  # ⚠ THE IDS, NOT A COUNT. Three top-level nodes would also count three; the
+  # ids are what say `g:x1.x2` and `g:x1.y3` are still CHILDREN of `g:x1`.
+  set bx_seedrows [pcall set ::wviewer::browserrows(wvbx)]
+  check {BX20 (FIXTURE) no design root, NODES only, still nested — the shape BX30/BX32/BX36 rest on} \
+    [list [pcall ::wviewer::browser_root_id $bx_seedrows] \
+          [pcall $BXTV exists {g:}] [bs_tree_ids $BXTV] \
+          [pcall $BXTV exists {s:v(out)}]] \
+    [list {} 0 {g:x1 g:x1.x2 g:x1.y3} 0]
+
   # ⚠⚠ POSITIVE CONTROL #1, and without it every "not visible" claim below is
-  # worthless: prove the fixture can be put into `collapsed` at all, and that
-  # `collapsed` is a DIFFERENT value from `visible` on the very same node.
-  check {BX30 (POSITIVE CONTROL) a freshly populated tree reads `visible`} \
-    [bx_vis $BXTV g:x1.x2] visible
+  # worthless: prove this very node can be put into BOTH `collapsed` AND
+  # `visible`, so the two are known to be distinguishable HERE.
+  #
+  # ⚠ RESTATED BY TWO-PANE ITEM 10 (R1/M11): the DIRECTION of the gesture moved,
+  # not the claim. `browser_populate` used to insert every group `-open 1`, so a
+  # fresh tree read `visible` and this control CLOSED a node to reach
+  # `collapsed`. Item 10 inserts nodes `-open 0` — collapsed by default is the
+  # ruling — and opens exactly one exception, `browser_root_id $rows`, which
+  # this fixture does not have (BX20's fixture leg). So the fresh tree reads
+  # `collapsed` and the control OPENS a node to reach `visible`. Both values,
+  # same node, same block.
+  # ⚠ AND IT ENDS WHERE IT BEGAN — g:x1 closed, selection empty — because BX31
+  # below proves `see` RE-OPENED a collapsed ancestor and is worthless if the
+  # ancestor was open on entry.
+  check {BX30 (POSITIVE CONTROL) item 10's freshly populated tree is COLLAPSED} \
+    [bx_vis $BXTV g:x1.x2] collapsed
+  pcall $BXTV item g:x1 -open 1
+  update
+  check {BX30 (POSITIVE CONTROL) OPENING the ancestor reads `visible` — same node, other value} \
+    [list [pcall $BXTV item g:x1 -open] [bx_vis $BXTV g:x1.x2]] [list 1 visible]
   pcall $BXTV item g:x1 -open 0
   pcall $BXTV selection set {}
   update
-  check {BX30 (POSITIVE CONTROL) collapsing the ancestor reads `collapsed`, selection empty} \
+  check {BX30 (POSITIVE CONTROL) collapsing it again reads `collapsed`, selection empty} \
     [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV selection]] [list collapsed {}]
 
   # THE ITEM, on the HIT path (sidebar already shown, node present) — so no
@@ -414,12 +482,36 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # THE SCROLL LEG — a node whose ancestors are ALL open and which is still not
   # on screen. `collapsed` cannot see this one; only the bbox can.
+  # ⚠⚠ THE FILL MINTS NODES, NOT SIGNALS, AND THAT IS TWO-PANE ITEM 10's DOING.
+  # The old fill was 60 FLAT names (`v(zz0)`..`v(zz59)`), which mint LEAF rows —
+  # and item 10 keeps leaves OUT of the tree (they belong to the lower pane from
+  # item 11 on). With that fill the widget held THREE items, `yview moveto 1.0`
+  # scrolled nothing, and this control read `visible`: the `offscreen` state it
+  # exists to prove had become unreachable, so restating its expectation would
+  # have left a green check covering nothing. One dot per name fixes it —
+  # `v(zz0.n)` is two segments, so sig_declass passes it through untouched and
+  # sig_split gives path `zz0`, minting the TOP-LEVEL GROUP `g:zz0` (plus a leaf
+  # the tree drops). 60 of them put 63 NODES in the widget.
+  # ⚠ WHY 63 IS ENOUGH: the tree pane lives inside a 900x400 toplevel, i.e. at
+  # most ~20 rows tall, so a 63-row tree scrolled to its end cannot be showing
+  # its second row. If this ever reads `visible` the pane grew — a LOUD failure
+  # with the 63-item leg right beside it naming the cause, not a silent one.
   set bx_fill {}
-  for {set bx_i 0} {$bx_i < 60} {incr bx_i} { lappend bx_fill "v(zz$bx_i)" }
+  for {set bx_i 0} {$bx_i < 60} {incr bx_i} { lappend bx_fill "v(zz${bx_i}.n)" }
   bx_seed [concat $bx_names $bx_fill]
+  # ⚠ THE ANCESTOR IS OPENED ON PURPOSE, not inherited. `offscreen` requires
+  # every ancestor OPEN; item 10 inserts nodes `-open 0` and only CARRIES the
+  # previously-open set across a repopulate, so leaning on BX31's `see` to have
+  # left g:x1 open would make this control depend on a different item's rule.
+  # The flag is still ASSERTED below — it is the precondition the `offscreen`
+  # verdict rests on, and reading it back is what stops a silent revert.
+  pcall $BXTV item g:x1 -open 1
+  update
   pcall $BXTV yview moveto 1.0
   pcall $BXTV selection set {}
   update
+  check {BX32 (control) the fill really minted NODES — 63 items, so the scroll has something to do} \
+    [bx_nodes $BXTV] 63
   check {BX32 (POSITIVE CONTROL) scrolled to the bottom, x1.x2 reads `offscreen`} \
     [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV item g:x1 -open]] [list offscreen 1]
   check {BX32 browser_reveal scrolls it back into view} \
@@ -654,12 +746,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
             [pcall xschem get sim_sch_path]] \
       [list wvhier_top.sch {X1.X2.}]
 
-    # ⚠⚠ THE FIRST INVOKE CANNOT PROVE THE EXPANSION, and that was MEASURED, not
-    # reasoned: un-hiding the sidebar repopulates the tree, and `browser_populate`
-    # inserts every group `-open 1`, so the node is visible whether or not
-    # anything expanded it. Sabotage (a) (delete `$tv see`) left the leg above
-    # GREEN. The SECOND invoke is the real one — sidebar already shown, so no
-    # repopulate intervenes, and the ancestor deliberately collapsed first.
+    # ⚠⚠ RESTATED BY TWO-PANE ITEM 10, AND THE OLD RATIONALE IS NOW BACKWARDS.
+    # It used to read "THE FIRST INVOKE CANNOT PROVE THE EXPANSION", and it was
+    # true: un-hiding the sidebar repopulates, `browser_populate` inserted every
+    # group `-open 1`, and the node was visible whether or not anything expanded
+    # it — sabotage (a) (delete `$tv see`) left the leg above GREEN. Item 10
+    # INVERTED that. The first populate of an empty tree opens exactly ONE node,
+    # the design root (browser_populate's `$first`/`$rootid` branch); `g:x1` is
+    # born `-open 0`, so the `visible` verdict above ALREADY rests on `see`.
+    # THE SECOND INVOKE IS KEPT, and its claim is the different one it was
+    # always also making: with the sidebar ALREADY SHOWN,
+    # `ase::show_in_browser_for_current` skips its `browser_toggle`, so NO
+    # repopulate runs at all and the reveal is the only thing that can re-open a
+    # hand-collapsed ancestor.
     pcall $BXVTV item g:x1 -open 0
     pcall $BXVTV selection set {}
     update
@@ -787,12 +886,37 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     pcall ::wviewer::hier_walk {}
     pcall $BXVTV selection set {g:x1.x2}
     update
+    # ⚠⚠ POSITIVE CONTROL. Two things it pins, both needed to READ the leg below.
+    # (1) THE TOP LEVEL IS ONE ROOT. R2's single `g:` is what `g:` MEANS here,
+    # and it is also the precondition of the branch under test: with no root row
+    # browser_show_path takes its legacy CLEAR arm and the leg would red without
+    # ever saying which half was wrong.
+    # (2) THE PRE-STATE IS A NON-ROOT NODE THAT STILL EXISTS, so the three
+    # outcomes are distinguishable: a command that bailed early leaves
+    # `g:x1.x2`, a reverted sim-root branch clears to `{}`, and only the branch
+    # under test leaves `g:`.
+    # ⚠ NOTE WHAT DOES NOT HAPPEN HERE, because it is what keeps the leg clean:
+    # the sidebar is ALREADY shown, so ase::show_in_browser_for_current skips
+    # `browser_toggle` and NO browser_show / repopulate runs; browsersigs is
+    # non-empty, so browser_show_path takes no reload either. Nothing but the
+    # sim-root branch can move this selection.
+    check {BX45 (control) ONE top-level root, and a NON-root node selected going in} \
+      [list [pcall $BXVTV children {}] [pcall $BXVTV selection]] \
+      [list {g:} {g:x1.x2}]
     pcall ase::show_in_browser_for_current $bx_dwin
     update
-    check {BX45 at the sim top the selection is cleared and the reason given} \
+    # ⚠ RESTATED BY TWO-PANE ITEM 10 (R4), NAME AND ALL. It used to read "the
+    # selection is cleared" — which WAS the behaviour while the tree's top level
+    # was a forest of instances with no row meaning "the whole design". Item 10
+    # gives the tree exactly such a row and forbids an empty selection, so the
+    # sim root now SELECTS it. The claim is unchanged in substance (the sim top
+    # is an ANSWER, not a failure, and it is reported); only the value the answer
+    # leaves behind moved, so the NAME moved with it rather than staying a lie
+    # that happens to be green.
+    check {BX45 at the sim top the DESIGN ROOT is selected (R4) and the reason given} \
       [list [pcall $BXVTV selection] \
             [pcall $bx_vtop.wvbrowser.ph cget -text]] \
-      [list {} "Signal Browser\nshowing the simulation top level"]
+      [list {g:} "Signal Browser\nshowing the simulation top level"]
     check {BX45 ...and the sidebar is STILL shown (a no-op must not re-hide it)} \
       [list [pcall ::wviewer::browser_shown $bx_tok] \
             [bs_packed $bx_vtop.wvbrowser]] \
@@ -814,9 +938,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     bx_ctx_to $bx_vtop.drw
     pcall xschem raw add {v(x1.x2.x7.late)} {vsweep 1 +}
     bx_ctx_to $bx_dwin
+    # ⚠ THE WALK IS SEEDED WITH THE DESIGN ROOT, and that is item 8's `start`
+    # argument, not a workaround: two-pane item 2 gave the row list a `g:` root,
+    # every real instance hangs off it, and browser_show_path passes exactly this
+    # seed. A walk left on the default `{}` would answer 0 here BEFORE the reload
+    # and 0 AFTER it — green either way, i.e. a control that controls nothing.
+    # The bare-start fact is pinned as a value in BX15, where no reload exists to
+    # make it ambiguous.
+    set bx_rows_b [pcall set ::wviewer::browserrows($bx_tok)]
+    set bx_rid [pcall ::wviewer::browser_root_id $bx_rows_b]
+    check {BX50 (control) the snapshot really carries item 2's design root to walk from} \
+      [list [string equal $bx_rid {g:}] [pcall $BXVTV exists {g:}]] [list 1 1]
     check {BX50 (control) the browser has NOT seen the new signal yet (D6 snapshot)} \
-      [lindex [pcall ::wviewer::browser_node_for $::wviewer::browserrows($bx_tok) \
-                 {x1 x2 x7}] 1] 2
+      [lindex [pcall ::wviewer::browser_node_for $bx_rows_b {x1 x2 x7} $bx_rid] 1] 2
     pcall ::wviewer::hier_walk X1.X2
     # there is no X7 instance in the fixture, so walk there by hand-feeding the
     # path — what is under test is the RELOAD, not the descend
@@ -834,15 +968,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {unset ::wviewer::browsersigs($bx_tok)}
     pcall $BXVTV selection set {}
     update
+    check {BX46 (control) the selection really is EMPTY before the command runs} \
+      [pcall $BXVTV selection] {}
     pcall ase::show_in_browser_for_current $bx_dwin
     update
     check {BX46 with no raw loaded it says so rather than doing nothing} \
       [pcall $bx_vtop.wvbrowser.ph cget -text] \
       "Signal Browser\nno simulation data loaded - read a raw file first"
-    check {BX46 ...nothing is selected, and the sidebar is still shown} \
-      [list [pcall $BXVTV selection] [pcall ::wviewer::browser_shown $bx_tok] \
+    # ⚠ RESTATED BY TWO-PANE ITEM 10 (R2 + R4). "Nothing is selected" was the old
+    # shape of "the sidebar is untouched". Item 10 forbids an empty selection,
+    # and the inventory unset above makes browser_show_path spend its ONE
+    # empty-inventory reload (NOT browser_show, which is skipped here because the
+    # sidebar is already shown). That reload rebuilds the tree from an EMPTY
+    # inventory, which browser_rows still gives a design root, because
+    # browser_root_label's floor is the literal `design` once browser_reload has
+    # captured an empty raw path. So the honest report leaves a ONE-NODE tree
+    # with that root selected, and only THEN does the second guard speak. Claim
+    # kept: the command SPOKE and did not re-hide the sidebar. Claim gained: R4
+    # holds on the degenerate path too.
+    # ⚠ THE `design` TEXT IS THE DISCRIMINATOR. A reload that had bailed would
+    # leave the OLD tree standing, root and all, named `bx_item12` — the text is
+    # the only element that can tell a real rebuild from a no-op.
+    check {BX46 ...the emptied tree is ONE `design` root, selected (R4), sidebar still shown} \
+      [list [pcall $BXVTV children {}] [pcall $BXVTV item {g:} -text] \
+            [pcall $BXVTV selection] [pcall ::wviewer::browser_shown $bx_tok] \
             [bs_packed $bx_vtop.wvbrowser]] \
-      [list {} 1 1]
+      [list {g:} design {g:} 1 1]
     bx_ctx_to $bx_dwin
 
     # ==== BX43: THE REAL KEY, on the REAL design canvas ====

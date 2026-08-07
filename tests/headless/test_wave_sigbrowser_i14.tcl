@@ -168,6 +168,45 @@ proc bd_ids_for {rows n} {
   return $out
 }
 
+# --- TWO-PANE ITEM 10: reading the TREE WIDGET without ever throwing ----------
+# Item 10 takes LEAF rows out of the treeview (`browser_tree_rows` keeps only
+# `kind group`), so this file's widget assertions must be able to say
+# "correctly not there" OUT LOUD. `$tv parent` / `$tv item` THROW on a missing
+# id, and `pcall` turns that throw into ttk's own wording — not this item's
+# claim, and IDENTICAL to what a destroyed widget would produce.
+# Three NAMED states instead (the wvbs_common rule, spec §13.2):
+#   no-tree   the widget is gone
+#   absent    the widget is there and the id is not in it
+#   <value>   the answer
+# `top-level` is the THIRD state of `parent`: `{}` is an ANSWER (a top-level
+# row), not an absence, and the two must never both read as the empty string.
+proc bd_tv_parent {tv id} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  if {[catch {$tv exists $id} ex]}         { return no-tree }
+  if {!$ex}                                { return absent }
+  if {[catch {$tv parent $id} p]}          { return no-tree }
+  if {$p eq {}}                            { return top-level }
+  return $p
+}
+proc bd_tv_text {tv id} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  if {[catch {$tv exists $id} ex]}         { return no-tree }
+  if {!$ex}                                { return absent }
+  if {[catch {$tv item $id -text} t]}      { return no-tree }
+  return $t
+}
+# The WHOLE upper pane as a SET, never a count: "1 node" is the same number for
+# a tree holding the DB header and for one holding a stray leaf instead.
+# `bs_tree_ids` (wvbs_common.tcl, item 10's own addition) is the shared
+# depth-first walk; this adds the two sentinels it folds together — it answers
+# `{}` both for "no widget" and for "empty tree".
+proc bd_tv_ids {tv} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  if {[catch {bs_tree_ids $tv} ids]}       { return no-tree }
+  if {![llength $ids]}                     { return empty }
+  return $ids
+}
+
 if {[catch {
 
 # ============================================================================
@@ -625,6 +664,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [lsearch -exact [bd_e $::wviewer::browserdbsigs($tok) 0 names] \
              {v(alpha)}]] \
     [list 1 1]
+  # ⚠ THE POSITIVE CONTROL FOR BD48c, and the only place in this batch where the
+  # design root's TEXT is checked against a raw path THIS FILE WROTE ITSELF.
+  # `bd_b.raw` is the current DB (BD45c), and `browser_root_label` is file tail
+  # -> rootname, so item 10's root label is `bd_b`. A root reading `design`
+  # would mean browser_reload never captured the raw path; a root reading `bd_a`
+  # would mean it captured the WRONG DB's. Both fixture raws are FLAT (every
+  # signal_entry `path` is {}), so the design root is the ONLY node either
+  # inventory can mint: a one-element id set.
+  # ⚠ LEG 2 IS BD48c's POSITIVE CONTROL ON THE SAME EXPRESSION. BD48c asserts
+  # `browser_root_id` answers {} with the box ON; without this leg that {} is
+  # green on a browser_root_id that always answers {}.
+  # ⚠ THE EXPECTED LITERAL IS A STRING REP, NOT A NESTED LIST. `check` compares
+  # STRINGS and `[list {g:} {g:} bd_b bd_b]` is `g: g: bd_b bd_b`.
+  check {BD47c (POSITIVE CONTROL) box OFF: the tree is exactly ONE node — the design root, named for the CURRENT raw, and the leaves hang off it} \
+    [list [bd_tv_ids $BVF.pw.tvf.tv] \
+          [pcall ::wviewer::browser_root_id [bd_rows $tok]] \
+          [bd_tv_text $BVF.pw.tvf.tv {g:}] \
+          [bd_parent_text [bd_rows $tok] {s:v(beta)}]] \
+    [list {g:} {g:} bd_b bd_b]
   set bd_status_off [$BVF.ph cget -text]
 
   # --- the tree, box ON: THE POSITIVE ---------------------------------------
@@ -649,11 +707,53 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ `parent`/`item` THROW on a missing ttk id, so they go through pcall: a
   # regression that removes the row must FAIL THIS CHECK, not abort the file and
   # take the nine checks after it with it (the S2 lesson, twice over).
-  check {BD50b box ON: the treeview really holds the header and the foreign leaf} \
-    [list [$BVF.pw.tvf.tv exists {d:0}] [$BVF.pw.tvf.tv exists {d:0|s:v(alpha)}] \
-          [pcall $BVF.pw.tvf.tv parent {d:0|s:v(alpha)}] \
-          [pcall $BVF.pw.tvf.tv item {d:0} -text]] \
-    [list 1 1 {d:0} {bd_a.raw (tran)}]
+  # ⚠ TWO-PANE ITEM 10 MEETS ITEM 14, AND THE RULING IS A NEGATIVE: with the box
+  # ON, browser_refresh passes NO design root, because giving each DB its own
+  # root is ITEM 15's change (spec R7) and landing it here would make item 15's
+  # reds unattributable. So there is no `g:` row at all and the tree's top level
+  # is the DB headers alone. PAIRED WITH BD47c, which shows the SAME fixture
+  # grows a root the moment the box goes off — so "no root" here cannot be
+  # "roots never worked", and this check's `{}` cannot be a browser_root_id that
+  # always answers `{}`.
+  check {BD48c box ON: NO design root is emitted — neither in the row model nor in the tree (item 15 owns per-DB roots)} \
+    [list [pcall ::wviewer::browser_root_id [bd_rows $tok]] \
+          [bd_tv_parent $BVF.pw.tvf.tv {g:}]] \
+    [list {} absent]
+  # THE WIDGET, not just the model — RESTATED BY TWO-PANE ITEM 10. HALF THE OLD
+  # CLAIM IS NOW FALSE BY DESIGN: `browser_tree_rows` keeps only `kind group`,
+  # so leaf rows never enter the treeview at all and `d:0|s:v(alpha)` is ABSENT
+  # from the widget while still sitting in `browserrows` under its header. The
+  # claim therefore splits into four legs that no failure this file fears can
+  # satisfy together:
+  #   * the HEADER is really in the widget, at top level   (item 14's own claim)
+  #   * it carries its label                               (item 14's own claim)
+  #   * the foreign LEAF is an ASSERTABLE ABSENCE          (item 10's projection)
+  #   * the MODEL still parents that leaf under the header — so "the browser
+  #     lost the signal entirely" and "the leaf moved to the lower pane" are
+  #     different values HERE, rather than only in BD48.
+  # ⚠ THE ABSENCE IS READ AS `absent`, NEVER AS AN `ERR:` STRING. `pcall $tv
+  # parent {d:0|s:v(alpha)}` answers ttk's "Item ... not found" wording, which
+  # would become this item's expected value and which reads IDENTICALLY if the
+  # widget had been destroyed. `bd_tv_parent` answers three distinct stable
+  # sentinels instead.
+  check {BD50b box ON: the treeview holds the DB HEADER at top level with its label, the foreign LEAF is projected OUT of the tree (item 10), and the MODEL still parents that leaf under the header} \
+    [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
+          [bd_tv_text   $BVF.pw.tvf.tv {d:0}] \
+          [bd_tv_parent $BVF.pw.tvf.tv {d:0|s:v(alpha)}] \
+          [bd_parent_text [bd_rows $tok] {d:0|s:v(alpha)}]] \
+    [list top-level {bd_a.raw (tran)} absent {bd_a.raw (tran)}]
+  # ⚠ THE SET, NOT JUST THE TWO IDS. `absent` above is one id; this is the WHOLE
+  # upper pane, and it is what stops "the projection dropped the leaf" being
+  # confused with "the projection dropped everything and happened to keep d:0",
+  # or with a tree that grew a node nobody asked for. Both fixture raws are FLAT
+  # so neither inventory mints a hierarchy node, and item 10 emits no design
+  # root while All-DBs is on (BD48c) — so the correct answer is exactly one id.
+  # ⚠ DECLARED: this also records that a DB header currently has NO ttk children
+  # at all here — its only children were leaves. Item 11 (the lower pane) and
+  # item 15 (per-DB roots) both have to answer for that, and this is the check
+  # that will red when they do.
+  check {BD50c box ON: the upper pane's ENTIRE id set is the one DB header — every leaf really left the tree, and no node left with them} \
+    [bd_tv_ids $BVF.pw.tvf.tv] [list {d:0}]
 
   # --- per-DB matching: the header only appears when that DB matched ---------
   proc bd_pat {w p} {
@@ -662,17 +762,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     wviewer::searchbar_fire $w
   }
   bd_pat $BSB {*beta*}
-  check {BD51 (THE NEGATIVE) ON + `*beta*`: the other DB matched nothing so it gets NO header row at all} \
-    [list [$BVF.pw.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(beta)}]] \
-    [list 0 {s:v(beta)}]
+  # ⚠ AFTER ITEM 10 THIS TREE IS LEGITIMATELY EMPTY, AND THAT IS ASSERTED RATHER
+  # THAN ASSUMED. `*beta*` matches one FLAT signal in the current DB — a LEAF,
+  # which no longer enters the tree — and nothing in the foreign DB, so there is
+  # no header either; the design root is suppressed while All-DBs is on (BD48c).
+  # The old `exists {d:0}`=0 leg therefore stopped being able to tell "the
+  # header was correctly omitted" from "the treeview was never populated", while
+  # still passing. `absent` + `empty` are two different values for those two
+  # worlds, and the model leg keeps the signal itself accounted for.
+  check {BD51 (THE NEGATIVE) ON + `*beta*`: the other DB matched nothing so it gets NO header row at all — and after item 10 the tree is legitimately EMPTY, which is asserted rather than assumed} \
+    [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
+          [bd_tv_ids $BVF.pw.tvf.tv] \
+          [bd_ids_for [bd_rows $tok] {v(beta)}]] \
+    [list absent empty {s:v(beta)}]
   # ⚠ POSITIVE CONTROL for BD51 on the SAME bar and the SAME fixture: a pattern
   # the other DB DOES match brings the header straight back — and this is also
   # the PLAN's headline case, a signal found ONLY in the second database.
   bd_pat $BSB {*alpha*}
-  check {BD51b (POSITIVE CONTROL) ON + `*alpha*`: the current DB matches NOTHING and the row comes from the other DB alone} \
-    [list [$BVF.pw.tvf.tv exists {d:0}] [bd_ids_for [bd_rows $tok] {v(alpha)}] \
-          [bd_ids_for [bd_rows $tok] {v(beta)}]] \
-    [list 1 {d:0|s:v(alpha)} {}]
+  # ⚠ RESTATED BY TWO-PANE ITEM 10 / SPEC §7.1, AND THE CLAIM MOVED RATHER THAN
+  # WEAKENED. "The current DB matches NOTHING" used to be readable off the ROW
+  # MODEL, because the model was built from the bar-matched set. It no longer
+  # is: §7.1 scopes both bars to the LOWER pane, so the CURRENT DB's rows are
+  # built from the unfiltered inventory and `v(beta)` stays in the model however
+  # the bars are set. The matching claim is therefore read from
+  # `browser_match` — the very proc `browser_refresh` calls, not a second
+  # matcher — and the model leg becomes §7.1's own positive statement rather
+  # than a casualty of it.
+  # ⚠ THE FOREIGN DB IS STILL BAR-MATCHED: item 10's §7.1 change is scoped to
+  # the CURRENT DB, because R7's tree shape belongs to item 15. Legs 1-3 pin
+  # that asymmetry from both sides, so item 15 cannot close it silently.
+  check {BD51b (POSITIVE CONTROL) ON + `*alpha*`: the FOREIGN DB's row appears and it alone MATCHED; the current DB matched nothing yet KEEPS its rows (§7.1 — the bars narrow the lower pane, never the tree)} \
+    [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
+          [bd_ids_for [bd_rows $tok] {v(alpha)}] \
+          [bd_ids_for [bd_rows $tok] {v(beta)}] \
+          [pcall ::wviewer::browser_match $tok]] \
+    [list top-level {d:0|s:v(alpha)} {s:v(beta)} {ok {}}]
   bd_pat $BSB {}
   check {BD51c (CONTROL) clearing the pattern brings everything back} \
     [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]
@@ -750,13 +874,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     $::wviewer::browserdbsigs($tok) {SENTINEL}
 
   # --- teardown --------------------------------------------------------------
-  check {BD56 (CONTROL) the inventory entry exists while the window does} \
-    [info exists ::wviewer::browserdbsigs($tok)] 1
+  # ⚠ ITEM 10's `browserraw($token)` RIDES ALONG HERE, and it is the only live
+  # teardown in the browser batch. The array is declared, set unconditionally by
+  # browser_reload and unset in `forget`, but nothing anywhere under tests/ ever
+  # named it — so its capture and its leak were both unasserted. A live teardown
+  # leg is strictly better evidence than a source grep.
+  check {BD56 (CONTROL) the inventory entry AND item 10's raw-path capture exist while the window does} \
+    [list [info exists ::wviewer::browserdbsigs($tok)] \
+          [info exists ::wviewer::browserraw($tok)]] \
+    [list 1 1]
   set bd_sbpath $BSB
   catch {wviewer::close $tok}
   update
-  check {BD56b close unsets it: no per-token leak} \
-    [info exists ::wviewer::browserdbsigs($tok)] 0
+  check {BD56b close unsets BOTH: no per-token leak, item 10's array included} \
+    [list [info exists ::wviewer::browserdbsigs($tok)] \
+          [info exists ::wviewer::browserraw($tok)]] \
+    [list 0 0]
   check {BD56c ...and the bar's checkbutton element goes with the bar} \
     [info exists ::wviewer::sballdb($bd_sbpath)] 0
   }

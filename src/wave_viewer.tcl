@@ -384,6 +384,13 @@ namespace eval wviewer {
   #     ONE reader, in browser_refresh, and the snapshot cost does not depend on
   #     widget state.
   variable browserdbsigs; array set browserdbsigs {}
+  #   browserraw($token) = TWO-PANE item 10. The CURRENT DB's raw path, captured
+  #     by browser_reload in the SAME pass browserdbsigs is, so the tree's design
+  #     root can be named without browser_refresh taking a context loan per
+  #     keystroke. `browser_root_label` turns it into the root row's text and
+  #     answers `design` when it is empty, so a missing capture degrades to a
+  #     named root rather than to no root at all.
+  variable browserraw; array set browserraw {}
   # TWO-PANE item 9: the paned skeleton's three per-token pieces.
   #   browsersash($token) = the split between the instance tree and the sea of
   #     names, as a FRACTION of the panedwindow's height (M3), never pixels. A
@@ -664,6 +671,8 @@ proc wviewer::forget {token} {
   variable browsersigs; variable browserrows
   # signal-browser item 14: the foreign-DB inventory snapshot, same rule again.
   variable browserdbsigs
+  # TWO-PANE item 10: the current DB's raw path, same rule.
+  variable browserraw
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
   # a third time.
   variable browsersash; variable browserdev; variable browsersrc
@@ -716,6 +725,7 @@ proc wviewer::forget {token} {
   catch {unset browsersigs($token)}
   catch {unset browserrows($token)}
   catch {unset browserdbsigs($token)}
+  catch {unset browserraw($token)}
   catch {unset browsersash($token)}
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
@@ -7071,12 +7081,32 @@ proc wviewer::browser_build {token top} {
   # tree has focus. Both routes resolve the same target (the tree's selection)
   # through browser_descend_at. The `break` stops ttk seeing it.
   bind $f.pw.tvf.tv <Key-E> {wviewer::browser_descend_at %W ; break}
+  # item 10 (two-pane): the tree's selection IS the lower pane's query. The bind
+  # lands here, in the SAME commit as its guide row, so GH8/GH9's count moves
+  # exactly once. `browser_sea_refresh` is a stub until item 11 — the shape
+  # stops moving now, the behaviour arrives later.
+  bind $f.pw.tvf.tv <<TreeviewSelect>> [list wviewer::browser_sea_refresh $token]
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
   wviewer::sync_browser_mirror $token
   ase::ui::apply_theme $f
   return 1
+}
+
+# --- TWO-PANE item 10: the tree's selection -> the lower pane -----------------
+# THE STUB. The bind and its guide row land in item 10 so GH8/GH9's count moves
+# exactly ONCE; item 11 fills the body. It answers 0 rather than throwing,
+# because it rides <<TreeviewSelect>> — which browser_populate fires on every
+# refresh, i.e. on every keystroke in either searchbar — and a throw there pops
+# bgerror, modal under X.
+#
+# ⚠ IT MUST NEVER CALL `$tv see`. That is the whole of R5's fix: a search
+# narrows the LOWER pane and leaves the tree's open set alone.
+proc wviewer::browser_sea_refresh {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  return 0
 }
 
 # --- TWO-PANE item 9: the LOWER pane's widgets --------------------------------
@@ -7166,6 +7196,7 @@ proc wviewer::browser_reload {token} {
   variable windows
   variable browsersigs
   variable browserdbsigs
+  variable browserraw
   if {![dict exists $windows $token]} { return 0 }
   set names {}
   foreach e [wviewer::signal_list $token] { lappend names [dict get $e name] }
@@ -7176,15 +7207,25 @@ proc wviewer::browser_reload {token} {
   # re-entering the engine. With a single raw loaded this costs one `raw info`
   # and no DB switch at all.
   set foreign {}
+  # item 10 (two-pane): the CURRENT DB's raw path, captured in the same pass, at
+  # zero extra engine cost — `browser_root_label` turns it into the tree's design
+  # root text. It is captured HERE, in the one proc that already holds the 0173
+  # context loan, rather than read in `browser_refresh`: refresh rides both
+  # searchbars' <KeyRelease> pump and must not take a loan per character.
+  set curraw {}
   catch {
     foreach db [wviewer::signal_list_all $token] {
-      if {[wviewer::dget $db cur 0]} { continue }
+      if {[wviewer::dget $db cur 0]} {
+        set curraw [wviewer::dget $db path {}]
+        continue
+      }
       lappend foreign [dict create \
         id    "d:[wviewer::dget $db idx {}]" \
         label [wviewer::dget $db label {}] \
         names [wviewer::dget $db names {}]]
     }
   }
+  set browserraw($token) $curraw
   set browserdbsigs($token) $foreign
   return [llength $names]
 }
@@ -7250,6 +7291,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browsersigs
   variable browserrows
   variable browserdbsigs
+  variable browserraw
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} { return 0 }
@@ -7265,14 +7307,98 @@ proc wviewer::browser_refresh {token {reload 0}} {
     return 0
   }
   set names [lindex $r 1]
+  # --- TWO-PANE item 10: R5, AND THE TREE IS NOT WHAT THE BARS NARROW ---------
+  #
+  # ⚠⚠ THE TREE'S NODE SET COMES FROM THE **BAR-UNFILTERED** INVENTORY, and this
+  # is spec §7.1 read literally: "the tree's node set is derived from the
+  # unfiltered inventory (minus R11's class filter, which is not a search). A
+  # pattern that matches nothing leaves the tree intact and the sea of names
+  # empty." The rejected alternative is named there too — "pruning the tree to
+  # nodes with surviving signals ... makes the navigation surface flicker under
+  # the user's fingers while they type, which is the defect R5 exists to fix,
+  # merely relocated."
+  #
+  # THE FLICKER IS NOT HYPOTHETICAL — IT WAS MEASURED on the first cut of this
+  # item, which fed `$names` (the bar-matched set) straight into browser_rows:
+  #   expand x1, then type `v(x1.x2*` one character at a time, as a user does.
+  #   The FIRST character makes the shell pattern `v`, which matches NOTHING, so
+  #   the tree empties; x1 is deleted, its open state dies with it, and the
+  #   remaining seven keystrokes rebuild it CLOSED. The user's expansion is gone
+  #   and no amount of open-set carrying inside browser_populate can save it,
+  #   because the node did not exist to carry.
+  #
+  # ⚠ §6's "the tree, the sea of names, the status line and every gesture see
+  # one consistent set" is NOT in conflict: that sentence is in the R11 section
+  # and is about the CLASS FILTER, which §7.1 explicitly exempts from this rule
+  # ("which is not a search"). The class filter still applies to the tree.
+  #
+  # ⚠ SCOPE, DECLARED: this governs the CURRENT DB only. The All-DBs branch
+  # below still matches each foreign inventory with the bars, because R7's tree
+  # shape — per-DB headers appearing and disappearing with the pattern — is
+  # ITEM 15's, and BD51/BD51b pin today's behaviour. Changing both here would
+  # make item 15's reds unattributable.
+  #
+  # ⚠ `browserrows($token)` therefore becomes the UNFILTERED rows, and it must:
+  # every gesture resolves a tree row id THROUGH it (browser_leaf_names,
+  # browser_plot_ids, browser_menu_ids, browser_target_path, browser_descend_to),
+  # so a tree holding a node the row model does not describe is a broken gesture,
+  # not a cosmetic mismatch. The bar-matched set is what item 11's sea and §7.2's
+  # status line consume; it is NOT computed here yet, because dead code is worse
+  # than an absent seam and `$names` already carries it for the count below.
   set entries {}
-  foreach n $names { lappend entries [wviewer::signal_entry $n] }
+  foreach n $browsersigs($token) { lappend entries [wviewer::signal_entry $n] }
+  # --- TWO-PANE item 10 -------------------------------------------------------
+  # ⚠⚠ M6's PRE-FILTER `anypath` GATE IS DELIBERATELY *NOT* PASSED HERE, and the
+  # reason is measured rather than stylistic. Two facts kill it:
+  #
+  #   1. It cannot change anything. `browser_rows`' flat branch is ALSO gated
+  #      PER ENTRY on `$path ne {}`, so forcing the gate to 1 on a set whose
+  #      surviving entries all have empty paths mints no groups — there are no
+  #      segments to mint. And when the filter leaves even one pathed entry the
+  #      auto-gate already answers 1. M6's stated failure mode ("designs flip to
+  #      flat mode if the gate is computed after the class filter") therefore has
+  #      no reachable state. Item 2's TP32 pins that as a value, and the
+  #      "default the gate to 1" sabotage produced ZERO reds, which is the same
+  #      fact from the other side.
+  #   2. Passing it would be WRONG under All-DBs. One gate computed from the
+  #      CURRENT DB's entries and applied to every group would flatten a
+  #      hierarchical FOREIGN inventory whenever the current raw happens to be
+  #      flat. The gate is per-inventory, and `browser_rows` already computes it
+  #      per inventory.
+  #
+  # So the override exists, is unit-tested (item 2), and has no production
+  # caller. That is stated here rather than papered over with a source-order
+  # check that would pin dead code.
+  #
+  # R11's two class policies. ⚠ THE DEFAULTS ARE HARDCODED HERE IN THIS ITEM —
+  # item 12 replaces the literals with browser_devint/browser_srccur, which is
+  # why the checkbuttons were built INERT. Everything downstream — the tree, the
+  # sea, the status line and every gesture — sees this ONE filtered set (spec §6).
+  set entries [wviewer::browser_class_filter $entries 0 1]
+  # R2: the tree has exactly one root node, named for the design.
+  #
+  # ⚠ NO ROOT WHILE ALL-DBs IS ON. With the box ticked the tree's top level is
+  # the per-DB headers (R7), and giving each DB its own design root is ITEM 15's
+  # change, with its own reds (BD50/BD51). Passing the root here would land item
+  # 15's behaviour inside item 10 and make the reds unattributable.
+  # ⚠ ONE READ OF THE All-DBs CHECKBOX, HELD IN A LOCAL AND USED TWICE. Its
+  # accessor is pinned by BD06 as "defined once and CALLED once, FILE-WIDE" —
+  # BD06 counts the bare name over the whole source, so even naming it in a
+  # comment reds it. The rule exists so a scoping sabotage has exactly one place
+  # to land, and one place to look when the scope is wrong.
+  set alldbs [wviewer::browser_alldbs $token]
+  set root {}
+  if {!$alldbs} {
+    set rp {}
+    if {[info exists browserraw($token)]} { set rp $browserraw($token) }
+    set root [wviewer::browser_root_label $rp]
+  }
   # item 14: the CURRENT DB is always group 0, flat and unprefixed (label {}),
   # so with the box off the row list is byte-identical to what item 9 shipped.
   set groups [list [list {} {} $entries]]
   set extra 0
   set ndbs 0
-  if {[wviewer::browser_alldbs $token]} {
+  if {$alldbs} {
     # the SAME two bar dicts the current DB was matched with — the foreign
     # inventories go through browser_and, not through a second matcher, so the
     # AND, the type dropdowns and decision 4's error arm cannot drift per DB.
@@ -7289,12 +7415,16 @@ proc wviewer::browser_refresh {token {reload 0}} {
       if {![llength $dnames]} { continue }
       set dent {}
       foreach n $dnames { lappend dent [wviewer::signal_entry $n] }
+      # spec 6: ONE consistent set. A foreign DB filtered differently from the
+      # current one would make the same signal visible in one tree and not the
+      # other, with the checkbox claiming to govern both.
+      set dent [wviewer::browser_class_filter $dent 0 1]
       lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] $dent]
       incr extra [llength $dnames]
       incr ndbs
     }
   }
-  if {[catch {wviewer::browser_rows_multi $groups} rows]} {
+  if {[catch {wviewer::browser_rows_multi $groups $root} rows]} {
     wviewer::browser_status $token $rows
     return 0
   }
@@ -7311,15 +7441,79 @@ proc wviewer::browser_refresh {token {reload 0}} {
   return 1
 }
 
-# Apply a row list to a treeview. Groups are inserted OPEN, so the hierarchy is
-# what the user sees rather than something they have to go looking for.
+# Apply a row list to a treeview — TWO-PANE item 10.
+#
+# ⚠⚠ THE PROJECTION LIVES HERE, NOT IN THE CALLER, and that is the whole reason
+# it is one line. `browser_populate` has TWO callers: `browser_refresh` and
+# `browser_show_path`'s improve-or-restore arm, which hands back the FULL saved
+# row list. Projecting in the caller would leave that second path re-inserting
+# leaves into a tree that must not have any, and only an X-arm check would ever
+# see it.
+#
+# THREE CHANGES FROM THE SINGLE-PANE VERSION, all of them spec rulings:
+#
+#  * R1/R3 — ONLY NODES. Leaf rows never enter the tree; signals live in the
+#    lower pane now. `browserrows($token)` still holds the FULL list, so
+#    browser_leaf_names, browser_plot_ids, browser_menu_ids, browser_target_path
+#    and browser_descend_to are untouched and R6's recursive plot still works.
+#  * R1/M11 — COLLAPSED BY DEFAULT, except the design root. "Collapsed by
+#    default" taken literally including the root renders the whole tree as one
+#    line, which is not navigation.
+#  * R4 — THE SELECTION IS NEVER EMPTY. The previous selection is restored when
+#    it survived, otherwise the design root is selected. ⚠ AND IT IS NARROWED TO
+#    ONE ID HERE: `-selectmode browse` gates only ttk's CLASS BINDINGS
+#    (/usr/share/tcltk/tk8.6/ttk/treeview.tcl:262-275), so `selection set` with
+#    two ids really does select two — the widget will not narrow it for us.
+#
+# ⚠⚠ AND THE OPEN SET SURVIVES A REPOPULATE, which is R5 and was NOT free.
+# Every keystroke in either searchbar runs `browser_refresh`, which runs this
+# proc, which deletes every row. While rows were re-inserted `-open 1` that was
+# invisible; the moment item 10 inserts them `-open 0` it becomes "typing in the
+# Search bar collapses everything you had expanded". R5's letter is "the tree
+# never auto-OPENS on a search"; auto-CLOSING is the same defect wearing the
+# other sign, and it is the one this rebuild introduces. So the previously-open
+# ids are carried across. A node that did not exist before the repopulate is
+# still born CLOSED — this restores state, it does not invent it.
+#
+# ⚠ `$tv see` IS NOT CALLED, AND MUST NOT BE. `see` force-opens every ancestor
+# of its target (browser_reveal's central finding), which would undo
+# collapsed-by-default on every keystroke in either searchbar. Only a
+# user-initiated reveal may reach it (spec §4.2).
 proc wviewer::browser_populate {tv rows} {
-  $tv delete [$tv children {}]
-  foreach r $rows {
-    $tv insert [dict get $r parent] end -id [dict get $r id] \
-      -text [dict get $r text] -open 1
+  set prev {}
+  catch {set prev [$tv selection]}
+  set wasopen {}
+  foreach id [wviewer::browser_tree_nodes $tv] {
+    set o 0
+    if {[catch {$tv item $id -open} o]} { continue }
+    if {[string is boolean -strict $o] && [string is true -strict $o]} {
+      lappend wasopen $id
+    }
   }
-  return [llength $rows]
+  set first [expr {![llength [wviewer::browser_tree_nodes $tv]]}]
+  $tv delete [$tv children {}]
+  set nodes [wviewer::browser_tree_rows $rows]
+  set rootid [wviewer::browser_root_id $rows]
+  foreach r $nodes {
+    set id [dict get $r id]
+    set op 0
+    if {$first} {
+      if {$id eq $rootid} { set op 1 }
+    } elseif {[lsearch -exact $wasopen $id] >= 0} {
+      set op 1
+    }
+    $tv insert [dict get $r parent] end -id $id \
+      -text [dict get $r text] -open $op
+  }
+  set want {}
+  foreach id $prev {
+    if {![catch {$tv exists $id} ex] && $ex} { set want $id ; break }
+  }
+  if {$want eq {} && $rootid ne {}} {
+    if {![catch {$tv exists $rootid} ex] && $ex} { set want $rootid }
+  }
+  if {$want ne {}} { catch {$tv selection set [list $want]} }
+  return [llength $nodes]
 }
 
 # The two searchbar consumers. `args` swallows the bar's
@@ -8264,15 +8458,28 @@ proc wviewer::browser_show_path {token path} {
     return [wviewer::browser_say $token err \
       {no simulation data loaded - read a raw file first}]
   }
+  set rows {}
+  if {[info exists browserrows($token)]} { set rows $browserrows($token) }
   set segs [wviewer::hier_split $path]
   if {![llength $segs]} {
-    catch {$tv selection set {}}
+    # ⚠ TWO-PANE item 10 (R4): the sim root SELECTS the design root instead of
+    # clearing. Clearing was the right answer while the tree's top level was a
+    # forest of instances and there was no row that MEANT "the whole design";
+    # now there is exactly such a row, and R4 forbids an empty selection. The
+    # fallback to a bare clear is kept for a row list that has no root at all
+    # (a legacy state, or All-DBs, where item 15 owns the per-DB roots).
+    set rid [wviewer::browser_root_id $rows]
+    if {$rid ne {} && ![catch {$tv exists $rid} rex] && $rex} {
+      catch {$tv selection set [list $rid]}
+      catch {$tv focus $rid}
+    } else {
+      catch {$tv selection set {}}
+    }
     catch {$tv yview moveto 0}
     return [wviewer::browser_say $token root {} {} {}]
   }
-  set rows {}
-  if {[info exists browserrows($token)]} { set rows $browserrows($token) }
-  lassign [wviewer::browser_node_for $rows $segs] id matched
+  lassign [wviewer::browser_node_for $rows $segs \
+             [wviewer::browser_root_id $rows]] id matched
   if {$matched < [llength $segs]} {
     # ⚠ IMPROVE-OR-RESTORE, and it is a MEASURED necessity, not caution.
     # `browser_reload` sets the inventory to whatever `signal_list` answered —
@@ -8293,7 +8500,8 @@ proc wviewer::browser_show_path {token path} {
     catch {wviewer::browser_refresh $token 1}
     set rows2 {}
     if {[info exists browserrows($token)]} { set rows2 $browserrows($token) }
-    lassign [wviewer::browser_node_for $rows2 $segs] id2 matched2
+    lassign [wviewer::browser_node_for $rows2 $segs \
+               [wviewer::browser_root_id $rows2]] id2 matched2
     if {$matched2 > $matched} {
       set rows $rows2 ; set id $id2 ; set matched $matched2
     } else {
@@ -8644,17 +8852,21 @@ proc wviewer::browser_state_is_default {d} {
 }
 
 # --- the tree's own two fields ------------------------------------------------
-# Every row that HAS CHILDREN, depth-first. Group rows are exactly the rows with
-# children (item 14 kept DB headers `kind group` rather than inventing a kind),
-# so this needs no row-model lookup and works on a tree the model no longer
-# describes. Tk-only, never throws.
+# EVERY row in the tree, depth-first. Tk-only, never throws.
+#
+# ⚠⚠ THE "HAS CHILDREN" HEURISTIC WAS REMOVED BY TWO-PANE ITEM 10, AND LEAVING
+# IT WOULD HAVE BEEN A SILENT BUG. It said "group rows are exactly the rows with
+# children", which was true only while LEAF rows were in the tree. Once item 10
+# takes them out, a node whose children were all signals — e.g. `g:x1.x2` in a
+# design with no deeper instances — has NO children at all, so it would drop out
+# of this list: its `-open` state would stop being saved by `browser_tree_state`
+# and stop being restored by `browser_tree_apply`, and the user's collapse of
+# exactly the leaf-most nodes would be the part that never persisted. Every item
+# in the tree IS a node now, so the predicate is gone rather than reworded.
 proc wviewer::browser_tree_nodes {tv {id {}}} {
   set out {}
   if {[catch {$tv children $id} kids]} { return {} }
   foreach k $kids {
-    set gk {}
-    catch {set gk [$tv children $k]}
-    if {![llength $gk]} { continue }
     lappend out $k
     foreach d [wviewer::browser_tree_nodes $tv $k] { lappend out $d }
   }

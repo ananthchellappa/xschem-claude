@@ -205,6 +205,80 @@ proc br_rawfile {token} {
   return $r
 }
 
+# --- TWO-PANE ITEM 10: three assertable-sentinel readers ---------------------
+# ⚠ ALL THREE ANSWER STRINGS, NEVER A COUNT AND NEVER A BOOLEAN. Item 10 can make
+# a row VANISH (leaf rows left the tree; with All-DBs ticked the design root is
+# not minted until two-pane item 15), and "the row is gone" must be a value a
+# check can PRINT — not a `0` that reads as "closed", and not a throw.
+#
+# ⚠⚠ THE DEFECT THESE REPLACE IS A SILENT GREEN, NOT A THROW, and getting that
+# backwards is how someone "fixes" it with a catch and keeps the vacuity. `pcall`
+# answers the STRING `ERR:<msg>`; `lsearch -exact ERR:... g:x1` does NOT throw —
+# it answers -1 — so the shipped leg `[expr {[lsearch -exact [pcall dict get
+# $bs1 open] g:x1] < 0}]` evaluates `-1 < 0` = 1 and GOES GREEN when the read
+# failed outright. Its twin `>= 0` reds, so the pair failed asymmetrically and
+# only the honest half ever said so.
+
+# The tree's selection: `no-tree` / `none` / the id list.
+proc bp_sel {tv} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  set s {}
+  if {[catch {$tv selection} s]} { return no-tree }
+  if {![llength $s]} { return none }
+  return $s
+}
+
+# The CURRENT DB's design-root id, computed by the PRODUCT: `no-rows` /
+# `no-root` / `ERR:...` / the id. `no-root` is item 10's All-DBs state and BP43a
+# asserts it as such; two-pane item 15 turns it into `d:0|g:` and reds BP43a on
+# purpose.
+# ⚠ THE ARRAY IS READ INSIDE THE PROC, never substituted into a pcall argument:
+# `$::wviewer::browserrows($tok)` on a token with no rows throws BEFORE pcall can
+# see it.
+proc bp_rootid {token} {
+  if {![info exists ::wviewer::browserrows($token)]} { return no-rows }
+  set r {}
+  if {[catch {::wviewer::browser_root_id $::wviewer::browserrows($token)} r]} {
+    return "ERR:$r"
+  }
+  if {$r eq {}} { return no-root }
+  return $r
+}
+
+# ONE node's -open AFTER applying ONE tree state:
+# `no-tree` / `absent` / `ERR:...` / `odd:<v>` / 0 / 1. bp_order_probe only —
+# it MUTATES the tree, and only bp_order_probe restores what it changed.
+# ⚠ THE BOOLEAN NORMALISATION IS NOT DECORATION. ttk's `see` force-opens an
+# ancestor by writing a fresh boolean object, and the raw read is whatever ttk
+# stored; `string is true -strict` makes `1`, `true` and `yes` one value.
+proc bp_apply_read {token tv id d} {
+  if {[catch {::wviewer::browser_tree_apply $token $d} r]} { return "ERR:$r" }
+  catch {update idletasks}
+  if {[catch {$tv exists $id} ex] || !$ex} { return absent }
+  set o {}
+  if {[catch {$tv item $id -open} o]} { return absent }
+  if {![string is boolean -strict $o]} { return "odd:$o" }
+  return [expr {[string is true -strict $o] ? 1 : 0}]
+}
+
+# BP54's ORDERING PROBE — three values, one tree, and it RESTORES what it
+# changed: its last act re-applies {open $open sel $sel}, which is byte-for-byte
+# the state `restore` produced, so BP55 still reads the RESTORED selection.
+#   leg 1  the SELECTION ALONE. `browser_tree_apply` skips its open pass entirely
+#          when the state carries no `open` key, so this is `$tv see` on its own
+#          — the POSITIVE CONTROL that `see` really force-opens $anc on THIS tree.
+#          ⚠ ITEM 10 MADE THIS LEG MANDATORY: the tree is now born COLLAPSED, so
+#          a lone "$anc reads 0" is the DEFAULT and asserts nothing.
+#   leg 2  the SAME selection WITH the persisted open set: $anc reads 0 only if
+#          the open pass ran AFTER `see` and beat it.
+#   leg 3  the selection survived both applies.
+proc bp_order_probe {token tv anc sel open} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  set a [bp_apply_read $token $tv $anc [dict create sel $sel]]
+  set b [bp_apply_read $token $tv $anc [dict create open $open sel $sel]]
+  return [list $a $b [bp_sel $tv]]
+}
+
 if {[catch {
 
 # ============================================================================
@@ -1115,11 +1189,39 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # paying the footprint. Declared as a substitution, not renamed (ruling 23).
   # ==========================================================================
 
-  # A raw with HIERARCHY: `v(x1.out)` -> group `g:x1`, leaf `s:v(x1.out)`.
-  # The default tree is ALL-OPEN with an EMPTY selection (browser_populate
-  # inserts every row -open 1 and clears the selection), so a COLLAPSED group
-  # and a NON-EMPTY selection are the genuinely non-default values driver note
-  # (d) demands. A flat raw has no groups at all and could not test either.
+  # A raw with HIERARCHY: `v(x1.out)` -> node `g:x1`; `v(x1.x2.n1)` -> `g:x1.x2`;
+  # `v(y3.q)` -> `g:y3`. After two-pane item 10 the LEAF rows (`s:...`) are not in
+  # the tree at all — `browserrows($token)` still holds them (R6), the widget does
+  # not — so every gesture in this block targets a NODE id.
+  #
+  # ⚠⚠ THE NON-DEFAULT PAIR IS INVERTED BY TWO-PANE ITEM 10, AND THE INVERSION IS
+  # THE WHOLE POINT OF DRIVER NOTE (d). The tree used to be born ALL-OPEN with an
+  # EMPTY selection, so a COLLAPSED group and any selection at all were the
+  # departures. It is now born ALL-CLOSED (M11: only the design root opens) and
+  # `browser_populate` never leaves the selection empty. So the genuinely
+  # non-default values this block must set are the other way round:
+  #   * an OPEN node                      -> `g:y3`, opened explicitly below;
+  #   * a selection that is NOT the root  -> `g:x1.x2`.
+  # A collapsed `g:x1` is now the DEFAULT and asserts nothing ON ITS OWN — it is
+  # kept because BP54 needs an ancestor that `see` will try to re-open, and it is
+  # always asserted PAIRED with the open node.
+  #
+  # ⚠ `g:y3` IS DELIBERATELY A NODE WITH NO CHILDREN after item 10 (its only child
+  # was the leaf `v(y3.q)`), so carrying the open state on it also exercises the
+  # node the deleted "rows with children" predicate would have dropped. That claim
+  # is OWNED by BW52 in test_wave_sigbrowser_panes.tcl; here it is corroboration.
+  #
+  # ⚠⚠ THE All-DBs BOX GOES ON PART-WAY THROUGH THIS BLOCK, AND THE CHECKS EITHER
+  # SIDE OF THAT LINE ASSERT DIFFERENT TREES:
+  #   * BEFORE it (BP43's `browser_toggle 1`): the box is OFF — a fresh bar is
+  #     built with `sballdb($w) 0` — so item 10 mints the design root `g:`,
+  #     named `br_p` after the raw. That is what BP43 pins.
+  #   * FROM the two `searchbar_fire` calls ON: the box is ON (BP49 needs
+  #     `alldbs 1`, the field's only non-default value, so it cannot be turned
+  #     off without making BP49 vacuous) and item 10 emits NO design root at all.
+  # That second state is a DECLARED, ORDERED GAP owned by two-pane item 15 (spec
+  # R7 / §4.3), asserted as a value by BP43a rather than suffered as five skipped
+  # checks.
   set brP [file normalize [file join $scratch br_p.raw]]
   br_mkraw $brP {time v(x1.out) v(x1.x2.n1) v(y3.q)} 3
 
@@ -1166,11 +1268,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall ::wviewer::rawbar_load $tok $brA] \
           [pcall ::wviewer::rawbar_load $tok $brP] [br_rawfile $tok]] \
     [list 1 1 $brP]
-  check {BP43 (FIXTURE) the sidebar shows and the tree carries the groups} \
+  # ⚠ THE FULL SHAPE, BEFORE All-DBs IS TICKED: one design root named for the raw
+  # (item 10 (C): basename without extension, `br_p`), the instance nodes hanging
+  # off it, and the leaf row ABSENT — an assertable 0, never a dropped leg. The
+  # root legs are here on purpose: they are what makes BP43a's `no-root` a
+  # MEASURED CHANGE caused by ticking the box, not an unexplained void.
+  # ⚠ EXPECTED IS BUILT WITH [list], NEVER A BRACED LITERAL: `[list g: 0]` has the
+  # string rep `g: 0`; `{{g:} 0}` does not, and that over-bracing is an already
+  # measured failure in this batch (see BW40's ⚠ in
+  # test_wave_sigbrowser_panes.tcl).
+  check {BP43 (FIXTURE) the sidebar shows: ONE design root, the instance nodes under it, and NO leaf row} \
     [list [pcall ::wviewer::browser_toggle 1 $tok] \
+          [pcall $BPT exists {g:}] [pcall $BPT item {g:} -text] \
+          [pcall $BPT parent g:x1] \
           [pcall $BPT exists g:x1] [pcall $BPT exists g:x1.x2] \
           [pcall $BPT exists g:y3] [pcall $BPT exists {s:v(x1.x2.n1)}]] \
-    [list 1 1 1 1 1]
+    [list 1 1 br_p g: 1 1 1 0]
   update
 
   # the bars, driven the way a USER drives them: entry text, the two readonly
@@ -1188,19 +1301,59 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::searchbar_fire $BPS
   pcall ::wviewer::searchbar_fire $BPL
   update
+  # --- BP43a: THE DECLARED GAP, STATED AS SEVEN VALUES -----------------------
+  # ⚠⚠ TWO-PANE ITEM 10 EMITS NO DESIGN ROOT WHILE All-DBs IS TICKED, AND FROM
+  # HERE ON THIS BLOCK RUNS WITH IT TICKED (BP49 needs `alldbs 1`, the field's
+  # only non-default value). Spec R7 and §4.3 say each DB gets its OWN design
+  # root under a `d:<idx>` header and that the CURRENT DB's root is the selected
+  # node; `browser_refresh` deliberately withholds it (`if {!$alldbs}`) so item
+  # 15's reds stay attributable to item 15.
+  # CONSEQUENCE, ASSERTED RATHER THAN SUFFERED: `browser_root_id` answers {}, and
+  # `browser_populate`'s R4 fallback (`if {$want eq {} && $rootid ne {}}`) cannot
+  # fire — so R4's "there is always exactly one node selected" DOES NOT HOLD in
+  # this state, today.
+  # ⚠ LEG 1 IS THE PRECONDITION, through the PRODUCT's own reader: without it,
+  # "the box is on and there is no root" and "the fire never ran" are only told
+  # apart indirectly.
+  # ⚠ THIS CHECK IS THE GAP'S TOMBSTONE AND TWO-PANE ITEM 15 MUST EDIT IT: legs
+  # 2-4 flip (`0`->`1`, `no-root`->`d:0|g:`, `none`->`d:0|g:`) and legs 5-7 re-key
+  # to `d:0|g:x1...`. PLAN item 15's break-list names only BD50/BD51; it must name
+  # these too. A GREEN BP43a after item 15 lands means item 15 did not do its job.
+  check {BP43a (DECLARED GAP, two-pane item 15 closes it) with All-DBs ON there is no design root yet, so R4's never-empty selection cannot hold} \
+    [list [pcall ::wviewer::browser_alldbs $tok] \
+          [pcall $BPT exists {g:}] [bp_rootid $tok] [bp_sel $BPT] \
+          [pcall $BPT exists g:x1] [pcall $BPT exists g:x1.x2] \
+          [pcall $BPT exists g:y3]] \
+    [list 1 0 no-root none 1 1 1]
   pcall ::wviewer::set_plot_dest newstrip $tok
   set bpw [pcall ::wviewer::browser_width $tok 260]
+  # THE PRE CONTROL. Under item 10 the tree is born ALL-CLOSED, and with All-DBs
+  # on there is not even a root to open, so `none` is the departure point.
+  # Without this leg "g:y3 is open" and "the whole tree is open" are the same
+  # picture, and a collapse that persisted nothing reads identically.
+  set bp_open0 [bs_open_set $BPT]
+  # `g:x1` closed is now the DEFAULT, kept explicit because BP54 needs it stated;
+  # `g:y3` OPEN and a NON-ROOT selection are the real departures (see the block
+  # header). `g:x1.x2` is chosen so BP54 keeps an ancestor (`g:x1`) for `see` to
+  # fight over and BP55 keeps its `{ok x1.x2}` byte-identical.
   pcall $BPT item g:x1 -open 0
-  pcall $BPT selection set {s:v(x1.x2.n1)}
+  pcall $BPT item g:y3 -open 1
+  pcall $BPT selection set {g:x1.x2}
   update
 
   set bs1 [pcall ::wviewer::browser_state $tok]
-  check {BP43 the non-defaults TOOK: shown/dest/sel/collapse read back live} \
-    [list [pcall dict get $bs1 shown] [pcall dict get $bs1 dest] \
-          [pcall dict get $bs1 sel] \
-          [expr {[lsearch -exact [pcall dict get $bs1 open] g:x1] < 0}] \
-          [expr {[lsearch -exact [pcall dict get $bs1 open] g:y3] >= 0}]] \
-    [list 1 newstrip {s:v(x1.x2.n1)} 1 1]
+  # ⚠ THE OPEN SET IS READ AS A SET, TWICE: once out of the state dict and once
+  # off the widget, so "the reader agrees with the world" is part of the claim.
+  # bs_open_set answers `no-tree` / `none` / the ids — never a count, which would
+  # say "1" for both `{g:y3}` and `{g:x1}`, opposite states — and never an
+  # [expr] over a pcall result, which is how the old `g:x1` leg went green on a
+  # failed read.
+  check {BP43 the non-defaults TOOK: shown/dest/sel/open-set read back live} \
+    [list $bp_open0 \
+          [pcall dict get $bs1 shown] [pcall dict get $bs1 dest] \
+          [pcall dict get $bs1 sel] [pcall dict get $bs1 open] \
+          [bs_open_set $BPT]] \
+    [list none 1 newstrip g:x1.x2 g:y3 g:y3]
   check {BP43 ...and both bars read back exactly what was typed into them} \
     [list [pcall dict get $bs1 search] [pcall dict get $bs1 filter]] \
     [list {pattern .* syntax regexp case 1 type v alldbs 1} \
@@ -1226,14 +1379,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   foreach k {shown width search filter dest open sel hist} {
     lappend bpg $k [wviewer::dget $bsnap $k {NO-KEY}]
   }
+  # ⚠ `open` NOW ASSERTS ITS VALUE, NOT `present`. The `present` collapse is what
+  # let an EMPTY open set through: two-pane item 10 turned the tree's default from
+  # all-open to all-closed, the fixture's implicit "g:y3 is open" evaporated, and
+  # this leg still printed `present`. The `NO-KEY` sentinel is unchanged — an
+  # absent key reads `NO-KEY` and still reds — but a present-and-empty set now
+  # reds too. `hist` keeps the present/NO-KEY shape: BP59 owns its value.
   check {BP45 every field made it into the snapshot dict} \
     [list [dict get $bpg shown] [dict get $bpg width] [dict get $bpg dest] \
           [dict get $bpg sel] [dict get $bpg search] [dict get $bpg filter] \
-          [expr {[dict get $bpg open] eq {NO-KEY} ? {NO-KEY} : {present}}] \
+          [dict get $bpg open] \
           [expr {[dict get $bpg hist] eq {NO-KEY} ? {NO-KEY} : {present}}]] \
-    [list 1 $bpw newstrip {s:v(x1.x2.n1)} \
+    [list 1 $bpw newstrip g:x1.x2 \
           {pattern .* syntax regexp case 1 type v alldbs 1} \
-          {pattern .* syntax regexp case 1 type v} present present]
+          {pattern .* syntax regexp case 1 type v} g:y3 present]
 
   # --- BP46: THE CONTROL FOR THE DESTROY ------------------------------------
   # ⚠ THE SECOND HALF OF THE ANTI-VACUITY PAIR. BP41 proved a fresh window is
@@ -1285,23 +1444,57 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list {pattern .* syntax regexp case 1 type v} 0]
   check {BP51 the plot destination round-tripped (ruling 24's accessor)} \
     [pcall ::wviewer::plot_dest $tok] newstrip
-  check {BP52 the tree SELECTION round-tripped} \
-    [pcall $BPT selection] {s:v(x1.x2.n1)}
+  # ⚠ THE SELECTION IS READ THROUGH bp_sel, so "the widget is gone", "nothing is
+  # selected" and "this id is selected" are three distinguishable answers — a bare
+  # [$BPT selection] makes the first two both read {}. Leg 2 states item 10's fact
+  # at the RESTORE end: the leaf id is an ASSERTABLE ABSENCE, not a row that
+  # merely failed to be selected.
+  check {BP52 the tree SELECTION round-tripped, onto a NODE id} \
+    [list [bp_sel $BPT] [pcall $BPT exists {s:v(x1.x2.n1)}]] \
+    [list g:x1.x2 0]
 
   # --- BP53/BP54: the expanded set, and the ORDERING finding ----------------
   # BOTH LEGS, so "everything collapsed" and "everything open" are different
   # answers: the collapsed group and an open sibling are asserted together.
-  check {BP53 the COLLAPSE round-tripped, while a sibling group stayed OPEN} \
-    [list [pcall $BPT item g:x1 -open] [pcall $BPT item g:y3 -open]] \
-    [list 0 1]
+  # BOTH LEGS PLUS THE WHOLE SET, so three worlds are three values:
+  #   {0 1 g:y3}                       the restore worked
+  #   {0 0 none}                       nothing was restored (item 10's default)
+  #   {1 1 {g:x1 g:x1.x2 g:y3}}        everything was opened
+  # ⚠ `g:y3` IS CHILDLESS after item 10 (its only child was the leaf `v(y3.q)`),
+  # so this also exercises the node the deleted "rows with children" predicate
+  # would have dropped from `browser_tree_nodes`. That claim's OWNER is BW52 in
+  # test_wave_sigbrowser_panes.tcl, which asserts the node list directly; here it
+  # is corroboration from the persistence end, not the only coverage.
+  check {BP53 the COLLAPSE round-tripped, while a sibling node stayed OPEN} \
+    [list [pcall $BPT item g:x1 -open] [pcall $BPT item g:y3 -open] \
+          [bs_open_set $BPT]] \
+    [list 0 1 g:y3]
   # ⚠ THE NON-OBVIOUS ORDERING CLAIM. `$tv see` force-opens EVERY ANCESTOR of
   # the node it scrolls to (browser_reveal's central finding), so revealing the
   # selection AFTER applying the collapse would silently re-expand exactly the
   # group the user collapsed. The selected leaf lives under `g:x1`; if g:x1 is
   # open here, the open-set was applied too early. Sabotage (c) is this.
+  # BEFORE two-pane item 10 the tree was born ALL-OPEN, so a single `g:x1 == 0`
+  # was self-evidently a departure. IT IS NOT ANY MORE — closed is the default —
+  # so the claim is now made as a PAIR on the same tree:
+  #   leg 1  the SELECTION ALONE (no `open` key -> browser_tree_apply's open pass
+  #          is skipped): `see` on its own really does open `g:x1`     -> 1
+  #   leg 2  the SAME selection WITH the persisted open set: the open pass ran
+  #          after `see` and won                                       -> 0
+  #   leg 3  the selection survived both applies
+  # bp_order_probe RESTORES the post-restore state as its last act, so BP55 below
+  # still reads the RESTORED selection.
+  #
+  # ⚠⚠ TWO-PANE ITEM 13 REDS THIS CHECK BY DESIGN: PLAN item 13 unions the
+  # SELECTION's ancestor chain into the applied open set, which makes `see`'s
+  # effect and the open pass's effect coincide on that chain. Its own checks then
+  # own the union/ordering claim. ⚠ THE NUMBERS PLAN GIVES THEM (BW53/BW54/BW55)
+  # ARE ALREADY SPENT BY ITEM 10 — BW53 is "(SOURCE) the populate path never calls
+  # see" — so item 13 must re-band before citing them. Until item 13 lands, HERE
+  # is the only place the ordering claim is expressible at all.
   check {BP54 the persisted collapse BEATS see's ancestor-expansion} \
-    [list [pcall $BPT item g:x1 -open] [pcall $BPT parent {s:v(x1.x2.n1)}]] \
-    [list 0 g:x1.x2]
+    [bp_order_probe $tok $BPT g:x1 {g:x1.x2} {g:y3}] \
+    [list 1 0 g:x1.x2]
 
   # --- BP55: SETTLED DECISION 11 --------------------------------------------
   # "A restored selection must be a LEGAL INPUT to item 12's sync, not just a
@@ -1309,9 +1502,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # `browser_descend_to $token $sel`, whose very first act is
   # `browser_target_path $token $sel`. That value is the gate, and it is what is
   # asserted here (see the group header for why the real descend is not driven).
+  # ⚠ LEG 1 NAMES THE SELECTION THE ANSWER CAME FROM. Without it, `{ok x1.x2}`
+  # and "some other selection happened to resolve" are the same picture — and the
+  # id itself is now the load-bearing half: two-pane item 10 took the LEAF row out
+  # of the tree, so decision 11's clause is only expressible on a NODE id, and
+  # `g:x1.x2` is a group whose id IS the dotted path (settled decision 14), which
+  # is why the expected value is byte-identical to the pre-item-10 one.
   check {BP55 the RESTORED selection resolves to a hierarchy path (decision 11)} \
-    [pcall ::wviewer::browser_target_path $tok [pcall $BPT selection]] \
-    {ok x1.x2}
+    [list [bp_sel $BPT] \
+          [pcall ::wviewer::browser_target_path $tok [pcall $BPT selection]]] \
+    [list g:x1.x2 {ok x1.x2}]
   # the NEGATIVE control on the same fixture: an empty selection is the refusal,
   # so "ok x1.x2" cannot be what this proc says about anything.
   check {BP55 (CONTROL) an EMPTY selection is refused by the same gate} \

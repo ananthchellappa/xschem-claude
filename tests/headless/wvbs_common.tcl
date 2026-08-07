@@ -262,6 +262,89 @@ proc bs_wait_sash {pw {budget 300} {settle 12}} {
 proc bs_num {v} { if {[string is double -strict $v]} { return $v } ; return -1 }
 proc bs_set {v} { expr {$v ne {} && [string range $v 0 3] ne {ERR:}} }
 
+# --- THE TREE'S EXPANDED SET (two-pane item 10) -------------------------------
+# ⚠ THREE DISTINCT SHAPES, NEVER A COUNT AND NEVER A BOOLEAN, for the reason
+# spec §13.2 gives: "the thing I am reading is gone" has to be an assertable
+# value, distinct from "present but empty".
+#   no-tree   the widget does not exist
+#   none      it exists and NOTHING is expanded — which after item 10 would mean
+#             even the design root is collapsed, i.e. a one-line tree
+#   <ids>     the expanded ids, depth-first, in tree order
+# A count would say "1" for both `{g:}` and `{g:x1}`, which are opposite states.
+proc bs_open_set {tv} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  set out {}
+  foreach id [bs_tree_ids $tv] {
+    set o 0
+    if {[catch {$tv item $id -open} o]} { continue }
+    if {[string is boolean -strict $o] && [string is true -strict $o]} {
+      lappend out $id
+    }
+  }
+  if {![llength $out]} { return none }
+  return $out
+}
+# EVERY item in the tree, depth-first. Deliberately NOT the "rows with children"
+# predicate wviewer::browser_tree_nodes used to carry: after item 10 a node whose
+# children were all signals has no children at all, and a helper that skipped it
+# would report the leaf-most nodes as permanently collapsed.
+proc bs_tree_ids {tv {id {}}} {
+  set out {}
+  if {[catch {$tv children $id} kids]} { return {} }
+  foreach k $kids {
+    lappend out $k
+    foreach d [bs_tree_ids $tv $k] { lappend out $d }
+  }
+  return $out
+}
+# Type into a searchbar's entry the way a USER does — one <KeyRelease> per
+# character through the bar's own pump — and answer what the bar ended up
+# holding, so "the keystrokes never arrived" cannot masquerade as "the filter
+# matched nothing". `no-bar` / `no-focus` / the entry's contents.
+#
+# ⚠⚠ THE FOCUS LOOP IS MANDATORY, AND THIS WAS MEASURED RATHER THAN ASSUMED.
+# Tk delivers KEY events to the TOPLEVEL'S FOCUS WIDGET, not to the window named
+# in `event generate`, so a bare `event generate $e <KeyRelease>` on an
+# unfocused entry updates the entry's text and fires NOTHING. The first cut of
+# this helper had no focus loop, and on the panes fixture it measured:
+#     bs_type returned |v(x1.x2*|   entry now |v(x1.x2*|
+#     browser_refresh calls fired   0
+#     tree ids after                unchanged, all four nodes
+# i.e. the bar HELD the pattern, this helper cheerfully ANSWERED it, and the
+# filter never ran — so every R5 claim built on it (BW46/BW47) was green and
+# hollow. `bt_type` (test_wave_sigbrowser.tcl) has carried this loop since item
+# 9 for exactly this reason; the divergence was the bug.
+#
+# A focus stall is answered as the VALUE `no-focus`, never printed and swallowed:
+# "the keystrokes could not be delivered" must not read like "the filter matched
+# nothing" either.
+proc bs_type {bar text} {
+  set e $bar.pat
+  if {[catch {winfo exists $e} ok] || !$ok} { return no-bar }
+  catch {$e delete 0 end}
+  for {set i 0} {$i < 50} {incr i} {
+    focus -force $e
+    update
+    if {[focus -displayof $e] eq $e} { break }
+    after 20
+  }
+  if {[catch {focus -displayof $e} f] || $f ne $e} { return no-focus }
+  foreach ch [split $text {}] {
+    catch {$e insert end $ch}
+    catch {event generate $e <KeyRelease> -keysym a}
+  }
+  # ⚠ AND THE EMPTY STRING MUST STILL FIRE ONCE. `split {} {}` yields no
+  # elements, so the loop above runs zero times: `bs_type $bar {}` would leave
+  # the ENTRY empty while the OLD pattern was still applied — the same hollow
+  # shape wearing the other sign, and the state BW48/BW49 would then start from.
+  # A user clearing the last character does release a key; so does this.
+  if {$text eq {}} { catch {event generate $e <KeyRelease> -keysym BackSpace} }
+  update
+  set v {}
+  catch {set v [$e get]}
+  return $v
+}
+
 # --- BLANK TREE SPACE, WHICH STOPPED BEING FREE (two-pane item 9) ------------
 # ⚠⚠ WHY THIS EXISTS. Two checks — BT31's "a middle-click below the last row
 # plots nothing" and BM21's "an RMB on BLANK tree space refuses" — spelled the
