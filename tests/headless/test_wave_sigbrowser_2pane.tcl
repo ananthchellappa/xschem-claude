@@ -587,6 +587,174 @@ check {TP33 (STANDING CONTROL) with no root, one unlabelled group == browser_row
   [tp_rowsig [pcall ::wviewer::browser_rows_multi [list [list {} {} $tp_ents]]]] \
   [tp_rowsig [pcall ::wviewer::browser_rows $tp_ents]]
 
+# --- TP34-TP40 — item 4: browser_tree_rows + browser_root_label (R1, R2) -----
+#
+# ⚠⚠ THE COMMITTED CORPUS FIXTURES. `tests/headless/fixtures/tb_bandgap_vars.txt`
+# (424 names) and `tb_charge_pump_vars.txt` (1191) are the ngspice `Variables:`
+# headers of two of the 22 corpus raws, NAMES ONLY. They are committed because
+# the raws themselves are 69 MB and 621 MB and live under
+# `tests/headless/.scratch/0211/`, which `test_scratch_drop` deletes and no
+# clean checkout has — every node count in this batch was derived from data a
+# fresh clone could not see.
+#
+# ⚠ tb_charge_pump IS NOT OPTIONAL. tb_bandgap has ZERO `devmeas` signals
+# (measured: net 140, devnode 234, devmeas 0, srcbranch 50), so an
+# implementation that drops `devmeas` with `srcbranch` instead of with `devnode`
+# is INVISIBLE on it. TP34's histogram is what makes that statement checkable
+# rather than a comment.
+#
+# ⚠ "the fixture is missing" is its own assertable value. A loader that answered
+# {} would make every count below read 0 and every claim vacuous.
+proc tp_slurp {name} {
+  set p [file join [file dirname [info script]] fixtures $name]
+  if {![file exists $p]} { return NO-FIXTURE }
+  if {[catch {open $p r} fh]} { return NO-FIXTURE }
+  set d [read $fh] ; close $fh
+  set out {}
+  foreach l [split $d "\n"] { set l [string trim $l] ; if {$l ne {}} { lappend out $l } }
+  if {![llength $out]} { return EMPTY-FIXTURE }
+  return $out
+}
+proc tp_ents_of {names} {
+  if {[string match {*-FIXTURE} $names]} { return $names }
+  set r {}
+  foreach n $names { lappend r [wviewer::signal_entry $n] }
+  return $r
+}
+# the NODE count: how many group rows a row list carries. `no-rows` and 0 are
+# different answers and both are reachable, so neither may masquerade.
+proc tp_nodes {ents} {
+  if {[string match {*-FIXTURE} $ents]} { return $ents }
+  if {[catch {wviewer::browser_rows $ents} rows]} { return NO-ROWS }
+  set n 0
+  foreach r $rows { if {[dict get $r kind] eq {group}} { incr n } }
+  return $n
+}
+proc tp_hist {ents} {
+  if {[string match {*-FIXTURE} $ents]} { return $ents }
+  array set h {net 0 devnode 0 devmeas 0 srcbranch 0}
+  foreach e $ents { incr h([wviewer::dget $e class net]) }
+  return [list net $h(net) devnode $h(devnode) devmeas $h(devmeas) srcbranch $h(srcbranch)]
+}
+
+set tp_bg [tp_ents_of [tp_slurp tb_bandgap_vars.txt]]
+set tp_cp [tp_ents_of [tp_slurp tb_charge_pump_vars.txt]]
+
+check {TP34 (FIXTURE CONTROL) both committed name lists load at their measured sizes} \
+  [list [llength $tp_bg] [llength $tp_cp]] {424 1191}
+check {TP34 (FIXTURE CONTROL) ...and tb_bandgap carries ZERO devmeas while
+       tb_charge_pump carries 283 — which is exactly why the second is committed} \
+  [list [tp_hist $tp_bg] [dict get [tp_hist $tp_cp] devmeas]] \
+  {{net 140 devnode 234 devmeas 0 srcbranch 50} 283}
+
+# --- R1's prune is STRUCTURAL, not a third proc ------------------------------
+#
+# browser_refresh runs browser_class_filter BEFORE browser_rows, so a node all of
+# whose signals are device-classed has no surviving entry and is never minted.
+# That satisfies R1's "hide it iff EVERY signal at or under it is device-classed"
+# exactly — `x1.xr1.x0` survives because its real nets do.
+#
+# ⚠ THE THIRD LEG IS A SECOND, INDEPENDENT ROUTE TO THE SAME NUMBER.
+# browser_device_paths (item 3) answers R1's quantifier directly; the difference
+# of the two structural counts must equal it, or the two implementations of one
+# rule have drifted and nothing else in the suite would say so.
+check {TP35 tb_bandgap: 128 nodes, 44 kept with internals hidden, 84 hidden —
+       and browser_device_paths independently answers the same 84} \
+  [list [tp_nodes $tp_bg] [tp_nodes [pcall ::wviewer::browser_class_filter $tp_bg 0 1]] \
+        [expr {[tp_nodes $tp_bg] - [tp_nodes [pcall ::wviewer::browser_class_filter $tp_bg 0 1]]}] \
+        [llength [pcall ::wviewer::browser_device_paths $tp_bg]]] \
+  {128 44 84 84}
+check {TP35 tb_charge_pump: 316 / 13 / 303, the same three ways} \
+  [list [tp_nodes $tp_cp] [tp_nodes [pcall ::wviewer::browser_class_filter $tp_cp 0 1]] \
+        [llength [pcall ::wviewer::browser_device_paths $tp_cp]]] \
+  {316 13 303}
+# ⚠ MEASURED NO-OP, PINNED SO NOBODY REINTRODUCES IT AS A SHORTCUT: filtering on
+# the `x` prefix would hide NOTHING. All 85 distinct post-declass path segments
+# in the corpus begin with `x`, because sky130 wraps its MOSFETs in pcell
+# SUBCIRCUITS — `xm1` is grammatically a real X-instance.
+proc tp_segs {ents} {
+  if {[string match {*-FIXTURE} $ents]} { return $ents }
+  array set s {}
+  foreach e $ents {
+    foreach g [split [wviewer::dget $e path {}] .] { if {$g ne {}} { set s($g) 1 } }
+  }
+  return [lsort [array names s]]
+}
+set tp_allsegs [lsort -unique [concat [tp_segs $tp_bg] [tp_segs $tp_cp]]]
+check {TP35 (THE MEASURED NO-OP) every path segment in the corpus starts with `x`,
+       so an x-prefix rule would hide nothing — the class tag is the only evidence} \
+  [list [llength [lsearch -all -not -inline -glob $tp_allsegs x*]] \
+        [expr {[llength $tp_allsegs] > 20}]] {0 1}
+
+# --- browser_tree_rows: the node-only projection -----------------------------
+set tp_rows4   [pcall ::wviewer::browser_rows $tp_ents]
+set tp_tree4   [pcall ::wviewer::browser_tree_rows $tp_rows4]
+set tp_treerd  [pcall ::wviewer::browser_tree_rows $tp_rooted]
+check {TP36 browser_tree_rows emits NO leaf rows — and it is not a no-op either} \
+  [list [lsort -unique [tp_kinds $tp_tree4]] \
+        [list [llength $tp_tree4] [llength $tp_rows4]]] {group {4 11}}
+check {TP36 ...the node ids are BYTE-IDENTICAL to browser_rows' group ids, in order} \
+  [tp_ids $tp_tree4] {g:x1 g:x1.xm1 g:x1.xr1 g:x1.xr1.x0}
+check {TP36 ...the root survives the projection and is FIRST} \
+  [list [lindex [tp_ids $tp_treerd] 0] [llength $tp_treerd]] {g: 5}
+# parents before children, which is what lets browser_populate insert in ONE
+# pass. A projection built by filtering preserves it for free; one built by
+# re-collecting from a dict does not.
+proc tp_pbc {rows} {
+  if {[string match {ERR:*} $rows]} { return $rows }
+  array set seen {}
+  foreach r $rows {
+    set p [dict get $r parent]
+    if {$p ne {} && ![info exists seen($p)]} { return "child-before-parent:[dict get $r id]" }
+    set seen([dict get $r id]) 1
+  }
+  return ok
+}
+check {TP36 ...and parents still precede their children} [tp_pbc $tp_treerd] ok
+
+# --- THE R1 CONTROL, on the mini fixture: one check, TWO nodes ---------------
+# x1.xm1 is all-device and goes; x1.xr1.x0 carries a real net AND an @r
+# measurement at the same level and STAYS. An "any device signal under it" rule
+# passes the first leg and fails the second, taking the net `t1` with it.
+set tp_kept4 [pcall ::wviewer::browser_tree_rows \
+                [pcall ::wviewer::browser_rows \
+                   [pcall ::wviewer::browser_class_filter $tp_ents 0 1]]]
+check {TP37 (THE R1 CONTROL) the all-device node is gone while the MIXED node
+       and its ancestor survive — one check, three nodes} \
+  [list [tp_parent_of $tp_kept4 {g:x1.xm1}] [tp_parent_of $tp_kept4 {g:x1.xr1.x0}] \
+        [tp_parent_of $tp_kept4 {g:x1.xr1}]] {no-such-row g:x1.xr1 g:x1}
+
+# --- browser_root_label ------------------------------------------------------
+check {TP38 browser_root_label strips the directory, the extension and `_ase`} \
+  [list [pcall ::wviewer::browser_root_label {/x/y/tb_bandgap_ase.raw}] \
+        [pcall ::wviewer::browser_root_label {/x/y/tb_bandgap.raw}]] {tb_bandgap tb_bandgap}
+# ⚠ IT MAY NEVER ANSWER {}. R2 requires the root row to EXIST, and browser_rows
+# emits it only when the label is non-empty — an empty label silently deletes
+# the root, which R4 then has nothing to select.
+check {TP38 ...and it NEVER answers {}, on three different degenerate inputs:
+       no path at all, an all-extension tail, and a name that is ONLY the suffix} \
+  [list [pcall ::wviewer::browser_root_label {}] \
+        [pcall ::wviewer::browser_root_label {/x/.raw}] \
+        [pcall ::wviewer::browser_root_label {_ase.raw}]] {design design design}
+# MEASURED, and recorded rather than assumed: a trailing slash is not degenerate
+# to `file tail`, which answers the last DIRECTORY. That is a real name and it is
+# kept — the floor is for the empty cases above, not for every odd path.
+check {TP38 ...a trailing slash names the last directory, and that is kept} \
+  [pcall ::wviewer::browser_root_label {/x/y/}] y
+check {TP38 ...an `_ase` INSIDE the name is not stripped — only the suffix is} \
+  [pcall ::wviewer::browser_root_label {/x/tb_ase_pump_ase.raw}] {tb_ase_pump}
+
+# A design whose every signal is device-classed filters to nothing, and the tree
+# must STILL have its root — otherwise R4's "there is always exactly one node
+# selected" is unsatisfiable on exactly the designs R11(a) exists for.
+set tp_devonly [pcall ::wviewer::browser_class_filter \
+                  [list [pcall ::wviewer::signal_entry {v(m.x1.xm1.mod#body)}]] 0 1]
+check {TP39 a device-only design filters to nothing yet STILL emits its root row} \
+  [list [llength $tp_devonly] \
+        [tp_rowsig [pcall ::wviewer::browser_tree_rows \
+                      [pcall ::wviewer::browser_rows $tp_devonly design]]]] \
+  {0 g:||design|group}
+
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"
   puts "$::errorInfo"

@@ -302,6 +302,20 @@ tag must still classify `devnode`, or the check proves nothing).
   a non-integer means "compute it here". ⚠ MEASURED: the override is observable in
   exactly ONE direction — forcing `0` flattens a pathed set — because the flat branch is
   *also* gated per entry on `$path ne {}`. See §8 and the two-pane spec M6.
+- `wviewer::browser_tree_rows` — `{rows}` -> the UPPER pane's row list: `browser_rows`'
+  output with every **leaf** dropped. A filter, not a rebuild, so parents still precede
+  children and `browser_populate` still inserts in one pass. ⚠ **`browserrows($token)`
+  keeps the leaves** — `browser_leaf_names`, `browser_plot_ids`, `browser_menu_ids`,
+  `browser_target_path` and `browser_descend_to` all read it, and R6 keeps the tree's plot
+  gesture recursive. ⚠ **R1's device-node prune is not in here and is not a third proc**:
+  `browser_refresh` runs `browser_class_filter` *before* `browser_rows`, so a node all of
+  whose signals are device-classed is never minted. Measured: 128 -> 44 nodes for
+  `tb_bandgap`, 316 -> 13 for `tb_charge_pump`, the same 84 / 303 that
+  `browser_device_paths` answers directly.
+- `wviewer::browser_root_label` — `{path}` -> the design name for the root row, with the
+  directory, the extension and a trailing `_ase` stripped. ⚠ **It never answers `{}`** —
+  `browser_rows` emits the root only for a non-empty label, so an empty one silently
+  deletes the row R4 requires something to select. `design` is the floor.
 - `wviewer::browser_menu_build` — `{token ids}` — the RMB menu. §9.
 - `wviewer::browser_state` — `{token}` -> the persistence dict. §13.
 - `wviewer::browser_state_apply` — `{token d}` -> 1/0. §13.

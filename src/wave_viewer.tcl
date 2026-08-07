@@ -6173,6 +6173,56 @@ proc wviewer::browser_device_paths {entries} {
   return $out
 }
 
+# --- item 4: the NODE-ONLY projection and the design-root label (R1, R2) ------
+#
+# The UPPER pane's row list: `browser_rows`' output with every leaf dropped.
+# PURE, and a FILTER rather than a rebuild — which is what preserves
+# parents-before-children for free, so browser_populate still inserts in one
+# pass. A projection re-collected from a dict does not preserve it and ttk then
+# throws on the first orphan.
+#
+# ⚠ THE FULL ROW LIST IS NOT REPLACED BY THIS. `browserrows($token)` keeps the
+# LEAVES — browser_leaf_names, browser_plot_ids, browser_menu_ids,
+# browser_target_path and browser_descend_to all read it, and R6 keeps the tree's
+# plot gesture recursive. Feeding this projection into `browserrows` instead is
+# the single most likely wrong edit in the batch: nothing would be plottable and
+# only one check would say so.
+#
+# ⚠ R1's DEVICE-NODE PRUNE IS NOT HERE, AND IS NOT A THIRD PROC. It falls out
+# structurally: browser_refresh runs `browser_class_filter` BEFORE
+# `browser_rows`, so a node all of whose signals are device-classed has no
+# surviving entry and is never minted. That satisfies R1's `EVERY signal at or
+# under it` quantifier exactly — `x1.xr1.x0` survives because its real nets do —
+# and it is the same number `browser_device_paths` answers directly: MEASURED
+# 128 -> 44 (84 hidden) for tb_bandgap, 316 -> 13 (303) for tb_charge_pump.
+proc wviewer::browser_tree_rows {rows} {
+  set out {}
+  foreach r $rows {
+    if {[wviewer::dget $r kind {}] ne {group}} { continue }
+    lappend out $r
+  }
+  return $out
+}
+
+# The design name for the root row (R2). PURE.
+#
+# ⚠ IT MAY NEVER ANSWER {}, and that is load-bearing rather than defensive:
+# `browser_rows` emits the root only when the label is non-empty, so an empty
+# label silently deletes the root row — and R4's "there is always exactly one
+# node selected" then has nothing to select, on exactly the degenerate paths
+# (no raw loaded, a dotfile, a trailing slash) where it is least likely to be
+# noticed. `design` is the floor.
+#
+# `_ase` is stripped because ASE writes `<cell>_ase.raw` beside the schematic;
+# the user drew `tb_bandgap`, not `tb_bandgap_ase`. Only the SUFFIX goes.
+proc wviewer::browser_root_label {path} {
+  if {$path eq {}} { return design }
+  set b [file rootname [file tail $path]]
+  regsub {_ase$} $b {} b
+  if {$b eq {}} { return design }
+  return $b
+}
+
 # The full raw names owned by EXACTLY ONE hierarchy level — the lower pane's
 # selector (spec R3). PURE. Raw-file order (limit D7).
 #
