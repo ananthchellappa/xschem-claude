@@ -1,34 +1,82 @@
 # 0233 — the wire-draw ↔ placement mutual exclusion is enforced at 1 of 13 arm sites, in one direction only, and ESC cannot always clean up after the other 12
 
-Status: **PARTIAL** — **F1 done for `p` (Add Pin, both views) and component insert
-(`place_symbol`)**, user-ratified 2026-08-07; 3 of 13 arm sites are now gated (4 counting
-`add_wire_label`). **F2 (the reverse door) and F3 (the ESC hole) are still OPEN**, and so are the
-nine remaining forward doors — `t` (text), `r`/`P` (rect/polygon), `Alt+L` / `Ctrl+P`
-(`net_label 0/2/3`), `add_graph`, `add_image`, `Ctrl+V` merge, and the two context-menu inserts.
-**F3 is the one that still bites**: `r`/`P`/`t`/bare `place_symbol` zero `last_command` while
-leaving `STARTWIRE` set, so ESC leaves `ui=3 [STARTWIRE|STARTRECT]` and 0230's "grey lines"
-symptom survives.
+Status: **FIXED** 2026-08-07 — **F3 (the ESC hole)** and **F2 (the reverse door)** landed together;
+**F1** landed earlier the same day for `l`, `p` (both views) and component insert. The eight
+remaining forward doors are re-scoped into issue **0237** (they are now a *jam*, not a *residue* —
+F3 made ESC clean up after every one of them).
 
-What landed (commit on `open_pdk`, 2026-08-07): a shared `leave_wire_draw_for(const char *what)`
-in `src/scheduler.c` wrapping `abort_wire_line_command()` + a statusbar line, called from the
-`add_wire_label -place`/bare, `add_sch_pin -place`, `add_symbol_pin -place` and `place_symbol`
-branches. It leaves wire/line mode in **all three** of its states (live / menu-armed / resting —
-the resting one was itself a 0230 follow-up bug, see that issue). The scripted coordinate forms
-(`add_wire_label -drop`, `add_symbol_pin <x> <y> …`) are deliberately NOT gated: they commit
-outright, arm no cursor placement, and are the replay/test seams. Tests:
-`tests/headless/test_placement_wire_gate.tcl`, **29 checks**, registered in `run_regression.tcl`;
-three sabotage runs give disjoint red sets (`p` 4 checks, insert 4, symbol-view `p` 2).
+What landed:
 
-Area: the call sites of `abort_wire_line_command()` (one at filing, four since 2026-08-07, via
-`leave_wire_draw_for()`) vs the still-ungated placement arms; `start_wire()`/`start_line()` (`src/callback.c:536`, `:473`) have no
-placement gate; the `xctx->last_command &&` conjunct at `src/callback.c:351`
-Tests: `tests/headless/test_placement_wire_gate.tcl` (29, the F1 slice); **0230's section G2
-depends on the double-armed state staying reachable** — see *Landmines*
+- **F1** (earlier, 2026-08-07): a shared `leave_wire_draw_for(const char *what)` in
+  `src/scheduler.c:68` wrapping `abort_wire_line_command()` + a statusbar line, called from the
+  `add_wire_label -place`/bare, `add_sch_pin -place`, `add_symbol_pin -place` and `place_symbol`
+  branches. It leaves wire/line mode in **all three** of its states (live / menu-armed / resting —
+  the resting one was itself a 0230 follow-up bug). The scripted coordinate forms
+  (`add_wire_label -drop`, `add_symbol_pin <x> <y> …`) are deliberately NOT gated: they commit
+  outright, arm no cursor placement, and are the replay/test seams.
+- **F3**: the `xctx->last_command &&` conjunct is gone from the wire/line teardown guard in
+  `abort_operation()`, the two-stage-ESC `return` inside it is now conditional on `last_command`,
+  and **all three** of the function's early returns (`DESEL_MODE`, `STARTMOVE`, `STARTCOPY`) call a
+  shared `clear_orphan_gesture_bits()` for the bits whose only sink was the `ui_state = 0` they
+  skip — `STARTRECT | STARTPOLYGON | STARTARC | STARTZOOM | MENUSTART`. `MENUSTART` was **not** in
+  the fix sketch below and leaked measurably (`ui=65536` after ESC). Covering the sibling returns
+  came out of adversarial review: `STARTCOPY` is textually identical to `STARTMOVE`
+  (`copy_objects(ABORT)` clears only `STARTCOPY`, runs no `draw()`), and `DESEL_MODE` leaked too
+  (measured `ui=10` after `deselect_mode` + `rect gui` + ESC). Left unfixed, the next canvas click
+  is eaten by the orphan gesture and `new_rect(PLACE|END)` commits a stray rectangle.
+- **F2**: `abort_placement_preview()` (factored out of `abort_operation()`, the helper issue
+  **0232** also wants) plus `leave_placement_for(const char *what)`, the mirror of
+  `leave_wire_draw_for()`. Called from every wire/line **verb**: `w`, `W`/`s` (snap wire), the `l`
+  line fallback, context-menu Insert wire / Insert line, and the `wire gui` / bare `wire` /
+  `line gui` / bare `line` / `snap_wire` scheduler arms. **Not** from `start_wire()`/`start_line()`
+  as the sketch proposed — see *Where the fix diverged from the sketch*.
+- **F2's issue-0231 carve-out** (also from review): `abort_placement_preview()` tears the preview
+  down with `delete()`, which removes the **selection**, not the preview object — that is issue
+  **0231**, open, and out of scope here. On the ESC path it misfires only for someone who pressed a
+  cancel key; wiring it to `w` would hand it to the commonest drawing keys, and one `Ctrl+A` under a
+  live preview (the forms are modeless) would wipe the drawing on the next `w`. **Measured before
+  the guard: 2 wires + preview + `select_all` + `w` → 0 wires.** So `leave_placement_for()` returns
+  0 and DECLINES while a multiple selection is live, the statusbar says *"finish or ESC the pending
+  placement first"*, and every caller skips arming the draw (declining without that would just
+  rebuild the jam). Delete the guard when 0231 lands.
+
+User-ratified 2026-08-07 for F2: `w` **abandons the pending placement preview** and starts drawing
+(option (a)), symmetric with what `l`/`p` do to a live wire and with 0230's ratified rule *"whatever
+you just pressed is what you meant"*.
+
+Tests: `tests/headless/test_placement_wire_gate.tcl` grew 29 → **86 checks** (section **D** = F3,
+section **E** = F2), registered in `run_regression.tcl`. Eight sabotage runs, each with its own
+witness:
+
+| sabotage | red set | size |
+|---|---|---|
+| restore the `last_command &&` conjunct | `D3 ESC clears STARTWIRE` | 1 |
+| empty `clear_orphan_gesture_bits()` | `D1 STARTRECT`, `D1 ui_state`, `D2 MENUSTART`, `D2 ui_state`, `D7 STARTRECT` | 5 |
+| drop the call from the `STARTMOVE` return only | the same four `D1`/`D2` checks (`D7` stays green) | 4 |
+| make the two-stage-ESC return unconditional (`if(1)`) | `D6 ESC still deselects` | 1 |
+| disable the `leave_placement_for()` call sites | `E1`×3, `E2`×2, `E3`, `E4`, `E7 wire NOT armed`, `E7 no wire mode` | 9 |
+| remove the 0231 decline guard (`if(0)`) | `E7`×5 | 5 |
+| apply the gate to the scripted coordinate commit form | `E5 control` ×2 | 2 |
+| break the `delete(0)`/`delete(1)` undo discriminator | `E6 undo lands pre-gesture` | 1 |
+
+(the three F1 sabotage runs — `p` 4, insert 4, symbol-view `p` 2 — are unchanged. `E7`'s two
+"draw not armed" checks are the deliberate overlap between the call-site and guard sabotages: both
+must stop the draw arming, for different reasons.)
+
+Area: the call sites of `abort_wire_line_command()` / `abort_placement_preview()` vs the placement
+and wire/line arms; the `xctx->last_command &&` conjunct and the `STARTMOVE` `return` in
+`abort_operation()` (`src/callback.c`)
+Tests: `tests/headless/test_placement_wire_gate.tcl` (86); **0230's section G2 was rebuilt** on
+`net_label 0`, one of the constructors issue 0237 keeps alive — see *Landmines*
 Found: 2026-08-06, verifying issue **0230**'s out-of-scope list
 Related: **0230** (parent — this is its "Still open" items 1 and 3, verified and widened), **0231**,
 **0232**, `doc/claude/specs/add_wire_label.md`, `WIRING.md` §8 classes **D** and **H**.
 
 ## Repro
+
+**Historical — this is the pre-fix measurement.** Replayed on a post-F1/F2/F3 binary the script
+below no longer reproduces: `p` is gated (so `after p` gives `ui=16424`, no `STARTWIRE`) and the
+ESC leaves `ui=0`. The residues quoted are what the tree did on 2026-08-06.
 
 ```tcl
 set ::infix_interface 1        ;# `xschem wire gui` == a real first canvas click (start_wire)
@@ -77,7 +125,15 @@ D is the clean control. A/B/C are the same keystroke shape with a different verb
 (place text) needs a Tk toplevel, but its pre-arm effect — `last_command 1 → 0` with `ui=1
 [STARTWIRE]` intact — is already measurable headlessly.
 
+**Post-F3 status of this table:** the `ESC #1` column is now **clean for every row** — that was
+F3's job, and the "leaves `ui=3`" / "leaves residue" entries are historical. What remains is the
+jam while both are armed, re-scoped to issue **0237**.
+
 ### Reverse census — preview armed first, then the draw
+
+**All four rows below are CLOSED by F2** (2026-08-07): the wire/line verb tears the preview down
+and starts drawing, and the statusbar says `<verb>: pending placement abandoned`. The table is the
+pre-fix measurement, kept as the record of the jam.
 
 | door | `ui_state` after the draw arms | recoverable without losing the preview? |
 |---|---|---|
@@ -115,7 +171,8 @@ exits — `callback.c:7828` (`persistent_command && last_command` → `start_wir
 can commit the preview while `STARTWIRE` is set. That is 0230's Defect 1, verbatim, on twelve
 ungated verbs.
 
-**Why the reverse direction is open:** `start_wire()` (`:536`) and `start_line()` (`:473`) do
+**Why the reverse direction was open** (CLOSED by F2, 2026-08-07 — the four callers named below
+are exactly the sites the gate now sits at): `start_wire()` (`:536`) and `start_line()` (`:473`) do
 nothing but `readonly_block()` + `last_command = …` + `new_wire(PLACE, …)`. No test of
 `START_SYMPIN` / `PLACE_SYMBOL` / `PLACE_TEXT` / `sympin_preview`. Callers are equally ungated
 (`case 'w'` `:7135`, ctx-menu `:4285`/`:4293`, `scheduler.c:13007`).
@@ -178,6 +235,40 @@ covers them; `actions.c:2477`, `paste.c:683`, `callback.c:457`/`:4319`/`:6968` n
 **Policy question for the user, mirroring 0230's ratification:** does `w` on a live preview
 *abandon the preview* (symmetric with `l` abandoning the wire), or *decline to start the wire*?
 0230's precedent says abandon; a silent decline would be a TRAP-7-shaped surprise.
+→ **Ratified 2026-08-07: abandon.**
+
+## Where the fix diverged from the sketch
+
+1. **F2's gate is at the VERBS, not inside `start_wire()`/`start_line()`.** The sketch above (and
+   the session prompt) proposed the two primitives as the choke point. They are not one: they are
+   also the per-**click** continuation of a running draw. A press reaches `start_wire()` at
+   `callback.c` `persistent_command` (`&& xctx->last_command`, before
+   `end_place_move_copy_zoom()` ever sees the click) and again from `check_menu_start_commands()`'s
+   `MENUSTARTWIRE` arm — neither of which consults `START_SYMPIN`/`PLACE_SYMBOL`/`PLACE_TEXT`/
+   `sympin_preview`. A teardown there would delete a user's pending placement on an ordinary mouse
+   click, one event *after* the keystroke that armed the wire. `leave_placement_for()` is therefore
+   called from each wire/line verb (key, menu, toolbar, context menu, scripted `gui` form) exactly
+   the way `leave_wire_draw_for()` is called from each placement verb — and the pure-commit
+   coordinate forms (`xschem wire x1 y1 x2 y2`) are excluded, same rule as `-drop`.
+2. **The F3 mask needed `MENUSTART` and `STARTZOOM`,** not just the three shape bits named above.
+   Measured leak on `add_sch_pin -place` + menu `rect` + ESC: `ui=65536 [MENUSTART]`. The principled
+   set is *every bit `redraw_w_a_l_r_p_z_rubbers()` re-strokes, plus the menu arm* —
+   `STARTWIRE|STARTLINE` excluded because the block above owns them.
+3. **`STARTPOLYGON` never leaked.** `new_polygon(END, …)` at the top of `abort_operation()` consumes
+   the bit *and commits a real polygon* before the guard is reached (`p` → `P` → ESC ends at `ui=0`
+   with a stray polygon on layer 4 — a different defect, not fixed here, not claimed). It stays in
+   the mask as defence only.
+4. **Fall through, don't return, when `last_command == 0`.** With the conjunct dropped, a bare
+   `STARTWIRE` draw with no command mode now enters the block. It must NOT take the two-stage-ESC
+   `return`: that return exists only to jump over `last_command = 0`, and with `last_command`
+   already 0 it would merely skip `unselect_all()` and the `draw()` the rubber CLEAR depends on.
+   Pinned by check `D6`.
+5. **The `STARTMOVE` branch keeps its `return`** rather than falling through to `ui_state = 0`.
+   An aborted move must KEEP its selection (`move_objects(ABORT)` never unselects;
+   `tests/headless/test_drag_keeps_selection.tcl` case 7 asserts it by name), which falling through
+   to `unselect_all(1)` would break.
+6. **`ui_state2` is still never cleared by `abort_operation()`** — deliberately left as-is rather
+   than fixed on one path only. Landmine below stands.
 
 Rejected: reordering `end_place_move_copy_zoom()`'s branches (`STARTMOVE` before `STARTWIRE`) —
 `WIRING.md` §8 class **H**, and it does not even fix the symptom. Measured proof: the `-drop` path
@@ -185,14 +276,52 @@ Rejected: reordering `end_place_move_copy_zoom()`'s branches (`STARTMOVE` before
 `ui=9 [STARTWIRE|SELECTION] last_command=1` — the wire gesture and its rubber band ride on into
 whatever the user does next.
 
+## Known gaps left by F2/F3 (measured, deliberate)
+
+Found by the adversarial review of the fix itself; each is either another issue's territory or has
+no seam to close it here.
+
+- **Merge / paste is not covered by F2.** `abort_placement_preview()` keys on
+  `START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT`; a `Ctrl+V` merge preview carries `STARTMERGE`, so `w`
+  over one still jams. Tearing a merge down needs the `delete(1)` + `set_modify` handling issues
+  **0232** and **0234** own. Tracked in **0237**.
+- **A non-sympin preview abandoned with `w` can be resurrected by one undo.** The
+  `delete(0)/delete(1)` discriminator (kept verbatim, see *Landmines*) sends `PLACE_SYMBOL` /
+  `PLACE_TEXT` / graph previews down `delete(1)`, which snapshots the drawing *including* the
+  preview before removing it. Pre-existing on the ESC path; F2 gives it a second entry point.
+  Add-Pin / Add-Wire-Label previews (the `sympin_preview` ones) take `delete(0)` and are clean —
+  that is what check `E6` pins.
+- **`wirelabel_preview` has no `xschem get` seam**, so its clear inside
+  `abort_placement_preview()` is unasserted (only `sympin_preview` is checked). Issue **0236** owns
+  that flag's hygiene.
+- **The `STARTCOPY` early return is fixed but not headlessly pinned.** `copy_objects(START)` has no
+  scriptable seam (`xschem copy_objects dx dy` runs START and END back to back), so `D7` pins the
+  shared `clear_orphan_gesture_bits()` through the `DESEL_MODE` return instead; the `STARTCOPY`
+  call site is code-shared with it.
+- **Truncated arg forms arm rather than commit.** `xschem wire 10 20` (argc ≤ 5) falls into the
+  ARM branch, not the coordinate-commit branch, so it now also runs the F2 gate. Pre-existing
+  dispatcher quirk; the *documented* commit form is `xschem wire x1 y1 x2 y2`, which is excluded
+  (check `E5`).
+
 ## Landmines
 
-- **0230's section G2 constructs this very state on purpose** (`test_add_wire_label.tcl:203-219`,
-  8 checks; its constructor is `add_wire_label -place` then `wire gui` = reverse door 1). F2 makes
-  that unreachable and `check "0230 both gestures armed" … 1` goes red. G2 must be rebuilt on a
-  different constructor or replaced by this issue's tests. 0230 flags the dependency itself.
-- **G3 is the guard for F3** — it pins the `a797bc59` two-stage ESC. Sabotage F3 with `if(1)` on the
-  new inner `if(xctx->last_command)` and exactly those 3 checks must go red.
+- **0230's section G2 constructs this very state on purpose** (`test_add_wire_label.tcl`, 8 checks;
+  its constructor was `add_wire_label -place` then `wire gui` = reverse door 1). F2 made that
+  unreachable. **Resolved 2026-08-07:** G2 was rebuilt on `xschem wire gui` + `xschem net_label 0`
+  — one of the forward doors now tracked by issue **0237**. Those doors (`net_label 0/2/3`,
+  `add_graph`, `add_image`, merge, …) are the remaining ways to reach the co-armed state;
+  `net_label` was picked because its preview is a real INSTANCE, so G2's "ESC deletes preview
+  instance" check stays falsifiable (`add_graph`'s preview is a rect, which made it vacuous —
+  caught in review). `net_label` sets no `sympin_preview`, so G2's now-vacuous check on that flag
+  was dropped and the flag is asserted where it is real: section E of
+  `test_placement_wire_gate.tcl`, on the F2 path. **Closing the last 0237 door makes G2 unreachable
+  again** — 0237 carries the warning.
+- **G3 pins the `a797bc59` two-stage ESC** (5 checks). **Corrected 2026-08-07:** it is NOT the
+  sabotage witness for the new inner `if(xctx->last_command)` — G3's constructor is a plain
+  `xschem wire gui`, which always leaves `last_command == 1`, so `if(1)` is equivalent there and
+  every G3 check stays green. The measured witness is `D6 ESC still deselects` in
+  `test_placement_wire_gate.tcl` (see the sabotage table at the top). G3 remains the guard that the
+  two-stage ESC still *works*.
 - **15 headless tests call `abort_operation`** and are F3's blast radius, led by
   `test_create_instance.tcl` (12 calls — the `place_symbol` door) and `test_add_wire_label.tcl` (9).
 - **`persistent_command` wire mode.** F1 clears `last_command`, so arming a placement mid-draw drops

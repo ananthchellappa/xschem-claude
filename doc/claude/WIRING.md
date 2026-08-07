@@ -427,7 +427,19 @@ has three more class-D holes, each filed with a measured headless repro: **0231*
 SELECTION rather than the preview, so a `Ctrl+A` in between wipes the schematic; **0232** every
 other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
 paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
-**0233** the ESC path still leaks `STARTWIRE|STARTRECT|STARTPOLYGON` when `last_command == 0`.) · E **Transform
+**0233** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
+`abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
+`last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the
+`STARTMOVE` branch `return`s to keep an aborted move's selection, and that `return` skipped the
+`ui_state = 0` that was the ONLY sink for every gesture bit no callee owns, so the rubber band was
+re-stroked forever with nothing left to erase it — and the next click was eaten by the orphan
+gesture, committing a stray rectangle. The fix is one `clear_orphan_gesture_bits()` shared by all
+three returns; fixing only the branch the repro used would have left two textually identical
+siblings leaking. **If a teardown must return early, it owes by hand every clear the
+terminal would have done.** 0233 also added the class's mirror-image gate: `leave_placement_for()`
+(placement dropped before a wire/line arms) opposite `leave_wire_draw_for()` (wire dropped before a
+placement arms) — two modal gestures may not coexist in EITHER order, and both gates live at the
+verbs, never at the shared primitive the click path also uses.) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
 follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others

@@ -198,17 +198,30 @@ check "0230 drop clears placing"           [placing] 0
 check "0230 drop leaves preview clean"     [getq sympin_preview] 0
 check "0230 one label committed"           [xschem get instances] 1
 
-# G2 -- ESC with BOTH armed (reachable via the menu Wire path on top of a live preview).
-#       Pre-fix: ui_state=0 with sympin_preview=1 and the lab_pin left in the drawing forever.
+# G2 -- ESC with BOTH armed. abort_operation() must tear the placement down instead of returning
+#       early with `ui_state = 0`. Pre-fix: ui_state=0 with sympin_preview=1 and the lab_pin left
+#       in the drawing forever.
+#       CONSTRUCTOR NOTE (issue 0233): this used to be built with `add_wire_label -place` then
+#       `xschem wire gui`. Both halves of that are now gated -- F1 makes the label arm abandon the
+#       wire, F2 makes the wire arm abandon the label -- so the co-armed state is no longer
+#       reachable from either verb, which is the whole point of 0233. It IS still reachable
+#       through the forward doors 0233 F1 left ungated (issue 0237), of which `net_label 0`
+#       (Alt+Shift+L, place a lab_wire label) is one: it arms a cursor placement
+#       (START_SYMPIN|STARTMOVE) with a real preview INSTANCE on top of a live wire draw, without
+#       leaving wire mode. Rebuilt on that, so this section keeps testing abort_operation()'s
+#       co-armed teardown -- its only coverage -- for as long as any such door exists. Do not use
+#       `add_graph` here: its preview is a rect, not an instance, which would make the
+#       "deletes preview instance" check below vacuous (0==0 before and after).
+#       `net_label` sets no sympin_preview, so that flag's teardown is asserted where it is real:
+#       section E of tests/headless/test_placement_wire_gate.tcl, on the F2 path.
 xschem clear force
 xschem wire 0 0 100 0
 xschem unselect_all
-set ::label_new_name BAR
-xschem add_wire_label -place
 xschem wire gui
+xschem net_label 0
 check "0230 both gestures armed"           [expr {[startwire] && [placing]}] 1
+check "0230 preview instance is live"      [xschem get instances] 1
 xschem abort_operation
-check "0230 ESC clears sympin_preview"     [getq sympin_preview] 0
 check "0230 ESC clears START_SYMPIN"       [placing] 0
 check "0230 ESC deletes preview instance"  [xschem get instances] 0
 check "0230 ESC clears STARTWIRE"          [startwire] 0

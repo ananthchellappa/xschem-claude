@@ -6703,8 +6703,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify(1);
       }
       else if(argc == 3 && !strcmp(argv[2], "gui")) {
-        int prev_state = xctx->ui_state;
+        int prev_state;
         int infix_interface = tclgetboolvar("infix_interface");
+        /* issue 0233 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
+         * the `argc > 5` coordinate form above commits a line outright and is the replay seam. */
+        if(!leave_placement_for("Line")) return TCL_OK;
+        prev_state = xctx->ui_state;
         if(infix_interface) {
           start_line(xctx->mousex_snap, xctx->mousey_snap);
           if(prev_state == STARTLINE) {
@@ -6718,6 +6722,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       else {
+        if(!leave_placement_for("Line")) return TCL_OK;  /* issue 0233 F2 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTLINE;
@@ -12075,6 +12080,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "snap_wire"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(!leave_placement_for("Snap wire")) return TCL_OK;  /* issue 0233 F2 */
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTSNAPWIRE;
     }
@@ -13030,8 +13036,12 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify(1);
       }
       else if(argc > 2 && !strcmp(argv[2], "gui")) {
-        int prev_state = xctx->ui_state;
+        int prev_state;
         int infix_interface = tclgetboolvar("infix_interface");
+        /* issue 0233 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
+         * the `argc > 5` coordinate form above commits a wire outright and is the replay seam. */
+        if(!leave_placement_for("Wire")) return TCL_OK;
+        prev_state = xctx->ui_state;
         if(infix_interface) {
           start_wire(xctx->mousex_snap, xctx->mousey_snap);
           if(prev_state == STARTWIRE) {
@@ -13044,6 +13054,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->ui_state2 = MENUSTARTWIRE;
         }
       } else {
+        if(!leave_placement_for("Wire")) return TCL_OK;  /* issue 0233 F2 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTWIRE;

@@ -78,6 +78,19 @@ spec adds multi-name to the **shared** dialog, so both views gain it (decision D
    double-click ends a segment (`ui_state` clear, only `last_command` armed). The scripted
    coordinate form `add_symbol_pin <x> <y> …` is deliberately NOT gated — it commits outright,
    arms no cursor placement, and is the replay/test seam.
+7. **And the reverse: a wire/line verb pressed while a pin preview is live ABANDONS the preview**
+   (`leave_placement_for()`, `callback.c`, issue **0233** F2, user-ratified 2026-08-07). The
+   exclusion has to hold in both directions or the jam just gets entered backwards — and Add-Pin
+   is the worse half, because unlike the Add-Wire-Label form there is no keystroke that re-arms
+   the placement and frees the wire: before F2, ESC was the only exit and it threw the pin away.
+   The preview is removed without pushing undo (the arm's single baseline stays the only rollback
+   point) and the statusbar says `Wire: pending placement abandoned`. Applies to `w`, Shift+L,
+   `W`/`s` (snap wire), the context-menu inserts, the menu/toolbar entries and scripted
+   `xschem wire|line gui` / `xschem snap_wire`; the scripted coordinate forms are excluded for the
+   same reason as above. Exception: with a **multiple selection** live the wire verb declines
+   (statusbar: *finish or ESC the pending placement first*) and does not arm the draw — the
+   teardown deletes the selection rather than the preview (issue **0231**), so abandoning there
+   would wipe the drawing.
 
 The bottom status line reflects state and advertises Ctrl+MMB + the multi-name convention.
 

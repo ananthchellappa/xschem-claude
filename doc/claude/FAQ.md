@@ -14,6 +14,42 @@ Newest entries on top.
 
 ---
 
+## Q36. And the other way round — I pressed `w` while a pin/label preview was stuck to the cursor. What happens?
+
+- **Asked:** 2026-08-07
+- **Project state:** branch `open_pdk` @ `bd61efed` + uncommitted — issue **0233** F2/F3 fix.
+
+**The pending placement is abandoned and the wire starts.** Same ratified rule as Q35, applied to
+the reverse door: whatever you just pressed is what you meant. The preview instance is removed
+without burning an undo entry (the arm's single baseline is the only rollback point), the statusbar
+says `Wire: pending placement abandoned`, and you are drawing wire from the cursor.
+
+This closes a genuinely stuck state, not just an untidy one. With both armed, the click handler
+tests `STARTWIRE` before the placement, so every click fed the wire and the preview could never be
+dropped. Add-Wire-Label had an accidental escape hatch — typing one more character in the form
+re-issues its `-place`, which hits the Q35 gate and frees the wire while keeping the preview —
+but **Add-Pin had none**: ESC was the only exit and it threw the pin away.
+
+One exception: if you have a **multiple selection** live at the time (a `Ctrl+A` under the preview,
+say), the wire verb refuses instead and the status bar says *finish or ESC the pending placement
+first*. The teardown is a delete of the selection rather than of the preview (issue 0231, still
+open), so abandoning there would take your drawing with it.
+
+Every wire/line verb does it: `w`, Shift+L (graphic line), `W` / cadence `s` (snap wire), the
+context menu's Insert wire / Insert line, the Wire and Line menu entries and toolbar buttons, and
+scripted `xschem wire gui` / `xschem line gui` / `xschem snap_wire`. The gate is **not** in
+`start_wire()` itself, because that function is also what a *click* calls to continue a running
+draw (under `persistent_command` every press goes through it) — a teardown there would delete your
+pending placement on an ordinary click one event after the keystroke. The scripted coordinate forms
+(`xschem wire x1 y1 x2 y2`) commit a wire outright, arm no draw, and are deliberately not gated:
+they are the replay/test seams.
+
+Related: ESC now also cleans up properly after the arms that zero wire *command* mode (`r`, `P`,
+`t`, …). Before, one ESC could leave `STARTWIRE`/`STARTRECT` set with no owner to erase the band —
+the "grey lines of the same dimensions as the wire" of the 0230 report. See issue **0233** F3.
+
+---
+
 ## Q35. I pressed `l` while still drawing a wire and everything broke. What does `l` do mid-draw now?
 
 - **Asked:** 2026-08-06

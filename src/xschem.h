@@ -2481,6 +2481,10 @@ extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);
+/* issue 0233 F2 (and 0232): tear down a modal cursor placement preview / the gate that does it
+ * before a wire or line draw is armed on top of one. See callback.c. */
+extern int abort_placement_preview(void);
+extern int leave_placement_for(const char *what);
 extern int abort_wire_line_command(void); /* issue 0230 */
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
