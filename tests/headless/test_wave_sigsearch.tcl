@@ -428,14 +428,14 @@ check {SB05 sig_split v(out) -> empty path} \
   [::wviewer::sig_split {v(out)}] [list {} out]
 check {SB06 sig_split net1 -> empty path} \
   [::wviewer::sig_split {net1}] [list {} net1]
-check {SB07 sig_split @m.x1.m1[id] -> {@m.x1 m1[id]}} \
-  [::wviewer::sig_split {@m.x1.m1[id]}] [list @m.x1 {m1[id]}]
+check {SB07 sig_split @m.x1.m1[id] -> {x1 m1[id]}, the class tag STRIPPED} \
+  [::wviewer::sig_split {@m.x1.m1[id]}] [list x1 {m1[id]}]
 check {SB08 sig_split v(net_name[3]) -> empty path, bracketed leaf} \
   [::wviewer::sig_split {v(net_name[3])}] [list {} {net_name[3]}]
 
-check {SB10 signal_entry key set is exactly leaf/name/path/type} \
+check {SB10 signal_entry key set is exactly class/leaf/name/path/type} \
   [lsort [dict keys [::wviewer::signal_entry {v(x1.x2.net5)}]]] \
-  [list leaf name path type]
+  [list class leaf name path type]
 # decision 2: `name` is the FULL raw name, never the bare/stripped form
 check {SB11 signal_entry name is the FULL raw name} \
   [dict get [::wviewer::signal_entry {v(x1.x2.net5)}] name] {v(x1.x2.net5)}
@@ -443,6 +443,132 @@ check {SB11 signal_entry name is the FULL raw name} \
 check {SB12 signal_entry type comes from sig_type (i(v1) and I(V2))} \
   [list [dict get [::wviewer::signal_entry {i(v1)}] type] \
         [dict get [::wviewer::signal_entry {I(V2)}] type]] [list i i]
+
+# --- GROUP DC: sig_declass + the `class` field (issue 0217, spec §3) ----------
+#
+# ngspice tags a signal with a DEVICE-CLASS prefix -- and only when the object
+# lives INSIDE a subcircuit. `v(m.x1.x1.xm1.msky…#body)` means "the MOSFET-class
+# object at design path x1.x1.xm1"; the leading `m.` is a namespace tag bolted
+# on the front, not a hierarchy level. Measured across 22 real ngspice-46 raws:
+# 2026 of 2338 hierarchical signals -- 87% -- sat under a fake root before this.
+#
+# ⚠ THE RULE IS SOUND BY SPICE GRAMMAR, NOT BY HEURISTIC, and DC12 is what pins
+# that: a hierarchy level comes from a SUBCIRCUIT INSTANCE, and SPICE requires
+# those to begin with `X`. A one-letter segment therefore CANNOT be a subckt
+# instance. Corroborated over the corpus: all 85 distinct real path segments
+# start with `x`; every fake root matches `^@?[a-z]$`; zero overlap.
+#
+# ⚠ `pcall`, not a bare call: before the proc exists these must report
+# `ERR:invalid command name` as an ASSERTABLE VALUE. An unguarded throw would
+# hit the file's outer catch and silently abort every later check while the
+# printed fail count still looked plausible (the lesson of the batch's worst
+# testing bug -- see the header of test_wave_sigbrowser.tcl).
+
+# The eight tags observed in the corpus, with their measured counts:
+#   m 1400 · @m 360 · v 155 · @c 61 · @r 24 · @b 15 · @q 10 · n 1  = 2026
+check {DC01 sig_declass strips the `m` tag (1400 corpus signals)} \
+  [pcall ::wviewer::sig_declass {m.x1.x1.xm1.msky130_fd_pr__nfet_01v8#body}] \
+  [list m {x1.x1.xm1.msky130_fd_pr__nfet_01v8#body}]
+check {DC02 sig_declass strips the `v` tag -- an internal source branch} \
+  [pcall ::wviewer::sig_declass {v.x1.v1}] [list v {x1.v1}]
+check {DC03 sig_declass strips the `n` tag (1 corpus signal)} \
+  [pcall ::wviewer::sig_declass {n.xu1.n1#flow(out)}] [list n {xu1.n1#flow(out)}]
+check {DC04 sig_declass strips the `@m` tag} \
+  [pcall ::wviewer::sig_declass {@m.x1.xm1.msky130_fd_pr__nfet_01v8[id]}] \
+  [list @m {x1.xm1.msky130_fd_pr__nfet_01v8[id]}]
+check {DC05 sig_declass strips the `@c` tag} \
+  [pcall ::wviewer::sig_declass {@c.x1.c1[i]}] [list @c {x1.c1[i]}]
+check {DC06 sig_declass strips the `@r` tag} \
+  [pcall ::wviewer::sig_declass {@r.x2.xr4.r0[i]}] [list @r {x2.xr4.r0[i]}]
+check {DC07 sig_declass strips the `@b` tag} \
+  [pcall ::wviewer::sig_declass {@b.x1.b1[ic]}] [list @b {x1.b1[ic]}]
+check {DC08 sig_declass strips the `@q` tag} \
+  [pcall ::wviewer::sig_declass {@q.x1.q1[ib]}] [list @q {x1.q1[ib]}]
+
+# ⚠ SABOTAGE (a)'s ORACLE -- the `>= 2 following segments` guard. `m.foo` is
+# AMBIGUOUS: stripping it would leave an EMPTY path and file a signal at the
+# root that belongs one level down. Drop the guard and this check fails.
+check {DC09 sig_declass does NOT strip with only ONE following segment} \
+  [pcall ::wviewer::sig_declass {m.foo}] [list {} {m.foo}]
+# ...and its POSITIVE CONTROL on the same fixture shape: add one more segment
+# and it DOES strip. Without this pair, DC09 would also pass on a proc that
+# never strips anything at all.
+check {DC09 positive control -- ONE more segment and it strips} \
+  [pcall ::wviewer::sig_declass {m.foo.bar}] [list m {foo.bar}]
+
+check {DC10 sig_declass leaves a name with NO tag alone} \
+  [pcall ::wviewer::sig_declass {x1.x2.net5}] [list {} {x1.x2.net5}]
+check {DC11 sig_declass leaves a DOTLESS name alone} \
+  [pcall ::wviewer::sig_declass {net1}] [list {} net1]
+
+# ⚠ SABOTAGE (b)'s ORACLE. ngspice lowercases, but a hand-written or foreign
+# raw need not, and a case-SENSITIVE match would silently pass the tag through
+# as a hierarchy level -- the exact defect, one case-fold away.
+check {DC12 sig_declass is CASE-INSENSITIVE on the tag} \
+  [pcall ::wviewer::sig_declass {M.X1.X2.FOO}] [list M {X1.X2.FOO}]
+check {DC12 positive control -- the lowercase twin strips identically} \
+  [lindex [pcall ::wviewer::sig_declass {m.x1.x2.foo}] 0] m
+
+# ⚠ SABOTAGE (c)'s ORACLE -- the rule must NOT over-reach. `xm1` is a REAL
+# pcell wrapper instance; strip two-letter heads and every real design path
+# loses its first level. This is the check that proves the SPICE-grammar
+# argument rather than merely asserting it.
+check {DC13 sig_declass does NOT strip a TWO-letter head (a real instance)} \
+  [pcall ::wviewer::sig_declass {xm.x1.foo}] [list {} {xm.x1.foo}]
+check {DC13 positive control -- the ONE-letter twin DOES strip} \
+  [pcall ::wviewer::sig_declass {x.x1.foo}] [list x {x1.foo}]
+
+# Leaf shapes that must survive the strip untouched. `#`, `[..]` and `(..)`
+# all appear in real corpus leaves; the longest measured leaf is 54 chars.
+check {DC14 a `#` leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {m.x1.xm1.mod#dbody}] 1] {x1.xm1.mod#dbody}
+check {DC15 a bracketed leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {@m.x1.xm1.mod[gm]}] 1] {x1.xm1.mod[gm]}
+check {DC16 a PARENTHESISED leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {n.xu1.n1#flow(out)}] 1] {xu1.n1#flow(out)}
+
+# sig_split routes through sig_declass. SB07 pins the @m case; these pin that
+# the WRAPPER is unwrapped FIRST and the strip happens on the bare form.
+check {DC17 sig_split unwraps THEN declasses} \
+  [pcall ::wviewer::sig_split {v(m.x1.x1.xm1.mod#body)}] \
+  [list {x1.x1.xm1} {mod#body}]
+check {DC18 sig_split on i(v.x1.v1) -> path x1, leaf v1} \
+  [pcall ::wviewer::sig_split {i(v.x1.v1)}] [list x1 v1]
+# ⚠ the DEPTH the fake tag was inflating: 5 segments read as hierarchy before,
+# 4 after. Any depth-based assertion elsewhere shifts by exactly one.
+check {DC19 sig_split drops the fake level -- depth 4, not 5} \
+  [llength [split [lindex [pcall ::wviewer::sig_split \
+     {v(m.x1.x1.x1.xm1.msky130_fd_pr__nfet_01v8#body)}] 0] .]] 4
+
+# --- the `class` field -------------------------------------------------------
+#
+# ⚠ THE CLASSIFIER KEYS ON THE STRIPPED TAG, NEVER ON THE LEAF'S SHAPE, and
+# DC25 is the check that forces it. 0217:44 records "100% of device leaves
+# contain `#`" -- true FORWARD, FALSE BACKWARD: six REAL design nets end in `#`
+# (xschem's auto-generated net names, e.g. v(x2.x1.a_27_47#) in tb_charge_pump).
+# A classifier keyed on "the leaf contains #" misfires on every one of them.
+proc dc_class {n} { pcall dict get [pcall ::wviewer::signal_entry $n] class }
+
+check {DC20 class of a plain design net is `net`}        [dc_class {v(x1.adj)}]  net
+check {DC21 class of a TOP-LEVEL source current is `net`} [dc_class {i(v1)}]      net
+check {DC22 class of a device internal node is `devnode`} \
+  [dc_class {v(m.x1.xm1.msky130_fd_pr__nfet_01v8#body)}] devnode
+check {DC23 class of a device measurement is `devmeas`} \
+  [dc_class {i(@m.x1.xm1.msky130_fd_pr__nfet_01v8[id])}] devmeas
+check {DC24 class of an internal source branch current is `srcbranch`} \
+  [dc_class {i(v.x1.v1)}] srcbranch
+# ⚠ THE BACKWARD TRAP, measured on the real corpus.
+check {DC25 a REAL design net ending in `#` is `net`, NOT devnode} \
+  [dc_class {v(x2.x1.a_27_47#)}] net
+check {DC25 positive control -- the same leaf shape WITH a tag is devnode} \
+  [dc_class {v(m.x2.x1.a_27_47#)}] devnode
+# the `n` tag is the other internal-node class
+check {DC26 the `n` tag also classifies devnode} \
+  [dc_class {v(n.xu1.n1#flow(out))}] devnode
+# a tagless dotless name is a top-level net, whatever its type
+check {DC27 class of a bare top-level net is `net`} [dc_class {v(vbg)}] net
+check {DC28 class of the sweep variable is `net` (M8: not special-cased)} \
+  [dc_class {time}] net
 
 # GROUP SL — signal_list over TWO REAL xschem contexts.
 #

@@ -1721,21 +1721,97 @@ proc wviewer::sig_bare {name} {
   return $name
 }
 
-# {path leaf} for a raw signal name, split on the LAST dot of the UNWRAPPED
-# form. A name with no dot is all leaf and an empty path (a top-level signal).
+# {class rest} for an UNWRAPPED raw name: strip ngspice's device-class tag.
+# `class` is {} when the name carries no tag, in which case `rest` is the input
+# unchanged. Issue 0217; spec doc/claude/specs/waveform_signal_browser_two_pane.md §3.1.
+#
+# ngspice tags an object with its device class -- and ONLY when the object lives
+# INSIDE a subcircuit. The same raw carries bare `i(v1)` for a top-level source
+# but `i(v.x1.v1)` for one inside `x1`; the prefix exists only to reach inside.
+# Left in place it becomes a hierarchy level, so the tree grows top-level nodes
+# (`m`, `v`, `@m`, ...) that exist in no design. MEASURED across 22 real
+# ngspice-46 raws: 2026 of 2338 hierarchical signals -- 87% -- sat under one.
+#
+# ⚠ THE RULE IS SOUND BY SPICE GRAMMAR, NOT BY HEURISTIC, and that is the whole
+# reason it is safe to apply unconditionally. A hierarchy level in a raw name
+# comes from a SUBCIRCUIT INSTANCE, and SPICE requires those to begin with `X`.
+# A one-letter segment therefore CANNOT be a subckt instance -- `m...` parses as
+# a MOSFET, not a subckt call. Corroborated over the corpus: all 85 distinct
+# real path segments start with `x`; every fake root matches `^@?[a-z]$`; zero
+# overlap. Pinned by DC13, which is the check that proves the rule does not
+# over-reach (`xm.x1.foo` is a REAL instance and must survive intact).
+#
+# ⚠ THE `>= 2 FOLLOWING SEGMENTS` GUARD IS LOAD-BEARING (DC09). `m.foo` is
+# ambiguous, and stripping it would leave an EMPTY path -- filing a signal at
+# the root that belongs one level down. Total segments must be >= 3.
+#
+# ⚠ CASE-INSENSITIVE (DC12). ngspice lowercases, but a hand-written or foreign
+# raw need not, and a case-sensitive match would pass the tag through as a
+# hierarchy level -- the exact defect, one case-fold away.
+#
+# Declared residual risk, stated rather than defended against: a top-level NET
+# named `m` cannot collide (nets carry no dots) and a subcircuit instance named
+# `m` cannot exist (SPICE grammar). The only way to defeat the rule is a
+# non-SPICE producer writing a raw with a one-letter hierarchy level.
+proc wviewer::sig_declass {bare} {
+  set parts [split $bare .]
+  if {[llength $parts] < 3} { return [list {} $bare] }
+  set head [lindex $parts 0]
+  if {![regexp {^@?[A-Za-z]$} $head]} { return [list {} $bare] }
+  return [list $head [join [lrange $parts 1 end] .]]
+}
+
+# A device-class TAG -> the signal's class. PURE, and the ONLY classifier.
+#
+# ⚠ IT KEYS ON THE TAG, NEVER ON THE LEAF'S SHAPE, and DC25 is what forces
+# that. Issue 0217:44 records "100% of device leaves contain `#`" -- true
+# FORWARD, FALSE BACKWARD: six REAL design nets end in `#` (xschem's
+# auto-generated net names, e.g. `v(x2.x1.a_27_47#)` in tb_charge_pump). A
+# classifier keyed on "the leaf contains #" misfires on every one of them.
+#
+#   {}   net        a design net, or a TOP-LEVEL source's branch current
+#   v    srcbranch  the branch current of a source INSIDE a subcircuit
+#   @X   devmeas    a device PARAMETER accessor (@m @c @r @b @q)
+#   X    devnode    a device INTERNAL NODE (m, n)
+proc wviewer::sig_class {tag} {
+  if {$tag eq {}}                       { return net }
+  if {[string match {@*} $tag]}         { return devmeas }
+  if {[string equal -nocase $tag v]}    { return srcbranch }
+  return devnode
+}
+
+# {path leaf} for a raw signal name, split on the LAST dot of the UNWRAPPED,
+# DECLASSED form. A name with no dot is all leaf and an empty path (a top-level
+# signal).
+#
+# ⚠ RULING 14 STILL HOLDS, with one amendment: `path`/`leaf` still split the
+# UNWRAPPED name -- the class strip is a step BEFORE the split, not instead of
+# it. Ruling 14 exists so the tree never grows a root node called `v(x1`; the
+# strip exists so it never grows one called `m` either.
 proc wviewer::sig_split {name} {
-  set bare [wviewer::sig_bare $name]
+  set bare [lindex [wviewer::sig_declass [wviewer::sig_bare $name]] 1]
   set parts [split $bare .]
   if {[llength $parts] < 2} { return [list {} $bare] }
   return [list [join [lrange $parts 0 end-1] .] [lindex $parts end]]
 }
 
-# ONE raw name -> the item-2 dict {name type leaf path}.
+# ONE raw name -> the item-2 dict {name type leaf path class}.
 # `type` comes from wviewer::sig_type — never re-implemented here, so the
 # browser's type dropdown and the matcher's -type filter can never disagree.
+#
+# ⚠ THE TAG IS CAPTURED HERE, WHERE IT STILL EXISTS. The declass step is
+# DESTRUCTIVE: once the leading `m.` / `@m.` / `v.` is gone the path reads
+# `x1.x1.xm1` and nothing downstream can tell `xm1` -- a pcell wrapper holding
+# a transistor -- from `x2`, a real subcircuit, because SPICE requires subckt
+# instances to begin with `X` and so an x-prefixed segment is grammatically
+# indistinguishable from one. The stripped tag is the ONLY evidence a segment
+# is a device, and it exists for exactly one instant. Capturing it costs one
+# dict key; re-deriving it later would mean parsing every raw name twice.
 proc wviewer::signal_entry {name} {
+  lassign [wviewer::sig_declass [wviewer::sig_bare $name]] tag -
   lassign [wviewer::sig_split $name] path leaf
-  return [dict create name $name type [wviewer::sig_type $name] leaf $leaf path $path]
+  return [dict create name $name type [wviewer::sig_type $name] \
+            leaf $leaf path $path class [wviewer::sig_class $tag]]
 }
 
 # wviewer::signal_list  token  ->  list of dicts

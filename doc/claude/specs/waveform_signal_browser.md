@@ -202,9 +202,15 @@ rename there turns the suite red.
   CODED as a short-circuit, not inherited — `string match {} x` is 0.
 - `wviewer::sig_bare` — `{name}` strips ONE `<fn>(...)` wrapper: `v(x1.x2.net5)` ->
   `x1.x2.net5`. **For path/leaf splitting only** (ruling 14); nothing here feeds `sig_match`.
-- `wviewer::sig_split` — `{name}` -> `{path leaf}`, split on the LAST dot of the **UNWRAPPED**
-  form.
-- `wviewer::signal_entry` — `{name}` -> `{name type leaf path}` for one raw name.
+- `wviewer::sig_declass` — `{bare}` -> `{class rest}`. Strips ngspice's device-class tag
+  from an **unwrapped** name: `m.x1.xm1.mod#body` -> `{m x1.xm1.mod#body}`. `class` is `{}`
+  and `rest` is the input unchanged when there is no tag. **Rule:** first segment matches
+  `^@?[a-z]$` case-insensitively **AND at least two segments follow**. Issue 0217.
+- `wviewer::sig_class` — `{tag}` -> `net` | `devnode` | `devmeas` | `srcbranch`. THE one
+  classifier, and it keys on the **tag**, never on the leaf's shape (see the ⚠ below).
+- `wviewer::sig_split` — `{name}` -> `{path leaf}`, split on the LAST dot of the **UNWRAPPED,
+  DECLASSED** form.
+- `wviewer::signal_entry` — `{name}` -> `{name type leaf path class}` for one raw name.
 - `wviewer::signal_list` — `{token}` -> list of those dicts, for the token's **current** raw.
   Returns `{}` — never throws — when the token is unknown, when the context switch is
   REFUSED, or when there is no raw. "Nothing to browse" is an ANSWER.
@@ -219,6 +225,21 @@ rename there turns the suite red.
 split the **UNWRAPPED** name. `v(x1.x2.net5)` gives `path x1.x2`, `leaf net5`. Taken
 literally against the full raw name it would give `path v(x1`, `leaf net5)` — **which is
 why item 9's tree never grows a node called `v(x1`.**
+
+⚠ **Ruling 14's ONE amendment (issue 0217).** The class strip is a step *before* the split,
+not instead of it — `path`/`leaf` still split the unwrapped name, they just split it after
+`sig_declass` has removed a leading device-class tag. Ruling 14 exists so the tree never
+grows a root node called `v(x1`; the strip exists so it never grows one called `m` either.
+MEASURED across 22 real ngspice-46 raws: **2026 of 2338 hierarchical signals — 87% — filed
+under a fake root** (`m` 1400, `@m` 360, `v` 155, `@c` 61, `@r` 24, `@b` 15, `@q` 10, `n` 1)
+before the strip landed. `tb_bandgap`'s netlist has exactly **one** subcircuit instance.
+
+⚠ **`sig_class` keys on the TAG, never on the leaf's shape.** Issue 0217:44 records "100% of
+device leaves contain `#`". That is true forward and **false backward**: six *real design
+nets* end in `#` — xschem's auto-generated net names, e.g. `v(x2.x1.a_27_47#)` in
+`tb_charge_pump`. A classifier keyed on "the leaf contains `#`" misfires on all six. Pinned
+by DC25 **with a positive control on the same fixture** (the identical leaf shape *with* a
+tag must still classify `devnode`, or the check proves nothing).
 
 ### The destination
 
