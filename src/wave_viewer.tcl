@@ -6061,10 +6061,98 @@ proc wviewer::grid_toggle_at {W} {
 # all testable in `--nogui`, where there is no Tk at all. Only the insertion
 # needs a display.
 
-# `entries` are item-2 dicts {name type leaf path}. Returns an ORDERED list of
-# row dicts {id .. parent .. text .. kind group|leaf .. name ..}, parents always
-# BEFORE their children (which is what lets browser_populate insert them in
-# order without a second pass).
+# Is this signal class a DEVICE class? PURE.
+#
+# It exists so `devnode`/`devmeas` is written down exactly ONCE. Two call sites
+# that each spell out the set drift the first time a class is added, and the
+# drift is invisible: the tree and the signal list simply start disagreeing
+# about what a device is, which reads as a display bug rather than a logic one.
+#
+# ⚠ `srcbranch` is deliberately NOT a device class. A voltage source you placed
+# inside a subcircuit to measure a current is a thing you DREW; a MOSFET's
+# `#body` node is a thing the model generated. They get separate checkboxes
+# (spec R11) because they answer separate questions. Fold `srcbranch` in here
+# and the two boxes collapse into one. Pinned by TP03.
+proc wviewer::sig_is_device {class} {
+  return [expr {$class eq {devnode} || $class eq {devmeas}}]
+}
+
+# Narrow an entry list by CLASS, for the two independent checkboxes (spec R11).
+# PURE. `devint` = show device internals (default 0), `srccur` = show internal
+# source branch currents (default 1).
+#
+# MEASURED on tb_bandgap's 424 signals: devint 0 leaves 190; devint 0 + srccur 0
+# leaves 140; design nets alone would be 139 (the 140th is the sweep variable,
+# which M8 deliberately does not special-case). tb_charge_pump: 1191 -> 137 ->
+# 111, nets-only 110.
+#
+# ⚠ THE MUCH-QUOTED "424 -> 139" IS WRONG as a description of hiding device
+# internals. It needs source-branch currents AND the sweep variable hidden too.
+# Hiding internals alone gives 190. The figure travelled through three planning
+# docs unchallenged; it is corrected here and in the spec.
+#
+# ⚠ RAW-FILE ORDER IS PRESERVED (limit D7, pinned by TP09). Every downstream
+# gesture resolves a row INDEX back into this list, so a filter built on a dict
+# or ending in `lsort -unique` would keep every count check green while silently
+# reordering the user's plots.
+proc wviewer::browser_class_filter {entries devint srccur} {
+  if {$devint && $srccur} { return $entries }
+  set out {}
+  foreach e $entries {
+    set c [wviewer::dget $e class net]
+    if {!$devint && [wviewer::sig_is_device $c]} { continue }
+    if {!$srccur && $c eq {srcbranch}} { continue }
+    lappend out $e
+  }
+  return $out
+}
+
+# The dotted paths of hierarchy nodes that hold NOTHING BUT device signals, and
+# which the tree therefore hides while `Show device internals` is off. PURE.
+# Spec doc/claude/specs/waveform_signal_browser_two_pane.md §3.3.
+#
+# ⚠⚠ THE `x` PREFIX IS NOT A DISCRIMINATOR AND MUST NEVER BE USED AS ONE. The
+# obvious implementation — "keep only segments that look like subcircuit
+# instances" — is a NO-OP. MEASURED over the 22-raw corpus: ALL 85 distinct
+# post-declass path segments begin with `x`, because sky130 wraps its MOSFETs in
+# pcell SUBCIRCUITS. `xm1` is grammatically a real X-instance and lexically
+# indistinguishable from `x2`. The class tag captured at declass time
+# (signal_entry's ⚠) is the only evidence that exists.
+#
+# ⚠ THE RULE IS `EVERY SIGNAL AT OR UNDER IT`, NOT `ANY`, and that is not a
+# nicety. MEASURED: sky130 pcell-wraps MOSFETs but NOT capacitors, and
+# resistor/bipolar parasitic sub-devices sit at a level SHARED with real nets —
+# 32 such signals across 5 of the 22 designs. `x1.xr1.x0` carries the design
+# nets `t1`/`t2` AND `@r...[i]` measurements at the same level, so an `any`
+# rule deletes the node and takes two real nets with it. TP11 is that oracle,
+# and TP12's positive control (drop the net, the node MUST become a device
+# node) is what stops TP11 passing on an implementation that hides nothing.
+#
+# The accumulator starts each node at "all device" and is knocked down to 0 by
+# the first non-device signal at or under it, which is the `every` quantifier
+# expressed in one pass rather than a subtree walk per node.
+proc wviewer::browser_device_paths {entries} {
+  array set all {}
+  foreach e $entries {
+    set p [wviewer::dget $e path {}]
+    if {$p eq {}} { continue }
+    set dev [wviewer::sig_is_device [wviewer::dget $e class net]]
+    set pref {}
+    foreach seg [split $p .] {
+      set pref [expr {$pref eq {} ? $seg : "$pref.$seg"}]
+      if {![info exists all($pref)]} { set all($pref) 1 }
+      if {!$dev} { set all($pref) 0 }
+    }
+  }
+  set out {}
+  foreach k [array names all] { if {$all($k)} { lappend out $k } }
+  return $out
+}
+
+# `entries` are item-2 dicts {name type leaf path class}. Returns an ORDERED
+# list of row dicts {id .. parent .. text .. kind group|leaf .. name ..}, parents
+# always BEFORE their children (which is what lets browser_populate insert them
+# in order without a second pass).
 #
 # ⚠ THE `g:` / `s:` ID PREFIXES ARE LOAD-BEARING, not decoration. A raw signal
 # literally named `x1.x2` and the GROUP `x1.x2` minted by `v(x1.x2.net5)` would
