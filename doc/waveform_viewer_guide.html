@@ -1155,7 +1155,49 @@ work while the tree has focus.</td></tr>
 names</b> below it: the lower pane lists the signals owned by that instance's
 <em>own level only</em>, never its descendants. Exactly one node is selected at
 all times &mdash; the design root when nothing else is.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-1&gt;">
+<td class="where">sea of names</td><td>click</td>
+<td>Select that one signal, replacing whatever was selected. Clicking past the
+last name clears the selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Shift-Button-1&gt;">
+<td class="where">sea of names</td><td><kbd>Shift</kbd>+click</td>
+<td>Extend the selection from the last plain click, in <em>flow order</em>
+&mdash; down the column, then on to the next one.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Control-Button-1&gt;">
+<td class="where">sea of names</td><td><kbd>Ctrl</kbd>+click</td>
+<td>Add that signal to the selection, or drop it from it, leaving the rest
+alone.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Double-Button-1&gt;">
+<td class="where">sea of names</td><td>double-click</td>
+<td>Plot it. Double-clicking a signal that is part of the selection plots the
+whole selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-2&gt;">
+<td class="where">sea of names</td><td>middle-click</td>
+<td>The same as double-click: plot the signal under the pointer, or the whole
+selection when the pointer is on one of its members.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-3&gt;">
+<td class="where">sea of names</td><td>right-click</td>
+<td>Post the context menu (<a href="#browser-menu">§11.3</a>) for the signals
+that click picked. It is a separate menu from the tree's, so the two panes never
+act on each other's selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Configure&gt;">
+<td class="where">sea of names</td><td>drag the split</td>
+<td>The names re-flow to the new pane height: a taller pane gives longer
+columns, a shorter one more of them. The pane only ever scrolls sideways.</td></tr>
 </table>
+
+<p>The line under the sea of names counts what it is showing &mdash;
+<code>12 of 43 signals</code> &mdash; and says which of the three reasons an
+empty pane has: the instance <i>has no signals of its own</i>, the
+<i>Search/Filter bar is hiding them</i>, or <i>device internals are hidden</i>.
+Each has a different remedy, so they are worded differently.</p>
 
 <h3 id="browser-state">11.7 What is remembered</h3>
 

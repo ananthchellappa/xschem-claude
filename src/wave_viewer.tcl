@@ -391,6 +391,24 @@ namespace eval wviewer {
   #     answers `design` when it is empty, so a missing capture degrades to a
   #     named root rather than to no root at all.
   variable browserraw; array set browserraw {}
+  # TWO-PANE item 11: the LOWER pane's four per-token pieces.
+  #   browserseaent($token) = the entry snapshot the SEA is drawn from: the
+  #     BAR-MATCHED half of browsersigs, class-filtered. ⚠ IT IS A DIFFERENT SET
+  #     FROM THE TREE'S, and deliberately so — spec §7.1 derives the tree from
+  #     the BAR-UNFILTERED inventory (item 10) while R5 scopes both bars to the
+  #     lower pane. One array per pane is what makes "the bars moved the sea and
+  #     left the tree alone" an assertable pair of values rather than a claim.
+  #   browsersea($token) = the ordered {label fullname} pairs CURRENTLY DRAWN,
+  #     index-parallel to the canvas's `n<idx>` tags. ⚠ THE FULL RAW NAME LIVES
+  #     HERE, NEVER IN THE CANVAS TEXT: the label is a display (spec R8 collides
+  #     four times in the corpus) and every gesture resolves through the index.
+  #   browserseasel($token) = the selection, a SET of indices into browsersea
+  #     (spec §5.3). A list, not a single index — Shift and Control extend it.
+  #   browserseaanchor($token) = the index Shift-click extends FROM.
+  variable browserseaent;    array set browserseaent    {}
+  variable browsersea;       array set browsersea       {}
+  variable browserseasel;    array set browserseasel    {}
+  variable browserseaanchor; array set browserseaanchor {}
   # TWO-PANE item 9: the paned skeleton's three per-token pieces.
   #   browsersash($token) = the split between the instance tree and the sea of
   #     names, as a FRACTION of the panedwindow's height (M3), never pixels. A
@@ -673,6 +691,10 @@ proc wviewer::forget {token} {
   variable browserdbsigs
   # TWO-PANE item 10: the current DB's raw path, same rule.
   variable browserraw
+  # TWO-PANE item 11: the lower pane's snapshot, its drawn pairs, its selection
+  # and its Shift anchor — same rule a fourth time.
+  variable browserseaent; variable browsersea
+  variable browserseasel; variable browserseaanchor
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
   # a third time.
   variable browsersash; variable browserdev; variable browsersrc
@@ -689,8 +711,10 @@ proc wviewer::forget {token} {
     catch {wviewer::trace_menu_unpost $token}
     catch {wviewer::strip_menu_unpost $token}
     # item 10: the browser's row menu is a THIRD tk_popup grab that must not
-    # outlive its widget.
+    # outlive its widget. Item 11's SEA menu is a FOURTH — a DISTINCT widget
+    # (`wvseamenu`), so it needs its own unpost; the tree's would not reach it.
     catch {wviewer::browser_menu_unpost $token}
+    catch {wviewer::browser_sea_menu_unpost $token}
     catch {unset b3x0($wp_)}
     catch {unset b3y0($wp_)}
     catch {unset b3mk($wp_)}
@@ -726,6 +750,10 @@ proc wviewer::forget {token} {
   catch {unset browserrows($token)}
   catch {unset browserdbsigs($token)}
   catch {unset browserraw($token)}
+  catch {unset browserseaent($token)}
+  catch {unset browsersea($token)}
+  catch {unset browserseasel($token)}
+  catch {unset browserseaanchor($token)}
   catch {unset browsersash($token)}
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
@@ -7086,6 +7114,30 @@ proc wviewer::browser_build {token top} {
   # exactly once. `browser_sea_refresh` is a stub until item 11 — the shape
   # stops moving now, the behaviour arrives later.
   bind $f.pw.tvf.tv <<TreeviewSelect>> [list wviewer::browser_sea_refresh $token]
+  # --- item 11: the LOWER pane's seven gestures (spec §5.3 + the reflow) ------
+  # They live HERE, in browser_build, and not in browser_sea_build, because
+  # GH8/GH9 count `bind $f.` lines in THIS proc against the guide's data-bseq
+  # rows: a gesture bound out of sight of that ledger is a gesture nobody
+  # documents. The widget is spelled `$f.pw.sea.c` for the same reason.
+  #
+  # ⚠ NO `break` ON ANY OF THEM, and unlike the tree that is not a choice about
+  # defence in depth — a canvas inside the sidebar has bindtags
+  # {<canvas> Canvas <top> all} and Tk's stock Canvas class binds none of these,
+  # so there is nothing to yield to and nothing to stop.
+  bind $f.pw.sea.c <Button-1> \
+    [list wviewer::browser_sea_click $token %W %x %y]
+  bind $f.pw.sea.c <Shift-Button-1> \
+    [list wviewer::browser_sea_extend $token %W %x %y]
+  bind $f.pw.sea.c <Control-Button-1> \
+    [list wviewer::browser_sea_toggle $token %W %x %y]
+  bind $f.pw.sea.c <Double-Button-1> \
+    [list wviewer::browser_sea_plot_at $token %W %x %y]
+  bind $f.pw.sea.c <Button-2> \
+    [list wviewer::browser_sea_plot_at $token %W %x %y]
+  bind $f.pw.sea.c <Button-3> \
+    "[list wviewer::browser_sea_menu_post $token] %W %x %y %X %Y"
+  bind $f.pw.sea.c <Configure> \
+    [list wviewer::browser_sea_configure $token]
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
@@ -7094,19 +7146,614 @@ proc wviewer::browser_build {token top} {
   return 1
 }
 
-# --- TWO-PANE item 10: the tree's selection -> the lower pane -----------------
-# THE STUB. The bind and its guide row land in item 10 so GH8/GH9's count moves
-# exactly ONCE; item 11 fills the body. It answers 0 rather than throwing,
-# because it rides <<TreeviewSelect>> — which browser_populate fires on every
-# refresh, i.e. on every keystroke in either searchbar — and a throw there pops
-# bgerror, modal under X.
+# =============================================================================
+# TWO-PANE item 11: THE LOWER PANE GOES LIVE — the tree's selection -> the sea
+# doc/claude/specs/waveform_signal_browser_two_pane.md §5, §7.1, §7.2, R3-R8.
+# doc/claude/signal_browser_2pane_batch/PLAN.md item 11.
+# =============================================================================
 #
-# ⚠ IT MUST NEVER CALL `$tv see`. That is the whole of R5's fix: a search
-# narrows the LOWER pane and leaves the tree's open set alone.
+# The canvas the sea is drawn on, or {} — the ONE spelling of that path.
+proc wviewer::browser_sea_canvas {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set c [dict get $windows $token top].wvbrowser.pw.sea.c
+  if {[catch {winfo exists $c} e] || !$e} { return {} }
+  return $c
+}
+
+# The row pitch, READ AT RUNTIME from the font (spec §5.2). ⚠ NEVER A CONSTANT,
+# and that is measured rather than stylistic: `tk scaling` differs per display,
+# so Arial 13 is 19.93 px here and something else on the next machine. The
+# shipped scrollable-frame idiom hardcodes 24 px for exactly this row
+# (src/xschem.tcl:1683-1685) — a coincidence of ONE machine, not a contract.
+#
+# The floor is for a Tk-less (`--nogui`) caller: with no font engine there is no
+# display either, so answering a floor is an ANSWER, not a guess that can be
+# seen.
+proc wviewer::browser_sea_rowh {} {
+  set ls 0
+  catch {ase::theme}
+  catch {set ls [font metrics AseEntryFont -linespace]}
+  if {![string is integer -strict $ls] || $ls < 1} { set ls 12 }
+  return [expr {$ls + 4}]
+}
+
+# The column pitch: the widest RENDERED label plus a gutter, `font measure`d,
+# floored (spec §5.2). The floor is what stops a level of one-character names
+# producing fifty columns of whitespace.
+proc wviewer::browser_sea_colw {labels} {
+  set w 0
+  foreach l $labels {
+    set m 0
+    catch {set m [font measure AseEntryFont $l]}
+    if {[string is integer -strict $m] && $m > $w} { set w $m }
+  }
+  incr w 18
+  if {$w < 60} { set w 60 }
+  return $w
+}
+
+# {per cols colw rowh n paneh} for what is CURRENTLY drawn at the CURRENT pane
+# height.
+#
+# ⚠⚠ ONE ARITHMETIC, ONE PLACE, and this proc exists for exactly that. The draw
+# and the hit-test must agree to the pixel or a click selects a neighbour; two
+# copies of `colw = widest + gutter` drift the first time one of them is tuned,
+# and the drift is invisible until a user clicks the last column.
+proc wviewer::browser_sea_layout {token} {
+  variable browsersea
+  set pairs {}
+  if {[info exists browsersea($token)]} { set pairs $browsersea($token) }
+  set labels {}
+  foreach p $pairs { lappend labels [lindex $p 0] }
+  set n    [llength $pairs]
+  set rowh [wviewer::browser_sea_rowh]
+  set colw [wviewer::browser_sea_colw $labels]
+  set paneh 1
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c ne {}} { catch {set paneh [winfo height $c]} }
+  if {![string is integer -strict $paneh] || $paneh < 1} { set paneh 1 }
+  lassign [wviewer::browser_flow_layout $n $rowh $paneh] per cols
+  return [list $per $cols $colw $rowh $n $paneh]
+}
+
+# --- the accessors every gesture resolves through -----------------------------
+# ⚠ THE LABEL IS A DISPLAY, NEVER AN IDENTITY (spec R8, and it collides exactly
+# four times in the 2656-name corpus). A gesture answers an INDEX; the index
+# answers a FULL RAW NAME through here; nothing downstream ever sees a label.
+
+# The ordered full raw names currently drawn.
+proc wviewer::browser_sea_names {token} {
+  variable browsersea
+  if {![info exists browsersea($token)]} { return {} }
+  set out {}
+  foreach p $browsersea($token) { lappend out [lindex $p 1] }
+  return $out
+}
+
+# ONE index -> its full raw name, {} when out of range. NEVER throws.
+proc wviewer::browser_sea_name {token idx} {
+  variable browsersea
+  if {![info exists browsersea($token)]} { return {} }
+  if {![string is integer -strict $idx]} { return {} }
+  if {$idx < 0 || $idx >= [llength $browsersea($token)]} { return {} }
+  return [lindex [lindex $browsersea($token) $idx] 1]
+}
+
+# The selection: a SET of indices, ascending, and always inside range. Sorting
+# here rather than at every call site is what makes "extend from the anchor"
+# and "toggle" produce comparable values.
+proc wviewer::browser_sea_selection {token} {
+  variable browsersea
+  variable browserseasel
+  if {![info exists browserseasel($token)]} { return {} }
+  set n 0
+  if {[info exists browsersea($token)]} { set n [llength $browsersea($token)] }
+  set out {}
+  foreach i [lsort -integer -unique $browserseasel($token)] {
+    if {$i >= 0 && $i < $n} { lappend out $i }
+  }
+  return $out
+}
+
+# The selected FULL RAW NAMES, in flow order.
+proc wviewer::browser_sea_sel_names {token} {
+  set out {}
+  foreach i [wviewer::browser_sea_selection $token] {
+    set n [wviewer::browser_sea_name $token $i]
+    if {$n ne {}} { lappend out $n }
+  }
+  return $out
+}
+
+# Replace the selection and redraw. `anchor` {} keeps the current one.
+proc wviewer::browser_sea_select {token idxs {anchor {}}} {
+  variable browserseasel
+  variable browserseaanchor
+  set browserseasel($token) $idxs
+  if {$anchor ne {} && [string is integer -strict $anchor]} {
+    set browserseaanchor($token) $anchor
+  }
+  wviewer::browser_sea_draw $token
+  return [llength [wviewer::browser_sea_selection $token]]
+}
+
+# --- THE DRAW -----------------------------------------------------------------
+# Column-major flow onto the canvas: a selection rectangle behind each selected
+# cell, then the label. Returns the number of cells drawn.
+#
+# ⚠ THE SCROLLREGION'S HEIGHT IS CLAMPED TO THE PANE, and that clamp is the
+# whole of R3's "horizontal scrollbar only" — see browser_flow_scrollregion.
+# There is NO -yscrollcommand on this canvas and there must not be one.
+#
+# ⚠ IT MUST NEVER CALL `$tv see`, and it never touches the tree at all. That is
+# R5: a search narrows THIS pane and leaves the tree's open set alone.
+proc wviewer::browser_sea_draw {token} {
+  variable browsersea
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c eq {}} { return 0 }
+  catch {$c delete all}
+  lassign [wviewer::browser_sea_layout $token] per cols colw rowh n paneh
+  catch {$c configure -scrollregion \
+           [wviewer::browser_flow_scrollregion $cols $colw $paneh]}
+  if {!$n} { return 0 }
+  set pairs $browsersea($token)
+  set sel [wviewer::browser_sea_selection $token]
+  # the palette has no `select` key; `header` is the one flat tint in it and
+  # `accent` the one contrast colour, so the box and the selected text come from
+  # the theme rather than from two new literals nobody would ever re-tune.
+  set boxbg {#e8e8e8}
+  set selfg {#8b0000}
+  catch {set boxbg [ase::theme header]}
+  catch {set selfg [ase::theme accent]}
+  for {set i 0} {$i < $n} {incr i} {
+    lassign [wviewer::browser_flow_cell $i $per $colw $rowh] x y
+    set on [expr {[lsearch -exact $sel $i] >= 0}]
+    if {$on} {
+      catch {$c create rectangle $x $y [expr {$x + $colw}] [expr {$y + $rowh}] \
+               -fill $boxbg -outline {} -tags [list selbox]}
+    }
+    # ⚠ THE TAGS ARE `cell` AND `n<index>` — the raw name is NOT among them.
+    # A canvas TAG is parsed as a tag EXPRESSION by `find withtag`, and raw
+    # names carry `(`, `)`, `[`, `]` and `@`, so a name-as-tag would be a
+    # search that throws on its own data. The index is the handle;
+    # browser_sea_name is the decoder.
+    catch {$c create text [expr {$x + 3}] $y -anchor nw -font AseEntryFont \
+             -text [lindex [lindex $pairs $i] 0] \
+             -fill [expr {$on ? $selfg : {#000000}}] \
+             -tags [list cell n$i]}
+  }
+  return $n
+}
+
+# --- THE REFRESH --------------------------------------------------------------
+# The tree's ONE selected node -> the names at exactly that level -> the flow.
+# Returns the number of cells drawn; 0 is an ANSWER (a pure ancestor, or a
+# pattern that matched nothing), never an error.
+#
+# ⚠⚠ IT RIDES <<TreeviewSelect>>, WHICH FIRES ON EVERY KEYSTROKE IN EITHER BAR
+# (browser_populate's `selection set` fires it once per repopulate). A throw
+# here pops bgerror — MODAL under X, which HANGS a headless run. Every rung is a
+# guard, exactly like browser_refresh and browser_menu_post.
+#
+# ⚠ `browser_level_names`, NOT `browser_leaf_names`. Two different questions
+# (spec §7.6): the tree's plot gesture is RECURSIVE by ruling R6 — MEASURED on
+# tb_bandgap's x1, own level 43 against 172 recursive under the shipped class
+# filter — and the lower pane is about ONE level. Swapping them here is the
+# sabotage BQ51's *descended* leg exists to catch; its ROOT leg would stay right,
+# which is why the check names a descended node.
 proc wviewer::browser_sea_refresh {token} {
   variable windows
+  variable browsersea
+  variable browserseaent
+  variable browserseasel
+  variable browserseaanchor
   if {![dict exists $windows $token]} { return 0 }
-  return 0
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c eq {}} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
+  set sel {}
+  catch {set sel [$tv selection]}
+  # R4 keeps this to one id; a legacy multi-selection resolves to its first,
+  # which is browser_populate's own narrowing rule spelled the same way.
+  set id [lindex $sel 0]
+  if {![info exists browserseaent($token)]} { set browserseaent($token) {} }
+  set ent $browserseaent($token)
+  set pairs {}
+  set own 0
+  if {$id eq {}} {
+    # no selection at all: R4 says this cannot happen with a design root in the
+    # tree, and BP43a is the tombstone for the All-DBs case where it can. An
+    # EMPTY pane with a named reason beats a stale one.
+    set path {}
+    set nostate 1
+  } else {
+    set nostate 0
+    set path [wviewer::browser_id_path $id]
+    if {[catch {wviewer::browser_level_names $ent $path} nms]} { set nms {} }
+    foreach nm $nms {
+      set e {}
+      if {[catch {wviewer::signal_entry $nm} e]} { continue }
+      lappend pairs [list [wviewer::browser_label $e] \
+                          [wviewer::browser_label_full $e]]
+    }
+    set own [wviewer::browser_sea_own $token $path]
+  }
+  set browsersea($token) $pairs
+  set browserseasel($token) {}
+  set browserseaanchor($token) 0
+  set n [wviewer::browser_sea_draw $token]
+  # §7.2's three distinguishable states, plus the ordinary count. SPELLED IN
+  # browser_msg AND NOWHERE ELSE — three sentences written inline here would be
+  # three sentences to keep in step with the spec.
+  if {$nostate} {
+    wviewer::browser_sea_say $token seanone
+  } elseif {$own == 0} {
+    wviewer::browser_sea_say $token seaempty [wviewer::browser_sea_label $token $path]
+  } elseif {$n == 0 && [wviewer::browser_bars_active $token]} {
+    wviewer::browser_sea_say $token seabars 0 $own
+  } elseif {$n == 0} {
+    wviewer::browser_sea_say $token seaclass 0 $own
+  } else {
+    wviewer::browser_sea_say $token seacount $n $own
+  }
+  return $n
+}
+
+# The node's OWN-LEVEL signal count BEFORE either narrowing — the `<own>`
+# denominator §7.2's line needs, and the ONE fact that tells "this node has no
+# signals of its own" (a pure ancestor: MEASURED, 12 of tb_bandgap's 44 kept
+# nodes) apart from "everything at this level was hidden".
+#
+# ⚠ IT COUNTS THE UNFILTERED INVENTORY, and that is what makes §7.2's THIRD
+# state expressible at all: with `Show device internals` off, a node whose own
+# level is all-device has own > 0 and shown == 0, which is a different sentence
+# from own == 0. Counting the filtered set would collapse the two.
+proc wviewer::browser_sea_own {token path} {
+  variable browsersigs
+  if {![info exists browsersigs($token)]} { return 0 }
+  set n 0
+  foreach nm $browsersigs($token) {
+    set e {}
+    if {[catch {wviewer::signal_entry $nm} e]} { continue }
+    if {[string equal -nocase [wviewer::dget $e path {}] $path]} { incr n }
+  }
+  return $n
+}
+
+# The name §7.2's first state puts in front of `has no signals of its own`: the
+# dotted path, or the design's own name at the root (`has no signals of its own`
+# about an empty string reads as a bug report).
+proc wviewer::browser_sea_label {token path} {
+  variable browserraw
+  if {$path ne {}} { return $path }
+  set rp {}
+  if {[info exists browserraw($token)]} { set rp $browserraw($token) }
+  return [wviewer::browser_root_label $rp]
+}
+
+# §7.2 SAID, on the lower pane's OWN caption. Returns the result list.
+#
+# ⚠⚠ IT WRITES `$f.pw.sea.st`, NOT THE SIDEBAR'S STATUS LINE, AND THE CHOICE WAS
+# FORCED BY MEASUREMENT (receipt §"the status line"). Item 9's `.ph` carries
+# `<matched> of <total> signals` about the WHOLE INVENTORY; §7.2's sentence is
+# about the SELECTED NODE. They are two facts, and the three ways of putting
+# them on one label were each measured against the suites:
+#   * REPLACE  — BT24/BT25/BT26/BT27's counts, BD52/BD52b's byte-identity and
+#     BW46's "the search really RAN" proof all move, and the FILTER and AND bar
+#     states stop being distinguishable at the design root (both read `0 of N`),
+#     which is the discriminator item 10 rebuilt twice to keep.
+#   * APPEND a third line — BD52/BD52b plus BX37/BX42/BX44/BX45/BX46 and
+#     BH50/BH51/BH54 all assert `[$F.ph cget -text]` BYTE-IDENTICALLY as
+#     "Signal Browser\n<msg>"; a third line reds every one of them.
+#   * A CAPTION ON THE PANE IT DESCRIBES — costs exactly one existing check (the
+#     sea frame's pinned child set) and reads better, because the sentence sits
+#     under the list it is about.
+# The third was taken. `browser_say` is untouched; only the SPELLING is shared,
+# in browser_msg, which is what the plan asked for.
+#
+# NO ECHO, and that is deliberate rather than an omission: this fires on every
+# keystroke and every arrow-key move through the tree, and `wviewer::echo`
+# writes an action-log `-result` line. browser_say echoes because it reports a
+# USER-INITIATED sync; this reports a cursor moving.
+proc wviewer::browser_sea_say {token kind {a {}} {b {}}} {
+  variable windows
+  switch -- $kind {
+    seanone  { set r [list seanone] }
+    seaempty { set r [list seaempty $a] }
+    seabars  { set r [list seabars $a $b] }
+    seaclass { set r [list seaclass $a $b] }
+    default  { set r [list seacount $a $b] }
+  }
+  set m [wviewer::browser_msg $r]
+  if {[dict exists $windows $token]} {
+    set l [dict get $windows $token top].wvbrowser.pw.sea.st
+    if {![catch {winfo exists $l} e] && $e} { catch {$l configure -text $m} }
+  }
+  return $r
+}
+
+# --- the six gestures (spec §5.3) ---------------------------------------------
+# ⚠ EVERY ONE OF THEM RIDES A Tk BINDING, so every one of them is TOTAL: a throw
+# in a binding pops bgerror, modal under X. `browser_menu_post`'s rule verbatim.
+
+# Canvas pixel -> item index, or -1 for a MISS. `canvasx`/`canvasy` first,
+# because the pane SCROLLS horizontally and a widget-relative x is not a
+# content-relative one the moment the user has scrolled.
+proc wviewer::browser_sea_hit {token W x y} {
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c eq {} || $W ne $c} { return -1 }
+  set cx $x ; set cy $y
+  catch {set cx [$c canvasx $x]}
+  catch {set cy [$c canvasy $y]}
+  lassign [wviewer::browser_sea_layout $token] per cols colw rowh n paneh
+  if {!$n} { return -1 }
+  set r -1
+  catch {set r [wviewer::browser_flow_hit $cx $cy $per $colw $rowh $n]}
+  return $r
+}
+
+# LMB: select one, REPLACING the set. A miss clears it — clicking the empty
+# gutter is how a user says "never mind", and leaving the old set selected there
+# is what makes the next Plot surprising.
+proc wviewer::browser_sea_click {token W x y} {
+  catch {focus $W}
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {$i < 0} { return [wviewer::browser_sea_select $token {} 0] }
+  return [wviewer::browser_sea_select $token [list $i] $i]
+}
+
+# Shift-LMB: extend from the anchor in FLOW ORDER — down the column, then to the
+# next — which is what the arithmetic range between two indices already means,
+# because the flow IS column-major (browser_flow_cell). A visual rectangle would
+# be a different gesture and is not what spec §5.3 asks for.
+proc wviewer::browser_sea_extend {token W x y} {
+  variable browserseaanchor
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {$i < 0} { return [llength [wviewer::browser_sea_selection $token]] }
+  set a 0
+  if {[info exists browserseaanchor($token)]} { set a $browserseaanchor($token) }
+  if {![string is integer -strict $a]} { set a 0 }
+  set lo [expr {$a < $i ? $a : $i}]
+  set hi [expr {$a < $i ? $i : $a}]
+  set out {}
+  for {set k $lo} {$k <= $hi} {incr k} { lappend out $k }
+  # the anchor DOES NOT MOVE — a second Shift-click must re-extend from the same
+  # origin, which is the whole point of an anchor.
+  return [wviewer::browser_sea_select $token $out]
+}
+
+# Ctrl-LMB: toggle one, KEEPING the set. The toggled cell becomes the anchor,
+# matching every list widget in the toolkit.
+proc wviewer::browser_sea_toggle {token W x y} {
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {$i < 0} { return [llength [wviewer::browser_sea_selection $token]] }
+  set cur [wviewer::browser_sea_selection $token]
+  set at [lsearch -exact $cur $i]
+  if {$at >= 0} { set cur [lreplace $cur $at $at] } else { lappend cur $i }
+  return [wviewer::browser_sea_select $token $cur $i]
+}
+
+# Indices -> plot. The ONE route every sea plot gesture converges on, and it
+# goes through `plot_signals` exactly as browser_plot_ids does, so item 7's
+# destination policy is read in ONE place for BOTH panes.
+proc wviewer::browser_sea_plot_idx {token idxs {destover {}}} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set names {}
+  foreach i $idxs {
+    set n [wviewer::browser_sea_name $token $i]
+    if {$n ne {} && [lsearch -exact $names $n] < 0} { lappend names $n }
+  }
+  if {![llength $names]} {
+    wviewer::echo {signal browser: nothing selected to plot} error
+    return 0
+  }
+  set errs {}
+  if {[catch {wviewer::plot_signals $token $names {} $destover} errs]} {
+    wviewer::echo "signal browser: $errs" error
+    return 0
+  }
+  foreach e $errs {
+    wviewer::echo "signal browser: [lindex $e 0]: [lindex $e 1]" error
+  }
+  return [llength $names]
+}
+
+# Double-LMB and MMB. SELECTION-INDEPENDENT in exactly browser_plot_at's way:
+# the cell comes from the POINTER, and when that cell is in the selection the
+# WHOLE selection plots. `event generate` does not reliably set a selection
+# first, so a handler that read only the selection would be untestable AND would
+# surprise a user who double-clicked a cell other than the selected one.
+proc wviewer::browser_sea_plot_at {token W x y} {
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {$i < 0} { return 0 }
+  set sel [wviewer::browser_sea_selection $token]
+  if {[lsearch -exact $sel $i] >= 0} { set idxs $sel } else { set idxs [list $i] }
+  return [wviewer::browser_sea_plot_idx $token $idxs]
+}
+
+# <Configure>: the pane was resized (the sash moved — which is the whole point
+# of R3), so re-flow. It re-reads the tree selection through the ordinary
+# refresh rather than carrying a second draw path, because a second path is how
+# the two get to disagree about what is selected.
+proc wviewer::browser_sea_configure {token} {
+  return [wviewer::browser_sea_refresh $token]
+}
+
+# --- the sea's RMB menu — A DISTINCT WIDGET ----------------------------------
+# ⚠⚠ `wvseamenu`, NEVER `wvbrowsermenu`, and the reason is not tidiness.
+# ctx_menu_widget DESTROYS and re-mints the widget it is asked for, so posting
+# the sea's menu through the tree's name would tear down the tree's menu
+# mid-life, and `ctx_menu_drop` on either name would take the other down. The
+# two panes hold two independent selections and each menu's -commands close over
+# ITS pane's currency (row ids one side, flow indices the other); sharing one
+# widget aliases them. It also disturbs the tree menu's reserved index 7, which
+# BM02 and BH40 pin.
+#
+# THE ENTRY TABLE IS DELIBERATELY IDENTICAL to browser_menu_build's — same
+# eight entries in the same order, so BM23's index table describes both panes.
+# It is spelled twice rather than factored into a shared builder because
+# BM01-BM09 grep browser_menu_build's own body; the AGREEMENT is pinned
+# behaviourally instead, by comparing the two posted menus entry for entry.
+
+# THE GATE: the flow indices an RMB at canvas pixel (x,y) acts on, or {}.
+# browser_menu_ids' rule verbatim: the clicked cell when it is not in the
+# selection, the WHOLE selection when it is; a miss posts NOTHING; and it NEVER
+# MUTATES the selection.
+proc wviewer::browser_sea_menu_ids {token W x y} {
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {$i < 0} { return {} }
+  set sel [wviewer::browser_sea_selection $token]
+  if {[lsearch -exact $sel $i] >= 0} { return $sel }
+  return [list $i]
+}
+
+# Flow indices -> {ok <dotted path>} / {err <message>}. The sea's twin of
+# browser_target_path, resolved through the NAME (`sig_split`'s declassed path),
+# which is the same expression browser_target_path uses for a leaf row.
+#
+# ⚠ THE MULTI-CELL RULE IS browser_target_path's, VERBATIM: a set resolves only
+# when every cell yields the SAME path, and a disagreeing set is an `err` that
+# leaves the menu entry DISABLED. Silent first-wins is the ruling-17 defect.
+proc wviewer::browser_sea_target_path {token idxs} {
+  if {![llength $idxs]} {
+    return [list err {select a signal in the Signal Browser first}]
+  }
+  set path {}
+  set first 1
+  foreach i $idxs {
+    set nm [wviewer::browser_sea_name $token $i]
+    if {$nm eq {}} { return [list err "unknown signal '$i'"] }
+    set p [lindex [wviewer::sig_split $nm] 0]
+    if {$first} { set path $p ; set first 0 } \
+    elseif {$p ne $path} {
+      return [list err {those signals are in different parts of the hierarchy}]
+    }
+  }
+  return [list ok $path]
+}
+
+proc wviewer::browser_sea_descend_to {token idxs} {
+  set r [wviewer::browser_sea_target_path $token $idxs]
+  if {[lindex $r 0] ne {ok}} {
+    catch {wviewer::browser_status $token [lindex $r 1]}
+    return 0
+  }
+  # ⚠ IT RE-ENTERS THE TREE'S OWN COMMAND rather than re-implementing the walk:
+  # browser_descend_to is 80 lines of context loan, rollback and re-read, and a
+  # second copy of it would drift on the first fix. The tree row for this path
+  # is what it wants, and browser_node_for is the decoder.
+  variable browserrows
+  set rows {}
+  if {[info exists browserrows($token)]} { set rows $browserrows($token) }
+  set segs [wviewer::hier_split [lindex $r 1]]
+  lassign [wviewer::browser_node_for $rows $segs \
+             [wviewer::browser_root_id $rows]] id matched
+  if {$id eq {}} { return 0 }
+  return [wviewer::browser_descend_to $token [list $id]]
+}
+
+proc wviewer::browser_sea_copy_names {token idxs} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set names {}
+  foreach i $idxs {
+    set n [wviewer::browser_sea_name $token $i]
+    if {$n ne {} && [lsearch -exact $names $n] < 0} { lappend names $n }
+  }
+  if {![llength $names]} { return 0 }
+  set top [dict get $windows $token top]
+  # ⚠ `::clipboard` FULLY QUALIFIED — this namespace has its own zero-argument
+  # `wviewer::clipboard` and an unqualified call resolves to THAT, throws, and
+  # is swallowed (item 10's measured defect, BM33).
+  if {[catch {
+    ::clipboard clear -displayof $top
+    ::clipboard append -displayof $top [join $names "\n"]
+  }]} { return 0 }
+  set n [llength $names]
+  catch {wviewer::browser_status $token \
+           "copied $n name[expr {$n == 1 ? {} : {s}}]"}
+  return $n
+}
+
+proc wviewer::browser_sea_send_to_add_trace {token idxs} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set names {}
+  foreach i $idxs {
+    set n [wviewer::browser_sea_name $token $i]
+    if {$n ne {} && [lsearch -exact $names $n] < 0} { lappend names $n }
+  }
+  if {![llength $names]} { return 0 }
+  set w {}
+  if {[catch {wviewer::add_trace_dialog $token} w]} { return 0 }
+  if {$w eq {}} { return 0 }
+  if {[catch {winfo exists $w.expr} e] || !$e} { return 0 }
+  catch {
+    $w.expr delete 0 end
+    $w.expr insert end [lindex $names 0]
+    focus $w.expr
+  }
+  return 1
+}
+
+proc wviewer::browser_sea_menu_build {token idxs} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set names {}
+  foreach i $idxs {
+    set nm [wviewer::browser_sea_name $token $i]
+    if {$nm ne {} && [lsearch -exact $names $nm] < 0} { lappend names $nm }
+  }
+  if {![llength $names]} { return {} }
+  set m [wviewer::ctx_menu_widget $token wvseamenu]
+  if {$m eq {}} { return {} }
+  set n [llength $names]
+  $m add command -state disabled \
+    -label [expr {$n == 1 ? [lindex $names 0] : "$n signals"}]
+  $m add separator
+  $m add command \
+    -label "Plot ([wviewer::dest_menu_label $token [wviewer::plot_dest $token]])" \
+    -command [list wviewer::browser_sea_plot_idx $token $idxs]
+  set sub [wviewer::ctx_menu_child $m dest]
+  if {$sub ne {}} {
+    foreach lab [wviewer::dest_labels] {
+      set code [wviewer::dest_norm $lab]
+      $sub add command -label [wviewer::dest_menu_label $token $code] \
+        -command [list wviewer::browser_sea_plot_idx $token $idxs $code]
+    }
+  }
+  $m add cascade -label {Plot to} -menu $sub
+  $m add command -label {Send to Add Trace...} \
+    -command [list wviewer::browser_sea_send_to_add_trace $token $idxs]
+  $m add command -command [list wviewer::browser_sea_copy_names $token $idxs] \
+    -label [expr {$n == 1 ? {Copy name} : "Copy names ($n)"}]
+  $m add separator
+  set tp [wviewer::browser_sea_target_path $token $idxs]
+  if {[lindex $tp 0] eq {ok}} {
+    $m add command -label {Descend to here} \
+      -command [list wviewer::browser_sea_descend_to $token $idxs]
+  } else {
+    $m add command -label {Descend to here} -state disabled
+  }
+  return $m
+}
+
+proc wviewer::browser_sea_menu_post {token W x y {rx -1} {ry -1}} {
+  set ids {}
+  catch {set ids [wviewer::browser_sea_menu_ids $token $W $x $y]}
+  if {![llength $ids]} { return 0 }
+  set m {}
+  catch {set m [wviewer::browser_sea_menu_build $token $ids]}
+  if {$m eq {}} { return 0 }
+  set r 0
+  catch {set r [wviewer::ctx_menu_popup $W $m $x $y $rx $ry]}
+  return $r
+}
+
+proc wviewer::browser_sea_menu_unpost {token} {
+  return [wviewer::ctx_menu_drop $token wvseamenu]
 }
 
 # --- TWO-PANE item 9: the LOWER pane's widgets --------------------------------
@@ -7130,6 +7777,22 @@ proc wviewer::browser_sea_refresh {token} {
 #
 # Returns the pane's path, so the caller adds it to the panedwindow without
 # respelling it.
+# ⚠ TWO-PANE item 11 ADDED `$w.st`, THE PANE'S OWN CAPTION — spec §7.2's line.
+# It is a THIRD child of this frame, which reds the item-9 check that pinned the
+# child set to exactly {c hsb}; that check is restated rather than relaxed.
+# Why here and not on the sidebar's `.ph` status line: `.ph` says
+# `<matched> of <total> signals` about the WHOLE inventory and a dozen checks
+# across four files assert its text BYTE-IDENTICALLY. §7.2's sentence is about
+# the SELECTED NODE — a different fact about a different set — and it belongs
+# under the list it describes. The full reasoning, with the measured blast
+# radius of each alternative, is in browser_sea_say.
+#
+# ⚠ `-width 1` IS NOT A SIZE, IT IS A STABILITY GUARANTEE. A label whose
+# requested width tracks its text would re-request on every sentence change,
+# the frame would re-request, the canvas would get <Configure>, and <Configure>
+# refreshes the sea — which writes the caption. `-width 1` + `pack -fill x`
+# gives the geometry manager a CONSTANT request, so the loop cannot start.
+# `.ph` carries `-width 22` for the same reason.
 proc wviewer::browser_sea_build {parent} {
   set w $parent.sea
   catch {destroy $w}
@@ -7138,6 +7801,9 @@ proc wviewer::browser_sea_build {parent} {
     -background [ase::theme table] \
     -xscrollcommand [list $w.hsb set]
   scrollbar $w.hsb -orient horizontal -command [list $w.c xview]
+  label $w.st -anchor w -justify left -width 1 \
+    -font AseLabelFont -background [ase::theme panel] -text {}
+  pack $w.st  -side bottom -fill x
   pack $w.hsb -side bottom -fill x
   pack $w.c   -side top -fill both -expand 1
   return $w
@@ -7292,6 +7958,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browserrows
   variable browserdbsigs
   variable browserraw
+  variable browserseaent
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} { return 0 }
@@ -7343,8 +8010,9 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # browser_plot_ids, browser_menu_ids, browser_target_path, browser_descend_to),
   # so a tree holding a node the row model does not describe is a broken gesture,
   # not a cosmetic mismatch. The bar-matched set is what item 11's sea and §7.2's
-  # status line consume; it is NOT computed here yet, because dead code is worse
-  # than an absent seam and `$names` already carries it for the count below.
+  # caption consume, and item 11 computes it below — from the SAME class-filtered
+  # entry list, narrowed by name, so the two panes cannot disagree about what the
+  # CLASS filter did (spec §6) while disagreeing about what the BARS did (§7.1).
   set entries {}
   foreach n $browsersigs($token) { lappend entries [wviewer::signal_entry $n] }
   # --- TWO-PANE item 10 -------------------------------------------------------
@@ -7375,6 +8043,38 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # why the checkbuttons were built INERT. Everything downstream — the tree, the
   # sea, the status line and every gesture — sees this ONE filtered set (spec §6).
   set entries [wviewer::browser_class_filter $entries 0 1]
+  # --- TWO-PANE item 11: THE OTHER HALF, and it is a DIFFERENT SET -----------
+  #
+  # ⚠⚠ THE SEA IS WHAT THE BARS NARROW. `$entries` above is the tree's set,
+  # bar-UNFILTERED per §7.1; `$names` is the bar-matched name list. Item 11's
+  # first job is the intersection — and it is spelled as a NARROWING OF
+  # `$entries` rather than as `class_filter(entries_of($names))` on purpose:
+  #
+  #   * ONE class_filter call for the current DB means the two panes provably
+  #     agree about what R11's checkboxes did (spec §6's "one consistent set"),
+  #     while §7.1 lets them disagree about what the BARS did. Two filter calls
+  #     would let a future item change one and not the other, and the symptom
+  #     would be a signal visible in the tree's node set but absent from every
+  #     node's list, which reads as a display bug.
+  #   * it preserves RAW-FILE ORDER (limit D7) for free, because `$entries` is
+  #     already in it and this is a filter, not a rebuild.
+  #   * a name appearing TWICE in one raw (legal) keeps both entries, because
+  #     the test is membership of the NAME, not of the entry.
+  set seakeep {}
+  foreach n $names { lappend seakeep $n }
+  array unset __seaidx
+  array set __seaidx {}
+  foreach n $seakeep { set __seaidx($n) 1 }
+  set seaent {}
+  foreach e $entries {
+    if {[info exists __seaidx([wviewer::dget $e name {}])]} { lappend seaent $e }
+  }
+  array unset __seaidx
+  # SET BEFORE browser_populate RUNS, and that ordering is load-bearing:
+  # `browser_populate`'s `selection set` fires <<TreeviewSelect>>, which runs
+  # browser_sea_refresh — mid-refresh. It must find THIS refresh's snapshot, not
+  # the previous one's.
+  set browserseaent($token) $seaent
   # R2: the tree has exactly one root node, named for the design.
   #
   # ⚠ NO ROOT WHILE ALL-DBs IS ON. With the box ticked the tree's top level is
@@ -7438,6 +8138,14 @@ proc wviewer::browser_refresh {token {reload 0}} {
     append st ", +$extra from $ndbs other DB[expr {$ndbs == 1 ? {} : {s}}]"
   }
   wviewer::browser_status $token $st
+  # --- TWO-PANE item 11: THE TAIL, and it is not redundant --------------------
+  # browser_populate already fired <<TreeviewSelect>> above — but ONLY when the
+  # selection actually CHANGED. Type a character that narrows nothing away and
+  # the same node stays selected, ttk fires nothing, and without this call the
+  # sea would keep showing the previous match set while the bar says otherwise.
+  # MEASURED as the sabotage "drop the tail call": a bar keystroke stops moving
+  # the sea.
+  catch {wviewer::browser_sea_refresh $token}
   return 1
 }
 
@@ -8548,12 +9256,35 @@ proc wviewer::browser_bars_active {token} {
 # `browser_show_path` RESULT -> the sentence for it, so the sidebar's status
 # line, the CIW echo and the ASE-side echo cannot drift apart into three
 # slightly different accounts of the same event. BX37 pins the strings verbatim.
+# ⚠ TWO-PANE item 11 ADDED FIVE KINDS, and they are HERE rather than inline in
+# browser_sea_refresh for exactly the reason the header above gives: spec §7.2's
+# three states have three different REMEDIES ("clear the bar", "tick the box",
+# "this node genuinely has nothing"), so a user who cannot tell them apart is
+# stuck. Three sentences written at their point of use are three sentences that
+# drift from the spec one at a time.
+#
+#   seanone   nothing selected — R4 says unreachable with a design root in the
+#             tree; BP43a is the tombstone for the All-DBs case where it is not
+#   seaempty  a PURE ANCESTOR. MEASURED: 12 of tb_bandgap's 44 kept nodes and 18
+#             of its 128 raw ones have no own-level signals at all. An ANSWER
+#   seabars   the Search/Filter bar emptied it (browser_bars_active)
+#   seaclass  the CLASS filter emptied it — §7.5's reachable case: a wrapper kept
+#             because a descendant carries a real net, whose own level is all
+#             device. Distinct from seabars, and distinct from seaempty
+#   seacount  the ordinary `<shown> of <own> signals`
 proc wviewer::browser_msg {res} {
   switch -- [lindex $res 0] {
     ok      { return "showing [lindex $res 2]" }
     partial { return "no signals under '[lindex $res 3]' - showing\
                       [lindex $res 2] instead" }
     root    { return {showing the simulation top level} }
+    seanone  { return {no node selected} }
+    seaempty { return "[lindex $res 1] has no signals of its own" }
+    seabars  { return "[lindex $res 1] of [lindex $res 2] signals\
+                       (the Search/Filter bar is hiding them)" }
+    seaclass { return "[lindex $res 1] of [lindex $res 2] signals\
+                       (device internals are hidden)" }
+    seacount { return "[lindex $res 1] of [lindex $res 2] signals" }
   }
   return [lindex $res 1]
 }
@@ -12845,7 +13576,10 @@ proc wviewer::tab_drop_transients {token} {
   catch {wviewer::strip_menu_unpost $token}
   # item 10: same argument as the two above — the browser menu's entries carry
   # the OUTGOING tab's row ids, and its grab must not survive the switch.
+  # Item 11's SEA menu carries the outgoing tab's SIGNAL INDICES and is a
+  # DISTINCT widget, so it needs the same treatment spelled separately.
   catch {wviewer::browser_menu_unpost $token}
+  catch {wviewer::browser_sea_menu_unpost $token}
   catch {
     if {[wviewer::switch_ctx $token]} { xschem graph_marker select -none }
   }

@@ -1246,6 +1246,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   set BTF .wvbt1.wvbrowser
   set BTTV $BTF.pw.tvf.tv
+  set BTC  $BTF.pw.sea.c
   set BTSB $BTF.wvsearch
   set BTFB $BTF.wvfilter
   # ⚠ "NEVER BUILT" IS A DISTINCT VALUE FROM "BUILT AND EMPTY" (trap 1).
@@ -1559,15 +1560,36 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # (or a real middle-click) on a SIGNAL row that plots it.
   check {BT29 the upper pane holds NOTHING BUT group rows, so the double-click's leaf arm cannot be reached from it} \
     [bt_tree_kinds $BTTV wvbt] group
+  # ⚠⚠ ITEM 11 GAVE THIS ITS GESTURE BACK, and the qualifier came off with it.
+  # Between item 10 and item 11 NO check in the repo drove a real click on a
+  # SIGNAL that plotted it: the leaf rows had left the tree and the lower pane
+  # was a stub, so the positive arm relocated to a DIRECT `browser_plot_ids`
+  # call and said so in its own name. The sea of names is where those rows went,
+  # so this is a real Tk double-click again — on `net1`, cell 3 of the design
+  # root's own level (`v(out) v(out2) i(v1) net1 vsweep`, raw order, limit D7).
+  #
   # ⚠ THE CALL AND ITS RECORDING ARE READ IN TWO STEPS, DELIBERATELY. Folding
   # them into one `[list ...]` would make the check depend on Tcl substituting
   # its arguments left to right — true, but invisible to the next reader.
+  set bt_selwas [pcall $BTTV selection]
+  pcall $BTTV selection set [list {g:}]
+  update
   set ::bt_plot_calls {}
   set bt_kd [bt_kind wvbt {s:net1}]
-  set bt_n  [pcall ::wviewer::browser_plot_ids wvbt {s:net1}]
-  check {BT29 (ROW MODEL, a DIRECT browser_plot_ids call — NOT a Tk gesture) a LEAF id still resolves to exactly its one signal} \
-    [list $bt_kd $bt_n $::bt_plot_calls] \
-    [list leaf 1 [list [list wvbt net1]]]
+  set bt_seal [bs_sea_labels $BTC]
+  set bt_g [bs_sea_dclick $BTC 3]
+  check {BT29 a REAL DOUBLE-CLICK on a signal in the lower pane plots exactly
+         its one signal, by the full raw name behind the label} \
+    [list $bt_kd $bt_seal $bt_g $::bt_plot_calls] \
+    [list leaf {out out2 v1:i net1 vsweep} ok [list [list wvbt net1]]]
+  # ...and the same target through the ROW MODEL agrees, which is what says the
+  # gesture resolved rather than guessed
+  set ::bt_plot_calls {}
+  set bt_n [pcall ::wviewer::browser_plot_ids wvbt {s:net1}]
+  check {BT29 ...and the row-model route answers identically for the same signal} \
+    [list $bt_n $::bt_plot_calls] [list 1 [list [list wvbt net1]]]
+  pcall $BTTV selection set $bt_selwas
+  update
   # ...and on a GROUP it plots NOTHING (D3: ttk's expand/collapse owns that
   # gesture). THE NEGATIVE CONTROL for the double-click route.
   # ⚠ THE PRECONDITION IS ASSERTED, NOT ASSUMED. `g:x1` is on screen only
@@ -1692,11 +1714,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [list [list wvbt {v(x1.x2.net5) v(x1.y3.net5) i(x1.x2.net5)}]]]
   # ...and the LITERAL original claim — a group plus one of its own LEAF ids —
   # survives on the ROW MODEL, which is where those two ids still coexist.
-  # DIRECT CALL, NOT A TK GESTURE, and named so: browser_plot_ids takes row IDS,
-  # so this is the same entry point the button reaches, one step in.
+  #
+  # ⚠⚠ THIS ONE KEEPS ITS DIRECT-CALL QUALIFIER, AND ITEM 11 DID NOT REMOVE IT
+  # BECAUSE IT CANNOT. BT29's and BT43's qualifiers were RELOCATIONS — a gesture
+  # that existed, lost its widget in item 10 and got it back in item 11. This is
+  # not: the target is a GROUP **and** a LEAF at once, and after the two-pane
+  # split those live in two different widgets holding two independent
+  # selections. There is no single gesture that expresses it, which is exactly
+  # why the dedup rule needs an oracle at the entry point both panes converge
+  # on. Declared rather than faked with a two-pane gesture that would be
+  # testing something else.
   set ::bt_plot_calls {}
   set bt_n [pcall ::wviewer::browser_plot_ids wvbt [list {g:x1.x2} {s:v(x1.x2.net5)}]]
-  check {BT32 (ROW MODEL, a DIRECT browser_plot_ids call) a group plus one of its own LEAF ids still plots that leaf once} \
+  check {BT32 (ROW MODEL, a DIRECT browser_plot_ids call — UNEXPRESSIBLE as a gesture, see above) a group plus one of its own LEAF ids still plots that leaf once} \
     [list $bt_n $::bt_plot_calls] \
     [list 2 [list [list wvbt {v(x1.x2.net5) i(x1.x2.net5)}]]]
   pcall $BTTV selection set {}
@@ -1777,6 +1807,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   } else {
     set BTVF $vtop2.wvbrowser
     set BTVTV $BTVF.pw.tvf.tv
+    set BTVC  $BTVF.pw.sea.c
     # a REAL raw, built on the VIEWER's own context (the SL idiom)
     set BTMAIN [xschem get current_win_path]
     xschem new_schematic switch $vdrw2
@@ -1864,16 +1895,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
               [bt_spot_state [bt_spot $BTVTV {g:x1.y3}]]] \
         [list 0 mapped]
     }
-    # THE POSITIVE ARM, RELOCATED: a LEAF id still reaches the REAL model. A
-    # DIRECT browser_plot_ids call, NOT a Tk gesture, and named so. It keeps
-    # "a browser leaf -> a real trace" covered on the real viewer until item
-    # 11's lower pane gives the leaf a widget to be clicked on again.
+    # ⚠⚠ THE POSITIVE ARM, GIVEN ITS GESTURE BACK BY ITEM 11. It relocated to a
+    # DIRECT `browser_plot_ids` call when item 10 took the leaf rows out of the
+    # tree — the honest thing to do with a gesture whose widget had gone, and
+    # named so. The sea of names is that widget, so this is a REAL Tk
+    # double-click on a REAL viewer again, and it is the strongest form of the
+    # claim available anywhere in the batch: a click, on a real canvas, over a
+    # real raw, adding a real trace to a real model.
+    #
+    # MEASURED: `xschem raw new ... dc vsweep ...` writes the sweep variable
+    # first, so the design root's own level is `{vsweep out}` and `v(out)` is
+    # cell 1. The label list is asserted beside the count so a re-ordering
+    # cannot quietly plot the sweep variable instead.
     set bt_n1b [bt_traces $tok]
     set bt_kd  [bt_kind $tok {s:v(out)}]
-    set bt_pn  [pcall ::wviewer::browser_plot_ids $tok {s:v(out)}]
-    check {BT43 (ROW MODEL, a DIRECT browser_plot_ids call) a LEAF id still adds a real trace} \
-      [list $bt_kd $bt_pn [expr {[bt_traces $tok] - $bt_n1b}]] \
-      [list leaf 1 1]
+    pcall $BTVTV selection set [list {g:}]
+    update
+    set bt_seal [bs_sea_labels $BTVC]
+    set bt_g    [bs_sea_dclick $BTVC 1]
+    check {BT43 a REAL DOUBLE-CLICK on a signal in the lower pane adds a real
+           trace to the real model} \
+      [list $bt_kd $bt_seal $bt_g [expr {[bt_traces $tok] - $bt_n1b}]] \
+      [list leaf {vsweep out} ok 1]
+    # ...and MMB on the same cell is the second route, still one trace
+    set bt_n1c [bt_traces $tok]
+    set bt_g2 [bs_sea_click $BTVC 1 <Button-2>]
+    check {BT43 ...and a REAL MIDDLE-CLICK on it does the same} \
+      [list $bt_g2 [expr {[bt_traces $tok] - $bt_n1c}]] [list ok 1]
     bt_close $BTVTV $bt_o
 
     # --- BT44: the DESTINATION is honoured, through plot_signals (ruling 24) --
@@ -2266,91 +2314,54 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return [list [expr {[lindex $bb 0] + [lindex $bb 2]/2}] \
                  [expr {[lindex $bb 1] + [lindex $bb 3]/2}]]
   }
-  # --- THE THROWAWAY LEAF TREE (two-pane item 10) ---------------------------
-  # ⚠⚠ THIS WIDGET DOES NOT MIRROR PRODUCTION ANY MORE, AND THAT IS THE POINT.
-  # Item 10 took the LEAF rows OUT of the sidebar's tree: `browser_populate`
-  # inserts only nodes (`g:...`) now, every one of them `-open 0` bar the design
-  # root, and the signals move to the LOWER pane in item 11. Every gesture in
-  # BM21-BM34 names its target by row id (`s:v(out)`, `s:net1`, `s:vsweep`), and
-  # a gesture whose target row does not exist takes the `bm_centre ... eq {}`
-  # arm: it SKIPS, asserts nothing, and still prints green. That is how ~43
-  # checks in this band went silent in ONE edit — MEASURED, verbatim:
-  #     SKIPPED: BM22-BM34 (row s:v(out) never mapped)
+  # --- THE SEA OF NAMES IS THE SIGNAL SURFACE NOW (two-pane item 11) ---------
+  # ⚠⚠ THE THROWAWAY LEAF TREE THAT USED TO LIVE HERE IS GONE, AND SO IS THE
+  # REASON FOR IT. Item 10 took the LEAF rows out of the sidebar's tree, so
+  # every gesture in BM21-BM34 — each naming its target by a leaf row id
+  # (`s:v(out)`, `s:net1`, `s:vsweep`) — lost the widget it clicked in. Rather
+  # than let ~43 checks go silent (they took the `bm_centre ... eq {}` arm:
+  # SKIPPED, zero assertions, still green), item 10 built a second `ttk::treeview`
+  # in its own toplevel, filled it from `browserrows($token)` and clicked THAT.
+  # It was titled "NOT production" and item 11 was named as the thing that would
+  # delete it. This is that deletion.
   #
-  # THE PART OF ITEM 10 THAT DID NOT MOVE is what makes this fixture legitimate
-  # rather than a rewrite of the claims:
-  #   * `browser_menu_ids` takes a WIDGET and a PIXEL and asks it `identify row`
-  #     / `selection`. Widget-agnostic; item 10 did not touch it.
-  #   * `browser_menu_post` -> `ctx_menu_popup` only reads `winfo rootx/rooty $W`.
-  #   * `browser_menu_names` resolves ids through `browserrows($token)`, WHICH
-  #     STILL HOLDS THE FULL ROW LIST, LEAVES INCLUDED (spec R6) — browser_refresh
-  #     stores the PRE-projection list and browser_populate projects internally.
-  # So this tree is fed from that same `browserrows($token)` and every id and
-  # every text in it is byte-identical to what item 9 shipped. Every BM check
-  # keeps asserting exactly what it asserted before; only the widget the click
-  # lands in has moved.
+  # WHERE THE CLAIMS WENT, and the split is THREE-WAY rather than two:
   #
-  # ⚠ ROWS GO IN `-open 1` HERE, WHICH IS THE OPPOSITE OF PRODUCTION. A
-  # collapsed ancestor makes `$tv bbox` answer {} and the gesture skips again —
-  # the very failure this fixture exists to fix. Nothing in this band asserts
-  # the fixture's open state; R5/M11's collapsed-by-default is pinned on the
-  # REAL tree, in the panes file's BW40-BW53 band.
+  #   * SIGNAL gestures -> `$BMC`, THE REAL LOWER PANE. `browser_sea_menu_post`
+  #     is `browser_menu_post`'s twin over the canvas, and its menu carries the
+  #     same eight-entry table, so BM22-BM26 and BM28-BM34 assert exactly what
+  #     they asserted before. What MOVED is the currency: the tree's menu closes
+  #     over ROW IDS (`{s:v(out)}`), the sea's over FLOW INDICES (`0`), because
+  #     the sea has no row ids and inventing some would be a fiction.
+  #   * GROUP gestures -> `$BMRTV`, THE REAL TREE, which never needed a fixture:
+  #     item 10 removed only leaves, so `g:x1.x2` is still a real clickable row.
+  #     BM27 was on the throwaway purely because it sat inside the same guard.
+  #   * STRUCTURAL claims stay where item 10 put them (BM20, BM35, BM40, BM42).
   #
-  # ⚠ ITEM 11 DELETES THIS. When the sea of names exists, BM21-BM34's gestures
-  # re-point at it and this widget goes with them. Until then the band's claims
-  # about the MENU live here, and its claims about the real tree's STRUCTURE
-  # stay on $BMRTV / $BMVRTV (BM20, BM35, BM40, BM42).
-  proc bm_leaf_tree {top} {
-    catch {destroy $top}
-    toplevel $top
-    wm title $top {item10 throwaway leaf tree (NOT production - see BM20)}
-    # ⚠ THE HEIGHT IS A REQUEST, NOT A FACT, and no comment here may quote a row
-    # height: `Ase.Treeview` derives -rowheight from a font metric this file
-    # cannot predict. What makes the geometry ASSERTABLE instead of assumed is
-    # BM20's "the last row has a bbox" leg and BM21's own blank-space
-    # precondition — both go red with their own values if a WM shrinks this
-    # window.
-    wm geometry $top 320x560+40+560
-    # ⚠⚠ STYLE APPLIED **AFTER** CREATION, which is the repo's own idiom. The
-    # tempting shape — `if {[catch {ttk::treeview $w ... -style Ase.Treeview}]}
-    # {ttk::treeview $w ...}` — is a TRAP: a creation that fails after Tk has
-    # minted the window leaves the path taken, the retry throws `window name
-    # ".wvbmleaf.tv" already exists`, and an unguarded throw HERE lands in this
-    # file's outer catch and DELETES every remaining check.
-    ttk::treeview $top.tv -show tree -selectmode browse
-    catch {$top.tv configure -style Ase.Treeview}
-    # `-selectmode browse` DELIBERATELY MATCHES THE REAL TREE: BM26/BM29/BM33
-    # `selection set` THREE ids at once and rely on all three surviving, which
-    # is the same measured fact item 10's own browser_populate comment records
-    # (browse gates ttk's CLASS BINDINGS, not `selection set`).
-    pack $top.tv -side left -fill both -expand 1
-    update
-    bs_wait_mapped_top $top
-    bs_wait_mapped $top.tv
-    return $top.tv
+  # ⚠ THE ANTI-SKIP DISCIPLINE SURVIVES THE MOVE. Every gesture below still
+  # asserts its precondition as a VALUE first (`bm_sea_ready`, `bs_sea_xy`), so
+  # a band that goes quiet still has a red standing next to it naming the cell
+  # that was not drawn.
+
+  # Is the lower pane really drawn and clickable? AN ASSERTABLE STRING:
+  #   no-pane   the canvas is not there
+  #   unmapped  it is there but never mapped, so nothing has a bbox
+  #   empty     mapped and drawing nothing
+  #   ok:N      N cells really drawn
+  proc bm_sea_ready {c} {
+    if {[catch {winfo exists $c} e] || !$e} { return no-pane }
+    if {![bs_wait_mapped $c]} { return unmapped }
+    set l [bs_sea_labels $c]
+    if {$l eq {no-pane}} { return no-pane }
+    if {$l eq {empty}} { return empty }
+    return "ok:[llength $l]"
   }
-  # Fill it from browserrows($token) — the FULL list — parent before child
-  # (browser_rows emits in that order; the pre-item-10 browser_populate relied
-  # on exactly the same property). AN ASSERTABLE STRING, never a bare count:
-  #   no-tree   the widget is not there
-  #   no-rows   there is no row snapshot, or it is empty
-  #   ok:N      N rows really went in
-  # so "the fixture never filled" cannot masquerade as "the fixture filled and
-  # the ids are wrong".
-  proc bm_leaf_fill {tv token} {
-    if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
-    catch {$tv delete [$tv children {}]}
-    if {![info exists ::wviewer::browserrows($token)]} { return no-rows }
-    set rows $::wviewer::browserrows($token)
-    if {![llength $rows]} { return no-rows }
-    set n 0
-    foreach r $rows {
-      if {[catch {$tv insert [dict get $r parent] end -id [dict get $r id] \
-                    -text [dict get $r text] -open 1}]} { continue }
-      incr n
-    }
-    update
-    return "ok:$n"
+  # Centre of the cell at flow index `idx`, or {} — bm_centre's twin for the
+  # canvas, so the two panes' gesture code reads the same way.
+  proc bm_sea_centre {c idx} {
+    set p [bs_sea_xy $c $idx]
+    if {[llength $p] != 2} { return {} }
+    return $p
   }
   # a plot recorder that also keeps the DESTOVER argument, which is the only
   # thing that can see a one-shot override
@@ -2394,24 +2405,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   bs_wait_mapped .wvbm1.drw
 
   set BMF   .wvbm1.wvbrowser
-  # ⚠ TWO TREES FROM ITEM 10 ON, AND THE SPLIT IS THE WHOLE EDIT.
-  #   $BMRTV  the REAL sidebar tree. Item 10 made it NODE-ONLY, so it is what
-  #           BM20 reads ("production populated the node projection under the
-  #           design root") and what BM35 reads ("the production <Button-3>
-  #           binding is on the production widget, and the canvas is not in its
-  #           bindtag chain").
-  #   $BMTV   the THROWAWAY leaf tree (`bm_leaf_tree`, above). Every MENU
-  #           gesture targets a LEAF row id, and leaf rows live only here now.
+  # ⚠ TWO PANES AND TWO MENUS FROM ITEM 11 ON, AND THE SPLIT IS THE WHOLE EDIT.
+  #   $BMRTV  the REAL sidebar tree — NODE-ONLY since item 10. BM20 reads it
+  #           ("production populated the node projection under the design
+  #           root"), BM35 reads it ("the production <Button-3> binding is on
+  #           the production widget, and the canvas is not in its bindtag
+  #           chain"), and BM27 clicks a GROUP row in it.
+  #   $BMC    the REAL lower pane. Every SIGNAL gesture lands here, because
+  #           signals live here now.
+  #   $BMM    the TREE's context menu.   $BMSM  the SEA's — a DISTINCT widget,
+  #           and BM22b is the check that says so.
   # ⚠ BM35 STAYS ON $BMRTV FOR A SEMANTIC REASON, NOT A VACUITY ONE. Its leg 3
   # (`bind $w <Button-3>` mentions browser_menu_post) is TRUE OF EXACTLY ONE
-  # WIDGET, and its leg 2 is a claim about the PRODUCTION bindtag chain — on the
-  # throwaway it would read `.wvbmleaf.tv Treeview .wvbmleaf all` against an
-  # expected `... .wvbm1 all` and go RED, i.e. it would fail loudly while
-  # testing the wrong thing. Either way it must not follow the fixture.
+  # WIDGET, and its leg 2 is a claim about the PRODUCTION bindtag chain.
   set BMRTV $BMF.pw.tvf.tv
-  set BMTV  .wvbmleaf.tv
+  set BMC   $BMF.pw.sea.c
   set BMM   .wvbm1.wvbrowsermenu
   set BMS   $BMM.dest
+  set BMSM  .wvbm1.wvseamenu
+  set BMSS  $BMSM.dest
   pcall ::wviewer::browser_build wvbm .wvbm1
   bm_log_on
   pcall ::wviewer::browser_toggle 1 wvbm
@@ -2420,10 +2432,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::browser_refresh wvbm
   update
   bs_wait_mapped $BMRTV
-  # the throwaway is built AFTER the real refresh, because it is fed from the
-  # row snapshot that refresh leaves behind in browserrows(wvbm)
-  bm_leaf_tree .wvbmleaf
-  set bm_fill [bm_leaf_fill $BMTV wvbm]
+  bs_wait_mapped $BMC
+  bs_wait_sash $BMF.pw
+  # ⚠ THE SEA'S CONTENT IS A FUNCTION OF THE TREE'S SELECTION, so the fixture
+  # states which node it is standing on rather than inheriting whatever R4 left
+  # selected. The design root's OWN LEVEL is the five top-level names of $BTFIX,
+  # in raw order — which is where every `s:...` id this band used to name has
+  # gone: v(out) -> 0, v(out2) -> 1, i(v1) -> 2, net1 -> 3, vsweep -> 4.
+  pcall $BMRTV selection set [list {g:}]
+  update
+  set bm_fill [bm_sea_ready $BMC]
 
   check {BM20 the fixture really is a populated tree before any menu exists} \
     [list [winfo exists $BMRTV] [expr {[bt_tree $BMRTV] ne {empty}}]] [list 1 1]
@@ -2439,26 +2457,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BM20 ...and it is the NODE-ONLY tree (R1) under the design root (R2)} \
     [bt_tree $BMRTV] \
     [list {g:|design} {g:x1|x1} {g:x1.x2|x2} {g:x1.y3|y3}]
-  # ⚠⚠ THE ANTI-SKIP GUARD FOR THE WHOLE BAND. Everything from BM21 to BM34
-  # dies quietly — `SKIPPED`, zero assertions, a green file — if the throwaway
-  # is unmapped, unfilled, or too short to show its last row. Those are THREE
-  # different failures and they get three different values here, so a band that
-  # goes silent always has a RED check standing next to it saying which one.
-  check {BM20 (FIXTURE) the throwaway leaf tree is mapped, filled and shows its last row} \
-    [list [bs_wait_mapped $BMTV] $bm_fill \
-          [expr {[bm_centre $BMTV {s:vsweep}] ne {}}] \
-          [expr {[lsearch -exact [bs_tree_ids $BMTV] {s:v(out)}] >= 0}]] \
-    [list 1 ok:12 1 1]
-  # ...and the ids AND texts really are the FULL row list, leaves included (R6),
-  # so a fixture that quietly drifted from what BM21-BM34 assert is a RED here
-  # rather than a wrong-looking failure forty checks later. Eight leaves, three
-  # hierarchy nodes and the design root = the 12 of `ok:12` above, spelled out.
-  check {BM20 (FIXTURE) ...and its rows are the FULL row list, leaves included (R6)} \
-    [bt_tree $BMTV] \
-    [list {g:|design} {s:v(out)|v(out)} {s:v(out2)|v(out2)} {g:x1|x1} \
-          {g:x1.x2|x2} {s:v(x1.x2.net5)|net5} {s:i(x1.x2.net5)|net5} \
-          {g:x1.y3|y3} {s:v(x1.y3.net5)|net5} {s:i(v1)|i(v1)} \
-          {s:net1|net1} {s:vsweep|vsweep}]
+  # ⚠⚠ THE ANTI-SKIP GUARD FOR THE WHOLE BAND, kept through item 11's move.
+  # Everything from BM21 to BM34 dies quietly — `SKIPPED`, zero assertions, a
+  # green file — if the lower pane is missing, unmapped or drawing nothing.
+  # Those are THREE different failures and they get three different values here,
+  # so a band that goes silent always has a RED standing next to it saying which.
+  check {BM20 (FIXTURE) the lower pane is mapped, drawn and its last cell is
+         clickable} \
+    [list $bm_fill [expr {[bm_sea_centre $BMC 4] ne {}}] \
+          [expr {[bm_sea_centre $BMC 0] ne {}}]] \
+    [list ok:5 1 1]
+  # ...and the CELLS really are the design root's own level, by label AND by the
+  # full raw name behind each — so a fixture that quietly drifted from what
+  # BM21-BM34 assert is a RED here rather than a wrong-looking failure forty
+  # checks later. R8 renders `i(v1)` as `v1:i`, which no raw name contains.
+  check {BM20 (FIXTURE) ...and its cells are the design root's OWN LEVEL, five
+         of the eight, labels and raw names alike} \
+    [list [bs_sea_labels $BMC] [pcall ::wviewer::browser_sea_names wvbm]] \
+    [list {out out2 v1:i net1 vsweep} \
+          {v(out) v(out2) i(v1) net1 vsweep}]
+  # ...and the ROW MODEL still holds all twelve rows, leaves included (R6) —
+  # which is what the tree's own recursive plot gesture resolves through, and
+  # the reason taking leaves out of the TREE cost no plotting coverage.
+  check {BM20 (FIXTURE) ...while browserrows still holds the FULL twelve-row
+         list, leaves included (R6)} \
+    [list [llength $::wviewer::browserrows(wvbm)] \
+          [pcall ::wviewer::browser_menu_names wvbm [list {s:vsweep}]]] \
+    [list 12 {vsweep}]
   # ORACLE VALUE 1 of 4
   check {BM20 with no menu ever built the oracle says `absent`} \
     [bm_menu_state $BMM] absent
@@ -2474,53 +2499,68 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   destroy .wvbm1.__bmempty
 
   # --- BM21: the gate FAILS CLOSED -----------------------------------------
-  # ⚠ SAME COORDINATE REPAIR AS BT31, and for the same measured reason: the
-  # two-pane item 9 made the tree ONE PANE (144 px against ~220 px of rows on
-  # this fixture), so `[winfo height $BMTV] - 3` stopped being blank and this
-  # check went red reporting a POSTED MENU. The precondition is now asserted, so
-  # "nowhere blank to click" is a failure with its own value rather than a
-  # refusal that never happened.
-  # ⚠ AND NOW ONE ARGUMENT LIGHTER. The blank space is looked for in the
-  # THROWAWAY tree, which is not a pane of anything: passing `$BMF.pw` would let
-  # `bs_blank_y` drag the REAL sidebar's sash about in search of blank space in
-  # a widget that sash does not govern. `bs_blank_y`'s remaining escalation
-  # (collapse the top-level rows) works on `$tv` alone and needs no pane, and it
-  # restores what it collapsed through `bs_blank_undo` below.
-  set bm_bl [bs_blank_y $BMTV]
-  set bm_by [lindex $bm_bl 0]
-  check {BM21 (PRECONDITION) there really is blank tree space below the last row} \
-    [list [expr {$bm_by > 0}] [pcall $BMTV identify row 20 $bm_by]] {1 {}}
+  # ⚠ THE BLANK SPACE MOVED WITH THE SIGNALS. This used to hunt for a y below
+  # the last ROW of a tree; the lower pane is a canvas flowed column-major, so
+  # its blank space is the GUTTER TO THE RIGHT of the last column — and the
+  # miss is `browser_flow_hit`'s arithmetic -1 rather than `identify row`'s {}.
+  # That difference is the point of the arithmetic: `find closest`, which
+  # ::tk::IconList uses, ALWAYS returns something and would have posted a menu
+  # for the nearest neighbour instead of refusing.
+  #
+  # ⚠ THE PRECONDITION IS STILL ASSERTED AS A VALUE. "there was nowhere blank
+  # to click" and "the gate refused" are different facts, and a fixture whose
+  # five cells happened to fill the pane must red HERE rather than turn the
+  # refusal into a refusal that never happened.
+  set bm_bx [expr {[winfo width $BMC] - 2}]
+  set bm_by [expr {[winfo height $BMC] - 2}]
+  check {BM21 (PRECONDITION) the far corner of the pane really is past the last
+         cell — an arithmetic MISS, not a near neighbour} \
+    [list [expr {$bm_bx > 0}] \
+          [pcall ::wviewer::browser_sea_hit wvbm $BMC $bm_bx $bm_by]] {1 -1}
   set ::bm_popped {}
-  check {BM21 an RMB on BLANK tree space below the last row refuses} \
-    [pcall ::wviewer::browser_menu_post wvbm $BMTV 20 $bm_by 100 100] 0
+  check {BM21 an RMB on BLANK pane space past the last cell refuses} \
+    [pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_bx $bm_by 100 100] 0
   check {BM21 ...and posts NOTHING — still `absent`, never an empty menu} \
-    [list [bm_menu_state $BMM] $::bm_popped] [list absent {}]
-  bs_blank_undo [lindex $bm_bl 1]
+    [list [bm_menu_state $BMSM] $::bm_popped] [list absent {}]
+  check {BM21 (AND THE TREE'S OWN BLANK SPACE STILL REFUSES TOO) the upper pane
+         keeps its own fail-closed gate, on its own widget} \
+    [list [pcall ::wviewer::browser_menu_post wvbm $BMRTV 20 \
+             [expr {[winfo height $BMRTV] - 2}] 100 100] \
+          [bm_menu_state $BMM]] [list 0 absent]
 
-  # --- BM22: a post on a real leaf -----------------------------------------
-  set bm_c [bm_centre $BMTV {s:v(out)}]
+  # --- BM22: a post on a real SIGNAL, in the pane that now holds signals -----
+  set bm_c [bm_sea_centre $BMC 0]
   if {$bm_c eq {}} {
-    # ⚠ NEVER SILENT ANY MORE: BM20's two FIXTURE legs above assert this exact
-    # row's presence and clickability, so a skip here always arrives with a red.
-    puts "SKIPPED: BM22-BM34 (throwaway row s:v(out) never mapped)"
+    # ⚠ NEVER SILENT: BM20's three FIXTURE legs above assert this exact cell's
+    # presence and clickability, so a skip here always arrives with a red.
+    puts "SKIPPED: BM22-BM34 (sea cell 0 never drawn)"
   } else {
     set bm_x [lindex $bm_c 0] ; set bm_y [lindex $bm_c 1]
     set ::bm_popped {}
-    check {BM22 an RMB on a leaf row posts, and returns 1} \
-      [pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 771 553] 1
+    check {BM22 an RMB on a signal cell posts, and returns 1} \
+      [pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 771 553] 1
     # ORACLE VALUE 3 of 4
     check {BM22 the oracle now says `built:8` — present, eight entries, not mapped} \
-      [bm_menu_state $BMM] built:8
+      [bm_menu_state $BMSM] built:8
+    # ⚠ ITEM 11's OWN CLAIM, AND IT IS THE REASON THE TWO MENUS ARE TWO WIDGETS.
+    # `ctx_menu_widget` DESTROYS and re-mints the name it is handed, so a sea
+    # post through `wvbrowsermenu` would tear the tree's menu down mid-life and
+    # `ctx_menu_drop` on either name would take the other with it. The two panes
+    # hold two independent selections; one widget aliases them.
+    check {BM22b the sea's menu is a DISTINCT widget and the tree's is still
+           untouched — `absent`, not rebuilt under it} \
+      [list [expr {$BMSM ne $BMM}] [winfo exists $BMSM] [bm_menu_state $BMM]] \
+      [list 1 1 absent]
     # THE ROOT-COORD CONTRACT: tk_popup gets %X/%Y, never the widget pixels
-    check {BM22 tk_popup was handed the menu and the ROOT coords, not the tree pixels} \
-      $::bm_popped [list $BMM 771 553]
-    # ...and when the caller has no root coords they are DERIVED from the tree
+    check {BM22 tk_popup was handed the menu and the ROOT coords, not the pane pixels} \
+      $::bm_popped [list $BMSM 771 553]
+    # ...and when the caller has no root coords they are DERIVED from the pane
     set ::bm_popped {}
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y
-    check {BM22 with no root coords supplied they are derived from the tree's origin} \
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y
+    check {BM22 with no root coords supplied they are derived from the pane's origin} \
       $::bm_popped \
-      [list $BMM [expr {[winfo rootx $BMTV] + $bm_x}] \
-                 [expr {[winfo rooty $BMTV] + $bm_y}]]
+      [list $BMSM [expr {[winfo rootx $BMC] + $bm_x}] \
+                  [expr {[winfo rooty $BMC] + $bm_y}]]
 
     # --- BM23: the whole entry table, BY INDEX ------------------------------
     # ⚠ index 7 UPDATED BY ITEM 11, which consumes the reserved slot: with a
@@ -2530,7 +2570,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # dropped from coverage — BH41 pins it for a disagreeing multi-row target
     # (item 11's own file, test_wave_sigbrowser_i11.tcl — ruling 30).
     check {BM23 the menu is the exact eight-entry table, by index, types and states} \
-      [bm_entries $BMM] \
+      [bm_entries $BMSM] \
       [list {command|v(out)|disabled} \
             {separator||} \
             {command|Plot (Append)|normal} \
@@ -2539,29 +2579,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
             {command|Copy name|normal} \
             {separator||} \
             {command|Descend to here|normal}]
-    check {BM23 the header names the row the gate picked, and is the only greyed entry bar the last} \
-      [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 0 -state] \
-            [pcall $BMM entrycget 2 -state] [pcall $BMM entrycget 5 -state]] \
+    check {BM23 the header names the SIGNAL the gate picked, and is the only greyed entry bar the last} \
+      [list [pcall $BMSM entrycget 0 -label] [pcall $BMSM entrycget 0 -state] \
+            [pcall $BMSM entrycget 2 -state] [pcall $BMSM entrycget 5 -state]] \
       [list {v(out)} disabled normal normal]
 
     # --- BM24: the cascade --------------------------------------------------
+    # ⚠ THE CURRENCY MOVED AND THE CLAIM DID NOT. The tree's -commands close
+    # over ROW IDS; the sea has no row ids, so its close over FLOW INDICES. What
+    # is still asserted, and is the whole point of the check, is that every
+    # entry is FULLY RESOLVED — token, target AND code — so no entry can act on
+    # the previous click's target or on the window's policy by accident.
     check {BM24 the `Plot to` entry really is a cascade pointing at the submenu} \
-      [list [pcall $BMM type 3] [pcall $BMM entrycget 3 -menu]] [list cascade $BMS]
+      [list [pcall $BMSM type 3] [pcall $BMSM entrycget 3 -menu]] [list cascade $BMSS]
     check {BM24 the submenu carries the four destinations, in dest_labels order} \
-      [bm_entries $BMS] \
+      [bm_entries $BMSS] \
       [list {command|Append|normal} {command|Replace|normal} \
             {command|New Strip|normal} {command|New Tab|normal}]
-    check {BM24 every cascade -command is fully resolved: token, ids AND code} \
-      [list [pcall $BMS entrycget 0 -command] [pcall $BMS entrycget 1 -command] \
-            [pcall $BMS entrycget 2 -command] [pcall $BMS entrycget 3 -command]] \
-      [list [list wviewer::browser_plot_ids wvbm {s:v(out)} append] \
-            [list wviewer::browser_plot_ids wvbm {s:v(out)} replace] \
-            [list wviewer::browser_plot_ids wvbm {s:v(out)} newstrip] \
-            [list wviewer::browser_plot_ids wvbm {s:v(out)} newtab]]
+    check {BM24 every cascade -command is fully resolved: token, target AND code} \
+      [list [pcall $BMSS entrycget 0 -command] [pcall $BMSS entrycget 1 -command] \
+            [pcall $BMSS entrycget 2 -command] [pcall $BMSS entrycget 3 -command]] \
+      [list [list wviewer::browser_sea_plot_idx wvbm 0 append] \
+            [list wviewer::browser_sea_plot_idx wvbm 0 replace] \
+            [list wviewer::browser_sea_plot_idx wvbm 0 newstrip] \
+            [list wviewer::browser_sea_plot_idx wvbm 0 newtab]]
     # the TOP Plot entry passes NO override — it is the window's own policy
     check {BM24 the top Plot entry passes no override at all} \
-      [pcall $BMM entrycget 2 -command] \
-      [list wviewer::browser_plot_ids wvbm {s:v(out)}]
+      [pcall $BMSM entrycget 2 -command] \
+      [list wviewer::browser_sea_plot_idx wvbm 0]
 
     # --- BM25: the slot item 11 CONSUMED ------------------------------------
     # ⚠ REWRITTEN BY ITEM 11. It pinned the reservation (disabled, no -command);
@@ -2572,88 +2617,108 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # DISABLED state it used to pin is not lost: BH41 (in
     # test_wave_sigbrowser_i11.tcl, ruling 30) asserts it for a
     # disagreeing multi-row target, which is the only case that still greys it.
-    check {BM25 `Descend to here` is LAST and item 11 has made it LIVE on this click's ids} \
-      [list [pcall $BMM index end] [pcall $BMM entrycget 7 -label] \
-            [pcall $BMM entrycget 7 -state] [pcall $BMM entrycget 7 -command]] \
+    check {BM25 `Descend to here` is LAST and item 11 has made it LIVE on this click's target} \
+      [list [pcall $BMSM index end] [pcall $BMSM entrycget 7 -label] \
+            [pcall $BMSM entrycget 7 -state] [pcall $BMSM entrycget 7 -command]] \
       [list 7 {Descend to here} normal \
-            [list wviewer::browser_descend_to wvbm {s:v(out)}]]
+            [list wviewer::browser_sea_descend_to wvbm 0]]
 
-    # --- BM26: a multi-row target ------------------------------------------
-    pcall $BMTV selection set [list {s:v(out)} {s:net1} {s:vsweep}]
-    set bm_c2 [bm_centre $BMTV {s:net1}]
+    # --- BM26: a multi-cell target ------------------------------------------
+    pcall ::wviewer::browser_sea_select wvbm [list 0 3 4]
+    set bm_c2 [bm_sea_centre $BMC 3]
     if {$bm_c2 eq {}} {
-      puts "SKIPPED: BM26 (row s:net1 never mapped)"
+      puts "SKIPPED: BM26 (sea cell 3 never drawn)"
     } else {
-      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+      pcall ::wviewer::browser_sea_menu_post wvbm $BMC \
         [lindex $bm_c2 0] [lindex $bm_c2 1] 10 10
-      check {BM26 a 3-row target headers `3 signals` and offers `Copy names (3)`} \
-        [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 5 -label]] \
+      check {BM26 a 3-cell target headers `3 signals` and offers `Copy names (3)`} \
+        [list [pcall $BMSM entrycget 0 -label] [pcall $BMSM entrycget 5 -label]] \
         [list {3 signals} {Copy names (3)}]
-      check {BM26 ...and the entries act on all three ids, in row order} \
-        [pcall $BMM entrycget 2 -command] \
-        [list wviewer::browser_plot_ids wvbm {s:v(out) s:net1 s:vsweep}]
+      check {BM26 ...and the entries act on all three, in FLOW order} \
+        [pcall $BMSM entrycget 2 -command] \
+        [list wviewer::browser_sea_plot_idx wvbm {0 3 4}]
     }
 
     # --- BM27: the GROUP decision, made deliberately and stated -------------
     # RMB on a group DOES post and DOES act on its leaves — MMB's semantics,
     # not the double-click's refusal (item 9's D3 exists only to yield the
     # double-click to ttk's expand/collapse, and ttk owns no Button-3).
-    pcall $BMTV selection set {}
-    set bm_c3 [bm_centre $BMTV {g:x1.x2}]
+    #
+    # ⚠ THIS ONE IS ON THE REAL TREE, and item 11 is where it goes back to it.
+    # A group row is a TREE row; item 10 removed only leaves, so `g:x1.x2` was
+    # always still clickable there. It sat on the throwaway purely because it
+    # was inside the same guard, which is exactly the kind of drift a fixture
+    # invites.
+    pcall ::wviewer::browser_sea_select wvbm {}
+    pcall $BMRTV item {g:} -open 1
+    pcall $BMRTV item {g:x1} -open 1
+    update
+    set bm_c3 [bm_centre $BMRTV {g:x1.x2}]
     if {$bm_c3 eq {}} {
       puts "SKIPPED: BM27 (group row g:x1.x2 never mapped)"
     } else {
       check {BM27 an RMB on a GROUP posts (unlike the double-click, which refuses)} \
-        [pcall ::wviewer::browser_menu_post wvbm $BMTV \
+        [pcall ::wviewer::browser_menu_post wvbm $BMRTV \
            [lindex $bm_c3 0] [lindex $bm_c3 1] 10 10] 1
       check {BM27 ...and it acts on the group's leaves, headered as `2 signals`} \
         [list [pcall $BMM entrycget 0 -label] [pcall $BMM entrycget 2 -command]] \
         [list {2 signals} [list wviewer::browser_plot_ids wvbm {g:x1.x2}]]
+      check {BM27 (AND THE TWO MENUS DID NOT ALIAS) the sea's menu is still the
+             SEA's — its header still names a signal, not a group} \
+        [pcall $BMSM entrycget 0 -label] {3 signals}
     }
+    pcall ::wviewer::browser_menu_unpost wvbm
+    # the tree selection is what the sea is a function of — put it back on the
+    # design root, and re-assert that it really is (a silent change here would
+    # renumber every cell index below)
+    pcall $BMRTV selection set [list {g:}]
+    update
+    check {BM27 (RESTORED) the sea is back on the design root's own level} \
+      [bs_sea_labels $BMC] {out out2 v1:i net1 vsweep}
 
     # --- BM28: the RMB never mutates the selection --------------------------
-    pcall $BMTV selection set [list {s:net1}]
-    set bm_sel0 [pcall $BMTV selection]
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
-    check {BM28 an RMB on an UNSELECTED row leaves the selection untouched} \
-      [pcall $BMTV selection] $bm_sel0
-    set bm_c4 [bm_centre $BMTV {s:net1}]
+    pcall ::wviewer::browser_sea_select wvbm [list 3]
+    set bm_sel0 [pcall ::wviewer::browser_sea_selection wvbm]
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
+    check {BM28 an RMB on an UNSELECTED cell leaves the selection untouched} \
+      [pcall ::wviewer::browser_sea_selection wvbm] $bm_sel0
+    set bm_c4 [bm_sea_centre $BMC 3]
     if {$bm_c4 ne {}} {
-      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+      pcall ::wviewer::browser_sea_menu_post wvbm $BMC \
         [lindex $bm_c4 0] [lindex $bm_c4 1] 10 10
-      check {BM28 ...and on a SELECTED row it leaves it untouched too} \
-        [pcall $BMTV selection] $bm_sel0
+      check {BM28 ...and on a SELECTED cell it leaves it untouched too} \
+        [pcall ::wviewer::browser_sea_selection wvbm] $bm_sel0
     }
 
     # --- BM29: item 9's in/out-of-selection rule, on the gate ---------------
-    pcall $BMTV selection set [list {s:v(out)} {s:net1}]
-    check {BM29 an RMB on a row INSIDE the selection targets the whole selection} \
-      [pcall ::wviewer::browser_menu_ids wvbm $BMTV $bm_x $bm_y] \
-      {s:v(out) s:net1}
-    if {[bm_centre $BMTV {s:vsweep}] ne {}} {
-      set bm_c5 [bm_centre $BMTV {s:vsweep}]
-      check {BM29 ...and on a row OUTSIDE it targets that row alone} \
-        [pcall ::wviewer::browser_menu_ids wvbm $BMTV \
+    pcall ::wviewer::browser_sea_select wvbm [list 0 3]
+    check {BM29 an RMB on a cell INSIDE the selection targets the whole selection} \
+      [pcall ::wviewer::browser_sea_menu_ids wvbm $BMC $bm_x $bm_y] \
+      {0 3}
+    if {[bm_sea_centre $BMC 4] ne {}} {
+      set bm_c5 [bm_sea_centre $BMC 4]
+      check {BM29 ...and on a cell OUTSIDE it targets that cell alone} \
+        [pcall ::wviewer::browser_sea_menu_ids wvbm $BMC \
            [lindex $bm_c5 0] [lindex $bm_c5 1]] \
-        {s:vsweep}
+        {4}
     }
-    pcall $BMTV selection set {}
+    pcall ::wviewer::browser_sea_select wvbm {}
 
     # --- BM30: the Plot entry, on a recorder with both controls -------------
     bm_spy_on
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
     set ::bm_plot_calls {}
-    pcall $BMM invoke 2
+    pcall $BMSM invoke 2
     check {BM30 invoking `Plot` plots that row with NO override (the window's policy)} \
       $::bm_plot_calls [list [list wvbm {v(out)} {}]]
     # NEGATIVE CONTROL: a DISABLED entry records nothing...
     set ::bm_plot_calls {}
-    pcall $BMM invoke 0
-    pcall $BMM invoke 7
+    pcall $BMSM invoke 0
+    pcall $BMSM invoke 7
     check {BM30 invoking either DISABLED entry records nothing} $::bm_plot_calls {}
     # ...and the very next real invoke still records, so that zero is a rule
     set ::bm_plot_calls {}
-    pcall $BMM invoke 2
+    pcall $BMSM invoke 2
     check {BM30 ...and the next real invoke still records (the recorder is alive)} \
       $::bm_plot_calls [list [list wvbm {v(out)} {}]]
 
@@ -2666,7 +2731,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     bm_log_on
     set ::bm_plot_calls {}
     array unset ::wviewer::dest wvbm
-    pcall $BMS invoke 2
+    pcall $BMSS invoke 2
     check {BM31 `Plot to -> New Strip` passes newstrip as a ONE-SHOT override} \
       $::bm_plot_calls [list [list wvbm {v(out)} newstrip]]
     check {BM31 ...and the window's own destination is untouched, never even created} \
@@ -2680,7 +2745,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [lsearch -glob $::bm_log_calls {*set_plot_dest*}] -1
     # all four cascade entries, one after another, still leave the policy alone
     set ::bm_plot_calls {}
-    foreach bm_i {0 1 3} { pcall $BMS invoke $bm_i }
+    foreach bm_i {0 1 3} { pcall $BMSS invoke $bm_i }
     check {BM31 the other three cascade entries pass their own codes} \
       $::bm_plot_calls \
       [list [list wvbm {v(out)} append] [list wvbm {v(out)} replace] \
@@ -2693,14 +2758,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
     # --- BM32: the multi-plot Replace label, live ---------------------------
     set ::wviewer::mode(wvbm) single
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
-    set bm_lab_single [list [pcall $BMS entrycget 1 -label] \
-                            [pcall $BMM entrycget 2 -label]]
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
+    set bm_lab_single [list [pcall $BMSS entrycget 1 -label] \
+                            [pcall $BMSM entrycget 2 -label]]
     set ::wviewer::mode(wvbm) multi
     pcall ::wviewer::set_plot_dest replace wvbm
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
-    set bm_lab_multi [list [pcall $BMS entrycget 1 -label] \
-                           [pcall $BMM entrycget 2 -label]]
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
+    set bm_lab_multi [list [pcall $BMSS entrycget 1 -label] \
+                           [pcall $BMSM entrycget 2 -label]]
     check {BM32 under SINGLE both Replace surfaces read plainly} \
       $bm_lab_single [list Replace {Plot (Append)}]
     check {BM32 under MULTI both admit the declared limit, from the ONE shared proc} \
@@ -2709,28 +2774,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     array unset ::wviewer::mode wvbm
 
     # --- BM33: Copy really reaches the clipboard ----------------------------
-    pcall ::wviewer::browser_menu_post wvbm $BMTV $bm_x $bm_y 10 10
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
     catch {clipboard clear -displayof .wvbm1}
     catch {clipboard append -displayof .wvbm1 {__bm_sentinel__}}
     check {BM33 the sentinel proves the fixture can read its own clipboard} \
       [pcall clipboard get -displayof .wvbm1] {__bm_sentinel__}
-    pcall $BMM invoke 5
+    pcall $BMSM invoke 5
     check {BM33 `Copy name` puts the full raw name on the clipboard} \
       [pcall clipboard get -displayof .wvbm1] {v(out)}
     check {BM33 ...and it says so on the sidebar's status line} \
       [string match {*copied 1 name*} [pcall $BMF.ph cget -text]] 1
-    pcall $BMTV selection set [list {s:v(out)} {s:net1} {s:vsweep}]
-    if {[bm_centre $BMTV {s:net1}] ne {}} {
-      set bm_c6 [bm_centre $BMTV {s:net1}]
-      pcall ::wviewer::browser_menu_post wvbm $BMTV \
+    pcall ::wviewer::browser_sea_select wvbm [list 0 3 4]
+    if {[bm_sea_centre $BMC 3] ne {}} {
+      set bm_c6 [bm_sea_centre $BMC 3]
+      pcall ::wviewer::browser_sea_menu_post wvbm $BMC \
         [lindex $bm_c6 0] [lindex $bm_c6 1] 10 10
-      pcall $BMM invoke 5
+      pcall $BMSM invoke 5
       check {BM33 `Copy names (3)` joins the three names with newlines, in row order} \
         [pcall clipboard get -displayof .wvbm1] "v(out)\nnet1\nvsweep"
       check {BM33 ...and the status line pluralises} \
         [string match {*copied 3 names*} [pcall $BMF.ph cget -text]] 1
     }
-    pcall $BMTV selection set {}
+    pcall ::wviewer::browser_sea_select wvbm {}
     bm_spy_off
 
     # --- BM34: THE ONE REAL POPUP, and the fourth oracle value --------------
@@ -2743,25 +2808,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # from a KNOWN-CLEAN start: the previous legs left a BUILT menu lying about
     # (a build is not a post), and the sequence below is only a measurement if
     # its first value is `absent` for a reason rather than by luck
-    pcall ::wviewer::browser_menu_unpost wvbm
+    pcall ::wviewer::browser_sea_menu_unpost wvbm
     update
     set bm_seq {}
-    lappend bm_seq [bm_menu_state $BMM]
+    lappend bm_seq [bm_menu_state $BMSM]
     catch {
-      set bm_m [wviewer::browser_menu_build wvbm [list {s:v(out)}]]
-      lappend bm_seq [bm_menu_state $BMM]
-      tk_popup $bm_m [expr {[winfo rootx $BMTV] + 40}] \
-                     [expr {[winfo rooty $BMTV] + 40}]
+      set bm_m [wviewer::browser_sea_menu_build wvbm [list 0]]
+      lappend bm_seq [bm_menu_state $BMSM]
+      tk_popup $bm_m [expr {[winfo rootx $BMC] + 40}] \
+                     [expr {[winfo rooty $BMC] + 40}]
       update
-      lappend bm_seq [bm_menu_state $BMM]
+      lappend bm_seq [bm_menu_state $BMSM]
       $bm_m unpost
       update
-      lappend bm_seq [bm_menu_state $BMM]
+      lappend bm_seq [bm_menu_state $BMSM]
     }
-    set bm_un1 [pcall ::wviewer::browser_menu_unpost wvbm]
-    set bm_un2 [pcall ::wviewer::browser_menu_unpost wvbm]
+    set bm_un1 [pcall ::wviewer::browser_sea_menu_unpost wvbm]
+    set bm_un2 [pcall ::wviewer::browser_sea_menu_unpost wvbm]
     update
-    lappend bm_seq [bm_menu_state $BMM]
+    lappend bm_seq [bm_menu_state $BMSM]
     # ORACLE VALUE 4 of 4, and `dismissed` as the built:N that FOLLOWS it
     check {BM34 all four oracle values are observed for real: absent, built, posted, dismissed, absent} \
       $bm_seq [list absent built:8 posted:8 built:8 absent]
@@ -2794,23 +2859,37 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [expr {[string first {wviewer::browser_menu_post wvbm} [bind $BMRTV <Button-3>]] >= 0}] 1
 
   # --- BM36: teardown -------------------------------------------------------
+  # ⚠ THE PRE-STATE IS CAPTURED BEFORE `forget`, WHICH IS THE ONLY PLACE IT CAN
+  # BE: forget itself reaps both menus, so a capture taken after it would read
+  # 0/0 and the check below would pass on a band that never built anything.
+  # A menu is re-posted first so BOTH really exist at the moment of capture.
+  set bm_lastc [bm_sea_centre $BMC 0]
+  if {[llength $bm_lastc] == 2} {
+    pcall ::wviewer::browser_sea_menu_post wvbm $BMC \
+      [lindex $bm_lastc 0] [lindex $bm_lastc 1] 10 10
+  }
+  set bm_l_pre [list [winfo exists $BMSM] [winfo exists $BMC]]
   catch {wviewer::browser_menu_unpost wvbm}
   pcall ::wviewer::forget wvbm
   check {BM36 forget leaves no browser menu widget behind} \
     [list [winfo exists $BMM] [bm_menu_state $BMM]] [list 0 absent]
-  # ⚠ THE THROWAWAY IS ITS OWN TOPLEVEL, so `destroy .wvbm1` does not reap it.
-  # It is a separate toplevel on purpose: a child of `.wvbm1` would have to be
-  # packed into the sidebar/canvas row, which moves `browser_width`'s 0.45 cap,
-  # the canvas's <Configure> and BM35's `pack`-order world for no gain.
-  # ⚠⚠ AND THIS IS **NOT** `destroy; assert destroyed`, WHICH WOULD ASSERT ONLY
-  # THAT `destroy` DESTROYS — green forever, testing nothing. The pre-state is
-  # captured FIRST, so "the fixture died early" — the one failure that would
-  # explain a band of silent skips — is a named red rather than a tautology.
-  set bm_l_pre [winfo exists .wvbmleaf]
+  check {BM36 (ITEM 11) ...and it reaps the SEA's menu too — a distinct widget
+         needs its own unpost, and forget is where that is spelled} \
+    [list [winfo exists $BMSM] [bm_menu_state $BMSM]] [list 0 absent]
+  # ⚠⚠ AND THIS IS NOT `destroy; assert destroyed`, WHICH WOULD ASSERT ONLY THAT
+  # `destroy` DESTROYS — green forever, testing nothing. The pre-state was
+  # captured above, so "the sea menu was never built" — which would make the
+  # whole band vacuous — is a named red rather than a tautology that passes on
+  # an absent widget. (The throwaway leaf-tree leg that used to stand here died
+  # with the fixture: item 10 built `.wvbmleaf` and named item 11 as its
+  # deletion. The zero below is what says the deletion really happened.)
   destroy .wvbm1
-  catch {destroy .wvbmleaf}
-  check {BM36 the throwaway leaf tree lived through the band and did not outlive it} \
-    [list $bm_l_pre [winfo exists .wvbmleaf] [winfo exists $BMTV]] [list 1 0 0]
+  update
+  check {BM36 both menus and the lower pane are gone, both really existed
+         first, and no throwaway leaf tree exists anywhere any more} \
+    [list $bm_l_pre [winfo exists $BMSM] [winfo exists $BMC] \
+          [winfo exists .wvbmleaf]] \
+    [list {1 1} 0 0 0]
   rename ::tk_popup {}
   rename ::__bm_real_tk_popup ::tk_popup
   check {BM36 the real tk_popup is back in place} \
@@ -2843,18 +2922,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     #            <Button-3>, so it is the only one that can carry BM42's
     #            negative claim ("a real RMB reaches the canvas ZERO times").
     #            BM40, BM42 and BM46's re-post read it.
-    #   $BMVTV   the throwaway leaf tree, built at BM43 (AFTER BM41, so a newly
-    #            mapped toplevel cannot steal the focus BM41's positive control
-    #            is fighting for). Declared as a PATH here so BM47 can query it
-    #            even when the guard below skipped and it was never created.
+    #   $BMVC    the REAL lower pane. Every SIGNAL gesture lands here — item 11
+    #            deleted the throwaway leaf tree that stood in for it, along
+    #            with the `::bm_vleaf` sentinel that existed only to tell
+    #            "never built" from "built and reaped" for that fixture.
     set BMVRTV $BMVF.pw.tvf.tv
-    set BMVTV  .wvbmvleaf.tv
+    set BMVC   $BMVF.pw.sea.c
     set BMVM   $vtop3.wvbrowsermenu
     set BMVS   $BMVM.dest
-    # ⚠ BM47's teardown check needs to tell "never built because BM42 skipped"
-    # from "built and correctly reaped". `winfo exists` after a `destroy` cannot:
-    # both read 0. This sentinel is the third state.
-    set ::bm_vleaf never-built
+    set BMVSM  $vtop3.wvseamenu
+    set BMVSS  $BMVSM.dest
     proc bm_traces {token} {
       set n 0
       foreach G [dict get [wviewer::layout_for $token] graphs] {
@@ -2958,41 +3035,52 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
               [bm_menu_state $BMVM]] \
         [list 0 1 built:8]
 
-      # --- the THROWAWAY LEAF TREE for the real-viewer group ---------------
-      # ⚠ BUILT HERE, AFTER BM41, ON PURPOSE: a freshly mapped toplevel can take
-      # the focus BM41's positive control spends five retries fighting for.
-      # See BM20's comment for what this widget is and why it is legitimate;
-      # ITEM 11 re-points BM43/BM45 at the sea of names and deletes it.
-      bm_leaf_tree .wvbmvleaf
-      set ::bm_vleaf built
-      set bm_fillv [bm_leaf_fill $BMVTV $tok]
-      set bm_cl [bm_centre $BMVTV {s:v(out)}]
-      # FOUR values, so "unmapped", "unfilled", "row not drawn" and "the model
-      # no longer resolves the id" are four different reds and not one skip.
-      # ok:7 = 4 leaves + g:x1 + g:x1.x2 + the design root.
-      check {BM43 (FIXTURE) the throwaway holds the real raw's leaf rows, and they still resolve} \
-        [list [bs_wait_mapped $BMVTV] $bm_fillv [expr {$bm_cl ne {}}] \
-              [pcall ::wviewer::browser_menu_names $tok [list {s:v(out)}]]] \
-        [list 1 ok:7 1 {v(out)}]
+      # --- the REAL LOWER PANE for the real-viewer group -------------------
+      # ⚠ ITEM 11 DELETED THE THROWAWAY THAT STOOD HERE. `.wvbmvleaf` was item
+      # 10's stand-in for the leaf rows it had just removed from the tree; the
+      # sea of names is the real widget those rows became, and BM43/BM45 click
+      # it. The `::bm_vleaf` sentinel that told "never built" from "built and
+      # reaped" went with it — BM47 now asserts the SEA's lifecycle instead,
+      # which is a claim about production rather than about a fixture.
+      #
+      # ⚠ THE SELECTION IS STATED, NOT INHERITED. The pane is a function of the
+      # tree's selection; BM42's real RMB above does not change it, but saying
+      # so here is what keeps the cell indices below meaningful.
+      pcall $BMVRTV selection set [list {g:}]
+      update
+      set bm_fillv [bm_sea_ready $BMVC]
+      # ⚠ CELL **1**, MEASURED. `xschem raw new ... dc vsweep ...` writes the
+      # sweep variable FIRST, so the design root's own level is `{vsweep out}`
+      # in raw order (limit D7 — the pane preserves it and does not sort).
+      # Cell 1 is `v(out)`, which is what the legs below name.
+      set bm_cl [bm_sea_centre $BMVC 1]
+      # FOUR values, so "no pane", "unmapped", "nothing drawn" and "the model no
+      # longer resolves the name" are four different reds and not one skip.
+      # ok:2 = the real raw's design-root own level, `v(out)` and `vsweep`.
+      check {BM43 (FIXTURE) the real lower pane holds the real raw's own-level
+             signals, and they still resolve} \
+        [list $bm_fillv [expr {$bm_cl ne {}}] [bs_sea_labels $BMVC] \
+              [pcall ::wviewer::browser_sea_name $tok 1]] \
+        [list ok:2 1 {vsweep out} {v(out)}]
       if {$bm_cl eq {}} {
-       puts "SKIPPED: BM43-BM45 (throwaway row s:v(out) never mapped)"
+       puts "SKIPPED: BM43-BM45 (sea cell 1 never drawn)"
       } else {
       # --- BM43: the real header, and a real trace -------------------------
-      # ⚠ DELIVERY RESTATED, CLAIM UNCHANGED. The row lives in the throwaway
-      # now, which carries no <Button-3>, so the menu is posted by CALLING
-      # `browser_menu_post` with exactly the widget/x/y the binding forwards as
-      # `%W %x %y`. The real-event route is NOT dropped from coverage: BM42
-      # above IS that claim, with BM41 as its positive control.
-      # ⚠ AND THE TARGET CANNOT BE A NODE ROW: both legs below are leaf-specific
-      # (browser_menu_build headers `N signals` and plots N traces for n>1), so
+      # ⚠ DELIVERY RESTATED, CLAIM UNCHANGED. The menu is posted by CALLING
+      # `browser_sea_menu_post` with exactly the widget/x/y the canvas binding
+      # forwards as `%W %x %y`. The real-event route is NOT dropped from
+      # coverage: BM42 above IS that claim on the tree, with BM41 as its
+      # positive control, and BT43's sea legs drive real Tk events on this pane.
+      # ⚠ AND THE TARGET CANNOT BE A NODE ROW: both legs below are signal-
+      # specific (the menu headers `N signals` and plots N traces for n>1), so
       # re-aiming them would replace the claim instead of preserving it.
-      pcall ::wviewer::browser_menu_post $tok $BMVTV \
+      pcall ::wviewer::browser_sea_menu_post $tok $BMVC \
         [lindex $bm_cl 0] [lindex $bm_cl 1] 10 10
       update
       check {BM43 the real menu's header is the real raw name from `xschem raw list`} \
-        [pcall $BMVM entrycget 0 -label] {v(out)}
+        [pcall $BMVSM entrycget 0 -label] {v(out)}
       set bm_n0 [bm_traces $tok]
-      pcall $BMVM invoke 2
+      pcall $BMVSM invoke 2
       update
       check_true {BM43 ...and invoking its Plot entry added a REAL trace} \
         [expr {[bm_traces $tok] == $bm_n0 + 1}]
@@ -3030,39 +3118,49 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
       # --- BM45: Send to Add Trace -----------------------------------------
       # ⚠ TWO PRECONDITIONS, NOT ONE, and the second is the interesting one:
-      # the throwaway was filled BEFORE BM44's New Tab, so "the row is drawn"
-      # and "the row still resolves through browserrows" are separate facts and
-      # get separate values. An empty prefill can then never be blamed on the
-      # wrong half.
-      set bm_c7 [bm_centre $BMVTV {s:i(x1.x2.net5)}]
-      check {BM45 (PRECONDITION) the row is drawn in the throwaway AND still resolves in the model} \
-        [list [expr {$bm_c7 ne {}}] \
-              [pcall ::wviewer::browser_menu_names $tok [list {s:i(x1.x2.net5)}]]] \
-        [list 1 {i(x1.x2.net5)}]
+      # the pane was drawn BEFORE BM44's New Tab, so "the cell is drawn" and
+      # "the name still resolves through the pane's own pair list" are separate
+      # facts and get separate values. An empty prefill can then never be blamed
+      # on the wrong half.
+      #
+      # ⚠ THE TARGET IS A DESCENDED NODE, which is what makes this a real
+      # navigation: `i(x1.x2.net5)` is not at the design root, so the tree
+      # selection moves to `g:x1.x2` and the pane re-flows to that level's two
+      # signals — R8's `net5` / `net5:i` pair, the one place in this fixture
+      # where two names render to two DIFFERENT labels off the same net.
+      pcall $BMVRTV selection set [list {g:x1.x2}]
+      update
+      set bm_c7 [bm_sea_centre $BMVC 1]
+      check {BM45 (PRECONDITION) the cell is drawn in the real pane AND still
+             resolves to its full raw name} \
+        [list [expr {$bm_c7 ne {}}] [bs_sea_labels $BMVC] \
+              [pcall ::wviewer::browser_sea_name $tok 1]] \
+        [list 1 {net5 net5:i} {i(x1.x2.net5)}]
       if {$bm_c7 eq {}} {
-        puts "SKIPPED: BM45 (throwaway row s:i(x1.x2.net5) never mapped)"
+        puts "SKIPPED: BM45 (sea cell 1 of g:x1.x2 never drawn)"
       } else {
         catch {destroy $vtop3.wvadd}
-        pcall ::wviewer::browser_menu_post $tok $BMVTV \
+        pcall ::wviewer::browser_sea_menu_post $tok $BMVC \
           [lindex $bm_c7 0] [lindex $bm_c7 1] 10 10
         update
-        pcall $BMVM invoke 4
+        pcall $BMVSM invoke 4
         update
         check {BM45 `Send to Add Trace...` opens the dialog with the EXACT raw name prefilled} \
           [list [winfo exists $vtop3.wvadd] [pcall $vtop3.wvadd.expr get]] \
           [list 1 {i(x1.x2.net5)}]
         # ⚠ DECLARED LIMIT, ASSERTED AS A LIMIT: the Expression entry holds ONE
-        # expression, so a multi-row target prefills the FIRST name only. A
+        # expression, so a multi-cell target prefills the FIRST name only. A
         # batch goes through the dialog's own multi-select listbox (item 6).
-        pcall $BMVTV selection set [list {s:v(out)} {s:i(x1.x2.net5)}]
+        pcall ::wviewer::browser_sea_select $tok [list 0 1]
         catch {destroy $vtop3.wvadd}
-        pcall ::wviewer::browser_send_to_add_trace $tok \
-          [list {s:v(out)} {s:i(x1.x2.net5)}]
+        pcall ::wviewer::browser_sea_send_to_add_trace $tok [list 0 1]
         update
-        check {BM45 with a MULTI-row target only the FIRST name is prefilled (declared limit)} \
+        check {BM45 with a MULTI-cell target only the FIRST name is prefilled (declared limit)} \
           [list [winfo exists $vtop3.wvadd] [pcall $vtop3.wvadd.expr get]] \
-          [list 1 {v(out)}]
-        pcall $BMVTV selection set {}
+          [list 1 {v(x1.x2.net5)}]
+        pcall ::wviewer::browser_sea_select $tok {}
+        pcall $BMVRTV selection set [list {g:}]
+        update
         catch {destroy $vtop3.wvadd}
       }
       }
@@ -3101,21 +3199,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # --- BM47: close ---------------------------------------------------------
     rename ::wviewer::btn3_filter {}
     rename ::wviewer::__bm_real_btn3 ::wviewer::btn3_filter
-    # ⚠ THE THROWAWAY IS ITS OWN TOPLEVEL and `wviewer::close` does not reap it.
-    # ⚠⚠ AND THIS IS NOT `destroy; assert destroyed`. `winfo exists` after a
-    # `destroy` reads 0 for "reaped" AND for "never built", so a BM42 skip would
-    # have made this pass while asserting nothing. THREE states, three values:
-    # `$::bm_vleaf` says whether BM43's arm ever built it, `$bm_vl_pre` says it
-    # was still alive at teardown, and the two zeros say it is gone. A BM42 skip
-    # now reds HERE too, naming the fixture that never existed.
-    set bm_vl_pre [winfo exists .wvbmvleaf]
-    catch {destroy .wvbmvleaf}
-    check {BM47 the throwaway leaf tree was built for BM43-BM45, lived, and did not outlive the group} \
-      [list $::bm_vleaf $bm_vl_pre [winfo exists .wvbmvleaf] [winfo exists $BMVTV]] \
-      [list built 1 0 0]
+    # ⚠⚠ NOT `destroy; assert destroyed`. `winfo exists` after a teardown reads 0
+    # for "reaped" AND for "never built", so a BM42 skip would make a bare
+    # after-check pass while asserting nothing. The PRE-state is captured first
+    # and the pane's own drawn state with it, so a group that never ran reds
+    # HERE too, naming what was missing.
+    #
+    # ⚠ ITEM 11: the fixture whose lifecycle this used to assert (`.wvbmvleaf`,
+    # with its `::bm_vleaf` never-built/built sentinel) is DELETED. The claim
+    # moved to production — the real lower pane and the real sea menu — which is
+    # a stronger place for it: a throwaway outliving its band was a test-hygiene
+    # bug, a production pane outliving its window is a leak.
+    set bm_vl_pre [list [bm_sea_ready $BMVC] [winfo exists $BMVC]]
+    check {BM47 (PRECONDITION) the real lower pane was alive and drawn right up
+           to the close, and no throwaway leaf tree exists anywhere} \
+      [list $bm_vl_pre [winfo exists .wvbmvleaf]] [list {ok:2 1} 0]
     check {BM47 closing the viewer returns 1} [pcall ::wviewer::close $tok] 1
     check {BM47 ...and no browser menu survived the close} \
       [list [winfo exists $BMVM] [bm_menu_state $BMVM]] [list 0 absent]
+    check {BM47 (ITEM 11) ...nor the SEA's menu, nor the lower pane itself} \
+      [list [winfo exists $BMVSM] [bm_menu_state $BMVSM] [winfo exists $BMVC]] \
+      [list 0 absent 0]
     rename ::tk_popup {}
     rename ::__bm_real_tk_popup ::tk_popup
     check {BM47 the real btn3_filter and tk_popup are both back} \

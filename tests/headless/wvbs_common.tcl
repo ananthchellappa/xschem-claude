@@ -345,6 +345,132 @@ proc bs_type {bar text} {
   return $v
 }
 
+# --- THE SEA OF NAMES (two-pane item 11) --------------------------------------
+# ⚠ THREE DISTINCT SHAPES, for spec §13.2's reason and for one more that is
+# specific to this pane: 12 of tb_bandgap's 44 kept nodes are PURE ANCESTORS and
+# render legitimately EMPTY, so "nothing is drawn" is a correct answer here far
+# more often than it is anywhere else in the browser. A count or a boolean would
+# make it indistinguishable from "the canvas was never built" and from "the
+# filter correctly left nothing".
+#   no-pane   the canvas does not exist
+#   empty     it exists and NOTHING is drawn
+#   <labels>  the rendered labels, IN FLOW ORDER
+#
+# ⚠ ORDER COMES FROM THE `n<idx>` TAG, NOT FROM `find withtag`'s return order.
+# Canvas display order is creation order today, but it is changed by `raise`,
+# `lower` and by any future re-draw that touches selected cells first — and a
+# helper that silently reported a different order would make BQ50's "exact
+# ordered list" pass on a scrambled pane.
+proc bs_sea_labels {c} {
+  if {[catch {winfo exists $c} e] || !$e} { return no-pane }
+  set ids {}
+  if {[catch {$c find withtag cell} ids]} { return no-pane }
+  if {![llength $ids]} { return empty }
+  set pairs {}
+  foreach it $ids {
+    set k -1
+    foreach t [$c gettags $it] {
+      if {[regexp {^n([0-9]+)$} $t - k]} { break }
+    }
+    set tx {}
+    catch {set tx [$c itemcget $it -text]}
+    lappend pairs [list $k $tx]
+  }
+  set out {}
+  foreach p [lsort -integer -index 0 $pairs] { lappend out [lindex $p 1] }
+  return $out
+}
+
+# Select tree row `id` and answer what the sea then draws. ONE helper rather
+# than a `begin {...}`: it does one thing and answers a VALUE, and both the sea
+# file and the panes file drive the two panes through it, so "selecting a node
+# fills the pane" cannot be spelled two slightly different ways.
+proc bs_sea_at {tv c id} {
+  if {[catch {$tv selection set [list $id]}]} { return no-tree }
+  update
+  return [bs_sea_labels $c]
+}
+
+# The canvas item drawn for flow index `idx`, or {}. It insists on the `cell`
+# tag as well, so a selection rectangle can never be mistaken for a name.
+proc bs_sea_item {c idx} {
+  if {[catch {$c find withtag n$idx} ids]} { return {} }
+  foreach it $ids {
+    if {[catch {$c gettags $it} tg]} { continue }
+    if {[lsearch -exact $tg cell] >= 0} { return $it }
+  }
+  return {}
+}
+
+# WIDGET coordinates of a drawn cell's centre — `absent` / `nobbox` / {x y}.
+#
+# ⚠⚠ DERIVED FROM THE ITEM'S OWN bbox, NEVER FROM browser_flow_cell. A gesture
+# test that computed its click point with the arithmetic under test would click
+# wherever that arithmetic said, hit whatever that arithmetic said, and stay
+# green through any consistent error in it. Reading the pixels Tk actually drew
+# is what makes the click independent evidence.
+proc bs_sea_xy {c idx} {
+  set it [bs_sea_item $c $idx]
+  if {$it eq {}} { return absent }
+  if {[catch {$c bbox $it} bb] || [llength $bb] != 4} { return nobbox }
+  set cx [expr {([lindex $bb 0] + [lindex $bb 2]) / 2}]
+  set cy [expr {([lindex $bb 1] + [lindex $bb 3]) / 2}]
+  set ox 0 ; set oy 0
+  catch {set ox [$c canvasx 0]}
+  catch {set oy [$c canvasy 0]}
+  return [list [expr {int($cx - $ox)}] [expr {int($cy - $oy)}]]
+}
+
+# One event on the cell at flow index `idx`. Answers `absent`/`nobbox`/`ok`, so
+# "the cell was not drawn" cannot masquerade as "the binding did nothing".
+#
+# ⚠ NO FOCUS LOOP, and that is not an oversight: Tk routes BUTTON events by
+# POINTER POSITION (the window named in `event generate`), not by focus. Only
+# KEY events need the loop `bs_type` carries.
+#
+# ⚠⚠ `-time` IS MANDATORY AND IT IS NOT A DELAY. MEASURED: `event generate`
+# leaves the event's TIME FIELD AT ZERO unless it is given one, so EVERY
+# synthesised press carries timestamp 0 — and Tk's double-click detector
+# (tkBind.c, same position within 500 ms) sees a delta of 0 between any two
+# presses at one spot and matches the SECOND one as a `<Double-Button-1>`.
+# Two Ctrl-clicks on one cell therefore toggled ONCE and then PLOTTED, and no
+# amount of `after` between them helped, because wall-clock time is not what Tk
+# compares. A strictly increasing stamp is what makes each click its own click.
+proc bs_sea_click {c idx {ev <Button-1>}} {
+  set p [bs_sea_xy $c $idx]
+  if {[llength $p] != 2} { return $p }
+  if {![info exists ::bs_sea_t]} { set ::bs_sea_t 100000 }
+  incr ::bs_sea_t 1000
+  if {[catch {event generate $c $ev -x [lindex $p 0] -y [lindex $p 1] \
+                -time $::bs_sea_t}]} {
+    return nogen
+  }
+  update
+  return ok
+}
+
+# ⚠ `event generate <Double-Button-1>` IS ILLEGAL (Tk: "Double, Triple, or
+# Quadruple modifier not allowed"). A double-click is a PATTERN Tk recognises in
+# the press/release stream, so it has to be replayed as one — bt_dclick's rule,
+# one pane over.
+#
+# ⚠ ALL FOUR EVENTS SHARE ONE `-time`, which is the OPPOSITE of bs_sea_click's
+# rule and for the same reason: here a zero delta is what MAKES the double.
+proc bs_sea_dclick {c idx} {
+  set p [bs_sea_xy $c $idx]
+  if {[llength $p] != 2} { return $p }
+  set x [lindex $p 0] ; set y [lindex $p 1]
+  if {![info exists ::bs_sea_t]} { set ::bs_sea_t 100000 }
+  incr ::bs_sea_t 1000
+  foreach ev {<ButtonPress-1> <ButtonRelease-1> <ButtonPress-1> <ButtonRelease-1>} {
+    if {[catch {event generate $c $ev -x $x -y $y -time $::bs_sea_t}]} {
+      return nogen
+    }
+  }
+  update
+  return ok
+}
+
 # --- BLANK TREE SPACE, WHICH STOPPED BEING FREE (two-pane item 9) ------------
 # ⚠⚠ WHY THIS EXISTS. Two checks — BT31's "a middle-click below the last row
 # plots nothing" and BM21's "an RMB on BLANK tree space refuses" — spelled the

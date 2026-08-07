@@ -451,9 +451,16 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
 
 # --- GH8/GH9 — the SIGNAL BROWSER's own widget gestures (item 16) -------------
 # The direct analogue of GH1/GH2 one layer over. The §9.1 table documents the
-# `bind WaveViewer` defaults; the browser's six gestures are bound on the
-# SIDEBAR's widgets inside `browser_build` and are NOT on that tag, so they need
-# their own attribute and their own pair of legs.
+# `bind WaveViewer` defaults; the browser's gestures are bound on the SIDEBAR's
+# widgets inside `browser_build` and are NOT on that tag, so they need their own
+# attribute and their own pair of legs.
+#
+# ⚠ THE COUNT IS A LEDGER AND IT HAS MOVED TWICE. Item 16 shipped six; two-pane
+# item 10 added the tree's <<TreeviewSelect>> (seven); two-pane item 11 adds the
+# LOWER pane's seven canvas gestures (fourteen). Bump this literal in the SAME
+# commit as the binds and the guide rows, never separately -- GH9 compares the
+# two directions against each other and would stay green on a half-done edit if
+# both sides moved together but the ledger below did not.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
 # whole reason GH0's `== 16` above still holds: `data-bseq="` does not contain
@@ -470,14 +477,14 @@ foreach {gh_all gh_v} [regexp -all -inline {data-bseq="([^"]+)"} $gsrc] {
 # per-row leg below is vacuously green on a guide whose attributes were stripped
 # or whose table was deleted outright. It also distinguishes "one row was
 # removed" (5) from "nothing parsed" (0).
-check "GH8 the guide's browser table carries the seven browser gestures" \
-  [llength $gh_bseqs] 7
+check "GH8 the guide's browser table carries the fourteen browser gestures" \
+  [llength $gh_bseqs] 14
 foreach gh_v $gh_bseqs {                                  ;# doc -> source
   check_true "GH8 the guide's browser bind \$f.$gh_v really is in browser_build" \
     [expr {[string first "bind \$f.$gh_v" $gh_bb] >= 0}]
 }
-# THE OTHER DIRECTION. Count only the first line of each bind STATEMENT — three
-# of the six are `\`-continued, and the bodies mention the same widgets.
+# THE OTHER DIRECTION. Count only the first line of each bind STATEMENT — most
+# of them are `\`-continued, and the bodies mention the same widgets.
 set gh_nbb 0
 foreach gh_line [split $gh_bb "\n"] {
   if {[regexp {^\s*bind \$f\.} $gh_line]} { incr gh_nbb }

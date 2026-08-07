@@ -325,11 +325,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # R3: horizontal only. A vertical scrollbar here would be a design change, not
   # an oversight — the sea flows column-major, so nothing is ever below the fold.
-  check {BW23 (R3) the sea has a HORIZONTAL scrollbar and NO vertical one} \
+  #
+  # ⚠ THE CHILD SET GREW IN TWO-PANE ITEM 11, AND IT IS RESTATED RATHER THAN
+  # RELAXED. `$f.pw.sea.st` is spec §7.2's caption — the line that says whether
+  # an empty pane means "this instance has no signals of its own", "the
+  # Search/Filter bar is hiding them" or "device internals are hidden". It sits
+  # HERE, under the list it describes, instead of on the sidebar's `.ph` status
+  # line, because a dozen checks across four files assert `.ph`'s text BYTE-
+  # IDENTICALLY as "Signal Browser\n<msg>" (BD52, BX37, BX42, BX44-BX46, BH50,
+  # BH51, BH54) and `.ph` is about the WHOLE inventory, not the selected node.
+  # The pinned set stays a pinned set — it is now three, not "at least two".
+  check {BW23 (R3) the sea has a HORIZONTAL scrollbar, NO vertical one, and
+         item 11's caption} \
     [list [lsort [pcall winfo children $F.pw.sea]] [pcall $F.pw.sea.hsb cget -orient] \
           [pcall $F.pw.sea.c cget -yscrollcommand] \
-          [bs_set [pcall $F.pw.sea.c cget -xscrollcommand]]] \
-    [list [lsort [list $F.pw.sea.c $F.pw.sea.hsb]] horizontal {} 1]
+          [bs_set [pcall $F.pw.sea.c cget -xscrollcommand]] \
+          [pcall winfo class $F.pw.sea.st]] \
+    [list [lsort [list $F.pw.sea.c $F.pw.sea.hsb $F.pw.sea.st]] horizontal {} 1 Label]
 
   # R11: two boxes, TWO DIFFERENT DEFAULTS. A check that asserted "both 0" or
   # "both 1" would be green on a copy-paste of one line.
@@ -438,8 +450,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BW34 (item 10) the tree is filled with NODES and the design root} \
     [list [expr {[bs_set $bw_ids] && [llength $bw_ids] > 0}] \
           [pcall $TV exists {g:x1}] [pcall $TV exists {g:}]] {1 1 1}
-  check {BW35 ...and the sea is still EMPTY — item 11 fills it, not item 9/10} \
-    [llength [pcall $F.pw.sea.c find all]] 0
+  # ⚠ ITEM 11 FILLED THE SEA, so "the canvas is empty" stopped being true — and
+  # the restatement is a STRONGER claim, not a weaker one. R4 keeps exactly one
+  # node selected, so on this three-signal fixture the design root is selected
+  # and its OWN LEVEL is the single top-level signal `v(out)`. That is one cell,
+  # labelled `out`, and it is what proves the two panes are wired to each other
+  # from the pane that owns the skeleton.
+  check {BW35 (item 11) ...and the sea now draws the SELECTED NODE's own level:
+         the design root is selected, so its one top-level signal is the one
+         cell, by its R8 label} \
+    [list [pcall $TV selection] [bs_sea_labels $F.pw.sea.c] \
+          [pcall ::wviewer::browser_sea_names $tok]] \
+    [list {g:} {out} {v(out)}]
+  check {BW35 (item 11) ...and a DESCENDED node shows ITS own level instead,
+         while the PURE ANCESTOR between them renders legitimately EMPTY —
+         which is what makes the pane a function of the selection} \
+    [list [bs_sea_at $TV $F.pw.sea.c {g:x1.x2}] \
+          [bs_sea_at $TV $F.pw.sea.c {g:x1}] \
+          [bs_sea_at $TV $F.pw.sea.c {g:}]] \
+    [list {net5} empty {out}]
 
   # ==========================================================================
   # BW40-BW53 — TWO-PANE ITEM 10: THE UPPER PANE GOES LIVE
