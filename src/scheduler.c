@@ -41,6 +41,22 @@ void statusmsg(char str[],int n)
       my_strcat(_ALLOC_ID_, &xctx->infowindow_text, str);
     }
   }
+  /* THE HOLD, issue 0238: an ordinary status line does not overwrite a message the user has been
+   * given time to read; it is dropped. The rule lives HERE, at the single writer, rather than at
+   * the readers, because the field has more clobberers than the coordinate readout the issue was
+   * filed against: place_symbol() SELECTS the preview instance it just placed, and select.c's
+   * "n=%4d x = ... w = ... h = ..." info line (select.c:1197 and its five siblings) then lands
+   * one call after the gate message on every placement verb -- measured, and invisible in the same
+   * way. Writer-side also means a reader added later cannot reintroduce the bug.
+   * A hold is ended by statusmsg_hold() itself (newer news wins), by any ButtonPress
+   * (statusmsg_hold_clear(), so the live w=/h= move feedback comes straight back) and by its own
+   * deadline. Checked BEFORE the !has_x return so headless behaviour matches the GUI exactly --
+   * `xschem get statusmsg_hold` is this fix's only headless seam. */
+  if(n != 2 && n != 3 && statusmsg_held()) return;
+  /* record what a user would now be reading, before the !has_x return: the status bar is a Tk
+   * label that does not exist headlessly, so this copy is the only way a test can assert WHICH
+   * message won the field (issue 0238) */
+  if(xctx && n != 2 && n != 3) my_strncpy(xctx->statusmsg_text, str, S(xctx->statusmsg_text));
   if(!has_x) return;
   if(n == 2 || n == 3) {
     dbg(3, "statusmsg(): n = 2, str = %s\n", str);
@@ -51,6 +67,54 @@ void statusmsg(char str[],int n)
   }
 }
 
+/* Issue 0238. How long a held message owns `.statusbar.1`. A COUNT of motion events (the fix
+ * option the issue recommends) does not work: X streams motion at ~100 events/s while the hand is
+ * moving, so any count small enough to feel responsive expires in milliseconds -- exactly the
+ * failure being fixed. Wall clock is what "long enough to read" means. */
+#define STATUSMSG_HOLD_MS 5000.0
+
+/* statusmsg() for a line the user must be able to READ: every modal-gesture gate message and every
+ * verb-noun prompt (issue 0238). The status bar's wide field has writers with opposite needs --
+ * these messages, and the live `mouse = x y - selected: N w= h=` readout the motion / press /
+ * release handlers refresh (three sites in callback.c). The readout wins by sheer frequency: it is
+ * guarded by `if(xctx->ui_state)` plus an 8-pixel threshold, and ui_state is non-zero for precisely
+ * the reason a gate message exists, so the first flick of the mouse after the keystroke destroyed
+ * it. Every "<verb>: in-progress wire abandoned" line shipped since 2026-08-06 was therefore
+ * invisible in practice (user report, 2026-08-07).
+ * The suppression itself lives in statusmsg() (see the note there), so no reader needs to know
+ * about the hold. A held line is still replaced IMMEDIATELY by the next HELD line (a second gate
+ * message is newer news) and released by the next ButtonPress.
+ * Armed even when !has_x: statusmsg() itself no-ops without a display, but the flag is the only
+ * headless seam this fix has (`xschem get statusmsg_hold`, section H of
+ * tests/headless/test_placement_wire_gate.tcl). */
+void statusmsg_hold(char str[], int n)
+{
+  statusmsg_hold_clear();   /* a newer gate/prompt line replaces the one being held */
+  statusmsg(str, n);
+  if(xctx && n != 2 && n != 3) xctx->statusmsg_hold_ms = net_hilight_now_ms() + STATUSMSG_HOLD_MS;
+}
+
+/* 1 while a held message must be left alone. Self-expiring: the deadline is checked, never
+ * decremented by an event, so a user who stops moving the mouse still loses the line on schedule
+ * rather than keeping it forever. */
+int statusmsg_held(void)
+{
+  if(!xctx || xctx->statusmsg_hold_ms == 0.0) return 0;
+  if(net_hilight_now_ms() >= xctx->statusmsg_hold_ms) {
+    xctx->statusmsg_hold_ms = 0.0;
+    return 0;
+  }
+  return 1;
+}
+
+/* Release the hold early. Called on ButtonPress: a click is the user acting on what they just
+ * read, so the coordinate readout (the live w=/h= size feedback during a move -- 0238 landmine 1)
+ * must come back on the very next motion instead of waiting out the deadline. */
+void statusmsg_hold_clear(void)
+{
+  if(xctx) xctx->statusmsg_hold_ms = 0.0;
+}
+
 /* A modal PLACEMENT and a wire/line draw cannot usefully coexist: end_place_move_copy_zoom()
  * tests STARTWIRE (callback.c:2872) BEFORE the placement arm (:2927), and under
  * `persistent_command` the press handler (callback.c:7843) seizes the click one step earlier
@@ -59,20 +123,33 @@ void statusmsg(char str[],int n)
  * draws wire while the preview rides the cursor. Entering a placement therefore ABANDONS the
  * wire/line first. Nothing is committed -- new_wire() stores and pushes undo only at PLACE, so an
  * abandoned draw leaves no copper and no stranded undo baseline.
- * User-ratified for `l` (issue 0230, 2026-08-06) and for `p` / component insert (issue 0233 F1,
- * 2026-08-07). Called from the scheduler branch of each verb so the key, the menu, the toolbar,
- * a form's per-keystroke re-arm and a scripted `xschem <verb>` all pass through one gate.
+ * User-ratified for `l` (issue 0230, 2026-08-06), for `p` / component insert (issue 0233 F1,
+ * 2026-08-07), and for EVERY remaining draw and placement verb (2026-08-08, phases 1-2 of
+ * doc/claude/suggestions/plan_modal_gesture_exclusion.md, issue 0237): the shape draws `r` / `P` /
+ * arc / circle, and the placements Ctrl+P / Ctrl+Shift+P / Alt+Shift+L / `t` / add_graph /
+ * add_image / ctx-menu Insert symbol / Insert text / the screen grab. A shape draw jams a wire
+ * draw exactly as hard as a placement does -- measured in the GUI 2026-08-07 under cadence_style_rc
+ * (`w`, click, `r` -> ui=65537 [STARTWIRE|MENUSTARTRECT], the rectangle can never start because the
+ * wire keeps claiming every click; ESC is the only exit) -- so the rule is one rule for all verbs.
+ * Called from the arm of each verb so the key, the menu, the toolbar, the context menu, a form's
+ * per-keystroke re-arm and a scripted `xschem <verb>` all pass through one gate. Gate BOTH
+ * interface modes at every key: `infix_interface 1` arms the gesture at the keystroke, `0` arms
+ * MENUSTART and the first click starts it -- and cadence users run 0, so a gate on the infix branch
+ * alone would do nothing for them.
  * NOT called from the pure-commit / scripted coordinate sub-forms (`add_wire_label -drop`,
- * `add_symbol_pin <x> <y> ...`): those commit an object outright, arm no cursor placement, and
- * are the replay/test seams -- aborting a live gesture there would be a silent mutation. */
-static void leave_wire_draw_for(const char *what)
+ * `add_symbol_pin <x> <y> ...`, `xschem rect x1 y1 x2 y2`, `xschem polygon ...`): those commit an
+ * object outright, arm no cursor placement, and are the replay/test seams -- aborting a live
+ * gesture there would be a silent mutation. Gate by BRANCH, not by verb name: a truncated form
+ * (`xschem rect 10 20`) falls into the ARM branch, not the commit branch. */
+void leave_wire_draw_for(const char *what)
 {
   char msg[128];
+  if(xctx && xctx->gate_bypass) return;  /* test-only construction seam, see xschem.h gate_bypass */
   if(!abort_wire_line_command()) return;
-  if(has_x) {
-    my_snprintf(msg, S(msg), "%s: in-progress wire abandoned", what);
-    statusmsg(msg, 1);
-  }
+  /* not wrapped in `if(has_x)`: statusmsg() no-ops without a display anyway, and arming the hold
+   * unconditionally is what makes the gate observable headlessly (issue 0238) */
+  my_snprintf(msg, S(msg), "%s: in-progress wire abandoned", what);
+  statusmsg_hold(msg, 1);
 }
 
 static int get_text(const char *s)
@@ -1925,6 +2002,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "add_graph")) return TCL_ERROR;
+      /* phase 2 -- see leave_wire_draw_for(). Graphs > Add graph is one of the arms with NO way
+       * back: there is no form to re-trigger, so before the gate ESC was the only exit from the
+       * jam and it threw the graph away (issue 0237). */
+      leave_wire_draw_for("Add graph");
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -1965,6 +2046,12 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       char *f = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "add_image")) return TCL_ERROR;
+      /* phase 2 -- see leave_wire_draw_for(). Gated HERE, before the file chooser, and not inside
+       * the `if(tclresult()[0])` arm below: `unselect_all(1)` on the next line already ends the
+       * user's previous state, and place_symbol (0233 F1) sets the precedent that the gate fires
+       * on the keystroke/menu pick, not on whether the follow-up dialog is confirmed. Cancelling
+       * the chooser therefore does NOT bring the wire back -- stated in issue 0237. */
+      leave_wire_draw_for("Add image");
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -2148,6 +2235,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, "0", TCL_STATIC);
         }
       } else {
+        /* ARM branch only -- the coordinate form above commits an arc outright and is a replay
+         * seam. phase 1, see leave_wire_draw_for(). */
+        leave_wire_draw_for("Arc");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTARC;
         Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -2922,7 +3012,7 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTDESCEND; /* assign, like every other arming site */
-      statusmsg("Descend: click the instance to descend into (ESC to cancel)", 1);
+      statusmsg_hold("Descend: click the instance to descend into (ESC to cancel)", 1);
       Tcl_ResetResult(interp);
     }
 
@@ -4530,6 +4620,20 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "semaphore")) { /* used for debug */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->semaphore),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "statusmsg")) { /* issue 0238: the last line that actually
+                                                    * reached .statusbar.1 (a line dropped by a
+                                                    * live hold is not recorded) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->statusmsg_text, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "statusmsg_hold")) { /* issue 0238: 1 while a gate/prompt message
+                                                         * still owns .statusbar.1 (the coordinate
+                                                         * readout defers to it). The only headless
+                                                         * seam for that fix -- the status bar text
+                                                         * itself is only written when has_x. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(statusmsg_held()),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "sympin_drops")) { /* issue 0122 E1: committed Add-Pin/Add-Wire-Label drop count */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -8982,6 +9086,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "place_text"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* phase 2 -- see leave_wire_draw_for(). The scriptable twin of `case 't'` (callback.c) and
+       * of context-menu pick 6; all three arm a PLACE_TEXT cursor placement. */
+      leave_wire_draw_for("Place text");
       xctx->semaphore++;
       xctx->last_command = 0;
       unselect_all(1);
@@ -9077,6 +9184,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       else if(argc > 2 && !strcmp(argv[2], "gui")) {
         int infix_interface = tclgetboolvar("infix_interface");
+        /* phase 1 -- see leave_wire_draw_for(). This is also the `P` key: Shift+P is bound to the
+         * registry action tools.insert_polygon, whose command IS `xschem polygon gui`. */
+        leave_wire_draw_for("Polygon");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -9087,6 +9197,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->ui_state2 = MENUSTARTPOLYGON;
         }
       } else {
+        leave_wire_draw_for("Polygon");   /* truncated coordinate forms arm here too */
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTPOLYGON;
       }
@@ -9988,6 +10099,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify(1);
       } else if(argc > 2 && !strcmp(argv[2], "gui")) {
         int infix_interface = tclgetboolvar("infix_interface");
+        /* phase 1 -- see leave_wire_draw_for(). BOTH branches: with infix_interface 0 (what
+         * cadence_style_rc sets) the rectangle only arms MENUSTART and the FIRST CLICK starts it,
+         * and that click is exactly what the live wire draw would keep stealing. */
+        leave_wire_draw_for("Rectangle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -9998,6 +10113,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->ui_state2 = MENUSTARTRECT;
         }
       } else {
+        /* argc <= 5 and not "gui": a TRUNCATED coordinate form (`xschem rect 10 20`) lands here,
+         * in the ARM branch, not in the commit branch above -- gate by branch, not by verb name */
+        leave_wire_draw_for("Rectangle");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTRECT;
       }
@@ -12085,6 +12203,21 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->ui_state2 = MENUSTARTSNAPWIRE;
     }
 
+    /* statusmsg [text]
+     *   Write 'text' (default: a blank) to the wide status bar field, exactly as an internal
+     *   command message does. A script asking for the field is deliberate news, so this RELEASES
+     *   any hold a gate/prompt message has on it (issue 0238) instead of being dropped by it --
+     *   which is also what makes the hold testable: it is how a test resets the field between
+     *   checks (tests/headless/test_placement_wire_gate.tcl section H). No-op on the screen when
+     *   !has_x; the hold flag is maintained either way. */
+    else if(!strcmp(argv[1], "statusmsg"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      statusmsg_hold_clear();
+      statusmsg(argc > 2 ? (char *)argv[2] : (char *)" ", 1);
+      Tcl_ResetResult(interp);
+    }
+
     /* str_replace str rep with [escape] [count]
      *   replace 'rep' with 'with' in string 'str'
      *   if rep not preceeded by an 'escape' character */
@@ -12390,6 +12523,28 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, t, TCL_VOLATILE);
         my_free(_ALLOC_ID_, &t);
       }
+    }
+
+    /* test_gate_bypass [0|1]
+     *   TEST-ONLY seam (issue 0237, phases 1-2 of plan_modal_gesture_exclusion.md). Returns the
+     *   current setting; with an argument, sets it. 1 disables the modal-gesture gates
+     *   (leave_wire_draw_for / leave_placement_for) for this context.
+     *   Why it has to exist: those gates now cover EVERY verb that can arm a second modal gesture,
+     *   which is the point -- but it also means the CO-ARMED state (a live wire draw plus a
+     *   placement or shape draw) can no longer be built from any verb, and abort_operation()'s
+     *   co-armed teardown is precisely what tests/headless/test_add_wire_label.tcl G2 and
+     *   test_placement_wire_gate.tcl D3 exist to pin. Their constructors have already been rebuilt
+     *   twice on doors that were later closed (`add_wire_label -place` + `wire gui`, then
+     *   `add_graph`, then `net_label 0`); this seam ends that cycle. A test brackets ONLY its
+     *   constructor with it -- every check of a gate itself runs with the gate live, and section H
+     *   pins that the default is 0 and that flipping it really does disable a gate, so a suite
+     *   that forgot to switch it back cannot pass silently.
+     *   Not bound to any key, menu or toolbar item, not logged, and reset by nothing else. */
+    else if(!strcmp(argv[1], "test_gate_bypass"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2) xctx->gate_bypass = atoi(argv[2]) ? 1 : 0;
+      Tcl_SetResult(interp, my_itoa(xctx->gate_bypass), TCL_VOLATILE);
     }
 
     /* text x y rot flip text props size draw

@@ -1,14 +1,18 @@
-# 0238 — every gate / prompt statusbar message is wiped by the coordinate readout on the next pointer move
+# 0238 — every gate / prompt statusbar message is wiped before it can be read
 
-Status: **OPEN** — found by the user in the GUI, 2026-08-07, while eyeballing the issue 0233 F2 fix.
+Status: **FIXED** 2026-08-08. Found by the user in the GUI, 2026-08-07, while eyeballing the issue
+0233 F2 fix. Fixed first in that session's successor because phases 1–2 of the modal-gesture
+roadmap add eight more verbs that silently discard work in progress, and the statusbar line is
+their entire user-visible half.
 
-Area: `statusmsg()` (`src/scheduler.c:28`, writes `.statusbar.1` at `:49`) vs the motion-handler
-coordinate readout (`src/callback.c:5911-5921`, and the press/release twins at `:8495`, `:8882`)
-Tests: none — `.statusbar.1` is only written when `has_x`, so this is not headless-observable
+Area: `statusmsg()` (`src/scheduler.c`, writes `.statusbar.1`) vs the motion-handler coordinate
+readout (`src/callback.c`, and the press/release twins) **and** `select.c`'s object-info line
+Tests: `tests/headless/test_statusmsg_hold_0238.tcl` (**7 checks, needs a real `$DISPLAY`** — it
+reads `.statusbar.1 cget -text` after synthesizing real `<Motion>` events through the Tk bindings)
+plus section **H** of `tests/headless/test_placement_wire_gate.tcl` (flag-level, headless)
 Found: 2026-08-07, verifying issue **0233** F2 in the GUI under `src/cadence_style_rc`
-Related: **0230** (whose "in-progress wire abandoned" message has the same fate), **0233** F2,
-`doc/claude/suggestions/plan_modal_gesture_exclusion.md` (phases 1–2 add eight more verbs that all
-want this feedback)
+Related: **0230**, **0233** F2, **0237** (the verbs that depend on this feedback),
+`doc/claude/suggestions/plan_modal_gesture_exclusion.md`
 
 ## Symptom, as reported
 
@@ -16,17 +20,17 @@ Press `p`, type a name, let the pin preview ride the cursor, then press `w`. The
 vanishes and the wire arms — but the user never sees why. The status bar reads `DRAW WIRE!` and
 nothing else. The expected `Wire: pending placement abandoned` is nowhere.
 
-## What is actually happening
+## What was actually happening
 
-Two different status-bar fields are in play, and the message is not fighting the one you would
+Two different status-bar fields are in play, and the message was not fighting the one you would
 guess:
 
-- `.statusbar.10` is the green **mode** label (`callback.c:8637-8646`: `DRAW WIRE!`, `DRAW LINE!`,
-  `DRAW POLYGON!`, …). It is rewritten from the keyboard/motion path on every event.
-- `.statusbar.1` is the wide right-hand field, packed last with `-fill x` (`xschem.tcl:14251`), and
-  `statusmsg(str, 1)` is its **only** writer (`scheduler.c:49`).
+- `.statusbar.10` is the green **mode** label (`DRAW WIRE!`, `DRAW LINE!`, …), rewritten from the
+  keyboard/motion path on every event.
+- `.statusbar.1` is the wide right-hand field, packed last with `-fill x` (`xschem.tcl`), and
+  `statusmsg(str, 1)` is its **only** writer.
 
-So the gate message does reach `.statusbar.1`. It is then destroyed by this, in the motion handler:
+So the gate message did reach `.statusbar.1`. It was then destroyed by the motion handler:
 
 ```c
     /* update status bar messages */
@@ -39,52 +43,69 @@ So the gate message does reach `.statusbar.1`. It is then destroyed by this, in 
 ```
 
 `ui_state` is non-zero for the whole point of the message — a gesture was just armed or is still
-armed — so the first 8-pixel flick of the mouse overwrites it. In practice the user's hand is
-already moving, so the message is never read.
+armed — so the first 8-pixel flick of the mouse overwrote it.
 
-## Scope: this is not an F2 bug
+**Measured, pre-fix, with the GUI probe now committed as the test** (`add_sch_pin -place` then
+`wire gui`, then 25 synthesized motion events):
 
-The same fate awaits every message written while a gesture is live:
+```
+reverse msg (0233 F2): {Wire: pending placement abandoned}
+after 25 motions     : {mouse = 150 100 - selected: 0 w=250 h=200}
+```
 
-- `leave_wire_draw_for()` — `<verb>: in-progress wire abandoned` (issues 0230, 0233 F1). Shipped
-  2026-08-06 and, as far as anyone can tell, never once seen by a user.
-- `leave_placement_for()` — `<verb>: pending placement abandoned` (issue 0233 F2), **and** its
-  decline message `<verb>: finish or ESC the pending placement first (a multiple selection is
-  live)`. The decline case is the worse one: the placement stays armed, so `ui_state` is non-zero
-  and the explanation of why the key "did nothing" is wiped by the next mouse move.
-- ~15 other prompt-style `statusmsg(…, 1)` callers, including the verb-noun prompts
-  (`Copy: click an object to copy it`, `Flip in place: click an object to flip`,
-  `Descend: cancelled (no instance there)`).
+## A second clobberer the issue did not name
 
-There is no hold/sticky mechanism anywhere today (`grep` for one finds only unrelated uses of the
-word).
+Found while fixing it: for every **placement** verb the message did not even survive the arm, let
+alone the mouse. `place_symbol()` SELECTS the preview instance it just placed, and `select.c`'s
+`"n=%4d x = %.16g  y = %.16g  w = %.16g h = %.16g"` info line (six sibling sites) is a plain
+`statusmsg(str, 1)` that lands ONE call after the gate message. Measured: after
+`xschem net_label 0` on a live wire draw the field read `n=   0 x = -1.25  y = -1.25  w = 2.5
+h = 2.5`. This is why the fix is on the WRITER side (below) rather than at the three readout
+sites the issue originally listed — a reader-side fix would have left this one.
 
-## Why it matters more after issue 0233
+## The fix
 
-F2 makes a keystroke **silently discard work in progress** — the pin or label preview the user was
-placing. The policy was ratified on the understanding that the status bar says what happened. With
-the message invisible, the observable behaviour is "my pin vanished when I pressed `w`". Phases 1–2
-of the modal-gesture roadmap add eight more verbs with exactly this shape.
+A hold, enforced inside `statusmsg()`:
 
-## Fix options
+- `statusmsg_hold(str, n)` — write the line and hold the field. Used by `leave_wire_draw_for()`,
+  `leave_placement_for()` (both messages, including the issue-0231 decline), and the eleven
+  verb-noun prompts (`Copy: click an object to copy it`, `Move: …`, `Stretch: …`, `Rotate: …`,
+  `Flip: …`, `Descend: …`).
+- `statusmsg(str, 1)` — an ordinary line is DROPPED while a hold is up.
+- `statusmsg_held()` — self-expiring test, `STATUSMSG_HOLD_MS = 5000`.
+- `statusmsg_hold_clear()` — called on every **ButtonPress** (`callback.c`), so the live
+  `w=`/`h=` size feedback during a move/copy/stretch comes back the moment the user clicks
+  (landmine 1 below), and by `xschem statusmsg <text>`, which is deliberate news.
+- `xctx->statusmsg_hold_ms` + `xctx->statusmsg_text` (the last line that actually reached the
+  field), read back with `xschem get statusmsg_hold` / `xschem get statusmsg`.
 
-1. **A hold counter in `statusmsg()`** — `statusmsg_hold(str, n_events)` (or a
-   `xctx->statusmsg_hold` field) that the coordinate readout checks and decrements instead of
-   overwriting. Smallest change, keeps one owner for the field, and the readout stays live for
-   moves. **Recommended.**
-2. **Give the readout its own field** — honest separation, but it is a layout change in
-   `xschem.tcl` and every window/tab path has to follow.
-3. **Suppress the readout for N motion events after any gate message** — same as (1) with the
-   policy inverted; harder to reason about because the suppression lives in the reader.
+### Where this diverged from the *Fix options* below
 
-## Landmines
+1. **Wall clock, not an event counter.** Option 1 proposed a hold of *N events*. X streams motion
+   at ~100 events/s while the hand is moving, so any count small enough to feel responsive expires
+   in milliseconds — the failure being fixed. 5 s of wall clock (Tcl_GetTime via
+   `net_hilight_now_ms()`) is what "long enough to read" means; a click ends it sooner.
+2. **Writer-side, not reader-side.** See the second clobberer above. It also means a readout added
+   later cannot reintroduce the bug — the three known readout sites needed no change at all.
+3. **It IS testable.** The issue expected prove-by-code. `xschem get statusmsg` /
+   `statusmsg_hold` give headless flag-level checks (section H), and the GUI test drives real
+   `<Motion>`/`<ButtonPress>` events through the Tk bindings and reads the label — RED on the
+   pre-change binary, GREEN after (both measurements above and in the test's header).
 
-- **Do not simply drop the coordinate readout.** `mouse = … selected: N w= h=` is the live size
-  feedback during a move/copy/stretch, which is the one place a user reads exact deltas.
-- **`statusmsg(str, 2|3)` is a different sink** (the CIW info window, `xctx->infowindow_text`), not
-  the status bar. Do not route gate messages there instead: the user is looking at the canvas.
-- **Not headless-testable** (`statusmsg` returns early when `!has_x`). Either add a Tcl-level probe
-  that reads the label under a real `$DISPLAY`, or accept prove-by-code and say so.
-- **Three readout sites, not one** — `callback.c:5911` (motion) plus `:8495` and `:8882`
-  (press/release paths). A fix that only covers the motion one will still lose the message on the
-  next click.
+## Landmines (all still true)
+
+- **Do not drop the coordinate readout.** `mouse = … selected: N w= h=` is the live size feedback
+  during a move/copy/stretch, the one place a user reads exact deltas. That is what the
+  ButtonPress release exists for.
+- **`statusmsg(str, 2|3)` is a different sink** (the CIW info window, `xctx->infowindow_text`) and
+  is never held — netlist/ERC output must not be swallowed.
+- **A 5-second hold swallows ordinary lines.** An unrelated warning issued through
+  `statusmsg(…, 1)` within the window is dropped (most also go to the info window via `…, 2`). A
+  message that must win should call `statusmsg_hold()`, which replaces the held one.
+- **In GUI mode a test cannot print to stdout unless `--pipe` is given** (`main.c` `freopen` on
+  `--detach`, and a plain GUI run's stdout goes nowhere useful), and with `--pipe` xschem blocks
+  reading stdin so `after` timers never fire. The committed GUI test therefore runs entirely at
+  source time with explicit `update` calls, and also mirrors every line into
+  `tests/headless/results/test_statusmsg_hold_0238.log`. It is NOT registered in
+  `tests/run_regression.tcl` (that harness runs `--nogui` and demands an `OVERALL: ok` sentinel an
+  X-gated skip cannot honestly print); `tests/headless/full_audit.sh` picks it up automatically.

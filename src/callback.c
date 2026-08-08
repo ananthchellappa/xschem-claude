@@ -344,6 +344,9 @@ void abort_operation(int deselect)
   if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 &= ~MENUSTARTDESCEND;
+    /* blanking the prompt is deliberate, so it must not be dropped by that prompt's own hold
+     * (issue 0238): ESC is a KEY, and only a ButtonPress releases a hold on its own */
+    statusmsg_hold_clear();
     if(has_x) statusmsg(" ", 1);
     tcleval("hi_descend_pick_cancel");
   }
@@ -479,6 +482,10 @@ static void start_place_symbol(void)
 {
     if(readonly_block()) return;
     if(symbol_view_block()) return;   /* no instances in a symbol view (ctx-menu / native insert) */
+    /* phase 2 -- see leave_wire_draw_for(). The `xschem place_symbol` verb has been gated since
+     * 0233 F1; this is the OTHER component-insert route (context-menu Insert symbol, the `I` key
+     * and the Insert key, whenever new_file_browser is off) and it never went through it. */
+    leave_wire_draw_for("Insert symbol");
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -628,6 +635,7 @@ int leave_placement_for(const char *what)
 {
   char msg[128];
   if(!xctx) return 1;
+  if(xctx->gate_bypass) return 1;   /* test-only construction seam, see xschem.h gate_bypass */
   if(!(xctx->ui_state & (START_SYMPIN | PLACE_SYMBOL | PLACE_TEXT))) return 1;
   /* a read-only window refuses the teardown outright: it is a delete(), and `xschem snap_wire` is
    * the one wire arm with no readonly reject of its own (the others call readonly_block() /
@@ -644,18 +652,17 @@ int leave_placement_for(const char *what)
    * Remove this guard when 0231 lands and delete() only removes the preview. */
   rebuild_selected_array();
   if(xctx->lastsel > 1) {
-    if(has_x) {
-      my_snprintf(msg, S(msg),
-        "%s: finish or ESC the pending placement first (a multiple selection is live)", what);
-      statusmsg(msg, 1);
-    }
+    /* statusmsg_hold, not statusmsg (issue 0238): this is the message that MOST needs to survive.
+     * The decline leaves the placement armed, so ui_state is non-zero and the coordinate readout
+     * used to wipe the only explanation of why the key appeared to do nothing. */
+    my_snprintf(msg, S(msg),
+      "%s: finish or ESC the pending placement first (a multiple selection is live)", what);
+    statusmsg_hold(msg, 1);
     return 0;   /* caller must NOT arm the draw: that would rebuild the very jam F2 exists to fix */
   }
   if(!abort_placement_preview()) return 1;
-  if(has_x) {
-    my_snprintf(msg, S(msg), "%s: pending placement abandoned", what);
-    statusmsg(msg, 1);
-  }
+  my_snprintf(msg, S(msg), "%s: pending placement abandoned", what);
+  statusmsg_hold(msg, 1);
   return 1;
 }
 
@@ -3700,10 +3707,11 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->ui_state2 &= ~MENUSTARTDESCEND;
     n = find_closest_instance(xctx->mousex, xctx->mousey, 1);
     if(n >= 0) {
+      statusmsg_hold_clear();   /* same as the ESC path: the blank must land (issue 0238) */
       statusmsg(" ", 1);
       tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
     } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
-      statusmsg("Descend: cancelled (no instance there)", 1);
+      statusmsg_hold("Descend: cancelled (no instance there)", 1);
       tcleval("hi_descend_pick_cancel");
     }
     return 1;
@@ -4425,18 +4433,23 @@ static void context_menu_action(double mx, double my)
       }
       break;
     case 4:
+      leave_wire_draw_for("Rectangle");  /* phase 1 -- see leave_wire_draw_for() */
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
       new_rect(PLACE,mx, my);
       break;
     case 5:
+      leave_wire_draw_for("Polygon");    /* phase 1 -- see leave_wire_draw_for() */
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
       new_polygon(PLACE, mx, my);
       break;
     case 6: /* place text */
+      /* phase 2 -- see leave_wire_draw_for(). Pick 6, not 8: 8 is Paste clipboard (a merge, whose
+       * preview carries STARTMERGE and belongs to phase 4 / issues 0232+0234). */
+      leave_wire_draw_for("Insert text");
       xctx->last_command = 0;
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
@@ -4508,12 +4521,14 @@ static void context_menu_action(double mx, double my)
       if(xctx->ui_state & SELECTION) delete(1/* to_push_undo */);
       break;
     case 19: /* place arc */
+      leave_wire_draw_for("Arc");        /* phase 1 -- see leave_wire_draw_for() */
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
       new_arc(PLACE, 180., mx, my);
       break;
     case 20: /* place circle */
+      leave_wire_draw_for("Circle");     /* phase 1 -- see leave_wire_draw_for() */
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
@@ -5908,7 +5923,12 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
       return;
     }
 
-    /* update status bar messages */
+    /* update status bar messages.
+     * This readout is what issue 0238 was filed against: note the `if(xctx->ui_state)` guard --
+     * a gesture is armed exactly when a gate message or verb-noun prompt has something to say, so
+     * every one of them died on the first 8-pixel flick of the mouse. It is not gated here: the
+     * hold is enforced inside statusmsg() (scheduler.c), which drops an ordinary line while a held
+     * one is up. Same for the press/release twins below and for select.c's object-info lines. */
     if(xctx->ui_state) {
       if(abs(mx-xctx->mx_save) > 8 || abs(my-xctx->my_save) > 8 ) {
         my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d w=%.6g h=%.6g",
@@ -6277,7 +6297,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
            * cursor AND starts the copy in one gesture (check_menu_start_commands). */
           xctx->ui_state |= MENUSTART;
           xctx->ui_state2 = MENUSTARTCOPY;
-          statusmsg("Copy: click an object to copy it", 1);
+          statusmsg_hold("Copy: click an object to copy it", 1);
         }
       }
       /* copy selection into clipboard */
@@ -6311,6 +6331,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(/* !xctx->ui_state && */ rstate == 0) { /* place arc */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_wire_draw_for("Arc");     /* phase 1, both branches -- see leave_wire_draw_for() */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6324,6 +6345,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       else if(/* !xctx->ui_state && */ rstate == ControlMask) { /* place circle */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_wire_draw_for("Circle");  /* phase 1, both branches -- see leave_wire_draw_for() */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6412,7 +6434,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
-            statusmsg("Flip in place: click an object to flip", 1);
+            statusmsg_hold("Flip in place: click an object to flip", 1);
           } else {
             /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
              * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
@@ -6435,7 +6457,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_FLIP;
-            statusmsg("Flip: click an object to flip", 1);
+            statusmsg_hold("Flip: click an object to flip", 1);
           } else {
             /* standalone Shift-F (single-inline apply, no group form): route through the mutation
              * boundary (Refactor B atom 7, mirror of Shift-R atom 6). perform_action->run_core owns
@@ -6639,7 +6661,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           } else {
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTMOVE | MENUSTARTSTRETCH;
-            statusmsg("Stretch: click an object to move it (wires stay connected)", 1);
+            statusmsg_hold("Stretch: click an object to move it (wires stay connected)", 1);
           }
           break;
         }
@@ -6654,7 +6676,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
            * cursor AND starts the move in one gesture (check_menu_start_commands). */
           xctx->ui_state |= MENUSTART;
           xctx->ui_state2 = MENUSTARTMOVE;
-          statusmsg("Move: click an object to move it", 1);
+          statusmsg_hold("Move: click an object to move it", 1);
         }
       }
       /* move selection stretching attached nets */
@@ -6714,7 +6736,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           } else {
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTMOVE;
-            statusmsg("Move: click an object to move it (disconnected)", 1);
+            statusmsg_hold("Move: click an object to move it (disconnected)", 1);
           }
           break;
         }
@@ -6918,6 +6940,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         dbg(1, "callback(): start rect\n");
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        /* A shape draw jams a live wire draw exactly as a placement does, and this is the key the
+         * user hit: `w`, click, `r` under cadence_style_rc left ui=65537 [STARTWIRE|MENUSTARTRECT]
+         * with the wire claiming every click, so the rectangle could never start (2026-08-07).
+         * Gated OUTSIDE the infix test because both branches need it -- see leave_wire_draw_for(),
+         * phase 1 of plan_modal_gesture_exclusion.md. */
+        leave_wire_draw_for("Rectangle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6956,7 +6984,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
-            statusmsg("Rotate in place: click an object to rotate", 1);
+            statusmsg_hold("Rotate in place: click an object to rotate", 1);
           } else {
             /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
              * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
@@ -6980,7 +7008,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_ROTATE;
-            statusmsg("Rotate: click an object to rotate", 1);
+            statusmsg_hold("Rotate: click an object to rotate", 1);
           } else {
             /* standalone Shift-R (single-inline apply, no group form): route through the mutation
              * boundary (Refactor B atom 6). perform_action->run_core owns the readonly gate + the
@@ -7089,6 +7117,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(rstate == 0) { /* place text (graph routing is data: over_graph -> graph.forward) */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        /* phase 2 -- see leave_wire_draw_for(). `t` needs a Tk toplevel (place_text opens the text
+         * dialog), so this branch is not drivable headlessly; `xschem place_text` is its scriptable
+         * twin and carries the same gate. Before the gate this key left ui=1 [STARTWIRE] with
+         * last_command zeroed -- the exact residue issue 0233 F3 had to teach ESC to clean up. */
+        leave_wire_draw_for("Place text");
         xctx->last_command = 0;
         xctx->mx_double_save = xctx->mousex_snap;
         xctx->my_double_save = xctx->mousey_snap;
@@ -7202,7 +7235,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
-            statusmsg("Vertical flip in place: click an object to flip", 1);
+            statusmsg_hold("Vertical flip in place: click an object to flip", 1);
           } else {
             /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
              * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
@@ -7236,7 +7269,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->ui_state |= MENUSTART;
             xctx->ui_state2 = MENUSTARTROTATE;
             xctx->menu_pending_transform = PENDING_TR_FLIPV;
-            statusmsg("Vertical flip: click an object to flip", 1);
+            statusmsg_hold("Vertical flip: click an object to flip", 1);
           } else {
             /* standalone Shift-V (single-inline apply, no group form): route through the mutation
              * boundary (Refactor B atom 8, the LAST pivot form, mirror of Shift-F atom 7).
@@ -8494,7 +8527,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      rebuild_selected_array();
      my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d path: %s",
        xctx->mousex_snap, xctx->mousey_snap, xctx->lastsel, xctx->sch_path[xctx->currsch] );
-     statusmsg(str,1);
+     statusmsg(str,1);   /* held messages survive this -- the hold lives in statusmsg() (0238) */
    }
 
    /* clear start from menu flag or infix_interface=0 start commands */
@@ -8878,11 +8911,20 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
     xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
   }
 
+  /* The readout that reaches furthest (issue 0238): it runs for EVERY event -- motion, key press,
+   * enter/leave -- so a gate message died on the next keystroke even if the pointer never moved
+   * again (mx_save is only refreshed on a press, so the 8-pixel test stays true once the hand has
+   * moved). Held messages survive it via statusmsg() itself. */
   if(abs(mx-xctx->mx_save) > 8 || abs(my-xctx->my_save) > 8 ) {
     my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d path: %s",
       xctx->mousex_snap, xctx->mousey_snap, xctx->lastsel, xctx->sch_path[xctx->currsch] );
     statusmsg(str,1);
   }
+  /* A click is the user acting on what they just read, so the held message is released here and
+   * the coordinate readout resumes on the very next motion -- which is what keeps the live w=/h=
+   * size feedback during a move/copy/stretch (issue 0238 landmine 1). Placed AFTER the readout
+   * above so the press event itself still shows the message. */
+  if(event == ButtonPress) statusmsg_hold_clear();
 
   dbg(2, "key=%d EQUAL_MODMASK=%d, SET_MODMASK=%d\n", key, SET_MODMASK, EQUAL_MODMASK);
 

@@ -2460,6 +2460,13 @@ void delete_files(void)
 
 void place_net_label(int type)
 {
+  /* phase 2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0237) -- see
+   * leave_wire_draw_for() in scheduler.c for the rule and why it is not optional. ONE call here
+   * covers every route to a net-label placement: Alt+Shift+L (type 0), Ctrl+P (2),
+   * Ctrl+Shift+P (3) and the scripted `xschem net_label 0|1|2|3`. All of them arm a cursor
+   * placement (START_SYMPIN + a real lab_wire / lab_pin / ipin / opin preview instance riding the
+   * pointer); none is a commit form, so there is no coordinate sub-form to exclude here. */
+  leave_wire_draw_for("Net label");
   if(type == 1) {
       const char *lab = tcleval("find_file_first lab_pin.sym");
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);

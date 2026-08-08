@@ -439,7 +439,19 @@ siblings leaking. **If a teardown must return early, it owes by hand every clear
 terminal would have done.** 0233 also added the class's mirror-image gate: `leave_placement_for()`
 (placement dropped before a wire/line arms) opposite `leave_wire_draw_for()` (wire dropped before a
 placement arms) — two modal gestures may not coexist in EITHER order, and both gates live at the
-verbs, never at the shared primitive the click path also uses.) · E **Transform
+verbs, never at the shared primitive the click path also uses. **0237** (FIXED 2026-08-08) is the
+completion of that gate and the class's other lesson: the rule was applied one verb at a time, so
+after 0230 and 0233 F1 exactly four of the arms had it and thirteen did not — including the SHAPE
+draws (`r`, `P`, arc, circle), which 0237 had written off as "a much milder clash" until the user
+demonstrated the identical dead end in cadence mode (`w`, click, `r` → `ui=65537`, the rectangle can
+never start). **When a rule needs a call at every arm, enumerate the arms from the ui_state bits
+they set, not from the ones the bug report happened to name** — and gate BOTH interface branches of
+every key, since `infix_interface 0` (cadence) arms `MENUSTART` and starts the gesture on the first
+CLICK, which is precisely the click the live draw was stealing. Its user-visible half needed
+**0238** first: the gate's statusbar line was destroyed before it could be read, by the coordinate
+readout on the next 8-pixel mouse move AND, for placement verbs, by `select.c`'s object-info line
+one call after the arm. A message that explains a discarded gesture now HOLDS the field
+(`statusmsg_hold()`, 5 s or until the next ButtonPress).) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
 follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others
@@ -583,7 +595,22 @@ spec digest). Enforcement TODAY:
 - New gesture test: copy the 0111 test shape (~150 lines, self-contained); transcribe
   waypoints from the user's FLUID_TRACE log; RED-first against exact coordinates from
   after_M; prefer HERE-relative fixture paths.
-- Every new predicate/check needs a sabotage variant ([[green-but-hollow]]).
+- Every new predicate/check needs a sabotage variant ([[green-but-hollow]]). Two shapes of hollow
+  check found in the 0237 work: (a) a predicate satisfied by something OTHER than the fix — `r` on a
+  MENU-armed wire "clears the wire arm" is green with the gate deleted, because the shape arm
+  ASSIGNS `ui_state2` wholesale; (b) a sabotage run that lies because `make` did not rebuild —
+  restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
+  `.o` linked in, so the NEXT variant's red set is the previous one's. **`rm` the object file, do
+  not trust the timestamp**, and re-run the clean baseline after every restore.
+- **Constructing a state the product now refuses**: the modal-gesture gates make the co-armed state
+  (a live wire draw + a second gesture) unbuildable from any verb, which is what
+  `abort_operation()`'s teardown tests need. `xschem test_gate_bypass 0|1` is the test-only seam for
+  exactly that; bracket only the CONSTRUCTOR with it, never the behaviour under test, and pin the
+  seam itself (default off + it really disables a gate) so a forgotten `1` cannot fake a pass.
+- **A GUI-mode test cannot print to stdout unless `--pipe` is given** — and with `--pipe` xschem
+  blocks reading stdin, so `after` timers never fire. Drive such a test at SOURCE time with
+  explicit `update` calls (`tests/headless/test_statusmsg_hold_0238.tcl` is the worked example:
+  synthesized `<Motion>`/`<ButtonPress-1>` through the Tk bindings, then `.statusbar.1 cget -text`).
 
 ## 11. Open risks — predicted next failures (verified against source; check before
 declaring any wiring feature done, convert to xfail tests when touching the area)

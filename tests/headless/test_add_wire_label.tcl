@@ -214,11 +214,18 @@ check "0230 one label committed"           [xschem get instances] 1
 #       "deletes preview instance" check below vacuous (0==0 before and after).
 #       `net_label` sets no sympin_preview, so that flag's teardown is asserted where it is real:
 #       section E of tests/headless/test_placement_wire_gate.tcl, on the F2 path.
+#       CONSTRUCTOR NOTE #2 (phases 1-2 of plan_modal_gesture_exclusion.md, 2026-08-08): `net_label`
+#       was the LAST open forward door and it is now gated too, so no verb builds the co-armed
+#       state any more. Rather than rebuild this constructor a fourth time on a door that will also
+#       close, it now uses the test-only seam `xschem test_gate_bypass` (scheduler.c) -- bracketed
+#       tightly around the ARM only, so the ESC under test still runs with every gate live. The
+#       seam itself is pinned by section H of test_placement_wire_gate.tcl (default off, and
+#       flipping it really does disable a gate).
 xschem clear force
 xschem wire 0 0 100 0
 xschem unselect_all
 xschem wire gui
-xschem net_label 0
+xschem test_gate_bypass 1 ; xschem net_label 0 ; xschem test_gate_bypass 0
 check "0230 both gestures armed"           [expr {[startwire] && [placing]}] 1
 check "0230 preview instance is live"      [xschem get instances] 1
 xschem abort_operation

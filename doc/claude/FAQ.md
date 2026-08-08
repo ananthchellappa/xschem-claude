@@ -14,6 +14,68 @@ Newest entries on top.
 
 ---
 
+## Q38. I pressed `w`, started drawing, then pressed `r`. Nothing happened — why, and what does it do now?
+
+- **Asked:** 2026-08-07 (in the GUI, under `src/cadence_style_rc`)
+- **Project state:** branch `open_pdk` @ `465223be` + this session — issues **0237** / **0238**,
+  phases 1-2 of `doc/claude/suggestions/plan_modal_gesture_exclusion.md`.
+
+**Before:** the rectangle armed but could never start. Measured `ui=65537`
+(`STARTWIRE|MENUSTART` + `MENUSTARTRECT`) with `last_command=1`: two modal gestures live at once,
+and the click handler tests the wire first, so every click you gave the rectangle went to the wire.
+ESC was the only way out. Infix mode had the same dead end with two rubber bands on screen.
+
+**Now:** `r` abandons the in-progress wire and starts the rectangle — the same rule `l` and `p`
+already followed (Q35), and `w` in the other direction (Q36): *whatever you just pressed is what
+you meant*. Nothing is committed by the abandoned draw (a wire only exists once its second point
+lands), and the status bar says `Rectangle: in-progress wire abandoned`.
+
+The rule now covers **every** verb that can arm a second modal gesture on a live wire/line draw:
+the shape draws `r`, `Shift+P`, `C`, `Ctrl+C` and their context-menu picks; the placements
+`Alt+Shift+L`, `Ctrl+P`, `Ctrl+Shift+P`, `t`, Graphs ▸ Add graph / Add image, context-menu Insert
+symbol / Insert text, the `I` and Insert keys, and a screen grab; plus the scripted arms
+`xschem rect|polygon|arc [gui]`, `net_label`, `place_text`, `place_symbol`, `add_graph`,
+`add_image`. It applies in both interface modes — including `infix_interface 0` (cadence), where
+the shape arms on the first CLICK, which is exactly the click the wire was stealing.
+
+Two things it deliberately does NOT do:
+
+- **Coordinate/commit forms are untouched.** `xschem rect x1 y1 x2 y2`, `xschem polygon ...`,
+  `xschem arc x y r a b layer`, `add_wire_label -drop`, `add_symbol_pin <x> <y> ...` store an object
+  outright and arm nothing, so they leave a live draw alone — they are the replay/test seams.
+- **`Ctrl+V` merge is still an exception**, in both directions: a merge preview carries different
+  state (`STARTMERGE`) whose teardown needs issues 0232/0234 first.
+
+Note that a follow-up dialog cannot undo the cancel: `t` opens the text dialog and Add image opens a
+file chooser *after* the wire has been abandoned, so cancelling the dialog does not bring the wire
+back. That matches component insert, which has behaved this way since 2026-08-07.
+
+---
+
+## Q37. The status bar keeps telling me things I never see. Is it lying?
+
+- **Asked:** 2026-08-07
+- **Project state:** branch `open_pdk` @ `465223be` — issue **0238**.
+
+It was. `.statusbar.1` (the wide right-hand field) had one writer, `statusmsg()`, and two
+high-frequency clobberers: the pointer readout `mouse = x y - selected: N w= h=`, refreshed on any
+event once the pointer has moved 8 pixels **and only while a gesture is armed** — which is exactly
+when a gate message has something to say — and, for placement verbs, the object-info line
+`n=   0 x = ... w = ... h = ...` that the editor prints when it selects the preview it just placed,
+one call after the gate message. So `Wire: pending placement abandoned` was written and destroyed
+before a hand already in motion could read it. Measured: 25 mouse-motion events after the gate, the
+field read `mouse = 150 100 - selected: 0 w=250 h=200`.
+
+Now a gate or prompt message **holds** the field for 5 seconds, or until your next click — the click
+releases it deliberately, so the live `w=`/`h=` size readout you use while dragging comes straight
+back. An ordinary status line issued while a hold is up is dropped; a newer gate/prompt line
+replaces it. Scripts can post their own line with `xschem statusmsg {text}`, which always wins.
+
+The verb-noun prompts got the same treatment: `Move: click an object to move it`,
+`Copy: …`, `Stretch: …`, `Rotate: …`, `Flip: …`, `Descend: click the instance to descend into`.
+
+---
+
 ## Q36. And the other way round — I pressed `w` while a pin/label preview was stuck to the cursor. What happens?
 
 - **Asked:** 2026-08-07

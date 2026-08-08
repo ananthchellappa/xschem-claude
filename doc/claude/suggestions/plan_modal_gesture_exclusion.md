@@ -1,6 +1,8 @@
 # Roadmap — one modal gesture at a time
 
-Status: **phases 0 done, 1–4 open.** Owner: `open_pdk`. Last measured 2026-08-07 at `465223be`.
+Status: **phases 0, 1 and 2 done; 3 open; 4 blocked.** Owner: `open_pdk`. Phases 1–2 landed
+2026-08-08 (issue **0237** FIXED, issue **0238** FIXED first), user-ratified the same day as
+option (a) cancel. Last measured 2026-08-08.
 
 ## The invariant
 
@@ -55,36 +57,49 @@ infix mode has the identical dead end with two rubber bands on screen.
 Effort: ~8 one-line call sites, low risk (the call is a no-op unless a draw is live, and it is
 delete-free so issue 0231 is not in play).
 
-- [ ] fix issue **0238** first — every gate message is wiped by the coordinate readout before a
-      user can read it, so the feedback these verbs depend on does not currently reach the screen
-- [ ] ratify the policy with the user (see *Ratification* below)
-- [ ] `case 'r'` (`src/callback.c:6916`) — both the infix and the `MENUSTART` branch
-- [ ] `case 'P'` (`:6862`) — both branches
-- [ ] `case 'C'` / `Ctrl+C` arc+circle (`:6310`) — both branches
-- [ ] ctx-menu picks 4, 5 (`:4427`, `:4433`) and 19, 20 (`:4510`, `:4516`)
-- [ ] `xschem rect` (`src/scheduler.c:9958`) — the `gui` and bare ARM forms only
-- [ ] `xschem polygon` (`:9044`) — same
-- [ ] `xschem arc` (`:2126`) — same
-- [ ] leave every coordinate/commit form ungated (replay seams)
-- [ ] new test section, RED-first, with disjoint sabotage
-- [ ] docs: `WIRING.md` class D, `FAQ.md`, issue **0237**
+- [x] fix issue **0238** first — done, and it turned out to need a writer-side hold in
+      `statusmsg()`: for placement verbs the message was also being overwritten one call later by
+      `select.c`'s object-info line, not only by the coordinate readout
+- [x] ratify the policy with the user — 2026-08-08, option (a) cancel, one answer for both phases
+- [x] `case 'r'` (`src/callback.c`) — gated above the infix test, so both branches
+- [x] `P` polygon — the Shift+P binding is the registry action `tools.insert_polygon`, i.e.
+      `xschem polygon gui`, so the scheduler gate covers the key (there is no polygon branch left
+      in the `case 'P'` switch)
+- [x] `case 'C'` / `Ctrl+C` arc+circle — both branches
+- [x] ctx-menu picks 4, 5, 19, 20
+- [x] `xschem rect` — the `gui` and bare/truncated ARM forms only
+- [x] `xschem polygon` — same
+- [x] `xschem arc` — the ARM form only
+- [x] every coordinate/commit form left ungated (replay seams), pinned by checks F7/F8
+- [x] new test section **F**, with disjoint sabotage (4 variants, red sets in issue 0237)
+- [x] docs: `WIRING.md` class D, `FAQ.md` Q37, issue **0237**
 
 ### Phase 2 — the remaining placements cancel a live wire/line draw
 
 Effort: ~7 call sites, same pattern as `p`. **Breaks `test_add_wire_label.tcl` G2** — see *Landmines*.
 
-- [ ] `place_net_label()` (`src/actions.c:2477`) — covers `Alt+Shift+L`, `Ctrl+P`, `Ctrl+Shift+P`, `xschem net_label 0/2/3`
-- [ ] `add_graph` (`src/scheduler.c:1924`)
-- [ ] `add_image` (`:1963`)
-- [ ] `place_text` (`:8982`) and `case 't'` (`src/callback.c:7088`)
-- [ ] ctx-menu 1 Insert symbol (`start_place_symbol()`, `src/callback.c:478`) and 6 Insert text (`:4439`)
-- [ ] screen-grab image (`src/draw.c:305`) — GUI-only, prove by code
-- [ ] rebuild `test_add_wire_label.tcl` G2 on whatever constructor survives (landmine 1)
-- [ ] issue **0237** → FIXED or narrowed to merge only
+- [x] `place_net_label()` (`src/actions.c`) — covers `Alt+Shift+L`, `Ctrl+P`, `Ctrl+Shift+P`, `xschem net_label 0/2/3`
+- [x] `add_graph` (`src/scheduler.c`)
+- [x] `add_image` — gated before the file chooser, like `place_symbol`: cancelling the dialog does
+      NOT restore the wire (stated in issue 0237)
+- [x] `place_text` and `case 't'` (`src/callback.c`)
+- [x] ctx-menu 1 Insert symbol (`start_place_symbol()`, which also serves the `I` and Insert keys)
+      and 6 Insert text
+- [x] screen-grab image (`src/draw.c`) — gated at the ARM on the release that completes the grab,
+      so an abandoned grab leaves the wire alone. GUI-only, prove by code
+- [x] `test_add_wire_label.tcl` G2 rebuilt — on the new test-only seam `xschem test_gate_bypass`,
+      not on another door (there is none left but merge). `test_placement_wire_gate.tcl` **D3**
+      needed the same rebuild — it was NOT in this plan's landmine list and would have been found
+      only by running the suite
+- [x] issue **0237** → FIXED (merge/`Ctrl+V` stays open, tracked there and in phase 4)
 
 ### Phase 3 — wire/line and placements cancel a live SHAPE draw
 
-The reverse of phase 1; needs the new `abort_shape_draw()` helper.
+The reverse of phase 1; needs the new `abort_shape_draw()` helper. **Unchanged by phases 1-2**, and
+now the only asymmetry left outside merge: `r` then `w` still leaves `STARTRECT` armed under a
+fresh wire draw. Two things phases 1-2 hand it: the statusbar message will actually be readable
+(issue 0238), and `xschem test_gate_bypass` already exists for building whatever co-armed state its
+own tests need.
 
 - [ ] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair
 - [ ] call from every wire/line verb (the 11 sites `leave_placement_for()` already uses)
@@ -111,13 +126,19 @@ so `abort_placement_preview()` deliberately does not see it.
   delete with a foreign selection. Phases 1–2 are safe: they only cancel *draws*, which is
   delete-free.
 - **Issue 0236** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
-- **Issue 0238** — gate messages reach `.statusbar.1` but the coordinate readout overwrites them on
-  the next 8-pixel mouse move, so every "X abandoned" line since 2026-08-06 has been invisible.
-  Fix it before adding verbs that discard work silently.
+- **Issue 0238** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
+  the next click; an ordinary `statusmsg(…, 1)` is dropped while a hold is up. Seams:
+  `xschem get statusmsg` / `xschem get statusmsg_hold`, and a DISPLAY-gated test.
 - **`xschem callback …` segfaults under `--nogui`**, so no click path is drivable headlessly. Arm
   with `xschem <verb> gui` / `::infix_interface`, assert on flags, confirm pixels by eye.
 
 ## Landmines
+
+0. **RESOLVED 2026-08-08 — `xschem test_gate_bypass 0|1`** is the seam landmine 1 asked for
+   (`xctx->gate_bypass`, disables both gate helpers for the length of a constructor). Used by
+   `test_add_wire_label.tcl` G2 and `test_placement_wire_gate.tcl` D3, bracketed around the ARM
+   only; section H of the gate suite pins that it defaults to off and really does disable a gate.
+   The original text follows, as the record of why it exists.
 
 1. **`test_add_wire_label.tcl` G2 needs the co-armed state to be constructible.** It is the only
    coverage of `abort_operation()`'s co-armed teardown. Its constructor has already been rebuilt
@@ -144,6 +165,8 @@ Each verb's policy has been ratified individually so far. Phases 1–2 are one q
 > Any new draw or placement command cancels the one in progress — for **all** remaining verbs
 > (`r`, `P`, arc/circle, `Ctrl+P`, `Alt+Shift+L`, `t`, `add_graph`, `add_image`, ctx-menu inserts) —
 > yes or no?
+
+**Ratified 2026-08-08: (a) cancel**, one answer for both phases, consistent with 0230 and 0233.
 
 The alternative the code already supports is *decline* (`leave_placement_for()` returns 0 and the
 caller does not arm) with a statusbar hint. Mixing the two per family is possible but would be the

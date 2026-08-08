@@ -1536,6 +1536,24 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
+  double statusmsg_hold_ms; /* issue 0238: wall-clock deadline (ms, net_hilight_now_ms() scale)
+                       * until which the .statusbar.1 coordinate readout must NOT overwrite the
+                       * message that is up. 0 = no hold. Armed by statusmsg_hold() (every gate /
+                       * prompt line), tested by statusmsg_held() at the three readout sites, and
+                       * released early by any ButtonPress. Without it a gate message lives for one
+                       * mouse flick: the readout is guarded by `if(xctx->ui_state)`, and ui_state
+                       * is non-zero for exactly the reason the message exists. */
+  char statusmsg_text[256]; /* issue 0238: the last line statusmsg() actually put on .statusbar.1
+                       * (dropped lines are not recorded). The field itself is a Tk label that only
+                       * exists when has_x, so this is what makes the hold assertable headlessly --
+                       * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
+                       * context teardown. */
+  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0237): 1 disables the
+                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for) so a
+                       * headless test can still CONSTRUCT the co-armed state (a live wire draw +
+                       * a second modal gesture) that every production verb now refuses to build.
+                       * abort_operation()'s co-armed teardown has no other constructor left --
+                       * see tests/headless/test_add_wire_label.tcl G2. Never set by the GUI. */
   int sympin_drops;  /* issue 0122 E1: monotonic count of COMMITTED sympin drops (Add-Pin /
                        * Add-Wire-Label). Bumped only in end_move_copy_logged (the single commit
                        * funnel; aborts and off-copper label refusals never reach it). The Tcl
@@ -2485,6 +2503,10 @@ extern void start_wire(double mx, double my);
  * before a wire or line draw is armed on top of one. See callback.c. */
 extern int abort_placement_preview(void);
 extern int leave_placement_for(const char *what);
+/* the forward gate (issue 0230 / 0233 F1, widened to every remaining draw and placement verb by
+ * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c
+ * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */
+extern void leave_wire_draw_for(const char *what);
 extern int abort_wire_line_command(void); /* issue 0230 */
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
@@ -2885,6 +2907,11 @@ extern void tclsetintvar(const char *s, const int value);
 extern int tclvareval(const char *script, ...);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
+/* issue 0238: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
+ * verb-noun prompts). The coordinate readout skips itself while statusmsg_held(). */
+extern void statusmsg_hold(char str[],int n);
+extern int statusmsg_held(void);
+extern void statusmsg_hold_clear(void);
 extern int place_text(int draw_text, double mx, double my);
 extern int create_text(int draw_text, double x, double y, int rot, int flip, const char *txt,
        const char *props, double hsize, double vsize);

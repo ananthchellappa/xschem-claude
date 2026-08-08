@@ -301,6 +301,14 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
       my_free(_ALLOC_ID_, &prop);
       xctx->need_reb_sel_arr=1;
       rebuild_selected_array();
+      /* phase 2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0237) -- see
+       * leave_wire_draw_for() in scheduler.c. The grabbed image arms the same cursor placement
+       * (START_SYMPIN + STARTMOVE) as add_graph/add_image and would jam the same way on top of a
+       * live wire draw. Gated at the ARM (here, on the release that completes the grab) rather
+       * than where the grab is started, so an abandoned grab -- released too small, or a failed
+       * surface -- leaves the wire alone. GUI-only path (X + cairo, driven by a real pointer
+       * grab), so this one is proved by code and has no headless seam. */
+      leave_wire_draw_for("Screen grab");
       move_objects(START,0,0,0);
       xctx->ui_state |= START_SYMPIN;
     }

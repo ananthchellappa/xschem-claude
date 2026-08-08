@@ -128,10 +128,15 @@ check "D2 ESC clears MENUSTART"          [menustart] 0
 check "D2 ESC clears ui_state"           [ui] 0
 
 # D3 -- STARTWIRE residue: pins the dropped `last_command &&` conjunct at :351.
-#   Constructor deliberately uses `add_graph`, one of the forward doors issue 0233 F1
-#   left ungated (it arms a placement on top of a live wire draw without leaving wire
-#   mode). It is NOT the F2 reverse door, so this leg survives F2 gating `w`.
-reset ; xschem wire gui ; xschem add_graph ; xschem rect gui
+#   CONSTRUCTOR NOTE (phases 1-2, 2026-08-08): this needs a wire draw and a SECOND modal gesture
+#   armed at the same time, and no verb builds that state any more -- `add_graph` (phase 2) and
+#   `rect gui` (phase 1) now both abandon the wire first, which is the whole point. The bracket
+#   below is the test-only seam `xschem test_gate_bypass` (scheduler.c), used ONLY to build the
+#   state; the ESC being tested runs with the gates live again. Section H pins that the seam
+#   defaults to off and that flipping it really does disable a gate, so a forgotten `1` cannot
+#   make a gate check pass silently.
+reset ; xschem wire gui
+xschem test_gate_bypass 1 ; xschem add_graph ; xschem rect gui ; xschem test_gate_bypass 0
 check "D3 armed: wire+rect+placement, lc==0" \
       [expr {[startwire] && [startrect] && [placing] && [lc]==0}] 1
 xschem abort_operation
@@ -302,6 +307,265 @@ xschem add_sch_pin -place
 xschem wire gui
 check "E8 teardown kept it clean"        [xschem get modified] 0
 xschem abort_operation ; xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# F. phase 1 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0237): a SHAPE draw
+#    started on top of a live wire/line draw abandons it, exactly as a placement does.
+#
+# This is the case the user hit in the GUI on 2026-08-07 under src/cadence_style_rc: `w`, click,
+# `r` -- and the editor stayed in wire mode. The rectangle armed (measured ui=65537,
+# MENUSTART|MENUSTARTRECT, last_command=1) while the wire kept claiming every click, so the
+# rectangle could never start and ESC was the only exit. Issue 0237 called this "much milder" than
+# the placement clash; it is the same dead end, and the phase-1 gate is the same one-line call.
+#
+# Not drivable here: the `C` / Ctrl+C keys and context-menu picks 4, 5, 19, 20 are callback.c
+# paths, and `xschem callback ...` segfaults under --nogui (WIRING.md §10). They carry the same
+# leave_wire_draw_for() call at the same point in the same shape of branch -- prove-by-code -- and
+# the scheduler twins below (`rect gui`, `polygon gui`, `arc`) are what the keys/menus dispatch to
+# for `r` (menu/toolbar) and `P` (the registry action tools.insert_polygon IS `xschem polygon gui`).
+# ---------------------------------------------------------------------------
+proc startpoly {} { return [bit 2048] }        ;# STARTPOLYGON
+proc u2bit {b}   { return [expr {([xschem get ui_state2] & $b) ? 1 : 0}] }
+proc hold {}     { return [xschem get statusmsg_hold] }
+proc msg {}      { return [xschem get statusmsg] }
+#  reset + a known status line, so a check can tell "the gate spoke" from "a message was already
+#  up" (the hold is wall-clock, so it outlives a single check)
+proc nreset {} { reset ; xschem statusmsg "-" }
+
+set ::infix_interface 1
+
+# F1 -- `r` on a LIVE wire draw (the infix half of the report).
+nreset ; xschem wire gui
+check "F1 live: STARTWIRE armed"          [startwire] 1
+xschem rect gui
+check "F1 live: r clears STARTWIRE"       [startwire] 0
+check "F1 live: r clears wire mode"       [lc] 0
+check "F1 live: rect gesture armed"       [startrect] 1
+check "F1 live: nothing committed"        [xschem get wires] 1
+check "F1 live: statusbar says why"       [msg] "Rectangle: in-progress wire abandoned"
+
+# F2 -- the SAME verb in cadence mode, which is where the report came from: infix_interface 0, so
+#   the rectangle only arms MENUSTART|MENUSTARTRECT and its first CLICK would start it -- while the
+#   wire draw underneath owns every click. Measured then: ui=65537 [STARTWIRE|MENUSTART],
+#   last_command=1. The live draw is armed under infix 1 first (that is what `xschem wire gui`
+#   models: the canvas click that starts the wire, which cannot be driven headlessly), then the
+#   mode is flipped for the `r`. A gate that only covered the infix branch would pass F1 and leave
+#   this red, which is exactly the user's case.
+#   There is deliberately NO check for `r` on a MENU-ARMED wire (first click not landed): the shape
+#   arm ASSIGNS ui_state2 wholesale, so that arm is replaced with or without a gate -- a check
+#   there would be green either way (verified: sabotaging the gate leaves it green).
+nreset ; xschem wire gui
+check "F2 cadence: draw is live"          [startwire] 1
+set ::infix_interface 0
+xschem rect gui
+check "F2 cadence: r clears STARTWIRE"    [startwire] 0
+check "F2 cadence: r clears wire mode"    [lc] 0
+check "F2 cadence: rect menu-armed"       [expr {[menustart] && [u2bit 4]}] 1
+check "F2 cadence: statusbar says why"    [msg] "Rectangle: in-progress wire abandoned"
+set ::infix_interface 1
+xschem abort_operation
+
+# F3 -- `P` (polygon). The Shift+P binding is the registry action tools.insert_polygon, whose
+#   command IS `xschem polygon gui`, so this drives the real key path.
+nreset ; xschem wire gui ; xschem polygon gui
+check "F3 live: P clears STARTWIRE"       [startwire] 0
+check "F3 live: P clears wire mode"       [lc] 0
+check "F3 live: polygon armed"            [startpoly] 1
+check "F3 live: statusbar says why"       [msg] "Polygon: in-progress wire abandoned"
+#   ...and in cadence mode, same construction as F2.
+nreset ; xschem wire gui ; set ::infix_interface 0
+xschem polygon gui
+check "F3 cadence: P clears STARTWIRE"    [startwire] 0
+check "F3 cadence: polygon menu-armed"    [expr {[menustart] && [u2bit 32]}] 1
+set ::infix_interface 1
+xschem abort_operation
+
+# F4 -- arc/circle. `xschem arc` with no coordinates is the ARM form (the menu route and the
+#   scheduler twin of the `C` / Ctrl+C keys).
+nreset ; xschem wire gui ; xschem arc
+check "F4 live: arc clears STARTWIRE"     [startwire] 0
+check "F4 live: arc clears wire mode"     [lc] 0
+check "F4 live: arc menu-armed"           [expr {[menustart] && [u2bit 64]}] 1
+check "F4 live: statusbar says why"       [msg] "Arc: in-progress wire abandoned"
+
+# F5 -- the RESTING wire command mode (segment ended by a double click: no STARTWIRE, but
+#   last_command still owns the next click, and under persistent_command the press handler calls
+#   start_wire() before anything else can have it).
+nreset ; xschem wire gui ; xschem abort_operation
+check "F5 resting: no STARTWIRE"          [startwire] 0
+check "F5 resting: wire mode armed"       [lc] 1
+xschem rect gui
+check "F5 resting: r clears wire mode"    [lc] 0
+check "F5 resting: rect armed"            [startrect] 1
+
+# F6 -- a live graphic LINE draw (Shift+L, and the only draw available in a .sym view).
+nreset ; xschem line gui
+check "F6 line: STARTLINE armed"          [startline] 1
+xschem polygon gui
+check "F6 line: P clears STARTLINE"       [startline] 0
+check "F6 line: polygon armed"            [startpoly] 1
+
+# F7 CONTROL -- the coordinate COMMIT forms are the replay/test seams: they store an object
+#   outright, arm no gesture, and must leave a live draw completely alone (mirror of C2/E5).
+nreset ; xschem wire gui ; xschem rect 10 10 20 20
+check "F7 control: rect coords keep draw" [startwire] 1
+check "F7 control: rect coords keep mode" [lc] 1
+check "F7 control: rect committed"        [xschem get rects 4] 1
+check "F7 control: gate stayed silent"    [msg] "-"
+nreset ; xschem wire gui ; xschem polygon 0 0 10 0 10 10
+check "F7 control: poly coords keep draw" [startwire] 1
+check "F7 control: poly gate silent"      [msg] "-"
+nreset ; xschem wire gui ; xschem arc 0 0 10 0 360 4
+check "F7 control: arc coords keep draw"  [startwire] 1
+check "F7 control: arc gate silent"       [msg] "-"
+
+# F8 -- the arg-form quirk (WIRING.md / issue 0233): a TRUNCATED coordinate form falls into the
+#   ARM branch, not the commit branch, so it must be gated. Gate by branch, not by verb name.
+nreset ; xschem wire gui ; xschem rect 10 20
+check "F8 truncated form arms -> gated"   [startwire] 0
+check "F8 truncated form: menu-armed"     [expr {[menustart] && [u2bit 4]}] 1
+
+# F9 CONTROL -- with no draw live the gate is a no-op: the shape arms normally and says nothing
+#   (a gate that fired here would be abandoning something the user never started).
+nreset ; xschem rect gui
+check "F9 no draw: rect still arms"       [startrect] 1
+check "F9 no draw: gate stayed silent"    [msg] "-"
+check "F9 no draw: no message held"       [hold] 0
+xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# G. phase 2: the remaining PLACEMENT verbs cancel a live wire/line draw.
+#
+# `l`, `p` and component insert were gated by 0233 F1; these are the arms issue 0237 tracked as
+# still open -- and for add_graph / add_image / the screen grab there is no form to re-trigger, so
+# before the gate ESC was the only exit and it threw the placement away.
+#
+# Not drivable here: context-menu picks 1 (Insert symbol -> start_place_symbol) and 6 (Insert
+# text), the `t` key and the screen grab are callback.c / draw.c paths (`xschem callback`
+# segfaults headlessly, the grab needs a real pointer grab), and `add_image` opens tk_getOpenFile.
+# `place_text` below IS the scriptable twin of `t` and of ctx-menu 6; start_place_symbol() shares
+# its gate with the already-covered `xschem place_symbol` (section B) by inspection only.
+# ---------------------------------------------------------------------------
+
+# G1 -- `Alt+Shift+L` / `xschem net_label 0`: a real lab_wire preview INSTANCE on the cursor.
+nreset ; xschem wire gui ; xschem net_label 0
+check "G1 live: net label clears wire"    [startwire] 0
+check "G1 live: clears wire mode"         [lc] 0
+check "G1 live: placement armed"          [placing] 1
+check "G1 live: preview instance"         [xschem get instances] 1
+check "G1 live: nothing committed"        [xschem get wires] 1
+check "G1 live: statusbar says why"       [msg] "Net label: in-progress wire abandoned"
+xschem abort_operation
+check "G1 ESC after gate: clean"          [ui] 0
+check "G1 ESC removed the preview"        [xschem get instances] 0
+
+# G2 -- Ctrl+P / Ctrl+Shift+P are the same helper with another symbol (ipin/opin).
+nreset ; xschem wire gui ; xschem net_label 2
+check "G2 live: Ctrl+P clears wire"       [startwire] 0
+check "G2 live: placement armed"          [placing] 1
+xschem abort_operation
+
+# G3 -- Graphs > Add graph.
+nreset ; xschem wire gui ; xschem add_graph
+check "G3 live: add_graph clears wire"    [startwire] 0
+check "G3 live: clears wire mode"         [lc] 0
+check "G3 live: placement armed"          [placing] 1
+check "G3 live: statusbar says why"       [msg] "Add graph: in-progress wire abandoned"
+xschem abort_operation
+
+# G4 -- `xschem place_text`, the scriptable twin of the `t` key and ctx-menu 6. The text DIALOG
+#   needs a Tk toplevel, so headlessly place_text() fails and no PLACE_TEXT arms -- but the gate
+#   runs before it, which is the half under test (`t` used to leave ui=1 [STARTWIRE] with
+#   last_command zeroed: the residue issue 0233 F3 had to teach ESC to clean up).
+nreset ; xschem wire gui ; catch {xschem place_text}
+check "G4 live: place_text clears wire"   [startwire] 0
+check "G4 live: clears wire mode"         [lc] 0
+check "G4 live: statusbar says why"       [msg] "Place text: in-progress wire abandoned"
+
+# G5 -- infix_interface 0 (cadence): the MENU-armed wire is dropped too.
+set ::infix_interface 0
+nreset ; xschem wire ; xschem net_label 0
+check "G5 menu: net label clears arm"     [menuwire] 0
+check "G5 menu: placement armed"          [placing] 1
+xschem abort_operation
+nreset ; xschem wire ; xschem add_graph
+check "G5 menu: add_graph clears arm"     [menuwire] 0
+xschem abort_operation
+set ::infix_interface 1
+
+# G6 -- the RESTING wire command mode.
+nreset ; xschem wire gui ; xschem abort_operation
+check "G6 resting: wire mode armed"       [lc] 1
+xschem net_label 0
+check "G6 resting: net label clears mode" [lc] 0
+check "G6 resting: placement armed"       [placing] 1
+xschem abort_operation
+
+# G7 -- a live graphic LINE draw is abandoned by a placement too.
+nreset ; xschem line gui ; xschem net_label 0
+check "G7 line: net label clears line"    [startline] 0
+check "G7 line: placement armed"          [placing] 1
+xschem abort_operation
+
+# G8 CONTROL -- `xschem net_label` with no type places nothing, so it must not touch the draw
+#   (the branch never reaches place_net_label). Same rule as the coordinate forms in F7.
+nreset ; xschem wire gui ; xschem net_label
+check "G8 control: no-op keeps draw"      [startwire] 1
+check "G8 control: no-op keeps mode"      [lc] 1
+check "G8 control: gate stayed silent"    [msg] "-"
+xschem abort_operation ; xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# H. issue 0238 -- the gate messages above are the whole user-visible half of this policy, and
+#    until now none of them could be read: `statusmsg(str, 1)` does write .statusbar.1, but the
+#    coordinate readout (callback.c motion + press/release) overwrites it on the next 8-pixel
+#    flick of the mouse, and `ui_state` is non-zero for exactly the reason the message exists.
+#    Placement verbs had a second clobberer one call later: place_symbol() SELECTS the preview it
+#    just placed, and select.c's "n=%4d x = ..." info line lands on the same field.
+#    The fix is a hold enforced inside statusmsg() itself. The status bar is a Tk label that does
+#    not exist under --nogui, so `xschem get statusmsg` (the last line that actually reached the
+#    field) plus `xschem get statusmsg_hold` are the seams; the pixels were confirmed by eye.
+# ---------------------------------------------------------------------------
+
+# H1 -- an ordinary script line owns the field and holds nothing.
+nreset
+check "H1 plain message lands"            [msg] "-"
+check "H1 plain message holds nothing"    [hold] 0
+
+# H2 -- a gate message holds the field.
+xschem wire gui ; xschem rect gui
+check "H2 gate message lands"             [msg] "Rectangle: in-progress wire abandoned"
+check "H2 gate message is held"           [hold] 1
+xschem abort_operation
+
+# H3 -- the placement clobberer: place_symbol's own selection info line runs AFTER the gate
+#    message and must be dropped while the hold is up. Without the hold this reads
+#    "n=   0 x = ... w = ... h = ..." -- measured, and the reason the fix is writer-side.
+nreset ; xschem wire gui ; xschem net_label 0
+check "H3 select info line dropped"       [msg] "Net label: in-progress wire abandoned"
+check "H3 hold survived the placement"    [hold] 1
+xschem abort_operation
+
+# H4 -- an explicitly requested line wins immediately (deliberate news, and the reset seam).
+xschem statusmsg "AFTER"
+check "H4 explicit line wins"             [msg] "AFTER"
+check "H4 explicit line releases hold"    [hold] 0
+
+# H5 -- the test-only gate bypass (`xschem test_gate_bypass`), which is what still makes the
+#    co-armed state constructible for D3 here and G2 in test_add_wire_label.tcl. Pinned in both
+#    directions so a suite that forgot to switch it back cannot pass silently.
+check "H5 bypass is off by default"       [xschem test_gate_bypass] 0
+nreset ; xschem test_gate_bypass 1
+xschem wire gui ; xschem rect gui
+check "H5 bypassed: wire draw survives"   [startwire] 1
+check "H5 bypassed: rect armed too"       [startrect] 1
+check "H5 bypassed: gate stayed silent"   [msg] "-"
+xschem test_gate_bypass 0
+check "H5 bypass switches back off"       [xschem test_gate_bypass] 0
+xschem abort_operation ; xschem abort_operation
+nreset ; xschem wire gui ; xschem rect gui
+check "H5 gate live again: wire dropped"  [startwire] 0
+xschem abort_operation
 
 set ::infix_interface $saved_infix
 
