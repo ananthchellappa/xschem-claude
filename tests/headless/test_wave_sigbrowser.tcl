@@ -1399,12 +1399,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # The tree and model legs are KEPT and are not decoration: they are the
   # assertion that a search does NOT re-shape the upper pane — R5's sibling
   # (no auto-open) in its other form, no silent re-shape either.
-  set bt_k [bt_type $BTSB {v(*)}]
-  check {BT25 typing in the SEARCH entry matches the four v( names live, counts them on the status line, and leaves the tree AND the row model exactly as they were} \
+  # ⚠⚠ ITEM 16 RE-PATTERNED THIS WHOLE BLOCK, AND THE DISCRIMINATOR WAS REBUILT
+  # A THIRD TIME. The bars now match the R8 LABEL of each candidate and still
+  # return the RAW names, so `v(*)` — which matched four raw names — matches
+  # ZERO labels. $BTFIX's labels are {out out2 net5 net5 net5:i v1:i net1
+  # vsweep}, MEASURED, and the two patterns below were chosen out of that:
+  #
+  #     ALL       (neither bar)   8 of 8
+  #     SEARCH    `net*`          4 of 8
+  #     FILTER    `*:i`           2 of 8
+  #     AND       both            1 of 8
+  #
+  # Four distinct counts, which is what bt_distinct needs — and unlike `v(*)`
+  # BOTH patterns are LABEL-ONLY (`net*` is the driver's own example, `*:i` is
+  # R8's current suffix; neither matches a single raw name here). The
+  # discriminator now DEMONSTRATES the feature instead of merely surviving it,
+  # and it reds if the source is reverted.
+  set bt_k [bt_type $BTSB {net*}]
+  check {BT25 typing in the SEARCH entry matches the four names whose LABEL starts `net` live — a pattern that matches NO raw name at all — counts them on the status line, and leaves the tree AND the row model exactly as they were} \
     [list $bt_k [bt_tree $BTTV] [bt_leaves wvbt] [bt_count $BTF.ph] \
           [pcall ::wviewer::browser_match wvbt]] \
     [list 1 $BTNODES $BTFIX {4 of 8} \
-          {ok {v(out) v(out2) v(x1.x2.net5) v(x1.y3.net5)}}]
+          {ok {v(x1.x2.net5) v(x1.y3.net5) i(x1.x2.net5) net1}}]
   set BTGSEARCH [bt_sig $BTTV wvbt $BTF.ph]
   check {BT25 ...and the status line counts them} \
     [string match {*4 of 8 signals*} [$BTF.ph cget -text]] 1
@@ -1417,32 +1433,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BT25 the Search BUTTON rebuilds the same tree, the same row model AND the same count as the live route} \
     [list [bt_tree $BTTV] [bt_leaves wvbt] [bt_count $BTF.ph]] \
     [list $BTNODES $BTFIX {4 of 8}]
+  # ⚠ THE ROUTE-INDEPENDENCE LEG ITEM 16 ADDS: the BUTTON must key the same way
+  # the KEYSTROKE does. Both go through browser_refresh -> browser_match, so a
+  # break that keyed one route and not the other is caught by an answer, not by
+  # a count that both routes happen to share.
+  check {BT25 ...and the BUTTON route's matched set is BY NAME the live route's, so the label key is applied on both} \
+    [pcall ::wviewer::browser_match wvbt] \
+    {ok {v(x1.x2.net5) v(x1.y3.net5) i(x1.x2.net5) net1}}
 
   # --- ⚠⚠ BT26: THE AND, LIVE, THREE DIFFERENT ANSWERS ---------------------
   # The AND is now read where it is still visible: `browser_match` (by NAME, off
   # the two live bars) and the count. An ignored FILTER reads four names /
-  # `4 of 8`; an ignored SEARCH reads three / `3 of 8`; only a real AND reads
-  # two. The tree and model legs pin item 10's deliberate non-reshaping.
-  set bt_k [bt_type $BTFB {*net5*}]
+  # `4 of 8`; an ignored SEARCH reads two / `2 of 8`; only a real AND reads
+  # ONE. The tree and model legs pin item 10's deliberate non-reshaping.
+  set bt_k [bt_type $BTFB {*:i}]
   check {BT26 the FILTER bar narrows the SEARCH bar's result — the live AND, by NAME off both live bars, with the tree and the row model deliberately unchanged} \
     [list $bt_k [bt_tree $BTTV] [bt_leaves wvbt] [bt_count $BTF.ph] \
           [pcall ::wviewer::browser_match wvbt]] \
-    [list 1 $BTNODES $BTFIX {2 of 8} \
-          {ok {v(x1.x2.net5) v(x1.y3.net5)}}]
+    [list 1 $BTNODES $BTFIX {1 of 8} \
+          [list ok [list {i(x1.x2.net5)}]]]
   set BTGAND [bt_sig $BTTV wvbt $BTF.ph]
-  check {BT26 ...and the count says two of eight, not four and not three} \
-    [string match {*2 of 8 signals*} [$BTF.ph cget -text]] 1
+  check {BT26 ...and the count says one of eight, not four and not two} \
+    [string match {*1 of 8 signals*} [$BTF.ph cget -text]] 1
   # THE DISCRIMINATOR: clearing the search bar must give a DIFFERENT ANSWER
-  # from the AND. Under item 10 the difference is `i(x1.x2.net5)` reappearing in
-  # the MATCHED SET and the count going 2 -> 3 — not a row appearing in the tree
-  # (it shares g:x1.x2 with a v( name present in both states) and not a row
-  # appearing in the model (§7.1 never took it out).
+  # from the AND. Under item 10 the difference is a name reappearing in the
+  # MATCHED SET and the count going up — not a row appearing in the tree (all
+  # four states draw the same four nodes) and not a row appearing in the model
+  # (§7.1 never took it out). Under item 16 the returning name is `i(v1)`,
+  # whose label `v1:i` the SEARCH bar's `net*` was excluding, and the count
+  # goes 1 -> 2.
   set bt_k [bt_type $BTSB {}]
-  check {BT26 the FILTER bar alone gives a THIRD, larger answer — i( is back in the matched set and the count says three} \
+  check {BT26 the FILTER bar alone gives a THIRD, larger answer — i(v1) is back in the matched set and the count says two} \
     [list $bt_k [bt_tree $BTTV] [bt_leaves wvbt] [bt_count $BTF.ph] \
           [pcall ::wviewer::browser_match wvbt]] \
-    [list 1 $BTNODES $BTFIX {3 of 8} \
-          {ok {v(x1.x2.net5) v(x1.y3.net5) i(x1.x2.net5)}}]
+    [list 1 $BTNODES $BTFIX {2 of 8} \
+          {ok {i(x1.x2.net5) i(v1)}}]
   set BTGFILT [bt_sig $BTTV wvbt $BTF.ph]
   # ⚠⚠ THE ITEM-10 DISCRIMINATOR, AND WHY IT MOVED TWICE. Item 9's control
   # compared the three TREES. Item 10 (A) takes the leaves out of the tree, so
@@ -1460,11 +1485,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # version of this control that read sea labels would be green-because-empty.
   check {BT26 all FOUR bar states give a genuinely different browser signature} \
     [bt_distinct $BTGALL $BTGSEARCH $BTGFILT $BTGAND] {distinct:4}
-  set bt_k [bt_type $BTSB {v(*)}]
-  check {BT26 re-typing the search puts the AND back — two names, two of eight} \
+  set bt_k [bt_type $BTSB {net*}]
+  check {BT26 re-typing the search puts the AND back — one name, one of eight} \
     [list $bt_k [bt_tree $BTTV] [bt_count $BTF.ph] \
           [pcall ::wviewer::browser_match wvbt]] \
-    [list 1 $BTNODES {2 of 8} {ok {v(x1.x2.net5) v(x1.y3.net5)}}]
+    [list 1 $BTNODES {1 of 8} [list ok [list {i(x1.x2.net5)}]]]
 
   # --- decision 4, live: the error is VISIBLE and the tree is HELD ----------
   bt_syntax $BTFB RegExp
@@ -1496,11 +1521,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ THIS LEG NOW CARRIES "NEVER WIDENED". A break that widened during the
   # error state leaves the recovered count at `4 of 8` or `8 of 8`; only a real
   # hold-then-recover reads `2 of 8` with the AND's two names.
+  # ⚠ ITEM 16: the recovery pattern is unchanged (`.*net5.*` is a substring form
+  # and reads the same against a label as against a raw name) but its ANSWER
+  # moved, because the SEARCH bar above it now holds `net*`. Three of eight —
+  # which is still neither the search-alone 4, the AND's 1, nor 8, so the
+  # "never widened" claim this leg carries is intact.
   set bt_k [bt_type $BTFB {.*net5.*}]
-  check {BT27 a valid regexp recovers: the count is back to two of eight and the AND's two names are back, with the tree unmoved throughout} \
+  check {BT27 a valid regexp recovers: the count is back to three of eight and the AND's three names are back, with the tree unmoved throughout} \
     [list $bt_k [bt_tree $BTTV] [bt_count $BTF.ph] \
           [pcall ::wviewer::browser_match wvbt]] \
-    [list 1 $BTNODES {2 of 8} {ok {v(x1.x2.net5) v(x1.y3.net5)}}]
+    [list 1 $BTNODES {3 of 8} \
+          {ok {v(x1.x2.net5) v(x1.y3.net5) i(x1.x2.net5)}}]
   bt_syntax $BTFB Shell
   bt_type $BTFB {}
   set bt_k [bt_type $BTSB {}]

@@ -797,6 +797,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [bd_ids_for [bd_rows $tok] {v(beta)}] \
           [pcall ::wviewer::browser_match $tok]] \
     [list top-level {d:0|s:v(alpha)} {s:v(beta)} {ok {}}]
+  # ⚠⚠ BD57 (TWO-PANE ITEM 16) — THE FOREIGN INVENTORIES ARE KEYED TOO, AND THIS
+  # IS THE ONLY PLACE IT IS REACHABLE. `browser_and` has TWO production callers,
+  # not one: `browser_match` (the current DB) and `browser_refresh`'s All-DBs
+  # loop at wave_viewer.tcl:8110 (each FOREIGN DB). Item 16's work order names
+  # only the first. Keying one and not the other would make the SAME two bar
+  # dicts mean two different things depending on which DB a name came from —
+  # the user types one pattern, the current DB answers about labels and the
+  # foreign one about raw names. That is exactly the failure `browser_match`'s
+  # own ⚠ was written to prevent, one level up, so BOTH sites pass the key and
+  # this check is what says so BEHAVIOURALLY rather than by reading the source.
+  #
+  # `alpha` — no wildcards, whole-name anchored — matches ZERO raw names
+  # (`v(alpha)`) and exactly ONE label (`alpha`). Under the old raw-keyed loop
+  # the foreign header cannot appear; it appears here only because the foreign
+  # branch keys the same way the current DB does. The pair with BD51b above is
+  # deliberate: same bar, same fixture, `*alpha*` (works either way) against
+  # `alpha` (works only keyed).
+  bd_pat $BSB {alpha}
+  check {BD57 (ITEM 16) ON + the LABEL-ONLY `alpha`: the FOREIGN DB's header still appears, so browser_refresh's All-DBs loop keys the bars the same way browser_match does} \
+    [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
+          [bd_ids_for [bd_rows $tok] {v(alpha)}]] \
+    [list top-level {d:0|s:v(alpha)}]
+  check {BD57 (ITS NEGATIVE CONTROL) the same pattern against the RAW name would have matched nothing at all — which is what the header appearing proves did not happen} \
+    [list [lindex [pcall ::wviewer::sig_match {v(alpha)} {alpha}] 1] \
+          [lindex [pcall ::wviewer::sig_match {v(alpha)} {alpha} \
+                     -key wviewer::browser_label_of] 1]] \
+    [list {} {v(alpha)}]
   bd_pat $BSB {}
   check {BD51c (CONTROL) clearing the pattern brings everything back} \
     [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]

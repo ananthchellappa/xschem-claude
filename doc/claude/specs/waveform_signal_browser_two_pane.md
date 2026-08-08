@@ -109,7 +109,7 @@ names the measurement that forced it.
 | **R5** | **Both** search bars (Search AND Filter, ANDed as today) filter **the lower pane only**. The tree **never auto-opens** on a search. |
 | **R6** | A plot gesture on a **tree** node stays **recursive** — `browser_leaf_names` is untouched. Rationale, driver's own: plotting everything under a block is how you find what is coupling into a signal you see a kink on. |
 | **R7** | **All DBs**: with the box ticked, per-database headers become the tree's **top level**, above each DB's design root. |
-| **R8** | Lower-pane labels, Cadence convention: **voltages bare** (`net5`); **currents `<instance>:<param>`** with the model name dropped (`xm1:id`, `v1:i`, `c1:i`). The full raw name stays in the tooltip and on copy. |
+| **R8** | Lower-pane labels, Cadence convention: **voltages bare** (`net5`); **currents `<instance>:<param>`** with the model name dropped (`xm1:id`, `v1:i`, `c1:i`). The full raw name stays in the tooltip and on copy. **Item 16 adds: the label is also the two bars' FILTER SUBJECT** — see §5.4 and §7.7. |
 | **R9** | **Ctrl-L → Ctrl-B** for the browser toggle. See §8.1 — this overrides an in-source rejection. |
 | **R10** | **Ctrl-Alt-V replaces Ctrl+5** as "Show in Signal Browser", routed through the **C action registry** so it is remappable. Nothing selected → reveal the current descend level. One instance selected → reveal that instance, as if the user had descended into it. |
 | **R11** | **Two independent checkboxes**: (a) *Show device internals*, default **OFF**; (b) *Show source currents*, default **ON**. (a) governs both the tree's device nodes and the signal list. |
@@ -401,6 +401,19 @@ Cadence namespace. The real forms are `/I0/M1/D` (schematic/OSS: leading slash, 
 and `I0.M1:d` (simulator/raw: dot hierarchy, colon terminal). R8 follows the **raw**
 namespace, which is the one our names come from.
 
+⚠⚠ **ITEM 16: THE LABEL IS ALSO THE FILTER SUBJECT — AND THAT DOES NOT WEAKEN THE RULE
+ABOVE.** The two browser bars match this label and **return the raw name**. "The label is a
+display, never an identity" is *restated* by that, not traded away: a filter selects **what
+to show** and resolves nothing. Every gesture still goes through the row index into
+`browser_label_full`; the status line still counts names; a label collision still shows
+both rows rather than picking one. The four collisions above are unaffected — a filter that
+matches a colliding label simply shows both signals, which is the correct answer for a
+display operation and would be the wrong one for an identity operation.
+
+Mechanism: `wviewer::browser_label_of` (a pure `browser_label(signal_entry(name))`) is
+handed to `sig_match` as `-key`, which applies it before the pattern and appends the
+original. See §7.7 for why, and for what it costs.
+
 ---
 
 ## 6. Filters (R11)
@@ -492,6 +505,55 @@ R6 keeps it recursive. The lower pane needs a *different* question answered — 
 exactly this level" — so it gets its own selector proc. Adding one reds nothing; changing
 `browser_leaf_names` would red BT13, BM12, BT29 and BT32, and would break the one gesture
 the driver explicitly asked to preserve.
+
+### 7.7 The bars match the LABEL (item 16), and the raw-name paste path was not preserved
+
+R8 gave the lower pane a rendered label. That created a surface no other search box in this
+codebase has: **it displays one string and filtered on another.** Typing `v(x1.net1)` at a
+pane showing `net1` is pure *articulatory distance* (Hutchins/Hollan/Norman 1985) — same
+meaning, different surface form, and the user pays the translation. MEASURED on
+`tb_bandgap`'s `x1` (43 own-level signals, shipped class policy):
+
+| the user types | matched against RAW | matched against the LABEL |
+|---|---|---|
+| `net*` | **0** | **26** |
+| `net1*` | **0** | **11** |
+| `*1` | **0** | **4** |
+| `*net*` | 26 | 26 |
+| `v(x1.net*` | 26 | **0** |
+
+Ruling 3 (whole-name anchoring) is **unchanged in force**; it now anchors to the label,
+which is exactly what makes `net*` work. Only the `*…*` substring form worked before, and
+only by accident.
+
+**Scope.** The two BROWSER bars only. The legacy `.graphdialog`, the Add Trace dialog and
+the bare searchbar widget all **display the string they match** and are left alone — the
+Add Trace listbox in particular feeds its selection into the Expression entry, so
+label-matching there would prefill an un-plottable string. The `type` dropdown stays keyed
+to the **raw** name, because `sig_type` reads the `v(`/`i(` prefix that the label destroys.
+
+**Why the raw-name paste path was not preserved.** The strongest objection —
+*"but users paste raw names"* — is already false. `string match` treats `[` as a character
+class opener, so a pasted name containing one has never matched itself:
+
+```
+string match {i(@c.x1.c1[i])} {i(@c.x1.c1[i])}   ->  0
+```
+
+`tb_bandgap` has 0 such names of 424; `tb_charge_pump` has **292 of 1191** — every device
+measurement in the corpus. Against that, R8 labels carry **zero** glob metacharacters
+(0 of the 190 class-filtered `tb_bandgap` names) while **189 of 190** raw names contain `(`.
+The pattern language is clean on labels and booby-trapped on raw names.
+
+**Rejected, with the reason recorded:** a `raw:` escape hatch, and a label-OR-raw union. The
+union makes *"why did that match?"* unanswerable and lets `*v(*` match a row whose label
+contains no `v(`. A saved raw-shaped pattern in `browser_state` simply stops matching after
+the upgrade — a declared limit, not a migration.
+
+**Two callers, one key.** `browser_and` has two production callers — `browser_match` (the
+current DB) and `browser_refresh`'s All-DBs loop (each foreign DB). **Both** pass the key.
+Keying one would make the same typed pattern mean "the label" for one inventory and "the
+raw name" for the next, with nothing on screen to say which; BD57 pins it.
 
 ---
 

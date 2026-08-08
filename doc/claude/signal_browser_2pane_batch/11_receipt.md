@@ -217,6 +217,14 @@ COUNT was read alongside its fail count; no run lost a check.
 
 ## 8. Found, named, NOT fixed
 
+* **⚠ THE SEA HAS NO HOVER TOOLTIP — an acknowledged MISS, not a deferral.**
+  `PLAN.md` item 11's scope names *"Tooltip on hover shows `browser_label_full`"*
+  (PLAN:816) and nothing binds `<Motion>` on `$f.pw.sea.c`: **seven** binds shipped,
+  not eight. The pane draws a LABEL and gives the user no way to see the NAME behind
+  it. — **PAID by item 16's second commit** (`16_receipt.md` §5): one `<Motion>` bind,
+  GH8's literal `14` → `15`, a fifteenth `data-bseq` row, and BQ75-BQ77. *(This entry
+  was itself added late: item 11's receipt did not record the miss, and the next
+  session's prompt cited a §8 line that was not here.)*
 * **`browser_show_path`'s bar clause is now stale.** Its `$matched == 0` arm appends
   *"(the Search/Filter bar may be hiding it)"* when `browser_bars_active` — but since
   item 10 the bars cannot hide a node from the tree for the current DB (§7.1). The

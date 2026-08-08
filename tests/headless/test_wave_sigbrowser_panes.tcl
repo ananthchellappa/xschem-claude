@@ -584,7 +584,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set bw_ids0  [bs_tree_ids $TV]
   set bw_open0 [bs_open_set $TV]
   set bw_stat0 [pcall $F.ph cget -text]
-  set bw_typed [bs_type $F.wvsearch {v(x1.x2*}]
+  # ⚠ ITEM 16 RE-PATTERNED THIS. The old `v(x1.x2*` matched 1 of the 3 RAW names
+  # and now matches 0 labels; `net*` matches 0 raw names and 2 of the 3 LABELS
+  # ({out net5 net5}), so the count moves 3 -> 2 instead of 3 -> 1 and the
+  # anti-vacuity leg below still has a number to see. The flicker-provoking
+  # property that made (2) below a real test is unchanged and MEASURED: typing
+  # it a character at a time gives `n`, `ne`, `net` — all matching NOTHING —
+  # before `net*` matches two.
+  set bw_typed [bs_type $F.wvsearch {net*}]
   update
   # ⚠ THE ANTI-VACUITY GUARD FOR THE CHECK BELOW, and it is load-bearing: the
   # status line is the ONE surface the bars are still allowed to move in this
@@ -594,8 +601,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
          moved off its unfiltered count} \
     [list $bw_typed $bw_open0 [llength $bw_ids0] \
           [string match {*3 of 3 signals*} $bw_stat0] \
-          [string match {*1 of 3 signals*} [pcall $F.ph cget -text]]] \
-    [list {v(x1.x2*} {g: g:x1} 4 1 1]
+          [string match {*2 of 3 signals*} [pcall $F.ph cget -text]]] \
+    [list {net*} {g: g:x1} 4 1 1]
   check {BW46 (R5, spec §7.1) ...and it left the tree's NODE SET and its OPEN SET
          byte-identical — the bars narrow the lower pane, never the tree} \
     [list [bs_tree_ids $TV] [bs_open_set $TV]] [list $bw_ids0 $bw_open0]

@@ -26,15 +26,19 @@
 #  3. THE LABEL IS A DISPLAY. R8 renders `i(x1.x2.net5)` as `net5:i`, and no raw
 #     name contains `net5:i`. Every gesture must resolve through the INDEX into
 #     the full raw name; BQ56 and BQ58 are the two ends of that.
+#  4. ITEM 16 MAKES THE LABEL THE BARS' SUBJECT TOO, and that does NOT weaken
+#     (3): a filter selects WHAT TO SHOW and resolves nothing. BQ70-BQ74 are the
+#     driver's own case, and BQ73 is (3) restated from the bar's side — the
+#     matcher matches the label and RETURNS THE RAW NAME.
 #
 # ============================================================================
 # CONVENTIONS (inherited — test_wave_sigbrowser.tcl:38-49, ruling 30)
 # ============================================================================
 # GROUP PREFIX: the sea of names is `BQ`, never reused. Numbers are BLOCKED by
-# arm: 01-19 source/pure (BOTH arms), 50-69 the throwaway toplevel (X only).
-# PLAN reserves BQ01-BQ13 for items 6/7's pure model, which shipped inside
-# test_wave_sigbrowser_2pane.tcl's TP band instead (the as-built convention);
-# nothing here renumbers into them.
+# arm: 01-19 source/pure (BOTH arms), 50-69 the throwaway toplevel (X only),
+# 70-79 ITEM 16's live-bar block, also X only. PLAN reserves BQ01-BQ13 for items
+# 6/7's pure model, which shipped inside test_wave_sigbrowser_2pane.tcl's TP
+# band instead (the as-built convention); nothing here renumbers into them.
 #
 # ⚠ EXPECTED LITERALS ARE STRING REPS, NEVER NESTED LISTS. `check` compares
 # STRINGS, and `[list {g:} 0]` has the string rep `g: 0`, not `{g:} 0`. Five
@@ -280,13 +284,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $bq_precol $bq_open0 [llength [bs_sea_labels $C]]] \
     [list {g:} {g:} 23]
   set bq_sea0  [bs_sea_labels $C]
-  set bq_typed [bs_type $SB {v(x1.x2.net5*}]
+  # ⚠ ITEM 16 RE-PATTERNED THIS, and the property it was chosen for is intact.
+  # It used to read `v(x1.x2.net5*`, whose FIRST keystroke (`v`) matched nothing
+  # — that is what makes this a real R5 test rather than a no-op. `net5*` has
+  # the same shape (`n`, `ne`, `net`, `net5` all match nothing at this level,
+  # MEASURED) and narrows the pane to the same ONE row, so only the STRING in
+  # the precondition moved. It is now also the driver's own case: this pattern
+  # matches the label the pane draws, and matches ZERO raw names.
+  set bq_typed [bs_type $SB {net5*}]
   update
   set bq_open1 [bq_openset $TV]
   set bq_sea1  [bs_sea_labels $C]
   check {BQ53 (PRECONDITION) the keystrokes were really delivered and the pane
          had something to lose} \
-    [list $bq_typed [llength $bq_sea0]] [list {v(x1.x2.net5*} 23]
+    [list $bq_typed [llength $bq_sea0]] [list {net5*} 23]
   check {BQ53 (R5's HEADLINE) a Search keystroke leaves the tree's OPEN SET
          UNCHANGED while the sea's contents CHANGE} \
     [list [expr {$bq_open1 eq $bq_open0}] [expr {$bq_sea1 ne $bq_sea0}] \
@@ -731,6 +742,118 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check {BQ67c (RESTORED) the corpus is back} \
     [llength [bs_tree_ids $TV]] 45
+
+  # === BQ70-BQ74 (ITEM 16): THE BARS FILTER WHAT THE USER SEES ===============
+  #
+  # ⚠⚠ THE DRIVER'S OWN CASE, VERBATIM: "descend to x1 and there are signals
+  # named net1, net2. The user SHOULD be able to filter based on what is
+  # presented, not what the actual database value is. `net*` should show the
+  # netXYZ signals. User should not have to put in `*net*` or `v(x1.net*`."
+  #
+  # MEASURED on THIS corpus at g:x1 (43 own-level signals under the shipped
+  # class policy), the same pattern against the RAW name and against the R8
+  # LABEL the lower pane actually draws:
+  #
+  #     net*        raw  0   label 26
+  #     net1*       raw  0   label 11
+  #     *1          raw  0   label  4
+  #     v(x1.net*   raw 26   label  0
+  #
+  # Every zero in the raw column is ruling 3 doing its job: wildcards anchor to
+  # the WHOLE name, so a leading-anchored pattern can never reach inside a
+  # wrapped one. The pane renders `net1`; the matcher was globbing
+  # `v(x1.net1)`. Only the `*...*` substring form ever worked, and only by
+  # accident — which is why BQ65's `*net1*` above is the one bar check in this
+  # file that does NOT move.
+  catch {$TV selection set [list {g:x1}]}
+  update
+  check {BQ70 (PRECONDITION) at g:x1 with both bars EMPTY the sea draws the
+         node's 43 OWN-level signals, and the caption counts them} \
+    [list [llength [bs_sea_labels $C]] [pcall $ST cget -text]] \
+    [list 43 {43 of 43 signals}]
+  set bq_k16 [bs_type $SB {net*}]
+  update
+  check {BQ70 (THE DRIVER'S OWN CASE) `net*` — which matches NOTHING against the
+         raw names — draws the 26 signals whose LABEL starts `net`, in raw-file
+         order} \
+    [list $bq_k16 [llength [bs_sea_labels $C]] [lrange [bs_sea_labels $C] 0 3] \
+          [pcall $ST cget -text]] \
+    [list {net*} 26 {net1 net2 net3 net4} {26 of 43 signals}]
+  check {BQ70 ...and §7.1 is NOT weakened by it: the tree keeps all 45 nodes} \
+    [llength [bs_tree_ids $TV]] 45
+
+  # ⚠ TWO MORE PATTERNS, BECAUSE ONE COUNT IS ONE COUNT. 26 alone would also be
+  # the answer of a break that ignored the pattern and drew every net-classed
+  # row; 26/11/4 from three patterns cannot be.
+  set bq_k16 [bs_type $SB {net1*}]
+  update
+  set bq_n1 [llength [bs_sea_labels $C]]
+  set bq_l1 [lrange [bs_sea_labels $C] 0 2]
+  set bq_k16b [bs_type $SB {*1}]
+  update
+  check {BQ71 `net1*` narrows to 11 and `*1` to a DIFFERENT four — and `*1`'s
+         four are not all nets, so this is the LABEL being matched and not a
+         `net` prefix being special-cased} \
+    [list $bq_k16 $bq_n1 $bq_l1 $bq_k16b [bs_sea_labels $C]] \
+    [list {net1*} 11 {net1 net10 net11} {*1} {f1 net1 net11 net21}]
+
+  # ⚠⚠ THE RAW FORM STOPS WORKING, AND IT IS ASSERTED AS A VALUE RATHER THAN
+  # LEFT AS A SURPRISE (work order §4.4: no `raw:` escape hatch and no
+  # label-OR-raw union — a union makes "why did that match?" unanswerable). The
+  # cost is declared here, in the file, next to the benefit.
+  set bq_k16 [bs_type $SB {v(x1.net*}]
+  update
+  check {BQ72 (THE DECLARED COST) the RAW-shaped pattern that used to match all
+         26 now matches NOTHING — and the caption names the remedy rather than
+         leaving an empty pane unexplained} \
+    [list $bq_k16 [bs_sea_labels $C] [pcall $ST cget -text]] \
+    [list {v(x1.net*} empty \
+          {0 of 43 signals (the Search/Filter bar is hiding them)}]
+
+  # ⚠⚠ THE LABEL IS A FILTER SUBJECT, NEVER AN IDENTITY. The whole point of the
+  # `-key` shape is that the matcher matches the transform and RETURNS THE
+  # ORIGINAL. Return the label instead and every gesture downstream plots a
+  # string no raw file contains — measured as item 11's S3, 26 reds over two
+  # files. This is that claim stated once more from the bar's side.
+  set bq_k16 [bs_type $SB {net*}]
+  update
+  check {BQ73 (THE LABEL IS A DISPLAY) the 26 SURVIVORS are the RAW names, not
+         the labels that were matched} \
+    [list [lrange [pcall ::wviewer::browser_sea_names $tok] 0 2] \
+          [llength [pcall ::wviewer::browser_sea_names $tok]]] \
+    [list {v(x1.net1) v(x1.net2) v(x1.net3)} 26]
+  bs_type $SB {}
+  update
+
+  # ⚠⚠ THE TYPE DROPDOWN STAYS ON THE RAW NAME, AND THAT IS A RULING. `sig_type`
+  # reads the `v(` / `i(` prefix, which R8's label deliberately destroys — a
+  # current renders `v1:i`, whose sig_type is `other`. Key the type filter off
+  # the label too and Current/Voltage select NOTHING, everywhere. Three legs, so
+  # a break cannot hide in a zero: 6 currents with no pattern, the SAME 6 under
+  # a label pattern that keeps them all, and 2 under one that keeps two.
+  pcall ::wviewer::searchbar_set $SB [dict create pattern {} type i]
+  update
+  set bq_ti0 [bs_sea_labels $C]
+  pcall ::wviewer::searchbar_set $SB [dict create pattern {*:i} type i]
+  update
+  set bq_ti1 [bs_sea_labels $C]
+  pcall ::wviewer::searchbar_set $SB [dict create pattern {vb*} type i]
+  update
+  check {BQ74 (THE TYPE DROPDOWN READS THE RAW PREFIX) Current alone answers the
+         level's six currents; a label pattern narrows THEM, and the two filters
+         compose instead of cancelling} \
+    [list $bq_ti0 [expr {$bq_ti1 eq $bq_ti0}] [bs_sea_labels $C]] \
+    [list {v1:i v2:i vb1:i vb2:i vc1:i vc2:i} 1 {vb1:i vb2:i}]
+  pcall ::wviewer::searchbar_set $SB [dict create]
+  update
+  check {BQ74 (RESTORED) the bar is back to its defaults and the whole level is
+         showing again — read field by field, because the Search bar carries
+         item 14's conditional fifth `alldbs` key and a whole-dict comparison
+         here would be asserting THAT instead} \
+    [list [pcall ::wviewer::dget [::wviewer::searchbar_get $SB] pattern MISSING] \
+          [pcall ::wviewer::dget [::wviewer::searchbar_get $SB] type MISSING] \
+          [llength [bs_sea_labels $C]]] \
+    [list {} all 43]
 
   # --- BQ62: BOTH MENUS DIE WITH THE WINDOW ---------------------------------
   set bq_p [bs_sea_xy $C 0]

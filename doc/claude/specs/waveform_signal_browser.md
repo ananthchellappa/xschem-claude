@@ -436,6 +436,27 @@ They are **ANDed**: `browser_and` intersects the two match sets. The Filter bar 
 list that has already been fetched, which is why a DB scope there would mean nothing — and
 two All-DBs boxes would be two answers to one question.
 
+### ⚠⚠ THE SUBJECT IS THE RENDERED LABEL (two-pane item 16)
+
+Both bars match **the string the lower pane draws** — R8's label — and **return the raw
+name**. `sig_match` is given `wviewer::browser_label_of` as its `-key`; the option defaults
+to the identity, so no other caller of the matcher changed.
+
+**Ruling 3 (whole-name anchoring) is UNCHANGED in force.** It now anchors to the label,
+which is precisely what makes the driver's `net*` work: the pane renders `net1`, so a
+leading-anchored pattern can reach it. Against the raw `v(x1.net1)` it never could —
+MEASURED, `net*` matched 0 of `tb_bandgap`'s 43 signals at `x1` and matches 26 now.
+
+Two things do **not** move with it, both deliberately:
+
+* **the `type` dropdown**, which stays on the raw name — `sig_type` classifies on the
+  leading `v(`/`i(` that the label destroys (`i(v1)` renders `v1:i`);
+* **every other consumer of `sig_match`** — the legacy `.graphdialog`, the Add Trace dialog
+  and the bare searchbar widget all display the string they match and are already WYSIWYS.
+
+Full reasoning, the measurements, and the rejected alternatives:
+`waveform_signal_browser_two_pane.md` §7.7.
+
 ### ⚠ D1 — the error label is clipped, and the message is mirrored
 
 The bars are wider than any sane sidebar: 755 px with the button, 680 without (type 97,

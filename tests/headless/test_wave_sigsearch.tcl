@@ -2,7 +2,8 @@
 # (doc/claude/signal_browser_batch/PLAN.md items 1-7 — per settled decision 9
 # this ONE file carries every item-1..7 check; each item APPENDS its group).
 #
-#   SM01-SM28  wviewer::sig_match — the shared matcher (item 1).
+#   SM01-SM30  wviewer::sig_match — the shared matcher (item 1), plus TWO-PANE
+#              item 16's `-key` option (SM29/SM30, appended in place after SM27).
 #              Shape; shell `*` `?` `[range]` and the literal-bracket escape;
 #              regexp WHOLE-NAME anchoring (SM04, the ViVA trap, see below);
 #              case default vs -case 1 on BOTH syntax arms (shell SM09/SM10/SM11,
@@ -383,6 +384,57 @@ check {SM26 subject is the full raw name, never the stripped form} \
 # That is correct scoping, not leakage; coverage wins over a one-target count.
 check {SM27 regexp arm is case-INsensitive by DEFAULT} \
   [lindex [sig_match $SIGS {V\(OUT\)} -syntax regexp] 1] [list v(out)]
+
+# --- SM29/SM30 — `-key`, item 16's ONE new option -----------------------------
+#
+# ⚠⚠ WHY AN OPTION AND NOT A REWRITE. `GSO01`-`GSO06` below is a differential
+# property oracle: a FROZEN copy of the pre-retrofit `graph_get_signal_list` run
+# against the live one over 52 names x 94 patterns x 2 sorts = 10,340
+# comparisons with ZERO permitted differences. Any SEMANTIC change inside
+# `sig_match` reds it. An option that defaults to identity is not one — and
+# these two checks are what say so from this side, while GSO01 says it from the
+# other. The bars needed a different match SUBJECT; giving the matcher a key and
+# leaving every existing caller alone is the cheapest true statement of that.
+#
+# THE CONTRACT, in three parts, and all three are pinned below because a break
+# in any one of them is silent:
+#   1. `-key {}` (and NO -key at all) is the IDENTITY;
+#   2. the pattern is applied to `key(element)`;
+#   3. the ORIGINAL element is what comes back — never the transformed one.
+# (3) is the one with teeth: return the key's output and every gesture
+# downstream gets a string that is not in the raw file. Measured as item 11's
+# S3, 26 reds over two files.
+proc sm_upper {n} { return [string toupper $n] }
+check {SM29 -key defaults to the IDENTITY — omitted and `{}` are the same answer, and it is the un-keyed answer} \
+  [list [lindex [sig_match $SIGS {l*}] 1] \
+        [lindex [sig_match $SIGS {l*} -key {}] 1]] \
+  [list [list l1 l2] [list l1 l2]]
+check {SM29 the pattern is applied to key(element) — a pattern that matches NO element matches every one of their transforms} \
+  [lindex [sig_match $SIGS {L*} -key sm_upper -case 1] 1] [list l1 l2]
+check {SM29 ...and the SAME pattern with no key matches nothing, so the key is what did it} \
+  [lindex [sig_match $SIGS {L*} -case 1] 1] [list]
+check {SM29 (THE TEETH) the ORIGINAL element comes back, never the key's output} \
+  [lindex [sig_match {v(out)} {V(OUT)} -key sm_upper -case 1] 1] [list v(out)]
+# The real key item 16 ships, exercised here rather than only through the bars:
+# the composition browser_label(signal_entry(name)) is what the lower pane draws.
+check {SM29 (THE SHIPPED KEY) browser_label_of makes the pane's own label the subject, and `net*` — worth 0 against these raw names — finds the two it draws} \
+  [list [lindex [sig_match {v(x1.net1) v(x1.net2) v(out)} {net*}] 1] \
+        [lindex [sig_match {v(x1.net1) v(x1.net2) v(out)} {net*} \
+                  -key wviewer::browser_label_of] 1]] \
+  [list {} {v(x1.net1) v(x1.net2)}]
+# ⚠⚠ -type IS NOT KEYED, AND THAT IS A RULING. `sig_type` reads the `v(` / `i(`
+# prefix, which the label deliberately destroys — `i(v1)` renders `v1:i`, whose
+# sig_type is `other`. Key the type filter too and Voltage/Current select
+# NOTHING. Both directions are asserted: the type still finds its names under a
+# key, and the label the key produces would NOT have satisfied it.
+check {SM30 -type is applied to the RAW element even when -key is given} \
+  [lindex [sig_match {v(out) i(v1) net1} {*} -key wviewer::browser_label_of -type i] 1] \
+  [list i(v1)]
+check {SM30 (THE OTHER DIRECTION) the label that element produced is type `other`, so a keyed type filter would have dropped it} \
+  [list [wviewer::browser_label_of {i(v1)}] \
+        [wviewer::sig_type [wviewer::browser_label_of {i(v1)}]] \
+        [wviewer::sig_type {i(v1)}]] \
+  [list {v1:i} other i]
 
 check {ST01 sig_type v(out) -> v}      [sig_type {v(out)}] v
 check {ST02 sig_type V(OUT) -> v}      [sig_type {V(OUT)}] v

@@ -1660,6 +1660,7 @@ proc wviewer::sig_type {name} {
 #   -case     0|1             default 0  (0 = case-INsensitive, ViVA default)
 #   -type     all|v|i|other   default all
 #   -sort     0|1|-1          0 = raw order (default), 1 = -increasing, -1 = -decreasing
+#   -key      <cmd prefix>    default {} = IDENTITY (two-pane item 16)
 # Returns: {ok  {matched names...}}   on success
 #          {err {message}}            on an invalid regexp
 # Matching is WHOLE-NAME anchored. shell -> `string match`; regexp -> `^(?:$pat)$`.
@@ -1687,6 +1688,38 @@ proc wviewer::sig_type {name} {
 # An invalid regexp is an ERROR (settled decision 4). It must NOT degrade into
 # the legacy `if {$err} {set pattern {}}` of xschem.tcl:4478, which widens a
 # typo into "show everything" — the worst possible failure for a search box.
+#
+# --- TWO-PANE ITEM 16: `-key`, THE MATCH SUBJECT ------------------------------
+#
+# `-key` is a command prefix applied to each element before the PATTERN is
+# tested; the ORIGINAL element is what gets returned. `{}` — the default, and
+# what every pre-item-16 caller passes by omission — is the identity, so this
+# option adds an ability without changing a single existing answer.
+#
+# ⚠⚠ THAT LAST SENTENCE IS A CLAIM THE TESTS VERIFY, NOT AN ASSUMPTION.
+# `GSO01`-`GSO06` (test_wave_sigsearch.tcl) is a differential property oracle: a
+# FROZEN copy of the pre-retrofit `graph_get_signal_list` run against the live
+# one over 52 names x 94 patterns x 2 sorts = 10,340 comparisons with ZERO
+# permitted differences, and any SEMANTIC change in here reds it. Adding an
+# option that defaults to identity is the cheapest true way to give the signal
+# browser's two bars a different match subject, and it is why item 16 added a
+# key rather than rewriting this loop. SM29/SM30 pin the option itself.
+#
+# ⚠ `-type` IS NOT KEYED, DELIBERATELY. See the ⚠ on the type line in the loop.
+#
+# ⚠ `eval $key [list $n]`, NEVER `{*}$key $n`: this codebase targets Tcl 8.4
+# upwards and `{*}` is 8.5. `[list $n]` is what stops a name containing spaces
+# or brackets from being re-parsed as extra words.
+#
+# ⚠ `-key` IS NOT VALIDATED in the option switch below, and that is not
+# laziness: a command prefix is only checkable by running it, and running it
+# there — once, on nothing — would be a second call shape every key's author has
+# to survive. A key that is not a command throws on the FIRST element, inside
+# the caller's own catch, naming itself. Both production callers pass a literal
+# proc name, so the reachable failure is a typo at edit time.
+# (And it must stay a bare `-key { set key $v }` arm: a comment BETWEEN switch
+# arms is parsed as a PATTERN — "extra switch pattern with no body" — which is
+# how this note ended up here rather than there.)
 proc wviewer::sig_match {siglist pattern args} {
   # Defaults. `nocase 1` IS decision 6's case-INsensitive default; the `-case`
   # option is its INVERSE, so it is validated as a boolean before inverting
@@ -1695,6 +1728,7 @@ proc wviewer::sig_match {siglist pattern args} {
   set nocase 1
   set type   all
   set sort   0
+  set key    {}
   if {[llength $args] % 2} {
     return -code error "wviewer::sig_match: options must come in -opt value pairs"
   }
@@ -1709,6 +1743,7 @@ proc wviewer::sig_match {siglist pattern args} {
       }
       -type   { set type [string tolower [string trim $v]] }
       -sort   { set sort $v }
+      -key    { set key $v }
       default { return -code error "wviewer::sig_match: unknown option $o" }
     }
   }
@@ -1737,21 +1772,35 @@ proc wviewer::sig_match {siglist pattern args} {
   }
   set out {}
   foreach n $siglist {
+    # ⚠⚠ THE TYPE FILTER READS THE RAW ELEMENT, NEVER `key(element)`, AND THAT
+    # IS A RULING (item 16 §4.1). `sig_type` classifies on the leading `v(` /
+    # `i(`, which the browser's R8 label deliberately DESTROYS — `i(v1)` renders
+    # `v1:i`, whose sig_type is `other`. Key this line too and the Voltage and
+    # Current dropdowns select NOTHING, everywhere, while every pattern check
+    # stays green. SM30 pins both directions.
     if {$type ne {all} && [wviewer::sig_type $n] ne $type} { continue }
     # MANDATORY short-circuit: "an empty pattern matches everything" is CODED,
     # not a consequence — `string match {} x` is 0 and `regexp {^(?:)$} x` is 0.
+    # It is also why the key is computed BELOW it: a cleared bar must not pay
+    # for a transform whose answer it would then throw away, and this loop runs
+    # once per signal on every keystroke.
     if {$pattern eq {}} { lappend out $n ; continue }
+    # item 16: the pattern is tested against `key(element)`; `lappend out $n`
+    # below still appends the ORIGINAL. Returning `$k` instead is the sabotage
+    # that puts un-plottable strings into every gesture downstream.
+    set k $n
+    if {$key ne {}} { set k [eval $key [list $n]] }
     if {$syntax eq {shell}} {
       if {$nocase} {
-        if {[string match -nocase $pattern $n]} { lappend out $n }
+        if {[string match -nocase $pattern $k]} { lappend out $n }
       } else {
-        if {[string match $pattern $n]} { lappend out $n }
+        if {[string match $pattern $k]} { lappend out $n }
       }
     } else {
       if {$nocase} {
-        if {[regexp -nocase -- $rx $n]} { lappend out $n }
+        if {[regexp -nocase -- $rx $k]} { lappend out $n }
       } else {
-        if {[regexp -- $rx $n]} { lappend out $n }
+        if {[regexp -- $rx $k]} { lappend out $n }
       }
     }
   }
@@ -6353,6 +6402,28 @@ proc wviewer::browser_label {e} {
   return "${inst}:${param}"
 }
 
+# --- TWO-PANE ITEM 16: THE FILTER SUBJECT ------------------------------------
+#
+# ONE raw name -> the label the lower pane renders for it. PURE, and the ONLY
+# spelling of "what the user is looking at" the matcher is ever given: it is
+# passed to `sig_match -key` by `browser_match` and by `browser_refresh`'s
+# All-DBs loop, and by nothing else.
+#
+# ⚠⚠ THE BARS NOW MATCH THIS AND STILL RETURN THE RAW NAME. The pane draws
+# `net1` while the name is `v(x1.net1)`, and ruling 3 anchors wildcards to the
+# WHOLE subject — so before this, `net*` matched 0 of tb_bandgap's 43 signals at
+# x1 and only the accidental `*net*` substring form ever worked. MEASURED at
+# that node: `net*` 0 raw / 26 label, `net1*` 0 / 11, `*1` 0 / 4.
+#
+# ⚠ IT DOES NOT MAKE THE LABEL AN IDENTITY. A filter selects WHAT TO SHOW and
+# resolves nothing: every gesture still goes through the row index into the full
+# raw name (browser_sea_name), and the status line still counts NAMES. Spec R8's
+# "the label is a display, never an identity" is restated by item 16, not
+# weakened by it.
+proc wviewer::browser_label_of {name} {
+  return [wviewer::browser_label [wviewer::signal_entry $name]]
+}
+
 # --- the "sea of names" flow: column-major layout arithmetic (M2, R3) --------
 #
 # PURE, and deliberately so. The flow is the one part of a canvas megawidget
@@ -6622,12 +6693,22 @@ proc wviewer::browser_leaf_names {rows id} {
 # ONE searchbar dict applied to a name list. `{}` (a torn-down or absent bar)
 # is the identity, so a browser whose filter bar has gone still searches.
 # Returns sig_match's own {ok <names>} / {err <msg>}.
-proc wviewer::browser_match_one {sigs d} {
+#
+# ⚠⚠ `key` IS OPTIONAL AND DEFAULTED, AND THAT SHAPE IS LOAD-BEARING RATHER THAN
+# A STYLE CHOICE (two-pane item 16 §4.2). This proc and `browser_and` are pinned
+# as PURE by BT14 (5 checks), BT15 (3) and BT16 (4) — twelve checks that call
+# them directly with RAW patterns against RAW names, because they are testing
+# the MATCHER, not the bars. Make the label transform unconditional here and all
+# twelve move for no reason; keyed-and-defaulted, they stay green BY
+# CONSTRUCTION. "Make the key unconditional in browser_match_one" is a declared
+# sabotage precisely so that claim is run rather than believed.
+proc wviewer::browser_match_one {sigs d {key {}}} {
   if {![llength $d]} { return [list ok $sigs] }
   return [wviewer::sig_match $sigs [wviewer::dget $d pattern {}] \
             -syntax [wviewer::dget $d syntax shell] \
             -case   [wviewer::dget $d case 0] \
-            -type   [wviewer::dget $d type all]]
+            -type   [wviewer::dget $d type all] \
+            -key    $key]
 }
 
 # ⚠⚠ THE AND, AND THE ONLY PLACE IT LIVES. `d1` is the top Search bar, `d2` the
@@ -6645,10 +6726,14 @@ proc wviewer::browser_match_one {sigs d} {
 #
 # An `err` from EITHER bar short-circuits with that bar's message (decision 4:
 # an invalid regexp is an ERROR, never a silent match-all).
-proc wviewer::browser_and {sigs d1 d2} {
-  set r1 [wviewer::browser_match_one $sigs $d1]
+# ⚠ item 16's `key` is threaded to BOTH rungs, and the two-line body is the
+# whole guarantee: passing it to one call and not the other makes the two bars
+# disagree about what they are matching, which is the exact failure this proc's
+# single-place-for-the-AND design exists to prevent. It is a declared sabotage.
+proc wviewer::browser_and {sigs d1 d2 {key {}}} {
+  set r1 [wviewer::browser_match_one $sigs $d1 $key]
   if {[lindex $r1 0] ne {ok}} { return $r1 }
-  set r2 [wviewer::browser_match_one [lindex $r1 1] $d2]
+  set r2 [wviewer::browser_match_one [lindex $r1 1] $d2 $key]
   return $r2
 }
 
@@ -7924,7 +8009,13 @@ proc wviewer::browser_match {token} {
   set f [dict get $windows $token top].wvbrowser
   set d1 [wviewer::searchbar_get $f.wvsearch]
   set d2 [wviewer::searchbar_get $f.wvfilter]
-  return [wviewer::browser_and $browsersigs($token) $d1 $d2]
+  # ⚠⚠ TWO-PANE ITEM 16: THE SUBJECT IS THE LABEL THE LOWER PANE DRAWS. This is
+  # ONE of the TWO places the key is spelled — the other is browser_refresh's
+  # All-DBs loop, which matches each FOREIGN inventory with these same two bar
+  # dicts. Both must pass it, or one pattern would mean "the label" for the
+  # current DB and "the raw name" for every other one. BD57 is that check.
+  return [wviewer::browser_and $browsersigs($token) $d1 $d2 \
+            wviewer::browser_label_of]
 }
 
 # The status/error line — item 8's `.ph` label, repurposed. It keeps saying
@@ -8102,12 +8193,20 @@ proc wviewer::browser_refresh {token {reload 0}} {
     # the SAME two bar dicts the current DB was matched with — the foreign
     # inventories go through browser_and, not through a second matcher, so the
     # AND, the type dropdowns and decision 4's error arm cannot drift per DB.
+    #
+    # ⚠⚠ TWO-PANE ITEM 16 ADDS THE KEY HERE TOO, and "the same two bar dicts"
+    # above is why: a dict is only half of what a bar means — the other half is
+    # the SUBJECT it is matched against. Key browser_match and not this loop and
+    # one typed pattern would filter the current DB by the label the user can
+    # see and every foreign DB by the raw name they cannot, with nothing on
+    # screen to say which. BD57 pins it on the live All-DBs fixture.
     set d1 [wviewer::searchbar_get $f.wvsearch]
     set d2 [wviewer::searchbar_get $f.wvfilter]
     if {![info exists browserdbsigs($token)]} { set browserdbsigs($token) {} }
     foreach db $browserdbsigs($token) {
       set dr {}
-      if {[catch {wviewer::browser_and [wviewer::dget $db names {}] $d1 $d2} dr]} {
+      if {[catch {wviewer::browser_and [wviewer::dget $db names {}] $d1 $d2 \
+                    wviewer::browser_label_of} dr]} {
         continue
       }
       if {[lindex $dr 0] ne {ok}} { continue }
