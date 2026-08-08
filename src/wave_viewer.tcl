@@ -7115,9 +7115,17 @@ proc wviewer::browser_build {token top} {
   # default and no check would see the difference between "ruled 1" and
   # "happened to be 0".
   #
-  # ⚠ NO `-command`. Item 12 wires them; item 9 only pins the shape. A
-  # checkbutton uses -command rather than `bind $f.`, so neither box moves the
-  # guide's GH8/GH9 gesture count when item 12 does wire them.
+  # ⚠ TWO-PANE ITEM 12 WIRED THEM. Item 9 built them with `-command {}` and said
+  # so here; that is no longer true and the note is kept rather than deleted
+  # because BW25 was written against the inert shape and item 12 had to RESTATE
+  # it (the PLAN's "item 12 reds nothing" was wrong). BOTH boxes get the SAME
+  # command -- one refresh, one consistent set (spec §6) -- and it is
+  # `browser_refresh`, NOT `browser_reload`: a toggle re-scopes the snapshot the
+  # browser already holds and must never re-enter the engine (BW63's spy).
+  #
+  # ⚠ STILL NO ACCELERATOR AND STILL NOT A MENU ENTRY. A checkbutton uses
+  # -command rather than `bind $f.`, so neither box moves the guide's GH8/GH9
+  # gesture count or GH0's 11 accelerators, and wiring them did not change that.
   #
   # ⚠ They are OPTIONS ON THE SIDEBAR, not options on searchbar_build: BAR11
   # pins the plain bar's dict to exactly four keys and `searchbar_get` already
@@ -7127,9 +7135,11 @@ proc wviewer::browser_build {token top} {
   set browsersrc($token) 1
   frame $f.opt -background [ase::theme panel]
   ttk::checkbutton $f.opt.dev -text {Show device internals} \
-    -variable ::wviewer::browserdev($token)
+    -variable ::wviewer::browserdev($token) \
+    -command [list wviewer::browser_refresh $token]
   ttk::checkbutton $f.opt.src -text {Show source currents} \
-    -variable ::wviewer::browsersrc($token)
+    -variable ::wviewer::browsersrc($token) \
+    -command [list wviewer::browser_refresh $token]
   pack $f.opt.dev -side top -anchor w -padx 6
   pack $f.opt.src -side top -anchor w -padx 6
   # --- TWO-PANE item 9: THE PANED SKELETON ------------------------------------
@@ -8185,6 +8195,48 @@ proc wviewer::browser_alldbs {token} {
   return [expr {[wviewer::dget $d alldbs 0] ? 1 : 0}]
 }
 
+# --- TWO-PANE item 12: R11's TWO CLASS FILTERS STOP BEING INERT ---------------
+#
+# One accessor per checkbox, each THE ONE AND ONLY READ OF ITS BOX — the same
+# rule the All-DBs reader directly above is built on, for the same reason: a
+# scoping sabotage has exactly one place to land and a wrong scope has exactly
+# one place to look. BW59 counts each bare name file-wide and expects 2 (defined
+# once, called once), which is BD06's rule.
+#
+# ⚠⚠ NO ACCESSOR IS NAMED IN ANY COMMENT IN THIS FILE, AND THAT INCLUDES THE ONE
+# ABOVE. Those counts are BARE-NAME greps over the whole source, so a mention in
+# prose is indistinguishable from a call site. Naming the All-DBs reader in this
+# very block is what turned BD06 red on item 12's first green run — it counted 3
+# where it demands 2. The rule costs one awkward sentence and buys a check that
+# cannot be fooled; the blocks below therefore say "the two boxes".
+#
+# ⚠ AN UNKNOWN TOKEN ANSWERS R11's DEFAULT, never {} and never a throw. The two
+# arrays are seeded per token in browser_build, so "not built yet" and "torn
+# down" are both reachable -- and `{}` reaching browser_class_filter's
+# `if {$devint && $srccur}` is a THROW, not a filter. BW57.
+#
+# ⚠ THE TWO DEFAULTS DIFFER (0 and 1). That is R11, not an asymmetry to be
+# tidied away: a copy-paste that gives both boxes the same default reds BW56 and
+# collapses BW60's four totals to two.
+#
+# ⚠ PER TOKEN, NOT PER NAMESPACE. Seeding a scalar instead of the array element
+# makes a second viewer inherit the first one's boxes; BW58's last leg is that.
+#
+# `want` is optional so the accessor is both the read and the write, which keeps
+# the setter from becoming a second place that knows the default.
+proc wviewer::browser_devint {token {want {}}} {
+  variable browserdev
+  if {$want ne {}} { set browserdev($token) [expr {$want ? 1 : 0}] }
+  if {![info exists browserdev($token)]} { return 0 }
+  return [expr {$browserdev($token) ? 1 : 0}]
+}
+proc wviewer::browser_srccur {token {want {}}} {
+  variable browsersrc
+  if {$want ne {}} { set browsersrc($token) [expr {$want ? 1 : 0}] }
+  if {![info exists browsersrc($token)]} { return 1 }
+  return [expr {$browsersrc($token) ? 1 : 0}]
+}
+
 # Both bars -> browser_and. Returns {ok <names>} / {err <msg>}.
 #
 # ⚠ IT READS BOTH BARS ITSELF and the callback's own `pat/syn/case/type`
@@ -8319,11 +8371,24 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # caller. That is stated here rather than papered over with a source-order
   # check that would pin dead code.
   #
-  # R11's two class policies. ⚠ THE DEFAULTS ARE HARDCODED HERE IN THIS ITEM —
-  # item 12 replaces the literals with browser_devint/browser_srccur, which is
-  # why the checkbuttons were built INERT. Everything downstream — the tree, the
-  # sea, the status line and every gesture — sees this ONE filtered set (spec §6).
-  set entries [wviewer::browser_class_filter $entries 0 1]
+  # R11's two class policies. ⚠⚠ TWO-PANE ITEM 12 REPLACED ITEM 10's HARDCODED
+  # `0 1` WITH THE TWO BOXES. This comment used to NAME the two accessors, and
+  # item 12 reworded it deliberately: BW59 counts each bare name over the whole
+  # source and expects 2 (defined once, called once — BD06's rule), so naming one
+  # here would make the count start at 1 and the rule stop meaning anything.
+  #
+  # ⚠ ONE READ OF EACH BOX, HELD IN A LOCAL AND USED TWICE — exactly the shape
+  # `alldbs` below uses, and load-bearing for the same reason. The second use is
+  # the All-DBs loop's own class filter: read the boxes AGAIN down there and the
+  # two reads can drift, so one checkbox would govern the current DB's inventory
+  # and not the next one's. Spec §6's "one consistent set" is the ruling and
+  # BD58 is the check.
+  #
+  # Everything downstream — the tree, the sea, the status line and every gesture
+  # — sees this ONE filtered set.
+  set devint [wviewer::browser_devint $token]
+  set srccur [wviewer::browser_srccur $token]
+  set entries [wviewer::browser_class_filter $entries $devint $srccur]
   # --- TWO-PANE item 11: THE OTHER HALF, and it is a DIFFERENT SET -----------
   #
   # ⚠⚠ THE SEA IS WHAT THE BARS NARROW. `$entries` above is the tree's set,
@@ -8407,7 +8472,15 @@ proc wviewer::browser_refresh {token {reload 0}} {
       # spec 6: ONE consistent set. A foreign DB filtered differently from the
       # current one would make the same signal visible in one tree and not the
       # other, with the checkbox claiming to govern both.
-      set dent [wviewer::browser_class_filter $dent 0 1]
+      #
+      # ⚠⚠ TWO-PANE ITEM 12: THE SAME TWO VALUES read ONCE at the top of this
+      # proc, not a second read of the boxes. This is the site item 20 found the
+      # hard way about `browser_and`'s two callers, one item over: wiring the
+      # current-DB filter and leaving this one at item 10's literal `0 1` gives a
+      # checkbox that governs the tree the user is looking at and silently not
+      # the foreign inventory beside it. BD58 is that check, on the live All-DBs
+      # fixture, because this is the only place it is reachable.
+      set dent [wviewer::browser_class_filter $dent $devint $srccur]
       lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] $dent]
       incr extra [llength $dnames]
       incr ndbs

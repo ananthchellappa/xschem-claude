@@ -350,10 +350,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall set ::wviewer::browserdev($tok)] \
           [pcall set ::wviewer::browsersrc($tok)]] \
     {TCheckbutton TCheckbutton 0 1}
-  # INERT. Item 12 wires them; wiring them now reds this and steals item 12's
-  # own attribution.
-  check {BW25 ...and they are INERT for now (item 12 wires them)} \
-    [list [pcall $F.opt.dev cget -command] [pcall $F.opt.src cget -command]] {{} {}}
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 12, WHICH IS THE ITEM ITEM 9 SAID WOULD RED IT.
+  # Item 9's wording was "they are INERT for now (item 12 wires them)" asserting
+  # `{{} {}}`, with the note that "wiring them now reds this and steals item 12's
+  # own attribution". Item 12 wired them, so the INERT claim is now false BY
+  # DESIGN and is replaced rather than deleted — the PLAN's "this item reds
+  # nothing" was wrong, and this comment is the record of it.
+  #
+  # WHAT SURVIVES THE WIRING is the half item 9 actually cared about: the boxes
+  # are OPTIONS ON THE SIDEBAR, so both must be wired to THE SAME command and it
+  # must name THIS window's token. A copy-paste that leaves one box on another
+  # window's token is invisible to every arithmetic check in the BW56 band —
+  # they all drive `$tok` — and shows up only as a viewer whose box moves a
+  # DIFFERENT viewer's tree. BW64 pins WHICH command it is and that it carries
+  # no reload flag; this pins that there is one, that it is shared, and that the
+  # token is ours.
+  check {BW25 (RESTATED, item 12) both boxes are now WIRED, to the SAME command,
+         and it names THIS window's token} \
+    [list [expr {[bs_set [pcall $F.opt.dev cget -command]] ? 1 : 0}] \
+          [expr {[pcall $F.opt.dev cget -command] eq [pcall $F.opt.src cget -command]}] \
+          [expr {[lindex [pcall $F.opt.dev cget -command] end] eq $tok}]] \
+    {1 1 1}
 
   # ⚠ EVERYTHING BELOW NEEDS THE SIDEBAR PACKED AND MAPPED, and that is not
   # fussiness: `$tv bbox <id>` answers {} for a row in an UNMAPPED tree, so the
@@ -700,6 +717,339 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
          ancestor must NOT re-open it — `see` would, and that is R5} \
     [list $bw_deep0 [pcall $TV item {g:x1} -open] [pcall $TV selection]] \
     [list {0 g:x1.x2} 0 g:x1.x2]
+
+  # ==========================================================================
+  # BW56-BW67 — TWO-PANE ITEM 12: THE TWO CHECKBOXES STOP BEING INERT
+  # ==========================================================================
+  #
+  # ⚠⚠ THE BAND. The PLAN gives item 12 `BW40`-`BW49`; item 10 spent
+  # BW40-BW53 in this file and BW53-BW55 in `_i1315.tcl`. MEASURED over both
+  # files before a line was written: BW56 is the first free id. Nothing existing
+  # is renumbered.
+  #
+  # ⚠⚠ THE PLAN SAYS THIS ITEM REDS NOTHING. IT REDS BW25, and item 9 said so
+  # at the time — "INERT. Item 12 wires them; wiring them now reds this and
+  # steals item 12's own attribution." BW25 is RESTATED below (not deleted): the
+  # boxes still have exactly one `-command` each and it is still the same one
+  # for both, which is the claim that survives the wiring.
+  #
+  # ⚠⚠ THE PLAN'S NODE COUNTS (44/128) ARE WRONG; MEASURED 45/129. Same
+  # off-by-one item 11 already corrected once: spec §3.3's 44 counts INSTANCE
+  # nodes and R2's design root is the 45th ROW. Its four SIGNAL totals
+  # (424/190/374/140) do reproduce exactly. Re-measured through the shipped
+  # pipeline on `fixtures/tb_bandgap_vars.txt` before any literal below existed.
+  #
+  # ⚠⚠ `srccur` DOES NOT MOVE THE NODE COUNT — ONLY `devint` DOES. 45 either
+  # way, 129 either way. A node-count leg on the source-currents box would be
+  # VACUOUSLY GREEN, so BW61 asserts the node count only across the axis that
+  # discriminates and says so in its own name; srccur is asserted through the
+  # SIGNAL total (BW60), which is the only place it shows.
+  #
+  # ⚠ THE MEASURED SET IS `browserseaent`, NOT THE `.ph` STATUS LINE. The status
+  # line is `"[llength $names] of $total signals"` — BAR-matched, class-filter
+  # blind — and a dozen checks across four files pin it BYTE-IDENTICALLY
+  # (BD52, BX37, BX42, BX44-BX46, BH50, BH51, BH54). `browserseaent` is the
+  # class-filtered ∩ bar-matched set spec §6 calls "one consistent set", it is
+  # what BOTH panes consume, and with the bars empty it IS the class-filtered
+  # inventory. Moving the status line is not in this item (see the receipt).
+
+  # THE CORPUS. The three-name inventory above cannot carry this item's claim —
+  # its whole content is `net`-classed, so all four combinations answer 3 and
+  # the four totals collapse by construction. `fixtures/tb_bandgap_vars.txt`
+  # (424 names) is hand-seeded the same way `test_wave_sigbrowser_sea.tcl` does,
+  # and RESTORED afterwards by BW67's control — otherwise every later BW check
+  # in this file would silently inherit a 424-name browser.
+  proc bw_slurp {name} {
+    set p [file join [file dirname [info script]] fixtures $name]
+    if {![file exists $p]} { return NO-FIXTURE }
+    set fp [open $p r]
+    set t [read $fp]
+    close $fp
+    set out {}
+    foreach l [split [string trim $t] "\n"] {
+      set l [string trim $l]
+      if {$l ne {}} { lappend out $l }
+    }
+    if {![llength $out]} { return EMPTY-FIXTURE }
+    return $out
+  }
+  # the class-filtered ∩ bar-matched set, as a COUNT. -1 rather than a throw.
+  proc bw_seen {tok} {
+    if {![info exists ::wviewer::browserseaent($tok)]} { return -1 }
+    return [llength $::wviewer::browserseaent($tok)]
+  }
+  # the upper pane's row count, live off the widget. -1 rather than a throw.
+  proc bw_nodes {tv} {
+    if {[catch {winfo exists $tv} e] || !$e} { return -1 }
+    return [llength [bs_tree_ids $tv]]
+  }
+  # ONE combination, driven the way the widget drives it: write the two
+  # -variable arrays (which is all a click does) and then fire the SAME
+  # -command the checkbutton carries. Answers {signals nodes}; restores nothing,
+  # because bw_four owns the restore.
+  proc bw_combo {tok tv d s} {
+    set ::wviewer::browserdev($tok) $d
+    set ::wviewer::browsersrc($tok) $s
+    if {[catch {::wviewer::browser_refresh $tok 0}]} { return refresh-threw }
+    update
+    return [list [bw_seen $tok] [bw_nodes $tv]]
+  }
+  # the four combinations, in the PLAN's order, restoring R11's shipped defaults.
+  proc bw_four {tok tv} {
+    set out {}
+    foreach {d s} {1 1  0 1  1 0  0 0} {
+      lappend out [lindex [bw_combo $tok $tv $d $s] 0]
+    }
+    bw_combo $tok $tv 0 1
+    return $out
+  }
+  proc bw_four_nodes {tok tv} {
+    set out {}
+    foreach {d s} {1 1  0 1  1 0  0 0} {
+      lappend out [lindex [bw_combo $tok $tv $d $s] 1]
+    }
+    bw_combo $tok $tv 0 1
+    return $out
+  }
+  # a REAL gesture: ttk::checkbutton invoke toggles -variable AND runs -command,
+  # which is the only route that proves the wiring rather than the arithmetic.
+  proc bw_invoke {w} {
+    if {[catch {$w invoke}]} { return invoke-threw }
+    update
+    return ok
+  }
+  # signal_list spy. THE ONLY THING THAT SEPARATES "re-filters" FROM "re-reads
+  # the raw": browser_refresh with reload=0 never re-enters the engine, so a
+  # `-command` wired to browser_reload (or to browser_refresh $tok 1) is
+  # invisible to every count check above — the numbers come out identical.
+  # RESTORES the real proc, always.
+  proc bw_spy_on {} {
+    set ::bw_spy 0
+    if {[info commands ::wviewer::__bw_real_signal_list] ne {}} { return already }
+    rename ::wviewer::signal_list ::wviewer::__bw_real_signal_list
+    proc ::wviewer::signal_list {token} {
+      incr ::bw_spy
+      return [::wviewer::__bw_real_signal_list $token]
+    }
+    return ok
+  }
+  proc bw_spy_off {} {
+    if {[info commands ::wviewer::__bw_real_signal_list] eq {}} { return not-on }
+    rename ::wviewer::signal_list {}
+    rename ::wviewer::__bw_real_signal_list ::wviewer::signal_list
+    return ok
+  }
+
+  # --- BW56-BW59: THE TWO ACCESSORS, PURE -----------------------------------
+  # ⚠ THE DEFAULTS MUST DIFFER. `{0 0}` or `{1 1}` is what a copy-paste of one
+  # line produces and it is green against any check that asserts them
+  # separately, which is why both are in ONE tuple.
+  check {BW56 (R11) the defaults read back through the accessors, and they DIFFER} \
+    [list [pcall ::wviewer::browser_devint $tok] [pcall ::wviewer::browser_srccur $tok]] \
+    {0 1}
+  # a token that was never built. The variables are seeded per token in
+  # browser_build, so this is the state between a teardown and the next build —
+  # and `{}` reaching browser_class_filter's `if {$devint && $srccur}` is a
+  # throw, not a filter.
+  check {BW57 an unknown token answers R11's defaults, not {} and not a throw} \
+    [list [pcall ::wviewer::browser_devint nosuchtok] \
+          [pcall ::wviewer::browser_srccur nosuchtok]] \
+    {0 1}
+  # the write arm, both directions, and PER TOKEN: seeding the namespace instead
+  # of the array makes a second viewer inherit the first one's boxes.
+  set bw_rt {}
+  lappend bw_rt [pcall ::wviewer::browser_devint $tok 1]
+  lappend bw_rt [pcall ::wviewer::browser_devint $tok]
+  lappend bw_rt [pcall ::wviewer::browser_srccur $tok 0]
+  lappend bw_rt [pcall ::wviewer::browser_srccur $tok]
+  lappend bw_rt [pcall ::wviewer::browser_devint nosuchtok2]
+  pcall ::wviewer::browser_devint $tok 0
+  pcall ::wviewer::browser_srccur $tok 1
+  lappend bw_rt [pcall ::wviewer::browser_devint $tok]
+  lappend bw_rt [pcall ::wviewer::browser_srccur $tok]
+  check {BW58 `want` round-trips BOTH ways, and the write is PER TOKEN — a
+         second token still answers R11's default} \
+    $bw_rt {1 1 0 0 0 0 1}
+  # BD06's rule, applied to both new accessors: defined once, called once,
+  # FILE-WIDE. ⚠ COUNTED AS A BARE NAME, which is only legitimate because item
+  # 12 REWORDED browser_refresh's item-10 comment, which named both procs and
+  # would have made every count start at 1. That rewording is part of this item
+  # precisely so this check can be the same shape as BD06.
+  check {BW59 (SOURCE, BD06's RULE) each accessor is defined ONCE and called
+         ONCE, file-wide — one place for a scoping sabotage to land} \
+    [list [regexp -all {browser_devint} $wsrc] [regexp -all {browser_srccur} $wsrc]] \
+    {2 2}
+
+  # --- BW60/BW61: THE MEASURED ARITHMETIC, END TO END -----------------------
+  set bw_sig_was $::wviewer::browsersigs($tok)
+  set bw_corpus [bw_slurp tb_bandgap_vars.txt]
+  check {BW60 (PRECONDITION) the 424-name corpus really loaded} \
+    [expr {[llength $bw_corpus] == 424}] 1
+  set ::wviewer::browsersigs($tok) $bw_corpus
+  check {BW60 (THE MEASURED ARITHMETIC) the four combinations are FOUR
+         DIFFERENT signal totals, driven through the widget variables} \
+    [bw_four $tok $TV] {424 190 374 140}
+  # ⚠ THE NODE COUNT DISCRIMINATES ON `devint` ONLY — see this block's header.
+  # Asserting it across srccur too would be four legs and two facts.
+  check {BW61 the tree's row count follows `devint` and is BLIND to `srccur`
+         (45/129 WITH R2's design root; the spec's 44/128 count instances)} \
+    [bw_four_nodes $tok $TV] {129 45 129 45}
+  # ⚠ THIS IS THE SWEEP'S RESTORE, NOT A CLAIM ABOUT THE SHIPPED DEFAULT, and
+  # the sabotage run is what forced the distinction. It was first written as
+  # "(THE SHIPPED DEFAULT) devint 0 + srccur 1 is what a user gets" — and it
+  # stayed GREEN under S2 (swap the two seeded defaults in browser_build),
+  # because `bw_four` above sets both arrays explicitly on its way out. It was
+  # reading its own helper's restore, not the build.
+  #
+  # THE BUILD-TIME PIN IS BW24 (item 9's), which reds on S2 as it should, and
+  # BW56/BW57 are the accessors' own defaults. What this check is actually good
+  # for is the pairing: after a four-way sweep the browser is back at 0/1 AND
+  # that pair really is the 190/45 one, so no combination leaked state forward.
+  check {BW61 (THE SWEEP'S RESTORE) the four-way sweep leaves the browser at 0/1,
+         and that pair really is the 190/45 one — no combination leaked forward} \
+    [list [pcall ::wviewer::browser_devint $tok] [pcall ::wviewer::browser_srccur $tok] \
+          [bw_seen $tok] [bw_nodes $TV]] \
+    {0 1 190 45}
+
+  # --- BW62: THE WIRING, AS A REAL GESTURE ----------------------------------
+  # Everything above sets the -variable by hand. This is the click: `invoke`
+  # toggles the variable AND fires -command, so it is red on a box whose
+  # -command is still {} while every arithmetic check above stays green.
+  set bw_g0 [list [pcall set ::wviewer::browserdev($tok)] [bw_seen $tok]]
+  bw_invoke $F.opt.dev
+  set bw_g1 [list [pcall set ::wviewer::browserdev($tok)] [bw_seen $tok]]
+  bw_invoke $F.opt.dev
+  set bw_g2 [list [pcall set ::wviewer::browserdev($tok)] [bw_seen $tok]]
+  check {BW62 (THE GESTURE) invoking the device-internals box really re-filters,
+         and invoking it back really restores} \
+    [list $bw_g0 $bw_g1 $bw_g2] [list {0 190} {1 424} {0 190}]
+  set bw_h0 [list [pcall set ::wviewer::browsersrc($tok)] [bw_seen $tok]]
+  bw_invoke $F.opt.src
+  set bw_h1 [list [pcall set ::wviewer::browsersrc($tok)] [bw_seen $tok]]
+  bw_invoke $F.opt.src
+  check {BW62 (THE SECOND BOX IS INDEPENDENTLY WIRED) the source-currents box
+         moves the total on its own — a shared -variable collapses this} \
+    [list $bw_h0 $bw_h1 [pcall set ::wviewer::browsersrc($tok)] [bw_seen $tok]] \
+    [list {1 190} {0 140} 1 190]
+
+  # --- BW63/BW64: IT RE-FILTERS, IT DOES NOT RE-READ THE RAW ----------------
+  # ⚠⚠ THIS CHECK WAS VACUOUS ON ITS FIRST RED RUN AND THE RED RUN IS HOW I KNOW.
+  # With `-command {}` the invoke does nothing, so the spy counts 0 and BW63 was
+  # GREEN before a line of item 12 existed — one of the two checks in this band
+  # that passed before the code did. A zero only means something next to a leg
+  # that made the spy count, and next to a leg that says the toggle DID work:
+  #   [0] the spy can count at all      — browser_refresh RELOAD=1 must move it
+  #   [1] the toggle re-read nothing    — the actual claim
+  #   [2] the toggle nevertheless RE-FILTERED — else "nothing happened" passes
+  #   [3] the real signal_list is back  — the rename is restored
+  # ⚠⚠ THE CONTROL EATS THE FIXTURE, AND THE FIRST GREEN RUN IS HOW I FOUND OUT.
+  # `browser_refresh $tok 1` is the only way to make signal_list run — and
+  # browser_reload's whole job is to OVERWRITE `browsersigs($token)` from it.
+  # With no raw loaded in this fixture that read correctly answers {}, so the
+  # 424-name corpus is gone the instant the control fires and BW63, BW65 and
+  # BW66 all failed on an EMPTY browser rather than on anything they claim.
+  # The control therefore re-seeds what it consumed, before the measurement.
+  bw_spy_on
+  pcall ::wviewer::browser_refresh $tok 1
+  update
+  set bw_spy_ctl $::bw_spy
+  set ::bw_spy 0
+  set ::wviewer::browsersigs($tok) $bw_corpus
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  set bw_p0 [bw_seen $tok]
+  bw_invoke $F.opt.dev
+  set bw_p1 [bw_seen $tok]
+  bw_invoke $F.opt.dev
+  set bw_spy_n $::bw_spy
+  bw_spy_off
+  check {BW63 toggling a box does NOT re-enter the engine — signal_list is not
+         called (item 9's D6 snapshot rule) — WITH the control that proves the
+         spy counts, and the leg that proves the toggle still did its job} \
+    [list [expr {$bw_spy_ctl > 0}] $bw_spy_n \
+          [expr {$bw_p1 != $bw_p0}] [info commands ::wviewer::signal_list]] \
+    [list 1 0 1 ::wviewer::signal_list]
+  # BW63's SOURCE twin, and it is not redundant: the spy proves nothing was
+  # called on THIS fixture, where browser_reload's engine reads are already
+  # wrapped in `catch` and answer {} with no xschem raw loaded. The -command
+  # itself is the claim.
+  check {BW64 both boxes carry the SAME -command, and it is browser_refresh with
+         NO reload flag — `browser_reload` or a trailing 1 re-reads the raw} \
+    [list [pcall $F.opt.dev cget -command] [pcall $F.opt.src cget -command]] \
+    [list "wviewer::browser_refresh $tok" "wviewer::browser_refresh $tok"]
+
+  # --- BW65: R5's DISCIPLINE, APPLIED TO THE BOXES --------------------------
+  # The bars must not move the user's navigation surface; neither may these.
+  # ⚠ THE OPEN NODE IS CHOSEN SO IT SURVIVES BOTH SCOPES. `g:x1` exists at
+  # devint 0 and at devint 1, so a changed open set means the boxes disturbed
+  # it — not that the node stopped existing.
+  # ⚠⚠ THE SECOND CHECK IN THIS BAND THAT WAS GREEN BEFORE THE CODE EXISTED.
+  # "Nothing changed" is exactly what an unwired checkbutton produces, so the
+  # stability legs are worthless alone. THE SCOPE CHANGE IS CARRIED IN THE SAME
+  # TUPLE: the box must have really re-filtered (190 -> 424 -> 190) WHILE the
+  # open set and the selection sat still. An inert box fails leg [2]; a box that
+  # rebuilds the tree from scratch fails legs [0]/[1].
+  pcall $TV item {g:x1} -open 1
+  pcall $TV selection set [list {g:x1}]
+  update
+  set bw_r0 [list [lsort [pcall bs_open_set $TV]] [pcall $TV selection]]
+  set bw_n0 [bw_seen $tok]
+  bw_invoke $F.opt.dev
+  set bw_r1 [list [lsort [pcall bs_open_set $TV]] [pcall $TV selection]]
+  set bw_n1 [bw_seen $tok]
+  bw_invoke $F.opt.dev
+  set bw_r2 [list [lsort [pcall bs_open_set $TV]] [pcall $TV selection]]
+  set bw_n2 [bw_seen $tok]
+  check {BW65 (R5's DISCIPLINE) toggling a box changes neither the open set nor
+         the selected node — WHILE it really re-filters, so an inert box cannot
+         satisfy this by doing nothing} \
+    [list [expr {$bw_r1 eq $bw_r0}] [expr {$bw_r2 eq $bw_r0}] \
+          [list $bw_n0 $bw_n1 $bw_n2] [lindex $bw_r0 1]] \
+    [list 1 1 {190 424 190} g:x1]
+
+  # --- BW66: THE CLASS FILTER REACHES THE TREE, NOT ONLY THE COUNT ----------
+  # ⚠ A COUNT CAN MOVE WITHOUT THE TREE MOVING. This is the id itself: a node
+  # whose every signal is device-classed must be ABSENT at devint 0 and PRESENT
+  # at devint 1, which is R1's quantifier read off the live widget.
+  # ids in $a that are NOT in $b. A count of 0 is "subset"; the ids themselves
+  # would be the diagnosis if it ever moves.
+  proc bw_not_in {a b} {
+    set out {}
+    foreach id $a { if {[lsearch -exact $b $id] < 0} { lappend out $id } }
+    return $out
+  }
+  pcall ::wviewer::browser_devint $tok 1
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  set bw_on_ids [bs_tree_ids $TV]
+  pcall ::wviewer::browser_devint $tok 0
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  set bw_off_ids [bs_tree_ids $TV]
+  check {BW66 (R1, OFF THE WIDGET) the device-only nodes are an ASSERTABLE
+         ABSENCE at devint 0 and really come back at devint 1 — and the OFF set
+         is a strict SUBSET of the ON set, never a different tree} \
+    [list [llength $bw_off_ids] [llength $bw_on_ids] \
+          [expr {[llength $bw_off_ids] < [llength $bw_on_ids]}] \
+          [llength [bw_not_in $bw_off_ids $bw_on_ids]]] \
+    {45 129 1 0}
+
+  # --- BW67: THE RESTORE, AS A CHECK ----------------------------------------
+  # ⚠ NOT A `catch {...}` AT THE END OF THE BLOCK. The corpus is a fixture
+  # change, and a restore nobody asserts is a restore that silently stops
+  # happening — every later BW check would then run against a 424-name browser
+  # and the file would still be green.
+  set ::wviewer::browsersigs($tok) $bw_sig_was
+  pcall ::wviewer::browser_devint $tok 0
+  pcall ::wviewer::browser_srccur $tok 1
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  check {BW67 (THE RESTORE, ASSERTED) the three-name inventory and R11's shipped
+         defaults are back, and the tree is item 10's four nodes again} \
+    [list $::wviewer::browsersigs($tok) \
+          [pcall ::wviewer::browser_devint $tok] [pcall ::wviewer::browser_srccur $tok] \
+          [lsort [bs_tree_ids $TV]]] \
+    [list {v(out) v(x1.x2.net5) v(x1.y3.net5)} 0 1 {g: g:x1 g:x1.x2 g:x1.y3}]
 
   catch {destroy .wvbw1}
   catch {dict unset ::wviewer::windows wvbw}

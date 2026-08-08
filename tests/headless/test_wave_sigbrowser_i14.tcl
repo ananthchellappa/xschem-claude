@@ -828,6 +828,79 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BD51c (CONTROL) clearing the pattern brings everything back} \
     [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]
 
+  # --- BD58 (TWO-PANE ITEM 12) — R11's BOXES GOVERN THE FOREIGN DBs TOO ------
+  #
+  # ⚠⚠ THIS IS THE ONLY PLACE IT IS REACHABLE, which is exactly BD57's argument
+  # one item over. `browser_class_filter` has TWO production callers inside
+  # browser_refresh: the current DB's, and this All-DBs loop's — one per foreign
+  # inventory. Item 12 wires the checkboxes; wiring the first call and leaving
+  # the second at item 10's literal `0 1` gives a checkbox that governs the tree
+  # the user is looking at and silently NOT the foreign inventory beside it, with
+  # nothing on screen to say so. Spec §6's "one consistent set" is the ruling.
+  # Every check in `test_wave_sigbrowser_panes.tcl`'s BW56 band drives the
+  # CURRENT DB only and stays green through that half-wiring — this is the half
+  # they cannot see.
+  #
+  # ⚠ THE FOREIGN INVENTORY IS HAND-SEEDED, not added to the fixture raws. The
+  # real `bd_a.raw`/`bd_b.raw` are all `net`-classed, so a class filter cannot
+  # move them; giving them a device signal would change `bd_rows`' length and red
+  # BD50c, BD51c and the two status-line checks above for no gain.
+  # `browser_refresh $tok` (reload 0) never re-enters browser_reload, so the seed
+  # survives the refresh — the same property BW63 pins from the other side.
+  #
+  # ⚠ RESTORED AND ASSERTED. BD58c puts the real foreign inventory back and
+  # checks it, because every check after this one runs against it.
+  set bd_dbs_was $::wviewer::browserdbsigs($tok)
+  set bd_devsig {v(m.x1.mn1#body)}
+  set ::wviewer::browserdbsigs($tok) \
+    [list [dict create id {d:9} label {bd_z.raw (tran)} \
+             names [list {v(zeta)} $bd_devsig]]]
+  set ::wviewer::sballdb($BSB) 1
+  wviewer::browser_devint $tok 0
+  wviewer::browser_refresh $tok
+  update
+  set bd_off_ids  [bd_ids_for [bd_rows $tok] $bd_devsig]
+  set bd_off_zeta [bd_ids_for [bd_rows $tok] {v(zeta)}]
+  set bd_off_node [bd_tv_parent $BVF.pw.tvf.tv {d:9|g:x1}]
+  wviewer::browser_devint $tok 1
+  wviewer::browser_refresh $tok
+  update
+  set bd_on_ids  [bd_ids_for [bd_rows $tok] $bd_devsig]
+  set bd_on_node [bd_tv_parent $BVF.pw.tvf.tv {d:9|g:x1}]
+  # THE CLAIM, as one tuple: the foreign DB's device signal is an ASSERTABLE
+  # ABSENCE with the box off and really present with it on, the device-only NODE
+  # it lives under appears and disappears with it IN THE WIDGET, and the foreign
+  # DB's ordinary net is untouched throughout — so "the box works" and "the box
+  # emptied the foreign DB" are different values here.
+  check {BD58 (ITEM 12) the device-internals box governs the FOREIGN inventories
+         too — browser_refresh's All-DBs loop reads the SAME two values the
+         current DB was filtered with} \
+    [list $bd_off_ids $bd_off_node $bd_on_ids $bd_on_node $bd_off_zeta] \
+    [list {} absent {d:9|s:v(m.x1.mn1#body)} {d:9} {d:9|s:v(zeta)}]
+  # THE NEGATIVE CONTROL, and it is the one that catches the half-wiring: with
+  # the box ON the CURRENT DB's own inventory is unchanged, because it holds no
+  # device signal at all. So BD58's movement cannot be "the whole tree got
+  # rebuilt" — only the foreign side moved, which is what makes it evidence
+  # about the SECOND class_filter call rather than the first.
+  # ⚠ THE SEEDED FOREIGN DB DELIBERATELY DOES NOT CARRY `v(shared)`. The real
+  # fixture's two raws share that name and BD50 uses it to prove a name shows up
+  # once PER DB; here the point is the opposite one, so the current DB's two nets
+  # must each resolve to exactly ONE id — their own.
+  check {BD58b (NEGATIVE CONTROL) the CURRENT DB's rows are identical either way
+         — it has no device signal, so only the foreign side could have moved} \
+    [list [bd_ids_for [bd_rows $tok] {v(beta)}] \
+          [bd_ids_for [bd_rows $tok] {v(shared)}]] \
+    [list {s:v(beta)} {s:v(shared)}]
+  wviewer::browser_devint $tok 0
+  set ::wviewer::browserdbsigs($tok) $bd_dbs_was
+  wviewer::browser_refresh $tok
+  update
+  check {BD58c (THE RESTORE, ASSERTED) the real foreign inventory and R11's
+         shipped default are back — every check below runs against them} \
+    [list [pcall ::wviewer::browser_devint $tok] \
+          [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] \
+    [list 0 1 7]
+
   # --- the status line -------------------------------------------------------
   # ⚠ BYTE-IDENTICAL WITH THE BOX OFF. test_wave_sigbrowser.tcl:1173/1182/1199
   # match on this string; item 14 must not move it for anybody who did not tick
