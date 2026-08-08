@@ -15,9 +15,23 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 18, both arms green.
+Measured **2026-08-08** after two-pane item 18 **and its FIX-UP (`BK43`)**,
+both arms green.
 Re-measure before item 19 and record any drift here; do **not** silently adopt a
 new baseline.
+
+> **⚠ THE FIX-UP MOVED THE X ARM ONLY — X 2243 → 2244, headless 1662 UNCHANGED.**
+> Two-pane item 18's verifier found the item's ONE decision point unpinned:
+> relaxing `browser_show_path`'s full-resolution guard from "the would-be model
+> resolves the WHOLE path" to "…resolves MORE than we did" red **nothing** in
+> either arm, while flipping the box, tripling the tree 45 → 129 and saying
+> nothing about it. The fix-up adds **`BK43`** (X-only, one call, in
+> `test_wave_sigbrowser_keys`) and a pointer comment in `browser_show_path`.
+> `keys` **48 → 49** under X; **25 unchanged** headless because `BK43` needs the
+> Tk fixture. Every other file and every other suite byte-identical in both arms.
+> Re-measured by hand: headless **1662 / 0** over the 15 files with every
+> per-file figure exact; X **12/12 = 2244** through `xarm.sh suites` with
+> `SUITE_TIMEOUT=400` on the real `:0` under the gate panel.
 
 > **⚠ THE BASELINE MOVED WITH ITEM 18 — headless 1658 → 1662 over the same**
 > **FIFTEEN files, X 2230 → 2243 over the same TWELVE suites.**
@@ -193,7 +207,8 @@ new baseline.
 > (that equivalence was established at the item-12 baseline; item 13 moves the
 > total to **2149**, item 14 to **2170**, its fixup to **2174**, item 15 to
 > **2192**, item 16 to **2215** over **twelve** suites, item 17b to **2230**
-> and item 18 to **2243** — see the table; the equivalence itself is unaffected).
+> item 18 to **2243** and its fix-up to **2244** — see the table; the
+> equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -207,8 +222,8 @@ new baseline.
 | `sea` | 79 | `grid` | 356 |
 | `i11` | 74 | `modes` | 488 |
 | `i12` | **126** | | |
-| `i1315` | **190** | `keys` | **48** |
-| | | **TOTAL** | **2243** |
+| `i1315` | **190** | `keys` | **49** |
+| | | **TOTAL** | **2244** |
 | `i14` | **107** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
@@ -602,12 +617,28 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       (this item touches no C and no csv).
       **Band `BK32`-`BK42` — the PLAN's `BK40`-`BK49` was dead on arrival for the
       THIRD time in this batch, and internally inconsistent besides.**
-      **NEXT FREE `BK43`.** `BK19` still reserved and unspent.
+      **NEXT FREE `BK44`** (`BK43` spent by the FIX-UP below). `BK19` still
+      reserved and unspent.
       **RESTATED, NOT DELETED: `BW59` `{4 4 1 1}` → `{5 5 1 1}`** — the PLAN said
       "reds existing: none" for the THIRD time and was wrong for the third time.
       **THE RED RUN EARNED ITS KEEP AGAIN:** `BK39`/`BK40`/`BK42` were GREEN
       before the code existed (all three asserted only shipped behaviour) and
       were rewritten to carry a moving leg in the same tuple.
+      **FIX-UP (verifier finding — the ONE decision point was UNPINNED).** The
+      arm's full-resolution guard had no check: relaxing it to "any improvement"
+      red NOTHING across both arms while flipping the box and tripling the tree
+      45 → 129 with no mention of it in the status line. **`BK43`** (X-only)
+      closes it — a dual pair in ONE tuple: the deeper-but-partial
+      `x1.x1.xm1.zznosuch` must report the shipped `partial` at `g:x1.x1` with
+      box **0** and tree **45**, while the fully-resolving `x1.x1.xm1` on the
+      same fixture moments later ticks and grows the tree to **129**. Verified
+      by sabotage: the relaxation now reds **exactly `BK43`** (49 checks, 1 fail,
+      count held); turning the whole arm off reds `BK36`-`BK43` (so `BK43`'s
+      positive half is a MOVING leg, not inertia); the behaviourally-invisible
+      "bypass the checkbutton's -command" control still reds **exactly `BK35`**
+      in both arms, which proves the driver mutated the loaded file.
+      X **2243 → 2244** (`keys` 48 → **49**), headless **1662 unchanged**.
+      **NEXT FREE `BK44`.**
       **7 sabotages, 7 fired**, incl. `S1b` proving the rejected confirm-guard
       shape is visible (refresh count 1 → **3**) and `S6` reddening `BW59`
       **under X** — a gap the headless-only sweep had missed.

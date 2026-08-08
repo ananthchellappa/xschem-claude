@@ -19,11 +19,12 @@
 #
 # CHECK-ID BAND: BK01-BK18 two-pane item 16 / BK19 UNSPENT (reserved to item
 # 16's own file band by 16_receipt.md §11) / BK20-BK31 two-pane item 17b /
-# BK32-BK42 two-pane item 18 (R12's auto-unhide).
+# BK32-BK43 two-pane item 18 (R12's auto-unhide; BK43 is its FIX-UP — the
+# full-resolution rule, which shipped declared but unasserted).
 # Measured free before use in all three rounds (greps over tests/ and
 # doc/claude/; BK20+ was reserved to item 17b by the PLAN and taking it earlier
 # would have repeated the item-10/item-12 BW40 collision).
-# NEXT FREE IN THIS FILE: BK43.
+# NEXT FREE IN THIS FILE: BK44.
 #
 # ⚠ THE PLAN'S BAND FOR ITEM 18 WAS `BK40`-`BK47` UNDER A HEADING AND
 # `BK40`-`BK49` IN ITS CODE BLOCK — internally inconsistent, and DEAD ON ARRIVAL
@@ -727,8 +728,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 }
 
 # ============================================================================
-# BK36-BK42 — TWO-PANE item 18's X arm. R12 END TO END on a corpus that HAS
-# device classes.
+# BK36-BK43 — TWO-PANE item 18's X arm. R12 END TO END on a corpus that HAS
+# device classes. (BK43 is the fix-up: the full-resolution rule.)
 #
 # ⚠⚠ IT BUILDS ITS OWN TOPLEVEL AND ITS OWN TOKEN, and both are forced:
 #   * the BKV sky130 `test_nfet_final` session has no device-classed signals at
@@ -979,6 +980,64 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $bk_n4 $bk_res4 $bk_n5 $bk_res5] \
     [list 1 {unhidden g:x1.x1.xm1 x1.x1.xm1} 0 {ok g:x1.x1.xm1 x1.x1.xm1}]
 
+  # --- BK43: THE FULL-RESOLUTION RULE, WHICH WAS THE ITEM'S ONE UNPINNED -----
+  #           DECISION POINT (two-pane item 18 FIX-UP)
+  #
+  # ⚠⚠ WHY THIS CHECK EXISTS. TWO-PANE item 18 shipped with its DECLARED LIMIT
+  # — "the tick is kept only on a FULL resolution" — written down in the source
+  # and in the receipt but asserted NOWHERE. Measured by the item's verifier and
+  # RE-MEASURED here: relaxing the arm's single comparison from "the would-be
+  # model resolves the WHOLE path" to "the would-be model resolves MORE than we
+  # did" red NOTHING across both arms. That is the coverage hole this closes.
+  #
+  # THE SHAPE IS A DUAL PAIR IN ONE TUPLE, for the same reason BK39 and BK40
+  # carry theirs: "the box did not move" alone is what NO CODE produces. Legs
+  # 1-4 are the deeper-but-partial path that must NOT tick; legs 5-7 are the
+  # fully-resolving path on the SAME fixture moments later that MUST tick and
+  # MUST triple the tree. So this check is also a RED-RUN MOVING check — before
+  # item 18 existed leg 5 was `partial g:x1.x1 x1.x1 x1.x1.xm1`, leg 6 was 0 and
+  # leg 7 was 45.
+  #
+  # ⚠ THE NUMBERS ARE MEASURED, NOT COPIED. On this 424-name corpus
+  # `x1.x1.xm1.zznosuch` walks 2 of its 4 segments with the box OFF and 3 of 4
+  # with it ON — deeper, never full — which is exactly the state the rule
+  # refuses. Box-OFF tree 45 nodes, box-ON tree 129 (the design root is a ROW,
+  # so these are 45/129 and not the PLAN's 44/128).
+  #
+  # ⚠ A BEHAVIOURAL CHECK, NOT A SOURCE ORACLE, and that is the instrument
+  # choice on purpose: relaxing the comparison is loudly VISIBLE — it flips the
+  # box, triples the tree from 45 to 129, and lands the sentence on a different
+  # node — so a value oracle can see it. A source oracle is for the
+  # behaviourally-invisible claim (that is BK35's job, not this one).
+  #
+  # ⚠ LEG 4 READS `.ph` — it does not MOVE it. The twelve byte-identity pins
+  # carried in from two-pane item 12 (BD52, BX37, BX42, BX44-BX46, BH50, BH51,
+  # BH54) are untouched; §7.2's three-state caption still owns that widget.
+  # It is here because R12's last clause is "say so": at the shallower landing
+  # the user must get the SHIPPED partial wording and no claim about device
+  # internals. Relax the comparison and this line still says "showing x1.x1.xm1
+  # instead" while the tree silently triples — the exact unexplained state the
+  # sentence exists to prevent.
+  bk_seed
+  set bk_deep_res  [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1.zznosuch]
+  update
+  set bk_deep_box  [pcall ::wviewer::browser_devint $bktok]
+  set bk_deep_tree [llength [bs_tree_ids $BKTV]]
+  set bk_deep_ph   [pcall $BKF.ph cget -text]
+  set bk_full_res  [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  update
+  check {BK43 (X, THE FULL-RESOLUTION RULE) a path whose would-be model resolves
+         DEEPER but still NOT FULLY leaves the box UNTICKED, leaves the tree at
+         its 45 nodes and reports the SHIPPED partial sentence at the shallower
+         landing — while the fully-resolving path on the same fixture moments
+         later ticks, says so, and grows the tree to 129} \
+    [list $bk_deep_res $bk_deep_box $bk_deep_tree $bk_deep_ph \
+          $bk_full_res [pcall ::wviewer::browser_devint $bktok] \
+          [llength [bs_tree_ids $BKTV]]] \
+    [list {partial g:x1.x1 x1.x1 x1.x1.xm1.zznosuch} 0 45 \
+          "Signal Browser\nno signals under 'x1.x1.xm1.zznosuch' - showing x1.x1 instead" \
+          {unhidden g:x1.x1.xm1 x1.x1.xm1} 1 129]
+
   # --- BK42: THE IMPROVE-OR-RESTORE CONTROL ---------------------------------
   # The R12 probe rides IN FRONT of the shipped retry, so the retry's own
   # discipline has to be re-measured with the probe in place: a reload that finds
@@ -1037,7 +1096,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [info commands ::wviewer::__bk_refresh_real]] \
     [list 0 0 0 0 {}]
 } else {
-  puts "SKIPPED: BK36-BK42 (Tk/X arm only)"
+  puts "SKIPPED: BK36-BK43 (Tk/X arm only)"
 }
 
 wvbs_finish

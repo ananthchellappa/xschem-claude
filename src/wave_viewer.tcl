@@ -9860,6 +9860,16 @@ proc wviewer::browser_show_path {token path} {
   # would-be model resolves DEEPER but still not fully leaves the box alone and
   # reports the shipped `partial` at the shallower landing — because the sentence
   # says "to reach <node>", which a partial makes a lie.
+  #
+  # ⚠⚠ THAT LIMIT IS PINNED, NOT MERELY DECLARED — `BK43` in
+  # tests/headless/test_wave_sigbrowser_keys.tcl. It shipped declared-but-
+  # unasserted in TWO-PANE item 18 and the fix-up closed the hole: relaxing the
+  # `==` that guards the tick below into a `>` ("surely a deeper landing is
+  # still an improvement") is a one-line edit that ticks the box, TRIPLES the tree
+  # from 45 nodes to 129 and says nothing about it in the status line — measured
+  # on `x1.x1.xm1.zznosuch`, which walks 2 of 4 segments hidden and 3 of 4 shown.
+  # Before BK43 that edit red NOTHING in either arm. Do not relax it without
+  # moving that check.
   set r12 0
   if {$matched < [llength $segs] && ![wviewer::browser_devint $token]} {
     set pent {}

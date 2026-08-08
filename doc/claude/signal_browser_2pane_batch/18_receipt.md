@@ -227,10 +227,13 @@ proven live.
 1. **FULL RESOLUTION ONLY.** A path whose devint-1 model resolves *deeper* but
    still not fully (e.g. `x1.x3.nosuch`: 2 of 3 with the box on, 1 of 3 with it
    off) leaves the box **unticked** and reports the shipped `partial` at the
-   shallower landing. The alternative — keep the tick on any improvement — is one
-   comparison away and nothing downstream moves. Chosen this way because
-   `unhidden`'s sentence says *"to reach `<node>`"*, which a partial makes a lie,
-   and because it keeps the absence control unambiguous.
+   shallower landing. Chosen this way because `unhidden`'s sentence says *"to
+   reach `<node>`"*, which a partial makes a lie, and because it keeps the
+   absence control unambiguous.
+   **⚠ THIS WAS THE ITEM'S ONE UNPINNED DECISION POINT AND THE FIX-UP CLOSED IT
+   — see §14.** As shipped, "the alternative is one comparison away and nothing
+   downstream moves" was true of the *tests* as well: relaxing it red **nothing**
+   in either arm. It is now `BK43`.
 2. **THE PROBE IS CURRENT-DB ONLY.** It builds a single-group model from
    `browsersigs($token)`, so under All-DBs a hidden node in a **foreign**
    inventory answers "no" and the shipped path runs. Conservative by
@@ -318,4 +321,98 @@ internals to reach `<path>`"* — with the checkbox now visibly ticked. That is
 * §3.3's 44/128 → **45/129** (it counts instances, missing R2's design ROW) —
   item 12 owed this one too and it is still open.
 * `browser_msg` now has **ten** kinds, not the five §7.2 knows about.
-* NEXT FREE in `test_wave_sigbrowser_keys.tcl`: **`BK43`**. `BK19` stays reserved.
+* NEXT FREE in `test_wave_sigbrowser_keys.tcl`: **`BK44`** (`BK43` spent by the
+  fix-up, §14). `BK19` stays reserved.
+
+---
+
+## 14. FIX-UP — the verifier's finding: the ONE decision point was UNPINNED
+
+**The finding, restated honestly.** §9's limit 1 was written down in the source,
+in this receipt, and nowhere a test could see. Changing
+`src/wave_viewer.tcl`'s `if {$pmatched == [llength $segs]}` to
+`if {$pmatched > $matched}` — "tick on any improvement" — passed **every** check
+in both arms with every count held. Measured consequence, not inferred: on
+`x1.x1.xm1.zznosuch` the box flips 0 → 1, the tree grows **45 → 129**, and the
+returned result is a plain `partial g:x1.x1.xm1 …` whose sentence reads *"no
+signals under 'x1.x1.xm1.zznosuch' - showing x1.x1.xm1 instead"* with **no
+mention of device internals** — the silent unexplained tree-tripling R12's last
+sentence exists to prevent. **The finding is accepted in full; no part of it was
+argued down.**
+
+**What the fix-up adds — ONE check, `BK43`, X-only.**
+
+```
+BK43 (X, THE FULL-RESOLUTION RULE)  tests/headless/test_wave_sigbrowser_keys.tcl
+  legs 1-4  x1.x1.xm1.zznosuch  ->  {partial g:x1.x1 x1.x1 x1.x1.xm1.zznosuch}
+                                    box 0, tree 45 nodes, and `.ph` byte-exactly
+                                    "Signal Browser\nno signals under
+                                     'x1.x1.xm1.zznosuch' - showing x1.x1 instead"
+  legs 5-7  x1.x1.xm1 on the SAME fixture moments later
+                                ->  {unhidden g:x1.x1.xm1 x1.x1.xm1}, box 1,
+                                    tree 129 nodes
+```
+
+* **A dual pair in ONE tuple**, for `BK39`/`BK40`'s reason: "the box did not
+  move" alone is what NO CODE produces. Legs 5-7 are also the **moving** half —
+  before item 18 existed leg 5 was `partial g:x1.x1 x1.x1 x1.x1.xm1`, leg 6 was
+  `0`, leg 7 was `45`.
+* **Every literal re-measured**, not copied from the finding: a throw-away probe
+  (deliberately not named `test_*.tcl`, deleted afterwards) ran the real
+  `browser_show_path` on the real fixture and printed all seven values. 45/129,
+  not the PLAN's 44/128 — the design root is a ROW.
+* **Behavioural, not a source oracle, on purpose.** The relaxation is loudly
+  visible (box, tree size, landing node, sentence), so a value oracle can see
+  it. Source oracles are the instrument for behaviourally-invisible claims —
+  that is `BK35`'s job, and it stays exactly as it was.
+* **Leg 4 READS `.ph`, it does not MOVE it.** The twelve byte-identity pins
+  carried in from item 12 (`BD52`, `BX37`, `BX42`, `BX44`-`BX46`, `BH50`,
+  `BH51`, `BH54`) are untouched; §7.2's three-state caption still owns that
+  widget's future.
+* **`src/wave_viewer.tcl` gains a COMMENT ONLY** — no behaviour change — turning
+  §9's declared limit into a pointer at the check that now pins it. Written to
+  name **no** accessor (`browser_devint`, `browser_srccur`, `browser_alldbs`,
+  `browser_refresh`, `browser_id_path`, `sch_path`, `device internals to reach`
+  all absent), because file-wide bare-name oracles cannot tell prose from a call
+  site. Re-grepped after the edit: `browser_devint` **5**, `browser_srccur`
+  **5**, `browser_alldbs` **2**, `device internals to reach` **1** — all
+  unchanged, and all five occurrences of each are real code lines.
+
+**Sabotages re-run for the fix-up** (driver: lock dir, `EXIT/INT/TERM` restore
+trap, pre-state count asserted before patching, on-disk `diff` of the mutation,
+`md5`+`diff`-verified restore, `NORESULT`/`TIMEOUT` counted as red):
+
+| # | mutation | expected | measured |
+|---|---|---|---|
+| `V1` | `$pmatched == [llength $segs]` → `$pmatched > $matched` | `BK43` alone | **`BK43` alone.** keys X **49 checks, 1 fail** (count held, no early abort); keys h 25/0, 2pane h 108/0, panes h 15/0 unmoved |
+| `V0` | the same guard → `0` (the R12 arm off — the "before item 18" proxy) | `BK43` among the reds, proving legs 5-7 MOVE | **`BK36`-`BK43` red**, 49 checks held; headless keys 25/0 (the group is X-only), 2pane 108/0, panes 15/0 |
+| `V2` | bypass the checkbutton's `-command` (behaviourally invisible) | `BK35` alone — the driver-bites control | **`BK35` alone**, both arms (X 49/1, headless 25/1); `BK43` stays green, which is the correct instrument split |
+
+All three restored byte-exact (`md5` + `diff` verified) before the next run.
+
+**Arms after the fix-up.** Headless **1662 / 0** over the same 15 files, every
+per-file figure identical to the item-18 baseline (`BK43` is X-only, so `keys`
+stays at **25**). X **12/12 = 2244** through `xarm.sh suites` with
+`SUITE_TIMEOUT=400` on the real `:0` under the gate panel — only `keys` moved,
+**48 → 49**; the other eleven per-suite figures byte-identical.
+
+**The three out-of-baseline X-only suites, by hand.** `test_bindings_file` **ALL
+PASS**, `test_keybindings_help` **ALL PASS**, `test_key_graph_context`
+**TIMEOUT at 400 s on the first attempt, then ALL PASS twice on re-run in ~1
+second each** — a stall, not a slow suite and not a regression: this fix-up
+touches one comment and one test file, neither of which that suite loads.
+`run_suites.sh` prints no per-check count for these three, so **PASS is all that
+is confirmable here** — the receipt's earlier "13 / 17 / 70" figures remain
+unverified by measurement and should not be quoted as if they were.
+
+**The other three verifier remarks, for the record.**
+
+* **The EYEBALL is owed and is NOT closed by this fix-up** (see §12). No check
+  can judge that the `ttk::checkbutton` *widget* visibly renders ticked — only
+  its `-variable` and its accessor are asserted — nor that the 45 → 129 tree
+  change reads as *explained* rather than alarming in situ.
+* **`BP77` on `:0`** did not reproduce for the verifier either; it stays
+  recorded as a flake with no independent witness to the failure itself.
+* **The output schema's "headless 1618 / X 11/11" is stale by five items.** The
+  live contract is the LEDGER's 15 files / **1662** headless and 12 suites /
+  **2244** X.
