@@ -1399,7 +1399,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # The tree and model legs are KEPT and are not decoration: they are the
   # assertion that a search does NOT re-shape the upper pane — R5's sibling
   # (no auto-open) in its other form, no silent re-shape either.
-  # ⚠⚠ ITEM 16 RE-PATTERNED THIS WHOLE BLOCK, AND THE DISCRIMINATOR WAS REBUILT
+  # ⚠⚠ ITEM 20 RE-PATTERNED THIS WHOLE BLOCK, AND THE DISCRIMINATOR WAS REBUILT
   # A THIRD TIME. The bars now match the R8 LABEL of each candidate and still
   # return the RAW names, so `v(*)` — which matched four raw names — matches
   # ZERO labels. $BTFIX's labels are {out out2 net5 net5 net5:i v1:i net1
@@ -1433,7 +1433,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BT25 the Search BUTTON rebuilds the same tree, the same row model AND the same count as the live route} \
     [list [bt_tree $BTTV] [bt_leaves wvbt] [bt_count $BTF.ph]] \
     [list $BTNODES $BTFIX {4 of 8}]
-  # ⚠ THE ROUTE-INDEPENDENCE LEG ITEM 16 ADDS: the BUTTON must key the same way
+  # ⚠ THE ROUTE-INDEPENDENCE LEG ITEM 20 ADDS: the BUTTON must key the same way
   # the KEYSTROKE does. Both go through browser_refresh -> browser_match, so a
   # break that keyed one route and not the other is caught by an answer, not by
   # a count that both routes happen to share.
@@ -1459,7 +1459,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # from the AND. Under item 10 the difference is a name reappearing in the
   # MATCHED SET and the count going up — not a row appearing in the tree (all
   # four states draw the same four nodes) and not a row appearing in the model
-  # (§7.1 never took it out). Under item 16 the returning name is `i(v1)`,
+  # (§7.1 never took it out). Under item 20 the returning name is `i(v1)`,
   # whose label `v1:i` the SEARCH bar's `net*` was excluding, and the count
   # goes 1 -> 2.
   set bt_k [bt_type $BTSB {}]
@@ -1521,7 +1521,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ THIS LEG NOW CARRIES "NEVER WIDENED". A break that widened during the
   # error state leaves the recovered count at `4 of 8` or `8 of 8`; only a real
   # hold-then-recover reads `2 of 8` with the AND's two names.
-  # ⚠ ITEM 16: the recovery pattern is unchanged (`.*net5.*` is a substring form
+  # ⚠ ITEM 20: the recovery pattern is unchanged (`.*net5.*` is a substring form
   # and reads the same against a label as against a raw name) but its ANSWER
   # moved, because the SEARCH bar above it now holds `net*`. Three of eight —
   # which is still neither the search-alone 4, the AND's 1, nor 8, so the

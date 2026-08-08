@@ -109,7 +109,7 @@ names the measurement that forced it.
 | **R5** | **Both** search bars (Search AND Filter, ANDed as today) filter **the lower pane only**. The tree **never auto-opens** on a search. |
 | **R6** | A plot gesture on a **tree** node stays **recursive** — `browser_leaf_names` is untouched. Rationale, driver's own: plotting everything under a block is how you find what is coupling into a signal you see a kink on. |
 | **R7** | **All DBs**: with the box ticked, per-database headers become the tree's **top level**, above each DB's design root. |
-| **R8** | Lower-pane labels, Cadence convention: **voltages bare** (`net5`); **currents `<instance>:<param>`** with the model name dropped (`xm1:id`, `v1:i`, `c1:i`). The full raw name stays in the tooltip and on copy. **Item 16 adds: the label is also the two bars' FILTER SUBJECT** — see §5.4 and §7.7. |
+| **R8** | Lower-pane labels, Cadence convention: **voltages bare** (`net5`); **currents `<instance>:<param>`** with the model name dropped (`xm1:id`, `v1:i`, `c1:i`). The full raw name stays in the tooltip and on copy. **Item 20 adds: the label is also the two bars' FILTER SUBJECT** — see §5.4 and §7.7. |
 | **R9** | **Ctrl-L → Ctrl-B** for the browser toggle. See §8.1 — this overrides an in-source rejection. |
 | **R10** | **Ctrl-Alt-V replaces Ctrl+5** as "Show in Signal Browser", routed through the **C action registry** so it is remappable. Nothing selected → reveal the current descend level. One instance selected → reveal that instance, as if the user had descended into it. |
 | **R11** | **Two independent checkboxes**: (a) *Show device internals*, default **OFF**; (b) *Show source currents*, default **ON**. (a) governs both the tree's device nodes and the signal list. |
@@ -401,7 +401,7 @@ Cadence namespace. The real forms are `/I0/M1/D` (schematic/OSS: leading slash, 
 and `I0.M1:d` (simulator/raw: dot hierarchy, colon terminal). R8 follows the **raw**
 namespace, which is the one our names come from.
 
-⚠⚠ **ITEM 16: THE LABEL IS ALSO THE FILTER SUBJECT — AND THAT DOES NOT WEAKEN THE RULE
+⚠⚠ **ITEM 20: THE LABEL IS ALSO THE FILTER SUBJECT — AND THAT DOES NOT WEAKEN THE RULE
 ABOVE.** The two browser bars match this label and **return the raw name**. "The label is a
 display, never an identity" is *restated* by that, not traded away: a filter selects **what
 to show** and resolves nothing. Every gesture still goes through the row index into
@@ -506,7 +506,7 @@ exactly this level" — so it gets its own selector proc. Adding one reds nothin
 `browser_leaf_names` would red BT13, BM12, BT29 and BT32, and would break the one gesture
 the driver explicitly asked to preserve.
 
-### 7.7 The bars match the LABEL (item 16), and the raw-name paste path was not preserved
+### 7.7 The bars match the LABEL (item 20), and the raw-name paste path was not preserved
 
 R8 gave the lower pane a rendered label. That created a surface no other search box in this
 codebase has: **it displays one string and filtered on another.** Typing `v(x1.net1)` at a
@@ -562,7 +562,7 @@ raw name" for the next, with nothing on screen to say which; BD57 pins it.
 reveal that instance, as if the user had descended into it."* The first sentence
 shipped; **the second never did**, and nothing in the batch noticed, because
 every check drove the command with nothing selected. The driver re-raised it as
-a defect report after item 16. It is recorded here as an unimplemented ruling
+a defect report after item 20. It is recorded here as an unimplemented ruling
 rather than as a new feature, so the gap is attributable.
 
 ⚠ **R10's OTHER half is still owed and is NOT part of item 17.** R10 also says

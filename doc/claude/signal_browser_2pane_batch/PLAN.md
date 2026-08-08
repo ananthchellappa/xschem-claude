@@ -1,5 +1,27 @@
 # Two-pane Signal Browser — RED-first implementation plan
 
+> ## ⚠⚠ ITEM NUMBERING — READ THIS BEFORE WRITING "item N" ANYWHERE
+>
+> **There are TWO plans with overlapping numbering**, and a bare "item N" near the
+> Signal Browser is ambiguous. It has already caused real confusion three times.
+>
+> | plan | file | numbering |
+> |---|---|---|
+> | **single-pane** | `doc/claude/signal_browser_batch/PLAN.md` | items 1-16, ALL SHIPPED |
+> | **two-pane** (this one) | `doc/claude/signal_browser_2pane_batch/PLAN.md` | items 0-20 |
+>
+> **THE RULE: always write `single-pane item N` or `two-pane item N`.** In source
+> comments the two-pane ones are written `TWO-PANE item N`. A bare `item N` inside
+> a test file means *that file's own* plan, which its header names.
+>
+> **The number 16 meant three different things** until 2026-08-07:
+> single-pane 16 (docs/guide rows, shipped `24c491cd`), two-pane 16 (R9, Ctrl-L →
+> Ctrl-B, **still unstarted**), and the driver-raised label filter. The label
+> filter had no claim to the number and was **renumbered to two-pane item 20**;
+> the other two keep theirs. Historical artefacts that still say 16 —
+> `doc/claude/suggestions/next_session_2pane_item16.md` and the commit message of
+> `258c567a` — are dated records and were deliberately left alone.
+
 > **STOP — the tree moved under all four planners.** Item 1 (M1: `sig_declass` + the `class` field) is **already implemented and committed** as `422b3f55 fix(wviewer): strip ngspice device-class prefixes (0217)`. `wviewer::sig_declass` is live at `src/wave_viewer.tcl:1756`, `wviewer::sig_class` at `:1776`, `sig_split` already routes through it (`:1792`), and `signal_entry` already returns the fifth key (`:1810-1815`). SB07/SB10 are already at their new values and a **DC01-DC28+ band** already exists in `test_wave_sigsearch.tcl:455-575`. A `doc/claude/specs/waveform_signal_browser_two_pane.md` (721 lines) also already exists and settles most of what the four planners re-derived.
 >
 > **MEASURED BASELINE, re-run just now, all green:** sigsearch **139**, sigbrowser 135, i11 50, i12 29, i1315 80, i14 47, grid **214** = **694** `--nogui` checks (not 660). `test_wave_modes.tcl` = 212, separately.
@@ -58,6 +80,22 @@ Item 0 is verification only. Execution order is **B's** (pure model first, keys 
 | 17 | R10 — Ctrl-Alt-V via the action registry + the selected-instance arm | L | high | pure+X | 16 | test_bindings_file, test_keybindings_help, BX13 |
 | 18 | R12 — auto-tick, reveal, and say so | M | med | pure+X | 12,13,17 | none |
 | 19 | Docs, oracles, the four-file lockstep, 0217 closed | M | low | pure | all | GS0, GS2, GH8, GH9, BT09, BX13 |
+| **20** | **The two bars filter the R8 LABEL, not the raw name** (driver-raised) | M | med | pure+X | 6,11 | BT25/26/27, BW46, BQ53 |
+
+### ⚠ Status of the two items that are PART-DONE
+
+* **Item 17 is HALF SHIPPED.** Its *selected-instance arm* landed `882694cc`
+  (receipt `17_receipt.md`): "Show in Signal Browser" now targets the selected
+  instance, with the two rulings for non-hierarchical and multi-select picks.
+  **Still owed:** `Ctrl-Alt-V` via the **C action registry**, replacing Ctrl-5.
+  There is no `Control-Alt-v` binding anywhere in `src/`. That half still depends
+  on item 16, which is why it was not taken.
+* **Item 20 is DONE** (`258c567a`, receipt `20_receipt.md`), and so is the hover
+  tooltip that shipped beside it (`c02bfa6f`) — the latter is not an item at all
+  but **item 11's own scope**, paid late; `11_receipt.md` §8 records the miss.
+
+**Done so far:** 0-11, 20, and half of 17. **Next by dependency: item 12** — its
+deps (3, 4, 10, 11) are all done, and it unblocks 14 and 18.
 
 ---
 

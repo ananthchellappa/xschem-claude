@@ -584,7 +584,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set bw_ids0  [bs_tree_ids $TV]
   set bw_open0 [bs_open_set $TV]
   set bw_stat0 [pcall $F.ph cget -text]
-  # ⚠ ITEM 16 RE-PATTERNED THIS. The old `v(x1.x2*` matched 1 of the 3 RAW names
+  # ⚠ ITEM 20 RE-PATTERNED THIS. The old `v(x1.x2*` matched 1 of the 3 RAW names
   # and now matches 0 labels; `net*` matches 0 raw names and 2 of the 3 LABELS
   # ({out net5 net5}), so the count moves 3 -> 2 instead of 3 -> 1 and the
   # anti-vacuity leg below still has a number to see. The flicker-provoking

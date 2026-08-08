@@ -3,7 +3,7 @@
 # this ONE file carries every item-1..7 check; each item APPENDS its group).
 #
 #   SM01-SM30  wviewer::sig_match — the shared matcher (item 1), plus TWO-PANE
-#              item 16's `-key` option (SM29/SM30, appended in place after SM27).
+#              item 20's `-key` option (SM29/SM30, appended in place after SM27).
 #              Shape; shell `*` `?` `[range]` and the literal-bracket escape;
 #              regexp WHOLE-NAME anchoring (SM04, the ViVA trap, see below);
 #              case default vs -case 1 on BOTH syntax arms (shell SM09/SM10/SM11,
@@ -385,7 +385,7 @@ check {SM26 subject is the full raw name, never the stripped form} \
 check {SM27 regexp arm is case-INsensitive by DEFAULT} \
   [lindex [sig_match $SIGS {V\(OUT\)} -syntax regexp] 1] [list v(out)]
 
-# --- SM29/SM30 — `-key`, item 16's ONE new option -----------------------------
+# --- SM29/SM30 — `-key`, item 20's ONE new option -----------------------------
 #
 # ⚠⚠ WHY AN OPTION AND NOT A REWRITE. `GSO01`-`GSO06` below is a differential
 # property oracle: a FROZEN copy of the pre-retrofit `graph_get_signal_list` run
@@ -415,7 +415,7 @@ check {SM29 ...and the SAME pattern with no key matches nothing, so the key is w
   [lindex [sig_match $SIGS {L*} -case 1] 1] [list]
 check {SM29 (THE TEETH) the ORIGINAL element comes back, never the key's output} \
   [lindex [sig_match {v(out)} {V(OUT)} -key sm_upper -case 1] 1] [list v(out)]
-# The real key item 16 ships, exercised here rather than only through the bars:
+# The real key item 20 ships, exercised here rather than only through the bars:
 # the composition browser_label(signal_entry(name)) is what the lower pane draws.
 check {SM29 (THE SHIPPED KEY) browser_label_of makes the pane's own label the subject, and `net*` — worth 0 against these raw names — finds the two it draws} \
   [list [lindex [sig_match {v(x1.net1) v(x1.net2) v(out)} {net*}] 1] \

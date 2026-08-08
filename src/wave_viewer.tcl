@@ -409,7 +409,7 @@ namespace eval wviewer {
   variable browsersea;       array set browsersea       {}
   variable browserseasel;    array set browserseasel    {}
   variable browserseaanchor; array set browserseaanchor {}
-  # THE HOVER TOOLTIP (item 11's eighth gesture, paid beside item 16). The pane
+  # THE HOVER TOOLTIP (item 11's eighth gesture, paid beside item 20). The pane
   # draws a LABEL; this is how the user sees the NAME behind it.
   #   seatipdelay = ms of hover before a tip appears. A VARIABLE, not a literal,
   #     for the reason `balloon` takes the same argument: a tip that appears on
@@ -1681,7 +1681,7 @@ proc wviewer::sig_type {name} {
 #   -case     0|1             default 0  (0 = case-INsensitive, ViVA default)
 #   -type     all|v|i|other   default all
 #   -sort     0|1|-1          0 = raw order (default), 1 = -increasing, -1 = -decreasing
-#   -key      <cmd prefix>    default {} = IDENTITY (two-pane item 16)
+#   -key      <cmd prefix>    default {} = IDENTITY (two-pane item 20)
 # Returns: {ok  {matched names...}}   on success
 #          {err {message}}            on an invalid regexp
 # Matching is WHOLE-NAME anchored. shell -> `string match`; regexp -> `^(?:$pat)$`.
@@ -1710,7 +1710,7 @@ proc wviewer::sig_type {name} {
 # the legacy `if {$err} {set pattern {}}` of xschem.tcl:4478, which widens a
 # typo into "show everything" — the worst possible failure for a search box.
 #
-# --- TWO-PANE ITEM 16: `-key`, THE MATCH SUBJECT ------------------------------
+# --- TWO-PANE ITEM 20: `-key`, THE MATCH SUBJECT ------------------------------
 #
 # `-key` is a command prefix applied to each element before the PATTERN is
 # tested; the ORIGINAL element is what gets returned. `{}` — the default, and
@@ -1723,7 +1723,7 @@ proc wviewer::sig_type {name} {
 # one over 52 names x 94 patterns x 2 sorts = 10,340 comparisons with ZERO
 # permitted differences, and any SEMANTIC change in here reds it. Adding an
 # option that defaults to identity is the cheapest true way to give the signal
-# browser's two bars a different match subject, and it is why item 16 added a
+# browser's two bars a different match subject, and it is why item 20 added a
 # key rather than rewriting this loop. SM29/SM30 pin the option itself.
 #
 # ⚠ `-type` IS NOT KEYED, DELIBERATELY. See the ⚠ on the type line in the loop.
@@ -1794,7 +1794,7 @@ proc wviewer::sig_match {siglist pattern args} {
   set out {}
   foreach n $siglist {
     # ⚠⚠ THE TYPE FILTER READS THE RAW ELEMENT, NEVER `key(element)`, AND THAT
-    # IS A RULING (item 16 §4.1). `sig_type` classifies on the leading `v(` /
+    # IS A RULING (item 20 §4.1). `sig_type` classifies on the leading `v(` /
     # `i(`, which the browser's R8 label deliberately DESTROYS — `i(v1)` renders
     # `v1:i`, whose sig_type is `other`. Key this line too and the Voltage and
     # Current dropdowns select NOTHING, everywhere, while every pattern check
@@ -1806,7 +1806,7 @@ proc wviewer::sig_match {siglist pattern args} {
     # for a transform whose answer it would then throw away, and this loop runs
     # once per signal on every keystroke.
     if {$pattern eq {}} { lappend out $n ; continue }
-    # item 16: the pattern is tested against `key(element)`; `lappend out $n`
+    # item 20: the pattern is tested against `key(element)`; `lappend out $n`
     # below still appends the ORIGINAL. Returning `$k` instead is the sabotage
     # that puts un-plottable strings into every gesture downstream.
     set k $n
@@ -6423,7 +6423,7 @@ proc wviewer::browser_label {e} {
   return "${inst}:${param}"
 }
 
-# --- TWO-PANE ITEM 16: THE FILTER SUBJECT ------------------------------------
+# --- TWO-PANE ITEM 20: THE FILTER SUBJECT ------------------------------------
 #
 # ONE raw name -> the label the lower pane renders for it. PURE, and the ONLY
 # spelling of "what the user is looking at" the matcher is ever given: it is
@@ -6439,7 +6439,7 @@ proc wviewer::browser_label {e} {
 # ⚠ IT DOES NOT MAKE THE LABEL AN IDENTITY. A filter selects WHAT TO SHOW and
 # resolves nothing: every gesture still goes through the row index into the full
 # raw name (browser_sea_name), and the status line still counts NAMES. Spec R8's
-# "the label is a display, never an identity" is restated by item 16, not
+# "the label is a display, never an identity" is restated by item 20, not
 # weakened by it.
 proc wviewer::browser_label_of {name} {
   return [wviewer::browser_label [wviewer::signal_entry $name]]
@@ -6716,7 +6716,7 @@ proc wviewer::browser_leaf_names {rows id} {
 # Returns sig_match's own {ok <names>} / {err <msg>}.
 #
 # ⚠⚠ `key` IS OPTIONAL AND DEFAULTED, AND THAT SHAPE IS LOAD-BEARING RATHER THAN
-# A STYLE CHOICE (two-pane item 16 §4.2). This proc and `browser_and` are pinned
+# A STYLE CHOICE (two-pane item 20 §4.2). This proc and `browser_and` are pinned
 # as PURE by BT14 (5 checks), BT15 (3) and BT16 (4) — twelve checks that call
 # them directly with RAW patterns against RAW names, because they are testing
 # the MATCHER, not the bars. Make the label transform unconditional here and all
@@ -6747,7 +6747,7 @@ proc wviewer::browser_match_one {sigs d {key {}}} {
 #
 # An `err` from EITHER bar short-circuits with that bar's message (decision 4:
 # an invalid regexp is an ERROR, never a silent match-all).
-# ⚠ item 16's `key` is threaded to BOTH rungs, and the two-line body is the
+# ⚠ item 20's `key` is threaded to BOTH rungs, and the two-line body is the
 # whole guarantee: passing it to one call and not the other makes the two bars
 # disagree about what they are matching, which is the exact failure this proc's
 # single-place-for-the-AND design exists to prevent. It is a declared sabotage.
@@ -7245,7 +7245,7 @@ proc wviewer::browser_build {token top} {
   bind $f.pw.sea.c <Configure> \
     [list wviewer::browser_sea_configure $token]
   # THE EIGHTH, and it pays PLAN item 11's one acknowledged miss: the pane draws
-  # R8's LABEL and had no way to show the NAME behind it. Item 16 lets the user
+  # R8's LABEL and had no way to show the NAME behind it. Item 20 lets the user
   # filter on what they see; this tells them what they are looking at. ⚠ ONE
   # bind — the teardown is `browser_sea_tip_watch`, not a `<Leave>` that would
   # be a ninth line here documenting no gesture.
@@ -7869,13 +7869,13 @@ proc wviewer::browser_sea_menu_unpost {token} {
   return [wviewer::ctx_menu_drop $token wvseamenu]
 }
 
-# --- THE HOVER TOOLTIP (PLAN item 11's eighth gesture, paid by item 16) -------
+# --- THE HOVER TOOLTIP (PLAN item 11's eighth gesture, paid by item 20) -------
 #
 # ⚠⚠ THIS IS AN ACKNOWLEDGED MISS BEING PAID, NOT A NEW FEATURE. PLAN item 11's
 # scope names "Tooltip on hover shows `browser_label_full`" and item 11 shipped
 # SEVEN binds on this canvas, not eight (11_receipt.md §8). It belongs beside
-# item 16 because it is the same defect wearing the other sign: the pane shows a
-# LABEL and gave the user no way to see the NAME behind it. Item 16 lets them
+# item 20 because it is the same defect wearing the other sign: the pane shows a
+# LABEL and gave the user no way to see the NAME behind it. Item 20 lets them
 # filter on what they see; this lets them find out what they are seeing.
 #
 # ⚠ ONE BIND, and the teardown is CODE rather than a second bind. `<Leave>`
@@ -8199,7 +8199,7 @@ proc wviewer::browser_match {token} {
   set f [dict get $windows $token top].wvbrowser
   set d1 [wviewer::searchbar_get $f.wvsearch]
   set d2 [wviewer::searchbar_get $f.wvfilter]
-  # ⚠⚠ TWO-PANE ITEM 16: THE SUBJECT IS THE LABEL THE LOWER PANE DRAWS. This is
+  # ⚠⚠ TWO-PANE ITEM 20: THE SUBJECT IS THE LABEL THE LOWER PANE DRAWS. This is
   # ONE of the TWO places the key is spelled — the other is browser_refresh's
   # All-DBs loop, which matches each FOREIGN inventory with these same two bar
   # dicts. Both must pass it, or one pattern would mean "the label" for the
@@ -8384,7 +8384,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
     # inventories go through browser_and, not through a second matcher, so the
     # AND, the type dropdowns and decision 4's error arm cannot drift per DB.
     #
-    # ⚠⚠ TWO-PANE ITEM 16 ADDS THE KEY HERE TOO, and "the same two bar dicts"
+    # ⚠⚠ TWO-PANE ITEM 20 ADDS THE KEY HERE TOO, and "the same two bar dicts"
     # above is why: a dict is only half of what a bar means — the other half is
     # the SUBJECT it is matched against. Key browser_match and not this loop and
     # one typed pattern would filter the current DB by the label the user can

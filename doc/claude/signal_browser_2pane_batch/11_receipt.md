@@ -221,7 +221,7 @@ COUNT was read alongside its fail count; no run lost a check.
   `PLAN.md` item 11's scope names *"Tooltip on hover shows `browser_label_full`"*
   (PLAN:816) and nothing binds `<Motion>` on `$f.pw.sea.c`: **seven** binds shipped,
   not eight. The pane draws a LABEL and gives the user no way to see the NAME behind
-  it. — **PAID by item 16's second commit** (`16_receipt.md` §5): one `<Motion>` bind,
+  it. — **PAID by two-pane item 20's second commit** (`20_receipt.md` §5): one `<Motion>` bind,
   GH8's literal `14` → `15`, a fifteenth `data-bseq` row, and BQ75-BQ77. *(This entry
   was itself added late: item 11's receipt did not record the miss, and the next
   session's prompt cited a §8 line that was not here.)*

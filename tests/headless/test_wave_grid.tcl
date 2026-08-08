@@ -449,25 +449,27 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
     [expr {[string first "href=\"$gh_rel\"" $gh_idx] >= 0}]
 }
 
-# --- GH8/GH9 — the SIGNAL BROWSER's own widget gestures (item 16) -------------
+# --- GH8/GH9 — the SIGNAL BROWSER's own widget gestures (SINGLE-PANE item 16) -
 # The direct analogue of GH1/GH2 one layer over. The §9.1 table documents the
 # `bind WaveViewer` defaults; the browser's gestures are bound on the SIDEBAR's
 # widgets inside `browser_build` and are NOT on that tag, so they need their own
 # attribute and their own pair of legs.
 #
-# ⚠ THE COUNT IS A LEDGER AND IT HAS MOVED THREE TIMES. Item 16 shipped six;
-# two-pane item 10 added the tree's <<TreeviewSelect>> (seven); two-pane item 11
-# added the LOWER pane's seven canvas gestures (fourteen); and the hover TOOLTIP
-# -- item 11's own scope, shipped late beside the two-pane item 16 -- adds the
-# sea's <Motion> (fifteen). Bump this literal in the SAME commit as the binds and
-# the guide rows, never separately -- GH9 compares the two directions against
-# each other and would stay green on a half-done edit if both sides moved
-# together but the ledger below did not.
+# ⚠ THE COUNT IS A LEDGER AND IT HAS MOVED THREE TIMES. SINGLE-PANE item 16
+# shipped six; TWO-PANE item 10 added the tree's <<TreeviewSelect>> (seven);
+# TWO-PANE item 11 added the LOWER pane's seven canvas gestures (fourteen); and
+# the hover TOOLTIP -- item 11's own scope, shipped late beside two-pane item 20
+# -- adds the sea's <Motion> (fifteen). Bump this literal in the SAME commit as
+# the binds and the guide rows, never separately -- GH9 compares the two
+# directions against each other and would stay green on a half-done edit if both
+# sides moved together but the ledger below did not.
 #
-# ⚠ TWO DIFFERENT ITEM 16s ARE NAMED ABOVE and neither is a typo: `PLAN.md`'s
-# table row 16 is "R9 -- Ctrl-L to Ctrl-B", which is the six this ledger started
-# at; the TWO-PANE batch's driver-raised item 16 is the label filter, which added
-# no bind at all. See doc/claude/signal_browser_2pane_batch/16_receipt.md.
+# ⚠⚠ EVERY "item N" ABOVE IS PREFIXED, AND THAT IS NOT PEDANTRY. There are TWO
+# plans with overlapping numbering — doc/claude/signal_browser_batch/PLAN.md
+# (single-pane) and doc/claude/signal_browser_2pane_batch/PLAN.md (two-pane) —
+# and "item 16" meant three different pieces of work until the two-pane batch's
+# driver-raised label filter was renumbered to 20. A bare "item N" anywhere near
+# the browser is ambiguous; write which plan. Both PLAN headers carry the rule.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
 # whole reason GH0's `== 16` above still holds: `data-bseq="` does not contain
@@ -524,7 +526,7 @@ foreach gh_n [lsort -unique $gh_refs] {
 }
 
 # ============================================================================
-# GS* — the SIGNAL BROWSER SPEC's contract list vs the source (item 16)
+# GS* — the SIGNAL BROWSER SPEC's contract list vs the source (SINGLE-PANE 16)
 # ============================================================================
 # Same justification as the GH block's own: a doc table that silently rots is
 # worse than none, and this one is now the batch's ONLY durable record of what

@@ -1,3 +1,11 @@
+> ⚠ **HISTORICAL — THE ITEM WAS RENUMBERED AFTER THIS PROMPT WAS WRITTEN.**
+> What this file calls "item 16" is now **two-pane item 20**, and its work order
+> is `doc/claude/signal_browser_2pane_batch/ITEM20_label_filter.md` (was
+> `ITEM16_label_filter.md`); the receipt is `20_receipt.md`. The number 16 was
+> already taken twice — single-pane item 16 (docs, shipped) and two-pane item 16
+> (R9, Ctrl-L → Ctrl-B, unstarted). This file is left as the dated record of what
+> was asked; the numbering rule is in the two-pane `PLAN.md` header.
+
 Repo `/home/qflow/dev/xschem/claude_1/xschem`, branch `fluid-editing`.
 
 Implement the **two-pane Signal Browser, item 16 — THE BARS FILTER WHAT THE USER SEES**,

@@ -1,16 +1,16 @@
-# Item 16 — the bars filter WHAT THE USER SEES. And item 11's eighth bind.
+# Item 20 — the bars filter WHAT THE USER SEES. And item 11's eighth bind.
 
 **Status: LANDED.** Two commits, two attributions, as the work order asked:
 the label filter, then the hover tooltip that pays item 11's one acknowledged miss.
 
 ⚠ **THE NUMBER 16 IS USED TWICE IN THIS BATCH, and it is not a typo here.**
 `PLAN.md`'s table row 16 is *"R9 — Ctrl-L → Ctrl-B, incl. the C-table row
-deletion"*, which shipped long ago; **this** item 16 is the driver-raised one
-scoped in `ITEM16_label_filter.md` after item 11 landed, and it has no PLAN row.
-`test_wave_grid.tcl`'s GH8 comment refers to the *first* item 16. Nothing was
+deletion"*, which shipped long ago; **this** item 20 is the driver-raised one
+scoped in `ITEM20_label_filter.md` after item 11 landed, and it has no PLAN row.
+`test_wave_grid.tcl`'s GH8 comment refers to the *first* item 20. Nothing was
 renumbered — noted so the next reader does not "fix" one of them.
 
-Work order: `ITEM16_label_filter.md` (commit `2f7d45d6`). Everything below is a
+Work order: `ITEM20_label_filter.md` (commit `2f7d45d6`). Everything below is a
 value that was **run**, not a value that was reasoned to. Where the work order's
 own numbers turned out to be wrong, the correction is stated with the
 measurement, not silently applied.
@@ -47,7 +47,7 @@ key-delivery flake. Re-run: 86 and 485, exact.
 
 ## 2. ⚠⚠ THE WORK ORDER'S CALLER TABLE WAS INCOMPLETE, AND IT MATTERED
 
-`ITEM16_label_filter.md` §4.1 threads the key through three rungs and has
+`ITEM20_label_filter.md` §4.1 threads the key through three rungs and has
 `browser_match` pass it. **`browser_and` has TWO production callers, not one:**
 
 | caller | file:line | inventory |
@@ -272,11 +272,11 @@ driver does — a sabotage measured on an unknown source state measures nothing.
 ## 7. Found, named, NOT fixed
 
 * **`browser_show_path`'s bar clause is still stale** (item 11 §8 named it).
-  Item 16 does not touch it: BX37/BX38 pin the strings verbatim.
+  Item 20 does not touch it: BX37/BX38 pin the strings verbatim.
 * **Guide §11.2 prose is still pre-two-pane.** A prose pass is still owed.
 * **`browser_state` can hold a raw-shaped pattern that no longer matches.**
   Declared in §4.4 of the work order and in the spec as a limit, not migrated.
-* **The eyeball.** Every claim here is a measured value. Item 16 adds its own
+* **The eyeball.** Every claim here is a measured value. Item 20 adds its own
   pixel claims to the queue: that `net*` typed at `x1` really does leave 26 rows
   drawn, and that the tooltip appears where the pointer is, after a beat, and
   goes when the pointer leaves the pane.

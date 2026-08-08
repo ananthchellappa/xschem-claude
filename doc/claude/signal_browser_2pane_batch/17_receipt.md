@@ -15,7 +15,7 @@ committed. The two-pane spec's ruling table has said it from the start:
 > reveal the current descend level. One instance selected → reveal that
 > instance, as if the user had descended into it.**
 
-The first sentence shipped in item 12. **The second never did.** No check caught
+The first sentence shipped in SINGLE-PANE item 12. **The second never did.** No check caught
 it, and the reason is worth keeping: *every existing check drives the command
 with nothing selected*, so the half that was built is the half they all
 exercise. A ruling can be green, approved and never fire.
@@ -111,7 +111,7 @@ the first run aborted with `PRE = 2 (expect 4)`. The tree was fine — **my
 expected count was wrong** (the proc and its one caller, not four). That is the
 guard working: it refuses to measure a sabotage against a source state nobody
 checked, and it cannot tell "corrupted" from "you counted wrong" — which is
-exactly why it stops rather than guesses. (Item 16's receipt §4.2 is why it
+exactly why it stops rather than guesses. (Item 20's receipt §4.2 is why it
 exists at all.)
 
 ⚠ **U1 and U2 first appeared to red NOTHING**, and that was a defect in the

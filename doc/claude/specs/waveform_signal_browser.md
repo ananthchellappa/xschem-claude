@@ -436,7 +436,7 @@ They are **ANDed**: `browser_and` intersects the two match sets. The Filter bar 
 list that has already been fetched, which is why a DB scope there would mean nothing — and
 two All-DBs boxes would be two answers to one question.
 
-### ⚠⚠ THE SUBJECT IS THE RENDERED LABEL (two-pane item 16)
+### ⚠⚠ THE SUBJECT IS THE RENDERED LABEL (two-pane item 20)
 
 Both bars match **the string the lower pane draws** — R8's label — and **return the raw
 name**. `sig_match` is given `wviewer::browser_label_of` as its `-key`; the option defaults

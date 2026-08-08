@@ -26,7 +26,7 @@
 #  3. THE LABEL IS A DISPLAY. R8 renders `i(x1.x2.net5)` as `net5:i`, and no raw
 #     name contains `net5:i`. Every gesture must resolve through the INDEX into
 #     the full raw name; BQ56 and BQ58 are the two ends of that.
-#  4. ITEM 16 MAKES THE LABEL THE BARS' SUBJECT TOO, and that does NOT weaken
+#  4. ITEM 20 MAKES THE LABEL THE BARS' SUBJECT TOO, and that does NOT weaken
 #     (3): a filter selects WHAT TO SHOW and resolves nothing. BQ70-BQ74 are the
 #     driver's own case, and BQ73 is (3) restated from the bar's side — the
 #     matcher matches the label and RETURNS THE RAW NAME.
@@ -36,7 +36,7 @@
 # ============================================================================
 # GROUP PREFIX: the sea of names is `BQ`, never reused. Numbers are BLOCKED by
 # arm: 01-19 source/pure (BOTH arms), 50-69 the throwaway toplevel (X only),
-# 70-79 ITEM 16's live-bar block, also X only. PLAN reserves BQ01-BQ13 for items
+# 70-79 ITEM 20's live-bar block, also X only. PLAN reserves BQ01-BQ13 for items
 # 6/7's pure model, which shipped inside test_wave_sigbrowser_2pane.tcl's TP
 # band instead (the as-built convention); nothing here renumbers into them.
 #
@@ -284,7 +284,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $bq_precol $bq_open0 [llength [bs_sea_labels $C]]] \
     [list {g:} {g:} 23]
   set bq_sea0  [bs_sea_labels $C]
-  # ⚠ ITEM 16 RE-PATTERNED THIS, and the property it was chosen for is intact.
+  # ⚠ ITEM 20 RE-PATTERNED THIS, and the property it was chosen for is intact.
   # It used to read `v(x1.x2.net5*`, whose FIRST keystroke (`v`) matched nothing
   # — that is what makes this a real R5 test rather than a no-op. `net5*` has
   # the same shape (`n`, `ne`, `net`, `net5` all match nothing at this level,
@@ -743,7 +743,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BQ67c (RESTORED) the corpus is back} \
     [llength [bs_tree_ids $TV]] 45
 
-  # === BQ70-BQ74 (ITEM 16): THE BARS FILTER WHAT THE USER SEES ===============
+  # === BQ70-BQ74 (ITEM 20): THE BARS FILTER WHAT THE USER SEES ===============
   #
   # ⚠⚠ THE DRIVER'S OWN CASE, VERBATIM: "descend to x1 and there are signals
   # named net1, net2. The user SHOULD be able to filter based on what is
@@ -861,9 +861,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠⚠ AN ACKNOWLEDGED MISS BEING PAID, not a new feature. PLAN item 11's scope
   # names "Tooltip on hover shows `browser_label_full`"; item 11 shipped SEVEN
   # binds on this canvas and recorded the omission (11_receipt.md §8). It lands
-  # beside item 16 because it is the same defect wearing the other sign: the
+  # beside item 20 because it is the same defect wearing the other sign: the
   # pane draws a LABEL, and until now there was no way to see the NAME behind
-  # it. Item 16 lets the user filter on what they see; this tells them what they
+  # it. Item 20 lets the user filter on what they see; this tells them what they
   # are looking at.
   #
   # ⚠ THE DELAY IS SET TO 0 AND RESTORED (the named-helper rule). `seatipdelay`

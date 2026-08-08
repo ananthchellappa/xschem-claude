@@ -797,10 +797,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [bd_ids_for [bd_rows $tok] {v(beta)}] \
           [pcall ::wviewer::browser_match $tok]] \
     [list top-level {d:0|s:v(alpha)} {s:v(beta)} {ok {}}]
-  # ⚠⚠ BD57 (TWO-PANE ITEM 16) — THE FOREIGN INVENTORIES ARE KEYED TOO, AND THIS
+  # ⚠⚠ BD57 (TWO-PANE ITEM 20) — THE FOREIGN INVENTORIES ARE KEYED TOO, AND THIS
   # IS THE ONLY PLACE IT IS REACHABLE. `browser_and` has TWO production callers,
   # not one: `browser_match` (the current DB) and `browser_refresh`'s All-DBs
-  # loop at wave_viewer.tcl:8110 (each FOREIGN DB). Item 16's work order names
+  # loop at wave_viewer.tcl:8110 (each FOREIGN DB). Item 20's work order names
   # only the first. Keying one and not the other would make the SAME two bar
   # dicts mean two different things depending on which DB a name came from —
   # the user types one pattern, the current DB answers about labels and the
@@ -815,7 +815,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # deliberate: same bar, same fixture, `*alpha*` (works either way) against
   # `alpha` (works only keyed).
   bd_pat $BSB {alpha}
-  check {BD57 (ITEM 16) ON + the LABEL-ONLY `alpha`: the FOREIGN DB's header still appears, so browser_refresh's All-DBs loop keys the bars the same way browser_match does} \
+  check {BD57 (ITEM 20) ON + the LABEL-ONLY `alpha`: the FOREIGN DB's header still appears, so browser_refresh's All-DBs loop keys the bars the same way browser_match does} \
     [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
           [bd_ids_for [bd_rows $tok] {v(alpha)}]] \
     [list top-level {d:0|s:v(alpha)}]

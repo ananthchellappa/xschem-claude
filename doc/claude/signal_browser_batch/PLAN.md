@@ -1,5 +1,16 @@
 # Signal Browser batch plan — ViVA-style signal browsing for the ASE waveform viewer
 
+> ## ⚠⚠ THIS IS THE **SINGLE-PANE** PLAN. ITS ITEM NUMBERS ARE NOT THE OTHER ONE'S.
+>
+> `doc/claude/signal_browser_2pane_batch/PLAN.md` is a SECOND plan with
+> overlapping numbering. **Always write `single-pane item N` or
+> `two-pane item N`** — a bare "item N" near the Signal Browser is ambiguous and
+> has caused real confusion. Inside THIS file and its receipts, a bare "item N"
+> means single-pane. The full rule and the history of the number 16 are in the
+> two-pane plan's header.
+>
+> **This batch is COMPLETE** (items 1-16). The two-pane plan rebuilds on top of it.
+
 Generated 2026-08-03. Source of truth for the batch. Driver: `DRIVER_PROMPT.md` in this
 directory. Per-item workflow: `item_pipeline.js`. Receipts: `receipts/NN_receipt.md`.
 

@@ -1,4 +1,4 @@
-# Item 16 — the bars filter WHAT THE USER SEES
+# Item 20 — the bars filter WHAT THE USER SEES
 
 **Status: SCOPED, not implemented.** Driver-raised after item 11 landed.
 Spec to amend: `doc/claude/specs/waveform_signal_browser_two_pane.md` (R8, §7.1)

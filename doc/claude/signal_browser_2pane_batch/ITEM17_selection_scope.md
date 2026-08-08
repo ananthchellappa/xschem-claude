@@ -1,10 +1,11 @@
 # Item 17 — "Show in Signal Browser" must honour the SELECTION
 
-**Status: SCOPED.** Driver-raised after item 16 landed. Rulings 1-3 below are
+**Status: SCOPED.** Driver-raised after item 20 landed. Rulings 1-3 below are
 TAKEN; do not re-open them.
 
 Spec to amend: `doc/claude/specs/waveform_signal_browser_two_pane.md` (a new
-§7.8) and `doc/claude/specs/waveform_signal_browser.md` §12 (item 12's contract).
+§7.8) and `doc/claude/specs/waveform_signal_browser.md` §10 (single-pane item
+12's contract).
 
 ---
 
