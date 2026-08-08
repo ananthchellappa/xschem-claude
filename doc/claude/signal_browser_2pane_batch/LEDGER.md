@@ -15,36 +15,49 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 18 **and its FIX-UP (`BK43`)**,
-both arms green.
-Re-measure before item 19 and record any drift here; do **not** silently adopt a
-new baseline.
+Measured **2026-08-08** after two-pane item 19 **and its FIX-UP (`GS28`/`GS29`)**,
+both arms green. **THE BATCH IS CLOSED**; the tables below are the contract any
+later work compares against. Re-measure before touching this subsystem and record
+any drift here; do **not** silently adopt a new baseline.
 
-> **⚠ TWO-PANE ITEM 19 RAN AND THE BATCH IS CLOSED. THE NUMBERS BELOW ARE THE
-> PRE-ITEM-19 BASELINE AND THEY WERE RE-MEASURED EXACT ON THE UNCHANGED TREE
-> BEFORE THE ITEM TOUCHED ANYTHING** — headless **1662 / 0** with every per-file
-> figure identical, X **2244** with every per-suite figure identical, the three
-> out-of-baseline X-only suites **13 / 17 / 70**. **NO DRIFT.**
+> **⚠ THE PRE-ITEM-19 BASELINE, KEPT FOR ATTRIBUTION. IT WAS RE-MEASURED EXACT
+> ON THE UNCHANGED TREE BEFORE THE ITEM TOUCHED ANYTHING** — headless
+> **1662 / 0** with every per-file figure identical (`test_wave_grid` 231), X
+> **2244** with every per-suite figure identical (`test_wave_grid` 356), the
+> three out-of-baseline X-only suites **13 / 17 / 70**. **NO DRIFT.** Item 19
+> took it to headless **1698** / X **2281**; its fix-up to the **1705 / 2287** in
+> the tables.
 >
-> **⚠⚠ SUPERSEDED BY THE ITEM-19 FIX-UP (2026-08-08). THE CURRENT CONTRACT IS:**
-> **headless 1705 / 0 over the same 15 files** (`test_wave_grid` 267 → **274**,
-> the only mover, `+7` = `GS28` +5 and `GS29` +2), **X 2162 measurable over 11
-> of the 12 suites** (`test_wave_grid` 392 → **399**, the same `+7`; every other
-> per-suite figure identical to the post-item-19 numbers), **out-of-baseline
-> 13 / 17 / 70 unmoved**. The fix-up closes the verifier's two findings — the
-> guide's §11.7 had **no oracle at all** (`GS28`) and a corrected
-> `tb_charge_pump` figure survived as a stale `110` in §0's table (`GS29`).
+> **⚠⚠ THE BASELINE MOVED WITH THE ITEM-19 FIX-UP (2026-08-08) AND THE TABLES
+> BELOW ARE THE NEW CONTRACT: headless 1662 → 1705, X 2244 → 2287.**
+> **Reason, in one line:** the fix-up added **7** check calls and they are all in
+> **ONE** file — `test_wave_grid` 267 → **274** headless / 392 → **399** under X,
+> the SAME `+7` in both arms (`GS28` +5, `GS29` +2) — and every other file and
+> every other suite is byte-identical in both arms. The `+7` closes the item-19
+> verifier's two findings: the guide's §11.7 had **no oracle at all** (`GS28`,
+> section-scoped) and a corrected `tb_charge_pump` figure survived as a stale
+> `110` in two-pane §0's motivation table (`GS29`, a within-file agreement
+> oracle). Out-of-baseline **13 / 17 / 70 unmoved**.
 >
-> **⚠ `test_wave_sigbrowser_i12`'s X FIGURE IS NOT IN THE 2162 AND WAS NOT
-> MEASURED.** Nine consecutive runs died `X connection to :0 broken` at
-> **teardown**, each after **124 of 126 checks printed `ok` with ZERO fails**.
-> **A/B-proven environmental:** `HEAD`'s `test_wave_grid.tcl` was swapped back
-> in and `i12` died **identically twice**, then the fix-up file was restored
-> byte-identical. `xarm.sh` picks Xvfb only before its `DEADLINE` and **editing
-> `DEADLINE` to force Xvfb would circumvent the user's handback**, so it was not
-> done. Headless `i12` is **40 / 0 unchanged**. **Whoever next gets a healthy
-> `:0` or a legitimate Xvfb window owes this one number**; if it reads 126 the X
-> total is **2288**.
+> **⚠ NOT ADOPTED FROM THE FIX-UP IMPLEMENTER'S RUN — AND ITS X FIGURE IS
+> CORRECTED.** The fix-up reported **"11/12 measurable = 2162"** and declared
+> `test_wave_sigbrowser_i12`'s X count **unmeasurable** after nine consecutive
+> teardown deaths on `:0` (each after 124 of 126 checks had printed `ok` with
+> zero fails; A/B-proven environmental by swapping `HEAD`'s `test_wave_grid.tcl`
+> back in and watching `i12` die identically twice). **Its verifier measured that
+> number: `i12` = 126 ALL PASS on `:0`, first try.** So the arm is **12/12 =
+> 2287**, the declared limit is **closed, not carried**, and `2244 + 36 + 7`
+> reconciles **EXACTLY** with no drift hiding behind the missing figure. Both
+> arms were re-measured independently by that verifier — all 15 headless files by
+> hand (**1705 / 0**, summed by hand) and 12 suites through `xarm.sh suites` on
+> the gated `:0` — and the `+7` was **attributed** by checking `589d7424`'s
+> `test_wave_grid.tcl` back in (**267 / 0 ALL PASS**, restored byte-identical),
+> so all seven are genuinely new checks on a green pre-state.
+>
+> **⚠ `i1315`'s X COUNT IS 190 *OR* 191 ON IDENTICAL BYTES, AND BOTH ARE REAL.**
+> `BP56`'s pixel leg is **gated**; 190 and 191 were observed on consecutive
+> standalone runs of the same tree. The total is stated as **2287** (i1315 at
+> 190) and reads **2288** when that leg runs. Do not treat either as drift.
 >
 > **⚠ `:0` DEGRADED PROGRESSIVELY WHILE THE FIX-UP WAS MEASURED.**
 > `test_wave_sigbrowser_i1315` **answered 191** in the first X sweep of this
@@ -249,20 +262,20 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1662 checks over 15 files, 0 fail**
+**headless — 1705 checks over 15 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
 |---|---|---|---|
 | `test_wave_sigsearch` | 146 | `test_wave_sigbrowser_i14` | **56** |
-| `test_wave_sigbrowser_sea` | 6 | `test_wave_grid` | 231 |
+| `test_wave_sigbrowser_sea` | 6 | `test_wave_grid` | **274** |
 | `test_wave_sigbrowser` | 135 | `test_wave_modes` | 212 |
 | `test_wave_sigbrowser_2pane` | 108 | `test_wave_viewer` | 57 |
 | `test_wave_sigbrowser_panes` | 15 | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
 | `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **25** |
-| | | **TOTAL** | **1662** |
+| | | **TOTAL** | **1705** |
 
 **X arm — 12/12 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
@@ -271,8 +284,8 @@ new baseline.
 > (that equivalence was established at the item-12 baseline; item 13 moves the
 > total to **2149**, item 14 to **2170**, its fixup to **2174**, item 15 to
 > **2192**, item 16 to **2215** over **twelve** suites, item 17b to **2230**
-> item 18 to **2243** and its fix-up to **2244** — see the table; the
-> equivalence itself is unaffected).
+> item 18 to **2243**, its fix-up to **2244**, item 19 to **2281** and ITS
+> fix-up to **2287** — see the table; the equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -283,12 +296,16 @@ new baseline.
 |---|---|---|---|
 | `panes` | 81 | `2pane` | 108 |
 | `sigbrowser` | 353 | `sigsearch` | 233 |
-| `sea` | 79 | `grid` | 356 |
+| `sea` | 79 | `grid` | **399** |
 | `i11` | 74 | `modes` | 488 |
 | `i12` | **126** | | |
-| `i1315` | **190** | `keys` | **49** |
-| | | **TOTAL** | **2244** |
+| `i1315` | **190 / 191** | `keys` | **49** |
+| | | **TOTAL** | **2287** |
 | `i14` | **107** | | |
+
+`i1315` reports **190 or 191 on identical bytes** — `BP56`'s pixel leg is
+**gated** — so the total reads **2287** at 190 and **2288** at 191. Both were
+observed on consecutive standalone runs; neither is drift.
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
 *not* regressions and must be re-run before being called a fail: `BR25`
@@ -753,7 +770,8 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       is current-DB only. **DIVERGENCES FOR ITEM 19:** §8.2's "prefix" is a
       complete sentence; §7.4's "is logged" describes a path with no
       `log_action`; §3.3's 44/128 is still 45/129.
-- [x] 19 — Docs, oracles, the four-file lockstep, 0217 closed **-> DONE.**
+- [x] 19 — Docs, oracles, the four-file lockstep, 0217 closed **-> DONE
+      (`589d7424`, FIX-UP `b5a57db6`).**
       Receipt `19_receipt.md`. **BOTH BASELINES RE-MEASURED EXACT on the
       unchanged tree first**: headless **1662 / 0** over 15 files with every
       per-file figure identical to the block above; X **2244** over 12 suites
@@ -846,6 +864,95 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       `browser_show_path`'s bar clause is still stale and still not item 19's;
       **nothing in this batch is visually verified** — the eyeball queue below
       keeps its four unticked rows.
+      **⚠⚠ REJECTED BY ITS VERIFIER ON TWO REAL FINDINGS, THEN FIXED UP
+      (`b5a57db6`) AND ACCEPTED.** (1) **The item's own thesis failed on the
+      item's own delivered prose:** reverting the guide's §11.7 *"What is
+      remembered"* wholesale to its pre-two-pane single-pane wording — dropping
+      the sash split, **both** class-box names and the whole fraction-vs-pixels
+      paragraph — left **all four** guide-reading suites ALL PASS with **every
+      count unchanged** (grid 267, sigbrowser 135, i12 40, keys 25). §11.7 is the
+      ONLY user-facing doc of two-pane item 14's feature. `GS24` asks the WHOLE
+      FILE and all four phrases also occur in §11.0/§11.2 (measured: with §11.7
+      gutted, `Show source currents` still greps **2**); `GS26` pins the Ctrl-B
+      prose; `GH10` counts headings. **`GS28`** (5 legs) closes it, section-scoped
+      via `bs_section` + `bs_flat` — `bs_flat` is REQUIRED, not cosmetic, because
+      the guide hard-wraps `<b>Show device\ninternals</b>` so that phrase exists
+      nowhere in the raw bytes. (2) **A corrected number survived as a stale copy
+      415 lines up in the same file:** §0's motivation table still read
+      `| tb_charge_pump | 1191 | 110 |`; corrected to **119** and pinned by
+      **`GS29`**, a **within-file agreement** oracle (§0's row must equal §5.4's
+      `nets-only **N**`, `tb_bandgap` as positive control). Two minor overclaims
+      narrowed rather than argued away: `GH11`'s limit → *"every bind spelled from
+      a lower-case-initial variable is counted"*, and `GS22` **retitled** (the
+      roster is 17 hand-picked names). **+7 checks, same +7 in both arms**;
+      **6 sabotages, 6 fired exactly on target**, incl. a faithful replay of the
+      verifier's own revert. **The first `SAB-B` attempt was a DRIVER bug caught
+      by the COUNT, not the fail total** — an `&sect;8` where the guide has a
+      literal `§8` occurring exactly once file-wide, inside §11.7, so `GH10` lost
+      a leg and grid fell 274 → **273**: the right check red for the wrong reason.
+      **⚠ THE FIX-UP'S VERIFIER RE-MEASURED BOTH ARMS BY HAND AND CLOSED THE ONE
+      NUMBER THE FIX-UP DECLARED UNMEASURABLE.** `test_wave_sigbrowser_i12`
+      answered **126 ALL PASS under `:0` on the first try**, so the X arm is
+      **12/12 = 2287**, not the fix-up's "11/12 = 2162", and `2244 + 36 + 7`
+      reconciles **exactly**. It also attributed the `+7` by checking out
+      `589d7424`'s `test_wave_grid.tcl` (**267 / 0**, restored byte-identical),
+      replayed the §11.7 revert from `git show c5a55dd8:` (four `GS28` legs red
+      ALONE, control green, count HELD at 274, guide §-markers held at 24 — so
+      **not** the implementer's `&sect;` driver bug), replayed the stale `110`
+      (`GS29` red ALONE), and **re-derived 119 independently** with the shipped
+      procs (net 120 / srcbranch 26 / devmeas 283 / devnode 762 = 1191;
+      `browser_class_filter 0 0` = 120, all class `net`, minus the sweep variable
+      `time` = **119**).
+      **⚠ TWO OPEN NOTES FROM THE FIX-UP'S VERIFIER, BOTH FROM ITS OWN FRESH
+      SABOTAGES, NEITHER ON ANYBODY'S LIST — RECORDED, NOT FIXED.**
+      (a) **`GS29` CANNOT SEE THE THIRD SITE.** The stale triple lived in
+      **three** places and `GS29` is a within-file oracle over **two**; rotting
+      `src/wave_viewer.tcl`'s `browser_class_filter` comment back to
+      `1191 -> 137 -> 111, nets-only 110` — **the one site item 19 actually edited
+      in source** — leaves **all 15 headless files GREEN with every count exact**.
+      Honestly scoped in the check title ("elsewhere in the same file"), but the
+      commit and receipt prose read broader than the check is. **It belongs in
+      declared limits and is now written into `19_receipt.md` §9 as limit 11.**
+      (b) **§14's device-node counts have NO doc oracle**: reverting the spec's
+      `303 → 278` / `84 → 78` rows reds nothing. Severity low — `TP35` pins 84 and
+      303 against the committed fixture in code, so only the prose can rot, and it
+      would then disagree with a green check — but it is one section away from the
+      finding that got the item rejected.
+      **⚠ A NEW OVERCLAIM INSIDE THE FIX FOR THE OLD OVERCLAIM, MEASURED:**
+      `GS22`'s new comment says the batch's other minted procs are "covered only
+      INDIRECTLY, by `GS23`'s exact 57". **28 procs minted by two-pane item 11**
+      (the whole `browser_sea_draw` / `_hit` / `_click` / `_colw` / `_rowh` /
+      `_canvas` / `_configure` / `_label` / `_own` / `_extend` / `_say` /
+      `_toggle` / `_descend_to` / `_copy_names` / `_sel_names` / `_target_path` /
+      `_send_to_add_trace` / `_plot_at` / `_plot_idx` / `_menu_build` / `_ids` /
+      `_post` / `_unpost` / `_tip` family) appear **nowhere** in the parent spec,
+      so `GS23`'s 57 does not cover them either. The 57-name list is plainly a
+      **curated public-surface contract** — a defensible shipped reality — but the
+      PLAN's chartered "every proc this batch minted is named" is **not literally
+      met**. One sentence, not a rework.
+      **⚠ THREE OF THE FIX-UP'S OWN FIGURES CORRECTED BY MEASUREMENT, none a
+      defect.** (a) X is **12/12 = 2287** (2288 when `i1315`'s **gated** `BP56`
+      pixel leg runs), not 11/12 = 2162. (b) **`i1315`'s X count is not stably
+      191** — 190 and 191 were both observed on consecutive standalone runs of
+      **identical bytes**, because `BP56`'s leg is gated; the baseline's 190 and
+      the item's 191 are both real. (c) *"`test_key_graph_context` did NOT stall
+      this session"* was **luck, not a property** — it stalled and emitted fails on
+      the verifier's first attempt and answered **70 ALL PASS** on re-run, exactly
+      as this baseline predicts.
+      **⚠ THE VERIFIER'S OWN DRIVER BIT IT, AND IT IS THE TRAP THIS DISCIPLINE
+      NAMES.** Its sabotage harness re-took the backup **after** the first
+      mutation on a twice-patched file, so the restore left two mutations on disk
+      while printing *"byte-identical: True"* and the post-restore suite run came
+      back **fully green**. Only `git status` caught it. The X arm had already run
+      with that residue; both mutations were ones it had **just proved red nothing
+      anywhere**, both files were restored from `git show HEAD:`, and
+      `test_wave_grid` was re-measured clean on both arms (**274 / 399**). Final
+      tree byte-identical to `HEAD`. **No measurement is contaminated.**
+      **FLAKES HIT AND RE-RUN, none a regression, all pre-documented:**
+      `test_wave_sigbrowser` `NORESULT` inside the batched X sweep → **353 ALL
+      PASS** standalone; **`MG13`** in `test_wave_modes` → **488 ALL PASS**
+      standalone (key-delivery class, sibling of the listed `MG16`); **`BP77`** in
+      `i1315` (the listed `:0` geometry echo). Non-baseline fails: **NONE**.
 
 ### Dependencies — the driver enforces these before launching
 
