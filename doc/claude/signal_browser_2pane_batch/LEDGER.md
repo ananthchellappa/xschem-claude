@@ -15,9 +15,54 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 16, both arms green.
-Re-measure before item 17b and record any drift here; do **not** silently adopt a
+Measured **2026-08-08** after two-pane item 17b, both arms green.
+Re-measure before item 18 and record any drift here; do **not** silently adopt a
 new baseline.
+
+> **⚠ THE BASELINE MOVED WITH ITEM 17b — headless 1649 → 1658 over the same**
+> **FIFTEEN files, X 2215 → 2230 over the same TWELVE suites.**
+> **Reason, in one line:** item 17b added **9** check calls headless and **15**
+> under X, and they are all in the **two** files it touches —
+> `test_wave_sigbrowser_keys` 12 → **21** headless / 23 → **35** under X
+> (`BK20`-`BK31`, of which `BK20`-`BK28` run in both arms and `BK29`-`BK31` are
+> X-only) and `test_wave_sigbrowser_i12` **40 headless, unchanged** / 123 →
+> **126** under X (`BX54`, `BX55`, `BX56`). **`BX11`/`BX12`/`BX13`/`BX43`/`BX44`
+> were restated IN PLACE with no change in call count**, which is why the
+> headless `i12` figure does not move even though five of its ids changed
+> meaning. Every other file and every other suite is byte-identical in both arms.
+> The item-17b implementer RE-MEASURED the item-16 baseline on the unchanged tree
+> first (headless 1649/0 with every per-file figure exact, X 12/12 = 2215 with
+> every per-suite figure exact), so the delta is attributable.
+> **Not adopted from the implementer's run:** both arms were re-measured
+> independently by the item-17b verifier — all 15 headless files run by hand
+> (1658 / 0 fail, sum verified) and 12/12 through `xarm.sh suites` under Xvfb
+> with `SUITE_TIMEOUT=400` (2230, sum verified, the ten untouched suites
+> byte-identical). The verifier also confirmed **neither** moved suite printed a
+> `SKIPPED` line, so 35 is not a masked 34 and 126 is not a masked 125 —
+> `BX43`'s retargeted real-key leg really fired. Before measuring it ran
+> `cd src && make`, which answered *"Nothing to be done"*, proving the shipped
+> binary was built from the committed `callback.c`.
+>
+> **⚠ THE THREE OUT-OF-BASELINE X-ONLY SUITES DID NOT MOVE: 13 / 17 / 70.**
+> `test_bindings_file`, `test_keybindings_help` and `test_key_graph_context` were
+> re-run by hand through `xarm.sh one` before and after. **The PLAN says the
+> first two red BY DESIGN on this item; measured, they do not** — each is a
+> lockstep tripwire for one leg of the C / `keybindings.csv` / `actions.csv`
+> triangle and each was proven to fire only under sabotage (S1+S5, and S2a).
+> They are still in NEITHER baseline and item 18/19 must still run them by hand.
+>
+> **⚠ TWELVE FURTHER NON-BATCH SUITES were run once, by the verifier**, because
+> this item touches four broad-reach files (`callback.c`, `actions.csv`,
+> `keybindings.csv`, `xschem.tcl`'s menubar) and an empty "no non-baseline fails"
+> claim over 12+3 suites would have held by luck of scope rather than by
+> measurement: `test_accelerators`, `test_binding_precedence`, `test_remap`,
+> `test_perform_action_check_unique_names`, `test_keybind_snap_grid`,
+> `test_gesture_bindings`, `test_mouse_bindings`, `test_clone_canvas_bindings`,
+> `test_altf5_ciw`, `test_graph_context` — **all ALL PASS**. The two that did not
+> report clean (`test_action_log_dispatch` NORESULT, `test_cadence_window_hop_log`
+> SKIP) were re-run by hand under Xvfb **with `--logdir`** and both give ALL PASS:
+> the harness passes `--nolog`, so it is an **invocation artefact, not a
+> regression**. None of the twelve is adopted into the baseline.
 
 > **⚠ THE BASELINE MOVED WITH ITEM 16 — headless 1637 → 1649 over FIFTEEN files,**
 > **X 2192 → 2215 over TWELVE suites.**
@@ -94,7 +139,7 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1649 checks over 15 files, 0 fail**
+**headless — 1658 checks over 15 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
@@ -106,8 +151,8 @@ new baseline.
 | `test_wave_sigbrowser_panes` | 15 | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
-| `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **12** |
-| | | **TOTAL** | **1649** |
+| `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **21** |
+| | | **TOTAL** | **1658** |
 
 **X arm — 12/12 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
@@ -115,8 +160,8 @@ new baseline.
 > eleven per-suite counts identical, 11/11 both ways, **2136 checks** either way
 > (that equivalence was established at the item-12 baseline; item 13 moves the
 > total to **2149**, item 14 to **2170**, its fixup to **2174**, item 15 to
-> **2192** and item 16 to **2215** over **twelve** suites — see the table; the
-> equivalence itself is unaffected).
+> **2192**, item 16 to **2215** over **twelve** suites and item 17b to
+> **2230** — see the table; the equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -129,9 +174,9 @@ new baseline.
 | `sigbrowser` | 353 | `sigsearch` | 233 |
 | `sea` | 79 | `grid` | 356 |
 | `i11` | 74 | `modes` | 488 |
-| `i12` | 123 | | |
-| `i1315` | **190** | `keys` | **23** |
-| | | **TOTAL** | **2215** |
+| `i12` | **126** | | |
+| `i1315` | **190** | `keys` | **35** |
+| | | **TOTAL** | **2230** |
 | `i14` | **107** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
@@ -431,7 +476,85 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       mtime is older than the `.o` the sabotage just built, so the binary keeps
       the SABOTAGED object and the "clean re-run" measures the sabotage. `touch`
       the file before rebuilding. **Item 17b touches C too.**
-- [ ] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
+- [x] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
+      **-> DONE (`c5a55dd8`)**
+      Receipt `17b_receipt.md`. **Both baselines RE-MEASURED EXACT on the
+      unchanged tree first** (headless 1649/0 over 15 files, X 12/12 = 2215,
+      every per-file and per-suite figure byte-identical; the three
+      out-of-baseline X-only suites 13/17/70), so every red is attributable.
+      Headless **1649 → 1658** (`keys` 12 → **21**), X **2215 → 2230**
+      (`keys` 23 → **35**, `i12` 123 → **126**); only the two files this item
+      touches moved. Band **BK20-BK31** + **BX54-BX56**; **BK19 left UNSPENT**
+      (reserved to item 16's file band). **NEXT FREE `BK32` / `BX57`.**
+      **⚠ THE ACCELERATOR WAS A LIE BEFORE THIS ITEM.** Measured: `bind .drw
+      <Control-Key-5>` is **EMPTY** in the shipped default profile —
+      `cadence_style_rc` is opt-in — while the Tools cascade advertised `Ctrl+5`
+      to everyone. R10 makes it true for every profile *and* remappable
+      (`xschem bind` / `keybindings.csv`).
+      **⚠ SEVEN literal `Ctrl-5` sites over FIVE files**, not the PLAN's "five
+      coordinated edits" nor spec §8.2's "four": `cadence_style_rc:234,243,245`,
+      `xschem.tcl:14942`, **`wave_viewer.tcl:9608`**, **`ase.tcl:1017`** and
+      **`doc/waveform_viewer_guide.html:1094`** — the last three are named by
+      neither document. The guide section is **§11.5** (`browser-hier`), not
+      §11.4 as `17_receipt.md:92` says.
+      **⚠ THE PLAN'S RED LIST IS WRONG IN BOTH DIRECTIONS.** It says
+      `test_bindings_file` and `test_keybindings_help` red BY DESIGN — **they do
+      not** when the item is done right (measured 13/13 and 17/17, and
+      `test_key_graph_context` 70/70). Both are **LOCKSTEP TRIPWIRES**, proven to
+      fire under sabotage (S1+S5 and S2a). And its "existing checks it reds" list
+      misses **`BX11`, `BX12`, `BX43`, `BX44`** entirely; all four were found by
+      grep and restated. `BX43` was driving a `bind .drw <Control-Key-5>` **the
+      test itself installed** (the `BS46` shape) — retargeted through the shipped
+      table, and its hand-installed bind deleted.
+      **⚠ THE SABOTAGE PAIR THAT DECIDED THE ITEM.** `S2b` (registry row gone,
+      `set_input_binding` kept) reds `BK22`, `BK23`, `BX54`, `BX55`, `BX56`,
+      `BK31` while **`BK29` STAYS GREEN** — the live `bindings dump` **cannot see
+      a missing registry row**, which is why the behavioural drive at `BX54` is
+      not redundant with the table check. `S3` (bind it in `cadence_style_rc`
+      instead) leaves `BK24`/`BK25`/`BK27`/`BK28` green: an rc bind is
+      indistinguishable from a registry row **except through the un-bind**, which
+      is what `BK31`/`BX55` exist for. **9/9 of the item's own sabotages fire**,
+      plus the verifier's own — removing `ase::show_in_browser_for_current`'s
+      `{win {}}` default arm, which **only `BX56` can see** (`BX43`/`BX54`/`BX55`
+      install a spy that supplies the default itself) — red `BX56` alone, count
+      held at 126.
+      **⚠ TWO KEY-DISPATCH TRAPS, both measured, both now written into the
+      tests.** (a) `event generate <Control-Alt-Key-v>` delivers state
+      **131076**, not 12 — Tk's `Alt` pattern modifier is the virtual META bit;
+      drive `<Control-Mod1-Key-v>` or `-state 12`. (b) `handle_key_press` looks a
+      **printable** keysym up under `rstate` (`state & ~ShiftMask`), so the
+      "inert" control state 5 became **Ctrl-v = clipboard paste**, whose MODAL
+      dialog **hung the `i12` suite for ten minutes**. Near-miss control is
+      **68** (Ctrl+Super); state 13 FIRES the chord, by the same stripping.
+      **⚠ CONSEQUENCE, REPORTED NOT SMOOTHED:** that hang cost `BX56` its
+      initial-red measurement. Its red evidence comes from sabotage `S2b` and
+      from the verifier's own sabotage instead.
+      **⚠ `handle_window_switching` does NOT fire on a KeyPress** (FocusIn /
+      Expose / EnterNotify only, `callback.c:8497-8498`) — the PLAN's safety
+      sentence for the argument-less Tcl command is imprecise. The context is
+      right because the preceding Enter/Focus set it; corrected in the C comment.
+      **⚠ SHIPPED CASE SPLIT, ON PURPOSE:** the Tools accelerator is
+      `Ctrl+Alt+V` (house style, cf. `file.save_as_symbol`) and the generated
+      cheat-sheet is `Ctrl+Alt+v` (`keybinding_chord_label` renders keysym 118
+      through `%c`). `BK20`/`BK27` pin the first, `BK30` the second — **do not
+      copy either literal into the other's check.**
+      **⚠ REGENERATION, not hand-editing:** `keybindings.csv` was moved aside and
+      produced from the builtins — 66 → 67 lines, the new row at 66, Alt-2 still
+      last at 67 (item 16's §4.1 trap, honoured).
+      **⚠ ONE UNEXPLAINED MEASUREMENT, DECLARED AND NOT ASSERTED.** A
+      Ctrl+Alt+NumLock drive (state 28) recorded **one** spy call where the code
+      says zero — `key_chord_has_binding` compares mods for EQUALITY and nothing
+      strips `Mod2Mask`. The verifier read the same code and agrees. The leg was
+      **removed** from `BX54` rather than pinned to a number nobody can explain.
+      **⚠ CROSS-ITEM TRIPWIRE.** `BK29` leg 3 and `BK31` legs 3/5 pin
+      `[llength [xschem bindings dump]]` at **72** (71 mid-unbind). Any future
+      item that adds or removes ANY C binding reds this file. Deliberate — it was
+      the only count oracle available — but items 18/19 will meet it.
+      **⚠ ONE EYEBALL OWED, and it is NOT a pixel** (hence `[x]`, no queue row):
+      a **physical Ctrl+Alt+V on the real `:0` display**. The whole X arm ran
+      under Xvfb, which has no window manager and no compositor, so a
+      desktop-environment **grab** of this specific chord is untestable here —
+      and it is R10's chosen chord. One press after the handback.
 - [ ] 18 — R12: auto-tick, reveal, and say so
 - [ ] 19 — Docs, oracles, the four-file lockstep, 0217 closed
 
@@ -466,7 +589,7 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
 | 16 | *(this item)* | **NONE OWED.** Every claim is a bind, a `xschem bindings dump` row, a file byte-compare or a Tcl variable — there is no pixel deliverable. The one thing a human might still want to *feel* is the chord itself: press **Ctrl-B** over a plotted strip and confirm the sidebar toggles and the symbol text on the schematic behind it does **not** change. That is `BK12`+`BK18` restated in fingers, not a gap in coverage. | n/a |
 | 15 | `e1cfd5ff` | With **two raws loaded**, tick the **All-DBs** box. The tree's TOP LEVEL must become one row per database — **the current one included** — and each header must carry that database's **own** design root, named for **its own** raw (not the current design's name under a foreign header). The current DB's header **and** root come back **OPEN**; the foreign header stays **COLLAPSED**. Then collapse a header by hand and **type in the search bar** — it must stay collapsed. Judge indentation, nesting legibility and label truncation on a **real** raw path. Full script: `15_receipt.md` §11. **A one-DB tree answers nothing**, and neither does the box left OFF. | ☐ |
 | 14 | *(this item)* | Drag the **sash** small, tick **Show device internals**, save/quit/reopen: both must come back. Then reopen into a **shorter** window — the sash must return to the same *proportion*, not the same pixel row. A window you never drag must have **no `browser` key** in its state at all. Full script: `14_receipt.md` §7.7. | ☐ |
-| 13 | `24fb6769` + `9d5cdd26` | **Tools → Show in Signal Browser** (Ctrl+5 today; R10's Ctrl-Alt-V is item 17b's and does NOT exist yet) with an instance that **CONTAINS other instances** selected. (a) the tree row scrolls in, is selected, expander stays **CLOSED**; (b) the LOWER pane fills with **that node's own-level signals**; (c) clicking the expander still opens it. Full script: `13_receipt.md` §9. **A LEAF instance answers nothing** — that node class is exactly where the batch's checks were blind. | ☐ |
+| 13 | `24fb6769` + `9d5cdd26` | **Tools → Show in Signal Browser** (**Ctrl+Alt+V** since two-pane item 17b, `c5a55dd8`; the old Ctrl+5 no longer exists) with an instance that **CONTAINS other instances** selected. (a) the tree row scrolls in, is selected, expander stays **CLOSED**; (b) the LOWER pane fills with **that node's own-level signals**; (c) clicking the expander still opens it. Full script: `13_receipt.md` §9. **A LEAF instance answers nothing** — that node class is exactly where the batch's checks were blind. | ☐ |
 
 ---
 
