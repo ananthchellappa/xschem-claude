@@ -855,6 +855,77 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [llength [bs_sea_labels $C]]] \
     [list {} all 43]
 
+
+  # === BQ75-BQ77: THE HOVER TOOLTIP — item 11's EIGHTH GESTURE ===============
+  #
+  # ⚠⚠ AN ACKNOWLEDGED MISS BEING PAID, not a new feature. PLAN item 11's scope
+  # names "Tooltip on hover shows `browser_label_full`"; item 11 shipped SEVEN
+  # binds on this canvas and recorded the omission (11_receipt.md §8). It lands
+  # beside item 16 because it is the same defect wearing the other sign: the
+  # pane draws a LABEL, and until now there was no way to see the NAME behind
+  # it. Item 16 lets the user filter on what they see; this tells them what they
+  # are looking at.
+  #
+  # ⚠ THE DELAY IS SET TO 0 AND RESTORED (the named-helper rule). `seatipdelay`
+  # is a variable for exactly this reason — `balloon` takes the same argument —
+  # because a 600 ms wall-clock wait in a suite is a flake generator, while
+  # `after 0` is a real trip through the same scheduler.
+  set bq_tipwas $::wviewer::seatipdelay
+  set ::wviewer::seatipdelay 0
+  set bq_tipxy [bs_sea_xy $C 0]
+  set bq_tipi [pcall ::wviewer::browser_sea_tip $tok $C \
+                 [lindex $bq_tipxy 0] [lindex $bq_tipxy 1]]
+  update
+  set TIP $C.seatip
+  # ⚠⚠ THE LITERAL PAIR IS THE CHECK. `[browser_sea_name $tok 0]` on both sides
+  # would be an identity, green on a tip that showed the label; BQ51 already
+  # pins this cell as raw `i(v.x1.v1)` drawn as `v1:i`, so the two spellings go
+  # in by hand and a tip that showed either the label or nothing reds.
+  check {BQ75 hovering a cell posts a tip whose text is the FULL RAW NAME — not
+         the label that cell draws} \
+    [list $bq_tipi [winfo exists $TIP] [pcall $TIP.txt cget -text] \
+          [lindex [bs_sea_labels $C] 0]] \
+    [list 0 1 {i(v.x1.v1)} {v1:i}]
+  # THE SECOND CELL, because one cell is one cell: a tip that had baked its
+  # string at bind time (which is what `balloon` does, and why it could not be
+  # reused) would still be showing the first name here.
+  set bq_tipxy [bs_sea_xy $C 3]
+  set bq_tipi [pcall ::wviewer::browser_sea_tip $tok $C \
+                 [lindex $bq_tipxy 0] [lindex $bq_tipxy 1]]
+  update
+  check {BQ75 ...and it FOLLOWS the pointer to another cell, so the string is
+         resolved per hover and not baked at bind time} \
+    [list $bq_tipi [pcall $TIP.txt cget -text] [lindex [bs_sea_labels $C] 3]] \
+    [list 3 {i(v.x1.vb2)} {vb2:i}]
+  # A MISS: past the last cell there is nothing to name, and the tip that WAS up
+  # must go. `-1` is the hit-test's own miss value, asserted rather than assumed.
+  set bq_tipi [pcall ::wviewer::browser_sea_tip $tok $C 5000 5000]
+  update
+  check {BQ76 (THE MISS) hovering past the last cell answers -1, posts nothing,
+         and takes down the tip that was already up} \
+    [list $bq_tipi [winfo exists $TIP] \
+          [info exists ::wviewer::seatipidx($tok)]] \
+    [list -1 0 0]
+  # THE PENDING TIMER IS CANCELLED, and this is the leg that would catch a tip
+  # arriving after the pointer left. Scheduled with a delay long enough not to
+  # fire, then hidden, then given an `update` it could have fired in.
+  set ::wviewer::seatipdelay 100000
+  set bq_tipxy [bs_sea_xy $C 0]
+  pcall ::wviewer::browser_sea_tip $tok $C [lindex $bq_tipxy 0] [lindex $bq_tipxy 1]
+  set bq_tippend [info exists ::wviewer::seatipafter($tok)]
+  pcall ::wviewer::browser_sea_tip_hide $tok
+  update
+  check {BQ77 browser_sea_tip_hide cancels a PENDING tip as well as a posted
+         one — the timer really was armed, and nothing arrives after it is
+         cancelled} \
+    [list $bq_tippend [info exists ::wviewer::seatipafter($tok)] \
+          [winfo exists $TIP]] \
+    [list 1 0 0]
+  set ::wviewer::seatipdelay $bq_tipwas
+  check {BQ77 (RESTORED) the hover delay is back to the shipped default, so no
+         later check inherits a 0} \
+    [list $::wviewer::seatipdelay [expr {$bq_tipwas > 0}]] [list $bq_tipwas 1]
+
   # --- BQ62: BOTH MENUS DIE WITH THE WINDOW ---------------------------------
   set bq_p [bs_sea_xy $C 0]
   catch {::wviewer::browser_sea_menu_post $tok $C [lindex $bq_p 0] \

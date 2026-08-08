@@ -409,6 +409,22 @@ namespace eval wviewer {
   variable browsersea;       array set browsersea       {}
   variable browserseasel;    array set browserseasel    {}
   variable browserseaanchor; array set browserseaanchor {}
+  # THE HOVER TOOLTIP (item 11's eighth gesture, paid beside item 16). The pane
+  # draws a LABEL; this is how the user sees the NAME behind it.
+  #   seatipdelay = ms of hover before a tip appears. A VARIABLE, not a literal,
+  #     for the reason `balloon` takes the same argument: a tip that appears on
+  #     the first pixel of movement is noise. A test sets it to 0 and restores.
+  #   seatippoll = ms between the watchdog's containment checks. It is also the
+  #     worst-case staleness after the pointer leaves the pane, which is what
+  #     buys the tooltip its ONE bind (see browser_sea_tip_watch).
+  #   seatipafter($token) = the pending `after` id -- a SHOW while none is
+  #     posted, the WATCHDOG re-arm while one is. One id, cancelled one way.
+  #   seatipidx($token) = the row the posted tip is about, and the thing that
+  #     makes "the pointer has not left this cell" answerable without work.
+  variable seatipdelay 600
+  variable seatippoll  200
+  variable seatipafter;      array set seatipafter      {}
+  variable seatipidx;        array set seatipidx        {}
   # TWO-PANE item 9: the paned skeleton's three per-token pieces.
   #   browsersash($token) = the split between the instance tree and the sea of
   #     names, as a FRACTION of the panedwindow's height (M3), never pixels. A
@@ -715,6 +731,11 @@ proc wviewer::forget {token} {
     # (`wvseamenu`), so it needs its own unpost; the tree's would not reach it.
     catch {wviewer::browser_menu_unpost $token}
     catch {wviewer::browser_sea_menu_unpost $token}
+    # the hover tooltip is an override-redirect toplevel and a pending `after`;
+    # both must die with the window. Unlike the menus it is not a grab, so it
+    # would not freeze the UI — it would just float there over whatever the user
+    # opened next, which is worse to diagnose and no harder to prevent.
+    catch {wviewer::browser_sea_tip_hide $token}
     catch {unset b3x0($wp_)}
     catch {unset b3y0($wp_)}
     catch {unset b3mk($wp_)}
@@ -7223,6 +7244,13 @@ proc wviewer::browser_build {token top} {
     "[list wviewer::browser_sea_menu_post $token] %W %x %y %X %Y"
   bind $f.pw.sea.c <Configure> \
     [list wviewer::browser_sea_configure $token]
+  # THE EIGHTH, and it pays PLAN item 11's one acknowledged miss: the pane draws
+  # R8's LABEL and had no way to show the NAME behind it. Item 16 lets the user
+  # filter on what they see; this tells them what they are looking at. ⚠ ONE
+  # bind — the teardown is `browser_sea_tip_watch`, not a `<Leave>` that would
+  # be a ninth line here documenting no gesture.
+  bind $f.pw.sea.c <Motion> \
+    [list wviewer::browser_sea_tip $token %W %x %y]
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
@@ -7839,6 +7867,168 @@ proc wviewer::browser_sea_menu_post {token W x y {rx -1} {ry -1}} {
 
 proc wviewer::browser_sea_menu_unpost {token} {
   return [wviewer::ctx_menu_drop $token wvseamenu]
+}
+
+# --- THE HOVER TOOLTIP (PLAN item 11's eighth gesture, paid by item 16) -------
+#
+# ⚠⚠ THIS IS AN ACKNOWLEDGED MISS BEING PAID, NOT A NEW FEATURE. PLAN item 11's
+# scope names "Tooltip on hover shows `browser_label_full`" and item 11 shipped
+# SEVEN binds on this canvas, not eight (11_receipt.md §8). It belongs beside
+# item 16 because it is the same defect wearing the other sign: the pane shows a
+# LABEL and gave the user no way to see the NAME behind it. Item 16 lets them
+# filter on what they see; this lets them find out what they are seeing.
+#
+# ⚠ ONE BIND, and the teardown is CODE rather than a second bind. `<Leave>`
+# would be an eighth `bind $f.` line that documents no gesture, and item 11's
+# own rule is that every such line has a `data-bseq` row in the guide. So the
+# tip watches the pointer instead: while one is up, `browser_sea_tip_watch`
+# re-arms every SEATIPPOLL ms and drops it as soon as `winfo containing` stops
+# answering the canvas. Measured cost: one `after` token, and only while a tip
+# is actually posted.
+#
+# ⚠ `balloon` (xschem.tcl:12551) COULD NOT BE REUSED, and the reason is in its
+# first line: it BAKES its string into an `<Enter>` binding at attach time. This
+# tooltip's text changes per CELL, forty times across one pane, so a baked
+# string is the one thing it cannot be. `browser_rawbar_sync`'s ⚠ records the
+# same finding from the other side (it re-attaches the balloon on every load).
+#
+# ⚠ THE FOUR VARIABLES LIVE IN THE `namespace eval wviewer` BLOCK AT THE TOP OF
+# THIS FILE, beside browsersea/browserseasel and the rest, NOT here. This point
+# in the file is OUTSIDE any namespace — every proc below is spelled
+# `wviewer::…` precisely because of that — so a bare `variable` here would mint
+# a GLOBAL, and every `variable seatipdelay` inside a proc would then find an
+# empty namespace one instead. Two spellings of the delay, and the one a test
+# writes would not be the one the code reads.
+#
+# THE DELAY IS A VARIABLE, not a literal, for the same reason `balloon` takes
+# one: a tooltip that appears on the first pixel of movement is noise. A test
+# sets it to 0 and restores it — that is a supported knob, not a back door.
+
+# The tip window for a token: a child of the CANVAS, so `destroy $c` takes it.
+proc wviewer::browser_sea_tip_path {token} {
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c eq {}} { return {} }
+  return $c.seatip
+}
+
+# Take the tip down and cancel anything pending. IDEMPOTENT and never throws —
+# it is called from the teardown paths, where a half-built window is legal.
+proc wviewer::browser_sea_tip_hide {token} {
+  variable seatipafter
+  variable seatipidx
+  if {[info exists seatipafter($token)]} {
+    catch {after cancel $seatipafter($token)}
+    unset seatipafter($token)
+  }
+  set t [wviewer::browser_sea_tip_path $token]
+  if {$t ne {}} { catch {destroy $t} }
+  catch {unset seatipidx($token)}
+  return 1
+}
+
+# THE WATCHDOG, and the reason there is no `<Leave>` bind. Re-arms while the tip
+# is up; the moment the pointer is over something else — another widget, another
+# window, off the screen — the tip goes.
+proc wviewer::browser_sea_tip_watch {token} {
+  variable seatipafter
+  variable seatippoll
+  set t [wviewer::browser_sea_tip_path $token]
+  if {$t eq {} || [catch {winfo exists $t} e] || !$e} {
+    return [wviewer::browser_sea_tip_hide $token]
+  }
+  set c [wviewer::browser_sea_canvas $token]
+  set over {}
+  # ⚠ `eval`, not `{*}`: `{*}` is Tcl 8.5 and this codebase targets 8.4 upwards.
+  # `balloon_show` (xschem.tcl:12567) spells the same containment test the same
+  # way, for the same reason.
+  catch {set over [eval winfo containing [winfo pointerxy $c]]}
+  if {$c eq {} || $over ne $c} { return [wviewer::browser_sea_tip_hide $token] }
+  set seatipafter($token) \
+    [after $seatippoll [list wviewer::browser_sea_tip_watch $token]]
+  return 1
+}
+
+# POST the tip for one cell. Returns the text posted, or {} when it declined —
+# which is an ANSWER (the row went, the pointer left, the canvas died), never a
+# silent nothing.
+#
+# ⚠ THE TEXT IS `browser_sea_name`, i.e. THE FULL RAW NAME, resolved through the
+# row INDEX exactly as every other gesture does. That is the whole point of the
+# tooltip and it is also R8's rule restated: the label is a display, the index is
+# the identity.
+proc wviewer::browser_sea_tip_show {token idx {rx -1} {ry -1}} {
+  variable seatipidx
+  variable seatipafter
+  variable seatippoll
+  set c [wviewer::browser_sea_canvas $token]
+  if {$c eq {}} { return {} }
+  set nm [wviewer::browser_sea_name $token $idx]
+  if {$nm eq {}} { return {} }
+  set t $c.seatip
+  catch {destroy $t}
+  if {[catch {
+    toplevel $t -bd 1 -background black -takefocus 0
+    wm overrideredirect $t 1
+    label $t.txt -justify left -takefocus 0 -fg black -background lightyellow \
+      -font AseEntryFont -text $nm
+    pack $t.txt
+  }]} {
+    catch {destroy $t}
+    return {}
+  }
+  if {![string is integer -strict $rx] || $rx < 0} {
+    catch {set rx [expr {[winfo pointerx $c] + 14}]}
+  }
+  if {![string is integer -strict $ry] || $ry < 0} {
+    catch {set ry [expr {[winfo pointery $c] + 18}]}
+  }
+  catch {wm geometry $t \
+    [winfo reqwidth $t.txt]x[winfo reqheight $t.txt]+$rx+$ry}
+  catch {raise $t}
+  set seatipidx($token) $idx
+  # ⚠ THE WATCHDOG IS ARMED ON A DELAY, NEVER CALLED SYNCHRONOUSLY HERE. Two
+  # reasons and both are real: a containment test at the instant of posting
+  # answers a question we have just decided (we post BECAUSE the pointer was
+  # over a cell), and a synchronous call makes the tip untestable — a suite
+  # posts it programmatically while the real pointer is somewhere else
+  # entirely, and the watchdog would take it down before the check could read
+  # it. One poll interval is also the worst-case staleness after the pointer
+  # leaves, which is the number that actually matters.
+  set seatipafter($token) \
+    [after $seatippoll [list wviewer::browser_sea_tip_watch $token]]
+  return $nm
+}
+
+# `<Motion>` — the eighth gesture. Resolves the cell under the pointer and
+# schedules the tip; a MISS, or a move to a different cell, takes the current
+# one down first.
+#
+# ⚠ IT RETURNS EARLY WHEN THE CELL HAS NOT CHANGED, and that is not an
+# optimisation: without it every pixel of movement inside one cell would cancel
+# and re-arm the timer, so the tip would never appear at all while the user's
+# hand is still moving.
+proc wviewer::browser_sea_tip {token W x y} {
+  variable seatipdelay
+  variable seatipafter
+  variable seatipidx
+  set i [wviewer::browser_sea_hit $token $W $x $y]
+  if {[info exists seatipidx($token)] && $seatipidx($token) == $i} { return $i }
+  if {[info exists seatipafter($token)]} {
+    catch {after cancel $seatipafter($token)}
+    unset seatipafter($token)
+  }
+  set t [wviewer::browser_sea_tip_path $token]
+  if {$t ne {}} { catch {destroy $t} }
+  catch {unset seatipidx($token)}
+  if {$i < 0} { return -1 }
+  set rx -1 ; set ry -1
+  catch {set rx [expr {[winfo pointerx $W] + 14}]}
+  catch {set ry [expr {[winfo pointery $W] + 18}]}
+  set d $seatipdelay
+  if {![string is integer -strict $d] || $d < 0} { set d 600 }
+  set seatipafter($token) \
+    [after $d [list wviewer::browser_sea_tip_show $token $i $rx $ry]]
+  return $i
 }
 
 # --- TWO-PANE item 9: the LOWER pane's widgets --------------------------------
@@ -13679,6 +13869,10 @@ proc wviewer::tab_drop_transients {token} {
   # DISTINCT widget, so it needs the same treatment spelled separately.
   catch {wviewer::browser_menu_unpost $token}
   catch {wviewer::browser_sea_menu_unpost $token}
+  # and the hover tooltip, which names a row INDEX into the outgoing tab's sea:
+  # left up across a switch it would sit over the incoming tab claiming a name
+  # that is not in it.
+  catch {wviewer::browser_sea_tip_hide $token}
   catch {
     if {[wviewer::switch_ctx $token]} { xschem graph_marker select -none }
   }

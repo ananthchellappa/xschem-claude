@@ -455,12 +455,19 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
 # widgets inside `browser_build` and are NOT on that tag, so they need their own
 # attribute and their own pair of legs.
 #
-# ⚠ THE COUNT IS A LEDGER AND IT HAS MOVED TWICE. Item 16 shipped six; two-pane
-# item 10 added the tree's <<TreeviewSelect>> (seven); two-pane item 11 adds the
-# LOWER pane's seven canvas gestures (fourteen). Bump this literal in the SAME
-# commit as the binds and the guide rows, never separately -- GH9 compares the
-# two directions against each other and would stay green on a half-done edit if
-# both sides moved together but the ledger below did not.
+# ⚠ THE COUNT IS A LEDGER AND IT HAS MOVED THREE TIMES. Item 16 shipped six;
+# two-pane item 10 added the tree's <<TreeviewSelect>> (seven); two-pane item 11
+# added the LOWER pane's seven canvas gestures (fourteen); and the hover TOOLTIP
+# -- item 11's own scope, shipped late beside the two-pane item 16 -- adds the
+# sea's <Motion> (fifteen). Bump this literal in the SAME commit as the binds and
+# the guide rows, never separately -- GH9 compares the two directions against
+# each other and would stay green on a half-done edit if both sides moved
+# together but the ledger below did not.
+#
+# ⚠ TWO DIFFERENT ITEM 16s ARE NAMED ABOVE and neither is a typo: `PLAN.md`'s
+# table row 16 is "R9 -- Ctrl-L to Ctrl-B", which is the six this ledger started
+# at; the TWO-PANE batch's driver-raised item 16 is the label filter, which added
+# no bind at all. See doc/claude/signal_browser_2pane_batch/16_receipt.md.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
 # whole reason GH0's `== 16` above still holds: `data-bseq="` does not contain
@@ -477,8 +484,8 @@ foreach {gh_all gh_v} [regexp -all -inline {data-bseq="([^"]+)"} $gsrc] {
 # per-row leg below is vacuously green on a guide whose attributes were stripped
 # or whose table was deleted outright. It also distinguishes "one row was
 # removed" (5) from "nothing parsed" (0).
-check "GH8 the guide's browser table carries the fourteen browser gestures" \
-  [llength $gh_bseqs] 14
+check "GH8 the guide's browser table carries the fifteen browser gestures" \
+  [llength $gh_bseqs] 15
 foreach gh_v $gh_bseqs {                                  ;# doc -> source
   check_true "GH8 the guide's browser bind \$f.$gh_v really is in browser_build" \
     [expr {[string first "bind \$f.$gh_v" $gh_bb] >= 0}]

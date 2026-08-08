@@ -19,10 +19,15 @@ measurement, not silently applied.
 
 ## 1. The baselines, re-measured on the UNCHANGED tree first
 
-| arm | before | after | delta |
+| arm | before | after the filter | after the tooltip |
 |---|---|---|---|
-| headless, 14 files | **1602**, 0 fail | **1609**, 0 fail | +7 |
-| X arm, 11 suites | **11/11** | **11/11** | — |
+| headless, 14 files | **1602**, 0 fail | **1609**, 0 fail | **1610**, 0 fail |
+| X arm, 11 suites | **11/11** | **11/11** | **11/11** |
+
+The tooltip's own deltas: `test_wave_sigbrowser_sea` 74 → **79** (BQ75 ×2,
+BQ76, BQ77 ×2, X only) and `test_wave_grid` 229/354 → **230/355** — GH8 runs one
+leg per `data-bseq` row, so the fifteenth row is worth exactly one check on both
+arms.
 
 Per-suite, the only four counts that moved:
 
@@ -232,6 +237,28 @@ Three of these need reading rather than counting:
   unconditional one is S2 wearing another hat. SM12-SM14 pass no key and cannot
   see it either. **SM30 was written for exactly this**, and BQ74 catches it on
   the live bar.
+
+### The tooltip's own four
+
+| # | sabotage | reds | where |
+|---|---|---|---|
+| T1 | the tip shows the **LABEL**, not the raw name | **2** | BQ75 ×2 |
+| T2 | drop the **`<Motion>` bind** | **2** | GH8, GH9 |
+| T3 | a **MISS** leaves the previous tip up | **1** | BQ76 |
+| T4 | `tip_hide` stops cancelling the **pending** timer | **1** | BQ77 |
+
+* **T2 reds the LEDGER and nothing else** — the sea suite stays at 79, because
+  BQ75-BQ77 drive `browser_sea_tip` directly. That is the ledger doing exactly
+  the job item 11 built it for, and it is why the literal, the guide row and the
+  bind are in ONE commit.
+* ⚠ **T3's first version reddened NOTHING and that was a BAD SABOTAGE, not a
+  coverage hole.** The patch appended `if {0} { return -1 }` — dead code that
+  changes no behaviour. Re-cut as a real mutation (skip the destroy unless the
+  hit-test HIT), it reds BQ76. A sabotage that mutates nothing proves nothing,
+  and reading its zero as "no check covers this" would have been the wrong
+  conclusion twice over.
+
+### On the first S5
 
 ⚠ **S5's FIRST run answered ZERO reds and that result is VOID, not a finding.**
 It was taken while the source was in the corrupted state described in §4.2 (the
