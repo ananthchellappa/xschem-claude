@@ -1485,13 +1485,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # bp_order_probe RESTORES the post-restore state as its last act, so BP55 below
   # still reads the RESTORED selection.
   #
-  # ⚠⚠ TWO-PANE ITEM 13 REDS THIS CHECK BY DESIGN: PLAN item 13 unions the
-  # SELECTION's ancestor chain into the applied open set, which makes `see`'s
-  # effect and the open pass's effect coincide on that chain. Its own checks then
-  # own the union/ordering claim. ⚠ THE NUMBERS PLAN GIVES THEM (BW53/BW54/BW55)
-  # ARE ALREADY SPENT BY ITEM 10 — BW53 is "(SOURCE) the populate path never calls
-  # see" — so item 13 must re-band before citing them. Until item 13 lands, HERE
-  # is the only place the ordering claim is expressible at all.
+  # ⚠⚠ THIS CHECK'S PREDECESSOR COMMENT SAID "TWO-PANE ITEM 13 REDS THIS CHECK
+  # BY DESIGN" — IT DOES NOT, AND THE CORRECTION IS THE RECORD OF A REFUSED PLAN
+  # CLAUSE. PLAN item 13 asks `browser_tree_apply` to union the SELECTION's
+  # ancestor chain into the applied open set, which would make `see`'s effect and
+  # the open pass's effect coincide on that chain and red leg 2 below. Item 13
+  # REFUSED the union, because spec §4.2 forbids it in so many words:
+  #     "the persisted `open` set must beat it — BP54 already pins that a
+  #      persisted collapse beats `see`'s ancestor-expansion, and that check
+  #      stays green."
+  # So this check is UNCHANGED and stays green, and the union is now a SABOTAGE
+  # rather than a plan: injecting it reds leg 2 here, BP53 above, and BW76 in
+  # test_wave_sigbrowser_panes.tcl — three files triangulating one proc.
+  # ⚠ THE NUMBERS PLAN GIVES ITEM 13 (BW53/BW54/BW55) ARE ALREADY SPENT BY ITEM
+  # 10 — BW53 is "(SOURCE) the populate path never calls see". Item 13 re-banded
+  # onto BW15 + BW68-BW76; BW76 is the standing twin of this check.
   check {BP54 the persisted collapse BEATS see's ancestor-expansion} \
     [bp_order_probe $tok $BPT g:x1 {g:x1.x2} {g:y3}] \
     [list 1 0 g:x1.x2]

@@ -93,7 +93,14 @@ Marks: `[ ]` not started · `[x]` done, test-verified · `[E]` done, **eyeball
 owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reason
 · `[F]` failed, needs a human.
 
-- [ ] 13 — `browser_reveal` / `browser_tree_apply` under collapsed-by-default
+- [x] 13 — `browser_reveal` / `browser_tree_apply` under collapsed-by-default
+      — 10 checks (`BW15` + `BW68`-`BW76`), `BX31` restated with a third leg.
+      Headless **1618 → 1619**, X **11/11** (`panes` 68 → 79, everything else
+      byte-identical). 7/7 sabotages fire exactly on target.
+      **⚠ ONE PLAN CLAUSE REFUSED**: the selection's ancestor chain is NOT
+      unioned into the applied open set — spec §4.2 forbids it and `BP54` is
+      named there as a check that "stays green". The union is now sabotage S4
+      and reds `BW76`+`BP53`+`BP54` across three files. See `13_receipt.md`.
 - [ ] 14 — Persistence: `sash` / `devint` / `srccur`
 - [ ] 15 — R7: All-DBs headers + a design root per DB
 - [ ] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion

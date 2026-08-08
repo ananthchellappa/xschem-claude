@@ -558,8 +558,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BX31 ...the node is SELECTED} [pcall $BXTV selection] {g:x1.x2}
   # ⚠ SABOTAGE (a)'s TARGET. `selection` above stays GREEN under it — that is
   # the built-in control that excludes "the command did nothing".
-  check {BX31 ...and it is VISIBLE: `see` re-opened the collapsed ancestor} \
-    [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV item g:x1 -open]] [list visible 1]
+  #
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 13, WITH A THIRD LEG. The first two legs are
+  # unchanged and still say what they always said: `see` re-opened the COLLAPSED
+  # ANCESTOR (`g:x1`), which is the whole reason the node is on screen. What
+  # item 13 adds is the other half of the same sentence — the TARGET ITSELF is
+  # left CLOSED, because R3 makes the LOWER pane the answer to "what is inside
+  # this node". That leg read `1` before item 13 landed, so it is this file's
+  # red-first witness and the cross-file twin of BW68 (leg 5) in
+  # test_wave_sigbrowser_panes.tcl.
+  #
+  # ⚠ THE PLAN PRESCRIBED A DIFFERENT LEG — `[$BXTV item {g:} -open]` — AND IT
+  # IS IMPOSSIBLE ON THIS FIXTURE. BX20 above asserts `$BXTV exists {g:}` == 0:
+  # `bx_seed` calls `browser_rows` with NO root argument on purpose, so there is
+  # no `g:` row to read an `-open` from. The ancestor leg already there IS the
+  # claim the PLAN was reaching for.
+  check {BX31 ...and it is VISIBLE: `see` re-opened the COLLAPSED ANCESTOR —
+         while TWO-PANE item 13 leaves the TARGET ITSELF CLOSED (R3: the lower
+         pane is the answer to "what is inside")} \
+    [list [bx_vis $BXTV g:x1.x2] [pcall $BXTV item g:x1 -open] \
+          [pcall $BXTV item {g:x1.x2} -open]] [list visible 1 0]
 
   # THE SCROLL LEG — a node whose ancestors are ALL open and which is still not
   # on screen. `collapsed` cannot see this one; only the bbox can.

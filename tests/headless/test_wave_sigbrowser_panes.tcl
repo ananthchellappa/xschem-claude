@@ -281,6 +281,34 @@ check {BW14 the three new per-token arrays are unset on window teardown} \
         [regexp -all {catch \{unset browsersrc\(\$token\)\}}  $wsrc]] \
   {1 1 1}
 
+# --- BW15 — TWO-PANE ITEM 13, the ONE claim that survives without X ----------
+# ⚠⚠ THE SHAPE OF ITEM 13's `browser_reveal` CHANGE IS A DELETION, NOT A LOOP,
+# and this check is the only witness the `--nogui` arm gets. `$tv see $id` IS
+# the expansion — ttk sets EVERY ancestor's `-open` to true and then scrolls —
+# so an explicit expand-ancestors loop would be dead code no sabotage could
+# reach. What item 13 removes is the ONE line that additionally force-opened
+# THE TARGET, because R3 makes the LOWER pane the answer to "what is inside
+# this node": landing on `x1.x2` selects it, `<<TreeviewSelect>>` fires, and the
+# sea below draws its signals. Opening the node as well would say the same thing
+# twice, in the pane spec §4.1 keeps for nodes only.
+#
+# ⚠ LEG 1 IS MANDATORY, NOT DECORATION. `wvproc_body` answers {} on a rename or
+# a reformatted signature, and `regexp -all` over {} is 0 — so WITHOUT it the
+# `0` on leg 2 is exactly what a vanished proc produces (BR01/BP01's idiom,
+# which cost item 2 four vacuously-green checks).
+#
+# ⚠ LEG 3 IS THE STANDING CONTROL FOR THE SUBSTITUTED SABOTAGE. Deleting `see`
+# "to honour collapsed-by-default" would satisfy leg 2 and break scrolling; it
+# reds here AND at BW53 AND at BX31/BX32 in test_wave_sigbrowser_i12.tcl.
+set bw_revealb [wvproc_body $wsrc wviewer::browser_reveal]
+check {BW15 (SOURCE, TWO-PANE item 13) browser_reveal no longer force-opens its
+       TARGET, while `see` — which IS the expansion — is still there exactly
+       once; leg 1 is the body-found guard both greps are vacuous without} \
+  [list [expr {$bw_revealb ne {}}] \
+        [regexp -all {\$tv item \$id -open 1} $bw_revealb] \
+        [regexp -all {\$tv see} $bw_revealb]] \
+  {1 0 1}
+
 # ============================================================================
 # BW20-BW39 — THE LIVE SHAPE. X arm only.
 # ============================================================================
@@ -1050,6 +1078,308 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall ::wviewer::browser_devint $tok] [pcall ::wviewer::browser_srccur $tok] \
           [lsort [bs_tree_ids $TV]]] \
     [list {v(out) v(x1.x2.net5) v(x1.y3.net5)} 0 1 {g: g:x1 g:x1.x2 g:x1.y3}]
+
+  # ==========================================================================
+  # BW68-BW76 — TWO-PANE ITEM 13: browser_reveal / browser_tree_apply UNDER
+  # COLLAPSED-BY-DEFAULT
+  # ==========================================================================
+  # spec §4.2 (`see` may only be reached from a USER-INITIATED reveal, and the
+  # persisted `open` set must BEAT it) and spec §7.3 (a shipped multi-id `sel`
+  # is narrowed to its first SURVIVING id; an all-dead one falls back to the
+  # root). Two procs move: `browser_reveal` loses one line, `browser_tree_apply`
+  # gains a narrowing and a fallback. The ORDER inside `browser_tree_apply`
+  # — SELECTION FIRST, OPEN-SET LAST — is untouched and BW76 is why.
+  #
+  # ⚠⚠ THE BAND, AND WHY IT IS NOT THE PLAN'S. PLAN item 13 asks for
+  # `BW50`-`BW58`. MEASURED: `BW50`-`BW53` are two-pane item 10's (they are
+  # above, in this file) and `BW56`-`BW58` are two-pane item 12's. First free id
+  # at the time of writing is BW68, and the one SOURCE claim takes BW15 out of
+  # this file's own 01-19 "both arms" block. Nothing is renumbered.
+  #
+  # ⚠⚠ THE NODE IDS ARE NOT THE PLAN'S EITHER. Every PLAN check in item 13 names
+  # `g:y3`. MEASURED: this file's fixture tree is exactly
+  # `{g: g:x1 g:x1.x2 g:x1.y3}` — THERE IS NO `g:y3` here; that id belongs to
+  # test_wave_sigbrowser_i1315.tcl's raw-backed fixture (BP43a). The sibling
+  # available on THIS tree is the TARGET's sibling `g:x1.y3`, which is the
+  # better discriminator anyway: `g:x1` is the root's ONLY child, so "a sibling
+  # of an ANCESTOR stays collapsed" is not even expressible here.
+  #
+  # ⚠⚠⚠ THE ONE PLAN CLAUSE THIS ITEM REFUSES, AND THE REFUSAL IS BW76.
+  # PLAN item 13 also asks `browser_tree_apply` to "union the selection's
+  # ancestor chain into the applied open set". IT IS NOT IMPLEMENTED, because
+  # spec §4.2 forbids it in so many words:
+  #     "the persisted `open` set must beat it — BP54 already pins that a
+  #      persisted collapse beats `see`'s ancestor-expansion, and that check
+  #      stays green."
+  # MEASURED on this fixture, before any code changed:
+  #   * with NO `open` key the open pass is SKIPPED and `see` has ALREADY opened
+  #     the whole chain — so the union is a NO-OP exactly where it is harmless;
+  #   * with `{open {g: g:x1.y3} sel {g:x1.x2}}` the open pass runs LAST and
+  #     leaves `g:x1` CLOSED — which is the state the union would flip, i.e. it
+  #     is a §4.2 violation exactly where it bites.
+  # It also breaks round-trip idempotency: the widened set is what the next
+  # `browser_state` persists, so the user's collapse dissolves over sessions.
+  # BW76 is its standing guard here, and it is green BEFORE and AFTER on
+  # purpose; BP53 (i1315:1468) and BP54 (i1315:1495) are the cross-file twins.
+  # Implementing the union reds all three — three files triangulating one proc.
+
+  # SEVEN-VALUED, NEVER THROWS — the same contract as `bx_vis` in
+  # test_wave_sigbrowser_i12.tcl. `unmapped` is checked BEFORE bbox precisely
+  # because bbox cannot see it, and `collapsed` must be distinguishable from
+  # `offscreen` or "it is visible" means two different things.
+  proc bw_vis {tv id} {
+    if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+    if {$id eq {}} { return root }
+    if {[catch {$tv exists $id} ex] || !$ex} { return absent }
+    set p $id
+    while {1} {
+      set par {}
+      if {[catch {$tv parent $p} par]} { return absent }
+      if {$par eq {}} break
+      set o 0
+      catch {set o [$tv item $par -open]}
+      if {!$o} { return collapsed }
+      set p $par
+    }
+    set m 0
+    catch {set m [winfo ismapped $tv]}
+    if {!$m} { return unmapped }
+    set bb {}
+    catch {set bb [$tv bbox $id]}
+    if {$bb eq {}} { return offscreen }
+    return visible
+  }
+  # THE PRECONDITION EVERY CHECK BELOW STARTS FROM, and it ANSWERS the state it
+  # reached rather than assuming it: item 10's lesson is that "the ancestor was
+  # open all along" must never be able to masquerade as "the reveal opened it".
+  proc bw_collapse_all {tv} {
+    foreach id [bs_tree_ids $tv] { catch {$tv item $id -open 0} }
+    update
+    return [bs_open_set $tv]
+  }
+
+  # {pre-open-set  ret  root-open  anc-open  TARGET-open  sibling-open  vis  sel}
+  proc bw_reveal_probe {tok tv root anc id sib} {
+    set pre [bw_collapse_all $tv]
+    set r [pcall ::wviewer::browser_reveal $tok $id]
+    update
+    return [list $pre $r [pcall $tv item $root -open] [pcall $tv item $anc -open] \
+                 [pcall $tv item $id -open] [pcall $tv item $sib -open] \
+                 [bw_vis $tv $id] [pcall $tv selection]]
+  }
+  # {before  after-set  after-cleared  children}  — is `-open` even a live
+  # discriminator on a CHILDLESS node? Without this, BW68's `0` asserts nothing.
+  proc bw_open_roundtrip {tv id} {
+    bw_collapse_all $tv
+    set a [pcall $tv item $id -open]
+    catch {$tv item $id -open 1}
+    set b [pcall $tv item $id -open]
+    catch {$tv item $id -open 0}
+    set c [pcall $tv item $id -open]
+    return [list $a $b $c [pcall $tv children $id]]
+  }
+  # {open-set-before  open-set-after-a-reveal}
+  proc bw_multi_open_probe {tok tv ids target} {
+    bw_collapse_all $tv
+    foreach id $ids { catch {$tv item $id -open 1} }
+    update
+    set before [bs_open_set $tv]
+    pcall ::wviewer::browser_reveal $tok $target
+    update
+    return [list $before [bs_open_set $tv]]
+  }
+  # {ret-on-{}  sel-after-{}  ret-on-a-real-id  sel-after-it}
+  proc bw_reveal_pair {tok tv presel other} {
+    bw_collapse_all $tv
+    catch {$tv selection set [list $presel]}
+    update
+    set a [pcall ::wviewer::browser_reveal $tok {}]
+    set b [pcall $tv selection]
+    set c [pcall ::wviewer::browser_reveal $tok $other]
+    set d [pcall $tv selection]
+    return [list $a $b $c $d]
+  }
+  # {ret  selection}
+  proc bw_apply_sel {tok tv open sel} {
+    bw_collapse_all $tv
+    set r [pcall ::wviewer::browser_tree_apply $tok [list open $open sel $sel]]
+    update
+    return [list $r [pcall $tv selection]]
+  }
+  # {pre-selection  ret  post-selection  post-open-set}
+  # ⚠ LEG 4 IS THE ANTI-VACUITY LEG, and it is what stops the EMPTY-`sel` arm
+  # (BW74's second) being green on a `browser_tree_apply` that does NOTHING at
+  # all: the open pass really ran, so "the selection was left alone" is a
+  # decision the proc took rather than a call that never happened.
+  proc bw_apply_dead {tok tv presel sel} {
+    bw_collapse_all $tv
+    catch {$tv selection set [list $presel]}
+    update
+    set pre [pcall $tv selection]
+    set r [pcall ::wviewer::browser_tree_apply $tok [list open {g:} sel $sel]]
+    update
+    return [list $pre $r [pcall $tv selection] [bs_open_set $tv]]
+  }
+  # THE NO-ROOT ARM, AND ITS OWN POSITIVE ARM, IN ONE TUPLE:
+  #   {root-id-with-the-swapped-model  ret  selection  root-id-after-the-restore
+  #    ret-on-the-RESTORED-model  selection-on-the-RESTORED-model}
+  #
+  # ⚠⚠ MEASURED ON THE RED RUN, AND THIS IS WHY THE HELPER HAS SIX LEGS INSTEAD
+  # OF FOUR. The four-leg version asserted only "with no root the fallback is a
+  # no-op" — which is byte-identical to "there is no fallback at all", i.e. it
+  # was GREEN BEFORE ITEM 13's CODE EXISTED. That is precisely the shape
+  # two-pane item 12 shipped twice. Legs 5-6 repeat the SAME call on the
+  # RESTORED model, where the fallback MUST fire, so the no-op on legs 2-3 is
+  # now a decision the proc took rather than a proc that does not exist.
+  #
+  # ⚠⚠ AND IT EATS THE FIXTURE IF IT DOES NOT PUT IT BACK: browserrows is the
+  # array browser_leaf_names / browser_plot_ids / browser_menu_ids all read. Leg
+  # 4 asserts the restore IN THE SAME TUPLE (item 12's BW67 lesson) and is also
+  # the precondition legs 5-6 rest on — a restore nobody asserts is a restore
+  # that silently stops happening.
+  proc bw_apply_dead_norootrows {tok tv presel} {
+    bw_collapse_all $tv
+    catch {$tv selection set [list $presel]}
+    update
+    set was $::wviewer::browserrows($tok)
+    set rows {}
+    foreach r $was {
+      if {[pcall ::wviewer::dget $r id {}] eq {g:}} { continue }
+      lappend rows $r
+    }
+    set ::wviewer::browserrows($tok) $rows
+    set seen [pcall ::wviewer::browser_root_id $::wviewer::browserrows($tok)]
+    if {$seen eq {}} { set seen no-root }
+    set r [pcall ::wviewer::browser_tree_apply $tok [list open {g:} sel {g:zz}]]
+    update
+    set sel [pcall $tv selection]
+    # THE RESTORE, then THE POSITIVE ARM on the very same call shape.
+    set ::wviewer::browserrows($tok) $was
+    set back [pcall ::wviewer::browser_root_id $::wviewer::browserrows($tok)]
+    bw_collapse_all $tv
+    catch {$tv selection set [list $presel]}
+    update
+    set r2 [pcall ::wviewer::browser_tree_apply $tok [list open {g:} sel {g:zz}]]
+    update
+    return [list $seen $r $sel $back $r2 [pcall $tv selection]]
+  }
+  # {see-ALONE opened $anc?  $anc after the SAME sel WITH the open set  the
+  #  whole open set  the selection}. Leg 1 is the positive control without which
+  # "it was closed anyway" reads exactly like "the open pass won".
+  proc bw_order_probe {tok tv anc sel open} {
+    bw_collapse_all $tv
+    pcall ::wviewer::browser_tree_apply $tok [list sel $sel]
+    update
+    set seealone [pcall $tv item $anc -open]
+    bw_collapse_all $tv
+    pcall ::wviewer::browser_tree_apply $tok [list open $open sel $sel]
+    update
+    return [list $seealone [pcall $tv item $anc -open] [bs_open_set $tv] \
+                 [pcall $tv selection]]
+  }
+
+  # --- BW68: THE ITEM'S HEADLINE --------------------------------------------
+  # ⚠ LEG 1 (`none`) IS ITEM 10's S3 LESSON MADE A LEG: the tree really was
+  # FULLY COLLAPSED on entry, so legs 3/4 are things the reveal DID rather than
+  # things that were already true. Leg 5 is the item. Leg 6 says the expansion
+  # is a CHAIN, not a subtree. Legs 7/8 keep "the reveal did nothing at all"
+  # excluded, which is what makes leg 5's `0` a claim.
+  check {BW68 (TWO-PANE item 13, R1/R3) a reveal from a FULLY COLLAPSED tree
+         opens the ANCESTOR CHAIN AND NOTHING ELSE: the target's own node and
+         the target's SIBLING stay closed, and it is VISIBLE and SELECTED} \
+    [bw_reveal_probe $tok $TV {g:} {g:x1} {g:x1.x2} {g:x1.y3}] \
+    [list none 1 1 1 0 0 visible g:x1.x2]
+
+  # --- BW69: BW68's POSITIVE CONTROL ----------------------------------------
+  # ⚠ WITHOUT THIS, BW68's leg 5 is green on a widget that cannot report `-open`
+  # for a childless row at all. Same node, both values, plus the fact that it
+  # HAS no children — so "closed" is a real state and not an artefact.
+  check {BW69 (BW68's POSITIVE CONTROL) `-open` is settable and readable on the
+         CHILDLESS target, so BW68's `0` leg really discriminates} \
+    [bw_open_roundtrip $TV {g:x1.x2}] {0 1 0 {}}
+
+  # --- BW70: R1, on the ids this fixture actually has ------------------------
+  # Green BEFORE and AFTER, declared: it is R1's quantifier ("more than one
+  # subtree may be expanded at once") plus the guarantee that a reveal is
+  # ADDITIVE — it never closes what the user opened. Sabotage (b)'s control.
+  check {BW70 (R1, STANDING CONTROL — green before AND after) MORE THAN ONE
+         subtree may be expanded at once, and a reveal closes none of them} \
+    [bw_multi_open_probe $tok $TV {g: g:x1 g:x1.x2 g:x1.y3} {g:x1.x2}] \
+    [list {g: g:x1 g:x1.x2 g:x1.y3} {g: g:x1 g:x1.x2 g:x1.y3}]
+
+  # --- BW71: the empty-id refusal, NOT as a lone stability claim -------------
+  # ⚠ DECLARED: the refusal half is green before this item, and its OWNER is
+  # BX33 (test_wave_sigbrowser_i12.tcl:607-611). It is carried here only so the
+  # deletion above cannot be "verified" against a proc that stopped working —
+  # legs 3/4 are the SAME call shape on a REAL id, moving the selection.
+  check {BW71 (DECLARED CONTROL, owner BX33) reveal REFUSES the empty id
+         (`$tv exists {}` is TRUE) and leaves the selection alone, while the
+         SAME call on a real id moves it — the refusal is about the ID} \
+    [bw_reveal_pair $tok $TV {g:x1.x2} {g:x1.y3}] {0 g:x1.x2 1 g:x1.y3}
+
+  # --- BW72/BW73: spec §7.3's narrowing --------------------------------------
+  # ⚠⚠ TWO SURVIVORS, DELIBERATELY. The PLAN's version of this check hands
+  # `{g:zz g:x1.x2}` — one dead id and ONE survivor — and MEASURED it is VACUOUS:
+  # today's keep-everything already answers `g:x1.x2` because only one id is
+  # left to keep. The claim only has teeth when narrowing and keeping DISAGREE.
+  # ⚠ AND THE WIDGET WILL NOT DO THIS FOR THE RESTORE: BW26b above MEASURED
+  # that `$tv selection set {a b}` is blind to `-selectmode browse` and really
+  # sets two. Its comment has said since item 9 that narrowing is item 13/14's
+  # job; this is item 13 paying it.
+  check {BW72 (§7.3) a SHIPPED-shape multi-id `sel` with TWO SURVIVING ids
+         narrows to the FIRST, so R4 holds through a restore (BW26b is why the
+         widget cannot be relied on to do it)} \
+    [bw_apply_sel $tok $TV {g:} {g:x1.x2 g:x1.y3}] {1 g:x1.x2}
+  check {BW73 (§7.3) ...and it is the first SURVIVING id, not `lindex 0`: a DEAD
+         id at the HEAD neither widens the selection nor blanks it} \
+    [bw_apply_sel $tok $TV {g:} {g:zz g:x1.x2 g:x1.y3}] {1 g:x1.x2}
+
+  # --- BW74: §7.3's root fallback, and the EMPTY-`sel` ruling ----------------
+  # ⚠ THE READING OF §7.3 ADOPTED HERE, STATED SO IT IS NOT RE-DECIDED SILENTLY:
+  # the fallback fires only when `sel` was NON-EMPTY and nothing survived. An
+  # EMPTY `sel` is not "all dead" — it has no ids that "have gone" — and
+  # `browser_state_apply` passes `sel {}` for every legacy and default state, so
+  # treating it as all-dead would move the selection on every plain restore. R4
+  # is already satisfied by `browser_populate`'s own root selection.
+  check {BW74 (§7.3) an ALL-DEAD `sel` falls back to the design ROOT — never to
+         empty and never to whatever happened to be selected; leg 1 names what
+         it had to move away from and leg 4 that the open pass still ran} \
+    [bw_apply_dead $tok $TV {g:x1.y3} {g:zz}] {g:x1.y3 1 g: g:}
+  check {BW74 (THE OTHER READING, REFUSED) ...and an EMPTY `sel` is NOT "all
+         dead": the selection is left alone WHILE the open pass still runs, so
+         this cannot be green on a call that did nothing} \
+    [bw_apply_dead $tok $TV {g:x1.y3} {}] {g:x1.y3 1 g:x1.y3 g:}
+
+  # --- BW75: the fallback's NO-ROOT arm --------------------------------------
+  # The All-DBs state two-pane item 15 owns emits NO design root, so the row
+  # list answers `{}` — and that absence is an ANSWER (browser_root_id's own ⚠).
+  # The fallback must then be a NO-OP: not a clear, not a throw.
+  # ⚠ SIX LEGS, AND THE RED RUN IS WHY — see the helper's ⚠⚠. Legs 1-3 are the
+  # no-op; leg 4 is the asserted restore; legs 5-6 are the SAME call on the
+  # RESTORED model, where the fallback fires. Without them "the fallback is a
+  # no-op here" and "there is no fallback anywhere" are the same picture, and
+  # the four-leg version of this check was MEASURED green before item 13's code
+  # existed.
+  check {BW75 (BW74's OTHER ARM) with a row list that has NO design root the
+         fallback is a NO-OP — not a clear, not a throw — while the SAME call
+         on the restored model still lands on the root} \
+    [bw_apply_dead_norootrows $tok $TV {g:x1.y3}] {no-root 1 g:x1.y3 g: 1 g:}
+
+  # --- BW76: THE DIVERGENCE'S STANDING GUARD --------------------------------
+  # GREEN BEFORE AND AFTER, ON PURPOSE. See the ⚠⚠⚠ block at the top of this
+  # band: PLAN item 13 asks for the selection's ancestor chain to be UNIONED
+  # into the applied open set, and spec §4.2 forbids it —
+  #     "the persisted `open` set must beat it — BP54 already pins that a
+  #      persisted collapse beats `see`'s ancestor-expansion, and that check
+  #      stays green."
+  # Leg 1 is `see` ALONE on the SAME tree (no `open` key -> the open pass is
+  # skipped), so "g:x1 was closed anyway" cannot pass for "the open pass won".
+  # Cross-file twins: BP53 (i1315:1468) and BP54 (i1315:1495).
+  check {BW76 (SPEC §4.2 — AND WHAT THE PLAN'S "UNION" WOULD HAVE BROKEN) the
+         persisted OPEN SET still BEATS `see`: the restored selection's own
+         ancestor is left COLLAPSED when the persisted set says so} \
+    [bw_order_probe $tok $TV {g:x1} {g:x1.x2} {g: g:x1.y3}] \
+    [list 1 0 {g: g:x1.y3} g:x1.x2]
 
   catch {destroy .wvbw1}
   catch {dict unset ::wviewer::windows wvbw}

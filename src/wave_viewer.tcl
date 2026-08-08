@@ -9458,8 +9458,17 @@ proc wviewer::browser_origin_drop {level rawlevel} {
 # this implementation can be put into by deletion. Deleting `see` itself is, and
 # that is what the substituted sabotage (a) does.
 #
-# Opening the TARGET is the one thing `see` does NOT do (it opens ancestors),
-# and it is wanted: landing on `x1.x2` should show what is inside it.
+# ⚠⚠ THE TARGET ITSELF IS LEFT CLOSED, AND TWO-PANE ITEM 13 IS WHERE THAT
+# CHANGED. Opening the target is the one thing `see` does NOT do (it opens
+# ancestors), and this proc used to do it by hand so that landing on `x1.x2`
+# also showed what was inside it. Under the two-pane sidebar the LOWER PANE is
+# the answer to "what is inside this node" (spec R3): the selection set above
+# fires `<<TreeviewSelect>>`, the sea below redraws with this node's own
+# signals, and force-opening the row as well would say the same thing twice in
+# the pane that is now nodes only. So the reveal expands the CHAIN and stops.
+# See doc/claude/specs/waveform_signal_browser_two_pane.md §4.2. Re-adding the
+# open reds BW68 (test_wave_sigbrowser_panes.tcl), BW15 and BX31
+# (test_wave_sigbrowser_i12.tcl).
 #
 # ⚠ `$tv exists {}` IS TRUE (the root), so the empty id is refused explicitly —
 # otherwise `selection set {}` would silently CLEAR the selection and report
@@ -9477,7 +9486,6 @@ proc wviewer::browser_reveal {token id} {
   catch {$tv focus $id}
   catch {update idletasks}
   if {[catch {$tv see $id}]} { set ok 0 }
-  catch {$tv item $id -open 1}
   return $ok
 }
 
@@ -9970,10 +9978,14 @@ proc wviewer::browser_tree_nodes {tv {id {}}} {
 # is no window / no tree. NEVER throws — it is read from `snapshot`, which runs
 # on a window that may be halfway through teardown.
 #
-# ⚠ THE DEFAULT IS ALL-OPEN AND EMPTY-SELECTION, because `browser_populate`
-# inserts every row `-open 1` and clears the selection. So a COLLAPSED group and
-# a NON-EMPTY selection are the genuinely non-default values a round-trip
-# fixture has to set (driver note (d): a default-valued field proves nothing).
+# ⚠ THE DEFAULT IS ALL-CLOSED-BUT-THE-ROOT, AND A NON-EMPTY SELECTION — BOTH
+# SIGNS INVERTED BY TWO-PANE ITEM 10, whose header this paragraph still
+# described until item 13 corrected it. `browser_populate` now inserts every row
+# `-open 0` and opens exactly one exception, the design root (R1/M11), and it
+# never leaves the selection empty (R4). So the genuinely non-default values a
+# round-trip fixture has to set are the other way round: an OPEN group and a
+# selection that is NOT the root (driver note (d): a default-valued field proves
+# nothing). test_wave_sigbrowser_i1315.tcl's BP43 block sets exactly those.
 proc wviewer::browser_tree_state {token} {
   variable windows
   if {![dict exists $windows $token]} { return {} }
@@ -9999,22 +10011,68 @@ proc wviewer::browser_tree_state {token} {
 # `$tv see` sets EVERY ANCESTOR's `-open` to true (that is browser_reveal's
 # central finding), so applying the collapse first and then revealing the
 # selection would silently re-expand exactly the groups the user had collapsed.
-# For the same reason `browser_reveal` is NOT reused here: it also force-opens
-# the node it lands on.
+# `browser_reveal` is still NOT reused here, but the reason CHANGED with
+# two-pane item 13: it no longer force-opens the node it lands on, so what is
+# left is simply that a RESTORE must let the persisted open set have the last
+# word, and reveal is a user gesture that has no open set to lose to.
+#
+# ⚠⚠⚠ AND THAT IS WHY THE SELECTION'S ANCESTOR CHAIN IS **NOT** UNIONED INTO
+# THE APPLIED OPEN SET. PLAN item 13 asks for exactly that union; it is REFUSED,
+# and the refusal is recorded here because the next reader will otherwise "fix"
+# it back. Spec §4.2 (doc/claude/specs/waveform_signal_browser_two_pane.md):
+#     "the persisted `open` set must beat it — BP54 already pins that a
+#      persisted collapse beats `see`'s ancestor-expansion, and that check
+#      stays green."
+# MEASURED, not argued: with NO `open` key the pass below is skipped entirely
+# and `see` has already opened the whole chain, so the union is a no-op exactly
+# where it would be harmless; with an `open` key that omits an ancestor the pass
+# below closes it, which is the one state the union would flip — a §4.2
+# violation exactly where it bites. It would also break round-trip idempotency,
+# because the widened set is what the next `browser_state` persists, so a user's
+# collapse would dissolve over sessions. Implementing it reds BW76
+# (test_wave_sigbrowser_panes.tcl), BP53 and BP54
+# (test_wave_sigbrowser_i1315.tcl) — three files, one proc.
 #
 # ⚠ It must run AFTER `browser_show`, never before: showing the sidebar calls
-# `browser_refresh $token 1`, and `browser_populate` deletes every row, re-inserts
-# them all `-open 1` and clears the selection.
+# `browser_refresh $token 1`, and `browser_populate` deletes every row and
+# re-inserts them all (closed, bar the design root, since two-pane item 10).
 proc wviewer::browser_tree_apply {token d} {
   variable windows
+  variable browserrows
   if {$d eq {}} { return 0 }
   if {![dict exists $windows $token]} { return 0 }
   set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
   if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  # ⚠⚠ SPEC §7.3: `sel` IS PERSISTED AS A LIST and the shipped version wrote it
+  # from an `extended` tree, so a state file in the wild can hold two ids. R4
+  # says the tree holds exactly one — and the widget will NOT enforce it for us:
+  # `-selectmode` gates only ttk's CLASS BINDINGS, so `$tv selection set {a b}`
+  # really does select two (MEASURED, BW26b in test_wave_sigbrowser_panes.tcl).
+  # So the restore narrows: THE FIRST id that STILL EXISTS, which is not
+  # `lindex 0` — a dead id at the head must not blank the selection (BW73).
+  set want [wviewer::dget $d sel {}]
   set keep {}
-  foreach id [wviewer::dget $d sel {}] {
+  foreach id $want {
     if {$id eq {}} { continue }
-    if {![catch {$tv exists $id} ex] && $ex} { lappend keep $id }
+    if {![catch {$tv exists $id} ex] && $ex} { set keep [list $id] ; break }
+  }
+  # ...and §7.3's other half: "a list whose ids have all gone falls back to the
+  # root". The root comes from the ROW MODEL, never from the widget — the row
+  # list is where "there is no design root" is expressible at all (the All-DBs
+  # state), and `[lindex [$tv children {}] 0]` would answer a DB header there.
+  #
+  # ⚠ NON-EMPTY IS PART OF THE CONDITION, and the narrow reading is deliberate:
+  # an EMPTY `sel` has no ids that "have gone", `browser_state_apply` passes
+  # `sel {}` for every legacy and default state, and R4 is already satisfied by
+  # `browser_populate`'s own root selection. Firing here would move the
+  # selection on every plain restore. BW74's second leg pins that.
+  # ⚠ A row model with NO design root answers `{}`, and that absence is an
+  # ANSWER: the fallback is then a NO-OP, never a clear and never a throw.
+  if {![llength $keep] && [llength $want]} {
+    set rows {}
+    if {[info exists browserrows($token)]} { set rows $browserrows($token) }
+    set rid [wviewer::browser_root_id $rows]
+    if {$rid ne {} && ![catch {$tv exists $rid} rex] && $rex} { set keep [list $rid] }
   }
   if {[llength $keep]} {
     catch {$tv selection set $keep}
@@ -10024,7 +10082,7 @@ proc wviewer::browser_tree_apply {token d} {
   }
   # ...and only NOW the expanded set, over the top of whatever `see` opened. An
   # absent `open` key (a state written before this item) leaves the tree as
-  # `browser_populate` built it, i.e. all open.
+  # `browser_populate` built it.
   if {[dict exists $d open]} {
     set op [dict get $d open]
     foreach id [wviewer::browser_tree_nodes $tv] {
