@@ -27,6 +27,13 @@ new baseline.
 > both arms**. The item-16 implementer RE-MEASURED the item-15 baseline on the
 > unchanged tree first (headless 1637, X 11/11 2192, every per-file and
 > per-suite figure EXACT, no drift), so the delta is attributable.
+> **Not adopted from the implementer's run:** both arms were re-measured
+> independently by the item-16 verifier — all 15 headless files run by hand
+> (1649 / 0 fail, the 14 pre-existing files summing to **exactly 1637**, every
+> per-file figure byte-identical) and 12/12 through `xarm.sh suites` under Xvfb
+> with `SUITE_TIMEOUT=400` (2215, the eleven baseline suites byte-identical).
+> The verifier also confirmed the `keys` suite printed **no `SKIPPED` line**, so
+> `BK18`'s real-key leg really fired and 23 is not a masked 22.
 >
 > **⚠ THE ITEM-16 NOTE BELOW SAYS "the two binding suites". IT IS THREE.**
 > `test_bindings_file.tcl`, `test_keybindings_help.tcl` **and
@@ -34,6 +41,9 @@ new baseline.
 > the one item 16 reds. Post-item ok-counts: **13 / 17 / 70** (key_graph_context
 > was 69; +1 is the explicit absence claim item 16 added beside its inverted
 > behavioural leg). A green 15-file / 12-suite run proves NOTHING about them.
+> **All three are X-ONLY** — the two binding suites THROW under `--nogui`
+> (`invalid command name "focus"` / `"winfo"`), so those figures are reproducible
+> only through `xarm.sh one <suite>`, never from the headless arm.
 
 > **⚠ THE BASELINE MOVED WITH ITEM 15 — headless 1628 → 1637, X 2174 → 2192.**
 > **Reason, in one line:** item 15 added **18 check calls** and they are all in
@@ -84,7 +94,7 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1637 checks over 14 files, 0 fail**
+**headless — 1649 checks over 15 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
@@ -99,13 +109,14 @@ new baseline.
 | `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **12** |
 | | | **TOTAL** | **1649** |
 
-**X arm — 11/11 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
+**X arm — 12/12 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
 > **⚠ MEASURED 2026-08-07: the Xvfb arm reproduces the `:0` arm EXACTLY.** All
 > eleven per-suite counts identical, 11/11 both ways, **2136 checks** either way
 > (that equivalence was established at the item-12 baseline; item 13 moves the
-> total to **2149**, item 14 to **2170**, its fixup to **2174** and item 15 to
-> **2192** — see the table; the equivalence itself is unaffected).
+> total to **2149**, item 14 to **2170**, its fixup to **2174**, item 15 to
+> **2192** and item 16 to **2215** over **twelve** suites — see the table; the
+> equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -350,7 +361,8 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       header comes back COLLAPSED. Selection and instance-node collapse survive,
       which is the whole point of the unprefixed ids. **Next free `BD71` /
       `BP78`.**
-- [x] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion
+- [x] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion **-> DONE
+      (`08c37980`)**
       Receipt `16_receipt.md`. **Both baselines RE-MEASURED EXACT on the unchanged
       tree first** (headless 1637/0, X 11/11 2192, every per-file and per-suite
       figure), so every red is attributable. New file
@@ -397,7 +409,28 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       user-visible is lost" and "the schematic side is untouched" both replaced
       with the measurements, §10 gained limits 8 and 9, §13 gained the eighth file.
       **No eyeball owed** — every claim is a bind, a dump row, a byte-compare or a
-      Tcl variable.
+      Tcl variable, and the menu accelerator is read at RUNTIME
+      (`entrycget -accelerator`, sigbrowser`:543` + grid`:1107`), not as a source
+      string.
+      **⚠ 9/9 OF THE ITEM'S OWN SABOTAGES FIRE, PLUS TWO THE VERIFIER INVENTED,
+      neither on the item's list.** `SV-A` — the likeliest half-done state, the C
+      row still PRESENT **and** the csv correctly regenerated to match it, in
+      which the VIEWER behaves perfectly and `BK12` cannot see a thing — reds
+      `BK04`, `BK06`, `BK16` **and both** restated `test_key_graph_context`
+      claims, so the C-table deletion is covered by **4 checks in 2 files**, not
+      the 1 the PLAN predicted. `SV-B` — `($s & 4)` → `($s == 4)` in the
+      carve-out, which would leak **Ctrl+Alt+b** and **NumLock+Ctrl+b** back to
+      the C switch — reds `BK01` **alone**.
+      **⚠ ONE OPEN COVERAGE NOTE, FOR 17b, WHICH OWNS `BK20+` IN THE SAME FILE:**
+      `BK02` evaluates the shipped expression only over masks 0 and 4, so it
+      cannot tell a bitmask test from an equality test. **Add the pair `{98 12}`**
+      when next touching that file. The shipped code is correct; this is the
+      oracle, not the behaviour.
+      **⚠ DRIVER HAZARD, found by the verifier hitting it.** Restoring a `.c`
+      from a `cp -p` backup and re-running `make` is a **NO-OP** — the preserved
+      mtime is older than the `.o` the sabotage just built, so the binary keeps
+      the SABOTAGED object and the "clean re-run" measures the sabotage. `touch`
+      the file before rebuilding. **Item 17b touches C too.**
 - [ ] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
 - [ ] 18 — R12: auto-tick, reveal, and say so
 - [ ] 19 — Docs, oracles, the four-file lockstep, 0217 closed
