@@ -41,8 +41,14 @@
 #   69-74  REAL viewer        Tk/X only   (item 14)
 #   75     SOURCE             both arms   (item 14's verification FIXUP)
 #   76-77  REAL viewer        Tk/X only   (item 14's verification FIXUP)
+#   47b    REAL viewer        Tk/X only   (TWO-PANE item 15's prefix control)
 # Next free after this item: BP78. TWO-PANE ITEM 15 OWNS `BD60`-`BD70` — the
-# fixup did NOT take them.
+# fixup did NOT take them, and item 15 did not take a BP number either: its own
+# checks are `BD60`-`BD70d` in test_wave_sigbrowser_i14.tcl (the only fixture
+# holding two live raws). What item 15 does HERE is RESTATE — BP43a inverts from
+# a tombstone into a positive, and BP43/BP45/BP52/BP53/BP54/BP55 re-key onto the
+# `d:<registry idx>|` prefix — plus ONE new check, `BP47b`, which is the control
+# that stops those re-keys going green on a re-derived WRONG prefix.
 #
 # ⚠ THE FOOTPRINT CLAIM, MADE EXPLICITLY BECAUSE RULING 30 WAS CUT ON IT.
 # Ruling 30's split point was NOT the check count: across 8 pre-split runs the
@@ -1506,30 +1512,64 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::searchbar_fire $BPS
   pcall ::wviewer::searchbar_fire $BPL
   update
-  # --- BP43a: THE DECLARED GAP, STATED AS SEVEN VALUES -----------------------
-  # ⚠⚠ TWO-PANE ITEM 10 EMITS NO DESIGN ROOT WHILE All-DBs IS TICKED, AND FROM
-  # HERE ON THIS BLOCK RUNS WITH IT TICKED (BP49 needs `alldbs 1`, the field's
-  # only non-default value). Spec R7 and §4.3 say each DB gets its OWN design
-  # root under a `d:<idx>` header and that the CURRENT DB's root is the selected
-  # node; `browser_refresh` deliberately withholds it (`if {!$alldbs}`) so item
-  # 15's reds stay attributable to item 15.
-  # CONSEQUENCE, ASSERTED RATHER THAN SUFFERED: `browser_root_id` answers {}, and
-  # `browser_populate`'s R4 fallback (`if {$want eq {} && $rootid ne {}}`) cannot
-  # fire — so R4's "there is always exactly one node selected" DOES NOT HOLD in
-  # this state, today.
+  # --- BP43a: THE GAP, CLOSED BY TWO-PANE ITEM 15 ---------------------------
+  # ⚠⚠ FROM HERE ON THIS BLOCK RUNS WITH All-DBs TICKED (BP49 needs `alldbs 1`,
+  # the field's only non-default value). Item 10 emitted NO design root in that
+  # state and this check was its TOMBSTONE, asserting the gap as seven values:
+  # `browser_root_id` answered {}, `browser_populate`'s R4 fallback could not
+  # fire, and R4's "there is always exactly one node selected" DID NOT HOLD.
+  #
+  # TWO-PANE ITEM 15 (spec R7 / §4.3) CLOSES IT, and the check is INVERTED
+  # rather than deleted: every DB — the current one included — now gets a
+  # `d:<registry idx>` HEADER with its own design root beneath it. The CURRENT
+  # DB's root and instance ids stay UNPREFIXED (§4.3's closing sentence), so
+  # legs 2 and 5-7 keep their item-14 values and only legs 3-4 flip: the root id
+  # goes `no-root` -> `g:` and the selection `none` -> `g:`.
+  #
+  # ⚠⚠ THE HEADER ID IS DERIVED FROM THE ENGINE, NOT FROM `browser_root_id` AND
+  # NOT HARD-CODED. Which registry slot the current raw occupies depends on how
+  # many raws this file's earlier groups already read into the same session, so a
+  # literal `d:0` would be a guess. `signal_list_all`'s `cur` flag is an
+  # INDEPENDENT source — the check does not read the proc it is testing — and
+  # BP47b below re-derives it after the destroy/restore. It is MEASURED to MOVE
+  # there (1 -> 0), which is precisely why the current DB's ROWS must not carry
+  # it: BP52-BP55's persisted ids would otherwise name rows that no longer exist.
   # ⚠ LEG 1 IS THE PRECONDITION, through the PRODUCT's own reader: without it,
-  # "the box is on and there is no root" and "the fire never ran" are only told
+  # "the box is on and there is a root" and "the fire never ran" are only told
   # apart indirectly.
-  # ⚠ THIS CHECK IS THE GAP'S TOMBSTONE AND TWO-PANE ITEM 15 MUST EDIT IT: legs
-  # 2-4 flip (`0`->`1`, `no-root`->`d:0|g:`, `none`->`d:0|g:`) and legs 5-7 re-key
-  # to `d:0|g:x1...`. PLAN item 15's break-list names only BD50/BD51; it must name
-  # these too. A GREEN BP43a after item 15 lands means item 15 did not do its job.
-  check {BP43a (DECLARED GAP, two-pane item 15 closes it) with All-DBs ON there is no design root yet, so R4's never-empty selection cannot hold} \
+  # ⚠ THROUGH `signal_list_all`, WHICH CARRIES ITS OWN 0173 CONTEXT BRACKET, so
+  # the index is read in the TOKEN's engine context and put back — a bare
+  # `xschem raw info` here would report whichever context this file happens to
+  # be sitting in. Answers -1 rather than throwing, and every check below then
+  # names `d:-1|...` and reds by name.
+  proc bp_curidx {tok} {
+    set all {}
+    if {[catch {wviewer::signal_list_all $tok} all]} { return -1 }
+    foreach db $all {
+      if {[wviewer::dget $db cur 0]} { return [wviewer::dget $db idx -1] }
+    }
+    return -1
+  }
+  set bp_cur [bp_curidx $tok]
+  set bp_pfx "d:$bp_cur|"
+  check {BP43a (THE GAP, CLOSED by two-pane item 15) with All-DBs ON every DB has its own header and its own design root, so R4's never-empty selection holds again} \
     [list [pcall ::wviewer::browser_alldbs $tok] \
           [pcall $BPT exists {g:}] [bp_rootid $tok] [bp_sel $BPT] \
           [pcall $BPT exists g:x1] [pcall $BPT exists g:x1.x2] \
           [pcall $BPT exists g:y3]] \
-    [list 1 0 no-root none 1 1 1]
+    [list 1 1 {g:} {g:} 1 1 1]
+  # ⚠ BP43a's OWN NEGATIVE CONTROL, on the same tree, and it is what says the
+  # current DB's ids did NOT move. Without it, legs 2 and 5-7 above are green
+  # both under this design and under one that ALSO minted prefixed copies — and a
+  # duplicated tree is exactly what a half-applied prefix looks like right up to
+  # the point ttk throws. Leg 4 is the positive half: the current DB really does
+  # sit under a header now, so "unprefixed" cannot be "R7 never ran".
+  check {BP43a (ITS NEGATIVE CONTROL) no PREFIXED copy of the current DB exists — and its bare root really is a DB header's child} \
+    [list [pcall $BPT exists "${bp_pfx}g:"] \
+          [pcall $BPT exists "${bp_pfx}g:x1"] \
+          [pcall $BPT exists "${bp_pfx}g:y3"] \
+          [pcall $BPT parent {g:}]] \
+    [list 0 0 0 "d:$bp_cur"]
   pcall ::wviewer::set_plot_dest newstrip $tok
   # TWO-PANE ITEM 14: the three persisted fields depart from their defaults HERE
   # so BP45's snapshot legs and the whole BP47+ restore group assert real
@@ -1545,15 +1585,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::browser_srccur $tok 0
   pcall ::wviewer::browser_sash   $tok 0.35
   set bpw [pcall ::wviewer::browser_width $tok 260]
-  # THE PRE CONTROL. Under item 10 the tree is born ALL-CLOSED, and with All-DBs
-  # on there is not even a root to open, so `none` is the departure point.
-  # Without this leg "g:y3 is open" and "the whole tree is open" are the same
-  # picture, and a collapse that persisted nothing reads identically.
+  # THE PRE CONTROL. Under item 10 the tree is born ALL-CLOSED with exactly one
+  # exception, the design root (M11). TWO-PANE ITEM 15 makes that TWO under
+  # All-DBs — the current DB's header AND its root — because the root R4 selects
+  # would otherwise sit inside a collapsed header where nobody can see it, and
+  # `browser_populate` may not call `see` (spec §4.2, BW53). NOTHING ELSE opens:
+  # the foreign headers stay collapsed, which is what keeps "g:y3 is open" and
+  # "the whole tree is open" different pictures.
   set bp_open0 [bs_open_set $BPT]
   # `g:x1` closed is now the DEFAULT, kept explicit because BP54 needs it stated;
   # `g:y3` OPEN and a NON-ROOT selection are the real departures (see the block
   # header). `g:x1.x2` is chosen so BP54 keeps an ancestor (`g:x1`) for `see` to
   # fight over and BP55 keeps its `{ok x1.x2}` byte-identical.
+  # ⚠⚠ RE-KEYED BY TWO-PANE ITEM 15, AND THESE ARE POKES, NOT CHECKS — which is
+  # exactly why they are dangerous. Through `pcall` a poke at an id that no
+  # longer exists degrades to an `ERR:` STRING that nothing looks at, and
+  # BP43-BP55 would then all assert an unset fixture while still failing for a
+  # reason that reads like a persistence bug. BP43's legs below are what catch
+  # a poke that silently missed.
   pcall $BPT item g:x1 -open 0
   pcall $BPT item g:y3 -open 1
   pcall $BPT selection set {g:x1.x2}
@@ -1570,6 +1619,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # tuple, read back through the STATE DICT, so "the fixture set them" and "the
   # reader can see them" are one claim. `dget` with a `{NO-KEY}` sentinel, never
   # `dict get`, so an absent key is a value and not a throw.
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: leg 1 is no longer `none` (see the pre-control
+  # comment above) and the sel/open ids carry the derived prefix. The open SET
+  # legs now hold THREE ids — the two born open plus the poked `y3` — which is
+  # strictly more evidence than `g:y3` alone: a populate that opened everything
+  # and one that opened only what it should are still different values.
   check {BP43 the non-defaults TOOK: shown/dest/sel/open-set/boxes/sash read back live} \
     [list $bp_open0 \
           [pcall dict get $bs1 shown] [pcall dict get $bs1 dest] \
@@ -1578,7 +1632,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [wviewer::dget $bs1 devint {NO-KEY}] \
           [wviewer::dget $bs1 srccur {NO-KEY}] \
           [wviewer::dget $bs1 sash   {NO-KEY}]] \
-    [list none 1 newstrip g:x1.x2 g:y3 g:y3 1 0 0.35]
+    [list [list "d:$bp_cur" {g:}] 1 newstrip g:x1.x2 \
+          [list "d:$bp_cur" {g:} {g:y3}] \
+          [list "d:$bp_cur" {g:} {g:y3}] 1 0 0.35]
   check {BP43 ...and both bars read back exactly what was typed into them} \
     [list [pcall dict get $bs1 search] [pcall dict get $bs1 filter]] \
     [list {pattern .* syntax regexp case 1 type v alldbs 1} \
@@ -1620,7 +1676,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [dict get $bpg sash] [dict get $bpg devint] [dict get $bpg srccur]] \
     [list 1 $bpw newstrip g:x1.x2 \
           {pattern .* syntax regexp case 1 type v alldbs 1} \
-          {pattern .* syntax regexp case 1 type v} g:y3 present \
+          {pattern .* syntax regexp case 1 type v} \
+          [list "d:$bp_cur" {g:} {g:y3}] present \
           0.35 1 0]
 
   # --- BP46: THE CONTROL FOR THE DESTROY ------------------------------------
@@ -1956,6 +2013,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BP47 ...on a mapped canvas} [viewer_ready $vtop] 1
   update
 
+  # ⚠⚠ THIS IS THE MEASUREMENT THAT DECIDED TWO-PANE ITEM 15's ID SCHEME, AND IT
+  # IS ASSERTED HERE SO NOBODY CAN UNDO THE RULING WITHOUT SEEING IT FAIL.
+  # `browser_tree_state` persists sel/open as RAW IDS. PLAN item 15 asks for the
+  # current DB's rows to be prefixed with `d:<its registry index>|` — and that
+  # index is a property of the ENGINE REGISTRY, not of the design. MEASURED
+  # RIGHT HERE: the fixture snapshotted with TWO raws loaded, where the current
+  # one is slot 1; `restore` brings back ONE, where it is slot 0. Under the
+  # PLAN's scheme every persisted `d:1|g:x1.x2` would name a row that no longer
+  # exists, and the user's selection and open set would silently evaporate —
+  # BP52, BP53, BP54 and BP55 would all go red with no defect in the persistence
+  # code at all. Spec §4.3's "the current DB is ... unprefixed" is what avoids
+  # it, and legs 3-4 are the proof that it did: the SAME bare ids the snapshot
+  # recorded are still in the tree on the other side of a registry renumber.
+  # ⚠ LEGS 1-2 ARE PINNED LITERALS, NOT `$bp_cur`-RELATIVE. A check that only
+  # said "they are equal" would go green precisely when the drift stopped
+  # happening, which is when this check has nothing left to say.
+  set bp_cur2 [bp_curidx $tok]
+  check {BP47b (ITEM 15's ID-SCHEME CONTROL) the current DB's REGISTRY SLOT really does move across a snapshot/restore — and the persisted UNPREFIXED ids survive it anyway} \
+    [list $bp_cur $bp_cur2 \
+          [pcall $BPT exists {g:}] [pcall $BPT exists g:x1.x2]] \
+    [list 1 0 1 1]
+
   # THE WIDGET-STATE MASQUERADE ANSWER: "hidden" and "destroyed" both read 0
   # from bs_packed, so the pair is always asserted together.
   check {BP48 the sidebar came back SHOWN (packed, and really there)} \
@@ -1980,9 +2059,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # [$BPT selection] makes the first two both read {}. Leg 2 states item 10's fact
   # at the RESTORE end: the leaf id is an ASSERTABLE ABSENCE, not a row that
   # merely failed to be selected.
+  # ⚠ RE-KEYED BY TWO-PANE ITEM 15 (R7): the node id carries the current DB's
+  # `d:<idx>|` prefix. Leg 2 is untouched — a LEAF id is an assertable absence
+  # under BOTH spellings, so an unprefixed leaf cannot sneak back in either.
   check {BP52 the tree SELECTION round-tripped, onto a NODE id} \
-    [list [bp_sel $BPT] [pcall $BPT exists {s:v(x1.x2.n1)}]] \
-    [list g:x1.x2 0]
+    [list [bp_sel $BPT] [pcall $BPT exists {s:v(x1.x2.n1)}] \
+          [pcall $BPT exists "${bp_pfx}g:x1.x2"]] \
+    [list g:x1.x2 0 0]
 
   # --- BP53/BP54: the expanded set, and the ORDERING finding ----------------
   # BOTH LEGS, so "everything collapsed" and "everything open" are different
@@ -1996,10 +2079,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # would have dropped from `browser_tree_nodes`. That claim's OWNER is BW52 in
   # test_wave_sigbrowser_panes.tcl, which asserts the node list directly; here it
   # is corroboration from the persistence end, not the only coverage.
+  # ⚠ RESTATED BY TWO-PANE ITEM 15, AND THE THREE-WORLD TABLE ABOVE GAINS ONE
+  # MEMBER: the restored open set now also carries the current DB's design root
+  # `g:`, which the populate opens because it is newly born (M11 / spec §4.2's
+  # visibility rule) and which the persisted set then confirms. The
+  # DISCRIMINATING legs are unchanged — a collapsed `x1` beside an open `y3`.
+  #
+  # ⚠⚠ THE DB HEADER IS **NOT** IN THIS SET, AND THAT IS A DECLARED LIMIT
+  # MEASURED HERE RATHER THAN REASONED ABOUT. `browser_populate` inserts it open
+  # (it is newly born and it is the root's parent), but `browser_tree_apply`
+  # then applies the PERSISTED set and §4.2 rules that the persisted set WINS —
+  # and the persisted set named `d:1`, the slot the current DB occupied when the
+  # snapshot was taken. BP47b measures that slot moving to 0 across this very
+  # restore, so `d:1` matches nothing and `d:0` is closed by the apply pass.
+  # CONSEQUENCE, STATED: after a restore that renumbers the registry, the current
+  # DB's header comes back COLLAPSED, so the restored selection is scrolled out
+  # of sight until the user expands it. It is the LAST piece of state item 15's
+  # unprefixed ids could not make index-independent — the header id is the one id
+  # that must carry the index — and it is one click, not lost work. Fixing it
+  # would mean either overriding §4.2 or teaching persistence about DB identity;
+  # both are larger than R7 and neither is item 15's.
   check {BP53 the COLLAPSE round-tripped, while a sibling node stayed OPEN} \
     [list [pcall $BPT item g:x1 -open] [pcall $BPT item g:y3 -open] \
-          [bs_open_set $BPT]] \
-    [list 0 1 g:y3]
+          [bs_open_set $BPT] \
+          [pcall $BPT item "d:$bp_cur2" -open]] \
+    [list 0 1 [list {g:} {g:y3}] 0]
   # ⚠ THE NON-OBVIOUS ORDERING CLAIM. `$tv see` force-opens EVERY ANCESTOR of
   # the node it scrolls to (browser_reveal's central finding), so revealing the
   # selection AFTER applying the collapse would silently re-expand exactly the
@@ -2031,6 +2135,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ THE NUMBERS PLAN GIVES ITEM 13 (BW53/BW54/BW55) ARE ALREADY SPENT BY ITEM
   # 10 — BW53 is "(SOURCE) the populate path never calls see". Item 13 re-banded
   # onto BW15 + BW68-BW76; BW76 is the standing twin of this check.
+  # ⚠ RE-KEYED BY TWO-PANE ITEM 15: the probe's three ids carry the prefix. The
+  # ORDERING claim and its three expected values are byte-identical, which is the
+  # record that item 15 moved the ids and nothing else about §4.2's ordering.
   check {BP54 the persisted collapse BEATS see's ancestor-expansion} \
     [bp_order_probe $tok $BPT g:x1 {g:x1.x2} {g:y3}] \
     [list 1 0 g:x1.x2]
@@ -2047,6 +2154,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # of the tree, so decision 11's clause is only expressible on a NODE id, and
   # `g:x1.x2` is a group whose id IS the dotted path (settled decision 14), which
   # is why the expected value is byte-identical to the pre-item-10 one.
+  # ⚠ RE-KEYED BY TWO-PANE ITEM 15, AND LEG 2 IS BYTE-IDENTICAL ON PURPOSE:
+  # `browser_id_path` strips the `d:N|` prefix before decoding, so a prefixed
+  # node id resolves to the SAME dotted path. That is what let item 15 leave
+  # `browser_target_path` unedited, and this is where it is measured rather than
+  # asserted in a receipt.
   check {BP55 the RESTORED selection resolves to a hierarchy path (decision 11)} \
     [list [bp_sel $BPT] \
           [pcall ::wviewer::browser_target_path $tok [pcall $BPT selection]]] \

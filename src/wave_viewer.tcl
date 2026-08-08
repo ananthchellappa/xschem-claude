@@ -391,6 +391,15 @@ namespace eval wviewer {
   #     answers `design` when it is empty, so a missing capture degrades to a
   #     named root rather than to no root at all.
   variable browserraw; array set browserraw {}
+  #   browsercurdb($token) = TWO-PANE item 15 (spec R7). `{id d:<idx> label ..}`
+  #     for the CURRENT results database, captured by browser_reload in the SAME
+  #     pass as browserraw and browserdbsigs, for the same reason: with All-DBs
+  #     ticked the current DB needs a header of its own and browser_refresh rides
+  #     both searchbars' key pump, so it must not take a context loan per
+  #     character to learn its own label. An absent or empty entry degrades to
+  #     the flat unlabelled group item 14 shipped — a missing capture costs the
+  #     current DB its header, never a throw.
+  variable browsercurdb; array set browsercurdb {}
   # TWO-PANE item 11: the LOWER pane's four per-token pieces.
   #   browserseaent($token) = the entry snapshot the SEA is drawn from: the
   #     BAR-MATCHED half of browsersigs, class-filtered. ⚠ IT IS A DIFFERENT SET
@@ -712,6 +721,8 @@ proc wviewer::forget {token} {
   variable browserdbsigs
   # TWO-PANE item 10: the current DB's raw path, same rule.
   variable browserraw
+  # TWO-PANE item 15: the current DB's header identity, same rule.
+  variable browsercurdb
   # TWO-PANE item 11: the lower pane's snapshot, its drawn pairs, its selection
   # and its Shift anchor — same rule a fourth time.
   variable browserseaent; variable browsersea
@@ -776,6 +787,7 @@ proc wviewer::forget {token} {
   catch {unset browserrows($token)}
   catch {unset browserdbsigs($token)}
   catch {unset browserraw($token)}
+  catch {unset browsercurdb($token)}
   catch {unset browserseaent($token)}
   catch {unset browsersea($token)}
   catch {unset browserseasel($token)}
@@ -6640,8 +6652,32 @@ proc wviewer::browser_rows_reparent {rows prefix parent} {
 }
 
 # PURE (item 14). Several inventories -> ONE row list. `groups` is a list of
-# {id label entries}; a group whose LABEL is empty is emitted FLAT and
-# UNPREFIXED — that is the CURRENT DB, and it goes first.
+#
+#     {id label entries ?root? ?prefix?}
+#
+# a group whose LABEL is empty is emitted FLAT and UNPREFIXED — that is the
+# CURRENT DB with All-DBs off, and it goes first.
+#
+# ⚠⚠ THE LAST TWO ELEMENTS ARE TWO-PANE ITEM 15 (spec R7 / §4.3) AND BOTH ARE
+# OPTIONAL, so every 3-element call is byte-identical to what item 14 shipped
+# (BD19-BD25c, TP33, TP40, TP41).
+#  * `root` — THIS group's design-root label. Without it there is only the
+#    shared `$root` below, threaded into every group, so every DB's root would
+#    render the CURRENT design's name under a FOREIGN DB's header — the tree
+#    would name the wrong run. Defaults to `$root`, which is what a 3-element
+#    call gets. BD62b.
+#  * `prefix` — supplied ONLY by the current DB, and only as `{}`. Absent, it
+#    defaults to `<id>|`, which is item 14's behaviour. The current DB keeps
+#    UNPREFIXED ids even when R7 puts it under a header, because the prefix is
+#    the DB's REGISTRY INDEX and that is not a property of the design: it moves
+#    when raws are loaded in another order or one is closed, and every persisted
+#    tree id (`browser_tree_state`) would then name a row that no longer exists.
+#    MEASURED in test_wave_sigbrowser_i1315.tcl BP47b, where the index really
+#    does move 1 -> 0 across a snapshot/restore. §4.3's closing sentence rules
+#    the same way ("the current DB is always group 0 ... unprefixed"); only its
+#    "unlabelled" half is superseded by R7.
+#  * `[llength $g] >= 5` rather than `$gpfx ne {}`, because `{}` IS the value the
+#    current DB passes — "absent" and "deliberately empty" must not collapse.
 #
 # ⚠ TWO PROPERTIES THE REST OF THE BROWSER DEPENDS ON, both deliberate:
 #  * the header row's kind is `group`, NOT a new kind. browser_plot_at's
@@ -6650,29 +6686,32 @@ proc wviewer::browser_rows_reparent {rows prefix parent} {
 #    plots its leaves, and item 14 adds no new row vocabulary;
 #  * the current DB's rows are FIRST and UNPREFIXED, so `browser_node_for`'s
 #    hierarchy walk (item 12) still lands on the current DB's nodes: it scans in
-#    row order and breaks on the first exact match.
+#    row order and breaks on the first exact match. TWO-PANE item 15 keeps BOTH
+#    halves — the current DB gets a header, but its rows do not move.
 # A group with NO entries emits NO header: an empty `bd_a.raw (tran)` node would
 # claim a DB matched when it did not.
 #
-# `root` (item 2, OPTIONAL) is threaded into EVERY group, so each DB gets its
-# own design root: the current DB's stays `g:`, and a foreign one goes through
-# browser_rows_reparent, which re-keys it to `d:N|g:` and re-parents it (its
-# parent is {}) onto the DB header. That is what lets R7 give one design root
-# PER DB without an id collision — and a shared `g:` THROWS in ttk
-# (`Item ... already exists`), on the searchbar's <KeyRelease> pump, i.e.
-# bgerror, i.e. a modal dialog under X.
+# `root` (item 2, OPTIONAL) is the FALLBACK design-root label for a group that
+# names none of its own, so each DB gets its own design root: the current DB's
+# stays `g:`, and a foreign one goes through browser_rows_reparent, which re-keys
+# it to `d:N|g:` and re-parents it (its parent is {}) onto the DB header. That is
+# what lets R7 give one design root PER DB without an id collision — and a shared
+# `g:` THROWS in ttk (`Item ... already exists`), on the searchbar's <KeyRelease>
+# pump, i.e. bgerror, i.e. a modal dialog under X.
 proc wviewer::browser_rows_multi {groups {root {}}} {
   set rows {}
   foreach g $groups {
-    lassign $g gid glab gent
+    lassign $g gid glab gent grt gpfx
+    if {$grt eq {}} { set grt $root }
     if {$glab eq {}} {
-      foreach r [wviewer::browser_rows $gent $root] { lappend rows $r }
+      foreach r [wviewer::browser_rows $gent $grt] { lappend rows $r }
       continue
     }
     if {![llength $gent]} { continue }
+    if {[llength $g] < 5} { set gpfx "$gid|" }
     lappend rows [dict create id $gid parent {} text $glab kind group name {}]
     foreach r [wviewer::browser_rows_reparent \
-                 [wviewer::browser_rows $gent $root] "$gid|" $gid] {
+                 [wviewer::browser_rows $gent $grt] $gpfx $gid] {
       lappend rows $r
     }
   }
@@ -8274,6 +8313,7 @@ proc wviewer::browser_reload {token} {
   variable browsersigs
   variable browserdbsigs
   variable browserraw
+  variable browsercurdb
   if {![dict exists $windows $token]} { return 0 }
   set names {}
   foreach e [wviewer::signal_list $token] { lappend names [dict get $e name] }
@@ -8289,20 +8329,33 @@ proc wviewer::browser_reload {token} {
   # root text. It is captured HERE, in the one proc that already holds the 0173
   # context loan, rather than read in `browser_refresh`: refresh rides both
   # searchbars' <KeyRelease> pump and must not take a loan per character.
+  # TWO-PANE item 15 (spec R7): the current DB's HEADER IDENTITY, captured in the
+  # very same pass and at the same zero extra cost. With All-DBs ticked the
+  # current DB is a top-level node like every other DB, and it needs the same two
+  # facts a foreign one does — the `d:<registry idx>` id and the label. Its
+  # SIGNAL NAMES are deliberately NOT captured here: those still come from
+  # `signal_list` above, which stays the authority for the current DB (decision
+  # 13, BD07), and a second copy could disagree with it.
   set curraw {}
+  set curdb {}
   catch {
     foreach db [wviewer::signal_list_all $token] {
       if {[wviewer::dget $db cur 0]} {
         set curraw [wviewer::dget $db path {}]
+        set curdb [dict create \
+          id    "d:[wviewer::dget $db idx {}]" \
+          label [wviewer::dget $db label {}]]
         continue
       }
       lappend foreign [dict create \
         id    "d:[wviewer::dget $db idx {}]" \
         label [wviewer::dget $db label {}] \
+        path  [wviewer::dget $db path {}] \
         names [wviewer::dget $db names {}]]
     }
   }
   set browserraw($token) $curraw
+  set browsercurdb($token) $curdb
   set browserdbsigs($token) $foreign
   return [llength $names]
 }
@@ -8417,6 +8470,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browserrows
   variable browserdbsigs
   variable browserraw
+  variable browsercurdb
   variable browserseaent
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
@@ -8547,27 +8601,52 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # browser_sea_refresh — mid-refresh. It must find THIS refresh's snapshot, not
   # the previous one's.
   set browserseaent($token) $seaent
-  # R2: the tree has exactly one root node, named for the design.
+  # R2: the tree has exactly one root node per database, named for its design.
   #
-  # ⚠ NO ROOT WHILE ALL-DBs IS ON. With the box ticked the tree's top level is
-  # the per-DB headers (R7), and giving each DB its own design root is ITEM 15's
-  # change, with its own reds (BD50/BD51). Passing the root here would land item
-  # 15's behaviour inside item 10 and make the reds unattributable.
   # ⚠ ONE READ OF THE All-DBs CHECKBOX, HELD IN A LOCAL AND USED TWICE. Its
   # accessor is pinned by BD06 as "defined once and CALLED once, FILE-WIDE" —
   # BD06 counts the bare name over the whole source, so even naming it in a
   # comment reds it. The rule exists so a scoping sabotage has exactly one place
   # to land, and one place to look when the scope is wrong.
   set alldbs [wviewer::browser_alldbs $token]
-  set root {}
-  if {!$alldbs} {
-    set rp {}
-    if {[info exists browserraw($token)]} { set rp $browserraw($token) }
-    set root [wviewer::browser_root_label $rp]
+  set rp {}
+  if {[info exists browserraw($token)]} { set rp $browserraw($token) }
+  set root [wviewer::browser_root_label $rp]
+  # --- TWO-PANE item 15 (spec R7 / §4.3): THE CURRENT DB GETS A HEADER TOO ----
+  #
+  # With the box OFF, group 0 stays flat and unlabelled and the row list is
+  # byte-identical to what item 9 shipped (BD19's identity, BW52's node set).
+  # With it ON, group 0 gains its own `d:<registry idx>` header and its own
+  # design root, so the tree's TOP LEVEL is the per-DB headers — R7's sentence.
+  #
+  # ⚠⚠ THE FIFTH TUPLE ELEMENT IS AN EXPLICIT EMPTY PREFIX, AND IT IS THE WHOLE
+  # RULING. The current DB's ROWS keep their unprefixed ids (`g:`, `g:x1`,
+  # `s:v(n)`) even under a header, because the prefix would be the DB's REGISTRY
+  # INDEX — which moves when raws load in another order or one is closed. Every
+  # id `browser_tree_state` persisted would then name a row that no longer
+  # exists and the user's selection and open set would silently evaporate.
+  # MEASURED: test_wave_sigbrowser_i1315.tcl BP47b watches that index move 1 -> 0
+  # across one snapshot/restore. §4.3 rules the same way.
+  #
+  # ⚠⚠ THE HEADER FOLLOWS THE CHECKBOX ALONE, NEVER "how many foreign DBs
+  # matched". Gating it on the foreign count would make it appear and disappear
+  # as the user types — a foreign DB that stops matching emits no header — and
+  # every current-DB row would be re-parented mid-keystroke, destroying the open
+  # set. That is §7.1's flicker one level up. BD70c pins it.
+  #
+  # A missing or empty capture degrades to the flat unlabelled group: no header,
+  # no throw.
+  set g0id {} ; set g0lab {}
+  if {$alldbs && [info exists browsercurdb($token)]} {
+    set g0id  [wviewer::dget $browsercurdb($token) id {}]
+    set g0lab [wviewer::dget $browsercurdb($token) label {}]
+    if {$g0id eq {} || $g0lab eq {}} { set g0id {} ; set g0lab {} }
   }
-  # item 14: the CURRENT DB is always group 0, flat and unprefixed (label {}),
-  # so with the box off the row list is byte-identical to what item 9 shipped.
-  set groups [list [list {} {} $entries]]
+  if {$g0id ne {}} {
+    set groups [list [list $g0id $g0lab $entries $root {}]]
+  } else {
+    set groups [list [list {} {} $entries $root]]
+  }
   set extra 0
   set ndbs 0
   if {$alldbs} {
@@ -8607,7 +8686,15 @@ proc wviewer::browser_refresh {token {reload 0}} {
       # the foreign inventory beside it. BD58 is that check, on the live All-DBs
       # fixture, because this is the only place it is reachable.
       set dent [wviewer::browser_class_filter $dent $devint $srccur]
-      lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] $dent]
+      # ⚠ TWO-PANE item 15: the FOURTH element is THIS DB's own design-root
+      # label, derived from THIS DB's own raw path. Left off, every DB's root
+      # would render the CURRENT design's name under a foreign DB's header — the
+      # tree would say which run a node came from and be wrong. A seeded
+      # inventory with no `path` key floors at `design` (BD58's fixture) rather
+      # than borrowing the current design's name.
+      lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] \
+                        $dent \
+                        [wviewer::browser_root_label [wviewer::dget $db path {}]]]
       incr extra [llength $dnames]
       incr ndbs
     }
@@ -8652,9 +8739,13 @@ proc wviewer::browser_refresh {token {reload 0}} {
 #    lower pane now. `browserrows($token)` still holds the FULL list, so
 #    browser_leaf_names, browser_plot_ids, browser_menu_ids, browser_target_path
 #    and browser_descend_to are untouched and R6's recursive plot still works.
-#  * R1/M11 — COLLAPSED BY DEFAULT, except the design root. "Collapsed by
-#    default" taken literally including the root renders the whole tree as one
-#    line, which is not navigation.
+#  * R1/M11 — COLLAPSED BY DEFAULT, except the design root — and, under R7,
+#    except the DB header that root now hangs from (TWO-PANE item 15; see the
+#    ⚠ block on the open rule below). "Collapsed by default" taken literally
+#    including the root renders the whole tree as one line, which is not
+#    navigation. ⚠ SPEC §4.1 SAYS "Inserted closed (-open 0) — R1. This is the
+#    single change in browser_populate"; item 15 makes it two, and the receipt
+#    records the divergence rather than the code hiding it.
 #  * R4 — THE SELECTION IS NEVER EMPTY. The previous selection is restored when
 #    it survived, otherwise the design root is selected. ⚠ AND IT IS NARROWED TO
 #    ONE ID HERE: `-selectmode browse` gates only ttk's CLASS BINDINGS
@@ -8686,16 +8777,43 @@ proc wviewer::browser_populate {tv rows} {
       lappend wasopen $id
     }
   }
-  set first [expr {![llength [wviewer::browser_tree_nodes $tv]]}]
+  set existed [wviewer::browser_tree_nodes $tv]
   $tv delete [$tv children {}]
   set nodes [wviewer::browser_tree_rows $rows]
   set rootid [wviewer::browser_root_id $rows]
+  # --- TWO-PANE item 15: THE SECOND ROW THAT IS BORN OPEN --------------------
+  #
+  # M11 opens the design root, or the whole tree renders as one line. Under R7
+  # that root is a DB HEADER's child, so opening it alone leaves R4's selected
+  # node inside a collapsed parent where nobody can see it — and `see`, which
+  # would scroll to it, is forbidden here (spec §4.2, BW53). So the root's own
+  # parent is born open too, and ONLY the current DB's: a foreign header stays
+  # collapsed (BD70b's third leg).
+  #
+  # ⚠⚠ "BORN" IS THE WHOLE RULE, AND IT REPLACES `$first` RATHER THAN JOINING
+  # IT. `$first` meant "the tree was empty", which is FALSE on the populate that
+  # matters most: ticking the All-DBs box re-shapes an already-drawn tree, so
+  # under `$first` the header and root would arrive collapsed and R4's selection
+  # would be invisible on the one gesture that creates it. "Newly born" — the id
+  # was not in the tree a moment ago — is a strict superset of `$first` (nothing
+  # existed, so everything is newly born) and leaves item 10's carry-over
+  # untouched: a row that WAS there keeps whatever the user did to it.
+  #
+  # That is also R5. "The tree never auto-opens on a search" is what a rule of
+  # "open the current header every populate" would break — every keystroke would
+  # re-expand a header the user had just collapsed. BD69 is that check.
+  set rootpar {}
+  foreach r $nodes {
+    if {[dict get $r id] eq $rootid} { set rootpar [dict get $r parent] ; break }
+  }
   foreach r $nodes {
     set id [dict get $r id]
     set op 0
-    if {$first} {
-      if {$id eq $rootid} { set op 1 }
-    } elseif {[lsearch -exact $wasopen $id] >= 0} {
+    if {[lsearch -exact $wasopen $id] >= 0} {
+      set op 1
+    } elseif {[lsearch -exact $existed $id] < 0 &&
+              ($id eq $rootid ||
+               ($rootpar ne {} && $id eq $rootpar))} {
       set op 1
     }
     $tv insert [dict get $r parent] end -id $id \

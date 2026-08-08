@@ -36,6 +36,14 @@
 #                                      item rests on, and pinning them on the
 #                                      arm that always completes is deliberate
 #   BD40-BD59  REAL viewer + REAL raws Tk/X only
+#   BD60-BD66b TWO-PANE item 15 (R7), PURE Tcl algebra   both arms
+#   BD67-BD70d TWO-PANE item 15 (R7), the CALLER + tree  Tk/X only
+#
+# ⚠ TWO-PANE ITEM 15 LIVES IN THIS FILE, not in `_i1315.tcl`, because R7's tree
+# shape is only observable on a fixture holding TWO live raws — which is this
+# file's whole footprint and nobody else's. `_i1315.tcl` owns the PERSISTENCE
+# half (BP43a and the BP4x/BP5x re-keys); the two halves are cross-referenced.
+# NEXT FREE IN THIS FILE: BD71.
 #
 # ⚠ THE FOOTPRINT STATEMENT FOR THIS FILE. The X group holds ONE viewer, TWO
 # hand-written 3-point ASCII raws and NO DESIGN WINDOW — no `xschem load` of a
@@ -155,6 +163,67 @@ proc bd_parent_text {rows id} {
     if {[dict get $r id] eq $par} { return [dict get $r text] }
   }
   return {DANGLING-PARENT}
+}
+
+# --- TWO-PANE ITEM 15's row-model readers ------------------------------------
+# Same rule as bd_parent_text above, one level up: every one of these answers a
+# STABLE SENTINEL rather than throwing or returning {}, because "the row is
+# gone" and "the row is there and its parent is top level" must never both read
+# as the empty string. TWO-PANE item 15 moves whole id families at once
+# (`s:v(beta)` -> `d:1|s:v(beta)`), so a reader that collapses absence into {}
+# would let a HALF-DONE re-key read as a correct one.
+proc bd_id_of {rows id} {
+  foreach r $rows { if {[dict get $r id] eq $id} { return $id } }
+  return {NO-SUCH-ROW}
+}
+proc bd_parent_of {rows id} {
+  foreach r $rows {
+    if {[dict get $r id] ne $id} { continue }
+    set p [dict get $r parent]
+    return [expr {$p eq {} ? {TOP-LEVEL} : $p}]
+  }
+  return {NO-SUCH-ROW}
+}
+proc bd_text_of {rows id} {
+  foreach r $rows { if {[dict get $r id] eq $id} { return [dict get $r text] } }
+  return {NO-SUCH-ROW}
+}
+proc bd_has {rows id} {
+  foreach r $rows { if {[dict get $r id] eq $id} { return 1 } }
+  return 0
+}
+# The text of the row TWO levels up. TWO-PANE item 15 inserts a design root
+# BETWEEN a DB header and its leaves, so the leg that used to read the header's
+# text off `bd_parent_text` now reads the ROOT's — and the header claim has to
+# be restated one level higher rather than deleted.
+proc bd_grandparent_text {rows id} {
+  set par {NO-SUCH-ROW}
+  foreach r $rows {
+    if {[dict get $r id] eq $id} { set par [dict get $r parent] ; break }
+  }
+  if {$par eq {NO-SUCH-ROW}} { return {NO-SUCH-ROW} }
+  if {$par eq {}} { return {TOP-LEVEL} }
+  return [bd_parent_text $rows $par]
+}
+# `-open` off the WIDGET, with bd_tv_parent's three sentinels: `no-tree` /
+# `absent` / 0 / 1. A bare `$tv item $id -open` THROWS on a missing id, which
+# would abort the file instead of failing one check.
+proc bd_tv_open {tv id} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  if {[catch {$tv exists $id} ex]}         { return no-tree }
+  if {!$ex}                                { return absent }
+  if {[catch {$tv item $id -open} o]}      { return no-tree }
+  if {[string is boolean -strict $o]} { return [expr {$o ? 1 : 0}] }
+  return $o
+}
+# The tree's SELECTION as three distinguishable answers — `{}` from a bare
+# `$tv selection` is BOTH "nothing selected" and "the widget is gone", and R4's
+# whole claim is that the first of those never happens.
+proc bd_tv_sel {tv} {
+  if {[catch {winfo exists $tv} e] || !$e} { return no-tree }
+  if {[catch {$tv selection} s]}           { return no-tree }
+  if {![llength $s]}                       { return none }
+  return $s
 }
 
 # Every row id whose `name` is $n, in row order.
@@ -468,6 +537,162 @@ check {BD25c the header text is unreachable from any hier_split output} \
   [list 2 1]
 
 # ============================================================================
+# BD60-BD66b — TWO-PANE ITEM 15 (spec R7 / §4.3), the PURE half. BOTH ARMS.
+#
+# R7: with the All-DBs box ticked the tree's TOP LEVEL is the per-DB headers —
+# the CURRENT DB included — and EACH DB gets its OWN design root under its own
+# header. Item 14 shipped the headers for the FOREIGN DBs only, with the current
+# DB emitted flat and NO design root anywhere (BD48c is that state's tombstone).
+#
+# ⚠⚠ THE CURRENT DB GETS A HEADER BUT KEEPS ITS UNPREFIXED IDS, AND THAT SPLIT
+# IS A MEASUREMENT, NOT A PREFERENCE. PLAN item 15 asks for `d:0|` on group 0
+# too. Spec §4.3's own closing sentence rules the other way — "the current DB is
+# always group 0, unlabelled and unprefixed, and that invariant is what makes
+# 'current' well-defined" — and only the *unlabelled* half can survive R7. The
+# measurement settles it: the prefix is the DB's REGISTRY INDEX, which is not a
+# property of the design. `test_wave_sigbrowser_i1315.tcl`'s restore fixture
+# MEASURES that index moving from 1 to 0 across a snapshot/restore (two raws in,
+# one raw back), so every persisted `d:1|g:x1.x2` would name a row that no longer
+# exists and the user's selection and open set would silently evaporate. Keeping
+# the current DB unprefixed makes its persisted ids index-INDEPENDENT, and
+# BP47b/BP52-BP55 over there are the checks that say so. R7's letter — "per-DB
+# headers become the tree's top level, above each DB's design root" — is
+# satisfied either way; BD68 is the check that says it.
+#
+# ⚠⚠ SO THE HELPER GAINS TWO OPTIONAL TUPLE ELEMENTS, both additive, and every
+# 3-element call stays byte-identical (BD19-BD25c here, TP33/TP40/TP41 in
+# test_wave_sigbrowser_2pane.tcl):
+#     {gid glab entries ?root? ?prefix?}
+#   * `root` — that group's OWN design-root label. PLAN item 15 says the helper
+#     is unchanged and then prescribes a BD50 whose parent row reads `bd_a`, the
+#     FOREIGN design's name. The unchanged helper CANNOT produce that: it threads
+#     ONE root string into every group, so every DB's root would render `bd_b`,
+#     the CURRENT design's name, under a `bd_a.raw (tran)` header — a
+#     user-visible lie about which run a node came from. BD62b is that leg.
+#   * `prefix` — supplied ONLY by the current DB, and only as `{}`. Absent, it
+#     defaults to `$gid|`, which is exactly what item 14 shipped and what TP41's
+#     `tp_multi2` (a 3-element all-labelled list) still measures.
+#
+# ⚠ THE SILENT-GREEN TRAP, NAMED (PLAN §3.2). BD19/BD21/BD22/BD25 call the helper
+# DIRECTLY with a `{}`-labelled group and therefore stay green on a code path
+# production no longer takes. Their staying green proves nothing about item 15 —
+# BD67 in the X block is the check that watches the CALLER.
+#
+# ⚠ THE PURE FIXTURE NUMBERS ITS OWN GROUPS: the CURRENT DB is `d:0` and the
+# foreign one `d:1`, so these ids are self-contained and readable. The LIVE i14
+# fixture is the other way round (BD31 pins `cur` == registry slot 1), which is
+# why every X check below takes its header id from the ENGINE instead of
+# hard-coding one. The PLAN's literals assume `d:0` is the foreign DB in both
+# places; measured, that is true in neither.
+# ============================================================================
+
+# THE ROOTED MULTI LIST, built the way browser_refresh will build it: every
+# group labelled and carrying ITS OWN root label, the CURRENT one (group 0) also
+# carrying an explicit EMPTY prefix, and NO shared `$root` argument at all.
+set bd_rooted [wviewer::browser_rows_multi \
+  [list [list {d:0} {bd_b.raw (tran)} $bd_ents  {bd_b} {}] \
+        [list {d:1} {bd_a.raw (tran)} $bd_fents {bd_a}]]]
+set bd_ids {}
+foreach r $bd_rooted { lappend bd_ids [dict get $r id] }
+
+# ⚠ LEG 2 IS THE ANTI-VACUITY LEG AND IT IS WHY THIS IS NOT BD19 TWICE. Leg 1
+# alone is GREEN BEFORE ITEM 15 EXISTS (it is BD19's own claim), so on its own it
+# is a check that cannot fail in the direction this item moves. Leg 2 is red
+# until the per-group root lands. Together they are the "the new argument was
+# made MANDATORY" detector: rooting every group unconditionally reds leg 1 while
+# leaving leg 2 green, and that inversion is a signature no single leg has.
+check {BD60 (PURE) the UNLABELLED arm is still browser_rows byte-for-byte, and a group's OWN root is honoured} \
+  [list [expr {[wviewer::browser_rows_multi [list [list {} {} $bd_ents]]] eq
+               [wviewer::browser_rows $bd_ents]}] \
+        [bd_text_of $bd_rooted {d:1|g:}]] \
+  [list 1 bd_a]
+
+# The single-group rooted shape, both ways of asking for it. Legs 1-3 are item
+# 2's shipped `$root` argument (green before this item); LEG 4 is the new one —
+# the SAME list must come out when the root arrives as the group's own 4th
+# element instead. Without leg 4 this check is green on the old code.
+set bd_one  [wviewer::browser_rows_multi [list [list {} {} $bd_ents]] bd_b]
+set bd_one2 [wviewer::browser_rows_multi [list [list {} {} $bd_ents bd_b]]]
+check {BD61 (PURE) a ROOTED single group: the root is FIRST, unprefixed and kind group — and a per-group root builds the identical list} \
+  [list [dict get [lindex $bd_one 0] id] [dict get [lindex $bd_one 0] kind] \
+        [dict get [lindex $bd_one 1] parent] \
+        [expr {$bd_one eq $bd_one2}]] \
+  [list {g:} group {g:} 1]
+
+# R7's own sentence: each DB gets its OWN design root, under its OWN header —
+# the current DB included. LEG 5 IS THE ONE THAT SEPARATES THIS DESIGN FROM THE
+# PLAN's: the current DB's root is the BARE `g:`, so `d:0|g:` must NOT exist. A
+# prefixed current DB would satisfy legs 1-4 and fail here, and that is exactly
+# the difference the persisted-id measurement forced (see the block header).
+check {BD62 (PURE) each DB gets its OWN design root under its OWN header — the FOREIGN one prefixed, the CURRENT one bare} \
+  [list [bd_id_of $bd_rooted {d:1|g:}] [bd_parent_of $bd_rooted {d:1|g:}] \
+        [bd_id_of $bd_rooted {g:}]     [bd_parent_of $bd_rooted {g:}] \
+        [bd_has   $bd_rooted {d:0|g:}]] \
+  [list {d:1|g:} {d:1} {g:} {d:0} 0]
+# ⚠⚠ THE LEG THE PLAN'S OWN BREAK-LIST IMPLIES AND ITS "no helper change" FORBIDS.
+# A shared root string gives BOTH roots the text `bd_b` — the tree would then say
+# `bd_a.raw (tran)` > `bd_b` > `v(alpha)`, naming the wrong run. Leg 3 is the
+# grandparent, so "the root took the header's place" and "the root was inserted
+# UNDER the header" are different values here.
+check {BD62b (PURE) each root carries ITS OWN design's name, and the header is still one level above it} \
+  [list [bd_text_of $bd_rooted {d:1|g:}] [bd_text_of $bd_rooted {g:}] \
+        [bd_grandparent_text $bd_rooted {d:1|s:v(alpha)}] \
+        [bd_parent_text      $bd_rooted {d:1|s:v(alpha)}]] \
+  [list bd_a bd_b {bd_a.raw (tran)} bd_a]
+
+# BD23 restated one level up: a header must still answer for every name beneath
+# it now that a root sits in between. Leg 2 asks the ROOT the same question, so
+# "the header reaches through" and "the root holds them" are asserted together.
+check {BD63 (PURE) browser_leaf_names on a DB HEADER reaches THROUGH its design root} \
+  [list [wviewer::browser_leaf_names $bd_rooted {d:1}] \
+        [wviewer::browser_leaf_names $bd_rooted {d:1|g:}]] \
+  [list {time v(alpha) v(shared)} {time v(alpha) v(shared)}]
+
+# ⚠ A SHARED `g:` THROWS IN ttk (`Item g: already exists`) on the searchbar's
+# <KeyRelease> pump — i.e. bgerror, i.e. a modal dialog under X. Leg 2 is the
+# count, because "every id is unique" is also true of a row list with no rows.
+check {BD64 (PURE) every id in a rooted multi list is UNIQUE, and there are the ten rows there should be} \
+  [list [expr {[llength [lsort -unique $bd_ids]] == [llength $bd_ids]}] \
+        [llength $bd_ids]] \
+  [list 1 10]
+
+# BD24b one level up: an empty group emits no header AND no root. Leg 3 is the
+# positive control on the same list — the non-empty group DID get its root, so
+# "the empty one was suppressed" cannot be "roots were never emitted".
+set bd_empty [wviewer::browser_rows_multi \
+  [list [list {d:0} {bd_b.raw (tran)} $bd_ents {bd_b} {}] \
+        [list {d:1} {bd_a.raw (tran)} {}       {bd_a}]]]
+check {BD65 (PURE) a group with zero entries emits NEITHER a header NOR a root} \
+  [list [bd_has $bd_empty {d:1}] [bd_has $bd_empty {d:1|g:}] \
+        [bd_has $bd_empty {d:0}] [bd_has $bd_empty {g:}]] \
+  [list 0 0 1 1]
+
+# BD25 restated for R7's tree. The current DB is no longer top-level, so the walk
+# MUST be seeded with browser_root_id — which is exactly what browser_show_path
+# passes (item 8). The NEGATIVE leg keeps BD25b's claim: a foreign-only node is
+# still not reachable from the current DB's root.
+set bd_hrooted [wviewer::browser_rows_multi \
+  [list [list {d:0} {bd_b.raw (tran)} $bd_h1 {bd_b} {}] \
+        [list {d:1} {bd_a.raw (tran)} $bd_h2 {bd_a}]]]
+check {BD66 (PURE) browser_node_for seeded at the CURRENT DB's root lands on the CURRENT DB's node, and a foreign-only node stays unreachable} \
+  [list [wviewer::browser_node_for $bd_hrooted {x1} \
+           [wviewer::browser_root_id $bd_hrooted]] \
+        [wviewer::browser_node_for $bd_hrooted {y9} \
+           [wviewer::browser_root_id $bd_hrooted]]] \
+  [list {g:x1 1} {{} 0}]
+# ⚠⚠ LEG 3 IS THE ANTI-VACUITY LEG AND IT IS WHY THIS IS NOT "the root id never
+# changed". A PREFIXED foreign root really is in the list; `browser_root_id` has
+# to walk past it and answer the CURRENT DB's bare one, which leg 4 then shows
+# is genuinely nested under a DB header rather than sitting at top level as it
+# did before R7. Leg 2 is why `browser_target_path` needed no edit at all.
+check {BD66b (PURE) browser_root_id answers the CURRENT DB's BARE root even though a prefixed foreign root exists beside it, and that root is now a header's child} \
+  [list [wviewer::browser_root_id $bd_rooted] \
+        [wviewer::browser_id_path [wviewer::browser_root_id $bd_rooted]] \
+        [bd_has $bd_rooted {d:1|g:}] \
+        [bd_parent_of $bd_rooted [wviewer::browser_root_id $bd_rooted]]] \
+  [list {g:} {} 1 {d:0}]
+
+# ============================================================================
 # BD30-BD36 — THE ENGINE CONTRACT, BOTH ARMS. Two real raws in the CURRENT
 # context, no viewer, no Tk. This is the mechanism signal_list_all is built on
 # (`raw info` -> `raw switch <n>` -> `raw list` -> switch back); pinning it on
@@ -641,6 +866,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BD45c (FIXTURE) the current DB is restored to B for the tree checks} \
     [pcall xschem raw rawfile] $bdB
 
+  # --- TWO-PANE ITEM 15: THE PREFIX, TAKEN FROM THE ENGINE ------------------
+  # ⚠⚠ NOT FROM `browser_root_id`, AND NOT HARD-CODED. R7 gives the CURRENT DB a
+  # header of its own, `d:<its registry index>`, and in THIS fixture the current
+  # DB is slot 1 (B was read second — BD31/BD31b/BD43 all pin it), so every
+  # literal PLAN item 15 writes as `d:0` is the FOREIGN DB here. Deriving the id
+  # from `rawinfo_parse` keeps the checks reading an INDEPENDENT source rather
+  # than the proc under test; BD67's third leg asserts the derived index itself,
+  # so a fixture that quietly reorders its raws FAILS LOUDLY instead of
+  # re-deriving a wrong id and going green on it.
+  # ⚠ `$bd_P` IS THE SPELLING THAT MUST NEVER APPEAR. The current DB's ROWS stay
+  # UNPREFIXED (spec §4.3); only its HEADER carries the registry index. Several
+  # checks below assert `${bd_P}...` rows are ABSENT, which is what stops the
+  # PLAN's prefix-everything design landing here unnoticed.
+  set bd_cur [dict get [wviewer::rawinfo_parse [pcall xschem raw info]] cur]
+  set bd_H "d:$bd_cur"
+  set bd_P "d:$bd_cur|"
+
   # --- the tree, box OFF: the PLAN's negative and its two controls -----------
   proc bd_rows {tok} { return $::wviewer::browserrows($tok) }
   check {BD46 (FIXTURE) a refresh with the box OFF succeeds} \
@@ -683,42 +925,88 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [bd_tv_text $BVF.pw.tvf.tv {g:}] \
           [bd_parent_text [bd_rows $tok] {s:v(beta)}]] \
     [list {g:} {g:} bd_b bd_b]
+  # ⚠⚠ A CAPTURE, NOT A CHECK, AND THE RED RUN IS WHY. Asked as its own check
+  # here — "box OFF: the top level is the single design root" — it PASSED BEFORE
+  # ITEM 15 EXISTED, because it is item 10's shipped shape. A control that cannot
+  # fail in the direction the item moves is not evidence; it becomes evidence
+  # only when it sits in the SAME TUPLE as the value it is a control for. So it
+  # is captured here and asserted as BD68's first leg, below.
+  set bd_top_off [pcall $BVF.pw.tvf.tv children {}]
   set bd_status_off [$BVF.ph cget -text]
 
   # --- the tree, box ON: THE POSITIVE ---------------------------------------
   set ::wviewer::sballdb($BSB) 1
-  check {BD48 (THE POSITIVE) box ON: v(alpha), present ONLY in the other DB, appears AND its parent row NAMES ITS SOURCE} \
+  # ⚠ RESTATED BY TWO-PANE ITEM 15 (R7): the DB header is no longer the leaf's
+  # PARENT — that DB's own design root is, and the header is one level above it.
+  # Leg 3 therefore moves to `bd_a` and leg 4 is NEW, carrying the old claim at
+  # its new depth. Deleting leg 3 would have thrown away the only assertion that
+  # a foreign leaf is labelled with its SOURCE at all.
+  check {BD48 (THE POSITIVE) box ON: v(alpha), present ONLY in the other DB, appears under that DB's OWN design root, and its DB header is one level above that} \
     [list [pcall ::wviewer::browser_refresh $tok] \
           [bd_ids_for [bd_rows $tok] {v(alpha)}] \
-          [bd_parent_text [bd_rows $tok] {d:0|s:v(alpha)}]] \
-    [list 1 {d:0|s:v(alpha)} {bd_a.raw (tran)}]
-  # the current DB is not demoted by the box: its rows stay top-level.
-  check {BD49 box ON: the CURRENT DB's rows stay top-level and unprefixed} \
+          [bd_parent_text      [bd_rows $tok] {d:0|s:v(alpha)}] \
+          [bd_grandparent_text [bd_rows $tok] {d:0|s:v(alpha)}]] \
+    [list 1 {d:0|s:v(alpha)} bd_a {bd_a.raw (tran)}]
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 15, AND THE TITLE IS REWRITTEN RATHER THAN
+  # RE-VALUED, BECAUSE HALF THE INVARIANT IS INVERTED AND HALF IS LOAD-BEARING.
+  # Item 14's claim was "the current DB is not demoted by the box: its rows stay
+  # TOP-LEVEL and UNPREFIXED". R7 kills the first half — the current DB gets a
+  # header and a design root of its own, so its rows are two levels down — and
+  # spec §4.3 keeps the second: the ids stay UNPREFIXED, which is what makes a
+  # persisted selection survive the DB registry being renumbered (see the block
+  # header for the measurement). A check whose title still promised "top-level"
+  # would be a lie; one that quietly re-keyed the ids would hide the ruling.
+  # ⚠ LEG 5 IS THE NEGATIVE THAT SEPARATES THIS FROM THE PLAN's DESIGN: the
+  # PREFIXED spelling of the same row must NOT exist.
+  # ⚠ LEG 4 WAS PREDICTED AS ONE ID AND MEASURED AS TWO, AND THE MEASUREMENT IS
+  # THE BETTER LEG. `time` is in BOTH fixture raws, so it resolves to the current
+  # DB's UNPREFIXED id and the foreign DB's PREFIXED one — the two id schemes
+  # side by side on one name, in row order, which is exactly the ruling this
+  # check exists to state. The receipt records the corrected prediction.
+  check {BD49 box ON: the CURRENT DB is under a header of its OWN too — but its ids stay UNPREFIXED and hang off its own bare design root (R7 inverts item 14's top-level half; §4.3 keeps the unprefixed half)} \
     [list [bd_ids_for [bd_rows $tok] {v(beta)}] \
-          [bd_parent_text [bd_rows $tok] {s:v(beta)}]] \
-    [list {s:v(beta)} {TOP-LEVEL}]
+          [bd_parent_text      [bd_rows $tok] {s:v(beta)}] \
+          [bd_grandparent_text [bd_rows $tok] {s:v(beta)}] \
+          [bd_ids_for [bd_rows $tok] {time}] \
+          [bd_has [bd_rows $tok] "${bd_P}s:v(beta)"]] \
+    [list {s:v(beta)} bd_b {bd_b.raw (tran)} [list {s:time} {d:0|s:time}] 0]
   # a name in BOTH DBs shows up ONCE PER DB — the compare-two-runs case.
-  check {BD50 box ON: v(shared) appears twice, once under each DB} \
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: the two ids are unchanged (the current DB's
+  # stays bare — §4.3), but each leaf's parent is now ITS OWN DB's design root.
+  # LEG 3 IS WHAT MAKES THIS CHECK SAY THE TWO COPIES CAME FROM DIFFERENT RUNS:
+  # two roots reading the same design name would be the shared-root defect the
+  # PLAN's "the helper is unchanged" clause would have shipped, and BD62b is its
+  # pure twin.
+  check {BD50 box ON: v(shared) appears twice, once under each DB — and each copy sits under ITS OWN design root, named for ITS OWN run} \
     [list [bd_ids_for [bd_rows $tok] {v(shared)}] \
-          [bd_parent_text [bd_rows $tok] {d:0|s:v(shared)}]] \
-    [list {s:v(shared) d:0|s:v(shared)} {bd_a.raw (tran)}]
+          [bd_parent_text [bd_rows $tok] {d:0|s:v(shared)}] \
+          [bd_parent_text [bd_rows $tok] {s:v(shared)}]] \
+    [list [list {s:v(shared)} {d:0|s:v(shared)}] bd_a bd_b]
   # THE WIDGET, not just the model: the header and the foreign leaf are really
   # in the treeview, with the header as the leaf's ttk parent.
   # ⚠ `parent`/`item` THROW on a missing ttk id, so they go through pcall: a
   # regression that removes the row must FAIL THIS CHECK, not abort the file and
   # take the nine checks after it with it (the S2 lesson, twice over).
-  # ⚠ TWO-PANE ITEM 10 MEETS ITEM 14, AND THE RULING IS A NEGATIVE: with the box
-  # ON, browser_refresh passes NO design root, because giving each DB its own
-  # root is ITEM 15's change (spec R7) and landing it here would make item 15's
-  # reds unattributable. So there is no `g:` row at all and the tree's top level
-  # is the DB headers alone. PAIRED WITH BD47c, which shows the SAME fixture
-  # grows a root the moment the box goes off — so "no root" here cannot be
-  # "roots never worked", and this check's `{}` cannot be a browser_root_id that
-  # always answers `{}`.
-  check {BD48c box ON: NO design root is emitted — neither in the row model nor in the tree (item 15 owns per-DB roots)} \
+  # ⚠⚠ THIS WAS ITEM 15's TOMBSTONE AND IT IS NOW ITS RECEIPT. Item 14's text
+  # here read "with the box ON, browser_refresh passes NO design root, because
+  # giving each DB its own root is ITEM 15's change (spec R7) ... so there is no
+  # `g:` row at all" — and said that a green version of it after item 15 would
+  # mean item 15 never ran. TWO-PANE ITEM 15 INVERTS IT: `browser_root_id` now
+  # answers the CURRENT DB's PREFIXED root, and the row really is in the widget.
+  # ⚠ AND THE ROOT IS THE BARE `g:`, NOT A PREFIXED ONE — spec §4.3. What CHANGED
+  # is where it hangs: leg 2 was `absent` and is now the current DB's HEADER, and
+  # BD47c shows the SAME id at TOP LEVEL the moment the box goes off. So "the
+  # root grew a parent" and "the root never existed" are different values, and
+  # neither can be a browser_root_id that always answers the same thing.
+  # ⚠ LEG 4 IS THE NEGATIVE FOR THE PLAN's DESIGN: no PREFIXED current-DB root
+  # exists. A prefixed one would satisfy legs 1-3's shape and break every
+  # persisted id (see the BD60 block header).
+  check {BD48c box ON: the design root is the CURRENT DB's BARE `g:`, really in the tree and nested under that DB's header — and no PREFIXED current-DB root exists (R7; item 14's no-root gap is closed)} \
     [list [pcall ::wviewer::browser_root_id [bd_rows $tok]] \
-          [bd_tv_parent $BVF.pw.tvf.tv {g:}]] \
-    [list {} absent]
+          [bd_tv_parent $BVF.pw.tvf.tv {g:}] \
+          [bd_tv_text   $BVF.pw.tvf.tv {g:}] \
+          [bd_tv_parent $BVF.pw.tvf.tv "${bd_P}g:"]] \
+    [list {g:} $bd_H bd_b absent]
   # THE WIDGET, not just the model — RESTATED BY TWO-PANE ITEM 10. HALF THE OLD
   # CLAIM IS NOW FALSE BY DESIGN: `browser_tree_rows` keeps only `kind group`,
   # so leaf rows never enter the treeview at all and `d:0|s:v(alpha)` is ABSENT
@@ -736,24 +1024,83 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # would become this item's expected value and which reads IDENTICALLY if the
   # widget had been destroyed. `bd_tv_parent` answers three distinct stable
   # sentinels instead.
-  check {BD50b box ON: the treeview holds the DB HEADER at top level with its label, the foreign LEAF is projected OUT of the tree (item 10), and the MODEL still parents that leaf under the header} \
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: leg 4's model parent is now that DB's own
+  # design root (`bd_a`), and a FIFTH leg carries the old value at its new depth
+  # — the grandparent — so the "the model still knows which DB this leaf came
+  # from" claim is not weakened, only re-anchored. Legs 1-3 are untouched.
+  check {BD50b box ON: the treeview holds the DB HEADER at top level with its label, the foreign LEAF is projected OUT of the tree (item 10), and the MODEL parents that leaf under that DB's OWN root, one level below the header} \
     [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
           [bd_tv_text   $BVF.pw.tvf.tv {d:0}] \
           [bd_tv_parent $BVF.pw.tvf.tv {d:0|s:v(alpha)}] \
-          [bd_parent_text [bd_rows $tok] {d:0|s:v(alpha)}]] \
-    [list top-level {bd_a.raw (tran)} absent {bd_a.raw (tran)}]
+          [bd_parent_text      [bd_rows $tok] {d:0|s:v(alpha)}] \
+          [bd_grandparent_text [bd_rows $tok] {d:0|s:v(alpha)}]] \
+    [list top-level {bd_a.raw (tran)} absent bd_a {bd_a.raw (tran)}]
   # ⚠ THE SET, NOT JUST THE TWO IDS. `absent` above is one id; this is the WHOLE
   # upper pane, and it is what stops "the projection dropped the leaf" being
   # confused with "the projection dropped everything and happened to keep d:0",
   # or with a tree that grew a node nobody asked for. Both fixture raws are FLAT
   # so neither inventory mints a hierarchy node, and item 10 emits no design
   # root while All-DBs is on (BD48c) — so the correct answer is exactly one id.
-  # ⚠ DECLARED: this also records that a DB header currently has NO ttk children
-  # at all here — its only children were leaves. Item 11 (the lower pane) and
-  # item 15 (per-DB roots) both have to answer for that, and this is the check
-  # that will red when they do.
-  check {BD50c box ON: the upper pane's ENTIRE id set is the one DB header — every leaf really left the tree, and no node left with them} \
-    [bd_tv_ids $BVF.pw.tvf.tv] [list {d:0}]
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 15, AND ITEM 14's OWN COMMENT PREDICTED IT: "a
+  # DB header currently has NO ttk children at all here ... item 15 (per-DB
+  # roots) has to answer for that, and this is the check that will red when they
+  # do." It answers here. The set is now FOUR ids in depth-first order — each
+  # header immediately followed by its own root — and the CURRENT DB comes first
+  # because `browser_rows_multi` still emits group 0 first and `browser_populate`
+  # inserts at `end`.
+  # ⚠ THIS IS THE CHECK THAT CATCHES AN UNPREFIXED FOREIGN ROOT, because that
+  # defect THROWS on insert (`Item g: already exists`), browser_refresh's catch
+  # turns the throw into a status-line message, and the tree is then left holding
+  # whatever was inserted before the throw — a SET, not a count, is what tells
+  # that apart from a correct tree.
+  check {BD50c box ON: the upper pane's ENTIRE id set is the two DB headers each followed by ITS OWN design root, current DB first} \
+    [bd_tv_ids $BVF.pw.tvf.tv] \
+    [list $bd_H {g:} {d:0} {d:0|g:}]
+
+  # --- BD67-BD70b — TWO-PANE ITEM 15's CALLER-SIDE CLAIMS -------------------
+  # ⚠⚠ BD67 IS THE ITEM'S WHOLE POINT AND THE ONE THE PLAN'S BREAK-LISTS WERE
+  # MISSING. Everything item 15 changes about the PURE helper is already pinned
+  # by BD60-BD66b — but BD19/BD21/BD22/BD25 call that helper DIRECTLY with a
+  # hand-built `{}`-labelled group, so they would stay green forever on a code
+  # path production no longer takes (silent-green trap §3.2). R7 changes the
+  # CALLER: `browser_refresh` must now LABEL group 0. This check watches the
+  # caller's own output — `browserrows` after a LIVE refresh — and nothing else
+  # in either file does.
+  # ⚠ LEG 3 IS THE FIXTURE ASSERTION FOR EVERY `$bd_P` ABOVE: if the current DB
+  # ever stops being registry slot 1 the derived prefix would still be
+  # self-consistent and every re-keyed check would go green on the wrong DB.
+  # ⚠ `db_label` TAKES TWO ARGUMENTS (path AND analysis). PLAN item 15 writes it
+  # with one, which throws `wrong # args` — measured, not predicted.
+  check {BD67 (THE CALLER) box ON: browserrows' FIRST row is a `group` whose text is the CURRENT DB's own label — R7 labels group 0, which no direct-helper check can see} \
+    [list [dict get [lindex [bd_rows $tok] 0] kind] \
+          [dict get [lindex [bd_rows $tok] 0] text] \
+          $bd_cur] \
+    [list group [wviewer::db_label $bdB tran] 1]
+  # R7's tree shape, at the level R7 rules on, WITH ITS OWN CONTROL IN THE SAME
+  # TUPLE: leg 1 is the SAME reading taken on the SAME fixture with the box off,
+  # so "the top level is the DB headers" is a measured CHANGE caused by ticking
+  # the box rather than a shape the tree always had. `children {}` is asked
+  # directly because that is the level R7 rules on; `bd_tv_ids` is the whole
+  # depth-first set and belongs to BD50c.
+  check {BD68 R7's TOP LEVEL: the single design root with the box OFF, the per-DB headers with it ON — CURRENT DB first} \
+    [list $bd_top_off [pcall $BVF.pw.tvf.tv children {}]] \
+    [list {g:} [list $bd_H {d:0}]]
+  # R2/R4 through the new shape: the never-empty selection is the CURRENT DB's
+  # design root, not a header and not a foreign root. `bd_tv_sel` so "nothing is
+  # selected" (R4's violation, which BP43a recorded as the item-14 state) and
+  # "the widget is gone" are two different values.
+  check {BD70 box ON: the selection is the CURRENT DB's design root (R2/R4 hold again under All-DBs)} \
+    [bd_tv_sel $BVF.pw.tvf.tv] {g:}
+  # ⚠⚠ AND IT MUST BE VISIBLE. The selected root's PARENT is a header inserted
+  # `-open 0`, so R4's selection would land on a row nobody can see — and
+  # `browser_populate` may not call `see` (spec §4.2, BW53). So the current DB's
+  # HEADER is opened too. Leg 3 is the negative that keeps it honest: the FOREIGN
+  # header stays closed, so this is not "everything got opened".
+  check {BD70b box ON: the CURRENT DB's header AND its root are open so the selected root is really visible, while the FOREIGN header stays collapsed} \
+    [list [bd_tv_open $BVF.pw.tvf.tv $bd_H] \
+          [bd_tv_open $BVF.pw.tvf.tv {g:}] \
+          [bd_tv_open $BVF.pw.tvf.tv {d:0}]] \
+    [list 1 1 0]
 
   # --- per-DB matching: the header only appears when that DB matched ---------
   proc bd_pat {w p} {
@@ -770,11 +1117,63 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # header was correctly omitted" from "the treeview was never populated", while
   # still passing. `absent` + `empty` are two different values for those two
   # worlds, and the model leg keeps the signal itself accounted for.
-  check {BD51 (THE NEGATIVE) ON + `*beta*`: the other DB matched nothing so it gets NO header row at all — and after item 10 the tree is legitimately EMPTY, which is asserted rather than assumed} \
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 15, AND HALF OF IT IS NOW ITS OPPOSITE. The
+  # FOREIGN DB still matches nothing, so leg 1's `absent` stands — that is the
+  # negative this check exists for. But the CURRENT DB's header and root are NOT
+  # conditional on any DB matching (see BD70c), so the tree is no longer empty:
+  # `empty` becomes the current DB's two ids. Leaving `empty` in place would have
+  # made a correct tree look like a regression, and deleting the leg would have
+  # thrown away the "the treeview was never populated" discriminator that leg was
+  # added for — so it is RE-VALUED, not dropped.
+  check {BD51 (THE NEGATIVE) ON + `*beta*`: the other DB matched nothing so it gets NO header row at all — while the CURRENT DB's own header and root are still there, which is asserted rather than assumed} \
     [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
           [bd_tv_ids $BVF.pw.tvf.tv] \
           [bd_ids_for [bd_rows $tok] {v(beta)}]] \
-    [list absent empty {s:v(beta)}]
+    [list absent [list $bd_H {g:}] {s:v(beta)}]
+  # ⚠⚠ BD70c — TWO-PANE ITEM 15's FLICKER GUARD, and it is why the current DB's
+  # header is gated on THE CHECKBOX ALONE and never on "how many foreign DBs
+  # matched". `*beta*` is exactly the state where a `ndbs > 0` gate would look
+  # right in every other check in this file and be wrong here: the foreign DB
+  # drops out mid-keystroke, the header vanishes, every current-DB id re-keys
+  # from `d:1|...` back to `s:...` and the whole open set evaporates — §7.1's
+  # flicker, one item on. THE SAME THREE VALUES ARE ASSERTED HERE AS UNDER
+  # `*alpha*` in BD51b below, which is what makes this a stability claim rather
+  # than a restatement of BD51.
+  check {BD70c (THE FLICKER GUARD) ON + a pattern NO foreign DB matches: the CURRENT DB's header, root and prefixed ids are unchanged — the header follows the checkbox, never the foreign match count} \
+    [list [bd_tv_parent $BVF.pw.tvf.tv $bd_H] \
+          [bd_tv_parent $BVF.pw.tvf.tv {g:}] \
+          [bd_tv_text   $BVF.pw.tvf.tv $bd_H] \
+          [bd_tv_sel    $BVF.pw.tvf.tv]] \
+    [list top-level $bd_H [wviewer::db_label $bdB tran] {g:}]
+
+  # --- BD69 — R5's GUARD ON THE ONE THING ITEM 15 ADDS TO browser_populate ---
+  # ⚠⚠ THE HEADER AND ROOT ARE BORN OPEN, ONCE, WHEN THEY ARE BORN — NOT ON
+  # EVERY POPULATE, and this is the check that says which. Item 15 has to open
+  # the current DB's header or R4's selected root sits inside a collapsed node
+  # nobody can see (`browser_populate` may not call `see` — spec §4.2, BW53).
+  # The lazy spelling of that is "open it every time", which turns typing in the
+  # Search bar into "the tree re-expands what you just collapsed" — R5's letter
+  # ("the tree never auto-opens on a search") wearing the other sign, and exactly
+  # the regression item 10's open-set carry-over exists to prevent.
+  # THE GESTURE IS REAL: the header is collapsed by hand and then a PATTERN is
+  # typed through the bar's own pump, which is what a user does.
+  # ⚠ LEG 2 AND LEG 3 ARE THE POSITIVE CONTROLS. Without them "the header stayed
+  # closed" is equally true of a refresh that destroyed the tree, or one that
+  # collapsed everything: leg 2 says the ROOT is still open (so nothing did a
+  # blanket collapse) and leg 3 says the root is still that header's child (so
+  # the tree is still R7's).
+  # ⚠ THE RESTORE HAPPENS AFTER ALL THREE READS. A check that read back what its
+  # own restore had just written would be asserting the restore.
+  pcall $BVF.pw.tvf.tv item $bd_H -open 0
+  update
+  bd_pat $BSB {*shared*}
+  set bd_r5_hdr  [bd_tv_open   $BVF.pw.tvf.tv $bd_H]
+  set bd_r5_root [bd_tv_open   $BVF.pw.tvf.tv {g:}]
+  set bd_r5_par  [bd_tv_parent $BVF.pw.tvf.tv {g:}]
+  pcall $BVF.pw.tvf.tv item $bd_H -open 1
+  update
+  check {BD69 (R5) a SEARCH KEYSTROKE never re-opens a DB header the user collapsed — the header and its root are born open ONCE, when they are born} \
+    [list $bd_r5_hdr $bd_r5_root $bd_r5_par] [list 0 1 $bd_H]
   # ⚠ POSITIVE CONTROL for BD51 on the SAME bar and the SAME fixture: a pattern
   # the other DB DOES match brings the header straight back — and this is also
   # the PLAN's headline case, a signal found ONLY in the second database.
@@ -791,6 +1190,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ THE FOREIGN DB IS STILL BAR-MATCHED: item 10's §7.1 change is scoped to
   # the CURRENT DB, because R7's tree shape belongs to item 15. Legs 1-3 pin
   # that asymmetry from both sides, so item 15 cannot close it silently.
+  # ⚠ UNTOUCHED BY TWO-PANE ITEM 15, AND THAT IS THE POINT: the current DB's ids
+  # do not move (§4.3) and the foreign side is exactly where item 14 left it, so
+  # all four legs keep their item-14 values. That is what makes BD70c's stability
+  # claim above readable as a PAIR with this one — same bar, same fixture, and
+  # only the foreign header differs between them.
   check {BD51b (POSITIVE CONTROL) ON + `*alpha*`: the FOREIGN DB's row appears and it alone MATCHED; the current DB matched nothing yet KEEPS its rows (§7.1 — the bars narrow the lower pane, never the tree)} \
     [list [bd_tv_parent $BVF.pw.tvf.tv {d:0}] \
           [bd_ids_for [bd_rows $tok] {v(alpha)}] \
@@ -825,8 +1229,38 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                      -key wviewer::browser_label_of] 1]] \
     [list {} {v(alpha)}]
   bd_pat $BSB {}
-  check {BD51c (CONTROL) clearing the pattern brings everything back} \
-    [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 7]
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: the row COUNT moves 7 -> 10, and the three
+  # extra rows are named rather than left as an arithmetic surprise — one header
+  # and one design root for the CURRENT DB (R7), plus one design root for the
+  # foreign DB (item 14 already had its header). MEASURED, not predicted.
+  check {BD51c (CONTROL) clearing the pattern brings everything back: 2 headers + 2 design roots + 6 leaves} \
+    [list [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] [list 1 10]
+
+  # --- BD70d — A DECLARED LIMIT, ASSERTED AS A VALUE -------------------------
+  # ⚠⚠ REACHABLE FOR THE FIRST TIME BECAUSE OF TWO-PANE ITEM 15. The lower pane
+  # is drawn from `browserseaent`, which holds the CURRENT DB's entries and only
+  # those — so a FOREIGN design root, which decodes to the empty path exactly
+  # like the current one, shows the CURRENT DB's own-level names. Before item 15
+  # there were no foreign roots to click, so the case did not exist. Item 15 does
+  # NOT fix it: scoping the sea per DB is a two-pane change of its own (spec
+  # §7.2's caption owns the wording), and a silent wrong answer is worse than a
+  # recorded one. LEG 1 IS THE POSITIVE CONTROL taken BEFORE the foreign root is
+  # selected, so "the sea shows the current DB" and "the sea never changed
+  # because nothing is wired" are not the same picture.
+  set bd_sea_own {}
+  foreach p $::wviewer::browsersea($tok) { lappend bd_sea_own [lindex $p 1] }
+  pcall $BVF.pw.tvf.tv selection set [list {d:0|g:}]
+  update
+  set bd_sea_for {}
+  foreach p $::wviewer::browsersea($tok) { lappend bd_sea_for [lindex $p 1] }
+  # put the fixture back BEFORE the check, and never read what this line writes.
+  pcall $BVF.pw.tvf.tv selection set [list {g:}]
+  update
+  check {BD70d (DECLARED LIMIT) selecting a FOREIGN DB's design root shows the CURRENT DB's own-level names — the lower pane is built from the current DB's entries alone, and both roots decode to the same empty path} \
+    [list $bd_sea_own $bd_sea_for \
+          [wviewer::browser_id_path {d:0|g:}] \
+          [wviewer::browser_id_path {g:}]] \
+    [list {time v(beta) v(shared)} {time v(beta) v(shared)} {} {}]
 
   # --- BD58 (TWO-PANE ITEM 12) — R11's BOXES GOVERN THE FOREIGN DBs TOO ------
   #
@@ -872,11 +1306,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # it lives under appears and disappears with it IN THE WIDGET, and the foreign
   # DB's ordinary net is untouched throughout — so "the box works" and "the box
   # emptied the foreign DB" are different values here.
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: leg 4 moves from the DB HEADER `d:9` to that
+  # DB's OWN design root `d:9|g:` — the device node hangs off the root now, not
+  # off the header. `absent` on leg 2 is untouched, which is what keeps the
+  # appear/disappear pair readable.
+  # ⚠ THE SEEDED DICT CARRIES NO `path` KEY, DELIBERATELY: `browser_root_label`
+  # floors an empty path at `design`, so this DB's root text is `design` while
+  # its id is still `d:9|g:`. The check asserts the ID, never the text, so the
+  # seed stays a two-key `{id label names}` dict and the "do not `browser_refresh
+  # $tok 1`, it re-enters browser_reload and destroys the seed" rule below still
+  # holds. Widening the seed would have been a control eating its own fixture.
   check {BD58 (ITEM 12) the device-internals box governs the FOREIGN inventories
          too — browser_refresh's All-DBs loop reads the SAME two values the
          current DB was filtered with} \
     [list $bd_off_ids $bd_off_node $bd_on_ids $bd_on_node $bd_off_zeta] \
-    [list {} absent {d:9|s:v(m.x1.mn1#body)} {d:9} {d:9|s:v(zeta)}]
+    [list {} absent {d:9|s:v(m.x1.mn1#body)} {d:9|g:} {d:9|s:v(zeta)}]
   # THE NEGATIVE CONTROL, and it is the one that catches the half-wiring: with
   # the box ON the CURRENT DB's own inventory is unchanged, because it holds no
   # device signal at all. So BD58's movement cannot be "the whole tree got
@@ -886,6 +1330,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # fixture's two raws share that name and BD50 uses it to prove a name shows up
   # once PER DB; here the point is the opposite one, so the current DB's two nets
   # must each resolve to exactly ONE id — their own.
+  # ⚠ UNTOUCHED BY TWO-PANE ITEM 15: the current DB's ids do not move (§4.3), so
+  # both legs keep their item-12 values on a tree that R7 has completely
+  # re-shaped around them. That is evidence for the ruling, not an oversight.
   check {BD58b (NEGATIVE CONTROL) the CURRENT DB's rows are identical either way
          — it has no device signal, so only the foreign side could have moved} \
     [list [bd_ids_for [bd_rows $tok] {v(beta)}] \
@@ -899,7 +1346,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
          shipped default are back — every check below runs against them} \
     [list [pcall ::wviewer::browser_devint $tok] \
           [$BVF.pw.tvf.tv exists {d:0}] [llength [bd_rows $tok]]] \
-    [list 0 1 7]
+    [list 0 1 10]
 
   # --- the status line -------------------------------------------------------
   # ⚠ BYTE-IDENTICAL WITH THE BOX OFF. test_wave_sigbrowser.tcl:1173/1182/1199
@@ -952,6 +1399,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # as a declared limit for item 15 / a follow-up issue.
   $BSB.alldb invoke
   update
+  # ⚠ UNTOUCHED BY TWO-PANE ITEM 15, AND IT IS THE CHECK THAT SHOWS WHY THE
+  # UNPREFIXED CURRENT DB MATTERS BEYOND PERSISTENCE. Under the PLAN's
+  # prefix-everything design `s:v(beta)` would stop existing, `browser_leaf_names`
+  # would answer {} and `browser_plot_ids` would echo "nothing selected to plot"
+  # and return 0 — a WRONG VALUE, not a throw, reading exactly like a real
+  # cross-DB plotting regression. It stays green here because the id did not move.
   set bd_plot_cur [pcall ::wviewer::browser_plot_ids $tok [list {s:v(beta)}]]
   set bd_plot_for [pcall ::wviewer::browser_plot_ids $tok [list {d:0|s:v(alpha)}]]
   check {BD54 (DECLARED LIMIT) a FOREIGN row plots exactly like a current one - item 14 adds no cross-DB guard} \
@@ -979,17 +1432,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # browser_reload and unset in `forget`, but nothing anywhere under tests/ ever
   # named it — so its capture and its leak were both unasserted. A live teardown
   # leg is strictly better evidence than a source grep.
-  check {BD56 (CONTROL) the inventory entry AND item 10's raw-path capture exist while the window does} \
+  # ⚠ RESTATED BY TWO-PANE ITEM 15: a THIRD per-token array rides along — the
+  # current DB's header identity, captured by browser_reload in the same pass
+  # that already captures item 10's raw path. A new per-token array with no
+  # teardown leg is a per-window leak nothing else in the suite would see.
+  check {BD56 (CONTROL) the inventory entry, item 10's raw-path capture AND item 15's current-DB header identity all exist while the window does} \
     [list [info exists ::wviewer::browserdbsigs($tok)] \
-          [info exists ::wviewer::browserraw($tok)]] \
-    [list 1 1]
+          [info exists ::wviewer::browserraw($tok)] \
+          [info exists ::wviewer::browsercurdb($tok)]] \
+    [list 1 1 1]
   set bd_sbpath $BSB
   catch {wviewer::close $tok}
   update
-  check {BD56b close unsets BOTH: no per-token leak, item 10's array included} \
+  check {BD56b close unsets ALL THREE: no per-token leak, item 10's and item 15's arrays included} \
     [list [info exists ::wviewer::browserdbsigs($tok)] \
-          [info exists ::wviewer::browserraw($tok)]] \
-    [list 0 0]
+          [info exists ::wviewer::browserraw($tok)] \
+          [info exists ::wviewer::browsercurdb($tok)]] \
+    [list 0 0 0]
   check {BD56c ...and the bar's checkbutton element goes with the bar} \
     [info exists ::wviewer::sballdb($bd_sbpath)] 0
   }
