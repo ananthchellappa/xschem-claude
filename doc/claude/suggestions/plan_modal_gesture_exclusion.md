@@ -55,6 +55,8 @@ infix mode has the identical dead end with two rubber bands on screen.
 Effort: ~8 one-line call sites, low risk (the call is a no-op unless a draw is live, and it is
 delete-free so issue 0231 is not in play).
 
+- [ ] fix issue **0238** first — every gate message is wiped by the coordinate readout before a
+      user can read it, so the feedback these verbs depend on does not currently reach the screen
 - [ ] ratify the policy with the user (see *Ratification* below)
 - [ ] `case 'r'` (`src/callback.c:6916`) — both the infix and the `MENUSTART` branch
 - [ ] `case 'P'` (`:6862`) — both branches
@@ -109,6 +111,9 @@ so `abort_placement_preview()` deliberately does not see it.
   delete with a foreign selection. Phases 1–2 are safe: they only cancel *draws*, which is
   delete-free.
 - **Issue 0236** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
+- **Issue 0238** — gate messages reach `.statusbar.1` but the coordinate readout overwrites them on
+  the next 8-pixel mouse move, so every "X abandoned" line since 2026-08-06 has been invisible.
+  Fix it before adding verbs that discard work silently.
 - **`xschem callback …` segfaults under `--nogui`**, so no click path is drivable headlessly. Arm
   with `xschem <verb> gui` / `::infix_interface`, assert on flags, confirm pixels by eye.
 

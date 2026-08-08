@@ -4,8 +4,8 @@ Paste everything below the line into a fresh session with cleared context.
 
 ---
 
-Implement **phases 1 and 2** of `doc/claude/suggestions/plan_modal_gesture_exclusion.md`, and fold
-in the issue **0237** corrections listed at the bottom. Tree is at `465223be` on `open_pdk`; every
+Implement **phases 1 and 2** of `doc/claude/suggestions/plan_modal_gesture_exclusion.md`, fix issue
+**0238**, and fold in the issue **0237** corrections listed at the bottom. Tree is at `465223be` on `open_pdk`; every
 anchor below was verified there. Re-derive line numbers by grepping the quoted statement, not by
 trusting the number.
 
@@ -28,7 +28,8 @@ could never start. Same dead end in infix mode, where both rubber bands are live
 `doc/claude/suggestions/plan_modal_gesture_exclusion.md` (the roadmap — phases, machinery,
 landmines, ratification question), then `doc/claude/issues/0233-*.md` (**FIXED**; its *Where the fix
 diverged from the sketch* and *Known gaps* sections carry the reasoning you must not re-derive),
-then `doc/claude/issues/0237-*.md` (**OPEN** — the doors you are closing), then `WIRING.md` §7
+then `doc/claude/issues/0237-*.md` (**OPEN** — the doors you are closing) and
+`doc/claude/issues/0238-*.md` (**OPEN** — the statusbar fix, below), then `WIRING.md` §7
 landmines 8, 9, 12, §8 classes **D** and **H**, and §10 (testing traps).
 
 ## ASK THE USER FIRST
@@ -84,6 +85,22 @@ Same helper, same rule. Sites:
 
 `Ctrl+V` merge is **out of scope** (phase 4, blocked on issues 0232/0234): its preview carries
 `STARTMERGE`, not the placement bits.
+
+## Issue 0238 — do this FIRST, before adding any gate
+
+Every gate message is invisible in the running GUI, and the user confirmed it on 2026-08-07: press
+`p`, type a name, press `w`, and the preview vanishes with no explanation — the status bar shows
+only the green `DRAW WIRE!` mode label. `statusmsg(str, 1)` does write `.statusbar.1`
+(`scheduler.c:28`, `:49` — its only writer), but the motion handler's coordinate readout
+(`callback.c:5911-5921`, guarded by `if(xctx->ui_state)` and an 8-pixel threshold, plus the
+press/release twins at `:8495` and `:8882`) overwrites it on the next flick of the mouse. `ui_state`
+is non-zero for exactly the reason the message exists, so it is always wiped.
+
+This matters here because phases 1–2 add eight more verbs that silently discard work in progress.
+Ship the feedback before you ship the verbs. Issue 0238 recommends a hold counter checked by the
+readout; read its *Fix options* and *Landmines* (three readout sites, keep the live `w=`/`h=` size
+feedback during moves, `statusmsg(…,2|3)` is a different sink, not headless-testable) before
+choosing. `leave_wire_draw_for()`'s 0230 message has the same defect and is fixed by the same change.
 
 ## TRAPS
 
@@ -167,6 +184,8 @@ Measured against the tree, its current text is wrong in two ways:
   the "Status" line and the phase-3 notes if anything you learn changes them.
 - Issue **0237** corrected as above, and marked FIXED or narrowed to merge-only depending on what
   lands.
+- Issue **0238** fixed and closed, with the gate messages actually visible in the GUI — confirm by
+  eye, since it cannot be asserted headlessly, and say plainly that you did.
 - `WIRING.md` §8 class **D** if the work names a new class member; `doc/claude/FAQ.md` (Q36 is the
   reverse-door entry — a new Q for "what happens if I press `r` mid-wire" belongs on top);
   `doc/claude/specs/add_wire_label.md` and `schematic_add_pin.md` only if the user-visible rule for
