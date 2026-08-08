@@ -13801,7 +13801,8 @@ set tctx::global_list {
  graph_sel_wave graph_selected graph_sort graph_unlocked graph_use_ctrl_key 
  graph_vlegend hide_empty_graphs
  hide_symbols incr_hilight incremental_select infix_interface infowindow_text intuitive_interface
- keep_symbols launcher_default_program light_colors line_width live_cursor2_backannotate
+ keep_symbols label_ride label_splits_wires launcher_default_program light_colors line_width
+ live_cursor2_backannotate
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
  no_ask_save no_ask_simulate no_change_attrs nolist_libs noprint_libs only_probes
@@ -14433,6 +14434,21 @@ proc fluid_trace_stop {} {
     else { ciw_echo "FLUID trace stopped (no file was open)" result }
   }
 }
+# One menu entry, not two: the trace is a binary state, so the menu offers the only
+# transition that is legal right now. Start and Stop as permanent siblings made the
+# user pick the verb AND remember the state; half the time the pick was a no-op.
+proc fluid_trace_toggle {} {
+  if {[xschem fluid_trace status] eq {on}} { fluid_trace_stop } else { fluid_trace_start }
+}
+# -postcommand hook on Help>Debug: relabel the single entry from the C-side state just
+# before the menu is posted. Driven by `status` rather than a Tcl mirror variable so a
+# FLUID_TRACE=... env launch (traced without anyone touching the menu) shows "Stop" too.
+proc fluid_trace_menu_update {m} {
+  if {![winfo exists $m]} return
+  if {[catch {xschem fluid_trace status} st]} return
+  set lab [expr {$st eq {on} ? "Stop FLUID trace" : "Start FLUID trace"}]
+  catch {$m entryconfigure {*FLUID trace} -label $lab}
+}
 
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
@@ -14496,14 +14512,16 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"
-  # issue 0123: runtime FLUID_TRACE control. Start opens a PID-named trace file and reports the
-  # name in the CIW; Stop flush+closes it. Lets a user capture a fluid-editing trace on demand
-  # without relaunching with FLUID_TRACE=... See doc/claude/WIRING.md.
+  # issue 0123: runtime FLUID_TRACE control. ONE entry that flips between Start and Stop,
+  # relabelled by the -postcommand from the C-side `fluid_trace status`. Start opens a
+  # PID-named trace file and reports the name in the CIW; Stop flush+closes it. Lets a user
+  # capture a fluid-editing trace on demand without relaunching with FLUID_TRACE=...
+  # See doc/claude/WIRING.md.
   $topwin.menubar.help add separator
-  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0
+  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0 \
+     -postcommand [list fluid_trace_menu_update $topwin.menubar.help.debug]
   $topwin.menubar.help add cascade -label "Debug" -menu $topwin.menubar.help.debug
-  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_start}
-  $topwin.menubar.help.debug add command -label "Stop FLUID trace"  -command {fluid_trace_stop}
+  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_toggle}
 
   # File menu is generated from the action registry (actions.csv). The parent
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
@@ -15742,6 +15760,39 @@ set_ne escape_deselects 0
 set_ne intuitive_interface 1
 set_ne use_cursor_for_selection 0
 set_ne autotrim_wires 0
+# Does a type=label instance's pin CUT the wire it taps into two clickable segments?
+# 0 (default, doc/claude/specs/wire_label_ride.md R2/S2): no -- a net label NAMES copper, it
+# does not cut it. Its PINLAYER rect is a naming anchor, so it neither splits a wire
+# (break_wires_at_attach_points) nor blocks trim_wires' collinear rejoin (any_inst_pin_at).
+# A DEVICE pin still does both: wire_segment_splitting.md's per-segment click granularity is
+# unchanged for the resistor-tap case that motivated it, and only lost at a net label.
+# 1 restores the pre-S2 behaviour byte-for-byte, as a one-release escape hatch -- it also
+# restores the measured bug it exists to fix: an EMPTY lab= label sitting on a wire CROSSING
+# splits both wires there, and four coincident endpoints ARE connectivity, so two independent
+# nets silently merge (spec 4.4).
+# Only has any effect when autotrim_wires is on (which cadence_compat force-enables); with
+# auto join/trim off nothing splits at any pin and this variable is inert.
+set_ne label_splits_wires 0
+# Does a net label RIDE the copper it names when that copper moves, rotates or flips?
+# 1 (default, doc/claude/specs/wire_label_ride.md R3/S3): yes -- moving a wire carries every net
+# label attached to it, and rotating or flipping the wire rotates and flips the label's own text
+# with it, the Cadence behaviour. This is what closes issue 0237: before S3 the label was simply
+# left behind and the net silently reverted to an auto #netN name, on stock defaults and (as of
+# S2, which removed the split that accidentally masked it) under cadence_compat too.
+# The switch also owns connect_by_kissing()'s wire-endpoint TETHER -- the zero-length stub that
+# used to hold an END-OF-STUB label to a wire being dragged away. The two are a matched pair and
+# must never be split: the ride replaces the stub, so 1 gives the ride and no stub, and 0 gives
+# the stub and no ride (pre-S3 behaviour, byte-for-byte). Half of each would leave an end-of-stub
+# label with neither.
+# Deliberately NOT under cadence_compat_sync: 0237 reproduces on stock defaults too (measured --
+# autotrim_wires 0 strands the label just the same), so this is a correctness fix for everyone,
+# not a Cadence-compatibility mode. It is a one-release escape hatch, like label_splits_wires,
+# and has no menu entry for the same reason.
+# Two scope rules worth knowing: a label the user has ALSO selected is placed by the normal move
+# commit and never ridden -- the explicit selection wins, which matters under Alt-R/Alt-F (each
+# object turns about its own origin) and when the wire only stretches; and a label whose copper
+# only PARTLY moves stays put, because it is still connected to the part that stayed.
+set_ne label_ride 1
 set_ne auto_set_wire_bus 0
 # autosave: every genuine edit immediately writes a cellName~.sch backup; saving
 # the real file removes it. Persists unsaved edits across descend and crashes

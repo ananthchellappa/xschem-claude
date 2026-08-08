@@ -6,6 +6,30 @@ Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding 
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
 fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
 
+> **AMENDED 2026-08-06 by `doc/claude/specs/wire_label_ride.md` S2 (R2): a `type=label` pin is a
+> NAMING ANCHOR, not an attachment point.** This feature's "attachment" is now a **device** pin
+> only. A net label neither splits a wire (§6.1) nor blocks the §5 pin-aware merge, behind
+> `label_splits_wires` (default 0; set it to 1 to restore everything written below verbatim).
+> Read §5 and §6.1 with that substitution in mind, and note two consequences:
+>
+> - **The §5 linchpin argument survives intact but changes owner.** "Net-labels need no special
+>   case: a label is just an instance whose pin is at `get_inst_pin_coord`" is exactly the
+>   assumption S2 reverses — the label *was* the special case all along, and `any_inst_pin_at()`
+>   now takes a `skip_labels` argument to say so. The **auto-rejoin-on-delete** behaviour §5 sells
+>   as the second half of the guard is unchanged for device pins, and for a label it is now
+>   permanent rather than earned: there is no boundary to remove.
+> - **What is given up is per-segment click granularity at a net label**, `autotrim_wires` only.
+>   The `test_wire_splits.sch` fixture that motivated this whole feature (wire tapped by a label at
+>   −80 and a resistor at 0) now loads as **2** clickable segments, not 3. The resistor's boundary —
+>   the case the feature exists for — is untouched. `tests/headless/test_wire_split.tcl` was
+>   re-authored onto `devices/res` taps for that reason (`wire_label_ride.md` §15.6); every fixture
+>   here that used a `lab_wire` as its split source was measuring the wrong thing.
+>
+> Not amended: **D1** (coalesce-on-save keeps the `.sch` byte-stable — the coalescer was always
+> pin-blind, so the label split never reached disk anyway), **D2** (default mode byte-for-byte
+> unchanged — `label_splits_wires` carries its own gate precisely so D2 stays load-bearing), and
+> every hazard H1–H11.
+
 ## Built
 
 - **W6 — end-to-end integration through the real cadence path. Test-only** (`test_wire_split.tcl`).
@@ -268,6 +292,15 @@ Net-labels need no special case: a label is just an instance whose pin is at
 (a 3rd wire's endpoint mid-span) already block the merge via `end1/end2` and already split
 via `check_breaks` — unchanged.
 
+> **SUPERSEDED for net labels, 2026-08-06 (`wire_label_ride.md` S2).** "Net-labels need no special
+> case" is the assumption that turned out to be wrong: a `type=label` pin carries no current and is
+> a *name*, not a terminal, so treating it as copper geometry also made it split a wire, block this
+> merge, and — measured — short two independent nets when it sat with an empty `lab=` on a wire
+> **crossing** (four coincident split endpoints ARE connectivity). `any_inst_pin_at(x, y,
+> skip_labels)` now takes the distinction as a parameter, and `trim_wires` passes
+> `!label_splits_wires`. **T-junctions and device pins are unchanged**, and so is the
+> auto-rejoin-on-delete property this section sells.
+
 ## 6. Architecture — reuse the existing engine, do not hand-roll
 
 | Concern | Existing machinery to reuse | Location |
@@ -286,6 +319,14 @@ instance, every PINLAYER pin coord `P = get_inst_pin_coord(...)`, find wires wit
 `touch(wire,P)` **and** `P` strictly interior, and `wire_store_split` at the **exact** `P`
 (never a projected/snapped point — Hazard H2). Excludes bare X-crossings by construction
 (only endpoints/pins split, never a crossing). Sets `prep_hash_wires=0`, `need_reb_sel_arr=1`.
+
+**Amended 2026-08-06 (`wire_label_ride.md` S2, change #6):** the sweep skips `type=label`
+instances (`if(!label_splits && inst_is_netlabel(k)) continue;`, `label_splits` read once per
+sweep). It is a **matched pair** with §5's `skip_labels` and the two must land together — but note
+the asymmetry: relaxing the splitter alone is *invisible* in a wire count, because `trim_wires`'
+now-label-blind merge welds the split back inside the same `maintain_wire_segments()` call. The
+witness is a label at a wire crossing, where the merge is refused on `end1/end2` and the split is
+permanent (`wire_label_ride.md` §15.1).
 
 ### 6.2 New: `maintain_wire_segments()` (`check.c`), gated on `autotrim_wires`
 The canonical read/edit-time maintenance routine:
@@ -377,7 +418,9 @@ silently merged).
 
 ## 8. Non-goals
 
-- No change to default (`autotrim_wires=0`) behaviour whatsoever.
+- No change to default (`autotrim_wires=0`) behaviour whatsoever. *(Still holds after S2:
+  `label_splits_wires` is inert with autotrim off — nothing splits at any pin there. Asserted by
+  `test_wire_split.tcl` `S2e`, both settings.)*
 - No persisted split (D1): the `.sch` stays coalesced/canonical.
 - No stable logical-wire handle / `select_at` replay fix for wires (H8) — separate,
   tracked as issue 0078.

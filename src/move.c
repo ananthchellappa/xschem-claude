@@ -1487,6 +1487,15 @@ typedef struct {
                             * >=1 edge THIS drag produced (absent from this set) -- the novelty scope (H3)
                             * that keeps it off pre-existing user copper. Constant across the gesture. */
   int     start_nwire;     /* 0 => no snapshot => fluid_wire_is_novel() fails safe (not novel) */
+  unsigned int *strand_id; /* wire_label_ride.md S0 / issue 0237: session-stable INSTANCE ids of the
+                            * type=label instances whose pin sat ON COPPER at START. The END strand
+                            * count is a DELTA against this set, exactly as the label-short count is a
+                            * delta against enf_short_base: 1.7% of the shipped corpus parks labels off
+                            * copper deliberately, and an ABSOLUTE count would blame every unrelated
+                            * gesture for them. Keyed by inst[].id, NOT by array index or by the
+                            * instance x pin walk -- the END geometry may have added/removed/reordered
+                            * instances, and ids ride mem_serialize_slot's whole-struct copy. */
+  int     strand_nid;      /* 0 => no strand baseline => the END pass publishes 0 (fail-safe) */
   /* --- D2: hand-down "hidden parameter" scratch (WIRING §7.9), each with its VALIDITY WINDOW.
    *     Byte-identical fold: all are set-before-read within their window (see the header note). --- */
   int     slide_pushthrough_on; /* window: one ATTEMPT. issue 0109: attempts >= 1 of the P2 safety net
@@ -2651,6 +2660,76 @@ static int fluid_build_partition(int *out, int maxpins)
   return k;
 }
 
+/* wire_label_ride.md S0 (issue 0237): is instance i a net label whose pin currently sits on
+ * COPPER? Copper is deliberately PIN-AWARE, not wire-only:
+ *   - any non-degenerate wire whose span the pin coordinate touch()es (interior included), or
+ *   - another instance's PINLAYER pin at the exact same coordinate.
+ * The second arm is not optional. 1919 labels in the shipped libraries (36% of them) touch no
+ * wire at all and sit exactly on a DEVICE pin -- the standard gnd/vdd-on-a-pin idiom -- and they
+ * are genuinely connected there (name_attached_inst(), netlist.c:1127, binds pins that share a
+ * coordinate). A wire-only predicate would report every one of them as stranded.
+ * Returns -1 for "not a trackable net label" (unlinked instance, not type=label, or no PINLAYER
+ * pin), else 0 (off copper) / 1 (on copper).
+ * Two silent-false-negative traps this closes, both already worked around elsewhere in this file
+ * but NOT in fluid_count_label_shorts():
+ *   - get_inst_pin_coord() answers (0,0) with no error for an out-of-range pin index
+ *     (netlist.c:766-772), so a label symbol with zero PINLAYER rects would be probed at the world
+ *     origin and read as "on copper" for any schematic with a wire through (0,0). Hence the
+ *     rects[PINLAYER] > 0 gate before the anchor read (the flyline.c:80-83 pattern).
+ *   - touch() (clip.c:234-245) mishandles a DEGENERATE segment: the collinear test is trivially
+ *     0==0 and the axis branch ignores the off-axis coordinate, so a zero-length wire on row y
+ *     matches EVERY query on that row (the same trap fluid_start_deg_at guards at :3415). A
+ *     gesture leaves exactly such point-wires behind -- connect_by_kissing() mints zero-length
+ *     stubs -- so skipping them here is load-bearing, not defensive.
+ * Requires prepare_netlist_structs() to have run (instpin_spatial_table fresh). */
+
+/* The point-level half, so the S1 rider set can ask the same question about an ARBITRARY
+ * coordinate (a captured START anchor) instead of only about a label's current pin.
+ * skip_inst is excluded from the pin arm (pass the label's own index, or -1).
+ * ANOTHER NET LABEL'S PIN IS NOT COPPER. That filter is not a detail: without it two net labels
+ * at the same coordinate each read the other as copper, so a gesture that drags both off a wire
+ * is judged harmless -- the leash declines, fluid_count_label_strands() scores 0, and the net
+ * silently reverts to #netN with no diagnostic at all. It is also what makes this predicate agree
+ * with wire_label_ride.md §5.2 / change #4, whose whole premise is that a label's pin is a naming
+ * anchor and not copper geometry. The 1919-labels-on-a-DEVICE-pin idiom that motivates the pin arm
+ * (§13.2) is untouched: a device pin, ipin/opin, bus_tap and every other non-label instance still
+ * count. */
+static int fluid_point_on_copper(double px, double py, int skip_inst)
+{
+  Instpinentry *iptr;
+  int w, sqx, sqy;
+  for(w = 0; w < xctx->wires; ++w) {
+    if(xctx->wire[w].x1 == xctx->wire[w].x2 &&
+       xctx->wire[w].y1 == xctx->wire[w].y2) continue;   /* degenerate: touch() would match anything */
+    if(touch(xctx->wire[w].x1, xctx->wire[w].y1, xctx->wire[w].x2, xctx->wire[w].y2, px, py)) return 1;
+  }
+  /* no wire: the point may still be on a device pin. Exact coordinate compare via the instance-pin
+   * spatial hash (the connect_by_kissing() pattern, actions.c:2124-2133) -- an O(instances*pins)
+   * rescan per label would be quadratic on label-dense schematics (33% of the shipped corpus's
+   * instances are labels). */
+  get_square(px, py, &sqx, &sqy);
+  for(iptr = xctx->instpin_spatial_table[sqx][sqy]; iptr; iptr = iptr->next) {
+    if(iptr->n == skip_inst) continue;                   /* never self-match */
+    if(inst_is_netlabel(iptr->n)) continue;              /* a naming anchor is not copper (§5.2) */
+    if(iptr->x0 == px && iptr->y0 == py) return 1;
+  }
+  return 0;
+}
+
+static int fluid_label_on_copper(int i)
+{
+  const xSymbol *sym;
+  double px, py;
+  if(i < 0 || i >= xctx->instances) return -1;
+  if(xctx->inst[i].ptr < 0) return -1;                   /* unlinked symbol (see move.c:1274) */
+  sym = xctx->inst[i].ptr + xctx->sym;
+  if(!sym->type || strcmp(sym->type, "label")) return -1;   /* net labels only; ipin/opin/iopin are
+                                                             * real hierarchy terminals, out of scope */
+  if(sym->rects[PINLAYER] < 1) return -1;                /* no anchor to test -- see the (0,0) trap */
+  get_inst_pin_coord(i, 0, &px, &py);                    /* a net label has a single pin (0) */
+  return fluid_point_on_copper(px, py, i);
+}
+
 /* capture the pre-move connectivity partition (called at move START) */
 static void fluid_snapshot_partition(void)
 {
@@ -2698,6 +2777,19 @@ static void fluid_snapshot_partition(void)
    * same pristine geometry as the wire snapshot above; pure touch(), no netlist dependency. */
   fluid_g.geo_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
   fluid_g.geo_snap_npins = fluid_loop_partition(NULL, fluid_g.geo_snap_id);
+  /* wire_label_ride.md S0 / issue 0237: the STRAND baseline -- which net labels were on copper
+   * before the gesture. Nothing already captured can answer this: for a type=label instance
+   * node[0] is a straight copy of inst[].lab (netlist.c:1491), present whether or not the label
+   * touches anything, so fluid_g.snap_pinnet cannot discriminate; and fluid_g.geo_snap_id
+   * canonicalizes a floating pin into a singleton indistinguishable from "sole pin on its own
+   * net". Store instance IDS, not the pin-walk index: this array is deliberately NOT part of the
+   * snap_id / snap_pinnet / geo_snap_id positional family (landmine WIRING.md §7.5), so a
+   * gesture that adds or removes an instance does not invalidate it. */
+  fluid_g.strand_nid = 0;
+  fluid_g.strand_id = my_malloc(_ALLOC_ID_, (xctx->instances + 1) * sizeof(unsigned int));
+  for(i = 0; i < xctx->instances; ++i) {
+    if(fluid_label_on_copper(i) == 1) fluid_g.strand_id[fluid_g.strand_nid++] = xctx->inst[i].id;
+  }
 }
 
 /* free the snapshot without comparing (called on move ABORT, at each new START, and after each
@@ -2716,6 +2808,8 @@ static void fluid_discard_snapshot(void)
   fluid_g.start_nwire = 0;
   my_free(_ALLOC_ID_, &fluid_g.geo_snap_id);                /* issue 0104 geometric partition snapshot */
   fluid_g.geo_snap_npins = 0;
+  my_free(_ALLOC_ID_, &fluid_g.strand_id);                  /* wire_label_ride.md S0 strand baseline */
+  fluid_g.strand_nid = 0;
   my_free(_ALLOC_ID_, &fluid_g.snap_id);
   fluid_g.snap_npins = 0;
 }
@@ -6158,6 +6252,27 @@ static int fluid_seg_hits_moving_pin(double x1, double y1, double x2, double y2,
 #define FLUID_MLH_FPIN     4
 #define FLUID_MLH_STRAY    8
 #define FLUID_MLH_SPANLOSS 16
+
+/* doc/claude/specs/wire_label_ride.md S3, change #9. Is instance i registered to RIDE, i.e. is it a
+ * stationary net label that this gesture's END will carry along with the copper it names?
+ * Such a label is NOT a stationary merge hazard: block (3b) below scores it because a label pin
+ * under a leg names the copper beneath it, but a rider is about to leave that spot -- it ends up
+ * exactly where its own wire ends up, on its own net, by construction. Scoring it would push the
+ * elbow chooser away from an orientation for a merge that never happens.
+ * Rider set membership only (LABEL_RIDE_RIDE); a LEASHED label is the object being dragged and is
+ * already excluded by the `sel` test it sits beside. Cheap: label_ride_n is 0 on the vast majority
+ * of gestures and never more than the label count. */
+static int label_is_rider(int i)
+{
+  int j;
+  if(!xctx->label_ride || xctx->label_ride_n <= 0) return 0;
+  for(j = 0; j < xctx->label_ride_n; ++j) {
+    if(xctx->label_ride[j].mode != LABEL_RIDE_RIDE) continue;
+    if(xctx->label_ride[j].lid == xctx->inst[i].id) return 1;
+  }
+  return 0;
+}
+
 static int fluid_ml_hazards(int ml, int sel1)
 {
   double rx1 = xctx->rx1, ry1 = xctx->ry1, rx2 = xctx->rx2, ry2 = xctx->ry2;
@@ -6252,7 +6367,11 @@ static int fluid_ml_hazards(int ml, int sel1)
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
     if(base + npins > fluid_g.snap_npins) break;
-    if(xctx->inst[i].sel) continue;                  /* only STATIONARY labels */
+    /* wire_label_ride.md S3 change #9: `base = k; k += npins;` above runs BEFORE this continue on
+     * purpose -- the instance x pin walk must stay aligned with fluid_snapshot_partition's
+     * (WIRING.md landmine 5, guarded only by pin-count bailouts which silently disable ALL fluid
+     * safety). Add the rider test HERE, never one line earlier. */
+    if(xctx->inst[i].sel || label_is_rider(i)) continue;   /* only STATIONARY, non-riding labels */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(!type || strcmp(type, "label")) continue;
     for(p = 0; p < npins; ++p) {
@@ -7998,9 +8117,14 @@ static int fluid_count_label_shorts(void)
 {
   int i, w, shorts = 0;
   for(i = 0; i < xctx->instances; ++i) {
-    const char *type = xctx->sym[xctx->inst[i].ptr].type;
+    const char *type;
     const char *intended;
     double px, py;
+    /* the ptr<0 skip every other fluid instance walk carries (fluid_count_pins :2616,
+     * fluid_build_partition :2635): an unlinked instance would index xctx->sym[-1] on the next
+     * line. Pre-existing; harmless in practice only because unlinked instances are rare. */
+    if(xctx->inst[i].ptr < 0) continue;
+    type = (xctx->inst[i].ptr + xctx->sym)->type;
     if(!type || strcmp(type, "label")) continue;         /* only net labels */
     if(!xctx->inst[i].node || !xctx->inst[i].node[0]) continue;
     intended = xctx->inst[i].node[0];                    /* the net this label names */
@@ -8016,13 +8140,580 @@ static int fluid_count_label_shorts(void)
         break;                                           /* first wire at the pin is enough */
       }
     }
+    /* NOTE (wire_label_ride.md S0): the loop above counts nothing when NO wire touches the pin --
+     * the label is not on the wrong net, it is on no net at all. That silent hole is the strand
+     * case and it is counted separately by fluid_count_label_strands() below, because it needs a
+     * gesture-START baseline this ABSOLUTE pass does not have. Do not "fix" it here. */
   }
   return shorts;
 }
 
+/* wire_label_ride.md S0 / issue 0237: the missing arm of the pass above. Count the net labels
+ * that sat ON COPPER at gesture START (fluid_g.strand_id) and now touch nothing -- a label
+ * STRANDED by this gesture. It is the only diagnostic for the failure mode the whole
+ * wire_label_ride spec exists to fix: measured, a wire translated out from under a mid-span label
+ * silently renames the net to #netN with fluid_last_move_violations == 0 and empty stderr.
+ *
+ * Deliberately a DELTA, not an absolute count: 91 labels across 21 shipped files (1.7%) sit off
+ * copper by design -- verilog_type= declaration blocks parked off-sheet, type=label symbols used
+ * as pure graphics, wireless flyline fixtures -- and an absolute count would blame every
+ * unrelated gesture for them. A label that is off copper at both ends of the gesture is not this
+ * gesture's problem; a label CREATED off copper mid-gesture is not in the baseline set either
+ * (that is issue 0233's territory, the place_net_label drop policy).
+ *
+ * Published only, never part of the refuse signal: S0 is instrumentation with no behaviour
+ * change. Requires prepare_netlist_structs() to have run (fluid_label_on_copper reads the
+ * instance-pin spatial hash) and must run BEFORE fluid_gesture_free() destroys fluid_g. */
+static int fluid_count_label_strands(void)
+{
+  int i, k, strands = 0;
+  if(!fluid_g.strand_id || fluid_g.strand_nid <= 0) return 0;   /* no baseline => fail safe to 0 */
+  for(i = 0; i < xctx->instances; ++i) {
+    if(fluid_label_on_copper(i) != 0) continue;          /* -1 not a label, 1 still on copper */
+    for(k = 0; k < fluid_g.strand_nid; ++k) {
+      if(fluid_g.strand_id[k] != xctx->inst[i].id) continue;
+      ++strands;
+      dbg(0, "fluid_editing INVARIANT (P1): net label '%s' (%s) was on copper at move START and "
+             "now touches none -- stranded, its net reverts to an auto #net name\n",
+             xctx->inst[i].lab ? xctx->inst[i].lab : "", xctx->inst[i].instname);
+      break;
+    }
+  }
+  return strands;
+}
+
+/* ==== wire_label_ride.md S1: the per-gesture net-label RIDER SET (LEASH) =====================
+ *
+ * A net label names copper, it does not cut it. Change #4 stopped connect_by_kissing() minting a
+ * stub at a label's pin; these functions are what replaces it. Between move START and move END the
+ * gesture remembers which copper each MOVING label was sitting on, and at END a label whose anchor
+ * left that copper is projected back onto it.
+ *
+ * THE OWNER NEVER CHANGES (R7, §5.4: "If the projected anchor happens to land on a different wire,
+ * that is irrelevant -- the label stays bound to the wire it started on. No re-attachment, ever.")
+ * So the trigger is "the anchor is no longer on ITS OWNER", NOT "the anchor is off all copper".
+ * The weaker trigger looks equivalent and is not: a perpendicular drag that happens to land on a
+ * neighbouring wire, or on a parked off-copper label's pin, would be judged harmless and the label
+ * would silently desert its net -- with the S0 strand oracle scoring 0, because it shares the
+ * predicate. Under the owner test those cases snap back like any other.
+ *
+ * The owner is a COLLINEAR RUN, not one wire record. `autotrim_wires` splits a wire at every
+ * attachment point, so in the target environment a mid-span label normally sits at the shared
+ * endpoint of two collinear halves; binding to one of them would make the clamp depend on wire
+ * ARRAY ORDER and silently revert a legitimate R6 slide toward the other half. label_ride_run()
+ * therefore grows the captured owner across every collinear wire it abuts. Splits are invisible
+ * to the leash, which is the same thing S2 will make true of the data model.
+ *
+ * When the owner itself moved (a stretch that pulled the wire along with the label, a rigid move
+ * of label+wire together) the resolution DECLINES -- the START anchor no longer lies on it -- and
+ * the label is left exactly where the ELEMENT commit put it. That is correct and load-bearing:
+ * it is what stops the leash fighting select_attached_nets()' stretch (spec §10, "label-transparent
+ * copper" was rejected precisely because that arm is what makes an end-of-stub label drag work).
+ *
+ * MODE. S1 ships LEASH only: the label is the object being dragged. RIDE (the wire moves and the
+ * label follows, orientation included) is S3 and needs change #8 shipped with it.
+ *
+ * GATE. LEASH is armed only when xctx->connect_by_kissing is set (spec §5.6), i.e. exactly the
+ * CONNECTED drag whose stub change #4 removed (`m` under cadence_style_rc). The rigid /
+ * disconnected move (Shift-M, Ctrl+LMB detach) is byte-identical to today and still detaches the
+ * label -- that is the modifier's meaning, and tests/headless/test_label_ride.tcl case K1 pins it.
+ *
+ * POLICY. The invariant is CONSERVATION, not prohibition: no gesture may take a label OFF copper
+ * that was ON copper. Being off copper is not itself illegal -- 91 labels across 21 shipped files
+ * sit off copper by design (spec §5.8, R9), so a label that was already off copper gets no rider
+ * and moves freely. This is the answer issue 0233 (place_net_label commits off copper) needs too:
+ * a NEW label was never on copper, so it violates no conservation rule; 0233 stays a UX
+ * inconsistency between the two placement paths and is closed on its own merits, not by S1.
+ */
+
+/* Owner resolution, both steps mandatory (spec §11 hazard B -- the single most dangerous finding
+ * in the preflight). wire_store_split() (store.c:404) gives the NEW head a fresh id while the
+ * SOURCE keeps its id and is rewritten into the TAIL (check.c:719-721), so a captured id can
+ * still resolve -- to a wire that no longer contains the label. An id-only implementation binds
+ * to the wrong half, silently. So: resolve, then VERIFY with touch(); on failure fall back to a
+ * geometric re-find. The fallback ships ENABLED.
+ * Returns the wire index, or -1 (caller then declines, or uses the bare pin anchor for wid==0).
+ *
+ * Parameterised in S3 rather than duplicated: LEASH asks "which wire still contains the START
+ * anchor, along the START direction" and RIDE asks "which wire contains the TRANSFORMED anchor,
+ * along the TRANSFORMED direction". Same two mandatory steps, same failure modes -- hazard (B)
+ * says do not write a second resolver, so both modes call this one with their own (anchor,
+ * direction) pair. */
+static int label_ride_owner_at(unsigned int wid, double ax, double ay, double dx, double dy)
+{
+  int i;
+  if(!wid) return -1;                               /* pin anchor: there is no owner wire */
+  i = wire_index_from_id(wid);
+  if(i >= 0 &&
+     !(xctx->wire[i].x1 == xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2) &&
+     touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, ax, ay))
+    return i;
+  /* Re-find: a non-degenerate wire COLLINEAR with the captured owner that still contains the
+   * START anchor. The trim merge (check.c:406-423) and the whole-inclusion drop (:314-326) both
+   * free wires outright, and maintain_wire_segments can re-split, so this is the normal path
+   * under autotrim, not an exotic one. Collinearity is an EXACT cross product of direction
+   * vectors -- the wire_through_tap_arm() rule (select.c:1729-1731): a cross product is an AREA,
+   * so it must not be compared against a length tolerance, and split points sit on exact
+   * grid-aligned coords. Degenerate wires are skipped because touch() matches every point on
+   * their row (clip.c:234-245); connect_by_kissing() mints exactly such point-stubs. */
+  for(i = 0; i < xctx->wires; ++i) {
+    double ex = xctx->wire[i].x2 - xctx->wire[i].x1, ey = xctx->wire[i].y2 - xctx->wire[i].y1;
+    if(ex == 0.0 && ey == 0.0) continue;
+    if(dx * ey - dy * ex != 0.0) continue;
+    if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, ax, ay))
+      return i;
+  }
+  return -1;
+}
+
+/* LEASH's call: the START anchor, along the captured owner's START direction. */
+static int label_ride_owner(const Label_ride *r)
+{
+  return label_ride_owner_at(r->wid, r->ax, r->ay, r->sx2 - r->sx1, r->sy2 - r->sy1);
+}
+
+/* Grow the resolved owner into the maximal COLLINEAR RUN of wires through the START anchor, and
+ * return it as a span in (*x1,*y1)-(*x2,*y2). Seeded from the owner wire `wi` (or, for wi < 0,
+ * from the bare pin anchor, which yields a degenerate run == the anchor).
+ *
+ * Why a run and not a wire: under `autotrim_wires` -- forced on by cadence_compat, i.e. the target
+ * environment -- break_wires_at_attach_points() splits a wire at every attachment point, so a
+ * mid-span label normally sits at the shared endpoint of TWO collinear halves and both touch() the
+ * anchor. Binding to whichever comes first in xctx->wire[] makes the clamp a function of record
+ * order: a slide toward the other half is reverted to the junction and the label does not move at
+ * all, silently. §14.7's transient weld hides that only when the halves can re-weld -- a device pin
+ * at the junction blocks the merge (any_inst_pin_at, check.c:405) and makes the wrong owner
+ * permanent. Growing the run makes split points invisible to the leash, which is exactly what S2
+ * will make true of the data model itself.
+ *
+ * Everything is done in the parametric coordinate t along the captured owner direction, measured
+ * from the anchor, so the run is an interval [tlo, thi] and "abuts or overlaps" is a closed-interval
+ * test. Membership is EXACT: a candidate must be parallel to the owner (cross of directions == 0)
+ * AND on the same infinite line (cross of direction with anchor-to-endpoint == 0). Cross products
+ * are areas, so they are compared against 0, never against a length tolerance -- the
+ * wire_through_tap_arm() rule (select.c:1729-1731); wire endpoints and split points are exact
+ * grid-aligned doubles. Degenerate wires are skipped throughout (touch() matches every point on
+ * their row, clip.c:234-245, and connect_by_kissing() mints exactly such point-stubs).
+ * Iterates to a fixed point, bounded by the wire count.
+ *
+ * Parameterised in S3 for the same reason as label_ride_owner_at(): RIDE grows the run around the
+ * TRANSFORMED anchor along the TRANSFORMED direction, LEASH around the START pair. */
+static void label_ride_run_at(double ax, double ay, double dx, double dy, int wi,
+                              double *x1, double *y1, double *x2, double *y2)
+{
+  double len2, tlo, thi;
+  int grew, i;
+  if(wi < 0) {                                       /* bare pin anchor: a degenerate run */
+    *x1 = *x2 = ax; *y1 = *y2 = ay;
+    return;
+  }
+  len2 = dx * dx + dy * dy;
+  if(len2 == 0.0) {                                  /* cannot happen (capture skips degenerates) */
+    *x1 = *x2 = ax; *y1 = *y2 = ay;
+    return;
+  }
+  tlo = ((xctx->wire[wi].x1 - ax) * dx + (xctx->wire[wi].y1 - ay) * dy) / len2;
+  thi = ((xctx->wire[wi].x2 - ax) * dx + (xctx->wire[wi].y2 - ay) * dy) / len2;
+  if(tlo > thi) { double s = tlo; tlo = thi; thi = s; }
+  do {
+    grew = 0;
+    for(i = 0; i < xctx->wires; ++i) {
+      double ex = xctx->wire[i].x2 - xctx->wire[i].x1, ey = xctx->wire[i].y2 - xctx->wire[i].y1;
+      double ax1 = xctx->wire[i].x1 - ax, ay1 = xctx->wire[i].y1 - ay, t1, t2;
+      if(ex == 0.0 && ey == 0.0) continue;           /* degenerate */
+      if(dx * ey - dy * ex != 0.0) continue;         /* not parallel to the owner */
+      if(dx * ay1 - dy * ax1 != 0.0) continue;       /* parallel but on a different line */
+      t1 = (ax1 * dx + ay1 * dy) / len2;
+      t2 = ((xctx->wire[i].x2 - ax) * dx + (xctx->wire[i].y2 - ay) * dy) / len2;
+      if(t1 > t2) { double s = t1; t1 = t2; t2 = s; }
+      if(t1 > thi || t2 < tlo) continue;             /* disjoint from the run so far (closed) */
+      if(t1 < tlo) { tlo = t1; grew = 1; }
+      if(t2 > thi) { thi = t2; grew = 1; }
+    }
+  } while(grew);
+  *x1 = ax + tlo * dx; *y1 = ay + tlo * dy;
+  *x2 = ax + thi * dx; *y2 = ay + thi * dy;
+}
+
+/* LEASH's call: the START anchor, along the captured owner's START direction. */
+static void label_ride_run(const Label_ride *r, int wi,
+                           double *x1, double *y1, double *x2, double *y2)
+{
+  label_ride_run_at(r->ax, r->ay, r->sx2 - r->sx1, r->sy2 - r->sy1, wi, x1, y1, x2, y2);
+}
+
+/* Closest point of the segment (x1,y1)-(x2,y2) to (px,py), clamped to the segment. A degenerate
+ * segment (the bare pin anchor) yields the point itself. Orientation-independent, so it handles
+ * a diagonal owner too -- note the projection of a snapped point onto a diagonal span is
+ * generally OFF the snap grid, which is accepted (spec §5.4): re-snapping after projection can
+ * push the anchor straight back off the copper it was just pulled onto. */
+static void label_ride_project(double x1, double y1, double x2, double y2,
+                               double px, double py, double *tx, double *ty)
+{
+  double ex = x2 - x1, ey = y2 - y1, len2 = ex * ex + ey * ey, t;
+  if(len2 == 0.0) { *tx = x1; *ty = y1; return; }
+  t = ((px - x1) * ex + (py - y1) * ey) / len2;
+  if(t < 0.0) t = 0.0; else if(t > 1.0) t = 1.0;
+  *tx = x1 + t * ex;
+  *ty = y1 + t * ey;
+}
+
+void label_ride_free(void)
+{
+  my_free(_ALLOC_ID_, &xctx->label_ride);
+  xctx->label_ride_n = 0;
+}
+
+/* RIDE only (S3): is this anchor ALSO held by something that is NOT moving? A label whose copper
+ * is only partly in the move set must stay where it is -- it is still connected, and carrying it
+ * off the stationary half would be the very strand this stage exists to stop, just in the other
+ * direction. So: any non-degenerate STATIONARY wire under the anchor, or any stationary non-label
+ * instance pin exactly at it (the gnd/vdd-on-a-device-pin idiom, 36% of shipped labels), vetoes the
+ * ride. Labels are excluded on both sides for the §5.2 reason -- a naming anchor is not copper.
+ * Note this is a THIRD question, distinct from fluid_point_on_copper()'s "is there copper here"
+ * and check.c's any_inst_pin_at() "is this pin a segment boundary": it asks "is any of that copper
+ * STAYING". Kept local rather than folded into either of those. */
+static int label_ride_anchor_held(double ax, double ay, int skip_inst)
+{
+  int i;
+  for(i = 0; i < xctx->wires; ++i) {
+    if(xctx->wire[i].sel) continue;                            /* moving with the gesture */
+    if(xctx->wire[i].x1 == xctx->wire[i].x2 &&
+       xctx->wire[i].y1 == xctx->wire[i].y2) continue;         /* degenerate: touch() matches all */
+    if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, ax, ay))
+      return 1;
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    const xSymbol *sym;
+    int p, np;
+    if(i == skip_inst) continue;
+    if(xctx->inst[i].ptr < 0) continue;
+    if(xctx->inst[i].sel) continue;                            /* moving with the gesture */
+    if(inst_is_netlabel(i)) continue;                          /* a naming anchor is not copper */
+    sym = xctx->inst[i].ptr + xctx->sym;
+    np = sym->rects[PINLAYER];
+    for(p = 0; p < np; ++p) {
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);
+      if(px == ax && py == ay) return 1;
+    }
+  }
+  return 0;
+}
+
+/* Capture, at move START -- after connect_by_kissing() and after movelastsel was refreshed,
+ * immediately before fluid_gesture_arm().
+ *
+ * TWO ARMS, and the selection predicate is INVERTED between them (spec §11 hazard E):
+ *   LEASH  the LABEL is selected and moves; its owner copper stays.   Gated on connect_by_kissing.
+ *   RIDE   the label is NOT selected; its owner copper moves.         Gated on `label_ride`.
+ * Getting either predicate backwards is silent, and the exclusion of SELECTED labels from RIDE is
+ * spec hazard (E) -- the shared ELEMENT commit (move.c, `case ELEMENT`) already moves them. Note
+ * what that exclusion does NOT protect against: a DOUBLE MOVE cannot happen here, because the ride
+ * places the label by solving for the origin from an absolute target rather than accumulating a
+ * delta, so on a rigid translate both answers are the same coordinate. Where it earns its keep is
+ * where the two answers legitimately differ -- ROTATELOCAL (the commit turns each instance about
+ * its OWN origin, so a selected label does not travel with the wire at all) and a partially
+ * selected owner (the commit gives the label the full delta, the ride would clamp it onto the
+ * reshaped span). In both, the user's explicit selection wins. Spec §16.4;
+ * test_label_ride.tcl V29a-V29d.
+ *
+ * RIDE deliberately does NOT inherit LEASH's kissing gate: §8 says the rider does
+ * not need kissing armed, which is exactly how issue 0238's label half closes. Do not widen the
+ * LEASH gate to get there -- §14.6 pins the rigid move / Ctrl+LMB detach as a DELIBERATE detach
+ * (test_label_ride.tcl K1/K2). */
+static void label_ride_capture(void)
+{
+  int i, w;
+  int leash_on, ride_on;
+  label_ride_free();                       /* defensive: a gesture that never reached END/ABORT */
+  leash_on = xctx->connect_by_kissing != 0;  /* LEASH is the connected drag only (spec §5.6) */
+  ride_on  = tclgetboolvar("label_ride");    /* RIDE: R3, behind its own preference (spec §7 S3) */
+  if(!leash_on && !ride_on) return;
+  for(i = 0; i < xctx->instances; ++i) {
+    const xSymbol *sym;
+    double ax, ay;
+    int owner = -1, mode;
+    if(!inst_is_netlabel(i)) continue;
+    if(xctx->inst[i].sel) {
+      if(!leash_on) continue;
+      mode = LABEL_RIDE_LEASH;             /* the label is the object being dragged */
+    } else {
+      if(!ride_on) continue;
+      mode = LABEL_RIDE_RIDE;              /* the copper under it may be the object being dragged */
+    }
+    sym = xctx->inst[i].ptr + xctx->sym;
+    /* never trust get_inst_pin_coord()'s silent (0,0) for an out-of-range pin index
+     * (netlist.c:782-785): without this gate a label symbol with zero PINLAYER rects would be
+     * probed at the WORLD ORIGIN and read as connected on any schematic with a wire through
+     * (0,0). The flyline.c:80-83 pattern; same guard as fluid_label_on_copper(). */
+    if(sym->rects[PINLAYER] < 1) continue;
+    get_inst_pin_coord(i, 0, &ax, &ay);    /* a net label has a single pin (0) */
+    for(w = 0; w < xctx->wires; ++w) {
+      if(xctx->wire[w].x1 == xctx->wire[w].x2 &&
+         xctx->wire[w].y1 == xctx->wire[w].y2) continue;   /* degenerate: touch() matches all */
+      /* RIDE's owner must be a wire THIS GESTURE MOVES -- that is the whole question the mode
+       * asks, and it is a SELECTION question (WIRING.md §8 class F: the follow set lives in
+       * wire[].sel). select_attached_nets() and connect_by_kissing() have both already run at this
+       * point, so wire[].sel is the final move set. LEASH takes the first touching wire regardless,
+       * exactly as in S1. */
+      if(mode == LABEL_RIDE_RIDE && !xctx->wire[w].sel) continue;
+      if(touch(xctx->wire[w].x1, xctx->wire[w].y1, xctx->wire[w].x2, xctx->wire[w].y2, ax, ay)) {
+        owner = w;
+        break;
+      }
+    }
+    if(mode == LABEL_RIDE_RIDE) {
+      /* No MOVING wire under the anchor => nothing to ride. Deliberately no bare-pin-anchor arm
+       * here: a label on a moving DEVICE's pin is still carried by connect_by_kissing()'s ELEMENT
+       * instpin walk (change #4 skips only a moving LABEL's own pins), so inventing a second
+       * mechanism for it would double-move it. R3 is about the WIRE moving. */
+      if(owner < 0) continue;
+      /* ...and nothing STATIONARY may still be holding the anchor, or the ride would strand the
+       * label off the copper that stayed (the same defect, mirrored). */
+      if(label_ride_anchor_held(ax, ay, i)) continue;
+    } else {
+    /* LEASH. No wire under the anchor: the label may still be on a DEVICE pin -- 1919 shipped labels
+     * (36%) use that idiom with no wire at all, and connect_by_kissing() is what keeps them
+     * attached today. The anchor POINT becomes the owner, so such a label springs back instead
+     * of silently orphaning. point_on_wire_or_pin() skips SELECTED objects, so the label being
+     * dragged never matches its own pin (it is selected -- that is this loop's entry condition).
+     * Nothing at all under the anchor => no rider: an already-off-copper label is not this
+     * gesture's problem (R9) and must stay free to move.
+     * fluid_point_on_copper() and not point_on_wire_or_pin(): the latter is the Add-Wire-Label DROP
+     * gate, where landing on another label's pin is a legitimate target (§5.2 keeps it label-aware
+     * on purpose). For an OWNER it is not -- a label anchored to another naming anchor is anchored
+     * to nothing. It skips SELECTED objects too, which would silently change the answer depending
+     * on what else the gesture grabbed. */
+      if(owner < 0 && fluid_point_on_copper(ax, ay, i) != 1) continue;
+    }
+    my_realloc(_ALLOC_ID_, &xctx->label_ride, (xctx->label_ride_n + 1) * sizeof(Label_ride));
+    {
+      Label_ride *r = &xctx->label_ride[xctx->label_ride_n++];
+      r->lid  = xctx->inst[i].id;
+      r->mode = mode;
+      r->ax = ax; r->ay = ay;
+      if(owner >= 0) {
+        r->wid = xctx->wire[owner].id;
+        r->sx1 = xctx->wire[owner].x1; r->sy1 = xctx->wire[owner].y1;
+        r->sx2 = xctx->wire[owner].x2; r->sy2 = xctx->wire[owner].y2;
+      } else {
+        r->wid = 0;                                        /* bare pin anchor */
+        r->sx1 = r->sx2 = ax; r->sy1 = r->sy2 = ay;
+      }
+      dbg(1, "label_ride_capture(): label '%s' anchor %g %g owner wid=%u span %g %g %g %g\n",
+             xctx->inst[i].instname ? xctx->inst[i].instname : "?", ax, ay,
+             r->wid, r->sx1, r->sy1, r->sx2, r->sy2);
+    }
+  }
+}
+
+/* RIDE (S3 = R3): the WIRE moved, rotated or flipped and this STATIONARY label follows it,
+ * ORIENTATION INCLUDED. Called from label_ride_apply(), so it runs at both of that function's call
+ * sites -- the real END and every live RUBBER commit (spec §16.5). Everything the closed form reads
+ * (move_rot/move_flip/x1/y1/deltax/deltay/rotatelocal) is live at both, and zeroed only after the
+ * END one -- see hazard (A) on the caller.
+ *
+ * FOUR STEPS, AND THE ORDER IS THE WHOLE POINT (spec §11 hazard D). LEASH gets away with correcting
+ * an origin the ELEMENT commit already wrote, by the ANCHOR delta (§14.3). RIDE places an
+ * UNSELECTED label, so there is no committed origin to correct and the ordering debt comes due:
+ *   1. transform the START anchor by the gesture's total transform -> the TARGET pin coordinate;
+ *   2. resolve the owner at END and clamp the target onto its collinear run;
+ *   3. bake rot/flip into the instance;
+ *   4. solve for the origin from the target, reading the pin back through get_inst_pin_coord().
+ * Translate-then-rotate instead slides an off-origin label off its copper (bus_connect.sym's pin is
+ * at (10,-10) -- ~28 units of travel under a 90 rotate), which R7 forbids.
+ *
+ * The closed rotation form is PRIMARY, not a fallback (§5.3 note 2): ORDER(), the SELECTED1<->
+ * SELECTED2 swap and order_wire_points() canonicalize wire endpoints on commit, so any
+ * parametric-t-from-endpoint-1 scheme mirrors the label to the wrong end on a rotate or an
+ * endpoint-crossing stretch. Parametric t survives only inside label_ride_project()'s clamp, which
+ * is what catches a PARTIALLY selected owner -- that does not translate, it changes SHAPE, so the
+ * transformed anchor can land off the final span. */
+static void label_ride_apply_ride(const Label_ride *r, int li)
+{
+  double pvx, pvy, nx, ny, ndx, ndy, wdx, wdy;
+  double sx1, sy1, sx2, sy2, tx, ty, cx, cy, corr2, span2;
+  int wi;
+  /* hazard (E): the shared ELEMENT commit already moves every SELECTED label, so the user's own
+   * selection owns it. Capture required !sel; re-assert it here because the selection can only have
+   * grown since. NOT a double-move guard -- the placement below is absolute, so on a rigid
+   * translate both answers coincide; what this protects is ROTATELOCAL and a partially selected
+   * owner, where they legitimately differ (spec §16.4). */
+  if(xctx->inst[li].sel) return;
+  /* (1) TARGET ANCHOR: ROTATION(pivot, START anchor) + TOTAL delta, mirroring the wire commit
+   * exactly. Pivot per that commit's own rule: under ROTATELOCAL each wire turns about ITS OWN
+   * (x1,y1) -- which is r->sx1/sy1, captured from the very same record -- otherwise the shared
+   * grab point xctx->x1/y1. deltax/deltay hold the accumulated totals at this site on every path
+   * (the diagonal decomposition restores them after the attempt loop). */
+  if(xctx->rotatelocal) { pvx = r->sx1; pvy = r->sy1; }
+  else                  { pvx = xctx->x1; pvy = xctx->y1; }
+  ROTATION(xctx->move_rot, xctx->move_flip, pvx, pvy, r->ax, r->ay, nx, ny);
+  nx += xctx->deltax; ny += xctx->deltay;
+  /* the owner's DIRECTION rides the same rotation. Pivot (0,0) makes ROTATION() a pure linear map,
+   * which is what a direction vector needs (a translation must not touch it). */
+  ROTATION(xctx->move_rot, xctx->move_flip, 0.0, 0.0, r->sx2 - r->sx1, r->sy2 - r->sy1, ndx, ndy);
+  /* (2) OWNER AT END -- hazard (B)'s two mandatory steps, asked about the TRANSFORMED anchor and
+   * direction rather than the START pair (that is why the resolver is parameterised: there is one
+   * resolver, not two). Note the predicate is the exact INVERSE of LEASH's: LEASH declines when the
+   * owner no longer holds the START anchor (the owner moved); RIDE expects precisely that. */
+  wi = label_ride_owner_at(r->wid, nx, ny, ndx, ndy);
+  if(wi < 0) {
+    /* A PARTIALLY selected owner changes shape rather than translating, so the transformed anchor
+     * can be off the final span and no wire contains it. Fall back to the surviving record and let
+     * the clamp below place the label on it; the sanity gate bounds the damage if the id is a
+     * hazard-(B) wrong half. */
+    wi = wire_index_from_id(r->wid);
+  }
+  if(wi < 0 ||
+     (xctx->wire[wi].x1 == xctx->wire[wi].x2 && xctx->wire[wi].y1 == xctx->wire[wi].y2)) {
+    dbg(1, "label_ride_apply(): DECLINE RIDE '%s': owner wid=%u is gone or degenerate\n",
+           xctx->inst[li].instname ? xctx->inst[li].instname : "?", r->wid);
+    return;
+  }
+  /* Grow the END owner into its maximal collinear RUN, seeded from a point ON that wire and along
+   * ITS OWN direction -- not from the anchor, which under a reshaping stretch is not on the line at
+   * all (LEASH can seed from its anchor because it verified touch() first). Split points stay
+   * invisible to the ride, which is what S2 made true of the data model. */
+  wdx = xctx->wire[wi].x2 - xctx->wire[wi].x1;
+  wdy = xctx->wire[wi].y2 - xctx->wire[wi].y1;
+  label_ride_run_at(xctx->wire[wi].x1, xctx->wire[wi].y1, wdx, wdy, wi, &sx1, &sy1, &sx2, &sy2);
+  if(touch(sx1, sy1, sx2, sy2, nx, ny)) { tx = nx; ty = ny; }   /* the rigid case: already there */
+  else label_ride_project(sx1, sy1, sx2, sy2, nx, ny, &tx, &ty);
+  /* Sanity gate, RIDE's form. A label rides a span, so the largest clamp it can legitimately need
+   * is that span's own length (an endpoint-to-endpoint correction). More than that means the
+   * resolution bound to copper this label was never on -- decline rather than teleport it. */
+  corr2  = (tx - nx) * (tx - nx) + (ty - ny) * (ty - ny);
+  span2  = (r->sx2 - r->sx1) * (r->sx2 - r->sx1) + (r->sy2 - r->sy1) * (r->sy2 - r->sy1);
+  if(corr2 > span2 + 1e-6) {
+    dbg(1, "label_ride_apply(): DECLINE RIDE '%s': clamp %g exceeds owner span %g\n",
+           xctx->inst[li].instname ? xctx->inst[li].instname : "?", sqrt(corr2), sqrt(span2));
+    return;
+  }
+  /* (3) R3: the label's own orientation rides too -- the text rotates and flips with the wire, as
+   * in Cadence. VERBATIM from the ELEMENT commit, the `+2` TERM INCLUDED: a naive
+   * (rot + move_rot) & 3 gets a FLIPPED ODD-ROTATION label wrong. The symbol's `T {@lab}` record
+   * needs no separate handling -- draw.c positions and orients it from this same pair, and
+   * select.c mirrors it so the bbox follows. update_symbol_bboxes() is NOT a commit helper: it
+   * applies rot/flip and then RESTORES them. */
+  xctx->inst[li].rot = (xctx->inst[li].rot +
+   ( (xctx->move_flip && (xctx->inst[li].rot & 1) ) ? xctx->move_rot+2 : xctx->move_rot) ) & 0x3;
+  xctx->inst[li].flip = xctx->move_flip ^ xctx->inst[li].flip;
+  /* (4) SOLVE FOR THE ORIGIN. get_inst_pin_coord() is the forward authority (spec §11 D: "assert
+   * with it, do not reimplement it"): read where the pin sits with the NEW orientation, then
+   * translate the origin by (target - pin). A translation moves origin and pin by the same vector,
+   * so this is exact for any pin offset under any rot/flip, with no inverse-rotation formula to
+   * get wrong. This is also step 3 of hazard (D) written the only way that cannot drift from the
+   * forward map -- by using the forward map. */
+  get_inst_pin_coord(li, 0, &cx, &cy);
+  dbg(1, "label_ride_apply(): RIDE '%s' pin %g %g -> %g %g rot=%d flip=%d (owner wire %d)\n",
+         xctx->inst[li].instname ? xctx->inst[li].instname : "?", cx, cy, tx, ty,
+         xctx->inst[li].rot, xctx->inst[li].flip, wi);
+  xctx->inst[li].x0 += tx - cx;
+  xctx->inst[li].y0 += ty - cy;
+  symbol_bbox(li, &xctx->inst[li].x1, &xctx->inst[li].y1,
+                  &xctx->inst[li].x2, &xctx->inst[li].y2);
+  xctx->prep_hash_inst   = 0;
+  xctx->prep_net_structs = 0;
+  xctx->prep_hi_structs  = 0;
+  xctx->need_reb_sel_arr = 1;
+}
+
+/* Apply, END-ONLY. SITE IS LOAD-BEARING (spec §11 hazard A): this must follow the last geometry
+ * mutation and precede the state zeroing `xctx->move_rot=xctx->move_flip=0;` /
+ * `xctx->x1=..=xctx->deltay=0.;` and the ROLLBACK-OR-REFUSE block. It sits as the first statement
+ * after `xctx->ui_state &= ~STARTMERGE;`. Moving it four lines later -- beside
+ * pin_views_reconcile_after_move(), where an earlier draft put it -- makes the whole feature a
+ * silent no-op that STILL LOOKS CORRECT on an unrotated pure translate.
+ *
+ * The correction is applied to the origin the ELEMENT commit (move.c, `case ELEMENT` walk) has
+ * already written, i.e. to ROTATION(pivot, START origin) + delta. That is a pure function of the
+ * START state and the TOTAL delta on every path -- a non-fluid gesture commits once at END, and a
+ * live fluid gesture fluid_reroute_restore()s to pristine before re-deriving -- so this is
+ * "absolute" in the sense §5.3 requires, and it is idempotent besides (a second application
+ * projects an already-projected point onto the same span and moves nothing).
+ *
+ * Translating the committed origin by the ANCHOR correction is also what makes hazard (D) a
+ * non-issue here: it is exact for a pin at any offset from the instance origin
+ * (bus_connect.sym's pin is at (10,-10), ~28 units of travel under a rotate), because rot/flip
+ * are already baked into the instance and a translation moves origin and pin by the same vector.
+ * get_inst_pin_coord() is the forward authority for where the pin ended up -- do not
+ * reimplement it. */
+static void label_ride_apply(void)
+{
+  int j;
+  if(!xctx->label_ride || xctx->label_ride_n <= 0) return;
+  /* fluid_point_on_copper() reads instpin_spatial_table and the gesture just mutated geometry.
+   * fluid_check_move_invariants() makes the same call a few lines below, and the flags cleared
+   * per moved label force it to recompute, so this costs one rebuild at most. Rebuilding once for
+   * the whole loop is safe even though each leashed label invalidates prep_hash_inst: the only
+   * entries that go stale are LABEL pins, and the predicate ignores those by construction. */
+  prepare_netlist_structs(0);
+  for(j = 0; j < xctx->label_ride_n; ++j) {
+    const Label_ride *r = &xctx->label_ride[j];
+    const xSymbol *sym;
+    double cx, cy, tx, ty, sx1, sy1, sx2, sy2, corr2, moved2;
+    int li, wi;
+    li = inst_index_from_id(r->lid);
+    if(li < 0) continue;                                   /* label deleted during the gesture */
+    if(!inst_is_netlabel(li)) continue;                    /* defensive: id no longer a label */
+    sym = xctx->inst[li].ptr + xctx->sym;
+    if(sym->rects[PINLAYER] < 1) continue;                 /* the (0,0) trap again */
+    if(r->mode == LABEL_RIDE_RIDE) { label_ride_apply_ride(r, li); continue; }
+    if(r->mode != LABEL_RIDE_LEASH) continue;              /* unknown mode: do nothing */
+    /* Resolve the owner FIRST: it decides both whether the leash may act at all and what the
+     * label is clamped to. A DECLINE here is the load-bearing "the owner moved with the label"
+     * case (an end-of-stub stretch, a rigid move of label+wire together): the START anchor no
+     * longer lies on the owner, nothing can be said about where the label belongs, and the
+     * ELEMENT commit's result stands. */
+    wi = label_ride_owner(r);
+    if(wi < 0 && !(!r->wid && fluid_point_on_copper(r->ax, r->ay, li) == 1)) {
+      dbg(1, "label_ride_apply(): DECLINE '%s': owner (wid=%u, span %g %g %g %g) moved or is gone\n",
+             xctx->inst[li].instname ? xctx->inst[li].instname : "?",
+             r->wid, r->sx1, r->sy1, r->sx2, r->sy2);
+      continue;
+    }
+    label_ride_run(r, wi, &sx1, &sy1, &sx2, &sy2);
+    get_inst_pin_coord(li, 0, &cx, &cy);
+    /* R7: the test is membership of the OWNER RUN, not "is there any copper here". Landing on a
+     * NEIGHBOUR's copper is a re-attachment and is refused -- the label goes back. Still on its
+     * own run (the R6 slide along the wire) is the common case and must be byte-identical. */
+    if(sx1 == sx2 && sy1 == sy2) {
+      if(cx == sx1 && cy == sy1) continue;                 /* bare pin anchor, never left it */
+    } else if(touch(sx1, sy1, sx2, sy2, cx, cy)) continue; /* still on its own run */
+    label_ride_project(sx1, sy1, sx2, sy2, cx, cy, &tx, &ty);
+    /* Sanity gate. The target is the CLOSEST point of the owner span to the raw anchor, and the
+     * START anchor lies ON that span, so |target - raw| <= |START anchor - raw| holds by
+     * construction, exactly, for any orientation. A violation therefore means the resolution
+     * bound to a span the anchor was never on (hazard B's wrong-half case). Decline rather than
+     * teleport the label across the schematic. */
+    corr2  = (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy);
+    moved2 = (r->ax - cx) * (r->ax - cx) + (r->ay - cy) * (r->ay - cy);
+    if(corr2 > moved2 + 1e-6) {
+      dbg(1, "label_ride_apply(): DECLINE '%s': correction %g exceeds anchor travel %g\n",
+             xctx->inst[li].instname ? xctx->inst[li].instname : "?", sqrt(corr2), sqrt(moved2));
+      continue;
+    }
+    if(tx == cx && ty == cy) continue;                     /* already there: change nothing */
+    dbg(1, "label_ride_apply(): LEASH '%s' %g %g -> %g %g (owner wire %d)\n",
+           xctx->inst[li].instname ? xctx->inst[li].instname : "?", cx, cy, tx, ty, wi);
+    xctx->inst[li].x0 += tx - cx;
+    xctx->inst[li].y0 += ty - cy;
+    symbol_bbox(li, &xctx->inst[li].x1, &xctx->inst[li].y1,
+                    &xctx->inst[li].x2, &xctx->inst[li].y2);
+    /* per the real ELEMENT commit: the instance-pin hash is stale, and so are the net names and
+     * the hilight structs derived from them -- omitting the latter two leaves stale wire node
+     * names until an unrelated edit clears the flag. */
+    xctx->prep_hash_inst  = 0;
+    xctx->prep_net_structs = 0;
+    xctx->prep_hi_structs  = 0;
+    xctx->need_reb_sel_arr = 1;
+  }
+}
+
 static int fluid_check_move_invariants(int short_baseline)
 {
-  int shorts = 0, disconnects = 0, dev_merges = 0, short_delta;
+  int shorts = 0, disconnects = 0, dev_merges = 0, short_delta, strands;
   if(!tclgetboolvar("fluid_editing")) { fluid_gesture_free(); return 0; }
   prepare_netlist_structs(0);
   /* --- P2: no-short/merge (wire-level, see comment above). DELTA vs the gesture-START baseline:
@@ -8047,8 +8738,12 @@ static int fluid_check_move_invariants(int short_baseline)
   /* --- P2 (general): device-pin-merge -- catches a DEVICE short (no net label), the R18/v8 class
    * the label pass above misses. Runs BEFORE the snapshot is freed. --- */
   dev_merges = fluid_check_device_merge();
+  /* wire_label_ride.md S0: strand count BEFORE fluid_gesture_free() -- it reads the START
+   * baseline in fluid_g, which the next line destroys. */
+  strands = fluid_count_label_strands();
   fluid_gesture_free();
   tclsetvar("fluid_last_move_violations", my_itoa(short_delta));  /* violations THIS move introduced */
+  tclsetvar("fluid_last_move_label_strands", my_itoa(strands));   /* S0 oracle: labels left off copper */
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
   tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
   tclsetvar("fluid_last_move_failsafes", my_itoa(fluid_move_failsafes));  /* B4: silent-degradation count */
@@ -8187,6 +8882,10 @@ void move_objects(int what, int merge, double dx, double dy)
    } else {xctx->x1=xctx->mousex_snap;xctx->y1=xctx->mousey_snap;}
    xctx->move_flip = 0;xctx->move_rot = 0;
    xctx->ui_state|=STARTMOVE;
+   /* wire_label_ride.md S1: capture the net-label rider set HERE -- after connect_by_kissing()
+    * above (so the degenerate stubs it mints are already present and get skipped) and after
+    * movelastsel was refreshed, before the fluid gesture is armed. Consumed at the real END. */
+   label_ride_capture();
    fluid_gesture_arm(); /* Phase 1 P1 guard: capture pre-move connectivity partition (D1: arm the Fluid_gesture) */
    fluid_move_failsafes = 0;   /* B4: reset the per-gesture fail-safe degradation counter at START */
    /* incremental_wire_reroute Phase I (ownership decoupling): xctx->fluid_startsel_wires (the count
@@ -8248,6 +8947,7 @@ void move_objects(int what, int merge, double dx, double dy)
    my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
    xctx->fluid_startsel_nid = 0;                       /* issue 0091: drop the user-selected id set */
    my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
+   label_ride_free();                                  /* wire_label_ride.md S1: drop the rider set */
 
    xctx->move_rot=xctx->move_flip=0;
    xctx->deltax=xctx->deltay=0.;
@@ -8374,6 +9074,9 @@ void move_objects(int what, int merge, double dx, double dy)
       my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
       xctx->fluid_startsel_nid = 0;                    /* issue 0091: drop the user-selected id set */
       my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
+      label_ride_free();  /* wire_label_ride.md S1: same reason -- this early return skips the END
+                           * tail, and xctx->label_ride is documented to follow the
+                           * fluid_startsel_id lifecycle exactly. Nothing to apply (zero delta). */
       /* a dirty fluid drag committed live steps that the roll-back above reverted to pristine --
        * repaint so the stale committed route is cleared from the canvas. */
       if(end_was_dirty) draw();
@@ -9351,6 +10054,20 @@ void move_objects(int what, int merge, double dx, double dy)
    }
    /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
     * as the true accumulated total (not the last leg's split); it is set to (totdx,totdy) above. */
+   /* wire_label_ride.md S3, §5.4: THE CLAMP IS LIVE, UNDER THE CURSOR. With clamping as the
+    * permanent model, applying it only at release would let the label track the cursor
+    * perpendicular for the whole drag and then jump back -- worse than the stub it replaced;
+    * Cadence constrains under the cursor. The same call also makes the RIDE live, so a dragged
+    * wire carries its labels while it moves instead of teleporting them at release.
+    * This is the SAME apply as the real END's, at the equivalent point of the same shared commit
+    * block: geometry for this step is final, and move_rot/move_flip/x1/y1/deltax/deltay/rotatelocal
+    * are all still live (the END zeroes them a few lines below, inside `if(!commit_now)` -- which is
+    * exactly why the END call cannot be hoisted here instead: it must also precede the refuse
+    * block). Correct across steps because every RUBBER step fluid_reroute_restore()s to pristine and
+    * re-derives from the TOTAL delta, so this is never applied twice to the same geometry -- the
+    * "absolute, never +=" rule of §5.3, and release == stepwise is asserted by test_label_ride.tcl
+    * N8 (LEASH) and V43 (RIDE). The rider set is NOT freed here: the gesture is still open. */
+   if(commit_now) label_ride_apply();
    /* --- END-only post-commit finalizers. A live fluid RUBBER step (commit_now) keeps the gesture
     * state and only repaints. stretch_select / stretch_grabbed_xy MUST be cleared/freed HERE, not
     * inside the shared commit above -- they scope the reroute (remove_move_orphan_wires reads
@@ -9370,6 +10087,17 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->ui_state &= ~STARTMOVE;
      if(xctx->ui_state & STARTMERGE) xctx->ui_state |= SELECTION; /* leave selection state so objects can be deleted */
      xctx->ui_state &= ~STARTMERGE;
+     /* wire_label_ride.md S1, §11 hazard A: the LEASH apply site. The next two lines zero
+      * move_rot/move_flip/x1/y1/deltax/deltay, and the geometry above is final (last mutation is
+      * the body-crossing shove block). Do NOT move this down beside
+      * pin_views_reconcile_after_move() -- it would read zeroed gesture state and become a
+      * no-op that still looks correct on an unrotated pure translate.
+      * Known ordering nit, S3: propagate_hilights() above ran on pre-leash geometry, so a
+      * highlighted net whose label the leash pulled back can carry a stale highlight until the
+      * next edit. Names are re-derived by fluid_check_move_invariants' prepare_netlist_structs
+      * below; only the hilight-hash insert is early. */
+     label_ride_apply();
+     label_ride_free();
      xctx->move_rot=xctx->move_flip=0;
      xctx->x1=xctx->y1=xctx->x2=xctx->y2=xctx->deltax=xctx->deltay=0.;
      /* P3 write-through: a moved pin-name view records its new offset on the owning pin;

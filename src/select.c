@@ -2454,4 +2454,113 @@ void pop_undo_keep_selection(int redo, int set_modify)
   my_free(_ALLOC_ID_, &sid);
 }
 
+/* ---- issue 0241: the placement preview's durable identity ----------------------------------
+ * A modal cursor placement (Add-Pin / Add-Wire-Label form preview, symbol or text placement,
+ * graph / image / screen grab) is torn down with delete(), and delete() removes THE SELECTION.
+ * That was safe only because the arm sites establish "selection == preview" and nothing was
+ * expected to disturb it -- but select_all() and friends are pure selection mutators with no
+ * gesture awareness, so one Ctrl+A under a live preview turned the cancel into a whole-document
+ * delete (and set_modify(save) then restored the pre-delete "clean" flag, so the emptied
+ * schematic closed without a prompt). These three functions re-establish the invariant AT the
+ * delete instead of trusting it to hold across the gap.
+ * The pair mirrors the selection-across-undo restore above: stamp per-type session-stable ids,
+ * resolve them back with the *_index_from_id() family, tolerate the ones that no longer exist. */
+
+/* Record the CURRENT selection as the object set of the placement being armed. Call immediately
+ * before `ui_state |= START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT` at every arm site.
+ * WHY the selection and not a hand-picked object: the preview IS the set move_objects(START) is
+ * about to grab, and that set is not always the single thing the site created. An Add-Pin
+ * preview is a PINLAYER rect PLUS its owned name text (actions.c create_pin); a type=scope
+ * symbol placement is the instance PLUS its attached graph floater; and two arms -- the screen
+ * grab (draw.c) and place_text() (`t`, context menu) -- never unselect first, so the user's
+ * existing selection deliberately rides along and is dragged and dropped with the preview.
+ * Stamping the selection reproduces the old teardown member for member whenever nothing grew
+ * the selection afterwards, and fixes it when something did.
+ * INST_PIN entries are inert pseudo-selections of one pin of an instance (pin_selection.md D1):
+ * no id of their own, never deletable, skipped. So is any object whose id is still 0.
+ * PARTIAL selections are skipped too, and that is load-bearing. rebuild_selected_array() admits
+ * ANY non-zero `sel`, but delete() removes only `sel == SELECTED` exactly -- a stretch box-select
+ * marks a wire/line SELECTED1/SELECTED2 and a rect SELECTED1..4 (a genuine user selection of one
+ * ENDPOINT, see select_inside), and the old teardown was a provable no-op on those. select_*()
+ * below re-selects with SELECTED, which would PROMOTE them and make the "narrowing" delete objects
+ * the unnarrowed code left standing -- silently, because set_modify(save) then restores the clean
+ * flag. So the stamp must name exactly the set delete() would have taken: fully selected only.
+ * (Found by the adversarial review of this fix, 2026-08-08; measured before the check: 3 wires
+ * stretch-selected + `net_label 0` + `w` -> 0 wires. Pinned by section H7 of
+ * tests/headless/test_add_wire_label.tcl.) */
+void stamp_placement_preview(void)
+{
+  int i, n = 0;
+  if(!xctx) return;
+  rebuild_selected_array();
+  if(xctx->lastsel > xctx->preview_sel_size) {
+    xctx->preview_sel_size = xctx->lastsel;
+    my_realloc(_ALLOC_ID_, &xctx->preview_sel, (size_t)xctx->preview_sel_size * sizeof(PlacePreview));
+  }
+  for(i = 0; i < xctx->lastsel; ++i) {
+    int c = (int)xctx->sel_array[i].col, k = xctx->sel_array[i].n;
+    unsigned int id;
+    switch(xctx->sel_array[i].type) {
+      case ELEMENT: if(xctx->inst[k].sel    != SELECTED) continue; id = xctx->inst[k].id;    break;
+      case WIRE:    if(xctx->wire[k].sel    != SELECTED) continue; id = xctx->wire[k].id;    break;
+      case xTEXT:   if(xctx->text[k].sel    != SELECTED) continue; id = xctx->text[k].id;    break;
+      case xRECT:   if(xctx->rect[c][k].sel != SELECTED) continue; id = xctx->rect[c][k].id; break;
+      case LINE:    if(xctx->line[c][k].sel != SELECTED) continue; id = xctx->line[c][k].id; break;
+      case POLYGON: if(xctx->poly[c][k].sel != SELECTED) continue; id = xctx->poly[c][k].id; break;
+      case ARC:     if(xctx->arc[c][k].sel  != SELECTED) continue; id = xctx->arc[c][k].id;  break;
+      default:      continue;   /* INST_PIN and anything else carrying no id */
+    }
+    if(!id) continue;           /* 0 = never stamped: not resolvable, so not ours to delete */
+    xctx->preview_sel[n].type = xctx->sel_array[i].type;
+    xctx->preview_sel[n].id = id;
+    ++n;
+  }
+  xctx->preview_sel_n = n;
+  dbg(1, "stamp_placement_preview(): %d objects stamped\n", n);
+}
+
+/* Forget the stamp. Called wherever a preview stops being live WITHOUT going through the
+ * teardown -- the commit paths, the failed arms -- so a stale set can never be deleted by a
+ * later, unrelated abort (the 0123/0240 desync class, WIRING.md §8 D). */
+void clear_placement_preview(void)
+{
+  if(xctx) xctx->preview_sel_n = 0;
+}
+
+/* Narrow the selection to exactly the stamped preview, so the delete() that follows is scoped
+ * to it. Returns how many members still resolve; 0 means the caller must delete NOTHING.
+ * Deliberately NOT a filter of the current selection: a preview object can have been
+ * DESELECTED between arm and cancel (Ctrl+A is not the only mutator) and must still go.
+ * unselect_all() zeroes ui_state WHOLESALE when anything was selected, which would drop the very
+ * placement bits the caller is in the middle of tearing down, so it is bracketed by a save and
+ * restore -- the same idiom as net_hilight_mode_click() in callback.c. */
+int select_placement_preview(void)
+{
+  int i, resolved = 0, idx, layer;
+  unsigned int ui;
+  if(!xctx || xctx->preview_sel_n <= 0) return 0;
+  ui = xctx->ui_state;
+  unselect_all(0);   /* dr=0: delete()'s trailing full draw() repaints */
+  xctx->ui_state = ui;
+  for(i = 0; i < xctx->preview_sel_n; ++i) {
+    unsigned int id = xctx->preview_sel[i].id;
+    /* select_*(..., fast=3, override_lock=1): no status line, no draw, and reselect faithfully
+     * -- a locked object that the arm nonetheless grabbed must still be released. */
+    switch(xctx->preview_sel[i].type) {
+      case ELEMENT: idx = inst_index_from_id(id); if(idx >= 0) { select_element(idx, SELECTED, 3, 1); resolved++; } break;
+      case WIRE:    idx = wire_index_from_id(id); if(idx >= 0) { select_wire(idx, SELECTED, 3, 1);    resolved++; } break;
+      case xTEXT:   idx = text_index_from_id(id); if(idx >= 0) { select_text(idx, SELECTED, 3, 1);    resolved++; } break;
+      case xRECT:   idx = gfx_index_from_id(xRECT, id, &layer);   if(idx >= 0) { select_box(layer, idx, SELECTED, 3, 1);     resolved++; } break;
+      case LINE:    idx = gfx_index_from_id(LINE, id, &layer);    if(idx >= 0) { select_line(layer, idx, SELECTED, 3, 1);    resolved++; } break;
+      case POLYGON: idx = gfx_index_from_id(POLYGON, id, &layer); if(idx >= 0) { select_polygon(layer, idx, SELECTED, 3, 1); resolved++; } break;
+      case ARC:     idx = gfx_index_from_id(ARC, id, &layer);     if(idx >= 0) { select_arc(layer, idx, SELECTED, 3, 1);     resolved++; } break;
+      default: break;
+    }
+  }
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  dbg(1, "select_placement_preview(): %d/%d preview objects resolved\n", resolved, xctx->preview_sel_n);
+  return resolved;
+}
+
 

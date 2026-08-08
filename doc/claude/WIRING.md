@@ -357,6 +357,69 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     skipped the snapshot silently degrades to naive routing (log-only backstop only).
 12. Zero-delta early-out (move.c:6187) tests deltas only — currently transform-blind
     (risk §11.8) and skips kissing cleanup.
+13. **The label rider set (`xctx->label_ride`, `wire_label_ride.md` S1) has TWO site constraints,
+    both silent when broken.** (a) `label_ride_apply()` must sit between the last geometry mutation
+    and the `move_rot=move_flip=0; x1=y1=deltax=deltay=0.;` pair — it is the first statement after
+    `xctx->ui_state &= ~STARTMERGE;`. Four lines later, beside `pin_views_reconcile_after_move()`,
+    it reads zeroed gesture state and becomes a no-op **that still looks correct on an unrotated
+    pure translate**. (b) `label_ride_free()` must run AFTER the apply, not beside
+    `my_free(&xctx->fluid_startsel_id)` a few lines above it, which would destroy the riders first.
+    Owner resolution is likewise two mandatory steps — resolve the id, then `touch()`-verify, else
+    geometrically re-find the collinear wire through the START anchor: `wire_store_split` keeps the
+    source id on the TAIL, so an id-only lookup binds to the wrong half (spec §11 B, §14.8). And
+    the resolved wire must then be grown into its collinear RUN — under autotrim a label sits at a
+    split point where TWO wires contain its anchor, so binding to one makes the result depend on
+    `xctx->wire[]` order (§14.4). Anything that consumes a captured owner id has all three
+    obligations.
+14. **A net label pin is not a segment boundary (`wire_label_ride.md` S2), and the two guards that
+    say so are a matched pair with ASYMMETRIC symptoms.** `break_wires_at_attach_points()` skips
+    `inst_is_netlabel()` and `any_inst_pin_at(x, y, skip_labels)` skips it too, both behind
+    `label_splits_wires` (default 0). Relaxing only the merge is loudly visible (two abutting
+    halves at a label never weld — a permanent fragment). Relaxing only the splitter is **not**:
+    `maintain_wire_segments()` splits and welds inside one call, so `xschem get wires` looks right
+    while every edit churns `set_modify(1)`. The witness for that direction is a label at a wire
+    **CROSSING**, where four endpoints make `end1/end2` non-zero, the merge is refused before
+    `any_inst_pin_at()` is consulted, and the split becomes permanent — plus the §4.4 short.
+    `label_splits_wires` must keep its **own** gate: `trim_wires`' `split_active`
+    (`autotrim_wires`, cached once) exists for spec D2 byte-stability, and folding the two makes
+    the escape hatch stop switching while every default-path test stays green (spec §15.1–15.2).
+15. **Removing manufactured endpoint coincidence removes rescues you did not know keyed on it.**
+    The S2 mask removal (§9, P1 label strand) is the worked example: the split placed a mid-span
+    label on a wire endpoint, and *both* `connect_by_kissing()`'s wire-endpoint tether and
+    `select_attached_nets()`' `endpoint_near` ELEMENT arm fired only because of that coincidence.
+    Before deleting any geometry-manufacturing pass, grep for consumers of the coincidence it
+    manufactures, not just for callers of the pass.
+16. **The net-label RIDER SET has TWO arms whose selection predicate is INVERTED, and one shared
+    resolver (`wire_label_ride.md` S3).** `label_ride_capture()` walks the instances once: a label
+    with `inst[].sel` SET is a LEASH rider (the label is being dragged, gated on
+    `connect_by_kissing`), a label with it CLEAR is a RIDE rider (its copper is being dragged, gated
+    on `label_ride`). Getting either backwards is silent. Owner resolution is
+    `label_ride_owner_at(wid, anchor, direction)` / `label_ride_run_at(...)` — parameterised, NOT
+    duplicated, because the two modes ask the SAME question about different anchors and LEASH's
+    DECLINE condition ("the owner no longer holds the START anchor") is RIDE's entry condition.
+    RIDE additionally requires that nothing STATIONARY still holds the anchor
+    (`label_ride_anchor_held()`): a label at an L-corner or a crossing whose copper only partly
+    moves must stay put, or the ride strands it off the half that stayed. RIDE places the label by
+    target-pin → rot/flip bake → **solve for the origin via `get_inst_pin_coord()`**, never
+    translate-then-rotate (an off-origin pin travels ~28 units under a 90° rotate), and never by
+    accumulating a delta — which is also why a duplicate rider is a no-op on a rigid translate and
+    the `sel` guard's real content is ROTATELOCAL and partially-selected owners, not a "2× delta".
+    The apply now has TWO call sites: the END one (landmine 13 above, unchanged) and a live one
+    gated on `commit_now` at the tail of the shared commit block. The END call cannot be hoisted to
+    the live site — it must also precede the refuse block — and the live call must not free the
+    rider set.
+
+17. **`sel_array` is NOT the delete set.** `rebuild_selected_array()` admits any object with a
+    non-zero `sel`, but `delete()` (and `delete_wires`, `del_rect_line_arc_poly`) removes only
+    `sel == SELECTED` **exactly**. A stretch box-select marks a wire/line `SELECTED1`/`SELECTED2`
+    and a rect `SELECTED1..4` — a real user selection of one ENDPOINT that `delete()` deliberately
+    leaves alone. So any code that reads `sel_array`, remembers what it saw, and later re-selects
+    it with `select_*(..., SELECTED, ...)` has **PROMOTED partial selections to full ones and
+    widened a delete**. Issue **0241**'s first build did exactly that: scoping the placement
+    teardown to a stamped selection made it destroy three stretch-selected wires the *unscoped*
+    code had left standing — and `set_modify(save)` then reported the document clean, which is the
+    very lie 0241 existed to fix. Caught by the adversarial review of the fix, not by any test.
+    **Filter on the `sel` VALUE, not on membership in `sel_array`.**
 
 ## 8. Root-cause classes from issues 0079–0111 (name the class before fixing)
 
@@ -365,7 +428,50 @@ contact matrix {endpoint-on-pin, pin-on-span, endpoint-on-span, collinear} × {o
 × {moving/stationary} × {perp/parallel} was never enumerated; each cell found by a user
 (0083/0085/0094/0098/0105/0106/0109; 0112 found by the A3 audit fold-in) · C **Stale anchor** — pristine-anchor-by-design +
 no liveness concept for vacated points (0103/0104/0108/0111) · D **Decline residue** —
-cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111) · E **Transform
+cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111; **0240**: `abort_operation()`'s
+STARTWIRE/STARTLINE arm returned early to preserve persistent command mode and thereby skipped the
+WHOLE teardown below — with a placement preview co-armed on top of a live wire draw, `ui_state = 0`
+dropped `START_SYMPIN` before `delete()` could run, orphaning the preview instance in the drawing
+with `sympin_preview`/`wirelabel_preview` stuck at 1 → callback.c's click-select guard
+(`!sympin_preview`) false forever = unrecoverable UI. **An early return inside a teardown function
+is a class-D generator: gate the ONE step you meant to skip, do not `return`.** The same teardown
+has three more class-D holes, each filed with a measured headless repro: **0241** it deleted the
+SELECTION rather than the preview, so a `Ctrl+A` in between wiped the schematic — FIXED 2026-08-08,
+and it is the class's *scope* lesson rather than its *early-return* one: a teardown that acts on
+"whatever is selected" is trusting an invariant established by a DIFFERENT function at a DIFFERENT
+time, across a window in which a modeless form lets the user run arbitrary commands. **A teardown
+must name what it is tearing down.** The fix stamps the preview's per-object session-stable ids at
+all twelve arm sites (`stamp_placement_preview()`, select.c) and re-selects exactly those before
+the `delete()`, with "resolves to nothing → delete nothing" as the backstop. It also let the
+0243 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
+refuses; **0242** every
+other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
+paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
+**0243** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
+`abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
+`last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the
+`STARTMOVE` branch `return`s to keep an aborted move's selection, and that `return` skipped the
+`ui_state = 0` that was the ONLY sink for every gesture bit no callee owns, so the rubber band was
+re-stroked forever with nothing left to erase it — and the next click was eaten by the orphan
+gesture, committing a stray rectangle. The fix is one `clear_orphan_gesture_bits()` shared by all
+three returns; fixing only the branch the repro used would have left two textually identical
+siblings leaking. **If a teardown must return early, it owes by hand every clear the
+terminal would have done.** 0243 also added the class's mirror-image gate: `leave_placement_for()`
+(placement dropped before a wire/line arms) opposite `leave_wire_draw_for()` (wire dropped before a
+placement arms) — two modal gestures may not coexist in EITHER order, and both gates live at the
+verbs, never at the shared primitive the click path also uses. **0247** (FIXED 2026-08-08) is the
+completion of that gate and the class's other lesson: the rule was applied one verb at a time, so
+after 0240 and 0243 F1 exactly four of the arms had it and thirteen did not — including the SHAPE
+draws (`r`, `P`, arc, circle), which 0247 had written off as "a much milder clash" until the user
+demonstrated the identical dead end in cadence mode (`w`, click, `r` → `ui=65537`, the rectangle can
+never start). **When a rule needs a call at every arm, enumerate the arms from the ui_state bits
+they set, not from the ones the bug report happened to name** — and gate BOTH interface branches of
+every key, since `infix_interface 0` (cadence) arms `MENUSTART` and starts the gesture on the first
+CLICK, which is precisely the click the live draw was stealing. Its user-visible half needed
+**0248** first: the gate's statusbar line was destroyed before it could be read, by the coordinate
+readout on the next 8-pixel mouse move AND, for placement verbs, by `select.c`'s object-info line
+one call after the arm. A message that explains a discarded gesture now HOLDS the field
+(`statusmsg_hold()`, 5 s or until the next ButtonPress).) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
 follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others
@@ -417,6 +523,67 @@ spec digest). Enforcement TODAY:
 - P1 disconnect: still **log-only** (Tcl var `fluid_last_move_disconnects`). NOT part of the
   refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
   and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
+- P1 **label strand**: also log-only (`fluid_last_move_label_strands`, `fluid_count_label_strands`,
+  wire_label_ride.md S0 / issue 0237). A net label that sat on copper at START and touches none at
+  END — the wire translated out from under it and the net silently reverted to `#netN`. A DELTA
+  against a START baseline of label instance **ids** (`fluid_g.strand_id`, captured in
+  `fluid_snapshot_partition`, freed in `fluid_discard_snapshot`), because 1.7% of the shipped
+  corpus parks labels off copper on purpose. "On copper" is **pin-aware** — a wire span OR another
+  instance's pin at the same coordinate; 36% of shipped labels sit on a device pin with no wire.
+  Deliberately NOT in the refuse signal: S0 is instrumentation, and the rider that will actually
+  prevent the strand is S1/S3. This oracle is the only diagnostic those stages have.
+- P1 **label leash**: ENFORCED as of `wire_label_ride.md` S1 — and it is the first P1 sub-signal
+  that is. `connect_by_kissing()` no longer mints a rescue stub at a `type=label` instance's pin
+  (`inst_is_netlabel()`, check.c); instead a per-gesture **rider set** (`xctx->label_ride`,
+  `label_ride_capture/apply/free` in move.c) remembers which copper each MOVING label sat on at
+  START, and at END a label that left it is projected back on. Three things about that sentence
+  are load-bearing and each was a bug in a draft: the test is **"left ITS OWNER"**, not "is off
+  all copper" — the weak form lets a drag onto a neighbour's wire, a device pin or another
+  label's anchor silently re-attach the label to a different net (R7, spec §14.1); the owner is
+  the **collinear RUN** through the anchor, not one wire record, because autotrim splits at every
+  attachment point and binding to one half makes the clamp depend on wire array order (§14.4);
+  and an owner that no longer contains the START anchor means the owner MOVED (a stretch pulling
+  the wire along with the label), where the leash must DECLINE, not fight it.
+  Scope, deliberately narrow: LEASH is gated on `xctx->connect_by_kissing`, so only the CONNECTED
+  drag changes; the rigid move, the Ctrl+LMB detach and the issue-0238 keyboard stretch paths are
+  byte-identical and still strand (the S0 oracle above still reports them). ~~The label ride for a
+  moving WIRE (RIDE) is S3 and does not exist yet.~~ **RIDE LANDED 2026-08-06 — see the next
+  entry.**
+- P1 **label ride**: ENFORCED as of `wire_label_ride.md` S3, behind `label_ride` (default 1). The
+  other direction of the same cell: the WIRE moves, rotates or flips and a STATIONARY net label
+  follows it, **its own `rot`/`flip` included** (R3, the Cadence behaviour). Same rider set, second
+  arm, opposite selection predicate (landmine 16). This is what closes issue **0237** — measured on
+  its own repro, `strands` 1 → 0 and the net `#net1` → `VOUT`, in BOTH the stock and the
+  `cadence_compat` config — and it removes `connect_by_kissing()`'s wire-endpoint TETHER for labels
+  (change #8) in the same switch, so `label_ride 0` restores the stub *and* withdraws the ride
+  rather than leaving an end-of-stub label with neither. Not gated on `connect_by_kissing`: the
+  rider does not need kissing armed, which closes the *wire-moving* direction of issue **0238**'s
+  label half (the label-moving direction stays with 0238's own fix — spec §16.7). Both modes apply
+  LIVE as of S3: a second `label_ride_apply()` call gated on `commit_now`, release == stepwise
+  measured for each (`test_label_ride.tcl` N8 and V43). Ground truth: `test_label_ride.tcl` sections
+  V and U (157 checks), `test_label_strand_oracle.tcl` A/C/D + their `label_ride 0` legacy legs,
+  `test_wire_split.tcl` W7b2. Spec §16.
+  Related predicate change: `fluid_label_on_copper()` (S0) now delegates to
+  `fluid_point_on_copper(x, y, skip)`, whose pin arm **skips net labels** — a naming anchor is not
+  copper (§5.2). Without that, two labels at one coordinate each read the other as copper, so both
+  can be dragged off a wire with the leash declining and the strand oracle scoring 0.
+- P1 **label strand, `cadence_compat` regression as of S2**: `wire_label_ride.md` S2 (2026-08-06)
+  stops a `type=label` pin splitting a wire (`break_wires_at_attach_points`) and stops it blocking
+  the collinear rejoin (`any_inst_pin_at`'s new skip-labels arg), behind
+  `label_splits_wires` (default 0). Connectivity at rest is unchanged — `touch()` is
+  interior-inclusive, corpus-verified — and the leash is unaffected. **But the split was MASKING
+  issue 0237 for the autotrim user, and S2 removes the mask.** Two rescues key on the endpoint
+  coincidence the split manufactured: `connect_by_kissing()`'s wire-endpoint tether (still alive;
+  it goes with S3) and `select_attached_nets()`' `endpoint_near` ELEMENT arm. Measured, one gesture
+  (label stationary, wire translates, kissing armed): autotrim-off `strands 1`; autotrim-on
+  pre-S2 `strands 0`; autotrim-on S2 `strands 1`. So the cadence user now matches the default user
+  instead of being accidentally protected — no new failure class, but strictly worse than before
+  until **S3/RIDE** lands. Mitigation: `set label_splits_wires 1` restores the mask exactly. Ground
+  truth: `test_label_strand_oracle.tcl` D0–D2 / DM0–DM2, `test_wire_split.tcl` `W7b`. Spec §15.3.
+  **RESOLVED the same day by S3** (entry above): the ride does not care whether the wire was split,
+  so all three rows now read `strands 0` / `VOUT` and `label_splits_wires 1` is back to being an
+  escape hatch rather than a mitigation. The D/DM anchors were re-authored to the S3 result and each
+  kept a `label_ride 0` legacy leg, so the measurement above is still executed on every run.
 - P4: never asserted; relay may legally save diagonals ("electrically correct beats pretty").
 - P3/P5/P6/no-dead-copper: produced procedurally by the healer ladder, never verified.
 - P7: approximated by prot[] + novelty; never asserted globally.
@@ -433,6 +600,12 @@ spec digest). Enforcement TODAY:
   ALT-R; self-skip without X) · **test_fluid_editing** (tip-grab basics).
 - Net readback: `xschem resolved_net 0` then `getprop wire <i> lab` — **bare
   `resolved_net` stamps every wire with the selected net and hides shorts**.
+- ERC readback: `xschem set infowindow_text {}` then the command, then
+  `xschem get infowindow_text` — `statusmsg(str,2)` appends there. Do **not** assert "the net is
+  highlighted" after a netlist run: `traverse_node_hash()` highlights every undriven/open net too,
+  so the assertion passes with the highlight code deleted. Probe through `xschem list_hilights`,
+  which runs `prepare_netlist_structs(1)` without that pass
+  (tests/headless/test_signal_short_nohier_0230.tcl).
 - `wire_coord` endpoint order is not canonical — normalize before compare.
 - Fixture conventions (`tests/from_user/`): `before_N.sch` user pre-state (N = fixture
   generation: before_3→0085-0090, before_7→0099-0104, before_8→0105-0111); `after_M.sch`
@@ -442,7 +615,22 @@ spec digest). Enforcement TODAY:
 - New gesture test: copy the 0111 test shape (~150 lines, self-contained); transcribe
   waypoints from the user's FLUID_TRACE log; RED-first against exact coordinates from
   after_M; prefer HERE-relative fixture paths.
-- Every new predicate/check needs a sabotage variant ([[green-but-hollow]]).
+- Every new predicate/check needs a sabotage variant ([[green-but-hollow]]). Two shapes of hollow
+  check found in the 0247 work: (a) a predicate satisfied by something OTHER than the fix — `r` on a
+  MENU-armed wire "clears the wire arm" is green with the gate deleted, because the shape arm
+  ASSIGNS `ui_state2` wholesale; (b) a sabotage run that lies because `make` did not rebuild —
+  restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
+  `.o` linked in, so the NEXT variant's red set is the previous one's. **`rm` the object file, do
+  not trust the timestamp**, and re-run the clean baseline after every restore.
+- **Constructing a state the product now refuses**: the modal-gesture gates make the co-armed state
+  (a live wire draw + a second gesture) unbuildable from any verb, which is what
+  `abort_operation()`'s teardown tests need. `xschem test_gate_bypass 0|1` is the test-only seam for
+  exactly that; bracket only the CONSTRUCTOR with it, never the behaviour under test, and pin the
+  seam itself (default off + it really disables a gate) so a forgotten `1` cannot fake a pass.
+- **A GUI-mode test cannot print to stdout unless `--pipe` is given** — and with `--pipe` xschem
+  blocks reading stdin, so `after` timers never fire. Drive such a test at SOURCE time with
+  explicit `update` calls (`tests/headless/test_statusmsg_hold_0248.tcl` is the worked example:
+  synthesized `<Motion>`/`<ButtonPress-1>` through the Tk bindings, then `.statusbar.1 cget -text`).
 
 ## 11. Open risks — predicted next failures (verified against source; check before
 declaring any wiring feature done, convert to xfail tests when touching the area)

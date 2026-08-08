@@ -1,6 +1,7 @@
 # 0123 — Fluid move refused by a PRE-EXISTING short on a foreign net
 
-Status: **FIXED** (primary bug). Secondary pin-placement hiccup: under investigation (see bottom).
+Status: **FIXED** (primary bug). Secondary pin-placement hiccup: guarded; its desync ROOT is now
+tracked as issue **0242** (headless repro obtained 2026-08-06 — see *Residual* at the bottom).
 
 ## Symptom (user report)
 
@@ -86,7 +87,14 @@ block); the guard bites only in the desync window, where declining the grab is s
 stealing the click into a wire-stretch. Regression-clean: `test_sch_add_pin`, `test_add_wire_label`,
 `test_wire_split`, wireedit 57/57 all still pass.
 
-**Residual (open):** the guard stops the WRONG action but the desync ROOT — `STARTMOVE` being cleared
+**Residual — SUPERSEDED 2026-08-06 by issue 0242.** The blocker recorded below was "no headless
+repro exists". One now does: `l` + a name + `Ctrl+V` (four keystrokes), asserted directly with the
+getters issue 0240 added (`xschem get sympin_preview`, `xschem get last_command`). 0242 enumerates
+17 doors, of which 6 leave exactly this desync, and settles the "blanket free is risky" caveat
+concretely — the discriminator is `START_SYMPIN`, which is set at every door and clear at every
+legitimate form re-arm. Track the root there; the guard described below stays as it is.
+
+*Original text:* the guard stops the WRONG action but the desync ROOT — `STARTMOVE` being cleared
 while `START_SYMPIN`/`sympin_preview` stay live, and `unselect_all()` orphaning the armed gesture — is
 not closed (candidate: have the ui_state teardown release the gesture, but `unselect_all` runs inside
 legit fluid passes too, so a blanket free is risky). No headless repro exists (the capture needs real

@@ -1904,6 +1904,10 @@ void clear_drawing(void)
   * net-label preview cannot leak its drop-on-copper gate onto the next document's placements. */
  xctx->sympin_preview = 0;
  xctx->wirelabel_preview = 0;
+ /* issue 0241: the stamped preview identity belongs to the document going away. The ids in it
+  * name objects that no longer exist, and the next document restarts the id counters -- so a
+  * survivor could resolve onto an UNRELATED new object and get deleted by the next abort. */
+ clear_placement_preview();
  xctx->graph_lastsel = -1;
  /* Waveform markers: the selection is a NUMBER, and the same xctx is reused by
   * `xschem clear`, File>Open in the same tab, `xschem load` and the disk-undo
@@ -2046,6 +2050,9 @@ int connect_by_kissing(void)
   double x0,y0, pinx0, piny0;
   int kissing, changed = 0;
   int k, ii, done_undo = 0;
+  /* doc/claude/specs/wire_label_ride.md R3 (S3, change #8): read the ride preference ONCE per
+   * sweep -- the wire-endpoint arm below consults it per candidate pin. */
+  int label_ride_on = tclgetboolvar("label_ride");
   Wireentry *wptr;
   Instpinentry *iptr;
   int sqx, sqy;
@@ -2061,6 +2068,19 @@ int connect_by_kissing(void)
   for(j=0;j<k; ++j) if(xctx->sel_array[j].type==ELEMENT) {
     int inst = xctx->sel_array[j].n;
     symbol = xctx->sym + xctx->inst[inst].ptr;
+    /* doc/claude/specs/wire_label_ride.md R1 (S1, change #4): a NET LABEL's pin is a naming
+     * anchor, not copper. The stub minted below is a gesture artifact -- it is rubber-banded
+     * into real copper by the drag, which is what leaks a duplicate collinear N record when the
+     * label slides ALONG its wire and leaves a permanent perpendicular stub when it is dragged
+     * OFF it (spec §4.1). Nothing reads that stub as the label-to-net connection: the label is
+     * bound to the wire by touch() at netlist time (netlist.c:1034), interior included.
+     * What replaces it is the LEASH (label_ride_capture/apply, move.c): the label is projected
+     * back onto its owner's span at move END, so it can slide along the wire but never leave it.
+     * NEVER ship this skip without that leash -- alone it turns an ugly-but-connected stub into
+     * a silent orphan. ipin/opin/iopin and every device pin are untouched (inst_is_netlabel is
+     * strcmp "label", not IS_LABEL_OR_PIN), and so is the wire-endpoint arm below (change #8,
+     * which must ship with RIDE in S3). */
+    if(inst_is_netlabel(inst)) continue;
     npin = symbol->rects[PINLAYER];
     for(i=0;i<npin; ++i) {
       get_inst_pin_coord(inst, i, &pinx0, &piny0);
@@ -2128,7 +2148,23 @@ int connect_by_kissing(void)
         ii = iptr->n;
         dbg(1, "connect_by_kissing(): ii=%d, x0=%g, y0=%g,  iptr->x0=%g, iptr->y0=%g\n",
                ii, x0, y0, iptr->x0, iptr->y0);
-        if( iptr->x0 == x0 && iptr->y0 == y0  &&  xctx->inst[ii].sel == 0) {
+        /* doc/claude/specs/wire_label_ride.md R3 (S3, change #8): the TETHER. This arm is
+         * wire-endpoint driven, so the instance tested through iptr is the STATIONARY one -- a net
+         * label sitting on the endpoint of a wire this gesture is about to move. The stub minted
+         * below is what has kept such a label attached; RIDE replaces it by carrying the label
+         * itself, orientation included, which is the Cadence behaviour and what R1/§5.1 mean by
+         * "no invented copper".
+         * MUST NOT SHIP WITHOUT RIDE. Post-S2 a mid-span label is interior to one wire and this arm
+         * never sees it, but an END-OF-STUB label -- the dominant topology the wire-stub+netlabel
+         * idiom produces -- is exactly on the endpoint, and this stub is the only thing holding it.
+         * Removing it without the rider widens S2's unmask from mid-span labels to ALL of them.
+         * Hence the shared `label_ride` gate: the preference switches the stub and the ride
+         * together, so 0 restores pre-S3 behaviour rather than leaving the label with neither.
+         * ipin/opin/iopin and every device pin are untouched (inst_is_netlabel is strcmp "label",
+         * not IS_LABEL_OR_PIN), and so is the ELEMENT arm above, which handles the mirrored case
+         * (a moving DEVICE carrying a stationary label on its pin). */
+        if( iptr->x0 == x0 && iptr->y0 == y0  &&  xctx->inst[ii].sel == 0 &&
+            !(label_ride_on && inst_is_netlabel(ii)) ) {
           kissing = 1;
           break;
         }
@@ -2428,6 +2464,13 @@ void delete_files(void)
 
 void place_net_label(int type)
 {
+  /* phase 2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0247) -- see
+   * leave_wire_draw_for() in scheduler.c for the rule and why it is not optional. ONE call here
+   * covers every route to a net-label placement: Alt+Shift+L (type 0), Ctrl+P (2),
+   * Ctrl+Shift+P (3) and the scripted `xschem net_label 0|1|2|3`. All of them arm a cursor
+   * placement (START_SYMPIN + a real lab_wire / lab_pin / ipin / opin preview instance riding the
+   * pointer); none is a commit form, so there is no coordinate sub-form to exclude here. */
+  leave_wire_draw_for("Net label");
   if(type == 1) {
       const char *lab = tcleval("find_file_first lab_pin.sym");
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);
@@ -2442,6 +2485,7 @@ void place_net_label(int type)
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);
   }
   move_objects(START,0,0,0);
+  stamp_placement_preview();   /* issue 0241 -- see stamp_placement_preview() in select.c */
   xctx->ui_state |= START_SYMPIN;
 }
 
@@ -3885,6 +3929,9 @@ void clear_schematic(int cancel, int symbol)
         my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
         xctx->fluid_startsel_nid = 0;                   /* issue 0091: drop the user-selected id set */
         my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
+        label_ride_free();  /* wire_label_ride.md S1: a teardown mid-gesture must drop the label
+                             * rider set too, else a later move END would leash instance ids that
+                             * belong to a different buffer. */
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both on-disk files and names already open

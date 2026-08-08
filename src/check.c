@@ -160,20 +160,49 @@ double timer(int start)
 
 static int touches_inst_pin(double x, double y, int inst); /* defined below; reused here */
 
-/* Return 1 if any instance PIN coincides EXACTLY with (x, y). Net-labels, pin-labels
- * and bus_taps are just instances carrying PINLAYER pins, so they are covered too.
+/* doc/claude/specs/wire_label_ride.md §5.2: is instance i a NET LABEL, i.e. an instance whose
+ * symbol type is exactly "label"? A net label's PINLAYER rect is a NAMING ANCHOR, not copper
+ * geometry: it must not mint a connecting stub during a drag (R1), must not split a wire (R2,
+ * S2) and must not block a collinear merge -- its own connection is carried by the per-gesture
+ * rider set instead (§5.3).
+ * Deliberately strcmp(type, "label") and NOT the IS_LABEL_OR_PIN macro: ipin / opin / iopin are
+ * real hierarchy terminals and every current behaviour of theirs is preserved. Deliberately not
+ * IS_LABEL_SH_OR_PIN either -- `scope` and `show_label` are out of scope here, and `bus_tap` is a
+ * genuine two-pin copper object.
+ * Exported: the three consumers live in check.c, actions.c and move.c. */
+int inst_is_netlabel(int i)
+{
+  const char *type;
+  if(i < 0 || i >= xctx->instances) return 0;
+  if(xctx->inst[i].ptr < 0) return 0;               /* unlinked symbol: no type to ask about */
+  type = (xctx->inst[i].ptr + xctx->sym)->type;
+  return type && !strcmp(type, "label");
+}
+
+/* Return 1 if any instance PIN coincides EXACTLY with (x, y). Pin-labels and bus_taps are just
+ * instances carrying PINLAYER pins, so they are covered too.
  * Used by trim_wires' collinear-rejoin to REFUSE welding two segments across an
- * attachment point (a net-label / instance pin between them is a meaningful segment
+ * attachment point (an instance pin between them is a meaningful segment
  * boundary for click-selection). Exact double compare (delegated to touches_inst_pin) is
  * correct here: pin coords and wire endpoints are on-grid, so a genuine attachment matches
  * exactly; a pin merely NEAR the wire is not an attachment (and is not connected either --
  * see doc/claude/specs/wire_segment_splitting.md, W0 + Hazard H2).
  * Only called (when splitting is active) from the merge branch after the cheap
- * end1/end2==0 test, i.e. for the rare degree-2 collinear joints trim would collapse. */
-static int any_inst_pin_at(double x, double y)
+ * end1/end2==0 test, i.e. for the rare degree-2 collinear joints trim would collapse.
+ *
+ * skip_labels: 1 = a type=label instance's pin is NOT a boundary, so two collinear halves
+ *   meeting at a net label WELD (doc/claude/specs/wire_label_ride.md R2, change #7). This is
+ *   the MATCHED PAIR of break_wires_at_attach_points()' label skip (change #6) and must never
+ *   ship without it: relax the splitter alone and a wire that was split at a label can never
+ *   re-weld -- a permanent, invisible fragment. Relax the merge alone and every edit splits at
+ *   the label and immediately welds it back, churning set_modify() for nothing.
+ *   0 = pre-S2 behaviour: any pin, label or device, blocks the weld.
+ * The caller decides, from `label_splits_wires`; a DEVICE pin blocks the weld either way. */
+static int any_inst_pin_at(double x, double y, int skip_labels)
 {
   int i;
   for(i = 0; i < xctx->instances; ++i) {
+    if(skip_labels && inst_is_netlabel(i)) continue;
     if(touches_inst_pin(x, y, i)) return 1;
   }
   return 0;
@@ -213,6 +242,14 @@ void trim_wires(void)
    * -- spec D2. It also short-circuits the O(inst*pins) any_inst_pin_at() away entirely on
    * the default path. See doc/claude/specs/wire_segment_splitting.md. */
   int split_active = tclgetboolvar("autotrim_wires");
+  /* A net label does not cut copper (doc/claude/specs/wire_label_ride.md R2, change #7). This is
+   * its OWN gate, deliberately not folded into split_active: split_active exists to keep the
+   * DEFAULT (autotrim off) trim/join byte-for-byte identical (spec D2) and to short-circuit the
+   * O(inst*pins) probe off that path, while label_splits_wires decides only WHICH pins count as a
+   * boundary once splitting is active. Sharing one flag would make the escape hatch unable to
+   * restore pre-S2 behaviour, and would make the label rule depend on autotrim in the merge but
+   * not in the splitter. Device-pin behaviour is unaffected in either autotrim mode. */
+  int label_splits = tclgetboolvar("label_splits_wires");
 
   doloops = 0;
   xctx->prep_hash_wires = 0;
@@ -398,11 +435,15 @@ void trim_wires(void)
             xctx->wire[j].x1 == x0 && xctx->wire[j].y1 == y0 &&
             /* no other connecting wires */
             xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 &&
-            /* and (when splitting is active) no instance pin / net-label at the joint: an
-             * attachment there is a meaningful segment boundary, do not weld across it
-             * (W0 -- pin-aware merge). Also gives free auto-rejoin when the pin is later
-             * removed. Gated on split_active so default trim/join is unchanged (D2). */
-            (!split_active || !any_inst_pin_at(x0, y0)) ) {
+            /* and (when splitting is active) no instance pin at the joint: an attachment there
+             * is a meaningful segment boundary, do not weld across it (W0 -- pin-aware merge).
+             * Also gives free auto-rejoin when the pin is later removed. Gated on split_active
+             * so default trim/join is unchanged (D2). A NET LABEL is excluded unless
+             * label_splits_wires is set: it names copper, it does not cut it (wire_label_ride.md
+             * R2, change #7 -- the matched pair of the splitter's label skip). THIS IS THE ONLY
+             * LIVE CONSUMER of any_inst_pin_at(): merge_collinear_wires' pin-aware arm is
+             * unreachable today (its sole caller, save.c, is pin-blind). */
+            (!split_active || !any_inst_pin_at(x0, y0, !label_splits)) ) {
           dbg(2, "trim_wires(): i=%d merged with j=%d\n", i, j);
           xctx->wire[i].x2 = xctx->wire[j].x2;
           xctx->wire[i].y2 = xctx->wire[j].y2;
@@ -696,6 +737,11 @@ int break_wires_at_attach_points(void)
   Wireentry *wptr;
   double x0, y0;
   int nsplit = 0;
+  /* doc/claude/specs/wire_label_ride.md R2 (change #6): a type=label instance's PINLAYER rect is
+   * a NAMING ANCHOR, not copper geometry, so by default it is not a segment boundary and does not
+   * split. Read once per sweep. Matched pair with any_inst_pin_at()'s skip_labels above -- see the
+   * comment there for why relaxing one without the other is a bug either way. */
+  int label_splits = tclgetboolvar("label_splits_wires");
 
   /* Force a fresh spatial table: hash_wires() no-ops when prep_hash_wires==1 (netlist.c),
    * and an earlier prepare_netlist_structs / check_collapsing_objects in the load path may
@@ -705,6 +751,13 @@ int break_wires_at_attach_points(void)
   hash_wires();
   for(k = 0; k < xctx->instances; ++k) {
     if(xctx->inst[k].ptr < 0) continue;
+    /* R2: a net label names the copper it taps, it does not cut it. What actually binds it to the
+     * net is touch() in name_attached_inst_to_net() (netlist.c), which is interior-inclusive, so
+     * the split was never the connection -- corpus-verified connectivity-neutral over 5393 label
+     * instances / a 244-schematic SPICE A/B (spec section 9). Only the CLICK granularity at a
+     * label is given up; a device pin keeps it (the resistor-tap case is the loop's next
+     * iteration, untouched). */
+    if(!label_splits && inst_is_netlabel(k)) continue;
     rects = (xctx->inst[k].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; ++r) {
       get_inst_pin_coord(k, r, &x0, &y0);
@@ -779,8 +832,14 @@ static int wire_prop_eq(const char *a, const char *b)
 int merge_collinear_wires(xWire *list, int n, int ignore_pins)
 {
   int i, j, e, k, changed;
+  int skip_labels;
   char *dead;
   if(n < 2) return n;
+  /* Kept in step with trim_wires' merge (wire_label_ride.md change #7): a net label is not a weld
+   * barrier unless label_splits_wires is set. CONSISTENCY ONLY, NOT A BEHAVIOUR CHANGE -- the
+   * pin-aware arm below is unreachable on the current call graph (the sole caller, save_wire() in
+   * save.c, passes ignore_pins = 1), which is also why the Tcl read is skipped in that case. */
+  skip_labels = ignore_pins ? 0 : !tclgetboolvar("label_splits_wires");
   dead = my_calloc(_ALLOC_ID_, n, sizeof(char));
   do {
     changed = 0;
@@ -792,7 +851,7 @@ int merge_collinear_wires(xWire *list, int n, int ignore_pins)
         double py = (e == 0) ? list[i].y1 : list[i].y2;
         double dxi = list[i].x2 - list[i].x1, dyi = list[i].y2 - list[i].y1;
         int branch = 0, partner = -1;
-        if(!ignore_pins && any_inst_pin_at(px, py)) continue;
+        if(!ignore_pins && any_inst_pin_at(px, py, skip_labels)) continue;
         for(j = 0; j < n; ++j) {
           double dxj, dyj;
           int parallel, tj;

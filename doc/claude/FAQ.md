@@ -14,6 +14,366 @@ Newest entries on top.
 
 ---
 
+## Q39. I had the Add Wire Label form open, pressed `Ctrl+A`, then closed the form — and my whole schematic was gone. Is that fixed?
+
+- **Asked:** 2026-08-08
+- **Project state:** branch `open_pdk` @ `d9c6a8e5` + this session — issue **0241**.
+
+**Yes, fixed.** And it was as bad as it sounds: no `Delete` key, no ESC, no confirmation, and the
+dirty flag said *unmodified* afterwards, so the emptied drawing closed without a "unsaved changes"
+prompt and `reload` succeeded silently. One `undo` brought it back in the simple case, but not if
+you had edited anything after opening the form.
+
+**Why it happened.** Cancelling a cursor placement removed the preview with an internal delete —
+and that delete is *selection-scoped*. It only ever worked because the arm left exactly the preview
+selected, and nothing defended that: the Add-Label / Add-Pin / Insert-symbol forms are **modeless**,
+so `Ctrl+A`, Edit ▸ Select all and `select_dangling_nets` were all reachable in between, and none
+of them knows a placement is armed. It was never a `Ctrl+A` bug — anything that grew the selection
+did it.
+
+**What it does now.** The arm records *what the preview is* (per-object durable ids), and the
+cancel re-selects exactly that before deleting. Your other objects are deselected but stay in the
+drawing. Three more doors were closed with it:
+
+- **the form's own window-close button** (the shortest route — it calls the same cancel);
+- **typing one more character in the Name field**, which re-arms and dropped the old preview the
+  same way — this one needed no cancel gesture at all;
+- **pressing `w`** on a live preview, which used to *refuse* while several objects were selected
+  (statusbar: *"finish or ESC the pending placement first"*). That refusal existed only because of
+  this bug. It is gone: `w` now abandons the placement and starts drawing like every other verb,
+  and what else you had selected survives.
+
+**Still not scoped: paste / merge.** `Ctrl+V` then `Ctrl+A` then ESC is the same wipe on a sibling
+code path (issues **0242** / **0244**). Treat a pending paste the same way until those land.
+
+---
+
+## Q38. I pressed `w`, started drawing, then pressed `r`. Nothing happened — why, and what does it do now?
+
+- **Asked:** 2026-08-07 (in the GUI, under `src/cadence_style_rc`)
+- **Project state:** branch `open_pdk` @ `465223be` + this session — issues **0247** / **0248**,
+  phases 1-2 of `doc/claude/suggestions/plan_modal_gesture_exclusion.md`.
+
+**Before:** the rectangle armed but could never start. Measured `ui=65537`
+(`STARTWIRE|MENUSTART` + `MENUSTARTRECT`) with `last_command=1`: two modal gestures live at once,
+and the click handler tests the wire first, so every click you gave the rectangle went to the wire.
+ESC was the only way out. Infix mode had the same dead end with two rubber bands on screen.
+
+**Now:** `r` abandons the in-progress wire and starts the rectangle — the same rule `l` and `p`
+already followed (Q35), and `w` in the other direction (Q36): *whatever you just pressed is what
+you meant*. Nothing is committed by the abandoned draw (a wire only exists once its second point
+lands), and the status bar says `Rectangle: in-progress wire abandoned`.
+
+The rule now covers **every** verb that can arm a second modal gesture on a live wire/line draw:
+the shape draws `r`, `Shift+P`, `C`, `Ctrl+C` and their context-menu picks; the placements
+`Alt+Shift+L`, `Ctrl+P`, `Ctrl+Shift+P`, `t`, Graphs ▸ Add graph / Add image, context-menu Insert
+symbol / Insert text, the `I` and Insert keys, and a screen grab; plus the scripted arms
+`xschem rect|polygon|arc [gui]`, `net_label`, `place_text`, `place_symbol`, `add_graph`,
+`add_image`. It applies in both interface modes — including `infix_interface 0` (cadence), where
+the shape arms on the first CLICK, which is exactly the click the wire was stealing.
+
+Two things it deliberately does NOT do:
+
+- **Coordinate/commit forms are untouched.** `xschem rect x1 y1 x2 y2`, `xschem polygon ...`,
+  `xschem arc x y r a b layer`, `add_wire_label -drop`, `add_symbol_pin <x> <y> ...` store an object
+  outright and arm nothing, so they leave a live draw alone — they are the replay/test seams.
+- **`Ctrl+V` merge is still an exception**, in both directions: a merge preview carries different
+  state (`STARTMERGE`) whose teardown needs issues 0242/0244 first.
+
+Note that a follow-up dialog cannot undo the cancel: `t` opens the text dialog and Add image opens a
+file chooser *after* the wire has been abandoned, so cancelling the dialog does not bring the wire
+back. That matches component insert, which has behaved this way since 2026-08-07.
+
+---
+
+## Q37. The status bar keeps telling me things I never see. Is it lying?
+
+- **Asked:** 2026-08-07
+- **Project state:** branch `open_pdk` @ `465223be` — issue **0248**.
+
+It was. `.statusbar.1` (the wide right-hand field) had one writer, `statusmsg()`, and two
+high-frequency clobberers: the pointer readout `mouse = x y - selected: N w= h=`, refreshed on any
+event once the pointer has moved 8 pixels **and only while a gesture is armed** — which is exactly
+when a gate message has something to say — and, for placement verbs, the object-info line
+`n=   0 x = ... w = ... h = ...` that the editor prints when it selects the preview it just placed,
+one call after the gate message. So `Wire: pending placement abandoned` was written and destroyed
+before a hand already in motion could read it. Measured: 25 mouse-motion events after the gate, the
+field read `mouse = 150 100 - selected: 0 w=250 h=200`.
+
+Now a gate or prompt message **holds** the field for 5 seconds, or until your next click — the click
+releases it deliberately, so the live `w=`/`h=` size readout you use while dragging comes straight
+back. An ordinary status line issued while a hold is up is dropped; a newer gate/prompt line
+replaces it. Scripts can post their own line with `xschem statusmsg {text}`, which always wins.
+
+The verb-noun prompts got the same treatment: `Move: click an object to move it`,
+`Copy: …`, `Stretch: …`, `Rotate: …`, `Flip: …`, `Descend: click the instance to descend into`.
+
+---
+
+## Q36. And the other way round — I pressed `w` while a pin/label preview was stuck to the cursor. What happens?
+
+- **Asked:** 2026-08-07
+- **Project state:** branch `open_pdk` @ `bd61efed` + uncommitted — issue **0243** F2/F3 fix.
+
+**The pending placement is abandoned and the wire starts.** Same ratified rule as Q35, applied to
+the reverse door: whatever you just pressed is what you meant. The preview instance is removed
+without burning an undo entry (the arm's single baseline is the only rollback point), the statusbar
+says `Wire: pending placement abandoned`, and you are drawing wire from the cursor.
+
+This closes a genuinely stuck state, not just an untidy one. With both armed, the click handler
+tests `STARTWIRE` before the placement, so every click fed the wire and the preview could never be
+dropped. Add-Wire-Label had an accidental escape hatch — typing one more character in the form
+re-issues its `-place`, which hits the Q35 gate and frees the wire while keeping the preview —
+but **Add-Pin had none**: ESC was the only exit and it threw the pin away.
+
+**No exceptions any more.** Until 2026-08-08 the wire verb *refused* when a **multiple selection**
+was live (a `Ctrl+A` under the preview, say) and said *finish or ESC the pending placement first*:
+the teardown was a delete of the selection rather than of the preview, so abandoning there would
+have taken your drawing with it. Issue **0241** scoped the teardown to the preview's own identity,
+so the carve-out is gone — the verb abandons the placement and starts drawing no matter what else
+is selected, and **what else is selected stays in the drawing**.
+
+Every wire/line verb does it: `w`, Shift+L (graphic line), `W` / cadence `s` (snap wire), the
+context menu's Insert wire / Insert line, the Wire and Line menu entries and toolbar buttons, and
+scripted `xschem wire gui` / `xschem line gui` / `xschem snap_wire`. The gate is **not** in
+`start_wire()` itself, because that function is also what a *click* calls to continue a running
+draw (under `persistent_command` every press goes through it) — a teardown there would delete your
+pending placement on an ordinary click one event after the keystroke. The scripted coordinate forms
+(`xschem wire x1 y1 x2 y2`) commit a wire outright, arm no draw, and are deliberately not gated:
+they are the replay/test seams.
+
+Related: ESC now also cleans up properly after the arms that zero wire *command* mode (`r`, `P`,
+`t`, …). Before, one ESC could leave `STARTWIRE`/`STARTRECT` set with no owner to erase the band —
+the "grey lines of the same dimensions as the wire" of the 0240 report. See issue **0243** F3.
+
+---
+
+## Q35. I pressed `l` while still drawing a wire and everything broke. What does `l` do mid-draw now?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `aabf354e` + uncommitted — issue **0240** fix.
+
+**It cancels the wire you were drawing — or just leaves wire mode if no segment is in progress —
+then opens the Add Wire Label form.** That is the
+user-ratified behaviour as of 2026-08-06 (the alternatives considered were: ignore `l` with a
+statusbar hint, or silently *finish* the wire at the current point). Nothing is committed — an
+abandoned draw leaves no copper, burns no undo baseline, and the statusbar says
+`Add Wire Label: in-progress wire abandoned`. A wire armed from the **menu** but not yet clicked is
+dropped too, and wire *command* mode is left, so the next click does not restart a wire underneath
+the new label preview.
+
+That last part matters more than it sounds. After you end a segment with a double-click you are
+still in wire mode (the diamond snap cursor is up) even though no wire is in progress — and with
+`persistent_command` on (`cadence_style_rc`) the next canvas click is claimed by the wire command
+*before* any placement can see it. So arming a label there without leaving the mode meant every
+click started a new wire while the label preview kept following the mouse. `l` now leaves the mode
+in all three of its states: live draw, menu-armed, and resting.
+
+Why it cannot just let both run: `end_place_move_copy_zoom()` tests `STARTWIRE`
+(`callback.c:2809`) **before** the placement arm (`:2864`), so while a wire draw is live every
+click is consumed by the wire and the label can never reach its drop gate — exactly the
+"XSCHEM wants to keep drawing wire" the report described. Two modal placement gestures at once has
+no good meaning; one of them has to yield, and the one you just asked for wins.
+
+The second half of that bug was worse and is also fixed: `ESC` used to *return early* out of
+`abort_operation()` to preserve persistent wire mode, skipping the teardown below it. With a label
+preview co-armed, that dropped `START_SYMPIN` while leaving `sympin_preview = 1` and the preview
+instance committed in the drawing — after which the click-select guard
+(`… && !xctx->sympin_preview`, `callback.c:7815`) was false forever and nothing could be selected,
+dropped or cancelled again. The grey wire-shaped ghost lines and the dead zoom were the same thing:
+the rubber bands are only ever erased while their `ui_state` bit is set. ESC now tears down both
+gestures; the two-stage ESC for a *plain* wire draw (first press ends the segment, second leaves
+wire mode) is unchanged.
+
+**`p` (Add Pin) and component insert now do the same** (ratified 2026-08-07, issue **0243** F1):
+arming either abandons a live wire/line draw, in all three states, through the one shared
+`leave_wire_draw_for()` gate. The remaining placement verbs — `t` (text), `r`/`P` (rect/polygon),
+`Alt+L`/`Ctrl+P` (`net_label`), graph/image insert, `Ctrl+V` merge — are still ungated and tracked
+in 0243. Related open items found while fixing this: **0241**, **0242**, **0244**, **0245**,
+**0246**.
+
+---
+
+## Q34. Now a net label follows the wire when I move it, and it rotates with it. What changed, and can I turn it off?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `a72ddb34` + uncommitted — `wire_label_ride.md`
+  **S3 (R3 = RIDE)** just landed on top of S0 + S1 + S2.
+
+That is the fix for issue **0237**, and it supersedes Q33 below — read this one first.
+
+Before S3, moving a wire out from under a net label left the label behind and the net silently
+reverted to `#netN`. Now the label rides: at move START the gesture records which copper each
+*stationary* label is sitting on, and at every drag step (and at release) that label is placed on
+its copper's new geometry. Rotating or flipping the wire rotates and flips the **label's own text**
+too, which is the Cadence behaviour and the part of R3 that is not just a translation.
+
+Three things worth knowing:
+
+- **It is not a Cadence mode.** 0237 reproduced on stock defaults as well — nothing ever split
+  there, so the label was never on an endpoint and nothing ever rescued it. `label_ride` defaults to
+  **1** for everybody.
+- **It replaces the little rescue wire, it does not add to it.** `connect_by_kissing()` used to mint
+  a zero-length stub wherever a moving wire's endpoint coincided with a stationary label's pin, and
+  the drag rubber-banded that into a real wire. That is gone for labels (device pins and
+  `ipin`/`opin`/`iopin` keep it). The same preference switches both, on purpose: `label_ride 0`
+  gives you the old stub **and** no ride, so you get the pre-S3 behaviour exactly rather than a
+  label with neither.
+- **A label whose copper only PARTLY moves stays put.** If it sits at a crossing or an L-corner and
+  only one of the wires is in the move, it is still connected to the one that stayed, so it does not
+  travel. Same for a label sitting on a stationary device pin.
+
+Escape hatch: `set label_ride 0`. As with `label_splits_wires` there is no menu entry — it is a
+one-release hatch, not a feature toggle.
+
+What is *not* covered, so you know where the edge is: dragging the **label itself** with the
+keyboard stretch (`m` / Ctrl-m) still detaches it, because those paths do not arm
+`connect_by_kissing` and the leash that would catch it is deliberately gated on that. That is issue
+**0238**'s own one-line fix, still open. The mouse connected drag has been leashed since S1.
+
+---
+
+## Q32. Clicking either side of a net label used to select just that piece of wire, and now it selects the whole run. Did something break?
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `8fee6129` + uncommitted — `wire_label_ride.md`
+  S2 (R2) just landed on top of S0 + S1.
+
+No — that is the feature, and it is the one thing S2 deliberately gives up. `wire_segment_splitting.md`
+made xschem split a wire in memory at every **attachment point** so each inter-attachment span became
+an independent click target, and it counted a net label's `PINLAYER` rect as an attachment. S2 says a
+net label is a **name**, not a terminal: it no longer cuts the wire it taps. A **device** pin still
+does, so the resistor-tap case the splitting feature was built for is untouched — on the original
+fixture (a run tapped by a label at x=−80 and a resistor at x=0) you now get **2** clickable segments
+instead of 3, and the resistor's boundary is still there.
+
+Three things worth knowing about it:
+
+- **It only affects you if Auto Join/Trim Wires is on** (`autotrim_wires`, which `cadence_compat`
+  force-enables). With stock defaults nothing ever split at a label, so nothing changes.
+- **Nothing on disk changes, and connectivity does not change.** What binds a label to a net is
+  `touch()` in `name_attached_inst_to_net()` (`src/netlist.c`), which is interior-inclusive — the
+  split was never what made the connection. The save path's coalescer was always pin-blind, so the
+  split never reached a `.sch` either.
+- **It fixes a real bug in the other direction.** Splitting *both* wires where they cross gives four
+  segments a coincident endpoint, and coincident endpoints *are* connectivity. So a label with an
+  **empty** `lab=` sitting on a crossing — a label that names nothing at all — silently merged two
+  independent nets. Measured: four resistors on one net before, two after.
+
+Escape hatch if you want the old boundaries back: `set label_splits_wires 1`. It restores the pre-S2
+behaviour exactly, including the crossing short. ~~There is one other reason you might want it right
+now — see Q33.~~ (That second reason was the issue-0237 mask; **S3 removed the need for it the same
+day** — see Q34.)
+
+---
+
+## Q33. Since that change, dragging a wire out from under a net label loses the net name. That used to work. Why?
+
+> **SUPERSEDED 2026-08-06 by Q34 above — S3 landed the same day and this no longer reproduces.** The
+> answer is kept because the *mechanism* generalises and is worth reading: it is the worked example
+> of "removing manufactured endpoint coincidence removes rescues you did not know keyed on it"
+> (`WIRING.md` landmine 15). All three rows of the table below now read `strands 0` / `VOUT`, and
+> `label_splits_wires 1` is no longer a mitigation for anything.
+
+- **Asked:** 2026-08-06
+- **Project state:** branch `open_pdk` @ `8fee6129` + uncommitted — `wire_label_ride.md` S2 landed,
+  **S3 not yet**.
+
+It used to work **by accident**, and S2 removed the accident. This is issue **0237**, and until S2 it
+only reproduced for stock-config users; now it reproduces for `cadence_compat` users too.
+
+The mechanism is worth understanding because it generalises. Splitting the wire at the label's pin
+put the label on a wire **endpoint**, and two entirely separate rescues fire only on endpoint
+coincidence:
+
+- `connect_by_kissing()`'s **wire-endpoint arm** (`src/actions.c`) found the stationary label in
+  `instpin_spatial_table` at the moving wire's endpoint and minted a tether stub. Interior to a
+  single unsplit wire, there is no endpoint there to find.
+- `select_attached_nets()`' **ELEMENT arm** (`src/select.c`) fires only on `endpoint_near`, which is
+  what used to make a `stretch` drag of a mid-span label carry its wire along (issue **0238**'s
+  cell).
+
+Neither was designed to protect a label; both did, as a side effect of geometry the splitter
+manufactured. Measured on 0237's own repro — label stationary, wire translates, connected drag:
+
+| config | wires | strands | net |
+|---|---|---|---|
+| `autotrim_wires 0` (stock default) | 1 | 1 | `#net1` |
+| `autotrim_wires 1`, `label_splits_wires 1` (pre-S2) | 3 | 0 | `VOUT` |
+| `autotrim_wires 1`, `label_splits_wires 0` (S2) | 1 | 1 | `#net1` |
+
+So no new failure mode was invented — you now get the same result a default-config user has always
+had — but if you were relying on the mask, it is gone. The real fix is **S3 (RIDE)**: the label
+follows its wire's new geometry, orientation included, for every config at once. Until S3 lands,
+`set label_splits_wires 1` restores the mask exactly.
+
+Note what is *not* affected: dragging the **label itself** on a connected drag. That is S1's LEASH,
+it is gated on `connect_by_kissing`, and it measures 0 strands in all three configs above — S2 is a
+no-op for it, because the leash always resolved its owner as the whole **collinear run** rather than
+one wire record, precisely so split points were invisible to it.
+
+---
+
+## Q31. Dragging a net label used to leave a little wire behind, and now it doesn't. What changed, and how is the label still connected?
+
+- **Asked:** 2026-08-05
+- **Project state:** branch `open_pdk` @ `74ef1aed` + uncommitted — `wire_label_ride.md`
+  S1 (R1 + LEASH) just landed on top of S0's strand oracle.
+
+The little wire was never the connection. It was `connect_by_kissing()`
+(`src/actions.c`) dropping a **zero-length `SELECTED1` stub** at every moving instance pin that
+started on stationary copper; the drag then rubber-banded that stub into real wire. For a device
+pin that is exactly right — the pin *is* a terminal and it must stay wired. For a `type=label`
+instance it is an artifact with three costs:
+
+- sliding the label **along** its own wire leaked a duplicate collinear `N` record;
+- dragging it **off** the wire left a permanent perpendicular stub, and that stub is a genuine
+  third endpoint, so `merge_collinear_wires` refuses to weld across it — one `N` record on disk
+  became three;
+- under `autotrim_wires` a *nameless* label at a wire crossing silently merged two nets.
+
+What actually binds a label to a net is `touch()`: `name_attached_inst_to_net()`
+(`src/netlist.c:1034`) binds an instance pin to any wire whose span contains that pin coordinate,
+**interior included**. So a label sitting mid-wire is connected without any split, any stub, or
+any endpoint coincidence. Measured on the shipped corpus: split and unsplit produce byte-identical
+SPICE across 244 schematics.
+
+S1 therefore skips labels in that kissing arm (`inst_is_netlabel()`, `src/check.c` — deliberately
+`strcmp(type,"label")`, so `ipin`/`opin`/`iopin`/`bus_tap` keep every behaviour they have) and
+replaces the stub with a **leash**: at move START the gesture records which copper each *selected*
+label was sitting on, and at move END a label whose pin left that copper is projected back onto
+it, clamped to its endpoints (`label_ride_capture` / `label_ride_apply`, `src/move.c`). So you can
+slide a label along its wire, you cannot drag it off, and neither gesture creates copper.
+
+Four scoping facts worth knowing:
+
+- **The rule is "it may not leave its OWN copper", not "it must end up on some copper".** Those
+  differ whenever the drag lands on a *neighbouring* wire, a device pin, or another label's anchor:
+  under the weak rule the label would quietly desert its net and rename what it landed on. The
+  owner never changes (spec R7 / §5.4). The owner is the whole **collinear run** through the
+  anchor, so the segment splits `autotrim_wires` introduces are invisible to it — the label slides
+  across them freely.
+- **It only applies to the connected drag.** The leash is gated on `xctx->connect_by_kissing`, so
+  `m` (and every mouse stretch) leashes; Shift-M / the Ctrl+LMB detach do not, and there a label
+  still detaches — that is what the modifier means, and it is how you deliberately move a label to
+  a different net.
+- **A label on a bare device pin is leashed to that pin**, not to a wire. 36 % of shipped labels
+  sit on a device pin with no wire under them (the gnd/vdd idiom); without this they would have
+  been silently orphaned by the same change.
+- **A label that was already off copper is left alone.** The rule is *conservation* — no gesture
+  takes a label off copper that was on copper — not prohibition. 91 labels across 21 shipped files
+  sit off copper on purpose (`verilog_type=` declaration blocks parked off-sheet, `type=label`
+  symbols used as pure graphics, wireless flyline fixtures).
+
+Not yet done: a label does **not** follow its wire when the *wire* moves (that is RIDE, S3, and
+issue **0237**'s own repro), and sliding past the end clamps rather than extending the wire
+(R6, S5). See `doc/claude/specs/wire_label_ride.md` §7 and §14.
+
+This supersedes the label half of **Q27** (W7's "keep the through-wire, drop one stub"): the
+through-wire rule stands, the stub is gone.
+
+---
+
 ## Q30. Ctrl+MMB cycles a pin's type (in/out/inout). How do I rebind that gesture to something else?
 
 - **Asked:** 2026-07-19

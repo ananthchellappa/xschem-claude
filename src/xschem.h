@@ -651,6 +651,18 @@ typedef struct
   unsigned int col;
 } Selected;
 
+/* One member of the object set a modal cursor PLACEMENT is made of (issue 0241). `type` is the
+ * sel_array type constant (ELEMENT / WIRE / xTEXT / xRECT / LINE / POLYGON / ARC), `id` the
+ * matching session-stable object id. Deliberately NOT a Selected: array indexes are meaningless
+ * across the arbitrary edits the MODELESS Add-Pin / Add-Wire-Label forms allow between the arm
+ * and the cancel, while ids survive them (and survive an undo, xschem.h id fields / select.c
+ * selection-across-undo). Resolved back through the *_index_from_id() family in store.c. */
+typedef struct
+{
+  unsigned short type;
+  unsigned int id;
+} PlacePreview;
+
 /* Hover fly-line query result (doc/claude/specs/hover_flylines.md). One geometry member on a
  * queried net: a wire (kind 0) or an instance pin (kind 1). idx = wire/instance index, pin =
  * pin index (-1 for a wire), (x,y) = wire midpoint or pin coord. */
@@ -1386,6 +1398,33 @@ typedef struct {
   double savexor, saveyor, savezoom, savelw;
 } Zoom_info;
 
+/* doc/claude/specs/wire_label_ride.md §5.3: one entry of the per-gesture net-label RIDER SET --
+ * "which copper was this label sitting on when the drag started, and where was its anchor".
+ * The set exists only between move START and move END/ABORT, is never in sel_array, never in
+ * inst[].sel and never on disk; no xWire / xInstance / xSymbol field changes.
+ * S1 implements LEASH (the LABEL is the object being dragged; an anchor that lands off copper is
+ * projected back onto the owner span). S3 adds RIDE (the WIRE moves and the label follows,
+ * orientation included). The two arms split on xctx->inst[].sel -- SET means LEASH, CLEAR means
+ * RIDE -- and getting that predicate backwards is silent.
+ * NO START ORIGIN FIELD, in either mode, and that is a result rather than an omission: LEASH
+ * corrects the origin the ELEMENT commit already wrote, and RIDE solves for a new one from the
+ * TARGET PIN by reading get_inst_pin_coord() back after baking rot/flip (spec §11 hazard D, §16.1).
+ * Neither ever needs to know where the instance started, so the field the spec reserved for S3 is
+ * not carried -- WIRING.md §7.9's rule about unread per-gesture scratch. */
+#define LABEL_RIDE_LEASH 1
+#define LABEL_RIDE_RIDE  2
+typedef struct {
+  unsigned int lid;            /* label instance id (session-stable id, NOT an array index) */
+  unsigned int wid;            /* owner WIRE id at capture; 0 => the owner is a bare PIN ANCHOR
+                                * (the gnd/vdd-on-a-device-pin idiom: 36% of shipped labels sit
+                                * on a device pin with no wire under them, spec §5.8) */
+  double ax, ay;               /* label pin anchor, START coordinates. Also the owner-resolution
+                                * key: the captured owner must still contain this point. */
+  double sx1, sy1, sx2, sy2;   /* owner SPAN at capture -- the collinearity key for the geometric
+                                * re-find (§11 hazard B). Degenerate (== the anchor) for wid==0. */
+  int mode;                    /* LABEL_RIDE_LEASH | LABEL_RIDE_RIDE */
+} Label_ride;
+
 typedef struct {
   xWire *wire;
   xText *text;
@@ -1509,6 +1548,43 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
+  PlacePreview *preview_sel; /* issue 0241: WHAT the live cursor placement is, as durable ids.
+                       * Stamped at every arm by stamp_placement_preview() (the twelve
+                       * `ui_state |= START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT` sites), and read back
+                       * by the two places that tear a preview down with delete():
+                       * abort_placement_preview() and the modeless forms' per-keystroke re-arm
+                       * drop. delete() is SELECTION-scoped, so without this the cancel removes
+                       * whatever is selected AT THE CANCEL -- and a single Ctrl+A (or
+                       * select_dangling_nets, or Edit>Select all) between the arm and the cancel
+                       * turned it into a whole-document delete that set_modify(save) then
+                       * reported as UNMODIFIED. The stamp is the SELECTION AT THE ARM, which is
+                       * exactly the set move_objects(START) grabbed: one object for most arms,
+                       * a PINLAYER rect + its owned name text for Add-Pin, and deliberately the
+                       * user's pre-existing selection too for the two arms that ride along with
+                       * it (draw.c screen grab, place_text). NULL until the first arm; freed with
+                       * sel_array in xinit.c. */
+  int preview_sel_n;   /* live entries in preview_sel. 0 = nothing stamped -> the teardown
+                       * deletes NOTHING (backstop: a stray preview is cosmetic, a wiped
+                       * schematic is not). */
+  int preview_sel_size; /* allocated entries in preview_sel (high-water mark, never shrinks) */
+  double statusmsg_hold_ms; /* issue 0248: wall-clock deadline (ms, net_hilight_now_ms() scale)
+                       * until which the .statusbar.1 coordinate readout must NOT overwrite the
+                       * message that is up. 0 = no hold. Armed by statusmsg_hold() (every gate /
+                       * prompt line), tested by statusmsg_held() at the three readout sites, and
+                       * released early by any ButtonPress. Without it a gate message lives for one
+                       * mouse flick: the readout is guarded by `if(xctx->ui_state)`, and ui_state
+                       * is non-zero for exactly the reason the message exists. */
+  char statusmsg_text[256]; /* issue 0248: the last line statusmsg() actually put on .statusbar.1
+                       * (dropped lines are not recorded). The field itself is a Tk label that only
+                       * exists when has_x, so this is what makes the hold assertable headlessly --
+                       * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
+                       * context teardown. */
+  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables the
+                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for) so a
+                       * headless test can still CONSTRUCT the co-armed state (a live wire draw +
+                       * a second modal gesture) that every production verb now refuses to build.
+                       * abort_operation()'s co-armed teardown has no other constructor left --
+                       * see tests/headless/test_add_wire_label.tcl G2. Never set by the GUI. */
   int sympin_drops;  /* issue 0122 E1: monotonic count of COMMITTED sympin drops (Add-Pin /
                        * Add-Wire-Label). Bumped only in end_move_copy_logged (the single commit
                        * funnel; aborts and off-copper label refusals never reach it). The Tcl
@@ -1693,6 +1769,13 @@ typedef struct {
    * intact. Allocated in select_attached_nets, freed with the move (mirrors stretch_grabbed_xy). */
   unsigned int *fluid_startsel_id;
   int fluid_startsel_nid;
+  /* doc/claude/specs/wire_label_ride.md §5.3 (S1): the per-gesture net-label rider set. Captured
+   * at move START (label_ride_capture, move.c) BEFORE fluid_gesture_arm, consumed at the real
+   * move END (label_ride_apply) and freed at END / ABORT / clear (label_ride_free) -- the
+   * fluid_startsel_id lifecycle exactly. A live fluid RUBBER step (commit_now) must NOT free it:
+   * the gesture is still open and END re-derives from the total delta. */
+  Label_ride *label_ride;
+  int label_ride_n;
   /* Cadence deferred-selection: a plain (no-modifier) press-drag-release of an object that was NOT
    * already selected must MOVE it without changing the selection membership -- if nothing was
    * selected it ends unselected, and a pre-existing selection is preserved untouched. A CLICK (no
@@ -2432,6 +2515,11 @@ extern Selected select_object(double mx,double my, unsigned short sel_mode,
                                     int override_lock, const Selected *selptr);
 extern int set_first_sel(unsigned short type, int n, unsigned int col);
 extern void unselect_all(int dr);
+/* issue 0241: stamp / forget / re-select the object set a modal cursor placement is made of,
+ * so its teardown deletes the PREVIEW and not whatever happens to be selected. See select.c. */
+extern void stamp_placement_preview(void);
+extern void clear_placement_preview(void);
+extern int select_placement_preview(void);
 extern void drag_sel_free(void);          /* cadence deferred-selection: reset the pre-press snapshot */
 extern void drag_sel_snapshot(void);      /* snapshot pre-press selection ids before a transient drag-select */
 extern void drag_sel_restore_now(void);   /* restore the pre-press selection after a moved drag */
@@ -2447,6 +2535,15 @@ extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);
+/* issue 0243 F2 (and 0242): tear down a modal cursor placement preview / the gate that does it
+ * before a wire or line draw is armed on top of one. See callback.c. */
+extern int abort_placement_preview(void);
+extern int leave_placement_for(const char *what);
+/* the forward gate (issue 0240 / 0243 F1, widened to every remaining draw and placement verb by
+ * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c
+ * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */
+extern void leave_wire_draw_for(const char *what);
+extern int abort_wire_line_command(void); /* issue 0240 */
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
@@ -2670,6 +2767,7 @@ extern void place_net_label(int type);
 extern int place_sch_pin(const char *name, const char *dir);
 extern int place_wire_label(const char *name);
 extern int point_on_wire_or_pin(double x, double y);
+extern int inst_is_netlabel(int i);  /* wire_label_ride.md §5.2: symbol type is exactly "label" */
 extern int wire_label_try_commit(void);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
@@ -2752,6 +2850,10 @@ extern void fluid_reroute_discard(void);
  * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
  * gesture (else the next move START's arm assert would see a leaked-armed context). */
 extern void fluid_gesture_free(void);
+/* wire_label_ride.md §5.3 (S1): free the per-gesture net-label rider set. Called at move
+ * END/ABORT and by clear_schematic() alongside fluid_gesture_free(), so a buffer teardown
+ * mid-gesture cannot leak it or apply it to unrelated geometry. */
+extern void label_ride_free(void);
 /* D6 single-pass harness (scheduler `xschem fluid_snapshot arm` / `xschem fluid_pass <name>`):
  * run one END-cleanup pass in isolation, no gesture/X. arm returns 1 if a valid START snapshot was
  * taken (needs fluid_editing on + >=1 instance pin), else 0; run_pass returns the pass's
@@ -2841,6 +2943,11 @@ extern void tclsetintvar(const char *s, const int value);
 extern int tclvareval(const char *script, ...);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
+/* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
+ * verb-noun prompts). The coordinate readout skips itself while statusmsg_held(). */
+extern void statusmsg_hold(char str[],int n);
+extern int statusmsg_held(void);
+extern void statusmsg_hold_clear(void);
 extern int place_text(int draw_text, double mx, double my);
 extern int create_text(int draw_text, double x, double y, int rot, int flip, const char *txt,
        const char *props, double hsize, double vsize);

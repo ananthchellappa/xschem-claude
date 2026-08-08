@@ -107,6 +107,61 @@ and the status line explains why. Predicate: `point_on_wire_or_pin(x, y)` (check
 
 All defaults are reconfigurable from a user's loadable rc/script via `bind`/`keybindings.csv`.
 
+### Entering the form CANCELS an in-progress wire/line draw (issue 0240, user-ratified 2026-08-06)
+
+`l` pressed **without** first leaving wire-draw mode used to arm two modal gestures at once, and
+that is not a usable state at any flag setting: `end_place_move_copy_zoom()` tests `STARTWIRE`
+(`callback.c:2872`) **before** the placement arm (`:2927`), so every click fed the wire and the
+label could never reach its drop gate. Add-Wire-Label therefore **abandons the in-progress
+wire/line first** — `abort_wire_line_command()` (`callback.c:494`), called from the scheduler
+branch (`scheduler.c:1846`) so the key, the menu accelerator, the form's per-keystroke `-place`
+re-arm and a scripted `xschem add_wire_label` all pass through it. Nothing is committed
+(`new_wire()` stores and pushes undo only at `PLACE`, so an abandoned draw leaves no copper and no
+stranded baseline), a menu-armed-but-unclicked wire/line is dropped too, `last_command` is cleared
+so no press restarts a wire under the fresh preview, and the statusbar says what happened.
+
+**"Wire-draw mode" is three states, not one**, and the gate must catch all three: a LIVE draw
+(`ui_state & STARTWIRE`, rubber band up); a MENU-armed draw whose first click has not landed
+(`MENUSTART` + `MENUSTARTWIRE`); and the **RESTING** command mode after a double-click ends a
+segment — `ui_state` has no `STARTWIRE` at all, only `last_command`, and the diamond snap cursor
+is the only tell. The resting state is the dangerous one: under `persistent_command`
+(`cadence_style_rc:60`) `callback.c:7843` tests `last_command` alone and calls `start_wire()`
+*before* any placement is offered the click, so a label armed there can never be dropped. Gating
+on `ui_state` alone shipped that bug (issue 0240 follow-up, 2026-08-06).
+
+It is **not** `abort_operation()`: on a `-place` re-arm a preview is already live, and tearing that
+down would clear `sympin_preview` and make the next `-place` push a **second** undo baseline for
+one gesture (see #8 and the one-baseline rule below). `-drop` is not gated — by then the wire is
+long gone.
+
+### The reverse door: a wire/line verb during a live label preview (issue 0243 F2, ratified 2026-08-07)
+
+The exclusion holds in **both** directions. Pressing `w` (or Shift+L, `W`/`s` snap wire, the
+context-menu inserts, the Wire/Line menu or toolbar entries, or a scripted `xschem wire|line gui` /
+`xschem snap_wire`) while a label preview rides the cursor **abandons the preview** and starts
+drawing — `leave_placement_for()` (`callback.c`), the mirror of `leave_wire_draw_for()`, wrapping
+the shared `abort_placement_preview()`. Same ratified rule as `l`: whatever you just pressed is what
+you meant. The preview is torn down undo-free, so the gesture still owns exactly one baseline.
+
+One carve-out: while a **multiple selection** is live (e.g. `Ctrl+A` under the preview — the forms
+are modeless) the gate DECLINES instead, says so in the statusbar, and the draw does not arm. The
+teardown is a `delete()`, which removes the selection rather than the preview (issue **0241**,
+open), so abandoning there would wipe the drawing. That carve-out goes away when 0241 lands.
+
+The gate sits at each **verb**, not inside `start_wire()`/`start_line()` (which the sketch in 0243
+originally proposed): those primitives are also the per-*click* continuation of a running draw —
+under `persistent_command` every press calls `start_wire()` before `end_place_move_copy_zoom()` sees
+the click — so a teardown there would drop a pending placement on an ordinary click. The scripted
+coordinate forms (`xschem wire x1 y1 x2 y2`) are excluded, same rule as `-drop`.
+
+Note `p` (Add Pin) and the symbol-placement dialogs were gated by issue **0243** F1 on 2026-08-07;
+`add_graph`, `add_image`, `net_label 0/2/3`, `Ctrl+V` merge, `r`/`P`/`t` and the context-menu text
+insert still permit the double-arm and are tracked by issue **0247** (ESC does clean up after them
+since 0243 F3 — what remains is the jam while both are armed).
+Beware when testing this class: `xschem add_wire_label -drop` calls `wire_label_try_commit()`
+directly and bypasses `end_place_move_copy_zoom()`, so headlessly a label DOES drop while
+`STARTWIRE` is live, where the GUI click cannot. Assert on the flags, not on `-drop`'s return.
+
 ## Implementation map
 
 C:

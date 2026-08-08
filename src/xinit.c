@@ -515,6 +515,8 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->maxa);
   my_free(_ALLOC_ID_, &xctx->maxl);
   my_free(_ALLOC_ID_, &xctx->sel_array);
+  my_free(_ALLOC_ID_, &xctx->preview_sel); /* issue 0241: placement preview identity */
+  xctx->preview_sel_n = xctx->preview_sel_size = 0;
   my_free(_ALLOC_ID_, &xctx->scope_hi_type);
   my_free(_ALLOC_ID_, &xctx->scope_hi_id);
   my_free(_ALLOC_ID_, &xctx->fly_shown_net);   /* hover fly-line overlay state (Track B) */
@@ -550,6 +552,14 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->fill_type);
   my_free(_ALLOC_ID_, &xctx->format);
   my_free(_ALLOC_ID_, &xctx->custom_format);
+  /* Gesture-scoped state that survives if the ctx is torn down MID-GESTURE (closing a tab or the
+   * window during a drag). This funnel does not run clear_schematic()/abort_operation() first, so
+   * whatever a live move START allocated is otherwise lost with the ctx.
+   * wire_label_ride.md S1 rider set; the pre-existing siblings stretch_grabbed_xy (select.c) and
+   * fluid_startsel_id (issue 0091), plus the fluid_reroute snapshot, have the same gap and are
+   * worth folding into a shared gesture-teardown helper next time this is touched. */
+  my_free(_ALLOC_ID_, &xctx->label_ride);
+  xctx->label_ride_n = 0;
   my_free(_ALLOC_ID_, &xctx);
 }
 
