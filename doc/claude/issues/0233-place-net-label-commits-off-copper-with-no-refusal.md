@@ -1,4 +1,4 @@
-# 0223 — `place_net_label()` commits a net label off copper; the Add-Wire-Label form refuses
+# 0233 — `place_net_label()` commits a net label off copper; the Add-Wire-Label form refuses
 
 Status: **OPEN** — inconsistency measured on both paths; whether to close it is a policy call (see Risks).
 **Policy decided 2026-08-05 by `doc/claude/specs/wire_label_ride.md` S1 (§14.6), and it does NOT

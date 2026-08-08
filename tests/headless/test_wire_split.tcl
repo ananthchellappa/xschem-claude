@@ -674,13 +674,13 @@ check "W7: no stub leaves the run (R1)" $w7_off 0
 # Measured 2026-08-06; the legacy leg below keeps the escape hatch's promise honest.
 #
 # S3 (RIDE) LANDED AND THIS CASE IS DELIBERATELY UNCHANGED -- re-measured, not assumed. Issue
-# 0228's label half has two directions and S3 closes exactly one of them:
+# 0238's label half has two directions and S3 closes exactly one of them:
 #   (a) the WIRE moves and the label stays  -> RIDE, which is not gated on kissing. CLOSED (the
 #       strand oracle's D3/D4 flipped from 1/#net1 to 0/VOUT).
 #   (b) THIS case: the LABEL moves and the wire stays, with `stretch` but no `kissing`. RIDE does
 #       not apply (nothing the gesture moves is under the anchor) and the LEASH is gated on
 #       connect_by_kissing -- policy, spec §14.6, pinned by test_label_ride.tcl K1/K2, and NOT
-#       widened by S3. This direction closes when issue 0228's own one-line fix lands (arm kissing
+#       widened by S3. This direction closes when issue 0238's own one-line fix lands (arm kissing
 #       at callback.c:6445/:6466 like every other stretch entry point), at which point the leash
 #       fires here for free. Until then `label_splits_wires 1` still restores the old rescue,
 #       which is what the legacy leg below asserts.

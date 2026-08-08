@@ -1,4 +1,4 @@
-# 0225 — netlist/highlight back-annotates `lab=` into wire records without setting modified, and `#netN` renumbers on every topology change
+# 0235 — netlist/highlight back-annotates `lab=` into wire records without setting modified, and `#netN` renumbers on every topology change
 
 Status: **OPEN** — measured repro, fix drafted, not implemented. Unchanged by
 `wire_label_ride.md` S1/S2, but **strictly rarer as of S2** (2026-08-06) and worth recording why:
@@ -13,9 +13,9 @@ boundary. Concretely, the one file spec §12.3 found keeping a label-pin split o
 reach that state through a label. **Do not fold this into that spec** — it is an independent writer
 bug in `netlist.c` and the fix below is unchanged.
 Area: `src/netlist.c` `wirecheck()` (`:1093`), `name_attached_nets()` (`:1117`), `set_unnamed_net()` (`:1584-1588`); `set_modify(-2)` at `:1765`
-Tests: none yet — proposed `tests/headless/test_wire_lab_backannot_0225.tcl`
+Tests: none yet — proposed `tests/headless/test_wire_lab_backannot_0235.tcl`
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related: **0226** — the other document-mutating path in this area (`auto_set_wire_bus` in `draw()`). No prior issue covers wire `lab=` back-annotation.
+Related: **0236** — the other document-mutating path in this area (`auto_set_wire_bus` in `draw()`). No prior issue covers wire `lab=` back-annotation.
 
 ## The defect
 
@@ -108,7 +108,7 @@ netlister, so the auto names buy nothing on disk.
   my_strdup(_ALLOC_ID_, &xctx->wire[i].node, tmp_str);
   /* do NOT write auto names into prop_ptr: they renumber on every topology change and
    * would ship as a spurious save diff (there is no set_modify here).
-   * See doc/claude/issues/0225-*.md */
+   * See doc/claude/issues/0235-*.md */
 ```
 
 `src/netlist.c:1093` and `:1117`, guard the propagated write the same way:

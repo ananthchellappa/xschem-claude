@@ -651,7 +651,7 @@ typedef struct
   unsigned int col;
 } Selected;
 
-/* One member of the object set a modal cursor PLACEMENT is made of (issue 0231). `type` is the
+/* One member of the object set a modal cursor PLACEMENT is made of (issue 0241). `type` is the
  * sel_array type constant (ELEMENT / WIRE / xTEXT / xRECT / LINE / POLYGON / ARC), `id` the
  * matching session-stable object id. Deliberately NOT a Selected: array indexes are meaningless
  * across the arbitrary edits the MODELESS Add-Pin / Add-Wire-Label forms allow between the arm
@@ -1548,7 +1548,7 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
-  PlacePreview *preview_sel; /* issue 0231: WHAT the live cursor placement is, as durable ids.
+  PlacePreview *preview_sel; /* issue 0241: WHAT the live cursor placement is, as durable ids.
                        * Stamped at every arm by stamp_placement_preview() (the twelve
                        * `ui_state |= START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT` sites), and read back
                        * by the two places that tear a preview down with delete():
@@ -1567,19 +1567,19 @@ typedef struct {
                        * deletes NOTHING (backstop: a stray preview is cosmetic, a wiped
                        * schematic is not). */
   int preview_sel_size; /* allocated entries in preview_sel (high-water mark, never shrinks) */
-  double statusmsg_hold_ms; /* issue 0238: wall-clock deadline (ms, net_hilight_now_ms() scale)
+  double statusmsg_hold_ms; /* issue 0248: wall-clock deadline (ms, net_hilight_now_ms() scale)
                        * until which the .statusbar.1 coordinate readout must NOT overwrite the
                        * message that is up. 0 = no hold. Armed by statusmsg_hold() (every gate /
                        * prompt line), tested by statusmsg_held() at the three readout sites, and
                        * released early by any ButtonPress. Without it a gate message lives for one
                        * mouse flick: the readout is guarded by `if(xctx->ui_state)`, and ui_state
                        * is non-zero for exactly the reason the message exists. */
-  char statusmsg_text[256]; /* issue 0238: the last line statusmsg() actually put on .statusbar.1
+  char statusmsg_text[256]; /* issue 0248: the last line statusmsg() actually put on .statusbar.1
                        * (dropped lines are not recorded). The field itself is a Tk label that only
                        * exists when has_x, so this is what makes the hold assertable headlessly --
                        * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
                        * context teardown. */
-  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0237): 1 disables the
+  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables the
                        * modal-gesture gates (leave_wire_draw_for / leave_placement_for) so a
                        * headless test can still CONSTRUCT the co-armed state (a live wire draw +
                        * a second modal gesture) that every production verb now refuses to build.
@@ -2515,7 +2515,7 @@ extern Selected select_object(double mx,double my, unsigned short sel_mode,
                                     int override_lock, const Selected *selptr);
 extern int set_first_sel(unsigned short type, int n, unsigned int col);
 extern void unselect_all(int dr);
-/* issue 0231: stamp / forget / re-select the object set a modal cursor placement is made of,
+/* issue 0241: stamp / forget / re-select the object set a modal cursor placement is made of,
  * so its teardown deletes the PREVIEW and not whatever happens to be selected. See select.c. */
 extern void stamp_placement_preview(void);
 extern void clear_placement_preview(void);
@@ -2535,15 +2535,15 @@ extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);
-/* issue 0233 F2 (and 0232): tear down a modal cursor placement preview / the gate that does it
+/* issue 0243 F2 (and 0242): tear down a modal cursor placement preview / the gate that does it
  * before a wire or line draw is armed on top of one. See callback.c. */
 extern int abort_placement_preview(void);
 extern int leave_placement_for(const char *what);
-/* the forward gate (issue 0230 / 0233 F1, widened to every remaining draw and placement verb by
+/* the forward gate (issue 0240 / 0243 F1, widened to every remaining draw and placement verb by
  * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c
  * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */
 extern void leave_wire_draw_for(const char *what);
-extern int abort_wire_line_command(void); /* issue 0230 */
+extern int abort_wire_line_command(void); /* issue 0240 */
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
@@ -2943,7 +2943,7 @@ extern void tclsetintvar(const char *s, const int value);
 extern int tclvareval(const char *script, ...);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
-/* issue 0238: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
+/* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
  * verb-noun prompts). The coordinate readout skips itself while statusmsg_held(). */
 extern void statusmsg_hold(char str[],int n);
 extern int statusmsg_held(void);

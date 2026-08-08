@@ -24,14 +24,14 @@
 
 static int for_netlist = 0;
 static int netlist_lvs_ignore = 0;
-/* issue 0220: the ERC double-print gate, hoisted from a local of
+/* issue 0230: the ERC double-print gate, hoisted from a local of
  * name_nodes_of_pins_labels_and_propagate() to file scope so signal_short() can read it.
  * Assigned once per prepare_netlist_structs() run at its single site below (search print_erc =),
  * inside the FIRST naming pass prepare_netlist_structs calls (:1776), i.e. before any
  * signal_short() call in the same run. Safe as hidden cross-call state on the same grounds
  * `startlevel` already is: netlisting is not interruptable. */
 static int print_erc = 0;
-/* issue 0220: `incr_hilight` cached per run instead of read per short. signal_short() owns no
+/* issue 0230: `incr_hilight` cached per run instead of read per short. signal_short() owns no
  * loop of its own (six call sites inside the per-object naming walk), so it cannot hoist the
  * lookup the way traverse_node_hash() does at node_hash.c:200-202; upstream 0805802b already
  * removed one per-short Tcl call from this function for exactly this reason. Refreshed beside
@@ -945,7 +945,7 @@ static int signal_short( const char *tag, const char *n1, const char *n2)
 {
  int err = 0;
  char str[2048];
- /* issue 0220: gate on print_erc, not on netlist_count.
+ /* issue 0230: gate on print_erc, not on netlist_count.
   * `xctx->netlist_count &&` (upstream 590b6fb3, "better ERC messaging") was a stand-in for "this
   * is not the second, re-name-only pass over the reloaded top level". It over-fires as a
   * suppressor: netlist_count stays 0 for the WHOLE run whenever the hierarchy is not descended
@@ -1786,7 +1786,7 @@ int prepare_netlist_structs(int for_netl)
   int err = 0;
   char nn[PATH_MAX+30];
   netlist_lvs_ignore=tclgetboolvar("lvs_ignore");
-  erc_incr_hilight=tclgetboolvar("incr_hilight");   /* issue 0220: once per run, not per short */
+  erc_incr_hilight=tclgetboolvar("incr_hilight");   /* issue 0230: once per run, not per short */
   for_netlist = for_netl;
   if(for_netlist>0 && xctx->prep_net_structs) return 0;
   else if(!for_netlist && xctx->prep_hi_structs) return 0;

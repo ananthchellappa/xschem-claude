@@ -107,7 +107,7 @@ and the status line explains why. Predicate: `point_on_wire_or_pin(x, y)` (check
 
 All defaults are reconfigurable from a user's loadable rc/script via `bind`/`keybindings.csv`.
 
-### Entering the form CANCELS an in-progress wire/line draw (issue 0230, user-ratified 2026-08-06)
+### Entering the form CANCELS an in-progress wire/line draw (issue 0240, user-ratified 2026-08-06)
 
 `l` pressed **without** first leaving wire-draw mode used to arm two modal gestures at once, and
 that is not a usable state at any flag setting: `end_place_move_copy_zoom()` tests `STARTWIRE`
@@ -127,14 +127,14 @@ segment — `ui_state` has no `STARTWIRE` at all, only `last_command`, and the d
 is the only tell. The resting state is the dangerous one: under `persistent_command`
 (`cadence_style_rc:60`) `callback.c:7843` tests `last_command` alone and calls `start_wire()`
 *before* any placement is offered the click, so a label armed there can never be dropped. Gating
-on `ui_state` alone shipped that bug (issue 0230 follow-up, 2026-08-06).
+on `ui_state` alone shipped that bug (issue 0240 follow-up, 2026-08-06).
 
 It is **not** `abort_operation()`: on a `-place` re-arm a preview is already live, and tearing that
 down would clear `sympin_preview` and make the next `-place` push a **second** undo baseline for
 one gesture (see #8 and the one-baseline rule below). `-drop` is not gated — by then the wire is
 long gone.
 
-### The reverse door: a wire/line verb during a live label preview (issue 0233 F2, ratified 2026-08-07)
+### The reverse door: a wire/line verb during a live label preview (issue 0243 F2, ratified 2026-08-07)
 
 The exclusion holds in **both** directions. Pressing `w` (or Shift+L, `W`/`s` snap wire, the
 context-menu inserts, the Wire/Line menu or toolbar entries, or a scripted `xschem wire|line gui` /
@@ -145,19 +145,19 @@ you meant. The preview is torn down undo-free, so the gesture still owns exactly
 
 One carve-out: while a **multiple selection** is live (e.g. `Ctrl+A` under the preview — the forms
 are modeless) the gate DECLINES instead, says so in the statusbar, and the draw does not arm. The
-teardown is a `delete()`, which removes the selection rather than the preview (issue **0231**,
-open), so abandoning there would wipe the drawing. That carve-out goes away when 0231 lands.
+teardown is a `delete()`, which removes the selection rather than the preview (issue **0241**,
+open), so abandoning there would wipe the drawing. That carve-out goes away when 0241 lands.
 
-The gate sits at each **verb**, not inside `start_wire()`/`start_line()` (which the sketch in 0233
+The gate sits at each **verb**, not inside `start_wire()`/`start_line()` (which the sketch in 0243
 originally proposed): those primitives are also the per-*click* continuation of a running draw —
 under `persistent_command` every press calls `start_wire()` before `end_place_move_copy_zoom()` sees
 the click — so a teardown there would drop a pending placement on an ordinary click. The scripted
 coordinate forms (`xschem wire x1 y1 x2 y2`) are excluded, same rule as `-drop`.
 
-Note `p` (Add Pin) and the symbol-placement dialogs were gated by issue **0233** F1 on 2026-08-07;
+Note `p` (Add Pin) and the symbol-placement dialogs were gated by issue **0243** F1 on 2026-08-07;
 `add_graph`, `add_image`, `net_label 0/2/3`, `Ctrl+V` merge, `r`/`P`/`t` and the context-menu text
-insert still permit the double-arm and are tracked by issue **0237** (ESC does clean up after them
-since 0233 F3 — what remains is the jam while both are armed).
+insert still permit the double-arm and are tracked by issue **0247** (ESC does clean up after them
+since 0243 F3 — what remains is the jam while both are armed).
 Beware when testing this class: `xschem add_wire_label -drop` calls `wire_label_try_commit()`
 directly and bypasses `end_place_move_copy_zoom()`, so headlessly a label DOES drop while
 `STARTWIRE` is live, where the GUI click cannot. Assert on the flags, not on `-drop`'s return.

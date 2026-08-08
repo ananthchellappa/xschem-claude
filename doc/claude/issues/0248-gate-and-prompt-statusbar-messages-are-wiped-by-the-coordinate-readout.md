@@ -1,17 +1,17 @@
-# 0238 — every gate / prompt statusbar message is wiped before it can be read
+# 0248 — every gate / prompt statusbar message is wiped before it can be read
 
 Status: **FIXED** 2026-08-08. Found by the user in the GUI, 2026-08-07, while eyeballing the issue
-0233 F2 fix. Fixed first in that session's successor because phases 1–2 of the modal-gesture
+0243 F2 fix. Fixed first in that session's successor because phases 1–2 of the modal-gesture
 roadmap add eight more verbs that silently discard work in progress, and the statusbar line is
 their entire user-visible half.
 
 Area: `statusmsg()` (`src/scheduler.c`, writes `.statusbar.1`) vs the motion-handler coordinate
 readout (`src/callback.c`, and the press/release twins) **and** `select.c`'s object-info line
-Tests: `tests/headless/test_statusmsg_hold_0238.tcl` (**7 checks, needs a real `$DISPLAY`** — it
+Tests: `tests/headless/test_statusmsg_hold_0248.tcl` (**7 checks, needs a real `$DISPLAY`** — it
 reads `.statusbar.1 cget -text` after synthesizing real `<Motion>` events through the Tk bindings)
 plus section **H** of `tests/headless/test_placement_wire_gate.tcl` (flag-level, headless)
-Found: 2026-08-07, verifying issue **0233** F2 in the GUI under `src/cadence_style_rc`
-Related: **0230**, **0233** F2, **0237** (the verbs that depend on this feedback),
+Found: 2026-08-07, verifying issue **0243** F2 in the GUI under `src/cadence_style_rc`
+Related: **0240**, **0243** F2, **0247** (the verbs that depend on this feedback),
 `doc/claude/suggestions/plan_modal_gesture_exclusion.md`
 
 ## Symptom, as reported
@@ -49,7 +49,7 @@ armed — so the first 8-pixel flick of the mouse overwrote it.
 `wire gui`, then 25 synthesized motion events):
 
 ```
-reverse msg (0233 F2): {Wire: pending placement abandoned}
+reverse msg (0243 F2): {Wire: pending placement abandoned}
 after 25 motions     : {mouse = 150 100 - selected: 0 w=250 h=200}
 ```
 
@@ -68,7 +68,7 @@ sites the issue originally listed — a reader-side fix would have left this one
 A hold, enforced inside `statusmsg()`:
 
 - `statusmsg_hold(str, n)` — write the line and hold the field. Used by `leave_wire_draw_for()`,
-  `leave_placement_for()` (both messages, including the issue-0231 decline), and the eleven
+  `leave_placement_for()` (both messages, including the issue-0241 decline), and the eleven
   verb-noun prompts (`Copy: click an object to copy it`, `Move: …`, `Stretch: …`, `Rotate: …`,
   `Flip: …`, `Descend: …`).
 - `statusmsg(str, 1)` — an ordinary line is DROPPED while a hold is up.
@@ -106,6 +106,6 @@ A hold, enforced inside `statusmsg()`:
   `--detach`, and a plain GUI run's stdout goes nowhere useful), and with `--pipe` xschem blocks
   reading stdin so `after` timers never fire. The committed GUI test therefore runs entirely at
   source time with explicit `update` calls, and also mirrors every line into
-  `tests/headless/results/test_statusmsg_hold_0238.log`. It is NOT registered in
+  `tests/headless/results/test_statusmsg_hold_0248.log`. It is NOT registered in
   `tests/run_regression.tcl` (that harness runs `--nogui` and demands an `OVERALL: ok` sentinel an
   X-gated skip cannot honestly print); `tests/headless/full_audit.sh` picks it up automatically.

@@ -1,8 +1,8 @@
-# 0222 — a label symbol missing from the library path silently stops naming its net; no ERC fires
+# 0232 — a label symbol missing from the library path silently stops naming its net; no ERC fires
 
 Status: **OPEN** — measured repro, fix drafted, not implemented.
 Area: `src/netlist.c` `name_nodes_of_pins_labels_and_propagate()` ERC block (`:1450-1457`); `src/token.c` `match_symbol()` (`:201`); `src/save.c` `load_sym_def()` (`:4680-4683`)
-Tests: none yet — proposed `tests/headless/test_missing_sym_erc_0222.tcl`
+Tests: none yet — proposed `tests/headless/test_missing_sym_erc_0232.tcl`
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
 Related: **0125** — documents that the same `missing.sym` substitution counts as a mutation (`set_modify(1)` + an undo slot). This issue is about the substitution's *netlist* semantics, not its undo side effect.
 
@@ -130,7 +130,7 @@ set" block — i.e. between `src/netlist.c:1456` `}` and `:1457`:
      * (token.c match_symbol -> save.c load_sym_def). Its type is "missing", which is
      * non-empty, so the !type[0] check above never fires, and it has no rect[PINLAYER]
      * so inst[].node stays NULL -- a net label that resolves to it stops naming its net
-     * with no ERC at all. Report it. See doc/claude/issues/0222-*.md */
+     * with no ERC at all. Report it. See doc/claude/issues/0232-*.md */
     if(print_erc && type && !strcmp(type, "missing")) {
       char str[2048];
       my_snprintf(str, S(str), "ERROR: instance: %s: symbol %s not found on library path; "

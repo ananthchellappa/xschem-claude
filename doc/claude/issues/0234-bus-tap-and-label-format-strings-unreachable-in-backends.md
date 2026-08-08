@@ -1,8 +1,8 @@
-# 0224 — `bus_tap`'s `verilog_format`/`vhdl_format` are unreachable, and every label symbol's `format=` is dead
+# 0234 — `bus_tap`'s `verilog_format`/`vhdl_format` are unreachable, and every label symbol's `format=` is dead
 
 Status: **OPEN** — measured, two independent fixes drafted, neither urgent.
 Area: `src/verilog_netlist.c:52`, `src/vhdl_netlist.c:77` (skip predicate); `xschem_library/devices/bus_tap.sym:26-27`; the `format="*.alias @lab"` line in six label symbols
-Tests: none yet — proposed `tests/headless/test_backend_skip_divergence_0224.tcl`; fixture `xschem_library/examples/test_bus_tap.sch` already exists
+Tests: none yet — proposed `tests/headless/test_backend_skip_divergence_0234.tcl`; fixture `xschem_library/examples/test_bus_tap.sch` already exists
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
 Related: no prior issue. `doc/claude/suggestions/next_session_prompt_0180.md:45` already warns the `IS_PIN` / `IS_LABEL_OR_PIN` / `IS_LABEL_SH_OR_PIN` macros differ. **Do not conflate with 0181**, which quotes `IS_LABEL_OR_PIN` for a different purpose.
 

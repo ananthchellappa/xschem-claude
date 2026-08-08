@@ -1,4 +1,4 @@
-# 0232 — arming anything on top of a live placement preview orphans it: `sympin_preview` outlives `START_SYMPIN` and the canvas goes dead (closes issue 0123's open residual)
+# 0242 — arming anything on top of a live placement preview orphans it: `sympin_preview` outlives `START_SYMPIN` and the canvas goes dead (closes issue 0123's open residual)
 
 Status: **OPEN** — measured headless repro (4 keystrokes), 17 doors enumerated, fix sketched, not
 implemented. **Critical**: 6 doors leave the terminal issue-0123 desync; all 9 defective doors
@@ -6,18 +6,18 @@ commit a net label the user never dropped, and the merge/paste doors then report
 **clean**.
 Area: `src/select.c:1066-1068` (`unselect_all()` zeroes `ui_state` wholesale) vs the placement
 teardown that only exists inside `src/callback.c:383-400`
-Tests: none yet. `xschem get sympin_preview` (`scheduler.c:4513`, added by 0230) makes the invariant
+Tests: none yet. `xschem get sympin_preview` (`scheduler.c:4513`, added by 0240) makes the invariant
 directly assertable; the fluid tripwire on stderr is a usable second oracle
-Found: 2026-08-06, verifying issue **0230**'s out-of-scope list
+Found: 2026-08-06, verifying issue **0240**'s out-of-scope list
 Related: **0123** — this is that issue's *"desync ROOT open (no headless repro — needs GUI eyeball)"*
-residual; the repro now exists, so 0123's blocker is gone. **0230** (parent; its pre-existing item
-2), **0231** (the same teardown's other defect), **0234** (`set_modify(0)` — the `modified=0` half of
+residual; the repro now exists, so 0123's blocker is gone. **0240** (parent; its pre-existing item
+2), **0241** (the same teardown's other defect), **0244** (`set_modify(0)` — the `modified=0` half of
 the damage here), **0122** E1/E2, `doc/claude/specs/add_wire_label.md` #8,
 `doc/claude/specs/cadence_pin_name_text.md` #3, `WIRING.md` §8 class **D**.
 
 ## The invariant that is not enforced
 
-0230 stated it and did not enforce it: **`xctx->sympin_preview` must never outlive
+0240 stated it and did not enforce it: **`xctx->sympin_preview` must never outlive
 `START_SYMPIN`.** One function tears a placement preview down (`callback.c:383-400`); every other
 actor that clears the trigger bits skips it.
 
@@ -78,10 +78,10 @@ Not label-specific — the Add-Pin (`p`) preview breaks identically, leaving `ip
 | `add_graph` | 16424/1 | 0 | **yes** | orphan |
 | `place_symbol` (toolbar / ctx-menu) | 8232/1 | 0 | **yes** | orphan |
 | `netlist` | 0/0 | 0 | **yes** | orphan is netlisted |
-| `select_all` | 16424/1 | 0 | — | **whole schematic deleted** → that is issue **0231** |
+| `select_all` | 16424/1 | 0 | — | **whole schematic deleted** → that is issue **0241** |
 | `undo`, `load`, `clear` | 0/0 | 0 | no | clean |
 | `cut` / `delete` | 16416/1 | 0 | no | clean, but the mid-state is a live gesture on a freed object |
-| `wire gui` | 16425/1 | 0 | no | clean — that is issue **0233** |
+| `wire gui` | 16425/1 | 0 | no | clean — that is issue **0243** |
 | `descend` / `go_back` / `zoom_full` | 16424/1 | 0 | no | clean |
 | `add_sch_pin -place` | 16424/1 | 0 | no | clean — the re-arm path tears down properly |
 
@@ -113,7 +113,7 @@ Of 87 `unselect_all()` call sites, the reachable-while-armed ones are the doors:
 `redo` is a door even with an empty redo stack). `place_symbol` reaches the same end state without
 `unselect_all` — it just `|= PLACE_SYMBOL` over the preview (`scheduler.c:8940`).
 
-**Why it is terminal**, by the two guards 0123 and 0230 installed:
+**Why it is terminal**, by the two guards 0123 and 0240 installed:
 - `callback.c:7877-7878` — the entire Button-1 click-select/grab block requires
   `!xctx->sympin_preview`. Stuck at 1 ⇒ no press can ever select, grab or complete anything.
 - `callback.c:2843` — `wire_label_try_commit()` returns 0 when `START_SYMPIN` is gone, so `-drop`
@@ -123,12 +123,12 @@ Of 87 `unselect_all()` call sites, the reachable-while-armed ones are the doors:
   (`:2932-2935`), which refuses **and swallows the click** — so the pasted objects cannot be
   dropped either.
 
-Class: `WIRING.md` §8 **D (decline residue)**, one level up from 0230 — the teardown is correct but
+Class: `WIRING.md` §8 **D (decline residue)**, one level up from 0240 — the teardown is correct but
 lives in exactly one function.
 
-## Why issue 0230 does not cover it
+## Why issue 0240 does not cover it
 
-0230 fix (A) only decides *whether control reaches* `callback.c:383`; it never changes *what `:383`
+0240 fix (A) only decides *whether control reaches* `callback.c:383`; it never changes *what `:383`
 tests*. Measured at ESC time on the paste door with `ui_state == 296`:
 
 ```
@@ -137,13 +137,13 @@ START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT = 0  -> callback.c:383 FALSE, teardown :384
 STARTMERGE(256)                      = 1  -> callback.c:401 delete(1) on the MERGED selection only
 ```
 
-The door cleared `START_SYMPIN` *before* ESC arrived. 0230 fix (B) is directional the other way — it
+The door cleared `START_SYMPIN` *before* ESC arrived. 0240 fix (B) is directional the other way — it
 abandons a live wire draw when Add-Wire-Label is entered — and never touches `START_SYMPIN` or
 `sympin_preview`.
 
 ## Fix sketch
 
-Mirror 0230-B's shape. **Do not put the teardown inside `unselect_all()`** (87 call sites, several
+Mirror 0240-B's shape. **Do not put the teardown inside `unselect_all()`** (87 call sites, several
 inside netlisting and live fluid passes — 0123's own stated reason — and it would make a *deselect*
 silently delete objects).
 
@@ -168,7 +168,7 @@ silently delete objects).
    entry of `callback()` and of `xschem()`, in the style of the existing witness at
    `callback.c:7859-7862`. That turns "how many doors are left" into an empirical question forever.
 
-Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0234**) — it produces the
+Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0244**) — it produces the
 `modified=0` half of the corruption here.
 
 ## Landmines
@@ -176,7 +176,7 @@ Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0234**) — it
 - **The one-baseline-per-gesture contract** is the sabotage target: drop the `START_SYMPIN` term in
   step 2 and the undo-depth checks in `test_add_wire_label.tcl` / `test_sch_add_pin.tcl` must go
   red, and only those.
-- **`add_graph`'s undo depth will move — because a live bug is being removed.** 0230's comment at
+- **`add_graph`'s undo depth will move — because a live bug is being removed.** 0240's comment at
   `callback.c:389-391` claims *"a live preview always has START_SYMPIN set, so a STALE
   sympin_preview cannot make an UNRELATED placement abort drop its undo snapshot"*. That premise is
   **false for `add_graph`**, which re-sets `START_SYMPIN` at `scheduler.c:1932` after its own
@@ -185,8 +185,8 @@ Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0234**) — it
 - **`merge_file()` is on the action-log replay path** (`xschem paste x y … -file {f}`,
   `scheduler.c:8687`). The `START_SYMPIN` gate covers replay (no preview live), but run the
   replay/`log_action` tests explicitly — see the coordinate-form-bypass note at `scheduler.c:8648`.
-- **Behaviour change needing the same ratification 0230-B got:** `Ctrl+V` during a live preview will
-  *discard* the preview. 0230 scoped its policy call to Add-Wire-Label alone on purpose.
+- **Behaviour change needing the same ratification 0240-B got:** `Ctrl+V` during a live preview will
+  *discard* the preview. 0240 scoped its policy call to Add-Wire-Label alone on purpose.
 - **`cut`/`delete` leave a live gesture pointing at a freed object** (mid-state `ui=16416` with
   `inst=0`). It self-heals on ESC, so it is not this defect, but it is a dangling-gesture window
   worth a line in `WIRING.md` §11.
@@ -195,4 +195,4 @@ Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0234**) — it
   `headless/run.sh` (6/6), `run_regression.tcl` (same 3 pre-existing `test_ihp_sg13g2_libmgr`
   FAILs).
 - **The visual half is not headless-testable** (`WIRING.md` §8 I/K) — expect the grey rubber ghost
-  in the GUI and confirm by eye, as in 0230.
+  in the GUI and confirm by eye, as in 0240.

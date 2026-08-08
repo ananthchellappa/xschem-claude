@@ -1,4 +1,4 @@
-# 0237 — every remaining verb that arms a second modal gesture on top of a live wire draw
+# 0247 — every remaining verb that arms a second modal gesture on top of a live wire draw
 
 (filename kept for its issue number; the original title said "eight placement arms", which was
 wrong twice over — the shape draws `r` / `P` / arc / circle belong in the same set, and counting
@@ -7,21 +7,21 @@ modal gesture while a wire/line draw is live**.)
 
 Status: **FIXED** 2026-08-08 — phases 1 and 2 of
 `doc/claude/suggestions/plan_modal_gesture_exclusion.md` landed together, user-ratified the same
-day (option **(a) cancel**, consistent with issues 0230 and 0233). Carved out of issue **0233**
-when its F2 and F3 landed (2026-08-07): 0233 closed the *ESC hole* (F3), the *reverse* door (F2,
+day (option **(a) cancel**, consistent with issues 0240 and 0243). Carved out of issue **0243**
+when its F2 and F3 landed (2026-08-07): 0243 closed the *ESC hole* (F3), the *reverse* door (F2,
 `w`/`L`/snap-wire/menu Wire abandon a live placement) and gated four *forward* doors (F1: `l`, `p`
 in both views, component insert). Everything else is closed here. **Still open, deliberately:
 `Ctrl+V` merge, both directions** — its preview carries `STARTMERGE`, not the placement bits, and
-tearing it down needs the `delete(1)` + `set_modify` handling issues **0232** and **0234** own
+tearing it down needs the `delete(1)` + `set_modify` handling issues **0242** and **0244** own
 (roadmap phase 4).
 
 Area: the draw and placement arms that did not call `leave_wire_draw_for()` (`src/scheduler.c`)
 Tests: `tests/headless/test_placement_wire_gate.tcl` sections **F** (shape draws) and **G**
-(placements) — 86 → **169** checks; `tests/headless/test_statusmsg_hold_0238.tcl` (GUI) for the
+(placements) — 86 → **169** checks; `tests/headless/test_statusmsg_hold_0248.tcl` (GUI) for the
 message these gates depend on
-Found: 2026-08-06 (as 0233's forward census), re-scoped 2026-08-07, fixed 2026-08-08
-Related: **0233** (parent, FIXED), **0230** (the original `l` ratification), **0238** (the gate
-messages were invisible until this session), **0232**, **0234**, `WIRING.md` §8 class **D**
+Found: 2026-08-06 (as 0243's forward census), re-scoped 2026-08-07, fixed 2026-08-08
+Related: **0243** (parent, FIXED), **0240** (the original `l` ratification), **0248** (the gate
+messages were invisible until this session), **0242**, **0244**, `WIRING.md` §8 class **D**
 
 ## The doors
 
@@ -56,12 +56,12 @@ ESC was the only exit. Infix mode is the same dead end with both rubber bands on
 | screen-grab image | `draw.c` grabscreen release | — | — | gated at the arm (GUI-only, prove-by-code) |
 | `merge` (**Ctrl+V**, Edit ▸ Merge) | `paste.c` | 297 `STARTWIRE\|SEL\|STARTMOVE\|STARTMERGE` | 1 | **unchanged — phase 4** |
 
-`xschem place_symbol` was already gated by 0233 F1; `start_place_symbol()` is the *other* route to
+`xschem place_symbol` was already gated by 0243 F1; `start_place_symbol()` is the *other* route to
 the same operation and was not.
 
 ## What the fix is
 
-One line per arm: `leave_wire_draw_for("<verb>")`, the helper 0230/0233 F1 already used — now
+One line per arm: `leave_wire_draw_for("<verb>")`, the helper 0240/0243 F1 already used — now
 non-static (`src/xschem.h`) because the arms live in four files. It abandons wire/line mode in all
 three of its states (live draw / menu-armed / RESTING command mode), is delete-free (nothing is
 committed until `new_wire(PLACE)`, so no copper and no stranded undo baseline), and writes the
@@ -83,18 +83,18 @@ Two rules the call sites follow:
 
 - **A cancelled follow-up dialog does not bring the wire back.** `add_image` opens a file chooser
   and `t` / `place_text` open the text dialog *after* the gate has run. This matches
-  `place_symbol` (gated since 0233 F1, ahead of the symbol chooser): the gate fires on the
+  `place_symbol` (gated since 0243 F1, ahead of the symbol chooser): the gate fires on the
   keystroke, which is what the user actually pressed, not on whether they confirm the dialog.
 - **Persistent (cadence) wire mode ends too.** The gate clears `last_command` — that is the
-  ratified 0230 policy, extended to these verbs on 2026-08-08.
+  ratified 0240 policy, extended to these verbs on 2026-08-08.
 - **The user-visible half only started working this session.** Every one of these messages was
-  wiped before it could be read — issue **0238**, fixed first for that reason.
+  wiped before it could be read — issue **0248**, fixed first for that reason.
 
 ## Tests
 
 `tests/headless/test_placement_wire_gate.tcl` 86 → **169** checks: section **F** (phase 1, incl.
 the cadence-mode reproduction of the report and the commit-form controls), section **G** (phase 2),
-section **H** (issue 0238's flags + the test seam). Sabotage runs, each with its own witness:
+section **H** (issue 0248's flags + the test seam). Sabotage runs, each with its own witness:
 
 | sabotage | red set | size |
 |---|---|---|
@@ -106,9 +106,9 @@ section **H** (issue 0238's flags + the test seam). Sabotage runs, each with its
 | `add_graph` gate removed | `G3`×3, `G5 menu: add_graph` | 4 |
 | `place_text` gate removed | `G4`×2 | 2 |
 | gate applied to the rect COMMIT form | `F7 control`×3 | 3 |
-| `statusmsg()` ignores the hold (0238) | `G1 statusbar says why`, `H3 select info line dropped` | 2 |
-| hold never armed (0238) | the two above + `H2 gate message is held`, `H3 hold survived` | 4 |
-| `gate_bypass` ignored (the test seam) | `D3`, `H5`×2, and `test_add_wire_label.tcl` `0230 both gestures armed` + `ESC keeps wire command mode` | 5 |
+| `statusmsg()` ignores the hold (0248) | `G1 statusbar says why`, `H3 select info line dropped` | 2 |
+| hold never armed (0248) | the two above + `H2 gate message is held`, `H3 hold survived` | 4 |
+| `gate_bypass` ignored (the test seam) | `D3`, `H5`×2, and `test_add_wire_label.tcl` `0240 both gestures armed` + `ESC keeps wire command mode` | 5 |
 
 Deliberately NOT asserted: `r` on a **menu-armed** wire (first click not landed). The shape arm
 ASSIGNS `ui_state2` wholesale, so that arm is replaced with or without a gate — a check there is
@@ -120,7 +120,7 @@ real one.
 - **The co-armed state is no longer constructible from any verb** — which is the point, and it
   broke the two tests that need it: `test_add_wire_label.tcl` **G2** (the only coverage of
   `abort_operation()`'s co-armed teardown) and `test_placement_wire_gate.tcl` **D3** (the dropped
-  `last_command &&` conjunct, issue 0233 F3). Their constructors had already been rebuilt twice on
+  `last_command &&` conjunct, issue 0243 F3). Their constructors had already been rebuilt twice on
   doors that later closed. **Resolved with a test-only seam**: `xschem test_gate_bypass 0|1`
   (`scheduler.c`, `xctx->gate_bypass`), which disables `leave_wire_draw_for()` /
   `leave_placement_for()` for the length of a constructor. Both tests bracket only the ARM with it;
@@ -128,8 +128,8 @@ real one.
   that flipping it really does disable a gate, so a suite that forgot to switch it back cannot pass
   silently.
 - **Merge (`Ctrl+V`) is still an open door in both directions** and is the one remaining
-  constructor for a co-armed state from a real verb. Do not build tests on it: issue **0234**
-  (aborted paste marks a dirty schematic clean) and **0232** (shared teardown) own that site.
+  constructor for a co-armed state from a real verb. Do not build tests on it: issue **0244**
+  (aborted paste marks a dirty schematic clean) and **0242** (shared teardown) own that site.
 - **The `delete(0)` vs `delete(1)` discriminator** (`abort_placement_preview()`) is untouched:
   `add_graph` / `add_image` / merge arm `START_SYMPIN` with `sympin_preview == 0` and rely on
   `delete(1)` pushing undo. `tests/pin_name_text.tcl` regression 11 sabotage-checks it.

@@ -275,7 +275,7 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
   xctx->prev_rubbery = xctx->mousey_snap;
 }
 
-/* Issue 0233 F3. Every EARLY RETURN in abort_operation() owes by hand what the `ui_state = 0` at
+/* Issue 0243 F3. Every EARLY RETURN in abort_operation() owes by hand what the `ui_state = 0` at
  * the bottom would have done for it. These bits are owned by no callee -- move_objects(ABORT)
  * clears STARTMOVE, copy_objects(ABORT) clears STARTCOPY, the placement teardown clears the
  * placement bits, and that is all -- so an early return leaves a drawing gesture armed with no
@@ -345,7 +345,7 @@ void abort_operation(int deselect)
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 &= ~MENUSTARTDESCEND;
     /* blanking the prompt is deliberate, so it must not be dropped by that prompt's own hold
-     * (issue 0238): ESC is a KEY, and only a ButtonPress releases a hold on its own */
+     * (issue 0248): ESC is a KEY, and only a ButtonPress releases a hold on its own */
     statusmsg_hold_clear();
     if(has_x) statusmsg(" ", 1);
     tcleval("hi_descend_pick_cancel");
@@ -361,14 +361,14 @@ void abort_operation(int deselect)
    * modes above, which fall through to unselect_all). Clear the prompt and return. */
   if(xctx->ui_state & DESEL_MODE) {
     xctx->ui_state &= ~DESEL_MODE;
-    clear_orphan_gesture_bits();  /* third early return, same debt (issue 0233 F3) */
+    clear_orphan_gesture_bits();  /* third early return, same debt (issue 0243 F3) */
     if(has_x)
       tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
     return;
   }
 
   if(xctx->ui_state & STARTPOLYGON) new_polygon(END, xctx->mousex_snap, xctx->mousey_snap);
-  /* No `xctx->last_command &&` conjunct here (issue 0233 F3). It was there only to protect the
+  /* No `xctx->last_command &&` conjunct here (issue 0243 F3). It was there only to protect the
    * two-stage ESC below, but SEVERAL arms zero last_command while leaving STARTWIRE/STARTLINE set
    * -- `r`/`P`/`t` (callback.c: 'r', 'P', 't'), `xschem rect|polygon gui`, `place_text`. With the
    * conjunct, ESC after one of those skipped the rubber CLEAR, so the band had no owner left to
@@ -391,7 +391,7 @@ void abort_operation(int deselect)
      * xctx->inst[] and sympin_preview stays 1 with ui_state == 0 -- the issue 0123 desync, here
      * terminal: :7878's click-select guard requires !sympin_preview, so no press can select,
      * grab or complete anything ever again, and wire_label_try_commit() (:2843) refuses forever
-     * because START_SYMPIN is gone. Issue 0230; WIRING.md §8 class D (decline residue).
+     * because START_SYMPIN is gone. Issue 0240; WIRING.md §8 class D (decline residue).
      * So: keep skipping last_command=0, stop skipping the teardown. Only the states that HAVE
      * teardown below fall through; a bare wire/line draw with a live command mode still returns
      * here, unchanged.
@@ -399,7 +399,7 @@ void abort_operation(int deselect)
      * delete()'s trailing full draw() (select.c:790) regenerates. */
     if(!(xctx->ui_state & (STARTMOVE | STARTCOPY | STARTMERGE))) {
       /* ...and the return is only meaningful when there IS a command mode to preserve. With
-       * last_command == 0 (issue 0233 F3: the arms listed above zero it) it would jump over
+       * last_command == 0 (issue 0243 F3: the arms listed above zero it) it would jump over
        * nothing and merely skip unselect_all()/draw() at the bottom -- and draw() is the full
        * repaint the rubber CLEAR above depends on. So in that case fall through, which is what
        * this path did before F3 too (the conjunct kept it out of this block entirely). */
@@ -416,13 +416,13 @@ void abort_operation(int deselect)
   if(xctx->ui_state & STARTMOVE)
   {
    move_objects(ABORT,0,0,0);
-   abort_placement_preview();  /* no-op unless a cursor placement is armed (issue 0233 F2 / 0232) */
+   abort_placement_preview();  /* no-op unless a cursor placement is armed (issue 0243 F2 / 0242) */
    if(xctx->ui_state & STARTMERGE) {
      delete(1/* to_push_undo */);
      xctx->ui_state &= ~STARTMERGE;
      set_modify(0); /* aborted merge: no change, so reset modify flag set by delete() */
    }
-   /* Issue 0233 F3. This return is deliberate -- an ABORTED MOVE KEEPS ITS SELECTION
+   /* Issue 0243 F3. This return is deliberate -- an ABORTED MOVE KEEPS ITS SELECTION
     * (move_objects(ABORT) never unselects; tests/headless/test_drag_keeps_selection.tcl case 7
     * pins it), so it must not fall through to the unselect_all() at the bottom -- which is
     * exactly why it owes the clear below. STARTWIRE|STARTLINE are not part of that debt: the
@@ -434,7 +434,7 @@ void abort_operation(int deselect)
   {
    copy_objects(ABORT);
    /* same early-return debt as the STARTMOVE branch above: copy_objects(ABORT) clears STARTCOPY
-    * and nothing else, and this path runs no draw() either (issue 0233 F3) */
+    * and nothing else, and this path runs no draw() either (issue 0243 F3) */
    clear_orphan_gesture_bits();
    return;
   }
@@ -483,7 +483,7 @@ static void start_place_symbol(void)
     if(readonly_block()) return;
     if(symbol_view_block()) return;   /* no instances in a symbol view (ctx-menu / native insert) */
     /* phase 2 -- see leave_wire_draw_for(). The `xschem place_symbol` verb has been gated since
-     * 0233 F1; this is the OTHER component-insert route (context-menu Insert symbol, the `I` key
+     * 0243 F1; this is the OTHER component-insert route (context-menu Insert symbol, the `I` key
      * and the Insert key, whenever new_file_browser is off) and it never went through it. */
     leave_wire_draw_for("Insert symbol");
     xctx->last_command = 0;
@@ -498,7 +498,7 @@ static void start_place_symbol(void)
      xctx->mousey_snap = xctx->my_double_save;
       xctx->mousex_snap = xctx->mx_double_save;
       move_objects(START,0,0,0);
-      stamp_placement_preview();   /* issue 0231 -- see stamp_placement_preview() in select.c */
+      stamp_placement_preview();   /* issue 0241 -- see stamp_placement_preview() in select.c */
       xctx->ui_state |= PLACE_SYMBOL;
     }
 }
@@ -528,7 +528,7 @@ static void draw_snap_cursor(int action);   /* defined below; used by the gate r
 
 /* Leave any live (or menu-armed) wire/line DRAW, or the RESTING wire/line command mode, before a
  * modal PLACEMENT is armed on top of it
- * (issue 0230). Two modal gestures at once is not a usable state even when every flag is
+ * (issue 0240). Two modal gestures at once is not a usable state even when every flag is
  * consistent: end_place_move_copy_zoom() tests STARTWIRE (:2872) BEFORE the placement arm
  * (:2927), so while a wire draw is live every click feeds the wire and the label/pin preview can
  * never reach its drop gate -- "you want to place the label, but XSCHEM wants to keep drawing
@@ -584,11 +584,11 @@ int abort_wire_line_command(void)
 /* Tear down a modal cursor PLACEMENT preview (Add-Pin / Add-Wire-Label form preview, symbol or
  * text placement) without committing it. The mirror image of abort_wire_line_command(): that one
  * abandons a wire/line DRAW so a placement can be armed, this one abandons a PLACEMENT so a
- * wire/line draw can be armed (issue 0233 F2). Factored out of abort_operation(), which is its
- * first caller and keeps behaving exactly as before -- issue 0232 asks for the same helper for a
+ * wire/line draw can be armed (issue 0243 F2). Factored out of abort_operation(), which is its
+ * first caller and keeps behaving exactly as before -- issue 0242 asks for the same helper for a
  * different set of callers, so it is written once, here, gated on the flags rather than on who is
  * calling. Not gated on `sympin_preview` alone: PLACE_SYMBOL / PLACE_TEXT previews carry no such
- * flag and are precisely the placements the 0233 census found jamming a wire draw.
+ * flag and are precisely the placements the 0243 census found jamming a wire draw.
  * Returns 1 if a preview was actually torn down. */
 int abort_placement_preview(void)
 {
@@ -599,7 +599,7 @@ int abort_placement_preview(void)
    * removes a settled object (abort_operation has already done this when it calls us) */
   if(xctx->ui_state & STARTMOVE) move_objects(ABORT, 0, 0, 0);
   save = xctx->modified;
-  /* ISSUE 0231 -- delete the PREVIEW, not "whatever is selected".
+  /* ISSUE 0241 -- delete the PREVIEW, not "whatever is selected".
    * delete() below is SELECTION-scoped (select.c). The "selection == preview" invariant is
    * established at the ARM and nothing defends it afterwards: the Add-Pin / Add-Wire-Label forms
    * are MODELESS, so between the arm and this teardown the user can reach Ctrl+A, Edit>Select
@@ -637,17 +637,17 @@ int abort_placement_preview(void)
   xctx->ui_state &= ~PLACE_TEXT;
   xctx->sympin_preview = 0;
   xctx->wirelabel_preview = 0;   /* add_wire_label.md: torn-down label preview */
-  clear_placement_preview();     /* issue 0231: the stamp dies with the preview it named */
+  clear_placement_preview();     /* issue 0241: the stamp dies with the preview it named */
   return 1;
 }
 
 /* The reverse door of leave_wire_draw_for() (scheduler.c): a modal PLACEMENT and a wire/line draw
  * cannot coexist in EITHER order, because end_place_move_copy_zoom() tests STARTWIRE (:2872) before
  * the placement arm (:2927) and under persistent_command the press handler seizes the click one
- * step earlier still. Issue 0230 stopped a placement being armed on top of a draw; this stops a
+ * step earlier still. Issue 0240 stopped a placement being armed on top of a draw; this stops a
  * draw being armed on top of a placement, where the symptom is worse -- Add-Pin has no escape but
- * ESC, which throws the pin away. User-ratified policy (2026-08-07, issue 0233 F2), the same rule
- * as 0230: whatever you just pressed is what you meant, so `w` / Shift+L / snap-wire / menu Wire
+ * ESC, which throws the pin away. User-ratified policy (2026-08-07, issue 0243 F2), the same rule
+ * as 0240: whatever you just pressed is what you meant, so `w` / Shift+L / snap-wire / menu Wire
  * abandon the pending preview and start drawing.
  * Called from each wire/line VERB -- key, menu, toolbar, context menu, scripted `xschem wire|line
  * gui` -- and deliberately NOT from start_wire()/start_line() themselves: those are also the
@@ -657,7 +657,7 @@ int abort_placement_preview(void)
  * Not called from the pure-commit coordinate forms (`xschem wire x1 y1 x2 y2`, snapped_wire()'s
  * END half): those commit outright, arm no draw, and are the replay/test seams.
  * Returns 1 if the caller may go ahead and arm the draw. It no longer returns 0 for anything --
- * the one decline it ever had was the 0231 carve-out below, now gone -- but the int result is
+ * the one decline it ever had was the 0241 carve-out below, now gone -- but the int result is
  * kept: every wire/line arm already tests it, so a future refusal needs no call-site churn. */
 int leave_placement_for(const char *what)
 {
@@ -669,7 +669,7 @@ int leave_placement_for(const char *what)
    * the one wire arm with no readonly reject of its own (the others call readonly_block() /
    * scheduler_readonly_reject() before they get here) */
   if(xctx->readonly) return 1;
-  /* Between 0233 F2 and 0231 this function DECLINED (returned 0, draw not armed) whenever
+  /* Between 0243 F2 and 0241 this function DECLINED (returned 0, draw not armed) whenever
    * xctx->lastsel > 1, because abort_placement_preview() then removed the SELECTION rather than
    * the preview and handing that delete() to the three commonest drawing keys would have wiped
    * the drawing on the first `w` after a Ctrl+A (measured: 2 wires + preview + select_all + `w`
@@ -2999,7 +2999,7 @@ int wire_label_try_commit(void)
   xctx->ui_state &= ~START_SYMPIN;
   xctx->sympin_preview = 0;
   xctx->wirelabel_preview = 0;
-  clear_placement_preview();  /* issue 0231: committed, so it is no longer a deletable preview */
+  clear_placement_preview();  /* issue 0241: committed, so it is no longer a deletable preview */
   xctx->constr_mv = 0;
   tcleval("set constr_mv 0");
   return 1;
@@ -3090,7 +3090,7 @@ static int end_place_move_copy_zoom()
      * on the stack already, so clear the preview flag -> the drop-hook's next arm starts a
      * fresh baseline for the next pin (cadence_pin_name_text.md item #3). */
     xctx->sympin_preview = 0;
-    clear_placement_preview(); /* issue 0231: committed objects are not a deletable preview */
+    clear_placement_preview(); /* issue 0241: committed objects are not a deletable preview */
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;
@@ -3726,7 +3726,7 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->ui_state2 &= ~MENUSTARTDESCEND;
     n = find_closest_instance(xctx->mousex, xctx->mousey, 1);
     if(n >= 0) {
-      statusmsg_hold_clear();   /* same as the ESC path: the blank must land (issue 0238) */
+      statusmsg_hold_clear();   /* same as the ESC path: the blank must land (issue 0248) */
       statusmsg(" ", 1);
       tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
     } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
@@ -4434,7 +4434,7 @@ static void context_menu_action(double mx, double my)
       start_place_symbol();
       break;
     case 2:
-      if(!leave_placement_for("Insert wire")) break;  /* issue 0233 F2 -- see leave_placement_for() */
+      if(!leave_placement_for("Insert wire")) break;  /* issue 0243 F2 -- see leave_placement_for() */
       prev_state = xctx->ui_state;
       start_wire(mx, my);
       if(prev_state == STARTWIRE) {
@@ -4443,7 +4443,7 @@ static void context_menu_action(double mx, double my)
       }
       break;
     case 3:
-      if(!leave_placement_for("Insert line")) break;  /* issue 0233 F2 -- see leave_placement_for() */
+      if(!leave_placement_for("Insert line")) break;  /* issue 0243 F2 -- see leave_placement_for() */
       prev_state = xctx->ui_state;
       start_line(mx, my);
       if(prev_state == STARTLINE) {
@@ -4467,7 +4467,7 @@ static void context_menu_action(double mx, double my)
       break;
     case 6: /* place text */
       /* phase 2 -- see leave_wire_draw_for(). Pick 6, not 8: 8 is Paste clipboard (a merge, whose
-       * preview carries STARTMERGE and belongs to phase 4 / issues 0232+0234). */
+       * preview carries STARTMERGE and belongs to phase 4 / issues 0242+0244). */
       leave_wire_draw_for("Insert text");
       xctx->last_command = 0;
       xctx->mx_double_save=xctx->mousex_snap;
@@ -4476,7 +4476,7 @@ static void context_menu_action(double mx, double my)
         xctx->mousey_snap = xctx->my_double_save;
         xctx->mousex_snap = xctx->mx_double_save;
         move_objects(START,0,0,0);
-        /* issue 0231. place_text() does not unselect first, so the stamp captures the new text
+        /* issue 0241. place_text() does not unselect first, so the stamp captures the new text
          * AND whatever was already selected -- which is what move_objects(START) just grabbed
          * and what the cancel has always removed. Preserved verbatim; narrowing it further
          * would be a separate change to what `t` does with a live selection. */
@@ -5948,7 +5948,7 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
     }
 
     /* update status bar messages.
-     * This readout is what issue 0238 was filed against: note the `if(xctx->ui_state)` guard --
+     * This readout is what issue 0248 was filed against: note the `if(xctx->ui_state)` guard --
      * a gesture is armed exactly when a gate message or verb-noun prompt has something to say, so
      * every one of them died on the first 8-pixel flick of the mouse. It is not gated here: the
      * hold is enforced inside statusmsg() (scheduler.c), which drops an ordinary line while a held
@@ -6624,7 +6624,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(!leave_placement_for("Line")) break;   /* issue 0233 F2 -- see leave_placement_for() */
+        if(!leave_placement_for("Line")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         prev_state = xctx->ui_state;    /* the teardown just cleared the placement bits */
         if(infix_interface) {
           start_line(xctx->mousex_snap, xctx->mousey_snap);
@@ -7071,7 +7071,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       else if(/* !xctx->ui_state && */ (rstate == 0) && cadence_compat) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(!leave_placement_for("Snap wire")) break;   /* issue 0233 F2 -- see leave_placement_for() */
+        if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         snapped_wire(c_snap);
       }
       else if(rstate == ControlMask ){ /* save 20121201 */
@@ -7144,7 +7144,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         /* phase 2 -- see leave_wire_draw_for(). `t` needs a Tk toplevel (place_text opens the text
          * dialog), so this branch is not drivable headlessly; `xschem place_text` is its scriptable
          * twin and carries the same gate. Before the gate this key left ui=1 [STARTWIRE] with
-         * last_command zeroed -- the exact residue issue 0233 F3 had to teach ESC to clean up. */
+         * last_command zeroed -- the exact residue issue 0243 F3 had to teach ESC to clean up. */
         leave_wire_draw_for("Place text");
         xctx->last_command = 0;
         xctx->mx_double_save = xctx->mousex_snap;
@@ -7153,7 +7153,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           xctx->mousey_snap = xctx->my_double_save;
           xctx->mousex_snap = xctx->mx_double_save;
           move_objects(START,0,0,0);
-          stamp_placement_preview();  /* issue 0231, same note as the context-menu twin at :4460 */
+          stamp_placement_preview();  /* issue 0241, same note as the context-menu twin at :4460 */
           xctx->ui_state |= PLACE_TEXT;
         }
       }
@@ -7326,7 +7326,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(!leave_placement_for("Wire")) break;   /* issue 0233 F2 -- see leave_placement_for() */
+        if(!leave_placement_for("Wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         prev_state = xctx->ui_state;   /* the teardown just cleared the placement bits */
 
         if(infix_interface) {
@@ -7358,7 +7358,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(/* !xctx->ui_state && */ (rstate == 0) && !cadence_compat) { /* create wire snapping to closest instance pin (original keybind) */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(!leave_placement_for("Snap wire")) break;   /* issue 0233 F2 -- see leave_placement_for() */
+        if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         snapped_wire(c_snap);
       }
       break;
@@ -8552,7 +8552,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      rebuild_selected_array();
      my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d path: %s",
        xctx->mousex_snap, xctx->mousey_snap, xctx->lastsel, xctx->sch_path[xctx->currsch] );
-     statusmsg(str,1);   /* held messages survive this -- the hold lives in statusmsg() (0238) */
+     statusmsg(str,1);   /* held messages survive this -- the hold lives in statusmsg() (0248) */
    }
 
    /* clear start from menu flag or infix_interface=0 start commands */
@@ -8936,7 +8936,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
     xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
   }
 
-  /* The readout that reaches furthest (issue 0238): it runs for EVERY event -- motion, key press,
+  /* The readout that reaches furthest (issue 0248): it runs for EVERY event -- motion, key press,
    * enter/leave -- so a gate message died on the next keystroke even if the pointer never moved
    * again (mx_save is only refreshed on a press, so the 8-pixel test stays true once the hand has
    * moved). Held messages survive it via statusmsg() itself. */
@@ -8947,7 +8947,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   }
   /* A click is the user acting on what they just read, so the held message is released here and
    * the coordinate readout resumes on the very next motion -- which is what keeps the live w=/h=
-   * size feedback during a move/copy/stretch (issue 0238 landmine 1). Placed AFTER the readout
+   * size feedback during a move/copy/stretch (issue 0248 landmine 1). Placed AFTER the readout
    * above so the press event itself still shows the message. */
   if(event == ButtonPress) statusmsg_hold_clear();
 

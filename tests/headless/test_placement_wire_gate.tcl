@@ -1,11 +1,11 @@
 # RED-first regression: entering a modal PLACEMENT leaves wire/line draw mode.
 #
-# Issue 0230 established the policy for `l` (Add Wire Label) and the reason it is not optional:
+# Issue 0240 established the policy for `l` (Add Wire Label) and the reason it is not optional:
 # end_place_move_copy_zoom() tests STARTWIRE BEFORE the placement arm, so while a wire draw is
 # live every click feeds the wire and the placement can never be dropped -- and under
 # `persistent_command` (cadence_style_rc) the press handler seizes the click even in the RESTING
 # command mode, where ui_state has no STARTWIRE at all and only last_command is armed.
-# Issue 0233 measured the same clash on the other twelve placement arms. This file covers the two
+# Issue 0243 measured the same clash on the other twelve placement arms. This file covers the two
 # the user ratified on 2026-08-07: `p` (Add Pin, schematic and symbol view) and component insert
 # (`place_symbol`, i.e. the toolbar / library-manager / context-menu route).
 #
@@ -94,7 +94,7 @@ set ::infix_interface 1
 xschem abort_operation
 
 # ---------------------------------------------------------------------------
-# D. issue 0233 F3 -- ESC must not leak shape-draw bits past the STARTMOVE return.
+# D. issue 0243 F3 -- ESC must not leak shape-draw bits past the STARTMOVE return.
 #
 # abort_operation() returns at callback.c:406 after tearing a placement down, and that
 # return skips the `ui_state = 0` at the bottom. Every gesture bit whose only sink was
@@ -212,13 +212,13 @@ xschem abort_operation ; xschem abort_operation
 catch {file delete -force $symf}
 
 # ---------------------------------------------------------------------------
-# E. issue 0233 F2 -- the REVERSE door: a wire/line verb pressed while a modal PLACEMENT
+# E. issue 0243 F2 -- the REVERSE door: a wire/line verb pressed while a modal PLACEMENT
 #    preview is live must abandon the preview and start drawing.
 #
 # Same jam as F1, entered backwards: with both armed the wire wins every click, so the
 # preview rides the cursor and can never be dropped. Add-Wire-Label had an accidental
 # escape hatch (one more keystroke re-issues `-place`, which hits the F1 gate), Add-Pin had
-# none -- only ESC, which throws the pin away. User-ratified 2026-08-07, same rule as 0230:
+# none -- only ESC, which throws the pin away. User-ratified 2026-08-07, same rule as 0240:
 # whatever you just pressed is what you meant. The gate is leave_placement_for() at each
 # wire/line VERB, deliberately not inside start_wire()/start_line() (those are also the
 # per-click continuation of a running draw: persistent_command calls start_wire() on every
@@ -247,7 +247,7 @@ set ::infix_interface 0 ; xschem wire ; set ::infix_interface 1
 check "E2 menu wire clears preview"      [placing] 0
 check "E2 menu wire clears sympin_prev"  [xschem get sympin_preview] 0
 #    (wirelabel_preview has no `xschem get` seam, so its clear in abort_placement_preview()
-#     is unasserted -- noted in issue 0233, and the flag is issue 0236's subject anyway)
+#     is unasserted -- noted in issue 0243, and the flag is issue 0246's subject anyway)
 check "E2 menu wire armed"               [menuwire] 1
 
 # E3 -- `xschem line gui` (Shift+L / menu Insert line) does the same.
@@ -283,13 +283,13 @@ xschem abort_operation ; xschem abort_operation
 xschem undo
 check "E6 undo lands pre-gesture"        [expr {[xschem get wires]==1 && [xschem get instances]==0}] 1
 
-# E7 -- issue 0231 landed, so F2 no longer carves itself out. This section used to assert that a
+# E7 -- issue 0241 landed, so F2 no longer carves itself out. This section used to assert that a
 #    wire verb DECLINED while a multiple selection was live: abort_placement_preview() tore the
 #    preview down with delete(), which removes the SELECTION and not the preview object, and
 #    handing that to `w` would have wiped the drawing on the first keystroke after a Ctrl+A
 #    (measured then: 2 wires + preview + select_all + `w` -> ZERO wires). The teardown is now
 #    scoped to the identity stamped at the arm, so the verb must PROCEED -- and the assertion
-#    that carries 0231 on this path is the last one: THE OTHER SELECTED OBJECTS SURVIVE.
+#    that carries 0241 on this path is the last one: THE OTHER SELECTED OBJECTS SURVIVE.
 #    Same constructor as before, deliberately, so the two halves are directly comparable.
 reset ; xschem wire 0 40 100 40 ; xschem unselect_all
 xschem instance devices/lab_pin.sym 300 0 0 0 {name=e7 lab=E7SURV}  ;# a survivor of the
@@ -302,12 +302,12 @@ xschem wire gui
 check "E7 proceeds: preview torn down"   [placing] 0
 check "E7 proceeds: wire draw armed"     [startwire] 1
 check "E7 proceeds: wire mode owned"     [lc] 1
-check "E7 0231: other objects survive"   [xschem get wires] 2
-check "E7 0231: survivor instance kept"  [xschem get instances] 1
-check "E7 0231: it is the survivor"      [xschem getprop instance 0 lab] E7SURV
+check "E7 0241: other objects survive"   [xschem get wires] 2
+check "E7 0241: survivor instance kept"  [xschem get instances] 1
+check "E7 0241: it is the survivor"      [xschem getprop instance 0 lab] E7SURV
 xschem abort_operation ; xschem abort_operation
 
-# E8 -- the teardown must not touch the modify flag (issue 0234 is this bug on a sibling path).
+# E8 -- the teardown must not touch the modify flag (issue 0244 is this bug on a sibling path).
 reset ; xschem save
 check "E8 saved doc is clean"            [xschem get modified] 0
 xschem add_sch_pin -place
@@ -316,13 +316,13 @@ check "E8 teardown kept it clean"        [xschem get modified] 0
 xschem abort_operation ; xschem abort_operation
 
 # ---------------------------------------------------------------------------
-# F. phase 1 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0237): a SHAPE draw
+# F. phase 1 of doc/claude/suggestions/plan_modal_gesture_exclusion.md (issue 0247): a SHAPE draw
 #    started on top of a live wire/line draw abandons it, exactly as a placement does.
 #
 # This is the case the user hit in the GUI on 2026-08-07 under src/cadence_style_rc: `w`, click,
 # `r` -- and the editor stayed in wire mode. The rectangle armed (measured ui=65537,
 # MENUSTART|MENUSTARTRECT, last_command=1) while the wire kept claiming every click, so the
-# rectangle could never start and ESC was the only exit. Issue 0237 called this "much milder" than
+# rectangle could never start and ESC was the only exit. Issue 0247 called this "much milder" than
 # the placement clash; it is the same dead end, and the phase-1 gate is the same one-line call.
 #
 # Not drivable here: the `C` / Ctrl+C keys and context-menu picks 4, 5, 19, 20 are callback.c
@@ -426,7 +426,7 @@ nreset ; xschem wire gui ; xschem arc 0 0 10 0 360 4
 check "F7 control: arc coords keep draw"  [startwire] 1
 check "F7 control: arc gate silent"       [msg] "-"
 
-# F8 -- the arg-form quirk (WIRING.md / issue 0233): a TRUNCATED coordinate form falls into the
+# F8 -- the arg-form quirk (WIRING.md / issue 0243): a TRUNCATED coordinate form falls into the
 #   ARM branch, not the commit branch, so it must be gated. Gate by branch, not by verb name.
 nreset ; xschem wire gui ; xschem rect 10 20
 check "F8 truncated form arms -> gated"   [startwire] 0
@@ -443,7 +443,7 @@ xschem abort_operation
 # ---------------------------------------------------------------------------
 # G. phase 2: the remaining PLACEMENT verbs cancel a live wire/line draw.
 #
-# `l`, `p` and component insert were gated by 0233 F1; these are the arms issue 0237 tracked as
+# `l`, `p` and component insert were gated by 0243 F1; these are the arms issue 0247 tracked as
 # still open -- and for add_graph / add_image / the screen grab there is no form to re-trigger, so
 # before the gate ESC was the only exit and it threw the placement away.
 #
@@ -483,7 +483,7 @@ xschem abort_operation
 # G4 -- `xschem place_text`, the scriptable twin of the `t` key and ctx-menu 6. The text DIALOG
 #   needs a Tk toplevel, so headlessly place_text() fails and no PLACE_TEXT arms -- but the gate
 #   runs before it, which is the half under test (`t` used to leave ui=1 [STARTWIRE] with
-#   last_command zeroed: the residue issue 0233 F3 had to teach ESC to clean up).
+#   last_command zeroed: the residue issue 0243 F3 had to teach ESC to clean up).
 nreset ; xschem wire gui ; catch {xschem place_text}
 check "G4 live: place_text clears wire"   [startwire] 0
 check "G4 live: clears wire mode"         [lc] 0
@@ -523,7 +523,7 @@ check "G8 control: gate stayed silent"    [msg] "-"
 xschem abort_operation ; xschem abort_operation
 
 # ---------------------------------------------------------------------------
-# H. issue 0238 -- the gate messages above are the whole user-visible half of this policy, and
+# H. issue 0248 -- the gate messages above are the whole user-visible half of this policy, and
 #    until now none of them could be read: `statusmsg(str, 1)` does write .statusbar.1, but the
 #    coordinate readout (callback.c motion + press/release) overwrites it on the next 8-pixel
 #    flick of the mouse, and `ui_state` is non-zero for exactly the reason the message exists.

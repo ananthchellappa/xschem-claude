@@ -1,4 +1,4 @@
-# 0227 — a net label tapping a wire's span interior is stranded when the wire translates; the net silently reverts to `#netN`
+# 0237 — a net label tapping a wire's span interior is stranded when the wire translates; the net silently reverts to `#netN`
 
 Status: **CLOSED 2026-08-06 — superseded and fixed by `doc/claude/specs/wire_label_ride.md` S3
 (R3 = RIDE).** Not implemented as filed: the fix drafted below extends `connect_by_kissing()` to
@@ -66,7 +66,7 @@ exactly one day.
 >
 > Regression witnesses for the unmasked state: `test_label_strand_oracle.tcl` **D0–D2**,
 > `test_wire_split.tcl` **W7b/S2** (the same mask removal on the `stretch`-without-`kissing` path,
-> which is issue **0228**'s cell). Spec: `wire_label_ride.md` **§15.3**, §9 loss 5.
+> which is issue **0238**'s cell). Spec: `wire_label_ride.md` **§15.3**, §9 loss 5.
 
 **S1 landed 2026-08-05 — the rescue stub is now GONE, and the half of the fix that exists is the
 LEASH, not the ride.** `connect_by_kissing()`'s ELEMENT arm skips `type=label` instances
@@ -83,13 +83,13 @@ copper at gesture START and touch none at END. The repro below scores 1.
 Regression: `tests/headless/test_label_strand_oracle.tcl`. That test also pins two facts this
 issue only asserted in prose: `cadence_compat`/`autotrim_wires` really does mask the loss (case
 D1 — the split puts the label on an endpoint and kissing tethers it), and the mask fails on the
-keyboard stretch paths that never arm kissing (case D3, issue **0228**).
+keyboard stretch paths that never arm kissing (case D3, issue **0238**).
 
 Original status: measured repro on stock defaults, fix drafted, not implemented.
 Area: `src/actions.c` `connect_by_kissing()` (`:2042`, endpoint sweep at `:2110-2121`)
-Tests: none yet — proposed `tests/headless/wireedit/test_wireedit_NN_midspan_label_0227.tcl`
+Tests: none yet — proposed `tests/headless/wireedit/test_wireedit_NN_midspan_label_0237.tcl`
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related: **0228** — the sibling hole on the keyboard stretch paths (do both). **0117** (diagonal fluid drag of a net label leaves a selection ghost — a redraw defect, not this), **0162** (fluid label guards drop a user `#` label). `doc/claude/WIRING.md` open risks 5 (`:477-480`) and 6 (`:481-483`) are adjacent but do **not** cover this cell.
+Related: **0238** — the sibling hole on the keyboard stretch paths (do both). **0117** (diagonal fluid drag of a net label leaves a selection ghost — a redraw defect, not this), **0162** (fluid label guards drop a user `#` label). `doc/claude/WIRING.md` open risks 5 (`:477-480`) and 6 (`:481-483`) are adjacent but do **not** cover this cell.
 
 > This touches the fluid engine. Per `MEMORY.md` another agent owns that area — cite issue
 > numbers rather than quoting current `move.c` text, and read `doc/claude/WIRING.md` §7
@@ -189,7 +189,7 @@ before `str_hash_free(&coord_table);` (`src/actions.c:2166`):
   /* A stationary pin fed STRICTLY INSIDE a moving wire's span is stranded when the wire
    * translates: the endpoint sweep above never sees it. A net label is the damaging case
    * (it is the sole carrier of the net's name), so drop the same rescue stub there.
-   * See doc/claude/issues/0227-*.md */
+   * See doc/claude/issues/0237-*.md */
   for(j = 0; j < k; ++j) if(xctx->sel_array[j].type == WIRE) {
     int wire = xctx->sel_array[j].n;
     double wx1, wy1, wx2, wy2;

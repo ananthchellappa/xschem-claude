@@ -275,7 +275,7 @@ check "K1 rigid move still detaches the label"       [lp] {100 -100}
 check "K2 ... and the S0 oracle still reports it"    [st] 1
 
 # L1: a label that was ALREADY off copper has no owner, so nothing leashes it (R9: 91 labels
-#     across 21 shipped files sit off copper by design).  This is also the 0223 boundary --
+#     across 21 shipped files sit off copper by design).  This is also the 0233 boundary --
 #     the invariant is CONSERVATION (never take a label off copper), not prohibition.
 scene
 xschem wire 0 0 200 0
@@ -522,14 +522,14 @@ set fluid_editing 1
 
 # ===========================================================================
 # V. S3 = R3, THE RIDE.  The label is STATIONARY and the copper it names moves, rotates or flips;
-#    the label follows, its own orientation included.  This is issue 0227's own repro, and it is
+#    the label follows, its own orientation included.  This is issue 0237's own repro, and it is
 #    the direction S1's leash deliberately did not cover.
 #
 #    RED before the implementation (measured 2026-08-06 against the a72ddb34 tree, every case
 #    below reproduced by hand first):
-#      V1  0227 stock defaults          label stayed at (100,0), net #net1, strands 1
-#      V2  0227 under autotrim (S2)     identical -- S2 removed the split that masked it
-#      V3  0228 cell, no kissing        identical
+#      V1  0237 stock defaults          label stayed at (100,0), net #net1, strands 1
+#      V2  0237 under autotrim (S2)     identical -- S2 removed the split that masked it
+#      V3  0238 cell, no kissing        identical
 #      V4  END-OF-STUB label            2 wires: the kissing TETHER stub, label left at (0,0)
 #      V5/V6/V7 rotate / flip           label not moved and not re-oriented at all
 #    and every U control below was green on both sides.
@@ -558,7 +558,7 @@ proc rotflip {nm} {
   }
   return "?"
 }
-# 0227's own fixture: mid-span label, and the WIRE is what gets selected.
+# 0237's own fixture: mid-span label, and the WIRE is what gets selected.
 proc ridescene {} {
   scene
   xschem wire 0 0 200 0
@@ -567,18 +567,18 @@ proc ridescene {} {
   xschem select wire 0
 }
 
-# V1 issue 0227's measured repro, STOCK DEFAULTS (autotrim off, so no split has ever masked it).
+# V1 issue 0237's measured repro, STOCK DEFAULTS (autotrim off, so no split has ever masked it).
 ridescene
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "V1 the label rides the wire (0227)"           [lp] {100 100}
+check "V1 the label rides the wire (0237)"           [lp] {100 100}
 check "V2 ... and no copper is invented for it"      [xschem get wires] 1
 check "V3 ... the span just translated"              [spans] {{0 100 200 100}}
 check "V4 ... the net keeps its name"                [xschem getprop wire 0 lab] {VOUT}
 check "V5 ... and the S0 oracle scores no strand"    [st] 0
 
 # V6 the same under the target environment (cadence_compat => autotrim_wires 1).  S2 removed the
-#    split that used to mask 0227 here by putting the label on an endpoint where the tether found
+#    split that used to mask 0237 here by putting the label on an endpoint where the tether found
 #    it; the ride replaces that accident with the real rule, and the answer is now identical in
 #    both configs -- which is the point.
 scene
@@ -596,14 +596,14 @@ check "V8 ... net keeps its name"                    [xschem getprop wire 0 lab]
 check "V9 ... no strand"                             [st] 0
 set autotrim_wires 0
 
-# V10 issue 0228's cell: `stretch` with kissing NOT armed (the keyboard entry points).  RIDE is
+# V10 issue 0238's cell: `stretch` with kissing NOT armed (the keyboard entry points).  RIDE is
 #     deliberately NOT gated on connect_by_kissing -- spec §8, "the rider does not need kissing
-#     armed" -- which is exactly how 0228's label half closes for this direction.  The LEASH's gate
+#     armed" -- which is exactly how 0238's label half closes for this direction.  The LEASH's gate
 #     is untouched (K1/K2 above still pin the rigid detach), so this is not a widening of it.
 ridescene
 xschem move_objects 0 100 stretch
 xschem resolved_net 0
-check "V10 no kissing: the label still rides (0228)"  [lp] {100 100}
+check "V10 no kissing: the label still rides (0238)"  [lp] {100 100}
 check "V11 ... and the net keeps its name"            [xschem getprop wire 0 lab] {VOUT}
 check "V12 ... no strand"                             [st] 0
 

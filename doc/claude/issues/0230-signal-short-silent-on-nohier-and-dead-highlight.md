@@ -1,14 +1,14 @@
-# 0220 — `signal_short()` is silent on `-nohier` / current-level-only netlist, and its highlight branch is unreachable
+# 0230 — `signal_short()` is silent on `-nohier` / current-level-only netlist, and its highlight branch is unreachable
 
 Status: **FIXED** 2026-08-05 — as drafted below, with two corrections (see *Corrections made
 while implementing*). Landed as the S0 prerequisite of
 `doc/claude/specs/wire_label_ride.md`.
 Area: `src/netlist.c` `signal_short()` (`:923-941`), the `print_erc` gate at `:1426`
-Tests: `tests/headless/test_signal_short_nohier_0220.tcl` — 11 checks. Verified RED against the
+Tests: `tests/headless/test_signal_short_nohier_0230.tcl` — 11 checks. Verified RED against the
 pre-fix tree on exactly the two defects (`A1` = defect A, `D0`/`D1`/`D2` = defect B) with every
 control green on both sides.
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related: **0221** — the order-dependent naming this failure hides. No prior issue covers `signal_short`; the nearest prose is `doc/claude/specs/pin_rename_propagation.md:88,111` and the comment at `src/editprop.c:1243-1246`.
+Related: **0231** — the order-dependent naming this failure hides. No prior issue covers `signal_short`; the nearest prose is `doc/claude/specs/pin_rename_propagation.md:88,111` and the comment at `src/editprop.c:1243-1246`.
 
 ## Not the defect that was first suspected
 
@@ -191,5 +191,5 @@ it simultaneously pins correction 2 as intended behaviour.
 
 ## What this does *not* fix
 
-The order-dependent name selection — see **0221**. This issue only makes the collision
+The order-dependent name selection — see **0231**. This issue only makes the collision
 audible on the paths where it currently is not.

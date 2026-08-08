@@ -1,5 +1,5 @@
-# RED-first regression for issue 0220 --
-#   doc/claude/issues/0220-signal-short-silent-on-nohier-and-dead-highlight.md
+# RED-first regression for issue 0230 --
+#   doc/claude/issues/0230-signal-short-silent-on-nohier-and-dead-highlight.md
 #
 # Defect A: signal_short() was gated on `xctx->netlist_count`, which stays 0 for the whole run
 #   whenever the hierarchy is not descended. `xschem netlist -nohier` (scheduler.c:8145) and the
@@ -14,10 +14,10 @@
 #
 # Prerequisite of doc/claude/specs/wire_label_ride.md (S0): signal_short is the only diagnostic
 # for a contested-name regression, and every later stage of that spec is blind without it.
-# See also issue 0221 -- the record-order-dependent name selection this makes audible.
+# See also issue 0231 -- the record-order-dependent name selection this makes audible.
 #
 # Pure headless.  Run from the repo ROOT:
-#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_signal_short_nohier_0220.tcl
+#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_signal_short_nohier_0230.tcl
 # Prints "RESULT: ALL PASS" / "OVERALL: ok" on success.
 
 set fail 0; set npass 0
@@ -28,7 +28,7 @@ proc check {name got exp} {
 }
 
 source [file join [file dirname [info script]] scratch.tcl]
-set dir [test_scratch sigshort_0220]
+set dir [test_scratch sigshort_0230]
 
 # short.sch: two lab_pin instances with DIFFERENT names on ONE wire -- a naming short.
 # clean.sch: byte-identical except both labels say AAA.  The single-token difference is what
@@ -90,7 +90,7 @@ check "C0 not double-printed on the hierarchical path" [n_shorts [erc $shortf]] 
 #    highlights every undriven / open / goes-nowhere net too, so on a netlist run the shorted
 #    names would light up whether or not signal_short's branch works.  On this path signal_short
 #    is the ONLY thing that can insert into the hilight table, so the check is a real
-#    discriminator -- and it also pins the behaviour change issue 0220 flagged as a risk
+#    discriminator -- and it also pins the behaviour change issue 0230 flagged as a risk
 #    ("restoring reports to the two hilight.c callers"), which is intended, not accidental.
 # ---------------------------------------------------------------------------
 proc hilight_probe {file} {

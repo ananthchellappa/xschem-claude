@@ -1,5 +1,5 @@
 # RED-first regression for the net-label STRAND oracle
-# (doc/claude/specs/wire_label_ride.md S0, change #3; issue 0227).
+# (doc/claude/specs/wire_label_ride.md S0, change #3; issue 0237).
 #
 # fluid_count_label_shorts() (src/move.c) counts a net label sitting on the WRONG net, but its
 # inner loop `break`s on the first touching wire and counts NOTHING when no wire touches at all.
@@ -41,10 +41,10 @@ proc scene {} {
 
 # ---------------------------------------------------------------------------
 # A. The defect: a label tapping the SPAN INTERIOR is stranded by a translation.
-#    (issue 0227's measured repro, stock defaults.)
+#    (issue 0237's measured repro, stock defaults.)
 #
 #    RE-AUTHORED for S3 (R3 = RIDE, changes #8/#9/#10). The oracle is unchanged; what changed is
-#    the schematic it is measuring. S0 built this counter precisely so 0227 would be audible while
+#    the schematic it is measuring. S0 built this counter precisely so 0237 would be audible while
 #    S1/S3 were built, and S3 is the stage that silences it: the wire now carries the label, so
 #    the anchor is never left behind and the net keeps its name. The 0-strand answer here is
 #    therefore a claim about the RIDE, not about the oracle -- AL below re-runs the identical
@@ -73,7 +73,7 @@ xschem unselect_all
 xschem select wire 0
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "AL0 legacy: the net really was lost (0227)"          [xschem getprop wire 0 lab] {#net1}
+check "AL0 legacy: the net really was lost (0237)"          [xschem getprop wire 0 lab] {#net1}
 check "AL1 legacy: mid-span label stranded -> 1"            [strands] 1
 set label_ride 1
 
@@ -182,14 +182,14 @@ set label_ride 1
 
 # ---------------------------------------------------------------------------
 # D. The user's real environment: cadence_compat forces autotrim_wires on
-#    (cadence_compat_sync, xschem.tcl:16260-16264). This is issue 0227's OWN repro -- the label
+#    (cadence_compat_sync, xschem.tcl:16260-16264). This is issue 0237's OWN repro -- the label
 #    is STATIONARY and the WIRE translates out from under it -- so it is the RIDE case (S3) and
 #    neither S1's leash (which needs the label to be the moving object) nor S2 addresses it.
 #
 #    RE-AUTHORED for S2 (R2, changes #6/#7). Pre-S2 the split put the label on an ENDPOINT of both
 #    halves, so connect_by_kissing()'s WIRE-endpoint arm (actions.c, change #8 -- deliberately NOT
 #    removed until S3) found it in instpin_spatial_table and minted a TETHER stub, and the label
-#    stayed connected. That accident is what MASKED 0227 for the cadence_compat user (spec §4.2,
+#    stayed connected. That accident is what MASKED 0237 for the cadence_compat user (spec §4.2,
 #    §13.5 row 2). With `label_splits_wires 0` the label is strictly INTERIOR to one wire, the
 #    wire's endpoints are 100 units away, the tether arm finds nothing, and the label strands.
 #
@@ -209,7 +209,7 @@ set label_ride 1
 #      autotrim 0, label_ride 1            wires 1  strands 0  net VOUT   <- A above
 #      autotrim 1, label_ride 1            wires 1  strands 0  net VOUT   <- D below
 #      any config,  label_ride 0           wires as before, strands 1, net #net1  <- AL / DL
-#    The escalation on issue 0227 is therefore lifted, and `label_splits_wires 1` stops being a
+#    The escalation on issue 0237 is therefore lifted, and `label_splits_wires 1` stops being a
 #    load-bearing mitigation and goes back to being the one-release escape hatch S2 intended.
 #    DM is kept, but it can no longer witness the SPLIT+TETHER mask on its own -- with the ride on,
 #    the label stays connected for a completely different reason -- so it now carries its own
@@ -237,12 +237,12 @@ xschem unselect_all
 xschem select wire 0
 xschem move_objects 0 100 stretch kissing
 xschem resolved_net 0
-check "D1 S3 closes 0227 for the cadence user too -> 0"     [strands] 0
+check "D1 S3 closes 0237 for the cadence user too -> 0"     [strands] 0
 check "D2 ... and the net keeps its name"                   [xschem getprop wire 0 lab] {VOUT}
 check "D2b ... the label rode"                              [lrange [xschem instance_pin_coord l1 name p] 1 2] {100 100}
 
 # DL the S2 measurement, preserved: with the ride off this is exactly the row S2 recorded, and it
-#    is what issue 0227's escalation note was about.
+#    is what issue 0237's escalation note was about.
 set label_ride 0
 cadence_midspan
 check "DL1 legacy (label_ride 0): S2's unmasked strand -> 1" [strands] 1
@@ -275,11 +275,11 @@ set label_ride 1
 set label_splits_wires 0
 
 # D3 the hole autotrim never masked, in either setting: the keyboard stretch paths do not arm
-#    kissing (issue 0228), so there is no tether to mint. Same repro, kissing withheld. Asserted
-#    under `label_splits_wires 1` so it stays the 0228 claim and not a restatement of D1.
+#    kissing (issue 0238), so there is no tether to mint. Same repro, kissing withheld. Asserted
+#    under `label_splits_wires 1` so it stays the 0238 claim and not a restatement of D1.
 #    RE-AUTHORED for S3: this is the case the spec's §8 disposition means by "the label half of
-#    0228 is subsumed by S3" -- RIDE is deliberately NOT gated on connect_by_kissing, so it fires
-#    here where neither the tether nor S1's leash ever could. D3L keeps the 0228 measurement.
+#    0238 is subsumed by S3" -- RIDE is deliberately NOT gated on connect_by_kissing, so it fires
+#    here where neither the tether nor S1's leash ever could. D3L keeps the 0238 measurement.
 scene
 set label_splits_wires 1
 xschem wire 0 0 200 0
@@ -290,7 +290,7 @@ xschem select wire 0
 xschem select wire 1
 xschem move_objects 0 100 stretch
 xschem resolved_net 0
-check "D3 S3: no kissing needed, the label rides (0228) -> 0" [strands] 0
+check "D3 S3: no kissing needed, the label rides (0238) -> 0" [strands] 0
 check "D4 ... and the net keeps its name"                    [xschem getprop wire 0 lab] {VOUT}
 set label_ride 0
 scene
@@ -303,7 +303,7 @@ xschem select wire 0
 xschem select wire 1
 xschem move_objects 0 100 stretch
 xschem resolved_net 0
-check "D3L legacy: autotrim, kissing NOT armed (0228) -> 1"  [strands] 1
+check "D3L legacy: autotrim, kissing NOT armed (0238) -> 1"  [strands] 1
 check "D4L legacy: ... and the net really was lost"          [xschem getprop wire 0 lab] {#net1}
 set label_ride 1
 set label_splits_wires 0

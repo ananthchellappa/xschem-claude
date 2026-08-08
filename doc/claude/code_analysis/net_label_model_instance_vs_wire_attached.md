@@ -13,7 +13,7 @@ Prompted by the observation:
 Short answer: **the observation is correct in substance, imprecise in four ways,
 and points at the wrong layer for a fix.** The defects that actually hurt are
 policy and feedback failures, not representation failures. They are spun out as
-issues 0220–0226 (listed at the end).
+issues 0230–0236 (listed at the end).
 
 ---
 
@@ -97,7 +97,7 @@ The old "drop an `xxx` label, then open the property dialog" flow survives on
 Alt+Shift+L → `place_net_label(0)` (`src/actions.c:2429`, NULL props so the symbol
 template's `lab=xxx` stands), on the port keys Ctrl+P / Ctrl+Shift+P, and on the
 Symbol menu entries. **The UX gap is much smaller than the data-model gap.** See
-issue 0223 for the residue.
+issue 0233 for the residue.
 
 ### 2.4 Wire records already look Cadence-like on disk — and that is a trap
 
@@ -141,7 +141,7 @@ off the snap lattice is unreachable from a snapped drop (`xschem wire 0 5 100 5`
 → `net_at 50 5` = 1, `net_at 50 0` = 0, and no snapped drop can produce y=5). An
 *oblique* off-grid wire can still be hit at exact lattice crossings —
 `xschem wire 5 5 105 105` then `net_at 10 10` returns 1. Do not write "off-grid
-wires cannot be hit"; it is false as stated. (Issue 0223.)
+wires cannot be hit"; it is false as stated. (Issue 0233.)
 
 **Failure when the label misses is quiet, though not unreported.** The name is
 discarded and the wire falls through to `set_unnamed_net()` → `#netN`
@@ -149,7 +149,7 @@ discarded and the wire falls through to `set_unnamed_net()` → `#netN`
 catch it, neither on the netlist path: the Add-Wire-Label form refuses the drop
 outright, and `select_dangling_nets()`'s third pass (`src/select.c:431-471`) finds
 a label touching nothing — but that command has no menu entry, no button and no
-key binding, so it reaches scripting users only. (Issues 0223, 0229.)
+key binding, so it reaches scripting users only. (Issues 0233, 0239.)
 
 **A missing `.sym` rewrites the netlist without an ERC.** `match_symbol()` never
 returns -1 (`src/token.c:201`); `load_sym_def()` substitutes
@@ -161,13 +161,13 @@ type. Be precise about "silent": stderr does carry
 `l_s_d(): Symbol not found: …` and the canvas draws a loud
 `---MISSING SYMBOL---` box. What is missing is the ERC layer and any trace in the
 simulator-facing netlist beyond a comment. Measured: two resistors that shared a
-named net land on different nets. (Issue 0222.)
+named net land on different nets. (Issue 0232.)
 
 **Orientation is manual.** `place_wire_label()` and `place_net_label()` both
 hard-code `rot=0, flip=0` (`src/actions.c:2429-2447`, `:2499`), so the name always
 reads leftward from the attachment point. Auto-orientation exists —
 `lab_orient()` (`src/actions.c:1387`) — but it is `static` and called only from
-`add_pin_stubs` (`:1442`). (Issue 0223.)
+`add_pin_stubs` (`:1442`). (Issue 0233.)
 
 **Move/edit duality.** `move.c` special-cases `type=="label"` in roughly a dozen
 places with "labels have no body" guards — the label is simultaneously
@@ -178,7 +178,7 @@ invariant documented at `src/callback.c:5827` and relied on by the rigid-group
 rotate/flip pivot logic. Connectivity is rescued instead by
 `connect_by_kissing()`, which samples only wire *endpoints* — so a label tapping
 a span interior is stranded and the net silently reverts to `#netN`. Measured on
-stock defaults. (Issues 0227, 0228.)
+stock defaults. (Issues 0237, 0238.)
 
 > Correction worth recording: `src/move.c:6246-6271` is **not** a label
 > re-inclusion pass. It is block (3b) of `fluid_ml_hazards()` (`:6161`), the P2
@@ -197,7 +197,7 @@ the symbol declaring `verilog_format=` and `vhdl_format=`. Two things that look
 like defects and are not: `IS_PIN` is a distinct, correct concept (hierarchy
 ports only), and `src/netlist.c:1460`'s `strcmp(type,"label")` is a
 label-vs-port *discriminator* inside the `IS_LABEL_OR_PIN` branch, not a fourth
-skip test. (Issue 0224.)
+skip test. (Issue 0234.)
 
 **Conflict resolution is by file record order.** Naming is first-writer-wins on a
 NULL check (`src/netlist.c:1091`, `:1115`) inside a plain ascending
@@ -207,7 +207,7 @@ port `BBB` in its header and connects it to nothing in the body. Swapping the tw
 `C {...}` lines flips the result. The short *is* reported on a default
 hierarchical netlist (from a second post-descent pass), but not on `-nohier` or
 the Shift-N current-level netlist, and the highlight branch is unreachable dead
-code. (Issues 0221, 0220.)
+code. (Issues 0231, 0230.)
 
 **Redraw mutates the document.** `src/draw.c:9695` calls `auto_set_wire_bus()` per
 visible wire per repaint, which runs `prepare_netlist_structs(0)`, rewrites
@@ -219,7 +219,7 @@ and no netlisting: `prepare_netlist_structs()` back-annotates `lab=` into wire
 prop_ptr (`src/netlist.c:1093`, `:1117`, `:1588`) without touching the modify
 flag, so merely highlighting one net produces a 39-record save diff on
 `cmos_example.sch` while `xschem get modified` stays 0 — and the `#netN` names in
-it renumber on any topology change. (Issues 0226, 0225.)
+it renumber on any topology change. (Issues 0236, 0235.)
 
 ---
 
@@ -289,7 +289,7 @@ expensive is elsewhere.
 | `xWire` / storage | No new struct field. New token in `prop_ptr` — but it **cannot be `lab=`** (claimed as netlister output, `netlist.c:1093/1117/1588`) or `name=` (claimed by the generic object-name facility, `select.c:1267`, `move.c:656`). Needs e.g. `netname=`. | **small** |
 | `save.c` + `XSCHEM_FILE_VERSION` | None. Unknown tokens are ignored by `get_tok_value`; unknown records fall to `read_record()` (`save.c:3268-3271`). No version bump. | **small** |
 | Undo / clipboard | Free — prop_ptr already deep-copied. | **small** |
-| `netlist.c` / `node_hash.c` | New seeding pass reading `netname=` into `wire[].node` before the label loop at `netlist.c:1427`, plus an explicit precedence policy (today: first-writer-wins by array index). Bus expansion is free — `bus_node_hash_lookup()` takes a string (`node_hash.c:123-163`). Must define short semantics and fix issue 0220 first. | **medium** |
+| `netlist.c` / `node_hash.c` | New seeding pass reading `netname=` into `wire[].node` before the label loop at `netlist.c:1427`, plus an explicit precedence policy (today: first-writer-wins by array index). Bus expansion is free — `bus_node_hash_lookup()` takes a string (`node_hash.c:123-163`). Must define short semantics and fix issue 0230 first. | **medium** |
 | `draw.c` / `svgdraw.c` / `psprint.c` | Wires have **no text path at all** today (`draw.c:9680-9714` draws lines and junction dots only). Needs a placement rule relative to the segment, font metrics, cairo/Xlib duplication, three exporters, hidden-text and zoom handling — and critically, a wire's redraw bbox is currently its segment, so every incremental-invalidate site would under-invalidate. | **medium-large** |
 | `select.c` / `findnet.c` | `find_closest_wire` is distance-to-segment; the glyph sits outside it. Cheapest: the name is not separately pickable. Proper: sub-object selection, for which precedents exist (`xPoly.selected_point`, `xInstance.pin_sel`). | **medium** |
 | `move.c` / fluid engine | **The real cost.** Per `doc/claude/WIRING.md:137, 311-323`, the fluid engine already uses prop_ptr `lab=` as its per-wire net-identity snapshot and its "explicit label" gate (`move.c:2694`, `:2858-2870`, `:3443-3451`). A second, *authoritative* name source doubles that state space. Split: both halves inherit the name, but a later prune must not delete the sole carrier — the hazard already open at `WIRING.md:613-622`. Merge: `merge_collinear_wires` keys on byte-equal prop_ptr (`check.c:809`), so same-named segments weld and the name's *position* is lost. Trim, `break_wires_at_pins` and every de-shorter gate need re-derivation. | **large** |
@@ -307,17 +307,17 @@ argument against.
 Everything below fits inside the instance model, with no `XSCHEM_FILE_VERSION`
 change and no new object type. Ranked by value / cost. Each is an issue.
 
-1. **Close the silent-failure holes** (issues 0222, 0223) — small, best ratio. A
+1. **Close the silent-failure holes** (issues 0232, 0233) — small, best ratio. A
    label that names nothing should say so.
-2. **Fix the short detector** (issue 0220) — small, independent of everything
+2. **Fix the short detector** (issue 0230) — small, independent of everything
    else, and an outright bug on the `-nohier` / Shift-N paths.
-3. **Auto-orient on drop** (issue 0223) — small. `lab_orient()` already exists at
+3. **Auto-orient on drop** (issue 0233) — small. `lab_orient()` already exists at
    `src/actions.c:1387`; un-static it and call it from `wire_label_try_commit()`,
    where the wire under the cursor is already known.
-4. **Snap tolerance on drop** (issue 0223) — small-medium. Search a small radius
+4. **Snap tolerance on drop** (issue 0233) — small-medium. Search a small radius
    and move the label's pin onto the nearest wire, turning "drop failed, no idea
    why" into "it snapped".
-5. **Keep the label attached when the wire moves** (issues 0227, 0228) — medium,
+5. **Keep the label attached when the wire moves** (issues 0237, 0238) — medium,
    the only genuinely hard piece. Two one-file fixes: extend
    `connect_by_kissing()`'s endpoint sweep (`src/actions.c:2110-2121`) to the span
    interior so a mid-span label gets the same rescue stub the endpoint case
@@ -345,8 +345,8 @@ that read backwards, labels stranded by a wire move, conflicting names resolved 
 file record order, a missing `.sym` rewriting the netlist — is a **policy and
 feedback** failure. All are fixable in place.
 
-Ship the outright bugs first (0220, 0222, 0225), then the ergonomics (0223), then
-0227 + 0228 with a headless regression. 0221 needs a naming-policy decision before
+Ship the outright bugs first (0230, 0232, 0235), then the ergonomics (0233), then
+0237 + 0238 with a headless regression. 0231 needs a naming-policy decision before
 any code. Revisit a wire-attached name only if users still report the model leaking
 after that — and note that even then it would be an *addition*, not a replacement,
 because ports stay instances.
@@ -362,18 +362,18 @@ rather than this summary if you are about to touch the code.
 
 | # | one line | severity |
 |---|---|---|
-| **0220** | `signal_short()` silent on `-nohier` / Shift-N; its highlight branch is unreachable dead code | wrong output on one path + dead code |
-| **0221** | a net's name is decided by file record order; a hierarchy port loses to a plain label and its `.subckt` port connects to nothing | wrong output |
-| **0222** | a label symbol missing from the library path silently stops naming its net; no ERC fires | wrong output |
-| **0223** | `place_net_label()` (Alt+Shift+L, Symbol menu, `xschem net_label`) commits a label off copper; the Add-Wire-Label form refuses | misleading UI |
-| **0224** | `bus_tap`'s `verilog_format`/`vhdl_format` unreachable; every label symbol's `format=` is dead in all five backends | dead code |
-| **0225** | netlist/highlight back-annotates `lab=` into wire records without setting modified; `#netN` renumbers into save diffs | silent data churn |
-| **0226** | `auto_set_wire_bus()` runs from `draw()`, so pan/zoom modifies the document with no undo (opt-in preference) | silent mutation |
-| **0227** | a net label tapping a wire's span interior is stranded by a translation; net silently becomes `#netN` | silent data loss |
-| **0228** | the keyboard stretch paths never arm kissing, so even an *endpoint* label is stranded | silent data loss |
-| **0229** | `select_dangling_nets()` doc contradicts the code about pins, ignores connect-by-name, and its second pass skips `skip_instance()` | doc + minor |
+| **0230** | `signal_short()` silent on `-nohier` / Shift-N; its highlight branch is unreachable dead code | wrong output on one path + dead code |
+| **0231** | a net's name is decided by file record order; a hierarchy port loses to a plain label and its `.subckt` port connects to nothing | wrong output |
+| **0232** | a label symbol missing from the library path silently stops naming its net; no ERC fires | wrong output |
+| **0233** | `place_net_label()` (Alt+Shift+L, Symbol menu, `xschem net_label`) commits a label off copper; the Add-Wire-Label form refuses | misleading UI |
+| **0234** | `bus_tap`'s `verilog_format`/`vhdl_format` unreachable; every label symbol's `format=` is dead in all five backends | dead code |
+| **0235** | netlist/highlight back-annotates `lab=` into wire records without setting modified; `#netN` renumbers into save diffs | silent data churn |
+| **0236** | `auto_set_wire_bus()` runs from `draw()`, so pan/zoom modifies the document with no undo (opt-in preference) | silent mutation |
+| **0237** | a net label tapping a wire's span interior is stranded by a translation; net silently becomes `#netN` | silent data loss |
+| **0238** | the keyboard stretch paths never arm kissing, so even an *endpoint* label is stranded | silent data loss |
+| **0239** | `select_dangling_nets()` doc contradicts the code about pins, ignores connect-by-name, and its second pass skips `skip_instance()` | doc + minor |
 
-0227 and 0228 are fluid-engine adjacent; per `MEMORY.md` another agent owns that
+0237 and 0238 are fluid-engine adjacent; per `MEMORY.md` another agent owns that
 area, so both docs cite by issue number rather than quoting current `move.c` text.
 
 ---
@@ -391,11 +391,11 @@ area, so both docs cite by issue number rather than quoting current `move.c` tex
   at Check&Save** — not established.
 - **Performance.** The 33 % label-instance share is a corpus count; the cost of it
   was never profiled.
-- **User impact of the axis-aligned off-lattice case** (issue 0223) — the geometry
+- **User impact of the axis-aligned off-lattice case** (issue 0233) — the geometry
   is measured, but no evidence anyone has hit it in practice.
 - **Whether `scope` / `show_label` divergence between the backends matters** — with
   the shipped library it is latent, because neither carries a `format=`. It would
-  surface only for a user-authored symbol of those types (issue 0224).
+  surface only for a user-authored symbol of those types (issue 0234).
 - `src/netlist.c:1536-1541` (a label-name fallback to the symbol template) is
   inside `#if 0`. It is **dead**, and it looks live in a casual grep.
 

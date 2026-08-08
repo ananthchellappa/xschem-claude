@@ -1,4 +1,4 @@
-# 0236 — `::sympin_place` is a write-only owner latch: it names the last form that *called* `arm`, never gets cleared, and makes Add-Pin and Add-Wire-Label swap identities at the shared drop witness
+# 0246 — `::sympin_place` is a write-only owner latch: it names the last form that *called* `arm`, never gets cleared, and makes Add-Pin and Add-Wire-Label swap identities at the shared drop witness
 
 Status: **OPEN** — measured A/B with the real form procs, two generators that need no injection, fix
 drafted (preferred fix deletes the latch), not implemented. **Major**.
@@ -7,10 +7,10 @@ Area: `src/xschem.tcl:10985`, `:11350` (writes), `:10930`, `:11294` (reads) — 
 `src/callback.c:2657` (`sympin_drops`)
 Tests: `test_sympin_drop_log.tcl` (self-skips without Tk),
 `scratchpad/verify_pinlabel_forms.tcl` (36/36, the 0122 F1/E1 harness)
-Found: 2026-08-06, verifying issue **0230**'s out-of-scope list (its item 4)
+Found: 2026-08-06, verifying issue **0240**'s out-of-scope list (its item 4)
 Related: **0122** E1/E2 + F1/F2 (the drop witness and the `.drw` slot handoff this mirrors),
 `doc/claude/specs/add_wire_label.md` **#8** ("cross-form drop cross-talk" — the latch is that item's
-mitigation), **0230**, **0235** (the sibling `.drw <Key-Escape>` handoff, same failure shape).
+mitigation), **0240**, **0245** (the sibling `.drw <Key-Escape>` handoff, same failure shape).
 
 ## What breaks
 
@@ -139,7 +139,7 @@ form steal the survivor's ownership and re-open #8 — the same trap 0122-E2 hit
   `test_add_pin_lib_symbol_view.tcl` asserts `[placing] 1` for the **pin** form in a library symbol
   view — the pin path must keep arming (`place_verb` → `add_symbol_pin`); only the label path may go
   quiet there.
-- **Do not "reset ownership" by calling `abort_operation()` from `arm()`** — 0230 fix (B) documents
+- **Do not "reset ownership" by calling `abort_operation()` from `arm()`** — 0240 fix (B) documents
   why (`callback.c:502-505`): on a `-place` re-arm a preview is already live, and tearing it down
   clears `sympin_preview`, so the next `-place` pushes a **second undo baseline for one gesture**.
 - **`ciform::after_drop`** (`create_instance.tcl:64-71`) is a **third** form on the same

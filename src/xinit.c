@@ -515,7 +515,7 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->maxa);
   my_free(_ALLOC_ID_, &xctx->maxl);
   my_free(_ALLOC_ID_, &xctx->sel_array);
-  my_free(_ALLOC_ID_, &xctx->preview_sel); /* issue 0231: placement preview identity */
+  my_free(_ALLOC_ID_, &xctx->preview_sel); /* issue 0241: placement preview identity */
   xctx->preview_sel_n = xctx->preview_sel_size = 0;
   my_free(_ALLOC_ID_, &xctx->scope_hi_type);
   my_free(_ALLOC_ID_, &xctx->scope_hi_id);

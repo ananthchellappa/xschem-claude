@@ -1,7 +1,7 @@
 # Roadmap — one modal gesture at a time
 
 Status: **phases 0, 1 and 2 done; 3 open; 4 blocked.** Owner: `open_pdk`. Phases 1–2 landed
-2026-08-08 (issue **0237** FIXED, issue **0238** FIXED first), user-ratified the same day as
+2026-08-08 (issue **0247** FIXED, issue **0248** FIXED first), user-ratified the same day as
 option (a) cancel. Last measured 2026-08-08.
 
 ## The invariant
@@ -20,7 +20,7 @@ Why they cannot coexist: `end_place_move_copy_zoom()` tests `STARTWIRE` **before
 arm, and under `persistent_command` (cadence rc) the Button-1 handler seizes the click one step
 earlier still. Whichever gesture is armed second can never be completed, and ESC is the only exit.
 Rejected alternative: reorder those branches — `WIRING.md` §8 class **H**, and it does not fix the
-symptom (issue 0233 measured it).
+symptom (issue 0243 measured it).
 
 Cadence mode is not special. It makes the jam louder (`persistent_command` claims every click) but
 infix mode has the identical dead end with two rubber bands on screen.
@@ -33,8 +33,8 @@ infix mode has the identical dead end with two rubber bands on screen.
 - `abort_placement_preview()` — `src/callback.c`. Tears down a cursor placement preview. Keeps the
   `delete(0)`/`delete(1)` undo discriminator verbatim.
 - `leave_placement_for(const char *what)` — `src/callback.c`. The above + a statusbar line. It used
-  to carry the issue **0231** decline guard (returned 0 while a multiple selection was live, so the
-  caller must not arm); 0231 landed on 2026-08-08 and the guard is gone — it now always returns 1.
+  to carry the issue **0241** decline guard (returned 0 while a multiple selection was live, so the
+  caller must not arm); 0241 landed on 2026-08-08 and the guard is gone — it now always returns 1.
 - `clear_orphan_gesture_bits()` — `src/callback.c`. What every early return in `abort_operation()`
   owes the terminal `ui_state = 0`.
 
@@ -45,21 +45,21 @@ infix mode has the identical dead end with two rubber bands on screen.
 
 ### Phase 0 — done
 
-- [x] `l` (Add Wire Label) cancels a live wire/line draw — issue **0230**, ratified 2026-08-06
-- [x] the RESTING wire command mode counts as "live" — 0230 follow-up
-- [x] `p` (both views) and component insert cancel a live wire/line — issue **0233 F1**, ratified 2026-08-07
-- [x] every wire/line verb cancels a live placement preview — issue **0233 F2**, ratified 2026-08-07
+- [x] `l` (Add Wire Label) cancels a live wire/line draw — issue **0240**, ratified 2026-08-06
+- [x] the RESTING wire command mode counts as "live" — 0240 follow-up
+- [x] `p` (both views) and component insert cancel a live wire/line — issue **0243 F1**, ratified 2026-08-07
+- [x] every wire/line verb cancels a live placement preview — issue **0243 F2**, ratified 2026-08-07
 - [x] ESC cleans up after all of them; all three early returns in `abort_operation()` clear the
-      orphan gesture bits — issue **0233 F3**
+      orphan gesture bits — issue **0243 F3**
 - [x] 86-check headless suite (`tests/headless/test_placement_wire_gate.tcl`) + 8 sabotage variants
 
 ### Phase 1 — shape draws cancel a live wire/line draw
 
 Effort: ~8 one-line call sites, low risk (the call is a no-op unless a draw is live, and it is
-delete-free so issue 0231 was never in play — and since 2026-08-08 the placement teardown is
+delete-free so issue 0241 was never in play — and since 2026-08-08 the placement teardown is
 scoped too).
 
-- [x] fix issue **0238** first — done, and it turned out to need a writer-side hold in
+- [x] fix issue **0248** first — done, and it turned out to need a writer-side hold in
       `statusmsg()`: for placement verbs the message was also being overwritten one call later by
       `select.c`'s object-info line, not only by the coordinate readout
 - [x] ratify the policy with the user — 2026-08-08, option (a) cancel, one answer for both phases
@@ -73,8 +73,8 @@ scoped too).
 - [x] `xschem polygon` — same
 - [x] `xschem arc` — the ARM form only
 - [x] every coordinate/commit form left ungated (replay seams), pinned by checks F7/F8
-- [x] new test section **F**, with disjoint sabotage (4 variants, red sets in issue 0237)
-- [x] docs: `WIRING.md` class D, `FAQ.md` Q37, issue **0237**
+- [x] new test section **F**, with disjoint sabotage (4 variants, red sets in issue 0247)
+- [x] docs: `WIRING.md` class D, `FAQ.md` Q37, issue **0247**
 
 ### Phase 2 — the remaining placements cancel a live wire/line draw
 
@@ -83,7 +83,7 @@ Effort: ~7 call sites, same pattern as `p`. **Breaks `test_add_wire_label.tcl` G
 - [x] `place_net_label()` (`src/actions.c`) — covers `Alt+Shift+L`, `Ctrl+P`, `Ctrl+Shift+P`, `xschem net_label 0/2/3`
 - [x] `add_graph` (`src/scheduler.c`)
 - [x] `add_image` — gated before the file chooser, like `place_symbol`: cancelling the dialog does
-      NOT restore the wire (stated in issue 0237)
+      NOT restore the wire (stated in issue 0247)
 - [x] `place_text` and `case 't'` (`src/callback.c`)
 - [x] ctx-menu 1 Insert symbol (`start_place_symbol()`, which also serves the `I` and Insert keys)
       and 6 Insert text
@@ -93,14 +93,14 @@ Effort: ~7 call sites, same pattern as `p`. **Breaks `test_add_wire_label.tcl` G
       not on another door (there is none left but merge). `test_placement_wire_gate.tcl` **D3**
       needed the same rebuild — it was NOT in this plan's landmine list and would have been found
       only by running the suite
-- [x] issue **0237** → FIXED (merge/`Ctrl+V` stays open, tracked there and in phase 4)
+- [x] issue **0247** → FIXED (merge/`Ctrl+V` stays open, tracked there and in phase 4)
 
 ### Phase 3 — wire/line and placements cancel a live SHAPE draw
 
 The reverse of phase 1; needs the new `abort_shape_draw()` helper. **Unchanged by phases 1-2**, and
 now the only asymmetry left outside merge: `r` then `w` still leaves `STARTRECT` armed under a
 fresh wire draw. Two things phases 1-2 hand it: the statusbar message will actually be readable
-(issue 0238), and `xschem test_gate_bypass` already exists for building whatever co-armed state its
+(issue 0248), and `xschem test_gate_bypass` already exists for building whatever co-armed state its
 own tests need.
 
 - [ ] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair
@@ -112,16 +112,16 @@ own tests need.
 
 ### Phase 4 — merge / paste (`Ctrl+V`), both directions
 
-**Blocked** on issues **0232** (shared teardown for the merge/paste arms) and **0234** (aborted
+**Blocked** on issues **0242** (shared teardown for the merge/paste arms) and **0244** (aborted
 paste marks a dirty schematic clean). A merge preview carries `STARTMERGE`, not the placement bits,
 so `abort_placement_preview()` deliberately does not see it.
 
-- [ ] wait for 0232/0234
+- [ ] wait for 0242/0244
 - [ ] then: merge cancels a live draw, and a draw cancels a live merge
 
 ## Cross-cutting blockers
 
-- **Issue 0231** — **FIXED 2026-08-08, and the guard is deleted.** `abort_placement_preview()` tore
+- **Issue 0241** — **FIXED 2026-08-08, and the guard is deleted.** `abort_placement_preview()` tore
   the preview down with `delete()`, which removes the **selection**, not the preview object
   (measured: 2 wires + preview + `select_all` + `w` → 0 wires), so `leave_placement_for()` declined
   while a multiple selection was live. The teardown is now scoped to the preview's own identity —
@@ -131,9 +131,9 @@ so `abort_placement_preview()` deliberately does not see it.
   **the blocker on later phases is lifted**: a new caller may now reach the placement teardown with
   a foreign selection live. `tests/headless/test_placement_wire_gate.tcl` **E7** was rewritten to
   assert the opposite of what it used to. Still NOT scoped: the **merge/paste** `delete(1)` in
-  `abort_operation()` (issues **0232**/**0234**), so phase 4 inherits the un-narrowed version.
-- **Issue 0236** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
-- **Issue 0238** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
+  `abort_operation()` (issues **0242**/**0244**), so phase 4 inherits the un-narrowed version.
+- **Issue 0246** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
+- **Issue 0248** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
   the next click; an ordinary `statusmsg(…, 1)` is dropped while a hold is up. Seams:
   `xschem get statusmsg` / `xschem get statusmsg_hold`, and a DISPLAY-gated test.
 - **`xschem callback …` segfaults under `--nogui`**, so no click path is drivable headlessly. Arm
@@ -173,7 +173,7 @@ Each verb's policy has been ratified individually so far. Phases 1–2 are one q
 > (`r`, `P`, arc/circle, `Ctrl+P`, `Alt+Shift+L`, `t`, `add_graph`, `add_image`, ctx-menu inserts) —
 > yes or no?
 
-**Ratified 2026-08-08: (a) cancel**, one answer for both phases, consistent with 0230 and 0233.
+**Ratified 2026-08-08: (a) cancel**, one answer for both phases, consistent with 0240 and 0243.
 
 The alternative the code already supports is *decline* (`leave_placement_for()` returns 0 and the
 caller does not arm) with a statusbar hint. Mixing the two per family is possible but would be the

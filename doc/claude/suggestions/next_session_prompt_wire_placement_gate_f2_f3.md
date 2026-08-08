@@ -1,10 +1,10 @@
-# Next-session prompt — issue 0233 F3 (the ESC hole) and F2 (the reverse door)
+# Next-session prompt — issue 0243 F3 (the ESC hole) and F2 (the reverse door)
 
 Paste everything below the line into a fresh session with cleared context.
 
 ---
 
-Finish issue **0233** (`doc/claude/issues/0233-modal-gesture-exclusion-gated-at-one-of-thirteen-arm-sites.md`,
+Finish issue **0243** (`doc/claude/issues/0243-modal-gesture-exclusion-gated-at-one-of-thirteen-arm-sites.md`,
 status **PARTIAL**). Two remaining pieces, **F3 first — it is smaller, needs no decision from the
 user, and it is the one that still shows the user-visible symptom**. Tree is at `322be1b0`; every
 anchor below was verified there. Re-derive line numbers by grepping the quoted statement, not by
@@ -12,8 +12,8 @@ trusting the number.
 
 ## Background you need before touching anything
 
-Read in this order: `doc/claude/issues/0233-*.md` (the whole thing — it carries the measured
-censuses), then `doc/claude/issues/0230-*.md` (the parent fix, especially its *Follow-up
+Read in this order: `doc/claude/issues/0243-*.md` (the whole thing — it carries the measured
+censuses), then `doc/claude/issues/0240-*.md` (the parent fix, especially its *Follow-up
 2026-08-06* section: "wire-draw mode is THREE states"), then `doc/claude/WIRING.md` §7 landmines
 **8, 9, 12**, §8 classes **D** and **H**, and §10 (testing traps).
 
@@ -43,7 +43,7 @@ original user report ("there are grey lines of the same dimensions as the wire d
 if(xctx->last_command && xctx->ui_state & (STARTWIRE | STARTLINE)) {
 ```
 
-The `xctx->last_command &&` conjunct predates issue 0230 (commit `a797bc59`) and exists **only** to
+The `xctx->last_command &&` conjunct predates issue 0240 (commit `a797bc59`) and exists **only** to
 protect the two-stage ESC in persistent command mode. But several arms zero `last_command` while
 leaving `STARTWIRE` set:
 
@@ -84,7 +84,7 @@ Because `redraw_w_a_l_r_p_z_rubbers()` (`callback.c:241`) re-strokes the band on
 `STARTWIRE` is set, and the CLEAR never ran, the stroke has no owner left to erase it. That is the
 grey-lines symptom.
 
-**Proposed shape** (0233 already spells it out — verify it, do not assume):
+**Proposed shape** (0243 already spells it out — verify it, do not assume):
 
 ```c
 if(xctx->ui_state & (STARTWIRE | STARTLINE)) {
@@ -122,7 +122,7 @@ Add-Wire-Label has an accidental escape hatch (typing one more character re-issu
 hits the gate and frees the wire while keeping the preview); **Add-Pin does not** — ESC is the only
 exit and it throws the pin away.
 
-**ASK THE USER BEFORE WRITING CODE**, exactly as issue 0230 did for `l`:
+**ASK THE USER BEFORE WRITING CODE**, exactly as issue 0240 did for `l`:
 
 - **(a) `w` abandons the placement preview** and starts drawing — symmetric with what `l` now does
   to a wire, and consistent with the ratified rule *"whatever you just pressed is what you meant"*.
@@ -135,17 +135,17 @@ If (a): add an `abort_placement_preview()` helper — factor the existing block 
 `set_modify(save)` → clear `START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT`, `sympin_preview`,
 `wirelabel_preview`) into a function and call it from `abort_operation()`, from `start_wire()`
 (`callback.c:551`) and from `start_line()` (`:473`). **It must NOT be `abort_operation()`** — see
-the comment at `callback.c:502-505` and the trap below. Issue **0232** wants the same helper for a
+the comment at `callback.c:502-505` and the trap below. Issue **0242** wants the same helper for a
 different set of callers; factor it once, in a way both can use.
 
 ---
 
 ## TRAPS
 
-1. **0230's section G2 constructs the double-armed state on purpose.**
+1. **0240's section G2 constructs the double-armed state on purpose.**
    `tests/headless/test_add_wire_label.tcl` (88 checks) builds it with `add_wire_label -place` then
    `xschem wire gui` — that is exactly reverse door F2. Fixing F2 makes
-   `check "0230 both gestures armed" … 1` unreachable and the whole section stops testing what it
+   `check "0240 both gestures armed" … 1` unreachable and the whole section stops testing what it
    was written for. Rebuild G2 on a different constructor (a direct seam that sets the flags) or
    move its intent into the new tests — do not just delete it, it is the only coverage of
    `abort_operation()`'s co-armed teardown.
@@ -175,7 +175,7 @@ different set of callers; factor it once, in a way both can use.
 8. **`ui_state2` is never cleared by `abort_operation()`** — after ESC on the menu-wire path
    `ui_state == 0` but `ui_state2 == MENUSTARTWIRE`. Inert today (only `MENUSTART` gates its
    consumers) but do not make it load-bearing.
-9. Out of scope: issues **0231**, **0232**, **0234**, **0235**, **0236** (all filed, all open) and
+9. Out of scope: issues **0241**, **0242**, **0244**, **0245**, **0246** (all filed, all open) and
    the nine remaining F1 forward doors. If a fix here would obviously close one of those, say so
    and stop — do not widen.
 
@@ -213,7 +213,7 @@ nothing else moved. These five fail at HEAD for unrelated reasons and are baseli
 
 - The code, with comments that name the issue and explain *why* the guard is shaped that way (match
   the density of the surrounding comments — see `abort_wire_line_command()` for the house style).
-- `doc/claude/issues/0233-*.md` updated: status **PARTIAL → FIXED** only if both F2 and F3 land and
+- `doc/claude/issues/0243-*.md` updated: status **PARTIAL → FIXED** only if both F2 and F3 land and
   the nine remaining forward doors are re-scoped into their own issue; otherwise keep PARTIAL and
   update the census tables and the "What landed" paragraph.
 - `WIRING.md` §8 class **D** if the root cause names a new class member; `doc/claude/FAQ.md` Q35 and

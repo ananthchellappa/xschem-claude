@@ -1,4 +1,4 @@
-# 0235 — while a placement form is open, canvas Escape never reaches the C Escape terminal: an idle form swallows it and aborts nothing
+# 0245 — while a placement form is open, canvas Escape never reaches the C Escape terminal: an idle form swallows it and aborts nothing
 
 Status: **OPEN** — measured (the *downstream* half; the Tk delivery half is proven by code +
 documented Tk semantics, see *What cannot be shown headlessly*). Fix drafted, not implemented.
@@ -8,8 +8,8 @@ Area: `src/xschem.tcl:11370` (`addlabel::grab_esc`), `:11028` (`addpin::`),
 `src/create_instance.tcl:151` (`ciform::`, no guard at all) vs `src/callback.c:7344-7359`
 (`case XK_Escape`)
 Tests: `test_cmdmode_descend_0201.tcl` legs CS3a–CS3c pin the exact `.drw <Key-Escape>` script text
-Found: 2026-08-06, verifying issue **0230**'s out-of-scope list
-Related: **0230** — its "Still open" item 3 called this *"harmless now"*; **this issue supersedes
+Found: 2026-08-06, verifying issue **0240**'s out-of-scope list
+Related: **0240** — its "Still open" item 3 called this *"harmless now"*; **this issue supersedes
 that verdict**. **0122** item 3 / E2 (Esc dismisses an idle form; the `release_esc` handoff),
 `doc/claude/specs/cadence_pin_name_text.md:549-551` (**states the opposite of what the code does**
 — see *History*), **0202** D3 (same, see *Landmines*).
@@ -87,10 +87,10 @@ What each skip costs:
   break it.
 - **`:7352`** — leaves `MENUSTARTWIRE` in `ui_state2` even on paths where `abort_operation` *does*
   run (measured `ui2=1` after the C terminal too). Inert today because every arming site **assigns**
-  `ui_state2` wholesale (`scheduler.c:13015`, `:13020`); hygiene, same status 0230 gives
+  `ui_state2` wholesale (`scheduler.c:13015`, `:13020`); hygiene, same status 0240 gives
   `MENUSTARTDESCEND` at `callback.c:330`.
 - **`:7355`** — the snap cursor is never erased.
-- **`:7357`** — the cadence one-stage-Esc fixup. **This one has teeth after 0230**: `abort_operation`
+- **`:7357`** — the cadence one-stage-Esc fixup. **This one has teeth after 0240**: `abort_operation`
   now latches `keep_last_command = 1` (`callback.c:376`) whenever a placement is co-armed, so
   `last_command` stays `STARTWIRE` (measured, row D), and `callback.c:7828` then starts a wire on
   the next press. Without the form, `:7357` would have cleared it.
@@ -151,7 +151,7 @@ clear `last_command & STARTWIRE`.
   pending. Default is 0 (`xschem.tcl:15731`), so most users see only an extra `draw()`.
 - **`tclstop = 1` on every form Esc** will break a running `propagate_logic` that happens to be up
   while a form is open. Correct by definition, but a real change.
-- **0122 E1's `sympin_drops` witness and the `::sympin_place` latch** (issue **0236**) sit on the
+- **0122 E1's `sympin_drops` witness and the `::sympin_place` latch** (issue **0246**) sit on the
   same teardown path; ordering `destroy` before `xschem escape` must not let `after_drop` mistake
   the terminal's `delete()` for a real drop.
 - **0202 D3 currently asserts the opposite of this finding** — *"neither is displaced by Tk-level

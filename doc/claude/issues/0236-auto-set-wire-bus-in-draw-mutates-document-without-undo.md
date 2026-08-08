@@ -1,10 +1,10 @@
-# 0226 — `auto_set_wire_bus()` runs from `draw()`, so a pure pan/zoom modifies the document with no undo
+# 0236 — `auto_set_wire_bus()` runs from `draw()`, so a pure pan/zoom modifies the document with no undo
 
 Status: **OPEN** — measured repro, fix drafted, not implemented. Opt-in preference, so blast radius is small.
 Area: `src/draw.c:9695` (inside `draw()`, `:9539`); `src/netlist.c` `auto_set_wire_bus()` (`:1701-1727`)
-Tests: none yet — proposed `tests/headless/test_auto_set_wire_bus_0226.tcl`; `xschem test 7` (`src/scheduler.c:12317`) drives the same function headlessly
+Tests: none yet — proposed `tests/headless/test_auto_set_wire_bus_0236.tcl`; `xschem test 7` (`src/scheduler.c:12317`) drives the same function headlessly
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related: **0225** — the other document-mutating path in this area, which is unconditional and needs no preference. No prior doc mentions `auto_set_wire_bus` anywhere under `doc/claude/`.
+Related: **0235** — the other document-mutating path in this area, which is unconditional and needs no preference. No prior doc mentions `auto_set_wire_bus` anywhere under `doc/claude/`.
 
 ## The defect
 

@@ -1,19 +1,19 @@
-# 0231 — a cancelled placement deletes **the selection**, not the preview: `Ctrl+A` while the Add-Label/Add-Pin form is armed wipes the whole schematic, and the dirty flag says it is clean
+# 0241 — a cancelled placement deletes **the selection**, not the preview: `Ctrl+A` while the Add-Label/Add-Pin form is armed wipes the whole schematic, and the dirty flag says it is clean
 
 Status: **FIXED 2026-08-08** (branch `open_pdk`). Was **critical**: silent whole-document loss on a
 two-gesture path that contains no `Delete` and, in the shortest route, no `ESC` either.
 Area: `abort_placement_preview()` (`src/callback.c`, factored out of `abort_operation()` by issue
-0233 F2) and the three modeless-form RE-ARM drops (`src/scheduler.c`, `add_symbol_pin` /
+0243 F2) and the three modeless-form RE-ARM drops (`src/scheduler.c`, `add_symbol_pin` /
 `add_sch_pin` / `add_wire_label`); `delete()` is selection-scoped (`src/select.c` `delete()`); the
 twelve arm sites that establish the assumption (`grep -n "ui_state |= START_SYMPIN\|ui_state |=
 PLACE_SYMBOL\|ui_state |= PLACE_TEXT" src/*.c`)
 Tests: `tests/headless/test_add_wire_label.tcl` section **H** (88 → **178** checks) and
 `tests/headless/test_placement_wire_gate.tcl` **E7**, rewritten to assert the opposite of the
 decline guard it used to pin (169 → **171**)
-Found: 2026-08-06, by the adversarial review of issue **0230** (raised, then confirmed pre-existing
+Found: 2026-08-06, by the adversarial review of issue **0240** (raised, then confirmed pre-existing
 and out of that fix's scope)
-Related: **0230** (parent; its "Pre-existing defects" list item 1), **0232** (the other half of the
-same teardown's brokenness), **0234** (the merge arm's dirty-flag reset, which compounds this),
+Related: **0240** (parent; its "Pre-existing defects" list item 1), **0242** (the other half of the
+same teardown's brokenness), **0244** (the merge arm's dirty-flag reset, which compounds this),
 `doc/claude/specs/cadence_pin_name_text.md` item #3 (the `delete(0)` rule this must not break),
 `WIRING.md` §8 class **D**.
 
@@ -54,7 +54,7 @@ BUG  (Ctrl+A+ESC)  wires=0 inst=0 modified=0      <-- whole schematic gone, stil
 CTRL (just ESC)    wires=1 inst=1 modified=0      <-- correct: only the preview removed
 ```
 
-No `STARTWIRE` anywhere (`last_command=0`) — this is **not** issue 0230's wire clash.
+No `STARTWIRE` anywhere (`last_command=0`) — this is **not** issue 0240's wire clash.
 
 **What survives: nothing.** With 8 objects selected, the saved `.sch` goes from
 2×`N`, 2×`C`, `L`, `B`, `P`, `T` to the `v/G/K/V/S/F/E` header records alone. Wires, instances,
@@ -78,7 +78,7 @@ It is fixed by the same narrowing and pinned by section **H3**.
 
 ## Root cause
 
-(ANCHOR CORRECTION, 2026-08-07: issue 0233 F2 moved this code out of `abort_operation()` into
+(ANCHOR CORRECTION, 2026-08-07: issue 0243 F2 moved this code out of `abort_operation()` into
 `abort_placement_preview()`, which `abort_operation()` calls at its `STARTMOVE` branch and which
 `leave_placement_for()` also calls. The `delete()` blamed below lives there now. Everything else in
 this section stayed true.)
@@ -105,7 +105,7 @@ mutator with no gesture awareness: it never inspects `STARTMOVE`/`START_SYMPIN`,
 invariant is simply false and `delete()` takes the document.
 
 The state left behind is **consistent** (`START_SYMPIN` and `sympin_preview` both cleared) — this
-is plain over-deletion, not the 0123/0230 desync.
+is plain over-deletion, not the 0123/0240 desync.
 
 Age: upstream and older than all preview work. `git log -S` puts the
 `(START_SYMPIN | PLACE_SYMBOL | PLACE_TEXT)` widening at `8281c67a` (2021-11-04, *"aborting
@@ -166,10 +166,10 @@ delete rather than trusting it.
    stray preview is cosmetic; a wiped schematic is not.
 4. **Same treatment for the merge arms** (`callback.c:401-405`, `:413-416`) — narrow the
    `delete(1)` to what `merge_file()` pasted, and replace the unconditional `set_modify(0)` with the
-   save/restore idiom (that reset is issue **0234**; the two defects compound here).
+   save/restore idiom (that reset is issue **0244**; the two defects compound here).
 5. **Optional belt, not a substitute:** make `select_all` decline (or first cancel the placement)
    while `ui_state & (START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT|STARTMERGE)`, gated at the command site
-   (`scheduler.c:10682` / `callback.c:6089`) the way 0230 gated `add_wire_label`. It closes only the
+   (`scheduler.c:10682` / `callback.c:6089`) the way 0240 gated `add_wire_label`. It closes only the
    `Ctrl+A` door — `select_dangling_nets` still reproduces — so ship it *with* 2, never instead.
 
 ## Landmines for whoever fixes it
@@ -182,7 +182,7 @@ delete rather than trusting it.
 - **`to_push_undo` must not change.** `tests/pin_name_text.tcl` regression 11 (`:259`) is an
   explicit sabotage check on `delete(0)` vs `delete(1)`, and 11c (`:279`) guards the stale
   `sympin_preview` desync.
-- **0230's section-G checks pin the *effects*** — `test_add_wire_label.tcl:211/213/215`
+- **0240's section-G checks pin the *effects*** — `test_add_wire_label.tcl:211/213/215`
   (`sympin_preview` 0, preview instance deleted, `lastsel` 0). The narrowing must keep `:213`
   exactly; `:215` forces a deliberate decision about whether ESC keeps the user's *other*
   selection.
@@ -243,7 +243,7 @@ that stamp before deleting.
 5. **The three modeless-form RE-ARM drops** (`src/scheduler.c`, `add_symbol_pin` / `add_sch_pin` /
    `add_wire_label`) get the identical narrowing. This is the door with no cancel key in it (see
    the fourth-door repro above) and it was **not** in the original sketch.
-6. **The 0231 decline guard is gone** from `leave_placement_for()` (`src/callback.c`) — see below.
+6. **The 0241 decline guard is gone** from `leave_placement_for()` (`src/callback.c`) — see below.
 7. Cleared wherever a preview stops being live without a teardown: both commit paths
    (`wire_label_try_commit`, `end_place_move_copy_zoom`), both failed arms, and `clear_drawing()`
    (load / clear / new / undo reload — the next document restarts the id counters, so a surviving
@@ -253,7 +253,7 @@ that stamp before deleting.
 
 `leave_placement_for()` used to `return 0` while `xctx->lastsel > 1`, refusing to start a wire/line
 draw with the statusbar line *"finish or ESC the pending placement first (a multiple selection is
-live)"*. That guard existed **only** because of this issue (0233 F2's carve-out). It was the single
+live)"*. That guard existed **only** because of this issue (0243 F2's carve-out). It was the single
 inconsistency left in the ratified modal-gesture rule — every other verb cancelled the pending
 gesture, that one refused. It is deleted, and the function now always returns 1 (the `int` result
 is kept so a future refusal needs no call-site churn).
@@ -261,7 +261,7 @@ is kept so a future refusal needs no call-site churn).
 ## The decision that was NOT taken
 
 Narrowing makes *"ESC removes the preview and keeps my selection"* newly possible. **It was not
-taken.** `test_add_wire_label.tcl` G2 (`0230 ESC leaves nothing selected`) ratified `lastsel == 0`
+taken.** `test_add_wire_label.tcl` G2 (`0240 ESC leaves nothing selected`) ratified `lastsel == 0`
 on this path; changing it is a separate, user-facing decision, not something to let fall out of a
 scoping fix. The cancel therefore **deselects** the user's other objects and **keeps** them, and
 section H1 now pins that with its own check per verb rather than leaving it implicit.
@@ -326,10 +326,10 @@ resurrecting a dead bit, and every C89 complaint (the new code compiles clean un
   merge+CtrlA+ESC      wires=0 inst=0 modified=0 ui=0     <-- still wipes, still says "clean"
   ```
    Sketch item 4 wanted it narrowed too; that site is issue
-  **0234**'s (its unconditional `set_modify(0)`) and issue **0232**'s territory and the two collide
+  **0244**'s (its unconditional `set_modify(0)`) and issue **0242**'s territory and the two collide
   in `paste.c`, so it is deliberately untouched. The machinery this fix adds is directly reusable
   there: stamp at the merge arm, `select_placement_preview()` before the `delete(1)`.
-- **Issue 0232** — the other actors that clear `START_SYMPIN`/`STARTMOVE` with no teardown at all
+- **Issue 0242** — the other actors that clear `START_SYMPIN`/`STARTMOVE` with no teardown at all
   (notably `unselect_all()` at `select.c`, i.e. paste/merge/redo/place_text/add_image) still orphan
   a preview. A stamp left behind by such an actor is inert (the placement bits are gone, so the
   teardown returns early) but the preview object is still stranded in the drawing.
@@ -340,7 +340,7 @@ resurrecting a dead bit, and every C89 complaint (the new code compiles clean un
 - **`place_net_label()` still arms unconditionally** (`actions.c`: `place_symbol()`'s return value
   is discarded), so an unresolvable label symbol arms `START_SYMPIN` with no preview. Behaviour is
   unchanged by this fix — the stamp then captures whatever was already selected, exactly as the old
-  `delete()` would have taken it — but it is an 0232-family arm-with-no-preview and worth closing
+  `delete()` would have taken it — but it is an 0242-family arm-with-no-preview and worth closing
   there.
 
 ## Tests
@@ -362,7 +362,7 @@ stretch selections survive — see *Defects the review of this fix found*, below
 object of every type the previews are made of, so `instances == 1` after cancelling an *instance*
 preview and `texts == 1` after cancelling the rect+text Add-Pin preview can only pass if the
 survivors really survived. `rects`/`lines`/`polygons`/`arcs` have no `xschem get` counter, so the
-line's survival is proved by counting saved object-record lines (`rec0231`).
+line's survival is proved by counting saved object-record lines (`rec0241`).
 
 **E7** was **replaced, not deleted** — same constructor, opposite assertions (the draw arms, the
 preview is torn down, *and the other selected objects survive*), plus a same-type survivor instance
@@ -374,7 +374,7 @@ so the last check is not vacuous.
 |---|---|---|
 | narrowing removed from `abort_placement_preview()` only (`if(1)`) | `H1`×20 (5 verbs × wires/instance/text/records), `H2`×3, `H4 wires survive`/`instance kept`/`text survives`, `E7 other objects survive`/`survivor instance kept` | 28 |
 | narrowing removed from the three re-arm drops only (`if(1)`) | `H3 wires survive`, `H3 fixture inst kept`, `H3 text survives`, `H3 records survive` | 4 |
-| `stamp_placement_preview()` records nothing (backstop swallows every teardown) | the UNDER-delete direction: `H5 control: preview removed`, `H5 control: nothing else lost`, `H1 * preview gone`, `H3 old preview gone`/`ESC clears it`, `H4 preview gone`, and the pre-existing 0230/0233 effect checks `0230 ESC deletes preview instance`, `D1`/`D2`/`D5`, `E1`, `G1` | 32 |
+| `stamp_placement_preview()` records nothing (backstop swallows every teardown) | the UNDER-delete direction: `H5 control: preview removed`, `H5 control: nothing else lost`, `H1 * preview gone`, `H3 old preview gone`/`ESC clears it`, `H4 preview gone`, and the pre-existing 0240/0243 effect checks `0240 ESC deletes preview instance`, `D1`/`D2`/`D5`, `E1`, `G1` | 32 |
 | the removed decline guard put back | `H4 proceeded`, `H4 draw armed`, `H4 preview gone`, `E7 proceeds: preview torn down`/`wire draw armed`/`wire mode owned`, `E7 survivor instance kept` | 7 |
 | the partial-selection filter removed from `stamp_placement_preview()` | `H7 partial: wires survive`, `H7 partial: ESC keeps them` | 2 |
 
@@ -386,7 +386,7 @@ Run 1 and run 2 are disjoint, and both are disjoint from run 4 — the H4 checks
 between "did the other objects survive" (run 1) and "did the verb proceed at all" (run 4). Run 3 is
 the deliberate mirror: it proves every survival predicate has a partner that fails when the delete
 stops happening, so none of them is satisfiable by a teardown that simply does nothing. Its overlap
-with the 0230/0233 sections is the evidence that those older checks pin the delete too.
+with the 0240/0243 sections is the evidence that those older checks pin the delete too.
 
 ### Green tiers after the fix
 
@@ -394,7 +394,7 @@ with the 0230/0233 sections is the evidence that those older checks pin the dele
 `test_label_ride` 157 · `test_label_strand_oracle` 32 · `test_wire_split` 119 ·
 `test_add_pin_lib_symbol_view` 12 · `tests/pin_name_text.tcl` ALL PASS (regression 11/11b/11c) ·
 `wireedit/run_wireedit.sh` 58/58 · `headless/run.sh` 6 goldens ·
-`test_statusmsg_hold_0238` 7 · `test_create_instance`, `test_wire_stub_bindings`,
+`test_statusmsg_hold_0248` 7 · `test_create_instance`, `test_wire_stub_bindings`,
 `test_drag_keeps_selection` (14), `test_verb_noun_copy_move`, `test_cmdmode_descend_0201` ALL PASS ·
 `cd tests && tclsh run_regression.tcl` -> the 3 pre-existing FAIL lines only
 (`test_ihp_sg13g2_libmgr` expects 9 libs, the tree has 10 — **reproduced identically on a HEAD

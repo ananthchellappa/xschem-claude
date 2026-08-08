@@ -35,7 +35,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wire_split" \
                  "headless/test_label_strand_oracle" \
                  "headless/test_label_ride" \
-                 "headless/test_signal_short_nohier_0220" \
+                 "headless/test_signal_short_nohier_0230" \
                  "headless/test_sch_add_pin" \
                  "headless/test_add_pin_lib_symbol_view" \
                  "headless/test_add_wire_label" \

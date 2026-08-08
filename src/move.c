@@ -1487,7 +1487,7 @@ typedef struct {
                             * >=1 edge THIS drag produced (absent from this set) -- the novelty scope (H3)
                             * that keeps it off pre-existing user copper. Constant across the gesture. */
   int     start_nwire;     /* 0 => no snapshot => fluid_wire_is_novel() fails safe (not novel) */
-  unsigned int *strand_id; /* wire_label_ride.md S0 / issue 0227: session-stable INSTANCE ids of the
+  unsigned int *strand_id; /* wire_label_ride.md S0 / issue 0237: session-stable INSTANCE ids of the
                             * type=label instances whose pin sat ON COPPER at START. The END strand
                             * count is a DELTA against this set, exactly as the label-short count is a
                             * delta against enf_short_base: 1.7% of the shipped corpus parks labels off
@@ -2660,7 +2660,7 @@ static int fluid_build_partition(int *out, int maxpins)
   return k;
 }
 
-/* wire_label_ride.md S0 (issue 0227): is instance i a net label whose pin currently sits on
+/* wire_label_ride.md S0 (issue 0237): is instance i a net label whose pin currently sits on
  * COPPER? Copper is deliberately PIN-AWARE, not wire-only:
  *   - any non-degenerate wire whose span the pin coordinate touch()es (interior included), or
  *   - another instance's PINLAYER pin at the exact same coordinate.
@@ -2777,7 +2777,7 @@ static void fluid_snapshot_partition(void)
    * same pristine geometry as the wire snapshot above; pure touch(), no netlist dependency. */
   fluid_g.geo_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
   fluid_g.geo_snap_npins = fluid_loop_partition(NULL, fluid_g.geo_snap_id);
-  /* wire_label_ride.md S0 / issue 0227: the STRAND baseline -- which net labels were on copper
+  /* wire_label_ride.md S0 / issue 0237: the STRAND baseline -- which net labels were on copper
    * before the gesture. Nothing already captured can answer this: for a type=label instance
    * node[0] is a straight copy of inst[].lab (netlist.c:1491), present whether or not the label
    * touches anything, so fluid_g.snap_pinnet cannot discriminate; and fluid_g.geo_snap_id
@@ -8148,7 +8148,7 @@ static int fluid_count_label_shorts(void)
   return shorts;
 }
 
-/* wire_label_ride.md S0 / issue 0227: the missing arm of the pass above. Count the net labels
+/* wire_label_ride.md S0 / issue 0237: the missing arm of the pass above. Count the net labels
  * that sat ON COPPER at gesture START (fluid_g.strand_id) and now touch nothing -- a label
  * STRANDED by this gesture. It is the only diagnostic for the failure mode the whole
  * wire_label_ride spec exists to fix: measured, a wire translated out from under a mid-span label
@@ -8159,7 +8159,7 @@ static int fluid_count_label_shorts(void)
  * as pure graphics, wireless flyline fixtures -- and an absolute count would blame every
  * unrelated gesture for them. A label that is off copper at both ends of the gesture is not this
  * gesture's problem; a label CREATED off copper mid-gesture is not in the baseline set either
- * (that is issue 0223's territory, the place_net_label drop policy).
+ * (that is issue 0233's territory, the place_net_label drop policy).
  *
  * Published only, never part of the refuse signal: S0 is instrumentation with no behaviour
  * change. Requires prepare_netlist_structs() to have run (fluid_label_on_copper reads the
@@ -8221,8 +8221,8 @@ static int fluid_count_label_strands(void)
  * POLICY. The invariant is CONSERVATION, not prohibition: no gesture may take a label OFF copper
  * that was ON copper. Being off copper is not itself illegal -- 91 labels across 21 shipped files
  * sit off copper by design (spec §5.8, R9), so a label that was already off copper gets no rider
- * and moves freely. This is the answer issue 0223 (place_net_label commits off copper) needs too:
- * a NEW label was never on copper, so it violates no conservation rule; 0223 stays a UX
+ * and moves freely. This is the answer issue 0233 (place_net_label commits off copper) needs too:
+ * a NEW label was never on copper, so it violates no conservation rule; 0233 stays a UX
  * inconsistency between the two placement paths and is closed on its own merits, not by S1.
  */
 
@@ -8419,7 +8419,7 @@ static int label_ride_anchor_held(double ax, double ay, int skip_inst)
  * test_label_ride.tcl V29a-V29d.
  *
  * RIDE deliberately does NOT inherit LEASH's kissing gate: §8 says the rider does
- * not need kissing armed, which is exactly how issue 0228's label half closes. Do not widen the
+ * not need kissing armed, which is exactly how issue 0238's label half closes. Do not widen the
  * LEASH gate to get there -- §14.6 pins the rigid move / Ctrl+LMB detach as a DELIBERATE detach
  * (test_label_ride.tcl K1/K2). */
 static void label_ride_capture(void)

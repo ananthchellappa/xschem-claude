@@ -2454,7 +2454,7 @@ void pop_undo_keep_selection(int redo, int set_modify)
   my_free(_ALLOC_ID_, &sid);
 }
 
-/* ---- issue 0231: the placement preview's durable identity ----------------------------------
+/* ---- issue 0241: the placement preview's durable identity ----------------------------------
  * A modal cursor placement (Add-Pin / Add-Wire-Label form preview, symbol or text placement,
  * graph / image / screen grab) is torn down with delete(), and delete() removes THE SELECTION.
  * That was safe only because the arm sites establish "selection == preview" and nothing was
@@ -2521,7 +2521,7 @@ void stamp_placement_preview(void)
 
 /* Forget the stamp. Called wherever a preview stops being live WITHOUT going through the
  * teardown -- the commit paths, the failed arms -- so a stale set can never be deleted by a
- * later, unrelated abort (the 0123/0230 desync class, WIRING.md §8 D). */
+ * later, unrelated abort (the 0123/0240 desync class, WIRING.md §8 D). */
 void clear_placement_preview(void)
 {
   if(xctx) xctx->preview_sel_n = 0;

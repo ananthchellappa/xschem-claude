@@ -1,5 +1,16 @@
 # What is still open — branch `fluid-editing`
 
+> **Renumbering, 2026-08-08 — the old 0220–0238 block is now 0230–0248 (+10).**
+> `open_pdk` had filed 0220–0238 while the branch it merges into was filing its
+> own issues in 0220–0229, so the two blocks collided. Every file, every
+> in-document reference, the two issue-named tests
+> (`test_signal_short_nohier_0220` → `_0230`,
+> `test_statusmsg_hold_0238` → `_0248`) and `doc/claude/evidence/0230/`
+> → `0240/` were shifted together; 0219 and below are untouched.
+> **Commit messages are not** — history is immutable, so any commit dated on or
+> before 2026-08-08 that says "issue 0231" means what is now **0241**. Subtract
+> 10 when reading git log, add 10 when reading anything checked out.
+
 Snapshot taken **2026-07-30**, immediately after issue 0176 was closed
 (`c8671825` + `d5968562`). This is a point-in-time answer to "what is still
 open", not a live index — re-derive it rather than trusting it after any

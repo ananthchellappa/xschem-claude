@@ -1,10 +1,10 @@
-# 0230 — `l` (Add Wire Label) pressed *during* a wire draw armed two modal gestures, and one ESC then orphaned the preview forever
+# 0240 — `l` (Add Wire Label) pressed *during* a wire draw armed two modal gestures, and one ESC then orphaned the preview forever
 
 Status: **FIXED** — two independent defects, two disjoint fixes, 23 new headless checks.
 Area: `src/callback.c` `abort_operation()` (`:350-378`), new `abort_wire_line_command()` (`:494-534`);
 `src/scheduler.c` `add_wire_label` branch (`:1831-1848`)
 Tests: `tests/headless/test_add_wire_label.tcl` section **G** (59 → 88 checks)
-Found: 2026-08-06 (user report, `cadence_style_rc` session). Evidence: `doc/claude/evidence/0230/`
+Found: 2026-08-06 (user report, `cadence_style_rc` session). Evidence: `doc/claude/evidence/0240/`
 Related: **0123** (the `sympin_preview`-without-`STARTMOVE` desync this reproduces), **0122** E1
 (`sympin_drops` witness), `doc/claude/specs/add_wire_label.md`, `doc/claude/specs/wire_stub_netlabel.md`
 §5 B6 (the SPACE self-gate precedent), `WIRING.md` §8 class **D**.
@@ -49,7 +49,7 @@ xschem abort_operation       ;# ESC
 | 8 final ESC | **`inst=1`** — one stray net label kept forever | `inst=0` |
 
 Full traces, the original user-session action log and the `FLTRACE` capture are in
-`doc/claude/evidence/0230/` (`Xschem.log.2`, `xschem_fltrace_217801.log`) — 13 of the 16 trace lines
+`doc/claude/evidence/0240/` (`Xschem.log.2`, `xschem_fltrace_217801.log`) — 13 of the 16 trace lines
 are the terminal state, which is why "nothing works properly after this".
 
 ## Defect 1 — you could never drop the label, even before any ESC
@@ -187,7 +187,7 @@ sympin_preview=1` — **no `STARTWIRE`** at the moment the preview was live.
 
 `abort_wire_line_command()` now also treats a non-zero `last_command` as live (it only ever holds
 `0`/`STARTWIRE`/`STARTLINE`, `callback.c:541`/`:476`) and erases the stale snap cursor. Check
-`0230 resting: arm label leaves mode` in section **G4**; sabotaging that one predicate reddens
+`0240 resting: arm label leaves mode` in section **G4**; sabotaging that one predicate reddens
 exactly it.
 
 **Two read-only getters** were added so the invariant is directly assertable rather than inferred
@@ -231,20 +231,20 @@ and post-fix binaries and the per-test failure counts are **byte-identical**.
 All four were verified independently on 2026-08-06 (measured headless repros, one agent per item)
 and filed. Two of the verdicts below changed under measurement.
 
-1. **`p` (Add Pin) has the identical clash** → issue **0233**. The census came back much wider than
+1. **`p` (Add Pin) has the identical clash** → issue **0243**. The census came back much wider than
    this note assumed: the gate exists at **1 of 13** placement arm sites, and the reverse direction
-   (`w` on top of a live preview) is open too. 0233 also found an ESC hole this fix does not close —
+   (`w` on top of a live preview) is open too. 0243 also found an ESC hole this fix does not close —
    arms that zero `last_command` while leaving `STARTWIRE` set (`r`, `P`, `t`, bare `place_symbol`)
    leave `ui=3 [STARTWIRE|STARTRECT]` after ESC, i.e. **the "grey lines" symptom survives**.
 2. **Three more callers reach `abort_operation` with both live** and are correct by (A). The
    `.load` dialog Cancel/Escape (`xschem.tcl:7160`, `:7317`) is still ungated by `ui_state`; no
-   separate issue, it is covered by 0233's F1/F3.
-3. **ESC does not reach C while the form is open** → issue **0235**. **The "harmless now" verdict
-   above is wrong** and 0235 supersedes it: Tk picks the most specific binding *per bindtag*, and
+   separate issue, it is covered by 0243's F1/F3.
+3. **ESC does not reach C while the form is open** → issue **0245**. **The "harmless now" verdict
+   above is wrong** and 0245 supersedes it: Tk picks the most specific binding *per bindtag*, and
    both the grab and the dispatcher are on `.drw`, so `<Key-Escape>` wins regardless of `break`.
    With the form **idle** the Escape aborts *nothing* — a menu-armed wire, a keyboard move and a
    live wire draw all survive, and the next canvas click acts on them.
-4. **`::sympin_place` is a write-only Tcl owner latch** → issue **0236**, with a measured A/B: a
+4. **`::sympin_place` is a write-only Tcl owner latch** → issue **0246**, with a measured A/B: a
    stale latch makes the two forms swap identities at the shared `sympin_drops` witness (Add-Pin
    drains a name it never placed and re-arms an `iopin.sym` port on a user who is placing labels).
 
@@ -254,16 +254,16 @@ A 4-lens adversarial review of the diff (21 findings raised, **0 survived refuta
 regressions) surfaced these. All were verified to exist at `aabf354e` too, on code paths this
 change does not touch. All four have since been reproduced independently and filed:
 
-1. **`Ctrl+A` then `ESC` with a preview armed deletes the whole schematic** → issue **0231**.
+1. **`Ctrl+A` then `ESC` with a preview armed deletes the whole schematic** → issue **0241**.
    `select_all` makes the teardown's `delete(0)` (`callback.c:393`) operate on the *entire*
    selection. Correction to the note as first written: `undo` *does* restore the simple case (the
    arm pushed a baseline), but recovery is lossy or wrong on three of four doors — and
    `set_modify(save)` then reports the emptied document **clean**, so nothing prompts. The shortest
    route contains no ESC at all: arm the form, `Ctrl+A`, close the form.
-2. **Any other placement armed on top of a live preview orphans it** → issue **0232**, which also
+2. **Any other placement armed on top of a live preview orphans it** → issue **0242**, which also
    closes issue **0123**'s open residual (*"desync ROOT open — no headless repro"*). 17 doors
    measured; 6 leave the terminal desync, 9 commit a label the user never dropped.
-3. **The clash is gated in one direction only** → folded into issue **0233** (see above).
-4. **`abort_operation()`'s merge/paste arms clobber the document dirty flag** → issue **0234**. Note
+3. **The clash is gated in one direction only** → folded into issue **0243** (see above).
+4. **`abort_operation()`'s merge/paste arms clobber the document dirty flag** → issue **0244**. Note
    the obvious fix is wrong: `merge_file()` already `set_modify(1)`s, so the pre-merge value has to
    be latched, not read at abort time.

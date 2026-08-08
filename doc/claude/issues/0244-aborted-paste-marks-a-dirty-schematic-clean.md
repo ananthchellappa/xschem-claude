@@ -1,4 +1,4 @@
-# 0234 — ESC-ing a paste/merge marks an already-dirty schematic **clean**, so the save prompts stop firing and File ▸ New then deletes the autosave backup
+# 0244 — ESC-ing a paste/merge marks an already-dirty schematic **clean**, so the save prompts stop firing and File ▸ New then deletes the autosave backup
 
 Status: **OPEN** — 5-line headless repro + 4 controls + a measured consequence chain, fix drafted
 (the obvious fix is wrong — see below), not implemented. **Major**: silent loss of real edits, no
@@ -7,9 +7,9 @@ Area: `src/callback.c:401-405` and `:413-416` — two `set_modify(0);` calls in 
 merge arms, where the placement arm eight lines above uses save/restore
 Tests: none — `grep -rn 'get modified' tests/` has 30 hits, **none** in a test that also pastes or
 merges. The measurable regression surface in the suite is empty.
-Found: 2026-08-06, verifying issue **0230**'s out-of-scope list (its pre-existing item 4)
-Related: **0230** (parent), **0231** (`Ctrl+A` amplifies this into whole-document loss reported
-clean), **0232** (the same abort path's other half), `doc/claude/issues/0225` (a different
+Found: 2026-08-06, verifying issue **0240**'s out-of-scope list (its pre-existing item 4)
+Related: **0240** (parent), **0241** (`Ctrl+A` amplifies this into whole-document loss reported
+clean), **0242** (the same abort path's other half), `doc/claude/issues/0235` (a different
 modified-flag blind spot).
 
 ## Repro
@@ -63,13 +63,13 @@ save returns silently because the flag says clean, and the recovery file is dele
 File ▸ New / cell open, which is exactly the gesture that destroys it.
 
 Amplifier: `Ctrl+A` while the paste is pending, then ESC → `wires 3 → 0` **and** `modified=0` —
-the whole schematic deleted and reported clean (that deletion is issue **0231**; this issue is why
+the whole schematic deleted and reported clean (that deletion is issue **0241**; this issue is why
 nothing prompts). Geometry is recoverable by `undo` here — this arm's `delete(1)` does push undo —
 but nothing tells the user to press it.
 
-Post-0230 widening: with a live wire draw on top of the pending paste, one ESC now also reaches the
-clobber. Before 0230 that path took the old early `return` and the flag survived — while orphaning
-the preview instead (0230 defect 2). The trade is strictly better, but this issue is what is left.
+Post-0240 widening: with a live wire draw on top of the pending paste, one ESC now also reaches the
+clobber. Before 0240 that path took the old early `return` and the flag survived — while orphaning
+the preview instead (0240 defect 2). The trade is strictly better, but this issue is what is left.
 
 ## Root cause
 

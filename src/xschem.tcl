@@ -15765,7 +15765,7 @@ set_ne label_splits_wires 0
 # Does a net label RIDE the copper it names when that copper moves, rotates or flips?
 # 1 (default, doc/claude/specs/wire_label_ride.md R3/S3): yes -- moving a wire carries every net
 # label attached to it, and rotating or flipping the wire rotates and flips the label's own text
-# with it, the Cadence behaviour. This is what closes issue 0227: before S3 the label was simply
+# with it, the Cadence behaviour. This is what closes issue 0237: before S3 the label was simply
 # left behind and the net silently reverted to an auto #netN name, on stock defaults and (as of
 # S2, which removed the split that accidentally masked it) under cadence_compat too.
 # The switch also owns connect_by_kissing()'s wire-endpoint TETHER -- the zero-length stub that
@@ -15773,7 +15773,7 @@ set_ne label_splits_wires 0
 # must never be split: the ride replaces the stub, so 1 gives the ride and no stub, and 0 gives
 # the stub and no ride (pre-S3 behaviour, byte-for-byte). Half of each would leave an end-of-stub
 # label with neither.
-# Deliberately NOT under cadence_compat_sync: 0227 reproduces on stock defaults too (measured --
+# Deliberately NOT under cadence_compat_sync: 0237 reproduces on stock defaults too (measured --
 # autotrim_wires 0 strands the label just the same), so this is a correctness fix for everyone,
 # not a Cadence-compatibility mode. It is a one-release escape hatch, like label_splits_wires,
 # and has no menu entry for the same reason.

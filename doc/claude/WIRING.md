@@ -415,10 +415,10 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     and a rect `SELECTED1..4` — a real user selection of one ENDPOINT that `delete()` deliberately
     leaves alone. So any code that reads `sel_array`, remembers what it saw, and later re-selects
     it with `select_*(..., SELECTED, ...)` has **PROMOTED partial selections to full ones and
-    widened a delete**. Issue **0231**'s first build did exactly that: scoping the placement
+    widened a delete**. Issue **0241**'s first build did exactly that: scoping the placement
     teardown to a stamped selection made it destroy three stretch-selected wires the *unscoped*
     code had left standing — and `set_modify(save)` then reported the document clean, which is the
-    very lie 0231 existed to fix. Caught by the adversarial review of the fix, not by any test.
+    very lie 0241 existed to fix. Caught by the adversarial review of the fix, not by any test.
     **Filter on the `sel` VALUE, not on membership in `sel_array`.**
 
 ## 8. Root-cause classes from issues 0079–0111 (name the class before fixing)
@@ -428,14 +428,14 @@ contact matrix {endpoint-on-pin, pin-on-span, endpoint-on-span, collinear} × {o
 × {moving/stationary} × {perp/parallel} was never enumerated; each cell found by a user
 (0083/0085/0094/0098/0105/0106/0109; 0112 found by the A3 audit fold-in) · C **Stale anchor** — pristine-anchor-by-design +
 no liveness concept for vacated points (0103/0104/0108/0111) · D **Decline residue** —
-cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111; **0230**: `abort_operation()`'s
+cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111; **0240**: `abort_operation()`'s
 STARTWIRE/STARTLINE arm returned early to preserve persistent command mode and thereby skipped the
 WHOLE teardown below — with a placement preview co-armed on top of a live wire draw, `ui_state = 0`
 dropped `START_SYMPIN` before `delete()` could run, orphaning the preview instance in the drawing
 with `sympin_preview`/`wirelabel_preview` stuck at 1 → callback.c's click-select guard
 (`!sympin_preview`) false forever = unrecoverable UI. **An early return inside a teardown function
 is a class-D generator: gate the ONE step you meant to skip, do not `return`.** The same teardown
-has three more class-D holes, each filed with a measured headless repro: **0231** it deleted the
+has three more class-D holes, each filed with a measured headless repro: **0241** it deleted the
 SELECTION rather than the preview, so a `Ctrl+A` in between wiped the schematic — FIXED 2026-08-08,
 and it is the class's *scope* lesson rather than its *early-return* one: a teardown that acts on
 "whatever is selected" is trusting an invariant established by a DIFFERENT function at a DIFFERENT
@@ -443,11 +443,11 @@ time, across a window in which a modeless form lets the user run arbitrary comma
 must name what it is tearing down.** The fix stamps the preview's per-object session-stable ids at
 all twelve arm sites (`stamp_placement_preview()`, select.c) and re-selects exactly those before
 the `delete()`, with "resolves to nothing → delete nothing" as the backstop. It also let the
-0233 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
-refuses; **0232** every
+0243 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
+refuses; **0242** every
 other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
 paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
-**0233** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
+**0243** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
 `abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
 `last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the
 `STARTMOVE` branch `return`s to keep an aborted move's selection, and that `return` skipped the
@@ -456,19 +456,19 @@ re-stroked forever with nothing left to erase it — and the next click was eate
 gesture, committing a stray rectangle. The fix is one `clear_orphan_gesture_bits()` shared by all
 three returns; fixing only the branch the repro used would have left two textually identical
 siblings leaking. **If a teardown must return early, it owes by hand every clear the
-terminal would have done.** 0233 also added the class's mirror-image gate: `leave_placement_for()`
+terminal would have done.** 0243 also added the class's mirror-image gate: `leave_placement_for()`
 (placement dropped before a wire/line arms) opposite `leave_wire_draw_for()` (wire dropped before a
 placement arms) — two modal gestures may not coexist in EITHER order, and both gates live at the
-verbs, never at the shared primitive the click path also uses. **0237** (FIXED 2026-08-08) is the
+verbs, never at the shared primitive the click path also uses. **0247** (FIXED 2026-08-08) is the
 completion of that gate and the class's other lesson: the rule was applied one verb at a time, so
-after 0230 and 0233 F1 exactly four of the arms had it and thirteen did not — including the SHAPE
-draws (`r`, `P`, arc, circle), which 0237 had written off as "a much milder clash" until the user
+after 0240 and 0243 F1 exactly four of the arms had it and thirteen did not — including the SHAPE
+draws (`r`, `P`, arc, circle), which 0247 had written off as "a much milder clash" until the user
 demonstrated the identical dead end in cadence mode (`w`, click, `r` → `ui=65537`, the rectangle can
 never start). **When a rule needs a call at every arm, enumerate the arms from the ui_state bits
 they set, not from the ones the bug report happened to name** — and gate BOTH interface branches of
 every key, since `infix_interface 0` (cadence) arms `MENUSTART` and starts the gesture on the first
 CLICK, which is precisely the click the live draw was stealing. Its user-visible half needed
-**0238** first: the gate's statusbar line was destroyed before it could be read, by the coordinate
+**0248** first: the gate's statusbar line was destroyed before it could be read, by the coordinate
 readout on the next 8-pixel mouse move AND, for placement verbs, by `select.c`'s object-info line
 one call after the arm. A message that explains a discarded gesture now HOLDS the field
 (`statusmsg_hold()`, 5 s or until the next ButtonPress).) · E **Transform
@@ -524,7 +524,7 @@ spec digest). Enforcement TODAY:
   refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
   and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
 - P1 **label strand**: also log-only (`fluid_last_move_label_strands`, `fluid_count_label_strands`,
-  wire_label_ride.md S0 / issue 0227). A net label that sat on copper at START and touches none at
+  wire_label_ride.md S0 / issue 0237). A net label that sat on copper at START and touches none at
   END — the wire translated out from under it and the net silently reverted to `#netN`. A DELTA
   against a START baseline of label instance **ids** (`fluid_g.strand_id`, captured in
   `fluid_snapshot_partition`, freed in `fluid_discard_snapshot`), because 1.7% of the shipped
@@ -545,20 +545,20 @@ spec digest). Enforcement TODAY:
   and an owner that no longer contains the START anchor means the owner MOVED (a stretch pulling
   the wire along with the label), where the leash must DECLINE, not fight it.
   Scope, deliberately narrow: LEASH is gated on `xctx->connect_by_kissing`, so only the CONNECTED
-  drag changes; the rigid move, the Ctrl+LMB detach and the issue-0228 keyboard stretch paths are
+  drag changes; the rigid move, the Ctrl+LMB detach and the issue-0238 keyboard stretch paths are
   byte-identical and still strand (the S0 oracle above still reports them). ~~The label ride for a
   moving WIRE (RIDE) is S3 and does not exist yet.~~ **RIDE LANDED 2026-08-06 — see the next
   entry.**
 - P1 **label ride**: ENFORCED as of `wire_label_ride.md` S3, behind `label_ride` (default 1). The
   other direction of the same cell: the WIRE moves, rotates or flips and a STATIONARY net label
   follows it, **its own `rot`/`flip` included** (R3, the Cadence behaviour). Same rider set, second
-  arm, opposite selection predicate (landmine 16). This is what closes issue **0227** — measured on
+  arm, opposite selection predicate (landmine 16). This is what closes issue **0237** — measured on
   its own repro, `strands` 1 → 0 and the net `#net1` → `VOUT`, in BOTH the stock and the
   `cadence_compat` config — and it removes `connect_by_kissing()`'s wire-endpoint TETHER for labels
   (change #8) in the same switch, so `label_ride 0` restores the stub *and* withdraws the ride
   rather than leaving an end-of-stub label with neither. Not gated on `connect_by_kissing`: the
-  rider does not need kissing armed, which closes the *wire-moving* direction of issue **0228**'s
-  label half (the label-moving direction stays with 0228's own fix — spec §16.7). Both modes apply
+  rider does not need kissing armed, which closes the *wire-moving* direction of issue **0238**'s
+  label half (the label-moving direction stays with 0238's own fix — spec §16.7). Both modes apply
   LIVE as of S3: a second `label_ride_apply()` call gated on `commit_now`, release == stepwise
   measured for each (`test_label_ride.tcl` N8 and V43). Ground truth: `test_label_ride.tcl` sections
   V and U (157 checks), `test_label_strand_oracle.tcl` A/C/D + their `label_ride 0` legacy legs,
@@ -572,7 +572,7 @@ spec digest). Enforcement TODAY:
   the collinear rejoin (`any_inst_pin_at`'s new skip-labels arg), behind
   `label_splits_wires` (default 0). Connectivity at rest is unchanged — `touch()` is
   interior-inclusive, corpus-verified — and the leash is unaffected. **But the split was MASKING
-  issue 0227 for the autotrim user, and S2 removes the mask.** Two rescues key on the endpoint
+  issue 0237 for the autotrim user, and S2 removes the mask.** Two rescues key on the endpoint
   coincidence the split manufactured: `connect_by_kissing()`'s wire-endpoint tether (still alive;
   it goes with S3) and `select_attached_nets()`' `endpoint_near` ELEMENT arm. Measured, one gesture
   (label stationary, wire translates, kissing armed): autotrim-off `strands 1`; autotrim-on
@@ -605,7 +605,7 @@ spec digest). Enforcement TODAY:
   highlighted" after a netlist run: `traverse_node_hash()` highlights every undriven/open net too,
   so the assertion passes with the highlight code deleted. Probe through `xschem list_hilights`,
   which runs `prepare_netlist_structs(1)` without that pass
-  (tests/headless/test_signal_short_nohier_0220.tcl).
+  (tests/headless/test_signal_short_nohier_0230.tcl).
 - `wire_coord` endpoint order is not canonical — normalize before compare.
 - Fixture conventions (`tests/from_user/`): `before_N.sch` user pre-state (N = fixture
   generation: before_3→0085-0090, before_7→0099-0104, before_8→0105-0111); `after_M.sch`
@@ -616,7 +616,7 @@ spec digest). Enforcement TODAY:
   waypoints from the user's FLUID_TRACE log; RED-first against exact coordinates from
   after_M; prefer HERE-relative fixture paths.
 - Every new predicate/check needs a sabotage variant ([[green-but-hollow]]). Two shapes of hollow
-  check found in the 0237 work: (a) a predicate satisfied by something OTHER than the fix — `r` on a
+  check found in the 0247 work: (a) a predicate satisfied by something OTHER than the fix — `r` on a
   MENU-armed wire "clears the wire arm" is green with the gate deleted, because the shape arm
   ASSIGNS `ui_state2` wholesale; (b) a sabotage run that lies because `make` did not rebuild —
   restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
@@ -629,7 +629,7 @@ spec digest). Enforcement TODAY:
   seam itself (default off + it really disables a gate) so a forgotten `1` cannot fake a pass.
 - **A GUI-mode test cannot print to stdout unless `--pipe` is given** — and with `--pipe` xschem
   blocks reading stdin, so `after` timers never fire. Drive such a test at SOURCE time with
-  explicit `update` calls (`tests/headless/test_statusmsg_hold_0238.tcl` is the worked example:
+  explicit `update` calls (`tests/headless/test_statusmsg_hold_0248.tcl` is the worked example:
   synthesized `<Motion>`/`<ButtonPress-1>` through the Tk bindings, then `.statusbar.1 cget -text`).
 
 ## 11. Open risks — predicted next failures (verified against source; check before

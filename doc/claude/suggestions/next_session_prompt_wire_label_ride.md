@@ -13,7 +13,7 @@ corpus preflight is already done — do not re-litigate the design or re-run the
 2. `doc/claude/WIRING.md` — §7 landmines and §10 (CI cannot catch a fluid regression).
 3. `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md` — why the instance
    model is being kept rather than replaced.
-4. Issues **0220** (S0 prerequisite), **0227** and **0228** (both partly superseded — see §8 of
+4. Issues **0230** (S0 prerequisite), **0237** and **0238** (both partly superseded — see §8 of
    the spec before touching either).
 
 ## Goal in one paragraph
@@ -46,7 +46,7 @@ sees no change at all from the split guard.
    `xctx->fluid_last_move_label_strands`, Tcl-mirrored. **This is the RED oracle and it must
    fail on today's tree** — a stranded label currently loses its net name with
    `fluid_last_move_violations = 0` and empty stderr. Write the failing fixture first.
-2. Ship **issue 0220** (`signal_short()` inert on `-nohier` / Shift-N, plus its unreachable
+2. Ship **issue 0230** (`signal_short()` inert on `-nohier` / Shift-N, plus its unreachable
    highlight branch). It is the only diagnostic for contested-name regressions and every later
    stage is blind without it.
 
@@ -140,6 +140,6 @@ Spec §12 lists five. Two are cheap and affect scheduling:
 
 ## Deliverable for the first session
 
-S0 landed: the failing strand oracle with its fixture, issue 0220 fixed with a regression test,
+S0 landed: the failing strand oracle with its fixture, issue 0230 fixed with a regression test,
 and a short note in the spec recording which of §12's open questions you settled. Do not start S1
 until the oracle is red for the right reason.

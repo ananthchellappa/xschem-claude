@@ -1,4 +1,4 @@
-# Issue 0238 -- a gate / prompt status line must survive the coordinate readout.
+# Issue 0248 -- a gate / prompt status line must survive the coordinate readout.
 #
 # `statusmsg(str, 1)` is the only writer of `.statusbar.1`, but three readout sites (callback.c
 # motion + the press/release twins) rewrite that field with `mouse = x y - selected: N w= h=`
@@ -14,11 +14,11 @@
 # checks live in section H of tests/headless/test_placement_wire_gate.tcl instead.
 #
 # Needs a real DISPLAY. Run from the repo ROOT, either way:
-#   ./src/xschem --pipe -q --nolog --script tests/headless/test_statusmsg_hold_0238.tcl
-#   ./src/xschem --script tests/headless/test_statusmsg_hold_0238.tcl   ;# then read the log file
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_statusmsg_hold_0248.tcl
+#   ./src/xschem --script tests/headless/test_statusmsg_hold_0248.tcl   ;# then read the log file
 # The first form is what tests/headless/full_audit.sh uses and prints the result on stdout. The
 # second (plain GUI) prints nothing to the terminal, so every line is ALSO written to
-# tests/headless/results/test_statusmsg_hold_0238.log (override with XSCHEM_TEST_LOG).
+# tests/headless/results/test_statusmsg_hold_0248.log (override with XSCHEM_TEST_LOG).
 # NOT registered in tests/run_regression.tcl: that harness runs everything with --nogui and
 # demands an "OVERALL: ok" sentinel, which an X-gated self-skip cannot honestly print.
 #
@@ -38,7 +38,7 @@ if {![winfo exists [xschem get top_path].statusbar.1]} {
 
 set fail 0; set npass 0
 if {[info exists ::env(XSCHEM_TEST_LOG)]} { set ::LOGF $::env(XSCHEM_TEST_LOG) } \
-else { set ::LOGF [file join [file dirname [info script]] results test_statusmsg_hold_0238.log] }
+else { set ::LOGF [file join [file dirname [info script]] results test_statusmsg_hold_0248.log] }
 file mkdir [file dirname $::LOGF]
 set ::LOG [open $::LOGF w]
 proc say {t} { catch {puts $t ; flush stdout} ; puts $::LOG $t ; flush $::LOG }
@@ -78,13 +78,13 @@ wiggle 25 200 150
 check "2 survives 25 motion events"      [sb] "Net label: in-progress wire abandoned"
 
 # 3. a click releases the hold: the live w=/h= size feedback must come straight back
-#    (0238 landmine 1 -- that readout is the one place a user reads exact deltas)
+#    (0248 landmine 1 -- that readout is the one place a user reads exact deltas)
 event generate $drw <ButtonPress-1> -x 320 -y 300 ; update
 event generate $drw <ButtonRelease-1> -x 320 -y 300 ; update
 wiggle 8 400 320
 check "3 a click releases the hold"      [string match "mouse = *" [sb]] 1
 
-# 4. the reverse door (issue 0233 F2) had the same defect and takes the same fix
+# 4. the reverse door (issue 0243 F2) had the same defect and takes the same fix
 fresh
 set ::pin_new_name GG ; set ::pin_new_dir in
 xschem add_sch_pin -place ; xschem wire gui

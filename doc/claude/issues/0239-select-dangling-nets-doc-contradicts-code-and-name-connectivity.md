@@ -1,4 +1,4 @@
-# 0229 — `select_dangling_nets()` doc says pins are excluded (they are not), ignores connect-by-name, and its second pass skips `skip_instance()`
+# 0239 — `select_dangling_nets()` doc says pins are excluded (they are not), ignores connect-by-name, and its second pass skips `skip_instance()`
 
 Status: **OPEN** — mostly a documentation-truthfulness fix; one small real inconsistency. **The label exclusion itself is deliberate and must not be "fixed".**
 Area: `src/select.c` `select_dangling_nets()` (`:323-476`); the doc comments at `src/select.c:342`, `src/scheduler.c:10669`, `doc/xschem_man/developer_info.html:1489, 2419-2422`

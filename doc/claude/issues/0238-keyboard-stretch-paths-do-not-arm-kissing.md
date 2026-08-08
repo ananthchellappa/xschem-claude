@@ -1,4 +1,4 @@
-# 0228 — the keyboard stretch paths call `select_attached_nets()` without arming kissing, so even an endpoint net label is stranded
+# 0238 — the keyboard stretch paths call `select_attached_nets()` without arming kissing, so even an endpoint net label is stranded
 
 Status: **OPEN, and narrowed twice** — measured repro, one-line fix per site, not implemented.
 User-visible behaviour change: needs a release note.
@@ -46,16 +46,16 @@ net `GB`, `label_splits_wires 0` → `#net1`; a stock-config user (autotrim off,
 the `#net1` result all along. Witness: `tests/headless/test_wire_split.tcl` **W7b/S2** plus its
 legacy leg. This does not change the fix below — widening the leash's gate is still the wrong
 answer (§14.6 pins that as policy) — but it does raise the priority, and it is the same mask
-removal that escalated issue **0227**. Spec §15.3.
+removal that escalated issue **0237**. Spec §15.3.
 
 **Instrumented 2026-08-05 (spec S0):** the label half now has an oracle —
 `tests/headless/test_label_strand_oracle.tcl` case D3 drives a stretch with kissing withheld
 under `autotrim_wires 1` and scores `fluid_last_move_label_strands` = 1, which is this issue's
 claim that autotrim does *not* mask the loss on these paths.
 Area: `src/callback.c:6445` and `src/callback.c:6466` (the `m` / Ctrl+m stretch entry points)
-Tests: none yet — proposed leg in `tests/headless/wireedit/test_wireedit_NN_midspan_label_0227.tcl`
-Found: 2026-08-05, alongside **0227**
-Related: **0227** — the sibling hole in `connect_by_kissing()` itself. Do both; neither subsumes the other.
+Tests: none yet — proposed leg in `tests/headless/wireedit/test_wireedit_NN_midspan_label_0237.tcl`
+Found: 2026-08-05, alongside **0237**
+Related: **0237** — the sibling hole in `connect_by_kissing()` itself. Do both; neither subsumes the other.
 
 > Fluid-engine adjacent. Per `MEMORY.md` another agent owns that area — read
 > `doc/claude/WIRING.md` §7 landmines before implementing, and keep the edit merge-friendly.
@@ -88,7 +88,7 @@ invariant is documented and load-bearing at `src/callback.c:5827`. Connectivity 
 stationary instance pin is rescued entirely by `connect_by_kissing()`
 (`src/actions.c:2042`), which drops a zero-length `SELECTED1` stub at a coincident pin. If
 kissing is never armed, that rescue never runs, and **even an endpoint net label is left
-behind** — a strictly worse case than 0227, which needs the label to be mid-span.
+behind** — a strictly worse case than 0237, which needs the label to be mid-span.
 
 ## Measured
 

@@ -29,7 +29,7 @@ src/xschem_subcommands.txt
 # Action log (created at runtime in the cwd)
 Xschem.log
 Xschem.log.*
-# ...but a log deliberately kept as issue evidence is not runtime junk (issue 0230)
+# ...but a log deliberately kept as issue evidence is not runtime junk (issue 0240)
 !doc/claude/evidence/**
 
 # Executables

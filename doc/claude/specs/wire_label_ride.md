@@ -5,15 +5,15 @@ Status: **S0 LANDED** 2026-08-05 (instrumentation, no behaviour change).
 `label_splits_wires`, default 0). S3–S7 not implemented.
 Designed 2026-08-05.
 
-> ⚠ **S2 removes a mask that was protecting issue 0227 for the `cadence_compat` user, and §9
+> ⚠ **S2 removes a mask that was protecting issue 0237 for the `cadence_compat` user, and §9
 > did not list it.** The split put a mid-span label on a wire ENDPOINT, and two separate rescues
 > key on endpoint coincidence; without the split neither fires, so the user's original complaint
 > gets strictly worse until **S3** lands. Measured, bounded, and switchable — see **§15.3**.
 > Mitigation until S3: `set label_splits_wires 1`.
 Area: `src/check.c`, `src/actions.c`, `src/move.c`, `src/select.c` (comment only), `src/xschem.tcl`
 Related analysis: `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related issues: **0220** (prerequisite), **0223** (policy overlap), **0227** (superseded by this),
-**0228** (label half superseded; device-pin half stays)
+Related issues: **0230** (prerequisite), **0233** (policy overlap), **0237** (superseded by this),
+**0238** (label half superseded; device-pin half stays)
 Bible: `doc/claude/WIRING.md` — read §7 landmines and §10 before implementing.
 Sibling specs: `wire_segment_splitting.md` (amended by this), `wire_stub_netlabel.md`,
 `add_wire_label.md`, `cadence_modifier_drag.md`
@@ -433,7 +433,7 @@ Supersedes the tether stub.
 
 Both are new propagation rules and need their own passes; neither is implied by the rider set,
 which is per-gesture and move-scoped. Sizing is pending — the delete side interacts with
-`select_dangling_nets()` semantics (issue **0229**), and the copy side must not double-copy a
+`select_dangling_nets()` semantics (issue **0239**), and the copy side must not double-copy a
 label the user had also selected explicitly.
 
 ### 5.8 Legacy off-wire labels (R9)
@@ -508,7 +508,7 @@ having.
 | 7 | `src/check.c:173-180` | R2 matched pair. `any_inst_pin_at()` gains a skip-labels arg; label-blind at `:405` and `:795`. **Mandatory with #6.** `point_on_wire_or_pin()` unchanged. **DONE (S2)** — `:405` is the only LIVE consumer; the `:795` edit is consistency only (§15.7), and the pair's asymmetry is §15.1. | small |
 | 8 | `src/actions.c:2131` | R3. `&& !inst_is_netlabel(ii)` on the instpin test, killing the tether at `:2158`. **Must ship with RIDE, never before.** **DONE (S3)** — as `&& !(label_ride_on && inst_is_netlabel(ii))`, `label_ride_on` read once per sweep, so the *preference* switches the stub and the ride together and `0` is a coherent pre-S3 state rather than "neither" (§16.2). | small |
 | 9 | `src/move.c:6255` | `fluid_ml_hazards()` block 3b: `if(xctx->inst[i].sel \|\| label_is_rider(i)) continue;`. A label registered to ride is not a stationary merge hazard. **DONE (S3)**, at the anchor exactly — after `base = k; k += npins;`, so the instance×pin walk stays aligned (landmine 5). | small |
-| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), ~~`set_ne label_ride 1` under `cadence_compat_sync`~~ — **DONE (S3) at FILE SCOPE instead**, beside `label_splits_wires`, plus the `tctx::global_list` entry. Not under `cadence_compat_sync`: 0227 reproduces on stock defaults too (measured, §13.5 row 1), so R3 is a correctness fix for every user rather than a Cadence-compatibility mode, and the one-directional trace would make it sticky (§16.2). ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. **`label_splits_wires` DONE (S2)** — `set_ne` beside `autotrim_wires`, plus `tctx::global_list` so it survives a tab switch like `autotrim_wires` does. No menu entry: it is an escape hatch, not a feature toggle. `label_ride` is S3's. | small |
+| 10 | `src/xschem.tcl:15733`, `:16260` | `set_ne label_splits_wires 0` (one-release escape hatch), ~~`set_ne label_ride 1` under `cadence_compat_sync`~~ — **DONE (S3) at FILE SCOPE instead**, beside `label_splits_wires`, plus the `tctx::global_list` entry. Not under `cadence_compat_sync`: 0237 reproduces on stock defaults too (measured, §13.5 row 1), so R3 is a correctness fix for every user rather than a Cadence-compatibility mode, and the one-directional trace would make it sticky (§16.2). ~~Tcl mirror of `fluid_last_move_label_strands`~~ — **dropped**, §13.4: none of the sibling counters is declared in Tcl and their non-existence is an asserted contract. **`label_splits_wires` DONE (S2)** — `set_ne` beside `autotrim_wires`, plus `tctx::global_list` so it survives a tab switch like `autotrim_wires` does. No menu entry: it is an escape hatch, not a feature toggle. `label_ride` is S3's. | small |
 | 11 | `src/select.c:1705`, `:1797` | **Comment only.** `wire_through_tap_arm()` goes moot for labels — a mid-span label pin no longer coincides with any endpoint, so `endpoint_near` never fires. Stays live for device pins. `select_attached_nets()` itself is **not edited**. | small |
 | 12 | `tests/headless/test_wire_split.tcl` | 21 `lab_wire`/`lab_pin` references and **zero** `res.sym` taps — the entire suite uses a label as the split source. Re-author the tap fixtures onto a device pin; add mirror cases (label does NOT split; two stubs under a label DO re-weld; `.sch` stays one `N`). **PARTLY DONE (S1, forced):** the W7 block and its wireedit twin `wireedit/test_wireedit_20_F1_netlabel_tap.tcl` both assert the *label rescue stub* and went red on change #4 — re-authored to the S1 result (no stub, label leashed back, halves weld). **DONE (S2):** every fixture moved to a `devices/res` P-pin tap, each phase gained a label mirror and a `label_splits_wires 1` legacy leg, and a new Phase S2 holds the claims that are new rather than amended (S2a merge, S2b splitter, S2c disk, S2d the §4.4 netlist fix, S2e the D2 gate). 66 → **115 checks**; §15.6. | large |
 | 13 | `tests/headless/test_label_ride.tcl` (new) | R1 in both modes (the along-wire repro **must** use `autotrim_wires = 0`), R2, R3, rotate, leash, strand counter. **DONE for S1** (82 checks); R2/R3 legs land with S2/S3. | medium |
@@ -519,7 +519,7 @@ having.
 ## 7. Staging
 
 **S0 — instrumentation. No behaviour change. — LANDED 2026-08-05.**
-Change #3 (the strand oracle) plus **issue 0220** (`signal_short()` inert on flat top-level
+Change #3 (the strand oracle) plus **issue 0230** (`signal_short()` inert on flat top-level
 netlists). Without both, every later stage is blind: measured, a stranded label loses its net
 name with `fluid_last_move_violations = 0` and empty stderr. Also worth doing standalone:
 make `get_inst_pin_coord()`'s out-of-range `(0,0)` return loud under `dbg`
@@ -532,12 +532,12 @@ make `get_inst_pin_coord()`'s out-of-range `(0,0)` return loud under `dbg`
 | `fluid_label_on_copper(i)` — the pin-aware on-copper predicate | `src/move.c`, above `fluid_snapshot_partition` |
 | `Fluid_gesture.strand_id / .strand_nid` — the START baseline, keyed by `inst[].id` | `src/move.c` (struct), captured at the tail of `fluid_snapshot_partition()`, freed in `fluid_discard_snapshot()` |
 | `fluid_count_label_strands()` + `fluid_last_move_label_strands` | `src/move.c`, beside `fluid_count_label_shorts()`; published in `fluid_check_move_invariants()` **before** `fluid_gesture_free()` |
-| issue 0220: `print_erc` hoisted to file scope, `signal_short()` gated on it, `incr_hilight` cached per run | `src/netlist.c` |
+| issue 0230: `print_erc` hoisted to file scope, `signal_short()` gated on it, `incr_hilight` cached per run | `src/netlist.c` |
 | `get_inst_pin_coord()` out-of-range now `dbg(1, ...)` | `src/netlist.c` |
-| tests | `tests/headless/test_label_strand_oracle.tcl` (14 checks), `tests/headless/test_signal_short_nohier_0220.tcl` (11 checks) |
+| tests | `tests/headless/test_label_strand_oracle.tcl` (14 checks), `tests/headless/test_signal_short_nohier_0230.tcl` (11 checks) |
 
 Both suites were verified RED against the pre-change tree — the strand assertions on `<unset>`,
-0220's on defect A (`A1`) and defect B (`D0`/`D1`/`D2`) — with every control green on both sides.
+0230's on defect A (`A1`) and defect B (`D0`/`D1`/`D2`) — with every control green on both sides.
 `tests/headless/wireedit/` (58 tests) and `tests/headless/run.sh` (6 netlist goldens) stay green,
 which is the no-behaviour-change claim.
 
@@ -584,7 +584,7 @@ both ways during the rewrite and any netlist diff has a switch rather than a bis
 fixes the measured nameless-label-shorts-a-crossing bug (§4.4).
 
 *As built* — see §15 for the eight points the implementation had to settle, one of which
-(§15.3, the 0227 mask) is a **behaviour regression for the target user** and is the reason the
+(§15.3, the 0237 mask) is a **behaviour regression for the target user** and is the reason the
 S2/S3 sequencing deserves a second look:
 
 | what | where |
@@ -609,7 +609,7 @@ re-asserted by S2c), `run_regression.tcl` unchanged at the 3 pre-existing
 **S3 — R3 RIDE, with live clamping. — LANDED 2026-08-06.**
 Changes #8, #9, #10's second half plus RIDE mode in #5, with the rotation closed form from the start
 so translate, rotate and flip are one code path, and writing `rot`/`flip` per R3. Behind
-`label_ride` (default **1**). This closes issue **0227** and the wire-moving direction of **0228**'s
+`label_ride` (default **1**). This closes issue **0237** and the wire-moving direction of **0238**'s
 label half, and it lifts the S2 escalation recorded in §15.3.
 
 Live clamping (§5.4) is **in this stage, not deferred** — with clamping as the permanent model,
@@ -645,7 +645,7 @@ is trap 1 measured rather than argued. `tests/headless/wireedit/` 58/58, `tests/
 gesture, so it lands after the ride is stable and after the trim-ordering hazard (B) is closed.
 
 **S6 — R8 delete and copy propagation** (§5.7). Independent of everything above; can be
-scheduled whenever. Interacts with issue **0229**.
+scheduled whenever. Interacts with issue **0239**.
 
 **S7 — R9 legacy warning** (§5.8). Pure diagnostic, no behaviour change, ships any time after S0.
 
@@ -655,14 +655,14 @@ scheduled whenever. Interacts with issue **0229**.
 
 | issue | disposition |
 |---|---|
-| **0220** `signal_short` silent on `-nohier` | **S0 prerequisite.** The only diagnostic for contested-name regressions. |
-| **0221** first-writer-wins by record order | Not on the critical path — nothing here moves an anchor at netlist time — but it is *why* a naming regression would be silent. Keep open; reference from this spec. |
-| **0223** `place_net_label` commits off copper | **Policy DECIDED in S1 (§14.6), and it does NOT close 0223.** The invariant is *conservation* — no gesture takes a label off copper that was on copper — not *prohibition*: R9 already tolerates 91 shipped labels that sit off copper by design. A newly placed label was never on copper, so it breaks no rule the leash enforces. 0223 stays a UX inconsistency between the two placement paths, to be closed on its own merits under its `cadence_compat` gate. |
-| **0225** wire `lab=` back-annotation invisible to modify flag | Independent, though it touches the same `netlist.c:1117` writer. Fix separately; do not fold in. |
-| **0227** mid-span label stranded by wire translation | **CLOSED 2026-08-06 as superseded by S3.** Not implemented as filed — it proposed extending kissing to *rescue* a stranded label with a stub; S1/S3 deleted the stub and replaced it with the ride. Measured after S3, the issue's own repro: label rides, net keeps `VOUT`, `fluid_last_move_label_strands` 0, in **both** configs. |
-| **0228** keyboard stretch paths do not arm kissing | **Split, and the split turned out to be finer than this row assumed.** The label half has TWO directions: *the wire moves and the label stays* is closed by S3 (RIDE is not gated on kissing — strand-oracle D3/D4 flipped), but *the label moves and the wire stays, `stretch` without `kissing`* is **not** — RIDE does not apply and the LEASH's kissing gate is policy (§14.6), so it closes with this issue's own one-line fix instead. Measured: `test_wire_split.tcl` W7b is byte-identical before and after S3 (§16.7). The **device-pin** half remains a real, independent bug. Keep open. |
-| **0229** `select_dangling_nets` doc vs code | Unaffected. Its note that the label exclusion is deliberate is consistent with this design. |
-| **0222 / 0224 / 0226** | Untouched. |
+| **0230** `signal_short` silent on `-nohier` | **S0 prerequisite.** The only diagnostic for contested-name regressions. |
+| **0231** first-writer-wins by record order | Not on the critical path — nothing here moves an anchor at netlist time — but it is *why* a naming regression would be silent. Keep open; reference from this spec. |
+| **0233** `place_net_label` commits off copper | **Policy DECIDED in S1 (§14.6), and it does NOT close 0233.** The invariant is *conservation* — no gesture takes a label off copper that was on copper — not *prohibition*: R9 already tolerates 91 shipped labels that sit off copper by design. A newly placed label was never on copper, so it breaks no rule the leash enforces. 0233 stays a UX inconsistency between the two placement paths, to be closed on its own merits under its `cadence_compat` gate. |
+| **0235** wire `lab=` back-annotation invisible to modify flag | Independent, though it touches the same `netlist.c:1117` writer. Fix separately; do not fold in. |
+| **0237** mid-span label stranded by wire translation | **CLOSED 2026-08-06 as superseded by S3.** Not implemented as filed — it proposed extending kissing to *rescue* a stranded label with a stub; S1/S3 deleted the stub and replaced it with the ride. Measured after S3, the issue's own repro: label rides, net keeps `VOUT`, `fluid_last_move_label_strands` 0, in **both** configs. |
+| **0238** keyboard stretch paths do not arm kissing | **Split, and the split turned out to be finer than this row assumed.** The label half has TWO directions: *the wire moves and the label stays* is closed by S3 (RIDE is not gated on kissing — strand-oracle D3/D4 flipped), but *the label moves and the wire stays, `stretch` without `kissing`* is **not** — RIDE does not apply and the LEASH's kissing gate is policy (§14.6), so it closes with this issue's own one-line fix instead. Measured: `test_wire_split.tcl` W7b is byte-identical before and after S3 (§16.7). The **device-pin** half remains a real, independent bug. Keep open. |
+| **0239** `select_dangling_nets` doc vs code | Unaffected. Its note that the label exclusion is deliberate is consistent with this design. |
+| **0232 / 0234 / 0236** | Untouched. |
 
 ---
 
@@ -683,9 +683,9 @@ scheduled whenever. Interacts with issue **0229**.
    device pins still need it.
 4. **`test_wire_split.tcl` must be re-authored, not re-run.** 21 label references and zero
    `res.sym` taps: the suite has no device-pin tap fixture to swap to. **Done in S2** (§15.6).
-5. ~~**The issue-0227 mask, and this one is a REGRESSION for the target user.**~~ **RESOLVED
+5. ~~**The issue-0237 mask, and this one is a REGRESSION for the target user.**~~ **RESOLVED
    2026-08-06 by S3, the same day it was recorded — this is no longer given up.** The ride closes
-   0227 in every config, so the mask is not needed and `label_splits_wires 1` is back to being an
+   0237 in every config, so the mask is not needed and `label_splits_wires 1` is back to being an
    escape hatch rather than a mitigation. The measurement below is kept as the record of why S2 and
    S3 had to be sequenced, and of the general lesson (WIRING.md landmine 15). Original text: Added
    2026-08-06 after measuring S2; it was missing from this list and it is the most important
@@ -695,7 +695,7 @@ scheduled whenever. Interacts with issue **0229**.
    removes both, so a `cadence_compat` user's mid-span label now strands when the wire moves,
    where before it silently survived. It becomes identical to stock-default behaviour rather than
    a new failure mode, and it is exactly what **S3/RIDE** exists to fix — but it is the *filer of
-   0227*'s own complaint getting worse in the interim. Full measurement, both endpoint-keyed
+   0237*'s own complaint getting worse in the interim. Full measurement, both endpoint-keyed
    rescues, and the mitigation (`label_splits_wires 1`) in **§15.3**.
 
 **Migration: none. Zero files change on disk.**
@@ -904,7 +904,7 @@ published-only, keyed by instance id; and that change #10's Tcl mirror is droppe
 
 Settled while building S1 (see **§14**): the LEASH half of questions 1 and 2; that the leash's
 trigger is "the anchor landed off copper", not an unconditional clamp; that a bare **pin anchor**
-must be an owner too, or change #4 orphans the 36 % gnd/vdd-on-a-pin idiom; and issue **0223**'s
+must be an owner too, or change #4 orphans the 36 % gnd/vdd-on-a-pin idiom; and issue **0233**'s
 policy (conservation, not prohibition).
 
 Still open:
@@ -961,7 +961,7 @@ Still open:
    the splitter: `merge_collinear_wires` requires **byte-equal `prop_ptr`** (`check.c:809`,
    `wire_prop_eq`), while `trim_wires`' in-place merge keeps `wire[i]`'s prop with **no comparison**
    (`check.c:406-410`), so one half ends up `{}` and the other `{lab=A}` and the weld is refused.
-   That is issue **0225**'s back-annotation churn surfacing through the coalescer, not a
+   That is issue **0235**'s back-annotation churn surfacing through the coalescer, not a
    consequence of the split, and S2 removing the label split makes it strictly rarer.
 
    Also measured, because it is the fact a "regenerate goldens" instruction would really rest on:
@@ -971,7 +971,7 @@ Still open:
    independent reasons; do not attribute that to this work.
 4. **Delete/copy propagation sizing** (§5.7) — not established by any scan. The delete side
    touches `select.c:780`, the copy side `paste.c`, and it interacts with
-   `select_dangling_nets()` semantics (issue **0229**).
+   `select_dangling_nets()` semantics (issue **0239**).
 5. **Popup storm during a hierarchy descend chain.** `actions.c:3693` passes `reset_undo=1`, so
    the §5.8 hook fires on every descend. Also unknown whether `nowait` alerts stack when a
    `--script` batch opens many schematics under a GUI.
@@ -1076,14 +1076,14 @@ published)"). A `set_ne` would break the same property for the new counter. It f
 
 ### 13.5 What `autotrim_wires` does to the strand, measured
 
-The split is not a second bug here — it is what **masks** issue 0227 for the `cadence_compat` user,
+The split is not a second bug here — it is what **masks** issue 0237 for the `cadence_compat` user,
 and the oracle agrees:
 
 | config | kissing | result | strands |
 |---|---|---|---|
 | `autotrim_wires 0`, mid-span label | armed | wire moves, label left behind, net → `#net1` | **1** |
 | `autotrim_wires 1`, mid-span label | armed | split puts the label on an endpoint; kissing tethers it; net stays `VOUT` | **0** |
-| `autotrim_wires 1`, mid-span label | **not** armed (issue 0228 keyboard stretch) | net → `#net1` | **1** |
+| `autotrim_wires 1`, mid-span label | **not** armed (issue 0238 keyboard stretch) | net → `#net1` | **1** |
 
 The middle row is the sabotage variant WIRING.md §10 asks for: it goes red the moment the strand
 test degrades into an absolute count of off-copper labels.
@@ -1200,14 +1200,14 @@ nothing. Confirmed by the stepwise-vs-one-shot measurement (§12 question 1).
 kissing is armed by exactly the CONNECTED drag (`m` under `cadence_style_rc`, every mouse stretch
 entry point), which is the gesture whose stub change #4 removes. Gating them identically makes S1 a
 **replacement**, not an addition: off the kissing path — Shift-M, the Ctrl+LMB detach, the issue
-**0228** keyboard stretch paths — nothing changes at all, and a label dragged rigidly off its wire
+**0238** keyboard stretch paths — nothing changes at all, and a label dragged rigidly off its wire
 still detaches and still scores `fluid_last_move_label_strands = 1`.
 
 `test_label_ride.tcl` K1/K2 pin that as policy so a later stage cannot flip it by accident.
 
-### 14.7 Issue 0223: the invariant is CONSERVATION, not prohibition
+### 14.7 Issue 0233: the invariant is CONSERVATION, not prohibition
 
-§8 says 0223 "becomes a policy decision inside S1", and the two must not contradict. The rule S1
+§8 says 0233 "becomes a policy decision inside S1", and the two must not contradict. The rule S1
 adopts:
 
 > **No gesture may take a label OFF copper that was ON copper.** Being off copper is not itself
@@ -1218,8 +1218,8 @@ R9 already requires the second half — 91 labels across 21 shipped files sit of
 flyline fixtures) and §5.8 explicitly refuses to call them broken. So the leash conserves an
 existing attachment and says nothing about creating a label with no attachment.
 
-**Therefore S1 does not close 0223 and does not argue for closing it.** A label placed off copper by
-`place_net_label()` was never on copper, so it violates no conservation rule; 0223 remains a UX
+**Therefore S1 does not close 0233 and does not argue for closing it.** A label placed off copper by
+`place_net_label()` was never on copper, so it violates no conservation rule; 0233 remains a UX
 inconsistency between the two placement paths (the modern Add-Wire-Label form refuses, the legacy
 path commits) and should be closed on its own merits under the `cadence_compat` gate it drafts —
 not as a corollary of the leash. `test_label_ride.tcl` L1–L3 pins the boundary: an already-off-copper
@@ -1243,7 +1243,7 @@ Consequences, all benign, none silent:
   removes the label split for good and makes the welded form the resting state.
 - Residual risk, bounded and pre-existing: `trim_wires`' in-place merge keeps `wire[i]`'s `prop_ptr`
   with **no comparison** (`check.c:406-410`), so if a user had diverged the two halves' `lab=`, one
-  is dropped. That is issue **0225**'s class, it is newly *reachable* here only because the stub
+  is dropped. That is issue **0235**'s class, it is newly *reachable* here only because the stub
   that used to block the degree-2 merge is gone, and S2 retires it.
 
 ### 14.9 The COPY path gets change #4 but not the leash — deliberately
@@ -1258,7 +1258,7 @@ A DEVICE-pin copy still kisses. Pinned by `test_label_ride.tcl` Q1–Q3.
 
 Note this is also why the flag lifetime of `xctx->connect_by_kissing` matters to S1: the leash
 reads it at move START. It is armed only by the mouse/keyboard stretch entry points and the
-scheduler's `move_objects`/`copy_objects` verbs, and reset at move END/ABORT — issue **0228**'s
+scheduler's `move_objects`/`copy_objects` verbs, and reset at move END/ABORT — issue **0238**'s
 "flag lifetime" risk note applies unchanged, and a leaked `2` would arm the leash rather than
 break it (the capture still requires the label to be on copper at START).
 
@@ -1351,9 +1351,9 @@ So the two gates are independent: `split_active` decides *whether pins are bound
 `label_splits` decides *which pins count*. Device-pin behaviour is unchanged in either autotrim
 mode, asserted by `S2e`.
 
-### 15.3 S2 removes the mask that was protecting issue 0227 for the `cadence_compat` user
+### 15.3 S2 removes the mask that was protecting issue 0237 for the `cadence_compat` user
 
-**This is a regression for the person who filed 0227, it was not in §9, and it is the strongest
+**This is a regression for the person who filed 0237, it was not in §9, and it is the strongest
 argument for landing S3 alongside S2 rather than after it.**
 
 §13.5 row 2 already recorded the mechanism without naming it a dependency: under
@@ -1370,7 +1370,7 @@ mid-span label:
   That arm is what used to make a `stretch`-without-`kissing` drag of a mid-span label carry its
   wire along.
 
-Measured 2026-08-06, one gesture — **issue 0227's own repro: label stationary, wire translates,
+Measured 2026-08-06, one gesture — **issue 0237's own repro: label stationary, wire translates,
 kissing armed** — across three configurations:
 
 | config | wires | `fluid_last_move_label_strands` | resolved net |
@@ -1380,7 +1380,7 @@ kissing armed** — across three configurations:
 | `autotrim_wires 1`, `label_splits_wires 0` (**S2**) | 1 | **1** | `#net1` |
 
 And the same three rows for a label-moving `stretch` without `kissing` (the `W7b` fixture, issue
-**0228**'s cell): pre-S2 `GB`, S2 `#net1`, stock default `#net1`.
+**0238**'s cell): pre-S2 `GB`, S2 `#net1`, stock default `#net1`.
 
 What that does and does not mean:
 
@@ -1388,7 +1388,7 @@ What that does and does not mean:
   stock-config user, who has stranded on this gesture since forever. No new failure mode is
   invented and nothing that was correct becomes incorrect.
 - **But it is strictly worse than yesterday for the target user**, whose whole environment is
-  `cadence_compat`, and whose original complaint is 0227.
+  `cadence_compat`, and whose original complaint is 0237.
 - **The LEASH is untouched**, which was the prediction and is now measured: the label-*dragged*
   direction scores 0 strands in all three configs, because `label_ride_run()` already grew the
   owner across collinear split points on purpose (§14.4). S2 is a no-op for S1, confirmed by
@@ -1468,7 +1468,7 @@ split never persisted, and removing it cannot change a golden. Rather than re-ru
 corpus, `S2c` asserts the invariant directly — the same source file saved under
 `label_splits_wires` 0 and 1 produces one `N` record and **byte-identical output** — and
 `tests/headless/run.sh`'s 6 netlist goldens are green unchanged. The one file §12.3 found keeping a
-label-pin split on disk (`xschem_library/pcb/pcb_test1.sch`, via issue **0225**'s divergent
+label-pin split on disk (`xschem_library/pcb/pcb_test1.sch`, via issue **0235**'s divergent
 `prop_ptr`) is now strictly unreachable through a label, which is the "S2 retires it" of §14.8.
 
 ---
@@ -1506,7 +1506,7 @@ Change #10 proposed `set_ne label_ride 1` under `cadence_compat_sync`, which wou
 "force-enabled by cadence_compat like `autotrim_wires`". Rejected, for two measured reasons and one
 structural one:
 
-- **0227 reproduces on stock defaults.** §13.5 row 1 and the strand oracle's A case: `autotrim_wires
+- **0237 reproduces on stock defaults.** §13.5 row 1 and the strand oracle's A case: `autotrim_wires
   0`, no split ever, label stranded, net `#net1`. Gating the fix on `cadence_compat` would leave the
   default-config user with the bug the issue was filed about.
 - **The trace is one-directional** (`xschem.tcl`, `cadence_compat_sync`): turning `cadence_compat`
@@ -1611,11 +1611,11 @@ The owner resolution has a matching fallback: when no wire contains the transfor
 falls back to the surviving record for the captured id and lets the clamp place the label, with the
 span-length gate of §16.1 bounding a hazard-(B) wrong half.
 
-### 16.7 W7b does NOT change, and that refines §8's disposition of issue 0228
+### 16.7 W7b does NOT change, and that refines §8's disposition of issue 0238
 
 The S3 session prompt listed `test_wire_split.tcl` `W7b/S2` among the anchors expected to flip from
 `{#net1}` to `GB`. Measured, it does not, and the reason is worth recording because it splits
-0228's "label half" in two:
+0238's "label half" in two:
 
 | direction | gesture | S3 |
 |---|---|---|
@@ -1624,7 +1624,7 @@ The S3 session prompt listed `test_wire_split.tcl` `W7b/S2` among the anchors ex
 
 Widening the LEASH gate to cover the second row was considered and rejected: §14.6's gate is what
 makes the rigid move and the Ctrl+LMB detach a *deliberate* detach, and `test_label_ride.tcl` K1/K2
-exist to stop exactly that drift. The second row closes instead with issue **0228**'s own one-line
+exist to stop exactly that drift. The second row closes instead with issue **0238**'s own one-line
 fix — arm kissing at `callback.c:6445`/`:6466` like every other stretch entry point — after which
 the leash fires there for free. W7b was therefore re-authored **in comment only**, and a new
 `W7b2` leg records the direction S3 *does* close on the same fixture, with a `label_ride 0` legacy

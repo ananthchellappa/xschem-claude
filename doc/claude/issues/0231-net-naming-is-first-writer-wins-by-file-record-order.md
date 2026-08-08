@@ -1,10 +1,10 @@
-# 0221 — a net's name is decided by file record order, and a hierarchy port loses to a plain label
+# 0231 — a net's name is decided by file record order, and a hierarchy port loses to a plain label
 
 Status: **OPEN** — measured, no fix proposed (a real fix is a naming-policy change, not a patch).
 Area: `src/netlist.c` `name_nodes_of_pins_labels_and_propagate()` (`:1427`), `wirecheck()` (`:1090`), `name_attached_nets()` (`:1114`)
-Tests: none yet — proposed `tests/headless/test_net_name_precedence_0221.tcl`
+Tests: none yet — proposed `tests/headless/test_net_name_precedence_0231.tcl`
 Found: 2026-08-05, while grounding `doc/claude/code_analysis/net_label_model_instance_vs_wire_attached.md`
-Related: **0220** — the short detector that should make this audible is silent on `-nohier` and never highlights. Prior art on net naming: 0154, 0156, 0157, 0158, 0163, 0164, 0165, 0166, 0180, 0185.
+Related: **0230** — the short detector that should make this audible is silent on `-nohier` and never highlights. Prior art on net naming: 0154, 0156, 0157, 0158, 0163, 0164, 0165, 0166, 0180, 0185.
 
 ## The defect
 
@@ -84,7 +84,7 @@ file. The parent netlist will wire a signal into a port that goes nowhere.
 `.sch` record order is not stable under editing. Copy/paste, delete-and-redraw, symbol
 regeneration and any script that rewrites a schematic can reorder instance records without
 changing the drawing, silently changing which name reaches the simulator and which port is
-live. Under **0220** the `-nohier` and Shift-N paths do not even print the short.
+live. Under **0230** the `-nohier` and Shift-N paths do not even print the short.
 
 ## Direction, not a fix
 
@@ -99,7 +99,7 @@ increasing order of cost:
    first. Fixes the `.subckt` corruption above; still arbitrary between two labels.
 3. **Report and refuse** — treat two distinct explicit names on one conductor as an ERC
    error that fails the netlist, rather than picking one. This is the Cadence semantic.
-   Depends on **0220** landing first, since today the message does not reach the user on
+   Depends on **0230** landing first, since today the message does not reach the user on
    every path.
 
 Whichever is chosen, `signal_short()` must keep firing — the collision should stay audible
