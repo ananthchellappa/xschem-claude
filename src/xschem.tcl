@@ -14434,6 +14434,21 @@ proc fluid_trace_stop {} {
     else { ciw_echo "FLUID trace stopped (no file was open)" result }
   }
 }
+# One menu entry, not two: the trace is a binary state, so the menu offers the only
+# transition that is legal right now. Start and Stop as permanent siblings made the
+# user pick the verb AND remember the state; half the time the pick was a no-op.
+proc fluid_trace_toggle {} {
+  if {[xschem fluid_trace status] eq {on}} { fluid_trace_stop } else { fluid_trace_start }
+}
+# -postcommand hook on Help>Debug: relabel the single entry from the C-side state just
+# before the menu is posted. Driven by `status` rather than a Tcl mirror variable so a
+# FLUID_TRACE=... env launch (traced without anyone touching the menu) shows "Stop" too.
+proc fluid_trace_menu_update {m} {
+  if {![winfo exists $m]} return
+  if {[catch {xschem fluid_trace status} st]} return
+  set lab [expr {$st eq {on} ? "Stop FLUID trace" : "Start FLUID trace"}]
+  catch {$m entryconfigure {*FLUID trace} -label $lab}
+}
 
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
@@ -14497,14 +14512,16 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"
-  # issue 0123: runtime FLUID_TRACE control. Start opens a PID-named trace file and reports the
-  # name in the CIW; Stop flush+closes it. Lets a user capture a fluid-editing trace on demand
-  # without relaunching with FLUID_TRACE=... See doc/claude/WIRING.md.
+  # issue 0123: runtime FLUID_TRACE control. ONE entry that flips between Start and Stop,
+  # relabelled by the -postcommand from the C-side `fluid_trace status`. Start opens a
+  # PID-named trace file and reports the name in the CIW; Stop flush+closes it. Lets a user
+  # capture a fluid-editing trace on demand without relaunching with FLUID_TRACE=...
+  # See doc/claude/WIRING.md.
   $topwin.menubar.help add separator
-  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0
+  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0 \
+     -postcommand [list fluid_trace_menu_update $topwin.menubar.help.debug]
   $topwin.menubar.help add cascade -label "Debug" -menu $topwin.menubar.help.debug
-  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_start}
-  $topwin.menubar.help.debug add command -label "Stop FLUID trace"  -command {fluid_trace_stop}
+  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_toggle}
 
   # File menu is generated from the action registry (actions.csv). The parent
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
