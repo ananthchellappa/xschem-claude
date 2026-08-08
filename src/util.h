@@ -56,6 +56,9 @@ extern void log_action_flush_pending(void);
 extern void log_action_descend(const char *verb, int inst_n, const char *instname);
 extern void log_action_argv(int argc, const char *const *argv); /* defined in callback.c */
 extern void log_output(int iserr, const char *text);
+/* one human-readable outcome line to BOTH sinks: the log file ('#= ' comment)
+ * and the CIW pane. Pairs with the log_action() line that carries the command. */
+extern void log_action_result(const char *msg);
 /* Re-entrant suppress-scope guard for actionlog_suppress (issue 0071 Refactor A
  * step 2): wrap a replay or a composite op so its sub-lines re-EXECUTE but do
  * not re-LOG. Depth counter -> nested scopes stay suppressed until the outermost

@@ -398,6 +398,32 @@ set descend_readonly 1
 # CTRL-G toggles grid visibility (active):
 xschem bind key 103 ctrl canvas view.toggle_draw_grid
 
+# ALT+Up / ALT+Down : coarsen / refine the SNAP spacing (`cadsnap`) by 2x / 0.5x,
+# the Cadence snap-spacing bindkeys. Works in the schematic AND the symbol editor
+# (one canvas, one binding table -- the chord is dispatched by the C input-binding
+# table, not by anything schematic-specific) and on a read-only view too, since
+# snap is edit geometry, not saved content.
+# EVERY use is logged, to the action-log FILE and to the CIW pane, as two lines:
+#   xschem set cadsnap 20          <- the replayable ABSOLUTE command (0066 rule:
+#                                     never the relative `xschem snap double`,
+#                                     which replays onto a different value)
+#   #= snap 10 -> 20 (x2)          <- the human-readable outcome
+# The self-log lives in the C core (view_snap_change, callback.c), so the menu
+# items (View > Halve/Double snap factor) and `xschem snap half|double` from a
+# script log identically.
+# Arrow keysyms: Up=65362  Down=65364  Left=65361  Right=65363. Plain (unmodified)
+# arrows keep scrolling the viewport -- only the alt chord is claimed here.
+# REMAP: edit the two lines below (any keysym + 0|ctrl|alt|shift|super combo), or
+# re-bind at runtime from the CIW, e.g.
+#   xschem bind key 65451 ctrl canvas view.snap_double   ;# Ctrl+KP_Add instead
+# Un-bind with:  xschem unbind key 65362 alt canvas
+# The GRID spacing (`cadgrid`, the dot pitch) is a separate value with no
+# double/halve action; set it outright with `xschem set cadgrid <value>` (also
+# self-logged) or from View > Set grid spacing.
+# See doc/claude/specs/snap_spacing_bindkeys.md.
+xschem bind key 65362 alt canvas view.snap_double     ;# Alt+Up   : snap x2
+xschem bind key 65364 alt canvas view.snap_half       ;# Alt+Down : snap x0.5
+
 # CTRL+Plus / CTRL+Minus : grow / shrink the DISPLAYED text size of selected text notes
 # and pin/net-label names (~10%, min step, per-type floor). Other objects ignored.
 # Four keysyms cover both the main row and the numeric keypad; the C key path strips
@@ -410,6 +436,8 @@ xschem bind key 45    ctrl canvas edit.text_shrink    ;# Ctrl+-       (main-row 
 xschem bind key 65453 ctrl canvas edit.text_shrink    ;# Ctrl+KP_Subtract (keypad -)
 
 # Optional -- uncomment to give the others a key again:
+# (snap half/double now live on Alt+Down / Alt+Up above; these are the ORIGINAL
+#  stock chords, kept here as an additional/alternative mapping)
 # xschem bind key 103 0   canvas view.snap_half               ;# halve snap    (old 'g')
 # xschem bind key 71  0   canvas view.snap_double             ;# double snap   (old Shift-g)
 # xschem bind key 103 alt canvas hilight.send_to_waveform idle ;# hilight->wave (old Alt-g)

@@ -96,8 +96,6 @@ proc fire_wheel {button state} { xschem callback .drw 4 200 200 0 $button 0 $sta
 foreach {desc cmd fire} {
   "Up arrow"    {xschem scroll up}              {fire_key 65362 0}
   "Shift+wheel" {xschem pan left}               {fire_wheel 4 1}
-  "key g"       {xschem snap half}              {fire_key 103 0}
-  "key G"       {xschem snap double}            {fire_key 71 0}
   "key A"       {xschem toggle_show_netlist}    {fire_key 65 0}
   "key \$"      {xschem toggle_draw_pixmap}     {fire_key 36 0}
 } {
@@ -105,6 +103,35 @@ foreach {desc cmd fire} {
   eval $fire
   check "$desc logs '$cmd'" [expr {[lsearch -exact [loglines] $cmd] >= $n0}]
 }
+# The snap chords are no longer part of the loop above. Two reasons, both real:
+#   1. keysyms 103 ('g') / 71 ('G') were UNBOUND when the snap/grid actions became
+#      opt-in (doc/claude/specs/keybind_snap_grid_actions.md) -- these two rows
+#      asserted a binding that no longer exists and had been failing ever since.
+#      The shipped chord is now Alt+Up / Alt+Down, installed by cadence_style_rc
+#      (65362/65364 + Mod1Mask), so bind them here to drive the same dispatch.
+#   2. view_snap_change self-logs the ABSOLUTE resolved value, exactly like the
+#      'y' / toggle_stretch case below: `xschem set cadsnap <new>`, never the
+#      replay-fragile relative `xschem snap half|double` (the 0066 cadsnap rule).
+#      The relative csv log_cmd copy dedups through the dispatch gate.
+# Full coverage of the chords themselves lives in test_snap_bindkeys.tcl.
+xschem bind key 65362 alt canvas view.snap_double
+xschem bind key 65364 alt canvas view.snap_half
+xschem set cadsnap 10
+set n0 [llength [loglines]]
+fire_key 65362 8                             ;# Alt+Up  -> 20
+set added [lrange [loglines] $n0 end]
+check "Alt+Up logs absolute 'xschem set cadsnap 20'" \
+  [expr {[lsearch -exact $added {xschem set cadsnap 20}] >= 0}]
+set n0 [llength [loglines]]
+fire_key 65364 8                             ;# Alt+Down -> 10
+set added [lrange [loglines] $n0 end]
+check "Alt+Down logs absolute 'xschem set cadsnap 10'" \
+  [expr {[lsearch -exact $added {xschem set cadsnap 10}] >= 0}]
+check "snap chords do NOT log the relative 'xschem snap half|double'" \
+  [expr {[lsearch -exact [loglines] {xschem snap half}] < 0 &&
+         [lsearch -exact [loglines] {xschem snap double}] < 0}]
+xschem unbind key 65362 alt canvas
+xschem unbind key 65364 alt canvas
 # key 'y' -> edit.toggle_stretch now self-logs the ABSOLUTE resolved state (atom 16 /
 # 0062 tail): `xschem set enable_stretch <new>`, NOT the replay-fragile relative
 # `xschem toggle_stretch` (which lands on the opposite value when replayed from a

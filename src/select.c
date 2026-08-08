@@ -353,10 +353,7 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
  * log_action_echo, which owns the ciw_line variable). */
 static void select_net_report(const char *msg)
 {
-  log_output(0, msg);
-  if(!has_x || !interp) return;
-  tclsetvar("ciw_line", msg);
-  tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $ciw_line}");
+  log_action_result(msg);   /* util.c: the shared file '#= ' + CIW-pane sink */
 }
 
 /* The net name carried by the object under (mx,my), or NULL if there is none.

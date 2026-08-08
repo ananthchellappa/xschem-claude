@@ -4685,9 +4685,29 @@ static int act_make_sch_sym_from_sel(const ActionEvent *e) { (void)e; make_schem
  * `xschem toggle_*` subcommands (Phase 3, same rule as view_pan_dir above) */
 void view_snap_change(int dbl)
 {
-  set_snap(tclgetdoublevar("cadsnap") * (dbl ? 2.0 : 0.5));
+  char msg[128];
+  double old = tclgetdoublevar("cadsnap");
+  set_snap(old * (dbl ? 2.0 : 0.5));
   change_linewidth(-1.);
   draw();
+  /* Self-log the ABSOLUTE resolved snap, NOT the relative step (the 0066 cadsnap
+   * rule, same as toggle_stretch below: never a relative form when an absolute one
+   * exists -- a replayed `xschem snap double` lands on a different value whenever
+   * the start snap differs from record time). set_snap() maps 0 -> the default, so
+   * read cadsnap BACK rather than logging the computed argument. Every entry point
+   * funnels here (the bound Alt+Up/Alt+Down chords of cadence_style_rc, the View
+   * menu items, `xschem snap half|double` from a script), and log_action sets
+   * actionlog_cmd_logged, so the csv log_cmd copy in dispatch_input_action dedups
+   * to exactly ONE line. Snap is edit geometry, not saved content -> no read-only
+   * guard, so this logs on a read-only view too (descend browse mode).
+   * See doc/claude/specs/snap_spacing_bindkeys.md. */
+  log_action("xschem set cadsnap %.10g", tclgetdoublevar("cadsnap"));
+  /* ...plus the outcome a user reads in the CIW: which way it moved and from
+   * what. Silent-action complaint class -- a snap change that only shows up as a
+   * statusbar colour is invisible while the eye is on the schematic. */
+  my_snprintf(msg, S(msg), "snap %.10g -> %.10g (%s)", old, tclgetdoublevar("cadsnap"),
+              dbl ? "x2" : "x0.5");
+  log_action_result(msg);
 }
 void toggle_stretch_cmd(void)
 {

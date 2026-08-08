@@ -546,6 +546,23 @@ void log_output(int iserr, const char *text)
   if(p == text || p[-1] != '\n') fputc('\n', actionlog_fp);
 }
 
+/* Mirror one human-readable OUTCOME line to BOTH sinks the action log feeds: the
+ * log FILE (as a '#= ' comment, so the file stays source-able for replay) and the
+ * CIW pane. The companion log_action() call carries the replayable command; this
+ * carries the result a user reads ("snap 10 -> 20"). The text travels to Tcl
+ * through a variable and is never substituted into the eval string, so content
+ * with braces, brackets or '$' cannot be re-interpreted (same rule as
+ * log_action_echo above, which owns the same ciw_line variable).
+ * Callers: view_snap_change (callback.c), select_net_report (select.c). */
+void log_action_result(const char *msg)
+{
+  if(!msg) return;
+  log_output(0, msg);
+  if(!has_x || !interp) return;
+  tclsetvar("ciw_line", msg);
+  tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $ciw_line}");
+}
+
 /* Re-entrant scope guard for actionlog_suppress (issue 0071 Refactor A step 2,
  * the foundation the perform_action() boundary of Refactor B rides on -- see
  * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md
