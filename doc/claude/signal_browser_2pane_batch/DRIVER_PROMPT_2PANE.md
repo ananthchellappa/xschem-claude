@@ -6,28 +6,33 @@ commits from the repair stage). **Nothing is ever pushed.**
 
 ---
 
-## Before you launch — five minutes, and skipping them wastes the night
+## Before you launch
 
-1. **The GUI gate cannot be pressed while you sleep.** The X arm runs dozens of
-   times and every run asks the panel for permission. Two honest options:
-   * `export GUI_GATE=0` — the gate fails open and every suite just runs. Windows
-     will appear and disappear on `:0` all night. **This is the one to use for an
-     unattended run.**
-   * Install `xvfb` (`sudo apt install xvfb`) and the X arm can run on a private
-     display instead. **Not currently installed** — `xvfb-run` and `Xvfb` are both
-     absent. It would also sidestep item 3 below. Worth doing if you plan more
-     overnight batches, but it is a change to the machine, so it is your call.
-2. **⚠ WSLg's Xwayland dies about three times a session and takes every client
-   with it.** This is the single biggest overnight risk: it cannot be revived from
-   inside the VM (the cure is `wsl --shutdown` from Windows). The pipeline treats
-   a dead X server as **DEFER, not FAIL**, so the batch degrades honestly instead
-   of recording garbage — but if it dies early you may wake to four `[D]`s.
-   Installing xvfb is the only real mitigation.
-3. `cd src && make` must be green before you start. Never `make` while a suite runs.
-4. `git status --porcelain -- src tests doc` — note the pre-existing dirty files.
+Almost nothing is left to set up — `xvfb` is installed and the display handling is
+now automatic.
+
+1. **The display is handled.** Every X-arm run goes through `xarm.sh`, which uses a
+   private **Xvfb** until the deadline and the real **`:0` under the gate panel**
+   after it. No `GUI_GATE=0`, no flooding your screen, and nothing to press
+   overnight. **Measured before writing this: the Xvfb arm reproduces the `:0` arm
+   exactly** — 11/11, all eleven per-suite counts identical, 2136 checks either way.
+2. **The handback is set for Sat 2026-08-08 06:21 MST** (epoch `1786195286`, in
+   `DEADLINE` beside `xarm.sh`). At that moment `xarm.sh` stops using Xvfb, raises
+   the gate widget if it is not already up, and every later suite is under your
+   Pause/Stop. Move the deadline by editing that one file.
+3. **WSLg's Xwayland death cannot reach the batch while it is on Xvfb** — the
+   single biggest overnight risk, removed. It applies again after the handback, and
+   the pipeline still treats a dead `:0` as **DEFER, not FAIL**.
+4. `cd src && make` must be green before you start. Never `make` while a suite runs.
+5. `git status --porcelain -- src tests doc` — note the pre-existing dirty files.
    They must still be the only dirty tracked files (batch dir excepted) at the end.
-5. Three commits from the current session are **unpushed** (`958ada03`,
-   `a98ab6fe`, `e5347591`). The batch adds more. Push is never automatic.
+6. Four commits from the current session are **unpushed** (`958ada03`, `a98ab6fe`,
+   `e5347591`, `d5374918`). The batch adds more. Push is never automatic.
+
+**Xvfb has no window manager.** Decoration, iconify, stacking, raise and
+geometry-echo claims are untestable there. Nothing in items 13-19 needs one — it
+is all inside a single toplevel — but if an item turns out to, the pipeline is
+told to call that an eyeball rather than measure it and believe the answer.
 
 ---
 
@@ -61,12 +66,16 @@ READ FIRST (once, then stop reading):
    and the shape every receipt must take.
 
 PREFLIGHT (once, before item 13):
-1. `timeout 15 xdpyinfo -display :0` must return 0. If the X server is dead, do
-   **not** start: every X-arm item would defer. Report and stop.
+1. `doc/claude/signal_browser_2pane_batch/xarm.sh mode` — it must say **XVFB
+   (unattended)** with time left. If it says GATED, the unattended window has
+   already closed; that is not a reason to stop, but say so in your first message
+   because every run from then on needs the user at the panel.
 2. `cd src && make` green. If not, STOP and report — never start on a broken build.
 3. `git status --porcelain -- src tests doc` — record the pre-existing dirty set.
-4. Confirm `GUI_GATE=0` is exported, or that a long allow window is open.
-   Without one of those, every X run blocks on a panel nobody will press.
+
+The display needs no other preparation. Do **not** export `GUI_GATE=0`, do not
+call `run_suites.sh` or `gated_xschem.sh` yourself, and do not check the clock —
+`xarm.sh` owns all of that and the pipeline tells every agent to use it.
 
 LOOP (fully autonomous — **never ask the user anything**; when in doubt the answer
 is DEFER, recorded):
@@ -110,10 +119,20 @@ is DEFER, recorded):
    * Any other verdict has already been written to the ledger and a receipt by
      the pipeline. Do not re-verify it and do not edit what it wrote.
 
+THE HANDBACK (Sat 2026-08-08 06:21 MST, epoch 1786195286):
+You do not need to do anything for it — `xarm.sh` switches displays on its own and
+raises the gate widget. Two consequences to be aware of:
+* Items that start after it run on the real `:0` and are governed by the panel.
+  **Pause and Stop are the user's authority.** If a run seems to stall, check
+  `~/.claude/gui_test_gate/control` — it may simply say `PAUSE`. Wait for it.
+  Never set `GUI_GATE=0` to get around a pause, and never kill the panel.
+* Note in the final report which items ran before the handback and which after.
+
 FINAL REPORT (one message, at the end, and the only long thing you write):
 * The ledger table as it now stands, mark by mark.
 * Every commit the batch produced, in order, with its item.
 * **The two baselines as last measured**, against the recorded 1618 / 11-of-11.
+* Which items ran under Xvfb and which after the handback on `:0`.
 * The full eyeball queue — every `[E]` item and what to look at.
 * Every `[D]` and `[F]` with its one-line reason, separating *blocked by a
   dependency* from *deferred on its own merits*.

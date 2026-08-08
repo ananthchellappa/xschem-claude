@@ -33,7 +33,15 @@ new baseline.
 | `test_wave_sigbrowser_i12` | 40 | | |
 | `test_wave_sigbrowser_i1315` | 80 | **TOTAL** | **1618** |
 
-**X arm — 11/11 suites** (`tests/headless/run_suites.sh`, `SUITE_TIMEOUT=400`)
+**X arm — 11/11 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
+
+> **⚠ MEASURED 2026-08-07: the Xvfb arm reproduces the `:0` arm EXACTLY.** All
+> eleven per-suite counts identical, 11/11 both ways, **2136 checks** either way.
+> So a number measured before the handback is directly comparable with one
+> measured after it, and the unattended window costs no fidelity. What Xvfb
+> cannot do is any claim needing a **window manager** — decoration, iconify,
+> stacking, raise, geometry echo. Nothing in items 13-19 needs one; if something
+> turns out to, it is an eyeball, not a check.
 
 | suite | checks | suite | checks |
 |---|---|---|---|
@@ -48,7 +56,34 @@ new baseline.
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
 *not* regressions and must be re-run before being called a fail: `BR25`
 (a `<Return>` through a bare `event generate`), `MG16` (key delivery), and a
-whole-suite `NORESULT` from a WSLg Xwayland death.
+whole-suite `NORESULT` from a WSLg Xwayland death (reachable only after the
+handback — Xvfb is immune).
+
+---
+
+## The unattended window, and the handback
+
+The user granted **7 hours of free test running from 2026-08-07 23:21 MST**, then
+wants the GUI-test-gate widget raised so they have control again.
+
+| | |
+|---|---|
+| deadline | **1786195286** = Sat 2026-08-08 **06:21:26 MST** |
+| stored in | `DEADLINE` (epoch seconds) beside `xarm.sh` — the only clock anything reads |
+| before it | private **Xvfb**. No gate, the user's screen untouched, Xwayland death cannot reach the batch |
+| after it | the real **`:0` under the gate panel**, which `xarm.sh` **raises if it is not already up** |
+
+**Every X-arm run goes through `xarm.sh`** (`suites` / `one` / `mode`) so the
+switchover is automatic and no agent has to check a clock. Nothing else may call
+`run_suites.sh`, `gated_xschem.sh` or `./src/xschem` for an X run.
+
+Extending or ending the unattended window is a one-line edit to `DEADLINE`.
+
+After the handback the panel's **Pause and Stop are the user's authority.** A run
+that stalls may simply be paused — check `~/.claude/gui_test_gate/control`, wait,
+and never work around it with `GUI_GATE=0`.
+
+The `--nogui` headless arm needs no display at all and is unaffected by any of this.
 
 ---
 
