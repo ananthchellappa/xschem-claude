@@ -103,6 +103,26 @@ xschem bind wheel down alt canvas edit.shrink_selection
 xschem bind wheel up   alt+shift canvas edit.transpose_up_selection
 xschem bind wheel down alt+shift canvas edit.transpose_down_selection
 
+# Ctrl+Alt+Shift+LMB on a wire (or a net-label, or an instance pin) : select the
+# whole LOGICAL net -- every wire segment carrying that net name, INCLUDING the
+# segments that touch nothing but share the same wire-label and are therefore one
+# node in the SPICE netlist. The wire-labels (and ports/probes) that name the net
+# are selected too. This is the netlist twin of the double-click grow above, which
+# walks copper only and stops where the wire stops.
+# Matching is on the whole net name: bus notation is NOT expanded, so A[3:0] and
+# A[1] are treated as different nets. Each use writes a replayable
+# `xschem select_same_net <x> <y>` line plus a "net NAME -- N wires, M labels"
+# result line to the action log AND the CIW pane.
+# Remap to any button+modifier chord by editing this line; un-bind with
+#   xschem unbind button 1 ctrl+alt+shift canvas
+# Scriptable as `xschem select_same_net [x y] [add]` (no coords = every net in the
+# current selection). See doc/claude/specs/select_same_net_by_label.md.
+xschem bind button 1 ctrl+alt+shift canvas select.same_net_by_label
+# ...and the ADDITIVE variant, which keeps the current selection and adds the
+# clicked net to it, so several nets can be gathered one click at a time.
+# Unbound by default -- pick a free chord and uncomment:
+# xschem bind button 2 ctrl+alt+shift canvas select.same_net_by_label_add
+
 # Cadence-style instantiation: the "i" key opens the Create Instance browser
 # (Edit > Create Instance). `break` stops the event reaching the generic <KeyPress>
 # -> C dispatcher, which otherwise maps 'i' to descend-into-symbol.

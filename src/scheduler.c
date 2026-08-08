@@ -10947,6 +10947,45 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* select_same_net [x y] [add]
+     *   Select the whole LOGICAL net -- every wire segment carrying the same net
+     *   name, INCLUDING segments that touch nothing but share a wire-label (and are
+     *   therefore one node in the netlist), plus the net-labels / ports / probes that
+     *   name it. The geometric counterpart is select_grow_connected above, which
+     *   stops where the copper stops.
+     *   With [x y] the object under that schematic coord is the seed (a wire, a
+     *   net-label, or an instance pin under the pin pick radius). Without coords every
+     *   wire / net-label in the CURRENT selection seeds a net and all of them are
+     *   selected in full. 'add' keeps the existing selection instead of replacing it.
+     *   Matching is on the whole node name: bus notation is NOT expanded (A[3:0] and
+     *   A[1] are different names). See doc/claude/specs/select_same_net_by_label.md.
+     *   Returns the number of objects selected. */
+    else if(!strcmp(argv[1], "select_same_net"))
+    {
+      int add = 0, nsel, argi = 2;
+      double x = 0.0, y = 0.0;
+      int pick_seed = 0;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc >= 4 && argv[2][0] && strcmp(argv[2], "add")) { /* coords given */
+        x = atof(argv[2]);
+        y = atof(argv[3]);
+        pick_seed = 1;
+        argi = 4;
+      }
+      if(argc > argi) {
+        if(!strcmp(argv[argi], "add")) add = 1;
+        else {
+          Tcl_SetResult(interp, "xschem select_same_net: usage: select_same_net [x y] [add]", TCL_STATIC);
+          return TCL_ERROR;
+        }
+      }
+      /* No log_action here: select_same_net_by_name() self-logs at its CORE so the
+       * bound Ctrl+Alt+Shift+Button1 gesture (which calls the core directly from
+       * callback.c) is covered too -- same rule as select_grow_connected above. */
+      nsel = select_same_net_by_name(x, y, pick_seed, add);
+      Tcl_SetResult(interp, my_itoa(nsel), TCL_VOLATILE);
+    }
+
     /* selected_set [what]
      *   Return a list of selected instance names
      *   If what is not given or set to 'inst' return list of selected instance names

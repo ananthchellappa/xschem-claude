@@ -3118,6 +3118,7 @@ extern void hilight_net_styled(void);
 extern void propagate_hilights(int set, int clear, int mode);
 extern void  select_connected_nets(int stop_at_junction);
 extern int   select_grow_connected_step(double mx, double my, int pick_seed);
+extern int   select_same_net_by_name(double mx, double my, int pick_seed, int add);
 extern char *resolved_net(const char *net);
 extern char *resolved_net_from(const char *net, int from_level);
 extern void draw_hilight_net(int on_window);

@@ -204,7 +204,10 @@ seed object of any type stays selected; growth never pulls in other devices.
   variant.
 - **O3 — 3rd click: geometric flood** (`select_connected_nets(0)`) — physically
   touching only, same model as rings 1–2. (Node-name net = possible later option,
-  out of scope.)
+  out of scope.) **SHIPPED SEPARATELY, 2026-08-08:** the node-name option exists on
+  its own chord instead of taking over a double-click level — Ctrl+Alt+Shift+LMB /
+  `xschem select_same_net`, see [select_same_net_by_label.md](select_same_net_by_label.md).
+  This spec's escalation is unchanged and stays purely geometric.
 - **O4 — cap at 3.** click1→ring1, click2→ring2, click3→whole net (jump,
   regardless of net size), click4+→no-op.
 - **Edit Properties on double-click: given up** under the Cadence profile; `q`

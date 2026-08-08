@@ -107,6 +107,8 @@ hilight.select_hilight_nets_pins,command,hilight,Select hilight nets / pins,Alt+
 hilight.un_highlight_all_net_pins,command,hilight,Un-highlight all net/pins,Shift+K,xschem unhilight_all,,,Un-highlight all net/pins,1
 hilight.un_highlight_selected_net_pins,command,hilight,Un-highlight selected net/pins,Ctrl+K,xschem unhilight,,,Un-highlight selected net/pins,1
 hilight.show_labels_on_unconnected_instance_pins,command,hilight,Show labels on unconnected instance pins,,xschem show_unconnected_pins,,,Show labels on unconnected instance pins,
+select.same_net_by_label,command,hilight,Select same net (incl. label-connected),Ctrl+Alt+Shift+Click,xschem select_same_net,,,"Select every wire segment on the same net, including segments connected only through a shared wire label, plus the labels themselves",,1
+select.same_net_by_label_add,command,hilight,Add same net to selection (incl. label-connected),,xschem select_same_net add,,,Add every wire segment on the net (incl. label-connected ones) to the current selection,,1
 prop.edit,command,prop,Edit,Q,xschem edit_prop,,,Edit,
 prop.edit_with_editor,command,prop,Edit with editor,Shift+Q,xschem edit_vi_prop,,,Edit with editor,
 prop.view,command,prop,View,Ctrl+Shift+Q,xschem view_prop,,,View,

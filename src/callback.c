@@ -4886,6 +4886,35 @@ static int act_add_pin_stubs(const ActionEvent *e)
   return add_pin_stubs("", "", 0) > 0 ? 1 : 0;
 }
 
+/* select.same_net_by_label: select the whole LOGICAL net under the pointer --
+ * every wire segment carrying the same net name, INCLUDING segments that touch
+ * nothing but share a wire-label (one node in the netlist), plus the labels /
+ * ports that name it. The double-click grow (select_grow_connected) is the
+ * geometric counterpart and stops where the copper stops.
+ * doc/claude/specs/select_same_net_by_label.md.
+ *
+ * Ships UNBOUND: src/cadence_style_rc maps it to Ctrl+Alt+Shift+Button1. Remap or
+ * un-bind it from any rc / --script with
+ *   xschem bind button 1 ctrl+alt+shift canvas select.same_net_by_label
+ *   xschem unbind button 1 ctrl+alt+shift canvas
+ * xctx->mousex/mousey are the unsnapped schematic coords callback() computed for
+ * this event -- the same ones the other press branches pick objects with.
+ * The core self-logs (command + outcome, log file and CIW), and the csv rows are
+ * nolog, so nothing here logs a second line. */
+static int act_select_same_net(const ActionEvent *e)
+{
+  (void)e;
+  select_same_net_by_name(xctx->mousex, xctx->mousey, 1, 0);
+  return 1;
+}
+/* additive twin: keeps the current selection and adds the clicked net to it */
+static int act_select_same_net_add(const ActionEvent *e)
+{
+  (void)e;
+  select_same_net_by_name(xctx->mousex, xctx->mousey, 1, 1);
+  return 1;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -4976,6 +5005,11 @@ static ActionDef action_registry[] = {
   { "hilight.highlight_selected_net_pins",           NULL, "xschem hilight",            "Highlight selected net/pins" },
   { "hilight.un_highlight_selected_net_pins",        NULL, "xschem unhilight",          "Un-highlight selected net/pins" },
   { "hilight.select_hilight_nets_pins",              NULL, "xschem select_hilight_net", "Select highlighted nets/pins" },
+  /* logical (net-name) connected select -- see act_select_same_net above. Non-mutating. */
+  { "select.same_net_by_label",     act_select_same_net,     NULL,
+    "Select the whole net under the pointer, including label-connected segments" },
+  { "select.same_net_by_label_add", act_select_same_net_add, NULL,
+    "Add the net under the pointer (incl. label-connected segments) to the selection" },
   { "hilight.un_highlight_all_net_pins",             NULL, "xschem unhilight_all",      "Un-highlight all net/pins" },
   { "hilight.propagate_highlight_selected_net_pins", NULL, "xschem hilight drill",      "Propagate highlight (drill)" },
   /* Phase 3d.2 sem-gated batch 3 — `j` hilight-list (branch migration). Tcl commands
@@ -5440,6 +5474,10 @@ static int dispatch_input_action(const ActionEvent *e)
 static int dispatch_button_chord(int button, int state, int mx, int my)
 {
   ActionEvent ae;
+  /* `state` arrives already normalized: callback() strips Caps Lock / Num Lock
+   * (LockMask, Mod2Mask) for every event and the caller strips the button masks,
+   * so what is left is exactly the real modifier chord -- an exact match against
+   * a binding row's mods is safe with the latch keys in any state. */
   ae.device = DEV_BUTTON; ae.code = button; ae.mods = state; ae.ctx = ACTX_CANVAS;
   ae.mx = mx; ae.my = my; ae.state = state;
   ae.xevent = 0; ae.key = 0; ae.button = button; ae.aux = 0;
