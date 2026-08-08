@@ -420,6 +420,12 @@ xschem bind key 103 ctrl canvas view.toggle_draw_grid
 # The GRID spacing (`cadgrid`, the dot pitch) is a separate value with no
 # double/halve action; set it outright with `xschem set cadgrid <value>` (also
 # self-logged) or from View > Set grid spacing.
+# ORTHOGONAL: changing the snap no longer restyles the drawing. Stock XSCHEM scaled
+# the automatic line width AND the wire-junction / pin dot radius with the LIVE
+# cadsnap, so a 2x snap doubled every wire, symbol line and pin-rectangle outline.
+# The reference length is now the STARTUP snap, so line weight tracks zoom only.
+# Tick View > "Line width follows snap" (or `set linewidth_follows_snap 1` here) to
+# get the old coupling back.
 # See doc/claude/specs/snap_spacing_bindkeys.md.
 xschem bind key 65362 alt canvas view.snap_double     ;# Alt+Up   : snap x2
 xschem bind key 65364 alt canvas view.snap_half       ;# Alt+Down : snap x0.5

@@ -339,9 +339,53 @@ char *escape_chars(const char *source, const char *charset)
   return dest;
 }
 
+/* the snap in force when the program started (xschemrc `snap`, else CADSNAP).
+ * Hoisted out of set_snap() so linewidth_ref_snap() below can read it; still a
+ * single program-wide value, safe with multiple schematics/windows. */
+static double default_snap = -1.0;
+
+/* The REFERENCE length the automatic line width and the wire-junction / pin dot
+ * radius scale with.
+ *
+ * Stock XSCHEM uses the LIVE cadsnap for both: change_linewidth computes
+ * `lw = mooz * 0.09 * cadsnap * k`, which makes every drawn line a fixed fraction
+ * (~9%) of the snap pitch as it appears on screen, and cadhalfdotsize scales the
+ * same way. That couples a pure CURSOR setting to how the drawing RENDERS -- so
+ * doubling the snap (the Alt+Up / Alt+Down bindkeys, the View menu items, the snap
+ * dialog, the statusbar entry, `xschem set cadsnap`) also doubles the thickness of
+ * every wire, symbol line and pin-rectangle outline and grows the junction dots.
+ * That is not what "change the snap spacing" means to the user, and it is the
+ * defect this indirection removes.
+ *
+ * `linewidth_follows_snap` (MIRRORED IN TCL, xschem.tcl) picks the length:
+ *   0 = DEFAULT: the startup snap, fixed. Line weight and dot size then track ZOOM
+ *       only -- which is what change_linewidth's own comment ("choose line width
+ *       automatically based on zoom") describes -- and snap becomes orthogonal to
+ *       rendering. At the default snap the result is bit-identical to stock, so a
+ *       session that never changes the snap draws exactly as before.
+ *   1 = the old stock coupling, for anyone who wants line weight to follow the grid.
+ * See doc/claude/specs/snap_spacing_bindkeys.md section 5. */
+double linewidth_ref_snap(void)
+{
+  double cs = tclgetdoublevar("cadsnap");
+  if(tclgetboolvar("linewidth_follows_snap")) return cs;
+  /* before the first set_snap() (very early startup) there is no recorded default
+   * yet -- fall back to the live value, which IS the startup value at that point. */
+  if(default_snap <= 0.0) return cs ? cs : CADSNAP;
+  return default_snap;
+}
+
+/* cadhalfdotsize (junction/pin dot radius) from the reference snap. Four call sites
+ * computed this inline from the live cadsnap; they all funnel here so the
+ * linewidth_follows_snap decision is made in exactly one place. */
+void set_dotsize_from_snap(void)
+{
+  double cs = linewidth_ref_snap();
+  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+}
+
 void set_snap(double newsnap) /*  20161212 set new snap factor and just notify new value */
 {
-    static double default_snap = -1.0; /* safe to keep even with multiple schematics, set at program start */
     double cs;
 
     cs = tclgetdoublevar("cadsnap");
@@ -357,8 +401,8 @@ void set_snap(double newsnap) /*  20161212 set new snap factor and just notify n
         tclvareval(xctx->top_path, ".statusbar.3 configure -background OrangeRed", NULL);
       }
     }
-    xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
-    tclsetdoublevar("cadsnap", cs);
+    tclsetdoublevar("cadsnap", cs);   /* set BEFORE the dot size: it reads cadsnap back */
+    set_dotsize_from_snap();
 }
 
 void set_grid(double newgrid)
@@ -4148,7 +4192,6 @@ void zoom_full(int dr, int sel, int flags, double shrink)
   xRect boundbox;
   double yzoom;
   double bboxw, bboxh, schw, schh;
-  double cs = tclgetdoublevar("cadsnap");
   if(flags & 1) {
     if(xctx->change_lw) {
       xctx->lw = 1.;
@@ -4185,7 +4228,7 @@ void zoom_full(int dr, int sel, int flags, double shrink)
   dbg(1, "zoom_full(): current_name=%s\n", xctx->current_name);
   if(flags & 1) change_linewidth(-1.);
   /* we do this here since change_linewidth may not be called  if flags & 1 == 0*/
-  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+  set_dotsize_from_snap();
   if(dr && has_x) {
     draw();
     redraw_w_a_l_r_p_z_rubbers(1);

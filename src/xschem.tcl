@@ -13802,6 +13802,7 @@ set tctx::global_list {
  graph_vlegend hide_empty_graphs
  hide_symbols incr_hilight incremental_select infix_interface infowindow_text intuitive_interface
  keep_symbols label_ride label_splits_wires launcher_default_program light_colors line_width
+ linewidth_follows_snap
  live_cursor2_backannotate
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
@@ -14803,6 +14804,12 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar.view add checkbutton -label "Toggle variable line width" -variable change_lw \
      -selectcolor $selectcolor -accelerator {_} -command {xschem set change_lw $change_lw}
+  # Off by default: the automatic line width and the junction/pin dot radius then
+  # scale with the STARTUP snap, not the live one, so changing the snap spacing does
+  # not restyle the drawing. Ticking this restores the old stock coupling.
+  $topwin.menubar.view add checkbutton -label "Line width follows snap" \
+     -variable linewidth_follows_snap -selectcolor $selectcolor -accelerator {} \
+     -command {xschem set linewidth_follows_snap $linewidth_follows_snap}
   $topwin.menubar.view add command -label "Set line width" -accelerator {Alt+-} \
        -command {
          input_line "Enter linewidth (float):" "xschem line_width"
@@ -15717,6 +15724,17 @@ set_ne fullscreen 0
 set_ne unzoom_nodrift 0
 set_ne zoom_full_center 0
 set_ne change_lw 1
+## MIRRORED IN C (actions.c linewidth_ref_snap). Whether the automatic line width
+## and the wire-junction / pin dot radius scale with the LIVE snap.
+##   0 = DEFAULT: they scale with the snap in force at STARTUP, so line weight and
+##       dot size track zoom only and changing the snap (Alt+Up/Alt+Down, the View
+##       menu items, the snap dialog, the statusbar entry, `xschem set cadsnap`)
+##       leaves the drawing's weight alone. At the default snap this renders exactly
+##       as it always did.
+##   1 = the old stock coupling: doubling the snap doubles every wire/symbol/pin
+##       outline and grows the junction dots.
+## See doc/claude/specs/snap_spacing_bindkeys.md section 5.
+set_ne linewidth_follows_snap 0
 set_ne line_width 0
 set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}

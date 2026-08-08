@@ -2366,6 +2366,10 @@ extern void sleep_ms(int milliseconds);
 extern double timer(int start);
 extern void enable_layers(void);
 extern void set_snap(double);
+/* reference length the auto line width / junction-dot radius scale with; the live
+ * cadsnap only when `linewidth_follows_snap` (MIRRORED IN TCL) is set. actions.c */
+extern double linewidth_ref_snap(void);
+extern void set_dotsize_from_snap(void);
 extern void set_grid(double);
 extern void create_plot_cmd(void);
 extern int set_modify(int mod); /* return number of floaters */

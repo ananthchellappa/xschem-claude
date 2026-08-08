@@ -190,6 +190,74 @@ check "...and does not also scroll" \
 event generate .drw <Key-Down> -state 8 -x 400 -y 300 ; update idletasks
 check "Tk <Key-Down> -state 8 reaches view.snap_half" [expr {$cadsnap == 10}] "got $cadsnap"
 
+# --- 8c. snap is ORTHOGONAL to how the drawing renders -----------------------
+# Stock XSCHEM scaled the automatic line width and the wire-junction / pin dot
+# radius with the LIVE cadsnap (`lw = mooz * 0.09 * cadsnap * k`), so doubling the
+# snap doubled every wire, symbol line and pin-rectangle outline and grew the dots.
+# `linewidth_follows_snap` (default 0) pins the reference to the STARTUP snap.
+proc gvar {k} {
+  foreach l [split [xschem globals] \n] {
+    if {[string match "$k=*" $l]} { return [string range $l [expr {[string length $k] + 1}] end] }
+  }
+  return {}
+}
+proc weight {} { list [gvar lw] [gvar cadhalfdotsize] }
+
+xschem load xschem_library/examples/nand2.sch
+xschem zoom_full ; update idletasks
+check "linewidth_follows_snap defaults to 0" [expr {$linewidth_follows_snap == 0}]
+xschem set cadsnap 10
+set w0 [weight]
+foreach s {20 40 5 80} {
+  xschem set cadsnap $s
+  check "snap $s leaves line width + dot size alone" [expr {[weight] eq $w0}] "was $w0 now [weight]"
+}
+xschem set cadsnap 10
+# ...and the chords themselves, not just `xschem set cadsnap`
+key $UP $ALT ; key $UP $ALT
+check "Alt+Up x2 leaves line width + dot size alone" [expr {[weight] eq $w0}] "was $w0 now [weight]"
+key $DOWN $ALT ; key $DOWN $ALT
+
+# zoom must STILL drive the line width -- this decouples snap, not zoom
+xschem zoom_in ; update idletasks
+check "zoom still changes the line width" [expr {[weight] ne $w0}] "was $w0 now [weight]"
+xschem zoom_out ; update idletasks
+
+# the same in the symbol editor
+xschem load xschem_library/devices/nmos4.sym
+xschem zoom_full ; update idletasks
+xschem set cadsnap 10
+set ws [weight]
+xschem set cadsnap 40
+check "symbol view: snap 40 leaves line width + dot size alone" \
+  [expr {[weight] eq $ws}] "was $ws now [weight]"
+xschem set cadsnap 10
+
+# opting back in restores the old stock coupling
+xschem load xschem_library/examples/nand2.sch
+xschem zoom_full ; update idletasks
+xschem set linewidth_follows_snap 1
+xschem set cadsnap 10
+set w1 [weight]
+xschem set cadsnap 40
+check "linewidth_follows_snap 1 restores the stock coupling" \
+  [expr {[weight] ne $w1}] "was $w1 now [weight]"
+xschem set linewidth_follows_snap 0
+xschem set cadsnap 40
+check "back to 0: the weight is snap-independent again" \
+  [expr {[weight] eq $w1}] "was $w1 now [weight]"
+xschem set cadsnap 10
+
+# the knob is reachable from the GUI, not only from a script
+set found 0
+if {[winfo exists .menubar.view]} {
+  for {set i 0} {$i <= [.menubar.view index end]} {incr i} {
+    if {[catch {.menubar.view entrycget $i -label} lbl]} continue
+    if {$lbl eq "Line width follows snap"} { set found 1 ; break }
+  }
+}
+check "View menu offers 'Line width follows snap'" $found
+
 # --- 9. the shipped rc installs the rows ------------------------------------
 # Read the file rather than sourcing it: cadence_style_rc pulls in the whole
 # Cadence UX (library registry, forms, extra toplevels) and would reshape the

@@ -9558,7 +9558,6 @@ void draw(void)
   int cc, c, i = 0 /*, floaters = 0 */;
   xSymbol *symptr;
   int textlayer;
-  double cs;
   #if HAS_CAIRO==1
   const char *textfont;
   #endif
@@ -9572,10 +9571,9 @@ void draw(void)
    * global default (1.0) -- headless runs that still reach draw() (e.g. scripted
    * move_objects) then produce clean output instead of per-call Tk warnings. */
   if(has_x) tk_scaling = atof(tcleval("tk scaling"));
-  cs = tclgetdoublevar("cadsnap");
   xctx->ev_precision = tclgetintvar("ev_precision");
   cairo_font_scale  = tclgetdoublevar("cairo_font_scale");
-  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+  set_dotsize_from_snap();   /* reference snap, not the live one (actions.c) */
   xctx->crosshair_layer = tclgetintvar("crosshair_layer");
   if(xctx->crosshair_layer < 0 ) xctx->crosshair_layer = 2;
   if(xctx->crosshair_layer >= cadlayers ) xctx->crosshair_layer = 2;

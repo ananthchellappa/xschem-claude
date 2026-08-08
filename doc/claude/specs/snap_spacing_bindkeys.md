@@ -3,8 +3,10 @@
 Status: **implemented**.
 Related: `src/cadence_style_rc` (the two bind lines), `src/callback.c`
 (`view_snap_change` — the core and its self-log), `src/util.c` / `src/util.h`
-(`log_action_result`), `tests/headless/test_snap_bindkeys.tcl`,
-`tests/headless/test_phase3_mints.tcl`.
+(`log_action_result`), `src/actions.c` (`linewidth_ref_snap` /
+`set_dotsize_from_snap`), `src/xinit.c` (`change_linewidth`), `src/xschem.tcl`
+(the `linewidth_follows_snap` default + View menu item),
+`tests/headless/test_snap_bindkeys.tcl`, `tests/headless/test_phase3_mints.tcl`.
 Builds on: `doc/claude/specs/keybind_snap_grid_actions.md` (the actions and why they
 ship unbound), issue `doc/claude/issues/0066-xschem-set-config-changes-not-logged.md`
 (the "log the resolved absolute value" rule), `doc/claude/specs/action_logging.md`.
@@ -103,7 +105,48 @@ statusbar field turning orange, which is invisible while the eye is on the
 schematic. The command line alone states the new value but not the direction or
 where it came from.
 
-## 4. Tests
+## 4. Snap is orthogonal to how the drawing renders (`linewidth_follows_snap`)
+
+Stock XSCHEM made the snap a **rendering scale**, not just a cursor setting.
+`change_linewidth()` computed
+
+```
+xctx->lw = mooz * 0.09 * cadsnap * (1 + max(min_lw,1)/4)
+```
+
+— `lw` is in **pixels** and `mooz` is pixels-per-schematic-unit, so this pins every
+drawn line at ~9% of the **snap pitch as it appears on screen**. The
+wire-junction / pin dot radius did the same:
+`cadhalfdotsize = CADHALFDOTSIZE * min(cadsnap,20) / 10`.
+
+So doubling the snap doubled the thickness of every wire, every symbol line and
+every pin-rectangle outline, and grew the junction/pin dots — which is what the
+Alt+Up / Alt+Down chords surfaced immediately. It was never specific to the
+chords: `xschem set cadsnap`, the View-menu items, the snap dialog and the
+statusbar entry all did it, which is why the fix is at the shared core rather
+than in the key path.
+
+`linewidth_ref_snap()` (`actions.c`) is now the single place that decides which
+length is used, and the four sites that computed the dot radius inline
+(`set_snap`, `change_linewidth`, `draw()`, `zoom_full`) all funnel through
+`set_dotsize_from_snap()`.
+
+| `linewidth_follows_snap` | reference length | behavior |
+|---|---|---|
+| **0 (default)** | the snap in force at **startup** | line weight + dot size track **zoom only**; snap is orthogonal to rendering |
+| 1 | the **live** `cadsnap` | the old stock coupling |
+
+At the default snap the two are **bit-identical**, so a session that never changes
+the snap draws exactly as it always did. Mirrored in Tcl (`set_ne
+linewidth_follows_snap 0`, `xschem.tcl`), settable live from **View > "Line width
+follows snap"** or `xschem set linewidth_follows_snap 0|1` (which recomputes and
+redraws). It is a display preference, so it is **unlogged** by the 0066 policy-c
+rule, like `change_lw` and the other pure-display `set` targets.
+
+`change_lw` is unrelated and unchanged: it still turns zoom-adaptive width off
+entirely.
+
+## 5. Tests
 
 `tests/headless/test_snap_bindkeys.tcl` (in `full_audit.sh`'s `logdir_tests`) covers:
 actions bindable to the chords; x2 / x0.5 in a schematic; the same in a **symbol**;
@@ -111,7 +154,10 @@ on a **read-only** view; the absolute command line + the `#= ` outcome in the fi
 **and** in the CIW pane; absence of the relative `xschem snap half|double` line;
 `xschem snap double` from a script logging identically; the logged line **replaying**
 to the same snap; unbind making the chord inert and a remap (Ctrl+KP_Add/Subtract)
-working; plain Up/Down still scrolling and not touching snap; and that the shipped
+working; plain Up/Down still scrolling and not touching snap; **orthogonality** —
+`lw` and `cadhalfdotsize` (read back through `xschem globals`) unchanged across
+snap 5..80 in both a schematic and a symbol, while **zoom** still moves them, and
+`linewidth_follows_snap 1` restoring the old coupling; and that the shipped
 `src/cadence_style_rc` really contains the two rows.
 
 `test_phase3_mints.tcl`'s two `key g` / `key G` rows were **stale** — keysyms 103/71

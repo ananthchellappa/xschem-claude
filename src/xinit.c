@@ -2656,11 +2656,14 @@ void change_linewidth(double w)
   /* choose line width automatically based on zoom */
   dbg(1, "change_linewidth(): w = %g, win_path=%s lw=%g\n", w, xctx->current_win_path, xctx->lw);
   if(w<0. || xctx->lw == -1.0) {
-    double cs = tclgetdoublevar("cadsnap");
+    /* NOT the live cadsnap: the reference length is fixed at the startup snap unless
+     * `linewidth_follows_snap` is set, so changing the snap does not restyle the
+     * drawing (linewidth_ref_snap, actions.c). */
+    double cs = linewidth_ref_snap();
     if(xctx->change_lw)  {
       xctx->lw=xctx->mooz * 0.09 * cs * (1.0 + MAJOR(xctx->min_lw, 1.0) / 4.0);
       if(xctx->lw > 100.) xctx->lw = 100.;
-      xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+      set_dotsize_from_snap();
     }
   /* explicitly set line width */
   } else {

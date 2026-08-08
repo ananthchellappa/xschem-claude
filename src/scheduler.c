@@ -11216,6 +11216,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             dbg(1, "xschem change_lw: change_lw = %d\n", xctx->change_lw);
             tclsetboolvar("change_lw", xctx->change_lw);
           }
+          /* whether the auto line width / junction-dot radius scale with the LIVE snap
+           * (1) or with the startup snap (0, default: snap stays orthogonal to how the
+           * drawing renders -- linewidth_ref_snap, actions.c). Pure display preference,
+           * so unlogged by 0066 policy c; recompute + redraw so the toggle is live. */
+          else if(!strcmp(argv[2], "linewidth_follows_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            tclsetboolvar("linewidth_follows_snap", atoi(argv[3]) ? 1 : 0);
+            change_linewidth(-1.);
+            draw();
+          }
           else if(!strcmp(argv[2], "color_ps")) { /* set color psoscript (1 or 0) */
             color_ps=atoi(argv[3]);
           }
