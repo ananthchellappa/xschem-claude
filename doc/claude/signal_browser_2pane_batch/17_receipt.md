@@ -142,5 +142,7 @@ unreadable.
   checkboxes are still inert.
 * **Wires, pins and text.** `-type instance` is a declared limit: selecting a
   NET and asking to show it wants a signal ROW, not a node, and has no rulings.
-* **The eyeball.** Nobody has yet watched the tree expand to `x1.x2` on a real
-  Ctrl-5 with `x2` merely selected.
+* ~~**The eyeball.**~~ **DONE, by the driver, 2026-08-07.** Ctrl-5 with `x2`
+  selected inside `x1` of `tb_bandgap` in the `sky130_tests_ase` workarea (the
+  real 69 MB `tb_bandgap_ase.raw`, not a fixture): the tree expands to `x1.x2`
+  and the lower pane shows that level, with no descend. Reported good.
