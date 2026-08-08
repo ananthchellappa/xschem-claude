@@ -15,12 +15,27 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 14 **and its verification fixup**,
-both arms green.
-Re-measure before item 15 and record any drift here; do **not** silently adopt a
+Measured **2026-08-08** after two-pane item 15, both arms green.
+Re-measure before item 16 and record any drift here; do **not** silently adopt a
 new baseline.
 
-> **⚠ THE BASELINE MOVED WITH ITEM 14 — headless 1619 → 1627, X 2149 → 2170,**
+> **⚠ THE BASELINE MOVED WITH ITEM 15 — headless 1628 → 1637, X 2174 → 2192.**
+> **Reason, in one line:** item 15 added **18 check calls** and they are all in
+> two files — `i14` 47 → **56** headless (`BD60`-`BD66b`, the nine PURE checks)
+> and 91 → **107** in X (those nine plus `BD67`/`BD68`/`BD69`/`BD70`/`BD70b`/
+> `BD70c`/`BD70d`), and `i1315` 188 → **190** in X only (`BP43a`'s new negative
+> control and `BP47b`, the id-scheme control — the headless arm is unchanged at
+> 88). Every other file and every other suite is byte-identical in both arms.
+> Not adopted from the implementer's run: **both arms were re-measured
+> independently by the item-15 verifier** — all 14 headless files run by hand
+> (1637 / 0 fail, every per-file figure exact) and all 11 X suites through
+> `xarm.sh suites` under Xvfb with `SUITE_TIMEOUT=400` (11/11, 2192). The
+> item-15 implementer had also RE-MEASURED the item-14 baseline on the unchanged
+> tree first — headless 1628, X 11/11 2174, every per-file and per-suite figure
+> EXACT, no drift — so these deltas are attributable.
+>
+> **The item-14 note, kept:** **THE BASELINE MOVED WITH ITEM 14 — headless**
+> **1619 → 1627, X 2149 → 2170,**
 > **AND AGAIN WITH ITS FIXUP — headless 1627 → 1628, X 2170 → 2174.**
 > **The fixup's whole delta is in `i1315`:** 87 → **88** headless (`BP75`, the
 > both-arms SOURCE half) and 184 → **188** in X (`BP75` + `BP76`'s fixture +
@@ -53,27 +68,27 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1628 checks over 14 files, 0 fail**
+**headless — 1637 checks over 14 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
 |---|---|---|---|
-| `test_wave_sigsearch` | 146 | `test_wave_sigbrowser_i14` | 47 |
-| `test_wave_sigbrowser_sea` | 6 | `test_wave_grid` | **231** |
+| `test_wave_sigsearch` | 146 | `test_wave_sigbrowser_i14` | **56** |
+| `test_wave_sigbrowser_sea` | 6 | `test_wave_grid` | 231 |
 | `test_wave_sigbrowser` | 135 | `test_wave_modes` | 212 |
 | `test_wave_sigbrowser_2pane` | 108 | `test_wave_viewer` | 57 |
-| `test_wave_sigbrowser_panes` | **15** | `test_wave_markers` | 437 |
+| `test_wave_sigbrowser_panes` | 15 | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
-| `test_wave_sigbrowser_i1315` | **88** | **TOTAL** | **1628** |
+| `test_wave_sigbrowser_i1315` | 88 | **TOTAL** | **1637** |
 
 **X arm — 11/11 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
 > **⚠ MEASURED 2026-08-07: the Xvfb arm reproduces the `:0` arm EXACTLY.** All
 > eleven per-suite counts identical, 11/11 both ways, **2136 checks** either way
 > (that equivalence was established at the item-12 baseline; item 13 moves the
-> total to **2149** and item 14 to **2170** — see the table; the equivalence
-> itself is unaffected).
+> total to **2149**, item 14 to **2170**, its fixup to **2174** and item 15 to
+> **2192** — see the table; the equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -82,13 +97,13 @@ new baseline.
 
 | suite | checks | suite | checks |
 |---|---|---|---|
-| `panes` | **81** | `2pane` | 108 |
+| `panes` | 81 | `2pane` | 108 |
 | `sigbrowser` | 353 | `sigsearch` | 233 |
-| `sea` | 79 | `grid` | **356** |
-| `i11` | 74 | `modes` | **488** |
+| `sea` | 79 | `grid` | 356 |
+| `i11` | 74 | `modes` | 488 |
 | `i12` | 123 | | |
-| `i1315` | **188** | **TOTAL** | **2174** |
-| `i14` | **91** | | |
+| `i1315` | **190** | **TOTAL** | **2192** |
+| `i14` | **107** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
 *not* regressions and must be re-run before being called a fail: `BR25`
@@ -257,7 +272,66 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       **uncommitted** modification to `13_receipt.md` (mtime 00:42:21, ~68 min
       BEFORE the `1990d00e` commit at 01:50:36 — item 13's leftover, not an
       item-14 scope violation). Land it or drop it before item 15.
-- [ ] 15 — R7: All-DBs headers + a design root per DB
+- [E] 15 — R7: All-DBs headers + a design root per DB **-> DONE-PIXEL
+      (`e1cfd5ff`)**. `[E]` and never `[x]`: the deliverable is a tree whose top
+      level changes shape on screen, and no check in this batch judges pixels —
+      the new checks judge widget STATE (ids, text, `-open`, selection), and the
+      X arm ran under **Xvfb**, with no window manager. Eyeball script:
+      `15_receipt.md` §11.
+      — **18 new check calls** (`BD60`-`BD66b` PURE + `BD67`-`BD70d` in `i14`,
+      `BP43a`'s negative control + `BP47b` in `i1315`) + **15 restated, none
+      deleted**, three of which are TOMBSTONES whose own comments already spelled
+      out what item 15 owed (`BD48c`, `BD50c`, `BP43a`). Headless **1628 →
+      1637**, X **11/11**, 2174 → **2192**. **7/7 of the item's own sabotages
+      fire**, plus **three the verifier invented** (`VS1`/`VS2`/`VS3`) and a
+      verbatim replay of `S6`; every positive control held and the tree was
+      restored byte-exact each time.
+      **⚠ THE PLAN'S CENTRAL PRESCRIPTION WAS REFUSED, ON A MEASUREMENT.** PLAN
+      item 15 gives group 0 a `d:0|` prefix. It gets a HEADER and keeps its BARE
+      ids. Spec §4.3's closing sentence rules the same way, but the deciding fact
+      came out of the FIRST RED RUN: the prefix would carry the DB's **registry
+      index**, which is not a property of the design, and `i1315`'s restore
+      fixture moves the current DB from slot **1** to slot **0** — so every
+      persisted `d:1|g:x1.x2` would name a row that no longer exists and the
+      user's selection and open set would silently evaporate, reding
+      `BP52`-`BP55` with **no defect in the persistence code at all**. The
+      verifier reproduced this from the other side: sabotage `VS3` (collapse
+      "absent" and "deliberately empty" prefix) reds 17 in `i14` and 9 in
+      `i1315` **including `BP52`-`BP55`**. Blast radius fell from ~20 existing
+      checks to 15; six the PLAN's design would have re-keyed (`BD51b`, `BD54`,
+      `BD58b`, `BP52`, `BP54`, `BP55`) stayed byte-identical, and that is the
+      evidence for the ruling. `BP47b` pins the drift AND the survival, on
+      literals rather than on "they are equal".
+      **⚠ FOUR MORE PLAN ERRORS, EACH MEASURED.** (a) `BD67`'s prescribed
+      `db_label $cur` throws `wrong # args` — the proc takes TWO. (b) `BD68`'s
+      `{d:0 d:1}` and `BD70`'s `{d:0|g:}` name the WRONG DB: in the `i14` fixture
+      the current DB is registry slot **1** (`BD31`/`BD31b`/`BD43` pin it), so
+      every X check now derives its header id from the ENGINE and `BD67` asserts
+      the derived index itself. (c) `BD65`'s id is backwards for that fixture.
+      (d) The break-list names **2** existing checks and describes `BD51` in a
+      form two-pane item 10 had already replaced; the real radius is **15**.
+      **⚠ ONE VACUITY CAUGHT BY THE RED RUN, FIXED AND NOT EXCUSED.** `BD69` as
+      first written asserted item 10's already-shipped box-OFF shape and PASSED
+      before the code existed. Its reading became a CAPTURE folded into `BD68`'s
+      own tuple as leg 1, and the `BD69` id was re-spent on a red-before claim —
+      R5's guard that a search keystroke never re-opens a DB header the user
+      collapsed. **`BD69` is the SOLE witness to the mirror defect** (opening the
+      header on EVERY populate, the verifier's `VS2`); `BD70b` is the sole
+      witness to the opposite one (`S6`, never opening it). Neither may be
+      weakened. ⚠ `15_receipt.md` shipped one sentence misattributing `S6` to
+      `BD69`; corrected in §7 after the verifier replayed `S6` verbatim.
+      **⚠ TWO SPEC CLAUSES DIVERGED FROM, BOTH FLAGGED.** §4.1's "this is the
+      single change in `browser_populate`" becomes two (the current DB's header
+      is born open as well as its root, or R4's selected root sits inside a
+      collapsed parent and §4.2 forbids `see` there — `BW53`); and §4.3's
+      "unlabelled" clause is now stale. **Item 19 owns the spec edit.**
+      **⚠ SIX DECLARED LIMITS, two of them asserted as VALUES in checks rather
+      than only in prose** (`BP53` leg 4, `BD70d`). The one item 16+ should know:
+      a persisted **DB-header** open state does not survive a registry renumber —
+      §4.2 says the persisted `open` set wins and it named the old slot, so the
+      header comes back COLLAPSED. Selection and instance-node collapse survive,
+      which is the whole point of the unprefixed ids. **Next free `BD71` /
+      `BP78`.**
 - [ ] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion
 - [ ] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
 - [ ] 18 — R12: auto-tick, reveal, and say so
@@ -291,6 +365,7 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
 
 | item | commit | what to look at | eyeballed? |
 |---|---|---|---|
+| 15 | `e1cfd5ff` | With **two raws loaded**, tick the **All-DBs** box. The tree's TOP LEVEL must become one row per database — **the current one included** — and each header must carry that database's **own** design root, named for **its own** raw (not the current design's name under a foreign header). The current DB's header **and** root come back **OPEN**; the foreign header stays **COLLAPSED**. Then collapse a header by hand and **type in the search bar** — it must stay collapsed. Judge indentation, nesting legibility and label truncation on a **real** raw path. Full script: `15_receipt.md` §11. **A one-DB tree answers nothing**, and neither does the box left OFF. | ☐ |
 | 14 | *(this item)* | Drag the **sash** small, tick **Show device internals**, save/quit/reopen: both must come back. Then reopen into a **shorter** window — the sash must return to the same *proportion*, not the same pixel row. A window you never drag must have **no `browser` key** in its state at all. Full script: `14_receipt.md` §7.7. | ☐ |
 | 13 | `24fb6769` + `9d5cdd26` | **Tools → Show in Signal Browser** (Ctrl+5 today; R10's Ctrl-Alt-V is item 17b's and does NOT exist yet) with an instance that **CONTAINS other instances** selected. (a) the tree row scrolls in, is selected, expander stays **CLOSED**; (b) the LOWER pane fills with **that node's own-level signals**; (c) clicking the expander still opens it. Full script: `13_receipt.md` §9. **A LEAF instance answers nothing** — that node class is exactly where the batch's checks were blind. | ☐ |
 
