@@ -32,6 +32,15 @@
 #   20-39  throwaway toplevels Tk/X only
 #   40-59  REAL viewer + REAL raw files, Tk/X only
 #
+# ⚠ AMENDMENT, TWO-PANE ITEM 14 (`sash`/`devint`/`srccur` persistence). The
+# scheme above is AT CAPACITY: BP60/BP61 are the teardown pair and already
+# overflowed out of 01-18 into the real-viewer block, so squeezing item 14's ids
+# back into 01-18 would renumber checks that exist. The band is EXTENDED instead,
+# and the arm is carried in the id rather than in the block:
+#   62-68  SOURCE + PURE      both arms   (item 14)
+#   69-74  REAL viewer        Tk/X only   (item 14)
+# Next free after this item: BP75.
+#
 # ⚠ THE FOOTPRINT CLAIM, MADE EXPLICITLY BECAUSE RULING 30 WAS CUT ON IT.
 # Ruling 30's split point was NOT the check count: across 8 pre-split runs the
 # deaths landed in `BH5x` and `BX4x/BX5x` — the only two groups holding a REAL
@@ -277,6 +286,46 @@ proc bp_order_probe {token tv anc sel open} {
   set a [bp_apply_read $token $tv $anc [dict create sel $sel]]
   set b [bp_apply_read $token $tv $anc [dict create open $open sel $sel]]
   return [list $a $b [bp_sel $tv]]
+}
+
+# --- SOURCE ORDERING AS AN ASSERTABLE STRING (two-pane item 14) --------------
+# ⚠ NEVER A BOOLEAN AND NEVER A THROW, for the reason the whole file is built
+# on: "the needle I am ordering vanished" and "the needles are in the wrong
+# order" are DIFFERENT DEFECTS and must be different values. A boolean collapses
+# them, and `string first` answering -1 makes `-1 < 5` read TRUE — i.e. a
+# DELETED first step would report correct order.
+#   ok                the three needles appear once each, in the order given
+#   missing:<needle>  the FIRST one that is not in the body at all
+#   wrong:<i> <j> <k> all three present, but not in that order
+# --- WHICH FIELDS A STATE DICT DEPARTS IN (two-pane item 14) ------------------
+# ⚠ A LIST OF KEY NAMES, NOT A BOOLEAN, and the difference is the whole value of
+# it: `browser_state_is_default` answers 0 for "the sash leaked into every
+# window" and 0 for "the sidebar is open, which is what the test asked for", and
+# a check built on the boolean cannot tell a real defect from its own fixture.
+# `hist` is excluded for the same reason `browser_state_is_default` excludes it
+# (divergence D-A: a global disk-backed store would make the answer depend on
+# the developer's home directory). `no-state` when there is no window at all.
+proc bp_nondefault_keys {d} {
+  if {$d eq {} || [string range $d 0 3] eq {ERR:}} { return no-state }
+  if {[catch {wviewer::browser_state_default} def]} { return no-default }
+  set out {}
+  foreach k [dict keys $def] {
+    if {$k eq {hist}} { continue }
+    if {[wviewer::dget $d $k {NO-KEY}] ne [dict get $def $k]} { lappend out $k }
+  }
+  if {![llength $out]} { return none }
+  return $out
+}
+
+proc bp_order3 {body a b c} {
+  foreach n [list $a $b $c] {
+    if {[string first $n $body] < 0} { return "missing:$n" }
+  }
+  set i [string first $a $body]
+  set j [string first $b $body]
+  set k [string first $c $body]
+  if {$i < $j && $j < $k} { return ok }
+  return "wrong:$i $j $k"
 }
 
 if {[catch {
@@ -857,8 +906,15 @@ check {BP09 no item-15 body serialises the wave-highlight set (WH9j, D4)} \
 # ============================================================================
 set bp_def [wviewer::browser_state_default]
 
+# ⚠⚠ RESTATED BY TWO-PANE ITEM 14, WHICH APPENDED THREE KEYS. `sash devint
+# srccur` go on the END and nowhere else: `browser_state_is_default` is a
+# whole-dict STRING compare, so an INSERTED key makes the default dict and the
+# reader's build order disagree forever and the gate can never close again
+# (BP41/BP42 and test_wave_modes.tcl MG9 all go red with a confusing diff). The
+# append rule exists to make that mistake loud, and this is where it is loud.
 check {BP10 browser_state_default's key list is the snapshot shape} \
-  [dict keys $bp_def] {shown width search filter dest open sel hist}
+  [dict keys $bp_def] \
+  {shown width search filter dest open sel hist sash devint srccur}
 # ⚠ THE SUB-DICT SHAPES MUST MATCH searchbar_get's OUTPUT EXACTLY, key order
 # included — the equality test in is_default is a STRING compare, so a reordered
 # default would make the gate permanently false and `browser` would be emitted
@@ -885,7 +941,21 @@ check {BP12 is_default stays 1 when ONLY hist differs (D-A)} \
 
 # ...and 0 for every field that DOES count. One list, so a single field slipping
 # out of the comparison is one visible element, not a silently passing check.
-check {BP13 is_default is 0 for each field that counts} \
+#
+# ⚠⚠ RESTATED BY TWO-PANE ITEM 14: seven legs became TEN. ⚠ `srccur`'s
+# NON-DEFAULT VALUE IS 0, NOT 1 — R11's two boxes have OPPOSITE defaults (device
+# internals OFF, source currents ON), so `[dict replace $bp_def srccur 1]` would
+# replace the default with itself, `is_default` would answer 1, and the leg would
+# red on correct code. The asymmetry is the ruling, not a typo to be tidied.
+#
+# ⚠⚠ THE LAST THREE LEGS ARE `1`, AND THEY ARE THE ANTI-VACUITY LEGS — MEASURED
+# ON THE RED RUN. A `dict replace` on a key the dict does not HAVE is an INSERT,
+# so before item 14 existed the three `0` legs above were already green: they
+# were reporting "the dict grew a key", not "the field counts". Replacing each
+# field with its OWN DEFAULT must answer 1, which is only possible once the key
+# is really in the default dict — so the six legs together say "this field is
+# present, and it counts", which neither half says alone.
+check {BP13 is_default is 0 for each field that counts, and 1 when that same field is at its default} \
   [list [pcall wviewer::browser_state_is_default [dict replace $bp_def shown 1]] \
         [pcall wviewer::browser_state_is_default [dict replace $bp_def width 260]] \
         [pcall wviewer::browser_state_is_default [dict replace $bp_def dest newstrip]] \
@@ -896,8 +966,14 @@ check {BP13 is_default is 0 for each field that counts} \
               {pattern v* syntax shell case 0 type all alldbs 0}]] \
         [pcall wviewer::browser_state_is_default \
            [dict replace $bp_def filter \
-              {pattern {} syntax regexp case 0 type all}]]] \
-  [list 0 0 0 0 0 0 0]
+              {pattern {} syntax regexp case 0 type all}]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def sash 0.6]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def devint 1]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def srccur 0]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def sash 0]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def devint 0]] \
+        [pcall wviewer::browser_state_is_default [dict replace $bp_def srccur 1]]] \
+  [list 0 0 0 0 0 0 0 0 0 0 1 1 1]
 # a torn state must be an ANSWER, never a throw (driver note (e))
 check {BP14 is_default answers 0 on garbage rather than throwing} \
   [pcall wviewer::browser_state_is_default {this is not a dict at all}] 0
@@ -948,6 +1024,99 @@ check {BP19 ...and the tree writer likewise} \
   [list [pcall wviewer::browser_tree_apply tokBP {}] \
         [pcall wviewer::browser_tree_apply tokBP {open {} sel {}}]] \
   [list 0 0]
+
+# ============================================================================
+# BP62-BP68 — TWO-PANE ITEM 14, PURE + SOURCE, BOTH ARMS.
+#
+# The item persists three fields the browser already had but threw away on every
+# window build: the SASH fraction between the two panes and R11's two class
+# checkboxes. Spec doc/claude/specs/waveform_signal_browser_two_pane.md §9 and
+# R11; PLAN doc/claude/signal_browser_2pane_batch/PLAN.md two-pane item 14.
+#
+# ⚠⚠ THE ONE THING THAT MAKES THIS ITEM HARD IS ALSO THE ONE THING THAT MAKES IT
+# SILENTLY GREEN, so it is asserted from three sides below. `browser_sash`'s READ
+# arm is not a getter: it APPLIES the split and answers the LAYOUT default 0.55
+# on a window nobody has ever touched. Read THAT from the state writer and the
+# whole-dict compare in `browser_state_is_default` can never be true again —
+# every viewer's snapshot grows a `browser` key, and MG9 (a file this batch does
+# not own), BP41 and BP42 all go red at once. The cure is a SEPARATE pure reader
+# whose answer is "nobody chose a split" (0), never the layout default; BP63 and
+# BP67 are its source and behaviour halves and BP69 is its live one.
+# ============================================================================
+set bp_pref [wvproc_body $wsrc wviewer::browser_sash_pref]
+set bp_drop [wvproc_body $wsrc wviewer::browser_sash_drop]
+
+# ⚠ A `{NO-KEY}` READ, NOT `dict get` (driver note (e)): before the item lands
+# the keys do not exist, and `dict get` would THROW past the check into the
+# file's outer catch and delete every check after it.
+check {BP62 (PURE) the three new defaults are R11's ASYMMETRIC pair plus a ZERO sash} \
+  [list [wviewer::dget $bp_def sash   {NO-KEY}] \
+        [wviewer::dget $bp_def devint {NO-KEY}] \
+        [wviewer::dget $bp_def srccur {NO-KEY}]] \
+  [list 0 0 1]
+
+# THE SILENT-GREEN TWIN, ASSERTED IN THE SOURCE. Legs 2 and 3 are ZERO both
+# before and after the item, so they carry NO evidence on their own — leg 1 is
+# what makes the tuple mean something, which is why all three are ONE check.
+check {BP63 (SOURCE) the reader takes the PREFERENCE, never the live split} \
+  [list [regexp -all {wviewer::browser_sash_pref} $bp_state] \
+        [regexp -all {sashpos} $bp_state] \
+        [regexp -all {winfo height} $bp_state]] \
+  [list 1 0 0]
+
+# BP04's rule, extended to the three new fields: each goes through ITS OWNER's
+# accessor exactly once, and the three `dict set` lines are in spec §9's order —
+# which is load-bearing, because the string compare in `browser_state_is_default`
+# tests this build order against `browser_state_default`'s.
+check {BP64 (SOURCE) the three go through their OWN accessors, in spec §9's order} \
+  [list [regexp -all {wviewer::browser_sash_pref} $bp_state] \
+        [regexp -all {wviewer::browser_devint} $bp_state] \
+        [regexp -all {wviewer::browser_srccur} $bp_state] \
+        [bp_order3 $bp_state {dict set d sash} {dict set d devint} {dict set d srccur}]] \
+  [list 1 1 1 ok]
+
+# THE WRITER'S STEP ORDER, and it is forced rather than tidy: the two boxes are
+# CLASS FILTERS, so restoring them AFTER `browser_show` would populate the tree
+# and the sea once with the wrong set and once with the right one; the SASH can
+# only be applied to a MAPPED panedwindow, which is what `browser_show`'s pack
+# branch (and its `after idle` re-apply) produces, so it goes last.
+check {BP65 (SOURCE) apply restores the boxes BEFORE browser_show and the sash AFTER the width} \
+  [bp_order3 $bp_apply {wviewer::browser_devint} {wviewer::browser_show} \
+                       {wviewer::browser_sash $token}] \
+  ok
+
+# §7.4 / divergence D-F. ⚠ LEG 4 ALONE IS VACUOUS — it is 0 on a writer that
+# does nothing at all, which is exactly the pre-item state. Legs 1-3 are the
+# positive evidence that the writer HAD three chances to log and took none.
+check {BP66 (SOURCE, §7.4) apply writes all three DIRECTLY and reaches no logging path} \
+  [list [regexp -all {wviewer::browser_devint} $bp_apply] \
+        [regexp -all {wviewer::browser_srccur} $bp_apply] \
+        [regexp -all {wviewer::browser_sash \$token} $bp_apply] \
+        [regexp -all {log_action|browser_toggle|set_plot_dest} $bp_apply]] \
+  [list 1 1 1 0]
+
+# ⚠ LEG 1 IS THE ANTI-VACUITY LEG: `wvproc_body` answers {} for a proc that does
+# not exist, and `regexp -all` over {} is 0 — so without it leg 2 is green before
+# a line of the item is written. Leg 3 also pins that the reader is usable on a
+# HIDDEN sidebar: BP57 snapshots one, and the accessor's `$h <= 1` guard would
+# answer 0 there and silently drop a real preference.
+check {BP67 (PURE) the preference reader exists, touches NO widget, and answers 0 for an unknown token} \
+  [list [expr {$bp_pref ne {}}] \
+        [regexp -all {winfo|sashpos|windows} $bp_pref] \
+        [pcall ::wviewer::browser_sash_pref nosuchtok]] \
+  [list 1 0 0]
+
+# ⚠⚠ THE CHECK THAT PROVES THE FEATURE CAN EVER FIRE FOR A USER. Without a
+# gesture writing the preference, item 14 ships a field nobody can set and every
+# round trip below is a round trip of a constant. Leg 3 is the `break` ban, and
+# it is MEASURED rather than stylistic: a ttk::panedwindow's bindtags are
+# {<pw> TPanedwindow <top> all}, so the widget binding runs FIRST and ttk's own
+# Release still has to run after it — `break` would kill sash dragging outright.
+check {BP68 (SOURCE) the sash DROP is a real proc, bound on the panedwindow, and NOT break-ed} \
+  [list [regexp -all {proc wviewer::browser_sash_drop } $wsrc] \
+        [regexp -all {bind \$f\.pw <ButtonRelease-1>} $wsrc] \
+        [regexp -all {ButtonRelease-1>[^\n]*break} $wsrc]] \
+  [list 1 1 0]
 
 # ============================================================================
 # BR40-BR54 — the REAL VIEWER + REAL RAW FILES. `wviewer::open` on the sky130A
@@ -1326,6 +1495,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall $BPT exists g:y3]] \
     [list 1 0 no-root none 1 1 1]
   pcall ::wviewer::set_plot_dest newstrip $tok
+  # TWO-PANE ITEM 14: the three persisted fields depart from their defaults HERE
+  # so BP45's snapshot legs and the whole BP47+ restore group assert real
+  # departures rather than constants. ⚠ ALL THREE, and `srccur` DOWN to 0 —
+  # R11's defaults are asymmetric (0/1), so a fixture that set both boxes to 1
+  # would leave `srccur` sitting on its default and half the round trip vacuous.
+  # ⚠ SAFE, AND MEASURED: `brP`/`brA` are plain voltages with no device-classed
+  # and no `srcbranch` names, so both boxes are BEHAVIOURAL NO-OPS on this
+  # corpus — BP43a and BP47-BP56 keep their tree, sea and width values
+  # byte-identically. The behavioural claim belongs to BW60-BW62 in
+  # test_wave_sigbrowser_panes.tcl and is deliberately not re-litigated here.
+  pcall ::wviewer::browser_devint $tok 1
+  pcall ::wviewer::browser_srccur $tok 0
+  pcall ::wviewer::browser_sash   $tok 0.35
   set bpw [pcall ::wviewer::browser_width $tok 260]
   # THE PRE CONTROL. Under item 10 the tree is born ALL-CLOSED, and with All-DBs
   # on there is not even a root to open, so `none` is the departure point.
@@ -1348,12 +1530,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # say "1" for both `{g:y3}` and `{g:x1}`, opposite states — and never an
   # [expr] over a pcall result, which is how the old `g:x1` leg went green on a
   # failed read.
-  check {BP43 the non-defaults TOOK: shown/dest/sel/open-set read back live} \
+  # ⚠ RESTATED BY TWO-PANE ITEM 14: the two class boxes and the sash join the
+  # tuple, read back through the STATE DICT, so "the fixture set them" and "the
+  # reader can see them" are one claim. `dget` with a `{NO-KEY}` sentinel, never
+  # `dict get`, so an absent key is a value and not a throw.
+  check {BP43 the non-defaults TOOK: shown/dest/sel/open-set/boxes/sash read back live} \
     [list $bp_open0 \
           [pcall dict get $bs1 shown] [pcall dict get $bs1 dest] \
           [pcall dict get $bs1 sel] [pcall dict get $bs1 open] \
-          [bs_open_set $BPT]] \
-    [list none 1 newstrip g:x1.x2 g:y3 g:y3]
+          [bs_open_set $BPT] \
+          [wviewer::dget $bs1 devint {NO-KEY}] \
+          [wviewer::dget $bs1 srccur {NO-KEY}] \
+          [wviewer::dget $bs1 sash   {NO-KEY}]] \
+    [list none 1 newstrip g:x1.x2 g:y3 g:y3 1 0 0.35]
   check {BP43 ...and both bars read back exactly what was typed into them} \
     [list [pcall dict get $bs1 search] [pcall dict get $bs1 filter]] \
     [list {pattern .* syntax regexp case 1 type v alldbs 1} \
@@ -1376,7 +1565,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # after it.
   set bsnap [pcall dict get $snap1 browser]
   set bpg {}
-  foreach k {shown width search filter dest open sel hist} {
+  # ⚠ RESTATED BY TWO-PANE ITEM 14: eight sentinel reads became ELEVEN, and the
+  # three new ones are read the same way for the same reason.
+  foreach k {shown width search filter dest open sel hist sash devint srccur} {
     lappend bpg $k [wviewer::dget $bsnap $k {NO-KEY}]
   }
   # ⚠ `open` NOW ASSERTS ITS VALUE, NOT `present`. The `present` collapse is what
@@ -1389,10 +1580,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [dict get $bpg shown] [dict get $bpg width] [dict get $bpg dest] \
           [dict get $bpg sel] [dict get $bpg search] [dict get $bpg filter] \
           [dict get $bpg open] \
-          [expr {[dict get $bpg hist] eq {NO-KEY} ? {NO-KEY} : {present}}]] \
+          [expr {[dict get $bpg hist] eq {NO-KEY} ? {NO-KEY} : {present}}] \
+          [dict get $bpg sash] [dict get $bpg devint] [dict get $bpg srccur]] \
     [list 1 $bpw newstrip g:x1.x2 \
           {pattern .* syntax regexp case 1 type v alldbs 1} \
-          {pattern .* syntax regexp case 1 type v} g:y3 present]
+          {pattern .* syntax regexp case 1 type v} g:y3 present \
+          0.35 1 0]
 
   # --- BP46: THE CONTROL FOR THE DESTROY ------------------------------------
   # ⚠ THE SECOND HALF OF THE ANTI-VACUITY PAIR. BP41 proved a fresh window is
@@ -1414,6 +1607,195 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall dict get $bs2 shown] [pcall dict get $bs2 dest] \
           [pcall dict get $bs2 sel] [pcall dict get $bs2 width]] \
     [list 1 0 append {} 0]
+  catch {wviewer::close $tok} ; update
+
+  # ==========================================================================
+  # BP69-BP74 — TWO-PANE ITEM 14, the REAL VIEWER.
+  #
+  # ⚠ IT OPENS AND CLOSES ITS OWN WINDOW HERE, so BP47 below still starts from
+  # exactly the closed token BP46 left behind. `$snap1` was taken above and
+  # nothing in this block touches it.
+  # ⚠ IT NEVER RE-SETS WHAT IT ASSERTS. Item 12 shipped a check whose helper
+  # restored the values on the way out, so the check was about the helper and
+  # survived the swap-the-defaults sabotage. Every value read below is read
+  # BEFORE anything puts it back.
+  # ==========================================================================
+  check {BP69 (FIXTURE) a viewer opens for the item-14 group} \
+    [pcall ::wviewer::open $tok] 1
+  set vt14 [wviewer::window_for $tok]
+  set BPF14 $vt14.wvbrowser
+  set BPW14 $BPF14.pw
+  viewer_ready $vt14
+  pcall ::wviewer::browser_toggle 1 $tok
+  update ; update idletasks
+  set bp_frac0 [bs_wait_sash $BPW14]
+  # ⚠⚠ LEG 2 IS THE ANTI-VACUITY LEG AND THE WHOLE POINT OF THE CHECK. `sash 0`
+  # is ALSO what an unmapped, collapsed or broken pane reads, so leg 1 alone is
+  # green on a build where nothing works. Leg 2 proves the widget really has a
+  # live, non-zero split at this instant — so leg 1's 0 can only be "nobody
+  # chose a split", which is the preference this item persists.
+  # Leg 3 is the cross-file consequence: MG9 in test_wave_modes.tcl (a file this
+  # batch does not own) is red the moment this stops being 1.
+  # ⚠⚠ LEG 3 NAMES THE DEPARTING KEYS RATHER THAN ASKING FOR A BOOLEAN, and that
+  # is the fix for two MEASURED wrong spellings of this leg rather than a style
+  # preference. `browser_state_is_default` answers 0 both for "the sash leaked
+  # into every window in the world" (the defect) and for "the sidebar is open,
+  # which is what this check itself asked for" (the fixture) — the boolean
+  # cannot tell them apart, and the first two spellings here were green-hunting
+  # `dict replace` patches bolted on one measured surprise at a time. The key
+  # list says exactly which fields moved, so a NEW departure is a NEW name and
+  # is impossible to paper over. ALL FOUR NAMES BELOW WERE MEASURED, NOT
+  # PREDICTED, and every one is a direct consequence of the toggle:
+  #   shown  the toggle itself;
+  #   width  `browser_show`'s pack branch runs `browser_width`, which writes a
+  #          real pixel width where a hidden sidebar reports 0;
+  #   sel    showing REPOPULATES, and item 10's R4 leaves exactly one node
+  #          selected — the design root — where a hidden sidebar has no tree;
+  #   open   `see` on that selection opens its ancestor chain.
+  # Anything beyond those four — `sash`, `devint` or `srccur` above all — is the
+  # defect this item exists to prevent. BP41 is the same claim on a sidebar that
+  # was never shown at all, where the list is empty.
+  check {BP69 (X) a FRESH window's sash reads 0 -- the preference, never the live split} \
+    [list [wviewer::dget [pcall ::wviewer::browser_state $tok] sash {NO-KEY}] \
+          [expr {[bs_num $bp_frac0] > 0.1}] \
+          [bp_nondefault_keys [pcall ::wviewer::browser_state $tok]]] \
+    [list 0 1 {shown width open sel}]
+
+  # --- BP70: BP69's CONTROL, AND THE ONLY PROOF A USER CAN SET THIS ---------
+  # A REAL press/drag/release on the sash, through the shipped binding. Without
+  # it item 14 ships a preference nobody can reach and every round trip below is
+  # a round trip of a constant that the test itself wrote.
+  # ⚠ EXPLICITLY INCREASING `-time`: `event generate` stamps time 0, so two
+  # presses at one spot collapse into a <Double-Button-1> (the 0152 lesson).
+  set bp_py0 [bs_num [pcall $BPW14 sashpos 0]]
+  set bp_py1 [expr {int($bp_py0) + 40}]
+  catch {event generate $BPW14 <Button-1>        -x 5 -y [expr {int($bp_py0)}] -time 700000}
+  catch {event generate $BPW14 <B1-Motion>       -x 5 -y $bp_py1 -time 700120}
+  catch {event generate $BPW14 <ButtonRelease-1> -x 5 -y $bp_py1 -time 700240}
+  update ; update idletasks
+  set bp_frac1 [bs_wait_sash $BPW14]
+  set bp_pref1 [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_read1 [bs_num [wviewer::dget [pcall ::wviewer::browser_state $tok] sash -1]]
+  check {BP70 (X, BP69's CONTROL) a REAL sash drag moves the widget, writes the
+         preference, and the reader then finds it} \
+    [list [expr {[bs_num $bp_frac1] > [bs_num $bp_frac0] + 0.02}] \
+          [expr {abs($bp_pref1 - [bs_num $bp_frac1]) < 0.03}] \
+          [expr {abs($bp_read1 - [bs_num $bp_frac1]) < 0.03}]] \
+    [list 1 1 1]
+
+  # --- BP71: THE ROUND TRIP, ON NON-DEFAULT VALUES FOR ALL THREE -------------
+  pcall ::wviewer::browser_devint $tok 1
+  pcall ::wviewer::browser_srccur $tok 0
+  pcall ::wviewer::browser_sash   $tok 0.35
+  update ; update idletasks
+  set bp_s14 [pcall ::wviewer::snapshot $tok {}]
+  set bp_b14 [pcall dict get $bp_s14 browser]
+  check {BP71 (PRE) all three departed from their defaults and rode into the snapshot} \
+    [list [wviewer::dget $bp_b14 devint {NO-KEY}] \
+          [wviewer::dget $bp_b14 srccur {NO-KEY}] \
+          [wviewer::dget $bp_b14 sash   {NO-KEY}]] \
+    [list 1 0 0.35]
+  catch {wviewer::close $tok} ; update
+  # THE OTHER HALF OF THE ANTI-VACUITY PAIR (BP41/BP46's shape): the destroy
+  # really puts all three back at their defaults, so when they turn up again
+  # after the restore the restore is the only thing that can have put them there.
+  check {BP71 (CONTROL) the destroy really resets all three to their defaults} \
+    [list [pcall ::wviewer::browser_devint $tok] \
+          [pcall ::wviewer::browser_srccur $tok] \
+          [pcall ::wviewer::browser_sash_pref $tok]] \
+    [list 0 1 0]
+  check {BP71 restore returns 1 and the viewer comes back up} \
+    [pcall ::wviewer::restore $tok $bp_s14 $brP {}] 1
+  set vt14 [wviewer::window_for $tok]
+  set BPF14 $vt14.wvbrowser ; set BPW14 $BPF14.pw
+  viewer_ready $vt14 ; update ; update idletasks
+  set bp_st14 [pcall ::wviewer::browser_state $tok]
+  check {BP71 (X) ROUND TRIP: all three came back, read off the RESTORED window} \
+    [list [wviewer::dget $bp_st14 devint {NO-KEY}] \
+          [wviewer::dget $bp_st14 srccur {NO-KEY}] \
+          [wviewer::dget $bp_st14 sash   {NO-KEY}]] \
+    [list 1 0 0.35]
+
+  # --- BP72: A SHORTER WINDOW REPRODUCES THE FRACTION, NOT THE PIXEL ---------
+  # ⚠⚠ MEASURED, AND IT IS WHY THIS CHECK HAS FOUR LEGS: ttk RE-PROPORTIONS the
+  # sash on a resize ALL BY ITSELF (240/600 -> 90/300 with nothing helping it).
+  # A two-leg "the fraction came back" check therefore goes green on the
+  # widget's own arithmetic. Leg 1 is taken AFTER the window shrank and BEFORE
+  # the apply and asserts the fraction is NOT yet the target, so a coincidence
+  # is a visible value; leg 3 asserts the PIXEL really moved, which is what a
+  # pixel-persisting implementation cannot do.
+  set bp_h0  [bs_num [pcall winfo height $BPW14]]
+  set bp_px0 [bs_num [pcall $BPW14 sashpos 0]]
+  catch {wm geometry $vt14 520x340}
+  update ; update idletasks ; after 150 ; update
+  set bp_pre [bs_num [bs_wait_sash $BPW14]]
+  pcall ::wviewer::browser_state_apply $tok [dict replace $bp_st14 sash 0.62]
+  update ; update idletasks
+  set bp_post [bs_num [bs_wait_sash $BPW14]]
+  set bp_px1  [bs_num [pcall $BPW14 sashpos 0]]
+  check {BP72 (X) restore into a SHORTER window reproduces the FRACTION, not the pixel} \
+    [list [expr {abs($bp_pre  - 0.62) >= 0.03}] \
+          [expr {abs($bp_post - 0.62) <  0.03}] \
+          [expr {$bp_px1 != $bp_px0}] \
+          [expr {[bs_num [pcall winfo height $BPW14]] < $bp_h0}]] \
+    [list 1 1 1 1]
+
+  # --- BP73: THE CROSS-FILE GUARD, LOCAL ------------------------------------
+  # test_wave_modes.tcl MG18 is the twin in the file this batch does not own.
+  # Three values, so "the key never appears" and "the key always appears" are
+  # different pictures from "it appears exactly when a box is ticked".
+  catch {wviewer::close $tok} ; update
+  pcall ::wviewer::open $tok
+  set vt14 [wviewer::window_for $tok]
+  viewer_ready $vt14 ; update
+  set bp_k0 [lsearch -exact [dict keys [pcall ::wviewer::snapshot $tok {}]] browser]
+  pcall ::wviewer::browser_devint $tok 1
+  set bp_k1 [lindex [dict keys [pcall ::wviewer::snapshot $tok {}]] end]
+  pcall ::wviewer::browser_devint $tok 0
+  set bp_k2 [lsearch -exact [dict keys [pcall ::wviewer::snapshot $tok {}]] browser]
+  check {BP73 (X) a hidden all-default browser emits NO browser key; ONE ticked
+         box makes it appear LAST; un-ticking takes it away again} \
+    [list $bp_k0 $bp_k1 $bp_k2] [list -1 browser -1]
+
+  # --- BP74: §7.4 / D-F, WITH A SPY THAT CAN COUNT --------------------------
+  # ⚠⚠ A ZERO ONLY MEANS SOMETHING NEXT TO A LEG THAT MADE THE SPY TICK. Leg 1
+  # alone is 0 on a writer that does nothing at all — which is the pre-item
+  # state — so leg 2 asserts the writer DID apply all three (three chances to
+  # log, none taken) and leg 4 fires a path that really does log.
+  #
+  # ⚠⚠ LEG 3 IS IDEMPOTENCE, AND IT WAS ADDED BECAUSE A SABOTAGE MEASURED A
+  # HOLE. Restoring a checkbox by `$f.opt.dev invoke` — a RELATIVE toggle
+  # instead of an absolute write — was caught only by this file's SOURCE checks
+  # and by BW59: every behavioural round trip here happens to ask for the
+  # OPPOSITE of the fresh window's default, so one flip lands on the right
+  # answer by coincidence. Applying the SAME dict TWICE is where a toggle and a
+  # write stop agreeing: a write is idempotent, a toggle flips back. It also
+  # doubles the writer's chances to log, which leg 1 now covers for two applies.
+  set ::bp_logn 0
+  rename ::wviewer::log_action ::wviewer::__bp14_log
+  proc ::wviewer::log_action {line} { incr ::bp_logn ; ::wviewer::__bp14_log $line }
+  set bp_ln0 $::bp_logn
+  set bp_d74 [dict replace $bp_st14 shown 1 devint 1 srccur 0 sash 0.42]
+  pcall ::wviewer::browser_state_apply $tok $bp_d74
+  update
+  set bp_took [list [pcall ::wviewer::browser_devint $tok] \
+                    [pcall ::wviewer::browser_srccur $tok] \
+                    [pcall ::wviewer::browser_sash_pref $tok]]
+  pcall ::wviewer::browser_state_apply $tok $bp_d74
+  update
+  set bp_again [list [pcall ::wviewer::browser_devint $tok] \
+                     [pcall ::wviewer::browser_srccur $tok] \
+                     [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_ln1 $::bp_logn
+  pcall ::wviewer::browser_toggle 0 $tok
+  set bp_ln2 $::bp_logn
+  rename ::wviewer::log_action {}
+  rename ::wviewer::__bp14_log ::wviewer::log_action
+  check {BP74 (X, §7.4) two full restores write NO log line, they really DID
+         apply all three, the writer is ABSOLUTE and not a toggle, and the spy
+         that says so CAN count} \
+    [list [expr {$bp_ln1 - $bp_ln0}] $bp_took $bp_again [expr {$bp_ln2 - $bp_ln1}]] \
+    [list 0 [list 1 0 0.42] [list 1 0 0.42] 1]
   catch {wviewer::close $tok} ; update
 
   # --- BP47-BP56: THE RESTORE ------------------------------------------------

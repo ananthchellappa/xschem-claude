@@ -486,8 +486,13 @@ foreach {gh_all gh_v} [regexp -all -inline {data-bseq="([^"]+)"} $gsrc] {
 # per-row leg below is vacuously green on a guide whose attributes were stripped
 # or whose table was deleted outright. It also distinguishes "one row was
 # removed" (5) from "nothing parsed" (0).
-check "GH8 the guide's browser table carries the fifteen browser gestures" \
-  [llength $gh_bseqs] 15
+# ⚠ 15 -> 16, TWO-PANE ITEM 14: the sash's <ButtonRelease-1> is the sixteenth,
+# and the literal moves in the SAME commit as the bind and the guide row. GH9
+# below compares the two directions and is the standing guard on that lockstep —
+# but GH9 stays GREEN on a half-done edit where both sides moved and only this
+# literal did not, which is exactly why this number is asserted separately.
+check "GH8 the guide's browser table carries the sixteen browser gestures" \
+  [llength $gh_bseqs] 16
 foreach gh_v $gh_bseqs {                                  ;# doc -> source
   check_true "GH8 the guide's browser bind \$f.$gh_v really is in browser_build" \
     [expr {[string first "bind \$f.$gh_v" $gh_bb] >= 0}]

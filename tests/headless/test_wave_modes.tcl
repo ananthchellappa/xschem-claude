@@ -1330,6 +1330,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [pcall {wviewer::plot_mode $tok}] single
   check "MG9 missing target key falls back to 0" [pcall {wviewer::target_strip $tok}] 0
 
+  # --- MG18: MG9's POSITIVE TWIN (two-pane item 14) --------------------------
+  # MG9 above pins that an ordinary viewer's snapshot key list is EXACTLY
+  # {open sharedx rawfile graphs mode target} — no `browser`. That claim is only
+  # half of a contract: it is satisfied by a browser slice that is never emitted
+  # at all, which is what a persistence layer wired to nothing produces.
+  #
+  # ⚠⚠ TWO-PANE ITEM 14 IS THE ITEM THAT MOST EASILY BREAKS MG9, AND SILENTLY.
+  # It persists the sash, and the browser's sash ACCESSOR answers the LAYOUT
+  # default (0.55) on a window nobody has touched. Read that from the state
+  # reader and the "is this all default?" gate is false forever: every viewer in
+  # the world grows a `browser` key and MG9 goes red in a file that batch does
+  # not own. So the twin is asserted HERE, beside MG9, rather than only in the
+  # batch's own file: the key must appear when — and only when — the user has
+  # actually changed something.
+  #
+  # ⚠ THE BOX IS PUT BACK BEFORE LEAVING, and leg 3 is what proves the putting
+  # back really restored MG9's exact key list rather than merely not throwing.
+  check "MG18 (CONTROL) an untouched browser adds NO key to the snapshot" \
+    [lsearch -exact [dict keys [pcall {wviewer::snapshot $tok {}}]] browser] -1
+  pcall {wviewer::browser_devint $tok 1}
+  check "MG18 one ticked class box makes the browser key appear, and LAST" \
+    [lindex [dict keys [pcall {wviewer::snapshot $tok {}}]] end] browser
+  pcall {wviewer::browser_devint $tok 0}
+  check "MG18 un-ticking it takes the key away and gives MG9's key list back" \
+    [dict keys [pcall {wviewer::snapshot $tok {}}]] \
+    {open sharedx rawfile graphs mode target}
+
   # --- MG14: strip drag-to-reorder -------------------------------------------
   # doc/claude/specs/waveform_viewer_modes.md §12. Two halves, both with teeth:
   # the MODEL mutation (wviewer::move_strip) and the real Tk press/motion/release

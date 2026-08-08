@@ -898,15 +898,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BW58 `want` round-trips BOTH ways, and the write is PER TOKEN — a
          second token still answers R11's default} \
     $bw_rt {1 1 0 0 0 0 1}
-  # BD06's rule, applied to both new accessors: defined once, called once,
-  # FILE-WIDE. ⚠ COUNTED AS A BARE NAME, which is only legitimate because item
-  # 12 REWORDED browser_refresh's item-10 comment, which named both procs and
-  # would have made every count start at 1. That rewording is part of this item
-  # precisely so this check can be the same shape as BD06.
-  check {BW59 (SOURCE, BD06's RULE) each accessor is defined ONCE and called
-         ONCE, file-wide — one place for a scoping sabotage to land} \
-    [list [regexp -all {browser_devint} $wsrc] [regexp -all {browser_srccur} $wsrc]] \
-    {2 2}
+  # BD06's rule, applied to both new accessors: defined once and called from a
+  # KNOWN, ENUMERATED set of sites, FILE-WIDE. ⚠ COUNTED AS A BARE NAME, which
+  # is only legitimate because item 12 REWORDED browser_refresh's item-10
+  # comment, which named both procs and would have made every count start at 1.
+  # That rewording is part of item 12 precisely so this check can be the same
+  # shape as BD06.
+  #
+  # ⚠⚠ RESTATED BY TWO-PANE ITEM 14, FROM {2 2} TO {4 4}, AND THE FOUR SITES ARE
+  # ENUMERATED SO THE BIGGER NUMBER IS NOT A BLANKET PERMISSION:
+  #   1  the definition
+  #   2  the ONE read on the filter path (browser_refresh)
+  #   3  the ONE read in the state reader   (browser_state)
+  #   4  the ONE write in the state writer  (browser_state_apply)
+  # ⚠ THE PER-PROC LEG IS WHY THIS IS STILL A CHECK AND NOT A COUNT. A file-wide
+  # 4 is satisfied by four reads crammed into the filter path and none in the
+  # state pair — exactly the drift item 12 built this check to catch — so the
+  # last two legs pin that the filter path still has EXACTLY ONE of each. That is
+  # the "one place for a scoping sabotage to land" claim, and it is what the
+  # number alone stopped buying the moment the number grew.
+  check {BW59 (SOURCE, BD06's RULE) each accessor is defined ONCE and read from
+         exactly the four enumerated sites, with exactly ONE of each on the
+         filter path — one place for a scoping sabotage to land} \
+    [list [regexp -all {browser_devint} $wsrc] [regexp -all {browser_srccur} $wsrc] \
+          [regexp -all {browser_devint} [wvproc_body $wsrc wviewer::browser_refresh]] \
+          [regexp -all {browser_srccur} [wvproc_body $wsrc wviewer::browser_refresh]]] \
+    {4 4 1 1}
 
   # --- BW60/BW61: THE MEASURED ARITHMETIC, END TO END -----------------------
   set bw_sig_was $::wviewer::browsersigs($tok)

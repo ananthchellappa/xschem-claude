@@ -1208,6 +1208,15 @@ columns, a shorter one more of them. The pane only ever scrolls sideways.</td></
 pointer from name to name, and goes when the pointer leaves the pane. The pane
 shows names short &mdash; this is how to see the one a signal really has, and
 the one <b>Copy names</b> puts on the clipboard.</td></tr>
+
+<tr data-bseq="pw &lt;ButtonRelease-1&gt;">
+<td class="where">split between the panes</td><td>drag the sash, then let go</td>
+<td>Sets how the sidebar's height is divided between the instance tree above and
+the sea of names below. The split is <em>remembered</em>: it is saved with the
+session as a <b>fraction</b> of the sidebar's height, not as a pixel count, so
+reopening into a shorter or taller window puts the sash back in the same
+<em>place</em> rather than at the same number of pixels down. Until you drag it
+the window has no preference of its own and simply uses the default split.</td></tr>
 </table>
 
 <p>The line under the sea of names counts what it is showing &mdash;

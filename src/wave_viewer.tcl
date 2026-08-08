@@ -439,7 +439,12 @@ namespace eval wviewer {
   #     (default 1). ⚠ PER TOKEN, not namespace globals: two viewers showing two
   #     raws must be able to disagree. INERT in item 9 -- the checkbuttons are
   #     built and packed with NO `-command`; item 12 wires them.
-  # Persistence of all three is item 14, deliberately not here.
+  # ⚠ ALL THREE ARE NOW PERSISTED (TWO-PANE item 14, spec §9) -- they ride in
+  # the `browser` sub-dict of the session state. The arrays stay PER TOKEN and
+  # are still unset in the teardown block; a restore writes them through the
+  # accessors, never around them. ⚠ `browsersash($token)` in particular is only
+  # ever written by a real sash drag or by a restore, and its ABSENCE is the
+  # meaningful state "nobody chose a split" -- do not re-seed it at build time.
   variable browsersash; array set browsersash {}
   variable browserdev;  array set browserdev  {}
   variable browsersrc;  array set browsersrc  {}
@@ -7261,6 +7266,22 @@ proc wviewer::browser_build {token top} {
   # be a ninth line here documenting no gesture.
   bind $f.pw.sea.c <Motion> \
     [list wviewer::browser_sea_tip $token %W %x %y]
+  # --- TWO-PANE item 14: the SPLIT ITSELF is a gesture, and the only one that
+  # writes the persisted sash preference (spec §9). Without it the field is one
+  # nobody can set and every round trip is a round trip of a constant.
+  #
+  # ⚠⚠ NO `break`, AND THAT IS MEASURED RATHER THAN ASSUMED. A ttk::panedwindow's
+  # bindtags are {<pw> TPanedwindow <top> all}, so this WIDGET binding runs
+  # FIRST and ttk's own class-level Release still has to run after it -- a
+  # `break` here would kill sash dragging outright. (The
+  # `<ButtonRelease>`-not-`<ButtonRelease-1>` rule earlier in this file is about
+  # the CANVAS's kept generic editor bind; the panedwindow has no generic bind
+  # to preempt, and a probe confirmed the two coexist.) BP68's third leg is the
+  # standing ban.
+  #
+  # ⚠ THE RELEASE FIRES ONLY ON THE SASH. A release on the tree or on the sea
+  # goes to THOSE widgets; neither is a `$f.pw` event.
+  bind $f.pw <ButtonRelease-1> [list wviewer::browser_sash_drop $token]
   set browsersigs($token) {}
   set browserrows($token) {}
   set browser($token) 0
@@ -8097,7 +8118,12 @@ proc wviewer::browser_sea_build {parent} {
 # The split between the two panes, as a FRACTION of the panedwindow's height
 # (M3). `want` {} reads/re-applies the current one; a fraction strictly inside
 # (0,1) sets it. Returns the fraction in force, or 0 when it could not be
-# applied. PERSISTENCE IS ITEM 14 -- this is only the accessor and the apply.
+# applied. ⚠ ITS HEADER USED TO SAY "PERSISTENCE IS ITEM 14 -- this is only the
+# accessor and the apply". TWO-PANE ITEM 14 HAS LANDED: the persisted half is
+# `browser_sash_pref` (the reader) and `browser_sash_drop` (the one writer)
+# below, and this proc stayed the LAYOUT accessor with its contract unchanged,
+# deliberately -- see the two ⚠⚠ paragraphs on the reader for what changing it
+# instead would have broken.
 #
 # ⚠⚠ A FRACTION, NEVER PIXELS, and both halves of that were forced by reading
 # the code rather than by taste:
@@ -8125,12 +8151,84 @@ proc wviewer::browser_sash {token {want {}}} {
   # 0.55 gives the tree the larger share, which is the pane the user navigates
   # with; the sea reflows to whatever is left (its rows-per-column is derived
   # from the height, so it has no preferred size to honour).
-  if {![info exists browsersash($token)]} { set browsersash($token) 0.55 }
+  #
+  # ⚠⚠ TWO-PANE ITEM 14 MADE THE LAYOUT DEFAULT A **LOCAL**, AND THAT ONE-LINE
+  # CHANGE IS THE WHOLE REASON THE PERSISTENCE IS EXPRESSIBLE. It used to SEED
+  # the array (`set browsersash($token) 0.55`), and `browser_show` calls this
+  # proc twice on its pack branch -- so after any show, a window nobody had
+  # touched carried a stored 0.55 and "has a preference" and "has been shown"
+  # were the same fact. With the default held here, `[info exists
+  # browsersash($token)]` means EXACTLY "somebody chose a split", which is what
+  # lets the state reader answer spec §9's `sash 0` on a fresh window and keeps
+  # the whole-dict compare in `browser_state_is_default` closable.
+  # Restoring the seed is a one-line revert and it is the item's sabotage S7:
+  # it reds BP69 (the fresh window's preference becomes 0.55), BP41, BP42 and
+  # MG9 -- four oracles across three files, one line.
+  set frac 0.55
+  if {[info exists browsersash($token)]} { set frac $browsersash($token) }
   set h 0
   catch {set h [winfo height $pw]}
   if {$h <= 1} { return 0 }
-  catch {$pw sashpos 0 [expr {int($browsersash($token) * $h)}]}
+  catch {$pw sashpos 0 [expr {int($frac * $h)}]}
+  return $frac
+}
+
+# THE PERSISTED PREFERENCE, and it is a SEPARATE proc from the accessor above on
+# purpose. TWO-PANE item 14; spec §9. PURE -- no widget, no window, no throw.
+#
+# ⚠⚠ WHY IT IS NOT THE ACCESSOR, WHICH IS THE ONE MISTAKE THIS ITEM EXISTS TO
+# AVOID. The accessor's read arm APPLIES the split and answers the LAYOUT
+# DEFAULT (0.55) for a window nobody has dragged. Read THAT from the state
+# reader and `browser_state_is_default` compares 0.55 against the dict default
+# and is FALSE FOREVER: every viewer's snapshot grows a `browser` key, and MG9
+# in test_wave_modes.tcl -- a file the two-pane batch does not own -- goes red
+# along with BP41 and BP42.
+#
+# ⚠⚠ AND WHY THE ACCESSOR'S RETURN CONTRACT WAS NOT SIMPLY CHANGED INSTEAD.
+# test_wave_sigbrowser_sea.tcl captures the accessor's answer, squeezes the pane
+# to 0.90 and restores it. If the read arm started answering 0 for a
+# never-dragged window, that capture would be 0, the restoring call would be
+# refused by the `$want > 0` guard, and the sea would stay squeezed for the rest
+# of that file -- a fixture leak surfacing as unrelated reds. Two readers, two
+# contracts, both explicit.
+#
+# ⚠ IT MUST WORK ON A HIDDEN SIDEBAR. A snapshot can be taken with the browser
+# unpacked (BP57 does exactly that); the accessor's `$h <= 1` guard would answer
+# 0 there and silently discard a preference the user really set.
+proc wviewer::browser_sash_pref {token} {
+  variable browsersash
+  if {![info exists browsersash($token)]} { return 0 }
   return $browsersash($token)
+}
+
+# THE ONLY GESTURE THAT WRITES THE PREFERENCE: the user let go of the sash.
+# Reads the LIVE split off the mapped panedwindow, turns it into a fraction and
+# hands it to the accessor -- so the array still has exactly ONE writer and the
+# fraction-not-pixels rule is enforced in exactly one place. Returns the stored
+# fraction, or 0 when there was nothing sane to store. TWO-PANE item 14.
+#
+# ⚠ A FRACTION, COMPUTED HERE. Storing `$p` instead of `$p / $h` is the item's
+# sabotage S2: the accessor's `$want > 0 && $want < 1` guard then REFUSES every
+# real pixel count, so a drag would store nothing at all and BP70 goes red --
+# a pixel bug that fails closed rather than restoring a sash off the bottom of
+# a shorter window.
+#
+# ⚠ `$h <= 1` IS "NOT MAPPED", not an error: this can be reached from a release
+# delivered while the pane is being torn down.
+proc wviewer::browser_sash_drop {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set pw [dict get $windows $token top].wvbrowser.pw
+  if {[catch {winfo exists $pw} e] || !$e} { return 0 }
+  set h 0
+  catch {set h [winfo height $pw]}
+  if {$h <= 1} { return 0 }
+  set p {}
+  if {[catch {$pw sashpos 0} p]} { return 0 }
+  if {![string is integer -strict $p]} { return 0 }
+  set frac [expr {$p * 1.0 / $h}]
+  if {$frac <= 0 || $frac >= 1} { return 0 }
+  return [wviewer::browser_sash $token $frac]
 }
 
 # --- item 9: state + refresh --------------------------------------------------
@@ -9940,6 +10038,27 @@ proc wviewer::browser_toggle_at {W} {
 # item 14's conditional-key contract (only a bar built `-alldbs 1` has it), and
 # the two shapes must match `searchbar_get`'s output EXACTLY, key order included,
 # or the equality test below can never be true.
+#
+# ⚠⚠ TWO-PANE ITEM 14 APPENDED THREE KEYS, AND `APPEND` IS THE RULE, NOT THE
+# HABIT (spec doc/claude/specs/waveform_signal_browser_two_pane.md §9). The
+# equality test below is a WHOLE-DICT STRING COMPARE, so this dict's key order
+# and `browser_state`'s build order have to agree exactly. Insert a key in the
+# middle of one of them and the gate can never close again: every viewer's
+# snapshot grows a `browser` key, and test_wave_modes.tcl MG9 -- a file this
+# batch does not own -- goes red with a diff that looks like a value bug.
+# BP10 asserts the key list for exactly that reason.
+#
+# ⚠ THE TWO CLASS-BOX DEFAULTS DIFFER (0 and 1). That is R11 -- device internals
+# off, source currents on -- not an asymmetry to be tidied. BP62 is the check,
+# and BP13's `srccur 0` leg is the one that catches "tidied".
+#
+# ⚠ `sash 0` IS "NOBODY CHOSE A SPLIT", NOT A POSITION. 0 is outside the open
+# interval the accessor accepts, so it can never be a real preference and needs
+# no separate present/absent flag; the layout default (0.55) is the accessor's
+# business and deliberately does NOT appear here. If this default were the
+# layout one, a fresh window would have to report 0.55 to stay "default", the
+# accessor would have to be the reader, and the trap in the paragraph above
+# would spring on every window ever opened.
 proc wviewer::browser_state_default {} {
   return [dict create \
     shown  0 \
@@ -9949,7 +10068,10 @@ proc wviewer::browser_state_default {} {
     dest   append \
     open   {} \
     sel    {} \
-    hist   {}]
+    hist   {} \
+    sash   0 \
+    devint 0 \
+    srccur 1]
 }
 
 # 1 when `d` says nothing a fresh window does not already say. PURE.
@@ -10132,6 +10254,19 @@ proc wviewer::browser_state {token} {
   dict set d open [wviewer::dget $t open {}]
   dict set d sel  [wviewer::dget $t sel  {}]
   dict set d hist [wviewer::rawhist_get]
+  # TWO-PANE item 14, spec §9. APPENDED, in this order, matching
+  # browser_state_default's key order exactly -- the gate is a whole-dict string
+  # compare and the two orders are one contract (BP64 pins the order, BP10 the
+  # key list).
+  #
+  # ⚠⚠ THE PREFERENCE READER, NEVER THE SASH ACCESSOR AND NEVER A LIVE
+  # `sashpos`/`winfo height`. A live read can never equal a constant default, so
+  # the gate below would be permanently false and every viewer's snapshot would
+  # grow a `browser` key. That is the item's sabotage S1 and it reds BP63, BP69,
+  # BP41, BP42 and MG9 in test_wave_modes.tcl.
+  dict set d sash   [wviewer::browser_sash_pref $token]
+  dict set d devint [wviewer::browser_devint $token]
+  dict set d srccur [wviewer::browser_srccur $token]
   return $d
 }
 
@@ -10162,6 +10297,20 @@ proc wviewer::browser_state_apply {token d} {
   catch {wviewer::searchbar_set $f.wvsearch [wviewer::dget $d search {}]}
   catch {wviewer::searchbar_set $f.wvfilter [wviewer::dget $d filter {}]}
   catch {set dest($token) [wviewer::dest_norm [wviewer::dget $d dest append]]}
+  # TWO-PANE item 14: R11's two class boxes, restored BEFORE `browser_show`.
+  # THE ORDER IS FORCED -- they are CLASS FILTERS, and `browser_show` populates
+  # the tree and the sea, so restoring them afterwards would build the sidebar
+  # once with the wrong signal set and once with the right one, with a visible
+  # flash and a `see`/selection pass run against the wrong rows. BP65 pins it.
+  #
+  # ⚠ THE FALLBACKS ARE 0 AND 1 AND THEY ARE NOT A COPY-PASTE (R11): a state
+  # file written before this item has neither key, and the window must land on
+  # the shipped defaults, which differ.
+  # ⚠ `catch`ed for the same reason the neighbours are: a hand-edited value that
+  # is not boolean must leave the window usable at its build default rather than
+  # abort the whole restore.
+  catch {wviewer::browser_devint $token [wviewer::dget $d devint 0]}
+  catch {wviewer::browser_srccur $token [wviewer::dget $d srccur 1]}
   set shown [wviewer::dget $d shown 0]
   if {![string is boolean -strict $shown]} { set shown 0 }
   set shown [expr {[string is true -strict $shown] ? 1 : 0}]
@@ -10174,6 +10323,21 @@ proc wviewer::browser_state_apply {token d} {
     if {[dict exists $d open]} { dict set ts open [dict get $d open] }
     catch {wviewer::browser_tree_apply $token $ts}
   }
+  # TWO-PANE item 14: the SASH, last, and on purpose OUTSIDE the `$shown` arm.
+  #   * LAST, because it can only be applied to a MAPPED panedwindow, and it is
+  #     `browser_show`'s pack branch (plus the `after idle` re-apply it queues)
+  #     that produces one -- the same reason the width goes after the show.
+  #   * UNCONDITIONAL, because a restore of a HIDDEN sidebar must still STORE
+  #     the preference. The accessor's own height guard makes the apply a no-op
+  #     until the pane is mapped, and the show's idle re-apply then puts it in
+  #     place the moment the user opens the sidebar. Dropping the preference
+  #     here would mean "snapshot taken with the browser closed" silently
+  #     forgets a split the user chose.
+  # ⚠ `sash 0` (spec §9's default, i.e. nobody chose a split) is REFUSED by the
+  # accessor's own `$want > 0 && $want < 1` guard, so a default state file
+  # leaves the layout default alone rather than collapsing a pane. That is why
+  # this line needs no gate of its own.
+  catch {wviewer::browser_sash $token [wviewer::dget $d sash 0]}
   catch {wviewer::rawhist_merge [wviewer::dget $d hist {}]}
   return 1
 }
