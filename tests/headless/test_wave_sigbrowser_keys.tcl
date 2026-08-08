@@ -15,13 +15,29 @@
 #   tests/headless/test_wave_sigbrowser_i1315.tcl  items 13, 15     BP
 #   tests/headless/test_wave_sigbrowser_i14.tcl    item 14          BD
 #   tests/headless/test_wave_sigbrowser_panes.tcl  two-pane 9-13    BW
-#   tests/headless/test_wave_sigbrowser_keys.tcl   two-pane 16, 17b BK   <- HERE
+#   tests/headless/test_wave_sigbrowser_keys.tcl   two-pane 16, 17b, 18 BK <- HERE
 #
 # CHECK-ID BAND: BK01-BK18 two-pane item 16 / BK19 UNSPENT (reserved to item
-# 16's own file band by 16_receipt.md §11) / BK20-BK31 two-pane item 17b.
-# Measured free before use in both rounds (greps over tests/ and doc/claude/;
-# BK20+ was reserved to item 17b by the PLAN and taking it earlier would have
-# repeated the item-10/item-12 BW40 collision).  NEXT FREE IN THIS FILE: BK32.
+# 16's own file band by 16_receipt.md §11) / BK20-BK31 two-pane item 17b /
+# BK32-BK42 two-pane item 18 (R12's auto-unhide).
+# Measured free before use in all three rounds (greps over tests/ and
+# doc/claude/; BK20+ was reserved to item 17b by the PLAN and taking it earlier
+# would have repeated the item-10/item-12 BW40 collision).
+# NEXT FREE IN THIS FILE: BK43.
+#
+# ⚠ THE PLAN'S BAND FOR ITEM 18 WAS `BK40`-`BK47` UNDER A HEADING AND
+# `BK40`-`BK49` IN ITS CODE BLOCK — internally inconsistent, and DEAD ON ARRIVAL
+# either way: it was written before items 16 and 17b spent BK01-BK31. Measured
+# first free is BK32, exactly as two-pane item 12's receipt §3.1 requires and as
+# item 17b found for its own band. BK19 stays reserved and unspent.
+#
+# ⚠ TWO-PANE ITEM 18's OWN X BLOCK IS AT THE END OF THE FILE and it is the ONLY
+# group here that needs a signal corpus. It builds its OWN synthetic toplevel
+# (`test_wave_sigbrowser_panes.tcl`'s recipe) rather than reusing the BKV
+# sky130 session, because R12 needs an inventory with DEVICE classes in it and
+# `test_nfet_final` has none. It tears that toplevel down again — spec §9's live
+# note: a ticked box makes `browser_state` non-default, so a leaked one would
+# start emitting a `browser` key in another file's snapshot.
 #
 # ⚠ THE SKIP BANNER WORDING IS LOAD-BEARING. `SKIPPED: <group> (Tk/X arm only)`
 # is what a reader greps for when a headless count comes up short; a different
@@ -289,6 +305,104 @@ check {BK28 (FILE, GUIDE, LOCKSTEP) the guide's prose names the new chord, the
         [regexp -all {data-seq="Control-Alt-Key-v"} $gsrc] \
         [regexp -all {data-menu="Show in Signal Browser"} $gsrc]] \
   {1 0 0 0}
+
+# ============================================================================
+# BK32-BK35 — TWO-PANE item 18 (R12), BOTH ARMS. One PURE evaluation of the new
+# formatter arm, one nine-legged control over every SHIPPED rendering, and two
+# source oracles.
+#
+# ⚠ WHY THE CONTROLS CARRY A MOVING LEG. BK33 and BK35 restate facts that are
+# already true, and a check that is green before the code exists proves nothing
+# about the code — item 12 shipped two of those and only its red run found them.
+# Each therefore carries ONE leg that MOVES with this item, in the SAME tuple as
+# the stability claim: BK33's tenth leg is the formatter's return count (9 -> 10)
+# and BK35's fourth and fifth are the two class-scope reads the R12 arm adds to
+# `browser_show_path` (0 -> 1 each). Both were RED on the red run; without those
+# legs both were GREEN on it, which is exactly how the two vacuous checks item 12
+# shipped got through.
+# ============================================================================
+
+# ⚠ MEASURED PRE-STATE: this exact call answered `g:x1.x1.xm1` — the switch's
+# fall-through `[lindex $res 1]` — before the arm existed. So it is red first and
+# green after, not a restatement.
+# ⚠ AND THE NODE IS REAL. The PLAN's example `g:x1.xm1` / `x1.xm1` exists in
+# NEITHER model of the batch's corpus (measured through the shipped pipeline on
+# fixtures/tb_bandgap_vars.txt: 45 nodes with the box off, 129 with it on, and
+# `x1.xm1` in neither set). `x1.x1.xm1` does: absent with the box off, present
+# with it on, three own-level signals, all device-classed. Every id and path in
+# this band is that node.
+check {BK32 (PURE, TWO-PANE item 18) browser_msg renders the new `unhidden`
+       result as ONE sentence naming the node it had to unhide to reach} \
+  [pcall ::wviewer::browser_msg {unhidden g:x1.x1.xm1 x1.x1.xm1}] \
+  {showing device internals to reach x1.x1.xm1}
+
+# ⚠ THE PLAN SAYS "the four SHIPPED results still render as BX13's four" AND IS
+# WRONG TWICE. The four verbatim renderings are pinned by **BX14**
+# (test_wave_sigbrowser_i12.tcl:387-396); BX13 is the guide oracle. And there
+# have been NINE since two-pane item 11 added seanone/seaempty/seabars/seaclass/
+# seacount. All nine are re-measured here, in ONE tuple, so a tenth arm inserted
+# in the wrong place — or an arm that swallows another's input — is one red
+# rather than nine silent ones.
+set bk_msg9 [list \
+  [pcall ::wviewer::browser_msg {ok g:x1.x2 x1.x2}] \
+  [pcall ::wviewer::browser_msg {partial g:x1.x2 x1.x2 x1.x2.x9}] \
+  [pcall ::wviewer::browser_msg {root {}}] \
+  [pcall ::wviewer::browser_msg {err boom}] \
+  [pcall ::wviewer::browser_msg {seanone}] \
+  [pcall ::wviewer::browser_msg {seaempty x1.x2}] \
+  [pcall ::wviewer::browser_msg {seabars 0 43}] \
+  [pcall ::wviewer::browser_msg {seaclass 0 43}] \
+  [pcall ::wviewer::browser_msg {seacount 3 43}] \
+  [regexp -all {return } [wvproc_body $wsrc wviewer::browser_msg]]]
+check {BK33 (BK32's CONTROL) all NINE shipped renderings are byte-unchanged —
+       WITH the tenth leg that moves, so "nothing happened" cannot pass this} \
+  $bk_msg9 \
+  [list {showing x1.x2} \
+        {no signals under 'x1.x2.x9' - showing x1.x2 instead} \
+        {showing the simulation top level} \
+        {boom} \
+        {no node selected} \
+        {x1.x2 has no signals of its own} \
+        {0 of 43 signals (the Search/Filter bar is hiding them)} \
+        {0 of 43 signals (device internals are hidden)} \
+        {3 of 43 signals} \
+        10]
+
+# ⚠⚠ THIS IS THE ONLY WITNESS TO THE "compose the sentence inline" SABOTAGE, and
+# it needs BOTH of its first two legs. That sabotage moves the literal OUT of the
+# formatter and into browser_show_path: the file-wide count stays 1, the `.ph`
+# text stays byte-identical, every behavioural check in this band stays GREEN,
+# and the sidebar, the CIW echo and the ASE echo quietly stop being one account.
+# Leg 2 — "and that one occurrence is inside the formatter" — is what sees it.
+# Leg 3 is the mint site: `unhidden` appears TWICE in browser_say's body, once as
+# the switch pattern and once in the result list, exactly as `ok`'s arm does.
+# Leg 4 is the ONE call site in browser_show_path.
+check {BK34 (SOURCE, THE ONE-FORMATTER ORACLE) the sentence is spelled in
+       exactly ONE place in the file and that place is browser_msg; the kind is
+       minted in browser_say and called from exactly one arm} \
+  [list [regexp -all {device internals to reach} $wsrc] \
+        [regexp -all {device internals to reach} [wvproc_body $wsrc wviewer::browser_msg]] \
+        [regexp -all {unhidden} [wvproc_body $wsrc wviewer::browser_say]] \
+        [regexp -all {unhidden} [wvproc_body $wsrc wviewer::browser_show_path]]] \
+  {1 1 2 1}
+
+# ⚠ TP44's TWIN, KEPT LOCAL SO THE TRAP IS VISIBLE IN THE FILE THAT SPRINGS IT.
+# The one-line temptation in the R12 arm is to decode the revealed node's path
+# there; that reds `TP44` in test_wave_sigbrowser_2pane.tcl:849-851 — a file this
+# item has no other reason to open — for a reason no behavioural check can see.
+# Legs 1-3 are frozen numbers (MEASURED 1 / 2 / 0 before the item); legs 4 and 5
+# are the two reads the R12 arm adds, which is what stops this check being green
+# on an item that never shipped.
+set bk_spb [wvproc_body $wsrc wviewer::browser_show_path]
+check {BK35 (SOURCE, TP44's TWIN) the R12 arm reuses the ONE decode, adds no
+       third refresh and no sch_path read — while really adding the two
+       class-scope reads that make its probe scoped} \
+  [list [regexp -all {browser_id_path} $bk_spb] \
+        [regexp -all {browser_refresh} $bk_spb] \
+        [regexp -all {(^|[^_])sch_path} $bk_spb] \
+        [regexp -all {browser_devint} $bk_spb] \
+        [regexp -all {browser_srccur} $bk_spb]] \
+  {1 2 0 1 1}
 
 # ============================================================================
 # BKV — BK11-BK18, the X arm. A REAL viewer on the sky130A ngspice_state1
@@ -610,6 +724,320 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $bk_t1 $bk_t2 $bk_t3 $bk_t4 $bk_t5] {1 0 71 1 72}
 } else {
   puts "SKIPPED: BK29-BK31 (Tk/X arm only)"
+}
+
+# ============================================================================
+# BK36-BK42 — TWO-PANE item 18's X arm. R12 END TO END on a corpus that HAS
+# device classes.
+#
+# ⚠⚠ IT BUILDS ITS OWN TOPLEVEL AND ITS OWN TOKEN, and both are forced:
+#   * the BKV sky130 `test_nfet_final` session has no device-classed signals at
+#     all, so `devint 0` and `devint 1` describe the same tree and the whole item
+#     would be untestable on it;
+#   * spec §9's live note — a ticked box makes `browser_state` non-default, so
+#     `snapshot` starts emitting a `browser` key it did not emit before. That is
+#     CORRECT, and the mitigation is fixture hygiene rather than a code change:
+#     this group owns `wvbk18` end to end and destroys it, so no later file
+#     inherits a ticked box or a 424-name browser. BK42's teardown leg is that
+#     claim as a value.
+#
+# ⚠ `browser_refresh <tok> 1` MUST NEVER APPEAR IN THIS BLOCK's own helpers.
+# It runs `browser_reload`, whose job is to overwrite `browsersigs` from
+# `signal_list` — `{}` with no raw loaded — and two-pane item 12 lost three
+# checks to exactly that. `bk_seed` re-seeds and refreshes with reload 0.
+# The ONE place a reload legitimately happens is INSIDE `browser_show_path`'s
+# shipped improve-or-restore, and BK42 is the check that it puts everything back.
+# ============================================================================
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  catch {destroy .wvbk18}
+  toplevel .wvbk18
+  wm title .wvbk18 {two-pane item18 R12 auto-unhide fixture}
+  wm geometry .wvbk18 1400x620+40+40
+  canvas .wvbk18.drw -background white -width 1200 -height 580
+  pack .wvbk18.drw -side right -fill both -expand true
+  dict set ::wviewer::windows wvbk18 [dict create top .wvbk18 win_path .wvbk18.drw]
+  update
+  bs_wait_mapped .wvbk18.drw
+
+  set BKF   .wvbk18.wvbrowser
+  set BKTV  $BKF.pw.tvf.tv
+  set bktok wvbk18
+
+  set bk_built [pcall ::wviewer::browser_build $bktok .wvbk18]
+  # ⚠ THE SIDEBAR MUST BE PACKED AND MAPPED. `browser_reveal`'s `$tv see` is the
+  # expansion, and `see` on an unmapped tree is a no-op — BK38's open-set legs
+  # would then read 0 for a reason that has nothing to do with this item.
+  pcall ::wviewer::browser_toggle 1 $bktok
+  update
+  bs_wait_mapped $BKTV
+
+  # THE CORPUS, SEEDED AFTER THE SHOW. `browser_show` ends with
+  # `browser_refresh $token 1`, so a corpus seeded before it is wiped by the
+  # show itself.
+  proc bk_fixture {name} {
+    set p [file join [file dirname [info script]] fixtures $name]
+    if {![file exists $p]} { return NO-FIXTURE }
+    set fp [open $p r] ; set t [read $fp] ; close $fp
+    set out {}
+    foreach l [split [string trim $t] "\n"] {
+      set l [string trim $l]
+      if {$l ne {}} { lappend out $l }
+    }
+    if {![llength $out]} { return EMPTY-FIXTURE }
+    return $out
+  }
+  set bk_corpus [bk_fixture tb_bandgap_vars.txt]
+
+  # The pre-state every group in this block starts from: the shipped default
+  # pair (box OFF / source currents ON), the corpus back, one reload-free
+  # refresh. It writes the -variable arrays directly, which is all a click does.
+  proc bk_seed {} {
+    set ::wviewer::browsersigs(wvbk18) $::bk_corpus
+    set ::wviewer::browserdev(wvbk18) 0
+    set ::wviewer::browsersrc(wvbk18) 1
+    catch {::wviewer::browser_refresh wvbk18 0}
+    update
+    return ok
+  }
+
+  # ⚠ THE SPY IS INSTALLED BY RENAME AND CALLS THROUGH, and nothing else works:
+  # the checkbutton's -command is `[list wviewer::browser_refresh $token]`, which
+  # Tk resolves BY NAME at invoke time. A wrapper installed any other way counts
+  # zero and BK41 goes green on a broken item.
+  # ⚠ IT IS NEVER ON DURING `bk_seed` — the seeder's own refresh would inflate
+  # every count by one.
+  set ::bk_nref 0
+  proc bk_spy_on {} {
+    set ::bk_nref 0
+    if {[info commands ::wviewer::__bk_refresh_real] eq {}} {
+      rename ::wviewer::browser_refresh ::wviewer::__bk_refresh_real
+      proc ::wviewer::browser_refresh {token {reload 0}} {
+        incr ::bk_nref
+        return [::wviewer::__bk_refresh_real $token $reload]
+      }
+    }
+    return ok
+  }
+  proc bk_spy_off {} {
+    if {[info commands ::wviewer::__bk_refresh_real] ne {}} {
+      rename ::wviewer::browser_refresh {}
+      rename ::wviewer::__bk_refresh_real ::wviewer::browser_refresh
+    }
+    return ok
+  }
+
+  # "the row vanished" as an assertable VALUE, never an exception.
+  proc bk_node {id} {
+    set tv .wvbk18.wvbrowser.pw.tvf.tv
+    if {[catch {winfo exists $tv} e] || !$e} { return NO-TREE }
+    if {[catch {$tv exists $id} r]} { return NO-TREE }
+    return [expr {$r ? 1 : 0}]
+  }
+
+  bk_seed
+  check {BK36 (FIXTURE) the item-18 toplevel builds, the sidebar is PACKED, and
+         the 424-name corpus really drove the measured 45-node box-OFF tree} \
+    [list $bk_built [bs_packed $BKF] [llength $bk_corpus] \
+          [llength [bs_tree_ids $BKTV]]] \
+    {1 1 424 45}
+
+  # --- BK36: R12 ITSELF -----------------------------------------------------
+  # ⚠ LEGS 1 AND 2 ARE THE PRECONDITION AND THEY ARE IN THE SAME TUPLE ON
+  # PURPOSE. Without them "the node is selected and the box is 1" is satisfied by
+  # a browser that was ALREADY showing device internals — the item working and
+  # the item never running look identical from the far side.
+  # MEASURED SHIPPED PRE-STATE for this path: `{partial g:x1.x1 x1.x1 x1.x1.xm1}`
+  # (the walk reaches 2 of 3 segments). This item turns that into a full landing.
+  bk_seed
+  set bk_box0 [pcall ::wviewer::browser_devint $bktok]
+  set bk_pre  [bk_node g:x1.x1.xm1]
+  bk_spy_on
+  set bk_res  [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  set bk_n1   $::bk_nref
+  bk_spy_off
+  update
+  check {BK36 (X, R12) with the box OFF and the node genuinely ABSENT, a reveal
+         onto a device instance unhides it, lands on it, selects it, and leaves
+         the box TICKED} \
+    [list $bk_box0 $bk_pre $bk_res [pcall $BKTV selection] \
+          [pcall ::wviewer::browser_devint $bktok] [bk_node g:x1.x1.xm1]] \
+    [list 0 0 {unhidden g:x1.x1.xm1 x1.x1.xm1} g:x1.x1.xm1 1 1]
+
+  # ⚠ BYTE-EXACT, NOT `string match`, and on `.ph` — which is where the shipped
+  # `browser_msg` sentence has always landed (`browser_status` writes
+  # "Signal Browser\n<msg>" and `browser_say` calls it on every branch). MEASURED
+  # before writing this: no `.ph` move is required, so the twelve byte-identity
+  # pins carried in from item 12 (BD52, BX37, BX42, BX44-BX46, BH50, BH51, BH54)
+  # are untouched. §7.2's three-state caption still owns that widget's future.
+  check {BK37 (X) ...and it SAYS SO, in the SAME "Signal Browser\n<msg>" format
+         the rest of the family pins byte-for-byte} \
+    [pcall $BKF.ph cget -text] \
+    "Signal Browser\nshowing device internals to reach x1.x1.xm1"
+
+  # --- BK38: R12's LAST SENTENCE --------------------------------------------
+  # "The box stays ticked." A refresh is the cheapest thing that could put it
+  # back, so the claim is asserted one refresh LATER, not immediately.
+  # ⚠ THE LAST THREE LEGS ARE ITEM 13's REVEAL CONTRACT, restated here because
+  # this is the batch's only reveal onto a node that did not exist a moment ago:
+  # the ancestors OPEN, the target CLOSED. A bbox read would flake on geometry;
+  # `-open` is a stored value.
+  pcall ::wviewer::browser_refresh $bktok 0
+  update
+  check {BK38 (X, R12's LAST SENTENCE) one refresh later the box is STILL
+         ticked, the accessor and the -variable agree, the node is still
+         selected, and item 13's reveal left the ANCESTORS open and the TARGET
+         closed} \
+    [list [pcall ::wviewer::browser_devint $bktok] \
+          [pcall set ::wviewer::browserdev($bktok)] \
+          [pcall $BKTV selection] \
+          [pcall $BKTV item g:x1 -open] \
+          [pcall $BKTV item g:x1.x1 -open] \
+          [pcall $BKTV item g:x1.x1.xm1 -open]] \
+    {1 1 g:x1.x1.xm1 1 1 0}
+
+  # --- BK39: THE ABSENCE CONTROL, AND HALF OF THE DUAL PAIR -----------------
+  # "The node is missing, so tick the box" would tick it HERE. The probe's
+  # POSITIVE test is the only thing that stops it.
+  #
+  # ⚠⚠ THE PAIR IS IN ONE TUPLE, AND THE RED RUN IS WHY. Written as the absence
+  # alone this check was GREEN before a line of item 18 existed — "the box did
+  # not move" is precisely what NO CODE produces, the hollow shape item 12
+  # shipped twice. Legs 1-2 are the call that MUST tick; legs 3-5 the call that
+  # must NOT. With the pair together, the `0` in leg 3 is a DECISION rather than
+  # inertia, and there is no state of the world in which both halves are
+  # satisfied by an item that never ran.
+  # ⚠ Leg 3 unavoidably reads the value `bk_seed` wrote (an absence control has
+  # nowhere else to start). Legs 1-2 are the answer to that: they prove this same
+  # code path CAN move the box on this same fixture, moments earlier.
+  #
+  # ⚠ THE REFRESH COUNT IS THE SHIPPED ONE, MEASURED, NOT THE ITEM'S: the
+  # improve-or-restore arm already spends exactly one `browser_refresh <tok> 1`
+  # on any miss. The probe adds none. It is also what makes the rejected
+  # "tick, refresh, re-resolve, untick" shape visible — that shape spends three.
+  bk_seed
+  set bk_hit39  [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  set bk_hbox39 [pcall ::wviewer::browser_devint $bktok]
+  bk_seed
+  bk_spy_on
+  set bk_res2 [pcall ::wviewer::browser_show_path $bktok zzz.qqq]
+  set bk_n2 $::bk_nref
+  bk_spy_off
+  update
+  check {BK39 (X, THE DUAL PAIR) the SAME call that ticks for a hidden device
+         node leaves the box UNTICKED for a path in NEITHER model, reports the
+         SHIPPED err sentence, and spends exactly the ONE refresh the shipped
+         retry already spent} \
+    [list $bk_hbox39 $bk_hit39 \
+          [pcall ::wviewer::browser_devint $bktok] $bk_res2 $bk_n2] \
+    [list 1 {unhidden g:x1.x1.xm1 x1.x1.xm1} \
+          0 {err {no signals under 'zzz.qqq'}} 1]
+
+  # --- BK40: THE OTHER CONTROL ----------------------------------------------
+  # ⚠ RECORDED DIVERGENCE FROM THE PLAN. The PLAN calls this "a node hidden by
+  # the SEARCH BAR". Since two-pane item 10 the tree's node set is
+  # bar-UNFILTERED (spec §7.1), so a bar can no longer hide a NODE at all and
+  # that state is unreachable. What survives — and what this pins — is that the
+  # bars-active HEDGE still fires on the err sentence and still does not tick.
+  # ⚠ SAME RED-RUN LESSON AS BK39: legs 5-6 clear the bar and run the call that
+  # MUST tick, in this tuple, because the barred half alone was green before the
+  # item existed.
+  set bk_typed [bs_type $BKF.wvsearch {net*}]
+  update
+  set bk_res3    [pcall ::wviewer::browser_show_path $bktok zzz.qqq]
+  set bk_bar_box [pcall ::wviewer::browser_devint $bktok]
+  set bk_bar_ph  [string match {*Search/Filter*} [pcall $BKF.ph cget -text]]
+  bs_type $BKF.wvsearch {}
+  update
+  set bk_hit40 [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  update
+  check {BK40 (X, THE OTHER CONTROL) with a pattern in the Search bar the same
+         absent path STILL does not tick and the sentence still carries the
+         shipped bars hedge — while clearing the bar and asking for a real
+         hidden node ticks it after all} \
+    [list $bk_typed $bk_bar_box $bk_res3 $bk_bar_ph \
+          $bk_hit40 [pcall ::wviewer::browser_devint $bktok]] \
+    [list {net*} 0 \
+          {err {no signals under 'zzz.qqq' (the Search/Filter bar may be hiding it)}} 1 \
+          {unhidden g:x1.x1.xm1 x1.x1.xm1} 1]
+
+  # --- BK41: ONE REFRESH, THEN ZERO -----------------------------------------
+  # ⚠ THE `1` IS ALSO THE SPY'S OWN CONTROL. A spy that cannot count answers 0
+  # for both calls, which would make the `0` leg — the actual claim — worthless.
+  bk_seed
+  bk_spy_on
+  set bk_res4 [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  set bk_n4 $::bk_nref
+  set ::bk_nref 0
+  set bk_res5 [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  set bk_n5 $::bk_nref
+  bk_spy_off
+  update
+  check {BK41 (X) the auto-tick costs exactly ONE refresh — and with the box
+         ALREADY on the very same call is a plain `ok` costing ZERO, so there is
+         no spurious "I turned it on"} \
+    [list $bk_n4 $bk_res4 $bk_n5 $bk_res5] \
+    [list 1 {unhidden g:x1.x1.xm1 x1.x1.xm1} 0 {ok g:x1.x1.xm1 x1.x1.xm1}]
+
+  # --- BK42: THE IMPROVE-OR-RESTORE CONTROL ---------------------------------
+  # The R12 probe rides IN FRONT of the shipped retry, so the retry's own
+  # discipline has to be re-measured with the probe in place: a reload that finds
+  # LESS must put browsersigs, browserrows, browserdbsigs AND the selection back.
+  # ⚠ browserdbsigs is seeded by hand because this fixture has no foreign DB —
+  # without it leg 3 would be 0 both sides and prove nothing.
+  # ⚠⚠ LEGS 9-10 ARE THE MOVING HALF, and the red run is why they exist: the
+  # eight restore legs alone were GREEN before the item, because they assert
+  # SHIPPED behaviour. What they cannot see on their own is the one thing that
+  # actually changed here — the probe now reads `browsersigs` on the way in, so a
+  # restore that put back an EMPTY inventory would leave the R12 arm permanently
+  # blind and every restore leg would still be green. Legs 9-10 ask the browser
+  # for a real hidden node immediately AFTER the restore.
+  bk_seed
+  pcall $BKTV selection set [list g:x1.x2]
+  update
+  set ::wviewer::browserdbsigs($bktok) \
+    [list [dict create id d0 label L names {v(a)} path {}]]
+  set bk_sig0 [llength $::wviewer::browsersigs($bktok)]
+  set bk_row0 [llength $::wviewer::browserrows($bktok)]
+  set bk_db0  [llength $::wviewer::browserdbsigs($bktok)]
+  set bk_sel0 [pcall $BKTV selection]
+  pcall ::wviewer::browser_show_path $bktok zzz.qqq
+  update
+  set bk_sig1 [llength $::wviewer::browsersigs($bktok)]
+  set bk_row1 [expr {[llength $::wviewer::browserrows($bktok)] == $bk_row0}]
+  set bk_db1  [llength $::wviewer::browserdbsigs($bktok)]
+  set bk_sel1 [pcall $BKTV selection]
+  set bk_hit42 [pcall ::wviewer::browser_show_path $bktok x1.x1.xm1]
+  update
+  check {BK42 (X, THE IMPROVE-OR-RESTORE CONTROL) the shipped retry re-reads the
+         raw, finds LESS, and puts browsersigs, browserrows, browserdbsigs AND
+         the selection back exactly — and the restored inventory is one the R12
+         probe can still see a hidden node through} \
+    [list $bk_sig0 [expr {$bk_row0 > 0}] $bk_db0 $bk_sel0 \
+          $bk_sig1 $bk_row1 $bk_db1 $bk_sel1 \
+          $bk_hit42 [pcall ::wviewer::browser_devint $bktok]] \
+    [list 424 1 1 g:x1.x2 424 1 1 g:x1.x2 \
+          {unhidden g:x1.x1.xm1 x1.x1.xm1} 1]
+
+  # --- BK42's TEARDOWN, AS A VALUE ------------------------------------------
+  catch {destroy .wvbk18}
+  catch {dict unset ::wviewer::windows wvbk18}
+  foreach bk_a {browsersigs browserrows browserdbsigs browserdev browsersrc
+                browserseaent browserraw browsercurdb} {
+    catch {unset ::wviewer::${bk_a}(wvbk18)}
+  }
+  update
+  check {BK42 (TEARDOWN, spec §9's live note) the fixture leaves NOTHING behind
+         — no toplevel, no windows entry, no ticked box for another file's
+         snapshot to inherit, and the refresh spy really was un-installed} \
+    [list [winfo exists .wvbk18] \
+          [expr {[dict exists $::wviewer::windows wvbk18] ? 1 : 0}] \
+          [info exists ::wviewer::browserdev(wvbk18)] \
+          [info exists ::wviewer::browsersigs(wvbk18)] \
+          [info commands ::wviewer::__bk_refresh_real]] \
+    [list 0 0 0 0 {}]
+} else {
+  puts "SKIPPED: BK36-BK42 (Tk/X arm only)"
 }
 
 wvbs_finish

@@ -15,11 +15,43 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 17b, both arms green.
-Re-measure before item 18 and record any drift here; do **not** silently adopt a
+Measured **2026-08-08** after two-pane item 18, both arms green.
+Re-measure before item 19 and record any drift here; do **not** silently adopt a
 new baseline.
 
-> **⚠ THE BASELINE MOVED WITH ITEM 17b — headless 1649 → 1658 over the same**
+> **⚠ THE BASELINE MOVED WITH ITEM 18 — headless 1658 → 1662 over the same**
+> **FIFTEEN files, X 2230 → 2243 over the same TWELVE suites.**
+> **Reason, in one line:** item 18 added **4** check calls headless and **13**
+> under X, **all of them in ONE file** — `test_wave_sigbrowser_keys` 21 → **25**
+> headless / 35 → **48** under X (`BK32`-`BK42`: `BK32`-`BK35` in both arms,
+> `BK36`-`BK42` X-only over nine calls). `test_wave_sigbrowser_panes` restated
+> `BW59` **in place** from `{4 4 1 1}` to `{5 5 1 1}` with **no change in call
+> count**, which is why `panes` does not move in either arm. Every other file and
+> every other suite is byte-identical in both arms. The item-18 implementer
+> RE-MEASURED the item-17b baseline on the unchanged tree first — headless
+> **1658 / 0** with every per-file figure exact, X **2230** with every per-suite
+> figure exact — so the delta is attributable.
+>
+> **⚠⚠ ONE BASELINE FAIL OBSERVED ON THE PRISTINE TREE, AND IT IS A `:0` FLAKE,**
+> **NOT A REGRESSION AND NOT A DRIFT TO ADOPT.** The pre-item run of
+> `test_wave_sigbrowser_i1315` on the real `:0` failed **`BP77`** TWICE (189
+> passed / 1 failed — check count 190, correct) while the SAME file under Xvfb
+> answered **190 / 0**. `BP77`'s fourth leg is a **geometry echo** ("opening the
+> sidebar lands on the restored 0.44 split"), exactly the class this file's own
+> Xvfb note says a window manager can perturb and Xvfb cannot measure. It then
+> **passed on `:0`** in the post-item run (190 / 0). So: a WM timing flake,
+> reachable only after the handback, on the PRISTINE tree before item 18 existed.
+> **Add it to the known-flake list below; re-run before calling it a fail.**
+>
+> **⚠ THREE WHOLE-SUITE `NORESULT`s in one session** (`i1315` + `sigsearch`
+> pre-item, `i12` post-item), one carrying an explicit `X connection to :0
+> broken`. All re-run by hand through `xarm.sh one`, all ALL PASS at their
+> baseline counts. The WSLg Xwayland death is live again now that the arm is on
+> `:0` — a NORESULT is not a measurement.
+>
+> ---
+> **The item-17b record, kept for attribution:**
+> **THE BASELINE MOVED WITH ITEM 17b — headless 1649 → 1658 over the same**
 > **FIFTEEN files, X 2215 → 2230 over the same TWELVE suites.**
 > **Reason, in one line:** item 17b added **9** check calls headless and **15**
 > under X, and they are all in the **two** files it touches —
@@ -139,7 +171,7 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1658 checks over 15 files, 0 fail**
+**headless — 1662 checks over 15 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
@@ -151,8 +183,8 @@ new baseline.
 | `test_wave_sigbrowser_panes` | 15 | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
-| `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **21** |
-| | | **TOTAL** | **1658** |
+| `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **25** |
+| | | **TOTAL** | **1662** |
 
 **X arm — 12/12 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
@@ -160,8 +192,8 @@ new baseline.
 > eleven per-suite counts identical, 11/11 both ways, **2136 checks** either way
 > (that equivalence was established at the item-12 baseline; item 13 moves the
 > total to **2149**, item 14 to **2170**, its fixup to **2174**, item 15 to
-> **2192**, item 16 to **2215** over **twelve** suites and item 17b to
-> **2230** — see the table; the equivalence itself is unaffected).
+> **2192**, item 16 to **2215** over **twelve** suites, item 17b to **2230**
+> and item 18 to **2243** — see the table; the equivalence itself is unaffected).
 > So a number measured before the handback is directly comparable with one
 > measured after it, and the unattended window costs no fidelity. What Xvfb
 > cannot do is any claim needing a **window manager** — decoration, iconify,
@@ -175,15 +207,18 @@ new baseline.
 | `sea` | 79 | `grid` | 356 |
 | `i11` | 74 | `modes` | 488 |
 | `i12` | **126** | | |
-| `i1315` | **190** | `keys` | **35** |
-| | | **TOTAL** | **2230** |
+| `i1315` | **190** | `keys` | **48** |
+| | | **TOTAL** | **2243** |
 | `i14` | **107** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
 *not* regressions and must be re-run before being called a fail: `BR25`
-(a `<Return>` through a bare `event generate`), `MG16` (key delivery), and a
-whole-suite `NORESULT` from a WSLg Xwayland death (reachable only after the
-handback — Xvfb is immune).
+(a `<Return>` through a bare `event generate`), `MG16` (key delivery),
+**`BP77` (item 18's finding — a sash GEOMETRY ECHO that a window manager can
+perturb; measured 189/1 twice on `:0` and 190/0 under Xvfb on the PRISTINE tree,
+then 190/0 on `:0` after the item)**, and a whole-suite `NORESULT` from a WSLg
+Xwayland death (reachable only after the handback — Xvfb is immune; item 18 hit
+three in one session and all three re-ran clean).
 
 ---
 
@@ -555,7 +590,31 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       under Xvfb, which has no window manager and no compositor, so a
       desktop-environment **grab** of this specific chord is untestable here —
       and it is R10's chosen chord. One press after the handback.
-- [ ] 18 — R12: auto-tick, reveal, and say so
+- [x] 18 — R12: auto-tick, reveal, and say so
+      Receipt `18_receipt.md`. **Both baselines RE-MEASURED EXACT on the
+      unchanged tree first** (headless 1658/0 every per-file figure exact; X 2230
+      every per-suite figure exact) — except `BP77`, see the baseline block.
+      `src/wave_viewer.tcl`: ONE arm in `browser_msg`, ONE in `browser_say`, and
+      the R12 **pure probe** in `browser_show_path` between the walk and the
+      shipped improve-or-restore. Headless **1658 → 1662** (`keys` 21 → **25**),
+      X **2230 → 2243** (`keys` 35 → **48**); nothing else moved in either arm.
+      The three out-of-baseline suites re-run by hand: **13 / 17 / 70**, unmoved
+      (this item touches no C and no csv).
+      **Band `BK32`-`BK42` — the PLAN's `BK40`-`BK49` was dead on arrival for the
+      THIRD time in this batch, and internally inconsistent besides.**
+      **NEXT FREE `BK43`.** `BK19` still reserved and unspent.
+      **RESTATED, NOT DELETED: `BW59` `{4 4 1 1}` → `{5 5 1 1}`** — the PLAN said
+      "reds existing: none" for the THIRD time and was wrong for the third time.
+      **THE RED RUN EARNED ITS KEEP AGAIN:** `BK39`/`BK40`/`BK42` were GREEN
+      before the code existed (all three asserted only shipped behaviour) and
+      were rewritten to carry a moving leg in the same tuple.
+      **7 sabotages, 7 fired**, incl. `S1b` proving the rejected confirm-guard
+      shape is visible (refresh count 1 → **3**) and `S6` reddening `BW59`
+      **under X** — a gap the headless-only sweep had missed.
+      **DECLARED LIMITS:** the tick is kept only on a FULL resolution; the probe
+      is current-DB only. **DIVERGENCES FOR ITEM 19:** §8.2's "prefix" is a
+      complete sentence; §7.4's "is logged" describes a path with no
+      `log_action`; §3.3's 44/128 is still 45/129.
 - [ ] 19 — Docs, oracles, the four-file lockstep, 0217 closed
 
 ### Dependencies — the driver enforces these before launching
@@ -606,6 +665,14 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
   window build. That is item 14's whole job.~~ **SETTLED by two-pane item 14:**
   all three fields now ride in the `browser` sub-dict. The build still seeds the
   boxes; a restore overrides.
+* ~~**`.ph` is still class-filter blind.**~~ **MEASURED BY TWO-PANE ITEM 18 AND
+  IT NEEDED NO MOVE.** The shipped `browser_msg` sentence has always landed on
+  `.ph` (`browser_status` writes `"Signal Browser\n$msg"`; `browser_say` calls it
+  on every branch), and `browser_sea_refresh` writes `$f.pw.sea.st`, never `.ph`.
+  So `BK37` asserts the new sentence there **byte-exact** and the twelve
+  byte-identity pins are untouched. The class-filter blindness of the *count*
+  line is unchanged and still belongs to §7.2's three-state caption — which is
+  still nobody's but item 19's or a later item's.
 * **Item 12's build-time default pin is `BW24`, not `BW56`.** ~~If item 14 makes
   the defaults come from a persisted file, `BW24` is the check to restate.~~
   **It did not**: `browser_build` still seeds `0`/`1` and only an applied state

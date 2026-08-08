@@ -911,19 +911,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   #   2  the ONE read on the filter path (browser_refresh)
   #   3  the ONE read in the state reader   (browser_state)
   #   4  the ONE write in the state writer  (browser_state_apply)
+  # ⚠⚠ RESTATED AGAIN BY TWO-PANE ITEM 18, FROM {4 4} TO {5 5}. THE FIFTH SITE:
+  #   5  the ONE read each in `browser_show_path`'s R12 auto-unhide arm — the
+  #      entry guard ("is the box already on?") and the scope the pure probe
+  #      builds its would-be model with ("...and with the source-currents box
+  #      exactly as the user left it"). MEASURED 4 and 4 before that item, 5 and
+  #      5 after; legs 3 and 4 are UNMOVED at 1 and 1 because browser_refresh is
+  #      not touched.
+  # ⚠ AND THE ITEM'S PLAN SAID IT RED NOTHING. It said the same about item 12,
+  # which red this check's ancestor. A file-wide bare-name count is invisible to
+  # every behavioural check in the batch, so "reds existing: none" is never
+  # evidence — grepping for the counts is.
+  # ⚠ DODGING THIS BY READING `::wviewer::browserdev($token)` DIRECTLY IN THE NEW
+  # ARM WOULD KEEP THE NUMBER AT 4 AND DESTROY THE CHECK'S ONLY PURPOSE. The
+  # accessor exists so a scoping sabotage has one place to land; bypassing it to
+  # keep a literal green is the test driving the code.
   # ⚠ THE PER-PROC LEG IS WHY THIS IS STILL A CHECK AND NOT A COUNT. A file-wide
-  # 4 is satisfied by four reads crammed into the filter path and none in the
+  # 5 is satisfied by five reads crammed into the filter path and none in the
   # state pair — exactly the drift item 12 built this check to catch — so the
   # last two legs pin that the filter path still has EXACTLY ONE of each. That is
   # the "one place for a scoping sabotage to land" claim, and it is what the
   # number alone stopped buying the moment the number grew.
   check {BW59 (SOURCE, BD06's RULE) each accessor is defined ONCE and read from
-         exactly the four enumerated sites, with exactly ONE of each on the
+         exactly the five enumerated sites, with exactly ONE of each on the
          filter path — one place for a scoping sabotage to land} \
     [list [regexp -all {browser_devint} $wsrc] [regexp -all {browser_srccur} $wsrc] \
           [regexp -all {browser_devint} [wvproc_body $wsrc wviewer::browser_refresh]] \
           [regexp -all {browser_srccur} [wvproc_body $wsrc wviewer::browser_refresh]]] \
-    {4 4 1 1}
+    {5 5 1 1}
 
   # --- BW60/BW61: THE MEASURED ARITHMETIC, END TO END -----------------------
   set bw_sig_was $::wviewer::browsersigs($tok)

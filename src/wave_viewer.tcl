@@ -9780,6 +9780,9 @@ proc wviewer::browser_show_path {token path} {
   # the same improve-or-restore below — a failed sync that put browsersigs back
   # while leaving an emptied foreign inventory would silently switch All-DBs off.
   variable browserdbsigs
+  # TWO-PANE item 18 (R12): the probe below derives the design-root LABEL the
+  # same way browser_refresh does, from this window's own raw path.
+  variable browserraw
   if {![dict exists $windows $token]} {
     return [wviewer::browser_say $token err {no waveform viewer window is open}]
   }
@@ -9819,6 +9822,73 @@ proc wviewer::browser_show_path {token path} {
   }
   lassign [wviewer::browser_node_for $rows $segs \
              [wviewer::browser_root_id $rows]] id matched
+  # --- TWO-PANE item 18 (R12): THE AUTO-UNHIDE --------------------------------
+  #
+  # ⚠⚠ A POSITIVE TEST, NOT AN ABSENCE, and that distinction IS the ruling.
+  # "the node is missing, so tick the box" ticks it for a genuinely absent path
+  # and for one the Search bar is hedging about — two states in which unhiding 84
+  # nodes explains nothing and merely moves the user somewhere they did not ask
+  # to go. The only question that justifies the tick is asked here: WOULD this
+  # path resolve if device internals were shown?
+  #
+  # ⚠ THE PROBE IS PURE. It rebuilds the would-be model IN MEMORY through the
+  # very procs the refresh uses (signal_entry -> the class filter -> the rows),
+  # touches no widget and fires no refresh. So every shipped miss on an
+  # inventory with no hidden device nodes answers "no" and runs the untouched
+  # code below at the cost of one list walk; only a YES spends a refresh. That
+  # is what keeps the seven shipped miss-arm checks in _i12/_i11 green.
+  #
+  # ⚠⚠ ONE DECISION POINT AND NO CONFIRM GUARD. The rejected shape is "tick,
+  # refresh, re-resolve, untick if it failed": its guard puts the box back, so
+  # forcing the decision to always-yes reds NOTHING and the positive test stops
+  # being testable at all. MEASURED as well as reasoned — 0 of this corpus's 84
+  # hidden nodes are revealed by the device box only when the source-currents box
+  # is also on (45/129 either way), so the guard would be dead code no sabotage
+  # could reach.
+  #
+  # ⚠ THE TICK GOES THROUGH THE CHECKBUTTON'S OWN -command — the path a user's
+  # click takes (spec §7.4) — never through a direct refresh call. That is how it
+  # INHERITS "a box toggle re-filters and never re-enters the engine" instead of
+  # restating it, and it is why the auto-tick costs exactly ONE refresh.
+  #
+  # ⚠ IT MERGES INTO `$id`/`$matched` AND DECODES NOTHING. The shipped
+  # `browser_id_path` at the tail is the ONE decode for every kind; a second call
+  # here reds a frozen source oracle (test_wave_sigbrowser_2pane.tcl's TP44) that
+  # no behavioural check in the batch can see.
+  #
+  # DECLARED LIMIT: the tick is kept only on a FULL resolution. A path whose
+  # would-be model resolves DEEPER but still not fully leaves the box alone and
+  # reports the shipped `partial` at the shallower landing — because the sentence
+  # says "to reach <node>", which a partial makes a lie.
+  set r12 0
+  if {$matched < [llength $segs] && ![wviewer::browser_devint $token]} {
+    set pent {}
+    foreach n $browsersigs($token) { lappend pent [wviewer::signal_entry $n] }
+    # ⚠ THE SECOND ARGUMENT IS THE LIVE VALUE, NOT A HARDCODED 1. Hardcoding it
+    # would ask about a model the user cannot get to by ticking one box.
+    set pent [wviewer::browser_class_filter $pent 1 \
+                [wviewer::browser_srccur $token]]
+    set prp {}
+    if {[info exists browserraw($token)]} { set prp $browserraw($token) }
+    set plab [wviewer::browser_root_label $prp]
+    set prows {}
+    catch {set prows [wviewer::browser_rows_multi \
+             [list [list {} {} $pent $plab]] $plab]}
+    set pmatched 0
+    catch {lassign [wviewer::browser_node_for $prows $segs \
+             [wviewer::browser_root_id $prows]] pid pmatched}
+    if {$pmatched == [llength $segs]} {
+      set bx $f.opt.dev
+      if {![catch {winfo exists $bx} bex] && $bex} {
+        catch {$bx invoke}
+        set rows4 {}
+        if {[info exists browserrows($token)]} { set rows4 $browserrows($token) }
+        lassign [wviewer::browser_node_for $rows4 $segs \
+                   [wviewer::browser_root_id $rows4]] id4 matched4
+        set rows $rows4 ; set id $id4 ; set matched $matched4 ; set r12 1
+      }
+    }
+  }
   if {$matched < [llength $segs]} {
     # ⚠ IMPROVE-OR-RESTORE, and it is a MEASURED necessity, not caution.
     # `browser_reload` sets the inventory to whatever `signal_list` answered —
@@ -9864,6 +9934,12 @@ proc wviewer::browser_show_path {token path} {
   }
   wviewer::browser_reveal $token $id
   set landed [wviewer::browser_id_path $id]
+  # R12's LAST SENTENCE — "the box stays ticked" — is expressed by the ABSENCE of
+  # any untick here rather than by a line of code. The arm reports what it did and
+  # leaves the browser in the scope the user can now see and un-tick themselves.
+  if {$r12 && $matched == [llength $segs]} {
+    return [wviewer::browser_say $token unhidden $id $landed $asked]
+  }
   if {$matched < [llength $segs]} {
     return [wviewer::browser_say $token partial $id $landed $asked]
   }
@@ -9903,12 +9979,23 @@ proc wviewer::browser_bars_active {token} {
 #             because a descendant carries a real net, whose own level is all
 #             device. Distinct from seabars, and distinct from seaempty
 #   seacount  the ordinary `<shown> of <own> signals`
+#
+# ⚠ TWO-PANE ITEM 18 ADDED A TENTH RETURN, `unhidden`, and it belongs HERE for
+# the header's own reason rather than beside the code that mints it. R12 ticks
+# the device-internals box on the user's behalf, which grows tb_bandgap's tree
+# from 45 nodes to 129 — a change the user did not ask for and can see. The one
+# thing that makes that legitimate rather than alarming is a sentence saying it
+# happened, and a sentence written at its point of use is a sentence that drifts
+# from the sidebar's status line, the CIW echo and the ASE echo one at a time.
+# Its shape MATCHES `ok`'s — `{unhidden <row id> <landed path>}` — so `[lindex
+# $res 2]` means the same thing in both arms.
 proc wviewer::browser_msg {res} {
   switch -- [lindex $res 0] {
     ok      { return "showing [lindex $res 2]" }
     partial { return "no signals under '[lindex $res 3]' - showing\
                       [lindex $res 2] instead" }
     root    { return {showing the simulation top level} }
+    unhidden { return "showing device internals to reach [lindex $res 2]" }
     seanone  { return {no node selected} }
     seaempty { return "[lindex $res 1] has no signals of its own" }
     seabars  { return "[lindex $res 1] of [lindex $res 2] signals\
@@ -9924,14 +10011,20 @@ proc wviewer::browser_msg {res} {
 # `browser_show_path` returns.
 #
 # `a`/`b`/`c` are positional because their meaning is per-kind:
-#   ok/partial -> a=<row id>   b=<landed path>  c=<asked path>
-#   err        -> a=<message>
-#   root       -> nothing.
+#   ok/partial/unhidden -> a=<row id>   b=<landed path>  c=<asked path>
+#   err                 -> a=<message>
+#   root                -> nothing.
+#
+# ⚠ TWO-PANE ITEM 18's kind rides the SAME switch, which is what makes the R12
+# arm a one-line return in browser_show_path instead of a second place that
+# knows how to phrase and echo an outcome. `c` is accepted and dropped exactly
+# as `ok` drops it — the sentence names the landing, not the asked path.
 proc wviewer::browser_say {token kind {a {}} {b {}} {c {}}} {
   switch -- $kind {
     ok      { set r [list ok $a $b] }
     partial { set r [list partial $a $b $c] }
     root    { set r [list root {}] }
+    unhidden { set r [list unhidden $a $b] }
     default { set r [list err $a] }
   }
   set m [wviewer::browser_msg $r]
