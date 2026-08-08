@@ -12,7 +12,7 @@ item.
 
 | | |
 |---|---|
-| arms | headless **1627 / 0 fail** · X **11/11, 2170** |
+| arms | headless **1627 / 0 fail** · X **11/11, 2170** — **after the verification fixup (§9): headless 1628 · X 2174** |
 | baseline it started from | headless **1619**, X **2149** — both RE-MEASURED on the unchanged tree first, both EXACT, no drift |
 | new check calls | **21** (17 in `i1315`, 3 in `modes`, 1 in `grid`'s per-row loop) |
 | existing checks restated | **6** — `BP10` `BP13` `BP43` `BP45` `BW59` `GH8`. None deleted. |
@@ -136,7 +136,10 @@ satisfies `{4 4}`. So the restatement **enumerates the four sites in the check
 text** and **adds a per-proc leg** (`browser_refresh` must hold exactly one of
 each), which is the "one place for a scoping sabotage to land" claim the number
 used to buy. ⚠ Corollary, obeyed: **no comment in `src/wave_viewer.tcl` names
-either accessor** — that is how item 12 red `BD06`.
+either accessor** — that is how item 12 red `BD06`. ⚠⚠ SCOPE, ADDED BY THE
+FIXUP: that sentence is true of these **two** accessors only. It was **not**
+true of the two procs this item introduced until §9.4 fixed them, and the
+commit message's broader wording was wrong. See §9.4.
 
 `GH8`/`GH9` are the **three-file lockstep** (`bind $f.pw <ButtonRelease-1>` in
 the source, a `data-bseq` row in the guide, the literal in the test). All three
@@ -168,7 +171,7 @@ single run — no file aborted early, so no red set is a truncation.
 | **S5a** | restore the sidebar's shown state through `browser_toggle` instead of the direct `set browser($token)` | `BP65` `BP66` `BP74` | ✔ (this is the substitute; see the divergence list — the PLAN's own S5 reds nothing) |
 | **S5b** | restore a class box by `$f.opt.dev invoke` — a **relative** toggle | `BP65` `BP66` **`BP74`** (`i1315`) + **`BW59`** (`panes`) | ⚠ **A MEASURED COVERAGE HOLE, THEN CLOSED.** On the first pass this fired only on the SOURCE checks and `BW59`: every behavioural round trip in the file asks for the OPPOSITE of the fresh window's default, so one flip lands on the right answer by coincidence. `BP74` was given an **idempotence leg** (apply the SAME dict TWICE — a write is idempotent, a toggle flips back) and the sabotage was **re-run**: it now reds `BP74` behaviourally. Counts unchanged at 184 |
 | **S6** | delete the `<ButtonRelease-1>` bind from `browser_build` | **4 reds, 2 files.** `i1315`: `BP68` `BP70`. `grid`: `GH8`'s per-row leg + `GH9` | ✔ exactly — four oracles, two files, one line. This is the sabotage that proves the feature can fire for a user |
-| **S7** | restore the `set browsersash($token) 0.55` seed inside `browser_sash` (the one-line revert of A2) | **`BP69` alone** | ✘ **CORRECTED.** Scout predicted `BP41`/`BP42`/`MG9` too. They cannot see it: the seed is only written once `browser_sash` has RUN, and it only runs from `browser_show`'s pack branch — `BP41`, `BP42` and `MG9` all read windows whose sidebar was **never shown**. `BP69` is the **only** witness in the tree, and its leg 2 ("the live split really is non-zero") is what stops it being green on an unmapped pane |
+| **S7** | restore the `set browsersash($token) 0.55` seed inside `browser_sash` (the one-line revert of A2) | **`BP69` alone** | ✘ **CORRECTED.** Scout predicted `BP41`/`BP42`/`MG9` too. They cannot see it: the seed is only written once `browser_sash` has RUN, and it only runs from `browser_show`'s pack branch — `BP41`, `BP42` and `MG9` all read windows whose sidebar was **never shown**. `BP69` is the **only** witness in the tree at the time of this measurement, and its leg 2 ("the live split really is non-zero") is what stops it being green on an unmapped pane. ⚠ RE-MEASURED AFTER THE FIXUP: with `BP77` in the file it now reds **`BP69` + `BP77`** (186 / 2) — see §9.3; `BP41`/`BP42`/`MG9` are still GREEN |
 
 **No sabotage fired nothing.** Every mutation was proved on disk by `diff`
 before its run and every restore was proved byte-identical after it; the clean
@@ -302,5 +305,120 @@ and is shipping anyway with the limit stated.
 
 ## 8. Next free ids
 
-`BP75` · `MG19` · `BW79` · `GH` unchanged. **`BD60`-`BD70` remain two-pane item
-15's and were not taken.**
+`BP78` · `MG19` · `BW79` · `GH` unchanged. **`BD60`-`BD70` remain two-pane item
+15's and were not taken.** (`BP75`-`BP77` were taken by §9 below.)
+
+---
+
+## 9. FIXUP after adversarial verification — `BP75`/`BP76`/`BP77`
+
+The item was **rejected** by its verifier, who ran four sabotages of its own.
+**Two stayed fully green**, and those two are the finding. Everything in this
+section is a MEASUREMENT on the fixup tree, not a prediction.
+
+### 9.1 Two coverage holes, both on LIVE user paths
+
+| | the mutation | before the fixup | after |
+|---|---|---|---|
+| **V1** | swap the two fallbacks in `browser_state_apply` — `dget $d devint 0` → `1` and `dget $d srccur 1` → `0` | **fully green**: `i1315` 184, `panes` 81, `modes` 488, `sea` 79 — four suites, zero reds | reds **`BP75`** + **`BP76`**, count held at **188** |
+| **V2** | move the sash accessor's `set browsersash($token) $want` from BEFORE its `$h <= 1` guard to AFTER it, so a restore into a never-shown sidebar DROPS the preference | **fully green**: `i1315` 184, `panes` 81, `sea` 79 | reds **`BP77`**, count held at **188** |
+
+Neither is defensive code. **V1's branch is reached by every state file written
+before `91c6c828`**: `ase_window.tcl`'s Save State / Load State persists the
+session `viewer` dict — `browser` sub-dict and all — to a FILE, and a legacy
+file has no `devint`/`srccur` key, so a swap restores that session with device
+internals **ON** and source currents **OFF**, inverted from R11 and silent.
+**V2's branch is the behaviour `declaredLimits` chose on purpose** ("a restore
+of a HIDDEN sidebar STORES the sash preference but cannot APPLY it … chosen
+over dropping the preference"); the choice was declared, that it was unmeasured
+was not.
+
+**Why the batch could not see either.** Every behavioural round trip in the
+item (`BP43`, `BP45`, `BP71`, `BP74`) supplies all three keys, so the
+key-ABSENT path was never entered; and `BP71`'s restore lands on a window whose
+pane is already mapped, because `BP69` toggles the sidebar ON as its first act
+and the whole group inherits that. **A fresh viewer's sidebar is BUILT but
+never packed** — that is the state both defects need and the state the new
+block runs in.
+
+### 9.2 The three new checks
+
+| id | arm | claim |
+|---|---|---|
+| `BP75` | **both** | the two fallback constants, EXTRACTED AS VALUES, are R11's asymmetric `0`/`1` **and** are the same pair `browser_state_default` ships. Both start `{NO-MATCH}`, so a deleted or renamed line cannot go green |
+| `BP76` | X | a **PRE-ITEM state dict** (`devint`/`srccur`/`sash` all removed) applied to a window first driven to the OPPOSITE pair `{1 0}` lands on `{0 1}`. Leg 1 proves it really departed, so `{0 1}` cannot be "already like that" and cannot be "the writer did nothing" — both of those read `{1 0}` |
+| `BP77` | X | a restore into a **never-shown** sidebar cannot APPLY the sash (leg 2: `winfo height` ≤ 1, and `>= 0` so an `ERR:` read cannot satisfy it) but **STORES** it anyway (leg 3), and opening the sidebar then lands on the restored `0.44` rather than the `0.55` layout default (leg 4). Leg 1 pins the preference at `0` beforehand |
+
+Plus one `BP76 (FIXTURE)` call — the viewer opens, its `.wvbrowser` is **not**
+packed, its `.pw` **does** exist. **4 new check calls**, none restated, none
+deleted.
+
+### 9.3 The false sabotage claim, corrected IN THE SOURCE
+
+The comment inside the sash accessor said S7 "reds `BP69` …, `BP41`, `BP42` and
+`MG9` — four oracles across three files". **The receipt's §5 had already
+corrected that and the source had not**, so the file hardest to re-measure from
+was the one still carrying the disproved prediction. Re-measured here, on the
+fixup tree:
+
+* **S7 reds `BP69` and `BP77`** — `i1315` **186 passed / 2 failed**, count held
+  at 188. `BP77` is new since the last measurement and is red for the right
+  reason: `BP76`'s apply calls the accessor, and the restored seed puts a
+  preference into a window nobody chose one for, which is the defect stated
+  exactly. **Before `BP77` existed the answer was `BP69` ALONE (183 / 1)**, the
+  figure §5 and the verifier both measured.
+* **`BP41`, `BP42`, `MG9` MEASURE GREEN** — `test_wave_modes.tcl` **488**,
+  `test_wave_sigbrowser_panes.tcl` **81**, both untouched. They cannot see it:
+  the seed is only written once the accessor has RUN, which happens from
+  `browser_show`'s pack branch, and all three read sidebars that were never
+  shown.
+
+The source comment now states that, including the pre-`BP77` figure.
+
+### 9.4 The bare-name corollary, restated ACCURATELY
+
+§4 of this receipt claimed "no comment in `src/wave_viewer.tcl` names either
+accessor". That is **true as written** (it scopes to the two R11 accessors, and
+the file-wide counts are `4` and `4`, all real call sites — `BW59` is honest).
+**The commit message generalised it to "No accessor is named in any comment",
+and that was FALSE**: the comment above the sash accessor spelled **both** procs
+this item introduced. Nothing was red — no check counts those two bare names —
+but it pre-poisons any future `BD06`/`BW59`-style count on them, which is the
+exact trap the corollary exists to avoid.
+
+Fixed by describing the two neighbours **by role** instead of by name, and by
+writing the rule into the accessor's header so the next editor inherits it.
+File-wide bare-name counts now, all four, all real call sites:
+
+| name | count | sites |
+|---|---|---|
+| `browser_sash_pref` | **2** | its `proc` line; the state reader |
+| `browser_sash_drop` | **2** | its `proc` line; the `<ButtonRelease-1>` bind |
+| `browser_devint` | **4** | `proc`; `browser_class_filter`; the state reader; the state writer |
+| `browser_srccur` | **4** | the same four |
+
+### 9.5 A sabotage that did NOT fire exactly, and what was done
+
+The verifier's V2 as literally described — *move* the store below the guard —
+also reds **`BP70`** and **`BP72`**, because the `set frac` block sits between
+the two and the moved store leaves `frac` STALE: the accessor then snaps the
+sash back to `0.55` in the middle of a real drag. That is a second, larger
+defect riding along, so it is **not** a clean oracle for the coverage hole.
+**V2b** was run instead — the store is dropped only when the pane is unmapped
+(`&& $h0 > 1`), the mapped path byte-for-byte unchanged — and it reds
+**`BP77` ALONE**, 187 passed / 1 failed, count held at 188. Both forms are
+recorded because the difference is the point: `BP77` is the precise oracle, and
+the collateral reds under the literal move are a different bug.
+
+### 9.6 Arms after the fixup
+
+| arm | was (item 14) | now |
+|---|---|---|
+| headless | 1627 | **1628** — `i1315` 87 → **88** (`BP75`), every other file byte-identical |
+| X | 2170 | **2174** — `i1315` 184 → **188** (`BP75`, `BP76` fixture, `BP76`, `BP77`), every other suite byte-identical |
+
+Sabotage driver: lock dir, `EXIT`/`INT`/`TERM` restore trap, pre-state md5
+assert against a byte-exact backup (**not** `git checkout` — the fixup was
+uncommitted while it ran), proof-of-mutation-on-disk, printed diff,
+diff-verified restore, and `NORESULT` counted as red. Every restore verified
+byte-identical; the clean re-run after them is green at 88 headless / 188 X.

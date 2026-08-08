@@ -8119,11 +8119,19 @@ proc wviewer::browser_sea_build {parent} {
 # (M3). `want` {} reads/re-applies the current one; a fraction strictly inside
 # (0,1) sets it. Returns the fraction in force, or 0 when it could not be
 # applied. ⚠ ITS HEADER USED TO SAY "PERSISTENCE IS ITEM 14 -- this is only the
-# accessor and the apply". TWO-PANE ITEM 14 HAS LANDED: the persisted half is
-# `browser_sash_pref` (the reader) and `browser_sash_drop` (the one writer)
-# below, and this proc stayed the LAYOUT accessor with its contract unchanged,
-# deliberately -- see the two ⚠⚠ paragraphs on the reader for what changing it
-# instead would have broken.
+# accessor and the apply". TWO-PANE ITEM 14 HAS LANDED: the persisted half is the
+# pure preference READER and the single drop WRITER defined immediately below
+# this proc, and this proc stayed the LAYOUT accessor with its contract
+# unchanged, deliberately -- see the two ⚠⚠ paragraphs on that reader for what
+# changing it instead would have broken.
+#
+# ⚠ THE TWO NEIGHBOURS ARE DESCRIBED, NEVER SPELLED, HERE AND EVERYWHERE ELSE IN
+# THIS FILE. BD06/BW59-style checks count a BARE NAME file-wide and expect the
+# call sites they enumerate; a mention in prose is indistinguishable from a call
+# site, which is how two-pane item 12 red BD06. Each of the two is therefore
+# written exactly twice in this file -- its `proc` line and its one caller (the
+# state reader for one, the `<ButtonRelease-1>` bind for the other) -- and any
+# comment that wants to point at one points at it by ROLE.
 #
 # ⚠⚠ A FRACTION, NEVER PIXELS, and both halves of that were forced by reading
 # the code rather than by taste:
@@ -8145,6 +8153,13 @@ proc wviewer::browser_sash {token {want {}}} {
   if {![dict exists $windows $token]} { return 0 }
   set pw [dict get $windows $token top].wvbrowser.pw
   if {[catch {winfo exists $pw} e] || !$e} { return 0 }
+  # ⚠⚠ THE STORE IS DELIBERATELY ABOVE THE `$h <= 1` GUARD BELOW, AND THE ORDER
+  # OF THESE TWO BLOCKS IS THE WHOLE DIFFERENCE BETWEEN "a snapshot taken with
+  # the browser closed keeps the user's split" and "it silently forgets it".
+  # STORING is always possible; APPLYING needs a mapped pane. Move this after
+  # the guard and a restore into a never-shown sidebar drops the preference on
+  # the floor -- which was fully green across three suites until BP77 in
+  # `test_wave_sigbrowser_i1315.tcl` was added by the item's verification fixup.
   if {[string is double -strict $want] && $want > 0 && $want < 1} {
     set browsersash($token) $want
   }
@@ -8161,9 +8176,22 @@ proc wviewer::browser_sash {token {want {}}} {
   # browsersash($token)]` means EXACTLY "somebody chose a split", which is what
   # lets the state reader answer spec §9's `sash 0` on a fresh window and keeps
   # the whole-dict compare in `browser_state_is_default` closable.
-  # Restoring the seed is a one-line revert and it is the item's sabotage S7:
-  # it reds BP69 (the fresh window's preference becomes 0.55), BP41, BP42 and
-  # MG9 -- four oracles across three files, one line.
+  # Restoring the seed is a one-line revert and it is the item's sabotage S7.
+  # ⚠ THE PLAN PREDICTED "BP69, BP41, BP42 and MG9 -- four oracles across three
+  # files". THAT PREDICTION IS WRONG AND WAS MEASURED WRONG THREE TIMES (by the
+  # item, by its verifier, and again by the fixup). BP41, BP42 and MG9 all read
+  # windows whose sidebar was NEVER SHOWN, and the seed is only written once
+  # this proc has RUN -- which happens from `browser_show`'s pack branch. They
+  # MEASURE GREEN: `test_wave_modes.tcl` 488 and
+  # `test_wave_sigbrowser_panes.tcl` 81, both untouched.
+  # ⚠ WHAT IT ACTUALLY REDS, MEASURED ON THIS TREE: BP69 and BP77 in
+  # `test_wave_sigbrowser_i1315.tcl` (186 passed / 2 failed, count held at 188).
+  # BP69 sees the fresh window's preference become 0.55 and its third leg names
+  # `sash` as a new departure; BP77 sees it because the apply that precedes it
+  # calls this proc, and the seed puts a preference into a window nobody chose
+  # one for -- which is the defect stated exactly. Before the fixup added BP77
+  # the answer was BP69 ALONE (183/1). BP69's leg 2 ("the live split really is
+  # non-zero") is what stops either from going green on an unmapped pane.
   set frac 0.55
   if {[info exists browsersash($token)]} { set frac $browsersash($token) }
   set h 0
@@ -10306,6 +10334,16 @@ proc wviewer::browser_state_apply {token d} {
   # ⚠ THE FALLBACKS ARE 0 AND 1 AND THEY ARE NOT A COPY-PASTE (R11): a state
   # file written before this item has neither key, and the window must land on
   # the shipped defaults, which differ.
+  # ⚠⚠ AND THAT IS A LIVE PATH, NOT DEFENSIVE PADDING, WHICH IS WHY IT IS NOW
+  # CHECKED FROM BOTH SIDES. `ase_window.tcl`'s Save State / Load State writes
+  # the session `viewer` dict -- `browser` sub-dict and all -- to a FILE, so
+  # EVERY state file written before this item lands here, and swapping the two
+  # constants would restore a legacy session with device internals ON and source
+  # currents OFF, inverted from R11 and invisible. The fixup that followed this
+  # item's verification added BP75 (the two literals, SOURCE, both arms) and
+  # BP76 (a legacy dict with both keys REMOVED, applied to a window that was
+  # first driven to the OPPOSITE pair, X arm) -- the swap was fully green across
+  # four suites before they existed.
   # ⚠ `catch`ed for the same reason the neighbours are: a hand-edited value that
   # is not boolean must leave the window usable at its build default rather than
   # abort the whole restore.
@@ -10333,6 +10371,12 @@ proc wviewer::browser_state_apply {token d} {
   #     place the moment the user opens the sidebar. Dropping the preference
   #     here would mean "snapshot taken with the browser closed" silently
   #     forgets a split the user chose.
+  #     ⚠⚠ THAT CHOICE IS NOW A CHECK, NOT JUST A DECLARED LIMIT. It rests on
+  #     the accessor STORING `$want` BEFORE its own `$h <= 1` guard; moving the
+  #     store after the guard was fully green across three suites until the
+  #     fixup added BP77, which restores `sash 0.44` into a NEVER-SHOWN sidebar,
+  #     asserts the preference is held anyway, and then opens the sidebar and
+  #     watches the split land on 0.44 instead of the 0.55 layout default.
   # ⚠ `sash 0` (spec §9's default, i.e. nobody chose a split) is REFUSED by the
   # accessor's own `$want > 0 && $want < 1` guard, so a default state file
   # leaves the layout default alone rather than collapsing a pane. That is why

@@ -39,7 +39,10 @@
 # and the arm is carried in the id rather than in the block:
 #   62-68  SOURCE + PURE      both arms   (item 14)
 #   69-74  REAL viewer        Tk/X only   (item 14)
-# Next free after this item: BP75.
+#   75     SOURCE             both arms   (item 14's verification FIXUP)
+#   76-77  REAL viewer        Tk/X only   (item 14's verification FIXUP)
+# Next free after this item: BP78. TWO-PANE ITEM 15 OWNS `BD60`-`BD70` — the
+# fixup did NOT take them.
 #
 # ⚠ THE FOOTPRINT CLAIM, MADE EXPLICITLY BECAUSE RULING 30 WAS CUT ON IT.
 # Ruling 30's split point was NOT the check count: across 8 pre-split runs the
@@ -1118,6 +1121,39 @@ check {BP68 (SOURCE) the sash DROP is a real proc, bound on the panedwindow, and
         [regexp -all {ButtonRelease-1>[^\n]*break} $wsrc]] \
   [list 1 1 0]
 
+# ⚠⚠ BP75 — ADDED BY THE ITEM'S VERIFICATION FIXUP, AND IT CLOSES A MEASURED
+# COVERAGE HOLE, not a hypothetical one. The verifier SWAPPED the two fallback
+# constants in `browser_state_apply` (`dget $d devint 0` -> 1 and
+# `dget $d srccur 1` -> 0) and every suite in the batch stayed green: i1315 184,
+# panes 81, modes 488, sea 79 — zero reds anywhere. That is not defensive
+# padding being unreachable: `ase_window.tcl`'s Save State / Load State writes
+# the session `viewer` dict, `browser` sub-dict included, to a FILE, so EVERY
+# state file written before two-pane item 14 has no `devint`/`srccur` key and
+# lands on exactly this branch. A swap would restore a legacy session with
+# device internals ON and source currents OFF — inverted from R11, and silent.
+# The reason the batch could not see it is stated in BP74's own comment and is
+# the same shape: every behavioural round trip in this file supplies all three
+# keys, so the key-ABSENT path was never exercised.
+#
+# THIS IS THE SOURCE HALF and it runs in BOTH arms; BP76 is the behavioural half
+# and needs the real viewer. Both exist because either alone is weak: the source
+# check cannot prove the constants are the ones the window lands on, and the
+# behavioural one runs in one arm only.
+#
+# ⚠ IT EXTRACTS THE CONSTANTS AS VALUES rather than asserting two booleans, so a
+# swap prints `1 0` against `0 1` and reads as the defect it is. Both start at
+# `{NO-MATCH}`, which is what a deleted line or a renamed accessor produces —
+# so the check cannot go green by failing to find anything.
+set bp_fb_dev {NO-MATCH}
+set bp_fb_src {NO-MATCH}
+regexp {browser_devint \$token \[wviewer::dget \$d devint ([^\]]*)\]} $bp_apply -> bp_fb_dev
+regexp {browser_srccur \$token \[wviewer::dget \$d srccur ([^\]]*)\]} $bp_apply -> bp_fb_src
+check {BP75 (SOURCE, R11) a state file with NEITHER box key falls back to the
+       ASYMMETRIC shipped pair, and to the SAME pair browser_state_default ships} \
+  [list $bp_fb_dev $bp_fb_src \
+        [wviewer::dget $bp_def devint {NO-KEY}] [wviewer::dget $bp_def srccur {NO-KEY}]] \
+  [list 0 1 0 1]
+
 # ============================================================================
 # BR40-BR54 — the REAL VIEWER + REAL RAW FILES. `wviewer::open` on the sky130A
 # ngspice_state1 fixture (item 8's BSV recipe verbatim) plus two hand-written
@@ -1796,6 +1832,119 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
          that says so CAN count} \
     [list [expr {$bp_ln1 - $bp_ln0}] $bp_took $bp_again [expr {$bp_ln2 - $bp_ln1}]] \
     [list 0 [list 1 0 0.42] [list 1 0 0.42] 1]
+  catch {wviewer::close $tok} ; update
+
+  # ==========================================================================
+  # BP76/BP77 — TWO-PANE ITEM 14, THE VERIFICATION FIXUP. THE LEGACY-STATE AND
+  # HIDDEN-SIDEBAR PATHS, BOTH OF WHICH WERE FULLY GREEN UNDER SABOTAGE.
+  #
+  # ⚠⚠ THESE TWO EXIST BECAUSE THE ITEM'S VERIFIER RAN TWO SABOTAGES THE ITEM
+  # HAD NOT NAMED AND BOTH SURVIVED EVERY SUITE IN THE BATCH. They are recorded
+  # here as measurements, not as prose:
+  #   V1  swap the two fallbacks in `browser_state_apply` (`devint` 0 -> 1,
+  #       `srccur` 1 -> 0)         -> i1315 184, panes 81, modes 488, sea 79.
+  #                                   FOUR SUITES, ZERO REDS.
+  #   V2  move `set browsersash($token) $want` in the sash accessor from BEFORE
+  #       its `$h <= 1` guard to AFTER it, so a restore into a never-shown
+  #       sidebar DROPS the preference
+  #                                -> i1315 184, panes 81, sea 79. ZERO REDS.
+  # BOTH are live user paths, not defensive code (see each check).
+  #
+  # ⚠ WHY THE WHOLE BLOCK USES A SIDEBAR THAT WAS NEVER SHOWN. That is the
+  # condition both defects need, and it is a condition BP69-BP74 never produce:
+  # BP69 toggles the sidebar ON as its very first act and every later restore
+  # in that group lands on a window whose pane is already mapped. A fresh
+  # viewer's `$f.wvbrowser` is BUILT but never `pack`ed, so `winfo height` on
+  # its panedwindow is 1 and the accessor's guard is genuinely taken — asserted,
+  # not assumed, by BP77's second leg.
+  # ⚠ IT OPENS AND CLOSES ITS OWN WINDOW, like the BP69 group, so BP47 below
+  # still starts from the closed token BP46 left behind.
+  # ==========================================================================
+  check {BP76 (FIXTURE) a viewer opens for the fixup group, with its sidebar
+         BUILT but never shown} \
+    [list [pcall ::wviewer::open $tok] \
+          [bs_packed [wviewer::window_for $tok].wvbrowser] \
+          [expr {[winfo exists [wviewer::window_for $tok].wvbrowser.pw] ? 1 : 0}]] \
+    [list 1 0 1]
+  set vt76 [wviewer::window_for $tok]
+  set BPF76 $vt76.wvbrowser
+  set BPW76 $BPF76.pw
+  viewer_ready $vt76 ; update ; update idletasks
+
+  # --- BP76: THE LEGACY STATE FILE ------------------------------------------
+  # ⚠⚠ THE PATH IS LIVE AND THAT IS THE POINT. `ase_window.tcl`'s Save State /
+  # Load State writes the session `viewer` dict — `browser` sub-dict and all —
+  # to a FILE, so every state file written before two-pane item 14 has a
+  # `browser` dict with NO `devint`, NO `srccur` and NO `sash`, and loading one
+  # runs exactly the branch V1 mutated. R11's pair is ASYMMETRIC, so a legacy
+  # session restored through a swapped fallback comes back with device
+  # internals ON and source currents OFF and nothing says so.
+  #
+  # ⚠⚠ THE WINDOW IS FIRST DRIVEN TO THE OPPOSITE PAIR, WHICH IS WHAT MAKES THE
+  # CHECK MEAN ANYTHING. Leg 1 asserts it really got there, so the `{0 1}` in
+  # leg 3 cannot be "the window was already like that" and cannot be "the
+  # writer did nothing" — both of those read `{1 0}` and are red. This is the
+  # anti-vacuity shape BP41/BP46 and BP71 use, one layer in.
+  # ⚠ NOTHING BELOW PUTS THE VALUES BACK before they are read (item 12's lesson:
+  # a check that reads its own helper's restore is a check about the helper).
+  pcall ::wviewer::browser_devint $tok 1
+  pcall ::wviewer::browser_srccur $tok 0
+  update
+  set bp_pre76 [list [pcall ::wviewer::browser_devint $tok] \
+                     [pcall ::wviewer::browser_srccur $tok]]
+  set bp_leg76 [dict remove [pcall ::wviewer::browser_state $tok] devint srccur sash]
+  set bp_has76 [list [expr {[dict exists $bp_leg76 devint] ? 1 : 0}] \
+                     [expr {[dict exists $bp_leg76 srccur] ? 1 : 0}] \
+                     [expr {[dict exists $bp_leg76 sash]   ? 1 : 0}]]
+  pcall ::wviewer::browser_state_apply $tok $bp_leg76
+  update ; update idletasks
+  check {BP76 (X) a PRE-ITEM state dict — no devint, no srccur, no sash — restores
+         a window that was driven to the OPPOSITE pair back onto R11's ASYMMETRIC
+         shipped defaults} \
+    [list $bp_pre76 $bp_has76 \
+          [list [pcall ::wviewer::browser_devint $tok] \
+                [pcall ::wviewer::browser_srccur $tok]]] \
+    [list {1 0} {0 0 0} {0 1}]
+
+  # --- BP77: A RESTORE INTO A SIDEBAR THAT WAS NEVER SHOWN ------------------
+  # The declared design: `browser_state_apply` hands the sash to the accessor
+  # UNCONDITIONALLY, outside the `$shown` arm, and the accessor STORES `$want`
+  # BEFORE its own height guard. So "a snapshot taken with the browser closed"
+  # keeps the split the user chose; the apply itself is a no-op and the show's
+  # pack branch (plus its `after idle` re-apply) puts it in place the moment the
+  # sidebar opens. V2 moved that store after the guard — the rejected
+  # alternative, in which the preference is silently dropped — and three suites
+  # could not tell the two apart.
+  #
+  # FOUR LEGS, AND EACH ONE KILLS A DIFFERENT WAY OF BEING GREEN:
+  #   1  the preference was 0 BEFORE the apply, so the 0.44 below can only have
+  #      come from the apply (this window has never been dragged and BP70's
+  #      drag was on a different, since-closed window);
+  #   2  the pane really was UNMAPPED at apply time — `winfo height` <= 1. This
+  #      is the leg that proves the guard was taken; without it the whole check
+  #      could be running on a mapped pane and testing nothing new;
+  #   3  the preference is held ANYWAY. This is V2's oracle: with the store
+  #      after the guard this reads 0;
+  #   4  THE PAYOFF, and the leg a user would notice: open the sidebar and the
+  #      split lands on the restored 0.44, not on the 0.55 LAYOUT DEFAULT. 0.44
+  #      is chosen far from both 0.55 and BP74's 0.42 so no earlier value can
+  #      impersonate it.
+  set bp_pref77a [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_h77 [bs_num [pcall winfo height $BPW76]]
+  pcall ::wviewer::browser_state_apply $tok [dict replace $bp_leg76 shown 0 sash 0.44]
+  update ; update idletasks
+  set bp_pref77b [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  pcall ::wviewer::browser_toggle 1 $tok
+  update ; update idletasks
+  set bp_frac77 [bs_num [bs_wait_sash $BPW76]]
+  check {BP77 (X) a restore into a NEVER-SHOWN sidebar cannot APPLY the sash but
+         STORES it anyway, and opening the sidebar then lands on the restored
+         split instead of the layout default} \
+    [list $bp_pref77a \
+          [expr {$bp_h77 >= 0 && $bp_h77 <= 1}] \
+          $bp_pref77b \
+          [expr {abs($bp_frac77 - 0.44) < 0.03}]] \
+    [list 0 1 0.44 1]
   catch {wviewer::close $tok} ; update
 
   # --- BP47-BP56: THE RESTORE ------------------------------------------------

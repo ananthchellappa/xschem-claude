@@ -15,11 +15,21 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 14, both arms green.
+Measured **2026-08-08** after two-pane item 14 **and its verification fixup**,
+both arms green.
 Re-measure before item 15 and record any drift here; do **not** silently adopt a
 new baseline.
 
-> **⚠ THE BASELINE MOVED WITH ITEM 14 — headless 1619 → 1627, X 2149 → 2170.**
+> **⚠ THE BASELINE MOVED WITH ITEM 14 — headless 1619 → 1627, X 2149 → 2170,**
+> **AND AGAIN WITH ITS FIXUP — headless 1627 → 1628, X 2170 → 2174.**
+> **The fixup's whole delta is in `i1315`:** 87 → **88** headless (`BP75`, the
+> both-arms SOURCE half) and 184 → **188** in X (`BP75` + `BP76`'s fixture +
+> `BP76` + `BP77`). Every other file and every other suite is byte-identical to
+> the item-14 figures below in both arms. The fixup closes two coverage holes
+> the item's verifier found by sabotage — swapping `browser_state_apply`'s two
+> fallback constants, and dropping the sash preference on a restore into a
+> never-shown sidebar — **both of which were fully green across four and three
+> suites respectively.** Receipt `14_receipt.md` §9.
 > **Reason, per file:** `i1315` 80 → **87** headless / 167 → **184** in X
 > (`BP62`-`BP68`, 7 both-arms PURE/SOURCE calls, plus the 10-call `BP69`-`BP74`
 > real-viewer block); `grid` 230 → **231** / 355 → **356** (`GH8`'s per-row loop
@@ -43,7 +53,7 @@ new baseline.
 > `RESULT:` line. The previous baseline (item 12, `e5347591`) was headless
 > **1618** / X **2136** with `panes` at 14 and 68.
 
-**headless — 1627 checks over 14 files, 0 fail**
+**headless — 1628 checks over 14 files, 0 fail**
 (`env -u DISPLAY ./src/xschem --nogui --pipe -q --nolog --script <f>` from the repo root)
 
 | file | checks | file | checks |
@@ -55,7 +65,7 @@ new baseline.
 | `test_wave_sigbrowser_panes` | **15** | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
-| `test_wave_sigbrowser_i1315` | **87** | **TOTAL** | **1627** |
+| `test_wave_sigbrowser_i1315` | **88** | **TOTAL** | **1628** |
 
 **X arm — 11/11 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
@@ -77,7 +87,7 @@ new baseline.
 | `sea` | 79 | `grid` | **356** |
 | `i11` | 74 | `modes` | **488** |
 | `i12` | 123 | | |
-| `i1315` | **184** | **TOTAL** | **2170** |
+| `i1315` | **188** | **TOTAL** | **2174** |
 | `i14` | **91** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
@@ -170,6 +180,26 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       sash reds `BP69` ALONE — `BP41`/`BP42`/`MG9` all read never-shown
       sidebars. **`BP69`, `BP70` and `BP10` are each the SOLE witness to their
       defect; none may be weakened.**
+      **⚠⚠ REJECTED BY ITS VERIFIER, THEN FIXED UP.** Two sabotages the item had
+      NOT named stayed **fully green**: swapping `browser_state_apply`'s two
+      fallback constants (`i1315` 184, `panes` 81, `modes` 488, `sea` 79 — four
+      suites, zero reds) and dropping the sash preference on a restore into a
+      never-shown sidebar (`i1315` 184, `panes` 81, `sea` 79). Both are LIVE
+      paths: `ase_window.tcl` persists the session `viewer` dict to a FILE, so
+      every pre-`91c6c828` state file enters the key-absent branch; and the
+      hidden-sidebar store is the behaviour `declaredLimits` chose on purpose.
+      The fixup adds **`BP75`** (SOURCE, both arms), **`BP76`** (a legacy dict
+      applied to a window driven to the OPPOSITE pair) and **`BP77`** (a restore
+      into a never-shown sidebar) plus one fixture call — **4 new check calls,
+      none restated, none deleted** — taking headless **1627 -> 1628** and
+      X **2170 -> 2174**, all of it in `i1315`. It also corrects a **false
+      sabotage claim shipped in `src/wave_viewer.tcl`** (the comment still
+      predicted S7's four-oracle cascade after the receipt had disproved it;
+      re-measured on the fixup tree S7 reds **`BP69` + `BP77`**, 186/2, and
+      `BP41`/`BP42`/`MG9` measure GREEN) and removes the **two bare proc names**
+      the item wrote into a comment, which would have pre-poisoned any future
+      `BD06`/`BW59`-style count. Receipt `14_receipt.md` §9. **Next free `BP78`;
+      `BD60`-`BD70` still item 15's.**
       **⚠ A COVERAGE HOLE WAS MEASURED AND CLOSED MID-ITEM.** Restoring a class
       box by `invoke` (a RELATIVE toggle) was caught only by SOURCE checks:
       every behavioural round trip asks for the OPPOSITE of the fresh default,
