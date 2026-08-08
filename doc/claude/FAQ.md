@@ -14,6 +14,40 @@ Newest entries on top.
 
 ---
 
+## Q39. I had the Add Wire Label form open, pressed `Ctrl+A`, then closed the form — and my whole schematic was gone. Is that fixed?
+
+- **Asked:** 2026-08-08
+- **Project state:** branch `open_pdk` @ `d9c6a8e5` + this session — issue **0231**.
+
+**Yes, fixed.** And it was as bad as it sounds: no `Delete` key, no ESC, no confirmation, and the
+dirty flag said *unmodified* afterwards, so the emptied drawing closed without a "unsaved changes"
+prompt and `reload` succeeded silently. One `undo` brought it back in the simple case, but not if
+you had edited anything after opening the form.
+
+**Why it happened.** Cancelling a cursor placement removed the preview with an internal delete —
+and that delete is *selection-scoped*. It only ever worked because the arm left exactly the preview
+selected, and nothing defended that: the Add-Label / Add-Pin / Insert-symbol forms are **modeless**,
+so `Ctrl+A`, Edit ▸ Select all and `select_dangling_nets` were all reachable in between, and none
+of them knows a placement is armed. It was never a `Ctrl+A` bug — anything that grew the selection
+did it.
+
+**What it does now.** The arm records *what the preview is* (per-object durable ids), and the
+cancel re-selects exactly that before deleting. Your other objects are deselected but stay in the
+drawing. Three more doors were closed with it:
+
+- **the form's own window-close button** (the shortest route — it calls the same cancel);
+- **typing one more character in the Name field**, which re-arms and dropped the old preview the
+  same way — this one needed no cancel gesture at all;
+- **pressing `w`** on a live preview, which used to *refuse* while several objects were selected
+  (statusbar: *"finish or ESC the pending placement first"*). That refusal existed only because of
+  this bug. It is gone: `w` now abandons the placement and starts drawing like every other verb,
+  and what else you had selected survives.
+
+**Still not scoped: paste / merge.** `Ctrl+V` then `Ctrl+A` then ESC is the same wipe on a sibling
+code path (issues **0232** / **0234**). Treat a pending paste the same way until those land.
+
+---
+
 ## Q38. I pressed `w`, started drawing, then pressed `r`. Nothing happened — why, and what does it do now?
 
 - **Asked:** 2026-08-07 (in the GUI, under `src/cadence_style_rc`)
@@ -92,10 +126,12 @@ dropped. Add-Wire-Label had an accidental escape hatch — typing one more chara
 re-issues its `-place`, which hits the Q35 gate and frees the wire while keeping the preview —
 but **Add-Pin had none**: ESC was the only exit and it threw the pin away.
 
-One exception: if you have a **multiple selection** live at the time (a `Ctrl+A` under the preview,
-say), the wire verb refuses instead and the status bar says *finish or ESC the pending placement
-first*. The teardown is a delete of the selection rather than of the preview (issue 0231, still
-open), so abandoning there would take your drawing with it.
+**No exceptions any more.** Until 2026-08-08 the wire verb *refused* when a **multiple selection**
+was live (a `Ctrl+A` under the preview, say) and said *finish or ESC the pending placement first*:
+the teardown was a delete of the selection rather than of the preview, so abandoning there would
+have taken your drawing with it. Issue **0231** scoped the teardown to the preview's own identity,
+so the carve-out is gone — the verb abandons the placement and starts drawing no matter what else
+is selected, and **what else is selected stays in the drawing**.
 
 Every wire/line verb does it: `w`, Shift+L (graphic line), `W` / cadence `s` (snap wire), the
 context menu's Insert wire / Insert line, the Wire and Line menu entries and toolbar buttons, and

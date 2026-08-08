@@ -30,15 +30,20 @@ What landed:
   line fallback, context-menu Insert wire / Insert line, and the `wire gui` / bare `wire` /
   `line gui` / bare `line` / `snap_wire` scheduler arms. **Not** from `start_wire()`/`start_line()`
   as the sketch proposed — see *Where the fix diverged from the sketch*.
-- **F2's issue-0231 carve-out** (also from review): `abort_placement_preview()` tears the preview
-  down with `delete()`, which removes the **selection**, not the preview object — that is issue
-  **0231**, open, and out of scope here. On the ESC path it misfires only for someone who pressed a
-  cancel key; wiring it to `w` would hand it to the commonest drawing keys, and one `Ctrl+A` under a
-  live preview (the forms are modeless) would wipe the drawing on the next `w`. **Measured before
-  the guard: 2 wires + preview + `select_all` + `w` → 0 wires.** So `leave_placement_for()` returns
-  0 and DECLINES while a multiple selection is live, the statusbar says *"finish or ESC the pending
-  placement first"*, and every caller skips arming the draw (declining without that would just
-  rebuild the jam). Delete the guard when 0231 lands.
+- ~~**F2's issue-0231 carve-out**~~ — **STRUCK 2026-08-08, the guard is gone.** It read:
+  `abort_placement_preview()` tears the preview down with `delete()`, which removes the
+  **selection**, not the preview object — issue **0231**, open then and out of scope here; wiring
+  that delete to `w` would hand it to the commonest drawing keys, and one `Ctrl+A` under a live
+  preview (the forms are modeless) would wipe the drawing on the next `w` (**measured: 2 wires +
+  preview + `select_all` + `w` → 0 wires**), so `leave_placement_for()` returned 0 and DECLINED
+  while a multiple selection was live, with the statusbar line *"finish or ESC the pending
+  placement first"*.
+  Issue **0231** scoped the teardown to the preview's stamped identity, so the reason evaporated and
+  the guard came out with it — along with the last inconsistency in the ratified modal-gesture rule
+  (every other verb cancelled the pending gesture; this one alone refused). Section **E7** of
+  `tests/headless/test_placement_wire_gate.tcl` was REPLACED, not deleted: the same constructor now
+  asserts the opposite — the draw arms, the preview is torn down, and the other selected objects
+  survive. The `remove the 0231 decline guard (if(0))` sabotage row below is likewise historical.
 
 User-ratified 2026-08-07 for F2: `w` **abandons the pending placement preview** and starts drawing
 (option (a)), symmetric with what `l`/`p` do to a live wire and with 0230's ratified rule *"whatever
@@ -55,7 +60,7 @@ witness:
 | drop the call from the `STARTMOVE` return only | the same four `D1`/`D2` checks (`D7` stays green) | 4 |
 | make the two-stage-ESC return unconditional (`if(1)`) | `D6 ESC still deselects` | 1 |
 | disable the `leave_placement_for()` call sites | `E1`×3, `E2`×2, `E3`, `E4`, `E7 wire NOT armed`, `E7 no wire mode` | 9 |
-| remove the 0231 decline guard (`if(0)`) | `E7`×5 | 5 |
+| ~~remove the 0231 decline guard (`if(0)`)~~ *(historical — the guard was removed by 0231 on 2026-08-08; E7 now pins the opposite)* | `E7`×5 | 5 |
 | apply the gate to the scripted coordinate commit form | `E5 control` ×2 | 2 |
 | break the `delete(0)`/`delete(1)` undo discriminator | `E6 undo lands pre-gesture` | 1 |
 

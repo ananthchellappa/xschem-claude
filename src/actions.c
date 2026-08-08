@@ -1904,6 +1904,10 @@ void clear_drawing(void)
   * net-label preview cannot leak its drop-on-copper gate onto the next document's placements. */
  xctx->sympin_preview = 0;
  xctx->wirelabel_preview = 0;
+ /* issue 0231: the stamped preview identity belongs to the document going away. The ids in it
+  * name objects that no longer exist, and the next document restarts the id counters -- so a
+  * survivor could resolve onto an UNRELATED new object and get deleted by the next abort. */
+ clear_placement_preview();
  xctx->graph_lastsel = -1;
  /* Waveform markers: the selection is a NUMBER, and the same xctx is reused by
   * `xschem clear`, File>Open in the same tab, `xschem load` and the disk-undo
@@ -2481,6 +2485,7 @@ void place_net_label(int type)
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);
   }
   move_objects(START,0,0,0);
+  stamp_placement_preview();   /* issue 0231 -- see stamp_placement_preview() in select.c */
   xctx->ui_state |= START_SYMPIN;
 }
 

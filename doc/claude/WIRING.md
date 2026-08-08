@@ -409,6 +409,18 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     the live site — it must also precede the refuse block — and the live call must not free the
     rider set.
 
+17. **`sel_array` is NOT the delete set.** `rebuild_selected_array()` admits any object with a
+    non-zero `sel`, but `delete()` (and `delete_wires`, `del_rect_line_arc_poly`) removes only
+    `sel == SELECTED` **exactly**. A stretch box-select marks a wire/line `SELECTED1`/`SELECTED2`
+    and a rect `SELECTED1..4` — a real user selection of one ENDPOINT that `delete()` deliberately
+    leaves alone. So any code that reads `sel_array`, remembers what it saw, and later re-selects
+    it with `select_*(..., SELECTED, ...)` has **PROMOTED partial selections to full ones and
+    widened a delete**. Issue **0231**'s first build did exactly that: scoping the placement
+    teardown to a stamped selection made it destroy three stretch-selected wires the *unscoped*
+    code had left standing — and `set_modify(save)` then reported the document clean, which is the
+    very lie 0231 existed to fix. Caught by the adversarial review of the fix, not by any test.
+    **Filter on the `sel` VALUE, not on membership in `sel_array`.**
+
 ## 8. Root-cause classes from issues 0079–0111 (name the class before fixing)
 
 A **Unverified commit path** (0085/0093/0102/0109) · B **Trigger-bound detection** — the
@@ -423,8 +435,16 @@ dropped `START_SYMPIN` before `delete()` could run, orphaning the preview instan
 with `sympin_preview`/`wirelabel_preview` stuck at 1 → callback.c's click-select guard
 (`!sympin_preview`) false forever = unrecoverable UI. **An early return inside a teardown function
 is a class-D generator: gate the ONE step you meant to skip, do not `return`.** The same teardown
-has three more class-D holes, each filed with a measured headless repro: **0231** it deletes the
-SELECTION rather than the preview, so a `Ctrl+A` in between wipes the schematic; **0232** every
+has three more class-D holes, each filed with a measured headless repro: **0231** it deleted the
+SELECTION rather than the preview, so a `Ctrl+A` in between wiped the schematic — FIXED 2026-08-08,
+and it is the class's *scope* lesson rather than its *early-return* one: a teardown that acts on
+"whatever is selected" is trusting an invariant established by a DIFFERENT function at a DIFFERENT
+time, across a window in which a modeless form lets the user run arbitrary commands. **A teardown
+must name what it is tearing down.** The fix stamps the preview's per-object session-stable ids at
+all twelve arm sites (`stamp_placement_preview()`, select.c) and re-selects exactly those before
+the `delete()`, with "resolves to nothing → delete nothing" as the backstop. It also let the
+0233 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
+refuses; **0232** every
 other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
 paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
 **0233** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of

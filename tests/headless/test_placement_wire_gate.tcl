@@ -283,22 +283,29 @@ xschem abort_operation ; xschem abort_operation
 xschem undo
 check "E6 undo lands pre-gesture"        [expr {[xschem get wires]==1 && [xschem get instances]==0}] 1
 
-# E7 -- the issue 0231 guard. abort_placement_preview() tears the preview down with delete(),
-#    which removes the SELECTION, not the preview object (0231, open). On the ESC path that is
-#    0231's problem; F2 must not hand the same delete() to `w`, so it DECLINES while a multiple
-#    selection is live: measured before the guard, 2 wires + preview + select_all + `w` left
-#    ZERO wires. Declining also means the draw must NOT arm -- otherwise the jam is back.
+# E7 -- issue 0231 landed, so F2 no longer carves itself out. This section used to assert that a
+#    wire verb DECLINED while a multiple selection was live: abort_placement_preview() tore the
+#    preview down with delete(), which removes the SELECTION and not the preview object, and
+#    handing that to `w` would have wiped the drawing on the first keystroke after a Ctrl+A
+#    (measured then: 2 wires + preview + select_all + `w` -> ZERO wires). The teardown is now
+#    scoped to the identity stamped at the arm, so the verb must PROCEED -- and the assertion
+#    that carries 0231 on this path is the last one: THE OTHER SELECTED OBJECTS SURVIVE.
+#    Same constructor as before, deliberately, so the two halves are directly comparable.
 reset ; xschem wire 0 40 100 40 ; xschem unselect_all
+xschem instance devices/lab_pin.sym 300 0 0 0 {name=e7 lab=E7SURV}  ;# a survivor of the
+xschem unselect_all                                                 ;# preview's OWN type
 xschem add_sch_pin -place
 xschem select_all
 check "E7 armed: multiple selection"     [expr {[xschem get lastsel] > 1}] 1
+check "E7 armed: preview + survivor"     [xschem get instances] 2
 xschem wire gui
-check "E7 declined: drawing intact"      [xschem get wires] 2
-check "E7 declined: preview kept"        [placing] 1
-check "E7 declined: preview instance"    [xschem get instances] 1
-check "E7 declined: wire NOT armed"      [startwire] 0
-check "E7 declined: no wire mode"        [lc] 0
-xschem abort_operation
+check "E7 proceeds: preview torn down"   [placing] 0
+check "E7 proceeds: wire draw armed"     [startwire] 1
+check "E7 proceeds: wire mode owned"     [lc] 1
+check "E7 0231: other objects survive"   [xschem get wires] 2
+check "E7 0231: survivor instance kept"  [xschem get instances] 1
+check "E7 0231: it is the survivor"      [xschem getprop instance 0 lab] E7SURV
+xschem abort_operation ; xschem abort_operation
 
 # E8 -- the teardown must not touch the modify flag (issue 0234 is this bug on a sibling path).
 reset ; xschem save

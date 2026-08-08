@@ -310,6 +310,10 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
        * grab), so this one is proved by code and has no headless seam. */
       leave_wire_draw_for("Screen grab");
       move_objects(START,0,0,0);
+      /* issue 0231. This arm never unselect_all()s, so the stamp deliberately captures the
+       * user's pre-existing selection too -- it rides the cursor with the grabbed image and is
+       * dropped with it, so it is part of the preview by construction. */
+      stamp_placement_preview();
       xctx->ui_state |= START_SYMPIN;
     }
     XFreeGC(display, gc);

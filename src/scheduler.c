@@ -1841,8 +1841,17 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(xctx->ui_state & STARTMOVE) {
             int save = xctx->modified;
             move_objects(ABORT,0,0,0);
-            delete(0 /* to_push_undo: no, keep the single baseline */);
-            set_modify(save);
+            /* ISSUE 0231, same narrowing as abort_placement_preview(): delete() is
+             * SELECTION-scoped, so drop the PREVIOUS PREVIEW by its stamped identity and not
+             * whatever is selected right now. This is the 0231 door with no cancel key in it
+             * at all -- the form is MODELESS and re-issues `-place` on every keystroke, so
+             * before the narrowing a Ctrl+A followed by typing one more character in the Name
+             * field wiped the drawing (measured: 2 wires + 1 instance -> 0 wires, with only
+             * the freshly armed preview left standing). */
+            if(select_placement_preview() > 0) {
+              delete(0 /* to_push_undo: no, keep the single baseline */);
+              set_modify(save);
+            }
           }
           xctx->ui_state &= ~START_SYMPIN;
         } else {
@@ -1854,6 +1863,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->need_reb_sel_arr=1;
         rebuild_selected_array();
         move_objects(START,0,0,0);
+        /* issue 0231. Two objects here, not one: create_pin stores the PINLAYER rect AND its
+         * owned name-view text, both SELECTED. Stamping the selection takes both. */
+        stamp_placement_preview();
         xctx->ui_state |= START_SYMPIN;
       } else {
         /* no args: open the Add-pin dialog (Name + Direction); its Place button
@@ -1891,8 +1903,17 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(xctx->ui_state & STARTMOVE) {
             int save = xctx->modified;
             move_objects(ABORT,0,0,0);
-            delete(0 /* to_push_undo: no, keep the single baseline */);
-            set_modify(save);
+            /* ISSUE 0231, same narrowing as abort_placement_preview(): delete() is
+             * SELECTION-scoped, so drop the PREVIOUS PREVIEW by its stamped identity and not
+             * whatever is selected right now. This is the 0231 door with no cancel key in it
+             * at all -- the form is MODELESS and re-issues `-place` on every keystroke, so
+             * before the narrowing a Ctrl+A followed by typing one more character in the Name
+             * field wiped the drawing (measured: 2 wires + 1 instance -> 0 wires, with only
+             * the freshly armed preview left standing). */
+            if(select_placement_preview() > 0) {
+              delete(0 /* to_push_undo: no, keep the single baseline */);
+              set_modify(save);
+            }
           }
           xctx->ui_state &= ~START_SYMPIN;
         } else {
@@ -1904,6 +1925,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->need_reb_sel_arr = 1;
           rebuild_selected_array();
           move_objects(START,0,0,0);
+          stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
         } else {
           /* Pin symbol unresolvable (e.g. a misconfigured library path with no ipin.sym):
@@ -1914,6 +1936,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
            * fail -- so this guard is required here. START_SYMPIN was already cleared (re-arm)
            * or never set (fresh arm); a fresh arm's one push_undo is left as a no-op undo. */
           xctx->sympin_preview = 0;
+          clear_placement_preview();  /* issue 0231: nothing was placed, so nothing to name */
         }
       }
       Tcl_ResetResult(interp);
@@ -1956,8 +1979,17 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(xctx->ui_state & STARTMOVE) {
             int save = xctx->modified;
             move_objects(ABORT,0,0,0);
-            delete(0 /* to_push_undo: no, keep the single baseline */);
-            set_modify(save);
+            /* ISSUE 0231, same narrowing as abort_placement_preview(): delete() is
+             * SELECTION-scoped, so drop the PREVIOUS PREVIEW by its stamped identity and not
+             * whatever is selected right now. This is the 0231 door with no cancel key in it
+             * at all -- the form is MODELESS and re-issues `-place` on every keystroke, so
+             * before the narrowing a Ctrl+A followed by typing one more character in the Name
+             * field wiped the drawing (measured: 2 wires + 1 instance -> 0 wires, with only
+             * the freshly armed preview left standing). */
+            if(select_placement_preview() > 0) {
+              delete(0 /* to_push_undo: no, keep the single baseline */);
+              set_modify(save);
+            }
           }
           xctx->ui_state &= ~START_SYMPIN;
         } else {
@@ -1973,12 +2005,14 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           /* seed x2/y2 = anchor so the first `-drop`/RUBBER reposition (a different snap) passes
            * move_objects(RUBBER)'s no-motion guard (mirror of the move_objects headless seam). */
           xctx->x2 = xctx->x1; xctx->y2 = xctx->y1;
+          stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
         } else {
           /* lab_pin.sym unresolvable, or a .sym view forbids instances: nothing was placed, so do
            * NOT arm a phantom preview (mirror of the add_sch_pin guard, callback.c:237). */
           xctx->sympin_preview = 0;
           xctx->wirelabel_preview = 0;
+          clear_placement_preview();  /* issue 0231: nothing was placed, so nothing to name */
         }
         Tcl_ResetResult(interp);
       }
@@ -2035,6 +2069,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->need_reb_sel_arr=1;
       rebuild_selected_array();
       move_objects(START,0,0,0);
+      stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
       xctx->ui_state |= START_SYMPIN;
       Tcl_ResetResult(interp);
     }
@@ -2072,6 +2107,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->need_reb_sel_arr=1;
         rebuild_selected_array();
         move_objects(START,0,0,0);
+        stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
         xctx->ui_state |= START_SYMPIN;
       }
       if(f) my_free(_ALLOC_ID_, &f);
@@ -9075,6 +9111,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->mousey_snap = xctx->my_double_save;
         xctx->mousex_snap = xctx->mx_double_save;
         move_objects(START,0,0,0);
+        stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
         xctx->ui_state |= PLACE_SYMBOL;
       }
       xctx->semaphore--;
@@ -9098,6 +9135,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->mousey_snap = xctx->my_double_save;
         xctx->mousex_snap = xctx->mx_double_save;
         move_objects(START,0,0,0);
+        stamp_placement_preview();  /* issue 0231 -- see stamp_placement_preview() in select.c */
         xctx->ui_state |= PLACE_TEXT;
       }
       xctx->semaphore--;

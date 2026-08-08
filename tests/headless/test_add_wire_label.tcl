@@ -273,6 +273,233 @@ check "0230 resting: no wire committed"     [xschem get wires] 1
 set ::infix_interface $saved_infix
 
 # ---------------------------------------------------------------------------
+# H. Issue 0231 -- a cancelled placement deletes THE PREVIEW, not "whatever is selected".
+#
+#    abort_placement_preview() (callback.c) removes the preview with delete(), which is
+#    SELECTION-scoped. The "selection == preview" invariant holds only at the ARM; anything that
+#    grows the selection afterwards -- Ctrl+A, select_dangling_nets, Edit>Select all -- turns the
+#    cancel into a whole-document delete, and set_modify(save) then reports the empty schematic
+#    UNMODIFIED, so it closes without a prompt. Measured before the fix: 1 wire + 1 instance ->
+#    wires=0 inst=0 modified=0.
+#
+#    THREE cancel doors are covered, not one:
+#      H1/H2  ESC / form-close       -> abort_placement_preview()
+#      H3     the modeless form's own KEYSTROKE (a re-arm drops the previous preview with
+#             delete(0) at scheduler.c) -- this door needs no ESC at all and was not in the
+#             issue's original repro
+#      H4     a wire/line verb on a live preview -> leave_placement_for(), whose 0231 decline
+#             guard this fix removes (its replacement is section E7 of
+#             tests/headless/test_placement_wire_gate.tcl)
+#
+#    NOT HOLLOW (WIRING.md §10): the fixture deliberately holds one object of EVERY type the
+#    previews use -- 2 wires, 1 instance, 1 text, 1 line -- so "instances == 1" after cancelling
+#    an INSTANCE preview, and "texts == 1" after cancelling the rect+text Add-Pin preview, can
+#    only pass if the survivors really survived. rects/lines/polygons/arcs have no `xschem get`
+#    counter, so survival of the line is proved by counting saved record lines (TRAP 3).
+# ---------------------------------------------------------------------------
+source [file join [file dirname [info script]] scratch.tcl]
+set d0231 [test_scratch i0231]
+set f0231 [file join $d0231 doc.sch]
+
+# every object type a placement preview can be made of, plus survivors of the same type
+proc doc0231 {} {
+  xschem clear force
+  xschem wire 0 0 100 0
+  xschem wire 200 0 300 0
+  xschem instance devices/lab_pin.sym 300 0 0 0 {name=p1 lab=AAA}
+  xschem text 400 400 0 0 {SURVIVOR} {} 0.4 0
+  xschem line 0 200 100 200
+  xschem unselect_all
+  xschem saveas $::f0231
+  xschem load $::f0231          ;# modified == 0, like a freshly opened drawing
+}
+# object-record lines of the CURRENT drawing (N wire, C instance, T text, L line, B rect,
+# P poly, A arc) -- the only way to prove rect/line/poly/arc survival headlessly. Destructive to
+# `modified` (it saves), so always call it AFTER reading the modify flag.
+proc rec0231 {} {
+  set f [file join $::d0231 snap.sch]
+  xschem saveas $f
+  set fh [open $f r]; set data [read $fh]; close $fh
+  set n 0
+  foreach ln [split $data \n] { if {[regexp {^[NCTLBPA] } $ln]} { incr n } }
+  return $n
+}
+proc labcount0231 {lab} {
+  set n 0
+  for {set i 0} {$i < [xschem get instances]} {incr i} {
+    if {[inst_lab $i] eq $lab} { incr n }
+  }
+  return $n
+}
+proc placing_any0231 {} { return [expr {([xschem get ui_state] & 25600) ? 1 : 0}] }
+
+doc0231
+set REC0231 [rec0231]                       ;# 2 wires + 1 inst + 1 text + 1 line = 5 records
+xschem load $f0231
+check "0231 fixture: 2 wires"            [xschem get wires] 2
+check "0231 fixture: 1 instance"         [xschem get instances] 1
+check "0231 fixture: 1 text"             [xschem get texts] 1
+check "0231 fixture: 5 object records"   $REC0231 5
+
+# H1 -- every placement arm, cancelled by ESC after Ctrl+A, leaves the drawing untouched.
+#       `armv` is the verb, `pv` the extra objects its preview adds (instances/texts) so the
+#       "preview really was live" pre-check cannot be satisfied by an arm that did nothing.
+set ::label_new_name L0231
+set ::pin_new_name   P0231
+set ::pin_new_dir    inout
+foreach {tag armv} {
+  wirelabel {xschem add_wire_label -place}
+  schpin    {xschem add_sch_pin -place}
+  sympin    {xschem add_symbol_pin -place}
+  placesym  {xschem place_symbol devices/lab_pin.sym}
+  netlabel  {xschem net_label 0}
+} {
+  doc0231
+  set m0 [xschem get modified]
+  eval $armv
+  check "0231 H1 $tag: preview armed"        [placing_any0231] 1
+  xschem select_all
+  check "0231 H1 $tag: selection grown"      [expr {[xschem get lastsel] > 1}] 1
+  xschem abort_operation
+  check "0231 H1 $tag: wires survive"        [xschem get wires] 2
+  check "0231 H1 $tag: instance survives"    [xschem get instances] 1
+  check "0231 H1 $tag: text survives"        [xschem get texts] 1
+  check "0231 H1 $tag: preview gone"         [labcount0231 L0231] 0
+  check "0231 H1 $tag: not placing"          [placing_any0231] 0
+  check "0231 H1 $tag: sympin_preview clear" [xschem get sympin_preview] 0
+  # DELIBERATE, not a side effect of the narrowing: the cancel DESELECTS the user's other
+  # objects but does not delete them. Narrowing made "ESC keeps my selection" newly possible;
+  # it was NOT taken, because section G2 (`0230 ESC leaves nothing selected`) already ratified
+  # lastsel 0 on this path and changing it is a separate, user-facing decision. See issue 0231.
+  check "0231 H1 $tag: nothing left selected" [xschem get lastsel] 0
+  check "0231 H1 $tag: modify flag kept"     [xschem get modified] $m0
+  check "0231 H1 $tag: all records survive"  [rec0231] $REC0231
+}
+
+# H2 -- the grower is not Ctrl+A: select_dangling_nets reproduces it identically (the issue is
+#       "the selection grew", not "select_all ran"), so the fix must not be a select_all veto.
+doc0231
+set m0 [xschem get modified]
+xschem add_wire_label -place
+xschem select_dangling_nets
+check "0231 H2 dangling: selection grown"  [expr {[xschem get lastsel] > 1}] 1
+xschem abort_operation
+check "0231 H2 dangling: wires survive"    [xschem get wires] 2
+check "0231 H2 dangling: instance survives" [xschem get instances] 1
+check "0231 H2 dangling: text survives"    [xschem get texts] 1
+check "0231 H2 dangling: preview gone"     [labcount0231 L0231] 0
+check "0231 H2 dangling: modify flag kept" [xschem get modified] $m0
+check "0231 H2 dangling: records survive"  [rec0231] $REC0231
+
+# H3 -- the door with NO cancel key in it. The Add-Label / Add-Pin forms are modeless and re-issue
+#       `-place` on every keystroke; the re-arm drops the previous preview with delete(0)
+#       (scheduler.c). Pre-fix that delete took the grown selection too, so merely TYPING in the
+#       form after a Ctrl+A wiped the drawing -- measured wires=0 inst=1 (only the new preview).
+doc0231
+set m0 [xschem get modified]
+xschem add_wire_label -place
+xschem select_all
+set ::label_new_name L0231B
+xschem add_wire_label -place                ;# the next keystroke
+check "0231 H3 rearm: wires survive"       [xschem get wires] 2
+check "0231 H3 rearm: fixture inst kept"   [expr {[labcount0231 AAA] == 1}] 1
+check "0231 H3 rearm: text survives"       [xschem get texts] 1
+check "0231 H3 rearm: old preview gone"    [labcount0231 L0231] 0
+check "0231 H3 rearm: new preview live"    [labcount0231 L0231B] 1
+check "0231 H3 rearm: still placing"       [placing_any0231] 1
+xschem abort_operation
+check "0231 H3 rearm: ESC clears it"       [labcount0231 L0231B] 0
+check "0231 H3 rearm: modify flag kept"    [xschem get modified] $m0
+check "0231 H3 rearm: records survive"     [rec0231] $REC0231
+set ::label_new_name L0231
+
+# H4 -- the wire verb on a live preview + a multiple selection. Before the fix
+#       leave_placement_for() DECLINED here (it refused to hand delete() to `w`); with the delete
+#       narrowed it must proceed: preview torn down, draw armed, and the other selected objects
+#       still there. Full coverage of the three wire/line arms is E7 of test_placement_wire_gate.
+set saved_infix $::infix_interface
+set ::infix_interface 1
+doc0231
+xschem add_wire_label -place
+xschem select_all
+xschem wire gui
+check "0231 H4 wire verb: proceeded"       [placing_any0231] 0
+check "0231 H4 wire verb: draw armed"      [expr {([xschem get ui_state] & 1) ? 1 : 0}] 1
+check "0231 H4 wire verb: wires survive"   [xschem get wires] 2
+check "0231 H4 wire verb: instance kept"   [expr {[labcount0231 AAA] == 1}] 1
+check "0231 H4 wire verb: text survives"   [xschem get texts] 1
+check "0231 H4 wire verb: preview gone"    [labcount0231 L0231] 0
+xschem abort_operation ; xschem abort_operation
+set ::infix_interface $saved_infix
+
+# H5 CONTROL -- with NOTHING but the preview selected the cancel behaves exactly as it always did.
+#       This is the check that would go red if the narrowing over-corrected into a no-op delete.
+doc0231
+xschem add_wire_label -place
+check "0231 H5 control: one selected"      [xschem get lastsel] 1
+xschem abort_operation
+check "0231 H5 control: preview removed"   [labcount0231 L0231] 0
+check "0231 H5 control: nothing else lost" [expr {[xschem get wires]==2 && [xschem get instances]==1 && [xschem get texts]==1}] 1
+
+# H6 CONTROL -- a plain move (STARTMOVE with no placement bit) has no teardown at all: ESC after a
+#       Ctrl+A must not delete anything. Bounds the scope of the narrowing.
+doc0231
+xschem select_all
+xschem move_objects
+xschem select_all
+xschem abort_operation
+check "0231 H6 control: plain move intact" [expr {[xschem get wires]==2 && [xschem get instances]==1 && [xschem get texts]==1}] 1
+
+# H7 -- PARTIAL selections must survive, because delete() would never have taken them.
+#       rebuild_selected_array() admits any non-zero `sel`, but delete() removes only
+#       `sel == SELECTED` exactly; a stretch box-select marks a wire SELECTED1/SELECTED2 (one
+#       ENDPOINT grabbed) and delete() is a provable no-op on it. select_placement_preview()
+#       re-selects with SELECTED, so an unfiltered stamp would PROMOTE those wires and make the
+#       "narrowing" delete objects the UNNARROWED code left standing -- silently, since
+#       set_modify(save) restores the clean flag. Measured before the filter: 3 stretch-selected
+#       wires + `net_label 0` + `w` -> 0 wires. Found by the adversarial review of the 0231 fix.
+#       The arm used here is `net_label 0` with lab_wire.sym made unresolvable, because
+#       place_symbol() then bails BEFORE its own unselect_all() while place_net_label() arms
+#       anyway -- the same "arm keeps the user's pre-existing selection" state the `t` /
+#       context-menu-6 / screen-grab arms are in by design and that no headless path can reach.
+rename find_file_first find_file_first_orig0231
+proc find_file_first {f {paths {}} {maxdepth -1}} { return "" }
+set saved_stretch [xschem get enable_stretch]
+xschem set enable_stretch 1
+xschem clear force
+xschem wire 0 0 100 0 ; xschem wire 0 100 100 100 ; xschem wire 0 200 100 200
+xschem unselect_all
+xschem select_inside -10 -10 10 210          ;# grabs ONE endpoint of each -> 3 PARTIAL wires
+check "0231 H7 partial: three grabbed"     [xschem get lastsel] 3
+# CONTROL, and the whole premise of this section: an ordinary delete() on this selection is a
+# NO-OP, because delete() tests `sel == SELECTED` and these are SELECTED1/SELECTED2. If this ever
+# goes red the section is testing nothing -- the wires would be deletable and their survival
+# after the cancel would prove no scoping at all.
+xschem delete
+check "0231 H7 control: plain delete no-op" [xschem get wires] 3
+xschem unselect_all
+xschem select_inside -10 -10 10 210
+xschem net_label 0                           ;# arms with the partial selection still live
+check "0231 H7 partial: armed"             [placing_any0231] 1
+xschem wire gui
+check "0231 H7 partial: wires survive"     [xschem get wires] 3
+xschem abort_operation ; xschem abort_operation
+# and on the ESC door too
+xschem clear force
+xschem wire 0 0 100 0 ; xschem wire 0 100 100 100 ; xschem wire 0 200 100 200
+xschem unselect_all
+xschem select_inside -10 -10 10 210
+xschem net_label 0
+xschem abort_operation
+check "0231 H7 partial: ESC keeps them"    [xschem get wires] 3
+rename find_file_first {}
+rename find_file_first_orig0231 find_file_first
+xschem set enable_stretch $saved_stretch
+
+xschem clear force
+catch {file delete -force $f0231}
+
+# ---------------------------------------------------------------------------
 # F. Symbol-view guard (review #6): in a .sym view add_wire_label -place is a no-op -- it must NOT
 #    push an undo baseline or wipe the selection (place_symbol refuses instances there anyway).
 # ---------------------------------------------------------------------------

@@ -651,6 +651,18 @@ typedef struct
   unsigned int col;
 } Selected;
 
+/* One member of the object set a modal cursor PLACEMENT is made of (issue 0231). `type` is the
+ * sel_array type constant (ELEMENT / WIRE / xTEXT / xRECT / LINE / POLYGON / ARC), `id` the
+ * matching session-stable object id. Deliberately NOT a Selected: array indexes are meaningless
+ * across the arbitrary edits the MODELESS Add-Pin / Add-Wire-Label forms allow between the arm
+ * and the cancel, while ids survive them (and survive an undo, xschem.h id fields / select.c
+ * selection-across-undo). Resolved back through the *_index_from_id() family in store.c. */
+typedef struct
+{
+  unsigned short type;
+  unsigned int id;
+} PlacePreview;
+
 /* Hover fly-line query result (doc/claude/specs/hover_flylines.md). One geometry member on a
  * queried net: a wire (kind 0) or an instance pin (kind 1). idx = wire/instance index, pin =
  * pin index (-1 for a wire), (x,y) = wire midpoint or pin coord. */
@@ -1536,6 +1548,25 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
+  PlacePreview *preview_sel; /* issue 0231: WHAT the live cursor placement is, as durable ids.
+                       * Stamped at every arm by stamp_placement_preview() (the twelve
+                       * `ui_state |= START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT` sites), and read back
+                       * by the two places that tear a preview down with delete():
+                       * abort_placement_preview() and the modeless forms' per-keystroke re-arm
+                       * drop. delete() is SELECTION-scoped, so without this the cancel removes
+                       * whatever is selected AT THE CANCEL -- and a single Ctrl+A (or
+                       * select_dangling_nets, or Edit>Select all) between the arm and the cancel
+                       * turned it into a whole-document delete that set_modify(save) then
+                       * reported as UNMODIFIED. The stamp is the SELECTION AT THE ARM, which is
+                       * exactly the set move_objects(START) grabbed: one object for most arms,
+                       * a PINLAYER rect + its owned name text for Add-Pin, and deliberately the
+                       * user's pre-existing selection too for the two arms that ride along with
+                       * it (draw.c screen grab, place_text). NULL until the first arm; freed with
+                       * sel_array in xinit.c. */
+  int preview_sel_n;   /* live entries in preview_sel. 0 = nothing stamped -> the teardown
+                       * deletes NOTHING (backstop: a stray preview is cosmetic, a wiped
+                       * schematic is not). */
+  int preview_sel_size; /* allocated entries in preview_sel (high-water mark, never shrinks) */
   double statusmsg_hold_ms; /* issue 0238: wall-clock deadline (ms, net_hilight_now_ms() scale)
                        * until which the .statusbar.1 coordinate readout must NOT overwrite the
                        * message that is up. 0 = no hold. Armed by statusmsg_hold() (every gate /
@@ -2484,6 +2515,11 @@ extern Selected select_object(double mx,double my, unsigned short sel_mode,
                                     int override_lock, const Selected *selptr);
 extern int set_first_sel(unsigned short type, int n, unsigned int col);
 extern void unselect_all(int dr);
+/* issue 0231: stamp / forget / re-select the object set a modal cursor placement is made of,
+ * so its teardown deletes the PREVIEW and not whatever happens to be selected. See select.c. */
+extern void stamp_placement_preview(void);
+extern void clear_placement_preview(void);
+extern int select_placement_preview(void);
 extern void drag_sel_free(void);          /* cadence deferred-selection: reset the pre-press snapshot */
 extern void drag_sel_snapshot(void);      /* snapshot pre-press selection ids before a transient drag-select */
 extern void drag_sel_restore_now(void);   /* restore the pre-press selection after a moved drag */

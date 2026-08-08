@@ -498,6 +498,7 @@ static void start_place_symbol(void)
      xctx->mousey_snap = xctx->my_double_save;
       xctx->mousex_snap = xctx->mx_double_save;
       move_objects(START,0,0,0);
+      stamp_placement_preview();   /* issue 0231 -- see stamp_placement_preview() in select.c */
       xctx->ui_state |= PLACE_SYMBOL;
     }
 }
@@ -598,20 +599,45 @@ int abort_placement_preview(void)
    * removes a settled object (abort_operation has already done this when it calls us) */
   if(xctx->ui_state & STARTMOVE) move_objects(ABORT, 0, 0, 0);
   save = xctx->modified;
-  /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
-   * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
-   * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
-   * baseline as the single rollback point. A live preview always has START_SYMPIN set, so
-   * require it -> a STALE sympin_preview cannot make an UNRELATED placement abort
-   * (PLACE_SYMBOL/PLACE_TEXT/graph) drop its undo snapshot. Normal placements use
-   * delete(1) as before. */
-  delete((xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) ? 0 : 1/* to_push_undo */);
-  set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
+  /* ISSUE 0231 -- delete the PREVIEW, not "whatever is selected".
+   * delete() below is SELECTION-scoped (select.c). The "selection == preview" invariant is
+   * established at the ARM and nothing defends it afterwards: the Add-Pin / Add-Wire-Label forms
+   * are MODELESS, so between the arm and this teardown the user can reach Ctrl+A, Edit>Select
+   * all or select_dangling_nets -- none of which inspects ui_state -- and the cancel then took
+   * the whole drawing (measured: 1 wire + 1 instance -> 0/0). Worse, set_modify(save) below
+   * restored the pre-delete flag on the assumption that only the preview went, so the emptied
+   * schematic reported itself UNMODIFIED and closed with no prompt.
+   * So re-establish the invariant HERE, from the identity stamped at the arm, instead of
+   * trusting it to have survived. Everything downstream then becomes correct unchanged: the
+   * delete(0)/delete(1) discriminator, the save/set_modify(save) pair, the undo baseline.
+   * BACKSTOP: nothing resolves -> delete nothing and just clear the flags. A stray preview
+   * object left in the drawing is cosmetic; a wiped schematic is not. */
+  if(select_placement_preview() > 0) {
+    /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
+     * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
+     * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
+     * baseline as the single rollback point. A live preview always has START_SYMPIN set, so
+     * require it -> a STALE sympin_preview cannot make an UNRELATED placement abort
+     * (PLACE_SYMBOL/PLACE_TEXT/graph) drop its undo snapshot. Normal placements use
+     * delete(1) as before. */
+    delete((xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) ? 0 : 1/* to_push_undo */);
+    set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
+  } else {
+    /* Nothing to delete -- but select_placement_preview() may already have dropped the user's
+     * selection with dr=0, on the promise that delete()'s trailing draw() (select.c) would
+     * repaint. On THIS branch there is no delete(), and abort_operation()'s STARTMOVE arm
+     * returns before its own draw(), so the SELLAYER highlight of the just-deselected objects
+     * would stay painted until some unrelated redraw -- a paint/state desync of the class
+     * WIRING.md tracks. Before the narrowing delete() ran unconditionally here and always drew,
+     * so this keeps the repaint exactly as it was. */
+    draw();
+  }
   xctx->ui_state &= ~START_SYMPIN;
   xctx->ui_state &= ~PLACE_SYMBOL;
   xctx->ui_state &= ~PLACE_TEXT;
   xctx->sympin_preview = 0;
   xctx->wirelabel_preview = 0;   /* add_wire_label.md: torn-down label preview */
+  clear_placement_preview();     /* issue 0231: the stamp dies with the preview it named */
   return 1;
 }
 
@@ -630,7 +656,9 @@ int abort_placement_preview(void)
  * on an ordinary mouse click instead of on the keystroke the user actually typed.
  * Not called from the pure-commit coordinate forms (`xschem wire x1 y1 x2 y2`, snapped_wire()'s
  * END half): those commit outright, arm no draw, and are the replay/test seams.
- * Returns 1 if the caller may go ahead and arm the draw, 0 if it must not (see the 0231 guard). */
+ * Returns 1 if the caller may go ahead and arm the draw. It no longer returns 0 for anything --
+ * the one decline it ever had was the 0231 carve-out below, now gone -- but the int result is
+ * kept: every wire/line arm already tests it, so a future refusal needs no call-site churn. */
 int leave_placement_for(const char *what)
 {
   char msg[128];
@@ -641,25 +669,14 @@ int leave_placement_for(const char *what)
    * the one wire arm with no readonly reject of its own (the others call readonly_block() /
    * scheduler_readonly_reject() before they get here) */
   if(xctx->readonly) return 1;
-  /* DECLINE when the selection is more than the preview itself. abort_placement_preview() tears
-   * the preview down with delete(), which removes the SELECTION, not the preview object -- issue
-   * **0231**, open, and out of scope here. On the ESC path that misfires only for a user who
-   * deliberately pressed a cancel key; wiring the same delete() to `w` would hand it to the three
-   * commonest drawing keys, and one Ctrl+A under a live preview (the forms are modeless, so that
-   * is reachable) would then wipe the drawing on the next `w`. Measured: 2 wires + preview +
-   * select_all + `w` -> 0 wires. So F2 refuses in exactly the state 0231 makes unsafe and says so;
-   * the user can still ESC (unchanged, still 0231's problem) or finish the placement.
-   * Remove this guard when 0231 lands and delete() only removes the preview. */
-  rebuild_selected_array();
-  if(xctx->lastsel > 1) {
-    /* statusmsg_hold, not statusmsg (issue 0238): this is the message that MOST needs to survive.
-     * The decline leaves the placement armed, so ui_state is non-zero and the coordinate readout
-     * used to wipe the only explanation of why the key appeared to do nothing. */
-    my_snprintf(msg, S(msg),
-      "%s: finish or ESC the pending placement first (a multiple selection is live)", what);
-    statusmsg_hold(msg, 1);
-    return 0;   /* caller must NOT arm the draw: that would rebuild the very jam F2 exists to fix */
-  }
+  /* Between 0233 F2 and 0231 this function DECLINED (returned 0, draw not armed) whenever
+   * xctx->lastsel > 1, because abort_placement_preview() then removed the SELECTION rather than
+   * the preview and handing that delete() to the three commonest drawing keys would have wiped
+   * the drawing on the first `w` after a Ctrl+A (measured: 2 wires + preview + select_all + `w`
+   * -> 0 wires). The teardown is now scoped to the preview's stamped identity, so the reason is
+   * gone and so is the guard -- which also removes the single inconsistency left in the ratified
+   * modal-gesture rule: every other verb cancelled the pending gesture, this one alone refused.
+   * tests/headless/test_placement_wire_gate.tcl E7 now asserts the opposite. */
   if(!abort_placement_preview()) return 1;
   my_snprintf(msg, S(msg), "%s: pending placement abandoned", what);
   statusmsg_hold(msg, 1);
@@ -2982,6 +2999,7 @@ int wire_label_try_commit(void)
   xctx->ui_state &= ~START_SYMPIN;
   xctx->sympin_preview = 0;
   xctx->wirelabel_preview = 0;
+  clear_placement_preview();  /* issue 0231: committed, so it is no longer a deletable preview */
   xctx->constr_mv = 0;
   tcleval("set constr_mv 0");
   return 1;
@@ -3072,6 +3090,7 @@ static int end_place_move_copy_zoom()
      * on the stack already, so clear the preview flag -> the drop-hook's next arm starts a
      * fresh baseline for the next pin (cadence_pin_name_text.md item #3). */
     xctx->sympin_preview = 0;
+    clear_placement_preview(); /* issue 0231: committed objects are not a deletable preview */
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;
@@ -4457,6 +4476,11 @@ static void context_menu_action(double mx, double my)
         xctx->mousey_snap = xctx->my_double_save;
         xctx->mousex_snap = xctx->mx_double_save;
         move_objects(START,0,0,0);
+        /* issue 0231. place_text() does not unselect first, so the stamp captures the new text
+         * AND whatever was already selected -- which is what move_objects(START) just grabbed
+         * and what the cancel has always removed. Preserved verbatim; narrowing it further
+         * would be a separate change to what `t` does with a live selection. */
+        stamp_placement_preview();
         xctx->ui_state |= PLACE_TEXT;
       }
       break;
@@ -7129,6 +7153,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           xctx->mousey_snap = xctx->my_double_save;
           xctx->mousex_snap = xctx->mx_double_save;
           move_objects(START,0,0,0);
+          stamp_placement_preview();  /* issue 0231, same note as the context-menu twin at :4460 */
           xctx->ui_state |= PLACE_TEXT;
         }
       }

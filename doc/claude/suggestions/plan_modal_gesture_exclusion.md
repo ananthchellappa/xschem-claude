@@ -32,8 +32,9 @@ infix mode has the identical dead end with two rubber bands on screen.
 - `leave_wire_draw_for(const char *what)` — `src/scheduler.c:68`. The above + a statusbar line.
 - `abort_placement_preview()` — `src/callback.c`. Tears down a cursor placement preview. Keeps the
   `delete(0)`/`delete(1)` undo discriminator verbatim.
-- `leave_placement_for(const char *what)` — `src/callback.c`. The above + statusbar + the issue
-  **0231** decline guard (returns 0 while a multiple selection is live; the caller must then not arm).
+- `leave_placement_for(const char *what)` — `src/callback.c`. The above + a statusbar line. It used
+  to carry the issue **0231** decline guard (returned 0 while a multiple selection was live, so the
+  caller must not arm); 0231 landed on 2026-08-08 and the guard is gone — it now always returns 1.
 - `clear_orphan_gesture_bits()` — `src/callback.c`. What every early return in `abort_operation()`
   owes the terminal `ui_state = 0`.
 
@@ -55,7 +56,8 @@ infix mode has the identical dead end with two rubber bands on screen.
 ### Phase 1 — shape draws cancel a live wire/line draw
 
 Effort: ~8 one-line call sites, low risk (the call is a no-op unless a draw is live, and it is
-delete-free so issue 0231 is not in play).
+delete-free so issue 0231 was never in play — and since 2026-08-08 the placement teardown is
+scoped too).
 
 - [x] fix issue **0238** first — done, and it turned out to need a writer-side hold in
       `statusmsg()`: for placement verbs the message was also being overwritten one call later by
@@ -119,12 +121,17 @@ so `abort_placement_preview()` deliberately does not see it.
 
 ## Cross-cutting blockers
 
-- **Issue 0231** — `abort_placement_preview()` tears the preview down with `delete()`, which removes
-  the **selection**, not the preview object. Measured: 2 wires + preview + `select_all` + `w` → 0
-  wires. `leave_placement_for()` therefore declines while a multiple selection is live. **Delete
-  that guard when 0231 lands**, and until then do not add any new caller that could reach the
-  delete with a foreign selection. Phases 1–2 are safe: they only cancel *draws*, which is
-  delete-free.
+- **Issue 0231** — **FIXED 2026-08-08, and the guard is deleted.** `abort_placement_preview()` tore
+  the preview down with `delete()`, which removes the **selection**, not the preview object
+  (measured: 2 wires + preview + `select_all` + `w` → 0 wires), so `leave_placement_for()` declined
+  while a multiple selection was live. The teardown is now scoped to the preview's own identity —
+  stamped per-object as session-stable ids at all twelve arm sites
+  (`stamp_placement_preview()`, select.c) and re-selected immediately before the `delete()`, with
+  "resolves to nothing → delete nothing" as the backstop. The decline guard came out with it, so
+  **the blocker on later phases is lifted**: a new caller may now reach the placement teardown with
+  a foreign selection live. `tests/headless/test_placement_wire_gate.tcl` **E7** was rewritten to
+  assert the opposite of what it used to. Still NOT scoped: the **merge/paste** `delete(1)` in
+  `abort_operation()` (issues **0232**/**0234**), so phase 4 inherits the un-narrowed version.
 - **Issue 0236** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
 - **Issue 0238** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
   the next click; an ordinary `statusmsg(…, 1)` is dropped while a hold is up. Seams:
