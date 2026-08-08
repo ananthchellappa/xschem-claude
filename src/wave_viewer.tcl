@@ -10137,7 +10137,8 @@ proc wviewer::browser_from_menu {token} {
   return $r
 }
 
-# The Ctrl-L binding body -- the grid_toggle_at / clear_all_at pattern: resolve
+# The Ctrl-B binding body (Ctrl-L until TWO-PANE item 16, R9) -- the
+# grid_toggle_at / clear_all_at pattern: resolve
 # the window the KEY went to (%W), never the current xschem context. Silent on a
 # foreign canvas.
 proc wviewer::browser_toggle_at {W} {
@@ -11621,26 +11622,51 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Control-Key-g>] eq {}} {
     bind WaveViewer <Control-Key-g> {wviewer::grid_toggle_at %W; break}
   }
-  # Signal Browser sidebar on/off (signal-browser PLAN item 8). COLLISION
-  # CHECK, done and clean on all three of the paths a key can reach this window
-  # by:
-  #   * keysym 108 is NOT in `graphkeys` {97 98 100 115 109 116 65 66 77}, so
-  #     key_filter forwards nothing and the C dispatcher never sees it.
-  #     src/keybindings.csv holds exactly ONE row for 108,
-  #     `key,108,0,canvas,edit.add_wire_label,1` -- BARE l, ctx=canvas, which a
-  #     Ctrl chord does not match and a viewer canvas could not reach anyway.
-  #     (callback.c `case 'l'` under ControlMask makes a schematic from the
-  #     selected symbol; that is behind the same forward and stays unreachable.)
-  #     ⚠ Ctrl-B WAS CONSIDERED AND REJECTED: 98 IS a graphkeys member,
-  #     membership is unconditional on modifiers (see key_filter's note), the
-  #     csv carries `key,98,ctrl,graph,graph.forward`, and callback.c toggles
-  #     cursor B on 'b' -- one keystroke would have done both.
-  #   * NO rc binds <Control-Key-l> on .drw (cadence_style_rc and every src
-  #     *.tcl are clean), so clone_canvas_bindings has nothing to copy onto a
-  #     viewer canvas -- and strip_bindings would sweep it if it ever did.
+  # Signal Browser sidebar on/off (signal-browser PLAN item 8; the chord moved
+  # Ctrl-L -> Ctrl-B in TWO-PANE item 16, R9).
+  #
+  # ⚠⚠ THE Ctrl-B REJECTION RECORDED HERE WAS OVERRIDDEN, NOT FORGOTTEN. Item 8
+  # rejected Ctrl-B because 98 IS a `graphkeys` member and membership is
+  # unconditional on modifiers, so key_filter forwarded Ctrl-b to C whenever the
+  # pointer was over a graph; the csv carried `key,98,ctrl,graph,graph.forward`
+  # and one keystroke would have done two things. R9 overrides that on the
+  # ruling that Ctrl-B is the chord users expect for a Browser, and PAYS FOR IT
+  # in the two places the old objection named:
+  #   * key_filter's graphkeys arm gained a MODIFIER CARVE-OUT for 98 beside the
+  #     one Ctrl-d already had, so Ctrl-b is no longer forwarded. `graphkeys`
+  #     itself is UNCHANGED -- bare `b` still reaches waves_callback and still
+  #     toggles cursor B (measured: graph_flags bit 4, and the Tcl mirror with
+  #     it). Deleting 98 from the list instead would have taken bare `b` too.
+  #   * the C table's `key 98 ctrl graph graph.forward` row was DELETED from
+  #     src/callback.c and src/keybindings.csv was REGENERATED from the builtin
+  #     table (never hand-edited -- test_bindings_file byte-compares them).
+  # The price is declared, not hidden: over a graph EMBEDDED IN A SCHEMATIC,
+  # Ctrl+b now falls through to the canvas arm and toggles sym_txt (spec §10
+  # limit 9), and a user who sets `graph_use_ctrl_key 1` loses their only
+  # cursor-B chord (limit 8). Both are pinned by checks --
+  # tests/headless/test_key_graph_context.tcl and test_wave_sigbrowser_keys.tcl.
+  #
+  # COLLISION CHECK, RE-RUN FOR THE NEW CHORD and clean on all three of the
+  # paths a key can reach this window by:
+  #   * key_filter now REFUSES to forward 98 under ControlMask (the carve-out
+  #     above), so the C dispatcher never sees the chord from this window. The
+  #     only 98 row left in src/keybindings.csv is
+  #     `key,98,0,graph,graph.forward,1` -- BARE b, which a Ctrl chord does not
+  #     match. (callback.c `case 'b'` under ControlMask toggles symbol text on
+  #     the canvas; that is behind the same refused forward and unreachable.)
+  #   * NO rc binds <Control-Key-b> on .drw -- grepped again for the new chord,
+  #     zero hits across every cadence_style_rc and every src *.tcl -- so
+  #     clone_canvas_bindings has nothing to copy onto a viewer canvas, and
+  #     strip_bindings would sweep it if it ever did.
   #   * the `break` keeps it that way whatever the tags below this one carry.
-  if {[bind WaveViewer <Control-Key-l>] eq {}} {
-    bind WaveViewer <Control-Key-l> {wviewer::browser_toggle_at %W; break}
+  #   * Tk maps the virtual event <<PrevChar>> to <Control-Key-b>, which is a
+  #     collision class Ctrl-L never had. It does NOT fire here: this binding is
+  #     on the WaveViewer bindtag, which lives on the CANVAS, and the sidebar's
+  #     search entry carries neither that tag nor a toplevel that has it
+  #     (measured -- the insert cursor does not move and the sidebar does not
+  #     toggle when the chord is typed into the entry).
+  if {[bind WaveViewer <Control-Key-b>] eq {}} {
+    bind WaveViewer <Control-Key-b> {wviewer::browser_toggle_at %W; break}
   }
   # `Descend to here` — sync the ASE-L session's DESIGN window to the hierarchy
   # path of the browser row(s) selected here (signal-browser PLAN item 11).
@@ -13475,13 +13501,23 @@ proc wviewer::key_filter {W T x y N K s} {
     set fwd 1
   } elseif {[lsearch -exact $graphkeys $N] >= 0 && [wviewer::over_graph $W]} {
     # graphkeys membership is otherwise unconditional on modifiers, which is
-    # right for a/b/s (Ctrl+a, Ctrl+b, Ctrl+s are real ctx=graph rows in
-    # keybindings.csv). `d` is the one member with a live collision: Ctrl-D is
-    # the viewer's Clear All on the WaveViewer bindtag, and there is NO ctx=graph
-    # row for Ctrl+d — so a forward falls through to the schematic `case 'd'`,
-    # whose ControlMask branch is delete_files(), a MODAL FILE DIALOG over a
-    # readonly viewer. Refusing the forward leaves the tag binding to clear.
-    set fwd [expr {!($N == 100 && ($s & 4))}]
+    # right for a/s (Ctrl+a, Ctrl+s are real ctx=graph rows in keybindings.csv).
+    # TWO of the members now have a live Ctrl collision, and BOTH are handled
+    # here as MODIFIER CARVE-OUTS — `graphkeys` keeps every keysym it had, so
+    # the BARE key of each pair still forwards exactly as before:
+    #   * `d` (100): Ctrl-D is the viewer's Clear All on the WaveViewer bindtag,
+    #     and there is NO ctx=graph row for Ctrl+d — so a forward falls through
+    #     to the schematic `case 'd'`, whose ControlMask branch is
+    #     delete_files(), a MODAL FILE DIALOG over a readonly viewer.
+    #   * `b` (98): TWO-PANE item 16 (R9) moved the Signal Browser to Ctrl-B on
+    #     the same bindtag, and DELETED the C table's
+    #     `key 98 ctrl graph graph.forward` row with it — so a forward would now
+    #     fall through to the schematic `case 'b'`, whose ControlMask branch
+    #     toggles xctx->sym_txt. One keystroke would open the browser AND flip
+    #     symbol text behind it. Refusing the forward leaves the tag binding to
+    #     toggle, and BARE `b` still reaches waves_callback for cursor B.
+    # Refusing the forward leaves the tag binding to do its job in both cases.
+    set fwd [expr {!(($N == 100 || $N == 98) && ($s & 4))}]
   }
   # Delete deletes WHATEVER is selected — the selected marker, the selected
   # traces, or both (issue 0176, doc/claude/issues/0176-del-deletes-selection.md).
@@ -15088,14 +15124,15 @@ proc wviewer::build_menubar {token top} {
     -command [list wviewer::graph_zoom $token out]
   $mb.view add command -label Redraw \
     -command [list wviewer::in_ctx $token {xschem redraw}]
-  # signal-browser item 8: the menu twin of the Ctrl-L bindtag default. A
-  # checkbutton, not a command, because this is a STATE -- and its variable is
-  # PUSHED by sync_browser_mirror on every change rather than polled by a
-  # -postcommand, so it cannot go stale when the key is used (the Grid entry's
-  # rule). ⚠ `-label {Signal Browser} -accelerator Ctrl+L` must stay ADJACENT
-  # on one source line: test_wave_grid GH3 greps this proc's body for exactly
-  # that string.
-  $mb.view add checkbutton -label {Signal Browser} -accelerator Ctrl+L \
+  # signal-browser item 8: the menu twin of the Ctrl-B bindtag default (Ctrl-L
+  # until TWO-PANE item 16, R9). A checkbutton, not a command, because this is a
+  # STATE -- and its variable is PUSHED by sync_browser_mirror on every change
+  # rather than polled by a -postcommand, so it cannot go stale when the key is
+  # used (the Grid entry's rule). ⚠ `-label {Signal Browser} -accelerator Ctrl+B`
+  # must stay ADJACENT on one source line: test_wave_grid GH3 greps this proc's
+  # body for exactly that string, and it must agree with the guide's
+  # data-accel (GH3/GH4 compare them).
+  $mb.view add checkbutton -label {Signal Browser} -accelerator Ctrl+B \
     -variable ::wviewer::browsershow($token) \
     -command [list wviewer::browser_from_menu $token]
   # signal-browser item 11: the menubar twin of the Shift-E bindtag default and

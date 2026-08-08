@@ -630,7 +630,16 @@ net and asking to show it wants a *signal row*, not a node, and has no rulings.
 
 ### 8.1 Ctrl-L → Ctrl-B (R9) — overriding an in-source rejection
 
-`src/wave_viewer.tcl:9288-9291` records, verbatim, that Ctrl-B was considered and rejected:
+> **⚠ IMPLEMENTED (two-pane item 16). Anchors below were STALE and are corrected
+> in place; three claims were WRONG and are corrected with the measurement that
+> replaced them.** Receipt: `doc/claude/signal_browser_2pane_batch/16_receipt.md`.
+> Post-item line numbers: the rejection-turned-override paragraph
+> `src/wave_viewer.tcl:11628-11667`, the bind `:11668-11670`, the graphkeys arm
+> `:13502-13521` with `set fwd` on `:13520`, the menu accelerator `:15135`.
+
+`src/wave_viewer.tcl` (`:9288-9291` when this spec was written; **`:11628` after
+the item, and the paragraph is now the record of the override rather than of the
+rejection**) recorded, verbatim, that Ctrl-B was considered and rejected:
 
 > ⚠ Ctrl-B WAS CONSIDERED AND REJECTED: 98 IS a graphkeys member, membership is
 > unconditional on modifiers (see key_filter's note), the csv carries
@@ -639,7 +648,8 @@ net and asking to show it wants a *signal row*, not a node, and has no rulings.
 
 Every word of that is still true. The ruling overrides it, and here is the whole cost:
 
-* `key_filter`'s graphkeys arm (`:11130-11139`) already carries **exactly one** modifier
+* `key_filter`'s graphkeys arm (`:11130-11139` when written; **`:13502-13521` after the
+  item**) already carries **exactly one** modifier
   carve-out, for Ctrl-D, because a forwarded Ctrl-D lands on a modal file dialog over a
   read-only viewer. Keysym 98 joins it:
 
@@ -650,17 +660,46 @@ Every word of that is still true. The ruling overrides it, and here is the whole
 * `src/keybindings.csv:23` (`key,98,ctrl,graph,graph.forward`) is **deleted**, and the file
   regenerated so `test_bindings_file.tcl:22-32`'s byte-identity check stays green.
 
-* **Nothing user-visible is lost.** Verified in C: `src/callback.c:1647` handles `'b'` with
-  **no modifier test at all**, so bare `b` still toggles waveform cursor B. Ctrl+b was only
-  ever a duplicate of bare `b`. The driver's ruling, in their words: *"bare `b` is
-  sufficient."*
+* ~~**Nothing user-visible is lost.** Verified in C: `src/callback.c:1647` handles `'b'` with
+  **no modifier test at all**, so bare `b` still toggles waveform cursor B.~~
+  **CORRECTED BY MEASUREMENT (two-pane item 16).** Two of those three sentences are wrong:
 
-* The **schematic** side is untouched — `case 'b'` under `ControlMask` toggles `sym_txt`
-  (`src/callback.c:6035-6047`) and lives in the canvas context, which a WaveViewer bindtag
-  binding cannot reach.
+  * `src/callback.c:1647` is `else if(key == 'b' && access_cond)`, and `access_cond`
+    (`:991`) is `!graph_use_ctrl_key || (state & ControlMask)`. It is **not** unmodified —
+    it is gated. For the shipped default (`graph_use_ctrl_key` 0, `src/xschemrc:716`
+    commented out) bare `b` does reach cursor B, and that half of the claim was
+    **measured true**: bare `b` over a strip moved `graph_flags` 0 → 4 and flipped the Tcl
+    `cvb` mirror with it. For a user who sets `graph_use_ctrl_key 1`, bare `b` never
+    reached cursor B and **Ctrl+b was the only chord** — after this item there is none.
+    **Declared limit 8.** The carve-out is deliberately *not* conditioned on
+    `graph_use_ctrl_key`; that would be inventing a ruling to dodge a limit.
+  * "Ctrl+b was only ever a duplicate of bare `b`" understates it: it also *routed*. See
+    the next bullet.
 
-The change is otherwise a **pure rename** across 13 sites, so the guide's 16/11 counts do
-not move (§12.2).
+* ~~The **schematic** side is untouched.~~ **CORRECTED BY MEASUREMENT.** Deleting the
+  over_graph row is exactly what changes it. With the row present, Ctrl+b **over a graph
+  embedded in a schematic** was forwarded to `waves_callback` and toggled cursor B; with it
+  gone the dispatch finds nothing and falls through to `case 'b'` / `ControlMask`, which
+  toggles `sym_txt` (`src/callback.c:6042`). **Measured on the item's own tree:
+  `overgraph-CtrlB-toggles-sym_txt` 0 → 1.** The WaveViewer bindtag really cannot reach the
+  canvas context — that part was right — but the C table deletion reaches it for free.
+  **Declared limit 9**, and pinned by an INVERTED check in
+  `tests/headless/test_key_graph_context.tcl` whose surviving positive control is the
+  canvas leg (`canvas Ctrl+b toggles sym_txt`, measured 1 both sides of the deletion).
+
+* **The viewer is protected by the Tcl carve-out, not by the C table.** A csv edit alone
+  cannot unbind anything (`load_input_bindings_file` only adds/remaps; only an `action '-'`
+  row unbinds), so the deletion had to happen in `src/callback.c` and the csv had to be
+  **regenerated** — measured trap: regenerating with the old csv still on disk reproduces
+  the row (it is loaded at startup and lands back in the table, merely reordered). The
+  correct operation is to move the csv aside and generate from the builtins.
+
+The change is otherwise a **pure rename**. ~~across 13 sites~~ **Measured: 12 literal edit
+sites** — `src/wave_viewer.tcl` 7 lines (a raw `grep -c` says 11, but 4 are
+`Ctrl-LMB`/`Ctrl+Left` false positives), `doc/waveform_viewer_guide.html` 2 lines (one
+carries two literals), plus the C deletion, the csv regeneration and the carve-out, which
+are not renames. 13 is defensible only if the rewritten paragraph counts as a site. The
+guide's 16/11 counts do not move (§12.2) — **re-measured after the edit: 16 and 11.**
 
 ### 8.2 Ctrl-Alt-V (R10, R12)
 
@@ -774,6 +813,21 @@ site" check is what proves it did not grow a second one.
 6. **The lower pane renders empty for a pure ancestor** — 18 of 128 nodes in `tb_bandgap`.
    Correct, and §7.2 makes it legible.
 7. **`Replace` appends under multi-plot** (ruling 24, inherited, surfaced not fixed).
+8. **A user who sets `graph_use_ctrl_key 1` loses their only cursor-B chord** (R9,
+   two-pane item 16). `access_cond` (`src/callback.c:991`) is
+   `!graph_use_ctrl_key || (state & ControlMask)`, so in that profile bare `b` never
+   reached cursor B and Ctrl+b was the only way in — and Ctrl+b is now the Signal Browser
+   everywhere. It is **commented out by default** (`src/xschemrc:716`), so the shipped
+   profile is unaffected and bare `b` still works (measured: `graph_flags` 0 → 4). Shipping
+   it stated rather than conditioning the carve-out on `graph_use_ctrl_key`, which would be
+   inventing a ruling to dodge a limit.
+9. **Ctrl+b over a graph EMBEDDED IN A SCHEMATIC now toggles `sym_txt`** (R9, two-pane
+   item 16), because the `key 98 ctrl graph graph.forward` row it used to be routed by was
+   deleted from the C table. Nobody asked for this; it is a consequence of R9's ruling, not
+   of R9's intent. **Measured 0 → 1** and pinned by an inverted check in
+   `tests/headless/test_key_graph_context.tcl`, so the next reader finds a record instead
+   of filing a bug. The **viewer** is unaffected — its `key_filter` carve-out refuses the
+   forward before the C dispatch ever sees the chord.
 
 ---
 
@@ -844,6 +898,18 @@ failure mode that looks exactly like flakiness and is not.
 
 Baseline, re-measured and green: `--nogui` 660 checks across seven files (sigsearch 107,
 sigbrowser 135, i11 50, i12 29, i1315 80, i14 47, grid 212).
+
+**Two-pane item 16 adds an eighth file, `tests/headless/test_wave_sigbrowser_keys.tcl`,
+band `BK01-BK18` (`BK19` next free; `BK20+` belongs to item 17b).** 12 checks in the
+headless arm, 23 under X. It exists because the item's dangerous half is invisible to the
+source greps every other file is made of: `set fwd` in `key_filter` had **zero** test
+coverage in the whole repo before it. Its two behavioural checks (`BK12`, the direct
+`key_filter` drive, and `BK18`, a real keystroke) are the only witnesses to the routing.
+
+⚠ **`test_bindings_file.tcl`, `test_keybindings_help.tcl` and `test_key_graph_context.tcl`
+are outside both baselines** (the 14-file `--nogui` arm and the 11-suite X arm) and item 16
+reds the third of them twice. A green baseline run proves nothing about them; run them
+explicitly. Pre-item ok-counts: 13 / 17 / 69. Post-item: 13 / 17 / **70**.
 
 Keep every file under ~150 checks. `wvbs_common.tcl` stays **deliberately not** named
 `test_*.tcl` — `full_audit.sh` globs `test_*.tcl`, and a prelude with that name runs as a

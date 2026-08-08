@@ -129,19 +129,23 @@ check {BS02 exactly one pack and one pack forget in the proc} \
 
 set bs_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true {BS03 install_default_binds was found in the source} [expr {$bs_idb ne {}}]
-check_true {BS03 Ctrl-L is a WaveViewer default and it breaks} \
-  [regexp {\n\s*bind WaveViewer <Control-Key-l> \{[^\n]*break\}} $bs_idb]
+# ⚠ RETARGETED Ctrl-L -> Ctrl-B BY TWO-PANE item 16 (R9). The claim is
+# unchanged; only the chord moved. Nothing here was deleted or renumbered — the
+# reason is recorded in tests/headless/test_wave_sigbrowser_keys.tcl (band BK).
+check_true {BS03 Ctrl-B is a WaveViewer default and it breaks} \
+  [regexp {\n\s*bind WaveViewer <Control-Key-b> \{[^\n]*break\}} $bs_idb]
 check_true {BS03 ...behind the rc-wins guard every other default uses} \
-  [expr {[string first {if {[bind WaveViewer <Control-Key-l>] eq {}} } $bs_idb] >= 0}]
+  [expr {[string first {if {[bind WaveViewer <Control-Key-b>] eq {}} } $bs_idb] >= 0}]
 check_true {BS04 the binding body calls browser_toggle_at with the EVENT's canvas} \
-  [regexp {bind WaveViewer <Control-Key-l> \{wviewer::browser_toggle_at %W;} $bs_idb]
+  [regexp {bind WaveViewer <Control-Key-b> \{wviewer::browser_toggle_at %W;} $bs_idb]
 
 set bs_mb [wvproc_body $wsrc wviewer::build_menubar]
 check_true {BS05 build_menubar was found in the source} [expr {$bs_mb ne {}}]
 # GH3 in test_wave_grid greps for exactly this adjacency; assert it here too so
 # a reflow of the source line is attributed to item 8, not to the grid suite
-check_true {BS05 the View entry spells -label {Signal Browser} -accelerator Ctrl+L adjacently} \
-  [expr {[string first "-label \{Signal Browser\} -accelerator Ctrl+L" $bs_mb] >= 0}]
+# ⚠ RETARGETED Ctrl+L -> Ctrl+B BY TWO-PANE item 16 (R9).
+check_true {BS05 the View entry spells -label {Signal Browser} -accelerator Ctrl+B adjacently} \
+  [expr {[string first "-label \{Signal Browser\} -accelerator Ctrl+B" $bs_mb] >= 0}]
 check_true {BS05 ...on the View cascade, not another one} \
   [regexp {\$mb\.view add checkbutton -label \{Signal Browser\}} $bs_mb]
 # BS06 is where a collapse to ONE variable becomes visible: the menu must be
@@ -197,10 +201,12 @@ set fp [open $guide r]; set gsrc [read $fp]; close $fp
 # test_wave_grid GH0-GH4 enforce "every shipped key has a guide row and every
 # guide row is a shipped key" by COUNT; this names the row so a miss is
 # attributed to item 8 rather than read as a grid-suite regression
-check_true {BS09 §9.1 carries the Control-Key-l row} \
-  [expr {[string first {data-seq="Control-Key-l"} $gsrc] >= 0}]
+# ⚠ RETARGETED Ctrl-L -> Ctrl-B BY TWO-PANE item 16 (R9). A PURE RENAME of the
+# guide's one row: GH0's 16/11 counts, BT09 and BX13 do not move.
+check_true {BS09 §9.1 carries the Control-Key-b row} \
+  [expr {[string first {data-seq="Control-Key-b"} $gsrc] >= 0}]
 check_true {BS09 ...with the menu twin and the accelerator it advertises} \
-  [expr {[string first {data-menu="Signal Browser" data-accel="Ctrl+L"} $gsrc] >= 0}]
+  [expr {[string first {data-menu="Signal Browser" data-accel="Ctrl+B"} $gsrc] >= 0}]
 
 # ============================================================================
 # BS10-BS14 — PURE arm. Also both arms: these call the accessors with tokens
@@ -532,10 +538,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check_true {BS42 the View menu has a Signal Browser entry} [expr {$vidx >= 0}]
   if {$vidx >= 0} {
-    check {BS42 it is a checkbutton, it advertises Ctrl+L, and it is bound to the mirror} \
+    # ⚠ RETARGETED Ctrl+L -> Ctrl+B BY TWO-PANE item 16 (R9).
+    check {BS42 it is a checkbutton, it advertises Ctrl+B, and it is bound to the mirror} \
       [list [$vm type $vidx] [$vm entrycget $vidx -accelerator] \
             [$vm entrycget $vidx -variable]] \
-      [list checkbutton Ctrl+L "::wviewer::browsershow($tok)"]
+      [list checkbutton Ctrl+B "::wviewer::browsershow($tok)"]
 
     # ⚠ `invoke`, NOT `select` (item 4's lesson): `select` writes the variable
     # WITHOUT running -command, which would pin nothing at all.
@@ -561,35 +568,37 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
 
   # the binding seam, the TG15 four-part shape
-  check {BS45 Ctrl-L is on the WaveViewer tag by default} \
-    [expr {[bind WaveViewer <Control-Key-l>] ne {}}] 1
+  # ⚠ ALL FIVE RETARGETED Ctrl-L -> Ctrl-B BY TWO-PANE item 16 (R9).
+  check {BS45 Ctrl-B is on the WaveViewer tag by default} \
+    [expr {[bind WaveViewer <Control-Key-b>] ne {}}] 1
   check_true {BS45 it calls browser_toggle_at with the event's canvas} \
-    [string match {*wviewer::browser_toggle_at %W*} [bind WaveViewer <Control-Key-l>]]
+    [string match {*wviewer::browser_toggle_at %W*} [bind WaveViewer <Control-Key-b>]]
   check_true {BS45 and it breaks, so the chord never travels on} \
-    [string match {*break*} [bind WaveViewer <Control-Key-l>]]
+    [string match {*break*} [bind WaveViewer <Control-Key-b>]]
   wviewer::strip_bindings $vdrw
   check_true {BS45 it survives the strip_bindings sweep} \
-    [expr {[bind WaveViewer <Control-Key-l>] ne {}}]
-  check {BS45 Ctrl-L is NOT bound on the canvas widget itself} \
-    [bind $vdrw <Control-Key-l>] {}
+    [expr {[bind WaveViewer <Control-Key-b>] ne {}}]
+  check {BS45 Ctrl-B is NOT bound on the canvas widget itself} \
+    [bind $vdrw <Control-Key-b>] {}
 
-  # A REAL Ctrl-L. ⚠ THIS CANNOT BE A HARD ORACLE: its only signal is "did the
+  # A REAL Ctrl-B (TWO-PANE item 16 retargeted it from Ctrl-L). ⚠ THIS CANNOT
+  # BE A HARD ORACLE: its only signal is "did the
   # state change", which cannot tell a WSLg key-delivery stall from a broken
   # binding. So it SELF-SKIPS with a printed line, and the hard oracle for the
   # mirror stays BS34 (the command route). Two presses, which also puts the
   # window back where the menu legs left it.
   set bs_start [pcall ::wviewer::browser_shown $tok]
-  set bs_del [send_key $vdrw <Control-Key-l> \
+  set bs_del [send_key $vdrw <Control-Key-b> \
                 {[wviewer::browser_shown $tok] != $bs_start}]
   if {!$bs_del} {
-    puts "SKIPPED: BS46 real-key leg (Ctrl-L delivery never confirmed)"
+    puts "SKIPPED: BS46 real-key leg (Ctrl-B delivery never confirmed)"
   } else {
     update
-    check {BS46 a REAL Ctrl-L flipped the sidebar and the mirror together} \
+    check {BS46 a REAL Ctrl-B flipped the sidebar and the mirror together} \
       [list [pcall ::wviewer::browser_shown $tok] $::wviewer::browsershow($tok) \
             [bs_packed $vtop.wvbrowser]] \
       [list [expr {!$bs_start}] [expr {!$bs_start}] [expr {!$bs_start}]]
-    send_key $vdrw <Control-Key-l> {[wviewer::browser_shown $tok] == $bs_start}
+    send_key $vdrw <Control-Key-b> {[wviewer::browser_shown $tok] == $bs_start}
     update
     check {BS46 ...and a second press put it back} \
       [list [pcall ::wviewer::browser_shown $tok] $::wviewer::browsershow($tok)] \

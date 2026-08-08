@@ -4985,7 +4985,15 @@ static void init_input_bindings(void)
   set_input_binding(DEV_KEY, 'a', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* select all */
   set_input_binding(DEV_KEY, 'A', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* toggle show netlist */
   set_input_binding(DEV_KEY, 'A', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor1) */
-  set_input_binding(DEV_KEY, 'b', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* toggle sym text */
+  /* TWO-PANE item 16 (R9): the Ctrl+b over_graph row is GONE. The waveform
+   * viewer's Signal Browser moved to Ctrl-B (doc/claude/specs/
+   * waveform_signal_browser_two_pane.md §8.1), and wave_viewer.tcl's key_filter
+   * now refuses to forward 98 under ControlMask, so nothing in the viewer can
+   * reach this row any more. Consequence, declared rather than hidden (spec §10
+   * limit 9): over a graph EMBEDDED IN A SCHEMATIC Ctrl+b falls through to the
+   * switch below and toggles sym_txt, like it always did on bare canvas.
+   * Pinned by tests/headless/test_key_graph_context.tcl. The BARE-b idle
+   * over_graph row further down is NOT deleted -- bare `b` still forwards. */
   set_input_binding(DEV_KEY, 'B', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* edit header */
   set_input_binding(DEV_KEY, 'B', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor2) */
   /* Phase 3d.1: 'B' canvas behavior is now a Tcl-backed action; with this row the

@@ -15,9 +15,25 @@ Scope: `PLAN.md` items **13, 14, 15, 16, 17b, 18, 19**. Everything else is done.
 
 ## Recorded baseline — the contract every verifier compares against
 
-Measured **2026-08-08** after two-pane item 15, both arms green.
-Re-measure before item 16 and record any drift here; do **not** silently adopt a
+Measured **2026-08-08** after two-pane item 16, both arms green.
+Re-measure before item 17b and record any drift here; do **not** silently adopt a
 new baseline.
+
+> **⚠ THE BASELINE MOVED WITH ITEM 16 — headless 1637 → 1649 over FIFTEEN files,**
+> **X 2192 → 2215 over TWELVE suites.**
+> **Reason, in one line:** item 16 added ONE file,
+> `test_wave_sigbrowser_keys.tcl` (band `BK`) — **12** checks headless, **23**
+> under X — and **every other file and every other suite is byte-identical in
+> both arms**. The item-16 implementer RE-MEASURED the item-15 baseline on the
+> unchanged tree first (headless 1637, X 11/11 2192, every per-file and
+> per-suite figure EXACT, no drift), so the delta is attributable.
+>
+> **⚠ THE ITEM-16 NOTE BELOW SAYS "the two binding suites". IT IS THREE.**
+> `test_bindings_file.tcl`, `test_keybindings_help.tcl` **and
+> `test_key_graph_context.tcl`** are all outside both baselines, and the third is
+> the one item 16 reds. Post-item ok-counts: **13 / 17 / 70** (key_graph_context
+> was 69; +1 is the explicit absence claim item 16 added beside its inverted
+> behavioural leg). A green 15-file / 12-suite run proves NOTHING about them.
 
 > **⚠ THE BASELINE MOVED WITH ITEM 15 — headless 1628 → 1637, X 2174 → 2192.**
 > **Reason, in one line:** item 15 added **18 check calls** and they are all in
@@ -80,7 +96,8 @@ new baseline.
 | `test_wave_sigbrowser_panes` | 15 | `test_wave_markers` | 437 |
 | `test_wave_sigbrowser_i11` | 50 | `test_wave_tabs` | 56 |
 | `test_wave_sigbrowser_i12` | 40 | | |
-| `test_wave_sigbrowser_i1315` | 88 | **TOTAL** | **1637** |
+| `test_wave_sigbrowser_i1315` | 88 | `test_wave_sigbrowser_keys` | **12** |
+| | | **TOTAL** | **1649** |
 
 **X arm — 11/11 suites**, run through `xarm.sh suites …` with `SUITE_TIMEOUT=400`.
 
@@ -102,7 +119,8 @@ new baseline.
 | `sea` | 79 | `grid` | 356 |
 | `i11` | 74 | `modes` | 488 |
 | `i12` | 123 | | |
-| `i1315` | **190** | **TOTAL** | **2192** |
+| `i1315` | **190** | `keys` | **23** |
+| | | **TOTAL** | **2215** |
 | `i14` | **107** | | |
 
 **Baseline fails: NONE.** Any fail is the item's problem. Known flakes that are
@@ -332,7 +350,54 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       header comes back COLLAPSED. Selection and instance-node collapse survive,
       which is the whole point of the unprefixed ids. **Next free `BD71` /
       `BP78`.**
-- [ ] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion
+- [x] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion
+      Receipt `16_receipt.md`. **Both baselines RE-MEASURED EXACT on the unchanged
+      tree first** (headless 1637/0, X 11/11 2192, every per-file and per-suite
+      figure), so every red is attributable. New file
+      `tests/headless/test_wave_sigbrowser_keys.tcl`, band **BK01-BK18**,
+      **NEXT FREE BK19** (BK20+ is item 17b's). Headless **1637 → 1649** over
+      **15** files, X **2192 → 2215** over **12** suites; the whole delta is the
+      new file (+12 / +23) and every other file and suite is byte-identical.
+      **⚠ THREE out-of-baseline suites, not the two this LEDGER's item-16 NOTE
+      names.** `test_key_graph_context.tcl` is in NEITHER baseline and is the one
+      this item actually reds — twice. Pre/post ok-counts: bindings_file 13/13,
+      keybindings_help 17/17, **key_graph_context 69 → 70**.
+      **⚠ TWO PLAN CHECKS WERE VACUOUS AND WERE REPLACED.** `BK02` as prescribed
+      searched a literal it had written itself (green before, after, and under
+      the sabotage it was named for); it now EXTRACTS `set fwd [expr {…}]` from
+      the source and EVALUATES it (red `1 1 0 1 1 1` → green `1 0 0 1 1 1`), with
+      the membership claim moved to `BK03` on the LIVE `graphkeys`. `BK06` used
+      `[xschem get sym_txt]`, which **does not exist** — it returns `""`, so the
+      PLAN's landmine witness would have compared `""` to `""` and passed with
+      sym_txt flipped. Everything reads `$::sym_txt`.
+      **⚠ THE SABOTAGE THAT DECIDED THE ITEM.** `S1b'` keeps the carve-out text
+      byte-identical and re-opens the 98 hole alone: `BK01`/`BK02` stay GREEN and
+      **`BK12` reds `{1 1 1 0 1}`** — forwarded, `sym_txt` FLIPPED, `graph_flags`
+      unmoved, i.e. the forward reached the C switch's ControlMask arm. Had it
+      red nothing, the two behavioural checks would have been redundant with the
+      source greps. `S3` (delete the bare-b idle row too) **TIMED OUT** — bare `b`
+      falls through to the merge-schematic modal — which is why a sabotage filter
+      MUST count TIMEOUT as a red; its isolating evidence was
+      `test_key_graph_context:323` going red in the same run.
+      **⚠ THE PLAN'S BREAK LIST IS WRONG TWICE.** It says S6 reds "GH1 alone";
+      measured radius is **8 legs across 3 files** (GH1+GH3 headless, GH1+GH3+GH5
+      +GH6 under X, BS09 ×2). And it never names `test_key_graph_context.tcl` at
+      all, which is the item's real blast radius.
+      **⚠ TWO DECLARED LIMITS, both from measurement.** (8) `graph_use_ctrl_key 1`
+      users lose their only cursor-B chord (default is commented out; bare `b`
+      measured still working, `graph_flags` 0 → 4). (9) Ctrl+b over a graph
+      EMBEDDED IN A SCHEMATIC now toggles `sym_txt`, **measured 0 → 1** — a
+      schematic-editor behaviour change no part of the PLAN mentions, pinned by an
+      inverted check rather than left for the next reader to file as a bug.
+      **⚠ REGENERATION TRAP.** `save_input_bindings_file` writes the LIVE table and
+      the shipped csv is LOADED INTO IT at startup, so regenerating in place
+      reproduces the deleted row **moved to the end of the file** — a diff that
+      reads as harmless reordering. Move the csv aside and generate from the
+      builtins. Spec §8.1 anchors corrected (all stale by ~+2300), its "nothing
+      user-visible is lost" and "the schematic side is untouched" both replaced
+      with the measurements, §10 gained limits 8 and 9, §13 gained the eighth file.
+      **No eyeball owed** — every claim is a bind, a dump row, a byte-compare or a
+      Tcl variable.
 - [ ] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
 - [ ] 18 — R12: auto-tick, reveal, and say so
 - [ ] 19 — Docs, oracles, the four-file lockstep, 0217 closed
@@ -365,6 +430,7 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
 
 | item | commit | what to look at | eyeballed? |
 |---|---|---|---|
+| 16 | *(this item)* | **NONE OWED.** Every claim is a bind, a `xschem bindings dump` row, a file byte-compare or a Tcl variable — there is no pixel deliverable. The one thing a human might still want to *feel* is the chord itself: press **Ctrl-B** over a plotted strip and confirm the sidebar toggles and the symbol text on the schematic behind it does **not** change. That is `BK12`+`BK18` restated in fingers, not a gap in coverage. | n/a |
 | 15 | `e1cfd5ff` | With **two raws loaded**, tick the **All-DBs** box. The tree's TOP LEVEL must become one row per database — **the current one included** — and each header must carry that database's **own** design root, named for **its own** raw (not the current design's name under a foreign header). The current DB's header **and** root come back **OPEN**; the foreign header stays **COLLAPSED**. Then collapse a header by hand and **type in the search bar** — it must stay collapsed. Judge indentation, nesting legibility and label truncation on a **real** raw path. Full script: `15_receipt.md` §11. **A one-DB tree answers nothing**, and neither does the box left OFF. | ☐ |
 | 14 | *(this item)* | Drag the **sash** small, tick **Show device internals**, save/quit/reopen: both must come back. Then reopen into a **shorter** window — the sash must return to the same *proportion*, not the same pixel row. A window you never drag must have **no `browser` key** in its state at all. Full script: `14_receipt.md` §7.7. | ☐ |
 | 13 | `24fb6769` + `9d5cdd26` | **Tools → Show in Signal Browser** (Ctrl+5 today; R10's Ctrl-Alt-V is item 17b's and does NOT exist yet) with an instance that **CONTAINS other instances** selected. (a) the tree row scrolls in, is selected, expander stays **CLOSED**; (b) the LOWER pane fills with **that node's own-level signals**; (c) clicking the expander still opens it. Full script: `13_receipt.md` §9. **A LEAF instance answers nothing** — that node class is exactly where the batch's checks were blind. | ☐ |
