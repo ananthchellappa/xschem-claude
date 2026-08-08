@@ -1093,8 +1093,17 @@ hierarchy leave the entry disabled.</p>
 <p><b>Show in Signal Browser</b> takes the schematic to the browser: from a
 design window press <kbd>Ctrl</kbd>+<kbd>5</kbd>, or use <span class="menu">Tools
 &gt; Show in Signal Browser</span>. The session's viewer is raised, the sidebar is
-un-hidden, and the tree node for wherever the schematic is standing is selected
-and scrolled into view.</p>
+un-hidden, and a tree node is selected and scrolled into view.</p>
+
+<p><b>Which node depends on what is selected.</b> Select one instance and the
+browser goes to <em>that instance's</em> level &mdash; you do not have to descend
+into it first. Select nothing and it goes to wherever the schematic is standing,
+as before. Selecting something that has no level in the simulation data (a
+resistor, a voltage source) lands on its parent and says so.</p>
+
+<p>Selecting <em>two or more</em> instances is not a question the browser can
+answer &mdash; the lower pane shows one level at a time &mdash; so it uses the
+schematic's position instead and writes a note to the log saying it did.</p>
 
 <p>Both say what happened, every time. If the exact node does not exist the
 deepest ancestor that does is selected and the message says so. If the move

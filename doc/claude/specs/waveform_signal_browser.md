@@ -561,9 +561,14 @@ Two commands, mirror images:
 
 * **`Descend to here`** (item 11) — browser row -> put the *schematic* there.
   `Key-E` on the viewer canvas and on the tree; View menu; RMB menu.
-* **`Show in Signal Browser`** (item 12) — schematic position -> select and scroll the
-  *browser* node. `Ctrl-5` on `.drw` (`src/cadence_style_rc`); design window Tools menu
+* **`Show in Signal Browser`** (item 12) — the schematic's **selected instance**, or its
+  hierarchy position when nothing is selected -> select and scroll the *browser* node.
+  `Ctrl-5` on `.drw` (`src/cadence_style_rc`); design window Tools menu
   (`src/xschem.tcl`).
+  ⚠ **The selection half is two-pane item 17**, and it was R10's ruling from the start —
+  item 12 shipped only the hierarchy-position half. Rulings, the two-or-more case and the
+  reason the read happens before the viewer is raised:
+  `waveform_signal_browser_two_pane.md` §7.8.
 
 **ViVA has no documented equivalent.** There is no upstream doc to fall back on, and the
 plan the batch started from was **wrong about all six points below.** Each correction was

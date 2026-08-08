@@ -555,6 +555,75 @@ current DB) and `browser_refresh`'s All-DBs loop (each foreign DB). **Both** pas
 Keying one would make the same typed pattern mean "the label" for one inventory and "the
 raw name" for the next, with nothing on screen to say which; BD57 pins it.
 
+### 7.8 "Show in Signal Browser" takes the SELECTION as its object (item 17)
+
+⚠⚠ **THIS WAS RULED IN R10 AND SHIPPED ONLY HALF-DONE.** R10's own words:
+*"Nothing selected → reveal the current descend level. One instance selected →
+reveal that instance, as if the user had descended into it."* The first sentence
+shipped; **the second never did**, and nothing in the batch noticed, because
+every check drove the command with nothing selected. The driver re-raised it as
+a defect report after item 16. It is recorded here as an unimplemented ruling
+rather than as a new feature, so the gap is attributable.
+
+⚠ **R10's OTHER half is still owed and is NOT part of item 17.** R10 also says
+*"Ctrl-Alt-V replaces Ctrl+5 … routed through the C action registry so it is
+remappable"* (§8.2). The shipped gesture is still `Ctrl-5` on the Tools menu
+(`xschem.tcl:14938`) and there is no `Ctrl-Alt-V` binding anywhere in `src/`.
+Item 17 changes only what the command TARGETS, never how it is reached.
+
+`ase::show_in_browser_for_current` read `wviewer::hier_now` — `sim_sch_path`,
+**where the window is standing** — and nothing else. Descended into `x1` with
+`x2` selected, it revealed `g:x1`. It did *not* do nothing: it revealed the
+current level and filled the sea with that level's signals. It ignored the
+selection.
+
+**The rule: the selection is the direct object; the hierarchy position is the
+fallback when there is no direct object.** Every other navigation gesture in the
+tool — `Descend` (`e`), `Descend to here`, `Copy names`, the sea's context menu —
+already takes its target from the selection; this was the only one that could
+not be changed by pointing at something.
+
+`ase::browser_sel_segment` reduces the selection to the one question this asks,
+and its answer extends the path:
+
+| answer | what the command does |
+|---|---|
+| `{ok <name>}` | append `<name>` to the path — reveal that instance's level |
+| `{none}` | the hierarchy position, exactly as before item 17 |
+| `{many <n>}` | the hierarchy position, **and a CIW comment naming both the ambiguity and the action** |
+
+Three things made this three lines of behaviour rather than a feature:
+`browser_reveal`'s `$tv see` already opens every ancestor and a tree selection
+already fills the sea; `browser_node_for` already matches each segment
+exact-first with a `-nocase` fallback, so a schematic-spelled `X2` finds a raw
+`x2`; and `browser_show_path` already lands on the deepest existing ancestor and
+reports `partial`.
+
+**Two rulings, and where each is enforced.**
+
+* **A non-hierarchical pick lands on the parent and says so.** `partial` covers
+  it whenever one segment matched. It does **not** cover a top-level pick, where
+  the whole path is one unresolvable segment, `matched` is 0 and the answer is
+  `err` with the selection untouched. So the caller retries once **without** the
+  selection — and only when the selection is what extended the path. A path that
+  failed on its own merits still fails.
+* **Two or more selected is not a question one pane can answer.** Same reasoning
+  as `browser_sea_target_path`, which refuses two cells at different levels
+  rather than picking first-won. The sentence must name the ambiguity **and** the
+  action; a notice that reports only the ambiguity is a warning nobody can act
+  on. No `error` tag — it is a comment, and the tag is what picks
+  `log_action -error` over `-result`.
+
+⚠ **The selection is read in the DESIGN context, before anything raises a
+viewer**, for the same reason the pivot is — and with a worse failure mode.
+`wviewer::open` moves the xschem context to the viewer window, whose own
+untitled buffer has no instances, so a read placed after it degrades silently to
+`{none}` and the whole item does nothing while every unit-level check stays
+green. Sabotage U1 relocates the call; it reds four checks.
+
+**Out of scope, declared:** wires, pins and text (`-type instance`). Selecting a
+net and asking to show it wants a *signal row*, not a node, and has no rulings.
+
 ---
 
 ## 8. Keys

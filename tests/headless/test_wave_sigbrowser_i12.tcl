@@ -85,6 +85,16 @@ set ::wvbs_tag  wvsigbrowser_i12
 set ::wvbs_name test_wave_sigbrowser_i12
 source [file join [file dirname [info script]] wvbs_common.tcl]
 
+# item 17's fixture reader: the design window's instance names in INDEX order.
+# A list, so a check can name what it addresses by index (BX16) instead of
+# trusting the fixture not to have been reordered.
+proc bx_inst_names {} {
+  set out {}
+  if {[catch {xschem objects -type instance} objs]} { return OBJECTS-FAILED }
+  foreach o $objs { lappend out [dict get $o name] }
+  return $out
+}
+
 # --- THE FIXTURE PROLOGUE (see the ⚠⚠ above) --------------------------------
 # fixtures/wvhier: top holds `X1` AND `x1` (both instances of mid) plus the
 # non-subcircuit `V9`; mid holds `X2`; leaf is a leaf. Item 11's BH20 built it;
@@ -375,6 +385,77 @@ check {BX15 (ITEM 8) a ROOTED list walked with NO start DEAD-ENDS — declared, 
   [pcall ::wviewer::browser_node_for $bx_rrows {x1 x2}] {{} 0}
 check {BX15 ...and seeded with browser_root_id the same walk finds the same node} \
   [pcall ::wviewer::browser_node_for $bx_rrows {x1 x2} $bx_rid0] {g:x1.x2 2}
+
+# --- BX16-BX18 (ITEM 17): THE SELECTION IS THE DIRECT OBJECT -----------------
+#
+# ⚠⚠ THE DEFECT, STATED AS THE THING THAT WAS ACTUALLY TRUE. Until item 17,
+# `ase::show_in_browser_for_current` read `wviewer::hier_now` — that is
+# `xschem get sim_sch_path`, WHERE THE WINDOW IS STANDING — and nothing else.
+# Descended into x1 with x2 SELECTED it revealed `g:x1`. It did NOT "do
+# nothing": it revealed the CURRENT level and filled the sea with that level's
+# signals. What it ignored was the selection. A check written against "it does
+# nothing" would be pinning a false premise, so this one is written against the
+# true one, and BX51's NEGATIVE CONTROL is the other half of it.
+#
+# These legs pin the REDUCER — `ase::browser_sel_segment` — on the REAL design
+# window the prologue loaded, with no viewer and no Tk anywhere near it, which
+# is why they sit in the both-arms band. The three answers it can give are the
+# three rulings: `ok` extends the path, `none` keeps today's behaviour, and
+# `many` keeps today's behaviour AND owes the user a sentence (BX53).
+pcall xschem unselect_all
+check {BX16 (PRECONDITION) the prologue's design is still loaded, still at its
+       TOP level, and nothing is selected — the pure band above walks synthetic
+       row lists and must not have moved the design window} \
+  [list [file tail [pcall xschem get schname 0]] \
+        [llength [pcall ::wviewer::hier_now]] \
+        [pcall xschem selected_set]] \
+  [list wvhier_top.sch 0 {}]
+check {BX16 (RULING 3's FALLBACK) nothing selected answers `none`, which is what
+       keeps every pre-item-17 invocation answering exactly as it did} \
+  [pcall ::ase::browser_sel_segment] {none}
+# ⚠ THE FIXTURE'S SIX INSTANCES, ASSERTED BY NAME AND INDEX, because every leg
+# below addresses them by index and a fixture edit that reordered them would
+# otherwise change what these checks MEAN while leaving them green.
+check {BX16 (FIXTURE) the top level's six instances, in index order — two
+       spellings of the same cell (`X1`, `x1`) and the non-subcircuit `V9`} \
+  [bx_inst_names] {l1 X1 V9 l2 l3 x1}
+pcall xschem select instance 1
+check {BX17 ONE selected instance answers `ok` and its name — the SCHEMATIC's
+       own spelling, capital and all, because the browser's own walk is what
+       folds case (browser_node_for's -nocase fallback) and a second folding
+       here would be a second answer to one question} \
+  [pcall ::ase::browser_sel_segment] {ok X1}
+pcall xschem unselect_all
+check {BX17 (CONTROL) ...and unselecting puts it back to `none`, so the reader
+       is reading the LIVE selection and not something it cached} \
+  [pcall ::ase::browser_sel_segment] {none}
+# RULING 2. `X1` and `x1` are two instances of the SAME cell, so this is not a
+# contrived pair: it is the case a user actually hits by rubber-banding.
+pcall xschem select instance 1
+pcall xschem select instance 5
+check {BX18 (RULING 2) TWO selected instances answer `many` WITH THE COUNT — the
+       lower pane shows ONE level, so two targets is not a question it can
+       answer, and the count is what the CIW sentence needs} \
+  [list [pcall ::ase::browser_sel_segment] \
+        [llength [pcall xschem selected_set]]] \
+  [list {many 2} 2]
+# ⚠ THE `-type instance` FILTER, BEHAVIOURALLY. `xschem select_all` takes the
+# wires and the text too; if the reducer counted those, this level would answer
+# `many <a bigger number>` — or `ok` on a WIRE at a level with one instance,
+# which would put a net name into a hierarchy path.
+pcall xschem unselect_all
+pcall xschem select_all
+check {BX18 (THE -type FILTER) select-all selects more OBJECTS than instances,
+       and the reducer still counts only the INSTANCES} \
+  [list [pcall ::ase::browser_sel_segment] \
+        [expr {[llength [pcall xschem objects -selected]] >
+               [llength [pcall xschem objects -type instance -selected]]}]] \
+  [list {many 6} 1]
+pcall xschem unselect_all
+check {BX18 (RESTORE) the selection is clear again, so BX20 onward starts where
+       it always did} \
+  [list [pcall xschem selected_set] [pcall ::ase::browser_sel_segment]] \
+  [list {} none]
 
 # --- BX20-BX39: the REVEAL, on a throwaway toplevel (X only) -----------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -1049,6 +1130,162 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list [expr {[info commands ::ase::__bx_real] eq {}}] \
             [expr {[info commands ::ase::show_in_browser_for_current] ne {}}]] \
       [list 1 1]
+
+    # ==== BX51-BX53 (ITEM 17): THE SELECTION IS THE DIRECT OBJECT ===========
+    #
+    # ⚠ THE CIW CAPTURE, INSTALLED HERE AND REMOVED AT THE END OF THE BLOCK.
+    # `ase::echo` writes its message to `::ciw_echo` first, unconditionally
+    # (ase.tcl:117-118 says so and names this as the way tests capture ASE
+    # notices), so renaming it is the supported hook rather than a reach-in. It
+    # is NOT installed file-wide: BX42/BX45/BX47 assert what the command SAYS
+    # through other surfaces, and a global rename would silently change what
+    # those are reading.
+    set ::bx_said {}
+    set ::bx_had_ciw [expr {[info commands ::ciw_echo] ne {}}]
+    if {$::bx_had_ciw} { rename ::ciw_echo ::__bx_real_ciw }
+    proc ::ciw_echo {args} { append ::bx_said [lindex $args 0] "\n" }
+    #
+    # ⚠⚠ THE DRIVER'S OWN CASE, VERBATIM: "descend to x1 and now, within x1, the
+    # user has selected x2 and issues this command — it should expand this
+    # instance in the hierarchy navigator so that the signals at the x1.x2 level
+    # are visible in the signal pane. It should not be necessary to descend."
+    #
+    # The fixture is unusually well suited and that is not luck — item 11 built
+    # it to carry exactly these shapes: `wvhier_top` holds `X1` AND `x1` (two
+    # instances of the same cell, RULING 2's pair) plus the non-subcircuit `V9`
+    # (RULING 1's), and `wvhier_mid` holds `X2`.
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
+    pcall ::wviewer::hier_walk X1
+    pcall $BXVTV selection set {}
+    catch {$BXVTV item {g:x1} -open 0}
+    update
+    check {BX51 (PRECONDITION) the design window is descended to X1 with NOTHING
+           selected, the browser's selection is cleared and g:x1 is COLLAPSED —
+           so nothing below can be true of the state it started in} \
+      [list [pcall xschem get sim_sch_path] [pcall xschem selected_set] \
+            [pcall $BXVTV selection] [pcall $BXVTV item {g:x1} -open]] \
+      [list {X1.} {} {} 0]
+    # ⚠ THE NEGATIVE CONTROL COMES FIRST, deliberately. It is what makes the
+    # positive leg below mean "the SELECTION moved it" rather than "something
+    # moved it": same position, same command, one difference.
+    set bx_s0 [pcall ase::show_in_browser_for_current $bx_dwin]
+    update
+    check {BX51 (NEGATIVE CONTROL) with NOTHING selected the command still lands
+           on the descend level, exactly as it did before item 17 — the
+           selection is an EXTENSION of the answer, never a replacement for it} \
+      [list $bx_s0 [pcall $BXVTV selection]] [list $bx_tok {g:x1}]
+    # ...now the same command, from the same place, with X2 selected.
+    bx_ctx_to $bx_dwin
+    pcall xschem select instance 1
+    # ⚠ `lindex`, not the bare list: `xschem selected_set` BRACE-QUOTES every
+    # name (scheduler.c:10779), so a one-element answer has the string rep
+    # `{X2}` and comparing it to `X2` fails on correct code — this file's own
+    # string-rep warning, one layer down.
+    check {BX51 (PRECONDITION) `X2` is what is selected, and the window has NOT
+           descended into it — that is the whole point of the item} \
+      [list [llength [pcall xschem selected_set]] \
+            [lindex [pcall xschem selected_set] 0] \
+            [pcall xschem get sim_sch_path]] \
+      [list 1 {X2} {X1.}]
+    set bx_s1 [pcall ase::show_in_browser_for_current $bx_dwin]
+    update
+    check {BX51 (THE DRIVER'S OWN CASE) selecting X2 one level up reveals
+           g:x1.x2 — the raw's lowercase node, found through browser_node_for's
+           -nocase fallback — with its ancestors open and ON SCREEN} \
+      [list $bx_s1 [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1.x2]] \
+      [list $bx_tok {g:x1.x2} visible]
+    check {BX51 ...and the LOWER PANE is showing that level's own signals, which
+           is what the user asked for — not x1's} \
+      [bs_sea_labels $bx_vtop.wvbrowser.pw.sea.c] {net5}
+    # ⚠ THE CONTEXT SWITCH IS REQUIRED, and forgetting it is how this leg first
+    # read `{} {}` and looked like a real defect: the command LEAVES THE CONTEXT
+    # ON THE VIEWER (BX42 pins that as declared behaviour), so a design-window
+    # question asked without switching back is answered by the viewer's own
+    # untitled buffer.
+    bx_ctx_to $bx_dwin
+    check {BX51 (DECLARED) the DESIGN window never descended: still at X1, with
+           X2 still merely SELECTED} \
+      [list [pcall xschem get sim_sch_path] \
+            [lindex [pcall xschem selected_set] 0]] \
+      [list {X1.} {X2}]
+
+    # ==== BX52 (RULING 1): a NON-HIERARCHICAL selection lands on the parent ==
+    #
+    # ⚠ `V9` is a voltage source. It has no level in the simulation data, so the
+    # extended path cannot resolve — and the ruling is that this LANDS ON THE
+    # PARENT AND SAYS SO rather than erroring or silently ignoring the pick.
+    # Driven at the TOP level on purpose: that is the case `browser_show_path`
+    # alone gets WRONG. With no ancestor segment to fall back on, `matched` is 0
+    # and its answer is `err` with the selection untouched — so item 17 owes the
+    # retry, and this check is what says so.
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
+    pcall ::wviewer::hier_walk {}
+    pcall $BXVTV selection set {}
+    update
+    check {BX52 (PRECONDITION) back at the top level with a cleared browser} \
+      [list [pcall xschem get sim_sch_path] [pcall $BXVTV selection]] \
+      [list {} {}]
+    pcall xschem select instance 2
+    set ::bx_said {}
+    set bx_s2 [pcall ase::show_in_browser_for_current $bx_dwin]
+    update
+    set bx_selv9 [list]
+    bx_ctx_to $bx_dwin
+    set bx_selv9 [lindex [pcall xschem selected_set] 0]
+    check {BX52 (RULING 1) with the non-subcircuit `V9` selected the command
+           lands on the PARENT — here the design root, because the parent of a
+           top-level pick is the design — instead of refusing} \
+      [list $bx_selv9 $bx_s2 [pcall $BXVTV selection]] \
+      [list {V9} $bx_tok {g:}]
+    check {BX52 (RULING 1, "SAY SO") ...and the user is TOLD, by name, that the
+           thing they picked has no level and what was shown instead} \
+      [list [expr {[string first {V9} $::bx_said] >= 0}] \
+            [expr {[string first {no level in the simulation data} $::bx_said] >= 0}]] \
+      [list 1 1]
+
+    # ==== BX53 (RULING 2): TWO selected -> the descend level, and a comment ==
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
+    pcall ::wviewer::hier_walk {}
+    pcall $BXVTV selection set {}
+    set ::bx_said {}
+    pcall xschem select instance 1
+    pcall xschem select instance 5
+    update
+    check {BX53 (PRECONDITION) both spellings of the same cell are selected} \
+      [pcall xschem selected_set] {{X1} {x1}}
+    set bx_s3 [pcall ase::show_in_browser_for_current $bx_dwin]
+    update
+    check {BX53 (RULING 2) two selected instances do NOT pick a winner — the
+           answer is the DESCEND LEVEL's, which at the top is the design root} \
+      [list $bx_s3 [pcall $BXVTV selection]] [list $bx_tok {g:}]
+    # ⚠ THE SENTENCE MUST NAME BOTH HALVES. "2 instances are selected" alone is
+    # a fact the user can see; what they cannot see is what the tool DID with
+    # it. A notice that reports only the ambiguity is a warning nobody can act
+    # on, so both legs are asserted separately.
+    check {BX53 (RULING 2, THE CIW COMMENT) the CIW is told BOTH the ambiguity
+           AND the action taken — the count, and that the selection was ignored
+           in favour of the hierarchy position} \
+      [list [expr {[string first {2 instances} $::bx_said] >= 0}] \
+            [expr {[string first {ignoring the selection} $::bx_said] >= 0}]] \
+      [list 1 1]
+    check {BX53 (NOT AN ERROR) it is a COMMENT, not a failure — the command
+           still answers with the session key, which is how a caller tells a
+           refusal from a fallback} \
+      [expr {$bx_s3 ne {}}] 1
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
+    # ⚠ RESTORE WHAT WAS CHANGED (the named-helper rule). BX47 below reads the
+    # command's decline through the ordinary channels; leaving the capture
+    # installed would swallow its notice.
+    catch {rename ::ciw_echo {}}
+    if {$::bx_had_ciw} { catch {rename ::__bx_real_ciw ::ciw_echo} }
+    check {BX53 (RESTORE) the real ciw_echo is back and the stand-in is gone} \
+      [list [expr {[info commands ::ciw_echo] ne {}}] \
+            [expr {[info commands ::__bx_real_ciw] eq {}}]] \
+      [list $::bx_had_ciw 1]
 
     # ==== BX47: NO SESSION AT ALL -> an honest notice, and no viewer opened ==
     bx_ctx_to $bx_dwin

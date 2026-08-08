@@ -1051,6 +1051,50 @@ proc ase::plot_mode_for_current {{mode invert}} {
 #  7. CONTEXT IS LEFT ON THE VIEWER. Declared, not accidental: the exact mirror
 #     of item 11 leaving it on the design window, and consistent with the raise
 #     — the window the user is now looking at is the one the context points at.
+# --- ITEM 17: THE SELECTION IS THE DIRECT OBJECT ------------------------------
+#
+# The schematic's selection, reduced to the ONE question "Show in Signal
+# Browser" asks of it — which single instance, if any, should extend the
+# hierarchy path?
+#
+#   {ok <name>}   exactly one instance is selected; <name> is the SCHEMATIC's
+#                 own spelling, passed through verbatim
+#   {none}        nothing selected, or the read failed — the caller keeps its
+#                 pre-item-17 answer, the hierarchy position
+#   {many <n>}    two or more (ruling 2)
+#
+# ⚠ THE NAME IS NOT CASE-FOLDED HERE, and that is a decision. `browser_node_for`
+# (wave_viewer.tcl:9325) already matches each segment EXACT-first with a
+# `string equal -nocase` fallback — which is how BX42 lands a schematic `X1.X2`
+# on the raw's `g:x1.x2` today. Folding here as well would be a SECOND answer to
+# one question, and on this very fixture (which carries both `X1` and `x1`) the
+# two answers can differ: an exact hit must keep winning.
+#
+# ⚠ `-type instance`, NOT the bare selection. A rubber band takes wires and text
+# with it, and a WIRE contributing a segment would put a net name into a
+# hierarchy path. `xschem objects` documents its row shape at scheduler.c:8466 —
+# `{type T index I layer C id ID name {N}}` — so the name is a dict key and no
+# `getprop`/`get_tok` round trip is needed. (`xschem selected_set` answers names
+# directly and would also do; `objects` is used because it is the reader
+# `slickprop::selected_inst_ids` already established for this question.)
+#
+# NEVER THROWS: it rides a menu/key path, and a Tcl error there pops bgerror,
+# which is modal under X.
+proc ase::browser_sel_segment {} {
+  set sel {}
+  if {[catch {xschem objects -type instance -selected} sel]} { return [list none] }
+  set n [llength $sel]
+  if {$n == 0} { return [list none] }
+  if {$n > 1}  { return [list many $n] }
+  set nm {}
+  catch {set nm [dict get [lindex $sel 0] name]}
+  # an instance with no `name=` token answers `{}` (instname is "" and never
+  # NULL — actions.c:989 uses my_strdup2), and an empty segment would match the
+  # ROOT rather than nothing. `none` is the honest reduction of it.
+  if {$nm eq {}} { return [list none] }
+  return [list ok $nm]
+}
+
 proc ase::show_in_browser_for_current {{win {}}} {
   # 0. the window the gesture happened in
   if {$win ne {}} {
@@ -1083,6 +1127,44 @@ proc ase::show_in_browser_for_current {{win {}}} {
     return {}
   }
   set segs [lrange $segs $drop end]
+  # 3b. ITEM 17: THE SELECTION EXTENDS THE PATH.
+  #
+  # ⚠⚠ IT IS READ HERE, IN THE DESIGN CONTEXT, FOR STEP 2's REASON AND A WORSE
+  # FAILURE MODE. `wviewer::open` and the sidebar show both MOVE the xschem
+  # context to the viewer window; `xschem objects -selected` read there answers
+  # about the VIEWER's own untitled buffer, which has no instances at all — so a
+  # read placed after the raise degrades silently to `none` and the whole item
+  # does nothing, while every check that drives the reducer directly stays
+  # green. Moving this call below step 4 is a declared sabotage.
+  #
+  # ⚠ AFTER the `$drop` trim, never before. The drop takes ANCESTOR segments off
+  # the FRONT (the raw was read above this window's position); the selection
+  # appends at the END. Appending first would feed the selected instance to the
+  # origin mapping and eat it whenever drop > 0 — BX48's level>0 case.
+  set base $segs
+  set selname {}
+  set selr [ase::browser_sel_segment]
+  switch -- [lindex $selr 0] {
+    ok {
+      set selname [lindex $selr 1]
+      lappend segs $selname
+    }
+    many {
+      # RULING 2. The lower pane shows ONE level, so N targets is not a question
+      # it can answer — the same reasoning `browser_sea_target_path` uses when
+      # it refuses two cells at different levels rather than picking first-won.
+      #
+      # ⚠ THE SENTENCE NAMES BOTH HALVES, and that is the ruling too: what was
+      # ambiguous AND what was done instead. A notice that reports only the
+      # ambiguity is a warning the user cannot act on. NO `error` tag — this is
+      # a comment about an ambiguous request, not a failure, and the tag is what
+      # picks `log_action -error` over `-result`.
+      set where [expr {[llength $base] ? "[join $base .]" : {the design root}}]
+      catch {::ase::echo "ase: signal browser: [lindex $selr 1] instances are\
+ selected and the lower pane shows one level, so ignoring the selection and\
+ showing $where instead"}
+    }
+  }
   # 4. the viewer (raise-or-open; 0 headless or unknown)
   if {![wviewer::open $key]} {
     catch {::ase::echo "ase: no waveform viewer could be opened for $key" error}
@@ -1094,6 +1176,24 @@ proc ase::show_in_browser_for_current {{win {}}} {
   }
   # 6. the node
   set res [wviewer::browser_show_path $key [join $segs .]]
+  # 6b. RULING 1's LAST MILE, and it is NOT redundant with `partial`.
+  #
+  # `browser_show_path` lands on the deepest ancestor that exists and reports
+  # `partial` — but only when AT LEAST ONE segment matched. A non-hierarchical
+  # instance picked at the TOP level makes the whole path a single unresolvable
+  # segment, so `matched` is 0 and the answer is `err` with the selection left
+  # alone (wave_viewer.tcl:9513-9521). That is not "land on the parent".
+  #
+  # So: when the SELECTION is what extended the path and the extended path
+  # resolved nothing, ask again WITHOUT it. The retry is confined to that case —
+  # a path that failed on its own merits still fails, because that is the user's
+  # own hierarchy position and there is nothing better to show.
+  if {$selname ne {} && [lindex $res 0] eq {err}} {
+    set res [wviewer::browser_show_path $key [join $base .]]
+    set where [expr {[llength $base] ? "[join $base .]" : {the design root}}]
+    catch {::ase::echo "ase: signal browser: '$selname' has no level in the\
+ simulation data; showing $where instead"}
+  }
   # ⚠ THE SAME SENTENCE, from the SAME formatter, as the sidebar's status line —
   # a second wording composed here would drift from it (a `partial` reported as
   # a plain success is exactly the silent failure decision 11 forbids).

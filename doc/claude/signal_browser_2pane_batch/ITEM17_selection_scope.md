@@ -33,6 +33,28 @@ level and fills the sea with that level's signals. What it ignores is the
 selection — so selecting `x2` first changes nothing. A test written against "it
 does nothing" would be testing a false premise.
 
+## 1b. ⚠⚠ IT WAS ALREADY RULED — R10, SHIPPED HALF-DONE
+
+Found while writing the spec amendment, not while scoping. **R10** already says
+it, in the two-pane spec's own ruling table:
+
+> **R10** — Ctrl-Alt-V replaces Ctrl+5 as "Show in Signal Browser", routed
+> through the **C action registry** so it is remappable. **Nothing selected →
+> reveal the current descend level. One instance selected → reveal that
+> instance, as if the user had descended into it.**
+
+The first sentence shipped. **The second never did**, and no check caught it,
+because every existing check drives the command with nothing selected — so the
+half that WAS built is the half they all exercise. This item is therefore an
+unimplemented ruling being paid, not a new feature, and the receipt should say
+so plainly.
+
+⚠ **R10's remaining half stays owed and is explicitly NOT in scope here.** There
+is no `Ctrl-Alt-V` binding anywhere in `src/`; the gesture is still `Ctrl-5` on
+the Tools menu (`xschem.tcl:14938-14939`), and the C action registry route was
+never built. Item 17 changes what the command TARGETS. How it is reached is a
+separate, still-open piece of R10.
+
 ## 2. What this is called
 
 **Selection as the object of the verb.** Every other Cadence-style navigation
@@ -160,8 +182,16 @@ state, not licence to re-pattern it — read it before touching it.**
 
 ## 6. RED first
 
-New band **`BX53`-`BX5x`** in `test_wave_sigbrowser_i12.tcl` (BX52 is the
-highest spent, file-wide and tree-wide; BX51 is free but leave the gap).
+New band **`BX51`-`BX5x`** in `test_wave_sigbrowser_i12.tcl`, plus pure legs in
+the free **`BX16`-`BX19`**.
+
+⚠ **CORRECTION, measured after this order was first written.** `BX50` is the
+highest id any check actually uses. The file's own header prose says
+`BX40-BX52` and `BX01-BX52` (lines 18 and 116) but **nothing uses BX51 or
+BX52** — the prose over-claims. So the next free number is **BX51**, not BX53,
+and the existing header text already covers it. The band is `BX` file-wide and
+tree-wide; the only other `BX` strings in `tests/` are prose, or the unrelated
+coordinate variables `$::BX1`/`$BX2` in two fluid tests.
 The fixture is ALREADY THERE and is unusually well suited — `wvhier_top` holds
 **`X1` AND `x1`** (both instances of `wvhier_mid`) plus the **non-subcircuit
 `V9`**, and `mid` holds **`X2`**:
