@@ -9462,13 +9462,28 @@ proc wviewer::browser_origin_drop {level rawlevel} {
 # CHANGED. Opening the target is the one thing `see` does NOT do (it opens
 # ancestors), and this proc used to do it by hand so that landing on `x1.x2`
 # also showed what was inside it. Under the two-pane sidebar the LOWER PANE is
-# the answer to "what is inside this node" (spec R3): the selection set above
-# fires `<<TreeviewSelect>>`, the sea below redraws with this node's own
-# signals, and force-opening the row as well would say the same thing twice in
-# the pane that is now nodes only. So the reveal expands the CHAIN and stops.
-# See doc/claude/specs/waveform_signal_browser_two_pane.md §4.2. Re-adding the
-# open reds BW68 (test_wave_sigbrowser_panes.tcl), BW15 and BX31
-# (test_wave_sigbrowser_i12.tcl).
+# the answer to "what is inside this node": the selection set above fires
+# `<<TreeviewSelect>>`, the sea below redraws with this node's own signals, and
+# force-opening the row as well would say the same thing twice in the pane that
+# is now nodes only. So the reveal expands the CHAIN and stops.
+#
+# ⚠ THE RULING IS **R3**, NOT §4.2 — doc/claude/specs/waveform_signal_browser_
+# two_pane.md §2.1 R3, "the lower pane shows the selected node's own-level
+# signals only". §4.2 is a DIFFERENT ruling — who may reach `see`, and that a
+# persisted open set beats it, which is the STATE-RESTORE path's business rather
+# than this proc's — and it says nothing about the target's own row. An earlier
+# revision of this comment cited §4.2 here and would have sent a later reader
+# hunting for a rule that is not there.
+#
+# Re-adding the open reds BW77 and BW68 (test_wave_sigbrowser_panes.tcl), BW15
+# (same file, the source claim) and BX31 (test_wave_sigbrowser_i12.tcl).
+# ⚠⚠ BW77 IS THE ONE THAT MATTERS, and it was added by the item-13 FIXUP after a
+# verifier found the hole: BW68 and BX31 both land on `g:x1.x2`, which is
+# CHILDLESS, and on a childless row `-open` is stored but never RENDERED. A
+# re-add guarded on `[llength [$tv children $id]] > 0` was therefore invisible to
+# every check in the batch while restoring exactly the pre-item-13 behaviour in
+# the only node class where a user can see it. BW77 reveals `g:x1`, which has
+# children.
 #
 # ⚠ `$tv exists {}` IS TRUE (the root), so the empty id is refused explicitly —
 # otherwise `selection set {}` would silently CLEAR the selection and report

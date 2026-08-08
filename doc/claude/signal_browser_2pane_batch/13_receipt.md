@@ -6,6 +6,75 @@ window, 393 min left at start — no window-manager claim in this item).
 
 ---
 
+## 0. FIXUP — what the adversarial verifier found, and what changed
+
+The item shipped as `24fb6769`. A verifier rejected it on **one real coverage
+hole** plus two bookkeeping faults. All three are fixed here; **no behaviour
+changed** — `browser_reveal` and `browser_tree_apply` are byte-identical to
+`24fb6769` apart from one comment block.
+
+### (a) THE HOLE — the headline claim had no OBSERVABLE witness ✔ FIXED
+
+Every live witness for "the reveal expands the CHAIN and stops, the TARGET is
+left closed" — `BW68` leg 5 and `BX31` leg 3 — reveals **`g:x1.x2`**, and
+`BW69` in this same band **asserts that node is CHILDLESS** (`{0 1 0 {}}`). On a
+childless row `-open` is a value ttk stores and reports but **never renders**:
+there is no expander either way, so the claim changes nothing the user can see.
+
+The verifier proved it with a sabotage the whole batch was blind to:
+
+```
+V4  (strictly ADDITIVE, guarded so it can only OPEN, never close;
+     written `-open true` so BW15's literal regexp cannot match it)
+  if {[llength [$tv children $id]] > 0} { catch {$tv item $id -open true} }
+```
+
+That is **exactly the pre-item-13 behaviour in the only node class where it is
+observable**, and on `24fb6769` it passed all four suites in BOTH arms.
+
+**Fix: `BW77` + `BW78`, on the SHIPPED panes fixture — no new fixture.** `g:x1`
+is in that fixture and HAS children (`{g:x1.x2 g:x1.y3}`).
+
+| id | claim | RED-FIRST evidence |
+|---|---|---|
+| `BW77` | a reveal onto a node **that has children** opens the chain ABOVE it and leaves the node itself CLOSED | **RED under V4**, `panes` 81 checks / **1** red — `BW77` and nothing else, `i12` 123/0, `i1315` 167/0 |
+| `BW78` | `BW77`'s POSITIVE CONTROL: that target really HAS CHILDREN and `-open` round-trips on it — the leg `BW69` could not carry | green (declared control); it is what makes `BW77`'s `0` a **visible** claim rather than a stored attribute |
+
+`BW77` leg 6 is spent on `g:x1.x2`, a **DESCENDANT** (in this fixture `g:x1` has
+no same-level sibling), so it restates `S2`'s "not a subtree" claim on the
+observable node. Legs 3/4 still exclude "the reveal did nothing"; leg 1's
+`none` still proves the tree was fully collapsed on entry.
+
+**Band re-measured before use**: highest `BW` in `tests/headless/*.tcl` **and**
+the batch docs was `BW76`. `BW77`/`BW78` are the first free. Nothing renumbered.
+
+### (b) THE EYEBALL — owed, and it was filed as a "declared limit" ✔ FIXED
+
+The deliverable is visible UI, and no check judges the pixels. The old §7 bullet
+("`browser_reveal`'s `-open` deletion is not observable in the `sea` pane by a
+check here") **filed that as a limit when it is an owed eyeball** — and it is
+the same blind spot that hid (a). Item 13 is now **`[E]`** in the LEDGER with a
+queue row; see §9 below for the script.
+
+### (c) THE MIS-CITATION ✔ FIXED
+
+`browser_reveal`'s rewritten header cited **§4.2** for "the target is left
+closed". §4.2 (`:250-253`) rules only on WHO may reach `see` and that the
+persisted open set beats it; it says **nothing** about the target. The ruling is
+**R3** (`:107`), which the same comment already named. The header now says so
+explicitly, and says what §4.2 *is*, so a later reader does not go hunting.
+The receipt's OTHER §4.2 citation — the union refusal in §1 — is verbatim-correct
+and stands.
+
+**FIXUP measurements.** Headless **1619 / 0 fail**, all 14 per-file counts
+unchanged (`BW77`/`BW78` need Tk). X arm **11/11**, **2147 → 2149** — `panes`
+79 → **81**, every other suite byte-identical. Frozen oracles re-grepped after
+the source edit: `browser_alldbs` 2, `browser_devint` 2, `browser_srccur` 2,
+`browser_root_id` **8** (unmoved). `S1` and `S2` re-run under the driver and
+still fire; `BW77` joins each as an additional, attributable red (see §6).
+
+---
+
 ## 1. THE DIVERGENCE — one PLAN clause REFUSED, and the evidence for it
 
 PLAN item 13 has three clauses. Two are implemented; the third is refused.
@@ -102,6 +171,8 @@ gets a witness (1618 → 1619).
 | `BW75` | the NO-ROOT arm is a no-op, and the SAME call on the restored model is not | **RED** leg 6 (after rework) |
 | `BW76` | §4.2: the persisted open set still BEATS `see` | green before AND after, on purpose |
 | `BX31` | restated, third leg: the TARGET is left closed | **RED** `{visible 1 1}` vs `{visible 1 0}` |
+| `BW77` | **FIXUP.** the same headline on a node **that HAS children** — the only class where it is observable | **RED under `V4`** (see §0a), leg 5 `1` vs `0`, and `panes` 81/1 |
+| `BW78` | **FIXUP.** `BW77`'s positive control: the target has children, `-open` round-trips | green (declared control) |
 
 ### The node ids are not the PLAN's either
 
@@ -155,6 +226,10 @@ file byte-identical. X arm **11/11**, 2147 — `panes` 68 → **79** (`BW15` +
 `BW68`-`BW76`), every other suite byte-identical including `i12` at **123** (the
 `BX31` change is a LEG, not a check).
 
+**⚠ SUPERSEDED BY THE FIXUP (§0).** The shipping numbers are headless **1619**
+and X **2149**, `panes` **81** — `BW77`/`BW78` are X-only, so only the X arm
+moved again. Everything else in this section still holds.
+
 **Frozen oracles re-grepped after the patch:**
 
 | oracle | expected | measured |
@@ -196,6 +271,26 @@ after every row.
 
 No zero-red rows.
 
+### FIXUP re-run — the driver, the new row, and the widened radius
+
+Driver rewritten for the fixup as `scratchpad/sab13fix.sh` + three `tclsh` patch
+scripts (same contract: lock dir, `EXIT`/`INT`/`TERM` restore from a byte-exact
+backup, a pre-state **check count** printed before every patch, an md5 compare
+that ABORTS if the mutation never reached disk, the patch `diff` echoed, a
+`diff -q` restore proof, and a filter counting `NORESULT`/`TIMEOUT`/`UNEXPECTED
+ERROR` as reds). Source md5 `7eff8bb4…` asserted before each row and restored
+byte-identically after each.
+
+| # | injection | reds | verdict |
+|---|---|---|---|
+| **S8** | **`V4`, the verifier's own** — additive re-open of the target, guarded on `[llength [$tv children $id]] > 0`, written `-open true` | **`BW77` ALONE** — `panes` 81/1, `i12` 123/0, `i1315` 167/0 | exact, and it is the hole's closure: this reds NOTHING on `24fb6769` |
+| S1 (re-run) | re-add `catch {$tv item $id -open 1}` | `BW15`, `BW68`, **`BW77`**; `BX31` | 4 reds, one claim — `BW77` is now the *observable* witness of the same defect |
+| S2 (re-run) | open every descendant (a subtree reveal) | `BW68`, **`BW77`**; `BX31` | **`BW15` still green**, which is what tells S2 from S1 |
+
+**The radius of S1/S2 widened by exactly one check, and that is the point** —
+`BW77` is not a new claim, it is the old claim measured where a user could see
+it. Every red in both rows is still attributable to one proc and one sentence.
+
 ---
 
 ## 7. Declared limits
@@ -207,10 +302,11 @@ No zero-red rows.
 * **Measured under Xvfb, which has no window manager.** Nothing in item 13
   needs one (it is all inside one toplevel), and the LEDGER records that the
   Xvfb arm reproduced the `:0` arm exactly.
-* **`browser_reveal`'s `-open` deletion is not observable in the `sea` pane by a
-  check here.** R3's "the lower pane is the answer" is *why* the target is left
-  closed; that the sea then shows the node's own level is `BW35`'s and item 11's
-  claim, not restated here.
+* ~~`browser_reveal`'s `-open` deletion is not observable in the `sea` pane by a
+  check here.~~ **RECLASSIFIED BY THE FIXUP: this was never a limit, it is an
+  OWED EYEBALL** — see §9. Filing it as a limit is also what let the coverage
+  hole in §0(a) sit unnoticed: "no check judges the pixels" was recorded as
+  acceptable instead of as a debt.
 * **The empty-`sel` reading of §7.3 is a ruling, not a derivation.** §7.3 says
   "a list whose ids have all gone falls back to the root"; an empty list has no
   ids that have gone. Adopted: the fallback fires only when `sel` was NON-empty.
@@ -230,3 +326,34 @@ No zero-red rows.
   `BW24`, not `BW56`; if item 14 makes the defaults come from a persisted file,
   `BW24` is the check to restate.
 * Item 13 adds **no state key**, so `MG9` and `BP42`'s key list are untouched.
+
+---
+
+## 9. THE OWED EYEBALL — item 13 is `[E]`, not `[x]`
+
+No check in this batch judges pixels, and item 13's deliverable is visible UI.
+`BW77`/`BW78` pin the widget STATE (`-open` is 0 on a node that has children);
+what they cannot judge is that the state reads as the right thing on screen.
+
+**Script — 2 minutes, needs a real display (Xvfb cannot answer it):**
+
+1. Open the waveform viewer on a raw with hierarchy and show the sidebar.
+2. In the schematic, select **an instance that CONTAINS other instances** — a
+   group, not a leaf device. This is the whole point: on a childless node the
+   claim is invisible, which is exactly how the hole in §0(a) survived.
+3. **Tools → Show in Signal Browser** (accelerator **Ctrl+5** today —
+   ⚠ **R10's Ctrl-Alt-V does not exist yet**, it is TWO-PANE item 17b's job, so
+   an eyeballer following R10 literally will press a dead key and report a false
+   `[F]`. Re-read this step after 17b lands.)
+4. **(a)** The tree row for that instance scrolls into view, is selected, and
+   its **expander stays CLOSED** — its ancestors above it are open, its own
+   children are not shown.
+5. **(b)** The LOWER pane fills with **that node's own-level signals** — this is
+   R3, and it is the justification for (a). If the lower pane is empty or shows
+   the parent's signals, (a) is wrong even though `BW77` is green.
+6. **(c)** Click the expander by hand: it opens normally. The reveal declined to
+   open it; it did not disable it.
+
+Fail on any of (a)/(b)/(c) → item 13 goes `[F]`, not `[E]`.
+
+---

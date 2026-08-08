@@ -93,10 +93,19 @@ Marks: `[ ]` not started · `[x]` done, test-verified · `[E]` done, **eyeball
 owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reason
 · `[F]` failed, needs a human.
 
-- [x] 13 — `browser_reveal` / `browser_tree_apply` under collapsed-by-default
-      — 10 checks (`BW15` + `BW68`-`BW76`), `BX31` restated with a third leg.
-      Headless **1618 → 1619**, X **11/11** (`panes` 68 → 79, everything else
-      byte-identical). 7/7 sabotages fire exactly on target.
+- [E] 13 — `browser_reveal` / `browser_tree_apply` under collapsed-by-default
+      — 12 checks (`BW15` + `BW68`-`BW78`), `BX31` restated with a third leg.
+      Headless **1618 → 1619**, X **11/11** (`panes` 68 → **81**, everything else
+      byte-identical). 8/8 sabotages fire exactly on target.
+      **⚠ FIXUP after an adversarial verifier rejected `24fb6769`.** Its own
+      sabotage `V4` — an ADDITIVE re-open of the target guarded on
+      `[llength [$tv children $id]] > 0` — was **fully green**: every live
+      witness of the headline claim landed on `g:x1.x2`, which `BW69` itself
+      asserts is CHILDLESS, and `-open` on a childless row is never rendered.
+      `BW77`/`BW78` move the claim onto `g:x1`, which HAS children; `V4` now
+      reds `BW77` and nothing else. Two bookkeeping faults fixed with it: the
+      header's §4.2 citation for "leave the target closed" is **R3**, and this
+      item is `[E]`, not `[x]`.
       **⚠ ONE PLAN CLAUSE REFUSED**: the selection's ancestor chain is NOT
       unioned into the applied open set — spec §4.2 forbids it and `BP54` is
       named there as a check that "stays green". The union is now sabotage S4
@@ -136,6 +145,7 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
 
 | item | commit | what to look at | eyeballed? |
 |---|---|---|---|
+| 13 | `24fb6769` + FIXUP | **Tools → Show in Signal Browser** (Ctrl+5 today; R10's Ctrl-Alt-V is item 17b's and does NOT exist yet) with an instance that **CONTAINS other instances** selected. (a) the tree row scrolls in, is selected, expander stays **CLOSED**; (b) the LOWER pane fills with **that node's own-level signals**; (c) clicking the expander still opens it. Full script: `13_receipt.md` §9. **A LEAF instance answers nothing** — that node class is exactly where the batch's checks were blind. | ☐ |
 
 ---
 

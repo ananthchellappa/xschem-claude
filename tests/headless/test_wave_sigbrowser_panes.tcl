@@ -1381,6 +1381,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [bw_order_probe $tok $TV {g:x1} {g:x1.x2} {g: g:x1.y3}] \
     [list 1 0 {g: g:x1.y3} g:x1.x2]
 
+  # --- BW77/BW78: THE HEADLINE ON A NODE WHERE IT IS OBSERVABLE -------------
+  # ⚠⚠ THIS IS THE HOLE THE ITEM-13 VERIFIER FOUND, AND IT WAS A REAL ONE.
+  # `BW68` and `BX31` both reveal `g:x1.x2` — and `BW69` itself asserts that node
+  # is CHILDLESS. On a childless row `-open 0` is a state the widget stores and
+  # reports but NEVER RENDERS: the user sees no expander either way. So the whole
+  # live witness for "the reveal expands the CHAIN and stops" sat on the one node
+  # class where the claim changes NOTHING the user can see, and a strictly
+  # ADDITIVE re-add of the pre-item-13 open — guarded on `[llength [$tv children
+  # $id]] > 0`, and written `-open true` so BW15's literal regexp cannot match it
+  # — passed ALL FOUR suites in BOTH arms.
+  #
+  # `g:x1` is in this same shipped fixture and HAS children, so no new fixture is
+  # needed. MEASURED RED-FIRST under exactly that additive re-add: leg 5 reads
+  # `1`, which is also what it read before item 13.
+  #
+  # ⚠ LEG 6 IS A DESCENDANT HERE, NOT A SIBLING. `g:x1` has no same-level
+  # sibling in this fixture, so the 6th slot is spent on `g:x1.x2` instead: it
+  # says the reveal did not open the target's SUBTREE either, which is S2's
+  # claim restated on the observable node. Legs 3/4 (the root and the chain, both
+  # `1`) still exclude "the reveal did nothing"; leg 1's `none` still proves the
+  # tree really was fully collapsed on entry.
+  check {BW77 (TWO-PANE item 13, R3 — THE HEADLINE ON AN OBSERVABLE NODE) a
+         reveal onto a node that HAS CHILDREN opens the chain ABOVE it and
+         leaves the node ITSELF closed: the lower pane, not the expander, is
+         what answers "what is inside this"} \
+    [bw_reveal_probe $tok $TV {g:} {g:} {g:x1} {g:x1.x2}] \
+    [list none 1 1 1 0 0 visible g:x1]
+
+  # ⚠ BW77's POSITIVE CONTROL, and it is the leg BW69 could not carry: it pins
+  # that this target HAS CHILDREN, so BW77's `0` is a state the user can SEE
+  # (a collapsed expander) rather than an unrendered widget attribute.
+  check {BW78 (BW77's POSITIVE CONTROL) the BW77 target really HAS CHILDREN and
+         `-open` round-trips on it, so BW77's closed leg is a VISIBLE claim} \
+    [bw_open_roundtrip $TV {g:x1}] [list 0 1 0 [list {g:x1.x2} {g:x1.y3}]]
+
   catch {destroy .wvbw1}
   catch {dict unset ::wviewer::windows wvbw}
   catch {unset ::wviewer::browsersigs(wvbw)}
