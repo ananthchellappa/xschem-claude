@@ -9605,7 +9605,9 @@ proc wviewer::browser_descend_at {W} {
 # reads `sch_path`, and nothing here writes a second normaliser.
 #
 # The entry point is `ase::show_in_browser_for_current` (src/ase.tcl), reached
-# from the design window's Tools menu and Ctrl-5. The three procs below are the
+# from the design window's Tools menu and Ctrl-Alt-V (TWO-PANE item 17, R10:
+# the chord is a C action-registry row now, not the cadence-only rc bind it was).
+# The three procs below are the
 # viewer-side half: PURE match, Tk reveal, and the one command that sequences
 # them and SPEAKS on every branch (settled decision 11 — neither direction ever
 # fails silently).

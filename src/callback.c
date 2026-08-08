@@ -4822,6 +4822,22 @@ static ActionDef action_registry[] = {
    * Default key 'l' (init_input_bindings). Rebindable. */
   { "edit.add_wire_label", NULL, "xschem add_wire_label",
     "Open the Add Wire Label form (place net labels)" },
+  /* TWO-PANE item 17 (R10): the schematic's "Show in Signal Browser" reaches the C
+   * table, so the chord is REMAPPABLE (`xschem bind` / keybindings.csv) and works in
+   * every profile. It used to be a `bind .drw <Control-Key-5>` in src/cadence_style_rc,
+   * which only cadence-profile users ever loaded while the Tools cascade advertised
+   * the accelerator to everyone. Tcl-backed, fn NULL.
+   * ⚠ THE COMMAND TAKES NO WINDOW ARGUMENT, ON PURPOSE. dispatch_input_action runs a
+   * CONSTANT string -- there is no %-substitution -- so the Tcl side must be the
+   * `{win {}}` (current-context) arm of ase::show_in_browser_for_current, and the
+   * logged replay line is context-free BY DESIGN rather than by accident. The menu
+   * entry (src/xschem.tcl) still passes ${topwin}.drw: a menu click knows its window,
+   * a key press is already IN one.
+   * mutates=0: revealing a hierarchy position changes no schematic content, so it
+   * works in a read-only view. See doc/claude/specs/waveform_signal_browser_two_pane.md
+   * and doc/claude/signal_browser_2pane_batch/PLAN.md item 17. */
+  { "wave.show_in_signal_browser", NULL, "ase::show_in_browser_for_current",
+    "Show in Signal Browser" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -5105,6 +5121,18 @@ static void init_input_bindings(void)
    * 65474 alt canvas <action>` (or `xschem unbind key 65474 alt canvas`). Alt =
    * Mod1Mask, matching the other Alt chords above ('h', the j-cluster). */
   set_input_binding(DEV_KEY, XK_F5, Mod1Mask, ACTX_CANVAS, "tools.raise_ciw");
+  /* TWO-PANE item 17 (R10): Ctrl-Alt-V reveals the schematic's hierarchy position (or
+   * the selected instance's) in the waveform viewer's Signal Browser. 'v' == keysym
+   * 118; Ctrl+Alt == ControlMask|Mod1Mask, matching the other Alt chords here, and a
+   * physical Alt sets Mod1Mask in the X event. NOTHING COLLIDES: `case 'v'` in the C
+   * switch has arms for rstate==0, rstate==ControlMask and EQUAL_MODMASK only, and
+   * EQUAL_MODMASK is an EXACT test, so ControlMask|Mod1Mask matched nothing before
+   * this row. Replaces the cadence-only `bind .drw <Control-Key-5>`.
+   * ⚠ `event generate <Control-Alt-Key-v>` does NOT produce this chord -- Tk's `Alt`
+   * PATTERN modifier is the virtual META bit, not Mod1. A test must drive
+   * <Control-Mod1-Key-v> or `-state 12`. */
+  set_input_binding(DEV_KEY, 'v', ControlMask|Mod1Mask, ACTX_CANVAS,
+                    "wave.show_in_signal_browser");
   /* Alt-2 toggles the current window between the schematic-type and symbol-type view
    * of the same cell (doc/claude/specs/alt2_toggle_view.md). Tcl-backed
    * (alt2_toggle_view). '2' == keysym 50; Alt = Mod1Mask. Plain '2' (logic level) and

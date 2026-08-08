@@ -14938,8 +14938,13 @@ proc build_widgets { {topwin {} } } {
   # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
   # (`{}` for the main window, so `.drw`) — the command switches context there
   # and verifies, rather than trusting whatever context happens to be current.
+  # TWO-PANE item 17 (R10): the accelerator is now a real, REMAPPABLE binding —
+  # `wave.show_in_signal_browser` in the C action registry (src/callback.c,
+  # mirrored in src/keybindings.csv), not the cadence-only rc bind it used to
+  # advertise. The KEY route deliberately passes no window; only this menu click
+  # does, because only a menu click knows which window it happened in.
   $topwin.menubar.tools add command -label "Show in Signal Browser" \
-     -accelerator Ctrl+5 -command "ase::show_in_browser_for_current ${topwin}.drw"
+     -accelerator Ctrl+Alt+V -command "ase::show_in_browser_for_current ${topwin}.drw"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W

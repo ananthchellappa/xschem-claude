@@ -63,4 +63,5 @@ key,100,0,canvas,edit.deselect_mode,1
 key,100,0,graph,graph.forward,
 key,32,0,canvas,edit.add_pin_stubs,1
 key,65474,alt,canvas,tools.raise_ciw,
+key,118,ctrl+alt,canvas,wave.show_in_signal_browser,
 key,50,alt,canvas,view.toggle_view_type,

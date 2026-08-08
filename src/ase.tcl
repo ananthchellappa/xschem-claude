@@ -1014,7 +1014,7 @@ proc ase::plot_mode_for_current {{mode invert}} {
   return $new
 }
 
-# Ctrl-5 / Tools > "Show in Signal Browser" — THE MIRROR of the waveform
+# Ctrl-Alt-V / Tools > "Show in Signal Browser" — THE MIRROR of the waveform
 # viewer's `Descend to here` (PLAN item 12; item 11 is the other direction).
 # From wherever the schematic is standing — top level or three levels down —
 # open/raise the session's viewer, un-hide the Signal Browser sidebar, and

@@ -159,6 +159,7 @@ tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires a
 tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,Select all connected wires/labels/pins,
 tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions",
 tools.net_hilight_style_editor,command,tools,Net highlight styles...,,net_hilight_style_editor,,,"Edit net highlight colors, dashes, blink and marching-ants without editing rc files",
+wave.show_in_signal_browser,command,tools,Show in Signal Browser,Ctrl+Alt+V,ase::show_in_browser_for_current,,,Reveal the schematic's hierarchy position (or the selected instance) in the waveform viewer's Signal Browser,
 view.redraw,command,view,Redraw,Esc,xschem redraw,,,Redraw,
 view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,Zoom Full,
 view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In,

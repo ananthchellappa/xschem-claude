@@ -123,8 +123,17 @@ pcall ase::session_open [ase::session_key wvhier wvhier_top schematic] \
 if {[catch {
 
 # ============================================================================
-# BX01-BX52 — item 12: hierarchy sync SCHEMATIC -> BROWSER
-# ("Show in Signal Browser", Tools menu + Ctrl-5). The MIRROR of item 11.
+# BX01-BX53 — item 12 + item 17: hierarchy sync SCHEMATIC -> BROWSER
+# ("Show in Signal Browser", Tools menu + a key). The MIRROR of item 11.
+#
+# ⚠ BX54-BX56 — TWO-PANE ITEM 17b. The chord moved off the cadence_style_rc
+# `Ctrl-5` Tk bind and onto the C action registry as `Ctrl+Alt+V`, so it is
+# remappable and works outside the cadence profile. Only THIS file's fixture (a
+# real design window AND a real viewer at once) can measure it behaviourally.
+# BX11/BX12/BX13/BX43/BX44 are RESTATED for it in place — inverted, retargeted
+# or widened, never deleted; each carries a note where it sits.
+# MEASURED spent ids in this file: BX01-BX18, BX20, BX30-BX56 (BX19 and
+# BX21-BX29 are PRE-EXISTING GAPS — do not back-fill them). NEXT FREE: BX57.
 #
 # ⚠⚠ THE ORACLE, and it is the reason this block can make the claim at all
 # (driver note (d) / ruling 26). "The node is VISIBLE" has FOUR failure modes
@@ -315,17 +324,32 @@ set bx_rcline {}
 foreach bx_l [split $bx_rc "\n"] {
   if {[string first {<Control-Key-5>} $bx_l] >= 0} { set bx_rcline $bx_l ; break }
 }
-check {BX11 cadence_style_rc binds .drw <Control-Key-5> to the command, and BREAKs} \
+# ⚠⚠ BX11 IS RESTATED BY INVERSION, NOT DELETED — TWO-PANE item 17b (R10).
+# Item 12 shipped this chord as a cadence_style_rc Tk bind; two-pane item 17b
+# MOVES it into the C action registry as Ctrl+Alt+V so it is remappable
+# (`xschem bind` / keybindings.csv) and works outside the cadence profile. Both
+# legs keep their ids and their file; what they assert flips from presence to
+# ABSENCE. The `test_key_graph_context` precedent (two-pane item 16) is why the
+# inversion carries its own positive control in the next check rather than
+# standing alone — an emptied rc would satisfy an absence claim.
+check {BX11 (INVERTED by two-pane item 17b) cadence_style_rc no longer binds
+       .drw <Control-Key-5> — the chord moved to the C registry} \
   [regexp {^bind \.drw <Control-Key-5>\s+\{ase::show_in_browser_for_current %W; break\}$} \
-     $bx_rcline] 1
-check {BX11 ...and it is the ONLY Control-Key-5 line in the rc (no double-bind)} \
-  [regexp -all {<Control-Key-5>} $bx_rc] 1
+     $bx_rcline] 0
+check {BX11 (INVERTED) ...no Control-Key-5 line survives at all, and the rc is
+       not simply emptied: Ctrl-4 (Direct Plot) and Ctrl-$ are still bound} \
+  [list [regexp -all {<Control-Key-5>} $bx_rc] \
+        [regexp {<Control-Key-4>} $bx_rc] [regexp {<Control-Key-dollar>} $bx_rc]] \
+  [list 0 1 1]
 # THE MENU, in src/xschem.tcl (the PLAN said ase_window.tcl; that file builds
 # the ASE-L SESSION window's menubar, not the design window's — see the receipt)
 set bx_xp [file join $repo src xschem.tcl]
 set bx_fp [open $bx_xp r]; set bx_xsrc [read $bx_fp]; close $bx_fp
+# ⚠ RETARGETED IN PLACE by two-pane item 17b: the accelerator is now Ctrl+Alt+V
+# (the C registry's chord). The -command is UNCHANGED — a menu click knows its
+# own window, which the keyboard route deliberately does not.
 check {BX12 the design window's Tools cascade carries `Show in Signal Browser`} \
-  [regexp {menubar\.tools add command -label "Show in Signal Browser" \\\n\s+-accelerator Ctrl\+5 -command "ase::show_in_browser_for_current \$\{topwin\}\.drw"} \
+  [regexp {menubar\.tools add command -label "Show in Signal Browser" \\\n\s+-accelerator Ctrl\+Alt\+V -command "ase::show_in_browser_for_current \$\{topwin\}\.drw"} \
      $bx_xsrc] 1
 check {BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE block)} \
   [list [regexp -all {Show in Signal Browser} $bx_xsrc] \
@@ -345,10 +369,17 @@ check {BX13 test_wave_grid's GH0 literals are UNCHANGED at 16/11} \
   [list 1 1]
 set bx_fp [open [file join $repo doc waveform_viewer_guide.html] r]
 set bx_gd [read $bx_fp]; close $bx_fp
-check {BX13 ...and the guide gained NO data-seq/data-menu row for the schematic key} \
+# ⚠ WIDENED by two-pane item 17b, same id, same value class. The chord moved
+# from Control-Key-5 to Control-Alt-Key-v, so the OLD zero alone would now be
+# green for the wrong reason: it is trivially true of a chord that no longer
+# exists. The NEW spelling's zero is the claim that matters, and both are kept
+# so a re-added row of either vintage reds here.
+check {BX13 ...and the guide gained NO data-seq/data-menu row for the schematic
+       key — NEITHER the old chord NOR two-pane item 17b's new one} \
   [list [regexp -all {data-seq="Control-Key-5"} $bx_gd] \
+        [regexp -all {data-seq="Control-Alt-Key-v"} $bx_gd] \
         [regexp -all {data-menu="Show in Signal Browser"} $bx_gd]] \
-  [list 0 0]
+  [list 0 0 0]
 check {BX13 (control) the guide DOES still carry item 11's viewer key row} \
   [regexp {data-seq="Key-E"} $bx_gd] 1
 # the four sentences, PURE — one formatter, so the status line, the CIW echo and
@@ -964,7 +995,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [list [expr {$bx_ti >= 0}] \
               [pcall $bx_tm entrycget $bx_ti -accelerator] \
               [pcall $bx_tm entrycget $bx_ti -command]] \
-        [list 1 {Ctrl+5} {ase::show_in_browser_for_current .drw}]
+        [list 1 {Ctrl+Alt+V} {ase::show_in_browser_for_current .drw}]
       # invoke it FOR REAL from a different hierarchy position and assert the
       # world moved to match
       bx_ctx_to $bx_dwin
@@ -1096,17 +1127,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     bx_ctx_to $bx_dwin
 
     # ==== BX43: THE REAL KEY, on the REAL design canvas ====
-    # ⚠ NOT `source`d from cadence_style_rc (that installs every cadence bind and
-    # sources eight util files, perturbing later groups) — the exact line is
-    # grepped in BX11 and bound HERE, verbatim, the test_cadence_window_hop_log
-    # idiom.
+    #
+    # ⚠⚠ RETARGETED BY TWO-PANE ITEM 17b, AND THE HAND-INSTALLED BIND IS GONE.
+    # Item 12 bound `.drw <Control-Key-5>` HERE, verbatim from the rc (the
+    # test_cadence_window_hop_log idiom), because the chord lived in a profile
+    # file the suite must not source. That made this check GREEN NO MATTER WHAT
+    # THE TOOL SHIPPED — it drove a binding the TEST had installed. Item 17b
+    # moves the chord into the C action registry, so the tool owns it and the
+    # test must not: no `bind` here, and the drive goes through the shipped
+    # binding table or not at all. (Two-pane item 16 caught the identical shape
+    # at BS46.)
+    #
+    # ⚠⚠ `<Control-Alt-Key-v>` DOES NOT WORK UNDER `event generate` AND WOULD
+    # FAIL ON CORRECT CODE. MEASURED with a %s spy under Tk 8.6.14: Tk's `Alt`
+    # PATTERN modifier is the virtual META bit (1<<17), so
+    # `<Control-Alt-Key-v>` delivers state 131076, not 12. `<Control-Mod1-Key-v>`
+    # delivers 12, which is ControlMask|Mod1Mask — what the C row matches, and
+    # what a physical Alt sets on a real keyboard.
     set ::bx_calls 0
     rename ::ase::show_in_browser_for_current ::ase::__bx_real
     proc ::ase::show_in_browser_for_current {{win {}}} {
       incr ::bx_calls
       return [uplevel 1 [list ::ase::__bx_real $win]]
     }
-    bind .drw <Control-Key-5> {ase::show_in_browser_for_current %W; break}
     bx_ctx_to $bx_dwin
     # rebuild the inventory the raw clear above emptied
     bx_ctx_to $bx_vtop.drw
@@ -1121,11 +1164,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {focus .drw}
     update
     set bx_c0 $::bx_calls
-    if {![send_key .drw <Control-Key-5> {$::bx_calls > $bx_c0}]} {
+    if {![send_key .drw <Control-Mod1-Key-v> {$::bx_calls > $bx_c0}]} {
       puts "SKIPPED: BX43 (WSLg key-delivery stall on the design canvas)"
     } else {
       update
-      check {BX43 a REAL Ctrl-5 on the design canvas targets the browser at x1.x2} \
+      check {BX43 a REAL Ctrl-Alt-V on the design canvas targets the browser at x1.x2} \
         [list [expr {$::bx_calls - $bx_c0}] \
               [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1.x2]] \
         [list 1 {g:x1.x2} visible]
@@ -1141,6 +1184,90 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check {BX43 (NEGATIVE CONTROL) an unbound Ctrl-6 records ZERO on the same spy} \
         [expr {$::bx_calls - $bx_c1}] 0
     }
+
+    # ==== BX54-BX55 (TWO-PANE ITEM 17b): the chord is the C REGISTRY's ========
+    #
+    # ⚠ BX43 above rides `event generate`, which stalls ~1-in-5 under WSLg and
+    # therefore SELF-SKIPS. These two drive `xschem callback` numerically, so
+    # they are deterministic and are the item's HARD behavioural oracles.
+    # Signature: <win> <event=2 KeyPress> <x> <y> <keysym> <button> <aux> <state>.
+    proc bx_drive_cav {st} {
+      bx_ctx_to $::bx_dwin_g
+      catch {xschem unselect_all}
+      pcall $::BXVTV_g selection set {}
+      update
+      set c0 $::bx_calls
+      catch {xschem callback $::bx_dwin_g 2 100 100 118 0 0 $st}
+      update
+      bx_ctx_to $::bx_dwin_g
+      return [expr {$::bx_calls - $c0}]
+    }
+    set ::bx_dwin_g $bx_dwin
+    set ::BXVTV_g   $BXVTV
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_n12 [bx_drive_cav 12]
+    set bx_sel12 [pcall $BXVTV selection]
+    # ⚠⚠ THE NEAR-MISS STATES WERE CHOSEN BY MEASUREMENT, AND THE OBVIOUS ONES
+    # ARE BOOBY-TRAPPED. `handle_key_press` looks a printable keysym up under
+    # `rstate`, which is `state & ~ShiftMask` (callback.c: "rstate does not have
+    # ShiftMask bit"), and `case 'v'` in the C switch owns THREE of the four
+    # low states for this keysym:
+    #   state 4  (Ctrl)        -> clipboard PASTE, `merge_file(2,".sch")`
+    #   state 5  (Ctrl+Shift)  -> Shift is STRIPPED, so it is state 4 again
+    #   state 8  (Alt)         -> vertical flip in place; with nothing selected
+    #                             it ARMS a click-to-flip prompt in ui_state
+    # A first cut of this check drove 8 and 5. The 5 became a paste, whose file
+    # dialog is MODAL, and the whole file hung ten minutes into the run with a
+    # `go_back` waiting behind it. Do not "tidy" these back.
+    #
+    # ⚠ STATE 13 (Ctrl+Alt+Shift) IS EXPECTED TO **FIRE**, and that is the same
+    # rule seen from the other side: Shift is stripped to 12. It is not a
+    # reachable chord in practice — a shifted v arrives as keysym 86 ('V'), not
+    # 118 — so this leg documents the stripping rather than asserting a refusal.
+    # State 68 (Ctrl+Super) is the genuine near-miss: the right shape, the wrong
+    # modifier, no `case 'v'` arm, and NOT equal to the bound 12.
+    #
+    # ⚠ NOT ASSERTED, AND SAY SO RATHER THAN GUESS: a state-28 (Ctrl+Alt+NumLock)
+    # drive was tried here and recorded ONE call on the spy. By reading, it should
+    # record zero — `key_chord_has_binding` compares mods for EQUALITY and 28 != 12
+    # — and nothing in callback.c strips Mod2Mask. The discrepancy was NOT
+    # attributed inside this item's budget, so the leg is left OUT instead of
+    # being pinned to a number nobody can explain. See 17b_receipt's declared
+    # limits; whoever settles it owns the leg.
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_n13 [bx_drive_cav 13]
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_n68 [bx_drive_cav 68]
+    bx_ctx_to $bx_dwin
+    check {BX54 (X, THE BEHAVIOUR) a Ctrl-Alt-V through the REAL dispatcher runs
+           the command once and lands the browser on x1.x2; Ctrl-Alt-Shift-v is
+           the SAME chord (Shift is stripped for printable keysyms) and fires
+           too; Ctrl-Super-v — the right shape, the wrong modifier — does not} \
+      [list $bx_n12 $bx_sel12 $bx_n13 $bx_n68] \
+      [list 1 {g:x1.x2} 1 0]
+
+    # ---- BX55: R10's WHOLE POINT, behaviourally. -----------------------------
+    # An rc `bind` and a C registry row are INDISTINGUISHABLE through BX54. Only
+    # the un-bind can tell them apart, and only a registry row can be un-bound.
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_r0 [bx_drive_cav 12]
+    pcall xschem unbind key 118 ctrl+alt canvas
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_r1 [bx_drive_cav 12]
+    pcall xschem bind key 118 ctrl+alt canvas wave.show_in_signal_browser
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1.X2
+    set bx_r2 [bx_drive_cav 12]
+    check {BX55 (X, REMAPPABILITY) the chord is the BINDING TABLE's, not a Tk
+           bind: unbind it and the same drive does nothing; rebind it and it
+           works again} \
+      [list $bx_r0 $bx_r1 $bx_r2] [list 1 0 1]
+
     catch {bind .drw <Control-Key-5> {}}
     rename ::ase::show_in_browser_for_current {}
     rename ::ase::__bx_real ::ase::show_in_browser_for_current
@@ -1304,6 +1431,40 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list [expr {[info commands ::ciw_echo] ne {}}] \
             [expr {[info commands ::__bx_real_ciw] eq {}}]] \
       [list $::bx_had_ciw 1]
+
+    # ==== BX56 (TWO-PANE ITEM 17b): the SELECTION ARM rides the NEW chord ====
+    #
+    # ⚠ NOT A DUPLICATE OF BX51. BX51 calls `ase::show_in_browser_for_current`
+    # DIRECTLY, with the window argument. This drives the chord through the C
+    # dispatcher, which runs a CONSTANT string with NO argument — so it is the
+    # only check that can show item 17's selection arm still reaching the
+    # `{win {}}` (current-context) arm of the same command. Both legs on one
+    # fixture: nothing selected -> the descend level; ONE instance selected ->
+    # that instance's level.
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
+    pcall ::wviewer::hier_walk X1
+    pcall $BXVTV selection set {}
+    update
+    catch {xschem callback $bx_dwin 2 100 100 118 0 0 12}
+    update
+    set bx_k0 [pcall $BXVTV selection]
+    bx_ctx_to $bx_dwin
+    pcall ::wviewer::hier_walk X1
+    pcall $BXVTV selection set {}
+    pcall xschem select instance 1
+    set bx_ksel [lindex [pcall xschem selected_set] 0]
+    update
+    catch {xschem callback $bx_dwin 2 100 100 118 0 0 12}
+    update
+    set bx_k1 [pcall $BXVTV selection]
+    bx_ctx_to $bx_dwin
+    check {BX56 (X) the new chord carries item 17's selection arm: nothing
+           selected lands on the descend level, ONE selected `X2` lands on
+           x1.x2 — SAME fixture, SAME gesture, one difference} \
+      [list $bx_k0 $bx_ksel $bx_k1] [list {g:x1} {X2} {g:x1.x2}]
+    bx_ctx_to $bx_dwin
+    pcall xschem unselect_all
 
     # ==== BX47: NO SESSION AT ALL -> an honest notice, and no viewer opened ==
     bx_ctx_to $bx_dwin

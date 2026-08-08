@@ -15,12 +15,13 @@
 #   tests/headless/test_wave_sigbrowser_i1315.tcl  items 13, 15     BP
 #   tests/headless/test_wave_sigbrowser_i14.tcl    item 14          BD
 #   tests/headless/test_wave_sigbrowser_panes.tcl  two-pane 9-13    BW
-#   tests/headless/test_wave_sigbrowser_keys.tcl   two-pane 16      BK   <- HERE
+#   tests/headless/test_wave_sigbrowser_keys.tcl   two-pane 16, 17b BK   <- HERE
 #
-# CHECK-ID BAND: BK01-BK19, measured free before use (three greps over tests/
-# and doc/claude/ found ZERO shipped BK ids anywhere; BK20+ belongs to two-pane
-# item 17b by the PLAN and taking it would repeat the item-10/item-12 BW40
-# collision).  BK01-BK18 are spent here.  NEXT FREE IN THIS FILE: BK19.
+# CHECK-ID BAND: BK01-BK18 two-pane item 16 / BK19 UNSPENT (reserved to item
+# 16's own file band by 16_receipt.md §11) / BK20-BK31 two-pane item 17b.
+# Measured free before use in both rounds (greps over tests/ and doc/claude/;
+# BK20+ was reserved to item 17b by the PLAN and taking it earlier would have
+# repeated the item-10/item-12 BW40 collision).  NEXT FREE IN THIS FILE: BK32.
 #
 # ⚠ THE SKIP BANNER WORDING IS LOAD-BEARING. `SKIPPED: <group> (Tk/X arm only)`
 # is what a reader greps for when a headless count comes up short; a different
@@ -179,6 +180,115 @@ check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide still has
         [regexp {\[llength \$gh_seqs\] 16} $gridsrc] \
         [regexp {\[llength \$gh_menus\] 11} $gridsrc]] \
   {16 11 1 1}
+
+# ============================================================================
+# BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the
+# cadence_style_rc `Ctrl-5` Tk bind and onto the C action registry as
+# `Ctrl+Alt+V`, so it is REMAPPABLE (`xschem bind` / keybindings.csv) and works
+# for every profile rather than only for cadence users.
+# Spec: doc/claude/specs/waveform_signal_browser_two_pane.md §8.2, R10.
+#
+# ⚠ MEASURED, and it is the whole reason the item is not cosmetic: in the
+# shipped DEFAULT profile `bind .drw <Control-Key-5>` is EMPTY — cadence_style_rc
+# is an opt-in profile file, not sourced by default — while the Tools cascade
+# advertised `Ctrl+5` to everyone. The accelerator was a LIE for every
+# non-cadence user; the C row makes it true.
+#
+# ⚠ THE SELECTION ARM IS NOT RE-TESTED HERE. Item 17's other half (one selected
+# instance extends the browser path) shipped in 882694cc and is covered by
+# BX16-BX18 headless / BX51-BX53 under X; item 17b RESTATES it through the NEW
+# chord at BX56 rather than duplicating it.
+# ============================================================================
+set bk_rc   [bk_slurp [file join $repo src cadence_style_rc]]
+set bk_xsrc [bk_slurp [file join $repo src xschem.tcl]]
+set bk_acsv [bk_slurp [file join $repo src actions.csv]]
+
+# The one actions.csv row, split into fields. A missing row answers an
+# assertable {} rather than throwing.
+set bk_arows {}
+foreach bk_l [split $bk_acsv "\n"] {
+  if {[string match {wave.show_in_signal_browser,*} $bk_l]} { lappend bk_arows $bk_l }
+}
+set bk_af {}
+if {[llength $bk_arows] == 1} { set bk_af [split [lindex $bk_arows 0] ,] }
+check {BK20 (FILE) actions.csv carries EXACTLY ONE wave.show_in_signal_browser
+       row, and it is the row the cheat-sheet and the palette read: the label
+       and the DISPLAY accel} \
+  [list [llength $bk_arows] [lindex $bk_af 3] [lindex $bk_af 4]] \
+  {1 {Show in Signal Browser} Ctrl+Alt+V}
+
+# ⚠ LEG 2 IS THE MODS-ORDER WITNESS. `mods_name` (callback.c) is the ONLY writer
+# of the `ctrl+shift+alt+super` spelling, so a hand-typed `alt+ctrl` reds leg 1;
+# leg 2 proves the file was not simply emptied to satisfy leg 1's absence twin.
+# MEASURED before the item: ZERO ctrl+alt rows and ZERO code-118 rows in the
+# shipped csv, so the row is unambiguous.
+check {BK21 (FILE) the regenerated keybindings.csv row is spelled EXACTLY,
+       mods order included, and it is the file's only ctrl+alt row} \
+  [list [regexp -line {^key,118,ctrl\+alt,canvas,wave\.show_in_signal_browser,$} $kbcsv] \
+        [regexp -all -line {^key,[0-9]+,ctrl\+alt,} $kbcsv]] \
+  {1 1}
+
+# ⚠ LEG 2 IS A BARE-NAME FILE-WIDE COUNT (the BD06 shape, on callback.c): the id
+# must appear TWICE and only twice — the registry row and the set_input_binding.
+# A third occurrence means someone wrote it into a comment, which is
+# indistinguishable from a second wiring site to every grep in this file.
+check {BK22 (SOURCE, C) the registry row is Tcl-backed with a NULL fn, and the
+       action id appears in callback.c exactly TWICE} \
+  [list [regexp {\{ "wave\.show_in_signal_browser", NULL, "ase::show_in_browser_for_current",} $csrc] \
+        [regexp -all {wave\.show_in_signal_browser} $csrc]] \
+  {1 2}
+
+# ⚠ LEG 3 IS THE POINT OF THE WHOLE `{win {}}` ARGUMENT. dispatch_input_action
+# runs a CONSTANT string — there is no %-substitution — so a csv command written
+# with a window argument or a `%W` would be dispatched LITERALLY. Asserting the
+# ABSENCE of any argument makes the logged replay line context-free BY DESIGN.
+check {BK23 (SOURCE, C) the canvas chord is ControlMask|Mod1Mask on keysym 'v',
+       and the Tcl command takes NO window argument and no %W} \
+  [list [regexp {set_input_binding\(DEV_KEY, 'v', ControlMask\|Mod1Mask, ACTX_CANVAS,\s+"wave\.show_in_signal_browser"\);} $csrc] \
+        [regexp {"ase::show_in_browser_for_current"} $csrc] \
+        [regexp {"ase::show_in_browser_for_current[^"]+"} $csrc]] \
+  {1 1 0}
+
+check {BK24 (FILE) cadence_style_rc no longer binds Control-Key-5 — R10 is a
+       MOVE, not an ADD} [regexp {Control-Key-5} $bk_rc] 0
+# ⚠ WITHOUT THIS, BK24 IS GREEN ON A DELETED OR EMPTIED FILE. Ctrl-4 (Direct
+# Plot) and Ctrl-$ (plot mode) are the neighbours item 17b must not touch.
+check {BK25 (BK24's CONTROL, SAME FILE) ...and it still binds Control-Key-4 for
+       Direct Plot and Control-Key-dollar for the plot mode} \
+  [list [regexp {Control-Key-4} $bk_rc] [regexp {Control-Key-dollar} $bk_rc]] \
+  {1 1}
+
+# ⚠ AN ABSENCE CLAIM THAT WAS TRUE BEFORE THE CODE EXISTED. Nothing bound
+# Control-Alt-v anywhere, so leg 1 alone is VACUOUS — it passes on the red run.
+# Leg 2 carries the positive evidence in the SAME tuple: the chord exists, and it
+# exists in the C table. BOTH Tk spellings are grepped because a `bind` PATTERN
+# written with `Alt-` resolves against the real keymap and would work.
+check {BK26 (FILE, REMAPPABILITY) no rc file binds the chord in EITHER Tk
+       spelling — an rc bind bypasses `xschem bind` — and the C table does} \
+  [list [regexp {Control-(Alt|Mod1)-Key-v} $bk_rc] \
+        [regexp {set_input_binding\(DEV_KEY, 'v', ControlMask\|Mod1Mask} $csrc]] \
+  {0 1}
+
+# ⚠ LEG 2 IS THE COMMENT LANDMINE, and it is BX12 leg 2's local twin: the phrase
+# is counted FILE-WIDE over src/xschem.tcl and must stay at ONE. Writing the
+# label into a comment there reds both.
+check {BK27 (FILE) the Tools entry spells the new accelerator adjacent to the
+       label, and the phrase still occurs EXACTLY ONCE in src/xschem.tcl} \
+  [list [regexp -- {-label "Show in Signal Browser" \\\n\s+-accelerator Ctrl\+Alt\+V} $bk_xsrc] \
+        [regexp -all {Show in Signal Browser} $bk_xsrc]] \
+  {1 1}
+
+# ⚠ LEG 1 IS WHAT MAKES THE THREE ZEROS NON-VACUOUS. The guide's §11.5 is PROSE
+# ONLY: the chord is renamed inside a <kbd> run and the guide gains NO
+# data-seq/data-menu attribute, which is exactly what keeps test_wave_grid's GH0
+# at 16/11 and BX13's tuple at zeros.
+check {BK28 (FILE, GUIDE, LOCKSTEP) the guide's prose names the new chord, the
+       old one is gone, and NO guide row was added for either} \
+  [list [expr {[string first {<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>} $gsrc] >= 0}] \
+        [regexp -all {<kbd>Ctrl</kbd>\+<kbd>5</kbd>} $gsrc] \
+        [regexp -all {data-seq="Control-Alt-Key-v"} $gsrc] \
+        [regexp -all {data-menu="Show in Signal Browser"} $gsrc]] \
+  {1 0 0 0}
 
 # ============================================================================
 # BKV — BK11-BK18, the X arm. A REAL viewer on the sky130A ngspice_state1
@@ -430,6 +540,76 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
 } else {
   puts "SKIPPED: BKV group (Tk/X arm only)"
+}
+
+# ============================================================================
+# BK29-BK31 — TWO-PANE item 17b's X arm. NO viewer and no fixture: every claim
+# here is about the LIVE binding table and the cheat-sheet generated from it,
+# which are exactly the two things a source grep cannot see.
+# ============================================================================
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # NEVER THROWS: an unreadable dump is the assertable value NO-DUMP, so "the
+  # table vanished" cannot answer 0 and read as "the row is correctly absent".
+  proc bk_row {} {
+    set d [pcall xschem bindings dump]
+    if {![bs_set $d]} { return NO-DUMP }
+    return [expr {[lsearch -exact $d \
+      {key 118 ctrl+alt canvas wave.show_in_signal_browser}] >= 0 ? 1 : 0}]
+  }
+  proc bk_nrows {} {
+    set d [pcall xschem bindings dump]
+    if {![bs_set $d]} { return NO-DUMP }
+    return [llength $d]
+  }
+  proc bk_n53 {} {
+    set d [pcall xschem bindings dump]
+    if {![bs_set $d]} { return NO-DUMP }
+    set n 0
+    foreach r $d { if {[lrange $r 0 1] eq {key 53}} { incr n } }
+    return $n
+  }
+
+  # ⚠ LEG 2 IS A PRE-EXISTING ZERO and is NOT the evidence — keysym 53 ('5')
+  # never had a binding-table row; the old chord was a Tk `bind` in an rc file,
+  # which the table cannot see. It is here as the statement that item 17b did not
+  # "fix" the move by ADDING a 53 row. Leg 1 and leg 3 are what carry the item.
+  # MEASURED before the item: 71 rows; the row this item adds makes it 72, and no
+  # other test in the repo asserts that length, so this is its count oracle.
+  check {BK29 (X) the LIVE binding table carries the ctrl+alt row, still has no
+         canvas row for keysym 53, and grew by exactly one} \
+    [list [bk_row] [bk_n53] [bk_nrows]] {1 0 72}
+
+  # ⚠ THE CASE SPLIT IS REAL AND MEASURED, do not "tidy" it: the Tools menu
+  # accelerator is `Ctrl+Alt+V` (house style, cf. file.save_as_symbol's
+  # Ctrl+Alt+S) while `keybinding_chord_label` renders keysym 118 as `%c` and so
+  # emits `Ctrl+Alt+v`. Two different literals for one chord.
+  # Leg 2 is test_keybindings_help's `(bare: <id>)` claim brought INSIDE this
+  # baseline: the registry row without the actions.csv row renders the raw id.
+  set bk_help [pcall generate_keybindings_text]
+  check {BK30 (X) the cheat-sheet renders the chord WITH its actions.csv label,
+         lowercase v, and no `(bare:` fallback anywhere} \
+    [list [expr {[llength [regexp -line -inline \
+                    {^  Ctrl\+Alt\+v\s+Show in Signal Browser$} $bk_help]] > 0}] \
+          [regexp -all {\(bare: } $bk_help]] \
+    {1 0}
+
+  # ---- BK31: R10's WHOLE POINT, at the table level. -------------------------
+  # An rc `bind` is indistinguishable from a registry row by behaviour alone —
+  # BX54 would be green either way. Only the UN-BIND can tell them apart, and
+  # only a registry row can be un-bound.
+  set bk_t1 [bk_row]
+  pcall xschem unbind key 118 ctrl+alt canvas
+  set bk_t2 [bk_row]
+  set bk_t3 [bk_nrows]
+  pcall xschem bind key 118 ctrl+alt canvas wave.show_in_signal_browser
+  set bk_t4 [bk_row]
+  set bk_t5 [bk_nrows]
+  check {BK31 (X, REMAPPABILITY) bound -> unbind removes the row and the table
+         shrinks -> rebind puts it back and the table grows again} \
+    [list $bk_t1 $bk_t2 $bk_t3 $bk_t4 $bk_t5] {1 0 71 1 72}
+} else {
+  puts "SKIPPED: BK29-BK31 (Tk/X arm only)"
 }
 
 wvbs_finish
