@@ -3,6 +3,7 @@ DEFINE devices devices
 DEFINE examples examples
 DEFINE ngspice ngspice
 DEFINE ngspice_verilog_cosim ngspice_verilog_cosim
+DEFINE ngspice_verilog_cosim_ase ngspice_verilog_cosim_ase
 DEFINE logic logic
 DEFINE xschem_simulator xschem_simulator
 DEFINE binto7seg binto7seg
