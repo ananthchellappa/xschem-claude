@@ -154,10 +154,14 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       unioned into the applied open set — spec §4.2 forbids it and `BP54` is
       named there as a check that "stays green". The union is now sabotage S4
       and reds `BW76`+`BP53`+`BP54` across three files. See `13_receipt.md`.
-- [E] 14 — Persistence: `sash` / `devint` / `srccur` **-> DONE-PIXEL.** `[E]` and
-      never `[x]`: the deliverable is a remembered split and two remembered
-      boxes, and no check in this batch judges what the restored sidebar LOOKS
-      like. Eyeball script: `14_receipt.md` §7.7.
+- [F] 14 — Persistence: `sash` / `devint` / `srccur` **-> FAILED (`1990d00e`).**
+      **Rejected a SECOND time by its verifier, for the same class of defect as
+      the first rejection.** The failure block is at the end of this item; the
+      record of what did land is kept in full below it. Had it passed it would
+      have been `[E]` and never `[x]`: the deliverable is a remembered split and
+      two remembered boxes, and no check in this batch judges what the restored
+      sidebar LOOKS like. Eyeball script: `14_receipt.md` §7.7 — **not to be
+      actioned while the item is `[F]`.**
       — **21 new check calls** (`BP62`-`BP74` in `i1315`, `MG18` in `modes`, one
       more leg through `GH8`'s per-row loop) + **6 restated, none deleted**
       (`BP10` `BP13` `BP43` `BP45` `BW59` `GH8`). Headless **1619 -> 1627**,
@@ -209,6 +213,50 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       **⚠ `BW24` was NOT restated**, contradicting items 12 and 13's forecasts:
       `browser_build` still seeds `0`/`1` and a restore only overrides when a
       state dict is applied. See `14_receipt.md`.
+      **⚠⚠ FAILED (`1990d00e`) — A THIRD COVERAGE HOLE OF THE SAME FAMILY, FOUND
+      BY THE VERIFIER'S OWN FRESH SABOTAGE `V4`, IS STILL OPEN.** ONE CHARACTER
+      in the sash accessor's store guard (`src/wave_viewer.tcl:8163`,
+      `$want > 0` -> `$want >= 0`, i.e. stop REFUSING spec §9's `sash 0`) goes
+      **fully green**: `i1315` **188 ALL PASS** (count held) and `sea` **79 ALL
+      PASS**, zero reds — while the same driver in the same session red `V1`
+      (`BP75`+`BP76`), `V2`-literal (`BP70`+`BP72`+`BP77`), `V2b` (`BP77`) and
+      `S7` (`BP69`+`BP77`) exactly, each with a printed proof-of-mutation. It is
+      NOT defensive code: the item's own comment at
+      `src/wave_viewer.tcl:10380-10383` cites that guard BY NAME as the reason
+      the sash restore "needs no gate of its own", and **nothing measures it** —
+      the third written justification this item ships with no oracle behind it.
+      It is MORE live than either hole the fixup closed: `browser_state` writes
+      `sash 0` for every user who never dragged the sash, so ANY restore of a
+      browser dict from such a user (changed width, filter, dest, open set,
+      selection — anything) runs that line with `$want` 0. Measured on both
+      trees with the same probe: shipped `pref=0.42 frac=0.42 px=210`;
+      sabotaged `pref=0 frac=0.0 px=0` — **the tree pane collapses to nothing
+      and the two-pane browser is destroyed, silently, with every check in the
+      batch green.** Remedy is ONE check, **`BP78`** (free, and the file header
+      already reserves it), in the same X block: apply
+      `[dict replace $bp_st14 shown 1 sash 0]` to a window carrying a known
+      non-zero preference and assert the fraction and `sashpos 0` are unchanged
+      and non-zero, with a leg proving the preference was really there first.
+      Receipt `14_receipt.md` §10.
+      **⚠ THE BASELINE HELD AND THE CODE IS NOT REVERTED.** The verifier
+      re-measured both arms independently on `1990d00e` — headless **1628 /
+      0 fail**, X **11/11, 2174**, every per-file and per-suite figure EXACT
+      against the table above — and MEASURED the source-diff provenance rather
+      than taking it (`git diff 91c6c828 1990d00e -- src/wave_viewer.tcl`
+      filtered for non-comment `+`/`-` lines yields **zero**, so the fixup's
+      behaviour-change-free claim is true line by line). The recorded baseline
+      above is therefore the FAILED tree's. **If a human reverts `91c6c828` or
+      `1990d00e`, that baseline must be re-measured before item 15 runs.**
+      Nothing downstream is blocked — the dependency table gates on 13 and 16,
+      not on 14 — so the batch continues at item 15.
+      **⚠ Two minor findings, recorded not fixed.** (a) The fixup commit's
+      opening line says "three checks" while its own body says "FOUR NEW CHECK
+      CALLS"; both readings are defensible (three claims + one fixture call) but
+      a check COUNT is this batch's only witness to vacuity, so the skimmable
+      sentence is the wrong one to round down. (b) The tree carries an
+      **uncommitted** modification to `13_receipt.md` (mtime 00:42:21, ~68 min
+      BEFORE the `1990d00e` commit at 01:50:36 — item 13's leftover, not an
+      item-14 scope violation). Land it or drop it before item 15.
 - [ ] 15 — R7: All-DBs headers + a design root per DB
 - [ ] 16 — R9: Ctrl-L → Ctrl-B, incl. the C-table row deletion
 - [ ] 17b — R10: `Ctrl-Alt-V` via the C action registry (the half `882694cc` left)
