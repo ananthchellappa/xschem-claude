@@ -7,9 +7,15 @@
 > (`test_signal_short_nohier_0220` → `_0230`,
 > `test_statusmsg_hold_0238` → `_0248`) and `doc/claude/evidence/0230/`
 > → `0240/` were shifted together; 0219 and below are untouched.
-> **Commit messages are not** — history is immutable, so any commit dated on or
-> before 2026-08-08 that says "issue 0231" means what is now **0241**. Subtract
-> 10 when reading git log, add 10 when reading anything checked out.
+> **Commit messages are not** — history is immutable. The shift applies to
+> **`open_pdk`'s own commits**: those reachable from `99d6f1ed` but not from the
+> merge base `74ef1aed` (`git log 99d6f1ed --not 74ef1aed`; ten of them name a
+> number in the block). In one of those, "issue 0231" means what is now **0241**.
+> **Date is not the discriminator, branch is** — `fluid-editing` was filing its
+> own 0212–0225 on the same dates (`a98ab6fe`, 2026-08-07, "docs(issues):
+> 0218-0224 …") and none of its numbers moved, so +10 on one of ours lands on a
+> real but unrelated file. Our commits already mean the files on disk. See
+> `doc/claude/issues/0226-renumbering-note-is-scoped-by-date-not-by-branch.md`.
 
 Snapshot taken **2026-07-30**, immediately after issue 0176 was closed
 (`c8671825` + `d5968562`). This is a point-in-time answer to "what is still
