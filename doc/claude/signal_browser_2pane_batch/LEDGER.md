@@ -32,6 +32,17 @@ new baseline.
 > Re-measured by hand: headless **1662 / 0** over the 15 files with every
 > per-file figure exact; X **12/12 = 2244** through `xarm.sh suites` with
 > `SUITE_TIMEOUT=400` on the real `:0` under the gate panel.
+> **Not adopted from the implementer's run:** the fix-up's verifier re-measured
+> **both arms independently** — all 15 headless files by hand (**1662 / 0**,
+> every per-file figure identical to the 17b table except `keys` 21 → 25, which
+> is item 18 and *not* the fix-up, so the fix-up moved headless by ZERO as
+> claimed) and 12/12 through `xarm.sh suites` on the real `:0` under the gate
+> panel (**2244**, sum verified by hand, only `keys` 48 → **49**). It also
+> MEASURED the comment-only claim rather than taking it — `git diff 6c887aed
+> 91a3de1a -- src/wave_viewer.tcl` filtered to non-comment lines is **EMPTY** —
+> and re-counted the four frozen bare-name oracles pre/post: `browser_devint`
+> 5/5, `browser_srccur` 5/5, `browser_alldbs` 2/2, `device internals to reach`
+> 1/1, so the new comment names no accessor.
 
 > **⚠ THE BASELINE MOVED WITH ITEM 18 — headless 1658 → 1662 over the same**
 > **FIFTEEN files, X 2230 → 2243 over the same TWELVE suites.**
@@ -234,6 +245,12 @@ perturb; measured 189/1 twice on `:0` and 190/0 under Xvfb on the PRISTINE tree,
 then 190/0 on `:0` after the item)**, and a whole-suite `NORESULT` from a WSLg
 Xwayland death (reachable only after the handback — Xvfb is immune; item 18 hit
 three in one session and all three re-ran clean).
+**Add to that list: a whole-suite `TIMEOUT` of `test_key_graph_context` at 400 s
+on `:0`** — out of BOTH baselines, hit by item 18's fix-up implementer AND
+reproduced independently by its verifier, both times on the first *batched*
+attempt and both times ALL PASS in ~0.5-1 s wall standalone on every re-run. A
+**stall**, not a slow suite and not a regression; the fix-up touches nothing that
+suite loads. **Item 19 should expect it and re-run rather than report a fail.**
 
 ---
 
@@ -605,7 +622,15 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       under Xvfb, which has no window manager and no compositor, so a
       desktop-environment **grab** of this specific chord is untestable here —
       and it is R10's chosen chord. One press after the handback.
-- [x] 18 — R12: auto-tick, reveal, and say so
+- [E] 18 — R12: auto-tick, reveal, and say so **-> DONE-PIXEL (`91a3de1a`)**,
+      on `6c887aed`. `[E]` and never `[x]`: the deliverable is a checkbox a human
+      must see **ticked** and a tree that **triples on screen**. `BK38` and
+      `BK43` assert the `-variable` and the accessor one refresh later — no check
+      in this batch judges whether the `ttk::checkbutton` WIDGET renders ticked,
+      nor whether 45 → 129 reads as **explained** rather than alarming in situ.
+      The item and its fix-up both shipped saying "no eyeball owed"; **both
+      verifiers rejected that sentence**, and it is corrected here and in
+      `18_receipt.md` §12. Eyeball script: `18_receipt.md` §12.
       Receipt `18_receipt.md`. **Both baselines RE-MEASURED EXACT on the
       unchanged tree first** (headless 1658/0 every per-file figure exact; X 2230
       every per-suite figure exact) — except `BP77`, see the baseline block.
@@ -639,6 +664,35 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       in both arms, which proves the driver mutated the loaded file.
       X **2243 → 2244** (`keys` 48 → **49**), headless **1662 unchanged**.
       **NEXT FREE `BK44`.**
+      **⚠ THE FIX-UP'S VERIFIER PROVED THE HOLE WAS REAL AND TOTAL, rather than
+      believing the claim.** It extracted the keys file **at `6c887aed`** (48
+      checks, pre-repair) into a probe deliberately NOT named `test_*.tcl`, ran it
+      under X twice — pristine **48/0**, and with the IDENTICAL relaxation on disk
+      **48/0**. Zero reds. The repaired file reds `BK43` alone under the same
+      mutation. Probe deleted, tree byte-clean.
+      **⚠ A FOURTH SABOTAGE, THE VERIFIER'S OWN, ON AN AXIS NOBODY AIMED AT.**
+      All three of the fix-up's sabotages aim at the GUARD; `MY1` aims at R12's
+      LAST clause — *reveal, but never say so* (`set r12 1` → `0` in the merge, so
+      the box still ticks and the tree still grows but the arm returns a plain
+      `ok` and the sentence is never rendered). It reds **7 of the item's 8 X
+      checks** (`BK36` `BK37` `BK39` `BK40` `BK41` `BK42` `BK43`, count held at
+      49); **`BK38` correctly stays green** — it asserts only that the box is
+      still ticked one refresh later, which is still true. So the "say so" axis is
+      densely covered and `BK43`'s positive half is a MOVING leg under a sabotage
+      the implementer never named.
+      **⚠ THE `13 / 17 / 70` FIGURES ARE CONFIRMED, and the fix-up's contrary
+      DECLARED LIMIT IS WRONG.** The fix-up declared those three out-of-baseline
+      X-only suites "cannot be count-verified" because their `RESULT:` line
+      carries no count. Measured: `xarm.sh one` prints one `ok:` line per check,
+      and counting them gives **exactly 13 / 17 / 70**. **This LEDGER is the
+      correct half**; `18_receipt.md` §14 is restated to match. The over-claim was
+      in the conservative direction and blocked nothing.
+      **⚠ ONE OPEN NOTE FOR ITEM 19, PRE-EXISTING AND NOT THIS ITEM'S DOING:**
+      five ids in `test_wave_sigbrowser_keys.tcl` each carry **two** check calls —
+      `BK14`, `BK15`, `BK18` (item 16) and `BK36`, `BK42` (item 18) — so a FAIL
+      line naming `BK42` is ambiguous between the improve-or-restore control and
+      the teardown, and the verifier had to read the values to tell which fired
+      under `MY1`. `BK43` is a single call and does not add to the pattern.
       **7 sabotages, 7 fired**, incl. `S1b` proving the rejected confirm-guard
       shape is visible (refresh count 1 → **3**) and `S6` reddening `BW59`
       **under X** — a gap the headless-only sweep had missed.
@@ -676,6 +730,7 @@ Pixel items may **never** be marked `[x]`. `[E]` + a row here.
 
 | item | commit | what to look at | eyeballed? |
 |---|---|---|---|
+| 18 | `6c887aed` + `91a3de1a` | With **Show device internals OFF**, select a **MOSFET instance** on the schematic and press **Ctrl+Alt+V**. Three things must be true *at once*: (a) the **checkbox is visibly ticked** — the widget, not the variable; (b) the tree grew **45 → 129** rows and scrolled to that instance, selected, expander still **CLOSED**; (c) the status line reads *"showing device internals to reach `<path>`"*, so the tripling reads as **explained, not alarming**. Then ask for a path that is **deeper but still partial** (`<inst>.zznosuch`): the box must stay **UNTICKED**, the tree stay at **45**, and the sentence be the shipped *"no signals under … - showing … instead"*. Full script: `18_receipt.md` §12. **A `net`-classed instance answers nothing** — with no hidden device node the probe correctly says "no" and the shipped path runs. | ☐ |
 | 16 | *(this item)* | **NONE OWED.** Every claim is a bind, a `xschem bindings dump` row, a file byte-compare or a Tcl variable — there is no pixel deliverable. The one thing a human might still want to *feel* is the chord itself: press **Ctrl-B** over a plotted strip and confirm the sidebar toggles and the symbol text on the schematic behind it does **not** change. That is `BK12`+`BK18` restated in fingers, not a gap in coverage. | n/a |
 | 15 | `e1cfd5ff` | With **two raws loaded**, tick the **All-DBs** box. The tree's TOP LEVEL must become one row per database — **the current one included** — and each header must carry that database's **own** design root, named for **its own** raw (not the current design's name under a foreign header). The current DB's header **and** root come back **OPEN**; the foreign header stays **COLLAPSED**. Then collapse a header by hand and **type in the search bar** — it must stay collapsed. Judge indentation, nesting legibility and label truncation on a **real** raw path. Full script: `15_receipt.md` §11. **A one-DB tree answers nothing**, and neither does the box left OFF. | ☐ |
 | 14 | *(this item)* | Drag the **sash** small, tick **Show device internals**, save/quit/reopen: both must come back. Then reopen into a **shorter** window — the sash must return to the same *proportion*, not the same pixel row. A window you never drag must have **no `browser` key** in its state at all. Full script: `14_receipt.md` §7.7. | ☐ |
