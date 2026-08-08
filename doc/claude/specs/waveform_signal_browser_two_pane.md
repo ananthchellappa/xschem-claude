@@ -205,6 +205,12 @@ kept iff **any** signal at-or-under the node is `net` or `srcbranch`:
 | `tb_bandgap` | 128 | **44** | **84** |
 | `tb_charge_pump` | 316 | **13** | **303** |
 
+⚠ **NODES ARE NOT ROWS, AND THE TREE RENDERS ONE MORE OF THEM.** The 44 / 128 above are
+instance **nodes**; the shipped tree draws **45 / 129 ROWS**, because R2's design root is
+itself a row and is not an instance node. TWO-PANE item 12 measured that and the PLAN's text
+(44 / 128 as row counts) was wrong twice; `11_receipt.md:65` had corrected the same off-by-one
+once already. Quote whichever number answers the question being asked, and say which it is.
+
 ⚠ These are **not** the 78 / 278 that §14 quotes from the older work order. That figure is a
 different metric — nodes minted *only* by device paths — and it undercounts, because a node
 minted by a real net's path can still be hidden when every signal under it turns out to be
@@ -251,6 +257,14 @@ path. Under collapsed-by-default that is exactly right for a *deliberate* reveal
 **Rule:** `see` may only be reached from a user-initiated reveal. `browser_populate` must
 never call it, and the persisted `open` set must beat it — BP54 already pins that a
 persisted collapse beats `see`'s ancestor-expansion, and that check stays green.
+
+⚠⚠ **A PLAN CLAUSE WAS REFUSED HERE AND THE REFUSAL IS THE RULING.** TWO-PANE item 13's PLAN
+text asked for the restored **selection's ancestor chain** to be unioned into
+`browser_tree_apply`'s applied open set, so the selected node would always be visible. **It
+was not implemented**, because the rule above forbids it: the union makes a persisted
+collapse unrepresentable whenever the selection sits under it. `BP54`, `BP53` and `BW76` are
+the trio that go red if anyone re-adds it, and they stay green. **No doc sentence anywhere
+may say the union happens.**
 
 ### 4.3 All DBs (R7)
 
@@ -430,7 +444,17 @@ Design nets only would be 139; the 140th is the sweep variable, which M8 leaves 
 
 ⚠ **The much-quoted "424 → 139" is wrong as a description of hiding device internals.**
 It requires hiding source-branch currents *and* the sweep variable. Hiding internals alone
-gives 190. `tb_charge_pump`: 1191 → 137 → 111, nets-only 110.
+gives 190. `tb_charge_pump`: 1191 → **146** → **120**, nets-only **119**.
+
+⚠⚠ **THE `tb_charge_pump` TRIPLE WAS WRONG BY EXACTLY 9 IN EVERY TERM** — it read
+137 / 111 / 110 here *and* in the source comment above `browser_class_filter`. Nobody had
+flagged it; **TWO-PANE item 19 re-measured it** on the committed fixture
+(`tests/headless/fixtures/tb_charge_pump_vars.txt`) with the shipped proc and corrected both
+files in one commit. The evidence is the class histogram — net **120**, srcbranch **26**,
+devmeas **283**, devnode **762**, summing to 1191 — so `devint 0` keeps 120 + 26 = 146 and
+`devint 0` + `srccur 0` keeps 120, of which 119 are design nets. The `tb_bandgap` triple in
+the same sentence re-measures **correct** and is unchanged, which is what makes the
+correction attributable rather than a rewrite.
 
 **Placement:** checkbuttons in `browser_build`, not options on `searchbar_build`. A
 checkbutton uses `-command`, not `bind $f.`, so GH9's `bind $f.` count is unaffected by
@@ -472,6 +496,19 @@ shipped. Three states must be distinguishable, because they have different remed
 The existing `browser_bars_active` already answers the middle case; the third needs its
 twin.
 
+⚠⚠ **STILL OWED AFTER THE WHOLE BATCH, AND DELIBERATELY SO.** TWO-PANE item 18 measured the
+`.ph` question item 12 left open and found it needed no move: the `browser_msg` sentence has
+always landed on `.ph` (`browser_status` writes it, `browser_say` calls that on every
+branch), and `browser_sea_refresh` writes `$f.pw.sea.st` and never `.ph`. What remains open
+is only the **count** line — `"[llength $names] of $total signals"`, which is **bar-matched
+only**, so R11's two boxes move the tree, the sea and the filter entry but *not* that number.
+It is **class-filter blind** and it belongs to the three-state caption above.
+
+**Twelve checks pin `.ph` byte-identically** — `BD52` (`_i14`), `BX37`/`BX42`/`BX44`-`BX46`
+(`_i12`), `BH50`/`BH51`/`BH54` (`_i11`) and `BK37` (`_keys`) — so whoever takes the caption
+restates them in the same commit, and **nobody else may move that string.** TWO-PANE item 19
+records the hole; it does not fix it.
+
 ### 7.3 Restoring a multi-selection saved by the shipped version
 
 `browser_state` persists `sel` as a **list**, and BP10 pins the state dict's key set in
@@ -488,9 +525,17 @@ back to the root. No key is added, no key is removed, no key moves.
 through `set_plot_dest`/`browser_toggle`, because those `log_action` — a rebuild must not
 fill the replay log with lines nobody typed.
 
-R12's auto-tick is the opposite case: it *is* a user-initiated change, from a key the user
-pressed. It goes through the normal toggle path and **is** logged. One keystroke, one log
-line.
+R12's auto-tick was *specified* as the opposite case: a user-initiated change, from a key the
+user pressed, going through the normal toggle path and therefore logged. One keystroke, one
+log line.
+
+⚠⚠ **THAT IS NOT WHAT SHIPPED, AND THE MEASUREMENT WINS.** Item 18 named this as a divergence
+and TWO-PANE item 19 re-measured it: the auto-tick calls **`wviewer::browser_devint $token 1`
+directly**, and that accessor is four lines with **no `log_action` anywhere in it** — nor is
+there one on the path between `browser_show_path`'s probe and the refresh. So the auto-tick
+writes **NO log line at all**. Whether it *should* is a live question and nobody has ruled on
+it; what is recorded here is what the code does. `BP74` still pins the other half — that a
+*restore* writes no log line — and it is unaffected.
 
 ### 7.5 The tree node whose list is empty because of the class filter
 
@@ -753,7 +798,15 @@ nothing-selected arm — a reveal is a navigation aid, not a multi-target operat
 
 **R12's auto-tick** sits between the walk and the reveal: if the resolved node is absent
 from the current row set *and* the class filter is why, tick R11(a), refresh, re-resolve,
-and prefix the status message with `showing device internals to reach <node>`.
+and say `showing device internals to reach <node>`.
+
+⚠ **CORRECTED BY TWO-PANE ITEM 19 (item 18 named it as a divergence and handed it on).** The
+sentence above originally read *"and **prefix** the status message with …"*. As shipped it is
+**a whole `browser_msg` arm, not a prefix**: `unhidden` is its own case returning
+`"showing device internals to reach <landed>"` **instead of** the `ok` arm's
+`"showing <landed>"`, not in front of it. The distinction matters because `BK37` asserts that
+string **byte-exact**, and a reader implementing "prefix" from this sentence would produce a
+different one and red it.
 
 ---
 
@@ -785,6 +838,23 @@ So three new top-level keys it is, and their cost is paid explicitly:
 | BP13 | `_i1315.tcl:809-822` | seven counting fields → **ten**; `srccur`'s non-default value is `0`, not `1`. |
 | BP45 | `_i1315.tcl:1224-1232` | eight `{NO-KEY}`-sentinel reads → **eleven**. |
 | BP41 | `_i1315.tcl:1145` | a fresh window equals `browser_state_default` — still true, with the three new defaults. |
+
+⚠⚠ **THE STORE GUARD, AND WHY TWO-PANE ITEM 14 IS `[F]` RATHER THAN `[x]`.** `browser_sash`
+stores `$want` above its own height guard — that ordering is `BP77`'s subject and it is
+right — but the store arm is additionally guarded `$want > 0 && $want < 1`, i.e. it
+**REFUSES the `sash 0` this table calls the default.** That lower bound is cited BY NAME in
+`browser_sash_pref`'s header as the reason `test_wave_sigbrowser_sea.tcl`'s capture/restore
+is safe and the restoring call needs no gate of its own — and **nothing measured it.**
+MEASURED at TWO-PANE item 19: relaxing `> 0` to `>= 0` and driving `browser_sash $tok 0`
+sets `$frac` to 0, makes `sashpos 0 0` collapse the tree pane to zero pixels, and is
+**fully green in both arms**. `browser_sash_drop` cannot produce a 0 (it guards `$frac <= 0`
+itself), so no other check can reach it.
+
+**`BP78`** (`test_wave_sigbrowser_i1315.tcl`, X-only, on `BP76`/`BP77`'s mapped fixture) is
+the remedy and it landed with item 19: seven legs in one tuple — the refusal, the mapping
+proof, the accessor's return, the untouched preference, the untouched live split, and a
+**positive control** driving `0.30` through the same call. Item 14 stays `[F]` in the ledger
+because its own verifier rejected it; the hole is now measured rather than described.
 
 **MG9 stays green** and this is worth being exact about, because it is the one cross-file
 check the batch does not own: `test_wave_modes.tcl:1314-1315` pins the **snapshot's** key
@@ -841,8 +911,8 @@ site" check is what proves it did not grow a second one.
 | **0214** | `readonly` cleared on a failed load | unchanged |
 | **0215** | items 11/12 hierarchy sync asymmetry | unchanged |
 | **0216** | `attach_raw` bypasses the raw history | unchanged |
-| **0217** | device-class prefixes as fake hierarchy levels | **FIXED** by M1 |
-| *new* | `browser_target_path` mis-decodes `d:N\|` All-DBs ids (§4.3) | **FIXED**, both sites |
+| **0217** | device-class prefixes as fake hierarchy levels | **FIXED** by M1. Closed and tracked (`422b3f55`); cited from the parent spec's §15 by TWO-PANE item 19 |
+| **0225** | `browser_target_path` mis-decodes `d:N\|` All-DBs ids (§4.3) | **FIXED**, both sites, by TWO-PANE item 8. Filed as its own numbered issue by TWO-PANE item 19 — it had lived only as a paragraph inside `0217:190` — and cited from the parent spec's §15. Evidence `test_wave_sigbrowser_2pane.tcl:844-849` (`TP44`, both directions) |
 
 Decision 8 ("no new C code") was **batch-scoped and has expired with that batch**. R9 and
 R10 both touch C. That is a deliberate, ruled reopening — not a casual one — and it is
@@ -855,13 +925,33 @@ this is the written disposition the teardown study asked for.
 
 ### 12.1 Widget paths
 
-`<top>.wvbrowser.tvf.tv` is spelled longhand at nine sites in `src/wave_viewer.tcl`
-(`:6670, :6716, :6801, :7434, :7578, :7624, :7627, :8033, :8065`) — there is no accessor —
-and `.wvbrowser` appears **73 times** across `tests/headless` and **22 times** in
-`src/*.tcl`. The tree moves into the panedwindow, so every one of those nine moves.
+⚠⚠ **THIS SECTION IS A PLAN THAT WAS ONLY HALF EXECUTED, AND THE UNEXECUTED HALF NEVER
+BECAME A DEFECT.** Recorded as measured by TWO-PANE item 19 rather than as originally
+written, because the line-number list below was stale within two items.
 
-**Introduce an accessor** (`browser_tree`, `browser_sea`) in the same item, and re-point the
-nine. The test literals are docked paths and only move where the widget genuinely moved.
+**As planned:** `<top>.wvbrowser.tvf.tv` was spelled longhand at nine sites; the tree moves
+into the panedwindow, so all nine move. **Introduce an accessor (`browser_tree`,
+`browser_sea`) in the same item, and re-point the nine.**
+
+**As shipped, MEASURED 2026-08-08:** the tree did move — every path is now
+`<top>.wvbrowser.pw.tvf.tv` — but **the accessor was never introduced.** TWO-PANE item 1
+never landed (`09_receipt.md:26-27`: *"No accessor was introduced — `browser_tree` /
+`browser_sea` are item 1's, which has not landed"*), and every later item spelled the path
+longhand from `$f` or from the token. Today:
+
+| what | count |
+|---|---|
+| longhand `.wvbrowser.pw.tvf.tv` in `src/wave_viewer.tcl` | **6** |
+| any `tvf.tv` in `src/wave_viewer.tcl` | **20** |
+| `.wvbrowser` in `src/*.tcl` (all of them in `wave_viewer.tcl`; **zero** elsewhere) | **25** |
+| `.wvbrowser` across `tests/headless` | **87** |
+| `tvf.tv` across `tests/headless` | **55** |
+
+⚠ **`browser_tree` and `browser_sea` therefore DO NOT EXIST as procs, and naming them in the
+parent spec's contract list would red exactly two `GS1` legs.** The PLAN's own item-19 text
+named them; TWO-PANE item 19 dropped them instead of inventing them. If a later item wants
+the accessor, it introduces the proc and the contract line **in one commit** — that lockstep
+is the whole point of `GS1`, and `GS22` is now the source-side control on it.
 
 ### 12.2 The doc oracles
 
@@ -870,13 +960,32 @@ nine. The test literals are docked paths and only move where the widget genuinel
 | GH0 | `test_wave_grid.tcl:405-406` | 16 keys, 11 accelerators | **unchanged** — Ctrl-L→Ctrl-B is a rename |
 | BT09 | `test_wave_sigbrowser.tcl:824` | the same 16/11 | **unchanged** |
 | BX13 | `_i12.tcl:332-335` | reads `test_wave_grid.tcl` **as text** | **unchanged** |
-| GH8 | `test_wave_grid.tcl:473-478` | 6 `data-bseq` gestures | **12** — the sea of names adds six |
-| GH9 | `test_wave_grid.tcl:485-486` | 6 `bind $f.` in `browser_build` | **12**, in lockstep with GH8 |
-| guide | `doc/waveform_viewer_guide.html:483-490` | `data-seq="Control-Key-l"`, `<kbd>Ctrl-L</kbd>`, `data-accel="Ctrl+L"` | Ctrl-B, plus six new `data-bseq` rows |
+| GH8 | `test_wave_grid.tcl` | 6 `data-bseq` gestures | **16** — see the ledger below |
+| GH9 | `test_wave_grid.tcl` | 6 `bind $f.` in `browser_build` | **16**, in lockstep with GH8 |
+| guide | `doc/waveform_viewer_guide.html` | `data-seq="Control-Key-l"`, `<kbd>Ctrl-L</kbd>`, `data-accel="Ctrl+L"` | Ctrl-B, plus ten new `data-bseq` rows |
+
+⚠ **THE `data-bseq` COUNT FORECAST 12 AND SHIPPED 16.** It is a ledger and it moved four
+times: **6** (single-pane item 16) → **7** (two-pane item 10, the tree's `<<TreeviewSelect>>`)
+→ **14** (two-pane item 11, the lower pane's seven canvas gestures) → **15** (the hover
+tooltip's `<Motion>`) → **16** (two-pane item 14's sash `<ButtonRelease-1>`). Re-measured at
+TWO-PANE item 19: 16 rows in the guide, 16 `bind $f.` lines in `browser_build`, and GH8's
+literal already reads 16. **Item 19 adds and removes no row.**
+
+⚠ **GH9 AND GH8 SHARE A BLIND SPOT, AND `GH11` IS WHY IT IS NOW COVERED.** Both match on the
+literal `bind $f.`. A bind written through a widget alias — `set c $f.pw.sea.c ; bind $c
+<Button-1> …` — is invisible to *both*: GH8 only asks about rows the guide already has, and
+GH9 compares two numbers that are each one short. `GH11` (TWO-PANE item 19) counts the wider
+`^\s*bind \$[a-z]` and requires equality with GH9's counter, with a `>= 16` floor as its
+control. Its only positive evidence is the sabotage: aliasing one bind reds `GH11` **alone**,
+with GH8 and GH9 green — and that green pair *is* the finding.
 
 ⚠ **16/11 is pinned in four places** — the guide, GH0, BT09 and BX13 — and BX13 reads
 `test_wave_grid.tcl` as *text*. Keeping the key change a pure rename is what keeps all four
-untouched, and it is the single cheapest decision in this batch.
+untouched, and it is the single cheapest decision in this batch. **All four were sabotaged
+independently at TWO-PANE item 19** and the measured firing pattern is: a 17th `data-seq` row
+in the guide reds GH0 + GH2 + BT09 and leaves **BX13 green** (it reads the test file, not the
+guide), while bumping the literal in `test_wave_grid.tcl` reds GH0 + **BX13**. The PLAN's
+"BT09 **or** BX13" was a guess; it is neither an or nor the same lever.
 
 ### 12.3 The parent spec
 
@@ -896,12 +1005,32 @@ Ruling 30 stands: **every design-window-coupled item gets its own process.** At 
 one file was killed mid-run by WSLg ~90% of the time with **zero check failures** — a
 failure mode that looks exactly like flakiness and is not.
 
-Baseline, re-measured and green: `--nogui` 660 checks across seven files (sigsearch 107,
-sigbrowser 135, i11 50, i12 29, i1315 80, i14 47, grid 212).
+⚠ **THE BASELINE IN THIS SECTION WAS WRITTEN BEFORE THE BATCH RAN AND IS SUPERSEDED.** It
+read *"`--nogui` 660 checks across seven files (sigsearch 107, sigbrowser 135, i11 50, i12
+29, i1315 80, i14 47, grid 212)"*. **RE-MEASURED 2026-08-08, after two-pane item 18's fix-up
+and before item 19:**
+
+| arm | figure |
+|---|---|
+| `--nogui` | **1662 checks over FIFTEEN files, 0 fail** — sigsearch 146, sea 6, sigbrowser 135, 2pane 108, panes 15, i11 50, i12 40, i1315 88, i14 56, keys 25, grid 231, modes 212, viewer 57, markers 437, tabs 56 |
+| X (`xarm.sh suites`, `SUITE_TIMEOUT=400`) | **2244 over TWELVE suites** — panes 81, 2pane 108, sigbrowser 353, sigsearch 233, sea 79, grid 356, i11 74, modes 488, i12 126, i1315 190, keys 49, i14 107 |
+| out of both baselines, X-only | `test_bindings_file` **13**, `test_keybindings_help` **17**, `test_key_graph_context` **70** |
+
+**After TWO-PANE item 19:** `--nogui` **1698** (grid 231 → **267**; every other file
+byte-identical), X **2281** (grid 356 → **392**, i1315 190 → **191**; every other suite
+byte-identical), and the three out-of-baseline suites unchanged at 13 / 17 / 70.
+
+**Check-id bands, MEASURED at TWO-PANE item 19 — every one of them is spent past what §4 of
+the PLAN forecasts.** `BT` → BT47, `BX` → BX56, `BD` → BD70 (two-pane item 15's; do not
+take), `BW` → BW78, `BP` → **BP78** (item 19's), `BK` → BK43, `GH` → **GH11** (item 19's),
+`GS` → GS14 in `test_wave_grid.tcl` **and separately** GS21 in `test_wave_sigsearch.tcl`, so
+item 19 took **GS22-GS27**. `GS` is used for two unrelated blocks inside `test_wave_grid.tcl`
+and is owned by a second file as well; **measure both before writing an id.**
 
 **Two-pane item 16 adds an eighth file, `tests/headless/test_wave_sigbrowser_keys.tcl`,
-band `BK01-BK18` (`BK19` next free; `BK20+` belongs to item 17b).** 12 checks in the
-headless arm, 23 under X. It exists because the item's dangerous half is invisible to the
+band `BK01-BK18`** (`BK19` was next free when this was written; **`BK44` is next free now** —
+items 17b and 18 and its fix-up spent `BK19`-`BK43`). 12 checks in the headless arm, 23 under
+X when it landed; **25 / 49** after item 18 and its fix-up. It exists because the item's dangerous half is invisible to the
 source greps every other file is made of: `set fwd` in `key_filter` had **zero** test
 coverage in the whole repo before it. Its two behavioural checks (`BK12`, the direct
 `key_filter` drive, and `BK18`, a real keystroke) are the only witnesses to the routing.
@@ -930,6 +1059,16 @@ case, reports zero checks, prints no `RESULT` line and scores FAIL forever.
 ## 14. Corrections this spec makes to existing docs
 
 Apply when next editing the files named.
+
+⚠⚠ **ITEM 1 BELOW IS NOT A TYPO AND MUST NOT BE "CORRECTED" TO 84 / 303.** TWO-PANE item
+19's own PLAN text instructed *"fix §14's device-node counts (78→84, 278→303)"*; **that
+instruction was REFUSED and the refusal is recorded here so nobody executes it later.** The
+78 / 278 below are a **different metric** — nodes minted *only* by device paths, produced by
+the work order's own verbatim awk, which is what item 1 is auditing. §3.3's 84 / 303 are the
+nodes R1's quantifier actually hides, which is what the user sees. §3.3 already says so in
+writing, and it already carries 84 / 303. **Both numbers are right about their own
+question**; replacing one with the other injects an error into an audit of somebody else's
+arithmetic.
 
 1. **`signal_browser_declass_class_toggle_work_order.md` §2.2** — the device-node
    percentages are wrong in 4 of 5 rows. Re-running the doc's own verbatim awk:

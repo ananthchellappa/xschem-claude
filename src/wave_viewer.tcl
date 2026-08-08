@@ -6232,8 +6232,14 @@ proc wviewer::sig_is_device {class} {
 #
 # MEASURED on tb_bandgap's 424 signals: devint 0 leaves 190; devint 0 + srccur 0
 # leaves 140; design nets alone would be 139 (the 140th is the sweep variable,
-# which M8 deliberately does not special-case). tb_charge_pump: 1191 -> 137 ->
-# 111, nets-only 110.
+# which M8 deliberately does not special-case). tb_charge_pump: 1191 -> 146 ->
+# 120, nets-only 119.
+#
+# ⚠ THE tb_charge_pump TRIPLE WAS WRONG BY EXACTLY 9 IN EVERY TERM (it read
+# 137 / 111 / 110) and travelled that way through the spec too. RE-MEASURED at
+# TWO-PANE item 19 on the committed fixture with this proc: class histogram
+# net 120, srcbranch 26, devmeas 283, devnode 762, summing to 1191. The
+# tb_bandgap triple above re-measures correct and is unchanged.
 #
 # ⚠ THE MUCH-QUOTED "424 -> 139" IS WRONG as a description of hiding device
 # internals. It needs source-branch currents AND the sweep variable hidden too.

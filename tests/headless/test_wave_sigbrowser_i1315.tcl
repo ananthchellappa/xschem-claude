@@ -42,7 +42,8 @@
 #   75     SOURCE             both arms   (item 14's verification FIXUP)
 #   76-77  REAL viewer        Tk/X only   (item 14's verification FIXUP)
 #   47b    REAL viewer        Tk/X only   (TWO-PANE item 15's prefix control)
-# Next free after this item: BP78. TWO-PANE ITEM 15 OWNS `BD60`-`BD70` — the
+#   78     REAL viewer        Tk/X only   (TWO-PANE item 19 — the store guard)
+# Next free after this item: BP79. TWO-PANE ITEM 15 OWNS `BD60`-`BD70` — the
 # fixup did NOT take them, and item 15 did not take a BP number either: its own
 # checks are `BD60`-`BD70d` in test_wave_sigbrowser_i14.tcl (the only fixture
 # holding two live raws). What item 15 does HERE is RESTATE — BP43a inverts from
@@ -2002,6 +2003,56 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           $bp_pref77b \
           [expr {abs($bp_frac77 - 0.44) < 0.03}]] \
     [list 0 1 0.44 1]
+
+  # --- BP78: THE STORE GUARD ITSELF (TWO-PANE item 19) ----------------------
+  # ⚠⚠ THE HOLE TWO-PANE ITEM 14 SHIPPED WITH, AND THE REASON THAT ITEM IS `[F]`
+  # RATHER THAN `[x]`. `browser_sash`'s store arm is guarded
+  # `$want > 0 && $want < 1` (`src/wave_viewer.tcl`), and `browser_sash_pref`'s
+  # own header cites that lower bound BY NAME as the reason the sea suite's
+  # capture/restore is safe and the restore needs no gate of its own. NOTHING
+  # MEASURED IT: relaxing `> 0` to `>= 0` stores a 0, `$frac` becomes 0,
+  # `sashpos 0 0` collapses the tree pane to nothing — and every suite in both
+  # arms stayed green. `browser_sash_drop` cannot produce a 0 (it guards
+  # `$frac <= 0` itself), so no other check can reach this.
+  #
+  # ⚠ IT RUNS HERE, ON BP76/BP77's FIXTURE, BECAUSE THE PANE MUST BE MAPPED —
+  # an unmapped pane answers 0 for everything and every leg below goes green on
+  # a build where nothing works. Leg 2 asserts the mapping rather than assuming
+  # it, exactly as BP69 leg 2 and BP77 leg 2 do.
+  #
+  # ⚠ IT NEVER READS A VALUE ITS OWN RESTORE PUT BACK. Every leg is asserted
+  # BEFORE the fraction is restored on the last line of the block, and the
+  # restore is to BP77's OWN 0.44 — so what BP47 and everything after it inherit
+  # is byte-identical to what BP77 left. (Restoring is not optional: `sash 0.30`
+  # would otherwise leak into the rest of the file through `browsersash`, which
+  # survives a window close.)
+  set bp_pref78a [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_h78     [bs_num [pcall winfo height $BPW76]]
+  set bp_r78z    [bs_num [pcall ::wviewer::browser_sash $tok 0]]
+  update ; update idletasks
+  set bp_pref78z [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_frac78z [bs_num [bs_wait_sash $BPW76]]
+  # THE POSITIVE CONTROL, on the same fixture and the same proc: a LEGAL value
+  # in the same call really is taken and really does move the widget. Without it
+  # "0 was refused" is also what a dead accessor answers.
+  pcall ::wviewer::browser_sash $tok 0.30
+  update ; update idletasks
+  set bp_pref78p [bs_num [pcall ::wviewer::browser_sash_pref $tok]]
+  set bp_frac78p [bs_num [bs_wait_sash $BPW76]]
+  check {BP78 (X) `sash 0` is REFUSED by the store guard — the preference and
+         the live split are both untouched — while a legal value in the same
+         call is taken and moves the pane} \
+    [list [expr {abs($bp_pref78a - 0.44) < 0.03}] \
+          [expr {$bp_h78 > 1}] \
+          [expr {abs($bp_r78z - $bp_pref78a) < 0.03}] \
+          [expr {abs($bp_pref78z - $bp_pref78a) < 0.03}] \
+          [expr {$bp_frac78z > 0.05 && $bp_frac78z < 0.95}] \
+          [expr {abs($bp_pref78p - 0.30) < 0.03}] \
+          [expr {abs($bp_frac78p - 0.30) < 0.03}]] \
+    [list 1 1 1 1 1 1 1]
+  pcall ::wviewer::browser_sash $tok $bp_pref78a
+  update ; update idletasks
+
   catch {wviewer::close $tok} ; update
 
   # --- BP47-BP56: THE RESTORE ------------------------------------------------

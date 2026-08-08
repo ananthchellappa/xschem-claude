@@ -320,6 +320,70 @@ tag must still classify `devnode`, or the check proves nothing).
 - `wviewer::browser_state` — `{token}` -> the persistence dict. §13.
 - `wviewer::browser_state_apply` — `{token d}` -> 1/0. §13.
 
+### The two-pane rebuild's own procs
+
+Added by `doc/claude/specs/waveform_signal_browser_two_pane.md` (TWO-PANE items 1-18) and
+reconciled into this list by **TWO-PANE item 19**, which is the item that exists to stop the
+list rotting. `test_wave_grid.tcl`'s `GS22` asserts that every name below is here **and** is
+a real proc, in one tuple, so neither half can be satisfied alone.
+
+⚠ **There is no `browser_tree` / `browser_sea` accessor.** The two-pane spec §12.1 asked for
+one; **TWO-PANE item 1 never landed** (`09_receipt.md:26-27`), so the widget paths are still
+spelled longhand from `$f`. Naming a proc here that does not exist reds a `GS1` leg — which
+is precisely the mechanism that forces a spec entry and its proc into one commit.
+
+- `wviewer::browser_class_filter` — `{entries devint srccur}` -> the narrowed entry list, for
+  R11's two independent checkboxes. **PURE**, and it preserves **raw-file order** (limit D7),
+  because every downstream gesture resolves a row INDEX back into this list.
+  MEASURED on `tb_bandgap`'s 424: `devint 0` leaves 190; `devint 0` + `srccur 0` leaves 140.
+  `tb_charge_pump`: 1191 -> 146 -> 120.
+- `wviewer::browser_device_paths` — `{entries}` -> the set of instance paths **every** signal
+  at or under which is device-classed, i.e. exactly the nodes R1 hides. 84 of `tb_bandgap`'s
+  128, 303 of `tb_charge_pump`'s 316.
+- `wviewer::browser_level_names` — `{entries path}` -> the raw names owned by **that level
+  only**, `-nocase` on the path. The lower pane's selector. ⚠ It is deliberately **not**
+  `browser_leaf_names`, which R6 keeps **recursive** for the tree's own plot gesture.
+- `wviewer::browser_label` — `{e}` -> the Cadence-style rendered label for one entry
+  (`xm1:id`, `v1:i`); a plain design net renders as its bare leaf. **Display, not identity**
+  — two signals can render to the same label (two-pane §5.4, declared limit).
+- `wviewer::browser_label_full` — `{e}` -> the **full raw name** behind a row. What the
+  tooltip shows, what `Copy names` puts on the clipboard, and what every gesture resolves to.
+- `wviewer::browser_flow_layout` — `{n rowh paneh}` -> `{per-column columns}`.
+- `wviewer::browser_flow_cell` — `{idx per colw rowh}` -> `{x y}`, **COLUMN-major**: down a
+  column, then on to the next one to the right.
+- `wviewer::browser_flow_hit` — `{x y per colw rowh n}` -> the item index, or **`-1` for a
+  genuine MISS**. ⚠ Arithmetic, never `find closest`, which always returns *something* and
+  so silently selects a neighbour for a click in the gutter.
+- `wviewer::browser_flow_scrollregion` — `{cols colw paneh}` -> the canvas `-scrollregion`,
+  with the height **clamped to the pane**. That clamp *is* R3's "horizontal scrollbar only".
+- `wviewer::browser_sea_layout` — `{token}` -> the lower pane's live flow geometry, derived
+  from the pane height at read time and never cached.
+- `wviewer::browser_sea_names` — `{token}` -> the names currently flowed, **in draw order**,
+  which is the order every index-resolving gesture agrees with.
+- `wviewer::browser_sea_refresh` — `{token}` — repaints the lower pane for the tree's current
+  selection and writes the count line on `$f.pw.sea.st`. ⚠ **It never writes `.ph`** — the
+  sidebar status line is `browser_status`'s, and twelve checks pin that string byte-exactly.
+- `wviewer::browser_sea_selection` — `{token}` -> the selected indices. The sea is the
+  **multi-select** surface (Shift/Ctrl extend); the tree above it is `-selectmode browse`.
+- `wviewer::browser_devint` — `{token {want {}}}`. R11(a), *show device internals*, default
+  **0**. Read/write accessor over the per-window state. §13.
+- `wviewer::browser_srccur` — `{token {want {}}}`. R11(b), *show source currents*, default
+  **1**. ⚠ Its non-default value is `0`, which is the one asymmetry in the persistence tests.
+- `wviewer::browser_sash_pref` — `{token}` -> the **persisted** split, or `0` when nobody has
+  chosen one. ⚠ A **separate proc from the accessor on purpose**: `browser_sash`'s read arm
+  answers the *layout default* (0.55) for a window nobody dragged, and reading that from the
+  state reader would make `browser_state_is_default` false forever.
+- `wviewer::browser_sash_drop` — `{token}` — the `<ButtonRelease-1>` handler that turns a
+  real sash drag into a stored fraction. It refuses a non-positive fraction itself, which is
+  why `browser_sash`'s own `$want > 0` store guard has only one witness (`BP78`).
+- `wviewer::browser_tree_state` — `{token}` -> `{open {ids} sel {ids}}`, as **raw ids**. The
+  current DB's rows are unprefixed (§10.10), which is what lets a persisted selection survive
+  a registry renumber.
+- `wviewer::browser_tree_apply` — `{token d}` — its inverse. ⚠ **The selection's ancestor
+  chain is NOT unioned into the applied open set.** That was proposed and **refused**
+  (two-pane §4.2): a persisted collapse must beat `see`'s ancestor-expansion, and `BP54`
+  pins it. Do not re-add the union.
+
 ### The Location bar
 
 - `wviewer::rawbar_load` — `{token path}` -> 1 on success, 0 on every refusal, and **every
@@ -476,9 +540,25 @@ the right answer is a tooltip, not an elastic label.
 
 ---
 
-## 8. The tree
+## 8. The tree — and, since the two-pane rebuild, the pane below it
 
-`$f.tvf.tv`, a `ttk::treeview -show tree -selectmode extended`.
+⚠ **THIS SECTION DESCRIBES THE SHIPPED SINGLE-PANE BROWSER AND IS SUPERSEDED IN TWO PLACES
+BY `waveform_signal_browser_two_pane.md`.** Read both. What changed:
+
+* The sidebar is now a `ttk::panedwindow` (`$f.pw`) holding **two** panes. The **upper** one
+  is the **instance tree** — groups only, **no leaf rows at all**, collapsed on populate, and
+  `-selectmode **browse**`, so the selection is exactly one node and never empty. The
+  **lower** one is the **sea of names**: a flowed canvas listing the selected instance's
+  **own-level** signals, column-major, with a **horizontal** scrollbar only. It is the
+  multi-select surface — Shift and Ctrl extend there, not in the tree.
+* Two class checkboxes ride above them, **Show device internals** (default **off**) and
+  **Show source currents** (default **on**), narrowing the snapshot before the tree is built.
+* The split between the panes is a persisted **fraction**, not a pixel count.
+
+Everything below is still true of the tree's ids, its recursive plot gesture (R6) and D3/D7.
+
+`$f.pw.tvf.tv`, a `ttk::treeview -show tree` — `-selectmode extended` as shipped
+single-pane, **`browse`** after the two-pane rebuild.
 
 Row ids: **`g:<dotted path>`** for a hierarchy group, **`s:<name>`** for a signal leaf
 (disambiguated with a `#N` suffix when a name repeats — which is why a leaf's path is
@@ -919,6 +999,19 @@ viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `
 | **MOD** | `Browse...` is `tk_getOpenFile`, i.e. modal; only its wiring is assertable headlessly. | §12 | — |
 | **SEL** | A successful `Descend to here` **clears the schematic selection** at every level it traverses (C's `unselect_all(1)`). The `already` path does not. | §10.5 | — |
 
+**Added by the two-pane rebuild** (`waveform_signal_browser_two_pane.md` §10; the two lists
+are the same list, kept here so one file answers "what does this not do"):
+
+| id | limit | where | issue |
+|---|---|---|---|
+| **LBL** | **Two signals can render to the same LABEL** in the sea of names — the label is a display, identity is the full raw name. MEASURED: **4** collisions over the 2656-name corpus, all inside one instance's own level. | two-pane §5.4 | — |
+| **PURE** | The lower pane renders **legitimately EMPTY for a pure ancestor** — a node that owns no signals of its own and exists only because a descendant does. **18** of `tb_bandgap`'s 128 nodes, **25** of `tb_charge_pump`'s 316. Correct, and §7.2's three-state caption is what makes it legible. | two-pane §3.3, §10.6 | — |
+| **FRAC** | The sash is persisted as a **fraction**, so a restore into a different-sized window reproduces the *proportion*, never the pixel row. The same trade `browser_width` makes, one axis over. | two-pane §9 | — |
+| **CTRL-B** | A user who sets `graph_use_ctrl_key 1` **loses their only cursor-B chord**: `access_cond` (`src/callback.c`) makes bare `b` unreachable in that profile and Ctrl+b is now the Signal Browser everywhere. Commented out by default (`src/xschemrc`), so the shipped profile is unaffected. | two-pane §10.8 | — |
+| **SYM-TXT** | Ctrl+b over a graph **embedded in a schematic** now toggles `sym_txt`, because the C row that used to route it was deleted. Nobody asked for it; measured 0 -> 1 and pinned by an inverted check in `tests/headless/test_key_graph_context.tcl`. The **viewer** is unaffected. | two-pane §10.9 | — |
+| **CNT** | The sidebar status line's **count** sentence is still **class-filter blind** — it is bar-matched only, so the two class checkboxes move the tree, the sea and the filter entry but not that number. It belongs to two-pane §7.2's three-state caption and is **still owed**; twelve checks pin the current string byte-exactly, so nobody else may move it. | two-pane §7.2 | — |
+| **SASH-0** | `browser_sash`'s store arm refuses `0`, so spec §9's `sash 0` ("nobody chose a split") cannot be *written* through the accessor — only read. Shipped deliberately; it is what keeps the sea suite's capture/restore safe. Its only witness is `BP78`, added by TWO-PANE item 19 — the hole that keeps TWO-PANE item 14 marked `[F]`. | two-pane §9 | — |
+
 ---
 
 ## 15. Open issues
@@ -945,6 +1038,18 @@ viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `
 * **`doc/claude/issues/0215-hierarchy-sync-is-asymmetric-between-items-11-and-12.md`** —
   §10.7.
 * **`doc/claude/issues/0216-attach-raw-bypasses-the-raw-history.md`** — §12, L-13a.
+* **`doc/claude/issues/0217-raw-device-class-prefixes-render-as-fake-hierarchy-levels.md`** —
+  **FIXED** by TWO-PANE item 1 (`sig_declass` + `sig_class`, `class` as the fifth entry key).
+  ngspice's device-class tags (`m.`, `v.`, `@m.`, …) were rendering as top-level hierarchy
+  nodes that do not exist in the design — **2026 of 2338 hierarchical signals, 87%, sat under
+  a fake root.** Listed here rather than dropped because it is the defect the whole two-pane
+  rebuild was scheduled around.
+* **`doc/claude/issues/0225-browser-target-path-misdecodes-all-dbs-d-n-ids.md`** — **FIXED**
+  by TWO-PANE item 8, **both sites**. `[string range $id 2 end]` mis-decoded an All-DBs
+  `d:N|g:x1.x2` id into `N|g:x1.x2`, so `Descend to here` was *enabled* on foreign rows and
+  fired a garbage instance path; a second identical strip sat in `browser_show_path`. Both
+  now call the one decoder, `browser_id_path` (§10.10). Found in the same reading pass as
+  0217 and split out of it.
 
 ---
 
@@ -961,8 +1066,18 @@ viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `
 | `tests/headless/test_wave_sigbrowser_i1315.tcl` | items 13 + 15: the Location bar, the raw history, persistence |
 | `tests/headless/test_wave_sigbrowser_i14.tcl` | item 14, All DBs |
 | `tests/headless/wvbs_common.tcl` | shared fixture helpers — **not a case**, by design |
-| `tests/headless/test_wave_grid.tcl` | the **doc oracles**: GH0-GH7 (guide rows vs `install_default_binds` / `build_menubar`), GH8/GH9 (the browser's own widget gestures vs `browser_build`), GH10 (`§N` refs resolve), GS0-GS3 (this spec's contract list vs source, and its issue references vs the issue directory) |
+| `tests/headless/test_wave_grid.tcl` | the **doc oracles**: GH0-GH7 (guide rows vs `install_default_binds` / `build_menubar`), GH8/GH9 (the browser's own widget gestures vs `browser_build`), **GH11** (that GH9's `bind $f.` counter is *complete* — an aliased bind is invisible to GH8 and GH9 alike), GH10 (`§N` refs resolve), GS0-GS3 (this spec's contract list vs source, and its issue references vs the issue directory) and **GS22-GS27** (the two-pane batch's own reconcile: every minted proc named, the list's exact length, the guide's two panes and two checkboxes, Ctrl-B in the table *and* in the prose, and the two issues the batch owes) |
+| `tests/headless/test_wave_sigbrowser_2pane.tcl` | the **two-pane rebuild** proper (TWO-PANE items 2-8): `sig_declass`/`sig_class`, `browser_class_filter`, the tree's row filter, the flow arithmetic, the label forms, and `browser_id_path` (issue 0225) |
+| `tests/headless/test_wave_sigbrowser_sea.tcl` | the lower pane against a **live** panedwindow — the geometry claims a pure-Tcl file cannot make |
+| `tests/headless/test_wave_sigbrowser_panes.tcl` | the two panes' **build-time** contract: what `browser_build` packs, the tree's `browse` selectmode, the checkbox defaults |
+| `tests/headless/test_wave_sigbrowser_keys.tcl` | TWO-PANE items 16/17b: the Ctrl-L -> **Ctrl-B** rename and Ctrl+Alt+V, including `key_filter`'s `set fwd` — which had **zero** coverage in the whole repo before it |
 | `tests/headless/fixtures/wvhier/` | the hierarchy-sync fixture: a design carrying **both** `x1` and `X1`, which is what makes the byte-exact/`-nocase` split testable |
+| `tests/headless/fixtures/tb_bandgap_vars.txt`, `tb_charge_pump_vars.txt` | the two committed **corpus name lists** (424 and 1191 names). The raws themselves are 69 MB and 621 MB and live under a scratch dir no clean checkout has — every node count in the two-pane batch was derived from data a fresh clone could not see, until these landed |
+
+⚠ **Three X-only suites sit outside both baselines** and a green baseline run proves nothing
+about them: `test_bindings_file.tcl` (13), `test_keybindings_help.tcl` (17) and
+`test_key_graph_context.tcl` (70). The two binding suites **throw** under `--nogui`
+(`invalid command name "focus"` / `"winfo"`). Run them by hand.
 
 ### ⚠ Ruling 30 — every design-window-coupled item gets its OWN PROCESS
 

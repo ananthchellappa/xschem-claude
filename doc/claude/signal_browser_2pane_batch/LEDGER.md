@@ -20,6 +20,31 @@ both arms green.
 Re-measure before item 19 and record any drift here; do **not** silently adopt a
 new baseline.
 
+> **⚠ TWO-PANE ITEM 19 RAN AND THE BATCH IS CLOSED. THE NUMBERS BELOW ARE THE
+> PRE-ITEM-19 BASELINE AND THEY WERE RE-MEASURED EXACT ON THE UNCHANGED TREE
+> BEFORE THE ITEM TOUCHED ANYTHING** — headless **1662 / 0** with every per-file
+> figure identical, X **2244** with every per-suite figure identical, the three
+> out-of-baseline X-only suites **13 / 17 / 70**. **NO DRIFT.**
+>
+> **THE CURRENT CONTRACT, after item 19: headless 1698 / 0 over the same 15
+> files, X 2281 over the same 12 suites, out-of-baseline 13 / 17 / 70.**
+> Exactly two figures moved and both are attributable to the last check:
+> `test_wave_grid` **231 → 267** headless and **356 → 392** under X (the same
+> +36: `GS1` +19, `GS2` +6, `GS3` +2, `GS22`-`GS27` +6, `GH11` +2, `GH10` +1),
+> and `test_wave_sigbrowser_i1315` **190 → 191** under X only (`BP78`, which
+> needs a mapped panedwindow) with its headless 88 **unchanged**. Every other
+> per-file and per-suite figure is byte-identical in both arms.
+>
+> **⚠ THE `:0` ARM WAS UNRELIABLE THE DAY ITEM 19 RAN.** Three whole-suite deaths
+> (`i12` and `i1315` pre-item, `sigbrowser` post-item), each with
+> `X connection to :0 broken`; the gate panel itself died and was revived once;
+> one `BP56` geometry echo failed (240 vs 260 px) and passed on re-run; and
+> `test_key_graph_context` TIMEOUTed at 400 s on its first batched attempt and
+> answered 70/0 standalone twice. **Every one re-ran clean at its baseline
+> count.** The two pre-item deaths were additionally re-measured under **Xvfb**
+> — `i12` **126**, `i1315` **190** — so the baseline is attributable rather than
+> merely re-attempted. A `NORESULT` is still not a measurement.
+
 > **⚠ THE FIX-UP MOVED THE X ARM ONLY — X 2243 → 2244, headless 1662 UNCHANGED.**
 > Two-pane item 18's verifier found the item's ONE decision point unpinned:
 > relaxing `browser_show_path`'s full-resolution guard from "the would-be model
@@ -700,7 +725,99 @@ owed** (a pixel/feel deliverable no test can judge) · `[D]` deferred, with reas
       is current-DB only. **DIVERGENCES FOR ITEM 19:** §8.2's "prefix" is a
       complete sentence; §7.4's "is logged" describes a path with no
       `log_action`; §3.3's 44/128 is still 45/129.
-- [ ] 19 — Docs, oracles, the four-file lockstep, 0217 closed
+- [x] 19 — Docs, oracles, the four-file lockstep, 0217 closed **-> DONE.**
+      Receipt `19_receipt.md`. **BOTH BASELINES RE-MEASURED EXACT on the
+      unchanged tree first**: headless **1662 / 0** over 15 files with every
+      per-file figure identical to the block above; X **2244** over 12 suites
+      with every per-suite figure identical; the three out-of-baseline X-only
+      suites **13 / 17 / 70**.
+      **AFTER: headless 1698 / 0** (`grid` 231 → **267**, +36; **every other
+      file byte-identical**), **X 2281** (`grid` 356 → **392**, +36;
+      `i1315` 190 → **191**, +1 for the X-only `BP78`; every other suite
+      byte-identical), out-of-baseline **13 / 17 / 70 unmoved**.
+      The +36 is attributable to the last check: `GS1` +19 (the contract list
+      38 → 57), `GS2` +6 (the roster 23 → 29), `GS3` +2 (6 → 8 cited issues),
+      `GS22`-`GS27` +6, `GH11` +2, `GH10` +1 (the guide's §11 rewrite adds one
+      NEW distinct §-ref, §11.2 — 14 → 15).
+      **BAND, MEASURED NOT TAKEN: the PLAN's `GS10`-`GS15` are ALL FIVE SPENT.**
+      `GS` names two unrelated blocks inside `test_wave_grid.tcl` (the spec
+      oracles GS0-GS3 and the grid-selection block GS0-GS14) **and** is owned by
+      `test_wave_sigsearch.tcl` (GS01-GS21). Item 19 took **`GS22`-`GS27`**,
+      plus **`GH11`** and **`BP78`** (both free, both reserved for this).
+      **SIX PLAN BULLETS WERE ALREADY DONE and one was REFUSED.** Already done:
+      0217 is tracked (`422b3f55`) and reads `Status: FIXED`; §5.4's hybrid rule;
+      M6's 9-of-22; §10's limit 8 (there is a ninth); §11's `d:N|` FIXED row.
+      **REFUSED: §14's "78→84, 278→303".** §3.3 already carries 84/303 and rules
+      in writing that §14's 78/278 is a *different metric* — nodes minted only by
+      device paths — in an audit of somebody else's awk. Executing that bullet
+      injects an error. The refusal is now written into §14 so nobody executes it
+      later.
+      **THE PLAN'S GS10 LIST WOULD HAVE RED `GS1` TWICE.** It named
+      `browser_tree` and `browser_sea`; MEASURED, neither exists — two-pane item
+      1 never landed (`09_receipt.md:26-27`). Dropped from the list, and §12.1 is
+      rewritten to record the accessor as never-introduced rather than as owed.
+      **RESTATED, NEVER DELETED:** `GS0`'s floor `>= 20` → `>= 48` in place;
+      `GS2`'s roster 23 → 29 (`sig_declass`, `browser_tree_rows`,
+      `browser_class_filter`, `browser_level_names`, `browser_label`,
+      `browser_flow_layout`).
+      **THE RED RUN EARNED ITS KEEP: three checks were GREEN before the docs
+      existed** — `GS25` and both `GH11` legs. They are **regression GUARDS** on
+      two-pane items 14/16, declared as such in the file, each carrying its
+      positive control in the SAME tuple, and their only positive evidence is the
+      sabotage run. `BP78` likewise closes a coverage hole rather than pinning
+      new code.
+      **8 SABOTAGES RUN, 8 FIRED**, under a locked, trapped, pre-state-asserting
+      driver whose filter counts `NORESULT`/`TIMEOUT`/`X connection broken` as
+      reds. `S1` (a ghost contract line) reds **exactly one `GS1` leg, naming
+      `browser_zznosuch`**, plus `GS23`'s exact ledger; count +1. `S2` (delete
+      the item's 19 lines) reds `GS0`+`GS22`+`GS23`+4 `GS2` legs and the **count
+      FALLS 267 → 248**. `S3` (the pre-two-pane §11 wording) reds `GS24` **and**
+      `GS26` — they are not redundant. **THE FOUR-FILE LOCKSTEP, run four times
+      and the PLAN's "BT09 *or* BX13" is neither an or nor one lever:** a 17th
+      `data-seq` row in the guide reds `GH0`+`GH1`+`GH2`+**`BT09`** with **`BX13`
+      GREEN**; bumping the literal in `test_wave_grid.tcl` reds `GH0`+**`BX13`**
+      with `BT09` green; a 17th `data-bseq` row reds `GH8`×2 + `GH9`; deleting a
+      `bind $f.` reds `GH8`+`GH9`+**`GH11`'s CONTROL** (both counters fall
+      together, which is exactly why that floor is 16 and not the PLAN's 14).
+      `S6` reds **`BP78` alone**, count held at 191.
+      **⚠ `S5` FAILED ITS OWN PREDICTION AND `S5b` IS THE CORRECTION.** Rewriting
+      an EXISTING bind through an alias reds `GH8`+`GH9`+`GH11` — because GH8's
+      per-row leg greps the literal the rewrite deleted. That is **not** the hole.
+      The hole is an **ADDED** gesture: `S5b` ships a new `bind $zzc <Button-4>`
+      beside the sash bind, `$f.` stays 16, the guide stays 16, and **`GH11` reds
+      ALONE with `GH8` and `GH9` GREEN** — that green pair IS the finding.
+      **ONE SRC EDIT, COMMENT-ONLY, UNDER THE BD06 PROTOCOL.** The
+      `tb_charge_pump` triple above `browser_class_filter` was wrong by exactly 9
+      in every term (137/111/110). RE-MEASURED on the committed fixture:
+      **1191 → 146 → 120, nets-only 119**; histogram net 120, srcbranch 26,
+      devmeas 283, devnode 762. Corrected in the source comment **and** in
+      two-pane §5.4-adjacent §6. Bare-name counts identical before and after
+      (`browser_devint` 5, `browser_srccur` 5, `browser_alldbs` 2, `device
+      internals to reach` 1) and `git diff` filtered to non-comment lines is
+      **EMPTY**. `BW59` and `BD06` green.
+      **NEW ISSUE `0225`** — `browser_target_path` mis-decodes `d:N|` All-DBs ids
+      — filed and `git add`ed, FIXED by two-pane item 8, cited from the parent
+      spec's §15 alongside **0217**. It had lived only as a paragraph inside
+      `0217:190`. `GS3` now loops **8** issues, all resolving to exactly one file.
+      **⚠ THE `:0` ARM IS UNRELIABLE TODAY AND THREE WHOLE-SUITE DEATHS WERE SEEN
+      IN THIS SESSION** (`i12` + `i1315` pre-item, `sigbrowser` post-item), all
+      carrying `X connection to :0 broken`, plus a `BP56` geometry-echo FAIL
+      (240 vs 260 px) that passed on re-run, plus the documented
+      `test_key_graph_context` 400 s TIMEOUT on its first batched attempt (70/0
+      standalone, twice). **Every one re-ran clean at its baseline count**, and
+      the two pre-item deaths were additionally re-measured under **Xvfb**
+      (`i12` **126**, `i1315` **190**) to make the baseline attributable.
+      **DIVERGENCES ITEM 18 HANDED ON, ALL THREE NOW CLOSED:** §3.3 gains the
+      rows-vs-nodes sentence (44/128 **nodes**, 45/129 **rows**); §8.2's "prefix"
+      is corrected to "a whole `browser_msg` arm, not a prefix" (`BK37` pins the
+      string byte-exact); §7.4's "is logged" is corrected to **no log line at
+      all** — the auto-tick calls `browser_devint` directly and that accessor has
+      no `log_action`.
+      **DECLARED LIMITS:** the `.ph` count line is **still class-filter blind**
+      and still belongs to §7.2's three-state caption — recorded, not moved;
+      `browser_show_path`'s bar clause is still stale and still not item 19's;
+      **nothing in this batch is visually verified** — the eyeball queue below
+      keeps its four unticked rows.
 
 ### Dependencies — the driver enforces these before launching
 

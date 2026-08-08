@@ -945,11 +945,27 @@ is what guarantees no plotting session can ever modify a schematic.</li>
 <h2 id="browser">11. The Signal Browser</h2>
 
 <p>The <b>Signal Browser</b> is a sidebar down the left edge of the viewer window
-listing every signal in the loaded <code>.raw</code> file, with a search box, a
-hierarchy tree, and gestures that plot straight from it. Open and close it with
-<kbd>Ctrl</kbd>+<kbd>L</kbd> or <span class="menu">View &gt; Signal
-Browser</span>. It starts hidden, and a viewer that never opens it draws exactly
-as it did before the browser existed.</p>
+listing the signals in the loaded <code>.raw</code> file, with gestures that plot
+straight from it. Open and close it with <kbd>Ctrl</kbd>+<kbd>B</kbd> or <span
+class="menu">View &gt; Signal Browser</span>. It starts hidden, and a viewer that
+never opens it draws exactly as it did before the browser existed.</p>
+
+<p>It has <b>two panes, one above the other</b>, and the split between them can
+be dragged:</p>
+
+<ul>
+<li>the <b>instance tree</b> on top &mdash; the design's hierarchy and nothing
+else. Instances only: no signal ever appears as a row here. Exactly one instance
+is selected at a time, and something always is;</li>
+<li>the <b>sea of names</b> below &mdash; the signals belonging to the selected
+instance's <em>own level</em>, flowed into columns. Selecting an instance above
+is what fills it.</li>
+</ul>
+
+<p>Two boxes above them decide what counts as a signal at all: <b>Show device
+internals</b> (off to begin with) and <b>Show source currents</b> (on to begin
+with). They are described in <a href="#browser-tree">§11.2</a>, because until you
+know they are there the tree looks far emptier than the raw file is.</p>
 
 <p>It is the xschem port of the Cadence ViVA signal browser. Where it differs
 from ViVA it differs on purpose; the reasons, the measurements behind them and
@@ -1014,35 +1030,76 @@ expression. Use the <b>Match case</b> box instead.</p>
 <b>Filter</b> bar. It has the same controls minus the button and the DB scope,
 and it narrows what the Search bar already found — the two are ANDed.</p>
 
-<h3 id="browser-tree">11.2 The tree</h3>
+<h3 id="browser-tree">11.2 The two panes</h3>
 
-<p>Signals are grouped by hierarchy: <code>v(x1.x2.net5)</code> appears as
-<code>net5</code> inside <code>x2</code> inside <code>x1</code>. The grouping
-uses the name with its <code>v(</code>/<code>i(</code> wrapper removed, which is
-why there is no group called <code>v(x1</code>.</p>
+<p><b>The instance tree, on top.</b> It is the design's hierarchy and nothing
+else: one row per instance, with the design itself as the row at the root.
+Signals are never rows here. Instances come from the signal names —
+<code>v(x1.x2.net5)</code> puts <code>x2</code> inside <code>x1</code> — using the
+name with its <code>v(</code>/<code>i(</code> wrapper removed, which is why there
+is no instance called <code>v(x1</code>.</p>
 
-<p>Selection is extended — <kbd>Shift</kbd> and <kbd>Ctrl</kbd> work as usual.
-Three things plot:</p>
+<p>Everything starts <b>collapsed</b>, and <b>exactly one row is selected at all
+times</b> — the design root, until you pick something else. Clicking a different
+instance is what refills the pane below; it never plots anything by itself.
+Selection here is single: <kbd>Shift</kbd> and <kbd>Ctrl</kbd> do not extend it.
+That is what the lower pane is for.</p>
+
+<p><b>The sea of names, below.</b> The signals belonging to the selected
+instance's <em>own level</em> — not its children's. They flow into columns: down
+a column, then on to the next one to the right, so a taller pane gives longer
+columns and a shorter one gives more of them. The pane scrolls <b>sideways
+only</b>; there is deliberately no vertical scrollbar.</p>
+
+<p>Names here are written the way Cadence writes them, not the way ngspice does:
+<code>xm1:id</code> for a device measurement, <code>v1:i</code> for a source's
+branch current, and a plain design net as its own bare name. Hover a name to see
+the full raw name behind it — <code>i(v.x1.v1)</code> for a row drawn
+<code>v1:i</code> — which is also what <b>Copy names</b> puts on the
+clipboard.</p>
+
+<p><b>Selection in this pane is extended</b> — <kbd>Shift</kbd> and
+<kbd>Ctrl</kbd> work as usual, <kbd>Shift</kbd> running <em>in flow order</em>,
+down the column and on to the next. Double-click or middle-click plots; if the
+signal you click is part of the selection, the whole selection plots.</p>
+
+<p><b>Two boxes decide what is a signal at all.</b> A modern PDK's raw file is
+mostly not your design: a BSIM4 MOSFET contributes several internal body nodes
+apiece, and each of those is a name. So:</p>
 
 <table>
-<tr><th>Gesture</th><th>What it plots</th></tr>
-<tr><td>Double-click a <b>signal</b></td><td>That signal.</td></tr>
-<tr><td>Middle-click</td><td>The row under the pointer, or the whole group's
-signals if it is a group.</td></tr>
-<tr><td>The <b>Plot</b> button</td><td>Everything selected, groups
-included.</td></tr>
+<tr><th>Box</th><th>Default</th><th>What it does</th></tr>
+<tr><td><b>Show device internals</b></td><td>off</td><td>Brings in the internal
+nodes and per-device measurements of primitives. Measured on one testbench:
+<b>424 names become 190</b> with it off.</td></tr>
+<tr><td><b>Show source currents</b></td><td>on</td><td>Keeps the branch currents
+of voltage sources inside subcircuits. Turning it off as well takes the same
+testbench down to <b>140</b>.</td></tr>
 </table>
 
-<p><b>Double-clicking a group does not plot it</b> — that gesture belongs to the
-tree widget, which uses it to expand and collapse. Use middle-click or the Plot
-button on a group.</p>
+<p>They narrow the tree as well as the sea: an instance <em>all</em> of whose
+signals are device internals is not shown at all while the first box is off. On
+the same testbench that is 84 of 128 instances; on a larger one, 303 of 316. If
+an instance you expected is missing, that box is the first thing to try.</p>
 
-<p>When a group is plotted, its signals go in <b>raw-file order</b>, which is not
-always the order they are drawn in the tree: a signal that arrives late in the
-file is filed under the group it belongs to, so the tree shows it beside its
+<p><b>An empty lower pane is not always the same thing</b>, so the line under it
+says which: the instance genuinely <i>has no signals of its own</i> (it exists
+only because something inside it does), or the <i>Search/Filter bar is hiding
+them</i>, or <i>device internals are hidden</i>. Each has a different
+remedy.</p>
+
+<p><b>Plotting from the tree still works, and it is recursive.</b>
+Middle-clicking an instance, or the <b>Plot</b> button, plots everything at and
+under it — including the levels below, which is not what the sea of names shows.
+<b>Double-clicking an instance does not plot it</b>: that gesture belongs to the
+tree widget, which uses it to expand and collapse.</p>
+
+<p>When an instance is plotted this way its signals go in <b>raw-file order</b>,
+which is not always the order they are drawn: a signal that arrives late in the
+file is filed under the instance it belongs to, so the tree shows it beside its
 siblings while the plot order still follows the file.</p>
 
-<p>The tree is a <b>snapshot</b> taken when the sidebar is shown, not a live
+<p>Both panes are a <b>snapshot</b> taken when the sidebar is shown, not a live
 view. If a raw file is loaded by some other route while the sidebar is already
 open, close and reopen the sidebar to pick it up. Loading through the Location
 bar (<a href="#browser-loc">§11.4</a>) refreshes it for you.</p>
@@ -1228,11 +1285,21 @@ Each has a different remedy, so they are worded differently.</p>
 <h3 id="browser-state">11.7 What is remembered</h3>
 
 <p>The browser is part of the saved simulation state (<a
-href="#state">§8</a>): whether the sidebar was shown, its width, both bars'
-settings, the plot destination, which groups were expanded, what was selected,
-and the raw-file history. Restoring into a smaller window re-applies the width
-through the same 45%-of-the-window cap a fresh sidebar uses, so the number is
-kept but the pixels may not be.</p>
+href="#state">§8</a>): whether the sidebar was shown, its width, the
+<b>split between the two panes</b>, both class boxes (<b>Show device
+internals</b> and <b>Show source currents</b>), both bars' settings, the plot
+destination, which instances were expanded, what was selected, and the raw-file
+history.</p>
+
+<p>Two of those are kept as <em>proportions</em> rather than as pixels, and the
+distinction shows up when you reopen into a different-sized window. The width is
+re-applied through the same 45%-of-the-window cap a fresh sidebar uses, so the
+number is kept but the pixels may not be. The split between the panes is saved
+as a <b>fraction of the sidebar's height</b>, so a shorter window puts the sash
+back in the same <em>place</em>, not at the same number of pixels down.</p>
+
+<p>A window you have never customised carries no browser state at all — the
+settings only start being saved once something departs from its default.</p>
 
 <h2 id="trouble">12. Troubleshooting</h2>
 

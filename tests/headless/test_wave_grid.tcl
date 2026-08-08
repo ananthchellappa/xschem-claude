@@ -506,6 +506,29 @@ foreach gh_line [split $gh_bb "\n"] {
 check "GH9 every gesture browser_build binds has a guide row" \
   $gh_nbb [llength $gh_bseqs]
 
+# --- GH11 — THE HOLE NEITHER GH8 NOR GH9 CAN SEE (TWO-PANE item 19) ----------
+# Both of the legs above are anchored on the literal `bind $f.`: GH8 walks
+# doc -> source asking only about rows the guide ALREADY has, and GH9 counts
+# source -> doc with the same pattern. A gesture bound through a widget ALIAS
+#     set c $f.pw.sea.c ; bind $c <Button-1> …
+# is invisible to BOTH — GH8 never asks about it, and GH9 compares two numbers
+# that are each one short. So a shipped, undocumented gesture is a state the
+# pair reports as green, and the guide's ledger could be quietly wrong.
+#
+# THE CLAIM: inside `browser_build` every statement-initial `bind` binds a path
+# spelled from `$f`, so GH9's counter is COMPLETE and not merely consistent.
+# `^\s*bind \$[a-z]` catches `$f.`, `$c`, `$tv`, `$w` and `$top` alike; equality
+# with $gh_nbb is what says no alias slipped in. A commented-out bind cannot
+# match either pattern (`#` precedes `bind`), so prose is safe.
+check "GH11 browser_build binds nothing through a widget ALIAS" \
+  [regexp -all -line {^\s*bind \$[a-z]} $gh_bb] $gh_nbb
+# ⚠ THE CONTROL, AND ITS FLOOR IS 16 RATHER THAN THE 14 THE PLAN NAMED.
+# Without it the leg above is `0 == 0` on a renamed or deleted proc. MEASURED 16
+# at TWO-PANE item 19; a floor of 14 stays green after two binds are deleted,
+# which is exactly the drift GH8/GH9/GH11 exist together to catch.
+check "GH11 (CONTROL) the counter sees the binds that ARE there" \
+  [expr {$gh_nbb >= 16}] 1
+
 # --- GH10 — every prose §N names a real heading IN THIS FILE ------------------
 # Item 16 inserted a whole section, which renumbers the two below it. This leg
 # is the self-defence for that edit and for every later one.
@@ -551,16 +574,30 @@ set gs_names {}
 foreach gs_ln [split $gs_src "\n"] {
   if {[regexp {^- `wviewer::([a-z0-9_]+)`} $gs_ln -> gs_n]} { lappend gs_names $gs_n }
 }
-check_true "GS0 the spec's contract list was found" [expr {[llength $gs_names] >= 20}]
+# ⚠ 20 -> 48, TWO-PANE ITEM 19. The floor is a LEDGER as well as an extraction
+# control: the two-pane batch minted seventeen procs the parent spec never named
+# and the reconcile takes the list 38 -> 57. Moving this literal in the same
+# commit as the spec lines is what stops the list rotting back down again.
+# GS23 below carries the exact count; this stays the "the extraction found
+# something at all" leg, one step above the level where GS1 goes vacuous.
+check_true "GS0 the spec's contract list was found" [expr {[llength $gs_names] >= 48}]
 foreach gs_n $gs_names {                                  ;# spec -> source
   check_true "GS1 the spec's wviewer::$gs_n exists in src/wave_viewer.tcl" \
     [expr {[regexp "\nproc wviewer::${gs_n}\\s" $wsrc]}]
 }
+# ⚠ 23 -> 29, TWO-PANE ITEM 19. This is the SOURCE -> SPEC direction and it is
+# hard-coded on purpose: a derived list would shrink silently with the spec.
+# The six added are the two-pane rebuild's load-bearing shapes — the class
+# strip, the tree's row filter, the sea's per-level selector, its two label
+# forms' entry point and the flow layout — chosen so that a rebuild that
+# deleted any of them could not ship with a green suite.
 set gs_want {sig_type sig_match sig_split signal_entry signal_list signal_list_all
              rawinfo_parse db_label attach_raw plot_dest rawbar_load rawbar_commit
              browser_build browser_show browser_toggle browser_state
              browser_state_apply hier_split hier_common hier_same hier_now
-             searchbar_build searchbar_get}
+             searchbar_build searchbar_get
+             sig_declass browser_tree_rows browser_class_filter
+             browser_level_names browser_label browser_flow_layout}
 foreach gs_n $gs_want {                                   ;# source -> spec
   check_true "GS2 the spec's contract list names wviewer::$gs_n" \
     [expr {[lsearch -exact $gs_names $gs_n] >= 0}]
@@ -578,6 +615,90 @@ foreach gs_i [lsort -unique $gs_iss] {
     [expr {[llength [glob -nocomplain \
        [file join $repo doc claude issues ${gs_i}-*.md]]] == 1}]
 }
+
+# ============================================================================
+# GS22-GS27 — the TWO-PANE batch's own doc oracles (TWO-PANE item 19)
+# ============================================================================
+# ⚠⚠ WHY THESE ARE NOT THE PLAN'S GS10-GS15. `GS` is used for TWO unrelated
+# blocks inside this one file — the spec oracles above and the grid-selection
+# survival block below — and the latter is spent to GS14 with no gaps. GS is
+# ALSO owned by `test_wave_sigsearch.tcl` (GS01-GS21). GS22-GS27 is the first
+# run that collides with nothing in either owning file. MEASURED, not assumed.
+#
+# ⚠ TWO OF THE SIX WERE GREEN BEFORE THE ITEM'S DOCS EXISTED (GS25 and the
+# GH11 pair above), and that is recorded rather than hidden: they are
+# regression GUARDS on work TWO-PANE items 14/16 already did, and their only
+# positive evidence is the item's sabotage run. GS22, GS23, GS24, GS26 and
+# GS27 were all RED on the red run.
+#
+# Helpers. Both answer a VALUE for every input — a missing or unreadable file
+# makes them answer "everything is missing" / 0, never throw.
+proc bs_missing {have want} {
+  set out {}
+  foreach n $want { if {[lsearch -exact $have $n] < 0} { lappend out $n } }
+  return $out
+}
+proc bs_all_in {hay args} {
+  foreach s $args { if {[string first $s $hay] < 0} { return 0 } }
+  return 1
+}
+
+# ⚠ SEVENTEEN NAMES, AND `browser_tree` / `browser_sea` ARE DELIBERATELY ABSENT.
+# The PLAN's list named them; MEASURED, neither proc exists — two-pane item 1
+# (the accessor) never landed, and 09_receipt.md:26-27 says so outright. Naming
+# them in the spec would red exactly two GS1 legs above, so the fix is to keep
+# them off the list, not to invent the procs.
+# THE SECOND ELEMENT IS THE SOURCE-SIDE CONTROL, in the SAME tuple on purpose:
+# without it this check goes green on a spec that names seventeen ghosts.
+set gs_2pane {browser_class_filter browser_tree_rows browser_level_names
+              browser_label browser_label_full browser_root_label
+              browser_root_id browser_flow_layout browser_flow_cell
+              browser_flow_hit browser_flow_scrollregion browser_sea_build
+              browser_sea_refresh browser_sea_selection browser_devint
+              browser_srccur browser_sash}
+set gs_2have 0
+foreach gs_n $gs_2pane {
+  if {[regexp "\nproc wviewer::${gs_n}\\s" $wsrc]} { incr gs_2have }
+}
+check {GS22 the parent spec's contract list NAMES every proc the two-pane batch
+       minted, and every name on that list is a REAL proc} \
+  [list [bs_missing $gs_names $gs_2pane] $gs_2have] [list {} 17]
+
+# ⚠ AN EXACT LEDGER, NOT A FLOOR, and that is the point: GS0's `>= 48` above is
+# the floor, this is the count. A file that loses half its contract list prints
+# a plausible fail count while silently dropping GS1 legs — the LENGTH is the
+# only witness to that, and a floor cannot be it.
+check {GS23 the contract list is duplicate-free, and its length is the ledger} \
+  [list [expr {[llength $gs_names] - [llength [lsort -unique $gs_names]]}] \
+        [llength $gs_names]] [list 0 57]
+
+check {GS24 the guide's browser section names BOTH panes and BOTH class checkboxes} \
+  [bs_all_in $gsrc {instance tree} {sea of names} \
+                   {Show device internals} {Show source currents}] 1
+
+# ⚠ GREEN BEFORE THE ITEM — a GUARD on two-pane items 16/17b, declared as one.
+# The negative and its positive control ride in ONE tuple so they cannot drift
+# apart: a guide whose attributes were stripped answers {0 0 0 0}, not {0 0 1 1}.
+check {GS25 the guide documents the browser on Ctrl-B, with no row left for the
+       renamed chord and none for the schematic chord} \
+  [list [regexp -all {data-seq="Control-Key-l"} $gsrc] \
+        [regexp -all {data-seq="[^"]*Alt-Key-v"} $gsrc] \
+        [regexp -all {data-seq="Control-Key-b"} $gsrc] \
+        [regexp -all {data-seq="Key-E"} $gsrc]] {0 0 1 1}
+
+# GS25 pins the TABLE; the PROSE is a separate surface and it was still on the
+# old chord after two-pane item 16 renamed the key. Second leg is the control.
+check {GS26 the guide's §11 PROSE moved off Ctrl-L and onto Ctrl-B} \
+  [list [regexp -all {<kbd>Ctrl</kbd>\+<kbd>L</kbd>} $gsrc] \
+        [regexp -all {<kbd>Ctrl</kbd>\+<kbd>B</kbd>} $gsrc]] {0 1}
+
+# The per-issue GS3 legs above prove each cited number RESOLVES; this proves the
+# two the two-pane batch owes are CITED at all, and pins the total so a citation
+# cannot be dropped in exchange for a new one.
+check {GS27 the parent spec cites the two issues the two-pane batch owes} \
+  [list [expr {[lsearch -exact $gs_iss 0217] >= 0}] \
+        [expr {[lsearch -exact $gs_iss 0225] >= 0}] \
+        [llength [lsort -unique $gs_iss]]] {1 1 8}
 
 # ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)
