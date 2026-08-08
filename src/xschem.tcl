@@ -13805,7 +13805,8 @@ set tctx::global_list {
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
  no_ask_save no_ask_simulate no_change_attrs nolist_libs noprint_libs only_probes
- orthogonal_wiring path pathlist persistent_command preserve_unchanged_attrs prev_symbol ps_colors
+ orthogonal_wiring path pathlist persistent_command pin_rename_propagate
+ preserve_unchanged_attrs prev_symbol ps_colors
  ps_paper_size rainbow_colors rotated_text search_case search_exact
  search_found search_schematic search_select search_value select_touch
  show_hidden_texts show_infowindow show_infowindow_after_netlist simconf_default_geometry
@@ -14928,6 +14929,8 @@ proc build_widgets { {topwin {} } } {
      -label "Search all search-paths for schematic associated to symbol" -variable search_schematic
   $topwin.menubar.sym add checkbutton -label "Allow duplicated instance names (refdes)" \
       -selectcolor $selectcolor -variable disable_unique_names
+  $topwin.menubar.sym add checkbutton -label "Renaming a pin renames its net labels" \
+      -selectcolor $selectcolor -variable pin_rename_propagate
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
@@ -15812,6 +15815,12 @@ set_ne orthogonal_wiring 0
 set_ne wire_exit_stub 0
 set_ne compare_sch 0
 set_ne disable_unique_names 0
+
+## Cadence-style pin-rename label propagation: renaming an interface pin's `lab`
+## rewrites every net label in the same schematic that carried the old name, so
+## the connectivity survives the rename (doc/claude/specs/pin_rename_propagation.md).
+## Read from C by propagate_pin_rename(). MIRRORED IN TCL.
+set_ne pin_rename_propagate 1
 set_ne sym_txt 1
 set_ne show_infowindow 0
 set_ne show_infowindow_after_netlist onerror

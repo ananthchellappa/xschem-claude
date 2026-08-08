@@ -2788,6 +2788,39 @@ extern int apply_instance_properties(const char *scope, unsigned int displayed_i
                               const char *new_prop, const char *old_prop, int keep_name);
 extern int scope_targets(int displayed_inst, const char *scope, int *targets);
 extern int pin_scope_targets(int primary_n, const char *scope, int *targets);
+/* Cadence-style pin-rename label propagation, doc/claude/specs/pin_rename_propagation.md.
+ * Outcome codes: anything past PRR_MERGE means the propagation was REFUSED and no
+ * label was touched. The refusals are all-or-nothing on purpose: a partial rewrite
+ * makes the sheet look self-consistent while the netlist is wrong, which is worse
+ * than not propagating at all. */
+enum {
+  PRR_OK = 0,     /* proceed                                                    */
+  PRR_MERGE,      /* proceed, but NEW is already carried by another net object   */
+  PRR_NOT_PIN,    /* source is not ipin/opin/iopin                               */
+  PRR_SAME,       /* NEW == OLD                                                  */
+  PRR_EMPTY_OLD,
+  PRR_EMPTY_NEW,
+  PRR_AMBIGUOUS,  /* another pin still carries OLD                               */
+  PRR_GLOBAL_OLD, /* OLD is a global net name on this sheet                      */
+  PRR_GLOBAL_NEW, /* NEW is a global net name on this sheet                      */
+  PRR_BUSOVERLAP, /* a label bit-overlaps OLD without matching it exactly        */
+  PRR_SELECTED,   /* a matching label is selected: the caller may be editing it  */
+  PRR_BAD_INST
+};
+/* PURE: which net labels would follow pin <src_inst> from <oldlab> to <newlab>.
+ * Reads xctx; writes only targets[] (caller-sized >= xctx->instances) and *status.
+ * Returns the count; a 0 with *status past PRR_MERGE means refused. Ignores the
+ * pin_rename_propagate preference so the decision can be inspected on its own. */
+extern int pin_rename_targets(int src_inst, const char *oldlab, const char *newlab,
+                              int *targets, int *status);
+extern const char *pin_rename_status_str(int status);
+/* Thin mutation shell. <src_inst> is ALREADY renamed; <oldlab> is a COPY of its
+ * previous `lab` read with with_quotes=0. Honors the preference, warns on every
+ * refusal a user would notice. Caller owns push_undo/set_modify/redraw.
+ * Returns the number of net labels rewritten. */
+extern int propagate_pin_rename(int src_inst, const char *oldlab);
+/* flyline.c: bit-precise bus overlap -- A[1:0] matches A[0], A[1] does not. Read-only. */
+extern int flyline_same_net(const char *a, const char *b);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
 /* The single mutation/command boundary (Refactor B, audit §4): ONE readonly gate +

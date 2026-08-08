@@ -11475,6 +11475,11 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           char *translated_sym = NULL;
           int sym_number = -1;
           char *subst = NULL, *old_name = NULL;;
+          char *old_lab = NULL; /* pin name before the edit (pin-rename propagation) */
+
+          /* copied before the property write: get_tok_value's buffer is rotating
+           * (doc/claude/specs/pin_rename_propagation.md) */
+          my_strdup2(_ALLOC_ID_, &old_lab, get_tok_value(xctx->inst[inst].prop_ptr, "lab", 0));
 
           if(!fast) {
             symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
@@ -11519,6 +11524,17 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(old_name) my_free(_ALLOC_ID_, &old_name);
           set_inst_flags(&xctx->inst[inst]);
           hash_names(inst, XINSERT);
+          /* Renaming an interface pin drags its net labels along, in the undo slot
+           * pushed above (doc/claude/specs/pin_rename_propagation.md).
+           *
+           * Not under -fast (fast==1): that form pushes no undo and skips draw(),
+           * and its callers loop over a whole selection themselves --
+           * utils/bus_resize.tcl issues one -fast setprop per selected pin AND
+           * label under a single outer undo, so propagating would double-edit
+           * exactly the objects the loop is about to edit. -fastundo (fast==3)
+           * and the plain form both push undo and both propagate. */
+          if(fast != 1) propagate_pin_rename(inst, old_lab);
+          my_free(_ALLOC_ID_, &old_lab);
           set_modify(1); /* set modified state */
           if(!fast) {
             /* new symbol bbox after prop changes (may change due to text length) */
