@@ -520,6 +520,13 @@ check "GH9 every gesture browser_build binds has a guide row" \
 # `^\s*bind \$[a-z]` catches `$f.`, `$c`, `$tv`, `$w` and `$top` alike; equality
 # with $gh_nbb is what says no alias slipped in. A commented-out bind cannot
 # match either pattern (`#` precedes `bind`), so prose is safe.
+#
+# ⚠ THE LIMIT, STATED EXACTLY. The pattern needs a `$` AND a LOWERCASE initial,
+# so it cannot see a bind on a LITERAL path (`bind .foo.bar <…>`) NOR one
+# spelled from an uppercase-initial variable (`bind $Foo <…>`). Neither form
+# exists in `browser_build` today (measured) and neither matches the file's
+# lower-case-local convention, but the claim is "every bind spelled from a
+# lower-case-initial variable is counted", not "every bind is counted".
 check "GH11 browser_build binds nothing through a widget ALIAS" \
   [regexp -all -line {^\s*bind \$[a-z]} $gh_bb] $gh_nbb
 # ⚠ THE CONTROL, AND ITS FLOOR IS 16 RATHER THAN THE 14 THE PLAN NAMED.
@@ -617,7 +624,7 @@ foreach gs_i [lsort -unique $gs_iss] {
 }
 
 # ============================================================================
-# GS22-GS27 — the TWO-PANE batch's own doc oracles (TWO-PANE item 19)
+# GS22-GS29 — the TWO-PANE batch's own doc oracles (TWO-PANE item 19)
 # ============================================================================
 # ⚠⚠ WHY THESE ARE NOT THE PLAN'S GS10-GS15. `GS` is used for TWO unrelated
 # blocks inside this one file — the spec oracles above and the grid-selection
@@ -642,7 +649,46 @@ proc bs_all_in {hay args} {
   foreach s $args { if {[string first $s $hay] < 0} { return 0 } }
   return 1
 }
+# ⚠ WHOLE-FILE SUBSTRING ORACLES CANNOT SEE A SECTION-SHAPED REGRESSION, AND
+# `GS28` BELOW IS THE FIX-UP THAT PROVES IT. `bs_all_in $gsrc {…}` (GS24) is
+# green as long as a phrase survives ANYWHERE in the guide, so §11.7 could be
+# reverted wholesale to its pre-two-pane single-pane wording with all four
+# suites that read the guide still ALL PASS — measured, by the item's own
+# verifier. These two helpers scope a claim to ONE section.
+#
+# bs_section: everything after $anchor up to the next heading tag. `</h3>` does
+# not match `<h[1-6][ >]` (a `/` follows the `<`), so the section's own closing
+# tag cannot truncate it at zero length. A missing anchor answers {} — a VALUE,
+# never a throw — which reds the control leg rather than aborting the file.
+proc bs_section {hay anchor} {
+  set i [string first $anchor $hay]
+  if {$i < 0} { return {} }
+  set rest [string range $hay [expr {$i + [string length $anchor]}] end]
+  set j [regexp -indices -inline {<h[1-6][ >]} $rest]
+  if {[llength $j]} {
+    set rest [string range $rest 0 [expr {[lindex [lindex $j 0] 0] - 1}]]
+  }
+  return $rest
+}
+# bs_flat: tags -> spaces, runs of whitespace -> one space. REQUIRED, not
+# cosmetic: the guide hard-wraps its prose, so `<b>Show device\ninternals</b>`
+# carries the string "Show device internals" nowhere in the raw bytes. A
+# section-scoped check written without this reds on correct text.
+proc bs_flat {s} {
+  set s [regsub -all {<[^>]*>} $s { }]
+  set s [regsub -all {\s+} $s { }]
+  return [string trim $s]
+}
 
+# ⚠ THIS ROSTER IS SEVENTEEN HAND-PICKED NAMES, NOT "EVERY PROC THE BATCH
+# MINTED", and the check TITLE now says so — a title is what a later reader
+# trusts, and this one used to overclaim. The two-pane batch also minted
+# `browser_sash_pref`, `browser_sash_drop`, `browser_tree_state`,
+# `browser_tree_apply`, `browser_device_paths`, `browser_sea_layout` and
+# `browser_sea_names`; those are covered only INDIRECTLY, by GS23's exact 57.
+# The roster is hard-coded on purpose (a derived list would shrink with the
+# spec); GS23's length is what makes the omissions unable to grow silently.
+#
 # ⚠ SEVENTEEN NAMES, AND `browser_tree` / `browser_sea` ARE DELIBERATELY ABSENT.
 # The PLAN's list named them; MEASURED, neither proc exists — two-pane item 1
 # (the accessor) never landed, and 09_receipt.md:26-27 says so outright. Naming
@@ -660,8 +706,10 @@ set gs_2have 0
 foreach gs_n $gs_2pane {
   if {[regexp "\nproc wviewer::${gs_n}\\s" $wsrc]} { incr gs_2have }
 }
-check {GS22 the parent spec's contract list NAMES every proc the two-pane batch
-       minted, and every name on that list is a REAL proc} \
+check {GS22 the parent spec's contract list names the two-pane batch's SEVENTEEN
+       load-bearing procs (a hard-coded roster, NOT every proc the batch minted
+       — GS23's exact 57 is what covers the rest), and every name on that list
+       is a REAL proc} \
   [list [bs_missing $gs_names $gs_2pane] $gs_2have] [list {} 17]
 
 # ⚠ AN EXACT LEDGER, NOT A FLOOR, and that is the point: GS0's `>= 48` above is
@@ -699,6 +747,92 @@ check {GS27 the parent spec cites the two issues the two-pane batch owes} \
   [list [expr {[lsearch -exact $gs_iss 0217] >= 0}] \
         [expr {[lsearch -exact $gs_iss 0225] >= 0}] \
         [llength [lsort -unique $gs_iss]]] {1 1 8}
+
+# --- GS28 — §11.7 IS THE ONLY DOC OF TWO-PANE ITEM 14, AND IT HAD NO ORACLE ---
+#
+# ⚠⚠ THIS IS A FIX-UP CHECK AND THE HOLE IT CLOSES WAS MEASURED, NOT FEARED.
+# TWO-PANE item 19's verifier reverted `doc/waveform_viewer_guide.html` §11.7
+# "What is remembered" wholesale to its PRE-two-pane single-pane wording —
+# dropping the sash split, BOTH class-box names and the entire
+# fraction-vs-pixels paragraph — and every suite that reads the guide stayed
+# ALL PASS with EVERY count unchanged: grid 267, sigbrowser 135, i12 40,
+# keys 25. Zero reds, zero dropped legs.
+#
+# WHY THE EXISTING ORACLES CANNOT SEE IT. GS24 above asks `bs_all_in $gsrc`,
+# i.e. the WHOLE FILE — and all four of its phrases also occur in §11.0/§11.2,
+# so deleting §11.7 changes none of them. GS26 pins the Ctrl-B prose only.
+# GH10 counts §-references and headings, and §11.7's heading survives a body
+# rewrite. So the guide could silently go back to describing a single-pane
+# browser that forgets everything, in both arms, fully green.
+#
+# WHAT THIS PINS. §11.7 is the ONLY user-facing description of TWO-PANE item
+# 14's whole feature — the persisted sash and the two persisted class boxes —
+# and it is the exact text item 14's still-unticked eyeball row asks a human to
+# confirm. The four phrase legs are named individually so a red says WHICH
+# sentence went missing; a per-leg name is worth more here than a tuple.
+set gs_117 [bs_flat [bs_section $gsrc {<h3 id="browser-state">}]]
+# THE EXTRACTION CONTROL, and its floor is deliberately LOW. Its job is "a real
+# section was read, so the four legs below are meaningful reds" — not to be the
+# discriminator. MEASURED: the shipped §11.7 flattens to 936 chars and the
+# pre-two-pane wording to ~350, so `>= 300` stays GREEN under the verifier's
+# revert while all four legs go RED. A floor set high enough to catch the
+# revert would collapse the control into the claim and hide which is which.
+check {GS28 (CONTROL) the guide's §11.7 was found and is not a stub} \
+  [expr {[string length $gs_117] >= 300}] 1
+foreach gs_ph {{split between the two panes}
+               {Show device internals} {Show source currents}
+               {fraction of the sidebar's height}} {
+  check_true "GS28 the guide's §11.7 still says \"$gs_ph\"" \
+    [expr {[string first $gs_ph $gs_117] >= 0}]
+}
+
+# --- GS29 — A CORRECTED NUMBER MUST NOT SURVIVE AS A STALE COPY -------------
+#
+# ⚠⚠ ALSO A FIX-UP CHECK, AND ALSO A MEASURED DEFECT RATHER THAN A FEAR.
+# TWO-PANE item 19 re-measured `tb_charge_pump` (the shipped triple was wrong
+# by exactly 9 in every term) and corrected TWO of the THREE places it lived —
+# the source comment above `browser_class_filter` and §5.4 of the two-pane
+# spec. The third, §0's opening motivation table in that SAME file, kept the
+# stale `110` under the column header "of which are design nets". Nothing was
+# red. The item's own new paragraph asserted "corrected both files in one
+# commit", which was false as written.
+#
+# THE ORACLE IS WITHIN-FILE AGREEMENT, which is what the defect actually was:
+# §0's table row and §5.4's stated nets-only figure are the SAME metric — the
+# `tb_bandgap` row reads `424 | 139` and §5.4 says "Design nets only would be
+# 139" — so they must carry the same number or one of them has rotted.
+#
+# ⚠ ASCII-ONLY PATTERNS ON PURPOSE. §5.4's sentence is written with `→`; a
+# pattern containing it would depend on the encoding this file is read under.
+# `nets-only \*\*N\*\*` is the same anchor with no non-ASCII byte in it.
+set gs_2p [file join $repo doc claude specs waveform_signal_browser_two_pane.md]
+set gs_2src {}
+if {[file isfile $gs_2p]} {
+  set fp [open $gs_2p r]; set gs_2src [read $fp]; close $fp
+}
+check_true "GS29 (CONTROL) the two-pane spec was read" \
+  [expr {[string length $gs_2src] >= 20000}]
+proc bs_rows {src nm} {
+  set out {}
+  foreach {a n m} [regexp -all -inline \
+      "\\|\\s*`$nm`\\s*\\|\\s*(\[0-9\]+)\\s*\\|\\s*(\[0-9\]+)\\s*\\|" $src] {
+    lappend out [list $n $m]
+  }
+  return $out
+}
+set gs_nets {}
+foreach {gs_a gs_v} [regexp -all -inline {nets-only \*\*([0-9]+)\*\*} $gs_2src] {
+  lappend gs_nets $gs_v
+}
+# ONE TUPLE, FOUR TERMS, AND THE `tb_bandgap` ROW IS THE POSITIVE CONTROL: it
+# re-measures CORRECT and unchanged, so a green here is "the two surfaces agree
+# on BOTH designs", not "the extractor found nothing". A dropped table row
+# answers {} and reds; it cannot masquerade as agreement.
+check {GS29 the two-pane spec's §0 motivation table agrees with §5.4's measured
+       nets-only figure — a corrected number must not survive as a stale copy
+       elsewhere in the same file} \
+  [list [bs_rows $gs_2src tb_bandgap] [bs_rows $gs_2src tb_charge_pump] \
+        $gs_nets] {{{424 139}} {{1191 119}} 119}
 
 # ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)

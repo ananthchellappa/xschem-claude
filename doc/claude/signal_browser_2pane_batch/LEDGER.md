@@ -26,9 +26,37 @@ new baseline.
 > figure identical, X **2244** with every per-suite figure identical, the three
 > out-of-baseline X-only suites **13 / 17 / 70**. **NO DRIFT.**
 >
-> **THE CURRENT CONTRACT, after item 19: headless 1698 / 0 over the same 15
-> files, X 2281 over the same 12 suites, out-of-baseline 13 / 17 / 70.**
-> Exactly two figures moved and both are attributable to the last check:
+> **⚠⚠ SUPERSEDED BY THE ITEM-19 FIX-UP (2026-08-08). THE CURRENT CONTRACT IS:**
+> **headless 1705 / 0 over the same 15 files** (`test_wave_grid` 267 → **274**,
+> the only mover, `+7` = `GS28` +5 and `GS29` +2), **X 2162 measurable over 11
+> of the 12 suites** (`test_wave_grid` 392 → **399**, the same `+7`; every other
+> per-suite figure identical to the post-item-19 numbers), **out-of-baseline
+> 13 / 17 / 70 unmoved**. The fix-up closes the verifier's two findings — the
+> guide's §11.7 had **no oracle at all** (`GS28`) and a corrected
+> `tb_charge_pump` figure survived as a stale `110` in §0's table (`GS29`).
+>
+> **⚠ `test_wave_sigbrowser_i12`'s X FIGURE IS NOT IN THE 2162 AND WAS NOT
+> MEASURED.** Nine consecutive runs died `X connection to :0 broken` at
+> **teardown**, each after **124 of 126 checks printed `ok` with ZERO fails**.
+> **A/B-proven environmental:** `HEAD`'s `test_wave_grid.tcl` was swapped back
+> in and `i12` died **identically twice**, then the fix-up file was restored
+> byte-identical. `xarm.sh` picks Xvfb only before its `DEADLINE` and **editing
+> `DEADLINE` to force Xvfb would circumvent the user's handback**, so it was not
+> done. Headless `i12` is **40 / 0 unchanged**. **Whoever next gets a healthy
+> `:0` or a legitimate Xvfb window owes this one number**; if it reads 126 the X
+> total is **2288**.
+>
+> **⚠ `:0` DEGRADED PROGRESSIVELY WHILE THE FIX-UP WAS MEASURED.**
+> `test_wave_sigbrowser_i1315` **answered 191** in the first X sweep of this
+> exact tree, then `NORESULT`ed in the final sweep and on three standalone
+> re-runs. **The tree did not change between those sweeps.** Every per-suite
+> figure that reported in both sweeps is identical. Treat any single `NORESULT`
+> here as a server event, and prefer the sweep in which a suite actually
+> reported.
+>
+> **The pre-fix-up item-19 contract, for provenance: headless 1698 / 0, X 2281
+> over 12 suites.** Exactly two figures moved from the pre-item baseline and
+> both are attributable to the last check:
 > `test_wave_grid` **231 → 267** headless and **356 → 392** under X (the same
 > +36: `GS1` +19, `GS2` +6, `GS3` +2, `GS22`-`GS27` +6, `GH11` +2, `GH10` +1),
 > and `test_wave_sigbrowser_i1315` **190 → 191** under X only (`BP78`, which
@@ -844,6 +872,14 @@ run** — 15 depends on nothing outstanding and 19 documents whatever shipped.
 ## Eyeball queue
 
 Pixel items may **never** be marked `[x]`. `[E]` + a row here.
+
+⚠ **THE ITEM-19 FIX-UP TICKED NOTHING AND OWES ITEM 14's ROW HARDER THAN BEFORE.**
+`GS28` now pins the *words* of the guide's §11.7 — that it still claims the sash
+split and both class boxes are remembered as a **proportion** rather than pixels.
+It cannot tell whether any of that is **true**. An oracle on prose makes the
+prose stop rotting; only item 14's row below can say the prose is not confidently
+describing a feature that does not work. Four rows remain unticked: **18, 15, 14,
+13.**
 
 | item | commit | what to look at | eyeballed? |
 |---|---|---|---|

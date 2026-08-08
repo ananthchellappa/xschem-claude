@@ -1,7 +1,65 @@
 # TWO-PANE item 19 — Docs, oracles, the four-file lockstep, 0217 closed
 
-**Status: DONE.** Committed, not pushed. Both arms green.
+**Status: DONE, then FIXED UP once.** Committed, not pushed.
 Everything below is **measured**, not quoted from the PLAN.
+
+> ## ⚠⚠ FIX-UP (2026-08-08) — read this before the numbers below
+>
+> Item 19's verifier **rejected the item** and was right twice. Both findings are
+> repaired in the fix-up commit; the sections below are the ORIGINAL item's
+> record and are corrected in place where they were false.
+>
+> **1. THE ITEM'S OWN THESIS FAILED ON THE ITEM'S OWN DELIVERED PROSE.** The
+> verifier reverted `doc/waveform_viewer_guide.html` §11.7 *"What is
+> remembered"* wholesale to its pre-two-pane single-pane wording — dropping the
+> sash split, **both** class-box names and the entire fraction-vs-pixels
+> paragraph — and **all four suites that read the guide stayed ALL PASS with
+> every count unchanged** (grid 267, sigbrowser 135, i12 40, keys 25). Zero
+> reds, zero dropped legs. §11.7 is the **only** user-facing documentation of
+> TWO-PANE item 14's whole feature and the exact text item 14's still-unticked
+> eyeball row asks a human to confirm. `GS24` asks the **whole file** and all
+> four of its phrases also occur in §11.0/§11.2; `GS26` pins the Ctrl-B prose
+> only; `GH10` counts headings, which a body rewrite leaves alone. **`GS28`**
+> (5 legs) closes it, section-scoped. **The general rule: a doc oracle must be
+> scoped to the section it is the oracle for.**
+>
+> **2. A CORRECTED NUMBER SURVIVED AS A STALE COPY 415 LINES UP IN THE SAME
+> FILE, AND THIS RECEIPT SAID OTHERWISE.** §8 below claimed the wrong
+> `tb_charge_pump` triple lived in **two** places and that item 19 "corrected
+> both files in one commit". It lived in **three**: the source comment, §5.4,
+> and **§0's opening motivation table** — the most-read table in the document —
+> which kept `| tb_charge_pump | 1191 | 110 |` under the header *"of which are
+> design nets"*. Provably the same metric: the `tb_bandgap` row above it reads
+> `424 | 139` and §5.4 states *"Design nets only would be 139"*. **Independently
+> re-measured at the fix-up** with the shipped procs on the committed fixture:
+> histogram net **120**, srcbranch **26**, devmeas **283**, devnode **762**
+> (sums to 1191); `1191 → 146 → 120`, nets-only **119** (the 120th is `time`,
+> the sweep variable, class `net`). Corrected to **119**, and **`GS29`** (2
+> legs) now forbids the recurrence by requiring §0's table and §5.4's
+> `nets-only **N**` to agree, with the `tb_bandgap` row as the positive control.
+>
+> **3. Two MINOR overclaims, both narrowed rather than argued away.** `GH11`'s
+> declared limit said it cannot see a bind on a **literal** path; the pattern
+> `^\s*bind \$[a-z]` also cannot see one spelled from an **uppercase-initial
+> variable** (`bind $Foo <…>`). Now stated as *"every bind spelled from a
+> lower-case-initial variable is counted"*. And `GS22`'s **title** claimed the
+> spec "NAMES every proc the two-pane batch minted" when the roster is 17
+> hand-picked names — `browser_sash_pref`, `browser_sash_drop`,
+> `browser_tree_state`, `browser_tree_apply`, `browser_device_paths`,
+> `browser_sea_layout` and `browser_sea_names` are covered only indirectly by
+> `GS23`'s exact 57. The in-file comment was honest; the title was not, and
+> **titles are what a later reader trusts**. Retitled, and the comment now names
+> the seven omissions.
+>
+> **Fix-up totals: headless 1705 / 0 over 15 files** (only `grid` moved,
+> 267 → **274**); **X 11/12 measurable = 2162**, every per-suite figure equal to
+> the verifier's post-item numbers plus the same +7 in `grid` (356 → 392 → 399).
+> Out-of-baseline 13 / 17 / 70 unmoved. **`test_wave_sigbrowser_i12`'s X figure
+> could not be measured** — see the declared limit in §9.
+>
+> **Nothing here is visually verified.** The eyeball queue keeps its four
+> unticked rows, and §11.7 is now doubly owed one: an oracle pins the *words*,
+> not that the sash and the boxes behave as the words say.
 
 ---
 
@@ -35,7 +93,10 @@ first.
 inside `test_wave_grid.tcl` — the spec oracles `GS0`-`GS3` and the
 grid-selection-survival block `GS0`-`GS14`, no gaps — **and** the prefix is owned
 by `test_wave_sigsearch.tcl` (`GS01`-`GS21`). First id colliding with nothing in
-either owning file: **`GS22`**. Taken: **`GS22`-`GS27`**.
+either owning file: **`GS22`**. Taken: **`GS22`-`GS27`**, and **`GS28`-`GS29`**
+at the fix-up (band re-measured then: `GS` was spent to exactly 27 across every
+`tests/headless/*.tcl` and every batch doc, so 28/29 collide with nothing).
+**Next free: `GS30`.**
 
 `GH11` free (highest was `GH10`). `BP78` free and reserved by
 `test_wave_sigbrowser_i1315.tcl:45`'s own header. Adjacent bands re-measured so
@@ -53,11 +114,20 @@ reports as green. `GH11` counts the wider `^\s*bind \$[a-z]` and requires
 equality with `GH9`'s counter. **The control's floor is 16, not the PLAN's 14** —
 a 14-floor survives deleting two binds.
 
-**`GS22`** — the parent spec names every proc the batch minted, with the
-source-side existence count in the **same tuple** so the list can never name a
-ghost. **Seventeen names; `browser_tree` and `browser_sea` are deliberately
-absent** — neither proc exists (two-pane item 1 never landed,
-`09_receipt.md:26-27`), and naming them would have red exactly two `GS1` legs.
+**`GS22`** — the parent spec names the batch's **seventeen load-bearing** procs,
+with the source-side existence count in the **same tuple** so the list can never
+name a ghost. **`browser_tree` and `browser_sea` are deliberately absent** —
+neither proc exists (two-pane item 1 never landed, `09_receipt.md:26-27`), and
+naming them would have red exactly two `GS1` legs.
+
+> ⚠ **TITLE CORRECTED AT THE FIX-UP.** It read *"NAMES every proc the two-pane
+> batch minted"*, which the roster does not do — it is 17 hand-picked names, and
+> `browser_sash_pref`, `browser_sash_drop`, `browser_tree_state`,
+> `browser_tree_apply`, `browser_device_paths`, `browser_sea_layout` and
+> `browser_sea_names` are covered only indirectly by `GS23`'s exact 57. The
+> in-file comment was already honest about the roster being hard-coded; the
+> title was not, and **titles are what a later reader trusts**. The comment now
+> also names the seven omissions so the gap is legible without a diff.
 The PLAN's "reds existing: …" column did not mention `GS1` at all.
 
 **`GS23`** — duplicate-freeness **and the exact length** (57). An exact ledger,
@@ -190,14 +260,57 @@ reached **disk**, and `diff`ing the restore. Its filter counts `NORESULT`,
 Every mutation restored byte-exact; the final clean re-runs are the 1698 / 2281
 above.
 
+### 7b. The FIX-UP's sabotages — six, all fired
+
+Same protocol, tightened: lock dir, `EXIT/INT/TERM` trap restoring both targets,
+a **pre-state count asserted green before any patch** (the driver aborts if not),
+the mutation **proven on disk by grep** before any result is believed, `diff` on
+the restore, and an output filter in which **`TIMEOUT` and `NORESULT` are reds**
+(`0 999`), never a clean zero. All four guide-reading suites run per sabotage.
+
+| # | mutation | predicted | **measured** |
+|---|---|---|---|
+| **SAB-B** | the verifier's own: revert guide §11.7 wholesale to single-pane wording | `GS28`'s four phrase legs, nothing else | **EXACTLY that.** grid `274 → 274` **count held**, 4 fails, all `GS28`; `GS28 (CONTROL)` **green**; sigbrowser 135 / i12 40 / keys 25 all green and unmoved |
+| **SAB-B2** | drop **only** `split between the two panes` from the remembered list | one `GS28` leg | **one leg, count held at 274.** The legs are individually live, not all-or-nothing |
+| **SAB-B3** | rename the `<h3 id="browser-state">` anchor (**the CONTROL's own sabotage**) | control **+** all four legs | **5 fails, count held.** The control is not vacuous |
+| **SAB-C** | restore the stale `\| tb_charge_pump \| 1191 \| 110 \|` — *the actual defect* | `GS29` alone | **`GS29` alone**, count held |
+| **SAB-C2** | leave §0 right and rot §5.4's `nets-only **119**` instead | `GS29` alone | **`GS29` alone.** It reds on a stale copy in **either** direction, not just the one that happened |
+| **SAB-C3** | rot the `tb_bandgap` **positive control** row `424\|139 → 424\|140` | `GS29` alone | **`GS29` alone.** The term that says "the extractor found something" is itself pinned |
+
+⚠⚠ **THE FIRST SAB-B ATTEMPT WAS A DRIVER BUG AND THE COUNT CAUGHT IT — which
+is the whole reason the count is diffed and not just the fail total.** My
+reconstructed pre-item paragraph wrote `&sect;8` where the shipped text has a
+literal `§8`, and **`§8` occurs exactly once in the entire guide, inside §11.7**.
+So `GH10` lost one leg and grid fell `274 → 273`: a *second* check firing for a
+reason that had nothing to do with the claim under test. The tell was the
+verifier's own masking guard — they reported the section-ref count **unchanged
+at 24/24**. Re-run faithfully with the literal `§`, the refs held at 24 and only
+`GS28` moved. **A sabotage that reds the right check for the wrong reason is not
+evidence.**
+
+Also measured during SAB-B, and it *is* the finding restated: with §11.7 gutted,
+`grep -c 'Show source currents'` on the guide still answers **2**. That surviving
+pair elsewhere in the file is precisely why `GS24`'s whole-file `bs_all_in`
+stayed green through the verifier's revert.
+
 ---
 
 ## 8. The one source edit, and the protocol it went through
 
 `src/wave_viewer.tcl`'s comment above `browser_class_filter` claimed
-`tb_charge_pump: 1191 -> 137 -> 111, nets-only 110`. The same figures sat in
-two-pane §6. **Wrong by exactly 9 in every term.** RE-MEASURED on the committed
-fixture with the shipped proc:
+`tb_charge_pump: 1191 -> 137 -> 111, nets-only 110`.
+
+> ⚠ **CORRECTED AT THE FIX-UP — THIS PARAGRAPH WAS FALSE AS WRITTEN.** It said
+> "The same figures sat in two-pane §6" and, in the spec, "corrected **both
+> files** in one commit". There were **THREE** sites, not two: the source
+> comment, two-pane §5.4, and **two-pane §0's motivation table**, which kept the
+> stale `110` and was missed. The verifier found it. A number corrected in the
+> place you happen to be looking at is not a number corrected — which is exactly
+> why `GS29` is a **within-file agreement** oracle rather than a spot literal.
+
+**Wrong by exactly 9 in every term.** RE-MEASURED on the committed
+fixture with the shipped proc (and re-measured a second time, independently, at
+the fix-up — same figures):
 
 ```
 tb_charge_pump  1191 -> 146 (devint 0) -> 120 (devint 0 + srccur 0), nets-only 119
@@ -243,6 +356,36 @@ red item 12.
 8. **`GH11` cannot see a bind written with a literal path** (`bind .foo.bar <…>`)
    — only one spelled from a `$variable`. Narrower claim than "every bind is
    counted", stated rather than overclaimed.
+   ⚠ **NARROWED AGAIN AT THE FIX-UP**: the pattern is `^\s*bind \$[a-z]`, so it
+   needs a `$` **and a lower-case initial** and is blind to `bind $Foo <…>` as
+   well. Neither form exists in `browser_build` (measured) and neither matches
+   the file's lower-case-local convention. Honest claim: **"every bind spelled
+   from a lower-case-initial variable is counted"**.
+9. **`test_wave_sigbrowser_i12`'s X figure is UNMEASURABLE on `:0` today**, and
+   that is environmental, not the fix-up's. **Nine** consecutive runs (one
+   batched, seven through `xarm.sh one`, one more through `xarm.sh suites`) all
+   ended `X connection to :0 broken` at **teardown**, after **124 of 126 checks
+   had printed `ok` and ZERO had failed**. **Proven not mine by A/B**: the
+   `test_wave_grid.tcl` from `HEAD` (the exact tree the verifier measured i12 at
+   126 on) was swapped back in and i12 died **identically, twice**, then the
+   fix-up file was restored byte-identical. `xarm.sh` chooses Xvfb only before
+   its `DEADLINE`, and **editing `DEADLINE` to force Xvfb would circumvent the
+   user's handback**, so it was not done. Headless `i12` is **40 / 0,
+   unchanged**, and the only file i12 reads that this fix-up touches is
+   `test_wave_grid.tcl` *as text* — `BX13`'s two literals (`gh_seqs 16`,
+   `gh_menus 11`) are untouched and green in both arms.
+   ⚠ **AND `:0` DEGRADED PROGRESSIVELY DURING THE FIX-UP, WHICH IS ITSELF THE
+   EVIDENCE.** `test_wave_sigbrowser_i1315` **PASSED at 191** in the first X
+   sweep of this same tree and then `NORESULT`ed in the final sweep and on three
+   standalone re-runs afterwards. Nothing in the tree changed between those two
+   sweeps. A suite that answers 191 and later cannot answer at all, on identical
+   bytes, is measuring the **server**, not the code — so the 2162 is taken from
+   the sweep in which each suite actually reported, and both sweeps agree on
+   **every** figure that reported in both.
+10. **`GS28` pins WORDS, not BEHAVIOUR.** It cannot tell that the sash actually
+   persists or that the boxes actually restore — only that §11.7 still claims
+   they do. Item 14's eyeball row is still the only thing that can close that
+   gap, and it is still unticked.
 
 ---
 

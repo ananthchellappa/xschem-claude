@@ -29,7 +29,7 @@ it ports from does:
 | design | signals listed today | of which are design nets |
 |---|---|---|
 | `tb_bandgap` | 424 | 139 |
-| `tb_charge_pump` | 1191 | 110 |
+| `tb_charge_pump` | 1191 | 119 |
 
 77.2% of all corpus signals (2051 of 2656) and 86.7% of hierarchical ones (2026 of 2338)
 are ngspice device-class artefacts filed under a **fake** top-level node — `m`, `v`, `@m`,
@@ -447,14 +447,24 @@ It requires hiding source-branch currents *and* the sweep variable. Hiding inter
 gives 190. `tb_charge_pump`: 1191 → **146** → **120**, nets-only **119**.
 
 ⚠⚠ **THE `tb_charge_pump` TRIPLE WAS WRONG BY EXACTLY 9 IN EVERY TERM** — it read
-137 / 111 / 110 here *and* in the source comment above `browser_class_filter`. Nobody had
-flagged it; **TWO-PANE item 19 re-measured it** on the committed fixture
-(`tests/headless/fixtures/tb_charge_pump_vars.txt`) with the shipped proc and corrected both
-files in one commit. The evidence is the class histogram — net **120**, srcbranch **26**,
+137 / 111 / 110 in **THREE** places: here, in the source comment above
+`browser_class_filter`, and in **§0's opening motivation table** (the third term, `110`,
+under "of which are design nets"). Nobody had flagged it; **TWO-PANE item 19 re-measured
+it** on the committed fixture (`tests/headless/fixtures/tb_charge_pump_vars.txt`) with the
+shipped proc. The evidence is the class histogram — net **120**, srcbranch **26**,
 devmeas **283**, devnode **762**, summing to 1191 — so `devint 0` keeps 120 + 26 = 146 and
 `devint 0` + `srccur 0` keeps 120, of which 119 are design nets. The `tb_bandgap` triple in
 the same sentence re-measures **correct** and is unchanged, which is what makes the
 correction attributable rather than a rewrite.
+
+⚠ **AND IT TOOK TWO PASSES, WHICH IS THE ACTUAL LESSON.** Item 19's first pass corrected
+**two** of the three — the source comment and this section — and wrote "corrected both files
+in one commit" here and in its receipt. Its verifier found the third, 415 lines above in
+**this same file**, still reading `110`. A number corrected in the place you are *looking*
+at is not a number corrected. **`GS29`** (`tests/headless/test_wave_grid.tcl`) is the oracle
+that now forbids the recurrence: §0's table row and this section's `nets-only **N**` are the
+same metric and must carry the same number, with the `tb_bandgap` row as the positive
+control. It reds on a stale copy in either direction.
 
 **Placement:** checkbuttons in `browser_build`, not options on `searchbar_build`. A
 checkbutton uses `-command`, not `bind $f.`, so GH9's `bind $f.` count is unaffected by
@@ -979,6 +989,13 @@ GH9 compares two numbers that are each one short. `GH11` (TWO-PANE item 19) coun
 control. Its only positive evidence is the sabotage: aliasing one bind reds `GH11` **alone**,
 with GH8 and GH9 green — and that green pair *is* the finding.
 
+⚠ **`GH11`'s OWN LIMIT, STATED EXACTLY** (narrowed at the item-19 fix-up — it had been
+written as "cannot see a bind on a LITERAL path", which is only half of it). The pattern
+requires a `$` **and a lower-case initial**, so it is blind to *both* `bind .foo.bar <…>`
+and `bind $Foo <…>`. Neither form exists in `browser_build` today (measured) and neither
+matches the file's lower-case-local convention. The honest claim is **"every bind spelled
+from a lower-case-initial variable is counted"**, not "every bind is counted".
+
 ⚠ **16/11 is pinned in four places** — the guide, GH0, BT09 and BX13 — and BX13 reads
 `test_wave_grid.tcl` as *text*. Keeping the key change a pure rename is what keeps all four
 untouched, and it is the single cheapest decision in this batch. **All four were sabotaged
@@ -986,6 +1003,27 @@ independently at TWO-PANE item 19** and the measured firing pattern is: a 17th `
 in the guide reds GH0 + GH2 + BT09 and leaves **BX13 green** (it reads the test file, not the
 guide), while bumping the literal in `test_wave_grid.tcl` reds GH0 + **BX13**. The PLAN's
 "BT09 **or** BX13" was a guess; it is neither an or nor the same lever.
+
+⚠⚠ **A WHOLE-FILE SUBSTRING ORACLE CANNOT SEE A SECTION-SHAPED REGRESSION, AND THE GUIDE'S
+`§11.7` PROVED IT.** Item 19's verifier reverted §11.7 *"What is remembered"* wholesale to
+its pre-two-pane single-pane wording — dropping the sash split, **both** class-box names and
+the whole fraction-vs-pixels paragraph — and **all four suites that read the guide stayed
+ALL PASS with every count unchanged** (grid 267, sigbrowser 135, i12 40, keys 25). `GS24`
+asks `bs_all_in $gsrc`, i.e. the whole file, and all four of its phrases also occur in
+§11.0/§11.2; `GS26` pins the Ctrl-B prose only; `GH10` counts headings, which a body rewrite
+leaves alone. §11.7 is the **only** user-facing description of TWO-PANE item 14's entire
+feature, and it is exactly the text item 14's still-unticked eyeball row asks a human to
+confirm — so the docs could revert to describing a single-pane browser that forgets
+everything, in both arms, fully green.
+
+**`GS28`** (`test_wave_grid.tcl`, the item-19 fix-up) closes it: `bs_section` scopes the
+claim to §11.7 alone and `bs_flat` collapses tags and hard wraps first — **required, not
+cosmetic**, because the guide wraps `<b>Show device\ninternals</b>` and the raw bytes carry
+that phrase nowhere. Four named legs (`split between the two panes`, both box labels,
+`fraction of the sidebar's height`) plus a deliberately **low** extraction floor, so the
+control says "a real section was read" rather than becoming the discriminator itself.
+**The general rule this batch leaves behind: a doc oracle must be scoped to the section it
+is the oracle for.**
 
 ### 12.3 The parent spec
 
