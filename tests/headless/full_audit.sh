@@ -16,6 +16,8 @@
 #   tests/headless/full_audit.sh                 # all tests
 #   tests/headless/full_audit.sh test_sweep_diff test_multi_window   # a subset
 #   XSCHEM=/path/to/xschem xvfb-run -a tests/headless/full_audit.sh  # in CI
+#   AUDIT_LIB_ONLY=1 . tests/headless/full_audit.sh   # define is_skip/has_failure/
+#                                                     # classify only, run nothing
 #
 set -u
 
@@ -107,14 +109,94 @@ is_pass() {
                                  && ! is_skip "$out" ;;
   esac
 }
-# "skipped: no X" is the legacy self-skip banner ("RESULT: ALL PASS (0 checks,
-# skipped: no X)") -- classified as SKIP so an un-converted test can never count
-# as a hollow PASS on a display-less box. is_skip runs BEFORE is_pass, which is
-# what keeps the "OVERALL: ok" arm above honest: every X-gated self-skip prints
-# "RESULT: SKIP (no X)" (or, for test_grid_toggle_sel_gc, "SKIP: no X
-# connection") next to its "OVERALL: ok" and is classified SKIP, not PASS.
-is_skip() { [[ "$1" == *"RESULT: SKIP"* || "$1" == *"skipped: no X"* \
-               || "$1" == *"SKIP: no X connection"* ]]; }
+# THE SKIP CONTRACT (issue 0350). A skip banner counts only at the START OF A
+# LINE. Anywhere else -- inside a check name, a diagnostic, an echoed comment --
+# it is ordinary text and the test is classified on its real verdict. And a FAIL
+# line beats a skip banner (has_failure below): a run that failed must not be
+# able to hide behind one. CAVEAT, measured (issue 0354): has_failure's
+# alternation only covers the `FAIL:` banner shape, NOT the `RESULT: <n> FAIL` /
+# `RESULT: FAIL` / lowercase `OVERALL: fail` / `OVERALL: <n> FAILED` shapes ~26
+# shipped tests emit. Latent -- no in-tree test both self-skips at column 0 and
+# fails on the same path -- but do not read the guard as total.
+#
+# This used to be three UNANCHORED substring tests over the whole stdout+stderr
+# blob, evaluated ahead of is_pass, so a line a test printed MID-RUN --
+#   ok:   keyboard/ctx-menu copy (skipped: no X)  (no display)
+# -- reclassified the ENTIRE test as SKIP. SKIP increments only SKIP, the exit
+# gate is FAIL+CRASH>0 and AUDIT_MIN_PASS defaults to 0, so four fully-passing
+# suites (59 checks) were discarded wholesale -- and would have gone on being
+# discarded had they turned red (measured: a probe printing FAIL and exiting 1
+# was scored SKIP, audit exit 0). ~20 shipped tests still carry comments
+# explaining how they dodge the token; the anchor is what repays that dodge tax.
+#
+# The three accepted shapes are the only banners any test emits at column 0:
+#   RESULT: SKIP (...)                          canonical self-skip (84 sites)
+#   SKIP: no X connection (has_x=0); ...        test_grid_toggle_sel_gc.tcl:35,
+#                                               which prints NO RESULT line at all
+#   RESULT: ALL PASS (0 checks, skipped: no X)  the legacy banner -- extinct as an
+#                                               emitted string, kept so a
+#                                               resurrected test cannot be scored
+#                                               a hollow PASS. NOTE (0354) this
+#                                               alternative anchors RESULT:, not
+#                                               the token, so it is wider than the
+#                                               literal above: a green
+#                                               "RESULT: ALL PASS (20 checks; 3
+#                                               legs skipped: no X)" is scored SKIP.
+#                                               Keep the note out of RESULT lines.
+#
+# NOTE full_audit and run_suites.sh deliberately DISAGREE about skips, and that
+# split is ratified (issue 0350 D5): a whole-tree sweep tolerates SKIP behind an
+# AUDIT_MIN_PASS floor, whereas run_suites.sh:105 was asked for THIS test by
+# name, so a skip there is a failure to deliver and scores FAIL.
+is_skip() {
+  printf '%s\n' "$1" | grep -qE '^(RESULT: SKIP|SKIP: no X connection|RESULT:.*skipped: no X)'
+}
+
+# Independent second guard: an aborted run must not lie about its verdict, the
+# same way an aborted gesture must not lie about the modify flag (0244/0267/0270).
+# The skip arm of classify() is its ONLY consumer, so it can only ever move a
+# test SKIP -> FAIL; no currently-PASSing test can change classification
+# because of it. Anchored for exactly the reason is_skip is: "undo after a failed
+# paste" is a legitimate check name.
+has_failure() {
+  printf '%s\n' "$1" | grep -qE '^(FAIL[: !]|RESULT: [0-9]+ (FAILED|FAILURE)|OVERALL: (notok|FAIL))'
+}
+
+# The classification chain, lifted out of the run loop into a verb so the
+# ORDERING is testable (tests/headless/test_audit_classifier.tcl). Echoes exactly
+# one of PASS / SKIP / FAIL / CRASH / TIMEOUT; the loop below keeps only the
+# counter bookkeeping. The order is load-bearing:
+#   * TIMEOUT and CRASH out-rank skip -- a test that printed its banner and then
+#     died is a CRASH, not a SKIP (review wf_bfc3c5e4). A clean self-skip exit 0's
+#     right after its banner, so it can never reach a FATAL/Tcl_AppInit line.
+#   * is_skip stays AHEAD of is_pass. The `*)` and banner arms of is_pass call
+#     `! is_skip` themselves, so for those the order is unobservable -- but the
+#     seven name-specific arms (test_palette, test_ciw_autocomplete,
+#     test_ciw_puts_capture, test_lib_new_discovered_defs, test_nogui,
+#     test_readonly_guard, test_readonly_action_dispatch) do not self-guard, and
+#     test_grid_toggle_sel_gc prints its skip line next to "OVERALL: ok". Putting
+#     is_pass first turns both into hollow PASSes.
+classify() {
+  local name="$1" out="$2" ec="$3"
+  if [ "$ec" -eq 124 ]; then
+    echo TIMEOUT
+  elif [[ "$out" == *"FATAL: signal"* ]] \
+       || { [[ "$out" == *"Tcl_AppInit() error"* ]] && ! is_pass "$name" "$out" "$ec"; }; then
+    echo CRASH
+  elif is_skip "$out" && ! has_failure "$out"; then
+    echo SKIP
+  elif is_pass "$name" "$out" "$ec"; then
+    echo PASS
+  else
+    echo FAIL
+  fi
+}
+
+# Source-guard: `AUDIT_LIB_ONLY=1 . tests/headless/full_audit.sh` defines the
+# predicates and classify() and returns WITHOUT running an audit, so the
+# classifier can be regression-locked without a 300-test sweep. Inert on the
+# normal executed path -- the test short-circuits and `return` never runs.
+[ "${AUDIT_LIB_ONLY:-0}" = "1" ] && return 0 2>/dev/null
 
 # Test selection: explicit args, else all test_*.tcl. The 52-test wireedit
 # suite (wireedit/run_wireedit.sh, true headless) is part of the full run and
@@ -189,20 +271,14 @@ for testfile in "${files[@]}"; do
     out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --script "$testfile" 2>&1); ec=$?
   fi
 
-  if [ "$ec" -eq 124 ]; then
-    STATUS[$name]=TIMEOUT; OUT[$name]="$out"; ((CRASH++))
-  elif [[ "$out" == *"FATAL: signal"* ]] || { [[ "$out" == *"Tcl_AppInit() error"* ]] && ! is_pass "$name" "$out" "$ec"; }; then
-    # crash detection BEFORE skip (review wf_bfc3c5e4): a test that prints its skip banner and
-    # then dies must count as CRASH, not SKIP (a clean self-skip exit 0's right after the banner,
-    # so it can never reach a FATAL/Tcl_AppInit line).
-    STATUS[$name]=CRASH; OUT[$name]="$out"; ((CRASH++))
-  elif is_skip "$out"; then
-    STATUS[$name]=SKIP; ((SKIP++))
-  elif is_pass "$name" "$out" "$ec"; then
-    STATUS[$name]=PASS; ((PASS++))
-  else
-    STATUS[$name]=FAIL; OUT[$name]="$out"; ((FAIL++))
-  fi
+  # one verdict, decided by classify() above; the loop only tallies.
+  STATUS[$name]=$(classify "$name" "$out" "$ec")
+  case "${STATUS[$name]}" in
+    PASS)          ((PASS++)) ;;
+    SKIP)          ((SKIP++)) ;;
+    CRASH|TIMEOUT) OUT[$name]="$out"; ((CRASH++)) ;;
+    *)             OUT[$name]="$out"; ((FAIL++)) ;;
+  esac
   printf '%-8s | %s\n' "${STATUS[$name]}" "$name"
 done
 

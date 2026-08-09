@@ -1066,6 +1066,20 @@ declines buses); stacked coincident pins poison `fluid_geo_snap_id`.
 
 R1 **CI wiring** (0.5-1d): wireedit + gesture tests under xvfb as hard gate; fix
 full_audit is_skip; commit the untracked repro corpus. Prerequisite for everything.
+  **LANDED 2026-08-09 (issues 0350/0351/0352), with one correction to the plan above.**
+  `full_audit.sh`'s `is_skip` was unanchored *and* ranked ahead of `is_pass`, so a token
+  inside a check name scored a whole passing suite SKIP — and SKIP can fail neither the
+  audit nor CI. It is now line-anchored, guarded by `has_failure()`, and the chain is a
+  testable `classify NAME OUT EC` verb locked by `tests/headless/test_audit_classifier.tcl`.
+  The gesture suites did NOT go behind xvfb: all eleven are measured to pass with
+  `DISPLAY` unset (eight of them outside `full_audit`'s `nogui_tests`), so they went into
+  the cheap deterministic `Headless gate` step with `AUDIT_MIN_PASS` == the exact suite
+  count — that floor is what makes a PASS→SKIP flip fail CI. The wireedit suite was
+  already a hard gate (hardening plan A3). The "untracked repro corpus" turned out not to
+  be a corpus: `_g5/_g6/_g10/_g11/_*fixtures/` are dead July diff-dialog scratch referenced
+  by no test, and `undo_link_child/` is test leakage — inventory and cleanup recipe in
+  issue 0352. Only `tests/headless/test_descend_inert_class.tcl` was genuinely missing
+  from the tree and is now committed and gated.
 R2 **`Fluid_gesture` context struct** (2-3d): replace the file-scope statics; lifecycle
 arm-at-START/free-at-END; enables per-pass harness (`xschem fluid_pass <name>`).
 R3 **Unified predicate layer** (2d): one deg_at (degenerate skip), one touch body, one
