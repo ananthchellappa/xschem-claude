@@ -465,7 +465,29 @@ reported itself CLEAN (`modified` 1 → 0, issue **0244** — FIXED 2026-08-08: 
 the same fix's part B narrows their `delete(1)` to a 0241 stamp, so `Ctrl+V` + `Ctrl+A` + ESC no
 longer wipes the drawing either; its census found the corollary that **nothing tears down a pending
 `STARTMERGE`**, so a second `Ctrl+V` or any placement arm silently COMMITS the pending paste —
-issue **0265**) — a decline residue
+issue **0265**, FIXED 2026-08-08 and the MERGE DIMENSION of this class: `STARTMERGE` had one setter
+and three teardown-bearing clears, and every other way the bit vanished was `unselect_all()`'s
+wholesale `ui_state = 0` — which a pending paste ALWAYS reaches, because the selection is what the
+drag carries. The fix is the class's own prescription applied a third time: factor the teardown
+(`abort_pending_merge()`), gate every ARM (`leave_merge_for()`, 24 sites = the merge funnel + the
+twelve `stamp_placement_preview()` arms + the eleven wire/line draw arms), never the shared
+primitive. Two lessons the placement dimension did not teach. (i) **A cross-check between two
+gate helpers is a census in itself**: `leave_merge_for()` has 24 sites to `leave_placement_for()`'s
+23, and the +3/−2 difference IS the analysis — the three modeless form `-place` arms carry no
+placement gate (they re-arm themselves) and were doors; `undo`/`redo` carry one and must NOT get a
+merge gate, because a pending merge is undo-covered and a `delete()`+`push_undo` in front of the pop
+would make undo RESTORE the paste. (ii) **Bounding a gesture's lifetime against every ARM does not
+bound it against the COMMIT forms**, which are ratified as ungated (replay/test seams) — so issue
+**0267**, predicted to fall out of 0265, measured UNCHANGED after it and needed its own mechanism
+(`xctx->modify_seq`: `set_modify()` bumps a sequence on every declaration of dirtiness, the merge
+latches it at the arm, and the teardown restores `pre_merge_modified` only while the two still
+match). Both FIXED. **Class-D status after 0265**: the MODAL-GESTURE half of the class is closed for
+wire/line draws, placements and merges in every direction and both interface branches; what is left
+is (a) the SHAPE draws (`r`, `P`, arc, circle) — phase 3, no `abort_shape_draw()` exists yet — and
+(b) the two known, deliberate residues, **0262** (the bare `xschem unselect_all` verb: it arms
+nothing, so the rule has no subject, and gating it would put a `delete()` behind 817 scripted call
+sites) and **0263** (`netlist` netlists a live preview but clears no gesture bits, so it is a
+different defect, not a door). Neither is touched by 0265) — a decline residue
 becomes data corruption the moment the residue is a netlist object; (b) the invariant
 "`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
 three form `-place` arms themselves raised `sympin_preview` BEFORE the preview existed and held it

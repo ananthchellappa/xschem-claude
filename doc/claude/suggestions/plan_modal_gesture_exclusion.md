@@ -110,7 +110,26 @@ own tests need.
       (`new_polygon(END, …)` runs before the teardown); abandoning it instead is a behaviour change
 - [ ] tests + sabotage
 
-### Phase 4 — merge / paste (`Ctrl+V`), both directions
+### Phase 4 — merge / paste (`Ctrl+V`), both directions — **COMPLETE 2026-08-08**
+
+Closed by issue **0265**: `abort_pending_merge()` + `leave_merge_for()` (`callback.c`), the merge
+twins of `abort_placement_preview()` + `leave_placement_for()`. The teardown was factored out of
+`abort_operation()`'s two arms (both are now one call to it) and the gate is called from **24**
+sites — the merge funnel, all twelve `stamp_placement_preview()` placement arms, and all eleven
+wire/line draw arms. `undo`/`redo` are deliberately **excluded**, unlike the placement side: a
+pending merge is undo-covered (`merge_file()` pushes its baseline before loading), so `undo` already
+removes the paste, and a `delete()`+`push_undo` in front of the pop would make undo *restore* it.
+Issue **0267** closed with the same change but **not** as a byproduct of it — the pure-commit forms
+stay ungated, so the stale `pre_merge_modified` latch needed `xctx->modify_seq` of its own.
+Tests: section **E** of `tests/headless/test_paste_modify_flag_0244.tcl`, 247 checks (129 → 376),
+five sabotage runs with disjoint red sets.
+
+**Downstream:** phase 3 (shape draws) is the only phase left and is **not** blocked by anything this
+phase produced — it needs `abort_shape_draw()`, which does not exist yet. `test_gate_bypass` now
+also disables the merge gate, so phase 3's tests can construct a co-armed shape+merge state the same
+way. The one thing phase 4 hands it: `abort_pending_merge()`/`leave_merge_for()` is the third worked
+example of the teardown/gate pair, so `abort_shape_draw()`/`leave_shape_draw_for()` has a template
+and the `preview_sel` slot-ordering rule is now written down in two places.
 
 **UNBLOCKED 2026-08-08** — both named blockers are FIXED: **0242** (every door now calls
 `leave_placement_for()`; a merge tears down a live placement) and **0244** (the aborted-paste flag
@@ -128,9 +147,13 @@ silently **commits** the pending paste (measured). Phase 4 should factor the mer
 that closes 0265 in the same move.
 
 - [x] 0242 / 0244 landed
-- [ ] factor the merge teardown out of `abort_operation()` (select-stamp + `delete(1)` +
-      `pre_merge_modified` restore + `clear_placement_preview()`) into `leave_merge_for()`
-- [ ] then: a draw cancels a live merge (and issue **0265** falls out)
+- [x] factor the merge teardown out of `abort_operation()` (select-stamp + `delete(1)` +
+      `pre_merge_modified` restore + `clear_placement_preview()`) into `abort_pending_merge()`, with
+      `leave_merge_for()` as its gate wrapper — two functions, not one, so ESC keeps raising no
+      statusbar hold (the same split as `abort_placement_preview()` / `leave_placement_for()`)
+- [x] then: a draw cancels a live merge — `wire gui`, `line gui`, `snap_wire` and their key / menu /
+      context-menu twins, both interface branches (`snap_wire` arms `MENUSTART`, not `STARTWIRE`)
+- [x] issue **0265** closed; issue **0267** closed with it, by a separate mechanism
 
 ## Cross-cutting blockers
 
