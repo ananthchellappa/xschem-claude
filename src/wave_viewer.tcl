@@ -2912,7 +2912,16 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
 # (`raw add` of an existing name recalculates it); user-dialog expression
 # traces (item 12) go stale-but-CLEAN: the engine draws nothing for an
 # unresolved node and redraw keeps rc 0 (test-asserted).
-proc wviewer::attach_raw {token rawfile sim_type} {
+#
+# `vcdfiles` (spec section E, E3) are the run's DIGITAL databases — one VCD per
+# d_cosim code block, from ase::last_vcdfiles. They are read AFTER the analog
+# raw and the analog raw is then made current again, because `xschem raw read`
+# makes whatever it just read the current DB and every consumer downstream
+# expects analog vector names there. The whole registry sequence lives in
+# ase::attach_dbs so it is headless-testable; this proc keeps the ctx switch,
+# the 0194 view-state capture and the regenerate. DEFAULTS TO {} — the
+# three-argument call is byte-for-byte what it always was.
+proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
@@ -2922,11 +2931,9 @@ proc wviewer::attach_raw {token rawfile sim_type} {
   # regenerate below owes the fold. skip_ranges is what keeps a fresh run
   # autozooming instead of being drawn in the outgoing run's window.
   wviewer::capture_live_view_state $token
-  catch {xschem raw clear}
-  if {$sim_type ne {}} {
-    xschem raw read $rawfile $sim_type
-  } else {
-    xschem raw read $rawfile
+  set att [ase::attach_dbs $rawfile $sim_type $vcdfiles]
+  foreach v [dict get $att skipped] {
+    catch {::ase::echo "ase: digital database not attached (missing or unreadable): $v" error}
   }
   wviewer::regenerate $token
   return 1

@@ -2011,7 +2011,7 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   }
   set rf [ase::last_rawfile $key]
   if {$rf ne {}} {
-    wviewer::attach_raw $key $rf $sim_t
+    wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
   } else {
     catch {::ase::echo "ase: no simulation results yet — run first (queued\
  traces are recorded and resolve after the run)"}
@@ -3553,7 +3553,9 @@ proc ase::ui::auto_plot {key} {
     catch {::ase::echo "ase: no raw file from the run — nothing to auto-plot"}
     return
   }
-  wviewer::attach_raw $key $rf $sim_t
+  # spec E3: the run's digital VCDs ride along with the analog raw, so a
+  # mixed-signal session's Signal Browser sees every DB the run produced.
+  wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
   set gi [wviewer::ensure_auto_graph $key]
   wviewer::clear_graph_traces $key $gi
   wviewer::regenerate $key   ;# reflect the clear even if every add fails
@@ -3595,6 +3597,18 @@ proc ase::ui::run_finished {key} {
     unset loglen($key)
   }
   ase::ui::drop_trace $key
+  # spec E7: a co-simulation desync exits 0 and produces wrong waveforms.
+  # ase::run_done already echoed it to the CIW and the action log; put it at
+  # the END of the log window too, where a user who opened the log to read the
+  # tail cannot miss it. Before the exit-code branch, so it is said whichever
+  # way the run ended.
+  foreach d [ase::last_diagnostics] {
+    lassign $d dsev dcode dn dmsg
+    if {$dsev ne {error}} continue
+    catch {ase::ui::log_append $key \
+      "\n*** ASE-L: CO-SIMULATION PROBLEM ($dcode x$dn): $dmsg.\
+ The results of this run cannot be trusted. ***\n"}
+  }
   set ec -1
   if {[info exists ::execute(exitcode,last)]} { set ec $::execute(exitcode,last) }
   if {$ec == 0} {

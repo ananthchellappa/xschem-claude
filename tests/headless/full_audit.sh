@@ -70,7 +70,10 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # pinned here so its ASE-dispatch check cannot open a real ASE toplevel under X)
 # (test_vcd_read is a pure file-parser/data-model test -- it only reads VCD and
 # .raw files into the Raw registry and never draws, so it needs no display)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read "
+# (test_ase_cosim drives ase:: procs, the raw registry and the wviewer attach
+# seam with its three Tk helpers stubbed -- no display, and pinned here so its
+# `xschem load` of fixture schematics cannot land in a real editor window)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read test_ase_cosim "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

@@ -90,8 +90,18 @@ if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
 set d [ase::state_default]
-check "R1 default has exactly the 15 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands viewer}]
+# `cosim` joined in section E of doc/claude/specs/mixed_signal_signal_browser.md
+# (mixed-signal POLICY: build/trace/attach/bridges/vsupply). It is in
+# ase::omit_if_empty, so an empty one is NOT serialized and every state file
+# written before it existed still round-trips byte-identically — F3/G3 in
+# test_ase_final{,_gf180} are the golden files that assert exactly that.
+check "R1 default has exactly the 16 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands cosim viewer}]
+check "R1 cosim defaults to empty and is omitted from the serialized form" \
+  [list [dict get $d cosim] [expr {[string first "cosim" [ase::state_serialize $d]] >= 0}]] {{} 0}
+check "R1 a NON-empty cosim IS serialized" \
+  [expr {[string first "cosim {build never}" \
+     [ase::state_serialize [dict replace $d cosim {build never}]]] >= 0}] 1
 check "R1 version is 1" [dict get $d version] 1
 check "R1 temperature default 27" [dict get $d temperature] 27
 check "R1 save_all_v and save_all_i default 0" \

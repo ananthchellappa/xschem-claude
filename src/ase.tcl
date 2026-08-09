@@ -33,9 +33,20 @@ namespace eval ase {
   # the netlist is parsed, which is the only way to load a compiled Verilog-A
   # module; there is no `.osdi` dot-card. IHP SG13G2 needs four of them for its
   # psp103va/mosvar/r3_cmc models (ihp-sg13g2/cadence_style_rc:40-49).
+  # `cosim` follows it for the same reason — it is deck/simulation config the
+  # state owns (spec section E, E4). It is POLICY ONLY: it never lists the
+  # digital artifacts, which are DERIVED from the netlist at run time.
   variable schema_keys {version simulator design rundir temperature models
                         variables analyses outputs save_all_v save_all_i
-                        options includes pre_commands viewer}
+                        options includes pre_commands cosim viewer}
+  # Schema keys the serializer OMITS when empty. Every v1 key is written even
+  # when empty because every state file on disk already carries it; a key added
+  # LATER must not rewrite files that predate it — `state_load` merges over
+  # state_default, so an old file would otherwise gain `cosim {}` and stop
+  # round-tripping byte-identically (which two committed-golden tests assert,
+  # and which is what keeps a `git diff` of a state view meaningful). Empty
+  # carries no information here: `cosim {}` means exactly "every default".
+  variable omit_if_empty {cosim}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -206,6 +217,14 @@ set_ne ASE_DEFAULT_INCLUDES {}
 
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is
 # the one permitted ngspice literal outside the backend namespace.
+#
+# `version` STAYS 1 when a key is added (spec E4). Nothing reads it, and
+# ase::state_load merges the file OVER this dict, so a state written before a
+# key existed gains it with its default automatically and keeps every key it
+# already had. Bumping the number would buy nothing and would invite an
+# equality test somewhere that then rejects older files. It is reserved for a
+# change that an old loader could MISREAD, not for a new optional key.
+# tests/headless/fixtures/ase_state_v1_pre_cosim.state pins that.
 proc ase::state_default {} {
   return [dict create \
     version   1 \
@@ -223,6 +242,7 @@ proc ase::state_default {} {
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
                         $::ASE_DEFAULT_PRE_COMMANDS : {}}] \
+    cosim     {} \
     viewer    {}]
 }
 
@@ -317,9 +337,11 @@ proc ase::expand_bus_outputs {outputs} {
 # serializations match byte-for-byte.
 proc ase::state_serialize {state} {
   variable schema_keys
+  variable omit_if_empty
   set lines {}
   foreach k $schema_keys {
     if {[dict exists $state $k]} {
+      if {[dict get $state $k] eq {} && [lsearch -exact $omit_if_empty $k] >= 0} { continue }
       lappend lines "$k [list [dict get $state $k]]"
     }
   }
@@ -503,6 +525,41 @@ proc ase::run_deck {state netlistfile {callback {}}} {
 
   set rd   [ase::rundir $state]
   set cell [dict get [dict get $state design] cell]
+
+  # --- mixed-signal co-simulation (spec section E) --------------------------
+  # Detect at NETLIST time (E1), record the instance<->VCD map beside the
+  # artifacts it describes (F2), and rebuild every code-model .so BEFORE
+  # ngspice starts (E6). All three are no-ops for a purely analog deck:
+  # cosim_map returns {} the moment the netlist carries no d_cosim card.
+  # A failed build THROWS out of here on purpose — falling through would run
+  # the previous .so, i.e. silently simulate last week's Verilog.
+  set cosim [ase::cosim_map $state $netlist_text]
+  ase::cosim_save_map $state $cosim
+  # Delete the VCDs this deck is about to promise, for the reason ase::netlist
+  # gives for deleting its own artifact: a stale one must not mask a failed
+  # run. The VCD is written by the SHIM, not by ngspice's `write`, so the analog
+  # half can succeed while the digital half writes nothing at all — and then
+  # both the E7 missing-artifact check and last_vcdfiles would serve the
+  # PREVIOUS run's digital data beside this run's analog raw.
+  ase::cosim_clear_artifacts $cosim
+  if {[llength $cosim]} {
+    foreach r [ase::cosim_build $state $cosim] {
+      lassign $r cm cstatus cdetail
+      if {$cstatus eq {unavailable}} {
+        ::ase::echo "ase: d_cosim model '$cm': $cdetail" error
+      } elseif {$cstatus eq {built}} {
+        ::ase::echo "ase: d_cosim model '$cm': rebuilt $cdetail"
+      }
+    }
+    foreach e $cosim {
+      if {[ase::state_get $e multi 0] ne {1}} continue
+      ::ase::echo "ase: d_cosim model '[dict get $e model]' is instantiated\
+ [llength [dict get $e insts]] times ([join [dict get $e insts] {, }]) — the netlister emits\
+ ONE .model card for them (spice_netlist.c:143-169), so they would all write ONE VCD.\
+ Its internal signals are NOT collected." error
+    }
+  }
+
   set deck [$render_deck $state $netlist_text]
   set deckpath [file join $rd ${cell}_ase.spice]
   set f [open $deckpath w]
@@ -544,7 +601,39 @@ proc ase::run_done {logpath state callback} {
     set sim [ase::state_get $state simulator]
     set results [[ase::backend_hook $sim result_probe] $state $data]
   }
-  set last_run [dict create results $results exitcode $exitcode log $logpath]
+  # spec E7: a co-simulation can produce a clean exit code and WRONG waveforms.
+  # Scan the log for the diagnostics that say so and put them where a user will
+  # see them (ase::echo reaches the CIW pane AND the action log), not only in
+  # a 50 MB log file nobody scrolls.
+  set diags [ase::run_diagnostics $data]
+  # ...and the failure the LOG cannot report. Measured: ngspice lower-cases the
+  # strings in a device card, so a `sim_args` VCD path it cannot create is not
+  # an error it prints — the run exits 0, the analog raw is perfect, and the
+  # digital data is simply absent. Any VCD the deck promised and did not
+  # produce is therefore reported from the filesystem, not from the log.
+  # cosim_load_map is {} for an analog run (run_deck deletes the artifact), so
+  # this costs an analog run nothing.
+  if {$exitcode == 0} {
+    catch {
+      foreach cme [ase::cosim_load_map $state] {
+        if {[ase::state_get $cme multi 0] eq {1}} continue
+        set cmv [ase::state_get $cme vcd]
+        if {$cmv eq {} || [file isfile $cmv]} continue
+        lappend diags [list error cosim_novcd 1 "the deck asked d_cosim model\
+ '[ase::state_get $cme model]' to write [file tail $cmv] into the run directory and it\
+ never appeared, so this block's internal signals were not captured (a .so built without\
+ -V, or a run directory ngspice could not write to)"]
+      }
+    }
+  }
+  set last_run [dict create results $results exitcode $exitcode log $logpath \
+                            diagnostics $diags]
+  foreach d $diags {
+    lassign $d dsev dcode dn dmsg
+    if {$dsev ne {error}} continue
+    ::ase::echo "ase: *** CO-SIMULATION PROBLEM ($dcode, $dn occurrence[expr {$dn == 1 ? {} : {s}}]):\
+ $dmsg. The results of this run cannot be trusted. See $logpath" error
+  }
   ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
@@ -603,6 +692,898 @@ proc ase::last_rawfile {key} {
   set sim [ase::state_get $state simulator]
   if {[catch {[ase::backend_hook $sim raw_file] $state} rf]} { return {} }
   if {$rf ne {} && [file isfile $rf]} { return $rf }
+  return {}
+}
+
+# --- Mixed-signal co-simulation (spec section E) -----------------------------
+# doc/claude/specs/mixed_signal_signal_browser.md section E. Everything here is
+# Tk-free and headless-testable (tests/headless/test_ase_cosim.tcl).
+#
+# WHAT A "COSIM RUN" IS. An ngspice deck is mixed-signal when it carries at
+# least one `.model <name> d_cosim ...` card: that card is what ngspice obeys,
+# and it is the ONLY thing that makes the run co-simulate. The DESIGN side
+# (an instance whose cell has a `verilog` view, spec B) is what tells us WHICH
+# `.v` built that `.so` and which schematic instance owns the resulting VCD.
+# Both are needed and neither substitutes for the other, so the map below is
+# built from the deck text and then ENRICHED from the design walk.
+#
+# E1 -- DETECTION IS AT NETLIST TIME, NOT A STATE DECLARATION.  Measured: the
+# reference netlist emits exactly one card,
+#     .model counter d_cosim simulation="./counter.so" sim_args=["counter.vcd"] delay=0
+# from the INSTANCE's `device_model=` attribute (spice_netlist.c:228; the symbol
+# K record is only a fallback, :234). A state-dict declaration would be a second
+# copy of a fact the netlist already states, and would be wrong the moment a code
+# block is added, removed or renamed -- the same argument the spec makes against a
+# hand-maintained F2 mapping. The `cosim` state key added by E4 is therefore
+# POLICY ONLY (build/trace/supply knobs); it never declares which blocks exist.
+#
+# E1 uses `cellview_sibling_path`, NOT `library_inst_lcv`, to answer "does this
+# cell have a verilog view". `library_inst_lcv` is usable (it is a plain Tcl proc
+# taking a symbol reference, library_defs.tcl:505) and IS called here for the
+# lib/cell labels, but it only accepts the Cadence nested layout, so on its own it
+# would silently miss a flat library. `cellview_sibling_path` (library_defs.tcl:420,
+# spec B8) answers the same question in both layouts. The C verb `xschem
+# get_inst_lcv` is NOT usable at all here: it requires exactly one SELECTED
+# instance (scheduler.c:5020-5027), so it cannot enumerate.
+#
+# E2 -- ONE VCD PER d_cosim MODEL CARD, named <rundir>/<model>.vcd, written into
+# the card's `sim_args` by render_deck.  It cannot be per-INSTANCE: the netlister
+# deduplicates `.model` cards on the first two tokens after `.model`
+# (spice_netlist.c:143-169, key `counterd_cosim`), so two instances of the same
+# cell share ONE card, hence one `.so` and one `sim_args`. Splitting them would
+# mean synthesizing per-instance model cards AND rewriting every instance line's
+# trailing model token -- deep netlist surgery for a case that does not exist yet.
+# So: two DIFFERENT code blocks can never collide (different model names ->
+# different files), and the same block instantiated TWICE is DETECTED (the
+# instance lines are counted) and reported: its VCD would be two shims writing one
+# file, so the map marks it `multi 1` and it is excluded from the attach. The
+# upgrade path is per-instance model synthesis, deliberately not taken now.
+#
+# E6 -- STALENESS IS A STAMP FILE, NOT AN mtime COMPARE.  `<so>.stamp` records the
+# source path, its mtime and size, the shim source's mtime and size, and the build
+# flags. A bare "is the .so newer than the .v" test is not enough because the
+# rundir defaults to $USER_CONF_DIR/simulations for EVERY design (ase::rundir), so
+# two libraries that both contain a cell named `counter` build to the same
+# `<rundir>/counter.so`; the mtime test would happily reuse the wrong one. The
+# stamp also catches a shim edit (a `-V` build links tools/cosim/src) and a flag
+# change. No content hash: Tcl 8.6 core has no digest and tcllib is not a
+# dependency; path+mtime+size errs toward rebuilding, which is the safe direction.
+#
+# F2 -- THE INSTANCE <-> VCD MAPPING IS CARRIED NOW, as a RUN-DIRECTORY ARTIFACT
+# `<rundir>/<cell>_ase.cosim` written at run time beside the .raw and the .log.
+# Not the state file (it is derived data and would go stale on every edit), not
+# the Raw struct (a C change to every consumer for zero benefit today). It is a
+# deterministic path exactly like ase::raw_file / log_file, so a later session --
+# or F2's Signal Browser -- reads it without re-netlisting. Its `scope` field is a
+# HINT: Verilator names the DUT scope after the MODULE (measured: the reference
+# counter.vcd declares `$scope module TOP` then `$scope module counter`), which is
+# read out of the .v here, but inlining can change it, so F2 must verify the scope
+# against the DB it actually loaded rather than trust this string.
+
+# The build script that turns a `.v` into a d_cosim `.so`. An rc may point this
+# at an installed copy; stock resolution is the in-tree tools/cosim one, then
+# PATH. Empty -> no build orchestration is possible (E6 degrades to a notice).
+set_ne ASE_COSIM_BUILD {}
+
+# A `cosim` policy value, or `dflt`. The key is POLICY ONLY (see the header):
+#   build   auto|always|never   rebuild the .so before the run (default auto)
+#   trace   0|1                 build with -V so the shim writes a VCD (default 1)
+#   attach  0|1                 attach the VCDs after a run (default 1)
+#   vsupply <volts>             digital supply for the default auto_bridge models
+#   bridges auto|0|1            emit default auto_bridge pre_sets (default auto)
+proc ase::cosim_policy {state key {dflt {}}} {
+  set c [ase::state_get $state cosim]
+  if {[catch {expr {[dict exists $c $key] ? 1 : 0}} ok]} { return $dflt }
+  if {!$ok} { return $dflt }
+  set v [dict get $c $key]
+  if {$v eq {}} { return $dflt }
+  return $v
+}
+
+# Digital supply for the default adc/dac bridge models: the `cosim vsupply`
+# policy, else a design variable named VDD, else 1.8 (the reference TB's value
+# and the upstream example's).
+proc ase::cosim_supply {state} {
+  set v [ase::cosim_policy $state vsupply {}]
+  if {[string is double -strict $v]} { return $v }
+  foreach var [ase::state_get $state variables] {
+    if {[catch {ase::state_get $var name} nm]} { continue }
+    if {[string tolower $nm] ne {vdd}} { continue }
+    set val [ase::state_get $var value]
+    if {[string is double -strict $val]} { return $val }
+  }
+  return 1.8
+}
+
+# The LOCAL `.so` basename a `simulation=` value names, or {} when this card is
+# not something ASE may build or trace. Three rejections, each measured:
+#   - not a `.so` at all -> upstream's Icarus arm, `simulation="ivlng"`, whose
+#     `sim_args[0]` is the compiled vvp DESIGN name. Rewriting that to a VCD
+#     path stops the co-simulation dead, and it is the alternative the reference
+#     symbol ships commented out one line below the active card.
+#   - a path with a directory in it -> ngspice opens THAT file; building a
+#     same-named .so into the run directory would stamp a file nobody loads and
+#     report "rebuilt", i.e. silently simulate the old Verilog.
+#   - lower-cased, because ngspice folds the card (M18).
+proc ase::cosim_so_local {so} {
+  if {![string match {*.so} $so]} { return {} }
+  set s $so
+  if {[string range $s 0 1] eq {./}} { set s [string range $s 2 end] }
+  if {[string first / $s] >= 0} { return {} }
+  return [string tolower $s]
+}
+
+# A model name reduced to a safe filename stem. LOWERCASED, and that is not
+# cosmetic -- see cosim_rewrite: ngspice folds the strings inside a device card
+# to lower case, so an artifact whose name has any upper case is opened under a
+# DIFFERENT name than the one on disk.
+proc ase::cosim_safe_name {name} {
+  regsub -all {[^A-Za-z0-9_.+-]} $name {_} name
+  if {$name eq {}} { set name cosim }
+  return [string tolower $name]
+}
+
+# SPICE `+` continuations folded onto the card they continue, so a `.model`
+# split across lines is still SEEN. (The rewrite side deliberately does NOT
+# use this -- it edits physical lines; see cosim_rewrite.)
+proc ase::cosim_logical_lines {text} {
+  set out {}
+  foreach raw [split $text "\n"] {
+    set line [string trimright $raw]
+    if {[llength $out] && [regexp {^[ \t]*\+} $line]} {
+      regsub {^[ \t]*\+} $line { } line
+      lset out end "[lindex $out end]$line"
+      continue
+    }
+    lappend out $line
+  }
+  return $out
+}
+
+# Scan a netlist/deck for d_cosim model cards. Returns an ORDERED list of dicts
+#   {model <as written> so <simulation= value> sim_args <raw [..] content>
+#    insts <XSPICE instance names referencing it> cont <1 if the card is a
+#    continued card and cannot be rewritten in place>}
+# Lines inside a `.control` block are skipped: `alter`/`altermod` there are not
+# device cards and an `a...` control command is not an instance.
+proc ase::cosim_scan_deck {text} {
+  set logical [ase::cosim_logical_lines $text]
+  set phys {}
+  foreach raw [split $text "\n"] { lappend phys [string trimright $raw] }
+  set order {}
+  set info [dict create]
+  set incontrol 0
+  foreach line $logical {
+    if {[regexp -nocase {^[ \t]*\.control\M} $line]} { set incontrol 1; continue }
+    if {[regexp -nocase {^[ \t]*\.endc\M} $line]} { set incontrol 0; continue }
+    if {$incontrol} { continue }
+    if {![regexp -nocase {^[ \t]*\.model[ \t]+(\S+)[ \t]+d_cosim\M} $line -> m]} { continue }
+    set key [string tolower $m]
+    if {[dict exists $info $key]} { continue }
+    set so {}
+    if {![regexp -nocase {simulation[ \t]*=[ \t]*"([^"]*)"} $line -> so]} {
+      regexp -nocase {simulation[ \t]*=[ \t]*(\S+)} $line -> so
+    }
+    set sargs {}
+    regexp -nocase {sim_args[ \t]*=[ \t]*\[([^\]]*)\]} $line -> sargs
+    # a card that only exists in folded form cannot be edited on one physical line
+    set cont 0
+    if {[lsearch -exact $phys $line] < 0} { set cont 1 }
+    lappend order $key
+    dict set info $key [dict create model $m so $so sim_args $sargs insts {} ninst 0 cont $cont]
+  }
+  if {![llength $order]} { return {} }
+  set incontrol 0
+  set curblk {}
+  set mult [ase::cosim_subckt_counts $logical]
+  foreach line $logical {
+    if {[regexp -nocase {^[ \t]*\.control\M} $line]} { set incontrol 1; continue }
+    if {[regexp -nocase {^[ \t]*\.endc\M} $line]} { set incontrol 0; continue }
+    if {$incontrol} { continue }
+    if {[regexp -nocase {^[ \t]*\.subckt[ \t]+(\S+)} $line -> bnm]} {
+      set curblk [string tolower $bnm]; continue
+    }
+    if {[regexp -nocase {^[ \t]*\.ends\M} $line]} { set curblk {}; continue }
+    if {![regexp {^[ \t]*([aA]\S*)[ \t]+(.*\S)[ \t]*$} $line -> instname rest]} { continue }
+    set toks [regexp -all -inline {\S+} $rest]
+    if {![llength $toks]} { continue }
+    set last [string tolower [lindex $toks end]]
+    if {![dict exists $info $last]} { continue }
+    dict set info $last insts [concat [dict get $info $last insts] [list $instname]]
+    # ELABORATED count, not line count: a `.subckt` body appears once however
+    # many times the block is instantiated, so `x1 … dig_top` + `x2 … dig_top`
+    # around one `a1 … counter` line means TWO shims opening one VCD path.
+    # 0, not 1, when the enclosing `.subckt` is never instantiated: that block
+    # is dead code and contributes no runtime instance. The top level is always
+    # in `mult` with multiplicity 1, so a flat deck still counts 1.
+    set n 0
+    if {[dict exists $mult $curblk]} { set n [dict get $mult $curblk] }
+    dict set info $last ninst [expr {[ase::state_get [dict get $info $last] ninst 0] + $n}]
+  }
+  set out {}
+  foreach k $order { lappend out [dict get $info $k] }
+  return $out
+}
+
+# How many times each `.subckt` is ELABORATED, counted from the top level.
+# `.subckt` bodies are emitted ONCE however many times they are instantiated
+# (spice_netlist.c dedups on the cell), so a line scan alone cannot tell one
+# code block from N. Returns a dict subckt-name -> multiplicity, plus the key
+# {} for the top level (always 1). Computed by bounded relaxation, not by a
+# traversal -- see the comment on pass 2 for why a visit-once DFS is wrong here.
+proc ase::cosim_subckt_counts {logical} {
+  # pass 1: which block each line is in, and the x-instantiations per block
+  set blocks [dict create {} [dict create]]
+  set cur {}
+  foreach line $logical {
+    if {[regexp -nocase {^[ \t]*\.subckt[ \t]+(\S+)} $line -> nm]} {
+      set cur [string tolower $nm]
+      if {![dict exists $blocks $cur]} { dict set blocks $cur [dict create] }
+      continue
+    }
+    if {[regexp -nocase {^[ \t]*\.ends\M} $line]} { set cur {}; continue }
+    if {![regexp {^[ \t]*[xX]\S*[ \t]+(.*\S)[ \t]*$} $line -> rest]} { continue }
+    # the subckt name is the last token that is not a `param=value` assignment
+    set nm {}
+    foreach tok [regexp -all -inline {\S+} $rest] {
+      if {[string first = $tok] >= 0} { continue }
+      set nm $tok
+    }
+    if {$nm eq {}} { continue }
+    set nm [string tolower $nm]
+    set b [dict get $blocks $cur]
+    dict incr b $nm
+    dict set blocks $cur $b
+  }
+  # pass 2: multiplicity by BOUNDED RELAXATION, re-derived from scratch each
+  # round. A visit-once DFS is wrong here and was measured wrong: a block popped
+  # before every one of its parents has contributed keeps that partial
+  # multiplicity, and its descendants inherit it — `wa`+`wb` both instantiating
+  # `mid`, which instantiates the code block, gave the block 1 instead of 2 and
+  # so `multi 0`, which is exactly the interleaved-VCD case the flag exists for.
+  # One round propagates one level, so `size` rounds reach the deepest block;
+  # the fixed bound is also the cycle guard (a self-referential netlist is
+  # malformed, not a reason to hang).
+  set mult [dict create {} 1]
+  set rounds [expr {[dict size $blocks] + 1}]
+  for {set pass 0} {$pass < $rounds} {incr pass} {
+    set next [dict create {} 1]
+    dict for {parent kids} $blocks {
+      if {![dict exists $mult $parent]} { continue }
+      set m [dict get $mult $parent]
+      if {$m == 0} { continue }
+      dict for {child n} $kids {
+        set add [expr {$m * $n}]
+        if {[dict exists $next $child]} {
+          dict set next $child [expr {[dict get $next $child] + $add}]
+        } else {
+          dict set next $child $add
+        }
+      }
+    }
+    if {[dict size $next] == [dict size $mult]} {
+      set same 1
+      dict for {k v} $next { if {![dict exists $mult $k] || [dict get $mult $k] != $v} { set same 0; break } }
+      if {$same} { break }
+    }
+    set mult $next
+  }
+  return $mult
+}
+
+# instname -> {inst symref lib cell module vfile} for every instance of the
+# CURRENT schematic whose cell has a `verilog` view (E1's design side). Empty
+# when no schematic is loaded or nothing qualifies. Keys are LOWERCASED because
+# SPICE instance names are case-insensitive and the deck is the other half of
+# the join.
+proc ase::cosim_design_scan {} {
+  set out [dict create]
+  if {[catch {xschem instance_list} lst]} { return $out }
+  foreach {inst symref type} $lst {
+    if {$inst eq {} || $symref eq {}} { continue }
+    set vfile {}
+    catch {set vfile [cellview_sibling_path $symref verilog]}
+    if {$vfile eq {} || ![file isfile $vfile]} { continue }
+    set lib {}; set cell {}
+    if {![catch {library_inst_lcv $symref} lcv] && [llength $lcv] == 3} {
+      set lib [lindex $lcv 0]
+      set cell [lindex $lcv 1]
+    }
+    if {$cell eq {}} { set cell [file rootname [file tail $vfile]] }
+    dict set out [string tolower $inst] [dict create \
+      inst $inst symref $symref lib $lib cell $cell \
+      vfile [file normalize $vfile] module [ase::cosim_module_of $vfile]]
+  }
+  return $out
+}
+
+# Is the state's design the schematic currently loaded? Mirrors the comparison
+# ase::netlist makes before netlisting in place (normalized cellview_path vs
+# `xschem get schname`), and for the same reason: those are the only conditions
+# under which the current xctx's instances belong to THIS state.
+proc ase::cosim_design_is_current {state} {
+  set design [ase::state_get $state design]
+  if {$design eq {}} { return 0 }
+  if {[catch {expr {[dict exists $design lib] && [dict exists $design cell]}} ok]} { return 0 }
+  if {!$ok} { return 0 }
+  set view schematic
+  if {[dict exists $design view] && [dict get $design view] ne {}} {
+    set view [dict get $design view]
+  }
+  if {[catch {xschem cellview_path [dict get $design lib]/[dict get $design cell] $view} p]} {
+    return 0
+  }
+  if {$p eq {}} { return 0 }
+  if {[catch {xschem get schname} cur] || $cur eq {}} { return 0 }
+  return [expr {[file normalize $cur] eq [file normalize $p] ? 1 : 0}]
+}
+
+# The first `module <name>` declared in a Verilog source, or {}. Used only for
+# the VCD scope HINT -- Verilator names the DUT trace scope after the module.
+proc ase::cosim_module_of {vfile} {
+  if {$vfile eq {} || ![file isfile $vfile]} { return {} }
+  if {[catch {open $vfile r} f]} { return {} }
+  set txt [read $f]
+  close $f
+  if {[regexp -line {^[ \t]*module[ \t]+([A-Za-z_][A-Za-z0-9_$]*)} $txt -> m]} { return $m }
+  return {}
+}
+
+# <rundir>/<cell>_ase.cosim -- the co-simulation map artifact (F2). log_file /
+# raw_file mirror.
+proc ase::cosim_file {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (cosim_file)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.cosim]
+}
+
+# The full map: the deck scan, enriched with the design walk (when the design is
+# the current schematic) and with the previously saved map (so `Run` on an
+# existing netlist, which never loads the design, still knows which .v built
+# which .so). Adds, per entry: vcd, scope, multi, lib, cell, vfile, module.
+proc ase::cosim_map {state netlist_text} {
+  set scan [ase::cosim_scan_deck $netlist_text]
+  if {![llength $scan]} { return {} }
+  # The design walk is trusted ONLY when the state's design is the schematic
+  # actually loaded. `ase::run_existing` (ADE-L's "Run", on the existing netlist
+  # artifact) never loads it, and the window can be sitting on any other cell —
+  # whose instance names would join against this deck's, since `a1` is the
+  # default name for a code block. That join would hand the WRONG .v to the E6
+  # build. With no trustworthy walk the map falls back to the sidecar below,
+  # which is what the artifact exists for.
+  set dmap [dict create]
+  if {[ase::cosim_design_is_current $state]} { set dmap [ase::cosim_design_scan] }
+  set prev [dict create]
+  foreach e [ase::cosim_load_map $state] {
+    dict set prev [string tolower [ase::state_get $e model]] $e
+  }
+  set rd [ase::rundir $state]
+  set trace [expr {[ase::cosim_policy $state trace 1] eq {0} ? 0 : 1}]
+  set dcell {}
+  catch {set dcell [dict get [ase::state_get $state design] cell]}
+  if {$dcell eq {}} { set dcell cosim }
+  set used [dict create]
+  set out {}
+  foreach e $scan {
+    set key [string tolower [dict get $e model]]
+    set lib {}; set cell {}; set vfile {}; set module {}
+    foreach i [dict get $e insts] {
+      set ik [string tolower $i]
+      if {![dict exists $dmap $ik]} { continue }
+      set d [dict get $dmap $ik]
+      set lib [dict get $d lib]; set cell [dict get $d cell]
+      set vfile [dict get $d vfile]; set module [dict get $d module]
+      break
+    }
+    if {$vfile eq {} && [dict exists $prev $key]} {
+      set p [dict get $prev $key]
+      set lib [ase::state_get $p lib]; set cell [ase::state_get $p cell]
+      set vfile [ase::state_get $p vfile]; set module [ase::state_get $p module]
+      if {$vfile ne {} && ![file isfile $vfile]} { set vfile {} }
+    }
+    if {$module eq {}} { set module [dict get $e model] }
+    dict set e lib $lib
+    dict set e cell $cell
+    dict set e vfile $vfile
+    dict set e module $module
+    dict set e scope "TOP.$module"
+    # ELABORATED instances, not netlist lines (cosim_scan_deck): N of them share
+    # the one `.model` card, so they would all open the one `sim_args[0]` path
+    # and interleave their writes. Detected, excluded from the attach, reported.
+    set n [ase::state_get $e ninst 0]
+    if {$n < [llength [dict get $e insts]]} { set n [llength [dict get $e insts]] }
+    dict set e ninst $n
+    dict set e multi [expr {$n > 1 ? 1 : 0}]
+    dict set e local_so [ase::cosim_so_local [dict get $e so]]
+    # `vcd` is BOTH the artifact path and the promise: last_vcdfiles serves it,
+    # cosim_rewrite writes its basename into the card, and run_done reports it
+    # missing after the run. So it is set ONLY when this run will really write
+    # one. Empty for the Icarus arm, for a `.so` outside the run directory, for
+    # a `+`-continued card render_deck cannot edit, and for `cosim trace 0`.
+    set vcd {}
+    if {[dict get $e local_so] ne {} && [ase::state_get $e cont 0] ne {1} && $trace} {
+      set vcd [file join $rd "[ase::cosim_safe_name ${dcell}_[dict get $e model]].vcd"]
+      # design-qualified, like <cell>_ase.raw / .log / .cosim: the run directory
+      # defaults to $USER_CONF_DIR/simulations for EVERY design, so a bare
+      # <model>.vcd lets two sessions serve each other's digital data.
+      if {[dict exists $used $vcd]} {
+        # two model names that differ only where cosim_safe_name folds them
+        set vcd [file join $rd \
+          "[ase::cosim_safe_name ${dcell}_[dict get $e model]]_[llength $out].vcd"]
+      }
+      dict set used $vcd 1
+    }
+    dict set e vcd $vcd
+    lappend out $e
+  }
+  return $out
+}
+
+# Delete the VCDs a deck is about to promise. Returns the list deleted.
+# Same reasoning ase::netlist gives for deleting its netlist artifact ("a stale
+# artifact must not mask a failed netlist"), and here it is load-bearing twice
+# over: the VCD is written by the SHIM, not by ngspice's `write`, so the analog
+# half can succeed while the digital half writes nothing -- and both the E7
+# missing-artifact check and ase::last_vcdfiles decide with `file isfile`, so a
+# survivor from the previous run would be silently attached to THIS run's raw.
+proc ase::cosim_clear_artifacts {map} {
+  set gone {}
+  foreach e $map {
+    set v [ase::state_get $e vcd]
+    if {$v eq {}} { continue }
+    if {[file exists $v]} { lappend gone $v }
+    file delete -force -- $v
+  }
+  return $gone
+}
+
+# Persist / recover the map artifact. One `list`-quoted dict per line, `#`
+# comments skipped. Never throws: a missing or corrupt artifact just means "no
+# map" (the deck scan alone still detects the run as mixed-signal).
+proc ase::cosim_save_map {state map} {
+  if {[catch {ase::cosim_file $state} path]} { return {} }
+  if {![llength $map]} { file delete -force -- $path; return $path }
+  if {[catch {open $path w} f]} { return {} }
+  puts $f "# xschem ASE-L co-simulation map -- generated, do not edit."
+  puts $f "# doc/claude/specs/mixed_signal_signal_browser.md section E (F2 consumes it)."
+  foreach e $map { puts $f [list $e] }
+  close $f
+  return $path
+}
+
+proc ase::cosim_load_map {state} {
+  if {[catch {ase::cosim_file $state} path]} { return {} }
+  if {![file isfile $path]} { return {} }
+  if {[catch {open $path r} f]} { return {} }
+  set txt [read $f]
+  close $f
+  set out {}
+  foreach line [split $txt "\n"] {
+    set line [string trim $line]
+    if {$line eq {} || [string index $line 0] eq "#"} { continue }
+    if {[catch {lindex $line 0} e]} { continue }
+    if {[catch {dict size $e}]} { continue }
+    lappend out $e
+  }
+  return $out
+}
+
+# Replace (or insert) `sim_args=["<vcd>"]` on ONE physical `.model ... d_cosim`
+# line. Index arithmetic, not regsub: a path may contain `&` or `\`, which
+# regsub's replacement grammar would eat.
+proc ase::cosim_set_sim_args {line vcd} {
+  set rep "sim_args=\[\"$vcd\"\]"
+  if {[regexp -nocase -indices {sim_args[ \t]*=[ \t]*\[[^\]]*\]} $line rng]} {
+    return [string replace $line [lindex $rng 0] [lindex $rng 1] $rep]
+  }
+  if {[regexp -nocase -indices {^[ \t]*\.model[ \t]+\S+[ \t]+d_cosim} $line rng]} {
+    set b [lindex $rng 1]
+    return [string replace $line $b $b "[string index $line $b] $rep"]
+  }
+  return $line
+}
+
+# Point every d_cosim card in `lines` at the map's per-model VCD (E2).
+#
+# WHAT GOES INTO THE CARD IS A BARE, LOWER-CASE BASENAME, NOT THE ABSOLUTE PATH,
+# and that is measured, not taste. ngspice-46 LOWERCASES the strings inside a
+# device card, exactly as M14 records for script-file mode:
+#
+#   sim_args=["/tmp/vcdprobe/Ecap/x.vcd"]   -> the shim opened
+#                    /tmp/vcdprobe/ecap/x.vcd   (proved: pre-creating the
+#                    lower-case directory made the file appear there)
+#   simulation="./CounterUP.so"             -> ngspice reported
+#                    `d_cosim failed to load simulation binary ./counterup.so.`
+#
+# So an absolute path is silently destroyed by any upper case ANYWHERE in it --
+# a run directory under /home/User, or a scratch dir with a capital letter, and
+# the VCD simply never appears with NO error at all (the `.so` case at least
+# reports; the trace path does not). A bare basename puts nothing but the model
+# name through the folder, and cosim_safe_name has already lower-cased that.
+#
+# The cost is a cwd dependency: the shim resolves it against ngspice's working
+# directory. That is sound because ase::run_deck already does `cd $rundir`
+# before launching, and because the deck's own `simulation="./<cell>.so"` has
+# the identical dependency. ase::cosim_map keeps the ABSOLUTE path in `vcd` --
+# that is the one Tcl reads back (E3) and it never goes near ngspice.
+#
+# A card that only exists as a `+`-continued card is left alone -- editing it
+# would need to know which physical line carries `sim_args`.
+#
+# The model name is matched by CAPTURING it and comparing case-insensitively,
+# not by building a regexp around it: a name interpolated into a pattern would
+# have to be regexp-quoted, and SPICE compares model names case-insensitively
+# anyway (spice_netlist.c's own hash key is lowercased, :150).
+proc ase::cosim_rewrite {lines map} {
+  set want [dict create]
+  foreach e $map {
+    # `vcd` is empty for every card this run will not trace -- the Icarus arm, a
+    # `.so` ngspice opens from elsewhere, a `+`-continued card, `trace 0`. Those
+    # cards are left EXACTLY as the netlist wrote them: for `simulation="ivlng"`
+    # sim_args[0] is the compiled vvp design, and overwriting it with a VCD path
+    # is the one edit that stops that backend working.
+    set vcd [ase::state_get $e vcd]
+    if {$vcd eq {}} { continue }
+    dict set want [string tolower [dict get $e model]] [file tail $vcd]
+  }
+  if {![dict size $want]} { return $lines }
+  set done [dict create]
+  for {set i 0} {$i < [llength $lines]} {incr i} {
+    set line [lindex $lines $i]
+    if {![regexp -nocase {^[ \t]*\.model[ \t]+(\S+)[ \t]+d_cosim\M} $line -> m]} { continue }
+    set k [string tolower $m]
+    if {![dict exists $want $k] || [dict exists $done $k]} { continue }
+    lset lines $i [ase::cosim_set_sim_args $line [dict get $want $k]]
+    dict set done $k 1
+  }
+  return $lines
+}
+
+# --- E6: build orchestration -------------------------------------------------
+
+# The build script, or {} when none can be found.
+proc ase::cosim_build_script {} {
+  if {[info exists ::ASE_COSIM_BUILD] && $::ASE_COSIM_BUILD ne {}} {
+    if {[file executable $::ASE_COSIM_BUILD]} { return $::ASE_COSIM_BUILD }
+    return {}
+  }
+  if {[info exists ::XSCHEM_SHAREDIR]} {
+    set p [file normalize [file join $::XSCHEM_SHAREDIR .. tools cosim build_cosim_so.sh]]
+    if {[file executable $p]} { return $p }
+  }
+  set p [auto_execok build_cosim_so.sh]
+  if {$p ne {}} { return [lindex $p 0] }
+  return {}
+}
+
+# The shim source directory the build links, mirrored EXACTLY from
+# build_cosim_so.sh so the stamp can see a shim edit: NGSPICE_COSIM_SRC wins;
+# else a `-V` (trace) build uses the in-repo patched copy and a plain build uses
+# the system one. Mirroring the trace arm matters — recording the repo shim for
+# a build that actually linked the system shim would make a system upgrade
+# invisible to the staleness test.
+proc ase::cosim_shim_dir {script {trace 1}} {
+  if {[info exists ::env(NGSPICE_COSIM_SRC)] && $::env(NGSPICE_COSIM_SRC) ne {}} {
+    return $::env(NGSPICE_COSIM_SRC)
+  }
+  if {!$trace} { return /usr/local/share/ngspice/scripts/src }
+  if {$script eq {}} { return {} }
+  return [file join [file dirname $script] src]
+}
+
+# The build stamp for one entry: every input whose change must force a rebuild.
+proc ase::cosim_stamp {vfile script shimdir trace} {
+  set out [list src $vfile trace $trace]
+  foreach {k p} [list src $vfile tool $script shim [file join $shimdir verilator_shim.cpp]] {
+    if {$p ne {} && [file isfile $p]} {
+      lappend out ${k}_mtime [file mtime $p] ${k}_size [file size $p]
+    } else {
+      lappend out ${k}_mtime {} ${k}_size {}
+    }
+  }
+  return $out
+}
+
+# Is `so` missing, or built from different inputs than `stamp` describes?
+proc ase::cosim_stale {so stamp} {
+  if {![file isfile $so]} { return 1 }
+  set sf $so.stamp
+  if {![file isfile $sf]} { return 1 }
+  if {[catch {open $sf r} f]} { return 1 }
+  set old [read $f]
+  close $f
+  if {[catch {string equal [string trim $old] [string trim $stamp]} same]} { return 1 }
+  return [expr {$same ? 0 : 1}]
+}
+
+# Build every d_cosim `.so` the map names, before the deck runs (E6).
+# Returns a list of {model status detail}; status is one of
+#   built | uptodate | skipped | unavailable.
+# A FAILED build throws -- falling through to run the previous `.so` is exactly
+# the "silently simulating last week's Verilog" failure this item exists to
+# prevent.
+proc ase::cosim_build {state map} {
+  set res {}
+  if {![llength $map]} { return $res }
+  set mode [ase::cosim_policy $state build auto]
+  if {$mode eq {never}} {
+    foreach e $map { lappend res [list [dict get $e model] skipped "cosim build=never"] }
+    return $res
+  }
+  set trace [expr {[ase::cosim_policy $state trace 1] eq {0} ? 0 : 1}]
+  set script [ase::cosim_build_script]
+  set shimdir [ase::cosim_shim_dir $script $trace]
+  set rd [ase::rundir $state]
+  foreach e $map {
+    set model [dict get $e model]
+    set so [ase::state_get $e so]
+    set vfile [ase::state_get $e vfile]
+    set local [ase::state_get $e local_so]
+    if {$local eq {}} { set local [ase::cosim_so_local $so] }
+    if {$local eq {}} {
+      lappend res [list $model skipped "simulation=$so is not a run-directory .so\
+ (Icarus arm, or a path ngspice opens directly) — not ASE's to build"]
+      continue
+    }
+    # LOWER-CASED by cosim_so_local: ngspice folds `simulation="./Counter.so"` to
+    # `./counter.so` and reports `d_cosim failed to load simulation binary
+    # ./counter.so` (measured), so the file must exist under the folded name.
+    set target [file join $rd $local]
+    # NEVER ABORT THE RUN BECAUSE ASE CANNOT CHECK.  A code block one level down
+    # in the hierarchy has no resolvable `.v` at all: `xschem instance_list`
+    # enumerates the CURRENT schematic only (scheduler.c:6426-6440) while the
+    # netlister hoists the `.model` card to the top of the deck
+    # (spice_netlist.c:575-591), so the deck names a block the design walk never
+    # saw. That was a working configuration before section E and must stay one:
+    # ASE says what it cannot check and gets out of the way. If the `.so` really
+    # is absent, ngspice itself reports `d_cosim failed to load simulation
+    # binary` and E7's cosim_load matcher surfaces it.
+    if {$vfile eq {} || $script eq {}} {
+      set why [expr {$vfile eq {} ?
+        "no verilog view resolved for '$model' (a code block below the top level\
+ of the design is not reachable by the instance walk)" :
+        "build_cosim_so.sh not found (set ::ASE_COSIM_BUILD)"}]
+      lappend res [list $model unavailable "$why — $local is NOT being checked for\
+ staleness; build it yourself if it is out of date"]
+      continue
+    }
+    set stamp [ase::cosim_stamp $vfile $script $shimdir $trace]
+    if {$mode ne {always} && ![ase::cosim_stale $target $stamp]} {
+      lappend res [list $model uptodate [file tail $target]]
+      continue
+    }
+    set cmd [list $script]
+    if {$trace} { lappend cmd -V }
+    lappend cmd -o $rd $vfile
+    ::ase::echo "ase: building [file tail $target] from [file tail $vfile] (d_cosim model $model)"
+    # {*} expands the list directly into words. `eval exec [linsert $cmd end
+    # 2>@1]` would also work — Tcl's list quoting braces an element containing a
+    # space, `$`, `;` or `[`, so it round-trips (checked, not assumed) — but it
+    # only works because of that quoting, and one hand-built string in $cmd
+    # would break it silently. {*} cannot be broken that way.
+    if {[catch {exec {*}$cmd 2>@1} out]} {
+      return -code error "ase: co-simulation build FAILED for '$model'\
+ ([file tail $vfile]):\n$out"
+    }
+    # build_cosim_so.sh names the .so after the SOURCE FILE; the deck names it in
+    # `simulation=`. Reconcile rather than fail: the two differ whenever the .v
+    # basename is not the model/cell name.
+    set produced [file join $rd "[file rootname [file tail $vfile]].so"]
+    if {[file normalize $produced] ne [file normalize $target]} {
+      if {![file isfile $produced]} {
+        return -code error "ase: build of '$model' produced no $produced"
+      }
+      file copy -force -- $produced $target
+    }
+    if {![file isfile $target]} {
+      return -code error "ase: build of '$model' produced no [file tail $target]"
+    }
+    if {![catch {open $target.stamp w} f]} { puts $f $stamp; close $f }
+    lappend res [list $model built [file tail $target]]
+  }
+  return $res
+}
+
+# --- E5: the digital side of the deck ----------------------------------------
+
+# The default adc/dac auto-bridge `pre_set`s for a mixed-signal deck. ngspice
+# inserts an `auto_bridge` whenever a digital (event) node meets an analog one;
+# without these two `pre_set`s it uses built-in thresholds that have nothing to
+# do with the design's supply. Upstream's example hand-writes them into the
+# testbench's `code_shown` block; ASE-L owns simulation config, so a state that
+# has none and a deck that has d_cosim gets these (spec E5). A state that
+# already carries an auto_bridge pre_set is left completely alone.
+proc ase::cosim_default_bridges {state} {
+  set v [ase::cosim_supply $state]
+  return [list \
+    "pre_set auto_bridge_d_in = ( \".model auto_adc adc_bridge( in_low = '0.9 * $v / 2'\
+ in_high = '1.1 * $v / 2' rise_delay=1e-11 fall_delay=1e-11 )\" \"auto_bridge%d \[ %s \] \[ %s \] auto_adc\" )" \
+    "pre_set auto_bridge_d_out = ( \".model auto_dac dac_bridge( out_low = 0 out_high = $v\
+ t_rise=1e-11 t_fall=1e-11 )\" \"auto_bridge%d \[ %s \] \[ %s \] auto_dac\" )"]
+}
+
+# Does the design already configure the auto bridges by hand?
+#
+# BOTH places count. The state's `pre_commands` is where ASE-L keeps them and
+# where the migrator put them -- but upstream's shipped testbench writes them
+# into a `code_shown` block, i.e. into the NETLIST, and that text reaches
+# render_deck as `netlist_text`. Checking only the state made ASE append its own
+# defaults AFTER the design's, and the later `pre_set` wins (measured,
+# ngspice-46), so a 3.3 V design silently got 1.8 V bridge thresholds.
+proc ase::cosim_has_bridges {state {netlist_text {}}} {
+  foreach pc [ase::state_get $state pre_commands] {
+    set t $pc
+    if {[llength $pc] >= 2 && [catch {dict exists $pc cmd} ok] == 0 && $ok} {
+      set t [dict get $pc cmd]
+    }
+    if {[string first auto_bridge_d_ [string tolower $t]] >= 0} { return 1 }
+  }
+  if {[string first auto_bridge_d_ [string tolower $netlist_text]] >= 0} { return 1 }
+  return 0
+}
+
+# --- E3: attach the analog raw AND every digital VCD -------------------------
+
+# Load `rawfile` (as `sim_type`) plus every VCD in `vcdfiles` into the raw
+# registry, leaving N DBs with the ANALOG one current.
+#
+# ORDERING, and why. `xschem raw read` APPENDS to xctx->extra_raw_arr[] and makes
+# the file it just read CURRENT (save.c:1277-1280 / :1320-1323, verified
+# empirically) -- so reading the raw and then two VCDs leaves a VCD current. Every
+# existing consumer (annotate_op, `xschem raw value`, wviewer's add_trace) resolves
+# names against the CURRENT DB and expects analog vector names, so the analog DB is
+# switched back to explicitly. It is slot 0 because it is read first.
+#
+# PARTIAL RUNS. A missing/unreadable RAW returns 0 and clears NOTHING -- a
+# stale-but-loaded DB beats an empty viewer, which is attach_raw's existing
+# policy. A missing or unreadable VCD is skipped with a notice and does not stop
+# the analog attach: an analog-only result is still a correct, useful result.
+#
+# Returns {n <dbs attached> current <index> vcds <attached> skipped <not>}.
+# `xschem raw read` returns "1"/"0" WITHOUT throwing on a parse failure, so the
+# return value is checked, not just the catch.
+proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
+  if {$rawfile eq {} || ![file isfile $rawfile]} {
+    return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
+  }
+  # READ FIRST, DROP THE OLD DBs AFTER. `xschem raw read` APPENDS and makes what
+  # it read current (save.c:1277-1280), so the incoming raw can be validated
+  # while the outgoing one is still loaded. Clearing first -- which is what
+  # attach_raw did before section E -- destroys the previous DB and then leaves
+  # an EMPTY registry when the new file exists but does not parse: a truncated
+  # raw, or one whose requested analysis is not in it because the run died after
+  # `op`. "A stale-but-loaded DB beats an empty viewer" is the stated policy;
+  # this is the order that actually delivers it.
+  # DROP ANY STALE COPY OF THE INCOMING FILE FIRST. `xschem raw read` does not
+  # re-read a path already in the registry -- save.c:1335-1339, "file found:
+  # switch to it", no disk access -- and the raw path is deterministic
+  # (<rundir>/<cell>_ase.raw, overwritten in place by every run). Without this
+  # targeted clear the SECOND attach of a session would switch to the DB read
+  # from the FIRST run and plot last run's waveforms. (The old body was immune
+  # only because it cleared the whole registry first, which is the behaviour the
+  # read-before-clear order below is here to stop.)
+  catch {xschem raw clear $rawfile $sim_type}
+  if {$sim_type ne {}} {
+    set ok [expr {![catch {xschem raw read $rawfile $sim_type} r] && $r eq {1}}]
+  } else {
+    set ok [expr {![catch {xschem raw read $rawfile} r] && $r eq {1}}]
+  }
+  if {!$ok} {
+    return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
+  }
+  # drop everything that is not the DB just read, HIGHEST INDEX FIRST: `raw
+  # clear <n>` compacts the array, so removing a larger index never disturbs a
+  # smaller one.
+  set cur [ase::raw_current]
+  foreach i [lsort -integer -decreasing [ase::raw_indices]] {
+    if {$i == $cur} { continue }
+    catch {xschem raw clear $i}
+  }
+  set got {}; set skipped {}
+  foreach v $vcdfiles {
+    if {$v eq {} || ![file isfile $v]} { lappend skipped $v; continue }
+    if {[catch {xschem raw read $v vcd} r] || $r ne {1}} { lappend skipped $v; continue }
+    lappend got $v
+  }
+  # the analog DB is slot 0: it is the only survivor of the loop above, and
+  # `raw clear <n>` leaves extra_idx at 0 (save.c:1417-1421).
+  if {[llength $got]} { catch {xschem raw switch 0} }
+  return [dict create n [expr {1 + [llength $got]}] current 0 vcds $got skipped $skipped]
+}
+
+# The registry slot indices, and the current one; {} / -1 when nothing is
+# loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
+# line per slot (save.c:1469-1477) and nothing at all with no raw loaded.
+proc ase::raw_indices {} {
+  if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
+  set out {}
+  foreach line [lrange [split [string trimright $txt "\n"] "\n"] 1 end] {
+    if {[regexp {^(\d+) } $line -> i]} { lappend out $i }
+  }
+  return $out
+}
+proc ase::raw_current {} {
+  if {[catch {xschem raw info} txt] || $txt eq {}} { return -1 }
+  if {[regexp {^(\d+) current} [lindex [split $txt "\n"] 0] -> i]} { return $i }
+  return -1
+}
+
+# The VCD artifacts of session `key`'s last run that exist on disk (E3's input).
+# Reads the run-directory map artifact, so it works in a fresh xschem session
+# that never netlisted -- the same "file existence == has results" contract
+# ase::last_rawfile uses. A `multi 1` entry is EXCLUDED: two shims writing one
+# file produce an interleaved VCD that must not be presented as data.
+proc ase::last_vcdfiles {key} {
+  set state [ase::session_state $key]
+  if {$state eq {}} { return {} }
+  if {[ase::cosim_policy $state attach 1] eq {0}} { return {} }
+  set out {}
+  foreach e [ase::cosim_load_map $state] {
+    if {[ase::state_get $e multi 0] eq {1}} { continue }
+    set v [ase::state_get $e vcd]
+    if {$v ne {} && [file isfile $v]} { lappend out $v }
+  }
+  return $out
+}
+
+# --- E7: report a desynchronized co-simulation honestly ----------------------
+
+# Diagnostics extracted from a simulator log: a list of {severity code count
+# message}. `error` means the run's numbers are WRONG, not merely noisy.
+#
+# The strings are the literals inside /usr/local/lib/ngspice/digital.cm (they are
+# separate NUL-terminated literals, so the M9 diagnostic is a multi-line emission
+# whose header `XSPICE time is behind vtime:` is the only reliable probe -- a
+# regexp spanning the value lines would never match). ase's run_cmd folds stderr
+# into stdout (`2>@1`), so a stderr-only diagnostic still reaches the log.
+#
+# `dump call ignored` is Verilator's own message and is NOT an error: the patched
+# shim clamps a repeated/back-stepped dump to the previous time (M16/M9) and
+# VerilatedVcd then declines the duplicate. The reference run emits 61 of them
+# while producing a correct VCD, so it is reported as a note with a count.
+proc ase::run_diagnostics {logtext} {
+  set out {}
+  # The patterns are LITERAL substrings, matched with a string-first loop rather
+  # than `regexp -all`. Two reasons: the reference log is ~50 MB (issue 0278's
+  # print flood), and six regexp passes over that is real wall clock for a scan
+  # that must never be the reason someone turns diagnostics off; and a literal
+  # scan cannot be broken later by a `.` or `(` sneaking into a message string.
+  foreach {code sev pat msg} [list \
+    cosim_desync error {XSPICE time is behind vtime:} \
+      "the co-simulation DESYNCHRONIZED (ngspice stepped back and Verilator cannot\
+ un-step): the digital waveforms do NOT match the analog ones" \
+    cosim_past error {Warning simulated event is in the past:} \
+      "a digital event was simulated in the past: co-simulation event ordering is broken" \
+    cosim_out_past error {client simulator requested output in the past:} \
+      "the co-simulator requested an output in the past: event ordering is broken" \
+    cosim_portcount error {mismatched XSPICE/co-simulator} \
+      "XSPICE and the co-simulator disagree on the port count: the block is wired wrong" \
+    cosim_load error {failed to load simulation binary} \
+      "ngspice could not load the d_cosim shared object" \
+    cosim_dumpskip note {dump call ignored} \
+      "repeated VCD dump requests at the same time were coalesced (expected; the\
+ shim clamps non-monotonic dumps)"] {
+    set n [ase::count_substr $logtext $pat]
+    if {$n} { lappend out [list $sev $code $n $msg] }
+  }
+  return $out
+}
+
+# Occurrences of the literal substring `needle` in `hay`. `string first` is a
+# C-level scan, so this stays linear over a multi-megabyte log.
+proc ase::count_substr {hay needle} {
+  set n 0
+  set i 0
+  while {[set i [string first $needle $hay $i]] >= 0} { incr n; incr i }
+  return $n
+}
+
+# The `error`-severity diagnostics of the most recent completed run.
+proc ase::last_diagnostics {} {
+  variable last_run
+  if {[dict exists $last_run diagnostics]} { return [dict get $last_run diagnostics] }
   return {}
 }
 
@@ -1239,6 +2220,16 @@ namespace eval ase::backend::ngspice {
     if {[llength $lines] > 0 && [string trim [lindex $lines end]] eq ".end"} {
       set lines [lrange $lines 0 end-1]
     }
+    # Mixed-signal (spec E2): give every `.model <m> d_cosim` card a VCD of its
+    # own inside the run directory. The card reaches us verbatim in the circuit
+    # netlist (spice_netlist.c:575-591 emits it just before `.end`, which the
+    # strip above has already removed), and it is the ONLY place the digital
+    # artifact's path can be set — `sim_args[0]` is what the shim opens.
+    # `simulation=` is deliberately NOT touched: it is the user's choice of
+    # backend (`./counter.so` vs upstream's `ivlng` Icarus arm).
+    # Empty for any analog deck, so this is inert unless a code block exists.
+    set cosim [ase::cosim_map $state $netlist_text]
+    if {[llength $cosim]} { set lines [ase::cosim_rewrite $lines $cosim] }
     # .include cards (top-level, before .lib models so any global .params they
     # define — gf180's design.ngspice switches sw_stat_global/mc_skew/fnoicor/…
     # that sm141064's typical section references — are in scope when the models
@@ -1308,6 +2299,18 @@ namespace eval ase::backend::ngspice {
         set cmdtext $pc
       }
       lappend lines [ase::expand_path $cmdtext]
+    }
+    # Mixed-signal (spec E5): the adc/dac auto-bridge models are simulation
+    # config, so ASE-L owns them. ngspice inserts an `auto_bridge` wherever a
+    # digital (event) node meets an analog one; with no `pre_set` it uses
+    # built-in thresholds unrelated to the design's supply. The migrator only
+    # ever CARRIED these out of upstream's `code_shown` block, so a hand-built
+    # mixed-signal state had none at all. Emitted only when the deck really has
+    # a code block AND the state configures no bridge of its own — a state that
+    # hand-writes them is left completely alone. `cosim bridges 0` opts out.
+    if {[llength $cosim] && ![ase::cosim_has_bridges $state $netlist_text] &&
+        [ase::cosim_policy $state bridges auto] ne {0}} {
+      foreach b [ase::cosim_default_bridges $state] { lappend lines $b }
     }
     foreach type {op dc ac tran} {
       foreach a [ase::state_get $state analyses] {

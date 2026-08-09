@@ -112,3 +112,25 @@ The binary path (`fread(tmp, sizeof(double), rawvars, fd)`) is already bounded b
 `rawvars` and is not affected. Nothing here is specific to the waveform viewer,
 the Location bar or the Signal Browser: any route into `xschem raw read` —
 `Load raw`, the ASE plot path, a `.state` restore — reaches the same reader.
+
+## Update 2026-08-09 — it TERMINATES the editor, it is not merely an overrun
+
+Re-measured during the section-E adversarial review pass
+(`doc/claude/specs/mixed_signal_signal_browser.md`), with no §E code in the path:
+a plain `xschem raw read <f> tran` followed by `xschem raw clear` on an ASCII raw
+whose point blocks are **not blank-separated** ends in
+
+```
+double free or corruption (out)
+```
+
+i.e. SIGABRT, taking the whole editor with it — the write past the
+`my_calloc(rawvars)` buffer corrupts the allocator's metadata and the next
+`free_rawfile()` is where it lands. `read_raw_ascii_point()` (`src/save.c:406-461`)
+has no bound against `rawvars` and treats a blank line as its only terminator,
+so a missing blank line simply keeps filling `tmp[lines]`.
+
+That raises the severity: the title's "overruns its buffer" reads as a latent
+memory bug, but the reachable outcome is an editor crash with unsaved work lost,
+from opening a file. Two bounds are needed, not one: stop at `rawvars`, and treat
+a line that does not parse as a number as end-of-point.

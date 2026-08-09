@@ -138,10 +138,13 @@ ase::state_save $clonestate $cst
 # --- R1: state_default gained the viewer key ---------------------------------
 set d [ase::state_default]
 check "R1 state_default has viewer {}" [dict get $d viewer] {}
-check "R1 exactly the 15 schema keys" [lsort [dict keys $d]] \
+# `cosim` joined in §E of doc/claude/specs/mixed_signal_signal_browser.md. It is
+# in ase::omit_if_empty, so an empty one is not serialized and R2's
+# byte-identical round trip below is unaffected.
+check "R1 exactly the 16 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator design rundir temperature models variables \
           analyses outputs save_all_v save_all_i options includes \
-          pre_commands viewer}]
+          pre_commands cosim viewer}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------
 set vgraphs [list \
