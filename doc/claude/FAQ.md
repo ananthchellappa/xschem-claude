@@ -14,6 +14,52 @@ Newest entries on top.
 
 ---
 
+## Q40. Why did a digital signal have to be "bridged" to analog before I could plot it — and is that still true?
+
+- **Asked:** 2026-08-08
+- **Project state:** branch `fluid-editing` @ `1d776f33` + this session — §C of
+  `doc/claude/specs/mixed_signal_signal_browser.md`.
+
+**It was true. As of §C it is no longer true for anything a Verilog block dumps to VCD.**
+
+**Why it was true.** Three separate facts stacked up, and you needed all three to go away:
+
+1. **XSPICE event nodes never enter the `.raw` file.** Not with `save all`, not with an explicit
+   `save <node>`. Measured on a 2-node digital chain: `save all dclk dq` produced a raw whose
+   variable list was `time i(abr2) v(aq) v(clk) i(vclk)` — both event nodes simply absent.
+   ngspice's raw writer only knows about analog nodes.
+2. **Under `d_cosim`, only module PORTS cross the shim boundary at all.** The shim walks
+   `inputs.h`/`outputs.h`/`inouts.h` and nothing else, so a signal internal to the Verilog never
+   reaches ngspice in any form, bridged or not.
+3. **xschem could not read VCD.** `src/rawtovcd.c` is an *exporter*; `raw_read()` read spice raw
+   and nothing else.
+
+So the only way to see a digital node in a waveform was to give it an analog identity — put any
+analog load on it (a plain `robs <net> 0 1meg` inside a code block is enough; no symbol needed) and
+ngspice auto-inserts a `dac_bridge`, after which it lands in the raw under its hierarchical name.
+That works, but it only ever worked for nodes at the *boundary*. An internal signal of a Verilog
+module had nothing to attach a resistor to.
+
+**What changed.** Fact 3 is gone: `src/vcd_read.c` reads a VCD into the same `Raw` structure the
+spice parser produces, and registers it in `xctx->extra_raw_arr[]` as an ordinary database. Nothing
+downstream knows it came from a VCD — `xschem raw info` lists it, `xschem raw value` reads it, the
+Signal Browser's all-databases reader enumerates it. Fact 2 is gone too, on the simulation side:
+the patched Verilator shim in `tools/cosim/` dumps the model's full internal hierarchy.
+
+Concretely, on the reference testbench, `phase half prev next_count tc carry` appear **nowhere in
+the raw file** and are now browsable.
+
+**What bridging is still for.** Anything you want in the *raw* — because it is part of an analog
+measurement, or because you want it on the same trace as an analog signal today. Plotting an analog
+and a digital database on one time axis is §D and is not done yet.
+
+**Two things to know when you look at the numbers.** A VCD stores integer ticks scaled by
+`$timescale`; the reader converts to seconds once, at read time, so the X axis matches the raw with
+no unit juggling. And a digital `0`/`1` reads back as `0.0`/`1.0`, while `X` and `Z` read back as
+`0.5` and `0.3` — deliberately *not* `0`, so an unknown can never be mistaken for a low.
+
+---
+
 ## Q39. I had the Add Wire Label form open, pressed `Ctrl+A`, then closed the form — and my whole schematic was gone. Is that fixed?
 
 - **Asked:** 2026-08-08

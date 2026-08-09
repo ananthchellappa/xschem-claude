@@ -2248,6 +2248,10 @@ extern int update_op();
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
 extern int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, double sweep1, double sweep2);
 extern int table_read(const char *f);
+/* VCD (Value Change Dump) -> Raw. Same contract as table_read(): xctx->raw must be NULL
+ * on entry, the caller sets raw->sim_type. See src/vcd_read.c and
+ * doc/claude/specs/mixed_signal_signal_browser.md section C. */
+extern int vcd_read(const char *f);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);

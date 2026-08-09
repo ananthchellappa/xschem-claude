@@ -9574,7 +9574,15 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* raw what ...
      *     what = add | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
-     *            sim_type | switch | switch_back | table_read | value | values | pos_at | vars |
+     *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
+     *            pos_at | vars |
+     *
+     *   xschem raw vcd_read filename
+     *     read a Verilog VCD file as another database in the registry, with sim_type
+     *     "vcd". Same as `xschem raw read filename vcd`. Digital signals become ordinary
+     *     Raw vectors: 0 -> 0.0, 1 -> 1.0, X -> 0.5, Z -> 0.3; a bus becomes a composite
+     *     vector plus one vector per bit (`count` and `count[3]`..`count[0]`).
+     *     See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md.
      *
      *   xschem raw read filename [type [sweep1 sweep2]]
      *     if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
@@ -9729,6 +9737,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 3 && !strcmp(argv[2], "table_read")) {
         ret = extra_rawfile(1, argv[3], "table", sweep1, sweep2);
+        Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
+      } else if(argc > 3 && !strcmp(argv[2], "vcd_read")) {
+        /* identical to `xschem raw read <file> vcd`; spelled out for symmetry with
+         * table_read and so the type token cannot be mistyped by a caller */
+        ret = extra_rawfile(1, argv[3], "vcd", sweep1, sweep2);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "read")) {
         if(argc > 6) {
@@ -9976,7 +9989,14 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           sweep1 = atof_spice(argv[4]);
           sweep2 = atof_spice(argv[5]);
         }
-        if(argc > 3) res = raw_read(f, &xctx->raw, argv[3], 0, sweep1, sweep2);
+        /* `raw_read` BYPASSES extra_rawfile(), so the type-is-the-reader dispatch that
+         * save.c does for "table"/"vcd" has to be repeated here or a .vcd would be fed
+         * to the spice parser and read as an empty file. This is a live path, not a
+         * hypothetical: xschem.tcl:5705 (open_sub_schematic) and 5958 (hi_descend
+         * new-window) both carry the current database across with
+         * `xschem raw_read $rawfile [xschem raw_query sim_type]`. */
+        if(argc > 3 && !strcmp(argv[3], "vcd")) res = vcd_read(f);
+        else if(argc > 3) res = raw_read(f, &xctx->raw, argv[3], 0, sweep1, sweep2);
         else res = raw_read(f, &xctx->raw, NULL, 0, -1.0, -1.0);
         if(sch_waves_loaded() >= 0) {
           draw();
@@ -12990,10 +13010,37 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
  * matches no command in this group; early returns propagate unchanged. */
 static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
+    /* vcd_read [vcd_file]
+     *   If a simulation raw file is loaded unload it from memory,
+     *   else read a Verilog VCD file 'vcd_file' as the current database.
+     *   Mirrors the top-level `table_read` command (xschem_cmds_t). The registry form
+     *   `xschem raw vcd_read <f>` (xschem_cmds_r) is the one that ADDS a database
+     *   without dropping the analog one, and is what the mixed-signal flow uses.
+     *   See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md. */
+    if(!strcmp(argv[1], "vcd_read"))
+    {
+      char f[PATH_MAX + 100];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(sch_waves_loaded() >= 0) {
+        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+        draw();
+      } else if(argc > 2) {
+        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+        tcleval(f);
+        my_strncpy(f, tclresult(), S(f));
+        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+        vcd_read(f);
+        if(sch_waves_loaded() >= 0) {
+          my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, "vcd");
+          draw();
+        }
+      }
+      Tcl_ResetResult(interp);
+    }
     /* view_prop
      *   View attributes of selected element (read only)
      *   if multiple selection show the first element (in xschem  array order) */
-    if(!strcmp(argv[1], "view_prop"))
+    else if(!strcmp(argv[1], "view_prop"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       edit_property(2);

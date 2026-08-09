@@ -68,7 +68,9 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # cell raises a blocking "already open" warning popup -> flaky FAIL/CRASH)
 # (test_verilog_view_model is pure view-model logic and needs no display; it is
 # pinned here so its ASE-dispatch check cannot open a real ASE toplevel under X)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model "
+# (test_vcd_read is a pure file-parser/data-model test -- it only reads VCD and
+# .raw files into the Raw registry and never draws, so it needs no display)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

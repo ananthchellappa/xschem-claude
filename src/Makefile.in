@@ -5,7 +5,7 @@ put /local/src {
  select.c font.c editprop.c util.c save.c paste.c token.c psprint.c node_hash.c
  hilight.c options.c vhdl_netlist.c svgdraw.c spice_netlist.c spectre_netlist.c
  tedax_netlist.c verilog_netlist.c parselabel.c expandlabel.c
- eval_expr.c in_memory_undo.c cairo_jpg.c
+ eval_expr.c in_memory_undo.c cairo_jpg.c vcd_read.c
 }
 
 # list all files that need to be installed in "$(XSHAREDIR)"

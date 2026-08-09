@@ -1,6 +1,6 @@
 # Mixed-signal debug — digital internals in the Signal Browser
 
-Status: §A (simulation) and §B (view model) DONE; §C–§F open
+Status: §A (simulation), §B (view model) and §C (VCD → Raw DB) DONE; §D–§F open
 Owner branch: fluid-editing
 Related: `doc/claude/specs/ase_l.md`, `doc/claude/code_analysis/signal_browser_reference.md`,
 `doc/claude/code_analysis/signal_browser_teardown_scoping.md`,
@@ -171,15 +171,50 @@ more, but the primitive is unchanged for a direct caller (CIW, script, action lo
 The deliverable is a second *producer* for the same consumer. Nothing downstream should
 learn what a VCD is.
 
-| id | item | notes |
-|----|------|-------|
-| C1 | **`vcd_read()` → a populated `Raw`.** New `src/vcd_read.c` (add to `OBJ` **and** an explicit compile rule in `src/Makefile` — per CLAUDE.md). Parse `$timescale $scope $var $upscope $enddefinitions $dumpvars`, value-change body, `b<bits> <id>` vectors, `r<real> <id>`. | Fill `names/values/nvars/npoints/datasets/table/sim_type/schname/level`. |
-| C2 | **Event stream → sampled columns.** A `Raw` is columnar: every vector shares one point index. VCD is sparse per-signal events. Decide the materialization: (a) union of all event times, each signal held at its last value — exact, memory ~`nsignals × nevents`; (b) resample onto a fixed grid — bounded memory, loses exact edge times. **(a)** preserves the edges that make digital debug worth doing. Size it against the reference TB before committing. | The main engineering risk in §C. |
-| C3 | **X and Z.** `SPICE_DATA` is numeric; VCD has four states. Either a sentinel value with renderer support, or a parallel state array in `Raw`. M8 says the *co-simulation* is two-state, but a VCD from a `--timing` build or from `eprvcd` is not. | Do not silently map X→0. |
-| C4 | **Buses.** VCD `$var wire 4 ! cnt [3:0]` is one vector. The viewer's existing bus display is the `node="bus; b3,b2,b1,b0"` composition of scalars. Either explode buses into bits at read time (fits the existing renderer, loses the natural grouping) or teach the renderer a native bus vector. | Affects what the browser tree shows. |
-| C5 | **Scheduler surface.** A `vcd_read` arm alongside `raw_read`, landing the result in `extra_raw_arr[]` through `extra_rawfile()` so it is a first-class DB. Letter-dispatch rules apply (`doc/claude/` scheduler notes). | `src/scheduler.c` |
-| C6 | **`sim_type` for a digital DB.** Pick and document the token (`"vcd"`? `"tran"` so existing X-axis code just works?). Several call sites compare `sim_type` literally — e.g. `!strcmp(xctx->raw->sim_type, "op")` at `src/scheduler.c:2183,9751,9764`. Choosing `"tran"` avoids touching them; choosing `"vcd"` means auditing every one. | Decide once, write it down. |
-| C7 | **Digital rendering already half-exists.** Graph widgets have `digital=1`. Confirm it renders a 0/1 `SPICE_DATA` trace the way this needs, and extend for X/Z and bus-value text if C3/C4 demand. | `src/draw.c` graph path |
+**STATUS: §C IS DONE** (2026-08-08, `fluid-editing`). C1–C7 all landed in `src/vcd_read.c`
+(+ four wiring hunks). `xschem raw vcd_read <f>` / `xschem raw read <f> vcd` puts a VCD in
+`extra_raw_arr[]` as an ordinary DB that `xschem raw info` lists; the reference
+`counter.vcd` reads as **29 vectors × 20 points**. Regression-tested by
+`tests/headless/test_vcd_read.tcl` (187 checks, 22 sabotages verified). One residue filed
+as **issue 0290**: `xschem raw_read <f> table` still bypasses the reader dispatch — the
+same defect one file format over, fixed here for `vcd` only.
+
+**The re-measurement that shaped C1 and C2.** The spec's recorded artifact was stale. On the
+current `~/.xschem/simulations/counter.vcd` (390 KB, span 0..500,000 ps):
+
+| measured | value |
+|---|---|
+| `#t` timestamp lines | **50,088** |
+| value-change lines | **36** |
+| distinct timestamps carrying any change | **10** |
+| `$var` lines / distinct id codes | **10 / 8** |
+
+M17 is real and worse than recorded: **5,009** timestamp headers per timestamp that means
+anything. And the id codes are **not 1:1 with signals** — `clk` and `count` are declared in
+both `TOP` and `TOP.counter` with the *same* code (`&`, `'`).
+
+| id | item | outcome |
+|----|------|---------|
+| C1 | ~~`vcd_read()` → a populated `Raw`~~ | **DONE.** `src/vcd_read.c`, added to `/local/src` in `src/Makefile.in` (scconfig generates both the `OBJ` entry and the explicit compile rule — `./configure` regenerates `src/Makefile`). Header and body are parsed as ONE whitespace-token stream, which is what the VCD grammar actually is; that is what makes a truncated file and a missing `$enddefinitions` non-fatal rather than special cases. |
+| C1b | **Aliasing — one id, many vectors** (new, from the measurement) | An id is not a signal, it is a shared value cell. `Vcd_id` holds a LIST of variable indices and one change writes every column bound to it. `nvars` follows the `$var` count, never the id count. A 1:1 assumption would have silently dropped one of the two `count` vectors — precisely the payload this feature exists to surface. |
+| C2 | ~~Event stream → sampled columns~~ | **DONE — change times, as a STEP.** Neither of the spec's options: (a) "union of event times" was ambiguous and the ambiguity was the whole decision. Columns come from times where a value *actually changes* (10), not from `#t` headers (50,088) — 29 × 50,088 × 8 B = **11.6 MB** versus **4.6 KB**, ~2,500×. Each change emits TWO columns, `(t-1, old)` and `(t, new)`, because `draw_graph_points()` renders with `XDrawLines()` in the `digital=1` path too — it **interpolates**, so one column per change would draw a 50 ns ramp where a clock edge belongs. Plus the first and last `#t` so the trace spans the run. Reference file → **20 columns**: `0 50011 50012 … 450011 450012 500000`. |
+| C3 | ~~X and Z~~ | **DONE — four distinct doubles, no struct change.** `0→0.0  1→1.0  X→0.5  Z→0.3`. Not arbitrary: `get_bus_value()` already prints `'X'` for a bit inside its `vthl..vthh` undefined band, which is **0.2..0.8** on a 0..1 digital strip, so both sentinels render as `X` through the *existing* renderer — C7 needed no code. They differ from each other so `xschem raw value` distinguishes them. A vector with any `x` bit is X as a whole; any `z` and no `x` is Z; bits keep their own state. A parallel state array in `Raw` was rejected: it changes a struct every consumer touches and buys nothing until a renderer reads it. |
+| C4 | ~~Buses~~ | **DONE — explode to bits AND keep the composite.** `$var wire 4 ' count [3:0]` → five columns: `count` (0..15) plus `count[3]`..`count[0]`. The composite is the honest name and the value `xschem raw value` returns; the bits are what the only working bus display can actually draw (`node="bus; b3,b2,b1,b0"` → `get_bus_idx_array()`). Both are cheap — 10 `$var` lines cost 29 columns. Declared bit direction is honoured, so `[0:2]` names bits the other way round. |
+| C5 | ~~Scheduler surface~~ | **DONE.** `extra_rawfile()`'s `what==1` table arm generalised to `table`\|`vcd` (it already had the whole registry protocol); `xschem raw vcd_read <f>` in `xschem_cmds_r` beside `raw table_read`; top-level `xschem vcd_read` in `xschem_cmds_v` beside `table_read`'s in `_t`. `xschem raw read <f> vcd` works for free. **`raw_read` also had to be patched**: it bypasses `extra_rawfile()` entirely, and `open_sub_schematic`/`hi_descend` carry a DB across windows with `xschem raw_read $rawfile [xschem raw_query sim_type]` — so a VCD would have been handed to the spice parser. Issue **0290** is the untouched `table` twin. |
+| C6 | ~~`sim_type` token~~ | **DECIDED: `"vcd"`, and it is not merely the honest choice — it is forced.** The audit found **17** `raw->sim_type`-vs-literal sites (the spec said 3, the work order said 10), and **all 17 behave identically for `"vcd"` and `"tran"`**: every one is an is-it-`op` or is-it-`dc` test. `"tran"` therefore buys ZERO compatibility. Meanwhile `save.c`'s `extra_rawfile()` uses the type string as the **reader dispatch key**, so claiming `"tran"` would route the `.vcd` into `read_dataset()`. Precedent already exists: `"table"` is a non-analysis token. (`scheduler.c:9860`, in the work order's list, is dead code inside `#if 0`.) |
+| C7 | ~~Digital rendering~~ | **CONFIRMED, no change needed.** `digital=1` draws a 0/1 `SPICE_DATA` trace via `draw_graph_points()`; the C3 encoding makes X/Z render inside `get_bus_value()`'s existing undefined band. The one thing the render path *forced* was C2's step materialization (it interpolates). |
+
+**Not fixed, by design:** names are stored **verbatim**, unlike `read_dataset()` which
+`strtolower()`s every spice node name. Verilog is case-sensitive — `Count` and `count` are
+two signals — so folding would merge columns. The cost is that `get_raw_index()`'s
+verbatim→upper→lower probe ladder will not find a mixed-case VCD name from a lower-case
+query. Mapping a schematic path onto a VCD scope path is F2's job and is not a case-folding
+problem.
+
+**Carried into §D:** a graph rect tagged `sim_type=vcd` will *not* X-follow a rect tagged
+`sim_type=tran` — `callback.c` and `draw.c` gate pan/zoom propagation on the two rects'
+`sim_type=` **property tokens** matching. That is D2's problem (joint X domain) and the fix
+is a real one, not lying about the type.
 
 ### D — Two DBs, one time axis
 
@@ -281,7 +316,7 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 
 | id | item |
 |----|------|
-| H1 | Headless VCD-reader unit tests: `$timescale` variants, buses, X/Z, `$dumpvars` initial block, missing `$enddefinitions`, truncated file (a killed simulator leaves one). |
+| H1 | ~~Headless VCD-reader unit tests~~ **DONE.** `tests/headless/test_vcd_read.tcl`, **187 checks**, pinned to the `--nogui` arm in `full_audit.sh`. Groups: the reference artifact (counts, step times, the two-scopes-one-id alias, the six internals that exist nowhere in the raw), `$timescale` (`1ps` / two-token `10 ns` / `1us` / `1s` / absent / unparsable), buses (widths, bit naming, little-endian `[0:2]`, short-vector left-extension, scalars not exploded), X/Z (never 0, distinct, both inside `get_bus_value()`'s undefined band, vector-wide propagation), the `$dumpvars` initial block + `$comment` isolation, missing `$enddefinitions`, truncation (mid-vector, mid-timestamp, mid-`$var`, mid-scalar), undeclared ids, `real` vars, a no-change file, scope nesting/`$upscope`, and registry coexistence with a spice `.raw` (both listed, switch back and forth, values intact) — including the real analog raw from the same run when present. **22 sabotages injected, all 22 caught.** Three initially survived and each exposed a genuinely missing fixture, which was then added: an undeclared id, a truncated scalar record, and a file whose MAX timestamp is not its LAST. An adversarial review pass then found three real defects that 164 green checks had not — a fixed-size bit-name buffer that collapsed every bit of a long-named bus onto one name, a composite that counted `h`/`l`/`w`/`-` bits as 0 while its own bit columns reported X, and a duplicated first time sample when `$dumpvars` precedes the first `#t` — all three fixed, each with its own sabotage. |
 | H2 | Golden mixed-signal run end-to-end: build `.so`, run ngspice, assert both artifacts exist, assert a known internal signal's edge times. Guard on `verilator` being present — skip cleanly, never fail, on a machine without it. |
 | H3 | Time-base regression: an edge at a known SPICE time must land at the same time in both DBs (A6/D3). |
 | H4 | Scope-mapping test for F2: `x1.a1` resolves to the right VCD scope with two `d_cosim` instances in one deck (the case A5 also guards). |
@@ -301,16 +336,22 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 
 ## Open decisions
 
-1. **Signal-name source for a `verilog` view: parse the `.v`, or read the VCD header?**
-   Recommendation: **the VCD `$scope`/`$var` header.** No Verilog parser to write, and the
-   names are what the simulator actually elaborated rather than a guess at what survived
-   Verilator's inlining. Cost: names exist only after a run. Collapses C1's parsing and
-   F1's name source into one piece of work.
-2. **C2's materialization** — union-of-event-times vs. fixed grid. Measure against the
-   reference TB before committing.
-3. **C6's `sim_type` token** — `"tran"` (free compatibility) vs. `"vcd"` (honest, costs an
-   audit of every literal `sim_type` comparison).
-4. **C4's buses** — explode to bits at read time, or a native bus vector in `Raw`.
+1. ~~**Signal-name source for a `verilog` view: parse the `.v`, or read the VCD header?**~~
+   **SETTLED 2026-08-08: the VCD `$scope`/`$var` header**, as recommended — and the
+   measurement made it more than a convenience. The reference file declares the same id
+   code under two scopes; nothing in the `.v` predicts that, because it is a fact about
+   what the simulator elaborated. Cost stands: names exist only after a run.
+2. ~~**C2's materialization** — union-of-event-times vs. fixed grid.~~ **SETTLED: neither,
+   exactly.** Columns come from times where a value actually *changes* (10 in the reference
+   file, versus 50,088 `#t` headers), and each change is written as a two-column STEP
+   because the renderer interpolates. See the §C table.
+3. ~~**C6's `sim_type` token**~~ **SETTLED: `"vcd"`.** All 17 literal `sim_type` comparisons
+   behave identically for `"vcd"` and `"tran"`, so `"tran"` buys nothing; and the type
+   string is the reader dispatch key in `extra_rawfile()`, so `"tran"` would actively
+   misroute the file. See the §C table.
+4. ~~**C4's buses** — explode to bits at read time, or a native bus vector in `Raw`.~~
+   **SETTLED: both.** Composite vector (the honest name and value) plus one column per bit
+   (what the existing bus renderer can actually draw). See the §C table.
 5. **F2's mapping ownership** — netlist-time emission (authoritative, automatic) vs. a
    symbol attribute (explicit, hand-maintained, wrong the moment someone renames a module).
 6. ~~**B9** — does `veriloga` need any of §C/§D at all, or is recognition sufficient?~~
@@ -325,7 +366,7 @@ A2,A3,A4,A6  ──►  digital data exists on disk          [DONE]
       │
 B1..B9       ──►  xschem knows the cell has a verilog view   [DONE]
       │
-      ├──► C1..C7  ──►  a VCD is a Raw DB in the registry
+      ├──► C1..C7  ──►  a VCD is a Raw DB in the registry    [DONE]
       │        │
       │        └──► D1..D5  ──►  both DBs plot on one time axis
       │                 │

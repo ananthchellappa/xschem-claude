@@ -1213,6 +1213,8 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
+ *            if type == vcd use vcd_read() to read a Verilog VCD (section C of
+ *            doc/claude/specs/mixed_signal_signal_browser.md)
  * what == 2: switch raw file. If filename given switch to that one,
  * else if filename is an integer switch to that raw file index,
  * else switch to next
@@ -1250,11 +1252,17 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
     xctx->extra_raw_n++;
   }
-  /* **************** table_read ************* */
-  if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file && (type && !strcmp(type, "table"))) {
+  /* **************** table_read / vcd_read ************* */
+  /* The non-spice producers. `type` is the dispatch key that selects the reader, so a
+   * VCD must declare sim_type "vcd" -- calling it "tran" would route it into the spice
+   * raw parser below. Both readers share this arm because they share the whole registry
+   * protocol: same "already loaded?" test, same insert, same restore-on-failure.
+   * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
+  if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
+     (type && (!strcmp(type, "table") || !strcmp(type, "vcd")))) {
     tclvareval("subst {", file, "}", NULL);
     my_strncpy(f, tclresult(), S(f));
-    dbg(1, "extra_rawfile: table_read: f=%s\n", f);
+    dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
     for(i = 0; i < xctx->extra_raw_n; i++) {
       if( !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) break;
     }
@@ -1263,7 +1271,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       Raw *save;
       save = xctx->raw;
       xctx->raw = NULL;
-      read_ret = table_read(f);
+      read_ret = !strcmp(type, "vcd") ? vcd_read(f) : table_read(f);
       if(read_ret) {
         my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, type);
         xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
