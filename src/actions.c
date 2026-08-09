@@ -192,6 +192,12 @@ int set_modify(int mod)
   if(mod == 0 || mod == 1 || mod == 2 || mod == 3) {
     xctx->modified = ro_suppress ? 0 : (mod & 1);
   }
+  /* ISSUE 0267 -- see xctx->modify_seq (xschem.h). Bumped on every DECLARATION of dirtiness, not
+   * on the 0 -> 1 transition: the point is to let a latched "the flag before X" notice a later,
+   * unrelated edit, and after a paste the flag is already 1, so a transition counter would see
+   * nothing. Suppressed reads follow xctx->modified: a read-only buffer never becomes dirty, so
+   * nothing claimed a modification here either. */
+  if((mod == 1 || mod == 3) && !ro_suppress) ++xctx->modify_seq;
   /* Autosave: a genuine edit (mod 1/3 -> modified) immediately persists the buffer
    * to its cellName~.sch backup, so descend never has to save and edits survive a
    * crash. write_backup() is itself a no-op during load (xctx->no_autosave), when
@@ -2522,6 +2528,12 @@ void place_net_label(int type)
    * via the scripted `xschem net_label 0|1|2|3` (orphan=1 on each). This arm was NOT in the
    * issue's 17-verb census; the tripwire found it, which is what the tripwire is for. */
   leave_placement_for("Net label");
+  /* issue 0265 -- and the third modal gesture this arm can land on: a pending PASTE. The
+   * unselect_all(1) inside place_symbol()/place_wire_label() below zeroes ui_state wholesale, so
+   * STARTMERGE went away with no delete() and the paste stayed COMMITTED in the drawing. Always
+   * after leave_placement_for(): the two share xctx->preview_sel (abort_pending_merge(),
+   * callback.c). */
+  leave_merge_for("Net label");
   if(type == 1) {
       const char *lab = tcleval("find_file_first lab_pin.sym");
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);

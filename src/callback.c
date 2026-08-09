@@ -417,55 +417,20 @@ void abort_operation(int deselect)
   {
    move_objects(ABORT,0,0,0);
    abort_placement_preview();  /* no-op unless a cursor placement is armed (issue 0243 F2 / 0242) */
-   if(xctx->ui_state & STARTMERGE) {
-     /* ISSUE 0244 part B -- delete the PASTE, not "whatever is selected", exactly as the
-      * placement teardown one line above learned to (issue 0241). delete() is selection-scoped,
-      * and the "selection == the merged objects" invariant is established by merge_file() with
-      * nothing defending it afterwards: one Ctrl+A / Edit>Select all / select_dangling_nets
-      * between the paste and this ESC turned the cancel into a whole-document delete (measured:
-      * 2 wires + 1 instance + 1 text + 1 line -> nothing). The stamp taken at the arm
-      * (stamp_placement_preview() in merge_file(), paste.c) re-establishes it HERE.
-      * BACKSTOP, same as abort_placement_preview(): nothing resolves -> delete nothing. A leftover
-      * pasted object is cosmetic; a wiped schematic is not.
-      *
-      * THE SHARED SLOT, and the two properties it rests on -- both unenforced, so state them:
-      * (1) this reads the SAME xctx->preview_sel the abort_placement_preview() call above uses,
-      *     and that is correct ONLY because that helper is GATED (it returns at its first line
-      *     unless START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT is set) and its clear_placement_preview()
-      *     is its LAST statement. Do not make that teardown unconditional and do not hoist its
-      *     clear above the gate: the delete below would silently resolve 0 objects while the
-      *     set_modify() line still ran -- an orphaned paste reported UNMODIFIED, which is issue
-      *     0244 itself, restored.
-      * (2) a placement CAN be co-armed with a pending merge (0242 closed only the
-      *     placement-then-merge direction; nothing tears down a live STARTMERGE). It is benign
-      *     because the four arms that can reach here without an unselect_all leave the merged
-      *     objects selected, so their stamp is a SUPERSET and the teardown above already removed
-      *     the paste -- resolving 0 here is then the CORRECT answer, not a lost stamp. An arm that
-      *     narrowed the selection while leaving STARTMERGE live would break that. */
-     if(select_placement_preview() > 0) {
-       delete(1/* to_push_undo */);
-     } else {
-       /* select_placement_preview() dropped the selection with dr=0 on the promise that delete()'s
-        * trailing draw() repaints -- true only when it ran. This arm returns before the function's
-        * own draw() (see the 0243 F3 note below), so without this the SELLAYER highlight of the
-        * just-deselected objects would stay painted. Same repaint debt, same fix, as
-        * abort_placement_preview()'s else branch. */
-       draw();
-     }
-     clear_placement_preview();  /* the stamp dies with the gesture it named: ids survive an undo,
-                                  * so a resurrected paste must not be deletable by a later,
-                                  * unrelated abort (the 0123/0240 desync class, WIRING.md §8 D) */
-     xctx->ui_state &= ~STARTMERGE;
-     /* ISSUE 0244 -- an aborted merge restores the document, so it must restore the FLAG, not
-      * zero it. See xctx->pre_merge_modified (xschem.h) and its latch in merge_file() (paste.c)
-      * for why the pre-merge value has to be latched rather than read here.
-      * `if(!pre_merge_modified)` rather than `set_modify(xctx->pre_merge_modified)`: on the dirty
-      * path delete()'s own set_modify(1) (select.c) has already rewritten the `~` backup with the
-      * correct restored content, and the flat form would trigger a second, redundant
-      * write_backup(). It also keeps set_modify(0)'s `mod == 0 && prev_set_modify` branch -- the
-      * Netlist/Simulate/Waves button recolor -- on exactly the paths that had it before. */
-     if(!xctx->pre_merge_modified) set_modify(0);
-   }
+   /* ISSUE 0265 -- the teardown that was inline here (and again at the bare arm below) is now
+    * abort_pending_merge(); the long rationale for the narrowed delete, the flag restore and the
+    * repaint debt lives there, at the one copy. Called DIRECTLY rather than through
+    * leave_merge_for(): this is ESC, not a competing gesture, so there is no `what` to name and no
+    * statusbar hold to raise -- exactly as this arm calls abort_placement_preview() rather than
+    * leave_placement_for() one line above.
+    * ORDER IS LOAD-BEARING and unchanged: abort_placement_preview() above runs FIRST because the
+    * two teardowns share xctx->preview_sel, and the four placement arms that keep the user's
+    * selection stamp a SUPERSET of a co-armed merge -- so the placement teardown removes the paste
+    * with the placement and this call then correctly resolves 0. Swapping them would delete the
+    * merge subset and orphan the placement. (Co-arming is no longer reachable through a gated door
+    * now that every arm calls leave_merge_for(), but gate_bypass still constructs it, and the
+    * property is the reason the shared slot is safe at all.) */
+   abort_pending_merge();
    /* Issue 0243 F3. This return is deliberate -- an ABORTED MOVE KEEPS ITS SELECTION
     * (move_objects(ABORT) never unselects; tests/headless/test_drag_keeps_selection.tcl case 7
     * pins it), so it must not fall through to the unselect_all() at the bottom -- which is
@@ -489,14 +454,12 @@ void abort_operation(int deselect)
    * `xschem merge f` + `xschem move_objects abort` + `xschem abort_operation` (measured
    * ui_state 296 -> 264 -> 0). Same two defects as the nested arm above, same two fixes --
    * see issue 0244 and the comments there. */
-  if(xctx->ui_state & STARTMERGE) {
-    /* Narrowed and flag-corrected exactly like the nested arm above; the long rationale is there.
-     * No else-draw() is owed here: this arm falls through to the draw() at the bottom of the
-     * function, which is the repaint select_placement_preview()'s dr=0 unselect depends on. */
-    if(select_placement_preview() > 0) delete(1/* to_push_undo */);
-    clear_placement_preview();
-    if(!xctx->pre_merge_modified) set_modify(0);
-  }
+  /* ISSUE 0265 -- same one teardown as the nested arm above; see abort_pending_merge(). This arm
+   * falls through to the draw() at the bottom of the function, so the repaint the helper's else
+   * branch pays here is redundant rather than missing -- and it only runs when the stamp resolves
+   * to nothing. Accepted: see the branch's own comment for why one body with a spare draw() beats
+   * a `dr` parameter answered eleven times. */
+  abort_pending_merge();
   xctx->ui_state = 0;
   if(deselect) unselect_all(1);
   draw();
@@ -544,6 +507,8 @@ static void start_place_symbol(void)
     /* issue 0242 -- the keyboard/context-menu twin of the `xschem place_symbol` verb, which is
      * gated in scheduler.c. Same rule at every arm, not just the one the bug report named. */
     leave_placement_for("Insert symbol");
+    leave_merge_for("Insert symbol");  /* issue 0265 -- the pending-paste twin, always second (the
+                                        * two teardowns share xctx->preview_sel) */
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -794,6 +759,126 @@ int leave_placement_for(const char *what)
    * tests/headless/test_placement_wire_gate.tcl E7 now asserts the opposite. */
   if(!abort_placement_preview()) return 1;
   my_snprintf(msg, S(msg), "%s: pending placement abandoned", what);
+  statusmsg_hold(msg, 1);
+  return 1;
+}
+
+/* Tear down a pending PASTE/MERGE (STARTMERGE) without committing it -- the merge twin of
+ * abort_placement_preview() above, and the body abort_operation()'s two merge arms used to carry
+ * inline, once each. Issue 0265.
+ *
+ * WHY IT IS A FUNCTION. STARTMERGE has exactly ONE setter (merge_file(), paste.c) and three
+ * teardown-bearing clears: the commit tail (move.c) and abort_operation()'s two arms. Every OTHER
+ * way the bit disappeared was unselect_all()'s wholesale `ui_state = 0` (select.c), which fires
+ * whenever anything is selected -- and a pending paste is ALWAYS selected, because that selection
+ * is what the drag carries. So the paste was never CANCELLED by a second gesture; it was silently
+ * ACCEPTED, leaving a committed, netlist-visible set of objects the user never dropped (measured:
+ * `merge` `merge` ESC -> wires 1 -> 2 -> 3 -> 2, i.e. paste #1 kept). Gating the arms needs a third
+ * caller of these four statements, and the duplication between the two existing copies is LITERALLY
+ * how issue 0244 was born -- the 2022 fix 0bb4c9f2 made to the placement arm was never carried
+ * across to them. So: one body, here.
+ *
+ * WHY NOT INSIDE unselect_all(): 87 C call sites and 817 scripted ones, several inside netlisting
+ * and live fluid passes -- it would make a DESELECT silently delete objects. Issue 0123's reason,
+ * re-ratified by 0262. Gate the ARMS (leave_merge_for() below is what they call).
+ *
+ * THE SHARED preview_sel SLOT. The stamp read here is the same field the placement preview uses
+ * (see the riders in abort_operation() and merge_file()). Callers that may have BOTH gestures live
+ * must run the PLACEMENT teardown FIRST, exactly as abort_operation() does: the four placement arms
+ * that keep the user's selection stamp a SUPERSET of the merge, so the placement teardown removes
+ * the paste with the placement and this one then correctly resolves 0 and deletes nothing. Running
+ * this one first would delete the merge subset and leave the placement's own objects behind.
+ *
+ * Returns 1 if a pending merge was actually torn down. */
+int abort_pending_merge(void)
+{
+  unsigned int seq;
+  if(!xctx) return 0;
+  if(!(xctx->ui_state & STARTMERGE)) return 0;
+  /* ISSUE 0267 -- read the modify sequence BEFORE this teardown's own delete() dirties it, so the
+   * comparison below is "did anyone OTHER THAN this cancel claim a modification since the arm".
+   * Taken before move_objects(ABORT) too: an aborted move deliberately does not set_modify (move.c),
+   * so this is only belt, and belt on the conservative side (a spurious mismatch leaves the buffer
+   * DIRTY, which loses nothing). */
+  seq = xctx->modify_seq;
+  /* the paste rides the cursor as a move-in-progress; drop that first so the delete() below removes
+   * a settled object. abort_operation() has already done this when IT calls; a fresh caller
+   * (merge_file(), a placement arm, a wire/line arm) has not. move_objects(ABORT) clears STARTMOVE,
+   * so the guard also makes the call idempotent. */
+  if(xctx->ui_state & STARTMOVE) move_objects(ABORT, 0, 0, 0);
+  /* ISSUE 0244 part B / ISSUE 0241 -- delete the PASTE, not "whatever is selected". delete() is
+   * selection-scoped, and the "selection == the merged objects" invariant is established by
+   * merge_file() with nothing defending it afterwards: one Ctrl+A between the paste and here turned
+   * the cancel into a whole-document delete. The stamp taken at the arm re-establishes it.
+   * BACKSTOP: nothing resolves -> delete nothing. A leftover pasted object is cosmetic; a wiped
+   * schematic is not. */
+  if(select_placement_preview() > 0) {
+    delete(1/* to_push_undo */);
+  } else {
+    /* THIS FUNCTION OWNS THE REPAINT DEBT, unconditionally -- decided, not inherited.
+     * select_placement_preview() drops the current selection with dr=0 on the promise that
+     * delete()'s trailing draw() (select.c) repaints; on this branch there is no delete(), so the
+     * SELLAYER highlight of the just-deselected objects would stay painted. Some callers redraw
+     * straight after (merge_file() is about to load and draw; abort_operation()'s bare arm falls
+     * through to its own draw()) and for them this is one redundant full repaint -- on a branch that
+     * only runs when the stamp resolves to nothing, i.e. never in the common case. A `dr` parameter
+     * would buy that back at the price of a per-call-site correctness question at 23 arms; a
+     * silently-wrong repaint is the expensive mistake here, not a spare draw(). Same reasoning, same
+     * shape, as abort_placement_preview()'s else branch. */
+    draw();
+  }
+  clear_placement_preview();  /* the stamp dies with the gesture it named: ids survive an undo, so a
+                               * resurrected paste must not be deletable by a later, unrelated
+                               * abort (the 0123/0240 desync class, WIRING.md §8 D) */
+  xctx->ui_state &= ~STARTMERGE;
+  /* ISSUE 0244 -- an aborted merge restores the document, so it must restore the FLAG, not zero it.
+   * See xctx->pre_merge_modified (xschem.h) and its latch in merge_file() (paste.c) for why the
+   * pre-merge value has to be latched rather than read here. `if(!pre_merge_modified)` rather than
+   * set_modify(xctx->pre_merge_modified): on the dirty path delete()'s own set_modify(1) has
+   * already rewritten the `~` backup with the correct restored content, so the flat form would
+   * trigger a second, redundant write_backup(); it also keeps set_modify(0)'s
+   * `mod == 0 && prev_set_modify` branch -- the Netlist/Simulate/Waves button recolor -- on exactly
+   * the paths that had it before.
+   * ISSUE 0267 -- and only while the latch still DESCRIBES this document. pre_merge_modified is
+   * written once, at the arm; gating every arm (leave_merge_for() below) bounds a pending merge's
+   * lifetime against every ARMING gesture, but NOT against the pure-commit forms
+   * (`xschem wire x1 y1 x2 y2`, `xschem text ...`, menus, keybindings, action-log replay), which are
+   * deliberately never gated -- they are the replay/test seams. So a real edit can still land
+   * between the arm and the ESC, and restoring a flag that predates it reported that edit SAVED
+   * (measured: clean doc, merge, move_objects abort, one wire + one text, ESC -> both survive,
+   * modified == 0). The sequence test is what makes the latch self-invalidating; a second latch
+   * would only move the problem. */
+  if(!xctx->pre_merge_modified && seq == xctx->merge_modify_seq) set_modify(0);
+  return 1;
+}
+
+/* The merge twin of leave_placement_for() above: same ratified rule (whatever you just pressed is
+ * what you meant), same shape, same reason for living at the VERBS rather than inside the shared
+ * primitive every click also reaches. Called from merge_file() itself (a second Ctrl+V), from all
+ * twelve placement arms, and from the wire/line draw arms -- the last of those is the remaining
+ * direction of plan_modal_gesture_exclusion.md phase 4 (`merge cancels a live draw` already worked,
+ * because merge_file() calls leave_placement_for(), which is the wire/line teardown too).
+ * Deliberately NOT called from the undo/redo verbs, unlike leave_placement_for(): a pending merge is
+ * fully covered by the undo stack (merge_file() pushes its baseline BEFORE loading), so `undo`
+ * already removes the paste correctly -- and a delete()+push_undo run in front of the pop would make
+ * undo RESTORE the paste instead. A placement preview has no such coverage, which is why 0242
+ * needed the gate there.
+ * `what` is just the name of whatever seized the gesture. Returns 1 if the caller may go ahead; like
+ * leave_placement_for() it never declines today, but the int is kept so a future refusal needs no
+ * call-site churn. */
+int leave_merge_for(const char *what)
+{
+  char msg[128];
+  if(!xctx) return 1;
+  if(xctx->gate_bypass) return 1;   /* test-only construction seam, see xschem.h gate_bypass */
+  if(!(xctx->ui_state & STARTMERGE)) return 1;
+  /* a read-only window refuses the teardown outright: it IS a delete(). Unreachable today (the
+   * `merge`/`paste` verbs both run scheduler_readonly_reject, so no read-only window can hold a
+   * pending merge) -- kept for the same reason leave_placement_for() keeps its copy: the cheap
+   * local guard that stays correct if a future door arms one. */
+  if(xctx->readonly) return 1;
+  if(!abort_pending_merge()) return 1;
+  my_snprintf(msg, S(msg), "%s: pending paste abandoned", what);
   statusmsg_hold(msg, 1);
   return 1;
 }
@@ -4550,6 +4635,12 @@ static void context_menu_action(double mx, double my)
       break;
     case 2:
       if(!leave_placement_for("Insert wire")) break;  /* issue 0243 F2 -- see leave_placement_for() */
+      /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- the remaining direction: a DRAW
+       * cancels a live merge. (The other direction already worked: merge_file() calls
+       * leave_placement_for(), which is the wire/line teardown too.) Without this the paste stayed
+       * armed UNDER the new draw -- measured ui_state 297 = STARTWIRE|STARTMERGE|STARTMOVE|
+       * SELECTION -- and one ESC then had to serve two gestures. */
+      if(!leave_merge_for("Insert wire")) break;
       prev_state = xctx->ui_state;
       start_wire(mx, my);
       if(prev_state == STARTWIRE) {
@@ -4559,6 +4650,7 @@ static void context_menu_action(double mx, double my)
       break;
     case 3:
       if(!leave_placement_for("Insert line")) break;  /* issue 0243 F2 -- see leave_placement_for() */
+      if(!leave_merge_for("Insert line")) break;      /* issue 0265 -- phase 4, see the wire pick */
       prev_state = xctx->ui_state;
       start_line(mx, my);
       if(prev_state == STARTLINE) {
@@ -4585,6 +4677,11 @@ static void context_menu_action(double mx, double my)
        * preview carries STARTMERGE and belongs to phase 4 / issues 0242+0244). */
       leave_wire_draw_for("Insert text");
       leave_placement_for("Insert text");  /* issue 0242 -- twin of the place_text verb */
+      leave_merge_for("Insert text");      /* issue 0265 -- ditto for a pending paste. This is one
+                                            * of the four arms that do NOT unselect_all, so before
+                                            * the gate the merge stayed armed and its objects got
+                                            * folded into this placement's stamp; now the paste is
+                                            * torn down here and the stamp names only the text. */
       xctx->last_command = 0;
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
@@ -6799,7 +6896,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         if(!leave_placement_for("Line")) break;   /* issue 0243 F2 -- see leave_placement_for() */
-        prev_state = xctx->ui_state;    /* the teardown just cleared the placement bits */
+        if(!leave_merge_for("Line")) break;       /* issue 0265 -- phase 4, a draw cancels a paste */
+        prev_state = xctx->ui_state;    /* the teardowns just cleared the placement/merge bits */
         if(infix_interface) {
           start_line(xctx->mousex_snap, xctx->mousey_snap);
           if(prev_state == STARTLINE) {
@@ -7246,6 +7344,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
+        if(!leave_merge_for("Snap wire")) break;       /* issue 0265 -- phase 4 */
         snapped_wire(c_snap);
       }
       else if(rstate == ControlMask ){ /* save 20121201 */
@@ -7321,6 +7420,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          * last_command zeroed -- the exact residue issue 0243 F3 had to teach ESC to clean up. */
         leave_wire_draw_for("Place text");
         leave_placement_for("Place text");  /* issue 0242 -- the `t` key, twin of the verb */
+        leave_merge_for("Place text");      /* issue 0265 -- ditto for a pending paste */
         xctx->last_command = 0;
         xctx->mx_double_save = xctx->mousex_snap;
         xctx->my_double_save = xctx->mousey_snap;
@@ -7502,7 +7602,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         if(!leave_placement_for("Wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
-        prev_state = xctx->ui_state;   /* the teardown just cleared the placement bits */
+        if(!leave_merge_for("Wire")) break;       /* issue 0265 -- phase 4, a draw cancels a paste */
+        prev_state = xctx->ui_state;   /* the teardowns just cleared the placement/merge bits */
 
         if(infix_interface) {
           start_wire(xctx->mousex_snap, xctx->mousey_snap);
@@ -7534,6 +7635,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
+        if(!leave_merge_for("Snap wire")) break;       /* issue 0265 -- phase 4 */
         snapped_wire(c_snap);
       }
       break;

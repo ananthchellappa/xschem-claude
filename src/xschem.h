@@ -1617,6 +1617,20 @@ typedef struct {
                            * clear the flag. It must be LATCHED and cannot be read at abort time:
                            * merge_file() ends with an unconditional set_modify(1), so by then the
                            * pre-merge value is already gone. Per-window, like merge_source. */
+  unsigned int modify_seq;  /* ISSUE 0267: bumped by set_modify() (actions.c) every time something
+                             * DECLARES this buffer dirty (mod 1/3, not suppressed by readonly).
+                             * Not a change counter and not user-visible -- it exists so a latched
+                             * "the flag before X" can tell whether anything else has claimed a
+                             * modification since X was latched. Wraps harmlessly: only equality
+                             * against a value latched in the same session is ever tested. */
+  unsigned int merge_modify_seq; /* ISSUE 0267: modify_seq as it stood immediately after the
+                             * pending STARTMERGE armed (latched at the bottom of merge_file(),
+                             * paste.c, after its own set_modify(1)). The merge teardown
+                             * (abort_pending_merge(), callback.c) restores pre_merge_modified only
+                             * while this still matches: STARTMERGE has an unbounded lifetime on the
+                             * ungated pure-commit surface (`xschem wire x1 y1 x2 y2`, `xschem text
+                             * ...`), so real edits can happen between the arm and the ESC, and
+                             * restoring a flag that predates them reported them saved. */
   size_t tok_size;
   char netlist_name[PATH_MAX];
   char current_dirname[PATH_MAX];
@@ -2550,6 +2564,12 @@ extern void start_wire(double mx, double my);
 extern int abort_placement_preview(void);
 extern void check_placement_preview_invariant(const char *where); /* issue 0242 tripwire */
 extern int leave_placement_for(const char *what);
+/* issue 0265: the same pair for a pending PASTE/MERGE (STARTMERGE). abort_pending_merge() is the
+ * teardown abort_operation()'s two arms carried inline until it grew a third caller;
+ * leave_merge_for() is the gate every ARM calls so a second gesture cancels the pending paste
+ * instead of silently committing it. See callback.c. */
+extern int abort_pending_merge(void);
+extern int leave_merge_for(const char *what);
 /* the forward gate (issue 0240 / 0243 F1, widened to every remaining draw and placement verb by
  * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c
  * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */

@@ -30,10 +30,21 @@
 ##   sibling of this with an identity stamp; part B reuses it: merge_file() stamps the merged
 ##   selection and the arms re-select exactly that stamp before deleting.
 ##
+## ISSUE 0265 / 0267 (section E, added 2026-08-08)
+##   Those same arms were the ONLY teardown a pending merge had. Nothing bounded its lifetime, so a
+##   second Ctrl+V -- or any placement arm, or any wire/line draw -- silently COMMITTED the pending
+##   paste instead of cancelling it. Section E covers the gate that fixes it
+##   (abort_pending_merge() + leave_merge_for(), callback.c) at every arm, in both directions, with
+##   its controls; E4 is issue 0267, the stale pre_merge_modified latch, which did NOT fall out of
+##   the gate (the pure-commit forms stay ungated) and needed xctx->modify_seq of its own.
+##
 ## SECTIONS: A the four control rows x both doors (`xschem merge <file>` and clipboard
 ## `xschem paste`) · B hierarchy_modified, the flag the prompts actually read · C the SECOND
 ## STARTMERGE arm (the one reached with STARTMOVE already cleared) · D1-D8 part B, ending with D8,
-## the fluid-rollback door that the adversarial review of the fix found and that D7 does not cover.
+## the fluid-rollback door that the adversarial review of the fix found and that D7 does not cover ·
+## E1-E6 issue 0265: a second gesture ABANDONS the pending paste (E1 merge-over-merge, E2 the twelve
+## placement arms, E3 the reverse as a control, E4 issue 0267, E5 the wire/line draws, E6 the five
+## things that must NOT move).
 ##
 ## NOT HOLLOW (WIRING.md §10): the fixture holds one object of every type the merge carries -- 2
 ## wires, 1 instance, 1 text, 1 line -- and the merged file carries one of each too, so "wires == 2
@@ -486,6 +497,287 @@ check "0244 D8 clean: paste removed"       [labcount MERGED] 0
 check "0244 D8 clean: survivors kept"      [xschem get wires] 2
 check "0244 D8 clean: back to clean"       [xschem get modified] 0
 set ::fluid_editing $fluid0244
+
+# ---------------------------------------------------------------------------
+# E. ISSUE 0265 -- NOTHING TEARS DOWN A PENDING PASTE, so a second gesture silently COMMITS it.
+#    (Plus issue 0267, which falls out of the same fix; see E4.)
+#
+#    STARTMERGE had exactly ONE setter (merge_file(), paste.c) and three teardown-bearing clears:
+#    the commit tail (move.c) and abort_operation()'s two arms. Every OTHER way the bit went away
+#    was unselect_all()'s wholesale `ui_state = 0` (select.c) -- which fires whenever anything is
+#    selected, and a pending paste is ALWAYS selected, because that selection is what the drag
+#    carries. So the paste was never CANCELLED by the next gesture, it was silently ACCEPTED.
+#    Measured pre-fix on a 1-wire document:
+#        merge, merge, ESC       wires 1 -> 2 -> 3 -> 2   (paste #1 COMMITTED)
+#        merge, place_symbol     ui 296 -> 8232, merged wire committed; ESC removes only the symbol
+#    Both sequences also printed the fluid layer's "fluid_gesture_arm() re-armed while a prior
+#    gesture was still armed" warning -- a free second oracle on stderr, silent after the fix
+#    (checked outside this script; there is no in-process seam for it).
+#
+#    THE FIX under test: abort_pending_merge() (callback.c) is the teardown the two ESC arms used
+#    to carry inline, and leave_merge_for() is the gate every ARM now calls -- merge_file() itself,
+#    all twelve stamp_placement_preview() placement arms, and the eleven wire/line draw arms
+#    (plan_modal_gesture_exclusion.md phase 4's remaining direction). Pure-commit forms are
+#    deliberately NOT gated (E6), and neither are undo/redo (E6): a pending merge is undo-covered.
+#
+#    NOT HOLLOW: every row asserts BOTH halves -- the previous paste really went (labcount MERGED,
+#    textcount MERGEDTEXT, `wires`) AND the fixture really survived (SURVIVOR / SURVIVORTEXT /
+#    record count, which is the only headless proof for the line). A gate that deleted everything
+#    and a gate that deleted nothing both redden.
+# ---------------------------------------------------------------------------
+
+## the fixture, whole and alone: no merge residue, no placement residue, every survivor type.
+## `modified` is read BEFORE rec0244 (which saves, and a saveas zeroes the flag).
+proc fixture0265 {tag} {
+  check "$tag: wires survive"     [xschem get wires] 2
+  check "$tag: instance survives" [labcount SURVIVOR] 1
+  check "$tag: text survives"     [textcount SURVIVORTEXT] 1
+  check "$tag: one instance"      [xschem get instances] 1
+  check "$tag: merged inst gone"  [labcount MERGED] 0
+  check "$tag: merged text gone"  [textcount MERGEDTEXT] 0
+  check "$tag: not merging"       [merging] 0
+  check "$tag: flag dirty"        [xschem get modified] 1
+  check "$tag: records restored"  [rec0244] $::REC0244
+}
+
+# E1 -- THE BUG, both doors. A second merge must ABANDON the first, not commit it. The load-bearing
+#      number is `wires` after merge #2: 3 (survivors + ONE paste) and not 4.
+foreach {form armv} {
+  merge {xschem merge $::src0244}
+  paste {xschem paste}
+} {
+  # the clipboard is primed once per row and survives the second `xschem paste` untouched, so no
+  # re-prime is needed (or possible: prime_clip loads src0244 over the document under test).
+  primed_doc $form
+  eval $armv
+  check "0265 E1 $form: merge #1 armed"   [merging] 1
+  check "0265 E1 $form: paste #1 in"      [xschem get wires] 3
+  eval $armv
+  check "0265 E1 $form: merge #2 armed"   [merging] 1
+  check "0265 E1 $form: PASTE #1 GONE"    [xschem get wires] 3
+  check "0265 E1 $form: one merged inst"  [labcount MERGED] 1
+  check "0265 E1 $form: one merged text"  [textcount MERGEDTEXT] 1
+  xschem abort_operation
+  fixture0265 "0265 E1 $form"
+
+  # the flag half: two merges on a CLEAN document must still come back clean, i.e. the teardown's
+  # restore feeds the next merge's latch (merge_file() re-latches pre_merge_modified AFTER
+  # leave_merge_for(), which is why this is not the same check as A2).
+  primed_doc_clean $form
+  eval $armv
+  eval $armv
+  xschem abort_operation
+  check "0265 E1 $form: clean stays clean" [xschem get modified] 0
+  check "0265 E1 $form: clean survivors"   [xschem get wires] 2
+}
+
+# E1b -- three merges: the teardown must be re-entrant, not a one-shot. A stamp cleared but not
+#        re-taken, or a latch consumed once, shows up here and nowhere in E1.
+mkdoc
+xschem merge $::src0244
+xschem merge $::src0244
+xschem merge $::src0244
+check "0265 E1b: still exactly one paste" [labcount MERGED] 1
+check "0265 E1b: wires"                   [xschem get wires] 3
+xschem abort_operation
+fixture0265 "0265 E1b"
+
+# E2 -- EVERY PLACEMENT ARM. Enumerated from the state the teardown owns (the twelve
+#      stamp_placement_preview() sites) and not from the verbs the bug report named -- 0242's
+#      coverage lesson, whose own verb census was five arms short. Seven of the twelve are drivable
+#      headlessly; the other five are click/dialog paths (context-menu Insert symbol / Insert text,
+#      the `t` key, the screen grab, add_image's file chooser) and `xschem callback` segfaults under
+#      --nogui, so they are covered by code inspection and by their scriptable twins here.
+#      `place_text` is in the list on purpose even though its dialog cannot open headlessly: the
+#      gate must fire on the ARM, before the dialog, so the paste is gone even when the placement
+#      that displaced it never materializes.
+foreach {arm armscript live liveexp} {
+  place_symbol   {xschem place_symbol devices/lab_pin.sym}
+                 {expr {([xschem get ui_state] & 8192) ? 1 : 0}} 1
+  add_wire_label {set ::label_new_name E2LAB; xschem add_wire_label -place}
+                 {xschem get sympin_preview} 1
+  add_sch_pin    {set ::pin_new_name E2PIN; set ::pin_new_dir in; xschem add_sch_pin -place}
+                 {xschem get sympin_preview} 1
+  add_symbol_pin {set ::pin_new_name E2SP; set ::pin_new_dir in; xschem add_symbol_pin -place}
+                 {xschem get sympin_preview} 1
+  net_label      {xschem net_label 0}
+                 {expr {([xschem get ui_state] & 16384) ? 1 : 0}} 1
+  add_graph      {xschem add_graph}
+                 {expr {([xschem get ui_state] & 16384) ? 1 : 0}} 1
+  place_text     {xschem place_text}
+                 {expr {([xschem get ui_state] & 1024) ? 1 : 0}} 0
+} {
+  mkdoc
+  xschem merge $::src0244
+  check "0265 E2 $arm: paste armed"    [merging] 1
+  check "0265 E2 $arm: paste in"       [xschem get wires] 3
+  eval $armscript
+  check "0265 E2 $arm: PASTE GONE"     [xschem get wires] 2
+  check "0265 E2 $arm: merged inst gone" [labcount MERGED] 0
+  check "0265 E2 $arm: merged text gone" [textcount MERGEDTEXT] 0
+  check "0265 E2 $arm: not merging"    [merging] 0
+  check "0265 E2 $arm: placement live" [eval $live] $liveexp
+  xschem abort_operation
+  fixture0265 "0265 E2 $arm"
+}
+
+# E3 -- THE REVERSE, a control that was already green (issue 0242): a merge armed on top of a live
+#      placement tears the placement down. It is here so that a "fix" which merely swapped which
+#      gesture wins cannot pass section E.
+mkdoc
+set ::label_new_name E3LAB
+xschem add_wire_label -place
+check "0265 E3: preview armed"       [xschem get sympin_preview] 1
+xschem merge $::src0244
+check "0265 E3: preview torn down"   [xschem get sympin_preview] 0
+check "0265 E3: merge armed"         [merging] 1
+check "0265 E3: no orphan label"     [labcount E3LAB] 0
+check "0265 E3: paste in"            [xschem get wires] 3
+xschem abort_operation
+check "0265 E3: no orphan after ESC" [labcount E3LAB] 0
+fixture0265 "0265 E3"
+
+# E4 -- ISSUE 0267. pre_merge_modified is latched once, at the arm, and describes the document
+#      BEFORE the paste. Gating every arm bounds a pending merge against every ARMING gesture --
+#      but NOT against the pure-commit forms (`xschem wire x1 y1 x2 y2`, `xschem text ...`, and the
+#      menus/keybindings/replay that reach them), which are deliberately never gated. So real edits
+#      can still land between the arm and the ESC, and restoring a flag that predates them reported
+#      those edits SAVED: measured pre-fix, on a CLEAN document, wires=3 inst=1 texts=1 modified=0
+#      with the new wire and the new text still on screen and the buffer claiming to be saved.
+#      The fix is xctx->merge_modify_seq (xschem.h): set_modify() bumps a sequence on every
+#      declaration of dirtiness, merge_file() latches it at the arm, and the teardown restores the
+#      flag only while the two still match. Both abort_operation() arms are exercised.
+#      CLEAN document is mandatory -- on a dirty one pre_merge_modified is already 1 and the old
+#      code refused to clear the flag anyway, hiding the defect (the same trap as D8).
+mkdoc_clean
+xschem merge $::src0244
+xschem move_objects abort
+check "0265 E4 bare: bare arm reached"  [expr {[xschem get ui_state] == 264}] 1
+xschem wire 2000 2000 2100 2000
+xschem text 3000 3000 0 0 {E4NOTE} {} 0.4 0
+check "0265 E4 bare: edits landed"      [xschem get wires] 4
+xschem abort_operation
+check "0265 E4 bare: paste removed"     [labcount MERGED] 0
+check "0265 E4 bare: merged text gone"  [textcount MERGEDTEXT] 0
+check "0265 E4 bare: new wire survives" [xschem get wires] 3
+check "0265 E4 bare: new text survives" [textcount E4NOTE] 1
+check "0265 E4 bare: MODIFIED"          [xschem get modified] 1
+
+mkdoc_clean
+xschem merge $::src0244
+xschem wire 2000 2000 2100 2000
+xschem text 3000 3000 0 0 {E4NOTE} {} 0.4 0
+check "0265 E4 nested: nested arm"      [merging] 1
+xschem abort_operation
+check "0265 E4 nested: paste removed"   [labcount MERGED] 0
+check "0265 E4 nested: new wire kept"   [xschem get wires] 3
+check "0265 E4 nested: new text kept"   [textcount E4NOTE] 1
+check "0265 E4 nested: MODIFIED"        [xschem get modified] 1
+
+# E4 CONTROL, and the premise of the two rows above: the sequence guard must not degrade into
+# "the flag is now always dirty". A clean document, a paste, the gesture's OWN machinery (a drag
+# step and a selection change -- neither is an edit), then ESC, must still come back CLEAN.
+mkdoc_clean
+xschem merge $::src0244
+xschem move_objects step 40 40
+xschem select_all
+xschem abort_operation
+check "0265 E4 control: still clean"    [xschem get modified] 0
+check "0265 E4 control: survivors kept" [xschem get wires] 2
+check "0265 E4 control: paste gone"     [labcount MERGED] 0
+
+# E5 -- PART B (plan_modal_gesture_exclusion.md phase 4): a DRAW cancels a live merge. The other
+#      direction already worked, because merge_file() calls leave_placement_for() and that helper is
+#      the wire/line teardown too. Pre-fix the paste stayed armed UNDER the new draw -- measured
+#      ui_state 297 = STARTWIRE|STARTMERGE|STARTMOVE|SELECTION -- so one ESC had to serve two
+#      gestures. `snap_wire` arms MENUSTART (65536) rather than STARTWIRE: this run has
+#      infix_interface 0, and gating BOTH interface branches is 0247's lesson.
+foreach {arm armscript bit} {
+  wire_gui  {xschem wire gui}  1
+  line_gui  {xschem line gui}  4
+  snap_wire {xschem snap_wire} 65536
+} {
+  mkdoc
+  xschem merge $::src0244
+  check "0265 E5 $arm: paste in"      [xschem get wires] 3
+  eval $armscript
+  check "0265 E5 $arm: PASTE GONE"    [xschem get wires] 2
+  check "0265 E5 $arm: not merging"   [merging] 0
+  check "0265 E5 $arm: merged inst gone" [labcount MERGED] 0
+  check "0265 E5 $arm: draw armed"    [expr {([xschem get ui_state] & $bit) ? 1 : 0}] 1
+  xschem abort_operation
+  fixture0265 "0265 E5 $arm"
+}
+
+# E6 -- THE CONTROLS: four things that must NOT move.
+#
+# E6a  A pure COMMIT form is never gated (plan landmine 2: `xschem wire x1 y1 x2 y2` and friends
+#      are the replay/test seams). The paste must still be pending afterwards, and the committed
+#      wire must survive the ESC that removes it. This is the row that keeps the gate honest about
+#      WHY 0267 needed a second mechanism.
+mkdoc
+xschem merge $::src0244
+xschem wire 2000 2000 2100 2000
+check "0265 E6a commit-form: still merging" [merging] 1
+check "0265 E6a commit-form: both in"       [xschem get wires] 4
+xschem abort_operation
+check "0265 E6a commit-form: paste removed" [labcount MERGED] 0
+check "0265 E6a commit-form: commit kept"   [xschem get wires] 3
+
+# E6b  UNDO is deliberately NOT gated, unlike leave_placement_for()'s call sites. A pending merge is
+#      fully covered by the undo stack (merge_file() pushes its baseline BEFORE loading), so `undo`
+#      already removes the paste -- and a delete()+push_undo run in front of the pop would make undo
+#      RESTORE it. This row is the evidence for that decision, not decoration.
+mkdoc
+xschem merge $::src0244
+xschem undo
+check "0265 E6b undo: paste rolled back"  [xschem get wires] 2
+check "0265 E6b undo: merged inst gone"   [labcount MERGED] 0
+check "0265 E6b undo: survivors kept"     [labcount SURVIVOR] 1
+check "0265 E6b undo: not merging"        [merging] 0
+
+# E6c  A READ-ONLY window arms nothing, so there is no pending paste for any of this to act on
+#      (the `merge` and `paste` verbs both run scheduler_readonly_reject, which raises a Tcl error).
+#      leave_merge_for()'s own readonly guard is therefore unreachable today and is kept as a local
+#      guard, exactly like leave_placement_for()'s.
+mkdoc
+xschem set readonly 1
+check "0265 E6c readonly: merge refused"  [catch {xschem merge $::src0244}] 1
+check "0265 E6c readonly: not merging"    [merging] 0
+check "0265 E6c readonly: nothing merged" [xschem get wires] 2
+xschem set readonly 0
+
+# E6d  The teardowns run move_objects(ABORT), which zeroes xctx->paste_from -- the field merge_file()
+#      had already set for the merge it is about to arm. merge_file() puts it back. Without the
+#      restore a Ctrl+V over a pending gesture reports source 0 (named file) instead of 2
+#      (clipboard), and the cross-window selection transfer (1) loses the SelectionClear abort that
+#      reads it. `xschem get paste_from` is a seam added by 0265 for exactly this row.
+mkdoc
+xschem merge $::src0244
+check "0265 E6d paste_from: fresh merge"   [xschem get paste_from] 0
+prime_clip
+mkdoc
+xschem paste
+check "0265 E6d paste_from: fresh paste"   [xschem get paste_from] 2
+xschem paste
+check "0265 E6d paste_from: paste over paste" [xschem get paste_from] 2
+xschem merge $::src0244
+check "0265 E6d paste_from: merge over paste" [xschem get paste_from] 0
+xschem abort_operation
+
+# E6e  THE SEAM ITSELF. `xschem test_gate_bypass 1` must really disable the new gate -- otherwise a
+#      green section E could mean "the gate never runs". With the bypass on, the pre-fix behaviour
+#      comes back exactly: the paste is committed by the placement arm and outlives the ESC.
+mkdoc
+xschem merge $::src0244
+xschem test_gate_bypass 1
+xschem place_symbol devices/lab_pin.sym
+check "0265 E6e bypass: gate disabled"    [labcount MERGED] 1
+xschem test_gate_bypass 0
+xschem abort_operation
+check "0265 E6e bypass: pre-fix residue"  [labcount MERGED] 1
+check "0265 E6e bypass: default is off"   [expr {[catch {xschem place_symbol devices/lab_pin.sym}] ? 1 : 0}] 0
+xschem abort_operation
 
 xschem clear force
 

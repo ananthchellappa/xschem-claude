@@ -314,6 +314,10 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
        * a live Add-Pin / Add-Wire-Label preview would leave that preview committed. GUI-only
        * path, so this one is proved by code and has no headless seam either. */
       leave_placement_for("Screen grab");
+      /* issue 0265 -- and a pending PASTE, the third modal gesture this arm can land on. One of
+       * the four arms that never unselect_all(), so before the gate the merged objects were simply
+       * folded into the stamp below and dropped with the image. GUI-only, proved by code. */
+      leave_merge_for("Screen grab");
       move_objects(START,0,0,0);
       /* issue 0241. This arm never unselect_all()s, so the stamp deliberately captures the
        * user's pre-existing selection too -- it rides the cursor with the grabbed image and is

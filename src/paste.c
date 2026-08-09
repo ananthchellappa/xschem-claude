@@ -489,6 +489,7 @@ void merge_file(int selection_load, const char ext[])
     char *aux_ptr=NULL;
     int got_mouse, generator = 0;
     int rubber = 1;
+    int pf;   /* issue 0265: xctx->paste_from for THIS merge, saved across the teardowns below */
 
     rubber = !(selection_load & 8);
     selection_load &= 7;
@@ -538,6 +539,7 @@ void merge_file(int selection_load, const char ext[])
       * non-clipboard sources (`xschem paste dx dy ... -file {f}`). Stored per-window
       * (xctx) because each window can hold its own pending STARTMERGE. */
      my_strncpy(xctx->merge_source, name, S(xctx->merge_source));
+     pf = xctx->paste_from;   /* issue 0265 -- see the restore below leave_merge_for() */
      xctx->prep_hi_structs=0;
      xctx->prep_net_structs=0;
      xctx->prep_hash_inst=0;
@@ -561,6 +563,28 @@ void merge_file(int selection_load, const char ext[])
       * dialog (above) must not destroy the preview, and the teardown's delete() must land before
       * the merge's undo baseline is taken, or undoing the paste would resurrect the preview. */
      leave_placement_for(selection_load == 2 ? "Paste" : "Merge");
+     /* ISSUE 0265 -- and the merge twin, for a merge armed on top of a merge (a second Ctrl+V).
+      * unselect_all(1) three lines below zeroes ui_state wholesale (select.c) and so dropped
+      * STARTMERGE with NO delete(), leaving the FIRST paste committed and deselected in the drawing
+      * before arming the second -- the paste was never cancelled, it was silently ACCEPTED
+      * (measured on a 1-wire document: merge, merge, ESC -> wires 1 -> 2 -> 3 -> 2, paste #1 kept).
+      * Sited HERE for the same three reasons as the placement gate above -- inside `if(fd)` so a
+      * cancelled Merge dialog destroys nothing, at the ONE funnel every merge door shares, and
+      * BEFORE push_undo() so the previous paste's delete() lands before this merge's undo baseline
+      * is taken (otherwise undoing this paste would resurrect the previous one).
+      * AFTER leave_placement_for(), not before: the two teardowns share xctx->preview_sel, and the
+      * placement teardown must have the first read (see abort_pending_merge(), callback.c).
+      * It is also what makes the ISSUE 0244 latch below honest -- the teardown restores the flag
+      * the PREVIOUS paste started from, and that restored value is what this merge starts from. */
+     leave_merge_for(selection_load == 2 ? "Paste" : "Merge");
+     /* Both teardowns above run move_objects(ABORT) when a gesture is live, and that clears
+      * xctx->paste_from (move.c) -- which this function already set, above, for the merge it is
+      * about to arm. Put it back. The window it protects is small but real: paste_from == 1 (the
+      * cross-window SELECTION TRANSFER) is read by callback.c's SelectionClear handler to abort a
+      * receive whose sender dropped its selection, and a receive armed on top of a pending
+      * gesture would otherwise lose that. Pre-existing since 0242 on the placement path; 0265
+      * makes it fire on the common merge-over-merge path, so it is fixed here rather than noted. */
+     xctx->paste_from = pf;
      /* ISSUE 0244 -- latch the modify flag the merge is STARTING FROM.
       * abort_operation()'s two STARTMERGE arms (callback.c) used to call set_modify(0) flat, on
       * the reasoning "an aborted merge changed nothing, so undo the flag delete() just set". That
@@ -769,4 +793,12 @@ void merge_file(int selection_load, const char ext[])
       xctx->paste_from = 0;
     }
     set_modify(1);
+    /* ISSUE 0267 -- latch the modify SEQUENCE the pending paste leaves behind, AFTER this
+     * function's own set_modify(1) above, so it records "nobody has claimed a modification since
+     * the arm". abort_pending_merge() (callback.c) restores xctx->pre_merge_modified only while the
+     * two still match, which is what stops a paste that outlived its gesture on the ungated
+     * pure-commit surface from reporting later, unrelated edits as saved. Written unconditionally
+     * (even when no merge armed) for the same reason merge_source is: a stale value can only be
+     * read while STARTMERGE is set, and only merge_file() sets it. */
+    xctx->merge_modify_seq = xctx->modify_seq;
 }

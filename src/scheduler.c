@@ -1841,6 +1841,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* issue 0243 F1 -- see leave_wire_draw_for(). In a symbol view the modal draw this
          * collides with is the graphic LINE (`l`/`L`), which the same helper covers. */
         leave_wire_draw_for("Add Pin");
+        /* issue 0265 -- a pending PASTE is the third modal gesture this arm can land on, and this
+         * is one of the three arms that carry NO leave_placement_for(): they handle a previous
+         * PLACEMENT themselves, with the undo-clean per-keystroke re-arm dance below, because the
+         * form is modeless and re-issues `-place` on every character typed. That dance is scoped
+         * to sympin_preview and knows nothing about STARTMERGE, so the unselect_all(1) further
+         * down dropped the merge bit with no delete() and left the paste committed. The gate is
+         * the right tool here and the re-arm dance is not: a merge is a DIFFERENT gesture (it has
+         * its own undo baseline, taken by merge_file()), not a re-issue of this one, so it must be
+         * torn down with its own delete(1)+push_undo rather than folded into this arm's single
+         * baseline. Placed before the re-arm block so the paste dies before this gesture's undo
+         * bookkeeping starts, exactly as it is placed before push_undo() in merge_file(). */
+        leave_merge_for("Add Pin");
         /* this arms a symbol PIN preview, never a net-label: clear wirelabel_preview so a
          * still-live Add-Wire-Label preview (both modeless forms open) cannot leak its
          * drop-on-copper gate onto this pin's drop (add_wire_label.md invariant). */
@@ -1918,6 +1930,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *nm = tclgetvar("pin_new_name");
         const char *dr = tclgetvar("pin_new_dir");
         leave_wire_draw_for("Add Pin");   /* issue 0243 F1 -- see leave_wire_draw_for() */
+        leave_merge_for("Add Pin");       /* issue 0265 -- see the add_symbol_pin twin above for
+                                           * why the gate, and not the re-arm dance below, is what
+                                           * a pending merge needs */
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
         /* arming a schematic PIN preview, never a net-label: clear wirelabel_preview so a
@@ -2001,6 +2016,12 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
         if(!nm) nm = "";
+        /* issue 0265 -- see the add_symbol_pin arm above. Inside the `-place` branch, not beside
+         * the wire gate on the line above: that one deliberately also covers the bare form-open
+         * (`xschem add_wire_label` with no args), and opening a dialog arms nothing, so it has no
+         * claim on a pending paste under the "whatever you just pressed is what you meant" rule.
+         * -drop is a pure commit seam and is excluded by the same branch test. */
+        leave_merge_for("Add Wire Label");
         if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
           /* re-arm: discard the previous preview instance WITHOUT pushing undo */
           if(xctx->ui_state & STARTMOVE) {
@@ -2077,6 +2098,11 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * ("a live preview always has START_SYMPIN set") true for this path instead of merely
        * assumed -- so an aborted graph regains its undo snapshot. */
       leave_placement_for("Add graph");
+      /* issue 0265 -- and a pending PASTE. The unselect_all(1) on the next line is precisely the
+       * wholesale `ui_state = 0` that dropped STARTMERGE with no delete(), so the merged objects
+       * stayed committed in the drawing (measured: merge, add_graph -> ui 296 -> 16424, merged
+       * wire kept). Always after the placement gate: shared xctx->preview_sel. */
+      leave_merge_for("Add graph");
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -2130,6 +2156,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * gesture live -- which is the terminal case this issue measured (ui=0 with
        * sympin_preview stuck at 1), so gating before the dialog is what actually fixes it. */
       leave_placement_for("Add image");
+      leave_merge_for("Add image");   /* issue 0265 -- same door, same siting argument as the wire
+                                       * and placement gates above: on the pick, before the chooser,
+                                       * because the unselect_all(1) on the next line has already
+                                       * ended the previous state either way */
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -4645,6 +4675,15 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, s, TCL_VOLATILE);
             net_hilight_restore_ctx(borrowed);
           }
+          else if(!strcmp(argv[2], "paste_from")) { /* pending-merge source: 0 named file, 1 selection
+                                                     * transfer, 2 clipboard, 3 merge dialog (xschem.h).
+                                                     * Test seam added by issue 0265: the two teardowns
+                                                     * merge_file() now runs before arming both call
+                                                     * move_objects(ABORT), which zeroes this field, so
+                                                     * the restore that puts it back needs an oracle. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->paste_from), TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) {
@@ -6891,6 +6930,11 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a line outright and is the replay seam. */
         if(!leave_placement_for("Line")) return TCL_OK;
+        /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- a DRAW cancels a live merge, the
+         * direction that was missing (the reverse already worked: merge_file() calls
+         * leave_placement_for(), which is the wire/line teardown too). Same branch discipline as
+         * the placement gate: ARM forms only, never the coordinate commit form above. */
+        if(!leave_merge_for("Line")) return TCL_OK;
         prev_state = xctx->ui_state;
         if(infix_interface) {
           start_line(xctx->mousex_snap, xctx->mousey_snap);
@@ -6906,6 +6950,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       else {
         if(!leave_placement_for("Line")) return TCL_OK;  /* issue 0243 F2 */
+        if(!leave_merge_for("Line")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTLINE;
@@ -9138,6 +9183,11 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * share one STARTMOVE and the first one's instance is left committed when the second is
        * dropped or aborted. Gated with all three arg forms, like the wire gate above. */
       leave_placement_for("Insert symbol");
+      /* issue 0265 -- and a pending PASTE, the door this verb reaches the SAME way it reaches the
+       * placement one: place_symbol() runs its own unselect_all, which zeroes ui_state wholesale
+       * and dropped STARTMERGE with no delete() (measured: merge, place_symbol -> ui 296 -> 8232,
+       * merged wire committed, ESC then removes only the symbol). */
+      leave_merge_for("Insert symbol");
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -9180,6 +9230,8 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * START_SYMPIN, and no PLACE_TEXT was ever armed to give abort_operation() something to
        * tear down). Same pick-time rule as `Add image`. */
       leave_placement_for("Place text");
+      leave_merge_for("Place text");   /* issue 0265 -- and a pending paste, before the same
+                                        * unselect_all(1) and the same modal dialog */
       xctx->semaphore++;
       xctx->last_command = 0;
       unselect_all(1);
@@ -12340,6 +12392,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(!leave_placement_for("Snap wire")) return TCL_OK;  /* issue 0243 F2 */
+      if(!leave_merge_for("Snap wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTSNAPWIRE;
     }
@@ -13337,6 +13390,8 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a wire outright and is the replay seam. */
         if(!leave_placement_for("Wire")) return TCL_OK;
+        if(!leave_merge_for("Wire")) return TCL_OK;   /* issue 0265 -- phase 4, see the `line gui`
+                                                       * arm above for the branch discipline */
         prev_state = xctx->ui_state;
         if(infix_interface) {
           start_wire(xctx->mousex_snap, xctx->mousey_snap);
@@ -13351,6 +13406,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       } else {
         if(!leave_placement_for("Wire")) return TCL_OK;  /* issue 0243 F2 */
+        if(!leave_merge_for("Wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTWIRE;
