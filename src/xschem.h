@@ -1611,6 +1611,12 @@ typedef struct {
                                 * opened it -- read by the drop logger (callback.c
                                 * end_move_copy_logged) to record `xschem paste ... -file {f}`
                                 * for non-clipboard merges (issue 0069) */
+  int pre_merge_modified; /* ISSUE 0244: xctx->modified as it was BEFORE the pending STARTMERGE,
+                           * latched by merge_file() (paste.c) and read by abort_operation()'s two
+                           * merge arms (callback.c) to decide whether cancelling the paste may
+                           * clear the flag. It must be LATCHED and cannot be read at abort time:
+                           * merge_file() ends with an unconditional set_modify(1), so by then the
+                           * pre-merge value is already gone. Per-window, like merge_source. */
   size_t tok_size;
   char netlist_name[PATH_MAX];
   char current_dirname[PATH_MAX];

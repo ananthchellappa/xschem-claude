@@ -70,7 +70,10 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # (test_placement_preview_doors drives no `xschem callback`; --nogui also makes its
 # place_text / add_image rows exercise the CANCELLED-dialog path, which is the terminal
 # case issue 0242 measured)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors "
+# (test_paste_modify_flag_0244 drives no `xschem callback` either -- it arms with
+# `xschem merge`/`xschem paste`, commits with `move_objects end`, cancels with
+# `abort_operation` -- so it is true-headless by construction)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

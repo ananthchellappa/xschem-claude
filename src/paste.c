@@ -561,6 +561,24 @@ void merge_file(int selection_load, const char ext[])
       * dialog (above) must not destroy the preview, and the teardown's delete() must land before
       * the merge's undo baseline is taken, or undoing the paste would resurrect the preview. */
      leave_placement_for(selection_load == 2 ? "Paste" : "Merge");
+     /* ISSUE 0244 -- latch the modify flag the merge is STARTING FROM.
+      * abort_operation()'s two STARTMERGE arms (callback.c) used to call set_modify(0) flat, on
+      * the reasoning "an aborted merge changed nothing, so undo the flag delete() just set". That
+      * is true only for a document that was already clean: on a document with real unsaved edits
+      * ESC-ing a Ctrl+V reported it UNMODIFIED, which kills the Close/Quit prompts, save()'s
+      * `if(force || xctx->modified)` gate and go_back()'s ascend prompt -- and File > New then
+      * runs clear_schematic()'s silent save(1,0) followed by remove_backup(), deleting the `~`
+      * file that held the only copy of the work.
+      * Latched, NOT read at the abort: the unconditional set_modify(1) at the bottom of this
+      * function runs on every exit, so by abort time xctx->modified is always 1 and the
+      * save/restore idiom the PLACEMENT arm uses (abort_placement_preview()) would read the
+      * already-clobbered value -- leaving a clean document dirty after every Ctrl+V/ESC.
+      * Sited here, after leave_placement_for() and before the first mutation: push_undo() below is
+      * the merge's first write, and taking the latch after the placement teardown is the honest
+      * reading of "the flag this merge starts from" (that teardown is modified-neutral today --
+      * abort_placement_preview() does set_modify(save) -- so the order is not load-bearing yet,
+      * but it stays correct if it ever stops being neutral). */
+     xctx->pre_merge_modified = xctx->modified;
      xctx->push_undo();
      unselect_all(1);
      old=xctx->instances;
@@ -698,6 +716,36 @@ void merge_file(int selection_load, const char ext[])
        dbg(1, "merge_file(): %s (%s)\n", cnt, xview_coerced_names);
      }
      xview_mode = 0;
+     /* ISSUE 0244 part B / ISSUE 0241 -- name what the cancel is allowed to delete.
+      * abort_operation()'s two STARTMERGE arms (callback.c) tear the pending paste down with a
+      * SELECTION-scoped delete(1), trusting the "selection == the merged objects" invariant this
+      * function establishes right here. Nothing defends it afterwards: between the paste and the
+      * ESC the user can reach Ctrl+A, Edit>Select all or select_dangling_nets, none of which
+      * inspects ui_state, and the cancel then took the WHOLE DOCUMENT (measured at 7da044ff:
+      * 2 wires + 1 instance + 1 text + 1 line -> nothing, and issue 0244's flat set_modify(0)
+      * reported the emptied schematic clean, so it closed without a prompt).
+      * Same fix as the placement sibling: stamp the identity of the merged objects HERE, at the
+      * arm, and re-select exactly that stamp before the delete. THE STAMP IS THE SELECTION,
+      * which on this path is exactly the merged set -- push_undo() + unselect_all(1) above ran
+      * BEFORE the load, so nothing of the user's survives in it -- plus the pin name views
+      * synth_pin_views() just added, which must drag and die with their pins.
+      * Sited before `ui_state |= STARTMERGE` for the same reason as the placement arms: the stamp
+      * and the bit that authorises reading it are one fact and are written together.
+      * SHARED SLOT: the stamp goes in xctx->preview_sel, the same field the placement preview
+      * uses -- deliberately, and NOT because the two can never be co-armed. 0242 closed only the
+      * placement-then-merge direction (leave_placement_for() above); NOTHING tears down a pending
+      * STARTMERGE, so merge-then-placement is reachable. It is still safe, on two properties that
+      * the readers' comments (abort_operation(), callback.c) restate because nobody enforces them:
+      *   - every arm of either kind stamps immediately before setting its bit, and merge_file() is
+      *     the ONLY writer of STARTMERGE, so no reader can ever see a stale stamp;
+      *   - of the twelve placement arms, eight run unselect_all(1), which zeroes ui_state wholesale
+      *     and so destroys STARTMERGE before writing their stamp (no merge arm left to read it);
+      *     the four that do not (ctx-menu text, `t`, the screen grab, place_net_label's
+      *     failed-place_symbol path) leave the merged objects SELECTED, so their stamp is a
+      *     SUPERSET of this one and their teardown removes the merge with the placement -- after
+      *     which this arm's select_placement_preview() correctly resolves 0 and deletes nothing.
+      * A separate merge_sel field would behave identically in every reachable sequence. */
+     stamp_placement_preview();
      xctx->ui_state |= STARTMERGE;
      dbg(1, "End merge_file(): loaded file %s: wire=%d inst=%d ui_state=%ld\n",
              name, xctx->wires , xctx->instances, xctx->ui_state);
@@ -714,6 +762,7 @@ void merge_file(int selection_load, const char ext[])
         * move/copy drop would be mislogged as a paste (issue 0069 atom-9 review), and a
         * later ESC would delete(1) whatever selection exists. */
        xctx->ui_state &= ~STARTMERGE;
+       clear_placement_preview(); /* issue 0244 part B: nothing merged, so nothing to name */
      }
     } else {
       dbg(0, "merge_file(): can not open %s\n", name);

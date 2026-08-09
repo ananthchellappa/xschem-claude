@@ -7612,8 +7612,10 @@ static int fluid_shove_body_crossing_backbone(void)
         ok = (fluid_partition_changed() == 0) && npB == npA && fluid_part_equal(repA, repB, npA);
         if(!ok) {                                         /* EXACT revert (house restore ritual) */
           unsigned int saved_ui = xctx->ui_state;
+          int saved_preview_n = xctx->preview_sel_n; /* issue 0244 -- see fluid_reroute_restore() */
           mem_restore_slot(&snap, 0);
           xctx->ui_state = saved_ui;
+          xctx->preview_sel_n = saved_preview_n;
           xctx->wire_id_counter = s_wid; xctx->inst_id_counter = s_iid;
           xctx->gfx_id_counter  = s_gid; xctx->text_id_counter = s_tid;
           xctx->need_reb_sel_arr = 1; rebuild_selected_array();
@@ -7910,8 +7912,10 @@ static int fluid_shove_jog_separated_trunk(void)
           ok = (fluid_partition_changed() == 0) && npB == npA && fluid_part_equal(repA, repB, npA);
           if(!ok) {
             unsigned int saved_ui = xctx->ui_state;
+            int saved_preview_n = xctx->preview_sel_n; /* issue 0244 -- see fluid_reroute_restore() */
             mem_restore_slot(&snap, 0);
             xctx->ui_state = saved_ui;
+            xctx->preview_sel_n = saved_preview_n;
             xctx->wire_id_counter = s_wid; xctx->inst_id_counter = s_iid;
             xctx->gfx_id_counter  = s_gid; xctx->text_id_counter = s_tid;
             xctx->need_reb_sel_arr = 1; rebuild_selected_array();
@@ -8768,12 +8772,25 @@ static int fluid_check_move_invariants(int short_baseline)
  *   - sel_array/lastsel: rebuilt from the restored per-object .sel bits;
  *   - movelastsel = lastsel: so update_symbol_bboxes()'s [0,movelastsel) bound tracks the
  *     restored selection (a stale movelastsel > lastsel re-fires the dce0bea6 symbol_bbox
- *     heap-overflow). */
+ *     heap-overflow);
+ *   - preview_sel_n: the placement/paste identity stamp (issue 0241, extended to the merge arm by
+ *     issue 0244 part B). mem_restore_slot() -> clear_drawing() (actions.c) calls
+ *     clear_placement_preview(), which is right for a document LOAD (ids restart) and wrong here:
+ *     this is a ROLLBACK OF THE SAME DOCUMENT, the restored objects carry their snapshot ids and
+ *     the four id counters are put back on the very next lines, so the stamp stays valid. Without
+ *     this the bracket would preserve the gesture BIT while destroying what the bit authorises the
+ *     teardown to delete -- and ESC on a paste dragged over a fluid stretch then deleted NOTHING
+ *     while still clearing the modify flag: the paste left in the drawing, the buffer reporting
+ *     itself saved. Found by the adversarial review of the 0244 fix; pinned by section D8 of
+ *     tests/headless/test_paste_modify_flag_0244.tcl. Only the COUNT needs saving --
+ *     clear_placement_preview() zeroes preview_sel_n and never touches the array. */
 static void fluid_reroute_restore(void)
 {
   unsigned int saved_ui = xctx->ui_state;
+  int saved_preview_n = xctx->preview_sel_n;   /* issue 0244 -- see the note above */
   mem_restore_slot(&xctx->fluid_reroute_snap, 0);
   xctx->ui_state = saved_ui;
+  xctx->preview_sel_n = saved_preview_n;
   xctx->wire_id_counter = xctx->fluid_reroute_wid;
   xctx->inst_id_counter = xctx->fluid_reroute_iid;
   xctx->gfx_id_counter  = xctx->fluid_reroute_gid;
@@ -9935,8 +9952,10 @@ void move_objects(int what, int merge, double dx, double dy)
       * ones): they match the geometry being restored. */
      if(alt_snapped) {
        unsigned int saved_ui = xctx->ui_state;
+       int saved_preview_n = xctx->preview_sel_n; /* issue 0244 -- see fluid_reroute_restore() */
        mem_restore_slot(&alt_snap, 0);
        xctx->ui_state = saved_ui;
+       xctx->preview_sel_n = saved_preview_n;
        xctx->wire_id_counter = alt_wid;
        xctx->inst_id_counter = alt_iid;
        xctx->gfx_id_counter  = alt_gid;
@@ -9967,8 +9986,10 @@ void move_objects(int what, int merge, double dx, double dy)
     * Mirror fluid_reroute_restore(): mem_restore_slot zeroes ui_state/lastsel and reallocs the
     * arrays, so put back ui_state, the START id counters (determinism), sel_array, and movelastsel. */
    { unsigned int saved_ui = xctx->ui_state;
+     int saved_preview_n = xctx->preview_sel_n; /* issue 0244 -- see fluid_reroute_restore() */
      mem_restore_slot(&leg_snap, 0);
      xctx->ui_state = saved_ui;
+     xctx->preview_sel_n = saved_preview_n;
      xctx->wire_id_counter = xctx->fluid_reroute_wid;
      xctx->inst_id_counter = xctx->fluid_reroute_iid;
      xctx->gfx_id_counter  = xctx->fluid_reroute_gid;
@@ -10085,7 +10106,15 @@ void move_objects(int what, int merge, double dx, double dy)
      }
 
      xctx->ui_state &= ~STARTMOVE;
-     if(xctx->ui_state & STARTMERGE) xctx->ui_state |= SELECTION; /* leave selection state so objects can be deleted */
+     if(xctx->ui_state & STARTMERGE) {
+       xctx->ui_state |= SELECTION; /* leave selection state so objects can be deleted */
+       /* issue 0244 part B: the paste is DROPPED, so it is no longer a deletable preview -- forget
+        * the stamp merge_file() took (paste.c), or a later, unrelated ESC could delete the objects
+        * it named. This is the commit door for BOTH the interactive drop and the scripted
+        * `xschem paste dx dy` / `xschem move_objects end dx dy` forms, which reach move_objects(END)
+        * without passing through end_place_move_copy_zoom()'s own clear (callback.c). */
+       clear_placement_preview();
+     }
      xctx->ui_state &= ~STARTMERGE;
      /* wire_label_ride.md S1, §11 hazard A: the LEASH apply site. The next two lines zero
       * move_rot/move_flip/x1/y1/deltax/deltay, and the geometry above is final (last mutation is
@@ -10120,8 +10149,10 @@ void move_objects(int what, int merge, double dx, double dy)
           * mem_restore_slot (which zeroes it via unselect_all), put the START id counters back
           * (deterministic tool-wire ids), rebuild sel_array + movelastsel (dce0bea6 overflow guard). */
          unsigned int saved_ui = xctx->ui_state;
+         int saved_preview_n = xctx->preview_sel_n; /* issue 0244 -- see fluid_reroute_restore() */
          mem_restore_slot(&enf_snap, 0);
          xctx->ui_state = saved_ui;
+         xctx->preview_sel_n = saved_preview_n;
          xctx->wire_id_counter = enf_wid;
          xctx->inst_id_counter = enf_iid;
          xctx->gfx_id_counter  = enf_gid;
