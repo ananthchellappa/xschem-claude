@@ -104,6 +104,30 @@ Enumeration and resolution already work (`cell_views`, `cellview_resolve` — a
 `cellview_path` already returns its path). What is missing is typing, creation,
 routing, and the loose-file convention.
 
+**⚠ THIS IS NO LONGER PREP WORK — IT IS A DATA-LOSS BUG.** Measured 2026-08-08 against the
+reference cell, now that a `verilog` view exists on disk:
+
+```
+views        : symbol verilog                       <- enumerates fine
+view_type    : 'data'                               <- should be 'verilog'
+view_handler : 'editor'                             <- routes a .v to `xschem load`
+lib_qualified_abs {…_ase/counter.v} -> …/counter/symbol/counter.sym   <- resolves to the SYMBOL
+
+xschem load …/counter/verilog/counter.v
+  SKIP RECORD / `timescale 1ps/1ps … / END SKIP RECORD   (every line)
+  load returned OK (no error)
+  schname : …/counter/verilog/counter.v
+  wires=0 instances=0 texts=0   modified=0
+```
+
+`xschem load` on a `.v` **does not fail**. It skips every line and leaves an **empty schematic
+whose `schname` is the Verilog source**, marked unmodified. Opening the verilog view from the
+Library Manager therefore arms a save that writes an empty `.sch` over `counter.v`. The source
+file survived this probe only because nothing saved.
+
+So B1/B5/B6 are a fix, not scaffolding, and B5 (`view_handler`) is the one that closes the
+hole.
+
 | id | item | site |
 |----|------|------|
 | B1 | **Extension→type map.** Add `.v`,`.sv`→`verilog`; `.va`,`.vams`→`veriloga`. Today they fall to `default { return data }`. | `copyform::view_type`, `src/copy_form.tcl:52` |
