@@ -434,16 +434,44 @@ proc libmgr::selection {} {
 # library_defs.tcl cellview_resolve), which makes both mismatch directions
 # safe: a view named 'mystate' holding a .state never reaches `xschem load`,
 # and a view named 'ngspice_state1' holding a .sch still opens in the editor.
-# Without a path the view NAME decides (ngspice_state* -> ASE). Returns the
-# handler `ase::open_state` (called as `<handler> $lib $cell $view`) or the
-# token `editor` (status-quo load arms).
+# Without a path the view NAME decides (a *_state* name -> ASE, `verilog` /
+# `veriloga` -> text). Returns a handler proc (called as
+# `<handler> $lib $cell $view`) or the token `editor` (status-quo load arms).
+#
+# `editor` means `xschem load`, and `xschem load` on a NON-SCHEMATIC text file
+# does not fail: it skips every line and leaves an empty schematic whose
+# schname is that file, marked unmodified — so the next save writes an empty
+# .sch over the source. That is why .v/.va must divert here and not merely
+# "look nicer in the tree". Measured against
+# xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v; see
+# the §B preamble of doc/claude/specs/mixed_signal_signal_browser.md.
 proc libmgr::view_handler {view {path {}}} {
-  if {$path ne {}} {
-    if {[file extension $path] eq {.state}} { return ase::open_state }
-    return editor
+  # extension wins when we have a datafile, view name is the fallback — the one
+  # table in library_defs.tcl decides both.
+  set type [expr {$path ne {} ? [view_type_of_ext [file extension $path]] : $view}]
+  switch -- [view_type_opener $type] {
+    ase     { return ase::open_state }
+    text    { return libmgr::open_text_view }
+    default { return editor }
   }
-  if {[string match ngspice_state* $view]} { return ase::open_state }
-  return editor
+}
+
+# Handler for source-code views (verilog, veriloga): hand the datafile to the
+# configured text editor. edit_file already falls back to the internal text
+# window when $editor is not executable (editor-missing-fallback), so this needs
+# no display check of its own.
+#
+# Logs NO action line, like the ASE arm: `edit_file` spawns an external process,
+# which is not a replayable xschem operation — a replay must not fork gvim.
+# The $ro flag is accepted for handler-signature parity with ase::open_state and
+# reported honestly: an external editor is not ours to make read-only.
+proc libmgr::open_text_view {lib cell view {ro 0}} {
+  set path [xschem cellview_path "$lib/$cell" $view]
+  if {$path eq {}} { libmgr::status "no $view view for $lib/$cell"; return 0 }
+  edit_file $path
+  set note [expr {$ro ? " (an external editor cannot be forced read-only)" : ""}]
+  libmgr::status "opened $lib/$cell/$view in the text editor$note"
+  return 1
 }
 
 # open the selected view in its editor (schematic OR symbol), in a new window or
@@ -585,15 +613,20 @@ proc libmgr::open_view_ro {} {
   set lcv [libmgr::current_view]
   if {$lcv eq {}} return
   lassign $lcv lib cell view
-  # Non-editor views (ASE simulation states): dispatch DIRECTLY with the
-  # read-only flag (ase::open_state's trailing arg, item 07 D7 — it records
-  # the session attr `readonly` that gates the ASE Save-As overwrite
-  # confirmation). Routing through libmgr::open_view would drop the flag,
-  # and the `xschem set readonly 1` below would wrongly mark the CURRENT
-  # schematic window read-only instead. Like the plain-open ASE arm this
-  # logs NO action line (read-only viewer allowlist doctrine).
-  if {[libmgr::view_handler $view [xschem cellview_path "$lib/$cell" $view]] ne {editor}} {
-    ase::open_state $lib $cell $view 1
+  # Non-editor views (ASE simulation states, source-code views): dispatch
+  # DIRECTLY, through the resolved handler, with the read-only flag (the
+  # handlers' trailing arg — for ase::open_state, item 07 D7: it records the
+  # session attr `readonly` that gates the ASE Save-As overwrite confirmation).
+  # Routing through libmgr::open_view would drop the flag, and the `xschem set
+  # readonly 1` below would wrongly mark the CURRENT schematic window read-only
+  # instead. Like the plain-open non-editor arms this logs NO action line
+  # (read-only viewer allowlist doctrine). Dispatch is via $handler and not a
+  # hardcoded ase::open_state: with .v/.va views the non-editor set is no
+  # longer ASE-only, and calling ase::open_state on a Verilog file would report
+  # a bogus unloadable-state error.
+  set handler [libmgr::view_handler $view [xschem cellview_path "$lib/$cell" $view]]
+  if {$handler ne {editor}} {
+    if {![$handler $lib $cell $view 1]} return
     libmgr::status "opened $lib/$cell/$view read-only"
     return
   }
@@ -1253,8 +1286,14 @@ proc libmgr::view_dialog {title srclib srccell srcview} {
   return $res
 }
 
-# View name + editor type (schematic|symbol|ngspice_state1 — the last seeds an
-# ASE simulation-state view, doc/claude/specs/ase_l.md). Returns {name type} or {}.
+# View name + editor type. Returns {name type} or {}.
+#   schematic/symbol  empty .sch/.sym body
+#   verilog/veriloga  a source file seeded with a module header built from the
+#                     cell's symbol pins (doc/claude/specs/mixed_signal_signal_browser.md §B4)
+#   ngspice_state1    an ASE simulation-state view (doc/claude/specs/ase_l.md)
+# The combobox values must stay a subset of what view_ext_of_type creates —
+# library_new_view now errors on an unknown type instead of quietly writing a
+# .sch, so an entry added here without a table row is a visible failure.
 proc libmgr::newview_dialog {lib cell} {
   variable dlg_done
   set d .libmgr.nv2
@@ -1265,7 +1304,7 @@ proc libmgr::newview_dialog {lib cell} {
   ttk::label $d.l1 -text "View name:"
   ttk::entry $d.name -width 28
   ttk::label $d.l2 -text "Editor type:"
-  ttk::combobox $d.type -state readonly -values {schematic symbol ngspice_state1}
+  ttk::combobox $d.type -state readonly -values {schematic symbol verilog veriloga ngspice_state1}
   $d.type set schematic
   ttk::frame $d.b
   ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}

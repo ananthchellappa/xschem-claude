@@ -202,6 +202,75 @@ proc library_resolve {name} {
   return {}
 }
 
+# --- The view-type model (ONE table, five consumers) ------------------------
+# Codebase doctrine (copy_form.tcl header, cellview_resolve below): a view is a
+# directory, and its TYPE comes from the extension of the <cell>.<ext> datafile
+# inside it, never from the directory's name. That rule was previously spelled
+# out four times, each with its own private extension switch, and they had
+# drifted: `.v` was type `data` to copyform, opened with `xschem load` by
+# libmgr::view_handler, and resolved to the SYMBOL view by lib_qualified_abs.
+# `xschem load` on a `.v` does not fail -- it skips every line and leaves an
+# empty schematic whose schname is the Verilog source, so the next save writes
+# an empty .sch over the source. See the §B table in
+# doc/claude/specs/mixed_signal_signal_browser.md.
+#
+# These four procs are that single table. Consumers:
+#   copyform::view_type    ext  -> type            (src/copy_form.tcl)
+#   library_new_view       type -> ext + seed      (below)
+#   libmgr::view_handler   type -> open handler    (src/library_manager.tcl)
+#   lib_qualified_abs      ext  -> view            (below)
+#   alt2::*                which types toggle       (src/alt2_toggle_view.tcl)
+
+# Datafile extension (with the dot, any case) -> view type. `data` is the
+# catch-all for a view holding a file this editor has no model for.
+proc view_type_of_ext {ext} {
+  switch -- [string tolower $ext] {
+    .sch          { return schematic }
+    .sym          { return symbol }
+    .state        { return state }
+    .v    - .sv   { return verilog }
+    .va   - .vams { return veriloga }
+    default       { return data }
+  }
+}
+
+# View type -> every extension that reads back as that type, most canonical
+# first. "" (empty list) for a type with no creatable datafile. `ngspice_state1`
+# and friends are view NAMES that carry their type; string-match them here so
+# callers need no second rule.
+proc view_exts_of_type {type} {
+  if {[string match *_state* $type] || $type eq "state"} { return {.state} }
+  switch -- $type {
+    schematic { return {.sch} }
+    symbol    { return {.sym} }
+    verilog   { return {.v .sv} }
+    veriloga  { return {.va .vams} }
+    default   { return {} }
+  }
+}
+
+# The extension library_new_view creates for a type: the canonical one.
+proc view_ext_of_type {type} { return [lindex [view_exts_of_type $type] 0] }
+
+# View type -> who opens it:
+#   editor  the xschem canvas (`xschem load`)   -- schematic, symbol
+#   ase     the ASE-L simulation-state window   -- state
+#   text    a text editor (edit_file)           -- verilog, veriloga
+# `data` stays `editor` deliberately: that is the status quo for the unknown
+# extension, and narrowing it is a separate decision from fixing the two types
+# this table now knows are source code.
+proc view_type_opener {type} {
+  if {[string match *_state* $type] || $type eq "state"} { return ase }
+  switch -- $type {
+    verilog - veriloga { return text }
+    default            { return editor }
+  }
+}
+
+# Canonically-named view for a type (the New-View default, and alt2's default
+# chooser selection). Same name as the type for every type we create.
+proc view_default_name {type} { return $type }
+
 # --- Phase 2: lib/cell/view resolution -------------------------------------
 # A registered library 'libname' holds cell 'cell' whose 'view' datafile lives at
 # <libpath>/<cell>/<view>/<cell>.<ext>. Returns the absolute path if that file
@@ -226,6 +295,36 @@ proc cellview_resolve {libname cell view} {
   # lib-qualified ref to a flat lib resolves to the same file rule 3 would find)
   set flat [file join $lpath $cell$ext]
   if {[file exists $flat]} { return $flat }
+  return {}
+}
+
+# cellview_resolve, but the answer must actually BE a view of type $view.
+#
+# cellview_resolve ends in a legacy flat-layout fallback that hands back
+# <libpath>/<cell>.sym for any view name other than `schematic`. That is right
+# for a flat library, whose only views ARE symbol and schematic — but it means
+# asking a flat library for its `verilog` view returns the SYMBOL, the same
+# class of silent wrong answer lib_qualified_abs used to give for `lib/cell.v`.
+# So: take cellview_resolve's answer only when its extension reads back as the
+# requested type, else look for the loose sibling <libpath>/<cell>.<ext> (the
+# flat-library spelling of a source view, and upstream's own convention for a
+# `.v` next to its symbol). "" when neither exists.
+#
+# Only meaningful for a view name that is also a TYPE; an arbitrarily-labelled
+# view ('sch_alt') is not type-checkable and falls through to plain resolution.
+proc cellview_resolve_typed {libname cell view} {
+  set exts [view_exts_of_type $view]
+  set p [cellview_resolve $libname $cell $view]
+  if {$exts eq {}} { return $p }
+  if {$p ne {} && [view_type_of_ext [file extension $p]] eq [view_type_of_ext [lindex $exts 0]]} {
+    return $p
+  }
+  set lpath [library_resolve $libname]
+  if {$lpath eq {}} { return {} }
+  foreach e $exts {
+    set flat [file join $lpath $cell$e]
+    if {[file isfile $flat]} { return $flat }
+  }
   return {}
 }
 
@@ -273,16 +372,72 @@ proc cell_views {libname cell} {
 }
 
 # abs_sym_path rule 2: resolve a lib-qualified reference "lib/cell[.ext]" under
-# the new layout. The view is inferred from the extension (.sch -> schematic,
-# else symbol). Returns "" on any miss so abs_sym_path falls through to legacy.
+# the new layout. The view is inferred from the extension through the one
+# view-type table above: .sch -> schematic, .v -> verilog, .va -> veriloga, and
+# EVERYTHING else -> symbol. That last clause is why `default` cannot simply be
+# view_type_of_ext's answer: a bare, extension-less "lib/cell" is the common
+# case and must keep meaning "the symbol to instantiate". Only extensions the
+# table actually names divert. Before this, `lib/cell.v` silently resolved to
+# the SYMBOL view -- a reference to the Verilog source handing back a .sym.
+# Returns "" on any miss so abs_sym_path falls through to legacy.
 proc lib_qualified_abs {fname} {
   if {![regexp {^([^/]+)/(.+)$} $fname -> libname rest]} { return {} }
   if {[library_resolve $libname] eq {}} { return {} }
-  switch -- [file extension $rest] {
-    .sch    { set view schematic }
-    default { set view symbol }
+  set cell [file rootname $rest]
+  switch -- [view_type_of_ext [file extension $rest]] {
+    verilog  { return [cellview_resolve_typed $libname $cell verilog] }
+    veriloga { return [cellview_resolve_typed $libname $cell veriloga] }
+    schematic { set view schematic }
+    default   { set view symbol }
   }
-  return [cellview_resolve $libname [file rootname $rest] $view]
+  return [cellview_resolve $libname $cell $view]
+}
+
+# "This cell's <view> view", given any reference to one of its other views
+# (§B8 of doc/claude/specs/mixed_signal_signal_browser.md). Written for a
+# symbol's display text / tclcommand, where the reference at hand is @symref:
+#
+#   T {tcleval([read_data [cellview_sibling_path @symref verilog]])} ...
+#
+# replacing the hardcoded `[xschem cellview_path <lib>/<cell> verilog]` that
+# nails the library name into the symbol and breaks the moment the cell is
+# copied to another library.
+#
+# Write @symref BARE, not {@symref}: the .sym T-record parser does not handle
+# nested braces and truncates the record at the inner `}` ("WARNING: missing
+# fields for Text object, ignoring"). Token substitution runs before the
+# tcleval, so the brace would buy nothing anyway.
+#
+# Resolution order:
+#   1. already lib-qualified ("lib/cell[.ext]", lib registered) -> straight to
+#      cellview_resolve_typed, no filesystem walk;
+#   2. anything else -> abs_sym_path it, then reverse-map the absolute path to
+#      its {lib cell} with schematic_cellview and ask that cell;
+#   3. flat/unregistered layout -> the sibling file next to it, <dir>/<cell><ext>,
+#      which is exactly upstream's loose-file convention (abs_sym_path counter.v).
+# Returns "" when nothing resolves, so a caller can report rather than paste a
+# broken path into a netlist.
+proc cellview_sibling_path {ref view} {
+  if {$ref eq {}} { return {} }
+  if {[regexp {^([^/]+)/([^/]+)$} $ref -> libname rest] &&
+      [library_resolve $libname] ne {}} {
+    return [cellview_resolve_typed $libname [file rootname $rest] $view]
+  }
+  set abs [abs_sym_path $ref]
+  if {$abs eq {}} { return {} }
+  set cv [schematic_cellview $abs]
+  if {$cv ne {}} {
+    lassign $cv lib cell _v layout
+    if {$layout eq "nested"} { return [cellview_resolve_typed $lib $cell $view] }
+  }
+  # unregistered / loose-file layout: the sibling <dir>/<cell>.<ext> lying next
+  # to the reference itself, which is upstream's convention for a `.v` beside
+  # its symbol (`abs_sym_path counter.v`).
+  foreach ext [view_exts_of_type $view] {
+    set sib [file rootname $abs]$ext
+    if {[file isfile $sib]} { return $sib }
+  }
+  return {}
 }
 
 # rel_sym_path rule 2: if 'symbol' is an absolute path to a SYMBOL view inside a
@@ -575,16 +730,36 @@ proc library_write_empty_cellfile {path} {
   close $fp
 }
 
-# Create a new, empty cell with one view (schematic by default).
+# Write a plain-text view datafile (a source-code seed). Unlike write_data in
+# xschem.tcl this lets the open error propagate, so the do_* callers' `catch`
+# reports "permission denied" instead of silently creating nothing.
+proc library_write_textfile {path body} {
+  set fp [open $path w]
+  puts -nonewline $fp $body
+  close $fp
+}
+
+# Create a new, empty cell with one view (schematic by default). The argument is
+# a view NAME; the datafile extension comes from the shared table when the name
+# is also a known type, else the historical schematic-or-symbol rule. Without
+# this a cell created with view `verilog` got an empty <cell>.sym inside it.
 proc library_new_cell {lib cell {view schematic}} {
   set lp [library_resolve $lib]
   if {$lp eq {}} { error "no such library: $lib" }
   if {$cell eq {}} { error "cell name required" }
   if {[library_cell_layout $lib $cell] ne {}} { error "cell already exists: $lib/$cell" }
-  set ext [expr {$view eq "schematic" ? "sch" : "sym"}]
+  set ext [view_ext_of_type $view]
+  if {$ext eq {} || $ext eq {.state}} { set ext [expr {$view eq "schematic" ? ".sch" : ".sym"}] }
   set vd [file join $lp $cell $view]
   file mkdir $vd
-  library_write_empty_cellfile [file join $vd "$cell.$ext"]
+  set df [file join $vd "$cell$ext"]
+  # A brand-new cell has no symbol view yet, so a source seed is portless by
+  # construction — the module header is still valid and states that plainly.
+  switch -- [view_type_of_ext $ext] {
+    verilog  { library_write_textfile $df [library_verilog_seed  $cell {}] }
+    veriloga { library_write_textfile $df [library_veriloga_seed $cell {}] }
+    default  { library_write_empty_cellfile $df }
+  }
   return ""
 }
 
@@ -696,28 +871,156 @@ proc library_copy_view {sl sc sv dl dc dv} {
   return ""
 }
 
-# Create a new empty view of a given editor type (schematic|symbol|
-# ngspice_state*) under a free name. The cell must already exist; the view must
-# not. An ngspice_state* type seeds an ASE simulation-state view instead of an
-# empty sch/sym body (doc/claude/specs/ase_l.md).
+# --- pin list + source-view seeds (§B4) -------------------------------------
+# A cell's symbol pins as a list of {name dir} pairs, in symbol-file order.
+# Read by TEXT from the .sym rather than through `xschem load`, deliberately:
+# this runs from the Library Manager while the user has a schematic open, and
+# loading the symbol into the live context to count its pins would clobber it.
+# Same B-record regexp modify_symbol_pins uses (src/xschem.tcl). Returns {} when
+# the cell has no symbol view.
+proc library_symbol_pins {lib cell} {
+  set sym [cellview_resolve $lib $cell symbol]
+  if {$sym eq {} || ![file isfile $sym]} { return {} }
+  if {[catch {open $sym r} fp]} { return {} }
+  set txt [read $fp]; close $fp
+  set out {}
+  foreach ln [split $txt \n] {
+    if {![regexp {^B +[0-9]+ +[-0-9.]+ +[-0-9.]+ +[-0-9.]+ +[-0-9.]+ +\{(.*)\}} $ln -> props]} continue
+    if {![regexp {name=([^ \}]+)} $props -> pname]} continue
+    if {![regexp {dir=([^ \}]+)}  $props -> pdir]}  continue
+    lappend out [list $pname $pdir]
+  }
+  return $out
+}
+
+# Split an xschem pin name into {basename range}, where range is a Verilog
+# vector range ("[3:0]") or "". xschem spells a bus pin `count[3..0]`; a `:`
+# spelling is accepted too so a hand-edited symbol still seeds correctly.
+proc library_pin_split_bus {pname} {
+  if {[regexp {^(.*)\[([0-9]+)(?:\.\.|:)([0-9]+)\]$} $pname -> base msb lsb]} {
+    return [list $base "\[$msb:$lsb\]"]
+  }
+  return [list $pname {}]
+}
+
+# Pins grouped by direction, preserving symbol-file order within each group:
+# {inputs outputs inouts}. Anything not in/out/inout is treated as an inout.
+proc library_pins_by_dir {pins} {
+  set in {}; set out {}; set io {}
+  foreach p $pins {
+    lassign $p pname pdir
+    switch -- $pdir {
+      in   { lappend in  $pname }
+      out  { lappend out $pname }
+      default { lappend io $pname }
+    }
+  }
+  return [list $in $out $io]
+}
+
+# Seed body for a new `verilog` view. Port order is inputs, then outputs, then
+# inouts -- the order a d_cosim `format` string declares its bracket groups
+# (`format="@name [ @@clk ] [ @@count[3..0] ] @model"`), so a seeded module
+# matches the symbol's wire protocol without hand-reordering.
+proc library_verilog_seed {cell pins} {
+  lassign [library_pins_by_dir $pins] ins outs ios
+  set decl {}
+  foreach {kw group} [list input $ins output $outs inout $ios] {
+    foreach pname $group {
+      lassign [library_pin_split_bus $pname] base range
+      lappend decl [string trimright "    $kw $range"]\ $base
+    }
+  }
+  set body "\`timescale 1ps/1ps\n\n"
+  append body "// $cell — verilog view.\n//\n"
+  if {[llength $pins]} {
+    append body "// PORTS ARE FIXED BY THE SYMBOL VIEW ($cell/symbol/$cell.sym), from which\n"
+    append body "// this header was seeded: inputs, then outputs, then inouts. Adding or\n"
+    append body "// reordering a PORT here means editing the symbol too. Adding an INTERNAL\n"
+    append body "// signal does not -- and internals are exactly what the co-simulation VCD\n"
+    append body "// exists to expose (doc/claude/specs/mixed_signal_signal_browser.md).\n"
+  } else {
+    append body "// No symbol view found for this cell, so no ports could be seeded. Declare\n"
+    append body "// them here and in the symbol; the two must agree.\n"
+  }
+  append body "\n"
+  if {[llength $decl]} {
+    append body "module $cell (\n[join $decl ",\n"]\n);\n\n"
+  } else {
+    append body "module $cell ();\n\n"
+  }
+  append body "endmodule\n"
+  return $body
+}
+
+# Seed body for a new `veriloga` view. Verilog-A is ANALOG: its nodes reach the
+# ngspice raw file directly through OSDI, so unlike a d_cosim `verilog` block it
+# needs no VCD path to be plottable (§B9 of the mixed-signal spec). Ports are
+# declared the Verilog-A way -- name list in the header, direction and
+# discipline as separate statements.
+proc library_veriloga_seed {cell pins} {
+  lassign [library_pins_by_dir $pins] ins outs ios
+  set names {}; set decl {}; set disc {}
+  foreach {kw group} [list input $ins output $outs inout $ios] {
+    foreach pname $group {
+      lassign [library_pin_split_bus $pname] base range
+      lappend names $base
+      lappend decl [string trimright "  $kw $range"]\ $base\;
+      lappend disc [string trimright "  electrical $range"]\ $base\;
+    }
+  }
+  set body "\`include \"constants.vams\"\n\`include \"disciplines.vams\"\n\n"
+  append body "// $cell — veriloga view.\n//\n"
+  if {[llength $pins]} {
+    append body "// Ports seeded from the symbol view ($cell/symbol/$cell.sym).\n"
+  } else {
+    append body "// No symbol view found for this cell, so no ports could be seeded.\n"
+  }
+  append body "\nmodule ${cell}([join $names {, }]);\n"
+  if {[llength $decl]} { append body "[join $decl \n]\n[join $disc \n]\n" }
+  append body "\n  analog begin\n  end\nendmodule\n"
+  return $body
+}
+
+# Create a new empty view of a given editor type (schematic|symbol|verilog|
+# veriloga|ngspice_state*) under a free name. The cell must already exist; the
+# view must not. The type -> extension mapping is view_ext_of_type's, the one
+# table (it used to be an inline `$type eq "symbol" ? "sym" : "sch"`, so every
+# type that was not `symbol` or a state got a .sch datafile -- a `verilog` view
+# was created as an empty SCHEMATIC). An ngspice_state* type seeds an ASE
+# simulation-state view (doc/claude/specs/ase_l.md); verilog/veriloga seed a
+# module header from the cell's symbol pins (§B4), because an empty .v is
+# useless and a wrong-ported one is worse.
 proc library_new_view {lib cell view {type schematic}} {
   set lp [library_resolve $lib]
   if {$lp eq {}} { error "no such library: $lib" }
   if {$view eq {}} { error "view name required" }
   if {[library_cell_layout $lib $cell] eq {}} { error "no such cell: $lib/$cell" }
+  set ext [view_ext_of_type $type]
+  if {$ext eq {}} { error "unknown view type: $type" }
   set vd [file join $lp $cell $view]
   if {[file exists $vd]} { error "view already exists: $lib/$cell/$view" }
   file mkdir $vd
-  if {[string match ngspice_state* $type]} {
-    # The datafile is a serialized ase state dict, seeded VALID (never an
-    # empty file — ase::state_load must not need an empty-file special case),
-    # with design pointing at the cell's schematic view. If that view only
-    # arrives later, ase::netlist errors cleanly — acceptable.
-    set st [ase::state_default]
-    dict set st design [list lib $lib cell $cell view schematic]
-    ase::state_save [file join $vd "$cell.state"] $st
-  } else {
-    library_write_empty_cellfile [file join $vd "$cell.[expr {$type eq "symbol" ? "sym" : "sch"}]"]
+  set df [file join $vd "$cell$ext"]
+  switch -- [view_type_of_ext $ext] {
+    state {
+      # The datafile is a serialized ase state dict, seeded VALID (never an
+      # empty file — ase::state_load must not need an empty-file special case),
+      # with design pointing at the cell's schematic view. If that view only
+      # arrives later, ase::netlist errors cleanly — acceptable.
+      set st [ase::state_default]
+      dict set st design [list lib $lib cell $cell view schematic]
+      ase::state_save $df $st
+    }
+    verilog {
+      library_write_textfile $df [library_verilog_seed $cell [library_symbol_pins $lib $cell]]
+    }
+    veriloga {
+      library_write_textfile $df [library_veriloga_seed $cell [library_symbol_pins $lib $cell]]
+    }
+    default {
+      library_write_empty_cellfile $df
+    }
   }
   return ""
 }

@@ -18,10 +18,28 @@ namespace eval alt2 {
 }
 
 # ---- pure helpers --------------------------------------------------------
-# Target extension: the OTHER type from the current file.
+# Target extension: the OTHER type from the current file. Still the sch<->sym
+# binary — with four view types "the other one" stops being well-defined, so
+# this now serves only as the chooser's DEFAULT preference and the wording of
+# the nothing-to-toggle message. The candidate SET comes from
+# alt2::toggle_types below.
 proc alt2::other_ext {curpath} {
   return [expr {[string match {*.sym} $curpath] ? ".sch" : ".sym"}]
 }
+
+# The view types Alt-2 toggles between. Deliberately NOT "every type":
+#   in  schematic symbol   the canvas pair this feature was built for
+#   in  verilog veriloga   a cell whose implementation IS source code — the
+#                          case with no schematic to descend into, so toggling
+#                          to it is the only way to reach it from the canvas
+#   out state              has its own window (ase::open_state), reached from
+#                          the Library Manager; Alt-2 never offered it and
+#                          silently widening into it would be a surprise
+#   out data               unknown extension, no opener we can promise
+proc alt2::toggle_types {} { return {schematic symbol verilog veriloga} }
+
+# The view type of a datafile path, via the one table in library_defs.tcl.
+proc alt2::path_type {path} { return [view_type_of_ext [file extension $path]] }
 
 # Canonically-named view for an extension (the chooser's default selection).
 proc alt2::default_view {ext} {
@@ -50,23 +68,69 @@ proc alt2::views_of_ext {lib cell ext} {
   return [lsort $out]
 }
 
-# Candidate target views for toggling away from $curpath -> list of {view abspath}.
-# Registered cell: the target-type views of the cell. Flat/unregistered: the same-dir
-# sibling of the other type (empty view name), or {} if it does not exist.
+# Views of <lib>/<cell> whose datafile is of type $type, sorted.
+proc alt2::views_of_type {lib cell type} {
+  set out {}
+  foreach v [xschem cell_views $lib $cell] {
+    set p [xschem cellview_path "$lib/$cell" $v]
+    if {$p ne {} && [alt2::path_type $p] eq $type} { lappend out $v }
+  }
+  return [lsort $out]
+}
+
+# Candidate target views for toggling away from $curpath -> list of
+# {view abspath type}.
+#
+# Registered cell: every view of the cell whose type is in alt2::toggle_types
+# and differs from the current view's type. With only schematic/symbol views on
+# disk that is exactly the old other-ext answer; a `verilog` view now joins the
+# list instead of being invisible. Ordering puts the classic other-ext type
+# first so the chooser's default selection stays the top entry.
+#
+# Flat/unregistered: the same-dir sibling of the other type (empty view name),
+# plus a same-rootname source sibling if one is lying there (upstream's loose
+# `counter.v` convention, §B8), or {} if neither exists.
 proc alt2::target_candidates {curpath} {
+  set curtype [alt2::path_type $curpath]
   set ext [alt2::other_ext $curpath]
   set cv [schematic_cellview [file normalize $curpath]]
   if {$cv ne {}} {
     lassign $cv lib cell
+    # classic partner type first, then the rest, so the default stays on top
+    set order [list [view_type_of_ext $ext]]
+    foreach t [alt2::toggle_types] { if {[lsearch -exact $order $t] < 0} { lappend order $t } }
     set out {}
-    foreach v [alt2::views_of_ext $lib $cell $ext] {
-      lappend out [list $v [file normalize [xschem cellview_path "$lib/$cell" $v]]]
+    foreach t $order {
+      if {$t eq $curtype} continue
+      set vs [alt2::views_of_type $lib $cell $t]
+      if {[llength $vs]} {
+        foreach v $vs {
+          lappend out [list $v [file normalize [xschem cellview_path "$lib/$cell" $v]] $t]
+        }
+      } elseif {[view_type_opener $t] eq {text}} {
+        # A registered library can still be FLAT, and cell_views only knows
+        # <cell>.sym / <cell>.sch there — so a loose <cell>.v beside the symbol
+        # (upstream's own convention, §B8) enumerates as no view at all. Probe
+        # for it directly; cellview_sibling_path already knows both layouts.
+        set p [cellview_sibling_path "$lib/$cell" $t]
+        if {$p ne {}} { lappend out [list {} [file normalize $p] $t] }
+      }
     }
     return $out
   }
+  set out {}
   set sib [file rootname $curpath]$ext
-  if {[file exists $sib]} { return [list [list {} [file normalize $sib]]] }
-  return {}
+  if {[file exists $sib]} {
+    lappend out [list {} [file normalize $sib] [view_type_of_ext $ext]]
+  }
+  foreach t [alt2::toggle_types] {
+    if {$t eq $curtype || $t eq [view_type_of_ext $ext]} continue
+    foreach e [view_exts_of_type $t] {
+      set s [file rootname $curpath]$e
+      if {[file isfile $s]} { lappend out [list {} [file normalize $s] $t]; break }
+    }
+  }
+  return $out
 }
 
 # Human label for a datafile path (lib/cell/view when registered, else basename).
@@ -142,19 +206,31 @@ proc alt2_toggle_view {} {
     return
   }
   if {[llength $cands] == 1} {
-    lassign [lindex $cands 0] cview cpath
+    lassign [lindex $cands 0] cview cpath ctype
   } else {
     set ext [alt2::other_ext $cur]
     set views {}
     foreach c $cands { lappend views [lindex $c 0] }
     set chosen [alt2::choose_dialog $views [alt2::default_view $ext]]
     if {$chosen eq ""} return
-    set cview $chosen ; set cpath {}
-    foreach c $cands { if {[lindex $c 0] eq $chosen} { set cpath [lindex $c 1] } }
+    set cview $chosen ; set cpath {} ; set ctype {}
+    foreach c $cands {
+      if {[lindex $c 0] eq $chosen && $cpath eq ""} { set cpath [lindex $c 1]; set ctype [lindex $c 2] }
+    }
     if {$cpath eq ""} return
   }
 
   set tpath [file normalize $cpath]
+
+  # A source-code view is not a schematic: it has no window to activate, no
+  # read-only mode of ours to set, and `xschem load` on it would leave an empty
+  # schematic named after the source (see libmgr::view_handler). Hand it to the
+  # text editor and stop.
+  if {[view_type_opener $ctype] eq {text}} {
+    edit_file $tpath
+    ciw_echo "opened [alt2::label $tpath $cview] in the text editor"
+    return
+  }
 
   # already open in ANOTHER window? -> just activate it
   set curwin [xschem get current_win_path]

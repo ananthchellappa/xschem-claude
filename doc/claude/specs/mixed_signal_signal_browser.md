@@ -1,6 +1,6 @@
 # Mixed-signal debug — digital internals in the Signal Browser
 
-Status: SPEC / PLAN (no code yet)
+Status: §A (simulation) and §B (view model) DONE; §C–§F open
 Owner branch: fluid-editing
 Related: `doc/claude/specs/ase_l.md`, `doc/claude/code_analysis/signal_browser_reference.md`,
 `doc/claude/code_analysis/signal_browser_teardown_scoping.md`,
@@ -104,7 +104,13 @@ Enumeration and resolution already work (`cell_views`, `cellview_resolve` — a
 `cellview_path` already returns its path). What is missing is typing, creation,
 routing, and the loose-file convention.
 
-**⚠ THIS IS NO LONGER PREP WORK — IT IS A DATA-LOSS BUG.** Measured 2026-08-08 against the
+**STATUS: §B IS DONE** (2026-08-08, `fluid-editing`). B1–B9 all landed; the data-loss hole
+described below is closed and regression-tested by `tests/headless/test_verilog_view_model.tcl`
+(109 checks, 10 sabotages verified). The one residual is filed as **issue 0285**: `xschem load`
+itself still empty-loads any non-schematic file, so the primitive under the bug survives for a
+direct caller even though no UI path reaches it. See "What landed" at the end of this section.
+
+**⚠ THIS WAS NOT PREP WORK — IT WAS A DATA-LOSS BUG.** Measured 2026-08-08 against the
 reference cell, now that a `verilog` view exists on disk:
 
 ```
@@ -130,15 +136,35 @@ hole.
 
 | id | item | site |
 |----|------|------|
-| B1 | **Extension→type map.** Add `.v`,`.sv`→`verilog`; `.va`,`.vams`→`veriloga`. Today they fall to `default { return data }`. | `copyform::view_type`, `src/copy_form.tcl:52` |
-| B2 | **Creation.** `library_new_view` hardcodes `$type eq "symbol" ? "sym" : "sch"` — every non-state type writes a `.sch`. Needs a real type→ext table. | `src/library_defs.tcl:703` |
-| B3 | **New-View dialog.** `-values {schematic symbol ngspice_state1}` must gain the new types. | `src/library_manager.tcl:1268` |
-| B4 | **Seed template.** An empty `.v` is useless. When a symbol view exists, seed `module <cell>(<pins>); endmodule` from its pin list. `.va` gets the Verilog-A equivalent. | new, near B2 |
-| B5 | **Open routing.** `libmgr::view_handler` returns `editor` for everything non-`.state`, and `editor` means `xschem load` — which would try to parse `.v` as a schematic. Add `.v`/`.va` → text editor. Thin: `edit_file` already exists. | `src/library_manager.tcl:437` |
-| B6 | **Ref resolution.** `lib_qualified_abs` switches `.sch`→schematic, `default`→symbol, so `SANDBOX/counter.v` silently resolves to the *symbol* view. | `src/library_defs.tcl:278` |
-| B7 | **Alt-2.** `alt2::other_ext` is a hard binary (`*.sym ? ".sch" : ".sym"`), and `default_view`/`views_of_ext` filter on one ext. With four types "the other one" stops being well-defined. Mitigated: `alt2::choose_dialog` already handles N candidates — this is widening the candidate model, not new UI. | `src/alt2_toggle_view.tcl:22,27,45` |
-| B8 | **Convention change: the `.v` moves into a view.** Upstream keeps `counter.v` at the library root, named by hand in each symbol (`tclcommand="edit_file [abs_sym_path counter.v]"`). As a view it lives at `<cell>/verilog/<cell>.v`, and the instance→source link becomes *derivable* instead of hand-written. This is what makes §F possible at all. | convention + `abs_sym_path` |
-| B9 | **`veriloga` is a different animal — decide separately.** OSDI/Verilog-A modules are analog; their nodes *do* reach the raw. That branch may need recognition only (B1-B6) and none of §C/§D. Do not let it ride along unexamined on the digital design. | analysis |
+| B1 | ~~**Extension→type map.**~~ **DONE.** `.v`,`.sv`→`verilog`; `.va`,`.vams`→`veriloga`, case-insensitive. `copyform::view_type` no longer carries its own switch — it defers to `view_type_of_ext`. The type flows into copyform's filter language for free (`type:verilog` selects the view). | `copyform::view_type`, `src/copy_form.tcl:52` |
+| B2 | ~~**Creation.**~~ **DONE.** `library_new_view` uses `view_ext_of_type`, and **errors on an unknown type** instead of quietly writing a `.sch` — the old `$type eq "symbol" ? "sym" : "sch"` meant a `verilog` view was created as an empty SCHEMATIC. `library_new_cell` carried the same drift and got the same fix. | `src/library_defs.tcl:703` |
+| B3 | ~~**New-View dialog.**~~ **DONE.** `-values {schematic symbol verilog veriloga ngspice_state1}`. B2's error turns an entry added here without a table row into a visible failure rather than a silent `.sch`. | `src/library_manager.tcl:1268` |
+| B4 | ~~**Seed template.**~~ **DONE.** `library_symbol_pins` reads the `B` records out of the `.sym` **by text** (loading the symbol to count its pins would clobber the user's open schematic). Ports are emitted inputs → outputs → inouts, the order a `d_cosim` `format` string declares its bracket groups, and a bus `count[3..0]` becomes `output [3:0] count`. The seed carries a `` `timescale `` (A6's VCD time base) and states that the symbol owns the ports. No symbol view → a valid portless module that says so. `.va` gets the Verilog-A form (name list in the header, `input`/`electrical` statements, `analog begin`). | new, near B2 |
+| B5 | ~~**Open routing.**~~ **DONE — this is the hunk that closed the hole.** `libmgr::view_handler` returns the new `libmgr::open_text_view` for `verilog`/`veriloga`, resolved from the datafile extension (view NAME only as the fallback). `libmgr::open_view_ro` had `ase::open_state` **hardcoded** behind its `ne {editor}` test — it now dispatches `$handler`, or a Verilog file would have been opened as a broken ASE state. `open_text_view` logs no action line (an external editor is not a replayable xschem operation) and reports honestly that it cannot be forced read-only. | `src/library_manager.tcl:437` |
+| B6 | ~~**Ref resolution.**~~ **DONE.** `lib_qualified_abs` routes `.v`/`.va` through the new `cellview_resolve_typed`; a bare, extension-less `lib/cell` still means "the symbol to instantiate", which is why the default arm could not simply become `view_type_of_ext`'s answer. **`cellview_resolve_typed` exists because of a second door onto the same bug**: `cellview_resolve` ends in a legacy flat-layout fallback returning `<lib>/<cell>.sym` for any view name but `schematic`, so asking a *flat* library for its `verilog` view handed back the SYMBOL. It now takes that answer only when the extension reads back as the requested type, else looks for the loose `<lib>/<cell>.v`. `cellview_resolve` itself is untouched. | `src/library_defs.tcl:278` |
+| B7 | ~~**Alt-2.**~~ **DONE.** The candidate model widened from "views of the other ext" to "views of any type in `alt2::toggle_types` that differs from the current type", with the classic partner type ordered first so the chooser default stays on top. `toggle_types` is `{schematic symbol verilog veriloga}` — `state` and `data` are deliberately out (a state view has its own window and Alt-2 never offered it). A candidate row is now `{view path type}`, and a `text`-typed candidate goes to `edit_file`, never `xschem load`. Registered-but-flat libraries get an extra probe: `cell_views` only knows `.sym`/`.sch` there, so a loose `<cell>.v` enumerates as no view at all. | `src/alt2_toggle_view.tcl:22,27,45` |
+| B8 | ~~**Convention change + the self-referential helper.**~~ **DONE.** `cellview_sibling_path <ref> <view>` answers "this cell's `<view>` view" from any reference to another of its views — lib-qualified, `lib/cell.sym`, or an absolute path — and falls back to the loose sibling for the flat/unregistered layout, which is exactly upstream's `abs_sym_path counter.v`. The reference symbol now reads `tcleval([read_data [cellview_sibling_path @symref verilog]])`, with **no library name in it** (G6's hardcoded `[xschem cellview_path ngspice_verilog_cosim_ase/counter verilog]` is gone). Verified end to end through the real token substitution on the real instance: `@symref` → `ngspice_verilog_cosim_ase/counter` → 1962 chars of Verilog. **Landmine:** the `.sym` T-record parser does not accept nested braces, so `{@symref}` truncates the record at the inner `}` — write `@symref` bare. | convention + `abs_sym_path` |
+| B9 | ~~**`veriloga` — decide separately.**~~ **DECIDED: recognition only, and nothing more.** A Verilog-A module is analog. Its nodes reach the ngspice raw file directly through OSDI, so the M1+M3+M6 chain that forces the whole of §C/§D on the digital side simply does not apply to it: there is no event-node barrier to cross, no VCD to read, no second DB to reconcile onto one time axis. What `veriloga` needs is exactly B1–B6 — that a `.va` **types** as its own thing, **creates** as a `.va` with a Verilog-A seed, **routes** to a text editor instead of the schematic loader, and **resolves** as itself rather than as the symbol. All four are asserted (B9a/B9b in the test), including that `.va`/`.vams` never type as `verilog`. §C, §D and §F stay digital-only. Revisit only if a Verilog-A flow appears whose internals do *not* reach the raw. | analysis |
+
+**What landed** — one table, five files:
+
+`view_type_of_ext` / `view_exts_of_type` / `view_ext_of_type` / `view_type_opener` /
+`view_default_name` in `src/library_defs.tcl` are the single view-type model. The rule was
+previously spelled out four times, each with a private extension switch, and they had **drifted**:
+`.v` was type `data` to copyform, opened with `xschem load` by `libmgr::view_handler`, and
+resolved to the symbol view by `lib_qualified_abs`. Consumers are `copyform::view_type`,
+`library_new_view`/`library_new_cell`, `libmgr::view_handler`, `lib_qualified_abs` /
+`cellview_resolve_typed` / `cellview_sibling_path`, and `alt2::*`.
+
+Test: `tests/headless/test_verilog_view_model.tcl` — 109 checks over `verilog` **and** `veriloga`,
+in **both** the nested `lib/cell/view` layout and the legacy flat layout, plus a `REF` block that
+re-runs the original measured repro against the real reference cell and skips cleanly when
+`xschem_libraries_oa/` is absent. Pinned to the `--nogui` arm in `full_audit.sh`. Ten sabotages
+were injected and every one was caught by the checks that should catch it.
+
+Not covered by §B, filed instead: **issue 0285** — `xschem load` on a `.v` still returns OK,
+skips every line, and leaves an empty schematic named after the source. No UI path reaches it any
+more, but the primitive is unchanged for a direct caller (CIW, script, action log).
 
 ### C — Waveform Viewer: read a VCD into a `Raw` DB
 
@@ -249,7 +275,7 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 | G3 | **Observation taps cost no symbols.** M5: a text line `robs <net> 0 1meg` in a code block gives the analog load that fires the auto-bridge, with nothing on the canvas. Upstream's `parax_cap` per net is avoidable. | **Still open**, and now lower value — the shim reaches internals directly, so taps are only for signals wanted in the *raw*. |
 | G4 | ~~Symbol format for a code block~~ | **DONE / unchanged upstream form.** `type=primitive`, `format="@name [ @@clk ] [ @@count[3..0] ] @model"`, `device_model=".model counter d_cosim simulation=\"./counter.so\" sim_args=[\"counter.vcd\"] delay=0"`. The Verilator arm is now the active one (upstream shipped Icarus active; M12 rules that out here). Generating the symbol from the `verilog` view's port list stays a §B follow-on. |
 | G5 | ~~Library path~~ | **DONE for headless.** Scripts set `::XSCHEM_LIBRARY_DEFS` to `xschem_libraries_oa/library.defs` and append the OA root to `XSCHEM_LIBRARY_PATH` — **unqualified**, or the write trace that rebuilds `pathlist` never fires. An interactive `./src/xschem` still needs the same two lines in `~/.xschem/xschemrc`. |
-| G6 | **`counter/verilog/counter.v` is referenced by absolute-ish lookup.** The symbol's display text and `tclcommand` now use `[xschem cellview_path ngspice_verilog_cosim_ase/counter verilog]` instead of upstream's `[abs_sym_path counter.v]`, since the `.v` is no longer a loose file at the library root. That hardcodes the library name into the symbol — acceptable for a demo cell, but §B8 should provide a self-referential helper (`this cell's verilog view`). | new, from the build |
+| G6 | ~~**`counter/verilog/counter.v` is referenced by absolute-ish lookup.**~~ **DONE via B8.** The symbol's display text is now `tcleval([read_data [cellview_sibling_path @symref verilog]])` — no library name in it, so the cell survives being copied to another library. (It briefly used `[xschem cellview_path ngspice_verilog_cosim_ase/counter verilog]`, which hardcoded the library.) | new, from the build |
 
 ### H — Tests
 
@@ -259,7 +285,7 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 | H2 | Golden mixed-signal run end-to-end: build `.so`, run ngspice, assert both artifacts exist, assert a known internal signal's edge times. Guard on `verilator` being present — skip cleanly, never fail, on a machine without it. |
 | H3 | Time-base regression: an edge at a known SPICE time must land at the same time in both DBs (A6/D3). |
 | H4 | Scope-mapping test for F2: `x1.a1` resolves to the right VCD scope with two `d_cosim` instances in one deck (the case A5 also guards). |
-| H5 | View-model tests: `cell_views`/`view_type`/`view_handler`/`library_new_view` over `verilog` and `veriloga` views, both layouts. |
+| H5 | ~~View-model tests~~ **DONE.** `tests/headless/test_verilog_view_model.tcl`, 109 checks: `view_type` / `view_handler` (including both open paths driven for real) / `library_new_view` / `library_new_cell` / the seed template / `lib_qualified_abs` / `cellview_sibling_path` / the Alt-2 candidate model, over `verilog` and `veriloga`, in both the nested and the flat layout, plus the measured repro against the reference cell. |
 | H6 | Per CLAUDE.md, the trustworthy signal is `tests/headless/` (which has `gold/`). `create_save`/`open_close`/`netlisting` have no baseline and can only report `NOGOLD`. |
 
 ### I — Docs
@@ -287,14 +313,17 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 4. **C4's buses** — explode to bits at read time, or a native bus vector in `Raw`.
 5. **F2's mapping ownership** — netlist-time emission (authoritative, automatic) vs. a
    symbol attribute (explicit, hand-maintained, wrong the moment someone renames a module).
-6. **B9** — does `veriloga` need any of §C/§D at all, or is recognition sufficient?
+6. ~~**B9** — does `veriloga` need any of §C/§D at all, or is recognition sufficient?~~
+   **SETTLED 2026-08-08: recognition is sufficient.** Verilog-A is analog and its nodes reach the
+   raw through OSDI, so none of the M1/M3/M6 barrier applies. §C/§D stay digital-only. Rationale
+   and the asserting checks are in the §B table's B9 row.
 
 ## Dependency order
 
 ```
-A2,A3,A4,A6  ──►  digital data exists on disk
+A2,A3,A4,A6  ──►  digital data exists on disk          [DONE]
       │
-B1..B8       ──►  xschem knows the cell has a verilog view
+B1..B9       ──►  xschem knows the cell has a verilog view   [DONE]
       │
       ├──► C1..C7  ──►  a VCD is a Raw DB in the registry
       │        │

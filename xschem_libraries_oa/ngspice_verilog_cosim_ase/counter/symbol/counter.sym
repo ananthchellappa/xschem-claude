@@ -18,4 +18,4 @@ T {@symname} -68 -31 0 0 0.3 0.3 {}
 T {@name} 30 -27 0 0 0.2 0.2 {}
 T {count[3..0]} 45 -4 0 1 0.2 0.2 {}
 T {clk} -45 -4 0 0 0.2 0.2 {}
-T {tcleval([read_data [xschem cellview_path ngspice_verilog_cosim_ase/counter verilog]])} -145 65 0 0 0.2 0.2 {layer=4 font="courier new" weight=bold}
+T {tcleval([read_data [cellview_sibling_path @symref verilog]])} -145 65 0 0 0.2 0.2 {layer=4 font="courier new" weight=bold}
