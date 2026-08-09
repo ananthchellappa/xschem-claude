@@ -2515,6 +2515,13 @@ void place_net_label(int type)
    * placement (START_SYMPIN + a real lab_wire / lab_pin / ipin / opin preview instance riding the
    * pointer); none is a commit form, so there is no coordinate sub-form to exclude here. */
   leave_wire_draw_for("Net label");
+  /* issue 0242 -- see leave_placement_for() (callback.c). The other modal gesture this arm can
+   * land on: it ORs START_SYMPIN over a live Add-Wire-Label / Add-Pin preview and shares its
+   * STARTMOVE, so the earlier preview instance is left committed in the drawing -- a connected,
+   * netlist-visible lab_pin that renames the net under it. Measured as a door on all four types
+   * via the scripted `xschem net_label 0|1|2|3` (orphan=1 on each). This arm was NOT in the
+   * issue's 17-verb census; the tripwire found it, which is what the tripwire is for. */
+  leave_placement_for("Net label");
   if(type == 1) {
       const char *lab = tcleval("find_file_first lab_pin.sym");
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);

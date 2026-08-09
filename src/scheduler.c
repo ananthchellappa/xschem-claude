@@ -1193,6 +1193,12 @@ static int run_core(const char *verb, int argc, const char *argv[])
      * pop_undo_keep_selection(redo, set_modify) with argv-parsed ints (`xschem undo 1 1` = a
      * redo with its OWN `xschem undo %d %d` log) -- the argv-parsed site, distinct
      * verb, distinct line, no double-log path; the S7 exact-count rows lock both call sites. */
+    /* issue 0242 -- see leave_placement_for(). Sited HERE, at the VERB, and deliberately NOT
+     * inside pop_undo_keep_selection(): the teardown is a delete() and must run against a
+     * consistent object model, BEFORE the undo stack pointer moves. redo is a door even with an
+     * EMPTY redo stack, because pop_undo_keep_selection() ends with an unconditional
+     * unselect_all(0) (select.c) that zeroes ui_state whether or not the core popped anything. */
+    leave_placement_for("Redo");
     pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
     return TCL_OK;
   }
@@ -1217,6 +1223,13 @@ static int run_core(const char *verb, int argc, const char *argv[])
     int redo = 0, set_modify = 1;
     if(argc > 2) redo = atoi(argv[2]);
     if(argc > 3) set_modify = atoi(argv[3]);
+    /* issue 0242 -- same siting argument as the redo arm above (at the verb, before the stack
+     * pointer moves). Needed on the undo side too even though a DISK undo happens to clean up on
+     * its own: it does so only via clear_drawing()'s sympin_preview reset (actions.c) on the
+     * reload, which does not run for the MEMORY backend, for `xschem undo 1 1` (a redo wearing
+     * the undo verb) or for an empty stack -- while the unconditional unselect_all(0) at the end
+     * of pop_undo_keep_selection() drops START_SYMPIN on every one of those paths. */
+    leave_placement_for(redo ? "Redo" : "Undo");
     pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
     return TCL_OK;
   }
@@ -1854,9 +1867,21 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          /* ISSUE 0242: sympin_preview and START_SYMPIN are ONE fact ("a placement preview is
+           * live"), so they must move together. This clear is the re-arm half; the set moved to
+           * the success path below, next to `ui_state |= START_SYMPIN`. Before that, the flag was
+           * raised BEFORE the preview existed and stayed raised across the whole arm, so
+           * `sympin_preview && !START_SYMPIN` -- the exact desync signature this issue is about --
+           * was ALSO the normal state in the middle of every arm and every keystroke re-arm. That
+           * made the invariant unassertable: place_symbol() runs tclevals (abs_sym_path /
+           * is_xschem_file / tcl_hook2) that re-enter xschem(), so a tripwire on it fired on
+           * healthy arms. Narrowing the window to zero is what lets
+           * check_placement_preview_invariant() (callback.c) be believed.
+           * The undo contract is untouched: which branch we are in still decides whether a
+           * baseline is pushed, and that decision is read BEFORE either flag is written. */
+          xctx->sympin_preview = 0;
         } else {
           xctx->push_undo();        /* one undo baseline (no preview pin) per gesture */
-          xctx->sympin_preview = 1;
         }
         unselect_all(1);
         create_pin(x, y, nm, dr, SELECTED);
@@ -1867,6 +1892,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
          * owned name-view text, both SELECTED. Stamping the selection takes both. */
         stamp_placement_preview();
         xctx->ui_state |= START_SYMPIN;
+        xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
       } else {
         /* no args: open the Add-pin dialog (Name + Direction); its Place button
          * re-invokes this command as `add_symbol_pin -place`. */
@@ -1916,9 +1942,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          xctx->sympin_preview = 0;   /* issue 0242 -- see the add_symbol_pin arm above */
         } else {
           xctx->push_undo();        /* one undo baseline per gesture */
-          xctx->sympin_preview = 1;
         }
         unselect_all(1);
         if(place_sch_pin(nm, dr)) { /* selects the new instance (place_symbol draw&4) */
@@ -1927,6 +1953,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           move_objects(START,0,0,0);
           stamp_placement_preview();  /* issue 0241 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
+          xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
         } else {
           /* Pin symbol unresolvable (e.g. a misconfigured library path with no ipin.sym):
            * place_symbol placed and selected NOTHING, so do NOT arm a phantom preview.
@@ -1992,9 +2019,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          xctx->sympin_preview = 0;   /* issue 0242 -- see the add_symbol_pin arm above */
         } else {
           xctx->push_undo();        /* one undo baseline per gesture */
-          xctx->sympin_preview = 1;
         }
         xctx->wirelabel_preview = 1;  /* mark this preview as a constrained net-label */
         unselect_all(1);
@@ -2007,6 +2034,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->x2 = xctx->x1; xctx->y2 = xctx->y1;
           stamp_placement_preview();  /* issue 0241 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
+          xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
         } else {
           /* lab_pin.sym unresolvable, or a .sym view forbids instances: nothing was placed, so do
            * NOT arm a phantom preview (mirror of the add_sch_pin guard, callback.c:237). */
@@ -2040,6 +2068,15 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * back: there is no form to re-trigger, so before the gate ESC was the only exit from the
        * jam and it threw the graph away (issue 0247). */
       leave_wire_draw_for("Add graph");
+      /* issue 0242 -- see leave_placement_for(). The OTHER modal gesture this arm can land on
+       * top of. Load-bearing beyond the orphan: this branch re-sets START_SYMPIN below, so a
+       * leaked sympin_preview would still be 1 when the graph is later ESC-ed, and
+       * abort_placement_preview()'s `(sympin_preview && START_SYMPIN) ? delete(0) : delete(1)`
+       * discriminator would then read TRUE for the GRAPH and remove it with no undo baseline of
+       * its own. Tearing the preview down here makes the premise that discriminator documents
+       * ("a live preview always has START_SYMPIN set") true for this path instead of merely
+       * assumed -- so an aborted graph regains its undo snapshot. */
+      leave_placement_for("Add graph");
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -2087,6 +2124,12 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * on the keystroke/menu pick, not on whether the follow-up dialog is confirmed. Cancelling
        * the chooser therefore does NOT bring the wire back -- stated in issue 0247. */
       leave_wire_draw_for("Add image");
+      /* issue 0242 -- see leave_placement_for(). Same siting argument as the wire gate right
+       * above: on the pick, before the chooser, because the unselect_all(1) on the next line has
+       * already ended the previous state either way. A CANCELLED chooser therefore leaves neither
+       * gesture live -- which is the terminal case this issue measured (ui=0 with
+       * sympin_preview stuck at 1), so gating before the dialog is what actually fixes it. */
+      leave_placement_for("Add image");
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -9090,6 +9133,11 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * (they differ only in whether the symbol/prop is given up front), so all three are gated;
        * scripted instantiation that commits outright goes through `xschem instance`, not here. */
       leave_wire_draw_for("Insert symbol");
+      /* issue 0242 -- see leave_placement_for(). place_symbol reaches the orphan WITHOUT an
+       * unselect_all: it just ORs PLACE_SYMBOL over the live preview below, so the two placements
+       * share one STARTMOVE and the first one's instance is left committed when the second is
+       * dropped or aborted. Gated with all three arg forms, like the wire gate above. */
+      leave_placement_for("Insert symbol");
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -9126,6 +9174,12 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* phase 2 -- see leave_wire_draw_for(). The scriptable twin of `case 't'` (callback.c) and
        * of context-menu pick 6; all three arm a PLACE_TEXT cursor placement. */
       leave_wire_draw_for("Place text");
+      /* issue 0242 -- see leave_placement_for(). Gated before the unselect_all(1) below AND
+       * before place_text()'s modal text dialog, so a CANCELLED dialog cannot leave the terminal
+       * state (measured ui=0 with sympin_preview stuck at 1: the deselect had already dropped
+       * START_SYMPIN, and no PLACE_TEXT was ever armed to give abort_operation() something to
+       * tear down). Same pick-time rule as `Add image`. */
+      leave_placement_for("Place text");
       xctx->semaphore++;
       xctx->last_command = 0;
       unselect_all(1);
@@ -13470,6 +13524,10 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
    }
    fprintf(errfp, "\n");
  }
+ /* issue 0242 tripwire -- see check_placement_preview_invariant() (callback.c). The scripted
+  * twin of the callback() call site: every Tcl-driven actor (tests, menus, the modeless form
+  * procs, a user's rc) enters here, so a door opened from Tcl is caught even with no GUI. */
+ check_placement_preview_invariant("xschem()");
  /*
   * ********** xschem commands  IN SORTED ORDER !!! *********
   */

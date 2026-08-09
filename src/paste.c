@@ -543,6 +543,24 @@ void merge_file(int selection_load, const char ext[])
      xctx->prep_hash_inst=0;
      xctx->prep_hash_wires=0;
      got_mouse = 0;
+     /* ISSUE 0242 -- see leave_placement_for() (callback.c). A pending merge and a modal cursor
+      * PLACEMENT preview cannot coexist: the unselect_all(1) on the next line zeroes ui_state
+      * wholesale (select.c), dropping START_SYMPIN|STARTMOVE WITHOUT running the placement
+      * teardown, while sympin_preview/wirelabel_preview (not part of ui_state) and the preview
+      * INSTANCE both survive -- a connected, netlist-visible lab_pin/ipin silently renaming a net,
+      * committed by a user who never dropped it, and sympin_preview stuck at 1 thereafter kills
+      * the Button-1 click-select guard (callback.c) and wire_label_try_commit() for the rest of
+      * the session. Same ratified rule as 0243 F2 / 0240: whatever you just pressed is what you
+      * meant, so Ctrl+V / Merge abandons the pending preview.
+      * Sited HERE, not at the verbs: this is the ONE funnel every merge door shares -- the `paste`
+      * and `merge` scheduler verbs, the Ctrl+V binding, and the `xschem paste x y ... -file {f}`
+      * action-log REPLAY form. Replay is covered rather than broken: the gate needs a live
+      * placement, and a replay run has none, so it is a no-op there (the coordinate-form-bypass
+      * note at scheduler.c's paste branch still holds -- no log line is emitted from here).
+      * Sited INSIDE `if(fd)` and BEFORE push_undo() for two reasons: a cancelled Merge file
+      * dialog (above) must not destroy the preview, and the teardown's delete() must land before
+      * the merge's undo baseline is taken, or undoing the paste would resurrect the preview. */
+     leave_placement_for(selection_load == 2 ? "Paste" : "Merge");
      xctx->push_undo();
      unselect_all(1);
      old=xctx->instances;

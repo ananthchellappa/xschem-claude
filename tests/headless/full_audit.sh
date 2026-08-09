@@ -67,7 +67,10 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # (test_make_symbol_dialog is designed for --nogui: under X its has_x-gated
 # open-in-new-window step runs, and the second make_symbol_dialog on the same
 # cell raises a blocking "already open" warning popup -> flaky FAIL/CRASH)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 "
+# (test_placement_preview_doors drives no `xschem callback`; --nogui also makes its
+# place_text / add_image rows exercise the CANCELLED-dialog path, which is the terminal
+# case issue 0242 measured)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

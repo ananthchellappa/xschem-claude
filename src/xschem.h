@@ -2542,6 +2542,7 @@ extern void start_wire(double mx, double my);
 /* issue 0243 F2 (and 0242): tear down a modal cursor placement preview / the gate that does it
  * before a wire or line draw is armed on top of one. See callback.c. */
 extern int abort_placement_preview(void);
+extern void check_placement_preview_invariant(const char *where); /* issue 0242 tripwire */
 extern int leave_placement_for(const char *what);
 /* the forward gate (issue 0240 / 0243 F1, widened to every remaining draw and placement verb by
  * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c

@@ -445,8 +445,34 @@ all twelve arm sites (`stamp_placement_preview()`, select.c) and re-selects exac
 the `delete()`, with "resolves to nothing → delete nothing" as the backstop. It also let the
 0243 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
 refuses; **0242** every
-other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
-paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
+other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1258, i.e.
+paste/merge/redo/place_text/place_symbol/add_graph/add_image — skipped the teardown entirely and
+orphaned the preview — FIXED 2026-08-08, and it is the class's *coverage* lesson: 0243 built the
+right helper and called it from the wire/line verbs only, so nine further doors kept the defect
+for another two issues. **A teardown extracted for one caller is a rule, and a rule needs a call
+at EVERY arm — enumerate them from the state the teardown owns, not from the verbs the bug report
+named.** The doors were found by arming a preview and firing all seventeen candidate verbs at it —
+and that census was still FIVE ARMS SHORT, because a verb census enumerates verbs, not arms. The
+twelve `stamp_placement_preview()` sites are the arms; four are the form re-arms that must NOT be
+gated, and five had no gate at all — including `place_net_label()` (Alt+Shift+L, Ctrl+P,
+Ctrl+Shift+P and the scripted `xschem net_label`), four everyday keybindings on one helper,
+measured `orphan=1` on all four label types. It was found by the TRIPWIRE firing on an unrelated
+run, which is the argument for building the detector before declaring the census closed. Two structural notes worth
+more than the fix: (a) the orphan is not a stray glyph but a *connected, netlist-visible*
+`lab_pin`/`ipin` silently renaming the net it sits on, and on the merge doors the document then
+reported itself CLEAN (`modified` 1 → 0, issue **0244**, landing separately) — a decline residue
+becomes data corruption the moment the residue is a netlist object; (b) the invariant
+"`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
+three form `-place` arms themselves raised `sympin_preview` BEFORE the preview existed and held it
+across the whole arm — and `place_symbol()` re-enters `xschem()` through its own `tcleval`s, so the
+desync signature was also the normal mid-arm state. **A flag and the bit it shadows are one fact:
+write them together, or you cannot assert either.** Making the pair atomic took the tripwire
+(`check_placement_preview_invariant()`, callback.c, at the entry of `callback()` and `xschem()`)
+from 11 false positives on a healthy 6-keystroke arm to exactly one true report — the one door
+deliberately left ungated (the bare `xschem unselect_all` verb, issue **0262**: it arms nothing, so
+the "whatever you just pressed is what you meant" rule has no subject, and gating it would put a
+`delete()` behind 817 scripted call sites). `netlist` still netlists a live preview (issue
+**0263**) but clears no gesture bits, so it is a different defect, not a door;
 **0243** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
 `abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
 `last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the
@@ -965,6 +991,17 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     lab_pin-named net never presents). Kept as policy alignment, verified by inspection only.
     `doc/claude/issues/0162-*.md`, test `test_wireedit_58_user_hash_label_0162.tcl` (9 checks,
     three-way VDD/`#foo`/`#net99` comparison so it cannot pass by blanket-protecting `#`).
+
+18. **`cut`/`delete` leave a live gesture pointing at freed objects** (issue 0242 census, measured
+    2026-08-08): with a placement preview armed, `xschem cut` / `xschem delete` remove the preview
+    instance but leave `ui_state == 16416` (`SELECTION|STARTMOVE`) with `instances == 0` — a
+    STARTMOVE whose moved set no longer exists. It self-heals on ESC (`move_objects(ABORT)` finds
+    nothing to restore) and produced no orphan and no stuck flag in the census, so it is NOT the
+    0242 defect and was left alone. It is still a dangling-gesture window of the §11.10 family:
+    any pass that walks the move set between the free and the ESC is walking freed ids, and the
+    same shape reached from a path that DOES iterate (a fluid RUBBER step, a live re-derivation)
+    is the UAF §11.10 predicts. The general fix is the one §11.10 wants anyway — a gesture that
+    owns its object set and is closed when that set dies, not a bit that outlives it.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated

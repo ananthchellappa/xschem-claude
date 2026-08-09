@@ -486,6 +486,9 @@ static void start_place_symbol(void)
      * 0243 F1; this is the OTHER component-insert route (context-menu Insert symbol, the `I` key
      * and the Insert key, whenever new_file_browser is off) and it never went through it. */
     leave_wire_draw_for("Insert symbol");
+    /* issue 0242 -- the keyboard/context-menu twin of the `xschem place_symbol` verb, which is
+     * gated in scheduler.c. Same rule at every arm, not just the one the bug report named. */
+    leave_placement_for("Insert symbol");
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -616,10 +619,18 @@ int abort_placement_preview(void)
     /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
      * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
      * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
-     * baseline as the single rollback point. A live preview always has START_SYMPIN set, so
-     * require it -> a STALE sympin_preview cannot make an UNRELATED placement abort
-     * (PLACE_SYMBOL/PLACE_TEXT/graph) drop its undo snapshot. Normal placements use
-     * delete(1) as before. */
+     * baseline as the single rollback point. Normal placements use delete(1) as before.
+     * The START_SYMPIN conjunct is what keeps a STALE sympin_preview from making an UNRELATED
+     * placement abort (PLACE_SYMBOL/PLACE_TEXT/graph) drop ITS undo snapshot. Issue 0240 justified
+     * that conjunct with "a live preview always has START_SYMPIN set", which was NOT TRUE when it
+     * was written: `add_graph` (scheduler.c) re-set START_SYMPIN after its own unselect_all(1), so
+     * arming a graph on top of a live label preview left sympin_preview==1 with START_SYMPIN==1 and
+     * this line read delete(0) for the GRAPH -- measured, an aborted graph vanished with no undo
+     * baseline of its own. Issue 0242 made the premise true rather than assumed: every door that
+     * can carry a stale sympin_preview into a fresh arm now tears the preview down first
+     * (leave_placement_for() below). The conjunct stays -- it is the cheap local guard that keeps
+     * this correct if a thirteenth arm is ever added without its gate, which is exactly the
+     * residue check_placement_preview_invariant() reports. */
     delete((xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) ? 0 : 1/* to_push_undo */);
     set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
   } else {
@@ -641,6 +652,45 @@ int abort_placement_preview(void)
   return 1;
 }
 
+/* ISSUE 0242 tripwire -- NOT an assert (C89, and abort() in a GUI app is not acceptable).
+ * The invariant: xctx->sympin_preview must never outlive START_SYMPIN. It is set only by the
+ * three form `-place` arms (scheduler.c add_sch_pin / add_pin / add_wire_label) and cleared only
+ * alongside the bit -- by abort_placement_preview() above, by the per-keystroke re-arm drop, by
+ * the commit funnel, and by clear_drawing() (actions.c). Every OTHER actor that zeroes ui_state
+ * -- which is every caller of unselect_all() with something selected, and a live preview is
+ * always selected -- breaks it, because sympin_preview and wirelabel_preview are plain
+ * Xschem_ctx fields, not ui_state bits. When it is broken the canvas is DEAD, not merely wrong:
+ * the Button-1 click-select/grab block below requires !sympin_preview and wire_label_try_commit()
+ * requires START_SYMPIN, so nothing can ever be selected, grabbed or dropped again until ESC --
+ * and ESC cannot fix it either, since abort_placement_preview() is gated on the bit that is gone.
+ * The doors 0242 enumerated are now gated (leave_placement_for() below, called from merge_file(),
+ * place_symbol, place_text, add_graph, add_image and the undo/redo verbs), so this reports on a
+ * door NOBODY HAS FOUND YET. That is the point: it turns "how many doors are left" from an
+ * argument into an empirical question, permanently.
+ * Reports the TRANSITION, once per desync episode, not the state: at callback() entry this runs
+ * on every motion event, and a stuck flag would otherwise emit thousands of identical lines.
+ * The latch is file-static rather than per-context on purpose -- it exists to make one line
+ * appear on stderr, and a second window silently sharing the latch is a better failure than a
+ * flooded log. dbg(0) so it needs no -d flag: the tests read it off stderr as a second oracle
+ * beside `xschem get sympin_preview`. */
+void check_placement_preview_invariant(const char *where)
+{
+  static int reported = 0;
+  if(!xctx) return;
+  if(xctx->sympin_preview && !(xctx->ui_state & START_SYMPIN)) {
+    if(!reported) {
+      reported = 1;
+      dbg(0, "placement_preview: sympin_preview=%d outlived START_SYMPIN at %s entry "
+             "(ui_state=%u wirelabel_preview=%d instances=%d) -- issue 0242: an ungated door "
+             "cleared the gesture bits without tearing the preview down; click-select and "
+             "wire_label_try_commit() are dead until the flag is cleared\n",
+          xctx->sympin_preview, where, xctx->ui_state, xctx->wirelabel_preview, xctx->instances);
+    }
+  } else {
+    reported = 0;
+  }
+}
+
 /* The reverse door of leave_wire_draw_for() (scheduler.c): a modal PLACEMENT and a wire/line draw
  * cannot coexist in EITHER order, because end_place_move_copy_zoom() tests STARTWIRE (:2872) before
  * the placement arm (:2927) and under persistent_command the press handler seizes the click one
@@ -654,6 +704,16 @@ int abort_placement_preview(void)
  * per-CLICK continuation of a running draw (persistent_command calls start_wire() on every press,
  * before end_place_move_copy_zoom() ever sees the click), so a teardown there would kill a preview
  * on an ordinary mouse click instead of on the keystroke the user actually typed.
+ * ISSUE 0242 generalizes it beyond wire/line: a placement preview may not coexist with ANY second
+ * modal gesture, so the same door is now called from merge_file() (paste.c -- the `paste`/`merge`
+ * verbs, Ctrl+V and the `-file` replay form), from `place_symbol`, `place_text`, `add_graph`,
+ * `add_image`, and from the `undo`/`redo` verbs at the perform_action boundary. Same ratified
+ * policy, same message, one implementation -- `what` is just the name of whatever seized the
+ * gesture. The one door 0242 measured that is deliberately NOT gated here is the bare
+ * `xschem unselect_all` verb: it arms nothing, so the "whatever you just pressed is what you
+ * meant" rule has no subject, and gating it would put a delete() behind 817 scripted call sites
+ * -- the same objection that keeps the teardown out of unselect_all() itself (issue 0123).
+ * check_placement_preview_invariant() above is what reports that residue instead.
  * Not called from the pure-commit coordinate forms (`xschem wire x1 y1 x2 y2`, snapped_wire()'s
  * END half): those commit outright, arm no draw, and are the replay/test seams.
  * Returns 1 if the caller may go ahead and arm the draw. It no longer returns 0 for anything --
@@ -4469,6 +4529,7 @@ static void context_menu_action(double mx, double my)
       /* phase 2 -- see leave_wire_draw_for(). Pick 6, not 8: 8 is Paste clipboard (a merge, whose
        * preview carries STARTMERGE and belongs to phase 4 / issues 0242+0244). */
       leave_wire_draw_for("Insert text");
+      leave_placement_for("Insert text");  /* issue 0242 -- twin of the place_text verb */
       xctx->last_command = 0;
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
@@ -7204,6 +7265,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          * twin and carries the same gate. Before the gate this key left ui=1 [STARTWIRE] with
          * last_command zeroed -- the exact residue issue 0243 F3 had to teach ESC to clean up. */
         leave_wire_draw_for("Place text");
+        leave_placement_for("Place text");  /* issue 0242 -- the `t` key, twin of the verb */
         xctx->last_command = 0;
         xctx->mx_double_save = xctx->mousex_snap;
         xctx->my_double_save = xctx->mousey_snap;
@@ -8914,6 +8976,11 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
       dbg(1, "mx = %d  my=%d\n", mx, my);
     }
   }
+
+  /* issue 0242 tripwire -- see check_placement_preview_invariant(). Sited at the top of the GUI
+   * event entry and of xschem() (scheduler.c), the two funnels every actor passes through, so a
+   * door reached by a keystroke, a click, a menu or a script is caught wherever it lives. */
+  check_placement_preview_invariant("callback()");
 
   update_statusbar(persistent_command, wire_draw_active);
 
