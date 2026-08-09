@@ -678,6 +678,11 @@ _RPN_OPS = frozenset(("+", "-", "*", "/", "**", "%", "^", "!",
 _RPN_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)$")
 _RPN_NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[A-Za-z]*$")
 _BUS_BIT_SEP_RE = re.compile(r"[;,\s\\]+")      # get_bus_idx_array(), draw.c:2842
+# A `----` row is a graph VISUAL SEPARATOR (xschem just draws nothing for it), not
+# a vector — see doc/claude/issues/0295-*.md. Deliberately narrower than "row has
+# no alphanumerics": `0` is a legal node name, and a numeric row is already caught
+# (loudly) by the reference-line path below.
+_GRAPH_SEP_RE = re.compile(r"^[-\s]+$")
 
 
 def _graph_rows(node):
@@ -742,6 +747,22 @@ def _row_outputs(row, warn):
     raw = raw.strip()
     if not raw:
         warn.append("graph row carries no expression, dropped: %s" % row)
+        return []
+    if _GRAPH_SEP_RE.match(raw):                                # `----` separator
+        # This row used to reach the plain-signal `return` at the bottom because
+        # none of the three drop paths fit it: no whitespace so not RPN, a
+        # leading `-` with no digit after it so not _RPN_NUM_RE, and _graph_rows
+        # drops only empty/blank rows. Migration therefore emitted
+        # `{name o2 expr ----}` and render_deck a `.save ----`. Measured on
+        # ngspice-42 (issue 0159's evidence, restated in 0295): a
+        # `.save <not-a-vector>` as the ONLY .save aborts the run outright ("no
+        # data saved for Transient analysis; analysis not run"), and alongside a
+        # valid .save it is dropped silently and the trace simply never appears.
+        # Tested against the EXPRESSION rather than the whole row (a DECISION,
+        # see 0295): that also kills `sep;----`, while `-; 0.9` still reaches the
+        # reference-line path and `----;v(out)` keeps its signal.
+        # LOSSLESS-OR-LOUD (:519): warn, never drop in silence.
+        warn.append("graph separator row is not a signal, dropped: %s" % row)
         return []
     if re.search(r"(?<!\\)[ \t]", raw):                         # RPN expression
         toks = [_graph_unescape(t) for t in re.split(r"(?<!\\)[ \t]+", raw)]

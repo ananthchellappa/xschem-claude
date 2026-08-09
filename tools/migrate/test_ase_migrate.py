@@ -9,7 +9,14 @@ the sibling test_libmigrate.py: prints "ok:"/"FAIL:" per check and
 
 The integration leg (migrate the real gf180 nfet_test_claude, then run both the
 cluttered and the migrated cell through xschem+ngspice and compare Id) is gated
-on ./src/xschem and ngspice being present; it self-skips otherwise.
+on ./src/xschem and ngspice being present; it self-skips otherwise. So is the
+tclsh differential (S7/S8). Those skips are legitimate and stay green.
+
+What is NOT legitimate, and is now a hard failure (A0/A1 below): an unimportable
+`ase_migrate`, or a run that executed ZERO checks. Both used to end in
+"RESULT: ALL PASS (0 checks)" with exit 0 — a green banner over nothing, which
+makes every receipt written against this suite worthless. Only a run in which at
+least one check actually executed, and all of them passed, prints ALL PASS.
 """
 import os
 import re
@@ -35,9 +42,14 @@ def check(name, ok, detail=""):
 try:
     import ase_migrate as m
     HAVE = True
-except Exception as e:                       # RED before the module exists
+except Exception as e:
+    # A0. The import failing is a FAILURE, not a reason to skip everything.
+    # Before this was a registered check the line below was a bare print(), so
+    # an unimportable module left HAVE False, skipped every `if HAVE:` block,
+    # and the suite still printed "RESULT: ALL PASS (0 checks)" and exited 0.
+    # Reproduced by dropping this file alone into an empty directory.
     HAVE = False
-    print("import failed: %r" % (e,))
+    check("A0 ase_migrate imports", False, "import failed: %r" % (e,))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
@@ -443,6 +455,38 @@ if HAVE:
     check("G10 reference-line constant is not a signal",
           m.graph_outputs("node=\"-; 0.9\"", w) == []
           and any("reference-line" in x for x in w), str(w))
+    # 0295: a `----` row is a graph VISUAL SEPARATOR. It used to fall through
+    # every drop path and become `{name o2 expr ----}` -> `.save ----`, which
+    # ngspice either dies on (sole .save) or silently ignores (losing the trace).
+    w = []
+    check("G10b `----` separator row dropped, loudly",
+          m.graph_outputs("node=\"----\"", w) == []
+          and any("separator row" in x for x in w), str(w))
+    w = []
+    check("G10c odd-length `---` separator dropped too",
+          m.graph_outputs("node=\"---\"", w) == []
+          and any("separator row" in x for x in w), str(w))
+    w = []
+    # the exact shape from tb_counter_wrapper: separators BETWEEN real rows
+    outs = m.graph_outputs("flags=graph\nnode=\"clk\n----\ncount\n---\nq\"", w)
+    check("G10d separators between real rows leave the signals untouched",
+          outs == [("clk", 1, None), ("count", 1, None), ("q", 1, None)]
+          and len([x for x in w if "separator row" in x]) == 2,
+          "%s %s" % (outs, w))
+    # dashes WITH whitespace are still a separator, not an RPN expression whose
+    # operand list happens to be empty: the check must precede the RPN path.
+    w = []
+    check("G10e spaced dash run reads as separator, not as an RPN expression",
+          m.graph_outputs("node=\"- - -\"", w) == []
+          and any("separator row" in x for x in w)
+          and not any("operands" in x for x in w), str(w))
+    # the drop is matched on the EXPRESSION, so a labelled separator dies and a
+    # labelled real signal survives (the narrowness decision, 0295)
+    w = []
+    check("G10f labelled separator dropped, labelled signal kept",
+          m.graph_outputs("node=\"sep;----\"", w) == []
+          and m.graph_outputs("node=\"----;v(out)\"", w) == [("v(out)", 1, "----")]
+          and any("separator row" in x for x in w), str(w))
     w = []
     check("G11 `a;;b` collapses like find_nth does",
           m.graph_outputs("node=\"a;;b\"", w) == [("b", 1, "a")], str(w))
@@ -468,6 +512,32 @@ if HAVE:
     st = cmn._outputs(m.SpiceDeck(), [("vth2", 1, None), ("f2", 1, "vth2")])
     check("G16 colliding alias yields to the expr-derived name",
           [o[1] for o in st] == ["vth2", "f2"], str(st))
+
+    # 0295 END TO END: the committed offender. A real cluttered testbench whose
+    # graph `node=` carries two separator rows; migrate it for real and prove the
+    # SERIALIZED state carries no `----` output and that the report names the
+    # drop. Before the fix this state read `{name o2 expr ---- save 1 plot 1}`
+    # and `{name o7 expr --- ...}` with an EMPTY warning list.
+    tb = os.path.join(REPO, "xschem_libraries_oa", "ngspice_verilog_cosim",
+                      "tb_counter_wrapper", "schematic", "tb_counter_wrapper.sch")
+    check("G17 tb_counter_wrapper offender fixture present",
+          os.path.isfile(tb), tb)
+    if os.path.isfile(tb):
+        with open(tb) as f:
+            cmg = m.CellMigrator(f.read(), m.PDKS["sky130"],
+                                 "ngspice_verilog_cosim",
+                                 "tb_counter_wrapper").migrate()
+        stt = m.serialize_state(cmg.state, m.SCHEMA_KEYS)
+        exprs = [o[3] for o in cmg.state["outputs"]]
+        seps = [x for x in cmg.report.warnings if "separator row" in x]
+        check("G18 no dash-only output survives (was o2 `----`, o7 `---`)",
+              not any(re.match(r"^[-\s]+$", e) for e in exprs)
+              and "----" not in stt and "---" not in stt, str(exprs))
+        check("G19 both drops named in the migration report", len(seps) == 2,
+              str(seps))
+        check("G20 the signals around the separators are untouched",
+              "clk" in exprs and "count_out3" in exprs and len(exprs) == 6,
+              str(exprs))
 
 # --------------------------------------------------------------------------- #
 # 6b4. output names: identifier shape, uniqueness, discriminating tail
@@ -926,6 +996,15 @@ else:
     print("skip: integration leg (need ./src/xschem + ngspice)")
 
 # --------------------------------------------------------------------------- #
+# A1. A run that executed NO checks is not a pass, whatever the reason. This is
+# the floor under every receipt that cites this suite: "the suite was green" is
+# only evidence if something ran. Deliberately a floor of ZERO and not a fixed
+# expected count — I1-I7 (no ./src/xschem or no ngspice), S7/S8 (no tclsh), G7-G9
+# and G17-G20 (missing fixtures) all self-skip by design and must stay green.
+if npass == 0 and fail == 0:
+    print("FAIL: A1 suite executed zero checks (nothing ran; this is not a pass)")
+    fail += 1
+
 if fail == 0:
     print("RESULT: ALL PASS (%d checks)" % npass)
 else:
