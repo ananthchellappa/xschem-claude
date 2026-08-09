@@ -730,6 +730,10 @@ proc wviewer::forget {token} {
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
   # a third time.
   variable browsersash; variable browserdev; variable browsersrc
+  # spec §D1 (DEFECT 2): the armed per-signal database list, same rule again.
+  # It is one-shot and normally already consumed, but a window closed between an
+  # arm and its plot_signals would otherwise leave the entry forever.
+  variable plotdbs
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -795,6 +799,7 @@ proc wviewer::forget {token} {
   catch {unset browsersash($token)}
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
+  catch {unset plotdbs($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -2133,6 +2138,171 @@ proc wviewer::signal_list_all {token} {
   return [concat $head $rest]
 }
 
+# --- spec §D1: a trace may live in a DB that is NOT the current one ----------
+#
+# THE MECHANISM ALREADY EXISTS IN C AND IS PROVEN TO RENDER. One `node=` entry is
+#
+#     [alias;]<vec-or-RPN> [ '%' [<dataset-digits> ] <rawfile> [ <sim_type> ] ]
+#
+# and `draw_graph()` (src/draw.c:8185-8215) reacts to the `%` part by calling
+# `extra_rawfile(<autoload>, <rawfile>, <sim_type>, ...)` — with `autoload`
+# absent that is what-code 2, SWITCH-ONLY — drawing that one trace against that
+# DB, then switching back at the end of the node iteration (draw.c:8438). So an
+# analog trace and a VCD trace render in ONE strip on ONE time axis. MEASURED,
+# not inferred: tests/headless/test_wave_crossdb_trace.tcl renders both to a PNG
+# and probes the pixels.
+#
+# THE THREE RULES THE C SIDE IMPOSES ON THE STRING WE EMIT, each one measured:
+#
+#  1. SWITCH-ONLY means the DB MUST ALREADY BE IN THE REGISTRY, keyed on the
+#     STORED FULL PATH plus the sim_type, compared with a bare `strcmp`
+#     (save.c:1653-1655, inside the `what == 2` switch arm save.c:1647-1665). So
+#     the `%` value has to be the path `xschem raw info` reports —
+#     `wviewer::db_label` returns the file TAIL and is NOT usable here.
+#     An empty sim_type is worse than useless: draw_graph substitutes the CURRENT
+#     DB's type (draw.c:8194-8195), which for an analog current DB is `tran`, and
+#     the VCD switch then fails silently. Hence db_suffix refuses to emit a
+#     half-suffix.
+#  2. Both fields pass through Tcl `subst {…}` TWICE (draw.c:8191/8193, then
+#     again inside extra_rawfile, save.c:1649) and the sub-field separator set is
+#     "\n " — so a space TRUNCATES the path and turns the remainder into the
+#     sim_type, and `$` / `[` / `\` / unbalanced braces are live substitution
+#     syntax. `~` is NOT expanded. db_path_safe is that whole hazard list.
+#  3. `%` itself is the field separator (find_nth(...,"%",...)), and `"` is the
+#     quote char of the tokenizer — neither can appear inside the value.
+#
+# WHAT THIS DOES **NOT** BUY, stated rather than hidden: only THREE of the six
+# functions that walk `node=` honour `%rawfile` — draw_graph() (the renderer,
+# draw.c:8198), graph_fullyzoom() (draw.c:3467) and find_closest_wave()
+# (draw.c:5005). The other three parse `%` for the dataset digits only and DROP
+# the rawfile: graph_point_at() (draw.c:5948, pick/hover/marker create+drag),
+# wave_hilight_envelope() (draw.c:6364, bold/highlight) and graph_wave_resolve()
+# (draw.c:7410, the marker value readout). A cross-DB trace therefore RENDERS but
+# is not pickable, not boldable and not markable, and its X extent comes from the
+# current DB because graph_fullxzoom() (draw.c:3284-3391) never parses `%` at all
+# — that last one is spec §D2. Filed as
+# doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md
+# (every line number above re-verified against the tree 2026-08-09; the first cut
+# of this block cited a nonexistent issue 0301 and four stale draw.c lines).
+
+# PURE: may `$s` be carried inside a `node=` `%` suffix at all? See rules 2 and 3
+# above. Rejects the empty string too — a suffix field that is empty is never a
+# valid switch key.
+proc wviewer::db_path_safe {s} {
+  if {$s eq {}} { return 0 }
+  # whitespace (field separator), % (field separator), " (tokenizer quote),
+  # backslash + $ + [ ] + braces (live through two rounds of `subst`)
+  if {[regexp {[][{}%\"\\$[:space:]]} $s]} { return 0 }
+  return 1
+}
+
+# PURE: the `%<rawfile> <sim_type>` suffix a trace dict earns, or {} for the
+# ordinary current-DB trace (which must keep serialising byte-identically to
+# pre-§D1 — that is what keeps the 127 shipped schematics with embedded graphs
+# and every existing viewer test unchanged).
+proc wviewer::db_suffix {tr} {
+  set rf [wviewer::dget $tr rawfile {}]
+  set st [wviewer::dget $tr sim_type {}]
+  if {![wviewer::db_path_safe $rf]} { return {} }
+  if {![wviewer::db_path_safe $st]} { return {} }
+  # `<NULL>` is how `xschem raw info` SPELLS "this slot has no sim_type"
+  # (save.c:1780), and `extra_rawfile()`'s switch arm skips any slot whose
+  # `sim_type` is NULL before it ever compares (save.c:1653). A `%path <NULL>`
+  # suffix is therefore a suffix that can never switch — the same silent blank
+  # the half-suffix rule above exists to prevent, one spelling further out.
+  if {$st eq {<NULL>}} { return {} }
+  return "%$rf $st"
+}
+
+# Which loaded DB holds signal `vec`? Returns {} when NO registered database has
+# it, else `{idx .. path .. type .. cur 0|1 label ..}`.
+#
+# THE CURRENT DB WINS: signal_list_all yields the current database first, so a
+# name present in both resolves to the current one and earns no suffix. That is
+# deliberate — it is what makes this proc a pure ADDITION to add_trace rather
+# than a change of behaviour for every existing single-DB trace.
+#
+# The match rule is validate_rpn's, verbatim: case-insensitive, and a bare `x`
+# also matches a stored `v(x)` (get_raw_index's own probe ladder does the same on
+# the C side, save.c). lsearch over the split list is the C-speed form; this proc
+# is only ever reached after the CURRENT DB has already refused the name.
+proc wviewer::resolve_signal_db {token vec} {
+  set lv [string tolower $vec]
+  foreach db [wviewer::signal_list_all $token] {
+    set names {}
+    foreach n [dict get $db names] { lappend names [string tolower $n] }
+    if {[lsearch -exact $names $lv] < 0 && [lsearch -exact $names "v($lv)"] < 0} { continue }
+    return [dict create idx [dict get $db idx] path [dict get $db path] \
+                        type [dict get $db type] cur [dict get $db cur] \
+                        label [dict get $db label]]
+  }
+  return {}
+}
+
+# ONE registry slot by its INDEX, in `resolve_signal_db`'s dict shape plus the
+# slot's `names`; {} when no slot has that index.
+#
+# ⚠ WHY AN INDEX LOOKUP EXISTS AT ALL, next to a name lookup (this is the whole
+# of DEFECT 2's fix). `resolve_signal_db` answers "which DB has a signal CALLED
+# this", and its documented tie-break is "the current DB wins" — right for a
+# caller that has only a name (the Add Trace… dialog's text entry, a scripted
+# `xschem`-level add). It is WRONG for the signal browser, whose tree row id
+# ALREADY carries the database the user pointed at (`d:2|s:TOP.m.sig`): with the
+# same name in two VCDs, the name-only rule silently plots blockA's waveform
+# under the row the user clicked in blockB's pane. So the browser resolves by
+# INDEX and decision 4 keeps holding, unchanged, for every name-only caller.
+proc wviewer::db_by_index {token idx} {
+  if {![string is integer -strict $idx]} { return {} }
+  foreach db [wviewer::signal_list_all $token] {
+    if {[dict get $db idx] != $idx} { continue }
+    return [dict create idx [dict get $db idx] path [dict get $db path] \
+                        type [dict get $db type] cur [dict get $db cur] \
+                        label [dict get $db label] names [dict get $db names]]
+  }
+  return {}
+}
+
+# PURE: the FOREIGN databases a restored/loaded layout's traces NAME, as
+#   {{path .. type .. vecs {..}} ...}
+# — one entry per distinct `{rawfile sim_type}` pair, in first-appearance order,
+# each carrying the vecs that need it (so a failure can name what goes blank).
+#
+# ⚠ THIS IS DEFECT 1's ORACLE. `wviewer::restore` attaches ONE database (the
+# session's analog raw) and then draws traces whose `node=` tokens switch to a
+# database it never re-read — `extra_rawfile()`'s switch-only arm just fails, at
+# `dbg(1)`, and the strip STILL LISTS the signal in its legend. The symptom is
+# "that signal is flat", not "the data is gone". Deriving the list from the
+# traces themselves (rather than from the ASE run's artifacts alone) is what
+# makes the fix cover a hand-edited state, a saved-results seam and a non-`vcd`
+# sim_type as well as the ordinary co-sim reopen.
+#
+# Only pairs that CAN be carried in the `%` grammar are returned: a pair
+# db_suffix would refuse never reaches `node=` in the first place, so re-reading
+# it would attach a database nothing can switch to.
+proc wviewer::trace_dbs {graphs} {
+  set out {}
+  set seen {}
+  foreach G $graphs {
+    foreach tr [wviewer::dget $G traces {}] {
+      if {[wviewer::db_suffix $tr] eq {}} { continue }
+      set p [wviewer::dget $tr rawfile {}]
+      set t [wviewer::dget $tr sim_type {}]
+      set v [wviewer::dget $tr vec {}]
+      set k [list $p $t]
+      set at [lsearch -exact $seen $k]
+      if {$at < 0} {
+        lappend seen $k
+        lappend out [dict create path $p type $t vecs [list $v]]
+      } else {
+        set e [lindex $out $at]
+        dict set e vecs [concat [dict get $e vecs] [list $v]]
+        set out [lreplace $out $at $at $e]
+      }
+    }
+  }
+  return $out
+}
+
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
 # non-integer or an empty layout all collapse to 0 — the target is stored raw
 # and clamped on every read, so deleting strips can never dangle it.
@@ -2638,7 +2808,24 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
     set vec [wviewer::dget $tr vec {}]
     if {$vec eq {}} { continue }
     set nm [wviewer::dget $tr name {}]
-    if {$nm ne {} && $nm ne $vec} {
+    # spec §D1: a trace that was picked from a DB OTHER than the current one
+    # carries its own database in the node token — `<vec>%<rawfile> <sim_type>`.
+    # THE SUFFIX MUST BE EMITTED HERE and nowhere else: regenerate rebuilds every
+    # rect from this proc, and it fires on a window RESIZE, on add_trace and on
+    # attach_raw, so a `%` set straight onto a rect with `xschem setprop` lives
+    # exactly until the next repaint. Carrying it in the trace dict and emitting
+    # it here is what makes a cross-DB trace survive.
+    set sfx [wviewer::db_suffix $tr]
+    if {$sfx ne {}} {
+      # ALWAYS the alias form when a suffix is present. draw_graph passes the
+      # WHOLE token (`%` and all) to draw_graph_variables for the legend
+      # (draw.c:8247), so a bare `vec%path type` legends as the full absolute
+      # path — MEASURED: the legend read
+      # `TOP.m.siga%/home/qflow/dev/xschem/claude_1/...`. With the alias the
+      # legend is `find_nth(ntok,";",..,1)` = the display name (draw.c:4424-4425).
+      if {$nm eq {} || $nm eq $vec} { set nm $vec }
+      lappend ntoks "\\\"$nm;$vec$sfx\\\""
+    } elseif {$nm ne {} && $nm ne $vec} {
       lappend ntoks "\\\"$nm;$vec\\\""
     } else {
       lappend ntoks $vec
@@ -3069,7 +3256,16 @@ proc wviewer::snapshot {token prev} {
 # autozoom only runs when `raw loaded >= 0`, redraw rc 0 on unresolved
 # nodes). `sim_type` {} omits the `raw read` type word entirely (absent arg
 # != empty arg in the C handler). Returns 1 when the viewer is up.
-proc wviewer::restore {token vdict rawfile sim_type} {
+#
+# `dbs` (spec §D1, DEFECT 1 — 2026-08-09) is the EXTRA databases to re-attach
+# beside the primary raw, as `{{path type} ...}`. `ase::ui::viewer_restore` fills
+# it from `ase::last_vcdfiles`, exactly as the other two attach sites
+# (`ase_window.tcl` dp_finish and auto_plot) already hand that list to
+# `attach_raw`. It defaults to {} so the four-argument call is byte-for-byte what
+# it always was, and it is a UNION with the databases the restored traces
+# themselves name (`wviewer::trace_dbs`) — see the block below for why the second
+# half is not optional.
+proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   variable layouts
   variable sharedx
   variable mode; variable target
@@ -3119,6 +3315,101 @@ proc wviewer::restore {token vdict rawfile sim_type} {
         }
       }
     }
+    # --- spec §D1 / DEFECT 1: RE-ATTACH THE DATABASES THE TRACES NAME ---------
+    #
+    # ⚠⚠ WITHOUT THIS, A SAVED CROSS-DB TRACE COMES BACK SILENTLY BLANK. The
+    # `raw clear` + single `raw read` above leave exactly ONE database in the
+    # registry, so a trace whose `node=` token ends in `%<rawfile> <sim_type>`
+    # asks `extra_rawfile()` to SWITCH to a database that is no longer there.
+    # That arm just returns 0 at `dbg(1)` (save.c:1663) — the strip still LISTS
+    # the signal in its legend and draws nothing, which reads as "that signal is
+    # flat", not "the data is gone". MEASURED end to end in two processes:
+    # `tests/headless/test_wave_crossdb_trace.tcl`'s XS* leg.
+    #
+    # AFTER the `raw add` loop, deliberately: `xschem raw read` makes what it
+    # read CURRENT (extra_rawfile()'s read arm, save.c:1626-1627 for a fresh
+    # slot and :1642-1643 when the path was already registered), and those RPN
+    # vectors belong to the ANALOG raw. The switch back at the end restores it
+    # for the same reason
+    # `ase::attach_dbs` does — every downstream consumer (annotate_op, `xschem
+    # raw value`, add_trace's own validation) resolves names against the current
+    # DB and expects analog vector names there.
+    #
+    # THE UNION, and why both halves. `$dbs` is the RUN's digital artifacts
+    # (`ase::last_vcdfiles`, the list the other two attach sites already pass) —
+    # it re-attaches a co-sim run's VCDs even when no trace names them yet, so
+    # the browser's All-DBs pane and the next add_trace can see them.
+    # `trace_dbs` is what the RESTORED TRACES actually need — it covers a
+    # hand-edited state, the saved-results seam, a `multi 1` VCD that
+    # last_vcdfiles deliberately excludes, and any sim_type that is not `vcd`.
+    # Neither is a superset of the other.
+    set here -1
+    catch {set here [dict get [wviewer::rawinfo_parse [xschem raw info]] cur]}
+    set want {}
+    foreach pt $dbs {
+      # `{path type}` is the contract; a ONE-WORD element is accepted as a bare
+      # path (that is `ase::last_vcdfiles`' own shape) and anything else is taken
+      # WHOLE as the path — a path containing a space must not be chopped at its
+      # first word, which is exactly what `lindex $pt 0` would do to it.
+      if {[llength $pt] == 2} { lassign $pt p t } else { set p $pt ; set t {} }
+      if {$t eq {}} { set t vcd }
+      if {$p eq {}} { continue }
+      lappend want [dict create path $p type $t vecs {}]
+    }
+    foreach e [wviewer::trace_dbs [dict get [wviewer::layout_for $token] graphs]] {
+      set at -1
+      set i 0
+      foreach w $want {
+        if {[dict get $w path] eq [dict get $e path] \
+            && [dict get $w type] eq [dict get $e type]} { set at $i ; break }
+        incr i
+      }
+      if {$at < 0} { lappend want $e } else {
+        set w [lindex $want $at]
+        dict set w vecs [concat [dict get $w vecs] [dict get $e vecs]]
+        set want [lreplace $want $at $at $w]
+      }
+    }
+    foreach e $want {
+      set p [dict get $e path]
+      set t [dict get $e type]
+      # the PRIMARY raw is already in the registry under exactly this key; a
+      # second `raw read` of it would only switch to it (save.c:1640-1644).
+      # BOTH fields must match: the same file registered under two analyses is
+      # two databases (extra_rawfile() keys its switch on file AND sim_type), so
+      # `{<rawfile> ac}` beside a `tran` primary is a real second attach.
+      if {$p eq $rawfile && $t eq $sim_type} { continue }
+      set ok 0
+      if {[file isfile $p]} {
+        catch {set ok [expr {[xschem raw read $p $t] eq {1}}]}
+      }
+      if {$ok} { continue }
+      # ⚠⚠ THE DECISION: NOISY, NOT FATAL, AND NEVER SILENT.
+      #
+      # A hard failure here would stop the SESSION from opening over a deleted
+      # scratch VCD, which is strictly worse than the bug being fixed — the
+      # layout, the analog traces and everything else are still perfectly good.
+      # But "silently blank" is the defect, so the one thing this must not do is
+      # nothing. The message NAMES THE TRACES that will draw nothing, which is
+      # precisely what tells "flat" apart from "gone" — a flat signal is not
+      # listed in an error line. `wviewer::echo` is byte-for-byte `ase::echo`'s
+      # shape (ciw_echo pane half + `xschem log_action`, src/wave_viewer.tcl:637
+      # / src/ase.tcl:126), so this reaches the CIW AND the log file; it is used
+      # instead of `ase::echo` only because a viewer need not belong to an ASE
+      # session. The traces are LEFT ALONE on purpose: stripping the `%` suffix
+      # would make them resolve against the analog raw and plot a DIFFERENT
+      # signal, and dropping them would silently discard the user's layout on a
+      # transient mount failure. Residual limitation recorded in
+      # doc/claude/issues/0305-*.md.
+      set vs [dict get $e vecs]
+      if {[llength $vs]} {
+        wviewer::echo "wviewer: results database not re-attached: $p ($t) —\
+[join $vs {, }] will draw NOTHING (the data is missing, not flat)" error
+      } else {
+        wviewer::echo "wviewer: results database not re-attached: $p ($t)" error
+      }
+    }
+    if {$here >= 0} { catch {xschem raw switch $here} }
   }
   wviewer::regenerate $token
   # SIGNAL BROWSER (item 15): LAST, and after the regenerate rather than before
@@ -3142,7 +3433,13 @@ proc wviewer::restore {token vdict rawfile sim_type} {
 # Direct Plot picker uses it so the trace lands in exactly the color it already
 # painted the schematic net with — the prediction and the plot then cannot
 # disagree, whatever happened to the layout in between.
-proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
+#
+# `db` (spec §D1 / DEFECT 2) is a REGISTRY INDEX naming the database this signal
+# was picked FROM — the signal browser has it, because its tree row id carries
+# it. Given one, the name is resolved in THAT database and nowhere else. `{}` is
+# every caller that has only a name, and keeps decision 4 ("the current DB wins,
+# then the first other DB that has the name") exactly as it was.
+proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}}} {
   variable windows
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
@@ -3163,6 +3460,10 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
   set rawok [expr {[xschem raw loaded] >= 0}]
   set varlist {}
   if {$rawok} { set varlist [split [xschem raw list] "\n"] }
+  # spec §D1: {} = "the current DB owns this trace" (the only case before §D1).
+  # Set only when the name resolves in some OTHER loaded database; graph_props
+  # turns it into the `%<rawfile> <sim_type>` node suffix.
+  set trdb {}
   if {[llength [regexp -all -inline {\S+} $rpn]] > 1} {
     # RPN expression trace (D5)
     if {!$rawok} { return "no raw data loaded - cannot evaluate an expression" }
@@ -3178,9 +3479,56 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
   } else {
     # plain vector reference; validated only when raw data is present (a
     # trace may be recorded before the first run — item 13 wires raws)
+    #
+    # spec §D1: validation is against EVERY loaded database, not just the
+    # current one. Before this, `$varlist` (`xschem raw list` = the CURRENT DB)
+    # was the whole world, so a VCD signal was refused unless the user made the
+    # VCD current — which then broke every analog trace in the window. The
+    # current DB is still tried FIRST and still emits a bare vector name, so
+    # nothing about an ordinary single-DB add changes.
+    #
+    # ⚠⚠ …UNLESS `db` NAMES ONE (DEFECT 2). An explicit index is the user's own
+    # pick, made by clicking a row under a specific database's header, and it
+    # OVERRIDES the name search entirely — including the "the current DB wins"
+    # tie-break, which is right for a name and wrong for a pointer. An index that
+    # no longer resolves (a stale row list after a `raw clear`) degrades to the
+    # name search rather than refusing: the rows the user is looking at are then
+    # describing a registry that has moved, and plotting the same-named signal
+    # from whatever DB still has it is the lesser surprise.
     if {$rawok} {
-      set err [wviewer::validate_rpn $rpn $varlist]
-      if {$err ne {}} { return $err }
+      set hit {}
+      if {$db ne {}} { set hit [wviewer::db_by_index $token $db] }
+      if {$hit ne {}} {
+        # THE NAMED DATABASE AND NOWHERE ELSE. A name it does not have is
+        # REFUSED naming it, never quietly satisfied out of another DB — that
+        # silent substitution is the whole of DEFECT 2.
+        set err [wviewer::validate_rpn $rpn [dict get $hit names]]
+        if {$err ne {}} {
+          return "'$rpn' is not in [dict get $hit label] ($err)"
+        }
+        # …and when the named DB IS the current one, the trace stays byte-
+        # identical to a pre-§D1 trace: no keys, no `%`, no alias.
+        if {[dict get $hit cur]} { set hit {} }
+      } else {
+        set err [wviewer::validate_rpn $rpn $varlist]
+        if {$err ne {}} {
+          set hit [wviewer::resolve_signal_db $token $rpn]
+          if {$hit eq {}} { return $err }
+        }
+      }
+      if {$hit ne {}} {
+        # a FOREIGN DB. It can only be carried into `node=` if its registry path
+        # and type survive the `%` grammar (db_path_safe: the two rounds of
+        # `subst`, the "\n " field split, the `%` separator, the `"` quote).
+        # Refusing LOUDLY here is the honest move: emitting a suffix the engine
+        # cannot switch on would silently draw nothing.
+        if {![wviewer::db_path_safe [dict get $hit path]] ||
+            ![wviewer::db_path_safe [dict get $hit type]]} {
+          return "'$rpn' is in [dict get $hit label], but that database's path\
+cannot be carried in a graph node= token (it contains whitespace or one of % \" \\ \$ \[ \] { })"
+        }
+        set trdb $hit
+      }
     }
     if {[regexp {[";\\]} $name]} {
       return "invalid display name '$name' (quotes, semicolons and backslashes break the node grammar)"
@@ -3191,7 +3539,15 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
   set trs [dict get $G traces]
   set col $color
   if {$col eq {}} { set col [wviewer::next_color $G] }
-  lappend trs [dict create expr $rpn name $name vec $vec color $col]
+  set trd [dict create expr $rpn name $name vec $vec color $col]
+  # §D1: carry the DB the signal was picked from. The keys are ABSENT for an
+  # ordinary current-DB trace, so every existing model dict, state file and
+  # emitted node= string is byte-identical to before.
+  if {$trdb ne {}} {
+    dict set trd rawfile  [dict get $trdb path]
+    dict set trd sim_type [dict get $trdb type]
+  }
+  lappend trs $trd
   set G [dict replace $G traces $trs]
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
   wviewer::regenerate $token
@@ -5925,6 +6281,44 @@ proc wviewer::btn2_filter {W T px py state} {
   }
 }
 
+# --- spec §D1 / DEFECT 2: the per-signal DATABASE hand-off -------------------
+#
+# ⚠⚠ WHY THIS IS AN ARMED HAND-OFF AND NOT `plot_signals`' FIFTH ARGUMENT, which
+# is what it would obviously be. `wviewer::plot_signals`' four-parameter
+# signature is PINNED BY A LITERAL STRING MATCH — tests/headless/
+# test_wave_sigbrowser.tcl BM05 asserts
+# `proc wviewer::plot_signals {token exprs {colors {}} {destover {}}}` appears in
+# this file verbatim, and BM05 also asserts browser_plot_ids calls it as
+# `wviewer::plot_signals $token $names {} $destover` exactly once. Worse, BOTH
+# plot_signals SPIES in that suite are declared with exactly four parameters, so
+# a five-argument call would be "too many arguments", swallowed by
+# browser_plot_ids' own catch, and every BT gesture check there would read as
+# "the gesture did nothing" — the very trap that file's own ⚠ records item 10
+# falling into when `destover` was added. A parallel list is the RIGHT shape
+# (it is exactly `colors`'), and if that pin is ever relaxed this should become
+# `{dbs {}}` and these two procs should go.
+#
+# THE ONE-SHOT DISCIPLINE, which is what keeps a hidden channel honest:
+#  * `plot_dbs_take` CONSUMES — it unsets — so a stale arm can never be read
+#    twice, and `plot_signals` takes FIRST THING, before any early return;
+#  * `browser_plot_ids` takes-and-discards after its call as well, so an arm
+#    made while a TEST has renamed plot_signals away is still cleared;
+#  * `wviewer::forget` drops it with the window.
+# Nothing else in the file arms it: every other plot_signals caller (Direct
+# Plot, the browser's lower pane) has only names, and {} is exactly right there.
+proc wviewer::plot_dbs_arm {token dbs} {
+  variable plotdbs
+  set plotdbs($token) $dbs
+  return {}
+}
+proc wviewer::plot_dbs_take {token} {
+  variable plotdbs
+  if {![info exists plotdbs($token)]} { return {} }
+  set v $plotdbs($token)
+  unset plotdbs($token)
+  return $v
+}
+
 # Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
 # the window's plot mode — the ONE seam ase::ui::dp_finish calls. Creates the
 # strips plan_plot asks for, then appends one trace per signal at its planned
@@ -5945,7 +6339,13 @@ proc wviewer::btn2_filter {W T px py state} {
 # `dest($token)`, and a save/restore would log two spurious replay lines and
 # leave the window on the wrong policy if anything below threw. `{}` = use the
 # window's policy, which is every pre-item-10 caller.
+#
+# The per-signal DATABASE (spec §D1 / DEFECT 2) arrives out of band, through
+# `wviewer::plot_dbs_arm` / `plot_dbs_take` — see their header for why it is not
+# a fifth parameter here. It is taken FIRST THING below, so a gesture that arms
+# and then fails before the trace loop cannot leak its list into the next one.
 proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+  set dbs [wviewer::plot_dbs_take $token]
   variable windows
   if {![dict exists $windows $token]} {
     return [list [list {} "unknown viewer window"]]
@@ -6027,8 +6427,16 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
     wviewer::clear_graph_traces $token $ci
   }
   set errs {}
-  foreach ex $exprs gi [dict get $plan targets] col $colors {
-    set err [wviewer::add_trace $token $gi $ex {} $col]
+  # `dbs` is padded to `exprs`' length rather than relying on `foreach`'s own
+  # short-list padding: an empty `dbs` must give EVERY signal `{}` (resolve by
+  # name), and a caller that supplied a short list must not silently hand the
+  # tail somebody else's database.
+  set dblist {}
+  for {set i 0} {$i < [llength $exprs]} {incr i} {
+    lappend dblist [expr {$i < [llength $dbs] ? [lindex $dbs $i] : {}}]
+  }
+  foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist {
+    set err [wviewer::add_trace $token $gi $ex {} $col $db]
     if {$err ne {}} { lappend errs [list $ex $err] }
   }
   # every add_trace regenerates on success, so the canvas normally already
@@ -6754,6 +7162,47 @@ proc wviewer::browser_kind {rows id} {
 # Rows are ordered parent-before-child, so ONE forward pass propagates
 # membership: a row is included when it IS the id or when its parent already is.
 proc wviewer::browser_leaf_names {rows id} {
+  set out {}
+  foreach s [wviewer::browser_leaf_specs $rows $id] { lappend out [lindex $s 0] }
+  return $out
+}
+
+# PURE. The REGISTRY INDEX a row id belongs to, or {} for the current database.
+#
+# Item 14 gives every FOREIGN database's rows the prefix `d:<registry idx>|`
+# (`browser_rows_multi` -> `browser_rows_reparent`) while the current DB's rows
+# stay UNPREFIXED — that is the property `browser_node_for`'s hierarchy walk
+# leans on, and it is what makes {} mean "current" here rather than "unknown".
+# The regexp is `browser_id_path`'s, verbatim, so the two cannot drift about what
+# a prefix looks like.
+proc wviewer::browser_row_db {id} {
+  if {[regexp {^d:([0-9]+)\|} $id -> n]} { return $n }
+  return {}
+}
+
+# PURE. Every leaf at or under row `id` as `{<full raw name> <db-index-or-{}>}`,
+# in row order.
+#
+# ⚠⚠ THE DATABASE IS PART OF THE ANSWER, AND THAT IS DEFECT 2's WHOLE FIX. The
+# tree row id ALREADY says which database the user pointed at — with two VCDs
+# holding `TOP.m.sig`, item 14 emits `d:1|s:TOP.m.sig` AND `d:2|s:TOP.m.sig`.
+# `browser_leaf_names` threw that half away, so a double-click under the blockB
+# header plotted blockA's waveform (`resolve_signal_db` resolves by NAME and
+# returns the lowest-index match), with no error and no cue; and a Plot with BOTH
+# rows selected deduplicated down to ONE trace. This is not exotic — it is
+# exactly the shape spec §E produces when two `d_cosim` blocks instantiate the
+# same Verilog module.
+#
+# `browser_leaf_names` is kept as the ONE-LINE PROJECTION of this proc rather
+# than being deleted: `browser_menu_names` (the context menu, which ends in the
+# Add Trace… dialog's TEXT ENTRY — a string the user may edit, which genuinely
+# cannot carry a database) wants only the names, and so do the two-pane and
+# item-14 suites that assert on it directly. Re-deriving it here means the two
+# can never disagree about membership or order.
+#
+# Rows are ordered parent-before-child, so ONE forward pass propagates
+# membership: a row is included when it IS the id or when its parent already is.
+proc wviewer::browser_leaf_specs {rows id} {
   array set inc {}
   set inc($id) 1
   set out {}
@@ -6763,7 +7212,7 @@ proc wviewer::browser_leaf_names {rows id} {
     if {$par ne {} && [info exists inc($par)]} { set inc($rid) 1 }
     if {![info exists inc($rid)]} { continue }
     if {[wviewer::dget $r kind {}] ne {leaf}} { continue }
-    lappend out [wviewer::dget $r name {}]
+    lappend out [list [wviewer::dget $r name {}] [wviewer::browser_row_db $rid]]
   }
   return $out
 }
@@ -8865,10 +9314,18 @@ proc wviewer::browser_filter_cb {token args} {
 # there. A browser gesture offering Replace in multi mode is therefore offering
 # Append. Surfaced in receipts/09_receipt.md; not item 9's to fix.
 
-# Row ids -> full raw names -> plot_signals. Returns the number of names
-# plotted, 0 for a refused/empty gesture (which SPEAKS rather than sitting
-# silent). Names are deduplicated but keep ROW ORDER, so a selection spanning a
-# group and one of its leaves plots that leaf once.
+# Row ids -> {full raw name, database} -> plot_signals. Returns the number of
+# signals plotted, 0 for a refused/empty gesture (which SPEAKS rather than
+# sitting silent). Picks are deduplicated but keep ROW ORDER, so a selection
+# spanning a group and one of its leaves plots that leaf once.
+#
+# ⚠⚠ THE DEDUPE IS ON {name, database}, NOT ON THE NAME (DEFECT 2, 2026-08-09).
+# `TOP.m.sig` in blockA.vcd and `TOP.m.sig` in blockB.vcd are two different
+# waveforms; deduping on the bare name silently collapsed them to one trace —
+# blockA's, because `resolve_signal_db` returns the lowest-index match — however
+# many rows the user had selected. The database comes from the ROW ID the user
+# actually clicked (`browser_leaf_specs`), and is carried all the way into
+# `add_trace`, so the trace plotted is the trace pointed at.
 #
 # `destover` (item 10) is handed straight to plot_signals and read NOWHERE here:
 # the one-shot override is plot_signals' business, and BT06's "nothing in the
@@ -8880,9 +9337,14 @@ proc wviewer::browser_plot_ids {token ids {destover {}}} {
   if {![info exists browserrows($token)]} { return 0 }
   set rows $browserrows($token)
   set names {}
+  set dbs {}
+  set seen {}
   foreach id $ids {
-    foreach n [wviewer::browser_leaf_names $rows $id] {
-      if {[lsearch -exact $names $n] < 0} { lappend names $n }
+    foreach s [wviewer::browser_leaf_specs $rows $id] {
+      if {[lsearch -exact $seen $s] >= 0} { continue }
+      lappend seen $s
+      lappend names [lindex $s 0]
+      lappend dbs   [lindex $s 1]
     }
   }
   if {![llength $names]} {
@@ -8890,7 +9352,10 @@ proc wviewer::browser_plot_ids {token ids {destover {}}} {
     return 0
   }
   set errs {}
-  if {[catch {wviewer::plot_signals $token $names {} $destover} errs]} {
+  wviewer::plot_dbs_arm $token $dbs
+  set rc [catch {wviewer::plot_signals $token $names {} $destover} errs]
+  wviewer::plot_dbs_take $token          ;# no-op after a real call; clears after a stub
+  if {$rc} {
     wviewer::echo "signal browser: $errs" error
     return 0
   }

@@ -225,11 +225,109 @@ digital *together* is the new requirement.
 
 | id | item | notes |
 |----|------|-------|
-| D1 | **Per-trace DB resolution.** Today a graph's `node=` list resolves against the current DB. A mixed strip needs each trace to name its DB, or a documented search order across DBs. | The core §D change. |
+| D1 | ~~**Per-trace DB resolution.**~~ **DONE (2026-08-09) — the shortcut was already in C; the missing half was all Tcl.** Reviewed adversarially and **three defects it created were fixed in the same round** (see "the review round" below). `tests/headless/test_wave_crossdb_trace.tcl`, **109 checks (51 headless), 8 + 21 sabotages injected, all caught.** See the write-up below the table. | The core §D change. |
 | D2 | **Joint X domain.** Two DBs have independent time vectors, extents, and point counts. Zoom, pan, `x1/x2`, and the shared-X strip logic must span the union. | Silent-wrong-answer risk if one DB's extent is used as the whole. |
 | D3 | ~~**Time-unit reconciliation.**~~ **DONE — converted once at read (C1, `vcd_read()` stores seconds) and now ASSERTED against A6.** `tests/headless/test_vcd_time_base.tcl`, **124 checks** (112 when the reference artifacts are absent), pinned to the `--nogui` arm. The gate is a stated number, not a feeling: **100 ps**, which is 10.1× above the measured 9.883 ps physical skew and at minimum ~500× below the smallest 1e3 error the file can produce (the ÷1000 direction on the earliest edge used, 50 ns → 49.95 ns of displacement; the ×1000 direction is 499,500×). A zero tolerance would be wrong — the two DBs record different events, a Verilog value change versus an analog threshold crossing after a finite `dac_bridge t_rise`, sampled on ngspice's timestep grid. Coverage: six `$timescale` units including the two-token `10 ns` form, the whole fs→ps→ns→µs→ms→s ladder (**every rung of which IS the 1e3 factor**), the multiplier forms, seconds-not-ticks, and the symmetric "rescale the raw instead" error. The 1e3 rejection is **proved, not asserted**: nine negative-control VCDs that are deliberately 1e3 wrong — perfectly valid files, which is the whole point — go through the *same* `agree` proc the real checks use and must be rejected. **19 sabotages injected, all 19 caught; every one of the 124 checks is caught by at least one.** | Off-by-1e3 here looks like a plausible waveform. |
 | D4 | **Cursors, markers, annotation across DBs.** `annot_p`/`annot_x`/`annot_sweep_idx` are per-`Raw`. A cursor at time *t* must resolve in both — with the nearest-sample-before rule differing between a dense analog sweep and a sparse event stream. | `Raw` fields, `src/xschem.h:1129-1137` |
 | D5 | **Backannotation.** `annotate_op` and the schematic voltage overlay read the current DB. Define what a digital DB contributes (probably: nothing, explicitly). | `src/scheduler.c:2145` |
+
+#### D1 — what was already there, and what was missing
+
+**The C shortcut is real.** One `node=` entry is
+
+```
+[alias;]<vec-or-RPN> [ '%' [<dataset-digits> ] <rawfile> [ <sim_type> ] ]
+```
+
+and `draw_graph()` (`src/draw.c:8185-8215`) reacts to the `%` part by calling
+`extra_rawfile(<autoload>, <rawfile>, <sim_type>, …)`, drawing that ONE trace against
+that database, and switching back at the end of that node's iteration
+(`draw.c:8438`). `autoload` absent maps to **what-code 2, switch-only**
+(`draw.c:8133-8135`), so the database must ALREADY be in the registry and the `%`
+value must byte-match the stored path — `extra_rawfile()`'s switch arm is a bare
+`strcmp` on path AND `sim_type` (`save.c:1653-1655`).
+
+**Everything above the renderer was missing.** `wviewer::add_trace` validated against
+`xschem raw list` — the CURRENT database only — so a VCD signal was refused unless the
+user made the VCD current, which then broke every analog trace in the window. And
+`wviewer::graph_props` never emitted a `%` at all, while `wviewer::regenerate` rebuilds
+every rect from `graph_props` — on a window RESIZE, on `add_trace`, on `attach_raw`. A
+`%` poked onto a rect with `xschem setprop` therefore survived exactly until the next
+repaint. **Carrying the database in the trace dict and emitting it in `graph_props` is
+the whole feature**; setting a rect once is a demo that dies on resize.
+
+Landed in `src/wave_viewer.tcl`:
+
+* `wviewer::db_path_safe` — the `%` grammar's hazard list, one place. Both fields pass
+  through Tcl `subst {…}` **twice** (`draw.c:8191/8193`, then `save.c:1649`) and the
+  sub-field separator set is `"\n "`, so whitespace, `%`, `"`, `\`, `$`, `[`, `]`, `{`
+  and `}` are all refused. `~` is **not** expanded by `subst` and is not a hazard.
+* `wviewer::db_suffix` — `{}` for an ordinary current-DB trace (so every existing model
+  dict, state file and emitted `node=` string is byte-identical to pre-§D1), else
+  `%<rawfile> <sim_type>`. **Never a half suffix**: with no type, `draw_graph()`
+  substitutes the CURRENT database's `sim_type` (`draw.c:8194-8195`) and the switch fails
+  silently.
+* `wviewer::resolve_signal_db` — searches EVERY registered database through the existing
+  all-DBs reader `signal_list_all`, which yields the current DB first, so a name present
+  in both resolves to the current one and earns no suffix.
+* `graph_props` emits the **alias** form `"<display>;<vec>%<path> <type>"` whenever a
+  suffix is present. Not cosmetic: `draw_graph()` hands the WHOLE token to
+  `draw_graph_variables()` for the legend (`draw.c:8247`), so a bare `vec%path type`
+  legends as the absolute path — MEASURED, the legend read
+  `TOP.m.siga%/home/qflow/dev/xschem/claude_1/…`.
+
+**Proof, measured not inferred.** `tests/headless/test_wave_crossdb_trace.tcl` renders a
+real PNG of a viewer strip and pixel-probes it. The probe is self-calibrating: the VCD's
+square wave supplies both axes (its two logic levels are value 0 and 1, its rising edges
+are t = T/4 and 3T/4) and the analog sine is then required to land where that calibration
+predicts — a sine on a different time base could not put its peak on the VCD's first
+rising edge. The reference co-sim pair renders too: `v(clk)` from
+`tb_counter_wrapper_ase.raw` and `TOP.counter.clk` + `TOP.counter.count` from
+`counter.vcd`, in one strip, the analog clock's edges aligned with the Verilog clock's.
+
+#### D1 — the review round (2026-08-09)
+
+A three-lens adversarial review of the change above found **three defects, all created
+by it** — at its parent commit a cross-DB trace cannot be created at all, so none of
+them predates it. All three are fixed; the full list of what they leave behind lives in
+`doc/claude/issues/0305-*.md`'s addendum.
+
+1. **A saved cross-DB trace came back SILENTLY BLANK.** `ase::ui::viewer_restore` handed
+   `wviewer::restore` the primary analog raw alone, and `restore` did `raw clear` + ONE
+   `raw read` — so the database a trace's `%` suffix named was not in the registry when
+   `draw_graph()` tried to switch to it. `extra_rawfile()`'s switch failure is `dbg(1)`,
+   and the strip still LISTS the signal in its legend, so the symptom read as "that
+   signal is flat" rather than "the data is gone". `restore` now takes the extra
+   databases as a fifth argument (filled from `ase::last_vcdfiles`, the same list
+   `dp_finish` and `auto_plot` already pass to `attach_raw`) UNIONED with the databases
+   its own restored traces name (`wviewer::trace_dbs`) — neither list is a superset of
+   the other. A database it still cannot attach is reported once, naming the traces that
+   will draw nothing; the session opens anyway. **Proved across two processes**: a state
+   file carrying a cross-DB trace, reopened in a fresh xschem, pixel-probed — 145 red
+   columns (legend text alone) before, 510 after, with the legend-only floor measured in
+   the same process by detaching the VCD and re-rendering.
+2. **The signal browser plotted the WRONG database, silently.** The tree row id already
+   carries the database (`d:1|s:TOP.m.sig` vs `d:2|s:TOP.m.sig`); `browser_leaf_names`
+   dropped it and handed `add_trace` a bare name, which `resolve_signal_db` resolved to
+   the LOWEST-index match. A double-click under blockB's header therefore drew blockA's
+   waveform, and selecting both rows and pressing Plot produced ONE trace (the dedupe was
+   on the name). **This is exactly the shape §E produces when two `d_cosim` blocks
+   instantiate the same Verilog module.** `browser_leaf_specs` now answers `{name db}`
+   pairs, the dedupe is on the pair, and the database is carried to `add_trace`'s new
+   `db` argument, where it OVERRIDES the name search entirely. Decision 4 ("the current
+   DB wins") still governs every caller that has only a name.
+3. A comment cited a **nonexistent issue 0301** and four stale `draw.c` line numbers.
+   Every citation in the §D1 comment block, in issue 0305, in this write-up and in the
+   test header was re-verified against the tree.
+
+**What §D1 does NOT buy** (issue 0305): only three of the six functions that walk `node=`
+honour `%rawfile`. `graph_point_at()` (`draw.c:5948`), `wave_hilight_envelope()`
+(`draw.c:6364`) and `graph_wave_resolve()` (`draw.c:7410`) parse the `%` for the dataset
+digits only and drop the rawfile, so a cross-DB trace **renders but is not pickable, not
+boldable and not markable**. And `graph_fullxzoom()` (`draw.c:3284`) never parses `%` at
+all (`draw.c:3284-3391`), so the auto X window spans the CURRENT database's extent only — that is D2 below,
+and it is visible with the reference pair (raw 0..2 µs, VCD 0..500 ns: the VCD trace
+occupies the left quarter and stops).
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

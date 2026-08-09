@@ -3094,7 +3094,19 @@ proc ase::ui::viewer_restore {key} {
   }
   if {$rf eq {}} { set rf [ase::last_rawfile $key] }
   set sim_t [ase::plot_sim_type $st]
-  set rc [wviewer::restore $key $vd $rf $sim_t]
+  # spec §D1 (DEFECT 1, 2026-08-09): THE DIGITAL DATABASES GO IN TOO. This was
+  # the ONE attach site of the three that did not pass them — `dp_finish`
+  # (:2014) and `auto_plot` (:3570) both hand `ase::last_vcdfiles` to
+  # `wviewer::attach_raw`, while `wviewer::restore` is the inline copy of that
+  # attach shape and cleared the registry down to the analog raw alone. A saved
+  # cross-DB trace then came back with its `%<rawfile> <sim_type>` intact and
+  # nothing to switch to: legend listed, waveform blank, no message at any level
+  # (`extra_rawfile()`'s switch failure is `dbg(1)`). `wviewer::restore` unions
+  # this list with the databases the restored traces themselves name, and speaks
+  # up for whatever it still cannot attach.
+  set vcds {}
+  foreach v [ase::last_vcdfiles $key] { lappend vcds [list $v vcd] }
+  set rc [wviewer::restore $key $vd $rf $sim_t $vcds]
   if {$rc && $rf eq {}} {
     catch {::ase::echo "ase: no simulation results for this state — viewer\
  restored, traces will fill after a run"}
