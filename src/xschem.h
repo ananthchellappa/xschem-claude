@@ -2252,6 +2252,14 @@ extern int table_read(const char *f);
  * on entry, the caller sets raw->sim_type. See src/vcd_read.c and
  * doc/claude/specs/mixed_signal_signal_browser.md section C. */
 extern int vcd_read(const char *f);
+/* THE reader dispatch (issue 0290): `type` is the key that picks the parser --
+ * "table" -> table_read(), "vcd" -> vcd_read(), anything else -> raw_read() -- and
+ * raw->sim_type is stamped for the non-spice readers, which do not all do it
+ * themselves. Every (file, type) -> database path goes through this, so the choice
+ * exists exactly once; see the table above it in src/save.c. */
+extern int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
+                                int no_warning, double sweep1, double sweep2);
+extern int raw_type_is_non_spice(const char *type);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);

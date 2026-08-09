@@ -73,7 +73,15 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # (test_ase_cosim drives ase:: procs, the raw registry and the wviewer attach
 # seam with its three Tk helpers stubbed -- no display, and pinned here so its
 # `xschem load` of fixture schematics cannot land in a real editor window)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read test_ase_cosim "
+# (test_raw_ascii_point_bounds only feeds malformed ascii rawfiles to the Raw
+# reader and never draws; issue 0213)
+# (test_vcd_time_base reads a synthesized .raw and .vcd into the Raw registry and
+# compares time columns -- pure data model, no drawing, verified with DISPLAY
+# unset; spec D3/H3)
+# (test_raw_read_dispatch reads table/vcd/raw files into the Raw registry; its
+# end-to-end group calls open_sub_schematic / hi_descend, which open a new
+# window but need no display -- whole file verified with DISPLAY unset; 0290)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read test_ase_cosim test_raw_ascii_point_bounds test_vcd_time_base test_raw_read_dispatch "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

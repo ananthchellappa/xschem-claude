@@ -1425,6 +1425,91 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
   return ret;
 }
 
+/* ===========================================================================
+ * THE READER DISPATCH — one table, one function, no second copy (issue 0290)
+ *
+ * A database's `type` token is not a label pinned on after the fact: it is the
+ * KEY that chooses which parser reads the file. "vcd" means vcd_read(), "table"
+ * means table_read(), anything else means the ngspice raw parser raw_read().
+ * Hand a "table" to raw_read() and read_dataset() looks for `Plotname:` /
+ * `No. Variables:` / `Values:`, finds none, and returns 0 — no crash, no dialog,
+ * just no data.
+ *
+ * This used to be an `else if` chain written out once in extra_rawfile() and a
+ * second, SHORTER time in the `xschem raw_read` arm of scheduler.c. The two
+ * drifted: the scheduler copy knew "vcd" and not "table", so
+ * `xschem raw_read <f> table` — which open_sub_schematic() and hi_descend()
+ * generate verbatim when they carry the current database into a new window,
+ * `xschem raw_read $rawfile [xschem raw_query sim_type]` — fed a table file to
+ * the spice parser after the arm had already cleared the whole registry. That
+ * is issue 0290. Adding a third parallel chain would only queue up the next
+ * drift, so the dispatch now lives HERE, exactly once, driven by the table
+ * below; adding a reader means adding one row and nothing else.
+ *
+ * raw_type_is_non_spice() exists so callers that need to know WHICH registry
+ * protocol applies (extra_rawfile() dedups non-spice databases on filename
+ * alone, spice ones on filename+sim_type) ask the same table that picks the
+ * reader, instead of re-listing the type tokens.
+ * ===========================================================================
+ */
+static struct raw_reader_entry {
+  const char *type;
+  int (*read)(const char *f);   /* builds xctx->raw; 1 on success */
+} raw_reader_table[] = {
+  {"table", table_read},
+  {"vcd",   vcd_read}
+};
+#define N_RAW_READERS ((int)(sizeof(raw_reader_table) / sizeof(raw_reader_table[0])))
+
+/* 1 if `type` selects one of the non-spice readers above, 0 for a spice raw
+ * (and for a NULL/empty type, which means "first analysis found in the file") */
+int raw_type_is_non_spice(const char *type)
+{
+  int i;
+  if(!type || !type[0]) return 0;
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(!strcmp(type, raw_reader_table[i].type)) return 1;
+  }
+  return 0;
+}
+
+/* Read `f` with the reader that `type` selects. Every caller that turns a
+ * (file, type) pair into a loaded database must come through here.
+ *
+ * The non-spice readers build xctx->raw directly (they take no rawptr), so a
+ * foreign destination is refused rather than silently ignored.
+ *
+ * They also do not all stamp sim_type: vcd_read() does, table_read() does not.
+ * Stamping it here for every one of them is not cosmetic — a database whose
+ * sim_type is NULL is a live hazard. Seven sites strcmp() it with no NULL guard
+ * (scheduler.c: the `raw switch` and `raw switch_back` update_op() gates and the
+ * annotate_op arm; callback.c backannotate_at_cursor_b_pos(); draw.c
+ * graph_fullyzoom(), calc_custom_data_yrange() and draw_graph()),
+ * `xschem raw_query sim_type` hands the bare
+ * pointer to Tcl_SetResult(), and both lookup loops in extra_rawfile() skip an
+ * entry with a NULL sim_type — so such a database can never be reached by
+ * `xschem raw switch` again. */
+int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
+                         int no_warning, double sweep1, double sweep2)
+{
+  int i;
+  if(type && !type[0]) type = NULL; /* empty type == unspecified, as extra_rawfile() has it */
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(type && !strcmp(type, raw_reader_table[i].type)) {
+      int res;
+      if(rawptr != &xctx->raw) {
+        dbg(0, "read_rawfile_by_type(): the %s reader builds xctx->raw, "
+               "refusing a different destination\n", type);
+        return 0;
+      }
+      res = raw_reader_table[i].read(f);
+      if(res && xctx->raw) my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, type);
+      return res;
+    }
+  }
+  return raw_read(f, rawptr, type, no_warning, sweep1, sweep2);
+}
+
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
@@ -1472,9 +1557,12 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
    * VCD must declare sim_type "vcd" -- calling it "tran" would route it into the spice
    * raw parser below. Both readers share this arm because they share the whole registry
    * protocol: same "already loaded?" test, same insert, same restore-on-failure.
+   * Which types land here is decided by raw_type_is_non_spice(), the same table that
+   * read_rawfile_by_type() dispatches on, so the guard and the reader can never
+   * disagree about a type (issue 0290).
    * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
   if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
-     (type && (!strcmp(type, "table") || !strcmp(type, "vcd")))) {
+     raw_type_is_non_spice(type)) {
     tclvareval("subst {", file, "}", NULL);
     my_strncpy(f, tclresult(), S(f));
     dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
@@ -1486,9 +1574,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       Raw *save;
       save = xctx->raw;
       xctx->raw = NULL;
-      read_ret = !strcmp(type, "vcd") ? vcd_read(f) : table_read(f);
+      /* dispatches on `type` and stamps raw->sim_type on success */
+      read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
       if(read_ret) {
-        my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, type);
         xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
         xctx->extra_prev_idx = xctx->extra_idx;
         xctx->extra_idx = xctx->extra_raw_n;
@@ -1528,7 +1616,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       Raw *save;
       save = xctx->raw;
       xctx->raw = NULL;
-      read_ret = raw_read(f, &xctx->raw, type, no_warning, sweep1, sweep2);
+      /* same entry point as the arm above; raw_type_is_non_spice() is false here so it
+       * resolves to raw_read(), but the choice is made in ONE place either way */
+      read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
       if(read_ret) {
         dbg(1, "extra_rawfile(): read %s %s, switch to it. raw->sim_type=%s\n", f,
           type ? type : "<NULL>", xctx->raw->sim_type ? xctx->raw->sim_type : "<NULL>");

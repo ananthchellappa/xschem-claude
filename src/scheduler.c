@@ -9989,15 +9989,17 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           sweep1 = atof_spice(argv[4]);
           sweep2 = atof_spice(argv[5]);
         }
-        /* `raw_read` BYPASSES extra_rawfile(), so the type-is-the-reader dispatch that
-         * save.c does for "table"/"vcd" has to be repeated here or a .vcd would be fed
-         * to the spice parser and read as an empty file. This is a live path, not a
-         * hypothetical: xschem.tcl:5705 (open_sub_schematic) and 5958 (hi_descend
-         * new-window) both carry the current database across with
-         * `xschem raw_read $rawfile [xschem raw_query sim_type]`. */
-        if(argc > 3 && !strcmp(argv[3], "vcd")) res = vcd_read(f);
-        else if(argc > 3) res = raw_read(f, &xctx->raw, argv[3], 0, sweep1, sweep2);
-        else res = raw_read(f, &xctx->raw, NULL, 0, -1.0, -1.0);
+        /* `raw_read` BYPASSES extra_rawfile(), so the type-is-the-reader dispatch must
+         * still happen or a .vcd / a table file is fed to the spice parser and read as
+         * an empty file -- after the extra_rawfile(3, ...) above already cleared the
+         * whole registry, so the database is simply gone. This is a live path, not a
+         * hypothetical: open_sub_schematic() and hi_descend()'s new-window arm in
+         * src/xschem.tcl both carry the current database across with
+         * `xschem raw_read $rawfile [xschem raw_query sim_type]`.
+         * This used to be a private copy of the chain that knew "vcd" and not "table"
+         * (issue 0290); it now calls the one dispatch in save.c, which also stamps
+         * sim_type for readers that do not stamp it themselves. */
+        res = read_rawfile_by_type(f, &xctx->raw, argc > 3 ? argv[3] : NULL, 0, sweep1, sweep2);
         if(sch_waves_loaded() >= 0) {
           draw();
         }
@@ -12490,10 +12492,16 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
         my_strncpy(f, tclresult(), S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
-        table_read(f);
-
+        /* through the one dispatch (issue 0290): it stamps sim_type "table" on success.
+         * The stamp used to hang off the sch_waves_loaded() test below, which is a
+         * different question -- it also demands raw->values and a raw->schname matching
+         * the current hierarchy. A comments-only table makes table_read() return 1 with
+         * values still NULL, so the stamp was skipped and the database entered the
+         * registry with a NULL sim_type: listed as <NULL> by `raw info` and skipped by
+         * both of extra_rawfile()'s lookup loops, i.e. unreachable by `raw switch`
+         * forever. Checks R9/R10 in tests/headless/test_raw_read_dispatch.tcl. */
+        read_rawfile_by_type(f, &xctx->raw, "table", 0, -1.0, -1.0);
         if(sch_waves_loaded() >= 0) {
-          my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, "table");
           draw();
         }
       }
@@ -13029,9 +13037,10 @@ static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *
         tcleval(f);
         my_strncpy(f, tclresult(), S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
-        vcd_read(f);
+        /* through the one dispatch (issue 0290), same reasoning as the `table_read`
+         * verb: the sim_type stamp must not hang off sch_waves_loaded() */
+        read_rawfile_by_type(f, &xctx->raw, "vcd", 0, -1.0, -1.0);
         if(sch_waves_loaded() >= 0) {
-          my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, "vcd");
           draw();
         }
       }
