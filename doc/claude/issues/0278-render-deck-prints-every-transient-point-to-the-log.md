@@ -1,4 +1,4 @@
-# 0258 — ASE-L `render_deck` emits a `print` per output, dumping **every transient point** to the log; `result_probe` can match none of it, and `execute_fileevent` then forks `ps` ~49k times ingesting it
+# 0278 — ASE-L `render_deck` emits a `print` per output, dumping **every transient point** to the log; `result_probe` can match none of it, and `execute_fileevent` then forks `ps` ~49k times ingesting it
 
 Status: **OPEN** — measured with a controlled pair (deck with vs without the `print` lines), cause
 and both call sites identified, fix not implemented. **Major on usability**: a 2 µs transient
@@ -12,8 +12,11 @@ dict, so the whole surface is unmeasured.
 Found: 2026-08-08, building the mixed-signal reference testbench
 (`doc/claude/specs/mixed_signal_signal_browser.md` §E9).
 Related: `doc/claude/specs/ase_l.md` (the `result_probe` design this was built for),
-issue **0210** (ASE `pre_commands`). Numbered 0258 to leave a gap above `github/open_pdk`'s
-current maximum (0248) so the next merge needs no renumbering.
+issue **0210** (ASE `pre_commands`), **0279** (the pipe reader that turns this issue's log volume
+into minutes of wall clock — independently fixable). Numbered 0278/0279 to sit clear of the
+`open_pdk` block, which has advanced past 0260; the pair was first filed as 0258/0259 against a
+fetched `github/open_pdk` maximum of 0248 (that branch has not been pushed past 0248) and
+renumbered the same day, before any cross-reference escaped this branch.
 
 ## What it does
 
@@ -104,8 +107,8 @@ and the raw file appearing. It also builds a ~50 MB Tcl string in `execute(data,
 `ase::run_done` hands to `result_probe` whole.
 
 ⚠ Fixing only this issue's `print` loop leaves the reader unfixed: **any** verbose simulator
-output pays the same 1-`ps`-fork-per-KB tax. That deserves its own issue number — the read chunk
-should be far larger, and the zombie check should not be per-read.
+output pays the same 1-`ps`-fork-per-KB tax. Filed separately as **0279** — the read chunk should
+be far larger, and the zombie check should not be per-read.
 
 ## A second, pre-existing correctness bug in the same block
 

@@ -1,4 +1,4 @@
-# 0259 — `execute_fileevent` reads child stdout 1024 bytes at a time and forks `ps` on **every** read, capping every subprocess in xschem at **~255 kB/s**
+# 0279 — `execute_fileevent` reads child stdout 1024 bytes at a time and forks `ps` on **every** read, capping every subprocess in xschem at **~255 kB/s**
 
 Status: **OPEN** — measured with a three-point A/B inside a real xschem process, cause isolated to
 two lines, fix drafted, not implemented. **Major on usability**: any subprocess that talks costs
@@ -7,11 +7,13 @@ Area: `src/xschem.tcl:245` (`read … 1024`) and `src/xschem.tcl:255` (`exec ps`
 `execute_fileevent`. Channel setup at `src/xschem.tcl:388` (`fconfigure $pipe -blocking 0`).
 Tests: none. Nothing in `tests/` drives `execute` with a large-output child, so the entire
 throughput characteristic is unmeasured.
-Found: 2026-08-08, while measuring issue **0258** — the ASE log flood is the trigger, this is why
+Found: 2026-08-08, while measuring issue **0278** — the ASE log flood is the trigger, this is why
 it costs *minutes* rather than *seconds*.
-Related: **0258** (produces the 49.9 MB that exposes this; that issue is the cause, this one is
-the amplifier, and they are independently fixable). Numbered 0259 alongside 0258, above
-`github/open_pdk`'s current maximum (0248), so the next merge needs no renumbering.
+Related: **0278** (produces the 49.9 MB that exposes this; that issue is the cause, this one is
+the amplifier, and they are independently fixable). Numbered 0278/0279 to sit clear of the
+`open_pdk` block, which has advanced past 0260; the pair was first filed as 0258/0259 against a
+fetched `github/open_pdk` maximum of 0248 (that branch has not been pushed past 0248) and
+renumbered the same day, before any cross-reference escaped this branch.
 
 ## The two lines
 
@@ -61,7 +63,7 @@ signature of a per-event fixed cost, not of I/O:
 The `ps` fork is not *a* cost, it is essentially the *entire* cost. 50 MB = 51,200 reads =
 51,200 forks = 200 s.
 
-This is what 0258's 49.9 MB log actually buys: `49,922,360 / 1024 = 48,752` forks ≈ **197 s**,
+This is what 0278's 49.9 MB log actually buys: `49,922,360 / 1024 = 48,752` forks ≈ **197 s**,
 matching the multi-minute gap observed between the co-simulation finishing and the raw appearing.
 
 ## Blast radius
@@ -97,7 +99,7 @@ blocking channel on a live process that closed stdout blocks until that process 
 
 ⚠ A second, separate cost survives both fixes: `execute(data,$id)` accumulates the child's entire
 stdout as one Tcl string, so a 50 MB log becomes a 50 MB Tcl value handed whole to the caller's
-callback (`ase::run_done` → `result_probe` in 0258's case). Bounding or streaming that is a
+callback (`ase::run_done` → `result_probe` in 0278's case). Bounding or streaming that is a
 third change, out of scope here.
 
 Worth pinning with a test that asserts throughput on a multi-MB child stays above some floor —
