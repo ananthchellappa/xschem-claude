@@ -385,6 +385,29 @@ void transpose_matrix(double *a, int r, int c)
   my_free(_ALLOC_ID_, &done);
 }
 
+/* the empty line ngspice writes between ascii data points (LF and CRLF files
+ * both exist in the wild) */
+static int raw_ascii_blank_line(const char *line)
+{
+  return line[0] == '\n' || (line[0] == '\r' && line[1] == '\n');
+}
+
+/* Skip the ascii `Values:` block of a dataset the caller did not ask for.
+ *
+ * KNOWN DEFECT, deliberately left in place: see doc/claude/issues/0300-*.md.
+ * `line[0] == '\n'` is the only point terminator here, so this does not
+ * recognise a CRLF separator and has no bound at all -- a skipped block that is
+ * missing its separators, or written with CRLF endings, makes this walk past
+ * the block and eat the following plot's header, costing the whole read.
+ *
+ * A fix was written and REVERTED on 2026-08-09: counting value lines from the
+ * plot's own header (npoints * lines_per_point) cures both, but trusts a header
+ * that may over-declare its block, and then over-skips into the next plot's
+ * `Plotname:` line -- measured as a silently deleted dataset with the read
+ * still reporting success. A correct fix has to use the count as a BOUND while
+ * still resynchronising on a blank separator and on a new header line. Issue
+ * 0300 carries the measurements and the direction.
+ */
 static void skip_raw_ascii_points(int npoints, FILE *fd)
 {
   char line[1024];
@@ -403,20 +426,164 @@ static void skip_raw_ascii_points(int npoints, FILE *fd)
   }
 }
 
-static int read_raw_ascii_point(int ac, double *tmp, FILE *fd)
+/* match `word` (already lower case) at the head of `p`, case insensitively.
+ * Returns the number of characters consumed, 0 if it does not match. */
+static int raw_ascii_kw(const char *p, const char *word)
+{
+  int n = 0;
+  while(word[n]) {
+    if(tolower((unsigned char)p[n]) != word[n]) return 0;
+    n++;
+  }
+  return n;
+}
+
+/* 1 if `line` starts (after blanks) with something that can be a value.
+ * Second terminator of an ascii data point, see read_raw_ascii_point().
+ *
+ * NON FINITE VALUES (regression found reviewing the issue 0213 fix, fixed the
+ * same day). A C library prints a non finite double as a WORD -- glibc's "%e"
+ * gives `nan`, `-nan`, `inf`, `-inf`, "%E" gives `NAN`/`INF`, C99 also allows
+ * `nan(n-char-sequence)` and `infinity` -- so an ascii raw carrying one has
+ * value lines that start with a letter. A digits-only predicate classified
+ * those as junk, which under bound 2 ends the point: the point is short, the
+ * dataset is a read failure, and ONE non finite sample anywhere costs the whole
+ * file (`raw_read(): no useful data found`, every later query "No raw file
+ * loaded"). Before the 0213 fix such a line fell through to my_atof(), the
+ * point was full size and the file loaded with every healthy signal intact --
+ * a degraded read, not a total one. Turning that into a total one is a
+ * regression, so the words are accepted here.
+ *
+ * DECISION (2026-08-09) on exactly which spellings count, since the choice was
+ * open: an optional sign, then `nan` (with an optional parenthesised payload)
+ * or `inf`/`infinity`, matched case insensitively -- i.e. every spelling any
+ * printf can emit for a non finite double, and the same set strtod() accepts --
+ * and the word must END there. `nancy` is therefore NOT a value line and still
+ * terminates the point: the predicate's whole job is to tell a value from a
+ * header or from junk, the only reason to admit a bare word at all is that it
+ * is literally what a C library prints for a non finite double, and `nancy` is
+ * not one of those spellings. Admitting it would only let my_atof() store its
+ * 0.0 as a fabricated sample -- exactly the failure bound 2 exists to stop.
+ * `1.#INF` and `-1.#IND` (MSVC) need no rule: they start with a digit.
+ *
+ * What such a line STORES is unchanged and deliberately so: my_atof()
+ * (src/util.c) has never parsed these words and returns 0.0 for them, which is
+ * what the reader has always recorded. (Measured: the two sscanf-validated
+ * paths in read_raw_ascii_point() -- a point's first, index-bearing line and
+ * the `re,im` pair of an `ac` line -- do store a real non finite, because
+ * scanf's %lf accepts the same spellings strtod() does; only the fast my_atof()
+ * continuation path flattens them to 0. That inconsistency predates this
+ * change.) Making the my_atof() path agree would need strtod() here and would
+ * change what every consumer of raw->values sees -- min/max, dB, the viewer's
+ * autoscale; that is a separate decision, not part of a bounds fix.
+ *
+ * ngspice-46 on this box emits all four of `inf`, `-inf`, `nan`, `-nan` into an
+ * ASCII raw (`set filetype=ascii` + `write`, from `1e300*1e300`, `ln(0)` and
+ * `inf-inf`), so this is not a hypothetical foreign-writer case.
+ */
+static int raw_ascii_number_line(const char *line)
+{
+  const char *p = line;
+  int n;
+  while(SPC(*p)) p++;
+  if(*p == '+' || *p == '-') p++;
+  if(DGT(*p) || (*p == '.' && DGT(p[1]))) return 1;
+  if((n = raw_ascii_kw(p, "nan")) != 0) {
+    p += n;
+    if(*p == '(') { /* glibc/C99 nan(n-char-sequence): take it only if closed */
+      const char *q = p + 1;
+      while(*q && *q != ')' && *q != '\n' && *q != '\r') q++;
+      if(*q != ')') return 0;
+      p = q + 1;
+    }
+  } else if((n = raw_ascii_kw(p, "inf")) != 0) {
+    p += n;
+    p += raw_ascii_kw(p, "inity"); /* C99 spells it both ways */
+  } else {
+    return 0;
+  }
+  /* the word must end here -- `nancy` and `information` are not values */
+  return !(isalnum((unsigned char)*p) || *p == '_');
+}
+
+/* Read one ascii data point (the lines of a `Values:` block belonging to one
+ * point) into tmp[], which holds `maxvars` doubles -- `rawvars` at both call
+ * sites. Returns the number of doubles written; anything != maxvars means the
+ * point is SHORT and the caller must treat it as a read failure (issue 0213).
+ *
+ * Issue 0213: this used to take tmp[] without its capacity and to end a point
+ * only on an empty line or EOF. An otherwise well formed rawfile that merely
+ * lacks the blank separator between points therefore kept appending the NEXT
+ * point's values past the end of the my_calloc(rawvars) buffer, wrecking the
+ * allocator metadata: `xschem raw read <f> tran` reported success and the
+ * process then died in free_rawfile() with "double free or corruption (out)"
+ * -- SIGABRT, taking the editor and any unsaved work with it.
+ *
+ * Two bounds now end a point, besides the empty line and EOF:
+ *
+ *  1. tmp[] is full. `ac` writes two doubles per line (real, imag), so a line
+ *     may only be started while two slots are left: `lines + 1 >= maxvars`.
+ *     On a full point we look at the next line: the expected blank separator is
+ *     consumed, anything else is pushed back with xfseek() so that the next
+ *     point -- or, at the end of a block, read_dataset()'s header scan -- sees
+ *     it. DECISION (2026-08-09, issue 0213 was ambiguous here): that pushback
+ *     makes a separator-less block THIS FUNCTION READS come out correctly
+ *     rather than be rejected. Its points are complete; only the separators are
+ *     missing, and the crash is cured by the bound, not by refusing the file.
+ *     Refusing it would also regress the pre-count pass below, which must be
+ *     able to walk the same points twice.
+ *     The claim stops there, and deliberately: a separator-less block that this
+ *     reader SKIPS rather than reads is still broken, because
+ *     skip_raw_ascii_points() above walks to a blank line and there is none to
+ *     find. So a separator-less OP plot ahead of the wanted transient one still
+ *     costs the whole read. That is a pre-existing defect of the skip, filed as
+ *     doc/claude/issues/0300-*.md and NOT fixed here -- an attempt was reverted
+ *     the same day for over-skipping into the next plot. See its comment.
+ *
+ *  2. a line that does not start a number. Only the FIRST line of a point was
+ *     ever validated (sscanf "%d %lf"); continuation lines went straight to
+ *     my_atof(), which returns 0.0 for "Plotname:" as happily as for "0.0". A
+ *     stray header line or a block truncated mid-point now ends the point --
+ *     short, hence a read failure -- instead of being stored as zeroes.
+ *
+ * Cost: one ftell per POINT (and a seek only on a file that is missing
+ * separators), never one per line, so the hot path is unchanged.
+ */
+static int read_raw_ascii_point(int ac, double *tmp, int maxvars, FILE *fd)
 {
   char line[1024];
   int lines = 0;
   double d, id; /* id = imaginary part for AC */
   int p;
+  #ifdef __unix__
+    long filepos;
+  #else
+    __int3264 filepos;
+  #endif
+
+  if(maxvars <= 0) return 0;
   while(1) {
+    /* bound 1: tmp[] is full (issue 0213) */
+    if(ac ? (lines + 1 >= maxvars) : (lines >= maxvars)) {
+      filepos = xftell(fd);
+      if(fgets(line, 1024, fd) && !raw_ascii_blank_line(line)) {
+        xfseek(fd, filepos, SEEK_SET); /* not our separator: hand it back */
+      }
+      dbg(1, "read_raw_ascii_point(): point complete (%d values) --> return\n", lines);
+      break;
+    }
     if(!fgets(line, 1024, fd)) {
       dbg(1, "premature end of ascii block\n");
       return lines;
     }
-    if(line[0] == '\n' || (line[0] == '\r' && line[1] == '\n')) {
+    if(raw_ascii_blank_line(line)) {
       dbg(1, "found empty line --> return\n");
       break;
+    }
+    /* bound 2: a non numeric line ends the point (issue 0213) */
+    if(!raw_ascii_number_line(line)) {
+      dbg(1, "non numeric line in ascii data block --> return\n");
+      return lines;
     }
     if(lines == 0) {
       if(ac) {
@@ -465,8 +632,11 @@ static int read_raw_ascii_point(int ac, double *tmp, FILE *fd)
 /* read the ascii / binary portion of a ngspice raw simulation file
  * data layout in memory arranged to maximize cache locality
  * when looking up data
+ * returns 1 if the block was read, 0 if it is malformed (issue 0213): a data
+ * block that does not deliver rawvars values per point is a read FAILURE, not a
+ * warning, so no half populated dataset is reported as success.
  */
-static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
+static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
 {
   int i, p, v;
   double *tmp;
@@ -477,15 +647,21 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
     __int3264 filepos;
   #endif
   int npoints;
-  int rawvars = raw->nvars;
+  int rawvars;
+  int res = 1;
 
   if(!raw || !raw->npoints) {
     dbg(0, "read_raw_data_block() no raw struct allocated\n");
-    return;
+    return 0;
   }
+  rawvars = raw->nvars;
 
   /* we store 4 variables (mag, phase, real and imag) but raw file has only real and imag */
   if(ac) rawvars >>= 1;
+  if(rawvars <= 0) {
+    dbg(0, "read_raw_data_block(): no variables in data block\n");
+    return 0;
+  }
   /* read buffer */
   tmp = my_calloc(_ALLOC_ID_, rawvars, (sizeof(double) ));
 
@@ -501,8 +677,13 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
            dbg(0, "Warning: binary block is not of correct size\n");
         }
       } else {
-        if(read_raw_ascii_point(ac, tmp, fd) != rawvars) {
+        if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
            dbg(0, "Warning: ascii block is not of correct size\n");
+           /* issue 0213: stop counting, the block is malformed. The rewind
+            * below still runs, so the stream is left where this pass found it
+            * and the caller is free to give up cleanly. */
+           res = 0;
+           break;
         }
       }
       sweepvar = tmp[0];
@@ -510,6 +691,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
       else npoints++;
     }
     xfseek(fd, filepos, SEEK_SET); /* rewind file pointer */
+    if(!res) {
+      my_free(_ALLOC_ID_, &tmp);
+      return 0;
+    }
   }
   for(p = 0 ; p < raw->datasets; p++) {
     offset += raw->npoints[p];
@@ -528,8 +713,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
         dbg(0, "Warning: binary block is not of correct size\n");
       }
     } else {
-      if(read_raw_ascii_point(ac, tmp, fd) != rawvars) {
+      if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
          dbg(0, "Warning: ascii block is not of correct size\n");
+         res = 0; /* issue 0213: a short point is a read failure */
+         break;
       }
     }
     if(!(raw->sweep1 == raw->sweep2 && raw->sweep1 == -1.0)) {
@@ -563,8 +750,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
     }
     p++;
   }
-  raw->npoints[raw->datasets] = npoints; /* if sweeep1 and sweep2 are given less points are read */
+  /* if sweeep1 and sweep2 are given less points are read */
+  if(res) raw->npoints[raw->datasets] = npoints;
   my_free(_ALLOC_ID_, &tmp);
+  return res;
 }
 
 /* parse ascii raw header section:
@@ -595,7 +784,17 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   int variables = 0, i, done_points = 0;
   char *line = NULL, *varname = NULL, *lowerline = NULL;
   int n = 0, done_header = 0, ac = 0;
-  int exit_status = 0, npoints, nvars;
+  /* npoints/nvars are set by the `No. Points:`/`No. Variables:` header lines,
+   * which a malformed file need not carry -- a `Values:`/`Binary:` line before
+   * either of them reaches the block handlers below with both still unset.
+   * They are then read UNCONDITIONALLY, on every path: by the four dbg() calls
+   * (dbg() is a function in util.c, not a macro, so its varargs are evaluated
+   * whatever the debug level), by skip_raw_ascii_points(npoints, ...) and by
+   * `xfseek(fd, nvars * npoints * sizeof(double), SEEK_CUR)`, which seeks by an
+   * indeterminate amount. That is a genuine uninitialised read that predates
+   * this change; the initialisers are KEPT for it, not for anything the issue
+   * 0213 fix added (issue 0213 review, 2026-08-09). */
+  int exit_status = 0, npoints = 0, nvars = 0;
   int dbglev=1;
   const char *sim_type = NULL;
   Raw *raw;
@@ -624,7 +823,16 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         my_strdup(_ALLOC_ID_, &raw->sim_type, sim_type);
         done_header = 1;
         dbg(dbglev, "read_dataset(): read binary block, nvars=%d npoints=%d\n", nvars, npoints);
-        read_raw_data_block(0, fd, raw, ac);
+        if(!read_raw_data_block(0, fd, raw, ac)) {
+          /* issue 0213: a malformed ascii `Values:` block is a read FAILURE.
+           * Leave exit_status as it is (same rule as the nvars mismatch below):
+           * 0 if nothing was read yet, so free_rawfile() at the end of this
+           * function discards the half populated Raw and `xschem raw read`
+           * returns 0; 1 if earlier datasets read cleanly, which are kept.
+           * raw->datasets is NOT incremented, so the bad dataset is invisible. */
+          dbg(0, "read_dataset(): malformed ascii data block, aborting\n");
+          break;
+        }
         raw->datasets++;
         exit_status = 1;
       } else {
@@ -643,7 +851,14 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         my_strdup(_ALLOC_ID_, &raw->sim_type, sim_type);
         done_header = 1;
         dbg(dbglev, "read_dataset(): read binary block, nvars=%d npoints=%d\n", nvars, npoints);
-        read_raw_data_block(1, fd, raw, ac);
+        if(!read_raw_data_block(1, fd, raw, ac)) {
+          /* same as the ascii case above. The binary reader itself is bounded by
+           * rawvars and still only warns on a short fread, so this fires only on
+           * a missing npoints array or a variable-less block -- both of which
+           * used to be reported as a successful read with no data behind it. */
+          dbg(0, "read_dataset(): malformed binary data block, aborting\n");
+          break;
+        }
         raw->datasets++;
         exit_status = 1;
       } else {
