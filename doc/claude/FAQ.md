@@ -43,8 +43,13 @@ drawing. Three more doors were closed with it:
   this bug. It is gone: `w` now abandons the placement and starts drawing like every other verb,
   and what else you had selected survives.
 
-**Still not scoped: paste / merge.** `Ctrl+V` then `Ctrl+A` then ESC is the same wipe on a sibling
-code path (issues **0242** / **0244**). Treat a pending paste the same way until those land.
+**Paste / merge: scoped too, as of 2026-08-08 (issue 0244 part B).** `Ctrl+V` then `Ctrl+A` then ESC
+used to be the same wipe on a sibling code path, and worse — the emptied drawing also reported
+itself *unmodified*, so nothing prompted. Both are fixed: the cancel now removes exactly what the
+paste brought in, and the `*` stays on the title if the document had unsaved edits before the paste.
+One user-visible consequence to expect: **ESC-ing a paste no longer cleans the "unsaved changes"
+star**, so Close / Quit / File ▸ New prompt again where they had gone quiet. That is the intent, not
+a regression.
 
 ---
 

@@ -460,7 +460,12 @@ measured `orphan=1` on all four label types. It was found by the TRIPWIRE firing
 run, which is the argument for building the detector before declaring the census closed. Two structural notes worth
 more than the fix: (a) the orphan is not a stray glyph but a *connected, netlist-visible*
 `lab_pin`/`ipin` silently renaming the net it sits on, and on the merge doors the document then
-reported itself CLEAN (`modified` 1 → 0, issue **0244**, landing separately) — a decline residue
+reported itself CLEAN (`modified` 1 → 0, issue **0244** — FIXED 2026-08-08: the merge arms latch
+`xctx->pre_merge_modified` before the first mutation and restore it instead of writing 0 flat, and
+the same fix's part B narrows their `delete(1)` to a 0241 stamp, so `Ctrl+V` + `Ctrl+A` + ESC no
+longer wipes the drawing either; its census found the corollary that **nothing tears down a pending
+`STARTMERGE`**, so a second `Ctrl+V` or any placement arm silently COMMITS the pending paste —
+issue **0265**) — a decline residue
 becomes data corruption the moment the residue is a netlist object; (b) the invariant
 "`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
 three form `-place` arms themselves raised `sympin_preview` BEFORE the preview existed and held it
@@ -648,6 +653,18 @@ spec digest). Enforcement TODAY:
   restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
   `.o` linked in, so the NEXT variant's red set is the previous one's. **`rm` the object file, do
   not trust the timestamp**, and re-run the clean baseline after every restore.
+- **The `move_objects` sub-verbs are lowercase-only, and the mismatch is SILENT.** `scheduler.c`
+  compares `argv[2]` against `"start"`/`"step"`/`"end"`/`"abort"`; `xschem move_objects END` matches
+  none of them, falls into the one-shot form's `else` and merely arms a **deferred menu move**
+  (`ui_state |= MENUSTART`) — nothing is committed, no error is raised, and a following assertion is
+  measuring a still-pending gesture. Measured on a pending paste: `ui_state 296 → 65832`, and the
+  next ESC still deleted the paste. Commit with `xschem move_objects end <dx> <dy>`,
+  `xschem move_objects <dx> <dy>` or `xschem paste <dx> <dy>` (all → `ui_state 8`). Issue **0266**;
+  it cost issue 0244's original control row D its meaning.
+- **`move_objects abort` is the constructor for a `STARTMERGE`-without-`STARTMOVE` state**: it
+  clears `STARTMOVE` and returns before the END tail's `STARTMERGE` clear, so
+  `merge` → `move_objects abort` → `abort_operation` reaches `abort_operation()`'s *second*
+  (non-nested) merge arm, which had been assumed untestable headlessly (issue 0244 section C).
 - **Constructing a state the product now refuses**: the modal-gesture gates make the co-armed state
   (a live wire draw + a second gesture) unbuildable from any verb, which is what
   `abort_operation()`'s teardown tests need. `xschem test_gate_bypass 0|1` is the test-only seam for

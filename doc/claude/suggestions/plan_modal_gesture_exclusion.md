@@ -112,12 +112,25 @@ own tests need.
 
 ### Phase 4 — merge / paste (`Ctrl+V`), both directions
 
-**Blocked** on issues **0242** (shared teardown for the merge/paste arms) and **0244** (aborted
-paste marks a dirty schematic clean). A merge preview carries `STARTMERGE`, not the placement bits,
-so `abort_placement_preview()` deliberately does not see it.
+**UNBLOCKED 2026-08-08** — both named blockers are FIXED: **0242** (every door now calls
+`leave_placement_for()`; a merge tears down a live placement) and **0244** (the aborted-paste flag
+lie *and* the un-narrowed merge `delete(1)`, both arms). A merge preview still carries `STARTMERGE`
+and not the placement bits, so `abort_placement_preview()` still deliberately does not see it —
+but the merge arms now have their own scoped, flag-correct teardown to call from, which is exactly
+what this phase needs.
 
-- [ ] wait for 0242/0244
-- [ ] then: merge cancels a live draw, and a draw cancels a live merge
+The direction *merge cancels a live draw* already works (`merge_file()` calls
+`leave_placement_for()`, which is the wire/line-draw teardown too). The direction *a draw cancels a
+live merge* is the remaining work, and it now has a named prerequisite of its own: **issue 0265** —
+nothing tears down a pending `STARTMERGE` at all, so today a second `Ctrl+V` or any placement arm
+silently **commits** the pending paste (measured). Phase 4 should factor the merge teardown out of
+`abort_operation()`'s two arms into a `leave_merge_for()` sibling and call it from the draw verbs;
+that closes 0265 in the same move.
+
+- [x] 0242 / 0244 landed
+- [ ] factor the merge teardown out of `abort_operation()` (select-stamp + `delete(1)` +
+      `pre_merge_modified` restore + `clear_placement_preview()`) into `leave_merge_for()`
+- [ ] then: a draw cancels a live merge (and issue **0265** falls out)
 
 ## Cross-cutting blockers
 
@@ -130,8 +143,9 @@ so `abort_placement_preview()` deliberately does not see it.
   "resolves to nothing → delete nothing" as the backstop. The decline guard came out with it, so
   **the blocker on later phases is lifted**: a new caller may now reach the placement teardown with
   a foreign selection live. `tests/headless/test_placement_wire_gate.tcl` **E7** was rewritten to
-  assert the opposite of what it used to. Still NOT scoped: the **merge/paste** `delete(1)` in
-  `abort_operation()` (issues **0242**/**0244**), so phase 4 inherits the un-narrowed version.
+  assert the opposite of what it used to. The **merge/paste** `delete(1)` in `abort_operation()` was
+  scoped the same way on 2026-08-08 by **issue 0244** part B (same stamp, same slot, both arms), so
+  phase 4 no longer inherits an un-narrowed version.
 - **Issue 0246** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
 - **Issue 0248** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
   the next click; an ordinary `statusmsg(…, 1)` is dropped while a hold is up. Seams:

@@ -326,13 +326,20 @@ the replay/log group, `wireedit`, `headless/run.sh`, `run_regression.tcl` (same 
 
 ## What did NOT change
 
-- **Issue 0244** (`callback.c`'s unconditional `set_modify(0)` in the two `STARTMERGE` arms) is
+- **Issue 0244** (`callback.c`'s unconditional `set_modify(0)` in the two `STARTMERGE` arms) was
   **not** folded in — user decision, 2026-08-08. It is independent: after this fix the paste door
   tears the preview down *before* `merge_file()` runs, so no orphan exists to be reported clean,
   and the `set_modify(0)` clobber survives only on 0244's own repro (dirty doc + plain paste + ESC,
   no preview). Different root cause (a missing pre-merge latch), different files, its own control
   matrix and its own user-visible change. The new test therefore does **not** assert `modified` on
   the merge doors.
+  **UPDATE, later the same day: 0244 is FIXED**, so the `modified=0` half of the damage named in
+  this issue's header is closed — the merge arms latch the pre-merge flag
+  (`xctx->pre_merge_modified`) and restore it, and their `delete(1)` is narrowed to a stamp exactly
+  the way 0241 narrowed the placement one. 0244's census also **corrected a premise recorded here**:
+  the gating closed only *placement-then-merge*. Nothing tears down a pending `STARTMERGE`, so
+  *merge-then-placement* still orphans — the pending paste is silently **committed**, measured on
+  both doors and filed as issue **0265**.
 - **The teardown is still not inside `unselect_all()`** — 87 C call sites and 817 scripted ones,
   several inside netlisting and live fluid passes, and it would make a *deselect* silently delete
   objects. Issue 0123's stated reason still holds.
