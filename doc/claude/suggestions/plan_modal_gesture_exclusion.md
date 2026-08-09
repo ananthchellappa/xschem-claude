@@ -1,8 +1,17 @@
 # Roadmap — one modal gesture at a time
 
-Status: **phases 0, 1 and 2 done; 3 open; 4 blocked.** Owner: `open_pdk`. Phases 1–2 landed
-2026-08-08 (issue **0247** FIXED, issue **0248** FIXED first), user-ratified the same day as
-option (a) cancel. Last measured 2026-08-08.
+Status: **COMPLETE — all phases done.** Owner: `open_pdk`. Phases 1–2 landed 2026-08-08 (issue
+**0247** FIXED, issue **0248** FIXED first), user-ratified the same day as option (a) cancel;
+phase 4 landed 2026-08-08 (issue **0265**); phase 3, the last one, landed 2026-08-09 (issue
+**0269**, with **0268** / **0270** / **0271** / **0272** found by its census and fixed with it).
+Last measured 2026-08-09.
+
+**The plan as a whole is done.** All four gesture families now have a teardown/gate pair and every
+arm calls every gate that applies to it, in both interface branches. What remains of `WIRING.md`
+§8 class **D** is the two deliberate residues **0262** (the bare `xschem unselect_all` verb: it
+arms nothing, so the rule has no subject) and **0263** (`netlist` netlists a live preview but
+clears no gesture bits — a different defect, not a door), plus the wire-family `ui_state2` residue
+recorded and asserted-as-present in issue **0268**.
 
 ## The invariant
 
@@ -95,7 +104,7 @@ Effort: ~7 call sites, same pattern as `p`. **Breaks `test_add_wire_label.tcl` G
       only by running the suite
 - [x] issue **0247** → FIXED (merge/`Ctrl+V` stays open, tracked there and in phase 4)
 
-### Phase 3 — wire/line and placements cancel a live SHAPE draw
+### Phase 3 — wire/line and placements cancel a live SHAPE draw — **COMPLETE 2026-08-09**
 
 The reverse of phase 1; needs the new `abort_shape_draw()` helper. **Unchanged by phases 1-2**, and
 now the only asymmetry left outside merge: `r` then `w` still leaves `STARTRECT` armed under a
@@ -103,12 +112,26 @@ fresh wire draw. Two things phases 1-2 hand it: the statusbar message will actua
 (issue 0248), and `xschem test_gate_bypass` already exists for building whatever co-armed state its
 own tests need.
 
-- [ ] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair
-- [ ] call from every wire/line verb (the 11 sites `leave_placement_for()` already uses)
-- [ ] call from every placement verb (the sites `leave_wire_draw_for()` already uses)
-- [ ] decide what an in-progress polygon does — `abort_operation()` currently **commits** it
-      (`new_polygon(END, …)` runs before the teardown); abandoning it instead is a behaviour change
-- [ ] tests + sabotage
+- [x] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair — done
+      2026-08-09, `src/callback.c`. Delete-free, undo-free, and (after issue **0270** moved the
+      polygon's `set_modify`) modify-flag-free, so it needs none of the 0241/0244/0267 machinery
+      the other two teardowns carry. It DOES owe the rubber band, and none of
+      `new_rect`/`new_arc`/`new_polygon`/`zoom_rectangle` honoured `CLEAR` — the `RUBBER|CLEAR`
+      guard was added to all four (`src/actions.c`), a strict no-op for every existing caller
+- [x] call from every wire/line verb, every placement verb and every shape verb — **41 sites**,
+      enumerated from the state rather than the verbs: 24 (exactly `leave_merge_for()`'s list) +
+      15 shape arms + `undo`/`redo`. The 15 shape arms also gained `leave_placement_for()` and
+      `leave_merge_for()`, which they had never carried
+- [x] decide what an in-progress polygon does — **ratified 2026-08-09**: a competing gesture
+      ABANDONS it; ESC keeps COMMITTING it (`abort_operation()`'s `new_polygon(END, …)` is
+      unchanged, and so is its action-log line)
+- [x] decide whether the ZOOM BOX belongs in the helper — **ratified 2026-08-09: included.** It
+      stores nothing and needs no viewport restore, but it owns the next click exactly as an edit
+      shape does. The `z` key's decline guard became a cancel
+- [x] tests + sabotage — `tests/headless/test_shape_draw_gate.tcl`, 412 checks, six sabotage runs
+      with disjoint red sets; `test_placement_wire_gate.tcl` D1/D2 constructors rebuilt on
+      `test_gate_bypass`; new test seam `xschem test_shape_click` for the post-click state of
+      arc/circle/zoom, which `xschem callback` cannot reach headlessly
 
 ### Phase 4 — merge / paste (`Ctrl+V`), both directions — **COMPLETE 2026-08-08**
 

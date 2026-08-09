@@ -1198,6 +1198,18 @@ static int run_core(const char *verb, int argc, const char *argv[])
      * consistent object model, BEFORE the undo stack pointer moves. redo is a door even with an
      * EMPTY redo stack, because pop_undo_keep_selection() ends with an unconditional
      * unselect_all(0) (select.c) that zeroes ui_state whether or not the core popped anything. */
+    /* ISSUE 0269 -- phase 3, and the shape draw lands on leave_placement_for()'s side of the
+     * undo question, NOT leave_merge_for()'s. The merge gate is deliberately absent from undo/redo
+     * because a pending merge is undo-covered (merge_file() pushes its baseline before loading) and
+     * a delete()+push_undo in front of the pop would make undo RESTORE the paste. None of that
+     * applies here: a shape teardown runs no delete() and pushes no undo, so there is nothing for
+     * the pop to invert. Positively, it is needed -- pop_undo_keep_selection() ends in an
+     * unconditional unselect_all(0) whose `ui_state = 0` drops the shape bits with the band still
+     * stroked and no owner to erase it, and when NOTHING is selected the bits survive the pop
+     * intact (measured: `rect gui` + `undo` -> ui_state still 2), so the anchor nl_x1/nl_y1
+     * outlives a reloaded document and the next click commits geometry measured against a drawing
+     * that no longer exists. */
+    leave_shape_draw_for("Redo");
     leave_placement_for("Redo");
     pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
     return TCL_OK;
@@ -1229,6 +1241,9 @@ static int run_core(const char *verb, int argc, const char *argv[])
      * reload, which does not run for the MEMORY backend, for `xschem undo 1 1` (a redo wearing
      * the undo verb) or for an empty stack -- while the unconditional unselect_all(0) at the end
      * of pop_undo_keep_selection() drops START_SYMPIN on every one of those paths. */
+    leave_shape_draw_for(redo ? "Redo" : "Undo");   /* issue 0269 -- phase 3; see the redo
+                                                    * verb above for why undo/redo gate the
+                                                    * shape draw but not the merge */
     leave_placement_for(redo ? "Redo" : "Undo");
     pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
     return TCL_OK;
@@ -1841,6 +1856,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* issue 0243 F1 -- see leave_wire_draw_for(). In a symbol view the modal draw this
          * collides with is the graphic LINE (`l`/`L`), which the same helper covers. */
         leave_wire_draw_for("Add Pin");
+        leave_shape_draw_for("Add Pin");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         /* issue 0265 -- a pending PASTE is the third modal gesture this arm can land on, and this
          * is one of the three arms that carry NO leave_placement_for(): they handle a previous
          * PLACEMENT themselves, with the undo-clean per-keystroke re-arm dance below, because the
@@ -1930,6 +1946,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *nm = tclgetvar("pin_new_name");
         const char *dr = tclgetvar("pin_new_dir");
         leave_wire_draw_for("Add Pin");   /* issue 0243 F1 -- see leave_wire_draw_for() */
+        leave_shape_draw_for("Add Pin");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         leave_merge_for("Add Pin");       /* issue 0265 -- see the add_symbol_pin twin above for
                                            * why the gate, and not the re-arm dance below, is what
                                            * a pending merge needs */
@@ -2013,6 +2030,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * it -- `l` is Tcl-backed, so dispatch_input_action() cannot gate it (callback.c:5249).
        * NOT applied to -drop: that is the pure commit seam, and by then the wire is long gone. */
       if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_wire_draw_for("Add Wire Label");
+      if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_shape_draw_for("Add Wire Label");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
         if(!nm) nm = "";
@@ -2089,6 +2107,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * back: there is no form to re-trigger, so before the gate ESC was the only exit from the
        * jam and it threw the graph away (issue 0247). */
       leave_wire_draw_for("Add graph");
+      leave_shape_draw_for("Add graph");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       /* issue 0242 -- see leave_placement_for(). The OTHER modal gesture this arm can land on
        * top of. Load-bearing beyond the orphan: this branch re-sets START_SYMPIN below, so a
        * leaked sympin_preview would still be 1 when the graph is later ESC-ed, and
@@ -2150,6 +2169,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * on the keystroke/menu pick, not on whether the follow-up dialog is confirmed. Cancelling
        * the chooser therefore does NOT bring the wire back -- stated in issue 0247. */
       leave_wire_draw_for("Add image");
+      leave_shape_draw_for("Add image");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       /* issue 0242 -- see leave_placement_for(). Same siting argument as the wire gate right
        * above: on the pick, before the chooser, because the unselect_all(1) on the next line has
        * already ended the previous state either way. A CANCELLED chooser therefore leaves neither
@@ -2347,6 +2367,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* ARM branch only -- the coordinate form above commits an arc outright and is a replay
          * seam. phase 1, see leave_wire_draw_for(). */
         leave_wire_draw_for("Arc");
+        leave_shape_draw_for("Arc");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Arc");
+        leave_merge_for("Arc");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTARC;
         Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -2717,6 +2740,19 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "circle"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 0272 -- and the read-only reject its sibling `xschem arc` has always had. Without it
+       * a read-only window armed a circle and the third click stored an arc in it (store_arc runs
+       * unconditionally; only set_modify is readonly-suppressed). Same unfinished verb, same fix. */
+      if(scheduler_readonly_reject(interp, "circle")) return TCL_ERROR;
+      /* ISSUE 0272 -- this verb carried NO gate of any kind until phase 3, while its key
+       * (callback.c `C`) and context-menu (pick 20) twins have been gated since phase 1:
+       * `xschem wire gui` + `xschem circle` left ui_state 65537 (STARTWIRE|MENUSTART) with
+       * last_command still armed (measured). Phase 1 gated the shape KEYS and missed the two
+       * shape VERBS that arm MENUSTART directly. */
+      leave_shape_draw_for("Circle");
+      leave_wire_draw_for("Circle");
+      leave_placement_for("Circle");
+      leave_merge_for("Circle");
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTCIRCLE;
     }
@@ -6929,6 +6965,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         int infix_interface = tclgetboolvar("infix_interface");
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a line outright and is the replay seam. */
+        leave_shape_draw_for("Line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Line")) return TCL_OK;
         /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- a DRAW cancels a live merge, the
          * direction that was missing (the reverse already worked: merge_file() calls
@@ -6949,6 +6986,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       else {
+        leave_shape_draw_for("Line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Line")) return TCL_OK;  /* issue 0243 F2 */
         if(!leave_merge_for("Line")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
@@ -9178,6 +9216,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * (they differ only in whether the symbol/prop is given up front), so all three are gated;
        * scripted instantiation that commits outright goes through `xschem instance`, not here. */
       leave_wire_draw_for("Insert symbol");
+      leave_shape_draw_for("Insert symbol");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       /* issue 0242 -- see leave_placement_for(). place_symbol reaches the orphan WITHOUT an
        * unselect_all: it just ORs PLACE_SYMBOL over the live preview below, so the two placements
        * share one STARTMOVE and the first one's instance is left committed when the second is
@@ -9224,6 +9263,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* phase 2 -- see leave_wire_draw_for(). The scriptable twin of `case 't'` (callback.c) and
        * of context-menu pick 6; all three arm a PLACE_TEXT cursor placement. */
       leave_wire_draw_for("Place text");
+      leave_shape_draw_for("Place text");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       /* issue 0242 -- see leave_placement_for(). Gated before the unselect_all(1) below AND
        * before place_text()'s modal text dialog, so a CANCELLED dialog cannot leave the terminal
        * state (measured ui=0 with sympin_preview stuck at 1: the deselect had already dropped
@@ -9331,6 +9371,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* phase 1 -- see leave_wire_draw_for(). This is also the `P` key: Shift+P is bound to the
          * registry action tools.insert_polygon, whose command IS `xschem polygon gui`. */
         leave_wire_draw_for("Polygon");
+        leave_shape_draw_for("Polygon");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Polygon");
+        leave_merge_for("Polygon");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -9342,6 +9385,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       } else {
         leave_wire_draw_for("Polygon");   /* truncated coordinate forms arm here too */
+        leave_shape_draw_for("Polygon");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Polygon");
+        leave_merge_for("Polygon");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTPOLYGON;
       }
@@ -10247,6 +10293,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * cadence_style_rc sets) the rectangle only arms MENUSTART and the FIRST CLICK starts it,
          * and that click is exactly what the live wire draw would keep stealing. */
         leave_wire_draw_for("Rectangle");
+        leave_shape_draw_for("Rectangle");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Rectangle");
+        leave_merge_for("Rectangle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -10260,6 +10309,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* argc <= 5 and not "gui": a TRUNCATED coordinate form (`xschem rect 10 20`) lands here,
          * in the ARM branch, not in the commit branch above -- gate by branch, not by verb name */
         leave_wire_draw_for("Rectangle");
+        leave_shape_draw_for("Rectangle");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Rectangle");
+        leave_merge_for("Rectangle");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTRECT;
       }
@@ -12391,6 +12443,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "snap_wire"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      leave_shape_draw_for("Snap wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(!leave_placement_for("Snap wire")) return TCL_OK;  /* issue 0243 F2 */
       if(!leave_merge_for("Snap wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
       xctx->ui_state |= MENUSTART;
@@ -12721,8 +12774,9 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* test_gate_bypass [0|1]
      *   TEST-ONLY seam (issue 0247, phases 1-2 of plan_modal_gesture_exclusion.md). Returns the
-     *   current setting; with an argument, sets it. 1 disables the modal-gesture gates
-     *   (leave_wire_draw_for / leave_placement_for) for this context.
+     *   current setting; with an argument, sets it. 1 disables ALL FOUR modal-gesture gates
+     *   (leave_wire_draw_for / leave_placement_for / leave_merge_for / leave_shape_draw_for) for
+     *   this context.
      *   Why it has to exist: those gates now cover EVERY verb that can arm a second modal gesture,
      *   which is the point -- but it also means the CO-ARMED state (a live wire draw plus a
      *   placement or shape draw) can no longer be built from any verb, and abort_operation()'s
@@ -12739,6 +12793,39 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) xctx->gate_bypass = atoi(argv[2]) ? 1 : 0;
       Tcl_SetResult(interp, my_itoa(xctx->gate_bypass), TCL_VOLATILE);
+    }
+
+    /* test_shape_click
+     *   TEST-ONLY seam (issue 0269, phase 3 of plan_modal_gesture_exclusion.md). Performs, for a
+     *   MENU-ARMED shape, exactly what the FIRST CANVAS CLICK does: the matching arm of
+     *   check_menu_start_commands() (callback.c) followed by the release-side `ui_state &=
+     *   ~MENUSTART` (callback.c). Returns 1 if a menu-armed shape was advanced, 0 otherwise.
+     *   Why it has to exist: `xschem arc|circle|zoom_box` only ever arm MENUSTART plus a ui_state2
+     *   discriminator -- STARTARC and STARTZOOM are set by the click, and `xschem callback ...`
+     *   SEGFAULTS under --nogui, so the post-click half of three of the five shape gestures had no
+     *   headless state at all. Without it, abort_shape_draw()'s STARTARC / STARTZOOM paths would be
+     *   shipped with no oracle, which is the issue 0246 residue class.
+     *   It is a stand-in for the click, NOT a bypass: it runs the same primitives in the same order
+     *   and does not touch any gate. Not bound to any key, menu or toolbar item, and not logged. */
+    else if(!strcmp(argv[1], "test_shape_click"))
+    {
+      int done = 0;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(xctx->ui_state & MENUSTART) {
+        if(xctx->ui_state2 & MENUSTARTRECT) {
+          new_rect(PLACE, xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTPOLYGON) {
+          new_polygon(PLACE, xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTARC) {
+          new_arc(PLACE, 180., xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTCIRCLE) {
+          new_arc(PLACE, 360., xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTZOOM) {
+          zoom_rectangle(START); done = 1;
+        }
+        if(done) xctx->ui_state &= ~MENUSTART;   /* the release, callback.c */
+      }
+      Tcl_SetResult(interp, my_itoa(done), TCL_VOLATILE);
     }
 
     /* text x y rot flip text props size draw
@@ -13389,6 +13476,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         int infix_interface = tclgetboolvar("infix_interface");
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a wire outright and is the replay seam. */
+        leave_shape_draw_for("Wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Wire")) return TCL_OK;
         if(!leave_merge_for("Wire")) return TCL_OK;   /* issue 0265 -- phase 4, see the `line gui`
                                                        * arm above for the branch discipline */
@@ -13405,6 +13493,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->ui_state2 = MENUSTARTWIRE;
         }
       } else {
+        leave_shape_draw_for("Wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Wire")) return TCL_OK;  /* issue 0243 F2 */
         if(!leave_merge_for("Wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
@@ -13491,6 +13580,15 @@ static int xschem_cmds_z(Tcl_Interp *interp, int argc, const char *argv[], int *
         draw();
       }
       else {
+        /* ISSUE 0272 -- the ARM branch, which carried no gate of any kind until phase 3 (the
+         * coordinate form above is a pure commit and stays ungated). Measured: `xschem wire gui`
+         * + `xschem zoom_box` -> ui_state 65537. A zoom box owns the next click exactly as an
+         * edit shape does, so leaving one armed under a fresh gesture steals that click --
+         * which is why the zoom box is inside abort_shape_draw() at all (ratified 2026-08-09). */
+        leave_shape_draw_for("Zoom box");
+        leave_wire_draw_for("Zoom box");
+        leave_placement_for("Zoom box");
+        leave_merge_for("Zoom box");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTZOOM;
       }

@@ -562,6 +562,19 @@ void merge_file(int selection_load, const char ext[])
       * Sited INSIDE `if(fd)` and BEFORE push_undo() for two reasons: a cancelled Merge file
       * dialog (above) must not destroy the preview, and the teardown's delete() must land before
       * the merge's undo baseline is taken, or undoing the paste would resurrect the preview. */
+     /* ISSUE 0271 -- the WIRE/LINE draw gate, which this funnel never had. plan phase 4 recorded
+      * that "merge cancels a live draw already works, because merge_file() calls
+      * leave_placement_for(), which is the wire/line teardown too"; that is FALSE and was measured
+      * so on 2026-08-09 -- leave_placement_for() calls abort_placement_preview(), which touches
+      * only START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT and has never looked at STARTWIRE|STARTLINE.
+      * `xschem wire gui` + `xschem merge f` left ui_state 297 (STARTWIRE|STARTMOVE|SELECTION|
+      * STARTMERGE) with last_command still 1, i.e. exactly the two-modal-gestures jam issue 0240
+      * is about, in the one direction phases 0-4 all believed was already closed.
+      * ISSUE 0269 -- and the shape twin beside it, for the same funnel and the same reason.
+      * Both are band-erasing teardowns and both run BEFORE leave_placement_for(): the erase tiles
+      * from save_pixmap, and the placement teardown can reach a full draw(). */
+     leave_shape_draw_for(selection_load == 2 ? "Paste" : "Merge");
+     leave_wire_draw_for(selection_load == 2 ? "Paste" : "Merge");
      leave_placement_for(selection_load == 2 ? "Paste" : "Merge");
      /* ISSUE 0265 -- and the merge twin, for a merge armed on top of a merge (a second Ctrl+V).
       * unselect_all(1) three lines below zeroes ui_state wholesale (select.c) and so dropped

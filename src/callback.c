@@ -284,11 +284,18 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
  * for STARTRECT/STARTARC means new_rect/new_arc(PLACE|END) commits a stray object and marks the
  * file modified. The set is exactly the gesture bits redraw_w_a_l_r_p_z_rubbers() re-strokes, plus
  * the menu arm; STARTWIRE|STARTLINE are excluded because the wire/line block owns them.
- * ui_state2 is deliberately untouched -- abort_operation() has never cleared it on any path
- * (WIRING.md §7), and clearing it on one path only would make that inconsistency worse. */
+ *
+ * ISSUE 0269 -- the shape half of that set now has a real owner, abort_shape_draw() below, so this
+ * calls it instead of clearing the bits by hand. Two things change on these paths, both fixes:
+ * the rubber band is ERASED rather than merely orphaned (none of the three early returns runs a
+ * draw(), so the last stroke used to stay on screen), and the shape bits of ui_state2 go with it
+ * (issue 0268: `arc gui` + `wire gui` + ESC left ui_state2 = MENUSTARTARC, ui_state = 0).
+ * The bare `&= ~MENUSTART` stays for the NON-shape menu arms -- pending move / copy / wirecut /
+ * rotate / descend -- which own no band and which abort_shape_draw() deliberately does not touch. */
 static void clear_orphan_gesture_bits(void)
 {
-  xctx->ui_state &= ~(STARTRECT | STARTPOLYGON | STARTARC | STARTZOOM | MENUSTART);
+  abort_shape_draw();
+  xctx->ui_state &= ~MENUSTART;
 }
 
 /* resets UI state and aborts any pending operation. deselect!=0 also clears the
@@ -459,6 +466,16 @@ void abort_operation(int deselect)
    * branch pays here is redundant rather than missing -- and it only runs when the stamp resolves
    * to nothing. Accepted: see the branch's own comment for why one body with a spare draw() beats
    * a `dr` parameter answered eleven times. */
+  /* ISSUE 0269 -- the shape half, on the fall-through path. The `ui_state = 0` two lines down would
+   * drop the bits anyway and the draw() below would repaint over the band, so this is not about the
+   * pixels: it is about ui_state2, which nothing has ever cleared here (issue 0268), and about one
+   * owner for the state rather than three places that each know part of it. Sited BEFORE
+   * abort_pending_merge(), which can draw(): the shape erase tiles from save_pixmap and must
+   * precede any full repaint. Called directly rather than through leave_shape_draw_for(), for the
+   * reason the merge arm above states: ESC is not a competing gesture, so there is no `what` to
+   * name and no statusbar hold to raise. A live STARTPOLYGON never reaches here -- new_polygon(END)
+   * at the top of this function has already committed it, which is the ratified ESC behaviour. */
+  abort_shape_draw();
   abort_pending_merge();
   xctx->ui_state = 0;
   if(deselect) unselect_all(1);
@@ -504,6 +521,7 @@ static void start_place_symbol(void)
      * 0243 F1; this is the OTHER component-insert route (context-menu Insert symbol, the `I` key
      * and the Insert key, whenever new_file_browser is off) and it never went through it. */
     leave_wire_draw_for("Insert symbol");
+    leave_shape_draw_for("Insert symbol");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
     /* issue 0242 -- the keyboard/context-menu twin of the `xschem place_symbol` verb, which is
      * gated in scheduler.c. Same rule at every arm, not just the one the bug report named. */
     leave_placement_for("Insert symbol");
@@ -856,8 +874,11 @@ int abort_pending_merge(void)
  * what you meant), same shape, same reason for living at the VERBS rather than inside the shared
  * primitive every click also reaches. Called from merge_file() itself (a second Ctrl+V), from all
  * twelve placement arms, and from the wire/line draw arms -- the last of those is the remaining
- * direction of plan_modal_gesture_exclusion.md phase 4 (`merge cancels a live draw` already worked,
- * because merge_file() calls leave_placement_for(), which is the wire/line teardown too).
+ * direction of plan_modal_gesture_exclusion.md phase 4. (That plan also recorded `merge cancels a
+ * live draw` as already working, "because merge_file() calls leave_placement_for(), which is the
+ * wire/line teardown too" -- FALSE, and measured so: leave_placement_for() calls
+ * abort_placement_preview(), which never touches STARTWIRE|STARTLINE. Issue 0271 gave merge_file()
+ * the wire gate it never had.)
  * Deliberately NOT called from the undo/redo verbs, unlike leave_placement_for(): a pending merge is
  * fully covered by the undo stack (merge_file() pushes its baseline BEFORE loading), so `undo`
  * already removes the paste correctly -- and a delete()+push_undo run in front of the pop would make
@@ -866,6 +887,109 @@ int abort_pending_merge(void)
  * `what` is just the name of whatever seized the gesture. Returns 1 if the caller may go ahead; like
  * leave_placement_for() it never declines today, but the int is kept so a future refusal needs no
  * call-site churn. */
+/* Tear down a live SHAPE draw -- rectangle, polygon, arc, circle or zoom box -- without committing
+ * it. The fourth teardown of the family, after abort_wire_line_command(), abort_placement_preview()
+ * and abort_pending_merge(). Issue 0269, phase 3 of
+ * doc/claude/suggestions/plan_modal_gesture_exclusion.md.
+ *
+ * WHY IT IS NEEDED. Until this existed NOTHING abandoned a shape draw: the four bits were set by
+ * actions.c and cleared only by their own completion, by unselect_all()'s wholesale `ui_state = 0`,
+ * or by clear_orphan_gesture_bits() below on the ESC path -- a residue sweep, not a teardown. So
+ * every other gesture armed straight on top of a live shape (measured: `rect gui` + `wire gui` ->
+ * ui_state 3, `rect gui` + `place_symbol` -> 8234, `rect gui` + merge -> 298), and the co-armed
+ * state is unusable in exactly the way issue 0240 documented for wire/line: handle_button_press()
+ * runs check_menu_start_commands() BEFORE end_place_move_copy_zoom(), and inside the latter all
+ * four shape bits are tested before the STARTMOVE arm that commits a placement. STARTPOLYGON is
+ * the worst case and is UNBOUNDED -- new_polygon(ADD) never clears it, so every click adds a point
+ * and a preview armed on top can never be dropped at all.
+ *
+ * WHAT IT DOES, AND WHAT IT DOES NOT. A shape draw owns no objects: new_rect/new_arc/new_polygon
+ * push undo and store only when the gesture COMPLETES, and zoom_rectangle() never touches the
+ * document. So unlike the placement and merge teardowns there is no delete(), no undo baseline to
+ * strand, no selection stamp to resolve and (since issue 0270 moved the polygon's set_modify(1)
+ * down to its store_poly) no modify flag to restore. What it does owe is the RUBBER BAND: it is
+ * painted, and clearing the bit only stops redraw_w_a_l_r_p_z_rubbers() re-stroking it on the next
+ * motion -- the last stroke stays on screen. Hence the RUBBER|CLEAR erase FIRST, before the bits go
+ * and before any caller's draw(): the erase tiles from save_pixmap, which a full draw() regenerates
+ * (the ordering rule already documented in abort_operation() below).
+ *
+ * BOTH INTERFACE BRANCHES. `infix_interface 1` arms the gesture at the keystroke (STARTRECT etc.);
+ * `0` -- what cadence_style_rc sets -- arms MENUSTART plus a MENUSTARTSHAPE bit in ui_state2 and the
+ * first click starts it. Testing ui_state alone would look green and do nothing for cadence users
+ * (plan landmine 5). MENUSTART is cleared only when the bit that qualifies it IS a shape: the same
+ * bit also carries pending move / copy / wirecut / rotate / descend arms, which own no band.
+ *
+ * THE POLYGON, ratified 2026-08-09: a competing gesture ABANDONS an in-progress polygon (no
+ * store_poly, no push_undo, no `xschem polygon ...` action-log line), while ESC keeps COMMITTING it
+ * -- abort_operation() still calls new_polygon(END) below, unchanged. The two are not inconsistent:
+ * ESC is the gesture's own terminal and closing the polygon is its documented meaning, whereas a
+ * second gesture is the ratified "whatever you just pressed is what you meant" rule, and silently
+ * committing a half-drawn polygon because the user pressed `w` is exactly the issue 0265 defect
+ * class. Abandoning also owes the point buffers, which only the commit branch frees today.
+ *
+ * THE ZOOM BOX is included, ratified the same day. It stores nothing and dirties nothing, so the
+ * teardown is a pure bit-clear plus band erase (zoom_rectangle() writes xorigin/zoom only inside
+ * its END branch, so an abandoned box owes no viewport restore) -- but it jams identically, because
+ * it owns the next click, and leaving it armed under a fresh gesture steals that click.
+ *
+ * Returns 1 if a shape draw was actually torn down. */
+int abort_shape_draw(void)
+{
+  unsigned int live, menu;
+  if(!xctx) return 0;
+  live = xctx->ui_state & (STARTRECT | STARTPOLYGON | STARTARC | STARTZOOM);
+  menu = (xctx->ui_state & MENUSTART) ? (xctx->ui_state2 & MENUSTARTSHAPE) : 0;
+  if(!live && !menu) return 0;
+  /* THE ERASE, FIRST -- while the bits and the nl_* coordinates still describe the painted band.
+   * Each of these is the RUBBER branch minus its re-stroke (actions.c); every drawtemp* primitive
+   * is has_x-guarded, so this is a no-op headless rather than a crash. */
+  if(live & STARTZOOM)    zoom_rectangle(RUBBER | CLEAR);
+  if(live & STARTARC)     new_arc(RUBBER | CLEAR, 0., xctx->mousex_snap, xctx->mousey_snap);
+  if(live & STARTRECT)    new_rect(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+  if(live & STARTPOLYGON) new_polygon(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+  xctx->ui_state &= ~(STARTRECT | STARTPOLYGON | STARTARC | STARTZOOM);
+  /* ...and the shape bits of ui_state2, on BOTH paths. Not just the menu one: the first canvas
+   * click consumes MENUSTART (callback.c's release arm) and LEAVES the discriminator behind, so a
+   * clicked-then-abandoned arc kept ui_state2 = MENUSTARTARC with ui_state 0 -- the same stale-bit
+   * residue issue 0268 measured on the ESC path, one step further along. Only the shape bits:
+   * abort_wire_line_command() above zeroes the word wholesale, which is safe there only because it
+   * has already established that the arm is a wire/line one, whereas the same blanket clear here
+   * would silently cancel a co-existing MENUSTARTSTRETCH or MENUSTARTDESCEND. */
+  xctx->ui_state2 &= ~MENUSTARTSHAPE;
+  if(menu) xctx->ui_state &= ~MENUSTART;
+  if(live & STARTPOLYGON) {
+    /* the point buffers, freed by the commit branch (actions.c) and by nobody else. AFTER the
+     * erase above, which reads nl_polyx/nl_polyy and nl_points. */
+    my_free(_ALLOC_ID_, &xctx->nl_polyx);
+    my_free(_ALLOC_ID_, &xctx->nl_polyy);
+    xctx->nl_maxpoints = xctx->nl_points = 0;
+  }
+  return 1;
+}
+
+/* The shape twin of leave_wire_draw_for() (scheduler.c) and, like it, `void`: this gate can never
+ * decline. The other two gates return int because their teardown is a delete() they may have to
+ * refuse; this one deletes nothing, so there is no refusal to express -- including no `readonly`
+ * check. That asymmetry is deliberate and load-bearing for the zoom box: `z` / `xschem zoom_box` is
+ * a VIEW gesture and is the one shape arm a read-only window can actually reach, so a readonly
+ * refusal here would leave exactly that case ungated. Issue 0269.
+ * Called from every ARM -- key, menu, toolbar, context menu, scripted verb -- and never from the
+ * shared per-click primitives (new_rect(PLACE) and friends are also the CONTINUATION of a running
+ * draw, so a teardown there would kill a gesture on an ordinary mouse click; the same rule keeps
+ * leave_placement_for() out of start_wire()/start_line()). Never from a pure-commit coordinate form
+ * (`xschem rect x1 y1 x2 y2`, `xschem polygon ...`, `xschem arc x y r a b layer`,
+ * `xschem zoom_box x1 y1 x2 y2`): those are the replay/test seams. Gate by BRANCH, not by verb --
+ * a truncated form (`xschem rect 10 20`) falls into the ARM branch. */
+void leave_shape_draw_for(const char *what)
+{
+  char msg[128];
+  if(!xctx) return;
+  if(xctx->gate_bypass) return;   /* test-only construction seam, see xschem.h gate_bypass */
+  if(!abort_shape_draw()) return;
+  my_snprintf(msg, S(msg), "%s: in-progress shape abandoned", what);
+  statusmsg_hold(msg, 1);
+}
+
 int leave_merge_for(const char *what)
 {
   char msg[128];
@@ -4634,12 +4758,15 @@ static void context_menu_action(double mx, double my)
       start_place_symbol();
       break;
     case 2:
+      leave_shape_draw_for("Insert wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(!leave_placement_for("Insert wire")) break;  /* issue 0243 F2 -- see leave_placement_for() */
-      /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- the remaining direction: a DRAW
-       * cancels a live merge. (The other direction already worked: merge_file() calls
-       * leave_placement_for(), which is the wire/line teardown too.) Without this the paste stayed
-       * armed UNDER the new draw -- measured ui_state 297 = STARTWIRE|STARTMERGE|STARTMOVE|
-       * SELECTION -- and one ESC then had to serve two gestures. */
+      /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- one direction: a DRAW cancels a
+       * live merge. Without this the paste stayed armed UNDER the new draw -- measured ui_state
+       * 297 = STARTWIRE|STARTMERGE|STARTMOVE|SELECTION -- and one ESC then had to serve two
+       * gestures. The OTHER direction was recorded as already working, "because merge_file() calls
+       * leave_placement_for(), which is the wire/line teardown too" -- that was FALSE (issue 0271,
+       * measured: the SAME ui_state 297 from `wire gui` + `merge`), and merge_file() now carries
+       * leave_wire_draw_for() of its own. */
       if(!leave_merge_for("Insert wire")) break;
       prev_state = xctx->ui_state;
       start_wire(mx, my);
@@ -4649,6 +4776,7 @@ static void context_menu_action(double mx, double my)
       }
       break;
     case 3:
+      leave_shape_draw_for("Insert line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(!leave_placement_for("Insert line")) break;  /* issue 0243 F2 -- see leave_placement_for() */
       if(!leave_merge_for("Insert line")) break;      /* issue 0265 -- phase 4, see the wire pick */
       prev_state = xctx->ui_state;
@@ -4660,6 +4788,17 @@ static void context_menu_action(double mx, double my)
       break;
     case 4:
       leave_wire_draw_for("Rectangle");  /* phase 1 -- see leave_wire_draw_for() */
+      /* ISSUE 0269 -- phase 3, and the half of it the plan's own box called "call from every
+       * placement verb". A SHAPE arm is a co-arm in EVERY direction, not just against a wire draw:
+       * phase 1 gave the shape arms leave_wire_draw_for() and stopped there, so `rect gui` over a
+       * live Add-Pin preview (measured ui_state 8234 / 16426) or over a pending paste (298) still
+       * left BOTH gestures armed -- and a shape over another shape is a co-arm too (`rect gui`
+       * then `rect 10 20` -> 65538, STARTRECT under a fresh MENUSTARTRECT). One ratified rule, all
+       * four gates, at every shape arm. Order: the two band-erasing gates first (they tile from
+       * save_pixmap), then placement before merge for the shared preview_sel slot. */
+      leave_shape_draw_for("Rectangle");
+      leave_placement_for("Rectangle");
+      leave_merge_for("Rectangle");
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
@@ -4667,6 +4806,9 @@ static void context_menu_action(double mx, double my)
       break;
     case 5:
       leave_wire_draw_for("Polygon");    /* phase 1 -- see leave_wire_draw_for() */
+      leave_shape_draw_for("Polygon");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick */
+      leave_placement_for("Polygon");
+      leave_merge_for("Polygon");
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
@@ -4676,6 +4818,7 @@ static void context_menu_action(double mx, double my)
       /* phase 2 -- see leave_wire_draw_for(). Pick 6, not 8: 8 is Paste clipboard (a merge, whose
        * preview carries STARTMERGE and belongs to phase 4 / issues 0242+0244). */
       leave_wire_draw_for("Insert text");
+      leave_shape_draw_for("Insert text");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       leave_placement_for("Insert text");  /* issue 0242 -- twin of the place_text verb */
       leave_merge_for("Insert text");      /* issue 0265 -- ditto for a pending paste. This is one
                                             * of the four arms that do NOT unselect_all, so before
@@ -4759,6 +4902,9 @@ static void context_menu_action(double mx, double my)
       break;
     case 19: /* place arc */
       leave_wire_draw_for("Arc");        /* phase 1 -- see leave_wire_draw_for() */
+      leave_shape_draw_for("Arc");       /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick */
+      leave_placement_for("Arc");
+      leave_merge_for("Arc");
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
@@ -4766,6 +4912,9 @@ static void context_menu_action(double mx, double my)
       break;
     case 20: /* place circle */
       leave_wire_draw_for("Circle");     /* phase 1 -- see leave_wire_draw_for() */
+      leave_shape_draw_for("Circle");    /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick */
+      leave_placement_for("Circle");
+      leave_merge_for("Circle");
       xctx->mx_double_save=xctx->mousex_snap;
       xctx->my_double_save=xctx->mousey_snap;
       xctx->last_command = 0;
@@ -6627,6 +6776,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         leave_wire_draw_for("Arc");     /* phase 1, both branches -- see leave_wire_draw_for() */
+        leave_shape_draw_for("Arc");    /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick */
+        leave_placement_for("Arc");
+        leave_merge_for("Arc");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6641,6 +6793,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         leave_wire_draw_for("Circle");  /* phase 1, both branches -- see leave_wire_draw_for() */
+        leave_shape_draw_for("Circle"); /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick */
+        leave_placement_for("Circle");
+        leave_merge_for("Circle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6895,6 +7050,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_shape_draw_for("Line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Line")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         if(!leave_merge_for("Line")) break;       /* issue 0265 -- phase 4, a draw cancels a paste */
         prev_state = xctx->ui_state;    /* the teardowns just cleared the placement/merge bits */
@@ -7242,6 +7398,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          * Gated OUTSIDE the infix test because both branches need it -- see leave_wire_draw_for(),
          * phase 1 of plan_modal_gesture_exclusion.md. */
         leave_wire_draw_for("Rectangle");
+        leave_shape_draw_for("Rectangle");   /* issue 0269 -- phase 3, all four gates at every shape
+                                              * arm: see the ctx-menu Rectangle pick */
+        leave_placement_for("Rectangle");
+        leave_merge_for("Rectangle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -7343,6 +7503,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       else if(/* !xctx->ui_state && */ (rstate == 0) && cadence_compat) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_shape_draw_for("Snap wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         if(!leave_merge_for("Snap wire")) break;       /* issue 0265 -- phase 4 */
         snapped_wire(c_snap);
@@ -7419,6 +7580,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          * twin and carries the same gate. Before the gate this key left ui=1 [STARTWIRE] with
          * last_command zeroed -- the exact residue issue 0243 F3 had to teach ESC to clean up. */
         leave_wire_draw_for("Place text");
+        leave_shape_draw_for("Place text");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         leave_placement_for("Place text");  /* issue 0242 -- the `t` key, twin of the verb */
         leave_merge_for("Place text");      /* issue 0265 -- ditto for a pending paste */
         xctx->last_command = 0;
@@ -7601,6 +7763,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_shape_draw_for("Wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         if(!leave_merge_for("Wire")) break;       /* issue 0265 -- phase 4, a draw cancels a paste */
         prev_state = xctx->ui_state;   /* the teardowns just cleared the placement/merge bits */
@@ -7634,6 +7797,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(/* !xctx->ui_state && */ (rstate == 0) && !cadence_compat) { /* create wire snapping to closest instance pin (original keybind) */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        leave_shape_draw_for("Snap wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Snap wire")) break;   /* issue 0243 F2 -- see leave_placement_for() */
         if(!leave_merge_for("Snap wire")) break;       /* issue 0265 -- phase 4 */
         snapped_wire(c_snap);
@@ -7684,9 +7848,23 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case 'z':
       /* zoom box */
-      if(rstate == 0 && !(xctx->ui_state & (STARTRECT | STARTLINE | STARTWIRE | STARTPOLYGON | STARTARC))) {
-        dbg(1, "callback(): zoom_rectangle call\n");
-        zoom_rectangle(START);
+      if(rstate == 0) {
+        /* ISSUE 0269 -- phase 3. The guard below used to be a DECLINE: with any other draw live,
+         * `z` did nothing at all and the user got no feedback. The ratified rule is cancel-and-arm
+         * ("whatever you just pressed is what you meant"), so the four gates run first and the
+         * guard is now a backstop that is always true by the time it is reached -- kept rather than
+         * deleted because it is the cheap local statement of what this arm may not coexist with.
+         * Sited INSIDE the rstate==0 test on purpose: with a modifier held this case falls through
+         * to the other `z` chords (the cadence snap-cursor branch below), and tearing down a live
+         * gesture for one of those would be a mutation the user never asked for. */
+        leave_shape_draw_for("Zoom box");
+        leave_wire_draw_for("Zoom box");
+        leave_placement_for("Zoom box");
+        leave_merge_for("Zoom box");
+        if(!(xctx->ui_state & (STARTRECT | STARTLINE | STARTWIRE | STARTPOLYGON | STARTARC))) {
+          dbg(1, "callback(): zoom_rectangle call\n");
+          zoom_rectangle(START);
+        }
       }
       /* Ctrl-'z' (zoom out) migrated to the binding table (Phase 3d.5a): exact chord,
        * canvas row -> view.zoom_out. Plain 'z' stays (ui_state-conditioned modal

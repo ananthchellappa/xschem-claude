@@ -309,6 +309,7 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
        * surface -- leaves the wire alone. GUI-only path (X + cairo, driven by a real pointer
        * grab), so this one is proved by code and has no headless seam. */
       leave_wire_draw_for("Screen grab");
+      leave_shape_draw_for("Screen grab");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       /* issue 0242, same siting argument as the wire gate above (at the ARM, on the release that
        * completes the grab): the grabbed image arms START_SYMPIN + STARTMOVE, so dropping it onto
        * a live Add-Pin / Add-Wire-Label preview would leave that preview committed. GUI-only

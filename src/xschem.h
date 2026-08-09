@@ -295,6 +295,15 @@ typedef int Tcl_Size;
                                 * read-only backstop mask in check_menu_start_commands().
                                 * see doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
 
+/* The SHAPE sub-mask of ui_state2: the menu-armed half of the shape-draw family, i.e. the
+ * `infix_interface 0` (cadence) branch where the verb only arms MENUSTART and the FIRST CANVAS
+ * CLICK sets STARTRECT/STARTPOLYGON/STARTARC/STARTZOOM. abort_shape_draw() (callback.c) must test
+ * BOTH halves: a gate that looks only at ui_state is a no-op for every cadence user (plan
+ * landmine 5, doc/claude/suggestions/plan_modal_gesture_exclusion.md). Circle has no ui_state bit
+ * of its own -- it is new_arc(PLACE, 360.), so it lands on STARTARC. */
+#define MENUSTARTSHAPE (MENUSTARTRECT | MENUSTARTZOOM | MENUSTARTPOLYGON | MENUSTARTARC | \
+                        MENUSTARTCIRCLE)
+
 /* xctx->menu_pending_transform codes: which transform a pending MENUSTARTROTATE applies */
 #define PENDING_TR_NONE      0
 #define PENDING_TR_ROTATE    1  /* rotate about click point            (Shift-R / xschem rotate) */
@@ -1579,8 +1588,9 @@ typedef struct {
                        * exists when has_x, so this is what makes the hold assertable headlessly --
                        * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
                        * context teardown. */
-  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables the
-                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for) so a
+  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables all four
+                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for /
+                       * leave_merge_for / leave_shape_draw_for) so a
                        * headless test can still CONSTRUCT the co-armed state (a live wire draw +
                        * a second modal gesture) that every production verb now refuses to build.
                        * abort_operation()'s co-armed teardown has no other constructor left --
@@ -2575,6 +2585,13 @@ extern int leave_merge_for(const char *what);
  * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */
 extern void leave_wire_draw_for(const char *what);
 extern int abort_wire_line_command(void); /* issue 0240 */
+/* issue 0269 / plan phase 3: the fourth pair, for a SHAPE draw (rectangle, polygon, arc, circle,
+ * zoom box) in both its states -- STARTRECT|STARTPOLYGON|STARTARC|STARTZOOM in ui_state, or
+ * MENUSTART plus a MENUSTARTSHAPE bit in ui_state2. abort_shape_draw() is the teardown (band erase
+ * + bit clear, no delete and no undo baseline: a shape draw stores nothing until it completes);
+ * leave_shape_draw_for() is the gate every ARM calls. See callback.c. */
+extern int abort_shape_draw(void);
+extern void leave_shape_draw_for(const char *what);
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);

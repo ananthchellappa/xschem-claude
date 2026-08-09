@@ -108,7 +108,13 @@ xschem abort_operation
 set ::infix_interface 1
 
 # D1 -- STARTRECT residue: pins the flag mask added above the :406 return.
-reset ; xschem add_sch_pin -place ; xschem rect gui
+#   CONSTRUCTOR NOTE (phase 3, 2026-08-09, issue 0269): `rect gui` now carries all four gates, so
+#   it tears the pin placement down instead of arming on top of it -- which is what phase 3 is for,
+#   and it is asserted directly in test_shape_draw_gate.tcl C. The co-armed state this row needs is
+#   therefore built through `xschem test_gate_bypass`, exactly as D3 below has done since phase 2.
+#   The ESC under test still runs with the gates live.
+reset ; xschem add_sch_pin -place
+xschem test_gate_bypass 1 ; xschem rect gui ; xschem test_gate_bypass 0
 check "D1 armed: placement + rect"       [expr {[placing] && [startrect]}] 1
 check "D1 armed: last_command zeroed"    [lc] 0
 xschem abort_operation
@@ -121,7 +127,9 @@ check "D1 ESC committed no rect"         [xschem get rects 4] 0
 
 # D2 -- MENUSTART residue: the same return, on a bit the issue's fix sketch omits.
 reset ; xschem add_sch_pin -place
-set ::infix_interface 0 ; xschem rect ; set ::infix_interface 1
+set ::infix_interface 0
+xschem test_gate_bypass 1 ; xschem rect ; xschem test_gate_bypass 0   ;# see D1's constructor note
+set ::infix_interface 1
 check "D2 armed: placement + menu rect"  [expr {[placing] && [menustart]}] 1
 xschem abort_operation
 check "D2 ESC clears MENUSTART"          [menustart] 0

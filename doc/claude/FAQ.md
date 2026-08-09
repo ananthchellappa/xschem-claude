@@ -14,6 +14,44 @@ Newest entries on top.
 
 ---
 
+## Q40. I started drawing a rectangle, changed my mind and pressed `w`. Both were armed at once and nothing worked until ESC. Fixed?
+
+- **Asked:** 2026-08-09
+- **Project state:** branch `open_pdk` @ `6e7f1c55` + this session — issue **0269**, phase 3 of
+  `doc/claude/suggestions/plan_modal_gesture_exclusion.md` (the last open phase).
+
+**Yes.** Starting a rectangle, polygon, arc, circle or zoom box and then pressing anything else now
+**abandons the shape** and starts what you actually pressed. The status bar says which verb took
+over (`Wire: in-progress shape abandoned`), held for 5 s.
+
+**What was happening.** The shape draws were the last gesture family with no teardown at all. Their
+state bits were set when you armed them and cleared only when the gesture *finished*, so a second
+gesture armed straight on top: `r` then `w` left both live. That is not merely untidy, because the
+click handler tests every shape bit **before** the branch that would let a placement or a paste land
+— so while a shape is armed no click can complete anything else. With a half-drawn **polygon** it
+never resolves at all: every click just adds another polygon point. ESC was the only exit, and it
+had to serve two gestures at once.
+
+**What changed for you, concretely.**
+
+- Any draw, placement, paste, insert, undo or redo cancels a live shape draw — including the two
+  cadence-mode cases where the shape is armed but you have not clicked yet.
+- The reverse too: starting a shape now cancels a live wire draw, a pin/label/symbol/text preview,
+  or a paste riding the cursor. It used to cancel only the wire draw.
+- A half-drawn **polygon** is discarded when another gesture takes over. Pressing **ESC** on one
+  still closes and commits it, exactly as before — that is the gesture's own terminal, and it is
+  unchanged deliberately.
+- `z` (zoom box) used to do *nothing at all* while another draw was live. It now cancels that draw
+  and starts the zoom box.
+- Three side defects went with it: arming a polygon no longer marks a clean file modified with
+  nothing drawn (**0270**); `Ctrl+V` / File ▸ Merge now cancels a wire you were drawing, which three
+  documents claimed it already did and it never did (**0271**); and `xschem circle` /
+  `xschem zoom_box` — the scripted forms, whose key and menu twins were already covered — now cancel
+  what is live, with `circle` also gaining the read-only refusal its `arc` sibling always had
+  (**0272**).
+
+---
+
 ## Q39. I had the Add Wire Label form open, pressed `Ctrl+A`, then closed the form — and my whole schematic was gone. Is that fixed?
 
 - **Asked:** 2026-08-08

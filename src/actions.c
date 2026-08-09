@@ -2521,6 +2521,7 @@ void place_net_label(int type)
    * placement (START_SYMPIN + a real lab_wire / lab_pin / ipin / opin preview instance riding the
    * pointer); none is a commit form, so there is no coordinate sub-form to exclude here. */
   leave_wire_draw_for("Net label");
+  leave_shape_draw_for("Net label");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
   /* issue 0242 -- see leave_placement_for() (callback.c). The other modal gesture this arm can
    * land on: it ORs START_SYMPIN over a live Add-Wire-Label / Add-Pin preview and shares its
    * STARTMOVE, so the earlier preview instance is left committed in the drawing -- a connected,
@@ -4396,7 +4397,12 @@ void zoom_rectangle(int what)
 
     xctx->nl_xx1=xctx->nl_x1;xctx->nl_yy1=xctx->nl_y1;xctx->nl_xx2=xctx->nl_x2;xctx->nl_yy2=xctx->nl_y2;
     RECTORDER(xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
-    drawtemprect(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+    /* RUBBER|CLEAR: erase only -- see new_polygon() (abort_shape_draw(), callback.c). The
+     * draw_selection() overlay above is NOT skipped: the tiled erase wipes the SELLAYER highlight
+     * of everything inside the band bbox, and restoring it is not part of the band. */
+    if(!(what & CLEAR)) {
+      drawtemprect(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+    }
   }
 }
 
@@ -4686,7 +4692,10 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       xctx->nl_xx2 = xctx->mousex_snap;
       xctx->nl_yy2 = xctx->mousey_snap;
       ORDER(xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
-      drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      /* RUBBER|CLEAR: erase only -- see new_polygon() above (abort_shape_draw(), callback.c) */
+      if(!(what & CLEAR)) {
+        drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      }
     }
     else if(xctx->nl_state==1) {
       xctx->nl_x3 = xctx->mousex_snap;
@@ -4699,7 +4708,8 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       arc_bbox(xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b,
                 &xctx->nl_xx1, &xctx->nl_yy1, &xctx->nl_xx2, &xctx->nl_yy2);
       if(xctx->nl_sweep_angle==360.) xctx->nl_b=360.;
-      if(xctx->nl_r>0.) drawtemparc(xctx->gc[xctx->rectcolor], NOW,
+      /* RUBBER|CLEAR: erase only -- see new_polygon() (abort_shape_draw(), callback.c) */
+      if(!(what & CLEAR) && xctx->nl_r>0.) drawtemparc(xctx->gc[xctx->rectcolor], NOW,
            xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b);
     }
   }
@@ -4820,7 +4830,11 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
    xctx->nl_x2 = xctx->mousex_snap;xctx->nl_y2 = xctx->mousey_snap;
    nl_xx1 = xctx->nl_x1;nl_yy1 = xctx->nl_y1;nl_xx2 = xctx->nl_x2;nl_yy2 = xctx->nl_y2;
    RECTORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
-   drawtemprect(xctx->gc[xctx->rectcolor], NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+   /* RUBBER|CLEAR: erase only, no re-stroke -- see the same guard in new_wire()/new_line() and the
+    * reason in new_polygon() above (abort_shape_draw(), callback.c). */
+   if(!(what & CLEAR)) {
+     drawtemprect(xctx->gc[xctx->rectcolor], NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+   }
   }
 }
 
@@ -4846,7 +4860,14 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
          xctx->nl_polyy[xctx->nl_points-1]); */
      xctx->nl_x1=xctx->nl_x2=mousex_snap;xctx->nl_y1=xctx->nl_y2=mousey_snap;
      xctx->ui_state |= STARTPOLYGON;
-     set_modify(1);
+     /* ISSUE 0270 -- the set_modify(1) that used to sit HERE has moved to the commit branch, beside
+      * store_poly(). It was the polygon's ONLY modify write, and it fired at the ARM: `xschem
+      * polygon gui` on a clean document reported the buffer dirty with nothing stored (measured,
+      * modified 0 -> 1). Harmless while the only exit was ESC (which COMMITS the polygon, so the
+      * flag became true one call later), but abort_shape_draw() (callback.c) can now abandon the
+      * gesture, and a teardown that leaves a false `modified` is the issue 0244 class. Moving it
+      * rather than deleting it: the commit branch had no set_modify of its own, so deleting it
+      * would stop a finished polygon marking the file dirty at all. */
    }
    if( what & ADD)
    {
@@ -4881,6 +4902,7 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      xctx->push_undo();
      drawtemppolygon(xctx->gctiled, NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
      store_poly(-1, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points, xctx->rectcolor, 0, NULL);
+     set_modify(1);   /* ISSUE 0270 -- moved down from the PLACE arm; see the comment there */
      /* action-log Layer C: the stored point list replays through the
       * `xschem polygon x1 y1 ...` coordinate form (Phase 3 slice B);
       * dynamic length, so the line is assembled before logging */
@@ -4915,7 +4937,13 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      xctx->nl_polyx[xctx->nl_points] = mousex_snap;
      restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
      /* xctx->nl_x2 = mousex_snap; xctx->nl_y2 = mousey_snap; */
-     drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+     /* RUBBER|CLEAR erases the band and does NOT re-stroke it -- the idiom new_wire()/new_line()
+      * have always had, added here for abort_shape_draw() (callback.c, plan phase 3): a teardown
+      * owes the erase, and the erase must tile from save_pixmap BEFORE any full draw() regenerates
+      * it. The `nl_points+1` above is load-bearing: index nl_points is the live rubber vertex. */
+     if(!(what & CLEAR)) {
+       drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+     }
    }
 }
 

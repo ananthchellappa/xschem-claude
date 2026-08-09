@@ -481,13 +481,28 @@ bound it against the COMMIT forms**, which are ratified as ungated (replay/test 
 **0267**, predicted to fall out of 0265, measured UNCHANGED after it and needed its own mechanism
 (`xctx->modify_seq`: `set_modify()` bumps a sequence on every declaration of dirtiness, the merge
 latches it at the arm, and the teardown restores `pre_merge_modified` only while the two still
-match). Both FIXED. **Class-D status after 0265**: the MODAL-GESTURE half of the class is closed for
-wire/line draws, placements and merges in every direction and both interface branches; what is left
-is (a) the SHAPE draws (`r`, `P`, arc, circle) — phase 3, no `abort_shape_draw()` exists yet — and
-(b) the two known, deliberate residues, **0262** (the bare `xschem unselect_all` verb: it arms
-nothing, so the rule has no subject, and gating it would put a `delete()` behind 817 scripted call
-sites) and **0263** (`netlist` netlists a live preview but clears no gesture bits, so it is a
-different defect, not a door). Neither is touched by 0265) — a decline residue
+match). Both FIXED. **Class-D status after 0269 (2026-08-09): the MODAL-GESTURE half of this class is
+CLOSED.** Phase 3 gave the SHAPE draws the fourth teardown/gate pair — `abort_shape_draw()` /
+`leave_shape_draw_for()` — called from **41** arms enumerated from the state rather than the verbs,
+so all four families (wire/line draw, shape draw, placement preview, pending merge) now cancel each
+other in every direction and both interface branches. Its census produced four more filed defects,
+three of which are the class in new dimensions: **0271** — a merge did NOT cancel a live wire draw,
+the one direction three documents asserted was already covered and nothing ever asserted in a test
+(`wire gui` + `merge` → `ui_state` 297); **0272** — `xschem circle` and `xschem zoom_box` carried no
+gate at all, because phase 1 enumerated by VERB and their key twins were gated; **0270** — the
+polygon arm dirtied a clean document with nothing stored, harmless while ESC (which commits) was the
+only exit and a lie the moment a gate could abandon the gesture. The fourth, **0268**
+(`ui_state2` survived ESC), was adjudicated **inert** by enumerating all 24 readers — every one
+dominated by a `MENUSTART` test in `ui_state`, every arm ASSIGNING `ui_state2` wholesale — and fixed
+for the shape family as a by-product. Two lessons: (i) **a direction that is documented as covered
+and never asserted is a direction nobody re-checks** (0271); (ii) **enumerate the arms from the
+STATE the teardown owns, not from the verbs a report names** — 0242 and 0265 wrote that down, and
+0272 is the residue of the one phase written before it.
+What is left of class D is only the two known, deliberate residues, **0262** (the bare
+`xschem unselect_all` verb: it arms nothing, so the rule has no subject, and gating it would put a
+`delete()` behind 817 scripted call sites) and **0263** (`netlist` netlists a live preview but
+clears no gesture bits, so it is a different defect, not a door) — plus the wire-family `ui_state2`
+residue, measured, inert, and asserted-as-present in issue 0268 rather than silently left) — a decline residue
 becomes data corruption the moment the residue is a netlist object; (b) the invariant
 "`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
 three form `-place` arms themselves raised `sympin_preview` BEFORE the preview existed and held it
