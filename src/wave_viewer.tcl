@@ -1844,11 +1844,37 @@ proc wviewer::sig_match {siglist pattern args} {
     # that puts un-plottable strings into every gesture downstream.
     set k $n
     if {$key ne {}} { set k [eval $key [list $n]] }
+    # ⚠⚠ RULING F4b — IN SHELL SYNTAX, TYPING EXACTLY WHAT THE PANE DRAWS ALWAYS
+    # FINDS IT. The glob is tried first and its meaning is UNCHANGED; an EXACT
+    # whole-subject equality is tried second, so the match set can only GROW.
+    #
+    # WHY. Item 20 made the subject the LABEL the lower pane draws, and a label
+    # can legitimately contain a glob metacharacter: a bus bit renders `count[0]`
+    # (RULING F4 stopped the index being eaten into `count:3`), and an ngspice
+    # design net `v(x1.count[3])` has rendered `count[3]` since item 20 shipped.
+    # MEASURED, before this arm: with the label as the key, `sig` found
+    # `m.sub.sig` and `count` found `m.sub.count`, but `count[0]` — the exact
+    # string on screen — found NOTHING, because `[0]` is read as a character
+    # class. On a digital database that is the MAJORITY of names.
+    #
+    # ⚠ WHY NOT QUOTE THE METACHARACTERS, which is the obvious other fix.
+    # MEASURED: quoting them in the subject reds SM07, whose whole subject is
+    # that `[[]` is the escape for a literal `[` — `*net_name[[]*` then finds
+    # nothing. Quoting them in the pattern destroys every wildcard. Both change
+    # what a glob MEANS; this arm does not. SM06 (`net[0-9]` is a range), SM07
+    # and SM19 (a lone `[` is a no-match, not an error) all still hold, because
+    # no signal is literally named `net[0-9]` or `[`.
+    #
+    # ⚠ SHELL ONLY. `-syntax regexp` is the explicit power-user mode where a
+    # metacharacter is what the user came for, and it keeps `count\[0\]` as the
+    # exact-match escape hatch.
     if {$syntax eq {shell}} {
       if {$nocase} {
-        if {[string match -nocase $pattern $k]} { lappend out $n }
+        if {[string match -nocase $pattern $k] || \
+            [string equal -nocase $pattern $k]} { lappend out $n }
       } else {
-        if {[string match $pattern $k]} { lappend out $n }
+        if {[string match $pattern $k] || \
+            [string equal $pattern $k]} { lappend out $n }
       }
     } else {
       if {$nocase} {
@@ -1926,6 +1952,32 @@ proc wviewer::sig_declass {bare} {
   return [list $head [join [lrange $parts 1 end] .]]
 }
 
+# --- spec §F, RULING F4: A DIGITAL DATABASE IS A DIFFERENT NAMESPACE ---------
+#
+# PURE. Is this results database's `sim_type` a DIGITAL (event) database?
+# `vcd_read()` stamps `raw->sim_type` with the literal "vcd" itself
+# (src/vcd_read.c:831, DECISION C6), and it is the ONLY reader that does -- so
+# the engine's own answer to "what kind of database is this" is the whole test.
+# `-nocase` because a hand-seeded inventory is a legal caller and the string is
+# the engine's, not a user's.
+#
+# ⚠⚠ WHY THE CLASSIFIER HAS TO BE TOLD, AND CANNOT SNIFF THE NAME. `sig_declass`
+# is sound BY SPICE GRAMMAR and by nothing else: a one-letter path segment cannot
+# be a subcircuit instance because SPICE requires those to begin with `X`. A VCD
+# is not SPICE. Verilog places no such rule on a module or instance name, so a
+# top-level `$scope module m` is legal and produces `m.sub.sig` -- which the
+# SPICE rule strips, filing a real digital wire as a MOSFET internal node.
+# MEASURED on a two-scope VCD before RULING F4 landed, all three at once:
+#   class devnode (wrong), path `sub` (the `m` level DELETED from the tree),
+#   label `sig:i` (a wire rendered as a current), and -- because `devnode` is
+#   what Ruling B's `Show device internals` box hides BY DEFAULT -- the signal
+#   vanished from the browser entirely, leaving `time` alone in the tree.
+# Deleting real digital data is the one outcome the 0217 rulings forbid: the two
+# panes RELOCATE noise, they never delete signal.
+proc wviewer::db_is_digital {dbtype} {
+  return [expr {[string equal -nocase [string trim $dbtype] vcd] ? 1 : 0}]
+}
+
 # A device-class TAG -> the signal's class. PURE, and the ONLY classifier.
 #
 # ⚠ IT KEYS ON THE TAG, NEVER ON THE LEAF'S SHAPE, and DC25 is what forces
@@ -1938,6 +1990,12 @@ proc wviewer::sig_declass {bare} {
 #   v    srcbranch  the branch current of a source INSIDE a subcircuit
 #   @X   devmeas    a device PARAMETER accessor (@m @c @r @b @q)
 #   X    devnode    a device INTERNAL NODE (m, n)
+#
+# ⚠ THE FIFTH VALUE, `digital`, IS NOT MINTED HERE (RULING F4). It has no tag to
+# key on -- it is decided by the DATABASE a name came from, one level up in
+# `signal_entry`, which is the only place that fact is in hand. Keying it here
+# would mean guessing from the name's shape, which is the mistake this proc's
+# own ⚠ above exists to forbid.
 proc wviewer::sig_class {tag} {
   if {$tag eq {}}                       { return net }
   if {[string match {@*} $tag]}         { return devmeas }
@@ -1953,8 +2011,18 @@ proc wviewer::sig_class {tag} {
 # UNWRAPPED name -- the class strip is a step BEFORE the split, not instead of
 # it. Ruling 14 exists so the tree never grows a root node called `v(x1`; the
 # strip exists so it never grows one called `m` either.
-proc wviewer::sig_split {name} {
-  set bare [lindex [wviewer::sig_declass [wviewer::sig_bare $name]] 1]
+#
+# ⚠ RULING F4's SECOND AMENDMENT: `dbtype` is OPTIONAL and DEFAULTS TO ANALOG,
+# and that shape is load-bearing rather than a style choice. Every existing
+# caller and every DC/SB check passes one argument and must keep meaning exactly
+# what it meant; only a caller that HOLDS a results database can answer "digital",
+# and for those the declass step is SKIPPED entirely -- a VCD scope named `m` is a
+# real hierarchy level, not ngspice's MOSFET tag. See `db_is_digital`.
+proc wviewer::sig_split {name {dbtype {}}} {
+  set bare [wviewer::sig_bare $name]
+  if {![wviewer::db_is_digital $dbtype]} {
+    set bare [lindex [wviewer::sig_declass $bare] 1]
+  }
   set parts [split $bare .]
   if {[llength $parts] < 2} { return [list {} $bare] }
   return [list [join [lrange $parts 0 end-1] .] [lindex $parts end]]
@@ -1972,7 +2040,18 @@ proc wviewer::sig_split {name} {
 # indistinguishable from one. The stripped tag is the ONLY evidence a segment
 # is a device, and it exists for exactly one instant. Capturing it costs one
 # dict key; re-deriving it later would mean parsing every raw name twice.
-proc wviewer::signal_entry {name} {
+#
+# ⚠ RULING F4 (spec doc/claude/specs/mixed_signal_signal_browser.md §F). A name
+# that came out of a DIGITAL database is classed `digital` and is NEVER declassed:
+# there is no tag to capture, because ngspice's device-class grammar does not
+# reach a VCD. `dbtype` defaults to analog so that the ~thirty existing one-argument
+# callers and every DC/SB/TP check keep their exact shipped meaning.
+proc wviewer::signal_entry {name {dbtype {}}} {
+  if {[wviewer::db_is_digital $dbtype]} {
+    lassign [wviewer::sig_split $name $dbtype] path leaf
+    return [dict create name $name type [wviewer::sig_type $name] \
+              leaf $leaf path $path class digital]
+  }
   lassign [wviewer::sig_declass [wviewer::sig_bare $name]] tag -
   lassign [wviewer::sig_split $name] path leaf
   return [dict create name $name type [wviewer::sig_type $name] \
@@ -6648,6 +6727,14 @@ proc wviewer::grid_toggle_at {W} {
 # `#body` node is a thing the model generated. They get separate checkboxes
 # (spec R11) because they answer separate questions. Fold `srcbranch` in here
 # and the two boxes collapse into one. Pinned by TP03.
+#
+# ⚠⚠ `digital` IS NOT A DEVICE CLASS EITHER, AND THAT IS RULING F4's SECOND HALF,
+# not an omission. Ruling B (issue 0217) says device internals are hidden BY
+# DEFAULT; a digital signal that answered 1 here would therefore be hidden by
+# default, i.e. loading a VCD would show the user an empty tree. RULING F4 is
+# what makes `digital` a class the two boxes do not govern at all -- the boxes
+# partition an ANALOG raw, and a VCD has no devices for them to talk about.
+# Pinned by FD30/FD31: adding `digital` to this list reds them.
 proc wviewer::sig_is_device {class} {
   return [expr {$class eq {devnode} || $class eq {devmeas}}]
 }
@@ -6800,12 +6887,30 @@ proc wviewer::browser_root_label {path} {
 # A path with no signals of its own answers `{}`. That is an ANSWER, not an
 # error: MEASURED, 18 of tb_bandgap's 128 nodes and 25 of tb_charge_pump's 316
 # are pure ancestors that exist only because a descendant does.
+#
+# ⚠⚠ AND CASE-**SENSITIVE** FOR A `digital` ENTRY, WHICH IS NOT AN EXCEPTION TO
+# THE RULE ABOVE BUT THE SAME RULE READ CORRECTLY. `-nocase` is a fact about
+# NGSPICE (it lowercases, so the raw and the schematic disagree by case and only
+# by case); Verilog is case-SENSITIVE and `vcd_read.c` stores names verbatim, so
+# `top.mod` and `top.MOD` are two LEGAL SIBLING SCOPES with different contents.
+# Folding them here answers with the other scope's signals — MEASURED on the two
+# names `top.mod.a` and `top.MOD.b`, this proc answered BOTH for BOTH paths while
+# `browser_rows` (correctly) built two distinct groups, so selecting either scope
+# drew the other one's wires under a caption counting them. `browser_names_under`
+# already rules this exact point the same way and for the same reason; RULING F4
+# is what put digital names in front of this proc, so the reasoning has to come
+# with them. The test is the ENTRY's OWN class, not a database argument, because
+# an entry list is the only thing this proc is ever given.
 proc wviewer::browser_level_names {entries path} {
   set out {}
   foreach e $entries {
-    if {[string equal -nocase [wviewer::dget $e path {}] $path]} {
-      lappend out [wviewer::dget $e name {}]
+    set p [wviewer::dget $e path {}]
+    if {[wviewer::dget $e class {}] eq {digital}} {
+      if {$p ne $path} { continue }
+    } elseif {![string equal -nocase $p $path]} {
+      continue
     }
+    lappend out [wviewer::dget $e name {}]
   }
   return $out
 }
@@ -6849,10 +6954,29 @@ proc wviewer::browser_label_full {e} { return [wviewer::dget $e name {}] }
 # label is a display, every gesture resolves through the row INDEX into the full
 # raw name, and the status line counts names rather than labels so a collision
 # stays visible.
+#
+# ⚠⚠ RULING F4: A `digital` ENTRY ALWAYS RENDERS BARE, AHEAD OF EVERY OTHER RULE.
+# The whole `<instance>:<param>` half below is about SPICE currents, and a VCD has
+# none: its `type` is `other` for every name (there is no `v(`/`i(` wrapper to
+# read), so the `class eq net` test alone would drop a digital name into the
+# current formatter. MEASURED on `m.sub.count[3]`: `param` would capture the
+# BIT INDEX out of the brackets and the pane would draw `count:3` for bit 3 of a
+# bus -- a label that reads like a current on a signal that is not one. A bare
+# `sig` becomes `sig:i` the same way. FD32/FD33 are those two, as values.
+#
+# ⚠ THE EXEMPLAR IS `m.sub.count[3]` AND NOT A `TOP.`-ROOTED ONE, which is a
+# correction and not a typo: `TOP.counter.count[3]` classes `net` (no one-letter
+# head for `sig_declass` to take), takes the `class eq net` early return and
+# renders `count[3]` on BOTH readings, so it demonstrates nothing. The names this
+# arm actually changes are the ones a one-letter scope makes device-shaped —
+# which is the same family RULING F4 exists for. The spec's table and FD33 both
+# use `m.sub.count[3]`; this comment used to name the other one and call it
+# measured.
 proc wviewer::browser_label {e} {
   set leaf  [wviewer::dget $e leaf {}]
   set class [wviewer::dget $e class net]
   set type  [wviewer::dget $e type other]
+  if {$class eq {digital}} { return $leaf }
   if {$class eq {net} && $type ne {i}} { return $leaf }
   set base $leaf
   set param {}
@@ -6890,8 +7014,22 @@ proc wviewer::browser_label {e} {
 # raw name (browser_sea_name), and the status line still counts NAMES. Spec R8's
 # "the label is a display, never an identity" is restated by item 20, not
 # weakened by it.
+#
+# ⚠⚠ RULING F4 SPLITS THIS IN TWO, AND THE ORDER OF THE ARGUMENTS IS THE REASON.
+# `sig_match` invokes the key as `eval $key [list $name]`, i.e. as a COMMAND
+# PREFIX, so the only way to tell it which database a name came from is to CURRY
+# the database in front: `[list wviewer::browser_label_of_db vcd]`. Both production
+# key sites (browser_match, and browser_refresh's All-DBs loop) pass the curried
+# form; `browser_label_of` stays exactly as it shipped, one argument and analog,
+# for every caller that has no database in hand -- which is every direct unit test
+# of the matcher (SM29, SM30, BD57's negative control). Making the signature take
+# the type and rewriting those five call sites would have moved five checks for a
+# fact none of them is about.
+proc wviewer::browser_label_of_db {dbtype name} {
+  return [wviewer::browser_label [wviewer::signal_entry $name $dbtype]]
+}
 proc wviewer::browser_label_of {name} {
-  return [wviewer::browser_label [wviewer::signal_entry $name]]
+  return [wviewer::browser_label_of_db {} $name]
 }
 
 # --- the "sea of names" flow: column-major layout arithmetic (M2, R3) --------
@@ -7188,6 +7326,50 @@ proc wviewer::browser_leaf_names {rows id} {
 # a prefix looks like.
 proc wviewer::browser_row_db {id} {
   if {[regexp {^d:([0-9]+)\|} $id -> n]} { return $n }
+  return {}
+}
+
+# --- spec §F, RULING F4: WHICH KIND OF DATABASE DOES **THIS ROW** COME FROM? --
+#
+# A row id -> the `sim_type` of the database that row belongs to, out of the
+# snapshot `browser_reload` already took. `{}` for a row whose database is not in
+# the snapshot, which `db_is_digital` reads as ANALOG — the same deliberate
+# degradation direction the current-database reader documents, and for the same
+# reason: a guessed "digital" stops declassing a real ngspice raw.
+#
+# ⚠⚠ WHY THIS EXISTS AND THE CURRENT DATABASE'S KIND IS **NOT** ENOUGH. The tree
+# is the one surface that holds SEVERAL databases at once (item 14), so "which
+# grammar do this row's names obey" is a per-ROW question and answering it with
+# the current database's kind is wrong in BOTH directions: with an analog raw
+# current it declasses a foreign VCD's `m.sub.sig` down to `sub` (the defect
+# RULING F4 exists to remove, one database over), and with a VCD current it stops
+# declassing a foreign ngspice raw and answers `m.x1.xm1` for a MOSFET internal
+# node whose real path is `x1.xm1` — a fresh defect pointing the other way. The
+# LOWER PANE has no such question to ask: it draws the current database's entries
+# and only those (two-pane item 15's declared limit), so its own resolver is told
+# the current kind directly.
+#
+# ⚠ WITH All-DBs TICKED THE CURRENT DATABASE'S ROWS ARE PREFIXED TOO (item 15
+# gives it a header like any other), so the first branch is reached on a real
+# tree and is not defensive padding — `browser_reload` captures the current DB's
+# `d:<idx>` id in the same pass as the foreign ones exactly so it can be matched
+# here.
+proc wviewer::browser_id_type {token id} {
+  variable browsercurdb
+  variable browserdbsigs
+  set n [wviewer::browser_row_db $id]
+  if {$n eq {}} { return [wviewer::browser_curtype $token] }
+  if {[info exists browsercurdb($token)] && \
+      [wviewer::dget $browsercurdb($token) id {}] eq "d:$n"} {
+    return [wviewer::dget $browsercurdb($token) type {}]
+  }
+  if {[info exists browserdbsigs($token)]} {
+    foreach db $browserdbsigs($token) {
+      if {[wviewer::dget $db id {}] eq "d:$n"} {
+        return [wviewer::dget $db type {}]
+      }
+    }
+  }
   return {}
 }
 
@@ -8059,9 +8241,12 @@ proc wviewer::browser_sea_refresh {token} {
     set nostate 0
     set path [wviewer::browser_id_path $id]
     if {[catch {wviewer::browser_level_names $ent $path} nms]} { set nms {} }
+    # RULING F4: `browserseaent` is the CURRENT database's entries alone (item
+    # 15's declared limit), so the current DB's kind describes every name here.
+    set seatype [wviewer::browser_curtype $token]
     foreach nm $nms {
       set e {}
-      if {[catch {wviewer::signal_entry $nm} e]} { continue }
+      if {[catch {wviewer::signal_entry $nm $seatype} e]} { continue }
       lappend pairs [list [wviewer::browser_label $e] \
                           [wviewer::browser_label_full $e]]
     }
@@ -8100,11 +8285,27 @@ proc wviewer::browser_sea_refresh {token} {
 proc wviewer::browser_sea_own {token path} {
   variable browsersigs
   if {![info exists browsersigs($token)]} { return 0 }
+  # RULING F4: the current database's kind, or the own-level count of a digital
+  # scope would be taken against a declassed path and answer 0 -- which
+  # `browser_sea_refresh` renders as "has no signals of its own".
+  #
+  # ⚠ AND THE SAME CASE RULE `browser_level_names` CARRIES, for the same reason
+  # and it must not drift from it: this count is the DENOMINATOR of the caption
+  # over the very list that proc selects. Folding case on a digital scope counted
+  # a sibling scope's wires -- MEASURED, `top.mod` and `top.MOD` each answered 2
+  # of the 2 names in the inventory, so the pane said `2 of 2 signals` about a
+  # scope that owns one.
+  set owntype [wviewer::browser_curtype $token]
   set n 0
   foreach nm $browsersigs($token) {
     set e {}
-    if {[catch {wviewer::signal_entry $nm} e]} { continue }
-    if {[string equal -nocase [wviewer::dget $e path {}] $path]} { incr n }
+    if {[catch {wviewer::signal_entry $nm $owntype} e]} { continue }
+    set p [wviewer::dget $e path {}]
+    if {[wviewer::dget $e class {}] eq {digital}} {
+      if {$p eq $path} { incr n }
+    } elseif {[string equal -nocase $p $path]} {
+      incr n
+    }
   }
   return $n
 }
@@ -8406,12 +8607,20 @@ proc wviewer::browser_sea_target_path {token idxs} {
   if {![llength $idxs]} {
     return [list err {select a signal in the Signal Browser first}]
   }
+  # ⚠ RULING F4: the CURRENT database's kind, and the current one is the whole
+  # answer here — this pane draws that database's entries and only those. A
+  # one-argument split declassed a digital name, so on a VCD whose top `$scope`
+  # is one letter this answered a path with that level DELETED, the menu entry
+  # was built ENABLED against it, and the descend then found no such node and
+  # returned silently. MEASURED on `m.sub.sig`: `ok sub`, for a tree whose group
+  # is `g:m.sub`.
+  set seatype [wviewer::browser_curtype $token]
   set path {}
   set first 1
   foreach i $idxs {
     set nm [wviewer::browser_sea_name $token $i]
     if {$nm eq {}} { return [list err "unknown signal '$i'"] }
-    set p [lindex [wviewer::sig_split $nm] 0]
+    set p [lindex [wviewer::sig_split $nm $seatype] 0]
     if {$first} { set path $p ; set first 0 } \
     elseif {$p ne $path} {
       return [list err {those signals are in different parts of the hierarchy}]
@@ -8436,7 +8645,18 @@ proc wviewer::browser_sea_descend_to {token idxs} {
   set segs [wviewer::hier_split [lindex $r 1]]
   lassign [wviewer::browser_node_for $rows $segs \
              [wviewer::browser_root_id $rows]] id matched
-  if {$id eq {}} { return 0 }
+  # ⚠ AN UNREACHABLE NODE IS SAID, NEVER SWALLOWED. This arm used to `return 0`
+  # in silence, so the entry above — which is built ENABLED on `ok` alone — did
+  # nothing at all and explained nothing. A resolved path with no row is a real
+  # state a bar can produce (a Filter that hides the scope), so it needs a
+  # sentence rather than a stricter gate. A literal string and not a
+  # `browser_msg` kind: that proc's arms are the SCOPE-CHANGE vocabulary and its
+  # return count is pinned as a ledger.
+  if {$id eq {}} {
+    catch {wviewer::browser_status $token \
+             "'[lindex $r 1]' is not in the Signal Browser tree"}
+    return 0
+  }
   return [wviewer::browser_descend_to $token [list $id]]
 }
 
@@ -8943,17 +9163,24 @@ proc wviewer::browser_reload {token} {
   set curdb {}
   catch {
     foreach db [wviewer::signal_list_all $token] {
+      # ⚠ RULING F4: the `type` key rides along on BOTH dicts, at zero extra
+      # engine cost -- `signal_list_all` already read it out of `xschem raw info`.
+      # It is the ONE fact that says whether an inventory's names obey SPICE's
+      # device-class grammar or Verilog's, and without it every entry built from
+      # this snapshot would be classified as if it came out of ngspice.
       if {[wviewer::dget $db cur 0]} {
         set curraw [wviewer::dget $db path {}]
         set curdb [dict create \
           id    "d:[wviewer::dget $db idx {}]" \
-          label [wviewer::dget $db label {}]]
+          label [wviewer::dget $db label {}] \
+          type  [wviewer::dget $db type {}]]
         continue
       }
       lappend foreign [dict create \
         id    "d:[wviewer::dget $db idx {}]" \
         label [wviewer::dget $db label {}] \
         path  [wviewer::dget $db path {}] \
+        type  [wviewer::dget $db type {}] \
         names [wviewer::dget $db names {}]]
     }
   }
@@ -8975,6 +9202,38 @@ proc wviewer::browser_alldbs {token} {
   set d {}
   catch {set d [wviewer::searchbar_get $top.wvbrowser.wvsearch]}
   return [expr {[wviewer::dget $d alldbs 0] ? 1 : 0}]
+}
+
+# --- spec §F, RULING F4: WHICH KIND OF DATABASE IS THE CURRENT ONE? ----------
+#
+# THE ONE AND ONLY READ of the current database's `sim_type` on the browser side,
+# for the same reason the All-DBs checkbox reader directly above is the only read
+# of its box: a classification sabotage then has exactly one place to land, and a
+# wrong classification has exactly one place to look.
+#
+# ⚠ THAT READER IS DELIBERATELY NOT NAMED IN THIS COMMENT. `BD06`
+# (tests/headless/test_wave_sigbrowser_i14.tcl) counts its bare name over the
+# WHOLE FILE and expects 2 — defined once, called once — so a comment that spells
+# it reds a check about scoping for a reason that has nothing to do with scoping.
+# MEASURED: the first cut of this block did exactly that.
+#
+# It answers out of
+# the SNAPSHOT `browser_reload` already took, never by re-entering the engine --
+# it is called once per keystroke by `browser_match` and once per own-level signal
+# by `browser_sea_own`, and a `raw info` on either path would be a context loan
+# taken inside the search pump.
+#
+# ⚠ AN UNKNOWN TOKEN, A SNAPSHOT THAT WAS NEVER TAKEN AND A `signal_list_all`
+# THAT THREW ALL ANSWER `{}` -- which `db_is_digital` reads as ANALOG, i.e. as
+# exactly the behaviour that shipped before this ruling. The degradation
+# direction is deliberate: a guessed "digital" would stop declassing a real
+# ngspice raw and put `m`, `v` and `@m` back at the top of the tree, undoing
+# issue 0217 on a wrong guess. Guessing analog costs a digital name its class on
+# a browser that has no snapshot to draw anyway.
+proc wviewer::browser_curtype {token} {
+  variable browsercurdb
+  if {![info exists browsercurdb($token)]} { return {} }
+  return [wviewer::dget $browsercurdb($token) type {}]
 }
 
 # --- TWO-PANE item 12: R11's TWO CLASS FILTERS STOP BEING INERT ---------------
@@ -9038,8 +9297,12 @@ proc wviewer::browser_match {token} {
   # All-DBs loop, which matches each FOREIGN inventory with these same two bar
   # dicts. Both must pass it, or one pattern would mean "the label" for the
   # current DB and "the raw name" for every other one. BD57 is that check.
+  # ⚠ RULING F4: the key is CURRIED with the current database's kind. Left as the
+  # bare `browser_label_of` a VCD-current browser would match the bars against an
+  # analog-classified label (`sig:i`) while the pane below draws `sig` -- item 20's
+  # own defect, one database KIND over instead of one database over. FD36.
   return [wviewer::browser_and $browsersigs($token) $d1 $d2 \
-            wviewer::browser_label_of]
+            [list wviewer::browser_label_of_db [wviewer::browser_curtype $token]]]
 }
 
 # The status/error line — item 8's `.ph` label, repurposed. It keeps saying
@@ -9129,8 +9392,16 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # caption consume, and item 11 computes it below — from the SAME class-filtered
   # entry list, narrowed by name, so the two panes cannot disagree about what the
   # CLASS filter did (spec §6) while disagreeing about what the BARS did (§7.1).
+  #
+  # ⚠ RULING F4: ONE READ of the current database's kind, held in a local and
+  # handed to every entry built from this inventory -- the same shape as the two
+  # class boxes below. `browsersigs` is the CURRENT database's names alone, so
+  # this one value describes all of them.
+  set curtype [wviewer::browser_curtype $token]
   set entries {}
-  foreach n $browsersigs($token) { lappend entries [wviewer::signal_entry $n] }
+  foreach n $browsersigs($token) {
+    lappend entries [wviewer::signal_entry $n $curtype]
+  }
   # --- TWO-PANE item 10 -------------------------------------------------------
   # ⚠⚠ M6's PRE-FILTER `anypath` GATE IS DELIBERATELY *NOT* PASSED HERE, and the
   # reason is measured rather than stylistic. Two facts kill it:
@@ -9267,16 +9538,22 @@ proc wviewer::browser_refresh {token {reload 0}} {
     set d2 [wviewer::searchbar_get $f.wvfilter]
     if {![info exists browserdbsigs($token)]} { set browserdbsigs($token) {} }
     foreach db $browserdbsigs($token) {
+      # ⚠ RULING F4: THIS DB's OWN KIND, read once and used TWICE below -- as the
+      # matcher key and as the classifier's input. It is per-DB and cannot be
+      # hoisted: the whole point of the All-DBs tree is that an analog raw and a
+      # VCD sit in it side by side, and one `curtype` applied to both would
+      # declass the VCD or refuse to declass the raw.
+      set dbtype [wviewer::dget $db type {}]
       set dr {}
       if {[catch {wviewer::browser_and [wviewer::dget $db names {}] $d1 $d2 \
-                    wviewer::browser_label_of} dr]} {
+                    [list wviewer::browser_label_of_db $dbtype]} dr]} {
         continue
       }
       if {[lindex $dr 0] ne {ok}} { continue }
       set dnames [lindex $dr 1]
       if {![llength $dnames]} { continue }
       set dent {}
-      foreach n $dnames { lappend dent [wviewer::signal_entry $n] }
+      foreach n $dnames { lappend dent [wviewer::signal_entry $n $dbtype] }
       # spec 6: ONE consistent set. A foreign DB filtered differently from the
       # current one would make the same signal visible in one tree and not the
       # other, with the checkbox claiming to govern both.
@@ -10069,7 +10346,17 @@ proc wviewer::browser_target_path {token ids} {
     if {[wviewer::dget $row kind {}] eq {group}} {
       set p [wviewer::browser_id_path $id]
     } else {
-      set p [lindex [wviewer::sig_split [wviewer::dget $row name {}]] 0]
+      # ⚠⚠ THE LEAF IS SPLIT WITH ITS OWN DATABASE'S GRAMMAR IN HAND, and this
+      # is the leg that keeps a GROUP row and a LEAF ROW UNDER IT answering the
+      # SAME path. `browser_rows` builds the group id from the entry's path, so
+      # once RULING F4 stopped declassing digital names the group said `m.sub`
+      # while a one-argument split of its own child still said `sub` — and the
+      # multi-row rule below then read a scope and its own wire as being in
+      # different parts of the hierarchy and REFUSED, while the wire alone
+      # descended to a node the tree never showed. MEASURED on `m.sub.sig`:
+      # group `ok m.sub`, leaf `ok sub`, both together `err`.
+      set p [lindex [wviewer::sig_split [wviewer::dget $row name {}] \
+                       [wviewer::browser_id_type $token $id]] 0]
     }
     if {$first} { set path $p ; set first 0 } \
     elseif {$p ne $path} {
@@ -10492,7 +10779,8 @@ proc wviewer::browser_show_path {token path} {
   set r12 0
   if {$matched < [llength $segs] && ![wviewer::browser_devint $token]} {
     set pent {}
-    foreach n $browsersigs($token) { lappend pent [wviewer::signal_entry $n] }
+    set ptype [wviewer::browser_curtype $token]
+    foreach n $browsersigs($token) { lappend pent [wviewer::signal_entry $n $ptype] }
     # ⚠ THE SECOND ARGUMENT IS THE LIVE VALUE, NOT A HARDCODED 1. Hardcoding it
     # would ask about a model the user cannot get to by ticking one box.
     set pent [wviewer::browser_class_filter $pent 1 \

@@ -653,8 +653,8 @@ block against the real reference cell that skips cleanly when `xschem_libraries_
 |----|------|-------|
 | F1 | ~~**The branch.**~~ **DONE 2026-08-10 (batch F item 5), see "F1/F5 — the branch and the notice" below.** `ase::show_in_browser_for_current` (`src/ase.tcl:2521`) gained step 3c: `ase::browser_digital_probe` (`:1925`) beside the selection read, ABOVE the viewer raise, and a step 6 that shows the resolved scope through the new `wviewer::browser_show_db_scope` (`src/wave_viewer.tcl:10673`) instead of the analog walk. The ⚠ ordering was preserved and is now ASSERTED rather than described — `FV33` watches the live call order, not the source layout. | The `⚠` comments are load-bearing — the selection and hierarchy must still be read in the DESIGN context, before any viewer raise. Preserve that ordering. |
 | F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. **OWNERSHIP RULED 2026-08-09 — see "Open decision 5, ruled" at the end of this spec, which is F2's contract**: the mapping is three facts, not one (instance→cell is QUERY time, cell→VCD file is NETLIST time in `<rundir>/<cell>_ase.cosim`, file→scope is DERIVED from the loaded DB); the join key is the **cell** (`lib/cell`, with a four-rung ladder ending at the instance's own `model=` property), never the instance path; the schematic prefix is **dropped, not translated**; `scope` stays a hint, is not even eligible when the entry's `vfile` is empty, and the derived answer wins. A code block **below** the netlisted schematic reaches only rung 4 — issue 0307. **IMPLEMENTED 2026-08-09 (batch F item 4), see RULING 5f**: `ase::cosim_scope_for_instance <key> <instpath> ?<token>?` in `src/ase.tcl`, pinned by the **FS** group of `tests/headless/test_ase_cosim.tcl`. **F1 CALLS IT as of batch F item 5**, through `ase::cosim_scope_for_f1` (`src/ase.tcl:1834`) — the same resolver with step 1's design read hoisted into the caller, because the caller has to take that read before the viewer raise. | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
-| F3 | **Multi-DB display.** The all-DBs reader (`src/wave_viewer.tcl:2000-2130`) already enumerates every registry slot and labels them (`wviewer::db_label`). Confirm a digital DB labels sensibly and that per-DB grouping in the tree reads well when analog and digital scopes interleave. | Mostly free. Verify, don't assume. |
-| F4 | **Classification.** The `class`-field and hide-internals rulings (`signal-browser-declass-rulings`, issue 0217) were settled for raw vector names. Digital signals are a new class of name — decide whether they get their own class or reuse an existing one. | Consistency with settled work. |
+| F3 | ~~**Multi-DB display.**~~ **MEASURED AND FIXED 2026-08-10 (batch F item 6), see "F4/F3 — the digital signal class and the tree" below.** `wviewer::db_label` needed **no change** — a VCD reads `counter.vcd (vcd)`, distinct from `tb_ase.raw (tran)` beside it, and carries the space+bracket that stops it being read as a hierarchy segment (`FD38`). The **grouping did not read well and was not "mostly free"**: an inventory whose names are classified as ngspice names loses its top `$scope` level, mis-labels its wires as currents, and — at the shipped default box state — is not in the tree at all. That is F4's business and F4 fixed it. `wviewer::signal_list_all` was already right; what was missing was carrying its `type` **into the browser's own snapshot**. | Mostly free. Verify, don't assume. *(It was not free.)* |
+| F4 | ~~**Classification.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 6): digital names get their OWN class, `digital`.** See "F4/F3 — the digital signal class and the tree" below for the ruling, the measurement that forced it and which 0217 rulings it depends on. | Consistency with settled work. |
 | F5 | ~~**Empty-pane notice.**~~ **DONE 2026-08-10 (batch F item 5).** `ase::browser_digital_msg` (`src/ase.tcl:1954`) prefixes the F2 resolver's OWN refusal sentence and adds nothing (RULING 5f-3); `wviewer::browser_notice` (`src/wave_viewer.tcl:8187`) puts it on the lower pane's caption, the sidebar status line, and — when the pane really is empty — INTO the pane, wrapped, on the canvas. The `ase::echo … error` tag is the one this row named. **RULING F1e (salvage pass) adds the FOURTH surface this row actually needed: the SUCCESS path's own empty pane**, which without it captioned itself "'TOP.m' has no signals of its own" about a scope that has two. | The failure mode users will actually hit. |
 
 #### F1/F5 — the branch and the notice (batch F item 5, 2026-08-10)
@@ -821,6 +821,248 @@ so the two agree. Fixing the announcement costs a twelfth `browser_msg` kind and
 resolves against the viewer's registry BEFORE the
 raise, so a Ctrl-Alt-V taken when the viewer has not yet attached this run's databases
 answers `notloaded` — with the sentence that says to re-attach them.
+
+#### F4/F3 — the digital signal class and the tree (batch F item 6, 2026-08-10)
+
+**STATUS: F3 and F4 are DONE. All five §F rows are now closed.** What landed:
+`wviewer::db_is_digital`, `wviewer::browser_curtype` and
+`wviewer::browser_label_of_db` in `src/wave_viewer.tcl`; an optional `dbtype`
+parameter on `wviewer::sig_split` and `wviewer::signal_entry`; a `digital` arm in
+`wviewer::browser_label`; a `type` key on both of `browser_reload`'s per-database
+dicts; and the six sites that build entries or match names now say which database
+they are talking about. Pinned by the **FD30-FD48** band of
+`tests/headless/test_wave_sigbrowser_digital.tcl` (26 checks — 16 in the
+both-arms block, 10 on the real viewer), every one of which is red under at
+least one of seventeen sabotages.
+
+---
+
+**RULING F4 — DIGITAL NAMES GET THEIR OWN CLASS, `digital`. Reusing `net` was
+not available, and the reason is measured rather than aesthetic.**
+
+The `class` field enumerates `net` | `devnode` | `devmeas` | `srcbranch`. It
+gains a fifth value, `digital`, for every name that came out of a database whose
+`sim_type` is `vcd`. Such a name is **never declassed**: `sig_declass` does not
+run on it at all.
+
+*Which 0217 rulings this depends on, named explicitly:*
+
+* **Ruling A (`signal_entry` gains a `class` field) — DEPENDS ON, and extends.**
+  The whole ruling is expressed as a value of that field. Without Ruling A there
+  would be nowhere to put the answer and the tree would have to re-derive
+  "digital or not" from the name at every consumer, which is the second-parser
+  hazard Ruling A exists to prevent. `FD31c` pins that the key **set** does not
+  move: `digital` is a value of the shipped fifth key, never a sixth key.
+* **Ruling B (device internals hidden by default, behind a toggle) — DEPENDS ON,
+  and is the reason reuse fails.** See the measurement below: reusing `net`
+  leaves `sig_declass` running on digital names, and the names it mis-tags are
+  classed `devnode`, which is exactly what Ruling B's box hides **by default**.
+  `digital` is therefore deliberately **not** a device class (`sig_is_device`
+  answers 0) and neither of R11's two boxes narrows a digital inventory at all —
+  they partition an *analog* raw, and a VCD has no devices for them to talk
+  about. `FD32`/`FD37`.
+* **"The two panes RELOCATE the noise rather than delete it" (44 → 128 across two
+  panes) — DEPENDS ON, as the boundary this ruling must not cross.** That
+  redistribution is about *analog* noise and it is unchanged by this item: every
+  analog class, path, label and node count is byte-identical
+  (`FD32b`/`FD33b`/`FD35`/`FD36b`, and the live control `FD42b` reads the analog
+  raw sitting in the same tree). A digital database arrives as its **own
+  registry slot under its own header**, so its scopes are additional rows beside
+  the analog ones, never mixed into the 128. What the ruling forbids is the
+  other direction — *deleting* rows — and that is precisely what reuse did.
+
+*The measurement that forced it* (a two-scope VCD from `fd_mkvcd_m`, whose top
+`$scope module m` is legal Verilog and legal VCD; the name that comes out is
+`m.sub.sig`):
+
+| | reused as an ngspice name | ruled `digital` |
+|---|---|---|
+| class | `devnode` | `digital` |
+| path | `sub` — **the `m` level deleted** | `m.sub` |
+| label | `sig:i` — a wire drawn as a current | `sig` |
+| bus bit `m.sub.count[3]` | `count:3` — the **index eaten** out of the brackets | `count[3]` |
+| in the tree at the DEFAULT box state | **not present at all**; `time` alone | present |
+
+⚠ **`sig_declass` is sound BY SPICE GRAMMAR AND BY NOTHING ELSE.** Its own ⚠
+block says so: a one-letter path segment cannot be a subcircuit instance because
+SPICE requires those to begin with `X`. **A VCD is not SPICE.** Verilog places no
+such rule on a module or instance name, so the argument that makes the rule safe
+on a raw does not survive the crossing, and the tag it "recovers" from a VCD name
+is a hierarchy level it just deleted. That single sentence is the whole ruling:
+the classifier must be **told** which grammar a name obeys, and it cannot sniff
+it — sniffing the name's shape is the mistake `sig_class`'s own ⚠ block
+(issue 0217:44, the `#` trap) already forbids in the analog direction.
+
+⚠ **THE CLASS FOLLOWS THE DATABASE, NOT THE NAME.** `TOP.counter.clk` splits
+identically under both readings, and it is still classed `digital` (`FD31b`).
+Classing only the names that would otherwise be mangled would make the class a
+bug-workaround rather than a fact about the signal, and every consumer that
+wanted to ask "is this digital?" would have to ask "would it have been mangled?"
+instead.
+
+⚠ **`type` STAYS `other`, DELIBERATELY, AND IS A DIFFERENT FIELD.** `sig_type` is
+the one classifier behind the Voltage/Current dropdowns and it reads the leading
+`v(` / `i(`; a VCD name has neither, so every digital name is `other` and the
+dropdowns select it under "Other". Giving digital names a fourth dropdown value
+is a separate decision about a visible control and is **not** taken here.
+This is why `browser_label`'s digital arm is tested `class` FIRST and not
+`type`: the shipped `class eq net && type ne i` test would have dropped every
+digital name into the current formatter.
+
+*The mechanism, and the one fact that had to travel:* `signal_list_all` already
+reports each registry slot's `type`. What did not exist was that value **inside
+the browser** — `browser_reload` built its per-database dicts without it. It now
+carries `type` on both the current-DB dict and each foreign one, and
+`browser_curtype` is THE ONE read of it (the same single-place-to-sabotage rule
+`browser_alldbs` is built on). An unknown token, an absent snapshot or a thrown
+`signal_list_all` all answer `{}`, which reads as **analog** — the deliberate
+degradation direction, because a guessed "digital" would stop declassing a real
+ngspice raw and put `m`, `v` and `@m` back at the top of the tree, undoing
+issue 0217 on a guess.
+
+*The matcher subject follows the same rule.* Two-pane item 20 ruled that the
+Search/Filter bars match **the label the pane draws**. `sig_match` invokes its
+`-key` as a command PREFIX, so the database kind is **curried in front**:
+`[list wviewer::browser_label_of_db $type]`, at both production key sites
+(`browser_match` and `browser_refresh`'s All-DBs loop) — BD57's argument, one
+database *kind* over instead of one database over. The shipped one-argument
+`browser_label_of` is kept, unchanged and analog, for callers with no database in
+hand; that is every direct unit test of the matcher (`SM29`, `SM30`, `BD57`'s
+negative control), and rewriting those five call sites would have moved five
+checks for a fact none of them is about. `FD34`/`FD34b`/`FD43`.
+
+**RULING F3 — `db_label` IS ALREADY RIGHT AND IS NOT CHANGED.** A digital
+database's tree header reads `counter.vcd (vcd)`: the file tail plus the
+engine's own analysis string, which for a VCD is the literal `vcd` that
+`vcd_read()` stamps (`src/vcd_read.c:831`). It is distinct from the analog
+`tb_ase.raw (tran)` beside it, and it keeps the property `db_label`'s own ⚠
+block is about — a space and a bracket, so it can never be mistaken for a
+hierarchy segment by `browser_node_for`. The design root under it comes from the
+VCD's own file name via `browser_root_label` (`counter`), exactly as a raw's
+does. Confirmed as a VALUE by `FD38` rather than by reading the code.
+
+**What F3/F4 do NOT solve — stated rather than discovered.**
+
+* **The lower pane still lists only the CURRENT database** — issue **0308**,
+  **NOT a blocker for F3, and DEFERRED for a stated reason.** F3's subject is the
+  TREE, and the tree half works completely: `m` and `m.sub` are real rows of the
+  foreign VCD's own subtree, its wire and its bus bits hang off `m.sub`, and the
+  Search bar reaches them (`FD42`/`FD43`). The lower pane is a different surface
+  with a different reader — `browser_sea_refresh` draws it out of
+  `browserseaent`, which is the current database's entries and only those (item
+  15's declared limit, `BD70d`). RULING F4 cannot reach that: the classification
+  is already right there, and what 0308 needs is a per-ROW inventory reader,
+  which is `browser_sea_refresh`'s business and not the classifier's.
+  **0308 is now pinned as a VALUE rather than a claim by `FD48`**, which selects
+  a foreign digital scope by hand and asserts that the row's leaves ARE in the
+  tree while the pane lists nothing under `m.sub has no signals of its own` —
+  0308's own falsehood, reproduced from the digital side. When 0308 is fixed
+  `FD48` must be RESTATED, not deleted. Its oracle is sabotage **S17**, which is
+  the shape of that fix and reds `FD48` together with five of item 5's notice
+  checks — the concrete evidence for 0308's closing line that fixing it also
+  retires RULING F1e's arm.
+  What this item does add is the other half — with a VCD as the **current**
+  database the pane lists its own signals and draws them bare, which is
+  `FD44`/`FD45`/`FD46` and is the state a pure-digital run actually produces.
+* **Issue 0309 (a `partial` landing that ticked the All-DBs box says so nowhere)
+  is NOT a blocker for F3 either, and is DEFERRED.** It is a defect of
+  `browser_show_db_scope`'s outcome *sentence* — item 5's F1 territory — and has
+  no bearing on how a name is classified or how the tree groups it. Its own fix
+  needs a twelfth `browser_msg` kind plus a third restatement of `BK33`'s moving
+  `return`-count leg, which its filed text already says is not a one-liner; doing
+  it here would be the neighbouring-code fix this item was told not to take.
+  ⚠ Worth recording because it changes the odds rather than the code: RULING F4
+  **reduces** 0309's reachability for a digital database. `browser_node_for`
+  walks the TREE, and before the ruling a VCD's scopes were classed `devnode` and
+  therefore absent from the tree at the default box state — so every digital walk
+  landed short and took the `partial` arm. With the ruling the rows exist and the
+  walk lands (`FD41` asserts exactly that, `ok` rather than `partial`, with device
+  internals still hidden). 0309 remains reachable by the Search/Filter route its
+  own reproducer uses.
+* ~~**`browser_target_path` / `browser_sea_target_path` are NOT digital-aware.**~~
+  **NO LONGER A LIMIT — FIXED in the same item's review round, see "The fix pass"
+  below.** The limit as first declared was also *understated*: it said the two
+  procs "answer the declassed path while the tree's group id says otherwise" and
+  dismissed it as harmless, but the measured consequences were a `Descend to
+  here` entry left **ENABLED** and then silently doing nothing, and a scope
+  selected together with **its own child wire** reported as
+  `those rows are in different parts of the hierarchy`.
+* **There is no "hide digital internals" control.** A VCD carries every RTL net,
+  including ones nobody drew, and no box narrows them. Adding a third checkbox is
+  a product decision about a visible control, not a consequence of this ruling.
+* **The three new procs are NOT added to `waveform_signal_browser.md`'s contract
+  list.** `GS23` in `tests/headless/test_wave_grid.tcl` pins that list's length
+  as an exact ledger (57), so adding names to it is a separate, deliberate edit
+  with its own check to move; `GS2`'s source→spec roster is hard-coded and does
+  not require them. They are documented here instead. **The fix pass adds a
+  fourth (`browser_id_type`) on the same terms.**
+
+##### The fix pass — four defects RULING F4's first landing carried in
+
+RULING F4 admitted a **case-sensitive, non-SPICE namespace** into machinery that
+had only ever been given ngspice names. Its first landing was correct about the
+class, the label and the tree, and wrong in four places that the new namespace
+made reachable. All four are fixed; each is pinned as a value by a check that
+fails on the pre-fix tree with exactly the value quoted here.
+
+* **RULING F4c — a `digital` entry's path compares CASE-SENSITIVELY.** `-nocase`
+  is a fact about *ngspice* (it lowercases, so the raw says `x1.x2` where the
+  schematic says `X1`), not a courtesy. Verilog is case-sensitive and
+  `vcd_read.c` stores names verbatim, so **`top.mod` and `top.MOD` are two legal
+  sibling scopes**. MEASURED before the fix, on the inventory
+  `{top.mod.a top.MOD.b}`: `browser_rows` built two distinct groups (correctly)
+  while `browser_level_names` answered **both** names for **either** path and
+  `browser_sea_own` counted **2** for each — so selecting either scope drew the
+  other one's wires under a caption of `2 of 2 signals`. The rule keys on the
+  **entry's own `class`**, never on a database argument, because an entry list is
+  the only thing `browser_level_names` is ever given. `browser_names_under`
+  already ruled this exact point the same way; the reasoning simply had to travel
+  with the names. **`FD49`/`FD50`, both directions in one tuple** — the ngspice
+  control leg is load-bearing, because `TP16` pins `X1` finding `x1` and a fix
+  that merely made the compare case-sensitive would red a shipped check.
+* **RULING F4d — a leaf row is split with ITS OWN database's grammar, and the
+  *current* database's kind is not that answer for the tree.** The tree is the
+  one surface holding several databases at once (item 14), so "which grammar do
+  this row's names obey" is a **per-row** question. A new pure resolver
+  `browser_id_type {token id}` answers it out of the snapshot `browser_reload`
+  already takes, degrading to analog for an unknown row — the same deliberate
+  direction the current-kind reader documents. MEASURED before the fix, on
+  `m.sub.sig`: group `ok m.sub`, its own leaf `ok sub`, the two together
+  `err {those rows are in different parts of the hierarchy}`.
+  ⚠ **Currying the current kind here would have been the mirror defect, not the
+  fix**, and that is measured too: sabotage `T6` (force `vcd`) makes the current
+  ngspice raw's device leaf answer `ok m.x1.xm1` instead of `ok x1.xm1`. The
+  **lower pane** has no such question — it draws the current database's entries
+  and only those (item 15's declared limit) — so `browser_sea_target_path` is
+  told the current kind directly. **`FD51`/`FD52`, plus `FD54`/`FD55` on the real
+  tree and the real pane.**
+* **An unreachable node is SAID, not swallowed.** `browser_sea_descend_to`'s
+  "no such row" arm used to `return 0` in silence while the menu entry above it
+  is built ENABLED on `ok` alone — so `Descend to here` did nothing and explained
+  nothing. A Filter that hides the scope is a real way to reach that state, so it
+  gets a sentence rather than a stricter gate. A **literal string, not a twelfth
+  `browser_msg` kind**: that proc's arms are the scope-change vocabulary and its
+  `return` count is pinned as a ledger (`BK33`). **`FD52b`.**
+* **RULING F4b — in shell syntax, typing exactly what the pane draws always
+  finds it.** Two-pane item 20 made the bars match the **label**, and RULING F4
+  made a digital bus bit draw `count[0]` (correctly — the pre-ruling label was
+  `count:3`, with the index eaten). But `[0]` is a glob character class, so
+  MEASURED after that landing: `sig` found the wire, `count` found the bare bus,
+  and **`count[0]` — the exact string on screen — found nothing**. On a digital
+  database that is the majority of names. It is not purely digital either: an
+  ngspice design net `v(x1.count[3])` has drawn `count[3]` since item 20 shipped
+  and typing it has never worked.
+  **The fix does not change what a glob means.** The glob is tried first and
+  unchanged; an exact whole-subject equality is tried second, so the match set
+  can only *grow*, and it grows by exactly the string the user can see.
+  ⚠ The obvious alternative — quoting the metacharacters — was measured and
+  **rejected**: with the subject quoted, `*net_name[[]*` finds nothing, which
+  reds `SM07`, whose whole subject is that `[[]` is the escape for a literal `[`.
+  Quoting the pattern destroys every wildcard. `SM06` (a bracket range), `SM07`
+  and `SM19` (a lone `[` is a no-match, not an error) all still hold, because no
+  signal is literally named `net[0-9]` or `[`. **Shell only** — `-syntax regexp`
+  is the explicit power-user mode where a metacharacter is what the user came
+  for, and it keeps `count\[0\]` as the exact-match escape hatch. **`FD53`.**
 
 ### G — The reference testbench and the schematic side
 

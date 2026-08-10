@@ -75,6 +75,27 @@ What remains is an omission, and closing it is not a one-liner:
   `return` count, already restated 9 → 10 → 11 by earlier items. A twelfth arm is a third
   restatement of that check, which must be done deliberately and in the same commit.
 
+## Reviewed at batch F item 6 (F3/F4), 2026-08-10 — STILL OPEN, DEFERRED, and now RARER
+
+Item 6 considered this as a possible blocker for F3 and it is not one: this is a
+defect of the outcome *sentence*, and F3/F4 are about how a name is classified
+and how the tree groups it. Fixing it here would have meant a twelfth
+`browser_msg` kind plus a third restatement of `BK33`'s moving `return`-count leg
+— the neighbouring-code fix that item was told not to take.
+
+⚠ **RULING F4 changed the ODDS, not the code, and in the safe direction.**
+`browser_names_under` asks the INVENTORY and `browser_node_for` walks the TREE,
+and this issue lives where those two disagree. Before RULING F4 a digital
+database disagreed with itself *by construction*: a VCD's scopes were classed
+`devnode`, so at the shipped default box state they were **not in the tree at
+all** while the inventory still carried their names — every digital walk landed
+short and took the `partial` arm. With the ruling the rows exist and the walk
+lands: `FD41` in `tests/headless/test_wave_sigbrowser_digital.tcl` asserts `ok`
+rather than `partial` on a walk into `m.sub` with device internals still hidden.
+
+The Search/Filter route this issue's own reproducer uses is untouched and still
+reaches the path. The issue stands as written.
+
 ## The fix, when someone takes it
 
 Reorder the tail so the tick is not swallowed, and give the combination its own sentence:

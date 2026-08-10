@@ -166,6 +166,29 @@ instant — once stripped, `x1.x1.x1.xm1` cannot be told from a chain of real su
 | `devnode` | a device internal node | `v(m.x1.xm1.msky…#body)` | 1401 |
 | `devmeas` | a device parameter accessor | `i(@m.x1.xm1.msky…[id])` | 464 |
 | `srcbranch` | the branch current of a source **inside** a subcircuit | `i(v.x1.v1)` | 155 |
+| `digital` | a signal from a **digital** results database (`sim_type vcd`) | `TOP.counter.clk` | — (not in the analog corpus) |
+
+⚠ **`digital` IS NOT MINTED FROM A TAG AND IS NOT NARROWED BY EITHER R11 BOX.** Added
+2026-08-10 by RULING F4 (`doc/claude/specs/mixed_signal_signal_browser.md` §F). It is
+decided by the DATABASE a name came from, in `signal_entry`, and such a name is never
+declassed at all — `sig_declass` is sound by SPICE grammar, and a VCD is not SPICE, so on a
+top `$scope module m` it would strip a real hierarchy level, class the wire `devnode`, and
+R11(a)'s default-off box would then delete it from the tree. `sig_is_device digital` is 0
+and both boxes leave a digital inventory whole. The four analog rows above, their counts,
+R1's quantifier and the 44/128 redistribution below are **unchanged** by it: a digital
+database arrives as its own registry slot under its own header.
+
+⚠⚠ **`digital` ALSO CARRIES A CASE RULE AND A MATCH RULE, and both are consequences of the
+class rather than extras.** A `digital` entry's path compares **case-SENSITIVELY**
+(RULING F4c): `-nocase` everywhere else is a fact about ngspice's lowercasing, but Verilog
+is case-sensitive and `top.mod` / `top.MOD` are two legal sibling scopes — folding them made
+`browser_level_names` and `browser_sea_own` answer each scope with the other's signals under
+a caption counting them. And because §4.1 makes the **label** the filter subject, a digital
+bus bit's honest label `count[0]` is a glob character class: typing exactly what the pane
+draws found nothing until RULING F4b added an exact whole-subject arm after the glob (the
+glob's own meaning is unchanged, and the same wart pre-existed for an ngspice net
+`v(x1.count[3])`). Both are measured in
+`doc/claude/specs/mixed_signal_signal_browser.md` §F, "The fix pass".
 
 ⚠ **The classifier keys on the stripped tag, never on the leaf's shape.** 0217:44 records
 "100% of device leaves contain `#`". That is true forward and **false backward**: six real

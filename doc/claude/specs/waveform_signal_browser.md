@@ -200,6 +200,14 @@ rename there turns the suite red.
   reaches `string match` / `regexp` as data only, so a leading `-` or a `[` cannot become an
   option or a command substitution. An **empty pattern matches everything** and that is
   CODED as a short-circuit, not inherited — `string match {} x` is 0.
+  ⚠ **RULING F4b — in `shell` syntax an EXACT whole-subject equality is tried after the
+  glob**, so typing exactly what the pane draws always finds it. Item 20 made the subject
+  the **label**, and a label can legitimately contain a glob metacharacter (a bus bit draws
+  `count[0]`; an ngspice net `v(x1.count[3])` draws `count[3]`), which the glob reads as a
+  character class and never matches. The glob's meaning is **unchanged** and the match set
+  can only grow — `SM06`, `SM07` and `SM19` all still hold. Quoting the metacharacters was
+  measured and rejected: it reds `SM07`. `regexp` syntax is untouched and keeps
+  `count\[0\]` as the escape hatch. See `mixed_signal_signal_browser.md` §F.
 - `wviewer::sig_bare` — `{name}` strips ONE `<fn>(...)` wrapper: `v(x1.x2.net5)` ->
   `x1.x2.net5`. **For path/leaf splitting only** (ruling 14); nothing here feeds `sig_match`.
 - `wviewer::sig_declass` — `{bare}` -> `{class rest}`. Strips ngspice's device-class tag
@@ -208,9 +216,16 @@ rename there turns the suite red.
   `^@?[a-z]$` case-insensitively **AND at least two segments follow**. Issue 0217.
 - `wviewer::sig_class` — `{tag}` -> `net` | `devnode` | `devmeas` | `srcbranch`. THE one
   classifier, and it keys on the **tag**, never on the leaf's shape (see the ⚠ below).
-- `wviewer::sig_split` — `{name}` -> `{path leaf}`, split on the LAST dot of the **UNWRAPPED,
-  DECLASSED** form.
-- `wviewer::signal_entry` — `{name}` -> `{name type leaf path class}` for one raw name.
+  ⚠ There is a **fifth** class value, `digital`, which this proc does not mint — it has no
+  tag to key on and is decided by the DATABASE a name came from, in `signal_entry`. See
+  RULING F4 in `doc/claude/specs/mixed_signal_signal_browser.md` §F.
+- `wviewer::sig_split` — `{name ?dbtype?}` -> `{path leaf}`, split on the LAST dot of the
+  **UNWRAPPED, DECLASSED** form. ⚠ `dbtype` is OPTIONAL and defaults to analog; told `vcd`
+  it skips the declass step entirely, because a VCD scope named `m` is a real hierarchy
+  level and `sig_declass` is sound by SPICE grammar only (RULING F4).
+- `wviewer::signal_entry` — `{name ?dbtype?}` -> `{name type leaf path class}` for one raw
+  name. ⚠ Told `vcd` it answers class `digital` and does not declass (RULING F4); the key
+  SET never moves.
 - `wviewer::signal_list` — `{token}` -> list of those dicts, for the token's **current** raw.
   Returns `{}` — never throws — when the token is unknown, when the context switch is
   REFUSED, or when there is no raw. "Nothing to browse" is an ANSWER.
@@ -341,7 +356,12 @@ is precisely the mechanism that forces a spec entry and its proc into one commit
   at or under which is device-classed, i.e. exactly the nodes R1 hides. 84 of `tb_bandgap`'s
   128, 303 of `tb_charge_pump`'s 316.
 - `wviewer::browser_level_names` — `{entries path}` -> the raw names owned by **that level
-  only**, `-nocase` on the path. The lower pane's selector. ⚠ It is deliberately **not**
+  only**, `-nocase` on the path — **except for a `digital` entry, which compares
+  case-SENSITIVELY (RULING F4c)**: `-nocase` is a fact about ngspice's lowercasing, and
+  Verilog's `top.mod` / `top.MOD` are two legal sibling scopes that folding would merge.
+  The rule keys on the **entry's own class**, so the signature does not change;
+  `browser_sea_own` carries the identical rule because it is the same question's
+  denominator. The lower pane's selector. ⚠ It is deliberately **not**
   `browser_leaf_names`, which R6 keeps **recursive** for the tree's own plot gesture.
 - `wviewer::browser_label` — `{e}` -> the Cadence-style rendered label for one entry
   (`xm1:id`, `v1:i`); a plain design net renders as its bare leaf. **Display, not identity**

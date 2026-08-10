@@ -70,6 +70,43 @@ the current database. Two further paths are unfixed and share this cause:
   they belonged to the foreign one — `BD70d`'s declared limit, worse than empty because it is
   wrong rather than absent.
 
+## Re-measured at batch F item 6 (F3/F4), 2026-08-10 — STILL OPEN, and now PINNED
+
+Item 6 took F3 and **did not fix this**, deliberately: F3's subject is the TREE,
+and RULING F4 is a classification ruling, while what this issue needs is a
+per-ROW inventory reader inside `browser_sea_refresh`. Two things did change, and
+both are worth recording here.
+
+**1. The tree half is now completely sound, which sharpens the contrast.** Before
+RULING F4 a VCD whose top `$scope` was one letter had its wires classed `devnode`
+and hidden by Ruling B's default-off box, so the foreign digital rows were not in
+the tree at all. They are now. Measured on a healthy `:0` with a three-database
+fixture (analog raw current, two VCDs foreign):
+
+```
+tree rows        d:2|g:m , d:2|g:m.sub , d:2|s:m.sub.sig , d:2|s:m.sub.count[3]   ; ALL PRESENT
+lower pane cells 0
+lower pane caption  "m.sub has no signals of its own"    <-- STILL FALSE
+browser_sea_own  0
+```
+
+So the shape of the defect is unchanged, but it is now the ONLY thing wrong on
+that path — the row exists, is selected, is correctly classified, and lists
+nothing.
+
+**2. It is pinned as a value.** `FD48` in
+`tests/headless/test_wave_sigbrowser_digital.tcl` asserts all four lines above in
+one tuple, with the row's presence as leg 1 so the check carries its own positive
+evidence. **When this issue is fixed `FD48` must be RESTATED, not deleted**: leg
+2 becomes the six names and leg 3 the ordinary count.
+
+Its oracle is item 6's sabotage **S17**, which is the shape of the fix suggested
+below (the pane appends every foreign database's entries). S17 reds `FD48` **and
+five of item 5's own notice checks** — `FD19`, `FD21`, `FD23`, `FD24`, `FD26` —
+which is the measured evidence for the closing line of this issue: fixing the
+pane retires RULING F1e's arm, and that arm must then be DELETED rather than left
+saying something no longer true.
+
 ## The fix, when someone takes F3
 
 Make the lower pane read the database its selected ROW belongs to: `browser_row_db $id` (`src/wave_viewer.tcl:7189`) already
