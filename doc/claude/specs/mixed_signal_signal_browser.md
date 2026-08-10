@@ -30,8 +30,10 @@ zero vectors, because ngspice holds no internal nodes for a code-model instance.
 
 ## Measured constraints (why this is four subsystems, not one)
 
-All measured on this machine, ngspice-46 (build 2026-08-02), 2026-08-08. These are the
-facts that shape every decision below.
+All measured on this machine, ngspice-46 (build 2026-08-02), 2026-08-08 unless a row
+says otherwise. These are the facts that shape every decision below. Where a row was
+later refined against source or re-measured, the row carries the newer date and points
+at the section holding the detail — M15 and M18 both did (batch F item 12, 2026-08-10).
 
 | # | Fact | Evidence |
 |---|------|----------|
@@ -49,10 +51,10 @@ facts that shape every decision below.
 | M12 | Ubuntu's `iverilog` 12.0-2build2 deb **ships no `libvvp.so`** (only `/usr/bin/vvp`, `libvpi.a`). `ivlng.so` dlopens `libvvp`. The apt package cannot drive `d_cosim`. | `dpkg -c` on the downloaded deb; `strings ivlng.so` |
 | M13 | Installed and working: ngspice-46 with XSPICE (`digital.cm` exposing `d_cosim`, `d_process`, `d_dff`…), `ivlng.so`+`ivlng.vpi`, `vlnggen`, `ghnggen`, `openvaf`, `g++ 13.3`, **`verilator 5.020`**. | `ls /usr/local/lib/ngspice/`, `verilator --version` |
 | M14 | **ngspice-46 lowercases every literal token in script-file mode**, including `setcs` values. Interactive input is unaffected. This makes the shipped `vlnggen` unusable — it depends on case in `--Mdir`, `--prefix Vlng`, the `VL_IN`/`VL_OUT`/`VL_INOUT` scan, and the `VL_DATA(...)` lines it echoes. | `printf '*ng_script\necho BARE_UPPER\nsetcs v="X_UPPER"\necho $v\n' > s; ngspice s` → `bare_upper` / `x_upper`. Real failure: `%Error: Invalid option: --mdir... Suggested alternative: '-Mdir'` |
-| M15 | **`verilator_shim.cpp` has a use-after-free.** `Cosim_setup()` holds the `VerilatedContext` in a function-local `const std::unique_ptr` while the model keeps a raw pointer; the `--timing` `step()` then calls `topp->contextp()` on freed memory. Latent today only because the non-timing path never touches the context. | source read; patched in `tools/cosim/src/` |
+| M15 | **`verilator_shim.cpp` has a use-after-free.** `Cosim_setup()` holds the `VerilatedContext` in a function-local `const std::unique_ptr` while the model keeps a raw pointer; the `--timing` `step()` then calls `topp->contextp()` on freed memory. **It is NOT latent in the build we ship, and an earlier version of this row said it was.** The `--timing` `step()` is indeed never compiled (we never pass `-t`), but that is only the *first* of two ways the freed context is reached: the second is `Verilated::threadContextp()`, which the *generated* model dereferences inside `topp->eval()` in every build whenever the Verilog uses `$time`, `$display` with `%t`, `$finish`, `$stop` or `$fatal`. The patch is kept, is correct, and is load-bearing today. See §A part 2. | source read; patched in `tools/cosim/src/`. The old "inert" reading came from a real but NARROW measurement — with the `release()` neutered the *reference* run gave a byte-identical VCD and a clean valgrind, because `counter.v` uses none of those constructs. Re-measured 2026-08-10 under AddressSanitizer with the same neutering and no `-t`: a `$display("t=%t", $time)` counter gives heap-use-after-free in `VerilatedContext::time()` under `Vlng::eval_step()`; the reference `counter.v` in the identical harness stays clean |
 | M16 | **`pinfo->cleanup` is not reliably reached** in ngspice-46 batch mode. The first trace build ended with a half-written `#197` where `#1975796` belonged. Periodic `flush()` + `atexit()` fixes it. | measured, then re-measured clean: `truncated: False`, span `0..2000000 ps` |
 | M17 | **A trace dump happens on every SPICE timestep, not every signal change.** The reference run produced **200,344 VCD timestamps carrying ~40 real transitions** — one `#t` line per ngspice step. VerilatedVcd dedups *values* but still emits the time header. | `xcheck.py`: 200,344 timestamps vs 10 LSB edges. **Directly sizes decision C2.** |
-| M18 | **ngspice lower-cases the strings inside a device card**, not just in script-file mode (M14). A path with any upper case in it is opened under a different name, and for `sim_args` **there is no error at all** — the run exits 0, the analog raw is perfect, the VCD simply never exists. | Measured 2026-08-08, ngspice-46: `sim_args=["/tmp/vcdprobe/Ecap/x.vcd"]` wrote nothing; pre-creating `/tmp/vcdprobe/ecap/` made the file appear **there**. `simulation="./CounterUP.so"` → `d_cosim failed to load simulation binary ./counterup.so.` (that one at least reports). **Forces E2 to write a bare, lower-cased basename** resolved against the run directory ngspice is already `cd`-ed into. Found only by running §E end to end — 141 green headless checks did not see it. |
+| M18 | **ngspice lower-cases the strings inside a device card**, not just in script-file mode (M14). A path with any upper case in it is opened under a different name, and for `sim_args` **there is no error at all** — the run exits 0, the analog raw is perfect, the VCD simply never exists. | Measured 2026-08-08, ngspice-46: `sim_args=["/tmp/vcdprobe/Ecap/x.vcd"]` wrote nothing; pre-creating `/tmp/vcdprobe/ecap/` made the file appear **there**. On a card that ALSO carried `sim_args=["…"]` — i.e. four quotes on the physical line — `simulation="./CounterUP.so"` → `d_cosim failed to load simulation binary ./counterup.so.` (that one at least reports). **State that condition whenever you quote this example**: a card carrying *only* `simulation="./CounterUP.so"` has exactly two quotes and ngspice **keeps** its case (re-measured 2026-08-10), so the unqualified form asserts the opposite of the rule below. **Forces E2 to write a bare, lower-cased basename** resolved against the run directory ngspice is already `cd`-ed into. Found only by running §E end to end — 141 green headless checks did not see it. **Mechanism now recorded** in §A "M18 mechanically": `keep_case_of_cider_param()` (ngspice `src/frontend/inpcom.c:223-254` at `db9d99843`) preserves case only when the physical line carries **exactly two** double quotes; any other count, four included, folds the whole line. Adding `sim_args` is therefore what destroys the case of `simulation=`. |
 
 **M1 + M3 + M6 together are the whole problem.** The data exists only inside the
 digital simulator, the only way out is VCD, and xschem cannot read VCD.
@@ -89,7 +91,7 @@ far less work than the layers under it.
 | id | item | notes |
 |----|------|-------|
 | A1 | ~~Install `verilator`~~ | **DONE.** 5.020 at `/usr/bin/verilator`. |
-| A2 | ~~Trace-enabled cosim shim~~ | **DONE.** `tools/cosim/src/verilator_shim.cpp`, hunks marked `XSCHEM PATCH`: trace object + `traceEverOn` + depth 99 + `open()` from `sim_args`; `dump()` in **both** `step()` variants (the `--timing` one dumps at each Verilog event time `next * tick`, not at the SPICE target, or several internal events inside one timestep collapse); a monotonicity clamp (M16/M9); `flush()`+`atexit()` (M16); the context-lifetime fix (M15). |
+| A2 | ~~Trace-enabled cosim shim~~ | **DONE.** `tools/cosim/src/verilator_shim.cpp`, hunks marked `XSCHEM PATCH`: trace object + `traceEverOn` + depth 99 + `open()` from `sim_args`; `dump()` in **both** `step()` variants (the `--timing` one dumps at each Verilog event time `next * tick`, not at the SPICE target, or several internal events inside one timestep collapse); a monotonicity clamp (M16/M9); `flush()`+`atexit()` (M16); the context-lifetime fix (M15). **Note which half of that is live, and do not over-read it:** we never build with `-t`, so the `--timing` `step()` and its event-time `dump()` are not compiled at all in a shipped `.so`. The **M15 fix itself IS compiled** — `VerilatedContext *ctx = contextp.release();` sits at `verilator_shim.cpp:350`, between the `#endif` at `:295` and the `#if VM_TRACE` at `:357`, carrying no preprocessor guard of any kind — and it is load-bearing in that build too (§A part 2). What `-t` removes is one of its two consumers, not the fix. See §A "The shipped cosim build, precisely". |
 | A3 | ~~Fix the link~~ | **DONE**, in `tools/cosim/build_cosim_so.sh` — adds `verilated_vcd_c.o` when present. |
 | A4 | ~~Package the override~~ | **DONE, but not the way this spec first proposed.** The `sourcepath` trick is moot: `vlnggen` cannot run at all on ngspice-46 (M14). `tools/cosim/build_cosim_so.sh` replaces it outright, doing the same four steps in `sh`. `-V` selects the patched in-repo shim; without `-V` the system copy is used, so a stale vendored tree cannot silently affect a non-trace build. `NGSPICE_COSIM_SRC` overrides. See `tools/cosim/README.md`. |
 | A5 | ~~VCD path as a model parameter~~ | **DONE.** `.model counter d_cosim simulation="./counter.so" sim_args=["counter.vcd"] delay=0`; the shim reads `pinfo->sim_argv[0]`, defaulting to `cosim.vcd`. |
@@ -97,6 +99,219 @@ far less work than the layers under it.
 | A9 | **Throttle the trace dump** (new, from M17). 200,344 timestamps for ~40 transitions is ~1.7 MB per 2 µs and sets the floor for any reader's memory. Only dump when something changed, or subsample. | Not blocking; changes C2's arithmetic by ~4 orders of magnitude. |
 | A7 | *(optional, alternative)* Build Icarus from source with shared `libvvp` to unlock the `ivlng` route and plain `$dumpvars`. | M12. Only if a `.v` feature Verilator lacks is needed. |
 | A8 | *(optional, alternative)* `d_process` route — digital block as any external executable over pipes. Zero Verilog toolchain. | Worth a note in the spec; not on the critical path. |
+
+#### The shipped cosim build, precisely (batch F item 12, 2026-08-10)
+
+Two facts that the rest of §A and §E lean on without ever having stated them.
+Both are corrections: the first replaces a rationale in the source that was
+simply not true of the code it sat next to, the second records a property of the
+product that had only ever been a property of one run.
+
+##### 1. `-t` is never passed on any path. `-V` is passed unless `cosim trace 0`.
+
+`ase::cosim_build` builds the command line in three statements
+(`src/ase.tcl:1357-1359`):
+
+```tcl
+set cmd [list $script]
+if {$trace} { lappend cmd -V }
+lappend cmd -o $rd $vfile
+```
+
+Those two flags are **not** equally unconditional, and the easy mistake — made
+once already in this document — is to read the default as a universal.
+
+**`-t`: universal, and this is the item's actual finding.** There is no branch
+anywhere that appends it, and `ase::cosim_build` is the only caller of
+`build_cosim_so.sh` in the tree. In `build_cosim_so.sh`, `-t` is the *only*
+thing that sets `-DWITH_TIMING` (`build_cosim_so.sh:42`, `:73`). So **no**
+library ASE produces is a timing build:
+
+- `WITH_TIMING` is never defined → `verilator_shim.cpp` compiles the non-timing
+  `step()` (`verilator_shim.cpp:194-210`, dumping at `pinfo->vtime`) and sets
+  `pinfo->method = After_input` (`:389`);
+- the `WITH_TIMING` `step()` (`:229-277`) and its event-time `dump()` are **not
+  compiled at all**. They are maintained for a `-t` build that nothing in the
+  product currently makes.
+
+**`-V`: conditional.** `$trace` is 1 unless the state says literally `0`
+(`src/ase.tcl:1315`), so the default library is trace-enabled — but `cosim trace
+0` is a supported policy this document documents elsewhere (E2, E4, E7), not a
+hypothetical, and on that path the `.so` is a different animal entirely.
+`build_cosim_so.sh` uses `-V` for **two** things, and the second one is easy to
+miss: it gates `--trace` (`:74`), and it selects the shim source (`:49-53`) —
+
+```sh
+if [ "$trace" = 1 ]; then SHIMDIR=${NGSPICE_COSIM_SRC:-$here/src}
+else                      SHIMDIR=${NGSPICE_COSIM_SRC:-/usr/local/share/ngspice/scripts/src}
+fi
+```
+
+So a `cosim trace 0` library has `VM_TRACE` undefined **and is built from the
+stock upstream shim**, which carries none of the `XSCHEM PATCH` hunks at all —
+verified: `grep -c 'XSCHEM PATCH' /usr/local/share/ngspice/scripts/src/verilator_shim.cpp`
+gives `0`, and its `Cosim_setup` still has the unpatched
+`const std::unique_ptr<VerilatedContext> contextp` at `:205`. That includes the
+M15 `release()` whose retention part 2 argues for: in a `trace 0` build it does
+not exist, and the upstream use-after-free is present as upstream shipped it.
+
+This is not a new observation, which is the point — the tree already *tests* the
+switch and the first version of this subsection contradicted its own suite.
+`ase::cosim_shim_dir` (`src/ase.tcl:1267-1274`) returns the in-repo `src` for
+trace and `/usr/local/share/ngspice/scripts/src` otherwise, pinned by
+`tests/headless/test_ase_cosim.tcl` **BD19** and **BD20**.
+
+The `-t` choice is a decision, not an accident, and it is the right one for now:
+the reference design has no Verilog time delays, and `--timing` drags in
+`verilated_timing.o` and a second scheduling model for no benefit. It is
+recorded here because `After_input` is exactly why the monotonicity clamp is
+mandatory — ngspice calls `step()` more than once at the same `vtime`.
+
+##### 2. M15's fix is load-bearing in every build — and the trace setup was never the reason
+
+Two separate corrections live here, and the second one corrects the first
+attempt at this subsection. Keep them apart.
+
+**(i) The old reason was wrong.** The comment at the `release()` in
+`Cosim_setup()` used to say the patch was needed because "the trace setup needs
+the context too". That is false, and it is checkable in a minute: in
+`tools/cosim/src/verilator_shim.cpp` the released pointer `ctx` is used at
+exactly two places — the `ng_trace_tick` assignment and the non-`VM_TRACE`
+`(void)` cast — and both are inside `Cosim_setup()`, above its closing brace
+(`:282-391`), where the `unique_ptr` is still alive. `contextp.get()` would have
+served the tracer identically.
+
+**(ii) But "therefore inert" does not follow, and it is the more dangerous
+error.** Grepping for the identifier `ctx` answers a narrower question than *who
+reaches the context object*. Three aliases hold the same object and none of them
+contains the token `ctx`:
+
+| alias | where | live after `Cosim_setup` returns? |
+|---|---|---|
+| `topp->contextp()` | the raw pointer the model kept | **yes** — the `WITH_TIMING` `step()` calls `timeprecision()`/`time()` through it. Compiled only with `-t`. This is M15 as originally described. |
+| `VerilatedTrace::m_contextp` | `verilated_trace.h:285`, assigned in `addModel()` (`verilated_trace_imp.h:659`) | dereferenced only under `parallel()` (`:486`), which a single-thread build never sets — a dead end here. |
+| `Verilated::threadContextp()` | a **thread-local**, set by the `VerilatedContext` *constructor* (`verilated.cpp:2421`) and **never cleared by its destructor** (`:2434`) | **yes, in every build, `-t` or not** — see below. |
+
+The third row is what breaks "inert". The *generated* model dereferences that
+thread-local inside `topp->eval()` whenever the user's Verilog contains `$time`,
+`$display` with `%t`, `$finish`, `$stop` or `$fatal`: `VL_TIME_Q()` expands
+literally to `Verilated::threadContextp()->time()`
+(`verilated_funcs.h:302`, and `VL_TIME_UNITED_Q` at `:308` wraps it), and
+`vl_finish()` calls `gotFinish()` on the same pointer (`verilated.cpp:113`).
+Since the destructor only stamps `m_magic` and leaves the thread-local pointing
+at freed memory, `eval()` reads a dead object.
+
+**Measured 2026-08-10** (Verilator 5.020, ASan, no simulator involved). A
+harness reproducing `Cosim_setup` in the *shipped* configuration — `VM_TRACE`
+on, `WITH_TIMING` off — with the `release()` **neutered**, driving `topp->eval()`
+40 times:
+
+| Verilog driven | result |
+|---|---|
+| a counter whose `always` block does `$display("t=%t", $time)` and `$finish` | `ERROR: AddressSanitizer: heap-use-after-free`, READ of size 8 in `VerilatedContext::time()` ← `Vlng___024root___nba_sequent__TOP__0` ← `Vlng___024root___eval` ← `Vlng::eval_step()`; freed at the end of the `Cosim_setup` analogue |
+| `xschem_library/ngspice_verilog_cosim/counter.v` — the reference design, identical harness | exits 0, **ASan-clean** |
+
+That second row is the whole trap, and it explains the earlier evidence rather
+than contradicting it. The original "byte-identical VCD, clean valgrind"
+measurement is real; it was simply taken on `counter.v`, whose only `$display`
+has no `%t` and which never calls `$finish`, so it touches none of the three
+aliases. Codegen confirms it directly: the `%t` design emits
+`VL_TIME_UNITED_Q(1)` and `VL_FINISH_MT` inside `nba_sequent__TOP__0`, which
+runs under `Vlng::eval_step()`; the reference design emits neither.
+
+**RULING: keep the `release()`, and record the reason as "every build", not
+"only `-t`".** It costs one deliberately-leaked `VerilatedContext` per process
+(bounded — `d_cosim` unloads the library at end of run) and it is the difference
+between working and reading freed memory for any user Verilog that mentions
+time or calls `$finish`. The comment in `verilator_shim.cpp` and the bullet in
+`tools/cosim/README.md` now say so, and both warn against re-deriving "inert"
+from a run of `counter.v`. This matters operationally because
+`tools/cosim/README.md` "Keeping `src/` in sync" tells the next maintainer to
+re-apply the `XSCHEM PATCH` hunks by hand on an ngspice upgrade — a maintainer
+told this hunk buys nothing would have a reason to drop it.
+
+Two scope notes so this ruling is not over-read:
+
+- It is about the **patched** shim. Per part 1, a `cosim trace 0` build is
+  compiled from the stock system shim and has no `release()` at all; there the
+  upstream bug is simply present.
+- Nothing in the tree currently *tests* any of this. The only harness that
+  touches the build path is `tests/headless/test_ase_cosim.tcl`'s stub, which
+  explicitly swallows `-t` (`:608`) and records no argv, so a stray `lappend cmd
+  -t` in `ase::cosim_build` would leave BD1-BD26 green. Part 1's `-t` fact is
+  protected by prose only.
+
+#### M18 mechanically — a device card keeps its case only with EXACTLY two quotes
+
+M18 recorded the *symptom* (ngspice silently lower-cases the strings in a device
+card, and for `sim_args` there is no error at all). The mechanism is one small
+function, and knowing it lets you predict which of your own lines will be
+folded — which the symptom alone does not.
+
+**The code.** Line numbers below are the **ngspice source tree**, not xschem's:
+`/home/qflow/dev/ngspice_test`, clean at commit `db9d99843`. Pin the commit when
+you quote them — an earlier draft of this section carried numbers taken from a
+stale scratchpad copy and every one of them was 4 lines high against the tree it
+named. Grep for the identifier, not the line, if the two disagree.
+
+ngspice routes a `.model` line to `keep_case_of_cider_param()`
+(`src/frontend/inpcom.c:223-254`) when `is_xspice_model()` (`:416-438`, called at
+`:1908`) matches it: the line must start with `.model` *and* mention one of
+`filesource`, `table2d`, `table3d`, `d_state`, `d_source`, `d_process`,
+`d_cosim`. That function counts the `"` characters on the line and then branches
+on a single test (`:238`):
+
+```c
+if (numq == 2) {          /* one pair -> preserve what is between them */
+    ... toggle keep_case at each '"'; tolower_c only while !keep_case ...
+} else {                  /* ANY other count -> fold the WHOLE line */
+    for (s = buffer; *s && (*s != '\n'); s++) *s = tolower_c(*s);
+}
+```
+
+Anything not routed there falls through to the generic fold at `:1912-1927`.
+
+**The rule, in one sentence: count the double quotes on the physical line;
+exactly two preserves the single quoted run, and *every other count*, including
+four, folds the entire line — quotes, paths and all.** "Even" is not the rule.
+
+Measured on the installed **ngspice-46** (not the source tree) with
+`.control listing p .endc`, 2026-08-10:
+
+| card as written | `numq` | what ngspice stored |
+|---|---|---|
+| `.model Counter d_cosim simulation=./CounterUP.so` | 0 | `simulation=./counterup.so` — folded |
+| `.model Counter d_cosim simulation="./CounterUP.so"` | 2 | `./CounterUP.so` — **case kept** |
+| `.model Counter d_cosim simulation="./CounterUP.so" sim_args=["MixedCase.vcd"]` | 4 | `./counterup.so` *and* `mixedcase.vcd` — **both folded** |
+| …the same plus a second `sim_args` element `"Second.arg"` | 6 | all three folded |
+
+**This is why M18 is silent and why it bit us.** A card carrying only
+`simulation="…"` has two quotes and keeps its case perfectly. Adding `sim_args`
+— which is precisely what E2 does in order to name the VCD — takes the line to
+four quotes and retroactively destroys the case of `simulation=` as well. The
+parameter that breaks the line is not the one that appears to be affected.
+
+**Continuation lines are counted separately, and are always folded.** The count
+is per *physical* line, and only the line beginning with `.model` is eligible at
+all (`is_xspice_model` requires that prefix; the `+` arm at `:1896-1899` is
+CIDER-only — it is guarded by `in_cider_model`, so an XSPICE continuation never
+reaches `keep_case_of_cider_param` at all). Measured:
+
+```
+.model Counter d_cosim simulation="./CounterUP.so"      <- numq 2, ./CounterUP.so KEPT
++ sim_args=["MixedCase.vcd"]                            <- separate line, folded to mixedcase.vcd
+```
+
+That is independent confirmation of E2's decision to leave a `+`-continued card
+untouched: there is no way to write a case-preserving `sim_args` on a
+continuation line.
+
+**What this does *not* change.** ASE's chosen behaviour — write a bare,
+lower-cased basename and let it resolve against the run directory — remains
+correct, and is now correct for a stated reason rather than an observed one:
+every card ASE traces carries both `simulation=` and `sim_args=`, so it always
+has at least four quotes and always folds. Lower-casing up front is not
+defensive, it is agreeing with the parser.
 
 ### B — View model: `verilog` and `veriloga` become view types
 
@@ -584,11 +799,11 @@ without netlist surgery**: two instances of one cell share that card, hence one 
 | id | item | outcome |
 |----|------|---------|
 | E1 | ~~Detect.~~ | **DONE — netlist time, from the DECK, enriched by the DESIGN. Not a state declaration.** The deck's `.model <m> d_cosim` cards are what ngspice obeys and are the detector (`ase::cosim_scan_deck`); the design walk (`ase::cosim_design_scan`) says which `.v` built each `.so` and which schematic instance owns it. A state-dict declaration was rejected for the reason the spec already gives against a hand-maintained F2 map: it is a second copy of a fact the netlist states, wrong the moment a code block is added, removed or renamed. The `cosim` state key (E4) is therefore **policy only**. Two deviations from the row's stated sites, both forced: `library_inst_lcv` is used for the lib/cell labels but **cannot be the detector** — it accepts only the Cadence nested layout, so a flat library would silently have no code blocks; `cellview_sibling_path` (§B8) answers "has a verilog view" in both layouts. And the C verb `xschem get_inst_lcv` is unusable for enumeration at all: it requires exactly one SELECTED instance (`scheduler.c:5020-5027`). Enumeration is `xschem instance_list` → `{instname} {symref} {symtype}`; the symtype field is deliberately NOT used as a gate (it reads `missing` whenever the `.sym` did not load). |
-| E2 | ~~Emit both artifacts.~~ | **DONE — one VCD per `.model` CARD, `<rundir>/<model>.vcd`, written into that card's `sim_args` by `render_deck`.** Two DIFFERENT code blocks can never collide (different model names → different files). The same block **instantiated twice** is the case the row asks about, and it has no honest per-instance answer: it is DETECTED — by counting **elaborated** instances, not netlist lines, because a `.subckt` body is emitted once however many times it is instantiated (so the spec's own canonical `tb → x1 (dig_top) → a1 (counter)` topology, with `dig_top` placed twice, is one `a1` line and two shims) — marked `multi 1`, EXCLUDED from the attach, and reported — because N shims opening one path interleave their writes and the file would not be data. Per-instance `.model` synthesis (which also means rewriting each instance line's trailing model token) is the documented upgrade path, not taken now. `simulation=` is left **untouched** on purpose: it is the user's choice of backend (`./counter.so` vs upstream's `ivlng` Icarus arm) and rewriting it would break the alternative. What goes into the card is a **bare, lower-cased basename**, not an absolute path, and that is **M18**, not taste: ngspice lower-cases the strings in a device card, so any capital letter anywhere in a run-directory path silently redirects the file — with NO error for `sim_args`. The basename is resolved against ngspice's cwd, which `ase::run_deck` already `cd`s to the rundir, exactly as the deck's own `simulation="./<cell>.so"` already relies on. `ase::cosim_map` keeps the ABSOLUTE path in `vcd` for Tcl (E3), which never goes near ngspice. The VCD is also **design-qualified** — `<cell>_<model>.vcd`, like `<cell>_ase.raw`/`.log`/`.cosim` — because the run directory defaults to `$USER_CONF_DIR/simulations` for every design, and a bare `<model>.vcd` let two sessions serve each other's digital data. And a card ASE will **not** trace gets no VCD at all and is left byte-identical: upstream's Icarus arm (`simulation="ivlng"`, whose `sim_args[0]` is the compiled vvp *design*, not a trace path), a `.so` ngspice opens from outside the run directory, a `+`-continued card, and `cosim trace 0`. **This was found only by running the reference TB end to end** — the run went green, the raw was perfect, and the VCD did not exist. 141 headless checks did not see it. |
+| E2 | ~~Emit both artifacts.~~ | **DONE — one VCD per `.model` CARD, `<rundir>/<model>.vcd`, written into that card's `sim_args` by `render_deck`.** Two DIFFERENT code blocks can never collide (different model names → different files). The same block **instantiated twice** is the case the row asks about, and it has no honest per-instance answer: it is DETECTED — by counting **elaborated** instances, not netlist lines, because a `.subckt` body is emitted once however many times it is instantiated (so the spec's own canonical `tb → x1 (dig_top) → a1 (counter)` topology, with `dig_top` placed twice, is one `a1` line and two shims) — marked `multi 1`, EXCLUDED from the attach, and reported — because N shims opening one path interleave their writes and the file would not be data. Per-instance `.model` synthesis (which also means rewriting each instance line's trailing model token) is the documented upgrade path, not taken now. `simulation=` is left **untouched** on purpose: it is the user's choice of backend (`./counter.so` vs upstream's `ivlng` Icarus arm) and rewriting it would break the alternative. What goes into the card is a **bare, lower-cased basename**, not an absolute path, and that is **M18**, not taste: ngspice lower-cases the strings in a device card, so any capital letter anywhere in a run-directory path silently redirects the file — with NO error for `sim_args`. Precisely (§A "M18 mechanically"): the fold is skipped only for a card whose physical line carries **exactly two** double quotes, and a card ASE traces carries both `simulation="…"` and `sim_args=["…"]`, i.e. at least four — so an ASE-traced card is **always** folded and lower-casing up front is agreeing with the parser, not guarding against it. The basename is resolved against ngspice's cwd, which `ase::run_deck` already `cd`s to the rundir, exactly as the deck's own `simulation="./<cell>.so"` already relies on. `ase::cosim_map` keeps the ABSOLUTE path in `vcd` for Tcl (E3), which never goes near ngspice. The VCD is also **design-qualified** — `<cell>_<model>.vcd`, like `<cell>_ase.raw`/`.log`/`.cosim` — because the run directory defaults to `$USER_CONF_DIR/simulations` for every design, and a bare `<model>.vcd` let two sessions serve each other's digital data. And a card ASE will **not** trace gets no VCD at all and is left byte-identical: upstream's Icarus arm (`simulation="ivlng"`, whose `sim_args[0]` is the compiled vvp *design*, not a trace path), a `.so` ngspice opens from outside the run directory, a `+`-continued card, and `cosim trace 0`. **This was found only by running the reference TB end to end** — the run went green, the raw was perfect, and the VCD did not exist. 141 headless checks did not see it. |
 | E3 | ~~Attach both.~~ | **DONE — `ase::attach_dbs`, and the ANALOG DB is current.** Measured: `xschem raw read` APPENDS to `extra_raw_arr[]` **and makes what it just read current** (`save.c:1281-1287`, `:1327-1333`), so reading raw-then-VCD leaves a VCD current and every existing consumer (`annotate_op`, `xschem raw value`, `add_trace`) would resolve analog names against it. The raw is read first (slot 0), then each VCD, then slot 0 is switched back explicitly. Partial runs: a missing/unreadable **raw** returns 0 and clears NOTHING (a stale-but-loaded DB beats an empty viewer — `attach_raw`'s existing policy); a missing or unreadable **VCD** is skipped with a notice and does not stop the analog attach, because an analog-only result is still a correct result. The registry is read **before** the outgoing DBs are dropped, so a raw that exists but does not parse (truncated, or missing the requested analysis because the run died after `op`) leaves the previous DB loaded — which is what the stated policy always claimed and the old clear-then-read order never delivered. One subtlety that order forces: `xschem raw read` does **not** re-read a path already in the registry (`save.c:1335-1339`, it just switches), and the raw artifact is a deterministic path a re-run overwrites in place, so the incoming path is cleared **specifically** first or every re-run would replot the previous run's data. `wviewer::attach_raw` grew a 4th argument that defaults to `{}`. `xschem raw_read` is NOT used (issue 0290: it clears the whole registry and bypasses the reader dispatch). |
 | E4 | ~~State-dict fields.~~ | **DONE — ONE new key, `cosim`, and it is POLICY, not data.** `{build auto|always|never, trace 0|1, attach 0|1, bridges auto|0, vsupply <volts>}`; absent/empty means every default. It deliberately does **not** list the digital artifacts: those are derived (E1). **`version` stays 1.** Nothing reads it, `ase::state_load` merges over `state_default` so an old file gains the new key with its default automatically, and bumping the number would only invite an equality test somewhere. Asserted against a **committed frozen fixture**, `tests/headless/fixtures/ase_state_v1_pre_cosim.state` — it loads, keeps every old key (including an unknown one) byte-identical, gains `cosim {}`, and save→load→save is stable from then on. |
 | E5 | ~~Deck emission for the digital side.~~ | **DONE — default `auto_bridge` `pre_set`s when the state configures none.** The migrator never *synthesized* those cards; it only carried them out of upstream's `code_shown` block (`ase_migrate.py:531-544` catches any `pre_*` line), so a **hand-built** mixed-signal state had none at all and ngspice bridged with built-in thresholds unrelated to the design's supply. `render_deck` now emits the adc/dac pair when the deck has ≥1 `d_cosim` card and no `auto_bridge_d_*` `pre_set` is already present **in the state OR in the netlist text**, at the supply from `cosim vsupply` → a `VDD` design variable → 1.8. The netlist half is not hypothetical: upstream's shipped testbench puts the pair in a `code_shown` block, so checking only the state appended ASE's defaults *after* the design's, and the later `pre_set` wins (measured, ngspice-46) — a 3.3 V design would have run with 1.8 V bridge thresholds and no message. A state that hand-writes them is left completely alone. Observation taps (§G3) are NOT part of this: they are a schematic-side technique for getting a signal into the *raw*, and the shim reaches internals directly now. |
-| E6 | ~~Build orchestration.~~ | **DONE — `ase::cosim_build`, before the deck runs, and a failed build ABORTS the run.** Staleness is a **stamp file** `<so>.stamp` recording the source path, its mtime and size, the shim source's mtime and size, and the build flags — not an mtime compare. The reason is measured, not stylistic: `ase::rundir` defaults to `$USER_CONF_DIR/simulations` for **every** design, so two libraries that each hold a cell named `counter` build to the same `<rundir>/counter.so`; an mtime test would happily reuse the wrong one, and a `-V` shim edit would not invalidate anything. No content hash — Tcl 8.6 core has no digest and tcllib is not a dependency; path+mtime+size errs toward rebuilding, the safe direction. Always-rebuild was rejected on measurement: a warm no-op `build_cosim_so.sh` still costs **8.8 s** (cold 10.3 s). `build never` opts out; `build always` forces. Falling through to the previous `.so` on a build failure is exactly the "silently simulating last week's Verilog" outcome, so it throws instead. The `.so` is built to the **lower-cased** name too (M18): ngspice folds `simulation="./Counter.so"` and then reports `d_cosim failed to load simulation binary ./counter.so`. `Run` on an existing netlist never loads the design, so the `.v` for a model comes from the run-directory map artifact (see F2 below). **A block ASE cannot check never blocks the run.** `xschem instance_list` enumerates the current schematic only (`scheduler.c:6458-6472`) while the netlister hoists the `.model` card to the top of the deck (`spice_netlist.c:575-591`), so a code block one level down has no resolvable `.v` at all — a configuration that worked before §E and must keep working. ASE says what it cannot check and gets out of the way; if the `.so` really is missing, ngspice's own `d_cosim failed to load simulation binary` is what reports it, and E7 matches it. |
+| E6 | ~~Build orchestration.~~ | **DONE — `ase::cosim_build`, before the deck runs, and a failed build ABORTS the run.** Staleness is a **stamp file** `<so>.stamp` recording the source path, its mtime and size, the shim source's mtime and size, and the build flags — not an mtime compare. The reason is measured, not stylistic: `ase::rundir` defaults to `$USER_CONF_DIR/simulations` for **every** design, so two libraries that each hold a cell named `counter` build to the same `<rundir>/counter.so`; an mtime test would happily reuse the wrong one, and a `-V` shim edit would not invalidate anything. No content hash — Tcl 8.6 core has no digest and tcllib is not a dependency; path+mtime+size errs toward rebuilding, the safe direction. Always-rebuild was rejected on measurement: a warm no-op `build_cosim_so.sh` still costs **8.8 s** (cold 10.3 s). `build never` opts out; `build always` forces. Falling through to the previous `.so` on a build failure is exactly the "silently simulating last week's Verilog" outcome, so it throws instead. The `.so` is built to the **lower-cased** name too (M18): ngspice folds `simulation="./Counter.so"` and then reports `d_cosim failed to load simulation binary ./counter.so`. **That example needs its condition stated, or it contradicts §A "M18 mechanically"** — a card carrying *only* `simulation="./Counter.so"` has exactly two double quotes and ngspice keeps its case (measured 2026-08-10). The fold happens because the real card also carries `sim_args=["…"]`, taking the line to four quotes, at which point the whole line folds and `simulation=` goes down with it. Building to the lower-cased name is still right, and now for a stated reason: every card ASE traces has ≥4 quotes by construction (E2), so it always folds. `Run` on an existing netlist never loads the design, so the `.v` for a model comes from the run-directory map artifact (see F2 below). **A block ASE cannot check never blocks the run.** `xschem instance_list` enumerates the current schematic only (`scheduler.c:6458-6472`) while the netlister hoists the `.model` card to the top of the deck (`spice_netlist.c:575-591`), so a code block one level down has no resolvable `.v` at all — a configuration that worked before §E and must keep working. ASE says what it cannot check and gets out of the way; if the `.so` really is missing, ngspice's own `d_cosim failed to load simulation binary` is what reports it, and E7 matches it. |
 | E7 | ~~Report M9 honestly.~~ | **DONE — `ase::run_diagnostics`, called from `ase::run_done`.** The M9 diagnostic is **four separate NUL-terminated literals** in `/usr/local/lib/ngspice/digital.cm` — `XSPICE time is behind vtime:` then `XSPICE %.16g` then `Cosim  %.16g` — so a regexp spanning the value lines could never match; the header alone is the probe. Five `error`-severity strings are matched (desync, event-in-the-past ×2, port-count mismatch, `.so` load failure) and one `note` (`dump call ignored`). The note matters: the reference run emits **61** of them while producing a correct VCD — the patched shim clamps a non-monotonic dump and VerilatedVcd declines the duplicate — so flagging them as errors would make every healthy run red. Errors go to `ase::echo … error` (CIW **and** the action log) and into `ase::last_run`'s new `diagnostics` key; the ASE window also drops a banner into the log window. Note `run_cmd` folds stderr into stdout (`2>@1`), so a stderr-only diagnostic still reaches the log — the scan cannot be unfireable by construction. **Plus the failure the log cannot report**: a `cosim_novcd` check on the filesystem, because M18's silent redirect produces a clean exit, a perfect analog raw, and no digital data at all. That check exists because it happened. It is truthful only because two other things hold: the map promises a `vcd` **only** for a card this run will really trace (else `trace 0` would declare every healthy run untrustworthy and train the user past the real banner), and `run_deck` **deletes** the promised VCDs before launching — otherwise a survivor from the previous run both silences the check and gets attached to this run's analog raw. |
 | E8 | **There is no `post_commands` slot.** | **STILL OPEN, and still not needed.** `eprvcd` emits the *boundary event* nodes, which the shim's internal VCD makes redundant for §F. Revisit only if the boundary VCD is ever wanted. |
 | E9 | `render_deck` emits `print <expr>` per output | **OUT OF SCOPE for §E, filed as issue 0278.** Measured again here: the reference log is **49,922,360 bytes / 1,475,399 lines**, of which **1,402,702** are transient print rows — 95.07% of the file, and 99.99% is print-table scaffolding; only 129 lines carry anything else. It is a real ASE-L defect and it does dominate the reference run's wall clock. It is not fixed here because the fix changes `render_deck`'s output for **every** analog `dc`/`ac`/`tran` state in the tree, which is a different blast radius from §E's (whose deck changes are inert unless a `d_cosim` card is present). Cost of leaving it: the one reference run this section owes takes ~4 minutes. |

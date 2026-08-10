@@ -296,13 +296,57 @@ extern "C" void Cosim_setup(struct co_info *pinfo)
     Vlng *topp{new Vlng{contextp.get()}};
 
     /* XSCHEM PATCH — LIFETIME. Upstream declares contextp `const
-     * std::unique_ptr` and lets it die at the end of this function, while topp
-     * keeps a raw pointer to it: the WITH_TIMING step() calls topp->contextp()
-     * on freed memory, and so does the trace setup below. Release ownership so
-     * the context lives as long as the process, which is exactly the co-
-     * simulation's lifetime. Freed (if at all) by ng_trace_cleanup's sibling —
-     * deliberately never, since d_cosim unloads the whole library at end of
-     * run. */
+     * std::unique_ptr` and lets it die at the end of this function while topp
+     * keeps a raw pointer to it. Release ownership so the context outlives the
+     * function, i.e. lasts as long as the process.
+     *
+     * WHO ACTUALLY NEEDS THIS. An earlier version of this comment answered
+     * "the trace setup, which needs the context too". That is FALSE, and the
+     * check takes a minute: the local `ctx` below is used at exactly two places
+     * — the ng_trace_tick assignment and the non-VM_TRACE (void) cast — and
+     * both are inside Cosim_setup, above its closing brace, where the
+     * unique_ptr is still alive. contextp.get() would have served the tracer
+     * identically.
+     *
+     * But grepping for `ctx` is NOT the same question as "who reaches the
+     * context". Two ALIASES of the same object outlive this function, neither
+     * of them spelled `ctx`, and BOTH are dereferenced after it returns:
+     *
+     *   1. topp->contextp() — the raw pointer the model kept. The WITH_TIMING
+     *      step() above calls timeprecision() and time() through it. That is
+     *      the use-after-free of spec M15. Compiled only with -t.
+     *
+     *   2. Verilated::threadContextp() — a thread-local that the
+     *      VerilatedContext CONSTRUCTOR points at itself and that its
+     *      DESTRUCTOR never clears (verilated.cpp:2421 and :2434 in the
+     *      installed Verilator 5.020), so it keeps handing out the dead
+     *      pointer. This one is reached from the GENERATED model during
+     *      topp->eval(), in EVERY build, -t or not, whenever the user's Verilog
+     *      contains $time, $display with %t, $finish, $stop or $fatal:
+     *      VL_TIME_Q() expands to Verilated::threadContextp()->time()
+     *      (verilated_funcs.h:302) and vl_finish() calls gotFinish() on the
+     *      same pointer (verilated.cpp:113).
+     *
+     * So this release is LOAD-BEARING IN EVERY BUILD, not only under -t, and it
+     * is NOT "inert in the shipping configuration" — an earlier version of this
+     * comment said that too, and it was also wrong. Measured 2026-08-10 with
+     * the release neutered and no -t anywhere: a counter whose always-block
+     * does $display("t=%t", $time) faults under AddressSanitizer with
+     * heap-use-after-free in VerilatedContext::time(), called from
+     * Vlng___024root___nba_sequent__TOP__0 under Vlng::eval_step(), on memory
+     * freed at the end of the Cosim_setup analogue.
+     *
+     * The older "byte-identical VCD, clean valgrind" measurement is real but
+     * NARROW, and that is the whole trap: it was taken on the reference design
+     * xschem_library/ngspice_verilog_cosim/counter.v, whose only $display has
+     * no %t and which never calls $finish, so it touches neither alias. The
+     * same neutered harness on that file is ASan-clean; on the %t version it is
+     * not. Do not re-derive "inert" from a run of counter.v.
+     *
+     * The leak is deliberate and bounded: one VerilatedContext, never freed,
+     * once per process. d_cosim unloads the whole library at end of run. See
+     * doc/claude/specs/mixed_signal_signal_browser.md §A, "The shipped cosim
+     * build, precisely". */
     VerilatedContext *ctx = contextp.release();
 
     /* Return information to caller. */

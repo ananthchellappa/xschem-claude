@@ -97,8 +97,67 @@ Patches, all marked `XSCHEM PATCH`:
   contextp` as a local in `Cosim_setup()` and lets it die at function exit while
   the model keeps a raw pointer to it — so the `--timing` `step()` calls
   `topp->contextp()` on freed memory. The patch releases ownership so the context
-  lives for the process. This is an upstream bug, fixed here because the trace
-  setup needs the context too.
+  lives for the process. This is an upstream bug (spec M15).
+
+  **It is not the trace setup that needs this** — that was the old, wrong
+  reason. Every use of the local `ctx` is inside `Cosim_setup()` itself, where
+  the `unique_ptr` is still alive, so `contextp.get()` would have served the
+  tracer just as well.
+
+  **Re-apply this hunk in every build you make.** Grepping for `ctx` answers a
+  narrower question than "who reaches the context": two aliases of the same
+  object outlive the function and both are dereferenced afterwards.
+  `topp->contextp()` is the one the `WITH_TIMING` `step()` uses, and that arm is
+  only compiled with `-t`. The second alias has no `-t` condition at all:
+  `Verilated::threadContextp()` is a thread-local that the `VerilatedContext`
+  constructor points at itself and its destructor never clears
+  (`verilated.cpp:2421`, `:2434`), and the *generated* model dereferences it
+  inside `topp->eval()` whenever the user's Verilog uses `$time`, `$display`
+  with `%t`, `$finish`, `$stop` or `$fatal` — `VL_TIME_Q()` is literally
+  `Verilated::threadContextp()->time()` (`verilated_funcs.h:302`) and
+  `vl_finish()` calls `gotFinish()` on the same pointer (`verilated.cpp:113`).
+
+  So the `release()` is load-bearing in **every** build, including the shipped
+  non-timing one, and it costs one leaked `VerilatedContext` per process.
+  Measured 2026-08-10 with the `release()` neutered and no `-t`: a counter doing
+  `$display("t=%t", $time)` faults under AddressSanitizer with
+  heap-use-after-free in `VerilatedContext::time()` under `Vlng::eval_step()`.
+  The older "byte-identical VCD, clean valgrind" result is real but narrow — it
+  was taken on `xschem_library/ngspice_verilog_cosim/counter.v`, whose `$display`
+  has no `%t` and which never calls `$finish`, so it reaches neither alias. Do
+  not conclude "inert" from a run of that file.
+
+## What we actually ship: never `-t`; `-V` unless `cosim trace 0`
+
+`ase::cosim_build` assembles the command line as `<script>` + `-V` + `-o
+<rundir> <vfile>`. The two halves of that are **not** equally unconditional, and
+conflating them is easy:
+
+- **`-t` is never passed, on any path.** No branch adds it. So no `.so` ASE
+  builds ever defines `WITH_TIMING`: the shim compiles the **non-timing**
+  `step()` (the one that dumps at `pinfo->vtime`) and sets `pinfo->method` to
+  `After_input`.
+- **`-V` is passed unless the state says `cosim trace 0`**, which is a supported
+  policy, not a hypothetical. With `-V` (the default) `--trace` is on, `VM_TRACE`
+  is defined, and the VCD patches above are live.
+
+What `cosim trace 0` actually does is worth spelling out, because it is more
+than "no VCD": `build_cosim_so.sh` also uses `-V` to choose the shim source, and
+without it `SHIMDIR` falls back to the **system** copy under
+`/usr/local/share/ngspice/scripts/src`. That copy carries none of the `XSCHEM
+PATCH` hunks — not the trace object, not the clamp, and not the context-lifetime
+`release()`. A `trace 0` library is the stock upstream shim, upstream bug and
+all.
+
+Two consequences of the `-t` half worth remembering, because both look like
+puzzles otherwise: the `--timing` `step()` and its event-time `dump()` are
+**never compiled** in anything the product builds (they are maintained for a
+`-t` build nobody currently makes), and the `After_input` method is exactly why
+the monotonicity clamp is mandatory — ngspice calls `step()` repeatedly at the
+same `vtime`. A `-t` build is still supported by `build_cosim_so.sh`; it is
+simply not what the product does today. Note that "not compiled" applies to the
+`--timing` `step()`, **not** to the context-lifetime `release()`, which is
+unguarded and compiled into every build (see the bullet above).
 
 ## Keeping `src/` in sync
 
