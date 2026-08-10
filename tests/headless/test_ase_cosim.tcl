@@ -1689,9 +1689,14 @@ proc fv_arm {} {
   set ::fv_calls {}
   foreach p {::wviewer::open ::wviewer::browser_shown ::wviewer::browser_toggle \
              ::wviewer::browser_show_path ::wviewer::browser_show_db_scope \
-             ::wviewer::browser_notice ::ase::cosim_f1} {
+             ::wviewer::browser_notice ::wviewer::browser_sea_empty \
+             ::ase::cosim_f1} {
     if {[info commands $p] ne {}} { rename $p ${p}_fvsaved }
   }
+  # RULING F1e's input, driven from the test rather than guessed: whether the
+  # lower pane ended up listing anything. It is a STUB and not the real reader
+  # because the real one needs a Tk window (FD19/FD19b own that half).
+  proc ::wviewer::browser_sea_empty {token} { return $::fv_seaempty }
   proc ::wviewer::open {token} { lappend ::fv_calls open ; return 1 }
   proc ::wviewer::browser_shown {token} { return 1 }
   proc ::wviewer::browser_toggle {{want {}} {token {}}} { return 1 }
@@ -1711,7 +1716,8 @@ proc fv_arm {} {
 proc fv_disarm {} {
   foreach p {::wviewer::open ::wviewer::browser_shown ::wviewer::browser_toggle \
              ::wviewer::browser_show_path ::wviewer::browser_show_db_scope \
-             ::wviewer::browser_notice ::ase::cosim_f1} {
+             ::wviewer::browser_notice ::wviewer::browser_sea_empty \
+             ::ase::cosim_f1} {
     if {[info commands ${p}_fvsaved] ne {}} {
       catch {rename $p {}}
       rename ${p}_fvsaved $p
@@ -1728,6 +1734,11 @@ proc fv_kinds {} {
 
 # (a) THE DIGITAL PATH WINS. f1 is read first, the viewer is raised, the scope
 # is shown in ITS database, and the analog walk never runs.
+#
+# ⚠ THE PANE IS DECLARED FULL FOR (a)-(d). RULING F1e's arm fires only on an
+# `ok` whose pane then lists NOTHING, so leaving this at 0 keeps (a)-(d) about
+# the sequences they were written for; (e) drives it the other way.
+set ::fv_seaempty 0
 ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
 set ::fv_dbres [list ok {d:1|g:TOP.dcell} TOP.dcell]
 fv_arm
@@ -1786,6 +1797,83 @@ eqcheck FV38-analog-instance-keeps-the-shipped-sequence [fv_kinds] {f1 open show
 xschem select instance a9 clear fast nodraw
 xschem select instance a1 fast nodraw
 
+# (e) THE HAPPY PATH'S OWN EMPTY PANE (RULING F1e, the salvage pass).
+#
+# ⚠⚠ THIS IS THE STATE THE FEATURE ACTUALLY PRODUCES, AND IT WAS MEASURED ON
+# THE REAL VIEWER BEFORE THE ARM EXISTED: the scope resolves, the tree
+# re-scopes, the row is selected — and the lower pane lists nothing, because it
+# is drawn from the CURRENT database's entries alone (item 15's BD70d). The
+# shipped `seaempty` arm then captions that pane "'TOP.m' has no signals of its
+# own", about a scope that has two. So the success case, unarmed, ships the very
+# thing F5's row forbids: an empty pane with a WRONG reason. These three checks
+# are the arm that fixes it, and FV42 is the control that keeps it from firing
+# on a pane that is not empty.
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+set ::fv_dbres [list alldbs {d:1|g:TOP.dcell} TOP.dcell]
+set ::fv_seaempty 1
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV41-shown-but-unlisted-notices-last [fv_kinds] {f1 open show_db notice}
+# the sentence: it says the scope WAS shown, it names the scope and the database,
+# and it is NOT the refusal sentence — a notice that reported a success as "no
+# digital signals to show" would be the drift 5f-3 forbids, wearing the other
+# sign.
+set fv_pn [lindex [lindex $::fv_calls end] 1]
+eqcheck FV42-shown-but-unlisted-sentence-names-scope-db-and-does-not-claim-refusal \
+  [list [expr {[string first {TOP.dcell} $fv_pn] >= 0}] \
+        [expr {[string first {fs_agree.vcd} $fv_pn] >= 0}] \
+        [expr {[string first {lower pane} $fv_pn] >= 0}] \
+        [expr {[string first {no digital signals to show} $fv_pn] >= 0}]] \
+  {1 1 1 0}
+# ...and with the pane NOT empty there is no notice at all: the arm is gated on
+# the pane's own state, not on "the digital branch ran".
+set ::fv_seaempty 0
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV43-a-listed-pane-gets-no-notice [fv_kinds] {f1 open show_db}
+# ⚠⚠ THE SENTENCE NAMES WHERE THE TREE LANDED, NOT WHAT WAS ASKED FOR, and this
+# is the only check that can tell the two apart: everywhere else in this arm the
+# resolved scope and the landing are the same string, so a sentence composed
+# from the WRONG one of them stays green. A `partial` separates them — the walk
+# reached only an ancestor — and a review reproducer got there with nothing more
+# exotic than a Filter pattern. Composed from the asked scope, the notice claims
+# "showing the digital scope 'TOP.dcell' in the tree" one statement after the
+# CIW has said "no signals under 'TOP.dcell' - showing TOP instead": two
+# sentences from one command, contradicting each other, on the one surface that
+# survives.
+#
+# ⚠ AND THE ARM STILL FIRES ON A `partial`. That is the ruling, not an
+# oversight: the pane's emptiness is a fact about where the tree LANDED, and an
+# ancestor inside a foreign VCD lists exactly as little as the scope would, so
+# suppressing the notice here would hand the landing back to the shipped
+# `seaempty` arm and its "'TOP' has no signals of its own" — restoring the
+# falsehood instead of removing it. Leg 1 is the fire, legs 2/3 the naming.
+set ::fv_dbres [list partial {d:1|g:TOP} TOP TOP.dcell]
+set ::fv_seaempty 1
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+set fv_pp [lindex [lindex $::fv_calls end] 1]
+eqcheck FV45-a-partial-landing-is-named-by-where-it-landed \
+  [list [fv_kinds] \
+        [expr {[string first {scope 'TOP' of} $fv_pp] >= 0}] \
+        [expr {[string first {TOP.dcell} $fv_pp] >= 0}]] \
+  [list {f1 open show_db notice} 1 0]
+set ::fv_dbres [list alldbs {d:1|g:TOP.dcell} TOP.dcell]
+set ::fv_seaempty 0
+# the predicate is TOTAL and answers "no claim" rather than a guessed yes: a
+# viewer that throws, and a viewer whose reader does not exist at all, are both 0
+rename ::wviewer::browser_sea_empty ::wviewer::fv_saved_se
+proc ::wviewer::browser_sea_empty {token} { error {boom} }
+set fv_t1 [pcall ase::browser_pane_unread nosuchtoken]
+rename ::wviewer::browser_sea_empty {}
+set fv_t2 [pcall ase::browser_pane_unread nosuchtoken]
+rename ::wviewer::fv_saved_se ::wviewer::browser_sea_empty
+eqcheck FV44-pane-unread-is-total-and-claims-nothing-it-cannot-see \
+  [list $fv_t1 $fv_t2 [pcall ase::browser_pane_unread nosuchtoken]] {0 0 0}
+
 # --- the SOURCE witness beside the behavioural one (BX10's shape) ------------
 set fv_ap [file join $repo src ase.tcl]
 set fv_fp [open $fv_ap r]; set fv_asrc [read $fv_fp]; close $fv_fp
@@ -1818,6 +1906,28 @@ eqcheck FV39-probe-sits-between-the-selection-read-and-the-raise \
 eqcheck FV40-the-notice-is-written-after-the-fall-through-report \
   [expr {[string first {wviewer::browser_notice} $fv_body] >
          [string last {wviewer::browser_show_path} $fv_body]}] 1
+# ⚠⚠ THE SETTLE (step 6c), PINNED BETWEEN THE LAST TREE MOVE AND THE FIRST
+# NOTICE WRITE. This is a SOURCE witness because the erasure it prevents is a
+# Tk fact and this file has no display; the behavioural twin is FD23 one file
+# over, which drives the real command against a real viewer and reads the
+# caption AFTER the event-loop turn that the erasure needs.
+#
+# Both legs matter. Leg 1 is that there is exactly ONE flush — two would mean
+# somebody added a second rather than moving the one, and a flush in the middle
+# of the tree moves re-enters the event loop where the code is not ready for it.
+# Leg 2 is the position: BELOW every call that can change the treeview selection
+# (`browser_show_path`, `browser_show_db_scope`) and ABOVE the notice. Move it
+# up and the queued <<TreeviewSelect>> is delivered before the LAST selection
+# change, so the notice is erased again; delete it and the notice is erased
+# always. Either edit reds this and FD23 together.
+set fv_i4 [string first {catch {update}} $fv_body]
+eqcheck FV46-the-settle-sits-between-the-last-tree-move-and-the-notice \
+  [list [regexp -all {catch \{update\}} $fv_body] \
+        [expr {$fv_i4 > [string last {wviewer::browser_show_path} $fv_body] &&
+               $fv_i4 > [string last {wviewer::browser_show_db_scope} $fv_body]}] \
+        [expr {$fv_i4 >= 0 &&
+               $fv_i4 < [string first {wviewer::browser_notice} $fv_body]}]] \
+  {1 1 1}
 xschem raw clear
 
 # ===========================================================================

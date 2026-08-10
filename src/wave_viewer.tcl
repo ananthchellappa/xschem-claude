@@ -8204,6 +8204,61 @@ proc wviewer::browser_notice {token msg} {
   return $ok
 }
 
+# §F item F5, second half (RULING F1e): 1 when this viewer's lower pane is
+# listing NOTHING AT ALL, 0 whenever that cannot be established.
+#
+# ⚠⚠ IT ANSWERS 0 WHEN IT DOES NOT KNOW, AND THAT ASYMMETRY IS THE POINT. Its
+# one caller writes a NOTICE on a 1, so a "yes" guessed from a viewer that has
+# no window, or a pane state that has never been built, would put a sentence
+# about an empty pane on a pane nobody has drawn — the exact drift F5 exists to
+# prevent. A missing window and a missing pane state are therefore both `0`
+# ("no claim"), not `1` ("nothing to show").
+#
+# ⚠⚠ IT ASKS BOTH HALVES OF THE QUESTION, AND THE SECOND HALF IS WHAT MAKES IT
+# TRUE (salvage pass, review finding R2-D). `browsersea` is the pane's own
+# model, but it is the FILTERED set — the pairs actually drawn — so an empty
+# `browsersea` has TWO causes: a node with no own-level names at all, and a node
+# whose names were every one of them hidden by a Search/Filter bar or a class
+# filter. Answering 1 for the second was a guessed yes about a node that has
+# signals, and it made the one caller replace the shipped, TRUE caption
+# "0 of 2 signals (the Search/Filter bar is hiding them)" with a sentence
+# claiming the pane lists nothing because the database is foreign. MEASURED:
+# same node read twice, bar off -> drawn 2 / own 2, bar on -> drawn 0 / own 2,
+# and the old body called the second one empty.
+#
+# So the prior question is asked explicitly: `browser_sea_own` counts the
+# UNFILTERED inventory at this node's level (its own comment says so, and says
+# why counting the filtered set collapses the two states). Nothing drawn AND
+# nothing to draw is the one state `browser_sea_refresh` captions with the
+# `seaempty` arm — which is precisely the caption RULING F1e's arm exists to
+# correct — so this reader and that arm now agree by construction rather than
+# by coincidence.
+#
+# ⚠ THE SELECTION IS RE-DERIVED HERE rather than cached by the refresh, so the
+# reader stays total and stateless: a token whose pane has never been refreshed
+# has nothing to go stale, and there is no new per-token array for
+# `browser_forget` to have to remember to unset.
+proc wviewer::browser_sea_empty {token} {
+  variable windows
+  variable browsersea
+  if {![dict exists $windows $token]} { return 0 }
+  if {![info exists browsersea($token)]} { return 0 }
+  if {[llength $browsersea($token)]} { return 0 }
+  set tv [dict get $windows $token top].wvbrowser.pw.tvf.tv
+  if {[catch {winfo exists $tv} e] || !$e} { return 0 }
+  set sel {}
+  catch {set sel [$tv selection]}
+  set id [lindex $sel 0]
+  # no selection at all is `seanone`, not `seaempty`: no node is being shown, so
+  # there is no pane to make a claim about.
+  if {$id eq {}} { return 0 }
+  set path {}
+  if {[catch {wviewer::browser_id_path $id} path]} { return 0 }
+  set own 0
+  if {[catch {wviewer::browser_sea_own $token $path} own]} { return 0 }
+  return [expr {$own == 0 ? 1 : 0}]
+}
+
 # --- the six gestures (spec §5.3) ---------------------------------------------
 # ⚠ EVERY ONE OF THEM RIDES A Tk BINDING, so every one of them is TOTAL: a throw
 # in a binding pops bgerror, modal under X. `browser_menu_post`'s rule verbatim.

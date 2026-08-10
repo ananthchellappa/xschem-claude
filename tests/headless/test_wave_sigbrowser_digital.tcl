@@ -129,7 +129,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   set FDV $vtop.wvbrowser
   set FDB $FDV.wvsearch
-  check {FD10 (FIXTURE) the sidebar toggles on and the tree is real} \
+  # ⚠ FD10b, NOT a second FD10. The draft shipped this id twice, which makes a
+  # sabotage table unreadable (two rows can claim "FD10 went red" and mean
+  # different checks). Restated, not renumbered: the assertion is byte-identical
+  # and only the label moved.
+  check {FD10b (FIXTURE) the sidebar toggles on and the tree is real} \
     [list [pcall ::wviewer::browser_toggle 1 $tok] [winfo exists $FDV.pw.tvf.tv]] \
     [list 1 1]
   update
@@ -178,6 +182,38 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $::wviewer::sballdb($FDB) \
           [$FDV.ph cget -text]] \
     [list 1 "Signal Browser\nshowing every results database to reach TOP.m"]
+  # --- RULING F1e: WHAT THE HAPPY PATH ACTUALLY LEAVES ON SCREEN -----------
+  #
+  # ⚠⚠ THE SCOPE IS SHOWN AND THE PANE IS STILL EMPTY. The lower pane is drawn
+  # from `browserseaent`, the CURRENT database's entries alone (item 15's
+  # declared limit, BD70d one file over), so a FOREIGN VCD's scope selects a
+  # real row that lists nothing — and the shipped `seaempty` arm then captions
+  # it "'TOP.m' has no signals of its own", about a scope that has two. This is
+  # the state that makes `ase::show_in_browser_for_current`'s step 7b fire; FV41
+  # owns the arm, this owns the FACT, and without the fact the arm is a guess.
+  check {FD19 (F5/F1e) the digital scope is shown and the lower pane still lists
+         NOTHING — the state the "shown but not listed" notice exists for} \
+    [list [pcall ::wviewer::browser_sea_empty $tok] \
+          [llength $::wviewer::browsersea($tok)] \
+          [llength [$FDV.pw.sea.c find withtag cell]]] \
+    [list 1 0 0]
+  # THE POSITIVE CONTROL, and it is not optional: a reader that answered 1 for
+  # everything would pass FD19 and be worthless. The CURRENT database's design
+  # root lists its own signals, so the same reader must answer 0 there.
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  check {FD19b (F5/F1e CONTROL) the same reader answers 0 on the current
+         database's own root, whose pane really does list signals} \
+    [list [pcall ::wviewer::browser_sea_empty $tok] \
+          [expr {[llength $::wviewer::browsersea($tok)] > 0}]] \
+    [list 0 1]
+  # ⚠ AND THE FIXTURE GOES BACK, WITH AN `update`, BEFORE ANYTHING ELSE READS
+  # IT. `selection set` only QUEUES <<TreeviewSelect>>; without the flush the
+  # pane below still holds the previous node's cells, and FD21 (which asserts
+  # the canvas notice draws only on an EMPTY pane) then reads two stale cells
+  # and fails for a reason that has nothing to do with the notice. Measured.
+  pcall $FDV.pw.tvf.tv selection set [list [lindex $fd_r 1]]
+  update
   # ⚠ A SCOPE THE DATABASE DOES NOT DECLARE. Measured, and the answer is the
   # analog path's: the walk lands on the deepest ancestor that DOES exist and
   # reports `partial`, naming what was asked. That is deliberate parity — a
@@ -231,6 +267,158 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
          from the canvas} \
     [list $::wviewer::browserseanote($tok) [llength [$fd_c find withtag seanote]]] \
     [list {} 0]
+
+  # ===========================================================================
+  # FD23-FD26 — THE ORDERING THE PRODUCT CANNOT AVOID (salvage pass, review
+  # findings R1/R2/R2-D).
+  #
+  # ⚠⚠ EVERY CHECK ABOVE READS ITS SURFACE IN THE SAME EVENT-LOOP TURN THAT
+  # WROTE IT, AND THAT IS THE ONE TURN THE PRODUCT NEVER GETS. `browser_reveal`
+  # changes the treeview selection, which only QUEUES <<TreeviewSelect>>;
+  # `browser_sea_refresh` is delivered on the NEXT turn — i.e. the instant the
+  # Ctrl-Alt-V binding returns — and its first act is to clear the notice and
+  # its last is to re-caption the pane from the shipped `seaempty` arm. So a
+  # notice written before that flush lives for microseconds. Measured on the
+  # real viewer, both arms, before step 6c existed: caption held the sentence on
+  # return and read "TOP.m has no signals of its own" one `update` later.
+  #
+  # FD20/FD21 above cannot see any of it — they call `browser_notice` directly,
+  # and this file's `update` calls all sit BEFORE the notice, never after it.
+  # ===========================================================================
+
+  # ⚠⚠ THE COMMAND ITSELF, NOT ITS PIECES. Only the five DESIGN-side reads are
+  # stubbed (this file has no schematic and no session of its own); steps 4, 5,
+  # 6, 6c, 7 and 7b are the shipped code running against the real treeview, the
+  # real checkbutton, the real pane and the real canvas. Deleting step 6c's
+  # `catch {update}` from src/ase.tcl reds this; so does moving it above step 6.
+  proc fd_drive_on {} {
+    foreach p {::ase::session_for_current ::wviewer::hier_now \
+               ::ase::browser_sel_segment ::wviewer::browser_origin_drop \
+               ::ase::browser_digital_probe} {
+      if {[info commands $p] ne {}} { rename $p ${p}_fdsaved }
+    }
+    proc ::ase::session_for_current {} { return [list $::fd_tok 0] }
+    proc ::wviewer::hier_now {} { return {} }
+    proc ::ase::browser_sel_segment {} { return {ok a1} }
+    proc ::wviewer::browser_origin_drop {level lv} { return 0 }
+    proc ::ase::browser_digital_probe {key selname token} { return $::fd_dig }
+  }
+  proc fd_drive_off {} {
+    foreach p {::ase::session_for_current ::wviewer::hier_now \
+               ::ase::browser_sel_segment ::wviewer::browser_origin_drop \
+               ::ase::browser_digital_probe} {
+      if {[info commands ${p}_fdsaved] ne {}} {
+        catch {rename $p {}}
+        rename ${p}_fdsaved $p
+      }
+    }
+  }
+  set ::fd_tok $tok
+  set ::fd_dig [list ok $fd_vcd TOP.m]
+
+  # ⚠ THE PRE-STATE IS A SETTLED PANE THAT LISTS THINGS, and it is load-bearing
+  # for the SECOND blocker. Step 7b's predicate reads the pane MODEL, which the
+  # queued refresh has not rebuilt yet — so from here, without step 6c, it
+  # answers about the design root the user is leaving (2 signals -> "not empty"
+  # -> the arm refuses and writes nothing at all). Starting from an already
+  # empty pane would hide that: the stale answer and the true answer would
+  # coincide, and this check would pass with the flush deleted.
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  set fd_pre [list [llength $::wviewer::browsersea($tok)] \
+                   [pcall ::wviewer::browser_sea_empty $tok]]
+  fd_drive_on
+  set fd_dr [pcall ase::show_in_browser_for_current]
+  fd_drive_off
+  # ⚠⚠ AND HERE IS THE TURN OF THE EVENT LOOP THAT TK ALWAYS TAKES. Everything
+  # this item ships is judged after this line, never before it.
+  update
+  set fd_want "showing the digital scope 'TOP.m' of 'fd_dig.vcd' in the tree,\
+ but the lower pane lists only the current results database, so this scope's\
+ own signals are not in it yet"
+  check {FD23 (F5/F1e) the real command's notice SURVIVES the refresh its own
+         gesture queued — pane caption, one turn after the binding returns} \
+    [list $fd_pre $fd_dr [$FDV.pw.sea.st cget -text]] \
+    [list [list 2 0] $tok $fd_want]
+  # the other two surfaces, same settled moment: the sidebar status line and the
+  # pane canvas. The canvas arm draws only on an empty pane, which is exactly
+  # the state this path produces — and it only reaches that state because 6c let
+  # the refresh happen FIRST.
+  check {FD24 (F5/F1e) the same sentence is on the sidebar status line and drawn
+         in the pane canvas, one turn after the binding returns} \
+    [list [$FDV.ph cget -text] \
+          $::wviewer::browserseanote($tok) \
+          [llength [$fd_c find withtag seanote]] \
+          [llength [$fd_c find withtag cell]]] \
+    [list "Signal Browser\n$fd_want" $fd_want 1 0]
+  # ⚠ THE TOMBSTONE FOR WHY 6c EXISTS. The same two product calls in the same
+  # order with NO flush between them: the notice is written, and one turn later
+  # the queued refresh has cleared it and put the shipped `seaempty` falsehood
+  # back. This is the state the feature shipped in before the salvage pass, kept
+  # as a check so nobody re-derives it from first principles.
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  pcall ::wviewer::browser_show_db_scope $tok $fd_vcd TOP.m
+  pcall ::wviewer::browser_notice $tok {FD25 unflushed}
+  set fd_before [$FDV.pw.sea.st cget -text]
+  update
+  check {FD25 (F5/F1e TOMBSTONE) a notice written WITHOUT the settle is erased by
+         the queued refresh, and the false shipped caption comes back} \
+    [list $fd_before [$FDV.pw.sea.st cget -text] $::wviewer::browserseanote($tok)] \
+    [list {FD25 unflushed} {TOP.m has no signals of its own} {}]
+
+  # ⚠⚠ F5's OWN ROW, END TO END, ON THE PATH THAT SHIPPED THE DEFECT FIRST.
+  # FD23/FD24 drive the SUCCESS path; this is the REFUSAL path, whose notice was
+  # erased by exactly the same queued refresh. That half was inherited from
+  # `fda9d5a8` — RULING F1e did not introduce it and nothing pinned it — so
+  # without this check the flush could be removed from under F5's original row
+  # and only the F1e rows would notice. Same five stubs, same real steps 4-7;
+  # the probe answers a refusal, so step 7 writes and step 7b never runs.
+  set fd_refuse {the last run promised no VCD for 'dcell' (tracing off)}
+  set ::fd_dig [list none notraced $fd_refuse]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  fd_drive_on
+  pcall ase::show_in_browser_for_current
+  fd_drive_off
+  update
+  check {FD27 (F5) the REFUSAL notice also survives the refresh its own gesture
+         queued — caption and sidebar status line, one turn after the binding
+         returns} \
+    [list [$FDV.pw.sea.st cget -text] \
+          $::wviewer::browserseanote($tok) \
+          [$FDV.ph cget -text]] \
+    [list "no digital signals to show: $fd_refuse" \
+          "no digital signals to show: $fd_refuse" \
+          "Signal Browser\nno digital signals to show: $fd_refuse"]
+
+  # --- FD26: "the pane lists nothing" is not the same fact as "a bar is hiding
+  # everything" ------------------------------------------------------------
+  #
+  # ⚠⚠ `browsersea` IS THE FILTERED SET, so an empty one has two causes and only
+  # one of them is this reader's. With a no-match Filter pattern the design root
+  # draws nothing while still HAVING two own-level signals, and the shipped
+  # caption says so truthfully. A reader that called that "empty" would let step
+  # 7b replace a true caption with a sentence blaming a foreign database — the
+  # guessed yes its own ⚠⚠ block forbids. Leg 1 is the reader, legs 2/3 are the
+  # state it is answering about, leg 4 is the shipped caption it must not
+  # displace.
+  pcall ::wviewer::searchbar_set $FDV.wvfilter \
+    {pattern zzzznomatchzzzz syntax shell type all case 0}
+  pcall ::wviewer::browser_refresh $tok 1
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  check {FD26 (F5/F1e) a Search/Filter bar that hides every name is NOT an empty
+         scope: the reader declines and the shipped bar caption stands} \
+    [list [pcall ::wviewer::browser_sea_empty $tok] \
+          [llength $::wviewer::browsersea($tok)] \
+          [pcall ::wviewer::browser_sea_own $tok {}] \
+          [pcall ::wviewer::browser_bars_active $tok]] \
+    [list 0 0 2 1]
+  pcall ::wviewer::searchbar_set $FDV.wvfilter \
+    {pattern {} syntax shell type all case 0}
+  pcall ::wviewer::browser_refresh $tok 1
+  update
 
   catch {wviewer::close $tok}
   }

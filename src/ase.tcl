@@ -1956,6 +1956,27 @@ proc ase::browser_digital_msg {res} {
   return "no digital signals to show: [lindex $res 2]"
 }
 
+# 1 when the viewer's lower pane is listing nothing at all (RULING F1e). TOTAL:
+# it rides the same key binding as everything else in this file, and it is
+# consulted to decide whether to SAY something -- so anything it cannot
+# establish (no viewer proc, no window, no pane state) is `0`, "no claim", never
+# a guessed yes. `wviewer::browser_sea_empty` already answers 0 for every state
+# it cannot make the claim about — no window, no pane state, and (since the
+# review pass) a node whose names a Search/Filter bar has hidden rather than a
+# node that has none; this adds the last one, a viewer whose Tcl is not loaded
+# at all (headless).
+#
+# ⚠ IT IS ONLY MEANINGFUL ONCE THE PANE HAS SETTLED. `browsersea` is rebuilt by
+# the <<TreeviewSelect>> handler, which a tree landing only QUEUES — so asked
+# before step 6c's flush this answers about the node the user just LEFT. That
+# is why the flush exists and why it is above the only call site (RULING F1f).
+proc ase::browser_pane_unread {token} {
+  if {![llength [info commands ::wviewer::browser_sea_empty]]} { return 0 }
+  set r 0
+  catch {set r [wviewer::browser_sea_empty $token]}
+  return [expr {$r ? 1 : 0}]
+}
+
 # --- E7: report a desynchronized co-simulation honestly ----------------------
 
 # Diagnostics extracted from a simulator log: a list of {severity code count
@@ -2662,6 +2683,39 @@ proc ase::show_in_browser_for_current {{win {}}} {
   } else {
     catch {::ase::echo "ase: signal browser: $m"}
   }
+  # 6c. THE SETTLE, AND WITHOUT IT EVERYTHING BELOW IS WRITTEN INTO A PANE THAT
+  # HAS NOT HAPPENED YET (salvage pass, review findings R1/R2 — MEASURED on the
+  # real viewer, not predicted).
+  #
+  # ⚠⚠ THE NOTICE STEP 7 WRITES IS ERASED BEFORE THE USER CAN READ IT WITHOUT
+  # THIS LINE. `browser_reveal`'s `$tv selection set` only QUEUES
+  # <<TreeviewSelect>>; the bind runs `wviewer::browser_sea_refresh`, whose
+  # FIRST act is `set browserseanote($token) {}` and whose last act re-captions
+  # the pane from the shipped `seaempty`/`seacount` arms. That event is
+  # delivered on the very next turn of the event loop — i.e. the instant this
+  # key binding returns — so a notice written above it lives for microseconds
+  # and reaches nobody. Measured on BOTH arms before this line existed: the
+  # caption held the notice on return and read "'TOP.m' has no signals of its
+  # own" one `update` later, which is the exact falsehood F5 exists to remove.
+  #
+  # ⚠⚠ AND IT IS WHAT MAKES STEP 7b's PREDICATE HONEST. `ase::browser_pane_unread`
+  # reads the pane MODEL (`browsersea`), which that same queued refresh has not
+  # rebuilt yet — so without this flush the arm decides using the pane the user
+  # has just LEFT, firing or not according to stale state rather than to what is
+  # on screen. Measured: settled root then re-scope answered 0 ("pane lists
+  # things") for a scope whose pane was about to list nothing.
+  #
+  # ⚠ `update`, NOT `update idletasks`. <<TreeviewSelect>> is a virtual event on
+  # the MAIN queue, and idletasks does not deliver it — `browser_reveal` already
+  # calls `update idletasks` and the note still died. Measured.
+  #
+  # ⚠ HERE, AND ONLY HERE. Everything above still had a selection change to
+  # make (step 6, its `partial` fall-through and 6b's last-mile retry all move
+  # the tree); nothing below moves it. So this is the first point at which one
+  # flush is sufficient and the last at which one is needed. It re-enters the
+  # event loop, which is why it is at the tail rather than in the middle: only
+  # the notice write follows it.
+  catch {update}
   # 7. F5: THE EMPTY-PANE NOTICE, AND IT IS WRITTEN LAST.
   #
   # ⚠⚠ LAST, ON PURPOSE. The fall-through above has just written the sidebar's
@@ -2681,6 +2735,64 @@ proc ase::show_in_browser_for_current {{win {}}} {
   if {[lindex $dig 0] eq {none}} {
     set nm [ase::browser_digital_msg $dig]
     catch {::ase::echo "ase: signal browser: $nm" error}
+    catch {wviewer::browser_notice $key $nm}
+  } elseif {[lindex $dig 0] eq {ok} && $done && [ase::browser_pane_unread $key]} {
+    # 7b. F5's OTHER EMPTY PANE, AND IT IS THE ONE THE HAPPY PATH PRODUCES
+    # (RULING F1e, added by the salvage pass — MEASURED, not predicted).
+    #
+    # ⚠⚠ WITHOUT THIS ARM THE SUCCESS CASE CAPTIONS ITSELF WITH A FALSEHOOD.
+    # The scope really is shown: the tree re-scopes and the row is selected. But
+    # the lower pane is drawn from `browserseaent`, which holds the CURRENT
+    # database's entries and only those (item 15's declared limit, BD70d), so a
+    # foreign VCD's scope lists nothing — and `browser_sea_refresh`'s own
+    # `seaempty` arm then captions the pane "'TOP.m' has no signals of its own",
+    # about a scope that has two. Measured on the real viewer before this arm
+    # existed. F5's row is "say WHY the pane is empty, do not show an empty
+    # pane", and a WRONG why is the failure item 4's receipt names: "a notice
+    # that describes a different no-match behaviour than the code implements is
+    # worse than no notice." So the true reason overwrites it, on the same three
+    # surfaces, through the same renderer — and it survives to be read only
+    # because step 6c settled the pane first (without that flush this whole arm
+    # is written and erased inside one event-loop turn; see 6c's ⚠⚠).
+    #
+    # ⚠⚠ THE SENTENCE NAMES `[lindex $res 2]`, THE LANDING, NEVER `[lindex $dig
+    # 2]`, THE SCOPE THAT WAS ASKED FOR. They differ on a `partial` — the walk
+    # reached only an ancestor of the resolved scope — and a review reproducer
+    # got there on the first try with nothing more exotic than a Filter pattern:
+    # asked TOP.m, landed TOP, and the sentence claimed "showing the digital
+    # scope 'TOP.m' in the tree" one statement after the CIW had said "no
+    # signals under 'TOP.m' - showing TOP instead". Two sentences from one
+    # command contradicting each other is worse than either alone.
+    #
+    # ⚠ AND A `partial` STILL GETS THE NOTICE, which is why the guard is `$done`
+    # and not `[lindex $res 0] in {ok alldbs}`. The pane's emptiness is a fact
+    # about where the tree LANDED, and an ancestor inside a foreign VCD lists
+    # exactly as little as the scope itself would: excluding `partial` would
+    # hand that landing straight back to the shipped `seaempty` arm and its
+    # "'TOP' has no signals of its own", i.e. it would restore the falsehood on
+    # the very path the reproducer found. Naming the landing removes the
+    # contradiction; dropping the arm would only hide it.
+    #
+    # ⚠ THIS SENTENCE IS COMPOSED HERE, not rendered from the resolver, for
+    # `nopane`'s reason one line up: the resolver did not refuse — it answered
+    # `ok` — so there IS no resolver sentence. It is minted where the fact is
+    # decided, which is the rule 5f-3 actually states.
+    #
+    # ⚠ NOT the `error` tag. Nothing failed and nothing was refused; the user
+    # got what they asked for with a caveat, which is exactly what 5f-6 minted
+    # the `note` tag for.
+    #
+    # ⚠ IT DOES OVERWRITE THE SIDEBAR STATUS LINE that `browser_say` has just
+    # written ("showing every results database to reach <node>"), and that is
+    # the ordering choice, not an accident: one line, two candidate sentences,
+    # and the one the user needs is the one about the pane they are staring at.
+    # Nothing is lost — the CIW keeps BOTH, in the order they happened, which is
+    # the account the action log needs and the reason this arm echoes as well as
+    # renders.
+    set nm "showing the digital scope '[lindex $res 2]' of\
+ '[file tail [lindex $dig 1]]' in the tree, but the lower pane lists only the\
+ current results database, so this scope's own signals are not in it yet"
+    catch {::ase::echo "ase: signal browser: $nm" note}
     catch {wviewer::browser_notice $key $nm}
   }
   return $key
