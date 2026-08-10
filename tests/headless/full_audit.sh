@@ -75,11 +75,23 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # (test_paste_modify_flag_0244 drives no `xschem callback` either -- it arms with
 # `xschem merge`/`xschem paste`, commits with `move_objects end`, cancels with
 # `abort_operation` -- so it is true-headless by construction)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate "
+# (test_placement_wire_gate is --nogui by PRESCRIPTION, not preference: its own header says
+# so, and with ANY display it blocks forever at the G4 `xschem place_text` row -- headlessly
+# place_text() fails fast because the text dialog needs a Tk toplevel, but under a real X the
+# modal is raised for real and nothing dismisses it. Measured: killed at 120s under WSLg,
+# still stalled after 300s under xvfb-run. Issue 0355; the suite now self-guards too, so the
+# two halves are independent.)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate test_placement_wire_gate "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 
 in_list() { case "$2" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# THE ONE MATCHER. Every predicate below asks whether the blob contains a LINE
+# of the given shape -- never whether it contains the token somewhere. That is
+# the whole repair: issue 0350 anchored is_skip, issue 0354 measured that the
+# other four predicates were the identical defect wearing a different sign.
+line_has() { printf '%s\n' "$2" | grep -qE "$1"; }
 
 # A test PASSES on "RESULT: ALL PASS" or on the older run_regression sentinel
 # "OVERALL: ok"; a handful use their own banner.
@@ -90,22 +102,36 @@ in_list() { case "$2" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # forever while passing every one of their own checks (red-but-hollow, the
 # inverse of issue 0147). "OVERALL: notok"/"OVERALL: FAIL" are the failure
 # banners and are not substrings of "OVERALL: ok", so the test still fails.
+#
+# EVERY ARM IS LINE-ANCHORED (issue 0354 H1). These used to be unanchored bash
+# `==` globs over the whole merged stdout+stderr blob, so a suite that printed
+# three FAIL lines, a "RESULT: 1 FAILED" banner and exited 1 was scored PASS
+# because one of its check NAMES quoted "OVERALL: ok" -- and since AUDIT_MIN_PASS
+# counts PASSes, that hollow PASS satisfied the CI floor too (.github/workflows/
+# ci.yaml). Same contract as the skip banner: a pass banner counts only at the
+# START OF A LINE. Measured across the tree: every shipped emitter prints its
+# banner at column 0, so no in-tree suite changes classification.
+#
+# The "<name> headless: ..." arm is the one banner that is PREFIXED by
+# construction (test_hi_descend.tcl:163), so it is anchored at BOTH ends -- that
+# is the only way to assert its shape rather than accept it inside a check name.
 is_pass() {
   local name="$1" out="$2" ec="$3"
   case "$name" in
-    test_palette)              [ "$ec" -eq 0 ] && [[ "$out" == *"EVENT opens palette: yes"* ]] ;;
-    test_ciw_autocomplete)     [[ "$out" == *"PASS: ciw autocomplete (0 failure(s))"* ]] ;;
-    test_ciw_puts_capture)     [[ "$out" == *"PASS: ciw puts-capture (0 failure(s))"* ]] ;;
-    test_lib_new_discovered_defs) [[ "$out" == *"RESULT: all passed"* ]] ;;
-    test_nogui)                [[ "$out" == *"NOGUI_TEST_PASS"* ]] ;;
-    test_readonly_guard)       [[ "$out" == *"READONLY_GUARD_TEST_PASS"* ]] ;;
-    test_readonly_action_dispatch) [[ "$out" == *"ACTION_READONLY_TEST_PASS"* ]] ;;
+    test_palette)              [ "$ec" -eq 0 ] && line_has '^EVENT opens palette: yes' "$out" ;;
+    test_ciw_autocomplete)     line_has '^PASS: ciw autocomplete \(0 failure\(s\)\)' "$out" ;;
+    test_ciw_puts_capture)     line_has '^PASS: ciw puts-capture \(0 failure\(s\)\)' "$out" ;;
+    test_lib_new_discovered_defs) line_has '^RESULT: all passed' "$out" ;;
+    test_nogui)                line_has '^NOGUI_TEST_PASS' "$out" ;;
+    test_readonly_guard)       line_has '^READONLY_GUARD_TEST_PASS' "$out" ;;
+    test_readonly_action_dispatch) line_has '^ACTION_READONLY_TEST_PASS' "$out" ;;
     # third banner shape: "<name> headless: all checks passed" / "... N FAILURE(S)"
     # (test_cadence_descend_newwin_ro passes every check but was scored FAIL;
     # test_hi_descend shares the banner and really does fail one check)
     test_cadence_descend_newwin_ro|test_hi_descend) \
-                               [[ "$out" == *"headless: all checks passed"* ]] && ! is_skip "$out" ;;
-    *)                         [[ "$out" == *"RESULT: ALL PASS"* || "$out" == *"OVERALL: ok"* ]] \
+                               line_has '^[A-Za-z0-9_]+ headless: all checks passed$' "$out" \
+                                 && ! is_skip "$out" ;;
+    *)                         line_has '^(RESULT: ALL PASS|OVERALL: ok)' "$out" \
                                  && ! is_skip "$out" ;;
   esac
 }
@@ -113,11 +139,9 @@ is_pass() {
 # LINE. Anywhere else -- inside a check name, a diagnostic, an echoed comment --
 # it is ordinary text and the test is classified on its real verdict. And a FAIL
 # line beats a skip banner (has_failure below): a run that failed must not be
-# able to hide behind one. CAVEAT, measured (issue 0354): has_failure's
-# alternation only covers the `FAIL:` banner shape, NOT the `RESULT: <n> FAIL` /
-# `RESULT: FAIL` / lowercase `OVERALL: fail` / `OVERALL: <n> FAILED` shapes ~26
-# shipped tests emit. Latent -- no in-tree test both self-skips at column 0 and
-# fails on the same path -- but do not read the guard as total.
+# able to hide behind one. That guard used to cover only the `FAIL:` banner
+# shape; issue 0354 H2 measured the four other failure banners the tree really
+# emits and has_failure now covers all of them.
 #
 # This used to be three UNANCHORED substring tests over the whole stdout+stderr
 # blob, evaluated ahead of is_pass, so a line a test printed MID-RUN --
@@ -136,20 +160,23 @@ is_pass() {
 #   RESULT: ALL PASS (0 checks, skipped: no X)  the legacy banner -- extinct as an
 #                                               emitted string, kept so a
 #                                               resurrected test cannot be scored
-#                                               a hollow PASS. NOTE (0354) this
-#                                               alternative anchors RESULT:, not
-#                                               the token, so it is wider than the
-#                                               literal above: a green
-#                                               "RESULT: ALL PASS (20 checks; 3
-#                                               legs skipped: no X)" is scored SKIP.
-#                                               Keep the note out of RESULT lines.
+#                                               a hollow PASS. PINNED to that exact
+#                                               literal (issue 0354 H3): it used to
+#                                               anchor only `RESULT:`, so a fully
+#                                               green "RESULT: ALL PASS (20 checks;
+#                                               3 legs skipped: no X)" was scored
+#                                               SKIP. The alternative is kept rather
+#                                               than deleted -- deleting it would let
+#                                               a resurrected legacy banner score a
+#                                               hollow PASS, which is the one thing
+#                                               it exists to prevent.
 #
 # NOTE full_audit and run_suites.sh deliberately DISAGREE about skips, and that
 # split is ratified (issue 0350 D5): a whole-tree sweep tolerates SKIP behind an
 # AUDIT_MIN_PASS floor, whereas run_suites.sh:105 was asked for THIS test by
 # name, so a skip there is a failure to deliver and scores FAIL.
 is_skip() {
-  printf '%s\n' "$1" | grep -qE '^(RESULT: SKIP|SKIP: no X connection|RESULT:.*skipped: no X)'
+  line_has '^(RESULT: SKIP|SKIP: no X connection|RESULT: ALL PASS \(0 checks, skipped: no X\))' "$1"
 }
 
 # Independent second guard: an aborted run must not lie about its verdict, the
@@ -158,8 +185,22 @@ is_skip() {
 # test SKIP -> FAIL; no currently-PASSing test can change classification
 # because of it. Anchored for exactly the reason is_skip is: "undo after a failed
 # paste" is a legitimate check name.
+#
+# The alternation covers every failure-banner shape MEASURED in tests/headless
+# (issue 0354 H2 -- the old one covered `FAIL:` and `RESULT: <n> FAILED` only):
+#   FAIL: <check> -> {..} (exp {..})       the per-check line, ~all suites
+#   RESULT: <n> FAILED (<n> passed)        the dominant verdict banner
+#   RESULT: <n> FAIL                       19 sites, incl. test_cadence_stretch_move.tcl:170
+#   RESULT: FAIL (<n> ok, <n> fail)        6 sites
+#   RESULT: FAILED                         test_coordlog_precision.tcl:62
+#   RESULT: <n> FAILURE(S)
+#   OVERALL: notok / OVERALL: FAIL         the run_regression sentinels
+#   OVERALL: fail                          4 sites, lowercase
+#   OVERALL: <n> FAILED, <n> passed        test_descend_inert_class.tcl:151 (CI hard gate)
+# Column 0 ONLY, deliberately (0350 D2, re-ratified here): a suite that echoes a
+# CHILD run's indented output must not be reddened by someone else's failure.
 has_failure() {
-  printf '%s\n' "$1" | grep -qE '^(FAIL[: !]|RESULT: [0-9]+ (FAILED|FAILURE)|OVERALL: (notok|FAIL))'
+  line_has '^(FAIL[: !]|RESULT: ([0-9]+ )?FAIL|OVERALL: ([0-9]+ )?(notok|NOTOK|FAIL|fail))' "$1"
 }
 
 # The classification chain, lifted out of the run loop into a verb so the
@@ -176,12 +217,26 @@ has_failure() {
 #     test_readonly_guard, test_readonly_action_dispatch) do not self-guard, and
 #     test_grid_toggle_sel_gc prints its skip line next to "OVERALL: ok". Putting
 #     is_pass first turns both into hollow PASSes.
+#     The gate stays HERE, on the chain, and is NOT duplicated onto the seven
+#     name-specific arms (0243 F2: gates live at the verb, not at every caller) --
+#     duplicating it would also make that ordering unobservable.
+#
+# BOTH crash predicates are line-anchored too (issue 0354). They were unanchored
+# substring tests with OPPOSITE failure directions:
+#   * "FATAL: signal" in a check NAME scored a fully GREEN suite CRASH. main.c:58
+#     prints it after a leading \n, so column 0 is guaranteed for the real thing.
+#   * "Tcl_AppInit() error" in a check name scored a genuinely FAILING suite
+#     CRASH instead of FAIL (0354 H4 -- measured by this item, absent from the
+#     original filing; red->red, so the exit gate never moved either way).
+# NOTE the anchor keeps the arm's own literal. xinit.c also emits
+# "Tcl_AppInit() err 1:" .. "err 4:" (xinit.c:1507/3253/3325/3373), which this arm
+# has never matched; widening it is a separate, unmeasured change (0354 H4 note).
 classify() {
   local name="$1" out="$2" ec="$3"
   if [ "$ec" -eq 124 ]; then
     echo TIMEOUT
-  elif [[ "$out" == *"FATAL: signal"* ]] \
-       || { [[ "$out" == *"Tcl_AppInit() error"* ]] && ! is_pass "$name" "$out" "$ec"; }; then
+  elif line_has '^FATAL: signal' "$out" \
+       || { line_has '^Tcl_AppInit\(\) error' "$out" && ! is_pass "$name" "$out" "$ec"; }; then
     echo CRASH
   elif is_skip "$out" && ! has_failure "$out"; then
     echo SKIP
@@ -192,10 +247,64 @@ classify() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# THE TWO LEAK DETECTORS. Both take the tree to inspect as $1 (defaulting to the
+# repo) so they can be exercised against a synthetic throw-away tree by
+# tests/headless/test_audit_classifier.tcl, and both are defined above the
+# source-guard for the same reason.
+# ---------------------------------------------------------------------------
+
+# Arm 1, the directory glob (issue 0148). Tests mkdir a per-pid `_<tag>_<pid>`
+# dir and delete it on their last line, so any test that exits early, errors, or
+# crashes orphans one in the working tree -- invisible in `git status` because
+# .gitignore hides the pattern. Snapshot before/after, report what the run left
+# behind, and remove it. Every test now goes through tests/headless/scratch.tcl,
+# so the expected count is 0 and a leak is FATAL by default -- that enforcement
+# is the whole point of issue 0148 (the class recurred twice because nothing
+# checked). Set AUDIT_STRICT_SCRATCH=0 to downgrade it to a warning.
+scratch_snapshot() {
+  local root="${1:-$REPO}"
+  ls -1d "$root"/_*_[0-9]* "$root"/tests/_*_[0-9]* "$root"/tests/headless/_*_[0-9]* \
+         "$root"/src/_*_[0-9]* 2>/dev/null | sort
+}
+
+# Arm 2, the working-tree delta (issues 0352, 0353). Arm 1 only ever globs
+# DIRECTORIES with ONE name shape in four fixed parents, so it is structurally
+# blind to everything else a run can leave behind:
+#   a leaked FILE            untitled-NN.sch in the repo root       (0353)
+#   a differently-named DIR  undo_link_child/                       (0352)
+#   a NON-IGNORED deletion   something the run removed mid-suite
+# Guessing another name would repeat the defect, so this arm asks git what
+# actually moved instead.
+#
+# KNOWN LIMIT, measured -- do NOT read this arm as total coverage. `git status`
+# honours .gitignore, so everything .gitignore hides is invisible here in BOTH
+# directions: `*~.sch` / `*~.sym` (:55,:56) and `_*_[0-9]*/` (:64). That means
+# the autosave-BACKUP half of 0353 is unreported, and so is 100% of issue 0356's
+# only measured instance (an untracked `tests/untitled-16~.sch` that a suite
+# deleted) -- this arm cannot find 0356's emitter. Widening it (`--ignored=
+# matching` filtered to the two backup patterns) re-introduces exactly the
+# name-guessing this item exists to remove, so it is an OPEN decision recorded in
+# 0356, not something that item settled. Locked by C39b/C39c in
+# tests/headless/test_audit_classifier.tcl so the gap cannot be forgotten.
+#
+# REPORT ONLY, and deliberately so: it feeds no removal and no exit path, and is
+# NOT wired into AUDIT_STRICT_SCRATCH. Arm 1's cleanup deletes whatever its
+# snapshot reports, and `untitled-NN.sch` is shaped exactly like unsaved user
+# work -- 0352 and 0353 both refuse to let the audit delete that. Making it
+# fatal before the emitting tests are fixed would also redden a hard gate on the
+# first honest report. Fix the tests; the report is the standing reminder.
+tree_delta_snapshot() {
+  local root="${1:-$REPO}"
+  git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  git -C "$root" status --porcelain --untracked-files=all 2>/dev/null | sort
+}
+
 # Source-guard: `AUDIT_LIB_ONLY=1 . tests/headless/full_audit.sh` defines the
-# predicates and classify() and returns WITHOUT running an audit, so the
-# classifier can be regression-locked without a 300-test sweep. Inert on the
-# normal executed path -- the test short-circuits and `return` never runs.
+# predicates, classify() and the two snapshot verbs and returns WITHOUT running
+# an audit, so the classifier can be regression-locked without a 300-test sweep.
+# Inert on the normal executed path -- the test short-circuits and `return`
+# never runs.
 [ "${AUDIT_LIB_ONLY:-0}" = "1" ] && return 0 2>/dev/null
 
 # Test selection: explicit args, else all test_*.tcl. The 52-test wireedit
@@ -217,19 +326,10 @@ fi
 PASS=0 FAIL=0 CRASH=0 SKIP=0
 declare -A STATUS OUT
 
-# Scratch-leak detector (issue 0148). Tests mkdir a per-pid `_<tag>_<pid>` dir
-# and delete it on their last line, so any test that exits early, errors, or
-# crashes orphans one in the working tree -- invisible in `git status` because
-# .gitignore hides the pattern. Snapshot before/after, report what the run left
-# behind, and remove it. Every test now goes through tests/headless/scratch.tcl,
-# so the expected count is 0 and a leak is FATAL by default -- that enforcement
-# is the whole point of issue 0148 (the class recurred twice because nothing
-# checked). Set AUDIT_STRICT_SCRATCH=0 to downgrade it to a warning.
-scratch_snapshot() {
-  ls -1d "$REPO"/_*_[0-9]* "$REPO"/tests/_*_[0-9]* "$HERE"/_*_[0-9]* \
-         "$REPO"/src/_*_[0-9]* 2>/dev/null | sort
-}
+# Both leak detectors are defined above the source-guard; take their "before"
+# readings here, just ahead of the first test.
 SCRATCH_BEFORE=$(scratch_snapshot)
+TREE_BEFORE=$(tree_delta_snapshot)
 
 # GUI-test control gate: warn the user before the suite runs and give
 # Pause/Resume during it (tests/headless/gui_gate.sh). Fails open (no DISPLAY /
@@ -310,10 +410,30 @@ if [ -n "$SCRATCH_LEAKED" ]; then
   echo "(removed; convert the owning test to tests/headless/scratch.tcl -- issue 0148)"
 fi
 
+# Arm 2: what the run did to the working tree, in BOTH directions. Report only --
+# nothing below deletes any of it and nothing below changes the exit code.
+TREE_AFTER=$(tree_delta_snapshot)
+TREE_APPEARED=$(comm -13 <(printf '%s\n' "$TREE_BEFORE") <(printf '%s\n' "$TREE_AFTER"))
+TREE_VANISHED=$(comm -23 <(printf '%s\n' "$TREE_BEFORE") <(printf '%s\n' "$TREE_AFTER"))
+TREE_NADD=0
+TREE_NDEL=0
+if [ -n "$TREE_APPEARED" ] || [ -n "$TREE_VANISHED" ]; then
+  echo "--------- working-tree delta (report only) ---------"
+fi
+if [ -n "$TREE_APPEARED" ]; then
+  TREE_NADD=$(printf '%s\n' "$TREE_APPEARED" | grep -c .)
+  printf '%s\n' "$TREE_APPEARED" | sed 's/^/TREEADD | /'
+fi
+if [ -n "$TREE_VANISHED" ]; then
+  TREE_NDEL=$(printf '%s\n' "$TREE_VANISHED" | grep -c .)
+  printf '%s\n' "$TREE_VANISHED" | sed 's/^/TREEDEL | /'
+fi
+
 echo "========================================"
 echo "SUMMARY: $PASS pass  $FAIL fail  $CRASH crash/timeout  $SKIP skip  (total $((PASS+FAIL+CRASH+SKIP)))"
 echo "WIREEDIT: $WIREEDIT_VERDICT"
 echo "SCRATCH:  $SCRATCH_N leaked dir(s)"
+echo "TREE:     $TREE_NADD appeared  $TREE_NDEL vanished (report only, gitignored paths excluded; issues 0352/0353)"
 echo "========================================"
 
 if [ "$((FAIL+CRASH))" -gt 0 ]; then

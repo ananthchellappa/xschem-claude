@@ -1,6 +1,7 @@
 # 0353 — test_placement_wire_gate and test_instance_update leak `untitled-NN.sch` into the repo root
 
-Status: MEASURED, NOT FIXED (discovered by the item-D1 crew while verifying 0350/0351)
+Status: PARTIAL 2026-08-09 — DETECTOR half landed for the non-backup shape only; EMITTER half
+still open, and `*~.sch` stays invisible (see 0356). Section at the end.
 Area: tests/headless/test_placement_wire_gate.tcl, tests/headless/test_instance_update.tcl,
       tests/headless/full_audit.sh (scratch detector)
 Found: 2026-08-09
@@ -57,3 +58,29 @@ a human who has confirmed none of it matters (dry run first — read the list):
     git clean -nd -- 'untitled*.sch' 'untitled*~.sch' \
         'src/untitled*.sch' 'tests/untitled*.sch'     # -nd = DRY RUN
     # re-run with -fd once the list looks right
+
+---
+
+## Detector half landed (2026-08-09, in the 0354 item) — emitter half STILL OPEN
+
+`full_audit.sh` grew a second, report-only leak arm (`tree_delta_snapshot()`, a
+`git status --porcelain --untracked-files=all` diff around the run). It reported this leak
+live, on the very first verified run, while the pre-existing directory glob stayed blind:
+
+    TREEADD | ?? untitled-62.sch
+    SCRATCH:  0 leaked dir(s)
+
+**It sees only the non-backup half of this issue.** `git status` honours `.gitignore`, and
+`.gitignore:55,:56` hide `*~.sch` / `*~.sym` — so `untitled-NN.sch` is reported and
+`untitled-NN~.sch` is not. Measured in a controlled synthetic repo carrying this repo's own
+`.gitignore`; locked by C39b/C39c in `test_audit_classifier.tcl`. See 0356 for the open
+decision on widening.
+
+The arm is report-only by construction and deletes nothing: `full_audit.sh`'s cleanup loop
+`rm -rf`s whatever the *scratch* snapshot reports, and `untitled-NN.sch` is shaped exactly
+like unsaved user work, which this issue refuses to let the audit delete.
+
+**Emitter half deliberately not fixed here.** Renaming the buffers in
+`test_placement_wire_gate` (171 checks) and `test_instance_update` (95 checks) touches two
+driver tiers plus a CI hard gate and needs its own before/after; with the new arm report-only,
+nothing forces the coupling.

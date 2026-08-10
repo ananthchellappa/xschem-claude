@@ -17,6 +17,20 @@
 # Pure headless. Run from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_placement_wire_gate.tcl
 # Prints "OVERALL: ok" on success (run_regression sentinel).
+#
+# --nogui is a PRESCRIPTION, not a preference (issue 0355). Section G4 drives
+# `catch {xschem place_text}`: headlessly place_text() fails fast because the text
+# dialog needs a Tk toplevel, which is exactly the CANCELLED-dialog path G4 means to
+# exercise -- but under ANY display the modal is raised for real and nothing is there
+# to dismiss it, so the suite blocks forever mid-run. Measured: killed at 120s under
+# WSLg, still stalled at the same 143 ok-lines after 300s under `xvfb-run -a`.
+# full_audit.sh runs it from nogui_tests; this guard is the other half, so a human or
+# an agent invoking it by hand under X gets an honest instant skip instead of a hang
+# (and a hung terminal is how this defect ate two measurement windows).
+if {[info commands winfo] ne {} && [winfo exists .]} {
+  puts "RESULT: SKIP (needs --nogui: G4's place_text raises a modal nothing can dismiss -- issue 0355)"
+  exit 0
+}
 
 set fail 0; set npass 0
 proc check {name got exp} {

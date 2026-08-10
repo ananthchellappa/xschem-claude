@@ -1,6 +1,7 @@
 # 0352 — undo_link_child/ leaks into the repo root, invisible to the scratch detector
 
-Status: MEASURED, NOT FIXED (filed by item D1; do not fix silently elsewhere)
+Status: PARTIAL 2026-08-09 — DETECTOR half landed (full_audit's tree-delta arm sees it);
+EMITTER half still open. See the section at the end.
 Area: tests/headless/test_undo_link_symbols.tcl, tests/headless/full_audit.sh
 Found: 2026-08-09, unattended backlog run, item D1
 Related: 0148 (the scratch-leak class), 0350, 0353 (same detector blind spot, file-level:
@@ -57,3 +58,17 @@ matters:
         _libdiff_fixtures src/_libdiff_fixtures src/_diffdlg_fixtures \
         src/_g5 src/_g6 src/_g10 src/_g11        # -nd first: DRY RUN, read it
     # then re-run with -fd once the list looks right
+
+---
+
+## Detector half landed (2026-08-09, in the 0354 item) — emitter half STILL OPEN
+
+`full_audit.sh` grew a second, report-only leak arm (`tree_delta_snapshot()`, a
+`git status --porcelain --untracked-files=all` diff around the run), which sees a
+differently-named directory that the `_*_[0-9]*` glob is structurally blind to. Verified
+against a synthetic git tree: `TREEADD | ?? undo_link_child/drive.tcl` (C38 in
+`test_audit_classifier.tcl`).
+
+The arm is **report only** — it feeds no removal and no exit path, so nothing here deletes
+files shaped like unsaved user work. Emitter half (`test_undo_link_symbols.tcl:45`) remains
+open. Note the arm inherits `.gitignore`, so gitignored leaks stay invisible; see 0356.
