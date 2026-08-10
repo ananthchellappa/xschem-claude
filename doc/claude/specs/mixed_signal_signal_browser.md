@@ -1,6 +1,6 @@
 # Mixed-signal debug — digital internals in the Signal Browser
 
-Status: §A (simulation), §B (view model), §C (VCD → Raw DB) and §E (ASE-L) DONE; §D and §F open
+Status: §A (simulation), §B (view model), §C (VCD → Raw DB) and §E (ASE-L) DONE; §D open (D1/D3 done); §F: F1/F2/F5 DONE, F3/F4 open
 Owner branch: fluid-editing
 Related: `doc/claude/specs/ase_l.md`, `doc/claude/code_analysis/signal_browser_reference.md`,
 `doc/claude/code_analysis/signal_browser_teardown_scoping.md`,
@@ -651,11 +651,83 @@ block against the real reference cell that skips cleanly when `xschem_libraries_
 
 | id | item | notes |
 |----|------|-------|
-| F1 | **The branch.** `ase::show_in_browser_for_current` (`src/ase.tcl:2427`) appends the selected instance name to the hierarchy segments and scopes the pane to that prefix. Add: if the selected instance's cell has a `verilog` view (§B + `library_inst_lcv`), scope to its **digital DB** instead of the analog one. | The `⚠` comments at `src/ase.tcl:2461-2472` are load-bearing — the selection and hierarchy must still be read in the DESIGN context, before any viewer raise. Preserve that ordering. |
-| F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. **OWNERSHIP RULED 2026-08-09 — see "Open decision 5, ruled" at the end of this spec, which is F2's contract**: the mapping is three facts, not one (instance→cell is QUERY time, cell→VCD file is NETLIST time in `<rundir>/<cell>_ase.cosim`, file→scope is DERIVED from the loaded DB); the join key is the **cell** (`lib/cell`, with a four-rung ladder ending at the instance's own `model=` property), never the instance path; the schematic prefix is **dropped, not translated**; `scope` stays a hint, is not even eligible when the entry's `vfile` is empty, and the derived answer wins. A code block **below** the netlisted schematic reaches only rung 4 — issue 0307. **IMPLEMENTED 2026-08-09 (batch F item 4), see RULING 5f**: `ase::cosim_scope_for_instance <key> <instpath> ?<token>?` in `src/ase.tcl`, pinned by the **FS** group of `tests/headless/test_ase_cosim.tcl`. F1 still has to CALL it (F1 is not done). | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
+| F1 | ~~**The branch.**~~ **DONE 2026-08-10 (batch F item 5), see "F1/F5 — the branch and the notice" below.** `ase::show_in_browser_for_current` (`src/ase.tcl:2507`) gained step 3c: `ase::browser_digital_probe` (`:1925`) beside the selection read, ABOVE the viewer raise, and a step 6 that shows the resolved scope through the new `wviewer::browser_show_db_scope` (`src/wave_viewer.tcl:10650`) instead of the analog walk. The ⚠ ordering was preserved and is now ASSERTED rather than described — `FV33` watches the live call order, not the source layout. | The `⚠` comments are load-bearing — the selection and hierarchy must still be read in the DESIGN context, before any viewer raise. Preserve that ordering. |
+| F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. **OWNERSHIP RULED 2026-08-09 — see "Open decision 5, ruled" at the end of this spec, which is F2's contract**: the mapping is three facts, not one (instance→cell is QUERY time, cell→VCD file is NETLIST time in `<rundir>/<cell>_ase.cosim`, file→scope is DERIVED from the loaded DB); the join key is the **cell** (`lib/cell`, with a four-rung ladder ending at the instance's own `model=` property), never the instance path; the schematic prefix is **dropped, not translated**; `scope` stays a hint, is not even eligible when the entry's `vfile` is empty, and the derived answer wins. A code block **below** the netlisted schematic reaches only rung 4 — issue 0307. **IMPLEMENTED 2026-08-09 (batch F item 4), see RULING 5f**: `ase::cosim_scope_for_instance <key> <instpath> ?<token>?` in `src/ase.tcl`, pinned by the **FS** group of `tests/headless/test_ase_cosim.tcl`. **F1 CALLS IT as of batch F item 5**, through `ase::cosim_scope_for_f1` (`src/ase.tcl:1834`) — the same resolver with step 1's design read hoisted into the caller, because the caller has to take that read before the viewer raise. | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
 | F3 | **Multi-DB display.** The all-DBs reader (`src/wave_viewer.tcl:2000-2130`) already enumerates every registry slot and labels them (`wviewer::db_label`). Confirm a digital DB labels sensibly and that per-DB grouping in the tree reads well when analog and digital scopes interleave. | Mostly free. Verify, don't assume. |
 | F4 | **Classification.** The `class`-field and hide-internals rulings (`signal-browser-declass-rulings`, issue 0217) were settled for raw vector names. Digital signals are a new class of name — decide whether they get their own class or reuse an existing one. | Consistency with settled work. |
-| F5 | **Empty-pane notice.** Selecting a code-block instance in a run that produced no digital output must say *why* (no VCD / shim not trace-enabled / no scope mapping), not show an empty pane. The `ase::echo … error` pattern at `src/ase.tcl:2531` is the model. | The failure mode users will actually hit. |
+| F5 | ~~**Empty-pane notice.**~~ **DONE 2026-08-10 (batch F item 5).** `ase::browser_digital_msg` (`src/ase.tcl:1954`) prefixes the F2 resolver's OWN refusal sentence and adds nothing (RULING 5f-3); `wviewer::browser_notice` (`src/wave_viewer.tcl:8187`) puts it on the lower pane's caption, the sidebar status line, and — when the pane really is empty — INTO the pane, wrapped, on the canvas. The `ase::echo … error` tag is the one this row named. | The failure mode users will actually hit. |
+
+#### F1/F5 — the branch and the notice (batch F item 5, 2026-08-10)
+
+**STATUS: F1, F2 and F5 are DONE; F3 and F4 remain open.** What landed: step 3c of
+`ase::show_in_browser_for_current`, `ase::browser_digital_probe` /
+`ase::browser_digital_msg` / `ase::cosim_scope_for_f1` in `src/ase.tcl`, and
+`wviewer::browser_show_db_scope` / `browser_notice` / `browser_db_group_id` /
+`browser_rows_headered` / `browser_row_exists` / `browser_names_under` plus an eleventh
+`browser_msg` kind in `src/wave_viewer.tcl`. Pinned by the **FV** group of
+`tests/headless/test_ase_cosim.tcl` (40 checks, `--nogui` arm) and the new
+`tests/headless/test_wave_sigbrowser_digital.tcl` (**FD**, 18 checks, Tk/X arm — 3 of them
+source checks that also run headless).
+
+**RULING F1a — the gate is "the cell HAS a `verilog` view", not "has ONLY a verilog view".**
+The branch is entered exactly when f1 answers a non-empty `vfile`, and an instance whose cell
+has no `.v` is not merely refused, it is never asked: the probe returns `{}` and the shipped
+analog path runs untouched. Two reasons, and the first decides it: `cosim_scope_for_instance`
+answers `nodigital` for an ordinary analog cell, so entering the branch for every instance
+would put "has no digital signals of its own" in the CIW on every Ctrl-Alt-V in an analog
+design — training the user straight past the notice F5 exists to deliver. And the question the
+gate is a proxy for ("is this a code block in THIS run?") is one only the run's own map can
+answer (RULING 5a): a cell with a `verilog` view that the last run did not netlist as a
+`d_cosim` card comes back `nomap`, with a sentence saying so, which is strictly more useful
+than silence. Gating on "no schematic view" instead would silently skip a cell that IS a code
+block but also carries a stale schematic view — the wrong-answer direction. Pinned by
+`FV2`/`FV3`/`FV38`.
+
+**RULING F1b — a refusal FALLS THROUGH to the analog path; it never strands the user.** The
+digital branch is an *addition* to the shipped walk, not a replacement for it: on any refusal
+(and on an `ok` whose scope the tree cannot reach) the existing `browser_show_path` walk runs
+exactly as it did before this item, last-mile retry included, and F5's notice is written
+AFTERWARDS. Refusing outright would trade a partial answer for none, and the shipped retry is
+already the right behaviour for a code block — its own level does not exist in the analog raw,
+so landing on the parent is what a user wants while the notice explains the rest. The ordering
+is part of the ruling: the notice is the LAST thing the command does, because the fall-through
+writes the status line, the pane caption and a CIW line of its own, and a notice written before
+them is a sentence nobody reads. `FV34`/`FV36`/`FV40`.
+
+**RULING F1c — the tree is RE-SCOPED to show the digital database, on a positive test, and it
+says so.** A VCD is a foreign registry slot, and with the All-DBs box off its rows are not in
+the tree at all — so the branch would be dead on a default browser. `browser_show_db_scope`
+therefore invokes that checkbutton on the user's behalf, but only after asking the question
+that justifies it: does THAT database's own inventory really carry this scope
+(`browser_names_under`, literal and case-sensitive, RULING 5c's test)? That is R12's shape
+(two-pane item 18) one database over, including its last clause: the outcome is reported
+through a new `browser_msg` kind, `alldbs` — "showing every results database to reach <node>" —
+so a tree that just grew says why. It deviates from R12 in exactly one place, deliberately: if
+the tick did NOT bring the rows in, it is put back, because leaving a box the user did not tick
+for a gesture that then failed is a side effect with nothing to show for it. The walk itself
+starts at the database's OWN design root (`d:<idx>|g:`), never at the current database's, and
+the landing decodes with `browser_id_path` so no `d:<idx>|` prefix leaks into a reported path.
+`FD13`-`FD17b`, `FV21`-`FV24`.
+
+**RULING F1d — the notice is RENDERED on three surfaces and lives exactly as long as the pane
+it explains.** It is `ase::browser_digital_msg`'s string, which is the resolver's own sentence
+with one fixed prefix — nothing in the viewer inspects it, shortens it or picks a different one
+(RULING 5f-3; `FD02` fails if `browser_notice` so much as switches on a cause). The three
+surfaces are the lower pane's caption, the sidebar status line, and the pane canvas itself —
+the last **only** when the pane has no cells, which is the state F5's row is about; the
+fall-through case leaves the user on a populated pane, where a notice painted over the names
+would be worse than the caption. Lifetime: the next `browser_sea_refresh` clears it, so a
+reason cannot outlive the pane it described. `FD20`-`FD22`.
+
+**What F1 does NOT solve.** F3 (does a digital DB *label* sensibly, and do interleaved analog
+and digital scopes read well?) and F4 (are digital names a new signal class?) are untouched and
+still open. Two consequences of the current shape are worth stating rather than discovering:
+the lower pane's own-level names still come from the CURRENT database's inventory, so selecting
+a foreign VCD scope selects the node but lists nothing under it (that is F3's business, and it
+is exactly the state that makes F5's canvas notice reachable); and the branch resolves against
+the viewer's registry BEFORE the raise, so a Ctrl-Alt-V taken when the viewer has not yet
+attached this run's databases answers `notloaded` — with the sentence that says to re-attach
+them.
 
 ### G — The reference testbench and the schematic side
 
@@ -723,6 +795,7 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 | H3 | ~~Time-base regression: an edge at a known SPICE time must land at the same time in both DBs (A6/D3).~~ **DONE.** `tests/headless/test_vcd_time_base.tcl`, **124 checks**, `--nogui` arm, 19 sabotages all caught. Fixtures are synthesized (an ASCII spice raw and a VCD encoding the SAME edge, ~15 lines of generator each, the `mkraw`/`mkvcd` idiom from `test_ase_cosim.tcl`) — **no simulator is run**. Groups TB (six units, both DBs in the registry at once), LD (the unit ladder, each rung exactly 1e3), NC (nine negative controls that ARE 1e3 wrong and must be rejected by the same gate), SE (seconds not ticks; multiplier forms), RW (the raw side is not rescaled either) and REF (the real §A6 pair, guarded, and it prints no banner `full_audit` would score as a file-wide SKIP). Tolerance and margins: see the D3 row. |
 | H4 | ~~Scope-mapping test for F2~~ **DONE** — the **FS** group of `tests/headless/test_ase_cosim.tcl` (46 checks, 32 sabotages, every check red under at least one). `x1.a1` resolves to an absolute `(database, scope)` pair with three VCDs and the analog raw all loaded and the ANALOG one current, so the resolver has to reach a database that is not the current one (`FS30`-`FS33c`). The checks that carry it are the DIVERGING ones — a recorded hint naming a scope the loaded VCD does not declare (`FS34`-`FS37b`), a hint that differs only in CASE (`FS23`), and one where nothing matches at all (`FS38`/`FS39`) — because the agreeing case passes against an implementation that simply trusts the string. **Two `d_cosim` instances in one deck is the `multi` case**, produced for real through `xschem netlist` at `DS9`-`DS11` and refused by the resolver at `FS41`; a genuine two-CELL collision is `FS10` (rung 1 picks one where a bare cell key matches both) and `FS14` (a rung matching >1 refuses without falling through). Not covered: a really inlined VCD — no verilator on this machine — so the divergence fixtures hand-write the map entry. |
 | H5 | ~~View-model tests~~ **DONE.** `tests/headless/test_verilog_view_model.tcl`, 109 checks: `view_type` / `view_handler` (including both open paths driven for real) / `library_new_view` / `library_new_cell` / the seed template / `lib_qualified_abs` / `cellview_sibling_path` / the Alt-2 candidate model, over `verilog` and `veriloga`, in both the nested and the flat layout, plus the measured repro against the reference cell. |
+| H7 | ~~Browser-branch tests for F1/F5~~ **DONE 2026-08-10 (batch F item 5).** TWO files, split by ARM and not by topic: the **FV** group of `tests/headless/test_ase_cosim.tcl` (40 checks, `--nogui`) owns the branch — which cell enters it, which sentence each cause produces, and a LIVE assertion that f1 is read before `wviewer::open` moves the context; `tests/headless/test_wave_sigbrowser_digital.tcl` (**FD**, 18 checks, Tk/X arm, auto-enrolled by `full_audit.sh`'s `ls test_*.tcl`) owns the viewer half, which needs a treeview, a checkbutton, a canvas and a status label and therefore cannot live in the engine arm at all. Fixtures are synthesized (`mkraw`/`mkvcd`); no simulator runs. **33 sabotages injected across the two, 31 caught**; the two that were not are the same deletion masked by a redundant guard, named in the receipt, and a third patch that removes all three guards at once does catch the checks they cover. |
 | H6 | Per CLAUDE.md, the trustworthy signal is `tests/headless/` (which has `gold/`). `create_save`/`open_close`/`netlisting` have no baseline and can only report `NOGOLD`. |
 
 ### I — Docs

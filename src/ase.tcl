@@ -1815,10 +1815,25 @@ proc ase::cosim_scope_for_instance {key instpath {token {}}} {
 
 # The same resolver against an explicit state dict (the session lookup is the
 # only thing the key form adds).
+#
+# ⚠ IT IS A TWO-LINE WRAPPER, AND THE SPLIT IS F1's (batch F item 5). Step 1 --
+# the f1 read -- MUST happen in the DESIGN context, before any viewer raise;
+# steps 2-5 need only the state, the map and the registry. A caller that has
+# already taken its one design-context read (`ase::show_in_browser_for_current`,
+# which cannot re-read the design after `wviewer::open` has moved the context to
+# the viewer's own untitled buffer) hands that f1 straight to
+# `cosim_scope_for_f1`. Re-reading it there would answer about the VIEWER, which
+# is the exact silent degradation F1's ⚠ block exists to forbid.
 proc ase::cosim_scope_for_state {state instpath {token {}}} {
+  return [ase::cosim_scope_for_f1 $state [ase::cosim_f1 $instpath] $instpath $token]
+}
+
+# Steps 1's REFUSALS and steps 2-5, against an f1 the caller has already read.
+# `f1` is `ase::cosim_f1`'s answer ({} when the path's last segment names no
+# instance of the schematic that was open when it was read).
+proc ase::cosim_scope_for_f1 {state f1 instpath {token {}}} {
   set leaf [lindex [split $instpath .] end]
-  # 1 -- f1, in the DESIGN context
-  set f1 [ase::cosim_f1 $instpath]
+  # 1 -- f1's own refusals (5f-4: ONE code, two sentences)
   if {$f1 eq {}} {
     return [list none nodigital "'$leaf' is not an instance of the schematic\
  currently open, so xschem cannot tell which cell it is (f1)"]
@@ -1874,6 +1889,71 @@ proc ase::cosim_scope_for_state {state instpath {token {}}} {
   # it does not depend on a caller remembering to render <note>.
   if {$note ne {}} { ase::echo "ase: $note" note }
   return [list ok $vcd [lindex $d 1] [lindex $d 0] $note]
+}
+
+# --- F1/F5: the verilog-only branch of "Show in Signal Browser" --------------
+#
+# CONTRACT: doc/claude/specs/mixed_signal_signal_browser.md §F, rows F1 and F5,
+# and RULING 5f-3 ("F5 renders this sentence rather than composing its own").
+#
+# THE PROBE IS THE WHOLE DESIGN-CONTEXT READ, and it is called from step 3c of
+# `ase::show_in_browser_for_current` -- beside the selection read, above the
+# viewer raise, for that block's ⚠⚠ reason. It takes its OWN f1 read here and
+# hands it to `ase::cosim_scope_for_f1`, so nothing about the design is read
+# again after `wviewer::open` has moved the xschem context to the viewer.
+#
+#   {}                          this is not a digital cell -- the branch is NOT
+#                               entered and NOTHING is said (see below)
+#   {ok <vcd> <scope> <how> <note>}
+#   {none <code> <sentence>}    F5's notice, verbatim from the resolver
+#
+# ⚠⚠ THE GATE IS "THE CELL HAS A `verilog` VIEW", WHICH IS f1's `vfile`, AND IT
+# IS DELIBERATELY NOT "the cell has ONLY a verilog view" (RULING F1a, written
+# into §F of the spec by this item). Two reasons, and the first is decisive:
+#   * an ordinary analog instance must not pay for this branch, and must not be
+#     told anything about co-simulation. `cosim_f1` answers `nodigital` for a
+#     cell with no `.v`, and rendering that as a notice would put "has no
+#     digital signals of its own" in the CIW on every Ctrl-Alt-V in an analog
+#     design. So a `{}` vfile short-circuits to `{}` and the shipped analog path
+#     runs untouched -- which is also what keeps every pre-item BX check green.
+#   * whether the cell is a code block in THIS run is a question only the run's
+#     own map can answer (RULING 5a), and the ladder answers it: a cell with a
+#     `verilog` view that the last run did not netlist as a `d_cosim` card comes
+#     back `nomap`, with a sentence saying so. Gating on "no schematic view"
+#     instead would silently skip a cell that IS a code block but also happens to
+#     carry a stale schematic view, which is the wrong-answer direction.
+proc ase::browser_digital_probe {key selname {token {}}} {
+  if {$selname eq {}} { return {} }
+  set f1 {}
+  catch {set f1 [ase::cosim_f1 $selname]}
+  if {$f1 eq {}} { return {} }
+  set vf {}
+  catch {set vf [dict get $f1 vfile]}
+  if {$vf eq {}} { return {} }
+  set r {}
+  if {[catch {ase::cosim_scope_for_f1 [ase::session_state $key] $f1 $selname \
+                $token} r]} {
+    return {}
+  }
+  return $r
+}
+
+# F5's SENTENCE. PURE -- which is what lets a headless check assert WHICH cause
+# produced WHICH text without a viewer.
+#
+# ⚠⚠ IT RENDERS THE RESOLVER'S OWN SENTENCE VERBATIM (RULING 5f-3). The three
+# causes F5's spec row names are already three different sentences minted at the
+# point each is DECIDED -- `notloaded` ("not among the loaded results
+# databases"), `notraced` ("the last run promised no VCD ... tracing off ...")
+# and the no-mapping family (`nomap`/`ambiguous`/`noscope`/`multi`/`nodigital`).
+# A notice that re-worded them here would be a second account of the same event,
+# free to drift from what the code does; item 4's receipt states the failure
+# mode plainly -- "a notice that describes a different no-match behaviour than
+# the code implements is worse than no notice". So this proc adds a PREFIX that
+# says which surface is empty and nothing else.
+proc ase::browser_digital_msg {res} {
+  if {[lindex $res 0] ne {none}} { return {} }
+  return "no digital signals to show: [lindex $res 2]"
 }
 
 # --- E7: report a desynchronized co-simulation honestly ----------------------
@@ -2494,6 +2574,30 @@ proc ase::show_in_browser_for_current {{win {}}} {
  showing $where instead"}
     }
   }
+  # 3c. F1: THE VERILOG-ONLY BRANCH, PROBED HERE AND NOWHERE LOWER.
+  #
+  # ⚠⚠ IT IS ABOVE STEP 4 FOR STEP 3b's REASON, AND THE FAILURE MODE IS WORSE,
+  # not milder. The probe's first act is `ase::cosim_f1`, which reads `xschem
+  # instance_list` and `xschem getprop instance <name> model` — both of them
+  # about the schematic THIS window holds. `wviewer::open` moves the xschem
+  # context to the viewer's own untitled buffer, which has no instances at all,
+  # so a probe placed after it does not fail: it answers `{}` ("not a digital
+  # cell"), the branch quietly never fires, and every check that calls the probe
+  # or the resolver DIRECTLY stays green. Moving this call below step 4 is a
+  # declared sabotage: `FV33` watches the live call ORDER (f1 before open) and
+  # `FV39` the source layout, so the two cannot both be satisfied by a move.
+  #
+  # ⚠ THE VIEWER TOKEN IS PASSED, and it is what makes the one-read rule
+  # possible at all (RULING 5f-2): step 4 of the resolver needs the VIEWER's
+  # registry, and with a token it reaches it through
+  # `wviewer::signal_list_all`, which takes its own context loan. So the design
+  # is read here, the registry is read in the viewer, and nothing is re-read
+  # after the raise. The token IS the session key — every other viewer call in
+  # this proc passes the same value.
+  set dig {}
+  if {$selname ne {}} {
+    set dig [ase::browser_digital_probe $key $selname $key]
+  }
   # 4. the viewer (raise-or-open; 0 headless or unknown)
   if {![wviewer::open $key]} {
     catch {::ase::echo "ase: no waveform viewer could be opened for $key" error}
@@ -2503,25 +2607,51 @@ proc ase::show_in_browser_for_current {{win {}}} {
   if {![wviewer::browser_shown $key]} {
     catch {wviewer::browser_toggle 1 $key}
   }
-  # 6. the node
-  set res [wviewer::browser_show_path $key [join $segs .]]
-  # 6b. RULING 1's LAST MILE, and it is NOT redundant with `partial`.
+  # 6. the node — the DIGITAL scope when F1's branch resolved one, else the
+  # shipped analog path, unchanged.
   #
-  # `browser_show_path` lands on the deepest ancestor that exists and reports
-  # `partial` — but only when AT LEAST ONE segment matched. A non-hierarchical
-  # instance picked at the TOP level makes the whole path a single unresolvable
-  # segment, so `matched` is 0 and the answer is `err` with the selection left
-  # alone (wave_viewer.tcl:9513-9521). That is not "land on the parent".
-  #
-  # So: when the SELECTION is what extended the path and the extended path
-  # resolved nothing, ask again WITHOUT it. The retry is confined to that case —
-  # a path that failed on its own merits still fails, because that is the user's
-  # own hierarchy position and there is nothing better to show.
-  if {$selname ne {} && [lindex $res 0] eq {err}} {
-    set res [wviewer::browser_show_path $key [join $base .]]
-    set where [expr {[llength $base] ? "[join $base .]" : {the design root}}]
-    catch {::ase::echo "ase: signal browser: '$selname' has no level in the\
+  # ⚠ A REFUSAL FALLS THROUGH, IT DOES NOT STRAND THE USER (RULING F1b). The
+  # analog path still runs and still lands where it always did; F5's notice,
+  # written at the very end of this proc, is what says why the digital pane the
+  # user asked for is not there. Refusing outright would replace a partial
+  # answer with none, and the shipped last-mile retry below is already the right
+  # behaviour for a code block: its own level does not exist in the analog raw.
+  set res {}
+  set done 0
+  if {[lindex $dig 0] eq {ok}} {
+    set res [wviewer::browser_show_db_scope $key [lindex $dig 1] [lindex $dig 2]]
+    if {[lindex $res 0] ne {err}} {
+      set done 1
+    } else {
+      # THE SCOPE RESOLVED AND THE TREE COULD NOT REACH IT. That is a fourth
+      # cause, minted here because it is decided here, and it carries the
+      # browser's own sentence for the same no-second-account reason F5 renders
+      # the resolver's (RULING 5f-3).
+      set dig [list none nopane "the digital scope '[lindex $dig 2]' of\
+ '[file tail [lindex $dig 1]]' could not be shown in the Signal Browser:\
+ [wviewer::browser_msg $res]"]
+    }
+  }
+  if {!$done} {
+    set res [wviewer::browser_show_path $key [join $segs .]]
+    # 6b. RULING 1's LAST MILE, and it is NOT redundant with `partial`.
+    #
+    # `browser_show_path` lands on the deepest ancestor that exists and reports
+    # `partial` — but only when AT LEAST ONE segment matched. A non-hierarchical
+    # instance picked at the TOP level makes the whole path a single unresolvable
+    # segment, so `matched` is 0 and the answer is `err` with the selection left
+    # alone (wave_viewer.tcl:9513-9521). That is not "land on the parent".
+    #
+    # So: when the SELECTION is what extended the path and the extended path
+    # resolved nothing, ask again WITHOUT it. The retry is confined to that case —
+    # a path that failed on its own merits still fails, because that is the user's
+    # own hierarchy position and there is nothing better to show.
+    if {$selname ne {} && [lindex $res 0] eq {err}} {
+      set res [wviewer::browser_show_path $key [join $base .]]
+      set where [expr {[llength $base] ? "[join $base .]" : {the design root}}]
+      catch {::ase::echo "ase: signal browser: '$selname' has no level in the\
  simulation data; showing $where instead"}
+    }
   }
   # ⚠ THE SAME SENTENCE, from the SAME formatter, as the sidebar's status line —
   # a second wording composed here would drift from it (a `partial` reported as
@@ -2531,6 +2661,27 @@ proc ase::show_in_browser_for_current {{win {}}} {
     catch {::ase::echo "ase: signal browser: $m" error}
   } else {
     catch {::ase::echo "ase: signal browser: $m"}
+  }
+  # 7. F5: THE EMPTY-PANE NOTICE, AND IT IS WRITTEN LAST.
+  #
+  # ⚠⚠ LAST, ON PURPOSE. The fall-through above has just written the sidebar's
+  # status line, the lower pane's caption and a CIW line of its own about where
+  # it landed instead; a notice written before them would be the sentence the
+  # user never sees. The CIW keeps BOTH lines — what was shown, then why the
+  # digital pane is not there — which is the account the log needs.
+  #
+  # ⚠ IT IS RENDERED, NOT COMPOSED (RULING 5f-3, and item 4's receipt: "a notice
+  # that describes a different no-match behaviour than the code implements is
+  # worse than no notice"). `ase::browser_digital_msg` prefixes and nothing
+  # else; the sentence naming the cause is the resolver's own.
+  #
+  # ⚠ `error`, THE TAG §F's F5 ROW NAMES — the pane is empty because something
+  # refused, and the `note` tag is 5f-6's colour for a disagreement the resolver
+  # RECOVERED from. Two different events, two different tags.
+  if {[lindex $dig 0] eq {none}} {
+    set nm [ase::browser_digital_msg $dig]
+    catch {::ase::echo "ase: signal browser: $nm" error}
+    catch {wviewer::browser_notice $key $nm}
   }
   return $key
 }

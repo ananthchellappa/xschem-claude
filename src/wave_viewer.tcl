@@ -418,6 +418,14 @@ namespace eval wviewer {
   variable browsersea;       array set browsersea       {}
   variable browserseasel;    array set browserseasel    {}
   variable browserseaanchor; array set browserseaanchor {}
+  #   browserseanote($token) = §F's F5 NOTICE: one sentence explaining why the
+  #     lower pane has nothing to show, or {}. It is set by a GESTURE that
+  #     refused (Ctrl-Alt-V on a code block whose digital data is missing) and
+  #     CLEARED at the top of every sea refresh, so it lives exactly as long as
+  #     the pane it explains: the next node the user selects redraws that pane
+  #     and the sentence goes with it. Nothing persists it — a stale reason on a
+  #     pane that has since been repopulated would be worse than no reason.
+  variable browserseanote;   array set browserseanote   {}
   # THE HOVER TOOLTIP (item 11's eighth gesture, paid beside item 20). The pane
   # draws a LABEL; this is how the user sees the NAME behind it.
   #   seatipdelay = ms of hover before a tip appears. A VARIABLE, not a literal,
@@ -727,6 +735,8 @@ proc wviewer::forget {token} {
   # and its Shift anchor — same rule a fourth time.
   variable browserseaent; variable browsersea
   variable browserseasel; variable browserseaanchor
+  # §F item F5: the empty-pane notice, same rule again.
+  variable browserseanote
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
   # a third time.
   variable browsersash; variable browserdev; variable browsersrc
@@ -796,6 +806,7 @@ proc wviewer::forget {token} {
   catch {unset browsersea($token)}
   catch {unset browserseasel($token)}
   catch {unset browserseaanchor($token)}
+  catch {unset browserseanote($token)}
   catch {unset browsersash($token)}
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
@@ -7935,13 +7946,37 @@ proc wviewer::browser_sea_select {token idxs {anchor {}}} {
 # R5: a search narrows THIS pane and leaves the tree's open set alone.
 proc wviewer::browser_sea_draw {token} {
   variable browsersea
+  variable browserseanote
   set c [wviewer::browser_sea_canvas $token]
   if {$c eq {}} { return 0 }
   catch {$c delete all}
   lassign [wviewer::browser_sea_layout $token] per cols colw rowh n paneh
   catch {$c configure -scrollregion \
            [wviewer::browser_flow_scrollregion $cols $colw $paneh]}
-  if {!$n} { return 0 }
+  if {!$n} {
+    # --- §F item F5: WHY THE PANE IS EMPTY, IN THE PANE ----------------------
+    #
+    # ⚠⚠ ONLY WHEN THERE IS NOTHING TO DRAW. The notice explains an ABSENCE, so
+    # it may never overprint names: `n == 0` is the one state in which the pane
+    # is telling the user nothing at all, and it is exactly the state F5's spec
+    # row names ("must say why, not show an empty pane"). The caption and the
+    # CIW carry the same sentence when the pane is NOT empty (browser_notice),
+    # which is the fall-through case — the analog path landed somewhere real
+    # and the digital pane the user asked for is the thing that is missing.
+    #
+    # ⚠ `-width` IS THE PANE's WIDTH: the sentence is a whole clause naming a
+    # file and a scope, and a canvas text item does not wrap without one. The
+    # floor keeps it wrapping rather than vanishing in a sidebar dragged narrow.
+    if {[info exists browserseanote($token)] && $browserseanote($token) ne {}} {
+      set w 0
+      catch {set w [winfo width $c]}
+      if {$w < 80} { set w 240 }
+      catch {$c create text 6 4 -anchor nw -font AseLabelFont \
+               -width [expr {$w - 12}] -text $browserseanote($token) \
+               -fill {#8b0000} -tags [list seanote]}
+    }
+    return 0
+  }
   set pairs $browsersea($token)
   set sel [wviewer::browser_sea_selection $token]
   # the palette has no `select` key; `header` is the one flat tint in it and
@@ -7993,6 +8028,14 @@ proc wviewer::browser_sea_refresh {token} {
   variable browserseaent
   variable browserseasel
   variable browserseaanchor
+  variable browserseanote
+  # §F item F5: THE NOTICE IS CLEARED BY THE NEXT REFRESH, and this line is
+  # where its whole lifetime is decided. A refresh means the user moved — a new
+  # node, a new keystroke, a re-scoped tree — and a sentence about the PREVIOUS
+  # gesture's refusal would then be a caption on a pane it does not describe.
+  # It is cleared BEFORE the draw below, so this refresh's own pane draws clean;
+  # `browser_notice` sets it and redraws afterwards.
+  set browserseanote($token) {}
   if {![dict exists $windows $token]} { return 0 }
   set c [wviewer::browser_sea_canvas $token]
   if {$c eq {}} { return 0 }
@@ -8116,6 +8159,49 @@ proc wviewer::browser_sea_say {token kind {a {}} {b {}}} {
     if {![catch {winfo exists $l} e] && $e} { catch {$l configure -text $m} }
   }
   return $r
+}
+
+# --- §F item F5: THE EMPTY-PANE NOTICE ----------------------------------------
+#
+# One sentence, on every surface that can carry it, about why the lower pane has
+# nothing the user asked for. Returns 1 when it reached at least one surface.
+#
+# ⚠⚠ IT IS A RENDERER, NOT AN AUTHOR. The sentence arrives already written —
+# `ase::browser_digital_msg` prefixes the F2 resolver's own refusal sentence and
+# adds nothing (RULING 5f-3: "F5 renders this sentence rather than composing its
+# own, so the two cannot drift"). Nothing in this proc may inspect it, shorten
+# it, or decide a different one; that is why it takes a string and not a cause
+# code. The three causes F5's spec row distinguishes — no VCD loaded at all, the
+# run traced nothing, and no mapping from this instance to a scope — are three
+# different sentences minted where each is DECIDED, in src/ase.tcl.
+#
+# ⚠ THREE SURFACES, DELIBERATELY, because the pane is not always the empty one.
+# When the caller has fallen through to the analog path the tree has just landed
+# on a real node whose pane is full, so the canvas arm of browser_sea_draw stays
+# silent by construction and the caption plus the sidebar status line are what
+# carry the reason. When nothing was shown at all, the canvas carries it too.
+#
+# ⚠ NO ECHO HERE. The caller owns the CIW line (`ase::echo … error`, §F's F5
+# row) — echoing again would put the same sentence in the action log twice, and
+# browser_say's own echo has already reported what the fall-through DID show.
+proc wviewer::browser_notice {token msg} {
+  variable windows
+  variable browserseanote
+  if {$msg eq {}} { return 0 }
+  set browserseanote($token) $msg
+  if {![dict exists $windows $token]} { return 0 }
+  set ok 0
+  set f [dict get $windows $token top].wvbrowser
+  set l $f.pw.sea.st
+  if {![catch {winfo exists $l} e] && $e} {
+    if {![catch {$l configure -text $msg}]} { set ok 1 }
+  }
+  if {[wviewer::browser_status $token $msg]} { set ok 1 }
+  # the canvas arm: it draws the notice only on a pane with no cells, and it is
+  # called unconditionally so that "is the pane empty?" is asked in exactly one
+  # place (browser_sea_draw) rather than answered twice from two sides.
+  catch {wviewer::browser_sea_draw $token}
+  return $ok
 }
 
 # --- the six gestures (spec §5.3) ---------------------------------------------
@@ -10434,6 +10520,218 @@ proc wviewer::browser_show_path {token path} {
   return [wviewer::browser_say $token ok $id $landed $asked]
 }
 
+# =============================================================================
+# §F item F1 — SCOPE THE BROWSER TO A DIGITAL DATABASE
+# doc/claude/specs/mixed_signal_signal_browser.md §F (F1), RULINGS 5d/5e/F1c.
+#
+# THE MIRROR OF browser_show_path, ONE DATABASE OVER. `browser_show_path` walks
+# the CURRENT database's design root; a code block's signals are in a VCD that
+# is a DIFFERENT registry slot, and the tree already knows how to show it — item
+# 14 gives every foreign database its own header and re-keys its rows `d:<idx>|`.
+# What was missing is a way to ASK for a node in a named database.
+#
+# ⚠⚠ IT IS A SECOND PROC, NOT A `db` ARGUMENT ON browser_show_path, AND THAT IS
+# A DECISION. browser_show_path carries item 18's device-internals probe, the
+# improve-or-restore reload and nine pinned outcome sentences, all of them
+# reasoning about the CURRENT database's inventory (`browsersigs`) — a probe
+# that means nothing for a foreign slot. Threading a database through it would
+# have made every one of those arms conditional, and the analog path is the one
+# path in this file that must stay byte-identical.
+# =============================================================================
+
+# PURE. 1 when the row model is DB-HEADERED, i.e. the tree is currently showing
+# one top-level node per database (item 15's R7 shape).
+#
+# ⚠ IT IS A READ OF THE TREE, NOT OF THE CHECKBOX, and that is deliberate twice
+# over. The scope box has exactly ONE reader in this file, by a rule with a
+# check counting its bare name file-wide; and the question here is not "is the
+# box ticked" but "are the foreign databases' rows in the model I am about to
+# walk" — which is the fact that actually decides whether the walk can succeed.
+proc wviewer::browser_rows_headered {rows} {
+  foreach r $rows {
+    if {[regexp {^d:[0-9]+} [wviewer::dget $r id {}]]} { return 1 }
+  }
+  return 0
+}
+
+# PURE. 1 when row `id` is in the model.
+proc wviewer::browser_row_exists {rows id} {
+  foreach r $rows { if {[wviewer::dget $r id {}] eq $id} { return 1 } }
+  return 0
+}
+
+# The `d:<registry idx>` GROUP ID of the database whose file is `path`, plus
+# whether it is the CURRENT one: `{<gid> <cur>}`, or `{}` when this viewer holds
+# no such database.
+#
+# Paths are compared NORMALIZED, never as strings: the resolver's answer comes
+# out of the run-directory map artifact while the registry's comes from
+# `xschem raw info`, and the same file reaches the two through different spellings
+# (`~`, a relative rundir, a symlinked scratch directory).
+proc wviewer::browser_db_group_id {token path} {
+  variable browserdbsigs
+  variable browserraw
+  variable browsercurdb
+  if {$path eq {}} { return {} }
+  set want $path
+  catch {set want [file normalize $path]}
+  set cp {}
+  if {[info exists browserraw($token)]} { set cp $browserraw($token) }
+  if {$cp ne {}} {
+    set n $cp
+    catch {set n [file normalize $cp]}
+    if {$n eq $want} {
+      set gid {}
+      if {[info exists browsercurdb($token)]} {
+        set gid [wviewer::dget $browsercurdb($token) id {}]
+      }
+      return [list $gid 1]
+    }
+  }
+  if {[info exists browserdbsigs($token)]} {
+    foreach db $browserdbsigs($token) {
+      set p [wviewer::dget $db path {}]
+      if {$p eq {}} { continue }
+      set n $p
+      catch {set n [file normalize $p]}
+      if {$n eq $want} { return [list [wviewer::dget $db id {}] 0] }
+    }
+  }
+  return {}
+}
+
+# PURE. 1 when at least one name of `names` lives UNDER dotted scope `scope`.
+#
+# ⚠ LITERAL AND CASE-SENSITIVE, the same test RULING 5c makes the resolver use
+# and for the same measured reason: `vcd_read.c` stores names verbatim because
+# Verilog is case-sensitive, so folding here would answer yes for a scope this
+# database does not have. It is the POSITIVE TEST that justifies re-scoping the
+# tree on the user's behalf below — R12's rule, one item over.
+proc wviewer::browser_names_under {names scope} {
+  if {$scope eq {}} { return 0 }
+  set pfx "$scope."
+  set n [string length $pfx]
+  foreach nm $names {
+    if {[string range $nm 0 [expr {$n - 1}]] eq $pfx} { return 1 }
+  }
+  return 0
+}
+
+# THE COMMAND. A results-database FILE plus a scope INSIDE it -> the tree
+# selection, scrolled into view. Same result vocabulary as browser_show_path
+# (`ok` / `partial` / `err`) plus one more, and it NEVER throws — it rides a key
+# binding through ase::show_in_browser_for_current.
+#
+#   {alldbs <id> <landed>}   the same shape as `ok`, reported when the foreign
+#                            database's rows had to be brought into the tree
+#
+# ⚠⚠ THE AUTO-SCOPE IS R12's SHAPE, DELIBERATELY: A POSITIVE TEST, ONE DECISION
+# POINT, AND IT SAYS WHAT IT DID. With the scope box off, a VCD's rows are not
+# in the tree at all, so the branch would be dead on a default browser — and
+# ticking the box because the row is missing would tick it for a genuinely
+# absent scope too. The question asked instead is the one that justifies the
+# change: does THAT database's own inventory really carry this scope? Only then
+# is the box invoked, and the result reports `alldbs` so the user is told why
+# their tree just grew.
+#
+# ⚠ THE BOX IS INVOKED, never written: `invoke` runs the checkbutton's own
+# -command, which is the searchbar's fire path, which re-filters and repopulates
+# exactly as a click does. Setting the variable would move the tick and leave
+# the tree stale.
+#
+# ⚠ AND THE TICK IS PUT BACK IF IT DID NOT HELP. This is the one place this proc
+# deviates from R12, whose ⚠ block rejects a confirm guard — R12 has one thing
+# to try and this has two failure modes after the tick (the DB's rows appear but
+# the SCOPE's rows are filtered out by a bar). Leaving a box the user did not
+# tick, for a gesture that then failed, is a side effect with nothing to show
+# for it. The positive test above is still what makes the arm testable: forcing
+# the decision to always-yes UNTICKS a ticked box and the walk that followed
+# cannot find its rows.
+proc wviewer::browser_show_db_scope {token dbpath scope} {
+  variable windows
+  variable browserrows
+  variable browserdbsigs
+  if {![dict exists $windows $token]} {
+    return [wviewer::browser_say $token err {no waveform viewer window is open}]
+  }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} {
+    return [wviewer::browser_say $token err {the Signal Browser is not built}]
+  }
+  set segs [wviewer::hier_split $scope]
+  if {![llength $segs]} {
+    return [wviewer::browser_say $token err \
+      {the digital database was resolved but no scope inside it was}]
+  }
+  # the foreign inventory is what says which registry slot holds this file, and
+  # it exists only after a reload — the sidebar may have been built and never
+  # shown, which is exactly the Ctrl-Alt-V-from-cold path.
+  if {![info exists browserdbsigs($token)] || ![info exists browserrows($token)]} {
+    catch {wviewer::browser_refresh $token 1}
+  }
+  set rows {}
+  if {[info exists browserrows($token)]} { set rows $browserrows($token) }
+  set g [wviewer::browser_db_group_id $token $dbpath]
+  if {$g eq {}} {
+    return [wviewer::browser_say $token err "'[file tail $dbpath]' is not among\
+ this viewer's results databases"]
+  }
+  lassign $g gid cur
+  set ticked 0
+  if {$cur} {
+    set root [wviewer::browser_root_id $rows]
+  } else {
+    set root "$gid|g:"
+    if {![wviewer::browser_row_exists $rows $root]} {
+      # ⚠ GUARDED, because this proc rides a key binding and a throw here pops
+      # bgerror, which is modal under X. The refresh above may have declined
+      # (a sidebar that is built but has never been shown), so the array element
+      # is not guaranteed even at this point.
+      set dnames {}
+      if {[info exists browserdbsigs($token)]} {
+        foreach db $browserdbsigs($token) {
+          if {[wviewer::dget $db id {}] eq $gid} { set dnames [wviewer::dget $db names {}] }
+        }
+      }
+      if {![wviewer::browser_names_under $dnames $scope]} {
+        return [wviewer::browser_say $token err "'[file tail $dbpath]' holds no\
+ signal under '$scope'"]
+      }
+      set bx $f.wvsearch.alldb
+      if {[catch {winfo exists $bx} bex] || !$bex} {
+        return [wviewer::browser_say $token err "'[file tail $dbpath]' is not\
+ shown in the tree and the All-DBs box is not available"]
+      }
+      catch {$bx invoke}
+      set rows {}
+      if {[info exists browserrows($token)]} { set rows $browserrows($token) }
+      if {![wviewer::browser_row_exists $rows $root]} {
+        catch {$bx invoke}
+        return [wviewer::browser_say $token err "'[file tail $dbpath]' could not\
+ be brought into the Signal Browser tree"]
+      }
+      set ticked 1
+    }
+  }
+  lassign [wviewer::browser_node_for $rows $segs $root] id matched
+  if {$matched == 0} {
+    set m "no scope '$scope' in '[file tail $dbpath]'"
+    if {[wviewer::browser_bars_active $token]} {
+      append m " (the Search/Filter bar may be hiding it)"
+    }
+    return [wviewer::browser_say $token err $m]
+  }
+  wviewer::browser_reveal $token $id
+  set landed [wviewer::browser_id_path $id]
+  if {$matched < [llength $segs]} {
+    return [wviewer::browser_say $token partial $id $landed $scope]
+  }
+  if {$ticked} {
+    return [wviewer::browser_say $token alldbs $id $landed $scope]
+  }
+  return [wviewer::browser_say $token ok $id $landed $scope]
+}
+
 # 1 when either searchbar carries a non-empty pattern. Never throws.
 proc wviewer::browser_bars_active {token} {
   variable windows
@@ -10477,6 +10775,14 @@ proc wviewer::browser_bars_active {token} {
 # from the sidebar's status line, the CIW echo and the ASE echo one at a time.
 # Its shape MATCHES `ok`'s — `{unhidden <row id> <landed path>}` — so `[lindex
 # $res 2]` means the same thing in both arms.
+#
+# ⚠ §F ITEM F1 ADDED AN ELEVENTH, `alldbs`, and it is here for the header's
+# reason a third time. Scoping the browser to a code block's VCD needs that
+# database's rows in the tree, and with the scope box off they are not there;
+# the digital walk therefore ticks the box on the user's behalf — the same
+# "grew the tree without being asked, so say so" event R12's tenth kind
+# reports, one database over instead of one class of node over. Its shape
+# matches `ok`'s for the same reason: `[lindex $res 2]` is the landing.
 proc wviewer::browser_msg {res} {
   switch -- [lindex $res 0] {
     ok      { return "showing [lindex $res 2]" }
@@ -10484,6 +10790,7 @@ proc wviewer::browser_msg {res} {
                       [lindex $res 2] instead" }
     root    { return {showing the simulation top level} }
     unhidden { return "showing device internals to reach [lindex $res 2]" }
+    alldbs  { return "showing every results database to reach [lindex $res 2]" }
     seanone  { return {no node selected} }
     seaempty { return "[lindex $res 1] has no signals of its own" }
     seabars  { return "[lindex $res 1] of [lindex $res 2] signals\
@@ -10513,6 +10820,7 @@ proc wviewer::browser_say {token kind {a {}} {b {}} {c {}}} {
     partial { set r [list partial $a $b $c] }
     root    { set r [list root {}] }
     unhidden { set r [list unhidden $a $b] }
+    alldbs  { set r [list alldbs $a $b] }
     default { set r [list err $a] }
   }
   set m [wviewer::browser_msg $r]

@@ -1464,6 +1464,363 @@ eqcheck FS49-inventory-restores-the-current-db \
 xschem raw clear
 
 # ===========================================================================
+# FV — F1: the verilog-only branch of "Show in Signal Browser", and
+#      F5: the notice that says WHY the pane is empty
+# ===========================================================================
+#
+# Contract: doc/claude/specs/mixed_signal_signal_browser.md §F rows F1 and F5,
+# plus RULINGS F1a/F1b/F1c written there by this item and RULING 5f-3, which
+# says F5 RENDERS the resolver's sentence rather than composing its own.
+#
+# THE THREE CLAIMS THAT CARRY THE ITEM, and none of them is "the code ran":
+#   * THE GATE. An instance whose cell has no `verilog` view must not enter the
+#     branch at all — not a refusal, not a notice, nothing. FV2/FV3 are that,
+#     and FV3 asserts the SILENCE as well as the answer, because a branch that
+#     refuses politely on every analog instance in the design is a branch that
+#     trains the user past the message F5 exists to deliver.
+#   * WHICH SENTENCE FOR WHICH CAUSE. F5's spec row names three causes; the
+#     resolver mints four sentences that cover them plus the ones item 4 ruled.
+#     FV10-FV17 assert the notice CONTAINS the resolver's own sentence, byte for
+#     byte, for each cause — which is what makes "the notice describes what the
+#     code does" a check rather than a hope.
+#   * THE ORDER. FV31-FV34 drive the whole command with the viewer stubbed and
+#     assert that f1 was read BEFORE `wviewer::open` moved the context. That is
+#     the ⚠⚠ block at step 3b/3c of ase::show_in_browser_for_current, and it is
+#     a live ordering fact, not a source-layout one: a probe placed after the
+#     raise reads the VIEWER's untitled buffer, answers "not a digital cell",
+#     and every check that calls the probe directly stays green (FV35 is the
+#     source witness beside it, in BX10's shape).
+
+set fvsf [file join $tmp fv_tb1.state]
+set FVS [dict replace [st $rd tb1] design \
+  [dict create lib dlib cell tb1 view schematic]]
+ase::state_save $fvsf $FVS
+ase::session_open [ase::session_key dlib tb1 schematic] $fvsf
+
+# the same four databases the FS end-to-end block used, with the ANALOG one
+# current — so the branch has to reach a database that is not the current one.
+xschem raw clear
+ase::attach_dbs $rawf tran [list $vagree $vdiv $vnone $vmoved]
+xschem load $p1
+# ⚠ THE KEY COMES FROM `session_for_current`, NOT FROM `session_key`, AND THAT
+# IS NOT PEDANTRY: `session_for_design` matches on the state's DESIGN, and an
+# earlier group in this file already registered a session on dlib/tb1 under a
+# different key. The command resolves the design to whichever key binds it, so
+# the checks below must hold THAT session's state, or the probe would read one
+# state and the assertion another.
+set fvkey [lindex [pcall ase::session_for_current] 0]
+ase::session_update $fvkey $FVS
+check {FV0 (FIXTURE) the command and the checks share one session} \
+  [expr {$fvkey ne {} && [ase::state_get [ase::session_state $fvkey] rundir] eq $rd}] \
+  "(key '$fvkey')"
+xschem select instance a1 fast nodraw
+eqcheck {FV1 (FIXTURE) one instance is selected} [pcall ase::browser_sel_segment] {ok a1}
+
+# --- the GATE (RULING F1a): a cell with a `verilog` view, and only that ------
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+set fv_r [pcall ase::browser_digital_probe $fvkey a1]
+eqcheck FV2-code-block-enters-the-branch \
+  "[lindex $fv_r 0] [lindex $fv_r 2] [lindex $fv_r 3]" {ok TOP.dcell hint}
+# a9's cell (plaincell) has a symbol view and no .v: the branch is NOT entered,
+# and — the half that matters — nothing is said about it either.
+set ::fv_echoed {}
+if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::fv_saved_echo }
+proc ::ciw_echo {msg {tag {}}} { lappend ::fv_echoed [list $tag $msg] }
+set fv_r9 [pcall ase::browser_digital_probe $fvkey a9]
+eqcheck FV3-analog-cell-is-not-a-branch-and-is-silent \
+  "[llength $fv_r9]|[llength $::fv_echoed]" {0|0}
+set ::fv_echoed {}
+rename ::ciw_echo {}
+if {[info commands ::fv_saved_echo] ne {}} { rename ::fv_saved_echo ::ciw_echo }
+eqcheck FV4-no-selection-is-not-a-branch [pcall ase::browser_digital_probe $fvkey {}] {}
+eqcheck FV5-unknown-instance-is-not-a-branch \
+  [pcall ase::browser_digital_probe $fvkey nosuchinst] {}
+
+# THE PROBE TAKES EXACTLY ONE DESIGN-CONTEXT READ, and hands it on. Two reads
+# would be two answers the moment the context moves between them, which is the
+# whole hazard step 3c's ⚠⚠ block describes.
+set fv_f1n 0
+rename ::ase::cosim_f1 ::ase::fv_saved_f1
+proc ::ase::cosim_f1 {instpath} { incr ::fv_f1n ; return [::ase::fv_saved_f1 $instpath] }
+set fv_r [pcall ase::browser_digital_probe $fvkey a1]
+rename ::ase::cosim_f1 {}
+rename ::ase::fv_saved_f1 ::ase::cosim_f1
+eqcheck FV6-one-f1-read-per-probe "[lindex $fv_r 0] $fv_f1n" {ok 1}
+
+# ...and the state form is now a WRAPPER over the f1 form, which is what lets
+# the caller take that read itself. Stubbing the f1 form must capture the whole
+# answer, and it must arrive holding a REAL f1 (an empty one would mean the
+# wrapper read nothing and the split bought nothing).
+rename ::ase::cosim_scope_for_f1 ::ase::fv_saved_sff
+proc ::ase::cosim_scope_for_f1 {state f1 instpath {token {}}} {
+  return [list fvstub [ase::state_get $f1 cell] [ase::state_get $f1 module] $instpath]
+}
+set fv_w [pcall ase::cosim_scope_for_state $FVS x1.a1]
+rename ::ase::cosim_scope_for_f1 {}
+rename ::ase::fv_saved_sff ::ase::cosim_scope_for_f1
+eqcheck FV7-state-form-delegates-with-a-real-f1 $fv_w {fvstub dcell dcell x1.a1}
+
+# --- F5: WHICH SENTENCE FOR WHICH CAUSE -------------------------------------
+#
+# ⚠ EVERY ONE OF THESE ASSERTS THE RESOLVER'S OWN SENTENCE IS INSIDE THE NOTICE,
+# never a phrase re-typed here: `fvnotice` compares against the SECOND element
+# of the very answer it renders. A notice that re-worded the cause would pass a
+# check written the other way round and fail this one.
+proc fvnotice {res} {
+  set m [ase::browser_digital_msg $res]
+  if {$m eq {}} { return {EMPTY} }
+  if {[string first [lindex $res 2] $m] < 0} { return {SENTENCE-NOT-RENDERED} }
+  return $m
+}
+# F5 cause 1 — NO VCD LOADED AT ALL (the run has results, this database is not
+# among them)
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 \
+  vcd [file join $tmp fv_never_read.vcd] scope TOP.dcell]]
+set fv_nl [pcall ase::browser_digital_probe $fvkey a1]
+eqcheck FV10-cause-notloaded [lindex $fv_nl 1] notloaded
+check FV11-notloaded-notice-is-the-resolver-sentence \
+  [expr {[string first {is not among the loaded results databases} [fvnotice $fv_nl]] >= 0}] \
+  "([fvnotice $fv_nl])"
+# F5 cause 2 — THE RUN TRACED NOTHING (`cosim trace 0`, the Icarus arm, a .so
+# outside the run directory, a continued card): the entry promises no VCD at all
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd {}]]
+set fv_nt [pcall ase::browser_digital_probe $fvkey a1]
+eqcheck FV12-cause-notraced [lindex $fv_nt 1] notraced
+check FV13-notraced-notice-is-the-resolver-sentence \
+  [expr {[string first {promised no VCD} [fvnotice $fv_nt]] >= 0}] "([fvnotice $fv_nt])"
+# F5 cause 3 — NO MAPPING FROM THIS INSTANCE TO A SCOPE. Item 4 DEFINED this in
+# two places and the notice must say which: no map ENTRY for the cell (nomap),
+# and an entry whose database declares no scope for the module (noscope, RULING
+# 5f-3's sentence naming the module, the scopes found and the file).
+ase::cosim_save_map $FVS {}
+set fv_nm [pcall ase::browser_digital_probe $fvkey a1]
+eqcheck FV14-cause-nomap [lindex $fv_nm 1] nomap
+check FV15-nomap-notice-is-the-resolver-sentence \
+  [expr {[string first {no entry of the co-simulation map matches cell} [fvnotice $fv_nm]] >= 0}] \
+  "([fvnotice $fv_nm])"
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vnone scope TOP.dcell]]
+set fv_ns [pcall ase::browser_digital_probe $fvkey a1]
+eqcheck FV16-cause-noscope [lindex $fv_ns 1] noscope
+# 5f-3's three halves, in the sentence the NOTICE carries: the module sought,
+# the scopes found, and the database's basename
+check FV17-noscope-notice-names-module-scopes-and-file \
+  [expr {[string first {module 'dcell'} [fvnotice $fv_ns]] >= 0 &&
+         [string first {scopes found: TOP} [fvnotice $fv_ns]] >= 0 &&
+         [string first {fs_nomatch.vcd} [fvnotice $fv_ns]] >= 0}] "([fvnotice $fv_ns])"
+# the four causes are four DIFFERENT sentences — a notice that collapsed them
+# would satisfy every check above one at a time
+eqcheck FV18-the-four-causes-are-four-sentences \
+  [llength [lsort -unique [list [fvnotice $fv_nl] [fvnotice $fv_nt] \
+                                [fvnotice $fv_nm] [fvnotice $fv_ns]]]] 4
+# ...and a SUCCESS has no notice at all
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+eqcheck FV19-success-has-no-notice \
+  [ase::browser_digital_msg [pcall ase::browser_digital_probe $fvkey a1]] {}
+# the multi and ambiguous refusals reach the notice too — they are "no mapping"
+# in F5's language, and each keeps its own cause
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree multi 1 ninst 2]]
+set fv_mu [pcall ase::browser_digital_probe $fvkey a1]
+check FV20-multi-notice-explains-the-interleaved-file \
+  [expr {[lindex $fv_mu 1] eq {multi} &&
+         [string first {interleave} [fvnotice $fv_mu]] >= 0}] "([fvnotice $fv_mu])"
+
+# --- the VIEWER side, pure: a scope in a FOREIGN database is reachable -------
+#
+# The tree already knows how to show a second database (item 14's `d:<idx>|`
+# rows); what F1 needed was the walk that STARTS at one. These build the row
+# model through the SHIPPED procs and walk it, so the claim is about the real
+# tree shape rather than about a hand-written row list.
+set fv_ent {}
+foreach fv_n {TOP.clk TOP.counter.clk TOP.counter.phase} {
+  lappend fv_ent [wviewer::signal_entry $fv_n]
+}
+set fv_rows [pcall wviewer::browser_rows_multi \
+  [list [list {} {} [list [wviewer::signal_entry v(anlg)]] design] \
+        [list d:1 {counter.vcd (vcd)} $fv_ent counter]] design]
+eqcheck FV21-current-db-rows-are-unprefixed [pcall wviewer::browser_root_id $fv_rows] {g:}
+lassign [pcall wviewer::browser_node_for $fv_rows {TOP counter} {d:1|g:}] fv_id fv_m
+eqcheck FV22-foreign-scope-is-reachable-from-its-own-root "$fv_id $fv_m" {d:1|g:TOP.counter 2}
+eqcheck FV23-the-landed-path-decodes-without-the-db-prefix \
+  [pcall wviewer::browser_id_path $fv_id] TOP.counter
+# ...and the SAME walk from the CURRENT database's root finds nothing: that is
+# why the branch needs a database-aware entry point at all
+eqcheck FV24-the-current-db-root-does-not-hold-it \
+  [lindex [pcall wviewer::browser_node_for $fv_rows {TOP counter} {g:}] 1] 0
+eqcheck FV25-rows-headered [list [pcall wviewer::browser_rows_headered $fv_rows] \
+  [pcall wviewer::browser_rows_headered [pcall wviewer::browser_rows \
+     [list [wviewer::signal_entry v(anlg)]] design]]] {1 0}
+eqcheck FV26-row-exists [list [pcall wviewer::browser_row_exists $fv_rows {d:1|g:}] \
+  [pcall wviewer::browser_row_exists $fv_rows {d:9|g:}]] {1 0}
+# the positive test that justifies re-scoping the tree, and it is CASE-SENSITIVE
+# for RULING 5c's measured reason (vcd_read.c stores names verbatim)
+eqcheck FV27-names-under-is-literal-and-case-sensitive \
+  [list [pcall wviewer::browser_names_under {TOP.counter.clk} TOP.counter] \
+        [pcall wviewer::browser_names_under {TOP.counter.clk} top.counter] \
+        [pcall wviewer::browser_names_under {TOP.counterX.clk} TOP.counter] \
+        [pcall wviewer::browser_names_under {TOP.counter.clk} {}]] {1 0 0 0}
+# the file -> registry-slot lookup, on NORMALIZED paths (the resolver's answer
+# comes from the map artifact, the registry's from `xschem raw info`)
+set fv_tok fvtok
+set ::wviewer::browserraw($fv_tok) $rawf
+set ::wviewer::browsercurdb($fv_tok) [dict create id d:0 label {anlg.raw (tran)}]
+set ::wviewer::browserdbsigs($fv_tok) [list [dict create id d:1 label {x} \
+  path $vagree names {TOP.dcell.q}]]
+eqcheck FV28-db-group-id-current [pcall wviewer::browser_db_group_id $fv_tok \
+  [file join $tmp .. [file tail $tmp] anlg.raw]] {d:0 1}
+eqcheck FV29-db-group-id-foreign [pcall wviewer::browser_db_group_id $fv_tok $vagree] {d:1 0}
+eqcheck FV30-db-group-id-unknown \
+  [pcall wviewer::browser_db_group_id $fv_tok [file join $tmp nope.vcd]] {}
+array unset ::wviewer::browserraw $fv_tok
+array unset ::wviewer::browsercurdb $fv_tok
+array unset ::wviewer::browserdbsigs $fv_tok
+# the eleventh outcome sentence, spelled in browser_msg with the other ten
+eqcheck FV31-alldbs-sentence [pcall wviewer::browser_msg {alldbs {d:1|g:TOP.counter} TOP.counter}] \
+  {showing every results database to reach TOP.counter}
+
+# --- THE ORDER, DRIVEN: the whole command with the viewer stubbed ------------
+#
+# ⚠⚠ THIS IS THE CHECK THE ⚠⚠ BLOCK AT STEP 3c ASKS FOR, AND IT IS BEHAVIOURAL.
+# The four viewer entry points the command sequences are replaced by spies that
+# RECORD; `ase::cosim_f1` is spied too but delegates to the real one, so the
+# branch really resolves. What comes back is the order the command actually
+# executed in — so moving the probe below step 4 does not merely change the
+# source, it changes this list.
+proc fv_arm {} {
+  set ::fv_calls {}
+  foreach p {::wviewer::open ::wviewer::browser_shown ::wviewer::browser_toggle \
+             ::wviewer::browser_show_path ::wviewer::browser_show_db_scope \
+             ::wviewer::browser_notice ::ase::cosim_f1} {
+    if {[info commands $p] ne {}} { rename $p ${p}_fvsaved }
+  }
+  proc ::wviewer::open {token} { lappend ::fv_calls open ; return 1 }
+  proc ::wviewer::browser_shown {token} { return 1 }
+  proc ::wviewer::browser_toggle {{want {}} {token {}}} { return 1 }
+  proc ::wviewer::browser_show_path {token path} {
+    lappend ::fv_calls [list show_path $path] ; return [list err {no such node}]
+  }
+  proc ::wviewer::browser_show_db_scope {token dbpath scope} {
+    lappend ::fv_calls [list show_db [file tail $dbpath] $scope] ; return $::fv_dbres
+  }
+  proc ::wviewer::browser_notice {token msg} {
+    lappend ::fv_calls [list notice $msg] ; return 1
+  }
+  proc ::ase::cosim_f1 {instpath} {
+    lappend ::fv_calls f1 ; return [::ase::cosim_f1_fvsaved $instpath]
+  }
+}
+proc fv_disarm {} {
+  foreach p {::wviewer::open ::wviewer::browser_shown ::wviewer::browser_toggle \
+             ::wviewer::browser_show_path ::wviewer::browser_show_db_scope \
+             ::wviewer::browser_notice ::ase::cosim_f1} {
+    if {[info commands ${p}_fvsaved] ne {}} {
+      catch {rename $p {}}
+      rename ${p}_fvsaved $p
+    }
+  }
+}
+# the KINDS of call, in order, with the sentences dropped — what this asserts is
+# the sequence, and the sentences have their own checks above
+proc fv_kinds {} {
+  set out {}
+  foreach c $::fv_calls { lappend out [lindex $c 0] }
+  return $out
+}
+
+# (a) THE DIGITAL PATH WINS. f1 is read first, the viewer is raised, the scope
+# is shown in ITS database, and the analog walk never runs.
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+set ::fv_dbres [list ok {d:1|g:TOP.dcell} TOP.dcell]
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV32-digital-branch-sequence [list $fv_out $::fv_calls] \
+  [list $fvkey [list f1 open [list show_db fs_agree.vcd TOP.dcell]]]
+# ⚠ THE ORDER CLAIM, ISOLATED so its failure is unambiguous: f1 BEFORE open.
+eqcheck FV33-f1-is-read-before-the-viewer-is-raised \
+  [expr {[lsearch -exact [fv_kinds] f1] >= 0 &&
+         [lsearch -exact [fv_kinds] f1] < [lsearch -exact [fv_kinds] open]}] 1
+
+# (b) A REFUSAL FALLS THROUGH AND THEN EXPLAINS ITSELF (RULING F1b). The analog
+# walk runs — twice, because the stub refuses and the shipped last-mile retry
+# asks again without the selection — and the notice comes LAST, after the
+# fall-through has written its own account.
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd {}]]
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV34-refusal-falls-through-then-notices [fv_kinds] {f1 open show_path show_path notice}
+check FV35-the-notice-is-the-resolver-sentence \
+  [expr {[string first {promised no VCD} [lindex [lindex $::fv_calls end] 1]] >= 0}] \
+  "([lindex [lindex $::fv_calls end] 1])"
+
+# (c) THE SCOPE RESOLVED AND THE TREE COULD NOT REACH IT — the fourth cause,
+# minted by F1 itself, carrying the browser's own sentence.
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+set ::fv_dbres [list err {no scope 'TOP.dcell' in 'fs_agree.vcd'}]
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV36-unreachable-scope-falls-through-too [fv_kinds] \
+  {f1 open show_db show_path show_path notice}
+check FV37-unreachable-scope-notice-carries-the-browser-sentence \
+  [expr {[string first {could not be shown in the Signal Browser} \
+            [lindex [lindex $::fv_calls end] 1]] >= 0 &&
+         [string first {no scope 'TOP.dcell' in 'fs_agree.vcd'} \
+            [lindex [lindex $::fv_calls end] 1]] >= 0}] \
+  "([lindex [lindex $::fv_calls end] 1])"
+
+# (d) AN ANALOG INSTANCE IS UNTOUCHED BY ALL OF IT: no digital show, no notice,
+# and the shipped analog sequence exactly as it was before this item.
+# ⚠ THE DESELECT IS NOT TIDINESS: `xschem select` ADDS, so without it a1 and a9
+# are BOTH selected, item 17's reducer answers `many`, and this check would pass
+# through a branch that was never entered for a reason that has nothing to do
+# with the cell's views.
+xschem select instance a1 clear fast nodraw
+xschem select instance a9 fast nodraw
+eqcheck FV38a-the-analog-instance-is-the-only-selection \
+  [pcall ase::browser_sel_segment] {ok a9}
+fv_arm
+set fv_out [pcall ase::show_in_browser_for_current]
+fv_disarm
+eqcheck FV38-analog-instance-keeps-the-shipped-sequence [fv_kinds] {f1 open show_path show_path}
+xschem select instance a9 clear fast nodraw
+xschem select instance a1 fast nodraw
+
+# --- the SOURCE witness beside the behavioural one (BX10's shape) ------------
+set fv_ap [file join $repo src ase.tcl]
+set fv_fp [open $fv_ap r]; set fv_asrc [read $fv_fp]; close $fv_fp
+# a proc body reader: from the `proc` line to the first `}` in column 1. Bodies
+# are indented, so that brace is the proc's own. (test_wave_sigbrowser_*.tcl has
+# `wvproc_body` for this; it lives in wvbs_common.tcl, which this file does not
+# source.)
+proc fv_procbody {src name} {
+  set i [string first "\nproc $name " $src]
+  if {$i < 0} { return {} }
+  set rest [string range $src $i end]
+  set j [string first "\n\}\n" $rest]
+  if {$j < 0} { return {} }
+  return [string range $rest 0 $j]
+}
+set fv_body [fv_procbody $fv_asrc ase::show_in_browser_for_current]
+# ⚠ THE CALL FORMS, NOT THE BARE NAMES: step 3c's own ⚠⚠ block NAMES
+# `wviewer::open` while explaining why the probe must sit above it, so a
+# bare-name search finds the WARNING before the call and reports the order
+# backwards. (BX10 one file over has the same hazard and survives it only
+# because its comment happens to sit elsewhere.)
+set fv_i1 [string first {[ase::browser_digital_probe $key} $fv_body]
+set fv_i2 [string first {[wviewer::open $key]} $fv_body]
+set fv_i3 [string first {[ase::browser_sel_segment]} $fv_body]
+eqcheck FV39-probe-sits-between-the-selection-read-and-the-raise \
+  [list [expr {$fv_body ne {}}] [expr {$fv_i3 >= 0 && $fv_i1 > $fv_i3}] \
+        [expr {$fv_i1 >= 0 && $fv_i2 > $fv_i1}]] {1 1 1}
+# and F5's notice is the LAST thing the command does: written before the
+# fall-through's own report it would be the sentence nobody reads
+eqcheck FV40-the-notice-is-written-after-the-fall-through-report \
+  [expr {[string first {wviewer::browser_notice} $fv_body] >
+         [string last {wviewer::browser_show_path} $fv_body]}] 1
+xschem raw clear
+
+# ===========================================================================
 # REF — the real reference cell, when the OA library tree is present
 # ===========================================================================
 

@@ -344,6 +344,16 @@ check {BK32 (PURE, TWO-PANE item 18) browser_msg renders the new `unhidden`
 # seacount. All nine are re-measured here, in ONE tuple, so a tenth arm inserted
 # in the wrong place — or an arm that swallows another's input — is one red
 # rather than nine silent ones.
+# ⚠⚠ RESTATED BY BATCH F ITEM 5 (§F item F1), NOT RENUMBERED AND NOT WEAKENED.
+# Two things genuinely changed and both are recorded here rather than papered
+# over: browser_msg gained an ELEVENTH arm, `alldbs` — the digital branch of
+# "Show in Signal Browser" ticks the All-DBs box on the user's behalf to reach a
+# code block's VCD, which is R12's "grew the tree without being asked, so say
+# so" event one database over — so the `return ` count moves 10 -> 11, and the
+# new rendering is asserted BESIDE the nine rather than instead of one of them.
+# The nine shipped renderings are still byte-identical, which is what the check
+# was for; the count leg still moves under any edit, which is what stopped
+# "nothing happened" passing it.
 set bk_msg9 [list \
   [pcall ::wviewer::browser_msg {ok g:x1.x2 x1.x2}] \
   [pcall ::wviewer::browser_msg {partial g:x1.x2 x1.x2 x1.x2.x9}] \
@@ -354,9 +364,11 @@ set bk_msg9 [list \
   [pcall ::wviewer::browser_msg {seabars 0 43}] \
   [pcall ::wviewer::browser_msg {seaclass 0 43}] \
   [pcall ::wviewer::browser_msg {seacount 3 43}] \
+  [pcall ::wviewer::browser_msg {alldbs {d:1|g:TOP.m} TOP.m}] \
   [regexp -all {return } [wvproc_body $wsrc wviewer::browser_msg]]]
-check {BK33 (BK32's CONTROL) all NINE shipped renderings are byte-unchanged —
-       WITH the tenth leg that moves, so "nothing happened" cannot pass this} \
+check {BK33 (BK32's CONTROL, RESTATED by batch F item 5) all NINE shipped
+       renderings are byte-unchanged, the tenth is §F's new `alldbs`, and the
+       count leg still moves so "nothing happened" cannot pass this} \
   $bk_msg9 \
   [list {showing x1.x2} \
         {no signals under 'x1.x2.x9' - showing x1.x2 instead} \
@@ -367,7 +379,8 @@ check {BK33 (BK32's CONTROL) all NINE shipped renderings are byte-unchanged —
         {0 of 43 signals (the Search/Filter bar is hiding them)} \
         {0 of 43 signals (device internals are hidden)} \
         {3 of 43 signals} \
-        10]
+        {showing every results database to reach TOP.m} \
+        11]
 
 # ⚠⚠ THIS IS THE ONLY WITNESS TO THE "compose the sentence inline" SABOTAGE, and
 # it needs BOTH of its first two legs. That sabotage moves the literal OUT of the
