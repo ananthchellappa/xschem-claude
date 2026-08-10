@@ -74,7 +74,7 @@ The good news: three of the four subsystems already have the right shape.
 | a graph widget can name its own DB and the drawing code switches to it and back | `extra_rawfile(2, rawfile, sim_type, …)` … `extra_rawfile(5, …)` | `src/callback.c:2047,2068` |
 | the shape a dataset must have | `Raw` — `names[] values[][] nvars npoints[] datasets table sim_type schname level sweep1/2` | `src/xschem.h:1122-1145` |
 | ASE-L's raw artifact + attach path | `ase::raw_file` → `<rundir>/<cell>_ase.raw`; `ase::last_rawfile`; the `attach_raw` path does `xschem raw clear` then reads | `src/ase.tcl:1367,600` |
-| Ctrl-Alt-V today | `wave.show_in_signal_browser` → `ase::show_in_browser_for_current` — builds hierarchical segments from the design position, appends the selected instance name, scopes the lower pane to that prefix | `src/keybindings.csv:66`, `src/ase.tcl:1098` |
+| Ctrl-Alt-V today | `wave.show_in_signal_browser` → `ase::show_in_browser_for_current` — builds hierarchical segments from the design position, appends the selected instance name, scopes the lower pane to that prefix | `src/keybindings.csv:66`, `src/ase.tcl:2079` |
 
 **The single most important consequence:** a VCD loaded as another entry in
 `extra_raw_arr[]` is a DB the Signal Browser *already* enumerates. The browser needs
@@ -588,7 +588,7 @@ without netlist surgery**: two instances of one cell share that card, hence one 
 | E3 | ~~Attach both.~~ | **DONE — `ase::attach_dbs`, and the ANALOG DB is current.** Measured: `xschem raw read` APPENDS to `extra_raw_arr[]` **and makes what it just read current** (`save.c:1281-1287`, `:1327-1333`), so reading raw-then-VCD leaves a VCD current and every existing consumer (`annotate_op`, `xschem raw value`, `add_trace`) would resolve analog names against it. The raw is read first (slot 0), then each VCD, then slot 0 is switched back explicitly. Partial runs: a missing/unreadable **raw** returns 0 and clears NOTHING (a stale-but-loaded DB beats an empty viewer — `attach_raw`'s existing policy); a missing or unreadable **VCD** is skipped with a notice and does not stop the analog attach, because an analog-only result is still a correct result. The registry is read **before** the outgoing DBs are dropped, so a raw that exists but does not parse (truncated, or missing the requested analysis because the run died after `op`) leaves the previous DB loaded — which is what the stated policy always claimed and the old clear-then-read order never delivered. One subtlety that order forces: `xschem raw read` does **not** re-read a path already in the registry (`save.c:1335-1339`, it just switches), and the raw artifact is a deterministic path a re-run overwrites in place, so the incoming path is cleared **specifically** first or every re-run would replot the previous run's data. `wviewer::attach_raw` grew a 4th argument that defaults to `{}`. `xschem raw_read` is NOT used (issue 0290: it clears the whole registry and bypasses the reader dispatch). |
 | E4 | ~~State-dict fields.~~ | **DONE — ONE new key, `cosim`, and it is POLICY, not data.** `{build auto|always|never, trace 0|1, attach 0|1, bridges auto|0, vsupply <volts>}`; absent/empty means every default. It deliberately does **not** list the digital artifacts: those are derived (E1). **`version` stays 1.** Nothing reads it, `ase::state_load` merges over `state_default` so an old file gains the new key with its default automatically, and bumping the number would only invite an equality test somewhere. Asserted against a **committed frozen fixture**, `tests/headless/fixtures/ase_state_v1_pre_cosim.state` — it loads, keeps every old key (including an unknown one) byte-identical, gains `cosim {}`, and save→load→save is stable from then on. |
 | E5 | ~~Deck emission for the digital side.~~ | **DONE — default `auto_bridge` `pre_set`s when the state configures none.** The migrator never *synthesized* those cards; it only carried them out of upstream's `code_shown` block (`ase_migrate.py:531-544` catches any `pre_*` line), so a **hand-built** mixed-signal state had none at all and ngspice bridged with built-in thresholds unrelated to the design's supply. `render_deck` now emits the adc/dac pair when the deck has ≥1 `d_cosim` card and no `auto_bridge_d_*` `pre_set` is already present **in the state OR in the netlist text**, at the supply from `cosim vsupply` → a `VDD` design variable → 1.8. The netlist half is not hypothetical: upstream's shipped testbench puts the pair in a `code_shown` block, so checking only the state appended ASE's defaults *after* the design's, and the later `pre_set` wins (measured, ngspice-46) — a 3.3 V design would have run with 1.8 V bridge thresholds and no message. A state that hand-writes them is left completely alone. Observation taps (§G3) are NOT part of this: they are a schematic-side technique for getting a signal into the *raw*, and the shim reaches internals directly now. |
-| E6 | ~~Build orchestration.~~ | **DONE — `ase::cosim_build`, before the deck runs, and a failed build ABORTS the run.** Staleness is a **stamp file** `<so>.stamp` recording the source path, its mtime and size, the shim source's mtime and size, and the build flags — not an mtime compare. The reason is measured, not stylistic: `ase::rundir` defaults to `$USER_CONF_DIR/simulations` for **every** design, so two libraries that each hold a cell named `counter` build to the same `<rundir>/counter.so`; an mtime test would happily reuse the wrong one, and a `-V` shim edit would not invalidate anything. No content hash — Tcl 8.6 core has no digest and tcllib is not a dependency; path+mtime+size errs toward rebuilding, the safe direction. Always-rebuild was rejected on measurement: a warm no-op `build_cosim_so.sh` still costs **8.8 s** (cold 10.3 s). `build never` opts out; `build always` forces. Falling through to the previous `.so` on a build failure is exactly the "silently simulating last week's Verilog" outcome, so it throws instead. The `.so` is built to the **lower-cased** name too (M18): ngspice folds `simulation="./Counter.so"` and then reports `d_cosim failed to load simulation binary ./counter.so`. `Run` on an existing netlist never loads the design, so the `.v` for a model comes from the run-directory map artifact (see F2 below). **A block ASE cannot check never blocks the run.** `xschem instance_list` enumerates the current schematic only (`scheduler.c:6426-6440`) while the netlister hoists the `.model` card to the top of the deck (`spice_netlist.c:575-591`), so a code block one level down has no resolvable `.v` at all — a configuration that worked before §E and must keep working. ASE says what it cannot check and gets out of the way; if the `.so` really is missing, ngspice's own `d_cosim failed to load simulation binary` is what reports it, and E7 matches it. |
+| E6 | ~~Build orchestration.~~ | **DONE — `ase::cosim_build`, before the deck runs, and a failed build ABORTS the run.** Staleness is a **stamp file** `<so>.stamp` recording the source path, its mtime and size, the shim source's mtime and size, and the build flags — not an mtime compare. The reason is measured, not stylistic: `ase::rundir` defaults to `$USER_CONF_DIR/simulations` for **every** design, so two libraries that each hold a cell named `counter` build to the same `<rundir>/counter.so`; an mtime test would happily reuse the wrong one, and a `-V` shim edit would not invalidate anything. No content hash — Tcl 8.6 core has no digest and tcllib is not a dependency; path+mtime+size errs toward rebuilding, the safe direction. Always-rebuild was rejected on measurement: a warm no-op `build_cosim_so.sh` still costs **8.8 s** (cold 10.3 s). `build never` opts out; `build always` forces. Falling through to the previous `.so` on a build failure is exactly the "silently simulating last week's Verilog" outcome, so it throws instead. The `.so` is built to the **lower-cased** name too (M18): ngspice folds `simulation="./Counter.so"` and then reports `d_cosim failed to load simulation binary ./counter.so`. `Run` on an existing netlist never loads the design, so the `.v` for a model comes from the run-directory map artifact (see F2 below). **A block ASE cannot check never blocks the run.** `xschem instance_list` enumerates the current schematic only (`scheduler.c:6458-6472`) while the netlister hoists the `.model` card to the top of the deck (`spice_netlist.c:575-591`), so a code block one level down has no resolvable `.v` at all — a configuration that worked before §E and must keep working. ASE says what it cannot check and gets out of the way; if the `.so` really is missing, ngspice's own `d_cosim failed to load simulation binary` is what reports it, and E7 matches it. |
 | E7 | ~~Report M9 honestly.~~ | **DONE — `ase::run_diagnostics`, called from `ase::run_done`.** The M9 diagnostic is **four separate NUL-terminated literals** in `/usr/local/lib/ngspice/digital.cm` — `XSPICE time is behind vtime:` then `XSPICE %.16g` then `Cosim  %.16g` — so a regexp spanning the value lines could never match; the header alone is the probe. Five `error`-severity strings are matched (desync, event-in-the-past ×2, port-count mismatch, `.so` load failure) and one `note` (`dump call ignored`). The note matters: the reference run emits **61** of them while producing a correct VCD — the patched shim clamps a non-monotonic dump and VerilatedVcd declines the duplicate — so flagging them as errors would make every healthy run red. Errors go to `ase::echo … error` (CIW **and** the action log) and into `ase::last_run`'s new `diagnostics` key; the ASE window also drops a banner into the log window. Note `run_cmd` folds stderr into stdout (`2>@1`), so a stderr-only diagnostic still reaches the log — the scan cannot be unfireable by construction. **Plus the failure the log cannot report**: a `cosim_novcd` check on the filesystem, because M18's silent redirect produces a clean exit, a perfect analog raw, and no digital data at all. That check exists because it happened. It is truthful only because two other things hold: the map promises a `vcd` **only** for a card this run will really trace (else `trace 0` would declare every healthy run untrustworthy and train the user past the real banner), and `run_deck` **deletes** the promised VCDs before launching — otherwise a survivor from the previous run both silences the check and gets attached to this run's analog raw. |
 | E8 | **There is no `post_commands` slot.** | **STILL OPEN, and still not needed.** `eprvcd` emits the *boundary event* nodes, which the shim's internal VCD makes redundant for §F. Revisit only if the boundary VCD is ever wanted. |
 | E9 | `render_deck` emits `print <expr>` per output | **OUT OF SCOPE for §E, filed as issue 0278.** Measured again here: the reference log is **49,922,360 bytes / 1,475,399 lines**, of which **1,402,702** are transient print rows — 95.07% of the file, and 99.99% is print-table scaffolding; only 129 lines carry anything else. It is a real ASE-L defect and it does dominate the reference run's wall clock. It is not fixed here because the fix changes `render_deck`'s output for **every** analog `dc`/`ac`/`tran` state in the tree, which is a different blast radius from §E's (whose deck changes are inert unless a `d_cosim` card is present). Cost of leaving it: the one reference run this section owes takes ~4 minutes. |
@@ -611,8 +611,25 @@ renderer reads it. A deterministic run-directory path is exactly the contract `a
 and `ase::log_file` already use, and it is what lets `ase::last_vcdfiles` work in a fresh xschem
 session that never netlisted. **`scope` is a HINT**: Verilator names the DUT trace scope after
 the MODULE (measured — the reference `counter.vcd` declares `$scope module TOP` then
-`$scope module counter`), which is read out of the `.v` here, but inlining can change it, so F2
-must verify the scope against the DB it actually loaded rather than trust the string.
+`$scope module counter`), but inlining can change it, so F2 must verify the scope against the
+DB it actually loaded rather than trust the string.
+
+**And the hint is weaker than "read out of the `.v`" — say what it really is.** `cosim_map`
+writes `TOP.$module` unconditionally (`src/ase.tcl:1091`), and `$module` is the `.v`'s first
+`module` line **only when the design walk or the previous map resolved a `.v`** for that entry.
+When neither did — the walk is flat, so *every* code block below the current schematic is in
+this case — `src/ase.tcl:1086` falls back `set module [dict get $e model]` and the recorded
+hint becomes `TOP.<the .model card's name>`, a scope that need not exist in any VCD. Measured
+on the canonical `tbh → x1 (dig_top) → a1 (dcell)` fixture with the card renamed to `cnt8`:
+the entry comes out `model='cnt8' cell='' module='cnt8' vfile='' scope='TOP.cnt8'` while the
+cell's `.v` declares `module dcell`. **An entry whose `vfile` is empty carries no `.v`
+evidence at all, so its `scope` is not a hint but a guess**; F2 must go straight to the
+derived path there. See issue 0307 and RULING 5c.
+
+**Ownership was ruled in full on 2026-08-09 — see "Open decision 5, ruled" at the end of this
+spec.** In its terms this artifact owns exactly one of the three facts (f2, *cell→file*), the
+map is joined on the **cell** (`lib/cell`) and not on any instance path — it holds none today,
+and one would not be unique anyway — and `scope` stays the hint it is called here.
 
 Test: `tests/headless/test_ase_cosim.tcl`, pinned to the `--nogui` arm in `full_audit.sh`.
 Groups: the deck scanner over 0/1/2 code blocks and the one-card-two-instances case, `.control`
@@ -634,11 +651,11 @@ block against the real reference cell that skips cleanly when `xschem_libraries_
 
 | id | item | notes |
 |----|------|-------|
-| F1 | **The branch.** `ase::show_in_browser_for_current` (`src/ase.tcl:1098`) appends the selected instance name to the hierarchy segments and scopes the pane to that prefix. Add: if the selected instance's cell has a `verilog` view (§B + `library_inst_lcv`), scope to its **digital DB** instead of the analog one. | The `⚠` comments at `src/ase.tcl:1130-1143` are load-bearing — the selection and hierarchy must still be read in the DESIGN context, before any viewer raise. Preserve that ordering. |
-| F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. Something must record, per `d_cosim` instance, "instance `x1.a1` ↔ VCD file F, scope S". Most likely produced at netlist time (§E2 already walks exactly these instances) and carried in the DB's metadata. | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
+| F1 | **The branch.** `ase::show_in_browser_for_current` (`src/ase.tcl:2079`) appends the selected instance name to the hierarchy segments and scopes the pane to that prefix. Add: if the selected instance's cell has a `verilog` view (§B + `library_inst_lcv`), scope to its **digital DB** instead of the analog one. | The `⚠` comments at `src/ase.tcl:2113-2124` are load-bearing — the selection and hierarchy must still be read in the DESIGN context, before any viewer raise. Preserve that ordering. |
+| F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. **OWNERSHIP RULED 2026-08-09 — see "Open decision 5, ruled" at the end of this spec, which is F2's contract**: the mapping is three facts, not one (instance→cell is QUERY time, cell→VCD file is NETLIST time in `<rundir>/<cell>_ase.cosim`, file→scope is DERIVED from the loaded DB); the join key is the **cell** (`lib/cell`, with a four-rung ladder ending at the instance's own `model=` property), never the instance path; the schematic prefix is **dropped, not translated**; `scope` stays a hint, is not even eligible when the entry's `vfile` is empty, and the derived answer wins. A code block **below** the netlisted schematic reaches only rung 4 — issue 0307. | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
 | F3 | **Multi-DB display.** The all-DBs reader (`src/wave_viewer.tcl:2000-2130`) already enumerates every registry slot and labels them (`wviewer::db_label`). Confirm a digital DB labels sensibly and that per-DB grouping in the tree reads well when analog and digital scopes interleave. | Mostly free. Verify, don't assume. |
 | F4 | **Classification.** The `class`-field and hide-internals rulings (`signal-browser-declass-rulings`, issue 0217) were settled for raw vector names. Digital signals are a new class of name — decide whether they get their own class or reuse an existing one. | Consistency with settled work. |
-| F5 | **Empty-pane notice.** Selecting a code-block instance in a run that produced no digital output must say *why* (no VCD / shim not trace-enabled / no scope mapping), not show an empty pane. The `ase::echo … error` pattern at `src/ase.tcl:1125` is the model. | The failure mode users will actually hit. |
+| F5 | **Empty-pane notice.** Selecting a code-block instance in a run that produced no digital output must say *why* (no VCD / shim not trace-enabled / no scope mapping), not show an empty pane. The `ase::echo … error` pattern at `src/ase.tcl:2183` is the model. | The failure mode users will actually hit. |
 
 ### G — The reference testbench and the schematic side
 
@@ -737,12 +754,249 @@ deeper hierarchy and a genuine analog→digital loop are wanted:
 4. ~~**C4's buses** — explode to bits at read time, or a native bus vector in `Raw`.~~
    **SETTLED: both.** Composite vector (the honest name and value) plus one column per bit
    (what the existing bus renderer can actually draw). See the §C table.
-5. **F2's mapping ownership** — netlist-time emission (authoritative, automatic) vs. a
-   symbol attribute (explicit, hand-maintained, wrong the moment someone renames a module).
+5. ~~**F2's mapping ownership** — netlist-time emission (authoritative, automatic) vs. a
+   symbol attribute (explicit, hand-maintained, wrong the moment someone renames a module).~~
+   **SETTLED 2026-08-09 (batch F item 3). See "Open decision 5, ruled" immediately below.**
 6. ~~**B9** — does `veriloga` need any of §C/§D at all, or is recognition sufficient?~~
    **SETTLED 2026-08-08: recognition is sufficient.** Verilog-A is analog and its nodes reach the
    raw through OSDI, so none of the M1/M3/M6 barrier applies. §C/§D stay digital-only. Rationale
    and the asserting checks are in the §B table's B9 row.
+
+### Open decision 5, ruled — who owns the instance↔VCD-scope mapping
+
+**RULED 2026-08-09, batch F item 3, doc-only. Nothing in this section is implemented; it is
+the contract item 4 (F2) is handed as input.** The decision as posed — "netlist-time emission
+vs. a symbol attribute" — is a false pair, and the symbol attribute was never a live option
+(it is the hand-maintained copy §E1 already rejected). The convenient answer, "netlist time
+owns it because `<rundir>/<cell>_ase.cosim` already exists", is *most* of the truth and is
+wrong in the one place it matters.
+
+**THE RULING: the mapping is not one fact and has no single owner. It is THREE facts with
+three different lifetimes, and each is owned by the only component that is still right when
+the other two are stale.**
+
+| # | the fact | when it changes | owner | where it lives today |
+|---|----------|-----------------|-------|----------------------|
+| f1 | *this instance is an instance of cell C, and C has a `verilog` view* | every schematic edit | **QUERY TIME**, read from the live design at the gesture | `library_inst_lcv` (`src/library_defs.tcl:505`) + `cellview_sibling_path` (`:420`) — the same pair `ase::cosim_design_scan` already uses (`src/ase.tcl:985-995`) |
+| f2 | *cell/model C's digital data for THIS run is in file F — or there is none, and why* | every run | **NETLIST/RUN TIME**, the only moment the deck ngspice will obey is known | `<rundir>/<cell>_ase.cosim`, `ase::cosim_save_map` (`src/ase.tcl:1145`) writing `ase::cosim_map` (`:1046`) |
+| f3 | *inside F, C's signals live under scope S* | whenever the digital simulator re-elaborates — **after** the netlist was written | **LOAD/QUERY TIME**, derived from the DB actually in the registry | nowhere; derivable from `wviewer::signal_list_all` (`src/wave_viewer.tcl:2084`) |
+
+**RULING 5a — netlist time owns f2, and ONLY f2.** `<rundir>/<cell>_ase.cosim` is a record of
+the **run**, not of the **design**. It is the right and only owner of "which file, written by
+which `.model` card, and was it traced at all", because that fact is not recoverable from
+anything else: the VCD does not say which card produced it, the schematic does not say whether
+`cosim trace` was 0, and no reader can tell an interleaved `multi 1` file from a good one. It
+is the **wrong** owner of f1 (it goes stale on the next edit) and it *cannot* own f3 even in
+principle (§C's elaboration happens after it is written).
+
+**RULING 5b — the join key is the CELL (`lib/cell`), never the instance path.** This is the
+load-bearing consequence. Two independent facts force it:
+
+* **the artifact holds no hierarchical instance path today.** `insts` holds the deck's leaf
+  `a…` token as written on the instance line (`src/ase.tcl:887-892`), and the design walk that
+  enriches it is the **current schematic only** — `xschem instance_list` iterates
+  `xctx->instances` flat, one level, no hierarchy (`src/scheduler.c:6458-6472`). For this
+  spec's own canonical topology `tb → x1 (dig_top) → a1 (counter)` the walk run on `tb` sees
+  `x1` and never sees `a1` at all; that is exactly the gap §E6 already documents as "a block
+  ASE cannot check never blocks the run".
+* **and a path would not be a KEY even if it were recorded.** This, not impossibility, is the
+  deciding reason — the hierarchy is in fact present in the deck text the scanner already
+  reads (`x1 net1 net2 dig_top` … `.subckt dig_top` … `a1 [ … ] counter`), `cosim_scan_deck`
+  already tracks the enclosing block in `curblk` (`src/ase.tcl:877-886`) and
+  `cosim_subckt_counts` already walks the parent→child block graph (`src/ase.tcl:914-971`); it
+  discards the `x`-instance *name* only because the regexp at `src/ase.tcl:925` leaves `\S*`
+  outside its capture group. What cannot be fixed is uniqueness: one `.subckt` instantiated
+  twice puts the **same** code block at `x1.a1` *and* `x2.a1`, so a single instance path
+  cannot identify the entry. That is the very fact the `multi` flag already records.
+
+Consequences:
+
+* a schematic rename (`a1` → `a_cnt`, no re-netlist) does not invalidate anything, because
+  nothing is keyed on the instance name. **The `a` prefix is not free**: ngspice's XSPICE
+  syntax and the scanner's own instance regexp (`src/ase.tcl:887`) both require a code block
+  to start with `a`/`A`. Measured — renaming `a1` to `u_cnt` still netlists (the netlister
+  emits the instance name verbatim), but the line is then no longer an XSPICE code-model card
+  and `cosim_scan_deck` returns `insts ''` for that entry, losing its design linkage and its
+  `multi` protection with it: `a1` → `insts 'a1'`, `a_cnt` → `insts 'a_cnt'`, `u_cnt` →
+  `insts ''`. Only the part after the `a` is free.
+* **a code block BELOW the current schematic does NOT resolve on the cell key, and this ruling
+  does not pretend otherwise.** Measured on that same canonical topology: `cosim_design_scan`
+  on `tb` returns EMPTY, so the map entry comes out `cell='' lib='' vfile=''` and the cell rung
+  is dead in exactly the topology F2 exists for. Nor is the `module` rung independent there —
+  `src/ase.tcl:1086` falls back `module = model`, so `module` and `model` are the same string
+  (the `.model` card's name) twice over. Filed as **issue 0307**; the ladder's rung 4 below is
+  what carries the case until that issue is fixed, and it carries it on evidence rather than on
+  the coincidence that the card was named after the module.
+
+**The key ladder.** Let *f1* be the query-time answer for the selected instance: its
+`{lib cell}` (`library_inst_lcv`), its `.v` (`cellview_sibling_path … verilog`), that `.v`'s
+first module name (`ase::cosim_module_of`), and its own `model=` property
+(`xschem getprop instance <name> model`). Rungs are tried in this order; each names both
+operands, because a rung with only one is not a key:
+
+| rung | the entry's… | compared against | tried when |
+|---|---|---|---|
+| 1 | `lib` + `cell` | f1's `lib`/`cell` | the entry's `lib` and `cell` are both non-empty |
+| 2 | `cell` alone | f1's `cell` | the entry's `cell` is non-empty and its `lib` is empty (the `.v`-basename fallback at `src/ase.tcl:992`) |
+| 3 | `module` | f1's module name, read from f1's own `.v` | the entry's `vfile` is **non-empty** — otherwise `module` is not a module name at all (`src/ase.tcl:1086`) |
+| 4 | `model` | f1's `model=` **property** | always. The netlister emits that property verbatim as the instance line's last token, and `cosim_scan_deck` keys its entries on the matching `.model` card, so the two strings are the same string by construction — measured, `model='cnt8'` in the map for an instance whose property reads `cnt8`. Model names are unique per map (the scanner's `info` dict is keyed on them), so this rung matches at most one entry |
+
+Semantics, and they are part of the ruling: comparisons are case-insensitive (SPICE folds, and
+`cosim_map` already lower-cases its join keys). A rung matching **exactly one** entry wins. A
+rung matching **more than one** refuses with `ambiguous` and does **not** fall through — a
+multi-match is evidence of a real collision, not of a wrong key, and first-won there would plot
+another cell's internals under this cell's name (the silent-wrong-answer class D2 and the §D1
+refusal ruling both guard). A rung matching **none** falls through to the next; all four
+missing is `nomap`.
+
+Rung 1 is why `lib` is in the ladder at all: measured, two libraries each holding a cell named
+`dcell` produce two entries that a bare `cell` key matches **both** (→ `ambiguous`, a refusal
+on a question the artifact can actually answer) while `lib/cell` picks exactly one.
+
+**RULING 5c — `scope` STAYS A HINT, and the DERIVED answer wins.** Item 4's brief is
+unchanged, and this ruling is deliberately consistent with it rather than overriding it.
+
+**What the hint actually is, which is less than §E's original wording claimed.** It is written
+at `src/ase.tcl:1091` as `TOP.$module`, and `$module` is the `.v`'s first `module` line
+(`ase::cosim_module_of`, `src/ase.tcl:1023-1030`) **only when the design walk — or the previous
+map's sidecar, `src/ase.tcl:1080-1085` — supplied a `.v`**. When neither did, `src/ase.tcl:1086`
+falls back `module = model` and the hint silently becomes `TOP.<the .model card's name>`; no
+`.v` was opened at all. Measured on the renamed-card fixture: `scope='TOP.cnt8'` for a cell
+whose `.v` declares `module dcell`, and `xschem raw index` against the reference
+`counter.vcd` answers `-1` for anything of that shape. **So an empty `vfile` is the test:
+`vfile eq {}` means the hint carries no `.v` evidence and MUST NOT be accepted as `how=hint` —
+step 5 goes straight to the derived path.** That is not a special case bolted on; it is the
+same rule as "the derived answer wins", applied where the hint has nothing behind it.
+
+**Verification is a literal, CASE-SENSITIVE prefix test** against the names of the loaded DB:
+`vcd_read.c` stores names verbatim, scopes joined with `.` (`src/vcd_read.c:188`, `:579-580`),
+because Verilog is case-sensitive (§C, "Not fixed, by design"). **Do not verify through
+`get_raw_index()`**, for two measured reasons — and note the hazard runs the *opposite* way to
+the obvious guess:
+
+* it folds the **query**, not the store: verbatim → `strtoupper` → `strtolower`
+  (`src/save.c:2001-2020`). Against a mixed-case VCD name that ladder MISSES rather than
+  over-accepts — measured on the reference file, `TOP.counter.clk` → 7 while
+  `top.counter.clk`, `TOP.COUNTER.CLK` and `Top.Counter.Clk` all → `-1`. That is exactly the
+  cost `src/vcd_read.c:139-146` documents in prose.
+* it resolves **whole signal names**, not scope prefixes, so it could not perform step 5's test
+  in the first place: measured, `xschem raw index TOP.counter` → `-1` although eight signals
+  live under that scope.
+
+**RULING 5d — the schematic prefix is DROPPED, not translated. The answer is an ABSOLUTE
+`(database, scope)` pair.** Measured on the reference artifact `~/.xschem/simulations/counter.vcd`
+(2026-08-09), the entire scope tree is:
+
+```
+$scope module TOP $end          <- clk, count  (the shim's port mirror)
+ $scope module counter $end     <- clk count phase half prev next_count tc carry
+```
+
+There is no `x1` in it and there never can be: Verilator elaborates the module as its **own
+top**, so the VCD's namespace begins where the schematic's ends. `x1.a1` therefore resolves to
+`(counter.vcd, "TOP.counter")` — the prefix is consumed by f1 (it is how the leaf instance was
+identified) and then discarded. Any implementation that concatenates the schematic path with a
+VCD scope, or that tries to *translate* `x1` into a VCD scope name, is building a relationship
+that does not exist.
+
+**RULING 5e — refuse with a reason; never fall back to `TOP`, and never to "the current DB".**
+`TOP` is the port mirror, and its signals are precisely the ones already bridged into the
+analog raw — landing there would show the user the signals they could already see and call it
+success. Ambiguity, a missing DB and an unverifiable scope all refuse, and each refusal names
+which of f1/f2/f3 failed. That is F5's notice, and F5 is the *same* item as this ruling's
+failure paths, not a separate cosmetic one.
+
+**Why load-time alone was rejected.** Item 4 must walk the DB's scope tree anyway to verify the
+hint, so "derive it all, record nothing" is the tempting simplification. It cannot work,
+because a scope tree cannot answer **which database**. Walking scopes yields module-name
+matches, and two cells whose Verilog modules share a name — or one cell instantiated as two
+code blocks — are indistinguishable by it; the reference file goes further and declares
+`clk`/`count` under **both** `TOP` and `TOP.counter` *with the same id code* (§C's
+re-measurement, re-confirmed above), so even inside one file a scope tree does not by itself
+say which scope is the module. It also cannot know a `multi 1` file is interleaved garbage
+rather than data (that fact exists only in the deck, `src/ase.tcl:1092-1098`), and it needs the
+module name to match against, which comes from the `.v`, which needs the design — and
+`ase::run_existing` never loads it (`src/ase.tcl:1049-1056`).
+
+**Why query-time alone was rejected.** It is always current with the schematic, which is
+exactly why it owns f1. It has no access to the run's facts: nothing in the schematic says
+which VCD this run wrote, whether tracing was on, or whether the entry was excluded. It would
+have to **guess** the artifact path — and E2's naming is
+`<cell>_<model>.vcd` after `ase::cosim_safe_name` folding plus a `_<n>` collision suffix
+(`src/ase.tcl:1105-1117`), a guess that is wrong the moment two model names fold together or
+`cosim trace 0` is set.
+
+**The deciding question, answered per failure mode.** This is the test the ruling was built
+against: which owner is still correct when the two sides disagree?
+
+| the two sides disagree because… | netlist-time-only | load-time-only | query-time-only | **the split rule** |
+|---|---|---|---|---|
+| an instance was **renamed** and nothing re-netlisted | wrong if keyed on the instance path; **correct when keyed on the cell** (5b) | n/a — cannot pick a DB | correct | **correct** (f1 live, f2 keyed on the cell) |
+| the cell was **re-netlisted** / re-run | correct — the artifact and the VCD are written by the same `ase::run`, so they cannot disagree with each other | correct | wrong — guesses the old path | **correct** |
+| the module was **inlined away** by the digital simulator | **wrong, unfixably**: the scope is decided after the artifact is written | correct | wrong | **correct** (f3 derived, 5c) |
+| the **rundir is stale** (previous run's VCD survives) | correct *by construction*: `ase::cosim_clear_artifacts` deletes the promised VCDs before the run (`src/ase.tcl:1131-1139`) and `ase::last_vcdfiles` gates on `file isfile` (`:1518-1529`) | may attach yesterday's file | wrong | **correct** |
+| the `.v` was edited but not re-run | reports the file that exists; the data is genuinely last week's | same | same | **nobody wins** — out of scope for F2; E6's `.so.stamp` is what catches it at *run* time |
+| the code block is **below** the netlisted schematic (`tb → x1 → a1`) | `cell`/`lib`/`vfile` come out EMPTY, so rungs 1-3 are all dead and the recorded `scope` is a card name, not a module name — **measured** | correct, if the right DB is already known | correct | **rung 4 only** (`model` vs the instance's own `model=` property), and the scope must be DERIVED. A documented limit, not a solved case: issue **0307** |
+
+**The contract item 4 implements.** One Tcl-only resolver in `src/ase.tcl` (it needs the
+session state and the map; `src/wave_viewer.tcl` gets the answer, not the derivation). No C, no
+new field in `Raw` — the §E argument stands verbatim: a `Raw` change touches every consumer,
+`free_rawfile()` included, for zero benefit until a renderer reads it.
+
+```
+ase::cosim_scope_for_instance <key> <instpath>  ->
+    {ok <vcdpath> <scope> <how>}          how = hint|derived
+    {none <code> <human sentence>}        code = nodigital|nomap|multi|notraced|
+                                                 notloaded|noscope|ambiguous
+```
+
+Steps, in this order — **the order is part of the ruling**:
+
+1. **f1, in the DESIGN context, before any viewer raise.** Take the last segment of the path,
+   resolve it to `{lib cell}`, ask for a `verilog` view, read that `.v`'s first module name,
+   and read the instance's own `model=` property — **all four in this one design-context read**,
+   because rung 4 needs the property and nothing above the raise will be readable after it. No
+   `verilog` view → `nodigital`. The ordering is F1's existing ⚠ (`src/ase.tcl:2113-2124`): a
+   read placed after the raise answers about the viewer's own untitled buffer and degrades
+   silently to "no selection".
+2. **f2, by the 5b key ladder** over `ase::cosim_load_map`, rungs 1→4, each rung named with
+   both its operands. All four rungs matching nothing → `nomap`; any rung matching >1 →
+   `ambiguous`, without falling through.
+3. **The entry's own refusals, BEFORE anything touches the registry**: `multi 1` → `multi`
+   (`ase::last_vcdfiles` already excludes it, so its VCD is *deliberately* not loaded and a
+   `notloaded` answer here would name the wrong cause); empty `vcd` → `notraced` (Icarus arm,
+   a `.so` outside the rundir, a `+`-continued card, or `cosim trace 0`). Note the trap:
+   `cosim_map` sets `scope` unconditionally, including on entries whose `vcd` is empty
+   (`src/ase.tcl:1091` vs `:1105`), so a scope hint exists for files that will never exist —
+   check `vcd` first. That kills one of the hint's two lies; the other (a hint written with no
+   `.v` behind it) is killed by the `vfile` test in step 5, not here.
+4. **The DB must be in the registry**, matched on `path` against `wviewer::signal_list_all`'s
+   inventory. Absent → `notloaded`.
+5. **f3, derived and verified** against that DB's `names`. **The hint is eligible only when the
+   entry's `vfile` is non-empty** (5c: an empty `vfile` means no `.v` was ever read and the
+   string is the `.model` card's name). Eligible → accept it iff ≥1 name starts with
+   `<scope>.`, literally and case-sensitively. Otherwise derive: take the deepest scope whose
+   leaf segment equals **f1's** module name — f1's, read from the live `.v`, not the entry's,
+   which in the buried case is a card name; else, if exactly one non-root scope exists, take
+   it; else `noscope`, naming what was found. Report `hint` or `derived` in `how` so a test can
+   tell the two paths apart — a check that only asserts the final scope passes vacuously when
+   the hint happens to be right, which for the reference cell it always is.
+
+**What does NOT change.** The `.cosim` artifact's format, its fields and its producer are
+untouched by this ruling — it already records exactly f2 and it already calls `scope` a hint.
+No existing check changes expectation: `DS13-scope-hint`, `REF10-map-scope` and
+`REF12-scope-hint-matches-the-real-vcd` (`tests/headless/test_ase_cosim.tcl:466`, `:1100`,
+`:1106`) all assert the *hint's* production and stay correct. There is today **no consumer of
+the `scope` field anywhere in the tree** — the only reference outside the tests is the producer
+line itself — so nothing can contradict the ruling and nothing has to be restated to
+accommodate it.
+
+**What this ruling does NOT solve, stated so item 4 does not discover it as a surprise.** A
+code block below the netlisted schematic reaches the browser on rung 4 alone, with a derived
+scope and no `.v` linkage — issue **0307**, whose fix (a hierarchical design walk, so `cell`,
+`lib` and `vfile` are populated for buried blocks) would light rungs 1-3 up and make the
+`scope` hint honest there. That fix is *additive to* this ruling, not a revision of it: the key
+is still the cell, the hint is still verified, and rung 4 stays as the belt to those braces.
 
 ## Dependency order
 
