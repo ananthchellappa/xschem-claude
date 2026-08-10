@@ -1069,6 +1069,401 @@ eqcheck DG17-no-promise-no-complaint [llength [ase::last_diagnostics]] 0
 ase::cosim_save_map $STMISS {}
 
 # ===========================================================================
+# FS — F2: which VCD scope holds THIS instance's digital signals
+# ===========================================================================
+#
+# Contract: doc/claude/specs/mixed_signal_signal_browser.md, "Open decision 5,
+# ruled" (RULINGS 5a-5f). Three facts with three owners; the join key is the
+# CELL, never the instance path; and `scope` in the map artifact is a HINT that
+# the loaded database overrules.
+#
+# THE CHECKS THAT CARRY THE ITEM ARE THE ONES WHERE HINT AND REALITY DIVERGE.
+# FS30-FS33 (they agree) pass against a naive implementation that simply trusts
+# the recorded string; FS34-FS39 do not. FS34-FS39 are still not enough on their
+# own: every one of them makes the hint name a DIFFERENT module (`TOP.gone` vs
+# `realmod`), so a resolver that never reads the database at all -- accepting the
+# hint whenever its last segment equals f1's module -- passes all of them. The
+# shape inlining really produces keeps the module NAME and moves or deletes the
+# SCOPE, and that is FS22c/FS22d (pure) and FS60-FS64 (end to end). A recorded
+# hint can be wrong for
+# reasons no artifact can predict — the digital simulator inlines the module
+# away, or the .v is edited between the run and the query — so the fixtures
+# below hand-write map entries whose `scope` names a module the VCD does not
+# declare. That is the honest fixture for inlining on a machine with no
+# verilator: what F2 must survive is the DISAGREEMENT, and where the wrong
+# string came from is not something the resolver can see.
+
+set ::XSCHEM_LIBRARY_DEFS $tmp/library.defs
+set ::library_registry_defs_only 1
+
+proc fget {d k} {
+  if {[catch {dict exists $d $k} ok] || !$ok} { return {} }
+  return [dict get $d $k]
+}
+
+# A VCD whose SCOPE TREE is exactly the given dotted scope paths, one wire each.
+# mkvcd (AT) is fixed at TOP.m; divergence needs the tree to be a parameter.
+proc mkvcdtree {path scopes} {
+  set ids {! # % & + ,}
+  set body "\$timescale 1ps \$end\n"
+  set i 0
+  foreach sc $scopes {
+    set segs [split $sc .]
+    foreach s $segs { append body "\$scope module $s \$end\n" }
+    append body "\$var wire 1 [lindex $ids $i] q \$end\n"
+    foreach s $segs { append body "\$upscope \$end\n" }
+    incr i
+  }
+  append body "\$enddefinitions \$end\n#0\n"
+  for {set k 0} {$k < $i} {incr k} { append body "0[lindex $ids $k]\n" }
+  append body "#100\n"
+  for {set k 0} {$k < $i} {incr k} { append body "1[lindex $ids $k]\n" }
+  append body "#200\n"
+  wr $path $body
+}
+
+# a SECOND digital cell whose .v declares a module named differently from the
+# cell: without that, "the cell name" and "the module name" are the same string
+# and no check can tell which one the code used.
+symfile $tmp/dlib/dcell2/symbol/dcell2.sym {clk in q out}
+wr $tmp/dlib/dcell2/verilog/dcell2.v "module realmod(input clk, output q);\nendmodule\n"
+set p4 [tb tb4 "C \{dlib/dcell2\} 0 0 0 0 \{name=a1 model=dcell2\}\nC \{dlib/plaincell\} 200 0 0 0 \{name=a9 model=plaincell\}\n"]
+
+# --- f1: the query-time read, in the DESIGN context ------------------------
+xschem load $p1
+set F1 [pcall ase::cosim_f1 a1]
+eqcheck FS1-f1-lib-cell "[fget $F1 lib]/[fget $F1 cell]" dlib/dcell
+eqcheck FS2-f1-module [fget $F1 module] dcell
+eqcheck FS3-f1-model-property [fget $F1 model] dcell
+# RULING 5d: the schematic prefix is DROPPED, not translated
+eqcheck FS4-f1-drops-the-prefix [fget [pcall ase::cosim_f1 x1.x2.a1] inst] a1
+set F9 [pcall ase::cosim_f1 a9]
+eqcheck FS5-f1-no-verilog-view-no-vfile "[fget $F9 inst]|[fget $F9 cell]|[fget $F9 vfile]" \
+  {a9|plaincell|}
+eqcheck FS6-f1-unknown-instance [pcall ase::cosim_f1 nosuchinst] {}
+
+# --- f2: the 5b key ladder (pure, over hand-built maps) --------------------
+proc f1of {lib cell module model} {
+  return [dict create lib $lib cell $cell module $module model $model]
+}
+set FDC [f1of dlib dcell dcell dcell]
+proc mrung {r} { return [lindex $r 2] }
+proc mmodel {r} {
+  if {[lindex $r 0] ne {ok}} { return [lindex $r 1] }
+  return [ase::state_get [lindex $r 1] model]
+}
+
+# rung 1 -- lib/cell. Two libraries, each with a cell named `dcell`: the bare
+# cell key matches BOTH, lib/cell picks exactly one.
+set MAP1 [list \
+  [dict create model m_d lib dlib cell dcell vfile /x/dcell.v module dcell] \
+  [dict create model m_e lib elib cell dcell vfile /y/dcell.v module dcell]]
+set r [pcall ase::cosim_map_match $MAP1 $FDC]
+eqcheck FS10-rung1-picks-one "[mmodel $r] [mrung $r]" {m_d 1}
+# ...and the CELL half of that key is load-bearing too. MAP1 distinguishes its
+# entries by LIB alone, so it cannot tell a rung-1 that compares both operands
+# from one that compares only the library -- and two digital cells in ONE
+# library is the ordinary case, not an exotic one.
+set MAP1B [list \
+  [dict create model m_d lib dlib cell dcell vfile /x/dcell.v module dcell] \
+  [dict create model m_o lib dlib cell other vfile /x/other.v module other]]
+set r [pcall ase::cosim_map_match $MAP1B $FDC]
+eqcheck FS10b-rung1-cell-operand-matters "[mmodel $r] [mrung $r]" {m_d 1}
+# and the negative control: a lone entry from the RIGHT library but the WRONG
+# cell is not this cell's entry. A lib-only rung 1 would hand back its VCD and
+# its scope hint, i.e. another cell's internals under this cell's name.
+set MAP1C [list [dict create model m_o lib dlib cell other vfile /x/other.v module other]]
+eqcheck FS10c-rung1-wrong-cell-is-not-a-match \
+  [lindex [pcall ase::cosim_map_match $MAP1C $FDC] 1] nomap
+# rung 2 -- the .v-basename fallback leaves `lib` empty
+set MAP2 [list [dict create model m_d lib {} cell dcell vfile /x/dcell.v module dcell]]
+set r [pcall ase::cosim_map_match $MAP2 $FDC]
+eqcheck FS11-rung2-cell-alone "[mmodel $r] [mrung $r]" {m_d 2}
+# rung 3 -- the module name, and ONLY when the entry carries a .v
+set MAP3 [list [dict create model m_x lib {} cell {} vfile /x/dcell.v module dcell]]
+set r [pcall ase::cosim_map_match $MAP3 $FDC]
+eqcheck FS12-rung3-module "[mmodel $r] [mrung $r]" {m_x 3}
+# rung 4 -- the .model card name against the instance's own model= property.
+# THIS IS THE BURIED-BLOCK CASE (issue 0307): the design walk is flat, so a code
+# block below the netlisted schematic has lib/cell/vfile all empty and rungs
+# 1-3 are dead. Rung 4 is what carries it.
+set MAP4 [list [dict create model dcell lib {} cell {} vfile {} module dcell]]
+set r [pcall ase::cosim_map_match $MAP4 $FDC]
+eqcheck FS13-rung4-buried-block "[mmodel $r] [mrung $r]" {dcell 4}
+# a rung matching >1 REFUSES and does not fall through -- even though rung 4
+# would have matched exactly one of these two entries
+set MAP5 [list \
+  [dict create model dcell lib {} cell dcell vfile {} module dcell] \
+  [dict create model other lib {} cell dcell vfile {} module dcell]]
+set r [pcall ase::cosim_map_match $MAP5 $FDC]
+eqcheck FS14-ambiguous-does-not-fall-through [lindex $r 1] ambiguous
+eqcheck FS15-nomap [lindex [pcall ase::cosim_map_match {} $FDC] 1] nomap
+# rung 3 is gated on the entry's vfile: with none, `module` IS the .model card
+# name (cosim_map's own fallback), so it is not an independent key
+set MAP6 [list [dict create model cnt8 lib {} cell {} vfile {} module dcell]]
+eqcheck FS16-rung3-needs-a-vfile [lindex [pcall ase::cosim_map_match $MAP6 $FDC] 1] nomap
+
+# THE LADDER'S OPERANDS MUST BE THREE DIFFERENT STRINGS. FDC's cell, module and
+# model are all the literal `dcell`, so against it alone rungs 2/3/4 cannot be
+# told apart from a rung that reads f1's CELL three times -- and rung 4 is the
+# only key a buried code block has (issue 0307): its lib, cell and vfile are all
+# empty, and the .model card name is routinely NOT the cell name.
+set FCM [f1of dlib counter8 cnt_v cnt8]
+set MAP3B [list [dict create model zz lib {} cell {} vfile /x/cnt.v module cnt_v]]
+set r [pcall ase::cosim_map_match $MAP3B $FCM]
+eqcheck FS12b-rung3-reads-the-module-not-the-cell "[mmodel $r] [mrung $r]" {zz 3}
+set MAP4B [list [dict create model cnt8 lib {} cell {} vfile {} module cnt8]]
+set r [pcall ase::cosim_map_match $MAP4B $FCM]
+eqcheck FS13b-rung4-reads-the-model-not-the-cell "[mmodel $r] [mrung $r]" {cnt8 4}
+# negative control: a .model card that happens to carry the CELL's name is not
+# this instance's card -- the instance's own `model=` property is (RULING 5b)
+set MAP4C [list [dict create model counter8 lib {} cell {} vfile {} module zzz]]
+eqcheck FS13c-rung4-model-card-named-for-the-cell-is-not-a-match \
+  [lindex [pcall ase::cosim_map_match $MAP4C $FCM] 1] nomap
+
+# --- f3: scope derivation (pure) -------------------------------------------
+set NREF {TOP.clk TOP.count TOP.counter.clk TOP.counter.phase}
+set r [pcall ase::cosim_scope_derive $NREF TOP.counter /x/counter.v counter]
+eqcheck FS20-hint-accepted-when-it-agrees "[lindex $r 0] [lindex $r 1]" {hint TOP.counter}
+# an entry with no .v carries no evidence: the hint is not even eligible
+set r [pcall ase::cosim_scope_derive $NREF TOP.counter {} counter]
+eqcheck FS21-empty-vfile-hint-not-eligible "[lindex $r 0] [lindex $r 1]" {derived TOP.counter}
+# THE DIVERGENCE: an eligible hint that the database does not contain loses
+set r [pcall ase::cosim_scope_derive {TOP.realmod.q} TOP.gone /x/d.v realmod]
+eqcheck FS22-db-beats-hint "[lindex $r 0] [lindex $r 1]" {derived TOP.realmod}
+check FS22b-disagreement-is-reported [expr {[string first TOP.gone [lindex $r 2]] >= 0}] \
+  "(note '[lindex $r 2]')"
+# THE SHAPE INLINING ACTUALLY PRODUCES, and the one a hint-trusting resolver
+# survives: the module is NOT renamed, so the recorded hint is still
+# `TOP.<module>` and its last segment still equals f1's module name. Only the
+# LOADED DATABASE can say whether that scope is there. A resolver that accepts
+# the hint whenever its leaf matches the module answers TOP.dcell to both of
+# these -- a scope that does not exist.
+#   (a) fully inlined away: the dump declares the shim's root and nothing else
+set r [pcall ase::cosim_scope_derive {TOP.q TOP.clk} TOP.dcell /x/dcell.v dcell]
+eqcheck FS22c-inlined-hint-named-for-the-module-refuses "[lindex $r 0] [lindex $r 1]" \
+  {none noscope}
+#   (b) merely MOVED: the module survived one level deeper than recorded
+set r [pcall ase::cosim_scope_derive {TOP.q TOP.wrapper.dcell.q} TOP.dcell /x/dcell.v dcell]
+eqcheck FS22d-moved-hint-named-for-the-module-loses "[lindex $r 0] [lindex $r 1]" \
+  {derived TOP.wrapper.dcell}
+# the prefix test is CASE-SENSITIVE (vcd_read stores names verbatim; Verilog is
+# case-sensitive). A hint that differs only in case is a MISS, not a hit.
+set r [pcall ase::cosim_scope_derive $NREF TOP.Counter /x/counter.v counter]
+eqcheck FS23-hint-match-is-case-sensitive "[lindex $r 0] [lindex $r 1]" {derived TOP.counter}
+# the DEEPEST scope whose leaf is the module name
+set r [pcall ase::cosim_scope_derive {TOP.m.x TOP.m.sub.m.y} {} {} m]
+eqcheck FS24-deepest-wins "[lindex $r 0] [lindex $r 1]" {derived TOP.m.sub.m}
+# A SCOPE NEED NOT OWN A SIGNAL TO EXIST. Every fixture above puts a wire
+# directly in every scope it declares; a module that contains sub-instances (the
+# ordinary shape of a Verilator dump) declares a scope whose only trace in the
+# name list is as a PREFIX of a deeper name, so the enumeration must yield every
+# intermediate prefix, not just each name's innermost one.
+eqcheck FS24b-scopes-of-yields-every-prefix [pcall ase::cosim_scopes_of {TOP.a.b.q}] \
+  {TOP TOP.a TOP.a.b}
+set r [pcall ase::cosim_scope_derive {TOP.realmod.sub.q} {} {} realmod]
+eqcheck FS24c-intermediate-scope-is-derivable "[lindex $r 0] [lindex $r 1]" \
+  {derived TOP.realmod}
+# no module match -> exactly one NON-ROOT scope
+set r [pcall ase::cosim_scope_derive {TOP.a.q} {} {} zzz]
+eqcheck FS25-single-non-root-scope "[lindex $r 0] [lindex $r 1]" {derived TOP.a}
+# nothing matches -> REFUSE. Never `TOP`: its signals are the port mirror, i.e.
+# exactly the ones already bridged into the analog raw (RULING 5e).
+set r [pcall ase::cosim_scope_derive {TOP.clk TOP.count} {} {} realmod]
+eqcheck FS26-no-scope-refuses [lindex $r 1] noscope
+check FS27-refusal-names-what-was-found \
+  [expr {[string first {scopes found: TOP} [lindex $r 2]] >= 0}] "([lindex $r 2])"
+# two scopes with the same leaf at the same depth is not decidable
+set r [pcall ase::cosim_scope_derive {TOP.a.m.x TOP.b.m.y} {} {} m]
+eqcheck FS28-tie-refuses [lindex $r 1] noscope
+
+# --- end to end, against databases that are really loaded ------------------
+proc fsentry {args} {
+  return [dict create model dcell lib dlib cell dcell vfile {} module dcell \
+    scope TOP.dcell vcd {} multi 0 ninst 1 {*}$args]
+}
+set vagree [file join $tmp fs_agree.vcd]
+set vdiv   [file join $tmp fs_diverge.vcd]
+set vnone  [file join $tmp fs_nomatch.vcd]
+set vmoved [file join $tmp fs_moved.vcd]
+mkvcdtree $vagree {TOP TOP.dcell}
+mkvcdtree $vdiv   {TOP TOP.realmod}
+mkvcdtree $vnone  {TOP}
+# the module is still called `dcell` and the hint is still `TOP.dcell`; the
+# digital run put it one level down, INSIDE a wrapper, and gave it no signal of
+# its own -- so `TOP.wrapper.dcell` exists in this database only as a prefix
+mkvcdtree $vmoved {TOP TOP.wrapper.dcell.inner}
+
+set dv1 [file normalize $tmp/dlib/dcell/verilog/dcell.v]
+set dv2 [file normalize $tmp/dlib/dcell2/verilog/dcell2.v]
+
+# THE AGREEING CASE. Loaded: the analog raw (current) + all three VCDs, so the
+# resolver has to reach a database that is NOT the current one.
+xschem raw clear
+ase::attach_dbs $rawf tran [list $vagree $vdiv $vnone $vmoved]
+xschem load $p1
+set FSA [st $rd fsa]
+ase::cosim_save_map $FSA [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1]
+eqcheck FS30-agree-ok [lindex $r 0] ok
+eqcheck FS31-agree-vcd [lindex $r 1] $vagree
+eqcheck FS32-agree-scope [lindex $r 2] TOP.dcell
+eqcheck FS33-agree-how-is-hint [lindex $r 3] hint
+eqcheck FS33b-agree-no-note "[lindex $r 3]|[lindex $r 4]" {hint|}
+eqcheck FS33c-current-db-untouched "[lindex $r 0] [pcall xschem raw rawfile]" "ok $rawf"
+
+# THE DIVERGING CASE — the item's whole point. The recorded hint names
+# `TOP.gone`; the database that is actually loaded declares TOP and TOP.realmod,
+# and `realmod` is what THIS cell's .v declares. A resolver that trusts the
+# string answers TOP.gone (or refuses); the DB must win.
+xschem load $p4
+set FSB [st $rd fsb]
+ase::cosim_save_map $FSB [list [fsentry model dcell2 cell dcell2 module gone \
+  vfile $dv2 vcd $vdiv scope TOP.gone]]
+set r [pcall ase::cosim_scope_for_state $FSB x1.a1]
+eqcheck FS34-diverge-ok [lindex $r 0] ok
+eqcheck FS35-diverge-scope-comes-from-the-db [lindex $r 2] TOP.realmod
+eqcheck FS36-diverge-how-is-derived [lindex $r 3] derived
+check FS37-diverge-note-names-the-stale-hint \
+  [expr {[string first TOP.gone [lindex $r 4]] >= 0}] "(note '[lindex $r 4]')"
+# and it is not the port mirror either
+eqcheck FS37b-diverge-not-TOP \
+  "[lindex $r 0] [expr {[lindex $r 2] ne {TOP} ? 1 : 0}]" {ok 1}
+
+# NO SCOPE MATCHES AT ALL — the case F5's empty-pane notice has to explain.
+# Defined answer: {none noscope <sentence>}, the sentence naming the database
+# and the scopes that WERE found. Never an ok on `TOP`.
+set FSC [st $rd fsc]
+ase::cosim_save_map $FSC [list [fsentry model dcell2 cell dcell2 module gone \
+  vfile $dv2 vcd $vnone scope TOP.gone]]
+set r [pcall ase::cosim_scope_for_state $FSC x1.a1]
+eqcheck FS38-nomatch-refuses [lindex $r 1] noscope
+check FS39-nomatch-sentence-explains \
+  [expr {[string first realmod [lindex $r 2]] >= 0 &&
+         [string first {scopes found: TOP} [lindex $r 2]] >= 0 &&
+         [string first fs_nomatch.vcd [lindex $r 2]] >= 0}] "([lindex $r 2])"
+
+# INLINING, END TO END, WITH THE MODULE NAME UNCHANGED. FS34-FS39 above make the
+# hint name a DIFFERENT module (`TOP.gone` vs `realmod`), which a resolver that
+# never reads the database can still get right by comparing the hint's leaf with
+# f1's module. These two do not: the .v still declares `module dcell`, the
+# recorded hint is still `TOP.dcell`, and only the loaded database knows whether
+# that scope survived the digital compile.
+# (a) MOVED into a wrapper, and owning no signal of its own -- so the answer is
+#     reachable only as an intermediate prefix of a deeper name
+xschem load $p1
+set FSE [st $rd fse]
+ase::cosim_save_map $FSE [list [fsentry vfile $dv1 vcd $vmoved scope TOP.dcell]]
+set r [pcall ase::cosim_scope_for_state $FSE x1.a1]
+eqcheck FS60-moved-ok-and-scope-from-the-db "[lindex $r 0] [lindex $r 2]" \
+  {ok TOP.wrapper.dcell}
+eqcheck FS61-moved-how-is-derived [lindex $r 3] derived
+check FS62-moved-note-names-the-stale-hint \
+  [expr {[string first TOP.dcell [lindex $r 4]] >= 0}] "(note '[lindex $r 4]')"
+# (b) INLINED AWAY entirely: the dump declares the shim root and nothing else.
+#     Defined answer is the refusal, never an `ok` on the hint and never on TOP.
+set FSF [st $rd fsf]
+ase::cosim_save_map $FSF [list [fsentry vfile $dv1 vcd $vnone scope TOP.dcell]]
+set r [pcall ase::cosim_scope_for_state $FSF x1.a1]
+eqcheck FS63-inlined-refuses [lindex $r 1] noscope
+check FS64-inlined-sentence-explains \
+  [expr {[string first {module 'dcell'} [lindex $r 2]] >= 0 &&
+         [string first {scopes found: TOP} [lindex $r 2]] >= 0 &&
+         [string first fs_nomatch.vcd [lindex $r 2]] >= 0}] "([lindex $r 2])"
+
+# the other refusals, each naming its own cause
+set FSD [st $rd fsd]
+ase::cosim_save_map $FSD [list [fsentry model dcell2 cell dcell2 vfile $dv2 \
+  vcd [file join $tmp fs_never_read.vcd] scope TOP.gone]]
+eqcheck FS40-db-not-loaded [lindex [pcall ase::cosim_scope_for_state $FSD a1] 1] notloaded
+ase::cosim_save_map $FSD [list [fsentry model dcell2 cell dcell2 vfile $dv2 \
+  vcd $vdiv multi 1 ninst 2]]
+eqcheck FS41-multi-refused [lindex [pcall ase::cosim_scope_for_state $FSD a1] 1] multi
+ase::cosim_save_map $FSD [list [fsentry model dcell2 cell dcell2 vfile $dv2 vcd {}]]
+eqcheck FS42-no-vcd-promised [lindex [pcall ase::cosim_scope_for_state $FSD a1] 1] notraced
+eqcheck FS43-no-verilog-view [lindex [pcall ase::cosim_scope_for_state $FSD a9] 1] nodigital
+ase::cosim_save_map $FSD {}
+eqcheck FS44-empty-map [lindex [pcall ase::cosim_scope_for_state $FSD a1] 1] nomap
+
+# the SESSION-KEY form is the one F1 will call
+set fskey [ase::session_key dlib fsa ngspice_state1]
+set fssf [file join $tmp fsa.state]
+ase::state_save $fssf $FSA
+ase::session_open $fskey $fssf
+ase::session_update $fskey $FSA
+xschem load $p1
+set r [pcall ase::cosim_scope_for_instance $fskey x1.a1]
+eqcheck FS45-key-form "[lindex $r 0] [lindex $r 2] [lindex $r 3]" {ok TOP.dcell hint}
+
+# THE DISAGREEMENT MUST NOT BE SILENT: it reaches the user through ase::echo,
+# not only through the returned note.
+set ::fs_echoed {}
+if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::fs_saved_echo }
+proc ::ciw_echo {msg {tag {}}} { lappend ::fs_echoed [list $tag $msg] }
+xschem load $p4
+pcall ase::cosim_scope_for_state $FSB x1.a1
+set said {}
+foreach e $::fs_echoed { if {[string first TOP.gone [lindex $e 1]] >= 0} { set said 1 } }
+check FS46-disagreement-is-echoed [expr {$said eq 1}] "(echoed '$::fs_echoed')"
+set ::fs_echoed {}
+xschem load $p1
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1]
+eqcheck FS47-agreement-is-quiet "[lindex $r 3] [llength $::fs_echoed]" {hint 0}
+# ...and the tag it is echoed WITH has to be a tag the CIW actually configures.
+# ase::echo hands the tag straight to the text widget; an undefined Tk tag is
+# legal and styles nothing, so `note` renders exactly like an ordinary result
+# and 5f-1's "the disagreement is visible" would be true of the return value
+# only. (This is a literal-source pin, like BM05's: headless has no Tk widget.)
+set ciwsrc {}
+if {![catch {open [file join $repo src ciw.tcl]} fh]} { set ciwsrc [read $fh]; close $fh }
+check FS47b-ciw-configures-the-note-tag \
+  [expr {[regexp {tag configure\s+note\s+-foreground} $ciwsrc]}] "(src/ciw.tcl)"
+rename ::ciw_echo {}
+if {[info commands ::fs_saved_echo] ne {}} { rename ::fs_saved_echo ::ciw_echo }
+
+# A STALE OR UN-ENTERABLE VIEWER TOKEN IS NOT AN EMPTY REGISTRY (5f-2, and this
+# is the arm F1 will actually use). wviewer::signal_list_all answers {} for a
+# token that is not in `windows`, for an enter_ctx ticket it refused, and for a
+# viewer that genuinely holds no database -- only the last is an answer. Taking
+# the empty list as authoritative makes the resolver say `notloaded` about a
+# database that is loaded and readable THIS INSTANT, and a token goes stale
+# exactly during viewer teardown, which is when a browser refresh fires.
+xschem load $p1
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .no_such_viewer_token]
+eqcheck FS50-stale-token-still-resolves "[lindex $r 0] [lindex $r 2] [lindex $r 3]" \
+  {ok TOP.dcell hint}
+# ...and the same with signal_list_all PRESENT and answering {} -- the refused
+# ticket, which the real proc returns without throwing, so a `catch` cannot see it
+set fs_had_sla [expr {[info commands ::wviewer::signal_list_all] ne {}}]
+if {$fs_had_sla} { rename ::wviewer::signal_list_all ::wviewer::fs_saved_sla }
+proc ::wviewer::signal_list_all {token} { return {} }
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .fs_live_but_refusing]
+rename ::wviewer::signal_list_all {}
+if {$fs_had_sla} { rename ::wviewer::fs_saved_sla ::wviewer::signal_list_all }
+eqcheck FS51-refused-viewer-ticket-falls-back \
+  "[lindex $r 0] [lindex $r 2] [lindex $r 3]" {ok TOP.dcell hint}
+
+# the inventory reads every database and PUTS THE POINTER BACK
+set inv [pcall ase::cosim_db_inventory]
+set paths {}
+# defensive: with the inventory absent `$inv` is pcall's ERR: string, and a bare
+# `dict get` on it would ABORT the file instead of failing this check
+catch {foreach db $inv { catch {lappend paths [file tail [dict get $db path]]} }}
+check FS48-inventory-sees-every-db \
+  [expr {[lsearch -exact $paths fs_agree.vcd] >= 0 && [lsearch -exact $paths anlg.raw] >= 0}] \
+  "($paths)"
+# THE FULL INVENTORY IS IN THE SAME ASSERTION ON PURPOSE, and it is named, not
+# counted: "the pointer did not move" is also true of an inventory that never
+# ran, and a bare `llength` of pcall's own error string
+# (`ERR:invalid command name "ase::cosim_db_inventory"`) is 4 -- which is
+# exactly what a count-based assertion here used to want, so it passed with the
+# whole implementation deleted.
+eqcheck FS49-inventory-restores-the-current-db \
+  "[lsort $paths] | [pcall xschem raw rawfile]" \
+  "anlg.raw fs_agree.vcd fs_diverge.vcd fs_moved.vcd fs_nomatch.vcd | $rawf"
+xschem raw clear
+
+# ===========================================================================
 # REF — the real reference cell, when the OA library tree is present
 # ===========================================================================
 

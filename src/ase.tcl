@@ -1528,6 +1528,354 @@ proc ase::last_vcdfiles {key} {
   return $out
 }
 
+# --- F2: which VCD scope holds THIS instance's digital signals ---------------
+#
+# CONTRACT: doc/claude/specs/mixed_signal_signal_browser.md, section "Open
+# decision 5, ruled" (RULINGS 5a-5f). Read it before changing anything here;
+# the three load-bearing points are:
+#
+#   * the mapping is THREE facts with three owners, not one artifact --
+#     f1 instance->cell is QUERY time (the live design), f2 cell->file is
+#     NETLIST time (<rundir>/<cell>_ase.cosim), f3 file->scope is DERIVED from
+#     the database actually loaded;
+#   * the join key is the CELL (lib/cell, four rungs), NEVER the instance path:
+#     one .subckt instantiated twice puts the same code block at x1.a1 AND
+#     x2.a1, so a path is not a key even when it is recorded;
+#   * `scope` in the map artifact is a HINT and the DERIVED answer WINS.
+#     Inlining can move or delete the module the hint names, so the hint is
+#     only ever a starting guess; what is returned is what the loaded DB says.
+#
+# Nothing here concatenates the schematic path with a VCD scope (RULING 5d: the
+# prefix is DROPPED, not translated) and nothing ever falls back to `TOP`
+# (RULING 5e: TOP is the shim's port mirror, whose signals are precisely the
+# ones already bridged into the analog raw -- landing there would show the user
+# what they could already see and call it success).
+
+# f1 -- the QUERY-TIME read, and it MUST run in the DESIGN context, before any
+# viewer raise (F1's existing warning, src/ase.tcl "show_in_browser" region: a
+# read placed after the raise answers about the viewer's own untitled buffer).
+# All four facts come out of this one read because rung 4 needs the `model=`
+# property and nothing above the raise is readable afterwards.
+#
+# Returns {} when the path's LAST segment names no instance of the current
+# schematic; otherwise a dict {inst symref lib cell module vfile model} whose
+# `vfile` is empty when the cell has no `verilog` view.
+#
+# The prefix of `x1.a1` is consumed here -- it is how the leaf was identified --
+# and then discarded (RULING 5d). The design walk is flat (issue 0307), which is
+# why this resolves against the schematic the user is actually IN: descend into
+# x1 and `a1` is a plain instance of the current schematic.
+proc ase::cosim_f1 {instpath} {
+  set leaf [lindex [split $instpath .] end]
+  if {$leaf eq {}} { return {} }
+  if {[catch {xschem instance_list} lst]} { return {} }
+  set inst {}; set symref {}
+  foreach {i s t} $lst {
+    if {$i eq {}} { continue }
+    if {$i eq $leaf} { set inst $i; set symref $s; break }
+    # a case-insensitive hit is kept only until an exact one turns up: the deck
+    # side folds case (SPICE), the canvas side does not.
+    if {$inst eq {} && [string equal -nocase $i $leaf]} { set inst $i; set symref $s }
+  }
+  if {$inst eq {} || $symref eq {}} { return {} }
+  set vfile {}
+  catch {set vfile [cellview_sibling_path $symref verilog]}
+  if {$vfile ne {} && ![file isfile $vfile]} { set vfile {} }
+  set lib {}; set cell {}
+  if {![catch {library_inst_lcv $symref} lcv] && [llength $lcv] == 3} {
+    set lib [lindex $lcv 0]
+    set cell [lindex $lcv 1]
+  }
+  if {$cell eq {} && $vfile ne {}} { set cell [file rootname [file tail $vfile]] }
+  set model {}
+  catch {set model [xschem getprop instance $inst model]}
+  if {$vfile ne {}} { set vfile [file normalize $vfile] }
+  return [dict create inst $inst symref $symref lib $lib cell $cell \
+    vfile $vfile module [ase::cosim_module_of $vfile] model $model]
+}
+
+# f2 -- RULING 5b's four-rung key ladder over a loaded map. Each rung names BOTH
+# operands, because a rung with only one is not a key. Comparisons are
+# case-INSENSITIVE (SPICE folds, and cosim_map already lower-cases its join
+# keys); the case-SENSITIVE test is the VCD one in cosim_scope_derive.
+#
+#   {ok <entry> <rung>} | {none ambiguous <why>} | {none nomap <why>}
+#
+# A rung matching >1 entry REFUSES and does NOT fall through: a multi-match is
+# evidence of a real collision, and first-won there would plot another cell's
+# internals under this cell's name.
+proc ase::cosim_map_match {map f1} {
+  set fl [string tolower [dict get $f1 lib]]
+  set fc [string tolower [dict get $f1 cell]]
+  set fm [string tolower [dict get $f1 module]]
+  set fd [string tolower [dict get $f1 model]]
+  foreach rung {1 2 3 4} {
+    set hits {}
+    foreach e $map {
+      set el [string tolower [ase::state_get $e lib]]
+      set ec [string tolower [ase::state_get $e cell]]
+      set em [string tolower [ase::state_get $e module]]
+      set ed [string tolower [ase::state_get $e model]]
+      set ev [ase::state_get $e vfile]
+      switch -- $rung {
+        1 { if {$el ne {} && $ec ne {} && $fl ne {} && $fc ne {} &&
+                $el eq $fl && $ec eq $fc} { lappend hits $e } }
+        2 { if {$ec ne {} && $el eq {} && $fc ne {} && $ec eq $fc} { lappend hits $e } }
+        3 { if {$ev ne {} && $em ne {} && $fm ne {} && $em eq $fm} { lappend hits $e } }
+        4 { if {$ed ne {} && $fd ne {} && $ed eq $fd} { lappend hits $e } }
+      }
+    }
+    if {[llength $hits] == 1} { return [list ok [lindex $hits 0] $rung] }
+    if {[llength $hits] > 1} {
+      set names {}
+      foreach e $hits { lappend names [ase::state_get $e model] }
+      return [list none ambiguous "the co-simulation map has [llength $hits] entries\
+ matching this cell on [ase::cosim_rung_name $rung] ([join $names {, }]): xschem cannot\
+ tell which one holds this instance's signals (f2)"]
+    }
+  }
+  return [list none nomap "no entry of the co-simulation map matches cell\
+ '[dict get $f1 lib]/[dict get $f1 cell]' (module '[dict get $f1 module]', model\
+ '[dict get $f1 model]'): this cell was not part of the last run's netlist, or the\
+ run predates it (f2)"]
+}
+
+proc ase::cosim_rung_name {rung} {
+  switch -- $rung {
+    1 { return {lib/cell} }
+    2 { return {cell} }
+    3 { return {verilog module name} }
+    4 { return {model card name} }
+  }
+  return "rung $rung"
+}
+
+# Every scope prefix present in a list of VCD signal names, outermost first,
+# de-duplicated. `TOP.counter.clk` contributes `TOP` and `TOP.counter`. A name
+# with no dot is a bare signal at the root and contributes no scope.
+proc ase::cosim_scopes_of {names} {
+  set out {}
+  set seen [dict create]
+  foreach n $names {
+    set segs [split $n .]
+    if {[llength $segs] < 2} { continue }
+    set pre {}
+    foreach s [lrange $segs 0 end-1] {
+      lappend pre $s
+      set sc [join $pre .]
+      if {![dict exists $seen $sc]} { dict set seen $sc 1; lappend out $sc }
+    }
+  }
+  return $out
+}
+
+# f3 -- RULING 5c/5f. THE DERIVED ANSWER WINS.
+#
+#   {hint <scope> {}} | {derived <scope> <note>} | {none noscope <why>}
+#
+# `hint` is the recorded TOP.<module> string, `vfile` the map ENTRY's vfile and
+# `module` f1's OWN module name, read from the live .v -- not the entry's, which
+# for a code block below the netlisted schematic is a .model card name (0307).
+#
+# Order:
+#   1. the hint is ELIGIBLE only when the entry's vfile is non-empty. An empty
+#      vfile means no .v was ever opened and `TOP.$module` is `TOP.<the .model
+#      card's name>` (src/ase.tcl, cosim_map's `if {$module eq {}} {set module
+#      [dict get $e model]}`) -- a guess, not a hint.
+#   2. an eligible hint is accepted iff >= 1 name of the LOADED DB starts with
+#      "<hint>." -- literally, CASE-SENSITIVELY. vcd_read.c stores names
+#      verbatim and Verilog is case-sensitive; get_raw_index() must not be used
+#      for this (it folds the query, so it MISSES a mixed-case name, and it
+#      resolves whole signal names, never a scope prefix).
+#   3. otherwise DERIVE: the DEEPEST scope whose leaf segment is f1's module
+#      name; else, if exactly one NON-ROOT scope exists, that one; else refuse.
+#      The module rung may legitimately land on a root scope when the root IS
+#      the module (Verilator elaborating the module as its own top) -- that is
+#      evidence. The count rung may not: a root scope chosen merely for being
+#      the only one left is the `TOP` fall-back RULING 5e forbids.
+# A hint that was eligible and REJECTED is not silent: it comes back in <note>.
+proc ase::cosim_scope_derive {names hint vfile module} {
+  set rejected {}
+  if {$hint ne {} && $vfile ne {}} {
+    set pfx "$hint."
+    set n [string length $pfx]
+    foreach nm $names {
+      if {[string range $nm 0 [expr {$n - 1}]] eq $pfx} { return [list hint $hint {}] }
+    }
+    set rejected $hint
+  }
+  set scopes [ase::cosim_scopes_of $names]
+  set best {}
+  set bestd 0
+  set ties 0
+  if {$module ne {}} {
+    foreach sc $scopes {
+      set segs [split $sc .]
+      if {[lindex $segs end] ne $module} { continue }
+      set d [llength $segs]
+      if {$d > $bestd} { set best $sc; set bestd $d; set ties 1 } \
+      elseif {$d == $bestd} { incr ties }
+    }
+  }
+  if {$best ne {} && $ties == 1} {
+    return [list derived $best [ase::cosim_hint_note $rejected $best]]
+  }
+  if {$best ne {} && $ties > 1} {
+    return [list none noscope "the loaded database has $ties scopes named '$module' at the\
+ same depth, so which one holds this instance's signals is not decidable (f3)"]
+  }
+  set nonroot {}
+  foreach sc $scopes { if {[string first . $sc] >= 0} { lappend nonroot $sc } }
+  if {[llength $nonroot] == 1} {
+    return [list derived [lindex $nonroot 0] \
+      [ase::cosim_hint_note $rejected [lindex $nonroot 0]]]
+  }
+  set found [expr {[llength $scopes] ? "scopes found: [join $scopes {, }]" \
+                                     : {the database declares no scope at all}}]
+  return [list none noscope "the loaded database holds no scope for module\
+ '$module' ($found): the digital data exists but xschem cannot tell which part of\
+ it belongs to this instance (f3)"]
+}
+
+proc ase::cosim_hint_note {rejected chosen} {
+  if {$rejected eq {}} { return {} }
+  return "the recorded scope hint '$rejected' is not in the loaded database --\
+ using '$chosen', derived from the database itself"
+}
+
+# EVERY loaded results database as {idx path names}, for step 4/5.
+#
+# With a viewer token this is wviewer::signal_list_all, which does its own
+# context enter/leave -- so f1 can be read in the DESIGN context and the
+# registry in the VIEWER's, which is the whole reason the token is a parameter.
+# With no token (headless, or a resolve before any viewer exists) the current
+# context's registry is read directly, with the same switch-and-restore shape.
+proc ase::cosim_db_inventory {{token {}}} {
+  if {$token ne {} && [llength [info commands ::wviewer::signal_list_all]]} {
+    if {![catch {wviewer::signal_list_all $token} inv] && [llength $inv]} {
+      set out {}
+      foreach e $inv {
+        lappend out [dict create idx [ase::state_get $e idx -1] \
+          path [ase::state_get $e path] names [ase::state_get $e names]]
+      }
+      return $out
+    }
+    # AN EMPTY ANSWER IS NOT "the registry is empty", and treating it as one is
+    # how a loaded database gets reported as `notloaded`. signal_list_all
+    # (src/wave_viewer.tcl) returns {} for THREE different situations: the token
+    # is not in `windows` (stale -- and a token goes stale exactly during viewer
+    # teardown), enter_ctx refused the ticket (its own comment documents the
+    # window-alloc window where current_win_path is transiently empty), and the
+    # viewer genuinely has no databases. Only the third is an answer. So fall
+    # through to the current context's registry, which reports {} by itself when
+    # nothing is loaded -- the honest empty -- and reports the real DBs when the
+    # token was simply unusable.
+  }
+  set cur [ase::raw_current]
+  if {$cur < 0} { return {} }
+  if {[catch {xschem raw info} info] || $info eq {}} { return {} }
+  set dbs {}
+  foreach line [lrange [split [string trimright $info "\n"] "\n"] 1 end] {
+    if {[regexp {^\s*(\d+)\s+(.*\S)\s+(\S+)\s*$} $line -> n p t]} { lappend dbs [list $n $p] }
+  }
+  set here $cur
+  set out {}
+  foreach db $dbs {
+    lassign $db idx path
+    if {$idx != $here} {
+      set sw 0
+      catch {set sw [xschem raw switch $idx]}
+      if {$sw != 1} { continue }
+      set here $idx
+    }
+    set names {}
+    if {![catch {xschem raw list} rl]} { set names [split [string trimright $rl "\n"] "\n"] }
+    lappend out [dict create idx $idx path $path names $names]
+  }
+  # unconditional restore, outside every per-DB failure path
+  catch {xschem raw switch $cur}
+  return $out
+}
+
+# THE F2 RESOLVER. `key` is an ASE session key, `instpath` the browser's
+# hierarchical instance path (its prefix is dropped, 5d), `token` an optional
+# viewer token for step 4.
+#
+#   {ok <vcdpath> <scope> <how> <note>}   how = hint | derived
+#   {none <code> <human sentence>}        code = nodigital | nomap | ambiguous |
+#                                                multi | notraced | notloaded |
+#                                                noscope
+#
+# <note> is the 5f slot: empty on a clean answer, and on a `derived` answer that
+# overrode an eligible hint it says so. Every refusal names which of f1/f2/f3
+# failed -- that is F5's notice, not a separate cosmetic item.
+proc ase::cosim_scope_for_instance {key instpath {token {}}} {
+  return [ase::cosim_scope_for_state [ase::session_state $key] $instpath $token]
+}
+
+# The same resolver against an explicit state dict (the session lookup is the
+# only thing the key form adds).
+proc ase::cosim_scope_for_state {state instpath {token {}}} {
+  set leaf [lindex [split $instpath .] end]
+  # 1 -- f1, in the DESIGN context
+  set f1 [ase::cosim_f1 $instpath]
+  if {$f1 eq {}} {
+    return [list none nodigital "'$leaf' is not an instance of the schematic\
+ currently open, so xschem cannot tell which cell it is (f1)"]
+  }
+  if {[dict get $f1 vfile] eq {}} {
+    return [list none nodigital "cell '[dict get $f1 lib]/[dict get $f1 cell]' has no\
+ verilog view, so instance '[dict get $f1 inst]' has no digital signals of its own (f1)"]
+  }
+  # 2 -- f2, by the 5b key ladder
+  set m [ase::cosim_map_match [ase::cosim_load_map $state] $f1]
+  if {[lindex $m 0] ne {ok}} { return $m }
+  set e [lindex $m 1]
+  # 3 -- the entry's OWN refusals, before anything touches the registry.
+  # `multi` first: last_vcdfiles already excludes such a file deliberately, so a
+  # `notloaded` answer here would name the wrong cause.
+  if {[ase::state_get $e multi 0] eq {1}} {
+    return [list none multi "the .model card '[ase::state_get $e model]' serves\
+ [ase::state_get $e ninst 2] instances, which would all write one VCD and interleave it:\
+ that file was deliberately not produced (f2)"]
+  }
+  # cosim_map writes `scope` unconditionally, INCLUDING for entries whose `vcd`
+  # is empty, so a scope hint exists for files that will never exist. Check the
+  # promise, not the hint.
+  set vcd [ase::state_get $e vcd]
+  if {$vcd eq {}} {
+    return [list none notraced "the last run promised no VCD for '[ase::state_get $e model]'\
+ (co-simulation tracing off, a non-Verilator shim, a .so outside the run directory, or a\
+ continued .model card), so there is no digital data to show (f2)"]
+  }
+  # 4 -- the DB must actually be in the registry
+  set names {}
+  set found 0
+  set nvcd [file normalize $vcd]
+  foreach db [ase::cosim_db_inventory $token] {
+    if {[file normalize [dict get $db path]] eq $nvcd} {
+      set names [dict get $db names]
+      set found 1
+      break
+    }
+  }
+  if {!$found} {
+    return [list none notloaded "'[file tail $vcd]' is not among the loaded results\
+ databases: run the simulation, or re-attach its results (f3)"]
+  }
+  # 5 -- f3, derived and VERIFIED against that DB
+  set d [ase::cosim_scope_derive $names [ase::state_get $e scope] \
+           [ase::state_get $e vfile] [dict get $f1 module]]
+  if {[lindex $d 0] eq {none}} {
+    return [list none noscope "[lindex $d 2] -- database '[file tail $vcd]'"]
+  }
+  set note [lindex $d 2]
+  # THE DISAGREEMENT IS NOT SILENT (5f). It also reaches the user directly, so
+  # it does not depend on a caller remembering to render <note>.
+  if {$note ne {}} { ase::echo "ase: $note" note }
+  return [list ok $vcd [lindex $d 1] [lindex $d 0] $note]
+}
+
 # --- E7: report a desynchronized co-simulation honestly ----------------------
 
 # Diagnostics extracted from a simulator log: a list of {severity code count

@@ -89,6 +89,29 @@ accident and silently wrong on a rename.
 
 ## Consequences
 
+**Status update, 2026-08-09 (batch F item 4, F2 implemented).** Still OPEN and still unfixed —
+`ase::cosim_design_scan` is unchanged. What changed is that consequence 1 below is now *live
+code with a test*: `ase::cosim_map_match` (`src/ase.tcl`) implements the four-rung ladder, and
+rung 4 — the entry's `model` against the instance's own `model=` property — is pinned by
+`FS13-rung4-buried-block` in `tests/headless/test_ase_cosim.tcl` over a map entry with
+`lib`/`cell`/`vfile` all empty, exactly the shape this issue produces. `FS16-rung3-needs-a-vfile`
+pins the other half: with `vfile` empty the entry's `module` is the `.model` card's name, so
+rung 3 is NOT tried and cannot match by the coincidence described above. The scope for such an
+entry is forced onto the derived path by the same `vfile` test (RULING 5c). **This issue is not
+made worse, and it is not closed**: a buried block still resolves with no `.v` linkage, and a
+hierarchical design walk would light rungs 1-3 and make the recorded hint honest. What the fix
+must NOT do is change the join key — see RULING 5b and 5f.
+
+**Amended in the same item's review round.** `FS13`'s evidence was weaker than it read. Its f1
+fixture had `cell == module == model == "dcell"`, so rung 4 could have been reading the
+instance's *cell name* rather than its `model=` property and every check would still have
+passed — which for a buried block, whose `cell` is EMPTY by the mechanism this issue describes,
+means the rung would fire for nothing. `FS13b-rung4-reads-the-model-not-the-cell` now drives the
+ladder with an f1 whose cell, module and model are three distinct strings
+(`counter8` / `cnt_v` / `cnt8`), and `FS13c-rung4-model-card-named-for-the-cell-is-not-a-match`
+is its negative control. The rung-4 belt this issue depends on is now pinned to the field it
+actually has.
+
 1. **F2 (the Signal Browser branch)** — RULING 5b's cell key cannot fire for a buried block.
    The ruling covers the case with rung 4 (the entry's `model` against the selected instance's
    own `model=` property, which is the same string by construction) and forces the scope onto
