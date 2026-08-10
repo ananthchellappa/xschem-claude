@@ -321,13 +321,96 @@ them predates it. All three are fixed; the full list of what they leave behind l
    test header was re-verified against the tree.
 
 **What §D1 does NOT buy** (issue 0305): only three of the six functions that walk `node=`
-honour `%rawfile`. `graph_point_at()` (`draw.c:5948`), `wave_hilight_envelope()`
-(`draw.c:6364`) and `graph_wave_resolve()` (`draw.c:7410`) parse the `%` for the dataset
-digits only and drop the rawfile, so a cross-DB trace **renders but is not pickable, not
-boldable and not markable**. And `graph_fullxzoom()` (`draw.c:3284`) never parses `%` at
-all (`draw.c:3284-3391`), so the auto X window spans the CURRENT database's extent only — that is D2 below,
-and it is visible with the reference pair (raw 0..2 µs, VCD 0..500 ns: the VCD trace
-occupies the left quarter and stops).
+honour `%rawfile`. `graph_point_at()`, `wave_hilight_envelope()` and
+`graph_wave_resolve()` parsed the `%` for the dataset digits only and dropped the
+rawfile, so a cross-DB trace **rendered but was not pickable, not boldable and not
+markable**. ~~That is issue 0305~~ — **FIXED 2026-08-09, batch F item 1: see the
+`node_token_split()` write-up immediately below.** `graph_fullxzoom()` (`draw.c:3284`)
+still never parses `%` at all, so the auto X window spans the CURRENT database's extent
+only — that is D2 below, and it is visible with the reference pair (raw 0..2 µs, VCD
+0..500 ns: the VCD trace occupies the left quarter and stops).
+
+#### D1 — `node_token_split()`, the one `%` parser (issue 0305, 2026-08-09)
+
+All six `node=` walkers in `src/draw.c` now call ONE parser,
+
+```c
+static void node_token_split(const char *ntok, char **expr, int *dataset,
+                             char **rawfile, char **sim_type,
+                             const char *dflt_sim_type);
+```
+
+which splits an entry into its expression half and its optional `%[digits] [rawfile]
+[sim_type]` half, Tcl-`subst`s both fields exactly as `draw_graph()` always did, and
+**switches nothing** — the switch, and the restore that must pair with it, stay at the
+call site where the unwind point is known.
+
+**RULING — the restore is an ABSOLUTE INDEX, never `extra_rawfile()`'s mode-5 swap.**
+Mode 5 swaps `extra_idx` with `extra_prev_idx` (`save.c`); it is not a stack pop. Issue
+0305 introduces a SECOND, per-trace switch nested inside the graph-level `rawfile=`
+switch that `graph_point_at()`, `wave_hilight_envelope()` and `graph_marker_sample()`
+already made, and a swap cannot unwind two levels — it lands the session on the inner
+database. Both levels therefore restore through `node_db_restore(idx)`, which is
+`extra_rawfile(2, "<idx>", …)`, and absolute restores compose. **Evidence:** with the
+per-node restore deleted (sabotages S4/S8) a bare HOVER over a strip whose own
+`rawfile=` does not resolve leaves the whole session pointing at the VCD, and 19 later
+checks of `tests/headless/test_node_token_split.tcl` go red in cascade. The graph-level
+restore alone hid this in the common case only because a rect with no `rawfile=` token
+inherits `xctx->raw->rawfile` and "switches to itself", which happens to re-anchor the
+index; the moment the graph-level switch fails, nothing else is holding the place.
+
+**RULING — the helper goes to ALL SIX walkers, including the three that already
+honoured `%rawfile`.** Batch F item 2 owns the residual defects in
+`find_closest_wave()` (its single mode-5 restore outside the loop) and
+`graph_fullyzoom()` (two `return 0` paths that skip the restore and leak
+`ntok_copy`/`express`); those are untouched here. But leaving their hand-rolled `%`
+parse in place would have left two of the seven copies the issue's own diagnosis names
+as the drift mechanism, and item 2 has to touch exactly those functions anyway.
+Extraction without behaviour change there, defect repair in item 2.
+
+**RULING — a per-trace switch re-resolves the SWEEP COLUMN by NAME, on every entry that
+took the switch.** (Added 2026-08-09 in review of this item; the first cut of it
+re-resolved the column only when the entry carried its *own* `sweep=` token, and that
+was a **segfault**, not a cosmetic bug.) The `sweep=` list may be shorter than the
+`node=` list — the documented carry-forward case, `draw.c:6004` and `test_wave_markers.tcl`
+MF1 — in which case an entry inherits the sweep variable of the entry before it. What it
+must inherit is the variable's **name**: a column *number* was resolved in the previous
+database and means nothing in this one. A three-column VCD indexed with a five-column
+analog raw's `values[4]` reads off the end of the array, and pick, bold and marker each
+die on it. Every one of the three walkers therefore keeps the last non-empty sweep token
+(`sweep_name`, which points into the `sweep=` buffer `my_strtok_r` split in place) and
+calls `get_raw_index()` again after the switch; each then clamps the result against the
+switched-in `xctx->raw->nvars` as a second line of defence. **Evidence:** with the
+re-resolution reverted to "only when this entry has its own token", the strip built by
+the `NDS` leg of `tests/headless/test_node_token_split.tcl` — graph-level `rawfile=` to a
+five-column raw, one `sweep=` token for three `node=` entries, entry 2 cross-DB into a
+VCD — makes each of `graph_point_at()`, `wave_hilight_envelope()` and
+`graph_wave_resolve()` `FATAL: signal 11` in turn (sabotages S1/S3/S5 of §5 of the
+receipt). The parent commit `96f7678a` does not crash there **only** because it never
+switched database at all.
+
+**RULING — an unresolvable per-trace database REFUSES the trace.** It does not fall
+back to the current database. Falling back plots a *different signal under the trace's
+name*, which is the silent-wrong-answer class this spec's D2 row also warns about. This
+was measurable before the fix: an entry naming a nonexistent `.raw` was pickable,
+boldable and markable, answering with whatever the current database held (checks
+NDG5/NDG7/NDG8, red at the parent commit).
+
+Pinned by `tests/headless/test_node_token_split.tcl` (**91 checks, true headless**, in
+`full_audit.sh`'s `nogui_tests`): 19 of them red at the parent commit `96f7678a`, and
+thirty-one sabotages injected across the two rounds, every one caught. Three of those
+checks (`NDX1`–`NDX3`) are **structural, not behavioural**: they read `src/draw.c` and
+assert that the `%` field is parsed in exactly two places, both inside
+`node_token_split()`, and that the parser has exactly six call sites. Nothing
+behavioural can see a seventh hand-rolled copy appear — which is precisely how this
+drifted to three-of-six in the first place. Two source-level checks in
+`tests/headless/test_wave_hilight.tcl` (WH9h, landmine 40) were **restated, not
+deleted**: the unwind mechanism and the switch count both genuinely changed, and the
+restated pair now demands two switches, two restores and zero mode-5 swaps in
+`wave_hilight_envelope()`.
+
+`find_closest_wave()` is reachable only from `callback.c`'s graph motion handler, i.e.
+a real DISPLAY, and was therefore NOT exercised behaviourally by that test.
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

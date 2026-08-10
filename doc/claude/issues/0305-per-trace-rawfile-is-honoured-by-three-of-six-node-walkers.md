@@ -1,6 +1,8 @@
 # 0305 — a per-trace `%<rawfile>` is honoured by three of the six `node=` walkers
 
-**Status:** OPEN
+**Status:** FIXED 2026-08-09 (batch F item 1) — see "The fix, as landed" below.
+The two smaller defects listed under "Two smaller defects noticed in the same sweep"
+are deliberately still OPEN; they are batch F item 2.
 **Found:** 2026-08-09, while wiring spec §D1 (`doc/claude/specs/mixed_signal_signal_browser.md`)
 **Area:** `src/draw.c` (graph rendering / graph interaction)
 **Severity:** a cross-DB trace RENDERS correctly but is inert to every mouse gesture
@@ -50,7 +52,9 @@ from a non-current database (spec §D1), a VCD trace in an otherwise analog stri
 1. `find_closest_wave()` (draw.c:4990-5017) DOES switch, but its restore is not the
    balanced per-node `if(save_extra_idx != -1 && save_extra_idx != xctx->extra_idx)`
    pair that `draw_graph()` uses at draw.c:8438 — worth re-reading before trusting
-   it on a strip with two foreign DBs.
+   it on a strip with two foreign DBs. **STILL OPEN** after the 2026-08-09 fix: its
+   `%` parse moved into `node_token_split()` with the rest, but its single mode-5
+   restore outside the node loop was left exactly as it was. Batch F item 2.
 2. `graph_fullxzoom()` (draw.c:3284-3391) never parses `%` **at all**, and
    `wviewer::graph_props` emits no per-rect `rawfile=` token, so an auto X window
    spans the CURRENT database's extent only. MEASURED with the reference co-sim
@@ -66,7 +70,70 @@ fix is ONE helper — `node_token_split(ntok, &vec, &dataset, &rawfile, &sim_typ
 plus the switch/restore bracket `draw_graph()` already gets right, applied at all
 six sites. Adding a seventh copy is how this drifted in the first place.
 
-## Not fixed because
+## The fix, as landed (2026-08-09, batch F item 1)
+
+`src/draw.c` gained ONE parser and ONE restore primitive, and every one of the six
+walkers calls them:
+
+```c
+static void node_token_split(const char *ntok, char **expr, int *dataset,
+                             char **rawfile, char **sim_type,
+                             const char *dflt_sim_type);
+static const char *node_dflt_sim_type(const char *graph_sim_type);
+static void node_db_restore(int idx);       /* extra_rawfile(2, "<idx>", ...) */
+```
+
+`node_token_split()` parses and Tcl-`subst`s; it switches nothing. The switch, and
+the restore that must pair with it, stay at the call site, because only the call site
+knows where the unwind point is.
+
+**The restore is an ABSOLUTE INDEX, not `extra_rawfile()`'s mode-5 swap.** This fix
+nests a per-trace switch inside the graph-level `rawfile=` switch that
+`graph_point_at()`, `wave_hilight_envelope()` and `graph_marker_sample()` already made.
+Mode 5 is a SWAP, not a stack pop: unwinding two levels with it lands the session on the
+inner database. Both levels now go through `node_db_restore()`, and absolute restores
+compose. The three affected graph-level restores changed from `extra_rawfile(5, ...)` to
+`node_db_restore(entry_extra_idx)` for that reason.
+
+`graph_wave_resolve()` is the one that cannot close its own bracket: the `idx` and
+`sweep_idx` it returns are COLUMN NUMBERS IN THE TRACE'S DATABASE, so the switch must
+still be in force while the caller reads them. It therefore reports the slot to unwind
+to through a new `int *db_restore_idx` out-parameter, and its single caller
+`graph_marker_sample()` restores at its single `done:` label. That caller's `point`
+bounds check moved BELOW the resolve for the same reason: `point` indexes the trace's
+own database.
+
+Two behavioural consequences worth naming:
+
+* an unresolvable per-trace database now REFUSES the trace instead of falling back to
+  the current one. Before the fix, an entry naming a nonexistent `.raw` was pickable,
+  boldable and markable — answering with whatever the current database happened to hold,
+  under the missing trace's name.
+* the sweep column is looked up in the trace's own database, as `draw_graph()` has always
+  done, kept in a per-node copy so a short `sweep=` list still carries forward correctly.
+  **Corrected in review:** it is re-looked-up **by NAME on every entry that took the
+  switch**, not only on the entries carrying their own `sweep=` token. The first cut
+  carried the *index* forward across the switch, and an index resolved in a five-column
+  analog raw subscripts a three-column VCD out of bounds — pick, bold and marker each
+  SIGSEGV'd on a strip whose `sweep=` list was shorter than its `node=` list. See the
+  sweep-column ruling in `doc/claude/specs/mixed_signal_signal_browser.md` §D1.
+
+**Proof:** `tests/headless/test_node_token_split.tcl`, 91 checks, true headless (in
+`full_audit.sh`'s `nogui_tests`). **19 of them are red at the parent commit `96f7678a`**,
+covering all three of the broken walkers plus the silent-fallback defect; the `NDS` leg
+covers the carried-sweep segfault, `NDT` the inherited-sim_type arm, and `NDX` reads
+`draw.c` itself so that a seventh hand-rolled `%` parse cannot reappear unnoticed.
+Thirty-one sabotages injected across the two rounds, every one caught — including one
+that reverts the index restore to the mode-5 swap and reddens 16 checks by leaving a bare
+envelope walk on the wrong database. Two source-level WH9h checks in
+`tests/headless/test_wave_hilight.tcl` were RESTATED (not deleted): the unwind mechanism
+and the switch count both genuinely changed.
+
+`find_closest_wave()` is only reachable from `callback.c`'s graph motion handler — a real
+DISPLAY — so its `%` parse moved into the shared helper but was NOT exercised
+behaviourally by that test.
+
+## Not fixed before because
 
 Out of scope for the §D1 item (whose deliverable was the render plus the Tcl
 emission). Fixing three C functions and their restore brackets is its own change
