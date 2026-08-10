@@ -498,10 +498,28 @@ for the shape family as a by-product. Two lessons: (i) **a direction that is doc
 and never asserted is a direction nobody re-checks** (0271); (ii) **enumerate the arms from the
 STATE the teardown owns, not from the verbs a report names** — 0242 and 0265 wrote that down, and
 0272 is the residue of the one phase written before it.
-What is left of class D is only the two known, deliberate residues, **0262** (the bare
+**Class-D correction, 2026-08-09: `netlist` WAS a door, and a terminal one (issue 0263, FIXED).**
+This document, the 0242 census and the phase plan all recorded `netlist` as a deliberate non-door
+residue — "it netlists a live preview but clears no gesture bits". Measured, that is false on the
+hierarchical arm. `global_*_netlist()` `push_undo()`s the document WITH the preview, then
+`unselect_all(1)` zeroes `ui_state` wholesale (a live preview is always selected), then
+`pop_undo(2,0)`'s `clear_drawing()` clears `sympin_preview`/`wirelabel_preview`/`preview_sel`, and
+the final `pop_undo(4,0)` restores the snapshot with the preview **baked in as an ordinary
+instance**: `ui 16424 → 0`, `sp 1 → 0`, three ESCs later the stray `lab_pin` still standing with
+`modified == 0`, and a leaked fluid snapshot that outlives the next file load. The deck was wrong
+too, in every backend (`R1 FOO GND 1k` for `R1 net1 GND 1k`) — an undropped label renames the whole
+NET via `name_nodes_of_pins_labels_and_propagate()` + `name_attached_nets()`. Fixed by gating the
+two netlist VERBS (`scheduler.c`'s branch, `callback.c`'s Shift-N, the latter necessarily ABOVE its
+own `unselect_all(1)`) with `leave_placement_for()` + `leave_merge_for()` — **not** by filtering the
+traversal, because `preview_sel`, the identity such a filter would key off, is destroyed by the
+driver's own `clear_drawing()` before the pass that needs it. Two lessons for this class: (iii) **a
+verb that only READS can still be a door, if the way it reads is push_undo → mutate → pop_undo**;
+(iv) **a census row that says "not a door" is a claim, and an unasserted claim rots** — this one sat
+in four documents for a day. `save` has the identical blindness and is still open (issue 0358).
+
+What is left of class D is only ONE known, deliberate residue, **0262** (the bare
 `xschem unselect_all` verb: it arms nothing, so the rule has no subject, and gating it would put a
-`delete()` behind 817 scripted call sites) and **0263** (`netlist` netlists a live preview but
-clears no gesture bits, so it is a different defect, not a door) — plus the wire-family `ui_state2`
+`delete()` behind 817 scripted call sites) — plus the wire-family `ui_state2`
 residue, measured, inert, and asserted-as-present in issue 0268 rather than silently left) — a decline residue
 becomes data corruption the moment the residue is a netlist object; (b) the invariant
 "`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
@@ -513,8 +531,10 @@ write them together, or you cannot assert either.** Making the pair atomic took 
 from 11 false positives on a healthy 6-keystroke arm to exactly one true report — the one door
 deliberately left ungated (the bare `xschem unselect_all` verb, issue **0262**: it arms nothing, so
 the "whatever you just pressed is what you meant" rule has no subject, and gating it would put a
-`delete()` behind 817 scripted call sites). `netlist` still netlists a live preview (issue
-**0263**) but clears no gesture bits, so it is a different defect, not a door;
+`delete()` behind 817 scripted call sites). `netlist` used to netlist a live preview and was filed
+as "not a door" on the same reasoning — measured FALSE and FIXED 2026-08-09, issue **0263**: it
+clears the bits AND commits the object, and it is now gated at both its verbs (see the class-D
+correction above);
 **0243** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
 `abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
 `last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the

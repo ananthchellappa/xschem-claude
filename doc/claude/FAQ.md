@@ -14,6 +14,52 @@ Newest entries on top.
 
 ---
 
+## Q41. I netlisted while a label was still riding the cursor. Is the deck safe, and where did my label go?
+
+- **Asked:** 2026-08-09
+- **Project state:** branch `open_pdk` @ `825d69ce` + this session — issue **0263**.
+
+**The deck is safe now. The label is gone, deliberately, and the status bar tells you so** —
+`Netlist: pending placement abandoned`, held for 5 s. Same for a paste riding the cursor
+(`Netlist: pending paste abandoned`).
+
+**What used to happen was much worse than "the label was included".** An undropped label preview is
+a real `lab_pin` instance, so the netlister treated it as a label you had dropped and renamed
+**the whole net** it happened to be sitting on. A cell that netlists as
+
+```
+R1 net1 GND 1k
+R2 net1 GND 2k
+```
+
+came out as `R1 FOO GND 1k` / `R2 FOO GND 2k` — *both* devices, because it is the net that gets
+renamed — in SPICE, Spectre, tedax, Verilog and VHDL alike, with no warning anywhere. And on a
+hierarchical netlist the preview was then **silently committed**: the netlister saves the document,
+netlists, and restores it, and the restore baked the preview in as an ordinary instance. Three ESCs
+could not remove it, the modify flag still read *unmodified*, and the next save wrote it to disk.
+The same round trip also turned a `place_symbol` preview into a real device and an undropped input
+pin into a **port of the subcircuit**.
+
+**Why the label is thrown away rather than kept.** This is the honest trade and it is written down
+as an open question. Keeping the gesture alive across a netlist means preserving five different
+pieces of gesture state through a full document save/restore, in five backend drivers. Abandoning
+it is two lines at the verb, reuses the teardown every other gesture already uses, and — critically
+— *the status quo was not "the gesture survives"*: the hierarchical netlist already destroyed it and
+gave you an object you could not delete. So the change trades a silently wrong netlist plus an
+undeletable stray object for a cancelled label you were told about.
+
+**What you should do:** drop the label (click) or ESC it before you netlist, exactly as you already
+do before saving. A netlist with nothing armed is completely unaffected — the gate is a no-op, and
+that is asserted by test, because it is what keeps the committed golden decks byte-identical.
+
+**Still rough** (filed, not fixed): if a *previous* action stripped the gesture bits without tearing
+the preview down (issue **0262** — the bare `unselect_all` verb, reachable after a property edit or
+from Compare Schematics), the stray object is by then an ordinary instance and the netlist will
+still emit it. And pressing **undo** after the abandon brings the preview back as a committed
+instance (issue **0361**) — the same thing ESC has always done.
+
+---
+
 ## Q40. I started drawing a rectangle, changed my mind and pressed `w`. Both were armed at once and nothing worked until ESC. Fixed?
 
 - **Asked:** 2026-08-09

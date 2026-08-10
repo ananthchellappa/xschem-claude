@@ -304,7 +304,7 @@ clean now, with two documented exceptions:
 |---|---|---|
 | paste / merge / paste-replay / redo / undo / place_text / place_symbol / add_graph / add_image | `sp=0`, no orphan | fixed |
 | `xschem unselect_all` (verb) | `sp=1`, orphan | **issue 0262** — deliberately not gated |
-| `netlist` | `sp=0`, orphan | **issue 0263** — clears no gesture bits, so not a door |
+| `netlist` | `sp=0`, orphan | **issue 0263** — this note said "clears no gesture bits, so not a door". Measured FALSE 2026-08-09: the driver's `push_undo`/`unselect_all(1)`/`pop_undo` round trip clears every bit AND commits the preview, on top of emitting a wrong deck. It was a door; **FIXED**, gated at both netlist verbs |
 
 ### Sabotage results — two of the three predictions were wrong, honestly reported
 

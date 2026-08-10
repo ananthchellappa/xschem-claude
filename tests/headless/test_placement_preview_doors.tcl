@@ -24,6 +24,27 @@
 # add_image and the undo/redo verbs in scheduler.c), and the three form `-place` arms now raise
 # sympin_preview WITH START_SYMPIN instead of before it, so the pair is atomic.
 #
+# ISSUE 0263 -- `netlist` (sections B14/B15 and G). Filed here originally as section F residue,
+# on the belief that the netlist merely READS the preview. Measured 2026-08-09, that is only half
+# of it, and the smaller half:
+#   * READ half. The preview is a fully-formed lab_pin in xctx->inst[], so
+#     name_nodes_of_pins_labels_and_propagate() (netlist.c) treats it as a real label and
+#     name_attached_nets() stamps its name onto the whole net it touches. A cell that netlists as
+#     `R1 net1 GND 1k` / `R2 net1 GND 2k` emits `R1 FOO GND 1k` / `R2 FOO GND 2k` -- a
+#     plausible-looking WRONG netlist with no diagnostic, in every backend (tedax shows the same
+#     substitution, which is what proves it is the shared pass and not spice_netlist.c).
+#   * COMMIT half, which the original filing denies. global_spice_netlist() push_undo()s the
+#     document WITH the preview, then unselect_all(1) zeroes ui_state wholesale, then pop_undo()'s
+#     clear_drawing() clears sympin_preview / wirelabel_preview / preview_sel, and the final
+#     pop_undo() restores the snapshot with the preview baked in as an ordinary instance. Measured
+#     ui 16424 -> 0, sp 1 -> 0, and three ESCs later `lab_pin.sym {l1 FOO}` is still standing with
+#     `modified` reading 0 throughout. So `netlist` IS a door, and a terminal one: the user cannot
+#     take the object back and is never told it is there.
+# So the gate belongs at the netlist VERB (leave_placement_for + leave_merge_for), not in the
+# traversal -- preview_sel, the identity a traversal filter would key off, is destroyed by the
+# driver's own clear_drawing() before the pass that needs it. `-nohier` (global=0) skips the whole
+# push/pop block and is the pure READ half, so it carries its own rows.
+#
 # Pure headless -- no `xschem callback`, so it runs true-headless. From the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_placement_preview_doors.tcl
 # Prints "RESULT: ALL PASS" on success.
@@ -59,6 +80,43 @@ proc renamed_net {} {
   return $r
 }
 
+## --- section G helpers (issue 0263): the emitted DECK is the oracle -------------------------
+## Everything above asserts xctx state. 0263's primary damage is in the FILE the netlister
+## writes, so section G reads it back. `deck` returns the whole text (empty when the netlister
+## produced nothing), `devline` the one line whose first token is $dev.
+proc deck {tag ext} {
+  set out [file join $::scratch $tag.$ext]
+  if {![file exists $out]} { return {} }
+  set fh [open $out r] ; set t [read $fh] ; close $fh
+  return $t
+}
+proc devline {tag ext dev} {
+  foreach l [split [deck $tag $ext] \n] {
+    set l [string trim $l]
+    if {[lindex [split $l] 0] eq $dev} { return $l }
+  }
+  return {}
+}
+## "does this token appear anywhere in the deck" -- catches a rename that landed on some OTHER
+## net or device than the one devline looks at.
+proc indeck {tag ext tok} { return [expr {[string match *$tok* [deck $tag $ext]] ? 1 : 0}] }
+proc msg  {} { return [xschem get statusmsg] }
+proc hold {} { return [xschem get statusmsg_hold] }
+
+## The G9 orphan oracle. `orphans` above matches the cell name EXACTLY against `lab_pin.sym`, which
+## is what a placement preview reports -- but a MERGED lab_pin reports `devices/lab_pin` (the path
+## form written in the merge source), so `orphans` silently counts it as zero. That blindness made
+## the original G9 row's "no orphan" checks pass for the wrong reason. Everything in sections A-F
+## places rather than merges its lab_pins, so `orphans` stays as it is; G9, which does both, counts
+## with this one instead.
+proc labpins {} {
+  set n 0
+  for {set i 0} {$i < [xschem get instances]} {incr i} {
+    if {[string match *lab_pin* [xschem getprop instance $i cell::name]]} { incr n }
+  }
+  return $n
+}
+
 ## One real edit on a clean document, nothing selected: wires=1, modified=1.
 proc setup {} {
   xschem abort_operation ; xschem abort_operation ; xschem abort_operation
@@ -77,11 +135,52 @@ if {![file exists $sym]} { puts "RESULT: SKIP (no lab_pin.sym at $sym)" ; exit 0
 ## lab_pin.sym is fine for the door sections (they only assert cleanup) but merging a .sym adds
 ## rects/lines/texts and no instances, so it cannot show that a replay actually landed.
 source [file join [file dirname [info script]] scratch.tcl]
-set mergesrc [file join [test_scratch pvdoors] one_wire.sch]
+set scratch [test_scratch pvdoors]
+set mergesrc [file join $scratch one_wire.sch]
 set fh [open $mergesrc w]
 puts $fh "v {xschem version=3.4.8RC file_version=1.3}"
 puts $fh "G {}" ; puts $fh "K {}" ; puts $fh "V {}" ; puts $fh "S {}" ; puts $fh "E {}"
 puts $fh "N 300 300 400 300 {lab=#net1}"
+close $fh
+
+## B14/B15 and section G run the REAL `netlist` verb, so the netlister needs somewhere to write.
+## Point it at this test's scratch dir (hoisted above section B): without it the decks land in the
+## developer's $netlist_dir, which is both a litter source and a way for one run to read another
+## run's deck.
+set ::netlist_dir $scratch
+
+## The section G cell, one file per row so no row can read a stale deck: ONE unnamed net with TWO
+## resistors on it plus two grounds. Two devices, not one, because 0263 renames the NET -- both
+## R-lines must move together, which a single-device fixture cannot show. Netlists as
+##   R1 net1 GND 1k / R2 net1 GND 2k
+## with nothing armed, and the 4 instances / 1 wire are the "the fixture survived" oracle.
+proc mkcell {tag} {
+  set fx [file join $::scratch $tag.sch]
+  set f [open $fx w]
+  puts $f {v {xschem version=3.4.8RC file_version=1.3}}
+  foreach k {G K V S F E} { puts $f "$k {}" }
+  puts $f {N 0 0 300 0 {}}
+  puts $f {C {devices/res} 100 30 0 0 {name=R1 value=1k}}
+  puts $f {C {devices/res} 200 30 0 0 {name=R2 value=2k}}
+  puts $f {C {devices/gnd} 100 60 0 0 {name=G1 lab=GND}}
+  puts $f {C {devices/gnd} 200 60 0 0 {name=G2 lab=GND}}
+  close $f
+  return $fx
+}
+## Load a fresh copy of it: clean modify flag, nothing selected, status field parked on "-".
+proc gload {tag} {
+  esc3
+  xschem load [mkcell $tag]
+  xschem unselect_all
+  xschem statusmsg "-"
+}
+## The merge source for the G8/G9 paste rows: a lab_pin named BAR sitting ON the fixture's net, so
+## an undropped paste renames it exactly the way an undropped placement does.
+set onelab [file join $scratch one_lab.sch]
+set fh [open $onelab w]
+puts $fh "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fh "G {}" ; puts $fh "K {}" ; puts $fh "V {}" ; puts $fh "S {}" ; puts $fh "E {}"
+puts $fh "C {devices/lab_pin} 100 0 0 0 {name=lb lab=BAR}"
 close $fh
 
 # ---------------------------------------------------------------------------
@@ -170,6 +269,20 @@ door_case "B10 net_label 0 (lab_wire)" { xschem net_label 0 }
 door_case "B11 net_label 1 (lab_pin)"  { xschem net_label 1 }
 door_case "B12 net_label 2 (ipin)"     { xschem net_label 2 }
 door_case "B13 net_label 3 (opin)"     { xschem net_label 3 }
+
+## B14 `netlist` -- issue 0263, and the door this file spent its first life calling a non-door (see
+##    the old section F note, now deleted). global_*_netlist()'s unselect_all(1) drops the gesture
+##    bits and its pop_undo() round trip restores a snapshot with the preview baked in, so pre-fix
+##    the ESC below has nothing left to abort and the lab_pin is a permanent, committed instance.
+##    `catch` because the verb returns the netlister's error code, not because it may throw.
+door_case "B14 netlist" { catch {xschem netlist} }
+
+## B15 The `-nohier` arm. global=0 takes a different route through the driver -- no push_undo, no
+##    unselect_all, no pop_undo -- so it is the pure READ half of 0263 and needs its own row rather
+##    than riding on B14's. Its STATE was already correct before the fix (the gesture survives and
+##    ESC still takes the preview back); what was wrong is the DECK, which section G asserts. This
+##    row is the no-regression pin saying that gating the verb did not break the arm already clean.
+door_case "B15 netlist -nohier" { catch {xschem netlist -nohier} }
 
 # ---------------------------------------------------------------------------
 # C. One undo baseline per gesture (add_wire_label.md #8) -- the sabotage target.
@@ -280,21 +393,193 @@ check "E4 replay ESC: merge stayed committed" [xschem get wires] 2
 check "E4 replay ESC: invariant holds"       [desync] 0
 
 # ---------------------------------------------------------------------------
-# F. KNOWN RESIDUE -- reported, not fixed here. Both are informational (note:, not check:) so this
-#    file stays a contract for what 0242 actually closed.
+# F. KNOWN RESIDUE -- reported, not fixed here. Informational (note:, not check:) so this file
+#    stays a contract for what 0242 actually closed.
 #      * the bare `xschem unselect_all` VERB still orphans: it arms nothing, so the ratified
 #        "whatever you just pressed is what you meant" rule has no subject, and gating it would
 #        put a delete() behind 817 scripted call sites -- the same objection that keeps the
 #        teardown out of unselect_all() itself (issue 0123). The C tripwire
 #        check_placement_preview_invariant() reports it on stderr instead.
-#      * `netlist` netlists the preview instance. It clears no gesture bits (sp and START_SYMPIN
-#        both end at 0), so it is not a door and leaves no terminal state -- a different defect.
+#    The `netlist` bullet that used to stand here -- "it clears no gesture bits ... so it is not a
+#    door and leaves no terminal state" -- was measured FALSE on 2026-08-09 and is gone: netlist is
+#    a door, it is terminal, and it is now gated and asserted in B14/B15 and section G (issue 0263).
 # ---------------------------------------------------------------------------
 setup ; arm ; xschem unselect_all
 note "residue: after `xschem unselect_all` sympin_preview=[sp] START_SYMPIN=[sympin_bit] orphans=[orphans] (issue 0262)"
 esc3
-setup ; arm ; xschem netlist
-note "residue: after `xschem netlist` sympin_preview=[sp] orphans=[orphans] (issue 0263)"
+
+# ---------------------------------------------------------------------------
+# G. THE DECK ITSELF -- issue 0263. Sections A-F assert xctx state; a state-only suite cannot see
+#    0263's headline damage, which is a WRONG NETLIST FILE with no error anywhere. Every row here
+#    loads a fresh copy of the fixture, so no row can inherit another's document or read another's
+#    deck.
+#
+#    THE FIXTURE, netlisted with nothing armed:  R1 net1 GND 1k  /  R2 net1 GND 2k
+#    Pre-fix, with a `FOO` label preview riding the cursor:  R1 FOO GND 1k  /  R2 FOO GND 2k
+#    -- BOTH devices move, because what the undropped label renames is the NET.
+# ---------------------------------------------------------------------------
+xschem set netlist_type spice
+
+## G0 CONTROL. Nothing armed: the fixture's own deck. If this row ever moves, every row below is
+##    measuring the fixture rather than the gate.
+gload g0
+xschem netlist
+check "G0 control deck: R1 line"          [devline g0 spice R1] {R1 net1 GND 1k}
+check "G0 control deck: R2 line"          [devline g0 spice R2] {R2 net1 GND 2k}
+check "G0 control: fixture instances"     [xschem get instances] 4
+check "G0 control: fixture wires"         [xschem get wires] 1
+
+## G1 THE PRIMARY ROW. A live placement preview must not reach the netlister.
+gload g1 ; arm
+xschem netlist
+check "G1 armed netlist: R1 line"         [devline g1 spice R1] {R1 net1 GND 1k}
+check "G1 armed netlist: R2 line"         [devline g1 spice R2] {R2 net1 GND 2k}
+check "G1b armed netlist: no FOO in deck" [indeck g1 spice FOO] 0
+
+## G2 The `-nohier` arm emits the top level through the same shared naming pass, so it is wrong in
+##    exactly the same way while reaching it by a different route. Own arm, own assertion.
+gload g2 ; arm
+xschem netlist -nohier
+check "G2 -nohier: R1 line"               [devline g2 spice R1] {R1 net1 GND 1k}
+check "G2 -nohier: R2 line"               [devline g2 spice R2] {R2 net1 GND 2k}
+check "G2b -nohier: no FOO in deck"       [indeck g2 spice FOO] 0
+
+## G3 BACKEND INDEPENDENCE. The rename happens in netlist.c's shared
+##    name_nodes_of_pins_labels_and_propagate(), not in spice_netlist.c, so a fix that only made
+##    the SPICE deck right would be the wrong fix. tedax is the cheapest second backend to read.
+xschem set netlist_type tedax
+gload g3 ; arm
+xschem netlist
+check "G3 tedax: conn line for R1"        [indeck g3 tdx {conn net1 R1 1}] 1
+check "G3 tedax: no FOO conn"             [indeck g3 tdx {conn FOO}] 0
+xschem set netlist_type spice
+
+## G4 STATE AFTER the netlist and BEFORE any ESC -- the commit half. The gesture must have been
+##    ABANDONED, not accepted: no lab_pin anywhere, and the fixture's own 4 instances only.
+gload g4 ; arm
+xschem netlist
+check "G4 after netlist: sympin cleared"  [sp] 0
+check "G4 after netlist: invariant holds" [desync] 0
+check "G4 after netlist: no orphan"       [orphans] 0
+check "G4 after netlist: instances"       [xschem get instances] 4
+
+## G5 ...and ESC afterwards has nothing to roll back and destroys nothing.
+esc3
+check "G5 netlist+ESC: instances"         [xschem get instances] 4
+check "G5 netlist+ESC: wires"             [xschem get wires] 1
+check "G5 netlist+ESC: no orphan"         [orphans] 0
+
+## G6 THE TEARDOWN NAMES ITSELF (the 0241 rule). The 5000 ms hold is what keeps this line on the
+##    status bar: the netlister's own select-info lines land one call later and would otherwise
+##    take the field with the user none the wiser.
+gload g6 ; arm
+xschem netlist
+check "G6 gate names itself"              [msg] {Netlist: pending placement abandoned}
+check "G6 gate message is held"           [hold] 1
+
+## G7 MODIFY CONTRACT (0244/0267/0270): abandoning a gesture must not touch the flag in either
+##    direction. Both rows were ALREADY GREEN before the fix -- the netlist's pop_undo round trip
+##    happens to restore the flag it found -- so they prove nothing about 0263 and are kept purely
+##    as the regression pin that the new teardown does not start lying.
+gload g7 ; arm
+check "G7 clean buffer before netlist"    [xschem get modified] 0
+xschem netlist
+check "G7 clean buffer: still clean"      [xschem get modified] 0
+esc3
+gload g7b
+xschem wire 0 500 100 500 ; xschem unselect_all
+arm
+check "G7b dirty buffer before netlist"   [xschem get modified] 1
+xschem netlist
+check "G7b dirty buffer: still dirty"     [xschem get modified] 1
+esc3
+
+## G8 THE MERGE TWIN (issue 0265's rule at the same verb). A pending paste is ALWAYS selected, so
+##    the driver's unselect_all(1) silently ACCEPTS it exactly as it accepts a placement -- and the
+##    merged lab_pin renames the net on the way out.
+gload g8
+xschem merge $::onelab
+check "G8 merge armed: STARTMERGE"        [expr {([xschem get ui_state] & 256) ? 1 : 0}] 1
+xschem netlist
+check "G8 after netlist: instances"       [xschem get instances] 4
+check "G8b merge deck: R1 line"           [devline g8 spice R1] {R1 net1 GND 1k}
+check "G8b merge deck: no BAR in deck"    [indeck g8 spice BAR] 0
+esc3
+check "G8 netlist+ESC: instances"         [xschem get instances] 4
+check "G8 netlist+ESC: wires"             [xschem get wires] 1
+
+## G9 THE CO-ARMED ORDERS. preview_sel is ONE slot shared by the placement and the merge, so a
+##    caller holding both must tear the PLACEMENT down first -- its stamp is a superset of the
+##    merge's (see merge_file(), paste.c). gate_bypass is the only way to build a co-armed state at
+##    all: it is exactly what the arms' own gates otherwise prevent.
+##
+##    THIS ROW'S ORIGINAL PREMISE WAS WRONG AND IS CORRECTED HERE (measured 2026-08-09, post-fix).
+##    It asserted that both orders end at the fixture's own 4 instances, i.e. that the netlist
+##    reclaims BOTH objects. Neither order ever holds two LIVE gestures, so neither can: both
+##    `add_wire_label -place` and merge_file() run their own unselect_all(1), which zeroes ui_state
+##    wholesale (select.c), so the SECOND arm always strips the FIRST one's bit while leaving its
+##    object in the drawing. That stranded object is the pre-existing 0262 orphan -- by then an
+##    ordinary committed instance with no gesture bit and no stamp -- and leave_placement_for() /
+##    leave_merge_for() early-return on it BY DESIGN (issue 0263 decision D10: 0262 is a separate,
+##    filed defect and this fix deliberately does not reach into it). Measured, both orders:
+##      merge then placement -> ui 16424, STARTMERGE already gone, the merged BAR stranded
+##      placement then merge -> ui 296, START_SYMPIN already gone, the placed FOO stranded
+##    The four placement arms whose stamp really IS a superset (ctx-menu text, `t`, the screen grab,
+##    place_net_label's failed-place_symbol path) all need `xschem callback` and a window, so the
+##    ordering rule itself stays code-proved, not asserted here.
+##
+##    What each order DOES prove, and why both are kept: they exercise the two gates SEPARATELY.
+##    G9a's live gesture is the placement, so only leave_placement_for() can clear it; G9b's is the
+##    merge, so only leave_merge_for() can. Either gate going missing reddens exactly one of them.
+
+## G9a MERGE, THEN PLACEMENT -- the placement is the live one.
+gload g9a
+xschem test_gate_bypass 1
+xschem merge $::onelab
+arm
+xschem test_gate_bypass 0
+check "G9a co-armed: instances"           [xschem get instances] 6
+check "G9a co-armed: lab_pins"            [labpins] 2
+check "G9a live gesture is the placement" [expr {([xschem get ui_state] & 16384) ? 1 : 0}] 1
+check "G9a the merge bit is already gone" [expr {([xschem get ui_state] & 256) ? 1 : 0}] 0
+xschem netlist
+check "G9a after netlist: placement gone" [xschem get instances] 5
+check "G9a after netlist: lab_pins"       [labpins] 1
+check "G9a after netlist: sympin cleared" [sp] 0
+check "G9a deck: no FOO"                  [indeck g9a spice FOO] 0
+note "residue: the 0262-stranded merge is a committed instance by now, so the deck correctly carries it -- R1 line is [devline g9a spice R1] (issue 0262, not 0263)"
+esc3
+check "G9a netlist+ESC: instances"        [xschem get instances] 5
+check "G9a netlist+ESC: wires"            [xschem get wires] 1
+
+## G9b PLACEMENT, THEN MERGE -- the merge is the live one, and sympin_preview is stuck at 1 with
+##     START_SYMPIN gone, which is the 0262 desync itself. The netlist must still take the paste.
+gload g9b
+xschem test_gate_bypass 1
+arm
+xschem merge $::onelab
+xschem test_gate_bypass 0
+check "G9b co-armed: instances"           [xschem get instances] 6
+check "G9b co-armed: lab_pins"            [labpins] 2
+check "G9b live gesture is the merge"     [expr {([xschem get ui_state] & 256) ? 1 : 0}] 1
+check "G9b the sympin bit is already gone" [sympin_bit] 0
+xschem netlist
+check "G9b after netlist: merge gone"     [xschem get instances] 5
+check "G9b after netlist: lab_pins"       [labpins] 1
+check "G9b deck: no BAR"                  [indeck g9b spice BAR] 0
+note "residue: the 0262-stranded placement is committed by now -- R1 line is [devline g9b spice R1] (issue 0262, not 0263)"
+esc3
+check "G9b netlist+ESC: instances"        [xschem get instances] 5
+check "G9b netlist+ESC: wires"            [xschem get wires] 1
+
+## G10 SILENCE WHEN IDLE / the replay seam. With nothing armed the gate must be a total no-op --
+##     this is the contract that keeps tests/headless/gold/*.spice byte-identical and keeps the
+##     `-keep_symbols` cellview/reroute calls in xschem.tcl from announcing themselves. ALREADY
+##     GREEN before the fix (there is no gate to be silent yet); it is a regression pin only.
+gload g10
+xschem netlist
+check "G10 idle netlist: status untouched" [msg] {-}
+check "G10 idle netlist: no hold armed"    [hold] 0
 esc3
 
 puts ""

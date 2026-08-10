@@ -8,10 +8,19 @@ Last measured 2026-08-09.
 
 **The plan as a whole is done.** All four gesture families now have a teardown/gate pair and every
 arm calls every gate that applies to it, in both interface branches. What remains of `WIRING.md`
-§8 class **D** is the two deliberate residues **0262** (the bare `xschem unselect_all` verb: it
-arms nothing, so the rule has no subject) and **0263** (`netlist` netlists a live preview but
-clears no gesture bits — a different defect, not a door), plus the wire-family `ui_state2` residue
-recorded and asserted-as-present in issue **0268**.
+§8 class **D** is the one deliberate residue **0262** (the bare `xschem unselect_all` verb: it
+arms nothing, so the rule has no subject), plus the wire-family `ui_state2` residue recorded and
+asserted-as-present in issue **0268**.
+
+**Correction, 2026-08-09.** This list used to carry a second residue, **0263** (`netlist`),
+excluded on the grounds that it "netlists a live preview but clears no gesture bits — a different
+defect, not a door". Measured, that is false: the hierarchical driver's
+`push_undo` → `unselect_all(1)` → `pop_undo` round trip clears every gesture bit AND restores the
+preview as an ordinary committed instance that ESC can never take back, on top of emitting a wrong
+deck in every backend. `netlist` was a door all along and is now gated like one, at both its verbs
+(`scheduler.c`'s branch and `callback.c`'s Shift-N) — issue **0263**, FIXED. The phase-plan lesson:
+this list was assembled from what each verb *arms*, and a verb that arms nothing can still destroy
+a gesture by the way it saves and restores the document.
 
 ## The invariant
 

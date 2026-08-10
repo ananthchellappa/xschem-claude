@@ -7229,6 +7229,15 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         int err = 0;
         yyparse_error = 0;
         if(xctx->semaphore >= 2) break;
+        /* ISSUE 0263 -- the third door into the same drivers, gated the same way as the `netlist`
+         * verb (scheduler.c, where the full reasoning lives). It MUST precede the unselect_all(1)
+         * below: that call is what zeroes ui_state wholesale (select.c) and so destroys the very
+         * bits both gates test -- after it there is no gesture left to abandon, only a committed
+         * object nobody asked for. Placement first, merge second (shared preview_sel stamp).
+         * Code-proved only, like the screen-grab gate in draw.c: this path needs `xschem callback`
+         * and a live window, so it carries no headless check. */
+        leave_placement_for("Netlist");
+        leave_merge_for("Netlist");
         unselect_all(1);
         if( set_netlist_dir(0, NULL) ) {
           dbg(1, "callback(): -------------\n");

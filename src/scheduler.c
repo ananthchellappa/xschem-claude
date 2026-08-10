@@ -8479,6 +8479,51 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(set_netlist_dir(0, NULL) ) {
         done_netlist = 1;
 
+        /* ISSUE 0263 -- a live placement preview / pending paste must not reach the netlister.
+         * MEASURED (2026-08-09): with an Add-Wire-Label preview named FOO riding the cursor on a
+         * cell whose one unnamed net carries two resistors, `xschem netlist` emitted
+         * `R1 FOO GND 1k` / `R2 FOO GND 2k` instead of `R1 net1 GND 1k` / `R2 net1 GND 2k` -- the
+         * preview is a fully formed lab_pin in xctx->inst[], so name_nodes_of_pins_labels_and_-
+         * propagate() (netlist.c) takes its lab as a node name and name_attached_nets() stamps it
+         * on the whole net. skip_instance() filters only *_IGNORE/*_SHORT/LVS, so nothing
+         * downstream can tell the difference, and every backend (spice/spectre/tedax/verilog/vhdl)
+         * emits the same wrong deck with no error anywhere.
+         * AND IT IS A DOOR, terminal, not merely a wrong read -- which is why the fix is a
+         * TEARDOWN here and not a filter in the emit loops (0263's own option 1). The
+         * hierarchical driver push_undo()s the document WITH the preview (spice_netlist.c),
+         * unselect_all(1)s -- which zeroes ui_state wholesale (select.c), a live preview being
+         * always selected -- then pop_undo(2,0) runs clear_drawing(), which clears
+         * sympin_preview / wirelabel_preview / the preview_sel stamp (actions.c), and finally
+         * pop_undo(4,0) restores the snapshot with the preview baked in as an ordinary object.
+         * Measured: ui_state 16424 -> 0, sympin_preview 1 -> 0, three ESCs later the stray
+         * `lab_pin.sym {l1 FOO}` is STILL there with modified == 0, and the abandoned gesture also
+         * leaks a fluid snapshot that outlives the next file load. A preview_sel-keyed filter
+         * cannot fix any of that -- and preview_sel is itself destroyed by the driver's own
+         * clear_drawing(), so the predicate would not even survive the pass that needs it.
+         * SITED HERE, not at branch entry: on the dir-unwritable path (the else below) the netlist
+         * never runs, and a verb that did nothing must not consume the user's gesture.
+         * Placement teardown FIRST, merge second -- they share xctx->preview_sel and the placement
+         * stamp is a superset (see abort_pending_merge(), callback.c).
+         * Only these two gates: leave_wire_draw_for()/leave_shape_draw_for() are deliberately NOT
+         * called. A rubber-band draw parks no object in inst[]/wire[], so the netlister cannot see
+         * it, and unselect_all() zeroes ui_state only when something is selected (select.c), which
+         * a bare draw is not -- so the round trip provably cannot clobber a draw either. Ending an
+         * in-flight draw on every `n` would be user-visible harm for zero correctness gain.
+         * Both gates are no-ops when nothing is armed, so idle netlists (the committed goldens,
+         * tests/netlisting, the `-keep_symbols` cellview/reroute calls in xschem.tcl) are
+         * byte-identical and silent. The `-keep_symbols` axis is NOT excluded: that axis exists
+         * for action-log replay fidelity, not for gesture ownership -- a wrong deck is wrong
+         * whoever asked for it.
+         * The Shift-N current-level key is the same verb by another door and is gated the same way
+         * at its callback.c handler. The CLI `-n` batch (xinit.c) is deliberately ungated: it runs
+         * BEFORE `--script` is sourced, so no gesture can exist there.
+         * RESIDUE, recorded not fixed: leave_placement_for() early-returns on xctx->readonly (the
+         * teardown IS a delete()) and on the already-stripped 0262 orphan state, so a netlist taken
+         * in either state still emits the stray object; and `save` has the identical blindness
+         * (issue 0358). See doc/claude/issues/0263-*.md. */
+        leave_placement_for("Netlist");
+        leave_merge_for("Netlist");
+
         save_keep = tclgetboolvar("keep_symbols");
         if(keep_symbols) tclsetboolvar("keep_symbols", keep_symbols);
         if(xctx->netlist_type == CAD_SPICE_NETLIST)

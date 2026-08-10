@@ -162,6 +162,29 @@ Beware when testing this class: `xschem add_wire_label -drop` calls `wire_label_
 directly and bypasses `end_place_move_copy_zoom()`, so headlessly a label DOES drop while
 `STARTWIRE` is live, where the GUI click cannot. Assert on the flags, not on `-drop`'s return.
 
+### The read verbs: `netlist` also abandons the preview (issue 0263, 2026-08-09)
+
+`xschem netlist` (and Shift-N, the toolbar button, and the `-keep_symbols` cellview/reroute calls
+in `xschem.tcl`) **abandons a live label preview** and says so —
+`Netlist: pending placement abandoned`, held for 5 s so the netlister's own status lines cannot
+bury it. Same `leave_placement_for()` teardown, same ratified rule, at the netlist verb.
+
+This is not a courtesy: an undropped preview is a fully-formed `lab_pin` in `xctx->inst[]`, so
+`name_nodes_of_pins_labels_and_propagate()` took its `lab=` as a node name and `name_attached_nets()`
+stamped it on the whole net — a cell that netlists as `R1 net1 GND 1k` came out `R1 FOO GND 1k`, in
+every backend, with no error. Worse, the hierarchical driver's
+`push_undo` → `unselect_all(1)` → `pop_undo` round trip then **committed** the preview as an
+ordinary instance, so ESC could not take it back and `modified` still read 0. Filtering the
+traversal instead was rejected: `preview_sel`, the stamp such a filter would key off, is cleared by
+the driver's own `clear_drawing()` before the pass that needs it.
+
+The user-visible consequence for this feature: **a netlist taken while you are still typing a label
+throws the label away.** That is the open question the fix records (issue 0263 decision D2) — the
+alternative, preserving the gesture across the driver's document round trip, is a much larger
+change in five backend drivers. `-drop` is unaffected, and so is a netlist taken with nothing armed
+(the gate is a total no-op then — asserted, because it is what keeps the committed goldens
+byte-identical).
+
 ## Implementation map
 
 C:
