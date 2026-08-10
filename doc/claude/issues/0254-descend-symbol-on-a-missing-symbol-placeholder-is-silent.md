@@ -319,3 +319,94 @@ Two things that must be decided in the same pass, not left implicit:
   (result string, `currsch` unchanged, and — after the fix — the presence of the named-symbol
   line), because the whole defect *is* the absence of output and only an output assertion can
   regress-guard it.
+
+---
+
+# RESOLUTION — FIXED (item D4, run 2026-08-09, branch open_pdk)
+
+Part of the one mechanism described in 0251's resolution. Item status **E** (see 0251, D6).
+
+## What was measured BEFORE
+
+With stderr fenced by markers, so "nothing was emitted" is a positive observation:
+
+```
+D0 placeholder: name=XM cell=no_such_cell_0254.sym type='missing'
+<<<STDERR FENCE OPEN (D1..D3)>>>
+<<<STDERR FENCE CLOSED>>>
+D1 descend_symbol       -> ''
+D3 descend              -> '0'
+D4 => the unresolved name 'no_such_cell_0254.sym' is never told to the user
+E1 xschem get descend_error -> ''
+```
+
+All three entry points refused and **nothing** appeared on any channel — even though the
+unresolved name was live in `name` (`src/save.c:5586`) two lines above the refusal. The only
+trace in the whole session was `l_s_d(): Symbol not found: …` at parent-*load* time, gated on
+`recursion_counter == 1` (so nested misses print nothing, ever) and stderr-only.
+
+## What it does AFTER
+
+```
+D1 descend_symbol       -> '0'
+D2 descend_symbol -inst -> '0'
+D3 descend              -> '0'
+E1 xschem get descend_error -> 'missing-symbol:no_such_cell_0254.sym'
+```
+
+and on the held status line (0248-safe — a plain `statusmsg` is clobbered by `select.c`):
+
+```
+statusmsg = {Descend: symbol not found: doomed.sym -- nothing to descend into} hold=1
+```
+
+The `-inst` form is covered too: it bypasses the *selection* guard but not this one.
+
+## How
+
+A named callee `descend_missing_sym(int n, const char *symname)` (`src/actions.c:3751`),
+tested **before** the generic type guard on **both** verbs — `src/save.c:5604` and
+`src/actions.c:3841`. Both emit the same sentence and record `missing-symbol:<name>`.
+
+Per this issue's first risk note, a user-authored `type=missing` symbol that really exists on
+disk is discriminated (`abs_sym_path` + `stat`) and worded differently:
+
+```c
+  if(path && path[0] && !stat(path, &sbuf))
+    "Descend: %s declares type=missing -- nothing to descend into"
+  else
+    "Descend: symbol not found: %s -- nothing to descend into"
+```
+
+## Decision
+
+- **D5 [R2] — `type=="missing"` becomes its own named, LOUD refusal, placed before
+  `descend_schematic`'s generic type guard.** The placeholder is the one thing in this class
+  the user *deliberately* clicked to interrogate — a `---MISSING SYMBOL---` box is precisely
+  what you click to find out what broke — and none of the 262 symbols locked by
+  `test_descend_inert_class.tcl` carries type `missing`, so the lock is untouched.
+  - *Rejected:* leaving the placeholder inside the generic type guard — that forces a choice
+    between making the whole annotation class loud and leaving the placeholder silent, which
+    is exactly the flattening decision D2 forbids.
+
+## Coverage and the stderr risk
+
+Rows R07 (token), R08 (`statusmsg` contains the name, `statusmsg_hold == 1`), R10 (`-inst`
+form) in `tests/headless/test_descend_symbol.tcl`; R17 on the `descend` verb in
+`test_descend_refusal_channel_0251.tcl`.
+
+This issue's "not free of behaviour change for scripts" note is satisfied: the fix speaks via
+`statusmsg_hold()` and **never** `dbg(0)`, so stderr is unchanged. The inert-class header's
+stderr-noise recipe prints nothing against the new binary.
+
+Sabotage **S6** (`#define descend_missing_sym(n,symname) (0)`) turns R07, R08, R10 and R17
+red. R07 is the sharp one: `descend_symbol` then returns `1` and **succeeds into** the
+`---MISSING SYMBOL---` placeholder, and R17 records `not-descendable:missing` instead of
+`missing-symbol:<name>` — so the token discriminates *which* guard fired, not merely that
+something refused.
+
+## Still open
+
+`descend_missing_sym()` dereferences `(xctx->inst[n].ptr + xctx->sym)->type` with no
+`ptr >= 0` guard, while `rebuild_selected_array()` guards exactly that elsewhere. Pre-existing
+shape, but this fix moved the deref onto both verbs' hot path. See 0251 "still open" item 9.

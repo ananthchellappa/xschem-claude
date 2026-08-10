@@ -14,6 +14,58 @@ Newest entries on top.
 
 ---
 
+## Q42. When should a refused operation tell the user, and when is silence the right answer?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `ee290c5b` + this session — issues **0249/0251/0254/0256/0366** (item D4).
+
+**Short answer: silence is correct exactly when nothing the user saw, typed or clicked
+promised the operation.** Record the reason always; speak it selectively.
+
+Descend was the case that settled it. It had thirteen refusal sites and no status protocol —
+only one of them said anything, and that one used `dbg(0)`, which a desktop-launched user
+never sees. A refused `xschem descend_symbol` and a successful one both evaluated to the
+empty string, so no script could tell them apart.
+
+The tempting fix — "make every refusal speak" — is wrong, and there is a committed
+regression lock proving it: `tests/headless/test_descend_inert_class.tcl` pins that 262
+shipped annotation symbols (`lab_pin`, `gnd`, `vdd`, `ipin`/`opin`, title blocks, probes)
+must be refused **silently**. Pressing `e` with a title block somewhere in a rubber-band
+selection is not a request to descend into a title block, and answering it with a status
+line trains the user to ignore the status line.
+
+So the shape is two mechanisms, not one:
+
+- **Record always** — a reason token on the context (`xschem get descend_error`), written at
+  every refusal, including the silent ones. Tests and scripts get a machine-readable cause
+  even where the UI stays quiet.
+- **Speak selectively** — a separate predicate decides. Loud when the user pressed the key on
+  something they picked (nothing selected, ambiguous multi-selection, a `---MISSING SYMBOL---`
+  box they clicked precisely to interrogate). Silent when the refusal is about an object the
+  user never aimed at.
+
+Two implementation lessons worth carrying:
+
+1. **The silent sites must still build their message and pass `speak = 0`.** The first cut
+   passed `NULL` instead, and a sabotage run that forced the predicate to "always speak" left
+   the lock green — the silence came from a missing string, not from policy. A policy you
+   cannot falsify is not a policy.
+2. **The reason must be a second channel, never a widened result.** `xschem descend`'s
+   `"0"`/`"1"` string is load-bearing in seven places, one of which compares it as a string.
+   Reason codes go in a new key; the boolean stays a boolean.
+
+**Speak via `statusmsg_hold()`, not `statusmsg()`** — a plain status message is immediately
+clobbered by `select.c`'s `n= x= y= w= h=` info line (0248), so an ordinary `statusmsg()` on a
+refusal is indistinguishable from not reporting at all.
+
+**Related trap:** a refusal channel documents "empty means success", which makes every
+*unreported failure* actively worse than before, because callers now trust the channel.
+`descend_symbol()` still drops `load_schematic()`'s result and returns success for a failed
+load — see **0369**. When you add a reason channel, audit the failure sites, not just the
+refusal sites.
+
+---
+
 ## Q41. I netlisted while a label was still riding the cursor. Is the deck safe, and where did my label go?
 
 - **Asked:** 2026-08-09

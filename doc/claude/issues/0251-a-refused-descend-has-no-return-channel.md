@@ -335,3 +335,190 @@ surface and Tcl can echo.
 - **No coverage of the reporting itself.** Everything currently asserted about descend is about
   the *value*; a fix here needs a new test that asserts a *message* was produced, which means the
   test has to intercept `ciw_echo`/`statusmsg` as the probe above does.
+
+---
+
+# RESOLUTION — FIXED (the refusal half); one failure site remains OPEN as 0369
+
+Item D4, run 2026-08-09, branch open_pdk. This is the **umbrella** resolution: 0249, 0254,
+0256 and 0366 were closed by the single mechanism described here.
+Item status is **E** — decision D6 below is a user-visible API change taken at ladder rung
+R3 with no prior ratification, and needs a human ruling.
+
+## What was measured BEFORE
+
+```
+A1 nothing selected   : descend_symbol -> ''   currsch=0
+A2 one instance (OK)  : descend_symbol -> ''   currsch=1
+A3 => a refused descend and a successful descend return the SAME string
+B1 nothing selected   : descend -> '0'
+B2 wire-only selection: descend -> '0'   selected_set={}
+B3 non-subcircuit inst: descend -> '0'   selected_set={{l1}}
+B4 success            : descend -> '1'   currsch=1
+E1 xschem get descend_error -> ''   (no such key; unknown keys are '' too)
+E2 after a refusal, statusmsg = 'n=   1 x = 590  y = 675  w = 220 h = 50'
+```
+
+Four unrelated causes collapsed into one `'0'`; a fifth (`semaphore != 0`) never entered the
+function at all and was also `'0'`. `descend_symbol` returned the empty string for *both*
+outcomes, which is why `src/xschem.tcl` inferred success from `[xschem get currsch]` rising.
+E2 is 0248 confirmed: a plain `statusmsg()` is already clobbered by `select.c`'s info line.
+
+## What it does AFTER
+
+```
+A1 nothing selected   : descend_symbol -> '0'   currsch=0
+A2 one instance (OK)  : descend_symbol -> '1'   currsch=1
+E1 xschem get descend_error -> 'missing-symbol:no_such_cell_0254.sym'
+E2 after a refusal, statusmsg = 'Descend symbol: select an instance to descend into'
+E3 after a refusal, statusmsg_hold = '1'
+```
+
+## The mechanism
+
+One **per-context** reason channel, recorded ALWAYS and spoken SELECTIVELY.
+
+- `char descend_err[192]` on `Xschem_ctx` (`src/xschem.h`), immediately after
+  `statusmsg_text`. Per-context, not a file-scope static, because `open_sub_schematic` and
+  `hi_descend_newwin` switch contexts mid-flight. Fixed array — no `_ALLOC_ID_`, no teardown.
+- Four named callees in `src/actions.c`: `descend_clear_error()`, `descend_speak_p()` (the
+  loud/silent **predicate**, its own function so it can be sabotaged), `descend_speak()` and
+  `descend_set_error(code, detail, msg, speak)`. Plus `descend_pick_target()` (0249/0366) and
+  `descend_missing_sym()` (0254).
+- Exposed as `xschem get descend_error`. Both verbs clear on entry, so a stale reason can
+  never be read as a fresh one.
+- Speaking is `statusmsg_hold()` **only** — never `dbg(0)`, so the inert-class lock's stderr
+  hygiene stays clean. A new dispatcher option `xschem statusmsg -hold <text>` gives the Tcl
+  side the same hold discipline (the bare form is byte-identical).
+
+Tokens: `maxdepth`, `busy`, `no-selection`, `no-instance-selected`, `multi-selection`,
+`missing-symbol:<name>`, `not-descendable:<type>`, `no-schematic`, `save-cancelled`,
+`save-failed`, `iter-cancelled`, `load-failed`.
+
+**`load-failed` is not a refusal** — this issue's own risk note demanded that distinction and
+it is honoured: the token is documented at `src/scheduler.c` as meaning *the hierarchy has
+ALREADY ADVANCED and the caller must `go_back`*, and must never be read as "nothing happened".
+
+## Decisions
+
+- **D1 [R1] — the reason is a SECOND channel, never a widened result.** Rung R1, landmine 2
+  ("never gate / disturb the replay-test seams"): the `"0"`/`"1"` string of `xschem descend`
+  is load-bearing at `src/xschem.tcl:3717`, `sky130A/sky130_procs.tcl:148`,
+  `ihp-sg13g2/sg13g2_procs.tcl:399`, `utils/cadence_nav.tcl:326`, `tests/buried_hilight.tcl:45`
+  (a *string* compare) and three headless tests. `xschem descend` is unchanged.
+  - *Rejected:* returning a reason string from `xschem descend` — breaks all seven at once.
+- **D2 [R1] — record ALWAYS, speak SELECTIVELY.** 0241 ("a refusal must name what it is
+  refusing") settles that a refusal the user asked for must speak; the committed lock
+  `tests/headless/test_descend_inert_class.tcl` (262 annotation symbols) settles that pressing
+  `e` on a `lab_pin` promised nothing and must stay silent. Recorded at all 13 sites, spoken
+  at 8.
+  - *Rejected:* "every refusal speaks" — one status line per label/gnd/title-block press, and
+    it breaks the lock.
+  - Implementation note: the silent sites **compose their message and pass `speak=0`**, rather
+    than passing `msg=NULL`. The first cut passed NULL, and sabotage S3 then left the lock
+    green — the silence came from a missing string, not from policy. This was corrected so
+    `descend_speak_p()` is the single switch, which is what makes D2 falsifiable.
+- **D6 [R3] — `xschem descend_symbol` now evaluates to `"1"`/`"0"` instead of the empty
+  string** (`src/scheduler.c`: `Tcl_ResetResult` → `Tcl_SetResult(interp, dtoa(ret), …)`), and
+  a semaphore-blocked call on either verb records `busy`. **This is the E question.** Every
+  in-tree consumer was re-verified safe (`src/xschem.tcl:5963` now genuinely reads it,
+  `:13260`/`:14820` are `-command` strings, `src/actions.csv:92` is a csv action, the tests
+  invoke it bare). Out-of-tree rc/PDK glue cannot be audited from here.
+  - *Rejected:* keeping `ResetResult` and the `currsch`-rise proxy — it cannot report a reason
+    and misreads any refusal that leaves `currsch` advanced.
+- **D7 [R1] — `hi_descend_finish` drops the `currsch`-rise proxy for the real return value**
+  and gains the missing `else` that echoes `[xschem get descend_error]`. R1/0241; and it is a
+  local anomaly, not house style — eleven sibling failure arms in the same proc family already
+  `ciw_echo`.
+  - *Rejected:* keeping both proxy and return as belt-and-braces — dead weight that hides
+    which one is authoritative.
+- **D10 [R1] — the context-menu action-log wrapper is gated on the verb's return value**
+  (`src/callback.c`). Direct generalisation of the ratified "an aborted gesture must not lie
+  about the modify flag" (0244/0267/0270): it must not lie in the action log either.
+  **Narrowed during implementation**: the gate is `(!verb_refused || logcmd[0] == '#')`,
+  because the blanket form suppressed the inert `'# '` marker that
+  `tests/headless/test_context_menu_log.tcl` pins. A `'#'` marker is inert commentary about
+  what was *picked* — replay skips it, so it cannot lie — while a command line replays and
+  must not describe work that never happened.
+
+## Sabotage matrix (Verify-B; `trustworthy = true`)
+
+| # | variant | predicted | observed |
+|---|---------|-----------|----------|
+| S1 | `descend_set_error` → no-op | 10 red | **13 red** — all 10 + R08/R09/R17 bonus |
+| S2 | `descend_speak` → no-op | 3 red | **2 red** (R08, R17); R22 mis-scoped |
+| S3 | `descend_speak_p` → `1` | 4 red | **2 red** — 34 inert "silent" rows + R16 |
+| S4 | `Tcl_ResetResult` restored | 5 red | **9 red**; R28 lost to an abort |
+| S5 | legacy picker macro | 7 red | **5 red**; R05/R06 unmoved (wrong shape) |
+| S5b | *added by Verify-B* — true pre-fix rule | — | **8 red** incl. R05, R06 |
+| S6 | `descend_missing_sym` → `0` | 4 red | **4 red** + 2 bonus |
+| S7 | `newwin_open_ok` → `1` | 2 red | **2 red** |
+| S8 | `newwin_descend_failed` → `1` | 3 red | **1 red** (R23); R22/R26 mis-scoped |
+
+**Controls that held.** Under S2 the inert-class stayed 177 ok / 0 FAIL and R16 stayed green;
+under S3 every reason-token row stayed green. Record and speak are genuinely separate.
+
+**Predicted reds that did NOT appear — all four causes are honest and named:**
+
+- **S4 / R28 — the one that matters.** R28 never *ran*: S4 makes the 0251 suite abort at line
+  315 (`expected boolean value but got ""` in `hi_descend_finish`'s `if {$ok}`), losing R25 and
+  R28. The abort exits 0, prints zero FAIL lines and no `OVERALL:` line, so a FAIL-grepping
+  harness scores the truncated run GREEN. Filed as **0368**.
+- **S3 / R14 — a real (small) coverage hole.** The re-anchored stderr-noise recipe cannot catch
+  speak-everything: `descend_speak()` writes only to `statusmsg_hold()`, never to stderr. R14
+  verifies C-level stderr hygiene and is worth having, but **R11 and R16 are the only checks
+  that cover the loud/silent split.** The plan's claim that R14 covered it was wrong.
+- **S3 / R13 — structurally unreachable.** A *successful* descend never calls
+  `descend_set_error`, so no `descend_speak_p` sabotage can move R13. It is a stale-channel
+  counterweight, not a speak-policy check.
+- **S2 & S8 / R22, R26 — mis-scoped.** Both select a lone wire, which refuses *earlier*, at
+  `open_sub_schematic`'s target-derivation step, and never reaches `newwin_descend_failed` or
+  the C-side `descend_speak()`. Consequence: `newwin_descend_failed` has exactly **one**
+  covering row (R23), which is thin for a proc whose failure mode is a leaked window plus a
+  bogus success return — see 0371.
+
+## Still open
+
+Verify-C (adversary) **refuted the maximal claim** ("distinguishable at every caller"), so
+this item was NOT certified `x`. What survives:
+
+1. **0369 — the refutation. `descend_symbol()` still drops `load_schematic()`'s result**
+   (`src/save.c:5686`) and returns 1 unconditionally, so a descend whose load *fails* reports
+   `1` with `descend_error={}` — a channel that positively asserts success — and self-logs a
+   phantom replayable line. Its sibling `descend_schematic()` got the `load-failed` token **in
+   this very fix**. Re-measured independently by the write-up agent; highest-value follow-up.
+2. **0370 — `hi_descend_newwin` never got `newwin_open_ok`/`newwin_descend_failed`.** It keeps
+   the full-table hijack and the orphan-window-on-refused-descend that this fix closed in
+   `open_sub_schematic`. Two procs, one defect, one fixed.
+3. **0371 — `newwin_descend_failed` clears the modify flag before an unverified destroy.**
+   New surface introduced by this fix; reachable only with `tabbed_interface=0` **and** no X.
+4. **0372 / 0373** — the pre-existing teardown defects that make 0371 possible.
+5. **The channel does not cross the window boundary.** After a refused `open_sub_schematic`,
+   `xschem get descend_error` on the *caller's* context is `{}` — the token was recorded on the
+   new window's context, which the teardown then destroyed. Measured. New-window callers get
+   the boolean plus a status string, not a machine-readable reason.
+6. **`load-failed`'s documented contract is implemented by no in-tree caller.** The `e` key
+   drops the value and `hi_descend_finish` only echoes. Measured: `e` on the shipped
+   `type=primitive` `devices/single2cm.sym` leaves the user at `currsch=1` on a nonexistent
+   `single2cm.sch`. Pre-existing (0250), now *named* but still not repaired.
+7. **A held refusal line survives a subsequent SUCCESSFUL descend** for the rest of its 5 s —
+   `statusmsg_hold` has no success-side release. And refusals now fire on very common
+   accidents (`e`/`i` with nothing selected), each holding the status bar for 5 s and
+   suppressing ordinary `statusmsg()` in that window. 0248 accepted this frequency for gate
+   messages; descend refusals are a much higher-rate source.
+8. **`xschem statusmsg -hold` is a new positional option**, so a caller passing the literal
+   text `-hold` gets a blank held line. Measured: `bare -hold: { } hold=1`.
+9. **`descend_missing_sym()` dereferences `(xctx->inst[n].ptr + xctx->sym)->type` with no
+   `ptr >= 0` guard.** `rebuild_selected_array()` guards `inst[i].ptr >= 0` elsewhere, so a
+   negative ptr is considered reachable here. Pre-existing shape, but this fix moved the deref
+   onto both verbs' hot path.
+10. **The two verbs still disagree** on identical state (0249 C1). Answered by speaking, not
+    by unifying — a deliberate R2 call, still a latent surprise.
+
+## What the adversary FAILED to break
+
+0366 one level deeper; the picker's bounds (no stale-`lastsel` or out-of-bounds `inst[]`);
+the `INST_PIN` rule; the loud/silent split (`descend` on `lab_pin.sym` → `0`,
+`not-descendable:label`, status bar untouched, `hold=0`); and both forbidden shapes — no pure
+commit-coordinate form is gated, and no gate was placed at a shared per-click primitive
+(`descend_pick_target`/`descend_missing_sym` are called only from the two verbs).

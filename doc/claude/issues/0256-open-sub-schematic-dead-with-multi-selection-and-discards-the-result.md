@@ -371,3 +371,103 @@ a separate decision, not this fix.
   accepted and emits `my_strdup2(): WARNING: src == *dest` (observed in the (c2) run). Harmless
   here, but it is the tell that the from/to paths were never validated; a guard at
   `src/actions.c:2837-2843` would have made (c) fail loudly years ago.
+
+---
+
+# RESOLUTION — FIXED for `open_sub_schematic`; the SIBLING `hi_descend_newwin` is OPEN as 0370
+
+Item D4, run 2026-08-09, branch open_pdk. Part of the mechanism in 0251's resolution.
+Item status **E** (see 0251, D6).
+
+## What was measured BEFORE
+
+```
+F1 2 instances selected  : lastsel=3 selected_set={{x1} {x2}} ntabs_before=1
+F2   open_sub_schematic -> '0'  windows_after=1  currsch=0
+F4 one WIRE selected     : lastsel=1 selected_set={}
+F5   open_sub_schematic -> '1'  schname=descend_parent.sch currsch=0
+F6   => returned success for an operation that descended nothing
+```
+
+Both halves of the defect in one probe. (a) a 2-object selection that `xschem descend`
+**accepts** produced no window and no message — control reached the argument-form else-arm
+with `$inst` still `{}`, where `lsearch -exact $instlist {}` is `-1`. (b) a wire-only
+selection fell through the entire window-creating body and returned **1**, leaving an orphan
+window sitting on the *parent* sheet.
+
+## What it does AFTER
+
+```
+F2   open_sub_schematic -> '1'  windows_after=2  currsch=1
+F5   open_sub_schematic -> '0'  schname=descend_parent.sch currsch=0
+```
+
+(a) now opens the child in a new window; (b) now refuses, creates nothing, and says why:
+
+```
+statusmsg = {Open in new window: cannot descend into the selected instance (not-descendable:label)} hold=1
+```
+
+## The four changes (all Tcl, `src/xschem.tcl`)
+
+1. **Target derived from the visible selection for any `n_sel > 0`** —
+   `set inst [lindex [xschem selected_set] 0]`, refusing with a message when that is empty.
+   The documented `n_sel == 0` duplicate-current-sheet arm is untouched, and the argument-form
+   `instlist` validation is kept (now with a message on the `-1` branch).
+2. **`newwin_capture_unsaved` moved below the derivation**, so a refusal no longer leaves a
+   `<cell>~.sch` for an operation that never happened (row R26).
+3. **`newwin_open_ok {res nwin_before}`** gates *before* `last_created_window` is read and
+   before `copy_hierarchy` runs — closing (c1) and (c2).
+4. **`newwin_descend_failed {src_win new_win}`** switches back, tears the new window down and
+   reports `[xschem get descend_error]`, called before `newwin_defer_fullzoom` so no `after`
+   is scheduled against a path about to disappear.
+
+**Deviation from plan, deliberate:** `newwin_open_ok` gates on the **window count**, not on a
+`last_created_window` delta. The delta test is wrong — destroying a window frees its slot, so
+the next create legitimately reuses the same path, and the delta guard made R24's own setup
+row fail. `[llength [xschem windows]] <= $nwin_before` is the honest test of "a slot was
+taken", and it still closes (c1). Recorded in the proc's comment.
+
+## Decisions
+
+- **D8 [R2] — derive the target from `[lindex [xschem selected_set] 0]` for any `n_sel > 0`.**
+  Makes Alt+E agree with `e`, which already accepts the identical selection, and converts
+  today's spurious duplicate-window-reported-as-success into a spoken refusal.
+  - *Rejected:* deleting `open_sub_schematic`'s body in favour of `hi_descend_newwin`
+    (`doc/claude/specs/hi_descend.md:243-245` already records that as the right long-term
+    answer) — it changes Alt+E's semantics (view enumeration, read-only mode, the 0053 window
+    link) and is a separate decision, not this fix.
+- **D9 [R2] — the window-table-full hijack (c1) is closed in Tcl**, by treating an unchanged
+  window count as failure, not by making `new_schematic` propagate its refusal in C.
+  Smallest blast radius: the C fix touches `src/xinit.c:1999/2150` and
+  `src/actions.c:2902-2917` and changes a void API; the Tcl guard has the same effect in three
+  lines.
+  - *Rejected (honestly deferred):* the C return-value plumbing. Recorded here as the better
+    long-term shape — and note it is what 0370 will need anyway.
+
+## Coverage
+
+R21 (multi-selection now opens the child), R22 (wire-only refuses, `ntabs` unchanged,
+`statusmsg` carries it), R23 (`type=label` refuses, no orphan), R24 ((c2) hijack lock),
+R25 ((c1) 20-window table lock), R26 (no `~.sch` for a refused call) — all in
+`tests/headless/test_descend_refusal_channel_0251.tcl`.
+
+Sabotage **S7** (`newwin_open_ok` → `return 1`) turns R24 and R25 red: the earlier window is
+destroyed by `copy_hierarchy` (`after={ABSENT}`), and a full 20-window table hijacks
+`.x19.drw`, returning 1 and moving that window to `descend_child.sch`.
+Sabotage **S8** (`newwin_descend_failed` → `return 1`) turns only **R23** red — R22 and R26
+refuse earlier, at the target-derivation step, and never reach the teardown proc. So the
+teardown has exactly one covering row; see 0371.
+
+This closes this issue's "no coverage anywhere" note, including the 19-window exhaustion case.
+
+## Still open
+
+- **0370 — the sibling was not fixed.** `hi_descend_newwin` (`src/xschem.tcl:6010-6060`) still
+  has both the full-table hijack and the orphan-window-on-refused-descend. Measured by the
+  write-up agent: `hi_descend_newwin(l1)` → `0`, yet `nwin` goes 1 → 2, the new window sits on
+  the parent, **and the active context is left switched into it**.
+- **0371 — the new teardown clears the modify flag before an unverified destroy.**
+- **The reason does not cross the window boundary**: after a refused `open_sub_schematic`,
+  `descend_error` on the caller's context reads `{}` (measured). Only the status text survives.
+- `copy_hierarchy_data` still has no self-copy guard (this issue's last note) — untouched.

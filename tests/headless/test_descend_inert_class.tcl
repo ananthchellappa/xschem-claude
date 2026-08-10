@@ -19,10 +19,27 @@
 #   currsch      unchanged   no hierarchy move -- this is the assertion that catches a strand
 #   current_name unchanged   the window still shows the same cell
 #   instances    unchanged   nothing was loaded over the top
-# Silence itself cannot be read from inside the interpreter (the guard's only trace is a
-# dbg(1) to stderr, and C-level stderr is not capturable here). The wrapper checks it:
+#   statusmsg    unchanged   SILENCE, asserted from inside the interpreter (issue 0251)
+#   descend_error == "not-descendable:<type>"   the reason is RECORDED even though it is
+#                            never SPOKEN -- record always, speak selectively
+#
+# The last two rows are the point of the 0249/0251/0254 reason channel and of this lock.
+# A refusal the user provoked (pressing `i` on a symbol they picked, a ---MISSING SYMBOL---
+# placeholder they clicked to interrogate) must SPEAK; a refusal on an annotation symbol the
+# user never asked to descend must stay byte-silent while still recording WHY, so a script or
+# a dialog can ask. `xschem get statusmsg` (issue 0248) is the readable half of that channel
+# and is the seam this file uses to prove the silence positively, rather than asserting the
+# absence of something it cannot see.
+#
+# The out-of-interpreter half -- C-level stderr, which no `xschem get` can reach -- is still
+# the wrapper's job. The recipe below is RE-ANCHORED (issue 0251): the old
+# `grep -v '^\(ok:\|FAIL:\|OVERALL:\|  \)'` let 7 lines through (2 xschem startup lines, the
+# 3 section banners and 2 blank lines), so it would have passed with real noise in it.
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_descend_inert_class.tcl \
-#     2>&1 | grep -v '^\(ok:\|FAIL:\|OVERALL:\|  \)'      # must print nothing
+#     2>&1 | grep -v -e '^ok:' -e '^FAIL:' -e '^OVERALL:' -e '^--- ' \
+#                    -e '^Using run time directory ' -e '^Sourcing ' -e '^$'
+#     # must print NOTHING. A dbg(0)/statusmsg added at the annotation-class guard
+#     # (src/actions.c, "not subcircuit and not primitive -> return 0") shows up here.
 #
 # Section B is the counterweight: a real subcircuit in the same fixture MUST still descend.
 # A test that only proves things do not happen passes just as well on a broken binary.
@@ -92,7 +109,12 @@ proc probe_descend {sympath} {
   set lvl0  [xschem get currsch]
   set name0 [xschem get current_name]
   set n0    [xschem get instances]
+  # issue 0251: the status line BEFORE the refusal. `xschem select instance` above always
+  # leaves select.c's "n= x= y= w= h=" info line here, so this is never trivially empty.
+  set sm0   [xschem get statusmsg]
   set ret   [xschem descend]
+  set ::last_silent [expr {[xschem get statusmsg] eq $sm0}]
+  set ::last_reason [xschem get descend_error]
   return "ret=$ret currsch=[expr {[xschem get currsch] - $lvl0}]\
            name=[expr {[xschem get current_name] eq $name0 ? {same} : {CHANGED}}]\
            insts=[expr {[xschem get instances] - $n0}]"
@@ -109,6 +131,10 @@ foreach row $INERT {
   check "A/$sym no .sch" [file exists [file rootname $p].sch] 0
   check "A/$sym descend" [probe_descend $p] \
         "ret=0 currsch=0 name=same insts=0"
+  # the split, per symbol: SILENT on the status line (this is the half a loud fix breaks) ...
+  check "A/$sym silent" $::last_silent 1
+  # ... but the reason is still RECORDED, so a caller that wants to explain can.
+  check "A/$sym reason" $::last_reason "not-descendable:$want_type"
 }
 
 puts "--- B. counterweight: a real subcircuit still descends ---"
@@ -126,8 +152,13 @@ if {![file exists $top]} {
     set lvl0 [xschem get currsch]
     xschem unselect_all
     xschem select instance $sub fast
+    set sm0 [xschem get statusmsg]
     check "B/descend ret"     [xschem descend]                        1
     check "B/descend currsch" [expr {[xschem get currsch] - $lvl0}]   1
+    # the counterweight for the two new rows above: on the SUCCESS path the reason channel
+    # is cleared (a stale reason can never be read as a fresh one) and nothing is said either.
+    check "B/reason cleared"  [xschem get descend_error]              {}
+    check "B/success silent"  [expr {[xschem get statusmsg] eq $sm0}] 1
     xschem go_back 2
     check "B/go_back currsch" [xschem get currsch]                    $lvl0
   }

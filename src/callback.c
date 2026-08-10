@@ -4734,6 +4734,15 @@ static void context_menu_action(double mx, double my)
   const char *status;
   int prev_state;
   const char *logcmd = NULL;     /* action-log Layer B: what this pick records */
+  /* issue 0249: the wrapper below is gated on "the core did not already log it",
+   * NOT on whether the verb did anything, and the descend verbs self-log only on
+   * their success path -- so a REFUSED descend pick fell through to the
+   * classification table and wrote `xschem descend_symbol` for a descend that never
+   * happened. Replaying that log descends where the recording did not. This is the
+   * ratified "an aborted gesture must not lie about the modify flag" (0244/0267/0270)
+   * applied to the action log. Index 13 is the only replay hazard (12/22 record `#`
+   * comments) but one flag covers all three uniformly. */
+  int verb_refused = 0;
   xctx->semaphore++;
   status = tcleval("context_menu");
   xctx->semaphore--;
@@ -4863,16 +4872,16 @@ static void context_menu_action(double mx, double my)
       edit_property(1);
       break;
     case 12:
-      descend_schematic(0, 1, 1, 1);
+      if(!descend_schematic(0, 1, 1, 1)) verb_refused = 1;
       break;
     case 22: /* descend schematic, then force editable (overrides descend_readonly) */
       if(descend_schematic(0, 1, 1, 1)) {
         xctx->readonly = 0;
         set_modify(-1); /* refresh title: clear the read-only marker */
-      }
+      } else verb_refused = 1;
       break;
     case 13:
-      descend_symbol();
+      if(!descend_symbol()) verb_refused = 1;
       break;
     case 14:
       go_back(1);
@@ -4931,7 +4940,14 @@ static void context_menu_action(double mx, double my)
    * # marker, or NULL = nothing). */
   if(!logcmd && ret > 0 && ret < (int)(sizeof(ctxmenu_log_cmd)/sizeof(ctxmenu_log_cmd[0])))
     logcmd = ctxmenu_log_cmd[ret];
-  if(logcmd && !actionlog_cmd_logged) log_action("%s", logcmd);
+  /* issue 0249: a REFUSED verb must not leave a replayable COMMAND behind (replay would
+   * then descend where the recording did not). A '#' marker is inert commentary about
+   * what was PICKED -- replay skips it, so it cannot lie, and suppressing it would erase
+   * the only record that the user clicked anything (locked by
+   * tests/headless/test_context_menu_log.tcl, "descend pick logs a '# ' marker", which
+   * picks descend with nothing selected). So: gate the commands, keep the markers. */
+  if(logcmd && !actionlog_cmd_logged && (!verb_refused || logcmd[0] == '#'))
+    log_action("%s", logcmd);
 }
 
 /* ===========================================================================

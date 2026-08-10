@@ -127,4 +127,150 @@ check "SYC: embedded-symbol descent STILL prompts (data-loss guard kept)" \
   [expr {$::ask_count > 0}]
 xschem go_back
 
+# ---------------------------------------------------------------------------
+# Part D: the refusal channel (issues 0249 / 0251 / 0254).
+#
+# descend_symbol() has four refusal exits and one success exit, and today all
+# five are indistinguishable at every caller: the dispatcher runs
+# Tcl_ResetResult (scheduler.c), so `xschem descend_symbol` evaluates to the
+# empty string whether it descended or declined, and three of the four
+# refusals emit nothing on any channel. Part D pins the fix:
+#
+#   * the verb evaluates to "1" on success and "0" on a refusal, mirroring
+#     `xschem descend`;
+#   * every refusal RECORDS a reason token on a per-context second channel,
+#     `xschem get descend_error` (a second channel, never a widened result --
+#     the "0"/"1" of `xschem descend` is load-bearing in the PDK glue and in
+#     tests/buried_hilight.tcl);
+#   * the refusals a user provoked by pressing `i` on something they picked
+#     also SPEAK, on the held status line (statusmsg_hold, issue 0248 -- a
+#     plain statusmsg is clobbered by select.c's n=/x=/y=/w=/h= info line);
+#   * the target rule is phrased against the VISIBLE selection
+#     (`xschem selected_set`, ELEMENT-only), not xctx->lastsel, which counts
+#     pseudo-selections the user cannot see: an instance plus its own pin
+#     reads as lastsel 2 while exactly one symbol is highlighted on screen.
+#
+# The silent half of the split lives in descend_schematic()'s annotation-class
+# guard and is locked by tests/headless/test_descend_inert_class.tcl.
+# See doc/claude/code_analysis/descend_silent_refusal_census.md.
+# ---------------------------------------------------------------------------
+proc d_fresh {} {
+  global work
+  set g 0
+  while {[xschem get currsch] > 0 && $g < 10} { xschem go_back; incr g }
+  xschem clear force
+  xschem load $work/descend_parent.sch
+  xschem unselect_all
+}
+
+# R01: a refused call and a successful call must not evaluate to the same string.
+d_fresh
+set refused [xschem descend_symbol]
+d_fresh
+xschem select instance x1 fast
+set accepted [xschem descend_symbol]
+xschem go_back
+check "R01: descend_symbol is \"0\" refused / \"1\" accepted (got {$refused}/{$accepted})" \
+  [expr {$refused eq "0" && $accepted eq "1"}]
+
+# R02: nothing selected.
+d_fresh
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+set derr [xschem get descend_error]
+check "R02: nothing selected -> ret 0, descend_error {no-selection}, no move (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "0" && $derr eq "no-selection" && [xschem get currsch] == $lvl}]
+
+# R03: a lone selected WIRE -- lastsel is 1, but zero ELEMENTs are selected, so
+# the reason is "you selected something, just not an instance".
+d_fresh
+xschem select wire 0
+check "R03 setup: one object selected, no ELEMENT in it" \
+  [expr {[xschem get lastsel] == 1 && [llength [xschem selected_set]] == 0}]
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+set derr [xschem get descend_error]
+check "R03: a lone WIRE -> ret 0, descend_error {no-instance-selected}, no move (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "0" && $derr eq "no-instance-selected" && [xschem get currsch] == $lvl}]
+
+# R04: two instances -- genuinely ambiguous, so it still refuses, but it says so.
+d_fresh
+xschem instance $work/descend_child.sym 500 500 0 0 {name=x2}
+xschem unselect_all
+xschem select instance x1 fast
+xschem select instance x2 fast
+check "R04 setup: two ELEMENTs selected" \
+  [expr {[llength [xschem selected_set]] == 2}]
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+set derr [xschem get descend_error]
+check "R04: two instances -> ret 0, descend_error {multi-selection}, no move (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "0" && $derr eq "multi-selection" && [xschem get currsch] == $lvl}]
+
+# R05: an instance and its OWN pin. lastsel is 2, but the user sees ONE selected
+# symbol and `xschem selected_set` agrees -- the legacy `lastsel > 1` guard
+# refuses a selection that does not exist. issue 0249.
+d_fresh
+xschem select instance x1 fast
+xschem select pin x1 0
+check "R05 setup: lastsel is 2 while exactly one ELEMENT is selected" \
+  [expr {[xschem get lastsel] == 2 && [llength [xschem selected_set]] == 1}]
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+check "R05: instance + its own pin -> descends into descend_child.sym (got ret={$ret} sch=[file tail [xschem get schname]])" \
+  [expr {$ret eq "1" && [xschem get currsch] == $lvl + 1 &&
+         [file tail [xschem get schname]] eq "descend_child.sym"}]
+xschem go_back
+
+# R06: a rubber-band that swept up the instance AND a wire. Same shape, and the
+# one the GUI actually produces.
+d_fresh
+xschem select_inside -1000 -1000 1000 1000
+check "R06 setup: rubber-band selected >1 object, exactly one ELEMENT" \
+  [expr {[xschem get lastsel] > 1 && [llength [xschem selected_set]] == 1}]
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+check "R06: instance co-selected with a wire -> descends into descend_child.sym (got ret={$ret} sch=[file tail [xschem get schname]])" \
+  [expr {$ret eq "1" && [xschem get currsch] == $lvl + 1 &&
+         [file tail [xschem get schname]] eq "descend_child.sym"}]
+xschem go_back
+
+# R07/R08: the ---MISSING SYMBOL--- placeholder. The unresolved name is a live
+# local one line above the refusal, and today it is never told to anyone.
+d_fresh
+xschem instance no_such_cell_0254.sym 700 700 0 0 {name=XM}
+xschem unselect_all
+xschem select instance XM fast
+set lvl [xschem get currsch]
+set ret [xschem descend_symbol]
+set derr [xschem get descend_error]
+check "R07: missing-symbol placeholder -> ret 0, {missing-symbol:<name>}, no move (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "0" && $derr eq "missing-symbol:no_such_cell_0254.sym" &&
+         [xschem get currsch] == $lvl}]
+set sm [xschem get statusmsg]
+check "R08: the refusal NAMES the unresolved symbol on the HELD status line (got hold=[xschem get statusmsg_hold] msg={$sm})" \
+  [expr {[string match {*no_such_cell_0254.sym*} $sm] && [xschem get statusmsg_hold] == 1}]
+
+# R10: the -inst form bypasses the selection guard but must not bypass this one.
+d_fresh
+xschem instance no_such_cell_0254.sym 700 700 0 0 {name=XM}
+xschem unselect_all
+set ret [xschem descend_symbol -inst XM]
+set derr [xschem get descend_error]
+check "R10: descend_symbol -inst on the placeholder -> same {missing-symbol:} token (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "0" && $derr eq "missing-symbol:no_such_cell_0254.sym"}]
+
+# R09: success clears the channel, so a stale reason can never be read as a
+# fresh one. Dirty it with a refusal first, in the SAME context.
+d_fresh
+xschem descend_symbol
+check "R09 setup: the channel is dirty after a refusal" \
+  [expr {[xschem get descend_error] ne {}}]
+xschem select instance x1 fast
+set ret [xschem descend_symbol]
+set derr [xschem get descend_error]
+check "R09: a successful descend_symbol clears descend_error (got ret={$ret} err={$derr})" \
+  [expr {$ret eq "1" && $derr eq {}}]
+xschem go_back
+
 result

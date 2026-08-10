@@ -1588,6 +1588,20 @@ typedef struct {
                        * exists when has_x, so this is what makes the hold assertable headlessly --
                        * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
                        * context teardown. */
+  char descend_err[192]; /* issues 0249/0251/0254: WHY the last descend attempt on THIS context
+                       * refused. A reason token, never a sentence -- read as `xschem get
+                       * descend_error`. Empty = the last attempt succeeded, or none has run.
+                       * Written at EVERY refusal in descend_schematic()/descend_symbol() (record
+                       * always) whether or not that refusal also SPEAKS (speak selectively): the
+                       * annotation class -- 262 shipped lab_pin/gnd/title/launcher symbols the
+                       * user never asked to descend -- must stay byte-silent, and that silence is
+                       * locked by tests/headless/test_descend_inert_class.tcl. This is a SECOND
+                       * channel: the "0"/"1" result of `xschem descend` is load-bearing in the
+                       * PDK glue and must never be widened into a reason string.
+                       * Per-context, not a file static: open_sub_schematic / hi_descend_newwin
+                       * switch contexts mid-flight, so a static would be read in the wrong window.
+                       * Fixed array on purpose: no allocation to free on context teardown.
+                       * doc/claude/code_analysis/descend_silent_refusal_census.md */
   int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables all four
                        * modal-gesture gates (leave_wire_draw_for / leave_placement_for /
                        * leave_merge_for / leave_shape_draw_for) so a
@@ -2878,6 +2892,23 @@ extern void toggle_ignore(void);
 extern void get_additional_symbols(int what);
 extern int change_sch_path(int instnumber, int dr);
 extern int descend_schematic(int instnumber, int fallback, int alert, int set_title);
+/* ---------------------------------------------------------------------------
+ * The descend refusal channel (issues 0249 / 0251 / 0254 / 0366). Record ALWAYS,
+ * speak SELECTIVELY. See xctx->descend_err above and
+ * doc/claude/code_analysis/descend_silent_refusal_census.md.
+ * Each piece is a NAMED callee rather than inline code so a sabotage build can
+ * neutralize exactly one of them (#define it away) and see which rows go red. */
+extern void descend_clear_error(void);   /* both verbs call this on entry */
+extern int  descend_speak_p(int speak);  /* the loud/silent PREDICATE */
+extern void descend_speak(const char *msg); /* statusmsg_hold(): 0248-safe, never dbg(0) */
+extern void descend_set_error(const char *code, const char *detail, const char *msg, int speak);
+/* Resolve WHICH instance to descend into from the VISIBLE selection (ELEMENT
+ * entries only -- xctx->lastsel also counts INST_PIN pseudo-selections the user
+ * cannot see). Never reads sel_array[0] before proving an entry is live: that is
+ * issue 0366's whole defect. Records+speaks its own refusal. 1 = *n is set. */
+extern int  descend_pick_target(int *n, int multi_ok, const char *verb);
+/* 1 (and reported) when instance n is a ---MISSING SYMBOL--- placeholder. */
+extern int  descend_missing_sym(int n, const char *symname);
 extern void go_back(int what); /* what == 1: confirm save; what == 2: do not reset window title */
 extern void clear_schematic(int cancel, int symbol);
 extern void view_unzoom(double z);

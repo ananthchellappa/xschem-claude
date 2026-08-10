@@ -303,3 +303,98 @@ explicit cross-check so a future unification has to update the test deliberately
   must respect the same ordering.
 - **Untested surface.** No test covers any refusal path of `descend_symbol()` today, so a change
   here is currently unguarded in both directions.
+
+---
+
+# RESOLUTION — FIXED (item D4, run 2026-08-09, branch open_pdk)
+
+Status: **FIXED**. Landed with 0251, 0254, 0256 and 0366 as one mechanism.
+Item status is **E**: see the ratification question in 0251's resolution (decision D6).
+
+## What was measured BEFORE
+
+Byte-identical state, opposite policy on the two verbs — quoted verbatim from the D4
+Measure agent's probe (`--nogui --pipe -q --nolog`):
+
+```
+C1 two instances selected: lastsel=2 selected_set={{x1} {x2}}
+C2   descend_symbol -> ''   currsch=0  (REFUSED, silently)
+C3   descend        -> '1'   currsch=1  (ACCEPTED)
+C4 instance + own pin    : lastsel=2 selected_set={{x1}}
+C5   descend_symbol -> ''   currsch=0  (REFUSED on an invisible 2nd selection)
+```
+
+C4/C5 is the shape that decided the fix: the user sees **one** selected symbol and
+`xschem selected_set` agrees (`{{x1}}`), but `xctx->lastsel` is 2 because an instance's
+own `INST_PIN` pseudo-selection counts. The old guard `if(xctx->lastsel > 1) return 0;`
+(`src/save.c:5563`) therefore refused a selection the user could not see, and said nothing.
+
+## What it does AFTER
+
+Same probe, same fixture, rebuilt binary:
+
+```
+C4 instance + own pin    : lastsel=2 selected_set={{x1}}
+C5   descend_symbol -> '1'   currsch=1
+C2   descend_symbol -> '0'   currsch=0
+E1 xschem get descend_error -> 'multi-selection'   (for the C1/C2 two-instance case)
+E2 after a refusal, statusmsg = 'Descend symbol: select an instance to descend into'
+E3 after a refusal, statusmsg_hold = '1'
+```
+
+(The probe's C2/C5 label text `(REFUSED…)` is baked-in BEFORE prose and is now stale;
+the values are what changed.)
+
+The genuinely ambiguous case (C1: two real instances) still refuses — but it now returns
+`0`, records `multi-selection`, and **says so** on the held status line. The accidental
+case (C4/C5: instance + its own pin) now descends, because exactly one ELEMENT is selected.
+
+## How
+
+`src/save.c:5563`'s `lastsel > 1` test and the trailing `else return 0` at `:5594` are
+replaced by one named callee, `descend_pick_target(&n, 0, "Descend symbol")`
+(`src/actions.c`), which calls `rebuild_selected_array()` once, counts **ELEMENT** entries
+over `[0, lastsel)`, and never reads `sel_array[0]` before proving an entry is live.
+`descend_schematic()` calls the same picker with `multi_ok = 1`.
+
+Resolving `n` inside the picker also satisfies this issue's own "the guard is load-bearing
+downstream" risk note: the target index is now fixed **before** the embedded-symbol save
+path can re-enter Tcl and replace `sel_array`.
+
+## Decisions
+
+- **D3 [ladder R1 spirit, R2 phrasing] — the guard moves from `lastsel > 1` to "exactly one
+  ELEMENT".** R1 for the spirit ("whatever you just pressed is what you meant",
+  0240/0242/0243/0247/0265/0269): with an instance and its own pin selected the user sees one
+  symbol and `selected_set` agrees, so refusing names a selection that does not exist. R2 for
+  the exact rule — it is forced by the message: a message-only fix would print "select exactly
+  one instance" while exactly one instance *is* selected, i.e. the fix would lie.
+  - *Rejected (a):* message-only, keeping the `lastsel` phrasing — it makes the tool
+    contradict itself out loud.
+  - *Rejected (b):* this issue's own full-unification proposal (delete the guard, take
+    `sel_array[0]`) — with two genuinely selected instances that silently picks whichever
+    sorts first, trading a silent refusal for a silent arbitrary choice.
+- **D4 [R2] — `descend_schematic` keeps "first ELEMENT, any count"** and gains only the
+  missing zero-ELEMENT refusal (0366). Smallest blast radius, and it buys the invariant that
+  bounds the whole item: **no descend that succeeds today stops succeeding**, the single
+  exception being 0366's false success.
+  - *Rejected:* tightening `descend` to "exactly one ELEMENT" to match `descend_symbol` —
+    removes shipped capability with unauditable out-of-tree rc/PDK exposure.
+  - *Rejected:* uncommenting `lastsel != 1` at `src/actions.c:3654` verbatim — it inherits
+    exactly the `INST_PIN` miscount this issue is about.
+
+The two verbs therefore still disagree on identical state (C1: `descend_symbol` refuses,
+`descend` accepts). That asymmetry is now **answered by speaking rather than by unifying** —
+see "still open" in 0251.
+
+## Coverage
+
+`tests/headless/test_descend_symbol.tcl` rows R04 (two instances → `0` + `multi-selection`),
+R05 (instance + own pin → `1`), R06 (instance + wire via `select_inside` → `1`).
+
+Sabotage **S5b** (restore the true pre-fix rule: `lastsel > 1` for `descend_symbol` plus
+`sel_array[0].type` for `descend`) turns R05 and R06 red with `ret={0} sch=descend_parent.sch`,
+which is what proves these rows actually cover this issue. Note that the originally-planned
+S5 variant did **not** move them — it reproduced `descend_schematic`'s legacy guard, not
+`descend_symbol`'s — and Verify-B added S5b specifically to settle that. See the full
+sabotage matrix in `doc/claude/code_analysis/descend_silent_refusal_census.md`.

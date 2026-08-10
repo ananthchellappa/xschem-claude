@@ -5655,18 +5655,80 @@ proc newwin_restore_unsaved {src} {
   catch { xschem load_backup $src }
 }
 
+# Say WHY a new-window descend did not happen. Held (issue 0248), because the plain
+# status line is clobbered one call later by select.c's "n= x= y= w= h=" info line --
+# the same discipline the C-side descend refusals use (descend_speak, actions.c).
+proc newwin_refuse {msg} {
+  catch { xschem statusmsg -hold $msg }
+  if {[info procs ciw_echo] ne {}} { ciw_echo $msg error }
+  return 0
+}
+
+# Did `xschem schematic_in_new_window` really open something?
+#
+# Two ways it can say yes and mean no, and BOTH end with open_sub_schematic
+# descending into somebody else's window (issue 0256 c1/c2):
+#   * schematic_in_new_window returns 0 for a selection it will not act on -- but the
+#     old code read last_created_window and ran copy_hierarchy BEFORE testing $res.
+#   * new_schematic() is void on refusal: past MAX_NEW_WINDOWS it logs "no more free
+#     slots" and returns, and schematic_in_new_window still returns 1. last_created_window
+#     is a static in xinit.c, only ever assigned on a SUCCESSFUL create and never reset,
+#     so it then names an unrelated earlier window -- the user's 20th window gets hijacked
+#     and the call reports success.
+# The window COUNT is the honest test for the second one: a slot was taken or it was not.
+# (A last_created_window delta is not: destroying a window frees its slot, so the next
+# create legitimately reuses the same path.)
+# Closed in Tcl rather than by plumbing a return value out of new_schematic()/
+# create_new_tab()/create_new_window() -- see issue 0256 for that (larger, deferred) fix.
+proc newwin_open_ok {res nwin_before} {
+  if {!$res} { return 0 }
+  if {[llength [xschem windows]] <= $nwin_before} { return 0 }
+  if {[xschem get last_created_window] eq {}} { return 0 }
+  return 1
+}
+
+# The new window is open but the descend into it was refused (a label/title-block
+# instance, a missing symbol, ...). Leaving it up is issue 0256(b'): an orphan window
+# sitting on the PARENT sheet, reported to the caller as a successful descend.
+# Tear it down and report the reason the C side recorded. issue 0251.
+proc newwin_descend_failed {src_win new_win} {
+  set why [xschem get descend_error]
+  # must be IN the tab to close it (destroy_tab refuses otherwise); and the doomed
+  # context carries the source's restored edits, so drop its modified flag first or the
+  # close prompts about data that still lives in the source window. set_modify 0 does
+  # NOT delete the crash-recovery ~ backup.
+  catch { xschem new_schematic switch $new_win }
+  catch { xschem set_modify 0 }
+  catch { xschem new_schematic destroy $new_win }
+  catch { xschem new_schematic switch $src_win }
+  set tail [expr {$why eq {} ? {} : " ($why)"}]
+  newwin_refuse "Open in new window: cannot descend into the selected instance$tail"
+  return 0
+}
+
 # opens indicated instance (or selected one) into a separate tab/window
 # keeping the hierarchy path, as it was descended into (as with 'e' key).
+#
+# issue 0256. Three things this proc used to get wrong, all of the same shape as the
+# rest of the descend census -- a refusal that is indistinguishable from a success:
+#  (a) it refused, silently and without creating anything, any selection of 2+ objects
+#      (control fell into the else-arm written for the ARGUMENT form, where
+#      `lsearch -exact $instlist {}` is -1) -- while `e` accepts that same selection.
+#  (b) it returned 1 for a selection with no instance in it, having duplicated the
+#      PARENT sheet into a new window and descended nothing.
+#  (c) it read last_created_window and ran copy_hierarchy before testing whether the
+#      open had worked at all.
+# The results of `xschem select instance` and `xschem descend` were both discarded and
+# the tail `return 1` was unconditional.
 proc open_sub_schematic {{inst {}} {inst_number 0}} {
   global search_schematic
   set rawfile {}
   set n_sel [xschem get lastsel]
   set current_win_path [xschem get current_win_path] ;# .drw or .x1.drw or .x2.drw ...
-  # carry the source window's unsaved edits across to the new window (issue 0037) -- capture
-  # BEFORE unselect_all / opening the new window, while the source is still the active context
-  set src_unsaved [newwin_capture_unsaved]
 
   if { $inst eq {} && $n_sel == 0} {
+    # documented arm: nothing selected -> re-open THIS sheet in another window/tab
+    set src_unsaved [newwin_capture_unsaved]
     if {$search_schematic == 1} {
       set f [abs_sym_path [xschem get current_name] {.sch}]
     } else {
@@ -5674,49 +5736,69 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
     }
     xschem new_schematic create {} $f
     return 1
-  } elseif { $inst eq {} && $n_sel == 1} {
+  } elseif { $inst eq {} } {
+    # ANY selection that contains an instance -- selected_set is ELEMENT-only, so a
+    # rubber-band that also caught wires/text/pins resolves to the same instance `e`
+    # would descend into. 0256(a).
     set inst [lindex [xschem selected_set] 0]
+    if {$inst eq {}} {
+      # 0256(b): this used to fall through the whole window-creating body and return 1
+      return [newwin_refuse "Open in new window: select an instance to descend into"]
+    }
     xschem unselect_all
   } else {
     set instlist {}
     # get list of instances (instance names only)
     foreach {i s t} [xschem instance_list] {lappend instlist $i}
-    # if provided $inst is not in the list return 0
-    if {[lsearch -exact $instlist $inst] == -1} {return 0}
+    # if provided $inst is not in the list refuse -- and now say so
+    if {[lsearch -exact $instlist $inst] == -1} {
+      return [newwin_refuse "Open in new window: no such instance: $inst"]
+    }
   }
+  # carry the source window's unsaved edits across to the new window (issue 0037) -- capture
+  # BEFORE opening the new window, while the source is still the active context, but AFTER
+  # the refusals above: `xschem backup write` for an operation that never happened leaves a
+  # <cell>~.sch nobody asked for (issue 0256).
+  set src_unsaved [newwin_capture_unsaved]
   # open a new top level in another window / tab
   if {[xschem raw loaded] >= 0} {
     set rawfile [xschem raw_query rawfile]
     set sim_type [xschem raw_query sim_type]
     set raw_level [xschem get raw_level]
   }
+  set nwin_before [llength [xschem windows]]
   set res [xschem schematic_in_new_window force]
+  # 0256(c): check the open BEFORE touching last_created_window -- on failure it names a
+  # stale earlier window, and copy_hierarchy into it clobbers that window's hierarchy.
+  if {![newwin_open_ok $res $nwin_before]} {
+    return [newwin_refuse "Open in new window: could not open a new window or tab"]
+  }
   set new_window_path [xschem get last_created_window] ;# something like .x1.drw
   xschem copy_hierarchy $current_win_path $new_window_path
-  # if successfull descend into indicated sub-schematic
-  if {$res} {
-    xschem copy_hilights
-    xschem new_schematic switch $new_window_path
-    newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
-    if { $rawfile ne {}} {
-      if {$sim_type eq {op}} {
-        xschem annotate_op $rawfile
-      } else {
-        xschem raw_read $rawfile $sim_type
-      }
-      xschem set raw_level $raw_level
+  xschem copy_hilights
+  xschem new_schematic switch $new_window_path
+  newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
+  if { $rawfile ne {}} {
+    if {$sim_type eq {op}} {
+      xschem annotate_op $rawfile
+    } else {
+      xschem raw_read $rawfile $sim_type
     }
-    xschem select instance $inst fast
-    xschem descend
-    # In window mode the just-created window has not settled to its real size, so the
-    # descend's zoom_full used a transient geometry (blank / off-screen until F). A new tab
-    # shares the already-sized main canvas, so skip it there. issue 0035/0037.
-    if {!([info exists ::tabbed_interface] && $::tabbed_interface)} {
-      newwin_defer_fullzoom $new_window_path
-    }
-    return 1
+    xschem set raw_level $raw_level
   }
-  return 0
+  xschem select instance $inst fast
+  if {![xschem descend]} {
+    # before newwin_defer_fullzoom, so no `after` is scheduled against a window path
+    # that is about to disappear
+    return [newwin_descend_failed $current_win_path $new_window_path]
+  }
+  # In window mode the just-created window has not settled to its real size, so the
+  # descend's zoom_full used a transient geometry (blank / off-screen until F). A new tab
+  # shares the already-sized main canvas, so skip it there. issue 0035/0037.
+  if {!([info exists ::tabbed_interface] && $::tabbed_interface)} {
+    newwin_defer_fullzoom $new_window_path
+  }
+  return 1
 }
 
 # ===========================================================================
@@ -5873,11 +5955,12 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
   }
   set lvl [xschem get currsch]
   if {$vtype eq {symbol}} {
-    # descend_symbol has no return value; detect success by the hierarchy level rising,
-    # so a no-op symbol descend does not falsely report success and then mislabel /
-    # clear the modified flag of the CURRENT (un-descended) schematic.
-    xschem descend_symbol
-    set ok [expr {[xschem get currsch] > $lvl}]
+    # `xschem descend_symbol` now evaluates to 1/0 like `xschem descend` (issue 0251):
+    # the C function always had a return value, the dispatcher used to Tcl_ResetResult
+    # it away, and this arm compensated by watching the hierarchy level rise. The proxy
+    # is gone -- it could not carry a REASON, so a refusal (missing symbol, ambiguous
+    # selection) arrived here as an indistinguishable 0.
+    set ok [xschem descend_symbol]
   } else {
     if {![hi_descend_is_default_sch $instname $vpath]} {
       set ::hi_descend_view_path $vpath        ;# one-shot, consumed by get_sch_from_sym
@@ -5898,6 +5981,16 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
       # close (issue 0035). set_modify 0 does not delete the crash-recovery ~ backup.
       xschem set_modify 0
     }
+  } else {
+    # issue 0251. Eleven sibling failure arms in this proc family already echo to the
+    # CIW; the one that fires when the DESCEND ITSELF is refused said nothing, so a
+    # refused hi_descend was indistinguishable from a successful one at the console.
+    # `xschem get descend_error` is the per-context reason the C side recorded
+    # (not-descendable:<type>, missing-symbol:<name>, no-selection, load-failed, ...).
+    # Also covers hi_descend_newwin, which routes every descend through here.
+    set why [xschem get descend_error]
+    set tail [expr {$why eq {} ? {} : " ($why)"}]
+    ciw_echo "hi_descend: cannot descend into $instname$tail" error
   }
   return $ok
 }

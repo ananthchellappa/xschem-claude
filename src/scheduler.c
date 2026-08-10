@@ -3111,6 +3111,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
             ret = descend_schematic(0, 0, 0, set_title);
           }
         }
+      } else {
+        /* issue 0251: a call the dispatcher's semaphore gate swallowed returns the
+         * same "0" as a refusal, but nothing was even attempted. Give it its own
+         * token so a caller can tell "I was ignored" from "I was declined". */
+        descend_set_error("busy", NULL, NULL, 0);
       }
       Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
     }
@@ -3120,9 +3125,15 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   With -inst <name>: name-addressed, self-contained form -- resolve the
      *   instance by its instname, select it, then descend. This IS the
      *   replay-stable form the action log emits (mirrors `descend -inst`).
-     *   Note: descend_symbol() logs its own outcome line, so no log here. */
+     *   Note: descend_symbol() logs its own outcome line, so no log here.
+     *   Evaluates to "1" (descended) or "0" (refused / not attempted), mirroring
+     *   the `descend` branch above. It used to Tcl_ResetResult() the C function's
+     *   perfectly good int away, so a refused descend and a successful one were
+     *   BOTH the empty string and no script could tell them apart -- issue 0251.
+     *   `xschem get descend_error` carries WHY on the "0". */
     else if(!strcmp(argv[1], "descend_symbol"))
     {
+      int ret = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(xctx->semaphore == 0) {
         if(argc > 2 && !strcmp(argv[2], "-inst")) {
@@ -3139,9 +3150,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
           unselect_all(1);
           select_element(inst, SELECTED, 1, 1);
         }
-        descend_symbol();
+        ret = descend_symbol();
+      } else {
+        descend_set_error("busy", NULL, NULL, 0); /* never entered the function */
       }
-      Tcl_ResetResult(interp);
+      Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
     }
 
     /* descend_pick
@@ -4038,6 +4051,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           else if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
             Tcl_SetResult(interp, my_itoa(debug_var),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "descend_error")) {
+            /* issues 0249/0251/0254: WHY the last descend attempt on THIS context
+             * refused. Empty = it succeeded, or none has run. A SECOND channel --
+             * the "0"/"1" of `xschem descend` is load-bearing and is never widened.
+             * Tokens: maxdepth, busy, no-selection, no-instance-selected,
+             * multi-selection, missing-symbol:<name>, not-descendable:<type>,
+             * no-schematic, save-cancelled, save-failed, iter-cancelled, load-failed.
+             *   busy        = the dispatcher's semaphore gate blocked the call; the
+             *                 C function never ran (nothing was attempted).
+             *   load-failed = the hierarchy ALREADY ADVANCED and the load then
+             *                 failed. Must NOT be read as "nothing happened": the
+             *                 caller has to go_back (issue 0250).
+             * A refusal RECORDS here whether or not it also speaks -- the annotation
+             * class is deliberately silent (test_descend_inert_class.tcl). */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->descend_err, TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "draw_window")) { /* direct draw into window */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -12495,18 +12525,28 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->ui_state2 = MENUSTARTSNAPWIRE;
     }
 
-    /* statusmsg [text]
+    /* statusmsg [-hold] [text]
      *   Write 'text' (default: a blank) to the wide status bar field, exactly as an internal
      *   command message does. A script asking for the field is deliberate news, so this RELEASES
      *   any hold a gate/prompt message has on it (issue 0248) instead of being dropped by it --
      *   which is also what makes the hold testable: it is how a test resets the field between
      *   checks (tests/headless/test_placement_wire_gate.tcl section H). No-op on the screen when
-     *   !has_x; the hold flag is maintained either way. */
+     *   !has_x; the hold flag is maintained either way.
+     *   -hold: write it as a line the user must be able to READ (statusmsg_hold()), so the
+     *   next selection/coordinate readout cannot eat it. Tcl-side refusals that mirror a C-side
+     *   one need the same discipline -- open_sub_schematic's descend refusals (issue 0256) are
+     *   the first caller. */
     else if(!strcmp(argv[1], "statusmsg"))
     {
+      int hold = 0, ti = 2;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      statusmsg_hold_clear();
-      statusmsg(argc > 2 ? (char *)argv[2] : (char *)" ", 1);
+      if(argc > 2 && !strcmp(argv[2], "-hold")) { hold = 1; ti = 3; }
+      if(hold) {
+        statusmsg_hold(argc > ti ? (char *)argv[ti] : (char *)" ", 1);
+      } else {
+        statusmsg_hold_clear();
+        statusmsg(argc > ti ? (char *)argv[ti] : (char *)" ", 1);
+      }
       Tcl_ResetResult(interp);
     }
 

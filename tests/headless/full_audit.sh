@@ -46,6 +46,7 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_select_same_net_by_label test_snap_bindkeys \
   test_descend_goback_selflog test_save_reload_copy_selflog test_selflog_grep_guard \
   test_key_make_sch_from_sel_log \
+  test_context_menu_descend_refusal_0249 \
   test_coordlog_precision test_wave_tabs \
   test_stdin_tcp_log test_libmgr_mutation_log test_nhse_mutation_log test_paste_at_log \
   test_shape_setprop_log test_sympin_drop_log test_cadence_window_hop_log \
@@ -81,7 +82,7 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # modal is raised for real and nothing dismisses it. Measured: killed at 120s under WSLg,
 # still stalled after 300s under xvfb-run. Issue 0355; the suite now self-guards too, so the
 # two halves are independent.)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate test_placement_wire_gate "
+nogui_tests=" test_descend_refusal_channel_0251 test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate test_placement_wire_gate "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 
