@@ -4023,6 +4023,38 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "0", TCL_STATIC);
             }
           }
+          /* xschem get graph_closest_wave <graph_idx> <px> <py>
+           * "<dataset> <node_index>" -- draw.c's find_closest_wave() asked as a
+           * question rather than driven by a graph gesture (issue 0305, batch F
+           * item 2). <node_index> is its node_number out-parameter (the
+           * `hilight_wave` index space, -1 for none) and <dataset> its return
+           * value (the closest dataset's sweepvar_wrap counter, -1 on refusal).
+           * NOT a duplicate of graph_trace_at: that one is graph_point_at(), a
+           * different walker with a tolerance and a segment metric. This is the
+           * ONLY way to reach find_closest_wave() without a display -- its sole
+           * other caller is callback.c's graph `t` key arm, which is why its
+           * unbalanced mode-5 restore survived every check in the tree until
+           * item 2. Read-only: no highlight, no prop mutation, no redraw, and
+           * the mouse mirror and the session's current database are exactly
+           * where they were -- the database meaning BOTH halves of the registry
+           * cursor, the current slot AND the slot `xschem raw switch_back` goes
+           * to (extra_prev_idx). The first cut of this verb restored only the
+           * first half, so a switch_back after a query landed one slot away;
+           * the walkers now put the pair back (draw.c node_db_prev_restore()).
+           * Fails soft ("-1 -1") on a bad index, a non-graph
+           * rect, an off-screen or digital strip, or no loaded data. */
+          else if(!strcmp(argv[2], "graph_closest_wave")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              char res[60];
+              int nn = -1;
+              int ds = graph_closest_wave(atoi(argv[3]), atof(argv[4]), atof(argv[5]), &nn);
+              my_snprintf(res, S(res), "%d %d", ds, nn);
+              Tcl_SetResult(interp, res, TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1 -1", TCL_STATIC);
+            }
+          }
           /* xschem get graph_plotbox_at <graph_idx> <px> <py>
            * 1 when the CANVAS PIXEL (px,py) is inside graph <graph_idx>'s PLOT
            * BOX -- the rectangle delineated by the two axes and the two lines

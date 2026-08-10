@@ -2267,6 +2267,9 @@ extern int sch_waves_loaded(void);
 extern int edit_wave_attributes(int what, int i, Graph_ctx *gr);
 extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
+/* find_closest_wave() as a read-only query at a canvas pixel; `xschem get
+ * graph_closest_wave` (batch F item 2, issue 0305) */
+extern int graph_closest_wave(int i, double px, double py, int *node_number);
 extern int graph_near_wave(int i, double px, double py, double tol);
 extern int graph_wave_at(int i, double px, double py, double tol);
 /* Trace SELECTION (issue 0175). The set lives in the graph rect's `hilight_wave`

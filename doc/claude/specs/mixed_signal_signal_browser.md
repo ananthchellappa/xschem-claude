@@ -409,8 +409,150 @@ deleted**: the unwind mechanism and the switch count both genuinely changed, and
 restated pair now demands two switches, two restores and zero mode-5 swaps in
 `wave_hilight_envelope()`.
 
-`find_closest_wave()` is reachable only from `callback.c`'s graph motion handler, i.e.
-a real DISPLAY, and was therefore NOT exercised behaviourally by that test.
+~~`find_closest_wave()` is reachable only from `callback.c`'s graph motion handler, i.e.
+a real DISPLAY, and was therefore NOT exercised behaviourally by that test.~~ It is now,
+through the query verb added in item 2 — see immediately below.
+
+#### D1b — the residual brackets and the sweep column (issue 0305, batch F item 2, 2026-08-09)
+
+Item 1 moved the `%` parse of all six walkers into `node_token_split()` and deliberately
+left three defects standing. They are fixed here, and the rulings behind them are the
+same shape: **a walker that switches the session's database owes a restore on every exit
+path, and an index resolved in one database means nothing in another.**
+
+**RULING — `find_closest_wave()` gets `graph_point_at()`'s two-level bracket, not a
+swap.** Its graph-level `rawfile=`/`sim_type=` switch was made once per NODE, inside the
+walk, and unwound by ONE `extra_rawfile(5, …)` after it. Both halves were wrong. Mode 5
+swaps `extra_idx` with `extra_prev_idx`; with the per-trace switch of D1 nested inside the
+graph-level one it lands the session on whichever database the last switch came from. And
+the swap ran whether or not the switch had TAKEN, so a graph whose `rawfile=` does not
+resolve had an unpaired restore repoint the session's raw on every call — and this
+function runs on a graph gesture. It now switches ONCE above the loop behind a `switched`
+flag, restores per node at the bottom of the body and once at the end, both by absolute
+index (`node_db_restore`). **Evidence:** reinstating the swap alone (sabotage S2) turns
+`NDC1 NDC2 NDC3 NDC4 NDC5 NDC6` of `tests/headless/test_node_token_split.tcl` red — a
+single hover on the nested strip, entered on slot 3, leaves the session on the VCD;
+deleting the per-node half alone (S1) reddens `NDC3`, because the entry AFTER a cross-DB
+one is then resolved in the cross-DB database.
+
+**RULING — one epilogue, reached by `goto`; a refusal never hand-copies the cleanup.**
+`graph_fullyzoom()`'s two refusals were bare `return 0`s that each hand-copied a SUBSET
+of the function's frees — and each got the subset wrong. The corrected inventory: they
+leaked `ntok_copy` (**13 bytes per refused fullyzoom, measured** — see below), and
+neither restored the database the graph-level switch had just made, so a strip whose
+graph database resolves and whose per-trace `%<rawfile>` does not left the whole SESSION
+pointing at the graph's database. **The addendum's claim that `express` also leaked is
+wrong**: `express` is scoped inside the `if(!bus_msb)` block and freed unconditionally
+before either refusal is reachable. Both refusals are now `goto fullyzoom_done`, the
+function's single exit; a third one added later inherits the restore and the frees by
+construction. **Evidence:** the leak is a differential `-d 3 -l log` +
+`src/track_memory.awk` measurement, 5 vs 205 refusals in one process: **fixed 830 → 830
+bytes (slope 0), the pre-item bypass restored 895 → 3495 (slope 13 B/refusal, exactly
+`strlen("bad;v(wonly)") + 1`)**. The restore is `NDL1`–`NDL4`.
+
+**RULING — the "re-resolve the sweep column BY NAME" rule of D1 covers ALL SIX walkers,
+not the three that had a per-trace switch when it was written.** `draw_graph()` — the
+REFERENCE walker — and `graph_fullyzoom()` both resolve the column after their switch but
+only for entries carrying their own `sweep=` token, and a `sweep=` list shorter than the
+`node=` list carries the previous entry's token forward. So the wide raw's `v(wsw)`
+(column 4) was carried into a three-column VCD and used as `values[4]`. This is not
+latent: **on a real display the renderer SIGSEGVs.** Evidence, both measured:
+* reverting `graph_fullyzoom()`'s re-resolve (S4) makes the headless file die with
+  `FATAL: signal 11` after 106 of its 118 checks;
+* reverting `draw_graph()`'s (S5) makes the on-display probe SIGSEGV inside the
+  `zoom_full` redraw, before the strip is ever drawn once; with the fix the same probe
+  survives 25 explicit `xschem draw_graph` calls.
+All six now keep `sweep_name`, re-`get_raw_index()` it after the switch and clamp the
+result against the switched-in `xctx->raw->nvars` (`NDR2`/`NDR3` count both, six each).
+
+**RULING — a function reachable only from a gesture gets a read-only query verb.**
+`find_closest_wave()`'s sole caller is `callback.c`'s graph `t` key arm, so no check in
+the tree could reach it — which is exactly why its restore was the one that drifted.
+`xschem get graph_closest_wave <graph_idx> <px> <py>` (scheduler.c, wrapping the new
+`graph_closest_wave()` in draw.c) answers `"<dataset> <node_index>"` at a canvas pixel. It
+is not a duplicate of `graph_trace_at`: that is `graph_point_at()`, a different walker
+with a tolerance and a segment metric. It sets up the transform, moves the C mouse mirror
+for the duration of the call and puts it back, and fails soft (`-1 -1`) on every refusal.
+**Evidence that the seam is load-bearing and not a stub:** dropping its
+canvas→schematic transform (S9) turns four NDC checks into `-1`.
+
+Item 2's legs take `tests/headless/test_node_token_split.tcl` from 91 checks to **118**
+(`NDC` bracket, `NDL` epilogue, `NDW` sweep column, `NDR` structural, plus three `NDF`
+premise checks); **fifteen sabotages, thirteen caught**. The two uncaught ones are named
+in the receipt and are both "this line is masked by another that already enforces it",
+not gaps in the item.
+
+**Not fixed, and not this item's:** `graph_fullxzoom()` still never parses `%` (that is
+D2); `graph_fullyzoom()`'s `save_npoints` is never reset to `-1` after the first
+OP→dc-sweep restore, so a later entry re-applies the first entry's counts to whatever
+database is current — pre-existing, untouched, and unrelated to the `%` field.
+
+##### D1b fix round — what adversarial review found still open (2026-08-09)
+
+Five findings, each raised with a reproducer. Three of them were the same shape as the
+item itself: *the contract claims more than any check watches.*
+
+**RULING — "the session's current database" means the WHOLE registry cursor, not the
+current slot.** `extra_idx` says which database is current; `extra_prev_idx` says where
+`xschem raw switch_back` will GO, and that idiom is real — `xschem.tcl:4743` and shipped
+schematics' `tcleval()` blocks both do `raw switch <f> … switch_back`. Every
+`extra_rawfile()` switch overwrites the second half, and in READ mode so does a FAILED one
+(`save.c`: `xctx->raw = save; xctx->extra_prev_idx = xctx->extra_idx;`). So a walker that
+unwinds only `extra_idx` has still moved the session, and a *read-only getter* could do
+it: measured with prev=1 / current=3, ONE call to `graph_closest_wave`, `graph_trace_at`,
+`wave_hilight_points` or a refused `fullyzoom` made the next `switch_back` land on slot 2.
+This is a FAMILY property (two of those four are unchanged HEAD code), so the fix is
+family-wide: `node_db_prev_restore()` (draw.c), called once per walker at its graph-level
+unwind and AFTER it, in ALL SIX. Deliberately NOT called by the per-node unwinds inside a
+walk — those are intermediate; the entry value is what the session is owed.
+**Evidence:** `NDU0` (control, no walker) plus `NDU1`–`NDU5`, one per reachable walker;
+`NDR7` counts the six call sites, because `draw_graph()` needs a canvas and
+`graph_wave_resolve()` needs a marker drag. Deleting the call in any one walker reddens
+exactly that walker's `NDU` check and `NDR7`; gutting the helper's body reddens all five
+`NDU`s and `NDL3` while leaving `NDR7` green (named blind spot: a structural count cannot
+see an empty body).
+
+**RULING — a query verb does not write to stderr.** `debug_var` is 0 in a normal run, so
+`dbg(0, …)` is not a level, it is an unconditional `fprintf`. `find_closest_wave()`'s
+"closest dataset=…" trace was one: harmless while a graph `t` keypress was its only
+trigger, once-per-CALL as soon as `xschem get graph_closest_wave` existed (20 lines from
+`NDC5` alone, 25 per suite run). Now `dbg(1, …)`. **Evidence:** `NDR8` (structural — a
+process cannot read its own stderr) plus the measured 25 → 0 lines per run.
+
+**CORRECTION — the two `graph_fullyzoom()` refusals are NOT symmetric, and the ruling
+above over-claimed by lumping them.** The graph-level switch is loop-invariant, so its
+refusal can only fire on iteration 1: `ntok_copy` is still NULL there and no switch is
+outstanding, and the pre-item `return 0` on that path leaked nothing and stranded nothing.
+Everything the ruling says is true of the PER-TRACE refusal only. Reverting the
+graph-level one alone left `NDL1`–`NDL5` green, i.e. `NDL3`'s name asserted a property no
+behavioural evidence covered. What the graph-level refusal *does* leave behind is the
+cursor's other half (the READ-mode clobber above), so `NDL3` now runs that strip with
+`autoload=true` and asserts where `switch_back` goes — and reverting the first refusal to
+`return 0` reddens it. The structural guard (`NDR4`/`NDR5`) stays.
+
+**RULING — a leak is proved by a differential, and the probe lives in the repo.** The
+restore half of residual (b) was pinned by `NDL1`–`NDL5`; the LEAK half by nothing —
+deleting the epilogue's `my_free(_ALLOC_ID_, &ntok_copy)` reintroduced a leak larger than
+the one the item fixed and left all 118 checks green. `NDK0`–`NDK2` now run
+`tests/headless/leakprobe_fullyzoom.tcl` as two child processes (5 and 55 refusals) under
+`-d 3 -l <log>`, and compare `src/track_memory.awk`'s totals: equal = slope 0. It must be
+a differential because with `_ALLOC_ID_` left as the placeholder `0` every allocation
+shares one id and only the slope means anything. **Evidence:** with the free deleted,
+`830/830` becomes `895/1545` and `NDK1` alone goes red; `NDK2` guards the vacuous case
+where the child ignores its loop count.
+
+**RULING — the mouse mirror put-back is watched through its production consumer.**
+`graph_closest_wave()` parks `xctx->mousex/mousey` on the pixel it is asked about; nothing
+observed the put-back, and deleting it left all 118 green. `xschem closest_object`
+(`find_closest_obj(xctx->mousex, xctx->mousey, 0)`) is the observable, so no new getter was
+added. **The capture point is load-bearing**: `NDC9` reads it BEFORE the file's first
+query, because with the put-back deleted the mirror parks on the first call and every
+later before/after pair then matches — moving the capture after the first query makes the
+check pass against the broken code (demonstrated).
+
+The file is now **130 checks** (was 118). `graph_fullxzoom()`'s carried sweep index was
+raised in this round and **NOT confirmed** — no reproducer was produced, and D2 already
+owns that function; it is recorded in the receipt, not acted on.
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

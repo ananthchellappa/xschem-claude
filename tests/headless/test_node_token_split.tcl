@@ -58,13 +58,39 @@
 #         seventh hand-rolled copy is invisible to all of them.
 #   NDZ*  the coverage self-check.
 #
+# BATCH F ITEM 2 added four more legs, for the residuals item 1 left open (the
+# addendum of issue 0305):
+#   NDC*  find_closest_wave()'s DATABASE BRACKET. Its restore was a single mode-5
+#         SWAP outside the node loop, made whether or not the switch had taken --
+#         and a swap cannot unwind the per-trace switch nested inside the
+#         graph-level one. Reached through `xschem get graph_closest_wave`, added
+#         with that item because callback.c's graph `t` key arm was its only
+#         caller and nothing headless could see the defect.
+#   NDL*  graph_fullyzoom()'s two `return 0` exits, which skipped the restore and
+#         leaked ntok_copy. Both are now `goto fullyzoom_done`, one epilogue.
+#   NDW*  the CARRIED SWEEP COLUMN across a per-trace switch, in the walker that
+#         can be watched headlessly. A carried column NUMBER belongs to the
+#         PREVIOUS database; what an entry with no `sweep=` token of its own
+#         inherits must be the NAME.
+#   NDR*  the structural guard for both: no exit past the epilogue, and all six
+#         walkers resolving the sweep column by name and clamping it.
+#
+# ITS FIX ROUND added two more, for what review showed nothing was watching:
+#   NDU*  the registry cursor is a PAIR. node_db_restore() puts back extra_idx;
+#         extra_prev_idx -- where `xschem raw switch_back` goes -- was left
+#         wherever the walk's last switch dropped it, so a read-only getter moved
+#         the session after all. Four walkers are reachable from Tcl; NDR7 counts
+#         the other two.
+#   NDK*  the LEAK half of residual (b), which no assertion inside this process
+#         can see: two child xschems, different refusal counts, `-d 3 -l <log>`,
+#         and src/track_memory.awk. Equal totals = slope 0.
+#
 # True headless: run under --nogui.
 #   ./src/xschem --pipe -q --nolog --nogui --script tests/headless/test_node_token_split.tcl
 #
-# NOT COVERED HERE: find_closest_wave() is only reachable from callback.c's
-# graph motion handler, i.e. a real DISPLAY. Its `%` parse moved into the shared
-# helper with the rest; its unbalanced mode-5 restore is deliberately untouched
-# (batch F item 2 owns it).
+# NOT COVERED HERE: draw_graph() carries the same carried-sweep-column shape the
+# NDW leg pins in graph_fullyzoom(), and it is fixed the same way -- but it needs
+# a canvas (`xschem draw_graph` is has_x-gated), so only NDR2/NDR3 see it here.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -700,6 +726,378 @@ check_true "NDX2 ...and both of them are inside node_token_split(): a seventh\
          [lindex $ndpct 0] > $nddef && [lindex $ndpct end] < $ndend}]
 check "NDX3 all SIX node= walkers call the shared parser" $ndcalls 6
 
+# ###########################################################################
+# BATCH F ITEM 2 -- the residuals issue 0305 left open:
+#   NDC  find_closest_wave()'s restore was a mode-5 SWAP, not a balanced bracket
+#   NDL  graph_fullyzoom()'s two `return 0` exits skipped the restore and leaked
+#   NDW  the CARRIED SWEEP COLUMN across a per-trace switch (residual (c))
+#   NDR  the structural guard for both of those, over src/draw.c
+#
+# THE TWO NEW STRIPS ARE BUILT HERE, AT THE END, ON PURPOSE. Adding rects earlier
+# would re-fit `zoom_full` and shrink every plot box the NDP/NDB/NDM/NDS legs
+# above measured in, so the item-1 checks would be judged against a geometry they
+# were not written for. Everything above has finished with the canvas by now.
+# ###########################################################################
+
+# a FIFTH strip: the same two-level nesting as strip 3 -- graph-level `rawfile=`
+# to the wide raw, a cross-DB `%<rawfile>` entry under it, and a third entry that
+# resolves ONLY in the graph's database -- but with NO `sweep=` token, so column 0
+# (time) is the right x column in both databases. That isolates the DATABASE
+# BRACKET from the sweep-column question: what this strip measures is purely
+# where the session's current database ends up.
+xschem rect 0 4000 800 4400 -1 {flags=graph} 0
+nd_setnode 4 "v(wonly)\n\\\"vcd4;TOP.m.siga%$vcdf vcd\\\"\nv(wtwo)"
+foreach {t v} [list x1 0 x2 2e-9 y1 -0.4 y2 1.4] { xschem setprop rect 2 4 $t $v }
+xschem setprop rect 2 4 rawfile $widef
+xschem setprop rect 2 4 sim_type tran
+# a SIXTH strip, for graph_fullyzoom()'s REFUSAL path. Its graph-level `rawfile=`
+# RESOLVES (the wide raw) and its SECOND entry names a per-trace database that
+# does not: the only shape in which the walker switches, then refuses, then has
+# to unwind. Entry 1 exists so the refusal lands on a LATER iteration, with a
+# live ntok_copy handed out by node_token_split on the entry before it.
+set ::nd_nosuch [file join $scratch nosuch_pertrace.raw]
+xschem rect 0 5000 800 5400 -1 {flags=graph} 0
+nd_setnode 5 "v(wonly)\n\\\"bad;v(wonly)%$::nd_nosuch tran\\\""
+foreach {t v} [list x1 0 x2 2e-9 y1 0.4 y2 0.6] { xschem setprop rect 2 5 $t $v }
+xschem setprop rect 2 5 rawfile $widef
+xschem setprop rect 2 5 sim_type tran
+xschem zoom_full
+check "NDF18 the two item-2 strips exist" [pcall {xschem get graph_rects}] 6
+set ::nd_box4 [nd_box 4 [nd_band 0 4000 800 4400]]
+check_true "NDF19 the bracket strip's plot box was located" \
+  [expr {[llength $::nd_box4] == 4}]
+check_true "NDF20 the per-trace database it refuses on is really absent from disk" \
+  [expr {![file exists $::nd_nosuch]}]
+
+# the screen row a graph-space VALUE sits at, given the strip's y1..y2 window.
+# Screen y grows downward, so the graph's y2 (the top of the window) is the box's
+# SMALLER screen y.
+proc nd_rowy {box gy1 gy2 v} {
+  lassign $box x1 y1 x2 y2
+  return [expr {int($y1 + ($gy2 - double($v)) * ($y2 - $y1) / ($gy2 - $gy1))}]
+}
+
+# ===========================================================================
+# NDC — find_closest_wave(): the balanced bracket (residual (a))
+# ===========================================================================
+# find_closest_wave() is reached from ONE place, callback.c's graph `t` key arm,
+# so nothing headless could call it and its restore drifted unseen: a single
+# extra_rawfile(5, ...) SWAP after the node loop, made whether or not the switch
+# had taken. `xschem get graph_closest_wave` (added with this item) asks the same
+# question as the key arm and changes nothing else.
+#
+# ⚠ ENTERED FROM A NON-DEFAULT CURRENT DATABASE. A swap restores correctly by
+# accident whenever exactly one switch is outstanding, which is what the session
+# database gives you -- so a check made on slot 0 is satisfied by the broken code
+# and proves nothing. The session is put on slot 3 (other.raw) first, and the
+# strip nests a per-trace switch inside a graph-level one.
+set ::nd_c_col [nd_colx $::nd_box4 0.375]
+# THE MOUSE MIRROR, captured BEFORE the first query in the file (NDC9 below).
+# graph_closest_wave() parks xctx->mousex/mousey on the pixel it is asked about
+# and puts them back; `xschem closest_object` is the production consumer of that
+# mirror (scheduler.c: find_closest_obj(xctx->mousex, xctx->mousey, 0)), so it is
+# the observable. It MUST be read before any query: with the put-back deleted the
+# mirror parks on the first query and every later before/after PAIR then matches,
+# which is exactly how a naive equality check passes against the broken code.
+set ::nd_mouse0 [pcall {xschem closest_object}]
+check "NDC0 the session starts on slot 3, a database that is neither the strip's\
+ nor its cross-DB entry's" [pcall {xschem raw switch 3; xschem raw rawfile}] $othf
+# t = 0.75 ns: the VCD is HIGH there, the wide raw's v(wonly) is ~0.61 and
+# v(wtwo) is ~-0.24, so the three traces are far apart in y and the row decides
+# which one answers.
+set ::nd_c1 [pcall {xschem get graph_closest_wave 4 $::nd_c_col \
+                      [nd_rowy $::nd_box4 -0.4 1.4 1.0]}]
+# FUSED: the answer AND the bracket in one assertion. "node 1" is the cross-DB
+# VCD entry (positive evidence the walk ran and resolved a foreign database);
+# the rawfile is the item. Pre-fix the walk answers 1 and leaves the session on
+# the VCD, so only the fused form is red.
+check "NDC1 a pick at logic 1 answers the CROSS-DB entry (node 1) and leaves the\
+ session's database exactly where it was" \
+  [list [lindex $::nd_c1 1] [pcall {xschem raw rawfile}]] [list 1 $othf]
+check "NDC2 ...and the registry's current slot with it" \
+  [pcall {lindex [split [xschem raw info] "\n"] 0}] {3 current}
+# the entry AFTER the cross-DB one resolves only in the GRAPH's database, so it
+# can only answer if the per-node unwind went back one level, not all the way out
+set ::nd_c2 [pcall {xschem get graph_closest_wave 4 $::nd_c_col \
+                      [nd_rowy $::nd_box4 -0.4 1.4 -0.24]}]
+check "NDC3 a pick at -0.24 answers the entry AFTER the cross-DB one (node 2),\
+ and still leaves the session's database alone" \
+  [list [lindex $::nd_c2 1] [pcall {xschem raw rawfile}]] [list 2 $othf]
+# and from the DEFAULT database, where the graph's own rawfile= is the only thing
+# between the session and the VCD
+check "NDC4 entered from slot 0 instead, the answer and the restore are the same" \
+  [pcall {xschem raw switch 0
+          set n [lindex [xschem get graph_closest_wave 4 $::nd_c_col \
+                          [nd_rowy $::nd_box4 -0.4 1.4 1.0]] 1]
+          list $n [xschem raw rawfile]}] [list 1 $rawf]
+# twenty calls: this function runs on a gesture, so an unbalanced restore walks
+# the session one slot at a time and a single call can hide it
+check "NDC5 twenty picks in a row leave the session on the same database" \
+  [pcall {set s {}
+          for {set k 0} {$k < 20} {incr k} {
+            xschem get graph_closest_wave 4 $::nd_c_col [nd_rowy $::nd_box4 -0.4 1.4 1.0]
+            lappend s [xschem raw rawfile]
+          }
+          lsort -unique $s}] $rawf
+# the VCD-only strip: one level, which is the case a swap survives -- kept so a
+# fix that broke the simple bracket is caught too
+check "NDC6 the single-level strip still answers its only trace, restore intact" \
+  [pcall {list [lindex [xschem get graph_closest_wave 1 [nd_colx $::nd_box1 0.375] \
+                         [nd_rowy $::nd_box1 -0.3 1.3 1.0]] 1] [xschem raw rawfile]}] \
+  [list 0 $rawf]
+# the refusals, which must not move anything either
+check "NDC7 a non-graph rect index is refused, not answered" \
+  [pcall {xschem get graph_closest_wave 99 100 100}] {-1 -1}
+# the fail-soft arm proper: too few arguments must be "nothing there", never a
+# Tcl error -- the ASE viewer wraps every such getter in a catch and reads an
+# error as "locked out"
+check "NDC8 ...and so is a call with no coordinates" \
+  [pcall {xschem get graph_closest_wave 4}] {-1 -1}
+# the verb's OTHER documented put-back, which nothing watched until the fix round:
+# it moves the C mouse mirror to the pixel it is asked about for the duration of
+# the call. Thirty-odd queries have run above; if the two lines that restore
+# xctx->mousex/mousey are gone the mirror is parked on the strip-4 pixel by now
+# and closest_object answers from THERE instead of from where it started.
+check "NDC9 thirty queries later the C mouse mirror is still where it was --\
+ `closest_object`, which reads xctx->mousex/mousey, answers unchanged" \
+  [pcall {xschem closest_object}] $::nd_mouse0
+
+# ===========================================================================
+# NDU — the registry cursor is a PAIR (fix round of batch F item 2)
+# ===========================================================================
+# node_db_restore() puts back extra_idx. It does NOT put back extra_prev_idx,
+# which is where `xschem raw switch_back` (extra_rawfile mode 5) GOES -- and
+# every switch a walker makes overwrites it. So a read-only getter could leave
+# the session's current database exactly right and still send the next
+# switch_back to a database the user never asked for. That idiom is real and
+# documented: `xschem raw switch <f>; ...; xschem raw switch_back` appears in
+# xschem.tcl's graph dialog (4743) and in shipped schematics' tcleval() blocks.
+#
+# The control (NDU0) is the same sequence with NO walker in the middle: a switch
+# to 1 then to 3 leaves prev=1, so switch_back must land on 1. Each check below
+# repeats it with one walker interposed. Pre-fix ALL FOUR landed on 2.
+proc nd_slot {} { return [lindex [split [xschem raw info] "\n"] 0] }
+proc nd_backto {script} {
+  uplevel 1 {xschem raw switch 1; xschem raw switch 3}
+  uplevel 1 $script
+  uplevel 1 {xschem raw switch_back}
+  return [nd_slot]
+}
+check "NDU0 CONTROL: with no walker in between, switch_back lands on the slot it\
+ was told to" [pcall {nd_backto {}}] {1 current}
+check "NDU1 a graph_closest_wave query leaves switch_back's destination alone" \
+  [pcall {nd_backto {xschem get graph_closest_wave 4 $::nd_c_col \
+                       [nd_rowy $::nd_box4 -0.4 1.4 1.0]}}] {1 current}
+check "NDU2 ...and so does graph_trace_at (graph_point_at's getter)" \
+  [pcall {nd_backto {xschem get graph_trace_at 4 $::nd_c_col \
+                       [nd_rowy $::nd_box4 -0.4 1.4 1.0]}}] {1 current}
+check "NDU3 ...and wave_hilight_points (wave_hilight_envelope's)" \
+  [pcall {nd_backto {xschem get wave_hilight_points 4 1}}] {1 current}
+check "NDU4 ...and a REFUSED fullyzoom, which is not a getter but must not move\
+ the session either" \
+  [pcall {nd_backto {xschem setprop rect 2 5 fullyzoom}}] {1 current}
+check "NDU5 ...and a fullyzoom that SUCCEEDS" \
+  [pcall {nd_backto {xschem setprop rect 2 4 fullyzoom}}] {1 current}
+
+# ===========================================================================
+# NDL — graph_fullyzoom(): one epilogue, no bypass (residual (b))
+# ===========================================================================
+# Both of its `return 0` exits skipped the database restore AND leaked the
+# ntok_copy node_token_split() had just handed out. The second one is reachable
+# with the graph-level switch OUTSTANDING, so the session was left pointing at
+# the GRAPH's database -- the wide raw here.
+check "NDL0 the session is on slot 3 before the refused fullyzoom" \
+  [pcall {xschem raw switch 3; xschem raw rawfile}] $othf
+pcall {xschem setprop rect 2 5 fullyzoom}
+# FUSED: y1/y2 UNCHANGED is the positive evidence that the refusal path is the
+# one that ran (a fullyzoom that completed would have rewritten them to the wide
+# raw's 0.60..0.65); the rawfile is the item.
+check "NDL1 a fullyzoom refused by an unresolvable per-trace database leaves the\
+ y window alone AND puts the session's database back" \
+  [pcall {list [xschem getprop rect 2 5 y1] [xschem getprop rect 2 5 y2] \
+               [xschem raw rawfile]}] [list 0.4 0.6 $othf]
+check "NDL2 ...and the registry's current slot with it" \
+  [pcall {lindex [split [xschem raw info] "\n"] 0}] {3 current}
+# the OTHER early exit: the graph-level `rawfile=` itself does not resolve.
+#
+# ⚠ THIS CHECK WAS OVER-CLAIMED IN THE FIRST CUT (review finding, fix round).
+# As first written it asserted the y window and the current database, and passed
+# just as happily with the pre-item `return 0` put back -- because the two
+# refusals are NOT symmetric. The graph-level switch is loop-invariant, so its
+# refusal can only fire on iteration 1, where ntok_copy is still NULL and no
+# switch is outstanding: there is nothing for a bypass to skip. Nothing, EXCEPT
+# the other half of the registry cursor. In READ mode (autoload=true) a failed
+# extra_rawfile() sets extra_prev_idx = extra_idx (save.c), so the refusal moves
+# where `raw switch_back` goes without moving the current slot -- and only the
+# epilogue puts it back. The strip is therefore flipped to autoload=true for the
+# duration of this check, which is what gives the first `goto` behavioural
+# evidence at all; NDR4/NDR5 remain its structural guard.
+xschem setprop rect 2 2 autoload true
+check "NDL3 the graph-level refusal leaves the y window, the database AND\
+ switch_back's destination alone -- it exits through the epilogue too" \
+  [pcall {xschem raw switch 1; xschem raw switch 3
+          xschem setprop rect 2 2 y1 0.42; xschem setprop rect 2 2 y2 0.62
+          xschem setprop rect 2 2 fullyzoom
+          set cur [list [xschem getprop rect 2 2 y1] [xschem getprop rect 2 2 y2] \
+                        [xschem raw rawfile]]
+          xschem raw switch_back
+          linsert $cur end [nd_slot]}] [list 0.42 0.62 $othf {1 current}]
+xschem setprop rect 2 2 autoload {}
+pcall {xschem raw switch 3}
+# twenty refusals: each one used to leak an ntok_copy and shift the session
+check "NDL4 twenty refused fullyzooms leave the session on one database, still usable" \
+  [pcall {set s {}
+          for {set k 0} {$k < 20} {incr k} {
+            xschem setprop rect 2 5 fullyzoom
+            lappend s [xschem raw rawfile]
+          }
+          list [lsort -unique $s] [expr {[xschem raw index v(other)] >= 0}]}] \
+  [list $othf 1]
+check "NDL5 a fullyzoom that SUCCEEDS still leaves the session's database alone" \
+  [pcall {xschem raw switch 0
+          xschem setprop rect 2 1 y1 0.4; xschem setprop rect 2 1 y2 0.6
+          xschem setprop rect 2 1 fullyzoom
+          list [expr {[xschem getprop rect 2 1 y1] <= 0.05}] [xschem raw rawfile]}] \
+  [list 1 $rawf]
+
+# ===========================================================================
+# NDW — the CARRIED SWEEP COLUMN across a per-trace switch (residual (c))
+# ===========================================================================
+# Strip 3 is the configuration: `sweep=v(wsw)` (column 4 of the FIVE-column wide
+# raw) for THREE node entries, the second of which switches into a THREE-column
+# VCD. What an entry with no `sweep=` token of its own inherits must be the
+# NAME -- a carried column NUMBER was resolved in the previous database and here
+# subscripts values[] past its end. graph_fullyzoom() is the one walker with this
+# shape that a headless check can watch answer: its answer is the y window.
+# (draw_graph(), which has the identical shape, needs a canvas -- NDR2 below is
+# its guard, and the receipt records the on-display run.)
+xschem setprop rect 2 3 y1 0.4
+xschem setprop rect 2 3 y2 0.6
+xschem setprop rect 2 3 fullyzoom
+set ::ndw1 [pcall {xschem getprop rect 2 3 y1}]
+set ::ndw2 [pcall {xschem getprop rect 2 3 y2}]
+check_true "NDW1 fullyzoom on the nested strip MOVED the window off its 0.4..0.6 seed" \
+  [expr {[string is double -strict $::ndw1] && [string is double -strict $::ndw2] &&
+         ($::ndw1 != 0.4 || $::ndw2 != 0.6)}]
+# the window must hold ALL THREE entries' data: the wide raw's v(wtwo) at -0.25
+# (bottom), and the VCD's logic 1 (top). The VCD half is the one that needs the
+# sweep column re-resolved -- against v(wsw)'s column 4 the VCD's x values are
+# whatever lies past the end of its values[], and the 0..2ns window rejects them.
+check_true "NDW2 ...and spans BOTH the graph database's -0.25 and the CROSS-DB\
+ entry's logic 1, i.e. the VCD was walked against ITS OWN time column" \
+  [expr {[string is double -strict $::ndw1] && [string is double -strict $::ndw2] &&
+         $::ndw1 <= -0.2 && $::ndw2 >= 0.95}]
+check "NDW3 ...and the session's database is unchanged" [pcall {xschem raw rawfile}] $rawf
+
+# ===========================================================================
+# NDK — the LEAK half of residual (b), measured (fix round)
+# ===========================================================================
+# Residual (b) is two defects wearing one name: a missed database restore and a
+# leaked ntok_copy. Everything above pins the restore half. The LEAK half was
+# pinned by nothing at all -- deleting the epilogue's `my_free(_ALLOC_ID_,
+# &ntok_copy)` reintroduces a leak strictly larger than the one the item fixed
+# and leaves every other check in this file green (review finding). A leak is not
+# visible to an assertion inside the process that leaks: it needs xschem's own
+# -d 3 allocation log and a DIFFERENTIAL, because with _ALLOC_ID_ left as the
+# placeholder 0 every allocation shares one id and only the SLOPE means anything.
+#
+# So: two child processes, K refusals each, K1 != K2, `-d 3 -l <log>`, and
+# src/track_memory.awk's "Total leaked memory". Equal totals = slope 0 = the
+# refusal path frees what it takes. The child is
+# tests/headless/leakprobe_fullyzoom.tcl, in the repo (NOT named test_*.tcl,
+# which full_audit.sh would glob and score as a zero-check FAIL) so the
+# measurement is reproducible by hand and not only from here.
+set ::nd_repo [file normalize [file join $here .. ..]]
+set ::nd_awk  [file join $::nd_repo src track_memory.awk]
+set ::nd_child [file join $here leakprobe_fullyzoom.tcl]
+proc nd_leak {k} {
+  set log [file join $::scratch "leak_$k.log"]
+  set xs [info nameofexecutable]
+  set env2 [list env ND_LEAK_K=$k GUI_GATE=1]
+  if {[catch {exec {*}$env2 $xs --pipe -q --nolog --nogui -d 3 -l $log \
+                --script $::nd_child} out]} {
+    ## a non-zero exit is still fine if the log was written; report it either way
+    if {![file exists $log]} { return "ERR:$out" }
+  }
+  if {![file exists $log]} { return "NOLOG" }
+  if {[catch {exec awk -f $::nd_awk $log nosource} rep]} { return "ERR:$rep" }
+  foreach line [split $rep "\n"] {
+    if {[regexp {Total leaked memory = ([0-9]+)} $line -> n]} { return $n }
+  }
+  return "NOTOTAL"
+}
+set ::nd_k1 [nd_leak 5]
+set ::nd_k2 [nd_leak 55]
+check_true "NDK0 both leak runs produced a parseable total from track_memory.awk" \
+  [expr {[string is integer -strict $::nd_k1] && [string is integer -strict $::nd_k2] &&
+         $::nd_k1 > 0}]
+check "NDK1 fifty extra REFUSED fullyzooms leak exactly nothing: the totals from\
+ a 5-refusal and a 55-refusal process are identical (slope 0)" \
+  [list $::nd_k1 $::nd_k2] [list $::nd_k1 $::nd_k1]
+# the differential is only meaningful if the two children really did different
+# amounts of work -- an ND_LEAK_K the child ignored would make NDK1 vacuous
+check_true "NDK2 ...and the two children really did run different loop counts\
+ (their allocation logs differ in size)" \
+  [expr {[file size [file join $scratch leak_5.log]] <
+         [file size [file join $scratch leak_55.log]]}]
+
+# ===========================================================================
+# NDR — the structural guard for the two residuals
+# ===========================================================================
+# Both defects are shapes, not values: an exit path that bypasses the epilogue,
+# and a column index carried across a database switch. A third early return added
+# later, or one walker reverting to "resolve only when this entry has its own
+# sweep token", is invisible to every behavioural check above -- NDW2 only sees
+# the walker it can reach.
+set ndf_open -1; set ndf_close -1; set ndk 0
+set ndf_returns 0; set ndf_gotos 0; set ndf_label 0
+set ndsweep 0; set ndclamp 0; set ndprev 0; set ndtrace {}
+foreach ndline [split $nddraw "\n"] {
+  if {[string first "int graph_fullyzoom(" $ndline] == 0} { set ndf_open $ndk }
+  if {$ndf_open >= 0 && $ndf_close < 0 && $ndk > $ndf_open && $ndline eq "\}"} {
+    set ndf_close $ndk
+  }
+  if {[nd_is_code $ndline]} {
+    if {[regexp {get_raw_index\(sweep_name,} $ndline]} { incr ndsweep }
+    if {[regexp {>= *(xctx->)?raw->nvars\)} $ndline]} { incr ndclamp }
+    if {[regexp {^\s*node_db_prev_restore\(} $ndline]} { incr ndprev }
+    if {[regexp {dbg\((\d+), *"closest dataset=} $ndline -> ndlev]} { lappend ndtrace $ndlev }
+    if {$ndf_open >= 0 && $ndf_close < 0} {
+      if {[regexp {^[ \t]*return[ ;]} $ndline]} { incr ndf_returns }
+      if {[regexp {goto +fullyzoom_done} $ndline]} { incr ndf_gotos }
+      if {[regexp {^\s*fullyzoom_done:} $ndline]} { incr ndf_label 1 }
+    }
+  }
+  incr ndk
+}
+check_true "NDR1 graph_fullyzoom() was located in draw.c" \
+  [expr {$ndf_open >= 0 && $ndf_close > $ndf_open}]
+check "NDR2 all SIX node= walkers resolve the sweep column BY NAME after the\
+ switch (a carried column NUMBER belongs to the previous database)" $ndsweep 6
+check "NDR3 ...and all six clamp it against the switched-in nvars" $ndclamp 6
+check "NDR4 graph_fullyzoom() has exactly TWO return statements: the answer and\
+ the no-waves refusal. Its node walk exits through the epilogue, never past it" \
+  $ndf_returns 2
+check "NDR5 ...through exactly the two `goto fullyzoom_done`s that replaced the\
+ two leaking `return 0`s" $ndf_gotos 2
+check "NDR6 ...and the epilogue label they land on exists exactly once" $ndf_label 1
+# the cursor's other half, structurally: NDU1-NDU5 can only reach four of the six
+# walkers from Tcl (draw_graph needs a canvas, graph_wave_resolve needs a marker
+# drag), so the count is what keeps the sixth from being forgotten. One call per
+# walker, at its GRAPH-level unwind -- a seventh would mean a per-node restore
+# had been given the entry value, which is the wrong nesting level.
+check "NDR7 all SIX node= walkers put back the OTHER half of the registry cursor\
+ (extra_prev_idx, where `raw switch_back` goes), once each" $ndprev 6
+# debug_var is 0 in every normal run (globals.c), so dbg(0, ...) is not a debug
+# level at all -- it is an unconditional write to stderr. find_closest_wave()'s
+# "closest dataset" trace was one, harmless while a graph `t` keypress was its
+# only trigger and one line per CALL once `xschem get graph_closest_wave` existed
+# (NDC5 alone makes twenty). Structural, and deliberately so: a check cannot read
+# its own process's stderr. The behavioural evidence is in the receipt (a child
+# process, 151 queries, `grep -c '^closest dataset'` = 0).
+check "NDR8 ...and the closest-wave trace is a dbg LEVEL 1 line: a query verb\
+ must not write to stderr once per call" $ndtrace 1
+
 set ::nd_body_completed 1
 
 } err]} {
@@ -715,7 +1113,7 @@ set ::nd_body_completed 1
 # put the new number here by hand. The count EXCLUDES the two NDZ legs, so the
 # RESULT line reads two higher.
 # ===========================================================================
-set ::nd_expect 89
+set ::nd_expect 128
 set ndgot [expr {$npass + $fail}]
 check "NDZ1 the file ran its full complement of checks (a silent shortfall is\
  the failure this guards)" \
