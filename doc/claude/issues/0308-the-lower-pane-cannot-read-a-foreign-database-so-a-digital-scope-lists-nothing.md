@@ -127,10 +127,10 @@ saying something no longer true.
 
 ## FIXED — batch F item 7, 2026-08-10 (spec RULING F6)
 
-Commit: `feat(waveform): give the browser's sea a database dimension` on branch
-`fluid-editing`, parent `1e5c2b64` — the SHA itself is written in by the one-line
-follow-up commit that immediately succeeds it, because a commit cannot carry its
-own hash. Receipt `doc/claude/batch_F/receipts/07-browser-sea-per-db.md`.
+Commit: **`f51a19d1`** — `feat(waveform): give the browser's sea a database dimension`
+on branch `fluid-editing` (parent `1e5c2b64`). The SHA is written in by this one-line
+follow-up commit, because a commit cannot carry its own hash.
+Receipt `doc/claude/batch_F/receipts/07-browser-sea-per-db.md`.
 
 ### It was worse than this file says, and the worse case is what the fix is proved on
 
