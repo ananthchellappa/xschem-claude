@@ -176,6 +176,47 @@ v4:
 software-render mode — `Failed to initialize glamor, falling back to sw`). Treat
 any long-lived X client on this box as mortal.
 
+**Panel liveness is NECESSARY BUT NOT SUFFICIENT (2026-08-10, issue 0310).**
+`pid == pgid == sid`, `DISPLAY=:0`, alive in `/proc`, `_gate_widget_alive` green
+— and the user sees no window and no taskbar icon, because the display Xwayland
+came back with is a **640×480 stub whose WM parks every top-level at -32768**.
+The panel is going exactly where it is told; there is nothing wrong with the
+client. **Visibility is a separate property and needs its own assertion.**
+`tests/headless/wslg_health.sh` is that assertion — five checks, of which the
+decisive one maps a real Tk window and compares where it landed with where it
+asked to go (spec: `doc/claude/specs/wslg_health_probe.md`).
+**It is NOT wired into this gate yet**: `_gate_ensure_widget` should run it
+before launching and log `panel launched onto a stub display` rather than a
+healthy-looking launch, and `full_audit.sh` should refuse the run with a distinct
+`ENVBAD` status. Both remain open under 0310.
+
+**That probe MAPS A WINDOW, so it answers this panel (2026-08-11).** Its check 5
+puts a real top-level on the user's desktop, and its first draft consulted
+nothing: probe windows flashed past during a sabotage run, the user pressed
+**Pause**, and nothing stopped. Anything that paints on the user's screen answers
+this button — that is the one rule this gate exists to enforce, and a preflight
+is not exempt from it. `wslg_health.sh` now **reads `$GATE_DIR/control` before it
+maps anything** — once at startup, and again **before every one of its up-to-3
+probe attempts**, sharing one deadline — and exits **4 STOPPED** / **5 DEFERRED**
+without mapping. (Consulting only once before the retry loop was not enough: a
+button pressed as probe window 1 appeared was answered with two more windows and
+a health verdict, and hardest of all on a stub, which misplaces every attempt and
+so always takes all three.) Three consequences for this file:
+
+* It **reads the file directly and does NOT source `gui_gate.sh`** — on purpose.
+  The probe is meant to become a preflight *inside* `gate_start`, and sourcing
+  the gate from something the gate calls is a circular dependency. It also never
+  writes into `$GATE_DIR`; that dir belongs to the user and the panel.
+* Whoever wires the preflight in must treat **4 and 5 as "not measured"**, not as
+  a bad environment: a run the user paused must not be reported as a stub
+  display. Only exit 1 means `ENVBAD`.
+* A **standing STOP is treated differently by the two**. `gate_start`
+  deliberately CLEARS a STOP it finds already set when a new suite arrives (it
+  was aimed at some earlier suite); the probe refuses on any standing STOP. As a
+  preflight inside `gate_start`, a stale self-clearing STOP would therefore make
+  the probe report STOPPED for a run the gate itself would have let through —
+  decide that order explicitly when wiring it in.
+
 ## The revive that could not (v6, 2026-08-04) — the launch is ASYNCHRONOUS
 
 v4's revive **failed seven times in one day**, each time logging
