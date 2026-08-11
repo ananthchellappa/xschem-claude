@@ -714,33 +714,85 @@ void start_wire(double mx, double my)
   }
 }
 
+/* SPEC D4 -- THE RESOLUTION RULE, and it genuinely differs by kind of database.
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4 (RULINGS D4-3, D4-4).
+ *
+ * `p` is the last sample at or before the cursor (see the search in
+ * backannotate_at_cursor_b_pos()), and this turns it into the value to report.
+ *
+ * DENSE ANALOG SWEEP -- interpolate between p and p+1, unchanged. The samples
+ * are close enough together that the choice is invisible, and this is what the
+ * viewer's readout has always shown (test_wave_viewer G15b pins Tcl-side
+ * interpolation against this function's answer).
+ *
+ * SPARSE EVENT STREAM (sim_type "vcd") -- HOLD. The value at t is the value set
+ * by the last event at or before t, which may be far to the left; that is not
+ * an approximation, it is what a digital signal DOES between events. And the
+ * approximation is not merely imprecise here, it is a different symbol: a VCD
+ * database encodes 0 -> 0.0, 1 -> 1.0, X -> 0.5, Z -> 0.3 (spec C3) and
+ * get_bus_value() reads anything in 0.2..0.8 as UNKNOWN, so interpolating
+ * across the step vcd_read() materializes at each change (spec C2 emits
+ * (t - 1 tick, old) then (t, new)) reports X for a perfectly known signal --
+ * for a whole tick, which on a `$timescale 1ns` file is a nanosecond wide.
+ * Only "vcd" takes this arm: a `table` database is a sampled table, not an
+ * event stream.
+ *
+ * ...AND THE SWEEP COLUMN IS EXEMPT FROM THE HOLD (RULING D4-6, fix round).
+ * A time axis is not an event-driven signal. Holding it froze a VCD's own
+ * `time` readout at the last event's timestamp while the SAME Raw's annot_x
+ * recorded the real cursor position -- the database contradicted itself, and
+ * `xschem raw value time {}` on a VCD answered 150n for a cursor at 175n. The
+ * sweep column interpolates like a dense analog one, which under D4-4's clamp
+ * is simply the cursor position clipped into the database's own span.
+ *
+ * NEITHER KIND EXTRAPOLATES (RULING D4-4). Outside [sweep[p], sweep[p+1]] the
+ * fraction is clamped, so a cursor before a database's first sample reads that
+ * first sample verbatim and one past its last sample reads the last -- which is
+ * the case a mixed strip creates on every cursor move, the VCD ending at 500 ns
+ * under an analog raw that runs to 2 us. The old code extrapolated there off
+ * the FORWARD segment's slope, and at the last sample of a dataset it did so by
+ * reading values[idx][p + 1] one element past the my_calloc(allpoints) buffer
+ * (save.c) -- silently plausible, occasionally not even repeatable. */
 static double interpolate_yval(int idx, int p, double x, int sweep_idx, int point_not_last)
 {
-  double val = xctx->raw->values[idx][p];
+  Raw *raw = xctx->raw;
+  double val = raw->values[idx][p];
+  /* HOLD -- but never on the sweep column itself (RULING D4-6) */
+  if(idx != sweep_idx && raw->sim_type && !strcmp(raw->sim_type, "vcd")) return val;
   /* not operating point, annotate from 'b' cursor */
-  if(point_not_last && (xctx->raw->allpoints > 1) && sweep_idx >= 0) {
-    Raw *raw = xctx->raw;
+  if(point_not_last && (raw->allpoints > 1) && sweep_idx >= 0) {
     SPICE_DATA *sweep_gv = raw->values[sweep_idx];
     SPICE_DATA *gv = raw->values[idx];
     double dx = sweep_gv[p + 1] - sweep_gv[p];
     double dy = gv[p + 1] - gv[p];
     double offset = x - sweep_gv[p];
-    double interp = dx != 0.0 ? offset * dy / dx : 0.0;
-    val += interp;
+    double frac = dx != 0.0 ? offset / dx : 0.0;
+    if(frac < 0.0) frac = 0.0;   /* before the bracket: hold, never extrapolate */
+    if(frac > 1.0) frac = 1.0;   /* past it: ditto */
+    val += frac * dy;
   }
   return val;
 }
 
-void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+/* Resolve cursor B in the database that is CURRENT RIGHT NOW and stamp its
+ * annot_p / annot_x / annot_sweep_idx / cursor_b_val. `write_tcl` is 1 for the
+ * one database that also publishes ngspice::ngspice_data (see D4-2 below).
+ *
+ * This is the shipped body of backannotate_at_cursor_b_pos(), moved down one
+ * level so it can be run once per contributing database; nothing inside it
+ * changed except the two Tcl_* publishing arms becoming conditional and the
+ * point_not_last argument (RULING D4-4). */
+static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
 {
-  tcleval("catch {eval $cursor_2_hook}");
-  if(sch_waves_loaded() >= 0) {
+  {
     int dset, first = -1, last, dataset = gr->dataset, i, p, ofs = 0, ofs_end;
     double start, end;
     int sweepvar_wrap = 0, sweep_idx;
     double xx, cursor2; /* xx is the p-th sweep variable value, cursor2 is cursor 'b' x position */
     Raw *raw = xctx->raw;
     int  save_datasets = -1, save_npoints = -1;
+    int use_window = 1;   /* RULING D4-7, see the rescan below */
+    if(!raw || !raw->values || !raw->cursor_b_val || raw->nvars <= 0) return;
     /* transform multiple OP points into a dc sweep */
     if(raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
       save_datasets = raw->datasets;
@@ -771,6 +823,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
     if(dataset < 0) dataset = 0; /* if all datasets are plotted use first for backannotation */
     dbg(1, "dataset=%d\n", dataset);
     ofs = 0;
+    rescan_no_window:
     for(dset = 0 ; dset < raw->datasets; dset++) {
       double prev_x, prev_prev_x;
       int cnt=0, wrap;
@@ -791,7 +844,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
            sweepvar_wrap++;
            cnt = 0;
         }
-        if(xx >= start && xx <= end) {
+        if(!use_window || (xx >= start && xx <= end)) {
           if(dataset == sweepvar_wrap) {
             dbg(1, "xx=%g cursor2=%g first=%d last=%d start=%g end=%g p=%d wrap=%d sweepvar_wrap=%d ofs=%d\n",
               xx, cursor2, first, last, start, end, p, wrap, sweepvar_wrap, ofs);
@@ -808,7 +861,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
             last = p;
           }
           ++cnt;
-        } /* if(xx >= start && xx <= end) */
+        } /* if(!use_window || (xx >= start && xx <= end)) */
         prev_prev_x = prev_x;
         prev_x = xx;
       } /* for(p = ofs ; p < ofs + raw->npoints[dset]; p++) */
@@ -819,6 +872,34 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
       ofs = ofs_end;
       sweepvar_wrap++;
     } /* for(dset...) */
+    /* RULING D4-7 (fix round) -- THE X WINDOW IS A RENDERING CONCERN AND MUST
+     * NOT GATE THE ANNOTATION.
+     *
+     * The scan above only considers samples inside the STRIP'S CURRENT X WINDOW
+     * [gr->gx1, gr->gx2]. That is fine while every contributing database
+     * overlaps the window, and it is exactly wrong the moment one does not:
+     * with the fan-out of RULING D4-1 a database whose samples all fall outside
+     * the window fell straight through here with first == -1 and had NOTHING
+     * stamped, so it kept the annot_p / annot_x / cursor_b_val of wherever the
+     * cursor USED to be -- or, if it had never been annotated, the -1 and the
+     * my_calloc zeros that read as "that signal is 0" rather than "nothing
+     * asked". One cursor, two times: the databases drift apart again the moment
+     * the user turns a wheel. Reachable by any ordinary X zoom
+     * (wviewer::wheel_zoom writes x1/x2 on the graph rect), and by the fan-out
+     * over sibling strips, whose windows are not this one's.
+     *
+     * So when the window yields nothing, rescan the SAME database with the
+     * window filter off. The answer is then D4-4's own rule applied to that
+     * database's whole sweep -- nearest of its own samples, clamped at both
+     * ends, never extrapolated -- which is the answer a cursor at t deserves
+     * from a database that simply is not on screen right now. It cannot loop:
+     * use_window is only ever cleared. */
+    if(first == -1 && use_window) {
+      use_window = 0;
+      ofs = 0;
+      sweepvar_wrap = 0;
+      goto rescan_no_window;
+    }
     found:
     if(first != -1) {
       if(p > last) {
@@ -831,24 +912,92 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
         }
       }
       dbg(1, "xx=%g, p=%d\n", xx, p);
-      Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+      if(write_tcl) Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
       raw->annot_p = p;
       raw->annot_x = cursor2;
       raw->annot_sweep_idx = sweep_idx;
       for(i = 0; i < raw->nvars; ++i) {
         char s[100];
-        raw->cursor_b_val[i] = interpolate_yval(i, p, cursor2, sweep_idx, (p < ofs_end));
-        sprintf(s, "%.*g", xctx->ev_precision, raw->cursor_b_val[i]);
-        /* tclvareval("array set ngspice::ngspice_data [list {",  raw->names[i], "} ", s, "]", NULL); */
-        Tcl_SetVar2(interp, "ngspice::ngspice_data", raw->names[i], s, TCL_GLOBAL_ONLY);
+        /* (p + 1 < ofs_end), not (p < ofs_end): at the LAST sample of the
+         * dataset the old test let interpolate_yval() read values[idx][p + 1],
+         * one past the end of the buffer. RULING D4-4. */
+        raw->cursor_b_val[i] = interpolate_yval(i, p, cursor2, sweep_idx, (p + 1 < ofs_end));
+        if(write_tcl) {
+          sprintf(s, "%.*g", xctx->ev_precision, raw->cursor_b_val[i]);
+          /* tclvareval("array set ngspice::ngspice_data [list {",  raw->names[i], "} ", s, "]", NULL); */
+          Tcl_SetVar2(interp, "ngspice::ngspice_data", raw->names[i], s, TCL_GLOBAL_ONLY);
+        }
       }
-      Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( raw->nvars), TCL_GLOBAL_ONLY);
-      Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
+      if(write_tcl) {
+        Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( raw->nvars), TCL_GLOBAL_ONLY);
+        Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
+      }
     }
     if(save_npoints != -1) { /* restore multiple OP points from artificial dc sweep */
       raw->datasets = save_datasets;
       raw->npoints[0] = save_npoints;
     }
+  }
+}
+
+/* SPEC D4 -- ONE CURSOR, EVERY DATABASE.
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4.
+ *
+ * A cursor placed at time t is ONE object at ONE time. The state it resolves
+ * to is per-`Raw` (annot_p, annot_x, annot_sweep_idx, cursor_b_val), so
+ * resolving it in xctx->raw alone made it N objects that happened to have been
+ * placed together and then drifted apart: on a mixed analog+VCD strip the
+ * cursor read correctly on whichever database the registry cursor was parked on
+ * and read whatever stale index the other one still held from the last time it
+ * happened to be current -- or, for a database that was never current, index
+ * -1, i.e. no readout at all.
+ *
+ * RULING D4-1: resolve in the CURRENT database plus every database contributing
+ * a trace to this strip. graph_cursor_dbs() (draw.c) owns that set and the `%`
+ * parse behind it; the switch/restore bracket lives here, where the unwind
+ * point is known (issue 0305), and restores BOTH halves of the registry cursor.
+ *
+ * RULING D4-2: exactly ONE database publishes ngspice::ngspice_data, and it is
+ * the one that is current on entry -- slots[0] by construction. The Tcl array is
+ * a flat name->value map read by the schematic voltage overlay and by every
+ * floater; letting each database rewrite it would make the last switch win, and
+ * merging a VCD's names into it is spec D5's question (what a digital database
+ * contributes to backannotation), which is still open and is NOT decided here.
+ * A single-database session therefore behaves exactly as it did before D4.
+ */
+void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+{
+  tcleval("catch {eval $cursor_2_hook}");
+  if(sch_waves_loaded() >= 0) {
+    int *slots = NULL, n, k;
+    int entry_extra_idx = xctx->extra_idx, entry_prev_idx = xctx->extra_prev_idx;
+
+    n = graph_cursor_dbs(r, &slots);
+    if(n <= 0) {                      /* no rect, or no registry: the current DB */
+      backannotate_cursor_b_in_db(r, gr, 1);
+      my_free(_ALLOC_ID_, &slots);
+      return;
+    }
+    for(k = 0; k < n; k++) {
+      /* slots[0] IS the entry database, so the first pass needs no switch and a
+       * session with one database makes no extra_rawfile() call at all */
+      if(k > 0) {
+        char buf[30];
+        my_snprintf(buf, S(buf), "%d", slots[k]);
+        if(!extra_rawfile(2, buf, NULL, -1.0, -1.0)) continue;
+      }
+      backannotate_cursor_b_in_db(r, gr, k == 0);
+    }
+    if(n > 1) {
+      char buf[30];
+      my_snprintf(buf, S(buf), "%d", entry_extra_idx);
+      extra_rawfile(2, buf, NULL, -1.0, -1.0);
+      /* the registry cursor is a PAIR: extra_prev_idx is where `xschem raw
+       * switch_back` goes, and every switch above overwrote it (batch F item 2,
+       * finding 1). draw.c's node_db_prev_restore() is the same two lines. */
+      if(entry_prev_idx >= 0) xctx->extra_prev_idx = entry_prev_idx;
+    }
+    my_free(_ALLOC_ID_, &slots);
   }
 }
 

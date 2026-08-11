@@ -2377,6 +2377,11 @@ extern void graph_marker_notify(void);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);
+/* spec D4: the registry slots a cursor on graph rect `r` must resolve in.
+ * Read-only; leaves both halves of the registry cursor where it found them.
+ * See the D4 comment block in draw.c and
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4. */
+extern int graph_cursor_dbs(xRect *r, int **slots);
 extern void sleep_ms(int milliseconds);
 extern double timer(int start);
 extern void enable_layers(void);

@@ -13395,6 +13395,16 @@ proc wviewer::key_cursor_tail {W N} {
 # the sweep range. v1 simplification (documented): dataset-0 semantics —
 # pos_at searches dataset 0 and `raw value` indexes allpoints, identical
 # for single-dataset raws.
+#
+# SPEC D4 (mixed_signal_signal_browser.md, RULING D4-3): the rule differs by
+# KIND of database, so this mirror has to differ too or the number the user
+# READS disagrees with the one the engine annotated. A `vcd` database is a
+# SPARSE EVENT STREAM: the value at x is the one the last event at or before x
+# set, held, never interpolated -- interpolating across the one-tick step
+# vcd_read() materializes at a change yields 0.5, which is the VCD encoding of X
+# (spec C3), i.e. the readout would say "unknown" about a known signal.
+# The two BOUNDARY arms below (pos < 0, pos >= n - 1) were already RULING D4-4's
+# "hold, never extrapolate" and are unchanged.
 proc wviewer::interp_value {var x} {
   set names [split [xschem raw list] "\n"]
   set sweep [lindex $names 0]
@@ -13413,8 +13423,78 @@ proc wviewer::interp_value {var x} {
   set xb [xschem raw value $sweep [expr {$pos + 1}]]
   set ya [xschem raw value $var $pos]
   set yb [xschem raw value $var [expr {$pos + 1}]]
+  set st {}
+  catch {set st [xschem raw sim_type]}
+  if {$st eq {vcd}} { return $ya }   ;# HOLD (D4-3)
   if {$xb == $xa} { return $ya }
   return [expr {$ya + ($yb - $ya) * ($x - $xa) / ($xb - $xa)}]
+}
+
+# SPEC D4: read a trace's value at cursor position `x` IN THE TRACE'S OWN
+# DATABASE. `tr` is a trace dict; its `rawfile`/`sim_type` are the same pair
+# db_suffix() puts after the `%` in the emitted `node=` token, so the readout
+# and the renderer agree about which database a trace comes from by
+# construction.
+#
+# Without this the readout bar was CURRENT-DATABASE-ONLY: `interp_value` asks
+# `xschem raw list` / `raw value`, so a VCD trace beside an analog one simply
+# vanished from the cursor line -- the strip drew it, the legend named it, and
+# the readout had nothing to say about it. That is the same shape as defect 2 of
+# the D1 review round (the browser plotting the wrong database) one layer up.
+#
+# The switch is bracketed and restored by ABSOLUTE INDEX, including on a throw:
+# a swap cannot unwind and this runs on every cursor motion. Returns {} when the
+# database cannot be reached or the value cannot be read.
+#
+# AND IT RESTORES BOTH HALVES OF THE REGISTRY CURSOR (fix round). `extra_idx` is
+# the current database; `extra_prev_idx` is where `xschem raw switch_back` GOES,
+# and EVERY `xschem raw switch` overwrites it. Putting back only the first half
+# is exactly the half-restore batch F item 2 removed from find_closest_wave() --
+# and this proc runs once per trace per cursor motion, so a mixed strip under a
+# dragged cursor rewrote the session's switch_back destination continuously.
+# Measured before the fix: park the registry at current=0/prev=2, call this once,
+# and `switch_back` landed on the BORROWED database instead of slot 2.
+#
+# There is no verb that writes extra_prev_idx directly, but `switch_back` is its
+# own inverse, so the pair can be READ without moving anything (two switch_backs
+# leave both halves as found) and PUT BACK with two switches: `switch $prev`
+# makes prev current, then `switch $cur` makes cur current and leaves prev
+# behind it. wviewer::raw_prev_idx is the read half.
+proc wviewer::raw_prev_idx {} {
+  set p -1
+  if {[catch {xschem raw switch_back}]} { return -1 }
+  catch {set p [dict get [wviewer::rawinfo_parse [xschem raw info]] cur]}
+  catch {xschem raw switch_back}
+  return $p
+}
+
+# put back the pair (cur, prev) after a borrow. Order matters: prev first.
+proc wviewer::raw_cursor_restore {cur prev} {
+  if {$cur < 0} { return }
+  if {$prev >= 0} { catch {xschem raw switch $prev} }
+  catch {xschem raw switch $cur}
+}
+
+proc wviewer::trace_cursor_value {tr x} {
+  set vec [wviewer::dget $tr vec {}]
+  if {$vec eq {}} { return {} }
+  set rf [wviewer::dget $tr rawfile {}]
+  set st [wviewer::dget $tr sim_type {}]
+  if {[wviewer::db_suffix $tr] eq {}} {           ;# no per-trace database
+    set y {}
+    catch {set y [wviewer::interp_value $vec $x]}
+    return $y
+  }
+  set cur -1
+  catch {set cur [dict get [wviewer::rawinfo_parse [xschem raw info]] cur]}
+  set prev [wviewer::raw_prev_idx]
+  set sw 0
+  catch {set sw [xschem raw switch $rf $st]}
+  if {$sw != 1} { wviewer::raw_cursor_restore $cur $prev ; return {} }
+  set y {}
+  catch {set y [wviewer::interp_value $vec $x]}
+  wviewer::raw_cursor_restore $cur $prev
+  return $y
 }
 
 # Enable + show the readout bar (cursor enable path: the bar appears
@@ -13501,6 +13581,33 @@ proc wviewer::status_refresh {token} {
   if {[catch {$w cget -text} cur] || $cur ne $txt} { catch {$w configure -text $txt} }
 }
 
+# The readout bar's entry list for a layout's `graphs`: one `{trace display}`
+# pair per distinct trace, in layout order.
+#
+# SPEC D4: the dedupe key is the (vec, DATABASE) TRIPLE, not the bare name. Two
+# databases may hold the same signal name -- exactly what spec E produces when
+# two d_cosim blocks instantiate one Verilog module -- and deduping on the name
+# alone drops one of them from the cursor line and shows the other one's number
+# under both legends. Same lesson as defect 2 of the D1 review round
+# (browser_leaf_specs, which used to throw the row's `d:N|` away), one layer up.
+proc wviewer::readout_entries {graphs} {
+  set keys {}
+  set out {}
+  foreach G $graphs {
+    foreach tr [wviewer::dget $G traces {}] {
+      set vec [wviewer::dget $tr vec {}]
+      if {$vec eq {}} { continue }
+      set key [list $vec [wviewer::dget $tr rawfile {}] [wviewer::dget $tr sim_type {}]]
+      if {[lsearch -exact $keys $key] >= 0} { continue }
+      lappend keys $key
+      set nm [wviewer::dget $tr name {}]
+      if {$nm eq {}} { set nm $vec }
+      lappend out [list $tr $nm]
+    }
+  }
+  return $out
+}
+
 proc wviewer::readout_refresh {token} {
   variable windows
   variable cva; variable cvb
@@ -13526,17 +13633,11 @@ proc wviewer::readout_refresh {token} {
   # `catch` evaluates in this scope, so the locals and `variable`s below still
   # resolve normally.
   catch {
-    set vecs {}
+    set trs {}
     set disps {}
-    foreach G [dict get [wviewer::layout_for $token] graphs] {
-      foreach tr [dict get $G traces] {
-        set vec [wviewer::dget $tr vec {}]
-        if {$vec eq {} || [lsearch -exact $vecs $vec] >= 0} { continue }
-        lappend vecs $vec
-        set nm [wviewer::dget $tr name {}]
-        if {$nm eq {}} { set nm $vec }
-        lappend disps $nm
-      }
+    foreach e [wviewer::readout_entries [dict get [wviewer::layout_for $token] graphs]] {
+      lappend trs   [lindex $e 0]
+      lappend disps [lindex $e 1]
     }
     foreach {which letter} {1 a 2 b} {
       if {$which == 1} {
@@ -13550,9 +13651,8 @@ proc wviewer::readout_refresh {token} {
         catch {set x [xschem get cursor${which}_x]}
         if {$x ne {}} {
           set line "[string toupper $letter]: x=[ase::format_value $x]"
-          foreach vec $vecs disp $disps {
-            set y {}
-            catch {set y [wviewer::interp_value $vec $x]}
+          foreach tr $trs disp $disps {
+            set y [wviewer::trace_cursor_value $tr $x]
             if {$y ne {}} { append line "   $disp=[ase::format_value $y]" }
           }
         }

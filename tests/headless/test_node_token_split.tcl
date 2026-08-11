@@ -734,7 +734,14 @@ check_true "NDX2 ...and both of them are inside node_token_split(): a seventh\
 # one walker that never parsed `%` at all -- that WAS the D2 defect -- and it now
 # resolves each entry's per-trace database through the same helper. The number is
 # the point of the check, so it is restated here rather than left to drift.
-check "NDX3 all SEVEN node= walkers call the shared parser" $ndcalls 7
+# RESTATED AGAIN, batch F item 9 (spec D4): SEVEN -> EIGHT. graph_cursor_dbs()
+# answers "which databases does a cursor on this strip have to resolve in", which
+# is the same `node=` walk over the same `%` field, so it is caller number eight
+# -- exactly what the parser's own comment says a new walker must be. It is NOT
+# a sweep-column walker (it resolves no column and samples nothing), which is why
+# NDR2/NDR3 below stay at seven; see their restated wording.
+check "NDX3 all EIGHT callers of the shared parser are accounted for: the seven\
+ node= walkers plus D4's graph_cursor_dbs()" $ndcalls 8
 
 # ###########################################################################
 # BATCH F ITEM 2 -- the residuals issue 0305 left open:
@@ -1084,8 +1091,13 @@ check_true "NDR1 graph_fullyzoom() was located in draw.c" \
   [expr {$ndf_open >= 0 && $ndf_close > $ndf_open}]
 # RESTATED with NDX3 (batch F item 8): graph_fullxzoom() joined the family, and
 # it resolves its sweep column per CONTRIBUTING DATABASE inside graph_x_extent().
-check "NDR2 all SEVEN node= walkers resolve the sweep column BY NAME after the\
- switch (a carried column NUMBER belongs to the previous database)" $ndsweep 7
+# NOT restated by batch F item 9: D4's graph_cursor_dbs() is an ENUMERATOR, not
+# a sampler -- it resolves no sweep column and reads no values[] at all, so it
+# owes neither the by-name resolve nor the nvars clamp. Seven remains the number
+# of walkers that subscript a database.
+check "NDR2 all SEVEN node= walkers that SAMPLE a database resolve the sweep\
+ column BY NAME after the switch (a carried column NUMBER belongs to the\
+ previous database)" $ndsweep 7
 check "NDR3 ...and all seven clamp it against the switched-in nvars" $ndclamp 7
 check "NDR4 graph_fullyzoom() has exactly TWO return statements: the answer and\
  the no-waves refusal. Its node walk exits through the epilogue, never past it" \
@@ -1099,8 +1111,13 @@ check "NDR6 ...and the epilogue label they land on exists exactly once" $ndf_lab
 # walker, at its GRAPH-level unwind -- a seventh would mean a per-node restore
 # had been given the entry value, which is the wrong nesting level.
 # RESTATED with NDX3 (batch F item 8): seven walkers, seven cursor put-backs.
-check "NDR7 all SEVEN node= walkers put back the OTHER half of the registry cursor\
- (extra_prev_idx, where `raw switch_back` goes), once each" $ndprev 7
+# RESTATED AGAIN with NDX3 (batch F item 9, spec D4): EIGHT. graph_cursor_dbs()
+# switches databases to find out which `%<rawfile>` entries resolve, so it owes
+# the cursor's other half back exactly as the seven walkers do -- and it runs on
+# every cursor motion, which is where an unbalanced restore is felt first.
+check "NDR7 all EIGHT node= walkers/enumerators put back the OTHER half of the\
+ registry cursor (extra_prev_idx, where `raw switch_back` goes), once each" \
+  $ndprev 8
 # debug_var is 0 in every normal run (globals.c), so dbg(0, ...) is not a debug
 # level at all -- it is an unconditional write to stderr. find_closest_wave()'s
 # "closest dataset" trace was one, harmless while a graph `t` keypress was its

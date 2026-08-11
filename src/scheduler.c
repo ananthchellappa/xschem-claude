@@ -9604,7 +9604,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
 
     /* raw what ...
-     *     what = add | clear | datasets | index | info | loaded | list |
+     *     what = add | annot | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
      *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
      *            pos_at | vars |
@@ -9822,8 +9822,21 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       } else if(argc > 2 && !strcmp(argv[2], "loaded")) {
         Tcl_SetResult(interp, my_itoa(sch_waves_loaded()), TCL_VOLATILE);
       } else if(raw && raw->values) {
+        /* xschem raw annot
+         *   read-only: the CURRENT database's cursor-B annotation state, as
+         *   "<annot_p> <annot_x> <annot_sweep_idx>". Those three fields are
+         *   per-Raw (xschem.h) and spec D4 makes a cursor resolve in every
+         *   database contributing a trace, so a check has to be able to ask
+         *   each database separately whether it followed the cursor or is
+         *   holding a stale index. -1 in annot_p means "no cursor here". */
+        if(argc > 2 && !strcmp(argv[2], "annot")) {
+          char s[200];
+          my_snprintf(s, S(s), "%d %s %d", raw->annot_p, dtoa(raw->annot_x),
+                      raw->annot_sweep_idx);
+          Tcl_SetResult(interp, s, TCL_VOLATILE);
+        }
         /* xschem raw value v(ldcp) 123 */
-        if(argc > 4 && !strcmp(argv[2], "value")) {
+        else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
           const char *node = argv[3];

@@ -279,6 +279,37 @@ check "PS7 a <NULL> sim_type names no database either" \
   [pcall {wviewer::trace_dbs [list $S6]}] {}
 
 # ============================================================================
+# PU* — PURE (spec §D4, batch F item 9): the readout bar's entry list dedupes on
+# the (vec, database) TRIPLE, not the bare name. Same signal name in two VCDs is
+# exactly what §E produces from two d_cosim blocks of one Verilog module, and a
+# name-only dedupe drops one of them off the cursor line while showing the
+# other's number under both legends.
+# ============================================================================
+set U1 [dict create traces [list \
+  [dict create vec v(a) name {} color 4] \
+  [dict create vec v(a) name {} color 5]]]
+check "PU1 the SAME vec in the SAME (current) database is one entry" \
+  [pcall {llength [wviewer::readout_entries [list $U1]]}] 1
+set U2 [dict create traces [list \
+  [dict create vec TOP.m.sig name blockA color 4 rawfile /t/a.vcd sim_type vcd] \
+  [dict create vec TOP.m.sig name blockB color 5 rawfile /t/b.vcd sim_type vcd]]]
+check "PU2 the same vec in TWO databases is TWO entries" \
+  [pcall {llength [wviewer::readout_entries [list $U2]]}] 2
+check "PU3 ...and each keeps its own display name and its own database" \
+  [pcall {set l {}
+          foreach e [wviewer::readout_entries [list $U2]] {
+            lappend l [lindex $e 1] [wviewer::dget [lindex $e 0] rawfile {}]
+          }
+          set l}] {blockA /t/a.vcd blockB /t/b.vcd}
+set U3 [dict create traces [list \
+  [dict create vec v(a) name {} color 4] \
+  [dict create vec {} name {} color 5]]]
+check "PU4 a trace with no vec contributes no entry" \
+  [pcall {llength [wviewer::readout_entries [list $U3]]}] 1
+check "PU5 the display name falls back to the vec when the trace has none" \
+  [pcall {lindex [lindex [wviewer::readout_entries [list $U3]] 0] 1}] {v(a)}
+
+# ============================================================================
 # PB* — PURE (DEFECT 2): the tree row id ALREADY says WHICH database
 #
 # item 14 prefixes every FOREIGN db's rows with `d:<registry idx>|` and leaves
@@ -738,6 +769,103 @@ check_true "XD2 auto X spans the UNION of the databases that actually carry the\
 # only way to re-run the fit is a full regenerate, which rebuilds the rect from
 # graph_props and would be measuring a different thing. That half is engine-level
 # and lives in the XD leg of tests/headless/test_node_token_split.tcl (XD3/XD4).
+
+# --- XU: THE CURSOR READOUT (spec §D4, batch F item 9) ----------------------
+# The engine half of D4 (a cursor at t resolves in every contributing database,
+# holding on a sparse stream) is pinned headlessly by
+# tests/headless/test_wave_cursor_crossdb.tcl. THIS leg is the half that only a
+# real viewer can show, and it is the reason the engine fix was not the whole
+# item: the readout BAR does not read the engine's annotation at all. It calls
+# wviewer::interp_value, which asks `xschem raw list` / `raw value` -- the
+# CURRENT database -- so a cross-DB trace was drawn by the renderer, named in the
+# legend, and then simply MISSING from the cursor line, with no error anywhere.
+xschem new_schematic switch $vdrw
+wviewer::set_graphs $tok [list [dict replace [wviewer::empty_graph] \
+  x1 0 x2 2e-9 y1 -0.3 y2 1.3]]
+wviewer::regenerate $tok
+check "XU0 the mixed strip rebuilds: one bare analog trace..." \
+  [pcall {wviewer::add_trace $tok 0 v(anlg) {} 4}] {}
+check "XU0b ...and one cross-DB VCD trace" \
+  [pcall {wviewer::add_trace $tok 0 TOP.m.siga {} 5}] {}
+set xu_trs [dict get [lindex [dict get [wviewer::layout_for $tok] graphs] 0] traces]
+set xu_ta {}; set xu_td {}
+foreach xu_t $xu_trs {
+  if {[wviewer::dget $xu_t vec {}] eq {v(anlg)}}    { set xu_ta $xu_t }
+  if {[wviewer::dget $xu_t vec {}] eq {TOP.m.siga}} { set xu_td $xu_t }
+}
+check_true "XU0c the digital trace carries its own database in the model" \
+  [expr {[wviewer::db_suffix $xu_td] ne {}}]
+check_true "XU0d ...and the analog one does not (it is the current database)" \
+  [expr {[wviewer::db_suffix $xu_ta] eq {}}]
+xschem new_schematic switch $vdrw
+xschem raw switch 0
+# 999.5 ps sits INSIDE the one-tick step vcd_read() materializes at the 1000 ps
+# change: the 999 ps sample still holds 1, the 1000 ps sample carries 0. Held,
+# the answer is 1; interpolated, it is 0.5 -- which is the VCD encoding of X.
+set xu_x 999.5e-12
+set xu_yd [pcall {wviewer::trace_cursor_value $xu_td $xu_x}]
+check_true "XU1 THE ITEM: the cross-DB trace's value is read IN ITS OWN DATABASE\
+ (before D4 this was {} -- the current db has no such name)" \
+  [expr {[string is double -strict $xu_yd] && abs($xu_yd - 1.0) < 1e-6}]
+check_true "XU2 ...and it HOLDS rather than interpolating across the step: not\
+ the 0.5 that reads back as X (spec C3)" \
+  [expr {[string is double -strict $xu_yd] && abs($xu_yd - 0.5) > 0.1}]
+set xu_ya [pcall {wviewer::trace_cursor_value $xu_ta $xu_x}]
+check_true "XU3 the DENSE analog trace beside it still interpolates" \
+  [expr {[string is double -strict $xu_ya] && $xu_ya != 0.0}]
+check "XU4 reading a foreign database leaves the registry cursor where it was" \
+  [pcall {xschem new_schematic switch $vdrw; xschem raw rawfile}] $rawf
+
+# THE REGISTRY CURSOR IS A PAIR, ON THE TCL SIDE TOO (fix round).
+# `extra_idx` is the current database; `extra_prev_idx` is where `xschem raw
+# switch_back` GOES, and every `xschem raw switch` overwrites it. XU4 above
+# watches only the first half. trace_cursor_value runs once per trace per cursor
+# motion, so a half-restore here rewrites the session's switch_back destination
+# continuously while a cursor is dragged over a mixed strip -- the same shape
+# batch F item 2 removed from find_closest_wave(), reintroduced one layer up.
+# Three databases are loaded here (rawf, vcdf, vcdshort), which is what makes
+# "prev" distinguishable from "cur".
+xschem new_schematic switch $vdrw
+proc xu_switchback_dest {} {
+  xschem raw switch_back
+  set d [xschem raw rawfile]
+  xschem raw switch_back
+  return $d
+}
+xschem raw switch 2
+xschem raw switch 0                      ;# cur = rawf, prev = vcdshort
+check "XU8 premise: the registry cursor is current=rawf, switch_back -> vcdshort" \
+  [pcall {xu_switchback_dest}] $vcdshort
+set xu_ctrl [pcall {wviewer::interp_value {v(anlg)} $xu_x; xu_switchback_dest}]
+check "XU8b CONTROL: the plain (current-database) readout path moves neither\
+ half -- so anything XU9 sees was introduced by the cross-DB borrow" \
+  $xu_ctrl $vcdshort
+set xu_yd2 [pcall {wviewer::trace_cursor_value $xu_td $xu_x}]
+check "XU9 a cross-DB readout leaves `raw switch_back` going where it was going:\
+ the borrow puts back BOTH halves of the registry cursor" \
+  [pcall {xu_switchback_dest}] $vcdshort
+check "XU9b ...and the current half is still rawf after it" \
+  [pcall {xschem raw rawfile}] $rawf
+check_true "XU9c ...and the borrow still answered (a restore that works by not\
+ switching at all would pass XU9 and be useless)" \
+  [expr {[string is double -strict $xu_yd2] && abs($xu_yd2 - 1.0) < 1e-6}]
+xschem raw switch 0
+# and the bar the user actually reads
+xschem new_schematic switch $vdrw
+xschem cursor 2 1
+xschem set cursor2_x $xu_x
+set ::wviewer::cvb($tok) 1
+wviewer::readout_auto_show $tok
+wviewer::readout_refresh $tok
+set xu_bar {}
+catch {set xu_bar [$vtop.wvreadout.b cget -text]}
+puts "  D4 readout B: $xu_bar"
+check_true "XU5 the readout bar's B line names the cross-DB digital trace" \
+  [expr {[string first TOP.m.siga $xu_bar] >= 0}]
+check_true "XU6 ...with its HELD value beside it" \
+  [expr {[string first "TOP.m.siga=[ase::format_value 1.0]" $xu_bar] >= 0}]
+check_true "XU7 ...and the analog trace is still on the same line" \
+  [expr {[string first {v(anlg)=} $xu_bar] >= 0}]
 
 catch {wviewer::close $tok}
 }

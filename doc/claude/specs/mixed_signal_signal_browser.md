@@ -443,7 +443,7 @@ digital *together* is the new requirement.
 | D1 | ~~**Per-trace DB resolution.**~~ **DONE (2026-08-09) — the shortcut was already in C; the missing half was all Tcl.** Reviewed adversarially and **three defects it created were fixed in the same round** (see "the review round" below). `tests/headless/test_wave_crossdb_trace.tcl`, **109 checks (51 headless), 8 + 21 sabotages injected, all caught.** See the write-up below the table. | The core §D change. |
 | D2 | ~~**Joint X domain.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 8): the AUTOMATIC X window is the union of the extents of every database contributing a trace to the shared-X strip GROUP.** See "D2 — the joint X domain" below for the four rulings (what contributes, what a degenerate input does, what the group is, and what is still NOT unioned). `graph_fullxzoom()` was the one `node=` walker that never parsed `%` at all; it is now the seventh caller of `node_token_split()`. | Silent-wrong-answer risk if one DB's extent is used as the whole. |
 | D3 | ~~**Time-unit reconciliation.**~~ **DONE — converted once at read (C1, `vcd_read()` stores seconds) and now ASSERTED against A6.** `tests/headless/test_vcd_time_base.tcl`, **124 checks** (112 when the reference artifacts are absent), pinned to the `--nogui` arm. The gate is a stated number, not a feeling: **100 ps**, which is 10.1× above the measured 9.883 ps physical skew and at minimum ~500× below the smallest 1e3 error the file can produce (the ÷1000 direction on the earliest edge used, 50 ns → 49.95 ns of displacement; the ×1000 direction is 499,500×). A zero tolerance would be wrong — the two DBs record different events, a Verilog value change versus an analog threshold crossing after a finite `dac_bridge t_rise`, sampled on ngspice's timestep grid. Coverage: six `$timescale` units including the two-token `10 ns` form, the whole fs→ps→ns→µs→ms→s ladder (**every rung of which IS the 1e3 factor**), the multiplier forms, seconds-not-ticks, and the symmetric "rescale the raw instead" error. The 1e3 rejection is **proved, not asserted**: nine negative-control VCDs that are deliberately 1e3 wrong — perfectly valid files, which is the whole point — go through the *same* `agree` proc the real checks use and must be rejected. **19 sabotages injected, all 19 caught; every one of the 124 checks is caught by at least one.** | Off-by-1e3 here looks like a plausible waveform. |
-| D4 | **Cursors, markers, annotation across DBs.** `annot_p`/`annot_x`/`annot_sweep_idx` are per-`Raw`. A cursor at time *t* must resolve in both — with the nearest-sample-before rule differing between a dense analog sweep and a sparse event stream. | `Raw` fields, `src/xschem.h:1129-1137` |
+| D4 | ~~**Cursors, markers, annotation across DBs.**~~ **RULED AND IMPLEMENTED 2026-08-11 (batch F item 9): a cursor at time *t* resolves in the current database PLUS every database contributing a trace to the strip, a dense analog sweep INTERPOLATES and a sparse event stream HOLDS, and neither extrapolates past either end.** See "D4 — cursors and markers across databases" below for the **eight** rulings (D4-6/D4-7/D4-8 came out of the fix round: the sweep column is exempt from the HOLD, the X window does not gate the annotation, and the cursor's scope is every strip that shares it) and for why MARKERS needed no change. `graph_cursor_dbs()` is the eighth caller of `node_token_split()`. The half no engine check could see: the readout BAR is Tcl and was current-database-only, so the digital trace was drawn, legended, and then silently absent from the cursor line. | `Raw` fields, `src/xschem.h:1129-1137` |
 | D5 | **Backannotation.** `annotate_op` and the schematic voltage overlay read the current DB. Define what a digital DB contributes (probably: nothing, explicitly). | `src/scheduler.c:2145` |
 
 #### D1 — what was already there, and what was missing
@@ -940,6 +940,253 @@ own: `XD12` (an empty strip still gets a window) and `XD17` (moving the cursor d
 move the window — the parent agrees, on the wrong window; `XD16` asserts the value in the
 same breath). `XD22b` is likewise green at the parent, for the reason D2-1b states.
 
+
+#### D4 — cursors and markers across databases (batch F item 9, 2026-08-11)
+
+**The defect, precisely.** `annot_p`, `annot_x`, `annot_sweep_idx` and
+`cursor_b_val[]` are fields of `Raw` (`src/xschem.h`), i.e. **per database**, and
+`backannotate_at_cursor_b_pos()` (`src/callback.c`) resolved cursor B in
+`xctx->raw` and nowhere else. A cursor at *t* was therefore not one object at one
+time — it was N objects that happened to have been placed together and could
+drift apart. With one database nobody notices. With an analog raw and a VCD
+loaded together the current database read correctly and every other one kept
+whatever index it was last left with; for a database that has never been current
+that is `annot_p == -1` and a `cursor_b_val[]` still full of `my_calloc` zeros,
+which reads as *"that signal is 0"*, not as *"nothing asked"*. Measured at the
+parent commit `81a2b53f` on the item's own fixture: with the analog raw current,
+the VCD's `TOP.m.siga` answers `0` at every *t*, including the *t* where its last
+event set it to 1.
+
+**RULING D4-1 — the cursor resolves in the CURRENT database plus every database
+contributing a trace to the strip, and it is deliberately a SUPERSET of D2's
+rule for the X window.** Three kinds of contributor:
+
+* the database that is **current on entry, always** — whether or not this strip
+  plots anything from it. It is what `xschem raw value <n> {}`, `annotate_op()`
+  and the schematic voltage overlay read when nobody switched, so including it
+  unconditionally is exactly what makes a single-database session behave as it
+  did before D4. (D2 could not afford this clause: an X *window* sized from the
+  registry cursor is the defect D2 exists to remove. A cursor *readout* on the
+  current database is not a wrong answer, it is the answer the rest of the
+  engine is already built on.)
+* every **`%<rawfile>` named by a `node=` entry that RESOLVES**. One that does
+  not resolve contributes nothing — every other walker REFUSES such a trace
+  (issue 0305's ruling), so annotating for it would be annotating a trace that is
+  never drawn (`XC19`, and the enumerator's own refusal).
+* the strip's **own database** (its `rawfile=`, else the current one) when a
+  trace actually plots from it: at least one `node=` entry without a `%`. A
+  TRACELESS strip contributes its own database too — unlike D2 there is no group
+  to disagree with, and a cursor on an empty strip must still annotate something.
+
+The enumeration is `graph_cursor_dbs()` in `src/draw.c`, **caller number eight of
+`node_token_split()`** — never parser number two. It leaves both halves of the
+registry cursor where it found them (`extra_idx` and the `extra_prev_idx` that
+`xschem raw switch_back` goes to; batch F item 2, finding 1), and so does the
+fan-out in `callback.c` that consumes it. That matters more here than anywhere
+else in the family: this code runs on **every cursor motion**.
+
+**RULING D4-2 — exactly ONE database publishes `ngspice::ngspice_data`, and it is
+the one that is current on entry** (`slots[0]` by construction). The Tcl array is
+a flat name→value map read by the schematic voltage overlay and by every floater;
+letting each database rewrite it would make the last switch win, and *merging* a
+VCD's names into it is **D5's** question — what a digital database contributes to
+schematic backannotation — which is still open and is **not** decided here. Every
+contributing database still gets its own `annot_*` and `cursor_b_val[]`; only the
+publishing is singular. `XC51`–`XC54`.
+
+**RULING D4-3 — a dense analog sweep INTERPOLATES; a sparse event stream HOLDS.**
+This is the rule the row asked for, and the two halves are not a matter of taste:
+
+* **Dense analog** — unchanged. Samples are close enough together that
+  nearest-sample-before and interpolation are visually the same thing, and the
+  viewer's readout has always shown the interpolated value (`test_wave_viewer`
+  G15b pins the Tcl mirror against this function's answer).
+* **Sparse (`sim_type` `"vcd"`)** — the value at *t* is the value set by the LAST
+  event at or before *t*, held, however far to the left that event is. That is
+  not an approximation, it is what a digital signal *does* between events. And
+  the approximation is not merely imprecise, it is **a different symbol**: C3
+  encodes `0 → 0.0, 1 → 1.0, X → 0.5, Z → 0.3` and `get_bus_value()` reads
+  anything in the 0.2..0.8 band as UNDEFINED, so interpolating across the
+  one-tick step C2 materializes at each change (`(t − 1 tick, old)` then
+  `(t, new)`) makes the readout say **X about a perfectly known signal**. The
+  width of that window is the file's `$timescale`: a picosecond on the reference
+  `counter.vcd`, a **nanosecond** on a `1ns` file, i.e. squarely where a human
+  puts a cursor. `XC21`/`XC22`/`XC24` park the cursor inside it.
+  Only `"vcd"` takes this arm — a `table` database is a sampled table, not an
+  event stream.
+
+C2's step materialization means the two rules already agreed *in the middle* of a
+hold span (both samples carry the same value, so the interpolation is flat). The
+step itself, and the two boundaries below, are where they part.
+
+**RULING D4-4 — neither kind extrapolates, at either end.** A cursor **before** a
+database's first sample reads that first sample verbatim; **after** its last
+sample, the last one verbatim. For a sparse stream this also answers the row's
+two open questions directly: before the first event the value is **the file's own
+first recorded state**, which `vcd_read()` already fills with X (0.5) when nothing
+was dumped — *not* a synthesized X, and not "undefined"; after the last event it
+is the last event's value, because the run ended, not the signal.
+
+Both boundaries are reachable in the shipped product on every cursor move: D2
+fits the X window to the UNION of the contributing databases, so the reference
+pair puts 1.5 µs of analog axis beyond the VCD's last sample. The old code
+extrapolated there off the FORWARD segment's slope, and at the last sample of a
+dataset it did so by reading `values[idx][p + 1]` **one element past the end of
+the `my_calloc(allpoints)` buffer** (`save.c`). Measured at the parent commit on
+the item's fixture: a cursor at 2.5 µs on a raw ending at 2 µs / 0.30 V read
+**0.37500001**, and moving it to 2.9 µs read **0.43500002** — a readout that
+moves when the data does not, off a heap word. Two lines fix it: the
+interpolation fraction is clamped to [0,1] (which also covers the *before* case,
+and a decreasing sweep), and `point_not_last` became `p + 1 < ofs_end`.
+
+**RULING D4-5 — MARKERS need no change, and the reason is structural.** A marker
+is bound to ONE trace (`GraphMarker.wave`), so it is single-database *by
+construction*: `graph_marker_sample()` → `graph_wave_resolve()` already switches
+to that trace's own database and returns column numbers valid in it (issue 0305,
+batch F item 1; pinned by the `NDM` leg of
+`tests/headless/test_node_token_split.tcl`). A marker also samples an exact point
+index rather than a position between samples, so D4-3 does not arise for it at
+all. The **cursor** is the one that is per-STRIP and therefore has to fan out.
+Recorded as a ruling rather than left implicit because the row's title says
+"cursors and markers" and a reader is entitled to know why only half of it moved.
+
+**RULING D4-6 — the SWEEP COLUMN is exempt from D4-3's HOLD** (fix round). A time
+axis is not an event-driven signal. Holding it froze a VCD's own `time` readout
+at the last event's timestamp while the *same* `Raw`'s `annot_x` recorded the
+real cursor position, so the database contradicted itself: measured on the item's
+fixture, `xschem raw annot` on the VCD said `6 1.75e-07 0` while
+`xschem raw value time {}` on it said `1.5e-07`. Before this item the sweep column
+interpolated to the cursor for every kind of database, and it still does; D4-4's
+clamp then makes that "the cursor position, clipped into this database's own
+span", which is the only honest answer past either end. `XCT2`–`XCT6`.
+
+**RULING D4-7 — the X WINDOW IS A RENDERING CONCERN AND DOES NOT GATE THE
+ANNOTATION** (fix round). The sample scan in `backannotate_cursor_b_in_db()`
+only considers samples inside the strip's current X window `[gr->gx1, gr->gx2]`.
+That is invisible while every contributing database overlaps the window, and it
+is exactly wrong the moment one does not: with D4-1's fan-out a database whose
+samples all fall outside the window fell through with `first == -1` and had
+**nothing stamped**, so it kept the annotation of wherever the cursor *used to
+be* — or, never having been annotated, the `-1` and the `my_calloc` zeros this
+section already calls out as reading *"that signal is 0"*. One cursor, two times,
+reachable by any ordinary wheel zoom (`wviewer::wheel_zoom` writes `x1`/`x2` on
+the graph rect). Measured: window zoomed to 1..3 µs and the cursor moved
+1.5 µs → 2.5 µs left the VCD's `annot_x` frozen at `1.5e-06` while the other two
+databases said `2.5e-06`; and a window before `late.raw`'s first sample read its
+**last** sample, 0.65, where D4-4 requires its first, 0.60.
+
+So when the window yields nothing, the same database is **rescanned with the
+window filter off**, and the answer is D4-4's own rule applied to its whole
+sweep — nearest of its own samples, clamped at both ends, never extrapolated.
+Resetting `annot_p` to `-1` instead was considered and rejected: a cursor at *t*
+deserves a real answer from a database that merely is not on screen, and the
+readout bar has no way to render "no answer" that is not itself a lie.
+`XCW2`–`XCW7`.
+
+**RULING D4-8 — CURSOR B IS A VIEWER OBJECT, NOT A STRIP OBJECT, so its scope is
+every strip that shares it** (fix round). `xctx->graph_cursor2_x` is one global,
+and the canonical mixed-signal layout is Cadence's: analog on one strip, the
+digital bus on **its own strip** underneath. Fanning out over only the rect that
+happened to be passed in left that strip's VCD never annotated at all —
+`annot_p -1`, `cursor_b_val` still zero — because `xschem set cursor2_x`
+(`scheduler.c`) hard-codes `rect[GRIDLAYER][0]` and every mouse-motion caller
+passes just the rect under the pointer. Which databases got a fresh cursor
+therefore depended on where the mouse was. `graph_cursor_dbs()` now unions the
+contributors of **every** graph rect that shares the cursor.
+
+A strip with `private_cursor` (flags bit 4) is excluded **in both directions** —
+it has a `cursor2_x` of its own, so it neither joins another strip's fan-out nor
+drags other strips into its own; that is the same reading of the flag
+`backannotate_cursor_b_in_db()` already applies when it picks `cursor2`. The
+per-database *resolution* still uses the driving strip's `Graph_ctx`: `gr` is the
+single shared `xctx->graph_struct` and re-running `setup_graph_data()` per
+sibling on every cursor motion would both cost a walk and stamp another strip's
+geometry into it. That is sound **because of D4-7** — a database with nothing
+inside the driving strip's window is resolved against its own whole sweep rather
+than skipped, so a sibling's zoom cannot change the answer. `XCS0`–`XCS6`.
+
+**The Tcl half owes both registry halves too** (fix round). `extra_idx` is the
+current database; `extra_prev_idx` is where `xschem raw switch_back` *goes*, and
+every `xschem raw switch` overwrites it. `wviewer::trace_cursor_value` restored
+only the first half, which is the half-restore batch F item 2 removed from
+`find_closest_wave()`, reintroduced one layer up — and this proc runs **once per
+trace per cursor motion**, so a mixed strip under a dragged cursor rewrote the
+session's `switch_back` destination continuously. Measured: registry parked at
+current=0/prev=2, one call, and `switch_back` landed on the borrowed database.
+The earlier note that "no Tcl verb writes `extra_prev_idx`" was **wrong about
+what that implies**: `switch_back` is its own inverse, so the pair can be *read*
+without moving anything (two `switch_back`s leave both halves as found) and put
+back with two switches — `switch $prev`, then `switch $cur`.
+`wviewer::raw_prev_idx` / `wviewer::raw_cursor_restore`; `XU8`–`XU9c`.
+
+**The half no engine check could see, and it was the whole user-visible payload.**
+`wviewer::readout_refresh` — the bar the user actually reads — does not consult
+the engine's annotation at all. It calls `wviewer::interp_value`, which asks
+`xschem raw list` / `xschem raw value`: the **current database**. So with the
+engine fix alone, a cross-DB digital trace was rendered by `draw_graph()`, named
+in the legend, and then **silently missing from the cursor line** — no error, no
+placeholder. Three changes in `src/wave_viewer.tcl` close it:
+`wviewer::trace_cursor_value` brackets a switch into the trace's own database
+(the `rawfile`/`sim_type` pair `db_suffix()` already puts after the `%`, so the
+readout and the renderer agree by construction) and restores by absolute index on
+every path; `interp_value` grew the D4-3 HOLD arm (its two boundary arms were
+already D4-4); and `wviewer::readout_entries` dedupes on the **(vec, database)
+triple** rather than the bare name — the same lesson as defect 2 of the D1 review
+round, one layer up, and the shape §E produces when two `d_cosim` blocks
+instantiate one Verilog module. Measured, real viewer, real cursor:
+`B: x=999.5p   v(anlg)=500.8m   TOP.m.siga=1` where the parent's line stops after
+`v(anlg)`.
+
+**THE HAZARD THIS FIX ALMOST CREATED, and the refusal that closes it.**
+`raw_read()` calls `backannotate_at_cursor_b_pos()` from INSIDE
+`extra_rawfile()`'s read arm (`save.c`), at a moment when `xctx->raw` is the
+freshly read database and is **not yet in `extra_raw_arr[]`** — `extra_idx` still
+names the outgoing slot. A fan-out that switched from there overwrote
+`xctx->raw`, and the read arm's `extra_raw_arr[extra_raw_n] = xctx->raw` a few
+lines later then registered a database it had not read: **two registry slots
+aliasing one `Raw`, the newly read one leaked, and a double free at the next
+`raw clear`**. `graph_cursor_dbs()` therefore REFUSES — answers 0, caller falls
+back to the current database alone — whenever `xctx->raw` is not the registry's
+current entry. It survived sixty green checks first, because `vcd_read()` makes
+no such call and every database read up to that point in the test was a VCD; the
+checks that catch it (`XC81`–`XC85`) read a **spice** raw with a live cursor on a
+cross-DB strip.
+
+**Proof.** `tests/headless/test_wave_cursor_crossdb.tcl` — **93 checks, true
+headless** (65 as first written, +28 in the fix round for D4-6/D4-7/D4-8 and the
+`own_db_plots` clause), in `full_audit.sh`'s `nogui_tests`; fixture synthesized
+(two analog raws, one of which starts at 1 µs, and two `$timescale 1ns` VCDs, one
+of which starts at 500 ns), no simulator. **21 of the 60 checks that existed at
+the time are red at the parent commit `81a2b53f`** — measured with `draw.c` and
+`callback.c` reverted and `scheduler.c`'s `raw annot` verb kept, because the file
+uses that verb; the shipped file does not run at `81a2b53f` at all. The viewer
+half is the `XU` leg (12 checks) and the `PU` leg (5) of
+`tests/headless/test_wave_crossdb_trace.tcl`, 109 → 130 checks. `NDX3` and `NDR7`
+of `test_node_token_split.tcl` were **RESTATED, not deleted** (seven → eight
+callers, seven → eight cursor put-backs); `NDR2`/`NDR3` deliberately stay at
+seven and say why — the D4 enumerator resolves no sweep column and samples
+nothing.
+
+**Three shapes the first round's fixture could not build, and what they cost.**
+Every check in the first round put all traces on **rect 0**, kept the X window at
+0..3 µs for the whole file, and never gave a rect its own `rawfile=`. Each of
+those three is a whole clause of D4-1 going unexercised: the multi-strip layout
+found D4-8, the window found D4-7, and the strip's own database found that
+deleting `if(own_db_plots) …` from `graph_cursor_dbs()` left **all 814 checks in
+five suites green**. A fixture that only builds the shape the code was written
+for is not evidence about the shape it was not.
+
+**Not done here, and named so nobody re-discovers it as a bug:** D5. The
+schematic voltage overlay and `annotate_op()` still read the current database
+only, and a digital database still contributes nothing to them — by RULING D4-2,
+on purpose. The per-sibling resolution uses the driving strip's `Graph_ctx` by
+D4-8, so a strip whose own X window is *narrower* than the driving one can still
+have a database resolved against a wider candidate set than it renders; D4-7
+makes the answer right in every case measured, and no case where the two disagree
+has been constructed. Multi-**dataset** databases remain unexercised: D4-7's
+rescan also un-skips a pre-existing shape where a non-final dataset's `first` was
+reset to `-1` by a later skipped dataset, which is a strict improvement but has
+no check.
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

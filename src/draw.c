@@ -3732,6 +3732,201 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
   return 1;
 }
 
+/* ==========================================================================
+ * SPEC D4 -- CURSORS ACROSS DATABASES.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D4.
+ *
+ * annot_p / annot_x / annot_sweep_idx / cursor_b_val are fields of `Raw`, i.e.
+ * PER DATABASE. backannotate_at_cursor_b_pos() (callback.c) resolved cursor B
+ * in xctx->raw and nowhere else, so with an analog raw and a VCD loaded
+ * together a cursor at time t was not one object at one time: it was N objects
+ * that happened to have been placed together, one of them fresh and the rest
+ * holding whatever index they were last left with. Which one was fresh depended
+ * on the registry cursor -- the same silent-wrong-answer shape as issue 0305
+ * and spec D2.
+ *
+ * This is the enumerator half of the fix: the SET of registry slots a cursor
+ * placed on graph rect `r` has to resolve in. The annotation itself stays in
+ * callback.c, which owns the cursor and the Tcl-visible backannotation array.
+ *
+ * WHAT CONTRIBUTES (spec RULING D4-1), and it is deliberately a SUPERSET of
+ * D2's rule for the X window:
+ *   - the database that is CURRENT on entry, ALWAYS. It is what `xschem raw
+ *     value <n> {}`, annotate_op() and the schematic voltage overlay read when
+ *     nobody switched, so including it unconditionally is what makes a
+ *     single-database session behave exactly as it did before this item.
+ *   - every `%<rawfile>` named by a `node=` entry THAT RESOLVES. One that does
+ *     not resolve contributes nothing -- that trace is refused everywhere else
+ *     (issue 0305), so annotating for it would be annotating a trace that is
+ *     never drawn.
+ *   - the strip's OWN database (its `rawfile=`, else the current one) when a
+ *     trace actually plots from it: at least one `node=` entry with no
+ *     `%<rawfile>`. A traceless strip contributes its own database too -- unlike
+ *     D2 there is no group to disagree with, and a cursor on an empty strip
+ *     still has to annotate something.
+ *   - all three of the above AGAIN, for every OTHER graph rect that shares this
+ *     cursor (RULING D4-8, at the sibling loop below). Cursor B is one global,
+ *     so a digital strip stacked under an analog one is inside its scope even
+ *     though no caller ever passes that rect down here.
+ *
+ * *slots is my_malloc'd here with the DISTINCT registry indices and the return
+ * value is how many were written; the caller my_free()s it. It grows rather
+ * than truncating because an `autoload=true` strip can REGISTER databases while
+ * this walks, so no bound taken before the walk is a bound. The current
+ * database is always (*slots)[0], so a caller that annotates in order leaves the
+ * Tcl-visible array written by the database the rest of the engine calls "the"
+ * one.
+ *
+ * Leaves BOTH halves of the registry cursor exactly where it found them: this
+ * is a read-only query and a query verb must not move the session (batch F
+ * item 2, finding 1).
+ * ========================================================================== */
+
+/* append `idx` to *slots unless it is already there; returns the new count */
+static int graph_db_slot_add(int **slots, int *cap, int n, int idx)
+{
+  int j;
+  if(idx < 0) return n;
+  for(j = 0; j < n; j++) if((*slots)[j] == idx) return n;
+  if(n >= *cap) {
+    *cap = n + 8;
+    my_realloc(_ALLOC_ID_, slots, (size_t)(*cap) * sizeof(int));
+  }
+  (*slots)[n] = idx;
+  return n + 1;
+}
+
+/* ONE STRIP's contribution to the set. Appends the registry slots rect `r`
+ * plots from to *slots and answers the new count; the current database is put
+ * back to `entry_extra_idx` on every exit path, so strips compose. */
+static int graph_cursor_dbs_rect(xRect *r, int **slots, int *cap, int n, int entry_extra_idx)
+{
+  char *node = NULL, *custom_rawfile = NULL, *sim_type = NULL;
+  char *node_rawfile = NULL, *node_sim_type = NULL, *ntok_copy = NULL;
+  char *saven, *nptr;
+  const char *ntok;
+  int autoload, graph_idx;
+  int own_db_plots = 0, nodes_seen = 0;
+
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  my_strdup2(_ALLOC_ID_, &custom_rawfile, get_tok_value(r->prop_ptr, "rawfile", 0));
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr, "sim_type", 0));
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr, "node", 0));
+
+  /* the strip's own database. A REFUSED graph-level switch is not fatal: the
+   * strip then owns whatever database is current, as every other walker has it. */
+  if(custom_rawfile[0]) {
+    extra_rawfile(autoload, custom_rawfile,
+                  sim_type[0] ? sim_type : node_dflt_sim_type(NULL), -1.0, -1.0);
+  }
+  graph_idx = xctx->extra_idx;
+
+  /* ONE walk, ONE `%` parse: caller number eight of node_token_split(), never
+   * parser number two (issue 0305). */
+  nptr = node;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    nptr = NULL;
+    nodes_seen++;
+    node_token_split(ntok, &ntok_copy, NULL, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0]) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) != 0) {
+        n = graph_db_slot_add(slots, cap, n, xctx->extra_idx);
+      }
+      node_db_restore(graph_idx);
+    } else {
+      own_db_plots = 1;
+    }
+  }
+  if(!nodes_seen) own_db_plots = 1;
+  if(own_db_plots) n = graph_db_slot_add(slots, cap, n, graph_idx);
+
+  node_db_restore(entry_extra_idx);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  my_free(_ALLOC_ID_, &node_rawfile);
+  my_free(_ALLOC_ID_, &node_sim_type);
+  my_free(_ALLOC_ID_, &ntok_copy);
+  return n;
+}
+
+int graph_cursor_dbs(xRect *r, int **slots)
+{
+  int entry_extra_idx, entry_prev_idx;
+  int n = 0, cap = 0, i;
+
+  if(!xctx || !r || !slots) return 0;
+  *slots = NULL;
+  /* RE-ENTRANCY REFUSAL, and it is not defensive: raw_read() calls
+   * backannotate_at_cursor_b_pos() from INSIDE extra_rawfile()'s read arm, at a
+   * moment when xctx->raw is the freshly read database and it is NOT YET in
+   * extra_raw_arr[] -- extra_idx still names the OUTGOING slot. Any switch made
+   * from here would then overwrite xctx->raw with a registered database, and the
+   * read arm's `extra_raw_arr[extra_raw_n] = xctx->raw` a few lines later would
+   * register THAT pointer a second time and leak the one it just read: two
+   * registry slots aliasing one Raw, i.e. a double free at the next `raw clear`.
+   * Whenever xctx->raw is not the registry's current entry there is nothing this
+   * function can safely enumerate, so it answers 0 and the caller falls back to
+   * annotating the current database alone -- exactly the shipped behaviour. */
+  if(xctx->extra_raw_n <= 0) return 0;
+  if(xctx->extra_idx < 0 || xctx->extra_idx >= xctx->extra_raw_n) return 0;
+  if(xctx->raw != xctx->extra_raw_arr[xctx->extra_idx]) return 0;
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
+  n = graph_db_slot_add(slots, &cap, n, entry_extra_idx);
+  /* not a graph rect: the current database and nothing else. Through the
+   * epilogue like every other exit -- nothing is outstanding here yet, but a
+   * refusal that hand-copies (or hand-skips) the cleanup is exactly what batch
+   * F item 2 had to unpick out of graph_fullyzoom(). */
+  if(!(r->flags & 1)) goto cursor_dbs_done;
+
+  n = graph_cursor_dbs_rect(r, slots, &cap, n, entry_extra_idx);
+
+  /* RULING D4-8 (fix round) -- CURSOR B IS A VIEWER OBJECT, NOT A STRIP OBJECT,
+   * SO ITS SCOPE IS EVERY STRIP THAT SHARES IT.
+   *
+   * xctx->graph_cursor2_x is ONE global, and the canonical mixed-signal layout
+   * is the Cadence one: analog on one strip, the digital bus on its own strip
+   * underneath. Fanning out over only the rect that happened to be passed in
+   * left the digital strip's VCD never annotated at all -- annot_p -1 and
+   * cursor_b_val my_calloc zero, which reads as "that signal is 0" rather than
+   * "nothing asked" -- and `xschem set cursor2_x` (scheduler.c) hard-codes
+   * rect[GRIDLAYER][0], so the headless path and the menu path both drove the
+   * cursor from strip 0 only. Every mouse-motion caller passes just the rect
+   * under the pointer, which is worse: which databases got a fresh cursor then
+   * depended on where the mouse was.
+   *
+   * A strip with `private_cursor` (flags bit 4) is excluded, in BOTH directions:
+   * it has a cursor2_x of its OWN, so it neither joins another strip's fan-out
+   * nor drags other strips into its own. That is the same reading of the flag
+   * backannotate_cursor_b_in_db() already has when it picks `cursor2`.
+   *
+   * The per-database RESOLUTION still uses the driving strip's Graph_ctx --
+   * `gr` is the single shared xctx->graph_struct and re-running setup_graph_data()
+   * per sibling on every cursor motion would both cost a walk and stamp another
+   * strip's geometry into it. That is sound because of RULING D4-7: a database
+   * with nothing inside the driving strip's X window is resolved against its
+   * own whole sweep instead of being skipped, so the window a sibling happens
+   * to be zoomed to cannot change the answer. */
+  if(!(r->flags & 4)) {
+    for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+      xRect *rr = &xctx->rect[GRIDLAYER][i];
+      if(rr == r) continue;
+      if(!(rr->flags & 1)) continue;   /* not a graph */
+      if(rr->flags & 4) continue;      /* its own cursor, its own databases */
+      n = graph_cursor_dbs_rect(rr, slots, &cap, n, entry_extra_idx);
+    }
+  }
+
+  cursor_dbs_done:
+  node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
+  dbg(1, "graph_cursor_dbs(): %d database(s)\n", n);
+  return n;
+}
+
 int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
 {
   int need_redraw = 0;
