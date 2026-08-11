@@ -377,3 +377,41 @@ user-visible consequence of the `semaphore != 0` row, which the `currsch` delta 
   the descend pick already does at `src/scheduler.c:3051`.
 - **No coverage anywhere near this band.** Every headless test that touches the semaphore sets it to
   2; nothing sets 1. A change to the threshold is currently unguarded in both directions.
+
+---
+
+## D5 attempt (2026-08-10) — built, verified, **REVERTED**. Still OPEN.
+
+Measured BEFORE (unchanged — the tree is back at `b1326180`):
+
+```
+0253 sem=1 descend       : '0' err='busy' currsch=0
+0253 sem=1 go_back 2     : '' err='busy' currsch=0
+0253 sem=2 hi_descend    : '' err='busy'   <- STALE token from the sem=1 call
+0253-B after go_back 2   : currsch=0 cell=top253.sch
+```
+
+Half (a): `hi_descend`'s gate moved `>= 2` → `!= 0` (the threshold of the verb it calls) and refused
+audibly; `xschem set descend_error` was added so the Tcl surface stamps a **fresh** `busy` instead
+of leaving the previous call's token readable; `scheduler.c`'s two `busy` records began to speak.
+`case 'e'` / `case 'i'` were deliberately **not** moved — they call the C functions directly and are
+self-consistent, and lowering them would re-open `editprop.c`'s `sel_array`-across-`tkwait` window.
+That disagreement is [0374](0374-descend-keys-run-at-semaphore-1-while-a-property-dialog-holds-sel-array-indices.md).
+
+Half (b): one named proc `descend_unwind_if_pushed {lvl}` keyed off the **`currsch` delta** replaced
+the unconditional `xschem go_back 2` else-arm in `src/xschem.tcl` (`hier_traversal`) **and** both
+in-tree PDK copies (`sky130A/sky130_procs.tcl`, `ihp-sg13g2/sg13g2_procs.tcl`) in the same commit.
+Keying off the delta — rather than a new accessor or the token vocabulary — is what makes it correct
+for all eight ways `descend` returns `0`. Rows H1/H2/H3 measured green, and sabotage variant S8
+confirmed a single fix covers all three call sites (the PDK copies hold no local definition).
+
+**Reverted** only because a sibling part of the same commit (the 0252 chooser filter) broke the
+create-the-child workflow — see [0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md).
+Nothing measured against 0253's own mechanism failed; **this half is the best candidate to re-land
+on its own.**
+
+Still open: `descend_unwind_if_pushed` calls `xschem go_back 2`, which is a silent no-op at
+`semaphore != 0` ([0377](0377-go-back-at-nonzero-semaphore-is-a-silent-no-op-that-records-nothing.md)),
+and all three call sites discard its return — so a walk that unwinds while busy continues at the
+wrong level. Also [0378](0378-hi-descend-tcl-level-bails-leave-descend-error-unreadable.md): the
+stale-token hole is wider than the semaphore arm.

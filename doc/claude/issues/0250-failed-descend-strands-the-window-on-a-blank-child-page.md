@@ -322,3 +322,48 @@ hook: `hi_descend_do_body` emits a `ciw_echo` for every *other* failure
   all three cases: explicit missing `schematic=` (refuse, level unchanged, message), derived
   missing `<symname>.sch` (descend, level +1, message), and existing child (unchanged
   behaviour) — plus that no `~` backup appears next to a refused target.
+
+---
+
+## D5 attempt (2026-08-10) — built, verified, **REVERTED**. Still OPEN.
+
+Measured BEFORE (unchanged by this attempt — the tree is back at `b1326180`):
+
+```
+0250-A descend returned  : '0'
+0250-A descend_error     : 'load-failed'
+0250-A currsch AFTER     : 1
+0250-A cell exists on disk: 0
+0250-A after drawing wire: wires=1 modified=1
+0250-A backup written    : 1
+0250 LOG: descend lines in Xschem.log = 0
+```
+
+New in this measurement, and the reason a blanket fix is wrong: D4's `load-failed` token and its
+"could not load" sentence **also fire for the legitimate create-the-child-by-descending flow**
+(a derived `<symname>.sch` that does not exist yet), so the message is now wrong in the other
+direction for an intended workflow.
+
+The fix that was built and then reverted: `get_sch_from_sym()` set `xctx->sch_origin_explicit`, and
+`descend_probe_target()` refused an **explicit** `schematic=` naming a missing file *before*
+`xctx->currsch++`, while a **derived** name still descended and was reported as `new-child`
+("Descend: creating new schematic <cell>") and written to the action log. It measured green:
+
+```
+E3 ... records schematic-not-found:<file>   (refused before the push, so no <cell>~.sch appears)
+E7 ... reported as a CREATION (msg {Descend: creating new schematic e_newcell})
+```
+
+**Reverted** because a sibling part of the same commit (the 0252 chooser filter) broke the
+create-the-child workflow through the chooser — see
+[0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md). This issue's own
+mechanism was sound and is worth re-attempting on its own, without the 0252 filter.
+
+Still open beyond the above: the probe was `stat()`, i.e. **ENOENT-only** — an explicit target that
+exists but is mode `000`, or is a directory, still strands with the level advanced and still gets a
+`<cell>~.sch` written beside the real unreadable cell (0250's full symptom set). `access(R_OK)`
+plus an `S_ISREG` test would close that without touching the derived/new-child split. Post-push
+failures also still advance the level and log nothing while the following `go_back` *is* logged,
+so a replay pops a level it never pushed.
+
+Decisions and the full sabotage matrix: see the census section above.

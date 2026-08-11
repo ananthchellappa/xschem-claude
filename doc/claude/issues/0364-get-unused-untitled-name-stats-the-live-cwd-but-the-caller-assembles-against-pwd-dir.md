@@ -64,3 +64,17 @@ same directory awareness to stay honest.
 
 `tests/headless/test_descend_untitled_preserve.tcl` is the ready-made witness — it is red today
 and should go green with the fix, and it should be added to a gated list once it does.
+
+## Two more suites are witnesses (measured 2026-08-10, item D5)
+
+`tests/headless/test_descend_untitled_preserve.tcl` (already named above) and
+`tests/headless/test_save_as_cellview.tcl` row **R4a** (`=> .../untitled-80.sch`) both fail when the
+repo root holds `untitled*.sch` litter, and **both pass verbatim when the process PWD is a clean
+directory** (verified). They are cwd-fragile for exactly the reason this issue describes, and will
+keep flapping while the ~150 untracked `untitled*.sch` files sit in the tree.
+
+The same defect was also observed firing *inside* the 0261c fabrication path: `descend_symbol`'s
+fabricated blank cell resolved to a `untitled.sch` that **already existed** (mtime predating the
+run), because `get_unused_untitled_name` stat'd the bare basename against the live cwd while the
+path was assembled from `getenv("PWD")`. So this is not only a test-hygiene irritant — it lets a
+fabricated page silently aim at an occupied path.

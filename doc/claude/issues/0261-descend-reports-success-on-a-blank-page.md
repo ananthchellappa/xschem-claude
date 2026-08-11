@@ -435,3 +435,49 @@ to drive a schematic generator at all, so the generator fixtures are reusable be
   becomes an error.
 - **No coverage today.** Nothing in `tests/headless/` exercises a generator, an empty `.sch`, or a
   truncated `.sch`, so every one of these edits is currently unguarded. Land the test first.
+
+---
+
+## D5 attempt (2026-08-10) — built, verified, **REVERTED**. Still OPEN, and narrower than it looked.
+
+Measured BEFORE (unchanged — the tree is back at `b1326180`), all three variants reporting
+*positive* success (`ret=1` **and** `descend_error` empty):
+
+```
+0261a exit-3 generator   : descend='1' err='' currsch=1 wires=1 readonly=0
+0261b truncated child : descend='1' err='' currsch=1 instances=0 wires=1
+0261c descend_error      : ''   <- EMPTY == 'the descend worked'
+```
+
+Correction to the original write-up, measured: **0261c's recipe as filed does not reproduce.** If
+`::mysym` is blank from the start, D4's `descend_missing_sym` guard catches it first
+(`descend_symbol` → `0`, `missing-symbol`). The symbol must **resolve at load time and the
+expression blank afterwards** (the live-parameter case) for File>New's fabrication branch to be
+reached.
+
+The fix that was built and reverted: a **second** channel `xctx->load_verdict` (with
+`LOAD_V_{OK,NOFILE,FABRICATED,NORECORDS,GENFAIL,GENWARN}`) plus `load_malformed`;
+`read_xschem_file()` returning a record count; `pclose()`'s wait status decoded under `__unix__`.
+`load_schematic()`'s own `int` return was left byte-identical in meaning, because `src/xinit.c:3697`
+and `:3713` do `if(!file_loaded) tcleval("exit 1")` — lowering it would make xschem exit 1 at
+startup on an empty start cell. Measured green:
+
+```
+F1/F3 generator-emitting-nothing and 0-byte child -> ret=0 moved=1 err=empty-file, spoken
+F4 header-only (well-formed, object-free) child   -> ret=1 err={}   (comp3_empty preserved)
+F2/F5 generator exit 3 WITH records, truncated child -> ret=1 err={} warned=1  (warn, never refuse)
+```
+
+**Reverted** because a sibling part of the same commit (the 0252 chooser filter) broke the
+create-the-child workflow — see [0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md).
+
+**Still open, and the adversary pass showed the headline is wider than the fix was:** the verdict's
+"at least one record consumed" rule is a **token count, not a parse-success count**.
+`read_xschem_file()`'s `default:` arm counts every unknown token as a record, so an HTML 404 page or
+a line of prose saved as `.sch` still gives `ret=1 err='' objs=0` on a blank page; only 0-byte and
+whitespace-only files ever reach `NORECORDS`. Likewise a generator that prints a diagnostic banner
+and **exits 0** produces `ret=1 err='' objs=0` with no warning at all, and `descend_symbol` into a
+`.sym` containing prose gives `ret=1 err=''`. Counting only *recognised* tags — or counting
+`default:` hits into `load_malformed` — is the missing piece. Note also that GENWARN and
+`malformed>0` were ratified to return `1` with `descend_error` **empty**, so a scripted caller
+cannot see a damaged load at all; only a human watching the status line can.

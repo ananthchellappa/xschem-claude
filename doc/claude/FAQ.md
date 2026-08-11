@@ -14,6 +14,48 @@ Newest entries on top.
 
 ---
 
+## Q43. Why did a fix with 67 green checks, a clean sabotage matrix and an adversary pass still get reverted?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `b1326180` + this session — issues **0250/0252/0253/0261/0369** (item D5).
+
+**Short answer: because every one of those checks addressed instances by name, and the user
+addresses them by selection.** The suite and the user were exercising different code paths, so the
+green was real and the workflow was still broken.
+
+The fix added a chooser filter so the descend view list stops offering a schematic view the C guard
+is going to veto (issue 0252). It decided with `xschem get_sym_type $symabs`. That command answers
+correctly on a freshly loaded sheet and returns **empty once an instance is selected** — which is
+exactly the state a user is in when they select an instance and press descend
+([0379](issues/0379-get-sym-type-returns-empty-while-an-instance-is-selected.md)). The filter then
+collapsed to a bare `[file exists]` test and dropped the schematic row for a `type=subcircuit`
+whose child does not exist yet, deleting the create-the-child-by-descending workflow — the very
+capability the rest of the same commit had gone out of its way to preserve.
+
+The test row that was supposed to catch this (*"a subcircuit whose .sch does not exist yet is still
+offered"*) passed, because it called `hi_descend inst=XN`. Nothing in the suite ever set a
+selection first.
+
+Three durable lessons:
+
+1. **A test must reproduce the user's gesture, not just the user's intent.** `inst=<name>` and
+   *select-then-descend* are different states. When a feature is reachable two ways, pin both, or
+   the cheaper one silently becomes the only one you have covered.
+2. **Sabotage verifies the mechanism you built, not the mechanism you needed.** All eight variants
+   behaved, including the one aimed at this filter (S6 turned its row red exactly as predicted).
+   Sabotage proves a check is load-bearing; it cannot tell you the check is asking the wrong
+   question.
+3. **Do not build a user-visible decision on an accessor whose stability you have not measured in
+   the caller's state.** The lookup was correct in every state the tests put it in and wrong in the
+   state that mattered. Read it once from the state the feature will actually run in before making
+   it load-bearing.
+
+Corollary for bundling: the 0250/0261/0369 verdict mechanism, the 0253 threshold work and the 0252
+filter were independent, and one bad component forced all of them out. Land independent mechanisms
+in independent commits.
+
+---
+
 ## Q42. When should a refused operation tell the user, and when is silence the right answer?
 
 - **Asked:** 2026-08-10

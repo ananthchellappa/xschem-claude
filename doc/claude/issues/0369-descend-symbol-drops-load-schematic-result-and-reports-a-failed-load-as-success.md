@@ -118,3 +118,44 @@ sharp. Revisit if D6 (0251) is ratified and the return value becomes contractual
 None. No row in any suite covers a descend whose load fails after `currsch++`. A test needs
 the validity gate shown above, or it degrades into the 0254 path and passes for the wrong
 reason.
+
+---
+
+## D5 attempt (2026-08-10) — built, verified, **REVERTED**. Still OPEN.
+
+Measured BEFORE (unchanged — the tree is back at `b1326180`):
+
+```
+0369 LOG: descend_symbol lines in Xschem.log = 1 : {xschem descend_symbol -inst xg1}
+```
+
+i.e. a `descend_symbol` whose load failed returned `'1'`, advanced `currsch`, left
+`descend_error` EMPTY, and wrote a **phantom replayable** action-log line — the exact inverse of
+0250, which advanced the level and logged nothing.
+
+The fix that was built and reverted bound `load_schematic()`'s result on **both** arms (the
+EMBEDDED arm and the main arm) and added a pre-push `descend_symbol_probe()` before
+`++xctx->currsch`. Measured green:
+
+```
+SY1 ... (got ret={0} err={symbol-not-found:gone_d5.sym} cell=p_gone_d5.sch)
+SY3 ... (got ret={0} err={no-symbol-path} cell=p_expr_d5.sch)
+SY4 counterweight: the EMBEDDED arm still returns 1 and advances a level
+L1 the failed descend_symbol writes NO phantom `xschem descend_symbol -inst xd1` line
+```
+
+The phantom line dies for free, because the early return precedes the self-log.
+
+Sabotage note worth carrying forward: **L1 is defended in depth and no single-mechanism sabotage
+turns it red** — the pre-push probe, the post-load `if(!load_ok)` guard and `load_schematic()`'s own
+zero each independently suppress the phantom line. Only the two-site variant (probe **and** guard
+removed together) made it fail. A future reviewer should not read L1's greenness under a single
+sabotage as evidence the row is vacuous.
+
+**Reverted** because a sibling part of the same commit (the 0252 chooser filter) broke the
+create-the-child workflow — see [0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md).
+Nothing measured against 0369's own mechanism failed; it is a good candidate to re-land on its own,
+together with [0261](0261-descend-reports-success-on-a-blank-page.md)'s verdict.
+
+Still open: `descend_symbol_probe()` only `stat()`s, and `descend_symbol` into a `.sym` containing
+prose still returns `1` with an empty token (see 0261's "still open").

@@ -339,3 +339,49 @@ assert `hi_descend_enum_views` emits no `schematic` row for the ineligible-and-n
   reads.
 - **No coverage today.** Nothing in `tests/headless/` exercises the type guard, so any change to
   it is currently unguarded.
+
+---
+
+## D5 attempt (2026-08-10) — built, then **REVERTED**. Still OPEN, and now with a known landmine.
+
+Measured BEFORE (unchanged — the tree is back at `b1326180`):
+
+```
+0252   row view='schematic' label='schematic' path='.../devices/res.sch' EXISTS=0
+0252 descend_error       : 'not-descendable:resistor'
+0252 statusmsg changed   : 0
+```
+
+Two things were built: a chooser filter (`hi_descend_row_offerable`) so the enumerator stops
+offering a row the C guard will veto, and a spoken refusal at the surface the user drove
+(`hi_descend_refuse` → held `statusmsg` **and** `ciw_echo`, because `ciw_echo` alone is a hard
+no-op without the `.ciw.l.t` widget). The C type guard stayed byte-silent (R1 / 0243 F2 — gates
+live at the verbs), so the committed 177-check inert-class silence lock stayed green.
+
+**The filter is what killed the whole item.** It decides via `xschem get_sym_type $symabs`, and that
+command returns **empty whenever an instance is selected** — the exact state the user is in when
+they select an instance and descend. The filter then collapses to a pure file-exists test and drops
+the schematic row for a `type=subcircuit` whose child does not exist yet:
+
+```
+ns.sch exists = 0 (create-the-child flow)
+BY NAME  rows = {schematic .../ns.sch} {symbol .../ns.sym}
+SELECTED rows = {symbol .../ns.sym}          <- schematic view GONE
+```
+
+Row V5 ("a subcircuit whose .sch does not exist yet is still offered") passed **only because the
+suite addresses instances by name (`inst=XN`), never with a live selection** — a green suite hiding
+a broken workflow. Root cause filed as
+[0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md).
+
+The filter also caused a second regression: with the row removed, the C guard never runs, so
+`hi_descend` returned `0` with `descend_error` **empty** — byte-identical to a success. Filed as
+[0378](0378-hi-descend-tcl-level-bails-leave-descend-error-unreadable.md).
+
+**Do not re-attempt this filter until 0379 is fixed**, and any test for it **must set a selection** —
+that is the only reason this survived a 67-check suite, an 8-variant sabotage matrix and an
+adversary pass. This file's existing "risks" section already warned that over-filtering silently
+removes the user's route to noticing a mistyped symbol; the create-the-child flow is a second,
+sharper instance of the same hazard.
+
+The spoken-refusal half (`hi_descend_refuse`) is independent of the filter and can land on its own.
