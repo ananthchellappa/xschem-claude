@@ -1,5 +1,6 @@
 # tests/headless/test_node_token_split.tcl — issue 0305: ONE node_token_split()
-# at all six `node=` walkers in src/draw.c.
+# at all SEVEN `node=` walkers in src/draw.c (six at issue 0305, plus
+# graph_fullxzoom() since batch F item 8 -- see the XD leg).
 #
 # Issue: doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md
 # Spec:  doc/claude/specs/mixed_signal_signal_browser.md section D (row D1).
@@ -9,7 +10,7 @@
 #
 #     [alias;]<vec-or-RPN> [ '%' [<dataset-digits>] [<rawfile> [<sim_type>]] ]
 #
-# Six functions in src/draw.c walk that list. All six parsed the `%`; only
+# SEVEN functions in src/draw.c walk that list. Six of them parsed the `%`; only
 # THREE did anything with the `<rawfile>` half. The three that did not are the
 # three a mouse touches:
 #
@@ -22,7 +23,10 @@
 # resolved against whatever database happened to be current, which for a mixed
 # strip is the analog one, where a VCD signal name does not exist.
 #
-# All six now call ONE helper, node_token_split(), and every switch it enables
+# The SEVENTH, graph_fullxzoom(), never parsed `%` at all and sized the auto X
+# window from the wrong database entirely -- spec D2, batch F item 8, the XD leg.
+#
+# All seven now call ONE helper, node_token_split(), and every switch it enables
 # is unwound by an absolute, index-based restore (node_db_restore) rather than
 # extra_rawfile()'s mode-5 SWAP -- a swap cannot unwind two nested levels, and
 # the graph-level `rawfile=` switch is the outer one.
@@ -54,8 +58,10 @@
 #         arm (node_dflt_sim_type), which every other `%` token here bypasses.
 #   NDY*  graph_fullyzoom(), the fourth walker reachable without a display.
 #   NDX*  the STRUCTURAL guard: the `%` parse exists in exactly one function and
-#         all six walkers call it. Every other check here is behavioural and a
-#         seventh hand-rolled copy is invisible to all of them.
+#         all SEVEN walkers call it. Every other check here is behavioural and a
+#         hand-rolled copy is invisible to all of them.
+#   XD*   batch F item 8, spec D2: the joint X domain. graph_fullxzoom() is the
+#         seventh walker -- it never parsed `%` at all, which WAS the defect.
 #   NDZ*  the coverage self-check.
 #
 # BATCH F ITEM 2 added four more legs, for the residuals item 1 left open (the
@@ -72,7 +78,7 @@
 #         can be watched headlessly. A carried column NUMBER belongs to the
 #         PREVIOUS database; what an entry with no `sweep=` token of its own
 #         inherits must be the NAME.
-#   NDR*  the structural guard for both: no exit past the epilogue, and all six
+#   NDR*  the structural guard for both: no exit past the epilogue, and all SEVEN
 #         walkers resolving the sweep column by name and clamping it.
 #
 # ITS FIX ROUND added two more, for what review showed nothing was watching:
@@ -690,7 +696,7 @@ check_true "NDY2 ...that spans the VCD's 0..1, not the analog band 0.25..0.30" \
 check "NDY3 ...and leaves the current database alone" [pcall {xschem raw rawfile}] $rawf
 
 # ===========================================================================
-# NDX — the STRUCTURAL guard: ONE `%` parser, and all six walkers on it
+# NDX — the STRUCTURAL guard: ONE `%` parser, and all SEVEN walkers on it
 # ===========================================================================
 # THE ITEM'S PRIMARY DELIVERABLE IS A STRUCTURE, and every check above it is
 # behavioural: re-inlining a private `%` parse into one walker leaves all of them
@@ -724,7 +730,11 @@ check_true "NDX2 ...and both of them are inside node_token_split(): a seventh\
  hand-rolled copy anywhere else fails HERE and nowhere else" \
   [expr {$nddef >= 0 && $ndend > $nddef && [llength $ndpct] == 2 &&
          [lindex $ndpct 0] > $nddef && [lindex $ndpct end] < $ndend}]
-check "NDX3 all SIX node= walkers call the shared parser" $ndcalls 6
+# RESTATED, batch F item 8 (spec D2): SIX -> SEVEN. graph_fullxzoom() was the
+# one walker that never parsed `%` at all -- that WAS the D2 defect -- and it now
+# resolves each entry's per-trace database through the same helper. The number is
+# the point of the check, so it is restated here rather than left to drift.
+check "NDX3 all SEVEN node= walkers call the shared parser" $ndcalls 7
 
 # ###########################################################################
 # BATCH F ITEM 2 -- the residuals issue 0305 left open:
@@ -1072,9 +1082,11 @@ foreach ndline [split $nddraw "\n"] {
 }
 check_true "NDR1 graph_fullyzoom() was located in draw.c" \
   [expr {$ndf_open >= 0 && $ndf_close > $ndf_open}]
-check "NDR2 all SIX node= walkers resolve the sweep column BY NAME after the\
- switch (a carried column NUMBER belongs to the previous database)" $ndsweep 6
-check "NDR3 ...and all six clamp it against the switched-in nvars" $ndclamp 6
+# RESTATED with NDX3 (batch F item 8): graph_fullxzoom() joined the family, and
+# it resolves its sweep column per CONTRIBUTING DATABASE inside graph_x_extent().
+check "NDR2 all SEVEN node= walkers resolve the sweep column BY NAME after the\
+ switch (a carried column NUMBER belongs to the previous database)" $ndsweep 7
+check "NDR3 ...and all seven clamp it against the switched-in nvars" $ndclamp 7
 check "NDR4 graph_fullyzoom() has exactly TWO return statements: the answer and\
  the no-waves refusal. Its node walk exits through the epilogue, never past it" \
   $ndf_returns 2
@@ -1086,8 +1098,9 @@ check "NDR6 ...and the epilogue label they land on exists exactly once" $ndf_lab
 # drag), so the count is what keeps the sixth from being forgotten. One call per
 # walker, at its GRAPH-level unwind -- a seventh would mean a per-node restore
 # had been given the entry value, which is the wrong nesting level.
-check "NDR7 all SIX node= walkers put back the OTHER half of the registry cursor\
- (extra_prev_idx, where `raw switch_back` goes), once each" $ndprev 6
+# RESTATED with NDX3 (batch F item 8): seven walkers, seven cursor put-backs.
+check "NDR7 all SEVEN node= walkers put back the OTHER half of the registry cursor\
+ (extra_prev_idx, where `raw switch_back` goes), once each" $ndprev 7
 # debug_var is 0 in every normal run (globals.c), so dbg(0, ...) is not a debug
 # level at all -- it is an unconditional write to stderr. find_closest_wave()'s
 # "closest dataset" trace was one, harmless while a graph `t` keypress was its
@@ -1097,6 +1110,374 @@ check "NDR7 all SIX node= walkers put back the OTHER half of the registry cursor
 # process, 151 queries, `grep -c '^closest dataset'` = 0).
 check "NDR8 ...and the closest-wave trace is a dbg LEVEL 1 line: a query verb\
  must not write to stderr once per call" $ndtrace 1
+
+# ###########################################################################
+# XD — BATCH F ITEM 8, SPEC D2: THE JOINT X DOMAIN.
+#
+# graph_fullxzoom() was the SEVENTH `node=` walker and the only one that never
+# parsed `%` at all. It sized the automatic X window from the extent of
+# whichever database happened to be CURRENT (or, for a follower strip, of the
+# MASTER rect's `rawfile=`), so a strip carrying a 0..2 us analog trace beside a
+# 0..500 ns digital one was fitted to ONE of them and the other was clipped or
+# squeezed into a corner -- and WHICH one depended on the registry cursor.
+#
+# The window is now the UNION of the extents of every database contributing a
+# trace to the shared-X strip GROUP. THE FIXTURE IS THE REFERENCE PAIR of the
+# issue: an analog raw spanning 0..2e-6 and a VCD spanning 0..5e-7, plus the
+# file's own session raw at 0..2e-9 as a THIRD number, so a window that came
+# from the registry cursor rather than from the union is recognisable on sight.
+#
+# GROUPING IS DONE WITH `unlocked`, NOT WITH `sim_type=`, and that is a
+# deliberate choice about the CONTROL. graph_shares_x() makes an UNLOCKED master
+# a group of one whatever its sim_type is, so `flags=graph,unlocked` isolates a
+# strip without touching its type token -- and the type token has to stay EMPTY,
+# because the parent commit's graph_fullxzoom() passes it to extra_rawfile() as
+# the current database's expected sim_type: give a strip a made-up type and the
+# parent REFUSES instead of answering, which would make every check below red
+# for the wrong reason. With the token empty the parent answers with the current
+# database's extent -- the actual defect -- and that is what these checks are
+# measured against. Parent values are in the receipt.
+#
+# The one LOCKED pair (strips 9 and 10, XD5-XD7) therefore shares the empty
+# sim_type with the file's earlier strips 0,1,2,3,5, which are in its group too.
+# That is honest rather than inconvenient: every one of them spans 0..2e-9 out
+# of the session raw, so they widen nothing, and the group is a realistic one.
+# ###########################################################################
+
+# a raw with exactly ONE sample: a legal database whose extent is a POINT. The
+# degenerate input the union rule has to survive.
+proc mkraw_one {path} {
+  set body "Title: nd-one\nDate: Thu Jan  1 00:00:00 2026\nPlotname: Transient Analysis\n"
+  append body "Flags: real\nNo. Variables: 2\nNo. Points: 1\nVariables:\n"
+  append body "\t0\ttime\ttime\n\t1\tv(one)\tvoltage\n"
+  append body "Values:\n0\t1e-06\n\t0.5\n\n"
+  wr $path $body
+}
+
+# a raw with NO points at all, and one whose SWEEP COLUMN is entirely NaN. The
+# two shapes RULING D2-2's first clause names and which nothing used to build,
+# so the guards could be deleted with the file fully green (verifier finding).
+proc mkraw_zero {path} {
+  set body "Title: nd-zero\nDate: Thu Jan  1 00:00:00 2026\nPlotname: Transient Analysis\n"
+  append body "Flags: real\nNo. Variables: 2\nNo. Points: 0\nVariables:\n"
+  append body "\t0\ttime\ttime\n\t1\tv(zero)\tvoltage\n"
+  append body "Values:\n"
+  wr $path $body
+}
+proc mkraw_nan {path} {
+  set body "Title: nd-nan\nDate: Thu Jan  1 00:00:00 2026\nPlotname: Transient Analysis\n"
+  append body "Flags: real\nNo. Variables: 2\nNo. Points: 3\nVariables:\n"
+  append body "\t0\ttime\ttime\n\t1\tv(nn)\tvoltage\n"
+  append body "Values:\n0\tnan\n\t0.1\n\n1\tnan\n\t0.2\n\n2\tnan\n\t0.3\n\n"
+  wr $path $body
+}
+
+set xdraw  [file join $scratch xd_long.raw]
+set xdvcd  [file join $scratch xd_500ns.vcd]
+set xdone  [file join $scratch xd_one.raw]
+set xdmiss [file join $scratch xd_nosuch.raw]
+set xdzero [file join $scratch xd_zero.raw]
+set xdnan  [file join $scratch xd_nan.raw]
+mkraw $xdraw 2.0e-6 41
+mkvcd $xdvcd sigd 500000
+mkraw_one $xdone
+mkraw_zero $xdzero
+mkraw_nan $xdnan
+catch {file delete -- $xdmiss}
+
+check "XD0 the 0..2us analog raw reads (slot 4)" [pcall {xschem raw read $xdraw tran}] 1
+check "XD0b the 0..500ns VCD reads (slot 5)" [pcall {xschem raw read $xdvcd vcd}] 1
+check "XD0c the single-sample raw reads (slot 6)" [pcall {xschem raw read $xdone tran}] 1
+check "XD0g the ZERO-POINT raw reads (slot 7): a legal database with no samples" \
+  [pcall {xschem raw read $xdzero tran}] 1
+check "XD0h the all-NaN-sweep raw reads (slot 8)" [pcall {xschem raw read $xdnan tran}] 1
+check "XD0d ...and the session raw, whose own extent is a THIRD number (0..2e-9),\
+ is current again" [pcall {xschem raw switch 0; xschem raw rawfile}] $rawf
+check "XD0e the unresolvable per-trace database really is absent from the registry" \
+  [pcall {expr {[string first $xdmiss [xschem raw info]] >= 0 ? 1 : 0}}] 0
+
+# `\"...\"` exactly as wviewer::graph_props emits it: a node= entry whose
+# `%<rawfile> <sim_type>` field contains a space must survive the tokenizer.
+proc xd_q {s} { return "\\\"$s\\\"" }
+set XA [xd_q "a;v(anlg)%$xdraw tran"]      ;# the 0..2e-6 analog raw
+set XV [xd_q "d;TOP.m.sigd%$xdvcd vcd"]    ;# the 0..5e-7 VCD
+set XO [xd_q "o;v(one)%$xdone tran"]       ;# the single-sample raw
+set XM [xd_q "z;v(zz)%$xdmiss tran"]       ;# a database that does not resolve
+set XZ [xd_q "zz;v(zero)%$xdzero tran"]    ;# a database with NO samples
+set XN [xd_q "nn;v(nn)%$xdnan tran"]       ;# a database whose sweep column is NaN
+
+# THE SEED IS PART OF EVERY CHECK (the NDY1 lesson): -1 .. -2 is a window no
+# database here can produce AND is inverted, so a fullxzoom that did nothing at
+# all is visible rather than being mistaken for an answer.
+set ::xd_y 6000
+# `simt` isolates a LOCKED pair into a shared-X group of exactly two: a made-up
+# sim_type token matches nothing else in the file, and graph_shares_x() needs the
+# tokens to match. Safe HERE (unlike on the parent-comparison strips, see the leg
+# header) because these strips carry no `rawfile=`, so nothing hands the token to
+# extra_rawfile() as an expected type, and every `%` entry names its own.
+proc xd_strip {gi flags nodes {simt {}} {sweep {}}} {
+  xschem rect 0 $::xd_y 800 [expr {$::xd_y + 400}] -1 "flags=$flags" 0
+  incr ::xd_y 1000
+  if {$simt ne {}} { xschem setprop rect 2 $gi sim_type $simt }
+  if {$sweep ne {}} { xschem setprop rect 2 $gi sweep $sweep }
+  nd_setnode $gi $nodes
+  xschem setprop rect 2 $gi x1 -1.0
+  xschem setprop rect 2 $gi x2 -2.0
+}
+proc xd_win {gi} {
+  xschem setprop rect 2 $gi fullxzoom
+  return [list [xschem getprop rect 2 $gi x1] [xschem getprop rect 2 $gi x2]]
+}
+# reseed, so a strip can be measured again from a state no database produces
+proc xd_reseed {gi} {
+  xschem setprop rect 2 $gi x1 -1.0
+  xschem setprop rect 2 $gi x2 -2.0
+}
+# is the window [a, b] to within a part in 1e6 of b's magnitude?
+proc xd_span {w a b} {
+  if {[llength $w] != 2} { return 0 }
+  lassign $w g h
+  if {![string is double -strict $g] || ![string is double -strict $h]} { return 0 }
+  set t [expr {1.0e-6 * abs($b)}]
+  return [expr {abs($g - $a) <= $t && abs($h - $b) <= $t}]
+}
+# is the window [0, want] to within a part in 1e6?
+proc xd_from0 {w want} {
+  if {[llength $w] != 2} { return 0 }
+  lassign $w a b
+  if {![string is double -strict $a] || ![string is double -strict $b]} { return 0 }
+  return [expr {abs($a) <= 1.0e-6 * $want && abs($b - $want) <= 1.0e-6 * $want}]
+}
+
+xschem unselect_all
+xd_strip  6 graph,unlocked $XA
+xd_strip  7 graph,unlocked $XV
+xd_strip  8 graph,unlocked "$XA\n$XV"
+xd_strip  9 graph $XA
+xd_strip 10 graph $XV
+xd_strip 11 graph,unlocked "$XA\n$XM"
+xd_strip 12 graph,unlocked "$XA\n$XO"
+xd_strip 13 graph,unlocked $XO
+xd_strip 14 graph,unlocked {}
+# a strip that mixes the two kinds of entry: one naming its OWN database, one
+# bare (i.e. plotting from the STRIP's database). The bare one has to be
+# measured after the per-trace switch has been UNWOUND -- measure it while the
+# `%` entry's database is still current and it silently answers for the wrong
+# one. Deliberately built so the two answers differ: with the 0..5e-7 VCD made
+# current the honest union is 0..1e-6, and measuring the bare entry against the
+# single-sample raw instead collapses it to a POINT and the fit is refused.
+xd_strip 15 graph,unlocked "$XO\nv(anlg)"
+check_true "XD0f the isolating flag really took: strip 7 is a graph AND unlocked,\
+ which is what makes it a shared-X group of one" \
+  [expr {[string first unlocked [pcall {xschem getprop rect 2 7 flags}]] >= 0}]
+
+# --- the two single-database premises. Both are RED at the parent commit: with
+# the session raw current, graph_fullxzoom() answered 0..2e-9 for either one,
+# because it never read the `%<rawfile>` that says where the trace lives.
+check_true "XD1 a strip whose only trace names the 0..2us raw is fitted to THAT\
+ database, not to the current one" [xd_from0 [xd_win 6] 2.0e-6]
+check_true "XD1b ...and a strip whose only trace names the 0..500ns VCD is fitted\
+ to the VCD" [xd_from0 [xd_win 7] 5.0e-7]
+
+# --- THE ITEM. The mixed strip: one analog trace out of the 0..2us raw, one
+# digital trace out of the 0..500ns VCD, on one X axis.
+set ::xd_mixed [xd_win 8]
+check_true "XD2 the auto X window of a MIXED strip spans the UNION of both\
+ databases, 0..2e-6 -- not the extent of whichever one is current (spec D2)" \
+  [xd_from0 $::xd_mixed 2.0e-6]
+# the union must be a property of the STRIP, not of the registry cursor. Two
+# more cursor positions, same answer; at the parent commit all three differ.
+xschem raw switch 5
+set xd_from_vcd [xd_win 8]
+xschem raw switch 0
+check "XD3 ...and it is the SAME window with the 0..500ns VCD made current: the\
+ auto window is a property of the strip, not of the registry cursor" \
+  $xd_from_vcd $::xd_mixed
+xschem raw switch 6
+set xd_from_one [xd_win 8]
+xschem raw switch 0
+check "XD4 ...and the same again with the single-sample raw current" \
+  $xd_from_one $::xd_mixed
+
+# --- the shared-X group: two strips, one sim_type, one X axis. They are given
+# the same x1/x2 by callback.c's loop, so they must AGREE about what it is.
+set ::xd_g9  [xd_win 9]
+set ::xd_g10 [xd_win 10]
+check_true "XD5 a shared-X group member carrying only the 0..2us trace spans the\
+ GROUP's union" [xd_from0 $::xd_g9 2.0e-6]
+check_true "XD6 ...and the member carrying only the 0..500ns trace spans the same\
+ union, not its own database's 0..5e-7" [xd_from0 $::xd_g10 2.0e-6]
+check_true "XD7 ...so the two members AGREE, ON THE UNION: a strip group that\
+ shares its X axis shares the union, whichever member the gesture happened to\
+ start on (agreement alone is not the claim -- the parent agrees too, on the\
+ wrong window, so the union value is asserted in the same breath)" \
+  [expr {$::xd_g9 eq $::xd_g10 && [xd_from0 $::xd_g9 2.0e-6]}]
+# ...and a strip that does NOT share that axis is not dragged into it. Re-run
+# AFTER the group, so a union that leaked across sim_type boundaries shows up.
+check_true "XD8 a strip in a DIFFERENT group is untouched by that union: it is\
+ still fitted to its own 0..5e-7 VCD" [xd_from0 [xd_win 7] 5.0e-7]
+
+# --- the degenerate-input rulings (all three are in the spec's D2 section)
+check_true "XD9 a per-trace database that does NOT resolve contributes NOTHING:\
+ the window is the same one the resolvable trace alone produces" \
+  [xd_from0 [xd_win 11] 2.0e-6]
+check_true "XD10 a DEGENERATE contributor (a single-sample database, extent a\
+ POINT at 1e-6) can only widen a union, never shrink it" \
+  [xd_from0 [xd_win 12] 2.0e-6]
+check_true "XD11 ...but a union that is degenerate ON ITS OWN is REFUSED: x1/x2\
+ keep the window the strip already had rather than becoming zero-width, which\
+ would make every X transform divide by gr->gw == 0" \
+  [expr {[xd_win 13] eq {-1.0 -2.0}}]
+check "XD12 REGRESSION GUARD (green at the parent by design): a strip with NO\
+ traces still gets the current database's window -- an empty strip has nothing\
+ else to go on" [expr {[xd_from0 [xd_win 14] 2.0e-9] ? {ok} : [xd_win 14]}] ok
+
+xschem raw switch 5
+set ::xd_mixedkind [xd_win 15]
+xschem raw switch 0
+check_true "XD15 an entry with NO `%` is measured against the STRIP's database,\
+ after the previous entry's per-trace switch has been unwound: with the 0..5e-7\
+ VCD current the union of it and a single-sample 1e-6 database is 0..1e-6" \
+  [xd_from0 $::xd_mixedkind 1.0e-6]
+
+# ###########################################################################
+# XD16..XD22 -- THE SHAPES THE FIRST CUT OF THIS ITEM DID NOT BUILD.
+# Every one of these was raised by a verifier or a reviewer against the first
+# implementation, each with a reproducer; four of them were live defects and
+# three were unpinned rulings. They are grouped here, at the end, because each
+# needs a shared-X group of EXACTLY TWO and gets it from a made-up `sim_type=`
+# token (see xd_strip) rather than from `unlocked`, which can only make a group
+# of ONE. That also answers the reviewer's objection to XD3/XD4: those two do
+# measure an isolated rect, which the viewer never builds -- the LOCKED-group
+# equivalents are XD5-XD7 and now XD16-XD18c.
+# ###########################################################################
+
+# --- the EMPTY strip in a shared-X group. `wviewer::add_graph` appends exactly
+# this: a traceless strip beside strips that do carry traces. The empty strip
+# used to fold the CURRENT database into the group's union, which put the defect
+# back -- the window snapped to the registry cursor again -- and broke the
+# group's agreement, because the fallback fired for one member and not the other.
+# The CURRENT database is deliberately made the WIDEST one here: with the session
+# raw current the wrong answer is a strict SUBSET of the right one and invisible.
+xd_strip 16 graph $XV xdempty
+xd_strip 17 graph {}  xdempty
+xschem raw switch 4                    ;# the 0..2us raw is CURRENT and is WIDER
+xd_reseed 16; xd_reseed 17
+set ::xd_e16 [xd_win 16]
+set ::xd_e17 [xd_win 17]
+xschem raw switch 5                    ;# ...and again from a different cursor
+xd_reseed 16
+set ::xd_e16b [xd_win 16]
+xschem raw switch 0
+check_true "XD16 an EMPTY strip in a shared-X group contributes NOTHING: the\
+ member carrying only the 0..500ns VCD is still fitted to 0..5e-7, not to the\
+ 0..2us database the registry cursor happens to be parked on" \
+  [xd_from0 $::xd_e16 5.0e-7]
+check_true "XD16b ...and the empty member is handed the SAME window, so the\
+ group still agrees (a fallback that fires for one member and not the other is\
+ how a group stops agreeing)" \
+  [expr {$::xd_e17 eq $::xd_e16 && [xd_from0 $::xd_e17 5.0e-7]}]
+check "XD17 ...and moving the registry cursor does not move that window" \
+  $::xd_e16b $::xd_e16
+
+# --- ONE X QUANTITY. graph_shares_x() has never required a shared-X group's
+# members to share a `sweep=` variable, and `sweep=<vector>` is shipped and used
+# (xschem_library/examples/test_nyquist.sch). Measuring each member in its OWN
+# sweep folded a VOLTAGE range into a TIME strip's window and squeezed a 2 ns
+# waveform into 3e-9 of the axis, i.e. invisible. The quantity is the TARGET
+# rect's, resolved by NAME in each contributing database.
+xd_strip 18 graph [xd_q "v(anlg)"] xdsw
+xd_strip 19 graph [xd_q "v(anlg)"] xdsw {v(anlg)}
+set ::xd_sw18 [xd_win 18]
+set ::xd_sw19 [xd_win 19]
+check_true "XD18 a TIME strip locked in a group with a `sweep=v(anlg)` X-Y strip\
+ keeps a TIME window (0..2e-9), rather than being auto-fitted to the other\
+ member's VOLTAGE range" [xd_from0 $::xd_sw18 2.0e-9]
+check_true "XD18b ...and the X-Y member gets the VOLTAGE window, 0.25..0.3: the\
+ union is over ONE quantity and it is the quantity of the rect being written" \
+  [xd_span $::xd_sw19 0.25 0.30000001]
+# and a database that does not HAVE the named quantity has no extent in it
+xd_strip 20 graph [xd_q "v(anlg)"] xdq {v(anlg)}
+xd_strip 21 graph $XV xdq
+set ::xd_sw20 [xd_win 20]
+check_true "XD18c a contributing database that does NOT have the target's sweep\
+ variable contributes NOTHING (the VCD has no v(anlg)) -- falling through to\
+ column 0 would fold that database's TIME into a VOLTAGE window" \
+  [xd_span $::xd_sw20 0.25 0.30000001]
+
+# --- RULING D2-1's first clause, on the ONLY fixture that can see it: a strip
+# whose every entry names a database that does not resolve. XD9 cannot -- its
+# strip carries a resolvable entry too, and the fallback a broken refusal folds
+# in is a strict subset of the answer XD9 asserts.
+xd_strip 22 graph,unlocked $XM
+check "XD19 a strip whose ONLY entry names an unresolvable database is REFUSED:\
+ the window it had SURVIVES, rather than being sized by whatever the registry\
+ cursor points at (only a WHOLLY TRACELESS group takes that fallback -- XD12)" \
+  [xd_win 22] {-1.0 -2.0}
+# ...and the same in a GROUP that also holds an EMPTY strip, which is the only
+# shape that can tell "no traces at all" from "traces named, none resolvable".
+# Gate the traceless fallback on `!got` instead of on `!nodes_seen` and the empty
+# member's fallback fires for the whole group, sizing BOTH strips from the
+# registry cursor -- and XD19 above, on a group of one, cannot see it.
+xd_strip 23 graph $XM xdref
+xd_strip 24 graph {}  xdref
+xschem raw switch 4
+xd_reseed 23; xd_reseed 24
+set ::xd_ref23 [xd_win 23]
+set ::xd_ref24 [xd_win 24]
+xschem raw switch 0
+check "XD19b ...and an EMPTY strip in the same group does not turn that refusal\
+ into a fallback: the traceless second pass is gated on the group naming NO\
+ traces, not on the group having produced no extent" \
+  [list $::xd_ref23 $::xd_ref24] {{-1.0 -2.0} {-1.0 -2.0}}
+
+# --- RULING D2-2's first clause, likewise: nothing used to build a degenerate
+# database at all, so its guards could be deleted with the file green.
+xd_strip 25 graph,unlocked $XZ
+xd_strip 26 graph,unlocked "$XZ\n$XA"
+check "XD20 a database with NO SAMPLES contributes nothing, so a strip whose\
+ only entry names one is refused and keeps its window" [xd_win 25] {-1.0 -2.0}
+check_true "XD20b ...and beside the 0..2us raw it widens nothing" \
+  [xd_from0 [xd_win 26] 2.0e-6]
+xd_strip 27 graph,unlocked $XN
+xd_strip 28 graph,unlocked "$XN\n$XA"
+check "XD21 a database whose SWEEP COLUMN IS ALL NaN likewise contributes\
+ nothing: NaN has no ordering, and letting it into the fold poisons the union\
+ (every later comparison against it is false)" [xd_win 27] {-1.0 -2.0}
+check_true "XD21b ...and beside the 0..2us raw, named FIRST so a NaN that got in\
+ would seed the union, the answer is still 0..2e-6" \
+  [xd_from0 [xd_win 28] 2.0e-6]
+
+# --- THE SHAPE THE VIEWER ACTUALLY BUILDS, stated out loud. wviewer::db_suffix
+# returns {} for a trace picked from the CURRENT database ("THE CURRENT DB WINS",
+# src/wave_viewer.tcl), so a production mixed strip is one BARE entry plus one
+# with a `%`. A bare entry has no database of its own and is therefore measured
+# against whatever is current -- which means THIS window does follow the registry
+# cursor, and the strip's analog trace stops being drawn at all once the cursor
+# moves off its database. That is RULING D2-1's second clause working as ruled,
+# not a defect, but it is the shape a human eyeballing this feature will see, so
+# it is pinned rather than assumed.
+xd_strip 29 graph,unlocked "v(anlg)\n$XV"
+set ::xd_prod0 [xd_win 29]
+xschem raw switch 4
+xd_reseed 29
+set ::xd_prod4 [xd_win 29]
+xschem raw switch 0
+check_true "XD22 the PRODUCTION strip shape (one BARE entry, one `%<rawfile>`)\
+ spans the union of the strip's own database and the named one: with the session\
+ raw current, 0..2e-9 unioned with the VCD's 0..5e-7 is 0..5e-7" \
+  [xd_from0 $::xd_prod0 5.0e-7]
+check_true "XD22b ...and with the 0..2us raw made current it is 0..2e-6, i.e. it\
+ MOVED: a bare entry names no database, so it follows the cursor. The\
+ cursor-INDEPENDENCE of XD3/XD4 is a property of an all-`%` strip only" \
+  [expr {[xd_from0 $::xd_prod4 2.0e-6] && $::xd_prod4 ne $::xd_prod0}]
+
+# --- and the walker leaves the session exactly as it found it
+check "XD13 a fullxzoom leaves the current database alone" \
+  [pcall {xd_win 8; xschem raw rawfile}] $rawf
+check "XD14 ...and leaves `raw switch_back`'s destination alone (the registry\
+ cursor is a PAIR)" [pcall {nd_backto {xschem setprop rect 2 8 fullxzoom}}] {1 current}
+xschem raw switch 0
 
 set ::nd_body_completed 1
 
@@ -1113,7 +1494,10 @@ set ::nd_body_completed 1
 # put the new number here by hand. The count EXCLUDES the two NDZ legs, so the
 # RESULT line reads two higher.
 # ===========================================================================
-set ::nd_expect 128
+# 128 -> 150: batch F item 8 added the XD leg (spec D2, the joint X domain).
+# 150 -> 166: item 8's fixer round added XD0g/XD0h and XD16-XD22b -- the group
+# shapes, the X-quantity rule, and the two rulings that had no fixture at all.
+set ::nd_expect 166
 set ndgot [expr {$npass + $fail}]
 check "NDZ1 the file ran its full complement of checks (a silent shortfall is\
  the failure this guards)" \

@@ -3,8 +3,12 @@
 **Status:** FIXED 2026-08-09 (batch F item 1) — see "The fix, as landed" below.
 The residuals it left (defect 1 below, plus `graph_fullyzoom()`'s two leaking early
 returns and the carried sweep column) are **FIXED 2026-08-09, batch F item 2** — see
-"The residuals, as landed" at the end. Defect 2 below (`graph_fullxzoom()`) stays OPEN:
-it is spec D2, a different feature.
+"The residuals, as landed" at the end. Defect 2 below (`graph_fullxzoom()`) is
+**FIXED 2026-08-10, batch F item 8** — it was spec D2, a different feature, and its
+rulings are in `doc/claude/specs/mixed_signal_signal_browser.md`, "D2 — the joint X
+domain". `graph_fullxzoom()` is now the SEVENTH caller of `node_token_split()`, so the
+structural guards in `tests/headless/test_node_token_split.tcl` (NDX3, NDR2, NDR3, NDR7)
+were restated from six to seven.
 **Found:** 2026-08-09, while wiring spec §D1 (`doc/claude/specs/mixed_signal_signal_browser.md`)
 **Area:** `src/draw.c` (graph rendering / graph interaction)
 **Severity:** a cross-DB trace RENDERS correctly but is inert to every mouse gesture
@@ -65,6 +69,13 @@ from a non-current database (spec §D1), a VCD trace in an otherwise analog stri
    and the auto window is 0..2 µs — the VCD trace occupies the left quarter of the
    strip and simply stops. That one is **spec §D2** (joint X domain) and is already
    tracked there; it is repeated here because it is the same root shape.
+   **FIXED 2026-08-10, batch F item 8.** The window is now the UNION of the extents of
+   every database contributing a trace to the shared-X strip group. Which database is
+   current is no longer the *whole* answer — it still supplies the extent of the traces
+   that name no database of their own, which is spec RULING D2-1b — but it no longer
+   overrides the databases that were named: measured on one fixture at the parent commit
+   `da93e9ba`, the same mixed strip answered `0..2e-9`, `0..5e-7` or the **zero-width**
+   `{1e-06 1e-06}` depending only on the registry cursor.
 
 ## Fix sketch
 
@@ -308,3 +319,7 @@ receipt. No existing check was renumbered or deleted.
 `tests/headless/test_node_token_split.tcl` is now **130 checks**. **Raised and NOT
 confirmed, no code changed:** `graph_fullxzoom()` resolving its sweep index before the
 master-rect switch — no reproducer was offered and D2 already owns that function.
+**RESOLVED by batch F item 8 without needing one:** the rewrite resolves the sweep column
+by NAME inside `graph_x_extent()`, i.e. once per contributing database and after every
+switch, and clamps it against that database's `nvars`. The ordering the raise complained
+about no longer exists.

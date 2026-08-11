@@ -33,9 +33,13 @@
 #   XB* the live browser with the SAME SIGNAL NAME in two VCDs.
 #   XS* END TO END, IN TWO PROCESSES: save a state carrying a cross-DB trace,
 #       reopen it in a fresh xschem, and PIXEL-PROBE that process's canvas.
-#   XD* the KNOWN LIMITATION, pinned rather than hidden: `graph_fullxzoom()`
-#       (draw.c:3284) never parses `%`, so an auto X window spans the CURRENT
-#       DB's extent only. That is spec §D2 and is NOT fixed here.
+#   XD* THE JOINT X DOMAIN, spec §D2. This leg used to pin the LIMITATION --
+#       `graph_fullxzoom()` never parsed `%` at all, so an auto X window spanned
+#       the CURRENT DB's extent only. FIXED in batch F item 8: the window is now
+#       the union of the extents of every database contributing a trace to the
+#       shared-X strip group. RESTATED here, not deleted: the expectation
+#       genuinely inverted. The engine-level cover is the XD leg of
+#       tests/headless/test_node_token_split.tcl.
 #
 # The PS/PB/XB/XS legs are the 2026-08-09 REVIEW ROUND: three defects the §D1
 # change itself created (a saved cross-DB trace came back silently blank; the
@@ -702,12 +706,16 @@ xschem raw read $rawf tran
 xschem raw read $vcdf vcd
 xschem raw switch 0
 
-# --- XD: the KNOWN limitation (spec §D2), pinned rather than hidden ---------
-# graph_fullxzoom() (draw.c:3284-3389) never parses `%`, and graph_props emits no
-# per-rect `rawfile=`, so an AUTO x window spans the CURRENT db's extent only. A
-# VCD ten times shorter is squeezed into the left tenth of the strip and a VCD
-# ten times longer is clipped. NOT fixed here — this leg exists so the next
-# person sees the number instead of rediscovering it.
+# --- XD: THE JOINT X DOMAIN (spec §D2) -------------------------------------
+# graph_fullxzoom() used never to parse `%` at all, and graph_props emits no
+# per-rect `rawfile=`, so an AUTO x window spanned the CURRENT db's extent only:
+# a VCD ten times shorter was squeezed into the left tenth of the strip and a VCD
+# ten times longer was clipped, and WHICH happened depended on the registry
+# cursor. Batch F item 8 makes the window the UNION of the extents of every
+# database contributing a trace to the shared-X strip group; a strip whose every
+# trace names its own `%<rawfile>` is therefore fitted to THOSE databases and not
+# to whatever happens to be current. RESTATED, not deleted -- this used to assert
+# the defect.
 set vcdshort [file join $scratch short.vcd]
 mkvcd $vcdshort sigb 200
 xschem new_schematic switch $vdrw
@@ -719,9 +727,17 @@ check "XD1 a 10x-shorter VCD's signal is accepted too" \
   [pcall {wviewer::add_trace $tok 0 TOP.m.sigb {} 5}] {}
 xschem new_schematic switch $vdrw
 set xx2 [pcall {xschem getprop rect 2 0 x2}]
-puts "  D2: with ONLY a 0..2e-10 VCD trace on the strip, auto x2 = $xx2 (the 0..2e-9 ANALOG extent)"
-check_true "XD2 auto X still spans the CURRENT (analog) db, not the VCD — spec D2" \
-  [expr {[string is double -strict $xx2] && $xx2 > 1.0e-9}]
+puts "  D2: with ONLY a 0..2e-10 VCD trace on the strip, auto x2 = $xx2 (the VCD's own extent; the session analog raw spans 0..2e-9)"
+check_true "XD2 auto X spans the UNION of the databases that actually carry the\
+ strip's traces — with only the 0..2e-10 VCD trace on it the window is the VCD's\
+ own extent, not the current analog db's 0..2e-9 (spec D2)" \
+  [expr {[string is double -strict $xx2] && $xx2 > 1.0e-10 && $xx2 < 1.0e-9}]
+# The other half of D2 -- that the union does not move when a different database
+# is made current -- is NOT asserted here: the viewer's buffer is read-only for
+# life, so `xschem setprop rect 2 0 fullxzoom` is refused in this context and the
+# only way to re-run the fit is a full regenerate, which rebuilds the rect from
+# graph_props and would be measuring a different thing. That half is engine-level
+# and lives in the XD leg of tests/headless/test_node_token_split.tcl (XD3/XD4).
 
 catch {wviewer::close $tok}
 }

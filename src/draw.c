@@ -3281,115 +3281,6 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
   }
 }
 
-int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
-{
-  xRect *r = &xctx->rect[GRIDLAYER][i];
-  if( sch_waves_loaded() >= 0) {
-    int idx, need_redraw = 0;
-    double xx1, xx2;
-    int dset = dataset == -1 ? 0 : dataset;
-    char *custom_rawfile = NULL; /* "rawfile" attr. set in graph: load and switch to specified raw */
-    char *sim_type = NULL;
-    int k, save_datasets = -1, save_npoints = -1;
-    int autoload = 0;
-    int master;
-    Raw *raw = NULL;
-    const char *ptr;
-
-    /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever the
-     * pointer is not over a graph (callback.c). A programmatic full zoom
-     * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
-     * can therefore run with graph_master == -1 (or stale beyond the rect count after
-     * a canvas rebuild) and the unguarded xctx->rect[GRIDLAYER][xctx->graph_master]
-     * reads below walked off the array -> intermittent SIGSEGV. Out-of-range master ->
-     * treat the target graph as its own master. */
-    master = xctx->graph_master;
-    if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
-
-    raw = xctx->raw;
-    autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
-    if(autoload == 0) autoload = 2;
-    ptr = get_tok_value(r->prop_ptr,"rawfile", 0);
-    if(!ptr[0]) {
-      if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
-      else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
-    } else {
-      my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
-    }
-    my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
-    if((i == master) && custom_rawfile[0]) {
-      if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
-        if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
-        if(sim_type) my_free(_ALLOC_ID_, &sim_type);
-        return 0;
-      }
-    }
-    idx = get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL);
-    dbg(1, "graph_fullxzoom(): sweep idx=%d\n", idx);
-    if(idx < 0 ) idx = 0;
-    if(i != master ) {
-
-      ptr = get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"rawfile", 0);
-      if(!ptr[0]) {
-        if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
-        else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
-      } else {
-        my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
-      }
-
-      my_strdup2(_ALLOC_ID_, &sim_type,
-        get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"sim_type", 0));
-      if(custom_rawfile[0]) {
-        if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
-          if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
-          if(sim_type) my_free(_ALLOC_ID_, &sim_type);
-          return 0;
-        }
-      }
-    }
-
-    /* if doing double variable DC sweeps raw->datasets == 1 but there are multiple curves.
-     * find_closest_wave() may return a dataset number that is > 0 but its a "virtual" dataset
-     * since double DC sweeps just do multiple sweeps by wrapping the sweep variable
-     */
-    if(dset >= raw->datasets) dset = 0;
-
-    /* transform multiple OP points into a dc sweep */
-    if(raw && raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
-      save_datasets = raw->datasets;
-      raw->datasets = 1;
-      save_npoints = raw->npoints[0];
-      raw->npoints[0] = raw->allpoints;
-    }
-    xx1 = xx2 = get_raw_value(dset, idx, 0);
-    for(k = 0; k < xctx->raw->npoints[dset]; k++) {
-      double v = get_raw_value(dset, idx, k);
-      if(v < xx1) xx1 = v;
-      if(v > xx2) xx2 = v;
-    }
-    if(gr->logx) {
-      xx1 = mylog10(xx1);
-      xx2 = mylog10(xx2);
-    }
-    dbg(1, "graph_fullxzoom(): xx1=%g, xx2=%g\n");
-    my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
-    my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
-
-    if(sch_waves_loaded()!= -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
-    my_free(_ALLOC_ID_, &custom_rawfile);
-    my_free(_ALLOC_ID_, &sim_type);
-
-    need_redraw = 1;
-    if(save_npoints != -1) { /* restore multiple OP points from artificial dc sweep */
-      raw->datasets = save_datasets;
-      raw->npoints[0] = save_npoints;
-    }
-    return need_redraw;
-  } else {
-    return 0;
-  }
-}
-
 /* ------------------------------------------------------------------------
  * THE one parser of a `node=` list entry.  Issue 0305:
  * doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md
@@ -3398,13 +3289,17 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
  *
  *     [alias;]<vec-or-RPN> [ '%' [<dataset-digits>] [<rawfile> [<sim_type>]] ]
  *
- * Six functions in this file walk that list (draw_graph, graph_fullyzoom,
- * find_closest_wave, graph_point_at, wave_hilight_envelope,
- * graph_wave_resolve). Each used to hand-roll the `%` parse, and THREE of the
- * six read only the leading dataset digits and silently dropped the rawfile --
- * so a cross-DB trace (spec D1, doc/claude/specs/mixed_signal_signal_browser.md)
- * drew correctly and could then not be picked, bolded or marked. A seventh
- * copy is how that drifted, so there is now exactly one.
+ * SEVEN functions in this file walk that list (draw_graph, graph_fullyzoom,
+ * find_closest_wave, graph_point_at, wave_hilight_envelope, graph_wave_resolve
+ * and -- since batch F item 8, spec D2 -- graph_fullxzoom(), which reaches it
+ * through graph_x_union_rect()). Six of them used to hand-roll the `%` parse
+ * and THREE of those six read only the leading dataset digits and silently
+ * dropped the rawfile -- so a cross-DB trace (spec D1,
+ * doc/claude/specs/mixed_signal_signal_browser.md) drew correctly and could
+ * then not be picked, bolded or marked; the seventh, graph_fullxzoom(), never
+ * parsed `%` at all and sized the X window from the wrong database entirely.
+ * ANOTHER hand-rolled copy is how that drifted, so there is now exactly one:
+ * a new walker becomes caller number eight, never parser number two.
  *
  *   ntok           IN  one token of the list. NOT modified.
  *   expr           OUT my_strdup'd token with the whole `%...` field removed
@@ -3455,7 +3350,7 @@ static void node_token_split(const char *ntok, char **expr, int *dataset,
 }
 
 /* The sim_type a `%<rawfile>` with no explicit type inherits: the graph's own
- * `sim_type=` token, else the CURRENT raw's. Kept in one place because all six
+ * `sim_type=` token, else the CURRENT raw's. Kept in one place because all seven
  * walkers must agree about it -- extra_rawfile()'s switch arm compares the type
  * with strcmp() and skips every slot whose sim_type is NULL (save.c). */
 static const char *node_dflt_sim_type(const char *graph_sim_type)
@@ -3500,6 +3395,341 @@ static void node_db_prev_restore(int prev)
 {
   if(!xctx || prev < 0) return;
   xctx->extra_prev_idx = prev;
+}
+
+/* ==========================================================================
+ * SPEC D2 -- THE JOINT X DOMAIN.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D2.
+ *
+ * graph_fullxzoom() used to compute the automatic X window from the extent of
+ * whichever database happened to be CURRENT (or, for a follower strip, of the
+ * MASTER rect's `rawfile=`). It was the one `node=` walker that never parsed
+ * the `%` field at all, so a strip carrying an analog trace from a 0..2 us raw
+ * and a digital trace from a 0..500 ns VCD was sized by one of the two and the
+ * other was clipped or squeezed -- and WHICH one depended on the registry
+ * cursor, which is exactly the silent-wrong-answer class issue 0305 is about.
+ *
+ * The window is now the UNION of the extents of every database contributing a
+ * trace to the shared-X strip GROUP. See the three helpers below.
+ * ========================================================================== */
+
+/* Does graph rect `k` share graph rect `master`'s X axis?
+ *
+ * THE predicate, verbatim from callback.c's MMB pan / RMB box zoom / arrow pan
+ * loop (and from graph_axis_zoom(), which used to hold the second copy):
+ *
+ *     rk->sel || (same_sim_type && !(rk->flags & 2)) || k == master
+ *
+ * where same_sim_type additionally requires the MASTER not to be `unlocked`
+ * (flags & 2) and the two `sim_type=` PROPERTY TOKENS to match. Factored into
+ * one place because D2 needs a third caller: the joint X domain is a property
+ * of the GROUP, so the union has to be taken over exactly the rects that will
+ * be handed the answer. Duplicating a predicate is how the `%` parse drifted to
+ * three-of-six walkers (issue 0305) -- one copy, three callers.
+ *
+ * NOT the viewer's `sharedx` flag, which the C engine cannot see. */
+static int graph_shares_x(int master, int k)
+{
+  xRect *rm, *rk;
+  char *master_sim = NULL;
+  int same_sim_type = 0, member;
+
+  if(!xctx) return 0;
+  if(master < 0 || master >= xctx->rects[GRIDLAYER]) return 0;
+  if(k < 0 || k >= xctx->rects[GRIDLAYER]) return 0;
+  rm = &xctx->rect[GRIDLAYER][master];
+  rk = &xctx->rect[GRIDLAYER][k];
+  if(!(rk->flags & 1)) return 0;     /* 1: graph, 3: graph_unlocked */
+  if(k == master) return 1;
+  /* get_tok_value() answers out of a rotating buffer, so the master's token has
+   * to be copied before the second call can overwrite it */
+  my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(rm->prop_ptr, "sim_type", 0));
+  if(!(rm->flags & 2) &&
+     !strcmp(master_sim, get_tok_value(rk->prop_ptr, "sim_type", 0))) {
+    same_sim_type = 1;
+  }
+  my_free(_ALLOC_ID_, &master_sim);
+  member = (rk->sel || (same_sim_type && !(rk->flags & 2)));
+  return member ? 1 : 0;
+}
+
+/* ONE CONTRIBUTION to the joint X domain: the extent of the sweep variable
+ * `sweep_name` (absent -> column 0) in the database that is CURRENT right now,
+ * for dataset `dataset` (-1 = dataset 0).
+ *
+ * Returns 1 and fills lo/hi, or 0 -- and 0 is a real answer, not an excuse to
+ * invent one. A database with no values, no columns, no datasets, an empty
+ * dataset or a column that is all NaN contributes NOTHING to the union rather
+ * than dragging it to 0, to NaN or to a window nothing can be drawn in. See the
+ * degenerate-input ruling in the spec.
+ *
+ * The sweep column is resolved BY NAME here and clamped against the
+ * switched-in nvars, for the reason batch F item 2 recorded at every other
+ * walker: a column NUMBER belongs to the database it was resolved in, and
+ * subscripting a three-column VCD with a five-column raw's column 4 is an
+ * out-of-bounds read. */
+static int graph_x_extent(const char *sweep_name, int dataset, double *lo, double *hi)
+{
+  Raw *raw;
+  int idx, k, dset, np, first = 1;
+  int save_datasets = -1, save_npoints = -1;
+  double xx1 = 0.0, xx2 = 0.0;
+
+  if(!xctx) return 0;
+  raw = xctx->raw;
+  if(!raw || !raw->values || !raw->npoints) return 0;
+  if(raw->nvars <= 0 || raw->datasets <= 0) return 0;
+  idx = -1;
+  if(sweep_name && sweep_name[0]) {
+    idx = get_raw_index(sweep_name, NULL);
+    /* A database that does not HAVE the target strip's x quantity has no extent
+     * IN that quantity, so it contributes nothing. Falling through to column 0
+     * would fold a different quantity into the union -- the same class of error
+     * as measuring each group member in its own `sweep=`. An ABSENT `sweep=`
+     * token is NOT this case: it means column 0, which is what every database
+     * here calls its x axis. */
+    if(idx < 0) return 0;
+  }
+  if(idx < 0) idx = 0;
+  if(idx >= raw->nvars) idx = 0;
+  dset = (dataset == -1) ? 0 : dataset;
+  if(dset < 0) dset = 0;
+  if(dset >= raw->datasets) dset = 0;
+  /* transform multiple OP points into a dc sweep (unchanged from the shipped
+   * code, but now per DATABASE: the saved pair is put back before this function
+   * returns, so a later contributor can never re-apply the first one's) */
+  if(raw->sim_type && !strcmp(raw->sim_type, "op") &&
+     raw->datasets > 1 && raw->npoints[0] == 1) {
+    save_datasets = raw->datasets;
+    raw->datasets = 1;
+    save_npoints = raw->npoints[0];
+    raw->npoints[0] = raw->allpoints;
+    dset = 0;
+  }
+  np = raw->npoints[dset];
+  for(k = 0; k < np; k++) {
+    double v = get_raw_value(dset, idx, k);
+    if(v != v) continue;              /* NaN has no ordering, so it is no extent */
+    if(first) { xx1 = xx2 = v; first = 0; }
+    else {
+      if(v < xx1) xx1 = v;
+      if(v > xx2) xx2 = v;
+    }
+  }
+  if(save_npoints != -1) {
+    raw->datasets = save_datasets;
+    raw->npoints[0] = save_npoints;
+  }
+  if(first) return 0;                 /* nothing usable in that column */
+  *lo = xx1;
+  *hi = xx2;
+  return 1;
+}
+
+/* fold one contribution into the running union */
+static void graph_x_union_add(const char *sweep_name, int dataset,
+                              double *lo, double *hi, int *got)
+{
+  double a = 0.0, b = 0.0;
+  if(!graph_x_extent(sweep_name, dataset, &a, &b)) return;
+  if(!*got) { *lo = a; *hi = b; }
+  else {
+    if(a < *lo) *lo = a;
+    if(b > *hi) *hi = b;
+  }
+  (*got)++;
+}
+
+/* Add every database contributing a trace to graph rect `k` to the running
+ * union [*lo, *hi]; `*got` counts the contributions that answered and
+ * `*nodes_seen` counts the `node=` entries walked, resolvable or not.
+ *
+ * `sweep_name` is THE TARGET RECT's x quantity, passed down from
+ * graph_fullxzoom() -- deliberately NOT rect k's own. A union is only meaningful
+ * over ONE quantity, and the rect being written is the one that says which:
+ * graph_shares_x() puts a locked X-Y strip (`sweep=v(a)`) in the same group as
+ * a time strip, and measuring each member in its own quantity folded a VOLTAGE
+ * range into a TIME window and squeezed the waveform to invisibility. Each
+ * database still resolves the NAME itself (graph_x_extent), so a column number
+ * never crosses a database boundary.
+ *
+ * WHAT CONTRIBUTES, and the ruling behind it (spec D2):
+ *   - every `%<rawfile>` named by a `node=` entry THAT RESOLVES. One that does
+ *     not resolve contributes nothing: every other walker REFUSES such a trace
+ *     (issue 0305's ruling), so sizing the window for it would fit a trace that
+ *     is never drawn.
+ *   - the strip's OWN database -- its `rawfile=`, or the current one when it
+ *     has none -- but only when a trace actually plots from it: at least one
+ *     `node=` entry WITHOUT a `%<rawfile>`. A strip whose every entry names its
+ *     own database must NOT be sized by whatever database the registry cursor
+ *     happens to be parked on -- that is the defect this item exists to remove.
+ *   - a TRACELESS strip contributes its own database ONLY under `empty_ok`,
+ *     which graph_fullxzoom() sets on a SECOND pass and only when the whole
+ *     group turned out to be traceless. An empty strip has nothing else to go on
+ *     and must still get a drawable window, but folding its fallback into a
+ *     group that does have traces put the current database back into the union
+ *     and the window snapped to the registry cursor again -- the very defect,
+ *     re-entering through the empty strip `wviewer::add_graph` appends. It also
+ *     broke the group's agreement, since the fallback fired for some members and
+ *     not others.
+ *
+ * Leaves the current database exactly where it found it. */
+static void graph_x_union_rect(int k, const char *sweep_name, int dataset,
+                               double *lo, double *hi, int *got,
+                               int *nodes_seen, int empty_ok)
+{
+  xRect *rk;
+  char *node = NULL, *custom_rawfile = NULL, *sim_type = NULL;
+  char *node_rawfile = NULL, *node_sim_type = NULL, *ntok_copy = NULL;
+  char *saven, *nptr;
+  const char *ntok;
+  int autoload, graph_idx, entry_extra_idx, own_db_plots = 0;
+
+  if(!xctx || k < 0 || k >= xctx->rects[GRIDLAYER]) return;
+  rk = &xctx->rect[GRIDLAYER][k];
+  entry_extra_idx = xctx->extra_idx;
+
+  autoload = !strboolcmp(get_tok_value(rk->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  my_strdup2(_ALLOC_ID_, &custom_rawfile, get_tok_value(rk->prop_ptr, "rawfile", 0));
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(rk->prop_ptr, "sim_type", 0));
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(rk->prop_ptr, "node", 0));
+
+  /* the strip's own database. A REFUSED graph-level switch is not fatal: the
+   * strip simply contributes the database that is current, exactly as every
+   * other walker treats an unresolvable `rawfile=`. */
+  if(custom_rawfile[0]) {
+    extra_rawfile(autoload, custom_rawfile,
+                  sim_type[0] ? sim_type : node_dflt_sim_type(NULL), -1.0, -1.0);
+  }
+  graph_idx = xctx->extra_idx;
+
+  /* ONE walk, ONE `%` parse (issue 0305: a second copy is how this family
+   * drifted). Each entry either names its own database -- switch, measure,
+   * unwind to the graph level -- or plots from the strip's own, which is then
+   * folded in once, after the walk. The union is commutative, so measuring the
+   * strip's own database last costs nothing and saves a second parse. */
+  nptr = node;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    nptr = NULL;
+    if(nodes_seen) (*nodes_seen)++;
+    node_token_split(ntok, &ntok_copy, NULL, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0]) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) != 0) {
+        graph_x_union_add(sweep_name, dataset, lo, hi, got);
+      }
+      node_db_restore(graph_idx);
+    } else {
+      own_db_plots = 1;
+    }
+  }
+  if(!node[0] && empty_ok) own_db_plots = 1;
+  if(own_db_plots) graph_x_union_add(sweep_name, dataset, lo, hi, got);
+
+  node_db_restore(entry_extra_idx);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  my_free(_ALLOC_ID_, &node_rawfile);
+  my_free(_ALLOC_ID_, &node_sim_type);
+  my_free(_ALLOC_ID_, &ntok_copy);
+}
+
+/* THE AUTOMATIC X WINDOW of graph rect `i` (the `f` key, and
+ * `xschem setprop rect 2 <n> fullxzoom`). Spec D2: the union, over the whole
+ * shared-X group, of every contributing database's extent.
+ *
+ * Returns 1 when x1/x2 were written (i.e. the caller owes a redraw).
+ *
+ * TWO REFUSALS, both leaving x1/x2 exactly as they were:
+ *   - nothing contributed at all. Note WHICH way that cuts: a group whose every
+ *     `node=` entry names a database that does not resolve keeps the window it
+ *     had, rather than falling back to whatever the registry cursor points at.
+ *     Only a WHOLLY TRACELESS group takes the current-database fallback, on the
+ *     second pass below.
+ *   - the union is DEGENERATE (zero width, e.g. a lone single-sample database).
+ *     A zero-width X window makes every X transform divide by gr->gw == 0, so
+ *     the window the strip already had is strictly the better answer. This is
+ *     the one behaviour the shipped code got wrong in the safe direction only
+ *     by luck: it wrote x1 == x2 and let setup_graph_data() divide by zero.
+ *
+ * The X QUANTITY is rect i's `sweep=` (absent -> column 0), resolved by NAME in
+ * every contributing database. A shared-X group can hold members with different
+ * `sweep=` tokens -- graph_shares_x() has never required otherwise -- and the
+ * union has to be over one quantity or it is not a union at all. */
+int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
+{
+  xRect *r;
+  char *sweep_name = NULL;
+  int master, k, got = 0, nodes_seen = 0;
+  int entry_extra_idx, entry_prev_idx;
+  double xx1 = 0.0, xx2 = 0.0;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  if(sch_waves_loaded() < 0) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+
+  /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever
+   * the pointer is not over a graph (callback.c). A programmatic full zoom
+   * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
+   * can therefore run with graph_master == -1, or stale beyond the rect count
+   * after a canvas rebuild, and the unguarded xctx->rect[GRIDLAYER][graph_master]
+   * reads walked off the array -> intermittent SIGSEGV. Out-of-range or
+   * non-graph master -> treat the target graph as its own master. */
+  master = xctx->graph_master;
+  if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
+  else if(!(xctx->rect[GRIDLAYER][master].flags & 1)) master = i;
+
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
+
+  /* ONE x quantity for the whole union, and it is the TARGET rect's: see the
+   * `sweep_name` paragraph on graph_x_union_rect(). Copied because
+   * get_tok_value() answers out of a rotating buffer the walk below reuses. */
+  my_strdup2(_ALLOC_ID_, &sweep_name,
+             find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1));
+
+  /* THE GROUP, not the rect: every strip that shares this X axis is about to be
+   * given the SAME x1/x2 by callback.c's loop, so all of them must be measured.
+   * Computing rect `i`'s own union instead would hand each member of a shared-X
+   * group a different idea of the window, and the last one written would win. */
+  for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+    if(!(xctx->rect[GRIDLAYER][k].flags & 1)) continue;
+    if(k != i && !graph_shares_x(master, k)) continue;
+    graph_x_union_rect(k, sweep_name, dataset, &xx1, &xx2, &got, &nodes_seen, 0);
+  }
+  /* SECOND PASS, and only for a group in which nothing plots at all: an empty
+   * strip still needs a drawable window, so the traceless group falls back to
+   * its members' own databases. Over the GROUP rather than over rect i, so every
+   * member of it computes the same answer whichever one the gesture started on.
+   * `!nodes_seen` is what separates "no traces" from "traces named, none of them
+   * resolvable" -- the latter keeps the window it had. */
+  if(!got && !nodes_seen) {
+    for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+      if(!(xctx->rect[GRIDLAYER][k].flags & 1)) continue;
+      if(k != i && !graph_shares_x(master, k)) continue;
+      graph_x_union_rect(k, sweep_name, dataset, &xx1, &xx2, &got, NULL, 1);
+    }
+  }
+
+  /* the registry cursor is a PAIR: extra_idx and the extra_prev_idx that
+   * `xschem raw switch_back` goes to (batch F item 2, finding 1) */
+  node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
+  my_free(_ALLOC_ID_, &sweep_name);
+
+  if(!got) return 0;
+  if(gr && gr->logx) {
+    xx1 = mylog10(xx1);
+    xx2 = mylog10(xx2);
+  }
+  if(!(xx1 < xx2)) return 0;   /* degenerate (or NaN): keep the drawable window */
+  dbg(1, "graph_fullxzoom(): %d contribution(s), xx1=%g, xx2=%g\n", got, xx1, xx2);
+  my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
+  my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
+  return 1;
 }
 
 int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
@@ -5865,23 +6095,17 @@ int graph_axis_zoom(int i, int axis, double lo, double hi)
   r = &xctx->rect[GRIDLAYER][i];
   if(!(r->flags & 1)) return 0;
   if(axis == GRAPH_AXIS_X) {
-    int master_locked = !(r->flags & 2);
-    char *master_sim = NULL;
-    my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(r->prop_ptr, "sim_type", 0));
+    /* the participation predicate lives in graph_shares_x() (spec D2): this
+     * loop used to hold the second hand-written copy of it, and
+     * graph_fullxzoom() now needs the same answer to know which databases its
+     * union has to span. One predicate, three callers. */
     for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
-      int same_sim_type = 0;
       rk = &xctx->rect[GRIDLAYER][k];
-      if(!(rk->flags & 1)) continue;
-      if(master_locked && !strcmp(master_sim, get_tok_value(rk->prop_ptr, "sim_type", 0))) {
-        same_sim_type = 1;
-      }
-      if(rk->sel || (same_sim_type && !(rk->flags & 2)) || k == i) {
-        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x1", dtoa(lo)));
-        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x2", dtoa(hi)));
-        wrote = 1;
-      }
+      if(!graph_shares_x(i, k)) continue;
+      my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x1", dtoa(lo)));
+      my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x2", dtoa(hi)));
+      wrote = 1;
     }
-    my_free(_ALLOC_ID_, &master_sim);
   } else {
     /* `digital` is read straight OFF THE RECT, never through a scratch
      * Graph_ctx: setup_graph_data() parses it BELOW its off-screen early return

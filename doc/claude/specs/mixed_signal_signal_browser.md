@@ -441,7 +441,7 @@ digital *together* is the new requirement.
 | id | item | notes |
 |----|------|-------|
 | D1 | ~~**Per-trace DB resolution.**~~ **DONE (2026-08-09) — the shortcut was already in C; the missing half was all Tcl.** Reviewed adversarially and **three defects it created were fixed in the same round** (see "the review round" below). `tests/headless/test_wave_crossdb_trace.tcl`, **109 checks (51 headless), 8 + 21 sabotages injected, all caught.** See the write-up below the table. | The core §D change. |
-| D2 | **Joint X domain.** Two DBs have independent time vectors, extents, and point counts. Zoom, pan, `x1/x2`, and the shared-X strip logic must span the union. | Silent-wrong-answer risk if one DB's extent is used as the whole. |
+| D2 | ~~**Joint X domain.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 8): the AUTOMATIC X window is the union of the extents of every database contributing a trace to the shared-X strip GROUP.** See "D2 — the joint X domain" below for the four rulings (what contributes, what a degenerate input does, what the group is, and what is still NOT unioned). `graph_fullxzoom()` was the one `node=` walker that never parsed `%` at all; it is now the seventh caller of `node_token_split()`. | Silent-wrong-answer risk if one DB's extent is used as the whole. |
 | D3 | ~~**Time-unit reconciliation.**~~ **DONE — converted once at read (C1, `vcd_read()` stores seconds) and now ASSERTED against A6.** `tests/headless/test_vcd_time_base.tcl`, **124 checks** (112 when the reference artifacts are absent), pinned to the `--nogui` arm. The gate is a stated number, not a feeling: **100 ps**, which is 10.1× above the measured 9.883 ps physical skew and at minimum ~500× below the smallest 1e3 error the file can produce (the ÷1000 direction on the earliest edge used, 50 ns → 49.95 ns of displacement; the ×1000 direction is 499,500×). A zero tolerance would be wrong — the two DBs record different events, a Verilog value change versus an analog threshold crossing after a finite `dac_bridge t_rise`, sampled on ngspice's timestep grid. Coverage: six `$timescale` units including the two-token `10 ns` form, the whole fs→ps→ns→µs→ms→s ladder (**every rung of which IS the 1e3 factor**), the multiplier forms, seconds-not-ticks, and the symmetric "rescale the raw instead" error. The 1e3 rejection is **proved, not asserted**: nine negative-control VCDs that are deliberately 1e3 wrong — perfectly valid files, which is the whole point — go through the *same* `agree` proc the real checks use and must be rejected. **19 sabotages injected, all 19 caught; every one of the 124 checks is caught by at least one.** | Off-by-1e3 here looks like a plausible waveform. |
 | D4 | **Cursors, markers, annotation across DBs.** `annot_p`/`annot_x`/`annot_sweep_idx` are per-`Raw`. A cursor at time *t* must resolve in both — with the nearest-sample-before rule differing between a dense analog sweep and a sparse event stream. | `Raw` fields, `src/xschem.h:1129-1137` |
 | D5 | **Backannotation.** `annotate_op` and the schematic voltage overlay read the current DB. Define what a digital DB contributes (probably: nothing, explicitly). | `src/scheduler.c:2145` |
@@ -768,6 +768,178 @@ check pass against the broken code (demonstrated).
 The file is now **130 checks** (was 118). `graph_fullxzoom()`'s carried sweep index was
 raised in this round and **NOT confirmed** — no reproducer was produced, and D2 already
 owns that function; it is recorded in the receipt, not acted on.
+
+#### D2 — the joint X domain (batch F item 8, 2026-08-10)
+
+**The defect, precisely.** `graph_fullxzoom()` (`src/draw.c`) computed the automatic X
+window from ONE database: the current one, or — for a strip that follows a master — the
+master rect's `rawfile=`. It was the sixth-and-a-half walker of the `node=` list and the
+only one that never parsed the `%` field at all, which is why item 1 did not have to
+touch it. With the reference pair (`tb_counter_wrapper_ase.raw` 0..2 µs,
+`counter.vcd` 0..500 ns) the answer therefore depended on the registry cursor, and
+`tests/headless/test_node_token_split.tcl` measures all three parent answers on one
+fixture: with the session raw current the mixed strip is fitted to **0..2e-9**, with the
+VCD current to **0..5e-7**, and with a single-sample database current to
+**{1e-06 1e-06}** — a **zero-width** window, which makes every X transform divide by
+`gr->gw == 0`.
+
+**RULING D2-1 — the window is a UNION, and what contributes is stated, not implied.**
+Two kinds of contributor, and only two:
+
+* **every `%<rawfile>` named by a `node=` entry THAT RESOLVES.** One that does not
+  resolve contributes nothing — every other walker REFUSES such a trace (issue 0305's
+  ruling), so sizing a window for it would fit a trace that is never drawn.
+* **the strip's own database** — its `rawfile=`, or the current one when it has none —
+  but *only when a trace actually plots from it*: at least one `node=` entry WITHOUT a
+  `%<rawfile>`. A strip whose every entry names its own database must NOT be sized by
+  whatever database the registry cursor happens to be parked on. That clause is the whole
+  defect.
+
+The bare-entry half has an ordering obligation that is easy to get wrong and invisible
+when you do: the strip's own database is measured **after the last per-trace switch has
+been unwound**, not while it is still in force. `XD15` is the check, on a strip built so
+the two answers differ.
+
+**RULING D2-1a — the TRACELESS strip, and why its fallback is a second pass over the
+GROUP.** An empty strip has nothing to go on and must still get a drawable window, which
+is what the shipped code gave it (`XD12`). The first cut of this item delivered that by
+letting a traceless rect fold the current database into the union unconditionally — and
+that put the defect straight back, because `wviewer::add_graph` appends exactly such a
+strip beside strips that do carry traces: one empty member dragged the registry cursor's
+database into the whole group's union, so every other strip's automatic window snapped
+back to whatever the cursor was parked on, and the group then *disagreed* (the fallback
+fired for the empty member and not for the others), violating D2-3. **The ruling:** a
+traceless strip contributes nothing to a group that has traces. Only when the WHOLE group
+turns out to be traceless does `graph_fullxzoom()` make a second pass, over the same
+group, with the fallback enabled — over the group rather than over rect `i`, so that every
+member computes the same answer whichever one the gesture started on. Checks `XD16`,
+`XD16b`, `XD17`; `XD12` still pins the lone-empty-strip case.
+
+That second pass is gated on *no `node=` entries at all*, not on *nothing contributed*.
+The distinction is load-bearing: a strip whose only entry names a database that does not
+resolve has traces, so it takes the **refusal** (keeps the window it had, `XD19`) rather
+than the fallback. Sizing it from the registry cursor is precisely what D2-1's first
+clause forbids.
+
+**RULING D2-1b — a BARE entry follows the registry cursor, and the viewer builds bare
+entries.** `wviewer::db_suffix` returns `{}` for a trace picked from the *current*
+database ("THE CURRENT DB WINS", `src/wave_viewer.tcl`), so a production mixed strip is
+one bare entry plus one carrying `%<rawfile>`. A bare entry names no database, so by
+D2-1's second clause it is measured against whatever is current — which means **the
+automatic window of a production mixed strip does move when the current database
+changes**, and the cursor-independence of `XD3`/`XD4` is a property of an all-`%` strip
+only. This is the ruling working as ruled, not a defect: once the cursor moves off the
+analog database the bare analog trace stops being *drawn* as well, so a window that still
+spanned it would be sizing for a trace that is not there. It is stated out loud here
+because it is the shape a human eyeballing this feature actually sees, and because the
+first cut of the item asked for an eyeball whose expected result was the opposite of what
+ships. `XD22`/`XD22b` pin both halves. If a cursor-independent window is ever wanted, the
+change belongs in `graph_props` — emit a `%` suffix for *every* trace — not in the engine.
+
+**RULING D2-1c — the union is over ONE X QUANTITY, and it is the TARGET rect's.**
+`graph_shares_x()` has never required a shared-X group's members to share a `sweep=`
+variable, and `sweep=<vector>` is a shipped, used attribute
+(`xschem_library/examples/test_nyquist.sch sweep=re_out`). Measuring each member in its
+own `sweep=` folded an X-Y strip's VOLTAGE range into a locked time strip's window — a
+2 ns waveform squeezed into 3e-9 of the axis, i.e. invisible, and a regression the parent
+commit did not have. The `sweep=` of the rect **being written** decides the quantity for
+the whole union; each contributing database still resolves that name itself, so a column
+NUMBER never crosses a database boundary. A database that does not *have* the named
+quantity contributes **nothing** rather than falling through to column 0, which would fold
+a different quantity in by the back door. An ABSENT `sweep=` token is not that case: it
+means column 0, which is what every database calls its x axis. Checks `XD18`, `XD18b`,
+`XD18c`.
+
+**RULING D2-2 — a degenerate input contributes, but never decides alone.** A database
+with no values, no columns, no datasets, an empty dataset or an all-NaN sweep column
+contributes **nothing** (`graph_x_extent()` returns 0, and 0 is a real answer, not an
+excuse to invent one) — `XD20`/`XD20b` build a zero-point raw and `XD21`/`XD21b` an
+all-NaN sweep column, both as a lone contributor (which must be REFUSED) and beside the
+0..2 µs raw named first (which must widen nothing). Before those fixtures existed the
+clause was asserted here and exercised by nothing.
+
+The two halves of that clause are **not equally load-bearing**, and the honest split is
+recorded rather than glossed:
+
+* **The NaN guard is real.** Delete `if(v != v) continue;` and `XD21b` goes red: a NaN
+  seeds the fold, every later comparison against it is false, and the whole union comes
+  back NaN — which the degenerate refusal then turns into "the key did nothing".
+* **The empty-database guards are DEFENSIVE, not load-bearing.** Deleting
+  `if(!raw || !raw->values || !raw->npoints) return 0;`, `if(raw->nvars <= 0 ||
+  raw->datasets <= 0) return 0;` and `if(first) return 0;` — individually or **all three at
+  once** — leaves the suite 168/168 green, because a zero-sample database drives a
+  zero-iteration loop and the degenerate refusal already catches what falls out. `XD20` and
+  `XD20b` pin the BEHAVIOUR (they go red under a fixture sabotage that gives the database
+  points, and under `S1`), not the guards. Keep the guards — they are cheap and the reader
+  should not have to re-derive the argument — but do not claim a check defends them.
+
+A database whose extent is a POINT — one sample — does contribute,
+and since a union only ever widens it can never shrink the answer (`XD10`). But a union
+that is degenerate **on its own** — zero width after everything has been folded in — is
+**REFUSED**: `x1`/`x2` keep the window the strip already had (`XD11`). The alternative is
+a window nothing can be drawn in, which is worse than the bug being fixed; the shipped
+code wrote `x1 == x2` and let `setup_graph_data()` divide by zero, and the parent-commit
+measurement above shows that is reachable, not theoretical.
+
+**RULING D2-3 — the union is a property of the GROUP, and there is now ONE predicate.**
+Every strip that shares an X axis is about to be handed the SAME `x1`/`x2` by
+`callback.c`'s loop, so all of them must be measured; taking rect `i`'s own union instead
+gives each member of a group a different idea of the window and the last one written
+wins. The membership test is the shipped one, verbatim —
+`rk->sel || (same_sim_type && !(rk->flags & 2)) || k == master`, with `same_sim_type`
+additionally requiring the MASTER not to be `unlocked` and the two `sim_type=` **property
+tokens** to match — and it now lives in exactly one place, `graph_shares_x()`.
+`graph_axis_zoom()` held the second hand-written copy and was moved onto it; `callback.c`
+still applies it inline to decide *which rects to call*, which is a different question
+from *which rects to measure*. Note this is NOT the viewer's `sharedx` flag, which the C
+engine cannot see.
+
+Two honest limits on how far the checks reach into this ruling, recorded rather than
+implied:
+
+* **The group is taken from the MASTER, not from rect `i`** — otherwise each member gets a
+  different window and the last write wins. No check can distinguish the two: `--nogui`
+  never sets `xctx->graph_master` (it is MOUSE state), so `master` is forced to `i` on
+  every headless call and the two expressions are the same code path. Substituting
+  `graph_shares_x(i, k)` for `graph_shares_x(master, k)` leaves the file green. The rule
+  is **verified by inspection**; the distinction only exists during a real gesture, where
+  `callback.c` fixes `master` and loops `i`.
+* **`XD3`/`XD4` deliberately measure an ISOLATED rect** (`flags=graph,unlocked`, a flag
+  `src/wave_viewer.tcl` never emits), because `unlocked` is the only way to make a group
+  of exactly one. The LOCKED-group equivalents — the shape the viewer actually builds,
+  every strip locked and therefore a group member — are `XD5`–`XD7` and `XD16`–`XD18c`,
+  which get a group of exactly TWO from a made-up `sim_type=` token instead.
+
+**RULING D2-4 — what is deliberately NOT unioned, so nobody re-discovers it as a bug.**
+
+* **A database is counted when its `%<rawfile>` resolves, not when the entry's expression
+  also resolves in it.** Sizing a window must not require evaluating RPN, and `draw_graph()`
+  switches to that database either way. A `%` naming a real database but a signal that is
+  not in it therefore still widens the window.
+* **`sim_type=` still gates X propagation**, so a rect tagged `sim_type=vcd` does not
+  follow one tagged `sim_type=tran` — the carry-over noted under C6. That is a separate
+  facet of D2, it is about which rects are in the group at all rather than about the
+  extent, and it is untouched here. The viewer does not currently hit it: `graph_props`
+  emits one `sim_type` per session, so a mixed strip is a single rect.
+* **Zoom and pan are not re-based.** D2's row names "zoom, pan, `x1/x2`, and the shared-X
+  strip logic"; what landed is the AUTOMATIC fit (`f`, `fullxzoom`) and the shared-X
+  agreement about it. Interactive pan/zoom already operate on the window itself, not on a
+  database extent, so they inherit the union — but nothing here clamps a pan to the union
+  or reconciles D4's cursors.
+
+**Proof.** The `XD` leg of `tests/headless/test_node_token_split.tcl` (**37 checks**, true
+headless, on the reference pair plus a third 0..2e-9 extent so a window that came from the
+registry cursor is recognisable on sight): **29 of the file's 168 checks are red at the
+parent commit `da93e9ba`** (`RESULT: 29 FAILED (139 passed)`, re-measured by the closer on
+the final fixture with `git show HEAD:src/draw.c` rebuilt and restored byte-exact),
+including the four structural counts that went from six walkers to seven. `test_wave_crossdb_trace.tcl`'s `XD` leg was **RESTATED, not deleted** — it used
+to pin the defect as a known limitation and now asserts the union at the viewer level.
+
+Two of the 37 are green at the parent by design and carry no positive evidence of their
+own: `XD12` (an empty strip still gets a window) and `XD17` (moving the cursor does not
+move the window — the parent agrees, on the wrong window; `XD16` asserts the value in the
+same breath). `XD22b` is likewise green at the parent, for the reason D2-1b states.
+
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

@@ -2309,19 +2309,21 @@ proc wviewer::signal_list_all {token} {
 #  3. `%` itself is the field separator (find_nth(...,"%",...)), and `"` is the
 #     quote char of the tokenizer — neither can appear inside the value.
 #
-# WHAT THIS DOES **NOT** BUY, stated rather than hidden: only THREE of the six
-# functions that walk `node=` honour `%rawfile` — draw_graph() (the renderer,
-# draw.c:8198), graph_fullyzoom() (draw.c:3467) and find_closest_wave()
-# (draw.c:5005). The other three parse `%` for the dataset digits only and DROP
-# the rawfile: graph_point_at() (draw.c:5948, pick/hover/marker create+drag),
-# wave_hilight_envelope() (draw.c:6364, bold/highlight) and graph_wave_resolve()
-# (draw.c:7410, the marker value readout). A cross-DB trace therefore RENDERS but
-# is not pickable, not boldable and not markable, and its X extent comes from the
-# current DB because graph_fullxzoom() (draw.c:3284-3391) never parses `%` at all
-# — that last one is spec §D2. Filed as
-# doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md
-# (every line number above re-verified against the tree 2026-08-09; the first cut
-# of this block cited a nonexistent issue 0301 and four stale draw.c lines).
+# WHAT THIS USED NOT TO BUY, kept as history rather than deleted: when this block
+# was written only THREE of the six functions that walk `node=` honoured
+# `%rawfile`, so a cross-DB trace RENDERED and was then not pickable, not
+# boldable and not markable — issue
+# doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md.
+# All SEVEN walkers now go through one node_token_split() (batch F items 1 and 2),
+# and the seventh — graph_fullxzoom(), which never parsed `%` at all, so an auto X
+# window spanned the current DB's extent only — joined them in batch F item 8:
+# the automatic X window is now the UNION of the extents of every database
+# contributing a trace to the shared-X strip group (spec §D2,
+# doc/claude/specs/mixed_signal_signal_browser.md, "D2 — the joint X domain").
+# Deliberately still NOT unioned, per RULING D2-4: `sim_type=` gates X
+# propagation, so a rect tagged `sim_type=vcd` does not X-follow one tagged
+# `sim_type=tran`. graph_props emits one sim_type per session, so the viewer does
+# not hit that today — a mixed strip is a single rect.
 
 # PURE: may `$s` be carried inside a `node=` `%` suffix at all? See rules 2 and 3
 # above. Rejects the empty string too — a suffix field that is empty is never a
