@@ -1089,9 +1089,13 @@ ase::cosim_save_map $STMISS {}
 # reasons no artifact can predict — the digital simulator inlines the module
 # away, or the .v is edited between the run and the query — so the fixtures
 # below hand-write map entries whose `scope` names a module the VCD does not
-# declare. That is the honest fixture for inlining on a machine with no
-# verilator: what F2 must survive is the DISAGREEMENT, and where the wrong
-# string came from is not something the resolver can see.
+# declare. That is the honest fixture for inlining: what F2 must survive is the
+# DISAGREEMENT, and where the wrong string came from is not something the
+# resolver can see.
+# (This paragraph used to say "on a machine with no verilator". That was WRONG:
+# /usr/bin/verilator 5.020 is installed and tests/headless/test_cosim_golden_e2e.tcl
+# uses it for a real run. What is still unavailable is Verilog that a digital
+# compile really inlines away, which is a property of the source, not the tool.)
 
 set ::XSCHEM_LIBRARY_DEFS $tmp/library.defs
 set ::library_registry_defs_only 1
@@ -1461,6 +1465,197 @@ check FS48-inventory-sees-every-db \
 eqcheck FS49-inventory-restores-the-current-db \
   "[lsort $paths] | [pcall xschem raw rawfile]" \
   "anlg.raw fs_agree.vcd fs_diverge.vcd fs_moved.vcd fs_nomatch.vcd | $rawf"
+xschem raw clear
+
+# ===========================================================================
+# TD — H4: TWO d_cosim INSTANCES IN ONE DECK, resolved apart
+# ===========================================================================
+#
+# Contract: spec H4, over RULING 5b (the join key is lib/cell, NEVER the
+# instance path) and RULING 5c/5f (`scope` is a hint the loaded DB overrules).
+#
+# WHY THIS GROUP EXISTS WHEN FS ALREADY PASSES. Every FS fixture resolves ONE
+# instance at a time, and with one instance any lookup returns the only answer
+# there is: a `cosim_map_match` that ignored its arguments and returned
+# `[lindex $map 0]` would pass all 63 of them. The fixture that can fail is two
+# instances in one deck, and it is only discriminating if the two are hard to
+# tell apart:
+#
+#   * a1 (cell tdx) and a2 (cell tdy) have IDENTICAL recorded hints. Both .v
+#     files declare `module tdmod`, and cosim_map mints the hint as
+#     "TOP.$module" (src/ase.tcl:1090) — so TD3 asserts the two hints are the
+#     same STRING. A resolver that trusts the hint therefore gives both
+#     instances the same scope; the loaded databases say otherwise.
+#   * their MODULE NAME is the same string too, so rung 3 of the 5b ladder
+#     matches both and refuses (TD6). Only rung 1's lib/cell key separates
+#     them, which is the ruling under test rather than an accident of the
+#     fixture. ⚠ TD7/TD8 alone do NOT establish that — they assert the rung
+#     NUMBER, and this fixture's .model card names separate the entries just as
+#     well, so a rung 1 re-keyed onto the model card still answers `mdx 1`.
+#     TD7b/TD8b are the checks that name the KEY: one f1 with no model card at
+#     all, and one whose model card deliberately contradicts its lib/cell.
+#   * a3 and a4 are two instances of ONE cell. The netlister deduplicates
+#     `.model` cards (spice_netlist.c:143-169), so lib/cell cannot separate
+#     them EVEN IN PRINCIPLE — one card, one sim_args path, two shims that
+#     would interleave their writes into it. The ruled answer is the `multi`
+#     refusal for BOTH, and TD20/TD21 are what a first-match resolver fails.
+#   * a2's hint names `TOP.tdmod`, a scope its database does not declare at
+#     all — the H4 case where hint and reality diverge with the module NAME
+#     unchanged.
+#
+# AND THE MAP IS NOT HAND-WRITTEN. It comes out of a real `xschem netlist` of a
+# real fixture cellview through the real `ase::cosim_map`, so the hints TD3
+# compares are produced by production code, not by the test.
+
+symfile $tmp/dlib/tdx/symbol/tdx.sym {clk in q out}
+symfile $tmp/dlib/tdy/symbol/tdy.sym {clk in q out}
+symfile $tmp/dlib/tdz/symbol/tdz.sym {clk in q out}
+# tdx and tdy are DIFFERENT cells whose .v files declare the SAME module name.
+# That is what makes their recorded scope hints identical strings.
+wr $tmp/dlib/tdx/verilog/tdx.v "\`timescale 1ps/1ps\nmodule tdmod(input clk, output q);\nendmodule\n"
+wr $tmp/dlib/tdy/verilog/tdy.v "\`timescale 1ps/1ps\nmodule tdmod(input clk, output q);\nendmodule\n"
+wr $tmp/dlib/tdz/verilog/tdz.v "\`timescale 1ps/1ps\nmodule tdz(input clk, output q);\nendmodule\n"
+
+proc tdmodel {m} {
+  return "device_model=\".model $m d_cosim simulation=\\\\\"./$m.so\\\\\"\
+ sim_args=\[\\\\\"$m.vcd\\\\\"\] delay=0\""
+}
+set ptd [tb tbtd \
+  "C \{dlib/tdx\} 0 0 0 0 \{name=a1 model=mdx\n[tdmodel mdx]\}\n\
+C \{dlib/tdy\} 200 0 0 0 \{name=a2 model=mdy\n[tdmodel mdy]\}\n\
+C \{dlib/tdz\} 400 0 0 0 \{name=a3 model=mdz\n[tdmodel mdz]\}\n\
+C \{dlib/tdz\} 600 0 0 0 \{name=a4 model=mdz\n[tdmodel mdz]\}\n"]
+
+xschem load $ptd
+set STD [st $rd tbtd]
+set tdnl [file join $rd tbtd.spice]
+xschem netlist -noalert $tdnl
+set tf [open $tdnl r]; set tdtext [read $tf]; close $tf
+set TDMAP [pcall ase::cosim_map $STD $tdtext]
+
+# FOUR instances, THREE cards: the netlister folded a3/a4's identical .model
+# card into one, which is the whole reason `multi` exists.
+# `8` is `llength` of the design walk's DICT — 2 x 4 entries. It is llength and
+# not `dict size` on purpose: with the walk broken, `pcall` returns its "ERR:..."
+# STRING, and `dict size` on that would ABORT the file instead of failing this
+# check (the idiom DS2/`dg` uses a few hundred lines above, for the same reason).
+eqcheck TD1-four-instances-three-cards \
+  "[llength [pcall ase::cosim_design_scan]] [llength $TDMAP]" {8 3}
+proc tdget {model key} {
+  global TDMAP
+  foreach e $TDMAP { if {[ase::state_get $e model] eq $model} { return [ase::state_get $e $key] } }
+  return {}
+}
+eqcheck TD2-cards-join-their-own-cells \
+  "[tdget mdx cell] [tdget mdy cell] [tdget mdz cell]" {tdx tdy tdz}
+# THE HINTS ARE THE SAME STRING. Stated as an equality AND as the value, so it
+# cannot pass by both being empty.
+eqcheck TD3-two-cells-one-hint-string \
+  "[tdget mdx scope] [tdget mdy scope] [expr {[tdget mdx scope] eq [tdget mdy scope]}]" \
+  {TOP.tdmod TOP.tdmod 1}
+eqcheck TD4-same-cell-twice-is-one-multi-card \
+  "[tdget mdz multi] [tdget mdz ninst] [llength [tdget mdz insts]]" {1 2 2}
+eqcheck TD5-the-other-two-are-not-multi "[tdget mdx multi] [tdget mdy multi]" {0 0}
+
+# THE LADDER. Over this REAL map, a module-keyed lookup is ambiguous (tdx and
+# tdy both declare `tdmod`) — so whatever separates a1 from a2 below is rung 1,
+# not rung 3. TD6 is the positive evidence that TD10/TD11 are not accidents.
+eqcheck TD6-module-alone-cannot-separate-them \
+  [lindex [pcall ase::cosim_map_match $TDMAP [f1of {} {} tdmod {}]] 1] ambiguous
+set r [pcall ase::cosim_map_match $TDMAP [f1of dlib tdx tdmod mdx]]
+eqcheck TD7-rung1-picks-tdx "[mmodel $r] [mrung $r]" {mdx 1}
+set r [pcall ase::cosim_map_match $TDMAP [f1of dlib tdy tdmod mdy]]
+eqcheck TD8-rung1-picks-tdy "[mmodel $r] [mrung $r]" {mdy 1}
+# ⚠⚠ TD7/TD8 ASSERT THE RUNG *NUMBER*, NOT THE KEY, AND THAT IS NOT ENOUGH.
+# In this fixture the three .model card names (mdx/mdy/mdz) separate the entries
+# exactly as well as lib/cell does, so a rung 1 RE-KEYED ONTO THE MODEL CARD NAME
+# answers `mdx 1` and `mdy 1` too. Measured: replacing rung 1's predicate in
+# src/ase.tcl:1621 with `$ed eq $fd` reddened 5 FS checks and NOT ONE of the 21
+# TD checks — the group whose whole reason for existing is RULING 5b's lib/cell
+# key could not tell that key from the model key. These two name the KEY:
+#
+#   TD7b feeds an f1 with NO model card name at all. lib/cell alone must still
+#        carry it; a model-keyed rung 1 has nothing to match and falls through to
+#        rung 3, which TD6 already proved is ambiguous here.
+#   TD8b feeds an f1 whose model card name is DELIBERATELY THE OTHER CELL'S. The
+#        two keys now disagree and the answer says which one the ladder used:
+#        lib/cell says mdy, the model card says mdx. `mdy 1` is the ruling.
+set r [pcall ase::cosim_map_match $TDMAP [f1of dlib tdx tdmod {}]]
+eqcheck TD7b-rung1-is-libcell-not-the-model-card "[mmodel $r] [mrung $r]" {mdx 1}
+set r [pcall ase::cosim_map_match $TDMAP [f1of dlib tdy tdmod mdx]]
+eqcheck TD8b-libcell-beats-a-contradicting-model-card "[mmodel $r] [mrung $r]" {mdy 1}
+
+# The three databases, at the exact paths the map promised. mdx's declares the
+# hinted scope; mdy's does NOT declare it anywhere — the module was elaborated
+# one level down, under a wrapper, with the module NAME unchanged.
+mkvcdtree [tdget mdx vcd] {TOP TOP.tdmod}
+mkvcdtree [tdget mdy vcd] {TOP TOP.wrapy.tdmod}
+mkvcdtree [tdget mdz vcd] {TOP TOP.tdz}
+eqcheck TD9-three-distinct-vcd-paths \
+  [llength [lsort -unique [list [tdget mdx vcd] [tdget mdy vcd] [tdget mdz vcd]]]] 3
+
+xschem raw clear
+ase::attach_dbs $rawf tran [list [tdget mdx vcd] [tdget mdy vcd] [tdget mdz vcd]]
+ase::cosim_save_map $STD $TDMAP
+xschem load $ptd
+
+set ra [pcall ase::cosim_scope_for_state $STD a1]
+set rb [pcall ase::cosim_scope_for_state $STD a2]
+eqcheck TD10-a1-resolves "[lindex $ra 0] [file tail [lindex $ra 1]] [lindex $ra 2] [lindex $ra 3]" \
+  "ok tbtd_mdx.vcd TOP.tdmod hint"
+eqcheck TD11-a2-resolves "[lindex $rb 0] [file tail [lindex $rb 1]] [lindex $rb 2] [lindex $rb 3]" \
+  "ok tbtd_mdy.vcd TOP.wrapy.tdmod derived"
+# THE TWO DISCRIMINATING ASSERTIONS, each naming what it kills:
+#   - a resolver that returns the first match regardless sends both instances to
+#     the SAME database
+check TD12-the-two-instances-land-in-different-databases \
+  [expr {[lindex $ra 1] ne [lindex $rb 1] &&
+         [lindex $ra 1] eq [tdget mdx vcd] && [lindex $rb 1] eq [tdget mdy vcd]}] \
+  "(a1='[lindex $ra 1]' a2='[lindex $rb 1]')"
+#   - a resolver that trusts the hint gives both the SAME scope, because TD3
+#     proved the two hints are one string
+check TD13-the-two-scopes-differ-although-the-hints-did-not \
+  [expr {[lindex $ra 2] ne [lindex $rb 2] &&
+         [tdget mdx scope] eq [tdget mdy scope]}] \
+  "(a1='[lindex $ra 2]' a2='[lindex $rb 2]' hint='[tdget mdy scope]')"
+# a2's answer is the DB's, and the stale hint is named in the note rather than
+# swallowed
+check TD14-a2-note-names-the-hint-that-lost \
+  [expr {[string first TOP.tdmod [lindex $rb 4]] >= 0}] "(note '[lindex $rb 4]')"
+# ...and it is not the port mirror, which is the one answer that is always
+# available and always wrong (RULING 5e)
+eqcheck TD15-neither-answer-is-TOP \
+  [expr {[lindex $ra 2] ne {TOP} && [lindex $rb 2] ne {TOP}}] 1
+# ⚠ ORDER MATTERS HERE. Two resolves each read every loaded database, and each
+# must put the pointer back. This check has to come BEFORE TD16's explicit
+# `raw switch`, or that switch restores slot 0 by hand and TD17 is green
+# whatever the resolver did (measured: it was, and S13 reddened nothing).
+eqcheck TD17-current-db-still-the-analog-raw-after-two-resolves \
+  [pcall xschem raw rawfile] $rawf
+# the hint a2 recorded really is absent from a2's database — the H4 case
+set tdnames [list]
+xschem raw switch [tdget mdy vcd] vcd
+set tdnames [split [pcall xschem raw list] "\n"]
+xschem raw switch 0
+check TD16-a2-hinted-scope-is-in-no-signal-of-its-db \
+  [expr {[lsearch -glob $tdnames {TOP.tdmod.*}] < 0 &&
+         [lsearch -glob $tdnames {TOP.wrapy.tdmod.*}] >= 0}] "($tdnames)"
+
+# TWO INSTANCES OF ONE CELL: both refuse, with the same cause, and neither is
+# handed a1's or a2's answer.
+set rc3 [pcall ase::cosim_scope_for_state $STD a3]
+set rc4 [pcall ase::cosim_scope_for_state $STD a4]
+eqcheck TD20-a3-refuses-multi "[lindex $rc3 0] [lindex $rc3 1]" {none multi}
+eqcheck TD21-a4-refuses-multi "[lindex $rc4 0] [lindex $rc4 1]" {none multi}
+# the COUNT, and it is matched as a phrase, not as the digit `2`: the sentence
+# ends `(f2)`, so a bare `string first 2` is true of "serves 1 instances" too
+check TD22-the-multi-sentence-says-how-many \
+  [expr {[string first {serves 2 instances} [lindex $rc3 2]] >= 0}] "([lindex $rc3 2])"
+# and the refusal is not a general failure of the deck: a1 still resolves in the
+# same breath, so TD20/TD21 cannot pass because the resolver stopped working
+eqcheck TD23-a1-still-resolves-beside-the-refusals \
+  [lindex [pcall ase::cosim_scope_for_state $STD a1] 2] TOP.tdmod
+
 xschem raw clear
 
 # ===========================================================================

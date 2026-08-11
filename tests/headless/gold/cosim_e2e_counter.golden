@@ -1,0 +1,108 @@
+# cosim_e2e_counter.golden -- the golden for H2, tests/headless/test_cosim_golden_e2e.tcl
+# doc/claude/specs/mixed_signal_signal_browser.md section H, item H2.
+#
+# WHAT THIS IS. Every TRANSITION of the six INTERNAL signals of
+# xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v, as
+# the patched d_cosim shim dumps them, read back through `xschem raw` from the
+# VCD produced by a real mixed-signal run of tb_counter_wrapper.
+#
+# The six are internal on purpose: only module PORTS cross the d_cosim boundary
+# (spec M6), so `phase`, `half`, `prev`, `next_count`, `tc` and `carry` exist in
+# NO `.raw` file anywhere. They are the payload the Signal Browser work exists
+# to show, and a golden made of ports would prove nothing about the VCD.
+#
+# PROVENANCE, and how to regenerate. Produced 2026-08-11 by the run the test
+# itself performs, in the SHIPPING configuration:
+#   * build:   tools/cosim/build_cosim_so.sh -V (trace, and NO -t: nothing in
+#              src/ase.tcl ever passes -t -- batch F item 12, commit 1e5c2b64),
+#              verilator 5.020, g++ 13.3
+#   * deck:    xschem netlist of
+#              xschem_libraries_oa/ngspice_verilog_cosim_ase/tb_counter_wrapper,
+#              rendered by ase::backend::ngspice::render_deck from that cell's
+#              own ngspice_state1 state -- VDD 1.8, `tran 10p 2u`, the state's
+#              two auto_bridge pre_sets
+#   * run:     ngspice-46 -b, cwd = the run directory
+# Regenerate by re-running the test and pasting the measured records; do NOT
+# hand-edit a time.
+#
+# STABILITY. Two independent ngspice invocations (`tran 10p 2u` and a truncated
+# `tran 10p 400n`) produced byte-identical VCD prefixes, so these numbers are
+# the simulator's, not a race. The 1 ps ladder around each clock edge
+# (...011 / ...012) is the dac_bridge t_rise=1e-11 plus the shim's event-time
+# dump, i.e. physical -- see the A6 row of the spec.
+#
+# FORMAT.  edge <signal> <time_ps> <value>
+# `#` comments and blank lines ignored. Buses carry their decimal value.
+#
+edge TOP.counter.phase 0 0
+edge TOP.counter.phase 50012 1
+edge TOP.counter.phase 150012 2
+edge TOP.counter.phase 250012 3
+edge TOP.counter.phase 350012 0
+edge TOP.counter.phase 450012 1
+edge TOP.counter.phase 550012 2
+edge TOP.counter.phase 650012 3
+edge TOP.counter.phase 750012 0
+edge TOP.counter.phase 850012 1
+edge TOP.counter.phase 950012 2
+edge TOP.counter.phase 1050012 3
+edge TOP.counter.phase 1150012 0
+edge TOP.counter.phase 1250012 1
+edge TOP.counter.phase 1350012 2
+edge TOP.counter.phase 1450012 3
+edge TOP.counter.phase 1550012 0
+edge TOP.counter.phase 1650012 1
+edge TOP.counter.phase 1750012 2
+edge TOP.counter.phase 1850012 3
+edge TOP.counter.phase 1950011 0
+edge TOP.counter.half 0 0
+edge TOP.counter.half 1550012 1
+edge TOP.counter.tc 0 0
+edge TOP.counter.tc 1450012 1
+edge TOP.counter.tc 1550012 0
+edge TOP.counter.carry 0 0
+edge TOP.counter.carry 650012 1
+edge TOP.counter.carry 750012 0
+edge TOP.counter.carry 1450012 1
+edge TOP.counter.carry 1550012 0
+edge TOP.counter.prev 0 0
+edge TOP.counter.prev 150012 1
+edge TOP.counter.prev 250012 2
+edge TOP.counter.prev 350012 3
+edge TOP.counter.prev 450012 4
+edge TOP.counter.prev 550012 5
+edge TOP.counter.prev 650012 6
+edge TOP.counter.prev 750012 7
+edge TOP.counter.prev 850012 8
+edge TOP.counter.prev 950012 9
+edge TOP.counter.prev 1050012 10
+edge TOP.counter.prev 1150012 11
+edge TOP.counter.prev 1250012 12
+edge TOP.counter.prev 1350012 13
+edge TOP.counter.prev 1450012 14
+edge TOP.counter.prev 1550012 15
+edge TOP.counter.prev 1650012 0
+edge TOP.counter.prev 1750012 1
+edge TOP.counter.prev 1850012 2
+edge TOP.counter.prev 1950011 3
+edge TOP.counter.next_count 0 1
+edge TOP.counter.next_count 50012 2
+edge TOP.counter.next_count 150012 3
+edge TOP.counter.next_count 250012 4
+edge TOP.counter.next_count 350012 5
+edge TOP.counter.next_count 450012 6
+edge TOP.counter.next_count 550012 7
+edge TOP.counter.next_count 650012 8
+edge TOP.counter.next_count 750012 9
+edge TOP.counter.next_count 850012 10
+edge TOP.counter.next_count 950012 11
+edge TOP.counter.next_count 1050012 12
+edge TOP.counter.next_count 1150012 13
+edge TOP.counter.next_count 1250012 14
+edge TOP.counter.next_count 1350012 15
+edge TOP.counter.next_count 1450012 0
+edge TOP.counter.next_count 1550012 1
+edge TOP.counter.next_count 1650012 2
+edge TOP.counter.next_count 1750012 3
+edge TOP.counter.next_count 1850012 4
+edge TOP.counter.next_count 1950011 5
