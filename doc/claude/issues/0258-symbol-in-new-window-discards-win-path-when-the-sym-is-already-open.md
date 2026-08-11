@@ -1,6 +1,7 @@
 # 0258 — symbol_in_new_window silently does nothing when the target .sym is already open
 
-Status: **OPEN** — reproduced headlessly in both tabbed and windowed mode (transcripts below). The
+Status: **FIXED** on the measured arm (2026-08-10, crew item D6 — see Resolution at the end;
+the sibling nothing-selected arm is 0383). Status was: **OPEN** — reproduced headlessly in both tabbed and windowed mode (transcripts below). The
 GUI-only half — that the suppressed feedback is a `tk_messageBox` under `has_x` rather than the
 stderr line the headless run prints — is read from the source, not measured under X.
 Area: `src/actions.c` `symbol_in_new_window()` (`:2793-2815`, the else arm `:2808-2814`);
@@ -285,3 +286,95 @@ above does.
   branch of `check_loaded`, so any change here lands unguarded until
   `test_symbol_in_new_window_0258.tcl` exists. The transcripts above are directly reusable as its
   body: assert `ntabs` unchanged **and** `current_win_path` moved to the pre-existing window.
+
+---
+
+## Resolution — crew item D6, 2026-08-10 — FIXED on the measured arm
+
+**Status: FIXED** for the arm this issue was filed against (an instance is selected and its `.sym`
+is already open). The sibling arm — nothing selected, "open another view of the *current*
+schematic's `.sym`" — was deliberately left alone and is filed as **0383**.
+
+### Measured BEFORE (D6 Measure, headless, tabbed, `lab_pin.sym` already open in `.x1.drw`)
+
+```
+D2 check_loaded <sym> = {.x1.drw}   <-- the value C computes at actions.c:2874 and DROPS
+D2 xschem symbol_in_new_window ret={}
+D2 AFTER: current_win_path=.drw cell=parent.sch windows=2 statusmsg={ }
+D3 ret={1} current_win_path=.x1.drw cell=descend_child.sym windows=2
+```
+
+`D2` is the defect: the verb returns empty, leaves the current window on the parent, creates no
+window and writes **nothing** to `statusmsg` (the field was blanked first and stayed blank).
+`D3` is the same request one level down — `xschem new_schematic create {} <sym> 1` — which prints
+`create_new_tab: ... already open: .x1.drw` and **switches** to that tab. So the pre-check deleted
+both the message and the navigation the user asked for.
+
+### What changed
+
+* New static `symbol_already_open(filename, win_path, new_process)` in `src/actions.c`. For
+  `new_process` it refuses with a held `statusmsg` naming the file and returns 3; for the
+  same-window case it says "already open in this window" and returns 0; otherwise it calls
+  `new_schematic("switch", win_path, "", 1)` (which routes tabs and real toplevels correctly),
+  **verifies** the switch by re-reading `xctx->current_win_path`, adds a catch-guarded
+  `raise`+`focus -force` under `has_x` (windowed mode's `switch_window` retitles but never raises),
+  holds a message and returns 2.
+* `symbol_in_new_window()` is now `int` (0 nothing done / 1 opened / 2 switched / 3 refused-and-said-so),
+  prototype updated in `src/xschem.h`; the scheduler branch returns it via `my_itoa` instead of
+  `Tcl_ResetResult`.
+* Untouched on purpose: the `lastsel != 1` arm, and the semaphore save/decrement/restore at
+  `src/callback.c:7008` / `:7027` — that is what makes `switch_tab`/`switch_window` legal under a
+  key handler (both bail on a nonzero semaphore).
+
+### Decisions
+
+* **D4 — consume `check_loaded()`'s `win_path` and switch (rung R1).** "Whatever you just pressed is
+  what you meant": the user asked to see that symbol, and the tab already holding it is the honest
+  fulfilment. The 0/1/2/3 return is 0251's shape. **Rejected:** keep the pre-check mute and only add
+  a message — that still deletes the navigation, which is half the measured defect.
+* **D5 — `new_process` (Alt+Shift+I) keeps the guard but now refuses OUT LOUD (rung R2; USER-VISIBLE,
+  item status E).** Letting it through creates a second *editable* view of one `.sym` across two
+  processes — a real save-over-each-other path — and it is the one arm that cannot be tested
+  headlessly. **Rejected:** this issue's rider 3 ("let `new_process` through the guard
+  unconditionally"). **Ledger question:** should Alt+Shift+I be allowed to spawn a second process on
+  a `.sym` already open in this one, accepting two editable views?
+
+### AFTER (6 new SNW rows in `tests/headless/test_descend_symbol.tcl`, 32 → 38 ok)
+
+```
+SNW2: already open -> returns 2, SWITCHES to the tab holding it, opens nothing new
+      (got ret={2} cur=.x1.drw want=.x1.drw tabs=2->2)
+SNW5: new_process -> ret 3, nothing spawned,
+      msg={Edit symbol in new process: ... already open in this process (.x1.drw) -- not opening a second copy}
+```
+
+Adversary re-measured it in a **real detached window** (`ATK-5`, not just a tab):
+`xschem new_schematic create_window {} <sym> 1`, then `symbol_in_new_window` from `.drw` → ret 2,
+`current_win_path` moves to `.x1.drw`, window count unchanged, held message
+`Edit symbol: .../descend_child.sym is already open -- switched to .x1.drw`. The switch-verification
+re-read works in windowed mode too. `ATK-7` confirmed the modify flag never lies across the switch.
+
+### Sabotage matrix (Verify-B)
+
+| variant | predicted | observed |
+|---|---|---|
+| `SAB-SYMSWITCH` (`#define symbol_already_open(f,w,p) 0`) | SNW2, SNW3, SNW5, SNW6 | **3 red**: SNW2, SNW3, SNW5. SNW6 did **not** redden — see below. |
+| `SAB-SYMRET` (`#define symbol_in_new_window(p) (symbol_in_new_window(p), 0)` — behaviour intact, only the value lies) | SNW2, SNW4, SNW5 | **4 red**: SNW2, SNW4, SNW5, SNW6. SNW2's *state* half stayed correct and only the return discriminated — confirming the plan's warning that the row must assert **ret AND state together**, which it does. SNW3 correctly stayed green. |
+
+**Predicted red that did not appear, and why.** The plan's SNW6 ("already open in the CURRENT window
+→ returns 0 and says so") is **unreachable**: that branch needs the current window to hold the
+`.sym` while an instance *of* that `.sym` is selected, and a `.sym` view has no instances. Implement
+re-aimed SNW6 at the untouched nothing-selected arm. Net finding for the record:
+**`symbol_already_open()`'s same-window branch is dead defensive code with zero coverage** — no row
+in any suite exercises it, so a future edit could break or delete it with every suite still green.
+
+### Still open
+
+* **0383** — the `lastsel != 1` arm returns 1 ("opened") unconditionally, but `new_schematic("create")`
+  underneath it has its own already-open branch (tabbed: warn + switch; windowed: warn + bare
+  return). SNW6 currently pins `ret == 1` there as correct, so the eventual 0383 fix is also a test
+  change.
+* The slot-limit mute (this issue's secondary, `src/xinit.c:2149` / `:1999`) is unchanged.
+* `schematic_in_new_window()` still discards its `win_path` — deliberately not copy-pasted into, for
+  the reasons in Risks above (see 0256).
+* The D5 ruling on Alt+Shift+I is unratified by a human (item status E).

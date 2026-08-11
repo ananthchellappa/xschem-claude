@@ -498,6 +498,37 @@ for the shape family as a by-product. Two lessons: (i) **a direction that is doc
 and never asserted is a direction nobody re-checks** (0271); (ii) **enumerate the arms from the
 STATE the teardown owns, not from the verbs a report names** — 0242 and 0265 wrote that down, and
 0272 is the residue of the one phase written before it.
+
+**A FIFTH family, 2026-08-10 (issue 0257): the persistent CLICK MODES.** `abort_click_mode()`
+(callback.c) ends interactive net-highlight / net-unhighlight / deselect-one-at-a-time. They belong
+to this class even though they own no band and no preview: they own **Button-1 from a resting
+`ui_state` bit**, and `handle_button_press()` dispatches all three with a `return` **before** the
+single `check_menu_start_commands()` call site — so an armed verb-noun descend pick (the one arm
+that call site owns) could never receive its click. Measured under xvfb: the press resolved nothing,
+the matching release cleared `MENUSTART` and left `MENUSTARTDESCEND`, and `cmdmode` stayed suspended
+for the rest of the session. The gate is at the verb (`xschem descend_pick`, scheduler.c) and takes
+**two** teardowns — `abort_wire_line_command()` and `abort_click_mode()` — because a **resting wire
+command** was the fourth swallower and the only *mutating* one: under `persistent_command` the press
+handler tests `last_command` alone and called `start_wire()`, so the click meant as "descend into
+this instance" **began a wire draw on it** (`ui_state` 65536 → 65537 across the pick press; no wire
+was ever committed, so the damage is the started draw plus the stranded state). This is the first
+member of the family whose teardown has **no `leave_*_for()` wrapper**: its only caller arms a HELD
+prompt one statement later, and a held line displaces the previous held line, so the gate message
+would be destroyed by the very arm that asked for the teardown — hence `abort_click_mode()` returns
+the *name* of what it ended and the caller composes one sentence (issue 0241's rule, satisfied by
+composition rather than by a second message).
+
+**AND A CORRECTION TO 0268's ADJUDICATION.** That inertness argument was "all 24 readers are
+dominated by a `MENUSTART` test in `ui_state`". There is now **one reader that is not**:
+`descend_pick_arm_live()` (callback.c), the ESC continuation's guard, reads `MENUSTARTDESCEND`
+**alone** — deliberately, because `handle_button_release()` clears `MENUSTART` unconditionally on any
+Button1Mask release, so the state that most needs ESC is precisely the one where `MENUSTART` has
+already been burned. Anyone re-deriving 0268's argument must exclude this reader; anyone adding a
+*sixth* `ui_state2` bit must keep assigning `ui_state2` wholesale at the arm, which is what still
+makes reading the discriminator alone safe. The release-side unconditional `MENUSTART` clear was
+deliberately **not** touched: it is the terminal of every menu-armed gesture and its residue is
+asserted on by `test_shape_draw_gate.tcl` (421) and `test_placement_wire_gate.tcl` (171).
+
 **Class-D correction, 2026-08-09: `netlist` WAS a door, and a terminal one (issue 0263, FIXED).**
 This document, the 0242 census and the phase plan all recorded `netlist` as a deliberate non-door
 residue — "it netlists a live preview but clears no gesture bits". Measured, that is false on the

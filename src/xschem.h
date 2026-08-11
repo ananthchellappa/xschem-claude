@@ -2432,7 +2432,8 @@ extern void select_all(void);
 extern void change_linewidth(double w);
 extern int copy_hierarchy_data(const char *from_win_path, const char *to_win_path);
 extern int schematic_in_new_window(int new_process, int dr, int force, int win);
-extern void symbol_in_new_window(int new_process);
+/* issue 0258: 0 nothing done, 1 opened, 2 switched to the window already holding it, 3 refused */
+extern int symbol_in_new_window(int new_process);
 extern void new_xschem_process(const char *cell, int symbol);
 extern void ask_new_file(int in_new_window, char *filename);
 extern void saveas(const char *f, int type);
@@ -2606,6 +2607,14 @@ extern int abort_wire_line_command(void); /* issue 0240 */
  * leave_shape_draw_for() is the gate every ARM calls. See callback.c. */
 extern int abort_shape_draw(void);
 extern void leave_shape_draw_for(const char *what);
+/* issue 0257: the FIFTH teardown, for a persistent CLICK MODE (NET_HILIGHT / NET_UNHILIGHT /
+ * DESEL_MODE) -- the three gestures that own Button-1 from a resting ui_state bit and whose press
+ * arms `return` ahead of check_menu_start_commands(), so an armed descend pick never sees its
+ * click. Returns the NAME of the mode it ended (static string) or NULL. It has no
+ * leave_click_mode_for() wrapper on purpose: its only caller arms a held prompt one statement
+ * later, which would replace any gate line written here, so the caller composes one sentence
+ * carrying both facts (issue 0241). See callback.c. */
+extern const char *abort_click_mode(void);
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);

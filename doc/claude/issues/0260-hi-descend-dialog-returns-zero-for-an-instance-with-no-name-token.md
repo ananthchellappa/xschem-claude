@@ -1,6 +1,8 @@
 # 0260 — the descend chooser silently gives up on an instance whose symbol carries no name= token
 
-Status: **OPEN** — the silent `return 0`, the empty-name plumbing that causes it, and the
+Status: **PARTIALLY FIXED** (2026-08-10, crew item D6 — the resolver route speaks; the C pick
+continuation still re-arms silently, filed as 0385. See Resolution at the end.)
+Status was: **OPEN** — the silent `return 0`, the empty-name plumbing that causes it, and the
 name-aliasing hazard that a naive fix would walk into are all measured headless (transcripts
 below). What is *not* measured: the GUI key press itself (`e` → `hi_descend`, read from
 `src/xschem.tcl:14175` + `:6271-6273`), and the multi-level `sch_path` degeneracy noted under
@@ -304,3 +306,95 @@ instance" behaviour measured above. Largest change; the one that actually closes
   *also* non-subcircuit types, so a user who gets past this issue immediately hits the next
   silent refusal. Fixing 0260 alone converts "nothing happens" into "one message, then nothing
   happens" unless 0252 lands with it.
+
+---
+
+## Resolution — crew item D6, 2026-08-10 — the resolver route now speaks; the PICK route still does not
+
+**Status: PARTIALLY FIXED.** The refusal is now spoken on both channels wherever
+`hi_descend_target_inst` is the resolver — scripted `hi_descend`, the modal dialog, and the pick
+*continuation* that goes through it. It is **not** reachable on the C verb-noun pick path, which
+calls `hi_descend_pick_done` directly with the empty instname; that hole is filed as **0385** and
+was found by the adversary pass *after* the fix landed.
+
+### Measured BEFORE (D6 Measure, headless, `xschem_library/logic/test_ngspice.sch` instance 2 = `use.sym`, no `name=`)
+
+```
+E1 lastsel=1 selected_set={{}} llength=1
+E1 hi_descend ret={0} statusmsg={n=   2 x = 30  y = -550  w = 355 h = 0} descend_error={}
+E1 hi_descend ECHOES = {}      <-- the refusal channel at the Tcl layer
+E2 control ECHOES = {{[error] hi_descend: select an instance to descend into}}
+```
+
+`selected_set` brace-wraps the empty instname with no emptiness check, so it is a **one**-element
+list whose element is `""` — every "did I get a target" test passes, `hi_descend_target_inst`'s
+unchecked `lindex $sel 0` returns `""`, and both `hi_descend` and `hi_descend_dialog` return 0 with
+**zero** echoes, an untouched `descend_error` and an untouched status line: byte-identical to having
+done nothing. The control (nothing selected) *does* echo. Aliasing confirmed on the parent:
+`hi_descend_inst_sym {}` returns `use.sym`, the **first** of the two nameless rows — so letting `""`
+through would enumerate another cell's views.
+
+### What changed
+
+`hi_descend_target_inst` returns `[hi_descend_nameless_refuse]` on an empty element. The new proc
+`ciw_echo`s **and** `xschem statusmsg -hold`s one sentence and returns `{}`:
+
+```
+hi_descend: the selected instance has no name= property; it cannot be addressed by name
+```
+
+Both channels, because neither alone reaches everyone: `ciw_echo` no-ops when the CIW pane is closed
+(`src/ciw.tcl:114`), and the held status line is what a CIW-less user reads. **No `descend_error`
+stamp** — issue 0378 records that a Tcl-level stamp must be opt-in (an unconditional one would
+destroy `not-descendable:<type>` / `missing-symbol:<name>` / `load-failed`), and there is no
+`xschem set descend_error` in this tree anyway.
+
+### Decision D8 — say why, keep refusing (rung R1)
+
+A refusal must name itself (0241/0251). It must keep **refusing**: letting `""` through enumerates
+the first nameless row's views (measured). **Rejected:** this issue's layer 2 (offer the symbol
+view, grey the schematic view) and layer 3 (index-keyed chooser) — both larger than the item; and
+filtering empty names out of `selected_set`, which would flip `hi_descend_dialog`'s pick-arm branch
+at `xschem.tcl:6260` from "resolve" to "arm a click pick" — a behaviour change, not a message change.
+
+### AFTER (6 new NAMELESS rows in `tests/headless/test_hi_descend.tcl`, 18 → 24 ok)
+
+```
+NAMELESS-echo ret=0 echoes={{hi_descend: the selected instance has no name= property; it cannot be addressed by name} error}
+NAMELESS-hold hold=1
+NAMELESS-noalias enum calls=0
+```
+
+plus `NAMELESS-setup` (the selection really is a 1-element list holding `{}`) and
+`NAMELESS-control` (a named instance in the same sheet still resolves and enumerates, i.e. the check
+is not a blanket refusal). The block works on a `/tmp` copy of the library — inserting the instance
+dirties the sheet and the `set_modify` hook would write `top~.sch` into the committed fixture.
+
+### Sabotage
+
+`SAB-NONAME` (a later, silent definition of `hi_descend_nameless_refuse` appended to
+`src/xschem.tcl`) reddened exactly `NAMELESS-echo` and `NAMELESS-hold`, while `NAMELESS-setup`,
+`-noalias` and `-control` stayed green — i.e. the rows separate "still refuses" from "refuses
+silently", which is the discrimination this issue is about.
+
+### Still open — **0385**, and it is this issue's own symptom on the GUI path
+
+The adversary (`ATK-3`) measured, under xvfb, that the C verb-noun pick never reaches the new
+refusal: `src/callback.c:4125` calls `hi_descend_pick_done {<instname>}` directly, which does
+`after idle [list hi_descend_dialog $instname]`; with an empty instname `hi_descend_dialog`
+(`src/xschem.tcl:6285`) sees `llength [xschem selected_set] == 0` and calls `hi_descend_pick_arm`
+**again**:
+
+```
+arm the pick, click the nameless instance -> narm 1->2, ndialog=2 dlgargs={<> <>},
+currsch=0, statusmsg still the plain prompt (hold=1), echoes = the prompt, twice
+```
+
+`hi_descend_nameless_refuse` is never reached. That is byte-for-byte the pre-fix symptom, on the
+exact path that 0257's half of the same item exists to make usable. The honest key there is the
+**index** — `find_closest_instance()` has it — so 0385 is where the resolver should stop being
+name-keyed.
+
+Also unchanged: the multi-level `sch_path` degeneracy (`..`), and the 0252 overlap (the two shipped
+nameless symbols are *also* non-subcircuit types, so a user now gets one message and then the next
+silent refusal).

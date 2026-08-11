@@ -94,7 +94,8 @@ rename ase::ui::dp_finish ase::ui::dp_finish_real
 proc ase::ui::dp_finish {key queue {qcolors {}}} { set ::plotted $queue; incr ::nplot }
 set ::plotted {} ; set ::nplot 0 ; set ::resolved {}
 
-xschem load [file normalize [file join [file dirname [info script]] .. .. xschem_library examples 0_examples_top.sch]]
+set ::TOPSCH [file normalize [file join [file dirname [info script]] .. .. xschem_library examples 0_examples_top.sch]]
+xschem load $::TOPSCH
 xschem zoom_full; update idletasks
 
 set INST {}
@@ -291,6 +292,142 @@ check "DS6e the queue crossed the window hop"        [qval queue] {v(alpha) v(be
 check "DS6f the count crossed it too"                [qval count] 2
 check "DS6g nothing was plotted on the way"          $::nplot 0
 check "DS6h the suspension is over"                  [cmdmode::is_suspended] 0
+
+# --- MS1..MS11: the armed pick vs. whoever else owns Button-1 (issue 0257) ----
+# Everything above interrupts an ASE mode, which SUSPENDS its binding and hands
+# Button-1 back. Three OTHER Button-1 owners cannot be suspended, because they are
+# not Tcl bindings at all -- they are resting ui_state bits that handle_button_press()
+# dispatches with a `return` BEFORE the single check_menu_start_commands() call site:
+# NET_HILIGHT, NET_UNHILIGHT and DESEL_MODE. A fourth is `last_command` under
+# `persistent_command`, which is tested one step earlier still.
+#
+# Measured under xvfb 2026-08-10, BEFORE the fix: arming the pick inside net-highlight
+# mode left the press resolving NOTHING; the matching ButtonRelease then cleared
+# MENUSTART while leaving MENUSTARTDESCEND set -- a combination no reader tests, since
+# both the pick arm and the ESC continuation were guarded on the conjunction -- so ESC
+# fell through to the blanket `ui_state = 0`, hi_descend_pick_cancel never fired and
+# cmdmode::is_suspended stayed 1 for the rest of the session. With a resting wire
+# command it was worse than swallowed: callback.c called start_wire(), so the press
+# meant as "descend into this instance" BEGAN A WIRE DRAW on it.
+#
+# The fix gates at the VERB (`xschem descend_pick`, scheduler.c), per the ratified
+# rules: "whatever you just pressed is what you meant" and "gates live at the VERBS,
+# never at the shared per-click primitive". It abandons the competing owner and NAMES
+# it in the prompt (issue 0241). ESC's continuation now reads MENUSTARTDESCEND ALONE,
+# so a STRANDED arm (MENUSTART already burned by a release) can still be redeemed.
+#
+# Own fixture copy: MS9 starts a wire draw on the sheet, and a set_modify(1) on the
+# COMMITTED example would write 0_examples_top~.sch into the repo.
+set MSWORK /tmp/ms_descend_gate_work
+file delete -force $MSWORK; file mkdir $MSWORK
+file copy -force $::TOPSCH $MSWORK/ms_top.sch
+
+set ::use_real_views 0
+catch {ase::ui::sod_end K}
+catch {xschem new_schematic destroy_all force}
+catch {xschem new_schematic switch .drw}
+while {[xschem get currsch] > 0} { xschem go_back }
+proc ms_reload {} {
+  global MSWORK
+  xschem load $MSWORK/ms_top.sch
+  xschem zoom_full
+  xschem unselect_all
+  set ::resolved {}
+  update idletasks
+}
+proc modebits {} { expr {[xschem get ui_state] & (1048576 | 2097152 | 4194304)} }
+proc descarm {} { expr {[xschem get ui_state2] & $::MENUSTARTDESC} }
+
+ms_reload
+lassign [lindex [split [xschem instance_bbox $INST] "\n"] 0] _ bx1 by1 bx2 by2
+set CX [expr {($bx1+$bx2)/2.0}] ; set CY [expr {($by1+$by2)/2.0}]
+
+# MS1-MS6: the NET_HILIGHT leg, end to end.
+ms_reload
+xschem hilight_net_interactive
+check "MS1 net-highlight mode is really live before the verb" [expr {[xschem get ui_state] & 1048576}] 1048576
+set r [hi_descend]
+check "MS2 hi_descend armed the pick AND ended the mode"  [list $r [armed] [modebits]] [list 1 1 0]
+check "MS3 the arm NAMES what it tore down, held"         [list [xschem get statusmsg] [xschem get statusmsg_hold]] \
+  [list {Descend: net-highlight mode ended -- click the instance to descend into (ESC to cancel)} 1]
+click $CX $CY
+update idletasks ; update
+check "MS4 THE POINT: the armed click resolves the instance instead of being swallowed" \
+  [list $::resolved [armed]] [list $INST 0]
+check "MS5 no MENUSTARTDESCEND residue after the click"   [descarm] 0
+check "MS6 command mode came back (it used to stay suspended forever)" [cmdmode::is_suspended] 0
+
+# MS7: deselect-one-at-a-time. It is entered ON a selection, and hi_descend only arms a
+# pick when nothing is selected -- so the mode's own click empties the selection first,
+# which is exactly the state a user is in mid-deselect.
+ms_reload
+xschem select instance $INST fast
+xschem deselect_mode
+check "MS7a deselect mode is live"                        [expr {[xschem get ui_state] & 4194304}] 4194304
+click $CX $CY
+set ::resolved {}
+set r [hi_descend]
+check "MS7b the arm ended deselect mode and named it"     [list $r [armed] [modebits] [xschem get statusmsg]] \
+  [list 1 1 0 {Descend: deselect mode ended -- click the instance to descend into (ESC to cancel)}]
+click $CX $CY
+update idletasks ; update
+check "MS7c and the pick resolved"                        [list $::resolved [armed] [cmdmode::is_suspended]] [list $INST 0 0]
+
+# MS8: net-UNhighlight, the third door.
+ms_reload
+xschem unhilight_net_interactive
+check "MS8a net-unhighlight mode is live"                 [expr {[xschem get ui_state] & 2097152}] 2097152
+set r [hi_descend]
+check "MS8b the arm ended it and named it"                [list $r [armed] [modebits] [xschem get statusmsg]] \
+  [list 1 1 0 {Descend: net-unhighlight mode ended -- click the instance to descend into (ESC to cancel)}]
+click $CX $CY
+update idletasks ; update
+check "MS8c and the pick resolved"                        [list $::resolved [armed]] [list $INST 0]
+
+# MS9: THE MUTATING SWALLOW. A resting wire command under persistent_command: ui_state
+# has no STARTWIRE, no band is up, but last_command still owns the next click and the
+# press handler calls start_wire() before anything else is offered it.
+ms_reload
+set persistent_command 1
+xschem wire gui
+click 3000 3000                      ;# first point: the draw is now live
+esc                                  ;# two-stage ESC: band gone, last_command still armed
+check "MS9a setup: a RESTING wire command owns the next click" \
+  [list [expr {[xschem get ui_state] & 1}] [xschem get last_command]] [list 0 1]
+set w0 [xschem get wires]
+set ::resolved {}
+set r [hi_descend]
+check "MS9b the arm abandoned the wire command and said so" \
+  [list $r [armed] [xschem get last_command] [expr {[xschem get ui_state] & 1}] [xschem get statusmsg]] \
+  [list 1 1 0 0 {Descend: in-progress wire abandoned -- click the instance to descend into (ESC to cancel)}]
+click $CX $CY
+update idletasks ; update
+check "MS9c the press DESCENDS instead of starting a wire, and commits no copper" \
+  [list $::resolved [xschem get wires]] [list $INST $w0]
+set persistent_command 0
+
+# MS10: the no-teardown regression guard. With nothing to tear down the prompt must be
+# byte-identical to the sentence this verb has always spoken.
+ms_reload
+set r [hi_descend]
+check "MS10 nothing torn down -> the shipped prompt, unchanged" \
+  [list $r [xschem get statusmsg] [xschem get statusmsg_hold]] \
+  [list 1 {Descend: click the instance to descend into (ESC to cancel)} 1]
+
+# MS11: ESC redeems a STRANDED arm. A bare ButtonRelease (the tail of a press some other
+# owner swallowed) burns MENUSTART and leaves MENUSTARTDESCEND set with MENUSTART clear.
+# The ESC continuation reads the discriminator alone, so it can still fire.
+check "MS11a setup: the arm from MS10 is live (both words set)" \
+  [list [expr {[xschem get ui_state] & $::MENUSTART}] [descarm]] [list $::MENUSTART $::MENUSTARTDESC]
+release $CX $CY
+check "MS11b MENUSTART burned, MENUSTARTDESCEND stranded" \
+  [list [expr {[xschem get ui_state] & $::MENUSTART}] [descarm] [cmdmode::is_suspended]] \
+  [list 0 $::MENUSTARTDESC 1]
+esc
+check "MS11c ESC redeems it: arm dropped and command mode resumed" \
+  [list [descarm] [cmdmode::is_suspended]] [list 0 0]
+
+file delete -force $MSWORK
 
 puts [expr {$::fails ? "RESULT: $::fails FAILURE(S)" : "RESULT: ALL PASS"}]
 flush stdout

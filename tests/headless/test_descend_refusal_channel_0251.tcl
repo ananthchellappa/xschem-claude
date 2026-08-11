@@ -324,6 +324,85 @@ check "R28 hi_descend into a MISSING symbol view returns 0" "$ret" "0"
 check "R28 ... and reports missing-symbol to the CIW" [rec_has {*missing-symbol*}] 1
 
 # ===========================================================================
+puts "--- E. the descend target rule, RATIFIED (issue 0255) ---"
+# ===========================================================================
+# Issue 0255's headline -- "an instance co-selected with a text silently blocks
+# descend" -- is already fixed in the tree: descend_schematic() calls
+# descend_pick_target() (actions.c), which scans sel_array for the first ELEMENT
+# instead of testing entry 0. R18 above locks the text case. These rows lock the
+# WHOLE measured table, so a future unification of the two verbs has to break
+# them on purpose rather than by accident. Crew item D6, 2026-08-10.
+
+# R30. The first-ELEMENT rule holds for EVERY co-selected object type, not just
+# the text that happened to be reported. sel_array is ordered by type, so which
+# companion is present decides whether the instance is entry 0 -- that is exactly
+# what the old sel_array[0] test was sensitive to.
+foreach {tag mk sel} {
+  wire {}                                     {xschem select wire 0 fast}
+  rect {xschem rect 500 500 560 560}          {xschem select rect [xschem get rectcolor] 0 fast}
+  line {xschem line 500 600 560 600}          {xschem select line [xschem get rectcolor] 0 fast}
+  poly {xschem polygon 500 700 560 700 560 760} {xschem select poly [xschem get rectcolor] 0 fast}
+  arc  {xschem arc 500 800 30 0 270}          {xschem select arc [xschem get rectcolor] 0 fast}
+} {
+  fresh
+  if {$mk ne {}} { eval $mk }
+  xschem unselect_all
+  xschem select instance x1 fast
+  eval $sel
+  set lvl [xschem get currsch]
+  set ret [xschem descend]
+  check "R30 instance co-selected with a $tag descends into the instance" \
+        "ret=$ret sch=[file tail [xschem get schname]] moved=[expr {[xschem get currsch] - $lvl}]" \
+        "ret=1 sch=descend_child.sch moved=1"
+}
+
+# R31. The reject half, and it must SPEAK: a selection with no ELEMENT in it at
+# all. Same sentence for both, same token -- "you selected something that is not
+# an instance" is one mistake, distinct from "you selected nothing" (R15's
+# {no-selection}). statusmsg is blanked first because it is STICKY across calls.
+foreach {tag sel} {
+  text {xschem text 600 600 0 0 {a comment} {} 0.4 0 ; xschem unselect_all ; xschem select text 0}
+  wire {xschem unselect_all ; xschem select wire 0 fast}
+} {
+  fresh
+  xschem statusmsg { }
+  eval $sel
+  set lvl [xschem get currsch]
+  set ret [xschem descend]
+  check "R31 a $tag-only selection refuses with {no-instance-selected} and does not move" \
+        "ret=$ret err=[xschem get descend_error] moved=[expr {[xschem get currsch] - $lvl}]" \
+        "ret=0 err=no-instance-selected moved=0"
+  check "R31 ... and SPEAKS it on the HELD status line ($tag)" \
+        "names=[string match {*select an instance to descend into*} [xschem get statusmsg]]\
+ held=[xschem get statusmsg_hold]" "names=1 held=1"
+}
+
+# R32. THE RATIFIED SPLIT (issue 0255 point 3, the only part that survives). The
+# two verbs deliberately disagree on a multi-instance selection, and the
+# disagreement is encoded in descend_pick_target()'s multi_ok argument:
+# descend_schematic() passes 1 (keep "first ELEMENT, any count"), descend_symbol()
+# passes 0 (a symbol is a file you may EDIT, so the ambiguity is refused and
+# named). R19 above pins the permissive half; this row pins the pair together so
+# neither can drift alone.
+fresh two_child_parent.sch
+xschem unselect_all
+xschem select instance x1 fast
+xschem select instance xB fast
+check "R32 setup: two ELEMENTs selected" [llength [xschem selected_set]] 2
+set r1 [xschem descend]
+set e1 [xschem get descend_error]
+set s1 [file tail [xschem get schname]]
+fresh two_child_parent.sch
+xschem unselect_all
+xschem select instance x1 fast
+xschem select instance xB fast
+set r2 [xschem descend_symbol]
+set e2 [xschem get descend_error]
+check "R32 descend is permissive, descend_symbol refuses and names it (deliberate)" \
+      "descend=$r1/$s1/{$e1} descend_symbol=$r2/{$e2}" \
+      "descend=1/descend_child.sch/{} descend_symbol=0/{multi-selection}"
+
+# ===========================================================================
 puts "--- C'. the window table, exhausted (issue 0256 c1) --- MUST RUN LAST ---"
 # ===========================================================================
 # new_schematic() refuses past MAX_NEW_WINDOWS, but schematic_in_new_window() is

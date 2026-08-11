@@ -3167,10 +3167,52 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
     else if(!strcmp(argv[1], "descend_pick"))
     {
+      /* ISSUE 0257 -- THE GATE, at the verb. This arm is the single door into the pick, so it is
+       * where the ratified rule applies: "whatever you just pressed is what you meant" (0240 /
+       * 0242 / 0243 / 0247 / 0265 / 0269), and gates live at the VERBS, never at the shared
+       * per-click primitive (0243 F2). Three Button-1 owners were measured swallowing the armed
+       * pick outright, and one of them MUTATES while doing it:
+       *   - a resting wire/line command under `persistent_command` (last_command != 0). The press
+       *     handler tests last_command alone and calls start_wire(), so the click meant as
+       *     "descend into this instance" BEGINS A WIRE DRAW on it instead (measured: arming gave
+       *     ui_state 65536, the pick press came back 65537 = MENUSTART|STARTWIRE). Killed by
+       *     abort_wire_line_command(), whose third arm is exactly that resting state.
+       *   - interactive net-highlight / net-unhighlight, and deselect-one-at-a-time. Killed by
+       *     abort_click_mode() (callback.c).
+       * ORDER IS LOAD-BEARING: abort_wire_line_command()'s menu-armed branch does
+       * `ui_state2 = 0`, so both teardowns must run BEFORE MENUSTARTDESCEND is assigned.
+       * Exactly two gates, not the four-gate battery the shape verbs carry: these are the doors
+       * that were MEASURED to eat the press. A placement preview cannot be live here (it is
+       * SELECTED, and hi_descend only arms a pick on an EMPTY selection), and a pending merge was
+       * not measured -- see doc/claude/issues/0257-* for the next door if one ever is.
+       * gate_bypass is the test-only construction seam (xschem.h), honoured the same way
+       * leave_wire_draw_for() honours it; abort_click_mode() checks it itself. */
+      int wire_gone;
+      const char *mode_ended;
+      char msg[192];
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      wire_gone = xctx->gate_bypass ? 0 : abort_wire_line_command();
+      mode_ended = abort_click_mode();
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTDESCEND; /* assign, like every other arming site */
-      statusmsg_hold("Descend: click the instance to descend into (ESC to cancel)", 1);
+      /* ONE held sentence carrying the prompt AND whatever was torn down for it (issue 0241): a
+       * separate gate line would be replaced by this prompt one statement later, since a held
+       * message is displaced by the next held message (statusmsg_hold() above). With nothing torn
+       * down the sentence is byte-identical to the one this verb has always spoken. */
+      if(!wire_gone && !mode_ended) {
+        statusmsg_hold("Descend: click the instance to descend into (ESC to cancel)", 1);
+      } else if(wire_gone && !mode_ended) {
+        statusmsg_hold("Descend: in-progress wire abandoned -- "
+                       "click the instance to descend into (ESC to cancel)", 1);
+      } else if(!wire_gone) {
+        my_snprintf(msg, S(msg), "Descend: %s mode ended -- "
+                    "click the instance to descend into (ESC to cancel)", mode_ended);
+        statusmsg_hold(msg, 1);
+      } else {
+        my_snprintf(msg, S(msg), "Descend: in-progress wire abandoned and %s mode ended -- "
+                    "click the instance to descend into (ESC to cancel)", mode_ended);
+        statusmsg_hold(msg, 1);
+      }
       Tcl_ResetResult(interp);
     }
 
@@ -12604,14 +12646,17 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* symbol_in_new_window [new_process]
      *   When a symbol is selected edit it in a new tab/window if not already open.
      *   If nothing selected open another window of the second schematic (issues a warning).
-     *   if 'new_process' is given start a new xschem process */
+     *   if 'new_process' is given start a new xschem process
+     *   Returns what happened (issue 0258): 0 nothing done, 1 opened, 2 switched to the
+     *   tab/window that already holds it, 3 refused (new_process on an already-open symbol).
+     *   It used to be Tcl_ResetResult() over a void function, so a caller could not tell a
+     *   switch from a silent no-op. */
     else if(!strcmp(argv[1], "symbol_in_new_window"))
     {
       int new_process = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2 && !strcmp(argv[2], "new_process")) new_process = 1;
-      symbol_in_new_window(new_process);
-      Tcl_ResetResult(interp);
+      Tcl_SetResult(interp, my_itoa(symbol_in_new_window(new_process)), TCL_VOLATILE);
     }
 
     /* swap_cursors

@@ -10,10 +10,34 @@ namespace eval cadence {
 # --- helpers --------------------------------------------------------------
 
 # 1 iff exactly one instance (ELEMENT == type 8) is selected.
+#
+# ISSUE 0259. This used to ask `xschem get first_sel`, which is a STICKY MEMO, not a live read:
+# set_first_sel() (select.c) stores only into an EMPTY slot and the slot is emptied only by
+# unselect_all / delete. So select a wire, then an instance, then deselect the wire, and the
+# selection really is exactly one instance -- lastsel 1, selected_set {x1} -- while first_sel
+# still reports the WIRE. The gate answered 0, Ctrl-X did nothing and said nothing, and
+# `xschem descend` on the very same selection returned 1. Measured 2026-08-10.
+#
+# The live question instead: exactly one object selected, and it is an ELEMENT. `xschem selection`
+# is the generic enumerator (scheduler.c, rebuilt on every call) and emits one
+# `{type index col id}` row per selected object, so with lastsel already pinned at 1 the single
+# row's type word IS the answer. (`xschem selection`, NOT `xschem get selection` -- the latter is
+# an unknown `get` key and answers EMPTY with rc 0, silently gating everything to 0; issue 0392.) The accept/reject set is unchanged on every case
+# doc/claude/specs/cadence_descend_newwin_ro.md enumerates: nothing selected -> lastsel 0 -> 0;
+# instance + wire -> lastsel 2 -> 0; one text/wire -> row type is not `instance` -> 0. Only the
+# false refusal changes.
+#
+# NOT `[llength [xschem selected_set]]`: selected_set hand-wraps each instname in braces with no
+# quoting, so an instance whose name= holds an unbalanced brace makes it an INVALID Tcl list and
+# llength THROWS -- turning a working Ctrl-X into a propagated Tcl error. Measured, and filed as
+# issue 0388. `xschem get selection` carries indices, never user text, so it cannot be poisoned.
+#
+# `xschem get first_sel` itself is NOT touched: its exact output is pinned string-for-string by
+# tests/stable_handles/test_body.tcl and inst_body.tcl. cadence::selkind reads the same stale memo
+# for five NON-descend verbs and is filed separately as issue 0382.
 proc cadence::one_instance_selected {} {
   if {[xschem get lastsel] != 1} { return 0 }
-  lassign [xschem get first_sel] type n col   ;# "type n col"
-  return [expr {$type == 8}]
+  return [expr {[lindex [xschem selection] 0 0] eq {instance}}]
 }
 
 # Current location as a list of instance names, top -> here.
@@ -239,7 +263,8 @@ proc cadence::descend_into_inst {} {
 }
 
 # "Descend schematic (edit)": descend, then force the child editable regardless of
-# the read-only-by-default. Used by the canvas context menu and bindable to a key.
+# the read-only-by-default. Bindable to a key; NOT wired to the canvas context menu (the
+# comment claiming so was stale -- issue 0259: this proc has no caller in the tree today).
 proc cadence::descend_into_inst_edit {} {
   if {![cadence::one_instance_selected]} { return }
   xschem descend

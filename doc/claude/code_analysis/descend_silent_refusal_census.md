@@ -382,3 +382,86 @@ that must be solved before 0252 is attempted again.
 - **`get_sch_from_sym`'s fallback block only consults `file_exists` when `has_x` is set**, so with
   `fallback != 0` and no X the explicit token is always replaced by the derived name and the
   discriminator cannot fire. Pre-existing, but it bounds where the probe applies.
+
+---
+
+# D6 (2026-08-10) — the Tcl-layer half of the census: 0255, 0257, 0258, 0259, 0260
+
+D4 gave the **C** layer one refusal channel and one resolver. D6 took the four remaining census
+sites that live **above** C, plus the gesture-ownership site that is not part of the channel at all.
+Landed and committed; two of the five are partial and the residue is filed, not hidden.
+
+## Verdicts
+
+| issue | verdict | what it cost |
+|---|---|---|
+| 0255 | **CLOSED, no code.** Headline already fixed by D4's `descend_pick_target()`; the surviving verb-vs-verb split is ratified and locked by R30/R31/R32. | 11 test rows |
+| 0257 | **PARTIAL.** The three measured swallow doors and the unredeemable ESC are closed at the verb; the reverse order and the shape-draw door remain (0386, 0387). | `abort_click_mode()`, `descend_pick_arm_live()`, 19 MS rows |
+| 0258 | **FIXED** on the arm it was filed against: `check_loaded`'s `win_path` is consumed, the window is switched to and the switch is verified and spoken; `int` return 0/1/2/3. Sibling arm filed as 0383. | `symbol_already_open()`, 6 SNW rows |
+| 0259 | **PARTIAL.** The false refusal (the sticky `first_sel` memo) is fixed; the silence on genuine refusals is escalated, not reversed (recorded user preference). | 6 GATE rows |
+| 0260 | **PARTIAL.** The nameless-instance refusal now speaks on both channels via the resolver; the C pick continuation still re-arms forever (0385). | `hi_descend_nameless_refuse`, 6 NAMELESS rows |
+
+## The one mechanism, restated after measurement
+
+The scout's thesis was that four of the five are the same missing thing: a single, selection-live,
+**index-carrying** descend-target resolver. D6 did **not** build it — three separate small fixes were
+cheaper and did not inherit 0378/0379 — and the adversary pass then demonstrated the cost of that
+choice twice:
+
+* `hi_descend_target_inst` is still **name-keyed**, so the refusal it now speaks is invisible to the
+  C pick, which passes a name and gets an empty one (0385).
+* the name it is keyed by arrives through `selected_set`, which is **not a valid Tcl list** — a
+  `name=` holding an unbalanced brace throws (0388), and an empty one aliases onto another cell.
+
+Both point at the same place. Whoever takes 0385 should take the index-carrying resolver with it;
+that is the fix the scout described, and it is now cheaper than the alternatives because 0378/0379
+are filed and understood.
+
+## Decision ladder (D6)
+
+| # | decision | rung | rejected alternative |
+|---|---|---|---|
+| D1 | the descend pick **abandons and names** the competing Button-1 owner, at the verb | R1 (0240/0243 F2/0241) | refuse-to-arm; hoisting the pick arm above the mode arms in `handle_button_press` (per-click primitive) |
+| D2 | relax the ESC guard to `MENUSTARTDESCEND` alone; leave the release-side `MENUSTART` clear alone | R2 | clearing `ui_state2` at release (deletes the evidence ESC needs); cancelling from the release (teardown at the shared primitive) |
+| D3 | exactly two gates on `descend_pick`: wire/line and click-mode | R2 | the full four-gate battery, dismissed as unmeasured — the shape door has since been measured (0387) |
+| D4 | consume `check_loaded`'s `win_path` and **switch**, with an `int` return | R1 | message-only, which still deletes the navigation |
+| D5 | `new_process` refuses **out loud** (3) instead of doing nothing | R2, **user-visible → status E** | letting it through: two editable views of one `.sym` across processes |
+| D6 | the cadence gate asks the live selection, in Tcl only | R2 | the new-subcommand consolidation; re-pointing `get first_sel` (breaks `tests/stable_handles`) |
+| D7 | genuine cadence refusals stay **silent** | R1 (recorded user preference, spec §4) | one echo per bail — escalated as a question instead |
+| D8 | say why and keep refusing the nameless instance; no `descend_error` stamp | R1 (0241/0251, 0378) | offering the symbol view; filtering `selected_set` (flips a branch, not a message) |
+| D9 | ratify the `descend` / `descend_symbol` split | R1 (`multi_ok`, R19) | unification (breaks R19 by design, changes which cell opens for editing) |
+| D10 | file `cadence::selkind` rather than fix it | R2 | fixing five non-descend call sites in a descend item |
+
+## Sabotage matrix (8 variants, Verify-B `trustworthy: true`)
+
+| variant | predicted | observed |
+|---|---|---|
+| SAB-CLICKMODE | MS2-MS8 | 8 red, all predicted. **Hole found:** MS7c stays green because the un-torn-down `NET_HILIGHT` leaks between legs; MS7b is the discriminating row. |
+| SAB-WIREGATE | MS9 | 2 red; `test_placement_wire_gate` stayed 171 — attribution preserved by scoping the `#define` to the branch |
+| SAB-ESCLATCH | MS11 | 1 red row carrying both facts (MS11c) |
+| SAB-SYMSWITCH | SNW2/3/5/6 | 3 red; **SNW6 did not appear** — the same-window branch it targeted is unreachable (a `.sym` view has no instances), so that branch is **dead code with zero coverage** |
+| SAB-SYMRET | SNW2/4/5 | 4 red; confirms SNW2 must assert **ret AND state** (state half stayed correct) |
+| SAB-CADGATE | GATE-stale ×2 | exactly 2 red |
+| SAB-NONAME | NAMELESS echo/hold | exactly 2 red; setup/noalias/control stayed green |
+| SAB-PICKTARGET | R30 ×5, R31, R32-half, R18/R19 collateral | 22 red in the 0251 suite + collateral in 3 suites; R32's `descend_symbol` half stayed correct |
+
+Plus one write-up-agent variant: reverting the cadence gate to `llength [xschem selected_set]`
+reddens `GATE-brace` / `GATE-brace-descend` and nothing else.
+
+## Still open (D6)
+
+* **0385** — the nameless refusal is unreachable from the C pick, which re-arms forever. The
+  strongest adversary finding; it is 0260's own symptom on the GUI path.
+* **0386** — the 0257 gate is one-directional: arm → mode still swallows, strands the discriminator
+  and leaves `cmdmode` suspended across an `xschem load` (ESC now redeems it, so not terminal).
+* **0387** — a live shape draw is a fourth Button-1 owner: not aborted, not named, and its
+  `MENUSTARTSHAPE` discriminator is destroyed by the wholesale `ui_state2` assignment.
+* **0388** — `selected_set` is not a valid Tcl list; `hi_descend_target_inst` still `llength`s it.
+* **0389** — "in-progress wire abandoned" is spoken for a merely resting command (pinned by MS9b).
+* **0390** — a plain `descend` leaves the click-mode prompt up in the child.
+* **0391** / **0384** — two harness hazards found in this run (a stray gitignored `top~.sch` poisons
+  later `test_hi_descend` runs; concurrent `run_regression` runs forge phantom FATALs).
+* **0392** — `xschem get <unknown-key>` answers empty with rc 0.
+* **0382**, **0383** — filed by this item, not fixed.
+* Two rulings are unratified by a human: Alt+Shift+I refusing out loud (D5) and the cadence gate
+  staying silent on genuine refusals (D7).

@@ -298,6 +298,28 @@ static void clear_orphan_gesture_bits(void)
   xctx->ui_state &= ~MENUSTART;
 }
 
+/* Is a verb-noun descend pick still waiting for its click? (issue 0257)
+ *
+ * MENUSTARTDESCEND ALONE, deliberately -- not the (MENUSTART && MENUSTARTDESCEND) conjunction the
+ * check_menu_start_commands() arm uses. The state that needs ESC most is the one where MENUSTART
+ * has already been BURNED: handle_button_release() clears MENUSTART unconditionally on any
+ * Button1Mask release, so a press that some other Button-1 owner swallowed (a click mode, a
+ * resting wire command) leaves MENUSTARTDESCEND set with MENUSTART clear. Measured under xvfb
+ * 2026-08-10: ESC then fell straight through to the blanket `ui_state = 0` below,
+ * hi_descend_pick_cancel never fired, and cmdmode::is_suspended stayed 1 for the rest of the
+ * session -- command mode dead, and the residue survived a subsequent `xschem load`.
+ * Reading the discriminator alone makes ESC able to redeem a stranded arm. It cannot misfire on a
+ * live OTHER arm: every arming site ASSIGNS ui_state2 wholesale, so MENUSTARTDESCEND is set only
+ * by `xschem descend_pick`, and the arm's own consumer (check_menu_start_commands) clears it.
+ * The release-side unconditional MENUSTART clear is deliberately left alone -- it is the terminal
+ * of every menu-armed gesture and its residue is asserted on by test_shape_draw_gate.tcl and
+ * test_placement_wire_gate.tcl. */
+static int descend_pick_arm_live(void)
+{
+  if(!xctx) return 0;
+  return (xctx->ui_state2 & MENUSTARTDESCEND) ? 1 : 0;
+}
+
 /* resets UI state and aborts any pending operation. deselect!=0 also clears the
  * selection when nothing was pending (the legacy ESC behavior); deselect==0 keeps the
  * current selection and just redraws. ESC drives this via the `escape_deselects` var
@@ -347,8 +369,12 @@ void abort_operation(int deselect)
    * ASSIGNS ui_state2 wholesale, so a stale bit cannot be misread as a live arm -- but it
    * keeps `xschem get ui_state2` an honest report of what is armed, which is what the
    * 0200/0201 tests assert on.
-   * Placed here, above the DESEL_MODE early return, because that arm returns. */
-  if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+   * Placed here, above the DESEL_MODE early return, because that arm returns.
+   *
+   * ISSUE 0257: the guard was the (MENUSTART && MENUSTARTDESCEND) conjunction and is now
+   * descend_pick_arm_live() -- see it above for why a STRANDED arm (MENUSTART already burned by
+   * the matching ButtonRelease) is exactly the state that needs this continuation. */
+  if(descend_pick_arm_live()) {
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 &= ~MENUSTARTDESCEND;
     /* blanking the prompt is deliberate, so it must not be dropped by that prompt's own hold
@@ -1005,6 +1031,50 @@ int leave_merge_for(const char *what)
   my_snprintf(msg, S(msg), "%s: pending paste abandoned", what);
   statusmsg_hold(msg, 1);
   return 1;
+}
+
+/* THE FIFTH TEARDOWN of the family (issue 0257), after abort_wire_line_command(),
+ * abort_placement_preview(), abort_pending_merge() and abort_shape_draw(). This one ends a
+ * persistent CLICK MODE -- interactive net-highlight, net-unhighlight, or deselect-one-at-a-time.
+ *
+ * WHY. Those three are the only gestures that own Button-1 from a RESTING ui_state bit rather than
+ * from a live band or preview, and handle_button_press() dispatches all three (callback.c, the
+ * NET_HILIGHT|NET_UNHILIGHT arm, the DESEL_MODE arm) with a `return` BEFORE the single
+ * check_menu_start_commands() call site. So an armed verb-noun descend pick -- MENUSTART plus
+ * MENUSTARTDESCEND, which only that call site reads -- can never receive its click while one of
+ * them is up. Measured 2026-08-10 under xvfb: arming the pick inside net-highlight mode left the
+ * press resolving nothing, and the matching ButtonRelease then cleared MENUSTART while leaving
+ * MENUSTARTDESCEND set -- a combination no reader tests -- so cmdmode stayed suspended forever.
+ *
+ * WHAT IT DOES NOT DO. It touches NO selection: deselect mode is entered ON a selection and ending
+ * the mode is not a reason to drop it (doc/claude/specs/deselect_one_mode.md), and the net-hilight
+ * modes leave nothing selected by construction. It removes no highlights. It is a pure mode exit.
+ * Note this is deliberately NARROWER than ESC: abort_operation()'s net-(un)hilight arm falls
+ * through to `ui_state = 0` + unselect_all(), which is ESC's documented meaning, not a gate's.
+ *
+ * NO leave_click_mode_for() WRAPPER, unlike the other four. Its only caller (`xschem descend_pick`,
+ * scheduler.c) arms a PROMPT one statement later, and a held prompt replaces a held gate line
+ * (statusmsg_hold(), scheduler.c) -- so a gate message written here would be destroyed by the very
+ * arm that asked for the teardown. The caller composes ONE held sentence carrying both facts
+ * instead, which is what issue 0241's "a teardown must name what it is tearing down" asks for.
+ * Hence the return type: the NAME of what ended (a static string, safe to hold), or NULL.
+ * gate_bypass is honoured here rather than in a wrapper for the same reason. */
+const char *abort_click_mode(void)
+{
+  const char *what = NULL;
+  if(!xctx) return NULL;
+  if(xctx->gate_bypass) return NULL;  /* test-only construction seam, see xschem.h gate_bypass */
+  if(xctx->ui_state & NET_HILIGHT)        what = "net-highlight";
+  else if(xctx->ui_state & NET_UNHILIGHT) what = "net-unhighlight";
+  else if(xctx->ui_state & DESEL_MODE)    what = "deselect";
+  if(!what) return NULL;
+  xctx->ui_state &= ~(NET_HILIGHT | NET_UNHILIGHT | DESEL_MODE);
+  /* the persistent mode prompt lives in the SECOND status field, written by
+   * net_hilight_interactive() (scheduler.c) and enter_deselect_mode() above, and cleared by
+   * abort_operation()'s two mode arms. A mode that ended must not keep advertising itself. */
+  if(has_x)
+    tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
+  return what;
 }
 
 void start_wire(double mx, double my)

@@ -1,6 +1,8 @@
 # 0255 — a text co-selected with an instance blocks descend_schematic; a wire does not
 
-Status: **OPEN** — reproduced and measured headless for all six co-selected object types; the
+Status: **CLOSED** (2026-08-10, crew item D6 — headline fixed by D4's `descend_pick_target()`,
+surviving verb-vs-verb split ratified; see Resolution at the end). Original text follows.
+Status was: **OPEN** — reproduced and measured headless for all six co-selected object types; the
 GUI silence is argued from the call sites (`src/callback.c:4510`, `src/xschem.tcl:12599`) and
 from the fact that the refusal is `dbg(1)`, not observed on a live display.
 Area: `src/actions.c` `descend_schematic()` (`:3589-3593`, target read at `:3610`);
@@ -285,3 +287,75 @@ It is a pure return-value test, so it needs no display.
   the single place that has to learn about it.
 - **No coverage today.** Every descend test in `tests/headless/` selects exactly one
   instance, so any change to this guard is currently unguarded in both directions.
+
+---
+
+## Resolution — crew item D6, 2026-08-10 — CLOSED, no code change
+
+**Status: CLOSED.** The headline defect no longer exists in the tree: it was closed by D4
+(commit `b1326180`), which gave both descend verbs a shared first-ELEMENT resolver
+`descend_pick_target()` (`src/actions.c:3715`). What survived measurement is only point 3 —
+the two verbs disagree on a multi-selection — and that divergence is hereby **ratified as
+deliberate** and locked by tests. No code was written for this issue in D6.
+
+### Measured BEFORE (D6 Measure, on a freshly rebuilt binary — the on-disk `src/xschem` was stale)
+
+```
+A2 inst+text     : descend                 ret={1} err_pre={} err_post={} currsch=1 cell=descend_child.sch
+A5 two instances : descend                 ret={1} err_pre={no-instance-selected} err_post={} currsch=1 cell=descend_child.sch
+A6 two instances : descend_symbol          ret={0} err_pre={} err_post={multi-selection} currsch=0 cell=parent.sch
+```
+
+`A2` is this issue's headline case (`instance + text`) and it **descends**, returning 1 and landing
+on the child. Text-only and wire-only selections refuse with the token `no-instance-selected` and a
+**held** status line `Descend: select an instance to descend into`. So the silence is gone and the
+false refusal is gone; `descend_schematic()` no longer reads `sel_array[0]` blind.
+
+`A5`/`A6` are the residue: `xschem descend` is permissive on a multi-selection (first ELEMENT wins),
+`xschem descend_symbol` is strict (`multi-selection`).
+
+### Decision D9 — ratify the split (ladder rung R1)
+
+The divergence is already **encoded in the source as a parameter**, not an accident:
+`descend_pick_target(&n, multi_ok, verb)` is called with `multi_ok=1` at `src/actions.c:3803`
+(descend) and `multi_ok=0` at `src/save.c:5573` (descend_symbol). R19 of
+`tests/headless/test_descend_refusal_channel_0251.tcl` already pins the permissive half **on
+purpose**. Rung R1 applies: "whatever you just pressed is what you meant" — a user who presses the
+descend key with several things selected means the instance under the cursor's intent, while
+`descend_symbol` opens a cell **for editing** and must not guess which one.
+
+**Rejected alternative:** unify both verbs behind one policy. It would break R19 by design, and it
+changes *which cell opens for editing* — `descend_symbol`'s embedded-symbol branch
+(`src/save.c:5572-5579`) has a save-prompt exception keyed to the resolved instance, so a loosened
+resolver must be wired in before that branch, not after. That is a separate, larger decision.
+
+### AFTER — the whole measured table is now locked by tests
+
+New section E in `tests/headless/test_descend_refusal_channel_0251.tcl` (34 → 45 checks):
+
+* **R30** — an instance co-selected with each of wire / rect / line / poly / arc descends into the
+  instance (5 checks, one per type).
+* **R31** — text-only and wire-only selections refuse with the exact token `no-instance-selected`
+  **and speak it held**.
+* **R32** — the ratified split: with two instances selected `xschem descend` == 1 while
+  `xschem descend_symbol` == 0 with `descend_error` == `multi-selection`.
+
+A future unification now has to break R32 on purpose, which is the point.
+
+### Sabotage evidence (Verify-B)
+
+`SAB-PICKTARGET` — `#define descend_pick_target(n,m,v) 0` immediately after its definition in
+`src/actions.c`, so only `descend_schematic()`'s call is neutralized and `save.c`'s is not:
+R30 ×5, R31 ×4 and R32 all went red, with R32 reading `descend=0` while the `descend_symbol` half
+still read `0/{multi-selection}` — the row discriminates the two verbs exactly as designed.
+Predicted collateral on R18/R19 (same callee) also appeared.
+
+### Still open
+
+* Four different multi-selection policies now coexist across four entry points and none is wrong on
+  its own: `descend` permissive (R32), `descend_symbol` strict (R32),
+  `cadence::one_instance_selected` exactly-one (issue 0259), `hi_descend_target_inst` `lindex 0`
+  (issue 0260). Nothing reconciles them; R32 records the two that matter.
+* Selection *order* is still absent: "first ELEMENT" means lowest instance index, not "the one I
+  clicked first". If the selection ever gains a true order, `descend_pick_target()` is the single
+  place that has to learn it.

@@ -5851,7 +5851,32 @@ proc hi_descend_target_inst {inst} {
   # first selected instance when several are selected.
   set sel [xschem selected_set]
   if {[llength $sel] == 0} { ciw_echo "hi_descend: select an instance to descend into" error; return {} }
+  # ISSUE 0260. `selected_set` brace-wraps each selected instance's instname with no emptiness
+  # check, so an instance with no name= property comes back as a 1-element list whose element is
+  # the EMPTY STRING (measured on xschem_library/logic/test_ngspice.sch, instances 2 and 14).
+  # Every consumer of this resolver is NAME-keyed, and hi_descend_inst_sym {} matches the FIRST
+  # nameless row in `xschem instance_list` -- so letting "" through does not fail, it silently
+  # enumerates and descends into ANOTHER CELL. It must keep refusing. What it owes is a reason:
+  # before this, hi_descend and hi_descend_dialog both returned 0 with ZERO echoes, an untouched
+  # descend_error and an untouched status line -- byte-identical to having done nothing at all.
+  if {[lindex $sel 0] eq {}} { return [hi_descend_nameless_refuse] }
   return [lindex $sel 0]
+}
+
+# The refusal 0260 was missing. Both channels, because neither alone reaches everyone: ciw_echo is
+# the CIW transcript (absent in a plain xschem session), the held status line is what a user
+# without a CIW actually reads. -hold so the next selection/coordinate readout cannot eat it
+# (issue 0248). Deliberately NO descend_error stamp: issue 0378 records that a Tcl-level stamp must
+# be opt-in -- hi_descend_finish and hier_traversal reach their refusal path AFTER the C verb has
+# recorded an accurate token, and an unconditional stamp here would destroy
+# not-descendable:<type> / missing-symbol:<name> / load-failed. (There is no `xschem set
+# descend_error` in this tree, so there is no way to stamp it from Tcl anyway.)
+# Returns {} so it is a drop-in for the `return [lindex $sel 0]` it replaces.
+proc hi_descend_nameless_refuse {} {
+  set m "hi_descend: the selected instance has no name= property; it cannot be addressed by name"
+  ciw_echo $m error
+  xschem statusmsg -hold $m
+  return {}
 }
 
 # Enumerate the views available for the cell behind instance $instname.

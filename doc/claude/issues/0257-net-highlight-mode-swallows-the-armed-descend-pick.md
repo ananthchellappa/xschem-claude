@@ -1,6 +1,7 @@
 # 0257 — net-highlight mode eats the armed descend pick and strands MENUSTARTDESCEND
 
-Status: **OPEN** — measured end to end (four transcripts below). The swallow, the arm being
+Status: **PARTIALLY FIXED** (2026-08-10, crew item D6 — see Resolution at the end; the
+remaining doors are 0386/0387/0389/0390). Status was: **OPEN** — measured end to end (four transcripts below). The swallow, the arm being
 burned by the matching ButtonRelease, the stale `MENUSTARTDESCEND` left in `ui_state2`, the
 permanently latched `cmdmode::suspend_all`, and the loss of the on-screen prompt are all
 reproduced. **Not** measured: the sibling swallow through the `persistent_command` wire arm
@@ -324,3 +325,118 @@ before it is safe to generalise.
   `tests/headless/test_descend_pick_mode_clash_0257.tcl` asserting, at minimum: the pick
   resolves or refuses (never silently drops), `ui_state2` is 0 after any terminal, and
   `cmdmode::is_suspended` returns to 0.
+
+---
+
+## Resolution — crew item D6, 2026-08-10 — FIXED for the measured mechanism; two doors remain
+
+**Status: PARTIALLY FIXED.** Every state this issue *measured* is closed: the three press-dispatch
+swallow doors, the mutating wire swallow, and the permanently latched `cmdmode::suspend_all` that
+ESC could not redeem. The **reverse order** (arm the pick first, then enter the mode) still swallows
+— filed as **0386** — and a live shape draw is a fourth Button-1 owner the arm neither aborts nor
+names — filed as **0387**.
+
+### Measured BEFORE (D6 Measure, xvfb, freshly rebuilt binary)
+
+```
+L1 after press     : ui_state=0 ui_state2=0 []  resolved={x1}
+L2 after press     : ui_state=1114112 ui_state2=32768 [MENUSTART|NET_HILIGHT|MENUSTARTDESCEND]  resolved={}   <-- pick SWALLOWED
+L2 after release   : ui_state=1048576 ui_state2=32768 [NET_HILIGHT|MENUSTARTDESCEND]  resolved={} cancelled=0
+L2 after ESC       : ui_state=0 ui_state2=32768 [MENUSTARTDESCEND]  cancelled=0 cmdmode::is_suspended=1
+L4 after press     : ui_state=65537 ui_state2=32768 [MENUSTART|STARTWIRE|MENUSTARTDESCEND]  resolved={} wires=10 -> 10
+```
+
+`L1` is the control (nothing owns Button-1: the pick resolves `x1` and both words return to 0).
+`L2` is the defect: the press changes nothing, the matching release burns `MENUSTART` and leaves
+`MENUSTARTDESCEND` set **with `MENUSTART` clear** — a combination no reader tests, because both the
+pick arm (`callback.c:4034`) and the ESC continuation (`callback.c:351`) are guarded on the
+*conjunction*. Consequence: `hi_descend_pick_cancel` never fires, `cmdmode::is_suspended` stays 1
+forever, and the residue survives a subsequent `xschem load`. `DESEL_MODE` reproduces identically.
+`L4` is the mutating swallow the issue's Risks predicted from source only: with
+`persistent_command=1` and a *resting* `last_command=STARTWIRE`, the press meant as "descend into
+this instance" instead **begins a wire draw** (`callback.c:8500` calls `start_wire()`). Refinement
+over the source-only prediction: no wire is committed (count 10 → 10) — the damage is the started
+draw plus the stranded state.
+
+### What changed
+
+1. **A fifth teardown primitive.** `const char *abort_click_mode(void)` in `src/callback.c`, beside
+   `abort_wire_line_command` / `abort_placement_preview` / `abort_pending_merge` / `abort_shape_draw`:
+   clears `NET_HILIGHT | NET_UNHILIGHT | DESEL_MODE`, blanks the `.statusbar.10` mode prompt under
+   `has_x`, honours `xctx->gate_bypass`, touches **no** selection, and returns the name of what it
+   ended (`net-highlight` / `net-unhighlight` / `deselect`) or NULL. Declared in `src/xschem.h`.
+2. **The gate at the verb.** `xschem descend_pick` (`src/scheduler.c`) now runs, in this order:
+   `wire_gone = gate_bypass ? 0 : abort_wire_line_command();` then `mode_ended = abort_click_mode();`
+   then sets `MENUSTART` / `MENUSTARTDESCEND`. The order is load-bearing —
+   `abort_wire_line_command()` zeroes `ui_state2` wholesale. It then composes **one held sentence**
+   carrying both facts, or the byte-identical shipped prompt when nothing was torn down.
+3. **ESC can redeem a stranded arm.** The descend continuation in `abort_operation()` now goes
+   through a named static predicate `descend_pick_arm_live()` reading `ui_state2 & MENUSTARTDESCEND`
+   **alone**. `handle_button_release()`'s unconditional `MENUSTART` clear is deliberately untouched.
+
+### Decisions
+
+* **D1 — abandon and name, at the verb (rung R1).** Three ratified rules converge: "whatever you
+  just pressed is what you meant" (0240/0242/0243/0247/0265/0269), "gates live at the VERBS, never
+  at the shared per-click primitive" (0243 F2), "a teardown must name what it is tearing down"
+  (0241). **Rejected:** shape A (refuse to arm and say so) — it makes the user do a mode dance for
+  a gesture they just asked for; shape C (hoist the `MENUSTARTDESCEND` arm above the three mode arms
+  in `handle_button_press`) — forbidden by the per-click-primitive rule, and this issue's own Risks
+  show those three arms are ordered deliberately.
+* **D2 — relax the ESC guard, do not touch the release-side clear (rung R2, smallest blast radius).**
+  That clear is the terminal of every menu-armed gesture and its residue is asserted on by
+  `test_shape_draw_gate` (421) and `test_placement_wire_gate` (171). **Rejected:** clearing
+  `ui_state2` at release (turns an unrecoverable latch into an unrecoverable latch with the evidence
+  deleted — ESC could then never redeem it), and calling `hi_descend_pick_cancel` from the release
+  (a teardown at the shared per-click primitive).
+* **D3 — exactly two gates: wire/line and click-mode (rung R2).** Those are the doors that were
+  *measured* to swallow the press. **Rejected:** the full four-gate battery the shape verbs carry
+  (`leave_placement_for` / `leave_shape_draw_for` / `leave_merge_for`) as unmeasured. The adversary
+  pass then measured the shape-draw door — see 0387; D3 stands as recorded but its "unmeasured"
+  justification no longer holds for that one door.
+
+### AFTER (19 new MS rows in `tests/headless/test_cmdmode_descend_0201.tcl`, xvfb)
+
+```
+MS4  THE POINT: the armed click resolves the instance instead of being swallowed (got x1 0 want x1 0)
+MS3  the arm NAMES what it tore down, held
+     (got {Descend: net-highlight mode ended -- click the instance to descend into (ESC to cancel)} 1)
+MS9c the press DESCENDS instead of starting a wire, and commits no copper (got x1 10 want x1 10)
+MS11c ESC redeems it: arm dropped and command mode resumed (got 0 0 want 0 0)
+```
+
+Full block: MS1-MS6 (net-highlight leg), MS7a-c (deselect), MS8a-c (net-unhighlight), MS9a-c
+(mutating swallow), MS10 (no-teardown prompt byte-identical to the shipped sentence), MS11a-c
+(stranded arm redeemed by ESC). Suite: 89 ok, RESULT: ALL PASS.
+
+### Sabotage matrix (Verify-B)
+
+| variant | predicted | observed |
+|---|---|---|
+| `SAB-CLICKMODE` (`#define abort_click_mode() ((const char *)0)` in scheduler.c) | MS2-MS8 red | **8 red**: MS2, MS3, MS4, MS5, MS6, MS7b, MS8b, MS8c. Other suites green. |
+| `SAB-WIREGATE` (`#define abort_wire_line_command() 0` scoped to the descend_pick branch) | MS9 red | **2 red**: MS9b, MS9c. `test_placement_wire_gate` stayed 171 ALL PASS — attribution preserved. |
+| `SAB-ESCLATCH` (predicate redefined back to the conjunction) | MS11 red | **1 red row carrying both facts**: MS11c (`got 32768 1, want 0 0`). MS11a/b correctly stayed green — they pin the stranded state, not the redemption. |
+
+**Coverage hole found by the sabotage loop:** MS7c stayed *green* under `SAB-CLICKMODE` because the
+un-torn-down `NET_HILIGHT` bit from the MS1-MS6 leg leaks into the MS7 leg (`ms_reload` does not
+clear `ui_state`; modebits read 5242880). MS7b is what actually pins the deselect leg; MS7c is not
+independently discriminating for this mechanism.
+
+### Still open
+
+* **0386** — the gate is one-directional. `net_hilight_interactive()` (`src/scheduler.c:5967-5968`)
+  and `enter_deselect_mode()` (`src/callback.c:4030`) still enter their modes with a bare `|=` over
+  a live `MENUSTARTDESCEND`. Measured: arm, then `xschem hilight_net_interactive`, then click →
+  `resolved=''`, `ui_state2=32768` stranded across an `xschem load`, `cmdmode::is_suspended=1`
+  (ESC does redeem it now, so it is no longer terminal).
+* **0387** — a live shape draw is a fourth Button-1 owner: `hi_descend` prints the *plain* prompt
+  (reports nothing torn down), leaves `STARTRECT` live and silently destroys `MENUSTARTRECT` via the
+  wholesale `ui_state2 = MENUSTARTDESCEND`.
+* **0389** — `Descend: in-progress wire abandoned` is spoken for a merely *resting* wire command,
+  because `abort_wire_line_command()` collapses three arms into one boolean. MS9b currently pins
+  that inaccurate wording as expected.
+* **0390** — `abort_click_mode()` is called only from `descend_pick`; a plain `xschem descend` with
+  a click mode live lands in the child still advertising `HIGHLIGHT NET!` / `DESELECT!`.
+* Issue **0268**'s inertness adjudication was corrected in `doc/claude/WIRING.md`: its argument was
+  that all 24 `ui_state2` readers are dominated by a `MENUSTART` test; `descend_pick_arm_live()` is
+  now the one reader that is not.

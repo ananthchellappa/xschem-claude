@@ -53,6 +53,72 @@ check "GATE-multi instance+wire selection is a no-op" \
   [expr {[llength [xschem windows]] == $w0 && [xschem get currsch] == 0 && [has top.sch]}] \
   "(wins=$w0->[llength [xschem windows]] currsch=[xschem get currsch] name=[schname])"
 
+# --- GATE-nonelem: exactly ONE object selected, but it is not an instance ----------
+# The reject half of the gate that the live-read rewrite (issue 0259) must preserve:
+# lastsel is 1, so the first arm passes, and only "is it an ELEMENT" can refuse.
+# (A wire stands in for any non-ELEMENT type; adding a text to the fixture would dirty
+# it and write top~.sch into the committed tree.)
+reload
+xschem select wire 0 fast
+check "GATE-nonelem one non-instance object selected still refuses" \
+  [expr {[cadence::one_instance_selected] == 0 && [xschem get lastsel] == 1}] \
+  "(gate=[cadence::one_instance_selected] lastsel=[xschem get lastsel] set={[xschem selected_set]})"
+
+# --- GATE-stale: THE FALSE REFUSAL (issue 0259 part b) ----------------------------
+# `xschem get first_sel` is a sticky MEMO: set_first_sel() (select.c) stores only into an
+# EMPTY slot, and the slot is emptied only by unselect_all / delete. So select a wire,
+# then an instance, then deselect the wire, and the selection really IS exactly one
+# instance -- lastsel 1, selected_set {x1} -- while first_sel still names the WIRE.
+# The gate answered 0: Ctrl-X did nothing and said nothing, while `xschem descend` on the
+# very same selection returned 1. The gate now asks live.
+reload
+xschem select wire 0 fast
+xschem select instance x1 fast
+xschem select wire 0 fast clear
+check "GATE-stale-setup exactly one INSTANCE is selected, but first_sel still says WIRE" \
+  [expr {[xschem get lastsel] == 1 && [xschem selected_set] eq {{x1}} &&
+         [lindex [xschem get first_sel] 0] == 1}] \
+  "(lastsel=[xschem get lastsel] set={[xschem selected_set]} first_sel={[xschem get first_sel]})"
+check "GATE-stale the gate reads the LIVE selection, not the memo" \
+  [expr {[cadence::one_instance_selected] == 1}] \
+  "(gate=[cadence::one_instance_selected])"
+set w0 [llength [xschem windows]]
+cadence::descend_into_inst
+check "GATE-stale-descend Ctrl-X on that selection descends (it used to do nothing)" \
+  [expr {[xschem get currsch] == 1 && [xschem get sch_path] eq {.x1.} && [has /schematic/leaf.sch]}] \
+  "(currsch=[xschem get currsch] path=[xschem get sch_path] name=[schname])"
+
+# --- GATE-brace: an instname the Tcl list parser cannot read (issue 0388) ----------
+# The first live-read rewrite of the gate asked `llength [xschem selected_set]`, and
+# selected_set hand-wraps each instname in braces with NO quoting (scheduler.c). An
+# instance whose name= holds an unbalanced brace therefore makes it an INVALID Tcl list,
+# llength THROWS, and cadence::descend_into_inst propagates the error -- a working Ctrl-X
+# turned into a stack trace. The gate now asks `xschem selection`, which carries indices
+# and type words only and cannot be poisoned by user text.
+# Works on a /tmp copy for the same reason the NAMELESS block in test_hi_descend does:
+# inserting an instance dirties the sheet and the set_modify hook would write top~.sch
+# into the COMMITTED fixture.
+set bwork /tmp/cadence_gate_brace_work
+file delete -force $bwork; file mkdir $bwork
+file copy -force $lib $bwork/blib     ;# different lib NAME so `hidlib/leaf` still resolves via $lib
+catch {xschem new_schematic destroy_all force}
+set ::hi_descend_view_path {}
+xschem load [file join $bwork blib top schematic top.sch]
+xschem unselect_all
+xschem instance hidlib/leaf 600 600 0 0 {name=xb\{roken}
+xschem unselect_all
+xschem select instance 2 fast
+set rcg [catch {cadence::one_instance_selected} gres]
+check "GATE-brace an unreadable instname neither throws nor closes the gate" \
+  [expr {$rcg == 0 && $gres == 1 && [xschem get lastsel] == 1}] \
+  "(rc=$rcg res={$gres} lastsel=[xschem get lastsel] set={[xschem selected_set]})"
+set rcd [catch {cadence::descend_into_inst} dres]
+check "GATE-brace-descend Ctrl-X on it still descends" \
+  [expr {$rcd == 0 && [xschem get currsch] == 1 && [has /schematic/leaf.sch]}] \
+  "(rc=$rcd res={$dres} currsch=[xschem get currsch] name=[schname])"
+while {[xschem get currsch] > 0} { xschem go_back }
+file delete -force $bwork
+
 # --- DESCEND: exactly one instance -> new window, REAL descend, read-only ----------
 reload
 set w0 [llength [xschem windows]]

@@ -2854,7 +2854,71 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  return 1;
 }
 
-void symbol_in_new_window(int new_process)
+/* ISSUE 0258 -- the already-open arm of symbol_in_new_window() below.
+ *
+ * check_loaded() answers TWO things: "is it open" and "WHERE". symbol_in_new_window() asked for
+ * both (it passes win_path) and consumed only the boolean, so the request died there: no window
+ * opened, no window switched, nothing said. Measured 2026-08-10 with the .sym already open in
+ * .x1.drw and its instance selected -- `xschem check_loaded <sym>` returned ".x1.drw", the exact
+ * value this function had in hand, while `xschem symbol_in_new_window` returned empty, left
+ * current_win_path on the parent and wrote nothing to the status bar. One level down,
+ * `xschem new_schematic create {} <sym> 1` both SAYS "already open: .x1.drw" and SWITCHES there.
+ * So the pre-check was deleting the message AND the navigation the user asked for.
+ *
+ * Ratified rule R1, "whatever you just pressed is what you meant": the user asked to see that
+ * symbol, and the window already holding it is the honest fulfilment. new_schematic("switch") is
+ * used rather than switch_tab/switch_window directly because it is the one entry that routes a
+ * real detached window and a pure tab correctly (xinit.c). The switch is VERIFIED by re-reading
+ * current_win_path: switch_tab()/switch_window() both bail on a nonzero semaphore and on a
+ * destroyed widget, and a refusal that reported 2 would be a fresh false success of the 0366 class.
+ *
+ * new_process (Alt+Shift+I) keeps its guard but now refuses OUT LOUD (ruling D5, ledger question):
+ * letting it through would give one .sym two editable views in two processes with no shared modify
+ * flag -- a real save-over-each-other path -- so the smallest, least surprising answer is to say
+ * why rather than to do nothing.
+ *
+ * Return: 0 nothing done, 2 switched, 3 refused (new_process). Never 1 -- the caller owns "opened".
+ */
+static int symbol_already_open(const char *filename, const char *win_path, int new_process)
+{
+  char msg[PATH_MAX + 160];
+  if(new_process) {
+    my_snprintf(msg, S(msg),
+      "Edit symbol in new process: %s is already open in this process (%s) -- not opening a second copy",
+      filename, win_path);
+    statusmsg_hold(msg, 1);
+    return 3;
+  }
+  if(!strcmp(win_path, xctx->current_win_path)) {
+    my_snprintf(msg, S(msg), "Edit symbol: %s is already open in this window", filename);
+    statusmsg_hold(msg, 1);
+    return 0;
+  }
+  new_schematic("switch", win_path, "", 1);
+  if(strcmp(xctx->current_win_path, win_path)) {
+    /* the switch was refused (semaphore held, or the widget is gone). Say so instead of
+     * reporting a navigation that did not happen. */
+    my_snprintf(msg, S(msg), "Edit symbol: %s is open in %s but that window cannot be raised now",
+                filename, win_path);
+    statusmsg_hold(msg, 1);
+    return 0;
+  }
+  /* windowed mode's switch_window() retitles and re-points xctx but never raises the toplevel, so
+   * the window the user was just sent to can stay buried behind the one they are looking at.
+   * catch-guarded: a tab's toplevel is the main window (a harmless raise) and headless has no Tk. */
+  if(has_x) {
+    tclvareval("catch {raise [winfo toplevel ", win_path, "]}", NULL);
+    tclvareval("catch {focus -force ", win_path, "}", NULL);
+  }
+  my_snprintf(msg, S(msg), "Edit symbol: %s is already open -- switched to %s", filename, win_path);
+  statusmsg_hold(msg, 1);
+  return 2;
+}
+
+/* Returns what happened, for the `xschem symbol_in_new_window` result (issue 0258; the return
+ * shape is 0251's): 0 nothing done, 1 opened, 2 switched to the window that already holds it,
+ * 3 refused and said why. The two key entries (callback.c Alt+i / Alt+Shift+I) discard it. */
+int symbol_in_new_window(int new_process)
 {
   char filename[PATH_MAX];
   char win_path[WINDOW_PATH_SIZE];
@@ -2868,13 +2932,16 @@ void symbol_in_new_window(int new_process)
     }
     if(new_process) new_xschem_process(filename, 1);
     else new_schematic("create", NULL, filename, 1);
+    return 1;
   }
   else {
     my_strncpy(filename, abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), S(filename));
     if(!check_loaded(filename, win_path)) {
       if(new_process) new_xschem_process(filename, 1);
       else new_schematic("create", NULL, filename, 1);
+      return 1;
     }
+    return symbol_already_open(filename, win_path, new_process);
   }
 }
 

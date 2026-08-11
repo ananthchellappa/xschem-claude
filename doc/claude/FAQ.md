@@ -14,6 +14,47 @@ Newest entries on top.
 
 ---
 
+## Q44. Two commands both want the next Button-1. Who wins, and where is that decided?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `ee290c5b` + this session — issue **0257** (item D6).
+
+**The one the user pressed most recently wins, it takes ownership at its own VERB, and it must name
+what it displaced.** Three ratified rules produce that answer together: "whatever you just pressed
+is what you meant" (0240/0242/0243/0247/0265/0269), "gates live at the verbs, never at the shared
+per-click primitive" (0243 F2), and "a teardown must name what it is tearing down" (0241).
+
+Concretely, `xschem descend_pick` arms a click-pick. If net-highlight mode, deselect mode, or a
+resting `persistent_command` wire already owns Button-1, the *press* used to be eaten by whichever
+arm of `handle_button_press()` came first — the pick simply never happened, and in the wire case the
+press even **started a wire** on the instance the user meant to descend into. The fix is not in the
+press dispatcher. It is three statements at the top of the verb: tear down the wire/line command,
+tear down the click mode, *then* set the arm bits, then say one sentence that names both
+(`Descend: net-highlight mode ended -- click the instance to descend into (ESC to cancel)`).
+
+Three things make this a pattern rather than a one-off:
+
+* **Teardown primitives are named functions that return what they ended**, not inline bit-clearing:
+  `abort_wire_line_command()`, `abort_placement_preview()`, `abort_pending_merge()`,
+  `abort_shape_draw()`, and now `abort_click_mode()`. The name is what lets the caller compose an
+  honest sentence, and every one of them must honour `xctx->gate_bypass` and touch no selection.
+* **Order is load-bearing.** Several teardowns write `ui_state2` wholesale, so all of them run
+  *before* the arming assignment. Getting this backwards silently deletes the arm you just set.
+* **The gate is one-directional unless you write the other half.** D6 gated the pick against the
+  modes; nothing gates the modes against a live pick, so the reverse order still swallows
+  ([0386](issues/0386-entering-net-highlight-or-deselect-mode-over-a-live-descend-pick-arm-still-swallows-it.md)),
+  and a live shape draw is a door nobody gated at all
+  ([0387](issues/0387-descend-pick-neither-aborts-nor-names-a-live-shape-draw-and-clobbers-its-discriminator.md)).
+  When you add a mode, add both directions.
+
+A corollary about ESC: the arm's liveness test must not depend on a bit some *other* handler clears.
+The descend continuation in `abort_operation()` used to require `MENUSTART && MENUSTARTDESCEND`, and
+the matching ButtonRelease burns `MENUSTART` unconditionally — so precisely the stranded state that
+most needs rescuing was the one ESC could not see, and command mode stayed suspended forever. The
+discriminator alone (`MENUSTARTDESCEND`) is the honest test.
+
+---
+
 ## Q43. Why did a fix with 67 green checks, a clean sabotage matrix and an adversary pass still get reverted?
 
 - **Asked:** 2026-08-10

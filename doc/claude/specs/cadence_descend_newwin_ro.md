@@ -64,6 +64,33 @@ Note this is stricter than bare `hi_descend`, which would descend into the *firs
 selected instance of several and would emit a CIW error on an empty selection. The gate
 makes the shortcut a clean silent no-op in every non-single-instance case.
 
+### 4a. Amendment, 2026-08-10 (crew item D6, issue 0259)
+
+**The memo read above was a bug and is gone.** `first_sel` is a *sticky memo*:
+`set_first_sel()` (`src/select.c:1142`) stores only into an empty slot, and the slot is emptied
+only by `unselect_all`/delete. Select a wire, then an instance, then deselect the wire, and the
+selection really is exactly one instance — `lastsel 1`, `selected_set {x1}` — while `first_sel`
+still names the WIRE, so the gate refused a selection `xschem descend` accepted. The gate now asks
+the live selection:
+
+```tcl
+[xschem get lastsel] == 1 && [lindex [xschem selection] 0 0] eq {instance}
+```
+
+`xschem selection` (not `selected_set`, and *not* `xschem get selection`, which is an unknown key
+that answers empty — issue 0392) carries type words and indices only, so a `name=` holding an
+unbalanced brace cannot make the gate throw (issue 0388). The accept/reject set described above is
+unchanged in every case this section enumerates; only the false refusal is gone. Pinned by
+`GATE-none` / `GATE-multi` / `GATE-nonelem` / `GATE-stale*` / `GATE-brace*` in
+`tests/headless/test_cadence_descend_newwin_ro.tcl`.
+
+**The silence is re-affirmed, not reversed.** Issue 0259 part 2 argues that these three verbs
+should `ciw_echo` on a genuine refusal, the way the other fourteen refusal sites in
+`cadence_nav.tcl` do. D6 deliberately did **not** do that: the preference recorded in this section
+is the *user's*, and an unattended crew does not overturn a recorded user preference. The question
+is escalated instead — if Ctrl-X / Ctrl-Shift-X should speak when the gate genuinely refuses, this
+section is the place to change first.
+
 ## 5. Implementation
 
 New proc in `utils/cadence_nav.tcl`:

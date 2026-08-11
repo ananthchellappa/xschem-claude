@@ -1,6 +1,7 @@
 # 0259 — the cadence_nav descend procs refuse without the ciw_echo every sibling proc gives
 
-Status: **OPEN** — measured. Two distinct defects share one gate: (a) an *intended* silent
+Status: **PARTIALLY FIXED** (2026-08-10, crew item D6 — the false refusal (b) is fixed; the
+silence (a) is escalated, not reversed. See Resolution at the end.) Status was: **OPEN** — measured. Two distinct defects share one gate: (a) an *intended* silent
 refusal that the spec argued for and that the rest of the file contradicts, and (b) a **false**
 refusal on a selection that really is exactly one instance, caused by reading the sticky
 `first_sel` memo. (b) is a plain bug with no policy question attached; (a) is a policy call, and
@@ -364,3 +365,116 @@ menu"): the context menu goes to `src/callback.c:4512` and never reaches that pr
   visible at the moment a user presses Ctrl-X. `ciw_echo` no-ops when `.ciw.l.t` does not exist
   (`src/ciw.tcl:114`), so an echo-only fix still says nothing to a user who has closed the CIW —
   a fourth silent-refusal surface that part 3 should weigh when choosing the channel.
+
+---
+
+## Resolution — crew item D6, 2026-08-10 — part (b) FIXED, part (a) deliberately unchanged
+
+**Status: PARTIALLY FIXED.** The **false refusal** (b) — the plain bug — is fixed. The **silence on
+genuine refusals** (a) is a policy call and was deliberately left as it is, because this repo's own
+spec records a user preference for it; the question is escalated rather than reversed unattended.
+
+### Measured BEFORE (D6 Measure, headless)
+
+```
+B2 setup: lastsel=1 selected_set={{x1}} selection={{instance 0 1 23}}
+B2 first_sel={1 0 0}   <-- type 1=WIRE, 8=ELEMENT
+B2 cadence::one_instance_selected = 0
+B2 SAME selection: xschem descend          ret={1} err_pre={} err_post={} currsch=1 cell=descend_child.sch
+```
+
+Select wire 0, then instance x1, then `xschem select wire 0 fast clear`. The selection really is
+exactly one instance — `lastsel` 1, `selected_set {x1}`, `selection {{instance 0 1 23}}` — but
+`first_sel` still names the WIRE, because `set_first_sel()` (`src/select.c:1142`) stores only into an
+**empty** slot and the slot is emptied only by `unselect_all` / delete. The gate answered 0, Ctrl-X
+did nothing and said nothing, while `xschem descend` on the identical selection returned 1.
+Part (a) reproduced too: with instance+wire selected, `cadence::descend_into_inst` returns `''` with
+zero echoes and `currsch` unchanged.
+
+### What changed
+
+`cadence::one_instance_selected` stops reading the memo and asks the **live** selection:
+
+```tcl
+proc cadence::one_instance_selected {} {
+  if {[xschem get lastsel] != 1} { return 0 }
+  return [expr {[lindex [xschem selection] 0 0] eq {instance}}]
+}
+```
+
+`xschem get first_sel` itself is **not** touched — its output is pinned string-for-string by
+`tests/stable_handles/test_body.tcl:200-201` and `inst_body.tcl:235`.
+
+### A regression this fix introduced, and its repair — recorded in full
+
+The first live-read form was `[llength [xschem selected_set]] == 1`. The adversary pass
+(`ATK-4a`) broke it: `selected_set` hand-wraps each instname in braces with **no quoting**
+(`src/scheduler.c:11258`), so an instance whose `name=` holds an unbalanced brace makes it an
+**invalid Tcl list** and `llength` throws — `cadence::descend_into_inst` then propagates the error
+and a *previously working* Ctrl-X becomes a stack trace:
+
+```
+B brace-in-name : NEW rc=1 res={unmatched open brace in list} | OLD rc=0 res=1 | currsch=0
+```
+
+The D6 write-up agent repaired it (Tcl only, no rebuild) by asking `xschem selection`, whose rows
+carry type words and indices only and cannot be poisoned by user text. Same probe after the repair:
+
+```
+B brace-in-name : NEW rc=0 res=1 | OLD rc=0 res=1 | descend_into_inst rc=0 res={1} currsch=1
+```
+
+Two hazards were measured on the way and are filed: **0388** (`selected_set` is not a valid Tcl
+list — `hi_descend_target_inst` has the same latent throw at `src/xschem.tcl:5852`) and **0392**
+(`xschem get <unknown-key>` answers empty with rc 0, which silently gated *everything* to 0 when the
+repair was first written as `xschem get selection`).
+
+### Decisions
+
+* **D6 — ask live, in Tcl, no C change (rung R2).** Identical answer on every case
+  `doc/claude/specs/cadence_descend_newwin_ro.md` enumerates; only the false refusal changes.
+  **Rejected:** the scout's consolidation (expose `descend_pick_target()` as a new index-returning
+  `xschem descend_target` subcommand and rewrite three resolvers on it) — a refactor beyond the item
+  that also inherits 0378/0379; and re-pointing `get first_sel` at `set_first_sel(0,-2,0)`, which
+  breaks the `tests/stable_handles` string-exact rows.
+* **D7 — the gate stays SILENT on genuine refusals (rung R1; item status E).**
+  `doc/claude/specs/cadence_descend_newwin_ro.md:56-65` records a **user** preference for a clean
+  silent no-op on Ctrl-X / Ctrl-Shift-X, and an unattended crew does not reverse a recorded user
+  preference. **Rejected:** this issue's part 2 (one echo per bail, in the file's own voice), which
+  is what the other fourteen refusal sites in `cadence_nav.tcl` do. **Ledger question:** should
+  Ctrl-X / Ctrl-Shift-X echo when the gate *genuinely* refuses, overriding that preference?
+* Also corrected: the stale comment on `cadence::descend_into_inst_edit` claiming it is used by the
+  canvas context menu. It has **no caller** in the tree today.
+
+### AFTER (`tests/headless/test_cadence_descend_newwin_ro.tcl`, 5 → 11 ok)
+
+```
+GATE-stale-setup lastsel=1 set={{x1}} first_sel={1 0 0}
+GATE-stale       gate=1
+GATE-stale-descend currsch=1 path=.x1. leaf.sch
+GATE-brace       an unreadable instname neither throws nor closes the gate (rc=0 res={1} set={{xb{roken}})
+GATE-brace-descend Ctrl-X on it still descends (rc=0 currsch=1 leaf.sch)
+```
+
+`GATE-none`, `GATE-multi` and `GATE-nonelem` (the reject half) stay green, so the accept/reject set
+is preserved. `GATE-nonelem` uses a WIRE rather than a TEXT: adding a text to the committed fixture
+dirties it and the `set_modify` hook writes `top~.sch` into the tree (observed). The `GATE-brace`
+rows work on a `/tmp` copy for the same reason.
+
+### Sabotage matrix
+
+| variant | predicted | observed |
+|---|---|---|
+| `SAB-CADGATE` (a second, pre-fix definition of the proc appended; later definition wins) | GATE-stale, GATE-stale-descend | **2 red**, exactly those; nothing else in any suite moved. |
+| write-up agent's own re-check: gate reverted to the `llength [xschem selected_set]` form | GATE-brace rows | **2 red**: `GATE-brace` (`rc=1 res={unmatched open brace in list}`) and `GATE-brace-descend` (`currsch=0`). |
+
+### Still open
+
+* **0382** — `cadence::selkind` reads the same sticky memo for five NON-descend verbs
+  (`cadence_nav.tcl:199`, `:378`, `select_same_cell.tcl:103`, `cadence_clip.tcl:32`,
+  `lib_mgr_helpers.tcl:18`). Filed, not fixed: those call sites branch on its return contract and
+  none of them is descend.
+* **0388**, **0392** — the two hazards above.
+* A cadence-gate bail still leaves `descend_error` byte-identical to a success (the 0378 class
+  reaching the cadence layer).
+* The D7 silence ruling is unratified by a human (item status E).

@@ -273,4 +273,82 @@ check "R09: a successful descend_symbol clears descend_error (got ret={$ret} err
   [expr {$ret eq "1" && $derr eq {}}]
 xschem go_back
 
+# ---------------------------------------------------------------------------
+# Part E: symbol_in_new_window and the tab that already holds the .sym.
+# Issue 0258. The OTHER "edit this symbol" verb (Alt+i / File > Open selected
+# symbol in new window), which does not descend but answers the same question.
+#
+# check_loaded() reports TWO things -- "is it open" and WHERE. symbol_in_new_window()
+# asked for both (it passes a win_path buffer) and consumed only the boolean, so an
+# already-open symbol produced: no window opened, no window switched, nothing said, and
+# a scheduler branch that ended in Tcl_ResetResult so no caller could tell. Measured
+# 2026-08-10: `xschem check_loaded <sym>` returned ".x1.drw" -- the exact value the C
+# code had in hand -- while `xschem symbol_in_new_window` returned empty and left
+# current_win_path on the parent. One level down, `xschem new_schematic create {} <sym> 1`
+# both SAYS "already open" and SWITCHES there. The pre-check was deleting the message AND
+# the navigation the user asked for.
+#
+# Return shape (0251's): 0 nothing done, 1 opened, 2 switched, 3 refused and said why.
+# MUST run before nothing else needs the window table; it leaves it clean.
+# ---------------------------------------------------------------------------
+proc snw_ntabs {} { return [llength [xschem windows]] }
+proc snw_home {} { catch {xschem new_schematic switch .drw} }
+
+d_fresh
+catch {xschem new_schematic destroy_all force}
+set symfile [file normalize $work/descend_child.sym]
+set t0 [snw_ntabs]
+xschem unselect_all
+xschem select instance x1 fast
+xschem statusmsg { }
+set ret [xschem symbol_in_new_window]
+check "SNW4: not open yet -> returns 1, one more tab, and that tab holds the .sym (got ret={$ret} tabs=$t0->[snw_ntabs] name=[file tail [xschem get schname]])" \
+  [expr {$ret eq "1" && [snw_ntabs] == $t0 + 1 &&
+         [file tail [xschem get schname]] eq "descend_child.sym"}]
+set symwin [xschem get current_win_path]
+
+snw_home
+check "SNW1 setup: back on the parent, and check_loaded names the tab that holds the .sym (got cur=[xschem get current_win_path] loaded=[xschem check_loaded $symfile] want=$symwin)" \
+  [expr {[xschem get current_win_path] eq ".drw" &&
+         [file tail [xschem get schname]] eq "descend_parent.sch" &&
+         [xschem check_loaded $symfile] eq $symwin}]
+
+set t1 [snw_ntabs]
+xschem unselect_all
+xschem select instance x1 fast
+xschem statusmsg { }
+set ret [xschem symbol_in_new_window]
+check "SNW2: already open -> returns 2, SWITCHES to the tab holding it, opens nothing new (got ret={$ret} cur=[xschem get current_win_path] want=$symwin tabs=$t1->[snw_ntabs])" \
+  [expr {$ret eq "2" && [xschem get current_win_path] eq $symwin && [snw_ntabs] == $t1 &&
+         [file tail [xschem get schname]] eq "descend_child.sym"}]
+set sm [xschem get statusmsg]
+check "SNW3: and the switch SPEAKS it, held (got hold=[xschem get statusmsg_hold] msg={$sm})" \
+  [expr {[string match {*already open*} $sm] && [string match {*descend_child.sym*} $sm] &&
+         [xschem get statusmsg_hold] == 1}]
+
+# SNW5: new_process keeps its guard but now refuses OUT LOUD (ruling D5). The .sym is
+# still open in $symwin, so this can never reach new_xschem_process() and spawn anything.
+snw_home
+set t2 [snw_ntabs]
+xschem unselect_all
+xschem select instance x1 fast
+xschem statusmsg { }
+set ret [xschem symbol_in_new_window new_process]
+set sm [xschem get statusmsg]
+check "SNW5: new_process on an already-open .sym -> returns 3, nothing spawned, nothing moved, and it says why (got ret={$ret} tabs=$t2->[snw_ntabs] cur=[xschem get current_win_path] msg={$sm})" \
+  [expr {$ret eq "3" && [snw_ntabs] == $t2 && [xschem get current_win_path] eq ".drw" &&
+         [string match {*already open*} $sm] && [string match {*descend_child.sym*} $sm] &&
+         [xschem get statusmsg_hold] == 1}]
+
+# SNW6: the arm this fix deliberately did NOT touch -- nothing selected, so the verb
+# means "open another view of the CURRENT schematic's own .sym". It must still answer 1.
+# (That arm can also answer 1 without having opened anything; filed as issue 0383.)
+snw_home
+xschem unselect_all
+set ret [xschem symbol_in_new_window]
+check "SNW6: the untouched nothing-selected arm still returns 1 (got ret={$ret})" \
+  [expr {$ret eq "1"}]
+catch {xschem new_schematic destroy_all force}
+snw_home
+
 result
