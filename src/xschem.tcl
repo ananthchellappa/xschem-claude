@@ -11136,17 +11136,36 @@ proc addpin::cycle_type {} {
   }
 }
 
-# issue 0122 E2: the Add-Pin and Add-Wire-Label forms share the single `.drw <Key-Escape>` slot.
+# issue 0122 E2 / 0245: THREE modeless placement forms (.addpin, .addlabel, .ciform) share the
+# single `.drw <Key-Escape>` slot. canvas_esc_release is the one owner-handoff: the dying form
+# names itself and the slot goes to the first surviving sibling, or is cleared if there is none.
+# `self` is excluded EXPLICITLY rather than trusted to `winfo exists`, because this runs from a
+# <Destroy> handler where the dying toplevel can still answer yes. It replaces three pairwise
+# release procs (and create_instance.tcl's blanket unbind, which named nothing and stranded a
+# still-open sibling -- issue 0245 K5, the live 0122-E2 clobber).
+proc canvas_esc_release {self} {
+  if {[info commands winfo] eq {}} return          ;# no Tk (headless): nothing to hand over
+  foreach {w grab} {.addlabel addlabel::grab_esc .addpin addpin::grab_esc .ciform ciform::grab_esc} {
+    if {$w eq $self} continue
+    # only the SUCCESSFUL handover ends the walk: if the sibling's grab proc errored the slot
+    # still holds the dying form's script, so fall through and clear it rather than leave it.
+    if {[winfo exists $w] && ![catch {$grab}]} return
+  }
+  catch {bind .drw <Key-Escape> {}}
+}
+
 # grab_esc points that slot at THIS form -- called on open/raise so the form the user just focused
-# owns canvas-Esc. release_esc (on close) hands the slot BACK to the sibling form if it is still
-# open, else clears it -- so closing one form no longer kills the survivor's canvas-Esc.
+# owns canvas-Esc. The script is TOTAL (issue 0245): form alive -> the form's canvas_escape, form
+# gone -> straight to the C Escape terminal. The else arm matters because a grab can outlive its
+# form -- clone_canvas_bindings copies a live grab onto every newly created canvas and release_esc
+# only ever unbinds `.drw` (0122-F3) -- and a stale grab with an empty else swallows Escape forever.
 # SCOPE (0122-F3): like the whole form mechanism (the `.drw <ButtonRelease>` drop hook in
 # install_drop_hook, and the sibling ciform), this targets the MAIN window canvas `.drw` only --
 # not a detached window / non-first tab (`.xN.drw`). Pre-existing single-canvas assumption.
-proc addpin::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::escape; break}} }
-proc addpin::release_esc {} {
-  if {[winfo exists .addlabel]} { addlabel::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+proc addpin::grab_esc {} {
+  bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::canvas_escape} else {xschem escape}; break}
 }
+proc addpin::release_esc {} { canvas_esc_release .addpin }
 
 # Esc / Close: end placement and dismiss the form.
 proc addpin::escape {} {
@@ -11154,6 +11173,19 @@ proc addpin::escape {} {
   set armed 0
   addpin::abort_if_placing
   catch {destroy .addpin}
+}
+# The CANVAS Escape (issue 0245). Everything ::escape does, and THEN the C Escape terminal that
+# the seized `.drw <Key-Escape>` slot would otherwise swallow whole: with the form idle,
+# abort_if_placing is a no-op (it is gated on START_SYMPIN), so a canvas Escape used to close the
+# form and abort NOTHING -- measured under xvfb, an armed `xschem wire` survived it byte-identical
+# and the next canvas click began an unrequested wire draw.
+# Deliberately NOT folded into ::escape: that is also the Close BUTTON's -command and the
+# form-focused <Key-Escape>, and with focus in the form neither ever reached callback.c. Neither
+# may gain the terminal -- clicking Close must not stop a running simulation (tclstop) or abort an
+# unrelated armed gesture. See tests/headless/test_sch_add_pin.tcl row P3.
+proc addpin::canvas_escape {} {
+  addpin::escape
+  catch {xschem escape}
 }
 # Form destroyed by any means: abort an armed preview and hand canvas-Esc back to the sibling form.
 # Also wipe the Pin Name so a NEW invocation opens blank (never retains the previous names).
@@ -11306,8 +11338,14 @@ proc addpin::open {} {
   # (mirror of the Add-Wire-Label form); dismiss whenever the form exists. `break` pre-empts
   # the generic <KeyPress> -> C dispatcher so the same key does not also fire a canvas verb.
   # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  # BOTH Escape routes end at the C terminal (issue 0245). The form-focused one matters as much as
+  # the canvas one: Tk routes a key to `[focus]`, and open() below ends with `focus $w.f.ename`, so
+  # from the moment the form appears until the user next clicks the canvas THIS binding is the one
+  # that fires -- not the `.drw` slot. Measured under xvfb: `xschem wire` (ui 65536, ui2 1) then
+  # addpin::open then Escape left both words byte-identical until this line forwarded too.
+  # The Close BUTTON keeps plain ::escape -- a mouse click on Close is not the Escape key.
   addpin::grab_esc
-  bind $w   <Key-Escape> {addpin::escape}
+  bind $w   <Key-Escape> {addpin::canvas_escape}
   bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
 
   raise_activate_toplevel $w
@@ -11483,12 +11521,13 @@ proc addlabel::on_reject {} {
   addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
 }
 
-# issue 0122 E2: shared `.drw <Key-Escape>` slot (see addpin::grab_esc). grab_esc claims it for
-# THIS form; release_esc hands it back to the sibling Add-Pin form if still open, else clears it.
-proc addlabel::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}} }
-proc addlabel::release_esc {} {
-  if {[winfo exists .addpin]} { addpin::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+# issue 0122 E2 / 0245: shared `.drw <Key-Escape>` slot (see addpin::grab_esc for the full note).
+# grab_esc claims it for THIS form with a TOTAL script (form alive -> canvas_escape, form gone ->
+# the C Escape terminal); release_esc hands the slot to the first surviving sibling.
+proc addlabel::grab_esc {} {
+  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::canvas_escape} else {xschem escape}; break}
 }
+proc addlabel::release_esc {} { canvas_esc_release .addlabel }
 
 # Esc / Close: end placement and dismiss the form.
 proc addlabel::escape {} {
@@ -11496,6 +11535,13 @@ proc addlabel::escape {} {
   set armed 0
   addlabel::abort_if_placing
   catch {destroy .addlabel}
+}
+# The CANVAS Escape (issue 0245) -- ::escape, then the C Escape terminal the seized slot would
+# otherwise swallow. NOT folded into ::escape: that is the Close button and the form-focused key,
+# which never reached callback.c and must gain nothing. See addpin::canvas_escape.
+proc addlabel::canvas_escape {} {
+  addlabel::escape
+  catch {xschem escape}
 }
 # Hand canvas-Esc back to the sibling form on close; wipe the Label Name so a NEW invocation opens
 # blank (never retains the previous names).
@@ -11554,8 +11600,11 @@ proc addlabel::open {} {
   # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
   # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
   # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  # The FORM-focused Escape forwards to the C terminal as well (issue 0245): open() ends with
+  # `focus $w.f.ename`, so until the user next clicks the canvas Tk fires THIS binding and never
+  # the `.drw` slot. The Close BUTTON keeps plain ::escape. See addpin::open for the measurement.
   addlabel::grab_esc
-  bind $w   <Key-Escape> {addlabel::escape}
+  bind $w   <Key-Escape> {addlabel::canvas_escape}
   bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
 
   raise_activate_toplevel $w

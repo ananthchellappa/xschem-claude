@@ -98,5 +98,35 @@ check "place_verb in schematic view" [addpin::place_verb] add_sch_pin
 
 catch {file delete -force $symf}
 
+# ---------------------------------------------------------------------------
+# P. Issue 0245 -- canvas Escape must reach the C Escape terminal while this form owns the
+#    shared `.drw <Key-Escape>` slot. addpin::grab_esc points that slot at addpin::escape
+#    (`set armed 0; abort_if_placing; destroy`), and abort_if_placing only fires while
+#    START_SYMPIN is set -- so with the form IDLE the entire Escape is a destroy plus a
+#    variable write and callback.c's `case XK_Escape:` never runs. Measured under xvfb with
+#    .addpin open: `xschem wire` then a real `<Key-Escape>` on .drw left ui=65536 ui2=1,
+#    i.e. the arm survived, and the next canvas click started an unrequested wire draw.
+#    The fix gives the CANVAS Escape its own entry point, addpin::canvas_escape, ending at
+#    the named C terminal `xschem escape`. Headless-safe: no Tk, so the inner
+#    `catch {destroy .addpin}` is a no-op and these rows test the FORWARD.
+# ---------------------------------------------------------------------------
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+check "P0 precondition: menu wire armed"   [xschem get ui_state] 65536
+catch {addpin::canvas_escape}
+check "P1 canvas Escape aborts the arm"    [xschem get ui_state] 0
+check "P2 canvas Escape clears ui_state2"  [xschem get ui_state2] 0
+xschem abort_operation
+
+# P3 CONTRAST -- the Close BUTTON (-command addpin::escape) is a mouse click, not the Escape
+#    key; it must gain nothing. GREEN before the fix and after. The form-focused <Key-Escape>
+#    is NOT part of this contrast: it forwards through addpin::canvas_escape, because Tk sends
+#    keys to `[focus]` and open() focuses the form. See test_create_instance.tcl CI15b.
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+catch {addpin::escape}
+check "P3 contrast: Close button leaves the arm" [xschem get ui_state] 65536
+xschem abort_operation ; xschem abort_operation
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

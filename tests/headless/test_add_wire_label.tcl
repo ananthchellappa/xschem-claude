@@ -520,5 +520,41 @@ check "symbol view: add_wire_label no-op (selection kept)" [xschem get lastsel] 
 check "symbol view: not placing"                          [placing] 0
 catch {file delete -force $symf}
 
+# ---------------------------------------------------------------------------
+# L. Issue 0245 -- canvas Escape must reach the C Escape terminal even while this form owns
+#    the `.drw <Key-Escape>` slot. addlabel::grab_esc points that slot at addlabel::escape,
+#    which is `set armed 0; abort_if_placing; destroy` -- and abort_if_placing only fires
+#    when START_SYMPIN is set. With the form IDLE the whole Escape is a `destroy` plus a
+#    variable write, so the sixteen lines of callback.c's `case XK_Escape:` never run.
+#    Measured under xvfb: `xschem wire` (ui=65536 ui2=1), canvas Escape with an idle
+#    .addlabel open -> ui/ui2/last_command BYTE-IDENTICAL and the form gone; the NEXT canvas
+#    click took ui to 65537 and last_command to 1 -- an unrequested wire draw begun by the
+#    click the user made to dismiss a dialog. Only a SECOND Escape aborted it.
+#    The fix routes the CANVAS Escape (and only the canvas one) through a new
+#    addlabel::canvas_escape that ends at `xschem escape`, the named C terminal.
+#    Headless-safe: with no Tk the inner `catch {destroy .addlabel}` is a no-op, so these
+#    rows test the FORWARD, not the widget.
+# ---------------------------------------------------------------------------
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+check "L0 precondition: menu wire armed"   [xschem get ui_state] 65536
+catch {addlabel::canvas_escape}
+check "L1 canvas Escape aborts the arm"    [xschem get ui_state] 0
+check "L2 canvas Escape clears ui_state2"  [xschem get ui_state2] 0
+xschem abort_operation
+
+# L3 CONTRAST -- the Close BUTTON (-command addlabel::escape) is a mouse click, not the
+#    Escape key, and must gain nothing here: clicking Close must not stop a running
+#    simulation or abort an unrelated armed gesture. GREEN before the fix and after.
+#    NOTE the form-focused <Key-Escape> is NOT in this contrast any more -- it fires
+#    addlabel::canvas_escape and DOES reach the terminal. It had to: Tk routes keys to
+#    `[focus]`, open() focuses the form, so that binding is the one a user's Escape hits
+#    until they click the canvas. See test_create_instance.tcl CI15a.
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+catch {addlabel::escape}
+check "L3 contrast: Close button leaves the arm" [xschem get ui_state] 65536
+xschem abort_operation ; xschem abort_operation
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

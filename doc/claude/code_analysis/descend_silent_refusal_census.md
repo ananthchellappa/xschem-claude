@@ -253,8 +253,17 @@ L1 the failed descend_symbol writes NO phantom `xschem descend_symbol -inst xd1`
 ```
 
 Tiers were clean (`shape_draw 421→421`, `doors 177→177`, `inert_class 177→177` silence lock intact,
-`refusal_channel_0251 34→67`, `descend_symbol 32→38`, `log_absorb 25→29`, regression suite still
-exactly its 3 known-red lines).
+`refusal_channel_0251 34→67`, `descend_symbol 32→38`, ~~`log_absorb 25→29`~~ **`log_absorb 23→27`**,
+regression suite still exactly its 3 known-red lines).
+
+> **CORRECTION 2026-08-11 (driver run item D7).** The `log_absorb 25→29` above was wrong on both
+> halves and propagated: the run-2026-08-09 ledger row D5 copied it verbatim as
+> `log_absorb 25->25 (fix 29)`. `tests/headless/test_descend_log_absorb.tcl` has **23** unconditional
+> top-level `check` calls — no loops, no conditionals — and prints `RESULT: ALL PASS (23 checks)`.
+> The file is byte-identical (blob `51c1d1c7`) at `bc4ff4a2`, `504e38c7`, `5c5671b5` and HEAD, last
+> touched by `a250fba7`, so **no checks were lost between those commits**; the reverted D5 fix added
+> 4 rows to a 23-check file, i.e. 23→27. Measured three times independently during D7 (Scout,
+> Measure, Verify-A). Do not carry 25 forward.
 
 ## Why it was reverted
 

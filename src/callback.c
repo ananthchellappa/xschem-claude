@@ -593,6 +593,48 @@ void start_line(double mx, double my)
 
 static void draw_snap_cursor(int action);   /* defined below; used by the gate right here */
 
+/* THE ESCAPE TERMINAL (issue 0245) -- the body of `case XK_Escape:` in handle_key_press(), lifted
+ * out verbatim so it has a NAME and, through scheduler.c's `xschem escape`, a Tcl entry point.
+ * It was previously reachable ONLY from the keysym switch, i.e. only from a real X key event that
+ * Tk chose to hand to the generic `<KeyPress>` dispatcher. A modeless placement form that seizes
+ * `.drw <Key-Escape>` (Add-Pin, Add-Wire-Label, Create-Instance) takes Escape instead -- Tk fires
+ * the specific `<Key-Escape>` binding and never the generic one -- so with a form open these
+ * sixteen lines simply did not run: measured under xvfb, `xschem wire` (ui_state 65536,
+ * ui_state2 1) followed by a canvas Escape with an IDLE Add-Wire-Label form open left both words
+ * byte-identical and the very next canvas click began an unrequested wire draw.
+ *
+ * Two halves, and they are deliberately not the same teardown:
+ *   - the ABORT, gated by the `semaphore < 2` re-entrancy guard;
+ *   - four REENTRANT siblings that run even when the guard skips the abort.
+ * The siblings are NOT hoisted into abort_operation(): that has 24 call sites inside this file
+ * alone plus 9 more in C and 10 in Tcl, and a .load dialog Cancel or a context-menu abort must
+ * never stop a running simulation (tclstop) nor drop the resting wire command mode.
+ * `snap_cursor` and `cadence_compat` are handle_key_press() parameters read from Tcl by callback()
+ * microseconds earlier; re-reading them here keeps the helper self-contained and callable from a
+ * verb, at the cost of two tclgetboolvar() lookups on a key press. */
+void escape_terminal(void)
+{
+  if(!xctx) return;
+  if(xctx->semaphore < 2) {
+    /* escape_deselects gates the idle-case unselect: 0 => keep selection,
+     * only redraw; 1 => legacy deselect-all. Pending ops abort regardless. */
+    abort_operation(tclgetboolvar("escape_deselects"));
+  }
+  /* stuff that can be done reentrantly ... */
+  tclsetvar("tclstop", "1"); /* stop simulation if any running */
+  if(xctx->ui_state2 & MENUSTARTWIRE) {
+    /* abort_operation() alone NEVER clears this bit (measured: `xschem wire` then
+     * `xschem abort_operation` leaves ui_state 0 but ui_state2 1), and wire_draw_active
+     * below reads it conjoined with MENUSTART */
+    xctx->ui_state2 &= ~MENUSTARTWIRE;
+  }
+  if(tclgetboolvar("snap_cursor")) draw_snap_cursor(1); /* erase */
+  if(tclgetboolvar("persistent_command") && (xctx->last_command & STARTWIRE) &&
+     tclgetboolvar("cadence_compat")) {
+    xctx->last_command &= ~STARTWIRE;
+  }
+}
+
 /* Leave any live (or menu-armed) wire/line DRAW, or the RESTING wire/line command mode, before a
  * modal PLACEMENT is armed on top of it
  * (issue 0240). Two modal gestures at once is not a usable state even when every flag is
@@ -6657,6 +6699,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
                              const char *win_path, double c_snap,
                              int cadence_compat, int wire_draw_active, int snap_cursor)
 {
+  /* `snap_cursor` no longer has a reader in this function: the only one was the Escape arm's
+   * snap-cursor erase, which moved into escape_terminal() (issue 0245) and re-reads the Tcl
+   * variable itself so the verb behaves identically to the key. The parameter is kept for
+   * signature symmetry with handle_button_press() / handle_button_release(), which callback()
+   * feeds from the same three locals. */
   char str[PATH_MAX + 100];
 
   /* Phase 3c c4/c5: data-driven context routing for migrated keys, tried before
@@ -8084,20 +8131,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case XK_Escape:                                       /* abort & redraw */
-      if(xctx->semaphore < 2) {
-        /* escape_deselects gates the idle-case unselect: 0 => keep selection,
-         * only redraw; 1 => legacy deselect-all. Pending ops abort regardless. */
-        abort_operation(tclgetboolvar("escape_deselects"));
-      }
-      /* stuff that can be done reentrantly ... */
-      tclsetvar("tclstop", "1"); /* stop simulation if any running */
-      if(xctx->ui_state2 & MENUSTARTWIRE) {
-        xctx->ui_state2 &= ~MENUSTARTWIRE;
-      }
-      if(snap_cursor) draw_snap_cursor(1); /* erase */
-      if(tclgetboolvar("persistent_command") && (xctx->last_command & STARTWIRE) && cadence_compat) {
-        xctx->last_command &= ~STARTWIRE;
-      }
+      /* the whole body now lives in escape_terminal() (issue 0245), so a Tk form that seized
+       * `.drw <Key-Escape>` can forward to it through `xschem escape` instead of swallowing
+       * Escape whole. Behaviour here is unchanged. */
+      escape_terminal();
       break;
 
     case XK_Delete:

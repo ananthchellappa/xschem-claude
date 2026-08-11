@@ -2580,6 +2580,12 @@ extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
 extern void abort_operation(int deselect);
+/* issue 0245: the body of `case XK_Escape:` -- abort_operation(escape_deselects) behind the
+ * `semaphore < 2` guard, plus the four reentrant siblings (tclstop, MENUSTARTWIRE clear,
+ * snap-cursor erase, the cadence resting-wire fixup). Named and exported so a Tk form that
+ * seized `.drw <Key-Escape>` can forward to it (`xschem escape`) instead of swallowing Escape.
+ * NOT the same teardown as abort_operation() -- see the comment in callback.c. */
+extern void escape_terminal(void);
 extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);

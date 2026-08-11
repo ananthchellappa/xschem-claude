@@ -3391,6 +3391,22 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* escape
+     *   Run the C Escape terminal: exactly what pressing Escape on the canvas does
+     *   (callback.c, escape_terminal()). Takes NO argument: the idle-case deselect is
+     *   read from `escape_deselects` (default 0) by the terminal itself, deliberately
+     *   NOT exposed here -- a no-arg `xschem abort_operation` is deselect=1, the opposite
+     *   default, and an optional argument would let a caller quietly change what Escape
+     *   means to the selection. Issue 0245: the three modeless placement forms seize
+     *   `.drw <Key-Escape>` and Tk then never fires the generic <KeyPress> -> C
+     *   dispatcher, so their canvas-Escape handlers forward here. */
+    else if(!strcmp(argv[1], "escape"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      escape_terminal();
+      Tcl_ResetResult(interp);
+    }
+
     /* escape_chars source [charset]
      *   escape tcl special characters with backslash
      *   if charset is given escape characters in charset */

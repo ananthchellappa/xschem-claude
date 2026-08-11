@@ -548,6 +548,26 @@ verb that only READS can still be a door, if the way it reads is push_undo → m
 (iv) **a census row that says "not a door" is a claim, and an unasserted claim rots** — this one sat
 in four documents for a day. `save` has the identical blindness and is still open (issue 0358).
 
+**A SIXTH swallower, 2026-08-11 (issue 0245, FIXED): a Tk-level KEY SEIZE.** The five families above
+are all C-side doors. This one is not a door at all — it is a *Tcl binding that steals the key that
+ends the gesture*. The three modeless placement forms (Add-Pin, Add-Wire-Label, Create-Instance)
+bind `<Key-Escape>`, and **Tk fires the most specific binding for a bindtag and routes the key to
+`[focus]`** — so with a form open, Escape ran the form's handler (`armed 0`; `abort_if_placing`,
+itself gated on `START_SYMPIN`; `destroy`) and the sixteen lines of `case XK_Escape:` never ran at
+all. Measured under xvfb: an armed `xschem wire` (`ui_state 65536`, `ui_state2 1`) survived Escape
+**byte-identically** and the next canvas click called `start_wire()` — `ui 65536 → 65537`,
+`last_command 0 → 1`. Same damage shape as 0257's resting-wire swallow: *the click that was meant to
+dismiss something began a wire draw instead.* Three consequences for anyone working in this family:
+(1) the ESC terminal now has a **name and a Tcl entry point** — `escape_terminal()` (callback.c),
+exposed as **`xschem escape`** — and it is the only teardown in the tree that clears
+`MENUSTARTWIRE`: `abort_operation()` alone leaves `ui_state 0` with `ui_state2 1` (measured; pinned
+by row **I4** in `test_placement_wire_gate.tcl`, 187). (2) It is **not** `abort_operation()` and must
+not be folded into it — 24 call sites in callback.c alone, and a `.load` Cancel must never set
+`tclstop`. (3) When enumerating who can end a wire gesture, **enumerate the Tk bindings too, keyed
+on `[focus]`, not just the C verbs** — a per-toplevel grab swallows the key exactly as effectively
+as one on `.drw`, which is why `.mkinst` (issue **0395**) and ASE's `sod` seize (issue **0394**) are
+still open with the identical shape.
+
 What is left of class D is only ONE known, deliberate residue, **0262** (the bare
 `xschem unselect_all` verb: it arms nothing, so the rule has no subject, and gating it would put a
 `delete()` behind 817 scripted call sites) — plus the wire-family `ui_state2`
