@@ -96,6 +96,27 @@ rather than `partial` on a walk into `m.sub` with device internals still hidden.
 The Search/Filter route this issue's own reproducer uses is untouched and still
 reaches the path. The issue stands as written.
 
+## Reviewed at batch F item 7 (F6 / issue 0308), 2026-08-10 — STILL OPEN, UNTOUCHED, NOT WORSE
+
+Item 7 gives the lower pane a per-database dimension. It changes nothing this
+issue is about, and the check was made rather than argued:
+
+* **`browser_msg`'s `return` count is unmoved at 11** — `BK33`'s deliberately
+  moving leg did not have to be restated a third time, and no `browser_say` arm
+  and no outcome sentence changed. The tail of `browser_show_db_scope` (the three
+  mutually exclusive returns this issue quotes) is byte-identical.
+* **The reachability is unchanged.** This issue lives where
+  `browser_names_under` (which asks the INVENTORY) and `browser_node_for` (which
+  walks the TREE) disagree, and a Search or Filter bar narrows the second without
+  touching the first. Item 7 touches neither proc.
+* ⚠ **One thing did move, and it moves in the SAFE direction.** RULING F1g
+  re-caused RULING F1e's notice, and the `partial` landing is exactly the case
+  that arm still fires on — so a walk that landed short now gets a sentence
+  naming *where it landed and in which database*, on top of the CIW line this
+  issue quotes. That is not the announcement this issue asks for (it still says
+  nothing about the box having been ticked), but it is one more true sentence on
+  the same path rather than one fewer.
+
 ## The fix, when someone takes it
 
 Reorder the tail so the tick is not swallowed, and give the combination its own sentence:

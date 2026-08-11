@@ -414,6 +414,27 @@ namespace eval wviewer {
   #   browserseasel($token) = the selection, a SET of indices into browsersea
   #     (spec §5.3). A list, not a single index — Shift and Control extend it.
   #   browserseaanchor($token) = the index Shift-click extends FROM.
+  #   browserseadbent($token) = §F item F6 (issue 0308). THE SEA'S PER-DATABASE
+  #     DIMENSION: a dict `d:<registry idx>` -> that FOREIGN database's own
+  #     bar-matched, class-filtered entry list, written by browser_refresh's
+  #     All-DBs loop in the SAME pass as the tree group it describes, so the two
+  #     cannot disagree about which rows exist. ⚠⚠ IT IS SEPARATE FROM
+  #     `browserseaent` RATHER THAN AN EXTRA KEY IN IT because `browserseaent`
+  #     IS the current database's list and a dozen readers (BW/BX/BQ/BP bands,
+  #     the two-pane counters) take its `llength` as "how many signals the pane
+  #     can draw". Widening that value would move every one of them for a fact
+  #     none of them is about. ⚠ A FOREIGN SLOT WITH NO ENTRY HERE ANSWERS
+  #     NOTHING, NEVER THE CURRENT DATABASE'S ENTRIES — issue 0308's whole point
+  #     is that a wrong answer beats no answer only in the other direction.
+  variable browserseadbent;  array set browserseadbent  {}
+  #   browserseadbid($token) = the TREE ROW ID the pane's cells were drawn for,
+  #     or {} when the pane is not drawn from a row at all. ⚠ IT IS THE ROW ID
+  #     AND NOT THE REGISTRY INDEX: `browser_row_db` projects the index out of
+  #     it and `browser_id_type` projects the database KIND, so one written fact
+  #     answers both of the pane's two per-database questions (which raw does a
+  #     Plot land against, and whose grammar does a Descend-to split with) and
+  #     they cannot drift apart. Written by browser_sea_refresh and nowhere else.
+  variable browserseadbid;   array set browserseadbid   {}
   variable browserseaent;    array set browserseaent    {}
   variable browsersea;       array set browsersea       {}
   variable browserseasel;    array set browserseasel    {}
@@ -517,6 +538,19 @@ namespace eval wviewer {
   # opens so the live filter never re-enters the context on every keystroke.
   # Dropped by the dialog's own <Destroy> (wviewer::add_trace_forget).
   variable atdsigs; array set atdsigs {}
+  #   atddb($token) = §F item F6 (issue 0308). THE ONE-SHOT DATABASE the
+  #     browser's LOWER PANE sends with a name it prefilled into the dialog:
+  #     `{<the exact prefilled name> <registry index>}`. `plot_dbs_arm`'s shape,
+  #     one dialog over, and for the identical reason — a foreign pane's name can
+  #     collide with a current-database name, and `add_trace`'s name search
+  #     resolves a collision to THE CURRENT DATABASE. ⚠ THE NAME IS HALF THE ARM:
+  #     the dialog is modeless and its Expression field is meant to be EDITED, so
+  #     the index is honoured only while the text is still byte-for-byte the one
+  #     it was armed with. CONSUMED by OK and dropped by the dialog's own
+  #     <Destroy> (`add_trace_forget`, the single owner) — which `dialog_frame`'s
+  #     unconditional `catch {destroy $w}` also makes the reason a REOPENED form
+  #     is never born armed. `forget` sweeps it with the window.
+  variable atddb;   array set atddb   {}
   # strip drag-reorder (doc/claude/specs/waveform_viewer_modes.md §12): TRANSIENT
   # per-window gesture state, keyed by session token. Created in open, dropped by
   # forget, NEVER serialized (a half-finished drag is not part of a saved layout).
@@ -735,6 +769,10 @@ proc wviewer::forget {token} {
   # and its Shift anchor — same rule a fourth time.
   variable browserseaent; variable browsersea
   variable browserseasel; variable browserseaanchor
+  # §F item F6 (issue 0308): the sea's per-database dimension and the row it is
+  # currently drawn for, same rule again — a foreign inventory left behind on a
+  # closed window would be a second, staler answer to "whose names are these".
+  variable browserseadbent; variable browserseadbid
   # §F item F5: the empty-pane notice, same rule again.
   variable browserseanote
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
@@ -744,6 +782,13 @@ proc wviewer::forget {token} {
   # It is one-shot and normally already consumed, but a window closed between an
   # arm and its plot_signals would otherwise leave the entry forever.
   variable plotdbs
+  # §F item F6: the Add Trace dialog's twin of that arm, same rule again — and
+  # with plotdbs' own caveat, verbatim: the dialog's <Destroy> is its single
+  # owner and normally drops it first, so this is the SWEEP, not the owner. It
+  # cannot be reddened by deleting it while a dialog destroy always precedes a
+  # window destroy; it is written because the file's rule is that every
+  # per-token array is dropped here.
+  variable atddb
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
   variable axl; variable delmap
@@ -803,6 +848,8 @@ proc wviewer::forget {token} {
   catch {unset browserraw($token)}
   catch {unset browsercurdb($token)}
   catch {unset browserseaent($token)}
+  catch {unset browserseadbent($token)}
+  catch {unset browserseadbid($token)}
   catch {unset browsersea($token)}
   catch {unset browserseasel($token)}
   catch {unset browserseaanchor($token)}
@@ -811,6 +858,7 @@ proc wviewer::forget {token} {
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
   catch {unset plotdbs($token)}
+  catch {unset atddb($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
@@ -6391,11 +6439,20 @@ proc wviewer::btn2_filter {W T px py state} {
 # THE ONE-SHOT DISCIPLINE, which is what keeps a hidden channel honest:
 #  * `plot_dbs_take` CONSUMES — it unsets — so a stale arm can never be read
 #    twice, and `plot_signals` takes FIRST THING, before any early return;
-#  * `browser_plot_ids` takes-and-discards after its call as well, so an arm
-#    made while a TEST has renamed plot_signals away is still cleared;
+#  * `browser_plot_ids` (the TREE's plot route) takes-and-discards after its
+#    call as well, so an arm made while a TEST has renamed plot_signals away is
+#    still cleared;
+#  * `browser_sea_plot_idx` (the LOWER PANE's plot route, §F item F6) does the
+#    same, and for the same reason — it is the SECOND armer and it obeys the
+#    identical arm/call/take shape;
 #  * `wviewer::forget` drops it with the window.
-# Nothing else in the file arms it: every other plot_signals caller (Direct
-# Plot, the browser's lower pane) has only names, and {} is exactly right there.
+# EXACTLY TWO CALLERS ARM IT and they are the browser's two plot routes:
+# `browser_plot_ids` from the tree and `browser_sea_plot_idx` from the lower
+# pane. Every other plot_signals caller (Direct Plot, the Add Trace… dialog) has
+# only names, and {} is exactly right there. ⚠ The lower pane was NOT an armer
+# before §F item F6 — until then it could only ever hold the CURRENT database's
+# names, so a bare name resolved right by construction; it can hold a foreign
+# database's names now, so it must say which.
 proc wviewer::plot_dbs_arm {token dbs} {
   variable plotdbs
   set plotdbs($token) $dbs
@@ -7322,11 +7379,12 @@ proc wviewer::browser_leaf_names {rows id} {
 # (`browser_rows_multi` -> `browser_rows_reparent`) while the current DB's rows
 # stay UNPREFIXED — that is the property `browser_node_for`'s hierarchy walk
 # leans on, and it is what makes {} mean "current" here rather than "unknown".
-# The regexp is `browser_id_path`'s, verbatim, so the two cannot drift about what
-# a prefix looks like.
+# It is `browser_id_split`'s FIRST half, so the two cannot drift about what a
+# prefix looks like — they are now literally the same decode read twice (§F item
+# F6; before it they were two copies of one regexp with a comment asking the
+# reader to keep them equal).
 proc wviewer::browser_row_db {id} {
-  if {[regexp {^d:([0-9]+)\|} $id -> n]} { return $n }
-  return {}
+  return [lindex [wviewer::browser_id_split $id] 0]
 }
 
 # --- spec §F, RULING F4: WHICH KIND OF DATABASE DOES **THIS ROW** COME FROM? --
@@ -7344,10 +7402,16 @@ proc wviewer::browser_row_db {id} {
 # current it declasses a foreign VCD's `m.sub.sig` down to `sub` (the defect
 # RULING F4 exists to remove, one database over), and with a VCD current it stops
 # declassing a foreign ngspice raw and answers `m.x1.xm1` for a MOSFET internal
-# node whose real path is `x1.xm1` — a fresh defect pointing the other way. The
-# LOWER PANE has no such question to ask: it draws the current database's entries
-# and only those (two-pane item 15's declared limit), so its own resolver is told
-# the current kind directly.
+# node whose real path is `x1.xm1` — a fresh defect pointing the other way.
+#
+# ⚠⚠ AND THE LOWER PANE ASKS IT TOO, SINCE §F item F6 (issue 0308). Until F6 it
+# had no such question: it drew the current database's entries and only those
+# (two-pane item 15's declared limit), so its own resolvers were told the current
+# kind directly, and the comment here said exactly that. RULING F6 overturned it
+# — the pane now draws whichever database the selected ROW belongs to — so
+# `browser_sea_refresh`, `browser_sea_own` and `browser_sea_target_path` are all
+# callers of THIS proc, asking it of the row `browser_sea_row` recorded (or of
+# `{}`, which maps back to the current kind, so every pre-F6 state is unmoved).
 #
 # ⚠ WITH All-DBs TICKED THE CURRENT DATABASE'S ROWS ARE PREFIXED TOO (item 15
 # gives it a header like any other), so the first branch is reached on a real
@@ -8204,10 +8268,67 @@ proc wviewer::browser_sea_draw {token} {
 # filter — and the lower pane is about ONE level. Swapping them here is the
 # sabotage BQ51's *descended* leg exists to catch; its ROOT leg would stay right,
 # which is why the check names a descended node.
+# --- §F item F6 (issue 0308): THE PANE READS THE ROW'S OWN DATABASE ----------
+#
+# `d:<registry idx>` when row `id` belongs to a FOREIGN database, `{}` when it
+# belongs to the current one. PURE apart from the snapshot read.
+#
+# ⚠ AN All-DBs HEADER DOES NOT MAKE THE CURRENT DATABASE FOREIGN. Two-pane item
+# 15 keeps the current DB's ROWS unprefixed even under its own header (the
+# prefix would be a registry index, which moves when a raw is closed, and every
+# persisted id would then name a row that no longer exists), so this branch is
+# belt-and-braces rather than reachable today — and it is spelled anyway,
+# because the alternative failure is the pane answering NOTHING for the database
+# the user is actually looking at.
+proc wviewer::browser_row_foreign {token id} {
+  variable browsercurdb
+  set n [wviewer::browser_row_db $id]
+  if {$n eq {}} { return {} }
+  if {[info exists browsercurdb($token)] && \
+      [wviewer::dget $browsercurdb($token) id {}] eq "d:$n"} { return {} }
+  return "d:$n"
+}
+
+# The ENTRY LIST the lower pane must draw row `id` from: the current database's
+# bar-matched, class-filtered snapshot for a current-DB row, that FOREIGN
+# database's own for a foreign one.
+#
+# ⚠⚠ A FOREIGN SLOT THIS SNAPSHOT DOES NOT CARRY ANSWERS `{}` — AN EMPTY PANE —
+# AND NEVER THE CURRENT DATABASE'S ENTRIES. That is issue 0308's whole lesson
+# read in the right direction: the shipped code fell back to the current
+# inventory and the pane then listed the current run's namesakes under a foreign
+# node, with nothing on screen to say so. Nothing is a state the caption can
+# describe truthfully; someone else's signals is not.
+proc wviewer::browser_sea_ent {token id} {
+  variable browserseaent
+  variable browserseadbent
+  set slot [wviewer::browser_row_foreign $token $id]
+  if {$slot eq {}} {
+    if {![info exists browserseaent($token)]} { return {} }
+    return $browserseaent($token)
+  }
+  if {![info exists browserseadbent($token)]} { return {} }
+  set m $browserseadbent($token)
+  if {![dict exists $m $slot]} { return {} }
+  return [dict get $m $slot]
+}
+
+# The tree row the pane's cells were LAST DRAWN FOR, or {}. The pane's two
+# per-database consumers (the Plot's raw hint, the Descend-to's split grammar)
+# read the database out of THIS rather than re-reading the treeview selection,
+# because the selection can have moved since the draw and a gesture must act on
+# the cells the user can see.
+proc wviewer::browser_sea_row {token} {
+  variable browserseadbid
+  if {![info exists browserseadbid($token)]} { return {} }
+  return $browserseadbid($token)
+}
+
 proc wviewer::browser_sea_refresh {token} {
   variable windows
   variable browsersea
   variable browserseaent
+  variable browserseadbid
   variable browserseasel
   variable browserseaanchor
   variable browserseanote
@@ -8228,7 +8349,18 @@ proc wviewer::browser_sea_refresh {token} {
   # which is browser_populate's own narrowing rule spelled the same way.
   set id [lindex $sel 0]
   if {![info exists browserseaent($token)]} { set browserseaent($token) {} }
-  set ent $browserseaent($token)
+  # §F item F6: THE ROW THE PANE IS ABOUT, RECORDED BEFORE ANYTHING IS DRAWN.
+  # One write, and the pane's gestures project the database out of it — see
+  # `browser_sea_row`.
+  set browserseadbid($token) $id
+  # ⚠⚠ AND THE ENTRIES COME FROM THE ROW'S OWN DATABASE (issue 0308). This used
+  # to be `browserseaent($token)` unconditionally, which is the current
+  # database's list — so a `d:N|` row's path was stripped of the very prefix
+  # that said where to look it up and was then looked up in the only inventory
+  # there was. Where the two databases had no name in common that showed as an
+  # empty pane under a false caption; where they collided it showed as the
+  # CURRENT run's signals listed under a foreign node.
+  set ent [wviewer::browser_sea_ent $token $id]
   set pairs {}
   set own 0
   if {$id eq {}} {
@@ -8241,16 +8373,18 @@ proc wviewer::browser_sea_refresh {token} {
     set nostate 0
     set path [wviewer::browser_id_path $id]
     if {[catch {wviewer::browser_level_names $ent $path} nms]} { set nms {} }
-    # RULING F4: `browserseaent` is the CURRENT database's entries alone (item
-    # 15's declared limit), so the current DB's kind describes every name here.
-    set seatype [wviewer::browser_curtype $token]
+    # RULING F4 + §F item F6: THE ROW'S OWN database's kind, not the current
+    # one's. `$ent` is now that row's inventory, so classifying it with the
+    # current kind would declass a foreign VCD's `m.sub.sig` down to `sub` with
+    # an analog raw current — the very defect RULING F4 removed one surface over.
+    set seatype [wviewer::browser_id_type $token $id]
     foreach nm $nms {
       set e {}
       if {[catch {wviewer::signal_entry $nm $seatype} e]} { continue }
       lappend pairs [list [wviewer::browser_label $e] \
                           [wviewer::browser_label_full $e]]
     }
-    set own [wviewer::browser_sea_own $token $path]
+    set own [wviewer::browser_sea_own $token $path $id]
   }
   set browsersea($token) $pairs
   set browserseasel($token) {}
@@ -8262,7 +8396,8 @@ proc wviewer::browser_sea_refresh {token} {
   if {$nostate} {
     wviewer::browser_sea_say $token seanone
   } elseif {$own == 0} {
-    wviewer::browser_sea_say $token seaempty [wviewer::browser_sea_label $token $path]
+    wviewer::browser_sea_say $token seaempty \
+      [wviewer::browser_sea_label $token $path $id]
   } elseif {$n == 0 && [wviewer::browser_bars_active $token]} {
     wviewer::browser_sea_say $token seabars 0 $own
   } elseif {$n == 0} {
@@ -8282,10 +8417,37 @@ proc wviewer::browser_sea_refresh {token} {
 # state expressible at all: with `Show device internals` off, a node whose own
 # level is all-device has own > 0 and shown == 0, which is a different sentence
 # from own == 0. Counting the filtered set would collapse the two.
-proc wviewer::browser_sea_own {token path} {
+# ⚠ `id` (§F item F6, issue 0308) NAMES THE ROW, AND THEREFORE THE DATABASE, THE
+# COUNT IS ABOUT. It is OPTIONAL and defaults to the current database, so every
+# pre-F6 caller and the whole shipped `BQ`/`FD4x` band keeps its exact meaning by
+# construction. Told a foreign row it counts THAT database's UNFILTERED
+# inventory: this number is the denominator of §7.2's caption, and counting the
+# current run's names under a foreign node is how the pane came to say
+# "'m.sub' has no signals of its own" about a scope with six (issue 0308) — and,
+# where the two runs collide, "1 of 1 signals" about the wrong one.
+#
+# ⚠ A FOREIGN SLOT THE SNAPSHOT DOES NOT CARRY COUNTS 0, never the current
+# database's total. `browser_sea_ent` degrades the same way and for the same
+# reason, and the two must agree or the caption would deny what the pane draws.
+proc wviewer::browser_sea_own {token path {id {}}} {
   variable browsersigs
-  if {![info exists browsersigs($token)]} { return 0 }
-  # RULING F4: the current database's kind, or the own-level count of a digital
+  variable browserdbsigs
+  set slot [wviewer::browser_row_foreign $token $id]
+  if {$slot eq {}} {
+    if {![info exists browsersigs($token)]} { return 0 }
+    set names $browsersigs($token)
+  } else {
+    set names {}
+    if {[info exists browserdbsigs($token)]} {
+      foreach db $browserdbsigs($token) {
+        if {[wviewer::dget $db id {}] eq $slot} {
+          set names [wviewer::dget $db names {}]
+          break
+        }
+      }
+    }
+  }
+  # RULING F4: the row's database's kind, or the own-level count of a digital
   # scope would be taken against a declassed path and answer 0 -- which
   # `browser_sea_refresh` renders as "has no signals of its own".
   #
@@ -8295,9 +8457,9 @@ proc wviewer::browser_sea_own {token path} {
   # a sibling scope's wires -- MEASURED, `top.mod` and `top.MOD` each answered 2
   # of the 2 names in the inventory, so the pane said `2 of 2 signals` about a
   # scope that owns one.
-  set owntype [wviewer::browser_curtype $token]
+  set owntype [wviewer::browser_id_type $token $id]
   set n 0
-  foreach nm $browsersigs($token) {
+  foreach nm $names {
     set e {}
     if {[catch {wviewer::signal_entry $nm $owntype} e]} { continue }
     set p [wviewer::dget $e path {}]
@@ -8313,9 +8475,29 @@ proc wviewer::browser_sea_own {token path} {
 # The name §7.2's first state puts in front of `has no signals of its own`: the
 # dotted path, or the design's own name at the root (`has no signals of its own`
 # about an empty string reads as a bug report).
-proc wviewer::browser_sea_label {token path} {
+#
+# ⚠ `id` (§F item F6) IS WHICH ROOT. Every design root decodes to the SAME empty
+# path — `g:` and `d:1|g:` alike — so without the row this proc named the CURRENT
+# design under a FOREIGN database's root, i.e. it put one run's name on another
+# run's empty pane. Optional and defaulting to the current database, so every
+# pre-F6 caller reads exactly as it did.
+proc wviewer::browser_sea_label {token path {id {}}} {
   variable browserraw
+  variable browserdbsigs
   if {$path ne {}} { return $path }
+  set slot [wviewer::browser_row_foreign $token $id]
+  if {$slot ne {}} {
+    if {[info exists browserdbsigs($token)]} {
+      foreach db $browserdbsigs($token) {
+        if {[wviewer::dget $db id {}] eq $slot} {
+          return [wviewer::browser_root_label [wviewer::dget $db path {}]]
+        }
+      }
+    }
+    # a foreign slot the snapshot has lost: `design`, the same floor
+    # browser_root_label gives an empty path, never the current design's name.
+    return [wviewer::browser_root_label {}]
+  }
   set rp {}
   if {[info exists browserraw($token)]} { set rp $browserraw($token) }
   return [wviewer::browser_root_label $rp]
@@ -8456,7 +8638,12 @@ proc wviewer::browser_sea_empty {token} {
   set path {}
   if {[catch {wviewer::browser_id_path $id} path]} { return 0 }
   set own 0
-  if {[catch {wviewer::browser_sea_own $token $path} own]} { return 0 }
+  # §F item F6: the count is asked OF THAT ROW'S DATABASE. Without the row this
+  # reader answered "the pane lists nothing" for every foreign node whose path
+  # the current database happens not to carry — which was true of the pane and
+  # false of the node, and it is what made RULING F1e's notice fire on scopes
+  # that have signals.
+  if {[catch {wviewer::browser_sea_own $token $path $id} own]} { return 0 }
   return [expr {$own == 0 ? 1 : 0}]
 }
 
@@ -8536,8 +8723,24 @@ proc wviewer::browser_sea_plot_idx {token idxs {destover {}}} {
     wviewer::echo {signal browser: nothing selected to plot} error
     return 0
   }
+  # ⚠⚠ §F item F6: THE PANE'S DATABASE RIDES ALONG, exactly as the tree's plot
+  # route already sends `browser_leaf_specs`' db half (spec §D1 / DEFECT 2).
+  # Before F6 this pane could only ever hold the CURRENT database's names, so an
+  # unarmed plot resolved them against the current raw and was right by
+  # construction. It can now hold a foreign database's names — and an unarmed
+  # plot resolves by NAME through `resolve_signal_db`, whose documented tie-break
+  # is THE CURRENT DATABASE WINS (`signal_list_all` yields the current DB first
+  # and that proc returns the first hit — see its own ⚠ at :2364, and `db_by_
+  # index`'s, which exists for exactly this reason). So an unarmed plot of a
+  # foreign `x1.sig` that the current run also carries would silently draw the
+  # CURRENT run's namesake, which is issue 0308's wrong answer one gesture on.
+  # One row, one database, so one index repeated is the whole hint.
+  wviewer::plot_dbs_arm $token \
+    [lrepeat [llength $names] [wviewer::browser_row_db [wviewer::browser_sea_row $token]]]
   set errs {}
-  if {[catch {wviewer::plot_signals $token $names {} $destover} errs]} {
+  set rc [catch {wviewer::plot_signals $token $names {} $destover} errs]
+  wviewer::plot_dbs_take $token          ;# no-op after a real call; clears after a stub
+  if {$rc} {
     wviewer::echo "signal browser: $errs" error
     return 0
   }
@@ -8607,14 +8810,22 @@ proc wviewer::browser_sea_target_path {token idxs} {
   if {![llength $idxs]} {
     return [list err {select a signal in the Signal Browser first}]
   }
-  # ⚠ RULING F4: the CURRENT database's kind, and the current one is the whole
-  # answer here — this pane draws that database's entries and only those. A
-  # one-argument split declassed a digital name, so on a VCD whose top `$scope`
-  # is one letter this answered a path with that level DELETED, the menu entry
-  # was built ENABLED against it, and the descend then found no such node and
-  # returned silently. MEASURED on `m.sub.sig`: `ok sub`, for a tree whose group
-  # is `g:m.sub`.
-  set seatype [wviewer::browser_curtype $token]
+  # ⚠ RULING F4: the pane's DATABASE's kind. A one-argument split declassed a
+  # digital name, so on a VCD whose top `$scope` is one letter this answered a
+  # path with that level DELETED, the menu entry was built ENABLED against it,
+  # and the descend then found no such node and returned silently. MEASURED on
+  # `m.sub.sig`: `ok sub`, for a tree whose group is `g:m.sub`.
+  #
+  # ⚠⚠ AND IT IS THE PANE'S ROW, NOT `browser_curtype`, SINCE §F item F6. Until
+  # F6 the two were the same fact — the pane drew the current database's entries
+  # and only those — and the comment here said so. The pane now draws whichever
+  # database the selected ROW belongs to, so reading the current kind would split
+  # a foreign VCD's name with ngspice's grammar the moment an analog raw is
+  # current, which is exactly the defect this proc was fixed for, one database
+  # over. `browser_sea_row` is {} for a pane drawn from the current DB, and
+  # `browser_id_type` maps that back to the current kind — so every pre-F6 state
+  # answers identically.
+  set seatype [wviewer::browser_id_type $token [wviewer::browser_sea_row $token]]
   set path {}
   set first 1
   foreach i $idxs {
@@ -8627,6 +8838,32 @@ proc wviewer::browser_sea_target_path {token idxs} {
     }
   }
   return [list ok $path]
+}
+
+# THE TREE ROOT THE PANE'S OWN WALK STARTS FROM: the design root of the database
+# the pane's ROW belongs to, `browser_root_id`'s answer for a current-DB pane.
+#
+# ⚠⚠ §F item F6, SECOND HALF (the reviewer's finding on item 7's first landing).
+# F6 made `browser_sea_target_path` answer in the row's own database and then
+# handed that answer to a walk that started at `browser_root_id $rows` — which is
+# hard-wired to the CURRENT database's root (`g:`, or `d:0|g:` under All-DBs).
+# So the database identity F6 rescued was thrown away one proc later, and the
+# `Descend to here` entry — now ENABLED on a foreign pane, where it used to be
+# disabled — either said `'TOP.dcell' is not in the Signal Browser tree` about a
+# row that IS in the tree (`d:1|g:TOP.dcell`), or, where the two databases
+# collide, resolved to the CURRENT database's namesake row with no cue at all.
+# MEASURED, both. That is the same wrong-answer shape this item was written to
+# remove, so the walk starts where the row lives.
+#
+# ⚠ A SLOT WHOSE ROOT ROW IS NOT IN `$rows` STILL ANSWERS `d:N|g:` AND NOT `{}`,
+# deliberately: `{}` is browser_node_for's TOP LEVEL, i.e. the current database's
+# unprefixed rows, which is precisely the fallback that made the defect. With no
+# such root row nothing has it as a parent, the walk matches nothing, and the
+# caller's "not in the Signal Browser tree" sentence is then TRUE.
+proc wviewer::browser_sea_root_id {token rows} {
+  set slot [wviewer::browser_row_foreign $token [wviewer::browser_sea_row $token]]
+  if {$slot eq {}} { return [wviewer::browser_root_id $rows] }
+  return "$slot|g:"
 }
 
 proc wviewer::browser_sea_descend_to {token idxs} {
@@ -8643,8 +8880,11 @@ proc wviewer::browser_sea_descend_to {token idxs} {
   set rows {}
   if {[info exists browserrows($token)]} { set rows $browserrows($token) }
   set segs [wviewer::hier_split [lindex $r 1]]
+  # ⚠⚠ THE ROW'S OWN DATABASE'S ROOT (§F item F6) — see browser_sea_root_id.
+  # `browser_root_id $rows` here was the current database's root whatever pane
+  # the gesture came out of, which is the defect that proc's header records.
   lassign [wviewer::browser_node_for $rows $segs \
-             [wviewer::browser_root_id $rows]] id matched
+             [wviewer::browser_sea_root_id $token $rows]] id matched
   # ⚠ AN UNREACHABLE NODE IS SAID, NEVER SWALLOWED. This arm used to `return 0`
   # in silence, so the entry above — which is built ENABLED on `ok` alone — did
   # nothing at all and explained nothing. A resolved path with no row is a real
@@ -8701,6 +8941,17 @@ proc wviewer::browser_sea_send_to_add_trace {token idxs} {
     $w.expr insert end [lindex $names 0]
     focus $w.expr
   }
+  # ⚠⚠ §F item F6: AND THE ROW'S DATABASE GOES WITH THE NAME, exactly as the
+  # sibling `Plot` entry arms `plot_dbs_arm`. Before F6 this pane could only hold
+  # the CURRENT database's names, so handing a bare name onward was right by
+  # construction; it can hold a FOREIGN database's names now, and `add_trace`'s
+  # name search resolves a collision to the CURRENT database (`resolve_signal_db`
+  # walks `signal_list_all`, which yields the current DB first). Two entries in
+  # ONE menu landing on two different runs, with no cue, is the very shape this
+  # item exists to remove. `browser_row_db` is {} for a current-DB pane, which
+  # `atd_db_arm` reads as "no arm" — so every pre-F6 state is untouched.
+  wviewer::atd_db_arm $token [lindex $names 0] \
+    [wviewer::browser_row_db [wviewer::browser_sea_row $token]]
   return 1
 }
 
@@ -9338,6 +9589,7 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browserraw
   variable browsercurdb
   variable browserseaent
+  variable browserseadbent
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} { return 0 }
@@ -9475,6 +9727,12 @@ proc wviewer::browser_refresh {token {reload 0}} {
   # browser_sea_refresh — mid-refresh. It must find THIS refresh's snapshot, not
   # the previous one's.
   set browserseaent($token) $seaent
+  # §F item F6 (issue 0308): THE SEA'S PER-DATABASE DIMENSION, EMPTIED HERE AND
+  # FILLED IN THE All-DBs LOOP BELOW — never carried over from the previous
+  # refresh. A foreign inventory left behind after its database stopped matching
+  # (or after the box was un-ticked) would be a pane listing a database the tree
+  # no longer shows, which is the same wrong-answer shape one refresh later.
+  set browserseadbent($token) {}
   # R2: the tree has exactly one root node per database, named for its design.
   #
   # ⚠ ONE READ OF THE All-DBs CHECKBOX, HELD IN A LOCAL AND USED TWICE. Its
@@ -9566,6 +9824,14 @@ proc wviewer::browser_refresh {token {reload 0}} {
       # the foreign inventory beside it. BD58 is that check, on the live All-DBs
       # fixture, because this is the only place it is reachable.
       set dent [wviewer::browser_class_filter $dent $devint $srccur]
+      # §F item F6 (issue 0308): AND THE LOWER PANE GETS THE SAME LIST, in the
+      # same pass, keyed by the same `d:<idx>` the group below is keyed by. One
+      # write means the pane can never list a set the tree does not show, which
+      # is the invariant §7.1 states for the current DB (there the tree is the
+      # BAR-UNFILTERED set and the pane the bar-matched one; a foreign DB's tree
+      # is already bar-matched — item 15's declared asymmetry, BD51/BD51b — so
+      # for a foreign database the two sets are literally the same list).
+      dict set browserseadbent($token) [wviewer::dget $db id {}] $dent
       # ⚠ TWO-PANE item 15: the FOURTH element is THIS DB's own design-root
       # label, derived from THIS DB's own raw path. Left off, every DB's root
       # would render the CURRENT design's name under a foreign DB's header — the
@@ -10293,9 +10559,34 @@ proc wviewer::hier_origin_ok {token} {
 # `g:` and `d:0|g:` both decode to `{}` — the design root, i.e. the legitimate
 # sim-root ascend, which is what makes item 2's choice of `g:` for the root id
 # free of any change to the callers.
+#
+# --- §F item F6 (issue 0308): THE DATABASE HALF IS AN ANSWER, NOT LITTER -----
+#
+# ⚠⚠ THE DECODE ANSWERS BOTH HALVES, `{<registry idx or {}> <dotted path>}`, AND
+# THAT IS THE WHOLE OF ISSUE 0308's FIRST STEP. Stripping `d:N|` and returning
+# only the path throws away the one fact that says WHICH INVENTORY the path is
+# to be looked up in; every caller then looked it up in the only one there was —
+# the current database's — and the browser answered confidently with the current
+# database's namesakes for a node that came from somewhere else. MEASURED on two
+# databases that each carry `x1`: the foreign scope listed the CURRENT raw's
+# `v(x1.fromraw)`. Absent would have been bad; wrong was worse.
+#
+# `browser_id_path` is kept as the ONE-LINE PROJECTION rather than being
+# re-signatured, and deliberately: `browser_target_path` and `browser_show_path`
+# each call it exactly once and `TP44` counts those two call sites as a frozen
+# 1/1 (it is the check that exists because those two sites once held two copies
+# of the string arithmetic and both were wrong). A caller that needs the database
+# asks for the pair; a caller that does not is untouched.
+proc wviewer::browser_id_split {id} {
+  set db {}
+  if {[regexp {^d:([0-9]+)\|} $id -> n]} {
+    set db $n
+    regsub {^d:[0-9]+\|} $id {} id
+  }
+  return [list $db [string range $id 2 end]]
+}
 proc wviewer::browser_id_path {id} {
-  regsub {^d:[0-9]+\|} $id {} id
-  return [string range $id 2 end]
+  return [lindex [wviewer::browser_id_split $id] 1]
 }
 
 # The CURRENT DB's design-root id: `g:` normally, `d:0|g:` when All-DBs has put
@@ -14153,6 +14444,15 @@ proc wviewer::add_trace_dialog {token} {
   variable windows
   variable atdsigs
   if {![dict exists $windows $token]} { return {} }
+  # ⚠ §F item F6: A FRESH DIALOG IS NEVER BORN ARMED, AND NOTHING HERE HAS TO
+  # SAY SO. `ase::ui::dialog_frame` opens with an unconditional
+  # `catch {destroy $w}` (src/ase_window.tcl:1286), which fires this dialog's own
+  # <Destroy> and therefore `add_trace_forget` — the SINGLE owner of dropping
+  # `atddb`. An explicit clear here would be a second owner that no sabotage
+  # could reach (MEASURED: deleting it reds nothing), so it is deliberately not
+  # written. Only the browser's lower pane arms a database, and it arms AFTER
+  # this returns, so the Graph menu and the TREE's `Send to Add Trace…` both
+  # start from the name-only rule they have always used. `FD68`.
   set top [dict get $windows $token top]
   set w [ase::ui::dialog_frame $top.wvadd {Add Trace}]
   set gcount [llength [dict get [wviewer::layout_for $token] graphs]]
@@ -14282,9 +14582,35 @@ proc wviewer::add_trace_filter {token pat syn case type} {
 # would otherwise evaporate the cache while the dialog is still up.
 proc wviewer::add_trace_forget {token W w} {
   variable atdsigs
+  # §F item F6: the lower pane's one-shot database goes with the dialog it was
+  # armed for — a dialog that was closed unanswered must not hand its database
+  # to the NEXT one, which is plot_dbs_take's discipline in this dialog's terms.
+  variable atddb
   if {$W ne $w} { return }
   catch {unset atdsigs($token)}
+  catch {unset atddb($token)}
   return
+}
+
+# --- §F item F6: the lower pane's `Send to Add Trace…` carries its database ---
+#
+# `plot_dbs_arm`/`plot_dbs_take` in miniature, for the OTHER route out of the
+# pane's context menu. See `atddb`'s declaration for why the arm carries the NAME
+# as well as the index, and `browser_sea_send_to_add_trace` for what arms it.
+proc wviewer::atd_db_arm {token name db} {
+  variable atddb
+  if {$db eq {}} { catch {unset atddb($token)} ; return {} }
+  set atddb($token) [list $name $db]
+  return {}
+}
+# CONSUMES, exactly as plot_dbs_take does: an arm that survived its own OK would
+# retarget whatever the user typed next.
+proc wviewer::atd_db_take {token} {
+  variable atddb
+  if {![info exists atddb($token)]} { return {} }
+  set v $atddb($token)
+  unset atddb($token)
+  return $v
 }
 
 # Double-click in the raw-vars listbox: copy the picked var into the
@@ -14324,6 +14650,10 @@ proc wviewer::add_trace_ok {token} {
   set gi   [$w.graph get]
   set rpn  [string trim [$w.expr get]]
   set name [string trim [$w.name get]]
+  # §F item F6: THE LOWER PANE'S ONE-SHOT DATABASE, TAKEN FIRST THING and read
+  # exactly like plot_signals reads its own arm — before any early return, so a
+  # refused OK cannot leave it to retarget the next gesture.
+  lassign [wviewer::atd_db_take $token] atd_nm atd_db
   # The dropdown IS the setting: choosing it in the dialog and pressing OK
   # persists it for the window (item 7's "persisted per window").
   set dest [wviewer::dest_norm [$w.dest get]]
@@ -14398,7 +14728,16 @@ proc wviewer::add_trace_ok {token} {
   }
   set added 0
   foreach nm $names ti [dict get $plan targets] {
-    set err [wviewer::add_trace $token $ti $nm $name]
+    # ⚠⚠ §F item F6: the armed database applies to the ARMED NAME AND NOTHING
+    # ELSE. `add_trace`'s 6th argument overrides the name search entirely, which
+    # is right for a pointer the user made by clicking a row under a specific
+    # database's header and wrong for anything they typed over it — so the text
+    # must still be byte-for-byte what the pane prefilled. `{}` is every other
+    # path through this dialog, and `add_trace` then behaves exactly as it always
+    # did (decision 4: the current DB wins, then the first other DB that has it).
+    set tdb {}
+    if {$atd_db ne {} && $nm eq $atd_nm} { set tdb $atd_db }
+    set err [wviewer::add_trace $token $ti $nm $name {} $tdb]
     if {$err ne {}} {
       # DELIBERATE NON-ROLLBACK (PLAN item 6 + driver note (f); settled decision
       # 11's rollback rule governs the hierarchy-sync items, not this one). The

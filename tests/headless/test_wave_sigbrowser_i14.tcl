@@ -1238,15 +1238,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # --- BD70d — A DECLARED LIMIT, ASSERTED AS A VALUE -------------------------
   # ⚠⚠ REACHABLE FOR THE FIRST TIME BECAUSE OF TWO-PANE ITEM 15. The lower pane
-  # is drawn from `browserseaent`, which holds the CURRENT DB's entries and only
+  # was drawn from `browserseaent`, which holds the CURRENT DB's entries and only
   # those — so a FOREIGN design root, which decodes to the empty path exactly
-  # like the current one, shows the CURRENT DB's own-level names. Before item 15
-  # there were no foreign roots to click, so the case did not exist. Item 15 does
-  # NOT fix it: scoping the sea per DB is a two-pane change of its own (spec
-  # §7.2's caption owns the wording), and a silent wrong answer is worse than a
-  # recorded one. LEG 1 IS THE POSITIVE CONTROL taken BEFORE the foreign root is
-  # selected, so "the sea shows the current DB" and "the sea never changed
-  # because nothing is wired" are not the same picture.
+  # like the current one, showed the CURRENT DB's own-level names. Before item 15
+  # there were no foreign roots to click, so the case did not exist. LEG 1 IS THE
+  # POSITIVE CONTROL taken BEFORE the foreign root is selected, so "the sea shows
+  # the current DB" and "the sea never changed because nothing is wired" are not
+  # the same picture.
+  #
+  # ⚠⚠ RESTATED — THE LIMIT IS GONE (§F item F6, issue 0308; batch F item 7).
+  # This check shipped as a DECLARED LIMIT asserting the defect as a value: leg 2
+  # read `{time v(beta) v(shared)}`, the CURRENT DB's names, under the FOREIGN
+  # DB's root. Item 7 gives the sea snapshot a per-database dimension —
+  # `browser_sea_ent` picks the inventory by the row's own `d:N|` prefix instead
+  # of the prefix being stripped and thrown away — so leg 2 is now `bd_a`'s own
+  # top level.
+  #
+  # ⚠ THIS FIXTURE IS THE COLLIDING CASE AND THAT IS WHY THE RESTATEMENT IS
+  # EVIDENCE. `time` and `v(shared)` are in BOTH raws; only `v(alpha)`/`v(beta)`
+  # separate them, and the two lists are the same LENGTH under either reading. A
+  # check on the count, or on a fixture whose databases shared no name, would
+  # have passed against the shipped code and proved nothing.
   set bd_sea_own {}
   foreach p $::wviewer::browsersea($tok) { lappend bd_sea_own [lindex $p 1] }
   pcall $BVF.pw.tvf.tv selection set [list {d:0|g:}]
@@ -1256,11 +1268,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # put the fixture back BEFORE the check, and never read what this line writes.
   pcall $BVF.pw.tvf.tv selection set [list {g:}]
   update
-  check {BD70d (DECLARED LIMIT) selecting a FOREIGN DB's design root shows the CURRENT DB's own-level names — the lower pane is built from the current DB's entries alone, and both roots decode to the same empty path} \
+  check {BD70d (RESTATED BY §F ITEM F6) selecting a FOREIGN DB's design root now shows THAT DB's own-level names, though both roots still decode to the same empty path — the database comes from the row id, not from the path} \
     [list $bd_sea_own $bd_sea_for \
           [wviewer::browser_id_path {d:0|g:}] \
-          [wviewer::browser_id_path {g:}]] \
-    [list {time v(beta) v(shared)} {time v(beta) v(shared)} {} {}]
+          [wviewer::browser_id_path {g:}] \
+          [wviewer::browser_id_split {d:0|g:}] \
+          [wviewer::browser_id_split {g:}]] \
+    [list {time v(beta) v(shared)} {time v(alpha) v(shared)} {} {} {0 {}} {{} {}}]
 
   # --- BD58 (TWO-PANE ITEM 12) — R11's BOXES GOVERN THE FOREIGN DBs TOO ------
   #
@@ -1338,6 +1352,79 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [bd_ids_for [bd_rows $tok] {v(beta)}] \
           [bd_ids_for [bd_rows $tok] {v(shared)}]] \
     [list {s:v(beta)} {s:v(shared)}]
+
+  # --- BD58d/BD58e (BATCH F ITEM 07 FIX PASS) — AND THE **PANE** GETS THE
+  # ---              FILTERED LIST, NOT THE ONE BEFORE THE FILTER --------------
+  #
+  # ⚠⚠ THIS IS THE ITEM'S OWN HEADLINE INVARIANT, WHICH SHIPPED WITH NO ORACLE.
+  # §F item F6 writes each foreign DB's entries into `browserseadbent` inside
+  # browser_refresh's All-DBs loop, and the comment on that write claims "one
+  # write means the pane can never list a set the tree does not show". MEASURED
+  # against the first landing: feeding that write the PRE-class-filter list left
+  # 564 checks green across four suites while the foreign pane really did list a
+  # device-internal node the tree beside it was hiding, drawn as a current
+  # (`mn1:#body`) and counted in the caption. No fixture reached it — the only
+  # foreign databases with device-class names were VCDs, and RULING F4 makes
+  # `browser_class_filter` a no-op on digital names.
+  #
+  # ⚠ SO THE SEED IS AN **ANALOG** FOREIGN DB WITH BOTH CLASSES AT ONE NODE:
+  # `v(x1.beta)` is `class net` and `v(m.x1.mn1#body)` is `class devnode`, and
+  # both have path `x1` (measured). That is what makes `d:9|g:x1` a row the tree
+  # keeps with the box OFF — BD58's own seed has the device signal alone, so its
+  # node vanishes entirely and there is nothing to select. Its own save/restore
+  # pair (`bd_dbs_was`, three lines below) covers this seed too.
+  #
+  # ⚠ THE CAPTION IS A LEG BECAUSE IT IS THE OTHER HALF OF THE SAME WRITE: `own`
+  # counts the UNFILTERED inventory (§7.2's denominator), so the honest sentence
+  # with the box off is `1 of 2 signals`. The pre-filter list makes it
+  # `2 of 2 signals` — a full pane under a caption that agrees with it.
+  proc bd_sea_labels {tok} {
+    set o {}
+    foreach p $::wviewer::browsersea($tok) { lappend o [lindex $p 0] }
+    return $o
+  }
+  proc bd_leaves_under {rows par} {
+    set o {}
+    foreach r $rows {
+      if {[wviewer::dget $r kind {}] eq {group}} { continue }
+      if {[wviewer::dget $r parent {}] ne $par} { continue }
+      lappend o [wviewer::dget $r id {}]
+    }
+    return $o
+  }
+  set bd_zseed [list [dict create id {d:9} label {bd_z.raw (tran)} \
+                        names [list {v(x1.beta)} {v(m.x1.mn1#body)}]]]
+  set ::wviewer::browserdbsigs($tok) $bd_zseed
+  wviewer::browser_devint $tok 0
+  wviewer::browser_refresh $tok
+  update
+  pcall $BVF.pw.tvf.tv selection set [list {d:9|g:x1}]
+  update
+  set bd_zoff [list [bd_sea_labels $tok] \
+                    [bd_leaves_under [bd_rows $tok] {d:9|g:x1}] \
+                    [$BVF.pw.sea.st cget -text]]
+  set ::wviewer::browserdbsigs($tok) $bd_zseed
+  wviewer::browser_devint $tok 1
+  wviewer::browser_refresh $tok
+  update
+  pcall $BVF.pw.tvf.tv selection set [list {d:9|g:x1}]
+  update
+  set bd_zon [list [bd_sea_labels $tok] \
+                   [bd_leaves_under [bd_rows $tok] {d:9|g:x1}] \
+                   [$BVF.pw.sea.st cget -text]]
+  check {BD58d (ITEM 07 FIX) with `Show device internals` OFF a FOREIGN
+         database's pane lists exactly that database's own tree leaves under the
+         node — the device-internal name the tree hides is hidden in the pane
+         too, and the caption says one of two} \
+    $bd_zoff \
+    [list {beta} {d:9|s:v(x1.beta)} {1 of 2 signals}]
+  check {BD58e (POSITIVE CONTROL) with the box ON the same foreign node's pane
+         and tree BOTH gain the device-internal name — so BD58d is the filter
+         working, not the pane being empty} \
+    $bd_zon \
+    [list {beta mn1:#body} \
+          {d:9|s:v(x1.beta) d:9|s:v(m.x1.mn1#body)} {2 of 2 signals}]
+
   wviewer::browser_devint $tok 0
   set ::wviewer::browserdbsigs($tok) $bd_dbs_was
   wviewer::browser_refresh $tok

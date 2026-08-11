@@ -87,6 +87,64 @@ b0001 #
 "
 }
 
+# --- §F item F6 (issue 0308): the COLLIDING pair -----------------------------
+#
+# ⚠⚠ THE TWO DATABASES CARRY THE SAME PATH AND ONE OF THE SAME LEAF NAMES, AND
+# THAT IS THE ONLY FIXTURE THAT CAN SEE THIS DEFECT. `browser_id_path` stripped
+# the `d:N|` prefix and the pane then looked the surviving path up in whichever
+# inventory was current — so with DISTINCT names in each database the symptom is
+# an EMPTY pane (visible, and what issue 0308 recorded), while with COLLIDING
+# ones it is a FULL pane listing the wrong run's signals, same length, same
+# caption, no cue anywhere. A check built on distinct names passes against the
+# broken code for the wrong reason.
+#
+#   raw (current)  time  v(rootraw)  v(x1.same)  v(x1.onlyraw)
+#   vcd (foreign)  time              x1.same     x1.onlyvcd
+#
+# `time` is in BOTH (the engine synthesises it for a VCD exactly as ngspice
+# writes it into a raw) and `v(rootraw)` in only one, which is what makes the
+# design ROOT — where `g:` and `d:N|g:` decode to the same empty path — tell the
+# two databases apart at all.
+#
+# `x1` is deliberate: a subcircuit instance is hierarchy under ngspice's grammar
+# and a plain module name under Verilog's, so BOTH databases really do own the
+# path `x1` and the two panes differ only by their contents (RULING F4's
+# single-letter case is FD41-FD48's subject and is kept out of this one).
+proc fd_mkraw_x1 {path} {
+  set body "Title: test\nDate: Thu Jan  1 00:00:00 2026\nPlotname: Transient Analysis\n"
+  append body "Flags: real\nNo. Variables: 4\nNo. Points: 3\nVariables:\n"
+  append body "\t0\ttime\ttime\n\t1\tv(rootraw)\tvoltage\n"
+  append body "\t2\tv(x1.same)\tvoltage\n\t3\tv(x1.onlyraw)\tvoltage\n"
+  append body "Values:\n0\t0.0\n\t0.0\n\t0.0\n\t0.0\n\n"
+  append body "1\t1e-09\n\t1.0\n\t1.0\n\t1.0\n\n"
+  append body "2\t2e-09\n\t0.5\n\t0.5\n\t0.5\n\n"
+  fd_wr $path $body
+}
+proc fd_mkvcd_x1 {path} {
+  fd_wr $path "\$timescale 1ps \$end
+\$scope module x1 \$end
+ \$var wire 1 ! same \$end
+ \$var wire 1 # onlyvcd \$end
+\$upscope \$end
+\$enddefinitions \$end
+#0
+0!
+0#
+#100
+1!
+1#
+#200
+"
+}
+
+# the LOWER PANE's drawn labels, in order — the one reader every pane check in
+# this file uses, so "what the pane lists" is one expression and not five.
+proc fd_pane {tok} {
+  set o {}
+  foreach p $::wviewer::browsersea($tok) { lappend o [lindex $p 0] }
+  return $o
+}
+
 # --- source-arm checks (BOTH arms) -------------------------------------------
 # The formatter rule this file's X arm then exercises: the eleventh outcome
 # sentence is spelled in browser_msg and NOWHERE else, exactly as the tenth is.
@@ -523,6 +581,33 @@ check {FD53 (F4b) typing the exact bus-bit label the pane draws finds THAT bit,
         {} \
         [list {v(x1.count[3])}]]
 
+# --- FD59: §F ITEM F6 — THE DECODE STOPS THROWING THE DATABASE AWAY ----------
+#
+# ⚠⚠ THIS IS THE FIRST STEP OF ISSUE 0308's MECHANISM, ISOLATED. `browser_id_path`
+# stripped `d:N|` and returned the bare path, so the one fact that said WHICH
+# inventory to resolve in was gone before the lookup started; every caller then
+# resolved in the only one there was. The decode now answers BOTH halves and the
+# two shipped projections are that same decode read twice, so `browser_row_db`
+# and `browser_id_path` cannot drift about what a prefix is (they were two copies
+# of one regexp, with a comment asking the reader to keep them equal).
+#
+# Legs 5/6 are the projections' FROZEN meanings: `TP44` counts the one decoder's
+# call sites in `browser_target_path` and `browser_show_path` as an exact 1/1, so
+# `browser_id_path` had to keep its signature and its answer to the character.
+# Leg 7 is the design-root case both prefixed and not — `d:0|g:` and `g:` decode
+# to the same empty path, which is precisely why the pane needed the other half.
+check {FD59 (F6) the row-id decode answers the DATABASE as well as the path, and
+       the two shipped projections are that one decode read twice} \
+  [list [pcall ::wviewer::browser_id_split {d:1|g:TOP.m}] \
+        [pcall ::wviewer::browser_id_split {g:x1}] \
+        [pcall ::wviewer::browser_id_split {d:12|s:v(a)}] \
+        [pcall ::wviewer::browser_id_split {s:v(a)}] \
+        [pcall ::wviewer::browser_id_path {d:1|g:TOP.m}] \
+        [pcall ::wviewer::browser_row_db  {d:1|g:TOP.m}] \
+        [pcall ::wviewer::browser_id_split {d:0|g:}] \
+        [pcall ::wviewer::browser_id_split {g:}]] \
+  [list {1 TOP.m} {{} x1} {12 v(a)} {{} v(a)} TOP.m 1 {0 {}} {{} {}}]
+
 # =============================================================================
 # FD10-FD48 — THE REAL VIEWER, THE REAL TREE, A REAL SECOND DATABASE. Tk/X only.
 # (FD30-FD39 are the §F item F4 ruling's PURE half and sit ABOVE this gate, in
@@ -621,19 +706,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list 1 "Signal Browser\nshowing every results database to reach TOP.m"]
   # --- RULING F1e: WHAT THE HAPPY PATH ACTUALLY LEAVES ON SCREEN -----------
   #
-  # ⚠⚠ THE SCOPE IS SHOWN AND THE PANE IS STILL EMPTY. The lower pane is drawn
-  # from `browserseaent`, the CURRENT database's entries alone (item 15's
-  # declared limit, BD70d one file over), so a FOREIGN VCD's scope selects a
-  # real row that lists nothing — and the shipped `seaempty` arm then captions
-  # it "'TOP.m' has no signals of its own", about a scope that has two. This is
-  # the state that makes `ase::show_in_browser_for_current`'s step 7b fire; FV41
-  # owns the arm, this owns the FACT, and without the fact the arm is a guess.
-  check {FD19 (F5/F1e) the digital scope is shown and the lower pane still lists
-         NOTHING — the state the "shown but not listed" notice exists for} \
+  # ⚠⚠ RESTATED BY §F ITEM F6, NOT DELETED, AND THE MOVEMENT IS THE POINT. As
+  # shipped this check asserted the OPPOSITE — `{1 0 0}`: the scope is shown and
+  # the lower pane lists NOTHING, because the pane was drawn from
+  # `browserseaent`, the CURRENT database's entries alone (item 15's declared
+  # limit, BD70d one file over), so a FOREIGN VCD's scope selected a real row and
+  # listed nothing under the false caption "'TOP.m' has no signals of its own".
+  # That was issue 0308. RULING F6 gives the pane a per-database dimension, and
+  # the same row now lists the VCD's OWN two wires, drawn bare.
+  #
+  # It is the NAMES and not merely the count, because the count alone cannot
+  # tell "the foreign database was read" from "the current one happened to have
+  # two names at this path" — which is exactly the confusion FD59 below is built
+  # to break. `siga`/`sigb` exist in the VCD and nowhere else in this fixture.
+  check {FD19 (F5/F1e, RESTATED BY §F ITEM F6) the digital scope is shown AND the
+         lower pane now lists that FOREIGN database's own two wires — issue
+         0308's state is gone} \
     [list [pcall ::wviewer::browser_sea_empty $tok] \
-          [llength $::wviewer::browsersea($tok)] \
-          [llength [$FDV.pw.sea.c find withtag cell]]] \
-    [list 1 0 0]
+          [fd_pane $tok] \
+          [llength [$FDV.pw.sea.c find withtag cell]] \
+          [pcall ::wviewer::browser_sea_own $tok {TOP.m} [lindex $fd_r 1]] \
+          [pcall ::wviewer::browser_sea_own $tok {TOP.m}]] \
+    [list 0 {siga sigb} 2 2 0]
   # THE POSITIVE CONTROL, and it is not optional: a reader that answered 1 for
   # everything would pass FD19 and be worthless. The CURRENT database's design
   # root lists its own signals, so the same reader must answer 0 there.
@@ -649,7 +743,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # pane below still holds the previous node's cells, and FD21 (which asserts
   # the canvas notice draws only on an EMPTY pane) then reads two stale cells
   # and fails for a reason that has nothing to do with the notice. Measured.
-  pcall $FDV.pw.tvf.tv selection set [list [lindex $fd_r 1]]
+  #
+  # ⚠⚠ AND IT GOES BACK TO THE VCD's `TOP`, NOT TO ITS `TOP.m`, SINCE §F ITEM
+  # F6. FD20/FD21 need a pane that is EMPTY, and until F6 every foreign row was
+  # one; now `TOP.m` lists the VCD's two wires (FD19) and only a PURE ANCESTOR
+  # is empty. `TOP` is that ancestor INSIDE THE FOREIGN DATABASE, which is a
+  # stricter fixture than the one it replaces: it is empty because the VCD
+  # really declares nothing at that level, not because the pane could not read
+  # the VCD at all.
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_gid|g:TOP"]
   update
   # ⚠ A SCOPE THE DATABASE DOES NOT DECLARE. Measured, and the answer is the
   # analog path's: the walk lands on the deepest ancestor that DOES exist and
@@ -751,7 +853,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
   }
   set ::fd_tok $tok
-  set ::fd_dig [list ok $fd_vcd TOP.m]
+  # ⚠⚠ `TOP`, NOT `TOP.m`, SINCE §F ITEM F6 — AND THE MOVE IS WHAT KEEPS THESE
+  # TWO CHECKS ABOUT WHAT THEY CLAIM. Step 7b is gated on `browser_sea_empty`,
+  # and F6 made that reader ask the ROW's OWN database, so `TOP.m` now lists two
+  # wires (FD19), the arm correctly declines and there is no notice left to
+  # measure the SETTLE with. `TOP` is the VCD's own pure ancestor: the show
+  # succeeds, the pane is genuinely empty, the arm fires — so FD23/FD24 still
+  # drive the exact ordering they were written for (RULING F1f's flush), and
+  # they now also pin RULING F1g's re-caused sentence, which is the only place
+  # in the suite that reads it end to end.
+  set ::fd_dig [list ok $fd_vcd TOP]
 
   # ⚠ THE PRE-STATE IS A SETTLED PANE THAT LISTS THINGS, and it is load-bearing
   # for the SECOND blocker. Step 7b's predicate reads the pane MODEL, which the
@@ -770,9 +881,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠⚠ AND HERE IS THE TURN OF THE EVENT LOOP THAT TK ALWAYS TAKES. Everything
   # this item ships is judged after this line, never before it.
   update
-  set fd_want "showing the digital scope 'TOP.m' of 'fd_dig.vcd' in the tree,\
- but the lower pane lists only the current results database, so this scope's\
- own signals are not in it yet"
+  # ⚠ RULING F1g's sentence, verbatim. RULING F1e's original blamed the lower
+  # pane's single-database reader — true then, false since §F item F6 — and the
+  # arm was RE-CAUSED rather than deleted (spec RULING F1g): the predicate still
+  # fires on a real empty pane, and the sentence now names the true reason while
+  # still saying that the show SUCCEEDED and which database it landed in, which
+  # the shipped `seaempty` caption does not.
+  set fd_want "showing the digital scope 'TOP' of 'fd_dig.vcd' in the tree,\
+ but that scope has no signals of its own - open one of its sub-scopes to see any"
   check {FD23 (F5/F1e) the real command's notice SURVIVES the refresh its own
          gesture queued — pane caption, one turn after the binding returns} \
     [list $fd_pre $fd_dr [$FDV.pw.sea.st cget -text]] \
@@ -799,10 +915,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::browser_notice $tok {FD25 unflushed}
   set fd_before [$FDV.pw.sea.st cget -text]
   update
+  # ⚠ LEG 2 RESTATED BY §F ITEM F6. It used to read
+  # `TOP.m has no signals of its own` — the falsehood issue 0308 quoted, which
+  # is what the pane reverted to. The erasure this tombstone is about is
+  # unchanged; what comes back is now the TRUE shipped caption for that scope,
+  # `2 of 2 signals`, so the check still proves the notice was wiped and no
+  # longer asserts a sentence the product has stopped producing.
   check {FD25 (F5/F1e TOMBSTONE) a notice written WITHOUT the settle is erased by
-         the queued refresh, and the false shipped caption comes back} \
+         the queued refresh, and the shipped caption comes back} \
     [list $fd_before [$FDV.pw.sea.st cget -text] $::wviewer::browserseanote($tok)] \
-    [list {FD25 unflushed} {TOP.m has no signals of its own} {}]
+    [list {FD25 unflushed} {2 of 2 signals} {}]
 
   # ⚠⚠ F5's OWN ROW, END TO END, ON THE PATH THAT SHIPPED THE DEFECT FIRST.
   # FD23/FD24 drive the SUCCESS path; this is the REFUSAL path, whose notice was
@@ -923,13 +1045,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     foreach r $::wviewer::browserrows($tok) { lappend o [wviewer::dget $r id {}] }
     return $o
   }
-  # the LOWER PANE's drawn labels, in order. Used by FD48 (where it must be
-  # empty) and by FD45 (where it must be the six bare digital names).
-  proc fd_pane {tok} {
-    set o {}
-    foreach p $::wviewer::browsersea($tok) { lappend o [lindex $p 0] }
-    return $o
-  }
   set fd_all [fd_ids $tok]
   check {FD42 (F3/F4) `m` and `m.sub` are both real rows of that database's
          subtree, and its wire and its bus bit hang from `m.sub`} \
@@ -968,39 +1083,150 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::browser_refresh $tok 0
   update
 
-  # ⚠⚠ ISSUE 0308's TOMBSTONE, FROM THE DIGITAL SIDE — A DECLARED LIMIT THIS
-  # ITEM DOES **NOT** FIX, PINNED AS A VALUE SO IT CANNOT BE FORGOTTEN OR
-  # QUIETLY "FIXED" WITHOUT THIS CHECK MOVING.
-  #
-  # The whole tree half above works: `m` and `m.sub` are real rows of the
-  # foreign VCD's subtree (FD42) and the Search bar reaches them (FD43). The
-  # LOWER PANE is a different surface with a different reader —
-  # `browser_sea_refresh` draws it out of `browserseaent`, which is the CURRENT
+  # ⚠⚠ ISSUE 0308's TOMBSTONE, RESTATED THE WAY THE ISSUE ITSELF PRESCRIBED —
+  # NOT DELETED. As shipped by item 6 this check asserted the DEFECT as a value:
+  # legs 2/3 were `{}` and `m.sub has no signals of its own`, because
+  # `browser_sea_refresh` drew the pane out of `browserseaent`, the CURRENT
   # database's entries and only those (two-pane item 15's declared limit,
-  # BD70d). So selecting a FOREIGN digital scope by hand selects a real row and
-  # lists NOTHING, under a caption that is a true sentence about the current
-  # database and a false one about the node on screen. That is issue 0308
-  # exactly, reproduced here from the case item 15 could not reach.
+  # BD70d), so selecting a FOREIGN digital scope by hand selected a real row and
+  # listed NOTHING under a caption that was a true sentence about the current
+  # database and a false one about the node on screen.
   #
-  # RULING F4 does not touch it and was never able to: the classification is
-  # right (FD42 proves the rows exist and are digital), and what is missing is
-  # a per-ROW inventory reader. FD44-FD47 below are the half this item DOES
-  # add — the same scope, listed and labelled correctly, once that database is
-  # the CURRENT one. When 0308 is fixed this check must be restated, not
-  # deleted: leg 2 becomes the six names and leg 3 the ordinary count. Leg 1 is
-  # this check's own positive evidence and is FALSE on a pre-ruling tree (the
-  # `devnode` rows are not there to select), which is what stops it being a
-  # check that merely restates shipped behaviour. Oracle: sabotage S17.
+  # §F item F6 gives the sea a per-database dimension, and issue 0308 named the
+  # restatement in advance: "leg 2 becomes the six names and leg 3 the ordinary
+  # count". It does. Leg 1 is this check's own positive evidence and is FALSE on
+  # a pre-RULING-F4 tree (the `devnode` rows are not there to select).
+  #
+  # ⚠ LEGS 4 AND 5 ARE THE PAIR THAT MAKES "PER-DATABASE" AN ASSERTION RATHER
+  # THAN A COUNT. The SAME path, asked of the same viewer, twice: told the
+  # foreign row it answers that VCD's six; told nothing it answers the CURRENT
+  # analog raw's zero. A single-inventory reader cannot produce both.
   pcall $FDV.pw.tvf.tv selection set [list "$fd_mgid|g:m.sub"]
   update
-  check {FD48 (F3, ISSUE 0308 DECLARED LIMIT) a FOREIGN digital scope selects a
-         real row whose leaves are in the tree, and the lower pane still lists
-         NOTHING under the current database's own `seaempty` caption} \
+  check {FD48 (F3, ISSUE 0308 — RESTATED BY §F ITEM F6) a FOREIGN digital scope
+         selects a real row AND the lower pane now lists that database's own six
+         signals under the ordinary count} \
     [list [expr {[lsearch -exact [fd_ids $tok] "$fd_mgid|s:m.sub.sig"] >= 0}] \
           [fd_pane $tok] \
           [$FDV.pw.sea.st cget -text] \
+          [pcall ::wviewer::browser_sea_own $tok {m.sub} "$fd_mgid|g:m.sub"] \
           [pcall ::wviewer::browser_sea_own $tok {m.sub}]] \
-    [list 1 {} {m.sub has no signals of its own} 0]
+    [list 1 [list sig count {count[0]} {count[1]} {count[2]} {count[3]}] \
+          {6 of 6 signals} 6 0]
+
+  # ⚠⚠ AND THE PANE'S OWN `Descend to here` RESOLVER FOLLOWS THE PANE, NOT THE
+  # CURRENT DATABASE — the second half of §F item F6, and the one a count check
+  # cannot see. `browser_sea_target_path` splits the pane's names with a grammar,
+  # and until F6 it asked `browser_curtype`: correct while the pane could only
+  # ever hold the current database's names, wrong the moment it can hold a
+  # foreign VCD's. With the ANALOG raw current and this VCD's `m.sub` pane drawn,
+  # the shipped reader answers `ok sub` — the single-letter scope declassed away,
+  # the menu entry built ENABLED against a node this tree never showed, which is
+  # FD52's defect one database over.
+  #
+  # ⚠ LEG 1 IS ASSERTED, NOT ASSUMED: index 0 must really be `m.sub.sig`, or leg
+  # 2 would answer the right path for the wrong row. Leg 3 is the CONTROL in the
+  # same viewer moments later — the pane redrawn from the CURRENT analog raw
+  # still splits as ngspice, so this is not "the resolver now always says vcd".
+  set fd_sp_f [list [pcall ::wviewer::browser_sea_name $tok 0] \
+                    [pcall ::wviewer::browser_sea_target_path $tok 0]]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  check {FD56 (F6, REAL PANE) with the ANALOG raw CURRENT the lower pane's
+         Descend-to resolver splits a FOREIGN VCD's name with that VCD's own
+         grammar, while the current raw's own pane still splits as ngspice} \
+    [list $fd_sp_f \
+          [pcall ::wviewer::browser_sea_name $tok 0] \
+          [pcall ::wviewer::browser_sea_target_path $tok 0]] \
+    [list [list {m.sub.sig} {ok m.sub}] {time} [list ok {}]]
+
+  # ⚠⚠ FD65 — AND THE GESTURE THAT USES THAT PATH WALKS THE ROW'S OWN
+  # ---        DATABASE'S SUBTREE (batch F item 07 FIX PASS) -------------------
+  #
+  # FD56 asserts only what the RESOLVER RETURNS. Its one consumer,
+  # `browser_sea_descend_to`, then looked the path up with
+  # `browser_node_for $rows $segs [browser_root_id $rows]` — and `browser_root_id`
+  # is hard-wired to the CURRENT database's root. So the database identity item 7
+  # rescued was thrown away one proc later, and the item made it WORSE than it
+  # found it: before the item `browser_sea_target_path` errored on a foreign pane
+  # and the `Descend to here` entry was DISABLED, after it the entry is ENABLED
+  # and the walk starts in the wrong tree.
+  #
+  # MEASURED on this very fixture, which is the honest one for it: `fd_anlg.raw`
+  # is CURRENT and has no `m` node at all, so the walk found nothing and the user
+  # was told `'m.sub' is not in the Signal Browser tree` — about `d:N|g:m.sub`,
+  # which leg 1 shows IS a row of that tree. (Where the two databases collide the
+  # walk finds the CURRENT database's namesake instead and says nothing at all;
+  # that half is FD66.)
+  #
+  # ⚠ THE ORACLE IS THE ID HANDED ON, NOT THE STATUS TEXT. `browser_descend_to`
+  # is the tree's own command and it takes a ROW ID; a spy on it records exactly
+  # which row the pane's gesture resolved to, and `NEVER` records the arm that
+  # returns 0 without calling it at all — so "descended to the wrong node" and
+  # "refused with a false sentence" are different values here, and the shipped
+  # code produces the second.
+  # ⚠ THE SPY TAKES TWO PARAMETERS, `browser_descend_to`'s exact signature.
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_mgid|g:m.sub"]
+  update
+  # ⚠ AND THE ENTRY IS REALLY REACHABLE, which is what makes the wrong landing a
+  # DEFECT rather than a theory: the pane's own context menu carries
+  # `Descend to here`, ENABLED, on this foreign pane. (Before item 7 the resolver
+  # errored here and the entry was DISABLED — so the item created the gesture and
+  # owed it a correct walk.)
+  set fd_dt_m [pcall ::wviewer::browser_sea_menu_build $tok 0]
+  set fd_dt_ent {NO-MENU}
+  catch {set fd_dt_ent [list [$fd_dt_m entrycget end -label] \
+                             [$fd_dt_m entrycget end -state]]}
+  rename ::wviewer::browser_descend_to ::wviewer::fd_dt_saved
+  proc ::wviewer::browser_descend_to {token ids} { set ::fd_dt_ids $ids ; return 1 }
+  set ::fd_dt_ids {NEVER}
+  set fd_dt_rc  [pcall ::wviewer::browser_sea_descend_to $tok 0]
+  set fd_dt_for [list $fd_dt_rc $::fd_dt_ids]
+  set fd_dt_root [pcall ::wviewer::browser_sea_root_id $tok \
+                    $::wviewer::browserrows($tok)]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  set fd_dt_croot [pcall ::wviewer::browser_sea_root_id $tok \
+                     $::wviewer::browserrows($tok)]
+  rename ::wviewer::browser_descend_to {}
+  rename ::wviewer::fd_dt_saved ::wviewer::browser_descend_to
+  check {FD65 (F6 FIX) `Descend to here` out of a FOREIGN pane resolves inside
+         THAT database's own subtree and hands its real row on, instead of
+         failing with a sentence that denies a row the tree is showing} \
+    [list [expr {[lsearch -exact [fd_ids $tok] "$fd_mgid|g:m.sub"] >= 0}] \
+          $fd_dt_ent $fd_dt_root $fd_dt_croot $fd_dt_for] \
+    [list 1 [list {Descend to here} normal] \
+          "$fd_mgid|g:" {g:} [list 1 [list "$fd_mgid|g:m.sub"]]]
+
+  # ⚠⚠ THE DEGRADATION DIRECTION, AS A VALUE. A `d:N|` row naming a slot the
+  # snapshot does not carry lists NOTHING and counts 0 — never the current
+  # database's entries. That is the whole lesson of issue 0308 read in the right
+  # direction: absent is a state the caption can describe truthfully, someone
+  # else's signals is not. Legs 3/4 are the positive control in the same call,
+  # so "it answers {} for everything" is not the same picture.
+  check {FD57 (F6) an unknown foreign registry slot lists NOTHING and counts 0,
+         never the current database's inventory} \
+    [list [pcall ::wviewer::browser_sea_ent $tok {d:99|g:m.sub}] \
+          [pcall ::wviewer::browser_sea_own $tok {m.sub} {d:99|g:m.sub}] \
+          [expr {[llength [pcall ::wviewer::browser_sea_ent $tok {g:}]] > 0}] \
+          [pcall ::wviewer::browser_sea_own $tok {} {}]] \
+    [list {} 0 1 2]
+
+  # ⚠⚠ AND THE `has no signals of its own` CAPTION NAMES THE ROW'S OWN DESIGN.
+  # This is where BD70d's declared limit lives one file over: `g:` and `d:N|g:`
+  # decode to the SAME empty path, so a foreign design root used to be captioned
+  # with the CURRENT run's name — one run's name on another run's pane. Leg 2 is
+  # the control (the current DB still names itself), leg 3 the degradation (a
+  # slot the snapshot has lost floors at `design`, never at the current design's
+  # name), leg 4 the untouched non-root case.
+  check {FD58 (F6) the empty-pane caption names the design of the ROW's OWN
+         database, and floors at `design` rather than borrowing the current
+         one's} \
+    [list [pcall ::wviewer::browser_sea_label $tok {} "$fd_mgid|g:"] \
+          [pcall ::wviewer::browser_sea_label $tok {}] \
+          [pcall ::wviewer::browser_sea_label $tok {} {d:99|g:}] \
+          [pcall ::wviewer::browser_sea_label $tok {m.sub} "$fd_mgid|g:m.sub"]] \
+    [list fd_dig_m fd_anlg design {m.sub}]
 
   # FD51's question asked of THE REAL TREE, on rows the product built, with the
   # analog raw CURRENT and the VCD foreign — the case a snapshot fixture cannot
@@ -1094,7 +1320,299 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall ::wviewer::browser_refresh $tok 0
   update
 
+  # =========================================================================
+  # FD60-FD62 — §F ITEM F6 ON THE CASE THAT ACTUALLY DISCRIMINATES: TWO
+  # DATABASES THAT COLLIDE.
+  #
+  # ⚠⚠ EVERYTHING ABOVE THIS LINE COULD HAVE BEEN GREEN FOR THE WRONG REASON.
+  # `fd_anlg.raw` and the two VCDs share no path at all, so the SHIPPED,
+  # single-inventory pane answered EMPTY for every foreign row — visible, and
+  # what issue 0308 recorded. The state nobody could see is the one where the
+  # two databases DO carry the same path: the pane then filled up with the
+  # CURRENT run's signals under a foreign node, with the same length and the
+  # same caption as the right answer. This fixture is that state, and it is the
+  # only place in the file where a wrong answer and a right one are the same
+  # shape.
+  #
+  #   raw (CURRENT, d:0)   time  v(x1.same)  v(x1.onlyraw)
+  #   vcd (FOREIGN, d:1)         x1.same     x1.onlyvcd
+  #
+  # Both own the path `x1`; both own a leaf that draws as `same`; each owns
+  # exactly one leaf the other does not. Two of two, either way.
+  # =========================================================================
+  set fd_rawc [file join $scratch fd_coll.raw]
+  set fd_vcdc [file join $scratch fd_coll.vcd]
+  fd_mkraw_x1 $fd_rawc
+  fd_mkvcd_x1 $fd_vcdc
+  wviewer::switch_ctx $tok
+  set fd_atc [pcall ase::attach_dbs $fd_rawc tran [list $fd_vcdc]]
+  wviewer::browser_refresh $tok 1
+  update
+  lassign [pcall ::wviewer::browser_db_group_id $tok $fd_vcdc] fd_cgid fd_ciscur
+  # ⚠ THE LAST LEG IS THE STALENESS GUARD. The previous fixture held THREE
+  # databases and this one holds two, so the registry slot `$fd_mgid` no longer
+  # exists. The per-DB sea map is emptied at the top of every refresh and
+  # refilled from the All-DBs loop; carried over instead, it would answer a
+  # closed database's entries for a row id that can be persisted and restored
+  # (`browser_tree_state`), which is the wrong-answer shape this item removes,
+  # one refresh later.
+  check {FD60 (F6 FIXTURE) the colliding pair attaches with the RAW current and
+         the VCD foreign, the All-DBs box is on, BOTH databases really carry the
+         path `x1` — and the departed database's slot carries nothing} \
+    [list [wviewer::dget $fd_atc n NONE] $fd_ciscur \
+          $::wviewer::sballdb($FDB) \
+          [pcall ::wviewer::browser_curtype $tok] \
+          [pcall ::wviewer::browser_sea_own $tok {x1}] \
+          [pcall ::wviewer::browser_sea_own $tok {x1} "$fd_cgid|g:x1"] \
+          [pcall ::wviewer::browser_sea_ent $tok "$fd_mgid|g:m.sub"]] \
+    [list 2 0 1 tran 2 2 {}]
+
+  # ⚠⚠ THE CHECK THE ITEM EXISTS FOR. Same viewer, same path, two rows: the
+  # foreign row must list the VCD's pair and the current row the raw's, and the
+  # ONLY thing that separates the two answers is the `d:1|` the shipped decode
+  # threw away. `onlyvcd` exists in no other database in this process and
+  # `onlyraw` in no other; `same` is in both, so leg-by-leg equality — not set
+  # size, not the caption — is what carries the evidence. Against the shipped
+  # code leg 1 reads `{same onlyraw}`: the right length, the right caption, the
+  # wrong run.
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  set fd_c_for [list [fd_pane $tok] [$FDV.pw.sea.st cget -text]]
+  pcall $FDV.pw.tvf.tv selection set [list {g:x1}]
+  update
+  set fd_c_cur [list [fd_pane $tok] [$FDV.pw.sea.st cget -text]]
+  check {FD61 (F6) THE COLLISION: the FOREIGN `x1` lists the VCD's own two names
+         and the CURRENT `x1` lists the raw's own two, in one viewer, at one
+         path, under captions that are word for word the same} \
+    [list $fd_c_for $fd_c_cur] \
+    [list [list {same onlyvcd} {2 of 2 signals}] \
+          [list {same onlyraw} {2 of 2 signals}]]
+
+  # ⚠⚠ THE SAME QUESTION AT THE DESIGN ROOT — BD70d's case, one file over, and
+  # the one two-pane item 15 filed as a declared limit because `g:` and `d:N|g:`
+  # decode to the SAME empty path. The raw carries a root net the VCD does not,
+  # so the two roots are finally distinguishable: the foreign root lists the
+  # VCD's `time` alone, the current root lists the raw's `time` and `rootraw`.
+  # Against the shipped code BOTH read `{time rootraw}`.
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:"]
+  update
+  set fd_r_for [list [fd_pane $tok] [$FDV.pw.sea.st cget -text]]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  check {FD63 (F6) the FOREIGN design ROOT lists that database's own top level,
+         not the current database's — issue 0308's BD70d half} \
+    [list $fd_r_for [fd_pane $tok] [$FDV.pw.sea.st cget -text]] \
+    [list [list {time} {1 of 1 signals}] {time rootraw} {2 of 2 signals}]
+
+  # ⚠⚠ AND A PLOT OUT OF THE FOREIGN PANE LANDS AGAINST THE FOREIGN DATABASE.
+  # This is the same silent wrong answer one gesture further on: `plot_signals`
+  # resolves a bare name through `resolve_signal_db`, which matches by NAME and
+  # whose documented tie-break is THE CURRENT DATABASE WINS (`signal_list_all`
+  # yields the current DB first and the first hit is returned — wave_viewer.tcl's
+  # ⚠ at `resolve_signal_db`, and `db_by_index`'s, which exists for exactly this
+  # reason). This fixture is a collision, so `x1.same` is in both: an unarmed
+  # plot of the foreign one draws the CURRENT raw's `v(x1.same)` instead, with no
+  # error and no cue. (`lowest-index` is the rule only AFTER the current database
+  # has refused the name — the §D1 case, two VCDs under an analog current DB.) The
+  # tree's plot route has carried the database since spec §D1's DEFECT 2; the
+  # pane's could not, because until F6 it could only ever hold current-DB names.
+  #
+  # ⚠ THE SPY TAKES FOUR PARAMETERS — the signature `BM05` pins by literal
+  # string one file over. It reads the armed list through the product's own
+  # `plot_dbs_take`, which is where `plot_signals` itself reads it.
+  rename ::wviewer::plot_signals ::wviewer::fd_ps_saved
+  proc ::wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+    set ::fd_pl_dbs   [wviewer::plot_dbs_take $token]
+    set ::fd_pl_names $exprs
+    return {}
+  }
+  set ::fd_pl_dbs {NEVER} ; set ::fd_pl_names {}
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  set fd_pl_n [pcall ::wviewer::browser_sea_plot_idx $tok [list 0 1]]
+  set fd_pl_for [list $fd_pl_n $::fd_pl_names $::fd_pl_dbs]
+  set ::fd_pl_dbs {NEVER} ; set ::fd_pl_names {}
+  pcall $FDV.pw.tvf.tv selection set [list {g:x1}]
+  update
+  pcall ::wviewer::browser_sea_plot_idx $tok [list 0 1]
+  set fd_pl_cur [list $::fd_pl_names $::fd_pl_dbs]
+  rename ::wviewer::plot_signals {}
+  rename ::wviewer::fd_ps_saved ::wviewer::plot_signals
+  check {FD62 (F6) plotting from the FOREIGN pane arms that database's registry
+         slot for every name, while the CURRENT pane arms none — the per-signal
+         database spec §D1 already gives the tree's plot route} \
+    [list $fd_pl_for $fd_pl_cur] \
+    [list [list 2 {x1.same x1.onlyvcd} [list [string range $fd_cgid 2 end] \
+                                             [string range $fd_cgid 2 end]]] \
+          [list {v(x1.same) v(x1.onlyraw)} {{} {}}]]
+
+  # ⚠⚠ FD66 — THE COLLISION, ONE GESTURE ON: `Descend to here` (item 07 FIX).
+  # FD65 is the case where the current database has no such node, which SHOWS as
+  # a refusal. This is the case that shows as NOTHING: both databases own `x1`,
+  # so the walk that started at the CURRENT database's root found `g:x1` and
+  # descended against it with no error and no cue, out of a pane whose cells came
+  # from the VCD. Same length, same success, wrong run — the exact shape issue
+  # 0308 is about, which is why the discriminating fixture has to be this one.
+  # ⚠ THE TWO LEGS ARE THE SAME CALL ON THE SAME PATH, so a reader cannot mistake
+  # this for "the resolver now always prefixes": the CURRENT pane still hands on
+  # the bare `g:x1`. Against the shipped code BOTH legs read `{1 g:x1}`.
+  rename ::wviewer::browser_descend_to ::wviewer::fd_dt2_saved
+  proc ::wviewer::browser_descend_to {token ids} { set ::fd_dt2_ids $ids ; return 1 }
+  set ::fd_dt2_ids {NEVER}
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  set fd_d2_for [list [pcall ::wviewer::browser_sea_descend_to $tok 0] $::fd_dt2_ids]
+  set ::fd_dt2_ids {NEVER}
+  pcall $FDV.pw.tvf.tv selection set [list {g:x1}]
+  update
+  set fd_d2_cur [list [pcall ::wviewer::browser_sea_descend_to $tok 0] $::fd_dt2_ids]
+  rename ::wviewer::browser_descend_to {}
+  rename ::wviewer::fd_dt2_saved ::wviewer::browser_descend_to
+  check {FD66 (F6 FIX) with the two databases COLLIDING at `x1`, the pane's
+         Descend-to hands on the row of the database the user is looking at —
+         the foreign one out of the foreign pane, the current one out of the
+         current pane} \
+    [list $fd_d2_for $fd_d2_cur] \
+    [list [list 1 [list "$fd_cgid|g:x1"]] [list 1 {g:x1}]]
+
+  # ⚠⚠ FD67 — AND THE **OTHER** ENTRY IN THE SAME CONTEXT MENU (item 07 FIX).
+  # The item armed the pane's `Plot` with the row's database (FD62) and left its
+  # sibling `Send to Add Trace…` handing a bare name to a dialog whose OK
+  # resolves names through `resolve_signal_db` — whose tie-break is THE CURRENT
+  # DATABASE WINS (`signal_list_all` yields the current DB first). So on this
+  # colliding fixture one menu entry landed on the run the user pointed at and
+  # the one below it on the current run, silently. Newly reachable: before §F
+  # item F6 the pane could only hold current-DB names and the bare hand-off was
+  # right by construction.
+  #
+  # ⚠ THE ARM CARRIES THE NAME AS WELL AS THE INDEX, and leg 4 is why: the
+  # dialog is modeless and its Expression field is meant to be EDITED, so an
+  # index that outlived the text it was armed for would retarget whatever the
+  # user typed. Leg 3 is the untouched text (the index is used), leg 4 the edited
+  # text (it is not), leg 5 the CURRENT pane (nothing is ever armed).
+  # ⚠ THE SPY TAKES SIX PARAMETERS, `add_trace`'s exact signature.
+  set fd_atw [wviewer::window_for $tok].wvadd
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  set fd_at_rc [pcall ::wviewer::browser_sea_send_to_add_trace $tok 0]
+  set fd_at_arm {NONE}
+  catch {set fd_at_arm $::wviewer::atddb($tok)}
+  rename ::wviewer::add_trace ::wviewer::fd_at_saved
+  proc ::wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}}} {
+    set ::fd_at_call [list $rpn $db] ; return {}
+  }
+  set ::fd_at_call {NEVER}
+  pcall ::wviewer::add_trace_ok $tok
+  set fd_at_kept $::fd_at_call
+  # …the same gesture, then the user TYPES OVER the prefill: the arm is dropped.
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  catch {$fd_atw.expr delete 0 end ; $fd_atw.expr insert end {x1.onlyvcd}}
+  set ::fd_at_call {NEVER}
+  pcall ::wviewer::add_trace_ok $tok
+  set fd_at_edit $::fd_at_call
+  # …and the CURRENT pane arms nothing at all, so every pre-F6 path is unmoved.
+  pcall $FDV.pw.tvf.tv selection set [list {g:x1}]
+  update
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  set fd_at_curarm {ARMED}
+  if {![info exists ::wviewer::atddb($tok)]} { set fd_at_curarm {NONE} }
+  set ::fd_at_call {NEVER}
+  pcall ::wviewer::add_trace_ok $tok
+  set fd_at_cur $::fd_at_call
+  rename ::wviewer::add_trace {}
+  rename ::wviewer::fd_at_saved ::wviewer::add_trace
+  # ⚠ FD68's material, gathered here so it rides the SAME live dialog: an arm
+  # that outlived the dialog it was made for would hand a database to whatever
+  # the user typed into the NEXT one, which is plot_dbs_take's discipline in this
+  # form's terms. Leg 1 is the positive control — armed, and still armed while
+  # the dialog is up — so "dropped" and "never armed" are different values.
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  set fd_at_live [info exists ::wviewer::atddb($tok)]
+  catch {destroy $fd_atw}
+  update
+  set fd_at_dead [info exists ::wviewer::atddb($tok)]
+  # …and REOPENING the form the way the Graph menu does starts unarmed, whatever
+  # an abandoned earlier dialog left behind. ⚠ THAT IS THE SAME ONE OWNER, not a
+  # second: `ase::ui::dialog_frame` opens with an unconditional
+  # `catch {destroy $w}`, so the reopen fires the <Destroy> that drops the arm.
+  # An explicit clear inside `add_trace_dialog` was written first and then
+  # REMOVED — deleting it reddened nothing, which is this file's definition of a
+  # line that is not there. Legs 3/4 are here to keep the OBSERVABLE property
+  # pinned however that plumbing is arranged later; both move under the same
+  # sabotage as leg 2.
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  set fd_at_live2 [info exists ::wviewer::atddb($tok)]
+  pcall ::wviewer::add_trace_dialog $tok
+  set fd_at_fresh [info exists ::wviewer::atddb($tok)]
+  catch {destroy $fd_atw}
+  update
+  check {FD68 (F6 FIX) the lower pane's one-shot database dies with the dialog it
+         was armed for, and a REOPENED dialog is never born armed} \
+    [list $fd_at_live $fd_at_dead $fd_at_live2 $fd_at_fresh] \
+    [list 1 0 1 0]
+  check {FD67 (F6 FIX) `Send to Add Trace…` out of a FOREIGN pane carries that
+         row's database to the OK, for the name it prefilled and no other, while
+         the CURRENT pane arms nothing} \
+    [list $fd_at_rc $fd_at_arm $fd_at_kept $fd_at_edit \
+          $fd_at_curarm $fd_at_cur] \
+    [list 1 [list {x1.same} [string range $fd_cgid 2 end]] \
+          [list {x1.same} [string range $fd_cgid 2 end]] \
+          [list {x1.onlyvcd} {}] \
+          {NONE} [list {v(x1.same)} {}]]
+
+  # ⚠⚠ FD69 — THE SAME GESTURE WITH NO SPY AT ALL, READ OFF THE TRACE THE
+  # PRODUCT ACTUALLY BUILT. FD67 proves the ARGUMENT `add_trace` is handed;
+  # this proves the RESULT, because an argument that some later arm discards is
+  # exactly the shape of defect this fix pass exists to remove. A trace with no
+  # `rawfile`/`sim_type` is `db_suffix`'s "ordinary current-DB trace" — i.e. the
+  # raw — so the CONTROL and the claim are told apart by presence, not by count.
+  proc fd_tr {tok} {
+    set o {}
+    foreach g [dict get [wviewer::layout_for $tok] graphs] {
+      foreach t [wviewer::dget $g traces {}] {
+        lappend o [list [wviewer::dget $t expr {}] \
+                        [file tail [wviewer::dget $t rawfile {}]] \
+                        [wviewer::dget $t sim_type {}]]
+      }
+    }
+    return $o
+  }
+  pcall ::wviewer::clear_all $tok
+  update
+  pcall $FDV.pw.tvf.tv selection set [list "$fd_cgid|g:x1"]
+  update
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  pcall ::wviewer::add_trace_ok $tok
+  set fd_tr_for [fd_tr $tok]
+  pcall ::wviewer::clear_all $tok
+  update
+  pcall $FDV.pw.tvf.tv selection set [list {g:x1}]
+  update
+  pcall ::wviewer::browser_sea_send_to_add_trace $tok 0
+  pcall ::wviewer::add_trace_ok $tok
+  set fd_tr_cur [fd_tr $tok]
+  check {FD69 (F6 FIX, END TO END) the trace the product really builds from a
+         FOREIGN pane's `Send to Add Trace…` names that database's file and its
+         sim_type, while the CURRENT pane's carries neither} \
+    [list $fd_tr_for $fd_tr_cur] \
+    [list [list [list {x1.same} [file tail $fd_vcdc] vcd]] \
+          [list [list {v(x1.same)} {} {}]]]
+
   catch {wviewer::close $tok}
+  update
+  # ⚠ THE TEARDOWN, AS A VALUE. §F item F6 adds two per-token arrays, and an
+  # undeclared `variable` in `browser_forget` leaks one entry per closed window
+  # forever — the rule that block's own comment states four times over. Leg 3 is
+  # the shipped control, so "forget dropped everything" and "forget was never
+  # reached" are not the same picture.
+  check {FD64 (F6) closing the viewer drops the sea's two per-database arrays,
+         beside the ones item 11 already dropped} \
+    [list [info exists ::wviewer::browserseadbent($tok)] \
+          [info exists ::wviewer::browserseadbid($tok)] \
+          [info exists ::wviewer::browserseaent($tok)]] \
+    [list 0 0 0]
   }
   }
 } else {

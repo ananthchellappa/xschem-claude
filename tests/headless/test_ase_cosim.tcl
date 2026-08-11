@@ -1819,11 +1819,20 @@ eqcheck FV41-shown-but-unlisted-notices-last [fv_kinds] {f1 open show_db notice}
 # and it is NOT the refusal sentence — a notice that reported a success as "no
 # digital signals to show" would be the drift 5f-3 forbids, wearing the other
 # sign.
+#
+# ⚠⚠ LEG 3 RESTATED BY §F ITEM F6 / RULING F1g (batch F item 7). As shipped it
+# demanded the phrase `lower pane`, because RULING F1e's sentence blamed the
+# pane's single-database reader — true then, false since item 7 gave the sea a
+# per-database dimension. The ARM was kept and RE-CAUSED rather than deleted
+# (spec RULING F1g): its predicate is `browser_sea_empty`, which now asks the
+# ROW's own database and therefore fires exactly when the landing is a pure
+# ancestor, and the new leg is the cause the sentence now names. Legs 1, 2 and 4
+# are untouched, and they are the ones this check is really about.
 set fv_pn [lindex [lindex $::fv_calls end] 1]
 eqcheck FV42-shown-but-unlisted-sentence-names-scope-db-and-does-not-claim-refusal \
   [list [expr {[string first {TOP.dcell} $fv_pn] >= 0}] \
         [expr {[string first {fs_agree.vcd} $fv_pn] >= 0}] \
-        [expr {[string first {lower pane} $fv_pn] >= 0}] \
+        [expr {[string first {no signals of its own} $fv_pn] >= 0}] \
         [expr {[string first {no digital signals to show} $fv_pn] >= 0}]] \
   {1 1 1 0}
 # ...and with the pane NOT empty there is no notice at all: the arm is gated on

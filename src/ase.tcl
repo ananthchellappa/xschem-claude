@@ -2740,20 +2740,32 @@ proc ase::show_in_browser_for_current {{win {}}} {
     # 7b. F5's OTHER EMPTY PANE, AND IT IS THE ONE THE HAPPY PATH PRODUCES
     # (RULING F1e, added by the salvage pass — MEASURED, not predicted).
     #
-    # ⚠⚠ WITHOUT THIS ARM THE SUCCESS CASE CAPTIONS ITSELF WITH A FALSEHOOD.
-    # The scope really is shown: the tree re-scopes and the row is selected. But
-    # the lower pane is drawn from `browserseaent`, which holds the CURRENT
-    # database's entries and only those (item 15's declared limit, BD70d), so a
-    # foreign VCD's scope lists nothing — and `browser_sea_refresh`'s own
-    # `seaempty` arm then captions the pane "'TOP.m' has no signals of its own",
-    # about a scope that has two. Measured on the real viewer before this arm
-    # existed. F5's row is "say WHY the pane is empty, do not show an empty
-    # pane", and a WRONG why is the failure item 4's receipt names: "a notice
-    # that describes a different no-match behaviour than the code implements is
-    # worse than no notice." So the true reason overwrites it, on the same three
+    # ⚠⚠ WITHOUT THIS ARM A SUCCESSFUL SHOW CAN CAPTION ITSELF AS A BARE
+    # EMPTINESS. The scope really is shown: the tree re-scopes and the row is
+    # selected. When the landing has no signals OF ITS OWN — a pure ancestor,
+    # and every `partial` landing is one — the pane draws nothing and
+    # `browser_sea_refresh`'s `seaempty` arm captions it "'TOP' has no signals
+    # of its own", a true sentence that says nothing about the database, nothing
+    # about the scope that was asked for, and nothing about the fact that the
+    # gesture SUCCEEDED. F5's row is "say WHY the pane is empty, do not show an
+    # empty pane". So the fuller reason overwrites it, on the same three
     # surfaces, through the same renderer — and it survives to be read only
     # because step 6c settled the pane first (without that flush this whole arm
     # is written and erased inside one event-loop turn; see 6c's ⚠⚠).
+    #
+    # ⚠⚠ THE CAUSE THIS SENTENCE NAMES WAS REWRITTEN BY §F ITEM F6 (issue 0308),
+    # AND THE ARM WAS KEPT RATHER THAN DELETED — a ruling, RULING F1g, taken
+    # against issue 0308's own closing suggestion and recorded in the spec with
+    # its reason. As shipped by RULING F1e the sentence blamed the LOWER PANE's
+    # single-database reader ("the lower pane lists only the current results
+    # database"), which was then the truth and is now false: the pane reads the
+    # row's own database. What is NOT false is the predicate. `browser_sea_empty`
+    # asks whether the selected NODE has anything to list, and F6 made it ask
+    # that of the node's own database — so it now fires exactly when the landing
+    # is a pure ancestor. Deleting the arm would hand that landing back to a
+    # caption that never says the digital show succeeded or which run it landed
+    # in, which is the contradiction RULING F1e was minted to remove; only its
+    # stated cause had to change with the fix.
     #
     # ⚠⚠ THE SENTENCE NAMES `[lindex $res 2]`, THE LANDING, NEVER `[lindex $dig
     # 2]`, THE SCOPE THAT WAS ASKED FOR. They differ on a `partial` — the walk
@@ -2790,8 +2802,8 @@ proc ase::show_in_browser_for_current {{win {}}} {
     # the account the action log needs and the reason this arm echoes as well as
     # renders.
     set nm "showing the digital scope '[lindex $res 2]' of\
- '[file tail [lindex $dig 1]]' in the tree, but the lower pane lists only the\
- current results database, so this scope's own signals are not in it yet"
+ '[file tail [lindex $dig 1]]' in the tree, but that scope has no signals of its\
+ own - open one of its sub-scopes to see any"
     catch {::ase::echo "ase: signal browser: $nm" note}
     catch {wviewer::browser_notice $key $nm}
   }

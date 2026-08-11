@@ -870,6 +870,7 @@ block against the real reference cell that skips cleanly when `xschem_libraries_
 | F2 | **Scope-path mapping — the hard one.** The schematic path is `x1.a1`. The VCD's internal path is whatever Verilator named the top module and its sub-scopes (`TOP.counter.cnt`, module-name based, subject to inlining). These two namespaces have **no inherent relationship**. **OWNERSHIP RULED 2026-08-09 — see "Open decision 5, ruled" at the end of this spec, which is F2's contract**: the mapping is three facts, not one (instance→cell is QUERY time, cell→VCD file is NETLIST time in `<rundir>/<cell>_ase.cosim`, file→scope is DERIVED from the loaded DB); the join key is the **cell** (`lib/cell`, with a four-rung ladder ending at the instance's own `model=` property), never the instance path; the schematic prefix is **dropped, not translated**; `scope` stays a hint, is not even eligible when the entry's `vfile` is empty, and the derived answer wins. A code block **below** the netlisted schematic reaches only rung 4 — issue 0307. **IMPLEMENTED 2026-08-09 (batch F item 4), see RULING 5f**: `ase::cosim_scope_for_instance <key> <instpath> ?<token>?` in `src/ase.tcl`, pinned by the **FS** group of `tests/headless/test_ase_cosim.tcl`. **F1 CALLS IT as of batch F item 5**, through `ase::cosim_scope_for_f1` (`src/ase.tcl:1834`) — the same resolver with step 1's design read hoisted into the caller, because the caller has to take that read before the viewer raise. | Without this, the browser can show the digital signals but cannot tell you *whose* they are. This is the item most likely to be underestimated. |
 | F3 | ~~**Multi-DB display.**~~ **MEASURED AND FIXED 2026-08-10 (batch F item 6), see "F4/F3 — the digital signal class and the tree" below.** `wviewer::db_label` needed **no change** — a VCD reads `counter.vcd (vcd)`, distinct from `tb_ase.raw (tran)` beside it, and carries the space+bracket that stops it being read as a hierarchy segment (`FD38`). The **grouping did not read well and was not "mostly free"**: an inventory whose names are classified as ngspice names loses its top `$scope` level, mis-labels its wires as currents, and — at the shipped default box state — is not in the tree at all. That is F4's business and F4 fixed it. `wviewer::signal_list_all` was already right; what was missing was carrying its `type` **into the browser's own snapshot**. | Mostly free. Verify, don't assume. *(It was not free.)* |
 | F4 | ~~**Classification.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 6): digital names get their OWN class, `digital`.** See "F4/F3 — the digital signal class and the tree" below for the ruling, the measurement that forced it and which 0217 rulings it depends on. | Consistency with settled work. |
+| F6 | ~~**The lower pane's per-database dimension.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 7): the sea snapshot is keyed by DATABASE as well as by path.** Issue **0308 is CLOSED** by it, and two-pane item 15's `BD70d` limit with it. See "F6 — the sea has a database dimension" below for the ruling, the collision that measured it, and **RULING F1g**, which re-causes RULING F1e's sentence instead of deleting its arm. | Not on the original plan. It is the row issues 0308 and `BD70d` were both filed against. |
 | F5 | ~~**Empty-pane notice.**~~ **DONE 2026-08-10 (batch F item 5).** `ase::browser_digital_msg` (`src/ase.tcl:1954`) prefixes the F2 resolver's OWN refusal sentence and adds nothing (RULING 5f-3); `wviewer::browser_notice` (`src/wave_viewer.tcl:8187`) puts it on the lower pane's caption, the sidebar status line, and — when the pane really is empty — INTO the pane, wrapped, on the canvas. The `ase::echo … error` tag is the one this row named. **RULING F1e (salvage pass) adds the FOURTH surface this row actually needed: the SUCCESS path's own empty pane**, which without it captioned itself "'TOP.m' has no signals of its own" about a scope that has two. | The failure mode users will actually hit. |
 
 #### F1/F5 — the branch and the notice (batch F item 5, 2026-08-10)
@@ -992,6 +993,18 @@ viewer (the pane is empty there, and the same reader answers 0 on the current da
 own root), `FD23`/`FD24` own the whole thing END TO END through the real command, and `FD27` does
 the same for F5's own refusal path. Filling
 that pane is still F3's — see issue 0308.
+
+> ⚠⚠ **SUPERSEDED IN PART BY RULING F1g (batch F item 7, 2026-08-10), and the part
+> that moved is the CAUSE, not the arm.** Everything above about the *shape* of the
+> defect stands and is the reason the arm exists. What has changed is that item 7
+> (RULING F6) fixed the cause: the lower pane now reads the row's own database, so
+> "the pane is drawn from `browserseaent`, the current database's entries alone" is
+> no longer true and the sentence that said so was false the moment F6 landed. The
+> arm was RE-CAUSED rather than deleted — its predicate was always about the NODE,
+> and it now fires exactly when the landing is a pure ancestor. `FD19` was restated
+> (the foreign scope's pane lists its two wires), and `FD23`/`FD24` drive the same
+> command against the VCD's own ancestor `TOP` so that the ORDERING this ruling and
+> F1f are about is still exercised end to end. See RULING F1g under "F6".
 
 **RULING F1f — THE NOTICE MUST OUTLIVE THE REFRESH THAT ITS OWN GESTURE QUEUED** (added by
 the review of the salvage pass, 2026-08-10; MEASURED on the real viewer). `browser_reveal`
@@ -1158,7 +1171,12 @@ does. Confirmed as a VALUE by `FD38` rather than by reading the code.
 
 **What F3/F4 do NOT solve — stated rather than discovered.**
 
-* **The lower pane still lists only the CURRENT database** — issue **0308**,
+* ~~**The lower pane still lists only the CURRENT database**~~ — issue **0308**,
+  **CLOSED 2026-08-10 by batch F item 7; see "F6 — the sea has a database
+  dimension" below. `FD48` was RESTATED exactly as this paragraph said it would
+  have to be.** What follows is item 6's account, kept because it is the
+  measurement that scoped the fix.
+  Issue **0308**,
   **NOT a blocker for F3, and DEFERRED for a stated reason.** F3's subject is the
   TREE, and the tree half works completely: `m` and `m.sub` are real rows of the
   foreign VCD's own subtree, its wire and its bus bits hang off `m.sub`, and the
@@ -1251,6 +1269,12 @@ fails on the pre-fix tree with exactly the value quoted here.
   and only those (item 15's declared limit) — so `browser_sea_target_path` is
   told the current kind directly. **`FD51`/`FD52`, plus `FD54`/`FD55` on the real
   tree and the real pane.**
+  ⚠ **THAT LAST SENTENCE STOPPED BEING TRUE ON THE SAME DAY — see RULING F6.**
+  The pane now draws whichever database the selected ROW belongs to, so it has
+  exactly the per-row question the tree has, and `browser_sea_target_path` is
+  told the PANE's row instead of the current kind. The two answers coincide for
+  every state that existed before F6, which is why `FD52`/`FD55` are unmoved;
+  `FD56` is the state that separates them.
 * **An unreachable node is SAID, not swallowed.** `browser_sea_descend_to`'s
   "no such row" arm used to `return 0` in silence while the menu entry above it
   is built ENABLED on `ok` alone — so `Descend to here` did nothing and explained
@@ -1278,6 +1302,185 @@ fails on the pre-fix tree with exactly the value quoted here.
   signal is literally named `net[0-9]` or `[`. **Shell only** — `-syntax regexp`
   is the explicit power-user mode where a metacharacter is what the user came
   for, and it keeps `count\[0\]` as the exact-match escape hatch. **`FD53`.**
+
+#### F6 — the sea has a database dimension (batch F item 7, 2026-08-10)
+
+**STATUS: F6 is DONE. Issue 0308 is CLOSED and `BD70d`'s declared limit with it.**
+
+**RULING F6 — THE LOWER PANE RESOLVES A ROW IN THE DATABASE THE ROW NAMES, NOT IN
+WHICHEVER ONE HAPPENS TO BE CURRENT.**
+
+Two procs conspired to make this a *silent wrong answer* rather than a missing
+feature, and the order matters:
+
+1. `browser_reload` snapshotted the inventory of the current database alone —
+   `browsersigs` — and `browser_refresh` turned it into the one entry list the
+   pane was ever drawn from, `browserseaent`.
+2. `browser_id_path` stripped the `d:<registry idx>|` prefix and returned the
+   bare path. **The one fact that said where to look the path up was discarded
+   at the first step of the lookup**, so what remained resolved in the only
+   inventory there was.
+
+So a foreign row's path was looked up in the current run's names. The browser did
+not error and — where the two databases shared no path — it showed nothing, which
+is what issue 0308 recorded. **Where they collide it shows the wrong run's
+signals, with the right count and the right caption.** MEASURED, `FD61`, two
+databases that each own the path `x1`:
+
+```
+                          shipped              ruled
+foreign d:1|g:x1   {same onlyraw}       {same onlyvcd}      <- the VCD's own
+current      g:x1  {same onlyraw}       {same onlyraw}
+caption, both      2 of 2 signals       2 of 2 signals      <- identical either way
+```
+
+and one gesture further on, `FD62`: a Plot out of that pane sent
+`{v(x1.same) v(x1.onlyraw)}` — the current raw's names — because the pane's
+model held them.
+
+**What the ruling changes, and the shape it is spelled in:**
+
+* **The decode answers both halves.** `browser_id_split {id}` → `{<db> <path>}`
+  is now the ONE decode; `browser_id_path` and `browser_row_db` are its two
+  one-line projections, so they cannot drift about what a prefix is (they were
+  two copies of one regexp with a comment asking the reader to keep them equal).
+  `browser_id_path`'s signature and answer are unchanged to the character —
+  `TP44` counts its call sites in `browser_target_path` and `browser_show_path`
+  as a frozen 1/1. **`FD59`.**
+* **The sea snapshot gains a per-database map**, `browserseadbent($token)`:
+  `d:<idx>` → that foreign database's bar-matched, class-filtered entry list,
+  written by `browser_refresh`'s All-DBs loop **in the same pass as the tree
+  group it describes**, so the pane can never list a set the tree does not show.
+  It is emptied at the top of every refresh — a slot carried over from a database
+  that has since been closed is the same wrong answer one refresh later
+  (`FD60`'s last leg).
+  ⚠ **It is a SECOND array and not an extra key inside `browserseaent`.**
+  `browserseaent` *is* the current database's list and a dozen readers take its
+  `llength` as "how many signals the pane can draw"; widening that value would
+  move every one of them for a fact none of them is about.
+* **Every reader and every gesture is told the row.** `browser_sea_ent`,
+  `browser_sea_own`, `browser_sea_label` and — through `browserseadbid`, the row
+  the pane was last drawn for — `browser_sea_target_path`, `browser_sea_plot_idx`,
+  `browser_sea_root_id` (RULING F6a) and `browser_sea_send_to_add_trace`
+  (RULING F6b). The `id`
+  argument is OPTIONAL and defaults to the current database on all of them, so
+  every pre-F6 call site and the whole shipped `BQ`/`FD4x` band keeps its exact
+  meaning by construction.
+* **A slot the snapshot does not carry answers NOTHING — never the current
+  database's entries.** That is issue 0308's lesson read in the right direction:
+  *absent* is a state the caption can describe truthfully, *someone else's
+  signals* is not. `FD57`.
+* **The pane's Plot arms the row's database**, through the same
+  `plot_dbs_arm`/`plot_dbs_take` band the tree's plot route has used since spec
+  §D1's DEFECT 2. It could not need it before, because the pane could only ever
+  hold current-database names. `FD62`.
+
+**THE FIX PASS (same day, three findings against F6's first landing).** The first
+landing made the *readers* database-aware and left three of their *consumers*
+behind. All three are the same mistake — a database identity rescued in one proc
+and discarded in the next — and the rulings are here because each had a
+defensible alternative that was rejected:
+
+* **RULING F6a — `Descend to here` out of the pane walks the ROW'S OWN
+  database's subtree.** `browser_sea_target_path` answered in the row's database
+  and handed the path to `browser_node_for … [browser_root_id $rows]`, which is
+  hard-wired to the CURRENT database's root (`g:`, or `d:0|g:` under All-DBs).
+  The item made this WORSE than it found it: before F6 the resolver errored on a
+  foreign pane and the menu entry was DISABLED, after it the entry is ENABLED and
+  the walk starts in the wrong tree. MEASURED both ways — with a foreign scope the
+  current run does not carry, the user was told *"'TOP.dcell' is not in the Signal
+  Browser tree"* about `d:1|g:TOP.dcell`, a row of that very tree; with the two
+  databases colliding at `x1` the walk silently resolved to the CURRENT database's
+  `g:x1`. `browser_sea_root_id` is the one-line projection that fixes it.
+  **The rejected alternative** was to make `browser_sea_target_path` return `err`
+  for a foreign row so the entry went back to DISABLED. It is rejected because the
+  TREE's own `Descend to here` has descended from foreign rows since item 14 —
+  `browser_target_path` resolves any `d:N|` group id — so refusing in the pane
+  would make two entries in one window disagree about whether a foreign row can
+  be descended from. ⚠ A slot with no root row in `$rows` still answers `d:N|g:`
+  and never `{}`: `{}` is `browser_node_for`'s TOP LEVEL, i.e. the current
+  database's unprefixed rows, which is the fallback that made the defect.
+  `FD65` (the refusal case) and `FD66` (the collision). 
+* **RULING F6b — `Send to Add Trace…` out of the pane carries the row's database
+  too, and it carries the NAME with it.** The sibling entry in the same context
+  menu prefilled a bare name into a dialog whose OK resolves names through
+  `resolve_signal_db`, so on a colliding pair one entry landed on the run the user
+  pointed at and the one below it on the current run, silently. The arm is
+  `atddb($token)` = `{<the prefilled name> <registry index>}` — `plot_dbs_arm`'s
+  shape, one dialog over — cleared when `add_trace_dialog` opens, CONSUMED by
+  `add_trace_ok`, dropped with the dialog and with the window. ⚠ **The name is
+  half the arm** because this dialog is *modeless and meant to be edited*: the
+  index is honoured only while the Expression text is still byte-for-byte the one
+  it was armed with, and `add_trace`'s 6th argument overrides the name search
+  ENTIRELY, which is right for a pointer and wrong for anything typed over it.
+  `FD67`, `FD68`.
+* **The mechanism sentence was wrong even where the conclusion was right.**
+  `resolve_signal_db` does NOT return the lowest-index match: `signal_list_all`
+  yields the CURRENT database first and the first hit is returned, so its
+  tie-break is "the current DB wins" (its own ⚠, and `db_by_index`'s, say so).
+  Lowest-index is the rule only AFTER the current database has refused the name,
+  which is the §D1 / DEFECT 2 case above and where that phrasing is correct. The
+  conclusion — an unarmed plot of a foreign name silently draws the current run's
+  namesake — is unchanged.
+
+**RULING F1g — RULING F1e's ARM IS RE-CAUSED, NOT DELETED**, and this is taken
+deliberately **against issue 0308's own closing suggestion**, which said the arm
+"should be DELETED". The evidence that changed the answer:
+
+* The arm's **predicate** was never about the database. `browser_sea_empty` asks
+  whether the selected NODE has anything to list, and RULING F6 makes it ask that
+  of the node's own database — so it now fires exactly when the landing is a
+  **pure ancestor**, which every `partial` landing is.
+* Its **sentence** was about the database, and that half is now false. It read
+  "…but the lower pane lists only the current results database, so this scope's
+  own signals are not in it yet". It now reads "…but that scope has no signals of
+  its own - open one of its sub-scopes to see any".
+* **Deleting the arm would restore the contradiction it was minted to remove.**
+  FV45's own ⚠⚠ block already argued this from the other side: on a `partial`
+  the shipped `seaempty` caption says "'TOP' has no signals of its own" and never
+  says that the digital show SUCCEEDED, which scope was asked for, or which run
+  the tree landed in. The arm supplies all three. What it must not do is name a
+  cause that has been fixed.
+
+Pinned by `FD23`/`FD24` (the real command, the real viewer, one event-loop turn
+after the binding returns, on the VCD's own ancestor `TOP`) and by `FV42` leg 3.
+`ase::browser_pane_unread` and `wviewer::browser_sea_empty` keep their callers
+and `FV43`/`FV44` keep their subjects.
+
+**Declared limits, stated rather than discovered:**
+
+* **A foreign database's pane is what the BARS left of it**, because a foreign
+  database's *tree* already is (two-pane item 15's declared asymmetry,
+  `BD51`/`BD51b`) — §7.1's "the tree is the bar-UNFILTERED set" governs the
+  CURRENT database only, and this ruling does not change which side of that line
+  a foreign inventory sits on.
+* **The own-level count for a foreign row uses that database's UNFILTERED
+  inventory**, exactly as the current database's does, so §7.2's three states
+  (`seaempty` / `seabars` / `seaclass`) mean the same thing on both.
+* **The TREE's own `Send to Add Trace…` (`browser_send_to_add_trace`) still hands
+  a bare name onward.** It has the row's database in the id it was given and does
+  not use it, so a foreign leaf sent to the dialog resolves by name exactly as it
+  did before this item. That is a PRE-EXISTING gap of spec §D1's DEFECT 2 (item
+  14 could already put foreign leaves in the tree), not one F6 created, and it is
+  left standing deliberately rather than widened into this item. The arm F6b adds
+  is the machinery it would reuse.
+* **The class filter reaches a foreign database's PANE, not only its tree.**
+  `browserseadbent` is written from the post-`browser_class_filter` list in the
+  All-DBs loop, so `Show device internals` hides a foreign run's device node in
+  the pane exactly as it does in the tree beside it, and §7.2's denominator stays
+  the UNFILTERED own-level count (`1 of 2 signals`, not `2 of 2`). `BD58d` /
+  `BD58e` — and it needed an ANALOG foreign database to reach at all, because
+  RULING F4 makes `browser_class_filter` a no-op on digital names.
+* **`browser_sea_empty` still re-derives the row from the treeview**, while the
+  pane's two gestures read `browserseadbid`. They differ only in a window where
+  a selection has changed and its refresh has not been delivered; a gesture must
+  act on the cells the user can see, and the reader is consulted only right after
+  a settle (RULING F1f).
+* **Issue 0309 is untouched and still open.** It is a defect of
+  `browser_show_db_scope`'s outcome *sentence*, needs a twelfth `browser_msg`
+  kind and a third restatement of `BK33`'s moving `return`-count leg, and this
+  item does not make it worse: `browser_msg`'s return count is unmoved at 11 and
+  no `browser_say` arm changed.
 
 ### G — The reference testbench and the schematic side
 
