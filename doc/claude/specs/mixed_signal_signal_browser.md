@@ -444,7 +444,7 @@ digital *together* is the new requirement.
 | D2 | ~~**Joint X domain.**~~ **RULED AND IMPLEMENTED 2026-08-10 (batch F item 8): the AUTOMATIC X window is the union of the extents of every database contributing a trace to the shared-X strip GROUP.** See "D2 — the joint X domain" below for the four rulings (what contributes, what a degenerate input does, what the group is, and what is still NOT unioned). `graph_fullxzoom()` was the one `node=` walker that never parsed `%` at all; it is now the seventh caller of `node_token_split()`. | Silent-wrong-answer risk if one DB's extent is used as the whole. |
 | D3 | ~~**Time-unit reconciliation.**~~ **DONE — converted once at read (C1, `vcd_read()` stores seconds) and now ASSERTED against A6.** `tests/headless/test_vcd_time_base.tcl`, **124 checks** (112 when the reference artifacts are absent), pinned to the `--nogui` arm. The gate is a stated number, not a feeling: **100 ps**, which is 10.1× above the measured 9.883 ps physical skew and at minimum ~500× below the smallest 1e3 error the file can produce (the ÷1000 direction on the earliest edge used, 50 ns → 49.95 ns of displacement; the ×1000 direction is 499,500×). A zero tolerance would be wrong — the two DBs record different events, a Verilog value change versus an analog threshold crossing after a finite `dac_bridge t_rise`, sampled on ngspice's timestep grid. Coverage: six `$timescale` units including the two-token `10 ns` form, the whole fs→ps→ns→µs→ms→s ladder (**every rung of which IS the 1e3 factor**), the multiplier forms, seconds-not-ticks, and the symmetric "rescale the raw instead" error. The 1e3 rejection is **proved, not asserted**: nine negative-control VCDs that are deliberately 1e3 wrong — perfectly valid files, which is the whole point — go through the *same* `agree` proc the real checks use and must be rejected. **19 sabotages injected, all 19 caught; every one of the 124 checks is caught by at least one.** | Off-by-1e3 here looks like a plausible waveform. |
 | D4 | ~~**Cursors, markers, annotation across DBs.**~~ **RULED AND IMPLEMENTED 2026-08-11 (batch F item 9): a cursor at time *t* resolves in the current database PLUS every database contributing a trace to the strip, a dense analog sweep INTERPOLATES and a sparse event stream HOLDS, and neither extrapolates past either end.** See "D4 — cursors and markers across databases" below for the **eight** rulings (D4-6/D4-7/D4-8 came out of the fix round: the sweep column is exempt from the HOLD, the X window does not gate the annotation, and the cursor's scope is every strip that shares it) and for why MARKERS needed no change. `graph_cursor_dbs()` is the eighth caller of `node_token_split()`. The half no engine check could see: the readout BAR is Tcl and was current-database-only, so the digital trace was drawn, legended, and then silently absent from the cursor line. | `Raw` fields, `src/xschem.h:1129-1137` |
-| D5 | **Backannotation.** `annotate_op` and the schematic voltage overlay read the current DB. Define what a digital DB contributes (probably: nothing, explicitly). | `src/scheduler.c:2145` |
+| D5 | ~~**Backannotation.**~~ **RULED AND IMPLEMENTED 2026-08-11 (batch F item 10): a digital database contributes NOTHING to `annotate_op` and NOTHING to the schematic voltage overlay, and the exclusion is single-sourced off the reader table's new `digital` column rather than assumed.** See "D5 — backannotation and the digital database" below for the eight rulings (what contributes, where the one predicate lives, the THREE enforcement points, why the array is cleared instead of left standing or handed to a substitute database, which paths tell the user why, that the `@spice_get_*` FLOATERS are the overlay too, that the refusal asks the FILE and not only the caller's type token, and that `raw switch` deliberately does not touch the array). It was not already true, **on two separate roads**: `xschem raw read <f>.vcd vcd` makes the VCD CURRENT, so the next cursor motion published its logic levels into `ngspice::ngspice_data` — with a colliding name, `1` where the analog raw says `0.7535` — and `src/token.c`'s `@spice_get_voltage` family read `cursor_b_val[]` out of the current database with no guard at all, so `lab_pin.sym` printed that same `1` (and `0.5` for an UNKNOWN net) as schematic text. `tests/headless/test_backannotate_digital.tcl`, **81 checks, 31 sabotage patches, 76 of the 81 driven red**. | `src/scheduler.c:2145` |
 
 #### D1 — what was already there, and what was missing
 
@@ -990,7 +990,9 @@ the one that is current on entry** (`slots[0]` by construction). The Tcl array i
 a flat name→value map read by the schematic voltage overlay and by every floater;
 letting each database rewrite it would make the last switch win, and *merging* a
 VCD's names into it is **D5's** question — what a digital database contributes to
-schematic backannotation — which is still open and is **not** decided here. Every
+schematic backannotation — which D4 left open and D5 has since **RULED: nothing,
+and if the entry database is itself digital the array is cleared and nobody
+publishes** (batch F item 10, "D5 — backannotation and the digital database"). Every
 contributing database still gets its own `annot_*` and `cursor_b_val[]`; only the
 publishing is singular. `XC51`–`XC54`.
 
@@ -1176,7 +1178,8 @@ deleting `if(own_db_plots) …` from `graph_cursor_dbs()` left **all 814 checks 
 five suites green**. A fixture that only builds the shape the code was written
 for is not evidence about the shape it was not.
 
-**Not done here, and named so nobody re-discovers it as a bug:** D5. The
+**Not done here, and named so nobody re-discovers it as a bug** *(RESOLVED by
+D5, below — this paragraph is left as the record of what D4 knew)*: D5. The
 schematic voltage overlay and `annotate_op()` still read the current database
 only, and a digital database still contributes nothing to them — by RULING D4-2,
 on purpose. The per-sibling resolution uses the driving strip's `Graph_ctx` by
@@ -1187,6 +1190,299 @@ has been constructed. Multi-**dataset** databases remain unexercised: D4-7's
 rescan also un-skips a pre-existing shape where a non-final dataset's `first` was
 reset to `-1` by a later skipped dataset, which is a strict improvement but has
 no check.
+
+#### D5 — backannotation and the digital database
+
+**STATUS: RULED AND IMPLEMENTED 2026-08-11 (batch F item 10).** The answer is
+NOTHING, and it is now a rule with enforcement rather than an assumption.
+`tests/headless/test_backannotate_digital.tcl`, **81 checks, true headless**
+(`--nogui`, in `full_audit.sh`'s nogui arm), **31 sabotage patches across the two
+rounds (`S1`-`S33` with gaps, plus `S21a` and `SF`); 76 of the 81 checks are
+driven red by at least one of them**, and the five that are not are named
+below rather than counted as evidence (`BA40`, `BA53`, `BA55`, `BA56`, `BA5a`).
+
+**⚠ THIS SECTION WAS WRITTEN ONCE ALREADY, AND WAS HALF TRUE.** The first round
+enforced the exclusion on the publisher of `ngspice::ngspice_data` and called the
+overlay done. An adversarial pass then measured a VCD's logic level being printed
+on the schematic anyway, through `src/token.c`'s floaters, which never touch that
+array (RULING D5-5); found that the refusal keyed on a type token neither GUI call
+site ever passes (RULING D5-6); and found the refusal sentence splicing a
+user-supplied path into a Tcl script. Rulings D5-5, D5-6 and D5-7 and 25 of the
+81 checks come from that second round. The lesson is the one this section is
+about: *"probably nothing", merely assumed, is how a digital database ends up
+half-participating* — and "enforced at every path" is a claim that has to be
+measured at every path, not at every path one happened to think of.
+
+**Why this needed a ruling and not a shrug.** Backannotation puts *operating
+point* values on the schematic — node voltages and device currents — read out of
+the flat Tcl array `ngspice::ngspice_data` by `ngspice::get_voltage` /
+`get_current` / `get_diff_voltage` / `get_node` (`src/xschem.tcl:2626-2760`) and
+by every floater. A VCD carries **logic levels over time**. A logic level is not
+a voltage: `1` is not 1.8 V, it is `1`; and `vcd_read()` encodes X as `0.5` and
+Z as `0.3` (`VCD_VX`/`VCD_VZ`, `src/vcd_read.c` DECISION 3), so a published VCD
+would print **"0.5" on a net whose value is UNKNOWN and "0.3" on one that is
+floating**. Every one of those numbers is fabricated, and a fabricated number on
+a schematic is indistinguishable from a measured one.
+
+"Probably nothing", merely assumed, is how a digital database ends up
+half-participating — excluded at one path, admitted at another, right on Tuesday
+and wrong on Wednesday. **It was already half-participating**: see THE DEFECT
+below.
+
+**RULING D5-1 — a digital database contributes NOTHING to `annotate_op` and
+NOTHING to the schematic voltage overlay.** Not a merged namespace, not a
+fallback, not a "digital nets get 0/1 volts" convenience. The waveform window is
+a different question and is *not* touched by this ruling: D4's per-`Raw`
+`annot_p` / `annot_x` / `cursor_b_val` are still stamped for every contributing
+database, digital ones included, so the viewer's readout bar still reads the
+digital trace at the cursor. **D5 is about the SCHEMATIC.**
+
+**RULING D5-2 — the exclusion is SINGLE-SOURCED, off the reader table.**
+`raw_reader_table[]` in `src/save.c` — the one table that maps a `sim_type`
+token to its parser (issue 0290) — grows a `digital` column, and
+`raw_type_is_digital(const char *)` / `raw_is_digital(const Raw *)` are the only
+answers. A future database type inherits this decision by filling in its row.
+**Never `!strcmp(sim_type, "vcd")` at a backannotation site**: that is how the
+question gets re-derived four times and answered differently by the third.
+`table` is deliberately **not** digital — an ascii table is columns of real
+numbers, an analog result read by another parser; the ruling is about logic
+levels, not about "anything that is not a spice raw" (`BA12`).
+Exposed to Tcl and to checks as `xschem raw is_digital [<sim_type>]`,
+read-only, answerable with nothing loaded.
+
+**RULING D5-3 — three enforcement points, because there are three paths.**
+Found by walking every caller that turns a loaded database into
+`ngspice::ngspice_data`:
+
+1. **`update_op()`** (`src/save.c`) — the point-0 publisher, which the
+   `annotate_op` arm, both `raw switch` / `switch_back` gates and the bare
+   `xschem update_op` verb all funnel through. A digital database publishes
+   nothing and **the array stays UNSET** (the function already clears it on
+   entry), and `update_op()` answers **0**, i.e. "nothing was published", which
+   `xschem update_op` hands back to the script that asked. `BA30`–`BA36`.
+2. **the `annotate_op` arm** (`src/scheduler.c`) — `xschem annotate_op <file>
+   <level> vcd` is refused **before anything is loaded or cleared**. Point 1
+   would refuse to publish it anyway, but only after the file had been read into
+   the registry, made current and drawn: *a refusal that arrives after the side
+   effects is not a refusal.* `BA20`–`BA2b`; sabotage `S11` moves the guard
+   below the load and reddens `BA22`/`BA23`/`BA28`/`BA29`/`BA2b` — the array
+   wiped and the loaded OP deleted from the registry, which is exactly the damage.
+3. **the cursor-B publisher** (`backannotate_at_cursor_b_pos`, `src/callback.c`)
+   — D4-2 makes the database that is current on entry the sole publisher; D5
+   adds: **and if that one is digital, nobody publishes and the array is
+   CLEARED.** `BA43`–`BA4c`.
+
+**THE DEFECT this found, which was live.** `xschem raw read <f>.vcd vcd` makes
+the VCD **current** (`extra_rawfile()`'s read arm) — that is why
+`ase::attach_dbs` and `wviewer::regenerate` both switch back explicitly. Any
+path that does not switch back leaves a VCD current, and **the very next cursor
+motion wrote that VCD's logic levels into `ngspice::ngspice_data` under the
+VCD's own names.** Where a name collides with an analog one, the schematic
+overlay silently swapped a measured voltage for a logic level. Measured on the
+fixture: with the VCD current, `top.m.same` on the schematic read **1** where
+the analog raw says **0.7535**. `BA46`; sabotage `S5` restores the old
+behaviour and reddens seven.
+
+**RULING D5-3a — the array is UNSET, not left standing, and NO other database is
+promoted into the publisher's place.** Both alternatives were considered and
+both are worse:
+
+* *Leave it alone* → the last analog position's numbers stay on screen while the
+  user moves the cursor: a **stale overlay that looks live**, which is the
+  silent-wrong-answer shape this whole section exists to remove. `BA48`,
+  sabotage `S6`.
+* *Promote the first analog slot* → the overlay follows a database the user did
+  not make current, so **which values the schematic shows depends on registry
+  order**. `BA4b`, sabotage `S7`. (`BA4c` asserts the premise that an analog
+  database really is in the fan-out at that moment, so `BA4b` is not a claim
+  about an absent candidate — it was, until the fixture was fixed; see below.)
+
+"No analog database is current, so there is nothing to show" is the true
+statement, and **`?` is how `ngspice::get_voltage` already renders it** — no new
+rendering, no new vocabulary. `BA35`, `BA49`, `BA74`.
+
+**RULING D5-4 — the REQUEST paths say why; the CURSOR path is silent.** Item 5's
+rule (a notice that describes a different behaviour than the code implements is
+worse than no notice; RULING F1e/F1f) applied to the engine side. The refusal
+sentence is **minted once**, in `backannot_refuse_digital()`
+(`src/save.c`), and rendered by its callers rather than composed a second time:
+
+> backannotation: '<file>' is a digital results database — it carries logic
+> levels over time, not an operating point, so there are no voltages or currents
+> in it to annotate onto the schematic
+
+It goes to the CIW through the guarded `ciw_echo` idiom
+(`[[ciw-feedback-channels]]`), to the debug channel always, and is **returned**
+so `annotate_op` can hand the same words back as its Tcl result. So the answer
+to *"if ONLY a digital database is loaded, does backannotation do nothing
+silently?"* is: **`annotate_op` and `update_op` tell the user why; a cursor
+motion does not** — that path runs on every motion of the pointer, and a message
+on every motion is noise, not a notice. `BA21`, `BA73`; sabotage `S10` reworks
+the sentence and reddens `BA21` alone.
+
+**RULING D5-5 — the `@spice_get_*` FLOATERS ARE THE OVERLAY TOO, by a second
+road that never touches `ngspice::ngspice_data`.** The first round of D5 enforced
+the exclusion only on the *publisher* of that Tcl array, and that was **not the
+whole overlay**. `translate()` / `get_pin_attr()` in `src/token.c` expand
+`@spice_get_voltage`, `@spice_get_voltage(…)`, `@spice_get_diff_voltage`,
+`@spice_get_current` and `@spice_get_modelparam` by reading
+`xctx->raw->cursor_b_val[]` **straight out of the current database** — ten reads
+across six branches — and `draw.c` expands exactly those tokens to draw the text
+that `lab_pin.sym` (whose entire T record is `T {@spice_get_voltage}`),
+`ipin`/`opin`/`iopin`, `vdd`, `ngspice_probe` and `scope` carry. **Measured with
+a VCD current on the colliding fixture: `xschem translate <lab_pin> {@spice_get_voltage}`
+returned `1`, and `0.5` when the VCD drove the net to `x`** — a fabricated volt,
+printed on the schematic, while `ngspice::get_voltage` for the same net correctly
+read `?`. So the array-only enforcement left the ruling *half* true, which is the
+precise failure mode this section was commissioned to prevent.
+
+All six branches now compute `live` as
+`tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw)` —
+one added term at the one precondition they already share, asking the D5-2
+predicate rather than a local `strcmp`. **The token then renders exactly what a
+session with live backannotation switched off renders: nothing.** "Contributes
+nothing" is not "contributes a dash": there is no measurement, so no placeholder
+is invented for one, and the Tcl half says the same thing in its own existing
+vocabulary (`?`). `BA80`–`BA87`; sabotage `S21` drops the term at all six sites
+and reddens `BA81`/`BA82`/`BA85`/`BA87`; `S21a` drops it at ONE site and reddens
+only the source witness `BA87` — which is precisely why that witness exists, the
+fixture reaching one of the six branches behaviourally; and `S30` latches the
+guard and reddens `BA86`.
+
+**RULING D5-6 — the refusal asks the FILE, not only the caller's type token.**
+`annotate_op`'s `sim_type` is an **optional 4th argument**, and both shipped GUI
+call sites (`src/xschem.tcl:14755` and `:15125`, `xschem annotate_op
+$tctx::retval`) pass a filename **alone** — while `select_raw`
+(`src/xschem.tcl:14292`) offers an `All Files *` filter, so pointing *Op
+Annotate* at a `.vcd` is two clicks. Keying the refusal on the token alone meant
+**the menu path was never refused at all**: the `op` → `dc` → `tran` fallbacks
+each fail on a VCD, and the user got silence *after* `array unset
+ngspice::ngspice_data` and after the "delete previously loaded OP"
+`extra_rawfile(3, …)` branch had already fired — the exact "silently empty
+schematic plus a registry the user did not ask to change" that D5-3's
+before-any-side-effect placement exists to prevent.
+
+So `raw_file_is_digital()` (`src/save.c`) sniffs the head of the file and the
+refusal fires on **either** answer. The witness is `$enddefinitions`, which is
+**mandatory** in every VCD and appears in no spice rawfile — definitive, not a
+guess. The **extension is deliberately not consulted**: a VCD named `.raw` is
+still a VCD and a raw named `.vcd` is still a raw, and only the content knows.
+An unreadable file is *not* digital — the load below reports the real error.
+`BA27`–`BA2b`; sabotage `S22` makes the sniff always answer 0 and reddens
+`BA27`/`BA28`/`BA29`/`BA2b`. ⚠ The standing database in that fixture is a 1-point
+OP on purpose: annotate_op's delete-previous-OP branch only fires on one, and
+with a `tran` database standing instead `BA29` passed against no sniff at all.
+
+**RULING D5-7 — `xschem raw switch` deliberately does NOT touch the annotation
+array, for a digital database exactly as for an analog one.** Raised because the
+state renders two ways: `raw switch <digital>` leaves the previous analog numbers
+on the schematic, and the *next cursor motion* clears them. Considered and
+**rejected**: clearing on switch-into-digital.
+
+* `raw switch` is a **navigation** verb, not a request to backannotate. The
+  publishers are `annotate_op`, `update_op` and the cursor; switching has never
+  republished, and switching between two **analog** databases equally leaves the
+  previous one's numbers standing. Nothing on screen is fabricated — those
+  numbers are real measurements from a database that is still loaded.
+* Clearing would be **actively destructive**. `wviewer::signal_list_all` (the
+  All-DBs search, item 14) walks *every* loaded database with `xschem raw switch
+  <idx>` (`src/wave_viewer.tcl`), and `ase.tcl` and `wviewer::with_db` do the
+  same. A search that happened to hop through a VCD would silently wipe the
+  design window's backannotation. A navigation verb must not destroy annotation
+  state — that is the same disease as the All-DBs `update_op` clobber recorded in
+  `doc/claude/code_analysis/signal_browser_teardown_scoping.md` §1, which D5 must
+  not *widen*.
+
+So the answer to "which values does the schematic show?" stays "whichever
+database last **published**", and D5's guarantee is that a digital database is
+never that database. `BA90`–`BA92` pin the choice in both directions: the array
+survives the switch, and the next cursor motion clears it. Sabotage `S23` makes
+`raw switch` clear on entry to a digital database and reddens `BA91`, plus
+`BA63` as collateral — the analog overlay never comes back.
+
+**⚠ THE REFUSAL SENTENCE CARRIES A USER-SUPPLIED PATH, so it is passed to Tcl as
+a VARIABLE.** `backannot_refuse_digital()` originally spliced the database name
+into a Tcl script inside a brace group
+(`tclvareval("… {ciw_echo {", msg, "} note}")`). A path containing `}` closes the
+group early: a plain `a}b.vcd` loses the notice to `extra characters after
+close-brace`, and a crafted one **executes** — measured, a file named
+`/tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd` set `::PWNED` in the GUI
+session. The sentence now goes over as a global variable that no path content can
+escape from. Every other `tclvareval` + `ciw_echo` site in the tree interpolates
+*program-generated* text; this was the first to interpolate a path, which is why
+the quoting discipline starts here.
+
+**The invariant, pinned: the presence of a VCD changes NO annotated value.**
+Annotate with the analog raw alone, snapshot the whole array as a sorted
+`{name value …}` string, load the VCD, annotate again from the same cursor
+position — byte-identical (`BA52`, and `BA53`/`BA54` for the `update_op` and
+`annotate_op` request paths). Sabotage `S12` lets every database in the fan-out
+publish and reddens thirteen, `BA52` among them.
+
+**"Contributes nothing" has TWO halves, and a colliding-name-only fixture can
+only ask one of them.** `BA52` pins *a digital value does not OVERWRITE an analog
+one*. It says nothing about a digital name the analog database has never heard
+of — and an **additive merge** (publish the entry database, then fill in any name
+a later digital database has that the array lacks) overwrites nothing, so it
+passed `BA52`, `BA53`, `BA54` and `BA55` and scored **56/56** while putting
+`top.m.donly = 1` on the schematic as a volt. The fixture's VCD therefore now
+carries a **second, non-colliding** signal, named in the strip's own `%` entry so
+it is genuinely in the cursor fan-out, and `BA56`–`BA5a` assert that with the
+ANALOG database current it reaches neither the array nor the overlay, through the
+cursor path and through `update_op`. Sabotage `S24` is that merge, and it now
+reddens `BA52`/`BA58`/`BA59`.
+
+**And the collision question, which is the one that matters.** *Does a digital
+node name that collides with an analog one change which value is annotated?* No
+— and the fixture is built to be able to tell. `coll.raw` carries
+`top.m.same` = 0.75…0.79 (a voltage) and `coll.vcd` carries `top.m.same` =
+logic 0/1, **the same stored name**. ⚠ **The case trap**: `read_dataset()`
+`strtolower()`s every spice variable name (`src/save.c:1008`) while
+`vcd_read()` stores Verilog identifiers **verbatim**, so an upper-case VCD scope
+gives `TOP.m.same` against the raw's `top.m.same` — *two different keys*, no
+collision, and the whole leg would be green against an implementation that
+merges the two namespaces. `xschem raw index` hides this (it probes verbatim,
+then upper, then lower), so the collision is asserted against `xschem raw list`,
+the **stored** names (`BA1d`; sabotage `SF` upper-cases the VCD scope and
+reddens it). This is item 7's lesson (`f51a19d1`) in the annotation array
+instead of the browser inventory.
+
+**The one duplicate answer that remains, named rather than hidden.**
+`wviewer::db_is_digital` (`src/wave_viewer.tcl`, RULING F4, batch F item 6) also
+decides "is this database digital?", by its own `string equal -nocase … vcd`. It
+is **not** unified with `raw_type_is_digital()` and that is deliberate: it is
+documented PURE, it is called with hand-seeded inventories that never reached
+the engine, it trims and folds case where the engine's answer is the engine's
+own stamped token, and it answers a different question — *how should this
+database's signal NAMES be classified in the browser* — for which "digital"
+happens to have the same membership today. **D5-2 governs backannotation
+sites**, where the answer must come from the reader table.
+
+**⚠ THE TWO LISTS ARE NOT PINNED AGAINST EACH OTHER, AND THAT IS A REAL GAP.**
+The day a second digital reader is added to `raw_reader_table[]` and nobody
+edits `wviewer::db_is_digital`, the browser will classify that database's names
+as analog while the engine refuses to annotate it — or, worse, the reverse if
+the Tcl side is edited and the table is not, in which case the schematic gains a
+fabricated volt with no check going red. An agreement check was attempted and
+**withdrawn**: `wave_viewer.tcl` is not sourced under `--nogui`, so the only
+available witness was a regexp over ~15 k lines of source, and the non-greedy
+proc-body pattern backtracked catastrophically (the test file hung past 120 s).
+A source witness is still the right shape; it needs a line-scanner, not a
+regexp. **Not done, deliberately named rather than left to be discovered.**
+
+**Out of scope, stated so nobody reads silence as a ruling:**
+`ngspice_backannotate.tcl` / `hspice_backannotate.tcl` build
+`ngspice::ngspice_data` by parsing a simulator's *log*, not a loaded database;
+they never see a VCD and are untouched. Nothing here changes what the waveform
+window shows.
+
+**What a fixture that only builds the easy shape costs, again.** `BA4b` ("no
+substitute publisher") was green against sabotage `S7`, which implements exactly
+the promotion D5-3a forbids — because with only an own-database entry plus the
+VCD's `%`, the fan-out with the VCD current is *{the VCD}* alone and there was
+no analog candidate to substitute. It took an explicit `%<analog raw> tran`
+entry on the strip to make the check able to fail. Same disease as D4's
+"all traces on rect 0" round.
 
 ### E — ASE-L: recognize, emit and attach a mixed-signal run
 

@@ -2260,6 +2260,21 @@ extern int vcd_read(const char *f);
 extern int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
                                 int no_warning, double sweep1, double sweep2);
 extern int raw_type_is_non_spice(const char *type);
+/* SPEC D5 -- the ONE place that answers "is this database logic levels rather
+ * than analog values?", driven by the `digital` column of the reader table in
+ * src/save.c. Every backannotation enforcement point asks these, and a new
+ * database type inherits the ruling by filling in its row. Never re-derive the
+ * answer with a strcmp against "vcd" at a call site (RULING D5-2). */
+extern int raw_type_is_digital(const char *type);
+extern int raw_is_digital(const Raw *raw);
+/* ...and the same question asked of a FILE, for the request paths where the
+ * caller did not spell a type at all (RULING D5-6). Content sniff, not
+ * extension. */
+extern int raw_file_is_digital(const char *f);
+/* the single-sourced refusal sentence (RULING D5-4): emits it on the CIW and
+ * the debug channel and returns it, so a caller with a Tcl result to set hands
+ * the script the same words the user reads. */
+extern const char *backannot_refuse_digital(const char *dbname);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);

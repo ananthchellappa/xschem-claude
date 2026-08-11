@@ -85,7 +85,7 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # marker readout over a synthesized raw+VCD pair through `xschem get`/`xschem
 # graph_marker` verbs only -- no canvas is ever drawn, so it is true-headless;
 # issue 0305)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read test_ase_cosim test_raw_ascii_point_bounds test_vcd_time_base test_raw_read_dispatch test_node_token_split test_wave_cursor_crossdb "
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_verilog_view_model test_vcd_read test_ase_cosim test_raw_ascii_point_bounds test_vcd_time_base test_raw_read_dispatch test_node_token_split test_wave_cursor_crossdb test_backannotate_digital "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

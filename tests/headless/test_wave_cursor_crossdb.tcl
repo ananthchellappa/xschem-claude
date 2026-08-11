@@ -41,8 +41,10 @@
 #         annot_sweep_idx / annot_p in one database is invisible to otherwise.
 #   XC5*  RULING D4-2: exactly ONE database publishes ngspice::ngspice_data, and
 #         it is the one that is current on entry. D5 (what a digital database
-#         contributes to schematic backannotation) is still open and is NOT
-#         decided here.
+#         contributes to schematic backannotation) was open when this file was
+#         written and has since been RULED: nothing. The digital-ENTRY case
+#         belongs to tests/headless/test_backannotate_digital.tcl; here the
+#         entry database is analog throughout, so XC51-XC54 are unchanged.
 #   XC6*  the registry cursor is a PAIR and the fan-out moves NEITHER half.
 #         backannotate_at_cursor_b_pos() now switches databases on every cursor
 #         motion; a walker that does that owes both halves back (batch F item 2,
@@ -406,9 +408,12 @@ xc_cursor 175e-9
 set xc_arr [pcall {lsort [array names ngspice::ngspice_data]}]
 check_true "XC51 the Tcl backannotation array carries the CURRENT database's\
  vector" [expr {[lsearch -exact $xc_arr {v(anlg)}] >= 0}]
-check_true "XC52 ...and NOT the VCD's names: D5 (what a digital database\
- contributes to schematic backannotation) is still open and is not decided by\
- D4" [expr {[lsearch -exact $xc_arr TOP.m.siga] < 0 &&
+check_true "XC52 ...and NOT the VCD's names (RESTATED 2026-08-11: the assertion\
+ is byte-identical, the reason is no longer 'D5 is open' -- D5 has RULED that a\
+ digital database contributes nothing to schematic backannotation; here the\
+ ENTRY database is analog, so this is D4-2's own rule, and the digital-entry\
+ case is test_backannotate_digital.tcl's BA46/BA47)" \
+  [expr {[lsearch -exact $xc_arr TOP.m.siga] < 0 &&
             [lsearch -exact $xc_arr TOP.m.sigb] < 0}]
 check_true "XC53 ...nor the other analog database's" \
   [expr {[lsearch -exact $xc_arr {v(late)}] < 0}]

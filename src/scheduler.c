@@ -2170,13 +2170,58 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           level = -1;
         }
       }
+      /* the file name is resolved BEFORE the D5 refusal below, because the
+       * refusal asks the FILE what it is, not just the caller (RULING D5-6).
+       *
+       * ⚠ AND IT IS RESOLVED IN C. This used to be
+       *   my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+       *   tcleval(f);
+       * which splices a USER-SUPPLIED PATH into a Tcl script inside a brace
+       * group -- a path containing `}` closes the group early and the rest of
+       * the path EXECUTES (measured: a file named
+       *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
+       * set ::PWNED in the session). That hazard predates D5 and fires for
+       * every annotate_op, but D5's refusal now stands downstream of this line,
+       * so leaving it would mean the refusal path itself ran attacker text.
+       * A leading `~/` is all that regsub ever did; doing it with two
+       * my_snprintf branches is the same transformation with nothing to
+       * escape from. */
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        if(argv[2][0] == '~' && argv[2][1] == '/') {
+          my_snprintf(f, S(f), "%s/%s", home_dir, argv[2] + 2);
+        } else {
+          my_snprintf(f, S(f), "%s", argv[2]);
+        }
       } else {
         my_snprintf(f, S(f), "%s/%s.raw",  tclgetvar("netlist_dir"), get_cell(xctx->sch[xctx->currsch], 0));
       }
+
+      /* RULING D5-3, enforcement point 2 of 3 -- THE REQUEST ITSELF.
+       * `xschem annotate_op <file> <level> vcd` is a request to backannotate a
+       * digital database, and it is refused HERE, before anything is loaded or
+       * cleared: update_op() below would refuse to publish it anyway
+       * (enforcement point 1), but only after the file had been read into the
+       * registry, made CURRENT, and drawn -- so the user would get a silently
+       * empty annotation plus a registry they did not ask to change. A refusal
+       * that arrives after the side effects is not a refusal.
+       *
+       * TWO questions, not one (RULING D5-6): the optional `sim_type` token
+       * when the caller spelled one, and the FILE ITSELF when they did not --
+       * and both shipped GUI call sites (src/xschem.tcl `xschem annotate_op
+       * $tctx::retval`) pass a filename ALONE, so keying only on the token
+       * would mean the menu path is never refused at all. Without the file
+       * sniff, Op Annotate pointed at a .vcd wipes ngspice::ngspice_data and
+       * deletes the previously loaded OP from the registry on its way to
+       * saying nothing.
+       *
+       * The sentence is minted once in save.c and rendered here (RULING D5-4);
+       * it is also the Tcl result, so a script that asked gets an answer rather
+       * than the previous command's leftovers. */
+      if(raw_type_is_digital(sim_type) || raw_file_is_digital(f)) {
+        Tcl_SetResult(interp, (char *)backannot_refuse_digital(f), TCL_VOLATILE);
+        return TCL_OK;
+      }
+
       tclsetboolvar("live_cursor2_backannotate", 1);
       /* delete previously loaded OP */
       if(xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
@@ -9821,6 +9866,18 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "loaded")) {
         Tcl_SetResult(interp, my_itoa(sch_waves_loaded()), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "is_digital")) {
+        /* xschem raw is_digital [<sim_type>]
+         *   read-only: 1 if the database is logic levels rather than analog
+         *   values (spec D5). With no argument, asks it of the CURRENT
+         *   database; with one, of that sim_type token. This is the SAME
+         *   answer every backannotation enforcement point uses -- one reader
+         *   table, one column (RULING D5-2) -- so Tcl and a check can ask the
+         *   engine instead of growing a second list of type tokens.
+         *   Deliberately outside the `raw && raw->values` gate below: "is this
+         *   type digital?" is answerable with nothing loaded at all. */
+        if(argc > 3) Tcl_SetResult(interp, my_itoa(raw_type_is_digital(argv[3])), TCL_VOLATILE);
+        else Tcl_SetResult(interp, my_itoa(raw_is_digital(raw)), TCL_VOLATILE);
       } else if(raw && raw->values) {
         /* xschem raw annot
          *   read-only: the CURRENT database's cursor-B annotation state, as

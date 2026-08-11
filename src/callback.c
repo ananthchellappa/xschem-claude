@@ -960,10 +960,36 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
  * RULING D4-2: exactly ONE database publishes ngspice::ngspice_data, and it is
  * the one that is current on entry -- slots[0] by construction. The Tcl array is
  * a flat name->value map read by the schematic voltage overlay and by every
- * floater; letting each database rewrite it would make the last switch win, and
- * merging a VCD's names into it is spec D5's question (what a digital database
- * contributes to backannotation), which is still open and is NOT decided here.
- * A single-database session therefore behaves exactly as it did before D4.
+ * floater; letting each database rewrite it would make the last switch win.
+ *
+ * RULING D5-1/D5-3 (spec row D5, enforcement point 3 of 3) -- AND IF THAT ONE
+ * DATABASE IS DIGITAL, NOBODY PUBLISHES AND THE ARRAY IS CLEARED. D4 left this
+ * open and it was a live hole: `xschem raw read <f>.vcd vcd` makes the VCD
+ * CURRENT (extra_rawfile()'s read arm), so the very next cursor motion wrote
+ * that VCD's logic levels into ngspice::ngspice_data under the VCD's own names
+ * -- and where a name collides with an analog one (`TOP.m.q` is a legal vector
+ * name in a spice raw and the natural name in a VCD) the schematic overlay
+ * silently swapped a measured voltage for a logic level. See RULING D5-1: a
+ * logic level is not a voltage.
+ *
+ * The array is UNSET rather than left alone, and no OTHER database is promoted
+ * into the publisher's place:
+ *   - leaving it alone keeps the last analog position's numbers on screen while
+ *     the user moves the cursor -- a stale overlay that looks live, which is the
+ *     silent-wrong-answer shape this whole section exists to remove.
+ *   - promoting the first analog slot would make the overlay follow a database
+ *     the user did not make current, so which values the schematic showed would
+ *     depend on registry order. "No analog database is current, so there is
+ *     nothing to show" is the true statement, and `?` is how
+ *     ngspice::get_voltage already renders it.
+ * Nothing is echoed to the CIW here: this runs on EVERY cursor motion, and a
+ * message on every motion is noise, not a notice. The `annotate_op` /
+ * `update_op` request paths are where the user is told why (RULING D5-4).
+ *
+ * The per-`Raw` half of D4 is untouched: every contributing database, digital
+ * ones included, still gets its annot_p / annot_x / cursor_b_val stamped, so
+ * the viewer's readout bar still reads the digital trace at the cursor. D5 is
+ * about the SCHEMATIC, not about the waveform window.
  */
 void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
 {
@@ -971,10 +997,14 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
   if(sch_waves_loaded() >= 0) {
     int *slots = NULL, n, k;
     int entry_extra_idx = xctx->extra_idx, entry_prev_idx = xctx->extra_prev_idx;
+    /* the entry database is the publisher (D4-2); a digital one publishes
+     * nothing and the array is emptied instead (D5-3) */
+    int publish = !raw_is_digital(xctx->raw);
 
+    if(!publish) Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
     n = graph_cursor_dbs(r, &slots);
     if(n <= 0) {                      /* no rect, or no registry: the current DB */
-      backannotate_cursor_b_in_db(r, gr, 1);
+      backannotate_cursor_b_in_db(r, gr, publish);
       my_free(_ALLOC_ID_, &slots);
       return;
     }
@@ -986,7 +1016,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
         my_snprintf(buf, S(buf), "%d", slots[k]);
         if(!extra_rawfile(2, buf, NULL, -1.0, -1.0)) continue;
       }
-      backannotate_cursor_b_in_db(r, gr, k == 0);
+      backannotate_cursor_b_in_db(r, gr, k == 0 && publish);
     }
     if(n > 1) {
       char buf[30];

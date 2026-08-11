@@ -1455,9 +1455,10 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
 static struct raw_reader_entry {
   const char *type;
   int (*read)(const char *f);   /* builds xctx->raw; 1 on success */
+  int digital;                  /* 1 = logic levels over time, NOT volts (spec D5) */
 } raw_reader_table[] = {
-  {"table", table_read},
-  {"vcd",   vcd_read}
+  {"table", table_read, 0},
+  {"vcd",   vcd_read,   1}
 };
 #define N_RAW_READERS ((int)(sizeof(raw_reader_table) / sizeof(raw_reader_table[0])))
 
@@ -1471,6 +1472,133 @@ int raw_type_is_non_spice(const char *type)
     if(!strcmp(type, raw_reader_table[i].type)) return 1;
   }
   return 0;
+}
+
+/* ===========================================================================
+ * SPEC D5 -- WHAT A DIGITAL DATABASE CONTRIBUTES TO BACKANNOTATION: NOTHING.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D5 and the section
+ * "D5 -- backannotation and the digital database".
+ *
+ * RULING D5-1: a digital database contributes NOTHING to annotate_op() and
+ * NOTHING to the schematic voltage overlay. Backannotation puts OPERATING
+ * POINT values on the schematic -- node voltages and device currents. A VCD
+ * carries logic levels over time. A logic level is not a voltage: `1` is not
+ * 1.8 V, it is `1`, and vcd_read() additionally encodes X as 0.5 and Z as 0.3
+ * (VCD_VX / VCD_VZ, src/vcd_read.c DECISION 3), so publishing them would put
+ * "0.5 V" on a net whose value is UNKNOWN and "0.3 V" on one that is floating,
+ * neither of which is a measurement. Every one of those numbers is
+ * fabricated, and a fabricated number on a schematic is indistinguishable
+ * from a measured one.
+ *
+ * RULING D5-2: the exclusion is SINGLE-SOURCED, right here, off the same
+ * table that picks the reader. A future database type answers the question by
+ * filling in the `digital` column of its own row, and inherits every
+ * enforcement point below rather than re-deriving the decision at each one.
+ * Never `!strcmp(sim_type, "vcd")` at a backannotation site.
+ * ===========================================================================
+ */
+
+/* 1 if `type` names a database of logic levels rather than analog values.
+ * A NULL/empty type is a spice raw ("first analysis found in the file"). */
+int raw_type_is_digital(const char *type)
+{
+  int i;
+  if(!type || !type[0]) return 0;
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(!strcmp(type, raw_reader_table[i].type)) return raw_reader_table[i].digital;
+  }
+  return 0;
+}
+
+/* the same question asked of a loaded database. A NULL Raw is not digital:
+ * "nothing is loaded" is not "a digital thing is loaded". */
+int raw_is_digital(const Raw *raw)
+{
+  if(!raw) return 0;
+  return raw_type_is_digital(raw->sim_type);
+}
+
+/* RULING D5-4 -- ONE SENTENCE, MINTED ONCE, RENDERED BY THE CALLERS.
+ * Item 5's rule for the empty-pane notice (doc/claude/specs/…, RULING F1e/F1f)
+ * applied to the engine side: the refusal is where the reason is known, so the
+ * sentence is minted here and every caller renders it rather than composing a
+ * second, drifting one. Says WHAT was refused, WHY, and names the database.
+ *
+ * Emits it on the CIW when there is a GUI (the guarded ciw_echo idiom,
+ * [[ciw-feedback-channels]]) and on the debug channel always, then RETURNS it
+ * so a caller with a Tcl result to set can hand the same words to the script
+ * that asked. Never called from the cursor-motion path -- see D5-3. */
+const char *backannot_refuse_digital(const char *dbname)
+{
+  static char msg[512];
+  const char *n = (dbname && dbname[0]) ? dbname : "that results database";
+  my_snprintf(msg, S(msg),
+    "backannotation: '%s' is a digital results database -- it carries logic "
+    "levels over time, not an operating point, so there are no voltages or "
+    "currents in it to annotate onto the schematic", n);
+  dbg(0, "%s\n", msg);
+  if(has_x) {
+    /* ⚠ `dbname` IS A USER-SUPPLIED PATH -- it arrives from `xschem annotate_op
+     * <file>`, i.e. from whatever the user picked in select_raw's file dialog
+     * (which offers an `All Files *` filter). It must therefore NEVER be
+     * spliced into a Tcl script by concatenation: the obvious
+     *   tclvareval("... {ciw_echo {", msg, "} note}", NULL)
+     * puts the path inside a brace group, so a path containing `}` closes the
+     * group early -- at best the notice is lost to `extra characters after
+     * close-brace` and the user is told nothing, at worst the remainder of the
+     * path is EXECUTED as Tcl in the GUI session (measured: a path spelled
+     *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
+     * set ::PWNED). The sentence is handed over as a VARIABLE instead, which no
+     * path content can escape from. Every other tclvareval() ciw_echo site in
+     * the tree interpolates program-generated text; this is the first to
+     * interpolate a path, so the quoting discipline starts here. */
+    tclsetvar("__backannot_refuse_msg", msg);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $::__backannot_refuse_msg note}");
+    Tcl_UnsetVar(interp, "__backannot_refuse_msg", TCL_GLOBAL_ONLY);
+  }
+  return msg;
+}
+
+/* RULING D5-6 -- THE TYPE TOKEN IS NOT THE ONLY WAY TO ASK FOR A DIGITAL
+ * DATABASE, so it cannot be the only thing the refusal keys on.
+ *
+ * `xschem annotate_op <file>` takes the type as an OPTIONAL 4th argument, and
+ * BOTH shipped GUI call sites (src/xschem.tcl, the Op Annotate menu entries)
+ * pass a filename ALONE -- select_raw's dialog offers an `All Files *` filter,
+ * so pointing Op Annotate at a .vcd is a thing a user can do in two clicks. A
+ * refusal that only fires on `annotate_op <f> <lvl> vcd` never fires for them:
+ * the op/dc/tran fallbacks each fail on a VCD, and the user is left with the
+ * silently empty schematic (plus a wiped annotation array) that D5-3's
+ * before-any-side-effect placement exists to prevent.
+ *
+ * So the file is asked what it is. The answer is definitive rather than a
+ * guess: `$enddefinitions` is MANDATORY in every VCD (IEEE 1364 section 18.2 --
+ * vcd_read() itself will not accept a file without it) and appears in no spice
+ * rawfile, ascii or binary. The extension is deliberately NOT consulted: a
+ * VCD named .raw is still a VCD, and a spice raw named .vcd is still a raw, and
+ * only the content knows which. Sniffs the head of the file only, so the cost
+ * is one fopen + one fread on a path the user just asked to load anyway.
+ *
+ * Returns 0 for a file that cannot be opened: "unreadable" is not "digital",
+ * and the load below will report the real error. */
+int raw_file_is_digital(const char *f)
+{
+  FILE *fd;
+  char buf[4097];
+  size_t n;
+  int found = 0;
+  if(!f || !f[0]) return 0;
+  fd = my_fopen(f, fopen_read_mode);
+  if(!fd) return 0;
+  n = fread(buf, 1, sizeof(buf) - 1, fd);
+  fclose(fd);
+  buf[n] = '\0';
+  /* strstr is safe on the NUL-terminated head even for a binary raw: it simply
+   * stops at the first NUL, and a spice binary raw's ASCII header never carries
+   * a VCD keyword. */
+  if(strstr(buf, "$enddefinitions")) found = 1;
+  if(found) dbg(1, "raw_file_is_digital(): %s sniffs as a VCD ($enddefinitions)\n", f);
+  return found;
 }
 
 /* Read `f` with the reader that `type` selects. Every caller that turns a
@@ -1790,6 +1918,18 @@ int update_op()
 {
   int res = 0, p = 0, i;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+  /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
+   * This is the choke point every "annotate the operating point" request funnels
+   * through: the `annotate_op` arm, both `raw switch` gates and the bare
+   * `xschem update_op` verb. A digital database publishes NOTHING, and the
+   * Tcl array stays UNSET (cleared above) rather than keeping the previous
+   * database's numbers -- a stale voltage on the schematic is the one outcome
+   * worse than no voltage. Answers 0, i.e. "nothing was published", which is
+   * what `xschem update_op` reports to the script that asked. */
+  if(raw_is_digital(xctx->raw)) {
+    backannot_refuse_digital(xctx->raw->rawfile);
+    return 0;
+  }
   if(xctx->raw && xctx->raw->values) {
     xctx->raw->annot_p = 0;
     dbg(1, "update_op(): nvars=%d\n", xctx->raw->nvars);
