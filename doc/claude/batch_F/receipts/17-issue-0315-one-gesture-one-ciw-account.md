@@ -234,8 +234,43 @@ regression, and not left as an open question.**
 Display health checked first (`wslg_health.sh`: HEALTHY, 5120x1440, 34 prior
 Xwayland fatals recorded). No `make` — this change is Tcl only.
 
-`full_audit.sh` diff against `doc/claude/batch_F/baseline_status.txt` is running
-at the time of this commit; the diff is appended to this receipt when it lands.
+### 6.1 Audit — diff by test NAME and STATUS
+
+`GUI_GATE=1 DISPLAY=:0 bash tests/headless/full_audit.sh`, joined by name against
+`doc/claude/batch_F/baseline_status.txt` (baseline `7a592f9c`, 2026-08-09).
+
+Run: `SUMMARY: 288 pass  23 fail  1 crash/timeout  1 skip  (total 313)` /
+`WIREEDIT: ALL PASS` / `SCRATCH: 0 leaked dir(s)`. (The baseline lists the 58
+wireedit cases as individual rows; this run reports them as one `ALL PASS` block,
+so they are absent from the by-name join and are not a diff — same as receipt 16.)
+
+**RED-WARD — four rows. All four re-run standalone. NONE is a regression.**
+
+| test | baseline | this run | standalone re-run | verdict |
+| --- | --- | --- | --- | --- |
+| `test_hover_highlight` | PASS | FAIL | **PASS** | batched-sweep flake |
+| `test_wave_trace_menu` | PASS | FAIL | **PASS (397 checks)** | batched-sweep flake |
+| `test_connected_drag_keeps_selection_0113` | PASS | SKIP | **PASS (7 checks)** | X-gated self-SKIP under load |
+| `test_wave_sigbrowser_i1315` | PASS | FAIL | NORESULT once, then **PASS (191 checks)** | the named `BP72` / whole-suite-death classes |
+
+None of the four is in an area this change can reach: it touches
+`wviewer::browser_say`'s CIW echo and `ase.tcl`'s gesture arming. Hover
+highlighting, the trace context menu and connected drag do not call either.
+
+**GREEN-WARD — eight rows, none of them mine either**: `test_ase_persist`,
+`test_ase_plot` (TIMEOUT → PASS), `test_fluid_bodyshove_guards_0132`,
+`test_rotate_stretch_dangling_0103`, `test_wave_axis_zoom`,
+`test_wave_crossdb_trace`, `test_wave_sigbrowser_i12`, `test_wire_vertex_grab` —
+the same flake classes settling the other way, plus work landed between the
+baseline and now. Recorded, not claimed.
+
+**NEW ROWS — seven** tests exist now that the baseline predates:
+`test_wave_sigbrowser_0315` **PASS** (this change), plus
+`test_wave_sigbrowser_0312`, `test_raw_read_failure_0306`,
+`test_backannotate_digital`, `test_cosim_golden_e2e`, `test_wave_cursor_crossdb`,
+`test_wave_sigbrowser_digital` — all PASS.
+
+**Zero attributable regressions.**
 
 ## 7. What this does NOT claim
 
