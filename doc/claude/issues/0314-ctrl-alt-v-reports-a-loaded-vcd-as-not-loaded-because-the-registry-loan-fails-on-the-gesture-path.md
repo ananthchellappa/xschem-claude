@@ -1,6 +1,16 @@
 # 0314 — Ctrl-Alt-V reports a loaded VCD as "not among the loaded results databases"
 
-**Status:** OPEN. **Blocks the eyeball of Batch F item 5's F1 branch.**
+**Status:** FIXED 2026-08-11. The open question below is ANSWERED — **refusal C,
+`switch_ctx`** — and the cause is the gesture's own callback frame: `callback()`
+raises `xctx->semaphore` for the whole of any key/button event and
+`switch_window`/`switch_tab` refuse a context switch while it is raised, so the
+loan was refused on every gesture and granted on every CIW call. Measured, fixed
+and sabotage-verified in
+`doc/claude/batch_F/receipts/14-0314-0313-gesture-context-loan.md`; the fix is
+the semaphore-aware retry in `wviewer::enter_ctx`/`leave_ctx` plus a `refused`
+status that stops `cosim_db_inventory` falling back to a registry that
+structurally cannot answer (new cause `notread`). Issue 0313 was the same
+refusal one caller over. Checks: `FD70`-`FD74`, `FS51`/`FS51b`-`FS51f`.
 **Filed:** 2026-08-11, from the Batch F eyeball queue (session 4, item 5 step 6).
 **Found by:** hand, then narrowed with live instrumentation in the running
 session. Reproducible.
@@ -73,6 +83,22 @@ documented at `scheduler.c` ~9380), or when `switch_ctx` fails.
 **Which of those fires was not isolated** — a fourth wrapper tangled the live
 session's renames before it logged. That is the one open question, and one clean
 run with a wrapper on `enter_ctx` alone should answer it.
+
+> **ANSWERED (2026-08-11), by exactly that run.** It is the THIRD:
+> `wviewer::switch_ctx` is refused, because the gesture's own `callback()` frame
+> holds `xctx->semaphore` and `switch_window`/`switch_tab` refuse on
+> `if(xctx->semaphore)`. At a real gesture, with a wrapper on `enter_ctx` alone:
+>
+> ```
+> >>> Ctrl-Alt-V ENTRY hit#1 win='' sem=1 cur=.drw
+>   enter_ctx REFUSED-C(switch_ctx) inwin=1 wp='.x1.drw' prev='.drw' sem=1 ticket='0 {}' caller=wviewer::signal_list
+>   enter_ctx REFUSED-C(switch_ctx) inwin=1 wp='.x1.drw' prev='.drw' sem=1 ticket='0 {}' caller=wviewer::signal_list_all
+> ```
+>
+> `inwin=1` rules out the stale token; `prev='.drw'` rules out the empty
+> `current_win_path`. Controlled, in the same session: `sem=0` → 2 databases,
+> `sem=1` → 0, `sem=0` → 2 again. The second line also names issue 0313's
+> clearing step, which was neither of the two candidates that issue lists.
 
 ## Why the fallback makes it worse
 

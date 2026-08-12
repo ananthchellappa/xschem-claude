@@ -855,8 +855,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set ::bw_spy 0
     if {[info commands ::wviewer::__bw_real_signal_list] ne {}} { return already }
     rename ::wviewer::signal_list ::wviewer::__bw_real_signal_list
-    proc ::wviewer::signal_list {token} {
+    # ⚠ THE SIGNATURE MUST TRACK THE REAL PROC'S (issue 0313/0314). `signal_list`
+    # grew an optional status out-var, and `browser_reload` — the very proc this
+    # spy exists to detect — now calls it with two arguments. A one-argument spy
+    # does not merely fail: it THROWS inside browser_refresh's `catch`, which
+    # makes browser_reload dead code while the spy is installed and turns this
+    # group's "the toggle re-read nothing" leg vacuously green.
+    proc ::wviewer::signal_list {token {statusVar {}}} {
       incr ::bw_spy
+      if {$statusVar ne {}} {
+        upvar 1 $statusVar st
+        return [::wviewer::__bw_real_signal_list $token st]
+      }
       return [::wviewer::__bw_real_signal_list $token]
     }
     return ok

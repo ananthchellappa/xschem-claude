@@ -1640,6 +1640,18 @@ is part of the ruling: the notice is the LAST thing the command does, because th
 writes the status line, the pane caption and a CIW line of its own, and a notice written before
 them is a sentence nobody reads. `FV34`/`FV36`/`FV40`.
 
+> **F1b's OTHER HALF, added by issue 0313 (2026-08-11): the fall-through must have something
+> to fall onto.** The refusal reached the notice correctly and still stranded the user, because
+> one step earlier `wviewer::browser_reload` had overwritten the browser's whole model
+> (`browsersigs` — the tree's node set AND the lower pane) with the empty answer of a REFUSED
+> context loan. Tree collapsed to its bare design root, pane emptied, and since that root was
+> already the selected row, ttk queued no `<<TreeviewSelect>>` and no click rebuilt it: only an
+> unrelated control (the class filter) brought the listing back. It also inverted F5's whole
+> point — `browser_sea_draw` writes the sentence into the pane only when the pane has nothing
+> to draw, precisely so it reads "the digital pane you asked for is missing" rather than "this
+> pane is empty". A refused reload therefore KEEPS the previous snapshot: one skipped refresh
+> is what a refusal may cost, never a wiped browser. `FD72` (sabotage S3).
+
 **RULING F1c — the tree is RE-SCOPED to show the digital database, on a positive test, and it
 says so.** A VCD is a foreign registry slot, and with the All-DBs box off its rows are not in
 the tree at all — so the branch would be dead on a default browser. `browser_show_db_scope`
@@ -2488,7 +2500,7 @@ new field in `Raw` — the §E argument stands verbatim: a `Raw` change touches 
 ase::cosim_scope_for_instance <key> <instpath>  ->
     {ok <vcdpath> <scope> <how>}          how = hint|derived
     {none <code> <human sentence>}        code = nodigital|nomap|multi|notraced|
-                                                 notloaded|noscope|ambiguous
+                                                 notloaded|notread|noscope|ambiguous
 ```
 
 Steps, in this order — **the order is part of the ruling**:
@@ -2512,7 +2524,9 @@ Steps, in this order — **the order is part of the ruling**:
    check `vcd` first. That kills one of the hint's two lies; the other (a hint written with no
    `.v` behind it) is killed by the `vfile` test in step 5, not here.
 4. **The DB must be in the registry**, matched on `path` against `wviewer::signal_list_all`'s
-   inventory. Absent → `notloaded`.
+   inventory. Absent → `notloaded`. **Registry not READABLE → `notread`, never `notloaded`**
+   (5f-7): the inventory reports `refused` when the viewer's context loan was refused, and that
+   is a different fact with different advice.
 5. **f3, derived and verified** against that DB's `names`. **The hint is eligible only when the
    entry's `vfile` is non-empty** (5c: an empty `vfile` means no `.v` was ever read and the
    string is the `.model` card's name). Eligible → accept it iff ≥1 name starts with
@@ -2586,9 +2600,43 @@ drove each:
   the call site. Taking `{}` as authoritative made the resolver answer `{none notloaded "… run
   the simulation, or re-attach its results"}` about a database that was loaded and readable that
   instant — reproduced with a bogus token against a live registry. The fall-through is safe in
-  the honest case: with nothing loaded the direct path reports `{}` by itself. Pinned by `FS50`
-  (an unknown token) and `FS51` (a `signal_list_all` that exists and returns `{}` without
-  throwing, i.e. the refused ticket a `catch` cannot see).
+  the honest case: with nothing loaded the direct path reports `{}` by itself.
+  **⚠ HALF OF THIS RULING WAS OVERTURNED BY 5f-7 — the fall-through is right for the STALE
+  token and wrong for the REFUSED ticket.** The evidence sentence moved with it: the
+  surviving half (an unknown token still falls through) is pinned by `FS50` and by
+  `FS51-unknown-viewer-token-falls-back`; the overturned half is pinned the other way up by
+  `FS51b`-`FS51h`, which require a refused loan to answer `notread` and never fall through.
+* **5f-7 (issue 0314, measured) — a REFUSED loan does not fall through, it gets its own cause
+  `notread`.** 5f-5's fall-through reads *the current context's* registry, and its safety
+  argument ("the direct path reports `{}` by itself when nothing is loaded") holds only where
+  the current context is the **viewer**. On the gesture path the current context is the **design
+  window**, which structurally never has databases — so the fall-through converted "I could not
+  ask" into "there are none", and the resolver told the user to run a simulation whose results
+  were attached and listed one window away. Which is not hypothetical: it was the *default*, not
+  an edge case, because `callback()` holds `xctx->semaphore` for the whole of every gesture and
+  `switch_window`/`switch_tab` refuse a context switch while it is raised, so **every** loan
+  taken from a keystroke was refused and **every** loan typed into the CIW succeeded. The
+  registry readers now report `ok`/`refused`/`unknown`; `refused` returns immediately with that
+  status (only the honest empty and the stale token still fall through — and a THROW is counted
+  as a refusal too, since the `catch` that guards the call would otherwise turn it into the
+  honest empty), and step 4 mints `notread`. **Its sentence says only what a refusal
+  establishes**: `refused` is the union of "busy", "the window is mid-alloc/teardown" and "the
+  target window is gone", so naming one of them as fact would be `notloaded`'s overreach one
+  step smaller — it reports that the registry could not be read, that the file could not be
+  *confirmed* loaded, and asks for the gesture again. The **loan itself** is also fixed, so on
+  the gesture path this cause is now rare rather than universal: `wviewer::enter_ctx` retries
+  the switch with the frame's own semaphore temporarily lowered, **at `semaphore == 1` and only
+  for a caller that opts in**. Both conditions are load-bearing: `>= 2` is callback.c's own
+  "busy" convention (recursive callback, modal dialog, placement in flight) and keeps its
+  refusal, while `== 1` alone does NOT identify a gesture — `ase::wait` holds exactly 1 across a
+  `vwait` that pumps the event loop, and `destroy_all_windows` holds it around a `tk_messageBox`
+  — so only `signal_list`/`signal_list_all`, whose bodies read and restore and run no
+  `update`/`after`, ask to borrow. `in_ctx`'s caller-supplied body never does. Pinned by
+  `FS51b`-`FS51h`, `FV10b`/`FV11b`/`FV18` (headless) and `FD70`-`FD74` (the Tk/X arm, including
+  the chord driven through the canvas binding's own C entry point); receipt
+  `doc/claude/batch_F/receipts/14-0314-0313-gesture-context-loan.md`, which also declares the
+  follow-up: a positive gesture-frame flag exported from callback.c would replace the value
+  test entirely.
 * **5f-6 (ruled in the review round) — `note` is a CIW tag, and `src/ciw.tcl` now configures it.**
   5f-1 asserts the disagreement is *visible*; `ase::echo … note` hands the tag straight to the
   CIW text widget, and an undefined Tk tag is legal and styles nothing, so before this the notice

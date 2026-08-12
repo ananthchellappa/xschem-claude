@@ -1246,15 +1246,33 @@ proc wviewer::switch_ctx {token} {
 # there — see the audit table in doc/claude/issues/0173-*.md.
 
 # Enter `token`'s viewer context, remembering where the context came from.
-# Returns a two-element TICKET {ok prev}:
+# Returns a TICKET {ok prev ?sem?}:
 #   ok   = 1 when the viewer's context is current, 0 when the switch was REFUSED
 #          (landmine 17: `new_schematic switch` silently no-ops while the current
 #          context's semaphore is raised, so it must be VERIFIED, never assumed).
 #   prev = the win_path to restore, or {} when there is nothing to undo — either
 #          because the viewer was ALREADY current (the switch never happened, so
 #          no title was clobbered) or because the switch was refused.
+#   sem  = present ONLY on the issue-0314 retry below: the callback frame's own
+#          semaphore, which leave_ctx must put back after the restore. Absent on
+#          every other ticket, so `lindex $ticket 2` is {} and leave_ctx does
+#          nothing — the two-element tickets of every older caller still work.
 # Callers must bail out on ok==0 and must hand the whole ticket to leave_ctx.
-proc wviewer::enter_ctx {token} {
+#
+# `borrow` OPTS IN to the issue-0314 retry, and it is opt-in for a measured
+# reason (review finding, verified in the source): **`semaphore == 1` does not
+# identify a gesture frame.** Three other brackets in this tree sit at exactly 1
+# — `ase::wait` (src/ase.tcl:646) holds it across a `vwait` that pumps the whole
+# event loop, `destroy_all_windows` (src/xinit.c:2482) raises it around a
+# `tk_messageBox` "to avoid context switches when dialog below is shown", and a
+# menu-driven `place_symbol` holds it with a placement in flight. Only the two
+# read-only registry readers below pass `borrow 1`; `in_ctx` (whose body is
+# caller-supplied and runs at `uplevel #0`) and `readout_refresh` keep the
+# refusal they have always had, so an arbitrary script can never move the
+# context out from under one of those brackets. Identifying the frame POSITIVELY
+# would need callback.c to export one (see the receipt's follow-up note); until
+# it does, the narrow door is the one that is safe to open.
+proc wviewer::enter_ctx {token {borrow 0}} {
   variable windows
   if {![dict exists $windows $token]} { return {0 {}} }
   set wp [dict get $windows $token win_path]
@@ -1271,8 +1289,51 @@ proc wviewer::enter_ctx {token} {
   # ~1797) would no-op anyway, but taking the fast path here also keeps `prev`
   # empty, so leave_ctx knows there is no title to repair.
   if {$prev eq $wp} { return {1 {}} }
-  if {![wviewer::switch_ctx $token]} { return {0 {}} }
-  return [list 1 $prev]
+  if {[wviewer::switch_ctx $token]} { return [list 1 $prev] }
+  # --- issue 0314: A GESTURE'S OWN CALLBACK FRAME IS WHY THAT REFUSED ---------
+  #
+  # ⚠⚠ EVERY KEY AND BUTTON GESTURE HOLDS THE SEMAPHORE FOR ITS WHOLE DURATION.
+  # `callback()` (src/callback.c ~9098) does `xctx->semaphore++` on entry "to
+  # recognize recursive callback() calls", and `switch_window`/`switch_tab`
+  # (src/xinit.c ~1843/~1897) refuse outright on `if(xctx->semaphore)`. So a
+  # loan taken from INSIDE a gesture — which is every Ctrl-Alt-V, every
+  # binding-driven browser refresh — was refused 100% of the time, while the
+  # identical call typed into the CIW (no callback frame, semaphore 0) worked.
+  # That is the whole of issue 0314: the two routes disagreed, and the refusal
+  # was invisible because a refused loan answers {} exactly like an empty
+  # registry. MEASURED at a real gesture: `sem=1`, refusal C (switch_ctx), with
+  # the same call answering 2 databases at `sem=0` one statement later.
+  #
+  # ⚠ ONLY `sem == 1`, AND ONLY FOR A CALLER THAT ASKED (`borrow`). `>= 2` is
+  # callback.c's own busy convention (a recursive callback, a modal dialog
+  # opened from inside a gesture, a placement in flight — see its ~20
+  # `if(xctx->semaphore >= 2) break;` guards) and keeps the refusal it has
+  # always had; `== 1` is necessary but NOT sufficient to mean "a gesture frame"
+  # (see the `borrow` note above the proc), which is why the door is opened per
+  # caller rather than per value. A lowered semaphore is safe for the two
+  # callers that pass it because their bodies (a) run no `update`/`after`, so no
+  # foreign event can interleave, (b) only READ, and (c) always restore.
+  #
+  # ⚠ `xschem set semaphore` IS THE LEVER THE C SIDE USES FOR THIS EXACT JOB:
+  # `int save = xctx->semaphore; xctx->semaphore--; ... xctx->semaphore = save;`
+  # around `open_sub_schematic` (callback.c ~6637, "so semaphore for current
+  # context wll be saved correctly"). The semaphore is a PER-CONTEXT field
+  # (`Xschem_ctx.semaphore`), so switch_window's save_ctx/restore_ctx carries
+  # the lowered value with the design context and leave_ctx has to put it back
+  # — hence the third ticket element rather than a restore right here.
+  if {!$borrow} { return {0 {}} }
+  set sem 0
+  catch {set sem [xschem get semaphore]}
+  if {$sem != 1} { return {0 {}} }
+  catch {xschem set semaphore 0}
+  if {![wviewer::switch_ctx $token]} {
+    # still refused: some other cause (a busy target, a dying window). Put the
+    # frame's semaphore back before returning — the caller is bailing out, and a
+    # frame that returns to callback() one short would decrement it to -1.
+    catch {xschem set semaphore $sem}
+    return {0 {}}
+  }
+  return [list 1 $prev $sem]
 }
 
 # The other half of enter_ctx: put the context back where the ticket says it came
@@ -1285,10 +1346,30 @@ proc wviewer::enter_ctx {token} {
 proc wviewer::leave_ctx {token ticket} {
   variable ctx_restore_refused
   set prev [lindex $ticket 1]
+  set sem [lindex $ticket 2]              ;# issue 0314: only the retry sets this
   if {$prev eq {}} { return 1 }           ;# never switched -> nothing to undo
   set ok 0
   catch {xschem new_schematic switch $prev}
   catch {set ok [expr {[xschem get current_win_path] eq $prev}]}
+  # --- issue 0314: THE BORROWED SEMAPHORE GOES BACK UNCONDITIONALLY -----------
+  #
+  # ⚠⚠ TO WHICHEVER CONTEXT WILL RECEIVE THE FRAME'S DECREMENT, which is the
+  # CURRENT one — not necessarily `prev`. The owning frame ends in
+  # `xctx->semaphore--` (callback.c) against whatever context is current at that
+  # moment, so the value has to be waiting THERE or the count goes negative.
+  # Normally the restore lands and current == prev, which is the whole point of
+  # the bracket. When the restore is REFUSED — `get_tab_or_window_number(prev)`
+  # gone, or `Tk_NameToWindow` NULL because the window the gesture came from was
+  # torn down during the loan (src/xinit.c ~1852/~1866; the file already treats
+  # that as a live state and counts it) — we are stranded in the viewer, and
+  # gating the restore on `$ok` would leave BOTH contexts wrong: `prev` short by
+  # one and the viewer about to be decremented to **-1**, which reads as a
+  # permanently raised semaphore and would refuse every context switch that
+  # viewer is ever asked for again. A review pass found that hole; this is why
+  # the condition is on `$sem`, never on `$ok`.
+  # (Silent, like the refused restore beside it: every caller rides a keystroke
+  # or the motion pump, and the event is already counted in ctx_restore_refused.)
+  if {$sem ne {} && $sem ne {0}} { catch {xschem set semaphore $sem} }
   # unconditional: the switch INTO the viewer already clobbered its title, and
   # that damage outlives a refused restore.
   wviewer::retitle $token
@@ -2124,11 +2205,22 @@ proc wviewer::signal_entry {name {dbtype {}}} {
 #    produces a value pollutes globals.
 #  * catch the body and re-raise AFTER leave_ctx: an unexpected throw must not
 #    escape past the restore and leak the foreign context.
-proc wviewer::signal_list {token} {
+proc wviewer::signal_list {token {statusVar {}}} {
   variable windows
+  # issue 0313/0314: THE EMPTY ANSWER IS AMBIGUOUS, so an optional out-var says
+  # which empty it is: `ok` (the loan was taken; {} means the viewer really has
+  # no signals), `refused` (the loan was refused, so this is NOT an answer about
+  # the viewer at all) or `unknown` (the token names no window). Callers that
+  # OVERWRITE a model with the result must consult it — treating `refused` as
+  # `ok` is how a full Signal Browser gets emptied by a gesture (issue 0313).
+  # Every existing caller may keep ignoring it: the return value is unchanged.
+  if {$statusVar ne {}} { upvar 1 $statusVar st }
+  set st unknown
   if {![dict exists $windows $token]} { return {} }
-  set ticket [wviewer::enter_ctx $token]
-  if {![lindex $ticket 0]} { return {} }
+  # `1` = borrow (issue 0314): this body reads and restores, runs no update/after
+  set ticket [wviewer::enter_ctx $token 1]
+  if {![lindex $ticket 0]} { set st refused ; return {} }
+  set st ok
   set names {}
   set code [catch {
     if {![catch {xschem raw list} rl]} { set names [split $rl "\n"] }
@@ -2219,11 +2311,18 @@ proc wviewer::db_label {path type} {
 # NOTHING here calls `update` or `after`: a redraw running while the current DB
 # is swapped would draw the wrong waveforms. And nothing calls `xschem raw
 # clear` — item 13's atomicity rule, inherited.
-proc wviewer::signal_list_all {token} {
+proc wviewer::signal_list_all {token {statusVar {}}} {
   variable windows
+  # issue 0314: the same three-way status signal_list carries, for the same
+  # reason — a `{}` from a REFUSED loan is not "the viewer has no databases",
+  # and a consumer that reads it as one reports a loaded VCD as not loaded.
+  if {$statusVar ne {}} { upvar 1 $statusVar st }
+  set st unknown
   if {![dict exists $windows $token]} { return {} }
-  set ticket [wviewer::enter_ctx $token]
-  if {![lindex $ticket 0]} { return {} }
+  # `1` = borrow (issue 0314): as signal_list, and for the same three reasons
+  set ticket [wviewer::enter_ctx $token 1]
+  if {![lindex $ticket 0]} { set st refused ; return {} }
+  set st ok
   set out {}
   set code [catch {
     set info {}
@@ -9391,8 +9490,36 @@ proc wviewer::browser_reload {token} {
   variable browserraw
   variable browsercurdb
   if {![dict exists $windows $token]} { return 0 }
+  # --- issue 0313: A REFUSED LOAN MUST NOT EMPTY THE SIDEBAR ------------------
+  #
+  # ⚠⚠ THIS IS THE STEP THAT CLEARED IT. The snapshot below is the browser's
+  # whole model — `browsersigs` feeds the tree's node set AND the lower pane —
+  # and it used to be overwritten with whatever `signal_list` returned, `{}`
+  # included. A `{}` from a REFUSED context loan is not "the viewer has no
+  # signals"; on the gesture path (issue 0314) it was every single time. So a
+  # Ctrl-Alt-V that merely REFUSED left the user with a tree collapsed to its
+  # bare design root, an empty pane, and a notice reading as "this pane is
+  # empty" instead of "the digital pane you asked for is missing" — MEASURED:
+  # `PANE ROWS 2 -> 0`, `TREE top=1 rows=g:/0`, `browsersea 0 entries`.
+  #
+  # ⚠ AND IT COULD NOT BE CLICKED BACK. The re-landed row is the one already
+  # selected, so ttk's `selection set` is a no-op, no <<TreeviewSelect>> is
+  # queued, and nothing rebuilds — only an unrelated control (the class filter)
+  # brought the listing back. RULING F1b: a refusal FALLS THROUGH, it does not
+  # strand the user. Keeping the previous snapshot is what makes that true here:
+  # the analog listing the refusal was supposed to fall back onto is still the
+  # one on screen, and F5's sentence lands on it exactly as designed.
+  #
+  # The fix for 0314 makes the gesture path stop refusing at all; this arm is
+  # what a refusal that is REAL (semaphore >= 2 — a modal dialog, a placement in
+  # flight — or a viewer being torn down) is allowed to cost: one skipped
+  # refresh, never a wiped browser.
   set names {}
-  foreach e [wviewer::signal_list $token] { lappend names [dict get $e name] }
+  set st ok
+  foreach e [wviewer::signal_list $token st] { lappend names [dict get $e name] }
+  if {$st eq {refused}} {
+    return [expr {[info exists browsersigs($token)] ? [llength $browsersigs($token)] : 0}]
+  }
   set browsersigs($token) $names
   # item 14: the FOREIGN databases' inventories, in the SAME snapshot. Taken
   # UNCONDITIONALLY — the checkbox is read in exactly one place (browser_refresh)
@@ -9414,8 +9541,9 @@ proc wviewer::browser_reload {token} {
   # 13, BD07), and a second copy could disagree with it.
   set curraw {}
   set curdb {}
-  catch {
-    foreach db [wviewer::signal_list_all $token] {
+  set ast ok
+  set acode [catch {
+    foreach db [wviewer::signal_list_all $token ast] {
       # ⚠ RULING F4: the `type` key rides along on BOTH dicts, at zero extra
       # engine cost -- `signal_list_all` already read it out of `xschem raw info`.
       # It is the ONE fact that says whether an inventory's names obey SPICE's
@@ -9436,7 +9564,16 @@ proc wviewer::browser_reload {token} {
         type  [wviewer::dget $db type {}] \
         names [wviewer::dget $db names {}]]
     }
-  }
+  }]
+  # issue 0313, SECOND HALF (review finding). The three snapshots below are the
+  # same kind of model as `browsersigs` — the tree's per-database groups, the
+  # design root's label, the current DB's identity — and this read can fail the
+  # same two ways: a REFUSED loan (`ast`), or a THROW that the `catch` above
+  # would otherwise turn into three silent empties (`signal_list_all` re-raises
+  # its body's errors, and its leave_ctx/retitle tail is outside that inner
+  # catch). Either way the answer is not an answer, so the previous snapshot
+  # stands: one skipped refresh, never a wiped browser.
+  if {$ast eq {refused} || $acode} { return [llength $names] }
   set browserraw($token) $curraw
   set browsercurdb($token) $curdb
   set browserdbsigs($token) $foreign

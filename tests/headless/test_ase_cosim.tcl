@@ -1436,16 +1436,82 @@ xschem load $p1
 set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .no_such_viewer_token]
 eqcheck FS50-stale-token-still-resolves "[lindex $r 0] [lindex $r 2] [lindex $r 3]" \
   {ok TOP.dcell hint}
-# ...and the same with signal_list_all PRESENT and answering {} -- the refused
-# ticket, which the real proc returns without throwing, so a `catch` cannot see it
+# ...and the same with signal_list_all PRESENT and answering {} for a token it
+# does not know: `unknown`, not `refused`, so the fall-through is still right.
 set fs_had_sla [expr {[info commands ::wviewer::signal_list_all] ne {}}]
 if {$fs_had_sla} { rename ::wviewer::signal_list_all ::wviewer::fs_saved_sla }
-proc ::wviewer::signal_list_all {token} { return {} }
+proc ::wviewer::signal_list_all {token {statusVar {}}} {
+  if {$statusVar ne {}} { upvar 1 $statusVar st ; set st unknown }
+  return {}
+}
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .fs_live_but_unknown]
+eqcheck FS51-unknown-viewer-token-falls-back \
+  "[lindex $r 0] [lindex $r 2] [lindex $r 3]" {ok TOP.dcell hint}
+# --- issue 0314: A REFUSED LOAN IS NOT AN EMPTY REGISTRY ---------------------
+#
+# ⚠⚠ AND IT MUST NOT FALL BACK. The fall-through reads THE CURRENT CONTEXT's
+# registry, and the context a gesture is standing in is the DESIGN window, which
+# structurally has none -- so "I could not ask" came out as "there are none" and
+# the resolver minted `notloaded`, telling the user to run a simulation whose
+# results were attached and listed one window away. The refusal now has its own
+# cause, and the sentence asks for the one thing that helps.
+#
+# ⚠ THE ARITY IS PART OF THE ASSERTION. The pre-0314 stub took one argument, so
+# after the fix it ERRORED, the `catch` swallowed it, the status stayed `ok` and
+# the old fall-through ran -- i.e. a stub can hide this defect by being stale.
+proc ::wviewer::signal_list_all {token {statusVar {}}} {
+  if {$statusVar ne {}} { upvar 1 $statusVar st ; set st refused }
+  return {}
+}
 set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .fs_live_but_refusing]
+eqcheck FS51b-refused-loan-is-its-own-cause "[lindex $r 0] [lindex $r 1]" {none notread}
+check FS51c-refused-loan-never-advises-a-rerun \
+  [expr {![regexp {run the simulation|re-attach|not among the loaded results databases} \
+     [lindex $r 2]]}] "([lindex $r 2])"
+check FS51d-refused-loan-says-what-happened-and-what-to-do \
+  [expr {[regexp {could not be read} [lindex $r 2]] \
+      && [regexp {try the gesture again} [lindex $r 2]]}] "([lindex $r 2])"
+# ⚠ AND IT CLAIMS NOTHING IT CANNOT KNOW. `refused` is the union of three causes
+# (busy semaphore, window alloc/teardown, target window gone), so naming any one
+# of them -- or asserting that the database IS loaded -- is the same overreach as
+# `notloaded`, one step smaller (review finding).
+check FS51g-refused-loan-does-not-name-a-cause-it-cannot-establish \
+  [expr {![regexp {editor was busy|nothing needs re-running|is loaded} \
+     [lindex $r 2]]}] "([lindex $r 2])"
+# the inventory's own status out-var, the value the resolver reads
+set fs_inv_st ok
+set fs_inv [pcall ase::cosim_db_inventory .fs_live_but_refusing fs_inv_st]
+eqcheck FS51e-inventory-reports-refused "[llength $fs_inv] $fs_inv_st" {0 refused}
+# ⚠ A THROW IS THE FOURTH NON-ANSWER, and it used to reach the user as
+# `notloaded` THROUGH THE ERROR DOOR (review finding): signal_list_all re-raises
+# its body's errors and anything its leave_ctx tail throws, and the `catch` that
+# guards the call converted that into the honest-empty case, which falls through
+# to the design context's registry. The status out-var cannot see it -- no
+# writer runs on that path -- so the catch code is the only witness.
+proc ::wviewer::signal_list_all {token {statusVar {}}} {
+  error "simulated failure inside the registry read"
+}
+set fs_thr_st ok
+set fs_thr [pcall ase::cosim_db_inventory .fs_live_but_throwing fs_thr_st]
+set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .fs_live_but_throwing]
+eqcheck FS51h-a-throw-is-not-an-answer-either \
+  "[llength $fs_thr] $fs_thr_st [lindex $r 1]" {0 refused notread}
 rename ::wviewer::signal_list_all {}
 if {$fs_had_sla} { rename ::wviewer::fs_saved_sla ::wviewer::signal_list_all }
-eqcheck FS51-refused-viewer-ticket-falls-back \
-  "[lindex $r 0] [lindex $r 2] [lindex $r 3]" {ok TOP.dcell hint}
+# ...and with the REAL proc and a REAL refusal (a window entry whose win_path
+# cannot be switched to), through no stub at all: the loan is refused, the
+# status is `refused`, and the fall-through does not run.
+if {$fs_had_sla} {
+  set fs_win_save {}
+  catch {set fs_win_save $::wviewer::windows}
+  dict set ::wviewer::windows .fs_real_refusal win_path .fs_no_such.drw
+  set fs_rr_st ok
+  set fs_rr [pcall ase::cosim_db_inventory .fs_real_refusal fs_rr_st]
+  set r [pcall ase::cosim_scope_for_state $FSA x1.a1 .fs_real_refusal]
+  set ::wviewer::windows $fs_win_save
+  eqcheck FS51f-real-refused-loan-through-no-stub \
+    "[llength $fs_rr] $fs_rr_st [lindex $r 1]" {0 refused notread}
+}
 
 # the inventory reads every database and PUTS THE POINTER BACK
 set inv [pcall ase::cosim_db_inventory]
@@ -1802,11 +1868,35 @@ check FV17-noscope-notice-names-module-scopes-and-file \
   [expr {[string first {module 'dcell'} [fvnotice $fv_ns]] >= 0 &&
          [string first {scopes found: TOP} [fvnotice $fv_ns]] >= 0 &&
          [string first {fs_nomatch.vcd} [fvnotice $fv_ns]] >= 0}] "([fvnotice $fv_ns])"
-# the four causes are four DIFFERENT sentences — a notice that collapsed them
-# would satisfy every check above one at a time
-eqcheck FV18-the-four-causes-are-four-sentences \
+# F5 cause 5 — THE REGISTRY COULD NOT BE READ (issue 0314). The cause that must
+# never wear `notloaded`'s clothes, asserted THROUGH THE RENDERER like the other
+# four: the notice is the surface a user reads, and it is the one step the spec
+# forbids from knowing that causes exist, so a resolver-only assertion leaves it
+# untested (review finding).
+ase::cosim_save_map $FVS [list [fsentry vfile $dv1 \
+  vcd [file join $tmp fv_never_read.vcd] scope TOP.dcell]]
+set fv_had_sla2 [expr {[info commands ::wviewer::signal_list_all] ne {}}]
+if {$fv_had_sla2} { rename ::wviewer::signal_list_all ::wviewer::fv_saved_sla }
+proc ::wviewer::signal_list_all {token {statusVar {}}} {
+  if {$statusVar ne {}} { upvar 1 $statusVar st ; set st refused }
+  return {}
+}
+set fv_nr [pcall ase::browser_digital_probe $fvkey a1 .fv_refusing_token]
+rename ::wviewer::signal_list_all {}
+if {$fv_had_sla2} { rename ::wviewer::fv_saved_sla ::wviewer::signal_list_all }
+eqcheck FV10b-cause-notread [lindex $fv_nr 1] notread
+check FV11b-notread-notice-is-the-resolver-sentence-and-advises-no-rerun \
+  [expr {[string first {could not be read} [fvnotice $fv_nr]] >= 0 &&
+         [string first {run the simulation} [fvnotice $fv_nr]] < 0}] \
+  "([fvnotice $fv_nr])"
+# the causes are DIFFERENT sentences — a notice that collapsed them would
+# satisfy every check above one at a time. `notread` joins the four because it
+# is the one most easily collapsed INTO `notloaded`: same step, same file name,
+# opposite advice.
+eqcheck FV18-the-five-causes-are-five-sentences \
   [llength [lsort -unique [list [fvnotice $fv_nl] [fvnotice $fv_nt] \
-                                [fvnotice $fv_nm] [fvnotice $fv_ns]]]] 4
+                                [fvnotice $fv_nm] [fvnotice $fv_ns] \
+                                [fvnotice $fv_nr]]]] 5
 # ...and a SUCCESS has no notice at all
 ase::cosim_save_map $FVS [list [fsentry vfile $dv1 vcd $vagree scope TOP.dcell]]
 eqcheck FV19-success-has-no-notice \

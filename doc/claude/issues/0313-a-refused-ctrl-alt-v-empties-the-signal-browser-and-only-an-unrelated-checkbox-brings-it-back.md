@@ -1,6 +1,15 @@
 # 0313 — a refused Ctrl-Alt-V empties the Signal Browser, and only an unrelated checkbox brings it back
 
-**Status:** OPEN.
+**Status:** FIXED 2026-08-11. **The clearing step was NEITHER of the two
+candidates below.** It is `wviewer::browser_reload` overwriting `browsersigs`
+— the browser's whole model — with the empty answer of a REFUSED context loan,
+the same refusal issue 0314 turned out to be: the gesture's own `callback()`
+frame holds `xctx->semaphore`, so `wviewer::signal_list`'s loan was refused and
+its `{}` was read as "the viewer has no signals". Measured (`caller=signal_list`
+in the receipt's log), fixed and sabotage-verified in
+`doc/claude/batch_F/receipts/14-0314-0313-gesture-context-loan.md`. A refused
+reload now keeps the previous snapshot, so the refusal falls through with the
+analog listing still on screen (RULING F1b). Check: `FD72` (sabotage S3).
 **Filed:** 2026-08-11, from the Batch F eyeball queue (session 4, item 5 step 4).
 **Found by:** hand. Every automated check for item 5 asserts on the notice's
 three surfaces, and the notice is correct — what none of them assert is what
@@ -74,6 +83,22 @@ candidates were not distinguished:
 
 A `-d 1` run through the a2 gesture, watching `browsersea` and the
 `<<TreeviewSelect>>` deliveries around `:2686`, should settle it in one pass.
+
+> **SETTLED (2026-08-11), and it is a THIRD cause.** `browser_reload`
+> (`src/wave_viewer.tcl`) rebuilds `browsersigs($token)` — which feeds BOTH the
+> tree's node set and the lower pane — from `wviewer::signal_list`, and on the
+> gesture path that call was refused, not empty. Instrumented at the a2 gesture:
+>
+> ```
+>   enter_ctx REFUSED-C(switch_ctx) ... caller=wviewer::signal_list
+>   TREE(after-a2): top=1 rows=g:/0 sel=g:     <- collapsed to the bare root
+>   browsersea(after-a2): 0 entries
+>   PANE ROWS : 0
+> ```
+>
+> Step 6b's retry did re-land the design root and did queue nothing (as this
+> issue predicted), but that is not what emptied the pane: the model had already
+> been wiped one step earlier. Both candidates above are innocent.
 
 ## Reproduce
 

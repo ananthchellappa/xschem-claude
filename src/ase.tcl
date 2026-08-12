@@ -1750,9 +1750,25 @@ proc ase::cosim_hint_note {rejected chosen} {
 # registry in the VIEWER's, which is the whole reason the token is a parameter.
 # With no token (headless, or a resolve before any viewer exists) the current
 # context's registry is read directly, with the same switch-and-restore shape.
-proc ase::cosim_db_inventory {{token {}}} {
+proc ase::cosim_db_inventory {{token {}} {statusVar {}}} {
+  # `status` is `ok` (this IS the registry) or `refused` (it could not be read;
+  # the empty list below says nothing about what is loaded). Optional, so every
+  # older caller is unchanged -- but a caller that turns an empty answer into a
+  # USER-FACING CAUSE must read it. See step 4 of ase::cosim_scope_for_f1.
+  if {$statusVar ne {}} { upvar 1 $statusVar status }
+  set status ok
   if {$token ne {} && [llength [info commands ::wviewer::signal_list_all]]} {
-    if {![catch {wviewer::signal_list_all $token} inv] && [llength $inv]} {
+    set sst ok
+    # ⚠ A THROW IS A FOURTH NON-ANSWER, and the pre-0314 `![catch ...]` quietly
+    # converted it into the honest-empty case (review finding). signal_list_all
+    # really does re-raise — its body's errors, and anything its leave_ctx tail
+    # throws — so an unparseable `xschem raw info` during a gesture would fall
+    # through to the design registry and mint 0314's sentence through the error
+    # door. `sst` is pre-seeded `ok` and no writer runs on that path, so the
+    # catch code is the only thing that knows.
+    set scode [catch {wviewer::signal_list_all $token sst} inv]
+    if {$scode} { set sst refused }
+    if {!$scode && [llength $inv]} {
       set out {}
       foreach e $inv {
         lappend out [dict create idx [ase::state_get $e idx -1] \
@@ -1766,10 +1782,23 @@ proc ase::cosim_db_inventory {{token {}}} {
     # is not in `windows` (stale -- and a token goes stale exactly during viewer
     # teardown), enter_ctx refused the ticket (its own comment documents the
     # window-alloc window where current_win_path is transiently empty), and the
-    # viewer genuinely has no databases. Only the third is an answer. So fall
-    # through to the current context's registry, which reports {} by itself when
-    # nothing is loaded -- the honest empty -- and reports the real DBs when the
-    # token was simply unusable.
+    # viewer genuinely has no databases. Only the third is an answer.
+    #
+    # ⚠⚠ AND THE FALL-THROUGH BELOW IS NOT SAFE FOR THE OTHER TWO -- issue 0314,
+    # the degradation this comment forbade, reached through the door it left
+    # open. The argument used to be "the current context reports {} by itself
+    # when nothing is loaded -- the honest empty -- and the real DBs when the
+    # token was simply unusable". That holds only where the current context IS
+    # the viewer. On the gesture path it is the DESIGN window, which never has
+    # databases, so the fall-through converted "I could not ask" into "there are
+    # none" and minted `notloaded` for a VCD that was attached and listed.
+    #
+    # So a REFUSED loan returns here, saying so. Only the honest empty and the
+    # stale token fall through -- and for those the current context's registry
+    # is still the better answer than nothing (a headless resolve, or a resolve
+    # taken before any viewer existed, has no token at all and lands there by
+    # the same route).
+    if {$sst eq {refused}} { set status refused ; return {} }
   }
   set cur [ase::raw_current]
   if {$cur < 0} { return {} }
@@ -1804,7 +1833,7 @@ proc ase::cosim_db_inventory {{token {}}} {
 #   {ok <vcdpath> <scope> <how> <note>}   how = hint | derived
 #   {none <code> <human sentence>}        code = nodigital | nomap | ambiguous |
 #                                                multi | notraced | notloaded |
-#                                                noscope
+#                                                notread | noscope
 #
 # <note> is the 5f slot: empty on a clean answer, and on a `derived` answer that
 # overrode an eligible hint it says so. Every refusal names which of f1/f2/f3
@@ -1867,12 +1896,32 @@ proc ase::cosim_scope_for_f1 {state f1 instpath {token {}}} {
   set names {}
   set found 0
   set nvcd [file normalize $vcd]
-  foreach db [ase::cosim_db_inventory $token] {
+  set inv_status ok
+  foreach db [ase::cosim_db_inventory $token inv_status] {
     if {[file normalize [dict get $db path]] eq $nvcd} {
       set names [dict get $db names]
       set found 1
       break
     }
+  }
+  # ⚠ "COULD NOT READ THE REGISTRY" IS NOT "IT IS NOT LOADED" (issue 0314). The
+  # two answers are indistinguishable in the inventory's return value and the
+  # difference is everything: `notloaded` tells the user to run a simulation
+  # whose results are, on this path, already attached and listed one window
+  # away. A refused loan therefore gets its OWN cause and a sentence that asks
+  # for the one thing that helps -- the gesture again, once the editor is idle.
+  # ⚠ AND IT SAYS ONLY WHAT A REFUSAL ESTABLISHES (review finding). `refused` is
+  # the union of three unrelated causes -- the semaphore said busy, the window
+  # was being allocated or torn down, the target window is gone -- so naming any
+  # ONE of them as fact would be the same overreach as `notloaded`, one step
+  # smaller. It does not claim the database IS loaded either: the refusal is
+  # defined as not knowing. What it does carry is the only advice the state
+  # supports, and the absence of the advice that made this issue: nobody is told
+  # to re-run anything.
+  if {!$found && $inv_status eq {refused}} {
+    return [list none notread "the waveform viewer's results registry could not be\
+ read just now, so '[file tail $vcd]' could not be confirmed loaded: try the\
+ gesture again in a moment (f3)"]
   }
   if {!$found} {
     return [list none notloaded "'[file tail $vcd]' is not among the loaded results\
@@ -1944,7 +1993,9 @@ proc ase::browser_digital_probe {key selname {token {}}} {
 # ⚠⚠ IT RENDERS THE RESOLVER'S OWN SENTENCE VERBATIM (RULING 5f-3). The three
 # causes F5's spec row names are already three different sentences minted at the
 # point each is DECIDED -- `notloaded` ("not among the loaded results
-# databases"), `notraced` ("the last run promised no VCD ... tracing off ...")
+# databases"), `notread` (issue 0314: the registry could not be READ, which is a
+# different fact and must never carry `notloaded`'s "run the simulation"),
+# `notraced` ("the last run promised no VCD ... tracing off ...")
 # and the no-mapping family (`nomap`/`ambiguous`/`noscope`/`multi`/`nodigital`).
 # A notice that re-worded them here would be a second account of the same event,
 # free to drift from what the code does; item 4's receipt states the failure

@@ -980,6 +980,260 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
 
   # ===========================================================================
+  # FD70-FD75 — ISSUES 0314 AND 0313: THE GESTURE'S OWN CALLBACK FRAME.
+  #
+  # ⚠⚠ EVERY CHECK ABOVE READS THE VIEWER FROM A CIW-SHAPED CALL, AND THAT IS
+  # THE ONE ROUTE THE DEFECT SPARED. `callback()` (src/callback.c ~9098) raises
+  # `xctx->semaphore` for the whole of any key or button gesture, and
+  # switch_window/switch_tab (src/xinit.c) refuse a context switch outright
+  # while it is raised — so every viewer LOAN taken from inside a gesture was
+  # refused, 100% of the time, while the identical call typed into the CIW
+  # worked. Issue 0314: a VCD that was attached AND LISTED was reported as "not
+  # among the loaded results databases: run the simulation". Issue 0313: the
+  # same refusal emptied the whole sidebar.
+  #
+  # MEASURED, at a real Ctrl-Alt-V on the batch F fixture (receipt
+  # doc/claude/batch_F/receipts/14-0314-0313-gesture-context-loan.md):
+  #   >>> ENTRY sem=1 cur=.drw
+  #   enter_ctx REFUSED-C(switch_ctx) inwin=1 prev='.drw' sem=1 ticket='0 {}'
+  # and the same call at sem=0 answering 2 databases one statement later.
+  #
+  # ⚠ `xschem set semaphore 1` IS NOT A MODEL OF THE GESTURE, IT IS THE STATE
+  # THE GESTURE HOLDS — measured equal at the Tcl entry point. FD73 then drives
+  # the REAL C entry (`xschem callback`, the exact command string the canvas's
+  # <KeyPress> binding runs) so the two routes are compared, not assumed.
+  # ===========================================================================
+  xschem new_schematic switch .drw
+  update
+  # ⚠ THE PRECONDITION IS A LEG, NOT AN ASSUMPTION (review finding). Everything
+  # above this block runs with the VIEWER context current, and if the switch
+  # back to `.drw` ever failed to take, `signal_list_all` would be answering
+  # from inside the viewer — no loan needed, nothing under test, four green
+  # legs. So the context is read here and again after the loan: cross-context
+  # going in, and BACK where it started coming out.
+  set fd_ctx0 [pcall xschem get current_win_path]
+  set fd_sem0 [llength [pcall ::wviewer::signal_list_all $tok]]
+  # THE GESTURE'S OWN SEMAPHORE, and the balance after it: a loan that lowered
+  # the frame's semaphore and forgot to put it back would leave callback()'s
+  # trailing `semaphore--` to reach -1.
+  xschem set semaphore 1
+  set fd_sem1 [llength [pcall ::wviewer::signal_list_all $tok]]
+  set fd_sem1_after [pcall xschem get semaphore]
+  set fd_ctx1 [pcall xschem get current_win_path]
+  xschem set semaphore 0
+  check {FD70 (0314) the viewer's registry is readable from inside a gesture's
+         callback frame, and both the frame's semaphore and its context come
+         back} \
+    [list $fd_ctx0 $fd_sem0 $fd_sem1 $fd_sem1_after $fd_ctx1] \
+    [list .drw 2 2 1 .drw]
+  # ⚠ THE OTHER HALF OF THE RETRY: lowered, and STILL refused. Nothing else in
+  # the suite stands in that window — FD71 returns at the `sem != 1` gate and so
+  # does the ASE arm's dead-window token, so the lowering was under test and its
+  # matching restore was not (review finding). A live `windows` entry whose
+  # win_path is not a window forces exactly it: the retry lowers, switch_ctx
+  # refuses again, and the frame's semaphore must still come back.
+  dict set ::wviewer::windows fd_dead win_path .fd_no_such.drw
+  xschem set semaphore 1
+  set fd_dead_st ok
+  set fd_dead_n [llength [pcall ::wviewer::signal_list_all fd_dead fd_dead_st]]
+  set fd_dead_sem [pcall xschem get semaphore]
+  set fd_dead_ctx [pcall xschem get current_win_path]
+  xschem set semaphore 0
+  dict unset ::wviewer::windows fd_dead
+  check {FD70b (0314) a loan that lowers the semaphore and is refused ANYWAY
+         gives the frame its semaphore back and does not move the context} \
+    [list $fd_dead_n $fd_dead_st $fd_dead_sem $fd_dead_ctx] \
+    [list 0 refused 1 .drw]
+  # ⚠⚠ AND THE RESTORE THAT ITSELF FAILS. The borrowed value must come back even
+  # when leave_ctx's context restore is REFUSED, because the owning frame's
+  # `xctx->semaphore--` lands on whatever context is current at that moment: a
+  # value dropped here would decrement the wrong context to -1, which reads as a
+  # permanently raised semaphore and would refuse every switch that context is
+  # ever asked for again (review finding — the first cut gated the restore on
+  # `$ok` and had exactly that hole). Driven with a hand-made ticket naming a
+  # window that does not exist, the same shape test_wave_modes.tcl's M-group
+  # uses for the refused-restore path.
+  xschem set semaphore 0
+  set fd_lv [pcall ::wviewer::leave_ctx $tok {1 .no.such.drw 1}]
+  set fd_lv_sem [pcall xschem get semaphore]
+  xschem set semaphore 0
+  check {FD70c (0314) a REFUSED context restore still hands the borrowed
+         semaphore back, to the context that will decrement it} \
+    [list $fd_lv $fd_lv_sem] [list 0 1]
+  # ⚠ THE BORROW IS OPT-IN, AND ONLY THE TWO READ-ONLY REGISTRY READERS ASK.
+  # `semaphore == 1` is NOT proof of a gesture frame — `ase::wait` holds exactly
+  # 1 across a `vwait` that pumps the event loop, and a menu-raised modal dialog
+  # holds it around `tk_messageBox` — so a bracket whose body is caller-supplied
+  # (`in_ctx`, at uplevel #0) must keep the refusal it has always had.
+  xschem set semaphore 1
+  set fd_noborrow [pcall ::wviewer::enter_ctx $tok]
+  set fd_borrow [pcall ::wviewer::enter_ctx $tok 1]
+  pcall ::wviewer::leave_ctx $tok $fd_borrow
+  xschem set semaphore 0
+  check {FD70d (0314) at a raised semaphore the loan is granted to a caller that
+         opts in and refused to one that does not} \
+    [list [lindex $fd_noborrow 0] [lindex $fd_borrow 0] [lindex $fd_borrow 2] \
+          [pcall xschem get current_win_path]] \
+    [list 0 1 1 .drw]
+  # ⚠ THE CONSERVATIVE HALF, AND IT IS NOT DECORATION. `semaphore >= 2` is
+  # callback.c's own "busy" convention (a recursive callback, a modal dialog, a
+  # placement in flight) and those keep the refusal they have always had. A fix
+  # that simply switched regardless would pass FD70 and lose this.
+  xschem set semaphore 2
+  set fd_sem2_st ok
+  set fd_sem2 [llength [pcall ::wviewer::signal_list_all $tok fd_sem2_st]]
+  xschem set semaphore 0
+  check {FD71 (0314) a GENUINELY busy editor still refuses the loan, and says
+         `refused` rather than answering an empty registry} \
+    [list $fd_sem2 $fd_sem2_st \
+          [llength [pcall ::wviewer::signal_list_all $tok]]] \
+    [list 0 refused 2]
+  # --- issue 0313: THE REFUSAL MUST NOT EMPTY THE SIDEBAR ---------------------
+  # The browser's whole model is `browsersigs`; a refused reload used to
+  # overwrite it with the refusal's empty answer, collapsing the tree to its
+  # bare design root and the pane to nothing — and the root being already
+  # selected, no <<TreeviewSelect>> fired and no click brought it back.
+  set fd_sigs_before [llength $::wviewer::browsersigs($tok)]
+  xschem set semaphore 2
+  set fd_reload_r [pcall ::wviewer::browser_reload $tok]
+  xschem set semaphore 0
+  set fd_sigs_after [llength $::wviewer::browsersigs($tok)]
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  check {FD72 (0313) a REFUSED reload leaves the browser's model and its lower
+         pane exactly as they were — a refusal falls through, it does not
+         strand the user (RULING F1b)} \
+    [list $fd_sigs_before $fd_sigs_after $fd_reload_r \
+          [llength $::wviewer::browsersea($tok)]] \
+    [list 2 2 2 2]
+  # ⚠ THE RELOAD'S **SECOND** ENGINE READ IS THE SAME RULING (review finding).
+  # `browsersigs` is not the whole model: the per-database groups, the design
+  # root's label and the current DB's identity all come from a separate
+  # `signal_list_all` pass in the same proc, and a refusal there wiped all three
+  # while FD72 stayed green. Forced with a reader that answers `refused` while
+  # the first read still succeeds — the shape a teardown produces between the
+  # two calls.
+  set fd_db_before [llength $::wviewer::browserdbsigs($tok)]
+  set fd_raw_before $::wviewer::browserraw($tok)
+  rename ::wviewer::signal_list_all ::wviewer::fd_saved_sla2
+  proc ::wviewer::signal_list_all {token {statusVar {}}} {
+    if {$statusVar ne {}} { upvar 1 $statusVar st ; set st refused }
+    return {}
+  }
+  pcall ::wviewer::browser_reload $tok
+  rename ::wviewer::signal_list_all {}
+  rename ::wviewer::fd_saved_sla2 ::wviewer::signal_list_all
+  check {FD72b (0313) a refusal in the reload's SECOND read leaves the tree's
+         per-database groups and the design root's label alone too} \
+    [list $fd_db_before [llength $::wviewer::browserdbsigs($tok)] \
+          [expr {$::wviewer::browserraw($tok) eq $fd_raw_before}]] \
+    [list 1 1 1]
+  pcall ::wviewer::browser_reload $tok
+  pcall ::wviewer::browser_refresh $tok 0
+  update
+  # --- THE TWO ROUTES, COMPARED --------------------------------------------
+  #
+  # ⚠⚠ THE WHOLE OF 0314 IS THAT THEY DISAGREED, so this drives the SAME command
+  # both ways and asserts one answer. Leg 2 goes through `xschem callback` —
+  # byte for byte the command `bind $topwin <KeyPress>` runs (src/xschem.tcl
+  # ~14164), with keysym 118 and state 12 (Control+Mod1), i.e. the Ctrl-Alt-V
+  # chord seeded in the C binding table. It is the gesture's own entry point,
+  # semaphore raise included.
+  #
+  # ⚠⚠ AND THE DIGITAL PROBE IS **NOT** STUBBED HERE, WHICH IS THE WHOLE VALUE
+  # OF THESE TWO CHECKS. The first cut of them kept `fd_drive_on`'s
+  # `browser_digital_probe` stub, so both routes were handed a pre-decided
+  # `{ok <vcd> TOP}` and never read the registry at all — MEASURED: with the fix
+  # reverted (sabotage S1) FD70 went red and these two stayed GREEN. What runs
+  # instead is the real probe -> ase::cosim_scope_for_f1 -> step 4's
+  # `cosim_db_inventory` -> `wviewer::signal_list_all`, i.e. the loan that the
+  # gesture's own semaphore used to refuse. Only `ase::cosim_f1` (the DESIGN
+  # read, which this file has no schematic for) is stubbed, and a real
+  # co-simulation map entry is written so f2 matches it.
+  set ::fd_vf [file join $scratch fd_dcell.v]
+  fd_wr $::fd_vf "module dcell(input clk, output q);\nendmodule\n"
+  ase::cosim_save_map [ase::session_state $tok] \
+    [list [dict create model dcell lib fdlib cell dcell vfile $::fd_vf \
+             module dcell scope TOP vcd $fd_vcd multi 0 ninst 1]]
+  proc fd_live_on {} {
+    fd_drive_on
+    catch {rename ::ase::browser_digital_probe {}}
+    rename ::ase::browser_digital_probe_fdsaved ::ase::browser_digital_probe
+    rename ::ase::cosim_f1 ::ase::cosim_f1_fdsaved
+    proc ::ase::cosim_f1 {instpath} {
+      return [dict create inst a1 symref fdlib/dcell lib fdlib cell dcell \
+        vfile $::fd_vf module dcell model dcell]
+    }
+  }
+  proc fd_live_off {} {
+    catch {rename ::ase::cosim_f1 {}}
+    rename ::ase::cosim_f1_fdsaved ::ase::cosim_f1
+    rename ::ase::browser_digital_probe ::ase::browser_digital_probe_fdsaved
+    fd_drive_off
+  }
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  fd_live_on
+  pcall ase::show_in_browser_for_current
+  fd_live_off
+  update
+  set fd_route_ciw [$FDV.pw.sea.st cget -text]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  fd_live_on
+  xschem new_schematic switch .drw
+  pcall xschem callback .drw 2 0 0 118 0 0 12
+  # ⚠ READ THE BALANCE HERE, BEFORE ANYTHING ELSE RUNS (review finding). This is
+  # the one route with a REAL callback() frame, so it is the only place the
+  # frame's own trailing `xctx->semaphore--` can land on the wrong context — and
+  # a rendered caption is far downstream of that. Captured before `fd_live_off`
+  # and before `update`, either of which could perturb both values.
+  set fd_key_sem [pcall xschem get semaphore]
+  set fd_key_ctx [pcall xschem get current_win_path]
+  fd_live_off
+  update
+  set fd_route_key [$FDV.pw.sea.st cget -text]
+  check {FD73 (0314) the Ctrl-Alt-V CHORD, driven through the canvas binding's
+         own C entry point and resolving its scope for real, reaches the same
+         caption as the CIW-shaped call, and leaves the frame's semaphore and
+         context balanced — it is the route that used to disagree} \
+    [list $fd_route_ciw $fd_route_key $fd_key_sem $fd_key_ctx] \
+    [list $fd_want $fd_want 0 .drw]
+  # ⚠⚠ AND THE SENTENCE THE DEFECT PRODUCED, PINNED AS A PAIR, WHICH IS WHAT
+  # MAKES IT A CHECK AND NOT A RESTATEMENT OF FD73 (review finding: as a bare
+  # negative over FD73's own two strings it could not fail unless FD73 did).
+  # Leg 1 is the gesture on the fixture's REAL map entry: never `notloaded`.
+  # Leg 2 is the same gesture with the map pointing at a VCD that genuinely is
+  # NOT attached — where `notloaded` and its "run the simulation" IS the truth,
+  # and must still be said. A fix that simply deleted the sentence passes the
+  # negative and fails the pair.
+  ase::cosim_save_map [ase::session_state $tok] \
+    [list [dict create model dcell lib fdlib cell dcell vfile $::fd_vf \
+             module dcell scope TOP vcd [file join $scratch fd_never_attached.vcd] \
+             multi 0 ninst 1]]
+  pcall $FDV.pw.tvf.tv selection set [list {g:}]
+  update
+  fd_live_on
+  xschem new_schematic switch .drw
+  pcall xschem callback .drw 2 0 0 118 0 0 12
+  fd_live_off
+  update
+  set fd_route_absent [$FDV.pw.sea.st cget -text]
+  check {FD74 (0314) the gesture says `not among the loaded results databases`
+         when that is TRUE and never when it is false} \
+    [list [regexp {not among the loaded results databases} \
+             "$fd_route_ciw $fd_route_key"] \
+          [regexp {not among the loaded results databases.*run the simulation} \
+             $fd_route_absent]] \
+    [list 0 1]
+  # put the honest map back for anything downstream
+  ase::cosim_save_map [ase::session_state $tok] \
+    [list [dict create model dcell lib fdlib cell dcell vfile $::fd_vf \
+             module dcell scope TOP vcd $fd_vcd multi 0 ninst 1]]
+  xschem new_schematic switch .drw
+  update
+
+  # ===========================================================================
   # FD40-FD48 — SPEC §F ITEM F3/F4 ON THE REAL VIEWER, THE REAL TREE AND THE
   # REAL LOWER PANE.
   #
