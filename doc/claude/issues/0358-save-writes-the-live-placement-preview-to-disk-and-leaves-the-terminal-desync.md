@@ -88,3 +88,50 @@ oracle as the model for what a `save` fix would have to assert.
 
 `/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_D2/repro5.tcl` section **C2** (scratch,
 not committed — reproduce with the six lines above).
+
+## Update 2026-08-11 — the TERMINAL half is gone; the PERSIST half is now the whole issue
+
+Issue **0262** was decided this day (item D8 of the 2026-08-11 unattended backlog run) and its
+answer covers this issue's *first* half without touching `save`. The ratified shape is a
+**repairing** `check_placement_preview_invariant()`: at `xschem()` entry (before dispatch) and at
+`callback()` entry, a detected desync now calls `repair_orphan_placement_preview()`
+(`src/callback.c`), which clears `sympin_preview`, `wirelabel_preview` and the `preview_sel` stamp,
+says so once on the status bar, and **deletes nothing**.
+
+So, measured post-fix and pinned in `tests/headless/test_placement_preview_doors.tcl`:
+
+| | before | after 0262 | row |
+|---|---|---|---|
+| canvas dead after `save`/`saveas` | **yes**, ESC could not repair | **no** — `sp=0`, `desync=0` | **F11** |
+| the undropped object written into the `.sch` | **yes** | **still yes** | **F12** |
+| user told the buffer is clean (`modified` → 0) | **yes** | **still yes** | — |
+
+**F12 is asserted as a contract, not a wish**, so that nobody reads 0262's repair as having closed
+this issue. A repair is **retroactive**: it cannot un-write a file. That is exactly 0262 decision
+**D9 rule B**, which is the ratified rule this issue is now the open instance of:
+
+> **A** — the TERMINAL half of class D is answered ONCE, at the repair; no verb acquires a
+> `delete()` for the sake of the flags alone. **B** — a door that additionally **COMMITS or
+> PERSISTS** the orphan still needs its own **VERB gate**, because a repair cannot un-write a file
+> or un-emit a deck. `netlist` has that gate (issue **0263**); `save`/`saveas`/Ctrl+S does not.
+
+**So: 0358's answer is still the 0263 shape** — `leave_placement_for("Save")` +
+`leave_merge_for("Save")` at the save VERBS — and 0263 decision D9's three reservations above still
+apply to `write_backup()`.
+
+### Three facts this issue did not have, measured by the item-D8 scout
+
+1. **It is GUI-reachable**, via **Ctrl+S** (`callback.c` → `save(0,0)`), not only from a script.
+2. **The same door also silently COMMITS a live `PLACE_SYMBOL` preview** — `ui 8232 → 0`, instance
+   kept, `modified` → 0.
+3. **And a pending `STARTMERGE` paste** — `ui 296 → 0`, wires kept, `modified` → 0. A live *wire
+   draw* is untouched (nothing is selected, so `unselect_all()` no-ops).
+
+So a `save` gate needs `leave_merge_for()` as well as `leave_placement_for()`, exactly as `netlist`
+does.
+
+### Scope warning
+
+**Do not read this issue as the complete list of COMMIT/PERSIST doors.** `save.c` alone has four
+`unselect_all` sites, and `descend_symbol` / autosave also reach `save_schematic()`. Rule D9 B is
+general; this issue is one instance of it.

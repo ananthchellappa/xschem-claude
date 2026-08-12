@@ -4808,6 +4808,17 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->paste_from), TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "preview_sel_n")) { /* issue 0241 identity stamp: how many objects the
+                                                        * live cursor placement / pending merge names, i.e.
+                                                        * exactly what a cancel would delete. 0 = nothing
+                                                        * stamped. Read-only seam added by issue 0262: the
+                                                        * repair (repair_orphan_placement_preview(),
+                                                        * callback.c) clears this stamp so a stale one can
+                                                        * never delete a now-real object, and without a
+                                                        * probe that effect has no oracle. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->preview_sel_n),TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) {
@@ -5054,6 +5065,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'w':
+          /* xschem get wirelabel_preview
+           * add_wire_label.md: 1 while the live cursor placement is a CONSTRAINED net label rather
+           * than an ordinary pin/symbol -- it is what end_place_move_copy_zoom() reads to route the
+           * drop into wire_label_try_commit(). Read-only seam added by issue 0262: left stale by a
+           * door it swallows the NEXT symbol drop (the branch claims the click and the commit
+           * refuses it), so the repair clears it and that effect needs an oracle. */
+          if(!strcmp(argv[2], "wirelabel_preview")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->wirelabel_preview),TCL_VOLATILE);
+          }
           /* ---- net-highlight styles on waveform TRACES ----------------------
            * doc/claude/specs/wave_trace_hilight.md §7.1. Three read-only
            * getters, all FAIL SOFT (a sentinel + TCL_OK on a short or bad
@@ -5067,7 +5088,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
            * rather than graph_preview_set's flat one, because a triple read
            * back as a flat list is one transcription slip away from a silent
            * off-by-one. */
-          if(!strcmp(argv[2], "wave_hilights")) {
+          else if(!strcmp(argv[2], "wave_hilights")) {
             int k;
             Tcl_Obj *lst;
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

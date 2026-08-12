@@ -14,6 +14,48 @@ Newest entries on top.
 
 ---
 
+## Q45. Something deselected while I was placing a label and the canvas went dead. Is that still a thing?
+
+- **Asked:** 2026-08-11
+- **Project state:** branch `open_pdk` @ `2f866dec` + this session — issue **0262** (item D8).
+
+**No — the canvas repairs itself now. But the label you never dropped stays in the drawing, and it
+still renames the net it landed on.** That trade is the whole decision, and it is deliberate.
+
+The mechanism: `unselect_all()` zeroes `ui_state` wholesale, and a live placement preview is always
+selected — so the gesture bits vanish without the placement teardown ever running. The flags that
+say "a preview is live" (`sympin_preview`, `wirelabel_preview`) are *not* `ui_state` bits, so they
+survived, and with them stuck the Button-1 select/grab block and `wire_label_try_commit()` both
+refuse forever. **ESC could not repair it** — the teardown is gated on the very bit that is gone —
+so the only recovery was to throw the document away.
+
+Reachable how? Not just from scripts, which is what 0262 originally assumed. Measured: the
+**default Ctrl+Button2 chord** (its pin-type-cycle fallback runs a bare deselect when the *Add Pin*
+form is not the one that is open), the **Hilight ▸ Compare schematics** menu item (its entire body
+is a deselect), and **Ctrl+S** (`save` deselects one line before it writes the file — issue
+**0358**, which additionally writes the undropped object into your `.sch` and then tells you the
+buffer is clean).
+
+**The ratified answer, in two parts** — and the shape matters more than this one bug:
+
+* **A. The dead-canvas half is fixed ONCE, class-wide, not door by door.** The tripwire that used to
+  merely *report* this state now **repairs** it, at the two funnels every command and every GUI
+  event passes through. So any door — the three above, or a fourth nobody has found — is now at
+  worst *orphan-only*, never terminal. **No command was given a new `delete()`** to achieve that:
+  gating the deselect verb would have put a silent delete behind 866 scripted call sites whose
+  normal use is "deselect, then select this other thing" (including the Property form's **Cancel**).
+* **B. A command that also *commits* or *persists* the stray object still needs its own gate**,
+  because a repair happens afterwards and cannot un-write a file or un-emit a netlist. `netlist` got
+  that gate (issue **0263**); `save` has not yet (issue **0358**).
+
+**What you should do:** drop the label (click) or ESC it before you deselect, save or netlist —
+same advice as Q41. If it happens anyway you will see one status line, *"Pending placement
+abandoned…"*, the canvas will work again, and **you should look for a stray label** — undo removes
+it. Watch out on a freshly-saved file: the stray object does not currently set the modify flag
+(issue **0398**), so nothing will prompt you on close.
+
+---
+
 ## Q44. Two commands both want the next Button-1. Who wins, and where is that decided?
 
 - **Asked:** 2026-08-10
@@ -190,7 +232,9 @@ that is asserted by test, because it is what keeps the committed golden decks by
 **Still rough** (filed, not fixed): if a *previous* action stripped the gesture bits without tearing
 the preview down (issue **0262** — the bare `unselect_all` verb, reachable after a property edit or
 from Compare Schematics), the stray object is by then an ordinary instance and the netlist will
-still emit it. And pressing **undo** after the abandon brings the preview back as a committed
+still emit it. *(2026-08-11: 0262 has been decided — see Q45 — and this stays true. The repair
+brings the canvas back and deletes nothing, so the stray object still reaches the deck, and on a
+freshly-saved file `modified` can still read 0 while it does: issue **0398**.)* And pressing **undo** after the abandon brings the preview back as a committed
 instance (issue **0361**) — the same thing ESC has always done.
 
 ---

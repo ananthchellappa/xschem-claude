@@ -303,7 +303,7 @@ clean now, with two documented exceptions:
 | row | after | note |
 |---|---|---|
 | paste / merge / paste-replay / redo / undo / place_text / place_symbol / add_graph / add_image | `sp=0`, no orphan | fixed |
-| `xschem unselect_all` (verb) | `sp=1`, orphan | **issue 0262** — deliberately not gated |
+| `xschem unselect_all` (verb) | `sp=1`, orphan | **issue 0262** — deliberately not gated. **DECIDED 2026-08-11**: the carve-out is permanent (the verb arms nothing, and gating it would put a `delete()` behind 866 scripted / 82 C call sites), and the *terminal* half is answered class-wide instead — `check_placement_preview_invariant()` now REPAIRS (`repair_orphan_placement_preview()`, callback.c), so this row is `sp=0`, orphan **only**. Asserted in section F of the doors suite, 29 checks. The bare verb was also **not** the only class-D door: `save`/`saveas`/Ctrl+S is the second (issue **0358**), and the verb IS GUI-reachable (issue **0397**) |
 | `netlist` | `sp=0`, orphan | **issue 0263** — this note said "clears no gesture bits, so not a door". Measured FALSE 2026-08-09: the driver's `push_undo`/`unselect_all(1)`/`pop_undo` round trip clears every bit AND commits the preview, on top of emitting a wrong deck. It was a door; **FIXED**, gated at both netlist verbs |
 
 ### Sabotage results — two of the three predictions were wrong, honestly reported

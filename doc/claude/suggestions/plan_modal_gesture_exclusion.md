@@ -7,10 +7,22 @@ phase 4 landed 2026-08-08 (issue **0265**); phase 3, the last one, landed 2026-0
 Last measured 2026-08-09.
 
 **The plan as a whole is done.** All four gesture families now have a teardown/gate pair and every
-arm calls every gate that applies to it, in both interface branches. What remains of `WIRING.md`
-§8 class **D** is the one deliberate residue **0262** (the bare `xschem unselect_all` verb: it
+arm calls every gate that applies to it, in both interface branches. ~~What remains of `WIRING.md`
+§8 class **D** is the one deliberate residue **0262**~~ (the bare `xschem unselect_all` verb: it
 arms nothing, so the rule has no subject), plus the wire-family `ui_state2` residue recorded and
 asserted-as-present in issue **0268**.
+
+**Correction, 2026-08-11 (item D8).** "The one deliberate residue" was wrong twice. There were at
+least **two** class-D doors — the bare verb (**0262**) and `save`/`saveas`/Ctrl+S (**0358**, still
+open, and it persists the orphan to disk) — and the bare verb is **GUI-reachable** through the
+default Ctrl+Button2 chord and the Compare-schematics menu item (**0397**), against 0262's own
+premise. **0262 is now DECIDED**: the verb stays ungated permanently, and the *terminal* half of
+class D is answered once, class-wide, by a **repairing**
+`check_placement_preview_invariant()` — it clears the stuck flags and the stamp, deletes nothing,
+and turns every door named or unnamed from *terminal* into *orphan-only*. A door that also **commits
+or persists** the orphan still needs its own verb gate (0262 decision **D9** rule B), which is what
+keeps **0358** open. The residue that remains is the object itself, its net rename, and a modify
+flag that can deny both (**0398**).
 
 **Correction, 2026-08-09.** This list used to carry a second residue, **0263** (`netlist`),
 excluded on the grounds that it "netlists a live preview but clears no gesture bits — a different

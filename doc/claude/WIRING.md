@@ -568,9 +568,26 @@ on `[focus]`, not just the C verbs** — a per-toplevel grab swallows the key ex
 as one on `.drw`, which is why `.mkinst` (issue **0395**) and ASE's `sod` seize (issue **0394**) are
 still open with the identical shape.
 
-What is left of class D is only ONE known, deliberate residue, **0262** (the bare
-`xschem unselect_all` verb: it arms nothing, so the rule has no subject, and gating it would put a
-`delete()` behind 817 scripted call sites) — plus the wire-family `ui_state2`
+~~What is left of class D is only ONE known, deliberate residue, **0262**~~ — **CORRECTED
+2026-08-11.** There were at least TWO doors, not one: the bare `xschem unselect_all` verb (**0262**)
+*and* `save`/`saveas`/Ctrl+S through `save_schematic()`'s own `unselect_all(1)` (**0358**, still
+open, and it PERSISTS the orphan); and the bare verb is **GUI-reachable** after all — the default
+Ctrl+Button2 chord and the Hilight ▸ Compare-schematics menu item both fire it (**0397**), against
+0262's own "not reachable from the GUI" premise. **CLASS D IS NOW ANSWERED IN TWO PARTS
+(0262 decision D9, ratified 2026-08-11).** **A — the TERMINAL half is answered ONCE, class-wide, not
+door by door:** `check_placement_preview_invariant()` no longer only reports, it REPAIRS —
+`repair_orphan_placement_preview()` (callback.c) clears `sympin_preview`, `wirelabel_preview` and
+(when no other gesture owns the shared slot) the `preview_sel` stamp at the two funnels every actor
+passes through, `xschem()` entry before dispatch and `callback()` entry. It **deletes nothing**, so
+every door named or unnamed goes from *terminal* to *orphan-only*, and **no verb acquires a
+`delete()` for the sake of the flags alone** — the bare verb stays ungated permanently (866 scripted
+/ 82 C call sites, dominant idiom `unselect_all ; select <thing>`, a housekeeping PREFIX; issue
+0123's objection unchanged). **B — a door that additionally COMMITS or PERSISTS the orphan still
+needs its own VERB gate**, because a repair is retroactive and cannot un-write a file or un-emit a
+deck: `netlist` has that gate (**0263**), `save` does not (**0358**). What the repair knowingly
+KEEPS: the object the user never dropped, its net rename, and the modify flag as the door left it
+(**0398**). Asserted in `tests/headless/test_placement_preview_doors.tcl` section F, 29 checks
+(177 → 206). Plus the wire-family `ui_state2`
 residue, measured, inert, and asserted-as-present in issue 0268 rather than silently left) — a decline residue
 becomes data corruption the moment the residue is a netlist object; (b) the invariant
 "`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
@@ -582,7 +599,13 @@ write them together, or you cannot assert either.** Making the pair atomic took 
 from 11 false positives on a healthy 6-keystroke arm to exactly one true report — the one door
 deliberately left ungated (the bare `xschem unselect_all` verb, issue **0262**: it arms nothing, so
 the "whatever you just pressed is what you meant" rule has no subject, and gating it would put a
-`delete()` behind 817 scripted call sites). `netlist` used to netlist a live preview and was filed
+`delete()` behind ~~817~~ **866** scripted call sites, re-measured 2026-08-11, plus 82 C ones).
+**That atomicity is now load-bearing in a second way (0262, 2026-08-11): the tripwire REPAIRS, so a
+false positive costs state rather than a log line.** Any new placement arm that raises
+`sympin_preview` without `START_SYMPIN` in the same breath will have the flag cleared under it
+mid-gesture — the detection condition was deliberately NOT widened for the same reason (0262 D5:
+`place_net_label()` sets `START_SYMPIN` with no `sympin_preview` and stays outside it, recorded as
+doors note F17). `netlist` used to netlist a live preview and was filed
 as "not a door" on the same reasoning — measured FALSE and FIXED 2026-08-09, issue **0263**: it
 clears the bits AND commits the object, and it is now gated at both its verbs (see the class-D
 correction above);

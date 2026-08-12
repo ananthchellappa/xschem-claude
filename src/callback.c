@@ -758,6 +758,88 @@ int abort_placement_preview(void)
   return 1;
 }
 
+/* ISSUE 0262, RATIFIED 2026-08-11 (decision D1) -- THE CLASS-WIDE ANSWER to the desync the
+ * tripwire below reports. Not a gate: a REPAIR, run at the two funnels every actor passes through.
+ *
+ * WHY A REPAIR AND NOT A GATE ON THE VERB. The door 0262 measured is the bare `xschem unselect_all`
+ * verb, and it stays ungated: it ARMS nothing, so the ratified "whatever you just pressed is what
+ * you meant" rule (0240/0243 F2) has no subject, and gating it would put a delete() behind 866
+ * scripted call sites and 82 C ones (re-measured 2026-08-11) whose dominant idiom is
+ * `xschem unselect_all ; xschem select <thing>` -- a housekeeping PREFIX to a fresh selection, not
+ * a gesture cancel. That includes slickprop::restore_selection (property_form.tcl), the Property
+ * form's Cancel path, which is 0262's own stated worst case. Issue 0123's objection, unchanged.
+ * And gating that one verb would close exactly ONE of the doors anyway: `save`/`saveas`/Ctrl+S
+ * reaches the identical state through save_schematic()'s own unselect_all(1) (issue 0358).
+ *
+ * WHY REPORT-ONLY IS NO LONGER ENOUGH (decision D2). The tripwire's log-only form rested on 0262's
+ * premise that the door is "not reachable from the GUI". Measured FALSE (issue 0397) on two routes,
+ * one of them the DEFAULT chord Ctrl+Button2 -- `button,2,ctrl,canvas,edit.cycle_pin_type`
+ * (mousebindings.csv) -> addpin::cycle_type (xschem.tcl), whose re-arm guard tests
+ * `[winfo exists .addpin]` and so falls through for a live `.addlabel` preview -- and the other the
+ * Hilight > "Compare schematics" menu item, whose entire -command body is the bare verb. The state
+ * it leaves is TERMINAL, not merely wrong (see the tripwire header), and ESC cannot repair it: the
+ * teardown is gated on the very bit that is gone. The only in-session recovery measured is
+ * discarding the document.
+ *
+ * WHAT IT DOES, AND DELIBERATELY DOES NOT (decision D3). It clears the three fields unselect_all()
+ * cannot reach -- sympin_preview, wirelabel_preview and the preview_sel stamp -- and posts one held
+ * status line. It DELETES NOTHING: the object the user never dropped stays in the drawing and still
+ * renames its net, and `modified` is left exactly as the door left it. So every door in the class,
+ * named or not yet found, goes from TERMINAL to ORPHAN-ONLY at ONE site. Running the full stamped
+ * teardown here instead was rejected: that is the gate's blast radius deferred to a later,
+ * unrelated command entry and made less predictable, and it would cost a user OBJECT rather than a
+ * flag on any future false positive.
+ * Two of the three clears are load-bearing, not hygiene:
+ *   - the STAMP: after the door preview_sel names what is now an ordinary document object, so a
+ *     later unrelated place_text/place_symbol abort would resolve it and delete the user's work;
+ *   - wirelabel_preview: left stale, end_place_move_copy_zoom()'s STARTMOVE branch routes the NEXT
+ *     symbol drop into wire_label_try_commit(), which returns 0 while the branch still returns 1 --
+ *     the click is swallowed and the symbol can never be committed.
+ * BUT the stamp slot is SHARED with the pending merge (see abort_pending_merge() above), and a
+ * co-armed `placement then merge` leaves this very desync while the MERGE owns the slot. Clearing
+ * it there would destroy the paste's identity and make its own cancel delete nothing. So the stamp
+ * clear is conditional on no OTHER gesture owning the slot; the two flags are not, they belong to
+ * the dead placement alone.
+ *
+ * NO draw() (decision D8): this repairs STATE, not PAINT. Any rubber ghost the dropped STARTMOVE
+ * left clears on the next full redraw, exactly as today -- and a draw() here would run at the head
+ * of motion-event dispatch, which is the window-only-overlay erase hazard.
+ * HONOURS gate_bypass (decision D6, rule 0247: the test-only construction seam every other gate
+ * already honours -- suites must still be able to BUILD this state) but NOT `readonly`: that guard
+ * exists on leave_placement_for() because that teardown IS a delete(), and copying it here would
+ * leave read-only windows terminally dead forever.
+ * Returns 1 if it repaired something. */
+int repair_orphan_placement_preview(void)
+{
+  char msg[128];
+  if(!xctx) return 0;
+  /* BELT AND BRACES, NOT THE LOAD-BEARING GUARD, and no test can turn it red: the only caller,
+   * check_placement_preview_invariant() below, tests this exact predicate before calling, so
+   * mutating this line is semantically dead (measured -- issue 0262 sabotage S7 reddened nothing;
+   * the same mutation AT THE TRIPWIRE reddened 5 predicted rows and 63 more). Kept because this
+   * function is extern in xschem.h and a second caller would need it. The condition that decides
+   * whether a repair happens is in the tripwire, not here. */
+  if(!xctx->sympin_preview || (xctx->ui_state & START_SYMPIN)) return 0;  /* invariant holds */
+  if(xctx->gate_bypass) return 0;   /* test-only construction seam, see xschem.h gate_bypass */
+  xctx->sympin_preview = 0;
+  xctx->wirelabel_preview = 0;
+  /* the stamp dies with the preview it named (issue 0241) -- unless a live merge or a live
+   * symbol/text placement is what the slot describes now (see the note above).
+   * CORRECT ONLY BECAUSE OF AN UNENFORCED INVARIANT, restated here because nothing checks it:
+   * every arm STAMPS immediately before it sets its bit (paste.c, scheduler.c, actions.c, draw.c
+   * -- verified by inspection 2026-08-11), so a live bit always means the slot describes THAT
+   * gesture. An arm that ever sets PLACE_SYMBOL/PLACE_TEXT/STARTMERGE without re-stamping would
+   * make this line preserve a stale stamp naming a now-real document object -- which is exactly
+   * the deletion hazard the header above calls load-bearing. */
+  if(!(xctx->ui_state & (PLACE_SYMBOL | PLACE_TEXT | STARTMERGE))) clear_placement_preview();
+  /* issue 0241: a teardown must name what it is tearing down. stderr alone (the dbg(0) below) is
+   * not an answer -- no GUI user reads it, and a repair the user cannot see is indistinguishable
+   * from the bug. statusmsg_hold() so the coordinate readout cannot eat it (issue 0248). */
+  my_snprintf(msg, S(msg), "Pending placement abandoned by a deselect; object left in place");
+  statusmsg_hold(msg, 1);
+  return 1;
+}
+
 /* ISSUE 0242 tripwire -- NOT an assert (C89, and abort() in a GUI app is not acceptable).
  * The invariant: xctx->sympin_preview must never outlive START_SYMPIN. It is set only by the
  * three form `-place` arms (scheduler.c add_sch_pin / add_pin / add_wire_label) and cleared only
@@ -773,12 +855,23 @@ int abort_placement_preview(void)
  * place_symbol, place_text, add_graph, add_image and the undo/redo verbs), so this reports on a
  * door NOBODY HAS FOUND YET. That is the point: it turns "how many doors are left" from an
  * argument into an empirical question, permanently.
+ * ISSUE 0262, RATIFIED: it no longer only reports. The detection branch now calls
+ * repair_orphan_placement_preview() above, which un-sticks the flags and the stamp so the canvas
+ * comes back -- deleting nothing, so the object the user never dropped is still there. Read that
+ * function's header for why the repair, and not a gate on the door, is the ratified answer. The
+ * DETECTION CONDITION IS UNCHANGED (decision D5): place_net_label() sets START_SYMPIN with no
+ * sympin_preview and stays outside it on purpose, because that wider surface has never been
+ * measured for false positives and a false positive now costs state rather than a log line.
  * Reports the TRANSITION, once per desync episode, not the state: at callback() entry this runs
  * on every motion event, and a stuck flag would otherwise emit thousands of identical lines.
+ * The REPAIR is deliberately OUTSIDE that latch -- an episode built through the gate_bypass seam
+ * is reported once and repaired on the first entry after the seam closes, which the latch would
+ * otherwise swallow.
  * The latch is file-static rather than per-context on purpose -- it exists to make one line
  * appear on stderr, and a second window silently sharing the latch is a better failure than a
- * flooded log. dbg(0) so it needs no -d flag: the tests read it off stderr as a second oracle
- * beside `xschem get sympin_preview`. */
+ * flooded log. Same for the repair, which acts on whichever xctx is current at entry: a second
+ * window's orphan is repaired when that window becomes current. dbg(0) so it needs no -d flag: the
+ * tests read it off stderr as a second oracle beside `xschem get sympin_preview`. */
 void check_placement_preview_invariant(const char *where)
 {
   static int reported = 0;
@@ -789,9 +882,11 @@ void check_placement_preview_invariant(const char *where)
       dbg(0, "placement_preview: sympin_preview=%d outlived START_SYMPIN at %s entry "
              "(ui_state=%u wirelabel_preview=%d instances=%d) -- issue 0242: an ungated door "
              "cleared the gesture bits without tearing the preview down; click-select and "
-             "wire_label_try_commit() are dead until the flag is cleared\n",
+             "wire_label_try_commit() were dead. Issue 0262: repairing the flags now (the object "
+             "the user never dropped is LEFT IN PLACE and still names its net)\n",
           xctx->sympin_preview, where, xctx->ui_state, xctx->wirelabel_preview, xctx->instances);
     }
+    repair_orphan_placement_preview();
   } else {
     reported = 0;
   }
@@ -817,9 +912,15 @@ void check_placement_preview_invariant(const char *where)
  * policy, same message, one implementation -- `what` is just the name of whatever seized the
  * gesture. The one door 0242 measured that is deliberately NOT gated here is the bare
  * `xschem unselect_all` verb: it arms nothing, so the "whatever you just pressed is what you
- * meant" rule has no subject, and gating it would put a delete() behind 817 scripted call sites
- * -- the same objection that keeps the teardown out of unselect_all() itself (issue 0123).
- * check_placement_preview_invariant() above is what reports that residue instead.
+ * meant" rule has no subject, and gating it would put a delete() behind 866 scripted call sites
+ * and 82 C ones (re-measured 2026-08-11) -- the same objection that keeps the teardown out of
+ * unselect_all() itself (issue 0123). RATIFIED, issue 0262 decision D1, 2026-08-11: that carve-out
+ * is permanent and it is not an open question any more. The terminal half of the residue is
+ * answered ONCE, class-wide, by repair_orphan_placement_preview() above -- no verb acquires a
+ * delete() for the sake of the flags alone. The other half of the ratified rule (D9 rule B) is
+ * that a door which additionally COMMITS or PERSISTS the orphan still needs its own VERB gate,
+ * because a repair is retroactive and cannot un-write a file or un-emit a deck: `netlist` has that
+ * gate (issue 0263), `save`/`saveas`/Ctrl+S does not (issue 0358, still open).
  * Not called from the pure-commit coordinate forms (`xschem wire x1 y1 x2 y2`, snapped_wire()'s
  * END half): those commit outright, arm no draw, and are the replay/test seams.
  * Returns 1 if the caller may go ahead and arm the draw. It no longer returns 0 for anything --

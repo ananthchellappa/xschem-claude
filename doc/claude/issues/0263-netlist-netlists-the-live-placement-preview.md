@@ -205,7 +205,7 @@ symptom 5 is gone.
 | **D7** | R1 | The Shift-N key IS gated, above its own `unselect_all(1)`. Code-proved only, no headless check — the path needs `xschem callback` and a window. | Asserting it under xvfb (a real event loop for one line); leaving it ungated (it is the third measured door into the same drivers). Verified working under `GUI_GATE=0 xvfb-run` by the adversary pass. |
 | **D8** | R1 | The original "not a door" framing is corrected everywhere it was copied: this file, `WIRING.md` §8 class D, `plan_modal_gesture_exclusion.md`, the 0242 census row. | Fixing the code and leaving four documents asserting the opposite. |
 | **D9** | R2 | `save` (issue **0358**) is **not** fixed here. | Applying the same verb gate to `save`/`saveas`/`write_backup`: `write_backup()` has no verb to gate, so 0358's answer is a different shape and a different ratification question. |
-| **D10** | R2 | Two residues recorded, not fixed: `leave_placement_for()` early-returns on `xctx->readonly` and on the already-stripped 0262 orphan state. | Dropping the readonly guard (the teardown IS a `delete()`); adding a belt-and-braces `preview_sel` filter for the 0262 state (that is 0262's fix, and `preview_sel` is already gone by then). |
+| **D10** | R2 | Two residues recorded, not fixed: `leave_placement_for()` early-returns on `xctx->readonly` and on the already-stripped 0262 orphan state. | Dropping the readonly guard (the teardown IS a `delete()`); adding a belt-and-braces `preview_sel` filter for the 0262 state (that is 0262's fix, and `preview_sel` is already gone by then). **Update 2026-08-11**: 0262 was decided and it does **not** close this residue. Its answer is a *repairing* tripwire that clears the flags and the stamp and deletes nothing, so the 0262 orphan is still an ordinary committed instance by the time `netlist` sees it and both gates still early-return on it by design. What changed is only that the canvas is no longer dead. See issue **0398** for the measured deck damage that remains. |
 
 One test-side decision was taken during implementation and is recorded here because it changed an
 assertion rather than the code: **G9's original premise was unreachable.** It asserted that a
@@ -231,7 +231,8 @@ reddens exactly one of them.
   contract on a clean and on a dirty buffer, G8/G8b the merge twin, G9a/G9b the two co-armed
   orders, G10 total silence when idle.
 * Section F's `netlist` residue bullet and its `note:` line are **deleted** — 0263 is no longer
-  residue. The `unselect_all` bullet stays: 0262 is still open.
+  residue. The `unselect_all` bullet stays: 0262 is still open. *(2026-08-11: 0262 has since been
+  decided and that bullet is now section F proper — 29 checks, 177 → 206.)*
 * No new file, and **no edit** to `tests/headless/run.sh`, `cases.txt` or `gold/*.spice` — those
   staying byte-identical is itself the regression check for the idle path.
 
@@ -284,8 +285,16 @@ Residues of this fix, and everything the adversary pass could not close. Nothing
    tripwire fires), then `xschem netlist` → `R1 line = R1 FOO GND 1k`, `inst=3`. The object is by
    then an ordinary committed instance with no gesture bit and no stamp, so both gates early-return
    on it by design. Reachable from ordinary GUI flows (`property_form.tcl`'s post-edit
-   `unselect_all`, the "Compare schematics" menu item, the Ctrl+MMB pin-type fallback). The suite
-   records it only as a `note:` line. **Fixing this is issue 0262's job.**
+   `unselect_all`, the "Compare schematics" menu item, the Ctrl+MMB pin-type fallback — the latter
+   two measured in issue **0397**). ~~The suite records it only as a `note:` line.~~
+   **Fixing this is issue 0262's job.**
+   **Update 2026-08-11 — 0262 was decided, and this residue SURVIVES it.** The ratified answer is a
+   *repairing* `check_placement_preview_invariant()` that clears the preview flags and the stamp and
+   **deletes nothing**, so the stranded object is still an ordinary committed instance and the deck
+   still reads `R1 FOO GND 1k` — re-measured post-fix, on a buffer that can even report
+   `modified=0` (issue **0398**). Only the dead canvas is gone. The suite now records the door in 29
+   checks (section F, 177 → 206) instead of a `note:` line, and 0262 decision **D9 rule B** is what
+   keeps this pointed at a verb gate: a door that COMMITS or PERSISTS still needs its own.
 3. **`readonly` toggled ON mid-gesture leaves the complete original defect.** Measured post-fix:
    `armed: ui=16424 inst=3` → `xschem set readonly 1` → `xschem netlist` →
    `R1 line = R1 FOO GND 1k  ui=0 inst=3`. `leave_placement_for()` early-returns on

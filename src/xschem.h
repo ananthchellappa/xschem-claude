@@ -2594,6 +2594,10 @@ extern void start_wire(double mx, double my);
  * before a wire or line draw is armed on top of one. See callback.c. */
 extern int abort_placement_preview(void);
 extern void check_placement_preview_invariant(const char *where); /* issue 0242 tripwire */
+/* issue 0262 (ratified 2026-08-11): the tripwire's REPAIR half -- un-stick sympin_preview /
+ * wirelabel_preview / the preview_sel stamp after an ungated door dropped the gesture bits, so the
+ * canvas is orphan-only instead of dead. Deletes nothing. See callback.c. */
+extern int repair_orphan_placement_preview(void);
 extern int leave_placement_for(const char *what);
 /* issue 0265: the same pair for a pending PASTE/MERGE (STARTMERGE). abort_pending_merge() is the
  * teardown abort_operation()'s two arms carried inline until it grew a third caller;

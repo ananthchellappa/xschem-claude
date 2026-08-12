@@ -80,6 +80,37 @@ proc renamed_net {} {
   return $r
 }
 
+## --- section F helpers (issue 0262): the REPAIR clears three fields, not one -----------------
+## `sp` above answers for sympin_preview only. The ratified repair (issue 0262 decision D1,
+## repair_orphan_placement_preview() in callback.c) also clears wirelabel_preview and the
+## preview_sel identity stamp, and neither has a probe in the `get` chain today -- the same fix
+## adds both beside "sympin_preview" (scheduler.c). `xschem get <unknown>` does NOT throw: it
+## answers the empty string, which an equality check would happily read as "not 1". So this maps
+## a missing probe to the literal PROBE-MISSING, and a row whose oracle the binary does not have
+## fails LOUDLY on the missing oracle rather than passing or failing for a silent reason.
+proc probe {key} {
+  if {[catch {xschem get $key} v]} { return PROBE-MISSING }
+  if {$v eq {}} { return PROBE-MISSING }
+  return $v
+}
+proc psel {} { return [probe preview_sel_n] }
+proc wlp  {} { return [probe wirelabel_preview] }
+## "is the stamp set at all", so a row can assert >0 through the equality-only `check` above.
+proc psel_set {} {
+  set v [psel]
+  if {![string is integer -strict $v]} { return $v }
+  return [expr {$v > 0 ? 1 : 0}]
+}
+## Did the repair name itself on the status bar (the 0241 rule)? Takes the captured line rather
+## than reading it live, because every `xschem` call is itself a repair opportunity.
+proc repaired {m} { return [expr {[string match {*Pending placement abandoned*} $m] ? 1 : 0}] }
+## Whole text of a written .sch, for the F12 persist row.
+proc filetext {f} {
+  if {![file exists $f]} { return {} }
+  set fh [open $f r] ; set t [read $fh] ; close $fh
+  return $t
+}
+
 ## --- section G helpers (issue 0263): the emitted DECK is the oracle -------------------------
 ## Everything above asserts xctx state. 0263's primary damage is in the FILE the netlister
 ## writes, so section G reads it back. `deck` returns the whole text (empty when the netlister
@@ -393,20 +424,177 @@ check "E4 replay ESC: merge stayed committed" [xschem get wires] 2
 check "E4 replay ESC: invariant holds"       [desync] 0
 
 # ---------------------------------------------------------------------------
-# F. KNOWN RESIDUE -- reported, not fixed here. Informational (note:, not check:) so this file
-#    stays a contract for what 0242 actually closed.
-#      * the bare `xschem unselect_all` VERB still orphans: it arms nothing, so the ratified
-#        "whatever you just pressed is what you meant" rule has no subject, and gating it would
-#        put a delete() behind 817 scripted call sites -- the same objection that keeps the
-#        teardown out of unselect_all() itself (issue 0123). The C tripwire
-#        check_placement_preview_invariant() reports it on stderr instead.
-#    The `netlist` bullet that used to stand here -- "it clears no gesture bits ... so it is not a
-#    door and leaves no terminal state" -- was measured FALSE on 2026-08-09 and is gone: netlist is
-#    a door, it is terminal, and it is now gated and asserted in B14/B15 and section G (issue 0263).
+# F. THE BARE `unselect_all` DOOR, AND THE CLASS-WIDE ANSWER TO IT -- issue 0262, decided.
+#
+#    THIS SECTION USED TO BE A `note:`. It said the bare `xschem unselect_all` VERB still orphans,
+#    that gating it would put a delete() behind ~817 scripted call sites (issue 0123's objection),
+#    and that the C tripwire check_placement_preview_invariant() "reports it on stderr instead".
+#    Two of those three sentences survive the decision; the third does not.
+#
+#    WHAT CHANGED. The tripwire's report-only form rested on 0262's own premise that the door is
+#    "not reachable from the GUI: no key, menu item or toolbar button issues the bare verb while a
+#    preview is live". Measured FALSE (issue 0397) on two routes:
+#      * the DEFAULT chord Ctrl+Button2 -- `button,2,ctrl,canvas,edit.cycle_pin_type`
+#        (mousebindings.csv) -> addpin::cycle_type (xschem.tcl), whose re-arm guard tests
+#        `[winfo exists .addpin]`. A live Add-Wire-Label preview belongs to `.addlabel`, so the
+#        guard is false and the fallback branch runs the bare verb. Row F9.
+#      * Hilight > "Compare schematics", whose entire -command body is
+#        `xschem unselect_all ; xschem redraw` (xschem.tcl). Row F10.
+#    And the resulting state is TERMINAL: sympin_preview stuck at 1 kills the Button-1 select/grab
+#    block and wire_label_try_commit() (see the header), ESC cannot repair it because
+#    abort_placement_preview() is gated on the bit that is gone, and the only in-session recovery
+#    measured is `clear`/`load`/`new` -- i.e. discarding the document. Nor is the bare verb the last
+#    door: `save`/`saveas`/Ctrl+S reaches the same desync through save_schematic()'s own
+#    unselect_all(1), and PERSISTS the undropped object into the .sch (issue 0358). Rows F11/F12.
+#
+#    THE RATIFIED DECISION (issue 0262 D1-D10). Do NOT gate the verb -- it arms nothing, so the
+#    "whatever you just pressed is what you meant" rule has no subject, and 0123's objection to a
+#    delete() behind 866 scripted / 82 C call sites (re-measured 2026-08-11) stands unchanged.
+#    Instead check_placement_preview_invariant() becomes the permanent, CLASS-WIDE answer in a
+#    REPAIRING form: at its two existing sitings -- callback() entry and xschem() entry BEFORE
+#    dispatch -- a detected desync now calls repair_orphan_placement_preview(), which clears
+#    sympin_preview, wirelabel_preview and the preview_sel stamp, posts one held status line, and
+#    DELETES NOTHING. Every door in the class, named or not yet found, goes from TERMINAL to
+#    ORPHAN-ONLY at one site.
+#
+#    WHAT THIS SECTION THEREFORE PINS, and just as importantly what it does not:
+#      * the canvas comes back (F1, F2) -- by clearing the FLAG, never by re-arming the bit;
+#      * the two other fields come back too, and both are load-bearing, not hygiene: a surviving
+#        stamp (F4) points at what is now a REAL document object, so a later unrelated abort can
+#        delete the user's work; a surviving wirelabel_preview (F5) makes end_place_move_copy_zoom()
+#        route the NEXT symbol drop into wire_label_try_commit(), which refuses while the branch
+#        still claims the click;
+#      * the repair names itself once (F6), because a repair the user cannot see is
+#        indistinguishable from the bug (the 0241 rule);
+#      * the ORPHAN AND THE RENAMED NET STAY (F3, F7, F8, F12). That is the knowingly-kept residue
+#        of decision D3, written here as a contract so nobody "improves" it into a deferred
+#        delete() by accident. It is also why 0358 stays open: a repair is retroactive and cannot
+#        un-write a file (decision D9 rule B -- a door that COMMITS or PERSISTS still needs its own
+#        verb gate, the shape `netlist` got in 0263);
+#      * the construction seam still opens the raw door (F13) and closes again (F14);
+#      * and the repair never fires on a healthy session (F15, F16), which is what makes it safe to
+#        put behind all 866 call sites: its precondition is itself already a defect.
 # ---------------------------------------------------------------------------
-setup ; arm ; xschem unselect_all
-note "residue: after `xschem unselect_all` sympin_preview=[sp] START_SYMPIN=[sympin_bit] orphans=[orphans] (issue 0262)"
+
+## F1-F8 THE BARE VERB. One episode, read in one pass: `msg`/`hold` are captured FIRST because the
+##       repair runs at the next xschem() entry whatever that entry happens to be, and every probe
+##       below is itself an xschem() entry.
+setup ; arm
+xschem statusmsg "-"
+xschem unselect_all
+set fmsg [msg] ; set fhold [hold]
+check "F1 bare verb: preview flag repaired"      [sp] 0
+check "F2 bare verb: START_SYMPIN still down"    [sympin_bit] 0
+check "F2 bare verb: invariant restored"         [desync] 0
+check "F3 bare verb: orphan KEPT (D3 residue)"   [orphans] 1
+check "F4 bare verb: stamp died with preview"    [psel] 0
+check "F5 bare verb: label flag cleared"         [wlp] 0
+check "F6 bare verb: repair names itself"        [repaired $fmsg] 1
+check "F6 bare verb: repair line is held"        $fhold 1
+check "F7 bare verb: modify flag untouched"      [xschem get modified] 1
+check "F8 bare verb: net still renamed (D3)"     [renamed_net] FOO
 esc3
+
+## F9 GUI ROUTE 1 (issue 0397): the DEFAULT Ctrl+Button2 chord. Reproducible true-headless because
+##    the guard it fails is `[info commands winfo] ne {} && [winfo exists .addpin]`, and under
+##    --nogui `winfo` does not exist at all -- so the same fallback branch runs, for a reason a
+##    real X session reaches by having `.addlabel` open instead of `.addpin`. The existence check
+##    is what stops this row quietly measuring nothing if the proc is ever renamed.
+setup ; arm
+check "F9 route exists: addpin::cycle_type"      [llength [info commands ::addpin::cycle_type]] 1
+catch {addpin::cycle_type}
+check "F9 Ctrl+MMB: preview flag repaired"       [sp] 0
+check "F9 Ctrl+MMB: invariant restored"          [desync] 0
+check "F9 Ctrl+MMB: orphan KEPT (D3 residue)"    [orphans] 1
+esc3
+
+## F10 GUI ROUTE 2 (issue 0397): the Hilight > Compare schematics checkbutton, whose -command body
+##     is reproduced verbatim. `redraw` touches no state, so this row is the bare verb reached by a
+##     menu -- which is exactly the point: it is a MENU ITEM, and 0262 said none existed.
+setup ; arm
+eval {xschem unselect_all ; xschem redraw}
+check "F10 Compare menu: preview flag repaired"  [sp] 0
+check "F10 Compare menu: invariant restored"     [desync] 0
+esc3
+
+## F11/F12 THE SAVE DOOR (issue 0358) -- the half this decision covers, and the half it does not.
+##     save_schematic()'s own unselect_all(1) sits one line before write_xschem_file(), so the
+##     canvas dies exactly as above (F11, covered by the repair) AND the object the user never
+##     dropped is written into the file with the wire's net renamed after it, while `modified` goes
+##     to 0 and the user is told the buffer is clean (F12, NOT covered -- the repair is retroactive
+##     and cannot un-write a file). F12 asserts the residue as a CONTRACT, not a wish: it is what
+##     keeps 0358 open and pointed at a verb gate of the 0263 shape.
+setup ; arm
+set f11 [file join $::scratch f11.sch]
+file delete -force $f11
+catch {xschem saveas $f11}
+check "F11 saveas: preview flag repaired"        [sp] 0
+check "F11 saveas: invariant restored"           [desync] 0
+check "F12 saveas: orphan PERSISTED (0358)"      [expr {[string match *lab_pin* [filetext $f11]] ? 1 : 0}] 1
+esc3
+
+## F13/F14 THE CONSTRUCTION SEAM. gate_bypass is the ratified test-only seam (issue 0247) that the
+##     other gates already honour, and G9 below depends on being able to BUILD a desync. The repair
+##     must honour it too -- and must resume the moment the seam closes, so a suite cannot leave a
+##     permanent opt-out behind it.
+setup ; arm
+xschem test_gate_bypass 1
+xschem unselect_all
+check "F13 bypass: raw door still opens"         [sp] 1
+xschem test_gate_bypass 0
+check "F14 bypass closed: repair resumes"        [sp] 0
+check "F14 bypass closed: invariant restored"    [desync] 0
+esc3
+
+## F15 NO FALSE POSITIVE, MID-ARM -- the landmine. The modeless form re-issues `-place` on every
+##     keystroke and raises sympin_preview WITH START_SYMPIN, so the invariant holds throughout and
+##     the repair must stay asleep. A detection condition widened to fire on a healthy live preview
+##     (dropping the `!(ui_state & START_SYMPIN)` half) reddens this row and section C with it.
+setup
+set ::label_new_name F
+xschem add_wire_label -place
+foreach ch {FO FOO FOOB FOOBA FOOBAR} { set ::label_new_name $ch ; xschem add_wire_label -place }
+xschem statusmsg "-"
+set fmsg2 [msg]
+check "F15 mid-arm: preview still live"          [sp] 1
+check "F15 mid-arm: stamp still set"             [psel_set] 1
+check "F15 mid-arm: exactly one preview"         [orphans] 1
+check "F15 mid-arm: repair stayed asleep"        [repaired $fmsg2] 0
+esc3
+
+## F16 NO FALSE POSITIVE, IDLE. The bare verb with nothing armed -- i.e. what all 866 scripted call
+##     sites and 82 C call sites actually do, `unselect_all` as a housekeeping PREFIX to a fresh
+##     selection. Nothing to repair, nothing said.
+setup
+xschem statusmsg "-"
+xschem unselect_all
+set fmsg3 [msg]
+check "F16 idle: no preview flag"                [sp] 0
+check "F16 idle: no stamp"                       [psel] 0
+check "F16 idle: repair stayed silent"           [repaired $fmsg3] 0
+esc3
+
+## F17 note: `xschem net_label 0` (place_net_label, actions.c) sets START_SYMPIN with NO
+##     sympin_preview, so that preview class sits OUTSIDE the repair's detection condition by
+##     design -- decision D5 declined to widen it, because the wider surface has never been
+##     measured for false positives and a false positive now costs state rather than a log line.
+##     Recorded so this file stays honest about what is NOT covered.
+note "not covered: place_net_label's START_SYMPIN-without-sympin_preview class (issue 0262 D5)"
+
+## F18 note: every row above enters through xschem(). The repair's OTHER siting, at callback()
+##     entry, needs a window and so is not exercised here -- it is covered by inspection and by
+##     issue 0397's xvfb transcript.
+note "not covered: the callback() siting of the repair (needs X; see issue 0397)"
+
+## F19 note: POST-FIX HAZARD found while writing this section, for whoever implements the repair.
+##     preview_sel is ONE slot shared by the placement and the merge stamps (select.c,
+##     paste.c), and clear_placement_preview() zeroes preview_sel_n WHOLESALE. G9b below
+##     deliberately builds `arm placement, then merge` -- which leaves sympin_preview stuck at 1
+##     (the 0262 desync itself) while the MERGE owns the stamp. A repair that clears the stamp
+##     unconditionally at the next entry would destroy the merge's identity and redden G9b's
+##     "after netlist: merge gone" row. The stamp clear needs to be conditional on no other
+##     gesture owning the slot.
+note "hazard: repair's clear_placement_preview() vs the merge stamp co-armed in G9b (see comment)"
 
 # ---------------------------------------------------------------------------
 # G. THE DECK ITSELF -- issue 0263. Sections A-F assert xctx state; a state-only suite cannot see
