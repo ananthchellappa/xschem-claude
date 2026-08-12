@@ -1,7 +1,19 @@
 # 0315 — the Signal Browser reports one landing TWICE in the CIW, and on a benign gesture one of the two is red
 
-**Status:** **FIXED pending an eyeball on the log**, 2026-08-12, branch
-`fluid-editing`, unpushed. The ruling below was taken by the user; both halves are
+**Status:** **FIXED and EYEBALLED OK**, 2026-08-12, branch `fluid-editing`,
+unpushed. The user ran the repro and pasted `/tmp/Xschem.log.8`: **two lines per
+gesture, no sentence repeated, and no `#!` anywhere** — all four lines are `#=`.
+
+⚠ **One line still LOOKS coloured on the a1 gesture and that is BY DESIGN, not a
+residue of this issue.** It is F5's step-7b notice ("…that scope has no signals of
+its own — open one of its sub-scopes to see any"), echoed with the **`note`** tag,
+which the CIW paints **`dark orange`** (`src/ciw.tcl:76`). RULING 5f-6 minted that
+tag precisely for "the user got what they asked for, with a caveat", to be
+distinct from `error`'s red (`src/ciw.tcl:69`). The log file confirms the
+distinction is real and not cosmetic: the line is written `#=` (result), never
+`#!`. The user read the orange as red on their display; **if that is a legibility
+problem it is a one-line palette change in `ciw.tcl`, not a change to this
+issue's logic** — recorded here rather than acted on, because nobody has ruled it. The ruling below was taken by the user; both halves are
 implemented, 21 checks in `tests/headless/test_wave_sigbrowser_0315.tcl` with 19
 sabotage mutations. Receipt:
 `doc/claude/batch_F/receipts/17-issue-0315-one-gesture-one-ciw-account.md`.

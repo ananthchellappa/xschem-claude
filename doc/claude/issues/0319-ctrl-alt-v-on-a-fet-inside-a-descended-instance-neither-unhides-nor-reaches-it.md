@@ -1,6 +1,9 @@
 # 0319 — Ctrl-Alt-V on a FET inside a descended instance neither ticks `Show device internals` nor reaches the device
 
-**Status:** **FIXED pending an eyeball** (2026-08-12), commit `c858efd0`, UNPUSHED. One line at the call site
+**Status:** **FIXED and EYEBALLED OK** by the user, 2026-08-12 — *"319 : OK. Works
+fine"*, on the reporter's own repro. Commit **`ec3b08a4`**, UNPUSHED.
+(⚠ The SHA first recorded here, `c858efd0`, was an amended commit and is **not
+reachable from HEAD** — corrected 2026-08-12.) One line at the call site
 in `src/ase.tcl` plus two new procs; `src/wave_viewer.tcl` is UNCHANGED and the
 R12 `==` was NOT relaxed. Receipt:
 `doc/claude/batch_F/receipts/19-issue-0319-primitive-fet-path.md`. Checks:

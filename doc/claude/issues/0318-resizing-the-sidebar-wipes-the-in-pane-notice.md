@@ -1,6 +1,7 @@
 # 0318 — resizing the sidebar wipes the sentence drawn inside the empty pane
 
-**Status:** **FIXED pending an eyeball** — `95a7e3ce` (branch `fluid-editing`,
+**Status:** **FIXED and EYEBALLED OK** by the user, 2026-08-12 — *"318 : Pass -
+OK"*: the sentence survives dragging the divider narrow. — `95a7e3ce` (branch `fluid-editing`,
 **unpushed**). Candidate 1 below, spelled as an explicit `keepnote` argument on
 `browser_sea_refresh` whose DEFAULT is "navigation": the `<Configure>`
 trampoline is the one caller that passes 1, and a kept notice also keeps the

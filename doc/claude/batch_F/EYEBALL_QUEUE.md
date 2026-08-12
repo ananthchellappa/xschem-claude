@@ -801,6 +801,14 @@ verdict ☒ PASS ☐ FAIL ☒ PARTLY BLOCKED (step 7)
 > short form for the caption and status line?" cannot be judged until the pane
 > keeps its sentence at that width. Re-ask it after 0318.
 >
+> **UNBLOCKED 2026-08-12. 0318 is FIXED (`95a7e3ce`) and the user eyeballed it
+> OK** — *"318 : Pass - OK"*: the sentence survives the divider being dragged
+> narrow. **The question itself is still unanswered and is now askable**: with the
+> sentence surviving at ~250 px, does F5 want a SHORT FORM for the two one-line
+> surfaces (the pane caption and the sidebar status line), or does the full
+> sentence read acceptably there? Nobody has ruled; do not shorten anything until
+> someone does.
+>
 > ⚠ 0312's own pixels were eyeballed in the same session and PASS: the divider
 > reads as a divider at `#b8b8b8`, and the two-row search bar reads as
 > deliberate.
