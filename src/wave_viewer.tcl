@@ -486,6 +486,19 @@ namespace eval wviewer {
   variable browsersash; array set browsersash {}
   variable browserdev;  array set browserdev  {}
   variable browsersrc;  array set browsersrc  {}
+  # issue 0312: THE SIDEBAR WIDTH PREFERENCE, and the live drag's two anchors.
+  # Same shape and the same rule as `browsersash` one line up: `browserwidth`'s
+  # ABSENCE means "nobody dragged the divider and no state restored one", so it
+  # is never seeded at build time -- but unlike the sash it IS seeded by the
+  # FIRST show, because `browser_width`'s derived base is read off the search
+  # bar's `reqwidth` and that number changes when the bar wraps (see
+  # `searchbar_reflow`). Without the seed, a hide/show after a wrap would
+  # re-derive from the WRAPPED bar and collapse the sidebar onto its 240 px
+  # floor. `gripdrag($token)` is the {rootx width} pair captured on <Button-1>,
+  # and it is a LIST rather than two arrays so the teardown sweep has one entry
+  # to drop.
+  variable browserwidth; array set browserwidth {}
+  variable gripdrag;     array set gripdrag     {}
   # signal-browser PLAN item 13: the Location bar's RAW HISTORY. A single
   # GLOBAL list (newest first, deduped on the normalised path, capped at
   # $::raw_history_max), NOT a per-token array: "the last raws I opened" is a
@@ -529,9 +542,13 @@ namespace eval wviewer {
   #   sbcase($w) = the Match-case checkbutton's -variable (0 = ViVA's default)
   #   sballdb($w) = the All-DBs checkbutton's -variable, on the bars built with
   #     `-alldbs 1` only (signal-browser item 14). Same lifecycle as sbcase.
+  #   sbwrap($w) = 1 while the bar is laid out on TWO ROWS (issue 0312). Same
+  #     lifecycle again; its absence means the flat one-row layout, which is the
+  #     shape `searchbar_build` always leaves behind.
   variable sbcfg;   array set sbcfg  {}
   variable sbcase;  array set sbcase {}
   variable sballdb; array set sballdb {}
+  variable sbwrap;  array set sbwrap  {}
   # Add Trace dialog's signal inventory (item 5), keyed by SESSION TOKEN — the
   # dialog IS a per-window singleton (`$top.wvadd`), unlike the searchbar above.
   # The FULL raw names (settled decision 2), snapshotted once when the dialog
@@ -778,6 +795,10 @@ proc wviewer::forget {token} {
   # TWO-PANE item 9: the sash fraction and R11's two class filters, same rule
   # a third time.
   variable browsersash; variable browserdev; variable browsersrc
+  # issue 0312: the sidebar width preference and the grip's drag anchors, same
+  # rule again. The grip WIDGET is a child of $top and dies with the toplevel;
+  # these two arrays are keyed by token and would not.
+  variable browserwidth; variable gripdrag
   # spec §D1 (DEFECT 2): the armed per-signal database list, same rule again.
   # It is one-shot and normally already consumed, but a window closed between an
   # arm and its plot_signals would otherwise leave the entry forever.
@@ -857,6 +878,8 @@ proc wviewer::forget {token} {
   catch {unset browsersash($token)}
   catch {unset browserdev($token)}
   catch {unset browsersrc($token)}
+  catch {unset browserwidth($token)}
+  catch {unset gripdrag($token)}
   catch {unset plotdbs($token)}
   catch {unset atddb($token)}
   catch {unset drag_from($token)}
@@ -7926,6 +7949,13 @@ proc wviewer::browser_build {token top} {
   variable browserdev
   variable browsersrc
   catch {destroy $top.wvbrowser}
+  # ⚠ ISSUE 0312: THE GRIP GOES WITH IT, and the failure without this line is
+  # not merely an orphan. `browser_build` re-creates the sidebar UNPACKED and
+  # sets `browser($token) 0` without calling `browser_show`, so a grip left
+  # packed sits against no sidebar at all -- and the NEXT show packs the sidebar
+  # `-before $top.drw`, i.e. AFTER the grip in the slave order, putting the
+  # divider on the wrong side of the pane it resizes.
+  catch {destroy $top.wvbgrip}
   set f $top.wvbrowser
   frame $f -background [ase::theme panel] -takefocus 0
   label $f.ph -anchor nw -justify left -width 22 \
@@ -11647,11 +11677,36 @@ proc wviewer::browser_width {token {want {}}} {
   # synthetic <KeyRelease> to it (the bar's own widgets are unmapped). Idle
   # tasks only; this is a gesture path, never an event pump, so nothing
   # re-enters.
-  catch {update idletasks}
+  # ⚠⚠ ISSUE 0312 NARROWED THE FLUSH TO THE DERIVING PATH, AND THAT IS A FIX,
+  # NOT A TIDY-UP. The flush exists for ONE reason — to make the `reqwidth` read
+  # below real — and an explicit positive `want` discards that derivation three
+  # lines later, so on that path it was pure cost. The cost was not small: a
+  # grip drag calls this proc per <B1-Motion>, `update idletasks` services the
+  # idle queue, and `on_configure`'s whole job is to park a
+  # `capture_live_view_state` + `regenerate` on that queue. Flushing from inside
+  # the motion handler therefore ran a FULL graph regeneration per pixel of
+  # drag. The paragraph above used to end "this is a gesture path, never an
+  # event pump, so nothing re-enters" — with a live drag that sentence became
+  # false, and this guard is what makes it true again.
+  if {![string is integer -strict $want] || $want <= 0} { catch {update idletasks} }
   catch {pack propagate $f 0}
   set w 280
   catch {set w [expr {[winfo reqwidth $f.wvsearch] -
                       [winfo reqwidth $f.wvsearch.err]}]}
+  # ⚠⚠ AND THE DERIVATION HAS TO IGNORE THE WRAP, OR IT EATS ITS OWN TAIL.
+  # `searchbar_reflow` (issue 0312) lays the bar out on TWO ROWS when it is
+  # narrower than it needs, which SHRINKS `reqwidth $f.wvsearch` — the input
+  # this rule just read. So a second `browser_show` on a wrapped sidebar derived
+  # ~180 and landed on the 240 px floor: the sidebar collapsed because it had
+  # once been narrow. `searchbar_need` answers what the bar needs FLAT, in both
+  # layouts, so it is the stable input. Guarded and additive: the four literals
+  # BT08 greps are untouched above, and a bar that is not wrapped (every
+  # pre-0312 state, and the `wvfilter` bar) never enters here.
+  catch {
+    if {[wviewer::searchbar_wrapped $f.wvsearch]} {
+      set w [wviewer::searchbar_need $f.wvsearch]
+    }
+  }
   # item 15: an explicit want REPLACES the derived base, then takes the same
   # cap/floor below. Non-integer / non-positive is ignored, so `{}` is literally
   # the pre-item-15 path.
@@ -11662,6 +11717,187 @@ proc wviewer::browser_width {token {want {}}} {
   if {$w < 240} { set w 240 }
   catch {$f configure -width $w}
   return $w
+}
+
+# --- issue 0312: THE WIDTH PREFERENCE AND THE GRIP -----------------------------
+# THE PERSISTED WIDTH, a SEPARATE proc from `browser_width` for exactly the
+# reason `browser_sash_pref` is separate from `browser_sash`: the accessor above
+# APPLIES a width and answers the derived/capped pixel count, so reading it as
+# "what the user chose" would mean every window that was ever shown has a
+# preference. Absence here means "nobody chose one".
+#
+# ⚠⚠ AND IT IS THE ONE THING STANDING BETWEEN THE WRAP AND A COLLAPSING SIDEBAR.
+# `browser_width`'s derived base is `[winfo reqwidth $f.wvsearch]` minus the err
+# label, and `searchbar_reflow` (issue 0312's other half) makes that number
+# SHRINK when the bar goes to two rows -- a wrapped bar reports ~350 px, so the
+# derivation lands under the 240 px floor. `browser_show` therefore SEEDS this
+# preference with the first show's derived answer and passes it back on every
+# later show, so a Ctrl-B/Ctrl-B round trip on a wrapped bar re-applies 450 px
+# instead of re-deriving 240. That seed is also what makes a grip drag survive
+# hiding the sidebar.
+#
+# ⚠ 0 IS "NO PREFERENCE", and it is `browser_width`'s own ignore value: a
+# non-integer / non-positive `want` there is documented as literally the
+# pre-item-15 path. So `browser_width $token [browser_width_pref $token]` is
+# exactly `browser_width $token` on a window nobody has a preference for --
+# which is what keeps item 15's shape and BT08/BP07's four literals untouched.
+# PURE: no widget, no throw.
+proc wviewer::browser_width_pref {token {want {}}} {
+  variable browserwidth
+  if {[string is integer -strict $want] && $want > 0} {
+    set browserwidth($token) $want
+  }
+  if {![info exists browserwidth($token)]} { return 0 }
+  return $browserwidth($token)
+}
+
+# The grip's widget path. One place, because five procs name it.
+proc wviewer::browser_grip_path {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  return [dict get $windows $token top].wvbgrip
+}
+
+# Build (once) and PACK the drag grip: a 6 px full-height bar between the
+# sidebar and the canvas. Returns 1 when it is packed, 0 otherwise.
+#
+# ⚠⚠ WHY THIS IS A GRIP FRAME AND NOT THE `ttk::panedwindow` ISSUE 0312's THIRD
+# CANDIDATE ASKED FOR. A horizontal panedwindow has to OWN both panes, so
+# `.wvbrowser` and `.drw` would become children of it -- and
+# `test_wave_sigbrowser.tcl` is FROZEN by ruling 30 while asserting, on a LIVE
+# widget tree, that `.wvbrowser` is a pack slave of the TOPLEVEL packed before
+# `.drw` (BS24, BS41, BT21) as well as source-grepping `browser_show`'s pack
+# line verbatim (BS01/BS02). Re-parenting reds five checks in a file that may
+# not be edited, and invalidates item 0's `xschem reload` waiver, which was
+# measured on precisely that packing. A grip packed BETWEEN the two leaves the
+# slave ORDER `.wvbrowser` < `.wvbgrip` < `.drw`, which `bs_order` still reads
+# as `a-before-b`, and leaves every literal where it was.
+#
+# ⚠ `-before $top.drw`, same as the sidebar and for the same reason: the canvas
+# is packed `-side right -fill both -expand true`, so anything packed AFTER it
+# gets nothing.
+#
+# ⚠ BUILT LAZILY, HERE, NOT IN `browser_build`. That proc must stay
+# geometry-neutral (item 8's BS21) and its children set is pinned to exactly
+# seven by BT21/BR20; the grip is a child of the TOPLEVEL, created the first
+# time the sidebar is actually shown.
+proc wviewer::browser_grip_show {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set g $top.wvbgrip
+  if {[catch {winfo exists $g} e] || !$e} {
+    catch {
+      # ⚠⚠ NOT `[ase::theme header]`, AND THE REASON IS ALREADY MEASURED IN THIS
+      # FILE. `tabbar_refresh`'s header records header (#e8e8e8) against panel
+      # (#f2f2f2) as an eyeball FAILURE -- "TEN levels apart in the ASE locked
+      # palette ... on screen all three buttons were indistinguishable" -- and
+      # answers it with three simultaneous cues. A 6 px divider has room for
+      # one, so that one has to carry: #b8b8b8 is dark enough to read as a
+      # deliberate edge against both the panel and the white canvas. It is a
+      # LITERAL rather than a palette name because the locked palette has four
+      # entries and none of them is a divider tone; adding one would restyle
+      # every ASE surface that names it. ⚠ THIS IS A PIXEL AND IT IS OWED AN
+      # EYEBALL -- no check can say a divider "looks like a divider".
+      frame $g -width 6 -background #b8b8b8 \
+        -cursor sb_h_double_arrow -takefocus 0 -relief raised -borderwidth 1
+    }
+    if {[catch {winfo exists $g} e2] || !$e2} { return 0 }
+    bind $g <Button-1>        [list wviewer::browser_grip_press $token %X]
+    bind $g <B1-Motion>       [list wviewer::browser_grip_motion $token %X]
+    bind $g <ButtonRelease-1> [list wviewer::browser_grip_drop $token]
+  }
+  if {[catch {pack info $g}]} {
+    if {[catch {pack $g -side left -fill y -before $top.drw}]} { return 0 }
+  }
+  return 1
+}
+
+# Unpack the grip. Spelled against `$g`, never `$f`, so `browser_show` still
+# carries exactly ONE `pack forget $f` (BS02 counts that literal).
+proc wviewer::browser_grip_hide {token} {
+  set g [wviewer::browser_grip_path $token]
+  if {$g eq {}} { return 0 }
+  if {[catch {winfo exists $g} e] || !$e} { return 0 }
+  catch {pack forget $g}
+  return 1
+}
+
+# <Button-1>: capture the anchor pair {root-x, current sidebar width}. Both are
+# needed -- tracking the pointer's absolute x alone would jump the divider to
+# the pointer on the first motion event, which is what a grab-anywhere-on-a-
+# 6px-bar gesture must not do.
+proc wviewer::browser_grip_press {token X} {
+  variable windows
+  variable gripdrag
+  if {![dict exists $windows $token]} { return 0 }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return 0 }
+  # ⚠⚠ `cget -width`, NOT `winfo width`, AND THE TWO REALLY DO DIVERGE. Every
+  # other party to this gesture works in the CONFIGURED width: `browser_width`
+  # writes it, `browser_grip_drop` reads it back. `winfo width` is what the
+  # packer GRANTED, and after a window shrink that nothing re-clamped (the rule
+  # runs from `browser_show`'s pack branch only) the two differ by the shortfall
+  # -- so the first motion event would jump the divider by exactly that
+  # difference, which is the one thing the two-value anchor exists to prevent.
+  # `winfo width` remains the fallback for a frame with no configured width yet.
+  set w 0
+  catch {set w [$f cget -width]}
+  if {![string is integer -strict $w] || $w <= 1} {
+    catch {set w [winfo width $f]}
+  }
+  if {![string is integer -strict $w] || $w <= 1} { return 0 }
+  if {![string is integer -strict $X]} { return 0 }
+  set gripdrag($token) [list $X $w]
+  return 1
+}
+
+# <B1-Motion>: apply the new width THROUGH `browser_width`, and that is the
+# whole reason this proc is three lines of arithmetic instead of thirty.
+#
+# ⚠⚠ THE CLAMP IS NOT DUPLICATED HERE, ON PURPOSE. `browser_width`'s 45% cap and
+# 240 px floor are inline in that proc because BT08 greps them there and the
+# file is FROZEN (ruling 30) -- so a second copy in this proc would be a second
+# authority on the same rule, and the two would drift the first time one of them
+# was tuned. Item 15 already built the door: a positive integer `want` REPLACES
+# the derived base and then takes THE SAME cap and floor. A drag is just a
+# `want` that arrives 60 times a second.
+#
+# ⚠ CONSEQUENCE, DECLARED RATHER THAN HIDDEN: a live drag therefore CANNOT widen
+# the sidebar past 45% of the toplevel. On the shipped 1000 px window that is
+# 450 px and the search bar needs 583 px, which is why issue 0312 needed BOTH
+# halves -- the grip reaches the narrow end (item 5 step 7's ~250 px), the wrap
+# is what makes `All DBs` and `Search` reachable at the wide end.
+#
+# ⚠ `$want < 1` IS FLOORED TO 1 rather than passed through: `browser_width`
+# ignores a non-positive `want` and falls back to the DERIVED base, so dragging
+# left past the sidebar's own left edge would make it JUMP back to 450 instead
+# of stopping at the 240 floor.
+proc wviewer::browser_grip_motion {token X} {
+  variable gripdrag
+  if {![info exists gripdrag($token)]} { return 0 }
+  if {![string is integer -strict $X]} { return 0 }
+  set a $gripdrag($token)
+  set want [expr {[lindex $a 1] + $X - [lindex $a 0]}]
+  if {$want < 1} { set want 1 }
+  return [wviewer::browser_width $token $want]
+}
+
+# <ButtonRelease-1>: store what the drag actually landed on. Reads the LIVE
+# frame rather than the arithmetic, so what is remembered is the CLAMPED width
+# -- exactly `browser_sash_drop`'s rule one axis over, and the reason the array
+# still has one writer (`browser_width_pref`).
+proc wviewer::browser_grip_drop {token} {
+  variable windows
+  variable gripdrag
+  catch {unset gripdrag($token)}
+  if {![dict exists $windows $token]} { return 0 }
+  set f [dict get $windows $token top].wvbrowser
+  if {[catch {winfo exists $f} e] || !$e} { return 0 }
+  set w 0
+  catch {set w [$f cget -width]}
+  if {![string is integer -strict $w] || $w <= 1} { return 0 }
+  return [wviewer::browser_width_pref $token $w]
 }
 
 # 1 when this window's sidebar is showing. An unknown token, or one whose
@@ -11702,7 +11938,27 @@ proc wviewer::browser_show {token} {
       pack $f -side left -fill y -before $top.drw
       # item 9: sizing belongs HERE, not in browser_build — the toplevel is
       # mapped on this branch, so `winfo width` is a real number.
-      catch {wviewer::browser_width $token}
+      #
+      # ⚠ WIDENED BY ISSUE 0312, AND ONLY BY AN ARGUMENT. `browser_width_pref`
+      # answers 0 — which this rule documents as its own ignore value — for
+      # every window nobody has dragged the divider on or restored a width
+      # into, so this line is LITERALLY the pre-0312 derived call there.
+      #
+      # ⚠⚠ IT USED TO ALSO SEED THAT PREFERENCE WITH THE DERIVED ANSWER, AND
+      # THAT WAS WRONG TWICE OVER. It made "has a preference" and "has been
+      # shown" the same fact — the exact mistake `browser_sash`'s header says
+      # the sash default was moved to a local to avoid — and because the seed
+      # was the CAPPED answer, a sidebar first shown on a 600 px window stored
+      # 270 and then stayed 270 forever, on every later window size, without
+      # the user ever touching anything. The seed existed only to defeat the
+      # wrap's effect on the derivation; that is now fixed AT the derivation
+      # (see `browser_width`), so the seed is gone and absence means what the
+      # accessor says it means.
+      catch {wviewer::browser_width $token [wviewer::browser_width_pref $token]}
+      # issue 0312: the drag grip, packed BETWEEN the sidebar and the canvas.
+      # After the width, because it packs `-before $top.drw` and the sidebar
+      # must already hold that slot.
+      catch {wviewer::browser_grip_show $token}
       # TWO-PANE item 9: the SASH, for the same reason and one step further
       # along. It is a FRACTION of the panedwindow's height, and that height is
       # only real once the pane is MAPPED — on an unmapped one `winfo height`
@@ -11723,6 +11979,10 @@ proc wviewer::browser_show {token} {
     catch {wviewer::browser_refresh $token 1}
   } else {
     catch {pack forget $f}
+    # issue 0312: the grip goes with it. A divider left packed against a hidden
+    # sidebar is a 6 px strip the user can still drag, resizing something that
+    # is not on screen.
+    catch {wviewer::browser_grip_hide $token}
   }
 }
 
@@ -12140,6 +12400,13 @@ proc wviewer::browser_state_apply {token d} {
   catch {wviewer::browser_show $token}
   if {$shown} {
     catch {wviewer::browser_width $token [wviewer::dget $d width 0]}
+    # issue 0312: and the same number becomes the window's width PREFERENCE, or
+    # the next Ctrl-B/Ctrl-B would re-derive and the restored width would
+    # evaporate. `browser_width_pref` ignores 0, so a state file with no `width`
+    # key (or the `width 0` a never-shown sidebar writes) leaves the window with
+    # NO preference — which is the truthful state, and the derived path then
+    # sizes it exactly as `browser_show` just did.
+    catch {wviewer::browser_width_pref $token [wviewer::dget $d width 0]}
     set ts [dict create sel [wviewer::dget $d sel {}]]
     if {[dict exists $d open]} { dict set ts open [dict get $d open] }
     catch {wviewer::browser_tree_apply $token $ts}
@@ -14477,13 +14744,10 @@ proc wviewer::searchbar_build {parent args} {
   }
   if {$showbutton} { button $w.search -text Search }
   label $w.err -text {} -font AseLabelFont -anchor w -width 24
-  pack $w.type   -side left -padx {6 4} -pady 3
-  pack $w.pat    -side left -padx {0 4} -pady 3 -fill x -expand 1
-  pack $w.syntax -side left -padx {0 4} -pady 3
-  pack $w.case   -side left -padx {0 4} -pady 3
-  if {$alldbs} { pack $w.alldb -side left -padx {0 4} -pady 3 }
-  if {$showbutton} { pack $w.search -side left -padx {0 6} -pady 3 }
-  pack $w.err    -side left -padx {0 6} -pady 3
+  # issue 0312: the flat one-row layout is now a PROC, because the two-row
+  # layout has to be able to put it back byte-for-byte. `searchbar_build` still
+  # leaves the bar flat, which is what BAR03 and BAR10 read.
+  wviewer::searchbar_pack_flat $w
   set sbcfg($w) [dict create command $cb showbutton $showbutton alldbs $alldbs]
   # EVERY route converges on the one handler, so there is exactly one place a
   # consumer's callback can be invoked from and exactly one place the error
@@ -14503,8 +14767,188 @@ proc wviewer::searchbar_build {parent args} {
   # bar that de-registers itself the first time its entry is destroyed.
   bind $w <Destroy> [list wviewer::searchbar_destroyed $w %W]
   ase::ui::apply_theme $w
+  # issue 0312: THE ONLY TRIGGER for the two-row layout. A bar narrower than its
+  # own controls used to lose them off the right-hand edge silently -- no
+  # ellipsis, no chevron, nothing on screen to say a control had been dropped.
+  bind $w <Configure> [list wviewer::searchbar_reflow $w]
   $w.err configure -foreground [ase::theme accent]
   return $w
+}
+
+# --- issue 0312: THE TWO-ROW LAYOUT -------------------------------------------
+# The bar's children in ViVA §3.2 order, skipping the two that only exist on
+# some variants. ONE list, so the flat layout, the wrapped layout and the width
+# measurement can never disagree about who is in the bar.
+proc wviewer::searchbar_kids {w} {
+  set out {}
+  foreach c {type pat syntax case alldb search err} {
+    if {[winfo exists $w.$c]} { lappend out $c }
+  }
+  return $out
+}
+
+# THE FLAT LAYOUT — ViVA §3.2's single row, and the shape `searchbar_build`
+# always leaves behind.
+#
+# ⚠⚠ THE `grid forget` SWEEP FIRST IS MANDATORY, NOT DEFENSIVE. A widget managed
+# by `grid` cannot be handed to `pack` -- Tk throws
+# "cannot use geometry manager pack inside ... which already has slaves managed
+# by grid" -- so unwrapping without releasing the grid leaves the bar with NO
+# managed children at all, i.e. an empty strip. That is strictly worse than the
+# clipping this whole change exists to remove.
+#
+# ⚠ THE OPTIONS ARE VERBATIM WHAT `searchbar_build` USED TO PACK, INCLUDING THE
+# ASYMMETRIC PADS (`{6 4}` on the leading widget, `{0 6}` on Search and the
+# error label). BAR03 asserts `pack slaves $w` and BAR10 the -showbutton 0
+# variant's; both read a LIVE bar, so a drifted option here surfaces as a
+# spacing change nobody asked for rather than as a red check.
+proc wviewer::searchbar_pack_flat {w} {
+  variable sbwrap
+  # ⚠ THE FOUR MANDATORY CHILDREN ARE GUARDED TOO, and not out of symmetry: this
+  # proc runs from a <Configure> BINDING, and a throw out of a binding reaches
+  # bgerror, which is modal under X and hangs a headless run (`searchbar_fire`,
+  # `browser_refresh` and `add_trace_filter` each state the same rule). Any
+  # state where a child is gone while `$w` is alive and still configuring --
+  # teardown, a consumer that destroyed one by hand -- must degrade to a
+  # half-laid-out bar, never to a hang.
+  foreach c [wviewer::searchbar_kids $w] { catch {grid forget $w.$c} }
+  catch {pack $w.type   -side left -padx {6 4} -pady 3}
+  catch {pack $w.pat    -side left -padx {0 4} -pady 3 -fill x -expand 1}
+  catch {pack $w.syntax -side left -padx {0 4} -pady 3}
+  catch {pack $w.case   -side left -padx {0 4} -pady 3}
+  if {[winfo exists $w.alldb]}  { catch {pack $w.alldb  -side left -padx {0 4} -pady 3} }
+  if {[winfo exists $w.search]} { catch {pack $w.search -side left -padx {0 6} -pady 3} }
+  catch {pack $w.err    -side left -padx {0 6} -pady 3}
+  set sbwrap($w) 0
+  return 0
+}
+
+# THE TWO-ROW LAYOUT — the QUERY on top (what to look for), the MODIFIERS below
+# (how to look, and where). Four grid columns; only column 1 carries a weight,
+# so it is the one the entry grows into and the one grid takes space FROM when
+# the bar is narrower than the row needs.
+#
+# ⚠ THE ERROR LABEL IS `grid remove`d, NOT PLACED ON A THIRD ROW. `$w.err` is
+# `-width 24` (~172 px), which is half the wrapped bar's whole budget, and it is
+# already THE designated clippable: `browser_width`'s rule subtracts exactly its
+# reqwidth, and `browser_refresh` mirrors its message into the sidebar's status
+# line so settled decision 4 survives the clip (see the width rule's header).
+# Giving it a row of its own would cost a third row of sidebar height to display
+# a duplicate of what `.ph` is already showing.
+#
+# ⚠ DECLARED LIMIT. Row 0 alone wants type (~97) + pat (~204) + syntax (~87)
+# plus pads, i.e. about 400 px, and row 1's three fixed controls about 260. So
+# below roughly 400 px even two rows clip: the entry shrinks first (it is the
+# weighted column) and then row 0's tail starts to go. The 240 px floor is
+# inside that band. The remedy there is the grip -- widen the sidebar, or the
+# window. (An earlier draft of this paragraph said ~350 by adding up the four
+# FIXED controls and forgetting that the entry shares row 0.)
+proc wviewer::searchbar_pack_wrapped {w} {
+  variable sbwrap
+  foreach c [wviewer::searchbar_kids $w] { catch {pack forget $w.$c} }
+  # guarded for the same reason searchbar_pack_flat's are: this runs from a
+  # <Configure> binding and a throw there hangs a headless run.
+  catch {grid $w.type   -row 0 -column 0 -sticky w  -padx {6 4} -pady {3 0}}
+  catch {grid $w.pat    -row 0 -column 1 -columnspan 2 -sticky ew -padx {0 4} -pady {3 0}}
+  catch {grid $w.syntax -row 0 -column 3 -sticky ew -padx {0 6} -pady {3 0}}
+  catch {grid $w.case   -row 1 -column 0 -sticky w  -padx {6 4} -pady {0 3}}
+  if {[winfo exists $w.alldb]}  { grid $w.alldb  -row 1 -column 1 -sticky w -padx {0 4} -pady {0 3} }
+  if {[winfo exists $w.search]} { grid $w.search -row 1 -column 2 -sticky w -padx {0 4} -pady {0 3} }
+  catch {grid $w.err -row 1 -column 3 -sticky ew -padx {0 6} -pady {0 3}}
+  catch {grid remove $w.err}
+  catch {grid columnconfigure $w 0 -weight 0}
+  catch {grid columnconfigure $w 1 -weight 1}
+  catch {grid columnconfigure $w 2 -weight 0}
+  catch {grid columnconfigure $w 3 -weight 0}
+  set sbwrap($w) 1
+  return 1
+}
+
+# 1 while the bar is on two rows. Absence reads 0 — a bar that was never
+# reflowed is flat, which is exactly what `searchbar_build` leaves.
+proc wviewer::searchbar_wrapped {w} {
+  variable sbwrap
+  if {![info exists sbwrap($w)]} { return 0 }
+  return [expr {$sbwrap($w) ? 1 : 0}]
+}
+
+# What the FLAT row needs, in pixels: every child's requested width plus its
+# pads, MINUS the error label's.
+#
+# ⚠⚠ MINUS THE ERROR LABEL, AND THAT SUBTRACTION IS `browser_width`'s, COPIED
+# DELIBERATELY. The width rule ships a sidebar sized to hold the bar WITHOUT the
+# err label (settled decision 5: Search stays mapped, err is allowed to clip),
+# so a threshold that included err would fire at the shipped default width and
+# wrap a bar that is not actually losing a control. The two numbers have to be
+# the same number or the layout fights the width rule.
+#
+# ⚠ REQUESTED width, never `winfo width`: this must answer the same thing in
+# both layouts, and an actual width is whatever the parent last imposed.
+proc wviewer::searchbar_need {w} {
+  set need 0
+  foreach c [wviewer::searchbar_kids $w] {
+    if {$c eq {err}} { continue }
+    set rw 0
+    catch {set rw [winfo reqwidth $w.$c]}
+    if {![string is integer -strict $rw]} { set rw 0 }
+    incr need $rw
+    # the pads, per widget, as searchbar_pack_flat really spells them: {6 4} on
+    # the leading `type`, {0 6} on `search`, {0 4} on the rest.
+    incr need [expr {$c eq {type} ? 10 : ($c eq {search} ? 6 : 4)}]
+  }
+  return $need
+}
+
+# <Configure>: pick the layout the current width can actually hold. Returns the
+# layout in force (0 flat / 1 wrapped), or -1 when it declined to decide.
+#
+# ⚠⚠ THE HYSTERESIS BAND IS WHAT STOPS THIS OSCILLATING, and the oscillation is
+# real rather than theoretical on the STANDALONE bar (item 5's dialog, and every
+# BAR-band test toplevel): there the bar is packed `-fill x` into a toplevel
+# that sizes itself to the bar's REQUESTED width, so wrapping shrinks the
+# request, which shrinks the toplevel, which re-fires <Configure>. Switching
+# only outside a 24 px band, and never re-applying a layout already in force,
+# closes both halves of that loop.
+#
+# ⚠ `winfo width` <= 1 IS "NOT MAPPED YET", not zero width -- the same guard
+# `browser_sash` takes on an unmapped panedwindow. Deciding a layout from it
+# would wrap every bar at build time, before the packer has run once.
+proc wviewer::searchbar_reflow {w} {
+  variable sbcfg
+  if {![info exists sbcfg($w)]} { return -1 }
+  if {[catch {winfo exists $w} e] || !$e} { return -1 }
+  # ⚠⚠ THE LAYOUT IS ONLY DECIDABLE WHEN SOMEBODY ELSE OWNS OUR WIDTH, AND
+  # WITHOUT THIS GUARD THE HYSTERESIS BAND BECOMES A ONE-WAY LATCH. In a
+  # container that sizes itself to its children -- the Add Trace dialog's bar,
+  # and every bar a test packs straight into a bare toplevel -- `winfo width $w`
+  # IS the bar's own request. Wrapping shrinks that request to about the width
+  # of row 0, so the unwrap test (`aw >= need + 24`) can never be true again:
+  # unwrapping is the only thing that would make the bar wide enough to unwrap.
+  # It would also mean a BAR-band test toplevel could wrap on its first
+  # <Configure> and turn `pack slaves $w` into `{}` under BAR03.
+  #
+  # A container with propagation OFF is exactly the sidebar's situation
+  # (`browser_width` does `pack propagate $f 0` and then fixes the width), and
+  # it is the ONLY situation where "the bar is narrower than it needs" is a fact
+  # about the container rather than about the bar. Anywhere else, a bar that
+  # does not fit simply asks for more room and gets it -- there is nothing to
+  # solve and nothing that can clip.
+  set fixed 0
+  set par {}
+  catch {set par [winfo parent $w]}
+  if {$par ne {}} {
+    catch { if {![pack propagate $par]} { set fixed 1 } }
+    catch { if {![grid propagate $par]} { set fixed 1 } }
+  }
+  if {!$fixed} { return -1 }
+  set aw 0
+  catch {set aw [winfo width $w]}
+  if {![string is integer -strict $aw] || $aw <= 1} { return -1 }
+  set need [wviewer::searchbar_need $w]
+  set cur [wviewer::searchbar_wrapped $w]
+  if {!$cur && $aw < $need} { return [wviewer::searchbar_pack_wrapped $w] }
+  if {$cur && $aw >= $need + 24} { return [wviewer::searchbar_pack_flat $w] }
+  return $cur
 }
 
 # The bar's four values as a dict {pattern .. syntax .. case .. type ..}, with
@@ -14658,6 +15102,7 @@ proc wviewer::searchbar_forget {w} {
   variable sbcfg
   variable sbcase
   variable sballdb
+  variable sbwrap
   catch {$w.case configure -variable {}}
   # item 14: exact parity with Match case — the All-DBs element must not outlive
   # the bar either, or a per-window array grows one entry per closed viewer.
@@ -14665,6 +15110,9 @@ proc wviewer::searchbar_forget {w} {
   catch {unset sbcfg($w)}
   catch {unset sbcase($w)}
   catch {unset sballdb($w)}
+  # issue 0312: the layout flag is per-bar state keyed by the same path, so it
+  # dies with the bar for the same reason the other three do.
+  catch {unset sbwrap($w)}
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------

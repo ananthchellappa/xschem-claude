@@ -785,10 +785,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list 1 1]
   update
 
-  # ViVA §3.2: the box exists, is packed, and is OFF by default (decision 6's
+  # ViVA §3.2: the box exists, is MANAGED, and is OFF by default (decision 6's
   # sibling — searching every open database is opt-in).
-  check {BD41 the All DBs box exists, is packed and defaults OFF} \
-    [list [winfo exists $BSB.alldb] [expr {[catch {pack info $BSB.alldb}] ? 0 : 1}] \
+  #
+  # ⚠⚠ WIDENED FROM "is packed" TO "is managed by EITHER geometry manager" BY
+  # ISSUE 0312, AND THE WIDENING IS FORCED RATHER THAN CONVENIENT. 0312's fix
+  # lays the search bar out on TWO ROWS when the sidebar is narrower than the
+  # bar needs — which is the shipped default — and two rows in one frame is
+  # `grid`, not `pack`. This check went red on the audit that followed that fix,
+  # correctly: `pack info` really does throw on a gridded widget.
+  #
+  # ⚠ WHAT IT STILL CATCHES IS THE WHOLE POINT, so the widening is not a
+  # weakening: a widget managed by NEITHER manager — built and then dropped,
+  # item 8's widget-state masquerade — still reads 0 here. And 0312's own
+  # `BF22`/`BF23` in test_wave_sigbrowser_0312.tcl pin WHICH manager holds it in
+  # each layout, which is a claim this file has no business making.
+  check {BD41 the All DBs box exists, is MANAGED (pack or grid) and defaults OFF} \
+    [list [winfo exists $BSB.alldb] \
+          [expr {([catch {pack info $BSB.alldb}] &&
+                  [catch {grid info $BSB.alldb}]) ? 0 : 1}] \
           $::wviewer::sballdb($BSB) \
           [wviewer::dget [wviewer::searchbar_get $BSB] alldbs {NO-KEY}]] \
     [list 1 1 0 0]

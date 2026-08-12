@@ -1,6 +1,8 @@
 # 0312 — the Signal Browser's search bar clips its own controls, and the sidebar width cannot be dragged
 
-**Status:** OPEN.
+**Status:** FIXED, pending the user's eyes (a width deliverable is pixels).
+Receipt: `doc/claude/batch_F/receipts/15-issue-0312-sidebar-grip-and-searchbar-wrap.md`.
+Evidence: `tests/headless/test_wave_sigbrowser_0312.tcl` (57 checks, 35 sabotages).
 **Filed:** 2026-08-11, from the Batch F eyeball queue (session 3, item 6 step 5).
 **Found by:** hand, at the shipped default window size. Every headless check
 passes, because a clipped Tk widget still exists, still holds its variable and
@@ -92,6 +94,25 @@ In rough order of effort. Not ruled on — this needs a decision.
   re-established inside the pane.
 * **Horizontal scrollbar on the bar.** Cheap, but a scrollbar under a six-widget
   row reads badly and hides the controls just as effectively until scrolled.
+
+### THE RULING (user, 2026-08-11): candidates 1 AND 3, both
+
+Neither half is redundant, and the arithmetic is why. The bar needs **651 px**
+(the 583 above predates item 14's `All DBs` box); the cap gives **450** on the
+shipped 1000 px window; and a live drag goes through **that same cap**, because
+lifting it would mean changing `browser_width`'s `want` semantics and `BP07`
+pins those. So the grip alone can never reach 651 px on a 1000 px window, and
+the wrap alone leaves EYEBALL_QUEUE item 5 step 7 (a judgement **at ~250 px**)
+with no gesture that reaches it. Grip = the narrow end plus the general
+complaint; wrap = every control on screen at the wide end.
+
+**Candidate 3's literal form was not buildable.** A horizontal
+`ttk::panedwindow` owns its panes, so `.wvbrowser` stops being a pack slave of
+the toplevel — and the FROZEN `test_wave_sigbrowser.tcl` asserts that it is one,
+on a live tree (BS24, BS41, BT21) as well as by source grep (BS01, BS02). Removing
+just `-before` from that one line reds **16 checks in the frozen file**, measured.
+What shipped is a 6 px grip frame packed BETWEEN the sidebar and the canvas, which
+leaves the slave order — and every frozen literal — intact.
 
 ⚠ **Constraint on any fix that touches `browser_width`:** its body is grepped
 for four literals by `test_wave_sigbrowser.tcl`'s BT08, and that file is FROZEN

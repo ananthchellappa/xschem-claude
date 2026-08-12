@@ -879,8 +879,21 @@ check {BP07 the width widening keeps all four BT08 literals in place} \
   [list 1 1 1 1]
 check {BP07 browser_width grew an OPTIONAL want, so every old caller is unchanged} \
   [regexp -all {proc wviewer::browser_width \{token \{want \{\}\}\} \{} $wsrc] 1
+# ⚠⚠ THE MIDDLE ANCHOR IS THE WHOLE REPLACEMENT LINE, NOT THE BARE `$want`
+# TEST, AND ISSUE 0312 IS WHY. This leg pins an ORDER — derive, then let `want`
+# replace the base, then clamp — by comparing the positions of three literals.
+# `string is integer -strict $want` was a fine proxy for the middle one until
+# 0312 gave `browser_width` a SECOND, earlier use of the same predicate: the
+# idle flush is now taken only on the deriving path (`if {![string is integer
+# -strict $want] || $want <= 0} { catch {update idletasks} }`), because a grip
+# drag calls this proc per motion event and an unconditional `update idletasks`
+# ran a full graph regenerate each time. The claim below is UNCHANGED and still
+# true; only the proxy was ambiguous. Anchoring on the entire replacement
+# statement is strictly sharper — it cannot be satisfied by any other mention of
+# `$want`, and it fails if the replacement itself is moved, reworded or deleted.
 set bp_wd [string first {[winfo reqwidth $f.wvsearch] -} $bp_width]
-set bp_ww [string first {string is integer -strict $want} $bp_width]
+set bp_ww [string first \
+  {if {[string is integer -strict $want] && $want > 0} { set w $want }} $bp_width]
 set bp_wc [string first {0.45 * [winfo width $top]} $bp_width]
 check {BP07 ...and want REPLACES the derived base, then takes the SAME cap} \
   [expr {$bp_wd >= 0 && $bp_ww > $bp_wd && $bp_wc > $bp_ww}] 1
