@@ -1,95 +1,135 @@
 # 0319 — Ctrl-Alt-V on a FET inside a descended instance neither ticks `Show device internals` nor reaches the device
 
-**Status:** OPEN. Not fixed. Reported by hand with an exact repro; the mechanism
-below is a **located hypothesis, NOT a measurement** — see "What is not yet
-known".
-**Area:** `src/wave_viewer.tcl` — two-pane item 18's auto-unhide probe (R12) in
-`browser_show_path`, and whatever builds the asked path `segs` for a selected
-**primitive** instance.
-**Found:** 2026-08-12, by the user, eyeballing two-pane **item 18**. That item's
-LEDGER row stays **unticked** and its verdict is **NOT OK** because of this.
-**Related:** two-pane item 18 (`18_receipt.md`, `6c887aed` + `91a3de1a`), item 13
-(the descend-aware show, which the same session eyeballed **OK**), issue 0217
-(the declass rule that decides what a device contributes to a path).
+**Status:** **FIXED pending an eyeball** (2026-08-12), commit `c858efd0`, UNPUSHED. One line at the call site
+in `src/ase.tcl` plus two new procs; `src/wave_viewer.tcl` is UNCHANGED and the
+R12 `==` was NOT relaxed. Receipt:
+`doc/claude/batch_F/receipts/19-issue-0319-primitive-fet-path.md`. Checks:
+`tests/headless/test_wave_sigbrowser_0319.tcl` (35 checks, 25 sabotage rows).
+**Area:** `src/ase.tcl` — `ase::show_in_browser_for_current`'s item-17 selection
+step, which is what BUILDS the asked path.
+**Found:** 2026-08-12, by the user, eyeballing two-pane **item 18**.
+**Related:** two-pane item 18 (`18_receipt.md`, `6c887aed` + `91a3de1a`), item 13,
+issue 0217 (the declass rule), issue **0321** (the MIRROR direction: "Descend to
+here" refuses the very device row this fix now selects — filed by this work).
 
 ## What happens
 
 ```
-xschem load {/home/qflow/dev/xschem/claude_1/xschem/sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/schematic/tb_bandgap.sch}
+xschem load {…/sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/schematic/tb_bandgap.sch}
 ```
 then load `ngspice_state1`.
 
-**The part that works.** Descend into `x1`, select `x1` on the bandgap schematic,
-press **Ctrl-Alt-V** — the Signal Browser finds `x1` correctly.
+**The part that works.** Descend into `x1`, select `x1` on the bandgap
+schematic, press **Ctrl-Alt-V** — the Signal Browser finds `x1` correctly.
 
-**The part that does not.** Descend into `x1` (inside the bandgap, an instance of
-`bandgap_opamp`), then select a **FET such as `M18`** and press **Ctrl-Alt-V**:
-
-* `Show device internals` **does not tick itself**, and
-* the navigator pane selects only `x1 > x1` — the parent, not the device.
-
-Item 18's whole promise is that this gesture ticks the box on the user's behalf
-and says so in the status line. On this cell it silently lands on an ancestor.
+**The part that did not.** Descend into `x1` (an instance of `bandgap_opamp`),
+select a **FET such as `M18`** and press **Ctrl-Alt-V**: `Show device internals`
+did not tick itself, and the navigator selected only `x1 > x1`.
 
 Verbatim: *"if I then select a FET such as M18 and do CTRL-ALT-V, the Show device
 internals does not get checked and it only selects x1 > x1 in the Signal Browser
 navigator pane."*
 
-## Where it stops
+## THE CAUSE — measured, and it is NOT the hypothesis this issue was filed with
 
-`browser_show_path`'s R12 probe ticks the box only on a **positive, exact** test:
+⚠ **The original hypothesis — that a primitive contributes no path segment at
+all — is REFUTED.** It does contribute one. It is spelled differently.
 
-```tcl
-  if {$matched < [llength $segs] && ![wviewer::browser_devint $token]} {
-    ... rebuild the would-be model with internals SHOWN, in memory ...
-    if {$pmatched == [llength $segs]} {
-      ... $bx invoke ; re-resolve ; set r12 1
-    }
-  }
+`tb_bandgap_ase.raw` (424 variables) carries exactly six names mentioning m18,
+and no bare `m18` at all:
+
+```
+v(m.x1.x1.xm18.msky130_fd_pr__nfet_01v8_lvt#body)   (+ #dbody, #sbody)
+v(m.x1.x2.xm18.msky130_fd_pr__nfet_01v8_lvt#body)   (+ #dbody, #sbody)
 ```
 
-The `==` is deliberate and defended at length in the source (relaxing it to `>`
-ticks the box, triples the tree 45 → 129 and explains nothing; `BK43` guards
-that). So the box not ticking means **`pmatched` never reached
-`[llength $segs]`**: even with device internals shown, the asked path does not
-fully resolve. The gesture then correctly falls through to improve-or-restore and
-lands on the deepest ancestor it *can* reach — `x1 > x1`, exactly what was seen.
+sky130's FET symbols format their element line `@spiceprefix@name …` with
+`spiceprefix=X`, so a FET **drawn** `M18` is **netlisted** `XM18`
+(`tb_bandgap_ase.spice:110`) and ngspice lower-cases the raw to **`xm18`**.
+xschem states the rule itself at `src/token.c:4435`:
+`i(\@m.@path@spiceprefix@name\.msky130_fd_pr__@model\[id])`.
 
-So the defect is upstream of the tick: **the asked path for this FET is not a
-path the raw's own names can produce.**
+The gesture asked for the **schematic's** spelling. `ase::browser_sel_segment`
+answers `{ok M18}` (its documented contract: the schematic's own spelling,
+verbatim), so `segs` was `{x1 x1 M18}` — and `browser_node_for` matches `M18`
+against the tree's `xm18` row neither exactly nor `-nocase`. `matched` stalled
+at 2 of 3.
 
-## The hypothesis, and why it is only that
+**Item 18's `==` probe was therefore right, and right for the right reason:**
+with internals shown the asked path still did not resolve, so `pmatched` was 2
+and the box correctly stayed unticked. Measured, both models built from the real
+raw through the shipped procs:
 
-Item 18 was built and measured on `x1.x1.xm1.…` — an **`X`-prefixed, pcell-wrapped**
-device, which is what sky130's `sky130_fd_pr__nfet_01v8` instances look like in a
-raw: `v(m.x1.x1.x1.xm1.msky130_fd_pr__nfet_01v8#body)`, where `xm1` survives
-0217's declass as a genuine **path segment**.
+| rows | `{x1 x1 M18}` | `{x1 x1 XM18}` |
+|---|---|---|
+| internals hidden | `g:x1.x1`, 2 of 3 | `g:x1.x1`, 2 of 3 |
+| internals shown  | `g:x1.x1`, 2 of 3 | **`g:x1.x1.xm18`, 3 of 3** |
 
-`M18` is an `M`-prefixed instance. Per 0217, SPICE requires *subcircuit*
-instances to begin with `X`, which is the whole basis of the declass rule — so an
-`M` instance is a primitive, and its internal nodes plausibly hang off the
-**parent** level with the device fused into the **leaf**, contributing no path
-segment at all. If so, a `segs` list built from the schematic hierarchy
-(`x1`, `x1`, `m18`) can never match a rows model whose deepest real segment is
-`x1.x1`, with or without internals shown — and `pmatched` stalls one short
-forever.
+**Descending is scenery.** `test_nfet_final` has its FET at the TOP level with
+no descend at all, drawn as plain `name=M1 W=1 L=0.15 nf=1` — no spiceprefix
+token of its own, inherited from the symbol template — and it is netlisted
+`XM1`. Same mismatch, zero descends. (⚠ Both sky130 and gf180 ship a cell of
+that name; the raw in `~/.xschem/simulations/`, whose first variable is
+`i(@m.xm1.m0[id])`, is **gf180's** — its Title line says so.) What decides the
+outcome is whether the SELECTED instance carries a spiceprefix, not how deep it
+sits.
 
-## What is not yet known — do not skip this
+## The fix
 
-1. **The actual raw names for `M18` in `ngspice_state1` have not been read.** The
-   paragraph above is inference from 0217's grammar argument, not a measurement.
-   First step for whoever takes this: `xschem raw list` in that context and grep
-   for `m18` / `xm18` / `@m.` to see what segment, if any, the device produces.
-2. **Whether `segs` is built from the schematic instance name or from something
-   else** for a primitive — locate the producer before touching the probe.
-3. **Whether item 18 is wrong or merely narrower than advertised.** If a primitive
-   genuinely has no path segment, then "reach the device" is not expressible for
-   it and the honest fix is a *different sentence* (land on the parent and say
-   the device's internals live at that level), not a relaxed `==`.
-4. **Whether descending matters at all.** The report descends first; it is not
-   established that the same selection from the top level behaves differently.
-   Worth one control run, because item 13's descend path eyeballed OK.
+`ase::inst_path_segment` asks the netlister what the instance is called —
+`xschem translate <inst> {@spiceprefix}`, which honours both the symbol-template
+fallback and the global `spiceprefix` switch — and `ase::spice_seg_name` applies
+it only when the format string actually consumes `@spiceprefix` (otherwise
+`devices/netlist_options`, which carries `spiceprefix=true` and no format, would
+be asked for as `trueNETLIST_OPTIONS`). The call site appends that instead of
+`$selname`; `$selname` itself is unchanged, because step 3c's digital probe and
+6b's sentence both need the schematic's spelling.
 
-⚠ **Do not "fix" this by relaxing the `==` to `>`.** That edit is named in the
-source as the one that ticks the box, triples the tree and says nothing —
-`BK43` exists to red it.
+Three further properties came from adversarial review and each was a live
+defect in the first cut (receipt §5):
+
+* the ACTIVE format attribute is used — **`lvs_format` when `lvs_netlist` is
+  on** — because 54 in-repo symbols (gf180mcu_pr, sg13g2_pr) disagree with
+  `format` about `@spiceprefix`, and under LVS the prefix must NOT be applied;
+* the format is read with **`getprop instance_notcl`**, because the plain
+  accessor EXECUTES a `tcleval(...)` format — and one shipped symbol's format
+  is `tcleval([::analyses::netlister spice])`;
+* an **all-digit instance name is refused**, because `get_instance` reads one as
+  an index and would silently answer about a different device.
+
+⚠ **The `==` in `browser_show_path`'s R12 probe was NOT relaxed, and must not
+be.** `BK43` guards it and `BN36` re-measures it from the 0319 side. `BN32`
+guards the other wrong fix: teaching `browser_node_for` to guess an `x` prefix
+reds it (sabotage S16).
+
+## THE EYEBALL THAT IS STILL OWED
+
+Everything above is widget state and returned values. Nobody has watched the
+box tick. From **ASE-L**:
+
+1. Open the bandgap testbench: **File > Open**, or the Library Manager, and pick
+   library `sky130_tests_ase`, cell **tb_bandgap**, view **schematic**.
+2. Load the saved ASE state: the cell's **ngspice_state1** view. (No re-simulation
+   is needed if `~/.xschem/simulations/tb_bandgap_ase.raw` is still there; if it
+   is not, run the state's TRAN analysis once so a raw exists.)
+3. Open the waveform viewer and make sure the **Signal Browser** sidebar is
+   showing, with **`Show device internals` UNTICKED** (that is the default —
+   untick it by hand if a previous session left it on).
+4. Back on the schematic: click `x1`, **descend** (`e`). Click `x1` again (the
+   `bandgap_opamp` instance) and **descend** again. You are now inside
+   `bandgap_opamp` and the title bar says `x1.x1`.
+5. Click the FET labelled **`M18`** — one single instance selected, nothing else.
+6. Press **Ctrl-Alt-V**.
+
+**Expected, and this is the whole issue:**
+* `Show device internals` **ticks itself**, and the tree grows.
+* The navigator selects and scrolls to **`x1 > x1 > xm18`** — note the tree's
+  spelling is the raw's, `xm18`, not the schematic's `M18`.
+* The CIW shows **one** line, not red:
+  `ase: signal browser: showing device internals to reach x1.x1.xm18`
+* The lower pane lists that device's own signals (`…#body`, `#dbody`, `#sbody`).
+
+**The control, in the same sitting:** press `Ctrl-Shift-E` / go back up one
+level, select the subcircuit `x1`, Ctrl-Alt-V. It must land on `x1 > x1` with the
+box **still unticked** and say `ase: signal browser: showing x1.x1`. If that
+regressed, the fix over-applied.

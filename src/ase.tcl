@@ -2576,6 +2576,160 @@ proc ase::browser_sel_segment {} {
   return [list ok $nm]
 }
 
+# --- ISSUE 0319: A HIERARCHY PATH SPELLS AN INSTANCE THE WAY THE NETLIST DOES --
+#
+# PURE. Given the three facts that decide it, the name a raw's hierarchy path
+# uses for one instance. It is a SEPARATE proc from the reads below for
+# `browser_origin_drop`'s reason, one item over: the RULE is then assertable
+# without a design, a raw or a viewer.
+#
+# ⚠⚠ THE RULE IS THE NETLISTER'S, MIRRORED — src/token.c:2468-2479 and 2676.
+# `print_spice_element` builds the element line from `@format`, and sky130's
+# device symbols begin theirs `@spiceprefix@name`. So a FET DRAWN as `M18` is
+# NETLISTED `XM18` and ngspice lower-cases that to `xm18`; the raw then carries
+# `v(m.x1.x1.xm18.msky130_fd_pr__nfet_01v8_lvt#body)` and the browser's tree a
+# group row `xm18` under `x1 > x1`. The schematic's own `M18` matches that row
+# neither exactly nor `-nocase`, which is the whole of issue 0319: the asked
+# path stalled one segment short of the device, two-pane item 18's probe could
+# never answer yes, and the gesture landed on the parent `x1 > x1` — the exact
+# symptom reported. (The issue GUESSED that a primitive contributes no segment
+# at all. It contributes one; it is spelled differently. Measured, receipt 19.)
+#
+# TWO CONDITIONS, AND BOTH ARE REACHABLE — neither is a defensive guard that no
+# sabotage could get to (the third, obvious one is discussed and rejected
+# below):
+#
+#  * `name` must not be empty. `browser_sel_segment`'s `none` shape is an empty
+#    name, and a bare prefix would match the ROOT rather than nothing.
+#  * `fmt` — the format string has to actually USE `@spiceprefix`. NOT
+#    hypothetical: `devices/netlist_options` carries `spiceprefix=true` in its
+#    template and has NO format at all (it configures the netlister instead of
+#    being netlisted), so without this condition selecting one and pressing
+#    Ctrl-Alt-V would ask the browser for a segment named `trueNETLIST_OPTIONS`.
+#    Measured: 122 `.sym` files across xschem_library (26), xschem_libs_newsym
+#    (26) and sky130A/xschem_libs (70) mention `spiceprefix`, and exactly TWO
+#    never use `@spiceprefix` — the same `netlist_options` symbol, once per
+#    library layout. Nothing else in the shipped tree reaches this condition,
+#    and nothing at all reaches it by ACCIDENT: no shipped format escapes the
+#    token (`\@spiceprefix`) or hides it inside a `@tcleval`, both checked.
+#
+# ⚠ AND THERE IS DELIBERATELY NO `$prefix eq {}` GUARD, which is the third
+# question this rule is asked and the one the CONCATENATION already answers:
+# an empty prefix makes `"$prefix$name"` the name, byte for byte, in every
+# state. A guard for it would be a line no sabotage could reach — the sabotage
+# battery measured exactly that, S6 reddening one SOURCE check and nothing
+# else. The early return that DOES earn its keep is the reader's below, and it
+# earns it by saving two reads rather than by changing an answer.
+#
+# ⚠ THE CASE IS NOT FOLDED, and that is `browser_sel_segment`'s decision kept
+# rather than a new one: `X` + `M18` is `XM18`, not `xm18`. The resolver's
+# exact-first/`-nocase`-fallback per level (`browser_node_for`) is what lands it
+# on the raw's lower-cased row, the same way BX42 lands a schematic `X1.X2` on
+# `g:x1.x2`. Lower-casing here would be a SECOND answer to that one question.
+proc ase::spice_seg_name {name prefix fmt} {
+  if {$name eq {}} { return $name }
+  if {[string first {@spiceprefix} $fmt] < 0} { return $name }
+  return "$prefix$name"
+}
+
+# The reads that feed the rule above, for one instance of the CURRENT design.
+# Returns `$nm` unchanged for anything it cannot establish.
+#
+# ⚠⚠ THE PREFIX IS ASKED OF THE NETLISTER, NOT RE-DERIVED — `xschem translate
+# <inst> {@spiceprefix}` runs `translate()` (token.c), the very substitution
+# `print_spice_element` uses to write the element line. THREE facts come with it
+# that a hand-rolled reader has to get right separately, and the first cost this
+# fix its first cut:
+#   1. THE SYMBOL TEMPLATE IS A FALLBACK. `xschem getprop instance M1
+#      spiceprefix` reads inst.prop_ptr ONLY (scheduler.c:5224). `test_nfet_final`
+#      draws its FET as plain `name=M1 W=1 L=0.15 nf=1` with NO spiceprefix
+#      token of its own and inherits `spiceprefix=X` from the symbol's template
+#      — and the netlist duly writes `XM1`. A getprop reader answers `{}` there
+#      and silently does nothing, which is the bug again on the commoner of the
+#      two shapes. MEASURED, by running the top-level control the issue asked
+#      for. (⚠ BOTH sky130 AND gf180 ship a cell of that name; the raw in
+#      `~/.xschem/simulations/test_nfet_final_ase.raw`, whose first variable is
+#      `i(@m.xm1.m0[id])`, is **gf180mcuD's** — its Title line says so. The
+#      sky130 one is what the check loads, and it answers `XM1` too.)
+#   2. THE GLOBAL TOGGLE IS HONOURED. Simulation > "Use 'spiceprefix' attribute"
+#      (xschem.tcl:15148, `set_ne spiceprefix 1` at :15708) makes token.c:2676
+#      expand `@spiceprefix` to nothing, and translate answers `{}` to match, so
+#      with that box unticked this returns the bare name the netlist will use.
+#   3. It cannot drift from the netlister, because it IS the netlister.
+#
+# ⚠⚠ THE FORMAT IS READ WITH `instance_notcl`, AND THAT IS NOT A STYLE CHOICE.
+# Plain `getprop instance` looks the token up with `with_quotes = 0`
+# (scheduler.c:5213/5221/5224), which routes through `tcl_hook2`
+# (token.c:533-537) and **EXECUTES** any value beginning `tcleval(`.
+# `print_spice_element` reads the same attribute with `with_quotes = 2`
+# (token.c:2471-2479) and never does. MEASURED with a symbol whose format is
+# `tcleval([boom])`: the plain read ran `boom`, `instance_notcl` did not — so
+# the plain read would fire a symbol's embedded Tcl on every Ctrl-Alt-V, and
+# `xschem_library/analyses/command_block.sym` is a shipped symbol whose format
+# is `tcleval([::analyses::netlister spice])`, i.e. a read that runs the
+# NETLISTER. DECLARED LIMIT, and it is the right way round: a format whose
+# `@spiceprefix` appears only AFTER evaluation reads as "no prefix" here and
+# degrades to the shipped `partial`, which is a miss, not a wrong node. (No
+# shipped symbol is like that: ihp's `ntap1` and friends carry `@spiceprefix`
+# literally inside their `tcleval(...)`.)
+#
+# ⚠⚠ THE ATTRIBUTE CHAIN IS token.c:2468-2479's, MIRRORED WHOLE — the active
+# format attribute (instance, then symbol), then a fall back to plain `format`
+# at both levels. `lvs_format` IS consulted: an earlier cut skipped it on a
+# measurement that swept only THREE of this repo's FIVE symbol libraries, and
+# the two it missed are the two the user actually runs. **54 symbols disagree**
+# about `@spiceprefix` between `format` and `lvs_format` — 19 in
+# `gf180mcuD/xschem_libs/gf180mcu_pr` (e.g. `nfet_03v3.sym:20` vs `:24`) and 35
+# in `ihp-sg13g2/xschem_libs/sg13g2_pr`, where lvs hardcodes a DIFFERENT letter
+# per class (`M@name`, `C@name`, `R@name`, `L@name`, `Q@name`). With LVS
+# netlisting on, gf180's `M1` is emitted BARE — so prefixing it would not merely
+# fail to help, it would break a segment that used to match. Measured on gf180
+# `test_nfet_final` with `lvs_netlist 1`: the element line is `M1 D G GND GND
+# nfet_03v3 …`.
+#
+# ⚠ DECLARED LIMIT: `xschem set format <attr>` (scheduler.c:11356) can point the
+# netlister at an arbitrary attribute (`xctx->format`, token.c:2469) and this
+# still reads `format`/`lvs_format`. No in-tree caller sets it. Same class:
+# the global `spiceprefix` switch is read at gesture time, not at simulation
+# time, so flipping it AFTER a run makes this disagree with the raw on disk.
+# Both degrade to `partial`, never to a wrong node.
+#
+# ⚠⚠ NEVER THROWS, and it rides Ctrl-Alt-V, where a Tcl error pops bgerror
+# (modal under X). `xschem translate` DOES throw on an unknown instance
+# ("xschem translate: instance not found", measured), so every read is caught
+# and every unreadable answer degrades to the bare name — the shipped
+# behaviour — rather than to an error.
+#
+# ⚠ TWO READS IN THE COMMON CASE: a selection with no prefix (every subcircuit)
+# leaves after the first and never spends the format reads.
+proc ase::inst_path_segment {nm} {
+  if {$nm eq {}} { return $nm }
+  # ⚠⚠ `get_instance()` READS AN ALL-DIGIT STRING AS AN INDEX
+  # (scheduler.c:187-190), so on a schematic whose instance is called `2` every
+  # by-name read below silently answers about instance number 2 instead — no
+  # throw, no empty result, just a different device's prefix. MEASURED on a
+  # sheet whose instance `2` is a vsource while index 2 is a prefixed FET:
+  # `getprop instance 2 name` answers `M2` and `translate 2 {@spiceprefix}`
+  # answers `X`, so without this line the segment for a device the netlist calls
+  # `2` would be `X2`. REFUSE rather than guess; `hier_resolve` guards the
+  # MIRROR direction against this same rule (wave_viewer.tcl:10725-10732).
+  if {[string is digit -strict $nm]} { return $nm }
+  set pfx {}
+  catch {set pfx [xschem translate $nm {@spiceprefix}]}
+  if {$pfx eq {}} { return $nm }
+  set attr format
+  if {[info exists ::lvs_netlist] && $::lvs_netlist ne {} &&
+      ![catch {expr {$::lvs_netlist ? 1 : 0}} lv] && $lv} { set attr lvs_format }
+  set fmt {}
+  catch {set fmt [xschem getprop instance_notcl $nm $attr]}
+  if {$fmt eq {}} { catch {set fmt [xschem getprop instance_notcl $nm cell::$attr]} }
+  if {$fmt eq {} && $attr ne {format}} {
+    catch {set fmt [xschem getprop instance_notcl $nm format]}
+    if {$fmt eq {}} { catch {set fmt [xschem getprop instance_notcl $nm cell::format]} }
+  }
+  return [ase::spice_seg_name $nm $pfx $fmt]
+}
+
 proc ase::show_in_browser_for_current {{win {}}} {
   # 0. the window the gesture happened in
   if {$win ne {}} {
@@ -2628,7 +2782,25 @@ proc ase::show_in_browser_for_current {{win {}}} {
   switch -- [lindex $selr 0] {
     ok {
       set selname [lindex $selr 1]
-      lappend segs $selname
+      # ⚠⚠ ISSUE 0319: THE PATH GETS THE NETLIST'S SPELLING AND `$selname` KEEPS
+      # THE SCHEMATIC'S. Two different values on purpose. The raw calls the FET
+      # the user drew as `M18` `xm18`, so the SEGMENT has to be `XM18` or the
+      # path stalls one short of the device (see `ase::spice_seg_name`), while
+      # `$selname` is what the user actually pointed at and is used for two
+      # other things this must not break: F1's digital probe at step 3c, whose
+      # `xschem getprop instance <name> model` only answers for the schematic's
+      # own spelling, and 6b's "'<name>' has no level in the simulation data"
+      # sentence, which must name what the user selected. Folding the two into
+      # one value breaks a lookup and starts reporting a name nobody typed.
+      #
+      # ⚠ AND IT IS READ HERE, IN THE DESIGN CONTEXT, FOR STEP 3b's REASON.
+      # `inst_path_segment` is an `xschem translate` and up to two `getprop
+      # instance` reads; after step 4's raise they answer about the VIEWER's own
+      # untitled buffer, which has no instances — so they would throw, be
+      # caught, and the prefix would silently never be applied while every
+      # direct check of the rule stayed green. Moving this below step 4 is a
+      # declared sabotage (S14).
+      lappend segs [ase::inst_path_segment $selname]
     }
     many {
       # RULING 2. The lower pane shows ONE level, so N targets is not a question
