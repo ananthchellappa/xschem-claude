@@ -11514,8 +11514,21 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "raw_level")) { /* set hierarchy level loaded raw file refers to */
             int n = atoi(argv[3]);
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-            if(n >= 0 && n <= xctx->currsch) {
-              xctx->raw->level = atoi(argv[3]);
+            /* The xctx->raw test is a crash fix (issue 0306 part 2), not a tidy-up.
+             * The range check is on n; nothing tested whether there was a database to
+             * write into. Both shipped callers -- open_sub_schematic and hi_descend's
+             * new-window arm, src/xschem.tcl -- emit this on the line IMMEDIATELY
+             * after `xschem raw_read`, without testing its result, and that arm
+             * CLEARS the whole registry (extra_rawfile(3, ...) sets xctx->raw = NULL)
+             * BEFORE it reads. So ANY failed read -- file moved, truncated, wrong
+             * declared type, permissions -- hands this line a NULL xctx->raw, as does
+             * the fresh context of a brand-new window. The matching getter
+             * (`xschem get raw_level`) has always answered -1 with nothing loaded;
+             * the setter segfaulted on the write to raw->level. -1 is already this
+             * arm's "did not take" answer, so no caller learns a new convention.
+             * Checks C10-C16 in tests/headless/test_raw_read_failure_0306.tcl. */
+            if(xctx->raw && n >= 0 && n <= xctx->currsch) {
+              xctx->raw->level = n;
               my_strdup2(_ALLOC_ID_, &xctx->raw->schname, xctx->sch[xctx->raw->level]);
               Tcl_SetResult(interp, my_itoa(n), TCL_VOLATILE);
             } else {

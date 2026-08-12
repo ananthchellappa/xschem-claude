@@ -1368,7 +1368,13 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
 
   if(xctx->extra_raw_n < xctx->extra_raw_size  && name && type) {
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if(xctx->extra_raw_arr[i]->sim_type &&
+      /* the sixth and last registry lookup loop, guarded like the five in
+       * extra_rawfile() (issue 0306): this one reaches a NULL rawfile through
+       * the same door -- the adopt block a dozen lines above takes whatever
+       * xctx->raw points at into slot 0, orphan included -- and survived only
+       * because its sim_type test short-circuits first, which is luck, not a
+       * guard on the thing it reads */
+      if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
          !strcmp(xctx->extra_raw_arr[i]->rawfile, name) &&
          !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
         ) break;
@@ -1638,6 +1644,31 @@ int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
   return raw_read(f, rawptr, type, no_warning, sweep1, sweep2);
 }
 
+/* Repaint the Waves menubar cue from whatever xctx->raw points at RIGHT NOW.
+ *
+ * free_rawfile() paints the cue grey unconditionally, and it is called on paths
+ * that then put a perfectly good database back: extra_rawfile()'s two
+ * restore-on-failure branches (`xctx->raw = save`) are the ones that matter --
+ * a failed read there disposes of its own half-built Raw (raw_read() and
+ * vcd_read() always did, table_read() now does too, issue 0306) and the grey
+ * that free_rawfile() left behind outlives the restore. The user is then
+ * looking at plotted waveforms under a menu that says there are none.
+ * raw_read() already re-asks sch_waves_loaded() for exactly this reason, but it
+ * asks BEFORE the restore, so its answer is about the failed read, not about
+ * what the caller ends up with. Asking again after the restore is the only
+ * place the question has the right answer. No-op without X. */
+static void update_waves_menu_cue(void)
+{
+  if(!has_x) return;
+  if(sch_waves_loaded() >= 0) {
+    tclvareval("set tctx::", xctx->current_win_path, "_waves Green", NULL);
+    tclvareval("catch {", xctx->top_path, ".menubar entryconfigure Waves -background Green}", NULL);
+  } else {
+    tclvareval("set tctx::", xctx->current_win_path, "_waves $simulate_bg", NULL);
+    tclvareval("catch {", xctx->top_path, ".menubar entryconfigure Waves -background $simulate_bg}", NULL);
+  }
+}
+
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
@@ -1695,7 +1726,17 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     my_strncpy(f, tclresult(), S(f));
     dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if( !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) break;
+      /* Skip an entry with no filename, the way the spice loop below skips one
+       * with no sim_type: strcmp(NULL, f) here IS the SIGSEGV of issue 0306
+       * part 1. The only thing that ever put such an entry in the registry --
+       * table_read()'s orphan, adopted by the insert above -- is now fixed at
+       * its source, so this is a backstop: the crash is a CONSEQUENCE of a
+       * reader breaking the "answer 0 => xctx->raw is NULL" contract, and any
+       * future reader with the same slip re-arms it. An entry with a NULL
+       * rawfile can never legitimately match a filename, so skipping it is
+       * behaviour-neutral for every state the registry can actually be in. */
+      if(xctx->extra_raw_arr[i]->rawfile &&
+         !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) break;
     }
     if(i >= xctx->extra_raw_n) { /* file not already loaded: read it and switch to it */
       int read_ret = 0;
@@ -1717,6 +1758,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
         if(xctx->extra_raw_n) { /* only restore if raw wiles were not deleted due to a failure in read_raw() */
           xctx->raw = save; /* restore */
           xctx->extra_prev_idx = xctx->extra_idx;
+          update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it; see above */
         }
       }
     } else { /* file found: switch to it */
@@ -1734,7 +1776,10 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       else if(!my_strcasecmp(type, "sp")) type = "ac";
     }
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if(xctx->extra_raw_arr[i]->sim_type &&
+      /* same NULL-rawfile skip as the non-spice loop above (issue 0306): this
+       * one only ever survived the orphan because its sim_type test happens to
+       * short-circuit first, which is luck, not a guard on the thing it reads */
+      if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
          !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
          (!type || !strcmp(xctx->extra_raw_arr[i]->sim_type, type) )
         ) break;
@@ -1763,6 +1808,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
           dbg(1, "extra_rawfile(): read: restore previous, extra_idx=%d\n",  xctx->extra_idx);
           xctx->raw = save; /* restore */
           xctx->extra_prev_idx = xctx->extra_idx;
+          update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it; see above */
         }
       }
     } else { /* file found: switch to it */
@@ -1777,8 +1823,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       tclvareval("subst {", file, "}", NULL);
       my_strncpy(f, tclresult(), S(f));
       for(i = 0; i < xctx->extra_raw_n; i++) {
-        dbg(1, "      extra_rawfile(): checking with %s\n", xctx->extra_raw_arr[i]->rawfile);
-        if(xctx->extra_raw_arr[i]->sim_type &&
+        dbg(1, "      extra_rawfile(): checking with %s\n",
+            xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>");
+        if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
            !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
            !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
           ) break;
@@ -1867,14 +1914,19 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       my_strncpy(f, tclresult(), S(f));
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
+          /* the same NULL skips as the two lookup loops above (issue 0306): a
+           * registry entry with no filename matches no filename, and the
+           * sim_type strcmp() here had no guard at all */
           if(type && type[0] &&
+              xctx->extra_raw_arr[i]->rawfile && xctx->extra_raw_arr[i]->sim_type &&
               !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
               !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
               ) {
             free_rawfile(&xctx->extra_raw_arr[i], 0, no_warning);
             found++;
             continue;
-          } else if( !(type && type[0]) && !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) {
+          } else if( !(type && type[0]) && xctx->extra_raw_arr[i]->rawfile &&
+                     !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) {
             free_rawfile(&xctx->extra_raw_arr[i], 0, no_warning);
             found++;
             continue;
@@ -1904,7 +1956,12 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       dbg(1, "extra_raw_n = %d\n", xctx->extra_raw_n);
       Tcl_AppendResult(interp, my_itoa(xctx->extra_idx), " current\n", NULL);
       for(i = 0; i < xctx->extra_raw_n; i++) {
-        Tcl_AppendResult(interp, my_itoa(i), " ", xctx->extra_raw_arr[i]->rawfile, " ",
+        /* rawfile gets the same "<NULL>" treatment sim_type already had: a NULL
+         * in the middle of Tcl_AppendResult()'s vararg list TERMINATES it, so
+         * one such entry would silently truncate the whole listing -- blinding
+         * the probe the 0306 checks use (issue 0306) */
+        Tcl_AppendResult(interp, my_itoa(i), " ",
+            xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>", " ",
             xctx->extra_raw_arr[i]->sim_type ? xctx->extra_raw_arr[i]->sim_type : "<NULL>", "\n",  NULL);
       }
     }
@@ -2097,6 +2154,45 @@ int table_read(const char *f)
   }
   err:
   dbg(0, "table_read(): failed to open file %s for reading\n", f);
+  /* A reader that answers 0 must leave xctx->raw exactly as it found it: NULL.
+   * This label is reached with a HALF-BUILT Raw whenever the two opens above
+   * disagree about the file -- the probe is a bare open(), which succeeds on a
+   * directory and on /dev/null, while my_fopen() (src/util.c) rejects anything
+   * that is not S_ISREG. The orphan left behind is INVISIBLE (raw->level is -1,
+   * so sch_waves_loaded() and `xschem raw loaded` still answer -1) and the next
+   * non-spice read adopts it into the registry and strcmp()s its NULL rawfile.
+   * vcd_read() has had this exact line at its `done:` label since it was
+   * written; table_read() was the odd one out among readers declared against
+   * the same contract (src/xschem.h, on vcd_read()), which table_read() itself
+   * enforces on ENTRY above and used to break on exit. One line kills both the
+   * crash and the ~250 KB-per-attempt leak, because the orphan is what both are
+   * made of. Issue 0306 part 1; checks S1-S5 in
+   * tests/headless/test_raw_read_failure_0306.tcl.
+   *
+   * It belongs HERE and not on every `return 0`. The other `return 0` is the
+   * ENTRY guard, which fires with an xctx->raw that belongs to SOMEONE ELSE and
+   * with nothing of its own allocated yet; freeing there would destroy a live
+   * database. That is a statement about what the guard means, not a measured
+   * result: no shipped caller can reach it, because all four
+   * read_rawfile_by_type() call sites NULL xctx->raw first (save.c's two read
+   * arms assign it directly, the three scheduler.c verbs go through
+   * extra_rawfile(3, ...)). So the placement is forward-looking and currently
+   * unexercised -- the nearest measured relative is sabotage SAB-6, which moves
+   * this free onto the SUCCESS path and kills the process a different way.
+   *
+   * The dbg() is the only externally visible trace that the orphan existed:
+   * `xschem raw loaded` answers -1 either way, which is what makes the orphan
+   * invisible in the first place. It fires ONLY when there is something to
+   * discard, so a nonexistent path (which `goto err`s before the allocation)
+   * stays silent -- checks C*f and C17 turn that difference into evidence that
+   * this line runs, which no assertion about the ABSENCE of a crash can give.
+   * no_warning=1 on the free: this dbg() has already said it, more precisely
+   * than free_rawfile()'s generic "clearing data". dr=0: a failed read must not
+   * redraw. */
+  if(xctx->raw) {
+    dbg(0, "table_read(): discarding the partially built database\n");
+    free_rawfile(&xctx->raw, 0, 1);
+  }
   return 0;
 }
 

@@ -1,7 +1,22 @@
 # 0306 — a failed raw read leaves a state the next operation crashes on
 
-**Status:** OPEN. Two independent SIGSEGVs, both **PRE-EXISTING**, both measured in this tree at
-`1afca8a2`. Documentation only — nothing was fixed, no test was written.
+**Status:** **FIXED** (2026-08-12, branch `fluid-editing`, unpushed -- SHA recorded in the follow-up commit). Both parts and
+the leak. 63 checks in `tests/headless/test_raw_read_failure_0306.tcl` (registered in
+`full_audit.sh`'s `nogui_tests`), 14 sabotage mutations, leak measured as a matched valgrind pair
+(2,278,504 bytes → 0). Receipt: `doc/claude/batch_F/receipts/16-issue-0306-failed-raw-read.md`.
+
+Three things the fix found that this issue did not name, all recorded rather than folded in:
+* `xschem raw clear <file>` and `xschem raw clear <file> <type>` are **two more crash doors** onto
+  the same orphan (`extra_rawfile()`'s `what==3` by-name arms, whose `strcmp(rawfile, ...)` had no
+  guard at all). Measured segfaulting pre-fix; fixed here, checks C18/C19.
+* `read_dataset()` leaks the same ~250 KB `Raw` on four malformed-header aborts **and destroys the
+  loaded database with it** — the same shape in a third function, and more reachable than this one.
+  Filed as **issue 0316**, deliberately not fixed here.
+* The probe `open()` still **hangs forever on a fifo**. Filed as **issue 0317**; fixing it makes
+  this fix unfalsifiable (measured as sabotage SAB-11), so it needs its own change.
+
+Two independent SIGSEGVs, both **PRE-EXISTING**, both measured in this tree at
+`1afca8a2`. Below is the original filing, unchanged.
 **Area:** `src/save.c` `table_read()` and `extra_rawfile()`'s non-spice dedup loop (part 1);
 `src/scheduler.c` the `set raw_level` arm in `xschem_cmds_s` (part 2).
 **Found:** 2026-08-09, during the adversarial review of the issue-0290 dispatch collapse
