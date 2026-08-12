@@ -239,10 +239,19 @@ whole replacement statement, which is strictly sharper.
 
 ## 6. WHAT THIS DOES NOT CLAIM
 
-* **The pixels.** A width/layout deliverable is made of pixels and this is
-  verdicted only after the user's eyes. Owed: EYEBALL_QUEUE item 5 step 7, and
-  two-pane item 14 §7.7. **Specifically including whether the divider READS as a
-  divider** — see review finding 8; no check can say that.
+* **The pixels — NOW EYEBALLED, 2026-08-12, and they PASS.** The divider reads as
+  a divider at `#b8b8b8` (review finding 8 closed by eye), and the two-row search
+  bar reads as deliberate rather than broken. Two-pane item 14 §7.7 also passed
+  in the same session, so both eyeballs this change existed to unblock are
+  discharged.
+* **What the unblocked eyeball then FOUND is not this change's defect but it is
+  this change's consequence:** at the ~250 px the grip now makes reachable, the
+  sentence drawn inside the empty pane VANISHES instead of clipping — the sea
+  canvas's `<Configure>` runs `browser_sea_refresh`, which clears the notice, so
+  a resize is treated as a navigation. Pre-existing and previously unreachable by
+  dragging, because there was nothing to drag. Filed as **issue 0318**.
+  EYEBALL_QUEUE item 5 step 7's original question (does F5 need a short form?) is
+  therefore STILL OWED, after 0318.
 * **The two-row bar's SPACING as it looks** — `BF23` proves the row split, not
   that the rows read well.
 * **Behaviour below ~350 px of sidebar** — declared in §4, not fixed.

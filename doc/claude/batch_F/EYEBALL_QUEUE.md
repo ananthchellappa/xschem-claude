@@ -786,6 +786,25 @@ verdict ☒ PASS ☐ FAIL ☒ PARTLY BLOCKED (step 7)
 > ticked, the `alldbs` kind never fires, and the line is the plain
 > `showing TOP`. Both are correct.
 >
+> **Step 7 — ANSWERED 2026-08-12, after issue 0312 shipped the divider, and the
+> answer is a DEFECT rather than a legibility verdict.** The grip made the ~250 px
+> width reachable, and at that width **the sentence does not clip — it VANISHES
+> from the pane entirely**, leaving the unexplained empty box that §F item F5
+> exists to abolish. Selecting `a1` and pressing Ctrl-Alt-V again brings it back,
+> because that mints a fresh notice. Mechanism located and filed as **issue
+> 0318**: the sea canvas's `<Configure>` is wired to `browser_sea_refresh`, whose
+> first act is `set browserseanote($token) {}` — so a RESIZE is treated as "the
+> user moved" when the user moved nothing. `browser_sea_draw`'s narrow-pane
+> `-width` floor works fine; the text never reaches it.
+>
+> **So the question step 7 was minted to answer is still owed** — "does F5 need a
+> short form for the caption and status line?" cannot be judged until the pane
+> keeps its sentence at that width. Re-ask it after 0318.
+>
+> ⚠ 0312's own pixels were eyeballed in the same session and PASS: the divider
+> reads as a divider at `#b8b8b8`, and the two-row search bar reads as
+> deliberate.
+>
 > **Step 9 — PASS.** The a9 control mentions nothing about co-simulation,
 > digital signals or a missing VCD on any surface or in the CIW, and the sidebar
 > returns to the analog root: `PANE ROWS 2`, caption `2 of 2 signals`, header
