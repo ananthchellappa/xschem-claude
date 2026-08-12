@@ -128,5 +128,92 @@ catch {addpin::escape}
 check "P3 contrast: Close button leaves the arm" [xschem get ui_state] 65536
 xschem abort_operation ; xschem abort_operation
 
+# ---------------------------------------------------------------------------
+# Q. Issue 0246 -- this form must own its OWN drop witness, so a sibling form's commit can never
+#    be credited to it. The full write-up is section W of tests/headless/test_add_wire_label.tcl;
+#    the rows here are the PIN side, which is where the identity swap is user-visible.
+#
+#    Today the two forms tell each other apart through `::sympin_place`, a bare global with two
+#    unconditional writers, two readers and no clear site. Whichever form armed LAST owns the
+#    latch, and each after_drop reads it ABOVE the 0122-E1 witness compare -- so the non-owner
+#    bails silently, keeps armed=1 and never posts the pause line (measured: pin.armed 1, status
+#    {}). With the latch stale the other way round it is worse: a genuine LABEL commit drains the
+#    PIN queue "IN OUT" -> "OUT", re-arms an iopin.sym PORT preview on the cursor of a user who is
+#    placing net labels, and posts "placing 'OUT' (inout) ...". Q2/Q5 are the detectors for that
+#    direction -- green today only because the latch happens to point the other way, and red under
+#    the sabotage variant that hands this form the shared total again.
+#
+#    THE FIX: delete the latch and split the C witness by owner (`sympin_drops_pin` /
+#    `sympin_drops_label`); this form compares a counter only a PIN commit can move, so a label
+#    drop leaves it equal to drop_snap and the E1 pause fires, as it should.
+#
+#    Headless harness: no Tk, so `winfo` is stubbed for the duration (arm/after_drop only ever ask
+#    `winfo exists`) and both forms' status procs are captured by rename; all of it is undone at
+#    the end of the section.
+# ---------------------------------------------------------------------------
+proc gi {k} { set v {} ; catch {xschem get $k} v ; if {[string is integer -strict $v]} { return $v } ; return -1 }
+
+if {[info commands winfo] ne {}} {
+  puts "SKIP: 0246 Q1-Q7 need a headless run (no Tk) -- form stubs would be wrong here"
+} else {
+  proc winfo {op args} { return 1 }
+  rename addpin::status          addpin::status_real0246
+  rename addlabel::status        addlabel::status_real0246
+  rename addlabel::status_error  addlabel::status_error_real0246
+  proc addpin::status         {msg} { set ::pst0246 $msg }
+  proc addlabel::status       {msg} { set ::lst0246 $msg }
+  proc addlabel::status_error {msg} { set ::lst0246 "ERR $msg" }
+  set ::pst0246 {} ; set ::lst0246 {}
+
+  xschem clear force
+  xschem wire 0 0 200 0
+  xschem unselect_all
+  unset -nocomplain ::sympin_place
+  addpin::on_destroy ; addlabel::on_destroy       ;# both forms in their freshly-opened state
+
+  # Q1 -- the pin form baselines ITS OWN witness at the arm, not the shared total.
+  set addpin::name "IN OUT" ; set addpin::dir inout
+  addpin::start_pass
+  check "0246 Q1 pin arm baselines the PIN witness" $addpin::drop_snap [gi sympin_drops_pin]
+
+  # the sibling arms ON TOP: the live preview is now the LABEL's, and the pin form is left armed
+  # with no preview of its own -- exactly the state a second open form puts it in.
+  set addlabel::name "A B"
+  addlabel::start_pass
+  check "0246 Q1 precondition: label owns the live preview" \
+        [list $addpin::armed $addlabel::armed [xschem get instances]] {1 1 1}
+
+  set p0 [gi sympin_drops_pin] ; set l0 [gi sympin_drops_label] ; set t0 [gi sympin_drops]
+  check "0246 Q2 precondition: the sibling's LABEL drop commits" [xschem add_wire_label -drop 40 0] 1
+  set ::pst0246 {} ; set ::lst0246 {}
+  addpin::after_drop 1                            ;# the shared .drw <ButtonRelease>, pin form first
+
+  # Q2/Q5 GUARD (green before and after; the identity-swap detectors)
+  check "0246 Q2 GUARD a label drop must not drain the pin queue" $addpin::name "IN OUT"
+  check "0246 Q5 GUARD no port preview re-armed on a label user's cursor" [xschem get instances] 1
+  # Q3/Q4 -- the pin form owns nothing here and must stop claiming it does, out loud.
+  check "0246 Q3 non-owner pin form disarms" $addpin::armed 0
+  check "0246 Q4 the 0122-E1 pause line is reachable for the pin form" $::pst0246 \
+        "placement paused (another action took over) -- edit the name or reopen to resume"
+
+  # Q6 GUARD -- the OWNER's own drain still works: queue advances "A B" -> "B" and the next
+  # preview arms (1 committed lab_pin + 1 live preview = 2 instances).
+  addlabel::after_drop 1
+  check "0246 Q6 GUARD the owning form still drains and re-arms" \
+        [list $addlabel::name [xschem get instances]] {B 2}
+
+  # Q7 -- the parts add up to the whole across a CROSS-FORM commit, and the pin part never moved.
+  set p1 [gi sympin_drops_pin] ; set l1 [gi sympin_drops_label] ; set t1 [gi sympin_drops]
+  check "0246 Q7 parts add up, pin witness unmoved by a label commit" \
+        [list [expr {$t1 - $t0}] [expr {($p1 - $p0) + ($l1 - $l0)}] [expr {$p1 - $p0}]] {1 1 0}
+
+  set addpin::armed 0 ; set addlabel::armed 0
+  xschem abort_operation
+  rename addpin::status         {} ; rename addpin::status_real0246         addpin::status
+  rename addlabel::status       {} ; rename addlabel::status_real0246       addlabel::status
+  rename addlabel::status_error {} ; rename addlabel::status_error_real0246 addlabel::status_error
+  rename winfo {}
+}
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

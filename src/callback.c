@@ -3291,6 +3291,23 @@ static int log_placed_instance(void)
   return 1;
 }
 
+/* issue 0246: WHO owns the sympin drop that is about to be counted. wirelabel_preview is the
+ * exact discriminator, but ONLY here inside the commit funnel: the two pin arms force it to 0
+ * (scheduler.c add_symbol_pin / add_sch_pin -place), the label arm sets it (add_wire_label
+ * -place), and wire_label_try_commit() calls end_move_copy_logged() BEFORE zeroing it. By the
+ * time either Tcl after_drop runs it is already down, which is why the split has to happen in C.
+ * Kept as two tiny functions on purpose: the fix must be neutralizable by a macro rename. */
+static int sympin_owner_is_label(void)
+{
+  return xctx && xctx->wirelabel_preview;
+}
+static void sympin_count_owner(void)
+{
+  if(!xctx) return;
+  if(sympin_owner_is_label()) xctx->sympin_drops_label++;
+  else                        xctx->sympin_drops_pin++;
+}
+
 /* action-log Layer C (spec section 2): complete a move/copy drag and record
  * the single command reproducing its effect. The two callback completion
  * paths (end_place_move_copy_zoom and the intuitive-interface release) both
@@ -3340,8 +3357,14 @@ static void end_move_copy_logged(int is_copy)
    * add_symbol_pin / add_wire_label, scheduler.c) and still 1 here (cleared AFTER this funnel) --
    * so a NON-form START_SYMPIN placement that also uses this machinery (place_net_label,
    * add_graph, add_image, image paste) does NOT bump the count and cannot make an armed form
-   * spuriously drain. Bump BEFORE the nothing/early returns so even a no-motion drop is recorded. */
-  if((ui & START_SYMPIN) && xctx->sympin_preview) xctx->sympin_drops++;
+   * spuriously drain. Bump BEFORE the nothing/early returns so even a no-motion drop is recorded.
+   * issue 0246: the same drop is also counted PER OWNER (sympin_count_owner, above) in this one
+   * place and under this one gate, so total == pin + label always holds and no second gate can
+   * drift from this one. */
+  if((ui & START_SYMPIN) && xctx->sympin_preview) {
+    xctx->sympin_drops++;
+    sympin_count_owner();
+  }
 
   if(is_copy) copy_objects(END);
   else        move_objects(END, 0, 0, 0);

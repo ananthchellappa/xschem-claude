@@ -1614,7 +1614,20 @@ typedef struct {
                        * funnel; aborts and off-copper label refusals never reach it). The Tcl
                        * form procs snapshot `xschem get sympin_drops` at arm and compare after a
                        * drop: an unchanged count means NO real drop happened (an external gesture
-                       * aborted the preview), so the queue/name entry must NOT drain. */
+                       * aborted the preview), so the queue/name entry must NOT drain.
+                       * KEPT as the total for existing callers (issue 0246 D2); the two parts
+                       * below carry the OWNER and are what the forms actually compare now. */
+  /* issue 0246: the SAME witness split by OWNER, so a form can never be credited with a sibling
+   * form's drop (`::sympin_place`, the write-only Tcl owner latch these replace, was written
+   * unconditionally after a `-place` that could be a no-op, was never cleared, and was read ABOVE
+   * the E1 compare -- so a stale value suppressed the very pause E1 exists to deliver).
+   * Bumped in the SAME funnel inside the SAME gate as the total, discriminated by
+   * wirelabel_preview (1 = a net-label commit, 0 = a pin commit: both pin arms force it to 0
+   * (scheduler.c), the label arm sets it, and wire_label_try_commit clears it only AFTER calling
+   * end_move_copy_logged). Invariant asserted by the tests:
+   *   sympin_drops == sympin_drops_pin + sympin_drops_label. */
+  int sympin_drops_pin;
+  int sympin_drops_label;
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;

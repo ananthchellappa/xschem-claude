@@ -10986,9 +10986,11 @@ namespace eval addpin {
   # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
   variable pending        {}
   variable current        {}
-  # issue 0122 E1: `xschem get sympin_drops` snapshot taken when the current preview is armed.
+  # issue 0122 E1: `xschem get sympin_drops_pin` snapshot taken when the current preview is armed.
   # after_drop only advances/drains if the count actually rose (a real commit) -- so an external
   # gesture that abandoned the preview cannot make a stray click consume an un-placed name.
+  # issue 0246: it is the PIN part of the witness, not the shared total, so a drop committed by
+  # the Add-Wire-Label form leaves it equal and this form pauses instead of draining.
   variable drop_snap      0
 }
 
@@ -10996,6 +10998,12 @@ proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
 
 # START_SYMPIN (xschem.h) = 16384: an Add-Pin preview is attached to the cursor.
 proc addpin::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+# issue 0246: MY committed drops. The C splits the one commit-funnel count by owner
+# (wirelabel_preview at the bump, callback.c), which is the only place that fact is still live --
+# it is already cleared by the time after_drop runs. This replaces `::sympin_place`, a bare global
+# that was written after a `-place` that may have armed nothing, never cleared, and read ABOVE the
+# E1 compare, so a stale value silently suppressed the pause.
+proc addpin::drops {} { return [xschem get sympin_drops_pin] }
 proc addpin::abort_if_placing {} { if {[addpin::placing]} { catch {xschem abort_operation} } }
 
 # map the human Direction label to the stored dir token (in/out/inout)
@@ -11043,14 +11051,15 @@ proc addpin::after_drop {b} {
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[addpin::placing]} return   ;# preview still attached -> no drop happened
-  # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
-  # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
-  if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
-  # issue 0122 E1: require a REAL commit. If the drop count did not rise, this ButtonRelease is
-  # not our pin drop -- e.g. the user started an unrelated canvas gesture (wire/move) that
-  # abandoned the preview (placing cleared, but armed/latch still ours). Do not consume a name;
-  # disarm and tell the user placement paused (E1-F2) -- editing the name or reopening re-arms.
-  if {[xschem get sympin_drops] == $drop_snap} {
+  # issue 0122 E1: require a REAL PIN commit. If MY part of the drop count did not rise, this
+  # ButtonRelease is not our pin drop. Two ways that happens, and both end here (issue 0246):
+  #  - an unrelated canvas gesture (wire/move) abandoned the preview (placing cleared, armed ours);
+  #  - the Add-Wire-Label form is ALSO open and IT armed the preview that just committed
+  #    (add_wire_label.md #8, cross-form drop cross-talk) -- its commit moves the LABEL part only.
+  # Either way do not consume a name: disarm and tell the user placement paused (E1-F2) -- editing
+  # the name or reopening re-arms. Saying so is the point: the sibling's `-place` already tore this
+  # form's preview down, so staying armed and silent was a lie about the gesture (0244/0267/0270).
+  if {[addpin::drops] == $drop_snap} {
     set armed 0
     addpin::status "placement paused (another action took over) -- edit the name or reopen to resume"
     return
@@ -11100,10 +11109,9 @@ proc addpin::arm {} {
   set ::pin_new_name $current
   set ::pin_new_dir  $d
   xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
-  set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
   variable drop_snap
-  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
+  set drop_snap [addpin::drops]  ;# issue 0122 E1 / 0246: PIN witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
@@ -11372,7 +11380,10 @@ namespace eval addlabel {
   variable last           {}
   variable pending        {}
   variable current        {}
-  variable drop_snap      0   ;# issue 0122 E1: sympin_drops witness for the armed preview
+  # issue 0122 E1 / 0246: the LABEL part of the committed-drop witness, snapshotted at the arm.
+  # Not the shared total: a drop committed by the Add-Pin form must leave it equal, so this form
+  # pauses instead of draining a name it never placed.
+  variable drop_snap      0
 }
 
 proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
@@ -11382,6 +11393,8 @@ proc addlabel::status_error {msg} { catch {.addlabel.status configure -style Add
 # START_SYMPIN (xschem.h) = 16384: a preview is attached to the cursor.
 proc addlabel::placing {} { return [expr {[xschem get ui_state] & 16384}] }
 proc addlabel::abort_if_placing {} { if {[addlabel::placing]} { catch {xschem abort_operation} } }
+# issue 0246: MY committed drops -- the LABEL half of the split C witness (see addpin::drops).
+proc addlabel::drops {} { return [xschem get sympin_drops_label] }
 
 # ---- pure helper (no Tk; headless-testable, see tests/headless/test_add_wire_label.tcl) ----
 # Split a Label Name entry into placement names. Tokens separate on any run of whitespace and/or
@@ -11445,13 +11458,12 @@ proc addlabel::after_drop {b} {
   if {!$armed} return
   if {![winfo exists .addlabel]} { set armed 0; return }
   if {[addlabel::placing]} return   ;# preview still attached (not committed, or refused) -> wait
-  # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
-  # label queue (add_wire_label.md #8: cross-form drop cross-talk).
-  if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
-  # issue 0122 E1: require a REAL commit -- a stray ButtonRelease after an external gesture
-  # abandoned the preview must not consume a queued label (see addpin::after_drop). Disarm and
-  # tell the user placement paused (E1-F2); editing the name or reopening re-arms.
-  if {[xschem get sympin_drops] == $drop_snap} {
+  # issue 0122 E1 / 0246: require a REAL LABEL commit -- a stray ButtonRelease after an external
+  # gesture abandoned the preview, or after the ALSO-open Add-Pin form's own drop committed
+  # (add_wire_label.md #8, cross-form drop cross-talk: a pin commit moves the PIN part only), must
+  # not consume a queued label (see addpin::after_drop). Disarm and tell the user placement paused
+  # (E1-F2); editing the name or reopening re-arms.
+  if {[addlabel::drops] == $drop_snap} {
     set armed 0
     addlabel::status "placement paused (another action took over) -- edit the name or reopen to resume"
     return
@@ -11503,10 +11515,9 @@ proc addlabel::arm {} {
   set last $current
   set ::label_new_name $current
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
-  set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
   set armed 1
   variable drop_snap
-  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
+  set drop_snap [addlabel::drops]  ;# issue 0122 E1 / 0246: LABEL witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"

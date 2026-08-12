@@ -68,6 +68,36 @@ xschem add_sch_pin -place
 check "add_sch_pin -place is a no-op in symbol view (no new rect)" [xschem get rects 5] $r0
 check "add_sch_pin -place is a no-op in symbol view (no arm)"      [placing] 0
 
+# ---------------------------------------------------------------------------
+# S13. DOCUMENTED RESIDUE of issue 0246 (green before the fix and after) -- keep this row and
+#      issue 0402 in step with each other.
+#
+#      In a symbol view `xschem add_wire_label -place` short-circuits (scheduler.c) and arms
+#      NOTHING: wirelabel_preview stays 0. addlabel::arm nevertheless sets armed=1 and posts
+#      "placing '<name>' ..." unconditionally, because the write sits AFTER the -place with no
+#      "did the C actually arm?" check. 0246 removes the HARM of that lie -- once the drop witness
+#      is split per owner, a label form that armed nothing can never move sympin_drops_label, so
+#      it can no longer drain a name on somebody else's commit -- but NOT the lie itself, which is
+#      a user-visible change (an error line instead of a placing line) and is filed as 0402.
+#      This row pins the residue so the day 0402 is fixed, it fails here and gets updated
+#      deliberately rather than silently.
+# ---------------------------------------------------------------------------
+if {[info commands winfo] ne {}} {
+  puts "SKIP: 0246 S13 needs a headless run (no Tk)"
+} else {
+  proc winfo {op args} { return 1 }
+  xschem load $symfile
+  check "S13 precondition: back in the lib symbol view" [xschem get editing_symbol_view] 1
+  set addlabel::last {} ; set addlabel::armed 0
+  set addlabel::name RESIDUE
+  addlabel::start_pass
+  check "S13 residue: an arm that armed nothing still claims armed (issue 0402)" \
+        [list [xschem get wirelabel_preview] $addlabel::armed] {0 1}
+  set addlabel::armed 0 ; set addlabel::last {} ; set addlabel::name {}
+  xschem abort_operation
+  rename winfo {}
+}
+
 catch {file delete -force $W}
 puts "PASS=$npass FAIL=$fail"
 if {$fail == 0} { puts "OVERALL: ok" } else { puts "OVERALL: FAIL" }

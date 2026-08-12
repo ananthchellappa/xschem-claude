@@ -4892,6 +4892,18 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->sympin_drops),TCL_VOLATILE);
           }
+          /* issue 0246: the same witness split by OWNER. Each form snapshots and compares only
+           * its own part, so a sibling form's commit can never drain its queue (this replaces
+           * the write-only `::sympin_place` Tcl latch). sympin_drops above stays the total for
+           * existing callers: sympin_drops == sympin_drops_pin + sympin_drops_label. */
+          else if(!strcmp(argv[2], "sympin_drops_pin")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops_pin),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "sympin_drops_label")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops_label),TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "sympin_preview")) { /* issue 0240: live form preview flag; it must
                                                          * never outlive START_SYMPIN (issue 0123 desync) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
