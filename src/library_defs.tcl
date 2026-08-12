@@ -214,6 +214,12 @@ proc library_resolve {name} {
 # an empty .sch over the source. See the §B table in
 # doc/claude/specs/mixed_signal_signal_browser.md.
 #
+# The `text` type (.md/.txt) is the same argument applied to PROSE, and it earns
+# a row for a reason beyond safety: documentation nobody can find is
+# documentation nobody reads. A cell's README belongs in its view list next to
+# its schematic, where the Library Manager already sends people, not in a
+# directory they must go spelunking for. Spec: doc/claude/specs/text_view_type.md.
+#
 # These four procs are that single table. Consumers:
 #   copyform::view_type    ext  -> type            (src/copy_form.tcl)
 #   library_new_view       type -> ext + seed      (below)
@@ -230,6 +236,7 @@ proc view_type_of_ext {ext} {
     .state        { return state }
     .v    - .sv   { return verilog }
     .va   - .vams { return veriloga }
+    .md   - .markdown - .txt - .text { return text }
     default       { return data }
   }
 }
@@ -245,6 +252,7 @@ proc view_exts_of_type {type} {
     symbol    { return {.sym} }
     verilog   { return {.v .sv} }
     veriloga  { return {.va .vams} }
+    text      { return {.md .txt} }
     default   { return {} }
   }
 }
@@ -255,15 +263,15 @@ proc view_ext_of_type {type} { return [lindex [view_exts_of_type $type] 0] }
 # View type -> who opens it:
 #   editor  the xschem canvas (`xschem load`)   -- schematic, symbol
 #   ase     the ASE-L simulation-state window   -- state
-#   text    a text editor (edit_file)           -- verilog, veriloga
+#   text    a text editor (edit_file)           -- verilog, veriloga, text
 # `data` stays `editor` deliberately: that is the status quo for the unknown
-# extension, and narrowing it is a separate decision from fixing the two types
-# this table now knows are source code.
+# extension, and narrowing it is a separate decision from fixing the types this
+# table knows are source code or prose.
 proc view_type_opener {type} {
   if {[string match *_state* $type] || $type eq "state"} { return ase }
   switch -- $type {
-    verilog - veriloga { return text }
-    default            { return editor }
+    verilog - veriloga - text { return text }
+    default                   { return editor }
   }
 }
 
@@ -373,8 +381,8 @@ proc cell_views {libname cell} {
 
 # abs_sym_path rule 2: resolve a lib-qualified reference "lib/cell[.ext]" under
 # the new layout. The view is inferred from the extension through the one
-# view-type table above: .sch -> schematic, .v -> verilog, .va -> veriloga, and
-# EVERYTHING else -> symbol. That last clause is why `default` cannot simply be
+# view-type table above: .sch -> schematic, .v -> verilog, .va -> veriloga,
+# .md/.txt -> text, and EVERYTHING else -> symbol. That last clause is why `default` cannot simply be
 # view_type_of_ext's answer: a bare, extension-less "lib/cell" is the common
 # case and must keep meaning "the symbol to instantiate". Only extensions the
 # table actually names divert. Before this, `lib/cell.v` silently resolved to
@@ -387,6 +395,7 @@ proc lib_qualified_abs {fname} {
   switch -- [view_type_of_ext [file extension $rest]] {
     verilog  { return [cellview_resolve_typed $libname $cell verilog] }
     veriloga { return [cellview_resolve_typed $libname $cell veriloga] }
+    text     { return [cellview_resolve_typed $libname $cell text] }
     schematic { set view schematic }
     default   { set view symbol }
   }
@@ -982,15 +991,37 @@ proc library_veriloga_seed {cell pins} {
   return $body
 }
 
+# Seed body for a new `text` view — the cell's documentation, opened from the
+# Library Manager like any other view (doc/claude/specs/text_view_type.md).
+# Markdown, because that is what the rest of this repo's prose is written in and
+# it stays readable in a plain editor. Seeded with the heading and the view
+# inventory rather than left empty: a blank file gets closed again, and the one
+# thing the author always has to hand is what the cell already contains.
+proc library_text_seed {lib cell view} {
+  set body "# $cell\n\n"
+  append body "<!-- $lib/$cell, `$view` view. Opened by the Library Manager in\n"
+  append body "     the configured text editor; no xschem window is involved. -->\n\n"
+  set views {}
+  catch {set views [cell_views $lib $cell]}
+  set others {}
+  foreach v $views { if {$v ne $view} { lappend others $v } }
+  if {[llength $others]} {
+    append body "Views: [join $others {, }].\n\n"
+  }
+  append body "## What this cell is\n\n\n## How to use it\n\n"
+  return $body
+}
+
 # Create a new empty view of a given editor type (schematic|symbol|verilog|
-# veriloga|ngspice_state*) under a free name. The cell must already exist; the
+# veriloga|text|ngspice_state*) under a free name. The cell must already exist; the
 # view must not. The type -> extension mapping is view_ext_of_type's, the one
 # table (it used to be an inline `$type eq "symbol" ? "sym" : "sch"`, so every
 # type that was not `symbol` or a state got a .sch datafile -- a `verilog` view
 # was created as an empty SCHEMATIC). An ngspice_state* type seeds an ASE
 # simulation-state view (doc/claude/specs/ase_l.md); verilog/veriloga seed a
 # module header from the cell's symbol pins (§B4), because an empty .v is
-# useless and a wrong-ported one is worse.
+# useless and a wrong-ported one is worse; `text` seeds a Markdown skeleton
+# listing the cell's other views (doc/claude/specs/text_view_type.md).
 proc library_new_view {lib cell view {type schematic}} {
   set lp [library_resolve $lib]
   if {$lp eq {}} { error "no such library: $lib" }
@@ -1017,6 +1048,9 @@ proc library_new_view {lib cell view {type schematic}} {
     }
     veriloga {
       library_write_textfile $df [library_veriloga_seed $cell [library_symbol_pins $lib $cell]]
+    }
+    text {
+      library_write_textfile $df [library_text_seed $lib $cell $view]
     }
     default {
       library_write_empty_cellfile $df

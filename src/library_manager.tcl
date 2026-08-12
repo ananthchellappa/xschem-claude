@@ -456,10 +456,11 @@ proc libmgr::view_handler {view {path {}}} {
   }
 }
 
-# Handler for source-code views (verilog, veriloga): hand the datafile to the
-# configured text editor. edit_file already falls back to the internal text
-# window when $editor is not executable (editor-missing-fallback), so this needs
-# no display check of its own.
+# Handler for every view whose opener is `text` — source code (verilog,
+# veriloga) and prose (text: a cell's README, doc/claude/specs/text_view_type.md).
+# Hand the datafile to the configured text editor. edit_file already falls back
+# to the internal text window when $editor is not executable
+# (editor-missing-fallback), so this needs no display check of its own.
 #
 # Logs NO action line, like the ASE arm: `edit_file` spawns an external process,
 # which is not a replayable xschem operation — a replay must not fork gvim.
@@ -1290,6 +1291,8 @@ proc libmgr::view_dialog {title srclib srccell srcview} {
 #   schematic/symbol  empty .sch/.sym body
 #   verilog/veriloga  a source file seeded with a module header built from the
 #                     cell's symbol pins (doc/claude/specs/mixed_signal_signal_browser.md §B4)
+#   text              the cell's documentation, a .md seeded with a heading and
+#                     the cell's other views (doc/claude/specs/text_view_type.md)
 #   ngspice_state1    an ASE simulation-state view (doc/claude/specs/ase_l.md)
 # The combobox values must stay a subset of what view_ext_of_type creates —
 # library_new_view now errors on an unknown type instead of quietly writing a
@@ -1304,7 +1307,7 @@ proc libmgr::newview_dialog {lib cell} {
   ttk::label $d.l1 -text "View name:"
   ttk::entry $d.name -width 28
   ttk::label $d.l2 -text "Editor type:"
-  ttk::combobox $d.type -state readonly -values {schematic symbol verilog veriloga ngspice_state1}
+  ttk::combobox $d.type -state readonly -values {schematic symbol verilog veriloga text ngspice_state1}
   $d.type set schematic
   ttk::frame $d.b
   ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}

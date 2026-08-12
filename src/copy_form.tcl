@@ -30,6 +30,8 @@
 #       <cell>.v/.sv      -> verilog  (source code; opens in a TEXT editor, never
 #                                      `xschem load` — doc/claude/specs/mixed_signal_signal_browser.md)
 #       <cell>.va/.vams   -> veriloga
+#       <cell>.md/.txt    -> text     (the cell's documentation, in its view list
+#                                      — doc/claude/specs/text_view_type.md)
 #       anything else     -> data
 #   The table itself lives once, in library_defs.tcl (view_type_of_ext and
 #   friends); this proc only supplies the datafile.

@@ -207,7 +207,13 @@ SANDBOX/counter/verilog/counter.v                         the only implementatio
 SANDBOX/tb_counter_wrapper/schematic/tb_counter_wrapper.sch
 SANDBOX/tb_counter_wrapper/symbol/tb_counter_wrapper.sym
 SANDBOX/tb_counter_wrapper/ngspice_state1/tb_counter_wrapper.state   ASE-L setup
+SANDBOX/tb_counter_wrapper/README/tb_counter_wrapper.md             this file
 ```
+
+This file is itself a **view** — type `text`, so it appears in the Library
+Manager's view list beside `schematic` and `ngspice_state1`, and opening it
+hands it to your text editor instead of `xschem load`. See
+`doc/claude/specs/text_view_type.md`.
 
 Related: `tools/cosim/README.md` (the build script and the shim patches),
 `doc/claude/specs/mixed_signal_signal_browser.md` (why any of this is shaped the
