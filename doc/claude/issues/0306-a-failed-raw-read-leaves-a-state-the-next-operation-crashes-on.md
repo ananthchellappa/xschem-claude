@@ -1,6 +1,6 @@
 # 0306 — a failed raw read leaves a state the next operation crashes on
 
-**Status:** **FIXED** (2026-08-12, branch `fluid-editing`, unpushed -- SHA recorded in the follow-up commit). Both parts and
+**Status:** **FIXED** in `c6743aff` (2026-08-12, branch `fluid-editing`, unpushed). Both parts and
 the leak. 63 checks in `tests/headless/test_raw_read_failure_0306.tcl` (registered in
 `full_audit.sh`'s `nogui_tests`), 14 sabotage mutations, leak measured as a matched valgrind pair
 (2,278,504 bytes → 0). Receipt: `doc/claude/batch_F/receipts/16-issue-0306-failed-raw-read.md`.

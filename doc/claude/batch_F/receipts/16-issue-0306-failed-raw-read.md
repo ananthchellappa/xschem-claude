@@ -1,6 +1,6 @@
 # Receipt 16 — issue 0306: a failed raw read leaves a state the next operation crashes on
 
-**Branch** `fluid-editing`. **Commit** recorded in the follow-up doc commit. **Nothing pushed.** Issue 0315 untouched.
+**Branch** `fluid-editing`. **Commit** `c6743aff`. **Nothing pushed.** Issue 0315 untouched.
 **Task brief** `doc/claude/suggestions/next_task_0306_failed_raw_read_crashes.md`.
 **Issue** `doc/claude/issues/0306-a-failed-raw-read-leaves-a-state-the-next-operation-crashes-on.md`.
 
