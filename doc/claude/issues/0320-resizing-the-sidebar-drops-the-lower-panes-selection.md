@@ -1,6 +1,6 @@
 # 0320 — resizing the sidebar drops the lower pane's selection
 
-**Status:** OPEN. Not fixed. Found while fixing issue 0318 (fixed by f6e3b20a); deliberately NOT
+**Status:** OPEN. Not fixed. Found while fixing issue 0318 (fixed by 95a7e3ce); deliberately NOT
 widened into it (0318's brief: a further door onto "a geometry event is treated
 as navigation" gets its own issue).
 **Area:** `src/wave_viewer.tcl` — `browser_sea_configure` → `browser_sea_refresh`

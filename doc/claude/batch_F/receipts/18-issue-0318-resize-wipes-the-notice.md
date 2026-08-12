@@ -3,7 +3,7 @@
 **Task** `doc/claude/suggestions/next_task_0318_resize_wipes_in_pane_notice.md`
 **Issue** `doc/claude/issues/0318-resizing-the-sidebar-wipes-the-in-pane-notice.md`
 **Branch** `fluid-editing` · start HEAD `a34dbf80` · **nothing pushed**
-**Commit** `f6e3b20a` (unpushed)
+**Commit** `95a7e3ce` (unpushed)
 **Files** `src/wave_viewer.tcl`, new `tests/headless/test_wave_sigbrowser_0318.tcl`,
 new `doc/claude/issues/0320-…md`, this receipt, the issue's Status line.
 
