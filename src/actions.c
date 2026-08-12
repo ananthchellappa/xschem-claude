@@ -3934,16 +3934,17 @@ void clear_schematic(int cancel, int symbol)
                              * belong to a different buffer. */
         remove_symbols();
         clear_drawing();
-        /* next free untitled[-n] name, avoiding both on-disk files and names already open
-         * in other windows so a blank window does not collide (issue 0056) */
+        /* next free untitled[-n] name, avoiding both files already in pwd_dir -- the very
+         * directory the buffer path is composed from just below, which is what issue 0323
+         * is about -- and names already open in other windows (issue 0056) */
         if(symbol == 1) {
           xctx->netlist_type = CAD_SYMBOL_ATTRS;
           set_tcl_netlist_type();
-          get_unused_untitled_name(1, name, S(name));
+          get_unused_untitled_name(pwd_dir, 1, name, S(name));
         } else {
           xctx->netlist_type = CAD_SPICE_NETLIST;
           set_tcl_netlist_type();
-          get_unused_untitled_name(0, name, S(name));
+          get_unused_untitled_name(pwd_dir, 0, name, S(name));
         }
         my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
         my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);

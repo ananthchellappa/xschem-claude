@@ -1,11 +1,11 @@
 # 0323 — the untitled namer probes one directory and writes into another, clobbering unsaved work
 
-Status: **OPEN** — filed 2026-08-12, found while fixing **0322**. Not fixed: 0322's scope was the
-litter, and this is a C-side correctness bug that deserves its own decision.
+Status: **FIXED** 2026-08-12, by option 1 below. Filed while fixing **0322**.
 
 Area: `get_unused_untitled_name()` (`src/xinit.c:170-182`) vs its two path-composing callers,
 `load_schematic()` (`src/save.c:4413-4421`) and `clear_schematic()` (`src/actions.c:3946-3949`)
-Tests: none yet
+Tests: `tests/headless/test_untitled_name_dir_0323.tcl` (8 checks, pure headless; runs the two
+arms in CHILD xschem processes because the property is decided by the child's startup cwd/`$PWD`)
 Found: 2026-08-12, by the background sweep filed under 0322; verified directly
 Related: **0322** (the litter this came out of), **0056** (the open-window arm of the same namer)
 
@@ -90,20 +90,56 @@ matching `cd $save` leaves the desync latched for the rest of the session. A use
 custom hook that `cd`s without restoring latches it immediately. **Not yet reproduced through the
 GUI** — the proof above is scripted.
 
-## Candidate fixes, not yet chosen
+## The fix
 
-1. **Probe the directory the caller will actually use.** Give `get_unused_untitled_name()` the
-   destination directory as an argument and `stat()` an absolute path built from it. Fixes the
-   overwrite and the mislocation together; touches the two callers and `src/xinit.c`.
-2. **Resolve the directory once, at the namer.** Have it call `getcwd()` itself and hand back an
-   absolute path, making the callers' `$PWD`/`pwd_dir` composition redundant. Changes where
-   untitled buffers land after a `cd`, which is arguably the *correct* behaviour but is a
-   user-visible change.
-3. **Keep `pwd_dir` fresh.** Narrowest, but only masks the class — any future caller that composes
-   from a different base reopens it.
+Three options were on the table:
 
-Option 1 preserves current placement semantics and closes the data-loss path, so it is the
-conservative pick. Whichever is taken, the fix wants a regression test built on the probe above:
-`cd` away, save an untitled buffer, assert both *where* it landed and that a pre-existing file of
-that name at the destination was not overwritten. `test_descend_untitled_preserve.tcl:33`'s comment
-must be corrected or its `cd` made effective at the same time.
+1. **Probe the directory the caller will actually use** — pass the destination in, `stat()` an
+   absolute path.
+2. **Resolve the directory at the namer** (`getcwd()` inside it), making the callers'
+   `$PWD`/`pwd_dir` composition redundant. This would *relocate* untitled buffers after a `cd`.
+3. **Keep `pwd_dir` fresh** — narrowest, and masks the class rather than closing it.
+
+**Option 1 was taken.** It closes the data-loss path without changing where untitled buffers land;
+option 2 additionally changes user-visible placement, which is a separate decision and not one this
+issue needed to make.
+
+`get_unused_untitled_name()` grows a leading `dir` argument (`src/xschem.h:2851`,
+`src/xinit.c:170`) and probes `dir/name` instead of a bare relative basename. Both callers now
+resolve the destination directory **before** naming: `src/save.c` hoists its
+`getenv("PWD")`/`pwd_dir` choice above the call and passes `xctx->current_dirname`;
+`src/actions.c` passes `pwd_dir`, the same variable it composes the path from two lines later. A
+NULL/empty `dir` falls back to `pwd_dir`.
+
+The `untitled_basename_open()` arm (issue 0056) was deliberately left directory-blind. Matching on
+the basename alone can only make it skip a number it did not have to, never reuse one — it cannot
+lose data, and narrowing it is how 0056 comes back.
+
+## Verification
+
+`tests/headless/test_untitled_name_dir_0323.tcl`, 8 checks, all passing. Sabotage-verified: with
+the probe reverted to the relative form (`"%s"` instead of `"%s/%s"`), 3 of the 8 go red, including
+the one that matters —
+
+```
+FAIL: B: clear-after-cd skips the occupied name -> {untitled.sch} (exp {untitled-1.sch}) : FAIL
+FAIL: B: the occupied file SURVIVES (0323 data loss) -> {v {xschem version=3.4.8RC ...
+FAIL: B: the new buffer was actually written -> {0} (exp {1}) : FAIL
+```
+
+Arm A passes under the sabotage by design (at startup cwd == `$PWD`, so there is nothing to
+desync); it is there to catch a wrong `dir` argument at the `save.c` call site.
+
+Regression arm, all green, no litter: `test_untitled_reuse`, `test_pristine_untitled_basename`,
+`test_descend_untitled_preserve`, `test_pristine_untitled_viewer_0172` (41), `test_backup_file`,
+`test_placement_wire_gate` (171), `test_descend_symbol`, `test_readonly`.
+
+## What this does NOT change
+
+Because option 1 preserves placement, a `cd` still does not move an untitled buffer — the path is
+still composed from the startup directory. `test_untitled_reuse` and `test_descend_untitled_preserve`
+therefore still each leave one `untitled~.sch` in the launch directory (measured after the fix).
+That is gitignored, same name overwritten in place, and no longer dangerous now that the probe and
+the write agree. `test_descend_untitled_preserve.tcl:32`'s comment claimed the `cd` relocated the
+buffer; it never did, and it now says so and points at the child-process technique the 0323 test
+uses to actually control the directory.

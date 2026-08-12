@@ -164,18 +164,32 @@ static int untitled_basename_open(const char *base)
 }
 
 /* Pick the next free "untitled[-n].sch" (or .sym when `symbol`) BASENAME into `name`.
- * A candidate is taken if a file with it exists in the current directory OR an open
- * window/tab already edits a buffer with that basename (issue 0056). Callers prepend the
- * directory themselves. Shared by save.c (empty-filename load) and actions.c (discard). */
-void get_unused_untitled_name(int symbol, char *name, int namesize)
+ * A candidate is taken if a file with it exists in `dir` OR an open window/tab already
+ * edits a buffer with that basename (issue 0056). Callers prepend the directory themselves.
+ * Shared by save.c (empty-filename load) and actions.c (discard).
+ *
+ * `dir` MUST be the same directory the caller composes the buffer path from. It used to be
+ * implicit and that was a data-loss bug (issue 0323): the stat() probed a bare relative
+ * basename, i.e. the LIVE process cwd, while both callers build the path from $PWD /
+ * pwd_dir captured at startup. Tcl's `cd` updates neither, so after any cd the probe and
+ * the write landed in different directories -- and the loop would then hand back a name
+ * that was already occupied at the destination, silently overwriting an unsaved buffer.
+ *
+ * The untitled_basename_open() arm below stays directory-blind on purpose: matching on the
+ * basename alone can only make it skip a number it did not have to, never reuse one, so it
+ * cannot lose data -- and narrowing it is how issue 0056 would come back. */
+void get_unused_untitled_name(const char *dir, int symbol, char *name, int namesize)
 {
   int n;
   struct stat buf;
+  char probe[PATH_MAX];
   const char *ext = symbol ? "sym" : "sch";
+  if(!dir || !dir[0]) dir = pwd_dir;
   for(n = 0;; ++n) {
     if(n == 0) my_snprintf(name, namesize, "untitled.%s", ext);
     else my_snprintf(name, namesize, "untitled-%d.%s", n, ext);
-    if(!stat(name, &buf)) continue;            /* exists on disk */
+    my_snprintf(probe, S(probe), "%s/%s", dir, name);
+    if(!stat(probe, &buf)) continue;           /* exists in `dir`, the write destination */
     if(untitled_basename_open(name)) continue; /* open in another window */
     break;
   }

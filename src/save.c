@@ -4408,16 +4408,20 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* if(reset_undo) xctx->time_last_modify = time(NULL); */ /* no file given, set mtime to current time */
     if(reset_undo) xctx->time_last_modify = 0; /* no file given, set mtime to 0 (undefined) */
     clear_drawing();
-    /* next free untitled[-n] name, avoiding both on-disk files and names already open in
-     * other windows so a second blank window does not collide (issue 0056) */
-    get_unused_untitled_name(xctx->netlist_type == CAD_SYMBOL_ATTRS, name, S(name));
-    my_strncpy(xctx->current_name, name, S(xctx->current_name));
+    /* Resolve the destination directory FIRST: the untitled namer probes it for a free
+     * number, and probing anywhere else than where we are about to write is how issue 0323
+     * silently overwrote an occupied untitled.sch. */
     if(getenv("PWD")) {
       /* $env(PWD) better than pwd_dir as it does not dereference symlinks */
       my_strncpy(xctx->current_dirname, getenv("PWD"), S(xctx->current_dirname));
     } else {
       my_strncpy(xctx->current_dirname, pwd_dir, S(xctx->current_dirname));
     }
+    /* next free untitled[-n] name, avoiding both files already in that directory and names
+     * already open in other windows so a second blank window does not collide (issue 0056) */
+    get_unused_untitled_name(xctx->current_dirname, xctx->netlist_type == CAD_SYMBOL_ATTRS,
+                             name, S(name));
+    my_strncpy(xctx->current_name, name, S(xctx->current_name));
     my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch],  xctx->current_dirname, "/", name, NULL);
     if(reset_undo) set_modify(0);
   }

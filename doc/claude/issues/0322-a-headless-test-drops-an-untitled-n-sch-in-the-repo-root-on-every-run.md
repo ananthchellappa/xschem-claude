@@ -212,12 +212,18 @@ under test. It does not pile up — the name comes from the same free-number sca
 cd $work
 ```
 
-That `cd` does not do what the comment claims. `get_unused_untitled_name()` `stat()`s a *relative*
+That `cd` does not do what the comment claims. `get_unused_untitled_name()` `stat()`ed a *relative*
 basename — against the live process cwd — while both callers compose the path from `$PWD` /
-`pwd_dir` captured at startup, which Tcl's `cd` never updates. So the namer probes the work dir and
-the file is written into the repo. The same split voids the loop's no-overwrite guarantee, and 0323
-demonstrates it silently destroying an occupied `untitled.sch`. Fixing that is what should retire
-this residual; converting the two tests to `test_scratch` would only hide it.
+`pwd_dir` captured at startup, which Tcl's `cd` never updates. So the namer probed the work dir and
+the file was written into the repo. The same split voided the loop's no-overwrite guarantee, and
+0323 demonstrated it silently destroying an occupied `untitled.sch`.
+
+0323 is now fixed, but by the option that closes the data-loss path **without** relocating untitled
+buffers — so this residual survives on purpose: both tests still leave one `untitled~.sch` in the
+launch directory, now harmlessly. The misleading comment is corrected there. Converting the two
+tests to `test_scratch` would not help either; the only way to put the buffer somewhere else is to
+launch xschem with that directory as its startup cwd, which is what
+`tests/headless/test_untitled_name_dir_0323.tcl` does.
 
 ## Residual risk
 
