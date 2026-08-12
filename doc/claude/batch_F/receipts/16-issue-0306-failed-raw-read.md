@@ -309,9 +309,34 @@ scored row behind it.
   loaded database. That is a **more reachable** defect than the one fixed here.
 * **Not claimed: the Waves menubar cue is verified.** The fix is correct by construction and the
   state it derives from is asserted headless (S7d), but `has_x` is 0 under `--nogui`, SAB-13 reds
-  nothing, and **no check in any suite exercises a failed table read with `has_x`**. It wants an
+  nothing, and **no check in any suite exercises a failed table read with `has_x`**. It wanted an
   eyeball: load a spice raw so the Waves menu goes Green, then fail a `xschem raw table_read` on a
   directory, and confirm the menu is still Green.
+
+  **CLOSED WITHOUT THE EYEBALL — owner's ruling, 2026-08-12.** The eyeball was not performed and
+  will not be chased. Two things came out of trying to hand it over, both worth keeping:
+
+  1. **Where the cue actually is.** It is the background colour of the word `Waves` in the
+     schematic window's own menubar — a top-level cascade created at `src/xschem.tcl:14743`
+     (`-background {#888888}`), immediately after `Simulate`. `simulate_bg` is *captured from* the
+     Simulate entry at `src/xschem.tcl:14768`, so it is that same `#888888`. Grey = no raw,
+     `Green` = raw loaded, `orange` = stale waves after a netlist run (`src/xschem.tcl:2259`,
+     restored at `:13982-13984`). There is nothing to open; the colour is the whole signal.
+  2. **The owner reports the menubar word never *looks* Green**, on any window, from launch
+     onward — while `puts [set tctx::[xschem get current_win_path]_waves]` correctly answers
+     `Green` with a raw loaded. Every site writes the variable and the `entryconfigure` in the
+     same breath (`src/save.c:1663-1668`, `:1276-1281`, `src/actions.c:221`), and every
+     `entryconfigure` is inside a bare `catch`, so a wrong path or a refused option fails silent.
+     The discriminating probe, **not run**, is
+     `puts [[xschem get top_path].menubar entrycget Waves -background]` — `Green` there means Tk
+     holds it and the bar is not repainting (WSLg/WM) or the raw is on a different window's
+     menubar; `#888888` there while the variable says `Green` means the paired writes diverged.
+
+  That second point is **a separate defect from 0306 if it is one at all**, and it is deliberately
+  **not filed**: the owner's instruction is to open a new issue only if it comes up again. 0306's
+  own fix does not depend on it — the fix is that a failed read must not grey a database you still
+  have, and the variable it sets is a sound proxy for the paint precisely because the two are
+  written together.
 * **Not claimed: `graph_fill_listbox` is exercised.** `src/xschem.tcl`'s line handing `table_read()`
   an unvalidated `rawfile=` attribute — the one shipped route with no typing in it — needs the
   `.graphdialog` widget tree and is not driven by any check. It remains a code-path argument, as the

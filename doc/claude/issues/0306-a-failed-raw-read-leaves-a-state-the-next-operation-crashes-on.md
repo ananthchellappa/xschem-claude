@@ -4,6 +4,11 @@
 the leak. 63 checks in `tests/headless/test_raw_read_failure_0306.tcl` (registered in
 `full_audit.sh`'s `nogui_tests`), 14 sabotage mutations, leak measured as a matched valgrind pair
 (2,278,504 bytes → 0). Receipt: `doc/claude/batch_F/receipts/16-issue-0306-failed-raw-read.md`.
+**CLOSED 2026-08-12** by the owner's ruling, with the Waves-menubar-cue eyeball **waived, not
+performed** — see receipt §7 for what came out of trying to hand it over, including a *possible*
+separate paint defect (the menubar word may never visibly turn Green even though the mirrored
+`tctx::<win>_waves` variable does) that is intentionally **not filed**: new issue only if it
+recurs.
 
 Three things the fix found that this issue did not name, all recorded rather than folded in:
 * `xschem raw clear <file>` and `xschem raw clear <file> <type>` are **two more crash doors** onto
