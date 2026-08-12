@@ -1,7 +1,40 @@
 # 0318 — resizing the sidebar wipes the sentence drawn inside the empty pane
 
-**Status:** OPEN. Not fixed. Mechanism located and quoted below; no code changed,
-no test written.
+**Status:** **FIXED pending an eyeball** — `f6e3b20a` (branch
+`fluid-editing`, unpushed). Candidate 1 below, spelled as an explicit
+`keepnote` argument on `browser_sea_refresh` whose DEFAULT is "navigation": the
+`<Configure>` trampoline is the one caller that passes 1, and a kept notice also
+keeps the pane's caption. Regression test
+`tests/headless/test_wave_sigbrowser_0318.tcl` (17 checks under X, 19 measured
+sabotage mutations); reasoning, the caller classification and the review triage
+are in `doc/claude/batch_F/receipts/18-issue-0318-resize-wipes-the-notice.md`.
+
+**The eyeball that is still owed** — the checks prove the sentence is drawn, in
+`#8b0000`, inside the pane, and re-wrapped to the pane's width at two widths.
+They cannot judge whether it READS well, which is what
+`EYEBALL_QUEUE.md` item 5 step 7 was blocked on. Exact steps:
+
+1. `make -C src` is NOT needed (Tcl only). Build the fixtures if they are gone:
+   `sh doc/claude/batch_F/eyeball_fixtures.sh` (do **not** `rm -rf`
+   `/tmp/xschem_eyeball_F`).
+2. `DISPLAY=:0 ./src/xschem --script /tmp/xschem_eyeball_F/tcl/s4_item5.tcl`
+3. Do `EYEBALL_QUEUE.md` item 5 steps 1-6 (select `a1` in `tb1.sch`,
+   **Ctrl-Alt-V**, hands off, count to three) so the sentence
+   `showing the digital scope 'TOP' of 'dig.vcd' in the tree, but that scope has
+   no signals of its own - open one of its sub-scopes to see any` is drawn
+   **inside** the empty lower pane.
+4. **The fix:** drag the divider between sidebar and waveform canvas until the
+   sidebar is roughly 250 px wide. **PASS:** the sentence is still there, in dark
+   red, re-wrapped to the narrow pane, and the caption strip under the pane still
+   reads the same sentence. **FAIL:** it vanishes (the reported bug), or it is
+   there but clipped / illegible / overlapping the caption.
+5. Then answer step 7's actual question, which is a verdict and not a pass/fail:
+   at ~250 px, do the two single-line surfaces (pane caption, sidebar header's
+   second line) CLIP the sentence — i.e. does F5 need a short form for them?
+6. **Two things deliberately NOT fixed, which will still happen:** press
+   `Ctrl-B` twice and the sentence goes (hide/show re-reads the raw — a
+   navigation); and select signals in the lower pane, then drag the divider, and
+   the selection is dropped (**issue 0320**).
 **Area:** `src/wave_viewer.tcl` — `browser_sea_configure` → `browser_sea_refresh`
 (the `set browserseanote($token) {}` line) vs `browser_sea_draw`'s notice arm.
 **Found:** by hand, 2026-08-12, by the user, at `EYEBALL_QUEUE` item 5 step 7 —
@@ -96,3 +129,17 @@ the variable — `browserseanote` is what survives; the drawn `seanote` tag is
 what the user sees. `bs_wait_mapped` plus a `$c find withtag seanote` is the
 shape. A source grep cannot see it: every line involved is already there and
 individually correct.
+
+## What was taken (2026-08-12)
+
+Candidate 1, as an explicit `{keepnote 0}` argument rather than a save/restore
+around the call — the clear happens BEFORE the draw, so a restore afterwards
+would need a second draw and would still let the caption be overwritten. The
+DEFAULT stays "navigation" on purpose: this file's own ruling is that a stale
+reason is worse than none, and splitting the clear into the navigation callers
+(candidate 2) would have inverted that default for every future caller — and
+would not have fixed the CAPTION surface at all, since `browser_sea_say` runs at
+the tail either way. All three callers are classified in the receipt. Two things
+of the same family were deliberately left: `Ctrl-B` twice (a repopulate, not a
+geometry event) and the pane's **selection**, which the same `<Configure>` still
+drops — filed as **issue 0320** rather than widening this one.

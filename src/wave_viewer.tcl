@@ -446,6 +446,15 @@ namespace eval wviewer {
   #     the pane it explains: the next node the user selects redraws that pane
   #     and the sentence goes with it. Nothing persists it — a stale reason on a
   #     pane that has since been repopulated would be worse than no reason.
+  #     ⚠⚠ "EVERY REFRESH" MEANS EVERY NAVIGATION, AND ISSUE 0318 IS WHAT THE
+  #     DIFFERENCE COSTS. A `<Configure>` on the sea canvas — issue 0312's width
+  #     grip, the sash, the toplevel resized, a window manager tiling it — comes
+  #     through the same refresh, and clearing there wiped the sentence off a
+  #     pane the user had only made NARROWER: it went back to being the
+  #     unexplained empty box F5 exists to abolish. The geometry door therefore
+  #     asks the refresh to KEEP the notice; the DEFAULT is still to clear, so a
+  #     caller that declares nothing is a navigation and cannot leave a stale
+  #     reason behind.
   variable browserseanote;   array set browserseanote   {}
   # THE HOVER TOOLTIP (item 11's eighth gesture, paid beside item 20). The pane
   # draws a LABEL; this is how the user sees the NAME behind it.
@@ -8492,7 +8501,9 @@ proc wviewer::browser_sea_row {token} {
   return $browserseadbid($token)
 }
 
-proc wviewer::browser_sea_refresh {token} {
+# `keepnote 1` says THIS REFRESH IS NOT A NAVIGATION — see the clear below and
+# the `<Configure>` trampoline. The default is the navigation.
+proc wviewer::browser_sea_refresh {token {keepnote 0}} {
   variable windows
   variable browsersea
   variable browserseaent
@@ -8506,7 +8517,35 @@ proc wviewer::browser_sea_refresh {token} {
   # gesture's refusal would then be a caption on a pane it does not describe.
   # It is cleared BEFORE the draw below, so this refresh's own pane draws clean;
   # `browser_notice` sets it and redraws afterwards.
-  set browserseanote($token) {}
+  #
+  # ⚠⚠ ISSUE 0318: "A REFRESH MEANS THE USER MOVED" IS TRUE OF EVERY CALLER BUT
+  # ONE. The sea canvas's `<Configure>` arrives here too, and a resize is not a
+  # move — the user changed how wide the pane is and asked for nothing — so the
+  # paragraph above was clearing a sentence off a pane it still described, and
+  # dragging issue 0312's grip narrow left the unexplained empty box behind.
+  # `keepnote` is that one caller saying which it is. THE DEFAULT IS 0, i.e.
+  # NAVIGATION, deliberately: a new caller that forgets to classify itself
+  # clears, which is the safe direction, since a stale reason is worse than no
+  # reason. The count of callers is pinned by BZ02 — by SOURCE COUNT, which is
+  # what that check can do: a caller spelled with another variable name is
+  # invisible to it, so classify a new one HERE rather than trusting the ledger.
+  #
+  # ⚠ NORMALISED RATHER THAN USED RAW, and that is this proc's own contract: the
+  # header above promises every rung is a guard because it rides
+  # <<TreeviewSelect>>, where a throw pops a MODAL bgerror that hangs a headless
+  # run — and `if {!$junk}` throws. Anything Tcl does not read as a TRUE boolean
+  # therefore reads as 0, which is both no-throw and the safe direction. (It is
+  # `Tcl_GetBoolean` semantics, so any non-zero integer is a yes — there is no
+  # such caller, and a future one saying `2` means the same as `1`.)
+  set keepnote [expr {[string is true -strict $keepnote] ? 1 : 0}]
+  if {!$keepnote} { set browserseanote($token) {} }
+  # WHAT A KEPT NOTICE IS, read once: the tail must not re-caption the pane out
+  # from under it. {} on every navigation, and on a geometry event that has no
+  # notice to keep.
+  set kept {}
+  if {$keepnote && [info exists browserseanote($token)]} {
+    set kept $browserseanote($token)
+  }
   if {![dict exists $windows $token]} { return 0 }
   set c [wviewer::browser_sea_canvas $token]
   if {$c eq {}} { return 0 }
@@ -8558,6 +8597,17 @@ proc wviewer::browser_sea_refresh {token} {
   set browserseasel($token) {}
   set browserseaanchor($token) 0
   set n [wviewer::browser_sea_draw $token]
+  # ⚠⚠ AND A KEPT NOTICE KEEPS THE CAPTION TOO (issue 0318). `browser_notice`
+  # writes its sentence to the very label the arms below write, so re-captioning
+  # here would put the shipped §7.2 sentence back under a pane that is still
+  # DRAWING the notice — two surfaces disagreeing about one empty pane, which is
+  # the drift F5 exists to remove. It also matters on the pane that is NOT empty:
+  # there the canvas arm is silent by construction and the caption is the only
+  # surface carrying the reason. A geometry event re-flows the pane; it says
+  # nothing. The draw is ABOVE this line, so the sentence has already been
+  # re-wrapped to the new width — that is what makes it a redraw and not a
+  # survivor.
+  if {$kept ne {}} { return $n }
   # §7.2's three distinguishable states, plus the ordinary count. SPELLED IN
   # browser_msg AND NOWHERE ELSE — three sentences written inline here would be
   # three sentences to keep in step with the spec.
@@ -8935,8 +8985,36 @@ proc wviewer::browser_sea_plot_at {token W x y} {
 # of R3), so re-flow. It re-reads the tree selection through the ordinary
 # refresh rather than carrying a second draw path, because a second path is how
 # the two get to disagree about what is selected.
+# ⚠⚠ AND IT IS THE ONE CALLER THAT IS NOT A NAVIGATION (issue 0318). Everything
+# that reaches this proc is GEOMETRY — issue 0312's width grip, the sash, the
+# toplevel resized, a tab bar appearing, a window manager tiling the window — and
+# in every one of them the user asked for nothing: which NAMES the pane lists has
+# not changed, only how wide it is. So the `1` below is not an optimisation, it is
+# the whole fix: without it the refresh cleared §F item F5's in-pane sentence and
+# a sidebar dragged narrow lost the only thing on screen saying why its lower
+# pane was empty.
+#
+# ⚠ TWO THINGS THIS DOES **NOT** COVER, DECLARED RATHER THAN IMPLIED (both are
+# adversarial-review findings on the 0318 fix):
+#   * THE PANE'S SELECTION IS STILL DROPPED by the refresh below
+#     (`browserseasel`/`browserseaanchor` are reset unconditionally), so a resize
+#     silently discards what the user picked in the lower pane. Same door, second
+#     casualty, and it needs its own ruling about an INDEX-based selection —
+#     filed as ISSUE 0320, deliberately not widened into 0318.
+#   * `Ctrl-B` TWICE still clears the notice, and that is not this trampoline:
+#     hiding and re-showing the sidebar goes through `browser_show`, whose own
+#     rule is SHOW = REPOPULATE (it re-reads the raw), so it is a navigation by
+#     the code's own declaration and clears at the top of the refresh.
+#
+# ⚠ ONE ARGUMENT ON THE ONE TRAMPOLINE, rather than a save-and-restore around the
+# call, and the reason is the ORDER inside the refresh: the clear happens BEFORE
+# the draw, so a restore afterwards would have to draw a second time to put the
+# sentence back — and it would still have let the pane's caption be overwritten
+# in between. It is also NOT a private `browser_sea_draw` here: the paragraph
+# above is still true, a geometry event must re-read the tree selection through
+# the one refresh rather than grow a second draw path that can disagree with it.
 proc wviewer::browser_sea_configure {token} {
-  return [wviewer::browser_sea_refresh $token]
+  return [wviewer::browser_sea_refresh $token 1]
 }
 
 # --- the sea's RMB menu — A DISTINCT WIDGET ----------------------------------
@@ -9796,6 +9874,12 @@ proc wviewer::browser_refresh {token {reload 0}} {
   variable browsercurdb
   variable browserseaent
   variable browserseadbent
+  # ⚠ DECLARED FOR THE TWO BAIL-OUTS BELOW, AND THE DECLARATION IS HALF OF THAT
+  # FIX: without it their `set browserseanote($token) {}` addresses a LOCAL array,
+  # writes nothing anybody reads, and the `catch` hides it — the leak shape this
+  # file's siblings document for `gridshow`, `dest` and `browserwidth`, and the one
+  # BE12 pins in `forget`.
+  variable browserseanote
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f.pw.tvf.tv} e] || !$e} { return 0 }
@@ -10051,11 +10135,26 @@ proc wviewer::browser_refresh {token {reload 0}} {
       incr ndbs
     }
   }
+  # ⚠⚠ THE TWO BAIL-OUTS CLEAR §F ITEM F5's NOTICE, AND THAT IS ISSUE 0318's
+  # SECOND HALF (adversarial review finding 2). Both arms are reached AFTER the
+  # pane's own snapshot has been rewritten (`browserseaent` above), and both
+  # `return` BEFORE the tail refresh — which is the ONE place the notice is
+  # normally cleared. So a refresh that throws left a sentence describing a pane
+  # that no longer exists, and since 0318 the next `<Configure>` KEEPS that
+  # sentence instead of scrubbing it: the geometry path is deliberately no longer
+  # the thing that cleans up after a failed navigation. A navigation that failed
+  # is still a navigation, so it clears here, on the two paths that return early.
+  # `catch`ed for this proc's usual reason — a bail-out must not throw on its way
+  # out. ⚠ AND THE `variable browserseanote` AT THE TOP OF THIS PROC IS PART OF
+  # THE FIX, NOT TIDINESS: without it this line writes a LOCAL array and the catch
+  # swallows the failure. BZ19 is behavioural for exactly that reason.
   if {[catch {wviewer::browser_rows_multi $groups $root} rows]} {
+    catch {set browserseanote($token) {}}
     wviewer::browser_status $token $rows
     return 0
   }
   if {[catch {wviewer::browser_populate $f.pw.tvf.tv $rows} pe]} {
+    catch {set browserseanote($token) {}}
     wviewer::browser_status $token $pe
     return 0
   }
