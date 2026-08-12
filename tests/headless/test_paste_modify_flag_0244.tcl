@@ -38,13 +38,21 @@
 ##   its controls; E4 is issue 0267, the stale pre_merge_modified latch, which did NOT fall out of
 ##   the gate (the pure-commit forms stay ungated) and needed xctx->modify_seq of its own.
 ##
+## ISSUE 0266 (section F, added 2026-08-12)
+##   `xschem move_objects END` -- an uppercase sub-verb -- does not commit the pending merge and
+##   does not error either: it falls past the four lowercase strcmp()s into the one-shot coordinate
+##   else and ARMS a deferred menu move (ui_state 296 -> 65832), so the following ESC deletes the
+##   paste that the caller thought it had just committed. Section F covers the argument-shape
+##   validation that fixes it, plus the same atof()-eats-a-non-number defect in the DELTA slots.
+##
 ## SECTIONS: A the four control rows x both doors (`xschem merge <file>` and clipboard
 ## `xschem paste`) · B hierarchy_modified, the flag the prompts actually read · C the SECOND
 ## STARTMERGE arm (the one reached with STARTMOVE already cleared) · D1-D8 part B, ending with D8,
 ## the fluid-rollback door that the adversarial review of the fix found and that D7 does not cover ·
 ## E1-E6 issue 0265: a second gesture ABANDONS the pending paste (E1 merge-over-merge, E2 the twelve
 ## placement arms, E3 the reverse as a control, E4 issue 0267, E5 the wire/line draws, E6 the five
-## things that must NOT move).
+## things that must NOT move) · F1-F29 issue 0266: the move_objects dispatch slot (F1-F17 the
+## rejections, F18-F29 the positive controls that keep the fix from becoming an over-gate).
 ##
 ## NOT HOLLOW (WIRING.md §10): the fixture holds one object of every type the merge carries -- 2
 ## wires, 1 instance, 1 text, 1 line -- and the merged file carries one of each too, so "wires == 2
@@ -778,6 +786,255 @@ xschem abort_operation
 check "0265 E6e bypass: pre-fix residue"  [labcount MERGED] 1
 check "0265 E6e bypass: default is off"   [expr {[catch {xschem place_symbol devices/lab_pin.sym}] ? 1 : 0}] 0
 xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# F. ISSUE 0266 -- the `move_objects` DISPATCH SLOT. (added 2026-08-12)
+#
+#    The verb dispatches on argv[2] with four bare strcmp()s against the lowercase literals
+#    "start"/"step"/"end"/"abort" (scheduler.c), and EVERYTHING else falls into the one-shot
+#    coordinate else, whose only commit-vs-arm discriminator is an argument COUNT
+#    (`argc > 3 + nparam`). Nothing ever asks whether argv[2] is a NUMBER, so atof() turns every
+#    typo into 0.0 and four distinct silent wrong answers follow. All four measured at d99f3791:
+#      `move_objects END`        argc 3 -> the count test is false -> `ui_state |= MENUSTART;
+#                                ui_state2 = MENUSTARTMOVE`, rc 0, NOTHING COMMITTED. On a pending
+#                                merge ui_state went 296 -> 65832 and the next ESC deleted the paste.
+#      `move_objects END 40 40`  argc 5 -> the count test is TRUE -> it really commits, at
+#                                dx = atof("END") = 0.0: the wire landed at `N 0 40 100 40` where
+#                                the control `move_objects 40 40` gives `N 40 40 140 40`. Worse than
+#                                the no-op: it writes the document, at the wrong coordinate, rc 0.
+#      `40 END` / `40 {}` / `kissing 40 40` / `stretch 40 40`
+#                                the same species in the other slots -- every one committed at a
+#                                corrupted delta with rc 0 (measured (40,0), (40,0), (0,40), (0,40)).
+#      `move_objects 40`         a TRUNCATED line arms a menu move (ui 8 -> 65544). That is the
+#                                action-log replay hazard this item exists for: a replay log is
+#                                `source`d as Tcl, and because this branch answers TCL_OK for every
+#                                spelling, a truncated / hand-edited / mis-cased move line replays
+#                                as a ui_state mutation with NO diagnostic.
+#
+#    THE FIX under test: pure argument-SHAPE validation inside that final else, placed BEFORE the
+#    `if(kissing)` / `if(stretch)` side effects -- the slot must be a number, or the flag word
+#    `kissing`/`stretch` with no deltas, or absent; anything else is a TCL_ERROR naming the token.
+#    Only the TYPE and COUNT of the verb's own arguments are inspected: no state precondition is
+#    added to the pure-commit coordinate form (plan landmine 2 -- that form is the replay/test seam).
+#
+#    NOT HOLLOW: F18-F29 are the positive controls and they carry every shipped caller shape --
+#    the three arm forms (toolbar/M bare, Ctrl+M `stretch`, Shift+M `kissing`), the commit form with
+#    negative / fractional / exponent deltas, the rot/flip/-anchor form, and the start/step/end/abort
+#    seam -- so a fix that over-gates (rejects the commit form, or drops the kissing/stretch
+#    whitelist) reddens F18-F26 instead of passing quietly. F15 is the ORDERING witness: the reject
+#    must fire before select_attached_nets(), which is the one thing every other row is blind to.
+#
+#    DELIBERATELY NOT COVERED HERE: the stranded ui_state2 that a PRE-EXISTING bad arm leaves behind
+#    (it survives abort_operation and `xschem clear force`) -- that is issue 0268. F4 asserts only
+#    that a rejected line never WRITES it.
+# ---------------------------------------------------------------------------
+
+set ::wire0266 [file join $::d0244 w0266.sch]
+
+## A one-wire CLEAN document (save+load, so modified == 0 like a freshly opened cell), fully
+## selected. CLEAN is mandatory for F17: mkdoc leaves the buffer dirty, and on a dirty buffer
+## "a rejected line must not set the modify flag" cannot fail.
+proc mkwire0266 {} {
+  xschem clear force
+  xschem set no_draw 1
+  xschem wire 0 0 100 0
+  xschem set no_draw 0
+  xschem unselect_all
+  xschem saveas $::wire0266
+  xschem load $::wire0266
+  xschem select_all
+}
+
+## The wire object record of the CURRENT drawing -- the only headless way to prove the wire did
+## not move. DESTRUCTIVE to the modify flag (it saves), so always call it AFTER reading
+## `modified` -- same caveat as rec0244.
+proc wirerec0266 {} {
+  set f [file join $::d0244 snap0266.sch]
+  xschem saveas $f
+  set fh [open $f r]; set data [read $fh]; close $fh
+  foreach ln [split $data \n] { if {[string match {N *} $ln]} { return [string trim $ln] } }
+  return {}
+}
+
+## An L of two wires with ONLY the horizontal one selected. select_attached_nets() grows
+## `lastsel` 1 -> 2 on this fixture (measured), which is what makes F15 an ordering witness.
+proc mkL0266 {} {
+  xschem clear force
+  xschem set no_draw 1
+  xschem wire 0 0 100 0
+  xschem wire 100 0 100 100
+  xschem set no_draw 0
+  xschem unselect_all
+  xschem select wire 0 fast
+}
+
+## MENUSTART (65536) in ui_state, MENUSTARTMOVE (256) in ui_state2 -- the two bits a rejected
+## line must never write.
+proc armed0266  {} { return [expr {([xschem get ui_state]  & 65536) ? 1 : 0}] }
+proc armed20266 {} { return [expr {([xschem get ui_state2] & 256)   ? 1 : 0}] }
+
+# F0 -- PRECONDITION. F4 and F12 assert that the MENUSTARTMOVE / MENUSTART bits are NOT written by
+#      a rejected line; nothing in this file clears ui_state2, so if a previous section had left
+#      256 set those two rows would be hollow. Prove they start clear.
+xschem clear force
+xschem unselect_all
+check "0266 F0: MENUSTART clear at entry"     [armed0266]  0
+check "0266 F0: MENUSTARTMOVE clear at entry" [armed20266] 0
+
+# F1-F6 -- THE FILED DEFECT, on the gesture it was filed against: a pending merge.
+mkdoc
+xschem merge $::src0244
+set ::ui0266 [xschem get ui_state]
+check "0266 F1: merge armed (ui_state 296)"  $::ui0266 296
+check "0266 F1: END REJECTED"                [catch {xschem move_objects END} ::e0266] 1
+check "0266 F2: error names the token"       [string match "*move_objects*END*" $::e0266] 1
+check "0266 F3: ui_state untouched"          [xschem get ui_state] $::ui0266
+check "0266 F3: MENUSTART not set"           [armed0266] 0
+check "0266 F4: MENUSTARTMOVE not written"   [armed20266] 0
+check "0266 F5: merge still pending"         [merging] 1
+check "0266 F5: paste still in"              [xschem get wires] 3
+# F6 -- the correct spelling still commits, immediately after the rejected one. The error must not
+#       half-consume the gesture.
+xschem move_objects end 0 0
+check "0266 F6: correct form commits"        [merging] 0
+check "0266 F6: paste kept"                  [xschem get wires] 3
+check "0266 F6: merged inst kept"            [labcount MERGED] 1
+xschem abort_operation
+
+# F7-F14 -- the DELTA slots. These forms did NOT no-op pre-fix, they COMMITTED at a corrupted
+#           delta, so the second row of each pair is the one that matters. The expected value is
+#           the literal fixture record, NOT a baseline read taken just before the call: wirerec0266
+#           saves, and `xschem saveas` drops the selection, which would leave the move with nothing
+#           to move and turn every one of these into a hollow green.
+#           `{lab=#net1}` in the pre-fix values is the node annotation a real commit leaves behind;
+#           a rejected line must not produce that either, so the row is a byte-identity row.
+foreach {tag form prefix} {
+  F7  {xschem move_objects END 40 40}     {N 0 40 100 40 {lab=#net1}}
+  F9  {xschem move_objects 40 END}        {N 40 0 140 0 {lab=#net1}}
+  F10 {xschem move_objects 40 {}}         {N 40 0 140 0 {lab=#net1}}
+  F13 {xschem move_objects kissing 40 40} {N 0 40 100 40 {lab=#net1}}
+  F14 {xschem move_objects stretch 40 40} {N 0 40 100 40 {lab=#net1}}
+} {
+  mkwire0266
+  check "0266 $tag: {$form} REJECTED"   [catch $form ::e0266] 1
+  check "0266 $tag: doc byte-identical" [wirerec0266] {N 0 0 100 0 {}}
+  note  "0266 $tag: pre-fix this COMMITTED at {$prefix}"
+}
+
+# F8 -- the delta corruption spelled out: `END 40 40` used to swallow dx and shift every later
+#       argument one slot left, landing the wire at N 0 40 100 40 instead of N 40 40 140 40.
+mkwire0266
+catch {xschem move_objects END 40 40}
+check "0266 F8: dx NOT eaten (pre-fix landed at N 0 40 100 40)" \
+      [expr {[wirerec0266] eq "N 0 40 100 40 {lab=#net1}"}] 0
+
+# F11/F12 -- THE TRUNCATED REPLAY LINE. `move_objects 40` is a half-written log line; pre-fix it
+#            armed a deferred menu move (ui 8 -> 65544) and answered TCL_OK.
+mkwire0266
+check "0266 F11: truncated {40} REJECTED"   [catch {xschem move_objects 40} ::e0266] 1
+check "0266 F12: MENUSTART not set"         [armed0266] 0
+check "0266 F12: MENUSTARTMOVE not written" [armed20266] 0
+
+# F15 -- ORDERING. The reject must fire BEFORE `if(stretch) select_attached_nets();`, so a rejected
+#        line leaves no selection change behind. On mkL0266 select_attached_nets() grows lastsel
+#        1 -> 2 (measured on the ARM form), so lastsel == 1 is the witness that it never ran.
+mkL0266
+check "0266 F15: only the h-wire selected"   [xschem get lastsel] 1
+check "0266 F15: {stretch 40 40} REJECTED"   [catch {xschem move_objects stretch 40 40} ::e0266] 1
+check "0266 F15: select_attached_nets NEVER RAN" [xschem get lastsel] 1
+
+# F16 -- MIS-CASED AND UNKNOWN SUB-VERBS. All rejected -- the fix does NOT make the sub-verbs
+#        case-insensitive (the rejected alternative in the issue file): a verb whose log-replay
+#        surface wants exactly one spelling gets exactly one.
+mkwire0266
+foreach sv {Start End Abort Step START STEP ABORT foo abort_it} {
+  check "0266 F16: sub-verb '$sv' REJECTED" [catch {xschem move_objects $sv} ::e0266] 1
+}
+xschem abort_operation
+
+# F17 -- a rejected line must not DIRTY the document. Clean fixture, the whole negative set, one
+#        read of the flag at the end (no wirerec0266 in between -- it saves, which zeroes it).
+mkwire0266
+check "0266 F17: clean before"   [xschem get modified] 0
+catch {xschem move_objects END}
+catch {xschem move_objects END 40 40}
+catch {xschem move_objects 40 END}
+catch {xschem move_objects 40 {}}
+catch {xschem move_objects 40}
+catch {xschem move_objects kissing 40 40}
+catch {xschem move_objects stretch 40 40}
+catch {xschem move_objects foo}
+check "0266 F17: STILL CLEAN"    [xschem get modified] 0
+xschem abort_operation
+
+# ---- F18-F29 THE POSITIVE CONTROLS ----------------------------------------------------------
+# Every shipped call site shape. These are green before the fix by construction; they are here so
+# that an over-gating fix cannot pass section F. F18-F21 are the three arm forms the GUI ships
+# (xschem.tcl toolbar/Edit menu + actions.csv M / Control+M / Shift+M).
+
+# F18 -- bare arm: toolbar, Edit > Move objects, M.
+mkwire0266
+check "0266 F18: bare arm accepted" [catch {xschem move_objects} ::e0266] 0
+check "0266 F18: bare arm ARMS"     [armed0266] 1
+xschem abort_operation
+
+# F19 -- Ctrl+M. select_attached_nets() DOES run on the arm path (the ordering fix must not
+#        suppress it, only order it) -- lastsel grows 1 -> 2.
+mkL0266
+check "0266 F19: stretch arm accepted"      [catch {xschem move_objects stretch} ::e0266] 0
+check "0266 F19: stretch arm ARMS"          [armed0266] 1
+check "0266 F19: select_attached_nets RAN"  [xschem get lastsel] 2
+xschem abort_operation
+
+# F20 -- Shift+M.
+mkwire0266
+check "0266 F20: kissing arm accepted" [catch {xschem move_objects kissing} ::e0266] 0
+check "0266 F20: kissing arm ARMS"     [armed0266] 1
+xschem abort_operation
+
+# F21 -- both flags, no deltas.
+mkwire0266
+check "0266 F21: stretch+kissing arm accepted" [catch {xschem move_objects stretch kissing} ::e0266] 0
+check "0266 F21: stretch+kissing arm ARMS"     [armed0266] 1
+xschem abort_operation
+
+# F22-F25 -- THE PURE-COMMIT COORDINATE FORM gains no precondition (landmine 2). Negative,
+#            fractional and exponent deltas are all live shipped forms (wireedit_54 uses
+#            `-90 -40 stretch kissing`), so the numeric predicate must be strtod, not isdigit.
+foreach {tag form want} {
+  F22 {xschem move_objects 40 40}                     {N 40 40 140 40 {lab=#net1}}
+  F23 {xschem move_objects -90 -40 stretch kissing}   {N -90 -40 10 -40 {lab=#net1}}
+  F24 {xschem move_objects 40.5 -0.5}                 {N 40.5 -0.5 140.5 -0.5 {lab=#net1}}
+  F25 {xschem move_objects 1e2 40}                    {N 100 40 200 40 {lab=#net1}}
+} {
+  mkwire0266
+  check "0266 $tag: {$form} accepted" [catch $form ::e0266] 0
+  check "0266 $tag: moved exactly"    [wirerec0266] $want
+}
+
+# F26 -- the rot/flip/local/-anchor parser is POSITIONAL and sits in the same else. No argument may
+#        be re-indexed by the validation.
+mkwire0266
+check "0266 F26: rot/-anchor form accepted" [catch {xschem move_objects 0 0 1 0 -anchor 0 0 kissing} ::e0266] 0
+check "0266 F26: rotation applied"          [wirerec0266] "N 0 0 0 100 {lab=#net1}"
+
+# F27/F28 -- the incremental start/step/end/abort seam. The four sub-verb branches are ahead of the
+#            final else and must never reach the new validation at all.
+mkwire0266
+check "0266 F27: start accepted" [catch {xschem move_objects start 0 0} ::e0266] 0
+check "0266 F27: step accepted"  [catch {xschem move_objects step 40 40} ::e0266] 0
+check "0266 F27: end accepted"   [catch {xschem move_objects end 40 40} ::e0266] 0
+check "0266 F27: gesture committed" [wirerec0266] "N 40 40 140 40 {lab=#net1}"
+mkwire0266
+check "0266 F28: abort accepted" [catch {xschem move_objects abort} ::e0266] 0
+
+# F29 -- re-pin of the A4/D5 constructor the rest of this file leans on: `end 0 0` on a pending
+#        merge still commits.
+mkdoc
+xschem merge $::src0244
+check "0266 F29: end 0 0 accepted"  [catch {xschem move_objects end 0 0} ::e0266] 0
+check "0266 F29: merge committed"   [merging] 0
+check "0266 F29: paste kept"        [xschem get wires] 3
 
 xschem clear force
 

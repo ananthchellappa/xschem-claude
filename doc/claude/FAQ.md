@@ -14,6 +14,57 @@ Newest entries on top.
 
 ---
 
+## Q46. `xschem move_objects END` did nothing and my test still passed. Is a typo'd sub-verb an error now, and how far does the check reach?
+
+- **Asked:** 2026-08-12
+- **Project state:** branch `open_pdk` @ `d99f3791` + this session — issue **0266** (item D10).
+
+**Yes — but only in the first two argument slots of the one-shot form.** Know exactly where the
+line is, because the interesting half of this answer is what is still silent.
+
+The mechanism: the verb dispatched on `argv[2]` with four bare `strcmp`s against the lowercase
+literals `start`/`step`/`end`/`abort`, and *everything else* fell into the one-shot coordinate form,
+whose only commit-vs-arm discriminator was an argument **count** (`argc > 3 + nparam`). Nothing ever
+asked whether `argv[2]` was a number, so `atof()` turned every typo into `0.0`. Three shapes of
+silent wrong answer followed, all measured: `move_objects END` armed a **deferred menu move**
+(`ui_state 296 → 65832`) and committed nothing — the next ESC then deleted the paste the caller
+believed it had dropped; `move_objects END 40 40` was worse, because `argc` alone put it on the
+commit path with `dx = atof("END") = 0.0`, writing the document at the wrong coordinate with rc 0;
+and a **truncated** `move_objects 40` armed too, which is the replay hazard, since a log is
+`source`d as Tcl and every spelling answered `TCL_OK`.
+
+**The ratified answer, in three parts:**
+
+1. **A verb that cannot mean what it was handed says so.** An unrecognised, non-numeric dispatch
+   slot is now a `TCL_ERROR` naming the token, not a silent arm. The sub-verbs stay
+   **case-sensitive on purpose** — the alternative on the table was to accept `END` via the tree's
+   existing `my_strcasecmp`, and that was rejected because it only *widens* the grammar of a verb
+   whose log-replay surface wants exactly one spelling, and it still leaves `foo` and a truncated
+   `40` arming silently. This is user-visible: a script that used to run past the no-op now aborts
+   at that line. That is the point.
+2. **Validate the argument shape, never the program state.** The check inspects only the TYPE and
+   COUNT of the verb's own arguments. It adds no precondition to `move_objects <dx> <dy> …`, which
+   still commits from any `ui_state` — that form is the replay/test seam (`WIRING.md` landmine 2),
+   and gating it is how you break every test that drives the editor without a mouse.
+3. **Order: refuse read-only first, validate second, side-effect third.** `scheduler_readonly_reject`
+   stays the first statement of the branch, so a read-only buffer still answers "read-only" even for
+   a bad spelling — the more important thing to tell the user. And the validator runs *before*
+   `connect_by_kissing` is armed and before `select_attached_nets()` grows the selection, so a
+   rejected line leaves nothing behind. Both orderings have a dedicated sabotage variant and a
+   single witness row each; relocating the call by four lines reddens exactly one check.
+
+**Where the line is** (this is the part to remember): the check guards `argv[2]` and `argv[3]` of the
+**one-shot** form and nothing else. Still silent, still `atof`/`atoi`, still rc 0 —
+`move_objects end END 40` commits at `dx = 0` (issue **0405**, and that is the very form the docs
+recommend as the scripted commit constructor); `0 0 1 0 -anchor 50` drops the anchor and rotates
+about the wrong pivot (**0406**, and truncation in that tail is what a corrupted *emitted* log line
+actually looks like); `nan`/`inf` pass a `strtod` check and then corrupt or erase the saved record
+(**0407**); and `copy_objects`, `rect`, `polygon`, `line`, `arc`, `circle` all still arm on an
+unknown slot (**0404**). The general lesson: a validator earns exactly the promise it tests, and the
+first draft of this one had three doc surfaces promising more than the code delivered.
+
+---
+
 ## Q45. Something deselected while I was placing a label and the canvas went dead. Is that still a thing?
 
 - **Asked:** 2026-08-11

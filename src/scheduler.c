@@ -285,6 +285,97 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* --- issue 0266: `move_objects` argument-shape validation ---------------------------------
+ * The move_objects verb dispatches on argv[2] with four bare strcmp()s against the LOWERCASE
+ * literals "start"/"step"/"end"/"abort"; everything else falls through into the one-shot
+ * coordinate form, whose only commit-vs-arm discriminator is an argument COUNT
+ * (argc > 3 + nparam). Nothing ever asked whether argv[2] was a NUMBER, so atof() turned every
+ * typo into 0.0 and four distinct SILENT wrong answers followed (all measured at d99f3791):
+ *   `move_objects END`       argc 3, count test false -> ui_state |= MENUSTART / ui_state2 =
+ *                            MENUSTARTMOVE, rc 0, NOTHING COMMITTED. On a pending merge
+ *                            ui_state went 296 -> 65832 and the next ESC deleted the paste the
+ *                            caller believed it had just committed.
+ *   `move_objects END 40 40` argc 5, count test TRUE -> it really commits, at
+ *                            dx = atof("END") = 0.0: the wire landed at `N 0 40 100 40` where
+ *                            `move_objects 40 40` gives `N 40 40 140 40`. Worse than the no-op,
+ *                            because it writes the document at the wrong coordinate, rc 0.
+ *   `40 END` / `40 {}` / `kissing 40 40` / `stretch 40 40`
+ *                            the same species in the other slots -- each committed at a
+ *                            corrupted delta ((40,0), (40,0), (0,40), (0,40)) with rc 0.
+ *   `move_objects 40`        a TRUNCATED line armed a menu move (ui 8 -> 65544). That is the
+ *                            action-log replay hazard this fix exists for: a replay log is
+ *                            `source`d as Tcl, and because the branch answered TCL_OK for every
+ *                            spelling, a truncated / hand-edited / mis-cased move line replayed
+ *                            as a ui_state mutation with NO diagnostic.
+ * The rejecter inspects ONLY the TYPE and COUNT of the verb's own arguments; it adds NO state
+ * precondition to the pure-commit coordinate form `move_objects <dx> <dy> ...`, which is the
+ * replay/test seam (WIRING.md landmine 2). The four sub-verb branches sit ahead of it and never
+ * reach it, so the incremental start/step/end/abort seam is untouched, and the sub-verbs stay
+ * case-SENSITIVE on purpose: a verb whose log-replay surface wants exactly one spelling gets
+ * exactly one (the rejected alternative -- accept them case-insensitively via my_strcasecmp --
+ * would only widen the grammar and would still let `foo` and a truncated `40` arm silently).
+ * scheduler_readonly_reject stays FIRST in the branch, so a read-only buffer still answers
+ * "read-only" for every spelling including a bad one (test_readonly_guard.tcl pins that).
+ * The sibling copy_objects has no sub-verb layer at all and is deliberately NOT touched here --
+ * `xschem copy_objects end` arms a menu copy the same way; filed as issue 0404 (which also covers
+ * rect/polygon/line/arc/circle, measured to arm MENUSTART on an unknown slot exactly the same way).
+ * SCOPE, measured 2026-08-12 and deliberately NOT widened here: this guards argv[2] and argv[3] of
+ * the ONE-SHOT form and nothing else. The sub-verb coordinates (`move_objects end END 40` still
+ * commits at dx = 0, `end 40` at (0,0), `start END END` anchors at (0,0)) are issue 0405, and the
+ * trailing transform slots (`0 0 1 0 -anchor 50` silently drops the anchor and rotates about the
+ * wrong pivot; `0 0 X 0 ...` reads atoi("X") = 0) are issue 0406 -- so a truncated *emitted* log
+ * line can still replay as a different transform. Do not read the messages below as covering them.
+ * Covered by tests/headless/test_paste_modify_flag_0244.tcl section F. */
+
+/* The two flag words that legitimately occupy the dispatch slot: `xschem move_objects stretch`
+ * (Control+M, actions.csv) and `xschem move_objects kissing` (Shift+M) arm a deferred move with
+ * no deltas at all, so a plain "non-numeric argv[2] is an error" rule must whitelist them. */
+static int move_objects_slot_is_flag(const char *s)
+{
+  return s && (!strcmp(s, "kissing") || !strcmp(s, "stretch"));
+}
+
+/* Full strtod parse -- the idiom this file already uses (see the `pan` verb, and the
+ * strtod-not-atof comment in the `simulate` arm) rather than atof, which answers 0.0 for
+ * garbage. NOT an isdigit test: negative (`-90 -40`, wireedit_54), fractional (`40.5 -0.5`)
+ * and exponent (`1e2 40`) deltas are all live shipped forms. */
+static int move_objects_slot_is_number(const char *s)
+{
+  char *endp;
+  if(!s || !*s) return 0;
+  strtod(s, &endp);
+  return endp != s && *endp == '\0';
+}
+
+/* Returns 1 (with the interp error result set) when the move_objects argument shape must be
+ * refused, 0 when it may proceed. `nparam` is the caller's own count of kissing/stretch flag
+ * words, so the accept test uses the SAME commit-vs-arm discriminator the branch uses. */
+static int move_objects_args_reject(Tcl_Interp *interp, int argc, const char *argv[], int nparam)
+{
+  int commit_shape;
+  if(argc <= 2) return 0;                  /* bare arm: toolbar, Edit > Move objects, M key */
+  commit_shape = (argc > 3 + nparam);      /* the branch's own commit-vs-arm discriminator */
+  if(move_objects_slot_is_flag(argv[2])) {
+    if(!commit_shape) return 0;            /* `stretch` / `kissing` / `stretch kissing` arms */
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem move_objects: \"", argv[2],
+                     "\" must follow <dx> <dy>, not precede them", NULL);
+    return 1;
+  }
+  if(!move_objects_slot_is_number(argv[2])) {
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem move_objects: unrecognized argument \"", argv[2],
+                     "\": expected sub-verb start|step|end|abort (lowercase), "
+                     "flag kissing|stretch, or a numeric <dx> <dy>", NULL);
+    return 1;
+  }
+  if(commit_shape && argc > 3 && move_objects_slot_is_number(argv[3])) return 0;
+  Tcl_ResetResult(interp);
+  Tcl_AppendResult(interp, "xschem move_objects: <dx> <dy> must both be numbers (got \"",
+                   argv[2], "\" \"", (argc > 3 ? argv[3] : ""), "\")", NULL);
+  return 1;
+}
+
 /* Forward decl: pin_scope_resolve() is defined below (after the xschem_cmds_a group) but
  * run_core's apply_pin_prop arm (Refactor B atom 18) calls it above its definition. */
 static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out);
@@ -7962,6 +8053,13 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
           }
         }
+        /* issue 0266: refuse an argument shape this form cannot mean, instead of letting atof()
+         * turn the typo into a 0.0 delta or letting the argument COUNT alone arm a deferred menu
+         * move. PLACEMENT IS LOAD-BEARING: this sits BEFORE the two side effects below, so a
+         * rejected line leaves no connect_by_kissing arm and no select_attached_nets() selection
+         * growth behind (test_paste_modify_flag_0244.tcl F15 is the witness). See the rejecter's
+         * header comment for the four measured silent wrong answers it closes. */
+        if(move_objects_args_reject(interp, argc, argv, nparam)) return TCL_ERROR;
         /* arm kissing BEFORE select_attached_nets so the latter can see it and skip
          * grabbing a through-run tap arm (a stub will replace it). See wire_through_tap_arm(). */
         if(kissing) xctx->connect_by_kissing = 2;

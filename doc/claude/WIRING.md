@@ -784,14 +784,40 @@ spec digest). Enforcement TODAY:
   restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
   `.o` linked in, so the NEXT variant's red set is the previous one's. **`rm` the object file, do
   not trust the timestamp**, and re-run the clean baseline after every restore.
-- **The `move_objects` sub-verbs are lowercase-only, and the mismatch is SILENT.** `scheduler.c`
-  compares `argv[2]` against `"start"`/`"step"`/`"end"`/`"abort"`; `xschem move_objects END` matches
-  none of them, falls into the one-shot form's `else` and merely arms a **deferred menu move**
-  (`ui_state |= MENUSTART`) — nothing is committed, no error is raised, and a following assertion is
-  measuring a still-pending gesture. Measured on a pending paste: `ui_state 296 → 65832`, and the
-  next ESC still deleted the paste. Commit with `xschem move_objects end <dx> <dy>`,
-  `xschem move_objects <dx> <dy>` or `xschem paste <dx> <dy>` (all → `ui_state 8`). Issue **0266**;
-  it cost issue 0244's original control row D its meaning.
+- **The `move_objects` sub-verbs are lowercase-only, and the mismatch is now a `TCL_ERROR`** (issue
+  **0266**, fixed). `scheduler.c` compares `argv[2]` against `"start"`/`"step"`/`"end"`/`"abort"`, and
+  a slot that is neither one of those, nor the flag word `kissing`/`stretch`, nor a number
+  (full `strtod` parse) is refused with a message naming the token:
+  `xschem move_objects: unrecognized argument "END": expected sub-verb start|step|end|abort
+  (lowercase), flag kissing|stretch, or a numeric <dx> <dy>`. Both delta slots **of that one-shot
+  form** are validated the same way, so `40 END`, `40 {}`, `kissing 40 40` and a truncated
+  `move_objects 40` all error too.
+  **SCOPE — read this before trusting the check** (measured 2026-08-12, adversary pass of item D10):
+  the rejecter guards `argv[2]`/`argv[3]` of the ONE-SHOT form and **nothing else**. Still silent,
+  still `atof`/`atoi`, still rc 0: the sub-verb coordinates — `move_objects end END 40` commits at
+  `dx=0` (`N 0 40 100 40` where `end 40 40` gives `N 40 40 140 40`), `end 40` commits at `(0,0)`,
+  `start END END` anchors at `(0,0)` — issue **0405**; and the trailing transform slots —
+  `0 0 1 0 -anchor 50` silently drops the `-anchor` and rotates about the wrong pivot
+  (`N 0 0 0 100` vs the full line's `N 100 0 100 100`), `0 0 1` drops the rotation, `0 0 X 0 …`
+  reads `atoi("X")=0`, and `40 40 GARBAGE` ignores the tail — issue **0406**. So a truncated
+  *emitted* action-log line (the emitter writes `dx dy rot flip [-anchor ax ay] [kissing]`) can
+  still replay as a DIFFERENT transform with no diagnostic.
+  Commit with `xschem move_objects end <dx> <dy>`, `xschem move_objects <dx> <dy>` or
+  `xschem paste <dx> <dy>` (all → `ui_state 8`) — and note the `end` form's own deltas are the
+  unvalidated ones (0405), so a scripted commit still wants the deltas spelled out literally.
+  HISTORY, because it is what a stale test transcript will show: until the fix `xschem move_objects
+  END` matched none of the four literals, fell into the one-shot form's `else` and merely armed a
+  **deferred menu move** (`ui_state |= MENUSTART`) — nothing committed, no error, and a following
+  assertion measured a still-pending gesture. Measured on a pending paste: `ui_state 296 → 65832`,
+  and the next ESC still deleted the paste; it cost issue 0244's original control row D its meaning.
+  `move_objects END 40 40` was worse: `argc` alone put it on the commit path with
+  `dx = atof("END") = 0.0`, writing the document at the wrong coordinate with rc 0.
+  The rejecter validates only the TYPE and COUNT of the arguments and runs BEFORE the
+  `connect_by_kissing` / `select_attached_nets()` side effects — it adds no state precondition to the
+  pure-commit coordinate form (landmine 2 below), and `scheduler_readonly_reject` still runs first so
+  a read-only buffer answers "read-only" even for a bad spelling. The arm-on-an-unknown-slot defect
+  is **six more verbs wide** and untouched: `copy_objects`, `rect`, `polygon`, `line`, `arc` and
+  `circle` all answer rc 0 to `<verb> END` and arm `MENUSTART` — issue **0404**.
 - **`move_objects abort` is the constructor for a `STARTMERGE`-without-`STARTMOVE` state**: it
   clears `STARTMOVE` and returns before the END tail's `STARTMERGE` clear, so
   `merge` → `move_objects abort` → `abort_operation` reaches `abort_operation()`'s *second*
