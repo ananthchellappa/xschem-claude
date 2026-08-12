@@ -199,11 +199,25 @@ test_descend_untitled_preserve           leaves: untitled~.sch
 ```
 
 Both tests exist to exercise untitled buffers, so `write_backup()` firing on them is the behaviour
-under test, not a bug in the test. Left alone deliberately, because this leak does not have the
-property that made 0322 worth filing: the name is chosen by the same free-number scan, so with no
-`untitled*.sch` on disk it is always the *same* `untitled~.sch`, overwritten in place. One file,
-not a pile — and `*~.sch` has ignored it since long before this issue. Worth converting to
-`test_scratch` if either test is touched for another reason.
+under test. It does not pile up — the name comes from the same free-number scan, so with no
+`untitled*.sch` on disk it is always the *same* `untitled~.sch`, overwritten in place — and
+`*~.sch` has ignored it since long before this issue.
+
+**But the reason it lands in the tree at all is a second, worse bug, filed as 0323.** Both tests
+`cd` into a `/tmp` work dir first, and
+`test_descend_untitled_preserve.tcl:33` says so explicitly:
+
+```tcl
+# cd into the work dir so the untitled buffer (and its ~ backup) resolve HERE, not the repo.
+cd $work
+```
+
+That `cd` does not do what the comment claims. `get_unused_untitled_name()` `stat()`s a *relative*
+basename — against the live process cwd — while both callers compose the path from `$PWD` /
+`pwd_dir` captured at startup, which Tcl's `cd` never updates. So the namer probes the work dir and
+the file is written into the repo. The same split voids the loop's no-overwrite guarantee, and 0323
+demonstrates it silently destroying an occupied `untitled.sch`. Fixing that is what should retire
+this residual; converting the two tests to `test_scratch` would only hide it.
 
 ## Residual risk
 
