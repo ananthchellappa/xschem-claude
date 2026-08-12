@@ -499,6 +499,36 @@ namespace eval wviewer {
   # to drop.
   variable browserwidth; array set browserwidth {}
   variable gripdrag;     array set gripdrag     {}
+  # issue 0315, RULING (1) — "the ASE command owns the CIW account". A ONE-SHOT
+  # per-token flag, armed by the caller immediately before a
+  # `browser_show_path`/`browser_show_db_scope` call and CONSUMED by the
+  # `browser_say` that call ends in. It suppresses the CIW echo only; the
+  # sidebar status line is written on every branch either way, because that
+  # line is decision 4's surface and nobody ruled it away.
+  #
+  # ⚠ A FLAG AND NOT AN ARGUMENT, AND THAT IS FORCED. Two suites STUB the two
+  # entry points with their shipped arity —
+  # `proc ::wviewer::browser_show_path {token path}` in
+  # `test_ase_cosim.tcl` and `test_wave_sigbrowser_i12.tcl` — so a third
+  # positional argument passed by `ase.tcl` would make the real caller invoke a
+  # stub with too many arguments and red both files for a reason that has
+  # nothing to do with what they test.
+  #
+  # ⚠ ONE-SHOT, AND SAFE ONLY BECAUSE EVERY RETURN PATH THROUGH BOTH ENTRY
+  # POINTS IS `return [wviewer::browser_say ...]` — MEASURED at 8 of 8 in
+  # `browser_show_path` and 11 of 11 in `browser_show_db_scope`, no bare
+  # `return` in either. So an armed flag is always consumed exactly once, and
+  # BE15 in `tests/headless/test_wave_sigbrowser_0315.tcl` pins both counts
+  # because a future early return is what would break it silently.
+  #
+  # ⚠ THE TAIL DISARM IN `ase.tcl` IS NOT A GUARANTEE ON THE THROW PATH. The
+  # three viewer calls there are unguarded, so an error raised inside one skips
+  # the disarm and leaves the flag armed for the next gesture, which would then
+  # report one line fewer. Nothing today can raise there (both entry points are
+  # built not to throw, for the bgerror reason this file repeats), which is why
+  # the disarm is a sweep and not a `finally` — but the limit is real and is
+  # recorded rather than papered over.
+  variable sayquiet;     array set sayquiet     {}
   # signal-browser PLAN item 13: the Location bar's RAW HISTORY. A single
   # GLOBAL list (newest first, deduped on the normalised path, capped at
   # $::raw_history_max), NOT a per-token array: "the last raws I opened" is a
@@ -799,6 +829,12 @@ proc wviewer::forget {token} {
   # rule again. The grip WIDGET is a child of $top and dies with the toplevel;
   # these two arrays are keyed by token and would not.
   variable browserwidth; variable gripdrag
+  # issue 0315: the one-shot CIW-echo suppression flag, same rule again — and
+  # with `plotdbs`' caveat just below, verbatim: it is normally consumed by the
+  # `browser_say` of the call it was armed for, so this is the SWEEP, not the
+  # owner. A window closed between an arm and its say would otherwise leave the
+  # entry forever.
+  variable sayquiet
   # spec §D1 (DEFECT 2): the armed per-signal database list, same rule again.
   # It is one-shot and normally already consumed, but a window closed between an
   # arm and its plot_signals would otherwise leave the entry forever.
@@ -880,6 +916,7 @@ proc wviewer::forget {token} {
   catch {unset browsersrc($token)}
   catch {unset browserwidth($token)}
   catch {unset gripdrag($token)}
+  catch {unset sayquiet($token)}
   catch {unset plotdbs($token)}
   catch {unset atddb($token)}
   catch {unset drag_from($token)}
@@ -11628,12 +11665,63 @@ proc wviewer::browser_say {token kind {a {}} {b {}} {c {}}} {
   }
   set m [wviewer::browser_msg $r]
   catch {wviewer::browser_status $token $m}
-  if {[lindex $r 0] eq {err}} {
-    catch {wviewer::echo "signal browser: $m" error}
-  } else {
-    catch {wviewer::echo "signal browser: $m"}
+  # issue 0315, RULING (1). The status line above is UNCONDITIONAL and the CIW
+  # echo below is not: when one gesture drives both this proc and an ASE command
+  # that reports the same answer, the log got the same sentence twice — and on a
+  # fall-through the viewer's copy was tagged `error` (red) while the ASE copy
+  # was a plain result, so a benign navigation left a failure marker in the log.
+  # The ruling is that the ASE command owns the CIW account of its own gesture;
+  # `ase::show_in_browser_for_current` arms the flag and this consumes it.
+  #
+  # ⚠ CONDITIONAL, NOT DELETED, AND THAT IS THE OTHER HALF OF THE RULING. A
+  # gesture that reaches the browser WITHOUT an ASE command driving it still
+  # reports itself here — that arm is the viewer's own contract, and the tests
+  # that call `browser_show_path` directly are exactly such a caller. (Measured
+  # while ruling: on this tree `src/ase.tcl` is the ONLY product caller of
+  # either entry point, so the unarmed arm has no product user today. It is kept
+  # because deleting it would silently make the viewer unable to report a
+  # navigation it performs, and re-adding it later would re-mint the sentence
+  # somewhere else — the one thing BK34's one-formatter oracle exists to stop.)
+  #
+  # ⚠ AND THE VIEWER-SIDE GESTURES THE ISSUE NAMES DO NOT COME THROUGH HERE AT
+  # ALL. The tree's own double-click and `Descend to here` echo their own
+  # `signal browser:` lines from their own sites, so this ruling did not quieten
+  # them and could not: it moved only what the two path-walking entry points
+  # say.
+  if {![wviewer::browser_say_quiet_consume $token]} {
+    if {[lindex $r 0] eq {err}} {
+      catch {wviewer::echo "signal browser: $m" error}
+    } else {
+      catch {wviewer::echo "signal browser: $m"}
+    }
   }
   return $r
+}
+
+# issue 0315: ARM the one-shot suppression for the NEXT `browser_say` on $token,
+# or clear it. `on` 0 is the disarm `ase.tcl` runs at the tail of its gesture, so
+# an armed-but-never-consumed flag cannot silence a later, unrelated say.
+#
+# ⚠ IT DOES NOT STACK. Two arms with no say between them are one arm — the ASE
+# gesture arms before each of its up-to-three viewer calls and each call
+# consumes its own, so nesting never arises and a counter would only be a
+# second thing to get wrong.
+proc wviewer::browser_say_quiet {token {on 1}} {
+  variable sayquiet
+  if {$on} {
+    set sayquiet($token) 1
+  } else {
+    catch {unset sayquiet($token)}
+  }
+  return $on
+}
+
+# issue 0315: read AND consume. 1 means "this say does not echo to the CIW".
+proc wviewer::browser_say_quiet_consume {token} {
+  variable sayquiet
+  if {![info exists sayquiet($token)]} { return 0 }
+  unset sayquiet($token)
+  return 1
 }
 
 # --- item 9: THE WIDTH RULE ---------------------------------------------------

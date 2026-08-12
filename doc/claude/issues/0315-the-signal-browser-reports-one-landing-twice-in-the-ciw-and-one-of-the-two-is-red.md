@@ -1,7 +1,51 @@
 # 0315 — the Signal Browser reports one landing TWICE in the CIW, and on a benign gesture one of the two is red
 
-**Status:** OPEN. **Not fixed: which of the two lines should survive is a
-ruling, not a bug fix.**
+**Status:** **FIXED pending an eyeball on the log**, 2026-08-12, branch
+`fluid-editing`, unpushed. The ruling below was taken by the user; both halves are
+implemented, 21 checks in `tests/headless/test_wave_sigbrowser_0315.tcl` with 19
+sabotage mutations. Receipt:
+`doc/claude/batch_F/receipts/17-issue-0315-one-gesture-one-ciw-account.md`.
+A CIW-log deliverable is made of lines the user reads, so the verdict stays
+pending until someone runs the repro below and looks at the log.
+
+## THE RULING (user, 2026-08-12): candidates 1 AND 3, both
+
+> (1) fixes the count, (3) fixes the colour, and they are not exclusive.
+
+* **(1)** `wviewer::browser_say` keeps its sidebar status-line write on every
+  branch and **skips its CIW echo when an ASE command is driving it**. Built as a
+  ONE-SHOT per-token flag (`wviewer::sayquiet`), armed by
+  `ase::show_in_browser_for_current` before **each** of its three viewer calls and
+  consumed by the `browser_say` that call ends in. **Conditional, not deleted** —
+  a non-ASE caller still gets the viewer's own line.
+* **(3)** The arm before the **last-mile retry** is what delivers it: that `err`
+  is the one the next line recovers from, and unarmed it reached the CIW tagged
+  `error`.
+* **Candidate (2) was rejected** — dropping step 6's echo would lose the `ase: `
+  prefix that ties the line to the key the user pressed.
+
+**A third argument on the two entry points was not buildable**, and that is
+measured, not preferred: `test_ase_cosim.tcl` and `test_wave_sigbrowser_i12.tcl`
+both STUB `browser_show_path` / `browser_show_db_scope` with their shipped arity.
+Sabotage S19 applied that design and reddened them — 5 and 8+ failures, one
+reading `wrong # args: should be "wviewer::browser_show_path token path"`.
+
+⚠ **A premise in "Why it is a ruling" is FALSE on this tree, and the fix records
+it:** there is no *viewer-side* caller. `src/ase.tcl` is the ONLY product caller
+of either entry point, so the tree's own double-click and `Descend to here` never
+reach `browser_say`. The unarmed echo arm is kept for the caller ruling (1)
+preserves rather than for one that exists today.
+
+**Expected log after the fix** — two lines for either gesture, neither red:
+
+```
+#= ase: signal browser: showing TOP
+#= ase: signal browser: showing the digital scope 'TOP' of 'dig.vcd' ...
+```
+```
+#= ase: signal browser: 'a9' has no level in the simulation data; showing the design root instead
+#= ase: signal browser: showing the simulation top level
+```
 **Filed:** 2026-08-11, from the Batch F eyeball queue, item 5 step 8 (the re-run
 after issue 0314 was fixed).
 **Found by:** hand, in the CIW log of a real Ctrl-Alt-V session

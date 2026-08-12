@@ -2690,7 +2690,27 @@ proc ase::show_in_browser_for_current {{win {}}} {
   # behaviour for a code block: its own level does not exist in the analog raw.
   set res {}
   set done 0
+  # issue 0315, RULING (1): THIS COMMAND OWNS THE CIW ACCOUNT OF ITS OWN GESTURE.
+  # Every viewer call below is armed so that `wviewer::browser_say` writes the
+  # sidebar status line and NOT a second CIW copy of the sentence step 6 is about
+  # to echo with the `ase: ` prefix. Before the ruling one Ctrl-Alt-V wrote the
+  # same sentence twice, and on the fall-through the viewer's copy was tagged
+  # `error` — a red line in the log for a gesture whose verdict is PASS.
+  #
+  # ⚠ ARMED PER CALL, NOT ONCE FOR THE PROC. The flag is one-shot: each of the
+  # three calls below consumes its own, and a single arm at the top would silence
+  # only the first. The tail disarm is the leak guard, not the mechanism.
+  #
+  # ⚠⚠ AND THE GESTURE STARTS FROM A KNOWN STATE, which review measured to be the
+  # half the tail disarm cannot give. The three calls below are unguarded, so an
+  # error raised between an arm and its say propagates out of this proc and skips
+  # the tail — leaving the flag armed. Tcl 8.4 is still a target here, so there is
+  # no `finally` to lean on; clearing on ENTRY is what makes the leak unable to
+  # reach anything, because the next thing that reads the flag is this gesture's
+  # own first arm.
+  catch {wviewer::browser_say_quiet $key 0}
   if {[lindex $dig 0] eq {ok}} {
+    catch {wviewer::browser_say_quiet $key}
     set res [wviewer::browser_show_db_scope $key [lindex $dig 1] [lindex $dig 2]]
     if {[lindex $res 0] ne {err}} {
       set done 1
@@ -2705,6 +2725,7 @@ proc ase::show_in_browser_for_current {{win {}}} {
     }
   }
   if {!$done} {
+    catch {wviewer::browser_say_quiet $key}
     set res [wviewer::browser_show_path $key [join $segs .]]
     # 6b. RULING 1's LAST MILE, and it is NOT redundant with `partial`.
     #
@@ -2719,6 +2740,15 @@ proc ase::show_in_browser_for_current {{win {}}} {
     # a path that failed on its own merits still fails, because that is the user's
     # own hierarchy position and there is nothing better to show.
     if {$selname ne {} && [lindex $res 0] eq {err}} {
+      # ⚠ issue 0315, RULING (3), AND THE ARM IS WHAT DELIVERS IT. This retry is
+      # the fall-through the a9 control exercises: the extended path resolved
+      # nothing, so the call above answered `err` — a benign outcome that the
+      # next line RECOVERS from. Unarmed, that `err` reached the CIW tagged
+      # `error`, painting a red line for a gesture that then landed somewhere
+      # sensible and reported so. The account the log keeps is the two `ase: `
+      # lines below, neither of which is an error, and a red line is now
+      # produced only when the retry ALSO fails — i.e. when nothing landed.
+      catch {wviewer::browser_say_quiet $key}
       set res [wviewer::browser_show_path $key [join $base .]]
       set where [expr {[llength $base] ? "[join $base .]" : {the design root}}]
       catch {::ase::echo "ase: signal browser: '$selname' has no level in the\
@@ -2858,6 +2888,11 @@ proc ase::show_in_browser_for_current {{win {}}} {
     catch {::ase::echo "ase: signal browser: $nm" note}
     catch {wviewer::browser_notice $key $nm}
   }
+  # issue 0315: THE LEAK GUARD, not the mechanism. Every arm above is consumed by
+  # the say of the call it was armed for, so this normally unsets nothing. It is
+  # here because the cost of being wrong about that is a LATER, unrelated
+  # navigation reporting nothing at all, and the flag has no other owner.
+  catch {wviewer::browser_say_quiet $key 0}
   return $key
 }
 
