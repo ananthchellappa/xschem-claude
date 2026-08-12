@@ -625,7 +625,12 @@ cd /home/qflow/dev/xschem/claude_1/xschem
 DISPLAY=:0 ./src/xschem --script /tmp/xschem_eyeball_F/tcl/s4_item5.tcl
 ```
 
-## - [ ] Item 5 — a verilog-only cell routes to its VCD scope, and the notice is still on screen a second later
+## - [x] Item 5 — a verilog-only cell routes to its VCD scope, and the notice is still on screen a second later
+<!-- [x] on the RE-RUN (2026-08-11, after 254dc117): steps 6 and 9 PASS by eye,
+     step 8 answered (no interruption; spawned issue 0315), step 7 BLOCKED by
+     issue 0312 — the divider is not draggable, so the ~250 px judgement cannot
+     be taken yet. See the second Record block below. -->
+
 
 `fda9d5a8` + `7ff1be9d` · session 4 · ~15 min
 *Not headless because:* every automated check read the sidebar in the same
@@ -742,6 +747,51 @@ stays unticked) and the gate leaking (any co-simulation sentence for a9).
 > Steps 7 (legibility at ~250 px), 8's CIW-pair judgement and 9 (the a9 control)
 > were NOT reached — the session was instrumented into an unusable state while
 > narrowing 0314. Owed on a re-run once 0314 is fixed.
+
+**Record (RE-RUN) —** date 2026-08-11, after `254dc117` fixed 0314 + 0313
+verdict ☒ PASS ☐ FAIL ☒ PARTLY BLOCKED (step 7)
+
+> **Step 6 — PASS, by eye, on the gesture that was blocked.** "Behavior is as
+> expected": the tree grows the VCD group with `TOP` selected, `All DBs` ticks
+> itself, the pane is empty, and the `showing the digital scope 'TOP' of
+> 'dig.vcd' …` sentence is on the caption, the header and inside the pane. The
+> refusal that made this item FAIL — `'dig.vcd' is not among the loaded results
+> databases: run the simulation` — is gone. Issue 0314 CLOSED; issue 0313 CLOSED
+> with it (the a2 refusal no longer empties the sidebar).
+>
+> **Step 7 — BLOCKED, by issue 0312, and the blocker is now measured from the
+> user's side: the divider is NOT DRAGGABLE at all.** The step asks for a
+> judgement at ~250 px and there is no way to get there. What it took just to
+> see the `All DBs` checkbox: **Ctrl-B to hide the Signal Browser, maximize the
+> window, Ctrl-B to show it again, then restore the window to its old size.**
+> That trick is the workaround of record until 0312 is ruled — and it is also
+> the answer to 0312's own open question about how bad the clipping is: bad
+> enough that a shipped control is unreachable without it. The legibility
+> verdict F5's short form depends on is owed AFTER 0312.
+>
+> **Step 8 — the anticipated interruption does NOT happen: there is no
+> `window 4 activated: untitled.sch` line between the two lines of the a1 pair.**
+> Confirmed in `/tmp/Xschem.log.4`: the lines are contiguous. That half of the
+> question is dead. What the log shows instead is **issue 0315** (filed): the
+> landing sentence is written to the CIW TWICE — once unprefixed by
+> `wviewer::browser_say`, once `ase: `-prefixed by step 6 — and on the a9
+> control one of the two is tagged as an ERROR (`#! signal browser: no signals
+> under 'a9'`) for a gesture whose verdict is PASS. Which of the two lines
+> should survive is a ruling, not a fix, so 0315 is filed and not touched.
+>
+> ⚠ One expectation in step 8's text needs restating for future runs: the first
+> line of the pair reads `showing every results database to reach TOP` only on
+> the FIRST a1 gesture of a session, when `browser_show_db_scope` has to tick
+> `All DBs` on the user's behalf. On any later a1 gesture the box is already
+> ticked, the `alldbs` kind never fires, and the line is the plain
+> `showing TOP`. Both are correct.
+>
+> **Step 9 — PASS.** The a9 control mentions nothing about co-simulation,
+> digital signals or a missing VCD on any surface or in the CIW, and the sidebar
+> returns to the analog root: `PANE ROWS 2`, caption `2 of 2 signals`, header
+> `showing the simulation top level`. (`All DBs` stays ticked from step 6, which
+> is state carried by design, not a defect.) The two extra CIW lines it prints
+> are 0315's, not this item's.
 
 ---
 ---
