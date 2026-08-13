@@ -1,7 +1,9 @@
 # 0228 — `run_suites.sh` is the only one of the three harnesses that will not read the `OVERALL: ok` sentinel, so passing suites score `NORESULT` through the X arm
 
-Status: **OPEN**. The X arm does **not** cope: measured, `xarm.sh suites test_wire_split.tcl`
-reports `NORESULT` and exits 1 while the file passes 121 of 121 checks.
+Status: **FIXED** (see `## What actually shipped` at the bottom — the patch suggested below
+is right in shape but wrong in three details, all measured). The X arm did **not** cope:
+measured, `xarm.sh suites test_wire_split.tcl` reported `NORESULT` and exited 1 while the
+file passed 121 of 121 checks.
 Found by: the merge-4 audit, running `tests/headless/test_wire_split.tcl` through both the
 true-headless invocation and the batch's sanctioned X arm
 (`doc/claude/signal_browser_2pane_batch/xarm.sh`) and getting a pass and a `NORESULT` from
@@ -228,3 +230,110 @@ Two smaller items, arguably separate:
 shows the disagreement already costs registrations in the opposite direction. Whichever way
 it is fixed, the aim is **one banner rule shared by `run_regression.tcl`, `full_audit.sh`
 and `run_suites.sh`**.
+
+---
+
+## What actually shipped
+
+The fallback went into `tests/headless/run_suites.sh` as proposed, but **three details of
+the suggested patch above are wrong**, each found by reading the other two harnesses and
+each proven by a run:
+
+### 1. `grep -qx` is too strict — it converts only four of the six, not six
+
+`test_ihp_sg13g2_libmgr.tcl:195` and `test_pdk_launcher.tcl:119` print
+`OVERALL: ok ($npass checks)`, not a bare `OVERALL: ok`. A whole-line `-qx` refuses both,
+so the suggested patch leaves them `NORESULT` — the same red-but-hollow it set out to end.
+Shipped instead:
+
+```sh
+grep -qE '^OVERALL: ok([[:space:]]+\([^)]*\))?[[:space:]]*$'
+```
+
+still whole-line (a check message mentioning the string cannot forge a pass) but tolerant
+of the count suffix. `full_audit.sh` never hit this because its match is a **substring**
+(`*"OVERALL: ok"*`); `run_regression.tcl:115` never hit it because neither suite is
+registered there.
+
+### 2. `notok` is not the only failure spelling
+
+Of the six suites the fallback reaches, `notok` covers three. `test_add_pin_lib_symbol_view`
+prints `OVERALL: FAIL`, and the two `(N checks)` suites print `OVERALL: N FAILED (M passed)`.
+Matching only `notok` would have left those three failures reported as `NORESULT`, i.e. the
+issue's stated point unmet for half the set. Shipped: `^OVERALL: (notok|FAIL|[0-9]+ FAILED)`.
+
+### 3. The fallback needs `full_audit.sh`'s `is_skip` guard, or it forges a green
+
+This is the one that would have shipped a bug. `tests/headless/test_grid_toggle_sel_gc.tcl:34-36`
+self-skips with
+
+```tcl
+puts "SKIP: no X connection (has_x=0); run under DISPLAY with --pipe"
+puts "OVERALL: ok"; exit 0
+```
+
+so on the `--nogui` arm the suggested patch scores it **PASS with zero checks run**.
+`full_audit.sh:125-132` says in its own comment that running `is_skip` *before* `is_pass` is
+"what keeps the `OVERALL: ok` arm above honest". `run_suites.sh` now has a `SKIP` class,
+checked before pass/fail, which also fixes a **pre-existing** hollow green: the legacy
+banner `RESULT: ALL PASS (0 checks, skipped: no X)` used to match `ALL PASS` and score PASS.
+Measured: `run_suites.sh --nogui test_grid_toggle_sel_gc` → `SKIP … RESULT: 0/0 runs passed (1 skipped)`.
+
+Also shipped, same reasoning: the pass arm requires **exit 0** (as `run_regression.tcl:116`
+does), and a banner followed by a nonzero exit is reported as
+`FAIL … RESULT: FAILED (OVERALL: ok but exit 2)` rather than a "binary never reported"
+`NORESULT`.
+
+### The measured before/after — six converted, and the count is neither 4 nor 8
+
+Same tree, same binary, `xarm.sh suites` on the gated `:0`; only `run_suites.sh` differs.
+
+| suite | before | after | checks under X | checks headless |
+|---|---|---|---|---|
+| `test_wire_split` | NORESULT | **PASS** | 121 | 121 |
+| `test_crossview_paste` | NORESULT | **PASS** | 28 | 28 |
+| `test_pin_type_edit` | NORESULT | **PASS** | 19 | 19 |
+| `test_add_pin_lib_symbol_view` | NORESULT | **PASS** | 12 | 12 |
+| `test_pdk_launcher` | NORESULT | **PASS** | 30 | needs X |
+| `test_ihp_sg13g2_libmgr` | NORESULT | **FAIL** | 65 ok + **1 real fail** | needs X |
+| `test_hi_descend` | NORESULT | NORESULT | — | custom banner, unreached |
+| `test_readonly_guard` | NORESULT | NORESULT | — | custom banner, unreached |
+| `test_cadence_descend_newwin_ro` | NORESULT | NORESULT | — | custom banner, unreached |
+| `test_nogui` | NORESULT | NORESULT | — | custom banner, unreached |
+| `test_lib_new_discovered_defs` | FAIL | FAIL | — | lowercase `RESULT: all passed`, unchanged |
+| `test_select_at` | FAIL | FAIL | — | 5 real failures, unchanged |
+
+So the disputed count resolves as **six**: the four this issue named, plus the two
+`(N checks)` suites it listed as "left unmeasured rather than claimed". The backlog's eight
+counted the four custom-banner suites, which the fallback does not reach — both numbers
+were right about different things, and neither is the number of suites converted.
+
+`test_ihp_sg13g2_libmgr`'s FAIL is **pre-existing and newly readable**, which is the whole
+point of the fix: its "exactly the 9 intended libs" check now sees 12. Filed as
+`doc/claude/issues/0324-test-ihp-sg13g2-libmgr-expects-nine-libs-and-the-workarea-now-has-twelve.md`.
+
+### Sabotage — the forged pass, run rather than reasoned about
+
+A scratch suite whose *check message* contains the literal string, and nothing else:
+
+```tcl
+puts "ok: banner reads OVERALL: ok when every check passes"
+exit 0
+```
+
+* shipped anchored form → `NORESULT | sab_forge … exit 1`;
+* the same harness with the anchor removed (`grep -qE 'OVERALL: ok'`) →
+  `PASS | sab_forge  RESULT: ALL PASS (via OVERALL: ok sentinel)`.
+
+Eleven scratch suites were run in all: `OVERALL: ok` → PASS, `OVERALL: ok (7 checks)` → PASS,
+trailing-whitespace banner → PASS, `notok`/`OVERALL: FAIL`/`OVERALL: 3 FAILED` → FAIL,
+the forge → NORESULT, banner-then-`exit 1` → FAIL, the two self-skip banners → SKIP, and the
+ordinary `RESULT: ALL PASS` / `RESULT: 2 FAILED` pair unchanged.
+
+### Still open, and deliberately not done here
+
+* `test_lib_new_discovered_defs`' lowercase `RESULT: all passed` still scores FAIL through
+  `run_suites.sh` (`full_audit.sh:90` carries a bespoke case for it).
+* The four custom-banner suites still need `full_audit.sh:87-98`'s bespoke cases.
+* A **fourth** reader exists — `tests/headless/wireedit/run_wireedit.sh` — stricter than all
+  three; it was not touched.
