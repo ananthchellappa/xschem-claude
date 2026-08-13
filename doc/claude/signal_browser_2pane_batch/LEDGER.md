@@ -59,6 +59,31 @@ any drift here; do **not** silently adopt a new baseline.
 > standalone runs of the same tree. The total is stated as **2287** (i1315 at
 > 190) and reads **2288** when that leg runs. Do not treat either as drift.
 >
+> **⚠ RE-MEASURED 2026-08-12 FOR ISSUE 0228 (a `run_suites.sh` change only):
+> HEADLESS IS EXACT AT 1705 / 0, AND THE X ARM READS 2290 — `+2` ON `i14`
+> ALONE, AND IT IS NOT DRIFT FROM THAT WORK.** Every other per-suite figure is
+> identical (`panes` 81, `sigbrowser` 353, `sea` 79, `i11` 74, `i12` 126,
+> `i1315` **191** — the gated `BP56` leg ran — `2pane` 108, `sigsearch` 233,
+> `grid` 399, `modes` 488, `keys` 49), and the three out-of-baseline X-only
+> suites answered **13 / 17 / 70** exactly. The `+2` is **`test_wave_sigbrowser_i14`
+> 107 → 109 under X with its headless 56 UNCHANGED**, attributable to
+> `f51a19d1` (2026-08-10, "give the browser's sea a database dimension"), which
+> took the file from 107 to 109 `check` calls — both inside X-gated legs. This
+> baseline was recorded on 2026-08-08, two days before that commit, so the row
+> is stale, not moved. `2287 + 1` (i1315's gated leg) `+ 2` (i14) `= 2290`
+> reconciles exactly. A harness-classifier change cannot add checks, and `i14`
+> was re-measured through `xarm.sh one`, which does not go through
+> `run_suites.sh` at all.
+>
+> **⚠ `i12` STILL CANNOT BE MEASURED ON `:0`, AND WAS MEASURED ON Xvfb: 126.**
+> Three consecutive standalone `:0` runs on 2026-08-12 died at 105-106 of 126
+> `ok` lines with **zero** fails and `X connection to :0 broken (explicit kill
+> or server shutdown)` — the same shape the fix-up implementer hit nine times.
+> The same tree under `xvfb-run` answered **`RESULT: ALL PASS (126 checks)`**
+> first try. `test_wave_modes` and `test_wave_sigsearch` and `i11` also
+> `NORESULT`ed once in the sweep and each answered its exact baseline figure
+> (488 / 233 / 74) standalone.
+>
 > **⚠ `:0` DEGRADED PROGRESSIVELY WHILE THE FIX-UP WAS MEASURED.**
 > `test_wave_sigbrowser_i1315` **answered 191** in the first X sweep of this
 > exact tree, then `NORESULT`ed in the final sweep and on three standalone
