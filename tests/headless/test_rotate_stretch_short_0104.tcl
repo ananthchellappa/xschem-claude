@@ -18,7 +18,7 @@
 # over-deletion; placement asserts keep every case anti-vacuous.
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_short_0104.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_short_0104.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

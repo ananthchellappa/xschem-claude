@@ -25,7 +25,7 @@
 #   - replay smoke: re-eval the logged do_new_cell line -> cell back on disk
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_libmgr_mutation_log.tcl
 
 set ::fails 0

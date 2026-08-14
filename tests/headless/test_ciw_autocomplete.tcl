@@ -1,7 +1,7 @@
 # Integration smoke for CIW Tab autocomplete (src/ciw.tcl ciw_complete + the
 # build-generated xschem_subcommands.txt). Spec: doc/claude/specs/ciw_autocomplete.md.
 # Run under X with --pipe (the CIW only exists in an interactive/has_x session):
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_ciw_autocomplete.tcl
 update idletasks
 

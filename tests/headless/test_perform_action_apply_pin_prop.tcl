@@ -63,7 +63,7 @@
 # pre-migration binary; the readonly-mutates, no-op-"0", argc-gate, and metachar round-trip pinned there.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_apply_pin_prop.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §38
 

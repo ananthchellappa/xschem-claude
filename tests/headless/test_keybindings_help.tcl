@@ -1,7 +1,7 @@
 # Smoke for the keybindings cheat-sheet (Phase 3d.3): it is now a generated VIEW of the
 # live binding table (`xschem bindings dump`), joined with actions.csv for human labels.
 # Run with --pipe (needs xctx for the dump):
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_keybindings_help.tcl
+#   ./src/xschem --pipe --script tests/headless/test_keybindings_help.tcl
 set fail 0
 proc check {name ok detail} {
   global fail

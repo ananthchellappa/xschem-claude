@@ -10,7 +10,7 @@
 # library resolves to <libpath>/<cell>/<view>/<cell>.<ext>.
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_cellview_resolve.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_cellview_resolve.tcl
 
 source [file join [file dirname [info script]] scratch.tcl]
 

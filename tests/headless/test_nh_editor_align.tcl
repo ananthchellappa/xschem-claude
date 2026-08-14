@@ -1,5 +1,5 @@
 # Net highlight style editor — header/column alignment (user feedback). GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_align.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_align.tcl
 # The header labels must sit directly over their body columns. With grid + shared per-column widths,
 # each header cell's left screen-x equals the corresponding cell's left screen-x in the free row and
 # in every table row.

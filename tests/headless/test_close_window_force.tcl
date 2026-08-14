@@ -14,7 +14,7 @@
 # [winfo id .drw]. Pre-fix it is the destroyed sub-window's id.
 #
 # GUI only (needs real windows). Run:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_close_window_force.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_close_window_force.tcl
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; real separate windows required)"; flush stdout; exit 0 }
 

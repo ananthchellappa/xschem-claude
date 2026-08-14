@@ -7,7 +7,7 @@
 #   2. a bound chord fires -> the canonical command lands in the log
 #   3. the logged line replays through the same code (re-source = same delta)
 # Run under X with --pipe and --logdir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_phase3_mints.tcl
 update idletasks
 focus -force .drw

@@ -1,6 +1,6 @@
 # C-side stripe-angle clamp widened to [-45,45] (parse_net_hilight_styles in hilight.c).
 # GUI headless (needs X for has_x so warnings reach ciw_echo, which we override to capture):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_clamp.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_clamp.tcl
 #
 # Verifies the COMPILED table accepts negative angles end-to-end: an in-range negative angle
 # warns NOT AT ALL; an out-of-range negative clamps to -45 (not 0) with the new range message;

@@ -18,7 +18,7 @@
 # spots must be bare. Structural partition asserts guard against the prune breaking reconnect.
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_dangling_0103.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_dangling_0103.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

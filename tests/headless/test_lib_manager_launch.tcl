@@ -6,7 +6,7 @@
 #   - the Tools menu is wired to the logged command
 #
 # Needs X (creates toplevels). Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_lib_manager_launch.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_lib_manager_launch.tcl
 
 set fail 0
 proc check {name ok detail} {

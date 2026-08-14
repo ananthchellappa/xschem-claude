@@ -8,7 +8,7 @@
 # stays open.
 #
 # Needs X. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_pristine_untitled_basename.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_pristine_untitled_basename.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

@@ -1,5 +1,5 @@
 # Integration smoke for the command palette. Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_palette.tcl
+#   ./src/xschem --pipe --script tests/headless/test_palette.tcl
 update idletasks
 
 # 1) the Ctrl+Shift+P binding is installed on the drawing canvas

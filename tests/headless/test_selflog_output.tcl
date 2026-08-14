@@ -11,7 +11,7 @@
 #     physical line of output.
 #
 # Run under X with --pipe and --logdir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_selflog_output.tcl
 
 set ::fail 0

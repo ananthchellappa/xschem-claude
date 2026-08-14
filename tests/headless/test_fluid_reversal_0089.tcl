@@ -6,7 +6,7 @@
 # NEEDS A REAL X DISPLAY (the gesture runs move_objects + Xlib drawtemp). Self-skips cleanly
 # under --nogui so it is safe to register in the headless case list.
 #
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_reversal_0089.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_reversal_0089.tcl
 
 # cadence_style_rc essentials (only the LAST --script runs when chained, so set them here)
 set fluid_editing 1

@@ -1,7 +1,7 @@
 # Editor support for negative stripe-angles: the angle slider must span [-45,45] and the
 # on-form preview must SHEAR (draw tilted polygons) for a negative angle, not fall back to a
 # flat line. GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_editor.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_editor.tcl
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; run with DISPLAY set, no --nogui)"; flush stdout; exit 0 }
 

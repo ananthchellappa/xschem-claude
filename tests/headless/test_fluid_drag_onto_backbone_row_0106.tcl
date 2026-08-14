@@ -17,7 +17,7 @@
 # PASS = R18's two pins stay on DISTINCT nets after the drag.
 #
 # NEEDS A REAL X DISPLAY. Self-skips cleanly with no display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_drag_onto_backbone_row_0106.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_drag_onto_backbone_row_0106.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

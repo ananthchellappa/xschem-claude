@@ -5,7 +5,7 @@
 # starts, deferred to Layer C). We test at that retval seam: stub `context_menu`
 # to return a chosen pick, fire a Button3 release (the trigger), inspect the log.
 # Run under X with --pipe and --logdir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_context_menu_log.tcl
 update idletasks
 focus -force .drw

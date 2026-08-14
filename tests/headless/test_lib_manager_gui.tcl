@@ -5,7 +5,7 @@
 # pixels / interaction remain a manual eyeball item.
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_lib_manager_gui.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_lib_manager_gui.tcl
 
 set fail 0
 proc check {name ok detail} {

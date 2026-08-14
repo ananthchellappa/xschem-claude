@@ -50,7 +50,7 @@
 # unconnected. `xschem add_pin_stubs` adds 2 wires + 2 lab_pin instances (inst 1->3, wires 0->2).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_add_pin_stubs.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §45
 

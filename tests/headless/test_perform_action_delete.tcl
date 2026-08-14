@@ -42,7 +42,7 @@
 # reads the count. Selecting + `xschem delete` drops the count to 0; one undo restores it.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_delete.tcl
 # doc/claude/code_analysis/perform_action_atom24_delete_friction_analysis.md §5
 

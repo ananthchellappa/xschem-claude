@@ -20,7 +20,7 @@
 # All cases: pins on DISTINCT nets, no diagonal wires, no NEW dangling endpoints.
 #
 # NEEDS A REAL X DISPLAY. Self-skips cleanly with no display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_drag_through_anchor_0109.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_drag_through_anchor_0109.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

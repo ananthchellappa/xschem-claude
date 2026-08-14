@@ -6,7 +6,7 @@
 #  (2) GUI (needs Tk/X): preview canvas exists, repaints on focus change, reflects uncommitted edits,
 #      and the self-rescheduling after tick is cancelled on close (no orphan loop).
 # Run headless:  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_nh_editor_preview.tcl
-# Run GUI:       DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_preview.tcl
+# Run GUI:       ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_preview.tcl
 
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }

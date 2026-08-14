@@ -7,7 +7,7 @@
 # waveform graph -> routed to the graph, canvas zoom unchanged; (b) on bare
 # canvas -> full zoom (canvas zoom changes).
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_key_graph_context.tcl
+#   ./src/xschem --pipe --script tests/headless/test_key_graph_context.tcl
 update idletasks
 focus -force .drw
 

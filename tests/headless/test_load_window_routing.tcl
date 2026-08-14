@@ -6,7 +6,7 @@
 # specific existing window and prompts "Save changes?" if that window is modified.
 #
 # Needs X (creates windows). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_load_window_routing.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_load_window_routing.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

@@ -17,7 +17,7 @@
 #    GC verbatim, so the leaked dashed style survives to the post-draw probe.
 #
 # REQUIRES X (real GCs). Run from the repo ROOT under a display, NOT --nogui:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_grid_toggle_sel_gc.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_grid_toggle_sel_gc.tcl
 # Prints "OVERALL: ok" on success (run_regression sentinel).
 
 set fail 0; set npass 0

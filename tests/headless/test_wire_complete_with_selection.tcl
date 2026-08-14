@@ -15,7 +15,7 @@
 # Drives the REAL press/motion/release dispatch via `xschem callback`, so it needs a
 # window. WSLg note: it waits for the canvas and RETRIES fixture build (never FAILs on a
 # not-ready window, only on the actual lost-wire behavior).
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_wire_complete_with_selection.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_wire_complete_with_selection.tcl
 
 set KP 2 ; set BP 4 ; set BR 5 ; set MOTION 6
 set Button1Mask 256

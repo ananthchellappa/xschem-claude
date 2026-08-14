@@ -6,7 +6,7 @@
 # doc/claude/specs/cadence_modifier_drag.md (deferred-selection).
 #
 # NEEDS A REAL X DISPLAY (drives the GUI callback press/motion/release path). Self-skips under --nogui.
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_drag_keeps_selection.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_drag_keeps_selection.tcl
 
 set fluid_editing 1
 set orthogonal_wiring 1

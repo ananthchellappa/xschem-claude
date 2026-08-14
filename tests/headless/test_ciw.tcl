@@ -1,7 +1,7 @@
 # Integration smoke for the CIW (Command Interpreter Window, src/ciw.tcl) and
 # the log_action CIW mirror / `xschem log_action` plumbing.
 # Run under X with --pipe; pass --logdir so the log file lands in a temp dir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_ciw.tcl
 update idletasks
 

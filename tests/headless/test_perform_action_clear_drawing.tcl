@@ -50,7 +50,7 @@
 #       clear_drawing() RAW below the boundary -- the F-shared spam lock).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_clear_drawing.tcl
 # doc/claude/code_analysis/perform_action_atom27_clear_drawing_decision.md §5
 

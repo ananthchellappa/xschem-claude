@@ -11,7 +11,7 @@
 # mid-drag ALT-R does not advance the committed rotation until a motion event arrives.
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGV --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_alt_transform_group_0116.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_alt_transform_group_0116.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

@@ -30,7 +30,7 @@
 #   vertical mirror) -- so flipv is measured on a DIAGONAL wire instead.
 #
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_transform_keys_remap.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_transform_keys_remap.tcl
 
 set ::fails 0
 proc check {name ok {info {}}} {

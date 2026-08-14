@@ -7,7 +7,7 @@
 #  3. Unbinding the chord makes button-3 press inert (no STARTZOOM): proof the
 #     dispatch — not hard-coded C — drives it. Rebinding restores it.
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_gesture_bindings.tcl
+#   ./src/xschem --pipe --script tests/headless/test_gesture_bindings.tcl
 update idletasks
 focus -force .drw
 update idletasks

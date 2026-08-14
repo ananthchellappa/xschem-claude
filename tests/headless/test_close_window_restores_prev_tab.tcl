@@ -7,7 +7,7 @@
 # GREEN after fix: current context is the previously-active tab (.x1.drw).
 #
 # Needs X. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_close_window_restores_prev_tab.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_close_window_restores_prev_tab.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

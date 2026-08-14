@@ -10,7 +10,7 @@
 #     Fixed with a suppress_select guard reset via `after idle`.
 #
 # Needs X. Run from the repo ROOT (so the in-repo OA registry resolves):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_lib_manager_locate.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_lib_manager_locate.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

@@ -22,7 +22,7 @@
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests (--logdir):
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_save_reload_copy_selflog.tcl
 
 set ::fails 0

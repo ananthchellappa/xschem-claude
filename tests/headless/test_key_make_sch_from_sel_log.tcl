@@ -9,7 +9,7 @@
 # only) ever writes the line -- from every entry point.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests (--logdir):
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_key_make_sch_from_sel_log.tcl
 
 set ::fails 0

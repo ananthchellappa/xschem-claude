@@ -7,7 +7,7 @@
 # the log line AND the actual state change, and parse the logged line back
 # against the state so nothing is hardcoded to snap math.
 # Run under X with --pipe and --logdir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_gesture_end_log.tcl
 update idletasks
 focus -force .drw

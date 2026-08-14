@@ -38,7 +38,7 @@
 #
 # MUST run under X with --logdir (a real CIW pane AND a real action log). --nolog would
 # disable both, and --nolog + --logdir is a fatal abort (util.c:344-349):
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir "$(mktemp -d)" \
+#   ./src/xschem --pipe -q --logdir "$(mktemp -d)" \
 #       --script tests/headless/test_ase_log_seam_0207.tcl
 # or, gated:
 #   tests/headless/run_suites.sh --logdir test_ase_log_seam_0207

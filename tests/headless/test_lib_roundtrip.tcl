@@ -9,7 +9,7 @@
 #   - save -> load -> save is byte-stable (the round-trip does not churn the file)
 #
 # Run under X with --pipe (any cwd -- paths derive from this script's location):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_lib_roundtrip.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_lib_roundtrip.tcl
 
 set fail 0
 proc check {name ok detail} {

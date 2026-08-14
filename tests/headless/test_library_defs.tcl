@@ -14,7 +14,7 @@
 #   same name; among defs files, the last DEFINE of a name wins.
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_library_defs.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_library_defs.tcl
 
 set fail 0
 proc check {name ok detail} {

@@ -1,6 +1,6 @@
 # Net highlight style editor — free-to-edit row + Add/Overwrite + Update + separator (plan slice 6).
 # GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_free.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_free.tcl
 # Composes a style in the pinned NEW row (bound to ::nhse_v(new,*)) and drives the Update path
 # directly (deterministic, no event injection): Add appends, Overwrite(row#) replaces just that row,
 # the free-row values persist after Update, and the action spinbox shows/hides with the action.

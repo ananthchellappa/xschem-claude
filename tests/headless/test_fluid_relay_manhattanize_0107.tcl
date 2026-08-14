@@ -16,7 +16,7 @@
 # left in the schematic.
 #
 # NEEDS A REAL X DISPLAY. Self-skips cleanly with no display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_relay_manhattanize_0107.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_relay_manhattanize_0107.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

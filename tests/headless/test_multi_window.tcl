@@ -2,7 +2,7 @@
 #
 # GUI smoke: opens real Tk toplevels, driven entirely by script. Needs a display.
 # Standard invocation (from src/):
-#   DISPLAY=:0 ./xschem --pipe -q --nolog --script ../tests/headless/test_multi_window.tcl
+#   ./xschem --pipe -q --nolog --script ../tests/headless/test_multi_window.tcl
 #
 # RED-first skeleton. Checks map 1:1 to the spec's acceptance list MW1..MW8 and to
 # doc/claude/suggestions/plan_multi_window_detach.md phases:

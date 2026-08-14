@@ -8,7 +8,7 @@
 # and a scheduler `set <var>` replay arm reproduces the effect without re-logging.
 #
 # Run:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_toggle_editmode_log.tcl
 
 set ::fails 0

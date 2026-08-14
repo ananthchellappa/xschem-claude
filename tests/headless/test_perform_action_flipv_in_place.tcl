@@ -45,7 +45,7 @@
 #       emit `xschem flipv_in_place` -- the gesture arm stays silent (logged at move END).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_flipv_in_place.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §25
 

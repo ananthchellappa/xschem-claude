@@ -16,7 +16,7 @@
 #      (no live update); Load Add appends + renumbers; the "no styles" path leaves the table unchanged.
 #
 # Run headless:  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_nh_editor_load.tcl
-# Run GUI:       DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_load.tcl
+# Run GUI:       ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_load.tcl
 
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }

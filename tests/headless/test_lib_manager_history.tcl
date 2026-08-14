@@ -4,7 +4,7 @@
 # commit's full message. Driven through the do_history_* seam.
 #
 # Needs X. Run with --pipe from src/:
-#   REPO=<repo> DISPLAY=:0 ./xschem --rcfile $REPO/tests/headless/minrc \
+#   REPO=<repo> ./xschem --rcfile $REPO/tests/headless/minrc \
 #       --pipe -q --nolog --script $REPO/tests/headless/test_lib_manager_history.tcl
 
 set fail 0

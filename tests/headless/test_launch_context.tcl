@@ -10,7 +10,7 @@
 #       `src/xschem --script src/cadence_style_rc`) succeeds,
 #   (3) its `xschem bind wheel ...` remaps actually land in the C table.
 # Run under X with --pipe (any cwd):
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_launch_context.tcl
+#   ./src/xschem --pipe --script tests/headless/test_launch_context.tcl
 update idletasks
 
 set fail 0

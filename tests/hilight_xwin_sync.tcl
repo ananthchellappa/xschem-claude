@@ -9,7 +9,7 @@
 #  run headful (NOT --nogui), e.g.:
 #
 #      cd tests
-#      DISPLAY=:0 ../src/xschem -q --script hilight_xwin_sync.tcl
+#      ../src/xschem -q --script hilight_xwin_sync.tcl
 #
 #  Fixture (tests/hilight_xwin_sync/): parent.sch instantiates child.sym as `xi`
 #  with a lab_pin FOO on xi's FOO pin; child.sch has an internal net FOO. Highlight

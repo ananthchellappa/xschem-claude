@@ -11,7 +11,7 @@
 # library.defs + the oa lib dirs on the path, the intended deployment).
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_lib_sweep.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_lib_sweep.tcl
 
 set fail 0
 proc check {name ok detail} {

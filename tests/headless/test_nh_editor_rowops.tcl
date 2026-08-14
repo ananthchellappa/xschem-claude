@@ -1,5 +1,5 @@
 # Net highlight style editor — per-row ops Move Up/Down, Delete, Duplicate (plan slice 7). GUI:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_rowops.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_rowops.tcl
 # Ops act on the table row that holds field focus (an integer ::nhse_focus_row; the free row's "new"
 # key disables them). They route through the fault-tolerant procs and renumber; focus follows the
 # moved/duplicated row so ops chain. Driven directly (deterministic, no event injection).

@@ -32,7 +32,7 @@
 #   DS6       the hard case: descend into a NEW WINDOW, mode re-homes there
 #
 # MUST run under X (no --nogui; `xschem callback` needs Tk):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_cmdmode_descend_0201.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_cmdmode_descend_0201.tcl
 # or, gated:
 #   tests/headless/run_suites.sh test_cmdmode_descend_0201
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; xschem callback dispatch)"; flush stdout; exit 0 }

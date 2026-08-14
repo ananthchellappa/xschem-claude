@@ -12,7 +12,7 @@
 # doc/claude/code_analysis/hover_highlight_decision.md.
 #
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_hover_highlight.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_hover_highlight.tcl
 update idletasks
 focus -force .drw
 update idletasks

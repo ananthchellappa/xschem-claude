@@ -2,7 +2,7 @@
 # structure (label/type/accelerator per entry, including submenus). Run under a
 # real X display so build_widgets has created the menu widgets.
 #
-#   DISPLAY=:0 ./src/xschem --script tests/headless/dump_file_menu.tcl
+#   ./src/xschem --script tests/headless/dump_file_menu.tcl
 
 proc dump_menu {w} {
   set out {}

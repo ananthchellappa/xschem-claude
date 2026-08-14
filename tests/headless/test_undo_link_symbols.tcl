@@ -18,7 +18,7 @@
 #      or reports "instance not found".
 #
 # Run under X with --pipe and --logdir, from the repo root:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_undo_link_symbols.tcl
 
 set ::fail 0

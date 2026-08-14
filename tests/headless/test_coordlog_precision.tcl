@@ -3,7 +3,7 @@
 # logs a %.10g view delta -- which the argv-path perform_action unit tests do NOT
 # cover, and asserts the logged coords carry no >10-sig-fig float noise and replay.
 # Needs the action log open; run via full_audit.sh (a logdir_test) or:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_coordlog_precision.tcl   # from repo root
 set PASS 1
 proc check {name ok {info {}}} {

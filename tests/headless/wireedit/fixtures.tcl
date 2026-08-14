@@ -12,13 +12,13 @@
 # Run each test from the REPO ROOT, TRUE HEADLESS (no X server / no window needed -- the
 # scripted move path doesn't require a GUI; --nogui sets has_x=0):
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/wireedit/<test>.tcl
-# (A windowed run -- DISPLAY=:0 without --nogui -- also works but is subject to WSLg
+# (A windowed run -- without --nogui -- also works but is subject to WSLg
 # flakiness; prefer --nogui. The gesture suite test_cadence_drag.tcl is the exception that
 # genuinely needs a real window.)
 
 set ::fails 0
 # belt+braces: never let a test session rewrite the USER's recent-files list, even if
-# launched without --nogui/--pipe (e.g. a windowed DISPLAY=:0 run of a gesture suite)
+# launched without --nogui/--pipe (e.g. a windowed run of a gesture suite)
 set ::update_recent_files 0
 proc check {name ok} {
   puts "[expr {$ok ? {ok:  } : {FAIL:}}] $name"; flush stdout

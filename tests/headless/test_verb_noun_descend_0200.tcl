@@ -20,7 +20,7 @@
 # The stub is also how the test observes WHICH instance was resolved.
 #
 # MUST run under X (no --nogui; `xschem callback` needs Tk):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_verb_noun_descend_0200.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_verb_noun_descend_0200.tcl
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; xschem callback dispatch)"; flush stdout; exit 0 }
 update idletasks
 focus -force .drw

@@ -5,7 +5,7 @@
 # non-interactively via an `after` that selects rows and releases the dialog.
 #
 # Needs X (it builds real toplevels). Run with --pipe from src/:
-#   REPO=<repo> DISPLAY=:0 ./xschem --rcfile $REPO/tests/headless/minrc \
+#   REPO=<repo> ./xschem --rcfile $REPO/tests/headless/minrc \
 #       --pipe -q --nolog --script $REPO/tests/headless/test_lib_manager_maintain.tcl
 
 set fail 0
