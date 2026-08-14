@@ -23,6 +23,20 @@
 
 set -u
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# THESE SUITES TEST THE GATE, so they must run where the gate is LIVE. The
+# persistent dev display deliberately disables it (gui_gate.sh
+# _gate_dev_display -- a panel on an invisible display is useless, and worse,
+# _gate_attention would relaunch the user's real panel there). On that display
+# every gate assertion here fails for the wrong reason: measured 6 failures on
+# :99 against 0 on any other display. So relocate rather than mislead.
+if [ -n "${DISPLAY:-}" ] && [ "${XSCHEM_GATE_SELFTEST_ARM:-0}" != 1 ] && \
+   [ "$DISPLAY" = "$(cat "${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display" 2>/dev/null)" ] && \
+   command -v xvfb-run >/dev/null 2>&1; then
+  echo "-- on the dev display, where the gate is disabled BY DESIGN; re-execing on a private Xvfb" >&2
+  export XSCHEM_GATE_SELFTEST_ARM=1
+  exec xvfb-run -a -s "-screen 0 1280x1024x24" bash "$0" "$@"
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
@@ -95,6 +109,21 @@ out="$(GUI_GATE_DIR="$G4" GUI_GATE_AUTOSTART=4 SELFDIR="$SELF" STEPS=1 \
 el=$(( $(date +%s) - t0 ))
 ck "B4 garbage in allow_until is ignored, not honoured" \
    "$([ "$el" -ge 4 ] && echo 1 || echo 0)"
+
+# BF1 "Forever" writes the WORD, not an epoch. The shell must honour it as a
+# keyword -- and B4 above must keep passing, i.e. one word in, every other
+# non-number still rejected.
+G6="$TMP/g6"; mkdir -p "$G6/req" "$G6/status"; printf '%s' RUN > "$G6/control"
+printf 'forever' > "$G6/allow_until"
+t0=$(date +%s)
+out="$(GUI_GATE_DIR="$G6" GUI_GATE_AUTOSTART=120 SELFDIR="$SELF" STEPS=1 \
+       timeout 30 bash "$TMP/fakesuite.sh" 2>"$TMP/g6.err")"; rc=$?
+el=$(( $(date +%s) - t0 ))
+eqck "BF1 suite ran under a forever grant" "$(echo "$out" | tail -1)" "SUITE_DONE"
+ck   "BF1 it did NOT wait out the countdown (took ${el}s)" \
+     "$([ "$el" -lt 15 ] && echo 1 || echo 0)"
+ck   "BF1 no go-ahead request was armed" \
+     "$([ -z "$(ls -A "$G6/req" 2>/dev/null)" ] && echo 1 || echo 0)"
 
 # B5 the trap: an INTERRUPTED suite must not orphan status/<pid>. An orphan
 # makes the panel list a phantom suite AND blocks STOP from self-clearing,
@@ -178,6 +207,28 @@ after 500 {
   ck "V6 do_revoke closes the window" [expr {![grant_live]}]
   refresh
   ck "V6 ...and Revoke goes back to disabled" [expr {[.go.revoke cget -state] eq "disabled"}]
+  # V10: "Forever" (the button that replaced "Allow 2h"). An open-ended grant
+  # cannot expire mid-batch, which is the failure a fixed window has: it runs
+  # out while nobody is at the desk and every later suite pays the autostart
+  # countdown.
+  .go.a120 invoke
+  ck "V10 Forever opened a grant" [grant_live]
+  ck "V10 ...recorded as the keyword, not an epoch" [expr {[grant_until] eq "forever"}]
+  ck "V10 ...and grant_forever agrees" [grant_forever]
+  # The trap: PAUSE pushes a timed window forward so a hold does not burn it.
+  # That arithmetic must not touch a forever grant -- doing so would resolve
+  # "forever" to a small number and silently downgrade it to seconds.
+  set fp [open [file join $G control] w]; puts -nonewline $fp PAUSE; close $fp
+  set ::last_tick [expr {[clock seconds] - 30}]
+  refresh
+  ck "V10 PAUSE does not downgrade a forever grant" [expr {[grant_until] eq "forever"}]
+  ck "V10 ...and it is still live" [grant_live]
+  set fp [open [file join $G control] w]; puts -nonewline $fp RUN; close $fp
+  refresh
+  ck "V10 the panel says so, without a countdown" \
+     [expr {[string match {*until you Revoke*} [.top.msg cget -text]]}]
+  .go.revoke invoke
+  ck "V10 Revoke ends a forever grant too" [expr {![grant_live]}]
   puts "WFAILS $fails"; flush stdout
   exit [expr {$fails ? 1 : 0}]
 }

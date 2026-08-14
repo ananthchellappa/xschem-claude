@@ -512,10 +512,18 @@ _gate_attention() {
 # point of approving it and leaving).
 #
 # The panel owns this file; the shell only ever reads it.
+#
+# The "Forever" button writes the literal word instead of an epoch. It is
+# matched as a KEYWORD, before the numeric test, and nothing else non-numeric is
+# accepted: this file is shared mutable state that outlives every process here,
+# so anything unrecognised in it must keep meaning "no grant" (test_gui_gate_batch
+# B4 writes "yes please" and asserts it is ignored). One word in, everything
+# else still rejected.
 _gate_grant_live() {
   local f="$GATE_DIR/allow_until" until now
   [ -f "$f" ] || return 1
   until="$(cat "$f" 2>/dev/null)"
+  [ "${until:-}" = forever ] && return 0
   case "${until:-}" in ''|*[!0-9]*) return 1 ;; esac
   now="$(date +%s)"
   [ "$now" -lt "$until" ]

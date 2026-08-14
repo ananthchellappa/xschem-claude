@@ -356,7 +356,19 @@ waits to run about two minutes of tests**. The gate was costing an order of
 magnitude more time than the tests it guarded, which is its own kind of "stops
 being a gate": the pressure is all towards `GUI_GATE=0`.
 
-**Proceed gained siblings: `Allow 30m` / `Allow 2h`.** They write an epoch into
+**Proceed gained siblings: `Allow 30m` / `Forever`.** `Forever` replaced an
+`Allow 2h` button: two hours was a guess at how long a person means to be away,
+and guessing short is the expensive direction — the window expires mid-batch,
+the next suite waits for a Proceed nobody is there to press, and every suite
+after that pays the 2-minute autostart. An open-ended grant cannot expire at the
+wrong moment, stays fully steerable (Pause and Stop are read at every pause
+point regardless), and `Revoke` ends it in one press. It writes the literal word
+`forever` rather than an epoch; both sides match that as a **keyword**, before
+the numeric test, so every *other* non-number in the file still means "no grant"
+(`test_gui_gate_batch` B4). The one place that must not see it is the PAUSE
+push-forward, which adds elapsed time to the deadline — on `forever` that
+arithmetic would silently downgrade an open-ended grant to seconds, so it is
+skipped (`V10`). They otherwise write an epoch into
 `allow_until`; while that is in the future `gate_start` returns *immediately* —
 no `req` file, no countdown, no `_gate_attention` relaunch. Approve once, walk
 away, and a whole batch runs back to back.

@@ -178,7 +178,7 @@ the deliberate `AUDIT_DISPLAY=:0` runs, not the everyday ones. A panel popping
 for a routine suite means something bypassed `xvfb_arm.sh`.
 
 **Don't press Proceed forty times.** Many small runs each cost a click, or a
-2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Allow 2h`**
+2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Forever`**
 once and every suite in that window starts unprompted — Pause and Stop keep
 working throughout, and the panel shows how many have run. Approving *before*
 launching a batch works too.

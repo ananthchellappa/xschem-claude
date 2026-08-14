@@ -122,21 +122,34 @@ if {![catch {set fp [open $SNOOZE r]}]} {
 }
 
 # ---- approval window -----------------------------------------------------
-# "Allow 30m" / "Allow 2h": suites start WITHOUT asking until it expires. The
+# "Allow 30m" / "Forever": suites start WITHOUT asking until it expires. The
 # gate used to warn before every suite, which turned forty two-second suites
 # into forty Proceed presses — or, with nobody at the desk, forty two-minute
 # autostart waits to run two minutes of tests. Approve once, walk away.
 #
 # Deliberately NOT a mode that suppresses control: Pause and Stop are read at
 # every pause point regardless, so an approved batch stays fully steerable.
+# Returns an epoch, the literal "forever", or 0 for "no grant".
+#
+# "forever" is a KEYWORD, not merely "something that isn't a number". The file
+# is world-writable state that outlives every process here, so anything
+# unrecognised in it must keep meaning "no grant" -- test_gui_gate_batch B4
+# writes "yes please" and asserts it is ignored, and that must stay true. One
+# accepted word, everything else rejected.
 proc grant_until {} {
   global ALLOW
   if {[catch {set fp [open $ALLOW r]}]} { return 0 }
   set v [string trim [read $fp]]; close $fp
+  if {$v eq "forever"} { return forever }
   if {![string is integer -strict $v]} { return 0 }
   return $v
 }
-proc grant_live {} { return [expr {[grant_until] > [clock seconds]}] }
+proc grant_forever {} { return [expr {[grant_until] eq "forever"}] }
+proc grant_live {} {
+  set u [grant_until]
+  if {$u eq "forever"} { return 1 }
+  return [expr {$u > [clock seconds]}]
+}
 proc grant_count {} {
   global GRANTN
   if {[catch {set fp [open $GRANTN r]}]} { return 0 }
@@ -181,8 +194,8 @@ button .go.proceed -text "Proceed" -bg #2e7d32 -fg white -width 10 \
   -activebackground #388e3c -command do_proceed
 button .go.a30 -text "Allow 30m" -bg #1b5e20 -fg white -width 9 \
   -activebackground #2e7d32 -command {do_allow 30}
-button .go.a120 -text "Allow 2h" -bg #1b5e20 -fg white -width 9 \
-  -activebackground #2e7d32 -command {do_allow 120}
+button .go.a120 -text "Forever" -bg #1b5e20 -fg white -width 9 \
+  -activebackground #2e7d32 -command do_allow_forever
 button .go.revoke -text "Revoke" -width 8 -command do_revoke
 pack .go.proceed .go.a30 .go.a120 .go.revoke -side left -padx 3 -pady 4
 
@@ -230,8 +243,19 @@ proc do_snooze {mins} {
 }
 proc do_allow {mins} {
   # Approving a window also releases whatever is waiting right now — otherwise
-  # "Allow 2h" would open the window and still leave this suite sitting there.
+  # "Allow 30m" would open the window and still leave this suite sitting there.
   set_grant [expr {[clock seconds] + $mins*60}]
+  do_proceed
+}
+# "Forever" replaced "Allow 2h". Two hours was an arbitrary guess at how long a
+# person intends to be away, and guessing short is the expensive direction: the
+# window expires mid-batch, the next suite sits waiting for a Proceed nobody is
+# there to press, and it burns the 2-minute autostart countdown per suite from
+# then on. An open-ended grant cannot expire at the wrong moment. It stays fully
+# steerable — Pause and Stop are read at every pause point regardless — and
+# Revoke ends it in one press.
+proc do_allow_forever {} {
+  set_grant forever
   do_proceed
 }
 proc do_revoke {} {
@@ -425,7 +449,12 @@ proc refresh_body {} {
   # ...and freezes the approval window too, for the same reason: an hour
   # approved is an hour of TESTS, and burning it while everything is held would
   # quietly expire the window the user is waiting to use.
-  if {$nctrl eq "PAUSE" && [grant_live] && [info exists ::last_tick]} {
+  # A "forever" grant has no countdown to freeze, and must NOT go through this
+  # arithmetic: `[grant_until] + elapsed` on the string "forever" would either
+  # error or, worse, resolve to a small number and silently downgrade an
+  # open-ended approval to a few seconds.
+  if {$nctrl eq "PAUSE" && [grant_live] && ![grant_forever] \
+      && [info exists ::last_tick]} {
     set_grant_keepcount [expr {[grant_until] + ($now - $::last_tick)}]
   }
   set ::last_tick $now
@@ -462,9 +491,10 @@ proc refresh_body {} {
     catch {raise .}
   } elseif {[grant_live]} {
     set n [grant_count]
+    set left [expr {[grant_forever] ? "until you Revoke" \
+                                    : "another [fmt_left [expr {[grant_until] - $now}]]"}]
     .top.msg configure -fg #a5d6a7 -text \
-      "APPROVED — suites start without asking for another\
-[fmt_left [expr {[grant_until] - $now}]].\
+      "APPROVED — suites start without asking for $left.\
 [expr {$n == 1 ? "1 suite has" : "$n suites have"}] run so far.\nPause still\
 holds them between tests; Revoke goes back to asking."
     .go.proceed configure -state disabled
@@ -473,8 +503,8 @@ holds them between tests; Revoke goes back to asking."
     .snz.s30 configure -state disabled
   } else {
     .top.msg configure -fg #a5d6a7 -text \
-      "No suite waiting for go-ahead.\nAllow 30m/2h to approve a whole batch\
-up front — no prompt per suite."
+      "No suite waiting for go-ahead.\nAllow 30m / Forever to approve a whole\
+batch up front — no prompt per suite."
     .go.proceed configure -state disabled
     .snz.s5  configure -state disabled
     .snz.s15 configure -state disabled

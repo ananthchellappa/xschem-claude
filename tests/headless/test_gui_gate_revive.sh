@@ -27,6 +27,20 @@
 
 set -u
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# THESE SUITES TEST THE GATE, so they must run where the gate is LIVE. The
+# persistent dev display deliberately disables it (gui_gate.sh
+# _gate_dev_display -- a panel on an invisible display is useless, and worse,
+# _gate_attention would relaunch the user's real panel there). On that display
+# every gate assertion here fails for the wrong reason: measured 6 failures on
+# :99 against 0 on any other display. So relocate rather than mislead.
+if [ -n "${DISPLAY:-}" ] && [ "${XSCHEM_GATE_SELFTEST_ARM:-0}" != 1 ] && \
+   [ "$DISPLAY" = "$(cat "${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display" 2>/dev/null)" ] && \
+   command -v xvfb-run >/dev/null 2>&1; then
+  echo "-- on the dev display, where the gate is disabled BY DESIGN; re-execing on a private Xvfb" >&2
+  export XSCHEM_GATE_SELFTEST_ARM=1
+  exec xvfb-run -a -s "-screen 0 1280x1024x24" bash "$0" "$@"
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
