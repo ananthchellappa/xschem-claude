@@ -74,20 +74,42 @@ the case no wrapper script can reach — a bare
 command in a session and which no arming script wraps.
 
 ```sh
-tests/headless/devdisplay.sh start                    # Xvfb :99 + openbox, ~0.3 s
-tests/headless/devdisplay.sh shellinit >> ~/.bashrc   # then open a new shell
-tests/headless/devdisplay.sh view                     # x11vnc on localhost, to watch it
+tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, ~0.3 s, idempotent
+tests/headless/devdisplay.sh view      # x11vnc on localhost, to watch it
 tests/headless/devdisplay.sh status|stop
 ```
 
-**Put it in `~/.bashrc`, not a prompt.** `export DISPLAY=:99` typed at a prompt
-covers that one terminal; the rc covers every terminal *and* the non-interactive
-shell Claude Code's Bash tool runs in, which also sources `~/.bashrc` — and that
-is the shell where the leaking bare `./src/xschem --script …` is typed most.
-`shellinit` emits a **conditional** export: an unconditional one in an rc
-outlives the display it names, and after a reboot or a `stop` every GUI program
-in every new terminal dies with `cannot open display`. **The display does not
-survive a reboot** — re-run `start`; the snippet picks it up automatically.
+**The human does NOT want `DISPLAY=:99` in their interactive shell**, and an
+earlier revision of this section wrongly told them to put it in `~/.bashrc`. A
+person launching xschem is launching it *to use it* — sending that to an
+invisible display is the bug, not the fix. The armed entry points
+(`full_audit.sh`, `run_suites.sh`, `gated_xschem.sh`, the 8 standalone
+`test_*.sh`) already need nothing.
+
+**The one consumer of the export is the assistant**, whose bare
+`./src/xschem --pipe -q --script tests/headless/<t>.tcl` is typed dozens of
+times a session and is armed by nothing. Two ways to cover it, in order:
+
+1. **Launch the session as `DISPLAY=:99 claude`.** Tool shells inherit the
+   Claude Code process's environment, so every bare invocation lands on the dev
+   display and the human's own terminals keep `:0`. One word, no rc edits, and
+   it does not depend on the assistant remembering anything.
+2. **Failing that — assistant, route it yourself**: `tests/headless/devdisplay.sh
+   exec ./src/xschem --pipe -q --script <t>.tcl`, or run suites through
+   `run_suites.sh`. Never a bare `./src/xschem --script` on a live `:0` unless
+   the point *is* the real screen.
+
+Note `~/.bashrc` cannot serve purpose 1 here anyway: it returns at its line 6–9
+for non-interactive shells, and the Bash tool's shell is non-interactive
+(`$- = hmtBc`). It inherits its environment; it does not source that file. (An
+earlier claim in this section that it *is* sourced was wrong — inferred from
+`~/eda/bin` being on `PATH`, which arrives by inheritance.)
+
+`shellinit` remains, for the narrow case it fits: a **dedicated terminal used
+only for running tests by hand**. It emits a *conditional* export, because an
+unconditional one in an rc outlives the display it names — after a reboot or a
+`stop`, every GUI program in that shell dies with `cannot open display`. **The
+display does not survive a reboot**; re-run `start`.
 
 The arm (below) **attaches** to it when it is up, so every entry point lands on
 one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the

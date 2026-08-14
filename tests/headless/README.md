@@ -61,17 +61,26 @@ machine unusable for the length of the run. Bring up the persistent dev display
 once and they all go somewhere invisible instead:
 
 ```sh
-./devdisplay.sh start                    # Xvfb + openbox, ~0.3 s, idempotent
-./devdisplay.sh shellinit >> ~/.bashrc   # then open a new shell
-./devdisplay.sh view                     # x11vnc on localhost, when you want to watch
+./devdisplay.sh start     # Xvfb + openbox, ~0.3 s, idempotent
+./devdisplay.sh view      # x11vnc on localhost, when you want to watch
 ```
 
-The `shellinit` line is the one that matters: it points **every** new shell at
-the display when it is up, and leaves `DISPLAY` alone when it is not — so a
-reboot or a `stop` degrades to your normal desktop instead of breaking every GUI
-program with `cannot open display`. A bare `export DISPLAY=:99` at a prompt
-covers only that terminal. The display is an ordinary process and **does not
-survive a reboot**; re-run `start` and the snippet picks it up.
+**Do not point your normal interactive shell at it.** You launch xschem to *use*
+it; sending that to an invisible display is the bug, not the fix. Suites started
+through `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` or the standalone
+`test_*.sh` attach automatically and need nothing from you.
+
+The gap is the *bare* invocation above — `../../src/xschem --pipe … --script
+test_<name>.tcl` — which nothing arms. Cover it per-command with
+`./devdisplay.sh exec ../../src/xschem --pipe -q --nolog --script test_<name>.tcl`,
+or, for an automated session, by launching the tool with `DISPLAY=:99` in its
+environment so every command it runs inherits it.
+
+`./devdisplay.sh shellinit >> ~/.bashrc` exists for one narrow case: a terminal
+you use *only* for running tests. It emits a conditional export, so a reboot or
+a `stop` degrades to your normal desktop instead of breaking every GUI program
+with `cannot open display`. The display is an ordinary process and **does not
+survive a reboot**; re-run `start`.
 
 Suites launched through `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` or
 the standalone `test_*.sh` attach to it automatically, and fall back to a

@@ -21,14 +21,15 @@
 # hand-typed -- land there instead of on the monitor.
 #
 #     tests/headless/devdisplay.sh start
-#     tests/headless/devdisplay.sh shellinit >> ~/.bashrc   # and open a new shell
 #
-# "Your shell" means every terminal you type commands in -- and, on this
-# machine, the non-interactive shell Claude Code's Bash tool runs in, which also
-# sources ~/.bashrc. That second one matters most: the leaking command is typed
-# far more often by the assistant than by the human. A bare `export DISPLAY=:99`
-# at a prompt only covers the one terminal it was typed in, which is why
-# `shellinit` exists.
+# WHO POINTS A SHELL AT IT: not the human. A person launching xschem is
+# launching it to USE it, and the suites arm themselves. L1 is typed by the
+# assistant, so the cover is the assistant's environment -- launch the session
+# as `DISPLAY=:99 claude` (tool shells inherit it) or use `devdisplay.sh exec`.
+# ~/.bashrc cannot do it here: it returns at its lines 6-9 for non-interactive
+# shells, and the Bash tool's shell is non-interactive -- it inherits its
+# environment rather than sourcing that file. `shellinit` below is for the
+# narrow case of a terminal used ONLY for running tests by hand.
 #
 # :0 then becomes the thing you opt INTO (AUDIT_DISPLAY=:0), which is the right
 # way round: the only remaining reason to need it is reproducing WSLg-specific

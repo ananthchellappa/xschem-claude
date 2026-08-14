@@ -66,37 +66,49 @@ devdisplay.sh shellinit  # the shell-rc snippet (see below)
 devdisplay.sh stop
 ```
 
-and then, once:
+### Who the export is actually for
+
+Not the human. This deserves stating plainly because an earlier revision of this
+spec got it backwards and told them to append `shellinit` to `~/.bashrc`.
+
+A person launching xschem is launching it **to use it**; routing that to an
+invisible display is the bug, not the fix. And they do not need it for suites
+either — `full_audit.sh`, `run_suites.sh`, `gated_xschem.sh` and the 8
+standalone `test_*.sh` all arm themselves (R501, R801, R802). For the human,
+starting the display is the whole of the job:
 
 ```sh
-tests/headless/devdisplay.sh shellinit >> ~/.bashrc     # then open a new shell
+tests/headless/devdisplay.sh start
 ```
 
-That last line is the part that closes L1, and it is worth being precise about
-what it means, because "set `DISPLAY` in your dev shell" is not an instruction
-anyone can follow reliably.
+**L1 belongs almost entirely to the assistant.** A bare
+`./src/xschem --pipe -q --script tests/headless/<t>.tcl` is typed dozens of
+times a session by Claude Code and armed by nothing. Two covers, in order of
+robustness:
 
-**Which shells.** Every terminal in which xschem might be launched — and on this
-machine that includes the **non-interactive shell Claude Code's Bash tool runs
-in, which also sources `~/.bashrc`** (verified: `~/eda/bin`, a `.bashrc`-only
-`PATH` addition, is present in it). That is the one that matters most: the
-leaking command is typed far more often by the assistant than by the human.
+1. **`DISPLAY=:99 claude`** — tool shells inherit the Claude Code process's
+   environment, so every bare invocation lands on the dev display while the
+   human's terminals keep `:0`. Does not depend on the assistant remembering.
+2. **`devdisplay.sh exec <cmd>`**, or running the suite through
+   `run_suites.sh` — per-command, and therefore only as reliable as the habit.
+   Recorded as a rule in `CLAUDE.md`, which is the assistant's equivalent of a
+   shell rc.
 
-**Why not just `export DISPLAY=:99`.** Typed at a prompt it lasts exactly as
-long as that terminal, so it covers the window you were in and no other. Put
-*unconditionally* in a shell rc it has the opposite failure: it outlives the
-display it names. After a reboot, a `wsl --shutdown`, or a `devdisplay.sh stop`,
-every GUI program in every new terminal points at a display that does not exist
-and dies with `cannot open display` — including programs with nothing to do with
-testing.
+**`~/.bashrc` cannot do job 1 on this machine.** It returns at lines 6–9 for
+non-interactive shells, and the Bash tool's shell is non-interactive
+(`$- = hmtBc`, no `i`, no `l`). It **inherits** its environment rather than
+sourcing that file. An earlier revision claimed the opposite, "verified" by
+observing `~/eda/bin` on `PATH` — a symptom with two explanations, of which
+inheritance is the true one. Test the mechanism, not a symptom it shares.
 
-`shellinit` emits a snippet that exports `DISPLAY` **only when that display is
-actually listening**, so the fallback is the normal desktop, silently. Both
-directions are tested (D15).
+**`shellinit` still has a use**, a narrow one: a terminal used *only* for
+running tests by hand. It exports `DISPLAY` **only when the display is actually
+listening**, because an unconditional export in a shell rc outlives the display
+it names — after a reboot, a `wsl --shutdown`, or a `stop`, every GUI program in
+that shell dies with `cannot open display`. Both directions are tested (D15).
 
 **The display does not survive a reboot.** `Xvfb` is an ordinary process. After
-a Windows restart or `wsl --shutdown`, run `devdisplay.sh start` again; the
-`shellinit` snippet then picks it up in every new shell with no further action.
+a Windows restart or `wsl --shutdown`, run `devdisplay.sh start` again.
 
 ### Why persistent rather than per-run
 
