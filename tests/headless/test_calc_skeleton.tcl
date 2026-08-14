@@ -197,6 +197,46 @@ check_true "S11 default bot sash near 78% of $W" [expr {abs($x0 - 0.78 * $W) < 1
 # and an even split would have failed those, so assert the negative too
 check_true "S11 not an even split" [expr {abs($y0 - $H / 4.0) > 20}]
 
+# --- S12 landmine D6, forced rather than hoped for ---------------------------
+# The clobber needs a save_layout to run INSIDE a restore. Who delivers that
+# depends entirely on the display: on :0 the window manager's Configure traffic
+# does it (measured: save_layout is entered twice per restore_layout), while
+# under Xvfb it is zero — with or without openbox, because openbox reparents and
+# honours iconify but does not generate WSLg's extra asynchronous Configures.
+# So the environment cannot be trusted to produce the race, and a guard that is
+# only exercised on one developer's display is not covered at all.
+#
+# Force it instead: wrap the restore body so a real save_layout attempt lands
+# while calc::restoring is set — precisely what a mid-restore Configure does —
+# and assert the restore still applies the value it was asked to apply.
+wm geometry .calc 700x800
+update idletasks
+set c0     [.calc.pw sash coord 0]
+set y0     [lindex $c0 1]
+set target [expr {$y0 + 30}]
+eval .calc.pw sash mark 0 $c0
+eval .calc.pw sash dragto 0 [list [lindex $c0 0] $target]
+update idletasks
+calc::save_layout
+set saved $::calc::sash(.calc.pw,0)
+check_true "S12 fixture: sash moved and captured" [expr {$saved != $y0}]
+# put the sash back, so a restore that does nothing is visibly distinguishable
+eval .calc.pw sash mark 0 [.calc.pw sash coord 0]
+eval .calc.pw sash dragto 0 [list [lindex $c0 0] $y0]
+update idletasks
+
+rename calc::restore_layout_body calc::_s12_orig_body
+proc calc::restore_layout_body {} {
+    calc::save_layout          ;# the mid-restore <Configure>, made deterministic
+    calc::_s12_orig_body
+}
+set s12err [catch {calc::restore_layout} s12msg]
+rename calc::restore_layout_body {}
+rename calc::_s12_orig_body calc::restore_layout_body
+update idletasks
+check "S12 restore survived a mid-restore save (no error)" $s12err 0
+check "S12 mid-restore save did not clobber" [lindex [.calc.pw sash coord 0] 1] $saved
+
 calc::close
 
 } bigerr]} {

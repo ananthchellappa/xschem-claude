@@ -83,13 +83,20 @@ checks that `$DISPLAY` is non-empty, so a virtual display arms the gate; then
 invisible display, for every session sharing the control dir. Xvfb without
 `GUI_GATE=0` doesn't free the screen, it breaks Pause.
 
-**Xvfb is not a substitute for `:0`** in three cases: a human eyeball; anything
-window-manager-dependent (Xvfb runs no WM, so decoration/iconify/stacking/raise
-are meaningless there); and WSLg-only bugs. The class is real — phase 0 of the
-Calculator passed 49/49 under Xvfb and failed 3 checks on `:0`, because a
-`<Configure>` delivered mid-restore clobbered the layout being restored, and
-Xvfb has no WM to generate one. **Run a GUI feature's suite on `:0` once before
-calling it done.**
+**A window manager runs inside the virtual session** (`AUDIT_WM`, default
+`openbox`; `none` for the old empty-Xvfb behaviour). Measured: empty Xvfb does
+not reparent and silently no-ops `wm iconify`; with openbox both work — and on
+iconify openbox is *more* faithful than WSLg, which doesn't honour it either.
+So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
+
+**Xvfb is still not a substitute for `:0`** for a human eyeball, or for WSLg's
+own quirks. The sharpest of those is **event traffic**: one `wm geometry`
+request yields 3 `<Configure>` events on `:0` against 1 under Xvfb with or
+without a WM, and Calculator phase 0 passed 49/49 under Xvfb while failing 3
+checks on `:0` for exactly that reason. **Run a GUI feature's suite on `:0` once
+before calling it done** — but treat a bug that only `:0` can reproduce as a
+*test* defect too: the fix is to force the race deterministically
+(`test_calc_skeleton` S12), not to hope an environment supplies it.
 
 ### GUI-test control gate (`tests/headless/gui_gate.sh`)
 Running a suite under a real/WSLg `$DISPLAY` pops a **control panel**

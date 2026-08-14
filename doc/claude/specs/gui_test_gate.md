@@ -28,11 +28,18 @@ Two consequences worth stating, because they invert earlier assumptions:
   `GUI_GATE=0` does not free the screen; it breaks Pause. The forcing lives in
   `xvfb_arm.sh` so no caller can forget it.
 
-The real screen keeps three jobs Xvfb cannot do: a human eyeball, anything
-window-manager-dependent (Xvfb runs no WM), and WSLg-only bugs. That second one
-is not theoretical — Calculator phase 0 passed 49/49 under Xvfb and failed three
-checks on `:0`, because a `<Configure>` arriving mid-restore clobbered the layout
-being restored and Xvfb has no WM to generate one.
+The virtual session now runs **openbox** (`AUDIT_WM`, default `openbox`, `none`
+to opt out), so window-manager behaviour is no longer a reason to reach for the
+real screen: measured, an empty Xvfb does not reparent and silently no-ops
+`wm iconify`, while openbox does both — and is *more* faithful than WSLg on
+iconify, which WSLg does not honour either.
+
+The real screen keeps two jobs: a human eyeball, and WSLg's own quirks. The
+sharpest quirk is event traffic — one `wm geometry` request yields 3 `<Configure>`
+events on `:0` against 1 under Xvfb with or without a WM. Calculator phase 0
+passed 49/49 under Xvfb and failed three checks on `:0` for exactly that reason.
+The durable fix was not a bigger matrix of window managers but a test that
+**forces** the race (`test_calc_skeleton` S12), which goes red on every arm.
 
 ## THE ONE RULE (v3)
 

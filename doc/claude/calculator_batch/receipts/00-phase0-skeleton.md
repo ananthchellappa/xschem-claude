@@ -158,9 +158,77 @@ sufficient and `settle` is not load-bearing. It was removed: a 200-iteration
 `calc::close`, so keeping unproven machinery with a real reentrancy hazard is a
 bad trade. Verified after removal: `:0` 3/3 × 49 checks, Xvfb 3/3 × 49 checks.
 
-**The general lesson**, now in `CLAUDE.md`: Xvfb is the right default arm, and it
-cannot see WM-dependent bugs. Run a GUI feature's suite on `:0` once before
-calling it done.
+**The general lesson**, now in `CLAUDE.md`: Xvfb is the right default arm. Run a
+GUI feature's suite on `:0` once before calling it done — and see the next
+section for why that alone is not enough.
+
+## Addendum 2 — openbox, and what it did and did not fix
+
+openbox was installed and wired into `xvfb_arm.sh` (`AUDIT_WM`, default
+`openbox`, `none` to opt out) to try to close the `:0`-only gap. It closes part
+of it. Measured 2026-08-13:
+
+| arm | reparented | `wm iconify` → state | ismapped |
+|---|---|---|---|
+| Xvfb, no WM | 0 | `normal` (silent no-op) | 1 |
+| Xvfb + openbox | **1** | **`iconic`** | **0** |
+| `:0` (WSLg) | 1 | `normal` | 1 |
+
+So openbox restores reparenting and real iconify/withdraw semantics, and on
+iconify is *more* faithful than WSLg — Xwayland does not honour it either. The
+standing "decoration/iconify/stacking/raise are worthless under Xvfb" ruling in
+`doc/claude/signal_browser_detach_batch/PLAN.md` has been amended accordingly.
+
+**It did not reproduce D6.** With the D6 guard removed:
+
+| arm | result |
+|---|---|
+| Xvfb, no WM | ALL PASS — bug hidden |
+| Xvfb + openbox | ALL PASS — bug still hidden |
+| `:0` | 3 FAILED |
+
+Instrumenting `save_layout` gave the reason, and it is not about window
+management at all:
+
+| arm | `<Configure>` per `wm geometry` | `save_layout` entries per `restore_layout` |
+|---|---|---|
+| Xvfb, no WM | 1 | 0 |
+| Xvfb + openbox | 1 | 0 |
+| `:0` (WSLg) | **3** | **2** |
+
+D6 needs that extra asynchronous traffic, which is a WSLg/Xwayland property, not
+a window-manager one. Adding window managers until a bug appears is not a
+strategy.
+
+**What actually closed the hole: S12.** A guard that only fires on one
+developer's display is not covered at all, so the test now *forces* the race —
+it wraps the restore body so a real `save_layout` lands while `calc::restoring`
+is set, which is precisely what a mid-restore Configure does. Verified by
+removing the guard again:
+
+```
+AUDIT_WM=none      FAIL: S12 mid-restore save did not clobber -> {161} (exp {191})
+AUDIT_WM=openbox   FAIL: S12 mid-restore save did not clobber -> {161} (exp {191})
+AUDIT_DISPLAY=:0   FAIL: S12 mid-restore save did not clobber -> {123} (exp {153})
+```
+
+Red on every arm. That is the shape to prefer for anything in this class:
+reproduce the hazard deterministically rather than hoping an environment
+supplies it.
+
+**openbox was kept as the default anyway**, because it costs nothing and closes
+the reparent/iconify class — but only after proving it shifts no verdict. The
+full audit was run twice, `AUDIT_WM=none` and `AUDIT_WM=openbox`, and the
+verdict sets diffed **identical**: 319 tests, 300 PASS, 18 FAIL, 1 TIMEOUT, same
+names. Baseline stored beside this file as
+`00b-audit-baseline-2026-08-14.txt`; the 18+1 are all pre-existing and include
+the two this batch already re-ran against a stashed tree (`test_cadence_drag`,
+`test_reopen_readonly`). `test_calc_skeleton` PASSes on both arms.
+
+(Method note: the first A/B attempt produced a 534-byte log and a false "exit 0".
+The command had been double-backgrounded — a `&` inside an already-backgrounded
+call — so the detached subshell was killed with its process group after 11
+tests. A truncated log that still reports success is worth recognising on sight.)
 
 ## Next
 
