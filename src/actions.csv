@@ -189,6 +189,9 @@ view.center_at_cursor,command,view,Center view on cursor,,,,,Center the view on 
 view.pan,command,view,Drag-pan canvas,,,,,Drag-pan the canvas from the pointer (ship unbound; bind a key in keybindings.csv),
 edit.cycle_manhattan,command,edit,Cycle manhattan corner,,,,,Cycle the corner mode of an in-progress move/wire/line gesture (ship unbound; bind a key in keybindings.csv),
 edit.cycle_pin_type,command,edit,Cycle pin type (while placing),,,,,Cycle the direction/type (input/output/inout <-> ipin/opin/iopin) of the pin being placed (default Ctrl+MMB),,1
+edit.rotate_in_place,command,edit,Rotate in place (key),Alt-R,,,,"Rotate the selection in place, or the objects being dragged (default Alt-R; remap with xschem bind key 114 <mods> canvas edit.rotate_in_place)",
+edit.flip_in_place,command,edit,Horizontal flip in place (key),Alt-F,,,,"Horizontally flip the selection in place, or the objects being dragged (default Alt-F; remap with xschem bind key 102 <mods> canvas edit.flip_in_place)",
+edit.flipv_in_place,command,edit,Vertical flip in place (key),Alt-V,,,,"Vertically flip the selection in place, or the objects being dragged (default Alt-V; remap with xschem bind key 118 <mods> canvas edit.flipv_in_place)",
 view.scroll_up,command,view,Scroll up,,xschem scroll up,,,Scroll the viewport up one step,
 view.scroll_down,command,view,Scroll down,,xschem scroll down,,,Scroll the viewport down one step,
 view.scroll_left,command,view,Scroll left,,xschem scroll left,,,Scroll the viewport left one step,

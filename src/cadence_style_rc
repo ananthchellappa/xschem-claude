@@ -382,6 +382,51 @@ set descend_readonly 1
 # Clear symbol (was Ctrl-Shift-N) and Draw crosshair (was Alt-X) are left as
 # menu items only (Symbol > Clear symbol; Options > Crosshair > Draw crosshair).
 
+# --- Rotate / flip IN PLACE: Alt-R, Alt-F, Alt-V -- all three REMAPPABLE ------
+# These used to be hardcoded in C (the EQUAL_MODMASK arms of callback.c's key
+# switch) and could not be moved. They are now registered actions, so the chord is
+# yours. Each one acts on the current selection (a multi-object selection rotates /
+# horizontally-flips as ONE rigid body about its snapped bounding-box centre), or on
+# the objects being dragged if you hit it mid move/copy, or -- with nothing selected
+# -- it arms "click an object to transform".
+#
+#   edit.rotate_in_place    default Alt-R    rotate 90 deg
+#   edit.flip_in_place      default Alt-F    HORIZONTAL flip (left <-> right)
+#   edit.flipv_in_place     default Alt-V    VERTICAL flip   (up <-> down)
+#
+# Remap = bind the action to the chord you want, then un-bind the old chord:
+#   xschem bind   key <keysym> <mods> canvas <action>
+#   xschem unbind key <keysym> <mods> canvas
+# Keysyms: r=114  f=102  v=118   R=82  F=70  V=86   (run `xev` for others).
+# mods: 0 | ctrl | alt | shift | super, joined with '+'.
+# GOTCHA: for printable keys the C dispatch strips Shift, so a Shift chord must name
+# the SHIFTED keysym -- Ctrl+Shift+R is `key 82 ctrl`, NOT `key 114 ctrl+shift`.
+# Already taken, do not reuse: plain r/f/v (rectangle / zoom-full / vertical-constrain),
+# Shift-r/f/v (rotate/flip about the MOUSE point), Ctrl-f (property search),
+# Ctrl-r (simulate, under cadence_compat), Ctrl-Alt-v (show in Signal Browser).
+#
+# Examples -- uncomment to move each transform onto Ctrl+Shift+<letter>:
+# xschem bind   key 82 ctrl canvas edit.rotate_in_place   ;# Ctrl+Shift+R = rotate
+# xschem unbind key 114 alt canvas                        ;# free Alt-R
+# xschem bind   key 70 ctrl canvas edit.flip_in_place     ;# Ctrl+Shift+F = h-flip
+# xschem unbind key 102 alt canvas                        ;# free Alt-F
+# xschem bind   key 86 ctrl canvas edit.flipv_in_place    ;# Ctrl+Shift+V = v-flip
+# xschem unbind key 118 alt canvas                        ;# free Alt-V
+#
+# Each key also ships a Super (Windows-key) twin -- keysym 114/102/118 with `super`,
+# inherited from the old C test, which accepted Alt OR Super. Un-bind those too if
+# you want the letter completely free:
+# xschem unbind key 114 super canvas
+# xschem unbind key 102 super canvas
+# xschem unbind key 118 super canvas
+#
+# The defaults live in src/keybindings.csv (generated from the C table); a copy in
+# your USER_CONF_DIR (~/.xschem/keybindings.csv) is loaded afterwards and wins, so
+# you can remap there instead of here -- edit the row, or set its action to '-' to
+# un-bind. The MENU accelerator text (Edit > "Rotate in place ... Alt-R") is a static
+# display string and does NOT follow a remap; `xschem bindings dump` and the
+# generated keybindings cheat-sheet always show the live truth.
+
 # --- snap / grid / highlight key actions (doc/claude/specs/keybind_snap_grid_actions.md) --
 # These ship UNBOUND: no built-in default chord. Each is a registered action, also
 # reachable from the menus (Options / View). Map any action to any chord with

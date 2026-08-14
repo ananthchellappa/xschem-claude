@@ -47,15 +47,21 @@ set F 102   ;# keysym for 'f'
 
 # --- the data: 'f' rows exist (canvas->zoom_full, over_graph->forward). Ctrl-f gained
 #     an over_graph routing row in Phase 3d.1b (property-search canvas behavior stays in
-#     C); Alt-f stays entirely in C. So neither has a CANVAS row. -
+#     C), so Ctrl-f still has NO canvas row. Alt-f DOES have one now: the in-place
+#     horizontal flip was migrated out of the switch so the chord is remappable
+#     (edit.flip_in_place, plus a Super twin — see act_flip_in_place). ---
 set dump [xschem bindings dump]
 check "canvas f -> view.zoom_full row present" \
   [expr {[lsearch -exact $dump {key 102 0 canvas view.zoom_full}] >= 0}] {}
 check "over_graph f -> graph.forward row present" \
   [expr {[lsearch -exact $dump {key 102 0 graph graph.forward}] >= 0}] {}
-check "no Ctrl-f / Alt-f CANVAS rows (canvas behavior stays in C)" \
-  [expr {[lsearch -glob $dump {key 102 ctrl canvas *}] < 0 &&
-         [lsearch -glob $dump {key 102 alt canvas *}]  < 0}] {}
+check "no Ctrl-f CANVAS row (property search stays in C)" \
+  [expr {[lsearch -glob $dump {key 102 ctrl canvas *}] < 0}] {}
+check "Alt-f / Super-f CANVAS rows -> edit.flip_in_place" \
+  [expr {[lsearch -exact $dump {key 102 alt canvas edit.flip_in_place}]   >= 0 &&
+         [lsearch -exact $dump {key 102 super canvas edit.flip_in_place}] >= 0}] {}
+check "no Alt-f OVER_GRAPH row (flip never routes to a graph)" \
+  [expr {[lsearch -glob $dump {key 102 alt graph *}] < 0}] {}
 
 # perturb the canvas zoom away from "full" so a subsequent zoom_full is observable
 lassign [screen 870 100] cx cy   ;# below the graph: bare canvas

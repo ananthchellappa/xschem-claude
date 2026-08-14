@@ -326,7 +326,28 @@ new context tests) stays green.
 
 **PHASE 3 PLAN COMPLETE (2026-06-10).** Remaining un-migrated chords are structurally
 parked (dialogs, semaphore-manipulating, unconditional symbol keys, cadence_compat) —
-revisit on concrete need. Next direction is a user decision: (a) generate more menus
+revisit on concrete need.
+
+**Need-driven follow-up (2026-08-13, option (d)): the in-place transforms.** A user
+asked whether `Alt-R`/`Alt-F` were remappable; they were not — the three
+`else if(EQUAL_MODMASK)` arms of cases `'r'`, `'f'`, `'v'` were hardcoded, so no
+`xschem bind` / keybindings.csv / cheat-sheet reach. Migrated whole:
+`edit.rotate_in_place`, `edit.flip_in_place`, `edit.flipv_in_place`, C-backed,
+`mutates=1` (the registry gate replaces each arm's `readonly_block()`), two rows each
+(Mod1 + Mod4, reproducing EQUAL_MODMASK), **non-idle** (the arms had no `sem>=2` guard
+because they must work mid-drag), canvas-only. All three switch arms deleted; `case 'f'`
+is down to `Ctrl+f`. **This retires the "structurally parked" verdict recorded for
+`Alt+f` in `tutorial_case_f_one_keys_journey.md` §4** — the blockers listed there
+(reads `ui_state`, reads the mouse, is a "modal sequence") assumed a migrated action
+must be a leaf command; keeping the `ui_state` ladder INSIDE the handler dissolves all
+three, adds no axis to the binding tuple, and leaves the genuine limits (a guard's
+position relative to a side effect; the truly modal `m`/place-text keys) intact. See
+that file's postscript. Layer A logging stays off (label-only `actions.csv` rows): the
+standalone arms self-log at the `perform_action` boundary and the mid-drag arms must
+emit nothing (the drag logs at its END). Tests: the six
+`test_perform_action_{rotate,flip,flipv}{,_in_place}` suites pass unchanged (incl. the
+mid-drag wrinkle lock), plus new `test_transform_keys_remap.tcl` (default chords, Super
+twins, remap, unbind-is-dead, read-only refusal). Next direction is a user decision: (a) generate more menus
 from actions.csv, (b) `xschem action <id>` palette dispatcher, (c) derive displayed
 accels from the live table, (d) need-driven migrations only.
 

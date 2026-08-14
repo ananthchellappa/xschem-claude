@@ -5065,6 +5065,131 @@ static int act_add_pin_stubs(const ActionEvent *e)
   return add_pin_stubs("", "", 0) > 0 ? 1 : 0;
 }
 
+/* --- Alt-R / Alt-F / Alt-V: the in-place transforms, made REMAPPABLE ---------
+ * These three were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r',
+ * 'f' and 'v' -- reachable only from those physical keys, invisible to `xschem bind`,
+ * to keybindings.csv and to the generated cheat-sheet. Each body is migrated here
+ * VERBATIM (the mid-drag STARTMOVE/STARTCOPY arms, the empty-selection arming arm and
+ * the standalone apply) and registered as an action, so the chord is data-driven like
+ * every other migrated key. The DEFAULTS ARE UNCHANGED: two rows per key, Mod1Mask
+ * (Alt) and Mod4Mask (Super), reproduce the EQUAL_MODMASK test exactly -- see
+ * init_input_bindings, and src/cadence_style_rc for the user-facing remap recipe.
+ *
+ * The readonly gate these arms had (`if(readonly_block()) break;`) is now the registry
+ * `mutates=1` column: dispatch_input_action refuses on a read-only view BEFORE the
+ * handler runs -- same modal, same no-op, one less inline gate.
+ *
+ * NO log_cmd, on purpose: the actions.csv rows are label-only (empty command), so
+ * dispatch_input_action's Layer A never fires for them. The standalone arms self-log at
+ * the perform_action boundary (`xschem rotate_in_place` / `rotate x y` / ...), while the
+ * mid-drag and arming arms MUST stay silent -- a drag is logged at its END (Layer C) and
+ * an `xschem rotate_in_place` line emitted mid-drag would replay as one extra rotation
+ * (the same trap the scheduler's rotate_in_place/flip_in_place branches warn about).
+ *
+ * The snap is read here exactly the way handle_key_press's c_snap parameter is derived
+ * (tclgetdoublevar("cadsnap"), callback entry), so the group pivot is identical. */
+static int connected_drag_group_transform(void);
+static void standalone_group_transform(int what, double c_snap);
+
+/* edit.rotate_in_place (default Alt-R / Super-R): old case 'r' EQUAL_MODMASK arm. */
+static int act_rotate_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: a multi-object connected drag rotates the whole selection as a group
+   * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
+   * the per-object in-place rotate (rotatelocal about its own origin). */
+  if(xctx->ui_state & STARTMOVE)
+    move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+  else if(xctx->ui_state & STARTCOPY)
+    copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
+      statusmsg_hold("Rotate in place: click an object to rotate", 1);
+    } else {
+      /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
+       * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
+      standalone_group_transform(ROTATE, tclgetdoublevar("cadsnap"));
+    }
+  }
+  return 1;
+}
+
+/* edit.flip_in_place (default Alt-F / Super-F): old case 'f' EQUAL_MODMASK arm --
+ * HORIZONTAL mirror (left<->right) about each object's own origin, or about the
+ * selection bbox centre for a multi-object selection. */
+static int act_flip_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: multi-object connected drag flips the whole selection as a group
+   * (shared pivot); a single object keeps the per-object in-place flip. */
+  if(xctx->ui_state & STARTMOVE)
+    move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+  else if(xctx->ui_state & STARTCOPY)
+    copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
+      statusmsg_hold("Flip in place: click an object to flip", 1);
+    } else {
+      /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
+       * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
+       * Self-logs at the helper (issue 0068): standalone reaches only here, never the
+       * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
+      standalone_group_transform(FLIP, tclgetdoublevar("cadsnap"));
+    }
+  }
+  return 1;
+}
+
+/* edit.flipv_in_place (default Alt-V / Super-V): old case 'v' EQUAL_MODMASK arm --
+ * VERTICAL mirror (up<->down), built as rotate+rotate+flip. NOTE the asymmetry with
+ * the two above: there is no standalone_group_transform arm (no issue-0116 group form),
+ * so a multi-object selection flips each object about its OWN origin. */
+static int act_flipv_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
+   * single object keeps the per-object in-place flip. rl applied to all three steps. */
+  if(xctx->ui_state & STARTMOVE) {
+    int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+    move_objects(ROTATE|rl,0,0,0);
+    move_objects(ROTATE|rl,0,0,0);
+    move_objects(FLIP|rl,0,0,0);
+  }
+  else if(xctx->ui_state & STARTCOPY) {
+    int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+    copy_objects(ROTATE|rl);
+    copy_objects(ROTATE|rl);
+    copy_objects(FLIP|rl);
+  }
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
+      statusmsg_hold("Vertical flip in place: click an object to flip", 1);
+    } else {
+      /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
+       * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
+       * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
+       * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
+       * form): the standalone apply is always the per-object in-place flip, so the WHOLE
+       * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
+       * so the mx/my_double_save previously seeded here was immaterial to the transform. */
+      perform_action("flipv_in_place", 0, NULL);
+    }
+  }
+  return 1;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -5255,6 +5380,18 @@ static ActionDef action_registry[] = {
    * and doc/claude/signal_browser_2pane_batch/PLAN.md item 17. */
   { "wave.show_in_signal_browser", NULL, "ase::show_in_browser_for_current",
     "Show in Signal Browser" },
+  /* In-place transforms, defaults Alt-R / Alt-F / Alt-V (plus the Super twins), migrated
+   * out of the hardcoded switch so the chords are remappable -- see the block comment above
+   * act_rotate_in_place and src/cadence_style_rc. mutates=1: dispatch_input_action's
+   * readonly gate replaces the readonly_block() each arm used to call. log_cmd stays NULL
+   * (label-only actions.csv rows, empty command): the standalone arms self-log at the
+   * perform_action boundary and the mid-drag arms must not log at all. */
+  { "edit.rotate_in_place", act_rotate_in_place, NULL,
+    "Rotate in place (selection, or the objects being dragged)", 1 },
+  { "edit.flip_in_place", act_flip_in_place, NULL,
+    "Horizontal flip in place (selection, or the objects being dragged)", 1 },
+  { "edit.flipv_in_place", act_flipv_in_place, NULL,
+    "Vertical flip in place (selection, or the objects being dragged)", 1 },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -5550,6 +5687,24 @@ static void init_input_bindings(void)
    * <Control-Mod1-Key-v> or `-state 12`. */
   set_input_binding(DEV_KEY, 'v', ControlMask|Mod1Mask, ACTX_CANVAS,
                     "wave.show_in_signal_browser");
+  /* In-place transforms: Alt-R rotate, Alt-F horizontal flip, Alt-V vertical flip.
+   * These were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r'/'f'/'v';
+   * EQUAL_MODMASK is `rstate == Mod1Mask || rstate == Mod4Mask`, so each key needs TWO
+   * rows (Alt and Super) to keep the shipped behavior byte-identical. 'r'=114, 'f'=102,
+   * 'v'=118. NON-idle on purpose: the arms had no `semaphore>=2` guard because they must
+   * keep working DURING a move/copy drag (that is the whole point of Alt-R mid-drag).
+   * Canvas-only -- no over_graph row, so the dispatch never consults the (side-effectful)
+   * graph context for these chords. NOTHING COLLIDES: plain 'f' (view.zoom_full), plain/
+   * Ctrl 'r' and 'v' and Ctrl-Alt-'v' (wave.show_in_signal_browser) are different chords.
+   * Remap or un-bind from keybindings.csv or a custom rc, e.g.
+   *   xschem bind key 114 ctrl+shift canvas edit.rotate_in_place
+   *   xschem unbind key 118 alt canvas                              */
+  set_input_binding(DEV_KEY, 'r', Mod1Mask, ACTX_CANVAS, "edit.rotate_in_place"); /* Alt-R   */
+  set_input_binding(DEV_KEY, 'r', Mod4Mask, ACTX_CANVAS, "edit.rotate_in_place"); /* Super-R */
+  set_input_binding(DEV_KEY, 'f', Mod1Mask, ACTX_CANVAS, "edit.flip_in_place");   /* Alt-F   */
+  set_input_binding(DEV_KEY, 'f', Mod4Mask, ACTX_CANVAS, "edit.flip_in_place");   /* Super-F */
+  set_input_binding(DEV_KEY, 'v', Mod1Mask, ACTX_CANVAS, "edit.flipv_in_place");  /* Alt-V   */
+  set_input_binding(DEV_KEY, 'v', Mod4Mask, ACTX_CANVAS, "edit.flipv_in_place");  /* Super-V */
   /* Alt-2 toggles the current window between the schematic-type and symbol-type view
    * of the same cell (doc/claude/specs/alt2_toggle_view.md). Tcl-backed
    * (alt2_toggle_view). '2' == keysym 50; Alt = Mod1Mask. Plain '2' (logic level) and
@@ -6659,30 +6814,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         /* graph routing migrated (Phase 3d.1b): idle_only over_graph -> graph.forward. */
         tcleval("property_search");
       }
-      else if(EQUAL_MODMASK) { /* flip objects around their anchor points 20171208 */
-        if(readonly_block()) break;
-        /* issue 0114: multi-object connected drag flips the whole selection as a group
-         * (shared pivot); a single object keeps the per-object in-place flip. */
-        if(xctx->ui_state & STARTMOVE)
-          move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
-        else if(xctx->ui_state & STARTCOPY)
-          copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
-            statusmsg_hold("Flip in place: click an object to flip", 1);
-          } else {
-            /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
-             * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
-             * Self-logs at the helper (issue 0068): standalone reaches only here, never the
-             * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
-            standalone_group_transform(FLIP, c_snap);
-          }
-        }
-      }
+      /* Alt-f / Super-f (flip objects around their anchor points, 20171208) is
+       * data-driven now: edit.flip_in_place, default rows key 102 alt|super canvas.
+       * Handled by the DEV_KEY dispatch above; see act_flip_in_place. */
       break;
 
     case 'F':
@@ -7208,29 +7342,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           tcleval("[xschem get top_path].menubar invoke Simulate");
         }
       }
-      else if(EQUAL_MODMASK) { /* rotate objects around their anchor points 20171208 */
-        if(readonly_block()) break;
-        /* issue 0114: a multi-object connected drag rotates the whole selection as a group
-         * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
-         * the per-object in-place rotate (rotatelocal about its own origin). */
-        if(xctx->ui_state & STARTMOVE)
-          move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
-        else if(xctx->ui_state & STARTCOPY)
-          copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
-            statusmsg_hold("Rotate in place: click an object to rotate", 1);
-          } else {
-            /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
-             * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
-            standalone_group_transform(ROTATE, c_snap);
-          }
-        }
-      }
+      /* Alt-r / Super-r (rotate objects around their anchor points, 20171208) is
+       * data-driven now: edit.rotate_in_place, default rows key 114 alt|super canvas.
+       * Handled by the DEV_KEY dispatch above; see act_rotate_in_place. */
       break;
 
     case 'R':
@@ -7453,41 +7567,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(readonly_block()) break;
         merge_file(2,".sch");
       }
-      else if(EQUAL_MODMASK) { /* vertical flip objects around their anchor points */
-        if(readonly_block()) break;
-        /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
-         * single object keeps the per-object in-place flip. rl applied to all three steps. */
-        if(xctx->ui_state & STARTMOVE) {
-          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
-          move_objects(ROTATE|rl,0,0,0);
-          move_objects(ROTATE|rl,0,0,0);
-          move_objects(FLIP|rl,0,0,0);
-        }
-        else if(xctx->ui_state & STARTCOPY) {
-          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
-          copy_objects(ROTATE|rl);
-          copy_objects(ROTATE|rl);
-          copy_objects(FLIP|rl);
-        }
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
-            statusmsg_hold("Vertical flip in place: click an object to flip", 1);
-          } else {
-            /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
-             * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
-             * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
-             * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
-             * form): the standalone apply is always the per-object in-place flip, so the WHOLE
-             * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
-             * so the mx/my_double_save previously seeded here was immaterial to the transform. */
-            perform_action("flipv_in_place", 0, NULL);
-          }
-        }
-      }
+      /* Alt-v / Super-v (vertical flip around anchor points) is data-driven now:
+       * edit.flipv_in_place, default rows key 118 alt|super canvas. Handled by the
+       * DEV_KEY dispatch above; see act_flipv_in_place. */
       break;
 
     case 'V':

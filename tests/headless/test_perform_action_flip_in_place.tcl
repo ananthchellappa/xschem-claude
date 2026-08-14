@@ -110,7 +110,8 @@ check "oracle: flip is OBSERVABLE (coords change, not an orientation no-op)" \
 # ---------------------------------------------------------------------------
 # (a) EXACTLY ONE log line from EACH standalone entry point.
 #     script  -> scheduler branch standalone `else` -> perform_action
-#     Alt-F key -> callback.c case 'f' EQUAL_MODMASK -> standalone_group_transform
+#     Alt-F key -> binding table (key 102 alt canvas -> edit.flip_in_place) ->
+#               callback.c act_flip_in_place -> standalone_group_transform
 #               (single object) -> perform_action   (keysym 102='f', state 8=Alt)
 #     menu    -> menu_action_logged wrapper -> `xschem flip_in_place` -> branch; the
 #               wrapper resets/checks actionlog_cmd_logged, so the core's log wins and the

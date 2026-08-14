@@ -172,6 +172,11 @@ case 'f':
   break;
 ```
 
+> **SUPERSEDED (2026-08-13) — see the postscript at the end of this file.** `Alt+f`
+> *was* migrated (`edit.flip_in_place`, rows `key 102 alt|super canvas`), and with it
+> `Alt+r` and `Alt+v`. `case 'f':` now holds only the `Ctrl+f` branch. The reasoning
+> in §4-§5 is kept verbatim because the *way* it was wrong is the lesson.
+
 This is not a failure state — it's the architecture working as specified. The table
 and the switch *coexist by contract*: the dispatch tries the table first, and
 anything without a row falls through to C unchanged. The case is smaller, its
@@ -184,8 +189,51 @@ tell the next reader where the rest went.
 |---|---|---|---|
 | `f` | hardcoded zoom + inline graph guard | 2 table rows, branch deleted | remappable (`xschem bind` / keybindings.csv), on the generated cheat-sheet, routing is data |
 | `Ctrl+f` | sem guard + inline graph guard + tcleval | routing row (`idle`), guard deleted; tcleval stays in C | graph forwarding remappable; canvas behavior unchanged, still one `xschem bind` away if ever needed |
-| `Alt+f` | modal flip | untouched | none — correctly so |
+| `Alt+f` | modal flip | untouched *(at the time — see postscript: now `edit.flip_in_place`, branch deleted)* | none at the time; today remappable like the others |
 
 The general shape to take away: **migrate per chord, not per key; delete only what
 the rows fully cover; let the hard parts stay in C without shame.** A refactor that
 must finish 100% of a case to ship anything would never have shipped at all.
+
+---
+
+## Postscript (2026-08-13): `Alt+f` migrated after all — what §4 got wrong
+
+`Alt+R`, `Alt+F` and `Alt+V` are now table rows (`edit.rotate_in_place`,
+`edit.flip_in_place`, `edit.flipv_in_place`; two rows each, Mod1 + Mod4), the three
+`else if(EQUAL_MODMASK)` arms are deleted, and `case 'f':` is down to its `Ctrl+f`
+branch. Behavior is unchanged — the same suites that locked the old arms
+(`test_perform_action_{rotate,flip,flipv}_in_place`, incl. the mid-drag wrinkle lock)
+pass untouched, and `test_transform_keys_remap.tcl` adds the remap/unbind legs.
+
+§4's three "blockers" were all consequences of one unstated assumption: **that a
+migrated action must be a leaf command** — a single side-effect-free-of-context call,
+the shape every earlier batch happened to have. Drop that and each bullet dissolves:
+
+- *"It reads in-progress edit state"* — the binding tuple still has no `ui_state`
+  axis, and it does not need one. The `ui_state` branching moved **inside the handler**
+  (`act_flip_in_place` opens with the same `if(ui_state & STARTMOVE) … else if
+  (STARTCOPY) … else …` ladder). The table answers "which action", not "which arm";
+  the action is free to be a small dispatcher itself. Nothing was added to the model.
+- *"It reads the mouse position"* — the handler reads `xctx->mousex_snap` /
+  `mousey_snap` directly, which is what the switch arm did too (they are context
+  fields, never `handle_key_press` parameters). The one genuine parameter it used,
+  `c_snap`, is `tclgetdoublevar("cadsnap")` at callback entry — the same read the
+  already-migrated snap actions do. "Migrated actions deliberately get no such
+  locals" confused *no parameters* with *no access to state*.
+- *"It is itself a modal sequence"* — `move_objects(START/FLIP|ROTATELOCAL/END)` is
+  three C calls in a row. That is a long action, not a modal one: nothing waits for
+  further input, so there is no gesture for the table to model. The *real* modal case
+  (`m`, place-text) still stays in C, and this does not weaken that rule.
+
+Two things did have to move rather than be copied: the arm's `readonly_block()` became
+the registry `mutates=1` column (dispatch refuses before the handler runs), and the
+Layer A log had to be kept OFF (label-only `actions.csv` rows) because the mid-drag arm
+must not emit a verb line — the drag logs at its END.
+
+The transferable lesson, then, is narrower than §4 claimed and worth more:
+**"unmigratable" is a claim about the action model, so state which axis is missing
+and check it is really missing.** Here the missing axis was imaginary — the work was
+"put the whole branch in one function", the least interesting kind of refactor, and it
+bought three chords their remappability. The genuine limits from §3 (a guard's
+*position* relative to a side effect) and the modal keys are untouched by this.
