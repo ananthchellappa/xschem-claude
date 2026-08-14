@@ -74,11 +74,20 @@ the case no wrapper script can reach — a bare
 command in a session and which no arming script wraps.
 
 ```sh
-tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, idempotent, ~0.3 s
-export DISPLAY=:99                     # in the shell you work in
-tests/headless/devdisplay.sh view      # x11vnc on localhost, to watch it
+tests/headless/devdisplay.sh start                    # Xvfb :99 + openbox, ~0.3 s
+tests/headless/devdisplay.sh shellinit >> ~/.bashrc   # then open a new shell
+tests/headless/devdisplay.sh view                     # x11vnc on localhost, to watch it
 tests/headless/devdisplay.sh status|stop
 ```
+
+**Put it in `~/.bashrc`, not a prompt.** `export DISPLAY=:99` typed at a prompt
+covers that one terminal; the rc covers every terminal *and* the non-interactive
+shell Claude Code's Bash tool runs in, which also sources `~/.bashrc` — and that
+is the shell where the leaking bare `./src/xschem --script …` is typed most.
+`shellinit` emits a **conditional** export: an unconditional one in an rc
+outlives the display it names, and after a reboot or a `stop` every GUI program
+in every new terminal dies with `cannot open display`. **The display does not
+survive a reboot** — re-run `start`; the snippet picks it up automatically.
 
 The arm (below) **attaches** to it when it is up, so every entry point lands on
 one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the

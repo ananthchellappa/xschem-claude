@@ -61,10 +61,17 @@ machine unusable for the length of the run. Bring up the persistent dev display
 once and they all go somewhere invisible instead:
 
 ```sh
-./devdisplay.sh start          # Xvfb + openbox, ~0.3 s, idempotent
-export DISPLAY=:99             # in the shell you work in
-./devdisplay.sh view           # x11vnc on localhost, when you want to watch
+./devdisplay.sh start                    # Xvfb + openbox, ~0.3 s, idempotent
+./devdisplay.sh shellinit >> ~/.bashrc   # then open a new shell
+./devdisplay.sh view                     # x11vnc on localhost, when you want to watch
 ```
+
+The `shellinit` line is the one that matters: it points **every** new shell at
+the display when it is up, and leaves `DISPLAY` alone when it is not — so a
+reboot or a `stop` degrades to your normal desktop instead of breaking every GUI
+program with `cannot open display`. A bare `export DISPLAY=:99` at a prompt
+covers only that terminal. The display is an ordinary process and **does not
+survive a reboot**; re-run `start` and the snippet picks it up.
 
 Suites launched through `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` or
 the standalone `test_*.sh` attach to it automatically, and fall back to a

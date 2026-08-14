@@ -62,16 +62,41 @@ devdisplay.sh start      # Xvfb :99 + openbox, readiness-polled, idempotent
 devdisplay.sh status     # alive? which display, pids, screen, wm, client count
 devdisplay.sh view       # x11vnc on localhost -- look at it, on demand
 devdisplay.sh exec CMD…  # run one command on it without exporting
+devdisplay.sh shellinit  # the shell-rc snippet (see below)
 devdisplay.sh stop
 ```
 
-and then, once, in the shell used for development:
+and then, once:
 
 ```sh
-export DISPLAY=:99
+tests/headless/devdisplay.sh shellinit >> ~/.bashrc     # then open a new shell
 ```
 
-That last line is the part that closes L1.
+That last line is the part that closes L1, and it is worth being precise about
+what it means, because "set `DISPLAY` in your dev shell" is not an instruction
+anyone can follow reliably.
+
+**Which shells.** Every terminal in which xschem might be launched — and on this
+machine that includes the **non-interactive shell Claude Code's Bash tool runs
+in, which also sources `~/.bashrc`** (verified: `~/eda/bin`, a `.bashrc`-only
+`PATH` addition, is present in it). That is the one that matters most: the
+leaking command is typed far more often by the assistant than by the human.
+
+**Why not just `export DISPLAY=:99`.** Typed at a prompt it lasts exactly as
+long as that terminal, so it covers the window you were in and no other. Put
+*unconditionally* in a shell rc it has the opposite failure: it outlives the
+display it names. After a reboot, a `wsl --shutdown`, or a `devdisplay.sh stop`,
+every GUI program in every new terminal points at a display that does not exist
+and dies with `cannot open display` — including programs with nothing to do with
+testing.
+
+`shellinit` emits a snippet that exports `DISPLAY` **only when that display is
+actually listening**, so the fallback is the normal desktop, silently. Both
+directions are tested (D15).
+
+**The display does not survive a reboot.** `Xvfb` is an ordinary process. After
+a Windows restart or `wsl --shutdown`, run `devdisplay.sh start` again; the
+`shellinit` snippet then picks it up in every new shell with no further action.
 
 ### Why persistent rather than per-run
 
@@ -189,6 +214,19 @@ and the durable answer remains forcing the hazard in the test
   behave. In particular the VNC client's pointer must not be required for any
   suite to pass.
 
+### R9 — pointing shells at it
+
+- **R901** `shellinit` prints a shell-rc snippet to stdout and changes nothing.
+- **R902** The snippet exports `DISPLAY` **only if that display is currently
+  listening**, testing both the socket file and the Linux abstract socket
+  (see §5a on why the file form never exists under WSLg).
+- **R903** When it is not running the snippet leaves `DISPLAY` untouched, so an
+  ordinary desktop session is unaffected. An unconditional export in a shell rc
+  would instead break every GUI program in every new terminal after a reboot or
+  a `stop`.
+- **R904** The snippet embeds the resolved state-dir path, so a custom
+  `XSCHEM_DEVDISPLAY_DIR` is honoured without the rc needing that variable set.
+
 ### R8 — the leaks
 
 - **R801** `gated_xschem.sh` sources the arm (L2).
@@ -247,6 +285,7 @@ real one.
 | D12 | end to end: a real headless suite runs on the dev display and reports ALL PASS |
 | D13 | `stop` → server gone, state cleaned, second `stop` still exits 0 |
 | D14 | `_wm_claimed` is false on a WM-less display, true on the managed one (R403) |
+| D15 | `shellinit` points a shell at a live display, and **leaves `DISPLAY` alone when it is not running** (R902/R903) |
 
 Each requires a sabotage that turns it red; a green suite over untouched code
 proves nothing.
@@ -273,7 +312,7 @@ Measured 2026-08-14 on this machine.
 
 ```
 tests/headless/test_devdisplay.sh
-RESULT: ALL PASS (33 checks)
+RESULT: ALL PASS (35 checks)
 
 devdisplay.sh start   ->  0.34 s
 DISPLAY=:97 xprop -root _NET_SUPPORTED | grep -c _NET   ->  71     (WSLg: 7)

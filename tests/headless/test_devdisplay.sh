@@ -205,6 +205,10 @@ else
   skipck "D12 (src/xschem not built)"
 fi
 
+# --- D15: the shell-rc snippet, both directions ------------------------------
+si_up=$(DISPLAY=:0 bash -c "eval \"\$('$DD' shellinit)\"; echo \$DISPLAY" 2>/dev/null)
+ck "D15 shellinit points a shell at a LIVE dev display" ":$NUM" "$si_up"
+
 # --- D13: stop ---------------------------------------------------------------
 "$DD" stop >/dev/null 2>&1
 ck "D13 stop exits 0" 0 "$?"
@@ -212,6 +216,12 @@ ck "D13 server is gone" 0 "$(pgrep -f "Xvfb [:]$NUM" | wc -l | tr -d ' ')"
 ck "D13 state cleaned" 0 "$([ -e "$STATE/display" ] && echo 1 || echo 0)"
 "$DD" stop >/dev/null 2>&1
 ck "D13 stopping again is not an error" 0 "$?"
+
+# The half that actually protects the user: an UNCONDITIONAL `export
+# DISPLAY=:99` in a shell rc outlives the display it names, and after a reboot
+# or a stop it points every GUI program in every new terminal at nothing.
+si_down=$(DISPLAY=:0 bash -c "eval \"\$('$DD' shellinit)\"; echo \$DISPLAY" 2>/dev/null)
+ck "D15 shellinit leaves DISPLAY ALONE when it is not running" ":0" "$si_down"
 
 # -----------------------------------------------------------------------------
 echo
