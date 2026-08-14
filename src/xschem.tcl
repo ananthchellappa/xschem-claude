@@ -14376,6 +14376,9 @@ source $XSCHEM_SHAREDIR/ase.tcl
 source $XSCHEM_SHAREDIR/ase_window.tcl
 # Waveform Viewer window shell (wviewer; doc/claude/specs/waveform_viewer.md)
 source $XSCHEM_SHAREDIR/wave_viewer.tcl
+# Calculator — waveform expression builder (calc; doc/claude/specs/calculator.md).
+# Proc definitions only at source time; the window is built on first calc::open.
+source $XSCHEM_SHAREDIR/calculator.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
@@ -14952,6 +14955,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
+  $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
   # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
   # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
   # (`{}` for the main window, so `.drw`) — the command switches context there

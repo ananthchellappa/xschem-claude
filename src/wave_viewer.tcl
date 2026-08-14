@@ -17591,6 +17591,12 @@ proc wviewer::build_menubar {token top} {
   # string.
   $mb.view add command -label {Descend to here} -accelerator E \
     -command [list wviewer::browser_descend_here $token]
+  # The Calculator (doc/claude/specs/calculator.md) belongs under Tools by
+  # Cadence convention, but G2 asserts this menubar's cascade set is exactly
+  # {File View Graph Cursors Options} and a whole cascade for one launcher
+  # would buy nothing. A View entry keeps the assertion true.
+  $mb.view add separator
+  $mb.view add command -label {Calculator...} -command calc::open
   # Graph menu (item 12, live): model editing, always through regenerate
   $mb.graph add command -label {Add Graph} \
     -command [list wviewer::add_graph $token]
