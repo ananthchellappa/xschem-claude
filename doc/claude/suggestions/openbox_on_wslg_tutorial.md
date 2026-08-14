@@ -1,11 +1,12 @@
 # Window managers, WSLg, and openbox — a plain-English tutorial
 
-*Why Linux GUI apps feel slightly broken under WSL, what is actually missing, and
-what a 2 MB program called openbox fixes. Written for someone who has never
-thought about window managers, because until something breaks, nobody does.*
+*Why Linux GUI apps feel slightly broken under WSL, what is actually missing,
+whose fault it is, and what a 2 MB program called openbox fixes. Written for
+someone who has never thought about window managers, because until something
+breaks, nobody does.*
 
-Every number in this document was measured on this machine on 2026-08-14. The
-commands are included so you can re-measure rather than trust me.
+Every number in this document was measured on this machine, 2026-08-13 and
+-08-14. The commands are included so you can re-measure rather than trust me.
 
 ---
 
@@ -65,7 +66,7 @@ EWMH — think of it as a menu of capabilities, where the WM advertises which
 dishes it serves:
 
 ```sh
-DISPLAY=:0 xprop -root _NET_SUPPORTED
+DISPLAY=:0 xprop -root _NET_SUPPORTED | tr ',' '\n' | grep -c _NET
 ```
 
 Measured results:
@@ -76,6 +77,10 @@ Measured results:
 | **Weston WM** (what WSLg runs) | **7** |
 | nothing (a bare X server) | *no window manager at all* |
 
+*(Count them with the `tr ',' '\n'` form above. A `grep -o '_NET[A-Z_]*'` form
+returns 71 and 8 — it also counts the name of the property being read. Same
+data, one off.)*
+
 Seven out of seventy. WSLg supports move/resize, fullscreen, maximise, "which
 window is active", and frame sizes. That covers what most people do most of the
 time, which is why WSLg feels fine.
@@ -84,15 +89,50 @@ What is missing includes minimise (`_NET_WM_STATE_HIDDEN`), always-on-top,
 "give me the list of open windows", window *types* (so a tool palette can be
 told apart from a dialog), modal dialogs, and virtual desktops.
 
+### 2a. Who is responsible, exactly
+
+Your own machine will tell you:
+
+```sh
+cat /mnt/wslg/versions.txt
+head -20 /mnt/wslg/weston.log
+```
+
+```
+WSLg:     1.0.71  (built 2025-10-06)
+weston:   9.0.0-211-g2318feca
+FreeRDP:  2.4.0
+weston --backend=rdp-backend.so --xwayland --shell=rdprail-shell.so
+```
+
+Three links in the chain, three owners:
+
+1. **The X window manager itself** — the 7-entry capability list, and what
+   happens when a program asks to be minimised — is weston's
+   `xwayland/window-manager.c`. Upstream code, from freedesktop.org. **But the
+   copy running here is Microsoft's fork pinned at weston 9.0.0, released
+   September 2020**, while upstream is on 14.x. Five years of upstream fixes are
+   not in this build, and the version choice is Microsoft's.
+2. **What minimise and "on top" even mean in WSLg** — `rdprail-shell.so`. RAIL
+   is Remote Application Integrated Locally: each Linux surface is delivered to
+   Windows as its own window over RDP. **That module does not exist upstream**;
+   it is Microsoft-authored. A minimise request has to travel X → Weston WM →
+   rdprail-shell → FreeRDP → Windows, and the middle links are theirs.
+3. **The Windows-side window** — Microsoft.
+
+So bug reports go to `github.com/microsoft/wslg`. FreeRDP 2.4.0 (2021) and
+weston 9.0.0 (2020) suggest the integration is maintained rather than actively
+tracked, so do not hold your breath.
+
 ---
 
 ## 3. What that costs you in practice
 
 ### Minimise silently does nothing
 
-This is the clearest one. A program asks to be minimised; nothing happens; no
-error is reported; the program is told everything is fine. Measured with a small
-Tk program that asks to iconify itself and then reports its own state:
+A program asks to be minimised; nothing happens; no error is reported; the
+program is told everything is fine. Measured with a small Tk program that asks
+to iconify itself and then reports its own state:
 
 | Display | did the frame get created? | after asking to minimise | is it still on screen? |
 |---|---|---|---|
@@ -107,6 +147,36 @@ running on a fake screen is *more correct than WSLg*.
 For a user this is a mild annoyance. For a developer it is worse: you can write
 a feature that minimises to the tray, test it under WSL, see it "work" (no error,
 no crash), and ship something that has never actually minimised once.
+
+### Raise silently does nothing either — and this one is expensive
+
+Minimise is the famous example. **Raise is the one that costs real money**, and
+it is easy to miss because WSLg *does* advertise `_NET_ACTIVE_WINDOW`. Two
+windows, ask the lower one to come to the front, then ask which is on top:
+
+| Display | after `raise .b` |
+|---|---|
+| X server + openbox | **`B_top`** — it worked |
+| **WSLg `:0`** | **`A_top`** — nothing happened |
+
+Advertised is not implemented. And the consequence is structural: because a bare
+`raise` does nothing here, every "bring this window forward" in this codebase is
+written as a **withdraw + deiconify re-map** — unmap the window and map it again
+to force the issue, because a *newly mapped* window is allowed to appear.
+
+That workaround is in `xschem.tcl`'s `raise_activate_toplevel` and its callers
+across `ciw.tcl`, `create_instance.tcl`, `wave_viewer.tcl`, `ase_window.tcl`,
+`ase.tcl` and `xinit.c`. The cost is not the hack, it is the *asynchrony*: a
+re-map is slow and non-atomic, so tests cannot read the stacking order straight
+after a raise. They poll and tolerate instead — see the comments in
+`test_ase_window` ("~2 s to show in `wm stackorder`", stalls 1 in 5 pristine
+runs), `test_ase_plot`, `test_wave_sigbrowser_i11`/`i12`, `test_ase_interact`.
+
+**Do not expect this one to be fixed.** Windows blocks foreground stealing *by
+design* — `SetForegroundWindow` refuses an application that does not already own
+the foreground. A Linux app calling `raise` is asking for precisely the thing
+Windows exists to deny. That is a policy, not a bug, and the withdraw/deiconify
+idiom will outlive any WSLg release.
 
 ### Silence, not errors
 
@@ -162,38 +232,55 @@ The catch used to be that a virtual server starts *empty* — no window manager 
 so anything involving frames, stacking or minimising was untestable there.
 **Starting openbox inside it removes that catch.**
 
-The recipe, standalone:
+In this repo none of it is typed by hand. One command brings up a **persistent**
+virtual screen with openbox already running in it:
 
 ```sh
-# start a virtual screen, run a window manager in it, then run your program
-xvfb-run -a -s "-screen 0 1920x1080x24" bash -c 'openbox & sleep 0.3; exec your-program'
+tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, ~0.34 s, idempotent
+tests/headless/devdisplay.sh view      # watch it in a VNC window, on demand
+tests/headless/devdisplay.sh status | stop
 ```
 
-In this repo it is already wired in and you don't type any of that.
-`tests/headless/full_audit.sh` and `tests/headless/run_suites.sh` do it
-automatically:
+and the test harness finds it automatically:
 
 ```sh
-tests/headless/run_suites.sh test_wave_viewer      # virtual screen + openbox
+tests/headless/run_suites.sh test_wave_viewer      # attaches to it
 AUDIT_WM=none tests/headless/run_suites.sh ...     # virtual screen, no WM
 AUDIT_DISPLAY=:0 tests/headless/run_suites.sh ...  # your real screen
 ```
 
-### One trap worth knowing, because it cost real time here
+Full details in `doc/claude/specs/dev_display.md`. **Note who this is for**: the
+suites arm themselves, so a human needs nothing beyond `start`. Pointing your own
+interactive shell at `:99` is a mistake — when *you* launch xschem you want to
+see it.
 
-A window manager takes a moment to take charge. A window created before it is
-ready is **never** picked up — it stays unmanaged for its whole life. So you
-cannot just start openbox and immediately launch your program; you have to wait
-until it has actually claimed the screen.
+The standalone equivalent, if you are working outside this repo:
 
-`sleep 0.3` above is the crude version and is fine for a one-off. The proper
-check is to poll until the WM has registered itself:
+```sh
+xvfb-run -a -s "-screen 0 1920x1080x24" bash -c 'openbox & sleep 0.3; exec your-program'
+```
+
+---
+
+## 6. Four traps when you script this yourself
+
+Every one of these cost real time here. They are all the same shape: something
+reports success, or reports nothing, while being wrong.
+
+### 6a. A window manager takes a moment to take charge
+
+A window created before the WM is ready is **never** picked up — it stays
+unmanaged for its whole life. So you cannot start openbox and immediately launch
+your program. `sleep 0.3` is the crude version and is fine for a one-off. The
+proper check polls until the WM has registered itself:
 
 ```sh
 until xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id #'; do
   sleep 0.05
 done
 ```
+
+### 6b. …and the obvious way to write that check is broken
 
 Note `'window id #'` and not just `window`. When no WM is running, `xprop`
 prints:
@@ -203,14 +290,70 @@ _NET_SUPPORTING_WM_CHECK:  no such atom on any window.
 ```
 
 which contains the word "window" — so a check for `window` matches the *failure
-message* and reports success immediately, forever. This exact bug shipped in
-this repo's harness and survived a review, because openbox happened to win the
-race anyway and nothing looked wrong. If you write a readiness check, **match
-the success text, never a word that also appears in the error text.**
+message* and reports success immediately, forever. **This exact bug shipped in
+this repo's harness and survived a review**, because openbox happened to win the
+race anyway and nothing ever looked wrong. If you write a readiness check,
+**match the success text, never a word that also appears in the error text.**
+
+### 6c. The X socket file does not exist under WSL
+
+The universal idiom for "is display :N up yet" is to wait for its socket:
+
+```sh
+[ -S /tmp/.X11-unix/X99 ]        # WRONG here — never becomes true
+```
+
+Under WSLg, `/tmp/.X11-unix` is mounted **mode 777 without the sticky bit**, and
+an X server refuses to create a socket file in such a directory:
+
+```
+_XSERVTransmkdir: Mode of /tmp/.X11-unix should be set to 1777
+_XSERVTransSocketCreateListener: failed to bind listener
+```
+
+It carries on regardless and binds the Linux **abstract-namespace** socket
+instead — `@/tmp/.X11-unix/X99`, a socket with no filesystem entry. So the
+display is up, fully working, `xdpyinfo` returns 0 — and the socket file never
+appears. A readiness poll on `[ -S ... ]` waits forever for a server that has
+been serving the whole time. Check both forms:
+
+```sh
+[ -S "/tmp/.X11-unix/X$N" ] || ss -xl | grep -q "@/tmp/\.X11-unix/X$N\b"
+```
+
+### 6d. `xdpyinfo` on a dead display hangs
+
+The natural fix for 6c is "just ask the server". Don't ask it *first*:
+
+```sh
+xdpyinfo -display :99      # with no server: HANGS, does not fail
+```
+
+The X client library tries the unix socket, fails, and falls back to TCP
+`localhost:6099` — which under WSL is neither refused nor answered. It ate a
+two-minute command timeout on the first cold status check ever run here. **Test
+the listen state before probing, and put a `timeout` on the probe anyway.**
+
+### 6e. Bonus: `pkill -f` can kill the shell that runs it
+
+Cleaning up a test display with
+
+```sh
+pkill -f "Xvfb :97"        # kills your own shell too
+```
+
+matches *any* process whose command line contains that string — including the
+shell currently running that very command line. The symptom is a command that
+produces no output and exits strangely. Bracket a character to break the
+self-match:
+
+```sh
+pkill -f "Xvfb [:]97"
+```
 
 ---
 
-## 6. Use B — openbox on your actual WSLg desktop (possible, with a real trade)
+## 7. Use B — openbox on your actual WSLg desktop (possible, with a real trade)
 
 Can you just run openbox on `:0` and get the missing 63 capabilities on your
 real desktop? Sort of, and there is a genuine cost.
@@ -244,7 +387,8 @@ DISPLAY=:3 your-program &
 ```
 
 Now you have a fully-managed Linux desktop-in-a-window, your normal WSLg `:0` is
-untouched, and you can close the whole thing by killing `Xvfb`.
+untouched, and you can close the whole thing by killing `Xvfb`. (`devdisplay.sh
+view` does exactly this for the repo's own display.)
 
 To back out of a `--replace` if you did try it: killing openbox leaves the
 screen with *no* window manager, which is worse. Restart the WSL session
@@ -252,38 +396,50 @@ screen with *no* window manager, which is worse. Restart the WSL session
 
 ---
 
-## 7. Which should you use?
+## 8. Which should you use?
 
 | Situation | Do this |
 |---|---|
 | Automated GUI tests | Virtual screen + openbox. Already the default here. |
 | Everyday development | Leave WSLg alone. It is good, and the Windows integration is the point. |
-| Testing something that minimises, stacks, or manages window lists | Virtual screen + openbox, or the VNC recipe in §6. |
+| Testing something that minimises, stacks, or manages window lists | Virtual screen + openbox, or the VNC recipe in §7. |
 | Chasing a bug only you can reproduce under WSL | Your real `:0`. That is where WSLg's quirks live, and they are real. |
 
 ---
 
-## 8. The general lesson, which outlives openbox
+## 9. The general lesson, which outlives openbox
 
-The temptation, on finding a bug that only reproduces on one display, is to make
-the other environments more realistic until the bug appears there too. That is a
-treadmill: we added a window manager to the virtual screen specifically hoping it
-would reproduce the resize bug from §3, and it did not, because the cause was
-WSLg's event traffic and not window management at all.
+Three versions of the same lesson, in increasing order of how much they cost to
+learn.
 
-The durable fix was to stop depending on the environment. The test now **creates
-the interruption itself** — it deliberately fires the disruptive event in the
-middle of the operation and checks the operation survives. That test fails on
-every display when the protection is removed, including the plain virtual screen
-with no window manager at all.
+**Don't chase realism.** The temptation, on finding a bug that only reproduces on
+one display, is to make the other environments more realistic until the bug
+appears there too. That is a treadmill: we added a window manager to the virtual
+screen specifically hoping it would reproduce the resize bug from §3, and it did
+not, because the cause was WSLg's event traffic and not window management at all.
 
-**A safeguard that only fires on one developer's machine is not protected. It is
-observed, occasionally, by one person.** If you can describe the hazard, you can
-usually trigger it on purpose, and then it is tested everywhere.
+**Force the hazard instead.** The durable fix was to stop depending on the
+environment. The test now **creates the interruption itself** — it deliberately
+fires the disruptive event in the middle of the operation and checks the
+operation survives. That test fails on every display when the protection is
+removed, including the plain virtual screen with no window manager at all.
+
+> **A safeguard that only fires on one developer's machine is not protected. It
+> is observed, occasionally, by one person.** If you can describe the hazard, you
+> can usually trigger it on purpose, and then it is tested everywhere.
+
+**And check that your test can actually see the thing it guards.** When the
+readiness bug from §6b was deliberately re-introduced, the entire 31-check suite
+stayed **green** — because openbox wins the race anyway on an idle machine. The
+suite could not observe the defect through the front door at all. The fix was to
+test the *predicate* directly: a bare Xvfb has no window manager, so the
+"is the WM live?" function must return false on it, on every machine, every time.
+That check goes red instantly. **If a sabotage doesn't turn your suite red, the
+suite was never testing that thing** — and you only find out by trying.
 
 ---
 
-## 9. Command reference
+## 10. Command reference
 
 ```sh
 # who is managing this screen?
@@ -299,18 +455,30 @@ xprop -root _NET_SUPPORTED | grep -c _NET_WM_STATE_HIDDEN     # 0 on WSLg, 1 on 
 # is a given window actually framed by a WM? (frame id differs from window id)
 # in Tk:  expr {[wm frame .win] != [winfo id .win]}
 
-# run something on a private, managed, invisible screen
+# is display :N actually up? (the file socket does NOT exist under WSL)
+ss -xl | grep "@/tmp/\.X11-unix/X"
+
+# what is WSLg made of, and how old is it?
+cat /mnt/wslg/versions.txt
+head -20 /mnt/wslg/weston.log
+
+# this repo: a persistent managed virtual screen
+tests/headless/devdisplay.sh start|status|view|stop
+
+# elsewhere: a one-shot managed virtual screen
 xvfb-run -a -s "-screen 0 1920x1080x24" bash -c 'openbox & sleep 0.3; exec <cmd>'
 ```
 
 Packages: `xvfb` (virtual screen), `openbox` (window manager), `x11-utils`
-(`xprop`), `x11vnc` (to look at a virtual screen).
+(`xprop`, `xdpyinfo`), `iproute2` (`ss`), `x11vnc` (to look at a virtual screen).
 
 ---
 
 ## Related
 
-- `tests/headless/xvfb_arm.sh` — the implementation, with the measurements in its header
-- `CLAUDE.md`, "The display arm" — the short version for this repo
+- `doc/claude/specs/dev_display.md` — the persistent display: design, requirements, evidence
+- `tests/headless/devdisplay.sh` — the implementation
+- `tests/headless/xvfb_arm.sh` — how suites choose a display, with measurements in its header
+- `CLAUDE.md`, "The persistent dev display" / "The display arm" — the short version
 - `doc/claude/specs/gui_test_gate.md` — the control panel that guards real-screen runs
 - `doc/claude/calculator_batch/receipts/00-phase0-skeleton.md` — the resize bug, its A/B, and the test that replaced it
