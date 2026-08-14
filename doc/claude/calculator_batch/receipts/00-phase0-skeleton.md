@@ -125,6 +125,43 @@ should be judged — a placeholder's width is not evidence.
 
 ---
 
+## Addendum — a fourth defect, found only on `:0`
+
+After phase 0 was committed, `full_audit.sh`/`run_suites.sh` were switched to a
+private Xvfb by default (`tests/headless/xvfb_arm.sh`). Exercising the new
+`AUDIT_DISPLAY=:0` opt-in immediately turned this suite red on the real screen:
+
+```
+FAIL: S8 restore_layout reproduced it -> {123} (exp {153})
+FAIL: S11 default sash0 near 21% of 769 -> {0} (exp {1})
+FAIL: S11 default sash2 near 64% of 769 -> {0} (exp {1})
+```
+
+49/49 under Xvfb, 46/49 on `:0`, same binary.
+
+**Cause (landmine D6):** `restore_layout` writes the layout, but a `<Configure>`
+delivered while it runs lands in `save_layout`, captures the positions the
+restore is halfway through replacing, and clobbers the values it was about to
+apply. The visible symptom is a restore that appears to do nothing. Xvfb runs no
+window manager, so no such Configure is ever pending — the bug is invisible
+there **by construction**.
+
+**Fix:** `calc::restoring`, held across the whole restore on every exit path,
+with `save_layout` returning early while it is set.
+
+**A wrong turn worth recording.** The first hypothesis was that `wm geometry` is
+negotiated asynchronously under a WM and `update idletasks` cannot see the reply,
+so a `calc::settle` proc was added to poll until the size stopped changing. That
+made the tests pass — but pinning it down showed the D6 guard *alone* is
+sufficient and `settle` is not load-bearing. It was removed: a 200-iteration
+`update` loop pumps X events, and events can run anything including
+`calc::close`, so keeping unproven machinery with a real reentrancy hazard is a
+bad trade. Verified after removal: `:0` 3/3 × 49 checks, Xvfb 3/3 × 49 checks.
+
+**The general lesson**, now in `CLAUDE.md`: Xvfb is the right default arm, and it
+cannot see WM-dependent bugs. Run a GUI feature's suite on `:0` once before
+calling it done.
+
 ## Next
 
 Phase 1: replace each placeholder's body with the real, inert controls. The

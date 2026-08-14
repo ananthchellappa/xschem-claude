@@ -59,6 +59,14 @@
 #       toplevel, so a drag-then-close would be lost.  save_layout is
 #       therefore also called on <ButtonRelease-1> over each panedwindow and
 #       once more from calc::close.
+#   D6  a restore WRITES the layout, so capture must be OFF while one runs.
+#       A <Configure> delivered during a restore lands in save_layout and
+#       overwrites the very values being applied; the symptom is a restore that
+#       silently does nothing.  restore_layout holds calc::restoring across the
+#       whole operation and save_layout returns early while it is set.
+#       This one is INVISIBLE UNDER Xvfb — no window manager means no pending
+#       Configure — and was found only by running the phase-0 test on :0.
+#       Anything added here that pumps the event loop must respect the flag.
 #
 # Layout state lives in this namespace and so persists for the session only.
 # Persisting it to ~/.xschem/calculator.state is plan phase 9 (spec R704);
@@ -244,6 +252,14 @@ proc calc::sash_axis {orient} {
 proc calc::save_layout {} {
     variable sash
     variable geom
+    variable restoring
+    # D6. A restore WRITES the layout, so capture must be off while one runs.
+    # A <Configure> delivered during a restore lands here, captures the
+    # positions the restore is halfway through replacing, and clobbers the
+    # values it was about to apply. The symptom is a restore that appears to do
+    # nothing at all. Invisible under Xvfb, which runs no WM and so has no
+    # pending Configure to deliver.
+    if {[info exists restoring] && $restoring} return
     if {![winfo exists .calc]} return
     foreach ent [calc::pw_list] {
         foreach {pw orient n fracs} $ent break
@@ -258,14 +274,23 @@ proc calc::save_layout {} {
 }
 
 proc calc::restore_layout {} {
+    variable restoring
+    set restoring 1
+    set rc [catch {calc::restore_layout_body} msg]
+    set restoring 0
+    if {$rc} {error $msg}
+}
+
+proc calc::restore_layout_body {} {
     variable sash
     variable geom
 
     if {$geom ne {}} {catch {wm geometry .calc $geom}}
-    # D1: give Tk a chance to apply the geometry and lay the panes out before
-    # any sash coordinate is read or written.  idletasks only — `update` would
-    # reenter the event loop mid-build.
+    # D1: no sash coordinate is meaningful until the panes have been laid out.
+    # idletasks only — `update` would pump X events mid-restore, and events can
+    # run anything, including calc::close.
     update idletasks
+    if {![winfo exists .calc]} return
 
     foreach ent [calc::pw_list] {
         foreach {pw orient n fracs} $ent break

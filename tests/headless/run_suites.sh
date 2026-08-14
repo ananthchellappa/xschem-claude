@@ -18,6 +18,13 @@
 # Repeats are the OUTER loop, so `-n 3 a b` runs a b a b a b — a soak
 # interleaves rather than running each suite three times back to back.
 #
+# DISPLAY: like full_audit.sh, a run gets a PRIVATE Xvfb by default instead of
+# borrowing the screen it was launched from (tests/headless/xvfb_arm.sh).
+#   AUDIT_DISPLAY=:0    the real screen -- for an eyeball, a WM-dependent test,
+#                       or a WSLg-only repro. The gate matters again there.
+#   AUDIT_DISPLAY=none  no DISPLAY; GUI legs self-skip
+#   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
+#
 # Same fail-open contract as full_audit.sh: no DISPLAY, GUI_GATE=0 or no panel
 # and it just runs. Disable entirely with `export GUI_GATE=0`. A Stop press
 # abandons the remaining runs and exits 3.
@@ -30,6 +37,19 @@
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# Display arm (may re-exec this script under xvfb-run — keep it above anything
+# with side effects). Skipped for --help: spawning an X server to print a
+# header block would be absurd, and would also swallow the exit.
+_want_help=0
+for _a in "$@"; do case "$_a" in -h|--help) _want_help=1 ;; esac; done
+if [ "$_want_help" = 0 ]; then
+  # shellcheck source=/dev/null
+  . "$HERE/xvfb_arm.sh"
+  xvfb_arm "$0" "$@"
+fi
+unset _want_help _a
+
 REPO=$(cd "$HERE/../.." && pwd)
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
 TIMEOUT="${SUITE_TIMEOUT:-200}"
@@ -43,7 +63,7 @@ while [ $# -gt 0 ]; do
     -n|--repeat) REPEAT="${2:-1}"; shift 2 ;;
     --nogui)     MODE=nogui;  shift ;;
     --logdir)    MODE=logdir; shift ;;
-    -h|--help)   sed -n '2,29p' "$0"; exit 0 ;;   # the header block, up to `set -u`
+    -h|--help)   sed -n '2,36p' "$0"; exit 0 ;;   # the header block, up to `set -u`
     -*)          echo "run_suites: unknown option $1" >&2; exit 2 ;;
     *)           suites+=("$1"); shift ;;
   esac

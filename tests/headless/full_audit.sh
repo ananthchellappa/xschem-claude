@@ -8,21 +8,36 @@
 #
 # Portable (vs the original machine-specific version):
 #   * repo root + binary resolved relatively; override the binary with $XSCHEM
-#   * no hard-coded DISPLAY — GUI tests self-SKIP when $DISPLAY is unset (they
-#     guard on `winfo exists .`); under a real/virtual X (xvfb-run) they run
-#   * per-test timeout via $AUDIT_TIMEOUT (default 120s)
+#   * per-test timeout via $AUDIT_TIMEOUT (default 300s)
+#
+# DISPLAY: the audit runs on a PRIVATE Xvfb by default and no longer borrows
+# whatever screen it was launched from — see tests/headless/xvfb_arm.sh for the
+# measurements behind that and for the three cases that still want a real one.
+#   AUDIT_DISPLAY=:0    the real screen (and then the GUI gate matters again)
+#   AUDIT_DISPLAY=none  no DISPLAY at all; GUI tests self-SKIP (`winfo exists .`)
+#   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
 #
 # Usage:
-#   tests/headless/full_audit.sh                 # all tests
+#   tests/headless/full_audit.sh                 # all tests, private Xvfb
 #   tests/headless/full_audit.sh test_sweep_diff test_multi_window   # a subset
-#   XSCHEM=/path/to/xschem xvfb-run -a tests/headless/full_audit.sh  # in CI
+#   AUDIT_DISPLAY=:0 tests/headless/full_audit.sh                    # real screen
+#   XSCHEM=/path/to/xschem tests/headless/full_audit.sh              # in CI
 #
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# Pick the display arm before anything else: this may re-exec the whole script
+# under xvfb-run, so nothing above it should have side effects.
+# shellcheck source=/dev/null
+. "$HERE/xvfb_arm.sh"
+xvfb_arm "$0" "$@"
+
 REPO=$(cd "$HERE/../.." && pwd)
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
-TIMEOUT="${AUDIT_TIMEOUT:-120}"
+# 300, not 120: test_wave_markers legitimately needs 61-149 s, so the old
+# default turned a slow-but-passing test into an intermittent TIMEOUT.
+TIMEOUT="${AUDIT_TIMEOUT:-300}"
 
 if [ ! -x "$XSCHEM" ]; then
   echo "FATAL: xschem binary not found/executable at: $XSCHEM (build with: cd src && make, or set \$XSCHEM)" >&2

@@ -8,6 +8,32 @@ plus tests/headless/gated_xschem.sh (enrolment wrapper for bare loops).
 Self-tests: tests/headless/test_gui_gate_revive.sh (v4 + **v6**),
 tests/headless/test_gui_gate_batch.sh (v5).
 
+## v7 (2026-08-13): the gate is no longer the everyday path
+
+`full_audit.sh` and `run_suites.sh` now take a **private Xvfb by default**
+(`tests/headless/xvfb_arm.sh`), so a routine suite never reaches the user's
+display and the panel never pops. The gate is unchanged and still correct — it
+now guards the *deliberate* real-screen runs, reached with `AUDIT_DISPLAY=:0`.
+
+Two consequences worth stating, because they invert earlier assumptions:
+
+- **A panel popping for a routine suite is now a symptom**, not the design. It
+  means something bypassed `xvfb_arm.sh` — a bare loop, or a script that has not
+  been wired.
+- **`GUI_GATE=0` is forced by the Xvfb arm, not left to the caller.**
+  `_gate_enabled` only tests that `$DISPLAY` is non-empty, so a virtual display
+  arms the gate exactly like a real one, and `gate_start` → `_gate_attention`
+  would then kill the live panel and relaunch it on a display nobody can see —
+  for every session sharing `~/.claude/gui_test_gate/`. An Xvfb arm without
+  `GUI_GATE=0` does not free the screen; it breaks Pause. The forcing lives in
+  `xvfb_arm.sh` so no caller can forget it.
+
+The real screen keeps three jobs Xvfb cannot do: a human eyeball, anything
+window-manager-dependent (Xvfb runs no WM), and WSLg-only bugs. That second one
+is not theoretical — Calculator phase 0 passed 49/49 under Xvfb and failed three
+checks on `:0`, because a `<Configure>` arriving mid-restore clobbered the layout
+being restored and Xvfb has no WM to generate one.
+
 ## THE ONE RULE (v3)
 
 **The only thing that holds tests up indefinitely is a user PAUSE.** Every other

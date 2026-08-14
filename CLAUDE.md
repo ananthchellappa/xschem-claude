@@ -67,8 +67,32 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
 
-### GUI-test control gate (`tests/headless/full_audit.sh`)
-Running `full_audit.sh` under a real/WSLg `$DISPLAY` pops a **control panel**
+### The display arm: Xvfb by default (`tests/headless/xvfb_arm.sh`)
+`full_audit.sh` and `run_suites.sh` run on a **private Xvfb** and no longer
+borrow the screen they were launched from. That is the routine arm because it is
+measured better, not merely quieter: 30/30 soak with identical check counts where
+the same suites on `:0` flake 4-in-10 / 2-in-3 / 1-in-5, a full audit reproducing
+the recorded `:0` fail list exactly, and `test_wave_modes` at 2.3 s against
+6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (real screen), `=none` (no DISPLAY, GUI
+legs self-skip), `AUDIT_SCREEN=WxHxD` (default `1920x1080x24` — **pin it**, and
+never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at).
+
+**`GUI_GATE=0` is forced on the Xvfb arm, not defaulted.** `_gate_enabled` only
+checks that `$DISPLAY` is non-empty, so a virtual display arms the gate; then
+`gate_start` → `_gate_attention` kills the live panel and relaunches it on the
+invisible display, for every session sharing the control dir. Xvfb without
+`GUI_GATE=0` doesn't free the screen, it breaks Pause.
+
+**Xvfb is not a substitute for `:0`** in three cases: a human eyeball; anything
+window-manager-dependent (Xvfb runs no WM, so decoration/iconify/stacking/raise
+are meaningless there); and WSLg-only bugs. The class is real — phase 0 of the
+Calculator passed 49/49 under Xvfb and failed 3 checks on `:0`, because a
+`<Configure>` delivered mid-restore clobbered the layout being restored, and
+Xvfb has no WM to generate one. **Run a GUI feature's suite on `:0` once before
+calling it done.**
+
+### GUI-test control gate (`tests/headless/gui_gate.sh`)
+Running a suite under a real/WSLg `$DISPLAY` pops a **control panel**
 (`tests/headless/gui_gate_widget.tcl` via `wish`) that **warns before the
 suite runs** (Proceed / Snooze 5·15·30 min) and gives a **Pause/Resume toggle
 + Stop** during it — the GUI suite otherwise floods the display and makes the
@@ -79,6 +103,10 @@ dir `~/.claude/gui_test_gate/` is shared by the main session and all
 worktree/subagent runs, so one Pause pauses every suite. It **fails open** (no
 `DISPLAY`, `GUI_GATE=0`, or a closed panel → tests just run) so CI/headless is
 unaffected. Spec: `doc/claude/specs/gui_test_gate.md`.
+
+Since the default arm became Xvfb the panel should be **rare** — it now guards
+the deliberate `AUDIT_DISPLAY=:0` runs, not the everyday ones. A panel popping
+for a routine suite means something bypassed `xvfb_arm.sh`.
 
 **Don't press Proceed forty times.** Many small runs each cost a click, or a
 2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Allow 2h`**
