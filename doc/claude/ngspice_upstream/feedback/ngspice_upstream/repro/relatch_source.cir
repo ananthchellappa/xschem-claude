@@ -1,0 +1,11 @@
+* latch preserve, then set casemode=fold and source relatch_inner.cir -- the enum moves
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+display
+set casemode=fold
+source relatch_inner.cir
+.endc
+.end

@@ -1,0 +1,11 @@
+* xschem casemode probe
+Vprb CaseProbeNet 0 DC 1
+Rprb CaseProbeNet 0 1k
+.control
+op
+write probe.raw
+let CaseProbe = 1
+let caseprobe = 2
+print CaseProbe
+.endc
+.end

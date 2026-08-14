@@ -1,0 +1,17 @@
+* issue 0058: switcher.cir taken one step further -- distinguish, then
+* preserve, then distinguish again in the same process.  This is the sequence
+* that tells "differs from the outcome last ANNOUNCED" apart from "differs
+* from the outcome of the previous READ": the second return to distinguish is
+* a new outcome to the second rule and an already-announced one to the first.
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  set casemode=preserve
+  source mid.cir
+  set casemode=distinguish
+  source mid.cir
+.endc
+.end

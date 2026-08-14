@@ -1,0 +1,10 @@
+* .save with one bad name and one good one -- the run is not killed
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(nosuchnode) v(In)
+.control
+op
+write save_partial_miss.raw
+.endc
+.end

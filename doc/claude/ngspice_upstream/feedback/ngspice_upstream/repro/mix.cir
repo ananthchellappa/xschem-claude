@@ -1,0 +1,9 @@
+* mixed-case net probe -- the net is spelled MidNode
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+display
+.endc
+.end

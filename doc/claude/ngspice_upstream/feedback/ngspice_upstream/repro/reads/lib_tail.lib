@@ -1,0 +1,4 @@
+* issue 0058: the library lib_deck.cir pulls its last resistor out of
+.lib tail
+Rg MidNode 0 3k
+.endl tail

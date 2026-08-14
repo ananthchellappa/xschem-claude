@@ -1,0 +1,10 @@
+* control-language 'save' of the folded net spelling -- same path, same silence
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+save v(midnode)
+op
+write save_cmd_lower.raw
+.endc
+.end

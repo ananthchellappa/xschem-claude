@@ -1,0 +1,8 @@
+* .include a second file -- does it add a set_case_mode() call? (count the warning)
+Vs In 0 DC 3
+Rl In MidNode 1k
+.include include_count.inc
+.control
+op
+.endc
+.end

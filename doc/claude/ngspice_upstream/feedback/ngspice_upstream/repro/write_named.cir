@@ -1,0 +1,10 @@
+* the named write already refuses after a failed analysis -- and writes no file
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(midnode)
+.control
+op
+write write_named.raw v(MidNode)
+.endc
+.end

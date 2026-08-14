@@ -1,0 +1,11 @@
+* absent -- .save names a node that is in no netlist, in any case
+Vs In 0 DC 3
+R1 In MidNode 1k
+R2 MidNode 0 3k
+.save v(nosuchnode)
+.op
+.control
+run
+write absent.raw
+.endc
+.end

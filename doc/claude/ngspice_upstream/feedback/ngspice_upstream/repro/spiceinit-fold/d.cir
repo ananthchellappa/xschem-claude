@@ -1,0 +1,9 @@
+* issue 0058: prints the control-language variable list, so the spelling the
+* .spiceinit beside this deck landed under is visible
+Vs In 0 DC 3
+Rl In 0 1k
+.control
+  op
+  set
+.endc
+.end

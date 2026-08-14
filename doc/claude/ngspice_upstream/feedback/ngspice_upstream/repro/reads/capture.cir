@@ -1,0 +1,29 @@
+* issue 0058: both casemode diagnostics are written to a literal stderr, so a
+* deck cannot guard them -- while a cp_err diagnostic under the same redirect
+* is captured.  Run under -D casemode=distinguish.
+.OPTIONS noacct
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+* --- inner deck 1: its own inp_readall() re-announces the mode
+echo "* inner deck: read under the mode the outer run set" > inner.cir
+echo ".OPTIONS noacct" >> inner.cir
+echo "V1 In 0 dc 1.5" >> inner.cir
+echo "R1 In 0 1k" >> inner.cir
+echo ".end" >> inner.cir
+source inner.cir >& cap.txt
+* --- inner deck 2: a vector near miss, which goes through cp_err
+echo "* inner deck: v(midnode) misses, MidNode is what the deck defines" > inner2.cir
+echo ".OPTIONS noacct" >> inner2.cir
+echo "V1 In 0 dc 1.5" >> inner2.cir
+echo "R1 In MidNode 1k" >> inner2.cir
+echo "R2 MidNode 0 3k" >> inner2.cir
+echo ".control" >> inner2.cir
+echo "op" >> inner2.cir
+echo "print v(midnode)" >> inner2.cir
+echo ".endc" >> inner2.cir
+echo ".end" >> inner2.cir
+source inner2.cir >& c2.txt
+.endc
+.end

@@ -1,0 +1,9 @@
+* writes an ASCII raw, so finding 1's header experiments can splice a line in
+Vs In 0 DC 3
+Rl In 0 1k
+.control
+set filetype=ascii
+op
+write ascii_raw.raw
+.endc
+.end

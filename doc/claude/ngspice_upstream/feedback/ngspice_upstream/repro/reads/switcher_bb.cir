@@ -1,0 +1,21 @@
+* issue 0058: a misspelled casemode, a legal silent mode, then the same
+* misspelling again.  Both spellings establish fold, so this is the
+* unknown-value arm's version of switcher_r.cir: under the rule the tree
+* implements each misspelling is a change of outcome and both are warned
+* about; under the rejected "last announced" rule the fold read in between
+* cannot update the latch, so the second misspelling is suppressed and a real
+* user error in the second file goes unreported.  doc/claude/decisions/0016.
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  set casemode=bogus
+  source mid.cir
+  set casemode=preserve
+  source mid.cir
+  set casemode=bogus
+  source mid.cir
+.endc
+.end

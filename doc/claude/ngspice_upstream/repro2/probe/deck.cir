@@ -1,0 +1,10 @@
+* probe/deck.cir -- run beside a .spiceinit that sets casemode=fold
+Vs In 0 DC 3
+R1 In MidNode 1k
+R2 MidNode 0 3k
+.op
+.control
+run
+write deck.raw
+.endc
+.end

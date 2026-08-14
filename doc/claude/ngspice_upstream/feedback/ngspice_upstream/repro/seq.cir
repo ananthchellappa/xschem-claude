@@ -1,0 +1,11 @@
+* good op, then save with the folded spelling, then a failing op, then write
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+save v(midnode)
+op
+write seq.raw
+.endc
+.end

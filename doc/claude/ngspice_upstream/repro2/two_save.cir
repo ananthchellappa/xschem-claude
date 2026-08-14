@@ -1,0 +1,12 @@
+* two_save -- two saved vectors, one .save card each (the xschem/ASE-L shape)
+Vs In 0 DC 3
+R1 In MidNode 1k
+R2 MidNode 0 3k
+.save v(In)
+.save v(MidNode)
+.op
+.control
+run
+write two_save.raw
+.endc
+.end

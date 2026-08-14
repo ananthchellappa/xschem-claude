@@ -1,0 +1,9 @@
+* issue 0058: an ordinary deck, to be sourced -- one inp_readall() each time
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+print v(midnode)
+.endc
+.end

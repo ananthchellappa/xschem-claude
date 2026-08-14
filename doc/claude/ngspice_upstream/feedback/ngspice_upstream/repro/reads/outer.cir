@@ -1,0 +1,10 @@
+* issue 0058: the same two-read shape, used to count print_compat_mode()
+* instead -- the compat announcement is once per DECK, not once per run
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  source plain.cir
+.endc
+.end

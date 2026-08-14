@@ -1,0 +1,9 @@
+* baseline divider -- schematic nets In / MidNode, source Vs
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+write divider.raw
+.endc
+.end

@@ -1,0 +1,2 @@
+* deliberately sets nothing: its only job is to be a third file that
+* inp_readall() reads, which is what makes finding 7's warning count reach 3.
