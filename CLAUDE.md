@@ -67,8 +67,39 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
 
+### The persistent dev display (`tests/headless/devdisplay.sh`)
+**Start this once and GUI testing stops touching your screen at all**, including
+the case no wrapper script can reach — a bare
+`./src/xschem --pipe -q --script tests/headless/<t>.tcl`, which is the most-typed
+command in a session and which no arming script wraps.
+
+```sh
+tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, idempotent, ~0.3 s
+export DISPLAY=:99                     # in the shell you work in
+tests/headless/devdisplay.sh view      # x11vnc on localhost, to watch it
+tests/headless/devdisplay.sh status|stop
+```
+
+The arm (below) **attaches** to it when it is up, so every entry point lands on
+one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the
+right way round — the only thing that still needs it is reproducing
+WSLg-specific defects. Side wins: immune to the WSLg Xwayland aborts that kill
+`:0` clients ~3×/session, and no per-run Xvfb spawn.
+
+`_gate_enabled` returns false on the dev display, deliberately: an invisible
+display would otherwise arm the gate and `_gate_attention` would relaunch the
+user's Pause panel where nobody can see it. Spec: `doc/claude/specs/dev_display.md`.
+
+**Two platform traps recorded there**: under WSLg `/tmp/.X11-unix` is mode 777
+without the sticky bit, so Xvfb binds only the *abstract* socket
+`@/tmp/.X11-unix/XN` and a `[ -S /tmp/.X11-unix/XN ]` readiness poll is always
+false; and `xdpyinfo` against a dead display **hangs** on the TCP fallback rather
+than failing — check the listen state before probing.
+
 ### The display arm: Xvfb by default (`tests/headless/xvfb_arm.sh`)
-`full_audit.sh` and `run_suites.sh` run on a **private Xvfb** and no longer
+`full_audit.sh`, `run_suites.sh`, `gated_xschem.sh` and the 7 window-mapping
+standalone `test_*.sh` suites run on the persistent dev display if one is up,
+otherwise a **private Xvfb**, and no longer
 borrow the screen they were launched from. That is the routine arm because it is
 measured better, not merely quieter: 30/30 soak with identical check counts where
 the same suites on `:0` flake 4-in-10 / 2-in-3 / 1-in-5, a full audit reproducing

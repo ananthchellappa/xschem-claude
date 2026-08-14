@@ -56,7 +56,9 @@
 #
 # INTERFACE
 #
-#   AUDIT_DISPLAY   unset | auto  spawn a private Xvfb                (DEFAULT)
+#   AUDIT_DISPLAY   unset | auto  attach to the persistent dev display if one
+#                                 is up (devdisplay.sh), else spawn a private
+#                                 Xvfb                                (DEFAULT)
 #                   none          run with DISPLAY unset; GUI legs self-skip
 #                   :0  (or any)  use that display verbatim
 #   AUDIT_SCREEN    Xvfb screen spec, default 1920x1080x24
@@ -84,10 +86,27 @@
 #     . "$HERE/xvfb_arm.sh"
 #     xvfb_arm "$0" "$@"          # may exec; never returns in that case
 
+# Echo the display of a LIVE persistent dev display, or fail. Liveness is
+# delegated to devdisplay.sh's own `status` rather than reimplemented here:
+# deciding "is :99 really ours" needs a pid-identity check (pids recycle across
+# a WSL boot while the state dir persists), and two copies of that rule would
+# drift. One implementation, one answer.
+_xvfb_dev_display() {
+  local dd; dd="$(dirname "$_XVFB_ARM_SELF")/devdisplay.sh"
+  [ -x "$dd" ] || return 1
+  "$dd" status >/dev/null 2>&1 || return 1
+  local sf="${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display"
+  [ -r "$sf" ] || return 1
+  local d; d=$(cat "$sf" 2>/dev/null)
+  [ -n "$d" ] || return 1
+  echo "$d"
+}
+
 # Re-exec self under a private Xvfb unless told otherwise. Idempotent: the
 # re-exec sets XSCHEM_XVFB_ARM so the second pass falls straight through.
 xvfb_arm() {
   local self="$1"; shift
+  local _dpy
 
   if [ "${XSCHEM_XVFB_ARM:-0}" = 1 ]; then
     return 0
@@ -101,7 +120,21 @@ xvfb_arm() {
       return 0
       ;;
     auto|"")
-      ;;   # fall through and spawn
+      # Prefer a PERSISTENT dev display if one is up (devdisplay.sh). Attaching
+      # is better than spawning: no ~1 s xvfb-run per invocation, one stable
+      # display shared by every entry point and every worktree, and -- the
+      # reason it exists -- the same display a bare `./src/xschem --script ...`
+      # gets from the shell, which no arming script can reach.
+      # doc/claude/specs/dev_display.md
+      if _dpy=$(_xvfb_dev_display); then
+        export XSCHEM_XVFB_ARM=1
+        export DISPLAY="$_dpy"
+        # forced for the same reason as the spawn path -- see "THE HAZARD" above
+        export GUI_GATE=0
+        echo "display arm: ATTACHED to persistent dev display $DISPLAY (devdisplay.sh), GUI_GATE=0" >&2
+        return 0
+      fi
+      ;;   # no persistent display -- fall through and spawn a private one
     *)
       export XSCHEM_XVFB_ARM=1
       export DISPLAY="$AUDIT_DISPLAY"
@@ -186,4 +219,29 @@ _XVFB_ARM_SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--wm-launch" ]; then
   shift
   _xvfb_wm_launch "$@"
+fi
+
+# POSIX-callable entry:  bash xvfb_arm.sh --arm <script> [args]
+#
+# Most of the standalone .sh suites are `#!/bin/sh`, and this file is bash --
+# `local`, `BASH_SOURCE`, and the array subscript above all break under dash. So
+# a POSIX script cannot source it. Rather than flip seven shebangs from sh to
+# bash (which silently swaps the `echo` builtin's backslash handling underneath
+# scripts nobody is re-reading today), they re-exec THROUGH here:
+#
+#     HERE=$(cd "$(dirname "$0")" && pwd)
+#     [ "${XSCHEM_XVFB_ARM:-0}" = 1 ] || exec bash "$HERE/xvfb_arm.sh" --arm sh "$0" "$@"
+#
+# One line, no interpreter change, and the arming policy stays in one file.
+#
+# Note the explicit `sh` before "$0". Several of these suites are NOT chmod +x
+# (test_flylines.sh, test_file_menu_log.sh, test_recent_launchlog.sh) and are
+# run as `sh tests/headless/<t>.sh`. Re-exec'ing "$0" alone turns that into an
+# exec of a non-executable file -- "Permission denied", and the suite never
+# runs at all. Naming the interpreter works either way.
+if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--arm" ]; then
+  shift
+  [ $# -gt 0 ] || { echo "!! xvfb_arm --arm needs a command" >&2; exit 2; }
+  xvfb_arm "$@"     # may exec (xvfb-run path); returns on attach/none/explicit
+  exec "$@"
 fi
