@@ -154,16 +154,24 @@ _xvfb_wm_launch() {
     if command -v xprop >/dev/null 2>&1; then
       local i=0
       while [ "$i" -lt 100 ]; do
-        if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q window; then
+        # Match the SUCCESS form, `... window id # 0x...`, not the word
+        # "window". xprop's failure output is "no such atom on any window."
+        # -- which contains "window", so a `grep -q window` readiness check
+        # succeeds on the first iteration forever and the wait never waits.
+        if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id #'; then
           break
         fi
-        kill -0 "$wmpid" 2>/dev/null || { echo "display arm: $wm died at startup" >&2; break; }
+        kill -0 "$wmpid" 2>/dev/null || { echo "!! display-arm WARNING: $wm died at startup" >&2; break; }
         i=$((i + 1))
-        # 0.05s without `sleep`, which some sandboxes block
-        read -r -t 0.05 -u 3 _ 3</dev/null 2>/dev/null || true
+        sleep 0.05
       done
       if [ "$i" -ge 100 ]; then
-        echo "display arm: $wm did not claim the screen in 5s -- continuing WM-less" >&2
+        # LOUD, and deliberately not prefixed "display arm:" -- the first
+        # version of this warning was prefixed exactly like the normal banner
+        # lines and was therefore filtered out by every `grep -v "display arm"`
+        # used to read these runs, which is how a wait loop that never waited
+        # went unnoticed. A warning you routinely filter is not a warning.
+        echo "!! display-arm WARNING: $wm did not claim the screen in 5s -- continuing WM-LESS" >&2
       fi
     fi
   fi
