@@ -8,7 +8,7 @@ All **measured** 2026-08-12 against `build-ver_50/src/ngspice`
 Reproduce everything: **`./repro/run_all.sh [case-capable-ngspice] [baseline-ngspice]`**
 (defaults are the two paths above). Each finding below names the deck it uses.
 
-**Findings 2 and 7 have been fixed since these measurements were taken, and
+**Findings 1, 2 and 7 have been fixed since these measurements were taken, and
 finding 4 half fixed**; each carries a note saying so at its head, the
 transcripts under them are left as measured, and `run_all.sh` runs the same
 decks against both binaries so the before and the after are visible side by
@@ -34,6 +34,42 @@ smaller.
 ---
 
 ## 1. ⭐ The raw-file header carries no casemode
+
+> **Shipped 2026-08-14, in the form this finding asked for.** `raw_write()`
+> (`src/frontend/rawfile.c`) emits `Option: casemode=<mode>` immediately after
+> the `Plotname:` line, in both the ASCII and the binary format, and the value
+> is the mode in force — `inp_case_mode_name()`, what `curcasemode` answers —
+> not the `casemode` variable. Measured against the unmodified
+> `/usr/local/bin/ngspice` (`ngspice-46`): both files load with no diagnostic
+> and `echo $casemode` answers the header's value there as well.
+> `doc/codex/issues/0061` is what had to land first — an `Option:` line used to
+> reconfigure the next netlist read of any session that loaded the file, so
+> writing this line into every raw file would have made every loaded raw file
+> steer the deck read after it; that is fixed, and re-measured after this
+> change. Two limits worth knowing, both measured in that issue's addendum: the
+> `-r`/batch writer (`src/frontend/outitf.c`) is a different function and does
+> not carry the line yet, and a plot that was *loaded* and then re-written
+> records the writing session's mode beside names spelled under the original
+> one. Everything below is the measurement as it stood before the change and is
+> left as it was written.
+>
+> **Amended the same day: it ships opt-in, off by default.** Nothing above is
+> withdrawn — the line is written in the form and place this finding asked
+> for, and the compatibility measurement against `ngspice-46` stands. What
+> changed is who asks for it: `set casemodewrite` before the `write`, and
+> without it the header is byte for byte the header `58496a8dc` wrote,
+> `cmp`-identical in both formats. The reason is a defect in the *released*
+> binary. Loading such a file gives that session a `casemode` key in the
+> loaded plot's environment, and `unset casemode` there frees a node it
+> leaves linked (`doc/codex/issues/0067`, fixed in this tree, in nothing
+> released): on `/usr/local/bin/ngspice`, `ngspice-46`, the `unset` returns
+> cleanly and **the next command of any kind is a SIGSEGV** — `set`, `echo
+> $casemode`, `display`, `print` and a second `unset` each measured at
+> `rc=139`, in the ASCII and the binary format alike. A file we write must
+> not become a crash trigger for a simulator that cannot be fixed unless
+> somebody asked for the line. The default flips once 0067 has been in a
+> release; the switch is described for the client in
+> `RESPONSE.md` §2 and in `doc/claude/casemode-distinguish-guide.md` §9.
 
 *Decks: `repro/divider.cir`, nets `In`/`MidNode`, source `Vs`; and
 `repro/ascii_raw.cir` for the header experiments below, which need a raw whose
@@ -408,7 +444,7 @@ nets and got one.
 
 | # | ask | size |
 |---|---|---|
-| 1 | `Option: casemode=<mode>` in the raw header, after `Plotname:` — *not* a new `Casemode:` key, which aborts existing readers | one line, high leverage |
+| 1 | `Option: casemode=<mode>` in the raw header, after `Plotname:` — *not* a new `Casemode:` key, which aborts existing readers | one line, high leverage — **done** |
 | 2 | make `.save` fold under `preserve` like `print` does (or document the carve-out) — `name_eq()`, `outitf.c:1338` | design call |
 | 3 | `write` refuses when the current plot is `constants` / no analysis ran | small |
 | 4 | fire the existing "differs only in case" warning from `.save` | small |
@@ -426,9 +462,15 @@ ask 3 that was decided rather than changed. Ask 4 is done **as worded**: the
 "differs only in case" warning does fire from `.save`. It is narrower than
 finding 4's headline, which asked for the token to be named whether or not a
 case variant exists; that wider report was built, fired on correct decks, and
-withdrawn — `0057`'s Status. Ask 1 is `doc/codex/issues/0061` and ask 8 is
-`doc/codex/issues/0060`; both are written up and both are deferred pending a
-decision. Asks 5, 6 and 9 have no issue of their own yet.
+withdrawn — `0057`'s Status. **Asks 1 and 8 are done too.** Ask 8 is
+`doc/codex/issues/0060`, closed by the read-only `curcasemode` variable. Ask 1
+is written exactly as this table words it — after `Plotname:`, on the
+`Option:` key — by `raw_write()`, taking its value from the same function
+`curcasemode` reads, and it had to ship in that order: it could only be
+written once `doc/codex/issues/0061` had stopped a loaded `Option:` line from
+steering the reading session's next netlist read. That issue carries the
+argument and the measurements, in its Resolution and its 2026-08-14 addendum.
+Asks 5, 6 and 9 have no issue of their own yet.
 
 ## Method notes, for whoever re-runs this
 
