@@ -112,10 +112,10 @@ catalogue in §7 must be expressed in it.
 | Hyperbolic | `sinh()` `cosh()` `tanh()` `asinh()` `acosh()` `atanh()` |
 | Exp/log | `exp()` `ln()` `log10()` `db20()` |
 | Basic | `abs()` `sgn()` `sqrt()` |
-| Complex | `re()` `im()` `cph()` (continuous phase — unwrapped, no ±180 jumps) |
+| Complex | `re()` `im()` `cph()` (continuous phase — unwrapped by removing ±360° wraps, so consecutive points never jump by more than 180°) |
 | Calculus | `integ()` `deriv()` `deriv0()` `deriv2()` `deriv20()` |
 | Statistics | `avg()` `ravg()` (running average) |
-| Clipping | `max()` (clip above arg) `min()` (clip below arg) |
+| Clipping | `max()` (clips from BELOW: a floor at the arg) `min()` (clips from ABOVE: a ceiling at the arg) |
 | Sequence | `prev()` (previous point) `del()` (delay by X-axis distance) `idx()` (point index) |
 | Stack | `dup()` `exch()` |
 | Constants | `pi()` `k()` (Boltzmann) `e()` `q()` (electron charge) |
@@ -125,6 +125,22 @@ graph's `sweep_idx`; `deriv2()`/`deriv20()` are 3-point. `integ()`, `deriv*()`, 
 and `del()` each **widen the evaluation window backwards** (they decrement `first`), so a
 clipped range silently reads one or two points before its start. Any measurement built on
 them must not assume the window is exactly what it asked for.
+
+**Two rows of that table were corrected against the C on 2026-08-15** (phase 1d, from
+`recon/catalogue_defects.md` D4/D5), because §3.2 is the stated source for the function
+catalogue's help text and a wrong gloss propagates into 108 rows:
+
+- `max()`/`min()` were glossed the wrong way round. `MAX` returns the **greater** operand
+  (`src/save.c` `case MAX`, ~`:2629`) and `MIN` the lesser, so `max()` raises a wave to a
+  **floor** and `min()` caps it at a **ceiling**. The old text said the opposite.
+- `cph()` unwraps by **360**: `result = ph - 360*floor((ph - prev_ph)/360 + 0.5)`
+  (`case CPH`, ~`:2799`). "No ±180 jumps" was the same fact seen from the output side and
+  read as a claim about ±180 wraps; both halves are now stated.
+
+`/` is worth knowing too, and its catalogue help says so: with a zero divisor `case DIVIS`
+(~`:2577`) yields **0** when the dividend is also zero and otherwise `y[p-1]` — the
+previous point of the *destination* column, which at `p == first` is whatever the last
+evaluation left there (L2).
 
 ### 3.3 Limits and landmines — every one of these has bitten the graph code
 
@@ -184,10 +200,10 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 | W25 | `.calc.stk.push/.pop/.del/.recall` | button | the four side buttons |
 | W26 | `.calc.fn` | frame | function browser |
 | W27 | `.calc.fn.cat` | combobox | §7 categories; initial `Special Functions` |
-| W28 | `.calc.fn.list` | multi-column list | horizontally scrollable |
+| W28 | `.calc.fn.list` | multi-column list | horizontally scrollable. **Fixed by phase 1d as a `canvas`**, one text item per entry, laid out column-major in `calc::fn_cols` (6) columns of per-column width, with `.calc.fn.hsb` under it and `.calc.fn.vsb` beside it. The alternatives were *rejected*, not skipped, and against this tree: `ttk::treeview` has no cell selection in Tk 8.6 and its tags are per **row**, so a disabled `dft` could not be greyed without greying the five names beside it (RULING-3 needs exactly that); side-by-side listboxes each own their own selection **and their own `xview`**, so the one horizontal scrollbar this row requires could not scroll the grid; a `text` widget yields character-range selection. This is the same enumeration, from the same constraints, that the signal browser records at `src/wave_viewer.tcl:9429-9436`. The vertical scrollbar is not decoration: 56 entries in 6 columns are 10 rows deep and the pane is ~8 rows tall at first open — R112 says the browser is what *scrolls*, not what disappears. |
 | W29 | `.calc.pad` | frame | keypad |
-| W30 | `.calc.pad.k<n>` | button | **operators only — no digit keys.** Digits are typed into the buffer. The set is drawn from §3.2 (`+ - * / **`, the comparisons, `?`, `±`, `.`) and is fixed by phase 1d. **Amended 2026-08-15 by RULING-2** (`doc/claude/calculator_batch/LEDGER.md`), which supersedes both the old `7 8 9 / 4 5 6 * 1 2 3 - 0 ± . +` reading of this row and the 4×4 digit pad in the reference screenshot. |
-| W31 | `.calc.pad.u1..u4` | button | `user 1`..`user 4` |
+| W30 | `.calc.pad.k<n>` | button | **operators only — no digit keys.** Digits are typed into the buffer. **Amended 2026-08-15 by RULING-2** (`doc/claude/calculator_batch/LEDGER.md`), which supersedes both the old `7 8 9 / 4 5 6 * 1 2 3 - 0 ± . +` reading of this row and the 4×4 digit pad in the reference screenshot. **RULING-2 fixed the principle and left the SET to the crew; ruled by the crew 2026-08-15 (phase 1d), the set is the twelve operator tokens `+ - * / ** ? == != > < >= <=` — eleven binary tokens plus the ternary `?`, which R510 does not describe** — `calc::pad_keys`, laid out four to a row, `k1`..`k12` in reading order. Rationale, in the order it decides things: (1) every key emits a token `plot_raw_custom_data()` really lexes (`src/save.c:2414-2425`); a key emitting anything else is not a shortcut but a trap, since §3.1 makes one unknown token return `-1` for the *whole* expression, surfacing phases later as an unexplained failure. (2) A key is not the same as typing the character — which is why keys survive RULING-2 and digits do not: R510/R511 give a binary-operator **button** stack semantics (consume the top two stack entries, push `<second> <top> <op>` as one entry) and no keystroke does that, while a digit has no second meaning and a digit key would only be a slower keyboard. **⚠ That rule covers eleven of the twelve. `?` is NOT binary** — it is the engine's `COND` (`#define COND 49`, `src/save.c:2361`), dispatched at `src/save.c:2531-2536` inside `if(stackptr2 > 2) { /* 3 argument operators */ }` as `stack2[p-3] = stack2[p-2] ? stack2[p-3] : stack2[p-1]; stackptr2 -= 2;`, consuming **three** stack entries (§3.2 classes it as the conditional, and the phase-1d catalogue row says the same). **Phase 4 (ledger item 10) therefore owes `?` its own three-operand rule** and must not read R510 as its contract for this key: a `?` button consumes the top **three** stack entries and pushes `<third> <second> <top> ?`. Emitting `<second> <top> ?` leaves `stackptr2 == 2` at the token, the `stackptr2 > 2` guard is false, `COND` never fires, and the expression silently yields an operand instead of a conditional. That `?` falls outside R510 is a reason to write the rule, not a reason to drop the key: it is a token the engine lexes and it has a button semantics no keystroke supplies. (3) **`±` and `.` are dropped.** Neither is in §3.2; both belong to typing a numeric literal, the job RULING-2 hands to the keyboard. `.` is not even lexable alone — `strtod(".")` fails, so §3.1 looks it up as a *vector name* and the expression returns `-1`. A negative literal is typed `-3`; a negated expression is `-1 *`, which the pad's own `*` composes. (4) The unary functions stay in the function browser, one catalogue entry each (§7.1); duplicating twenty of them here would be the second table R413 forbids, in widget form. |
+| W31 | `.calc.pad.u1..u4` | button | `user 1`..`user 4`, a 2×2 block under the keys |
 | W32 | `.calc.status` | frame | status line + history dropdown |
 | W33 | `.calc.status.msg` | entry/label | readonly, initial empty |
 | W34 | `.calc.status.hist` | combobox button | reveals the last 50 messages |
@@ -392,6 +408,26 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 Everything in §3.2 is exposed through the non-Special categories, one entry per token,
 inserting the token verbatim.
 
+**Ruled by the crew, 2026-08-15 (phase 1d), building the catalogue:**
+
+- **The category string in the table is the combobox value, verbatim.** The special rows
+  were authored as `Special`, which is not one of the eight above, so the *default*
+  category would have rendered an empty list. Fixed in the data (`recon/catalogue_defects.md`
+  D1); a filter that trims or prefix-matches a category name is a filter that will one day
+  match two.
+- **`All` is synthetic.** No row carries it; it means every row of every category.
+  `calc::fn_entries` is the one place that knows.
+- **Entries render alphabetically** (`lsort -dictionary`, i.e. case-insensitively), not in
+  table order. The table's order is §7.2's — grouped by kin, which is the right order to
+  *read the spec* in and the wrong one to *look a name up* in, and looking a name up is the
+  whole job of a 56-entry browser. The reference tool sorts the same way
+  (`ref/viva_xl_calculator.png`: `aaSP`, `abs_jitter`, `analog2Digital`, `average`, … down
+  the first column, with `dBm` between `d2a` and `delay`).
+- **The row schema is six fields** — `{name category route returns insert help}` — and it is
+  the single source R413 demands, for the list contents, for the greyed entries, and for the
+  hover help. `returns` was added because without it `integ` (scalar, the area) and `iinteg`
+  (wave, the running integral) were byte-identical rows (D3).
+
 ### 7.2 Special Functions — the catalogue
 
 The reference tool shows these 54 with more off-screen. Column `Route` says how it is
@@ -409,7 +445,7 @@ opcode, **✘** = out of scope v1.
 | `deriv` | wave | slope | P |
 | `clip` | wave | restrict X range | T (window arg, not an opcode) |
 | `flip` | wave | mirror along X | T |
-| `lshift` | wave | shift along X | C (`del()` with negative arg) or T |
+| `lshift` | wave | shift along X | **T** (was "C (`del()` with negative arg) or T" — see below) |
 | `sample` | wave | values at chosen X | T |
 | `root` | scalar | X where curve = 0 | T (`cross` at level 0) |
 | `cross` | scalar | X at Nth threshold crossing | T — **the primitive most timing verbs use** |
@@ -430,7 +466,7 @@ opcode, **✘** = out of scope v1.
 | `bandwidth` | scalar | X where response drops N dB | T |
 | `gainBwProd` | scalar | gain × bandwidth | T |
 | `gainMargin` / `phaseMargin` | scalar | loop stability margins | T |
-| `groupDelay` | wave | −dφ/dω | C (`cph() deriv()`, negated) |
+| `groupDelay` | wave | −dφ/dω | C — **`cph() deriv() -360 /`** (was "`cph() deriv()`, negated" — see below) |
 | `dft` | wave | discrete Fourier transform | **N** |
 | `psd` | wave | power spectral density | **N** |
 | `spectrum` / `spectralPower` | wave/scalar | spectrum, power in it | N (on `dft`) |
@@ -451,6 +487,37 @@ opcode, **✘** = out of scope v1.
 **Implementation order is exactly: P, then C, then T-on-`cross`, then the rest.** `cross`
 alone unlocks `riseTime` `slewRate` `delay` `dutyCycle` `frequency` `settlingTime`
 `overshoot` — seven of the most-used verbs from one well-tested primitive.
+
+### 7.2a Three corrections this table needed before it could build a catalogue
+
+Ruled by the crew, 2026-08-15 (phase 1d), from `recon/catalogue_defects.md`. The catalogue
+in `calc::catalogue` (`src/calculator.tcl`) is the shipped form of this table, so a wrong
+`Route` here becomes a wrong RPN string in the buffer three phases later, where §3.1 turns
+it into a silent `-1` for the whole expression.
+
+- **`lshift` is a T route, and the recipe this table used to prescribe is unimplementable.**
+  "`del()` with a negative arg" cannot work: the `DEL` arm (`src/save.c:2585`-2607) compares
+  `fabs(x[p] - x[...]) <= tmp`, so a negative `tmp` never matches; the search then runs past
+  `last`, reads `x[last+1]`, and `ravg_store()` writes `arr[i][last+1]` — one element past a
+  `my_calloc(_ALLOC_ID_, last + 1, sizeof(double))` (`src/save.c:2298`). That is an
+  **out-of-bounds read in shipped C**, reachable from any `node=` expression a user types,
+  and it is not a Calculator bug: confirming and filing it is batch item 12. The catalogue
+  emits nothing for `lshift` until a T-route proc exists. (The authored row also emitted a
+  bare `del()`, which is a *right* shift — the opposite of its own help.)
+- **`groupDelay` needed the units conversion the old recipe left out.** `cph()` is in
+  **degrees** and `deriv()` differentiates against the sweep variable, which for an AC raw
+  is **Hz, not ω**, so `cph() deriv()` negated is degrees per hertz — short of −dφ/dω by
+  π/90. With φ in radians and ω = 2πf, −dφ/dω = −(dφ_deg/df)/360, which is exactly
+  `cph() deriv() -360 /` in this evaluator's operand order (`X Y /` is X/Y).
+- **The five T-route verbs that stand on `dft` carry route `N` in the catalogue.** §7.2
+  marks `harmonic`, `harmonicFreq`, `thd` as "T (on `dft`)" and `spectrum`/`spectralPower`
+  as "N (on `dft`)"; with `dft` absent (§12.2 / RULING-3) there is no T to write, so the
+  route the *Calculator* would have to build is the N one. Encoding it in the route keeps
+  the table the single source for the disabled state, which is what RULING-3 asks for; each
+  row's help says which missing opcode it stands on, so the information is not lost.
+  The greyed set is therefore exactly: `dft` `psd` `convolve` `spectrum` `spectralPower`
+  `harmonic` `harmonicFreq` `thd` (route N) and `dftbb` `psdbb` `evmQAM` `evmQpsk` `pzbode`
+  `pzfilter` (route `X`, this table's `✘`).
 
 ### 7.3 The T route — how a Tcl measurement is allowed to work
 
@@ -509,10 +576,17 @@ Ruled by the crew, 2026-08-15, phase 1a. R506 obliges every operation to speak, 
 this proc is on the path of nearly every action in the tool; the three questions
 below are the ones a caller cannot answer for itself and so must not have to.
 
-- **R507** `calc::status ?msg?` writes `msg` into `.calc.status.msg` and **prepends**
-  it to the history behind `.calc.status.hist`. The **empty string clears the message
-  field and records nothing** — a blank history row is not information, and clearing
+- **R507** `calc::status ?msg? ?record?` writes `msg` into `.calc.status.msg` and
+  **prepends** it to the history behind `.calc.status.hist`. The **empty string clears the
+  message field and records nothing** — a blank history row is not information, and clearing
   is how a transient message is retired. `calc::status` returns the message it wrote.
+  **`record` defaults to 1 and exists for exactly one caller** (ruled by the crew,
+  2026-08-15, phase 1d): R413's hover help passes 0, so the line is shown and **not**
+  recorded. Help text is a legend, not an event — dragging the pointer across the function
+  list crosses fifty entries in a second, and recording them would spend R509's whole
+  50-entry cap on tooltips for functions the user never clicked, evicting the messages the
+  history exists to let them re-read. Everything that actually *happens* still records,
+  which is what R506 asks for.
 - **R508** With no window — `.calc` not built, already closed, or `--nogui` where
   `winfo` does not exist — it is a **silent no-op that returns cleanly**, and records
   nothing. Rationale: it is called from stubs, from teardown paths and from headless

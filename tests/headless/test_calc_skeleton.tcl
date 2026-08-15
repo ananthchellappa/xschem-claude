@@ -58,6 +58,19 @@
 #        and the toplevel's own declared minimum (all 22 selectors still on
 #        screen at it, and a window saved too small is corrected on reopen)
 #
+# Phase 1d (item 4) adds, and restates one phase-1a/1b check whose subject the
+# last two filled panes removed (⚠ RESTATED, in place):
+#   S22  the keypad (W29-W31): the twelve operator keys the crew ruled under
+#        RULING-2 and NO digit key, the four user buttons, all inert and all
+#        speaking, and the -minsize this item was sent to re-judge
+#   S23  the function browser (W26-W28): the category combobox, the canvas
+#        list in six column-major columns with a scrollbar that really scrolls,
+#        the greyed N-route/out-of-scope entries (RULING-3), per-entry hover
+#        help that does NOT flood the history, and repopulation on a switch
+#   S24  the catalogue (R413, one table): arity, categories, the §3.2 token set
+#        written out from the SPEC, every emitted token lexable, the audited
+#        defects D1/D2/D3/D6, and no duplicate names
+#
 # Needs a DISPLAY (Tk widgets). Under Xvfb set GUI_GATE=0. Standalone:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_skeleton.tcl
 
@@ -153,11 +166,24 @@ check "S3 inner orient" [.calc.pw.bot cget -orient] horizontal
 check "S4 outer panes" [.calc.pw panes] \
     {.calc.pw.sel .calc.pw.buf .calc.pw.stk .calc.pw.bot}
 check "S4 inner panes" [.calc.pw.bot panes] {.calc.pw.bot.fn .calc.pw.bot.pad}
+# ⚠ .calc.pw.bot's number is 158, NOT phase 0's 140, and this is the second
+# sanctioned amendment to a frozen phase-0 minsize (the first was the keypad
+# pane, re-judged by item 4 and unchanged at 140). Filling the bottom pair took
+# .calc.pw.bot's REQUESTED height from 67 to 158 while its -minsize stayed at
+# the placeholder-era 140, so dragging the bottom sash to its own legal floor
+# gave the pane 140 and clipped `user 3`/`user 4` by 3 px — a pane whose stated
+# minimum hides a control, which is the exact thing landmine D3's -minsize
+# exists to prevent. calc::apply_pane_minsize now raises the two panes item 4
+# filled to what their contents request; 140 remains the FLOOR in build_panes
+# and nothing can lower a minimum below it. The number below is the derived
+# value at the shipped font — S22's leg carries the font-independent form
+# (-minsize >= the pane's own requested size), which is what actually pins the
+# rule.
 foreach {pw pane min} {
     .calc.pw     .calc.pw.sel      120
     .calc.pw     .calc.pw.buf       70
     .calc.pw     .calc.pw.stk       80
-    .calc.pw     .calc.pw.bot      140
+    .calc.pw     .calc.pw.bot      158
     .calc.pw.bot .calc.pw.bot.fn   250
     .calc.pw.bot .calc.pw.bot.pad  140
 } {
@@ -498,23 +524,22 @@ foreach lf {.calc.pw.sel .calc.pw.buf .calc.pw.stk .calc.pw.bot.fn .calc.pw.bot.
 # ...and the hint INSIDE it, in every pane THAT STILL HAS ONE. Sampling one
 # pane let four panes revert to a literal with the suite green.
 #
-# ⚠ RESTATED by item 2 (phase 1b), and the expectation genuinely changed: a
-# placeholder hint is what a pane shows INSTEAD of its contents, and Selectors,
-# Buffer and Stack now have their contents (the grid + mode strip, the buffer +
-# toolbar, the Stack). Only Functions and Keypad — item 4's — are still owed,
-# so only those two still carry a hint. The other half of the restatement is
-# the check below: the three filled panes must have no hint LEFT, which is what
-# stops "filled" from meaning "drawn on top of the old placeholder".
-foreach lf {.calc.pw.bot.fn .calc.pw.bot.pad} {
-    check "S14 $lf hint text is the muted role" \
-        [pcall $lf.hint cget -foreground] $c_disabledfg
-    check "S14 $lf hint background" [pcall $lf.hint cget -background] $c_panel
-}
+# ⚠ RESTATED by item 2 (phase 1b), and again by item 4 (phase 1d) — and the
+# subject is now GONE, which is why the two per-pane colour checks went with it
+# rather than being renumbered around. A placeholder hint is what a pane shows
+# INSTEAD of its contents; item 2 filled Selectors, Buffer and Stack, item 4
+# filled Functions and Keypad, so no pane has one left and `calc::placeholder`
+# itself is deleted. What survives is the half that still has teeth: NO pane may
+# carry a hint, which is what stops "filled" from meaning "drawn on top of the
+# old placeholder" — the muted-colour checks could only ever have covered a
+# widget the window no longer builds.
 set leftover {}
-foreach lf {.calc.pw.sel .calc.pw.buf .calc.pw.stk} {
+foreach lf {.calc.pw.sel .calc.pw.buf .calc.pw.stk .calc.pw.bot.fn .calc.pw.bot.pad} {
     if {[winfo exists $lf.hint]} { lappend leftover $lf }
 }
 check "S14 a filled pane keeps no placeholder hint" $leftover {}
+check "S14 the placeholder proc is gone with its last caller" \
+    [expr {[llength [info procs ::calc::placeholder]] ? {STILL-THERE} : {gone}}] gone
 # ⚠ ...and every pane still SAYS what it is. Nothing asserted the pane
 # captions, so filling a pane could take its title with it — the mirror image
 # of the "no second title" check S20 adds for .calc.pw.stk, and measured: with
@@ -1549,6 +1574,995 @@ update idletasks ; raise .calc ; update
 check "S21 a reopened window is not clipped either" \
     [list [gridfit] [expr {[winfo width .calc] >= [lindex [pcall wm minsize .calc] 0]}]] \
     {fits 1}
+
+# =============================================================================
+# PHASE 1d (item 4) — the keypad (W29-W31, RULING-2) and the function browser
+# (W26-W28) over the one catalogue table (R413).  Still INERT: a key press and
+# a function click report through calc::status and insert nothing (insertion is
+# plan phase 2 / phase 5).
+#
+#   S22  W29-W31: the keypad — the twelve OPERATOR keys the crew ruled and NO
+#        digit key, the four user buttons, all inert and all speaking, and the
+#        one -minsize item 4 was sent to re-judge
+#   S23  W26-W28: the function browser — the category combobox, the canvas
+#        list, the two scrollbars, per-entry colour/hover/click, and that
+#        switching category really repopulates
+#   S24  THE CATALOGUE, which is the most testable thing in the item and the
+#        cheapest place to catch drift: arity, categories, the §3.2 token set
+#        read back from the spec rather than from the implementation, every
+#        emitted RPN token lexable, the disabled set, and no duplicate names
+# =============================================================================
+
+# a true first open again — S21 shrank the window and calc::geom persists
+calc::close
+update idletasks
+array unset ::calc::sash
+set ::calc::geom {}
+check "S22 first open returns .calc" [calc::open] .calc
+update idletasks
+raise .calc
+update
+
+# --- S22 the keypad (W29-W31) ------------------------------------------------
+# ⚠ THE KEY SET IS WRITTEN OUT HERE AS A LITERAL, not read back from
+# calc::pad_keys: a test that asks the implementation what the layout is
+# asserts nothing about the layout. This is RULING-2 (no digits) plus the
+# crew's phase-1d ruling on the set, now in spec §4 W30 — the twelve OPERATOR
+# tokens plot_raw_custom_data() lexes, four to a row.
+# ⚠ ELEVEN of them are binary; `?` is the engine's ternary COND (save.c:2361,
+# dispatched at save.c:2531-2536 under `stackptr2 > 2`, three operands). R510's
+# two-operand button rule does not describe it and phase 4 owes it its own; the
+# catalogue row and spec §4 W30 both say so, and S24 asserts they agree.
+set padkeys {+ - * / ** ? == != > < >= <=}
+
+check "S22 .calc.pad class" \
+    [expr {[winfo exists .calc.pad] ? [winfo class .calc.pad] : {MISSING}}] Frame
+check "S22 .calc.pad parent is .calc" [pcall winfo parent .calc.pad] .calc
+check "S22 drawn in the Keypad pane" [pcall pack slaves .calc.pw.bot.pad] {.calc.pad}
+# the stacking guard every `pack -in` row in this window has paid for: a widget
+# packed into a non-parent maps BEHIND its siblings unless it is raised, and
+# `ismapped` returns 1 for a widget that is completely obscured
+set kids [pcall winfo children .calc]
+check_true "S22 keypad stacks above the panedwindow" \
+    [expr {[lsearch -exact $kids .calc.pad] > [lsearch -exact $kids .calc.pw]
+           && [lsearch -exact $kids .calc.pad] >= 0}]
+set padat NO-PAD
+catch {
+    set padcx [expr {[winfo rootx .calc.pad] + [winfo width  .calc.pad] / 2}]
+    set padcy [expr {[winfo rooty .calc.pad] + [winfo height .calc.pad] / 2}]
+    set padat [winfo containing $padcx $padcy]
+}
+check_true "S22 keypad is the topmost widget at its own centre" \
+    [expr {$padat eq {.calc.pad} || [string match {.calc.pad.*} $padat]}]
+
+# W30: .calc.pad.k<n>, n from 1, in reading order, one per token
+set badkey {}
+set n 1
+foreach tok $padkeys {
+    set w .calc.pad.k$n
+    if {![winfo exists $w]} { lappend badkey k$n=MISSING ; incr n ; continue }
+    if {[winfo class $w] ne {Button}}   { lappend badkey k$n=[winfo class $w] }
+    if {[pcall $w cget -text] ne $tok}  { lappend badkey k$n=[pcall $w cget -text] }
+    if {[pcall $w cget -state] ne {normal}} { lappend badkey k$n=[pcall $w cget -state] }
+    incr n
+}
+check "S22 the twelve operator keys, in order, all pressable" $badkey {}
+# ⚠ RULING-2's WHOLE POINT, asserted from the negative side: NO DIGIT KEY, and
+# no thirteenth key either. A pad that grew a `7` back would pass every check
+# above (it asserts k1..k12 only), so count the buttons and read every label.
+set padbuttons {}
+foreach w [pcall winfo children .calc.pad] {
+    if {[pcall winfo class $w] eq {Button}} { lappend padbuttons $w }
+}
+check "S22 the pad holds exactly 12 keys + 4 user buttons, no strays" \
+    [llength $padbuttons] 16
+set digitkey {}
+foreach w $padbuttons {
+    set t [pcall $w cget -text]
+    if {[string is double -strict $t] || $t eq {.} || $t eq {±}} {
+        lappend digitkey $w=$t
+    }
+}
+# ⚠ the COUNT rides along in every "nothing bad is present" check in this
+# section. With no keypad at all the loops above are empty and every such check
+# passes over the feature's total absence — measured against HEAD's
+# calculator.tcl, where five of them did exactly that.
+check "S22 no digit, decimal point or sign key (RULING-2)" \
+    [list [llength $padbuttons] $digitkey] {16 {}}
+check "S22 there is no k13, and there is a k12" \
+    [list [winfo exists .calc.pad.k12] [winfo exists .calc.pad.k13]] {1 0}
+# ...and every key emits a token the ENGINE really lexes. A key whose label is
+# not in §3.2 is not a shortcut, it is a whole-expression -1 three phases later
+# (§3.1). The 52 tokens are written out in S24 from the spec.
+check "S22 the key set is the ruled twelve" [pcall calc::pad_keys] $padkeys
+
+# W31: four user buttons, spec's labels
+set baduser {}
+foreach i {1 2 3 4} {
+    set w .calc.pad.u$i
+    if {![winfo exists $w]} { lappend baduser u$i=MISSING ; continue }
+    if {[winfo class $w] ne {Button}} { lappend baduser u$i=[winfo class $w] }
+    if {[pcall $w cget -text] ne "user $i"} { lappend baduser u$i=[pcall $w cget -text] }
+}
+check "S22 the four user buttons, with the spec's labels" $baduser {}
+check "S22 there is no u5, and there is a u4" \
+    [list [winfo exists .calc.pad.u4] [winfo exists .calc.pad.u5]] {1 0}
+
+# the palette, on all sixteen at once — sampling one let fifteen revert
+set padcolor {}
+foreach w $padbuttons {
+    if {[pcall $w cget -background] ne $c_panel}   { lappend padcolor $w-bg }
+    if {[pcall $w cget -foreground] ne $c_fieldfg} { lappend padcolor $w-fg }
+    if {[pcall $w cget -activebackground] ne $c_header} { lappend padcolor $w-abg }
+}
+check "S22 every key wears the palette" [list [llength $padbuttons] $padcolor] {16 {}}
+check "S22 the pad frame wears the panel colour" \
+    [pcall .calc.pad cget -background] $c_panel
+
+# INERT, and R506: every key names itself and the phase that will implement it.
+# Insertion at the caret is plan 2.2; the stack composition R510 asks of a
+# binary operator button is phase 4.
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {S22 INERT SENTINEL}
+set padbuf [pcall .calc.buf get 1.0 end]
+set padstk [pcall .calc.stk.list size]
+set padsilent {}
+set padpressed 0
+set n 1
+foreach tok $padkeys {
+    pcall calc::status {}
+    if {![string match ERR:* [pcall .calc.pad.k$n invoke]]} { incr padpressed }
+    if {[pcall .calc.status.msg get] ne "operator $tok: not implemented (phase 2)"} {
+        lappend padsilent k$n=[pcall .calc.status.msg get]
+    }
+    incr n
+}
+check "S22 every operator key names itself and its phase (R506)" $padsilent {}
+set usersilent {}
+foreach i {1 2 3 4} {
+    pcall calc::status {}
+    if {![string match ERR:* [pcall .calc.pad.u$i invoke]]} { incr padpressed }
+    if {[pcall .calc.status.msg get] ne "user $i: not implemented (phase 9)"} {
+        lappend usersilent u$i=[pcall .calc.status.msg get]
+    }
+}
+check "S22 every user button names itself and its phase (R506)" $usersilent {}
+check_true "S22 the pre-press snapshot is real text" \
+    [expr {![string match ERR:* $padbuf] && [string match {*INERT SENTINEL*} $padbuf]
+           && [string is integer -strict $padstk]}]
+# ⚠ the press COUNT is part of the purity assertion: "nothing was pressed" and
+# "everything was pressed and touched nothing" are the same green otherwise.
+check "S22 no key touched the buffer" \
+    [list $padpressed \
+          [expr {[string match ERR:* $padbuf] ? {NO-SNAPSHOT-TO-COMPARE}
+                                              : [pcall .calc.buf get 1.0 end]}]] \
+    [list 16 $padbuf]
+check "S22 no key touched the stack" \
+    [list $padpressed \
+          [expr {[string is integer -strict $padstk] ? [pcall .calc.stk.list size]
+                                                     : {NO-SNAPSHOT-TO-COMPARE}}]] \
+    [list 16 $padstk]
+pcall .calc.buf delete 1.0 end
+
+# THE ONE -minsize ITEM 4 WAS SENT TO RE-JUDGE (phase-0 receipt: "the keypad
+# pane sits at its 140px minimum, against ~115px in the reference — phase 1 puts
+# real buttons there and that is when the number should be judged").
+# S4 still pins the NUMBER, which did not change. This pins the JUDGEMENT: it
+# must be at least what the pane's contents ask for, so a keypad that grows
+# carries the minimum with it instead of clipping — spec §4.2 rule 1's rule,
+# applied to a pane. (Measured: -minsize 128 let the first-open sash give the
+# pane 138 and the keypad rendered 2 px narrower than it asked for.)
+set padmin [pcall .calc.pw.bot panecget .calc.pw.bot.pad -minsize]
+set padreq [pcall winfo reqwidth .calc.pw.bot.pad]
+# ⚠ "the pane holds the keypad" is part of the assertion. An EMPTY pane requests
+# almost nothing and any minimum covers it, which is how this passed against a
+# tree with no keypad in it at all (measured).
+check "S22 the keypad pane's minimum covers what it holds" \
+    [list [pcall pack slaves .calc.pw.bot.pad] \
+          [expr {[string is integer -strict $padmin] && [string is integer -strict $padreq]
+                 && $padreq > 0 && $padmin >= $padreq}]] \
+    {.calc.pad 1}
+# ...and at first open it really got it: a cget cannot see a clipped keypad
+proc padfit {} {
+    set got  [pcall winfo width    .calc.pad]
+    set want [pcall winfo reqwidth .calc.pad]
+    if {![string is integer -strict $got] || ![string is integer -strict $want]} {
+        return NO-KEYPAD
+    }
+    return [expr {$got >= $want ? {fits} : "clipped($got/$want)"}]
+}
+check "S22 the keypad is not squeezed at first open" [padfit] fits
+# ...and the SAME RULE ON THE PANE THAT HOLDS IT, vertically. Item 4 re-judged
+# the pad pane's WIDTH and left the height minimum of `.calc.pw.bot` at phase
+# 0's 140 while filling it took its request from 67 to 158: dragging the bottom
+# sash to its own legal floor then gave the pane 140 and clipped `user 3` and
+# `user 4` by 3 px. A minimum that hides a control is not a minimum.
+set botmin [pcall .calc.pw panecget .calc.pw.bot -minsize]
+set botreq [pcall winfo reqheight .calc.pw.bot]
+check "S22 the bottom pane's minimum covers what it holds, vertically too" \
+    [list [pcall winfo children .calc.pw.bot] \
+          [expr {[string is integer -strict $botmin] && [string is integer -strict $botreq]
+                 && $botreq > 100 && $botmin >= $botreq}]] \
+    {{.calc.pw.bot.fn .calc.pw.bot.pad} 1}
+# ...and it is not vacuous: DRAG the sash to the floor and read the pixels. A
+# cget cannot see a clipped user button (the S21 lesson, applied to a drag).
+# ⚠ EVERY number is proved to BE a number before it reaches `expr`, and every
+# widget is proved to exist. A bare `winfo rooty .calc.pad` against a tree with
+# no keypad throws, the outer catch swallows the rest of the FILE, and S23/S24
+# never run at all — which is the same trap this file's other geometry loops
+# already record, arriving here through a proc instead of a loop.
+proc botdrag_overflow {} {
+    if {![winfo exists .calc.pw] || ![winfo exists .calc.pad]} { return NO-KEYPAD }
+    set co [pcall .calc.pw sash coord 2]
+    if {[llength $co] != 2} { return NO-SASH }
+    foreach {sx sy} $co break
+    if {![string is integer -strict $sx] || ![string is integer -strict $sy]} {
+        return NO-SASH
+    }
+    set h [pcall winfo height .calc.pw]
+    if {![string is integer -strict $h]} { return NO-PW }
+    pcall .calc.pw sash place 2 $sx $h
+    update idletasks
+    set over {}
+    set padbot [expr {[winfo rooty .calc.pad] + [winfo height .calc.pad]}]
+    foreach u {u1 u2 u3 u4} {
+        set w .calc.pad.$u
+        if {![winfo exists $w]} { lappend over $u=MISSING ; continue }
+        set wb [expr {[winfo rooty $w] + [winfo height $w]}]
+        if {$wb > $padbot} { lappend over $u=[expr {$wb - $padbot}] }
+    }
+    # put it back where the first-open layout had it
+    pcall .calc.pw sash place 2 $sx $sy
+    update idletasks
+    return $over
+}
+check "S22 the user buttons survive a drag to the bottom pane's own minimum" \
+    [botdrag_overflow] {}
+# every key on screen, by pixels, not by ismapped
+set padoff {}
+foreach w $padbuttons {
+    set cx [expr {[winfo rootx $w] + [winfo width  $w] / 2}]
+    set cy [expr {[winfo rooty $w] + [winfo height $w] / 2}]
+    if {[pcall winfo containing $cx $cy] ne $w} { lappend padoff $w }
+}
+check "S22 all sixteen keypad buttons are on screen at first open" \
+    [list [llength $padbuttons] $padoff] {16 {}}
+
+# --- S23 the function browser (W26-W28) --------------------------------------
+check "S23 .calc.fn class" \
+    [expr {[winfo exists .calc.fn] ? [winfo class .calc.fn] : {MISSING}}] Frame
+check "S23 .calc.fn parent is .calc" [pcall winfo parent .calc.fn] .calc
+check "S23 drawn in the Functions pane" [pcall pack slaves .calc.pw.bot.fn] {.calc.fn}
+# THE SAME STACKING GUARD THE KEYPAD CARRIES, on the item's larger payload.
+# `.calc.fn` is `pack -in` a non-parent exactly as `.calc.pad` is, so it maps
+# BEHIND its siblings unless it was created after them or raised — and
+# `winfo ismapped` returns 1 for a browser that is wholly obscured. Measured:
+# appending `lower .calc.fn` to calc::build_panes left all checks green while
+# `winfo containing` at both .calc.fn's centre and .calc.fn.list's centre
+# returned `.calc.pw.bot.fn`, i.e. the empty pane in front of the 56 names.
+set kids [pcall winfo children .calc]
+check_true "S23 the function browser stacks above the panedwindow" \
+    [expr {[lsearch -exact $kids .calc.fn] > [lsearch -exact $kids .calc.pw]
+           && [lsearch -exact $kids .calc.fn] >= 0}]
+set fnat NO-FN
+catch {
+    set fncx [expr {[winfo rootx .calc.fn] + [winfo width  .calc.fn] / 2}]
+    set fncy [expr {[winfo rooty .calc.fn] + [winfo height .calc.fn] / 2}]
+    set fnat [winfo containing $fncx $fncy]
+}
+check_true "S23 the function browser is the topmost widget at its own centre" \
+    [expr {$fnat eq {.calc.fn} || [string match {.calc.fn.*} $fnat]}]
+# ...and the LIST itself, not just the frame: the frame could be on top with the
+# canvas the thing that is covered.
+set fnlat NO-LIST
+catch {
+    set flx [expr {[winfo rootx .calc.fn.list] + [winfo width  .calc.fn.list] / 2}]
+    set fly [expr {[winfo rooty .calc.fn.list] + [winfo height .calc.fn.list] / 2}]
+    set fnlat [winfo containing $flx $fly]
+}
+check "S23 the function LIST is the topmost widget at its own centre" \
+    $fnlat {.calc.fn.list}
+check "S23 .calc.fn.cat class" \
+    [expr {[winfo exists .calc.fn.cat] ? [winfo class .calc.fn.cat] : {MISSING}}] TCombobox
+check "S23 .calc.fn.list class" \
+    [expr {[winfo exists .calc.fn.list] ? [winfo class .calc.fn.list] : {MISSING}}] Canvas
+
+# W27: §7.1's categories verbatim, initial `Special Functions`. Written out as
+# a literal from the spec, not read back from calc::fn_categories.
+set fncats {{Special Functions} Arithmetic Trigonometric Exponential Complex
+            Sequence Constants All}
+check "S23 the category values are §7.1's, in order" \
+    [pcall .calc.fn.cat cget -values] $fncats
+check "S23 the initial category is Special Functions" \
+    [pcall .calc.fn.cat get] {Special Functions}
+check "S23 the category chooser is readonly" [pcall .calc.fn.cat cget -state] readonly
+check_true "S23 the chooser binds combo_letter_cycle" \
+    [string match {*combo_letter_cycle*} [pcall bind .calc.fn.cat <Key>]]
+# ⚠ not the status history's style: Calc.TCombobox carries a -postoffset that
+# drags its popdown ~460 px left, which is right for a 2-character button at the
+# window's right edge and wrong for this one.
+check "S23 the chooser does not borrow the status history's offset style" \
+    [pcall .calc.fn.cat cget -style] {Calc.Field.TCombobox}
+
+# the list is painted from the palette, and the two scrollbars with it
+check "S23 the list wears the field colour" \
+    [pcall .calc.fn.list cget -background] $c_field
+set fnsb {}
+foreach {sb cmd} {.calc.fn.hsb {.calc.fn.list xview} .calc.fn.vsb {.calc.fn.list yview}} {
+    if {![winfo exists $sb]} { lappend fnsb $sb=MISSING ; continue }
+    if {[pcall winfo class $sb] ne {Scrollbar}} { lappend fnsb $sb=[pcall winfo class $sb] }
+    if {[pcall $sb cget -command] ne $cmd} { lappend fnsb $sb=[pcall $sb cget -command] }
+    if {[pcall $sb cget -background] ne $c_panel} { lappend fnsb $sb-bg }
+    if {[pcall $sb cget -troughcolor] ne $c_header} { lappend fnsb $sb-trough }
+}
+check "S23 both scrollbars exist, drive the list and wear the palette" $fnsb {}
+check "S23 the horizontal scrollbar is the horizontal one" \
+    [pcall .calc.fn.hsb cget -orient] horizontal
+# ⚠ THE WIRE BACK, which the scrollbar->list direction above does not cover.
+# Delete the canvas's two -*scrollcommand options and the bars are dead
+# decoration: no thumb, `get` stuck at `0 0 0 0` forever, dragging one still
+# scrolls (that is the -command above) but neither ever reports where the view
+# IS. Measured: with the two lines deleted the whole suite stayed green.
+check "S23 the list reports its view back to both scrollbars" \
+    [list [pcall .calc.fn.list cget -xscrollcommand] \
+          [pcall .calc.fn.list cget -yscrollcommand]] \
+    {{.calc.fn.hsb set} {.calc.fn.vsb set}}
+
+# W28 "horizontally scrollable" is a CLAIM ABOUT PIXELS: an h-scrollbar over a
+# scrollregion no wider than the canvas is pure decoration (the measured trap
+# recon/widgets.md §4d records for the browser's treeview). Assert the list is
+# really wider than its window at the default size.
+set sr [pcall .calc.fn.list cget -scrollregion]
+# ⚠ every number here is proved to BE a number first. `pcall` returns
+# "ERR:invalid command name .calc.fn.list", which is a four-element list whose
+# third element compares greater than a width that is also an error string — so
+# both of these passed against a tree with no function browser in it (measured).
+proc srnum {sr i} {
+    if {[llength $sr] != 4} { return {} }
+    set v [lindex $sr $i]
+    if {![string is double -strict $v]} { return {} }
+    return $v
+}
+check_true "S23 the scrollregion is a real four-tuple" \
+    [expr {[srnum $sr 2] ne {} && [srnum $sr 3] ne {}
+           && [srnum $sr 2] > 0 && [srnum $sr 3] > 0}]
+check_true "S23 the six columns are wider than the visible list, so the h-scrollbar scrolls" \
+    [expr {[srnum $sr 2] ne {} && [string is integer -strict [pcall winfo width .calc.fn.list]]
+           && [srnum $sr 2] > [pcall winfo width .calc.fn.list]}]
+# ⚠ READ IT OFF THE SCROLLBAR, not off the canvas. The check is named for what
+# the h-scrollbar shows, and `.calc.fn.list xview` is the canvas's own opinion —
+# true even when the bar was never wired to hear it. `.calc.fn.hsb get` is a
+# two-element float pair ONLY if the canvas really called `.calc.fn.hsb set`;
+# an unwired scrollbar returns the four zeros `0 0 0 0` of an unset old-style
+# bar. Same for the vertical one, which R112 makes load-bearing here.
+set hsbv [pcall .calc.fn.hsb get]
+set vsbv [pcall .calc.fn.vsb get]
+proc sbpartial {v} {
+    if {[llength $v] != 2} { return 0 }
+    foreach e $v { if {![string is double -strict $e]} { return 0 } }
+    return [expr {[lindex $v 0] >= 0.0 && [lindex $v 1] < 1.0
+                  && [lindex $v 1] > [lindex $v 0]}]
+}
+check_true "S23 the horizontal scrollbar reports a partial view" [sbpartial $hsbv]
+check_true "S23 the vertical scrollbar reports a partial view too (R112)" \
+    [sbpartial $vsbv]
+
+# every entry of the default category is on the canvas, ONE item each.
+# ⚠ the ERR string is flattened to the empty list HERE, once: without it the
+# geometry loops below feed "ERR:invalid" to `expr` as a float and the whole
+# file dies in the outer catch with S24 never run (measured against HEAD).
+set fnitems [pcall .calc.fn.list find withtag fnentry]
+if {[string match ERR:* $fnitems]} { set fnitems {} }
+set fnnames {}
+foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
+check "S23 the default category renders all 56 of its entries" [llength $fnitems] 56
+check "S23 ...and they are the catalogue's names, alphabetically" \
+    [list [llength $fnnames] $fnnames] [list 56 [lsort -dictionary $fnnames]]
+set catnames {}
+foreach row [pcall calc::fn_entries {Special Functions}] { lappend catnames [lindex $row 0] }
+check "S23 the rendered names are exactly the table's for that category" \
+    [lsort -dictionary $fnnames] [lsort -dictionary $catnames]
+
+# COLUMN-MAJOR, six columns: the reference's layout, and the thing that makes
+# the horizontal scrollbar the right one. Read the geometry back off the canvas.
+set xs {}
+foreach id $fnitems {
+    set x [lindex [pcall .calc.fn.list coords $id] 0]
+    if {[lsearch -exact $xs $x] < 0} { lappend xs $x }
+}
+check "S23 the entries are laid out in six columns" [llength $xs] 6
+# ...and DOWN each column, not across: the first six names alphabetically must
+# NOT be the first row. (An across-the-row layout puts them side by side.)
+set firstcol {}
+set x0 [lindex [lsort -real $xs] 0]
+foreach id $fnitems {
+    if {[lindex [pcall .calc.fn.list coords $id] 0] == $x0} {
+        lappend firstcol [list [lindex [pcall .calc.fn.list coords $id] 1] \
+                               [pcall .calc.fn.list itemcget $id -text]]
+    }
+}
+set firstcolnames {}
+foreach e [lsort -real -index 0 $firstcol] { lappend firstcolnames [lindex $e 1] }
+check "S23 the first column holds the first names, top to bottom (column-major)" \
+    [list [llength $firstcolnames] $firstcolnames] \
+    [list 10 [lrange [lsort -dictionary $catnames] 0 \
+                     [expr {[llength $firstcolnames] - 1}]]]
+
+# RULING-3: every N-route and every out-of-scope entry is RENDERED AND GREYED.
+# The names are written out here from the ledger + §7.2, not read back.
+set deadnames {dft psd convolve spectrum spectralPower harmonic harmonicFreq thd
+               dftbb psdbb evmQAM evmQpsk pzbode pzfilter}
+set badgrey {}
+foreach id $fnitems {
+    set nm [pcall .calc.fn.list itemcget $id -text]
+    set fg [pcall .calc.fn.list itemcget $id -fill]
+    set want [expr {[lsearch -exact $deadnames $nm] >= 0 ? $c_disabledfg : $c_fieldfg}]
+    if {$fg ne $want} { lappend badgrey $nm=$fg }
+}
+check "S23 exactly the N-route and out-of-scope entries are greyed (RULING-3)" \
+    [list [llength $fnitems] $badgrey] [list 56 {}]
+check_true "S23 the greyed colour is not the live one (or the check above is vacuous)" \
+    [expr {$c_disabledfg ne $c_fieldfg}]
+check "S23 all fourteen greyed entries are RENDERED, not removed" \
+    [llength [lsearch -all -inline -exact $fnnames dft]] 1
+# ⚠ AND THE GREYING IS DERIVED FROM THE TABLE — the check above compares the
+# render against a literal name list from the ledger, which is the right
+# SPEC-side check and says nothing about WHERE the renderer got it. R413's "one
+# table, not two" is a claim about the coupling: measured, replacing
+# fn_fill's `lsearch $dead $route` with a hardcoded list of the fourteen names
+# (literally the second table R413 forbids) left every check green. So assert
+# the render against the ROUTE FIELD of the row, entry by entry.
+set badcouple {}
+foreach id $fnitems {
+    set nm  [pcall .calc.fn.list itemcget $id -text]
+    set fg  [pcall .calc.fn.list itemcget $id -fill]
+    set row [pcall calc::fn_row $nm]
+    if {[llength $row] != 6} { lappend badcouple $nm=NO-ROW ; continue }
+    set deadrt [expr {[lsearch -exact [pcall calc::fn_dead_routes] [lindex $row 2]] >= 0}]
+    set want [expr {$deadrt ? $c_disabledfg : $c_fieldfg}]
+    if {$fg ne $want} { lappend badcouple $nm=route[lindex $row 2]/$fg }
+}
+check "S23 the greying is read off the table's route field, not a second list" \
+    [list [llength $fnitems] $badcouple] [list 56 {}]
+# ...and the coupling check above only sees a DIVERGENCE, so MAKE one: move the
+# dead-route set at runtime and repaint. If fn_fill reads the table, every
+# T-route special greys out with it; if it carries its own list of names,
+# nothing moves. This is the check that a hardcoded second list cannot pass even
+# when its contents happen to agree with the table today.
+set greybefore 0
+foreach id $fnitems {
+    if {[pcall .calc.fn.list itemcget $id -fill] eq $c_disabledfg} { incr greybefore }
+}
+set greyafter 0
+set greynames {}
+# ⚠ guarded: against a tree with no browser these renames throw and the outer
+# catch takes the rest of the FILE with them, S24 included.
+if {[llength [info procs ::calc::fn_dead_routes]] == 1} {
+    rename ::calc::fn_dead_routes ::calc::fn_dead_routes_SAVED
+    proc ::calc::fn_dead_routes {} { return {N X T} }
+    pcall calc::fn_fill
+    update idletasks
+    foreach id [pcall .calc.fn.list find withtag fnentry] {
+        if {[pcall .calc.fn.list itemcget $id -fill] eq $c_disabledfg} {
+            incr greyafter
+            lappend greynames [pcall .calc.fn.list itemcget $id -text]
+        }
+    }
+    rename ::calc::fn_dead_routes {}
+    rename ::calc::fn_dead_routes_SAVED ::calc::fn_dead_routes
+    pcall calc::fn_fill
+    update idletasks
+}
+set greyrestored 0
+foreach id [pcall .calc.fn.list find withtag fnentry] {
+    if {[pcall .calc.fn.list itemcget $id -fill] eq $c_disabledfg} { incr greyrestored }
+}
+# 14 dead by N/X; +34 T-route specials (56 = 4 P + 4 C + 34 T + 8 N + 6 X) = 48
+check "S23 moving the dead-route set repaints the greying (the table IS the source)" \
+    [list $greybefore $greyafter $greyrestored \
+          [expr {[lsearch -exact $greynames clip] >= 0}]] \
+    {14 48 14 1}
+# ⚠ two fn_fill calls have happened, so every canvas item id above is stale.
+# Re-read them, or the per-entry binding and gesture legs below address items
+# that no longer exist and pass over the wreckage.
+set fnitems [pcall .calc.fn.list find withtag fnentry]
+if {[string match ERR:* $fnitems]} { set fnitems {} }
+set fnnames {}
+foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
+check "S23 the repaint left the same 56 entries behind" \
+    [list [llength $fnitems] [lsort -dictionary $fnnames]] \
+    [list 56 [lsort -dictionary $catnames]]
+# ...and the refusal a click gives comes from the SAME field, for every dead
+# entry the browser drew — not from a per-name string beside the renderer.
+set badrefuse {}
+set nrefused 0
+foreach id $fnitems {
+    set nm  [pcall .calc.fn.list itemcget $id -text]
+    set row [pcall calc::fn_row $nm]
+    if {[llength $row] != 6} continue
+    set why [pcall calc::fn_reason [lindex $row 2]]
+    if {$why eq {}} continue
+    incr nrefused
+    pcall calc::status {}
+    pcall calc::fn_click $nm
+    if {[pcall .calc.status.msg get] ne "function $nm is not available: $why"} {
+        lappend badrefuse $nm=[pcall .calc.status.msg get]
+    }
+}
+# ⚠ the COUNT rides along: with nothing greyed the loop body never runs and an
+# empty `badrefuse` would be the same green.
+check "S23 every greyed entry refuses with its own route's reason" \
+    [list $nrefused $badrefuse] {14 {}}
+pcall calc::status {}
+
+# per-ENTRY bindings, which is why this is a canvas and not a treeview (whose
+# tags are per ROW) — assert the binding is attached to the item's own tag and
+# carries its own name
+proc fntag {id} {
+    foreach t [pcall .calc.fn.list gettags $id] {
+        if {[string match fn* $t] && $t ne {fnentry}} { return $t }
+    }
+    return {}
+}
+set badbind {}
+foreach id $fnitems {
+    set nm [pcall .calc.fn.list itemcget $id -text]
+    set tg [fntag $id]
+    if {$tg eq {}} { lappend badbind $nm=NO-TAG ; continue }
+    foreach {ev want} [list <Button-1> "calc::fn_click $nm" \
+                            <Enter>    "calc::fn_hover $nm"] {
+        if {[pcall .calc.fn.list bind $tg $ev] ne $want} {
+            lappend badbind $nm$ev=[pcall .calc.fn.list bind $tg $ev]
+        }
+    }
+}
+check "S23 every entry carries its own click and hover binding" \
+    [list [llength $fnitems] $badbind] [list 56 {}]
+
+# R413: hover writes THE TABLE'S help for that entry — and does not record it.
+# ⚠ The no-record half is the crew's phase-1d amendment to R507 and it has
+# teeth: 56 tooltips would evict the 50-entry history the user goes to to
+# re-read what the tool told them.
+pcall calc::status {}
+set ::calc::statushist {}
+pcall calc::status {a real event happened}
+set histbeforehover [pcall calc::status_history]
+pcall calc::fn_hover average
+check "S23 hovering an entry shows its one-line help (R413)" \
+    [pcall .calc.status.msg get] {Mean value of the wave over the X range}
+check "S23 the help comes from the table, not a second one" \
+    [pcall .calc.status.msg get] [lindex [pcall calc::fn_row average] 5]
+# ⚠ the SHOWN line rides along, or "nothing was recorded" is also true of a
+# hover that never happened (measured against HEAD, where it passed).
+check "S23 hovering records nothing in the history" \
+    [list [pcall .calc.status.msg get] [pcall calc::status_history]] \
+    [list {Mean value of the wave over the X range} $histbeforehover]
+check_true "S23 the pre-hover history snapshot is real" \
+    [expr {[llength $histbeforehover] == 1}]
+# ⚠ A <Leave> ON A DIFFERENT ENTRY MUST NOT RETIRE THIS ONE'S LINE. The guard
+# is per entry — that is what the `name` argument of calc::fn_unhover is for —
+# and the canvas really does deliver a <Leave> for the entry you came from after
+# the <Enter> of the one you are on. Guarding on the shared `fnhelp` alone made
+# the argument dead code and let entry B's <Leave> wipe entry A's help.
+check "S23 hovering B does not let A's <Leave> wipe B's line" \
+    [list [pcall calc::fn_unhover dft] [pcall .calc.status.msg get]] \
+    [list {} {Mean value of the wave over the X range}]
+pcall calc::fn_unhover average
+check "S23 leaving retires the help line" [pcall .calc.status.msg get] {}
+# ...and a <Leave> must not wipe a line somebody else wrote in between
+set hovok [pcall calc::fn_hover average]
+pcall calc::status {something else entirely}
+pcall calc::fn_unhover average
+check "S23 leaving does not wipe a message written after the hover" \
+    [list $hovok [pcall .calc.status.msg get]] \
+    [list {Mean value of the wave over the X range} {something else entirely}]
+
+# a click is INERT and says so; a greyed one refuses and says WHY (RULING-3)
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {S23 INERT SENTINEL}
+set fnbuf [pcall .calc.buf get 1.0 end]
+set fnclicked 0
+foreach nm {average dft pzbode} {
+    if {![string match ERR:* [pcall calc::fn_click $nm]]} { incr fnclicked }
+}
+pcall calc::status {}
+pcall calc::fn_click average
+check "S23 clicking a live entry is inert and names its phase" \
+    [pcall .calc.status.msg get] {function average: not implemented (phase 5)}
+pcall calc::status {}
+pcall calc::fn_click dft
+check "S23 clicking an N-route entry explains why it cannot be used" \
+    [pcall .calc.status.msg get] \
+    {function dft is not available: needs a C opcode not in v1}
+pcall calc::status {}
+pcall calc::fn_click pzbode
+check "S23 clicking an out-of-scope entry explains why too" \
+    [pcall .calc.status.msg get] {function pzbode is not available: out of scope in v1}
+check_true "S23 the pre-click buffer snapshot is real text" \
+    [expr {![string match ERR:* $fnbuf] && [string match {*INERT SENTINEL*} $fnbuf]}]
+# ⚠ the click COUNT rides along: "nothing was clicked" and "everything was
+# clicked and touched nothing" are the same green otherwise (the S22 lesson).
+check "S23 no function click touched the buffer" \
+    [list $fnclicked \
+          [expr {[string match ERR:* $fnbuf] ? {NO-SNAPSHOT-TO-COMPARE}
+                                             : [pcall .calc.buf get 1.0 end]}]] \
+    [list 3 $fnbuf]
+check "S23 no function click touched the stack" \
+    [list $fnclicked [pcall .calc.stk.list size]] {3 0}
+pcall .calc.buf delete 1.0 end
+
+# ...and the wiring really reaches the handler from a real pointer gesture, not
+# only from a direct call. A canvas dispatches item bindings off its own
+# current-item tracking, so the <Motion> is not optional.
+set clickable [lindex $fnitems 0]
+set cname [pcall .calc.fn.list itemcget $clickable -text]
+set bb [pcall .calc.fn.list bbox $clickable]
+set gestured NO-GESTURE
+# ⚠ all four numeric, not just four elements: `ERR:invalid command name
+# ".calc.fn.list"` IS a four-element list, and feeding it to expr took the whole
+# file down in the outer catch with S24 never run (measured against HEAD).
+set bbok 1
+foreach v $bb { if {![string is double -strict $v]} { set bbok 0 } }
+if {[llength $bb] == 4 && $bbok} {
+    set gx [expr {int(([lindex $bb 0] + [lindex $bb 2]) / 2 - [.calc.fn.list canvasx 0])}]
+    set gy [expr {int(([lindex $bb 1] + [lindex $bb 3]) / 2 - [.calc.fn.list canvasy 0])}]
+    pcall calc::status {}
+    pcall event generate .calc.fn.list <Motion> -x $gx -y $gy
+    pcall event generate .calc.fn.list <Button-1> -x $gx -y $gy
+    pcall event generate .calc.fn.list <ButtonRelease-1> -x $gx -y $gy
+    update idletasks
+    set gestured [pcall .calc.status.msg get]
+}
+check "S23 a real click on an entry reaches its handler" \
+    $gestured "function $cname: not implemented (phase 5)"
+
+# switching category REPOPULATES (plan 1.6's "done when")
+pcall .calc.fn.cat set {Constants}
+pcall event generate .calc.fn.cat <<ComboboxSelected>>
+update idletasks
+set constnames {}
+foreach id [pcall .calc.fn.list find withtag fnentry] {
+    lappend constnames [pcall .calc.fn.list itemcget $id -text]
+}
+check "S23 switching category repopulates the list" \
+    [lsort -dictionary $constnames] {e() k() pi() q()}
+check "S23 the category switch says what it did (R506)" \
+    [pcall .calc.status.msg get] {functions: Constants (4 entries)}
+pcall .calc.fn.cat set {All}
+pcall event generate .calc.fn.cat <<ComboboxSelected>>
+update idletasks
+check "S23 the All category shows every row of the table" \
+    [list [llength [pcall .calc.fn.list find withtag fnentry]] \
+          [llength [pcall calc::catalogue]]] {108 108}
+
+# A REPOPULATE MUST ALSO RESET THE VIEW. A canvas keeps its xview/yview across
+# a `delete all`; only the scrollregion changes. Measured before the fix:
+# scroll `All` to its far corner — which is exactly what dragging .calc.fn.hsb
+# does, its -command IS `.calc.fn.list xview` — then switch to Special
+# Functions, and 28 of the 56 entries were off-screen with the whole
+# alphabetical head (`average`, `bandwidth`, `clip`, `compare`) above the top
+# edge. Both axes, and BOTH must be scrolled first or the small categories
+# clamp the view to 0 by themselves and the check proves nothing.
+pcall .calc.fn.list xview moveto 1.0
+pcall .calc.fn.list yview moveto 1.0
+update idletasks
+set scrolledaway [list [lindex [pcall .calc.fn.list xview] 0] \
+                       [lindex [pcall .calc.fn.list yview] 0]]
+check_true "S23 fixture: the list really was scrolled off its origin first" \
+    [expr {[string is double -strict [lindex $scrolledaway 0]]
+           && [string is double -strict [lindex $scrolledaway 1]]
+           && [lindex $scrolledaway 0] > 0.1 && [lindex $scrolledaway 1] > 0.1}]
+pcall .calc.fn.cat set {Special Functions}
+pcall event generate .calc.fn.cat <<ComboboxSelected>>
+update idletasks
+check "S23 switching category scrolls the new list back to its top-left" \
+    [list [lindex [pcall .calc.fn.list xview] 0] [lindex [pcall .calc.fn.list yview] 0]] \
+    {0.0 0.0}
+# ...and it is the ENTRIES that came back on screen, not just two numbers: every
+# one of the 56 must be inside the visible window after the switch.
+# ⚠ every number proved numeric before `expr` sees it: `ERR:invalid command
+# name ".calc.fn.list"` is a list too, and feeding it to expr takes the whole
+# FILE down in the outer catch with S24 never run (the trap this file records
+# twice already).
+set offview {}
+set vw [pcall winfo width  .calc.fn.list]
+set vh [pcall winfo height .calc.fn.list]
+set ox [pcall .calc.fn.list canvasx 0]
+set oy [pcall .calc.fn.list canvasy 0]
+set nseen 0
+set viewok [expr {[string is integer -strict $vw] && [string is integer -strict $vh]
+                  && [string is double -strict $ox] && [string is double -strict $oy]}]
+foreach id [pcall .calc.fn.list find withtag fnentry] {
+    set bb [pcall .calc.fn.list bbox $id]
+    set bbok $viewok
+    if {[llength $bb] != 4} { set bbok 0 }
+    if {$bbok} { foreach v $bb { if {![string is double -strict $v]} { set bbok 0 } } }
+    if {!$bbok} { lappend offview NO-BBOX ; continue }
+    incr nseen
+    set x0 [expr {[lindex $bb 0] - $ox}]
+    set y0 [expr {[lindex $bb 1] - $oy}]
+    set x1 [expr {[lindex $bb 2] - $ox}]
+    set y1 [expr {[lindex $bb 3] - $oy}]
+    if {$x0 < 0 || $y0 < 0 || $x1 > $vw || $y1 > $vh} {
+        lappend offview [pcall .calc.fn.list itemcget $id -text]
+    }
+}
+# ⚠ NOT asserted empty: at the default size the six columns are deliberately
+# wider than the pane (that is what the h-scrollbar is FOR), so some entries are
+# legitimately off to the right. What must be true is that the head of the
+# alphabet is back — before the fix `average` itself was above the top edge.
+check "S23 ...and the head of the alphabet is on screen again" \
+    [list $nseen [lsearch -exact $offview average] [lsearch -exact $offview bandwidth] \
+          [lsearch -exact $offview clip]] {56 -1 -1 -1}
+
+# --- S24 the catalogue table (R413's "one table, not two") -------------------
+# ⚠ THE SPEC'S §3.2 TOKEN LIST, WRITTEN OUT HERE. This is the whole point of
+# the section: a wrong `insert` string is a silent -1 from the engine three
+# phases from now (§3.1 — one unknown token poisons the WHOLE expression), and
+# it is undebuggable there. 52 tokens, copied from the spec's §3.2 table, which
+# recon/catalogue_primitives.tclpart verified equals the 52 `strcmp(n, "…")`
+# arms in plot_raw_custom_data() (src/save.c:2414-2497) set-difference empty in
+# both directions.
+set tok32 {+ - * / ** == != > < >= <= ?
+           sin() cos() tan() asin() acos() atan()
+           sinh() cosh() tanh() asinh() acosh() atanh()
+           exp() ln() log10() db20()
+           abs() sgn() sqrt()
+           re() im() cph()
+           integ() deriv() deriv0() deriv2() deriv20()
+           avg() ravg() max() min()
+           prev() del() idx()
+           dup() exch()
+           pi() k() e() q()}
+check "S24 fixture: the spec's §3.2 lists 52 tokens" [llength $tok32] 52
+
+set rows [pcall calc::catalogue]
+check_true "S24 the catalogue is a real, non-empty list" \
+    [expr {![string match ERR:* $rows] && [llength $rows] > 100}]
+# every row is a well-formed list of the FIXED arity, with no empty field where
+# the schema does not allow one
+check "S24 the schema is the six ruled fields" [pcall calc::fn_fields] \
+    {name category route returns insert help}
+set badrow {}
+foreach row $rows {
+    if {[catch {llength $row} L] || $L != 6} { lappend badrow [lindex $row 0]=arity$L ; continue }
+    foreach {name category route returns insert help} $row break
+    if {$name eq {}}     { lappend badrow (blank-name) }
+    if {$category eq {}} { lappend badrow $name=no-category }
+    if {[lsearch -exact {P C T N X} $route] < 0} { lappend badrow $name=route$route }
+    if {[lsearch -exact {scalar wave bool scalar/wave} $returns] < 0} {
+        lappend badrow $name=returns$returns
+    }
+    if {[string trim $help] eq {}} { lappend badrow $name=no-help }
+}
+check "S24 every row is a well-formed six-field row" $badrow {}
+
+# EVERY §7.1 CATEGORY IS NON-EMPTY, including the synthetic All. A category
+# that renders empty is the D1 defect, and D1 was one string away from shipping.
+# ⚠ asserted as the COUNTS, not as "none of them is zero": with no catalogue at
+# all `pcall calc::fn_entries` returns a four-word error string whose length is
+# 4, so the emptiness form passed against a tree with no catalogue in it
+# (measured). The numbers are §7.2's 56 specials and §3.2's 52 primitives split
+# over six categories.
+set catcounts {}
+foreach cat $fncats { lappend catcounts [llength [pcall calc::fn_entries $cat]] }
+check "S24 every §7.1 category has entries, in the spec's numbers" \
+    $catcounts {56 26 12 4 3 3 4 108}
+check "S24 the DEFAULT category is the one that must not be empty (D1)" \
+    [llength [pcall calc::fn_entries {Special Functions}]] 56
+# ...and no row carries a category that is not one of the eight (`All` being
+# synthetic, no row may carry it either)
+set badcat {}
+foreach row $rows {
+    set cat [lindex $row 1]
+    if {[lsearch -exact $fncats $cat] < 0 || $cat eq {All}} { lappend badcat [lindex $row 0]=$cat }
+}
+check "S24 every row's category is a §7.1 value, and never the synthetic All" $badcat {}
+check "S24 All is the union, not a category" \
+    [list [llength [pcall calc::fn_entries All]] [llength $rows]] {108 108}
+
+# NO TWO ROWS SHARE A NAME WITHIN A CATEGORY (and in fact not across the table:
+# calc::fn_row looks a name up globally, so a global duplicate would silently
+# shadow one of them)
+array unset ::seen ; array set ::seen {}
+set dupes {}
+foreach row $rows {
+    set key [lindex $row 1]/[lindex $row 0]
+    if {[info exists ::seen($key)]} { lappend dupes $key }
+    set ::seen($key) 1
+}
+check "S24 no two rows share a name within a category" \
+    [list [llength $rows] $dupes] {108 {}}
+array unset ::seen ; array set ::seen {}
+set gdupes {}
+foreach row $rows {
+    set nm [lindex $row 0]
+    if {[info exists ::seen($nm)]} { lappend gdupes $nm }
+    set ::seen($nm) 1
+}
+check "S24 no name is duplicated across the whole table either" \
+    [list [llength $rows] $gdupes] {108 {}}
+
+# THE PRIMITIVES ARE §3.2, EXACTLY: one entry per token, inserting the token
+# verbatim (§7.1: "everything in §3.2 is exposed through the non-Special
+# categories, one entry per token, inserting the token verbatim")
+set primnames {}
+set badprim {}
+foreach row $rows {
+    if {[lindex $row 1] eq {Special Functions}} continue
+    foreach {name category route returns insert help} $row break
+    lappend primnames $name
+    if {$route ne {P}}   { lappend badprim $name=route$route }
+    if {$insert ne $name} { lappend badprim $name=inserts($insert) }
+}
+check "S24 the non-Special categories are exactly the §3.2 token set" \
+    [lsort $primnames] [lsort $tok32]
+check "S24 every primitive is route P and inserts itself verbatim" $badprim {}
+
+# ⚠ `?` IS THE ODD ONE OUT AND ITS ROW MUST SAY SO. Eleven of the twelve keypad
+# tokens are binary; `?` is the engine's COND (`#define COND 49`, src/save.c:2361)
+# dispatched at src/save.c:2531-2536 inside `if(stackptr2 > 2) { /* 3 argument
+# operators */ }` as `stack2[p-3] = stack2[p-2] ? stack2[p-3] : stack2[p-1];
+# stackptr2 -= 2;` — THREE operands consumed. Phase 1d's first cut of spec §4
+# W30 called the whole set "the twelve binary tokens" and grounded the ruling in
+# R510's two-operand button semantics, which would have had phase 4 pop two
+# entries: the guard is then false, COND never fires, and the expression
+# silently yields an operand instead of a conditional. The table always got it
+# right; this pins the table so the two cannot drift apart again.
+set qrow [pcall calc::fn_row ?]
+check "S24 the `?` row is on the keypad, in Arithmetic, emitting the bare token" \
+    [list [expr {[lsearch -exact $padkeys ?] >= 0}] [lindex $qrow 1] [lindex $qrow 4]] \
+    {1 Arithmetic ?}
+check_true "S24 ...and its help states THREE operands, not two (COND, save.c:2361)" \
+    [expr {[string match {*cond*} [lindex $qrow 5]]
+           && [llength [lindex $qrow 5]] > 3
+           && [string first {X cond Y} [lindex $qrow 5]] == 0}]
+
+# EVERY EMITTED RPN STRING IS LEXABLE. This is the check that pays for itself:
+# every whitespace-separated token of every `insert` must be either one of the
+# 52 the engine knows or a number strtod/atof_spice can eat — anything else is
+# §3.1's whole-expression -1, arriving phases later with no trace of its source.
+set badtok {}
+set nemit 0
+foreach row $rows {
+    foreach {name category route returns insert help} $row break
+    if {$insert eq {}} continue
+    incr nemit
+    foreach t $insert {
+        if {[lsearch -exact $tok32 $t] >= 0} continue
+        if {[string is double -strict $t]} continue
+        lappend badtok $name:$t
+    }
+}
+# the count of rows that actually emitted something rides along, or a table
+# that emits nothing at all passes this (measured against HEAD)
+check "S24 every emitted token is one the engine lexes, or a number" \
+    [list $nemit $badtok] {60 {}}
+# ...and L3: a composed expression must CONTAIN WHITESPACE, or callers do not
+# treat it as an expression at all (strpbrk(express, " \n\t"))
+set badcomp {}
+set ncomp 0
+foreach row $rows {
+    if {[lindex $row 2] ne {C}} continue
+    incr ncomp
+    if {[llength [lindex $row 4]] < 2} { lappend badcomp [lindex $row 0] }
+}
+check "S24 every C-route composition is more than one token (L3)" \
+    [list $ncomp $badcomp] {4 {}}
+# a route that cannot emit yet must emit NOTHING, rather than something wrong
+set badempty {}
+foreach row $rows {
+    foreach {name category route returns insert help} $row break
+    if {[lsearch -exact {T N X} $route] >= 0 && $insert ne {}} {
+        lappend badempty $name=($insert)
+    }
+    if {[lsearch -exact {P C} $route] >= 0 && $insert eq {}} {
+        lappend badempty $name=EMPTY
+    }
+}
+check "S24 P and C rows emit, T/N/X rows emit nothing" \
+    [list [llength $rows] $badempty] {108 {}}
+
+# THE THREE AUDITED DEFECTS, each pinned by the row it was found in
+# (recon/catalogue_defects.md D1-D3, D6).
+check "S24 D1: the special rows carry the combobox's own category string" \
+    [lindex [pcall calc::fn_row average] 1] {Special Functions}
+check "S24 D2: lshift is a T route and emits nothing (the del() recipe reads out of bounds)" \
+    [list [lindex [pcall calc::fn_row lshift] 2] [lindex [pcall calc::fn_row lshift] 4]] \
+    {T {}}
+check "S24 D3: integ and iinteg are no longer byte-identical rows" \
+    [list [lindex [pcall calc::fn_row integ] 3] [lindex [pcall calc::fn_row iinteg] 3]] \
+    {scalar wave}
+check_true "S24 D3: ...and it is the returns field that separates them" \
+    [expr {[pcall calc::fn_row integ] ne [pcall calc::fn_row iinteg]
+           && [lindex [pcall calc::fn_row integ] 4] eq [lindex [pcall calc::fn_row iinteg] 4]}]
+check "S24 D6: groupDelay carries the degrees-per-Hz conversion" \
+    [lindex [pcall calc::fn_row groupDelay] 4] {cph() deriv() -360 /}
+
+# ⚠ ALL FOUR C-ROUTE COMPOSITIONS, PINNED BY LITERAL. Everything above this
+# asserts SHAPE — lexable tokens, more than one token, route C — and shape is
+# not semantics: measured, rewriting `rms` to `dup() + avg() ln()`, `dBm` to
+# `log10() 20 * 30 -` and `rmsNoise` to `dup() / integ() abs()` kept every one
+# of those checks green while rms became a logarithm of a doubled cumulative
+# mean and dBm lost both its factor of 10 and its +30. A wrong composition is
+# not a crash, it is a plausible number three phases from now, and only the
+# literal catches it. Each with the arithmetic it stands on:
+#   rms       dup() *      -> x^2      avg()   -> mean(x^2)   sqrt()
+#   rmsNoise  dup() *      -> x^2      integ() -> ∫x^2 df     sqrt()
+#   dBm       log10() 10 * -> dB(W)    30 +    -> dBm
+#   groupDelay cph() deriv() -> dφ/df in degrees/Hz, / -360 -> -dφ/dω in seconds
+foreach {nm want} {
+    rms        {dup() * avg() sqrt()}
+    rmsNoise   {dup() * integ() sqrt()}
+    dBm        {log10() 10 * 30 +}
+    groupDelay {cph() deriv() -360 /}
+} {
+    check "S24 the C-route composition for $nm is exactly the ruled RPN" \
+        [lindex [pcall calc::fn_row $nm] 4] $want
+}
+# ...and those four ARE the whole C-route set, or the block above pins a subset
+set crows {}
+foreach row $rows { if {[lindex $row 2] eq {C}} { lappend crows [lindex $row 0] } }
+check "S24 ...and those are every C-route row there is" \
+    [lsort $crows] {dBm groupDelay rms rmsNoise}
+
+# RULING-3: the disabled set is exactly the N routes and the out-of-scope rows,
+# and it is what the browser greys.
+set deadrows {}
+foreach row $rows {
+    if {[lsearch -exact [pcall calc::fn_dead_routes] [lindex $row 2]] >= 0} {
+        lappend deadrows [lindex $row 0]
+    }
+}
+check "S24 the disabled set is the ledger's N routes plus the out-of-scope rows" \
+    [lsort $deadrows] [lsort $deadnames]
+check "S24 a live route has no refusal reason, a dead one does" \
+    [list [pcall calc::fn_reason P] [pcall calc::fn_reason T] \
+          [expr {[pcall calc::fn_reason N] ne {}}] [expr {[pcall calc::fn_reason X] ne {}}]] \
+    {{} {} 1 1}
+# every help line fits the status area it is written to (R413 + the item's
+# "if the help does not fit the status line, shorten the help in the table")
+set longhelp {}
+foreach row $rows {
+    if {[string length [lindex $row 5]] > 72} {
+        lappend longhelp [lindex $row 0]=[string length [lindex $row 5]]
+    }
+}
+check "S24 every help line is short enough for the status entry" \
+    [list [llength $rows] $longhelp] {108 {}}
+# ⚠ AND THE STRING fn_click ACTUALLY COMPOSES, which is the one that overflowed.
+# The bound above covers the table's `help` field; the refusal a greyed entry
+# gives is `function <name> is not available: <reason>` and is built at click
+# time from two other fields, so nothing bounded it. Measured on the shipped
+# 656x680 window: `.calc.status.msg` is 613 px wide in TkTextFont and the old
+# N-route reason made the spectralPower line 94 characters / 666 px, of which 85
+# rendered — the line ended "...no N-route function sh". RULING-3's whole point
+# is that a greyed entry carries information; a sentence cut mid-word does not.
+set longrefusal {}
+set nrefusals 0
+foreach row $rows {
+    set why [pcall calc::fn_reason [lindex $row 2]]
+    if {$why eq {}} continue
+    incr nrefusals
+    set line "function [lindex $row 0] is not available: $why"
+    if {[string length $line] > 72} {
+        lappend longrefusal [lindex $row 0]=[string length $line]
+    }
+}
+check "S24 every refusal line fn_click composes fits the status entry too" \
+    [list $nrefusals $longrefusal] {14 {}}
+
+# --- S22-S24 teardown: the initial state is a property of the BUILD ----------
+calc::close
+update idletasks
+check "S22 reopen returns .calc" [calc::open] .calc
+update idletasks
+check "S23 a fresh window opens on Special Functions" \
+    [pcall .calc.fn.cat get] {Special Functions}
+check "S23 a fresh window renders that category" \
+    [llength [pcall .calc.fn.list find withtag fnentry]] 56
+check "S22 a fresh window still has no digit key" \
+    [list [winfo exists .calc.pad.k12] [winfo exists .calc.pad.k13]] {1 0}
 
 calc::close
 catch {destroy .calccbprobe}
