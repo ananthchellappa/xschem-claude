@@ -146,6 +146,15 @@ existence, class, and initial state of each row.
 
 Widget paths are normative — tests address widgets by path.
 
+⚠ **Several of these are children of `.calc` that are *drawn* inside a pane.** `.calc.res`,
+`.calc.sel`, `.calc.mode`, `.calc.buf`, `.calc.btb` and `.calc.stk` are all children of the
+toplevel (this table says so, and it is normative), and they are managed by
+`pack -in .calc.pw.<pane>`, which pack allows for any descendant of the widget's parent.
+The consequence to know before editing: such a widget maps **behind** its siblings unless it
+is created after them and raised, and `winfo ismapped` returns 1 for a widget that is mapped
+and wholly obscured — so the guard has to be stacking order or `winfo containing`, never
+`ismapped` alone.
+
 | Id | Path (under `.calc`) | Class | Contents / initial state |
 |---|---|---|---|
 | W01 | `.calc` | toplevel | title `xschem Calculator` |
@@ -154,15 +163,15 @@ Widget paths are normative — tests address widgets by path.
 | W04 | `.calc.res.lab` | label | `Results Dir:` |
 | W05 | `.calc.res.path` | entry | full path of the loaded raw; readonly unless edited via Browse |
 | W06 | `.calc.sel` | frame | the 22-button radio grid |
-| W07 | `.calc.sel.<id>` | radiobutton | one per §5 row; variable `calc::selmode` |
+| W07 | `.calc.sel.<id>` | radiobutton | one per §5 row; variable `calc::selmode`, **empty = nothing armed**. ⚠ Each carries a `-tristatevalue` that no legitimate `calc::selmode` value can hold: Tk's default tristate value is the EMPTY STRING, which is exactly the "nothing armed" value, so without it all 22 render in Tk's mixed look (a panel-grey disc with a grey dot) at first open — the window ships looking as though every selector were half-armed. Ruled by the crew, 2026-08-15 (phase 1b fix round): `{}` stays the normative unarmed value, the sentinel moves. |
 | W08 | `.calc.mode` | frame | mode strip |
 | W09 | `.calc.mode.off/.family/.wave` | radiobutton | variable `calc::pickscope`, initial `off` |
 | W10 | `.calc.mode.clip` | checkbutton | variable `calc::clip`, **initial 1** |
-| W11 | `.calc.mode.plot` | button | plot buffer |
-| W12 | `.calc.mode.eval` | button | evaluate buffer |
+| W11 | `.calc.mode.plot` | button | plot buffer; label **`Plot`** |
+| W12 | `.calc.mode.eval` | button | evaluate buffer; label **`Eval`** |
 | W13 | `.calc.mode.dest` | combobox | values `Append Replace {New Strip}`, initial `Append` |
-| W14 | `.calc.mode.table` | button | show as table |
-| W15 | `.calc.buf` | text | **the buffer**; height 4, editable, `-undo 1` |
+| W14 | `.calc.mode.table` | button | show as table; label **`Table`** |
+| W15 | `.calc.buf` | text | **the buffer**; height 4, editable, `-undo 1`. ⚠ "height 4" is a **rendered** requirement, not just a `-height` option: the pane that holds it must give it at least its requested height at first open (§4.2). Phase 1b shipped `-height 4` in a pane that allotted 29 px of the 72 requested, so the tool's primary work surface drew one and a half lines with `cget -height` reporting 4. |
 | W16 | `.calc.btb` | frame | buffer toolbar |
 | W17 | `.calc.btb.enter` | button | push buffer → stack |
 | W18 | `.calc.btb.pop` | button | text `Pop` |
@@ -170,8 +179,8 @@ Widget paths are normative — tests address widgets by path.
 | W20 | `.calc.btb.mplus` | button | text `M+` |
 | W21 | `.calc.btb.me` | button | text `ME` |
 | W22 | `.calc.btb.undo` `.redo` | button | initial state `disabled` |
-| W23 | `.calc.stk` | labelframe | text `Stack` |
-| W24 | `.calc.stk.list` | listbox | top of stack = index 0 |
+| W23 | `.calc.stk` | labelframe | text `Stack`. **The pane that holds it, `.calc.pw.stk`, carries NO title of its own** — phase 0 had titled that pane `Stack` too, and the two nested boxes drew the word twice. Ruled by the crew, 2026-08-15 (phase 1b): the spec's widget keeps the caption, the pane keeps only its frame. |
+| W24 | `.calc.stk.list` | listbox | top of stack = index 0; scrolled by `.calc.stk.sb`, which takes the palette like every other widget here (R113) |
 | W25 | `.calc.stk.push/.pop/.del/.recall` | button | the four side buttons |
 | W26 | `.calc.fn` | frame | function browser |
 | W27 | `.calc.fn.cat` | combobox | §7 categories; initial `Special Functions` |
@@ -192,6 +201,7 @@ Widget paths are normative — tests address widgets by path.
   height.
 - **R112** Minimum size must keep every control reachable — if the layout cannot honour
   that, the function browser is what scrolls, not what disappears.
+  **R112 is about pixels, and it is enforced by derivation, not by a constant** (§4.2).
 - **R113** **Colours come from the signal browser's palette, through one accessor.**
   The browser's palette is `ase::palette <role>` (`src/ase_window.tcl:151`) — the
   USER-LOCKED values `panel #f2f2f2`, `table #ffffff`, `header #e8e8e8`,
@@ -245,6 +255,49 @@ Widget paths are normative — tests address widgets by path.
   "leave everything default grey" — which is what phase 0 shipped and what the user
   rejected. The prohibition survives as *one palette, not two*; it is no longer a
   prohibition on colouring.
+- **R113a — a readonly ttk::combobox is painted by the style's STATE MAP, not by
+  `ttk::style configure`.** Both comboboxes here are `-state readonly` (that is what a
+  chooser is), and in this tree's ttk theme `configure ... -fieldbackground` does not
+  reach that state: the widgets rendered the stock `#d9d9d9` while the style option
+  cheerfully reported `#ffffff`, and the checks that read the style option were green
+  about a colour that was not on screen. Every Calc.* combobox style therefore carries
+  `ttk::style map <style> -fieldbackground {readonly <field>} -foreground {readonly
+  <fieldfg>}`, and the check that covers it reads the **map**, not the option.
+  Ruled by the crew, 2026-08-15 (phase 1b fix round).
+
+### 4.2 First-open size, and the toplevel minimum
+
+**Ruled by the crew, 2026-08-15 (phase 1b fix round).** Phase 0 chose
+`wm minsize .calc 560 620` and the first-open sash fractions `{0.21 0.36 0.64}` against
+**empty placeholder panes**, where any split looks plausible. Phase 1b then put real
+controls in, and two defects followed that no `cget`-level check could see and that 299
+green checks did not:
+
+- the selector grid needs **614 px**, but at the declared minimum the window gave it
+  **548**, so `zm` and `data` — and `data` is an ENABLED selector — were entirely off
+  screen while `winfo ismapped` still returned 1. Because `save_layout` persists the
+  geometry, a window a user had once shrunk stayed unusable across close/reopen.
+- the buffer (W15) asks for **72 px** and was allotted **29**, i.e. one and a half of
+  its four lines; `bbox 3.0` and `bbox 4.0` were both empty.
+
+The rules that replace those constants:
+
+1. **The minimum width is DERIVED, every time the window is built:**
+   `wm minsize` width = `max(floor, [winfo reqwidth .calc.pw.sel])`, applied *after*
+   `restore_layout` so a geometry saved while clipped is corrected upward rather than
+   replayed. A grid that grows — a longer id, a bigger font, a later item's row —
+   carries the minimum with it. This is R112 made mechanical.
+2. **The first-open fractions must give every pane at least its requested height.**
+   `{0.21 0.42 0.645}` with a height floor of **680** does that, with ≥ 9 px of margin
+   on each of the four panes; the surplus goes to `.calc.pw.bot`, the pane item 4 still
+   has to fill. The arithmetic is written out at `calc::pw_list`.
+3. **The checks that hold these are pixel checks, not option checks** — `winfo height`
+   against `winfo reqheight`, `.calc.buf bbox 4.0`, and `winfo containing` at each
+   selector's own centre at the declared minimum (`test_calc_skeleton` S21). A
+   `cget -height` check cannot see any of it.
+
+Any later item that adds a widget to a pane re-measures. The phase-0 freeze on the
+layout means *do not redecorate*; it never meant *ship a control off the window*.
 
 ---
 
@@ -277,6 +330,13 @@ Widget paths are normative — tests address widgets by path.
   active one **disarms** it and returns `calc::selmode` to empty.
 - **R202** A disabled selector (§1.2) cannot be armed; clicking it writes an explanatory
   line to the status area and leaves `calc::selmode` unchanged.
+  ⚠ That line cannot come from the widget's `-command`: Tk's `invoke` and the `Button`
+  class bindings both return early on a `-state disabled` widget, so a disabled control's
+  `-command` never fires at all. It is delivered by an explicit `<Button-1>` binding
+  (`calc::sel_refuse`, phase 1b) — X still delivers events to a disabled widget — which
+  also cannot arm anything, because it never touches `calc::selmode`. The tooltip §1.2
+  asks for carries the same sentence, through `balloon` (`src/xschem.tcl:12551`), the
+  tree's one tooltip mechanism.
 - **R203** Voltage selectors pick a **net**; current selectors pick an **instance
   terminal**. The two use different pick modes and different hit tests. A voltage selector
   must refuse a terminal-only click and vice versa, with a status message — not silently.

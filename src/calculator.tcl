@@ -14,9 +14,12 @@
 # Landed so far in phase 1:
 #   1a  the colour layer (calc::color), the Results Dir row (W03-W05) and the
 #       status area with its 50-entry history (W32-W34, R506-R509).
-# Items 1b-1d replace the bodies of the Selectors / Buffer / Stack / Functions
-# / Keypad labelframes.  They must not move a sash, change a -minsize or touch
-# calc::pw_list.
+#   1b  the 22-button selector grid (W06-W07), the mode strip (W08-W14), the
+#       buffer and its toolbar (W15-W22) and the Stack (W23-W25).  All of it
+#       INERT: correct path, class and initial state, and a -command that
+#       routes through calc::inert -> calc::status and changes nothing else.
+# Item 1d replaces the bodies of the Functions / Keypad labelframes.  It must
+# not move a sash, change a -minsize or touch calc::pw_list.
 #
 # THE POINT OF THE FILE, once it is finished: the Calculator is an EXPRESSION
 # BUILDER, not a pocket calculator.  Its deliverable is a string — an RPN
@@ -149,6 +152,15 @@ namespace eval calc {
     # W34: the message history, NEWEST FIRST, capped at histmax (R509)
     variable statushist {}
     variable histmax 50
+    # W07: the selector grid's shared radio variable.  EMPTY means no selector
+    # is armed, which is also what R201's re-click-to-disarm returns it to.
+    variable selmode {}
+    # W09: off | family | wave (spec §6).  Initial `off` = pick from the
+    # schematic canvas.
+    variable pickscope off
+    # W10: Clip, INITIAL 1 (spec §4 W10 says so in bold, and R304 is what it
+    # means: evaluation is restricted to the displayed X range).
+    variable clip 1
 }
 
 # The panedwindows this window owns, as
@@ -162,11 +174,72 @@ namespace eval calc {
 # selector grid only as much height as its two button rows need and hands the
 # surplus to the stack and the function browser.  Measured off the reference
 # screenshot and rounded.
+#
+# ⚠ AMENDED by item 2's fix round (spec §4 "First-open size", ruled 2026-08-15).
+# Phase 0 picked {0.21 0.36 0.64} against EMPTY placeholder panes, where any
+# split looks plausible.  Once phase 1b put the real controls in, the Buffer
+# pane's share was 15% of 597 px = 81 px for a widget stack that requests 124
+# (`text -height 4` = 72 + the 23 px toolbar + 29 px of labelframe chrome), so
+# the tool's primary work surface rendered ONE AND A HALF of its four lines —
+# `.calc.buf bbox 3.0` and `bbox 4.0` both empty — while `cget -height` still
+# said 4 and 299 checks stayed green.  The arithmetic the fractions now satisfy,
+# at the first-open pw extent of 657 px (see calc::min_floor):
+#
+#   pane            wants (reqheight)   gets       margin
+#   .calc.pw.sel    119                 0.21       138      +19
+#   .calc.pw.buf    124                 0.42-0.21  133       +9
+#   .calc.pw.stk    133                 0.645-0.42 143      +10
+#   .calc.pw.bot     67 (-minsize 140)  1-0.645    228      +88
+#
+# The surplus goes to the bottom pane on purpose: it is the one item 4 fills
+# (function browser + keypad) and the only one whose contents still grow.
+# If a later item changes a pane's contents, re-measure — the check that pins
+# this is S19's "the buffer shows all four of its lines at first open", which
+# reads `bbox 4.0`, not a cget.
 proc calc::pw_list {} {
     return {
-        {.calc.pw     vertical   3 {0.21 0.36 0.64}}
+        {.calc.pw     vertical   3 {0.21 0.42 0.645}}
         {.calc.pw.bot horizontal 1 {0.78}}
     }
+}
+
+# ---------------------------------------------------------------------------
+# The toplevel's minimum size.
+#
+# ⚠ THE MINIMUM MUST BE DERIVED FROM THE CONTENTS, not guessed.  Phase 0 wrote
+# `wm minsize .calc 560 620` against empty placeholder panes; phase 1b then put
+# a 614 px selector grid in, and at the window's OWN declared minimum the grid
+# overflowed its pane by 66 px — `winfo containing` at the centres of
+# `.calc.sel.zm` and `.calc.sel.data` returned the EMPTY STRING (nothing of them
+# on screen) while `winfo ismapped` still returned 1, which is the trap the
+# comment in build_panes warns about.  `data` is an ENABLED selector, and
+# because save_layout persists the geometry the clipped state survived a
+# close/reopen: once a user had shrunk the window those two selectors were
+# permanently unreachable.
+#
+# So the floor below is a FLOOR, and calc::apply_minsize raises it to whatever
+# the selector pane actually requests.  A vertical panedwindow gives every pane
+# its own full width, and `.calc.pw` is packed edge to edge in the toplevel, so
+# the width the toplevel needs IS `winfo reqwidth .calc.pw.sel` (the widest of
+# the three rows it holds, plus the labelframe's own chrome).  A grid that grows
+# — a longer id, a bigger font, item 4's keypad — carries the minimum with it
+# instead of silently clipping.
+#
+# The height floor moved 620 -> 680 in the same round: at 620 the four panes'
+# requested heights (119 + 124 + 133 + 140) plus three sashes fit only with
+# ~0 px of margin at any sash split S11 still accepts, and a zero-margin layout
+# re-clips the moment a font changes.  680 buys every pane at least 9 px.
+proc calc::min_floor {} { return {560 680} }
+
+proc calc::apply_minsize {} {
+    if {![winfo exists .calc]} { return {} }
+    foreach {w h} [calc::min_floor] break
+    if {[winfo exists .calc.pw.sel]} {
+        set need [winfo reqwidth .calc.pw.sel]
+        if {[string is integer -strict $need] && $need > $w} { set w $need }
+    }
+    wm minsize .calc $w $h
+    return [list $w $h]
 }
 
 # ---------------------------------------------------------------------------
@@ -297,7 +370,9 @@ proc calc::build {} {
     toplevel .calc
     wm title .calc {xschem Calculator}
     wm protocol .calc WM_DELETE_WINDOW calc::close
-    wm minsize .calc 560 620
+    # the FLOOR now; tightened to what the selector grid needs once the panes
+    # exist and have a requested width (below, after restore_layout)
+    calc::apply_minsize
     .calc configure -background [calc::color window]
 
     calc::build_menubar
@@ -314,6 +389,13 @@ proc calc::build {} {
 
     # D1: the widgets are packed by now, so sash coord is meaningful.
     calc::restore_layout
+
+    # ...and NOW the panes have a requested width, so the toplevel minimum can
+    # be raised to what the selector grid needs.  Deliberately AFTER the
+    # restore: a geometry saved while the window was clipped is replayed first
+    # and then corrected upward by the new minimum, which is what makes the
+    # clipped state self-heal on reopen instead of persisting for the session.
+    calc::apply_minsize
 
     # D2/D5: three capture points — toplevel resize, end of a sash drag, and
     # close.  Together they cover every way the layout can change.
@@ -387,6 +469,18 @@ proc calc::build_menubar {} {
 # effect is the trap recorded in the header comment.
 proc calc::popdown_extra {} { return 460 }
 
+#
+# ⚠ `ttk::style configure ... -fieldbackground` DOES NOT REACH A READONLY
+# COMBOBOX.  Both comboboxes here are `-state readonly` (that is what a chooser
+# is), and in this tree's ttk theme the readonly field is painted from the
+# style's STATE MAP, not its base option — so the two comboboxes rendered with
+# the stock #d9d9d9 field while `ttk::style configure Calc.Field.TCombobox
+# -fieldbackground` cheerfully reported #ffffff and the checks that read the
+# style option were green about a colour that was not on screen.  MEASURED by
+# sampling the live window: the dest combobox's field read (217,217,217) beside
+# a `.calc.status.msg` Entry in the same role reading (255,255,255).
+# The base `configure` stays (it is what an editable combobox would use, and it
+# is the value the map is derived from); the `map` is what actually paints.
 proc calc::style_init {} {
     catch {
         ttk::style configure Calc.TCombobox \
@@ -394,6 +488,34 @@ proc calc::style_init {} {
             -postoffset [list [expr {-[calc::popdown_extra]}] 0 \
                               [calc::popdown_extra] 0]
     }
+    # ⚠ The second style exists because -postoffset is a property of the STYLE,
+    # not of the widget.  W13 (the plot-destination combobox) is a normal-width
+    # combobox whose popdown must sit under itself; giving it Calc.TCombobox
+    # would shift its list 460 px to the left and off the window.  Same field
+    # colour, no offset.
+    catch {
+        ttk::style configure Calc.Field.TCombobox \
+            -fieldbackground [calc::color field]
+    }
+    foreach st {Calc.TCombobox Calc.Field.TCombobox} {
+        catch {
+            ttk::style map $st \
+                -fieldbackground [list readonly [calc::color field]] \
+                -foreground      [list readonly [calc::color fieldfg]] \
+                -selectbackground [list readonly [calc::color field]] \
+                -selectforeground [list readonly [calc::color fieldfg]]
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Phase 1 is REAL BUT INERT, and R506 ("every operation that changes the buffer
+# or the stack updates the status area; silence is a bug") is made true of the
+# inert window here: every phase-1 -command routes through this one proc, which
+# names the control and the plan phase that will implement it.  A user pressing
+# a button that does nothing and says nothing cannot tell it from a broken one.
+proc calc::inert {what phase} {
+    return [calc::status "$what: not implemented (phase $phase)"]
 }
 
 proc calc::build_status {} {
@@ -576,6 +698,379 @@ proc calc::res_toggle {} {
     return $rescollapsed
 }
 
+# ---------------------------------------------------------------------------
+# W06-W07 — the 22-button selector grid (spec §5, plan step 1.2)
+#
+# THE LAYOUT IS NORMATIVE and comes from spec §5 plus the ASCII layout in
+# doc/claude/code_analysis/viva_calculator_explained.md §4 (region C): two rows
+# of eleven, in three visual groups of 4 / 3 / 4:
+#
+#     vt  vf  vdc  vs  |  op   var  vn   |  sp  vswr  hp  zm
+#     it  if  idc  is  |  opt  mp   vn2  |  zp  yp    gd  data
+#
+# ⚠ ref/viva_xl_calculator.png is the XL calculator and shows a DIFFERENT id
+# set (`os`, `ot`, no `data` in that row).  It is the COLOUR reference only;
+# the ids and their row come from spec §5.
+#
+# Column layout, and why it is not the house radiobutton idiom verbatim:
+# recon/widgets.md §2 says the tree has no N-by-M radiobutton grid anywhere and
+# that the idiom is "loop into its own frame, pack -side left, grid the frame
+# as one cell".  That idiom cannot produce these PATHS: spec §4 W07 is
+# `.calc.sel.<id>`, i.e. the buttons are direct children of .calc.sel, so a
+# per-group frame would make them .calc.sel.g1.vt and every test that addresses
+# a widget by path would be addressing the wrong one.  What is kept from the
+# idiom is the part that matters — the buttons are built by a loop over ONE
+# table (calc::sel_rows), so the layout is data, not twenty-two hand-written
+# calls.  The grouping is done with two spacer columns carrying a hairline
+# separator, which is what the reference draws between groups.
+#
+# ⚠ Tk writes a radiobutton's -variable BEFORE it fires -command
+# (wave_viewer.tcl:17665).  Nothing here diffs old against new, and nothing
+# later may: a -command that decides "did this change?" always sees "no".
+# R201's re-click-to-disarm therefore cannot be a -command diff; it is phase 6
+# and will need its own remembered value.
+#
+# ⚠ -selectcolor is the indicator's FIELD colour, NOT its "lit" colour, and
+# getting that backwards paints the grid unreadable.  MEASURED here (a scanline
+# across .calc.sel.vt's indicator at three states, on this Tk):
+#     ::calc::selmode = {}   background disc + grey dot   (Tk's TRISTATE look,
+#                                                          which is what "no
+#                                                          selector armed" is)
+#     ::calc::selmode = vt   -selectcolor disc + BLACK dot (armed)
+#     ::calc::selmode = vf   -selectcolor disc, flat       (not armed)
+# So with `-selectcolor [calc::color selectbg]` all 22 buttons render as solid
+# dark-blue blobs and the armed one is the same blob with a dot in it.  The
+# role that means "the white inside a field" is `field`, which is also what
+# xschem's own startup option database says for every other radiobutton in the
+# tree (`option add *selectColor {white}`, xschem.tcl:15552).
+
+proc calc::sel_rows {} {
+    return {
+        {{vt vf vdc vs} {op  var vn}  {sp vswr hp zm}}
+        {{it if idc is} {opt mp  vn2} {zp yp   gd data}}
+    }
+}
+
+# The eight that are rendered and DISABLED (spec §1.2): the seven RF ids and
+# `mp`.  Rendering them is information — removing them would change the shape
+# of the grid, and the grid's shape is the tool's identity — so each one
+# carries the reason it cannot be armed, as a tooltip and as the status line it
+# writes when clicked (R202).
+proc calc::sel_disabled {} {
+    return {
+        sp   {no S-parameter analysis in ngspice}
+        zp   {no S-parameter analysis in ngspice}
+        yp   {no S-parameter analysis in ngspice}
+        hp   {no S-parameter analysis in ngspice}
+        vswr {no S-parameter analysis in ngspice}
+        zm   {no S-parameter analysis in ngspice}
+        gd   {no S-parameter analysis in ngspice}
+        mp   {needs a model-database reader}
+    }
+}
+
+# the width of a spacer column between two groups, in pixels
+proc calc::sel_gap {} { return 12 }
+
+# ⚠ Tk's DEFAULT -tristatevalue is the EMPTY STRING, and the empty string is
+# exactly what ::calc::selmode holds when nothing is armed (and what R201's
+# re-click-to-disarm returns it to).  A radiobutton whose -variable equals its
+# -tristatevalue renders in the MIXED look — a panel-grey disc with a grey dot
+# in it — so the state the window is BORN in drew all 22 selectors as though
+# every one of them were half-armed, and it was the only unarmed state that
+# drew a dot at all.  MEASURED by scanline across .calc.sel.vt's indicator:
+#     selmode {}   panel-grey (242,242,242) disc + a (127,127,127) dot
+#     selmode zzz  flat white (255,255,255) disc      <- the `field` disc meant
+#     selmode vt   white disc + a black (0,0,0) dot   <- armed
+# "S17 nothing is armed at first open" was green while 22 indicators showed a
+# dot, because the check reads the VARIABLE and the defect is in the rendering.
+#
+# The fix keeps {} as the normative "nothing armed" value — every later phase
+# and R201 depend on it — and moves the tristate sentinel to a string no
+# selector id can ever be and no legitimate state can ever hold.  Configured
+# with a catch because Tk 8.4 has no -tristatevalue at all and this tree still
+# targets it (see the -stretch probe in build_panes).
+proc calc::sel_tristate {} { return {(no such selector)} }
+
+proc calc::build_sel {} {
+    variable selmode
+    # ⚠ Seeded BEFORE the widgets exist (wave_viewer.tcl:8051-8082): a
+    # radiobutton whose -variable does not exist yet CREATES it, and no check
+    # can then tell "deliberately unarmed" from "happened to be empty".
+    set selmode {}
+
+    frame .calc.sel -background [calc::color panel]
+    set dis [calc::sel_disabled]
+    set r 0
+    foreach rowgroups [calc::sel_rows] {
+        set col 0
+        set g 0
+        foreach group $rowgroups {
+            if {$g > 0} {
+                # the visible gap between groups, drawn once (on the first row
+                # pass) as a hairline spanning both rows
+                if {$r == 0} {
+                    frame .calc.sel.sep$g -width 1 \
+                        -background [calc::color disabledfg]
+                    grid .calc.sel.sep$g -row 0 -column $col -rowspan 2 \
+                        -sticky ns -padx [expr {[calc::sel_gap] / 2}]
+                }
+                incr col
+            }
+            foreach id $group {
+                radiobutton .calc.sel.$id -text $id -value $id \
+                    -variable ::calc::selmode -takefocus 0 \
+                    -padx 1 -pady 0 -borderwidth 1 \
+                    -background [calc::color panel] \
+                    -activebackground [calc::color header] \
+                    -foreground [calc::color fieldfg] \
+                    -activeforeground [calc::color fieldfg] \
+                    -disabledforeground [calc::color disabledfg] \
+                    -selectcolor [calc::color field] \
+                    -command [list calc::sel_click $id]
+                # see calc::sel_tristate: without this, selmode {} IS the
+                # tristate value and every selector renders half-armed
+                catch {.calc.sel.$id configure \
+                           -tristatevalue [calc::sel_tristate]}
+                if {[dict exists $dis $id]} {
+                    .calc.sel.$id configure -state disabled
+                    # the tooltip spec §1.2 asks for.  `balloon`
+                    # (xschem.tcl:12551) is the tree's ONE tooltip mechanism —
+                    # no proc named tooltip/set_tooltip exists — and it BAKES
+                    # its string into the <Enter> binding at attach time, which
+                    # is fine here because these strings never change.
+                    catch {balloon .calc.sel.$id [dict get $dis $id]}
+                    # R202: a disabled selector cannot be armed, and says why.
+                    # ⚠ -command cannot deliver that: Tk's button `invoke` and
+                    # the Button class bindings both return early on a disabled
+                    # widget, so a disabled control's -command NEVER fires.  An
+                    # explicit <Button-1> binding does fire (X still delivers
+                    # events to a disabled widget), and it cannot arm anything
+                    # because it does not touch ::calc::selmode.
+                    bind .calc.sel.$id <Button-1> \
+                        [list calc::sel_refuse $id [dict get $dis $id]]
+                }
+                grid .calc.sel.$id -row $r -column $col -sticky w -padx 1
+                incr col
+            }
+            incr g
+        }
+        incr r
+    }
+}
+
+# An enabled selector: arming the pick is phase 6 (plan 6.1-6.2).  The radio
+# variable is written by Tk itself — that is the widget's own state, not
+# behaviour this phase is wiring — and nothing else happens.
+proc calc::sel_click {id} {
+    return [calc::inert "selector $id: signal picking" 6]
+}
+
+# A disabled selector (spec §1.2 / R202).  Explains, and leaves
+# ::calc::selmode exactly as it found it.
+proc calc::sel_refuse {id why} {
+    return [calc::status "selector $id is not available: $why"]
+}
+
+# ---------------------------------------------------------------------------
+# W08-W14 — the mode strip (spec §6, plan step 1.3)
+#
+# Off/Family/Wave is the PICK SCOPE (§6): where the next pick comes from, not
+# what it picks.  Clip is evaluation-only (R305: it never rewrites the buffer),
+# and it starts ON.
+#
+# W11/W12/W14 are drawn as ICONS in the reference (a waveform, an arrow, a
+# table).  They are TEXT here.  Ruled by the crew, 2026-08-15: this tree ships
+# no icon set a new dialog can draw from (src/resources.tcl is base64 toolbar
+# icons for the main window's own toolbar, recon/theming.md §1), and an
+# invented glyph font would be a second asset to maintain for three buttons.
+# Written into spec §4 W11/W12/W14.
+proc calc::build_mode {} {
+    variable pickscope
+    variable clip
+    # seeded before the widgets exist, same rule as the selector grid
+    set pickscope off
+    set clip 1
+
+    frame .calc.mode -background [calc::color panel]
+    foreach {id label} {off Off family Family wave Wave} {
+        radiobutton .calc.mode.$id -text $label -value $id \
+            -variable ::calc::pickscope -takefocus 0 -padx 1 -pady 0 \
+            -background [calc::color panel] \
+            -activebackground [calc::color header] \
+            -foreground [calc::color fieldfg] \
+            -activeforeground [calc::color fieldfg] \
+            -disabledforeground [calc::color disabledfg] \
+            -selectcolor [calc::color field] \
+            -command [list calc::inert "pick scope $label" 6]
+        pack .calc.mode.$id -side left -padx {0 3} -pady 1
+    }
+    checkbutton .calc.mode.clip -text {Clip} -variable ::calc::clip \
+        -takefocus 0 -padx 1 -pady 0 \
+        -background [calc::color panel] \
+        -activebackground [calc::color header] \
+        -foreground [calc::color fieldfg] \
+        -activeforeground [calc::color fieldfg] \
+        -disabledforeground [calc::color disabledfg] \
+        -selectcolor [calc::color field] \
+        -command [list calc::inert {Clip} 6]
+    pack .calc.mode.clip -side left -padx {8 6} -pady 1
+
+    foreach {id label phase} {plot Plot 3 eval Eval 3} {
+        button .calc.mode.$id -text $label -takefocus 0 -padx 4 -pady 0 \
+            -background [calc::color panel] \
+            -activebackground [calc::color header] \
+            -foreground [calc::color fieldfg] \
+            -activeforeground [calc::color fieldfg] \
+            -disabledforeground [calc::color disabledfg] \
+            -command [list calc::inert $label $phase]
+        pack .calc.mode.$id -side left -padx {0 3} -pady 1
+    }
+
+    # W13.  The house combobox (recon/widgets.md §1): ttk, readonly, -values at
+    # creation, `$w set` for the initial value, and combo_letter_cycle bound
+    # because a readonly ttk::combobox does not type-to-cycle by itself
+    # (xschem.tcl:10828).  The three values are the ones R601 hands to
+    # wviewer::set_plot_dest in phase 3; the LABELS are fixed here.
+    ttk::combobox .calc.mode.dest -state readonly -width 10 \
+        -values {Append Replace {New Strip}} -takefocus 0 \
+        -style Calc.Field.TCombobox
+    .calc.mode.dest set {Append}
+    bind .calc.mode.dest <Key> {combo_letter_cycle %W %A; break}
+    bind .calc.mode.dest <<ComboboxSelected>> {calc::dest_changed}
+    pack .calc.mode.dest -side left -padx {6 3} -pady 1
+
+    button .calc.mode.table -text {Table} -takefocus 0 -padx 4 -pady 0 \
+        -background [calc::color panel] \
+        -activebackground [calc::color header] \
+        -foreground [calc::color fieldfg] \
+        -activeforeground [calc::color fieldfg] \
+        -disabledforeground [calc::color disabledfg] \
+        -command [list calc::inert {Table} 10]
+    pack .calc.mode.table -side left -padx {3 0} -pady 1
+}
+
+# W13's selection is remembered by the widget (that is what a combobox is for)
+# and consumed by phase 3's Plot.  Saying so is R506.
+proc calc::dest_changed {} {
+    if {![winfo exists .calc.mode.dest]} return
+    return [calc::inert "plot destination [.calc.mode.dest get]" 3]
+}
+
+# ---------------------------------------------------------------------------
+# W15-W22 — the buffer and its toolbar (plan step 1.4)
+#
+# The buffer is the one phase-1 control that is not inert, and deliberately so:
+# it is a text widget, and typing into a text widget is the widget working, not
+# a behaviour this phase is wiring.  -undo 1 is the blanket house default on
+# every editable text in the tree (recon/widgets.md §5, 16 sites).
+#
+# ⚠ Undo/redo are created DISABLED and stay that way here (W22).  R505 makes
+# them cover buffer edits AND stack operations as ONE history, which is phase 2
+# (2.3) and phase 4 (4.4); an undo button that drove only the text widget's own
+# stack would be a different feature wearing the same label.
+proc calc::build_buf {} {
+    text .calc.buf -height 4 -undo 1 -wrap none -exportselection 1 \
+        -relief sunken -borderwidth 1 \
+        -background [calc::color field] \
+        -foreground [calc::color fieldfg] \
+        -insertbackground [calc::color fieldfg] \
+        -selectbackground [calc::color selectbg] \
+        -selectforeground [calc::color selectfg]
+
+    frame .calc.btb -background [calc::color panel]
+    # id / label / the plan phase that makes it work.  Order is spec §4's:
+    # W17 enter, W18 pop, W19 swap roll clrbuf clrstk, W20 M+, W21 ME,
+    # W22 undo redo.
+    foreach {id label phase} {
+        enter  {Enter}  4
+        pop    {Pop}    4
+        swap   {Swap}   4
+        roll   {Roll}   4
+        clrbuf {ClrBuf} 2
+        clrstk {ClrStk} 4
+        mplus  {M+}     9
+        me     {ME}     9
+        undo   {Undo}   2
+        redo   {Redo}   2
+    } {
+        button .calc.btb.$id -text $label -takefocus 0 -padx 3 -pady 0 \
+            -background [calc::color panel] \
+            -activebackground [calc::color header] \
+            -foreground [calc::color fieldfg] \
+            -activeforeground [calc::color fieldfg] \
+            -disabledforeground [calc::color disabledfg] \
+            -command [list calc::inert $label $phase]
+        pack .calc.btb.$id -side left -padx 1 -pady 1
+    }
+    .calc.btb.undo configure -state disabled
+    .calc.btb.redo configure -state disabled
+}
+
+# ---------------------------------------------------------------------------
+# W23-W25 — the Stack (plan step 1.5)
+#
+# ⚠ TOP OF STACK IS INDEX 0 (spec §4 W24).  Nothing pushes yet — the model is
+# phase 4 (R502-R504) — but the direction has to be written down now, because
+# it is invisible in an empty listbox and every later phase reads it: R503's
+# Pop takes item 0, R504's cap drops the LAST item, and R511's operand order
+# (`[b, a]` + `+` -> `[a b +]`) is stated in the same convention.  A listbox
+# filled the other way round would pass every widget check and get the operand
+# order backwards, which the spec calls the classic bug.
+#
+# ⚠ The PANE labelframe .calc.pw.stk is retitled to nothing when this row is
+# built.  Spec W23 makes `.calc.stk` a labelframe titled `Stack` and phase 0
+# had already titled the pane that holds it `Stack`; drawing both renders the
+# word twice, one inside the other.  Ruled by the crew, 2026-08-15: the spec's
+# widget wins, the pane keeps its frame and loses its title.  Written into
+# spec §4 W23.
+proc calc::build_stk {} {
+    labelframe .calc.stk -text {Stack} -padx 4 -pady 4 \
+        -background [calc::color panel] -foreground [calc::color accent]
+
+    # the four side buttons of the reference, in a column at the left
+    set row 0
+    foreach {id label phase} {push Push 4 pop Pop 4 del Del 4 recall Recall 4} {
+        button .calc.stk.$id -text $label -takefocus 0 -padx 3 -pady 0 \
+            -width 6 \
+            -background [calc::color panel] \
+            -activebackground [calc::color header] \
+            -foreground [calc::color fieldfg] \
+            -activeforeground [calc::color fieldfg] \
+            -disabledforeground [calc::color disabledfg] \
+            -command [list calc::inert "Stack $label" $phase]
+        grid .calc.stk.$id -row $row -column 0 -sticky ew -padx {0 4} -pady 1
+        incr row
+    }
+    listbox .calc.stk.list -height 4 -exportselection 0 -activestyle dotbox \
+        -selectmode browse -borderwidth 1 -relief sunken \
+        -yscrollcommand {.calc.stk.sb set} \
+        -background [calc::color field] \
+        -foreground [calc::color fieldfg] \
+        -selectbackground [calc::color selectbg] \
+        -selectforeground [calc::color selectfg]
+    # ⚠ the scrollbar takes the palette too.  It was the one widget in this
+    # file created with no colours at all, and it showed: a stock grey80 bar
+    # with a #b3b3b3 trough (sampled: (204,204,204)) against a #f2f2f2 panel,
+    # which is the visible seam RULING-1 was written about.  Every palette
+    # background carries a palette foreground with it — see build_menubar.
+    scrollbar .calc.stk.sb -command {.calc.stk.list yview} -takefocus 0 \
+        -background [calc::color panel] \
+        -activebackground [calc::color header] \
+        -troughcolor [calc::color header] \
+        -highlightbackground [calc::color panel]
+    # ⚠ The stretch goes to an EMPTY row below the buttons, not to the last
+    # button's row.  Weighting row $row-1 is the obvious thing and it spreads
+    # the four buttons down the whole pane — measured, `Recall` ended up 60 px
+    # under `Del` with a gap between them, which reads as two groups of
+    # buttons rather than one column.  The listbox spans one row further so it
+    # still fills.
+    grid .calc.stk.list -row 0 -column 1 -rowspan [expr {$row + 1}] -sticky nsew
+    grid .calc.stk.sb   -row 0 -column 2 -rowspan [expr {$row + 1}] -sticky ns
+    grid rowconfigure    .calc.stk $row -weight 1
+    grid columnconfigure .calc.stk 1 -weight 1
+}
+
 proc calc::build_panes {} {
     variable optnever
     variable optalways
@@ -590,13 +1085,17 @@ proc calc::build_panes {} {
         -sashwidth 5 -sashrelief raised -showhandle 1 -borderwidth 0 \
         -background [calc::color panel]
 
-    # Phase 0 placeholders.  Phase 1 replaces the body of each of these with
-    # the real controls; the labelframe and its pane stay.
-    # (the Results Dir row is built below and packed into this pane; the hint
-    # names only what item 2 still owes)
-    calc::placeholder .calc.pw.sel      {Selectors}  {the 22 signal buttons, mode strip}
-    calc::placeholder .calc.pw.buf      {Buffer}     {the expression being built, plus its toolbar}
-    calc::placeholder .calc.pw.stk      {Stack}      {parked expressions}
+    # The panes.  A pane whose real contents have landed is a bare labelframe
+    # (calc::panelframe); one still waiting for its item keeps the phase-0
+    # placeholder hint inside it (calc::placeholder).  Three of the five are
+    # filled as of item 2; Functions and Keypad are item 4's.
+    #
+    # ⚠ .calc.pw.stk is titled EMPTY, not `Stack`.  Spec W23 puts a labelframe
+    # titled `Stack` INSIDE it (calc::build_stk), and two nested boxes both
+    # captioned Stack is the word drawn twice.  See the note on build_stk.
+    calc::panelframe  .calc.pw.sel      {Selectors}
+    calc::panelframe  .calc.pw.buf      {Buffer}
+    calc::panelframe  .calc.pw.stk      {}
     calc::placeholder .calc.pw.bot.fn   {Functions}  {category chooser + function list}
     calc::placeholder .calc.pw.bot.pad  {Keypad}     "operators,\nuser 1-4"
 
@@ -630,22 +1129,66 @@ proc calc::build_panes {} {
     eval .calc.pw.bot paneconfigure .calc.pw.bot.fn  $optalways
     eval .calc.pw.bot paneconfigure .calc.pw.bot.pad $optnever
 
-    # W03-W05, plan step 1.1.  Created LAST so it stacks above .calc.pw (see
-    # the note on build_res), and packed INTO the Selectors pane above the
-    # place the selector grid takes in item 2.  `-before` pins that order; the
-    # test asserts `pack slaves` so a later edit cannot silently reverse it.
+    # The pane CONTENTS, all of them children of `.calc` and drawn inside a
+    # pane with `pack -in`.  Spec §4's paths are normative — `.calc.res`,
+    # `.calc.sel`, `.calc.mode`, `.calc.buf`, `.calc.btb`, `.calc.stk` are all
+    # children of the toplevel — and pack allows a widget to be managed by any
+    # descendant of its parent, so both hold at once.  Two consequences, both
+    # already paid for by the Results Dir row:
+    #   - a widget packed into a non-parent maps BEHIND its siblings unless it
+    #     was created after them, so these are built LAST and raised anyway.
+    #     `winfo ismapped` cannot see the failure (S15's note); the guards that
+    #     can are stacking order in `winfo children .calc` and `winfo
+    #     containing` at the widget's own centre.
+    #   - `pack forget` detaches from the PANE, not from `.calc`, which is what
+    #     makes a collapse toggle possible (R110, phase 10).
+    # Packing order inside .calc.pw.sel is the reference's: Results Dir row,
+    # then the selector grid, then the mode strip.  `pack slaves` is asserted,
+    # so a later edit cannot silently reverse it.
     calc::build_res
-    pack .calc.res -in .calc.pw.sel -side top -fill x -before .calc.pw.sel.hint
-    raise .calc.res
+    calc::build_sel
+    calc::build_mode
+    pack .calc.res  -in .calc.pw.sel -side top -fill x
+    pack .calc.sel  -in .calc.pw.sel -side top -fill x -pady {2 0}
+    pack .calc.mode -in .calc.pw.sel -side top -fill x -pady {2 0}
+
+    # W15-W22: the buffer takes the growth, its toolbar sits under it.
+    #
+    # ⚠ THE TOOLBAR IS PACKED FIRST, and the visual order is the reverse of the
+    # packing order on purpose.  pack fills the cavity in packing order, so a
+    # `-fill both -expand 1` buffer packed first takes ALL of it and the
+    # fixed-height toolbar packed after it gets nothing: MEASURED at 660x700,
+    # `winfo ismapped .calc.btb` was 0 and the whole button row — Enter, Pop,
+    # M+, ME, undo, redo — was simply not on screen, with every widget check
+    # green because the widgets all existed.  Reserving the fixed-height row
+    # first is the fix; S19 asserts both are mapped AND which is on top.
+    calc::build_buf
+    pack .calc.btb -in .calc.pw.buf -side bottom -fill x
+    pack .calc.buf -in .calc.pw.buf -side top    -fill both -expand 1
+
+    # W23-W25
+    calc::build_stk
+    pack .calc.stk -in .calc.pw.stk -fill both -expand 1
+
+    foreach w {.calc.res .calc.sel .calc.mode .calc.buf .calc.btb .calc.stk} {
+        raise $w
+    }
 }
 
-proc calc::placeholder {path title hint} {
+# A pane whose real contents have landed: the labelframe only.
+proc calc::panelframe {path title} {
     # The labelframe's own title text is the "coloured accent on panel
     # headers" of the reference (ref/viva_xl_calculator.png), and it is the
     # browser's accent — ase::ui::apply_theme colours a Labelframe exactly this
     # way (ase_window.tcl:164-166).
     labelframe $path -text $title -padx 4 -pady 4 \
         -background [calc::color panel] -foreground [calc::color accent]
+}
+
+# A pane still waiting for its item: the labelframe plus a hint naming what is
+# owed.  Item 4 removes the last two.
+proc calc::placeholder {path title hint} {
+    calc::panelframe $path $title
     # muted hint text; disabledfg is the option database's own grey50, the same
     # value every disabled widget in the tree already renders with.  It
     # replaces the literal `grey40` phase 0 wrote, which was the only hardcoded
