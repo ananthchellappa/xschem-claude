@@ -24,9 +24,34 @@
 #   WIDGET W1..W2   a revive with nothing pending must NOT grab focus
 #
 # Uses a throwaway GUI_GATE_DIR: the real ~/.claude/gui_test_gate is untouched.
+#
+# WHAT IT STARTS, AND WHO KILLS IT (2026-08-15). Most of this file was already
+# careful -- every X arm ends in kill_panels, and that helper matches a pattern
+# SCOPED TO ITS OWN throwaway dir rather than the program name. Two things were
+# not covered, and are now:
+#
+#   * every path on which a launched panel is NOT the one the test then kills.
+#     G3b SIGKILLs its own panel by pid, and the LIVE arm's pkill is scoped to
+#     $G -- but a launch that goes PENDING writes no widget.pid, so $PB is empty
+#     and that live pidfile-less wish is named by nothing and killed by nobody.
+#     The stub arms are bounded, so the exposure here is smaller than
+#     test_gui_gate_batch.sh's five-per-run; it is not zero, and nothing
+#     asserted it either way.
+#   * the private X display of the re-run below, whose teardown used to belong
+#     to xvfb-run's EXIT trap and therefore to nobody under a SIGKILL.
+#
+# The R arm at the end asserts it, and the sweep at the top clears whatever a
+# run that was SIGKILLed left behind. See tests/headless/spawn_reaper.sh for why
+# none of this is allowed to be `pkill -f gui_gate_widget.tcl`.
 
 set -u
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SELF/spawn_reaper.sh"
+
+# Private displays and X locks left by a run that was SIGKILLed, before this run
+# picks a display number of its own. See test_gui_gate_batch.sh for why this is
+# ahead of the re-exec and not after it.
+reaper_sweep_orphan_xvfb
 
 # THESE SUITES TEST THE GATE, so they must run where the gate is LIVE. The
 # persistent dev display deliberately disables it (gui_gate.sh
@@ -36,16 +61,61 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # :99 against 0 on any other display. So relocate rather than mislead.
 if [ -n "${DISPLAY:-}" ] && [ "${XSCHEM_GATE_SELFTEST_ARM:-0}" != 1 ] && \
    [ "$DISPLAY" = "$(cat "${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display" 2>/dev/null)" ] && \
-   command -v xvfb-run >/dev/null 2>&1; then
-  echo "-- on the dev display, where the gate is disabled BY DESIGN; re-execing on a private Xvfb" >&2
+   command -v Xvfb >/dev/null 2>&1; then
+  echo "-- on the dev display, where the gate is disabled BY DESIGN; re-running on a private Xvfb" >&2
   export XSCHEM_GATE_SELFTEST_ARM=1
-  exec xvfb-run -a -s "-screen 0 1280x1024x24" bash "$0" "$@"
+  # NOT an `exec`, and NOT xvfb-run: this process stays alive to tear the
+  # display down if the run under it cannot, and xvfb-run's own teardown is a
+  # trap in someone else's script whose `set -e` also corrupts the exit status
+  # when the session reaps its own server. See reaper_run_on_private_xvfb.
+  reaper_run_on_private_xvfb 1280x1024x24 bash "$0" "$@"
+  exit $?
 fi
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# A second scratch root, outside $TMP on purpose: the R arm stands a decoy panel
+# in it for "the user's live panel on :0, or a concurrent worktree's", which this
+# run's provenance rule must not see and must not kill.
+OTHER="$(mktemp -d)"
+DECOY=""
+DPID=""      # the decoy's pid from the fork; $DECOY may never be written
+reaper_init "$TMP" || { echo "RESULT fails=1 (reaper would not arm on $TMP)"; exit 1; }
+reaper_sweep_orphan_panels
+_teardown() {
+  [ -n "${DECOY:-}" ] && reaper_track "$DECOY"
+  [ -n "${DPID:-}" ] && reaper_track "$DPID"
+  reaper_reap
+  rm -rf "$TMP" "$OTHER"
+  return 0
+}
+trap '_teardown' EXIT
+trap '_teardown; exit 130' INT
+trap '_teardown; exit 143' TERM
+if [ -n "${XSCHEM_REAPER_OWNED_DISPLAY:-}" ] && \
+   [ "${XSCHEM_REAPER_OWNED_DISPLAY:-}" = "${DISPLAY:-}" ]; then
+  reaper_own_xvfb "$DISPLAY" || true
+fi
 FAILS=0
 ck()   { if [ "$2" = "1" ];   then echo "ok   $1"; else echo "FAIL $1"; FAILS=$((FAILS+1)); fi; }
 eqck() { if [ "$2" = "$3" ];  then echo "ok   $1"; else echo "FAIL $1 (got '$2' want '$3')"; FAILS=$((FAILS+1)); fi; }
+
+# A process THIS RUN MUST REAP, forked deliberately.
+#
+# WHY A TEST HAS TO MANUFACTURE ITS OWN SUBJECT HERE. Measured 2026-08-15: this
+# file leaves nothing behind on its own -- every X arm ends in kill_panels,
+# scoped to its own throwaway dir, and G3b SIGKILLs its own panel by pid. So
+# "after reaping, nothing this run started is still alive" was TRIVIALLY TRUE:
+# a sabotage that turned every kill into a total no-op left R2 and R4 green over
+# a run that genuinely leaked two strays. Two of the checks were not evidence.
+# A check whose subject may be absent must supply the subject.
+#
+# `; :` is not decoration: `bash -c 'sleep 300'` alone is exec-optimised into
+# the sleep and the marker vanishes from the command line, which is how a
+# reviewer's first sabotage of the batch suite stayed green.
+_reap_probe() {   # -> pid, tracked AND visible to provenance
+  bash -c 'sleep 300; :' "$TMP/reap_probe" >/dev/null 2>&1 &
+  reaper_track "$!"
+  printf '%s' "$!"
+}
 
 # a stand-in suite: gate_start, then N pause points one second apart
 cat > "$TMP/fakesuite.sh" <<'EOF'
@@ -257,7 +327,17 @@ eqck "X5 a lock held by a dead owner is broken, the revive proceeds" \
 kill_panels "$X5"
 
 if [ -z "${DISPLAY:-}" ] || ! command -v wish >/dev/null 2>&1; then
-  echo "-- no DISPLAY/wish: skipping the live arms"
+  echo "-- no DISPLAY/wish: the live arms have nothing to run against"
+  # The stub arms above forked real processes even without an X server, so the
+  # reaping contract applies to this exit path too -- and it gets the same
+  # positive evidence as the live one, or "nothing survived" means nothing.
+  _reap_probe >/dev/null
+  n_before="$(reaper_survivors | grep -c . || true)"
+  ck "R1 this run has processes of its own to reap ($n_before)" \
+     "$([ "${n_before:-0}" -ge 1 ] && echo 1 || echo 0)"
+  reaper_reap_procs
+  eqck "R2 after reaping, nothing this run started is still alive" \
+       "$(reaper_survivors | grep -c . || true)" "0"
   echo "RESULT fails=$FAILS"; exit $((FAILS ? 1 : 0))
 fi
 
@@ -440,6 +520,71 @@ out="$(GUI_GATE_DIR="$WC" DISPLAY=:99 PATH="$STUB:$PATH" GUI_GATE_REVIVE_EVERY=1
        bash -c ". '$SELF/gui_gate.sh'; _gate_revive_widget && echo REVIVED || echo LEFT_ALONE" 2>/dev/null)"
 eqck "W3 ...so the shell will not resurrect it" "$out" "LEFT_ALONE"
 eqck "W3 ...and forked nothing" "$(panel_procs "$WC")" "0"
+
+echo "=== REAP arm ==="
+# The check this file did not have either: nothing this run started outlives it.
+# It carries its own positive evidence -- R0 stands up a panel belonging to
+# "another session" and R3 proves the reap left it alone, so the one fix that
+# must never be made here (`pkill -f gui_gate_widget.tcl`, which would take the
+# user's only authority over their own screen mid-run) passes R2 and fails R3.
+mkdir -p "$OTHER/req" "$OTHER/status"; printf '%s' RUN > "$OTHER/control"
+wish "$SELF/gui_gate_widget.tcl" "$OTHER" >"$OTHER/log" 2>&1 &
+DPID=$!          # held from the fork; $DECOY below may never arrive
+for i in $(seq 1 60); do [ -s "$OTHER/widget.pid" ] && break; sleep 0.1; done
+DECOY="$(cat "$OTHER/widget.pid" 2>/dev/null)"
+ck "R0 a decoy panel from ANOTHER session is up (pid ${DECOY:-none})" \
+   "$([ -n "$DECOY" ] && kill -0 "$DECOY" 2>/dev/null && echo 1 || echo 0)"
+
+# A panel of OUR OWN, in a control dir under $TMP, so that R2/R4 have something
+# to be about (see _reap_probe: this file leaks nothing by itself, and both
+# checks were vacuous without a subject). Deliberately a real gate panel and not
+# a sleeper: it is the exact process class the item is about, it is found by
+# PROVENANCE rather than by the registry, and it is what makes the decoy
+# comparison in R3 mean something -- two panels, one killed, one spared, told
+# apart only by which run's dir they carry.
+mkdir -p "$TMP/rprobe/req" "$TMP/rprobe/status"; printf '%s' RUN > "$TMP/rprobe/control"
+wish "$SELF/gui_gate_widget.tcl" "$TMP/rprobe" >"$TMP/rprobe/log" 2>&1 &
+for i in $(seq 1 60); do [ -s "$TMP/rprobe/widget.pid" ] && break; sleep 0.1; done
+_reap_probe >/dev/null
+
+n_before="$(reaper_survivors | grep -c . || true)"
+note_before="$n_before"
+ck "R1 this run really did leave processes of its own alive ($n_before)" \
+   "$([ "${n_before:-0}" -ge 2 ] && echo 1 || echo 0)"
+reaper_reap_procs
+eqck "R2 after reaping, nothing this run started is still alive (had $note_before)" \
+     "$(reaper_survivors | grep -c . || true)" "0"
+ck "R3 ...and the panel belonging to ANOTHER session is untouched" \
+   "$([ -n "$DECOY" ] && kill -0 "$DECOY" 2>/dev/null && echo 1 || echo 0)"
+sleep 3
+eqck "R4 ...still zero 3 s later (no lazy deaths counted as clean)" \
+     "$(reaper_survivors | grep -c . || true)" "0"
+
+reaper_track "$DECOY"; reaper_track "$DPID"; reaper_reap_procs
+# The decoy is deliberately outside $TMP, so provenance cannot see it, and
+# $DECOY comes from a pidfile that a slow or stuck wish may never write -- the
+# path on which this suite failed R0 and then leaked the panel it had just
+# started, named by nothing. $! is the belt.
+ck "R10 the decoy is gone, by the pid held at the fork and not only its pidfile" \
+   "$([ -n "$DPID" ] && ! kill -0 "$DPID" 2>/dev/null && echo 1 || echo 0)"
+DECOY=""; DPID=""
+
+# LAST, because an X server takes every client with it: a teardown check placed
+# before the client checks answers them itself. See test_gui_gate_batch.sh.
+if reaper_owns_xvfb; then
+  xp="$(reaper_xvfb_pid)"
+  reaper_reap_xvfb
+  ck "R5 the private Xvfb this run started ($DISPLAY pid $xp) is gone" \
+     "$(reaper_xvfb_alive && echo 0 || echo 1)"
+else
+  borrowed_ok=0
+  if [ -z "${DISPLAY:-}" ]; then borrowed_ok=1
+  elif ! command -v xdpyinfo >/dev/null 2>&1; then
+    command -v wish >/dev/null 2>&1 && borrowed_ok=1
+  elif xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then borrowed_ok=1
+  fi
+  ck "R5 a BORROWED display (${DISPLAY:-none}) is left running, never reaped" "$borrowed_ok"
+fi
 
 echo "RESULT fails=$FAILS"
 exit $((FAILS ? 1 : 0))

@@ -19,6 +19,17 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 DD="$HERE/devdisplay.sh"
+. "$HERE/spawn_reaper.sh"
+
+# BEFORE a display number is chosen: a run of THIS FILE that was SIGKILLed
+# leaves its `Xvfb :95 -screen 0 1920x1080x24` and its openbox serving, and the
+# number taken -- that pair, alive for a day, is half of what item 14 was raised
+# about, and no trap can cover a SIGKILL. The sweep reclaims only a state dir
+# whose `.reaper_owner` stamp names a run that is provably dead, and kills only
+# the pids that run itself recorded in that dir. A concurrent run's dir is
+# stamped alive and is never touched; the persistent dev display's state dir is
+# ~/.claude/xschem_dev_display, which this glob cannot reach.
+reaper_sweep_orphan_runs "${TMPDIR:-/tmp}/devdisplay_test.*" xvfb.pid wm.pid vnc.pid
 
 pass=0; fail=0; skip=0
 ck() {  # ck <desc> <expected> <actual>
@@ -53,12 +64,40 @@ STATE=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
 EMPTY=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_empty.XXXXXX")
 export XSCHEM_DEVDISPLAY_DIR="$STATE"
 export DEVDISPLAY_NUM="$NUM"
+# Claim this state dir for THIS run, so that a run which never reaches its
+# teardown can be identified as dead by the next one (and, equally, so that a
+# concurrent run is identified as ALIVE and left alone).
+reaper_mark_owner "$STATE"
 
+# THIS SUITE STARTS AN X SERVER AND A WINDOW MANAGER, so it tears them down --
+# and not only through `$DD stop`. The strays that produced item 14 were an
+# `Xvfb :95 -screen 0 1920x1080x24` and its `openbox`, alive for a day: that is
+# this file's shape exactly (devdisplay.sh's default screen and WM, no `-auth`,
+# and :95 is the second number _free_num picks). `$DD stop` is the right call and
+# usually works, but it goes through several liveness predicates and a state dir
+# that a half-finished run may have left inconsistent, so the pids are recorded
+# as they appear and killed directly as a backstop.
+#
+# FOREIGN is killed by a display-SCOPED pattern, never `pkill Xvfb`: :99 is the
+# persistent dev display every other suite on this machine is using, and :0 is
+# the user's screen.
+_dd_track_pids() {   # remember whatever devdisplay.sh has started so far
+  local f
+  for f in xvfb.pid wm.pid vnc.pid; do
+    [ -r "$STATE/$f" ] && reaper_track "$(cat "$STATE/$f" 2>/dev/null)"
+  done
+  return 0
+}
+SWEEPPIDS=""
 _cleanup() {
+  local p
   XSCHEM_DEVDISPLAY_DIR="$STATE" DEVDISPLAY_NUM="$NUM" "$DD" stop >/dev/null 2>&1
   [ -n "${FOREIGN:-}" ] && pkill -f "Xvfb [:]$FOREIGN" >/dev/null 2>&1
-  rm -rf "$STATE" "$EMPTY" 2>/dev/null
+  reaper_reap_procs
+  for p in $SWEEPPIDS; do kill -9 "$p" 2>/dev/null; done
+  rm -rf "$STATE" "$EMPTY" ${SWEEPDIRS:-} 2>/dev/null
   rm -f "/tmp/.X$NUM-lock" "/tmp/.X${FOREIGN:-999}-lock" 2>/dev/null
+  return 0
 }
 trap _cleanup EXIT INT TERM
 
@@ -67,6 +106,7 @@ note "display :$NUM, state $STATE"
 # --- D1: start ---------------------------------------------------------------
 "$DD" start >/dev/null 2>&1
 rc=$?
+_dd_track_pids
 ck "D1 start exits 0" 0 "$rc"
 "$DD" status >/dev/null 2>&1
 ck "D1 status exits 0 (alive)" 0 "$?"
@@ -160,6 +200,7 @@ if [ -z "${FOREIGN:-}" ]; then
 else
   Xvfb ":$FOREIGN" -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
   fpid=$!
+  reaper_track "$fpid"
   i=0; while [ $i -lt 60 ]; do
     ss -xl 2>/dev/null | grep -q "@/tmp/\.X11-unix/X$FOREIGN\b" && break
     i=$((i+1)); sleep 0.1
@@ -222,6 +263,54 @@ ck "D13 stopping again is not an error" 0 "$?"
 # or a stop it points every GUI program in every new terminal at nothing.
 si_down=$(DISPLAY=:0 bash -c "eval \"\$('$DD' shellinit)\"; echo \$DISPLAY" 2>/dev/null)
 ck "D15 shellinit leaves DISPLAY ALONE when it is not running" ":0" "$si_down"
+
+# --- D17: the sweep that covers what no trap can ------------------------------
+#
+# D16 below asserts the trap path. This asserts the OTHER one, which is the one
+# the strays came through: a run of this file that is SIGKILLed never reaches
+# any teardown, and its server and window manager keep serving. The next run
+# reclaims them, and the proof it uses is a stamp on disk -- so the check is a
+# pair, because "it killed something" is only half of it. The negative control
+# is the whole point: a state dir whose owner is ALIVE is a concurrent run, and
+# touching it would be the same defect one layer down.
+SWEEPDIRS=""
+ORPH=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
+LIVED=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
+SWEEPDIRS="$ORPH $LIVED"
+DEADP=999999; while [ -e "/proc/$DEADP" ]; do DEADP=$((DEADP + 1)); done
+printf '%s %s\n' "$DEADP" 1 > "$ORPH/.reaper_owner"          # a run that is gone
+sleep 300 & OPH=$!
+echo "$OPH" > "$ORPH/xvfb.pid"
+cp "$STATE/.reaper_owner" "$LIVED/.reaper_owner"             # THIS run: alive
+sleep 300 & LVP=$!
+echo "$LVP" > "$LIVED/xvfb.pid"
+SWEEPPIDS="$OPH $LVP"
+reaper_sweep_orphan_runs "${TMPDIR:-/tmp}/devdisplay_test.*" xvfb.pid wm.pid vnc.pid
+ck "D17 the sweep reclaims the server of a run that is provably dead" 0 \
+   "$(kill -0 "$OPH" 2>/dev/null && echo 1 || echo 0)"
+ck "D17 ...and leaves a CONCURRENT run's alone (negative control)" 1 \
+   "$(kill -0 "$LVP" 2>/dev/null && echo 1 || echo 0)"
+kill -9 "$OPH" "$LVP" 2>/dev/null; wait "$OPH" "$LVP" 2>/dev/null
+rm -rf "$ORPH" "$LIVED" 2>/dev/null; SWEEPDIRS=""; SWEEPPIDS=""
+
+# --- D16: nothing this run started outlives it -------------------------------
+#
+# The check the harness did not have. A suite that leaks cannot see it: item 14
+# began with 21 gate panels and an orphaned Xvfb + openbox pair alive for 24 h
+# behind suites that were passing every one of their own checks. D13 already
+# takes the dev display down, so what is left to reap here is the FOREIGN server
+# of D11 -- taken down first, by pid, so this is an assertion and not a
+# tautology. reaper_survivors is pid-registry based; it can never name a server
+# or a panel belonging to another session.
+#
+# NOTE THE ORDER: it asserts, it does not reap. Reaping first would make the
+# check ask "can I kill things", which is never the question. The net in
+# _cleanup still runs afterwards, so a red D16 does not become a leak.
+_dd_track_pids
+ntracked="$(reaper_tracked)"
+ck "D16 the run really did start servers of its own ($ntracked tracked)" 1 \
+   "$([ "${ntracked:-0}" -ge 2 ] && echo 1 || echo 0)"
+ck "D16 ...and nothing it started is still alive" 0 "$(reaper_survivors | grep -c . || true)"
 
 # -----------------------------------------------------------------------------
 echo

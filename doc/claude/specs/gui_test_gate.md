@@ -6,7 +6,8 @@ Files: tests/headless/gui_gate_widget.tcl, tests/headless/gui_gate.sh,
 wired into tests/headless/full_audit.sh **and tests/headless/run_suites.sh**,
 plus tests/headless/gated_xschem.sh (enrolment wrapper for bare loops).
 Self-tests: tests/headless/test_gui_gate_revive.sh (v4 + **v6**),
-tests/headless/test_gui_gate_batch.sh (v5).
+tests/headless/test_gui_gate_batch.sh (v5), both reaping through
+tests/headless/spawn_reaper.sh (see "Reaping contract").
 
 ## v7 (2026-08-13): the gate is no longer the everyday path
 
@@ -40,6 +41,192 @@ events on `:0` against 1 under Xvfb with or without a WM. Calculator phase 0
 passed 49/49 under Xvfb and failed three checks on `:0` for exactly that reason.
 The durable fix was not a bigger matrix of window managers but a test that
 **forces** the race (`test_calc_skeleton` S12), which goes red on every arm.
+
+## Reaping contract (2026-08-15) — what a gate self-test owes the machine
+
+**Measured, and the reason this section exists.** 21 `wish gui_gate_widget.tcl`
+processes were alive on the development box, all between 87433 s and 88025 s old
+(~24.3 h), alongside an orphaned second virtual display and its `openbox`.
+Steady cost 12% CPU and 269 MB. They came from repeated runs of
+`tests/headless/test_gui_gate_batch.sh`, whose `trap 'rm -rf "$TMP"' EXIT` reaped
+the throwaway **control dirs** and nothing else — so every run deleted the
+directory and spared the panels, leaving processes polling a directory that
+could never be written to again. **The suite passed all 51 of its own checks the
+whole time**, because "did I clean up after myself" was never asserted.
+
+Reproduced deterministically: run the pre-fix file on a display that outlives it
+and it leaves **5 panels** (`g1 g3 g4 g5 g6`) with `RESULT fails=0`. On the
+`xvfb-run` arm it appeared clean only because the private X server died at the
+end and took its clients with it — incidental cleanup that evaporates in exactly
+the case that produced the 21, i.e. when the display leaks too.
+
+### Rules
+
+1. **A gate self-test reaps every process it causes to exist**, on every exit
+   path: normal end, `set -u` abort, uncaught error, `INT`, `TERM`. Reaping runs
+   **before** `rm -rf "$TMP"`, never after — deleting the control dir first is
+   precisely the bug.
+2. **NEVER by program name.** `pkill -f gui_gate_widget.tcl` is not an acceptable
+   fix and must not be reintroduced. `~/.claude/gui_test_gate/` is shared by the
+   main session, every worktree and every subagent run, and the user may have a
+   **live panel on `:0`** at that moment — their only authority over their own
+   screen while a suite runs. Same for the X server: `:99` is the persistent dev
+   display every other suite on this machine uses.
+3. **Two exact identifications**, both in `tests/headless/spawn_reaper.sh`:
+   - **pid registry** — `reaper_track <pid>` at the fork, for anything the suite
+     backgrounds itself;
+   - **provenance** — a process whose command line names *this run's* private
+     `mktemp -d`. A gate panel's argv is
+     `<wish> <…/gui_gate_widget.tcl> <control-dir>`, so a panel this run caused
+     to exist carries this run's throwaway control dir. The user's panel carries
+     `~/.claude/gui_test_gate` and can never match.
+4. **The X server it starts is its own to tear down.** `reaper_own_xvfb` has
+   **three** refusals, and the third is the one that holds when the others are
+   subverted:
+   - `:0`, the user's screen;
+   - whatever **either** `devdisplay.sh` state file names — `$XSCHEM_DEVDISPLAY_DIR`
+     *and*, unconditionally, `$HOME/.claude/xschem_dev_display/display`. The
+     first alone was not a guard at all: any caller that redirected that
+     variable made the refusal disappear, and `test_devdisplay.sh` — which
+     sources the reaper — exports exactly that redirection for its whole run;
+   - **a server this run did not start.** The pid must be in this run's registry,
+     or have been forked by `reaper_run_on_private_xvfb` in this very shell, or
+     have been handed down by the parent as a *pair* (`XSCHEM_REAPER_OWNED_DISPLAY`
+     **and** `XSCHEM_REAPER_OWNED_XVFB_PID`) and really be that server. No
+     environment variable can make `:99` pass this one: with both state files
+     unreadable, `reaper_own_xvfb :99` still refuses, naming the reason.
+
+   A display the suite merely **borrowed** is left running — asserted, not
+   assumed. The teardown assertion (**R5**) runs **last of all**, after every
+   check that has a client on that display: an X server's death takes its
+   clients with it, and R5 placed earlier silently answered the checks after it.
+5. **The suite starts its own private display rather than `exec`ing `xvfb-run`**
+   (`reaper_run_on_private_xvfb`). Two independent reasons, both measured:
+   xvfb-run's teardown is *its* `trap clean_up EXIT`, so a SIGKILL or a tool
+   timeout leaves the server and every client on it behind; and `clean_up` runs
+   under `set -e` and ends with `kill "$XVFBPID"`, so a session that correctly
+   reaps its own server makes xvfb-run exit **1** — a suite with
+   `RESULT fails=0` and 57 green checks reported as failed. The careful teardown
+   and the honest exit status could not both be had while xvfb-run owned the
+   server. The launcher is **not** an `exec`: the parent stays alive to reap the
+   display if the run under it could not — **and the parent installs its own
+   EXIT/INT/TERM trap** (saving and restoring whatever traps the caller had).
+   Without it, SIGKILLing the two suite shells left the server and its lock
+   serving forever; two reviewers reproduced that independently. Belt and
+   braces both: the marker file of rule 6 covers the SIGKILL the trap cannot.
+6. **A trap cannot cover a SIGKILL, so the NEXT run does — for THREE process
+   classes, and this rule used to overstate it by two.** Every sweep runs at
+   suite start, and every one of them decides by **proof on disk**, never by a
+   name. The proof is `.reaper_owner`: a run stamps its own scratch root with
+   `<pid> <start-time-since-boot>` at the moment it creates it, so a later run
+   can tell "a live sibling owns this" from "the run that made this is gone"
+   (the start time is there because pids recycle).
+
+   | sweep | what it reclaims | proof |
+   |---|---|---|
+   | `reaper_sweep_orphan_panels` | gate panels | control dir under a temp root and **gone**, *or* it exists and the `.reaper_owner` stamp at or above it names a **dead** run |
+   | `reaper_sweep_orphan_xvfb` | private X displays started by `reaper_run_on_private_xvfb`, plus stale `/tmp/.X<n>-lock` | a marker file per display number, written **before** the run starts, naming the server and its owner |
+   | `reaper_sweep_orphan_runs` | a suite's own state dirs and the pids recorded in them (`test_devdisplay.sh`) | the dir's `.reaper_owner` stamp names a **dead** run |
+
+   **Why the panel sweep needed a second criterion.** The first one — dir GONE —
+   selects exactly the strays the *pre-fix* code produced, where `rm -rf "$TMP"`
+   ran and the panels were spared, and **none** of the ones the fixed code can
+   produce: reaping now runs *before* the `rm -rf`, so a hard-killed run leaves
+   its dirs standing and its panels invisible to that test. Measured: a
+   SIGKILLed run left 5 panels with their dirs intact and the next run swept
+   nothing. With the stamp, the same run reports
+   `swept 5 orphaned panel(s) (control dir gone, or its run is dead)`.
+
+   **Why the display sweep exists at all.** The original stray *was an X server*
+   — `Xvfb :95` and its openbox — and nothing reclaimed one: the panel sweep
+   matches panels only, and the surviving `/tmp/.X<n>-lock` then made the number
+   look occupied to every future run, burning one of the 60 the launcher can use
+   until it returns 127 and the suite exits with no `RESULT` line at all.
+   A lock whose owner pid is dead with nothing listening is now dropped (X
+   servers stale-check their own lock; this code did not), and the lock is
+   removed **only when the kill provably succeeded**, never unconditionally — a
+   live server advertised as free is worse than a burned number.
+
+   **What is still not covered, stated plainly**: a dir with **no** stamp is
+   left strictly alone (it may predate the mechanism, or belong to something
+   else entirely) and a server started by anything other than
+   `reaper_run_on_private_xvfb` carries no marker. "No evidence" never means
+   "kill it" — that direction is asserted by **R11**'s negative control.
+7. **Nothing may kill the caller, and nothing is identified by substring.** Both
+   sweeps identify their subject *structurally*, from `/proc/<pid>/cmdline` split
+   on NULs:
+   - a panel is argv exactly three words, argv[0] ends `wish`, argv[1] ends
+     `gui_gate_widget.tcl`, argv[2] is the control dir;
+   - an X server is `basename(argv[0]) == Xvfb` **and** `argv[1] == :<display>`.
+     The substring version of this — "does the line contain `Xvfb` and `:137`" —
+     was got to adopt, and then TERM+KILL, a plain `bash -c 'sleep 120; :' Xvfb
+     :137`, and before that a tool shell whose `-c` argument merely mentioned
+     both. That is now **R9**.
+
+   `_reaper_kill` additionally refuses `$$` and every ancestor of it. An earlier
+   substring version of the panel sweep matched the launching shell — whose `-c`
+   argument mentioned the widget by path — and killed it, exit 144. The sibling
+   scar is in `test_gui_gate_revive.sh`: a bare `pkill -f gui_gate_widget.tcl`
+   also matches pkill's own command line and SIGTERMs the script. Both are still
+   live hazards for the *person* running these tests by hand: a `pgrep -f` typed
+   at a shell matches that shell.
+8. **A handle held at the fork, not read back from a file.** The R arm's decoy
+   panel lives outside `$TMP` on purpose, so provenance cannot see it, and
+   `$DECOY` comes from `widget.pid` — which a wish stuck in the X handshake may
+   write **134 seconds late or never**. On that path the suite failed R0 and then
+   leaked the panel it had just started, named by nothing. `$!` is kept at the
+   fork and reaped alongside; **R10** asserts it.
+
+### The checks that enforce it
+
+`test_gui_gate_batch.sh` **R0–R12** (66 checks in the file),
+`test_gui_gate_revive.sh` **R0–R5, R10** (58), `test_devdisplay.sh` **D16, D17**
+(39). Two properties matter more than the count.
+
+**Every "nothing survived" check has positive evidence in front of it.** Batch
+**R1** asserts the run *did* leave processes alive (measured 5) before R2 says
+none are; **D16**'s first half asserts the run *did* start servers (measured 3).
+Without that, a suite that quietly stopped spawning would read as perfectly
+clean. `test_gui_gate_revive.sh` used to be exactly that case and was documented
+here as "no R1, deliberately" — which was wrong. Measured 2026-08-15: a sabotage
+making **every reap a no-op** left revive's R2 and R4 **green** over a run that
+leaked two strays, because the file genuinely leaks nothing of its own, so
+"nothing survived" was trivially true either way. **A check whose subject may be
+absent must supply the subject**: revive's R arm now forks a real gate panel in
+a control dir under its own `$TMP` plus one tracked sleeper, and R1 requires ≥2.
+
+**Every "we killed ours" check has a negative control beside it.** **R0/R3**
+stand a decoy panel belonging to "another session" outside `$TMP` and assert it
+is untouched by the reap — the pair that catches rule 2. **R11**'s second half
+puts that same decoy through the *sweep* and asserts an unstamped dir is left
+alone. **R12**'s second half asserts the display the run is sitting on survives
+the display sweep. **R6–R9** assert the refusals themselves, which until
+2026-08-15 no check covered at all: with both refusals deleted from
+`reaper_own_xvfb` the file was **57/57 green** while a three-line probe made the
+reaper adopt the live persistent dev display, pid 901342.
+
+Sabotage, 2026-08-15 (each applied alone, each reverted from a byte-exact backup
+with md5 verified, each re-run green afterwards):
+
+| sabotage | result |
+|---|---|
+| `_reaper_kill` made a total no-op | batch **R2 + R4 red**; revive **R2 + R4 red** (they were green through this before R1 existed) |
+| replace the reap with `pkill -f 'gui_gate_widget[.]tcl'` | R2 green, **R3 red** — the forbidden fix is caught by exactly the check written for it |
+| `reaper_reap_xvfb` → `return 0` | **R5 red**, both files |
+| provenance arm of `reaper_survivors` disabled | batch **R1 red** (the registry alone still reports); revive **R1 red** |
+| the `:0` refusal deleted | **R6 red** — and note R6 asserts the *reason*, not the return code: there is no Xvfb on `:0`, so rc-only would have stayed green |
+| `$HOME` state file dropped from the dev-display refusal | **R7 red** — the redirected-`XSCHEM_DEVDISPLAY_DIR` case, i.e. the one `test_devdisplay.sh` creates for real |
+| `reaper_init`'s non-temp guard deleted | **R8 red** |
+| `_reaper_is_xvfb` back to substring matching | **R9 red** — a `bash -c 'sleep 60; :' Xvfb :141` is adopted |
+| widget's pidfile write disabled **and** the `$!` handle dropped | **R10 red** (R0 red as collateral: same empty `$DECOY`) |
+| the dead-owner criterion removed from the panel sweep | **R11 red** — the SIGKILL path stops being covered |
+| the panel sweep made to accept `unknown` as orphan | **R11 (2nd) red** — it killed the decoy |
+| `reaper_sweep_orphan_xvfb` → `return 0` | **R12 red** |
+| the live-owner check removed from the display sweep | **R12 (2nd) red** — it killed the display the run was on |
+| `reaper_track` made a no-op | **D16 red** (0 tracked) |
+| `kill -TERM $fpid` in `test_devdisplay.sh` removed | **D16 (2nd) red** |
+| the kill removed from `reaper_sweep_orphan_runs` | **D17 red** |
+| that sweep's "provably dead" guard widened to any owner | **D17 (2nd) red** — it killed a concurrent run's server |
 
 ## THE ONE RULE (v3)
 

@@ -298,9 +298,22 @@ real one.
 | D13 | `stop` → server gone, state cleaned, second `stop` still exits 0 |
 | D14 | `_wm_claimed` is false on a WM-less display, true on the managed one (R403) |
 | D15 | `shellinit` points a shell at a live display, and **leaves `DISPLAY` alone when it is not running** (R902/R903) |
+| D16 | the run **started** servers of its own (positive evidence, ≥2 tracked) **and nothing it started is still alive** |
+| D17 | the startup sweep reclaims the server of a run that is **provably dead**, and leaves a **concurrent** run's alone (negative control) |
 
 Each requires a sabotage that turns it red; a green suite over untouched code
 proves nothing.
+
+**D16 and D17 are the reaping contract, and they are here because this file has
+the exact shape of the leak that produced it.** The strays measured on
+2026-08-15 were an `Xvfb :95 -screen 0 1920x1080x24` and an `openbox`, alive for
+24 h: `devdisplay.sh`'s default screen and WM, no `-auth`, and `:95` is the
+second number `_free_num` picks. D16 covers the trap path — `$DD stop` plus the
+pid-tracked backstop. D17 covers the one no trap can reach, a SIGKILLed run:
+the state dir is stamped with `.reaper_owner` at the moment it is created, and
+the next run kills the pids that a **dead** run recorded in it. The full
+contract, shared with the two gate self-tests, is in
+`doc/claude/specs/gui_test_gate.md`, "Reaping contract".
 
 **D14 exists because the front door does not cover R403.** Breaking the
 readiness poll to `grep -q window` — so it matches `xprop`'s failure text and
@@ -324,7 +337,9 @@ Measured 2026-08-14 on this machine.
 
 ```
 tests/headless/test_devdisplay.sh
-RESULT: ALL PASS (35 checks)
+RESULT: ALL PASS (35 checks)          # 2026-08-14, before D16/D17
+RESULT: ALL PASS (39 checks)          # 2026-08-15, with D16 (2) and D17 (2)
+                                      # 37 with src/xschem absent -- D12 skips
 
 devdisplay.sh start   ->  0.34 s
 DISPLAY=:97 xprop -root _NET_SUPPORTED | grep -c _NET   ->  71     (WSLg: 7)
@@ -341,6 +356,10 @@ Six sabotages, each reverted:
 | abstract-socket detection removed | `FAIL: D1 start exits 0 -> {5}` + 5 more |
 | readiness poll → `grep -q window` (R403), **before D14** | **ALL PASS — bug invisible** |
 | readiness poll → `grep -q window` (R403), **after D14** | `FAIL: D14 _wm_claimed is FALSE on a WM-less display -> {0} (exp {1})` |
+| `reaper_track` made a no-op (2026-08-15) | `FAIL: D16 the run really did start servers of its own (0 tracked)` |
+| `kill -TERM $fpid` (the D11 foreign server) removed | `FAIL: D16 ...and nothing it started is still alive -> {1} (exp {0})` |
+| the sweep's kill removed from `reaper_sweep_orphan_runs` | `FAIL: D17 the sweep reclaims the server of a run that is provably dead` |
+| the sweep's "provably dead" guard widened to any owner | `FAIL: D17 ...and leaves a CONCURRENT run's alone` — it killed the live one |
 
 Newly-armed suites, run through the arm: `test_action_log` ALL PASS,
 `test_readonly_guard` PASS, `test_readonly_action_dispatch` PASS,
