@@ -197,8 +197,8 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 | W01 | `.calc` | toplevel | title `xschem Calculator` |
 | W02 | `.calc.mbar` | menu | cascades: File, Tools, View, Options, Constants, Help |
 | W03 | `.calc.res` | frame | collapsible; collapse toggle `.calc.res.tog` |
-| W04 | `.calc.res.lab` | label | `Results Dir:` |
-| W05 | `.calc.res.path` | entry | full path of the loaded raw; readonly unless edited via Browse |
+| W04 | `.calc.res.lab` | label | `Results Dir:` — **plus the provenance, when the raw is not this window's own**: `Results Dir (waveform viewer):` / `Results Dir (ASE-L session):`. See W05. |
+| W05 | `.calc.res.path` | entry | full path of the loaded raw; readonly unless edited via Browse. **⚠ Resolved from the raw the USER is looking at, not only from this window's context. Ruled by the crew 2026-08-15 (item 13).** The report: the Calculator was opened from the schematic editor while an ASE-L session had a state loaded and waveforms on screen, and the row read `(no raw file loaded)` — true of `xschem raw rawfile` in the editor's context and useless, because there *was* a raw and the user was looking at it. The order is `calc::results_source`: **self** (`xschem raw rawfile` in the current context) → **viewer** (a waveform viewer's context, the active token first then registry order) → **ase** (`ase::last_rawfile` of a live session, which already answers `{}` unless the file exists) → **none** (the phase-1a wording, unchanged). **A borrowed path MUST say whose it is** — a path with no provenance is worse than no path, because it reads as the current context's and is silently somebody else's; the short form is on W04's label, the long form (which viewer token / which session key) is the `balloon` tooltip on the entry. Two mechanics are load-bearing: the viewer read goes through `wviewer::enter_ctx`/`leave_ctx` with `borrow 1` — a bare `new_schematic switch` clobbers the viewer's title (issue 0173) and an unborrowed switch is refused 100% of the time from a menu callback, which holds `callback()`'s semaphore (issue 0314) — and a **refused** ticket is *skipped*, never read as "that viewer has no raw" (issues 0313/0314). **R705 binds**: this is a live query, never a cached or persisted value, and it has **three** callers — `calc::build_res`, at the end of building the row, which is the only one that runs on a **first** open and is therefore the one that delivers the reported fix; `calc::open`'s raise arm, for a later open onto a world that has moved; and the row's own **expand**, whose whole meaning is "show me that path again". Do not delete the build-time call as an unlisted extra: the raise arm does not run when there is nothing to raise. |
 | W06 | `.calc.sel` | frame | the 22-button radio grid |
 | W07 | `.calc.sel.<id>` | radiobutton | one per §5 row; variable `calc::selmode`, **empty = nothing armed**. ⚠ Each carries a `-tristatevalue` that no legitimate `calc::selmode` value can hold: Tk's default tristate value is the EMPTY STRING, which is exactly the "nothing armed" value, so without it all 22 render in Tk's mixed look (a panel-grey disc with a grey dot) at first open — the window ships looking as though every selector were half-armed. Ruled by the crew, 2026-08-15 (phase 1b fix round): `{}` stays the normative unarmed value, the sentinel moves. |
 | W08 | `.calc.mode` | frame | mode strip |
@@ -239,6 +239,55 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 - **R112** Minimum size must keep every control reachable — if the layout cannot honour
   that, the function browser is what scrolls, not what disappears.
   **R112 is about pixels, and it is enforced by derivation, not by a constant** (§4.2).
+- **R112a** **Every scrollable region scrolls under the pointer, not only over its
+  scrollbar.** Ruled by the crew 2026-08-15 (item 13) from the user's phase-1 eyeball
+  pass: *"should not require mouse pointer to be over the scrollbar to scroll. Must get
+  vertical scroll with mouse scrollwheel if pointer is over the area that needs scrolling
+  to make content visible."* The three regions are the function browser (`.calc.fn`), the
+  Stack (`.calc.stk`) and the buffer (`.calc.buf` + its toolbar `.calc.btb`).
+  - The mechanism is the house one, `nhse_bind_wheel_tree` (`src/xschem.tcl:1589`),
+    written from the same feedback about the same defect: **walk the region's widget tree
+    and bind every widget**, because Tk delivers a wheel event to the widget under the
+    pointer and runs only *that* widget's bindtags — it does not walk up the tree, so a
+    bare `bind` on the scrolled canvas misses every sibling and child. `calc::wheel_areas`
+    is the table; `calc::wheel_bind_all` runs once, after everything is packed.
+  - **The pane holder is a root of its region too** (added by the item-13 review). The
+    three content frames are children of `.calc` and are packed *into* their labelframes
+    with `-in`, because §4's widget paths are normative — so `winfo children .calc.pw.buf`
+    is **empty** and a walk rooted at the content frame can never reach the holder. What
+    the holder draws is the pane's title strip and the padding around the scrolling
+    content: measured on `:99` at the default 656x680, **25.2%** of the Buffer pane's
+    visible area, **16.0%** of the Functions pane's, **10.8%** of the Stack's. That is
+    the user's own complaint in miniature, and it was inconsistent as well — `.calc.stk`
+    is a Labelframe and *was* bound, only because it happened to be a walk root. Roots:
+    `.calc.pw.bot.fn` + `.calc.fn`; `.calc.pw.stk` + `.calc.stk`;
+    `.calc.pw.buf` + `.calc.buf` + `.calc.btb`.
+  - **ttk comboboxes are excluded** from the walk and it does not descend into one: a
+    combobox owns the wheel (`ttk::combobox::Scroll` steps the value) and its popdown is
+    a *child* widget, so binding it would break both gestures. Same exclusion, same
+    reason, as the house walk's.
+  - Steps and direction are **Tk's own class values**, so no region's feel changes:
+    5 units for a listbox, 50 pixels for a text; `Button-4`/`%D > 0` scroll toward the start of the
+    content; **Shift is the horizontal axis** (`wave_viewer.tcl:16586`), which W28's
+    horizontally scrolling function list needs. X11's `Button-4`/`Button-5` and
+    Windows/macOS's `<MouseWheel>` are both bound.
+  - **The canvas step is 3 units, not `property_form.tcl`'s 1** (ruled by the item-13
+    review, and a measured number rather than a taste). The canvas leaves
+    `-yscrollincrement` at 0, so a unit is one tenth of the visible height. At 1 unit
+    the function browser would have been the slowest region in the window by a factor
+    of four — 10% of a viewport per notch against the Stack's ~38% and the buffer's
+    ~50% — in a dialog where the wheel is now meant to feel the same wherever the
+    pointer is; and, because the walk binds the scrollbars too and every binding
+    `break`s, it **replaced** `Scrollbar`'s own class binding and made the one place the
+    wheel already worked **3x slower**. Measured on `:99`, one notch over `.calc.fn.vsb`:
+    Tk's class binding `0.2205882…`, ours at 1 unit `0.0735294…`, ours at 3 units
+    `0.2205882…`. 3 units is the number that leaves the scrollbar exactly as it was
+    before the item, to the last digit. Do not "restore the house 1 unit" without also
+    excluding `Scrollbar` widgets from the walk — and that is the wrong trade, because
+    Tk's Scrollbar binding is `v`-only, so a plain wheel over a **horizontal** scrollbar
+    does nothing at all and a wheel-dead strip comes back under the function list.
+  - Every binding **`break`s**. `Listbox`, `Text` and `Scrollbar` already carry wheel
+    class bindings, and without the break one notch would scroll twice.
 - **R113** **Colours come from the signal browser's palette, through one accessor.**
   The browser's palette is `ase::palette <role>` (`src/ase_window.tcl:151`) — the
   USER-LOCKED values `panel #f2f2f2`, `table #ffffff`, `header #e8e8e8`,

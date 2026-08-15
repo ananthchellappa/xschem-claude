@@ -746,17 +746,164 @@ proc calc::results_path {} {
     return $p
 }
 
+# ---------------------------------------------------------------------------
+# W05 ANSWERS ABOUT THE SIMULATION THE USER IS LOOKING AT, NOT ABOUT THIS
+# WINDOW'S CONTEXT.  Ruled by the crew 2026-08-15 (item 13), written into spec
+# §4's W05 row.
+#
+# THE REPORT.  The user opened the Calculator from the schematic editor while an
+# ASE-L session had a saved state loaded and its waveforms on screen, and the
+# row said `(no raw file loaded)`.  That was TRUE of `xschem raw rawfile` in the
+# editor's context and useless: there was a raw, they were looking at it, and
+# the tool that exists to build expressions over it said there was none.
+#
+# THE RULE.  Resolve in the order a user would: this window's own context first,
+# then the waveform viewer's, then the ASE-L session's; and say WHICH ONE it
+# came from, because a path with no provenance is worse than no path — it looks
+# like the current context's and is silently somebody else's.
+#
+#   self    `xschem raw rawfile` in the CURRENT context (scheduler.c:10005)
+#   viewer  a viewer window's context, ACTIVE one first (wviewer::current_token)
+#           then registry order.  Read through the 0173 loan bracket, never a
+#           bare `new_schematic switch` — see below.
+#   ase     ase::last_rawfile of a live session: the run directory's raw, and it
+#           already answers {} unless the FILE EXISTS (ase.tcl:689).  A pure
+#           path derivation, no context switch at all.
+#   none    nothing anywhere — the wording phase 1a shipped, unchanged.
+#
+# ⚠ R705 STILL BINDS.  Nothing here is persisted or cached: every call is a live
+# query, and the THREE callers are the moments the answer can have changed —
+# calc::build_res, at the end of building the row, which is the only one that
+# runs on a FIRST open and is therefore the one that delivers the reported fix
+# (do not delete it as an unlisted extra: `calc::open`'s raise arm does not run
+# when there is nothing to raise); calc::open's raise arm, for a second open
+# onto a world that has moved; and the Results Dir row's own expand.  A remembered
+# path is exactly the "resurrect stale vector names as if valid" R705 forbids,
+# and it would be worse across a fallback: the viewer that supplied it may be
+# closed by the time it is read back.
+#
+# ⚠ THE VIEWER READ TAKES A LOAN AND GIVES IT BACK (issue 0173).  Switching into
+# a viewer runs save_ctx/restore_ctx and ends in set_modify(-1), which rewrites
+# the target window's title; wviewer::enter_ctx/leave_ctx is the bracket that
+# repairs it, and `1` = borrow is issue 0314's arm for the case that matters
+# here — EVERY menu-driven open holds callback()'s semaphore, and an unborrowed
+# switch is refused 100% of the time from there while the identical call from
+# the CIW works.  This body reads only, runs no update/after, and always
+# restores, which is exactly the door that arm was opened for.  A refused loan
+# is not an answer about the viewer: it is skipped, and the next source is
+# tried.
+proc calc::viewer_tokens {} {
+    if {![info exists ::wviewer::windows]} { return {} }
+    set out {}
+    catch {
+        set cur [wviewer::current_token]
+        if {$cur ne {}} { lappend out $cur }
+    }
+    set all {}
+    catch {set all [dict keys $::wviewer::windows]}
+    foreach t $all {
+        if {[lsearch -exact $out $t] < 0} { lappend out $t }
+    }
+    return $out
+}
+
+# {viewer <path> <token>}, or {} when no viewer has one.
+proc calc::viewer_raw {} {
+    foreach tok [calc::viewer_tokens] {
+        set ticket {}
+        if {[catch {wviewer::enter_ctx $tok 1} ticket]} continue
+        if {![lindex $ticket 0]} continue
+        set p {}
+        catch {set p [xschem raw rawfile]}
+        catch {wviewer::leave_ctx $tok $ticket}
+        if {$p ne {}} { return [list viewer $p $tok] }
+    }
+    return {}
+}
+
+# {ase <path> <session key>}, or {} when no ASE-L session has results.
+proc calc::ase_raw {} {
+    if {[info commands ::ase::last_rawfile] eq {}} { return {} }
+    set keys {}
+    catch {set keys [dict keys $::ase::sessions]}
+    foreach k $keys {
+        set p {}
+        catch {set p [ase::last_rawfile $k]}
+        if {$p ne {}} { return [list ase $p $k] }
+    }
+    return {}
+}
+
+# {origin path detail}: origin is self|viewer|ase|none.
+proc calc::results_source {} {
+    set p [calc::results_path]
+    if {$p ne {}} { return [list self $p {}] }
+    foreach probe {calc::viewer_raw calc::ase_raw} {
+        set r {}
+        catch {set r [$probe]}
+        if {[llength $r] == 3} { return $r }
+    }
+    return [list none {} {}]
+}
+
+# W04's text carries the provenance, and it is W04 that carries it rather than a
+# new widget or a decorated path for two reasons.  (1) The path stays a PATH:
+# `.calc.res.path` is a readonly entry precisely so it can be selected and
+# copied, and `sim.raw  (waveform viewer)` is not a filename.  (2) The row's
+# widget set is normative (spec §4 W03-W05) and its slave order is asserted; a
+# fourth widget would change both for a string that has a natural home.  Empty
+# provenance for `self` and for `none` keeps the label EXACTLY as phase 1a
+# shipped it in the two cases the user already approved.
+proc calc::results_label {origin} {
+    switch -exact -- $origin {
+        viewer  {return {Results Dir (waveform viewer):}}
+        ase     {return {Results Dir (ASE-L session):}}
+        default {return {Results Dir:}}
+    }
+}
+
+# The long form, for the tooltip: the same fact with the detail that does not
+# fit a label (which viewer token / which session key).
+proc calc::results_tip {origin path detail} {
+    switch -exact -- $origin {
+        self   {return "The raw file loaded in this xschem window.\n$path"}
+        viewer {return "No raw in this window: showing the raw loaded in the\
+                        waveform viewer[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
+        ase    {return "No raw in this window: showing the results of the\
+                        ASE-L session[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
+        default {return "No .raw file is loaded here, in any waveform viewer,\
+                         or in any ASE-L session."}
+    }
+}
+
 # W05's text.  With nothing loaded the entry says so in words: an empty readonly
 # entry and a broken one look identical, and this row is the first thing a user
 # reads when an expression fails to resolve.  The wording is the browser's own
 # (wave_viewer.tcl:7886).
+#
+# ⚠ THIS PROC WRITES NO STATUS LINE, deliberately.  R508 makes the message
+# history a property of the window and S16 pins "a fresh window starts silent";
+# a refresh runs at BUILD time, so a line here would make every Calculator open
+# with a message it did not earn.  The provenance is on the label and in the
+# tooltip, where it is readable for as long as it is true rather than until the
+# next message displaces it.
 proc calc::results_refresh {} {
     variable respath
-    set p [calc::results_path]
+    foreach {origin p detail} [calc::results_source] break
     if {$p eq {}} {
         set respath {(no raw file loaded)}
     } else {
         set respath $p
+    }
+    if {[winfo exists .calc.res.lab]} {
+        .calc.res.lab configure -text [calc::results_label $origin]
+    }
+    # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl:12551), so
+    # re-attaching is how a baked-in string is UPDATED — the same property that
+    # makes it useless for the 56 function entries makes it right here, where
+    # there is one string and it changes rarely.
+    if {[winfo exists .calc.res.path]} {
+        catch {balloon .calc.res.path [calc::results_tip $origin $p $detail]}
     }
     return $respath
 }
@@ -773,6 +920,14 @@ proc calc::res_toggle {} {
         pack .calc.res.path   -side left  -fill x -expand 1 -padx {0 2} -pady 2
         .calc.res.tog configure -text {v}
         set rescollapsed 0
+        # THE "ON DEMAND" HALF OF W05's live query (item 13).  Re-opening the
+        # row is the one gesture whose whole meaning is "show me that path
+        # again", and R705 forbids the alternative (remembering it), so the
+        # answer is re-resolved here rather than replayed.  The other two
+        # callers are calc::build_res (first open) and calc::open's raise arm
+        # (every later open).  Cheap, and it cannot recurse: results_refresh
+        # writes a variable, a label and a binding, and packs nothing.
+        catch {calc::results_refresh}
     } else {
         pack forget .calc.res.lab .calc.res.path .calc.res.browse
         .calc.res.tog configure -text {>}
@@ -1681,6 +1836,177 @@ proc calc::pad_click {tok} {
     return [calc::inert "operator $tok" 2]
 }
 
+# ---------------------------------------------------------------------------
+# MOUSE-WHEEL SCROLLING (item 13; the user's phase-1 eyeball pass)
+#
+# The report, verbatim: "should not require mouse pointer to be over the
+# scrollbar to scroll. Must get vertical scroll with mouse scrollwheel if
+# pointer is over the area that needs scrolling to make content visible".
+#
+# ⚠ THE HARD PART IS NOT THE BINDING, IT IS WHICH WIDGET GETS THE EVENT.  X
+# delivers a wheel event to the window under the pointer and Tk then runs the
+# bindings of THAT widget's bindtags — {widget, class, toplevel, all}.  It does
+# NOT walk up the widget tree.  So the two obvious shapes are both wrong here:
+#
+#   bind .calc.fn.list ...   scrolls only while the pointer is over the canvas
+#                            itself, not over its scrollbars or the frame.
+#   bind .calc ...           reaches every descendant (the toplevel IS in every
+#                            child's bindtags — that is why property_form.tcl's
+#                            single-scroll-area dialog can do exactly this at
+#                            :1462-1464) but has NO idea which of this window's
+#                            three scrollable regions the pointer is in.
+#
+# THE HOUSE ANSWER IS `nhse_bind_wheel_tree` (xschem.tcl:1589), written from the
+# same user feedback about the same defect — "the table scrolls on a wheel
+# ANYWHERE over it, not only on the scrollbar" — and it is copied here rather
+# than re-invented: WALK THE REGION'S WIDGET TREE AND BIND EACH WIDGET, skipping
+# ttk comboboxes so an open dropdown keeps its own wheel.  The only thing added
+# is that this window has THREE such regions instead of one, so the scroll
+# target and its step are arguments rather than a hard-coded `.nhse.tbl.sf`.
+# Each binding `break`s, exactly as nhse's does, so a widget whose CLASS already
+# has a wheel binding cannot also fire it and double the scroll.
+# calc::wheel_bind_all runs once, after everything is packed; a widget created
+# after that must be bound by whoever creates it (nhse re-runs the walk after
+# each rebuild for that reason).
+#
+# WHAT WAS ALREADY WORKING, and is now covered by one idiom instead of three
+# accidents (measured on Tk 8.6.14, `bind <class> <Button-4>`):
+#   Listbox   yview scroll -5 units      -> the Stack list already scrolled
+#   Text      yview scroll -50 pixels    -> the buffer already scrolled
+#   Scrollbar tk::ScrollByUnits          -> over a scrollbar it already worked
+#   Canvas    NOTHING AT ALL             -> the function browser, the one region
+#                                          that most needs it (56 entries, ten
+#                                          rows deep, an eight-row pane), had no
+#                                          wheel scroll anywhere except its
+#                                          scrollbars.  That is the defect the
+#                                          user hit.
+# The steps below are those same class values, so no region's feel changes: 5
+# units for a listbox and 50 pixels for a text.
+#
+# ⚠ THE CANVAS STEP IS 3 UNITS, NOT property_form.tcl's 1 — ruled by the crew
+# 2026-08-15 (item 13 review), measured, and written into spec §4.1's R112a.
+# The canvas leaves -yscrollincrement at 0, so one unit is one TENTH of the
+# visible height, and 1 unit had two consequences neither of which anybody
+# ruled on.  (1) The function browser would then be the slowest region in the
+# window by a factor of four — 10% of a viewport per notch against the Stack
+# listbox's 5 lines (~38%) and the buffer's 50 pixels (~50%) — in a dialog
+# where the wheel is now meant to feel the same wherever the pointer is.
+# (2) It made the ONE place the wheel already worked WORSE: this walk binds the
+# scrollbars too (nhse's does, and a scrollbar is a visible slice of the
+# region), and its binding `break`s, so it REPLACES Tk's Scrollbar class
+# binding `tk::ScrollByUnits %W v 5`.  Measured on :99 with 56 entries:
+#   over .calc.fn.vsb, one notch, Tk's class binding   -> yview 0.2205882…
+#   over .calc.fn.vsb, one notch, ours at 1 unit       -> yview 0.0735294…
+#   over .calc.fn.vsb, one notch, ours at 3 units      -> yview 0.2205882…
+# 3 units is therefore not a taste: it is the number that leaves the scrollbar
+# exactly as fast as it was before this item, to the last digit, while giving
+# the canvas body the same gesture.  Do not "restore the house 1 unit" without
+# also excluding Scrollbar-class widgets from the walk — and that is the wrong
+# trade, because it puts a wheel-dead strip back under the horizontal
+# scrollbar (Tk's Scrollbar binding is `v`-only, so a plain wheel over an
+# `h` scrollbar does nothing at all).
+#
+# DIRECTION is the house convention and Tk's: Button-4 (wheel up) scrolls
+# toward the START of the content (-1), Button-5 toward the end; <MouseWheel>'s
+# signed %D is mapped the same way (%D > 0 -> -1), exactly as
+# property_form.tcl:1464 and wave_viewer.tcl:16593 do it.  SHIFT is the house
+# horizontal modifier (wave_viewer.tcl:16586, and Tk's own Shift-Button-4 on
+# Listbox/Text), which W28's horizontally scrolling function list needs.
+# X11 delivers buttons 4/5; Windows/macOS deliver <MouseWheel>.  Both are bound,
+# as the viewer binds both.
+#
+# ⚠ ttk COMBOBOXES ARE EXCLUDED FROM THE WALK — nhse_bind_wheel_tree's own
+# exclusion, for its own reason: TCombobox has a wheel meaning of its own
+# (`ttk::combobox::Scroll`, which steps the VALUE), so binding `.calc.fn.cat`
+# would silently take away the standard gesture for choosing a category, and the
+# walk must not descend into one either — a combobox's popdown is a CHILD widget
+# (`$cb.popdown`), so recursing would make the wheel scroll the function list
+# while the user is scrolling the open dropdown.  The status history dropdown
+# (W34) needs nothing from us for the same reason its popdown works today: that
+# popdown holds a real Listbox, and Tk's Listbox class bindings scroll it.
+#
+# ⚠ THE PANE HOLDER IS A ROOT TOO, and it is a root in its own right rather
+# than the parent of the content: `.calc.fn`, `.calc.stk` and `.calc.buf` are
+# children of `.calc` and are packed INTO the labelframes with `-in` (spec §4's
+# widget paths are normative), so `winfo children .calc.pw.buf` is EMPTY and a
+# walk rooted at the content frame never reaches the holder.  What the holder
+# draws is not decoration: it is the pane's title strip and the padding around
+# the scrolling content — measured on :99 at the default 656x680, 25.2% of the
+# Buffer pane's visible area, 16.0% of the Functions pane's and 10.8% of the
+# Stack's.  Leaving them out is the user's own complaint in miniature ("the
+# pointer is over the area that needs scrolling" — the title strip of a pane is
+# over that area), and it was inconsistent as well: `.calc.stk` is a Labelframe
+# too and was bound only because it happened to be a walk root.
+#
+# Region -> {name  y-target {y-step}  x-target {x-step}  {root widgets}}
+proc calc::wheel_areas {} {
+    return {
+        {fn  .calc.fn.list  {3 units}
+             .calc.fn.list  {3 units}     {.calc.pw.bot.fn .calc.fn}}
+        {stk .calc.stk.list {5 units}
+             .calc.stk.list {5 units}     {.calc.pw.stk .calc.stk}}
+        {buf .calc.buf      {50 pixels}
+             .calc.buf      {50 pixels}   {.calc.pw.buf .calc.buf .calc.btb}}
+    }
+}
+
+# Scroll `w` along `axis` (y|x) by `dir` * `amount` `unit`.  Missing widget is a
+# silent no-op: this runs from a binding, and a region torn down mid-gesture
+# must not throw a background error over a wheel notch.
+proc calc::wheel_scroll {w axis dir amount {unit units}} {
+    if {![winfo exists $w]} { return 0 }
+    catch {$w ${axis}view scroll [expr {$dir * $amount}] $unit}
+    return 1
+}
+
+# Bind the six wheel sequences on ONE widget, aimed at this region's targets.
+# nhse_bind_wheel's shape (xschem.tcl:1583-1587), with the target and step as
+# arguments and Shift added for the horizontal axis W28 needs.
+proc calc::wheel_bind {w yw ystep xw xstep} {
+    foreach {seq tgt axis dir step} [list \
+        <Button-4>         $yw y -1 $ystep \
+        <Button-5>         $yw y  1 $ystep \
+        <Shift-Button-4>   $xw x -1 $xstep \
+        <Shift-Button-5>   $xw x  1 $xstep] {
+        bind $w $seq "calc::wheel_scroll $tgt $axis $dir $step; break"
+    }
+    # <MouseWheel> carries a signed %D instead of a button number (Windows,
+    # macOS, and Tcl > 8.7 on X11).  Same targets, same steps, sign from %D.
+    bind $w <MouseWheel> \
+        "calc::wheel_scroll $yw y \[expr {%D > 0 ? -1 : 1}\] $ystep; break"
+    bind $w <Shift-MouseWheel> \
+        "calc::wheel_scroll $xw x \[expr {%D > 0 ? -1 : 1}\] $xstep; break"
+}
+
+# ...and on every descendant, which is the whole point (bindings are per widget;
+# Tk does not walk up the tree).  Returns how many widgets were bound — 0 means
+# the region was not built, which is a bug and not a state.
+proc calc::wheel_bind_tree {w yw ystep xw xstep} {
+    if {![winfo exists $w]} { return 0 }
+    # see the ruling above: a ttk::combobox owns the wheel, and its popdown is a
+    # child, so this stops here rather than binding either.
+    if {[winfo class $w] eq {TCombobox}} { return 0 }
+    calc::wheel_bind $w $yw $ystep $xw $xstep
+    set n 1
+    foreach c [winfo children $w] {
+        incr n [calc::wheel_bind_tree $c $yw $ystep $xw $xstep]
+    }
+    return $n
+}
+
+proc calc::wheel_bind_all {} {
+    set out {}
+    foreach area [calc::wheel_areas] {
+        foreach {name yw ystep xw xstep roots} $area break
+        set n 0
+        foreach root $roots {
+            incr n [calc::wheel_bind_tree $root $yw $ystep $xw $xstep]
+        }
+        lappend out $name $n
+    }
+    return $out
+}
+
 proc calc::build_panes {} {
     variable optnever
     variable optalways
@@ -1822,6 +2148,11 @@ proc calc::build_panes {} {
                .calc.fn .calc.pad} {
         raise $w
     }
+
+    # LAST, because it walks the widget tree: every scrollable region's wheel
+    # bindtag, on every widget in the region (see calc::wheel_areas).  Anything
+    # created after this point must be tagged by whoever creates it.
+    calc::wheel_bind_all
 }
 
 # A pane whose real contents have landed: the labelframe only.

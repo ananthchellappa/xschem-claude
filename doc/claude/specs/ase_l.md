@@ -374,7 +374,10 @@ the schematic's name, not the simulator's.
 - **Tools** — Waveform Viewer (raise-or-open THE waveform viewer bound to
   this ASE-L session — `wviewer::open` is per-token idempotent, so a session
   never gets two viewer windows; same seam as the `~` strip button);
-  Calculator (placeholder, disabled until it exists).
+  Calculator (**LIVE since the calculator batch's item 13** — `calc::open`,
+  with no session key: the Calculator is per-PROCESS idempotent, one window per
+  xschem, `doc/claude/specs/calculator.md` R101. It was a disabled placeholder
+  only until the window existed).
 
 ### Log window (not a pane)
 Kicking off a run opens a NEW toplevel showing the live log (existing

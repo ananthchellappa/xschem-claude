@@ -537,13 +537,28 @@ proc ase::ui::build {key top} {
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
   # — wviewer::open is per-token idempotent (re-open arm raises the existing
   # toplevel), so a session never gets a second viewer window; same seam the
-  # `~` strip button and Direct Plot use. Calculator is a named placeholder
-  # (disabled) until it exists, like the Results > Annotate entries.
+  # `~` strip button and Direct Plot use.
+  #
+  # Calculator is LIVE (calculator batch item 13). It was a named placeholder
+  # (`-state disabled`, added in 63e10b87) for the same reason the Annotate
+  # entries still are — the window did not exist. It does now: phase 0 shipped
+  # `.calc` and phase 1 filled every pane, and the schematic editor's Tools menu
+  # (xschem.tcl:14958) and the viewer's View menu (wave_viewer.tcl:17599) were
+  # both wired to `calc::open` at the time. This one was missed, so the tool the
+  # user actually works in was the one place the Calculator stayed greyed out.
+  #
+  # ⚠ NO `$key`, and that is not an oversight. Every other live entry in this
+  # menu is `[list ase::ui::<proc> $key]` because it acts on THIS session;
+  # `calc::open` is per-PROCESS idempotent (spec R101: one Calculator, not one
+  # per invocation), exactly like the viewer's own View-menu entry. Passing a
+  # session key would be a promise of a per-session Calculator that R101
+  # forbids. Which raw the window reports is answered live at open time
+  # (calc::results_source), not by whoever opened it.
   menu $top.mb.tools -tearoff 0
   $top.mb add cascade -label Tools -menu $top.mb.tools
   $top.mb.tools add command -label {Waveform Viewer} \
     -command [list ase::ui::open_viewer $key]
-  $top.mb.tools add command -label Calculator -state disabled
+  $top.mb.tools add command -label Calculator -command calc::open
 
   # toolbar row under the menubar: the simulation-temperature entry (state
   # key `temperature`, commit-validated numeric -> `.temp <T>` in the deck)

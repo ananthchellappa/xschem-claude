@@ -27,7 +27,8 @@
 #          re-netlist (hand-edit sentinel proof); log-window Ctrl-W close +
 #          Simulation > Log reopen; Stop (status red); W7v Tools > Waveform
 #          Viewer (opens this session's viewer, second invoke raises the same
-#          one, disabled Calculator is inert); Close. Legs needing
+#          one, and Calculator — LIVE since calculator batch item 13 — opens
+#          `.calc`); Close. Legs needing
 #          the MAIN window (W4-W7) self-SKIP when WSLg never maps it to a
 #          usable size; the W4 raise assertion also self-SKIPs when WSLg
 #          drops every re-map (stackorder stall); run legs self-SKIP
@@ -413,8 +414,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [$top.tb.temp cget -font] eq {AseEntryFont}}]
 
   # W1m: menu tree v2 — the 9 cascades in order; Launch disabled; Tools LIVE
-  # (Waveform Viewer wired to ase::ui::open_viewer, Calculator a disabled
-  # placeholder); Results > Direct Plot LIVE since item 13 (wired to
+  # (Waveform Viewer wired to ase::ui::open_viewer; Calculator LIVE since
+  # calculator item 13, wired to the BARE calc::open with no session key —
+  # R101 makes the Calculator one per process, unlike every ase::ui:: entry
+  # beside it); Results > Direct Plot LIVE since item 13 (wired to
   # ase::ui::direct_plot); the Annotate entries stay disabled; the Simulation
   # tree; no Revert
   set mlabels {}
@@ -436,8 +439,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W1m Tools Waveform Viewer command" \
     [$top.mb.tools entrycget {Waveform Viewer} -command] \
     [list ase::ui::open_viewer $key]
-  check "W1m Tools Calculator disabled (placeholder)" \
-    [$top.mb.tools entrycget Calculator -state] disabled
+  # ⚠ RESTATED (calculator batch item 13). This read `disabled (placeholder)`
+  # from 63e10b87 until now, and the expectation genuinely changed: the
+  # Calculator window exists (phase 0 shipped `.calc`, phase 1 filled it) and
+  # the schematic editor's Tools menu and the viewer's View menu were wired to
+  # `calc::open` at the time while this entry was missed. The check is kept
+  # pointed at the same entry and now pins the opposite state PLUS the command,
+  # because "not disabled" alone would pass on an enabled entry that does
+  # nothing.
+  check_true "W1m Tools Calculator NOT disabled (item 13: live)" \
+    [expr {[$top.mb.tools entrycget Calculator -state] ne {disabled}}]
+  # ⚠ NO $key: calc::open is per-PROCESS idempotent (calculator.md R101, one
+  # Calculator per xschem), unlike every ase::ui:: entry beside it.
+  check "W1m Tools Calculator command is the bare calc::open" \
+    [$top.mb.tools entrycget Calculator -command] calc::open
   check_true "W1m Results Direct Plot NOT disabled (item 13: live)" \
     [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
   check_true "W1m Results Direct Plot has a command" \
@@ -998,8 +1013,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # W7v: Tools > Waveform Viewer opens THIS session's viewer; invoking it a
   # second time raises the SAME window (one viewer per ASE-L instance, the
-  # wviewer::open re-open arm). Calculator is a disabled placeholder — Tk's
-  # `invoke` on a disabled entry is a no-op, so it can never open anything.
+  # wviewer::open re-open arm). Calculator is LIVE since calculator item 13
+  # (-command calc::open), so invoking it really does open .calc — which is why
+  # the legs below open it, assert it is a NEW toplevel, and close it again.
   $top.mb.tools invoke {Waveform Viewer}
   update
   set vtop [wviewer::window_for $key]
@@ -1016,10 +1032,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "W7v second invoke raises the SAME viewer" \
       [wviewer::window_for $key] $vtop
     check "W7v no second viewer window" [toplevel_names] $tls
-    check "W7v disabled Calculator invoke does not throw" \
+    # ⚠ RESTATED (calculator batch item 13). Both of these used to assert the
+    # placeholder's inertness — Tk's `invoke` on a disabled entry is a no-op, so
+    # it could never open anything. The entry is live now, so the same two
+    # gestures assert the opposite: the invoke still must not throw, and it must
+    # open THE Calculator. The window is closed again immediately so the rest of
+    # this suite still compares against $tls.
+    check "W7v Calculator invoke does not throw" \
       [catch {$top.mb.tools invoke Calculator}] 0
     update
-    check "W7v Calculator opened nothing" [toplevel_names] $tls
+    check_true "W7v Calculator invoke opened .calc" \
+      [expr {[winfo exists .calc] && [winfo class .calc] eq {Toplevel}}]
+    check_true "W7v ...and it is a NEW toplevel, not one that was already there" \
+      [expr {[lsearch -exact $tls .calc] < 0
+             && [lsearch -exact [toplevel_names] .calc] >= 0}]
+    catch {calc::close}
+    update
+    check "W7v Calculator closed again, toplevel set back as it was" \
+      [toplevel_names] $tls
     wviewer::close $key
     update
     check "W7v viewer closed, registry clean" [wviewer::window_for $key] {}

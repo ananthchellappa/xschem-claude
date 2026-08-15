@@ -71,6 +71,19 @@
 #        written out from the SPEC, every emitted token lexable, the audited
 #        defects D1/D2/D3/D6, and no duplicate names
 #
+# Item 13 (the phase-1 eyeball punch-list) adds:
+#   S25  the wheel scrolls under the POINTER, not only over a scrollbar: every
+#        widget of all three scrollable regions is bound (the house walk,
+#        xschem.tcl:1589, comboboxes excluded), each aimed at its own target
+#        with Tk's own step; the gestures fire over a CHILD that is not the
+#        target and has no wheel class binding of its own; direction, the
+#        Shift horizontal axis, the <MouseWheel> arm, and that each binding
+#        `break`s so one notch is not scrolled twice
+#   S26  the Results Dir row answers about the raw the USER is looking at: this
+#        context first, then a waveform viewer's (through the 0173 loan, with a
+#        refused ticket skipped and the loan given back), then an ASE-L
+#        session's — and the label SAYS which. R705: nothing cached
+#
 # Needs a DISPLAY (Tk widgets). Under Xvfb set GUI_GATE=0. Standalone:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_skeleton.tcl
 
@@ -2563,6 +2576,485 @@ check "S23 a fresh window renders that category" \
     [llength [pcall .calc.fn.list find withtag fnentry]] 56
 check "S22 a fresh window still has no digit key" \
     [list [winfo exists .calc.pad.k12] [winfo exists .calc.pad.k13]] {1 0}
+
+# --- S25 mouse-wheel scrolling under the pointer (item 13, Part A) ------------
+# The user's words, from the phase-1 eyeball pass: "should not require mouse
+# pointer to be over the scrollbar to scroll. Must get vertical scroll with
+# mouse scrollwheel if pointer is over the area that needs scrolling to make
+# content visible".
+#
+# ⚠ A WHEEL CHECK IS EASY TO WRITE VACUOUSLY. `event generate <the widget that
+# already scrolls> <Button-5>` proves nothing about the pointer being over a
+# CHILD of the region — and two of the three regions here already scrolled over
+# their own list, through Tk's Listbox/Text CLASS bindings, before this item
+# existed. So every functional leg below fires over a widget that is NOT the
+# scroll target and has NO wheel class binding of its own (a Button), except
+# the function browser's, whose target is a canvas — and Canvas has no wheel
+# class binding at all, which is asserted here as the fingerprint of the defect.
+check "S25 fixture: Tk's Canvas class has NO wheel binding of its own" \
+    [list [bind Canvas <Button-4>] [bind Canvas <Button-5>] [bind Canvas <MouseWheel>]] \
+    {{} {} {}}
+check_true "S25 fixture: Listbox and Text DO have one (so only a non-list child proves ours)" \
+    [expr {[bind Listbox <Button-4>] ne {} && [bind Text <Button-4>] ne {}}]
+
+# ⚠ THIS SECTION MUST NOT CALL calc::wheel_bind_all, and the first draft did —
+# to read its per-region counts. That one line made every check below GREEN WITH
+# THE BUILD'S OWN CALL DELETED (measured: sabotage A1, 483/483), because the
+# test was installing the feature it was about to test. The counts are therefore
+# MEASURED off the widgets instead: what the BUILD left behind is the subject.
+proc s25_bound {w} {
+    if {![winfo exists $w]} { return 0 }
+    set n [expr {[bind $w <Button-4>] ne {} ? 1 : 0}]
+    foreach c [winfo children $w] { incr n [s25_bound $c] }
+    return $n
+}
+# ⚠ THE PANE HOLDER COUNTS. `.calc.fn`/`.calc.stk`/`.calc.buf` are children of
+# `.calc` and are packed into the labelframes with `-in`, so the holder is NOT
+# an ancestor in the widget tree and a walk rooted at the content frame cannot
+# reach it. The holder is what draws the pane's title strip and the padding
+# around the scrolling content — a measured 25.2% / 16.0% / 10.8% of the three
+# panes' visible area — so it is bound as a root of its own region, and counted
+# here as one widget each.
+check "S25 the BUILD bound every widget of all three regions, holder included" \
+    [list fn [expr {[pcall s25_bound .calc.pw.bot.fn] + [pcall s25_bound .calc.fn]}] \
+          stk [expr {[pcall s25_bound .calc.pw.stk] + [pcall s25_bound .calc.stk]}] \
+          buf [expr {[pcall s25_bound .calc.pw.buf] + [pcall s25_bound .calc.buf] \
+                     + [pcall s25_bound .calc.btb]}]] \
+    {fn 5 stk 8 buf 13}
+check "S25 ...and the holder really is the pane title strip, not an ancestor" \
+    [list [pcall winfo class .calc.pw.buf] [pcall winfo children .calc.pw.buf] \
+          [pcall winfo parent .calc.buf]] \
+    {Labelframe {} .calc}
+# the six sequences, on a widget that is NOT the scroll target
+foreach seq {<Button-4> <Button-5> <Shift-Button-4> <Shift-Button-5>
+             <MouseWheel> <Shift-MouseWheel>} {
+    check_true "S25 $seq bound on .calc.stk.push (a child, not the listbox)" \
+        [expr {[pcall bind .calc.stk.push $seq] ne {}}]
+}
+# ...and it aims at the region's own target, with the region's own step
+check "S25 the child's binding scrolls the STACK LIST, 5 units (Tk's own listbox step)" \
+    [pcall bind .calc.stk.push <Button-4>] \
+    {calc::wheel_scroll .calc.stk.list y -1 5 units; break}
+check "S25 the buffer toolbar's binding scrolls the BUFFER, 50 pixels (Tk's own text step)" \
+    [pcall bind .calc.btb.enter <Button-4>] \
+    {calc::wheel_scroll .calc.buf y -1 50 pixels; break}
+# ⚠ 3 canvas units, NOT property_form.tcl's 1 — the crew's item-13 ruling
+# (R112a), and a measured number rather than a taste. This walk binds the
+# scrollbars too and every binding `break`s, so it REPLACES Tk's Scrollbar class
+# binding `tk::ScrollByUnits %W v 5`; at 1 unit the one place the wheel already
+# worked became 3x slower (measured on :99: 0.0735294 per notch against Tk's
+# 0.2205882), and the canvas region would have been the slowest in the window by
+# a factor of four. 3 units restores the scrollbar's pre-item step to the last
+# digit. The check that guards the FEEL, not just the text, is below.
+check "S25 the function browser's is 3 canvas units (R112a, item 13 review)" \
+    [pcall bind .calc.fn.vsb <Button-4>] \
+    {calc::wheel_scroll .calc.fn.list y -1 3 units; break}
+# the house exclusion (xschem.tcl:1589, and test_nh_editor_flush_scroll.tcl W2):
+# a ttk::combobox keeps its own wheel, and the walk does not descend into one
+check "S25 no wheel binding on the category combobox (its dropdown keeps its own)" \
+    [pcall bind .calc.fn.cat <Button-4>] {}
+check "S25 nor on the plot-destination or status-history comboboxes" \
+    [list [pcall bind .calc.mode.dest <Button-4>] \
+          [pcall bind .calc.status.hist <Button-4>]] {{} {}}
+# ...and the history dropdown (W34) still scrolls, which is WHY it needs nothing
+# from us: its popdown holds a real Listbox and Tk's class binding scrolls it.
+# The popdown is a CHILD of the combobox and is built lazily, which is the other
+# half of the exclusion — a walk that descended into a combobox would bind this
+# listbox to scroll the FUNCTION list while the user scrolls this dropdown.
+# ⚠ NOT a scroll gesture: the popdown listbox is EMPTY until the combobox is
+# POSTED (measured — `size` 0 and `yview` {0.0 1.0} with 50 values on the
+# combobox), and posting takes a grab, which is not worth risking in the last
+# section of a 480-check file for a leg whose subject is Tk's own binding. What
+# is asserted is what this file is responsible for: that the popdown carries the
+# Listbox class tag (whose wheel binding the S25 fixture leg above proved
+# exists) and NOT one of ours.
+set pop [pcall ttk::combobox::PopdownWindow .calc.status.hist]
+check "S25 the history popdown is a child of the combobox, and holds a Listbox" \
+    [list [expr {$pop eq {.calc.status.hist.popdown}}] [pcall winfo class $pop.f.l]] \
+    {1 Listbox}
+check_true "S25 ...whose bindtags carry Listbox, so Tk's wheel binding reaches it" \
+    [expr {[lsearch -exact [pcall bindtags $pop.f.l] Listbox] >= 0}]
+check "S25 ...and it scrolls ITSELF, not the function browser" \
+    [pcall bind $pop.f.l <Button-4>] {}
+
+# --- and now the gesture itself, over a child, at real coordinates ------------
+# ⚠ SETTLE, DON'T HOPE. The first draft of these legs did one `update idletasks`
+# before the gesture and one `update` after, and went red once in seven runs on
+# a byte-identical tree — the whole gesture cluster at once, always reporting
+# "it did not move". The gesture-test rule in this tree (CLAUDE.md, and S12's
+# own forced race) says drive the full sequence and make the race deterministic
+# rather than let the environment supply it: the pane relayout that follows
+# S24's teardown and the fixture inserts lands on an `after idle`, and if it
+# lands between the `moveto 0` and the read, the view it recomputes is 0 again
+# and the notch is invisible. So: pump to quiescence BEFORE measuring, and after
+# the notch wait a BOUNDED time for the view to actually move. A view that never
+# moves still fails — it just takes 200 ms to say so instead of 0.
+proc s25_settle {} {
+    for {set i 0} {$i < 5} {incr i} { update idletasks ; update ; after 5 }
+    update idletasks ; update
+}
+# wait (bounded) for $tgt's $axis view to leave $from; returns where it ended up
+proc s25_await {tgt axis from} {
+    for {set i 0} {$i < 20} {incr i} {
+        update idletasks ; update
+        set now [lindex [$tgt ${axis}view] 0]
+        if {$now != $from} { return $now }
+        after 10
+    }
+    return [lindex [$tgt ${axis}view] 0]
+}
+
+# FIXTURE: content that really overflows. A view that cannot move cannot show
+# that the wheel moved it.
+for {set i 0} {$i < 40} {incr i} {
+    .calc.stk.list insert end "stack entry $i [string repeat wide 20]"
+}
+for {set i 0} {$i < 40} {incr i} {
+    .calc.buf insert end "line $i [string repeat x 60]\n"
+}
+s25_settle
+check_true "S25 fixture: all three regions really do overflow their viewports" \
+    [expr {[lindex [pcall .calc.fn.list yview] 1]  < 1.0
+        && [lindex [pcall .calc.fn.list xview] 1]  < 1.0
+        && [lindex [pcall .calc.stk.list yview] 1] < 1.0
+        && [lindex [pcall .calc.stk.list xview] 1] < 1.0
+        && [lindex [pcall .calc.buf yview] 1]      < 1.0}]
+
+# helper: fire a wheel event ON A GIVEN WIDGET at a coordinate inside it, and
+# report how far the region's target moved.
+proc s25_wheel {w seq tgt axis} {
+    s25_settle
+    catch {$tgt ${axis}view moveto 0}
+    s25_settle
+    set before [lindex [$tgt ${axis}view] 0]
+    set x [expr {[winfo width  $w] / 2}]
+    set y [expr {[winfo height $w] / 2}]
+    catch {event generate $w $seq -x $x -y $y}
+    return [list $before [s25_await $tgt $axis $before]]
+}
+
+# THE HEADLINE: the pointer is over a BUTTON in the Stack region — not the
+# listbox, not the scrollbar — and the list scrolls.
+set r [pcall s25_wheel .calc.stk.push <Button-5> .calc.stk.list y]
+check_true "S25 wheel over a Stack BUTTON scrolls the stack list down" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+set r [pcall s25_wheel .calc.stk.del <Shift-Button-5> .calc.stk.list x]
+check_true "S25 Shift-wheel over a Stack button scrolls it sideways (house horizontal modifier)" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+# ...and the same for the buffer, over its TOOLBAR
+set r [pcall s25_wheel .calc.btb.enter <Button-5> .calc.buf y]
+check_true "S25 wheel over the buffer TOOLBAR scrolls the buffer" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+# ...and the function browser, whose canvas had no wheel of any kind before
+set r [pcall s25_wheel .calc.fn.list <Button-5> .calc.fn.list y]
+check_true "S25 wheel over the function list scrolls it vertically (R112)" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+set r [pcall s25_wheel .calc.fn.list <Shift-Button-5> .calc.fn.list x]
+check_true "S25 Shift-wheel over the function list scrolls it horizontally (W28)" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+set r [pcall s25_wheel .calc.fn.hsb <Button-5> .calc.fn.list y]
+check_true "S25 ...and over its horizontal scrollbar too (which Tk's own binding no-ops)" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+# ...and over the PANE TITLE STRIP, which is a slice of the pane the user sees
+# and which a walk rooted at the content frame never reaches (the content frame
+# is a child of .calc, packed in with -in).
+set r [pcall s25_wheel .calc.pw.buf <Button-5> .calc.buf y]
+check_true "S25 wheel over the BUFFER PANE's title strip scrolls the buffer" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+set r [pcall s25_wheel .calc.pw.bot.fn <Button-5> .calc.fn.list y]
+check_true "S25 ...and over the FUNCTIONS pane's title strip" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+set r [pcall s25_wheel .calc.pw.stk <Button-5> .calc.stk.list y]
+check_true "S25 ...and over the STACK pane's title strip" \
+    [expr {[lindex $r 0] == 0.0 && [lindex $r 1] > 0.0}]
+
+# THE FEEL, not just the binding text (item 13 review): one notch over the
+# function browser's scrollbar must move it exactly as far as Tk's own Scrollbar
+# class binding moved it BEFORE this walk bound over the top of it. At the
+# house canvas step of 1 unit it was three times slower — the one place the
+# wheel already worked, made worse. This is the check that reddens if anyone
+# "restores" that step.
+catch {.calc.fn.list yview moveto 0}
+pcall s25_settle
+catch {event generate .calc.fn.vsb <Button-5> -x 3 -y 30}
+set fn_wheel [pcall s25_await .calc.fn.list y 0.0]
+catch {.calc.fn.list yview moveto 0}
+pcall s25_settle
+pcall tk::ScrollByUnits .calc.fn.vsb v 5
+pcall s25_settle
+check "S25 one notch over the fn scrollbar is still Tk's own pre-item step" \
+    $fn_wheel [lindex [pcall .calc.fn.list yview] 0]
+
+# DIRECTION, the house/Tk convention: Button-4 is toward the start of the
+# content. Scrolled down first, so "back to 0" is a real movement and not the
+# clamp it would be from the top.
+catch {.calc.stk.list yview moveto 0.5}
+pcall s25_settle
+set d0 [lindex [pcall .calc.stk.list yview] 0]
+catch {event generate .calc.stk.push <Button-4> -x 5 -y 5}
+set d1 [pcall s25_await .calc.stk.list y $d0]
+check_true "S25 Button-4 scrolls UP (toward the start), Button-5 down" \
+    [expr {$d0 > 0.0 && $d1 < $d0}]
+
+# <MouseWheel>'s signed %D maps the same way (Windows/macOS, Tcl > 8.7)
+catch {.calc.buf yview moveto 0.5}
+pcall s25_settle
+set m0 [lindex [pcall .calc.buf yview] 0]
+catch {event generate .calc.btb.pop <MouseWheel> -delta 120 -x 5 -y 5}
+set m1 [pcall s25_await .calc.buf y $m0]
+catch {event generate .calc.btb.pop <MouseWheel> -delta -120 -x 5 -y 5}
+set m2 [pcall s25_await .calc.buf y $m1]
+check_true "S25 <MouseWheel> +%D scrolls up and -%D scrolls down, from the same child" \
+    [expr {$m0 > 0.0 && $m1 < $m0 && $m2 > $m1}]
+
+# ⚠ <Shift-MouseWheel> IS THE ONE THE FIRST DRAFT LEFT AS AN EXISTENCE CHECK,
+# and it could therefore be pointed at the wrong AXIS with the sign REVERSED
+# and stay green (measured: 487/487). It is the Windows/macOS half of W28's
+# horizontal contract, so it gets the same two-direction gesture the vertical
+# <MouseWheel> gets — over a Stack BUTTON, and asserting the list's XVIEW.
+catch {.calc.stk.list xview moveto 0.5}
+pcall s25_settle
+set h0 [lindex [pcall .calc.stk.list xview] 0]
+catch {event generate .calc.stk.push <Shift-MouseWheel> -delta 120 -x 5 -y 5}
+set h1 [pcall s25_await .calc.stk.list x $h0]
+catch {event generate .calc.stk.push <Shift-MouseWheel> -delta -120 -x 5 -y 5}
+set h2 [pcall s25_await .calc.stk.list x $h1]
+check_true "S25 <Shift-MouseWheel> moves the X axis, +%D left and -%D right" \
+    [expr {$h0 > 0.0 && $h1 < $h0 && $h2 > $h1}]
+
+# ⚠ EVERY BINDING `break`s, and this is what proves it. .calc.buf is a Text, so
+# Tk's OWN class binding would also fire without the break and the wheel would
+# scroll TWICE per notch — a defect no "did it move?" check can see. One notch
+# must move the buffer exactly as far as one manual scroll of the same step.
+catch {.calc.buf yview moveto 0}
+pcall s25_settle
+catch {event generate .calc.buf <Button-5> -x 5 -y 5}
+set viawheel [pcall s25_await .calc.buf y 0.0]
+catch {.calc.buf yview moveto 0}
+catch {.calc.buf yview scroll 50 pixels}
+pcall s25_settle
+check "S25 one notch over the buffer scrolls it ONCE, not once per bindtag" \
+    $viawheel [lindex [pcall .calc.buf yview] 0]
+
+# re-running the walk is safe (nhse re-runs it after every rebuild): `bind`
+# REPLACES, so nothing is doubled and no widget is bound twice. Deliberately the
+# LAST leg of S25, after everything above has judged the build's own call.
+#
+# ⚠ COUNTS ALONE DO NOT ASSERT IDEMPOTENCE, which is what this check is named
+# for. A walk that APPENDED (`bind $w $seq "+..."`) re-reports the identical
+# counts and stays green on the return value — measured, 487/487 — while the
+# binding script really does grow on each pass; nothing user-visible happens
+# only because Tk's `break` aborts the appended copy, i.e. the check would be
+# passing for a reason it does not test. So the BINDING TEXT is compared against
+# the same literal used before the re-run, and the one-notch-moves-once
+# measurement is repeated after it.
+set bind_lit {calc::wheel_scroll .calc.stk.list y -1 5 units; break}
+set bind_before [pcall bind .calc.stk.push <Button-4>]
+set wcounts [pcall calc::wheel_bind_all]
+check "S25 the walk reports what it bound, and re-running it changes nothing" \
+    [list $wcounts [pcall s25_bound .calc.fn] [pcall s25_bound .calc.stk]] \
+    {{fn 5 stk 8 buf 13} 4 7}
+check "S25 ...the binding SCRIPT is byte-identical after the re-walk (bind replaces, never appends)" \
+    [list $bind_before [pcall bind .calc.stk.push <Button-4>]] \
+    [list $bind_lit $bind_lit]
+catch {.calc.buf yview moveto 0}
+pcall s25_settle
+catch {event generate .calc.buf <Button-5> -x 5 -y 5}
+check "S25 ...and one notch still moves the buffer exactly once after it" \
+    [pcall s25_await .calc.buf y 0.0] $viawheel
+
+# the fixture leaves nothing behind: the buffer and the stack are phase-2/4's
+.calc.buf delete 1.0 end
+.calc.stk.list delete 0 end
+update idletasks
+check "S25 fixture cleaned up" \
+    [list [pcall .calc.stk.list size] [string trim [pcall .calc.buf get 1.0 end]]] {0 {}}
+
+# --- S26 Results Dir against a NEIGHBOURING raw (item 13, Part C) -------------
+# The report: the Calculator was opened from the schematic editor while an ASE-L
+# session had a state loaded and waveforms on screen, and the row said "(no raw
+# file loaded)". True of `xschem raw rawfile` in the editor's context, and
+# useless — there WAS a raw and the user was looking at it.
+#
+# The three sources are shimmed rather than mocked away: calc::viewer_raw's real
+# loop runs against a fake registry and a fake 0173 loan bracket, so the ticket
+# bail, the ordering and the give-back are all exercised. R705 forbids caching
+# any of it, which the last leg checks by taking the shims away again.
+check "S26 with nothing anywhere it is still the phase-1a wording" \
+    [pcall calc::results_source] {none {} {}}
+check "S26 ...and the label is untouched in that case" \
+    [pcall .calc.res.lab cget -text] {Results Dir:}
+
+set ::s26_log {}
+set ::s26_inctx 0
+set ::s26_shimerr [catch {
+    rename ::xschem ::calc_s26_xschem
+    proc ::xschem {args} {
+        if {[lrange $args 0 1] eq {raw rawfile}} {
+            if {$::s26_inctx} { return {/tmp/s26/from_viewer.raw} }
+            error {No raw file loaded}
+        }
+        return [uplevel 1 [linsert $args 0 ::calc_s26_xschem]]
+    }
+    rename ::wviewer::enter_ctx ::calc_s26_enter
+    rename ::wviewer::leave_ctx ::calc_s26_leave
+    proc ::wviewer::enter_ctx {token {borrow 0}} {
+        lappend ::s26_log "enter $token borrow=$borrow"
+        # a REFUSED loan is not an answer about that viewer (issues 0313/0314)
+        if {$token eq {refused_tok}} { return {0 {}} }
+        set ::s26_inctx 1
+        return {1 .somewhere}
+    }
+    proc ::wviewer::leave_ctx {token ticket} {
+        lappend ::s26_log "leave $token"
+        set ::s26_inctx 0
+        return 1
+    }
+    set ::s26_savedwin $::wviewer::windows
+    set ::wviewer::windows [dict create \
+        refused_tok [dict create win_path .nosuch1 top .nosuch1] \
+        good_tok    [dict create win_path .nosuch2 top .nosuch2]]
+} s26msg]
+check "S26 shims installed cleanly" $::s26_shimerr 0
+
+set src [pcall calc::results_source]
+check "S26 with no raw here, the VIEWER's raw is what the row reports" \
+    $src {viewer /tmp/s26/from_viewer.raw good_tok}
+check "S26 a REFUSED loan is skipped, not read as 'that viewer has none'" \
+    [lsearch -exact $::s26_log {enter refused_tok borrow=1}] 0
+check "S26 the loan is taken with borrow=1 (issue 0314: a menu open holds the semaphore)" \
+    [lsearch -exact $::s26_log {enter good_tok borrow=1}] 1
+check "S26 ...and given back (issue 0173: a switch clobbers the viewer's title)" \
+    [lsearch -exact $::s26_log {leave good_tok}] 2
+check "S26 no leave for the refused token — there was nothing to give back" \
+    [lsearch -exact $::s26_log {leave refused_tok}] -1
+
+pcall calc::results_refresh
+check "S26 the entry shows the borrowed path in full" \
+    [pcall .calc.res.path get] {/tmp/s26/from_viewer.raw}
+check "S26 ...and the label SAYS whose it is (a path with no provenance is worse)" \
+    [pcall .calc.res.lab cget -text] {Results Dir (waveform viewer):}
+check_true "S26 the tooltip names the source and the path" \
+    [expr {[string match {*waveform viewer*} \
+              [set tip [pcall calc::results_tip viewer /tmp/s26/from_viewer.raw good_tok]]]
+           && [string match {*/tmp/s26/from_viewer.raw*} $tip]}]
+# ⚠ THE WIDGET, NOT THE FORMATTER (item 13 review). The leg above calls the pure
+# formatter with arguments the TEST supplies, so the whole `balloon` attach can
+# be deleted from calc::results_refresh and it stays green — measured, 487/487,
+# with the row carrying no tooltip in any state. `balloon` bakes its text into
+# the <Enter> script it binds (xschem.tcl:12551), so the BINDING is the evidence
+# that the provenance actually reached the user.
+set tipbind [pcall bind .calc.res.path <Enter>]
+check_true "S26 ...and the ROW really carries it: balloon attached, naming source and path" \
+    [expr {[string match {*waveform viewer*} $tipbind]
+           && [string match {*/tmp/s26/from_viewer.raw*} $tipbind]}]
+
+# ⚠ THE ACTIVE VIEWER ANSWERS FIRST, not whichever the registry happens to list
+# first — that is the whole premise of Part C (two viewers open, the user is
+# looking at ONE of them), and calc::viewer_tokens' current-token block can be
+# deleted with the rest of S26 still green unless the shim registry has more
+# than one answering token AND a current one that is not first.
+set ::s26_savedwin2 $::wviewer::windows
+set ::wviewer::windows [dict create good_tok {} good2_tok {}]
+set ::s26_curtok {}
+set ::s26_hadcur [expr {[info commands ::wviewer::current_token] ne {}}]
+if {$::s26_hadcur} { rename ::wviewer::current_token ::calc_s26_curtok }
+proc ::wviewer::current_token {} { return $::s26_curtok }
+check "S26 with no ACTIVE viewer, the registry order decides" \
+    [lindex [pcall calc::results_source] 2] good_tok
+set ::s26_curtok good2_tok
+check "S26 ...but the ACTIVE viewer outranks it (viewer_tokens puts it first)" \
+    [lindex [pcall calc::results_source] 2] good2_tok
+catch {rename ::wviewer::current_token {}}
+if {$::s26_hadcur} { catch {rename ::calc_s26_curtok ::wviewer::current_token} }
+catch {set ::wviewer::windows $::s26_savedwin2}
+
+# THE ORDER: this window's own context outranks a borrowed one.
+set ::s26_inctx 1
+check "S26 a raw in THIS context outranks the viewer's" \
+    [pcall calc::results_source] {self /tmp/s26/from_viewer.raw {}}
+pcall calc::results_refresh
+check "S26 ...and then the label is the plain one again" \
+    [pcall .calc.res.lab cget -text] {Results Dir:}
+set ::s26_inctx 0
+
+# ASE-L is the third source, and it is a pure path read (ase::last_rawfile
+# already answers {} unless the file exists) — no context switch at all.
+set ::s26_savedsess $::ase::sessions
+rename ::ase::last_rawfile ::calc_s26_lastraw
+proc ::ase::last_rawfile {key} {
+    if {$key eq {sess_b}} { return /tmp/s26/from_ase.raw }
+    return {}
+}
+set ::ase::sessions [dict create sess_a {} sess_b {}]
+# with the viewer registry emptied, the ASE session is the only source left
+set ::wviewer::windows [dict create]
+check "S26 with no viewer either, the ASE-L session's raw is reported" \
+    [pcall calc::results_source] {ase /tmp/s26/from_ase.raw sess_b}
+pcall calc::results_refresh
+check "S26 ...and the label names ASE-L, not the viewer" \
+    [pcall .calc.res.lab cget -text] {Results Dir (ASE-L session):}
+check "S26 a session with no results is skipped, not reported as empty" \
+    [lindex [pcall calc::ase_raw] 2] sess_b
+
+# R705: NOTHING about the current raw is persisted or cached. Take every shim
+# away and the very next query must answer from the world as it now is.
+catch {rename ::ase::last_rawfile {}}
+catch {rename ::calc_s26_lastraw ::ase::last_rawfile}
+catch {set ::ase::sessions $::s26_savedsess}
+catch {rename ::wviewer::enter_ctx {}}
+catch {rename ::calc_s26_enter ::wviewer::enter_ctx}
+catch {rename ::wviewer::leave_ctx {}}
+catch {rename ::calc_s26_leave ::wviewer::leave_ctx}
+catch {set ::wviewer::windows $::s26_savedwin}
+catch {rename ::xschem {}}
+catch {rename ::calc_s26_xschem ::xschem}
+check_true "S26 shims are gone again (the real raw verb throws, others answer)" \
+    [expr {[string match ERR:* [pcall xschem raw rawfile]]
+           && ![string match ERR:* [pcall xschem get current_win_path]]}]
+check "S26 R705: nothing was cached — the answer is live" \
+    [pcall calc::results_source] {none {} {}}
+pcall calc::results_refresh
+check "S26 ...so the row is back to the no-raw wording and the plain label" \
+    [list [pcall .calc.res.path get] [pcall .calc.res.lab cget -text]] \
+    {{(no raw file loaded)} {Results Dir:}}
+check_true "S26 ...and the balloon reverted with it (the widget, not the formatter)" \
+    [string match {*No .raw file is loaded here*} [pcall bind .calc.res.path <Enter>]]
+
+# ⚠ THE "ON DEMAND" HALF, AND WHY THE WORLD MUST CHANGE IN THE MIDDLE OF IT.
+# The first draft collapsed the row, expanded it, and asserted the entry still
+# read `(no raw file loaded)` — the value the test itself had put there two
+# lines earlier. It could not distinguish a re-resolve from a leftover, and it
+# stayed green with the `catch {calc::results_refresh}` in calc::res_toggle's
+# expand arm deleted (measured: 487/487) — i.e. the entire on-demand half of the
+# W05/R705 ruling had zero coverage. So: collapse, CHANGE THE WORLD while it is
+# collapsed, and expand. A replay and a re-resolve now differ.
+# ORDER MATTERS: the world changes BEFORE the collapse, so the collapse leg
+# proves the collapse arm does NOT refresh (it would otherwise pick the new
+# value up and make the expand leg indistinguishable from a leftover again),
+# and the expand leg proves the expand arm DOES.
+set ::s26_shim2 [catch {
+    rename ::xschem ::calc_s26_xschem2
+    proc ::xschem {args} {
+        if {[lrange $args 0 1] eq {raw rawfile}} { return {/tmp/s26/on_demand.raw} }
+        return [uplevel 1 [linsert $args 0 ::calc_s26_xschem2]]
+    }
+}]
+check "S26 a raw appeared while the row was showing the old answer (shim installed)" $::s26_shim2 0
+pcall calc::res_toggle
+check "S26 ...collapsing does NOT refresh: the row still holds the OLD string" \
+    [pcall .calc.res.path get] {(no raw file loaded)}
+pcall calc::res_toggle
+check "S26 re-expanding the row re-resolves it (on demand, never remembered)" \
+    [pcall .calc.res.path get] {/tmp/s26/on_demand.raw}
+check "S26 ...and the re-resolve reached the label too (this context's own raw)" \
+    [pcall .calc.res.lab cget -text] {Results Dir:}
+catch {rename ::xschem {}}
+catch {rename ::calc_s26_xschem2 ::xschem}
+pcall calc::results_refresh
+check "S26 shim 2 gone, and the row is live again" \
+    [list [pcall calc::results_source] [pcall .calc.res.path get]] \
+    {{none {} {}} {(no raw file loaded)}}
 
 calc::close
 catch {destroy .calccbprobe}

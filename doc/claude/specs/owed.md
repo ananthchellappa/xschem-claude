@@ -101,6 +101,53 @@ the gate dir there.
 - **R306** `drain` with nothing queued exits 0 and runs nothing.
 - **R307** The user can stop a drain mid-way (the gate's Stop); already-passed
   entries stay cleared and the rest stay queued.
+  - ⚠ **This holds for `.tcl` debts only.** R308 runs a `.sh` suite *directly*
+    and deliberately outside the gate, so Pause and Stop cannot reach it: the
+    panel lists such a run under `UNGATED`, and its **`Halt N xschem`** button
+    (SIGSTOP, resumable) is the only authority over it. The exception is
+    narrow on purpose — the suites that need the `.sh` path are the gate's own
+    self-tests, and a self-test *of* the gate must not run inside one — but it
+    is a real hole in R307 and is written down rather than left for a reader to
+    discover mid-drain. CLAUDE.md's owed-ledger section ("`drain` … gate live")
+    carries the same caveat.
+- **R308** **A suite name resolves to `<name>.tcl` *or* `<name>.sh`** in
+  `tests/headless/` (a name containing `/` is taken as a path). Both kinds of
+  suite exist in this tree — ~200 `test_*.tcl` driven through the xschem binary
+  and a dozen standalone `test_*.sh` — and `drain` must be able to pay a debt of
+  either kind.
+  - a `.tcl` suite runs through `run_suites.sh`, which is what **enrols it in
+    the gate** so Pause/Stop keep working;
+  - a `.sh` suite is **executed directly**, because nothing else could run it:
+    `run_suites.sh` drives `xschem --script`, which cannot source a shell
+    script. It is handed the display in both spellings (`DISPLAY`, which such a
+    suite reads, and `AUDIT_DISPLAY`, which the arm-aware ones read) and is
+    **not** wrapped in the gate — the suites that most need this are the gate's
+    own self-tests, and a self-test *of* the gate must not run inside one. Its
+    **exit status is its verdict**, the contract every `test_*.sh` here already
+    keeps.
+  - *The defect that produced this rule:* `drain` handed every name straight to
+    `run_suites.sh`, whose resolver knows `<name>.tcl` only
+    (`run_suites.sh:82-88`). A shell-script debt therefore failed with `FATAL:
+    no such test file: tests/headless/test_gui_gate_batch.tcl` on every drain,
+    was recorded as failed and so was **kept** (R303) — a debt the ledger could
+    only ever accumulate. Measured 2026-08-15 against the real
+    `test_gui_gate_batch` entry.
+- **R309** A name that resolves to **neither** extension is reported as a
+  **misnamed debt**, naming the paths it looked for, and the debt is **kept**.
+  It is not run, and it is not reported as a failing suite: only the user knows
+  what they meant to write, and "FAILED on :0" sends the reader hunting a
+  regression that does not exist.
+  - ⚠ **The message names what was really stat'd** — `_suite_file` prints its
+    own candidate list (`none\t<candidates>`) and the caller prints *that*.
+    A bare name has two candidates (`$HERE/<n>.tcl` and `$HERE/<n>.sh`); a name
+    containing `/` and a name that already carries an extension have exactly
+    **one** each. Composing the message from the name unconditionally — which
+    is what the first implementation did — named a doubled directory and a
+    doubled extension for those two arms
+    (`add suite tests/headless/test_nope.tcl` →
+    *"neither …/tests/headless/tests/headless/test_nope.tcl.tcl nor …"*), i.e.
+    two files nobody had looked for, which is exactly the reader-misdirection
+    this rule exists to prevent.
 
 ### R4 — the look debts
 
@@ -139,6 +186,9 @@ Runs against a throwaway `XSCHEM_OWED_DIR`.
 | O10 | `drain` on an empty queue runs nothing, exits 0 (R306) |
 | O11 | `clear look` is the only thing that clears a look |
 | O12 | a corrupt entry is skipped with a warning, the rest of the ledger survives (R503) |
+| O13 | one REAL drain of a real `.tcl` suite, so the stub cannot hide an integration break |
+| O14 | a **`.sh`** suite drains: it really runs (its own witness file), **not** through the suite runner, gets the display in **both spellings, pinned separately** (`DISPLAY` and `AUDIT_DISPLAY` on their own anchored lines — one grep for the substring `DISPLAY=…` matches the other spelling and proves neither), clears on a pass and is **kept** on a failure (R308/R303) |
+| O15 | a name with neither extension: non-zero exit, **both** candidate paths named, runner never invoked, debt kept and marked as misnamed (R309); plus a **path-shaped** and an **already-suffixed** name, whose message must name the **one** path really stat'd, with neither the directory nor the extension doubled |
 
 Each needs a sabotage that turns it red. O9 especially: it is the one guarding
 the rule the whole design exists to protect.

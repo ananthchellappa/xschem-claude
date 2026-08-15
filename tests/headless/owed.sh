@@ -188,11 +188,66 @@ cmd_clear() {
   _say "cleared $kind debt $id"
 }
 
+# Resolve a queued suite NAME to the file that runs it.
+#
+# ⚠ A SUITE IS NOT ALWAYS A .tcl. tests/headless holds both kinds -- 200-odd
+# `test_*.tcl` driven through the xschem binary, and a dozen standalone
+# `test_*.sh` (the gate's own self-tests, the dev-display one, the action-log
+# ones) that are plain shell and are not runnable by run_suites.sh at all.
+# drain used to hand every name straight to run_suites.sh, whose resolver only
+# knows `<name>.tcl` (run_suites.sh:82-88), so a shell-script suite debt failed
+# with
+#     FATAL: no such test file: tests/headless/test_gui_gate_batch.tcl
+# on EVERY drain, was recorded as failed, was therefore kept (R303), and so
+# could never be paid -- an entry the ledger could only accumulate. Measured
+# 2026-08-15 on the real `test_gui_gate_batch` debt.
+#
+# Prints "<kind>\t<path>" (kind = tcl | sh) and returns 0 when it resolves.
+#
+# ⚠ ON FAILURE IT PRINTS "none\t<the candidates it REALLY stat'd>" and returns
+# 1, and the caller must print THAT rather than composing its own guess. It did
+# compose its own: `$HERE/<name>.tcl nor $HERE/<name>.sh`, unconditionally. For
+# a name that is already a path or already carries an extension — the two arms
+# that stat exactly ONE file — the warning then named two paths nobody had
+# looked for, with the directory or the extension doubled:
+#     add suite tests/headless/test_nope.tcl
+#     -> "neither …/tests/headless/tests/headless/test_nope.tcl.tcl nor …"
+# R309 says the message names the paths it looked for; a fabricated pair sends
+# the reader to check files that were never in question.
+_suite_file() {  # $1 name -> prints "<kind>\t<path>", or "none\t<candidates>"
+  local n="$1"
+  case "$n" in
+    */*)   if [ -f "$n" ]; then
+             case "$n" in *.sh) printf 'sh\t%s' "$n" ;; *) printf 'tcl\t%s' "$n" ;; esac
+             return 0
+           fi
+           printf 'none\t%s' "$n"; return 1 ;;
+    *.tcl) [ -f "$HERE/$n" ] && { printf 'tcl\t%s' "$HERE/$n"; return 0; }
+           printf 'none\t%s' "$HERE/$n"; return 1 ;;
+    *.sh)  [ -f "$HERE/$n" ] && { printf 'sh\t%s'  "$HERE/$n"; return 0; }
+           printf 'none\t%s' "$HERE/$n"; return 1 ;;
+  esac
+  [ -f "$HERE/$n.tcl" ] && { printf 'tcl\t%s' "$HERE/$n.tcl"; return 0; }
+  [ -f "$HERE/$n.sh"  ] && { printf 'sh\t%s'  "$HERE/$n.sh";  return 0; }
+  printf 'none\t%s and %s' "$HERE/$n.tcl" "$HERE/$n.sh"
+  return 1
+}
+
 # Run every queued SUITE debt in one batch on the real display.
 #
-# Deliberately goes through run_suites.sh rather than the binary: that is what
-# enrols the run in the gate, so the user keeps Pause and Stop over a batch they
-# approved once with "Forever".
+# A .tcl suite deliberately goes through run_suites.sh rather than the binary:
+# that is what enrols the run in the gate, so the user keeps Pause and Stop over
+# a batch they approved once with "Forever".
+#
+# A .sh suite is executed directly, because there is nothing else that could run
+# it: run_suites.sh drives `xschem --script`, which cannot source a shell
+# script. Such a suite owns its own display arm (test_gui_gate_batch.sh re-execs
+# itself onto a private Xvfb when it finds the dev display, precisely because
+# the gate is disabled there), so it is handed the display in both spellings --
+# DISPLAY, which it reads, and AUDIT_DISPLAY, which the arm-aware ones read --
+# and is NOT wrapped in the gate: a self-test OF the gate must not run inside
+# one. Its exit status is its verdict, which is the contract every test_*.sh in
+# this tree already keeps (`exit 1` on any FAIL).
 cmd_drain() {
   local display=":0"
   while [ $# -gt 0 ]; do
@@ -221,11 +276,37 @@ cmd_drain() {
   _say "draining ${#names[@]} suite debt(s) on $display"
   _say "the gate is live on a real display -- Pause and Stop still work"
 
-  local ran=0 passed=0 failed=0 i
+  local ran=0 passed=0 failed=0 i res kind path rc now cand
   for i in "${!names[@]}"; do
     ran=$((ran + 1))
     echo "== [$ran/${#names[@]}] ${names[$i]}"
-    if AUDIT_DISPLAY="$display" "$HERE/run_suites.sh" "${names[$i]}"; then
+
+    # ⚠ RESOLVE BEFORE RUNNING, and say both candidates when it fails. An
+    # unresolvable name is a MISNAMED DEBT, not a red suite, and reporting it as
+    # "FAILED on :0" (which is what delegating blindly to run_suites.sh did)
+    # sends the reader looking for a regression that does not exist. The debt is
+    # still KEPT -- only the user knows what they meant to write.
+    if ! res=$(_suite_file "${names[$i]}"); then
+      failed=$((failed + 1))
+      now=$(date +%s)
+      cand=${res#*	}
+      printf '%s\t%s\t%s\n' "$now" "${names[$i]}" \
+             "NO SUCH SUITE FILE -- looked for $cand" \
+             > "$d/${ids[$i]}"
+      _warn "no such suite '${names[$i]}': looked for $cand -- no such file"
+      echo "   UNRESOLVED -> debt KEPT (fix the name, or: $0 clear suite ${ids[$i]})"
+      continue
+    fi
+    kind=${res%%	*}; path=${res#*	}
+
+    if [ "$kind" = "sh" ]; then
+      echo "   (shell suite: $path -- run directly, it owns its own display arm)"
+      AUDIT_DISPLAY="$display" DISPLAY="$display" bash "$path"; rc=$?
+    else
+      AUDIT_DISPLAY="$display" "$HERE/run_suites.sh" "${names[$i]}"; rc=$?
+    fi
+
+    if [ "$rc" -eq 0 ]; then
       passed=$((passed + 1))
       rm -f "$d/${ids[$i]}"
       echo "   PASS -> debt cleared"
@@ -233,9 +314,9 @@ cmd_drain() {
       failed=$((failed + 1))
       # A failure must NOT clear the debt. A drain that loses work when a suite
       # goes red is a way to forget things, not a way to remember them.
-      local now; now=$(date +%s)
+      now=$(date +%s)
       printf '%s\t%s\t%s\n' "$now" "${names[$i]}" \
-             "FAILED on $display -- still owed" > "$d/${ids[$i]}"
+             "FAILED on $display (rc=$rc) -- still owed" > "$d/${ids[$i]}"
       echo "   FAIL -> debt KEPT"
     fi
   done
