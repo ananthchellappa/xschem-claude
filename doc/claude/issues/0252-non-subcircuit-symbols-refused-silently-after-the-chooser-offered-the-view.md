@@ -385,3 +385,21 @@ removes the user's route to noticing a mistyped symbol; the create-the-child flo
 sharper instance of the same hazard.
 
 The spoken-refusal half (`hi_descend_refuse`) is independent of the filter and can land on its own.
+
+## 2026-08-15 — the human asked for this again, filed as 0411
+
+During the D1–D10 eyeball verification the human asked that, in cadence mode, `e` with an
+instance selected offer descending into the **symbol**. That is this issue's chooser half, and it
+is filed as
+[0411](0411-cadence-e-should-offer-descending-into-the-symbol-of-the-selected-instance.md), which
+names **this** issue as its vehicle and
+[0379](0379-get-sym-type-returns-empty-while-an-instance-is-selected.md) as its blocker.
+
+Crew item D11 shipped only the keyboard half —
+[0410](0410-descend-into-symbol-has-no-key-in-cadence-mode.md), Ctrl-Y bound to
+`xschem descend_symbol` in `src/cadence_style_rc`, because the cadence `i` steal left
+descend-into-symbol with no key at all — and deliberately built **no** chooser behaviour.
+
+Note for whoever resumes the filter: 0379, the reason the D5 attempt (`504e38c7`) was reverted,
+**did not reproduce** when re-measured twice on 2026-08-15. Re-measure it before treating it as
+the blocker, and read the caveat at the end of that file.

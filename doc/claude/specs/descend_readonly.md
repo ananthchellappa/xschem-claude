@@ -59,3 +59,20 @@ menu item itself (a GUI popup); the `Ctrl-2`/`Ctrl-Shift-2` key delivery.
 - Per-hierarchy-level read-only memory (readonly is a single window-context field;
   the descend-forces / ascend-restores behavior above is sufficient for browsing).
 - A persisted user preference for `descend_readonly` outside the rc.
+
+## `descend_symbol` does NOT honour this flag (issue 0412)
+
+The flag is applied at `src/actions.c:4097`, inside `descend_schematic()` only. `descend_symbol()`
+never consults it, so with `descend_readonly 1` a schematic descend opens read-only while a
+**symbol** descend opens the `.sym` **editable**. Measured on the `hi_descend` fixture, same
+instance, same session:
+
+```
+AFTER descend        : currsch=1 ro=1 name=leaf.sch
+AFTER descend_symbol : currsch=1 ro=0 name=leaf.sym
+```
+
+This predates the cadence `Ctrl-Y` chord (issue 0410) and is shared by the Edit menu, the
+toolbar, the canvas right-click "Descend symbol" and the `e` chooser's symbol row. Filed as
+[0412](../issues/0412-descend-symbol-ignores-descend-readonly.md); deliberately not fixed while
+shipping the chord, because it changes all of those paths at once.

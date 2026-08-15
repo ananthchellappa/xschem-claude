@@ -202,6 +202,29 @@ bind .drw <Control-Key-x>       {cadence::descend_into_inst;      break}
 # exactly one instance is selected. GOTCHA (same as Ctrl-Shift-N above): with Shift held
 # the "x" key emits the capital "X" keysym, so bind Key-X.
 bind .drw <Control-Shift-Key-X> {cadence::descend_into_inst_newwin_ro; break}
+# Ctrl-Y : descend into the selected instance's SYMBOL (edit the .sym in place), the
+# Cadence default chord for descend-into-symbol. This chord exists because the `i` steal
+# above (see "Cadence-style instantiation", ~line 129) ends in `break`, which stops the
+# event reaching the generic <KeyPress> -> C dispatcher -- the ONLY key route to
+# descend-into-symbol (callback.c case 'i'). Without Ctrl-Y the verb is unreachable by
+# any key in cadence mode; `i` cannot be given back because cadence mode needs it for
+# Create Instance. Shift-i is not a fallback (callback.c case 'I' is insert-symbol).
+# It calls the BARE verb, NOT a cadence:: wrapper mirroring descend_into_inst, because
+# (a) `xschem descend_symbol` already refuses OUT LOUD -- returns 0, sets descend_error
+# "no-selection" and statusmsg "Descend symbol: select an instance to descend into"
+# (the issue-0251 refusal channel), which descend_into_inst's silent gate does not; and
+# (b) cadence::one_instance_selected accepts a strictly SMALLER set than the core's
+# descend_pick_target (instance+wire selected: the core descends, the gate refuses), so
+# wrapping would add a new silent refusal on a selection the core handles. `xschem
+# go_back` (Ctrl-E) unwinds a symbol descend with no extra bookkeeping, so there is no
+# window-chain state for a wrapper to carry. See doc/claude/issues/0410-*.md.
+# CAVEAT, pre-existing and shared with the Edit menu / toolbar / right-click item:
+# descend_readonly (set below) is applied in descend_schematic() only, so in cadence
+# browse mode Ctrl-Y opens the .sym EDITABLE while Ctrl-X opens a child schematic
+# read-only -- filed as issue 0412, deliberately not fixed by this bind.
+# The verb self-logs at the C core (save.c), so no log_action belongs here. Under a
+# live dialog the scheduler's semaphore==0 gate makes this a silent no-op (issue 0253).
+bind .drw <Control-Key-y>       {xschem descend_symbol;           break}
 # Ctrl-E : return one level. Overrides the C default (go_back / ascend in place) with
 # the window-chain-aware version: a window descended-into-new-window returns focus to
 # the PARENT window instead of ascending the child in place (issue 0053). Cloned to

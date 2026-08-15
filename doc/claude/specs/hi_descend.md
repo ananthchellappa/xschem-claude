@@ -244,3 +244,18 @@ too) and are filed separately:
   `copy_hierarchy`/`copy_hilights`/`new_schematic switch` sequence. A future refactor
   should parameterize `open_sub_schematic` (view/iteration/mode) and have both call it,
   so the new-window descend logic lives in one place.
+
+## Open request, 2026-08-15 — the chooser should offer the SYMBOL view (issue 0411)
+
+The human asked that, in cadence mode, `e` with an instance selected offer descending into the
+**symbol**. `hi_descend_enum_views` already returns the symbol row, but `hi_descend_pick_view`
+returns the schematic row when no view is given and the dialog forces `schematic` as the default
+— so for a non-descendable master the default is a schematic that cannot exist, and the working
+symbol row is one drop-down click away behind a default that always fails.
+
+Filed as [0411](../issues/0411-cadence-e-should-offer-descending-into-the-symbol-of-the-selected-instance.md),
+**not built**: its vehicle is [0252](../issues/0252-non-subcircuit-symbols-refused-silently-after-the-chooser-offered-the-view.md)
+and its stated blocker is [0379](../issues/0379-get-sym-type-returns-empty-while-an-instance-is-selected.md),
+whose headline claim did **not** reproduce when re-measured twice on 2026-08-15 — re-measure it
+before treating it as the blocker. The keyboard half shipped separately as
+[0410](../issues/0410-descend-into-symbol-has-no-key-in-cadence-mode.md) (Ctrl-Y).

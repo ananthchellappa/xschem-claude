@@ -135,3 +135,17 @@ fixture (`tests/headless/fixtures/hi_descend/hidlib`, top.sch with instance `x1`
 
 The new-window path works under `--nogui` (the SELNW check in `test_hi_descend.tcl`
 already exercises `hi_descend target=new_window` headless).
+
+## Family note, 2026-08-15 — `Ctrl-Y` joined the hierarchy block
+
+`src/cadence_style_rc` now binds `Ctrl-Y` to the bare `xschem descend_symbol`, sitting between
+`Ctrl-Shift-X` and `Ctrl-E` in verb order (Ctrl-X descend schematic, Ctrl-Shift-X descend
+new-window read-only, **Ctrl-Y descend symbol**, Ctrl-E return one level, Alt-E top, Alt-X last).
+It exists because the rc's `i` steal left descend-into-symbol with no key at all —
+[issue 0410](../issues/0410-descend-into-symbol-has-no-key-in-cadence-mode.md), which also
+records why it is the bare verb rather than a `cadence::` wrapper like the rest of the family.
+
+The checks for it live in this spec's own suite,
+`tests/headless/test_cadence_descend_newwin_ro.tcl` (rows CY1–CY10; the suite went 11 → 21
+checks), because it is the cadence descend-family suite. `Ctrl-E` returning from a Ctrl-Y symbol
+descend is CY8 — no extra window-chain bookkeeping is needed for a symbol descend.

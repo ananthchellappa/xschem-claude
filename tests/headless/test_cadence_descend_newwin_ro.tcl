@@ -134,4 +134,84 @@ check "DESCEND child is READ-ONLY" \
   [expr {[xschem get readonly] == 1}] "(ro=[xschem get readonly])"
 catch {xschem new_schematic destroy_all force}
 
+# --- Ctrl-Y : descend into the selected instance's SYMBOL (issue 0410) ------------
+# The `i` steal in src/cadence_style_rc ends in `break`, which stops the event reaching
+# the generic <KeyPress> -> C dispatcher -- the only key route to descend-into-symbol.
+# So in cadence mode the verb had NO key at all. Ctrl-Y (Cadence's own chord) restores it.
+# --nogui has no Tk (`info commands bind` is empty), so the chord is asserted from the
+# SHIPPED rc TEXT -- the same precedent as test_snap_bindkeys.tcl / test_keybind_snap_grid.tcl
+# -- and the captured body is then EVALUATED, so the behaviour rows exercise the line that
+# actually ships rather than a hand-copied duplicate of the verb.
+# (The installed-on-.drw half needs real Tk and lives in test_altf5_ciw.tcl: CYT1-CYT3.)
+set rcfile [file normalize [file join $here .. .. src cadence_style_rc]]
+set fh [open $rcfile r] ; set rctext [read $fh] ; close $fh
+
+set cybody {}
+set cyn [regexp -line {^bind \.drw <Control-Key-y>\s+\{([^\}]*)\}} $rctext -> cybody]
+check "CY1 cadence_style_rc binds Ctrl-Y on .drw" [expr {$cyn == 1}] \
+  "(matches=$cyn body={$cybody})"
+check "CY2 the Ctrl-Y body is non-empty and runs the BARE verb `xschem descend_symbol`" \
+  [expr {[string trim $cybody] ne {} &&
+         [regexp {(?:^|;)\s*xschem\s+descend_symbol\s*(?:;|$)} $cybody]}] \
+  "(body={$cybody})"
+check "CY3 the Ctrl-Y body ends in `break`, like the rest of the hierarchy family" \
+  [regexp {;\s*break\s*$} $cybody] "(body={$cybody})"
+check "CY4 the `i` -> Create Instance steal is untouched" \
+  [regexp -line {^bind \.drw <Key-i> \{xschem create_instance; break\}$} $rctext] \
+  "(rc=$rcfile)"
+set cydup 0
+foreach ln [split $rctext \n] {
+  if {[string match {bind .drw *} $ln] && [string match {*descend_symbol*} $ln]} { incr cydup }
+}
+check "CY5 exactly ONE .drw bind line in the rc names descend_symbol" \
+  [expr {$cydup == 1}] "(lines=$cydup)"
+check "CY10 no competing chord: no <Control-Shift-Key-Y> bind and no C-table ctrl-y row" \
+  [expr {![regexp -line {^bind \.drw <Control-Shift-Key-Y>} $rctext] &&
+         ![regexp -line {^xschem bind key 121 ctrl} $rctext]}] "(rc=$rcfile)"
+
+# Behaviour, driven by the shipped body with its trailing `break` removed. A body that
+# will not run in a bare interpreter -- an empty `{break}`, a renamed callee, a cadence::
+# wrapper proc the rc defines but no headless session can source -- must make these rows
+# RED, not abort the suite before the later ones report, so the eval is caught.
+set cyrun [regsub {;\s*break\s*$} $cybody {}]
+proc cyeval {script} {
+  if {[catch {uplevel #0 $script} r]} { return "ERR:$r" }
+  return $r
+}
+reload
+xschem select instance x1 fast
+set cyret [cyeval $cyrun]
+set cydeep [xschem get currsch]
+check "CY6 Ctrl-Y on one selected instance descends into its SYMBOL" \
+  [expr {$cyret eq {1} && $cydeep == 1 && [has /hidlib/leaf/symbol/leaf.sym]}] \
+  "(ret={$cyret} currsch=$cydeep name=[schname])"
+cadence::return_one_level
+check "CY8 Ctrl-E returns from a Ctrl-Y symbol descend (no extra bookkeeping needed)" \
+  [expr {$cydeep == 1 && [xschem get currsch] == 0 && [has /hidlib/top/schematic/top.sch]}] \
+  "(currsch=$cydeep->[xschem get currsch] name=[schname])"
+
+# The refusal SPEAKS (the issue-0251 channel), which is exactly why the bind calls the
+# bare verb instead of a cadence:: wrapper: descend_into_inst's gate refuses in silence.
+reload
+set cyret [cyeval $cyrun]
+check "CY7 Ctrl-Y with nothing selected refuses OUT LOUD, and does not descend" \
+  [expr {$cyret eq {0} && [xschem get descend_error] eq {no-selection} &&
+         [xschem get statusmsg] eq {Descend symbol: select an instance to descend into} &&
+         [xschem get currsch] == 0}] \
+  "(ret={$cyret} err={[xschem get descend_error]} msg={[xschem get statusmsg]} currsch=[xschem get currsch])"
+
+# ACCEPT-SET RAIL: the core accepts instance+wire (it counts ELEMENTs), the cadence gate
+# does not. Goes red the moment anyone re-routes Ctrl-Y through descend_into_inst-style
+# gating, which would ADD a silent refusal on a selection the core handles.
+reload
+xschem select instance x1 fast
+xschem select wire 0 fast
+set cygate [cadence::one_instance_selected]
+set cyret [cyeval $cyrun]
+check "CY9 Ctrl-Y keeps the CORE's accept set (instance+wire descends; the gate refuses)" \
+  [expr {$cyret eq {1} && [xschem get currsch] == 1 && [has /hidlib/leaf/symbol/leaf.sym] &&
+         $cygate == 0}] \
+  "(ret={$cyret} gate=$cygate currsch=[xschem get currsch] name=[schname])"
+catch {xschem new_schematic destroy_all force}
+
 puts "cadence_descend_newwin_ro headless: [expr {$fails ? "$fails FAILURE(S)" : {all checks passed}}]"

@@ -1,7 +1,9 @@
 # 0379 — `xschem get_sym_type <path>` returns empty while an instance is selected
 
-Status: **OPEN** — measured headless. Pre-existing C behaviour (not introduced by any 2026-08-10
-work); filed because it silently killed the D5 attempt at
+Status: **OPEN — headline claim UNREPRODUCED on re-measurement (2026-08-15, twice, independently).
+See "Re-measurement" at the end of this file before building anything on it.** Pre-existing C
+behaviour (not introduced by any 2026-08-10 work); filed because it silently killed the D5
+attempt at
 [0252](0252-non-subcircuit-symbols-refused-silently-after-the-chooser-offered-the-view.md).
 Area: the `get_sym_type` branch of `scheduler()` in `src/scheduler.c`; consumed from Tcl by
 `hi_descend_no_view_msg()` (`src/xschem.tcl`) and by any future chooser filter.
@@ -95,3 +97,41 @@ puts "[xschem get_sym_type $W/rr.sym]"   ;# {}   <-- same literal path
 - **Any test must set a selection.** A suite that addresses instances by name (`inst=XN`) cannot
   see this defect at all; that is how it survived a 67-check suite, an 8-variant sabotage matrix
   and an adversary pass.
+
+## Re-measurement, 2026-08-15 (crew item D11) — the headline claim did NOT reproduce
+
+Two D11 agents independently re-ran this issue against the current tree (post-`dd5ca7b8`,
+freshly rebuilt binary) and could not reproduce the selection-dependence:
+
+- The **scout** ran five probe shapes: (a) a `type=subcircuit` symbol in a flat dir; (b) a
+  `type=resistor` symbol in a flat dir, the exact 7-step sequence above including
+  `xschem select instance 0`; (c) the same with the schematic referencing the symbol by
+  **absolute** path so `get_sym_type` takes its loaded-symbol-cache branch (`src/save.c:4294`)
+  rather than its file branch; (d) the OA lib/cell/view `hi_descend` fixture; (e) the real
+  `xschem_library/devices/res.sym` with a live selection and after a refused descend.
+- The **measure** agent re-ran the 7-step sequence in this file verbatim.
+
+In **every** case `xschem get_sym_type <abs path>` returned the correct type (`resistor` /
+`subcircuit`) at **every** step — fresh, after unselect, after select_all, with the instance
+selected (step 5, `lastsel=1`), and after the refused descend (step 6).
+
+A **different**, selection-independent failure did reproduce: `get_sym_type` answers `""` for a
+name it cannot resolve through the library path — `get_sym_type leaf.sym` → `''` while
+`get_sym_type hidlib/leaf` → `'subcircuit'` for the identical symbol — and `""` is also what an
+untyped symbol returns, so *unresolvable* and *no type token* are indistinguishable from the
+caller. That is a plausible alternative explanation for the D5 collapse (the filter was fed a
+row-shaped path), with the selection as a confound.
+
+This does **not** close the issue. D5 measured the emptiness live in a different session, and two
+failures to reproduce are not a refutation. What it means is:
+
+1. A third, deliberate re-measurement is its own work item — with the D5 call site reconstructed
+   exactly as it was, not a hand-written probe.
+2. **Nobody may cite this issue as an established blocker without re-measuring it first.**
+   [0411](0411-cadence-e-should-offer-descending-into-the-symbol-of-the-selected-instance.md)
+   names this issue as its blocker and carries the same caveat.
+3. Whatever the answer, `get_sym_type` should stop returning the same `""` for "cannot resolve
+   that name" and "that symbol has no type token".
+
+Blocking: [0411](0411-cadence-e-should-offer-descending-into-the-symbol-of-the-selected-instance.md)
+(cadence `e` should offer the symbol view — filed, not built, blocked on this).
