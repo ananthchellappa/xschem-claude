@@ -1,6 +1,12 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `7924d0db`
 
-Driver-mode unattended batch. **Not started.** Nothing is pushed.
+Driver-mode unattended batch. **Item 0 half done; items 1–15 not started.**
+Nothing is pushed.
+
+**The recorded base HEAD above is stale by 16 commits.** The docs, plan, ledger
+and fixtures were committed 2026-08-14 as `fc65f14a` ("docs(casemode): the
+upstream exchange, both rounds", 97 files, docs only) — shoot the baseline audit
+at *current* HEAD and record both the new base and the audit filename here.
 
 Plan: `doc/claude/casemode_batch/PLAN.md` — read it first, including
 §4 (three open decisions that must be answered before item 8) and §5 (holes).
@@ -12,6 +18,11 @@ Baseline audit: **not yet taken** — item 0 shoots it and records the filename
 here. Every later audit is judged by DIFFING that file by test NAME and STATUS,
 never by the red count.
 
+Item 0's other half **is** done: docs + the four fixtures are committed, so the
+batch has a base to diff against. `fixtures/tr_fold.raw` and `tr_preserve.raw`
+differ only in their Variables section and let items 1–5 be tested with no
+ngspice present at all.
+
 Receipts: `doc/claude/casemode_batch/receipts/NN-<slug>.md` (120 lines max).
 
 Verdicts: `[x]` done+verified · `[E]` done, eyeball pending (pixels) ·
@@ -19,7 +30,7 @@ Verdicts: `[x]` done+verified · `[E]` done, eyeball pending (pixels) ·
 
 | # | item | verdict | commit | checks | sabotages | files | eyeball | note |
 |---|------|---------|--------|--------|-----------|-------|---------|------|
-| 0 | setup: baseline audit + fixtures | | | | | | no | |
+| 0 | setup: baseline audit + fixtures | | `fc65f14a` (docs half) | | | 97 docs | no | fixtures + plan + upstream exchange committed; **baseline audit still owed, at current HEAD not `7924d0db`** |
 | 1 | `Raw.case_mode` + `read_dataset` gate + `raw read -case` | | | | | | no | |
 | 2 | `get_raw_index` three-valued ladder + `i(v.x` fixup | | | | | | no | |
 | 3 | `sim_case_mode` global + `auto` sniff | | | | | | no | |
