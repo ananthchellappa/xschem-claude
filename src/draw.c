@@ -3291,113 +3291,650 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
   }
 }
 
-int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
+/* ------------------------------------------------------------------------
+ * THE one parser of a `node=` list entry.  Issue 0305:
+ * doc/claude/issues/0305-per-trace-rawfile-is-honoured-by-three-of-six-node-walkers.md
+ *
+ * A graph rect's `node=` attribute is a newline separated list; one entry is
+ *
+ *     [alias;]<vec-or-RPN> [ '%' [<dataset-digits>] [<rawfile> [<sim_type>]] ]
+ *
+ * SEVEN functions in this file walk that list (draw_graph, graph_fullyzoom,
+ * find_closest_wave, graph_point_at, wave_hilight_envelope, graph_wave_resolve
+ * and -- since batch F item 8, spec D2 -- graph_fullxzoom(), which reaches it
+ * through graph_x_union_rect()). Six of them used to hand-roll the `%` parse
+ * and THREE of those six read only the leading dataset digits and silently
+ * dropped the rawfile -- so a cross-DB trace (spec D1,
+ * doc/claude/specs/mixed_signal_signal_browser.md) drew correctly and could
+ * then not be picked, bolded or marked; the seventh, graph_fullxzoom(), never
+ * parsed `%` at all and sized the X window from the wrong database entirely.
+ * ANOTHER hand-rolled copy is how that drifted, so there is now exactly one:
+ * a new walker becomes caller number eight, never parser number two.
+ *
+ *   ntok           IN  one token of the list. NOT modified.
+ *   expr           OUT my_strdup'd token with the whole `%...` field removed
+ *                      (the alias;vec part the callers evaluate). May be NULL.
+ *   dataset        OUT the `%<n>` dataset restriction, -1 when absent.
+ *   rawfile        OUT my_strdup'd per-trace database, "" when the token names
+ *                      none. May be NULL.
+ *   sim_type       OUT my_strdup'd sim type: the token's own when it carries
+ *                      one, else `dflt_sim_type`. May be NULL.
+ *   dflt_sim_type  IN  fallback (the graph's own `sim_type=`, then the current
+ *                      raw's). NULL is read as "".
+ *
+ * The caller my_free()s *expr, *rawfile and *sim_type.
+ * Both the path and the type go through a Tcl `subst {...}`, exactly as
+ * draw_graph() has always done, so a token may name its database through a Tcl
+ * variable. NOTHING here switches databases: the switch, and the balanced
+ * restore that must pair with it, belong to the caller. */
+static void node_token_split(const char *ntok, char **expr, int *dataset,
+                             char **rawfile, char **sim_type, const char *dflt_sim_type)
 {
-  xRect *r = &xctx->rect[GRIDLAYER][i];
-  if( sch_waves_loaded() >= 0) {
-    int idx, need_redraw = 0;
-    double xx1, xx2;
-    int dset = dataset == -1 ? 0 : dataset;
-    char *custom_rawfile = NULL; /* "rawfile" attr. set in graph: load and switch to specified raw */
-    char *sim_type = NULL;
-    int k, save_datasets = -1, save_npoints = -1;
-    int autoload = 0;
-    int master;
-    Raw *raw = NULL;
-    const char *ptr;
+  char *nd = NULL;
+  int ds = -1;
 
-    /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever the
-     * pointer is not over a graph (callback.c). A programmatic full zoom
-     * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
-     * can therefore run with graph_master == -1 (or stale beyond the rect count after
-     * a canvas rebuild) and the unguarded xctx->rect[GRIDLAYER][xctx->graph_master]
-     * reads below walked off the array -> intermittent SIGSEGV. Out-of-range master ->
-     * treat the target graph as its own master. */
-    master = xctx->graph_master;
-    if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
-
-    raw = xctx->raw;
-    autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
-    if(autoload == 0) autoload = 2;
-    ptr = get_tok_value(r->prop_ptr,"rawfile", 0);
-    if(!ptr[0]) {
-      if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
-      else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
-    } else {
-      my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
+  if(!dflt_sim_type) dflt_sim_type = "";
+  my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
+  if(nd[0]) {
+    /* `%12 file.raw tran` -- the dataset digits are optional, so the rawfile is
+     * field 1 or field 2 of the `%` payload (separators "\n ") */
+    int pos = 1;
+    if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+    if(rawfile) {
+      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
+      my_strdup2(_ALLOC_ID_, rawfile, tclresult());
     }
-    my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
-    if((i == master) && custom_rawfile[0]) {
-      if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
-        if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
-        if(sim_type) my_free(_ALLOC_ID_, &sim_type);
-        return 0;
-      }
+    if(sim_type) {
+      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
+      my_strdup2(_ALLOC_ID_, sim_type, tclresult()[0] ? tclresult() : dflt_sim_type);
     }
-    idx = get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL);
-    dbg(1, "graph_fullxzoom(): sweep idx=%d\n", idx);
-    if(idx < 0 ) idx = 0;
-    if(i != master ) {
+    if(pos == 2) ds = atoi(nd);
+    if(expr) my_strdup(_ALLOC_ID_, expr, find_nth(ntok, "%", "\"", 4, 1));
+  } else {
+    if(rawfile) my_strdup2(_ALLOC_ID_, rawfile, "");
+    if(sim_type) my_strdup2(_ALLOC_ID_, sim_type, dflt_sim_type);
+    if(expr) my_strdup(_ALLOC_ID_, expr, ntok);
+  }
+  if(dataset) *dataset = ds;
+  my_free(_ALLOC_ID_, &nd);
+}
 
-      ptr = get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"rawfile", 0);
-      if(!ptr[0]) {
-        if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
-        else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
-      } else {
-        my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
-      }
+/* The sim_type a `%<rawfile>` with no explicit type inherits: the graph's own
+ * `sim_type=` token, else the CURRENT raw's. Kept in one place because all seven
+ * walkers must agree about it -- extra_rawfile()'s switch arm compares the type
+ * with strcmp() and skips every slot whose sim_type is NULL (save.c). */
+static const char *node_dflt_sim_type(const char *graph_sim_type)
+{
+  if(graph_sim_type && graph_sim_type[0]) return graph_sim_type;
+  if(xctx && xctx->raw && xctx->raw->sim_type) return xctx->raw->sim_type;
+  return "";
+}
 
-      my_strdup2(_ALLOC_ID_, &sim_type,
-        get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"sim_type", 0));
-      if(custom_rawfile[0]) {
-        if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
-          if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
-          if(sim_type) my_free(_ALLOC_ID_, &sim_type);
-          return 0;
-        }
-      }
-    }
+/* Restore the current database to registry slot `idx`, the balanced other half
+ * of a per-node extra_rawfile() switch. `idx` < 0, or a database that is
+ * already the current one, is a no-op. Index form (extra_rawfile `what` 2 with
+ * an all-digit "file") rather than the mode-5 SWAP, because a swap is not a
+ * stack pop: nested switches cannot be unwound with it. */
+static void node_db_restore(int idx)
+{
+  char buf[30];
+  if(idx < 0 || !xctx || xctx->extra_idx == idx) return;
+  my_snprintf(buf, S(buf), "%d", idx);
+  extra_rawfile(2, buf, NULL, -1.0, -1.0);
+}
 
-    /* if doing double variable DC sweeps raw->datasets == 1 but there are multiple curves.
-     * find_closest_wave() may return a dataset number that is > 0 but its a "virtual" dataset
-     * since double DC sweeps just do multiple sweeps by wrapping the sweep variable
-     */
-    if(dset >= raw->datasets) dset = 0;
+/* THE REGISTRY CURSOR IS A PAIR, AND node_db_restore() PUTS BACK ONLY HALF OF IT
+ * (batch F item 2, fix round). `extra_idx` is the database that is current;
+ * `extra_prev_idx` is where `xschem raw switch_back` -- extra_rawfile() mode 5,
+ * scheduler.c, and the documented idiom of every `xschem raw switch <x>; ...;
+ * switch_back` fragment in a schematic (xschem.tcl:4743) -- will GO. EVERY
+ * extra_rawfile() switch overwrites the second half, and in READ mode so does a
+ * FAILED one (save.c: `xctx->raw = save; xctx->extra_prev_idx = xctx->extra_idx;`).
+ * So a walker that unwinds only extra_idx has still moved the session: measured
+ * with prev=1, current=3, ONE call to any of graph_closest_wave / graph_trace_at /
+ * wave_hilight_points / a refused fullyzoom made the next switch_back land on
+ * slot 2. A read-only getter must not be able to do that.
+ *
+ * Called ONCE per walker, at the graph-level unwind and AFTER it (node_db_restore
+ * is itself a switch and clobbers prev again). Deliberately NOT called by the
+ * per-NODE unwinds inside a walk: those are intermediate, and the entry value is
+ * what the session is owed. Unconditional -- a graph-level switch that REFUSED
+ * moved no extra_idx but may still have moved prev, which is exactly the
+ * graph_fullyzoom() graph-level refusal NDL3 now watches. */
+static void node_db_prev_restore(int prev)
+{
+  if(!xctx || prev < 0) return;
+  xctx->extra_prev_idx = prev;
+}
 
-    /* transform multiple OP points into a dc sweep */
-    if(raw && raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
-      save_datasets = raw->datasets;
-      raw->datasets = 1;
-      save_npoints = raw->npoints[0];
-      raw->npoints[0] = raw->allpoints;
-    }
-    xx1 = xx2 = get_raw_value(dset, idx, 0);
-    for(k = 0; k < xctx->raw->npoints[dset]; k++) {
-      double v = get_raw_value(dset, idx, k);
+/* ==========================================================================
+ * SPEC D2 -- THE JOINT X DOMAIN.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D2.
+ *
+ * graph_fullxzoom() used to compute the automatic X window from the extent of
+ * whichever database happened to be CURRENT (or, for a follower strip, of the
+ * MASTER rect's `rawfile=`). It was the one `node=` walker that never parsed
+ * the `%` field at all, so a strip carrying an analog trace from a 0..2 us raw
+ * and a digital trace from a 0..500 ns VCD was sized by one of the two and the
+ * other was clipped or squeezed -- and WHICH one depended on the registry
+ * cursor, which is exactly the silent-wrong-answer class issue 0305 is about.
+ *
+ * The window is now the UNION of the extents of every database contributing a
+ * trace to the shared-X strip GROUP. See the three helpers below.
+ * ========================================================================== */
+
+/* Does graph rect `k` share graph rect `master`'s X axis?
+ *
+ * THE predicate, verbatim from callback.c's MMB pan / RMB box zoom / arrow pan
+ * loop (and from graph_axis_zoom(), which used to hold the second copy):
+ *
+ *     rk->sel || (same_sim_type && !(rk->flags & 2)) || k == master
+ *
+ * where same_sim_type additionally requires the MASTER not to be `unlocked`
+ * (flags & 2) and the two `sim_type=` PROPERTY TOKENS to match. Factored into
+ * one place because D2 needs a third caller: the joint X domain is a property
+ * of the GROUP, so the union has to be taken over exactly the rects that will
+ * be handed the answer. Duplicating a predicate is how the `%` parse drifted to
+ * three-of-six walkers (issue 0305) -- one copy, three callers.
+ *
+ * NOT the viewer's `sharedx` flag, which the C engine cannot see. */
+static int graph_shares_x(int master, int k)
+{
+  xRect *rm, *rk;
+  char *master_sim = NULL;
+  int same_sim_type = 0, member;
+
+  if(!xctx) return 0;
+  if(master < 0 || master >= xctx->rects[GRIDLAYER]) return 0;
+  if(k < 0 || k >= xctx->rects[GRIDLAYER]) return 0;
+  rm = &xctx->rect[GRIDLAYER][master];
+  rk = &xctx->rect[GRIDLAYER][k];
+  if(!(rk->flags & 1)) return 0;     /* 1: graph, 3: graph_unlocked */
+  if(k == master) return 1;
+  /* get_tok_value() answers out of a rotating buffer, so the master's token has
+   * to be copied before the second call can overwrite it */
+  my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(rm->prop_ptr, "sim_type", 0));
+  if(!(rm->flags & 2) &&
+     !strcmp(master_sim, get_tok_value(rk->prop_ptr, "sim_type", 0))) {
+    same_sim_type = 1;
+  }
+  my_free(_ALLOC_ID_, &master_sim);
+  member = (rk->sel || (same_sim_type && !(rk->flags & 2)));
+  return member ? 1 : 0;
+}
+
+/* ONE CONTRIBUTION to the joint X domain: the extent of the sweep variable
+ * `sweep_name` (absent -> column 0) in the database that is CURRENT right now,
+ * for dataset `dataset` (-1 = dataset 0).
+ *
+ * Returns 1 and fills lo/hi, or 0 -- and 0 is a real answer, not an excuse to
+ * invent one. A database with no values, no columns, no datasets, an empty
+ * dataset or a column that is all NaN contributes NOTHING to the union rather
+ * than dragging it to 0, to NaN or to a window nothing can be drawn in. See the
+ * degenerate-input ruling in the spec.
+ *
+ * The sweep column is resolved BY NAME here and clamped against the
+ * switched-in nvars, for the reason batch F item 2 recorded at every other
+ * walker: a column NUMBER belongs to the database it was resolved in, and
+ * subscripting a three-column VCD with a five-column raw's column 4 is an
+ * out-of-bounds read. */
+static int graph_x_extent(const char *sweep_name, int dataset, double *lo, double *hi)
+{
+  Raw *raw;
+  int idx, k, dset, np, first = 1;
+  int save_datasets = -1, save_npoints = -1;
+  double xx1 = 0.0, xx2 = 0.0;
+
+  if(!xctx) return 0;
+  raw = xctx->raw;
+  if(!raw || !raw->values || !raw->npoints) return 0;
+  if(raw->nvars <= 0 || raw->datasets <= 0) return 0;
+  idx = -1;
+  if(sweep_name && sweep_name[0]) {
+    idx = get_raw_index(sweep_name, NULL);
+    /* A database that does not HAVE the target strip's x quantity has no extent
+     * IN that quantity, so it contributes nothing. Falling through to column 0
+     * would fold a different quantity into the union -- the same class of error
+     * as measuring each group member in its own `sweep=`. An ABSENT `sweep=`
+     * token is NOT this case: it means column 0, which is what every database
+     * here calls its x axis. */
+    if(idx < 0) return 0;
+  }
+  if(idx < 0) idx = 0;
+  if(idx >= raw->nvars) idx = 0;
+  dset = (dataset == -1) ? 0 : dataset;
+  if(dset < 0) dset = 0;
+  if(dset >= raw->datasets) dset = 0;
+  /* transform multiple OP points into a dc sweep (unchanged from the shipped
+   * code, but now per DATABASE: the saved pair is put back before this function
+   * returns, so a later contributor can never re-apply the first one's) */
+  if(raw->sim_type && !strcmp(raw->sim_type, "op") &&
+     raw->datasets > 1 && raw->npoints[0] == 1) {
+    save_datasets = raw->datasets;
+    raw->datasets = 1;
+    save_npoints = raw->npoints[0];
+    raw->npoints[0] = raw->allpoints;
+    dset = 0;
+  }
+  np = raw->npoints[dset];
+  for(k = 0; k < np; k++) {
+    double v = get_raw_value(dset, idx, k);
+    if(v != v) continue;              /* NaN has no ordering, so it is no extent */
+    if(first) { xx1 = xx2 = v; first = 0; }
+    else {
       if(v < xx1) xx1 = v;
       if(v > xx2) xx2 = v;
     }
-    if(gr->logx) {
-      xx1 = mylog10(xx1);
-      xx2 = mylog10(xx2);
-    }
-    dbg(1, "graph_fullxzoom(): xx1=%g, xx2=%g\n");
-    my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
-    my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
-
-    if(sch_waves_loaded()!= -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
-    my_free(_ALLOC_ID_, &custom_rawfile);
-    my_free(_ALLOC_ID_, &sim_type);
-
-    need_redraw = 1;
-    if(save_npoints != -1) { /* restore multiple OP points from artificial dc sweep */
-      raw->datasets = save_datasets;
-      raw->npoints[0] = save_npoints;
-    }
-    return need_redraw;
-  } else {
-    return 0;
   }
+  if(save_npoints != -1) {
+    raw->datasets = save_datasets;
+    raw->npoints[0] = save_npoints;
+  }
+  if(first) return 0;                 /* nothing usable in that column */
+  *lo = xx1;
+  *hi = xx2;
+  return 1;
+}
+
+/* fold one contribution into the running union */
+static void graph_x_union_add(const char *sweep_name, int dataset,
+                              double *lo, double *hi, int *got)
+{
+  double a = 0.0, b = 0.0;
+  if(!graph_x_extent(sweep_name, dataset, &a, &b)) return;
+  if(!*got) { *lo = a; *hi = b; }
+  else {
+    if(a < *lo) *lo = a;
+    if(b > *hi) *hi = b;
+  }
+  (*got)++;
+}
+
+/* Add every database contributing a trace to graph rect `k` to the running
+ * union [*lo, *hi]; `*got` counts the contributions that answered and
+ * `*nodes_seen` counts the `node=` entries walked, resolvable or not.
+ *
+ * `sweep_name` is THE TARGET RECT's x quantity, passed down from
+ * graph_fullxzoom() -- deliberately NOT rect k's own. A union is only meaningful
+ * over ONE quantity, and the rect being written is the one that says which:
+ * graph_shares_x() puts a locked X-Y strip (`sweep=v(a)`) in the same group as
+ * a time strip, and measuring each member in its own quantity folded a VOLTAGE
+ * range into a TIME window and squeezed the waveform to invisibility. Each
+ * database still resolves the NAME itself (graph_x_extent), so a column number
+ * never crosses a database boundary.
+ *
+ * WHAT CONTRIBUTES, and the ruling behind it (spec D2):
+ *   - every `%<rawfile>` named by a `node=` entry THAT RESOLVES. One that does
+ *     not resolve contributes nothing: every other walker REFUSES such a trace
+ *     (issue 0305's ruling), so sizing the window for it would fit a trace that
+ *     is never drawn.
+ *   - the strip's OWN database -- its `rawfile=`, or the current one when it
+ *     has none -- but only when a trace actually plots from it: at least one
+ *     `node=` entry WITHOUT a `%<rawfile>`. A strip whose every entry names its
+ *     own database must NOT be sized by whatever database the registry cursor
+ *     happens to be parked on -- that is the defect this item exists to remove.
+ *   - a TRACELESS strip contributes its own database ONLY under `empty_ok`,
+ *     which graph_fullxzoom() sets on a SECOND pass and only when the whole
+ *     group turned out to be traceless. An empty strip has nothing else to go on
+ *     and must still get a drawable window, but folding its fallback into a
+ *     group that does have traces put the current database back into the union
+ *     and the window snapped to the registry cursor again -- the very defect,
+ *     re-entering through the empty strip `wviewer::add_graph` appends. It also
+ *     broke the group's agreement, since the fallback fired for some members and
+ *     not others.
+ *
+ * Leaves the current database exactly where it found it. */
+static void graph_x_union_rect(int k, const char *sweep_name, int dataset,
+                               double *lo, double *hi, int *got,
+                               int *nodes_seen, int empty_ok)
+{
+  xRect *rk;
+  char *node = NULL, *custom_rawfile = NULL, *sim_type = NULL;
+  char *node_rawfile = NULL, *node_sim_type = NULL, *ntok_copy = NULL;
+  char *saven, *nptr;
+  const char *ntok;
+  int autoload, graph_idx, entry_extra_idx, own_db_plots = 0;
+
+  if(!xctx || k < 0 || k >= xctx->rects[GRIDLAYER]) return;
+  rk = &xctx->rect[GRIDLAYER][k];
+  entry_extra_idx = xctx->extra_idx;
+
+  autoload = !strboolcmp(get_tok_value(rk->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  my_strdup2(_ALLOC_ID_, &custom_rawfile, get_tok_value(rk->prop_ptr, "rawfile", 0));
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(rk->prop_ptr, "sim_type", 0));
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(rk->prop_ptr, "node", 0));
+
+  /* the strip's own database. A REFUSED graph-level switch is not fatal: the
+   * strip simply contributes the database that is current, exactly as every
+   * other walker treats an unresolvable `rawfile=`. */
+  if(custom_rawfile[0]) {
+    extra_rawfile(autoload, custom_rawfile,
+                  sim_type[0] ? sim_type : node_dflt_sim_type(NULL), -1.0, -1.0);
+  }
+  graph_idx = xctx->extra_idx;
+
+  /* ONE walk, ONE `%` parse (issue 0305: a second copy is how this family
+   * drifted). Each entry either names its own database -- switch, measure,
+   * unwind to the graph level -- or plots from the strip's own, which is then
+   * folded in once, after the walk. The union is commutative, so measuring the
+   * strip's own database last costs nothing and saves a second parse. */
+  nptr = node;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    nptr = NULL;
+    if(nodes_seen) (*nodes_seen)++;
+    node_token_split(ntok, &ntok_copy, NULL, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0]) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) != 0) {
+        graph_x_union_add(sweep_name, dataset, lo, hi, got);
+      }
+      node_db_restore(graph_idx);
+    } else {
+      own_db_plots = 1;
+    }
+  }
+  if(!node[0] && empty_ok) own_db_plots = 1;
+  if(own_db_plots) graph_x_union_add(sweep_name, dataset, lo, hi, got);
+
+  node_db_restore(entry_extra_idx);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  my_free(_ALLOC_ID_, &node_rawfile);
+  my_free(_ALLOC_ID_, &node_sim_type);
+  my_free(_ALLOC_ID_, &ntok_copy);
+}
+
+/* THE AUTOMATIC X WINDOW of graph rect `i` (the `f` key, and
+ * `xschem setprop rect 2 <n> fullxzoom`). Spec D2: the union, over the whole
+ * shared-X group, of every contributing database's extent.
+ *
+ * Returns 1 when x1/x2 were written (i.e. the caller owes a redraw).
+ *
+ * TWO REFUSALS, both leaving x1/x2 exactly as they were:
+ *   - nothing contributed at all. Note WHICH way that cuts: a group whose every
+ *     `node=` entry names a database that does not resolve keeps the window it
+ *     had, rather than falling back to whatever the registry cursor points at.
+ *     Only a WHOLLY TRACELESS group takes the current-database fallback, on the
+ *     second pass below.
+ *   - the union is DEGENERATE (zero width, e.g. a lone single-sample database).
+ *     A zero-width X window makes every X transform divide by gr->gw == 0, so
+ *     the window the strip already had is strictly the better answer. This is
+ *     the one behaviour the shipped code got wrong in the safe direction only
+ *     by luck: it wrote x1 == x2 and let setup_graph_data() divide by zero.
+ *
+ * The X QUANTITY is rect i's `sweep=` (absent -> column 0), resolved by NAME in
+ * every contributing database. A shared-X group can hold members with different
+ * `sweep=` tokens -- graph_shares_x() has never required otherwise -- and the
+ * union has to be over one quantity or it is not a union at all. */
+int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
+{
+  xRect *r;
+  char *sweep_name = NULL;
+  int master, k, got = 0, nodes_seen = 0;
+  int entry_extra_idx, entry_prev_idx;
+  double xx1 = 0.0, xx2 = 0.0;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  if(sch_waves_loaded() < 0) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+
+  /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever
+   * the pointer is not over a graph (callback.c). A programmatic full zoom
+   * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
+   * can therefore run with graph_master == -1, or stale beyond the rect count
+   * after a canvas rebuild, and the unguarded xctx->rect[GRIDLAYER][graph_master]
+   * reads walked off the array -> intermittent SIGSEGV. Out-of-range or
+   * non-graph master -> treat the target graph as its own master. */
+  master = xctx->graph_master;
+  if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
+  else if(!(xctx->rect[GRIDLAYER][master].flags & 1)) master = i;
+
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
+
+  /* ONE x quantity for the whole union, and it is the TARGET rect's: see the
+   * `sweep_name` paragraph on graph_x_union_rect(). Copied because
+   * get_tok_value() answers out of a rotating buffer the walk below reuses. */
+  my_strdup2(_ALLOC_ID_, &sweep_name,
+             find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1));
+
+  /* THE GROUP, not the rect: every strip that shares this X axis is about to be
+   * given the SAME x1/x2 by callback.c's loop, so all of them must be measured.
+   * Computing rect `i`'s own union instead would hand each member of a shared-X
+   * group a different idea of the window, and the last one written would win. */
+  for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+    if(!(xctx->rect[GRIDLAYER][k].flags & 1)) continue;
+    if(k != i && !graph_shares_x(master, k)) continue;
+    graph_x_union_rect(k, sweep_name, dataset, &xx1, &xx2, &got, &nodes_seen, 0);
+  }
+  /* SECOND PASS, and only for a group in which nothing plots at all: an empty
+   * strip still needs a drawable window, so the traceless group falls back to
+   * its members' own databases. Over the GROUP rather than over rect i, so every
+   * member of it computes the same answer whichever one the gesture started on.
+   * `!nodes_seen` is what separates "no traces" from "traces named, none of them
+   * resolvable" -- the latter keeps the window it had. */
+  if(!got && !nodes_seen) {
+    for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+      if(!(xctx->rect[GRIDLAYER][k].flags & 1)) continue;
+      if(k != i && !graph_shares_x(master, k)) continue;
+      graph_x_union_rect(k, sweep_name, dataset, &xx1, &xx2, &got, NULL, 1);
+    }
+  }
+
+  /* the registry cursor is a PAIR: extra_idx and the extra_prev_idx that
+   * `xschem raw switch_back` goes to (batch F item 2, finding 1) */
+  node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
+  my_free(_ALLOC_ID_, &sweep_name);
+
+  if(!got) return 0;
+  if(gr && gr->logx) {
+    xx1 = mylog10(xx1);
+    xx2 = mylog10(xx2);
+  }
+  if(!(xx1 < xx2)) return 0;   /* degenerate (or NaN): keep the drawable window */
+  dbg(1, "graph_fullxzoom(): %d contribution(s), xx1=%g, xx2=%g\n", got, xx1, xx2);
+  my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
+  my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
+  return 1;
+}
+
+/* ==========================================================================
+ * SPEC D4 -- CURSORS ACROSS DATABASES.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D4.
+ *
+ * annot_p / annot_x / annot_sweep_idx / cursor_b_val are fields of `Raw`, i.e.
+ * PER DATABASE. backannotate_at_cursor_b_pos() (callback.c) resolved cursor B
+ * in xctx->raw and nowhere else, so with an analog raw and a VCD loaded
+ * together a cursor at time t was not one object at one time: it was N objects
+ * that happened to have been placed together, one of them fresh and the rest
+ * holding whatever index they were last left with. Which one was fresh depended
+ * on the registry cursor -- the same silent-wrong-answer shape as issue 0305
+ * and spec D2.
+ *
+ * This is the enumerator half of the fix: the SET of registry slots a cursor
+ * placed on graph rect `r` has to resolve in. The annotation itself stays in
+ * callback.c, which owns the cursor and the Tcl-visible backannotation array.
+ *
+ * WHAT CONTRIBUTES (spec RULING D4-1), and it is deliberately a SUPERSET of
+ * D2's rule for the X window:
+ *   - the database that is CURRENT on entry, ALWAYS. It is what `xschem raw
+ *     value <n> {}`, annotate_op() and the schematic voltage overlay read when
+ *     nobody switched, so including it unconditionally is what makes a
+ *     single-database session behave exactly as it did before this item.
+ *   - every `%<rawfile>` named by a `node=` entry THAT RESOLVES. One that does
+ *     not resolve contributes nothing -- that trace is refused everywhere else
+ *     (issue 0305), so annotating for it would be annotating a trace that is
+ *     never drawn.
+ *   - the strip's OWN database (its `rawfile=`, else the current one) when a
+ *     trace actually plots from it: at least one `node=` entry with no
+ *     `%<rawfile>`. A traceless strip contributes its own database too -- unlike
+ *     D2 there is no group to disagree with, and a cursor on an empty strip
+ *     still has to annotate something.
+ *   - all three of the above AGAIN, for every OTHER graph rect that shares this
+ *     cursor (RULING D4-8, at the sibling loop below). Cursor B is one global,
+ *     so a digital strip stacked under an analog one is inside its scope even
+ *     though no caller ever passes that rect down here.
+ *
+ * *slots is my_malloc'd here with the DISTINCT registry indices and the return
+ * value is how many were written; the caller my_free()s it. It grows rather
+ * than truncating because an `autoload=true` strip can REGISTER databases while
+ * this walks, so no bound taken before the walk is a bound. The current
+ * database is always (*slots)[0], so a caller that annotates in order leaves the
+ * Tcl-visible array written by the database the rest of the engine calls "the"
+ * one.
+ *
+ * Leaves BOTH halves of the registry cursor exactly where it found them: this
+ * is a read-only query and a query verb must not move the session (batch F
+ * item 2, finding 1).
+ * ========================================================================== */
+
+/* append `idx` to *slots unless it is already there; returns the new count */
+static int graph_db_slot_add(int **slots, int *cap, int n, int idx)
+{
+  int j;
+  if(idx < 0) return n;
+  for(j = 0; j < n; j++) if((*slots)[j] == idx) return n;
+  if(n >= *cap) {
+    *cap = n + 8;
+    my_realloc(_ALLOC_ID_, slots, (size_t)(*cap) * sizeof(int));
+  }
+  (*slots)[n] = idx;
+  return n + 1;
+}
+
+/* ONE STRIP's contribution to the set. Appends the registry slots rect `r`
+ * plots from to *slots and answers the new count; the current database is put
+ * back to `entry_extra_idx` on every exit path, so strips compose. */
+static int graph_cursor_dbs_rect(xRect *r, int **slots, int *cap, int n, int entry_extra_idx)
+{
+  char *node = NULL, *custom_rawfile = NULL, *sim_type = NULL;
+  char *node_rawfile = NULL, *node_sim_type = NULL, *ntok_copy = NULL;
+  char *saven, *nptr;
+  const char *ntok;
+  int autoload, graph_idx;
+  int own_db_plots = 0, nodes_seen = 0;
+
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  my_strdup2(_ALLOC_ID_, &custom_rawfile, get_tok_value(r->prop_ptr, "rawfile", 0));
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr, "sim_type", 0));
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr, "node", 0));
+
+  /* the strip's own database. A REFUSED graph-level switch is not fatal: the
+   * strip then owns whatever database is current, as every other walker has it. */
+  if(custom_rawfile[0]) {
+    extra_rawfile(autoload, custom_rawfile,
+                  sim_type[0] ? sim_type : node_dflt_sim_type(NULL), -1.0, -1.0);
+  }
+  graph_idx = xctx->extra_idx;
+
+  /* ONE walk, ONE `%` parse: caller number eight of node_token_split(), never
+   * parser number two (issue 0305). */
+  nptr = node;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    nptr = NULL;
+    nodes_seen++;
+    node_token_split(ntok, &ntok_copy, NULL, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0]) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) != 0) {
+        n = graph_db_slot_add(slots, cap, n, xctx->extra_idx);
+      }
+      node_db_restore(graph_idx);
+    } else {
+      own_db_plots = 1;
+    }
+  }
+  if(!nodes_seen) own_db_plots = 1;
+  if(own_db_plots) n = graph_db_slot_add(slots, cap, n, graph_idx);
+
+  node_db_restore(entry_extra_idx);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  my_free(_ALLOC_ID_, &node_rawfile);
+  my_free(_ALLOC_ID_, &node_sim_type);
+  my_free(_ALLOC_ID_, &ntok_copy);
+  return n;
+}
+
+int graph_cursor_dbs(xRect *r, int **slots)
+{
+  int entry_extra_idx, entry_prev_idx;
+  int n = 0, cap = 0, i;
+
+  if(!xctx || !r || !slots) return 0;
+  *slots = NULL;
+  /* RE-ENTRANCY REFUSAL, and it is not defensive: raw_read() calls
+   * backannotate_at_cursor_b_pos() from INSIDE extra_rawfile()'s read arm, at a
+   * moment when xctx->raw is the freshly read database and it is NOT YET in
+   * extra_raw_arr[] -- extra_idx still names the OUTGOING slot. Any switch made
+   * from here would then overwrite xctx->raw with a registered database, and the
+   * read arm's `extra_raw_arr[extra_raw_n] = xctx->raw` a few lines later would
+   * register THAT pointer a second time and leak the one it just read: two
+   * registry slots aliasing one Raw, i.e. a double free at the next `raw clear`.
+   * Whenever xctx->raw is not the registry's current entry there is nothing this
+   * function can safely enumerate, so it answers 0 and the caller falls back to
+   * annotating the current database alone -- exactly the shipped behaviour. */
+  if(xctx->extra_raw_n <= 0) return 0;
+  if(xctx->extra_idx < 0 || xctx->extra_idx >= xctx->extra_raw_n) return 0;
+  if(xctx->raw != xctx->extra_raw_arr[xctx->extra_idx]) return 0;
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
+  n = graph_db_slot_add(slots, &cap, n, entry_extra_idx);
+  /* not a graph rect: the current database and nothing else. Through the
+   * epilogue like every other exit -- nothing is outstanding here yet, but a
+   * refusal that hand-copies (or hand-skips) the cleanup is exactly what batch
+   * F item 2 had to unpick out of graph_fullyzoom(). */
+  if(!(r->flags & 1)) goto cursor_dbs_done;
+
+  n = graph_cursor_dbs_rect(r, slots, &cap, n, entry_extra_idx);
+
+  /* RULING D4-8 (fix round) -- CURSOR B IS A VIEWER OBJECT, NOT A STRIP OBJECT,
+   * SO ITS SCOPE IS EVERY STRIP THAT SHARES IT.
+   *
+   * xctx->graph_cursor2_x is ONE global, and the canonical mixed-signal layout
+   * is the Cadence one: analog on one strip, the digital bus on its own strip
+   * underneath. Fanning out over only the rect that happened to be passed in
+   * left the digital strip's VCD never annotated at all -- annot_p -1 and
+   * cursor_b_val my_calloc zero, which reads as "that signal is 0" rather than
+   * "nothing asked" -- and `xschem set cursor2_x` (scheduler.c) hard-codes
+   * rect[GRIDLAYER][0], so the headless path and the menu path both drove the
+   * cursor from strip 0 only. Every mouse-motion caller passes just the rect
+   * under the pointer, which is worse: which databases got a fresh cursor then
+   * depended on where the mouse was.
+   *
+   * A strip with `private_cursor` (flags bit 4) is excluded, in BOTH directions:
+   * it has a cursor2_x of its OWN, so it neither joins another strip's fan-out
+   * nor drags other strips into its own. That is the same reading of the flag
+   * backannotate_cursor_b_in_db() already has when it picks `cursor2`.
+   *
+   * The per-database RESOLUTION still uses the driving strip's Graph_ctx --
+   * `gr` is the single shared xctx->graph_struct and re-running setup_graph_data()
+   * per sibling on every cursor motion would both cost a walk and stamp another
+   * strip's geometry into it. That is sound because of RULING D4-7: a database
+   * with nothing inside the driving strip's X window is resolved against its
+   * own whole sweep instead of being skipped, so the window a sibling happens
+   * to be zoomed to cannot change the answer. */
+  if(!(r->flags & 4)) {
+    for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+      xRect *rr = &xctx->rect[GRIDLAYER][i];
+      if(rr == r) continue;
+      if(!(rr->flags & 1)) continue;   /* not a graph */
+      if(rr->flags & 4) continue;      /* its own cursor, its own databases */
+      n = graph_cursor_dbs_rect(rr, slots, &cap, n, entry_extra_idx);
+    }
+  }
+
+  cursor_dbs_done:
+  node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
+  dbg(1, "graph_cursor_dbs(): %d database(s)\n", n);
+  return n;
 }
 
 int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
@@ -3409,6 +3946,7 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
       int p, v;
       char *bus_msb = NULL;
       int sweep_idx = 0;
+      const char *sweep_name = NULL; /* last non-empty `sweep=` token, carried BY NAME */
       double val, start, end;
       double min=0.0, max=0.0;
       int firstyval = 1;
@@ -3417,9 +3955,15 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
       char *ntok_copy = NULL; /* copy of ntok without %<n> */
       char *custom_rawfile = NULL; /* "rawfile" attr. set in graph: load and switch to specified raw */
       char *sim_type = NULL;
+      /* per-node, but declared HERE and not in the loop body: the two refusals
+       * below leave the loop through the epilogue, and the epilogue can only
+       * free what is still in scope at the label (batch F item 2). */
+      char *node_rawfile = NULL;
+      char *node_sim_type = NULL;
       Raw *raw = NULL;
       char *tmp_ptr = NULL;
       int save_extra_idx = -1;
+      int save_prev_idx = -1;   /* the OTHER half of the cursor: where switch_back goes */
       int autoload = 0, save_datasets = -1, save_npoints = -1;
       const char *ptr;
 
@@ -3440,60 +3984,58 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
       my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
 
       save_extra_idx = xctx->extra_idx;
+      save_prev_idx = xctx->extra_prev_idx;
       nptr = node;
       sptr = sweep;
       start = (gr->gx1 <= gr->gx2) ? gr->gx1 : gr->gx2;
       end = (gr->gx1 <= gr->gx2) ? gr->gx2 : gr->gx1;
 
       while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
-        char *nd = NULL;
-        char str_extra_idx[30];
-
         if(sch_waves_loaded() != -1 && custom_rawfile[0]) {
           if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
-            my_free(_ALLOC_ID_, &node);
-            my_free(_ALLOC_ID_, &sweep);
-            my_free(_ALLOC_ID_, &custom_rawfile);
-            my_free(_ALLOC_ID_, &sim_type);
-            return 0;
+            goto fullyzoom_done; /* need_redraw stays 0: the refusal is unchanged */
           }
         }
         raw = xctx->raw;
-        my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
-        /* if %<n> is specified after node name, <n> is the dataset number to plot in graph */
-        if(nd[0]) {
-          int pos = 1;
-          if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-          if(raw && raw->values) {
-            char *node_rawfile = NULL;
-            char *node_sim_type = NULL;
-            tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
-            my_strdup2(_ALLOC_ID_, &node_rawfile, tclresult());
-            tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
-            my_strdup2(_ALLOC_ID_, &node_sim_type, tclresult()[0] ? tclresult() :
-                  sim_type[0] ? sim_type : xctx->raw->sim_type);
-            dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
-            if(node_rawfile && node_rawfile[0]) {
-              if(!extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0)) {
-                my_free(_ALLOC_ID_, &node);
-                my_free(_ALLOC_ID_, &sweep);
-                my_free(_ALLOC_ID_, &custom_rawfile);
-                my_free(_ALLOC_ID_, &sim_type);
-                return 0;
-              }
-              raw = xctx->raw;
-            }
-            my_free(_ALLOC_ID_, &node_rawfile);
-            my_free(_ALLOC_ID_, &node_sim_type);
+        /* ONE `%` parse, issue 0305.
+         * ⚠ THE TWO REFUSALS HERE USED TO BE BARE `return 0`s (batch F item 2).
+         * Each hand-copied a subset of the epilogue's my_free()s -- and each got
+         * the subset wrong: `ntok_copy` (this walker's only per-entry allocation,
+         * handed back by node_token_split() a few lines below) was in neither, so
+         * every refused fullyzoom leaked it, and NEITHER restored the database
+         * the graph-level `rawfile=` switch above had just switched away from --
+         * so a strip whose graph DB resolves and whose per-trace `%<rawfile>`
+         * does not left the whole SESSION pointing at the graph's database.
+         * Both are now `goto fullyzoom_done`, the function's single exit: a third
+         * refusal added later inherits the frees and the restore by construction
+         * instead of having to remember them.
+         *
+         * ⚠ THE TWO REFUSALS ARE NOT SYMMETRIC, and the paragraph above used to
+         * over-claim by lumping them (review of the fix round). The GRAPH-level
+         * refusal a few lines up can only fire on the FIRST iteration -- the
+         * switch it guards is loop-invariant -- so at that point ntok_copy is
+         * still NULL, no per-trace switch is outstanding and the old `return 0`
+         * there leaked nothing and stranded nothing. Everything above is true of
+         * the PER-TRACE refusal (this one). What the graph-level refusal really
+         * does leave behind is the OTHER half of the registry cursor: in READ
+         * mode (autoload=true) a failed extra_rawfile() sets extra_prev_idx =
+         * extra_idx (save.c), moving where `raw switch_back` goes even though
+         * the current slot never moved. The epilogue's node_db_prev_restore()
+         * puts that back, and NDL3 is the check that watches it -- which is what
+         * finally gives the first `goto` behavioural evidence rather than only
+         * NDR4/NDR5's structural count. */
+        node_token_split(ntok, &ntok_copy, &node_dataset, &node_rawfile, &node_sim_type,
+                         node_dflt_sim_type(sim_type));
+        if(node_rawfile[0] && raw && raw->values) {
+          dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
+          if(!extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0)) {
+            goto fullyzoom_done;
           }
-          if(pos == 2) node_dataset = atoi(nd);
-          else node_dataset = -1;
-          dbg(1, "nd=|%s|, node_dataset = %d\n", nd, node_dataset);
-          my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-        } else {
-          node_dataset = -1;
-          my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+          raw = xctx->raw;
         }
+        my_free(_ALLOC_ID_, &node_rawfile);
+        my_free(_ALLOC_ID_, &node_sim_type);
+        dbg(1, "nd=|%s|, node_dataset = %d\n", ntok, node_dataset);
 
         /* transform multiple OP points into a dc sweep */
         if(raw && raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
@@ -3503,7 +4045,6 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
           raw->npoints[0] = raw->allpoints;
         }
 
-        my_free(_ALLOC_ID_, &nd);
         dbg(1, "ntok=|%s|\nntok_copy=|%s|\nnode_dataset=%d\n", ntok, ntok_copy, node_dataset);
 
         tmp_ptr = find_nth(ntok_copy, ";", "\"", 4, 2);
@@ -3515,10 +4056,19 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
         dbg(1, "ntok_copy=|%s|, bus_msb=|%s|\n", ntok_copy, bus_msb ? bus_msb : "<NULL>");
         stok = my_strtok_r(sptr, "\n\t ", "\"", 0, &saves);
         nptr = sptr = NULL;
-        if(stok && stok[0]) {
-          sweep_idx = get_raw_index(stok, NULL);
+        /* the sweep column, re-resolved BY NAME on every entry (batch F item 2,
+         * issue 0305) -- see the long note at the same point in draw_graph().
+         * A `sweep=` list shorter than the `node=` list carries its last token
+         * forward, and a carried column NUMBER was resolved in the previous
+         * entry's database: with a cross-DB `%<rawfile>` entry between two
+         * graph-DB entries, the wide raw's column 4 was used as the VCD's
+         * values[4], an out-of-bounds read. */
+        if(stok && stok[0]) sweep_name = stok;
+        if(sweep_name && sweep_name[0]) {
+          sweep_idx = get_raw_index(sweep_name, NULL);
           if( sweep_idx == -1) sweep_idx = 0;
         }
+        if(raw && (sweep_idx < 0 || sweep_idx >= raw->nvars)) sweep_idx = 0;
         dbg(1, "graph_fullyzoom(): ntok_copy=%s\n", ntok_copy);
         v = -1;
         if(!bus_msb) {
@@ -3589,24 +4139,33 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
           raw->datasets = save_datasets;
           raw->npoints[0] = save_npoints;
         }
-        if(save_extra_idx != -1 && save_extra_idx != xctx->extra_idx) {
-          my_snprintf(str_extra_idx, S(str_extra_idx), "%d", save_extra_idx);
-          extra_rawfile(2, str_extra_idx, NULL, -1.0, -1.0);
-          raw = xctx->raw;
-        }
+        node_db_restore(save_extra_idx);
+        raw = xctx->raw;
 
       } /* while( (ntok = my_strtok_r(nptr, "\n\t ", "\"", 0, &saven)) ) */
       if(max == min) max += 0.01;
       min = floor_to_n_digits(min, 2);
       max = ceil_to_n_digits(max, 2);
+      my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y1", dtoa(min)));
+      my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y2", dtoa(max)));
+      need_redraw = 1;
+
+      /* THE ONE EPILOGUE (batch F item 2). Every exit from the node walk above
+       * lands here, so the database restore and the eight my_free()s exist once.
+       * node_db_restore() is a no-op when nothing moved, and my_free() is a
+       * no-op on a NULL pointer, so the label is reached safely from a refusal
+       * on the very first entry as well as from the normal end of the walk. */
+      fullyzoom_done:
+      node_db_restore(save_extra_idx);
+      node_db_prev_restore(save_prev_idx);
       my_free(_ALLOC_ID_, &node);
       my_free(_ALLOC_ID_, &sweep);
       my_free(_ALLOC_ID_, &custom_rawfile);
       my_free(_ALLOC_ID_, &sim_type);
-      if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
-      my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y1", dtoa(min)));
-      my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y2", dtoa(max)));
-      need_redraw = 1;
+      my_free(_ALLOC_ID_, &node_rawfile);
+      my_free(_ALLOC_ID_, &node_sim_type);
+      my_free(_ALLOC_ID_, &bus_msb);
+      my_free(_ALLOC_ID_, &ntok_copy);
     } else { /* digital plot */
       my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "ypos1",
          get_tok_value(r->prop_ptr, "y1", 0) ));
@@ -3731,10 +4290,16 @@ static void draw_graph_points(int idx, int first, int last,
     dbg(0, "draw_graph_points(): no raw struct allocated\n");
     return;
   }
-  gv = raw->values[idx];
-
   dbg(1, "draw_graph_points: idx=%d, first=%d, last=%d, wcnt=%d\n", idx, first, last, wcnt);
+  /* idx == -1 is "the expression was rejected / the vector does not exist" --
+   * plot_raw_custom_data() returns it for an unresolvable token (spec
+   * doc/claude/specs/calculator.md section 3.1) and, since issue 0325, for a
+   * negative del() delay too. The load below MUST stay under the guard: with
+   * idx == -1 `raw->values[idx]` is an 8-byte read one element BEFORE the
+   * values[] pointer array, which valgrind flags as an Invalid read on every
+   * redraw of such a graph. Issue 0325. */
   if(idx == -1) return;
+  gv = raw->values[idx];
   for(p=0;p<cadlayers; ++p) {
     if(gr->mode == 1 || gr->mode == 2) { /* Histograms */
       XSetLineAttributes(display, xctx->gc[p],
@@ -4915,6 +5480,8 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
   double xval, yval;
   char *node = NULL, *sweep = NULL;
   int sweep_idx = 0;
+  int node_sweep_idx = 0;         /* the sweep column IN THE ENTRY'S OWN database */
+  const char *sweep_name = NULL;  /* last non-empty `sweep=` token, carried forward */
   char *saven, *saves, *nptr, *sptr;
   const char *ntok, *stok;
   int wcnt = -1, idx, expression;
@@ -4925,6 +5492,10 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
   double min=-1.0;
   char *custom_rawfile = NULL; /* "rawfile" attr. set in graph: load and switch to specified raw */
   char *sim_type = NULL;
+  int entry_extra_idx = -1;  /* the session's database on entry -- the unwind point */
+  int entry_prev_idx = -1;   /* ...and where switch_back pointed on entry */
+  int switched = 0;          /* the graph-level switch actually took */
+  int valid_rawfile = 1;
   const char *ptr;
 
   /* Written FIRST, before either refusal (issue 0174). Both early returns used
@@ -4961,12 +5532,44 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
 
   my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
 
+  /* ⚠ THE BRACKET (batch F item 2, issue 0305). `rawfile`/`sim_type` are
+   * GRAPH-level tokens, so the switch is made ONCE here, above the node loop --
+   * it used to be made once per node, inside it, and unwound by a single
+   * extra_rawfile(5, ...) after the loop. That is the shape graph_point_at()
+   * was already repaired into (landmine 40), and both halves of it were wrong
+   * here:
+   *   - mode 5 is a SWAP of extra_idx with extra_prev_idx, not a stack pop, so
+   *     with a per-trace `%<rawfile>` switch nested inside the graph-level one
+   *     (spec D1) it lands the session on whichever database the LAST switch
+   *     came from. Measured on the three-entry nested strip of
+   *     tests/headless/test_node_token_split.tcl: entering on the session raw
+   *     and hovering left the session pointing at the VCD.
+   *   - the swap ran whether or not the switch had TAKEN, so a graph whose
+   *     `rawfile=` does not resolve had its unpaired restore repoint the
+   *     session's current raw on every call -- and this function runs on a
+   *     graph gesture, i.e. constantly, against the session's real database
+   *     rather than a local.
+   * Both levels now unwind by ABSOLUTE INDEX (node_db_restore), which composes;
+   * the per-node half is at the bottom of the loop body. */
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
+  if(custom_rawfile[0]) {
+    if(extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type :
+       (xctx->raw && xctx->raw->sim_type ? xctx->raw->sim_type : NULL), -1.0, -1.0) == 0) {
+      valid_rawfile = 0;
+    } else {
+      switched = 1;
+    }
+  }
+
   nptr = node;
   sptr = sweep;
   /* process each node given in "node" attribute, get also associated sweep var if any*/
   while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
-    char *nd = NULL;
-    int valid_rawfile = 1;
+    char *node_rawfile = NULL;
+    char *node_sim_type = NULL;
+    int node_valid = valid_rawfile;
+    int node_saved_idx;
     wcnt++;
     /* Consume this entry's sweep token and clear the strtok seeds BEFORE the bus
      * skip. Two bugs used to live in the old ordering (both also fixed in
@@ -4984,52 +5587,45 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
     }
     dbg(1, "ntok=%s\n", ntok);
 
-    if(custom_rawfile[0]) {
-      if(extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type :
-         (xctx->raw && xctx->raw->sim_type ? xctx->raw->sim_type : NULL), -1.0, -1.0) == 0) {
-        valid_rawfile = 0;
-      }
-    }
-
     if(stok && stok[0]) {
+      sweep_name = stok;
       sweep_idx = get_raw_index(stok, NULL);
       if( sweep_idx == -1) {
         sweep_idx = 0;
       }
     }
-    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
-
-    if(nd[0]) {
-      int pos = 1;
-      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-      if(xctx->raw && xctx->raw->values) {
-        char *node_rawfile = NULL;
-        char *node_sim_type = NULL;
-        tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
-        my_strdup2(_ALLOC_ID_, &node_rawfile, tclresult());
-        tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
-        my_strdup2(_ALLOC_ID_, &node_sim_type, tclresult()[0] ? tclresult() :
-              sim_type[0] ? sim_type : xctx->raw->sim_type);
-        dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
-        if(node_rawfile && node_rawfile[0]) {
-          if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
-            my_free(_ALLOC_ID_, &node_rawfile);
-            my_free(_ALLOC_ID_, &node_sim_type);
-            valid_rawfile = 0;
-          }
+    /* ONE `%` parse, issue 0305. The per-trace switch it enables is unwound at
+     * the bottom of this loop body, by index, back to whatever was current when
+     * this entry started (the graph-level `rawfile=` when the graph has one). */
+    node_saved_idx = xctx->extra_idx;
+    node_sweep_idx = sweep_idx;
+    node_token_split(ntok, &ntok_copy, &node_dataset, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0] && xctx->raw && xctx->raw->values) {
+      dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
+        node_valid = 0;
+      } else {
+        /* the sweep COLUMN is a per-database index: re-resolve it BY NAME in the
+         * database this entry actually lives in, on EVERY entry that took the
+         * switch and not only on the ones carrying their own `sweep=` token (a
+         * short `sweep=` list carries the last one forward, and a carried INDEX
+         * was resolved in the previous database -- an out-of-bounds read of
+         * values[] when the foreign database is narrower). Same rule, same
+         * reason, as graph_point_at()/wave_hilight_envelope(). */
+        node_sweep_idx = 0;
+        if(sweep_name && sweep_name[0]) {
+          node_sweep_idx = get_raw_index(sweep_name, NULL);
+          if(node_sweep_idx == -1) node_sweep_idx = 0;
         }
-        my_free(_ALLOC_ID_, &node_rawfile);
-        my_free(_ALLOC_ID_, &node_sim_type);
       }
-      if(pos == 2) node_dataset = atoi(nd);
-      else node_dataset = -1;
-      dbg(1, "nd=|%s|, node_dataset = %d\n", nd, node_dataset);
-      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-    } else {
-      node_dataset = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
     }
-    if(nd) my_free(_ALLOC_ID_, &nd);
+    /* belt and braces: the column must be one the database that is NOW current
+     * actually has (values holds nvars+1 columns, the last the expression scratch) */
+    if(xctx->raw && (node_sweep_idx < 0 || node_sweep_idx >= xctx->raw->nvars)) node_sweep_idx = 0;
+    my_free(_ALLOC_ID_, &node_rawfile);
+    my_free(_ALLOC_ID_, &node_sim_type);
+    dbg(1, "ntok=|%s|, node_dataset = %d\n", ntok, node_dataset);
 
     /* if ntok following possible 'alias;' definition contains spaces --> custom data plot */
     idx = -1;
@@ -5047,7 +5643,7 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
     if(expression) idx = xctx->raw->nvars;
     else idx = get_raw_index(express, NULL);
     dbg(1, "find_closest_wave(): expression=%d, ntok_copy=%s express=%s idx=%d\n", expression, ntok_copy, express, idx);
-    if( sch_waves_loaded() != -1 && valid_rawfile && idx != -1 ) {
+    if( sch_waves_loaded() != -1 && node_valid && idx != -1 ) {
       int p, dset, ofs, ofs_end;
       int first, last;
       double xx, yy ; /* the p-th point */
@@ -5062,7 +5658,7 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
       for(dset = 0 ; dset < xctx->raw->datasets; dset++) {
         double prev_x = 0.0;
         int cnt=0, wrap;
-        register SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
+        register SPICE_DATA *gvx = xctx->raw->values[node_sweep_idx];
         register SPICE_DATA *gv0 = xctx->raw->values[0];
         register SPICE_DATA *gvy;
         /* ofs_end MUST be computed before the dataset-skip goto: `done:` does
@@ -5070,7 +5666,7 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
          * ofs_end and thereafter a stale one. graph_point_at() gets this right. */
         ofs_end = ofs + xctx->raw->npoints[dset];
         if(node_dataset != -1 && node_dataset != dset) goto done;
-        if(expression) plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL);
+        if(expression) plot_raw_custom_data(node_sweep_idx, ofs, ofs_end - 1, express, NULL);
         gvy = xctx->raw->values[idx];
         dbg(1, "find_closest_wave(): dset=%d\n", dset);
         first = -1;
@@ -5126,11 +5722,23 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
       } /* for(dset...) */
 
     } /*  if( (idx = get_raw_index(ntok, NULL)) != -1 ) */
+    /* the other half of the per-node switch, on every path out of the body:
+     * this is the only exit, and the `continue`s above all sit ABOVE the switch */
+    node_db_restore(node_saved_idx);
+    my_free(_ALLOC_ID_, &express);
   } /* while( (ntok = my_strtok_r(nptr, "\n\t ", "", 0, &saven)) ) */
-  dbg(0, "closest dataset=%d wave index=%d\n", closest_dataset, *node_number);
+  /* dbg LEVEL 1, not 0 (batch F item 2, fix round). This was an unconditional
+   * stderr line: debug_var is 0 in a normal run, so dbg(0, ...) always prints.
+   * At HEAD it could only fire on a real graph `t` keypress; `xschem get
+   * graph_closest_wave` turned it into one line per QUERY on a verb whose own
+   * contract is "changes nothing else" -- 20 lines from NDC5 alone. It is a
+   * trace, so it belongs at the level every other trace in this function is. */
+  dbg(1, "closest dataset=%d wave index=%d\n", closest_dataset, *node_number);
   if(express) my_free(_ALLOC_ID_, &express);
 
-  if(sch_waves_loaded()!= -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  /* the other half of the GRAPH-level switch, and only if it took */
+  if(switched) node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
   my_free(_ALLOC_ID_, &custom_rawfile);
   my_free(_ALLOC_ID_, &sim_type);
 
@@ -5139,6 +5747,60 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
   my_free(_ALLOC_ID_, &sweep);
   dbg(1, "find_closest_wave(): node_number = %d\n", *node_number);
   return closest_dataset;
+}
+
+/* find_closest_wave(), asked a question instead of driven by a gesture.
+ *
+ * WHY THIS EXISTS (batch F item 2, issue 0305). find_closest_wave() takes a
+ * Graph_ctx and reads the C mouse mirror, so its ONLY caller is callback.c's
+ * graph key handler -- i.e. a real DISPLAY -- and nothing headless could reach
+ * it. That is exactly how its restore drifted: it kept the single mode-5 SWAP
+ * every other walker had already been repaired away from, and no check in the
+ * tree could see it. This is the same read-only query shape as
+ * graph_wave_at()/graph_plotbox_at() above (`xschem get graph_closest_wave`):
+ * it sets up the transform, moves the mouse mirror to the CANVAS PIXEL asked
+ * about for the duration of the call and puts it back, and answers
+ *   *node_number  the node index (find_closest_wave's own index space, the one
+ *                 hilight_wave lives in), -1 when nothing answered;
+ *   return        the closest DATASET (its sweepvar_wrap counter), -1 on refusal.
+ * It changes nothing else -- in particular the session's current database must
+ * be exactly what it was, which is the property under test. "The current
+ * database" is a PAIR: extra_idx and extra_prev_idx, the second being where
+ * `xschem raw switch_back` will go. find_closest_wave() restores both (see
+ * node_db_prev_restore); NDU1 watches the second half, which the first cut of
+ * this verb moved. The mouse-mirror put-back two lines below the call is watched
+ * by NDC9, through `xschem closest_object` -- the production consumer of
+ * xctx->mousex/mousey. */
+int graph_closest_wave(int i, double px, double py, int *node_number)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags, dset, dummy = -1;
+  double save_mousex, save_mousey;
+
+  if(node_number) *node_number = -1;
+  if(!xctx) return -1;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return -1;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return -1;
+  if(!xctx->raw || sch_waves_loaded() == -1) return -1;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  /* landmine 37: setup_graph_data() rewrites graph_flags' hcursor bits from the
+   * rect it is given, and this is a query */
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return -1;
+  if(gr->digital) return -1;
+  save_mousex = xctx->mousex;
+  save_mousey = xctx->mousey;
+  xctx->mousex = X_TO_XSCHEM(px);
+  xctx->mousey = Y_TO_XSCHEM(py);
+  dset = find_closest_wave(i, gr, node_number ? node_number : &dummy);
+  xctx->mousex = save_mousex;
+  xctx->mousey = save_mousey;
+  return dset;
 }
 
 /* Screen-pixel distance from point (px,py) to the segment (ax,ay)-(bx,by). */
@@ -5644,23 +6306,17 @@ int graph_axis_zoom(int i, int axis, double lo, double hi)
   r = &xctx->rect[GRIDLAYER][i];
   if(!(r->flags & 1)) return 0;
   if(axis == GRAPH_AXIS_X) {
-    int master_locked = !(r->flags & 2);
-    char *master_sim = NULL;
-    my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(r->prop_ptr, "sim_type", 0));
+    /* the participation predicate lives in graph_shares_x() (spec D2): this
+     * loop used to hold the second hand-written copy of it, and
+     * graph_fullxzoom() now needs the same answer to know which databases its
+     * union has to span. One predicate, three callers. */
     for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
-      int same_sim_type = 0;
       rk = &xctx->rect[GRIDLAYER][k];
-      if(!(rk->flags & 1)) continue;
-      if(master_locked && !strcmp(master_sim, get_tok_value(rk->prop_ptr, "sim_type", 0))) {
-        same_sim_type = 1;
-      }
-      if(rk->sel || (same_sim_type && !(rk->flags & 2)) || k == i) {
-        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x1", dtoa(lo)));
-        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x2", dtoa(hi)));
-        wrote = 1;
-      }
+      if(!graph_shares_x(i, k)) continue;
+      my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x1", dtoa(lo)));
+      my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x2", dtoa(hi)));
+      wrote = 1;
     }
-    my_free(_ALLOC_ID_, &master_sim);
   } else {
     /* `digital` is read straight OFF THE RECT, never through a scratch
      * Graph_ctx: setup_graph_data() parses it BELOW its off-screen early return
@@ -5863,16 +6519,30 @@ int graph_point_at(int i, double px, double py, double tol,
   char *node = NULL, *sweep = NULL;
   char *saven, *saves, *nptr, *sptr;
   const char *ntok, *stok;
+  /* the LAST non-empty `sweep=` token seen, i.e. the sweep variable's NAME (not
+   * its column) for the entry being walked -- a `sweep=` list shorter than the
+   * `node=` list carries its last entry forward. Points into `sweep`, which
+   * my_strtok_r splits IN PLACE and leaves NUL terminated, so earlier tokens
+   * stay valid until `sweep` is freed. */
+  const char *sweep_name = NULL;
   char *ntok_copy = NULL;
   char *express = NULL;
   char *custom_rawfile = NULL;
   char *sim_type = NULL;
+  char *node_rawfile = NULL;
+  char *node_sim_type = NULL;
   const char *ptr;
   xRect *r;
   int sweep_idx = 0, idx, expression, autoload;
   int node_dataset = -1;
   int wcnt = -1, best_wave = -1;
   int valid_rawfile = 1, switched = 0, saveflags;
+  /* per-NODE state (issue 0305): the registry slot to unwind this entry's
+   * `%<rawfile>` switch to, whether THIS entry's database resolved, and this
+   * entry's sweep column IN ITS OWN database */
+  int node_saved_idx = -1, node_valid = 1, node_sweep_idx = 0;
+  int entry_extra_idx = 0;  /* the database that was current on the way in */
+  int entry_prev_idx = -1;  /* ...and where switch_back pointed on the way in */
   double best_dist = 0.0;
   double start, end;
 
@@ -5914,6 +6584,8 @@ int graph_point_at(int i, double px, double py, double tol,
   /* `rawfile`/`sim_type` are GRAPH-level tokens, so the switch is made once, not
    * once per node: the per-node form re-switched an already-switched raw and the
    * single extra_rawfile(5,...) below then restored only one level of it. */
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
   if(custom_rawfile[0]) {
     if(extra_rawfile(autoload, custom_rawfile,
        sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
@@ -5930,7 +6602,6 @@ int graph_point_at(int i, double px, double py, double tol,
   nptr = node;
   sptr = sweep;
   while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
-    char *nd = NULL;
     /* the counter tracks the node's POSITION in the list, so it must advance
      * for every entry including the bus ones skipped below (find_closest_wave()
      * counts the same way, and hilight_wave is in that index space) */
@@ -5951,22 +6622,53 @@ int graph_point_at(int i, double px, double py, double tol,
      * first made a restricted walk -- i.e. every anchor drag -- fall back to raw
      * column 0 and find nothing. graph_wave_resolve() has the same ordering. */
     if(stok && stok[0]) {
+      sweep_name = stok;
       sweep_idx = get_raw_index(stok, NULL);
       if(sweep_idx == -1) sweep_idx = 0;
     }
     if(restrict_wave >= 0 && wcnt != restrict_wave) continue;
-    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
-    if(nd[0]) {
-      int pos = 1;
-      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-      if(pos == 2) node_dataset = atoi(nd);
-      else node_dataset = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-    } else {
-      node_dataset = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    /* ⚠ ISSUE 0305 -- THIS WALKER USED TO READ ONLY THE `%<n>` DATASET DIGITS
+     * and drop the `%<rawfile>` that follows them, so a trace plotted from a
+     * FOREIGN database (spec D1) was resolved against whatever database happens
+     * to be current -- for a mixed analog+VCD strip the analog one, where a VCD
+     * signal name does not exist. The trace drew (draw_graph does honour it) and
+     * was then unpickable, unhoverable and unmarkable, which is the whole of
+     * issue 0305's symptom for this function.
+     * The switch is per NODE, so it is unwound per node too, at the bottom of
+     * this loop body -- by INDEX, back to whatever was current when this entry
+     * started (which is the graph-level `rawfile=` when the graph has one). */
+    node_saved_idx = xctx->extra_idx;
+    node_valid = valid_rawfile;
+    node_sweep_idx = sweep_idx;
+    node_token_split(ntok, &ntok_copy, &node_dataset, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0] && xctx->raw && xctx->raw->values) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
+        node_valid = 0;
+      } else {
+        /* the sweep COLUMN is a per-database index, so it must be looked up in
+         * the database the trace lives in -- draw_graph() resolves it after its
+         * own switch for exactly this reason. Kept in a per-node copy so the
+         * carry-forward of a short `sweep=` list still hands the NEXT entry the
+         * index it had in ITS database.
+         * ⚠ RE-RESOLVED ON EVERY ENTRY THAT TOOK THE SWITCH, by NAME, not only
+         * on the entries that carry their OWN `sweep=` token: a carried-forward
+         * index was resolved in the PREVIOUS database and means nothing here.
+         * With a `sweep=` list shorter than the `node=` list (the documented
+         * carry-forward case) that index can be past the end of the foreign
+         * database's values[] -- an out-of-bounds read, and a SEGFAULT on a
+         * cross-DB strip whose foreign database has fewer columns. */
+        node_sweep_idx = 0;
+        if(sweep_name && sweep_name[0]) {
+          node_sweep_idx = get_raw_index(sweep_name, NULL);
+          if(node_sweep_idx == -1) node_sweep_idx = 0;
+        }
+      }
     }
-    my_free(_ALLOC_ID_, &nd);
+    /* belt and braces: whatever the arithmetic above decided, the column must be
+     * one the database that is NOW current actually has (values holds nvars+1
+     * columns, the last being the expression scratch). */
+    if(xctx->raw && (node_sweep_idx < 0 || node_sweep_idx >= xctx->raw->nvars)) node_sweep_idx = 0;
 
     idx = -1;
     expression = 0;
@@ -5981,7 +6683,7 @@ int graph_point_at(int i, double px, double py, double tol,
     if(expression) idx = xctx->raw->nvars; /* the scratch column (values has nvars+1) */
     else if(express) idx = get_raw_index(express, NULL);
 
-    if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
+    if(sch_waves_loaded() != -1 && node_valid && idx != -1) {
       int p, dset, ofs = 0, ofs_end;
       double xx, yy, prev_sx = 0.0, prev_sy = 0.0;
       double nd_min = -1.0;   /* smallest SEGMENT distance found for THIS node */
@@ -6006,7 +6708,7 @@ int graph_point_at(int i, double px, double py, double tol,
       int prev_point = 0;
       int have_prev;
       for(dset = 0; dset < xctx->raw->datasets; dset++) {
-        SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
+        SPICE_DATA *gvx = xctx->raw->values[node_sweep_idx];
         SPICE_DATA *gvy;
         ofs_end = ofs + xctx->raw->npoints[dset];
         if(node_dataset != -1 && node_dataset != dset) { ofs = ofs_end; continue; }
@@ -6015,7 +6717,7 @@ int graph_point_at(int i, double px, double py, double tol,
          * WITHOUT touching the scratch column, so measuring afterwards would
          * compare against whatever expression was evaluated last. */
         if(expression &&
-           plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
+           plot_raw_custom_data(node_sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
           ofs = ofs_end;
           continue;
         }
@@ -6119,7 +6821,7 @@ int graph_point_at(int i, double px, double py, double tol,
         best.point = nd_point;
         best.idx = idx;
         best.expression = expression;
-        best.sweep_idx = sweep_idx;
+        best.sweep_idx = node_sweep_idx;
         best.x = nd_x;
         best.y = nd_y;
         best.sx = nd_sx;
@@ -6141,15 +6843,29 @@ int graph_point_at(int i, double px, double py, double tol,
       }
     }
     if(express) my_free(_ALLOC_ID_, &express);
+    /* THE OTHER HALF OF THE PER-NODE SWITCH (issue 0305), and it runs on every
+     * path out of the body: this is the only exit, and the `continue`s above all
+     * sit ABOVE the switch. Restoring by INDEX rather than the mode-5 swap is
+     * what makes a strip with two foreign databases unwind correctly. */
+    node_db_restore(node_saved_idx);
+    node_saved_idx = -1;
+    my_free(_ALLOC_ID_, &node_rawfile);
+    my_free(_ALLOC_ID_, &node_sim_type);
   }
 
-  /* Restore ONLY if the switch actually took. extra_rawfile mode 5 is a SWAP of
-   * extra_idx <-> extra_prev_idx, not a stack pop, so an unpaired call silently
-   * repoints the session's current raw -- measured: a pure hover query on a
-   * graph whose `rawfile=` does not resolve flipped xctx->raw on every call. */
-  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  /* Restore ONLY if the switch actually took -- an unpaired restore silently
+   * repoints the session's current raw (measured: a pure hover query on a graph
+   * whose `rawfile=` does not resolve flipped xctx->raw on every call).
+   * BY INDEX, not the mode-5 swap it used to be: issue 0305 put a SECOND,
+   * per-node switch inside the loop, and a swap cannot unwind two levels -- it
+   * would land back on the last node's database. Both halves are now absolute
+   * restores, so they compose. */
+  if(switched) node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
   my_free(_ALLOC_ID_, &custom_rawfile);
   my_free(_ALLOC_ID_, &sim_type);
+  if(node_rawfile) my_free(_ALLOC_ID_, &node_rawfile);
+  if(node_sim_type) my_free(_ALLOC_ID_, &node_sim_type);
   if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
   my_free(_ALLOC_ID_, &node);
   my_free(_ALLOC_ID_, &sweep);
@@ -6265,10 +6981,15 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
   char *node = NULL, *sweep = NULL;
   char *saven, *saves, *nptr, *sptr;
   const char *ntok, *stok;
+  /* the last non-empty `sweep=` token, i.e. the sweep variable's NAME; see
+   * graph_point_at() for why the NAME and not the carried column index */
+  const char *sweep_name = NULL;
   char *ntok_copy = NULL;
   char *express = NULL;
   char *custom_rawfile = NULL;
   char *sim_type = NULL;
+  char *node_rawfile = NULL;
+  char *node_sim_type = NULL;
   const char *ptr;
   short *cmin = NULL, *cmax = NULL;
   char *cseen = NULL;
@@ -6276,6 +6997,10 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
   int node_dataset = -1;
   int wcnt = -1, found = 0;
   int valid_rawfile = 1, switched = 0, saveflags;
+  /* per-NODE state (issue 0305), see graph_point_at() for the same three */
+  int node_saved_idx = -1, node_valid = 1, node_sweep_idx = 0;
+  int entry_extra_idx = 0;  /* the database that was current on the way in */
+  int entry_prev_idx = -1;  /* ...and where switch_back pointed on the way in */
   int ncol, col, ix1, ix2, iy1, iy2, npt = 0;
   int keypoints = 0, keysets = 0, keyvars = 0;
   const void *keyraw = NULL;
@@ -6341,6 +7066,8 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
 
   /* landmine 40: `rawfile`/`sim_type` are GRAPH-level tokens, so the switch is
    * made ONCE here, and unwound below only when it actually took. */
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
   if(custom_rawfile[0]) {
     if(extra_rawfile(autoload, custom_rawfile,
        sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
@@ -6357,7 +7084,6 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
   nptr = node;
   sptr = sweep;
   while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
-    char *nd = NULL;
     wcnt++;
     /* landmine 38: the sweep token and the strtok seeds are consumed for EVERY
      * entry, above the bus skip and above the node restriction below. */
@@ -6367,22 +7093,42 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
       if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* D8: a bus is not a polyline */
     }
     if(stok && stok[0]) {
+      sweep_name = stok;
       sweep_idx = get_raw_index(stok, NULL);
       if(sweep_idx == -1) sweep_idx = 0;
     }
     if(wcnt != ni) continue;
-    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
-    if(nd[0]) {
-      int pos = 1;
-      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-      if(pos == 2) node_dataset = atoi(nd);
-      else node_dataset = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-    } else {
-      node_dataset = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    /* ⚠ ISSUE 0305 -- LIKE graph_point_at(), THIS WALKER READ ONLY THE `%<n>`
+     * DATASET DIGITS. A trace plotted out of a foreign database (spec D1) then
+     * had its name resolved in the CURRENT database, where it does not exist,
+     * so idx came back -1, the envelope was empty and the LMB wave-bold click
+     * (issue 0152) bolded nothing at all.
+     * There is exactly ONE walked entry here (`wcnt != ni` skips the rest and
+     * the body ends in `break`), so the unwind sits below the loop -- AFTER the
+     * cache key is captured, so the key still describes the database actually
+     * walked, which is what its own comment down there promises. */
+    node_saved_idx = xctx->extra_idx;
+    node_valid = valid_rawfile;
+    node_sweep_idx = sweep_idx;
+    node_token_split(ntok, &ntok_copy, &node_dataset, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(sim_type));
+    if(node_rawfile[0] && xctx->raw && xctx->raw->values) {
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
+        node_valid = 0;
+      } else {
+        /* the sweep column is a per-database index, re-resolved by NAME on every
+         * entry that took the switch -- a carried-forward index belongs to the
+         * PREVIOUS database and can be past the end of this one (see
+         * graph_point_at() for the full note; it is an out-of-bounds read) */
+        node_sweep_idx = 0;
+        if(sweep_name && sweep_name[0]) {
+          node_sweep_idx = get_raw_index(sweep_name, NULL);
+          if(node_sweep_idx == -1) node_sweep_idx = 0;
+        }
+      }
     }
-    my_free(_ALLOC_ID_, &nd);
+    /* belt and braces: the column must exist in the database now current */
+    if(xctx->raw && (node_sweep_idx < 0 || node_sweep_idx >= xctx->raw->nvars)) node_sweep_idx = 0;
 
     idx = -1;
     expression = 0;
@@ -6397,11 +7143,11 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
     if(expression) idx = xctx->raw->nvars; /* the scratch column (values has nvars+1) */
     else if(express) idx = get_raw_index(express, NULL);
 
-    if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
+    if(sch_waves_loaded() != -1 && node_valid && idx != -1) {
       int p, dset, ofs = 0, ofs_end;
       double xx, yy;
       for(dset = 0; dset < xctx->raw->datasets; dset++) {
-        SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
+        SPICE_DATA *gvx = xctx->raw->values[node_sweep_idx];
         SPICE_DATA *gvy;
         ofs_end = ofs + xctx->raw->npoints[dset];
         if(node_dataset != -1 && node_dataset != dset) { ofs = ofs_end; continue; }
@@ -6409,7 +7155,7 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
          * so a malformed RPN must skip the dataset rather than measure whatever
          * the previous expression left there. */
         if(expression &&
-           plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
+           plot_raw_custom_data(node_sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
           ofs = ofs_end;
           continue;
         }
@@ -6457,8 +7203,19 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
   keypoints = xctx->raw ? xctx->raw->allpoints : 0;
   keysets   = xctx->raw ? xctx->raw->datasets  : 0;
   keyvars   = xctx->raw ? xctx->raw->nvars     : 0;
-  /* landmine 40 again: restore ONLY if the switch actually took. */
-  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  /* issue 0305: unwind the PER-NODE `%<rawfile>` switch first, by index, back to
+   * whatever was current when that entry started (the graph-level `rawfile=`
+   * when the graph has one). It must come AFTER the key capture above and
+   * BEFORE the graph-level mode-5 swap below -- a swap performed while a second
+   * switch is still outstanding would leave the session on the wrong database. */
+  node_db_restore(node_saved_idx);
+  if(node_rawfile) my_free(_ALLOC_ID_, &node_rawfile);
+  if(node_sim_type) my_free(_ALLOC_ID_, &node_sim_type);
+  /* landmine 40 again: restore ONLY if the switch actually took -- and BY INDEX,
+   * because the per-node restore just above is a second level a mode-5 swap
+   * could not unwind (issue 0305). */
+  if(switched) node_db_restore(entry_extra_idx);
+  node_db_prev_restore(entry_prev_idx);
   my_free(_ALLOC_ID_, &custom_rawfile);
   my_free(_ALLOC_ID_, &sim_type);
   if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
@@ -7389,23 +8146,45 @@ int graph_marker_at(int i, double px, double py, double tol, int *part)
 /* Resolve node index `wave` of graph rect `r` to the raw column that feeds it.
  * Mirrors the per-node walk of graph_point_at(), including the sweep-token
  * consumption for bus entries. Returns 1 on success. The caller my_free()s
- * *express when it is non-NULL. */
+ * *express when it is non-NULL.
+ *
+ * ⚠ ISSUE 0305, AND THE ONE PLACE THE BRACKET DOES NOT CLOSE HERE. This walker
+ * read only the `%<n>` dataset digits, so a marker on a trace plotted from a
+ * FOREIGN database (spec D1) resolved its name in the current database, where
+ * it does not exist -- the readout was blank or, when the name happened to
+ * exist in both, showed ANOTHER trace's number.
+ * The returned `*idx` and `*sweep_idx` are COLUMN NUMBERS IN THAT DATABASE, so
+ * the switch must still be in force while the caller reads them: this function
+ * therefore leaves the database switched and reports, in `*db_restore_idx`, the
+ * registry slot to unwind to (-1 = nothing to unwind). THE CALLER MUST CALL
+ * node_db_restore(*db_restore_idx) on every exit path, including its failure
+ * ones -- graph_marker_sample()'s `done:` label is that single point. */
 static int graph_wave_resolve(xRect *r, int wave, int *idx, int *expression,
-                              int *sweep_idx, char **express, int *node_dataset)
+                              int *sweep_idx, char **express, int *node_dataset,
+                              int *db_restore_idx)
 {
   char *node = NULL, *sweep = NULL, *ntok_copy = NULL, *ex = NULL;
+  char *graph_sim_type = NULL;
+  char *node_rawfile = NULL, *node_sim_type = NULL;
   char *saven, *saves, *nptr, *sptr;
   const char *ntok, *stok;
-  int wcnt = -1, found = 0;
+  /* the last non-empty `sweep=` token, i.e. the sweep variable's NAME; see
+   * graph_point_at() for why the NAME and not the carried column index */
+  const char *sweep_name = NULL;
+  int wcnt = -1, found = 0, autoload;
   int sw = 0, nds = -1;
 
+  if(db_restore_idx) *db_restore_idx = -1;
   if(!r || wave < 0 || !xctx || !xctx->raw) return 0;
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  else if(autoload == 1) autoload = 33;
   my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr, "node", 0));
   my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr, "sweep", 0));
+  my_strdup2(_ALLOC_ID_, &graph_sim_type, get_tok_value(r->prop_ptr, "sim_type", 0));
   nptr = node;
   sptr = sweep;
   while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
-    char *nd = NULL;
     wcnt++;
     stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
     nptr = sptr = NULL;
@@ -7413,26 +8192,42 @@ static int graph_wave_resolve(xRect *r, int wave, int *idx, int *expression,
       if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus: skip */
     }
     if(stok && stok[0]) {
+      sweep_name = stok;
       sw = get_raw_index(stok, NULL);
       if(sw == -1) sw = 0;
     }
     if(wcnt != wave) continue;
-    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
-    if(nd[0]) {
-      int pos = 1;
-      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-      nds = (pos == 2) ? atoi(nd) : -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-    } else {
-      nds = -1;
-      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    node_token_split(ntok, &ntok_copy, &nds, &node_rawfile, &node_sim_type,
+                     node_dflt_sim_type(graph_sim_type));
+    if(node_rawfile[0] && xctx->raw && xctx->raw->values) {
+      int save_idx = xctx->extra_idx;
+      if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
+        /* the database this trace names cannot be resolved: refuse rather than
+         * read the numbers out of whatever database is current */
+        found = 0;
+        break;
+      }
+      if(db_restore_idx) *db_restore_idx = save_idx;
+      /* the sweep column is a per-database index, re-resolved by NAME on every
+       * entry that took the switch -- a carried-forward index belongs to the
+       * PREVIOUS database and can be past the end of this one, and the caller
+       * subscripts values[] with it (see graph_point_at() for the full note) */
+      sw = 0;
+      if(sweep_name && sweep_name[0]) {
+        sw = get_raw_index(sweep_name, NULL);
+        if(sw == -1) sw = 0;
+      }
     }
-    my_free(_ALLOC_ID_, &nd);
+    /* belt and braces: the column must exist in the database now current */
+    if(xctx->raw && (sw < 0 || sw >= xctx->raw->nvars)) sw = 0;
     if(strstr(ntok_copy, ";")) my_strdup2(_ALLOC_ID_, &ex, find_nth(ntok_copy, ";", "\"", 0, 2));
     else my_strdup2(_ALLOC_ID_, &ex, ntok_copy);
     found = 1;
     break;
   }
+  if(node_rawfile) my_free(_ALLOC_ID_, &node_rawfile);
+  if(node_sim_type) my_free(_ALLOC_ID_, &node_sim_type);
+  my_free(_ALLOC_ID_, &graph_sim_type);
   if(found) {
     int isexpr = (ex && strpbrk(ex, " \n\t")) ? 1 : 0;
     int ix = isexpr ? xctx->raw->nvars : (ex ? get_raw_index(ex, NULL) : -1);
@@ -7462,6 +8257,11 @@ static int graph_marker_sample(int i, int wave, int dataset, int point, double *
   const char *ptr;
   int idx = -1, expression = 0, sweep_idx = 0, node_dataset = -1;
   int dset = 0, ofs = 0, ofs_end = 0, ok = 0, autoload, switched = 0;
+  /* the registry slot graph_wave_resolve()'s PER-TRACE `%<rawfile>` switch has
+   * to be unwound to (issue 0305); -1 = it made no switch */
+  int node_restore_idx = -1;
+  int entry_extra_idx = 0;  /* the database that was current on the way in */
+  int entry_prev_idx = -1;  /* ...and where switch_back pointed on the way in */
 
   if(!xctx || !xctx->raw || !xctx->raw->values) return 0;
   if(sch_waves_loaded() == -1) return 0;
@@ -7477,6 +8277,8 @@ static int graph_marker_sample(int i, int wave, int dataset, int point, double *
   autoload = !strboolcmp(get_tok_value(r->prop_ptr, "autoload", 0), "true");
   if(autoload == 0) autoload = 2;
   else if(autoload == 1) autoload = 33;
+  entry_extra_idx = xctx->extra_idx;
+  entry_prev_idx = xctx->extra_prev_idx;
   ptr = get_tok_value(r->prop_ptr, "rawfile", 0);
   if(ptr[0]) {
     my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
@@ -7493,8 +8295,14 @@ static int graph_marker_sample(int i, int wave, int dataset, int point, double *
     }
   }
   if(!xctx->raw || !xctx->raw->values) goto done;
+  /* issue 0305: resolve FIRST. For a cross-DB trace the resolve switches to the
+   * trace's own database and `point`, `idx`, `sweep_idx` and every npoints[]
+   * below are indices INTO THAT DATABASE, so a bounds check taken before the
+   * switch would be measuring the wrong one. */
+  if(!graph_wave_resolve(r, wave, &idx, &expression, &sweep_idx, &express, &node_dataset,
+                         &node_restore_idx)) goto done;
+  if(!xctx->raw || !xctx->raw->values) goto done;
   if(point < 0 || point >= xctx->raw->allpoints) goto done;
-  if(!graph_wave_resolve(r, wave, &idx, &expression, &sweep_idx, &express, &node_dataset)) goto done;
   for(dset = 0; dset < xctx->raw->datasets; dset++) {
     ofs_end = ofs + xctx->raw->npoints[dset];
     if(point >= ofs && point < ofs_end) break;
@@ -7510,7 +8318,13 @@ static int graph_marker_sample(int i, int wave, int dataset, int point, double *
     if(y) *y = xctx->raw->values[idx][point];
   }
   done:
-  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0); /* switch back */
+  /* THE OTHER HALF of graph_wave_resolve()'s per-trace switch, and the reason
+   * every failure above uses `goto done` rather than `return`. It must precede
+   * the graph-level mode-5 swap: mode 5 is a SWAP, not a stack pop, so swapping
+   * while a second switch is outstanding lands on the wrong database. */
+  node_db_restore(node_restore_idx);
+  if(switched) node_db_restore(entry_extra_idx); /* switch back, by index */
+  node_db_prev_restore(entry_prev_idx);
   if(express) my_free(_ALLOC_ID_, &express);
   if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
   if(sim_type) my_free(_ALLOC_ID_, &sim_type);
@@ -8065,6 +8879,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   int wc = 4, wave_color = 4;
   char *node = NULL, *color = NULL, *sweep = NULL;
   int sweep_idx = 0;
+  const char *sweep_name = NULL; /* last non-empty `sweep=` token, carried forward BY NAME */
   int n_nodes; /* number of variables to display in a single graph */
   char *saven, *savec, *saves, *nptr, *cptr, *sptr;
   const char *ntok, *ctok, *stok;
@@ -8080,6 +8895,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   char *custom_rawfile = NULL; /* "rawfile" attr. set in graph: load and switch to specified raw */
   char *sim_type = NULL;
   int save_extra_idx = -1;
+  int save_prev_idx = -1;   /* the OTHER half of the cursor: where switch_back goes */
   double cursor1, cursor2;
 
   xctx->ev_precision = tclgetintvar("ev_precision");
@@ -8161,6 +8977,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     dbg(1, "draw_graph(): graph %d: custom_rawfile=%s autoload=%d sim_type=%s\n",
         i, custom_rawfile, autoload, sim_type);
     save_extra_idx = xctx->extra_idx;
+    save_prev_idx = xctx->extra_prev_idx;
 
     nptr = node;
     cptr = color;
@@ -8170,7 +8987,8 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     /* process each node given in "node" attribute, get also associated color/sweep var if any*/
     while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
       int valid_rawfile = 1;
-      char *nd = NULL;
+      char *node_rawfile = NULL;
+      char *node_sim_type = NULL;
       char str_extra_idx[30];
 
       nptr = NULL;
@@ -8183,7 +9001,6 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
           valid_rawfile = 0;
         }
       }
-      my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
       if(wcnt >= n_nodes) {
         dbg(0, "draw_graph(): WARNING: wcnt (wave #) >= n_nodes (counted # of waves)\n");
         dbg(0, "draw_graph(): n_nodes=%d\n", n_nodes);
@@ -8191,38 +9008,21 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       }
       /* if %<n> is specified after node name, <n> is the dataset number to plot in graph */
       /* if %n rawfile.raw is specified use rawfile.raw for this node */
-
-      if(nd[0]) {
-        int pos = 1;
-        if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
-        if(xctx->raw && xctx->raw->values) {
-          char *node_rawfile = NULL;
-          char *node_sim_type = NULL;
-          tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
-          my_strdup2(_ALLOC_ID_, &node_rawfile, tclresult());
-          tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
-          my_strdup2(_ALLOC_ID_, &node_sim_type, tclresult()[0] ? tclresult() :
-                sim_type[0] ? sim_type : xctx->raw->sim_type);
-          dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
-          if(node_rawfile && node_rawfile[0]) {
-            if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
-              my_free(_ALLOC_ID_, &node_rawfile);
-              my_free(_ALLOC_ID_, &node_sim_type);
-              valid_rawfile = 0;
-            }
-          }
-          my_free(_ALLOC_ID_, &node_rawfile);
-          my_free(_ALLOC_ID_, &node_sim_type);
+      /* THE REFERENCE SITE for issue 0305: this walker always honoured the
+       * per-trace `%<rawfile>`, and its switch is unwound at the bottom of the
+       * loop by save_extra_idx. Only the PARSE moved into node_token_split();
+       * the switch, the guard and the restore are byte-for-byte what they were. */
+      node_token_split(ntok, &ntok_copy, &node_dataset, &node_rawfile, &node_sim_type,
+                       node_dflt_sim_type(sim_type));
+      if(node_rawfile[0] && xctx->raw && xctx->raw->values) {
+        dbg(1, "node_rawfile=|%s| node_sim_type=|%s|\n", node_rawfile, node_sim_type);
+        if(extra_rawfile(autoload, node_rawfile, node_sim_type, -1.0, -1.0) == 0) {
+          valid_rawfile = 0;
         }
-        if(pos == 2) node_dataset = atoi(nd);
-        else node_dataset = -1;
-        dbg(1, "nd=|%s|, node_dataset = %d\n", nd, node_dataset);
-        my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
-      } else {
-        node_dataset = -1;
-        my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
       }
-      if(nd) my_free(_ALLOC_ID_, &nd);
+      my_free(_ALLOC_ID_, &node_rawfile);
+      my_free(_ALLOC_ID_, &node_sim_type);
+      dbg(1, "ntok=|%s|, node_dataset = %d\n", ntok, node_dataset);
       /* transform multiple OP points into a dc sweep */
       if(xctx->raw && xctx->raw->sim_type && !strcmp(xctx->raw->sim_type, "op")
          && xctx->raw->datasets > 1 && xctx->raw->npoints[0] == 1) {
@@ -8248,12 +9048,27 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       if(ctok && ctok[0]) wc = atoi(ctok);
       if(wc < 0) wc = 4;
       if(wc >= cadlayers) wc = cadlayers - 1;
-      if(stok && stok[0]) {
-        sweep_idx = get_raw_index(stok, NULL);
+      /* ⚠ THE SWEEP COLUMN IS RE-RESOLVED BY NAME ON EVERY ENTRY (batch F item 2,
+       * issue 0305). This is the reference walker and it always resolved the
+       * column AFTER its per-node switch -- but only for entries carrying their
+       * OWN `sweep=` token. A `sweep=` list shorter than the `node=` list carries
+       * its last entry forward (stok comes back NULL), and what an entry must
+       * inherit is the sweep variable's NAME: a column NUMBER was resolved in the
+       * PREVIOUS entry's database and means nothing in this one. With a cross-DB
+       * `%<rawfile>` entry (spec D1) between two graph-DB entries, a five-column
+       * analog raw's column 4 was carried into a three-column VCD and used as
+       * values[4] -- an out-of-bounds read on the renderer's hot path.
+       * graph_point_at(), wave_hilight_envelope(), graph_wave_resolve() and
+       * find_closest_wave() all keep the name for the same reason. */
+      if(stok && stok[0]) sweep_name = stok;
+      if(sweep_name && sweep_name[0]) {
+        sweep_idx = get_raw_index(sweep_name, NULL);
         if( sweep_idx == -1) {
           sweep_idx = 0;
         }
       }
+      /* belt and braces: values[] holds nvars+1 columns, the last the scratch */
+      if(xctx->raw && (sweep_idx < 0 || sweep_idx >= xctx->raw->nvars)) sweep_idx = 0;
       draw_graph_variables(wcnt, wc, n_nodes, sweep_idx, flags, ntok, stok, bus_msb, gr);
       /* if ntok_copy following possible 'alias;' definition contains spaces --> custom data plot */
       idx = -1;
@@ -8451,6 +9266,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       }
 
     } /* while( (ntok = my_strtok_r(nptr, "\n\t ", "", 0, &saven)) ) */
+    node_db_prev_restore(save_prev_idx);
     if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
     if(express) my_free(_ALLOC_ID_, &express);
     /* if(sch_waves_loaded()!= -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0); */

@@ -1,0 +1,12 @@
+* three-way behavioural probe from doc/claude/casemode-distinguish-guide.md section 2
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+let CaseProbe = 1
+let caseprobe = 2
+print CaseProbe caseprobe
+echo casemode-is $casemode
+.endc
+.end

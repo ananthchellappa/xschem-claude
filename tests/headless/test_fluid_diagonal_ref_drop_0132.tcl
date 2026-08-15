@@ -18,7 +18,7 @@
 # NEEDS A REAL X DISPLAY (interactive multi-motion gesture -- a single move_objects does not reproduce
 # the accumulated RUBBER history that feeds the END diag_relay cleanup). Self-skips cleanly with no
 # display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_diagonal_ref_drop_0132.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_diagonal_ref_drop_0132.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

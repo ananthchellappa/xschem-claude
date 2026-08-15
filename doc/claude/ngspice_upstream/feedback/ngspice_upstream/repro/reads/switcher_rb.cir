@@ -1,0 +1,20 @@
+* issue 0058: switcher_r.cir with the silent detour replaced by a noisy one --
+* distinguish, then a misspelled casemode, then distinguish again.  Under the
+* rule the tree implements this and switcher_r.cir both announce the return,
+* because both returns are a change of outcome.  Under the rejected
+* "last announced" rule they differ: the misspelling here counts as an
+* announcement and re-arms the banner, while switcher_r.cir's silent preserve
+* read does not, so the same return is announced in one run and not the other
+* over an unrelated typo.  doc/claude/decisions/0016.
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  set casemode=bogus
+  source mid.cir
+  set casemode=distinguish
+  source mid.cir
+.endc
+.end

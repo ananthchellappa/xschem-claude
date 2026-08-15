@@ -19,7 +19,7 @@
 #
 # Needs the action log open AND a live Tk canvas (drives the raw Ctrl-E bind end to
 # end) -> registered in full_audit.sh logdir_tests (--pipe -q --logdir, NOT --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_cadence_window_hop_log.tcl
 
 set ::fails 0

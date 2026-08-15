@@ -6,7 +6,7 @@
 #     section is hidden until the "Copy Hierarchical" checkbox is ticked.
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_copy_form.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_copy_form.tcl
 
 # Needs a display: the second half builds real widgets. Self-skip in the
 # full_audit banner shape so a display-less box scores SKIP, not FAIL.

@@ -19,7 +19,7 @@
 #   - total copper strictly below the pre-fix route (1470) and no new dangling endpoints.
 #
 # NEEDS A REAL X DISPLAY. Self-skips cleanly with no display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_route_quality_0110.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_route_quality_0110.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

@@ -1,0 +1,10 @@
+* folded .save spelling -- kills the run under preserve
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(midnode)
+.control
+op
+write save_lower.raw
+.endc
+.end

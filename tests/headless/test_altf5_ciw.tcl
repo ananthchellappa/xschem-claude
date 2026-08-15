@@ -7,7 +7,7 @@
 #     rebinding restores it.
 #
 # Needs Tk (the CIW is a real toplevel). Run under X with --pipe + --logdir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_altf5_ciw.tcl
 
 set ::fail 0

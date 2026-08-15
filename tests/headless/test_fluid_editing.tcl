@@ -15,7 +15,7 @@
 # SELF-SKIPS (prints OVERALL: ok and exits 0) when .drw is not viewable, and is
 # meant to be run for real with a display:
 #
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_editing.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_editing.tcl
 #
 # RED-first: on a build without the grab, a first-click corner/endpoint grab does a
 # WHOLE-OBJECT move (both ends translate), so FE1/FE2 (which assert the OPPOSITE end

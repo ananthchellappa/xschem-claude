@@ -10,7 +10,7 @@
 # (x=-400, body-guarded), rerouting #net1 cleanly PAST the selection (preferred_15.sch topology).
 #
 # NEEDS A REAL X DISPLAY (the gesture runs move_objects + Xlib drawtemp). Self-skips under --nogui.
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_reversal_0096.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_reversal_0096.tcl
 
 set fluid_editing 1
 set orthogonal_wiring 1

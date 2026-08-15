@@ -4,7 +4,7 @@
 # so the two must have ~equal drawn area; and a tilted render covers less than the perpendicular
 # (angle 0) one. Before the fix, draw.c gated the cairo stripe path on `angle > 0`, so negative
 # angles rendered as flat angle-0 dashes (drawn area == angle 0, and != the +A mirror).
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_render.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_angle_render.tcl
 # NOTE: print-png on WSLg has a rare fresh-process flake (see net-hilight-styles memory); rerun.
 
 set fail 0

@@ -1,5 +1,5 @@
 # Net highlight style editor — user feedback round 2. GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_flush_scroll.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_flush_scroll.tcl
 #  (1) Apply/OK/Save/row-ops FLUSH a typed-but-not-focused-out field edit (point 1: a value you typed
 #      without tabbing out was lost when clicking Apply, because it lived only in the widget).
 #  (2) The table scrolls on a mouse wheel anywhere over it (point 3), except over a combobox dropdown.

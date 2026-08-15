@@ -45,13 +45,22 @@ Deferred `[D]` by Signal Browser batch item 00, for two independent reasons:
 
 1. it needs **C** at two families of site (`scheduler.c:10036` and the routing-exempt
    in-place loads), and that batch's decision 8 forbids new C. `src/xschem.tcl` holds
-   only a `xschem reload` *caller* (`:13074`, plus `action_registry.tcl:183`), so no
+   only a `xschem reload` *caller* (`:13155`, plus `action_registry.tcl:183`), so no
    Tcl edit can close it;
 2. its §2 is an **undecided design question by this document's own words** — the
    in-place loads are "arguably correct as it stands".
 
-The split-out `readonly`-cleared-on-failed-load defect is still unfiled. Next free
-issue number is **0212** (0188-0194 and 0200-0211 are taken).
+The split-out `readonly`-cleared-on-failed-load defect is now **FILED as issue 0214**
+(`doc/claude/issues/0214-readonly-is-cleared-on-a-failed-load.md`), by Signal Browser
+batch item 16. It also needs C and is likewise deferred.
+
+The Signal Browser batch went on to file **0212** (`Descend to here` cannot address a
+vector instance slice), **0213** (a real pre-existing C defect: a malformed ASCII
+`Values:` block overruns `read_raw_ascii_point`'s buffer), **0215** (hierarchy sync is
+asymmetric between items 11 and 12) and **0216** (`attach_raw` bypasses the raw history).
+Every browser item from 8 on was required to route **around** this issue — the batch's
+settled decision 13: browser state derives from `xschem raw list` / `xschem raw`, never
+from the rect model. See `doc/claude/specs/waveform_signal_browser.md` §15.
 
 Receipt: `doc/claude/signal_browser_batch/receipts/00_precondition.md`.
 

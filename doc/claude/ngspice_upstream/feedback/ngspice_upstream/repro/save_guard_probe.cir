@@ -1,0 +1,21 @@
+* can a deck read back its own 'no data saved' error? -- op >& capture, then fopen/fread/strstr
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(midnode)
+.control
+set cap = "no_line_read"
+op >& sgp_cap.txt
+fopen f1 sgp_cap.txt r
+fread cap $f1 n1
+fclose $f1
+strstr p1 "_$cap" "no data saved"
+if $p1 < 0
+  echo GUARD-NOT-CAPTURED
+else
+  echo GUARD-CAPTURED
+end
+shell cat sgp_cap.txt
+echo SHELL-CAT-ABOVE
+.endc
+.end

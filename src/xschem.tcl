@@ -14555,6 +14555,9 @@ source $XSCHEM_SHAREDIR/ase.tcl
 source $XSCHEM_SHAREDIR/ase_window.tcl
 # Waveform Viewer window shell (wviewer; doc/claude/specs/waveform_viewer.md)
 source $XSCHEM_SHAREDIR/wave_viewer.tcl
+# Calculator — waveform expression builder (calc; doc/claude/specs/calculator.md).
+# Proc definitions only at source time; the window is built on first calc::open.
+source $XSCHEM_SHAREDIR/calculator.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
@@ -15137,6 +15140,18 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
+  $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
+  # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
+  # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
+  # (`{}` for the main window, so `.drw`) — the command switches context there
+  # and verifies, rather than trusting whatever context happens to be current.
+  # TWO-PANE item 17 (R10): the accelerator is now a real, REMAPPABLE binding —
+  # `wave.show_in_signal_browser` in the C action registry (src/callback.c,
+  # mirrored in src/keybindings.csv), not the cadence-only rc bind it used to
+  # advertise. The KEY route deliberately passes no window; only this menu click
+  # does, because only a menu click knows which window it happened in.
+  $topwin.menubar.tools add command -label "Show in Signal Browser" \
+     -accelerator Ctrl+Alt+V -command "ase::show_in_browser_for_current ${topwin}.drw"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
@@ -15998,6 +16013,15 @@ if {[info exists no_recent_files] && $no_recent_files} {
 } else {
   set_ne update_recent_files 1
 }
+# Waveform-viewer Location bar history (signal_browser_batch item 13): how many
+# raw files the Location dropdown remembers. Kept HERE, in the user-history
+# cluster, because that is what it is -- its store is $USER_CONF_DIR/raw_history
+# and it is gated on the SAME update_recent_files flag set just above. That flag
+# is the only one covering both the hard-gated --nogui/--pipe session and the
+# 0119 --script-BODY window (xinit.c saves/zeroes/restores it around
+# source_tcl_file); a private flag would miss the --script case, i.e. reopen
+# 0119. Consumed by wviewer::rawhist_max.
+set_ne raw_history_max 20
 # Fluid editing: first-click tip/edge grab + incremental wire rip-up-reroute on drag
 # (doc/claude/specs/fluid_editing.md, nice_drag_rerouting.md). Default ON as of the
 # 0091-0096 reroute chain. The drag-to-move gesture itself still needs the intuitive/
@@ -16423,6 +16447,13 @@ set_ne copy_cell 0
 
 load_recent_file
 load_net_hilight_conf
+# signal_browser_batch item 13: the waveform viewer's Location-bar raw history,
+# read from its own store ($USER_CONF_DIR/raw_history) -- NEVER the recent-files
+# list. Sits with the other two loaders because it has their lifetime: read once
+# at startup, written back only from an ungated interactive load. wave_viewer.tcl
+# is sourced unconditionally at :14376, so the proc exists here; it never throws
+# (a corrupt store just leaves the dropdown empty).
+wviewer::rawhist_load
 # schematic to preload in new windows 20090708
 set_ne XSCHEM_START_WINDOW {}
 

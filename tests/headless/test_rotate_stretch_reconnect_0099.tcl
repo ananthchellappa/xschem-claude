@@ -18,7 +18,7 @@
 # (built-in P1/P2 invariant printer fires "device short/merge").
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_reconnect_0099.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_reconnect_0099.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

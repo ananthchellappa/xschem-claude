@@ -37,7 +37,7 @@
 #       emit `xschem flip_in_place` -- the gesture arm stays silent (logged at move END).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_flip_in_place.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §24
 
@@ -110,7 +110,8 @@ check "oracle: flip is OBSERVABLE (coords change, not an orientation no-op)" \
 # ---------------------------------------------------------------------------
 # (a) EXACTLY ONE log line from EACH standalone entry point.
 #     script  -> scheduler branch standalone `else` -> perform_action
-#     Alt-F key -> callback.c case 'f' EQUAL_MODMASK -> standalone_group_transform
+#     Alt-F key -> binding table (key 102 alt canvas -> edit.flip_in_place) ->
+#               callback.c act_flip_in_place -> standalone_group_transform
 #               (single object) -> perform_action   (keysym 102='f', state 8=Alt)
 #     menu    -> menu_action_logged wrapper -> `xschem flip_in_place` -> branch; the
 #               wrapper resets/checks actionlog_cmd_logged, so the core's log wins and the

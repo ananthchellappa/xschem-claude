@@ -5,7 +5,7 @@
 # set_geom already rejects off-screen *positions*; this proves it also
 # rejects degenerate *sizes*, while still honoring sane entries.
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_geometry_sanity.tcl
+#   ./src/xschem --pipe --script tests/headless/test_geometry_sanity.tcl
 update idletasks
 
 set fail 0

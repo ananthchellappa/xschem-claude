@@ -5,7 +5,7 @@
 # Backend: is_pristine_untitled() + load_new_window reuse (scheduler.c).
 #
 # Needs X (creates windows). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_untitled_reuse.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_untitled_reuse.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

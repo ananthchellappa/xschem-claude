@@ -1,0 +1,9 @@
+* same asymmetry on a branch current: i(vs) vs i(Vs)
+Vs In 0 DC 3
+Rl In 0 1k
+.save i(vs)
+.control
+op
+write save_current_lower.raw
+.endc
+.end

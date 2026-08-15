@@ -17,7 +17,7 @@
 # test_cadence_stretch_move.tcl.
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_prompt_object.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_prompt_object.tcl
 
 # --- X-availability gate: self-skip cleanly with no usable display -----------
 set WIN .drw

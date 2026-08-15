@@ -29,6 +29,21 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
+
+# Route onto the private/persistent test display FIRST (spec
+# doc/claude/specs/dev_display.md). This file used to source gui_gate.sh and
+# nothing else, so the recommended drop-in binary *gated* the developer's screen
+# instead of freeing it -- the panel could pause the flood, but the flood still
+# landed on the monitor.
+#
+# On the default arm the display is invisible, the arm forces GUI_GATE=0, and
+# the gate calls below become no-ops: there is nothing to pause when nothing is
+# visible. The combination that still matters is the deliberate one --
+#     AUDIT_DISPLAY=:0 tests/headless/gated_xschem.sh --script t.tcl
+# -- where the arm leaves GUI_GATE exactly as the caller set it and this file
+# behaves as it always did.
+. "$HERE/xvfb_arm.sh"
+xvfb_arm "$0" "$@"
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
 
 if [ ! -x "$XSCHEM" ]; then

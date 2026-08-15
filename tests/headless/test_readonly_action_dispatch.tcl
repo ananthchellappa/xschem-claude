@@ -9,7 +9,7 @@
 #
 # Needs a real X display (WSLg ok); has no meaning under --nogui. The read-only refusal
 # pops a modal dialog, so tk_messageBox is stubbed to auto-dismiss.
-#   REPO=<repo> DISPLAY=:0 src/xschem --rcfile tests/headless/minrc --pipe -q --nolog \
+#   REPO=<repo> src/xschem --rcfile tests/headless/minrc --pipe -q --nolog \
 #       --script tests/headless/test_readonly_action_dispatch.tcl
 proc tk_messageBox {args} { return ok }
 update idletasks

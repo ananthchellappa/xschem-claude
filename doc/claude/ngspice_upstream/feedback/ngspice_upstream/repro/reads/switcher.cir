@@ -1,0 +1,13 @@
+* issue 0058: deck read under fold, then a control block sets preserve
+* and sources a second deck, so two case modes are live in one process
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  display
+  set casemode=preserve
+  source mid.cir
+.endc
+.end

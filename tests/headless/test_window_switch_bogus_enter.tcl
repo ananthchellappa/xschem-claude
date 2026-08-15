@@ -10,7 +10,7 @@
 # is allocator-dependent, so this primarily locks the safe post-fix behavior.)
 #
 # Needs X. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_window_switch_bogus_enter.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_window_switch_bogus_enter.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

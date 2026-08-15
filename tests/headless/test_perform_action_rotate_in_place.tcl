@@ -34,7 +34,7 @@
 #       emit `xschem rotate_in_place` -- the gesture arm stays silent (logged at move END).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_rotate_in_place.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §23
 
@@ -101,7 +101,8 @@ proc is_horizontal {c} { expr {[lindex $c 1] == [lindex $c 3] && [lindex $c 0] !
 # ---------------------------------------------------------------------------
 # (a) EXACTLY ONE log line from EACH standalone entry point.
 #     script  -> scheduler branch standalone `else` -> perform_action
-#     Alt-R key -> callback.c case 'r' EQUAL_MODMASK -> standalone_group_transform
+#     Alt-R key -> binding table (key 114 alt canvas -> edit.rotate_in_place) ->
+#               callback.c act_rotate_in_place -> standalone_group_transform
 #               (single object) -> perform_action   (keysym 114='r', state 8=Alt)
 #     menu    -> menu_action_logged wrapper -> `xschem rotate_in_place` -> branch; the
 #               wrapper resets/checks actionlog_cmd_logged, so the core's log wins and the

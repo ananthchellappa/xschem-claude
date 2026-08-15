@@ -5,7 +5,7 @@
 # Runnable from any cwd: the no-litter checks compare against a baseline glob
 # taken at script start, so logs left in the cwd by EARLIER sessions (e.g. the
 # repo root after interactive use) don't false-fail them.
-#   DISPLAY=:0 <repo>/src/xschem --pipe -q --nolog \
+#   <repo>/src/xschem --pipe -q --nolog \
 #       --script <repo>/tests/headless/test_nolog.tcl
 update idletasks
 focus -force .drw

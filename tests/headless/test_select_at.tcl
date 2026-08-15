@@ -5,7 +5,7 @@
 # through select_object() and log the same line.
 #
 # Needs X + --logdir (established action-log harness). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_select_at.tcl
 #
 # RED-first: on a build without select_at, the command throws (caught -> FAIL)

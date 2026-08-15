@@ -1,5 +1,5 @@
 # Net highlight style editor — read-only table view (plan slice 3). GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_table.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_table.tcl
 # Seeds a known 3-row table, opens the editor, and asserts one row per style is rendered with the
 # right per-field cell values + a header; then asserts an external table change re-renders on reopen.
 

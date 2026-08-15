@@ -56,6 +56,19 @@ proc reset {} {
 set saved_infix $::infix_interface
 set ::pin_new_name PG ; set ::pin_new_dir in
 
+# `reset` leaves an UNTITLED buffer, whose path load_schematic() composes from $PWD
+# (src/save.c:4407) -- and this file is run from the repo ROOT. So anything that persists such a
+# buffer litters the working tree with untitled-<n>.sch, one more per run because
+# get_unused_untitled_name() skips names already on disk (src/xinit.c:180). Two writers:
+#   * the E8 `xschem save` below -- redirected into the scratch dir;
+#   * write_backup()'s "~" companion, which is written for untitled buffers on purpose (issue
+#     0060) and so fires on every one of the ~60 resets -- suppressed for the whole file.
+# See doc/claude/issues/0322 (68 corpses) and 0148 (the same class, for directories).
+source [file join [file dirname [info script]] scratch.tcl]
+set scratch [test_scratch placegate]
+set saved_autosave_backup $::autosave_backup
+set ::autosave_backup 0
+
 # ---------------------------------------------------------------------------
 # A. `p` (add_sch_pin) -- the schematic Add-Pin form
 # ---------------------------------------------------------------------------
@@ -330,7 +343,7 @@ check "E7 0241: it is the survivor"      [xschem getprop instance 0 lab] E7SURV
 xschem abort_operation ; xschem abort_operation
 
 # E8 -- the teardown must not touch the modify flag (issue 0244 is this bug on a sibling path).
-reset ; xschem save
+reset ; xschem saveas [file join $scratch e8.sch] schematic   ;# NOT a bare `xschem save`: 0322
 check "E8 saved doc is clean"            [xschem get modified] 0
 xschem add_sch_pin -place
 xschem wire gui
@@ -692,6 +705,7 @@ set ::escape_deselects $saved_deselect
 xschem abort_operation ; xschem unselect_all
 
 set ::infix_interface $saved_infix
+set ::autosave_backup $saved_autosave_backup
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

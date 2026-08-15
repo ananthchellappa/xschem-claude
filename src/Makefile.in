@@ -5,7 +5,7 @@ put /local/src {
  select.c font.c editprop.c util.c save.c paste.c token.c psprint.c node_hash.c
  hilight.c options.c vhdl_netlist.c svgdraw.c spice_netlist.c spectre_netlist.c
  tedax_netlist.c verilog_netlist.c parselabel.c expandlabel.c
- eval_expr.c in_memory_undo.c cairo_jpg.c
+ eval_expr.c in_memory_undo.c cairo_jpg.c vcd_read.c
 }
 
 # list all files that need to be installed in "$(XSHAREDIR)"
@@ -20,7 +20,7 @@ put /local/install_shares {
  action_registry.tcl actions.csv keybindings.csv mousebindings.csv ciw.tcl
  property_form.tcl library_defs.tcl library_git.tcl library_manager.tcl xschem_subcommands.txt
  create_instance.tcl save_as_form.tcl copy_form.tcl alt2_toggle_view.tcl ase.tcl ase_window.tcl
- wave_viewer.tcl cmdmode.tcl
+ wave_viewer.tcl cmdmode.tcl calculator.tcl
 }
 
 # generate a list of objects from the list of source files

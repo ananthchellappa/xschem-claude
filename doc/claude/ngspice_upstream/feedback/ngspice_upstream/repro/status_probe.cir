@@ -1,0 +1,13 @@
+* sim_status and curplot are readable before the write; neither reaches the file
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+save v(midnode)
+op
+echo after-failed-op status-is $sim_status curplot-is $curplot
+save all
+op
+echo after-good-op status-is $sim_status curplot-is $curplot
+.endc
+.end

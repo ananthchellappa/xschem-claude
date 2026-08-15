@@ -6,7 +6,7 @@
 # logged yet (that is the next slice -- needs the canonical command surfaced
 # from actions.csv).
 # Run under X with --pipe; pass --logdir so the log lands in a temp dir:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_action_log_dispatch.tcl
 update idletasks
 focus -force .drw

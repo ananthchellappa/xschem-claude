@@ -19,7 +19,7 @@
 #   gesture; a kept line would replay a second merge on top of the drop's)
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_paste_at_log.tcl
 
 set ::fails 0

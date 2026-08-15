@@ -1,0 +1,12 @@
+* destroy re-points plot_cur at the constants plot without plot_setcur()
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+op
+echo curplot-before $curplot
+destroy op1
+echo curplot-after $curplot
+write destroy_curplot.raw
+.endc
+.end

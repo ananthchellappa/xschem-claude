@@ -1,0 +1,10 @@
+* tran divider mixed case
+Vs In 0 PULSE(0 3 0 1n 1n 5n 10n)
+Rl In MidNode 1k
+Rg MidNode 0 3k
+Cg MidNode 0 1p
+.control
+tran 0.1n 20n
+write tr_MODE.raw
+.endc
+.end

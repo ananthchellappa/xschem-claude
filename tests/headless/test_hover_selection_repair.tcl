@@ -23,7 +23,7 @@
 # path is taken at all; this run reports its value for context.
 #
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_hover_selection_repair.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_hover_selection_repair.tcl
 update idletasks
 focus -force .drw
 update idletasks

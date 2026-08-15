@@ -9,7 +9,7 @@
 # selected. GREEN after fix: lib+cell+view all survive the event-loop turn.
 #
 # Needs X + the in-repo OA registry. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_libmgr_refresh_reentrancy.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_libmgr_refresh_reentrancy.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

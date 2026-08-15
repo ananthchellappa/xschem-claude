@@ -120,11 +120,51 @@ namespace eval ase::ui {
 
 # --- theme (UI v2 "Window chrome": USER-LOCKED palette + named fonts) --------
 
+# The USER-LOCKED palette, as a PURE READ. No font is created, no ttk style is
+# configured, no option-database entry is added: calling this cannot change how
+# any other window in the application looks.
+#
+# ⚠ That is the whole reason it exists separately from ase::theme. ase::theme
+# does `option add *TCombobox*Listbox.font AseEntryFont`, which is
+# PROCESS-GLOBAL and reaches the popdown of every ttk::combobox in xschem (33
+# call sites, 15 of them in xschem.tcl) — including comboboxes created before
+# the call, because the popdown listbox is built lazily. A caller that only
+# wants to know what colour a panel is must not pay that. The Calculator's
+# calc::color reads this proc for exactly that reason
+# (doc/claude/specs/calculator.md R113); ase::theme itself returns
+# `[ase::palette $name]` so there is one definition, not two.
+#
+#   panel      window and panel chrome
+#   table      list / tree / entry backgrounds
+#   header     header strips, column headings, active menu entries
+#   accent     the dark-red pane-title accent
+#   fieldfg    text on a `table` surface
+#   selectbg   selection background in lists and trees
+#   selectfg   selection foreground
+#   disabledbg a disabled row's background
+#   disabledfg a disabled row's foreground
+#
+# The last five were ttk's Treeview defaults until 2026-08-15 and are now named
+# here and APPLIED by ase::theme below, so that a reader (the Calculator) gets
+# the same value the browser's own widgets render with instead of whatever the
+# ambient ttk theme happens to supply. Their values are the measured `default`
+# theme defaults, so nothing moved when they were written down.
+proc ase::palette {{name {}}} {
+  set pal [dict create panel #f2f2f2 table #ffffff header #e8e8e8 \
+                       accent #8b0000 \
+                       fieldfg #000000 selectbg #4a6984 selectfg #ffffff \
+                       disabledbg #d9d9d9 disabledfg #a3a3a3]
+  if {$name ne {}} { return [dict get $pal $name] }
+  return $pal
+}
+
 # The central ASE look: named fonts (created once — the
 # references/copy_current_cell_dialog.tcl idiom), the combobox listbox font +
-# white-field style, and the locked palette: panels #f2f2f2, tables/entries
-# white, header strips #e8e8e8, dark-red pane-title accent. Returns the whole
-# palette dict, or one color when `name` is given.
+# white-field style, and the locked palette applied to the shared styles.
+# Returns the whole palette dict, or one color when `name` is given.
+#
+# ⚠ NOT a pure reader — see ase::palette. Call THIS when widgets are about to
+# be created or themed; call ase::palette when only a colour is wanted.
 proc ase::theme {{name {}}} {
   if {[lsearch -exact [font names] AseLabelFont] < 0} {
     font create AseLabelFont -family Arial -size 10 -weight bold
@@ -136,20 +176,30 @@ proc ase::theme {{name {}}} {
     font create AseMonoFont -family Courier -size 13
   }
   option add *TCombobox*Listbox.font AseEntryFont
-  catch {ttk::style configure Ase.TCombobox -fieldbackground #ffffff}
+  catch {ttk::style configure Ase.TCombobox -fieldbackground [ase::palette table]}
   # pane tables (UI v2): white rows in the entry font, the USER-LOCKED
-  # header-strip color on the column headings
+  # header-strip color on the column headings.
+  # The -foreground and the state map are declared rather than inherited: they
+  # were ttk Treeview defaults, which meant the palette did not actually own
+  # the text and selection colours the browser renders with, and anything
+  # reading them back (calc::color) was reading the ambient theme, not this
+  # one. The values are the measured `default`-theme defaults, so declaring
+  # them changed no pixel; the `disabled` half is re-declared with them because
+  # `ttk::style map` REPLACES a style's map rather than merging into it.
   catch {
     ttk::style configure Ase.Treeview -font AseEntryFont \
-      -background #ffffff -fieldbackground #ffffff \
+      -background [ase::palette table] -fieldbackground [ase::palette table] \
+      -foreground [ase::palette fieldfg] \
       -rowheight [expr {[font metrics AseEntryFont -linespace] + 4}]
+    ttk::style map Ase.Treeview \
+      -background [list disabled [ase::palette disabledbg] \
+                        selected [ase::palette selectbg]] \
+      -foreground [list disabled [ase::palette disabledfg] \
+                        selected [ase::palette selectfg]]
     ttk::style configure Ase.Treeview.Heading -font AseLabelFont \
-      -background #e8e8e8
+      -background [ase::palette header]
   }
-  set pal [dict create panel #f2f2f2 table #ffffff header #e8e8e8 \
-                       accent #8b0000]
-  if {$name ne {}} { return [dict get $pal $name] }
-  return $pal
+  return [ase::palette $name]
 }
 
 # Recursively re-skin an ASE widget tree: every widget class the ASE window
@@ -2011,7 +2061,7 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   }
   set rf [ase::last_rawfile $key]
   if {$rf ne {}} {
-    wviewer::attach_raw $key $rf $sim_t
+    wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
   } else {
     catch {::ase::echo "ase: no simulation results yet — run first (queued\
  traces are recorded and resolve after the run)"}
@@ -3163,7 +3213,19 @@ proc ase::ui::viewer_restore {key} {
   }
   if {$rf eq {}} { set rf [ase::last_rawfile $key] }
   set sim_t [ase::plot_sim_type $st]
-  set rc [wviewer::restore $key $vd $rf $sim_t]
+  # spec §D1 (DEFECT 1, 2026-08-09): THE DIGITAL DATABASES GO IN TOO. This was
+  # the ONE attach site of the three that did not pass them — `dp_finish`
+  # (:2014) and `auto_plot` (:3570) both hand `ase::last_vcdfiles` to
+  # `wviewer::attach_raw`, while `wviewer::restore` is the inline copy of that
+  # attach shape and cleared the registry down to the analog raw alone. A saved
+  # cross-DB trace then came back with its `%<rawfile> <sim_type>` intact and
+  # nothing to switch to: legend listed, waveform blank, no message at any level
+  # (`extra_rawfile()`'s switch failure is `dbg(1)`). `wviewer::restore` unions
+  # this list with the databases the restored traces themselves name, and speaks
+  # up for whatever it still cannot attach.
+  set vcds {}
+  foreach v [ase::last_vcdfiles $key] { lappend vcds [list $v vcd] }
+  set rc [wviewer::restore $key $vd $rf $sim_t $vcds]
   if {$rc && $rf eq {}} {
     catch {::ase::echo "ase: no simulation results for this state — viewer\
  restored, traces will fill after a run"}
@@ -3622,7 +3684,9 @@ proc ase::ui::auto_plot {key} {
     catch {::ase::echo "ase: no raw file from the run — nothing to auto-plot"}
     return
   }
-  wviewer::attach_raw $key $rf $sim_t
+  # spec E3: the run's digital VCDs ride along with the analog raw, so a
+  # mixed-signal session's Signal Browser sees every DB the run produced.
+  wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
   set gi [wviewer::ensure_auto_graph $key]
   wviewer::clear_graph_traces $key $gi
   wviewer::regenerate $key   ;# reflect the clear even if every add fails
@@ -3664,6 +3728,18 @@ proc ase::ui::run_finished {key} {
     unset loglen($key)
   }
   ase::ui::drop_trace $key
+  # spec E7: a co-simulation desync exits 0 and produces wrong waveforms.
+  # ase::run_done already echoed it to the CIW and the action log; put it at
+  # the END of the log window too, where a user who opened the log to read the
+  # tail cannot miss it. Before the exit-code branch, so it is said whichever
+  # way the run ended.
+  foreach d [ase::last_diagnostics] {
+    lassign $d dsev dcode dn dmsg
+    if {$dsev ne {error}} continue
+    catch {ase::ui::log_append $key \
+      "\n*** ASE-L: CO-SIMULATION PROBLEM ($dcode x$dn): $dmsg.\
+ The results of this run cannot be trusted. ***\n"}
+  }
   set ec -1
   if {[info exists ::execute(exitcode,last)]} { set ec $::execute(exitcode,last) }
   if {$ec == 0} {

@@ -18,7 +18,7 @@
 # wire byte-identical. Fresh fixture per case -> no cross-test state leak.
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_cadence_stretch_move.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_cadence_stretch_move.tcl
 #
 # RED-first: before the fix, cadence 'm' was DISCONNECTED (wire unchanged) so A/B fail,
 # and Shift+M was a kissing move (wire changed) so C fails.

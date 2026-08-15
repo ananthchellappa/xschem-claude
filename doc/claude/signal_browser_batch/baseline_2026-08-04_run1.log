@@ -1,0 +1,1364 @@
+gui_gate: approved batch window open, starting 'full_audit: 283 tests (test_accelerators.tcl ...)' (no prompt)
+PASS     | test_accelerators
+PASS     | test_action_log_dispatch
+PASS     | test_action_log_libmgr
+PASS     | test_actionlog_suppress_gate
+PASS     | test_add_pin_lib_symbol_view
+PASS     | test_add_wire_label
+PASS     | test_alt_transform_group_0116
+PASS     | test_altf5_ciw
+PASS     | test_apply_hilight_log
+PASS     | test_apply_properties_readonly
+PASS     | test_ase_bus_bits_0159
+PASS     | test_ase_core
+PASS     | test_ase_dialogs
+PASS     | test_ase_dirty
+PASS     | test_ase_final
+PASS     | test_ase_final_gf180
+PASS     | test_ase_hier_pick_0161
+PASS     | test_ase_hier_plot_0168
+PASS     | test_ase_interact
+PASS     | test_ase_launch
+PASS     | test_ase_locked_wire_pick_0160
+FAIL     | test_ase_log_seam_0207
+FAIL     | test_ase_persist
+PASS     | test_ase_plot
+PASS     | test_ase_print_bracket_0167
+SKIP     | test_ase_savestate_adopt
+PASS     | test_ase_unnamed_net
+PASS     | test_ase_view
+FAIL     | test_ase_window
+PASS     | test_autosave_hook
+PASS     | test_backup_file
+PASS     | test_backup_hidden
+PASS     | test_backup_recovery
+PASS     | test_binding_precedence
+PASS     | test_bindings_file
+PASS     | test_cadence_descend_newwin_ro
+FAIL     | test_cadence_drag
+PASS     | test_cadence_stretch_move
+PASS     | test_cadence_window_hop_log
+PASS     | test_callback_argc
+PASS     | test_cellview_resolve
+FAIL     | test_ciw
+PASS     | test_ciw_actionlog_output
+PASS     | test_ciw_autocomplete
+PASS     | test_ciw_interactive_load
+PASS     | test_ciw_puts_capture
+PASS     | test_clone_canvas_bindings
+PASS     | test_close_window_force
+PASS     | test_close_window_restores_prev_tab
+PASS     | test_cmdmode_0201
+PASS     | test_cmdmode_descend_0201
+PASS     | test_connected_drag_group_transform_0114
+PASS     | test_connected_drag_keeps_selection_0113
+PASS     | test_context_menu_descend_edit
+PASS     | test_context_menu_log
+PASS     | test_coordlog_precision
+PASS     | test_copy_form
+PASS     | test_create_instance
+PASS     | test_crossview_paste
+PASS     | test_dblclick_connected_grow
+PASS     | test_delete_cut_selflog
+PASS     | test_descend_efficiency
+PASS     | test_descend_fidelity
+PASS     | test_descend_goback_selflog
+PASS     | test_descend_log_absorb
+PASS     | test_descend_newwin_return
+PASS     | test_descend_preserve
+FAIL     | test_descend_readonly
+PASS     | test_descend_symbol
+PASS     | test_descend_untitled_preserve
+PASS     | test_descend_views
+PASS     | test_deselect_mode
+SKIP     | test_drag_keeps_selection
+PASS     | test_edit_vi_prop_readonly
+PASS     | test_editprop_preserve
+PASS     | test_empty_value_swallows_token_0183
+PASS     | test_expandlabel_zero_neg_mult_0182
+PASS     | test_find_helper
+PASS     | test_fluid_backbone_short_vertical_0098
+PASS     | test_fluid_bodyshove_guards_0132
+PASS     | test_fluid_collinear_backbone_short_0105
+PASS     | test_fluid_compact_escape_stub_0137
+PASS     | test_fluid_compact_named_crossbar_0138
+PASS     | test_fluid_diagonal_neighbor_bus_0134
+PASS     | test_fluid_diagonal_ref_drop_0132
+PASS     | test_fluid_diagonal_shove_throughbody_0135
+SKIP     | test_fluid_drag_onto_backbone_row_0106
+PASS     | test_fluid_drag_through_anchor_0109
+FAIL     | test_fluid_editing
+SKIP     | test_fluid_exit_stub_staircase_0111
+SKIP     | test_fluid_jog_separated_trunk_0136
+PASS     | test_fluid_loop_0088
+PASS     | test_fluid_ortho_ctrl1_shove_0132
+PASS     | test_fluid_ortho_second_drag_0132
+PASS     | test_fluid_relay_manhattanize_0107
+PASS     | test_fluid_relay_reanchor_0108
+SKIP     | test_fluid_reversal_0089
+PASS     | test_fluid_reversal_0096
+PASS     | test_fluid_rotate_body_route_0130
+PASS     | test_fluid_rotate_second_drag_0132
+PASS     | test_fluid_second_gesture_body_cross_0139
+SKIP     | test_fluid_sibling_pin_backbone_short_0098
+PASS     | test_flylines_render
+PASS     | test_geometry_sanity
+PASS     | test_gesture_bindings
+FAIL     | test_gesture_end_log
+PASS     | test_getprop_index_bounds
+PASS     | test_gf180_ase_defaults
+FAIL     | test_gf180mcud_libmgr
+TIMEOUT  | test_graph_box_zoom_xy
+PASS     | test_graph_context
+PASS     | test_grid_toggle_sel_gc
+PASS     | test_hash_extra_node_warn_0165
+PASS     | test_hash_label_crash_0156
+PASS     | test_hi_descend
+PASS     | test_hier_close_prompt
+PASS     | test_hier_walkup
+PASS     | test_hover_highlight
+PASS     | test_hover_selection_repair
+FAIL     | test_ihp_sg13g2_libmgr
+PASS     | test_instance_refusal
+PASS     | test_instance_update
+PASS     | test_isources
+PASS     | test_key_graph_context
+PASS     | test_key_make_sch_from_sel_log
+PASS     | test_keybind_snap_grid
+PASS     | test_keybindings_help
+PASS     | test_launch_context
+PASS     | test_lib_browse
+PASS     | test_lib_manager_bold
+PASS     | test_lib_manager_checkin
+PASS     | test_lib_manager_ctx
+FAIL     | test_lib_manager_gui
+PASS     | test_lib_manager_history
+PASS     | test_lib_manager_launch
+FAIL     | test_lib_manager_locate
+PASS     | test_lib_manager_maintain
+PASS     | test_lib_new_discovered_defs
+PASS     | test_lib_roundtrip
+FAIL     | test_lib_sweep
+PASS     | test_libmgr_mutation_log
+PASS     | test_libmgr_refresh_reentrancy
+PASS     | test_library_defs
+PASS     | test_library_git
+PASS     | test_library_git_history
+PASS     | test_library_git_report
+PASS     | test_library_ops
+PASS     | test_list_nets_null_token_0180
+PASS     | test_load_window_routing
+PASS     | test_make_symbol_dialog
+PASS     | test_make_symbol_view
+PASS     | test_migrate_engine
+PASS     | test_migrate_pin_names
+PASS     | test_modify_symbol_pins
+PASS     | test_mouse_bindings
+PASS     | test_multi_window
+PASS     | test_netlist_log
+PASS     | test_nh_angle_clamp
+PASS     | test_nh_angle_editor
+PASS     | test_nh_angle_range
+PASS     | test_nh_angle_render
+FAIL     | test_nh_anim_rearm
+PASS     | test_nh_editor_align
+PASS     | test_nh_editor_buttons
+PASS     | test_nh_editor_cells
+PASS     | test_nh_editor_discover
+PASS     | test_nh_editor_flush_scroll
+PASS     | test_nh_editor_free
+PASS     | test_nh_editor_load
+PASS     | test_nh_editor_persist
+PASS     | test_nh_editor_preview
+PASS     | test_nh_editor_rowops
+PASS     | test_nh_editor_staged
+PASS     | test_nh_editor_table
+PASS     | test_nh_export_custom_color
+PASS     | test_nhse_mutation_log
+PASS     | test_nogui
+PASS     | test_nolog
+PASS     | test_noncairo_verbs_ungated
+FAIL     | test_palette
+PASS     | test_paste_at_log
+PASS     | test_pdk_launcher
+PASS     | test_perform_action_add_pin_stubs
+PASS     | test_perform_action_align
+PASS     | test_perform_action_apply_pin_prop
+PASS     | test_perform_action_attach_labels
+PASS     | test_perform_action_break_wires
+PASS     | test_perform_action_change_elem_order
+PASS     | test_perform_action_check_unique_names
+PASS     | test_perform_action_clear_drawing
+PASS     | test_perform_action_delete
+PASS     | test_perform_action_embed_rawfile
+PASS     | test_perform_action_flip
+PASS     | test_perform_action_flip_in_place
+PASS     | test_perform_action_flipv
+PASS     | test_perform_action_flipv_in_place
+PASS     | test_perform_action_floaters_from_selected_inst
+PASS     | test_perform_action_image
+PASS     | test_perform_action_instance_number
+PASS     | test_perform_action_move_instance
+PASS     | test_perform_action_redo
+PASS     | test_perform_action_replace_symbol
+PASS     | test_perform_action_reset_inst_prop
+PASS     | test_perform_action_reset_symbol
+PASS     | test_perform_action_rotate
+PASS     | test_perform_action_rotate_in_place
+PASS     | test_perform_action_show_unconnected_pins
+PASS     | test_perform_action_toggle_ignore
+PASS     | test_perform_action_trim_wires
+PASS     | test_perform_action_undo
+PASS     | test_perform_action_wire_cut
+FAIL     | test_phase3_mints
+PASS     | test_pin_name_size_win
+PASS     | test_pin_type_edit
+PASS     | test_prep_result_contamination_0155
+PASS     | test_pristine_untitled_basename
+FAIL     | test_pristine_untitled_viewer_0172
+PASS     | test_prop_form_field_width_0170
+PASS     | test_readonly
+PASS     | test_readonly_action_dispatch
+PASS     | test_readonly_guard
+FAIL     | test_remap
+FAIL     | test_reopen_readonly
+PASS     | test_resolved_net_attr_scope_0163
+PASS     | test_resolved_net_bus_global_0157
+PASS     | test_resolved_net_hash_bus_0158
+PASS     | test_resolved_net_templ_fallback_0164
+SKIP     | test_rotate_prompt_object
+PASS     | test_rotate_stretch_dangling_0103
+PASS     | test_rotate_stretch_reconnect
+PASS     | test_rotate_stretch_reconnect_0099
+PASS     | test_rotate_stretch_reconnect_0100
+PASS     | test_rotate_stretch_route_quality_0110
+FAIL     | test_rotate_stretch_short_0104
+PASS     | test_rotmove_drop_log
+PASS     | test_save_as_cellview
+PASS     | test_save_as_form
+PASS     | test_save_reload_copy_selflog
+PASS     | test_sch_add_pin
+PASS     | test_schpins_stale_lab_0185
+PASS     | test_scripted_shape_undo
+FAIL     | test_select_at
+PASS     | test_select_inside_argc
+PASS     | test_selflog_grep_guard
+FAIL     | test_selflog_output
+PASS     | test_shape_setprop_log
+FAIL     | test_sky130a_libmgr
+FAIL     | test_sod_pick_no_select_0204
+PASS     | test_stdin_tcp_log
+PASS     | test_sweep_diff
+PASS     | test_symbol_view_resolve
+PASS     | test_sympin_drop_log
+PASS     | test_tedax_extra_pinnumber_0179
+PASS     | test_toggle_editmode_log
+PASS     | test_undo_link_symbols
+PASS     | test_undo_move_keep_selection
+PASS     | test_undo_selection
+PASS     | test_untitled_reuse
+PASS     | test_verb_noun_copy_move
+PASS     | test_verb_noun_descend_0200
+PASS     | test_vpulse
+PASS     | test_vpwl
+PASS     | test_wave_axis_zoom
+PASS     | test_wave_clear_all
+PASS     | test_wave_drag_preview
+PASS     | test_wave_empty_strips
+PASS     | test_wave_grid
+PASS     | test_wave_hilight
+PASS     | test_wave_legend
+PASS     | test_wave_markers
+PASS     | test_wave_modes
+PASS     | test_wave_sigsearch
+PASS     | test_wave_snap
+PASS     | test_wave_split_strip
+PASS     | test_wave_tabs
+PASS     | test_wave_trace_menu
+PASS     | test_wave_viewer
+PASS     | test_window_numbering
+PASS     | test_window_switch_bogus_enter
+PASS     | test_wire_complete_with_selection
+PASS     | test_wire_split
+PASS     | test_wire_stub_bindings
+PASS     | test_wire_vertex_grab
+--------- wireedit suite ---------
+test_wireedit_00_selftest.tcl: RESULT: ALL PASS
+test_wireedit_01_stretch_off.tcl: RESULT: ALL PASS
+test_wireedit_02_parallel_stretch.tcl: RESULT: ALL PASS
+test_wireedit_03_perp_lone.tcl: RESULT: ALL PASS
+test_wireedit_04_subgrid.tcl: RESULT: ALL PASS
+test_wireedit_05_tjunction.tcl: RESULT: ALL PASS
+test_wireedit_06_corner_slide.tcl: RESULT: ALL PASS
+test_wireedit_07_colinear_merge.tcl: RESULT: ALL PASS
+test_wireedit_08_overlap_dedup.tcl: RESULT: ALL PASS
+test_wireedit_09_orphan_stub.tcl: RESULT: ALL PASS
+test_wireedit_10_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_11_two_nets_no_short.tcl: RESULT: ALL PASS
+test_wireedit_12_bus.tcl: RESULT: ALL PASS
+test_wireedit_13_multi_rigid.tcl: RESULT: ALL PASS
+test_wireedit_14_undo.tcl: RESULT: ALL PASS
+test_wireedit_15_far_fixed_pin.tcl: RESULT: ALL PASS
+test_wireedit_16_pin_abutment.tcl: RESULT: ALL PASS
+test_wireedit_17_wire_drag_junction.tcl: RESULT: ALL PASS
+test_wireedit_18_subgrid_corner.tcl: RESULT: ALL PASS
+test_wireedit_19_multipin_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_20_F1_netlabel_tap.tcl: RESULT: ALL PASS
+test_wireedit_22_F5_no_short.tcl: RESULT: ALL PASS
+test_wireedit_23_F4_body_detour.tcl: RESULT: ALL PASS
+test_wireedit_24_F3_same_edge.tcl: RESULT: ALL PASS
+test_wireedit_25_F8_mos_bundle.tcl: RESULT: ALL PASS
+test_wireedit_26_phase1_runtime_guard.tcl: RESULT: ALL PASS
+test_wireedit_27_phase1_disconnect.tcl: RESULT: ALL PASS
+test_wireedit_28_escape_normal.tcl: RESULT: ALL PASS
+test_wireedit_29_exit_stub_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_30_F2_two_pin_res.tcl: RESULT: ALL PASS
+test_wireedit_31_tapped_leg_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_32_decouple_ownership.tcl: RESULT: ALL PASS
+test_wireedit_33_incremental_step.tcl: RESULT: ALL PASS
+test_wireedit_34_r18_no_short.tcl: RESULT: ALL PASS
+test_wireedit_35_flip_generality.tcl: RESULT: ALL PASS
+test_wireedit_36_both_blocked_detour.tcl: RESULT: ALL PASS
+test_wireedit_37_connected_wire_shove.tcl: RESULT: ALL PASS
+test_wireedit_38_shove_declines.tcl: RESULT: ALL PASS
+test_wireedit_39_p6_min_bend.tcl: RESULT: ALL PASS
+test_wireedit_40_diagonal_shove.tcl: RESULT: ALL PASS
+test_wireedit_41_no_short_offset_solder.tcl: RESULT: ALL PASS
+test_wireedit_42_farpin_never_worse.tcl: RESULT: ALL PASS
+test_wireedit_43_diagonal_fallback_no_short.tcl: RESULT: ALL PASS
+test_wireedit_44_diagonal_manhattan_quality.tcl: RESULT: ALL PASS
+test_wireedit_45_redundant_loop_0088.tcl: RESULT: ALL PASS
+test_wireedit_46_reversal_0089.tcl: RESULT: ALL PASS
+test_wireedit_47_staircase_0090.tcl: RESULT: ALL PASS
+test_wireedit_48_body_cross_0091.tcl: RESULT: ALL PASS
+test_wireedit_49_axis_overshoot_0092.tcl: RESULT: ALL PASS
+test_wireedit_50_regrab_partial_disconnect_0093.tcl: RESULT: ALL PASS
+test_wireedit_51_offpin_foreign_backbone_0094.tcl: RESULT: ALL PASS
+test_wireedit_52_pushthrough_amnesty_0112.tcl: RESULT: ALL PASS
+test_wireedit_53_mixed_selection_safetynet_0113.tcl: RESULT: ALL PASS
+test_wireedit_54_enforce_refuse_named_rail_0105.tcl: RESULT: ALL PASS
+test_wireedit_55_failsafe_counter_b4.tcl: RESULT: ALL PASS
+test_wireedit_56_fluid_pass_harness_d6.tcl: RESULT: ALL PASS
+test_wireedit_57_enforce_preexisting_foreign_short_0123.tcl: RESULT: ALL PASS
+test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
+WIREEDIT: ALL PASS
+========================================
+SUMMARY: 250 pass  24 fail  1 crash/timeout  8 skip  (total 283)
+WIREEDIT: PASS
+SCRATCH:  0 leaked dir(s)
+========================================
+
+=== FAIL / CRASH / TIMEOUT output ===
+
+###### FAIL: test_ase_log_seam_0207 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+FAIL: PS0 action log open (needs --logdir) -> {0} (exp {1}) : FAIL
+FAIL: PS0b CIW log pane exists -> {0} (exp {1}) : FAIL
+ok:   PS1 the ase::echo seam exists
+note: log lines added by the pick = {0}
+note: the added lines = {}
+FAIL: PS2 the pick's message is in the CIW pane -> {0} (exp {1}) : FAIL
+FAIL: PS3 the pick's message is in the LOG FILE -> {0} (exp {1}) : FAIL
+FAIL: PS4 the ESC summary is in the CIW pane -> {0} (exp {1}) : FAIL
+FAIL: PS5 the ESC summary is in the LOG FILE -> {0} (exp {1}) : FAIL
+FAIL: PS6 the mode-entry notice is in the LOG FILE too -> {0} (exp {1}) : FAIL
+note: no_session_notice lines = {}
+FAIL: PS7a an error-tagged notice reached the FILE -> {0} (exp {1}) : FAIL
+FAIL: PS7a2 and it is a real, non-empty message -> {0} (exp {1}) : FAIL
+FAIL: PS7b it carries the ERROR prefix `#! ` -> {} (exp {#! }) : FAIL
+ok:   PS7c it is NOT the result prefix
+FAIL: PS7d the pane got the same text -> {0} (exp {1}) : FAIL
+FAIL: PS8 the pick line appears in the pane exactly once -> {0} (exp {1}) : FAIL
+ok:   PS9 every new log line is a comment or an xschem command
+ok:   PS10a an empty ase::echo adds no log line
+ok:   PS10b and no stray flag line was written
+ok:   PS11 a value-less log_action flag writes nothing
+FAIL: PS12a the backslash message was logged -> {0} (exp {1}) : FAIL
+ok:   PS12b it does NOT end in a bare backslash
+FAIL: PS12c the FOLLOWING log line still EXECUTES on replay -> {0} (exp {1}) : FAIL
+FAIL: PS12d a backslash BEFORE a trailing newline is guarded too -> {0} (exp {1}) : FAIL
+ok:   PS13 the pick still writes NO replayable command line
+note: source error = {couldn't read file "": no such file or directory}
+FAIL: RP1 the whole log file still sources cleanly -> {0} (exp {1}) : FAIL
+ok:   RP2 replay executed no ASE proc as a command
+ok:   RP3 replay never executed a bare flag as a command
+RESULT: 16 FAILED (10 passed)
+
+###### FAIL: test_ase_persist ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   R1 state_default has viewer {}
+ok:   R1 exactly the 15 schema keys
+ok:   R2 save->load->save byte-identical with a viewer dict
+ok:   R2 reloaded graphs IDENTICAL to the input
+ok:   R2 auto 1 marker round-tripped on graph 0
+ok:   R2 open/sharedx/rawfile round-tripped
+ok:   R3 fixture file carries NO viewer line
+ok:   R3 viewer default-merged to {}
+ok:   R3 unknown key preserved
+ok:   R3 re-save: viewer {} is the last schema line
+ok:   R3 re-save: unknown key after it
+ok:   R4 snapshot: no window + no prev -> {}
+ok:   R4 snapshot: no window + prev -> open flipped to 0
+ok:   R4 snapshot closed arm KEEPS the graphs
+ok:   G1 open_state -> 1
+ok:   G1 session window exists
+ok:   G1 viewer {} state opened NO viewer
+ok:   G2 Choose Analyses dialog up
+ok:   G2 Enable checkbutton set
+ok:   G2 dialog closed on Return (commit ran)
+ok:   G2 dc enabled 1
+ok:   G2 dc source V2
+ok:   G2 dc start 0
+ok:   G2 dc stop 1.8
+ok:   G2 dc step 0.01
+ok:   G2 op row still enabled
+ok:   G2 plot_sim_type dc
+ok:   G3 outs pane has the single id row
+ok:   G3 REAL click on the Plot cell delivered
+ok:   G3 id row plot 1
+ok:   G3 id row save still 1
+ok:   G3s design is the current schematic
+ok:   G3s REAL ESC ended the save mode
+ok:   G3s outputs gained the v(d) save row
+ok:   G3s v(d) row expr
+ok:   G3s v(d) row save 1 / plot 0
+ok:   G4 run started (integer execute id)
+Raw file data read: /home/qflow/dev/xschem/claude_1/xschem/tests/headless/.scratch/_ase_persist_53628/run/test_nfet_final_ase.raw
+points=181, vars=4, datasets=1 sim_type=dc
+ok:   G4 exit 0
+ok:   G4 status Ready
+ok:   G4 status light Green
+ok:   G4 viewer auto-opened
+ok:   G4 viewer window mapped
+ok:   G4 raw loaded index >= 0
+ok:   G4 raw sim_type dc
+ok:   G4 raw points 181 (dc 0..1.8 step 0.01)
+ok:   G4 auto graph is graph 0
+ok:   G4 auto graph carries EXACTLY the id trace
+ok:   G4 raw vector id materialized (raw add)
+ok:   G4 redraw rc 0
+ok:   G5 ground truth id(Vgs=1.8) ~ 409.68 uA
+ok:   G5 readout A line carries x=1.8
+ok:   G5 readout A line carries id=409.7u (eng notation)
+ok:   G6 design is the current schematic
+free_rawfile(): clearing data
+Raw file data read: /home/qflow/dev/xschem/claude_1/xschem/tests/headless/.scratch/_ase_persist_53628/run/test_nfet_final_ase.raw
+points=181, vars=4, datasets=1 sim_type=dc
+ok:   G6 REAL ESC ended the mode
+ok:   G6 exactly ONE new graph appended
+ok:   G6 new graph is NOT auto-marked
+ok:   G6 new graph traces exactly v(d)
+ok:   G6 auto graph untouched (still just id)
+ok:   G6 outputs unchanged (Direct Plot writes no outputs)
+ok:   G7 Save State dialog up
+ok:   G7 dialog closed (save ran)
+ok:   G7 scratch view state file created
+ok:   G7 snapshot: viewer open 1
+ok:   G7 snapshot: rawfile {} (current run's raw)
+ok:   G7 snapshot: 2 graphs
+ok:   G7 snapshot: auto marker on graph 0
+ok:   G7 snapshot: graph 0 = the exact id trace model dict
+ok:   G7 snapshot: graph 1 = the exact v(d) trace model dict
+free_rawfile(): clearing data
+ok:   G8 session toplevel gone
+ok:   G8 viewer closed with the session (item-13 lifecycle)
+Raw file data read: /home/qflow/dev/xschem/claude_1/xschem/tests/headless/.scratch/_ase_persist_53628/run/test_nfet_final_ase.raw
+points=181, vars=4, datasets=1 sim_type=dc
+ok:   G8 reopen the scratch view -> 1
+ok:   G8 NEW session window up
+ok:   G8 viewer RELAUNCHED
+ok:   G8 relaunched viewer mapped
+ok:   G8 layout restored: 2 graphs
+ok:   G8 auto graph index 0
+ok:   G8 auto graph trace id
+ok:   G8 Direct-Plot graph trace v(d)
+ok:   G8 raw re-attached (loaded >= 0)
+ok:   G8 raw sim_type dc
+ok:   G8 raw points 181
+ok:   G8 raw index id >= 0 (RPN re-materialized)
+ok:   G8 redraw rc 0
+ok:   G8 relaunched readout carries x=1.8
+ok:   G8 relaunched readout carries id=409.7u again
+free_rawfile(): clearing data
+ok:   G9 session 2 closed
+ok:   G9 viewer 2 closed
+ok:   G9 sanity: stored viewer open 1
+ok:   G9a reopen (viewer open 0) -> 1
+ok:   G9a session window up
+ok:   G9a NO viewer auto-open (open 0)
+ok:   G9b rewritten state carries NO viewer line
+ok:   G9b reopen (no viewer key) -> 1
+ok:   G9b session window up
+ok:   G9b NO viewer auto-open (old state)
+ok:   G10 reopen (open 1, raw deleted) -> 1
+ok:   G10 session window up
+ok:   G10 viewer up despite the missing raw
+ok:   G10 viewer mapped
+ok:   G10 layout restored: 2 graphs
+ok:   G10 model traces present (id / v(d))
+ok:   G10 raw NOT loaded (errors-or-negative)
+ok:   G10 redraw rc 0 (traces draw empty, no crash)
+X connection to :0 broken (explicit kill or server shutdown).
+
+###### FAIL: test_ase_window ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   H1 design lib
+ok:   H1 design cell
+ok:   H1 design view points at the schematic
+ok:   H1 fresh session not dirty
+ok:   H2 dirty after update
+ok:   H2 saved file contains the new Vgs value
+ok:   H2 clean after save
+ok:   H3 dirty after second update
+ok:   H3 revert restores the saved variables
+ok:   H3 clean after revert
+ok:   H3 session_load re-reads the file from disk
+ok:   H4 existing view -> 1
+ok:   H4 session registered by open_state
+ok:   H4 missing view throws no error
+ok:   H4 missing view -> 0
+ok:   H5 allocator returns integers
+ok:   H5 second call == first+1 (counter advances)
+ok:   H5 numbers start at/after the editor floor (>= 3)
+ok:   H6 backend_names contains ngspice
+ok:   T1 run_existing without a netlist artifact raises
+ok:   T1 error points at Netlist > Recreate
+ok:   P2 output_display_name prefers the user name
+ok:   P2 unnamed short expr shown whole
+ok:   P2 unnamed long expr truncated to 21+...
+ok:   P2 truncated form is exactly 24 chars
+ok:   P3 output_kind v(net) -> voltage
+ok:   P3 output_kind -i(v1) -> current
+ok:   P3 save_options_cell voltage+save_all_v -> allv
+ok:   P3 current+save_all_i -> alli
+ok:   P3 blanket off -> blank
+ok:   P4 arg_summary dc row
+ok:   W1 open_state -> 1
+ok:   W1 window_for returns a live toplevel
+ok:   W1 toplevel named .ase<N>
+ok:   W1 v2 title Analog Sim Environment <design cell>
+ok:   W1 no log pane in the session window
+ok:   W1 temperature entry shows 27
+ok:   W1 toplevel panel background #f2f2f2
+ok:   W1 named fonts exist
+ok:   W1 pane title dark-red accent
+ok:   W1 temperature entry white + AseEntryFont
+ok:   W1m menubar cascades in order
+ok:   W1m Launch cascade disabled
+ok:   W1m Tools cascade NOT disabled
+ok:   W1m Tools menu entries
+ok:   W1m Tools Waveform Viewer NOT disabled
+ok:   W1m Tools Waveform Viewer command
+ok:   W1m Tools Calculator disabled (placeholder)
+ok:   W1m Results Direct Plot NOT disabled (item 13: live)
+ok:   W1m Results Direct Plot has a command
+ok:   W1m Results Annotate OP info disabled
+ok:   W1m Results Annotate DC Node Voltages disabled
+ok:   W1m Simulation menu entries
+ok:   W1m Netlist cascade entries
+ok:   W1m Session menu entries (v2, no Revert)
+ok:   W1p exactly the three v2 panes
+ok:   W1p no inline add/del buttons under the panes
+ok:   W1p variables columns
+ok:   W1p analyses columns
+ok:   W1p outputs columns
+ok:   W1p analyses rows numbered 1..4
+ok:   W1p variables pane has a Vgs row
+ok:   W1p Vgs row shows 1.8
+ok:   W1p outputs pane has the id row
+ok:   W1p id output row Value blank pre-run
+ok:   W1p id Save Options blank while blankets off
+ok:   W1p treeview themed (style Ase.Treeview)
+ok:   W1p heading strip carries the locked header color
+ok:   W1s strip buttons in order
+ok:   W1s plot button normal (item 13: ~ live)
+ok:   W1c vars context menu entries
+ok:   W1c ana context menu entries
+ok:   W1c outs context menu entries
+ok:   W2 re-open returns 1
+ok:   W2 same toplevel
+ok:   W2 still exactly one .ase* toplevel
+ok:   W2 no number consumed by the re-open (delta == the probe only)
+ok:   W3 double-click opens the variable editor
+ok:   W3 editor prefilled with the row name
+ok:   W3 editor prefilled with the row value
+ok:   W3 editor closed on Return
+ok:   W3 title gained the dirty marker
+ok:   W3 session dirty after widget commit
+ok:   W3 tree shows 2.2
+ok:   W3 saved file contains the widget's value
+ok:   W3 dirty marker gone after save
+ok:   W3 session clean after save
+ok:   W3 Vgs restored to 1.8 + saved
+ok:   W3t session dirty after temperature commit
+ok:   W3t status bar carries T=33 C
+ok:   W3t saved file contains temperature 33
+ok:   W3t non-numeric input keeps the stored temperature
+ok:   W3t entry restored after invalid input
+ok:   W3t temperature restored + saved
+ok:   W3s variables row selected
+ok:   W3s selecting in outputs clears the variables selection
+ok:   W3c analyses pane has the dc row
+ok:   W3c click toggles dc enabled in state
+ok:   W3c save persists the toggle
+ok:   W3c second click + save restores enabled 0
+ok:   W3v = opens the Add Variable dialog
+ok:   W3v add dialog closed on Return
+ok:   W3v tmpA in the tree
+ok:   W3v tmpA in the session state
+ok:   W3v tmpB added too
+ok:   W3v duplicate name rejected (state unchanged)
+ok:   W3v duplicate add keeps the dialog up
+ok:   W3v cancel closes the dialog
+ok:   W3x X removed both rows from the state
+ok:   W3x survivors intact
+ok:   W3x X with empty selection is a clean no-op
+ok:   W3o id row Save Options shows alli
+ok:   W3o blanket off -> Save Options blank again
+ok:   W3o session clean after the round trip
+ok:   W3e add-variable 1.04e-4 shows 104u in the pane
+ok:   W3e session state keeps the raw value
+ok:   W3e saved state file stores the raw value
+ok:   W3e saved state file has no formatted value
+ok:   W3e gate off shows the raw scientific value
+ok:   W3e gate back on shows 104u again
+ok:   W3e double-click opens the variable editor
+ok:   W3e editor prefill is the RAW value
+ok:   W3e cleanup leaves the session clean
+ok:   W3e cleanup restored the seeded variables
+ok:   W4 design is now the current schematic
+ok:   W4 window list has the design schematic
+ok:   W4 design toplevel raised above the ASE window
+ok:   W5 Recreate produced the netlist artifact
+ok:   W5 netlist textwindow opened (titled with the path)
+ok:   W5 netlist viewer shows the device line (XM1)
+ok:   W6 run started (integer execute id)
+ok:   W6 log toplevel appears
+ok:   W6 status orange while running
+ok:   W6 status text Running
+ok:   W6 log window non-empty
+ok:   W6 log window has the Data Rows banner
+ok:   W6 log window has the -i(v1) result line
+ok:   W6 status light Green on success
+ok:   W6 status text back to Ready
+ok:   W6 log file written in the scratch rundir
+ok:   W6 deck contains .temp 27
+ok:   W6 id row Value filled after run
+ok:   W6b run-existing started
+ok:   W6b run-existing exit 0
+ok:   W6b netlist artifact still carries the sentinel
+ok:   W6b deck carries the sentinel
+ok:   W6c log toplevel open before Ctrl-W
+ok:   W6c Ctrl-W destroyed the log window
+ok:   W6c Simulation > Log reopened the window
+ok:   W6c reopened log shows the log file content
+ok:   W7 long tran started
+FAIL: W7 simulator produced output before Stop -> {0} (exp {1}) : FAIL
+ok:   W7 nonzero exit after Stop
+ok:   W7 status light red after Stop
+ok:   W7 status text Error after Stop
+ok:   W7 execute pipe cleaned up
+ok:   W7 revert leaves the session clean
+ok:   W7v Tools > Waveform Viewer opened a viewer toplevel
+ok:   W7v the viewer is a toplevel
+ok:   W7v second invoke raises the SAME viewer
+ok:   W7v no second viewer window
+ok:   W7v disabled Calculator invoke does not throw
+ok:   W7v Calculator opened nothing
+ok:   W7v viewer closed, registry clean
+ok:   W8 toplevel destroyed
+ok:   W8 window_for now empty
+RESULT: 1 FAILED (165 passed)
+
+###### FAIL: test_cadence_drag ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   fixture has instances
+FAIL: plain click selects instance 0
+FAIL: Shift+drag duplicates the instance (copy)
+fluid_editing INVARIANT (P1): 2 instance pin(s) changed net partition after move -- possible disconnect
+FAIL: forced intuitive: plain drag moves the instance (intuitive_interface=0)
+fluid_editing INVARIANT (P1): 2 instance pin(s) changed net partition after move -- possible disconnect
+FAIL: plain drag moves the gate
+ok:   plain drag carries attached wires (enable_stretch=0)
+fluid_editing INVARIANT (P1): 2 instance pin(s) changed net partition after move -- possible disconnect
+FAIL: Ctrl+drag moves the gate
+FAIL: Ctrl+drag leaves wires behind (detached)
+ok:   Ctrl+drag is a move not a copy (count unchanged)
+fluid_editing INVARIANT (P1): 2 instance pin(s) changed net partition after move -- possible disconnect
+FAIL: non-cadence plain drag still moves the gate
+FAIL: non-cadence plain drag leaves wires behind (enable_stretch=0 stock)
+ok:   abutment fixture starts with no wire
+FAIL: plain cadence drag of abutted pin GENERATES a connecting wire
+ok:   no-motion click on abutted instance leaves no stub wire
+FAIL: no-motion click on abutted (kissing) instance stays selected
+ok:   Shift+copy after a no-kiss click draws no spurious wire
+FAIL: Shift+copy still duplicated the instance
+FAIL: cadence click-to-isolate still leaves exactly one selected
+RESULT: 12 FAILED
+
+###### FAIL: test_ciw ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   CIW toplevel exists
+ok:   panedwindow split
+ok:   log pane is a text
+ok:   log pane is read-only
+ok:   entry pane exists
+ok:   entry is editable (log pane is not)
+ok:   sash has a fat grab target
+ok:   entry height follows the sash
+ok:   actionlog_filename set
+ok:   CIW title shows the log path
+ok:   log_action mirrored to pane
+ok:   tricky line verbatim in pane
+ok:   typed cmd echoed with > prefix
+ok:   input tag used
+ok:   result tag used
+ok:   entry cleared after exec
+ok:   Return executes, no stray newline
+ok:   Ctrl-BackSpace eats trailing space + word
+ok:   Ctrl-BackSpace bound
+ok:   Up recalls newest command
+ok:   Up again walks older
+ok:   Down restores stashed draft
+ok:   Up/Down bound
+ok:   error text shown
+ok:   error tag used
+ok:   file header comment
+ok:   log_action line in file
+ok:   tricky line verbatim in file
+ok:   typed cmd recorded raw
+ok:   failed cmd is a comment
+ok:   no echo prefix in file
+FAIL: no result/error text in file
+ok:   file is source-able
+ok:   close withdraws, not destroys
+FAIL: ciw_create re-shows
+RESULT: 2 FAILED
+
+###### FAIL: test_descend_readonly ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+X connection to :0 broken (explicit kill or server shutdown).
+
+###### FAIL: test_fluid_editing ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   FE1 pre: rect starts at (0,0)-(200,200)
+ok:   FE1 opposite corner FIXED at (200,200)
+ok:   FE1 grabbed corner MOVED off (0,0)
+ok:   FE2 pre: line has endpoints (600,0) and (800,0)
+ok:   FE2 other endpoint FIXED at (800,0)
+ok:   FE2 grabbed endpoint MOVED off (600,0)
+ok:   FE1b stock: opposite corner MOVED (whole-object move preserved)
+ok:   FE3 pre: arc center (1200,0) r=100 a=0 b=90
+ok:   FE3 arc center FIXED at (1200,0)
+ok:   FE3 arc start angle a CHANGED off 0
+ok:   FE3c undo restores the arc to (1200,0) r=100 a=0 b=90
+ok:   FE4 bottom edge FIXED at y2=200
+ok:   FE4 top edge MOVED off y1=0
+ok:   FE4 left/right x extents UNCHANGED (0,200)
+ok:   FE4b quarter-point on top edge still grabs the edge (bottom fixed)
+ok:   FE5 pre: one rect present
+ok:   FE5 Shift+drag near a corner COPIES the rect (2 rects, not a stuck no-op)
+ok:   FE6 pre: arc selected by first click
+ok:   FE6 stock two-step MOVES the whole arc (center shifts), not a stretch
+ok:   FE9 pre: off-grid line ends (605,3) and (800,3)
+ok:   FE9 tolerance grab of an OFF-GRID endpoint (other end (800,3) FIXED)
+ok:   FE10a cadence ON + fluid OFF: first-click corner does NOT stretch (size 200x200 kept)
+ok:   FE10b cadence OFF + fluid ON: first-click corner GRABS (corner moved, opposite fixed)
+ok:   FE7 thin bar: body drag MOVES WHOLE bar (all 4 coords change, not an edge deform)
+ok:   FE8 pre: buffer clean (modified=0), arc a=30
+FAIL: FE8 drag-and-return changed the arc AND left buffer MODIFIED (no false-clean) (mod=1 a=30) : FAIL
+RESULT: 1 FAILED (25 passed)
+OVERALL: notok
+
+###### FAIL: test_gesture_end_log ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   action log open
+ok:   zoom drag logs zoom_box
+ok:   zoom_box line replays the exact view
+ok:   degenerate zoom logs no zoom_box
+ok:   wire gesture logs xschem wire
+ok:   wire gesture stored a wire
+ok:   logged wire coords match stored wire
+ok:   rect gesture logs xschem rect
+ok:   rect gesture stored a rect
+fluid_editing INVARIANT (P1): 4 instance pin(s) changed net partition after move -- possible disconnect
+ok:   move drop logs xschem move_objects dx dy
+FAIL: instance moved by exactly the logged delta
+ok:   duplicate drop logs xschem copy_objects dx dy
+ok:   duplicate created an instance
+ok:   symbol drop logs xschem instance
+ok:   symbol drop placed an instance
+ok:   logged instance line replays (places another instance)
+ok:   brace/backslash prop still logs a replayable instance line (0048)
+ok:   brace-prop placement NOT dropped to a comment
+ok:   brace-prop placement placed an instance
+ok:   brace-prop logged line replays cleanly (no source error)
+ok:   brace-prop replay placed another instance
+ok:   replayed instance carries the exact brace/backslash prop
+ok:   text drop logs xschem text ... HELLO ...
+ok:   polygon close logs xschem polygon with points
+ok:   polygon gesture stored a polygon
+ok:   logged polygon line replays (stores another polygon)
+ok:   drag-pan logs xschem pan dx dy
+ok:   logged pan delta matches the origin shift
+ok:   logged pan line replays the same shift
+ok:   no-motion pan logs nothing
+ok:   log file is source-able
+RESULT: 1 FAILED
+
+###### FAIL: test_gf180mcud_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+X connection to :0 broken (explicit kill or server shutdown).
+
+###### TIMEOUT: test_graph_box_zoom_xy ######
+timeout: the monitored command dumped core
+
+###### FAIL: test_ihp_sg13g2_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   library.defs exists
+ok:   cadence_style_rc exists
+ok:   sg13g2_procs.tcl exists
+ok:   run.sh is executable
+FAIL: library_list = exactly the 9 intended libs -> {SANDBOX TEST analyses devices examples ngspice ngspice_verilog_cosim sg13g2_pr sg13g2_stdcells sg13g2_tests sg13g2_tests_ase xschem_simulator} (exp {analyses devices examples ngspice ngspice_verilog_cosim sg13g2_pr sg13g2_stdcells sg13g2_tests xschem_simulator}) : FAIL
+ok:   devices -> xschem_libs_newsym/devices (outside ihp-sg13g2/)
+ok:   analyses -> xschem_libs_newsym/analyses (outside ihp-sg13g2/)
+ok:   examples -> xschem_libs_newsym/examples (outside ihp-sg13g2/)
+ok:   ngspice -> xschem_libs_newsym/ngspice (outside ihp-sg13g2/)
+ok:   ngspice_verilog_cosim -> xschem_libs_newsym/ngspice_verilog_cosim (outside ihp-sg13g2/)
+ok:   xschem_simulator -> xschem_libs_newsym/xschem_simulator (outside ihp-sg13g2/)
+ok:   sg13g2_pr lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_stdcells lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_tests lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_pr/sg13_lv_nmos symbol resolves
+ok:   sg13g2_pr/sg13_hv_nmos symbol resolves
+ok:   sg13g2_pr/cap_cmim symbol resolves
+ok:   sg13g2_pr/dantenna symbol resolves
+ok:   sg13g2_pr/annotate_fet_params symbol resolves
+ok:   sg13g2_pr/annotate_bip_params symbol resolves
+ok:   sg13g2_tests/dc_lv_nmos schematic resolves
+ok:   sg13g2_tests/dc_hbt_13g2 schematic resolves
+ok:   sg13g2_tests/ac_mim_cap schematic resolves
+ok:   sg13g2_stdcells/IHP130_stdcells schematic resolves
+ok:   devices/code_shown (cross-lib) resolves
+ok:   devices/vsource (cross-lib) resolves
+ok:   devices/gnd (cross-lib) resolves
+ok:   devices/lab_pin (cross-lib) resolves
+ok:   models/cornerMOSlv.lib vendored
+ok:   models/cornerMOShv.lib vendored
+ok:   models/cornerHBT.lib vendored
+ok:   models/cornerRES.lib vendored
+ok:   models/cornerCAP.lib vendored
+ok:   models/cornerDIO.lib vendored
+ok:   rc points the registry at this workarea
+ok:   rc is registry-only
+ok:   rc clears XSCHEM_LIBRARY_PATH
+ok:   rc sets ::MODELS_NGSPICE (benches need it)
+ok:   rc sets ::SG13G2_MODELS alias
+ok:   rc sources sg13g2_procs.tcl
+ok:   rc appends the IHP menu builder
+ok:   rc layers the repo Cadence UX
+ok:   sg13g2_procs.tcl defines sg13g2_fet_drc
+ok:   sg13g2_procs.tcl defines sg13g2_res_drc
+ok:   sg13g2_procs.tcl defines sg13g2_mim_drc
+ok:   sg13g2_procs.tcl defines sg13g2_hbt_drc
+ok:   sg13g2_procs.tcl defines sg13g2_diode_drc
+ok:   sg13g2_procs.tcl defines sg13g2_svaricap_drc
+ok:   sg13g2_procs.tcl defines sg13g2_save_params
+ok:   sg13g2_procs.tcl defines sg13g2_display_fet_params
+ok:   sg13g2_procs.tcl defines sg13g2_display_bip_params
+ok:   sg13g2_procs.tcl defines sg13g2_menupdk
+ok:   sg13g2_pr symbols carry prefixed drc= calls
+ok:   no sg13g2_pr symbol still calls a BARE *_drc
+ok:   benches reference models via $::MODELS_NGSPICE
+ok:   no bench still has a BARE model .lib/.include
+ok:   the .save includes were left bare (correct)
+ok:   osdi/psp103.osdi built
+ok:   osdi/psp103_nqs.osdi built
+ok:   osdi/r3_cmc.osdi built
+ok:   osdi/mosvar.osdi built
+ok:   build_ihp_osdi.sh is executable
+ok:   rc sets ::SG13G2_OSDI
+ok:   some benches pull in a model library
+ok:   every model-using bench registers the OSDI modules
+ok:   none uses a bare `osdi` (must be pre_osdi)
+
+OVERALL: 1 FAILED (65 passed)
+
+###### FAIL: test_lib_manager_gui ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   GUI1 three panes exist 
+ok:   GUI2 library pane populated (=> 15 libs)
+ok:   GUI3 cell+view panes start empty 
+ok:   GUI4 selecting a library fills cells (=> 127 cells)
+ok:   GUI5 switching library replaces cells (=> 76 cells)
+ok:   GUI6 selecting a cell fills views (=> schematic symbol)
+ok:   GUI7 current_cell resolves selection (=> examples cmos_inv)
+FAIL: GUI8 new-window mode adds a tab per open (=> 0 0 1)
+FAIL: GUI9 current-window mode reuses the tab (=> 1 -> 2)
+ok:   GUI10 symbol view opens for editing (=> /home/qflow/dev/xschem/claude_1/xschem/xschem_library/devices/res.sym)
+RESULT: 2 FAILED
+
+###### FAIL: test_lib_manager_locate ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   LM-LOC1 locate runs without error (no listbox API on treeview) (rc=0 e=)
+ok:   LM-LOC2 lib+cell+view stay selected after update (no deferred clobber) (lib=SANDBOX cell=cs_amp view=schematic want SANDBOX/cs_amp/schematic)
+FAIL: LM-LOC3 picking another library still clears the old cell/view selection (cell sel= cells=0)
+RESULT: 1 FAILED (2 passed)
+
+###### FAIL: test_lib_sweep ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+    (missing cells for devices)
+    (missing cells for examples)
+    (missing cells for ngspice)
+    (missing cells for ngspice_verilog_cosim)
+    (missing cells for logic)
+    (missing cells for xschem_simulator)
+    (missing cells for binto7seg)
+    (missing cells for pcb)
+    (missing cells for rom8k)
+    (missing cells for analyses)
+    (missing cells for xTAG)
+    (missing cells for rulz-r8c33)
+FAIL: P1 all 12 libraries migrated with view dirs 
+FAIL: P1b flat tree untouched 
+FAIL: P2 library.defs registers all 12 (=> 0/12)
+FAIL: P3 refs lib-qualified 
+FAIL: P4 netlist equivalence over all migrated schematics (compared=0, diffs=0)
+RESULT: 5 FAILED
+
+###### FAIL: test_nh_anim_rearm ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+FAIL: R1 animated highlight present + tick armed (animated=1 after=)
+FAIL: R2 tick fires while idle (harness genuinely animates) (ticks=0)
+ok:   R3 the highlight re-armed the tick during the callback (rearms=2)
+FAIL: R4 tick is STILL armed after the interactive highlight (after=)
+ok:   R5 highlight still animating (style present) (animated=1)
+FAIL: R6 tick keeps firing after the interactive highlight (NOT frozen) (ticks=0)
+RESULT: 4 FAILED
+
+###### FAIL: test_palette ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+BINDING: present
+QUERY 'save' -> 9 results
+  hit: Save
+  hit: Save as
+  hit: Save as symbol
+  hit: Toggle wire stretching
+  hit: Send highlighted nets to viewer
+QUERY '' -> 151 results (all commands)
+EVENT opens palette: NO
+
+###### FAIL: test_phase3_mints ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   action log open
+ok:   scroll up/down/left/right cancel out
+ok:   scroll up moves the origin
+ok:   pan dirs cancel out
+ok:   pan dx dy shifts origin exactly
+ok:   pan -dx -dy restores origin
+ok:   scroll rejects a bad direction
+ok:   pan rejects a bad direction
+ok:   snap half halves cadsnap
+ok:   snap double restores cadsnap
+ok:   snap rejects a bad arg
+ok:   toggle_stretch flips enable_stretch
+ok:   toggle_show_netlist flips netlist_show
+ok:   toggle_orthogonal_wiring flips the var
+ok:   toggle_draw_pixmap runs
+ok:   Up arrow logs 'xschem scroll up'
+ok:   Shift+wheel logs 'xschem pan left'
+FAIL: key g logs 'xschem snap half'
+FAIL: key G logs 'xschem snap double'
+ok:   key A logs 'xschem toggle_show_netlist'
+ok:   key $ logs 'xschem toggle_draw_pixmap'
+ok:   key y logs absolute 'xschem set enable_stretch 1'
+ok:   key y does NOT log the relative 'xschem toggle_stretch'
+ok:   replayed scroll line applies the same delta
+ok:   log file is source-able
+RESULT: 2 FAILED
+
+###### FAIL: test_pristine_untitled_viewer_0172 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   F1 a fresh buffer is not a waveform viewer (get=0)
+ok:   F2 `xschem set wave_viewer 1` is accepted (err=)
+ok:   F3 the flag round-trips through `xschem get` (get=1)
+ok:   F4 the flag clears again (get=0)
+ok:   F5 branding is per context: the NEW window is not a viewer (vwin=.drw nwin=.x1.drw get=0)
+ok:   F6 ...and the branded window kept its own buffer (win=.drw get=1 sch=untitled.sch wires=0)
+ok:   V0 the branded buffer looks exactly like is_pristine_untitled()'s target (inst=0 wires=0 modified=0 rects2=1 sch=untitled.sch)
+ok:   V1 the open created a NEW window/tab instead of reusing the viewer (ntabs 0 -> 1)
+ok:   V2 the schematic landed in that new window (win=.x1.drw sch=real_v.sch wires=2)
+ok:   V3 the viewer window still holds its own buffer (win=.drw sch=untitled.sch)
+ok:   V4 the viewer's graph rect survived (rects2=1 wires=0 inst=0)
+ok:   V5 the viewer kept its per-context branding (wave_viewer=1 no_grid=1 readonly=1)
+ok:   S1 an unbranded buffer holding a graph rect is not reused either (ntabs 0 -> 1 win=.x1.drw)
+ok:   S2 ...and its rect survived (rects2=1 wires=0)
+ok:   S3 the text buffer is otherwise pristine-shaped (texts=1 modified=0)
+ok:   S4 a buffer holding only a TEXT is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S5 ...and its text survived (texts=1 wires=0)
+ok:   S6 the top layer is a real, non-zero layer the older legs do not touch (cadlayers=22 toplayer=21)
+ok:   S7 the line buffer is otherwise pristine-shaped (lines21=1 modified=0)
+ok:   S8 a buffer holding only a LINE is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S9 ...and the line survived on layer 21 (lines21=1 wires=0 sch=untitled.sch)
+ok:   S10 the polygon buffer is otherwise pristine-shaped (polygons21=1 modified=0)
+ok:   S11 a buffer holding only a POLYGON is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S12 ...and the polygon survived on layer 21 (polygons21=1 wires=0 sch=untitled.sch)
+ok:   S13 the arc buffer is otherwise pristine-shaped, and `get arcs` answers (arcs21=1 modified=0)
+ok:   S14 a buffer holding only an ARC is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S15 ...and the arc survived on layer 21 (arcs21=1 wires=0 sch=untitled.sch)
+ok:   S16 the wire buffer is untitled, unmodified and holds exactly one wire (wires=1 modified=0 sch=untitled.sch)
+ok:   S17 a buffer holding only a WIRE is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S18 ...and the wire survived (still 1, not the 2 wires of real.sch) (wires=1 sch=untitled.sch)
+ok:   S19 the instance buffer is untitled, unmodified and holds exactly one instance (inst=1 modified=0 sch=untitled.sch)
+ok:   S20 a buffer holding only an INSTANCE is not reused (ntabs 0 -> 1 win=.x1.drw)
+ok:   S21 ...and the instance survived (inst=1 wires=0 sch=untitled.sch)
+ok:   P0 the buffer is genuinely empty (rects2=0 texts=0)
+ok:   P1 a pristine untitled buffer is STILL reused in place (no new window) (ntabs 0 -> 0 win=.drw)
+ok:   P2 ...and it now holds the opened schematic (sch=real_p.sch wires=2)
+ok:   R1 a read-only but genuinely pristine untitled buffer is still reused (ntabs 0 -> 0 sch=real_r.sch)
+FAIL: W-win fixture: a second window/tab exists to swap with (other=.drw main=.drw)
+tclvareval(): error executing button .tabs.x1 -padx 2 -pady 0 -takefocus 0 -anchor nw -text Tab2 -command "xschem new_schematic switch .x1.drw": bad window path name ".tabs"
+tclvareval(): error executing bind .tabs.x1 <ButtonPress-1> {swap_tabs %X %Y press}: bad window path name ".tabs.x1"
+tclvareval(): error executing bind .tabs.x1 <ButtonRelease-1> {swap_tabs %X %Y release}: bad window path name ".tabs.x1"
+tclvareval(): error executing bind .tabs.x1 <ButtonPress-3> {tab_context_menu %W}: bad window path name ".tabs.x1"
+tclvareval(): error executing pack .tabs.x1 -before .tabs.add -side left: bad window path name ".tabs.x1"
+ok:   W-tab the surviving .drw canvas is NOT branded a viewer (win=.drw wave_viewer=0 swapped-from=.x1.drw)
+ok:   M0 the buffer is modified (modified=1)
+ok:   M1 a MODIFIED buffer is not reused (pre-existing behaviour, unchanged) (ntabs 0 -> 1)
+RESULT: 1 FAILED (40 passed)
+
+###### FAIL: test_remap ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   default Z row -> view.zoom_in 
+FAIL: default Shift+Z zooms in (z0=1 z1=1)
+FAIL: remapped Shift+Z zooms OUT (z1=1 z2=1)
+FAIL: restored Shift+Z zooms in again (z2=1 z3=1)
+ok:   Phase-2 accel machinery deleted 
+ok:   no Tk shadow on <Shift-Key-Z> 
+RESULT: 3 FAILED
+
+###### FAIL: test_reopen_readonly ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   R1 plain load of a writable file opens EDITABLE (ro=0)
+ok:   R2 load -readonly opens READ mode (ro=1)
+ok:   R3 plain load after -readonly is editable again (ro=0)
+ok:   R8 plain load of fb is editable (ro=0)
+l_s_d(): Symbol not found: sky130_tests_ase/bandgap
+ok:   R9 -lastopened (keyboard reopen) implies READ mode (ro=1)
+FAIL: R10 -lastopened resolved to the prior file (fa) (=> /home/qflow/dev/xschem/claude_1/xschem/sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/schematic/tb_bandgap.sch)
+ok:   R4 open_most_recent (Ctrl+Shift+O) passes -readonly (=> file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened -readonly,,,Open the most recently used file (read-only; Ctrl-2 to edit),,1)
+ok:   R5 open_last_closed (Ctrl+Shift+T) passes -readonly (=> file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed -readonly,,,Reopen the most recently closed file (read-only; Ctrl-2 to edit),,1)
+ok:   R6 recent menu (setup_recent_menu) passes -readonly 
+ok:   R7 File>Open stays editable (no -readonly in file_chooser_place) 
+RESULT: 1 FAILED
+
+###### FAIL: test_rotate_stretch_short_0104 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   fixture has R18
+ok:   pre: R18.P=#net2
+ok:   pre: R18.M=#net1
+ok:   rot90-ip user drop (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip user drop (-30,70): pre-existing user stubs survive
+ok:   rot90-ip user drop (-30,70): R18 landed at delta (-30,70)
+ok:   rot90-ip user drop (-30,70): R18 rot == 1
+ok:   rot90-ip user drop (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip user drop (-30,70): R18.P still shares a C12 pin net
+ok:   rot90-ip user drop (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip user drop (-30,70): R18.M still on the v8/backbone subtree
+ok:   user drop: no wire endpoint left at stale anchor (-120,-40)
+ok:   rot90-ip (-60,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-60,70): pre-existing user stubs survive
+ok:   rot90-ip (-60,70): R18 landed at delta (-60,70)
+ok:   rot90-ip (-60,70): R18 rot == 1
+ok:   rot90-ip (-60,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-60,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-60,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-60,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-50,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-50,70): pre-existing user stubs survive
+ok:   rot90-ip (-50,70): R18 landed at delta (-50,70)
+ok:   rot90-ip (-50,70): R18 rot == 1
+ok:   rot90-ip (-50,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-50,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-50,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-50,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-40,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-40,70): pre-existing user stubs survive
+ok:   rot90-ip (-40,70): R18 landed at delta (-40,70)
+ok:   rot90-ip (-40,70): R18 rot == 1
+ok:   rot90-ip (-40,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-40,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-40,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-40,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-20,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-20,70): pre-existing user stubs survive
+ok:   rot90-ip (-20,70): R18 landed at delta (-20,70)
+ok:   rot90-ip (-20,70): R18 rot == 1
+ok:   rot90-ip (-20,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-20,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-20,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-20,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-10,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-10,70): pre-existing user stubs survive
+ok:   rot90-ip (-10,70): R18 landed at delta (-10,70)
+ok:   rot90-ip (-10,70): R18 rot == 1
+ok:   rot90-ip (-10,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-10,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-10,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-10,70): R18.M still on the v8/backbone subtree
+ok:   rot90+flip-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90+flip-ip (-30,70): pre-existing user stubs survive
+ok:   rot90+flip-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot90+flip-ip (-30,70): R18 flip toggled
+ok:   rot90+flip-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90+flip-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot90+flip-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90+flip-ip (-30,70): R18.M still on the v8/backbone subtree
+FAIL: rot180-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300} {-120 -50})
+ok:   rot180-ip (-30,70): pre-existing user stubs survive
+ok:   rot180-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot180-ip (-30,70): R18 rot == 2
+ok:   rot180-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot180-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot180-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot180-ip (-30,70): R18.M still on the v8/backbone subtree
+ok:   rot270-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot270-ip (-30,70): pre-existing user stubs survive
+ok:   rot270-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot270-ip (-30,70): R18 rot == 3
+ok:   rot270-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot270-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot270-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot270-ip (-30,70): R18.M still on the v8/backbone subtree
+
+RESULT: 1 FAIL (76 checks)
+OVERALL: FAIL
+
+###### FAIL: test_select_at ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+FAIL: action log open 
+ok:   fixture: 2 wires placed, nothing selected (sel=)
+ok:   SA1 select_at returns a hit row (rc=0 out={wire 0 1 1})
+ok:   SA1b return row matches the (unwrapped) xschem selection row (sel={wire 0 1 1})
+ok:   SA2 default mode replaces selection (1 selected) (sel={wire 0 1 1})
+ok:   SA2b add mode augments selection (2 selected) (sel={wire 0 1 1} {wire 1 1 2})
+ok:   SA3 miss returns empty, nothing selected (rc=0 out={})
+ok:   SA4 nodraw selects without drawing (rc=0)
+FAIL: SA5 command self-logs select_at (line={})
+ok:   SA6a cleared before replay 
+FAIL: SA6b replay reselects the same object (want={{wire 0 1 1}} got={})
+ok:   SA7a interactive click selected the instance (sel={wire 0 1 1} screen=662,332)
+FAIL: SA7b interactive click logged select_at (new=)
+ok:   SA8a shift-click augments selection (2 selected) (sel={wire 0 1 1} {wire 1 1 2})
+FAIL: SA8b shift-click logs 'select_at ... add' (new=)
+RESULT: 5 FAILED
+OVERALL: notok
+
+###### FAIL: test_selflog_output ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok   - action log open
+ok   - raw delete self-logs
+ok   - raw undo self-logs
+ok   - raw redo self-logs
+ok   - raw cut self-logs
+ok   - menu wrapper logs undo exactly once
+ok   - core self-log sets -emitted
+ok   - non-mutating cmd leaves -emitted 0
+ok   - flip self-logs with pivot
+ok   - flipv self-logs with pivot
+ok   - rotate self-logs with pivot
+ok   - flip_in_place self-logs
+ok   - flipv_in_place self-logs
+ok   - rotate_in_place self-logs
+ok   - align self-logs
+ok   - menu wrapper logs rotate exactly once
+ok   - trim_wires self-logs
+ok   - break_wires (bare) self-logs
+ok   - break_wires 1 self-logs with arg
+ok   - menu wrapper logs trim_wires exactly once
+ok   - read-only rejects flipv with no log line
+ok   - read-only rejects flip_in_place with no log line
+ok   - read-only rejects flipv_in_place with no log line
+ok   - read-only rejects rotate_in_place with no log line
+ok   - read-only rejects break_wires with no log line
+FAIL - key Shift-F logs flip
+FAIL - key Alt-F logs flip_in_place
+FAIL - key Shift-R logs rotate
+FAIL - key Alt-R logs rotate_in_place
+FAIL - key Shift-V logs flipv
+FAIL - key Alt-V logs flipv_in_place
+ok   - key Alt-U logs align
+ok   - key & logs trim_wires
+ok   - key ! logs break_wires
+ok   - key Ctrl-! logs break_wires 1
+ok   - setprop instance (non-fast) self-logs
+ok   - setprop -fast does NOT log
+ok   - setprop -fastundo (undoable) self-logs
+ok   - setprop rect (graph) is nolog
+ok   - change_elem_order (w/ sel) self-logs
+ok   - key Shift-S logs change_elem_order
+ok   - change_elem_order (no sel) is nolog
+ok   - set rectcolor w/ selection logs
+ok   - set rectcolor w/o selection is nolog
+ok   - set rectcolor on read-only rejects (TCL_ERROR)
+ok   - make_symbol read-only does NOT overwrite .sch
+ok   - make_symbol self-logs
+ok   - key 'a' logs make_symbol
+ok   - make_sch multi-select logs nothing (no phantom)
+ok   - make_sch_from_sel cancel logs nothing (no phantom)
+ok   - make_sch_from_sel (real edit) self-logs
+ok   - make_sch_from_sel read-only rejects (TCL_ERROR)
+ok   - make_sch_from_sel read-only logs nothing
+ok   - edit wire property logs a replayable setprop line
+ok   - edit rect property logs a replayable setprop line
+can't read "user_wants_copy_cell": no such variable
+ok   - edit instance property (vi editor) logs a replayable setprop line
+ok   - edit global schematic property logs a replayable set line
+ok   - property-edit marker no longer emitted
+ok   - cancelled property edit logs nothing
+ok   - attach_labels self-logs
+ok   - floaters_from_selected_inst self-logs
+check_unique_names(): found duplicate: i=11 name=m1
+check_unique_names(): found duplicate: i=13 name=m2
+ok   - check_unique_names 1 (rename) self-logs
+ok   - check_unique_names 0 (highlight) self-logs
+ok   - print_hilight_net 4 (create labels) self-logs
+ok   - print_hilight_net 1 (print) self-logs
+ok   - add_pin_stubs no-op STILL logs +1 (atom 25 option c no-op-still-logs)
+ok   - set header_text self-logs replayable
+ok   - set header_text no-op logs nothing
+ok   - set header_text read-only rejects (TCL_ERROR)
+ok   - set header_text read-only logs nothing
+ok   - set cadsnap self-logs resolved value
+ok   - set cadgrid self-logs resolved value
+ok   - set cadsnap 0 logs the RESOLVED default (not 0)
+ok   - pure-display set (color_ps) is nolog
+ok   - unhilight_all self-logs (key 0)
+ok   - hilight_net_interactive noun-verb self-logs (key 9)
+ok   - unhilight_net_interactive noun-verb self-logs (key 8)
+ok   - hilight_net_interactive interactive-mode logs nothing (gesture start)
+ok   - change_index (+/-) routes through logged setprop
+ok   - result -> '#= ' comment
+ok   - error  -> '#! ' comment
+ok   - multiline result prefixes each line
+ok   - log file is source-able
+RESULT: FAIL
+
+###### FAIL: test_sky130a_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   library.defs exists
+ok:   cadence_style_rc exists
+FAIL: library_list = exactly the 12 intended libs -> {SANDBOX TEST analyses devices examples mips_cpu ngspice ngspice_verilog_cosim sky130_fd_pr sky130_stdcells sky130_tests sky130_tests_ase stdcells xschem_simulator} (exp {analyses devices examples mips_cpu ngspice ngspice_verilog_cosim sky130_fd_pr sky130_stdcells sky130_tests sky130_tests_ase stdcells xschem_simulator}) : FAIL
+ok:   devices -> xschem_libs_newsym/devices
+ok:   devices path is outside sky130A/
+ok:   sky130_fd_pr/nfet_01v8 symbol resolves
+ok:   sky130_fd_pr/corner symbol resolves
+ok:   devices/vsource symbol resolves (cross-lib -> newsym)
+ok:   stdcells/AND2 symbol resolves (draft lib)
+ok:   analyses registered from newsym (outside sky130A/)
+ok:   examples registered from newsym (outside sky130A/)
+ok:   ngspice registered from newsym (outside sky130A/)
+ok:   ngspice_verilog_cosim registered from newsym (outside sky130A/)
+ok:   xschem_simulator registered from newsym (outside sky130A/)
+ok:   sky130_stdcells has 437 cell dirs
+ok:   rc points XSCHEM_LIBRARY_DEFS at xschem_libs/library.defs
+ok:   rc sets library_registry_defs_only 1
+ok:   rc sets SKYWATER_MODELS under models/
+RESULT: 1 FAILED (17 passed)
+OVERALL: notok
+
+###### FAIL: test_sod_pick_no_select_0204 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   SO0a the label bbox centre really hits the label instance
+ok:   SO0b the named-wire point really hits a wire
+ok:   SO0c the unnamed-wire point really hits a wire
+ok:   SO0d the vsource point really hits an instance
+ok:   SO0e the named wire's net resolves through flylines
+ok:   SO0f rule A6: flylines deliberately does NOT resolve the auto-named net
+ok:   SO13a/label object_at selects nothing
+ok:   SO13b/label object_at draws no selection
+ok:   SO13c/label object_at row == select_at row
+ok:   SO13a/namedwire object_at selects nothing
+ok:   SO13b/namedwire object_at draws no selection
+ok:   SO13c/namedwire object_at row == select_at row
+ok:   SO13a/unnamedwire object_at selects nothing
+ok:   SO13b/unnamedwire object_at draws no selection
+ok:   SO13c/unnamedwire object_at row == select_at row
+ok:   SO13a/vsource object_at selects nothing
+ok:   SO13b/vsource object_at draws no selection
+ok:   SO13c/vsource object_at row == select_at row
+ok:   SO13a/device object_at selects nothing
+ok:   SO13b/device object_at draws no selection
+ok:   SO13c/device object_at row == select_at row
+ok:   SO13a/empty object_at selects nothing
+ok:   SO13b/empty object_at draws no selection
+ok:   SO13c/empty object_at row == select_at row
+ok:   SO14a net_name_at on a named wire gives the RAW token
+ok:   SO14b net_name_at on the unnamed wire keeps the # form
+ok:   SO14c net_name_at on an INSTANCE body is empty (the wire-only gate)
+FAIL: SO14d net_name_at on empty canvas is empty -> {#net1} (exp {}) : FAIL
+ok:   SO14e and none of that selected anything
+note: SO14f the unnamed token = {#net1}
+ok:   SO14g net_name_at -wire on the named wire gives the token
+ok:   SO14g2 net_name_at -wire on the unnamed wire keeps the # form
+ok:   SO14g3 ... and both forms agree
+ok:   SO14h net_name_at -wire out of range is empty, not an error
+ok:   SO14i and the index form selected nothing either
+ok:   SO1a a net-label click still queues its net
+ok:   SO1b THE POINT: it selected nothing
+ok:   SO2a E right afterwards ARMS the pick (verb-noun)
+ok:   SO2b ... and did NOT descend into the label
+ok:   SO3a a named-wire click still queues its net
+ok:   SO3b and selects nothing
+ok:   SO4a E right afterwards arms the pick
+ok:   SO4b ... and resolved no instance
+ok:   SO5a THE 0154 FALLBACK still resolves an auto-named net
+ok:   SO5b and it did so without selecting the wire
+ok:   SO6a E right afterwards arms the pick
+ok:   SO6b ... and resolved no instance
+note: SO5c the token the fallback produced = {v(net1)}
+ok:   SO7a a vsource click still queues its current
+ok:   SO7b and selects nothing
+ok:   SO8a E right afterwards arms the pick
+ok:   SO8b ... and did NOT descend into the source
+ok:   SO9a a non-source device body still queues nothing
+ok:   SO9b ... but still gets the v1-scope notice
+ok:   SO9c and it selected nothing either
+ok:   SO9d E after a click that queued nothing still arms
+ok:   SO9e ... and did NOT descend into the resistor
+ok:   SO9f (and it still queued nothing, and selected nothing)
+FAIL: SO10a an empty-canvas click still queues nothing -> {v(net1)} (exp {}) : FAIL
+ok:   SO10b ... and still says nothing (no scolding a miss)
+ok:   SO10c and selects nothing
+ok:   SO11a the mode is seized before the click
+ok:   SO11b the real click actually picked the label
+ok:   SO11c the real click selected nothing
+FAIL: SO11d THE USER'S BUG: a real E after a real pick ARMS -> {0} (exp {1}) : FAIL
+ok:   SO11e ... and descended into nothing
+ok:   SO12a a pre-existing instance selection still takes noun-verb
+ok:   SO12b so E did NOT arm the pick
+RESULT: 3 FAILED (63 passed)

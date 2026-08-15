@@ -21,7 +21,7 @@
 #
 # NEEDS A REAL X DISPLAY (the interactive multi-motion connected-drag arms the fluid pipeline;
 # a headless --nogui select_at + move_objects does NOT move the instance). Self-skips with no display.
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_jog_separated_trunk_0136.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_jog_separated_trunk_0136.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

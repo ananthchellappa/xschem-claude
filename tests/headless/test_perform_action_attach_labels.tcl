@@ -55,7 +55,7 @@
 # forces a redraw (spatial hash) so the pin-vs-wire skip test is deterministic headless.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_attach_labels.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §31
 

@@ -21,7 +21,7 @@
 # add_symbol_pin form is the replay form and must NOT self-log either.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_sympin_drop_log.tcl
 
 set ::fails 0

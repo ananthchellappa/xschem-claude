@@ -1,0 +1,16 @@
+version 1
+simulator ngspice
+design {lib fixlib cell tb_frozen view schematic}
+rundir {}
+temperature 27
+models {}
+variables {{name VDD value 1.8}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 2u step 10p}}
+outputs {{name clk expr clk save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+pre_commands {{cmd {pre_set auto_bridge_d_in = ( ".model auto_adc adc_bridge( in_low = '0.9 * 1.8 / 2' in_high = '1.1 * 1.8 / 2' rise_delay=1e-11 fall_delay=1e-11 )" "auto_bridge%d [ %s ] [ %s ] auto_adc" )}} {cmd {pre_set auto_bridge_d_out = ( ".model auto_dac dac_bridge( out_low = 0 out_high = 1.8 t_rise=1e-11 t_fall=1e-11 )" "auto_bridge%d [ %s ] [ %s ] auto_dac" )}}}
+viewer {}
+zz_unknown_future_key {carried through untouched}

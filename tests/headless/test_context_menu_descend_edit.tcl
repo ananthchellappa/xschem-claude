@@ -10,7 +10,7 @@
 # the deferred teardown below sees both distinct buttons, then destroys the menu.
 #
 # Needs X (builds real Tk widgets). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_context_menu_descend_edit.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_context_menu_descend_edit.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

@@ -2305,6 +2305,33 @@ extern int update_op();
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
 extern int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, double sweep1, double sweep2);
 extern int table_read(const char *f);
+/* VCD (Value Change Dump) -> Raw. Same contract as table_read(): xctx->raw must be NULL
+ * on entry, the caller sets raw->sim_type. See src/vcd_read.c and
+ * doc/claude/specs/mixed_signal_signal_browser.md section C. */
+extern int vcd_read(const char *f);
+/* THE reader dispatch (issue 0290): `type` is the key that picks the parser --
+ * "table" -> table_read(), "vcd" -> vcd_read(), anything else -> raw_read() -- and
+ * raw->sim_type is stamped for the non-spice readers, which do not all do it
+ * themselves. Every (file, type) -> database path goes through this, so the choice
+ * exists exactly once; see the table above it in src/save.c. */
+extern int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
+                                int no_warning, double sweep1, double sweep2);
+extern int raw_type_is_non_spice(const char *type);
+/* SPEC D5 -- the ONE place that answers "is this database logic levels rather
+ * than analog values?", driven by the `digital` column of the reader table in
+ * src/save.c. Every backannotation enforcement point asks these, and a new
+ * database type inherits the ruling by filling in its row. Never re-derive the
+ * answer with a strcmp against "vcd" at a call site (RULING D5-2). */
+extern int raw_type_is_digital(const char *type);
+extern int raw_is_digital(const Raw *raw);
+/* ...and the same question asked of a FILE, for the request paths where the
+ * caller did not spell a type at all (RULING D5-6). Content sniff, not
+ * extension. */
+extern int raw_file_is_digital(const char *f);
+/* the single-sourced refusal sentence (RULING D5-4): emits it on the CIW and
+ * the debug channel and returns it, so a caller with a Tcl result to set hands
+ * the script the same words the user reads. */
+extern const char *backannot_refuse_digital(const char *dbname);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);
@@ -2312,6 +2339,9 @@ extern int sch_waves_loaded(void);
 extern int edit_wave_attributes(int what, int i, Graph_ctx *gr);
 extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
+/* find_closest_wave() as a read-only query at a canvas pixel; `xschem get
+ * graph_closest_wave` (batch F item 2, issue 0305) */
+extern int graph_closest_wave(int i, double px, double py, int *node_number);
 extern int graph_near_wave(int i, double px, double py, double tol);
 extern int graph_wave_at(int i, double px, double py, double tol);
 /* Trace SELECTION (issue 0175). The set lives in the graph rect's `hilight_wave`
@@ -2419,6 +2449,11 @@ extern void graph_marker_notify(void);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);
+/* spec D4: the registry slots a cursor on graph rect `r` must resolve in.
+ * Read-only; leaves both halves of the registry cursor where it found them.
+ * See the D4 comment block in draw.c and
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4. */
+extern int graph_cursor_dbs(xRect *r, int **slots);
 extern void sleep_ms(int milliseconds);
 extern double timer(int start);
 extern void enable_layers(void);
@@ -2907,7 +2942,7 @@ extern char *get_last_created_window_path(void);
 extern int get_last_created_window(void);
 extern char *get_window_path(int i);
 extern int get_window_count(void);
-extern void get_unused_untitled_name(int symbol, char *name, int namesize);
+extern void get_unused_untitled_name(const char *dir, int symbol, char *name, int namesize);
 extern Xschem_ctx **get_save_xctx(void);
 /* resolve open-window slot i -> its Xschem_ctx (NULL if empty) and, if win_path!=NULL, its window
  * path (".drw" for slot 0). Centralizes the single-schematic/save_xctx[0] invariant (see xinit.c). */

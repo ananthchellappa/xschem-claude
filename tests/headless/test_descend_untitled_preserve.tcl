@@ -29,7 +29,16 @@ proc result {} {
 proc ask_save {{a {}} {b {}}} { incr ::asked; return no }
 set ::asked 0
 
-# cd into the work dir so the untitled buffer (and its ~ backup) resolve HERE, not the repo.
+# cd into the work dir. NOTE this does NOT relocate the untitled buffer: clear_schematic()
+# composes its path from pwd_dir, the cwd captured at startup, and a Tcl `cd` never updates
+# that (nor $PWD, which the save.c arm reads). So the buffer -- and its ~ backup -- still
+# resolve against the directory xschem was LAUNCHED from, and this test leaves an
+# untitled~.sch there. Harmless (gitignored by *~.sch, same name overwritten in place) and
+# left alone deliberately: issue 0323 fixed the probe/write directory SPLIT, which was
+# silently destroying occupied files, but preserved where untitled buffers land. Relocating
+# them was the option 0323 explicitly did not take. To actually get the buffer in $work this
+# test would have to run xschem as a child process with $work as its startup cwd -- see
+# tests/headless/test_untitled_name_dir_0323.tcl, which does exactly that.
 cd $work
 
 # --- new blank UNTITLED canvas, place a subcircuit instance (an unsaved edit) ---

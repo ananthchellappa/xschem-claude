@@ -1,0 +1,10 @@
+* .save names a node the circuit has not got -- no casemode anywhere
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(nosuchnode)
+.control
+op
+write nocase.raw
+.endc
+.end

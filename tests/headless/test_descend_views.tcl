@@ -7,7 +7,7 @@
 #   D3  a legacy flat subcircuit still descends to the flat <cell>.sch (compat)
 #
 # Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_descend_views.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_descend_views.tcl
 
 set fail 0
 proc check {name ok detail} {

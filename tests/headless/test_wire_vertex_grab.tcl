@@ -4,7 +4,7 @@
 #
 # Drives the REAL press dispatch (handle_button_press, callback.c) via `xschem callback`.
 # MUST run from repo ROOT under X:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_wire_vertex_grab.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_wire_vertex_grab.tcl
 update idletasks
 focus -force .drw
 update idletasks

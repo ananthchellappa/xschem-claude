@@ -32,6 +32,17 @@ Xschem.log.*
 # ...but a log deliberately kept as issue evidence is not runtime junk (issue 0240)
 !doc/claude/evidence/**
 
+# Untitled buffers saved in the cwd (issue 0322). load_schematic() names an empty buffer
+# $PWD/untitled[-n].sch (src/save.c:4407) and get_unused_untitled_name() skips numbers already
+# taken (src/xinit.c:180), so a stray save from the repo root piles up one MORE file per run --
+# 67 of them before anyone noticed. Their "~" autosave twins were already covered by the
+# *~.sch / *~.sym rules below, which is why only the saved buffers ever showed in git status.
+# Root-anchored on purpose: a real untitled* fixture in a subdirectory must still show up.
+/untitled.sch
+/untitled-*.sch
+/untitled.sym
+/untitled-*.sym
+
 # Executables
 *.exe
 src/rawtovcd

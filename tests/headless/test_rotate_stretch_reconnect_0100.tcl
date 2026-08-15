@@ -18,7 +18,7 @@
 # #net1, distinct. Pre-fix the rot90-in-place cases DISCONNECT (fresh nets on both pins).
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_reconnect_0100.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_rotate_stretch_reconnect_0100.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

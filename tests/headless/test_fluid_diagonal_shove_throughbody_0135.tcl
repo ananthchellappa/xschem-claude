@@ -16,7 +16,7 @@
 #
 # NEEDS A REAL X DISPLAY (the interactive multi-motion gesture accumulates the RUBBER history the END
 # shove consumes; a single move_objects does NOT move the instance headless). Self-skips with no display.
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_diagonal_shove_throughbody_0135.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_diagonal_shove_throughbody_0135.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

@@ -8,6 +8,39 @@ plus tests/headless/gated_xschem.sh (enrolment wrapper for bare loops).
 Self-tests: tests/headless/test_gui_gate_revive.sh (v4 + **v6**),
 tests/headless/test_gui_gate_batch.sh (v5).
 
+## v7 (2026-08-13): the gate is no longer the everyday path
+
+`full_audit.sh` and `run_suites.sh` now take a **private Xvfb by default**
+(`tests/headless/xvfb_arm.sh`), so a routine suite never reaches the user's
+display and the panel never pops. The gate is unchanged and still correct — it
+now guards the *deliberate* real-screen runs, reached with `AUDIT_DISPLAY=:0`.
+
+Two consequences worth stating, because they invert earlier assumptions:
+
+- **A panel popping for a routine suite is now a symptom**, not the design. It
+  means something bypassed `xvfb_arm.sh` — a bare loop, or a script that has not
+  been wired.
+- **`GUI_GATE=0` is forced by the Xvfb arm, not left to the caller.**
+  `_gate_enabled` only tests that `$DISPLAY` is non-empty, so a virtual display
+  arms the gate exactly like a real one, and `gate_start` → `_gate_attention`
+  would then kill the live panel and relaunch it on a display nobody can see —
+  for every session sharing `~/.claude/gui_test_gate/`. An Xvfb arm without
+  `GUI_GATE=0` does not free the screen; it breaks Pause. The forcing lives in
+  `xvfb_arm.sh` so no caller can forget it.
+
+The virtual session now runs **openbox** (`AUDIT_WM`, default `openbox`, `none`
+to opt out), so window-manager behaviour is no longer a reason to reach for the
+real screen: measured, an empty Xvfb does not reparent and silently no-ops
+`wm iconify`, while openbox does both — and is *more* faithful than WSLg on
+iconify, which WSLg does not honour either.
+
+The real screen keeps two jobs: a human eyeball, and WSLg's own quirks. The
+sharpest quirk is event traffic — one `wm geometry` request yields 3 `<Configure>`
+events on `:0` against 1 under Xvfb with or without a WM. Calculator phase 0
+passed 49/49 under Xvfb and failed three checks on `:0` for exactly that reason.
+The durable fix was not a bigger matrix of window managers but a test that
+**forces** the race (`test_calc_skeleton` S12), which goes red on every arm.
+
 ## THE ONE RULE (v3)
 
 **The only thing that holds tests up indefinitely is a user PAUSE.** Every other
@@ -176,6 +209,47 @@ v4:
 software-render mode — `Failed to initialize glamor, falling back to sw`). Treat
 any long-lived X client on this box as mortal.
 
+**Panel liveness is NECESSARY BUT NOT SUFFICIENT (2026-08-10, issue 0310).**
+`pid == pgid == sid`, `DISPLAY=:0`, alive in `/proc`, `_gate_widget_alive` green
+— and the user sees no window and no taskbar icon, because the display Xwayland
+came back with is a **640×480 stub whose WM parks every top-level at -32768**.
+The panel is going exactly where it is told; there is nothing wrong with the
+client. **Visibility is a separate property and needs its own assertion.**
+`tests/headless/wslg_health.sh` is that assertion — five checks, of which the
+decisive one maps a real Tk window and compares where it landed with where it
+asked to go (spec: `doc/claude/specs/wslg_health_probe.md`).
+**It is NOT wired into this gate yet**: `_gate_ensure_widget` should run it
+before launching and log `panel launched onto a stub display` rather than a
+healthy-looking launch, and `full_audit.sh` should refuse the run with a distinct
+`ENVBAD` status. Both remain open under 0310.
+
+**That probe MAPS A WINDOW, so it answers this panel (2026-08-11).** Its check 5
+puts a real top-level on the user's desktop, and its first draft consulted
+nothing: probe windows flashed past during a sabotage run, the user pressed
+**Pause**, and nothing stopped. Anything that paints on the user's screen answers
+this button — that is the one rule this gate exists to enforce, and a preflight
+is not exempt from it. `wslg_health.sh` now **reads `$GATE_DIR/control` before it
+maps anything** — once at startup, and again **before every one of its up-to-3
+probe attempts**, sharing one deadline — and exits **4 STOPPED** / **5 DEFERRED**
+without mapping. (Consulting only once before the retry loop was not enough: a
+button pressed as probe window 1 appeared was answered with two more windows and
+a health verdict, and hardest of all on a stub, which misplaces every attempt and
+so always takes all three.) Three consequences for this file:
+
+* It **reads the file directly and does NOT source `gui_gate.sh`** — on purpose.
+  The probe is meant to become a preflight *inside* `gate_start`, and sourcing
+  the gate from something the gate calls is a circular dependency. It also never
+  writes into `$GATE_DIR`; that dir belongs to the user and the panel.
+* Whoever wires the preflight in must treat **4 and 5 as "not measured"**, not as
+  a bad environment: a run the user paused must not be reported as a stub
+  display. Only exit 1 means `ENVBAD`.
+* A **standing STOP is treated differently by the two**. `gate_start`
+  deliberately CLEARS a STOP it finds already set when a new suite arrives (it
+  was aimed at some earlier suite); the probe refuses on any standing STOP. As a
+  preflight inside `gate_start`, a stale self-clearing STOP would therefore make
+  the probe report STOPPED for a run the gate itself would have let through —
+  decide that order explicitly when wiring it in.
+
 ## The revive that could not (v6, 2026-08-04) — the launch is ASYNCHRONOUS
 
 v4's revive **failed seven times in one day**, each time logging
@@ -282,7 +356,19 @@ waits to run about two minutes of tests**. The gate was costing an order of
 magnitude more time than the tests it guarded, which is its own kind of "stops
 being a gate": the pressure is all towards `GUI_GATE=0`.
 
-**Proceed gained siblings: `Allow 30m` / `Allow 2h`.** They write an epoch into
+**Proceed gained siblings: `Allow 30m` / `Forever`.** `Forever` replaced an
+`Allow 2h` button: two hours was a guess at how long a person means to be away,
+and guessing short is the expensive direction — the window expires mid-batch,
+the next suite waits for a Proceed nobody is there to press, and every suite
+after that pays the 2-minute autostart. An open-ended grant cannot expire at the
+wrong moment, stays fully steerable (Pause and Stop are read at every pause
+point regardless), and `Revoke` ends it in one press. It writes the literal word
+`forever` rather than an epoch; both sides match that as a **keyword**, before
+the numeric test, so every *other* non-number in the file still means "no grant"
+(`test_gui_gate_batch` B4). The one place that must not see it is the PAUSE
+push-forward, which adds elapsed time to the deadline — on `forever` that
+arithmetic would silently downgrade an open-ended grant to seconds, so it is
+skipped (`V10`). They otherwise write an epoch into
 `allow_until`; while that is in the future `gate_start` returns *immediately* —
 no `req` file, no countdown, no `_gate_attention` relaunch. Approve once, walk
 away, and a whole batch runs back to back.

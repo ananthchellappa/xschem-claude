@@ -24,10 +24,17 @@
 #   never from the directory's name — matching how library_defs.tcl already
 #   thinks (library_new_view maps type -> extension, cellview_resolve maps
 #   extension -> view).
-#       <cell>.sch   -> schematic
-#       <cell>.sym   -> symbol
-#       <cell>.state -> state        (ASE-L simulation state, doc/claude/specs/ase_l.md)
-#       anything else-> data
+#       <cell>.sch        -> schematic
+#       <cell>.sym        -> symbol
+#       <cell>.state      -> state   (ASE-L simulation state, doc/claude/specs/ase_l.md)
+#       <cell>.v/.sv      -> verilog  (source code; opens in a TEXT editor, never
+#                                      `xschem load` — doc/claude/specs/mixed_signal_signal_browser.md)
+#       <cell>.va/.vams   -> veriloga
+#       <cell>.md/.txt    -> text     (the cell's documentation, in its view list
+#                                      — doc/claude/specs/text_view_type.md)
+#       anything else     -> data
+#   The table itself lives once, in library_defs.tcl (view_type_of_ext and
+#   friends); this proc only supplies the datafile.
 #   So an ASE-L view named `ngspice_state1` is a view of type `state`. Its NAME
 #   encodes simulator + ordinal, which gives a second, narrower type spelling
 #   derived by stripping the ordinal: `ngspice_state`. Hence
@@ -61,12 +68,9 @@ proc copyform::view_type {lib cell view} {
     if {$view eq "schematic" && [file isfile [file join $lp $cell.sch]]} { return schematic }
     return {}
   }
-  switch -- [file extension [lindex [lsort $hits] 0]] {
-    .sch    { return schematic }
-    .sym    { return symbol }
-    .state  { return state }
-    default { return data }
-  }
+  # ONE extension->type table, in library_defs.tcl. It also knows .v/.sv ->
+  # verilog and .va/.vams -> veriloga, which used to fall through to `data`.
+  return [view_type_of_ext [file extension [lindex [lsort $hits] 0]]]
 }
 
 # The narrow, simulator-qualified type spelling for a state view: ngspice_state1

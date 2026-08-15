@@ -1,0 +1,10 @@
+* issue 0058: the deck switcher.cir sources after switching the mode
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo SECOND-DECK
+  display
+.endc
+.end

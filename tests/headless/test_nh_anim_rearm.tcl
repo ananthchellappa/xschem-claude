@@ -15,7 +15,7 @@
 # net_hilight_anim_update() mid-callback).
 #
 # GUI only (a real Tk event loop is required for the `after`-based tick):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_anim_rearm.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_anim_rearm.tcl
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; run with DISPLAY set, no --nogui)"; flush stdout; exit 0 }
 

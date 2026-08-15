@@ -17,7 +17,7 @@
 # (positions unchanged = local spin).
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_connected_drag_group_transform_0114.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_connected_drag_group_transform_0114.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

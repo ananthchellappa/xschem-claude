@@ -5,7 +5,7 @@
 #  (2) GUI (needs Tk/X): the button bar exists; an open-time snapshot is taken; Cancel/✕ revert the
 #      live table to it; OK keeps the live state; Reset re-derives the default; WM-close == Cancel.
 # Run headless:  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_nh_editor_buttons.tcl
-# Run GUI:       DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_buttons.tcl
+# Run GUI:       ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_buttons.tcl
 
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }

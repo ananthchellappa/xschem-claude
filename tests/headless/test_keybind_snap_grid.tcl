@@ -10,7 +10,7 @@
 # RED-first SCAFFOLD (plan Phase 0): checks below map to spec section 7 (KB1..KB5) and
 # are expected to FAIL against current code; they go GREEN phase by phase. Run from the
 # repo ROOT, with the DEFAULT rc (no cadence_style_rc) so "plain startup" is honest:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_keybind_snap_grid.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_keybind_snap_grid.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

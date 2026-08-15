@@ -11,7 +11,7 @@
 # GREEN after fix: they reference the new window; user bindings still propagate.
 #
 # Needs X. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_clone_canvas_bindings.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_clone_canvas_bindings.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

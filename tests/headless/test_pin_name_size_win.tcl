@@ -12,7 +12,7 @@
 # GREEN (<win>):  `get pin_name_size 0 0 <schematic_win>` returns the pin's size regardless.
 #
 # Needs X (real windows). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_pin_name_size_win.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_pin_name_size_win.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

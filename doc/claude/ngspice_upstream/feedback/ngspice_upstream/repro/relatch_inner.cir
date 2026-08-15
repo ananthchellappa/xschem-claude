@@ -1,0 +1,9 @@
+* inner deck for relatch_source.cir -- nets Aa / Bb, source Vt
+Vt Aa 0 DC 1
+Rt Aa Bb 1k
+Rq Bb 0 1k
+.control
+op
+display
+.endc
+.end

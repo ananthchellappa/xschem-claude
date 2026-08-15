@@ -1,0 +1,9 @@
+* issue 0058: the same tail, reached through a .lib section instead
+Vs In 0 DC 3
+Rl In MidNode 1k
+.lib lib_tail.lib tail
+.control
+op
+print v(midnode)
+.endc
+.end

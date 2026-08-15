@@ -18,7 +18,7 @@
 #   - the Legacy button routes to the no-arg place_symbol dialog.
 #
 # Needs X. Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_create_instance.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_create_instance.tcl
 
 source [file join [file dirname [info script]] scratch.tcl]
 

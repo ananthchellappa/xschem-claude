@@ -44,9 +44,31 @@ _GATE_LOCK_DEPTH=0
 
 _gate_now() { date +%s; }
 
+# Is $DISPLAY the persistent dev display? (doc/claude/specs/dev_display.md)
+#
+# Deliberately a file read and not a liveness probe: this sits in a hot path,
+# and if DISPLAY *names* the dev display the run is invisible either way, so a
+# panel there is useless whether or not our pid check would pass.
+_gate_dev_display() {
+  local f="${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display"
+  [ -r "$f" ] || return 1
+  local d; d=$(cat "$f" 2>/dev/null)
+  [ -n "$d" ] && [ "$d" = "${DISPLAY:-}" ]
+}
+
 _gate_enabled() {
   [ "${GUI_GATE:-1}" = "0" ] && return 1
   [ -z "${DISPLAY:-}" ] && return 1
+  # THE HAZARD, arriving by a second route. _gate_enabled only tests that
+  # DISPLAY is non-empty, so an INVISIBLE display arms the gate exactly like a
+  # real one; gate_start then reaches _gate_attention, which kills the live
+  # panel and relaunches it with the calling suite's DISPLAY -- moving the
+  # user's Pause/Stop panel onto a display nobody can see, for every session
+  # sharing this control dir. xvfb_arm.sh contains that by forcing GUI_GATE=0,
+  # but a script that sources THIS and not the arm, inheriting DISPLAY=:99 from
+  # the developer's shell, would walk straight into it. A dev display without
+  # this exclusion does not free the screen; it breaks the Pause button.
+  _gate_dev_display && return 1
   command -v wish >/dev/null 2>&1 || return 1
   return 0
 }
@@ -490,10 +512,18 @@ _gate_attention() {
 # point of approving it and leaving).
 #
 # The panel owns this file; the shell only ever reads it.
+#
+# The "Forever" button writes the literal word instead of an epoch. It is
+# matched as a KEYWORD, before the numeric test, and nothing else non-numeric is
+# accepted: this file is shared mutable state that outlives every process here,
+# so anything unrecognised in it must keep meaning "no grant" (test_gui_gate_batch
+# B4 writes "yes please" and asserts it is ignored). One word in, everything
+# else still rejected.
 _gate_grant_live() {
   local f="$GATE_DIR/allow_until" until now
   [ -f "$f" ] || return 1
   until="$(cat "$f" 2>/dev/null)"
+  [ "${until:-}" = forever ] && return 0
   case "${until:-}" in ''|*[!0-9]*) return 1 ;; esac
   now="$(date +%s)"
   [ "$now" -lt "$until" ]

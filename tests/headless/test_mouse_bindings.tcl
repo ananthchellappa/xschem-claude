@@ -5,7 +5,7 @@
 #  3. `xschem bind` remaps a wheel signature at runtime (wheel-up -> pan, not zoom).
 #  4. `xschem unbind` removes a binding (wheel-up then does nothing).
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_mouse_bindings.tcl
+#   ./src/xschem --pipe --script tests/headless/test_mouse_bindings.tcl
 update idletasks
 focus -force .drw
 update idletasks

@@ -52,8 +52,41 @@ window (they need a display) but are driven entirely by script. Standard
 invocation:
 
 ```sh
-DISPLAY=:0 ../../src/xschem --pipe -q --nolog --script test_<name>.tcl
+../../src/xschem --pipe -q --nolog --script test_<name>.tcl
 ```
+
+**Which display that lands on is a setting, not a flag.** These invocations use
+whatever `$DISPLAY` names, and a windowed smoke on your own screen makes the
+machine unusable for the length of the run. Bring up the persistent dev display
+once and they all go somewhere invisible instead:
+
+```sh
+./devdisplay.sh start     # Xvfb + openbox, ~0.3 s, idempotent
+./devdisplay.sh view      # x11vnc on localhost, when you want to watch
+```
+
+**Do not point your normal interactive shell at it.** You launch xschem to *use*
+it; sending that to an invisible display is the bug, not the fix. Suites started
+through `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` or the standalone
+`test_*.sh` attach automatically and need nothing from you.
+
+The gap is the *bare* invocation above — `../../src/xschem --pipe … --script
+test_<name>.tcl` — which nothing arms. Cover it per-command with
+`./devdisplay.sh exec ../../src/xschem --pipe -q --nolog --script test_<name>.tcl`,
+or, for an automated session, by launching the tool with `DISPLAY=:99` in its
+environment so every command it runs inherits it.
+
+`./devdisplay.sh shellinit >> ~/.bashrc` exists for one narrow case: a terminal
+you use *only* for running tests. It emits a conditional export, so a reboot or
+a `stop` degrades to your normal desktop instead of breaking every GUI program
+with `cannot open display`. The display is an ordinary process and **does not
+survive a reboot**; re-run `start`.
+
+Suites launched through `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` or
+the standalone `test_*.sh` attach to it automatically, and fall back to a
+private Xvfb when it is not up. Use the real screen deliberately —
+`AUDIT_DISPLAY=:0`, or `DISPLAY=:0` for a bare invocation — for an eyeball or a
+WSLg-specific reproduction. Spec: `doc/claude/specs/dev_display.md`.
 
 **Pass `--nolog` unless the test's subject IS logging/the CIW.** It disables the
 action log (no `Xschem.log` litter in the launch cwd) and the CIW auto-open
@@ -69,8 +102,8 @@ only).
 `test_action_replay.sh` is a shell-orchestrated **two-process acceptance smoke**
 for the action log: it records a session in one xschem, replays the captured
 `Xschem.log` into a second fresh xschem, and diffs their state — proving the log
-is replayable, not just well-formed. Run it directly with a display:
-`DISPLAY=:0 sh test_action_replay.sh`.
+is replayable, not just well-formed. Run it directly: `sh test_action_replay.sh`
+— it routes itself onto the test display like the other standalone suites.
 
 ## Workflow for a bug fix
 

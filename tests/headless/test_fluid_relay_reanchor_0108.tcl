@@ -23,7 +23,7 @@
 # diagonals + partition preserved. (Sweep also showed (60,-60) in this class.)
 #
 # NEEDS A REAL X DISPLAY. Self-skips cleanly with no display. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_relay_reanchor_0108.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_relay_reanchor_0108.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

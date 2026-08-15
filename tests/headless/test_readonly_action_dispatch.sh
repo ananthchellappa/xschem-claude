@@ -4,6 +4,12 @@
 # none is available, since the keybinding path needs Tk + a mapped canvas.
 
 here=$(cd "$(dirname "$0")" && pwd)
+
+# Route this run onto the private/persistent GUI-test display instead of the
+# screen it was launched from (tests/headless/xvfb_arm.sh, spec
+# doc/claude/specs/dev_display.md). POSIX sh cannot source the arm -- it is
+# bash -- so re-exec through its --arm entry. AUDIT_DISPLAY=:0 opts back in.
+[ "${XSCHEM_XVFB_ARM:-0}" = 1 ] || exec bash "$here/xvfb_arm.sh" --arm sh "$0" "$@"
 repo=$(cd "$here/../.." && pwd)
 xschem="$repo/src/xschem"
 export REPO="$repo"

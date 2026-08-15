@@ -18,14 +18,38 @@
 # Repeats are the OUTER loop, so `-n 3 a b` runs a b a b a b — a soak
 # interleaves rather than running each suite three times back to back.
 #
+# DISPLAY: like full_audit.sh, a run gets a PRIVATE Xvfb by default instead of
+# borrowing the screen it was launched from (tests/headless/xvfb_arm.sh).
+#   AUDIT_DISPLAY=:0    the real screen -- for an eyeball, a WM-dependent test,
+#                       or a WSLg-only repro. The gate matters again there.
+#   AUDIT_DISPLAY=none  no DISPLAY; GUI legs self-skip
+#   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
+#
 # Same fail-open contract as full_audit.sh: no DISPLAY, GUI_GATE=0 or no panel
 # and it just runs. Disable entirely with `export GUI_GATE=0`. A Stop press
 # abandons the remaining runs and exits 3.
 #
-# Exits 0 only if every run passed. Spec: doc/claude/specs/gui_test_gate.md
+# A run is PASS on "RESULT: ALL PASS" or on the older run_regression sentinel
+# "OVERALL: ok" (issue 0228 — the same banner rule full_audit.sh uses), SKIP if
+# it self-skipped for want of an X connection, FAIL otherwise.
+#
+# Exits 0 only if every run passed or skipped. Spec: doc/claude/specs/gui_test_gate.md
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# Display arm (may re-exec this script under xvfb-run — keep it above anything
+# with side effects). Skipped for --help: spawning an X server to print a
+# header block would be absurd, and would also swallow the exit.
+_want_help=0
+for _a in "$@"; do case "$_a" in -h|--help) _want_help=1 ;; esac; done
+if [ "$_want_help" = 0 ]; then
+  # shellcheck source=/dev/null
+  . "$HERE/xvfb_arm.sh"
+  xvfb_arm "$0" "$@"
+fi
+unset _want_help _a
+
 REPO=$(cd "$HERE/../.." && pwd)
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
 TIMEOUT="${SUITE_TIMEOUT:-200}"
@@ -39,7 +63,7 @@ while [ $# -gt 0 ]; do
     -n|--repeat) REPEAT="${2:-1}"; shift 2 ;;
     --nogui)     MODE=nogui;  shift ;;
     --logdir)    MODE=logdir; shift ;;
-    -h|--help)   sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,36p' "$0"; exit 0 ;;   # the header block, up to `set -u`
     -*)          echo "run_suites: unknown option $1" >&2; exit 2 ;;
     *)           suites+=("$1"); shift ;;
   esac
@@ -77,7 +101,7 @@ if type gate_start >/dev/null 2>&1; then
     echo "gui_gate: stopped before start"; exit 3; }
 fi
 
-PASS=0; FAIL=0; STOPPED=0; i=0
+PASS=0; FAIL=0; SKIP=0; STOPPED=0; i=0
 
 for _r in $(seq 1 "$REPEAT"); do
   for s in "${suites[@]}"; do
@@ -102,9 +126,63 @@ for _r in $(seq 1 "$REPEAT"); do
     esac
 
     result=$(printf '%s\n' "$out" | grep -E '^RESULT' | tail -1)
+
+    # ONE banner rule, shared with the other two readers -- issue 0228. This was
+    # the only one of the three that could not read the older run_regression
+    # sentinel, so a suite printing "OVERALL: ok" and no RESULT: line scored
+    # NORESULT here forever while passing every one of its own checks (the
+    # inverse of issue 0147). tests/run_regression.tcl:115 requires the anchored
+    # {^OVERALL: ok$} and :116 also demands exit 0; tests/headless/full_audit.sh
+    # accepts both banners at :121 and, at :131, classifies a self-skip FIRST.
+    #
+    #   * WHOLE LINE, never a substring, so the string inside a check's own
+    #     message cannot forge a pass. A trailing "(N checks)" is tolerated
+    #     because test_ihp_sg13g2_libmgr.tcl:195 and test_pdk_launcher.tcl:119
+    #     print "OVERALL: ok (N checks)" -- a bare -x refuses those two.
+    #   * EVERY failure spelling maps to FAIL, or a real failure stays exactly as
+    #     unreadable as the NORESULT it replaces: "notok" (test_wire_split,
+    #     test_crossview_paste, test_pin_type_edit), "OVERALL: FAIL"
+    #     (test_add_pin_lib_symbol_view) and "OVERALL: N FAILED" (the two above).
+    #   * EXIT 0 is required on the pass arm, as run_regression.tcl:116 does: a
+    #     suite that prints the banner and then dies is not a pass -- it is a FAIL
+    #     naming the exit code, not a "binary never reported" NORESULT.
+    #
+    # Custom-banner suites (test_nogui, test_readonly_guard, test_hi_descend,
+    # test_cadence_descend_newwin_ro) print no OVERALL line at all, are NOT
+    # reached by this, and still need full_audit.sh's bespoke cases.
+    if [ -z "$result" ]; then
+      if printf '%s\n' "$out" \
+           | grep -qE '^OVERALL: ok([[:space:]]+\([^)]*\))?[[:space:]]*$'; then
+        if [ "$ec" -eq 0 ]; then
+          result="RESULT: ALL PASS (via OVERALL: ok sentinel)"
+        else
+          result="RESULT: FAILED (OVERALL: ok but exit $ec)"
+        fi
+      elif printf '%s\n' "$out" | grep -qE '^OVERALL: (notok|FAIL|[0-9]+ FAILED)'; then
+        result="RESULT: FAILED (via OVERALL failure sentinel)"
+      fi
+    fi
+
+    # A SELF-SKIP IS NOT A PASS. full_audit.sh:131's is_skip runs before its
+    # is_pass for exactly this reason, and without it the sentinel arm above
+    # forges a green: test_grid_toggle_sel_gc.tcl:34-36 prints "SKIP: no X
+    # connection" and a bare "OVERALL: ok" with zero checks run, and the legacy
+    # banner "RESULT: ALL PASS (0 checks, skipped: no X)" already scored a hollow
+    # PASS here through the ^RESULT path. SKIP is neither pass nor fail
+    # (full_audit.sh:7); a nonzero exit is never a skip.
+    skipped=0
+    if [ "$ec" -eq 0 ] && printf '%s\n' "$out" \
+         | grep -qE 'RESULT: SKIP|skipped: no X|SKIP: no X connection'; then
+      skipped=1
+    fi
+
     if [ "$ec" -eq 124 ]; then
       printf 'TIMEOUT  | %-28s run %d/%d (after %ss)\n' "$name" "$i" "$_nruns" "$TIMEOUT"
       FAIL=$((FAIL + 1))
+    elif [ "$skipped" = "1" ]; then
+      printf 'SKIP     | %-28s run %d/%d (self-skipped: no X — nothing ran)\n' \
+             "$name" "$i" "$_nruns"
+      SKIP=$((SKIP + 1))
     elif [ -z "$result" ]; then
       printf 'NORESULT | %-28s run %d/%d (exit %d — binary never reported)\n' \
              "$name" "$i" "$_nruns" "$ec"
@@ -114,7 +192,9 @@ for _r in $(seq 1 "$REPEAT"); do
       PASS=$((PASS + 1))
     else
       printf 'FAIL     | %-28s run %d/%d  %s\n' "$name" "$i" "$_nruns" "$result"
-      printf '%s\n' "$out" | grep -E '^FAIL' | sed 's/^/         | /'
+      # ^FATAL too: a suite that dies through `bail` prints its verdict there and
+      # never prints a FAIL: line, so the FAIL: grep alone would show nothing.
+      printf '%s\n' "$out" | grep -E '^(FAIL|FATAL)' | sed 's/^/         | /'
       FAIL=$((FAIL + 1))
     fi
   done
@@ -123,8 +203,17 @@ done
 type gate_finish >/dev/null 2>&1 && gate_finish
 
 if [ "$STOPPED" = "1" ]; then
-  echo "RESULT: STOPPED by the GUI-test control panel (partial: $PASS pass $FAIL fail)"
+  echo "RESULT: STOPPED by the GUI-test control panel" \
+       "(partial: $PASS pass $FAIL fail $SKIP skip)"
   exit 3
 fi
-echo "RESULT: $PASS/$((PASS + FAIL)) runs passed"
+# Skips are reported but do not fail the run, as in full_audit.sh:7. The
+# "RESULT: n/m runs passed" prefix is unchanged so anything grepping it still
+# reads; the skip count is appended only when there is one, and 0/0 with a skip
+# count is a run in which nothing actually ran.
+if [ "$SKIP" -eq 0 ]; then
+  echo "RESULT: $PASS/$((PASS + FAIL)) runs passed"
+else
+  echo "RESULT: $PASS/$((PASS + FAIL)) runs passed ($SKIP skipped)"
+fi
 [ "$FAIL" -eq 0 ]

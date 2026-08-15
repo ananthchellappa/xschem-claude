@@ -1,0 +1,15 @@
+version 1
+simulator ngspice
+design {lib ngspice_verilog_cosim_ase cell tb_sar_adc view schematic}
+rundir {}
+temperature 27
+models {}
+variables {{name VCC value 3.3}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 250u step 10n}}
+outputs {{name d5 expr d5 save 1 plot 1} {name d4 expr d4 save 1 plot 1} {name d3 expr d3 save 1 plot 1} {name d2 expr d2 save 1 plot 1} {name d1 expr d1 save 1 plot 1} {name d0 expr d0 save 1 plot 1} {name valida expr valid_a save 1 plot 1} {name clk expr clk save 1 plot 1} {name start expr start save 1 plot 1} {name xtestsample expr xtest.sample save 1 plot 1} {name xtestcompa expr xtest.comp_a save 1 plot 1} {name INPUT expr INPUT save 1 plot 1} {name xtesttestv expr xtest.test_v save 1 plot 1} {name ivamm expr i(vamm) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+pre_commands {}
+viewer {}

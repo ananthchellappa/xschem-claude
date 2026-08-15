@@ -1,0 +1,5 @@
+* plain divider, no .save and no .control -- for prompt-route `save` experiments
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.end

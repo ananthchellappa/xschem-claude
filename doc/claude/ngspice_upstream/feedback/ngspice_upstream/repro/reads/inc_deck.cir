@@ -1,0 +1,9 @@
+* issue 0058: divider.cir with its last resistor moved into an .include
+Vs In 0 DC 3
+Rl In MidNode 1k
+.include inc_tail.inc
+.control
+op
+print v(midnode)
+.endc
+.end

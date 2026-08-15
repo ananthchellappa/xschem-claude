@@ -2,7 +2,8 @@
 # (doc/claude/signal_browser_batch/PLAN.md items 1-7 — per settled decision 9
 # this ONE file carries every item-1..7 check; each item APPENDS its group).
 #
-#   SM01-SM28  wviewer::sig_match — the shared matcher (item 1).
+#   SM01-SM30  wviewer::sig_match — the shared matcher (item 1), plus TWO-PANE
+#              item 20's `-key` option (SM29/SM30, appended in place after SM27).
 #              Shape; shell `*` `?` `[range]` and the literal-bracket escape;
 #              regexp WHOLE-NAME anchoring (SM04, the ViVA trap, see below);
 #              case default vs -case 1 on BOTH syntax arms (shell SM09/SM10/SM11,
@@ -384,6 +385,57 @@ check {SM26 subject is the full raw name, never the stripped form} \
 check {SM27 regexp arm is case-INsensitive by DEFAULT} \
   [lindex [sig_match $SIGS {V\(OUT\)} -syntax regexp] 1] [list v(out)]
 
+# --- SM29/SM30 — `-key`, item 20's ONE new option -----------------------------
+#
+# ⚠⚠ WHY AN OPTION AND NOT A REWRITE. `GSO01`-`GSO06` below is a differential
+# property oracle: a FROZEN copy of the pre-retrofit `graph_get_signal_list` run
+# against the live one over 52 names x 94 patterns x 2 sorts = 10,340
+# comparisons with ZERO permitted differences. Any SEMANTIC change inside
+# `sig_match` reds it. An option that defaults to identity is not one — and
+# these two checks are what say so from this side, while GSO01 says it from the
+# other. The bars needed a different match SUBJECT; giving the matcher a key and
+# leaving every existing caller alone is the cheapest true statement of that.
+#
+# THE CONTRACT, in three parts, and all three are pinned below because a break
+# in any one of them is silent:
+#   1. `-key {}` (and NO -key at all) is the IDENTITY;
+#   2. the pattern is applied to `key(element)`;
+#   3. the ORIGINAL element is what comes back — never the transformed one.
+# (3) is the one with teeth: return the key's output and every gesture
+# downstream gets a string that is not in the raw file. Measured as item 11's
+# S3, 26 reds over two files.
+proc sm_upper {n} { return [string toupper $n] }
+check {SM29 -key defaults to the IDENTITY — omitted and `{}` are the same answer, and it is the un-keyed answer} \
+  [list [lindex [sig_match $SIGS {l*}] 1] \
+        [lindex [sig_match $SIGS {l*} -key {}] 1]] \
+  [list [list l1 l2] [list l1 l2]]
+check {SM29 the pattern is applied to key(element) — a pattern that matches NO element matches every one of their transforms} \
+  [lindex [sig_match $SIGS {L*} -key sm_upper -case 1] 1] [list l1 l2]
+check {SM29 ...and the SAME pattern with no key matches nothing, so the key is what did it} \
+  [lindex [sig_match $SIGS {L*} -case 1] 1] [list]
+check {SM29 (THE TEETH) the ORIGINAL element comes back, never the key's output} \
+  [lindex [sig_match {v(out)} {V(OUT)} -key sm_upper -case 1] 1] [list v(out)]
+# The real key item 20 ships, exercised here rather than only through the bars:
+# the composition browser_label(signal_entry(name)) is what the lower pane draws.
+check {SM29 (THE SHIPPED KEY) browser_label_of makes the pane's own label the subject, and `net*` — worth 0 against these raw names — finds the two it draws} \
+  [list [lindex [sig_match {v(x1.net1) v(x1.net2) v(out)} {net*}] 1] \
+        [lindex [sig_match {v(x1.net1) v(x1.net2) v(out)} {net*} \
+                  -key wviewer::browser_label_of] 1]] \
+  [list {} {v(x1.net1) v(x1.net2)}]
+# ⚠⚠ -type IS NOT KEYED, AND THAT IS A RULING. `sig_type` reads the `v(` / `i(`
+# prefix, which the label deliberately destroys — `i(v1)` renders `v1:i`, whose
+# sig_type is `other`. Key the type filter too and Voltage/Current select
+# NOTHING. Both directions are asserted: the type still finds its names under a
+# key, and the label the key produces would NOT have satisfied it.
+check {SM30 -type is applied to the RAW element even when -key is given} \
+  [lindex [sig_match {v(out) i(v1) net1} {*} -key wviewer::browser_label_of -type i] 1] \
+  [list i(v1)]
+check {SM30 (THE OTHER DIRECTION) the label that element produced is type `other`, so a keyed type filter would have dropped it} \
+  [list [wviewer::browser_label_of {i(v1)}] \
+        [wviewer::sig_type [wviewer::browser_label_of {i(v1)}]] \
+        [wviewer::sig_type {i(v1)}]] \
+  [list {v1:i} other i]
+
 check {ST01 sig_type v(out) -> v}      [sig_type {v(out)}] v
 check {ST02 sig_type V(OUT) -> v}      [sig_type {V(OUT)}] v
 check {ST03 sig_type i(v1) -> i}       [sig_type {i(v1)}] i
@@ -428,14 +480,14 @@ check {SB05 sig_split v(out) -> empty path} \
   [::wviewer::sig_split {v(out)}] [list {} out]
 check {SB06 sig_split net1 -> empty path} \
   [::wviewer::sig_split {net1}] [list {} net1]
-check {SB07 sig_split @m.x1.m1[id] -> {@m.x1 m1[id]}} \
-  [::wviewer::sig_split {@m.x1.m1[id]}] [list @m.x1 {m1[id]}]
+check {SB07 sig_split @m.x1.m1[id] -> {x1 m1[id]}, the class tag STRIPPED} \
+  [::wviewer::sig_split {@m.x1.m1[id]}] [list x1 {m1[id]}]
 check {SB08 sig_split v(net_name[3]) -> empty path, bracketed leaf} \
   [::wviewer::sig_split {v(net_name[3])}] [list {} {net_name[3]}]
 
-check {SB10 signal_entry key set is exactly leaf/name/path/type} \
+check {SB10 signal_entry key set is exactly class/leaf/name/path/type} \
   [lsort [dict keys [::wviewer::signal_entry {v(x1.x2.net5)}]]] \
-  [list leaf name path type]
+  [list class leaf name path type]
 # decision 2: `name` is the FULL raw name, never the bare/stripped form
 check {SB11 signal_entry name is the FULL raw name} \
   [dict get [::wviewer::signal_entry {v(x1.x2.net5)}] name] {v(x1.x2.net5)}
@@ -443,6 +495,132 @@ check {SB11 signal_entry name is the FULL raw name} \
 check {SB12 signal_entry type comes from sig_type (i(v1) and I(V2))} \
   [list [dict get [::wviewer::signal_entry {i(v1)}] type] \
         [dict get [::wviewer::signal_entry {I(V2)}] type]] [list i i]
+
+# --- GROUP DC: sig_declass + the `class` field (issue 0217, spec §3) ----------
+#
+# ngspice tags a signal with a DEVICE-CLASS prefix -- and only when the object
+# lives INSIDE a subcircuit. `v(m.x1.x1.xm1.msky…#body)` means "the MOSFET-class
+# object at design path x1.x1.xm1"; the leading `m.` is a namespace tag bolted
+# on the front, not a hierarchy level. Measured across 22 real ngspice-46 raws:
+# 2026 of 2338 hierarchical signals -- 87% -- sat under a fake root before this.
+#
+# ⚠ THE RULE IS SOUND BY SPICE GRAMMAR, NOT BY HEURISTIC, and DC12 is what pins
+# that: a hierarchy level comes from a SUBCIRCUIT INSTANCE, and SPICE requires
+# those to begin with `X`. A one-letter segment therefore CANNOT be a subckt
+# instance. Corroborated over the corpus: all 85 distinct real path segments
+# start with `x`; every fake root matches `^@?[a-z]$`; zero overlap.
+#
+# ⚠ `pcall`, not a bare call: before the proc exists these must report
+# `ERR:invalid command name` as an ASSERTABLE VALUE. An unguarded throw would
+# hit the file's outer catch and silently abort every later check while the
+# printed fail count still looked plausible (the lesson of the batch's worst
+# testing bug -- see the header of test_wave_sigbrowser.tcl).
+
+# The eight tags observed in the corpus, with their measured counts:
+#   m 1400 · @m 360 · v 155 · @c 61 · @r 24 · @b 15 · @q 10 · n 1  = 2026
+check {DC01 sig_declass strips the `m` tag (1400 corpus signals)} \
+  [pcall ::wviewer::sig_declass {m.x1.x1.xm1.msky130_fd_pr__nfet_01v8#body}] \
+  [list m {x1.x1.xm1.msky130_fd_pr__nfet_01v8#body}]
+check {DC02 sig_declass strips the `v` tag -- an internal source branch} \
+  [pcall ::wviewer::sig_declass {v.x1.v1}] [list v {x1.v1}]
+check {DC03 sig_declass strips the `n` tag (1 corpus signal)} \
+  [pcall ::wviewer::sig_declass {n.xu1.n1#flow(out)}] [list n {xu1.n1#flow(out)}]
+check {DC04 sig_declass strips the `@m` tag} \
+  [pcall ::wviewer::sig_declass {@m.x1.xm1.msky130_fd_pr__nfet_01v8[id]}] \
+  [list @m {x1.xm1.msky130_fd_pr__nfet_01v8[id]}]
+check {DC05 sig_declass strips the `@c` tag} \
+  [pcall ::wviewer::sig_declass {@c.x1.c1[i]}] [list @c {x1.c1[i]}]
+check {DC06 sig_declass strips the `@r` tag} \
+  [pcall ::wviewer::sig_declass {@r.x2.xr4.r0[i]}] [list @r {x2.xr4.r0[i]}]
+check {DC07 sig_declass strips the `@b` tag} \
+  [pcall ::wviewer::sig_declass {@b.x1.b1[ic]}] [list @b {x1.b1[ic]}]
+check {DC08 sig_declass strips the `@q` tag} \
+  [pcall ::wviewer::sig_declass {@q.x1.q1[ib]}] [list @q {x1.q1[ib]}]
+
+# ⚠ SABOTAGE (a)'s ORACLE -- the `>= 2 following segments` guard. `m.foo` is
+# AMBIGUOUS: stripping it would leave an EMPTY path and file a signal at the
+# root that belongs one level down. Drop the guard and this check fails.
+check {DC09 sig_declass does NOT strip with only ONE following segment} \
+  [pcall ::wviewer::sig_declass {m.foo}] [list {} {m.foo}]
+# ...and its POSITIVE CONTROL on the same fixture shape: add one more segment
+# and it DOES strip. Without this pair, DC09 would also pass on a proc that
+# never strips anything at all.
+check {DC09 positive control -- ONE more segment and it strips} \
+  [pcall ::wviewer::sig_declass {m.foo.bar}] [list m {foo.bar}]
+
+check {DC10 sig_declass leaves a name with NO tag alone} \
+  [pcall ::wviewer::sig_declass {x1.x2.net5}] [list {} {x1.x2.net5}]
+check {DC11 sig_declass leaves a DOTLESS name alone} \
+  [pcall ::wviewer::sig_declass {net1}] [list {} net1]
+
+# ⚠ SABOTAGE (b)'s ORACLE. ngspice lowercases, but a hand-written or foreign
+# raw need not, and a case-SENSITIVE match would silently pass the tag through
+# as a hierarchy level -- the exact defect, one case-fold away.
+check {DC12 sig_declass is CASE-INSENSITIVE on the tag} \
+  [pcall ::wviewer::sig_declass {M.X1.X2.FOO}] [list M {X1.X2.FOO}]
+check {DC12 positive control -- the lowercase twin strips identically} \
+  [lindex [pcall ::wviewer::sig_declass {m.x1.x2.foo}] 0] m
+
+# ⚠ SABOTAGE (c)'s ORACLE -- the rule must NOT over-reach. `xm1` is a REAL
+# pcell wrapper instance; strip two-letter heads and every real design path
+# loses its first level. This is the check that proves the SPICE-grammar
+# argument rather than merely asserting it.
+check {DC13 sig_declass does NOT strip a TWO-letter head (a real instance)} \
+  [pcall ::wviewer::sig_declass {xm.x1.foo}] [list {} {xm.x1.foo}]
+check {DC13 positive control -- the ONE-letter twin DOES strip} \
+  [pcall ::wviewer::sig_declass {x.x1.foo}] [list x {x1.foo}]
+
+# Leaf shapes that must survive the strip untouched. `#`, `[..]` and `(..)`
+# all appear in real corpus leaves; the longest measured leaf is 54 chars.
+check {DC14 a `#` leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {m.x1.xm1.mod#dbody}] 1] {x1.xm1.mod#dbody}
+check {DC15 a bracketed leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {@m.x1.xm1.mod[gm]}] 1] {x1.xm1.mod[gm]}
+check {DC16 a PARENTHESISED leaf survives the strip} \
+  [lindex [pcall ::wviewer::sig_declass {n.xu1.n1#flow(out)}] 1] {xu1.n1#flow(out)}
+
+# sig_split routes through sig_declass. SB07 pins the @m case; these pin that
+# the WRAPPER is unwrapped FIRST and the strip happens on the bare form.
+check {DC17 sig_split unwraps THEN declasses} \
+  [pcall ::wviewer::sig_split {v(m.x1.x1.xm1.mod#body)}] \
+  [list {x1.x1.xm1} {mod#body}]
+check {DC18 sig_split on i(v.x1.v1) -> path x1, leaf v1} \
+  [pcall ::wviewer::sig_split {i(v.x1.v1)}] [list x1 v1]
+# ⚠ the DEPTH the fake tag was inflating: 5 segments read as hierarchy before,
+# 4 after. Any depth-based assertion elsewhere shifts by exactly one.
+check {DC19 sig_split drops the fake level -- depth 4, not 5} \
+  [llength [split [lindex [pcall ::wviewer::sig_split \
+     {v(m.x1.x1.x1.xm1.msky130_fd_pr__nfet_01v8#body)}] 0] .]] 4
+
+# --- the `class` field -------------------------------------------------------
+#
+# ⚠ THE CLASSIFIER KEYS ON THE STRIPPED TAG, NEVER ON THE LEAF'S SHAPE, and
+# DC25 is the check that forces it. 0217:44 records "100% of device leaves
+# contain `#`" -- true FORWARD, FALSE BACKWARD: six REAL design nets end in `#`
+# (xschem's auto-generated net names, e.g. v(x2.x1.a_27_47#) in tb_charge_pump).
+# A classifier keyed on "the leaf contains #" misfires on every one of them.
+proc dc_class {n} { pcall dict get [pcall ::wviewer::signal_entry $n] class }
+
+check {DC20 class of a plain design net is `net`}        [dc_class {v(x1.adj)}]  net
+check {DC21 class of a TOP-LEVEL source current is `net`} [dc_class {i(v1)}]      net
+check {DC22 class of a device internal node is `devnode`} \
+  [dc_class {v(m.x1.xm1.msky130_fd_pr__nfet_01v8#body)}] devnode
+check {DC23 class of a device measurement is `devmeas`} \
+  [dc_class {i(@m.x1.xm1.msky130_fd_pr__nfet_01v8[id])}] devmeas
+check {DC24 class of an internal source branch current is `srcbranch`} \
+  [dc_class {i(v.x1.v1)}] srcbranch
+# ⚠ THE BACKWARD TRAP, measured on the real corpus.
+check {DC25 a REAL design net ending in `#` is `net`, NOT devnode} \
+  [dc_class {v(x2.x1.a_27_47#)}] net
+check {DC25 positive control -- the same leaf shape WITH a tag is devnode} \
+  [dc_class {v(m.x2.x1.a_27_47#)}] devnode
+# the `n` tag is the other internal-node class
+check {DC26 the `n` tag also classifies devnode} \
+  [dc_class {v(n.xu1.n1#flow(out))}] devnode
+# a tagless dotless name is a top-level net, whatever its type
+check {DC27 class of a bare top-level net is `net`} [dc_class {v(vbg)}] net
+check {DC28 class of the sweep variable is `net` (M8: not special-cased)} \
+  [dc_class {time}] net
 
 # GROUP SL — signal_list over TWO REAL xschem contexts.
 #
@@ -1925,14 +2103,60 @@ check {DS04 replace whose plan appends a strip clears nothing (single index spac
   [list [dict create new 1 targets {0} clear {}] \
         [dict create new 1 targets {3 3} clear {}]]
 
-# INDEX SPACE, multi arm: targets are POST-INSERT, so the strips this plan makes
-# are 0..new-1 and only `t >= new` pre-existed. Two sub-cases: a mix (one new
-# strip + two reused) and an all-reuse plan.
-check {DS05 replace in multi clears only the pre-existing landing strips} \
+# THE SINGLE ARM'S **REUSE** PATH, which DS04 does NOT reach (both of its cases
+# APPEND a strip; neither passes a non-empty empties list). Here the stored
+# target is the tool-owned auto strip, so the plan REUSES empty strip 2 instead
+# of appending — and a reused-empty strip holds nothing, so clearing it would be
+# a no-op clear_graph_traces call: a wavehl remap, a marker sweep and a redraw
+# for nothing. `clear` must be EMPTY.
+check {DS04b replace that REUSES an empty strip clears nothing (single arm)} \
+  [list [::wviewer::plan_plot single 3 1 2 1 {1 2} replace] \
+        [::wviewer::plan_plot single 3 0 1 0 {1} replace]] \
+  [list [dict create new 0 targets {2 2} clear {}] \
+        [dict create new 0 targets {1} clear {}]]
+
+# ...and the NEGATIVE half of that claim, because "clears nothing" is only worth
+# anything beside a case that clears something. IDENTICAL call but for the
+# target: an EMPTY target strip is not listed, an OCCUPIED one is. This is the
+# pair that separates "knows which strips are empty" from "never clears".
+check {DS04c the empties list is a FILTER, not an off switch: empty target -> {}, occupied target -> {1}} \
+  [list [::wviewer::plan_plot single 3 0 2 -1 {0 2} replace] \
+        [::wviewer::plan_plot single 3 1 2 -1 {0 2} replace] \
+        [::wviewer::plan_plot single 3 1 2 -1 {} replace]] \
+  [list [dict create new 0 targets {0 0} clear {}] \
+        [dict create new 0 targets {1 1} clear {1}] \
+        [dict create new 0 targets {1 1} clear {1}]]
+
+# ⚠ INDEX SPACE, multi arm — AND THE DECLARED LIMIT OF THE WHOLE POLICY.
+# multi-plot lands every signal either in a strip it CREATES or in a REUSED
+# EMPTY one; it never lands on an occupied strip, for any destination. So there
+# is by construction nothing for Replace to clear there: the key is present (the
+# shape still tracks the destination) and it is ALWAYS EMPTY. That is what
+# plan_plot's ⚠⚠ declares, and this is where it is pinned. Two sub-cases: a mix
+# (one new strip + two reused) and an all-reuse plan.
+check {DS05 replace in multi clears NOTHING: every landing strip is new or reused-empty} \
   [list [::wviewer::plan_plot multi 2 0 3 -1 {0 1} replace] \
         [::wviewer::plan_plot multi 3 0 2 -1 {0 1 2} replace]] \
-  [list [dict create new 1 targets {2 1 0} clear {1 2}] \
-        [dict create new 0 targets {1 0} clear {0 1}]]
+  [list [dict create new 1 targets {2 1 0} clear {}] \
+        [dict create new 0 targets {1 0} clear {}]]
+
+# DIFFERENTIAL, and it is the honest statement of the narrowed claim: under
+# multi, `replace` IS `append` plus an empty `clear` key — over the mix, the
+# all-new, the all-reuse and the auto-strip arms. If a later change ever makes
+# multi land on an occupied strip, this check fails and the declaration in
+# plan_plot's ⚠⚠ has to be revisited rather than quietly outliving its reason.
+set dsdiff {}
+foreach dscase {{multi 2 0 3 -1 {0 1}} {multi 3 0 2 -1 {0 1 2}} \
+                {multi 2 0 3 -1 {}}    {multi 3 0 1 -1 {2}} \
+                {multi 3 0 2 1 {0 1 2}}} {
+  set dsapp [::wviewer::plan_plot {*}$dscase append]
+  set dsrep [::wviewer::plan_plot {*}$dscase replace]
+  lappend dsdiff [expr {[dict remove $dsrep clear] eq $dsapp}] \
+                 [dict exists $dsrep clear] [::wviewer::dget $dsrep clear MISSING]
+}
+check {DS05b DIFFERENTIAL: in multi, replace == append + an empty clear key, on every arm} \
+  $dsdiff [list 1 1 {} 1 1 {} 1 1 {} 1 1 {} 1 1 {}]
+unset dsdiff dscase dsapp dsrep
 
 check {DS06 newstrip in single forces ONE fresh strip and IGNORES the target} \
   [list [::wviewer::plan_plot single 2 0 2 -1 {} newstrip] \
@@ -1952,8 +2176,13 @@ check {DS08 newstrip ignores reusable empty strips entirely} \
   [list [dict create new 1 targets {3 3}] \
         [dict create new 1 targets {0 0}]]
 
-# newtab collapses to append INSIDE plan_plot: dest_prepare has already made the
-# tab, and the layout being planned against is the NEW tab's.
+# newtab reaches the append policy INSIDE plan_plot: dest_prepare has already
+# made the tab, and the layout being planned against is the NEW tab's.
+# ⚠ BY FALL-THROUGH, not by a collapse statement — plan_plot's body names only
+# `newstrip` and `replace`. An explicit `set dest append` line used to sit at the
+# top of the proc; it was measured to change nothing and removed, so this check
+# is what the callers actually rely on. It is a BEHAVIOUR assertion and it holds
+# either way; nothing credits it to a line.
 check {DS09 newtab behaves as append inside plan_plot} \
   [list [expr {[::wviewer::plan_plot single 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot single 1 0 2]}] \
         [expr {[::wviewer::plan_plot multi 1 0 2 -1 {} newtab] eq [::wviewer::plan_plot multi 1 0 2]}] \
@@ -2049,6 +2278,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     return $o
   }
+  # ⚠ A CALL RECORDER for clear_graph_traces, because "the target ended up with
+  # the right traces" and "clear_graph_traces ran on exactly the right strips"
+  # are DIFFERENT claims, and only the second one can see a NO-OP clear.
+  # Clearing an ALREADY-EMPTY strip changes no trace list, so no count check
+  # anywhere in this file can catch it — but it is not free: that proc runs
+  # wavehl_remap_apply, markers_sweep_numbers and set_graphs (a redraw), which is
+  # precisely the "real work with real side effects" plan_replace_clear's header
+  # promises never happens. The wrapper DELEGATES to the real proc (nothing is
+  # stubbed out) and is torn down immediately; the pcall inside each gesture
+  # wrapper guarantees the restore is reached even when the gesture throws.
+  proc ds_spy_on {} {
+    set ::ds_cgt {}
+    rename ::wviewer::clear_graph_traces ::ds_cgt_real
+    proc ::wviewer::clear_graph_traces {token gi} {
+      lappend ::ds_cgt $gi
+      ::ds_cgt_real $token $gi
+    }
+  }
+  proc ds_spy_off {} {
+    rename ::wviewer::clear_graph_traces {}
+    rename ::ds_cgt_real ::wviewer::clear_graph_traces
+  }
+  proc ds_spy_ok {} {
+    ds_spy_on ; set r [pcall ::wviewer::add_trace_ok wvms] ; ds_spy_off ; return $r
+  }
+  proc ds_spy_plot {exprs} {
+    ds_spy_on ; set r [pcall ::wviewer::plot_signals wvms $exprs] ; ds_spy_off ; return $r
+  }
   # pick rows 2 and 3 of the inventory: v(out) and i(v1)
   proc ds_pick2 {w} {
     $w.vars selection clear 0 end
@@ -2090,9 +2347,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set dsw [ds_open 2 {1 net1}] ; update
   $dsw.dest set Replace
   ds_pick2 $dsw
-  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain} \
-    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec]] \
-    [list {} [list 0 2] [list v(out) i(v1)]]
+  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain, one clear call} \
+    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
+
+  # ...and the same gesture onto a target that is ALREADY EMPTY: the traces land
+  # identically and NO clear call is made. Counts alone cannot tell these two
+  # worlds apart — the recorder can, and this is the ONLY check that reaches the
+  # empty-strip list add_trace_ok now hands plan_plot.
+  set dsw [ds_open 2 {}] ; update
+  $dsw.dest set Replace
+  ds_pick2 $dsw
+  check {DS23b REPLACE onto an ALREADY-EMPTY target lands the same and clears nothing} \
+    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] {}]
 
   # --- NEW STRIP: a fresh strip appears and the seed is untouched ----------
   set dsw [ds_open 2 {1 net1}] ; update
@@ -2211,11 +2479,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ::wviewer::add_trace wvms 1 net1 {}
   ::wviewer::set_target_strip 1 wvms
   ::wviewer::set_plot_dest replace wvms
-  set dsperrs [pcall ::wviewer::plot_signals wvms [list v(out) i(v1)]]
+  set dsperrs [ds_spy_plot [list v(out) i(v1)]]
   update
-  check {DS30 plot_signals honours the window destination (Replace empties the target)} \
-    [list $dsperrs [ds_counts] [ms_field 1 vec]] \
-    [list {} [list 0 2] [list v(out) i(v1)]]
+  # the POSITIVE control for the recorder: an occupied target IS cleared, once,
+  # by index. Without this row the two zero-call checks below would prove only
+  # that the recorder never sees anything.
+  check {DS30 plot_signals honours the window destination (Replace empties the target, exactly once)} \
+    [list $dsperrs [ds_counts] [ms_field 1 vec] $::ds_cgt] \
+    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
   # ...and the same seam under append is the unchanged behaviour
   ::wviewer::set_plot_dest append wvms
   set dsperrs [pcall ::wviewer::plot_signals wvms [list net1]]
@@ -2223,6 +2494,47 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {DS30b plot_signals under append still accumulates} \
     [list $dsperrs [ds_counts] [ms_field 1 vec]] \
     [list {} [list 0 3] [list v(out) i(v1) net1]]
+
+  # --- REPLACE under MULTI-plot: the DECLARED limit, exercised LIVE ---------
+  # ⚠ The pure DS05/DS05b say the plan carries an empty `clear`. This says what
+  # that MEANS at the seam: with the window in multi-plot mode, a Replace gesture
+  # lands the batch in the reusable empty strip and the OCCUPIED strip beside it
+  # keeps all three of its traces. Replace is a single-mode policy (plan_plot's
+  # ⚠⚠) and the honest statement of that is a check that shows nothing was
+  # destroyed — not the absence of a check.
+  # mode is seeded first because set_plot_mode speaks only for a window that
+  # already has one (its {} truthfully means "no window"); the real accessor is
+  # then used, and its answer asserted, rather than writing the array twice.
+  set ::wviewer::mode(wvms) single
+  set dsmode [pcall ::wviewer::set_plot_mode multi wvms]
+  ::wviewer::set_plot_dest replace wvms
+  set dsperrs [ds_spy_plot [list v(out)]]
+  update
+  # THE ZERO-CALL half is what the trace counts cannot see: the landing strip is
+  # a REUSED EMPTY one, so a Replace that listed it would destroy nothing and
+  # every count below would still match — it would just do a wavehl remap, a
+  # marker sweep and a redraw for nothing, which is exactly what
+  # plan_replace_clear's header promises it does not do.
+  check {DS30c REPLACE under multi-plot destroys NOTHING and clears NOTHING (zero calls)} \
+    [list $dsmode $dsperrs [ds_counts] [ms_field 0 vec] [ms_field 1 vec] $::ds_cgt] \
+    [list multi {} [list 1 3] [list v(out)] [list v(out) i(v1) net1] {}]
+  pcall ::wviewer::set_plot_mode single wvms
+
+  # ...and the SINGLE arm's own no-op case, which is the one a user meets by
+  # simply pressing Replace twice, or Replace into a fresh strip: the target is
+  # already empty, so there is nothing to clear.
+  dict set ::wviewer::layouts wvms \
+    [dict create sharedx 0 graphs [list [::wviewer::empty_graph] [::wviewer::empty_graph]]]
+  ::wviewer::set_target_strip 0 wvms
+  ::wviewer::set_plot_dest replace wvms
+  set dsperrs [ds_spy_plot [list v(out)]]
+  update
+  check {DS30d REPLACE onto an ALREADY-EMPTY target makes no clear call at all} \
+    [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list {} [list 1 0] [list v(out)] {}]
+  rename ds_spy_on {} ; rename ds_spy_off {}
+  rename ds_spy_ok {} ; rename ds_spy_plot {}
+  catch {unset ::ds_cgt}
 
   # --- teardown ------------------------------------------------------------
   # Same shape as MS18's, and for the same reason: `with_edit` leaves the ctx
@@ -2234,15 +2546,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   dict unset ::wviewer::layouts wvms
   catch {unset ::wviewer::dest(wvms)}
   catch {unset ::wviewer::target(wvms)}
+  # DS30c seeded a plot MODE on this token; it did not exist before the DS group
+  # and must not outlive it either
+  catch {unset ::wviewer::mode(wvms)}
   xschem new_schematic switch $SLMAIN
   xschem set readonly 0
   xschem clear_drawing
   xschem set_modify 0
-  check {DS31 teardown leaves the main context empty and writable, and no tab state} \
+  check {DS31 teardown leaves the main context empty and writable, and no tab/dest/mode state} \
     [list [xschem get rects 2] [xschem get readonly] \
           [pcall ::wviewer::tab_count wvms] \
-          [info exists ::wviewer::dest(wvms)]] \
-    [list 0 0 0 0]
+          [info exists ::wviewer::dest(wvms)] \
+          [info exists ::wviewer::mode(wvms)]] \
+    [list 0 0 0 0 0]
 
 } else {
   # WORDING IS LOAD-BEARING — see the ⚠ in the file header.

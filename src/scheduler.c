@@ -2354,13 +2354,58 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           level = -1;
         }
       }
+      /* the file name is resolved BEFORE the D5 refusal below, because the
+       * refusal asks the FILE what it is, not just the caller (RULING D5-6).
+       *
+       * ⚠ AND IT IS RESOLVED IN C. This used to be
+       *   my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+       *   tcleval(f);
+       * which splices a USER-SUPPLIED PATH into a Tcl script inside a brace
+       * group -- a path containing `}` closes the group early and the rest of
+       * the path EXECUTES (measured: a file named
+       *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
+       * set ::PWNED in the session). That hazard predates D5 and fires for
+       * every annotate_op, but D5's refusal now stands downstream of this line,
+       * so leaving it would mean the refusal path itself ran attacker text.
+       * A leading `~/` is all that regsub ever did; doing it with two
+       * my_snprintf branches is the same transformation with nothing to
+       * escape from. */
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        if(argv[2][0] == '~' && argv[2][1] == '/') {
+          my_snprintf(f, S(f), "%s/%s", home_dir, argv[2] + 2);
+        } else {
+          my_snprintf(f, S(f), "%s", argv[2]);
+        }
       } else {
         my_snprintf(f, S(f), "%s/%s.raw",  tclgetvar("netlist_dir"), get_cell(xctx->sch[xctx->currsch], 0));
       }
+
+      /* RULING D5-3, enforcement point 2 of 3 -- THE REQUEST ITSELF.
+       * `xschem annotate_op <file> <level> vcd` is a request to backannotate a
+       * digital database, and it is refused HERE, before anything is loaded or
+       * cleared: update_op() below would refuse to publish it anyway
+       * (enforcement point 1), but only after the file had been read into the
+       * registry, made CURRENT, and drawn -- so the user would get a silently
+       * empty annotation plus a registry they did not ask to change. A refusal
+       * that arrives after the side effects is not a refusal.
+       *
+       * TWO questions, not one (RULING D5-6): the optional `sim_type` token
+       * when the caller spelled one, and the FILE ITSELF when they did not --
+       * and both shipped GUI call sites (src/xschem.tcl `xschem annotate_op
+       * $tctx::retval`) pass a filename ALONE, so keying only on the token
+       * would mean the menu path is never refused at all. Without the file
+       * sniff, Op Annotate pointed at a .vcd wipes ngspice::ngspice_data and
+       * deletes the previously loaded OP from the registry on its way to
+       * saying nothing.
+       *
+       * The sentence is minted once in save.c and rendered here (RULING D5-4);
+       * it is also the Tcl result, so a script that asked gets an answer rather
+       * than the previous command's leftovers. */
+      if(raw_type_is_digital(sim_type) || raw_file_is_digital(f)) {
+        Tcl_SetResult(interp, (char *)backannot_refuse_digital(f), TCL_VOLATILE);
+        return TCL_OK;
+      }
+
       tclsetboolvar("live_cursor2_backannotate", 1);
       /* delete previously loaded OP */
       if(xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
@@ -4309,6 +4354,38 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
                 TCL_VOLATILE);
             } else {
               Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
+          /* xschem get graph_closest_wave <graph_idx> <px> <py>
+           * "<dataset> <node_index>" -- draw.c's find_closest_wave() asked as a
+           * question rather than driven by a graph gesture (issue 0305, batch F
+           * item 2). <node_index> is its node_number out-parameter (the
+           * `hilight_wave` index space, -1 for none) and <dataset> its return
+           * value (the closest dataset's sweepvar_wrap counter, -1 on refusal).
+           * NOT a duplicate of graph_trace_at: that one is graph_point_at(), a
+           * different walker with a tolerance and a segment metric. This is the
+           * ONLY way to reach find_closest_wave() without a display -- its sole
+           * other caller is callback.c's graph `t` key arm, which is why its
+           * unbalanced mode-5 restore survived every check in the tree until
+           * item 2. Read-only: no highlight, no prop mutation, no redraw, and
+           * the mouse mirror and the session's current database are exactly
+           * where they were -- the database meaning BOTH halves of the registry
+           * cursor, the current slot AND the slot `xschem raw switch_back` goes
+           * to (extra_prev_idx). The first cut of this verb restored only the
+           * first half, so a switch_back after a query landed one slot away;
+           * the walkers now put the pair back (draw.c node_db_prev_restore()).
+           * Fails soft ("-1 -1") on a bad index, a non-graph
+           * rect, an off-screen or digital strip, or no loaded data. */
+          else if(!strcmp(argv[2], "graph_closest_wave")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              char res[60];
+              int nn = -1;
+              int ds = graph_closest_wave(atoi(argv[3]), atof(argv[4]), atof(argv[5]), &nn);
+              my_snprintf(res, S(res), "%d %d", ds, nn);
+              Tcl_SetResult(interp, res, TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1 -1", TCL_STATIC);
             }
           }
           /* xschem get graph_plotbox_at <graph_idx> <px> <py>
@@ -9988,9 +10065,17 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
 
     /* raw what ...
-     *     what = add | clear | datasets | index | info | loaded | list |
+     *     what = add | annot | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
-     *            sim_type | switch | switch_back | table_read | value | values | pos_at | vars |
+     *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
+     *            pos_at | vars |
+     *
+     *   xschem raw vcd_read filename
+     *     read a Verilog VCD file as another database in the registry, with sim_type
+     *     "vcd". Same as `xschem raw read filename vcd`. Digital signals become ordinary
+     *     Raw vectors: 0 -> 0.0, 1 -> 1.0, X -> 0.5, Z -> 0.3; a bus becomes a composite
+     *     vector plus one vector per bit (`count` and `count[3]`..`count[0]`).
+     *     See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md.
      *
      *   xschem raw read filename [type [sweep1 sweep2]]
      *     if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
@@ -10146,6 +10231,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 3 && !strcmp(argv[2], "table_read")) {
         ret = extra_rawfile(1, argv[3], "table", sweep1, sweep2);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
+      } else if(argc > 3 && !strcmp(argv[2], "vcd_read")) {
+        /* identical to `xschem raw read <file> vcd`; spelled out for symmetry with
+         * table_read and so the type token cannot be mistyped by a caller */
+        ret = extra_rawfile(1, argv[3], "vcd", sweep1, sweep2);
+        Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "read")) {
         if(argc > 6) {
           sweep1 = atof_spice(argv[5]);
@@ -10192,9 +10282,34 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "loaded")) {
         Tcl_SetResult(interp, my_itoa(sch_waves_loaded()), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "is_digital")) {
+        /* xschem raw is_digital [<sim_type>]
+         *   read-only: 1 if the database is logic levels rather than analog
+         *   values (spec D5). With no argument, asks it of the CURRENT
+         *   database; with one, of that sim_type token. This is the SAME
+         *   answer every backannotation enforcement point uses -- one reader
+         *   table, one column (RULING D5-2) -- so Tcl and a check can ask the
+         *   engine instead of growing a second list of type tokens.
+         *   Deliberately outside the `raw && raw->values` gate below: "is this
+         *   type digital?" is answerable with nothing loaded at all. */
+        if(argc > 3) Tcl_SetResult(interp, my_itoa(raw_type_is_digital(argv[3])), TCL_VOLATILE);
+        else Tcl_SetResult(interp, my_itoa(raw_is_digital(raw)), TCL_VOLATILE);
       } else if(raw && raw->values) {
+        /* xschem raw annot
+         *   read-only: the CURRENT database's cursor-B annotation state, as
+         *   "<annot_p> <annot_x> <annot_sweep_idx>". Those three fields are
+         *   per-Raw (xschem.h) and spec D4 makes a cursor resolve in every
+         *   database contributing a trace, so a check has to be able to ask
+         *   each database separately whether it followed the cursor or is
+         *   holding a stale index. -1 in annot_p means "no cursor here". */
+        if(argc > 2 && !strcmp(argv[2], "annot")) {
+          char s[200];
+          my_snprintf(s, S(s), "%d %s %d", raw->annot_p, dtoa(raw->annot_x),
+                      raw->annot_sweep_idx);
+          Tcl_SetResult(interp, s, TCL_VOLATILE);
+        }
         /* xschem raw value v(ldcp) 123 */
-        if(argc > 4 && !strcmp(argv[2], "value")) {
+        else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
           const char *node = argv[3];
@@ -10392,8 +10507,17 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           sweep1 = atof_spice(argv[4]);
           sweep2 = atof_spice(argv[5]);
         }
-        if(argc > 3) res = raw_read(f, &xctx->raw, argv[3], 0, sweep1, sweep2);
-        else res = raw_read(f, &xctx->raw, NULL, 0, -1.0, -1.0);
+        /* `raw_read` BYPASSES extra_rawfile(), so the type-is-the-reader dispatch must
+         * still happen or a .vcd / a table file is fed to the spice parser and read as
+         * an empty file -- after the extra_rawfile(3, ...) above already cleared the
+         * whole registry, so the database is simply gone. This is a live path, not a
+         * hypothetical: open_sub_schematic() and hi_descend()'s new-window arm in
+         * src/xschem.tcl both carry the current database across with
+         * `xschem raw_read $rawfile [xschem raw_query sim_type]`.
+         * This used to be a private copy of the chain that knew "vcd" and not "table"
+         * (issue 0290); it now calls the one dispatch in save.c, which also stamps
+         * sim_type for readers that do not stamp it themselves. */
+        res = read_rawfile_by_type(f, &xctx->raw, argc > 3 ? argv[3] : NULL, 0, sweep1, sweep2);
         if(sch_waves_loaded() >= 0) {
           draw();
         }
@@ -11861,8 +11985,21 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "raw_level")) { /* set hierarchy level loaded raw file refers to */
             int n = atoi(argv[3]);
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-            if(n >= 0 && n <= xctx->currsch) {
-              xctx->raw->level = atoi(argv[3]);
+            /* The xctx->raw test is a crash fix (issue 0306 part 2), not a tidy-up.
+             * The range check is on n; nothing tested whether there was a database to
+             * write into. Both shipped callers -- open_sub_schematic and hi_descend's
+             * new-window arm, src/xschem.tcl -- emit this on the line IMMEDIATELY
+             * after `xschem raw_read`, without testing its result, and that arm
+             * CLEARS the whole registry (extra_rawfile(3, ...) sets xctx->raw = NULL)
+             * BEFORE it reads. So ANY failed read -- file moved, truncated, wrong
+             * declared type, permissions -- hands this line a NULL xctx->raw, as does
+             * the fresh context of a brand-new window. The matching getter
+             * (`xschem get raw_level`) has always answered -1 with nothing loaded;
+             * the setter segfaulted on the write to raw->level. -1 is already this
+             * arm's "did not take" answer, so no caller learns a new convention.
+             * Checks C10-C16 in tests/headless/test_raw_read_failure_0306.tcl. */
+            if(xctx->raw && n >= 0 && n <= xctx->currsch) {
+              xctx->raw->level = n;
               my_strdup2(_ALLOC_ID_, &xctx->raw->schname, xctx->sch[xctx->raw->level]);
               Tcl_SetResult(interp, my_itoa(n), TCL_VOLATILE);
             } else {
@@ -12956,10 +13093,16 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
         my_strncpy(f, tclresult(), S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
-        table_read(f);
-
+        /* through the one dispatch (issue 0290): it stamps sim_type "table" on success.
+         * The stamp used to hang off the sch_waves_loaded() test below, which is a
+         * different question -- it also demands raw->values and a raw->schname matching
+         * the current hierarchy. A comments-only table makes table_read() return 1 with
+         * values still NULL, so the stamp was skipped and the database entered the
+         * registry with a NULL sim_type: listed as <NULL> by `raw info` and skipped by
+         * both of extra_rawfile()'s lookup loops, i.e. unreachable by `raw switch`
+         * forever. Checks R9/R10 in tests/headless/test_raw_read_dispatch.tcl. */
+        read_rawfile_by_type(f, &xctx->raw, "table", 0, -1.0, -1.0);
         if(sch_waves_loaded() >= 0) {
-          my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, "table");
           draw();
         }
       }
@@ -13510,10 +13653,38 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
  * matches no command in this group; early returns propagate unchanged. */
 static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
+    /* vcd_read [vcd_file]
+     *   If a simulation raw file is loaded unload it from memory,
+     *   else read a Verilog VCD file 'vcd_file' as the current database.
+     *   Mirrors the top-level `table_read` command (xschem_cmds_t). The registry form
+     *   `xschem raw vcd_read <f>` (xschem_cmds_r) is the one that ADDS a database
+     *   without dropping the analog one, and is what the mixed-signal flow uses.
+     *   See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md. */
+    if(!strcmp(argv[1], "vcd_read"))
+    {
+      char f[PATH_MAX + 100];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(sch_waves_loaded() >= 0) {
+        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+        draw();
+      } else if(argc > 2) {
+        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+        tcleval(f);
+        my_strncpy(f, tclresult(), S(f));
+        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+        /* through the one dispatch (issue 0290), same reasoning as the `table_read`
+         * verb: the sim_type stamp must not hang off sch_waves_loaded() */
+        read_rawfile_by_type(f, &xctx->raw, "vcd", 0, -1.0, -1.0);
+        if(sch_waves_loaded() >= 0) {
+          draw();
+        }
+      }
+      Tcl_ResetResult(interp);
+    }
     /* view_prop
      *   View attributes of selected element (read only)
      *   if multiple selection show the first element (in xschem  array order) */
-    if(!strcmp(argv[1], "view_prop"))
+    else if(!strcmp(argv[1], "view_prop"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       edit_property(2);

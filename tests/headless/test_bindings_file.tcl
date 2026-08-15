@@ -5,7 +5,7 @@
 # them is a no-op, (3) a fixture file remaps + un-binds and LIVE key behavior
 # follows, (4) a malformed row warns but doesn't abort the load.
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_bindings_file.tcl
+#   ./src/xschem --pipe --script tests/headless/test_bindings_file.tcl
 update idletasks
 focus -force .drw
 

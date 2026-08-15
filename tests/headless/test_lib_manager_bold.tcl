@@ -4,7 +4,7 @@
 # renders bold (the `tracked` tag), untracked renders normal.
 #
 # Needs X. Run with --pipe from src/:
-#   REPO=<repo> DISPLAY=:0 ./xschem --rcfile $REPO/tests/headless/minrc \
+#   REPO=<repo> ./xschem --rcfile $REPO/tests/headless/minrc \
 #       --pipe -q --nolog --script $REPO/tests/headless/test_lib_manager_bold.tcl
 
 set fail 0

@@ -14,7 +14,7 @@
 # user's session: `Frame inner map=1 1x142+0+0 req=460x142`.
 #
 # Needs a real display (the dialog is Tk):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_prop_form_field_width_0170.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_prop_form_field_width_0170.tcl
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; the form is a Tk dialog)"; flush stdout; exit 0 }
 update idletasks
 

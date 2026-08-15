@@ -4,7 +4,7 @@
 # library.defs, then loads + netlists the migrated schematic.
 #
 # Run under X with --pipe (any cwd -- paths derive from this script's location):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_migrate_engine.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_migrate_engine.tcl
 
 set fail 0
 proc check {name ok detail} {

@@ -8,7 +8,7 @@
 #
 #  Needs a real window: `xschem callback` SEGFAULTs under --nogui, so the gesture checks
 #  run only when .drw exists. Run from the repo ROOT under DISPLAY:
-#     DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/pin_gestures.tcl
+#     ./src/xschem --pipe -q --nolog --script tests/pin_gestures.tcl
 #
 #  Mirrors the user's interaction config (cadence): intuitive + cadence_compat + the
 #  en_pin_select global (read via tclgetboolvar by the C press hook).

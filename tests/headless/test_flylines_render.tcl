@@ -8,7 +8,7 @@
 # Asserts on `xschem flylines shown` -- the net whose star is currently drawn.
 #
 # Needs a real X window. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_flylines_render.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_flylines_render.tcl
 # RED-first: without draw_flylines the shown-net never becomes CLK -> checks red.
 
 set WIN .drw

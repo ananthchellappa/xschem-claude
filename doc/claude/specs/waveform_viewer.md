@@ -1449,6 +1449,91 @@ Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:
   `WB-mmb-drag` — sabotage-verified against 9 independent breakages. The grip and
   drop-bar PIXELS are eyeball-only, like the wave rendering itself.
 
+## Hierarchy sync: browser → schematic (signal-browser item 11, 2026-08-05)
+
+`Descend to here` moves the ASE-L session's **schematic** window to the point in
+the hierarchy the selected Signal Browser row(s) name, raising and activating
+that window — or leaves it *exactly* where it started, with a reason, if any
+step fails. Entry points: the browser's RMB menu (the slot item 10 reserved),
+`View > Descend to here`, and `E` (Shift-e) on the `WaveViewer` bindtag **and**
+on the tree widget. All Tcl; no C was added (settled decision 8).
+
+### The pivot is `sim_sch_path`, and that is measured
+
+`xschem get sim_sch_path` is the current hierarchy path **relative to the level
+where the raw was loaded** — the same origin the raw's own signal names use, so
+`v(x1.x2.net5)`'s path `x1.x2` and the getter are in one coordinate system.
+`xschem get sch_path` is absolute and is FORBIDDEN here (settled decision 10).
+Measured on `tests/headless/fixtures/wvhier`, currsch 2, `sch_path` fixed at
+`.X1.X2.`:
+
+| `raw_level` | `sim_sch_path` |
+|---|---|
+| 0 | `X1.X2.` |
+| 1 | `X2.` |
+| 2 | `` |
+
+⚠ **With NO raw loaded the two getters are byte-identical** (`sch_waves_loaded()`
+is −1, the C skip loop never runs, and `sim_sch_path` is `sch_path` minus its
+leading dot). That is why the mistake is invisible in the common case, and why
+the regression test has to read a raw and move `raw_level` to have any teeth at
+all.
+
+### Five things the algorithm has to get right, all measured
+
+1. **The trailing dot.** `sim_sch_path` answers `x1.x2.`, `x1.` and `` (the sim
+   root). `wviewer::hier_split` normalises; nothing else compares raw strings.
+2. **The prefix is byte-exact, the verify is case-insensitive.** ngspice
+   lowercases, so a correct walk of `x1.x2` legitimately lands on the
+   schematic's `x1.X2`; a byte-exact final verify rejects its own correct result
+   and rolls back (reproduced). But the *common prefix* must stay byte-exact, or
+   a design carrying both `x1` and `X1` — which the fixture does — never leaves
+   the wrong subtree. `hier_common` exact, `hier_same` `-nocase`.
+3. **`descend -inst` can refuse WITHOUT throwing.** It returns the string `1` on
+   success and the string `0` for a non-subcircuit instance or a raised
+   semaphore, and throws only for "instance not found". `catch` alone sees
+   success. Every step is confirmed by re-reading `sim_sch_path`.
+4. **`go_back` returns void** and returns *without ascending* when the user
+   cancels the save prompt, and is a silent no-op at semaphore ≠ 0. Again, only
+   the readback is truth.
+5. **Rollback is by readback, never by counting.** `descend_schematic()` extends
+   `sch_path` *before* `load_schematic()`, so a failed load leaves the tree one
+   level deep while returning 0. The rollback is the same walk primitive run
+   with rollback off, back to the recorded start.
+
+### The origin guard
+
+`wviewer::hier_origin_ok` is the one claim a readback cannot check. When the
+design window's top is *above* the session's design and no raw is loaded there,
+the pivot and the verify share the same wrong origin, so a walk would land N
+levels off and report success. The guard passes when a raw IS loaded in that
+context (`xschem raw loaded` ≥ 0) or when `ase::ui::sod_base_level` says the
+window's top IS the session's design; otherwise the command REFUSES and says so.
+Neither branch reads `sch_path`.
+
+### Declared limits
+
+* **Vector instances are deferred** — issue 0212. A bracketed segment is
+  refused, naming the issue. `sch_path` records the EXPANDED slice `x1[3]` while
+  `get_instance` only matches the unexpanded `x1[3:0]`; the `change_sch_path`
+  route is written up in the issue.
+* **A case-MISMATCHED already-at-target re-walks** rather than no-opping. It
+  lands correctly and reports the schematic's spelling; only a byte-exact match
+  takes the untouched no-op path.
+* **A multi-row target with disagreeing paths is DISABLED, not first-wins.** The
+  RMB entry stays grey and the reason goes to the status line.
+* **A successful walk clears the selection at every level it traverses**, because
+  both `descend -inst` and `go_back` call `unselect_all(1)` in C. The
+  already-there path touches nothing.
+* **The browser tree does not go stale.** The raw lives in the VIEWER context
+  (every `raw read` site is in `wave_viewer.tcl`), so descending the DESIGN
+  window touches neither `xctx->raw` of the viewer nor the snapshot behind the
+  tree (item 9's D6).
+* **`sod_base_level` answers 0 when the session's design is not in the window's
+  stack at all** — its own documented rule — so the origin guard passes there
+  too. Pre-existing hole in `ase_window.tcl`, asserted as a limit rather than
+  closed by item 11.
+
 ## Non-goals (v1)
 
 Digital lanes, sweep-family selector, cursor backannotate-to-schematic,

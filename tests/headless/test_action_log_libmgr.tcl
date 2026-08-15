@@ -6,7 +6,7 @@
 # Must run WITH action logging on; the harness passes --logdir and the same dir
 # in $env(XSCHEM_AL_LOGDIR). The action log is line-buffered, so lines are
 # readable in-process. Run under X with --pipe from src/:
-#   d=/tmp/al.$$; XSCHEM_AL_LOGDIR=$d DISPLAY=:0 ./xschem --pipe -q --logdir $d \
+#   d=/tmp/al.$$; XSCHEM_AL_LOGDIR=$d ./xschem --pipe -q --logdir $d \
 #       --script ../tests/headless/test_action_log_libmgr.tcl
 
 source [file join [file dirname [info script]] scratch.tcl]

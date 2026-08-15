@@ -1,0 +1,16 @@
+* only half of that refusal is capturable by a deck: cp_err yes, stderr no
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(midnode)
+.control
+op
+set silent_fileio
+set cap = "no_line_read"
+write write_named.raw v(MidNode) >& write_named_capture.txt
+fopen f1 write_named_capture.txt r
+fread cap $f1 n1
+fclose $f1
+echo captured: $cap
+.endc
+.end

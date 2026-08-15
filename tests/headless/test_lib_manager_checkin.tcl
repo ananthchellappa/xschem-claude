@@ -4,7 +4,7 @@
 # menu entries exist. Modal commit-comment / confirm dialogs remain manual.
 #
 # Needs X. Run with --pipe from src/:
-#   REPO=<repo> DISPLAY=:0 ./xschem --rcfile $REPO/tests/headless/minrc \
+#   REPO=<repo> ./xschem --rcfile $REPO/tests/headless/minrc \
 #       --pipe -q --nolog --script $REPO/tests/headless/test_lib_manager_checkin.tcl
 
 set fail 0

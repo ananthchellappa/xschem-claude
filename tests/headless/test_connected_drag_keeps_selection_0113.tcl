@@ -13,7 +13,7 @@
 # test_cadence_stretch_move.tcl. RED-first: pre-fix A2/B2 fail (selection collapses to 1).
 #
 # MUST run from the repo ROOT under X (move_objects + Xlib drawtemp SIGSEGVs --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_connected_drag_keeps_selection_0113.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_connected_drag_keeps_selection_0113.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

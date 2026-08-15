@@ -480,6 +480,32 @@ last strip standing.</td>
 axis numbers and the zero lines stay either way.</td>
 <td class="where">whole window</td>
 <td><span class="menu">Graph &gt; Grid</span> (a checkbutton)</td></tr>
+<tr data-seq="Control-Key-b" data-menu="Signal Browser" data-accel="Ctrl+B">
+<td><kbd>Ctrl-B</kbd></td>
+<td>Show/hide the <b>Signal Browser</b> sidebar down the left of this window. A
+viewer opens with it hidden, so the plot keeps the full width of the window
+until you ask for the sidebar. Showing or hiding it resizes the canvas, and the
+graphs re-fit to the new width.</td>
+<td class="where">whole window</td>
+<td><span class="menu">View &gt; Signal Browser</span> (a checkbutton)</td></tr>
+<tr data-seq="Key-E" data-menu="Descend to here" data-accel="E">
+<td><kbd>E</kbd> (Shift+e)</td>
+<td><b>Descend to here</b>: move this session's <i>schematic</i> window to the
+point in the hierarchy the selected Signal Browser row(s) name, raising and
+activating that window. The path is read from the row, so a group row
+<code>x1.x2</code> and any signal under it both go to the same place; a
+top-level signal goes back to the top. Instance names are matched
+case-insensitively (an exact match always wins first), because ngspice
+lowercases the names the raw file carries. <b>If any step fails the window is
+returned to exactly where it started</b> and the reason is reported in the
+browser's status line — you are never left part-way down a hierarchy you did not
+ask for. Rows in different parts of the hierarchy leave the command disabled
+rather than silently picking one, and a vector-instance slice
+(<code>x1[3]</code>) is refused (issue 0212). Works with the browser tree or the
+plot canvas focused.</td>
+<td class="where">whole window</td>
+<td><span class="menu">View &gt; Descend to here</span>, and the browser's
+right-click menu</td></tr>
 <tr data-seq="Key-u">
 <td><kbd>u</kbd></td>
 <td>Undo the last structural edit (reorder, trace move, split, delete, marker
@@ -916,7 +942,379 @@ drawn and what is clickable cannot drift apart.</li>
 is what guarantees no plotting session can ever modify a schematic.</li>
 </ul>
 
-<h2 id="trouble">11. Troubleshooting</h2>
+<h2 id="browser">11. The Signal Browser</h2>
+
+<p>The <b>Signal Browser</b> is a sidebar down the left edge of the viewer window
+listing the signals in the loaded <code>.raw</code> file, with gestures that plot
+straight from it. Open and close it with <kbd>Ctrl</kbd>+<kbd>B</kbd> or <span
+class="menu">View &gt; Signal Browser</span>. It starts hidden, and a viewer that
+never opens it draws exactly as it did before the browser existed.</p>
+
+<p>It has <b>two panes, one above the other</b>, and the split between them can
+be dragged:</p>
+
+<ul>
+<li>the <b>instance tree</b> on top &mdash; the design's hierarchy and nothing
+else. Instances only: no signal ever appears as a row here. Exactly one instance
+is selected at a time, and something always is;</li>
+<li>the <b>sea of names</b> below &mdash; the signals belonging to the selected
+instance's <em>own level</em>, flowed into columns. Selecting an instance above
+is what fills it.</li>
+</ul>
+
+<p>Two boxes above them decide what counts as a signal at all: <b>Show device
+internals</b> (off to begin with) and <b>Show source currents</b> (on to begin
+with). They are described in <a href="#browser-tree">§11.2</a>, because until you
+know they are there the tree looks far emptier than the raw file is.</p>
+
+<p>It is the xschem port of the Cadence ViVA signal browser. Where it differs
+from ViVA it differs on purpose; the reasons, the measurements behind them and
+the internal contracts are written up in the design spec
+<code>doc/claude/specs/waveform_signal_browser.md</code> in the source tree (a
+developer document, not installed with this guide).</p>
+
+<h3 id="browser-search">11.1 Searching</h3>
+
+<p>The <b>Search</b> bar across the top of the sidebar is, left to right: a
+<b>type</b> drop-down, the <b>pattern</b> entry, a <b>syntax</b> drop-down, the
+<b>Match case</b> box, the <b>All DBs</b> box, the <b>Search</b> button, and an
+error label.</p>
+
+<table>
+<tr><th>Control</th><th>What it does</th></tr>
+
+<tr><td><b>Type</b></td><td><b>All</b>, <b>Voltage</b>, <b>Current</b> or
+<b>Other</b>. The type is read off the name's <code>v(</code> / <code>i(</code>
+prefix. ngspice's <code>@m.x1.m1[id]</code> terminal-current form has neither, so
+it counts as <b>Other</b> — if a current you expected is missing, look under
+Other or All.</td></tr>
+
+<tr><td><b>Pattern</b></td><td>Filters as you type. An empty box shows
+everything.</td></tr>
+
+<tr><td><b>Syntax</b></td><td><b>Shell</b> (the default) or <b>RegExp</b>.</td></tr>
+
+<tr><td><b>Match case</b></td><td>Off by default, so <code>OUT</code> finds
+<code>v(out)</code>.</td></tr>
+
+<tr><td><b>All DBs</b></td><td>Widens the search to every results database loaded
+in this window, not just the current one. Each gets its own top-level group in the
+tree, headed with the file name and the analysis, e.g. <code>bd_a.raw
+(tran)</code>.</td></tr>
+
+<tr><td><b>Search</b></td><td>Applies the pattern. You rarely need it — the
+filter is already live — but it is there for the habit.</td></tr>
+</table>
+
+<p><b>Patterns match the whole name, and the name includes the wrapper.</b> The
+subject is <code>v(out)</code>, not <code>out</code>, so <code>out</code> on its
+own matches nothing and <code>*out*</code> is usually what you want. In Shell
+syntax <code>*</code> is any run of characters, <code>?</code> is one character,
+and <code>[a-z]</code> is a range. In RegExp syntax the pattern is anchored at
+both ends for you.</p>
+
+<p><b>A pattern that will not compile is an error, not a wildcard.</b> A broken
+regular expression turns the error label red and puts the message on the status
+line at the bottom of the sidebar; the list is left alone. It never silently
+widens into "show everything" — which is what the older embedded-graph dialog
+did, and what made a typo look like a successful search. The message appears on
+the status line because the sidebar is usually too narrow to show the error label
+itself.</p>
+
+<p>One Tcl-specific consequence: a leading ARE director or embedded option such
+as <code>(?i)foo</code> is reported as an error rather than honoured, because the
+pattern gets anchored and those are only legal at the very start of an
+expression. Use the <b>Match case</b> box instead.</p>
+
+<p>The second, button-less bar along the <i>bottom</i> of the sidebar is the
+<b>Filter</b> bar. It has the same controls minus the button and the DB scope,
+and it narrows what the Search bar already found — the two are ANDed.</p>
+
+<h3 id="browser-tree">11.2 The two panes</h3>
+
+<p><b>The instance tree, on top.</b> It is the design's hierarchy and nothing
+else: one row per instance, with the design itself as the row at the root.
+Signals are never rows here. Instances come from the signal names —
+<code>v(x1.x2.net5)</code> puts <code>x2</code> inside <code>x1</code> — using the
+name with its <code>v(</code>/<code>i(</code> wrapper removed, which is why there
+is no instance called <code>v(x1</code>.</p>
+
+<p>Everything starts <b>collapsed</b>, and <b>exactly one row is selected at all
+times</b> — the design root, until you pick something else. Clicking a different
+instance is what refills the pane below; it never plots anything by itself.
+Selection here is single: <kbd>Shift</kbd> and <kbd>Ctrl</kbd> do not extend it.
+That is what the lower pane is for.</p>
+
+<p><b>The sea of names, below.</b> The signals belonging to the selected
+instance's <em>own level</em> — not its children's. They flow into columns: down
+a column, then on to the next one to the right, so a taller pane gives longer
+columns and a shorter one gives more of them. The pane scrolls <b>sideways
+only</b>; there is deliberately no vertical scrollbar.</p>
+
+<p>Names here are written the way Cadence writes them, not the way ngspice does:
+<code>xm1:id</code> for a device measurement, <code>v1:i</code> for a source's
+branch current, and a plain design net as its own bare name. Hover a name to see
+the full raw name behind it — <code>i(v.x1.v1)</code> for a row drawn
+<code>v1:i</code> — which is also what <b>Copy names</b> puts on the
+clipboard.</p>
+
+<p><b>Selection in this pane is extended</b> — <kbd>Shift</kbd> and
+<kbd>Ctrl</kbd> work as usual, <kbd>Shift</kbd> running <em>in flow order</em>,
+down the column and on to the next. Double-click or middle-click plots; if the
+signal you click is part of the selection, the whole selection plots.</p>
+
+<p><b>Two boxes decide what is a signal at all.</b> A modern PDK's raw file is
+mostly not your design: a BSIM4 MOSFET contributes several internal body nodes
+apiece, and each of those is a name. So:</p>
+
+<table>
+<tr><th>Box</th><th>Default</th><th>What it does</th></tr>
+<tr><td><b>Show device internals</b></td><td>off</td><td>Brings in the internal
+nodes and per-device measurements of primitives. Measured on one testbench:
+<b>424 names become 190</b> with it off.</td></tr>
+<tr><td><b>Show source currents</b></td><td>on</td><td>Keeps the branch currents
+of voltage sources inside subcircuits. Turning it off as well takes the same
+testbench down to <b>140</b>.</td></tr>
+</table>
+
+<p>They narrow the tree as well as the sea: an instance <em>all</em> of whose
+signals are device internals is not shown at all while the first box is off. On
+the same testbench that is 84 of 128 instances; on a larger one, 303 of 316. If
+an instance you expected is missing, that box is the first thing to try.</p>
+
+<p><b>An empty lower pane is not always the same thing</b>, so the line under it
+says which: the instance genuinely <i>has no signals of its own</i> (it exists
+only because something inside it does), or the <i>Search/Filter bar is hiding
+them</i>, or <i>device internals are hidden</i>. Each has a different
+remedy.</p>
+
+<p><b>Plotting from the tree still works, and it is recursive.</b>
+Middle-clicking an instance, or the <b>Plot</b> button, plots everything at and
+under it — including the levels below, which is not what the sea of names shows.
+<b>Double-clicking an instance does not plot it</b>: that gesture belongs to the
+tree widget, which uses it to expand and collapse.</p>
+
+<p>When an instance is plotted this way its signals go in <b>raw-file order</b>,
+which is not always the order they are drawn: a signal that arrives late in the
+file is filed under the instance it belongs to, so the tree shows it beside its
+siblings while the plot order still follows the file.</p>
+
+<p>Both panes are a <b>snapshot</b> taken when the sidebar is shown, not a live
+view. If a raw file is loaded by some other route while the sidebar is already
+open, close and reopen the sidebar to pick it up. Loading through the Location
+bar (<a href="#browser-loc">§11.4</a>) refreshes it for you.</p>
+
+<h3 id="browser-menu">11.3 Right-click, and where traces land</h3>
+
+<p>Right-clicking the tree posts a menu: <b>Plot</b>, a destination cascade,
+<b>Copy names</b>, <b>Send to Add Trace</b> and <b>Descend to here</b>. The
+destination is the same one the Add Trace dialog offers — <b>Append</b>,
+<b>Replace</b>, <b>New Strip</b>, <b>New Tab</b> — and it is remembered per
+window.</p>
+
+<p>In <b>multi-plot</b> mode an entry reads <b>Replace &rarr; appends</b>. That
+is not a slip. Multi-plot always puts each signal in a strip it creates or an
+empty one it reuses, never in an occupied strip, so there is nothing for Replace
+to clear and it behaves exactly like Append. The label says so rather than
+pretending otherwise.</p>
+
+<h3 id="browser-loc">11.4 The Location bar</h3>
+
+<p>The row at the very top of the sidebar shows which <code>.raw</code> file is
+loaded and lets you change it: type a path and press <kbd>Return</kbd>, pick one
+from the drop-down, or use <b>Browse...</b>. The last twenty raw files you loaded
+this way are in the drop-down; the field is right-justified so the part you can
+read is the file name, and the full path is in the tooltip.</p>
+
+<p>A path that does not exist, or a file the reader rejects, leaves the previous
+raw and the whole plot exactly as they were and says why on the status line — a
+typo cannot lose your waveforms. The cost of that guarantee is that raw files
+<b>accumulate</b> in the window rather than replacing one another, which is
+precisely what <b>All DBs</b> then searches across.</p>
+
+<p>Raw files attached automatically by an ASE re-run do not appear in the
+drop-down; only the ones you loaded here do.</p>
+
+<h3 id="browser-hier">11.5 Moving between the browser and the schematic</h3>
+
+<p>Two commands keep the schematic and the browser pointing at the same place in
+the design.</p>
+
+<p><b>Descend to here</b> takes the browser to the schematic: select a row and
+press <kbd>E</kbd> (see <a href="#ref-viewer-keys">§9.1</a>), or use <span
+class="menu">View &gt; Descend to here</span> or the right-click menu. The design
+window descends to the instance that row lives in. Selecting several rows works
+only if they all live in the same place; rows from different parts of the
+hierarchy leave the entry disabled.</p>
+
+<p><b>Show in Signal Browser</b> takes the schematic to the browser: from a
+design window press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or use <span class="menu">Tools
+&gt; Show in Signal Browser</span>. The session's viewer is raised, the sidebar is
+un-hidden, and a tree node is selected and scrolled into view.</p>
+
+<p><b>Which node depends on what is selected.</b> Select one instance and the
+browser goes to <em>that instance's</em> level &mdash; you do not have to descend
+into it first. Select nothing and it goes to wherever the schematic is standing,
+as before. Selecting something that has no level in the simulation data (a
+resistor, a voltage source) lands on its parent and says so.</p>
+
+<p>Selecting <em>two or more</em> instances is not a question the browser can
+answer &mdash; the lower pane shows one level at a time &mdash; so it uses the
+schematic's position instead and writes a note to the log saying it did.</p>
+
+<p>Both say what happened, every time. If the exact node does not exist the
+deepest ancestor that does is selected and the message says so. If the move
+cannot be made the schematic is <b>put back where it was</b> and nothing is left
+half-done.</p>
+
+<p>Two limits worth knowing:</p>
+<ul>
+<li>A <b>vector instance slice</b> such as <code>x1[3]</code> cannot be descended
+into, and is refused by name.</li>
+<li>The two directions are not quite symmetric. When the design window is
+standing <i>above</i> the schematic the results belong to, <b>Show in Signal
+Browser</b> works out the offset and succeeds, while <b>Descend to here</b>
+refuses rather than risk landing on the wrong level. Descend from a window that
+is already on (or inside) the simulated cell.</li>
+</ul>
+
+<p>A successful descend clears the schematic's selection, because moving up and
+down the hierarchy always does.</p>
+
+<h3 id="browser-mouse">11.6 Mouse and keys in the browser</h3>
+
+<p>These belong to the sidebar's own widgets, not to the plot canvas, so they are
+not part of the remappable <code>WaveViewer</code> tag described in <a
+href="#rebinding">§10</a>.</p>
+
+<table>
+<tr><th>Where</th><th>Gesture</th><th>What it does</th></tr>
+
+<tr data-bseq="loc.cb &lt;Return&gt;">
+<td class="where">Location field</td><td><kbd>Return</kbd></td>
+<td>Load the raw file named in the field.</td></tr>
+
+<tr data-bseq="loc.cb &lt;&lt;ComboboxSelected&gt;&gt;">
+<td class="where">Location drop-down</td><td>pick an entry</td>
+<td>Load that raw file from the history.</td></tr>
+
+<tr data-bseq="pw.tvf.tv &lt;Double-Button-1&gt;">
+<td class="where">tree</td><td>double-click</td>
+<td>Plot that signal. On a <i>group</i> it expands or collapses instead.</td></tr>
+
+<tr data-bseq="pw.tvf.tv &lt;Button-2&gt;">
+<td class="where">tree</td><td>middle-click</td>
+<td>Plot the row under the pointer, groups included.</td></tr>
+
+<tr data-bseq="pw.tvf.tv &lt;Button-3&gt;">
+<td class="where">tree</td><td>right-click</td>
+<td>Post the browser's context menu (<a href="#browser-menu">§11.3</a>).</td></tr>
+
+<tr data-bseq="pw.tvf.tv &lt;Key-E&gt;">
+<td class="where">tree</td><td><kbd>E</kbd></td>
+<td><b>Descend to here</b> on the selected rows. The same key works over the
+plot canvas (<a href="#ref-viewer-keys">§9.1</a>); this binding is what makes it
+work while the tree has focus.</td></tr>
+<tr data-bseq="pw.tvf.tv &lt;&lt;TreeviewSelect&gt;&gt;">
+<td class="where">tree</td><td>select a node</td>
+<td>Selecting an instance in the upper pane is what fills the <b>sea of
+names</b> below it: the lower pane lists the signals owned by that instance's
+<em>own level only</em>, never its descendants. Exactly one node is selected at
+all times &mdash; the design root when nothing else is.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-1&gt;">
+<td class="where">sea of names</td><td>click</td>
+<td>Select that one signal, replacing whatever was selected. Clicking past the
+last name clears the selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Shift-Button-1&gt;">
+<td class="where">sea of names</td><td><kbd>Shift</kbd>+click</td>
+<td>Extend the selection from the last plain click, in <em>flow order</em>
+&mdash; down the column, then on to the next one.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Control-Button-1&gt;">
+<td class="where">sea of names</td><td><kbd>Ctrl</kbd>+click</td>
+<td>Add that signal to the selection, or drop it from it, leaving the rest
+alone.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Double-Button-1&gt;">
+<td class="where">sea of names</td><td>double-click</td>
+<td>Plot it. Double-clicking a signal that is part of the selection plots the
+whole selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-2&gt;">
+<td class="where">sea of names</td><td>middle-click</td>
+<td>The same as double-click: plot the signal under the pointer, or the whole
+selection when the pointer is on one of its members.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Button-3&gt;">
+<td class="where">sea of names</td><td>right-click</td>
+<td>Post the context menu (<a href="#browser-menu">§11.3</a>) for the signals
+that click picked. It is a separate menu from the tree's, so the two panes never
+act on each other's selection.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Configure&gt;">
+<td class="where">sea of names</td><td>drag the split</td>
+<td>The names re-flow to the new pane height: a taller pane gives longer
+columns, a shorter one more of them. The pane only ever scrolls sideways.</td></tr>
+
+<tr data-bseq="pw.sea.c &lt;Motion&gt;">
+<td class="where">sea of names</td><td>hover</td>
+<td>Rest on a name and a tooltip shows the <em>full raw name</em> behind it
+&mdash; <code>i(v.x1.v1)</code> for a row drawn <code>v1:i</code>. It follows the
+pointer from name to name, and goes when the pointer leaves the pane. The pane
+shows names short &mdash; this is how to see the one a signal really has, and
+the one <b>Copy names</b> puts on the clipboard.</td></tr>
+
+<tr data-bseq="pw &lt;ButtonRelease-1&gt;">
+<td class="where">split between the panes</td><td>drag the sash, then let go</td>
+<td>Sets how the sidebar's height is divided between the instance tree above and
+the sea of names below. The split is <em>remembered</em>: it is saved with the
+session as a <b>fraction</b> of the sidebar's height, not as a pixel count, so
+reopening into a shorter or taller window puts the sash back in the same
+<em>place</em> rather than at the same number of pixels down. Until you drag it
+the window has no preference of its own and simply uses the default split.</td></tr>
+
+<tr data-gseq="wvbgrip &lt;B1-Motion&gt;">
+<td class="where">divider between the sidebar and the plot</td>
+<td>drag the vertical grip, then let go</td>
+<td>Sets how wide the sidebar is. The grip is the narrow raised strip down the
+right-hand edge of the sidebar; the pointer turns into a horizontal
+double-arrow over it. The width you let go at is <em>remembered</em> for that
+window and is saved with the session. Two limits are deliberate and you will
+feel both: the sidebar will not go below <b>240&nbsp;px</b>, and it will not go
+past <b>45%</b> of the window &mdash; so on a small window, widen the window
+first. If the search bar is too narrow for one row it lays itself out on
+<b>two</b> rather than dropping <b>All&nbsp;DBs</b> and <b>Search</b> off the
+right-hand edge, which is what it used to do.</td></tr>
+</table>
+
+<p>The line under the sea of names counts what it is showing &mdash;
+<code>12 of 43 signals</code> &mdash; and says which of the three reasons an
+empty pane has: the instance <i>has no signals of its own</i>, the
+<i>Search/Filter bar is hiding them</i>, or <i>device internals are hidden</i>.
+Each has a different remedy, so they are worded differently.</p>
+
+<h3 id="browser-state">11.7 What is remembered</h3>
+
+<p>The browser is part of the saved simulation state (<a
+href="#state">§8</a>): whether the sidebar was shown, its width, the
+<b>split between the two panes</b>, both class boxes (<b>Show device
+internals</b> and <b>Show source currents</b>), both bars' settings, the plot
+destination, which instances were expanded, what was selected, and the raw-file
+history.</p>
+
+<p>Two of those are kept as <em>proportions</em> rather than as pixels, and the
+distinction shows up when you reopen into a different-sized window. The width is
+re-applied through the same 45%-of-the-window cap a fresh sidebar uses, so the
+number is kept but the pixels may not be. The split between the panes is saved
+as a <b>fraction of the sidebar's height</b>, so a shorter window puts the sash
+back in the same <em>place</em>, not at the same number of pixels down.</p>
+
+<p>A window you have never customised carries no browser state at all — the
+settings only start being saved once something departs from its default.</p>
+
+<h2 id="trouble">12. Troubleshooting</h2>
 
 <table>
 <tr><th>Symptom</th><th>Why, and what to do</th></tr>
@@ -973,13 +1371,18 @@ some engine-side gestures are view state that a rebuild discards. Use
 <td>Cosmetic. Move the pointer over the viewer and the title is restored.</td></tr>
 </table>
 
-<h2 id="seealso">12. See also</h2>
+<h2 id="seealso">13. See also</h2>
 <ul>
 <li><a href="ase_l_tutorial.html">ASE-L tutorial</a> — the simulation environment
 this viewer belongs to: analyses, outputs, running, session states.</li>
 <li><a href="xschem_man/graphs.html">Graphs in schematics</a> — the other
 plotting surface: graph rectangles drawn <i>into</i> a schematic. Same drawing
 engine, different window, different keys.</li>
+<li><code>doc/claude/specs/waveform_signal_browser.md</code>, in the xschem
+source tree — the design spec behind <a href="#browser">§11</a>: the divergences
+from Cadence ViVA and the measurements behind each one, the hierarchy-sync
+algorithm, and every declared limit. A developer document; it is not installed
+alongside this guide.</li>
 </ul>
 
 </body>

@@ -1251,33 +1251,85 @@ void start_wire(double mx, double my)
   }
 }
 
+/* SPEC D4 -- THE RESOLUTION RULE, and it genuinely differs by kind of database.
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4 (RULINGS D4-3, D4-4).
+ *
+ * `p` is the last sample at or before the cursor (see the search in
+ * backannotate_at_cursor_b_pos()), and this turns it into the value to report.
+ *
+ * DENSE ANALOG SWEEP -- interpolate between p and p+1, unchanged. The samples
+ * are close enough together that the choice is invisible, and this is what the
+ * viewer's readout has always shown (test_wave_viewer G15b pins Tcl-side
+ * interpolation against this function's answer).
+ *
+ * SPARSE EVENT STREAM (sim_type "vcd") -- HOLD. The value at t is the value set
+ * by the last event at or before t, which may be far to the left; that is not
+ * an approximation, it is what a digital signal DOES between events. And the
+ * approximation is not merely imprecise here, it is a different symbol: a VCD
+ * database encodes 0 -> 0.0, 1 -> 1.0, X -> 0.5, Z -> 0.3 (spec C3) and
+ * get_bus_value() reads anything in 0.2..0.8 as UNKNOWN, so interpolating
+ * across the step vcd_read() materializes at each change (spec C2 emits
+ * (t - 1 tick, old) then (t, new)) reports X for a perfectly known signal --
+ * for a whole tick, which on a `$timescale 1ns` file is a nanosecond wide.
+ * Only "vcd" takes this arm: a `table` database is a sampled table, not an
+ * event stream.
+ *
+ * ...AND THE SWEEP COLUMN IS EXEMPT FROM THE HOLD (RULING D4-6, fix round).
+ * A time axis is not an event-driven signal. Holding it froze a VCD's own
+ * `time` readout at the last event's timestamp while the SAME Raw's annot_x
+ * recorded the real cursor position -- the database contradicted itself, and
+ * `xschem raw value time {}` on a VCD answered 150n for a cursor at 175n. The
+ * sweep column interpolates like a dense analog one, which under D4-4's clamp
+ * is simply the cursor position clipped into the database's own span.
+ *
+ * NEITHER KIND EXTRAPOLATES (RULING D4-4). Outside [sweep[p], sweep[p+1]] the
+ * fraction is clamped, so a cursor before a database's first sample reads that
+ * first sample verbatim and one past its last sample reads the last -- which is
+ * the case a mixed strip creates on every cursor move, the VCD ending at 500 ns
+ * under an analog raw that runs to 2 us. The old code extrapolated there off
+ * the FORWARD segment's slope, and at the last sample of a dataset it did so by
+ * reading values[idx][p + 1] one element past the my_calloc(allpoints) buffer
+ * (save.c) -- silently plausible, occasionally not even repeatable. */
 static double interpolate_yval(int idx, int p, double x, int sweep_idx, int point_not_last)
 {
-  double val = xctx->raw->values[idx][p];
+  Raw *raw = xctx->raw;
+  double val = raw->values[idx][p];
+  /* HOLD -- but never on the sweep column itself (RULING D4-6) */
+  if(idx != sweep_idx && raw->sim_type && !strcmp(raw->sim_type, "vcd")) return val;
   /* not operating point, annotate from 'b' cursor */
-  if(point_not_last && (xctx->raw->allpoints > 1) && sweep_idx >= 0) {
-    Raw *raw = xctx->raw;
+  if(point_not_last && (raw->allpoints > 1) && sweep_idx >= 0) {
     SPICE_DATA *sweep_gv = raw->values[sweep_idx];
     SPICE_DATA *gv = raw->values[idx];
     double dx = sweep_gv[p + 1] - sweep_gv[p];
     double dy = gv[p + 1] - gv[p];
     double offset = x - sweep_gv[p];
-    double interp = dx != 0.0 ? offset * dy / dx : 0.0;
-    val += interp;
+    double frac = dx != 0.0 ? offset / dx : 0.0;
+    if(frac < 0.0) frac = 0.0;   /* before the bracket: hold, never extrapolate */
+    if(frac > 1.0) frac = 1.0;   /* past it: ditto */
+    val += frac * dy;
   }
   return val;
 }
 
-void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+/* Resolve cursor B in the database that is CURRENT RIGHT NOW and stamp its
+ * annot_p / annot_x / annot_sweep_idx / cursor_b_val. `write_tcl` is 1 for the
+ * one database that also publishes ngspice::ngspice_data (see D4-2 below).
+ *
+ * This is the shipped body of backannotate_at_cursor_b_pos(), moved down one
+ * level so it can be run once per contributing database; nothing inside it
+ * changed except the two Tcl_* publishing arms becoming conditional and the
+ * point_not_last argument (RULING D4-4). */
+static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
 {
-  tcleval("catch {eval $cursor_2_hook}");
-  if(sch_waves_loaded() >= 0) {
+  {
     int dset, first = -1, last, dataset = gr->dataset, i, p, ofs = 0, ofs_end;
     double start, end;
     int sweepvar_wrap = 0, sweep_idx;
     double xx, cursor2; /* xx is the p-th sweep variable value, cursor2 is cursor 'b' x position */
     Raw *raw = xctx->raw;
     int  save_datasets = -1, save_npoints = -1;
+    int use_window = 1;   /* RULING D4-7, see the rescan below */
+    if(!raw || !raw->values || !raw->cursor_b_val || raw->nvars <= 0) return;
     /* transform multiple OP points into a dc sweep */
     if(raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
       save_datasets = raw->datasets;
@@ -1308,6 +1360,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
     if(dataset < 0) dataset = 0; /* if all datasets are plotted use first for backannotation */
     dbg(1, "dataset=%d\n", dataset);
     ofs = 0;
+    rescan_no_window:
     for(dset = 0 ; dset < raw->datasets; dset++) {
       double prev_x, prev_prev_x;
       int cnt=0, wrap;
@@ -1328,7 +1381,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
            sweepvar_wrap++;
            cnt = 0;
         }
-        if(xx >= start && xx <= end) {
+        if(!use_window || (xx >= start && xx <= end)) {
           if(dataset == sweepvar_wrap) {
             dbg(1, "xx=%g cursor2=%g first=%d last=%d start=%g end=%g p=%d wrap=%d sweepvar_wrap=%d ofs=%d\n",
               xx, cursor2, first, last, start, end, p, wrap, sweepvar_wrap, ofs);
@@ -1345,7 +1398,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
             last = p;
           }
           ++cnt;
-        } /* if(xx >= start && xx <= end) */
+        } /* if(!use_window || (xx >= start && xx <= end)) */
         prev_prev_x = prev_x;
         prev_x = xx;
       } /* for(p = ofs ; p < ofs + raw->npoints[dset]; p++) */
@@ -1356,6 +1409,34 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
       ofs = ofs_end;
       sweepvar_wrap++;
     } /* for(dset...) */
+    /* RULING D4-7 (fix round) -- THE X WINDOW IS A RENDERING CONCERN AND MUST
+     * NOT GATE THE ANNOTATION.
+     *
+     * The scan above only considers samples inside the STRIP'S CURRENT X WINDOW
+     * [gr->gx1, gr->gx2]. That is fine while every contributing database
+     * overlaps the window, and it is exactly wrong the moment one does not:
+     * with the fan-out of RULING D4-1 a database whose samples all fall outside
+     * the window fell straight through here with first == -1 and had NOTHING
+     * stamped, so it kept the annot_p / annot_x / cursor_b_val of wherever the
+     * cursor USED to be -- or, if it had never been annotated, the -1 and the
+     * my_calloc zeros that read as "that signal is 0" rather than "nothing
+     * asked". One cursor, two times: the databases drift apart again the moment
+     * the user turns a wheel. Reachable by any ordinary X zoom
+     * (wviewer::wheel_zoom writes x1/x2 on the graph rect), and by the fan-out
+     * over sibling strips, whose windows are not this one's.
+     *
+     * So when the window yields nothing, rescan the SAME database with the
+     * window filter off. The answer is then D4-4's own rule applied to that
+     * database's whole sweep -- nearest of its own samples, clamped at both
+     * ends, never extrapolated -- which is the answer a cursor at t deserves
+     * from a database that simply is not on screen right now. It cannot loop:
+     * use_window is only ever cleared. */
+    if(first == -1 && use_window) {
+      use_window = 0;
+      ofs = 0;
+      sweepvar_wrap = 0;
+      goto rescan_no_window;
+    }
     found:
     if(first != -1) {
       if(p > last) {
@@ -1368,24 +1449,122 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
         }
       }
       dbg(1, "xx=%g, p=%d\n", xx, p);
-      Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+      if(write_tcl) Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
       raw->annot_p = p;
       raw->annot_x = cursor2;
       raw->annot_sweep_idx = sweep_idx;
       for(i = 0; i < raw->nvars; ++i) {
         char s[100];
-        raw->cursor_b_val[i] = interpolate_yval(i, p, cursor2, sweep_idx, (p < ofs_end));
-        sprintf(s, "%.*g", xctx->ev_precision, raw->cursor_b_val[i]);
-        /* tclvareval("array set ngspice::ngspice_data [list {",  raw->names[i], "} ", s, "]", NULL); */
-        Tcl_SetVar2(interp, "ngspice::ngspice_data", raw->names[i], s, TCL_GLOBAL_ONLY);
+        /* (p + 1 < ofs_end), not (p < ofs_end): at the LAST sample of the
+         * dataset the old test let interpolate_yval() read values[idx][p + 1],
+         * one past the end of the buffer. RULING D4-4. */
+        raw->cursor_b_val[i] = interpolate_yval(i, p, cursor2, sweep_idx, (p + 1 < ofs_end));
+        if(write_tcl) {
+          sprintf(s, "%.*g", xctx->ev_precision, raw->cursor_b_val[i]);
+          /* tclvareval("array set ngspice::ngspice_data [list {",  raw->names[i], "} ", s, "]", NULL); */
+          Tcl_SetVar2(interp, "ngspice::ngspice_data", raw->names[i], s, TCL_GLOBAL_ONLY);
+        }
       }
-      Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( raw->nvars), TCL_GLOBAL_ONLY);
-      Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
+      if(write_tcl) {
+        Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( raw->nvars), TCL_GLOBAL_ONLY);
+        Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
+      }
     }
     if(save_npoints != -1) { /* restore multiple OP points from artificial dc sweep */
       raw->datasets = save_datasets;
       raw->npoints[0] = save_npoints;
     }
+  }
+}
+
+/* SPEC D4 -- ONE CURSOR, EVERY DATABASE.
+ * doc/claude/specs/mixed_signal_signal_browser.md row D4.
+ *
+ * A cursor placed at time t is ONE object at ONE time. The state it resolves
+ * to is per-`Raw` (annot_p, annot_x, annot_sweep_idx, cursor_b_val), so
+ * resolving it in xctx->raw alone made it N objects that happened to have been
+ * placed together and then drifted apart: on a mixed analog+VCD strip the
+ * cursor read correctly on whichever database the registry cursor was parked on
+ * and read whatever stale index the other one still held from the last time it
+ * happened to be current -- or, for a database that was never current, index
+ * -1, i.e. no readout at all.
+ *
+ * RULING D4-1: resolve in the CURRENT database plus every database contributing
+ * a trace to this strip. graph_cursor_dbs() (draw.c) owns that set and the `%`
+ * parse behind it; the switch/restore bracket lives here, where the unwind
+ * point is known (issue 0305), and restores BOTH halves of the registry cursor.
+ *
+ * RULING D4-2: exactly ONE database publishes ngspice::ngspice_data, and it is
+ * the one that is current on entry -- slots[0] by construction. The Tcl array is
+ * a flat name->value map read by the schematic voltage overlay and by every
+ * floater; letting each database rewrite it would make the last switch win.
+ *
+ * RULING D5-1/D5-3 (spec row D5, enforcement point 3 of 3) -- AND IF THAT ONE
+ * DATABASE IS DIGITAL, NOBODY PUBLISHES AND THE ARRAY IS CLEARED. D4 left this
+ * open and it was a live hole: `xschem raw read <f>.vcd vcd` makes the VCD
+ * CURRENT (extra_rawfile()'s read arm), so the very next cursor motion wrote
+ * that VCD's logic levels into ngspice::ngspice_data under the VCD's own names
+ * -- and where a name collides with an analog one (`TOP.m.q` is a legal vector
+ * name in a spice raw and the natural name in a VCD) the schematic overlay
+ * silently swapped a measured voltage for a logic level. See RULING D5-1: a
+ * logic level is not a voltage.
+ *
+ * The array is UNSET rather than left alone, and no OTHER database is promoted
+ * into the publisher's place:
+ *   - leaving it alone keeps the last analog position's numbers on screen while
+ *     the user moves the cursor -- a stale overlay that looks live, which is the
+ *     silent-wrong-answer shape this whole section exists to remove.
+ *   - promoting the first analog slot would make the overlay follow a database
+ *     the user did not make current, so which values the schematic showed would
+ *     depend on registry order. "No analog database is current, so there is
+ *     nothing to show" is the true statement, and `?` is how
+ *     ngspice::get_voltage already renders it.
+ * Nothing is echoed to the CIW here: this runs on EVERY cursor motion, and a
+ * message on every motion is noise, not a notice. The `annotate_op` /
+ * `update_op` request paths are where the user is told why (RULING D5-4).
+ *
+ * The per-`Raw` half of D4 is untouched: every contributing database, digital
+ * ones included, still gets its annot_p / annot_x / cursor_b_val stamped, so
+ * the viewer's readout bar still reads the digital trace at the cursor. D5 is
+ * about the SCHEMATIC, not about the waveform window.
+ */
+void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+{
+  tcleval("catch {eval $cursor_2_hook}");
+  if(sch_waves_loaded() >= 0) {
+    int *slots = NULL, n, k;
+    int entry_extra_idx = xctx->extra_idx, entry_prev_idx = xctx->extra_prev_idx;
+    /* the entry database is the publisher (D4-2); a digital one publishes
+     * nothing and the array is emptied instead (D5-3) */
+    int publish = !raw_is_digital(xctx->raw);
+
+    if(!publish) Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+    n = graph_cursor_dbs(r, &slots);
+    if(n <= 0) {                      /* no rect, or no registry: the current DB */
+      backannotate_cursor_b_in_db(r, gr, publish);
+      my_free(_ALLOC_ID_, &slots);
+      return;
+    }
+    for(k = 0; k < n; k++) {
+      /* slots[0] IS the entry database, so the first pass needs no switch and a
+       * session with one database makes no extra_rawfile() call at all */
+      if(k > 0) {
+        char buf[30];
+        my_snprintf(buf, S(buf), "%d", slots[k]);
+        if(!extra_rawfile(2, buf, NULL, -1.0, -1.0)) continue;
+      }
+      backannotate_cursor_b_in_db(r, gr, k == 0 && publish);
+    }
+    if(n > 1) {
+      char buf[30];
+      my_snprintf(buf, S(buf), "%d", entry_extra_idx);
+      extra_rawfile(2, buf, NULL, -1.0, -1.0);
+      /* the registry cursor is a PAIR: extra_prev_idx is where `xschem raw
+       * switch_back` goes, and every switch above overwrote it (batch F item 2,
+       * finding 1). draw.c's node_db_prev_restore() is the same two lines. */
+      if(entry_prev_idx >= 0) xctx->extra_prev_idx = entry_prev_idx;
+    }
+    my_free(_ALLOC_ID_, &slots);
   }
 }
 
@@ -5549,6 +5728,131 @@ static int act_select_same_net_add(const ActionEvent *e)
   return 1;
 }
 
+/* --- Alt-R / Alt-F / Alt-V: the in-place transforms, made REMAPPABLE ---------
+ * These three were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r',
+ * 'f' and 'v' -- reachable only from those physical keys, invisible to `xschem bind`,
+ * to keybindings.csv and to the generated cheat-sheet. Each body is migrated here
+ * VERBATIM (the mid-drag STARTMOVE/STARTCOPY arms, the empty-selection arming arm and
+ * the standalone apply) and registered as an action, so the chord is data-driven like
+ * every other migrated key. The DEFAULTS ARE UNCHANGED: two rows per key, Mod1Mask
+ * (Alt) and Mod4Mask (Super), reproduce the EQUAL_MODMASK test exactly -- see
+ * init_input_bindings, and src/cadence_style_rc for the user-facing remap recipe.
+ *
+ * The readonly gate these arms had (`if(readonly_block()) break;`) is now the registry
+ * `mutates=1` column: dispatch_input_action refuses on a read-only view BEFORE the
+ * handler runs -- same modal, same no-op, one less inline gate.
+ *
+ * NO log_cmd, on purpose: the actions.csv rows are label-only (empty command), so
+ * dispatch_input_action's Layer A never fires for them. The standalone arms self-log at
+ * the perform_action boundary (`xschem rotate_in_place` / `rotate x y` / ...), while the
+ * mid-drag and arming arms MUST stay silent -- a drag is logged at its END (Layer C) and
+ * an `xschem rotate_in_place` line emitted mid-drag would replay as one extra rotation
+ * (the same trap the scheduler's rotate_in_place/flip_in_place branches warn about).
+ *
+ * The snap is read here exactly the way handle_key_press's c_snap parameter is derived
+ * (tclgetdoublevar("cadsnap"), callback entry), so the group pivot is identical. */
+static int connected_drag_group_transform(void);
+static void standalone_group_transform(int what, double c_snap);
+
+/* edit.rotate_in_place (default Alt-R / Super-R): old case 'r' EQUAL_MODMASK arm. */
+static int act_rotate_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: a multi-object connected drag rotates the whole selection as a group
+   * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
+   * the per-object in-place rotate (rotatelocal about its own origin). */
+  if(xctx->ui_state & STARTMOVE)
+    move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+  else if(xctx->ui_state & STARTCOPY)
+    copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
+      statusmsg_hold("Rotate in place: click an object to rotate", 1);
+    } else {
+      /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
+       * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
+      standalone_group_transform(ROTATE, tclgetdoublevar("cadsnap"));
+    }
+  }
+  return 1;
+}
+
+/* edit.flip_in_place (default Alt-F / Super-F): old case 'f' EQUAL_MODMASK arm --
+ * HORIZONTAL mirror (left<->right) about each object's own origin, or about the
+ * selection bbox centre for a multi-object selection. */
+static int act_flip_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: multi-object connected drag flips the whole selection as a group
+   * (shared pivot); a single object keeps the per-object in-place flip. */
+  if(xctx->ui_state & STARTMOVE)
+    move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+  else if(xctx->ui_state & STARTCOPY)
+    copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
+      statusmsg_hold("Flip in place: click an object to flip", 1);
+    } else {
+      /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
+       * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
+       * Self-logs at the helper (issue 0068): standalone reaches only here, never the
+       * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
+      standalone_group_transform(FLIP, tclgetdoublevar("cadsnap"));
+    }
+  }
+  return 1;
+}
+
+/* edit.flipv_in_place (default Alt-V / Super-V): old case 'v' EQUAL_MODMASK arm --
+ * VERTICAL mirror (up<->down), built as rotate+rotate+flip. NOTE the asymmetry with
+ * the two above: there is no standalone_group_transform arm (no issue-0116 group form),
+ * so a multi-object selection flips each object about its OWN origin. */
+static int act_flipv_in_place(const ActionEvent *e)
+{
+  (void)e;
+  /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
+   * single object keeps the per-object in-place flip. rl applied to all three steps. */
+  if(xctx->ui_state & STARTMOVE) {
+    int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+    move_objects(ROTATE|rl,0,0,0);
+    move_objects(ROTATE|rl,0,0,0);
+    move_objects(FLIP|rl,0,0,0);
+  }
+  else if(xctx->ui_state & STARTCOPY) {
+    int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+    copy_objects(ROTATE|rl);
+    copy_objects(ROTATE|rl);
+    copy_objects(FLIP|rl);
+  }
+  else {
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
+      xctx->ui_state |= MENUSTART;
+      xctx->ui_state2 = MENUSTARTROTATE;
+      xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
+      statusmsg_hold("Vertical flip in place: click an object to flip", 1);
+    } else {
+      /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
+       * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
+       * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
+       * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
+       * form): the standalone apply is always the per-object in-place flip, so the WHOLE
+       * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
+       * so the mx/my_double_save previously seeded here was immaterial to the transform. */
+      perform_action("flipv_in_place", 0, NULL);
+    }
+  }
+  return 1;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -5728,6 +6032,34 @@ static ActionDef action_registry[] = {
    * Default key 'l' (init_input_bindings). Rebindable. */
   { "edit.add_wire_label", NULL, "xschem add_wire_label",
     "Open the Add Wire Label form (place net labels)" },
+  /* TWO-PANE item 17 (R10): the schematic's "Show in Signal Browser" reaches the C
+   * table, so the chord is REMAPPABLE (`xschem bind` / keybindings.csv) and works in
+   * every profile. It used to be a `bind .drw <Control-Key-5>` in src/cadence_style_rc,
+   * which only cadence-profile users ever loaded while the Tools cascade advertised
+   * the accelerator to everyone. Tcl-backed, fn NULL.
+   * ⚠ THE COMMAND TAKES NO WINDOW ARGUMENT, ON PURPOSE. dispatch_input_action runs a
+   * CONSTANT string -- there is no %-substitution -- so the Tcl side must be the
+   * `{win {}}` (current-context) arm of ase::show_in_browser_for_current, and the
+   * logged replay line is context-free BY DESIGN rather than by accident. The menu
+   * entry (src/xschem.tcl) still passes ${topwin}.drw: a menu click knows its window,
+   * a key press is already IN one.
+   * mutates=0: revealing a hierarchy position changes no schematic content, so it
+   * works in a read-only view. See doc/claude/specs/waveform_signal_browser_two_pane.md
+   * and doc/claude/signal_browser_2pane_batch/PLAN.md item 17. */
+  { "wave.show_in_signal_browser", NULL, "ase::show_in_browser_for_current",
+    "Show in Signal Browser" },
+  /* In-place transforms, defaults Alt-R / Alt-F / Alt-V (plus the Super twins), migrated
+   * out of the hardcoded switch so the chords are remappable -- see the block comment above
+   * act_rotate_in_place and src/cadence_style_rc. mutates=1: dispatch_input_action's
+   * readonly gate replaces the readonly_block() each arm used to call. log_cmd stays NULL
+   * (label-only actions.csv rows, empty command): the standalone arms self-log at the
+   * perform_action boundary and the mid-drag arms must not log at all. */
+  { "edit.rotate_in_place", act_rotate_in_place, NULL,
+    "Rotate in place (selection, or the objects being dragged)", 1 },
+  { "edit.flip_in_place", act_flip_in_place, NULL,
+    "Horizontal flip in place (selection, or the objects being dragged)", 1 },
+  { "edit.flipv_in_place", act_flipv_in_place, NULL,
+    "Vertical flip in place (selection, or the objects being dragged)", 1 },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -5891,7 +6223,15 @@ static void init_input_bindings(void)
   set_input_binding(DEV_KEY, 'a', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* select all */
   set_input_binding(DEV_KEY, 'A', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* toggle show netlist */
   set_input_binding(DEV_KEY, 'A', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor1) */
-  set_input_binding(DEV_KEY, 'b', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* toggle sym text */
+  /* TWO-PANE item 16 (R9): the Ctrl+b over_graph row is GONE. The waveform
+   * viewer's Signal Browser moved to Ctrl-B (doc/claude/specs/
+   * waveform_signal_browser_two_pane.md §8.1), and wave_viewer.tcl's key_filter
+   * now refuses to forward 98 under ControlMask, so nothing in the viewer can
+   * reach this row any more. Consequence, declared rather than hidden (spec §10
+   * limit 9): over a graph EMBEDDED IN A SCHEMATIC Ctrl+b falls through to the
+   * switch below and toggles sym_txt, like it always did on bare canvas.
+   * Pinned by tests/headless/test_key_graph_context.tcl. The BARE-b idle
+   * over_graph row further down is NOT deleted -- bare `b` still forwards. */
   set_input_binding(DEV_KEY, 'B', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* edit header */
   set_input_binding(DEV_KEY, 'B', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor2) */
   /* Phase 3d.1: 'B' canvas behavior is now a Tcl-backed action; with this row the
@@ -6003,6 +6343,36 @@ static void init_input_bindings(void)
    * 65474 alt canvas <action>` (or `xschem unbind key 65474 alt canvas`). Alt =
    * Mod1Mask, matching the other Alt chords above ('h', the j-cluster). */
   set_input_binding(DEV_KEY, XK_F5, Mod1Mask, ACTX_CANVAS, "tools.raise_ciw");
+  /* TWO-PANE item 17 (R10): Ctrl-Alt-V reveals the schematic's hierarchy position (or
+   * the selected instance's) in the waveform viewer's Signal Browser. 'v' == keysym
+   * 118; Ctrl+Alt == ControlMask|Mod1Mask, matching the other Alt chords here, and a
+   * physical Alt sets Mod1Mask in the X event. NOTHING COLLIDES: `case 'v'` in the C
+   * switch has arms for rstate==0, rstate==ControlMask and EQUAL_MODMASK only, and
+   * EQUAL_MODMASK is an EXACT test, so ControlMask|Mod1Mask matched nothing before
+   * this row. Replaces the cadence-only `bind .drw <Control-Key-5>`.
+   * ⚠ `event generate <Control-Alt-Key-v>` does NOT produce this chord -- Tk's `Alt`
+   * PATTERN modifier is the virtual META bit, not Mod1. A test must drive
+   * <Control-Mod1-Key-v> or `-state 12`. */
+  set_input_binding(DEV_KEY, 'v', ControlMask|Mod1Mask, ACTX_CANVAS,
+                    "wave.show_in_signal_browser");
+  /* In-place transforms: Alt-R rotate, Alt-F horizontal flip, Alt-V vertical flip.
+   * These were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r'/'f'/'v';
+   * EQUAL_MODMASK is `rstate == Mod1Mask || rstate == Mod4Mask`, so each key needs TWO
+   * rows (Alt and Super) to keep the shipped behavior byte-identical. 'r'=114, 'f'=102,
+   * 'v'=118. NON-idle on purpose: the arms had no `semaphore>=2` guard because they must
+   * keep working DURING a move/copy drag (that is the whole point of Alt-R mid-drag).
+   * Canvas-only -- no over_graph row, so the dispatch never consults the (side-effectful)
+   * graph context for these chords. NOTHING COLLIDES: plain 'f' (view.zoom_full), plain/
+   * Ctrl 'r' and 'v' and Ctrl-Alt-'v' (wave.show_in_signal_browser) are different chords.
+   * Remap or un-bind from keybindings.csv or a custom rc, e.g.
+   *   xschem bind key 114 ctrl+shift canvas edit.rotate_in_place
+   *   xschem unbind key 118 alt canvas                              */
+  set_input_binding(DEV_KEY, 'r', Mod1Mask, ACTX_CANVAS, "edit.rotate_in_place"); /* Alt-R   */
+  set_input_binding(DEV_KEY, 'r', Mod4Mask, ACTX_CANVAS, "edit.rotate_in_place"); /* Super-R */
+  set_input_binding(DEV_KEY, 'f', Mod1Mask, ACTX_CANVAS, "edit.flip_in_place");   /* Alt-F   */
+  set_input_binding(DEV_KEY, 'f', Mod4Mask, ACTX_CANVAS, "edit.flip_in_place");   /* Super-F */
+  set_input_binding(DEV_KEY, 'v', Mod1Mask, ACTX_CANVAS, "edit.flipv_in_place");  /* Alt-V   */
+  set_input_binding(DEV_KEY, 'v', Mod4Mask, ACTX_CANVAS, "edit.flipv_in_place");  /* Super-V */
   /* Alt-2 toggles the current window between the schematic-type and symbol-type view
    * of the same cell (doc/claude/specs/alt2_toggle_view.md). Tcl-backed
    * (alt2_toggle_view). '2' == keysym 50; Alt = Mod1Mask. Plain '2' (logic level) and
@@ -7127,30 +7497,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         /* graph routing migrated (Phase 3d.1b): idle_only over_graph -> graph.forward. */
         tcleval("property_search");
       }
-      else if(EQUAL_MODMASK) { /* flip objects around their anchor points 20171208 */
-        if(readonly_block()) break;
-        /* issue 0114: multi-object connected drag flips the whole selection as a group
-         * (shared pivot); a single object keeps the per-object in-place flip. */
-        if(xctx->ui_state & STARTMOVE)
-          move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
-        else if(xctx->ui_state & STARTCOPY)
-          copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
-            statusmsg_hold("Flip in place: click an object to flip", 1);
-          } else {
-            /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
-             * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
-             * Self-logs at the helper (issue 0068): standalone reaches only here, never the
-             * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
-            standalone_group_transform(FLIP, c_snap);
-          }
-        }
-      }
+      /* Alt-f / Super-f (flip objects around their anchor points, 20171208) is
+       * data-driven now: edit.flip_in_place, default rows key 102 alt|super canvas.
+       * Handled by the DEV_KEY dispatch above; see act_flip_in_place. */
       break;
 
     case 'F':
@@ -7691,29 +8040,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           tcleval("[xschem get top_path].menubar invoke Simulate");
         }
       }
-      else if(EQUAL_MODMASK) { /* rotate objects around their anchor points 20171208 */
-        if(readonly_block()) break;
-        /* issue 0114: a multi-object connected drag rotates the whole selection as a group
-         * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
-         * the per-object in-place rotate (rotatelocal about its own origin). */
-        if(xctx->ui_state & STARTMOVE)
-          move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
-        else if(xctx->ui_state & STARTCOPY)
-          copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
-            statusmsg_hold("Rotate in place: click an object to rotate", 1);
-          } else {
-            /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
-             * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
-            standalone_group_transform(ROTATE, c_snap);
-          }
-        }
-      }
+      /* Alt-r / Super-r (rotate objects around their anchor points, 20171208) is
+       * data-driven now: edit.rotate_in_place, default rows key 114 alt|super canvas.
+       * Handled by the DEV_KEY dispatch above; see act_rotate_in_place. */
       break;
 
     case 'R':
@@ -7941,41 +8270,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(readonly_block()) break;
         merge_file(2,".sch");
       }
-      else if(EQUAL_MODMASK) { /* vertical flip objects around their anchor points */
-        if(readonly_block()) break;
-        /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
-         * single object keeps the per-object in-place flip. rl applied to all three steps. */
-        if(xctx->ui_state & STARTMOVE) {
-          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
-          move_objects(ROTATE|rl,0,0,0);
-          move_objects(ROTATE|rl,0,0,0);
-          move_objects(FLIP|rl,0,0,0);
-        }
-        else if(xctx->ui_state & STARTCOPY) {
-          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
-          copy_objects(ROTATE|rl);
-          copy_objects(ROTATE|rl);
-          copy_objects(FLIP|rl);
-        }
-        else {
-          rebuild_selected_array();
-          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
-            xctx->ui_state |= MENUSTART;
-            xctx->ui_state2 = MENUSTARTROTATE;
-            xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
-            statusmsg_hold("Vertical flip in place: click an object to flip", 1);
-          } else {
-            /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
-             * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
-             * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
-             * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
-             * form): the standalone apply is always the per-object in-place flip, so the WHOLE
-             * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
-             * so the mx/my_double_save previously seeded here was immaterial to the transform. */
-            perform_action("flipv_in_place", 0, NULL);
-          }
-        }
-      }
+      /* Alt-v / Super-v (vertical flip around anchor points) is data-driven now:
+       * edit.flipv_in_place, default rows key 118 alt|super canvas. Handled by the
+       * DEV_KEY dispatch above; see act_flipv_in_place. */
       break;
 
     case 'V':

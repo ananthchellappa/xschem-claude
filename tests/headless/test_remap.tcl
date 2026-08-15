@@ -3,7 +3,7 @@
 # the Phase-2 Tcl-intercept remap this test used to cover is retired; remapping
 # is now a C-binding-table edit, persistable via keybindings.csv, which
 # test_bindings_file covers). Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_remap.tcl
+#   ./src/xschem --pipe --script tests/headless/test_remap.tcl
 update idletasks
 focus -force .drw
 update idletasks

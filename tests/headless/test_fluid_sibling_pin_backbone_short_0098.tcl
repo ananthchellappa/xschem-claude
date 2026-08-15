@@ -18,7 +18,7 @@
 #
 # NEEDS A REAL X DISPLAY (move_objects + Xlib drawtemp SIGSEGV under --nogui). Self-skips
 # cleanly with no display so it is safe in the --nogui regression harness. Run for real:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_fluid_sibling_pin_backbone_short_0098.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_fluid_sibling_pin_backbone_short_0098.tcl
 
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }

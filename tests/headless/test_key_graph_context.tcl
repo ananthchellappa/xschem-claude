@@ -7,7 +7,7 @@
 # waveform graph -> routed to the graph, canvas zoom unchanged; (b) on bare
 # canvas -> full zoom (canvas zoom changes).
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_key_graph_context.tcl
+#   ./src/xschem --pipe --script tests/headless/test_key_graph_context.tcl
 update idletasks
 focus -force .drw
 
@@ -47,15 +47,21 @@ set F 102   ;# keysym for 'f'
 
 # --- the data: 'f' rows exist (canvas->zoom_full, over_graph->forward). Ctrl-f gained
 #     an over_graph routing row in Phase 3d.1b (property-search canvas behavior stays in
-#     C); Alt-f stays entirely in C. So neither has a CANVAS row. -
+#     C), so Ctrl-f still has NO canvas row. Alt-f DOES have one now: the in-place
+#     horizontal flip was migrated out of the switch so the chord is remappable
+#     (edit.flip_in_place, plus a Super twin — see act_flip_in_place). ---
 set dump [xschem bindings dump]
 check "canvas f -> view.zoom_full row present" \
   [expr {[lsearch -exact $dump {key 102 0 canvas view.zoom_full}] >= 0}] {}
 check "over_graph f -> graph.forward row present" \
   [expr {[lsearch -exact $dump {key 102 0 graph graph.forward}] >= 0}] {}
-check "no Ctrl-f / Alt-f CANVAS rows (canvas behavior stays in C)" \
-  [expr {[lsearch -glob $dump {key 102 ctrl canvas *}] < 0 &&
-         [lsearch -glob $dump {key 102 alt canvas *}]  < 0}] {}
+check "no Ctrl-f CANVAS row (property search stays in C)" \
+  [expr {[lsearch -glob $dump {key 102 ctrl canvas *}] < 0}] {}
+check "Alt-f / Super-f CANVAS rows -> edit.flip_in_place" \
+  [expr {[lsearch -exact $dump {key 102 alt canvas edit.flip_in_place}]   >= 0 &&
+         [lsearch -exact $dump {key 102 super canvas edit.flip_in_place}] >= 0}] {}
+check "no Alt-f OVER_GRAPH row (flip never routes to a graph)" \
+  [expr {[lsearch -glob $dump {key 102 alt graph *}] < 0}] {}
 
 # perturb the canvas zoom away from "full" so a subsequent zoom_full is observable
 lassign [screen 870 100] cx cy   ;# below the graph: bare canvas
@@ -116,7 +122,18 @@ check "over-graph Up leaves canvas origin" [expr {$z1==$z0 && $x1==$x0 && $y1==$
 #      graph-vs-canvas routing is data. Verified with Ctrl+b -> sym_txt.
 #      NOTE: 'A' (Shift+a) used to be Group-B routing-only but was fully migrated in
 #      Phase 3d.2 batch 3 (now has a canvas row -> view.toggle_show_netlist); its
-#      behavioral round-trip below still holds and now exercises the canvas row. ----
+#      behavioral round-trip below still holds and now exercises the canvas row.
+#
+# ⚠⚠ TWO-PANE item 16 (R9) DELETED Ctrl+b's over_graph ROW. The Signal Browser's
+# chord moved Ctrl-L -> Ctrl-B, and 98 is a `graphkeys` member whose membership
+# is unconditional on modifiers, so the waveform viewer's own key_filter now
+# REFUSES to forward Ctrl-b (a modifier carve-out beside Ctrl-d's) and the C
+# table's `key 98 ctrl graph graph.forward` row was removed with it — see
+# src/callback.c and doc/claude/specs/waveform_signal_browser_two_pane.md §8.1.
+# Ctrl+b is therefore no longer routed anywhere: the CANVAS arm owns it
+# everywhere, over a graph included. The two claims below RECORD that deletion
+# (an explicit absence, and the inverted behavioural leg) instead of losing it.
+# Nothing was deleted from this file. ----
 proc keyats {x y ks st} { xschem callback .drw 2 $x $y $ks 0 0 $st; update idletasks }
 set Akey 65; set bkey 98
 set Shift 1; set Ctrl 4
@@ -127,8 +144,14 @@ set Shift 1; set Ctrl 4
 check "Group B over_graph rows present" [expr {
   [lsearch -exact $dump {key 97 ctrl graph graph.forward}] >= 0 &&
   [lsearch -exact $dump {key 65 0 graph graph.forward}]    >= 0 &&
-  [lsearch -exact $dump {key 98 ctrl graph graph.forward}] >= 0 &&
   [lsearch -exact $dump {key 66 0 graph graph.forward}]    >= 0 }] {}
+# TWO-PANE item 16: the 98/ctrl term dropped out of the conjunction above and
+# becomes an explicit ABSENCE here, so the deletion is a recorded claim rather
+# than a term that quietly went missing. Its POSITIVE CONTROL is the bare-b
+# idle row, which is NOT deleted (asserted again in the 3d.1b section below).
+check "over_graph Ctrl+b row is GONE (two-pane item 16 / R9), bare-b row stays" [expr {
+  [lsearch -exact $dump {key 98 ctrl graph graph.forward}]      <  0 &&
+  [lsearch -exact $dump {key 98 0 graph graph.forward idle}]    >= 0 }] {}
 check "Group B has no canvas rows (behavior stays in C)" [expr {
   [lsearch -glob $dump {key 97 ctrl canvas *}] < 0 &&
   [lsearch -glob $dump {key 98 ctrl canvas *}] < 0 }] {}
@@ -144,15 +167,23 @@ set b1 $netlist_show
 keyats $gx $gy $Akey $Shift
 check "over-graph A leaves netlist_show" [expr {$netlist_show == $b1}] "($b1 == $netlist_show)"
 
-# Ctrl+b toggles sym_txt on the canvas; over a graph it forwards (no toggle)
+# Ctrl+b toggles sym_txt on the canvas — the surviving POSITIVE CONTROL, and the
+# reason the inverted leg below is a routing statement rather than a "Ctrl+b is
+# broken" statement. MEASURED both sides of the deletion: canvas 1, canvas 1.
 lassign [screen 870 100] cx cy
 set b0 $sym_txt
 keyats $cx $cy $bkey $Ctrl
 check "canvas Ctrl+b toggles sym_txt" [expr {$sym_txt != $b0}] "($b0 -> $sym_txt)"
+# ⚠ INVERTED BY TWO-PANE item 16 (R9), and MEASURED rather than reasoned: with
+# the over_graph row present this read 0 (no toggle over a graph); with the row
+# deleted it reads 1. That is a real, declared behaviour change for a graph
+# EMBEDDED IN A SCHEMATIC — spec §10 declared limit 9 — not an accident, and
+# this leg is what stops the next reader filing it as a bug.
 lassign [screen 870 -540] gx gy
 set b1 $sym_txt
 keyats $gx $gy $bkey $Ctrl
-check "over-graph Ctrl+b leaves sym_txt" [expr {$sym_txt == $b1}] "($b1 == $sym_txt)"
+check "over-graph Ctrl+b now TOGGLES sym_txt too (two-pane item 16 deleted the graph routing row, so the canvas arm owns the chord everywhere)" \
+  [expr {$sym_txt != $b1}] "($b1 -> $sym_txt)"
 
 # ---- Ctrl+Left/Right tab-switch: routing is data, tab-switch stays in C ----
 # Ctrl+arrow must NOT scroll (that distinguishes it from the no-mod arrow, which

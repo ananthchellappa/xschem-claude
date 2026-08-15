@@ -16,7 +16,7 @@
 #     a child run with --script must NOT log the script's commands.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_stdin_tcp_log.tcl
 
 set ::fails 0

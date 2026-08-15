@@ -1,0 +1,14 @@
+* issue 0058: switcher.cir with the mid-run mode misspelled, which is the case
+* a latch keyed on the MODE would silence -- 'bogus' establishes NG_CASE_FOLD
+* and the run started in fold, so a mode-difference test never fires
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  display
+  set casemode=bogus
+  source mid.cir
+.endc
+.end

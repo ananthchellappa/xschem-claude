@@ -1,5 +1,5 @@
 # Net highlight style editor — per-cell editing widgets (plan slice 4). GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_cells.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_cells.tcl
 # Drives the per-cell bound vars + commit path directly (deterministic, no event injection) and
 # asserts: rgb.txt name parse, color/march/dash helpers, widget->table->widget round-trip with
 # net_hilight_style_norm clamping, and the dash-empty disable rule.

@@ -10,7 +10,7 @@
 #
 # edit_property() early-returns on !has_x, and the force runs before the (non-blocking) form
 # opens, so this MUST run under X (no --nogui):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_editprop_preserve.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_editprop_preserve.tcl
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; edit_property early-returns on !has_x)"; flush stdout; exit 0 }
 update idletasks
 

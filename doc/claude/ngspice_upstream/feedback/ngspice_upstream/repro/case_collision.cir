@@ -1,0 +1,11 @@
+* two nets differing only in case: Out and OUT
+Vs In 0 DC 3
+Rm In Out 1k
+Rn In OUT 2k
+Ro Out 0 1k
+Rp OUT 0 3k
+.control
+op
+write case_collision.raw
+.endc
+.end

@@ -8,23 +8,39 @@
 #
 # Portable (vs the original machine-specific version):
 #   * repo root + binary resolved relatively; override the binary with $XSCHEM
-#   * no hard-coded DISPLAY — GUI tests self-SKIP when $DISPLAY is unset (they
-#     guard on `winfo exists .`); under a real/virtual X (xvfb-run) they run
-#   * per-test timeout via $AUDIT_TIMEOUT (default 120s)
+#   * per-test timeout via $AUDIT_TIMEOUT (default 300s)
+#
+# DISPLAY: the audit runs on a PRIVATE Xvfb by default and no longer borrows
+# whatever screen it was launched from — see tests/headless/xvfb_arm.sh for the
+# measurements behind that and for the three cases that still want a real one.
+#   AUDIT_DISPLAY=:0    the real screen (and then the GUI gate matters again)
+#   AUDIT_DISPLAY=none  no DISPLAY at all; GUI tests self-SKIP (`winfo exists .`)
+#   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
 #
 # Usage:
-#   tests/headless/full_audit.sh                 # all tests
+#   tests/headless/full_audit.sh                 # all tests, private Xvfb
 #   tests/headless/full_audit.sh test_sweep_diff test_multi_window   # a subset
-#   XSCHEM=/path/to/xschem xvfb-run -a tests/headless/full_audit.sh  # in CI
+#   AUDIT_DISPLAY=:0 tests/headless/full_audit.sh                    # real screen
+#   XSCHEM=/path/to/xschem tests/headless/full_audit.sh              # in CI -- NO outer
+#                                     # xvfb-run: the script arms its own private Xvfb
 #   AUDIT_LIB_ONLY=1 . tests/headless/full_audit.sh   # define is_skip/has_failure/
 #                                                     # classify only, run nothing
 #
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+
+# Pick the display arm before anything else: this may re-exec the whole script
+# under xvfb-run, so nothing above it should have side effects.
+# shellcheck source=/dev/null
+. "$HERE/xvfb_arm.sh"
+xvfb_arm "$0" "$@"
+
 REPO=$(cd "$HERE/../.." && pwd)
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
-TIMEOUT="${AUDIT_TIMEOUT:-120}"
+# 300, not 120: test_wave_markers legitimately needs 61-149 s, so the old
+# default turned a slow-but-passing test into an intermittent TIMEOUT.
+TIMEOUT="${AUDIT_TIMEOUT:-300}"
 
 if [ ! -x "$XSCHEM" ]; then
   echo "FATAL: xschem binary not found/executable at: $XSCHEM (build with: cd src && make, or set \$XSCHEM)" >&2
@@ -82,7 +98,32 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
 # modal is raised for real and nothing dismisses it. Measured: killed at 120s under WSLg,
 # still stalled after 300s under xvfb-run. Issue 0355; the suite now self-guards too, so the
 # two halves are independent.)
-nogui_tests=" test_descend_refusal_channel_0251 test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate test_placement_wire_gate "
+# (test_verilog_view_model is pure view-model logic and needs no display; it is
+# pinned here so its ASE-dispatch check cannot open a real ASE toplevel under X)
+# (test_vcd_read is a pure file-parser/data-model test -- it only reads VCD and
+# .raw files into the Raw registry and never draws, so it needs no display)
+# (test_ase_cosim drives ase:: procs, the raw registry and the wviewer attach
+# seam with its three Tk helpers stubbed -- no display, and pinned here so its
+# `xschem load` of fixture schematics cannot land in a real editor window)
+# (test_raw_ascii_point_bounds only feeds malformed ascii rawfiles to the Raw
+# reader and never draws; issue 0213)
+# (test_vcd_time_base reads a synthesized .raw and .vcd into the Raw registry and
+# compares time columns -- pure data model, no drawing, verified with DISPLAY
+# unset; spec D3/H3)
+# (test_raw_read_dispatch reads table/vcd/raw files into the Raw registry; its
+# end-to-end group calls open_sub_schematic / hi_descend, which open a new
+# window but need no display -- whole file verified with DISPLAY unset; 0290)
+# (test_node_token_split drives the graph hit-testers, the bold envelope and the
+# marker readout over a synthesized raw+VCD pair through `xschem get`/`xschem
+# graph_marker` verbs only -- no canvas is ever drawn, so it is true-headless;
+# issue 0305)
+# (test_raw_read_failure_0306 feeds non-regular paths and missing files to the
+# Raw readers and drives `set raw_level`; every crash-provoking sequence runs in
+# a spawned --nogui child, so the parent never draws and never dies -- issue 0306)
+# The list is the UNION of both merge-5 sides (merge 5, doc/claude/suggestions/
+# plan_merge5_fluid_into_open_pdk.md): keeping either half alone silently un-pins the
+# other's tests, and dropping open_pdk's half hangs test_placement_wire_gate forever.
+nogui_tests=" test_descend_refusal_channel_0251 test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 test_placement_preview_doors test_paste_modify_flag_0244 test_shape_draw_gate test_placement_wire_gate test_verilog_view_model test_vcd_read test_ase_cosim test_raw_ascii_point_bounds test_vcd_time_base test_raw_read_dispatch test_raw_read_failure_0306 test_node_token_split test_wave_cursor_crossdb test_backannotate_digital test_cosim_golden_e2e "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 

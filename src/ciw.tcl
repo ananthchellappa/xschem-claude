@@ -67,6 +67,13 @@ proc ciw_create {} {
   .ciw.l.t tag configure input  -foreground blue
   .ciw.l.t tag configure result -foreground gray30
   .ciw.l.t tag configure error  -foreground red
+  # `note` is a result the user must NOTICE without it being an error: today the
+  # only producer is the co-simulation resolver telling the user that the scope
+  # recorded by the netlister is not the one its signals actually live in
+  # (RULING 5f-1, doc/claude/specs/mixed_signal_signal_browser.md). Without this
+  # line the tag is undefined and Tk renders the notice exactly like any other
+  # result line, i.e. the visibility the ruling asserts does not exist.
+  .ciw.l.t tag configure note   -foreground {dark orange}
   pack .ciw.l.yscroll -side right -fill y
   pack .ciw.l.t -side top -fill both -expand yes
 

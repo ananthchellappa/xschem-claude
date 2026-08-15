@@ -10,7 +10,7 @@
 # command path (which is MENUSTART and bypasses the modifier logic).
 #
 # MUST run from the repo ROOT under X (the nand2.sch fixture path is CWD-relative):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_cadence_drag.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_cadence_drag.tcl
 update idletasks
 focus -force .drw
 update idletasks

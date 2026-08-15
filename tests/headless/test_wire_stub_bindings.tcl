@@ -15,7 +15,7 @@
 #      the case ' ' fallback); rebinding restores add_pin_stubs.
 #
 # Run under X with --pipe from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_wire_stub_bindings.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_wire_stub_bindings.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

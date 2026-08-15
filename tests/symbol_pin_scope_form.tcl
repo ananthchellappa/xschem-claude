@@ -14,7 +14,7 @@
 #  Run:
 #      cd tests
 #      ../src/xschem --nogui --pipe -q --script symbol_pin_scope_form.tcl     ;# logic gate
-#      DISPLAY=:0 ../src/xschem --pipe -q --script symbol_pin_scope_form.tcl  ;# + gui smoke
+#      ../src/xschem --pipe -q --script symbol_pin_scope_form.tcl  ;# + gui smoke
 #
 
 set nfail 0

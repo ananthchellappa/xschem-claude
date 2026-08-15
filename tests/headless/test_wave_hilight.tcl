@@ -706,10 +706,22 @@ check "WH9h landmine 37: the graph_flags 128|256 bracket SAVES the hcursor bits"
   [wh_count_code $whenv {saveflags = xctx->graph_flags & \(128 \| 256\)}] 1
 check "WH9h ...and puts them back after setup_graph_data" \
   [wh_count_code $whenv {xctx->graph_flags = \(xctx->graph_flags & ~\(128 \| 256\)\) \| saveflags}] 1
-check "WH9h landmine 40: the rawfile switch is unwound only if it TOOK" \
-  [wh_count_code $whenv {if\(switched\) extra_rawfile\(5,}] 1
-check "WH9h ...and there is exactly ONE switch, above the node loop" \
-  [wh_count_code $whenv {extra_rawfile\(autoload,}] 1
+# ⚠ RESTATED 2026-08-09 by issue 0305, not weakened. Both halves of landmine 40
+# still hold; what changed is the MECHANISM and the COUNT, deliberately:
+#   * the unwind is no longer extra_rawfile()'s mode-5 SWAP. 0305 puts a SECOND,
+#     PER-TRACE switch inside the node loop (a `node=` entry may name its own
+#     `%<rawfile>`), and a swap is not a stack pop -- unwinding two nested levels
+#     with it lands the session on the inner database. Both restores are now
+#     absolute, index-based node_db_restore() calls, which compose.
+#   * "exactly ONE switch above the node loop" is therefore now TWO switches,
+#     one at each level, and the requirement is that EACH has its own unwind.
+check "WH9h landmine 40: the graph-level rawfile switch is unwound only if it TOOK" \
+  [wh_count_code $whenv {if\(switched\) node_db_restore\(entry_extra_idx\)}] 1
+check "WH9h ...and the per-trace switch inside the loop (issue 0305) has its own\
+ unwind: two switches, two restores, no swap" \
+  [list [wh_count_code $whenv {extra_rawfile\(autoload,}] \
+        [wh_count_code $whenv {node_db_restore\(node_saved_idx\)}] \
+        [wh_count_code $whenv {extra_rawfile\(5,}]] {2 1 0}
 # landmine 38: the sweep token is pulled before ANY continue in the node walk
 set whlines [split $whenv "\n"]
 set whi_stok -1; set whi_cont -1

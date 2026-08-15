@@ -4,7 +4,7 @@
 # Tested with canvas-context events only (no graph fixture needed); the
 # over_graph context is exercised later (c3/c6) once graph routing is migrated.
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_binding_precedence.tcl
+#   ./src/xschem --pipe --script tests/headless/test_binding_precedence.tcl
 update idletasks
 focus -force .drw
 update idletasks

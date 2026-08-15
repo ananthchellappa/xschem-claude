@@ -1,0 +1,11 @@
+* one_save -- exactly one saved vector in the whole deck
+Vs In 0 DC 3
+R1 In MidNode 1k
+R2 MidNode 0 3k
+.save v(In)
+.op
+.control
+run
+write one_save.raw
+.endc
+.end

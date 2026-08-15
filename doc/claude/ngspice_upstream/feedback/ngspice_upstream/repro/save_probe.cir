@@ -1,0 +1,11 @@
+* candidate acceptance shape: .save v(midnode) against net MidNode, probed by a let
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.save v(midnode)
+.control
+op
+let vprobe = v(midnode)
+print vprobe
+.endc
+.end

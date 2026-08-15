@@ -25,7 +25,7 @@
 # paste test's T6b G-record poison).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_rotmove_drop_log.tcl
 
 set ::fails 0

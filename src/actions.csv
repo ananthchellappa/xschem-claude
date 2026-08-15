@@ -161,6 +161,8 @@ tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires a
 tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,Select all connected wires/labels/pins,
 tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions",
 tools.net_hilight_style_editor,command,tools,Net highlight styles...,,net_hilight_style_editor,,,"Edit net highlight colors, dashes, blink and marching-ants without editing rc files",
+calc.open,command,tools,Calculator,,calc::open,,,Open the Calculator — build waveform expressions and plot or measure them,
+wave.show_in_signal_browser,command,tools,Show in Signal Browser,Ctrl+Alt+V,ase::show_in_browser_for_current,,,Reveal the schematic's hierarchy position (or the selected instance) in the waveform viewer's Signal Browser,
 view.redraw,command,view,Redraw,Esc,xschem redraw,,,Redraw,
 view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,Zoom Full,
 view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In,
@@ -190,6 +192,9 @@ view.center_at_cursor,command,view,Center view on cursor,,,,,Center the view on 
 view.pan,command,view,Drag-pan canvas,,,,,Drag-pan the canvas from the pointer (ship unbound; bind a key in keybindings.csv),
 edit.cycle_manhattan,command,edit,Cycle manhattan corner,,,,,Cycle the corner mode of an in-progress move/wire/line gesture (ship unbound; bind a key in keybindings.csv),
 edit.cycle_pin_type,command,edit,Cycle pin type (while placing),,,,,Cycle the direction/type (input/output/inout <-> ipin/opin/iopin) of the pin being placed (default Ctrl+MMB),,1
+edit.rotate_in_place,command,edit,Rotate in place (key),Alt-R,,,,"Rotate the selection in place, or the objects being dragged (default Alt-R; remap with xschem bind key 114 <mods> canvas edit.rotate_in_place)",
+edit.flip_in_place,command,edit,Horizontal flip in place (key),Alt-F,,,,"Horizontally flip the selection in place, or the objects being dragged (default Alt-F; remap with xschem bind key 102 <mods> canvas edit.flip_in_place)",
+edit.flipv_in_place,command,edit,Vertical flip in place (key),Alt-V,,,,"Vertically flip the selection in place, or the objects being dragged (default Alt-V; remap with xschem bind key 118 <mods> canvas edit.flipv_in_place)",
 view.scroll_up,command,view,Scroll up,,xschem scroll up,,,Scroll the viewport up one step,
 view.scroll_down,command,view,Scroll down,,xschem scroll down,,,Scroll the viewport down one step,
 view.scroll_left,command,view,Scroll left,,xschem scroll left,,,Scroll the viewport left one step,

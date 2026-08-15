@@ -8,7 +8,7 @@
 #   (3) u regained the idle gate the Tk path used to bypass: at semaphore>=2 the
 #       GUI key no longer undoes (the old C switch did nothing while busy).
 # Run under X with --pipe:
-#   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_accelerators.tcl
+#   ./src/xschem --pipe --script tests/headless/test_accelerators.tcl
 update idletasks
 focus -force .drw
 update idletasks

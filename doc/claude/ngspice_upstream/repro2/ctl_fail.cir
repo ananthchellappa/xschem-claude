@@ -1,0 +1,11 @@
+* ctl_fail -- net MidNode, .save spells it midnode, failure inside .control
+Vs In 0 DC 3
+R1 In MidNode 1k
+R2 MidNode 0 3k
+.save v(midnode)
+.op
+.control
+run
+write ctl_fail.raw
+.endc
+.end

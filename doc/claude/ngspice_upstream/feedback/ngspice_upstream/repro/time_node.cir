@@ -1,0 +1,11 @@
+* a net literally called Time -- collides with the tran scale vector 'time'
+Vs In 0 DC 3
+Rl In Time 1k
+Rg Time 0 1k
+.control
+set filetype=ascii
+tran 1u 3u
+display
+write time_node.raw
+.endc
+.end

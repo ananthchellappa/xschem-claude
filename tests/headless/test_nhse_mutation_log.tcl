@@ -14,7 +14,7 @@
 # `xschem update_net_hilight_style` directly and never log.
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_nhse_mutation_log.tcl
 
 set ::fails 0

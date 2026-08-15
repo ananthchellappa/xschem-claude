@@ -67,8 +67,125 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
 
-### GUI-test control gate (`tests/headless/full_audit.sh`)
-Running `full_audit.sh` under a real/WSLg `$DISPLAY` pops a **control panel**
+### The persistent dev display (`tests/headless/devdisplay.sh`)
+**Start this once and GUI testing stops touching your screen at all**, including
+the case no wrapper script can reach — a bare
+`./src/xschem --pipe -q --script tests/headless/<t>.tcl`, which is the most-typed
+command in a session and which no arming script wraps.
+
+```sh
+tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, ~0.3 s, idempotent
+tests/headless/devdisplay.sh view      # x11vnc on localhost, to watch it
+tests/headless/devdisplay.sh status|stop
+```
+
+**The human does NOT want `DISPLAY=:99` in their interactive shell**, and an
+earlier revision of this section wrongly told them to put it in `~/.bashrc`. A
+person launching xschem is launching it *to use it* — sending that to an
+invisible display is the bug, not the fix. The armed entry points
+(`full_audit.sh`, `run_suites.sh`, `gated_xschem.sh`, the 8 standalone
+`test_*.sh`) already need nothing.
+
+**The one consumer of the export is the assistant**, whose bare
+`./src/xschem --pipe -q --script tests/headless/<t>.tcl` is typed dozens of
+times a session and is armed by nothing. Two ways to cover it, in order:
+
+1. **Launch the session as `DISPLAY=:99 claude`.** Tool shells inherit the
+   Claude Code process's environment, so every bare invocation lands on the dev
+   display and the human's own terminals keep `:0`. One word, no rc edits, and
+   it does not depend on the assistant remembering anything.
+2. **Failing that — assistant, route it yourself**: `tests/headless/devdisplay.sh
+   exec ./src/xschem --pipe -q --script <t>.tcl`, or run suites through
+   `run_suites.sh`. Never a bare `./src/xschem --script` on a live `:0` unless
+   the point *is* the real screen.
+
+Note `~/.bashrc` cannot serve purpose 1 here anyway: it returns at its line 6–9
+for non-interactive shells, and the Bash tool's shell is non-interactive
+(`$- = hmtBc`). It inherits its environment; it does not source that file. (An
+earlier claim in this section that it *is* sourced was wrong — inferred from
+`~/eda/bin` being on `PATH`, which arrives by inheritance.)
+
+`shellinit` remains, for the narrow case it fits: a **dedicated terminal used
+only for running tests by hand**. It emits a *conditional* export, because an
+unconditional one in an rc outlives the display it names — after a reboot or a
+`stop`, every GUI program in that shell dies with `cannot open display`. **The
+display does not survive a reboot**; re-run `start`.
+
+The arm (below) **attaches** to it when it is up, so every entry point lands on
+one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the
+right way round — the only thing that still needs it is reproducing
+WSLg-specific defects. Side wins: immune to the WSLg Xwayland aborts that kill
+`:0` clients ~3×/session, and no per-run Xvfb spawn.
+
+`_gate_enabled` returns false on the dev display, deliberately: an invisible
+display would otherwise arm the gate and `_gate_attention` would relaunch the
+user's Pause panel where nobody can see it. Spec: `doc/claude/specs/dev_display.md`.
+
+**Two platform traps recorded there**: under WSLg `/tmp/.X11-unix` is mode 777
+without the sticky bit, so Xvfb binds only the *abstract* socket
+`@/tmp/.X11-unix/XN` and a `[ -S /tmp/.X11-unix/XN ]` readiness poll is always
+false; and `xdpyinfo` against a dead display **hangs** on the TCP fallback rather
+than failing — check the listen state before probing.
+
+### The owed ledger (`tests/headless/owed.sh`)
+Two debts still cost the user's attention, and both used to arrive scattered —
+one at a time, whenever a feature happened to finish. Record them instead, pay
+them in one batch:
+
+```sh
+owed.sh add suite <name> [why]   # owes a :0 run  ("run a GUI feature's suite on
+                                 #   :0 once before calling it done")
+owed.sh add look  <what> [why]   # owes the USER's eyes (pixel deliverables)
+owed.sh list | count | show
+owed.sh drain                    # runs the SUITE debts, one batch, gate live
+```
+
+**The two lists are not interchangeable and no command converts one into the
+other.** A suite debt clears itself on a pass; a **look debt clears only when
+the user says so** (`owed.sh clear look <id>`). `drain` does not read the look
+list at all. A ledger that discharged an eyeball because a suite went green
+would be exactly the defect that rule was written about — two defects shipped
+past 28 passing checks. Spec: `doc/claude/specs/owed.md`.
+
+Assistant: `add` at the moment the debt is incurred; it costs nothing and is the
+only thing that makes the batching possible. Never report a pixel deliverable
+"done" on a green suite — record a `look` and say "suites green, please look".
+
+### The display arm: Xvfb by default (`tests/headless/xvfb_arm.sh`)
+`full_audit.sh`, `run_suites.sh`, `gated_xschem.sh` and the 7 window-mapping
+standalone `test_*.sh` suites run on the persistent dev display if one is up,
+otherwise a **private Xvfb**, and no longer
+borrow the screen they were launched from. That is the routine arm because it is
+measured better, not merely quieter: 30/30 soak with identical check counts where
+the same suites on `:0` flake 4-in-10 / 2-in-3 / 1-in-5, a full audit reproducing
+the recorded `:0` fail list exactly, and `test_wave_modes` at 2.3 s against
+6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (real screen), `=none` (no DISPLAY, GUI
+legs self-skip), `AUDIT_SCREEN=WxHxD` (default `1920x1080x24` — **pin it**, and
+never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at).
+
+**`GUI_GATE=0` is forced on the Xvfb arm, not defaulted.** `_gate_enabled` only
+checks that `$DISPLAY` is non-empty, so a virtual display arms the gate; then
+`gate_start` → `_gate_attention` kills the live panel and relaunches it on the
+invisible display, for every session sharing the control dir. Xvfb without
+`GUI_GATE=0` doesn't free the screen, it breaks Pause.
+
+**A window manager runs inside the virtual session** (`AUDIT_WM`, default
+`openbox`; `none` for the old empty-Xvfb behaviour). Measured: empty Xvfb does
+not reparent and silently no-ops `wm iconify`; with openbox both work — and on
+iconify openbox is *more* faithful than WSLg, which doesn't honour it either.
+So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
+
+**Xvfb is still not a substitute for `:0`** for a human eyeball, or for WSLg's
+own quirks. The sharpest of those is **event traffic**: one `wm geometry`
+request yields 3 `<Configure>` events on `:0` against 1 under Xvfb with or
+without a WM, and Calculator phase 0 passed 49/49 under Xvfb while failing 3
+checks on `:0` for exactly that reason. **Run a GUI feature's suite on `:0` once
+before calling it done** — but treat a bug that only `:0` can reproduce as a
+*test* defect too: the fix is to force the race deterministically
+(`test_calc_skeleton` S12), not to hope an environment supplies it.
+
+### GUI-test control gate (`tests/headless/gui_gate.sh`)
+Running a suite under a real/WSLg `$DISPLAY` pops a **control panel**
 (`tests/headless/gui_gate_widget.tcl` via `wish`) that **warns before the
 suite runs** (Proceed / Snooze 5·15·30 min) and gives a **Pause/Resume toggle
 + Stop** during it — the GUI suite otherwise floods the display and makes the
@@ -80,8 +197,12 @@ worktree/subagent runs, so one Pause pauses every suite. It **fails open** (no
 `DISPLAY`, `GUI_GATE=0`, or a closed panel → tests just run) so CI/headless is
 unaffected. Spec: `doc/claude/specs/gui_test_gate.md`.
 
+Since the default arm became Xvfb the panel should be **rare** — it now guards
+the deliberate `AUDIT_DISPLAY=:0` runs, not the everyday ones. A panel popping
+for a routine suite means something bypassed `xvfb_arm.sh`.
+
 **Don't press Proceed forty times.** Many small runs each cost a click, or a
-2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Allow 2h`**
+2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Forever`**
 once and every suite in that window starts unprompted — Pause and Stop keep
 working throughout, and the panel shows how many have run. Approving *before*
 launching a batch works too.

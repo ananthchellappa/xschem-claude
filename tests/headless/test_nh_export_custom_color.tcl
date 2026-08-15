@@ -6,7 +6,7 @@
 # Uses a NON-palette color (#1a9b8c teal) so a match cannot be a coincidence with a layer color.
 # Needs Tk/X: resolving a custom color to its RGB goes through X (resolve_hilight_style_rgb guards on
 # has_x), exactly as the on-screen path does. Run:
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_export_custom_color.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_export_custom_color.tcl
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; custom-color resolution needs X)"; flush stdout; exit 0 }
 

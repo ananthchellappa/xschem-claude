@@ -385,6 +385,29 @@ void transpose_matrix(double *a, int r, int c)
   my_free(_ALLOC_ID_, &done);
 }
 
+/* the empty line ngspice writes between ascii data points (LF and CRLF files
+ * both exist in the wild) */
+static int raw_ascii_blank_line(const char *line)
+{
+  return line[0] == '\n' || (line[0] == '\r' && line[1] == '\n');
+}
+
+/* Skip the ascii `Values:` block of a dataset the caller did not ask for.
+ *
+ * KNOWN DEFECT, deliberately left in place: see doc/claude/issues/0300-*.md.
+ * `line[0] == '\n'` is the only point terminator here, so this does not
+ * recognise a CRLF separator and has no bound at all -- a skipped block that is
+ * missing its separators, or written with CRLF endings, makes this walk past
+ * the block and eat the following plot's header, costing the whole read.
+ *
+ * A fix was written and REVERTED on 2026-08-09: counting value lines from the
+ * plot's own header (npoints * lines_per_point) cures both, but trusts a header
+ * that may over-declare its block, and then over-skips into the next plot's
+ * `Plotname:` line -- measured as a silently deleted dataset with the read
+ * still reporting success. A correct fix has to use the count as a BOUND while
+ * still resynchronising on a blank separator and on a new header line. Issue
+ * 0300 carries the measurements and the direction.
+ */
 static void skip_raw_ascii_points(int npoints, FILE *fd)
 {
   char line[1024];
@@ -403,20 +426,164 @@ static void skip_raw_ascii_points(int npoints, FILE *fd)
   }
 }
 
-static int read_raw_ascii_point(int ac, double *tmp, FILE *fd)
+/* match `word` (already lower case) at the head of `p`, case insensitively.
+ * Returns the number of characters consumed, 0 if it does not match. */
+static int raw_ascii_kw(const char *p, const char *word)
+{
+  int n = 0;
+  while(word[n]) {
+    if(tolower((unsigned char)p[n]) != word[n]) return 0;
+    n++;
+  }
+  return n;
+}
+
+/* 1 if `line` starts (after blanks) with something that can be a value.
+ * Second terminator of an ascii data point, see read_raw_ascii_point().
+ *
+ * NON FINITE VALUES (regression found reviewing the issue 0213 fix, fixed the
+ * same day). A C library prints a non finite double as a WORD -- glibc's "%e"
+ * gives `nan`, `-nan`, `inf`, `-inf`, "%E" gives `NAN`/`INF`, C99 also allows
+ * `nan(n-char-sequence)` and `infinity` -- so an ascii raw carrying one has
+ * value lines that start with a letter. A digits-only predicate classified
+ * those as junk, which under bound 2 ends the point: the point is short, the
+ * dataset is a read failure, and ONE non finite sample anywhere costs the whole
+ * file (`raw_read(): no useful data found`, every later query "No raw file
+ * loaded"). Before the 0213 fix such a line fell through to my_atof(), the
+ * point was full size and the file loaded with every healthy signal intact --
+ * a degraded read, not a total one. Turning that into a total one is a
+ * regression, so the words are accepted here.
+ *
+ * DECISION (2026-08-09) on exactly which spellings count, since the choice was
+ * open: an optional sign, then `nan` (with an optional parenthesised payload)
+ * or `inf`/`infinity`, matched case insensitively -- i.e. every spelling any
+ * printf can emit for a non finite double, and the same set strtod() accepts --
+ * and the word must END there. `nancy` is therefore NOT a value line and still
+ * terminates the point: the predicate's whole job is to tell a value from a
+ * header or from junk, the only reason to admit a bare word at all is that it
+ * is literally what a C library prints for a non finite double, and `nancy` is
+ * not one of those spellings. Admitting it would only let my_atof() store its
+ * 0.0 as a fabricated sample -- exactly the failure bound 2 exists to stop.
+ * `1.#INF` and `-1.#IND` (MSVC) need no rule: they start with a digit.
+ *
+ * What such a line STORES is unchanged and deliberately so: my_atof()
+ * (src/util.c) has never parsed these words and returns 0.0 for them, which is
+ * what the reader has always recorded. (Measured: the two sscanf-validated
+ * paths in read_raw_ascii_point() -- a point's first, index-bearing line and
+ * the `re,im` pair of an `ac` line -- do store a real non finite, because
+ * scanf's %lf accepts the same spellings strtod() does; only the fast my_atof()
+ * continuation path flattens them to 0. That inconsistency predates this
+ * change.) Making the my_atof() path agree would need strtod() here and would
+ * change what every consumer of raw->values sees -- min/max, dB, the viewer's
+ * autoscale; that is a separate decision, not part of a bounds fix.
+ *
+ * ngspice-46 on this box emits all four of `inf`, `-inf`, `nan`, `-nan` into an
+ * ASCII raw (`set filetype=ascii` + `write`, from `1e300*1e300`, `ln(0)` and
+ * `inf-inf`), so this is not a hypothetical foreign-writer case.
+ */
+static int raw_ascii_number_line(const char *line)
+{
+  const char *p = line;
+  int n;
+  while(SPC(*p)) p++;
+  if(*p == '+' || *p == '-') p++;
+  if(DGT(*p) || (*p == '.' && DGT(p[1]))) return 1;
+  if((n = raw_ascii_kw(p, "nan")) != 0) {
+    p += n;
+    if(*p == '(') { /* glibc/C99 nan(n-char-sequence): take it only if closed */
+      const char *q = p + 1;
+      while(*q && *q != ')' && *q != '\n' && *q != '\r') q++;
+      if(*q != ')') return 0;
+      p = q + 1;
+    }
+  } else if((n = raw_ascii_kw(p, "inf")) != 0) {
+    p += n;
+    p += raw_ascii_kw(p, "inity"); /* C99 spells it both ways */
+  } else {
+    return 0;
+  }
+  /* the word must end here -- `nancy` and `information` are not values */
+  return !(isalnum((unsigned char)*p) || *p == '_');
+}
+
+/* Read one ascii data point (the lines of a `Values:` block belonging to one
+ * point) into tmp[], which holds `maxvars` doubles -- `rawvars` at both call
+ * sites. Returns the number of doubles written; anything != maxvars means the
+ * point is SHORT and the caller must treat it as a read failure (issue 0213).
+ *
+ * Issue 0213: this used to take tmp[] without its capacity and to end a point
+ * only on an empty line or EOF. An otherwise well formed rawfile that merely
+ * lacks the blank separator between points therefore kept appending the NEXT
+ * point's values past the end of the my_calloc(rawvars) buffer, wrecking the
+ * allocator metadata: `xschem raw read <f> tran` reported success and the
+ * process then died in free_rawfile() with "double free or corruption (out)"
+ * -- SIGABRT, taking the editor and any unsaved work with it.
+ *
+ * Two bounds now end a point, besides the empty line and EOF:
+ *
+ *  1. tmp[] is full. `ac` writes two doubles per line (real, imag), so a line
+ *     may only be started while two slots are left: `lines + 1 >= maxvars`.
+ *     On a full point we look at the next line: the expected blank separator is
+ *     consumed, anything else is pushed back with xfseek() so that the next
+ *     point -- or, at the end of a block, read_dataset()'s header scan -- sees
+ *     it. DECISION (2026-08-09, issue 0213 was ambiguous here): that pushback
+ *     makes a separator-less block THIS FUNCTION READS come out correctly
+ *     rather than be rejected. Its points are complete; only the separators are
+ *     missing, and the crash is cured by the bound, not by refusing the file.
+ *     Refusing it would also regress the pre-count pass below, which must be
+ *     able to walk the same points twice.
+ *     The claim stops there, and deliberately: a separator-less block that this
+ *     reader SKIPS rather than reads is still broken, because
+ *     skip_raw_ascii_points() above walks to a blank line and there is none to
+ *     find. So a separator-less OP plot ahead of the wanted transient one still
+ *     costs the whole read. That is a pre-existing defect of the skip, filed as
+ *     doc/claude/issues/0300-*.md and NOT fixed here -- an attempt was reverted
+ *     the same day for over-skipping into the next plot. See its comment.
+ *
+ *  2. a line that does not start a number. Only the FIRST line of a point was
+ *     ever validated (sscanf "%d %lf"); continuation lines went straight to
+ *     my_atof(), which returns 0.0 for "Plotname:" as happily as for "0.0". A
+ *     stray header line or a block truncated mid-point now ends the point --
+ *     short, hence a read failure -- instead of being stored as zeroes.
+ *
+ * Cost: one ftell per POINT (and a seek only on a file that is missing
+ * separators), never one per line, so the hot path is unchanged.
+ */
+static int read_raw_ascii_point(int ac, double *tmp, int maxvars, FILE *fd)
 {
   char line[1024];
   int lines = 0;
   double d, id; /* id = imaginary part for AC */
   int p;
+  #ifdef __unix__
+    long filepos;
+  #else
+    __int3264 filepos;
+  #endif
+
+  if(maxvars <= 0) return 0;
   while(1) {
+    /* bound 1: tmp[] is full (issue 0213) */
+    if(ac ? (lines + 1 >= maxvars) : (lines >= maxvars)) {
+      filepos = xftell(fd);
+      if(fgets(line, 1024, fd) && !raw_ascii_blank_line(line)) {
+        xfseek(fd, filepos, SEEK_SET); /* not our separator: hand it back */
+      }
+      dbg(1, "read_raw_ascii_point(): point complete (%d values) --> return\n", lines);
+      break;
+    }
     if(!fgets(line, 1024, fd)) {
       dbg(1, "premature end of ascii block\n");
       return lines;
     }
-    if(line[0] == '\n' || (line[0] == '\r' && line[1] == '\n')) {
+    if(raw_ascii_blank_line(line)) {
       dbg(1, "found empty line --> return\n");
       break;
+    }
+    /* bound 2: a non numeric line ends the point (issue 0213) */
+    if(!raw_ascii_number_line(line)) {
+      dbg(1, "non numeric line in ascii data block --> return\n");
+      return lines;
     }
     if(lines == 0) {
       if(ac) {
@@ -465,8 +632,11 @@ static int read_raw_ascii_point(int ac, double *tmp, FILE *fd)
 /* read the ascii / binary portion of a ngspice raw simulation file
  * data layout in memory arranged to maximize cache locality
  * when looking up data
+ * returns 1 if the block was read, 0 if it is malformed (issue 0213): a data
+ * block that does not deliver rawvars values per point is a read FAILURE, not a
+ * warning, so no half populated dataset is reported as success.
  */
-static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
+static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
 {
   int i, p, v;
   double *tmp;
@@ -477,15 +647,21 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
     __int3264 filepos;
   #endif
   int npoints;
-  int rawvars = raw->nvars;
+  int rawvars;
+  int res = 1;
 
   if(!raw || !raw->npoints) {
     dbg(0, "read_raw_data_block() no raw struct allocated\n");
-    return;
+    return 0;
   }
+  rawvars = raw->nvars;
 
   /* we store 4 variables (mag, phase, real and imag) but raw file has only real and imag */
   if(ac) rawvars >>= 1;
+  if(rawvars <= 0) {
+    dbg(0, "read_raw_data_block(): no variables in data block\n");
+    return 0;
+  }
   /* read buffer */
   tmp = my_calloc(_ALLOC_ID_, rawvars, (sizeof(double) ));
 
@@ -501,8 +677,13 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
            dbg(0, "Warning: binary block is not of correct size\n");
         }
       } else {
-        if(read_raw_ascii_point(ac, tmp, fd) != rawvars) {
+        if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
            dbg(0, "Warning: ascii block is not of correct size\n");
+           /* issue 0213: stop counting, the block is malformed. The rewind
+            * below still runs, so the stream is left where this pass found it
+            * and the caller is free to give up cleanly. */
+           res = 0;
+           break;
         }
       }
       sweepvar = tmp[0];
@@ -510,6 +691,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
       else npoints++;
     }
     xfseek(fd, filepos, SEEK_SET); /* rewind file pointer */
+    if(!res) {
+      my_free(_ALLOC_ID_, &tmp);
+      return 0;
+    }
   }
   for(p = 0 ; p < raw->datasets; p++) {
     offset += raw->npoints[p];
@@ -528,8 +713,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
         dbg(0, "Warning: binary block is not of correct size\n");
       }
     } else {
-      if(read_raw_ascii_point(ac, tmp, fd) != rawvars) {
+      if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
          dbg(0, "Warning: ascii block is not of correct size\n");
+         res = 0; /* issue 0213: a short point is a read failure */
+         break;
       }
     }
     if(!(raw->sweep1 == raw->sweep2 && raw->sweep1 == -1.0)) {
@@ -563,8 +750,10 @@ static void read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
     }
     p++;
   }
-  raw->npoints[raw->datasets] = npoints; /* if sweeep1 and sweep2 are given less points are read */
+  /* if sweeep1 and sweep2 are given less points are read */
+  if(res) raw->npoints[raw->datasets] = npoints;
   my_free(_ALLOC_ID_, &tmp);
+  return res;
 }
 
 /* parse ascii raw header section:
@@ -595,7 +784,17 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   int variables = 0, i, done_points = 0;
   char *line = NULL, *varname = NULL, *lowerline = NULL;
   int n = 0, done_header = 0, ac = 0;
-  int exit_status = 0, npoints, nvars;
+  /* npoints/nvars are set by the `No. Points:`/`No. Variables:` header lines,
+   * which a malformed file need not carry -- a `Values:`/`Binary:` line before
+   * either of them reaches the block handlers below with both still unset.
+   * They are then read UNCONDITIONALLY, on every path: by the four dbg() calls
+   * (dbg() is a function in util.c, not a macro, so its varargs are evaluated
+   * whatever the debug level), by skip_raw_ascii_points(npoints, ...) and by
+   * `xfseek(fd, nvars * npoints * sizeof(double), SEEK_CUR)`, which seeks by an
+   * indeterminate amount. That is a genuine uninitialised read that predates
+   * this change; the initialisers are KEPT for it, not for anything the issue
+   * 0213 fix added (issue 0213 review, 2026-08-09). */
+  int exit_status = 0, npoints = 0, nvars = 0;
   int dbglev=1;
   const char *sim_type = NULL;
   Raw *raw;
@@ -624,7 +823,16 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         my_strdup(_ALLOC_ID_, &raw->sim_type, sim_type);
         done_header = 1;
         dbg(dbglev, "read_dataset(): read binary block, nvars=%d npoints=%d\n", nvars, npoints);
-        read_raw_data_block(0, fd, raw, ac);
+        if(!read_raw_data_block(0, fd, raw, ac)) {
+          /* issue 0213: a malformed ascii `Values:` block is a read FAILURE.
+           * Leave exit_status as it is (same rule as the nvars mismatch below):
+           * 0 if nothing was read yet, so free_rawfile() at the end of this
+           * function discards the half populated Raw and `xschem raw read`
+           * returns 0; 1 if earlier datasets read cleanly, which are kept.
+           * raw->datasets is NOT incremented, so the bad dataset is invisible. */
+          dbg(0, "read_dataset(): malformed ascii data block, aborting\n");
+          break;
+        }
         raw->datasets++;
         exit_status = 1;
       } else {
@@ -643,7 +851,14 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         my_strdup(_ALLOC_ID_, &raw->sim_type, sim_type);
         done_header = 1;
         dbg(dbglev, "read_dataset(): read binary block, nvars=%d npoints=%d\n", nvars, npoints);
-        read_raw_data_block(1, fd, raw, ac);
+        if(!read_raw_data_block(1, fd, raw, ac)) {
+          /* same as the ascii case above. The binary reader itself is bounded by
+           * rawvars and still only warns on a short fread, so this fires only on
+           * a missing npoints array or a variable-less block -- both of which
+           * used to be reported as a successful read with no data behind it. */
+          dbg(0, "read_dataset(): malformed binary data block, aborting\n");
+          break;
+        }
         raw->datasets++;
         exit_status = 1;
       } else {
@@ -988,12 +1203,26 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
     my_realloc(_ALLOC_ID_, &raw->values[raw->nvars], raw->allpoints * sizeof(SPICE_DATA));
     res = 1;
   }
-  if(expr) {
-    plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
-  } else if(res == 1) {
+  /* Zero a freshly created column BEFORE evaluating anything into it, not only
+   * when there is no expression -- issue 0325. The column a new vector gets is
+   * the previous scratch column (see the my_realloc dance above): its contents
+   * are whatever the last unnamed evaluation left there, or the uninitialised
+   * heap my_realloc() handed read_raw_data_block(). plot_raw_custom_data()
+   * returns -1 WITHOUT writing a single y[p] when it rejects the expression
+   * (spec doc/claude/specs/calculator.md section 3.1: an unresolvable vector
+   * name, or since issue 0325 a negative del() delay), so without this the
+   * caller is handed a registered, plottable, Tcl-readable vector made of
+   * uninitialised heap -- and wviewer::add_trace (src/wave_viewer.tcl:3785)
+   * reaches exactly that path with an auto-generated NEW name. "The
+   * destination column is not touched" is a safety property only if the
+   * column has defined contents to begin with. */
+  if(res == 1) {
     for(f = 0; f < raw->allpoints; f++) {
       raw->values[raw->nvars - 1][f] = 0.0;
     }
+  }
+  if(expr) {
+    plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
   }
   return res;
 }
@@ -1153,7 +1382,13 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
 
   if(xctx->extra_raw_n < xctx->extra_raw_size  && name && type) {
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if(xctx->extra_raw_arr[i]->sim_type &&
+      /* the sixth and last registry lookup loop, guarded like the five in
+       * extra_rawfile() (issue 0306): this one reaches a NULL rawfile through
+       * the same door -- the adopt block a dozen lines above takes whatever
+       * xctx->raw points at into slot 0, orphan included -- and survived only
+       * because its sim_type test short-circuits first, which is luck, not a
+       * guard on the thing it reads */
+      if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
          !strcmp(xctx->extra_raw_arr[i]->rawfile, name) &&
          !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
         ) break;
@@ -1210,9 +1445,249 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
   return ret;
 }
 
+/* ===========================================================================
+ * THE READER DISPATCH — one table, one function, no second copy (issue 0290)
+ *
+ * A database's `type` token is not a label pinned on after the fact: it is the
+ * KEY that chooses which parser reads the file. "vcd" means vcd_read(), "table"
+ * means table_read(), anything else means the ngspice raw parser raw_read().
+ * Hand a "table" to raw_read() and read_dataset() looks for `Plotname:` /
+ * `No. Variables:` / `Values:`, finds none, and returns 0 — no crash, no dialog,
+ * just no data.
+ *
+ * This used to be an `else if` chain written out once in extra_rawfile() and a
+ * second, SHORTER time in the `xschem raw_read` arm of scheduler.c. The two
+ * drifted: the scheduler copy knew "vcd" and not "table", so
+ * `xschem raw_read <f> table` — which open_sub_schematic() and hi_descend()
+ * generate verbatim when they carry the current database into a new window,
+ * `xschem raw_read $rawfile [xschem raw_query sim_type]` — fed a table file to
+ * the spice parser after the arm had already cleared the whole registry. That
+ * is issue 0290. Adding a third parallel chain would only queue up the next
+ * drift, so the dispatch now lives HERE, exactly once, driven by the table
+ * below; adding a reader means adding one row and nothing else.
+ *
+ * raw_type_is_non_spice() exists so callers that need to know WHICH registry
+ * protocol applies (extra_rawfile() dedups non-spice databases on filename
+ * alone, spice ones on filename+sim_type) ask the same table that picks the
+ * reader, instead of re-listing the type tokens.
+ * ===========================================================================
+ */
+static struct raw_reader_entry {
+  const char *type;
+  int (*read)(const char *f);   /* builds xctx->raw; 1 on success */
+  int digital;                  /* 1 = logic levels over time, NOT volts (spec D5) */
+} raw_reader_table[] = {
+  {"table", table_read, 0},
+  {"vcd",   vcd_read,   1}
+};
+#define N_RAW_READERS ((int)(sizeof(raw_reader_table) / sizeof(raw_reader_table[0])))
+
+/* 1 if `type` selects one of the non-spice readers above, 0 for a spice raw
+ * (and for a NULL/empty type, which means "first analysis found in the file") */
+int raw_type_is_non_spice(const char *type)
+{
+  int i;
+  if(!type || !type[0]) return 0;
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(!strcmp(type, raw_reader_table[i].type)) return 1;
+  }
+  return 0;
+}
+
+/* ===========================================================================
+ * SPEC D5 -- WHAT A DIGITAL DATABASE CONTRIBUTES TO BACKANNOTATION: NOTHING.
+ * doc/claude/specs/mixed_signal_signal_browser.md, row D5 and the section
+ * "D5 -- backannotation and the digital database".
+ *
+ * RULING D5-1: a digital database contributes NOTHING to annotate_op() and
+ * NOTHING to the schematic voltage overlay. Backannotation puts OPERATING
+ * POINT values on the schematic -- node voltages and device currents. A VCD
+ * carries logic levels over time. A logic level is not a voltage: `1` is not
+ * 1.8 V, it is `1`, and vcd_read() additionally encodes X as 0.5 and Z as 0.3
+ * (VCD_VX / VCD_VZ, src/vcd_read.c DECISION 3), so publishing them would put
+ * "0.5 V" on a net whose value is UNKNOWN and "0.3 V" on one that is floating,
+ * neither of which is a measurement. Every one of those numbers is
+ * fabricated, and a fabricated number on a schematic is indistinguishable
+ * from a measured one.
+ *
+ * RULING D5-2: the exclusion is SINGLE-SOURCED, right here, off the same
+ * table that picks the reader. A future database type answers the question by
+ * filling in the `digital` column of its own row, and inherits every
+ * enforcement point below rather than re-deriving the decision at each one.
+ * Never `!strcmp(sim_type, "vcd")` at a backannotation site.
+ * ===========================================================================
+ */
+
+/* 1 if `type` names a database of logic levels rather than analog values.
+ * A NULL/empty type is a spice raw ("first analysis found in the file"). */
+int raw_type_is_digital(const char *type)
+{
+  int i;
+  if(!type || !type[0]) return 0;
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(!strcmp(type, raw_reader_table[i].type)) return raw_reader_table[i].digital;
+  }
+  return 0;
+}
+
+/* the same question asked of a loaded database. A NULL Raw is not digital:
+ * "nothing is loaded" is not "a digital thing is loaded". */
+int raw_is_digital(const Raw *raw)
+{
+  if(!raw) return 0;
+  return raw_type_is_digital(raw->sim_type);
+}
+
+/* RULING D5-4 -- ONE SENTENCE, MINTED ONCE, RENDERED BY THE CALLERS.
+ * Item 5's rule for the empty-pane notice (doc/claude/specs/…, RULING F1e/F1f)
+ * applied to the engine side: the refusal is where the reason is known, so the
+ * sentence is minted here and every caller renders it rather than composing a
+ * second, drifting one. Says WHAT was refused, WHY, and names the database.
+ *
+ * Emits it on the CIW when there is a GUI (the guarded ciw_echo idiom,
+ * [[ciw-feedback-channels]]) and on the debug channel always, then RETURNS it
+ * so a caller with a Tcl result to set can hand the same words to the script
+ * that asked. Never called from the cursor-motion path -- see D5-3. */
+const char *backannot_refuse_digital(const char *dbname)
+{
+  static char msg[512];
+  const char *n = (dbname && dbname[0]) ? dbname : "that results database";
+  my_snprintf(msg, S(msg),
+    "backannotation: '%s' is a digital results database -- it carries logic "
+    "levels over time, not an operating point, so there are no voltages or "
+    "currents in it to annotate onto the schematic", n);
+  dbg(0, "%s\n", msg);
+  if(has_x) {
+    /* ⚠ `dbname` IS A USER-SUPPLIED PATH -- it arrives from `xschem annotate_op
+     * <file>`, i.e. from whatever the user picked in select_raw's file dialog
+     * (which offers an `All Files *` filter). It must therefore NEVER be
+     * spliced into a Tcl script by concatenation: the obvious
+     *   tclvareval("... {ciw_echo {", msg, "} note}", NULL)
+     * puts the path inside a brace group, so a path containing `}` closes the
+     * group early -- at best the notice is lost to `extra characters after
+     * close-brace` and the user is told nothing, at worst the remainder of the
+     * path is EXECUTED as Tcl in the GUI session (measured: a path spelled
+     *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
+     * set ::PWNED). The sentence is handed over as a VARIABLE instead, which no
+     * path content can escape from. Every other tclvareval() ciw_echo site in
+     * the tree interpolates program-generated text; this is the first to
+     * interpolate a path, so the quoting discipline starts here. */
+    tclsetvar("__backannot_refuse_msg", msg);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $::__backannot_refuse_msg note}");
+    Tcl_UnsetVar(interp, "__backannot_refuse_msg", TCL_GLOBAL_ONLY);
+  }
+  return msg;
+}
+
+/* RULING D5-6 -- THE TYPE TOKEN IS NOT THE ONLY WAY TO ASK FOR A DIGITAL
+ * DATABASE, so it cannot be the only thing the refusal keys on.
+ *
+ * `xschem annotate_op <file>` takes the type as an OPTIONAL 4th argument, and
+ * BOTH shipped GUI call sites (src/xschem.tcl, the Op Annotate menu entries)
+ * pass a filename ALONE -- select_raw's dialog offers an `All Files *` filter,
+ * so pointing Op Annotate at a .vcd is a thing a user can do in two clicks. A
+ * refusal that only fires on `annotate_op <f> <lvl> vcd` never fires for them:
+ * the op/dc/tran fallbacks each fail on a VCD, and the user is left with the
+ * silently empty schematic (plus a wiped annotation array) that D5-3's
+ * before-any-side-effect placement exists to prevent.
+ *
+ * So the file is asked what it is. The answer is definitive rather than a
+ * guess: `$enddefinitions` is MANDATORY in every VCD (IEEE 1364 section 18.2 --
+ * vcd_read() itself will not accept a file without it) and appears in no spice
+ * rawfile, ascii or binary. The extension is deliberately NOT consulted: a
+ * VCD named .raw is still a VCD, and a spice raw named .vcd is still a raw, and
+ * only the content knows which. Sniffs the head of the file only, so the cost
+ * is one fopen + one fread on a path the user just asked to load anyway.
+ *
+ * Returns 0 for a file that cannot be opened: "unreadable" is not "digital",
+ * and the load below will report the real error. */
+int raw_file_is_digital(const char *f)
+{
+  FILE *fd;
+  char buf[4097];
+  size_t n;
+  int found = 0;
+  if(!f || !f[0]) return 0;
+  fd = my_fopen(f, fopen_read_mode);
+  if(!fd) return 0;
+  n = fread(buf, 1, sizeof(buf) - 1, fd);
+  fclose(fd);
+  buf[n] = '\0';
+  /* strstr is safe on the NUL-terminated head even for a binary raw: it simply
+   * stops at the first NUL, and a spice binary raw's ASCII header never carries
+   * a VCD keyword. */
+  if(strstr(buf, "$enddefinitions")) found = 1;
+  if(found) dbg(1, "raw_file_is_digital(): %s sniffs as a VCD ($enddefinitions)\n", f);
+  return found;
+}
+
+/* Read `f` with the reader that `type` selects. Every caller that turns a
+ * (file, type) pair into a loaded database must come through here.
+ *
+ * The non-spice readers build xctx->raw directly (they take no rawptr), so a
+ * foreign destination is refused rather than silently ignored.
+ *
+ * They also do not all stamp sim_type: vcd_read() does, table_read() does not.
+ * Stamping it here for every one of them is not cosmetic — a database whose
+ * sim_type is NULL is a live hazard. Seven sites strcmp() it with no NULL guard
+ * (scheduler.c: the `raw switch` and `raw switch_back` update_op() gates and the
+ * annotate_op arm; callback.c backannotate_at_cursor_b_pos(); draw.c
+ * graph_fullyzoom(), calc_custom_data_yrange() and draw_graph()),
+ * `xschem raw_query sim_type` hands the bare
+ * pointer to Tcl_SetResult(), and both lookup loops in extra_rawfile() skip an
+ * entry with a NULL sim_type — so such a database can never be reached by
+ * `xschem raw switch` again. */
+int read_rawfile_by_type(const char *f, Raw **rawptr, const char *type,
+                         int no_warning, double sweep1, double sweep2)
+{
+  int i;
+  if(type && !type[0]) type = NULL; /* empty type == unspecified, as extra_rawfile() has it */
+  for(i = 0; i < N_RAW_READERS; i++) {
+    if(type && !strcmp(type, raw_reader_table[i].type)) {
+      int res;
+      if(rawptr != &xctx->raw) {
+        dbg(0, "read_rawfile_by_type(): the %s reader builds xctx->raw, "
+               "refusing a different destination\n", type);
+        return 0;
+      }
+      res = raw_reader_table[i].read(f);
+      if(res && xctx->raw) my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, type);
+      return res;
+    }
+  }
+  return raw_read(f, rawptr, type, no_warning, sweep1, sweep2);
+}
+
+/* Repaint the Waves menubar cue from whatever xctx->raw points at RIGHT NOW.
+ *
+ * free_rawfile() paints the cue grey unconditionally, and it is called on paths
+ * that then put a perfectly good database back: extra_rawfile()'s two
+ * restore-on-failure branches (`xctx->raw = save`) are the ones that matter --
+ * a failed read there disposes of its own half-built Raw (raw_read() and
+ * vcd_read() always did, table_read() now does too, issue 0306) and the grey
+ * that free_rawfile() left behind outlives the restore. The user is then
+ * looking at plotted waveforms under a menu that says there are none.
+ * raw_read() already re-asks sch_waves_loaded() for exactly this reason, but it
+ * asks BEFORE the restore, so its answer is about the failed read, not about
+ * what the caller ends up with. Asking again after the restore is the only
+ * place the question has the right answer. No-op without X. */
+static void update_waves_menu_cue(void)
+{
+  if(!has_x) return;
+  if(sch_waves_loaded() >= 0) {
+    tclvareval("set tctx::", xctx->current_win_path, "_waves Green", NULL);
+    tclvareval("catch {", xctx->top_path, ".menubar entryconfigure Waves -background Green}", NULL);
+  } else {
+    tclvareval("set tctx::", xctx->current_win_path, "_waves $simulate_bg", NULL);
+    tclvareval("catch {", xctx->top_path, ".menubar entryconfigure Waves -background $simulate_bg}", NULL);
+  }
+}
+
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
+ *            if type == vcd use vcd_read() to read a Verilog VCD (section C of
+ *            doc/claude/specs/mixed_signal_signal_browser.md)
  * what == 2: switch raw file. If filename given switch to that one,
  * else if filename is an integer switch to that raw file index,
  * else switch to next
@@ -1250,22 +1725,41 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
     xctx->extra_raw_n++;
   }
-  /* **************** table_read ************* */
-  if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file && (type && !strcmp(type, "table"))) {
+  /* **************** table_read / vcd_read ************* */
+  /* The non-spice producers. `type` is the dispatch key that selects the reader, so a
+   * VCD must declare sim_type "vcd" -- calling it "tran" would route it into the spice
+   * raw parser below. Both readers share this arm because they share the whole registry
+   * protocol: same "already loaded?" test, same insert, same restore-on-failure.
+   * Which types land here is decided by raw_type_is_non_spice(), the same table that
+   * read_rawfile_by_type() dispatches on, so the guard and the reader can never
+   * disagree about a type (issue 0290).
+   * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
+  if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
+     raw_type_is_non_spice(type)) {
     tclvareval("subst {", file, "}", NULL);
     my_strncpy(f, tclresult(), S(f));
-    dbg(1, "extra_rawfile: table_read: f=%s\n", f);
+    dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if( !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) break;
+      /* Skip an entry with no filename, the way the spice loop below skips one
+       * with no sim_type: strcmp(NULL, f) here IS the SIGSEGV of issue 0306
+       * part 1. The only thing that ever put such an entry in the registry --
+       * table_read()'s orphan, adopted by the insert above -- is now fixed at
+       * its source, so this is a backstop: the crash is a CONSEQUENCE of a
+       * reader breaking the "answer 0 => xctx->raw is NULL" contract, and any
+       * future reader with the same slip re-arms it. An entry with a NULL
+       * rawfile can never legitimately match a filename, so skipping it is
+       * behaviour-neutral for every state the registry can actually be in. */
+      if(xctx->extra_raw_arr[i]->rawfile &&
+         !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) break;
     }
     if(i >= xctx->extra_raw_n) { /* file not already loaded: read it and switch to it */
       int read_ret = 0;
       Raw *save;
       save = xctx->raw;
       xctx->raw = NULL;
-      read_ret = table_read(f);
+      /* dispatches on `type` and stamps raw->sim_type on success */
+      read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
       if(read_ret) {
-        my_strdup(_ALLOC_ID_, &xctx->raw->sim_type, type);
         xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
         xctx->extra_prev_idx = xctx->extra_idx;
         xctx->extra_idx = xctx->extra_raw_n;
@@ -1278,6 +1772,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
         if(xctx->extra_raw_n) { /* only restore if raw wiles were not deleted due to a failure in read_raw() */
           xctx->raw = save; /* restore */
           xctx->extra_prev_idx = xctx->extra_idx;
+          update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it; see above */
         }
       }
     } else { /* file found: switch to it */
@@ -1295,7 +1790,10 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       else if(!my_strcasecmp(type, "sp")) type = "ac";
     }
     for(i = 0; i < xctx->extra_raw_n; i++) {
-      if(xctx->extra_raw_arr[i]->sim_type &&
+      /* same NULL-rawfile skip as the non-spice loop above (issue 0306): this
+       * one only ever survived the orphan because its sim_type test happens to
+       * short-circuit first, which is luck, not a guard on the thing it reads */
+      if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
          !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
          (!type || !strcmp(xctx->extra_raw_arr[i]->sim_type, type) )
         ) break;
@@ -1305,7 +1803,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       Raw *save;
       save = xctx->raw;
       xctx->raw = NULL;
-      read_ret = raw_read(f, &xctx->raw, type, no_warning, sweep1, sweep2);
+      /* same entry point as the arm above; raw_type_is_non_spice() is false here so it
+       * resolves to raw_read(), but the choice is made in ONE place either way */
+      read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
       if(read_ret) {
         dbg(1, "extra_rawfile(): read %s %s, switch to it. raw->sim_type=%s\n", f,
           type ? type : "<NULL>", xctx->raw->sim_type ? xctx->raw->sim_type : "<NULL>");
@@ -1322,6 +1822,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
           dbg(1, "extra_rawfile(): read: restore previous, extra_idx=%d\n",  xctx->extra_idx);
           xctx->raw = save; /* restore */
           xctx->extra_prev_idx = xctx->extra_idx;
+          update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it; see above */
         }
       }
     } else { /* file found: switch to it */
@@ -1336,8 +1837,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       tclvareval("subst {", file, "}", NULL);
       my_strncpy(f, tclresult(), S(f));
       for(i = 0; i < xctx->extra_raw_n; i++) {
-        dbg(1, "      extra_rawfile(): checking with %s\n", xctx->extra_raw_arr[i]->rawfile);
-        if(xctx->extra_raw_arr[i]->sim_type &&
+        dbg(1, "      extra_rawfile(): checking with %s\n",
+            xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>");
+        if(xctx->extra_raw_arr[i]->sim_type && xctx->extra_raw_arr[i]->rawfile &&
            !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
            !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
           ) break;
@@ -1426,14 +1928,19 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       my_strncpy(f, tclresult(), S(f));
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
+          /* the same NULL skips as the two lookup loops above (issue 0306): a
+           * registry entry with no filename matches no filename, and the
+           * sim_type strcmp() here had no guard at all */
           if(type && type[0] &&
+              xctx->extra_raw_arr[i]->rawfile && xctx->extra_raw_arr[i]->sim_type &&
               !strcmp(xctx->extra_raw_arr[i]->rawfile, f) &&
               !strcmp(xctx->extra_raw_arr[i]->sim_type, type)
               ) {
             free_rawfile(&xctx->extra_raw_arr[i], 0, no_warning);
             found++;
             continue;
-          } else if( !(type && type[0]) && !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) {
+          } else if( !(type && type[0]) && xctx->extra_raw_arr[i]->rawfile &&
+                     !strcmp(xctx->extra_raw_arr[i]->rawfile, f)) {
             free_rawfile(&xctx->extra_raw_arr[i], 0, no_warning);
             found++;
             continue;
@@ -1463,7 +1970,12 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       dbg(1, "extra_raw_n = %d\n", xctx->extra_raw_n);
       Tcl_AppendResult(interp, my_itoa(xctx->extra_idx), " current\n", NULL);
       for(i = 0; i < xctx->extra_raw_n; i++) {
-        Tcl_AppendResult(interp, my_itoa(i), " ", xctx->extra_raw_arr[i]->rawfile, " ",
+        /* rawfile gets the same "<NULL>" treatment sim_type already had: a NULL
+         * in the middle of Tcl_AppendResult()'s vararg list TERMINATES it, so
+         * one such entry would silently truncate the whole listing -- blinding
+         * the probe the 0306 checks use (issue 0306) */
+        Tcl_AppendResult(interp, my_itoa(i), " ",
+            xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>", " ",
             xctx->extra_raw_arr[i]->sim_type ? xctx->extra_raw_arr[i]->sim_type : "<NULL>", "\n",  NULL);
       }
     }
@@ -1477,6 +1989,18 @@ int update_op()
 {
   int res = 0, p = 0, i;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+  /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
+   * This is the choke point every "annotate the operating point" request funnels
+   * through: the `annotate_op` arm, both `raw switch` gates and the bare
+   * `xschem update_op` verb. A digital database publishes NOTHING, and the
+   * Tcl array stays UNSET (cleared above) rather than keeping the previous
+   * database's numbers -- a stale voltage on the schematic is the one outcome
+   * worse than no voltage. Answers 0, i.e. "nothing was published", which is
+   * what `xschem update_op` reports to the script that asked. */
+  if(raw_is_digital(xctx->raw)) {
+    backannot_refuse_digital(xctx->raw->rawfile);
+    return 0;
+  }
   if(xctx->raw && xctx->raw->values) {
     xctx->raw->annot_p = 0;
     dbg(1, "update_op(): nvars=%d\n", xctx->raw->nvars);
@@ -1644,6 +2168,45 @@ int table_read(const char *f)
   }
   err:
   dbg(0, "table_read(): failed to open file %s for reading\n", f);
+  /* A reader that answers 0 must leave xctx->raw exactly as it found it: NULL.
+   * This label is reached with a HALF-BUILT Raw whenever the two opens above
+   * disagree about the file -- the probe is a bare open(), which succeeds on a
+   * directory and on /dev/null, while my_fopen() (src/util.c) rejects anything
+   * that is not S_ISREG. The orphan left behind is INVISIBLE (raw->level is -1,
+   * so sch_waves_loaded() and `xschem raw loaded` still answer -1) and the next
+   * non-spice read adopts it into the registry and strcmp()s its NULL rawfile.
+   * vcd_read() has had this exact line at its `done:` label since it was
+   * written; table_read() was the odd one out among readers declared against
+   * the same contract (src/xschem.h, on vcd_read()), which table_read() itself
+   * enforces on ENTRY above and used to break on exit. One line kills both the
+   * crash and the ~250 KB-per-attempt leak, because the orphan is what both are
+   * made of. Issue 0306 part 1; checks S1-S5 in
+   * tests/headless/test_raw_read_failure_0306.tcl.
+   *
+   * It belongs HERE and not on every `return 0`. The other `return 0` is the
+   * ENTRY guard, which fires with an xctx->raw that belongs to SOMEONE ELSE and
+   * with nothing of its own allocated yet; freeing there would destroy a live
+   * database. That is a statement about what the guard means, not a measured
+   * result: no shipped caller can reach it, because all four
+   * read_rawfile_by_type() call sites NULL xctx->raw first (save.c's two read
+   * arms assign it directly, the three scheduler.c verbs go through
+   * extra_rawfile(3, ...)). So the placement is forward-looking and currently
+   * unexercised -- the nearest measured relative is sabotage SAB-6, which moves
+   * this free onto the SUCCESS path and kills the process a different way.
+   *
+   * The dbg() is the only externally visible trace that the orphan existed:
+   * `xschem raw loaded` answers -1 either way, which is what makes the orphan
+   * invisible in the first place. It fires ONLY when there is something to
+   * discard, so a nonexistent path (which `goto err`s before the allocation)
+   * stays silent -- checks C*f and C17 turn that difference into evidence that
+   * this line runs, which no assertion about the ABSENCE of a crash can give.
+   * no_warning=1 on the free: this dbg() has already said it, more precisely
+   * than free_rawfile()'s generic "clearing data". dr=0: a failed read must not
+   * redraw. */
+  if(xctx->raw) {
+    dbg(0, "table_read(): discarding the partially built database\n");
+    free_rawfile(&xctx->raw, 0, 1);
+  }
   return 0;
 }
 
@@ -1962,6 +2525,14 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
       stackptr1++;
     }
   } /* while(n = my_strtok_r(...) */
+  /* The token scan WIDENS the evaluation window backwards: integ(), deriv*()
+   * and prev() decrement `first`, del() pulls it all the way back to the start
+   * of the dataset containing it (spec doc/claude/specs/calculator.md 3.2).
+   * The caller's `first` is printed above; this is the window actually
+   * evaluated, and it is what tests/headless/test_del_negative_arg.tcl DN12
+   * asserts -- the graph door (src/draw.c:9171, :9221) is the only caller that
+   * passes a first > 0, so without this line the widening is unobservable. */
+  dbg(1, "plot_raw_custom_data(): evaluated window: first=%d, last=%d\n", first, last);
   my_free(_ALLOC_ID_, &ntok_copy);
   for(p = first ; p <= last; p++) {
     stackptr2 = 0;
@@ -2036,13 +2607,42 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
             break;
           case DEL:
             tmp = stack2[stackptr2 - 1];
+            /* A NEGATIVE (or NaN) delay is rejected -- issue 0325. The search
+             * below only ever walks FORWARD from the previous match, so it can
+             * never produce a left shift; with tmp < 0 the `delta > tmp` test
+             * is true at every point, the walk ran off the end of the window
+             * and read x[last + 1] (one element past the column allocated in
+             * read_raw_data_block()), while stack1[i].prevp was still the
+             * uninitialised local -- the `fabs(x[p] - x[first]) <= tmp` arm
+             * below is what normally seeds it at p == first, and a negative
+             * tmp never takes that arm. Rejected the way an unresolvable
+             * vector name is rejected (spec section 3.1): the whole
+             * evaluation returns -1. With a constant argument -- the only
+             * form a generated expression emits -- that happens at
+             * p == first, before the first y[p] store, so the destination
+             * column is not touched at all. */
+            if(!(tmp >= 0.0)) {
+              dbg(1, "plot_raw_custom_data(): del() delay must be >= 0 (got %g),"
+                     " expression rejected\n", tmp);
+              ravg_store(0, 0, 0, 0, 0.0); /* clear data */
+              return -1;
+            }
+            if(p == first) stack1[i].prevp = first; /* never read it uninitialised */
             ravg_store(1, i, p, last, stack2[stackptr2 - 2]);
             if(fabs(x[p] - x[first]) <= tmp) {
               result = stack2[stackptr2 - 2];
               stack1[i].prevp = first;
             } else {
               double delta =  fabs(x[p] - x[stack1[i].prevp]);
-              while(stack1[i].prevp <= last && delta > tmp) {
+              /* `< last`, not `<= last`: the old bound let prevp reach
+               * last + 1 and index both x[] and ravg_store()'s arr[i][]
+               * (my_calloc()ed with last + 1 doubles, save.c ravg_store())
+               * one element past their end. For a non-negative tmp the bound
+               * is unreachable anyway -- prevp <= p <= last and delta is 0 at
+               * prevp == p, so `delta > tmp` stops the walk first -- which is
+               * why this cannot change what a positive del() returns.
+               * Issue 0325. */
+              while(stack1[i].prevp < last && delta > tmp) {
                 stack1[i].prevp++;
                 delta = fabs(x[p] - x[stack1[i].prevp]);
               }
@@ -3859,16 +4459,20 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* if(reset_undo) xctx->time_last_modify = time(NULL); */ /* no file given, set mtime to current time */
     if(reset_undo) xctx->time_last_modify = 0; /* no file given, set mtime to 0 (undefined) */
     clear_drawing();
-    /* next free untitled[-n] name, avoiding both on-disk files and names already open in
-     * other windows so a second blank window does not collide (issue 0056) */
-    get_unused_untitled_name(xctx->netlist_type == CAD_SYMBOL_ATTRS, name, S(name));
-    my_strncpy(xctx->current_name, name, S(xctx->current_name));
+    /* Resolve the destination directory FIRST: the untitled namer probes it for a free
+     * number, and probing anywhere else than where we are about to write is how issue 0323
+     * silently overwrote an occupied untitled.sch. */
     if(getenv("PWD")) {
       /* $env(PWD) better than pwd_dir as it does not dereference symlinks */
       my_strncpy(xctx->current_dirname, getenv("PWD"), S(xctx->current_dirname));
     } else {
       my_strncpy(xctx->current_dirname, pwd_dir, S(xctx->current_dirname));
     }
+    /* next free untitled[-n] name, avoiding both files already in that directory and names
+     * already open in other windows so a second blank window does not collide (issue 0056) */
+    get_unused_untitled_name(xctx->current_dirname, xctx->netlist_type == CAD_SYMBOL_ATTRS,
+                             name, S(name));
+    my_strncpy(xctx->current_name, name, S(xctx->current_name));
     my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch],  xctx->current_dirname, "/", name, NULL);
     if(reset_undo) set_modify(0);
   }

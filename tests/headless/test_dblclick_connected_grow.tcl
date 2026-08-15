@@ -11,7 +11,7 @@
 #
 # Uses select_object() + draw_selection() -> needs a real X window (like
 # test_select_at.tcl / test_connected_drag_*). Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_dblclick_connected_grow.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_dblclick_connected_grow.tcl
 #
 # RED-first: on a build without select_grow_connected the command throws (caught
 # -> FAIL) so every check reds.

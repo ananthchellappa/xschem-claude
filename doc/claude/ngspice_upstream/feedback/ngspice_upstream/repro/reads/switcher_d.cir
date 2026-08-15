@@ -1,0 +1,13 @@
+* issue 0058: switcher.cir with the mid-run mode set to distinguish, so that
+* only the sourced deck is experimental -- the banner count goes DOWN
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+  op
+  echo FIRST-DECK
+  display
+  set casemode=distinguish
+  source mid.cir
+.endc
+.end

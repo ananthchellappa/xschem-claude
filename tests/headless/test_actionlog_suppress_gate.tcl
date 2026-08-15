@@ -18,7 +18,7 @@
 # The whole gate changes NO existing log output -- every case here is a NEW
 # scope. No Tk needed (copy/set cadsnap/log_action are X-independent), so this
 # runs in a windowless audit too; it only needs the log OPEN.
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_actionlog_suppress_gate.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §20
 

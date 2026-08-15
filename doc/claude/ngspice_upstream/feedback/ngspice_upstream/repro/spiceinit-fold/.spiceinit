@@ -1,0 +1,4 @@
+* issue 0058: the whole of a .spiceinit -- one card, whose case the reader
+* folds or preserves according to the mode set_case_mode() established for
+* THIS read.  That is why the call cannot be gated on comfile.
+set MixedVar = 1

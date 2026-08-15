@@ -1,0 +1,12 @@
+* the failing op is not the last one, so the run still exits 0
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+save v(midnode)
+op
+write rc0.raw
+save all
+op
+.endc
+.end

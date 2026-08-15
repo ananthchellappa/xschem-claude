@@ -1,0 +1,11 @@
+* set casemode AFTER the deck was read -- $casemode moves, the names do not
+Vs In 0 DC 3
+Rl In MidNode 1k
+Rg MidNode 0 3k
+.control
+set casemode=preserve
+op
+display
+echo casemode-is $casemode
+.endc
+.end

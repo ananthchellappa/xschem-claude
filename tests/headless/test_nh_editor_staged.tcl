@@ -1,7 +1,7 @@
 # Net highlight style editor — STAGED commit model (user choice): field edits, row ops and the free-
 # row Add/Overwrite only RESTAGE the table; nothing reaches the live session until Apply/OK (or a
 # Cancel revert). GUI (needs Tk/X):
-#   DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_staged.tcl
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_staged.tcl
 # Counts pushes through nhse_apply_live (the single live-update chokepoint) to prove the deferral.
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; run with DISPLAY set, no --nogui)"; flush stdout; exit 0 }

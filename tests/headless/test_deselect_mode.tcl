@@ -13,7 +13,7 @@
 # run only when a GUI/DISPLAY is present (driven via focus-independent `xschem callback`).
 # Run from the repo ROOT:
 #   state only:    ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_deselect_mode.tcl
-#   full (GUI):    DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_deselect_mode.tcl
+#   full (GUI):    ./src/xschem --pipe -q --nolog --script tests/headless/test_deselect_mode.tcl
 
 set fail 0; set npass 0
 proc check {name ok detail} {

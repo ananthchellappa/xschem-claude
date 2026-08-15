@@ -6,7 +6,7 @@
 # tests drive the form procs directly (build / save / legacy / cancel / browse).
 #
 # Needs X. Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_save_as_form.tcl
+#   ./xschem --pipe -q --script ../tests/headless/test_save_as_form.tcl
 
 set fail 0
 proc check {name ok {detail {}}} {

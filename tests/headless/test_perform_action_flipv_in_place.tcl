@@ -16,7 +16,8 @@
 #     the per-object in-place flip, so the WHOLE standalone apply crosses the boundary.
 # The standalone verb crosses the boundary from EVERY entry point -- scheduler branch
 # (`xschem flipv_in_place`: Edit menu / context menu / command palette), the Alt-V key
-# (callback.c case 'v' EQUAL_MODMASK), and the verb-noun deferred-apply (MENUSTARTROTATE
+# (callback.c act_flipv_in_place, reached from the binding table), and the verb-noun
+# deferred-apply (MENUSTARTROTATE
 # PENDING_TR_FLIPV_IP) -- all now call perform_action("flipv_in_place", ...) instead of
 # duplicating readonly + rebuild + move_objects(START/ROTATE|ROTATELOCAL x2/FLIP|
 # ROTATELOCAL/END) + log_action.
@@ -44,7 +45,7 @@
 #       emit `xschem flipv_in_place` -- the gesture arm stays silent (logged at move END).
 #
 # Needs the action log open -> registered in full_audit.sh logdir_tests:
-#   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
+#   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_perform_action_flipv_in_place.tcl
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md §25
 
@@ -119,7 +120,8 @@ check "oracle: flipv mirrors Y to the expected (0,0)-(100,-40), NOT the horizont
 # ---------------------------------------------------------------------------
 # (a) EXACTLY ONE log line from EACH standalone entry point.
 #     script  -> scheduler branch standalone `else` -> perform_action
-#     Alt-V key -> callback.c case 'v' EQUAL_MODMASK standalone apply -> perform_action
+#     Alt-V key -> binding table (key 118 alt canvas -> edit.flipv_in_place) ->
+#               callback.c act_flipv_in_place standalone apply -> perform_action
 #               (keysym 118='v', state 8=Alt); one object selected -> lastsel!=0 apply arm
 #     menu    -> menu_action_logged wrapper -> `xschem flipv_in_place` -> branch; the
 #               wrapper resets/checks actionlog_cmd_logged, so the core's log wins and the

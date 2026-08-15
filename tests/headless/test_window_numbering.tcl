@@ -2,7 +2,7 @@
 #
 # GUI smoke: opens real Tk toplevels, driven entirely by script. Needs a display.
 # Standard invocation (from src/):
-#   DISPLAY=:0 ./xschem --pipe -q --nolog --script ../tests/headless/test_window_numbering.tcl
+#   ./xschem --pipe -q --nolog --script ../tests/headless/test_window_numbering.tcl
 #
 # RED-first: checks map 1:1 to the spec acceptance list WN1..WN7. Every check is
 # expected to FAIL (not crash) until the feature lands. Model:

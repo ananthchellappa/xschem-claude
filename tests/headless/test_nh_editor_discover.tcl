@@ -3,7 +3,7 @@
 # the palette actually coloring the row. Headless checks run everywhere; GUI checks run only when
 # Tk is present.
 #   --nogui: ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_nh_editor_discover.tcl
-#   GUI:     DISPLAY=:0 ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_discover.tcl
+#   GUI:     ./src/xschem --pipe -q --nolog --script tests/headless/test_nh_editor_discover.tcl
 
 set fail 0
 proc check {name ok detail} {

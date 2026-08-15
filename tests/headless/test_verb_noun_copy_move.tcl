@@ -12,7 +12,7 @@
 # find_closest_box PINLAYER tie-break), else a centre click would copy the stub line.
 #
 # MUST run under X (no --nogui; `xschem callback` needs Tk):
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_verb_noun_copy_move.tcl
+#   ./src/xschem --pipe -q --script tests/headless/test_verb_noun_copy_move.tcl
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; xschem callback dispatch)"; flush stdout; exit 0 }
 update idletasks
 focus -force .drw

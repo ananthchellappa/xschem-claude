@@ -1,0 +1,12 @@
+* issue 0058: 'altermod dmod file am.mod' is a third inp_readall() in one run
+.options noacct
+V1 in 0 dc 0.6
+D1 in 0 dmod
+.model dmod d (is=1e-14)
+.control
+op
+altermod dmod file am.mod
+let is_now = @dmod[is]
+print is_now
+.endc
+.end
