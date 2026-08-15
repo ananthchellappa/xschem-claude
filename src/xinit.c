@@ -3576,9 +3576,40 @@ int Tcl_AppInit(Tcl_Interp *inter)
     if(xctx->change_lw) l_width = -1.0;
     change_linewidth(l_width);
     dbg(1, "Tcl_AppInit(): done xinit()\n");
-    /* Set backing store window attribute */
-    winattr.backing_store = WhenMapped;
-    /* winattr.backing_store = NotUseful; */
+    /* The drawing window's backing-store attribute. See
+     * doc/claude/issues/0413-backing-store-on-the-drawing-window-kills-vcxsrv.md.
+     *
+     * ⚠⚠ NotUseful, NOT WhenMapped, AND THE DEFAULT IS THE WHOLE FIX. Asking a
+     * server for backing store on this window lets a CLIENT KILL THE SERVER:
+     * under VcXsrv (21.1.16, -multiwindow, the usual Windows/WSL setup) moving
+     * this window inside its toplevel — which is what packing ANY widget to its
+     * left or above it does, e.g. the waveform viewer's Ctrl-B Signal Browser —
+     * makes VcXsrv's own internal window manager issue a ConfigureWindow that
+     * comes back BadMatch, and winMultiWindowWMProc treats that as fatal:
+     *
+     *   winMultiWindowWMProc - Error code: 8 (Match), Major opcode: 12 (ConfigureWindow)
+     *
+     * The X server then exits, taking every other client with it. Measured A/B
+     * on one binary: WhenMapped kills it every time, NotUseful survives every
+     * time, same gesture, same server. Packing to the RIGHT of the window (a
+     * resize with no move) and `wm geometry` on the toplevel are both harmless,
+     * which is what makes it a *move* bug.
+     *
+     * ⚠ IT COSTS US NOTHING, which is why this is a fix and not a workaround.
+     * XSCHEM double-buffers into xctx->save_pixmap and handle_expose()
+     * (callback.c) repaints from it with MyXCopyArea on every Expose — the
+     * comment there has said "needed if no backing store available on the
+     * server" since 2017. Server-side backing store was only ever a redundant
+     * second copy of a buffer we already keep.
+     *
+     * XSCHEM_BACKING_STORE=1 restores the old request for anyone who wants to
+     * measure it; there is deliberately no Tcl preference, because the only
+     * thing the old value buys is the crash. */
+    winattr.backing_store = NotUseful;
+    {
+      const char *bs_env = getenv("XSCHEM_BACKING_STORE");
+      if(bs_env && bs_env[0] == '1') winattr.backing_store = WhenMapped;
+    }
     Tk_ChangeWindowAttributes(tkwindow, CWBackingStore, &winattr);
 
     dbg(1, "Tcl_AppInit(): sizeof xInstance=%lu , sizeof xSymbol=%lu\n",
