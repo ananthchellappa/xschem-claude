@@ -1203,12 +1203,26 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
     my_realloc(_ALLOC_ID_, &raw->values[raw->nvars], raw->allpoints * sizeof(SPICE_DATA));
     res = 1;
   }
-  if(expr) {
-    plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
-  } else if(res == 1) {
+  /* Zero a freshly created column BEFORE evaluating anything into it, not only
+   * when there is no expression -- issue 0325. The column a new vector gets is
+   * the previous scratch column (see the my_realloc dance above): its contents
+   * are whatever the last unnamed evaluation left there, or the uninitialised
+   * heap my_realloc() handed read_raw_data_block(). plot_raw_custom_data()
+   * returns -1 WITHOUT writing a single y[p] when it rejects the expression
+   * (spec doc/claude/specs/calculator.md section 3.1: an unresolvable vector
+   * name, or since issue 0325 a negative del() delay), so without this the
+   * caller is handed a registered, plottable, Tcl-readable vector made of
+   * uninitialised heap -- and wviewer::add_trace (src/wave_viewer.tcl:3785)
+   * reaches exactly that path with an auto-generated NEW name. "The
+   * destination column is not touched" is a safety property only if the
+   * column has defined contents to begin with. */
+  if(res == 1) {
     for(f = 0; f < raw->allpoints; f++) {
       raw->values[raw->nvars - 1][f] = 0.0;
     }
+  }
+  if(expr) {
+    plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
   }
   return res;
 }
@@ -2511,6 +2525,14 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
       stackptr1++;
     }
   } /* while(n = my_strtok_r(...) */
+  /* The token scan WIDENS the evaluation window backwards: integ(), deriv*()
+   * and prev() decrement `first`, del() pulls it all the way back to the start
+   * of the dataset containing it (spec doc/claude/specs/calculator.md 3.2).
+   * The caller's `first` is printed above; this is the window actually
+   * evaluated, and it is what tests/headless/test_del_negative_arg.tcl DN12
+   * asserts -- the graph door (src/draw.c:9171, :9221) is the only caller that
+   * passes a first > 0, so without this line the widening is unobservable. */
+  dbg(1, "plot_raw_custom_data(): evaluated window: first=%d, last=%d\n", first, last);
   my_free(_ALLOC_ID_, &ntok_copy);
   for(p = first ; p <= last; p++) {
     stackptr2 = 0;
@@ -2585,13 +2607,42 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
             break;
           case DEL:
             tmp = stack2[stackptr2 - 1];
+            /* A NEGATIVE (or NaN) delay is rejected -- issue 0325. The search
+             * below only ever walks FORWARD from the previous match, so it can
+             * never produce a left shift; with tmp < 0 the `delta > tmp` test
+             * is true at every point, the walk ran off the end of the window
+             * and read x[last + 1] (one element past the column allocated in
+             * read_raw_data_block()), while stack1[i].prevp was still the
+             * uninitialised local -- the `fabs(x[p] - x[first]) <= tmp` arm
+             * below is what normally seeds it at p == first, and a negative
+             * tmp never takes that arm. Rejected the way an unresolvable
+             * vector name is rejected (spec section 3.1): the whole
+             * evaluation returns -1. With a constant argument -- the only
+             * form a generated expression emits -- that happens at
+             * p == first, before the first y[p] store, so the destination
+             * column is not touched at all. */
+            if(!(tmp >= 0.0)) {
+              dbg(1, "plot_raw_custom_data(): del() delay must be >= 0 (got %g),"
+                     " expression rejected\n", tmp);
+              ravg_store(0, 0, 0, 0, 0.0); /* clear data */
+              return -1;
+            }
+            if(p == first) stack1[i].prevp = first; /* never read it uninitialised */
             ravg_store(1, i, p, last, stack2[stackptr2 - 2]);
             if(fabs(x[p] - x[first]) <= tmp) {
               result = stack2[stackptr2 - 2];
               stack1[i].prevp = first;
             } else {
               double delta =  fabs(x[p] - x[stack1[i].prevp]);
-              while(stack1[i].prevp <= last && delta > tmp) {
+              /* `< last`, not `<= last`: the old bound let prevp reach
+               * last + 1 and index both x[] and ravg_store()'s arr[i][]
+               * (my_calloc()ed with last + 1 doubles, save.c ravg_store())
+               * one element past their end. For a non-negative tmp the bound
+               * is unreachable anyway -- prevp <= p <= last and delta is 0 at
+               * prevp == p, so `delta > tmp` stops the walk first -- which is
+               * why this cannot change what a positive del() returns.
+               * Issue 0325. */
+              while(stack1[i].prevp < last && delta > tmp) {
                 stack1[i].prevp++;
                 delta = fabs(x[p] - x[stack1[i].prevp]);
               }

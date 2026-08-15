@@ -116,7 +116,7 @@ catalogue in §7 must be expressed in it.
 | Calculus | `integ()` `deriv()` `deriv0()` `deriv2()` `deriv20()` |
 | Statistics | `avg()` `ravg()` (running average) |
 | Clipping | `max()` (clips from BELOW: a floor at the arg) `min()` (clips from ABOVE: a ceiling at the arg) |
-| Sequence | `prev()` (previous point) `del()` (delay by X-axis distance) `idx()` (point index) |
+| Sequence | `prev()` (previous point) `del()` (delay by X-axis distance, **≥ 0 only**) `idx()` (point index) |
 | Stack | `dup()` `exch()` |
 | Constants | `pi()` `k()` (Boltzmann) `e()` `q()` (electron charge) |
 
@@ -125,6 +125,27 @@ graph's `sweep_idx`; `deriv2()`/`deriv20()` are 3-point. `integ()`, `deriv*()`, 
 and `del()` each **widen the evaluation window backwards** (they decrement `first`), so a
 clipped range silently reads one or two points before its start. Any measurement built on
 them must not assume the window is exactly what it asked for.
+
+**`del()` takes a non-negative delay and nothing else** (issue **0325**, fixed 2026-08-15 by
+batch item 12). Its search is a forward walk from the previous match, so it can only ever
+delay — there is no negative-argument left shift, and asking for one used to walk the search
+index one element past both the sweep column and `ravg_store()`'s scratch array, from a
+`stack1[i].prevp` that had never been initialised. A negative (or NaN) delay is now **rejected
+exactly like an unresolvable vector name in §3.1**: `plot_raw_custom_data()` returns `-1` for
+the whole expression, and because a constant argument is seen at the first evaluated point the
+destination column is not written at all. Emit `lshift` as a T route (§7.2), never as a
+`del()` with a negative argument. Test: `tests/headless/test_del_negative_arg.tcl`.
+
+**"Not written" is a safety property only because the column is guaranteed to be defined.**
+A rejected expression written to a vector name that does not exist yet still creates the
+vector — `raw_add_vector()` has registered it before the evaluator ever runs, and the column
+it hands over is the previous scratch column, which nothing had zeroed. Since issue 0325 that
+column is zeroed *before* the expression is evaluated into it, so a rejected expression yields
+a defined all-zero trace rather than a plottable, Tcl-readable window onto uninitialised heap.
+This matters to any generated expression, because the Calculator's plot/eval routes name a
+**new** destination vector (`wviewer::add_trace` → `xschem raw add <auto name> <rpn>`), which
+is precisely the case. A caller that wants to distinguish "rejected" from "all zero" must read
+the `-1` return, not the column.
 
 **Two rows of that table were corrected against the C on 2026-08-15** (phase 1d, from
 `recon/catalogue_defects.md` D4/D5), because §3.2 is the stated source for the function
@@ -445,7 +466,7 @@ opcode, **✘** = out of scope v1.
 | `deriv` | wave | slope | P |
 | `clip` | wave | restrict X range | T (window arg, not an opcode) |
 | `flip` | wave | mirror along X | T |
-| `lshift` | wave | shift along X | **T** (was "C (`del()` with negative arg) or T" — see below) |
+| `lshift` | wave | shift along X | **T** (was "C (`del()` with negative arg) or T"; that recipe is now a *rejected* expression — issue 0325, see below) |
 | `sample` | wave | values at chosen X | T |
 | `root` | scalar | X where curve = 0 | T (`cross` at level 0) |
 | `cross` | scalar | X at Nth threshold crossing | T — **the primitive most timing verbs use** |
@@ -496,14 +517,24 @@ in `calc::catalogue` (`src/calculator.tcl`) is the shipped form of this table, s
 it into a silent `-1` for the whole expression.
 
 - **`lshift` is a T route, and the recipe this table used to prescribe is unimplementable.**
-  "`del()` with a negative arg" cannot work: the `DEL` arm (`src/save.c:2585`-2607) compares
-  `fabs(x[p] - x[...]) <= tmp`, so a negative `tmp` never matches; the search then runs past
-  `last`, reads `x[last+1]`, and `ravg_store()` writes `arr[i][last+1]` — one element past a
-  `my_calloc(_ALLOC_ID_, last + 1, sizeof(double))` (`src/save.c:2298`). That is an
-  **out-of-bounds read in shipped C**, reachable from any `node=` expression a user types,
-  and it is not a Calculator bug: confirming and filing it is batch item 12. The catalogue
+  "`del()` with a negative arg" cannot work: the `DEL` arm (`src/save.c:2586`) compares
+  `fabs(x[p] - x[...]) <= tmp`, so a negative `tmp` never matches and the forward search runs
+  past `last`. **Confirmed under valgrind and fixed by batch item 12 — issue 0325**, and it
+  was worse than the finding claimed: the walk read `x[last+1]` *and* `arr[i][last+1]`, one
+  element past both the sweep column and the `my_calloc(_ALLOC_ID_, last + 1, sizeof(double))`
+  at `src/save.c:2297`, starting from a `stack1[i].prevp` that no arm had ever initialised.
+  Nothing was written out of bounds. It was an **out-of-bounds read in shipped C**, reachable
+  from any `node=` expression a user types, and not a Calculator bug.
+  **What a negative `del()` does now:** the whole evaluation is rejected the way §3.1 rejects
+  an unresolvable vector name — `plot_raw_custom_data()` returns `-1`, and with a constant
+  argument the destination column is not touched (and, when the destination is a vector the
+  call has just created, it holds the zeros `raw_add_vector()` put there — see §3.2). So the
+  old recipe is not merely a wrong answer, it is *no* answer: a `lshift` built on it would
+  plot a flat zero trace, not a shifted one. The catalogue
   emits nothing for `lshift` until a T-route proc exists. (The authored row also emitted a
   bare `del()`, which is a *right* shift — the opposite of its own help.)
+  A positive `del()` is untouched by the fix, pinned by `DN2`/`DN7`/`DN10` of
+  `tests/headless/test_del_negative_arg.tcl`.
 - **`groupDelay` needed the units conversion the old recipe left out.** `cph()` is in
   **degrees** and `deriv()` differentiates against the sweep variable, which for an AC raw
   is **Hz, not ω**, so `cph() deriv()` negated is degrees per hertz — short of −dφ/dω by

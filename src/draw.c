@@ -4280,10 +4280,16 @@ static void draw_graph_points(int idx, int first, int last,
     dbg(0, "draw_graph_points(): no raw struct allocated\n");
     return;
   }
-  gv = raw->values[idx];
-
   dbg(1, "draw_graph_points: idx=%d, first=%d, last=%d, wcnt=%d\n", idx, first, last, wcnt);
+  /* idx == -1 is "the expression was rejected / the vector does not exist" --
+   * plot_raw_custom_data() returns it for an unresolvable token (spec
+   * doc/claude/specs/calculator.md section 3.1) and, since issue 0325, for a
+   * negative del() delay too. The load below MUST stay under the guard: with
+   * idx == -1 `raw->values[idx]` is an 8-byte read one element BEFORE the
+   * values[] pointer array, which valgrind flags as an Invalid read on every
+   * redraw of such a graph. Issue 0325. */
   if(idx == -1) return;
+  gv = raw->values[idx];
   for(p=0;p<cadlayers; ++p) {
     if(gr->mode == 1 || gr->mode == 2) { /* Histograms */
       XSetLineAttributes(display, xctx->gc[p],
