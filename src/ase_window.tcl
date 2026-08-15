@@ -120,11 +120,51 @@ namespace eval ase::ui {
 
 # --- theme (UI v2 "Window chrome": USER-LOCKED palette + named fonts) --------
 
+# The USER-LOCKED palette, as a PURE READ. No font is created, no ttk style is
+# configured, no option-database entry is added: calling this cannot change how
+# any other window in the application looks.
+#
+# ⚠ That is the whole reason it exists separately from ase::theme. ase::theme
+# does `option add *TCombobox*Listbox.font AseEntryFont`, which is
+# PROCESS-GLOBAL and reaches the popdown of every ttk::combobox in xschem (33
+# call sites, 15 of them in xschem.tcl) — including comboboxes created before
+# the call, because the popdown listbox is built lazily. A caller that only
+# wants to know what colour a panel is must not pay that. The Calculator's
+# calc::color reads this proc for exactly that reason
+# (doc/claude/specs/calculator.md R113); ase::theme itself returns
+# `[ase::palette $name]` so there is one definition, not two.
+#
+#   panel      window and panel chrome
+#   table      list / tree / entry backgrounds
+#   header     header strips, column headings, active menu entries
+#   accent     the dark-red pane-title accent
+#   fieldfg    text on a `table` surface
+#   selectbg   selection background in lists and trees
+#   selectfg   selection foreground
+#   disabledbg a disabled row's background
+#   disabledfg a disabled row's foreground
+#
+# The last five were ttk's Treeview defaults until 2026-08-15 and are now named
+# here and APPLIED by ase::theme below, so that a reader (the Calculator) gets
+# the same value the browser's own widgets render with instead of whatever the
+# ambient ttk theme happens to supply. Their values are the measured `default`
+# theme defaults, so nothing moved when they were written down.
+proc ase::palette {{name {}}} {
+  set pal [dict create panel #f2f2f2 table #ffffff header #e8e8e8 \
+                       accent #8b0000 \
+                       fieldfg #000000 selectbg #4a6984 selectfg #ffffff \
+                       disabledbg #d9d9d9 disabledfg #a3a3a3]
+  if {$name ne {}} { return [dict get $pal $name] }
+  return $pal
+}
+
 # The central ASE look: named fonts (created once — the
 # references/copy_current_cell_dialog.tcl idiom), the combobox listbox font +
-# white-field style, and the locked palette: panels #f2f2f2, tables/entries
-# white, header strips #e8e8e8, dark-red pane-title accent. Returns the whole
-# palette dict, or one color when `name` is given.
+# white-field style, and the locked palette applied to the shared styles.
+# Returns the whole palette dict, or one color when `name` is given.
+#
+# ⚠ NOT a pure reader — see ase::palette. Call THIS when widgets are about to
+# be created or themed; call ase::palette when only a colour is wanted.
 proc ase::theme {{name {}}} {
   if {[lsearch -exact [font names] AseLabelFont] < 0} {
     font create AseLabelFont -family Arial -size 10 -weight bold
@@ -136,20 +176,30 @@ proc ase::theme {{name {}}} {
     font create AseMonoFont -family Courier -size 13
   }
   option add *TCombobox*Listbox.font AseEntryFont
-  catch {ttk::style configure Ase.TCombobox -fieldbackground #ffffff}
+  catch {ttk::style configure Ase.TCombobox -fieldbackground [ase::palette table]}
   # pane tables (UI v2): white rows in the entry font, the USER-LOCKED
-  # header-strip color on the column headings
+  # header-strip color on the column headings.
+  # The -foreground and the state map are declared rather than inherited: they
+  # were ttk Treeview defaults, which meant the palette did not actually own
+  # the text and selection colours the browser renders with, and anything
+  # reading them back (calc::color) was reading the ambient theme, not this
+  # one. The values are the measured `default`-theme defaults, so declaring
+  # them changed no pixel; the `disabled` half is re-declared with them because
+  # `ttk::style map` REPLACES a style's map rather than merging into it.
   catch {
     ttk::style configure Ase.Treeview -font AseEntryFont \
-      -background #ffffff -fieldbackground #ffffff \
+      -background [ase::palette table] -fieldbackground [ase::palette table] \
+      -foreground [ase::palette fieldfg] \
       -rowheight [expr {[font metrics AseEntryFont -linespace] + 4}]
+    ttk::style map Ase.Treeview \
+      -background [list disabled [ase::palette disabledbg] \
+                        selected [ase::palette selectbg]] \
+      -foreground [list disabled [ase::palette disabledfg] \
+                        selected [ase::palette selectfg]]
     ttk::style configure Ase.Treeview.Heading -font AseLabelFont \
-      -background #e8e8e8
+      -background [ase::palette header]
   }
-  set pal [dict create panel #f2f2f2 table #ffffff header #e8e8e8 \
-                       accent #8b0000]
-  if {$name ne {}} { return [dict get $pal $name] }
-  return $pal
+  return [ase::palette $name]
 }
 
 # Recursively re-skin an ASE widget tree: every widget class the ASE window

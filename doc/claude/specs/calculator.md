@@ -177,7 +177,7 @@ Widget paths are normative — tests address widgets by path.
 | W27 | `.calc.fn.cat` | combobox | §7 categories; initial `Special Functions` |
 | W28 | `.calc.fn.list` | multi-column list | horizontally scrollable |
 | W29 | `.calc.pad` | frame | keypad |
-| W30 | `.calc.pad.k<n>` | button | `7 8 9 / 4 5 6 * 1 2 3 - 0 ± . +` |
+| W30 | `.calc.pad.k<n>` | button | **operators only — no digit keys.** Digits are typed into the buffer. The set is drawn from §3.2 (`+ - * / **`, the comparisons, `?`, `±`, `.`) and is fixed by phase 1d. **Amended 2026-08-15 by RULING-2** (`doc/claude/calculator_batch/LEDGER.md`), which supersedes both the old `7 8 9 / 4 5 6 * 1 2 3 - 0 ± . +` reading of this row and the 4×4 digit pad in the reference screenshot. |
 | W31 | `.calc.pad.u1..u4` | button | `user 1`..`user 4` |
 | W32 | `.calc.status` | frame | status line + history dropdown |
 | W33 | `.calc.status.msg` | entry/label | readonly, initial empty |
@@ -192,8 +192,59 @@ Widget paths are normative — tests address widgets by path.
   height.
 - **R112** Minimum size must keep every control reachable — if the layout cannot honour
   that, the function browser is what scrolls, not what disappears.
-- **R113** Follow existing xschem dialog theming (`src/resources.tcl`). Do **not**
-  hand-set colors; a Cadence-red accent is not required and must not be hardcoded.
+- **R113** **Colours come from the signal browser's palette, through one accessor.**
+  The browser's palette is `ase::palette <role>` (`src/ase_window.tcl:151`) — the
+  USER-LOCKED values `panel #f2f2f2`, `table #ffffff`, `header #e8e8e8`,
+  `accent #8b0000`, `fieldfg #000000`, `selectbg #4a6984`, `selectfg #ffffff`,
+  `disabledbg #d9d9d9`, `disabledfg #a3a3a3` — which `ase::theme`
+  (`src/ase_window.tcl:190`) applies to the shared `Ase.*` ttk styles and
+  `ase::ui::apply_theme` (`:236`) walks a browser window with, from
+  `wviewer::browser_build` (`src/wave_viewer.tcl:8224`) and ~30 other browser sites.
+  The Calculator surfaces the same values as `calc::color <role>`
+  (`src/calculator.tcl`), which **reads that same dict** for eight of its nine
+  roles — `window`/`panel`/`header`/`field`/`accent`/`fieldfg`/`selectbg`/`selectfg`.
+  The ninth, `disabledfg`, is deliberately **not** a browser colour: greyed-out
+  text follows xschem's own tree-wide convention, the startup option database's
+  `*disabledForeground` (`src/xschem.tcl:15546`, `grey50`, set for both colour
+  schemes). `calc::color_sources` is the one place the mapping lives.
+  No literal colour is written in `src/calculator.tcl`, **and there are no fallback
+  defaults**: a role whose source does not resolve throws, because a colour that
+  silently defaults renders plausibly, cannot be told from a deliberate one by any
+  `cget` check, and then never tracks the palette again.
+  ⚠ `calc::color` reads `ase::palette`, **never `ase::theme`**. `ase::theme` is not
+  a reader: it creates ASE's three named fonts and does a process-global
+  `option add *TCombobox*Listbox.font AseEntryFont`, which changes the dropdown
+  font of every `ttk::combobox` in the application — including ones that already
+  exist, since a popdown listbox is built lazily. Opening this window must not
+  restyle the Graph dialog, Preferences or the Library Manager. For the same
+  reason the status history combobox uses a Calculator-local `Calc.TCombobox`
+  style rather than the browser's `Ase.TCombobox`.
+  ⚠ And **not `ttk::style lookup Ase.Treeview ...`** either. `lookup` walks the
+  style name chain and falls through to ttk's root style when the named style
+  does not set the option, so `ttk::style lookup NoSuchStyle.Treeview -foreground`
+  returns the same value as the real one and no value comparison can tell the two
+  apart. `fieldfg`/`selectbg`/`selectfg` were read that way in the first cut of
+  phase 1a and were therefore coming from the ambient ttk theme, not from the
+  browser; `ase::theme` now declares them on `Ase.Treeview` so the browser's own
+  widgets and this window are painted from one definition.
+  Still binding: **do not invent a second palette, and do not hardcode a Cadence
+  red** — the dark-red accent on panel headers is `[calc::color accent]`, i.e. the
+  value the signal browser already uses, never the literal `#8b0000`.
+  Every widget that takes a palette **background** takes a palette **foreground**
+  with it, hover states included. A background from the palette over a foreground
+  from the startup option database is a legibility bug, not a half-fix: under
+  `dark_gui_colorscheme` the option database says `*foreground white`
+  (`src/xschem.tcl:15560`), which is invisible on this window's light panels.
+  Fonts stay stock: nothing in the tree themes fonts for a new dialog
+  (`doc/claude/calculator_batch/recon/theming.md` §3), and ASE's named fonts are
+  ASE's.
+  **Amended 2026-08-15 by RULING-1** (`doc/claude/calculator_batch/LEDGER.md`). The
+  original text ("follow existing xschem dialog theming (`src/resources.tcl`); do
+  not hand-set colors") was wrong twice: `resources.tcl` contains no theming at all,
+  only base64 icons (recon/theming.md §1), and "do not hand-set colors" was read as
+  "leave everything default grey" — which is what phase 0 shipped and what the user
+  rejected. The prohibition survives as *one palette, not two*; it is no longer a
+  prohibition on colouring.
 
 ---
 
@@ -392,6 +443,39 @@ alone unlocks `riseTime` `slewRate` `delay` `dutyCycle` `frequency` `settlingTim
 - **R506** Every operation that changes the buffer or the stack updates the status area
   with what happened. Silence is a bug.
 
+#### `calc::status` — the contract every later phase calls (W32–W34)
+
+Ruled by the crew, 2026-08-15, phase 1a. R506 obliges every operation to speak, so
+this proc is on the path of nearly every action in the tool; the three questions
+below are the ones a caller cannot answer for itself and so must not have to.
+
+- **R507** `calc::status ?msg?` writes `msg` into `.calc.status.msg` and **prepends**
+  it to the history behind `.calc.status.hist`. The **empty string clears the message
+  field and records nothing** — a blank history row is not information, and clearing
+  is how a transient message is retired. `calc::status` returns the message it wrote.
+- **R508** With no window — `.calc` not built, already closed, or `--nogui` where
+  `winfo` does not exist — it is a **silent no-op that returns cleanly**, and records
+  nothing. Rationale: it is called from stubs, from teardown paths and from headless
+  tests, and a status line that throws would take its caller down with it (the
+  `ciw_echo` precedent, `src/ciw.tcl:120-127`). The history is a property of the
+  window: a closed-and-reopened Calculator starts with an empty one, matching R705's
+  "nothing stale is resurrected".
+- **R509** The history holds **50 entries, newest first**. At the cap the **oldest
+  (last) entry drops**. Consecutive duplicates are **kept** — unlike `::ciw_history`
+  (`src/ciw.tcl:161-174`), which dedupes because it recalls *commands*; two identical
+  status lines mean the operation genuinely happened twice, and hiding the second
+  would be the silence R506 forbids. Selecting an entry from `.calc.status.hist`
+  re-displays it in `.calc.status.msg` and does **not** re-record it.
+- **R510** W34 says the dropdown **reveals** the messages, and that is a rendering
+  requirement, not a data one. ttk sizes a combobox popdown to the combobox's own
+  pixel width, and W34 is deliberately a two-character *button* rather than a field,
+  so with no correction the list is ~35 px wide and shows `Buf`, `Plo`, `Eva`. The
+  Calculator-local `Calc.TCombobox` style therefore carries a `-postoffset` that
+  shifts the popdown left and widens it (`calc::popdown_extra`), leaving the button
+  small and the list readable. A check that only asserts `cget -values` tests the
+  widget's data, not what the user sees; the suite posts the dropdown and measures
+  the listbox against the longest message.
+
 ### 8.2 RPN mode (`calc::notation` = `rpn`, the default)
 
 - **R510** A binary operator button (`+ - * /`) consumes **the top two stack entries** and
@@ -530,14 +614,23 @@ Do not guess these; they change the shape of the work.
 
 1. **Toplevel or panel?** Cadence uses a separate toplevel. The signal browser learned the
    hard way that "frame inside the viewer" and "toplevel" are different features with
-   different costs. Spec above assumes **toplevel**. Confirm.
+   different costs. Spec above assumes **toplevel**.
+   **RULED 2026-08-13 by the build: toplevel.** Phase 0 shipped `.calc` as a toplevel
+   (commit `99a2edfd`).
 2. **Does v1 ship any N-route function** (`dft`, `psd`, `convolve`)? Each is real C work in
    `save.c`. Spec above assumes **no** — `dft` and everything above it deferred to v2. If
    `dft` is wanted, it is the single highest-value N addition and unlocks `thd`,
    `harmonic`, `spectrum`.
+   **RULED 2026-08-15: no.** v1 is pure Tcl. Every N-route entry (`dft`, `psd`,
+   `spectrum`, `spectralPower`, `convolve`, and the T-route verbs that stand on `dft` —
+   `harmonic`, `harmonicFreq`, `thd`) is **rendered in the function browser and disabled**,
+   with the same treatment as the RF selectors (§1.2): the entry is information, its
+   absence would not be.
 3. **Algebraic mode in v1, or RPN only?** RPN alone is far cheaper (the engine already
    speaks it) but is the unfamiliar half for a new user. `alg2rpn` is ~150 lines of Tcl and
    the most testable unit in the feature. Spec above assumes **both**.
+   **RULED 2026-08-15: both.** RPN stays the default and the only thing that reaches the
+   engine; `calc::alg2rpn` translates on the way in (phase 8, R521–R525).
 4. **Where do measurements land long-term** — ASE-L outputs rows, or new named vectors via
    `xschem raw add`? R608 assumes ASE-L rows. The two are not exclusive.
 5. **`user 1..4` scope** — per-user (`~/.xschem`) or per-project? Spec assumes per-user.
