@@ -32,9 +32,18 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 
 # Pick the display arm before anything else: this may re-exec the whole script
 # under xvfb-run, so nothing above it should have side effects.
-# shellcheck source=/dev/null
-. "$HERE/xvfb_arm.sh"
-xvfb_arm "$0" "$@"
+#
+# Skipped in library mode. xvfb_arm() ends in `exec xvfb-run ...`, and the
+# AUDIT_LIB_ONLY source-guard that would have stopped us is 300-odd lines below --
+# so `AUDIT_LIB_ONLY=1 . full_audit.sh` used to exec away and NEVER RETURN to its
+# caller, which is precisely how test_audit_classifier.tcl loads the predicates
+# (merge 5, doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md section 5.3).
+# Library mode runs no test, so it needs no display and must never re-exec.
+if [ "${AUDIT_LIB_ONLY:-0}" != "1" ]; then
+  # shellcheck source=/dev/null
+  . "$HERE/xvfb_arm.sh"
+  xvfb_arm "$0" "$@"
+fi
 
 REPO=$(cd "$HERE/../.." && pwd)
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"

@@ -68,7 +68,12 @@ proc pcall {args} {
 
 set here [file normalize [file dirname [info script]]]
 set repo [file normalize [file join $here .. ..]]
-set goldf [file join $here gold cosim_e2e_counter.golden]
+# fixtures/, NOT gold/: tests/headless/gold/ is the netlist-baseline directory that
+# run.sh iterates with `for g in "$GOLD"/*`, comparing every entry against a produced
+# artifact of the same name. A file living there that run.sh does not produce is a hard
+# `FAIL  <name>: missing from results` on the ci.yaml "Netlist golden gate" (merge 5,
+# doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md section 5.2).
+set goldf [file join $here fixtures cosim_e2e_counter.golden]
 
 # ===========================================================================
 # The golden format, and the comparator

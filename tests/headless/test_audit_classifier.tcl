@@ -502,5 +502,29 @@ check "C43 test_placement_wire_gate self-guards on a display before its first ch
             [expr {$i_chk >= 0 && $i_guard >= 0 && $i_guard < $i_chk}] \
             [expr {$i_chk >= 0 && $i_skip  >= 0 && $i_skip  < $i_chk}]] {1 1 1 1}
 
+# ---------------------------------------------------------------------------
+# J. run_suites.sh's PRIVATE COPY of the skip predicate (merge 5 section 5.5)
+#
+# run_suites.sh cannot call is_skip -- it scores its own runs -- so it carries a second
+# copy of the regexp, and the merge shipped the two out of sync: full_audit's was
+# line-anchored by 0354 H1 while run_suites.sh's was still the unanchored
+# 'RESULT: SKIP|skipped: no X|SKIP: no X connection'. Unanchored, "skipped: no X" matches
+# inside a CHECK NAME (test_save_reload_copy_selflog.tcl:139,205,280), so four suites that
+# ran every check and exited 0 were scored SKIP by the driver CLAUDE.md calls preferred and
+# PASS by full_audit. Asserted on the SOURCE of both files, because reproducing it
+# behaviourally needs a full suite run.
+#
+# The assertion is EQUALITY, not a spelling: whichever way the predicate is next revised,
+# both copies must move together or this check reddens.
+# ---------------------------------------------------------------------------
+set RS [file join $repo tests headless run_suites.sh]
+set rs ""
+if {[catch {set fh [open $RS r]; set rs [read $fh]; close $fh} e]} { set rs "<unreadable: $e>" }
+set fa_re ""; set rs_re ""
+regexp {line_has '(\^\(RESULT: SKIP[^']*)' "\$1"} $fa -> fa_re
+regexp {grep -qE '(\^\(RESULT: SKIP[^']*)'} $rs -> rs_re
+check "C44 run_suites.sh's skip regexp is line-anchored and identical to is_skip's" \
+      [list [expr {$fa_re ne ""}] [expr {$rs_re ne ""}] [expr {$fa_re eq $rs_re}]] {1 1 1}
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

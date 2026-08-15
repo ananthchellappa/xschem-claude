@@ -35,13 +35,22 @@ Xschem.log.*
 # Untitled buffers saved in the cwd (issue 0322). load_schematic() names an empty buffer
 # $PWD/untitled[-n].sch (src/save.c:4407) and get_unused_untitled_name() skips numbers already
 # taken (src/xinit.c:180), so a stray save from the repo root piles up one MORE file per run --
-# 67 of them before anyone noticed. Their "~" autosave twins were already covered by the
-# *~.sch / *~.sym rules below, which is why only the saved buffers ever showed in git status.
-# Root-anchored on purpose: a real untitled* fixture in a subdirectory must still show up.
-/untitled.sch
-/untitled-*.sch
-/untitled.sym
-/untitled-*.sym
+# 67 of them before anyone noticed.
+#
+# The /untitled.sch, /untitled-*.sch, /untitled.sym and /untitled-*.sym rules that used to sit
+# here are DELIBERATELY GONE (merge 5, doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md
+# section 5.6). full_audit.sh's tree_delta_snapshot() finds a suite's leaked files with
+# `git status --porcelain`, which honours .gitignore -- so ignoring the leak also hid it from
+# the detector, and check C37 of test_audit_classifier.tcl ("tree delta sees a leaked .sch
+# FILE", issue 0353) went red on the merge. 0322's real cure is the source fix
+# (get_unused_untitled_name probing the directory it is about to write into) plus the test
+# hygiene in test_placement_wire_gate.tcl; the ignore rule only ever hid the residue.
+# If these rules are ever restored for developer convenience, tree_delta_snapshot() must stop
+# trusting .gitignore for this class first -- e.g. a second
+# `git status --porcelain --ignored=matching -- ':(glob)untitled*.s[cy]*'` pass folded into the
+# snapshot -- and C37's comment must say why. Do NOT instead rewrite C37 into a C39b-style
+# "CANNOT see" row without filing the coverage loss against 0353.
+# Their "~" autosave twins remain covered by the *~.sch / *~.sym rules below.
 
 # Executables
 *.exe
