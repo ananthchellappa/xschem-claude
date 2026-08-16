@@ -1,0 +1,829 @@
+<title>The Fatal Hint</title>
+
+<style>
+  /* ── tokens ─────────────────────────────────────────────────────────────
+     Light is the base. Dark redefines ONLY tokens, twice: once for the
+     un-stamped system-dark case, once for an explicit data-theme="dark". */
+  :root {
+    --paper:      #eceff3;   /* cool paper — grey with a blue bias toward the accent */
+    --surface:    #f6f8fa;
+    --surface-2:  #e2e7ed;
+    --ink:        #131c26;
+    --ink-soft:   #48586a;
+    --ink-faint:  #6d7d8f;
+    --rule:       #c6d0da;
+    --rule-soft:  #dae1e8;
+    --accent:     #1d6f8b;   /* instrument blue — links, rails, structure */
+    --accent-2:   #10495c;
+    --fatal:      #a32f26;   /* semantic: the server dies */
+    --fatal-bg:   #f7e4e2;
+    --ok:         #2f6b45;   /* semantic: it survives */
+    --ok-bg:      #e2eee7;
+    --code-bg:    #e7ecf1;
+    --shadow:     0 1px 2px rgba(19,28,38,.06), 0 8px 24px rgba(19,28,38,.05);
+
+    --display: ui-monospace, "SF Mono", "SFMono-Regular", "Cascadia Mono",
+               "Roboto Mono", Menlo, Consolas, monospace;
+    --body: "Iowan Old Style", Charter, "Bitstream Charter", "Sitka Text",
+            Cambria, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "Cascadia Mono",
+            Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0d151d;
+      --surface:   #131e28;
+      --surface-2: #1b2833;
+      --ink:       #dde5ed;
+      --ink-soft:  #a3b2c0;
+      --ink-faint: #7d8d9c;
+      --rule:      #2a3a48;
+      --rule-soft: #1f2d39;
+      --accent:    #63b8d4;
+      --accent-2:  #9ad4e8;
+      --fatal:     #f0705f;
+      --fatal-bg:  #2c1a18;
+      --ok:        #6fbf8c;
+      --ok-bg:     #16271d;
+      --code-bg:   #16222d;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #0d151d;
+    --surface:   #131e28;
+    --surface-2: #1b2833;
+    --ink:       #dde5ed;
+    --ink-soft:  #a3b2c0;
+    --ink-faint: #7d8d9c;
+    --rule:      #2a3a48;
+    --rule-soft: #1f2d39;
+    --accent:    #63b8d4;
+    --accent-2:  #9ad4e8;
+    --fatal:     #f0705f;
+    --fatal-bg:  #2c1a18;
+    --ok:        #6fbf8c;
+    --ok-bg:     #16271d;
+    --code-bg:   #16222d;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.28);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 18px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 41rem; margin: 0 auto; }
+  .wide { max-width: 52rem; margin-inline: auto; }
+
+  /* ── masthead ───────────────────────────────────────────────────────── */
+  header.masthead {
+    padding: 4.5rem 0 2.25rem;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 3rem;
+  }
+  .eyebrow {
+    font-family: var(--display);
+    font-size: .72rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1.25rem;
+  }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(2.1rem, 6vw, 3.1rem);
+    line-height: 1.04;
+    letter-spacing: -.035em;
+    font-weight: 700;
+    margin: 0 0 1.1rem;
+    text-wrap: balance;
+  }
+  .deck {
+    font-size: 1.24rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0 0 1.75rem;
+    text-wrap: pretty;
+  }
+  .byline {
+    font-family: var(--display);
+    font-size: .78rem;
+    color: var(--ink-faint);
+    letter-spacing: .02em;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1.1rem;
+    margin: 0;
+  }
+
+  /* ── sections, numbered because the content really is a sequence ────── */
+  section { margin-bottom: 3.25rem; }
+  section > * { max-width: 41rem; margin-inline: auto; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 1.32rem;
+    line-height: 1.25;
+    letter-spacing: -.02em;
+    font-weight: 700;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+    display: flex;
+    gap: .85rem;
+    align-items: baseline;
+  }
+  h2 .step {
+    font-size: .82rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: .08em;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: .95rem;
+    letter-spacing: .01em;
+    margin: 2rem 0 .6rem;
+  }
+  p { margin: 0 0 1.1rem; }
+  a { color: var(--accent); text-underline-offset: .18em; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  strong { font-weight: 700; }
+  em.term { font-style: normal; font-family: var(--display); font-size: .92em; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: var(--code-bg);
+    padding: .1em .34em;
+    border-radius: 3px;
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: .8rem;
+    line-height: 1.55;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--rule-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: .95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  ul, ol { margin: 0 0 1.2rem; padding-left: 1.35rem; }
+  li { margin-bottom: .5rem; }
+
+  /* ── callouts ───────────────────────────────────────────────────────── */
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--rule-soft);
+    border-radius: 5px;
+    padding: 1.1rem 1.25rem;
+    margin: 0 auto 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  .note > :last-child { margin-bottom: 0; }
+  .note .label {
+    font-family: var(--display);
+    font-size: .68rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: .55rem;
+  }
+  .note.analogy { border-left: 3px solid var(--accent); }
+  .note.analogy .label { color: var(--accent); }
+
+  /* ── the gesture matrix ─────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; margin: 0 auto 1.5rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .92rem;
+    font-family: var(--body);
+  }
+  caption {
+    caption-side: bottom;
+    font-size: .82rem;
+    color: var(--ink-faint);
+    text-align: left;
+    padding-top: .7rem;
+    line-height: 1.45;
+  }
+  th, td {
+    text-align: left;
+    padding: .55rem .7rem;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--display);
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td.verdict { white-space: nowrap; font-family: var(--display); font-size: .78rem; }
+  .pill {
+    display: inline-block;
+    padding: .12rem .5rem;
+    border-radius: 999px;
+    font-weight: 700;
+    letter-spacing: .03em;
+  }
+  .pill.dead { color: var(--fatal); background: var(--fatal-bg); }
+  .pill.live { color: var(--ok);    background: var(--ok-bg); }
+
+  /* ── figures ────────────────────────────────────────────────────────── */
+  figure {
+    margin: 2rem auto 2.2rem;
+    max-width: 52rem;
+  }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption {
+    font-size: .85rem;
+    color: var(--ink-faint);
+    line-height: 1.5;
+    margin-top: .7rem;
+    max-width: 41rem;
+    margin-inline: auto;
+  }
+  .svg-fatal { color: var(--fatal); }
+  .svg-ok    { color: var(--ok); }
+  .svg-accent{ color: var(--accent); }
+
+  /* ── lessons ────────────────────────────────────────────────────────── */
+  .lessons { list-style: none; padding: 0; counter-reset: lesson; }
+  .lessons li {
+    counter-increment: lesson;
+    border-top: 1px solid var(--rule-soft);
+    padding: 1rem 0 .3rem 2.6rem;
+    position: relative;
+    margin: 0;
+  }
+  .lessons li::before {
+    content: counter(lesson, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 1.05rem;
+    font-family: var(--display);
+    font-size: .76rem;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .lessons b {
+    font-family: var(--display);
+    font-size: .95rem;
+    display: block;
+    margin-bottom: .25rem;
+    letter-spacing: -.01em;
+  }
+
+  footer.end {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.6rem;
+    font-size: .85rem;
+    color: var(--ink-faint);
+  }
+  footer.end p { margin-bottom: .6rem; }
+
+  @media (max-width: 34rem) {
+    body { font-size: 17px; }
+    h2 { display: block; }
+    h2 .step { display: block; margin-bottom: .3rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">Debugging case study · X11</p>
+    <h1>The Fatal Hint</h1>
+    <p class="deck">A schematic editor could take down every window on the machine — not
+      its own window, <em>every</em> window — by asking the X server, politely, for a favour
+      it never needed.</p>
+    <p class="byline">
+      <span>XSCHEM · issue 0413</span>
+      <span>VcXsrv 21.1.16.1</span>
+      <span>Reading time ~15 min</span>
+    </p>
+  </div>
+</header>
+
+
+<section>
+  <p>Here is a bug report, in full: <em>“Pressing Ctrl-B in the waveform viewer kills the X
+    server.”</em></p>
+
+  <p>Not <q>crashes the app.</q> Not <q>throws an error.</q> The X server — the process that
+    owns the screen, the keyboard, the mouse, and every window belonging to every program —
+    dies, and has to be restarted by hand. Every other application on the desktop dies with
+    it. One keystroke in one program, and the building comes down.</p>
+
+  <p>This walkthrough is the whole investigation: the hypothesis that was wrong, how it was
+    killed, how the crash was reproduced without destroying the reporter's desktop, and the
+    one word that turned out to be the cause. Almost none of the useful parts are specific to
+    X11. They are the same moves you will make on any bug where the failure happens somewhere
+    you do not control.</p>
+</section>
+
+<section>
+  <h2><span class="step">01</span> Why this report is extraordinary</h2>
+
+  <p>Start with why an experienced engineer should sit up at that sentence, because the
+    reaction is the first piece of analysis.</p>
+
+  <p>X11 is a <strong>client–server</strong> system, and an old one — the protocol is from
+    1987. Your applications are <em class="term">clients</em>. They own no pixels. They open a
+    socket to a <em class="term">server</em>, which owns the display hardware, and they send it
+    requests: <code>CreateWindow</code>, <code>ConfigureWindow</code>,
+    <code>CopyArea</code>. The server is shared infrastructure. Dozens of mutually distrustful
+    programs are connected to it at once.</p>
+
+  <div class="note analogy">
+    <span class="label">The analogy to keep</span>
+    <p>The server is the <strong>landlord</strong>; the clients are <strong>tenants</strong>.
+      Tenants ask for things — a repaint, a bigger room, hold my mail. The landlord may agree
+      or refuse. What must never happen, no matter how strange the request, is that one
+      tenant's paperwork <strong>burns down the building</strong>. If it does, the fault is not
+      only in the tenant who filed it.</p>
+  </div>
+
+  <p>This is a <strong>trust boundary</strong>. The server's contract with every client is
+    that a malformed request earns an error, not a death. That contract is why servers
+    validate: the protocol defines <code>BadValue</code>, <code>BadMatch</code>,
+    <code>BadWindow</code> precisely so that nonsense from one client is reported to that
+    client and survived by everyone else.</p>
+
+  <p>So a client that kills a server means one of two things, and probably both: the client is
+    sending something malformed, <em>and</em> the server is mishandling it. Hold both
+    suspicions. Do not resolve them early.</p>
+</section>
+
+<section>
+  <h2><span class="step">02</span> The obvious suspect, and its alibi</h2>
+
+  <p>There was already a leading theory when the investigation started, and it was a good one.
+    Worth walking through, because <strong>killing a plausible hypothesis quickly is most of
+    what debugging is.</strong></p>
+
+  <p>Ctrl-B opens a “signal browser” — a panel listing every signal in a simulation. It lays
+    names out in columns and sets the scrollable region to <code>columns × columnWidth</code>.
+    And here is the thing every X programmer eventually learns: <strong>X11 coordinates are
+    signed 16-bit.</strong> Every <var>x</var>, <var>y</var>, width and height on the wire lives
+    in −32768…32767. A simulation with enough signals makes that product enormous, and a number
+    that does not fit is exactly the sort of thing that could make an old server misbehave.</p>
+
+  <p>Clean theory. It names a mechanism, it predicts the trigger scales with signal count, and
+    it is falsifiable. So falsify it. Two measurements, both cheap:</p>
+
+  <ul>
+    <li>Build a bare Tk canvas with a scroll region <strong>150,096 pixels wide</strong> and 848
+      items placed out to <var>x</var> = 150,000, and scroll it end to end. The server did not
+      care. No error, no death.</li>
+    <li>Instrument the real panel on the reporter's actual data — 424 signals, the very file
+      that crashed it — and print the numbers it computes. Result:
+      <code>cols=3 colw=88</code>, scroll region <strong>264 pixels</strong>. Not 32,767.
+      Two hundred and sixty-four.</li>
+  </ul>
+
+  <p>The suspect had an alibi. There was a second one already on record: the reporter had
+    upgraded the X server from a 2020 build to the current one <em>before</em> this
+    investigation, hoping that was it, and the crash was unchanged. That kills <q>ancient
+    server</q> as an explanation too — and, importantly, it moves the blame toward us. A
+    six-year-old server mishandling a legal request is a story about the server. A current
+    server dying the same way says the request itself is wrong.</p>
+
+  <div class="note">
+    <span class="label">Method</span>
+    <p>A hypothesis that survives because nobody measured it is not evidence, it is a rumour
+      with a citation. Both of these took minutes and each removed a whole branch of the search
+      tree. Cheap falsification first, always — and notice that the strongest thing the
+      16-bit theory had going for it was that it was <em>the first one written down</em>.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">03</span> Reproduce it without burning the reporter's house down</h2>
+
+  <p>Now a practical problem that comes up constantly and is rarely taught: <strong>the act of
+    reproducing this bug destroys the environment you are working in.</strong> Every crash
+    costs the reporter their entire desktop. You cannot iterate that way, and you certainly
+    cannot ask someone else to.</p>
+
+  <p>The move is a <strong>stunt double</strong>. The X server is not a singleton — you can
+    run a second one on a different display number, point one client at it, and crash it as
+    often as you like while the real screen carries on. That second instance was launched with
+    verbose logging turned on, which the everyday one is not:</p>
+
+<pre><code>vcxsrv.exe :11 -multiwindow -clipboard -wgl -ac \
+    -logfile C:\...\vcx11.log -logverbose 3</code></pre>
+
+  <p>This buys three things at once. Isolation: only the sacrificial server dies.
+    Iteration: crash it fifty times, nobody notices. And <strong>observability</strong> — the
+    everyday configuration produces no log at all, so the single most valuable artifact in the
+    whole investigation only exists because the repro was staged deliberately.</p>
+
+  <p>First run of the real gesture against it: the client printed
+    <code>X connection broken</code>, and the server's log ended here.</p>
+
+<pre><code>Using Composite redirection
+winMultiWindowWMProc - Error code: 8 (Match), ID: 0x180000,
+                       Major opcode: 12 (ConfigureWindow)</code></pre>
+
+  <p>Read that line slowly, because it reframes the entire problem.
+    <code>Major opcode: 12</code> is <code>ConfigureWindow</code> — move/resize a window.
+    <code>Error code: 8</code> is <code>BadMatch</code>. And
+    <code>winMultiWindowWMProc</code> is not our code and not our thread. It is a thread
+    <em>inside the X server</em>.</p>
+</section>
+
+<figure>
+  <svg viewBox="0 0 760 300" role="img" aria-label="A diagram showing that the failing ConfigureWindow request was issued by the X server's own internal window manager thread, not by the client, and that the server treats the resulting BadMatch as fatal and exits.">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+
+    <!-- client -->
+    <rect x="16" y="86" width="212" height="94" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="32" y="112" font-size="13" font-weight="700" fill="currentColor">XSCHEM (client)</text>
+    <text x="32" y="134" font-size="11.5" fill="currentColor" opacity=".75">packs a sidebar to the</text>
+    <text x="32" y="150" font-size="11.5" fill="currentColor" opacity=".75">left of its drawing area,</text>
+    <text x="32" y="166" font-size="11.5" fill="currentColor" opacity=".75">which MOVES that window</text>
+
+    <!-- boundary -->
+    <line x1="272" y1="26" x2="272" y2="286" stroke="currentColor" stroke-width="1" stroke-dasharray="4 5" opacity=".55"/>
+    <text x="272" y="18" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".6">TRUST BOUNDARY</text>
+
+    <!-- request across boundary -->
+    <line x1="228" y1="120" x2="316" y2="120" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="272" y="110" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">ConfigureRequest</text>
+
+    <!-- server -->
+    <rect x="316" y="26" width="428" height="260" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="334" y="48" font-size="13" font-weight="700" fill="currentColor">X server</text>
+    <text x="404" y="48" font-size="11.5" fill="currentColor" opacity=".7">(VcXsrv, −multiwindow)</text>
+
+    <!-- wm thread -->
+    <rect x="336" y="70" width="388" height="62" rx="4" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".85"/>
+    <text x="352" y="94" font-size="12" font-weight="700" fill="currentColor">internal window-manager thread</text>
+    <text x="352" y="114" font-size="11" fill="currentColor" opacity=".75">reparents each top-level into a native Windows frame</text>
+
+    <line x1="392" y1="132" x2="392" y2="176" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="404" y="158" font-size="10.5" fill="currentColor" opacity=".75">issues its OWN ConfigureWindow</text>
+
+    <!-- badmatch -->
+    <g class="svg-fatal">
+      <rect x="336" y="180" width="168" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <text x="352" y="204" font-size="12" font-weight="700" fill="currentColor">BadMatch</text>
+      <text x="352" y="222" font-size="11" fill="currentColor" opacity=".8">error code 8</text>
+
+      <line x1="504" y1="208" x2="576" y2="208" stroke="currentColor" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="540" y="198" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">fatal</text>
+
+      <rect x="576" y="180" width="148" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <text x="592" y="204" font-size="12" font-weight="700" fill="currentColor">server exits</text>
+      <text x="592" y="222" font-size="11" fill="currentColor" opacity=".8">all clients die</text>
+    </g>
+
+    <text x="336" y="266" font-size="11" fill="currentColor" opacity=".6">The request that failed was the server's, not ours — we only supplied the provocation.</text>
+  </svg>
+  <figcaption><strong>The error was raised on the far side of the boundary.</strong> Our
+    client asked for a window to move. The server's own embedded window manager reacted by
+    issuing a <code>ConfigureWindow</code> of its own, got <code>BadMatch</code> back from
+    itself, and treated that as unrecoverable. A client-side protocol trace would have shown
+    nothing wrong, which is exactly why the server log was worth staging a whole second server
+    to obtain.</figcaption>
+</figure>
+
+<section>
+  <p>Notice what this does to the search. We are no longer looking for <q>the malformed
+    request XSCHEM sent.</q> We are looking for <strong>the state XSCHEM put a window into
+    that made the server's own manager generate a request it could not satisfy.</strong>
+    Different question, different evidence.</p>
+</section>
+
+<section>
+  <h2><span class="step">04</span> Twenty questions, played properly</h2>
+
+  <p>The crashing function builds a whole panel: a paned window, a tree, a search bar, a
+    canvas, a scrollbar. Dozens of candidate culprits. This is where beginners start reading
+    code and experts start <strong>bisecting</strong>.</p>
+
+  <p><em class="term">Delta debugging</em> is binary search applied to a failing scenario: cut
+    the input in half, ask which half still fails, repeat. It is the same algorithm as twenty
+    questions, and it has the same property — each answer halves the world, so twenty
+    questions is enough to find one item in a million.</p>
+
+  <p>The panel's construction was cut into eight numbered stages, run one at a time, with the
+    sacrificial server restarted between runs. The answer arrived on the first stage. The crash
+    was not in the tree, the scrollbar, the fonts or the layout maths. It was the very first
+    statement, before the panel had drawn a single pixel:</p>
+
+<pre><code>pack $sidebar -side left -before $drawingArea</code></pre>
+
+  <p>One line of layout. Now widen instead of narrowing — having found <em>a</em> trigger,
+    map its edges, because the shape of the boundary is what names the mechanism:</p>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Every row is the same binary, the same server, one gesture changed. The pattern
+        is unambiguous: what matters is not how big the window becomes, but whether its
+        <em>origin</em> moves.</caption>
+      <thead>
+        <tr><th scope="col">Gesture</th><th scope="col">Does the window move?</th><th scope="col">Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Pack a widget <strong>to the left</strong> of the drawing area</td><td>yes — shifts right</td><td class="verdict"><span class="pill dead">server dies</span></td></tr>
+        <tr><td>Pack a widget <strong>above</strong> the drawing area</td><td>yes — shifts down</td><td class="verdict"><span class="pill dead">server dies</span></td></tr>
+        <tr><td>Pack a widget <strong>to the right</strong> (resize only)</td><td>no</td><td class="verdict"><span class="pill live">survives</span></td></tr>
+        <tr><td>Resize the whole top-level window</td><td>no</td><td class="verdict"><span class="pill live">survives</span></td></tr>
+        <tr><td>Remove the drawing area entirely</td><td>n/a</td><td class="verdict"><span class="pill live">survives</span></td></tr>
+        <tr><td>The same gestures in <strong>plain Tk</strong>, no XSCHEM</td><td>yes</td><td class="verdict"><span class="pill live">survives</span></td></tr>
+        <tr><td>The same gesture on the app's <strong>main</strong> window</td><td>yes</td><td class="verdict"><span class="pill dead">server dies</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two conclusions fall straight out. First: <strong>the signal browser was never the
+    bug.</strong> It was one caller of a gesture that any left-hand or top sidebar performs, on
+    any window in the program. The feature in the bug report was a witness, not a suspect.</p>
+
+  <p>Second, and this is the pivot: <strong>plain Tk doing the identical thing does not
+    crash.</strong> So the difference is not the gesture. The difference is something about
+    <em>our</em> window that a stock one does not have. That reduces a huge search to a small,
+    answerable question: what do we set on that window that nobody else does?</p>
+
+  <p>One attribute, set once at startup, in one line of C:</p>
+
+<pre><code>winattr.backing_store = WhenMapped;
+Tk_ChangeWindowAttributes(tkwindow, CWBackingStore, &amp;winattr);</code></pre>
+</section>
+
+<section>
+  <h2><span class="step">05</span> The control group</h2>
+
+  <p>A suspect is not a conclusion. At this point there was a strong story and zero proof, and
+    the gap between those is where wrong fixes get shipped.</p>
+
+  <p>So: a <strong>controlled experiment</strong>, in the sense your biology teacher meant.
+    One binary. One environment variable that flips that single attribute and nothing else.
+    Two runs, same gesture, back to back:</p>
+
+  <div class="tablewrap">
+    <table>
+      <caption>The one-variable A/B. Same executable, same server, same keystroke — only the
+        attribute differs. Then the original bug report's exact path, on the real 424-signal
+        session, with the attribute off: survives.</caption>
+      <thead>
+        <tr><th scope="col">Attribute requested</th><th scope="col">Outcome</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>backing_store = WhenMapped</code></td><td class="verdict"><span class="pill dead">server dies, every time</span></td></tr>
+        <tr><td><code>backing_store = NotUseful</code></td><td class="verdict"><span class="pill live">survives, every time</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>That is the difference between <q>I believe</q> and <q>I measured.</q> It costs one
+    conditional and ten minutes, and it is the only thing standing between a real root cause
+    and a plausible story that happens to correlate. Keep the knob afterwards, too — the
+    escape hatch that produced the control group is also how the next person reproduces the
+    bug on purpose.</p>
+</section>
+
+<section>
+  <h2><span class="step">06</span> What backing store actually is</h2>
+
+  <p>So what was that one word doing?</p>
+
+  <p>When a window is covered and then uncovered, the pixels underneath have to come from
+    somewhere. There are two ways to arrange that. Either the client keeps its own copy and
+    repaints on demand, or it asks the <em>server</em> to remember the covered pixels on its
+    behalf. That second thing is <strong>backing store</strong>.</p>
+
+  <div class="note analogy">
+    <span class="label">The analogy to keep</span>
+    <p>Backing store is asking the building's concierge to <strong>hold a spare copy of your
+      keys</strong>. It is a <em>request</em>, not a contract. The concierge may agree, may
+      forget, may have a policy against it — and crucially, the protocol says so out loud:
+      backing store is a <strong>hint</strong>. A conforming server is free to ignore it
+      entirely, and many do.</p>
+  </div>
+
+  <p>This distinction — <strong>hints versus guarantees</strong> — runs through all of
+    systems programming, and it is one of the most reliable places for bugs to hide. A cache
+    <code>Expires</code> header, a <code>madvise()</code> call, a scheduler
+    <code>nice</code> value, a query planner index hint: <em>advisory</em>. You may not rely on
+    the answer. And because you may not rely on it, you must already have a fallback that works
+    without it.</p>
+
+  <p>Which raises the question that decided the fix. If the hint is ignorable, what does this
+    program do when it <em>is</em> ignored? It turns out: exactly the right thing, and it has
+    been doing it since 2017. The application double-buffers all its drawing into a pixmap it
+    owns, and on every expose event it copies from that buffer back to the window. There is
+    even a comment sitting next to the code:</p>
+
+<pre><code>/* redraw selection on expose, needed if no backing store
+   available on the server 20171112 */</code></pre>
+</section>
+
+<figure>
+  <svg viewBox="0 0 720 240" role="img" aria-label="A diagram showing the client keeps its own guaranteed pixel buffer and repaints from it on every expose event, while the server-side backing store was a redundant advisory second copy, now removed.">
+    <defs>
+      <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+
+    <!-- the kept path -->
+    <rect x="16" y="120" width="150" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="32" y="146" font-size="12" font-weight="700" fill="currentColor">drawing code</text>
+    <text x="32" y="164" font-size="11" fill="currentColor" opacity=".7">lines, text, symbols</text>
+
+    <line x1="166" y1="150" x2="222" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+    <rect x="222" y="120" width="186" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="238" y="146" font-size="12" font-weight="700" fill="currentColor">save_pixmap</text>
+    <text x="238" y="164" font-size="11" fill="currentColor" opacity=".7">ours · always there · guaranteed</text>
+
+    <line x1="408" y1="150" x2="470" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <text x="439" y="140" font-size="10" text-anchor="middle" fill="currentColor" opacity=".75">CopyArea</text>
+    <text x="439" y="170" font-size="10" text-anchor="middle" fill="currentColor" opacity=".75">on every Expose</text>
+
+    <rect x="470" y="120" width="164" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="486" y="146" font-size="12" font-weight="700" fill="currentColor">window on screen</text>
+    <text x="486" y="164" font-size="11" fill="currentColor" opacity=".7">what the user sees</text>
+
+    <!-- the removed path -->
+    <g class="svg-fatal">
+      <line x1="552" y1="120" x2="552" y2="72" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar2)"/>
+      <rect x="470" y="16" width="164" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="486" y="40" font-size="12" font-weight="700" fill="currentColor">server backing store</text>
+      <text x="486" y="58" font-size="11" fill="currentColor" opacity=".85">advisory · may be ignored</text>
+      <line x1="470" y1="16" x2="634" y2="72" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="634" y1="16" x2="470" y2="72" stroke="currentColor" stroke-width="1.5"/>
+      <text x="648" y="48" font-size="11" font-weight="700" fill="currentColor">removed</text>
+    </g>
+
+    <text x="16" y="216" font-size="11" fill="currentColor" opacity=".6">Deleting the crossed-out box changes nothing about what the user sees — the solid path was always doing the work.</text>
+  </svg>
+  <figcaption><strong>The removed edge is the whole fix.</strong> The application already kept
+    a guaranteed client-side copy of its pixels and repainted from it on every expose. The
+    server-side backing store was a second, advisory copy of a buffer we already had — an
+    optimisation whose only measurable effect on this platform was the crash.</figcaption>
+</figure>
+
+<section>
+  <p>So the fix is one word, from <code>WhenMapped</code> to <code>NotUseful</code>, and the
+    reason it is a <em>fix</em> rather than a <em>workaround</em> is the paragraph above: we
+    were not disabling a feature we relied on. We were withdrawing a request whose answer we
+    had never once used.</p>
+
+  <div class="note">
+    <span class="label">A test worth applying to your own code</span>
+    <p>Find the optimisations in your system that are advisory. For each, ask: <em>what breaks
+      if it is ignored?</em> If the answer is <q>nothing</q>, you are carrying a dependency
+      with no benefit — pure risk surface. If the answer is <q>I don't know</q>, that is the
+      more interesting finding, and it means the fallback path has never been exercised.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">07</span> Whose bug is it?</h2>
+
+  <p>Both parties. Say so plainly, and resist the pull to pick one.</p>
+
+  <p><strong>Ours</strong>, because we requested a hint we did not need, and on this platform
+    that request had a fatal side effect. That is squarely fixable by us, so we fixed it — and
+    the users on affected setups get relief immediately rather than after an upstream release
+    cycle.</p>
+
+  <p><strong>Theirs</strong>, because <em>nothing a client asks for may kill an X server.</em>
+    Look again at what the server did: its internal window manager made a request, got an error
+    back, and treated that error as unrecoverable. <strong>Fail-fast is a virtue in a
+    component and a catastrophe in shared infrastructure.</strong> A crash is a fine response
+    to a broken invariant inside a single process. It is never a fine response to input from an
+    untrusted peer — and every one of the server's clients is an untrusted peer.</p>
+
+  <div class="note analogy">
+    <span class="label">The analogy to keep</span>
+    <p>The landlord received a form he could not process and, rather than filing a complaint,
+      demolished the building. That the tenant's form was odd does not make the demolition
+      reasonable. <strong>Both findings are real, and reporting only the one you can fix is how
+      the other one survives to bite the next person.</strong></p>
+  </div>
+
+  <p>There is a well-known piece of advice hovering here — <em>be conservative in what you
+    send, liberal in what you accept</em>, sometimes called the robustness principle. It has
+    aged badly as a rule about parsing, where quietly accepting garbage propagates it. But its
+    second half holds absolutely at a trust boundary in one specific sense: <strong>accepting
+    input you dislike must never mean dying because of it.</strong> Reject it, log it,
+    disconnect that client if you must. Do not take everyone else down with you.</p>
+</section>
+
+<section>
+  <h2><span class="step">08</span> The test you cannot write, and the one you can</h2>
+
+  <p>Last act, and for a working engineer it is the most useful one. A bug is not finished when
+    it stops happening. It is finished when it cannot come back unnoticed.</p>
+
+  <p>Except here you cannot test for it. The crash needs a specific X server, driving a real
+    display, on a specific operating system. The project's automated tests run headless, on
+    virtual servers — and those servers tolerate the exact gesture that kills the real one.
+    Fourteen test suites covered this feature and every one of them passed, throughout.</p>
+
+  <div class="note analogy">
+    <span class="label">The analogy to keep</span>
+    <p>The <strong>streetlight effect</strong>: the drunk searches for his keys under the
+      lamp-post, not because he dropped them there, but because that is where the light is.
+      Headless CI is the lamp-post. It is genuinely where most bugs are findable — and it is
+      worth knowing, explicitly, which parts of your system are permanently outside the
+      circle of light.</p>
+  </div>
+
+  <p>So separate two things that are easy to conflate: the <strong>consequence</strong> (the
+    server dies) and the <strong>request</strong> (we set an attribute). The consequence is
+    untestable here. The request is entirely ours, is one word, and is the whole of the defect.
+    Assert on that instead.</p>
+
+  <p>The regression test asks the running program what attribute its windows actually carry,
+    on the main window and on a second window created later — because the code sets it in three
+    places, and a fix applied to only the startup path would leave every new window crashing.
+    Then the part that matters most:</p>
+
+<pre><code>$ XSCHEM_BACKING_STORE=1 ./xschem --script test_backing_store_0413.tcl
+FAIL: BS4 the MAIN drawing window carries NotUseful -> {WhenMapped}
+FAIL: BS5 a NEW drawing window carries NotUseful too -> {WhenMapped}</code></pre>
+
+  <p>That is the escape-hatch knob from step 05, reused as a <strong>negative control</strong>.
+    A test that has never been observed to fail is not yet known to be a test — it might be
+    asserting nothing at all, and green forever either way. Making it fail on purpose is how
+    you learn it is wired to reality.</p>
+</section>
+
+<section>
+  <h2><span class="step">09</span> What to carry away</h2>
+
+  <p>Almost none of this was about X11. Strip the protocol out and the moves are portable:</p>
+
+  <ol class="lessons">
+    <li><b>Falsify the leading theory first.</b> It is leading because someone wrote it down
+      first, which is not evidence. Two measurements retired a whole branch of the search here,
+      and one of them was a number — 264, where the theory needed 32,767.</li>
+    <li><b>Stage the reproduction so you can afford to repeat it.</b> If observing the bug
+      destroys the environment, build a sacrificial one. Cheap repetition is what makes every
+      later step possible.</li>
+    <li><b>Get the log from the layer that actually failed.</b> The decisive line came from
+      inside the other process. Everything before it was speculation; everything after it was
+      arithmetic.</li>
+    <li><b>Bisect the scenario, not the source.</b> Delta debugging found the guilty line in
+      one step, in code nobody had read yet.</li>
+    <li><b>Then widen, to find the edges.</b> Narrowing gives you a trigger. Mapping the
+      boundary — moves crash, resizes don't — gives you the mechanism, and told us the reported
+      feature was innocent.</li>
+    <li><b>Change one variable.</b> The A/B on a single binary is the difference between a
+      correlation and a cause, and it is almost always affordable.</li>
+    <li><b>Know which of your dependencies are hints.</b> Advisory means the fallback must
+      exist. If nothing breaks when the hint is ignored, you are holding pure risk.</li>
+    <li><b>At a trust boundary, dying is not an error-handling strategy.</b> Fail-fast inside a
+      process; fail-safe at the door.</li>
+    <li><b>Report both bugs.</b> Fix your side because it helps users now; file theirs because
+      the next person to hit it will not have this write-up.</li>
+    <li><b>When the consequence is untestable, test the request.</b> And prove the test can
+      fail before you trust its green.</li>
+  </ol>
+</section>
+
+<footer class="end">
+  <p>The fix is one word in <code>src/xinit.c</code>. Finding out that it was one word took a
+    second X server, eight bisection stages, a controlled A/B, and one line of somebody else's
+    log file.</p>
+  <p>Full write-up, with the raw measurements:
+    <code>doc/claude/issues/0413-backing-store-on-the-drawing-window-kills-vcxsrv.md</code>.</p>
+</footer>
+
