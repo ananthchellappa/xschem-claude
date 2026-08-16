@@ -64,7 +64,25 @@ fi
 cd "$REPO" || exit 2
 
 # Tests that need the action log / CIW open -> run with --logdir <tmp>
+# (test_ase_log_seam_0207 and test_select_at were MISSING from this list until
+# issue 0415. Both assert on the action log, which exists only under --logdir, so
+# without the flag they failed on their FIRST line -- `FAIL: action log open` --
+# and every downstream assertion failed for want of a log rather than for want of
+# the behaviour: 16 of the first's 26 checks lost, 5 in the second (SA5, SA6b,
+# SA7b, SA8b and the opener). The other 10 of the 26 are not evidence either --
+# they assert ABSENCES (PS9 over an empty line set, PS10a/PS10b/PS11/PS13 "nothing
+# was logged", RP2/RP3 "replay executed nothing") and pass vacuously with no log
+# at all. Both test files say so in their own headers
+# (test_select_at.tcl:7-15, test_ase_log_seam_0207.tcl:39-47) and neither had ever
+# been on the list. Measured here at 938388a5: 16 FAILED (10 passed) / 5 FAILED
+# without the flag, ALL PASS (26 checks) / ALL PASS with it.
+# The flag is safe to grant because the dispatch below is an if/elif CHAIN with
+# in_list "$logdir_tests" FIRST: a name can take exactly one arm, so a case on
+# this list can never also reach a --nolog invocation -- and --nolog + --logdir is
+# a fatal abort (util.c:344-349). nolog_tests holds only test_nolog, so there is
+# no overlap to guard in the first place.)
 logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_descend \
+  test_ase_log_seam_0207 test_select_at \
   test_action_log_dispatch test_action_log_libmgr test_context_menu_log \
   test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \

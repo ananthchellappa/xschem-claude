@@ -4,9 +4,15 @@
 # find_closest_obj() and reselects the same object. Interactive clicks funnel
 # through select_object() and log the same line.
 #
-# Needs X + --logdir (established action-log harness). Run from the repo ROOT:
+# Needs X + --logdir (established action-log harness) -> registered in
+# full_audit.sh logdir_tests. Run from the repo ROOT:
 #   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --script tests/headless/test_select_at.tcl
+# or, gated:
+#   tests/headless/run_suites.sh --logdir test_select_at
+# Without the flag the FIRST check ("action log open") reds and SA5/SA6b/SA7b/SA8b
+# fall with it -- 5 FAILED, for want of a log rather than for want of the
+# behaviour. That is what issue 0415 was: this file was absent from logdir_tests.
 #
 # RED-first: on a build without select_at, the command throws (caught -> FAIL)
 # and the interactive funnel logs nothing (assert fails) -- every SA check reds.

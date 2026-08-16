@@ -36,8 +36,13 @@
 #   PS13      the pick still writes NO replayable line — (B) is out of scope, not done
 #   RP1-RP3   the log still `source`s cleanly after the picks, and the ASE lines are inert
 #
-# MUST run under X with --logdir (a real CIW pane AND a real action log). --nolog would
-# disable both, and --nolog + --logdir is a fatal abort (util.c:344-349):
+# MUST run under X with --logdir (a real CIW pane AND a real action log) -> registered in
+# full_audit.sh logdir_tests. --nolog would disable both, and --nolog + --logdir is a fatal
+# abort (util.c:344-349) -- which is why the registration is a list membership and not an
+# extra flag: the audit's dispatch is an if/elif chain and logdir_tests is its first arm.
+# Without the flag PS0 reds and 16 of the 26 checks go with it; the other 10 assert
+# ABSENCES (PS9, PS10a, PS10b, PS11, PS13, RP2, RP3 ...) and pass vacuously over a log
+# that was never opened, so all 26 are worthless without it (issue 0415).
 #   ./src/xschem --pipe -q --logdir "$(mktemp -d)" \
 #       --script tests/headless/test_ase_log_seam_0207.tcl
 # or, gated:
