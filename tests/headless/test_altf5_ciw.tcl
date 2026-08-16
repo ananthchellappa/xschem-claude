@@ -18,6 +18,34 @@ proc check {name ok} {
 proc key {ks {st 0}} { xschem callback .drw 2 400 300 $ks 0 0 $st ; update idletasks }
 set F5 65474 ; set ALT 8
 
+# ⚠ `wm state` IS ASYNCHRONOUS, and `update idletasks` processes no X events at
+# all — so reading the state straight after the raise reads whatever Tk last
+# heard from the server, not what the raise did. Measured on the user's real
+# WSLg screen (:0, 2026-08-15, three consecutive runs): after the keypress the
+# CIW reads `iconic` and only becomes `normal` 60 ms, 1100 ms and 2920 ms later;
+# on the Xvfb dev display it is `normal` immediately, every time. The bare reads
+# this replaces therefore failed 3 runs in 5 on :0 while the CIW was in fact
+# being raised — a test defect, not a product one.
+#
+# So the state is POLLED with real `update`s, and THE NEGATIVE LEG IS GIVEN THE
+# SAME WINDOW: if the un-bind ever stops working, the raise it then wrongly
+# performs is subject to the same 0-2920 ms lag, and an immediate read of
+# `withdrawn` would be a FALSE GREEN for the one regression that check exists to
+# catch. ⚠ That false green was NOT reproduced — with the `xschem unbind` line
+# neutered, the OLD immediate read caught the leak 4 times out of 4 on :0 — so
+# this window is hardening against a MEASURED MECHANISM, not against an observed
+# failure, and it is written down that way rather than sold as a bug fixed.
+# 5 s is 1.7x the worst settle measured here. The positive legs return as soon as
+# the state arrives (0 ms on Xvfb); only the negative leg spends the whole window,
+# which is the ~5 s this file costs that it did not cost before.
+proc wait_state {want {ms 5000}} {
+  for {set t 0} {$t < $ms} {incr t 20} {
+    if {[winfo exists .ciw] && [wm state .ciw] eq $want} break
+    update ; after 20
+  }
+  return [expr {[winfo exists .ciw] ? [wm state .ciw] : {NOWIN}}]
+}
+
 check "action registered / bindable" \
   [expr {![catch {xschem bind key $F5 alt canvas tools.raise_ciw}]}]
 
@@ -26,18 +54,18 @@ if {[winfo exists .ciw]} { wm withdraw .ciw ; update idletasks }
 
 key $F5 $ALT
 check "Alt-F5 raises/opens the CIW" \
-  [expr {[winfo exists .ciw] && [wm state .ciw] eq "normal"}]
+  [expr {[winfo exists .ciw] && [wait_state normal] eq "normal"}]
 
 # override: un-bind Alt-F5, withdraw, press again -> must stay withdrawn
 wm withdraw .ciw ; update idletasks
 xschem unbind key $F5 alt canvas
 key $F5 $ALT
-check "un-bound Alt-F5 no longer raises CIW" [expr {[wm state .ciw] eq "withdrawn"}]
+check "un-bound Alt-F5 no longer raises CIW" [expr {[wait_state normal] eq "withdrawn"}]
 
 # rebind restores the behavior
 xschem bind key $F5 alt canvas tools.raise_ciw
 key $F5 $ALT
-check "rebound Alt-F5 raises CIW again" [expr {[wm state .ciw] eq "normal"}]
+check "rebound Alt-F5 raises CIW again" [expr {[wait_state normal] eq "normal"}]
 
 # --- cadence_style_rc coexistence -------------------------------------------
 # cadence_style_rc binds plain F5 to a net-highlight on .drw. That binding and the

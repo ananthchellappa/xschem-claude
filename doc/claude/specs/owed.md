@@ -159,6 +159,40 @@ the gate dir there.
   cheapest way to serve them (`devdisplay.sh view`, or `:0` if the point is
   WSLg-specific rendering).
 
+### R4b — what a debt's SCOPE is, and what may block clearing it
+
+Added 2026-08-15 by the merge-5 loose-ends fix round, after `merge5-gui` was
+cleared on a run that was not clean and two independent reviewers caught it.
+
+- **R411 A debt has a scope, and it is the scope that must run clean — not
+  every suite that happened to be in the same batch.** A debt named after a
+  *change* (`merge5-gui`) is discharged by the suites that change touched; a
+  debt named after a *suite* (`test_calc_widgets`) is discharged by that suite.
+  The scope must be **derivable, not asserted**: `merge5-gui`'s is
+  `git diff --name-only pre-open-pdk-merge-5 e7ae4d77 -- tests/headless/` minus
+  `full_audit.sh`'s `nogui_tests`, and the receipt must print the command.
+- **R412 A suite outside the scope that carries its OWN standing debt does not
+  block the clear, and does not get silently dropped either.** `test_calc_widgets`
+  is red on `:0` (R111) and is *not* merge-touched; it therefore cannot hold
+  `merge5-gui` open, and its own debt stays standing regardless. Whichever way it
+  falls, the receipt must NAME the suite, its result, and which debt owns it —
+  the defect being prevented is a clear that rests on an *unstated* narrowing of
+  the run set.
+- **R413 Widening the scope is allowed; narrowing it after the fact is not.**
+  Running more than the scope is how the merge-5 round found its only two real
+  `:0` defects. But the set is fixed *before* the run, and a suite that fails may
+  not be reclassified out of scope afterwards to make the clear work.
+- **R414 A red that is one of the documented WSLg non-regressions does not block
+  a clear, provided the receipt names it, names its mechanism, and shows a
+  re-run.** The list is in `CLAUDE.md`: TG9 root-coords, `test_ase_plot`
+  P4/P6/P8, and bare `event generate` key delivery. **Note the rate compounds:**
+  the documented "~1 in 5" is per `event generate` CALL, so a suite making seven
+  of them goes red far more often than one in five *runs* —
+  `test_create_instance` measured 5/6 and 1/6 on `:0` on the same day with no
+  code change between. Distinguish "late" from "lost" before believing any of
+  it: poll for the effect, and if it has not arrived after ~3 s the event was
+  lost and no amount of waiting in the test will fix it.
+
 ### R5 — not lying
 
 - **R501** Every command exits non-zero on real failure.

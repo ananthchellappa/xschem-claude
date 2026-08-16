@@ -274,6 +274,16 @@ xschem abort_operation
 # measurable only under a real display, which is why it lives in THIS suite.
 # The fix: a TOTAL slot script (form alive -> ciform::canvas_escape, else -> `xschem escape`,
 # the named C terminal) and a release-to-sibling on_destroy instead of a blanket unbind.
+# ⚠ Do NOT "harden" this into a poll for `[focus] eq .drw`. That was tried on :0
+# (2026-08-15) and is a trap: with a form toplevel open, `[focus]` reports the FORM
+# (.ciform / .addlabel) even after `focus -force .drw`, because it names the focus
+# window of whichever toplevel the WM has focused. A 5 s poll therefore ran to its
+# full timeout on 2 of the 3 esc14 calls, never reached `.drw`, changed no verdict,
+# and added ~10 s per run -- lengthening the window in which WSLg's Xwayland can die
+# under it. The generated Escape lands anyway. The CI14c/CI14d/CI14g reds seen on a
+# BUSY :0 travel with `X connection to :0 broken (explicit kill or server shutdown)`
+# in sibling runs: they are the documented Xwayland teardown, not a settle lag, and
+# no amount of waiting fixes a server that is going away. Left as it was, deliberately.
 proc esc14 {} { focus -force .drw ; update ; event generate .drw <Key-Escape> ; update }
 
 catch {destroy .addlabel}; catch {destroy .addpin}; catch {destroy .mkinst}
@@ -388,10 +398,35 @@ foreach {ci15 opener top wantfocus} {
   focus -force .drw
   update
   catch {$opener}
-  update                      ;# FULL update: `update idletasks` does not process the X
-                              ;# FocusIn that open()'s `focus $w.f.ename` depends on, and
-                              ;# without it focus stays on .drw and these rows go hollow --
-                              ;# they would pass through the `.drw` slot CI14 already covers.
+  # ⚠ WAIT for the focus to actually ARRIVE -- one `update` is not enough on WSLg.
+  # `update idletasks` processes no X events at all, so it can never see the FocusIn
+  # that open()'s `focus $w.f.ename` depends on; a single full `update` processes only
+  # what the server has ALREADY sent, which on :0 is frequently nothing yet, and the
+  # precondition then reads `focus=` EMPTY -- focus on nobody, neither form nor .drw.
+  #
+  # MEASURED, 2026-08-15, by instrumenting this very loop with its iteration count
+  # (one iteration = one `update` + 25 ms). On the Xvfb dev display :99: 0 iterations,
+  # all three legs, every run -- the single `update` was always enough there, which is
+  # why :99 never saw this. On the user's real WSLg screen :0, five runs: 0, 1, 3, 5
+  # and 76 iterations (76 = ~1.9 s of real waiting before the form's entry took focus).
+  # Under a second gated GUI batch running on :0 concurrently the bare `update` was
+  # enough in only 2 runs of 8. So on :0 a single `update` is a coin flip decided by
+  # compositor state, not a wait.
+  #
+  # THE POLL DOES NOT MASK A REAL FAILURE, and that is measured too, not asserted: in
+  # one of those five runs the form never took focus at all, the loop ran to its full
+  # 200 iterations with `[focus]` still `.drw`, and CI15a went RED exactly as it should.
+  # The precondition below stays the ASSERTION -- the loop only tests the same
+  # `[focus] eq $wantfocus` the check does, and never forces it. This is the class-(a)
+  # WSLg-traffic pattern of test_calc_skeleton S12: force the race in the test; do not
+  # chase window managers, and never `focus -force` here -- that would manufacture the
+  # state the product must reach unaided, which is the exact hollowness CI15 exists to
+  # escape from CI14.
+  for {set _f 0} {$_f < 200} {incr _f} {
+    update
+    if {[winfo exists $top] && [focus] eq $wantfocus} break
+    after 25
+  }
   xschem wire
   check "CI15$ci15 precondition: $top open, focus in the FORM, wire armed" \
     [expr {[winfo exists $top] && [focus] eq $wantfocus && \

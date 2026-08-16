@@ -13,6 +13,9 @@
 # silently), which would have left the mode down forever with its traces unreachable.
 #
 # Legs:
+#   FX0       the fixture's own precondition: the canvas is MAPPED and sized. Every leg
+#             below is silently vacuous without it -- see the wait loop under the SKIP
+#             guard, and doc/claude/merge5_loose_ends/receipts/02-merge5-gui-zero-run.md
 #   CS1-CS2   select_on_design really seizes the canvas; suspend_all releases it
 #   CS3       the three bindings go back to their EXACT predecessors (string-identical:
 #             the trailing `break` is what keeps the C dispatcher out, 0202)
@@ -36,6 +39,42 @@
 # or, gated:
 #   tests/headless/run_suites.sh test_cmdmode_descend_0201
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; xschem callback dispatch)"; flush stdout; exit 0 }
+
+# ⚠ WAIT FOR THE CANVAS TO BE MAPPED, and assert it (FX0) — do not merely hope.
+# `update idletasks` runs idle handlers and processes NO X EVENTS AT ALL, so the
+# MapNotify/ConfigureNotify that give .drw its real size are still sitting in the
+# queue when it returns. Under Xvfb the map has always already happened by the
+# time a --script runs; under WSLg it frequently has NOT, and .drw is still 1x1
+# with ismapped 0 when the script starts.
+#
+# ⚠ THE RATE IS NOT FIXED -- do not read a single number here and call the race
+# fiction when you fail to reproduce it. It tracks the state of the WSLg
+# compositor, and three independent measurements on :0 on 2026-08-15 disagree by
+# more than an order of magnitude, all of them correct: 1 red run in 31 on a
+# quiet, freshly-started display; 1 cold launch in 4 (the first xschem after the
+# compositor had been idle, 85 iterations / ~3.9 s to settle, the other three 0);
+# and 6 launches in 8 needing 22-34 iterations (~0.6-0.9 s) after a session of
+# heavy GUI testing had restarted Xwayland a few times. Concurrent GUI work on :0
+# pushes it up hard. On a warm, quiet display the loop below is a 0-iteration
+# no-op, which is exactly what it should cost when the canvas is already there.
+#
+# Everything downstream of an unmapped canvas is nonsense: `xschem zoom_full` fits the
+# drawing into one pixel (zoom 1834 against 1.83 on a mapped canvas), so sx/sy
+# compute (0,0) for every point and every click lands on the corner instead of on
+# the instance, and `focus -force .drw` cannot take on an unmapped window, so
+# DS7's REAL <Key-e> goes nowhere. Measured cost of one such launch: 9 red checks
+# — and, far worse, 80 checks that still printed `ok:` against a canvas that was
+# never there, which is red-but-hollow's mirror image.
+#
+# So the map is WAITED for with real `update`s, and then ASSERTED at FX0 below: a
+# launch whose canvas never maps must go red at one named check rather than green
+# 80 times. This is the class-(a) WSLg-traffic pattern of test_calc_skeleton S12 —
+# force the race in the test; do not chase window managers, and do not let an
+# environment decide whether the file measures anything.
+for {set _i 0} {$_i < 200} {incr _i} {
+  if {[winfo ismapped .drw] && [winfo width .drw] > 1 && [winfo height .drw] > 1} break
+  update ; after 25
+}
 update idletasks
 focus -force .drw
 update idletasks
@@ -46,6 +85,12 @@ proc check {name got want} {
   puts "[expr {$ok ? {ok:  } : {FAIL:}}] $name (got $got want $want)"; flush stdout
   if {!$ok} {incr ::fails}
 }
+
+# FX0 — the fixture's own precondition, stated as a check because every one of the
+# 89 below is silently vacuous without it (see the wait loop above).
+check "FX0 the canvas is mapped and really sized before anything is measured" \
+  [list [winfo ismapped .drw] [expr {[winfo width .drw] > 1 && [winfo height .drw] > 1}]] \
+  [list 1 1]
 
 set no_recent_files 1                       ;# issue 0119: keep Open Recent clean
 
