@@ -45,7 +45,13 @@ export const meta = {
 const REPO = '/home/qflow/dev/xschem/claude_1/xschem'
 const BATCHDIR = REPO + '/doc/claude/casemode_batch'
 const LEDGER = BATCHDIR + '/LEDGER.md'
-const BASELINE = REPO + '/doc/claude/merge5_loose_ends/audit_item02_fixround_2026-08-16.txt'
+// Rolled forward at item 1 (driver decision, LEDGER 'Baseline' section): item 1 added
+// one row to the audit (its own new suite), so every later item would otherwise have to
+// re-explain the same added row forever. The roll is safe because item 1's closer audit
+// was itself diffed against the merge-5 baseline and moved ZERO statuses — it is that
+// file plus one PASS. Diffing against the immediately preceding state is strictly more
+// sensitive, not less.
+const BASELINE = REPO + '/doc/claude/casemode_batch/audit_item01_closer_2026-08-16.txt'
 const VOID_BASELINE = REPO + '/doc/claude/batch_F/baseline_status.txt'
 
 const A = (typeof args === 'string') ? JSON.parse(args) : (args || {})
@@ -98,7 +104,7 @@ const POLICY = [
   'POLICY — binding on every stage:',
   '- NEVER push. There is no "git push" in this batch, not to any remote, not with any flag. Only the Commit stage commits; nothing leaves this machine.',
   '- Git hygiene: never `git reset --hard`, never `git add -A`, never `git commit -a`. Stage an explicit file list. Never stage a file that was already dirty before this item started.',
-  '- AUDIT IS A DIFF, NOT A COUNT. Report any audit as a diff against ' + BASELINE + ', by test NAME and STATUS, naming every test whose status changed IN EITHER DIRECTION (red->green counts and must be explained too). That file is 316 pass / 15 fail / 0 crash-timeout / 0 skip of 331, taken at HEAD 577ef5bc on the dev display :99. NEVER judge by the red count: full_audit.sh is never clean, and "the audit is red" is not a finding.',
+  '- AUDIT IS A DIFF, NOT A COUNT. Report any audit as a diff against ' + BASELINE + ', by test NAME and STATUS, naming every test whose status changed IN EITHER DIRECTION (red->green counts and must be explained too). That file is 317 pass / 15 fail / 0 crash-timeout / 0 skip of 332, taken at HEAD fbfc6395 (item 1) on the dev display :99. It is the merge-5 baseline plus exactly one row (test_raw_case_mode PASS) and zero moved statuses. NOTE when you count it yourself: six lines in it read "FAIL     | key ..." and are within-file detail, NOT test rows — a naive `grep -c '^FAIL'` says 21 and is wrong. NEVER judge by the red count: full_audit.sh is never clean, and "the audit is red" is not a finding.',
   '- ' + VOID_BASELINE + ' (285/19/1) IS VOID. It was shot with the pre-rework audit scorer. Do NOT diff against it, do not cite it, do not average it in.',
   '- A DELIVERABLE MADE OF PIXELS MAY NOT BE VERDICTED [x]. If the real payload of the change is something only a human looking at the screen can confirm (layout, colour, what a widget looks like, whether a notice reads sensibly), the verdict is [E] — eyeball pending — however many checks passed. Say what to look at.',
   '- WHERE A DECISION IS GENUINELY OPEN, THE CREW MAKES THE RULING. Write the ruling and its rationale into the relevant spec under doc/claude/specs/, and record it in the receipt with the evidence that drove it. There is no human to ask. Never stop and ask; never leave the item half-done pending an answer.',

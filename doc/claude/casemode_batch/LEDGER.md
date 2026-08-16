@@ -44,7 +44,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 0 | setup: fixtures + docs + upstream exchange | `[x]` | `fc65f14a`, `2cbc999e` | – | – | 97 docs | no | fixtures + plan + rounds 1–3. Audit debt discharged above; base HEAD corrected from `7924d0db` |
 | 0b | decisions + design revision + plan/ledger correction | `[x]` | `f7ab5f65` | – | – | 6 docs | no | docs-only, no build/suite owed. `DECISIONS.md`, `DESIGN_REVISION.md`, `OPEN_QUESTIONS.md`, PLAN §3b marked superseded in place |
 | 0a | suite sweep for folded-name assertions | `[x]` | `f7ab5f65` | – | – | 1 doc | no | `receipts/00a-suite-sweep.md`: **zero rows expected to move**. Static sweep; 34 suites touch `raw read`/`raw list`, 2 tracked `.raw` fixtures, no test reads either. THIS IS ITEM 1's EXPECTED-DIFF CONTRACT |
-| 1 | delete the fold + `Raw.case_sensitive` | | | | | | no | |
+| 1 | delete the fold + `Raw.case_sensitive` | `[x]` | `fbfc6395` | 81 | 33 | 7 code + spec | no | audit diff = **one added row** (`test_raw_case_mode PASS`), **zero movers** — 00a's contract met exactly. Review found 5 real bugs beyond scope, all fixed. Xyce **RULED: no fold**. Spec `specs/raw_case_mode.md` |
 | 2 | one lookup ladder (+ absorbs the VCD sub-step) | | | | | | no | |
 | 3 | four-source mode resolution | | | | | | no | |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | | | | | | no | |
@@ -60,6 +60,52 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
 | 14 | netlister collision warning + `model_name()` key | | | | | | no | fires only under `fold`/`preserve`; silent under `distinguish` |
 | 15 | docs | | | | | | no | must name `v(all)` **and** `i(all)`; must record Xyce as unverified |
+
+## The baseline ROLLED FORWARD at item 1 — read this before diffing an audit
+
+Item 1 added one row to the audit (its own new suite `test_raw_case_mode`), so
+every later item would otherwise re-explain the same added row forever. The
+pipeline's baseline is therefore now
+
+**`doc/claude/casemode_batch/audit_item01_closer_2026-08-16.txt`**
+— **317 pass / 15 fail / 0 crash-timeout / 0 skip of 332**, at `fbfc6395`, on `:99`.
+
+The roll is safe because item 1's closer audit was itself diffed against the
+merge-5 baseline and **moved zero statuses** — it is that file plus one `PASS`.
+Verified independently by the driver, by name and status: the entire diff is
+`> test_raw_case_mode PASS`. Diffing each item against the immediately preceding
+state is strictly *more* sensitive than diffing them all against a fixed older
+file, not less.
+
+**Counting trap in these audit files:** six lines read `FAIL     | key ...` and
+are *within-file detail*, not test rows. A naive `grep -c '^FAIL'` returns 21 and
+is wrong; the real figure is 15.
+
+## Carry-forwards item 1 handed to later items
+
+Item 1's receipt §5 ("what was NOT verified") is the source. These are **not**
+item 1 defects; they are scope that lands elsewhere:
+
+- **Item 2** — `src/vcd_read.c:139-141` now asserts the **opposite** of what the
+  code does (the apology survived the fold's deletion). Item 2 already owns
+  retiring it. Also: `raw case` on a **`table_read`** database was never driven
+  (VCD and spice were), and no sweep exists of Tcl consumers of `xschem raw list`
+  doing an exact lowercase comparison that could now miss.
+- **Item 5b** — **a THIRD `ngspice_data` publisher exists, and it is in Tcl**:
+  `ngspice::read_raw_dataset` (`ngspice_backannotate.tcl:24`). It is harmless
+  today only because of its own `string tolower` at `:38`. Any 5b work that
+  counts the publishers as "the two C sites" is already wrong. This refutes the
+  item-1 verifier's "only C writes it".
+- **Anyone touching `read_dataset`** — issue **`0316`** is open and was
+  re-measured during item 1: a malformed raw header makes `read_dataset()` call
+  `extra_rawfile(3, NULL, …)`, clearing **every** loaded database. Item 1's new
+  `fopen` probe cannot close it.
+- **Xyce is now RULED, not open** (`specs/raw_case_mode.md` §5): **no
+  Xyce-specific fold.** Grounded in what is measurable here — no measured way to
+  *identify* a Xyce raw exists (`Command:` is never parsed; `sim_is_xyce` regexps
+  the configured simulator command, never the file), so a fold would gate a
+  destructive transform on a heuristic. The spec records what would reopen it.
+  **Item 15 must still record Xyce's behaviour as unverified.**
 
 ## Environment — re-verified 2026-08-16
 
