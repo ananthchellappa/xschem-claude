@@ -81,10 +81,10 @@ proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; retur
 proc ::bgerror {msg} { puts "BGERROR: $msg"; incr ::fail }
 
 # ⚠ WHOLE-FILE gate, and the banner spelling matters.  full_audit.sh's is_skip
-# (:146) runs BEFORE is_pass and matches `RESULT: SKIP`; that is CORRECT for a
+# (:237) runs BEFORE is_pass and matches `RESULT: SKIP`; that is CORRECT for a
 # file that ran no checks at all, and wrong for a per-group skip (it would
 # discard every check that did run).  This file has no per-group skip: every
-# group needs Tk, so it is all-or-nothing.  test_calc_skeleton.tcl:36 prints
+# group needs Tk, so it is all-or-nothing.  test_calc_skeleton.tcl:100 prints
 # `RESULT: ALL PASS (0 checks)` here, which matches none of the three is_skip
 # spellings and scores a hollow PASS — deliberately not copied.
 if {![info exists ::has_x] || [info commands winfo] eq {}} {
@@ -1149,7 +1149,7 @@ group CW12 {
     # R113, the source-level half: no literal colour is executable in the file.
     # ⚠ $XSCHEM_SHAREDIR is a Tcl GLOBAL the C core sets (xinit.c), not an
     # environment variable: `$::env(XSCHEM_SHAREDIR)` throws here.  It is where
-    # xschem.tcl:14381 sourced calculator.tcl from, so it is the file that is
+    # xschem.tcl:14560 sourced calculator.tcl from, so it is the file that is
     # actually running, not whatever a relative path finds.
     set src {}
     if {[info exists ::XSCHEM_SHAREDIR]} {

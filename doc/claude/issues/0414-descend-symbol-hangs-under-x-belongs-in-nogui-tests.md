@@ -1,6 +1,8 @@
 # 0414 — `test_descend_symbol` hangs forever under X: it belongs in `nogui_tests`
 
-Status: **OPEN** — root-caused and measured, one-word fix identified, not applied.
+Status: **FIXED** — the prescribed one-word fix applied on the `fluid-editing` side when
+`open_pdk` was merged in (fluid-editing's merge 5, `e7ae4d77`); see "The fix, applied" below.
+Root-caused and measured on the `open_pdk` side, where it was filed OPEN.
 Pre-existing; predates merge 5 (`7af2da9e`) and is not caused by it.
 Area: `tests/headless/full_audit.sh` (`nogui_tests`), `tests/headless/test_descend_symbol.tcl`
 (SNW6), `src/actions.c:2927` (`symbol_in_new_window`), `src/save.c:4410` (`load_schematic`'s

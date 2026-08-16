@@ -14,7 +14,7 @@ Also committed: this receipt, `05-phase1e.md` (323 lines), `05-phase1e-sabotage-
 `05-phase1e.png` (658x737). **`src/calculator.tcl` is BYTE-IDENTICAL to HEAD** —
 `70933f40d903bac498050f32468e8c21` = `git show HEAD:src/calculator.tcl`, re-verified after each of the
 133 sabotage restores and at commit time; no W-row's widget was missing, so no inert control had to be
-added. **No rebuild** (sourced at runtime, `xschem.tcl:14381`). `LEDGER.md`, `recon/`, `ref/` and
+added. **No rebuild** (sourced at runtime, `xschem.tcl:14560`). `LEDGER.md`, `recon/`, `ref/` and
 every other dirty path in this tree: untouched and unstaged.
 
 ## 2. Decisions taken, and the evidence

@@ -543,7 +543,7 @@ proc ase::ui::build {key top} {
   # (`-state disabled`, added in 63e10b87) for the same reason the Annotate
   # entries still are — the window did not exist. It does now: phase 0 shipped
   # `.calc` and phase 1 filled every pane, and the schematic editor's Tools menu
-  # (xschem.tcl:14958) and the viewer's View menu (wave_viewer.tcl:17599) were
+  # (xschem.tcl:15143) and the viewer's View menu (wave_viewer.tcl:17599) were
   # both wired to `calc::open` at the time. This one was missed, so the tool the
   # user actually works in was the one place the Calculator stayed greyed out.
   #

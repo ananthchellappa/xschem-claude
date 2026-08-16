@@ -44,15 +44,15 @@
 #         └── .calc.pw.bot.pad  keypad + user buttons
 #   .calc.status                packed OUTSIDE the panes, at the bottom
 #
-# House idiom, copied from load_file_dialog (xschem.tcl:7082) rather than
+# House idiom, copied from load_file_dialog (xschem.tcl:7200) rather than
 # invented:
 #   - CLASSIC panedwindow, not ttk::panedwindow.  ttk::panedwindow has no
 #     -minsize, and every pane here needs one (landmine D3 below).
 #   - -stretch is catch-guarded, because Tk 8.4 does not have it
-#     (xschem.tcl:7115).
-#   - sash restore is `sash mark` then `sash dragto` (xschem.tcl:7332-7347).
+#     (xschem.tcl:7234).
+#   - sash restore is `sash mark` then `sash dragto` (xschem.tcl:7450-7465).
 #     The tree also contains a `sash place` idiom (.ins.center,
-#     xschem.tcl:8332).  Both work; MIXING them in one file does not.  This
+#     xschem.tcl:8450).  Both work; MIXING them in one file does not.  This
 #     file is mark/dragto throughout.
 #
 # Divider landmines (plan "Divider landmines"), all of them already paid for
@@ -325,7 +325,7 @@ proc calc::apply_pane_minsize {} {
 #   fieldfg     ase::palette fieldfg — text on a `field` surface     #000000
 #   selectbg    ase::palette selectbg                                #4a6984
 #   selectfg    ase::palette selectfg                                #ffffff
-#   disabledfg  option db disabledForeground (xschem.tcl:15546)      grey50
+#   disabledfg  option db disabledForeground (xschem.tcl:15731)      grey50
 #
 # ⚠ `fieldfg`/`selectbg`/`selectfg` used to be read with
 # `ttk::style lookup Ase.Treeview ...`, which was wrong twice and is recorded
@@ -349,7 +349,7 @@ proc calc::apply_pane_minsize {} {
 #
 # `disabledfg` is deliberately NOT a browser colour: it is xschem's own
 # tree-wide convention for greyed-out text (`option add *disabledForeground
-# {grey50}`, set for both colour schemes at xschem.tcl:15546/15564), and it is
+# {grey50}`, set for both colour schemes at xschem.tcl:15731/15564), and it is
 # used here for exactly that — the disabled Browse stub and the muted pane
 # hints.  R113 says so; do not "fix" it into ase::palette.
 #
@@ -493,7 +493,7 @@ proc calc::build_menubar {} {
     # forgets to do.  A background from the palette and a foreground from the
     # startup option database is not a half-fix, it is a legibility bug: under
     # $dark_gui_colorscheme the option database says `*foreground white`
-    # (xschem.tcl:15560), so File/Tools/View/Options/Constants/Help would be
+    # (xschem.tcl:15745), so File/Tools/View/Options/Constants/Help would be
     # white text on this window's light #f2f2f2 bar — invisible.  Phase 0, which
     # set no colours at all, was readable in both schemes; a colour layer must
     # not be a regression for half the users.  Every widget in this file that
@@ -736,9 +736,9 @@ proc calc::build_res {} {
 
 # The loaded raw's full path, or {}.
 #
-# ⚠ `xschem raw rawfile` (scheduler.c:10005) sits inside the `raw && raw->values`
-# gate at scheduler.c:9881, and the chain's final else THROWS "No raw file
-# loaded" (scheduler.c:10046) — it does not return the empty string.  The house
+# ⚠ `xschem raw rawfile` (scheduler.c:10421) sits inside the `raw && raw->values`
+# gate at scheduler.c:10297, and the chain's final else THROWS "No raw file
+# loaded" (scheduler.c:10462) — it does not return the empty string.  The house
 # idiom is therefore a catch, exactly as wave_viewer.tcl:17341 does it.
 proc calc::results_path {} {
     set p {}
@@ -762,7 +762,7 @@ proc calc::results_path {} {
 # came from, because a path with no provenance is worse than no path — it looks
 # like the current context's and is silently somebody else's.
 #
-#   self    `xschem raw rawfile` in the CURRENT context (scheduler.c:10005)
+#   self    `xschem raw rawfile` in the CURRENT context (scheduler.c:10421)
 #   viewer  a viewer window's context, ACTIVE one first (wviewer::current_token)
 #           then registry order.  Read through the 0173 loan bracket, never a
 #           bare `new_schematic switch` — see below.
@@ -898,7 +898,7 @@ proc calc::results_refresh {} {
     if {[winfo exists .calc.res.lab]} {
         .calc.res.lab configure -text [calc::results_label $origin]
     }
-    # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl:12551), so
+    # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl:12729), so
     # re-attaching is how a baked-in string is UPDATED — the same property that
     # makes it useless for the 56 function entries makes it right here, where
     # there is one string and it changes rarely.
@@ -982,7 +982,7 @@ proc calc::res_toggle {} {
 # dark-blue blobs and the armed one is the same blob with a dot in it.  The
 # role that means "the white inside a field" is `field`, which is also what
 # xschem's own startup option database says for every other radiobutton in the
-# tree (`option add *selectColor {white}`, xschem.tcl:15552).
+# tree (`option add *selectColor {white}`, xschem.tcl:15738).
 
 proc calc::sel_rows {} {
     return {
@@ -1075,7 +1075,7 @@ proc calc::build_sel {} {
                 if {[dict exists $dis $id]} {
                     .calc.sel.$id configure -state disabled
                     # the tooltip spec §1.2 asks for.  `balloon`
-                    # (xschem.tcl:12551) is the tree's ONE tooltip mechanism —
+                    # (xschem.tcl:12729) is the tree's ONE tooltip mechanism —
                     # no proc named tooltip/set_tooltip exists — and it BAKES
                     # its string into the <Enter> binding at attach time, which
                     # is fine here because these strings never change.
@@ -1170,7 +1170,7 @@ proc calc::build_mode {} {
     # W13.  The house combobox (recon/widgets.md §1): ttk, readonly, -values at
     # creation, `$w set` for the initial value, and combo_letter_cycle bound
     # because a readonly ttk::combobox does not type-to-cycle by itself
-    # (xschem.tcl:10828).  The three values are the ones R601 hands to
+    # (xschem.tcl:10946).  The three values are the ones R601 hands to
     # wviewer::set_plot_dest in phase 3; the LABELS are fixed here.
     ttk::combobox .calc.mode.dest -state readonly -width 10 \
         -values {Append Replace {New Strip}} -takefocus 0 \
@@ -1660,7 +1660,7 @@ proc calc::fn_fill {} {
                 -text $name -anchor nw -font $fnt -fill $fg \
                 -tags [list fnentry fn$i]
             # per-ENTRY hover and click.  `balloon` cannot do this: it bakes its
-            # string into an <Enter> binding at attach time (xschem.tcl:12551),
+            # string into an <Enter> binding at attach time (xschem.tcl:12729),
             # and there are 56 different strings on one widget — the same reason
             # the signal browser wrote its own cell tooltip.
             $c bind fn$i <Enter>    [list calc::fn_hover $name]

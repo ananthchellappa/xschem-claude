@@ -33,7 +33,7 @@ children of `.calc` packed with `-in` and so unreachable from a walk rooted ther
 **B.** `ase_window.tcl:561`: `-state disabled` → `-command calc::open`, with **no `$key`** unlike
 every `ase::ui::` entry beside it — `calc::open` is per-*process* idempotent (R101) and a session key
 would promise a per-session Calculator the spec forbids. Grepped the tree: the **only** remaining
-stub (`xschem.tcl:14958`, `wave_viewer.tcl:17599` were live). `specs/ase_l.md` corrected.
+stub (`xschem.tcl:15143`, `wave_viewer.tcl:17599` were live). `specs/ase_l.md` corrected.
 
 **C, ruled (spec §4 rows W04/W05).** `calc::results_source` resolves **self → viewer → ase → none**.
 The viewer read goes through `wviewer::enter_ctx`/`leave_ctx` with **`borrow 1`** — a bare switch

@@ -700,7 +700,7 @@ catch {rename ::calc_test_real_xschem ::xschem}
 check "S15 shim installed cleanly"       $shimerr 0
 check "S15 loaded raw shows its full path" $shown {/tmp/calc test/sim.raw}
 # the shim WAS live (it answered) and is gone again: with no raw loaded the
-# real command throws (scheduler.c:10046) while other verbs still answer
+# real command throws (scheduler.c:10462) while other verbs still answer
 check_true "S15 shim was live and is now gone" \
     [expr {$shown eq {/tmp/calc test/sim.raw}
            && ![string match ERR:* [pcall xschem get current_win_path]]
@@ -1080,7 +1080,7 @@ foreach id $selall {
 check "S17 no legitimate selmode value renders as Tk's tristate" $tristate_clash {}
 
 # the tooltip spec §1.2 asks for, on every one of the eight. `balloon` bakes
-# its string into the <Enter> binding at attach time (xschem.tcl:12551), which
+# its string into the <Enter> binding at attach time (xschem.tcl:12729), which
 # is how the tree's other suites assert a tooltip.
 set notip {}
 foreach {id why} [pcall calc::sel_disabled] {
@@ -1116,7 +1116,7 @@ check "S17 every selector wears the palette" $badcolor {}
 # dark-blue blob and the armed one as the same blob with a dot — 22 buttons
 # that all read as "on". The palette role that means "the white inside a
 # field" is `field`, which is also what xschem's own option database says for
-# every other radiobutton in the tree (*selectColor white, xschem.tcl:15552).
+# every other radiobutton in the tree (*selectColor white, xschem.tcl:15738).
 check_true "S17 the indicator field is not the panel it sits on" \
     [expr {$c_field ne $c_panel}]
 
@@ -1193,7 +1193,7 @@ check "S18 dest values"   [pcall .calc.mode.dest cget -values] {Append Replace {
 check "S18 dest initial"  [pcall .calc.mode.dest get] {Append}
 check "S18 dest readonly" [pcall .calc.mode.dest cget -state] readonly
 # the house companion: a readonly ttk::combobox does not type-to-cycle by
-# itself (recon/widgets.md §1d, xschem.tcl:10828)
+# itself (recon/widgets.md §1d, xschem.tcl:10946)
 check_true "S18 dest binds combo_letter_cycle" \
     [string match {*combo_letter_cycle*} [pcall bind .calc.mode.dest <Key>]]
 # ⚠ and it must NOT wear the status bar's style: Calc.TCombobox carries a
@@ -2942,7 +2942,7 @@ check_true "S26 the tooltip names the source and the path" \
 # formatter with arguments the TEST supplies, so the whole `balloon` attach can
 # be deleted from calc::results_refresh and it stays green — measured, 487/487,
 # with the row carrying no tooltip in any state. `balloon` bakes its text into
-# the <Enter> script it binds (xschem.tcl:12551), so the BINDING is the evidence
+# the <Enter> script it binds (xschem.tcl:12729), so the BINDING is the evidence
 # that the provenance actually reached the user.
 set tipbind [pcall bind .calc.res.path <Enter>]
 check_true "S26 ...and the ROW really carries it: balloon attached, naming source and path" \

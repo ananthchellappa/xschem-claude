@@ -168,7 +168,7 @@ evaluation left there (L2).
 | # | Landmine |
 |---|---|
 | L1 | `STACKMAX` is 200; overflow is caught at `STACKMAX-2` and returns `-1`. Guard your generated expressions. |
-| L2 | **The result lands in a single shared scratch column**, `raw->values[raw->nvars]`. It is overwritten by the *next* evaluation. `get_raw_value()` on an expression trace returns whatever was evaluated last (`src/draw.c:5875`, `:8235`). **Re-evaluate immediately before reading.** |
+| L2 | **The result lands in a single shared scratch column**, `raw->values[raw->nvars]`. It is overwritten by the *next* evaluation. `get_raw_value()` on an expression trace returns whatever was evaluated last (`src/draw.c:5885`, `:8235`). **Re-evaluate immediately before reading.** |
 | L3 | Callers detect "this token is an expression" with `if(strpbrk(express, " \n\t"))` — i.e. **a token counts as an expression only if it contains whitespace**. A single-token formula (`2`, or a bare vector name) is not treated as one. Emit expressions with spaces; never rely on a lone token. |
 | L4 | `raw_add_vector()` **reallocs `raw->values`, `raw->names`, `raw->cursor_b_val`**. Any cached pointer into those arrays dangles afterwards (see the note at `src/save.c:1335`). Never hold a `SPICE_DATA *` across an add. |
 | L5 | A `node=` entry is `[alias;]<vec-or-RPN> [ '%' [<dataset-digits>] [<rawfile> [<sim_type>]] ]` and there is **exactly one parser**, `node_token_split()`. Issue 0305 exists because six functions hand-rolled it. If the Calculator ever walks `node=`, it becomes caller number nine — **never parser number two**. |
@@ -332,7 +332,7 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
   roles — `window`/`panel`/`header`/`field`/`accent`/`fieldfg`/`selectbg`/`selectfg`.
   The ninth, `disabledfg`, is deliberately **not** a browser colour: greyed-out
   text follows xschem's own tree-wide convention, the startup option database's
-  `*disabledForeground` (`src/xschem.tcl:15546`, `grey50`, set for both colour
+  `*disabledForeground` (`src/xschem.tcl:15731`, `grey50`, set for both colour
   schemes). `calc::color_sources` is the one place the mapping lives.
   No literal colour is written in `src/calculator.tcl`, **and there are no fallback
   defaults**: a role whose source does not resolve throws, because a colour that
@@ -361,7 +361,7 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
   with it, hover states included. A background from the palette over a foreground
   from the startup option database is a legibility bug, not a half-fix: under
   `dark_gui_colorscheme` the option database says `*foreground white`
-  (`src/xschem.tcl:15560`), which is invisible on this window's light panels.
+  (`src/xschem.tcl:15745`), which is invisible on this window's light panels.
   Fonts stay stock: nothing in the tree themes fonts for a new dialog
   (`doc/claude/calculator_batch/recon/theming.md` §3), and ASE's named fonts are
   ASE's.
@@ -452,7 +452,7 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   `-command` never fires at all. It is delivered by an explicit `<Button-1>` binding
   (`calc::sel_refuse`, phase 1b) — X still delivers events to a disabled widget — which
   also cannot arm anything, because it never touches `calc::selmode`. The tooltip §1.2
-  asks for carries the same sentence, through `balloon` (`src/xschem.tcl:12551`), the
+  asks for carries the same sentence, through `balloon` (`src/xschem.tcl:12729`), the
   tree's one tooltip mechanism.
 - **R203** Voltage selectors pick a **net**; current selectors pick an **instance
   terminal**. The two use different pick modes and different hit tests. A voltage selector

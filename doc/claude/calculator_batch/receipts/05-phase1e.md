@@ -25,7 +25,7 @@ The per-sabotage → per-check map is `05-phase1e-sabotage-map.md`, committed be
  tests/headless/test_calc_widgets.tcl    | +1460   (new file, 244 checks)
 ```
 Plus `receipts/05-phase1e.md` (this), `05-phase1e-sabotage-map.md`, `05-phase1e.png`. **No rebuild**
-— the suite is a `--script` file and `calculator.tcl` is sourced at runtime (`xschem.tcl:14381`).
+— the suite is a `--script` file and `calculator.tcl` is sourced at runtime (`xschem.tcl:14560`).
 `src/calculator.tcl`, `LEDGER.md`, `recon/`, `ref/` untouched. Nothing else in this dirty tree staged.
 
 ## 2. Decisions taken, and the evidence
