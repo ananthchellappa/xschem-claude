@@ -520,5 +520,169 @@ check "symbol view: add_wire_label no-op (selection kept)" [xschem get lastsel] 
 check "symbol view: not placing"                          [placing] 0
 catch {file delete -force $symf}
 
+# ---------------------------------------------------------------------------
+# L. Issue 0245 -- canvas Escape must reach the C Escape terminal even while this form owns
+#    the `.drw <Key-Escape>` slot. addlabel::grab_esc points that slot at addlabel::escape,
+#    which is `set armed 0; abort_if_placing; destroy` -- and abort_if_placing only fires
+#    when START_SYMPIN is set. With the form IDLE the whole Escape is a `destroy` plus a
+#    variable write, so the sixteen lines of callback.c's `case XK_Escape:` never run.
+#    Measured under xvfb: `xschem wire` (ui=65536 ui2=1), canvas Escape with an idle
+#    .addlabel open -> ui/ui2/last_command BYTE-IDENTICAL and the form gone; the NEXT canvas
+#    click took ui to 65537 and last_command to 1 -- an unrequested wire draw begun by the
+#    click the user made to dismiss a dialog. Only a SECOND Escape aborted it.
+#    The fix routes the CANVAS Escape (and only the canvas one) through a new
+#    addlabel::canvas_escape that ends at `xschem escape`, the named C terminal.
+#    Headless-safe: with no Tk the inner `catch {destroy .addlabel}` is a no-op, so these
+#    rows test the FORWARD, not the widget.
+# ---------------------------------------------------------------------------
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+check "L0 precondition: menu wire armed"   [xschem get ui_state] 65536
+catch {addlabel::canvas_escape}
+check "L1 canvas Escape aborts the arm"    [xschem get ui_state] 0
+check "L2 canvas Escape clears ui_state2"  [xschem get ui_state2] 0
+xschem abort_operation
+
+# L3 CONTRAST -- the Close BUTTON (-command addlabel::escape) is a mouse click, not the
+#    Escape key, and must gain nothing here: clicking Close must not stop a running
+#    simulation or abort an unrelated armed gesture. GREEN before the fix and after.
+#    NOTE the form-focused <Key-Escape> is NOT in this contrast any more -- it fires
+#    addlabel::canvas_escape and DOES reach the terminal. It had to: Tk routes keys to
+#    `[focus]`, open() focuses the form, so that binding is the one a user's Escape hits
+#    until they click the canvas. See test_create_instance.tcl CI15a.
+xschem clear force ; xschem abort_operation ; xschem abort_operation
+xschem wire
+catch {addlabel::escape}
+check "L3 contrast: Close button leaves the arm" [xschem get ui_state] 65536
+xschem abort_operation ; xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# W. Issue 0246 -- the drop witness must be split PER OWNER, and `::sympin_place` must go.
+#
+#    `::sympin_place` is a bare Tcl global with two writers (addpin::arm, addlabel::arm), two
+#    readers (both after_drop) and ZERO clear sites. Both writes are unconditional and sit AFTER
+#    the `-place`, so an arm that armed NOTHING (in a .sym view scheduler.c short-circuits
+#    add_wire_label) still claims ownership; nothing ever clears it, so it outlives the form that
+#    wrote it -- and both READS sit ABOVE the 0122-E1 witness compare, so a stale latch SUPPRESSES
+#    the "placement paused" recovery E1 exists to deliver.
+#
+#    Measured, INJECTION-FREE (there is no `set ::sympin_place` anywhere below): the label form
+#    arms -> the pin form arms on top (the C tears the label preview down) -> the label form's
+#    redundant-rearm shortcut returns BEFORE the latch write, because addlabel::placing is
+#    owner-blind and the PIN's preview satisfies it (issue 0401) -> the pin form closes without
+#    clearing the latch -> one stray canvas left-release leaves the label form armed=1, queue
+#    {A B} and a SILENT status line: a zombie. With the latch merely unset the same release
+#    disarms and posts the E1 pause line.
+#
+#    THE FIX: delete the latch outright and split the existing `sympin_drops` witness by owner in
+#    C (`sympin_drops_pin` / `sympin_drops_label`, discriminated by wirelabel_preview at the one
+#    commit funnel), so each form compares a counter only its OWN commits can move. The total and
+#    its getter are untouched, and total == pin + label. The pin-COMMIT direction has no headless
+#    seam (`move_objects end` never reaches end_move_copy_logged), so it is covered adversarially
+#    by the sabotage variants and by section Q of test_sch_add_pin.tcl, not by a row here.
+#
+#    KNOWN GAP, honestly (issue 0246 closure, "still open" #1): because no pin commit is possible
+#    headlessly, sympin_drops is identically equal to sympin_drops_label in this suite -- so a
+#    regression that hands the LABEL form the shared total again (`proc addlabel::drops {} {xschem
+#    get sympin_drops}`) leaves W3-W6 GREEN, while under a real display a pin drop then drains the
+#    label queue. The label half of the split rests on the sabotage protocol until someone adds an
+#    X-driven row (dummy .addpin/.addlabel toplevels + real `xschem callback .drw 4/5` events).
+#
+#    Headless harness: with no Tk `info commands winfo` is empty, so a stub lets arm()/after_drop()
+#    run (they only ever ask `winfo exists`), and the status procs are captured by rename. Both are
+#    undone at the end of the section. Under a real Tk the stub would be a lie (the real .addlabel
+#    does not exist), so the section self-skips there.
+# ---------------------------------------------------------------------------
+proc gi {k} { set v {} ; catch {xschem get $k} v ; if {[string is integer -strict $v]} { return $v } ; return -1 }
+
+# W1/W2 -- the per-owner witnesses are exposed at all. Today `xschem get sympin_drops_pin` is an
+# unknown key that fails SOFT (rc 0, empty result -- issue 0392), so gi reports -1.
+check "0246 W1 pin drop witness is an integer"   [string is integer -strict [getq sympin_drops_pin]] 1
+check "0246 W2 label drop witness is an integer" [string is integer -strict [getq sympin_drops_label]] 1
+
+if {[info commands winfo] ne {}} {
+  puts "SKIP: 0246 W3-W11 need a headless run (no Tk) -- form stubs would be wrong here"
+} else {
+  proc winfo {op args} { return 1 }
+  rename addlabel::status       addlabel::status_real0246
+  rename addlabel::status_error addlabel::status_error_real0246
+  rename addpin::status         addpin::status_real0246
+  proc addlabel::status       {msg} { set ::st0246 $msg }
+  proc addlabel::status_error {msg} { set ::st0246 "ERR $msg" }
+  proc addpin::status         {msg} { set ::pst0246 $msg }
+  set ::st0246 {} ; set ::pst0246 {}
+
+  # W3 -- the label form must baseline ITS OWN witness at the arm, not the shared total.
+  xschem clear force
+  xschem wire 0 0 200 0
+  xschem unselect_all
+  addlabel::on_destroy ; addpin::on_destroy      ;# both forms in their freshly-opened state
+  set addlabel::name A
+  addlabel::start_pass
+  check "0246 W3 label arm baselines the LABEL witness" $addlabel::drop_snap [gi sympin_drops_label]
+
+  # W4/W5/W6 -- a committed LABEL drop moves the label part, only the label part, and the parts
+  # still add up to the total the 0122 harness reads.
+  set l0 [gi sympin_drops_label] ; set p0 [gi sympin_drops_pin] ; set t0 [gi sympin_drops]
+  check "0246 W4 precondition: drop on copper commits" [xschem add_wire_label -drop 40 0] 1
+  set l1 [gi sympin_drops_label] ; set p1 [gi sympin_drops_pin] ; set t1 [gi sympin_drops]
+  check "0246 W4 label drop bumps the label witness" $l1 [expr {$l0 + 1}]
+  check "0246 W5 label drop bumps ONLY the label side" [list $p1 $l1] [list $p0 [expr {$l0 + 1}]]
+  check "0246 W6 the parts add up to the whole" \
+        [list [expr {$t1 - $t0}] [expr {($p1 - $p0) + ($l1 - $l0)}]] {1 1}
+
+  # W7 GUARD (green before and after) -- a REFUSED drop is not a commit: the bump stays inside the
+  # 0122-F1 gate and inside the single commit funnel, so neither part moves.
+  set p2 [gi sympin_drops_pin] ; set l2 [gi sympin_drops_label]
+  set addlabel::name OFFCOPPER
+  addlabel::start_pass
+  check "0246 W7 GUARD off-copper drop refused, neither witness moves" \
+        [list [xschem add_wire_label -drop 40 500] [gi sympin_drops_pin] [gi sympin_drops_label]] \
+        [list 0 $p2 $l2]
+  xschem abort_operation
+
+  # W8 -- the write-only owner latch is gone. Unset FIRST so this can only pass by the arms
+  # declining to write it (not by it happening to be absent).
+  xschem clear force
+  xschem wire 0 0 200 0
+  xschem unselect_all
+  unset -nocomplain ::sympin_place
+  addlabel::on_destroy ; addpin::on_destroy
+  set addpin::name IN ; set addpin::dir inout
+  addpin::start_pass
+  set addlabel::name "Z1 Z2"
+  addlabel::start_pass
+  check "0246 W8 precondition: both forms armed" [list $addpin::armed $addlabel::armed] {1 1}
+  check "0246 W8 owner latch no longer exists"   [info exists ::sympin_place] 0
+
+  # W9/W10/W11 -- the stale-owner zombie, built with no state injection at all (see the note
+  # above). The stray release must disarm the form and SAY SO; it must not consume a queued name.
+  xschem clear force
+  xschem wire 0 0 200 0
+  xschem unselect_all
+  unset -nocomplain ::sympin_place
+  addlabel::on_destroy ; addpin::on_destroy
+  set addlabel::name "A B"
+  addlabel::start_pass                     ;# label preview armed
+  set addpin::name IN ; set addpin::dir inout
+  addpin::start_pass                       ;# pin arms ON TOP -- the C tears the label preview down
+  addlabel::start_pass                     ;# redundant-rearm shortcut: owner-blind, returns early
+  addpin::escape                           ;# the pin form closes, taking the preview with it
+  check "0246 W9 precondition: label form still thinks it is placing" $addlabel::armed 1
+  set ::st0246 {}
+  addlabel::after_drop 1                   ;# a stray canvas left-release
+  check "0246 W9 non-owner form disarms on a foreign release" $addlabel::armed 0
+  check "0246 W10 the 0122-E1 pause line is reachable again" $::st0246 \
+        "placement paused (another action took over) -- edit the name or reopen to resume"
+  check "0246 W11 GUARD a paused form keeps its queue" $addlabel::name "A B"
+
+  set addlabel::armed 0 ; set addpin::armed 0
+  xschem abort_operation
+  rename addlabel::status       {} ; rename addlabel::status_real0246       addlabel::status
+  rename addlabel::status_error {} ; rename addlabel::status_error_real0246 addlabel::status_error
+  rename addpin::status         {} ; rename addpin::status_real0246         addpin::status
+  rename winfo {}
+}
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

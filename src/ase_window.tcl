@@ -2218,6 +2218,22 @@ proc ase::ui::lb_sel {lb} {
   return [$lb get [lindex $s 0]]
 }
 
+# Select `val` in listbox `lb` by exact match, make it active and scroll it
+# into view. Returns 1 when the value was in the list, 0 when it was not --
+# callers use the 0 to fall back rather than guess. Note this does NOT fire
+# <<ListboxSelect>> (Tk raises that for user selection only), so a caller
+# that depends on a selection handler must invoke it by hand.
+proc ase::ui::lb_select_value {lb val} {
+  if {$val eq {}} { return 0 }
+  set i [lsearch -exact [$lb get 0 end] $val]
+  if {$i < 0} { return 0 }
+  $lb selection clear 0 end
+  $lb selection set $i
+  $lb activate $i
+  $lb see $i
+  return 1
+}
+
 # --- (h) shared confirm ------------------------------------------------------
 
 # Modeless themed confirm (NOT tk_messageBox — a modal grab would kill test
@@ -2941,7 +2957,49 @@ proc ase::ui::load_state_dialog {key} {
   ase::ui::bind_dialog_esc $w [list destroy $w]
   foreach n [lsort [libmgr::lib_names]] { $w.pw.lib.lb insert end $n }
   ase::ui::apply_theme $w
+  ase::ui::loadst_default_to_session $key
   return $w
+}
+
+# Open the browser on the session's OWN cell. The states worth loading are
+# nearly always the other states of the cell being simulated, so Library and
+# Cell arrive already chosen and the View column -- the filtered list of this
+# cell's saved states -- is the only pick left. The session's l/c comes from
+# `meta`, which ase::ui::open records for both the open-a-state-view route
+# and the untitled Launch route (there it is the DESIGN's lib/cell), so the
+# default is right in both.
+#
+# The View column is deliberately left UNSELECTED: choosing one is the point
+# of the dialog, and a default pick would put "discard this session's edits
+# for a state the user never chose" one OK press away. Focus goes to the View
+# listbox so the pick needs no mouse trip -- but note the Tk quirk, MEASURED,
+# not assumed: a listbox with no selection has active == 0, and <Down> moves
+# active BEFORE selecting, so the first Down lands on the SECOND view. Home
+# (or Up, or a click) reaches the first. Do not "fix" that by preselecting
+# index 0 -- that is the default pick this comment just ruled out.
+#
+# Degrades one column at a time when the session's l/c is not in the
+# browser's lists (a library dropped from the search path, say): an unknown
+# library leaves the browser exactly as it was before this defaulting
+# existed, and a known library with an unknown cell still leaves the Library
+# chosen and its Cell column filled, which is strictly more useful than
+# clearing it. Preselection is a convenience, never a precondition, and
+# load_state_ok already refuses an incomplete l/c/v with a status message.
+# Programmatic `selection set` does not fire <<ListboxSelect>>, hence the
+# explicit loadst_on_lib / loadst_on_cell calls (they also set the status
+# line and apply the state-view filter). Returns 1 when the cell defaulted.
+proc ase::ui::loadst_default_to_session {key} {
+  variable wins; variable meta
+  if {![dict exists $wins $key] || ![dict exists $meta $key]} { return 0 }
+  set w [dict get $wins $key].loadst
+  if {![winfo exists $w]} { return 0 }
+  lassign [dict get $meta $key] mlib mcell
+  if {![ase::ui::lb_select_value $w.pw.lib.lb $mlib]} { return 0 }
+  ase::ui::loadst_on_lib $key
+  if {![ase::ui::lb_select_value $w.pw.cell.lb $mcell]} { return 0 }
+  ase::ui::loadst_on_cell $key
+  if {[$w.pw.view.lb size] > 0} { catch {focus $w.pw.view.lb} }
+  return 1
 }
 
 proc ase::ui::loadst_on_lib {key} {
@@ -2952,6 +3010,10 @@ proc ase::ui::loadst_on_lib {key} {
   set lib [ase::ui::lb_sel $w.pw.lib.lb]
   $w.pw.cell.lb delete 0 end
   $w.pw.view.lb delete 0 end
+  # the status line described the cell whose columns were just deleted. Stale
+  # text here used to need two clicks to reach; now that the browser opens
+  # already defaulted to a cell, the very first Library click exposes it.
+  $w.status configure -text {pick a Library / Cell / simulation-state View}
   if {$lib eq {}} { return }
   foreach c [lsort [xschem lib_cells $lib]] { $w.pw.cell.lb insert end $c }
 }
@@ -2983,7 +3045,14 @@ proc ase::ui::load_state_ok {key} {
   set cell [ase::ui::lb_sel $w.pw.cell.lb]
   set view [ase::ui::lb_sel $w.pw.view.lb]
   if {$lib eq {} || $cell eq {} || $view eq {}} {
-    $w.status configure -text {pick a Library / Cell / simulation-state View}
+    # name what is actually missing: since the browser opens defaulted, the
+    # usual incomplete pick is "Library and Cell are set, no View chosen",
+    # and telling that user to pick a Library reads as a bug.
+    if {$lib ne {} && $cell ne {}} {
+      $w.status configure -text "$lib/$cell — choose a state View"
+    } else {
+      $w.status configure -text {pick a Library / Cell / simulation-state View}
+    }
     return
   }
   set path [xschem cellview_path "$lib/$cell" $view]

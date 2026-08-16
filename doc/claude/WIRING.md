@@ -445,8 +445,170 @@ all twelve arm sites (`stamp_placement_preview()`, select.c) and re-selects exac
 the `delete()`, with "resolves to nothing → delete nothing" as the backstop. It also let the
 0243 F2 decline guard come out, so the modal-gesture rule is now uniform: every verb cancels, none
 refuses; **0242** every
-other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1068, i.e.
-paste/merge/redo/place_text/add_image — skips the teardown entirely and orphans the preview;
+other actor that clears `START_SYMPIN`/`STARTMOVE` — `unselect_all()` at select.c:1258, i.e.
+paste/merge/redo/place_text/place_symbol/add_graph/add_image — skipped the teardown entirely and
+orphaned the preview — FIXED 2026-08-08, and it is the class's *coverage* lesson: 0243 built the
+right helper and called it from the wire/line verbs only, so nine further doors kept the defect
+for another two issues. **A teardown extracted for one caller is a rule, and a rule needs a call
+at EVERY arm — enumerate them from the state the teardown owns, not from the verbs the bug report
+named.** The doors were found by arming a preview and firing all seventeen candidate verbs at it —
+and that census was still FIVE ARMS SHORT, because a verb census enumerates verbs, not arms. The
+twelve `stamp_placement_preview()` sites are the arms; four are the form re-arms that must NOT be
+gated, and five had no gate at all — including `place_net_label()` (Alt+Shift+L, Ctrl+P,
+Ctrl+Shift+P and the scripted `xschem net_label`), four everyday keybindings on one helper,
+measured `orphan=1` on all four label types. It was found by the TRIPWIRE firing on an unrelated
+run, which is the argument for building the detector before declaring the census closed. Two structural notes worth
+more than the fix: (a) the orphan is not a stray glyph but a *connected, netlist-visible*
+`lab_pin`/`ipin` silently renaming the net it sits on, and on the merge doors the document then
+reported itself CLEAN (`modified` 1 → 0, issue **0244** — FIXED 2026-08-08: the merge arms latch
+`xctx->pre_merge_modified` before the first mutation and restore it instead of writing 0 flat, and
+the same fix's part B narrows their `delete(1)` to a 0241 stamp, so `Ctrl+V` + `Ctrl+A` + ESC no
+longer wipes the drawing either; its census found the corollary that **nothing tears down a pending
+`STARTMERGE`**, so a second `Ctrl+V` or any placement arm silently COMMITS the pending paste —
+issue **0265**, FIXED 2026-08-08 and the MERGE DIMENSION of this class: `STARTMERGE` had one setter
+and three teardown-bearing clears, and every other way the bit vanished was `unselect_all()`'s
+wholesale `ui_state = 0` — which a pending paste ALWAYS reaches, because the selection is what the
+drag carries. The fix is the class's own prescription applied a third time: factor the teardown
+(`abort_pending_merge()`), gate every ARM (`leave_merge_for()`, 24 sites = the merge funnel + the
+twelve `stamp_placement_preview()` arms + the eleven wire/line draw arms), never the shared
+primitive. Two lessons the placement dimension did not teach. (i) **A cross-check between two
+gate helpers is a census in itself**: `leave_merge_for()` has 24 sites to `leave_placement_for()`'s
+23, and the +3/−2 difference IS the analysis — the three modeless form `-place` arms carry no
+placement gate (they re-arm themselves) and were doors; `undo`/`redo` carry one and must NOT get a
+merge gate, because a pending merge is undo-covered and a `delete()`+`push_undo` in front of the pop
+would make undo RESTORE the paste. (ii) **Bounding a gesture's lifetime against every ARM does not
+bound it against the COMMIT forms**, which are ratified as ungated (replay/test seams) — so issue
+**0267**, predicted to fall out of 0265, measured UNCHANGED after it and needed its own mechanism
+(`xctx->modify_seq`: `set_modify()` bumps a sequence on every declaration of dirtiness, the merge
+latches it at the arm, and the teardown restores `pre_merge_modified` only while the two still
+match). Both FIXED. **Class-D status after 0269 (2026-08-09): the MODAL-GESTURE half of this class is
+CLOSED.** Phase 3 gave the SHAPE draws the fourth teardown/gate pair — `abort_shape_draw()` /
+`leave_shape_draw_for()` — called from **41** arms enumerated from the state rather than the verbs,
+so all four families (wire/line draw, shape draw, placement preview, pending merge) now cancel each
+other in every direction and both interface branches. Its census produced four more filed defects,
+three of which are the class in new dimensions: **0271** — a merge did NOT cancel a live wire draw,
+the one direction three documents asserted was already covered and nothing ever asserted in a test
+(`wire gui` + `merge` → `ui_state` 297); **0272** — `xschem circle` and `xschem zoom_box` carried no
+gate at all, because phase 1 enumerated by VERB and their key twins were gated; **0270** — the
+polygon arm dirtied a clean document with nothing stored, harmless while ESC (which commits) was the
+only exit and a lie the moment a gate could abandon the gesture. The fourth, **0268**
+(`ui_state2` survived ESC), was adjudicated **inert** by enumerating all 24 readers — every one
+dominated by a `MENUSTART` test in `ui_state`, every arm ASSIGNING `ui_state2` wholesale — and fixed
+for the shape family as a by-product. Two lessons: (i) **a direction that is documented as covered
+and never asserted is a direction nobody re-checks** (0271); (ii) **enumerate the arms from the
+STATE the teardown owns, not from the verbs a report names** — 0242 and 0265 wrote that down, and
+0272 is the residue of the one phase written before it.
+
+**A FIFTH family, 2026-08-10 (issue 0257): the persistent CLICK MODES.** `abort_click_mode()`
+(callback.c) ends interactive net-highlight / net-unhighlight / deselect-one-at-a-time. They belong
+to this class even though they own no band and no preview: they own **Button-1 from a resting
+`ui_state` bit**, and `handle_button_press()` dispatches all three with a `return` **before** the
+single `check_menu_start_commands()` call site — so an armed verb-noun descend pick (the one arm
+that call site owns) could never receive its click. Measured under xvfb: the press resolved nothing,
+the matching release cleared `MENUSTART` and left `MENUSTARTDESCEND`, and `cmdmode` stayed suspended
+for the rest of the session. The gate is at the verb (`xschem descend_pick`, scheduler.c) and takes
+**two** teardowns — `abort_wire_line_command()` and `abort_click_mode()` — because a **resting wire
+command** was the fourth swallower and the only *mutating* one: under `persistent_command` the press
+handler tests `last_command` alone and called `start_wire()`, so the click meant as "descend into
+this instance" **began a wire draw on it** (`ui_state` 65536 → 65537 across the pick press; no wire
+was ever committed, so the damage is the started draw plus the stranded state). This is the first
+member of the family whose teardown has **no `leave_*_for()` wrapper**: its only caller arms a HELD
+prompt one statement later, and a held line displaces the previous held line, so the gate message
+would be destroyed by the very arm that asked for the teardown — hence `abort_click_mode()` returns
+the *name* of what it ended and the caller composes one sentence (issue 0241's rule, satisfied by
+composition rather than by a second message).
+
+**AND A CORRECTION TO 0268's ADJUDICATION.** That inertness argument was "all 24 readers are
+dominated by a `MENUSTART` test in `ui_state`". There is now **one reader that is not**:
+`descend_pick_arm_live()` (callback.c), the ESC continuation's guard, reads `MENUSTARTDESCEND`
+**alone** — deliberately, because `handle_button_release()` clears `MENUSTART` unconditionally on any
+Button1Mask release, so the state that most needs ESC is precisely the one where `MENUSTART` has
+already been burned. Anyone re-deriving 0268's argument must exclude this reader; anyone adding a
+*sixth* `ui_state2` bit must keep assigning `ui_state2` wholesale at the arm, which is what still
+makes reading the discriminator alone safe. The release-side unconditional `MENUSTART` clear was
+deliberately **not** touched: it is the terminal of every menu-armed gesture and its residue is
+asserted on by `test_shape_draw_gate.tcl` (421) and `test_placement_wire_gate.tcl` (171).
+
+**Class-D correction, 2026-08-09: `netlist` WAS a door, and a terminal one (issue 0263, FIXED).**
+This document, the 0242 census and the phase plan all recorded `netlist` as a deliberate non-door
+residue — "it netlists a live preview but clears no gesture bits". Measured, that is false on the
+hierarchical arm. `global_*_netlist()` `push_undo()`s the document WITH the preview, then
+`unselect_all(1)` zeroes `ui_state` wholesale (a live preview is always selected), then
+`pop_undo(2,0)`'s `clear_drawing()` clears `sympin_preview`/`wirelabel_preview`/`preview_sel`, and
+the final `pop_undo(4,0)` restores the snapshot with the preview **baked in as an ordinary
+instance**: `ui 16424 → 0`, `sp 1 → 0`, three ESCs later the stray `lab_pin` still standing with
+`modified == 0`, and a leaked fluid snapshot that outlives the next file load. The deck was wrong
+too, in every backend (`R1 FOO GND 1k` for `R1 net1 GND 1k`) — an undropped label renames the whole
+NET via `name_nodes_of_pins_labels_and_propagate()` + `name_attached_nets()`. Fixed by gating the
+two netlist VERBS (`scheduler.c`'s branch, `callback.c`'s Shift-N, the latter necessarily ABOVE its
+own `unselect_all(1)`) with `leave_placement_for()` + `leave_merge_for()` — **not** by filtering the
+traversal, because `preview_sel`, the identity such a filter would key off, is destroyed by the
+driver's own `clear_drawing()` before the pass that needs it. Two lessons for this class: (iii) **a
+verb that only READS can still be a door, if the way it reads is push_undo → mutate → pop_undo**;
+(iv) **a census row that says "not a door" is a claim, and an unasserted claim rots** — this one sat
+in four documents for a day. `save` has the identical blindness and is still open (issue 0358).
+
+**A SIXTH swallower, 2026-08-11 (issue 0245, FIXED): a Tk-level KEY SEIZE.** The five families above
+are all C-side doors. This one is not a door at all — it is a *Tcl binding that steals the key that
+ends the gesture*. The three modeless placement forms (Add-Pin, Add-Wire-Label, Create-Instance)
+bind `<Key-Escape>`, and **Tk fires the most specific binding for a bindtag and routes the key to
+`[focus]`** — so with a form open, Escape ran the form's handler (`armed 0`; `abort_if_placing`,
+itself gated on `START_SYMPIN`; `destroy`) and the sixteen lines of `case XK_Escape:` never ran at
+all. Measured under xvfb: an armed `xschem wire` (`ui_state 65536`, `ui_state2 1`) survived Escape
+**byte-identically** and the next canvas click called `start_wire()` — `ui 65536 → 65537`,
+`last_command 0 → 1`. Same damage shape as 0257's resting-wire swallow: *the click that was meant to
+dismiss something began a wire draw instead.* Three consequences for anyone working in this family:
+(1) the ESC terminal now has a **name and a Tcl entry point** — `escape_terminal()` (callback.c),
+exposed as **`xschem escape`** — and it is the only teardown in the tree that clears
+`MENUSTARTWIRE`: `abort_operation()` alone leaves `ui_state 0` with `ui_state2 1` (measured; pinned
+by row **I4** in `test_placement_wire_gate.tcl`, 187). (2) It is **not** `abort_operation()` and must
+not be folded into it — 24 call sites in callback.c alone, and a `.load` Cancel must never set
+`tclstop`. (3) When enumerating who can end a wire gesture, **enumerate the Tk bindings too, keyed
+on `[focus]`, not just the C verbs** — a per-toplevel grab swallows the key exactly as effectively
+as one on `.drw`, which is why `.mkinst` (issue **0395**) and ASE's `sod` seize (issue **0394**) are
+still open with the identical shape.
+
+~~What is left of class D is only ONE known, deliberate residue, **0262**~~ — **CORRECTED
+2026-08-11.** There were at least TWO doors, not one: the bare `xschem unselect_all` verb (**0262**)
+*and* `save`/`saveas`/Ctrl+S through `save_schematic()`'s own `unselect_all(1)` (**0358**, still
+open, and it PERSISTS the orphan); and the bare verb is **GUI-reachable** after all — the default
+Ctrl+Button2 chord and the Hilight ▸ Compare-schematics menu item both fire it (**0397**), against
+0262's own "not reachable from the GUI" premise. **CLASS D IS NOW ANSWERED IN TWO PARTS
+(0262 decision D9, ratified 2026-08-11).** **A — the TERMINAL half is answered ONCE, class-wide, not
+door by door:** `check_placement_preview_invariant()` no longer only reports, it REPAIRS —
+`repair_orphan_placement_preview()` (callback.c) clears `sympin_preview`, `wirelabel_preview` and
+(when no other gesture owns the shared slot) the `preview_sel` stamp at the two funnels every actor
+passes through, `xschem()` entry before dispatch and `callback()` entry. It **deletes nothing**, so
+every door named or unnamed goes from *terminal* to *orphan-only*, and **no verb acquires a
+`delete()` for the sake of the flags alone** — the bare verb stays ungated permanently (866 scripted
+/ 82 C call sites, dominant idiom `unselect_all ; select <thing>`, a housekeeping PREFIX; issue
+0123's objection unchanged). **B — a door that additionally COMMITS or PERSISTS the orphan still
+needs its own VERB gate**, because a repair is retroactive and cannot un-write a file or un-emit a
+deck: `netlist` has that gate (**0263**), `save` does not (**0358**). What the repair knowingly
+KEEPS: the object the user never dropped, its net rename, and the modify flag as the door left it
+(**0398**). Asserted in `tests/headless/test_placement_preview_doors.tcl` section F, 29 checks
+(177 → 206). Plus the wire-family `ui_state2`
+residue, measured, inert, and asserted-as-present in issue 0268 rather than silently left) — a decline residue
+becomes data corruption the moment the residue is a netlist object; (b) the invariant
+"`sympin_preview` must never outlive `START_SYMPIN`" was UNTESTABLE before the fix, because the
+three form `-place` arms themselves raised `sympin_preview` BEFORE the preview existed and held it
+across the whole arm — and `place_symbol()` re-enters `xschem()` through its own `tcleval`s, so the
+desync signature was also the normal mid-arm state. **A flag and the bit it shadows are one fact:
+write them together, or you cannot assert either.** Making the pair atomic took the tripwire
+(`check_placement_preview_invariant()`, callback.c, at the entry of `callback()` and `xschem()`)
+from 11 false positives on a healthy 6-keystroke arm to exactly one true report — the one door
+deliberately left ungated (the bare `xschem unselect_all` verb, issue **0262**: it arms nothing, so
+the "whatever you just pressed is what you meant" rule has no subject, and gating it would put a
+`delete()` behind ~~817~~ **866** scripted call sites, re-measured 2026-08-11, plus 82 C ones).
+**That atomicity is now load-bearing in a second way (0262, 2026-08-11): the tripwire REPAIRS, so a
+false positive costs state rather than a log line.** Any new placement arm that raises
+`sympin_preview` without `START_SYMPIN` in the same breath will have the flag cleared under it
+mid-gesture — the detection condition was deliberately NOT widened for the same reason (0262 D5:
+`place_net_label()` sets `START_SYMPIN` with no `sympin_preview` and stays outside it, recorded as
+doors note F17). `netlist` used to netlist a live preview and was filed
+as "not a door" on the same reasoning — measured FALSE and FIXED 2026-08-09, issue **0263**: it
+clears the bits AND commits the object, and it is now gated at both its verbs (see the class-D
+correction above);
 **0243** the ESC path leaked `STARTRECT|STARTARC|STARTZOOM|MENUSTART` past ALL THREE of
 `abort_operation()`'s early returns, plus `STARTWIRE|STARTLINE` on the subset where
 `last_command == 0` — FIXED 2026-08-07, and it is the sharpest statement of the class: the
@@ -622,6 +784,44 @@ spec digest). Enforcement TODAY:
   restoring a file with an old mtime (or rewriting it inside the same second) leaves the sabotaged
   `.o` linked in, so the NEXT variant's red set is the previous one's. **`rm` the object file, do
   not trust the timestamp**, and re-run the clean baseline after every restore.
+- **The `move_objects` sub-verbs are lowercase-only, and the mismatch is now a `TCL_ERROR`** (issue
+  **0266**, fixed). `scheduler.c` compares `argv[2]` against `"start"`/`"step"`/`"end"`/`"abort"`, and
+  a slot that is neither one of those, nor the flag word `kissing`/`stretch`, nor a number
+  (full `strtod` parse) is refused with a message naming the token:
+  `xschem move_objects: unrecognized argument "END": expected sub-verb start|step|end|abort
+  (lowercase), flag kissing|stretch, or a numeric <dx> <dy>`. Both delta slots **of that one-shot
+  form** are validated the same way, so `40 END`, `40 {}`, `kissing 40 40` and a truncated
+  `move_objects 40` all error too.
+  **SCOPE — read this before trusting the check** (measured 2026-08-12, adversary pass of item D10):
+  the rejecter guards `argv[2]`/`argv[3]` of the ONE-SHOT form and **nothing else**. Still silent,
+  still `atof`/`atoi`, still rc 0: the sub-verb coordinates — `move_objects end END 40` commits at
+  `dx=0` (`N 0 40 100 40` where `end 40 40` gives `N 40 40 140 40`), `end 40` commits at `(0,0)`,
+  `start END END` anchors at `(0,0)` — issue **0405**; and the trailing transform slots —
+  `0 0 1 0 -anchor 50` silently drops the `-anchor` and rotates about the wrong pivot
+  (`N 0 0 0 100` vs the full line's `N 100 0 100 100`), `0 0 1` drops the rotation, `0 0 X 0 …`
+  reads `atoi("X")=0`, and `40 40 GARBAGE` ignores the tail — issue **0406**. So a truncated
+  *emitted* action-log line (the emitter writes `dx dy rot flip [-anchor ax ay] [kissing]`) can
+  still replay as a DIFFERENT transform with no diagnostic.
+  Commit with `xschem move_objects end <dx> <dy>`, `xschem move_objects <dx> <dy>` or
+  `xschem paste <dx> <dy>` (all → `ui_state 8`) — and note the `end` form's own deltas are the
+  unvalidated ones (0405), so a scripted commit still wants the deltas spelled out literally.
+  HISTORY, because it is what a stale test transcript will show: until the fix `xschem move_objects
+  END` matched none of the four literals, fell into the one-shot form's `else` and merely armed a
+  **deferred menu move** (`ui_state |= MENUSTART`) — nothing committed, no error, and a following
+  assertion measured a still-pending gesture. Measured on a pending paste: `ui_state 296 → 65832`,
+  and the next ESC still deleted the paste; it cost issue 0244's original control row D its meaning.
+  `move_objects END 40 40` was worse: `argc` alone put it on the commit path with
+  `dx = atof("END") = 0.0`, writing the document at the wrong coordinate with rc 0.
+  The rejecter validates only the TYPE and COUNT of the arguments and runs BEFORE the
+  `connect_by_kissing` / `select_attached_nets()` side effects — it adds no state precondition to the
+  pure-commit coordinate form (landmine 2 below), and `scheduler_readonly_reject` still runs first so
+  a read-only buffer answers "read-only" even for a bad spelling. The arm-on-an-unknown-slot defect
+  is **six more verbs wide** and untouched: `copy_objects`, `rect`, `polygon`, `line`, `arc` and
+  `circle` all answer rc 0 to `<verb> END` and arm `MENUSTART` — issue **0404**.
+- **`move_objects abort` is the constructor for a `STARTMERGE`-without-`STARTMOVE` state**: it
+  clears `STARTMOVE` and returns before the END tail's `STARTMERGE` clear, so
+  `merge` → `move_objects abort` → `abort_operation` reaches `abort_operation()`'s *second*
+  (non-nested) merge arm, which had been assumed untestable headlessly (issue 0244 section C).
 - **Constructing a state the product now refuses**: the modal-gesture gates make the co-armed state
   (a live wire draw + a second gesture) unbuildable from any verb, which is what
   `abort_operation()`'s teardown tests need. `xschem test_gate_bypass 0|1` is the test-only seam for
@@ -966,6 +1166,17 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     `doc/claude/issues/0162-*.md`, test `test_wireedit_58_user_hash_label_0162.tcl` (9 checks,
     three-way VDD/`#foo`/`#net99` comparison so it cannot pass by blanket-protecting `#`).
 
+18. **`cut`/`delete` leave a live gesture pointing at freed objects** (issue 0242 census, measured
+    2026-08-08): with a placement preview armed, `xschem cut` / `xschem delete` remove the preview
+    instance but leave `ui_state == 16416` (`SELECTION|STARTMOVE`) with `instances == 0` — a
+    STARTMOVE whose moved set no longer exists. It self-heals on ESC (`move_objects(ABORT)` finds
+    nothing to restore) and produced no orphan and no stuck flag in the census, so it is NOT the
+    0242 defect and was left alone. It is still a dangling-gesture window of the §11.10 family:
+    any pass that walks the move set between the free and the ESC is walking freed ids, and the
+    same shape reached from a path that DOES iterate (a fluid RUBBER step, a live re-derivation)
+    is the UAF §11.10 predicts. The general fix is the one §11.10 wants anyway — a gesture that
+    owns its object set and is closed when that set dies, not a bit that outlives it.
+
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
 as same-net :5681-5707); bus quality debt accumulates monotonically (every cleaner
@@ -975,6 +1186,20 @@ declines buses); stacked coincident pins poison `fluid_geo_snap_id`.
 
 R1 **CI wiring** (0.5-1d): wireedit + gesture tests under xvfb as hard gate; fix
 full_audit is_skip; commit the untracked repro corpus. Prerequisite for everything.
+  **LANDED 2026-08-09 (issues 0350/0351/0352), with one correction to the plan above.**
+  `full_audit.sh`'s `is_skip` was unanchored *and* ranked ahead of `is_pass`, so a token
+  inside a check name scored a whole passing suite SKIP — and SKIP can fail neither the
+  audit nor CI. It is now line-anchored, guarded by `has_failure()`, and the chain is a
+  testable `classify NAME OUT EC` verb locked by `tests/headless/test_audit_classifier.tcl`.
+  The gesture suites did NOT go behind xvfb: all eleven are measured to pass with
+  `DISPLAY` unset (eight of them outside `full_audit`'s `nogui_tests`), so they went into
+  the cheap deterministic `Headless gate` step with `AUDIT_MIN_PASS` == the exact suite
+  count — that floor is what makes a PASS→SKIP flip fail CI. The wireedit suite was
+  already a hard gate (hardening plan A3). The "untracked repro corpus" turned out not to
+  be a corpus: `_g5/_g6/_g10/_g11/_*fixtures/` are dead July diff-dialog scratch referenced
+  by no test, and `undo_link_child/` is test leakage — inventory and cleanup recipe in
+  issue 0352. Only `tests/headless/test_descend_inert_class.tcl` was genuinely missing
+  from the tree and is now committed and gated.
 R2 **`Fluid_gesture` context struct** (2-3d): replace the file-scope statics; lifecycle
 arm-at-START/free-at-END; enables per-pass harness (`xschem fluid_pass <name>`).
 R3 **Unified predicate layer** (2d): one deg_at (degenerate skip), one touch body, one

@@ -107,7 +107,10 @@ callback.c edit, no key decision, no F-2ndentry.
   compound `-command "xschem redo; xschem redraw"` (the `-accelerator {Shift+U}` is display-only) →
   the branch. **actions.csv:74** is the same id's palette/metadata row (idle=1, nolog empty).
 - **Scripted/tests** call bare `xschem redo` (tests/headless/test_undo_*, stable_handles bodies,
-  undo_link_child/drive.tcl) → the branch.
+  `undo_link_child/drive.tcl` — that directory is scratch built by
+  tests/headless/test_undo_link_symbols.tcl:45 next to the action log and is not committed;
+  the cited copy is preserved at `doc/claude/evidence/0148_undo_link_child/`, see issue 0352)
+  → the branch.
 
 **The compound wrinkle, verified.** The plan asks: does the boundary's success-only
 `Tcl_ResetResult` change what `xschem redo; xschem redraw` observes? No — the OLD branch already did

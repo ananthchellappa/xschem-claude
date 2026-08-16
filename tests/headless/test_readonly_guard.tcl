@@ -67,6 +67,17 @@ check "treatment: instance count unchanged" [expr {[xschem get instances] == $i0
 check "treatment: wire count unchanged" [expr {[xschem get wires] == $w0}] "($w0)"
 check "treatment: buffer still unmodified" [expr {[xschem get modified] == 0}] ""
 
+# ISSUE 0266 ORDERING ROW. move_objects gained argument-shape validation (an unrecognised dispatch
+# slot is now a TCL_ERROR naming the token). scheduler_readonly_reject must stay the FIRST thing
+# the branch does, so a read-only buffer answers "read-only" for EVERY spelling -- including a bad
+# one. The loop above only ever calls the verb bare (argc 2), which never reaches the new check, so
+# it cannot see this. The read-only refusal is the more important thing to tell the user.
+set rc [catch {xschem move_objects END} e]
+check "treatment: 'move_objects END' refused as read-only" \
+      [expr {$rc != 0 && [string match "*read-only*" $e]}] "(rc=$rc msg=[string range $e 0 60])"
+check "treatment: read-only wins over the 0266 slot check" \
+      [expr {![string match "*unrecognized argument*" $e]}] ""
+
 # non-mutating query/nav commands must still work read-only (no over-block)
 check "treatment: select_all works read-only" [expr {[catch {xschem select_all}] == 0}] ""
 check "treatment: 'get' works read-only" [expr {[catch {xschem get instances}] == 0}] ""

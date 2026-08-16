@@ -309,6 +309,16 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
        * surface -- leaves the wire alone. GUI-only path (X + cairo, driven by a real pointer
        * grab), so this one is proved by code and has no headless seam. */
       leave_wire_draw_for("Screen grab");
+      leave_shape_draw_for("Screen grab");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+      /* issue 0242, same siting argument as the wire gate above (at the ARM, on the release that
+       * completes the grab): the grabbed image arms START_SYMPIN + STARTMOVE, so dropping it onto
+       * a live Add-Pin / Add-Wire-Label preview would leave that preview committed. GUI-only
+       * path, so this one is proved by code and has no headless seam either. */
+      leave_placement_for("Screen grab");
+      /* issue 0265 -- and a pending PASTE, the third modal gesture this arm can land on. One of
+       * the four arms that never unselect_all(), so before the gate the merged objects were simply
+       * folded into the stamp below and dropped with the image. GUI-only, proved by code. */
+      leave_merge_for("Screen grab");
       move_objects(START,0,0,0);
       /* issue 0241. This arm never unselect_all()s, so the stamp deliberately captures the
        * user's pre-existing selection too -- it rides the cursor with the grabbed image and is
@@ -10374,7 +10384,6 @@ void draw(void)
   int cc, c, i = 0 /*, floaters = 0 */;
   xSymbol *symptr;
   int textlayer;
-  double cs;
   #if HAS_CAIRO==1
   const char *textfont;
   #endif
@@ -10388,10 +10397,9 @@ void draw(void)
    * global default (1.0) -- headless runs that still reach draw() (e.g. scripted
    * move_objects) then produce clean output instead of per-call Tk warnings. */
   if(has_x) tk_scaling = atof(tcleval("tk scaling"));
-  cs = tclgetdoublevar("cadsnap");
   xctx->ev_precision = tclgetintvar("ev_precision");
   cairo_font_scale  = tclgetdoublevar("cairo_font_scale");
-  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+  set_dotsize_from_snap();   /* reference snap, not the live one (actions.c) */
   xctx->crosshair_layer = tclgetintvar("crosshair_layer");
   if(xctx->crosshair_layer < 0 ) xctx->crosshair_layer = 2;
   if(xctx->crosshair_layer >= cadlayers ) xctx->crosshair_layer = 2;

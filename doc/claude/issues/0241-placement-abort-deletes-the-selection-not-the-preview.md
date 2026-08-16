@@ -316,19 +316,23 @@ resurrecting a dead bit, and every C89 complaint (the new code compiles clean un
 
 ## What is still wrong (NOT fixed here)
 
-- **The merge / paste arm still over-deletes.** `abort_operation()`'s `STARTMERGE` branches still
-  call a bare `delete(1)` on whatever is selected, so `Ctrl+V` + `Ctrl+A` + ESC is the same
-  whole-document wipe on a sibling path. Measured on the FIXED binary, 2026-08-08:
+- ~~**The merge / paste arm still over-deletes.**~~ **CLOSED 2026-08-08 by issue 0244 part B**, with
+  exactly the reuse this bullet predicted: `merge_file()` (`paste.c`) calls
+  `stamp_placement_preview()` immediately before `ui_state |= STARTMERGE`, and **both**
+  `abort_operation()` `STARTMERGE` arms wrap their `delete(1)` in
+  `if(select_placement_preview() > 0)` — same backstop, same `else { draw(); }` repaint debt on the
+  arm that returns early. The merge stamp shares the `preview_sel` slot; 0244 records why that is
+  safe (and corrects the premise that a merge and a placement can never be co-armed — they can, and
+  the co-armed stamp is a superset). Measured before it landed, on the 0241-fixed binary:
 
   ```
   doc                  wires=1 inst=1 modified=0 ui=0
   after merge          wires=2 inst=1 modified=1 ui=296   [SELECTION|STARTMOVE|STARTMERGE]
-  merge+CtrlA+ESC      wires=0 inst=0 modified=0 ui=0     <-- still wipes, still says "clean"
+  merge+CtrlA+ESC      wires=0 inst=0 modified=0 ui=0     <-- wiped, and reported "clean"
   ```
-   Sketch item 4 wanted it narrowed too; that site is issue
-  **0244**'s (its unconditional `set_modify(0)`) and issue **0242**'s territory and the two collide
-  in `paste.c`, so it is deliberately untouched. The machinery this fix adds is directly reusable
-  there: stamp at the merge arm, `select_placement_preview()` before the `delete(1)`.
+
+  Now: the survivors survive and the flag stays dirty
+  (`tests/headless/test_paste_modify_flag_0244.tcl` sections C and D).
 - **Issue 0242** — the other actors that clear `START_SYMPIN`/`STARTMOVE` with no teardown at all
   (notably `unselect_all()` at `select.c`, i.e. paste/merge/redo/place_text/add_image) still orphan
   a preview. A stamp left behind by such an actor is inert (the placement bits are gone, so the

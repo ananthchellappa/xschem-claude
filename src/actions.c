@@ -192,6 +192,12 @@ int set_modify(int mod)
   if(mod == 0 || mod == 1 || mod == 2 || mod == 3) {
     xctx->modified = ro_suppress ? 0 : (mod & 1);
   }
+  /* ISSUE 0267 -- see xctx->modify_seq (xschem.h). Bumped on every DECLARATION of dirtiness, not
+   * on the 0 -> 1 transition: the point is to let a latched "the flag before X" notice a later,
+   * unrelated edit, and after a paste the flag is already 1, so a transition counter would see
+   * nothing. Suppressed reads follow xctx->modified: a read-only buffer never becomes dirty, so
+   * nothing claimed a modification here either. */
+  if((mod == 1 || mod == 3) && !ro_suppress) ++xctx->modify_seq;
   /* Autosave: a genuine edit (mod 1/3 -> modified) immediately persists the buffer
    * to its cellName~.sch backup, so descend never has to save and edits survive a
    * crash. write_backup() is itself a no-op during load (xctx->no_autosave), when
@@ -339,9 +345,53 @@ char *escape_chars(const char *source, const char *charset)
   return dest;
 }
 
+/* the snap in force when the program started (xschemrc `snap`, else CADSNAP).
+ * Hoisted out of set_snap() so linewidth_ref_snap() below can read it; still a
+ * single program-wide value, safe with multiple schematics/windows. */
+static double default_snap = -1.0;
+
+/* The REFERENCE length the automatic line width and the wire-junction / pin dot
+ * radius scale with.
+ *
+ * Stock XSCHEM uses the LIVE cadsnap for both: change_linewidth computes
+ * `lw = mooz * 0.09 * cadsnap * k`, which makes every drawn line a fixed fraction
+ * (~9%) of the snap pitch as it appears on screen, and cadhalfdotsize scales the
+ * same way. That couples a pure CURSOR setting to how the drawing RENDERS -- so
+ * doubling the snap (the Alt+Up / Alt+Down bindkeys, the View menu items, the snap
+ * dialog, the statusbar entry, `xschem set cadsnap`) also doubles the thickness of
+ * every wire, symbol line and pin-rectangle outline and grows the junction dots.
+ * That is not what "change the snap spacing" means to the user, and it is the
+ * defect this indirection removes.
+ *
+ * `linewidth_follows_snap` (MIRRORED IN TCL, xschem.tcl) picks the length:
+ *   0 = DEFAULT: the startup snap, fixed. Line weight and dot size then track ZOOM
+ *       only -- which is what change_linewidth's own comment ("choose line width
+ *       automatically based on zoom") describes -- and snap becomes orthogonal to
+ *       rendering. At the default snap the result is bit-identical to stock, so a
+ *       session that never changes the snap draws exactly as before.
+ *   1 = the old stock coupling, for anyone who wants line weight to follow the grid.
+ * See doc/claude/specs/snap_spacing_bindkeys.md section 5. */
+double linewidth_ref_snap(void)
+{
+  double cs = tclgetdoublevar("cadsnap");
+  if(tclgetboolvar("linewidth_follows_snap")) return cs;
+  /* before the first set_snap() (very early startup) there is no recorded default
+   * yet -- fall back to the live value, which IS the startup value at that point. */
+  if(default_snap <= 0.0) return cs ? cs : CADSNAP;
+  return default_snap;
+}
+
+/* cadhalfdotsize (junction/pin dot radius) from the reference snap. Four call sites
+ * computed this inline from the live cadsnap; they all funnel here so the
+ * linewidth_follows_snap decision is made in exactly one place. */
+void set_dotsize_from_snap(void)
+{
+  double cs = linewidth_ref_snap();
+  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+}
+
 void set_snap(double newsnap) /*  20161212 set new snap factor and just notify new value */
 {
-    static double default_snap = -1.0; /* safe to keep even with multiple schematics, set at program start */
     double cs;
 
     cs = tclgetdoublevar("cadsnap");
@@ -357,8 +407,8 @@ void set_snap(double newsnap) /*  20161212 set new snap factor and just notify n
         tclvareval(xctx->top_path, ".statusbar.3 configure -background OrangeRed", NULL);
       }
     }
-    xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
-    tclsetdoublevar("cadsnap", cs);
+    tclsetdoublevar("cadsnap", cs);   /* set BEFORE the dot size: it reads cadsnap back */
+    set_dotsize_from_snap();
 }
 
 void set_grid(double newgrid)
@@ -2471,6 +2521,20 @@ void place_net_label(int type)
    * placement (START_SYMPIN + a real lab_wire / lab_pin / ipin / opin preview instance riding the
    * pointer); none is a commit form, so there is no coordinate sub-form to exclude here. */
   leave_wire_draw_for("Net label");
+  leave_shape_draw_for("Net label");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+  /* issue 0242 -- see leave_placement_for() (callback.c). The other modal gesture this arm can
+   * land on: it ORs START_SYMPIN over a live Add-Wire-Label / Add-Pin preview and shares its
+   * STARTMOVE, so the earlier preview instance is left committed in the drawing -- a connected,
+   * netlist-visible lab_pin that renames the net under it. Measured as a door on all four types
+   * via the scripted `xschem net_label 0|1|2|3` (orphan=1 on each). This arm was NOT in the
+   * issue's 17-verb census; the tripwire found it, which is what the tripwire is for. */
+  leave_placement_for("Net label");
+  /* issue 0265 -- and the third modal gesture this arm can land on: a pending PASTE. The
+   * unselect_all(1) inside place_symbol()/place_wire_label() below zeroes ui_state wholesale, so
+   * STARTMERGE went away with no delete() and the paste stayed COMMITTED in the drawing. Always
+   * after leave_placement_for(): the two share xctx->preview_sel (abort_pending_merge(),
+   * callback.c). */
+  leave_merge_for("Net label");
   if(type == 1) {
       const char *lab = tcleval("find_file_first lab_pin.sym");
       place_symbol(-1, lab, xctx->mousex_snap, xctx->mousey_snap, 0, 0, NULL, 4, 1, 1/*to_push_undo*/);
@@ -2790,7 +2854,71 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  return 1;
 }
 
-void symbol_in_new_window(int new_process)
+/* ISSUE 0258 -- the already-open arm of symbol_in_new_window() below.
+ *
+ * check_loaded() answers TWO things: "is it open" and "WHERE". symbol_in_new_window() asked for
+ * both (it passes win_path) and consumed only the boolean, so the request died there: no window
+ * opened, no window switched, nothing said. Measured 2026-08-10 with the .sym already open in
+ * .x1.drw and its instance selected -- `xschem check_loaded <sym>` returned ".x1.drw", the exact
+ * value this function had in hand, while `xschem symbol_in_new_window` returned empty, left
+ * current_win_path on the parent and wrote nothing to the status bar. One level down,
+ * `xschem new_schematic create {} <sym> 1` both SAYS "already open: .x1.drw" and SWITCHES there.
+ * So the pre-check was deleting the message AND the navigation the user asked for.
+ *
+ * Ratified rule R1, "whatever you just pressed is what you meant": the user asked to see that
+ * symbol, and the window already holding it is the honest fulfilment. new_schematic("switch") is
+ * used rather than switch_tab/switch_window directly because it is the one entry that routes a
+ * real detached window and a pure tab correctly (xinit.c). The switch is VERIFIED by re-reading
+ * current_win_path: switch_tab()/switch_window() both bail on a nonzero semaphore and on a
+ * destroyed widget, and a refusal that reported 2 would be a fresh false success of the 0366 class.
+ *
+ * new_process (Alt+Shift+I) keeps its guard but now refuses OUT LOUD (ruling D5, ledger question):
+ * letting it through would give one .sym two editable views in two processes with no shared modify
+ * flag -- a real save-over-each-other path -- so the smallest, least surprising answer is to say
+ * why rather than to do nothing.
+ *
+ * Return: 0 nothing done, 2 switched, 3 refused (new_process). Never 1 -- the caller owns "opened".
+ */
+static int symbol_already_open(const char *filename, const char *win_path, int new_process)
+{
+  char msg[PATH_MAX + 160];
+  if(new_process) {
+    my_snprintf(msg, S(msg),
+      "Edit symbol in new process: %s is already open in this process (%s) -- not opening a second copy",
+      filename, win_path);
+    statusmsg_hold(msg, 1);
+    return 3;
+  }
+  if(!strcmp(win_path, xctx->current_win_path)) {
+    my_snprintf(msg, S(msg), "Edit symbol: %s is already open in this window", filename);
+    statusmsg_hold(msg, 1);
+    return 0;
+  }
+  new_schematic("switch", win_path, "", 1);
+  if(strcmp(xctx->current_win_path, win_path)) {
+    /* the switch was refused (semaphore held, or the widget is gone). Say so instead of
+     * reporting a navigation that did not happen. */
+    my_snprintf(msg, S(msg), "Edit symbol: %s is open in %s but that window cannot be raised now",
+                filename, win_path);
+    statusmsg_hold(msg, 1);
+    return 0;
+  }
+  /* windowed mode's switch_window() retitles and re-points xctx but never raises the toplevel, so
+   * the window the user was just sent to can stay buried behind the one they are looking at.
+   * catch-guarded: a tab's toplevel is the main window (a harmless raise) and headless has no Tk. */
+  if(has_x) {
+    tclvareval("catch {raise [winfo toplevel ", win_path, "]}", NULL);
+    tclvareval("catch {focus -force ", win_path, "}", NULL);
+  }
+  my_snprintf(msg, S(msg), "Edit symbol: %s is already open -- switched to %s", filename, win_path);
+  statusmsg_hold(msg, 1);
+  return 2;
+}
+
+/* Returns what happened, for the `xschem symbol_in_new_window` result (issue 0258; the return
+ * shape is 0251's): 0 nothing done, 1 opened, 2 switched to the window that already holds it,
+ * 3 refused and said why. The two key entries (callback.c Alt+i / Alt+Shift+I) discard it. */
+int symbol_in_new_window(int new_process)
 {
   char filename[PATH_MAX];
   char win_path[WINDOW_PATH_SIZE];
@@ -2804,13 +2932,16 @@ void symbol_in_new_window(int new_process)
     }
     if(new_process) new_xschem_process(filename, 1);
     else new_schematic("create", NULL, filename, 1);
+    return 1;
   }
   else {
     my_strncpy(filename, abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), S(filename));
     if(!check_loaded(filename, win_path)) {
       if(new_process) new_xschem_process(filename, 1);
       else new_schematic("create", NULL, filename, 1);
+      return 1;
     }
+    return symbol_already_open(filename, win_path, new_process);
   }
 }
 
@@ -3564,6 +3695,145 @@ int change_sch_path(int instnumber, int dr)
   return res;
 }
 
+/* ===========================================================================
+ * The descend refusal channel. Issues 0249 / 0251 / 0254 / 0256 / 0366.
+ * doc/claude/code_analysis/descend_silent_refusal_census.md
+ *
+ * descend has thirteen refusal sites and, before this, no status protocol: a
+ * refused descend was indistinguishable from a successful one at every caller.
+ * ONE mechanism closes the batch -- a short reason token recorded on the CURRENT
+ * context (xctx->descend_err, read as `xschem get descend_error`) at every
+ * `return 0`, plus a status line at the subset of them the user actually asked
+ * for.
+ *
+ * RECORD ALWAYS, SPEAK SELECTIVELY, and the split is the point:
+ *   loud  -- the user pressed `i`/`e` on something they picked and nothing
+ *            happened (empty/ambiguous selection, a ---MISSING SYMBOL---
+ *            placeholder, a symbol with no schematic view, a failed load).
+ *   quiet -- the annotation class: 262 shipped lab_pin/gnd/vdd/ipin/title/
+ *            launcher/probe symbols have no child schematic and pressing `e`
+ *            with one selected never promised a descend. Making those speak adds
+ *            one status line per label press and breaks the committed lock
+ *            tests/headless/test_descend_inert_class.tcl.
+ * A quiet refusal still RECORDS, so a script or a dialog can ask why.
+ *
+ * Two rules this must not break:
+ *  - the reason is a SECOND channel. The "0"/"1" string of `xschem descend` is
+ *    load-bearing in src/xschem.tcl, sky130/ihp/cadence glue and
+ *    tests/buried_hilight.tcl; it is never widened into a reason string.
+ *  - speaking uses statusmsg_hold(), never a plain statusmsg() and never dbg(0).
+ *    A plain statusmsg is clobbered one call later by select.c's
+ *    "n= x= y= w= h=" info line (issue 0248), and stderr noise is what the
+ *    inert-class lock greps for.
+ * =========================================================================== */
+
+/* Both verbs call this on entry, so a stale reason can never be read as a fresh
+ * one and the SUCCESS path needs no bookkeeping of its own. */
+void descend_clear_error(void)
+{
+  if(xctx) xctx->descend_err[0] = '\0';
+}
+
+/* The loud/silent predicate. Trivial by design: it exists as a named callee so
+ * the split can be neutralized in one place by a sabotage build (`#define
+ * descend_speak_p(s) (1)` must turn the inert-class silence rows red). */
+int descend_speak_p(int speak)
+{
+  return speak;
+}
+
+/* Say it where a user will actually read it. statusmsg_hold() (issue 0248) owns
+ * .statusbar.1 for a few seconds so the selection info line cannot eat it, and
+ * it records xctx->statusmsg_text even headless -- which is the test seam
+ * (`xschem get statusmsg` / `get statusmsg_hold`). */
+void descend_speak(const char *msg)
+{
+  if(msg && msg[0]) statusmsg_hold((char *)msg, 1);
+}
+
+/* code: the stable token a script tests ("no-selection", "not-descendable", ...)
+ * detail: appended as "code:detail" when non-empty (the symbol name, the type)
+ * msg:  the human sentence, used only when speak
+ * speak: 1 = the user asked for this descend, 0 = record only */
+void descend_set_error(const char *code, const char *detail, const char *msg, int speak)
+{
+  if(!xctx) return;
+  if(detail && detail[0]) {
+    my_snprintf(xctx->descend_err, S(xctx->descend_err), "%s:%s", code, detail);
+  } else {
+    my_snprintf(xctx->descend_err, S(xctx->descend_err), "%s", code);
+  }
+  if(descend_speak_p(speak)) descend_speak(msg);
+}
+
+/* Which instance does the user mean? Counted over the ELEMENT entries of the
+ * selection -- what `xschem selected_set` reports and what is highlighted on
+ * screen -- NOT xctx->lastsel, which also counts INST_PIN pseudo-selections
+ * (an instance plus its own pin reads as lastsel 2 while exactly one symbol is
+ * selected; the legacy `lastsel > 1` guard refused a selection that does not
+ * exist -- issue 0249).
+ * multi_ok = 1 keeps descend_schematic's shipped "first ELEMENT, any count"
+ * capability; descend_symbol passes 0 and refuses a genuinely ambiguous pick,
+ * but now says so.
+ * The loop is also the fix for issue 0366: with nothing selected,
+ * rebuild_selected_array() leaves the PREVIOUS rebuild's entry in sel_array[0],
+ * so a guard phrased as `sel_array[0].type != ELEMENT` re-descended into the
+ * last child and returned 1. Nothing here reads sel_array[i] past lastsel. */
+int descend_pick_target(int *n, int multi_ok, const char *verb)
+{
+  int i, nelem = 0, first = -1;
+  char msg[256];
+  rebuild_selected_array();
+  for(i = 0; i < xctx->lastsel; ++i) {
+    if(xctx->sel_array[i].type == ELEMENT) {
+      if(first < 0) first = xctx->sel_array[i].n;
+      ++nelem;
+    }
+  }
+  if(nelem == 0) {
+    my_snprintf(msg, S(msg), "%s: select an instance to descend into", verb);
+    /* two different mistakes: "you selected nothing" and "you selected something
+     * that is not an instance". Same sentence, different token. */
+    descend_set_error(xctx->lastsel == 0 ? "no-selection" : "no-instance-selected",
+                      NULL, msg, 1);
+    return 0;
+  }
+  if(nelem > 1 && !multi_ok) {
+    my_snprintf(msg, S(msg), "%s: select exactly one instance", verb);
+    descend_set_error("multi-selection", NULL, msg, 1);
+    return 0;
+  }
+  *n = first;
+  return 1;
+}
+
+/* The ---MISSING SYMBOL--- placeholder (issue 0254). Its own named guard, tested
+ * BEFORE the generic type whitelist on both verbs, because it is the one member
+ * of the "type is not subcircuit" family that a user deliberately clicks to find
+ * out what broke -- so it must SPEAK the unresolved name, which is live in the
+ * caller two lines up. None of the 262 annotation symbols carries type
+ * "missing", so the inert-class lock is untouched.
+ * A user-authored symbol that really exists on disk and declares type=missing is
+ * a different sentence (it is not a lookup failure) but the same token. */
+int descend_missing_sym(int n, const char *symname)
+{
+  struct stat sbuf;
+  char msg[PATH_MAX + 128];
+  const char *type = (xctx->inst[n].ptr + xctx->sym)->type;
+  const char *path;
+  if(!type || strcmp(type, "missing")) return 0;
+  path = (symname && symname[0] && !is_generator(symname)) ? abs_sym_path(symname, "") : "";
+  if(path && path[0] && !stat(path, &sbuf)) {
+    my_snprintf(msg, S(msg), "Descend: %s declares type=missing -- nothing to descend into",
+                symname);
+  } else {
+    my_snprintf(msg, S(msg), "Descend: symbol not found: %s -- nothing to descend into",
+                symname ? symname : "");
+  }
+  descend_set_error("missing-symbol", symname, msg, 1);
+  return 1;
+}
+
 /* fallback = 1: if schematic=.. attr is set but file not existing descend into symbol base schematic
  * instnumber: instance to descend into in case of vector instances (1 = leftmost, -1=rightmost)
  * if set_title == 0 do not set window title (faster)
@@ -3582,16 +3852,27 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
  int i, n = 0;
  int descend_ok = 1;
 
+ descend_clear_error();
  if(xctx->currsch + 1 >= CADMAXHIER) {
+   char msg[128];
+   my_snprintf(msg, S(msg), "Descend: maximum hierarchy depth (%d) reached", CADMAXHIER);
    dbg(0, "descend_schematic(): max hierarchy depth reached: %d", CADMAXHIER);
+   descend_set_error("maxdepth", NULL, msg, 1);
    return 0;
  }
- rebuild_selected_array();
- if(/* xctx->lastsel !=1 || */ xctx->sel_array[0].type!=ELEMENT) {
+ /* was: a bare test of sel_array[0].type != ELEMENT (with the lastsel != 1 half
+  * commented out). That read entry 0
+  * of an array that, with nothing selected, still holds the PREVIOUS rebuild's
+  * entry -- so `e`, go_back, `e` descended a second time and reported success
+  * (issue 0366). The picker counts live ELEMENT entries instead, and keeps the
+  * "first ELEMENT, any count" capability (multi_ok = 1): no descend that
+  * succeeds today stops succeeding, 0366's false one excepted. */
+ if(!descend_pick_target(&n, 1, "Descend")) {
    dbg(1, "descend_schematic(): wrong selection\n");
    return 0;
  }
  else {
+   char symname[PATH_MAX];
    /* no name set for current schematic: save it before descending*/
    if(!strcmp(xctx->sch[xctx->currsch],""))
    {
@@ -3602,26 +3883,62 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      my_snprintf(cmd, S(cmd), "save_file_dialog {Save file} * INITIALLOADDIR {%s}", filename);
      tcleval(cmd);
      my_strncpy(res, tclresult(), S(res));
-     if(!res[0]) return 0;
+     /* the user's own Cancel is its own feedback: record it, do not narrate it
+      * (message built anyway -- speak = 0 is the only thing keeping it quiet) */
+     if(!res[0]) {
+       descend_set_error("save-cancelled", NULL, "Descend: save cancelled -- not descending", 0);
+       return 0;
+     }
      dbg(1, "descend_schematic(): saving: %s\n",res);
      save_ok = save_schematic(res, 0);
-     if(save_ok==0) return 0;
+     if(save_ok==0) {
+       descend_set_error("save-failed", NULL,
+         "Descend: could not save the current schematic -- not descending", 1);
+       return 0;
+     }
    }
-   n = xctx->sel_array[0].n;
    /* capture the raw instname NOW: after load_schematic() below, xctx->inst[]
     * is the CHILD's array and n no longer names this instance. Used for the
     * `xschem descend -inst <name>` action-log line. action_log_absorb.md */
    my_strncpy(descend_logname, xctx->inst[n].instname ? xctx->inst[n].instname : "", S(descend_logname));
-   get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
-
-   if(!filename[0]) return 0; /* no filename returned from get_sch_from_sym() --> abort */
+   my_snprintf(symname, S(symname), "%s", translate(n, xctx->inst[n].name));
+   /* issue 0254: the placeholder is checked BEFORE the generic type guard, so the
+    * one refusal in this family that a user provoked on purpose can name the
+    * symbol that failed to resolve instead of joining the silent class. */
+   if(descend_missing_sym(n, symname)) return 0;
    dbg(1, "descend_schematic(): selected:%s\n", xctx->inst[n].name);
    dbg(1, "descend_schematic(): inst type: %s\n", (xctx->inst[n].ptr+ xctx->sym)->type);
+   /* THE SILENT ONE (speak = 0), and it must stay silent: this is the annotation
+    * class -- labels, ports, title blocks, launchers, probes. Nothing the user saw,
+    * typed or clicked promised a descend, so there is nothing to explain; the
+    * reason is recorded for whoever asks. Locked by
+    * tests/headless/test_descend_inert_class.tcl (262 symbols).
+    * Moved AHEAD of get_sch_from_sym(): the type is knowable without resolving a
+    * filename, and this keeps the annotation class landing on its own token
+    * rather than on the (loud) no-schematic one. */
    if(                   /*  do not descend if not subcircuit */
       (xctx->inst[n].ptr+ xctx->sym)->type &&
       strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "subcircuit") &&
       strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "primitive")
-   ) return 0;
+   ) {
+     /* The sentence is BUILT and then deliberately not said: what keeps this guard
+      * quiet is the speak = 0 argument alone, not a missing string. That is what makes
+      * the policy testable -- neutralize descend_speak_p() and the inert-class silence
+      * rows must go red. */
+     char msg[PATH_MAX + 128];
+     my_snprintf(msg, S(msg), "Descend: %s is a '%s' symbol -- nothing to descend into",
+                 symname, (xctx->inst[n].ptr+ xctx->sym)->type);
+     descend_set_error("not-descendable", (xctx->inst[n].ptr+ xctx->sym)->type, msg, 0);
+     return 0;
+   }
+   get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
+
+   if(!filename[0]) { /* no filename returned from get_sch_from_sym() --> abort */
+     char msg[PATH_MAX + 128];
+     my_snprintf(msg, S(msg), "Descend: %s has no schematic view", symname);
+     descend_set_error("no-schematic", NULL, msg, 1);
+     return 0;
+   }
    /* No save prompt on descend: a genuine edit to the parent was already
     * persisted to cellName~.sch by the autosave hook (set_modify -> write_backup),
     * and go_back() reloads that backup, restoring the unsaved edits and the
@@ -3658,6 +3975,9 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
        dbg(1, "descend_schematic(): inum=%s\n", inum);
        if(!inum[0]) {
          my_free(_ALLOC_ID_, &str);
+         /* the user cancelled the iteration prompt: their own Cancel is the feedback */
+         descend_set_error("iter-cancelled", NULL,
+           "Descend: no instance number given -- not descending", 0);
          return 0;
        }
        inst_number=atoi(inum);
@@ -3735,6 +4055,15 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    /* we are descending from a parent schematic downloaded from the web */
    if(!tclgetboolvar("keep_symbols")) remove_symbols();
    descend_ok = load_schematic(1, filename, (set_title & 1), alert);
+   if(!descend_ok) {
+     /* xctx->currsch was ALREADY incremented above, so this 0 does not mean
+      * "nothing happened" -- the window is one level down on a page that failed
+      * to load and the caller must go_back. Its own token, deliberately not
+      * lumped in with the refusals (issue 0250). */
+     char msg[PATH_MAX + 128];
+     my_snprintf(msg, S(msg), "Descend: could not load %s", filename);
+     descend_set_error("load-failed", NULL, msg, 1);
+   }
    if(descend_ok) {
      /* Outcome-level action log: record the coordinate-free, replay-stable form
       * `xschem descend -inst <name>`, absorbing the provisional select_at the
@@ -4149,7 +4478,6 @@ void zoom_full(int dr, int sel, int flags, double shrink)
   xRect boundbox;
   double yzoom;
   double bboxw, bboxh, schw, schh;
-  double cs = tclgetdoublevar("cadsnap");
   if(flags & 1) {
     if(xctx->change_lw) {
       xctx->lw = 1.;
@@ -4186,7 +4514,7 @@ void zoom_full(int dr, int sel, int flags, double shrink)
   dbg(1, "zoom_full(): current_name=%s\n", xctx->current_name);
   if(flags & 1) change_linewidth(-1.);
   /* we do this here since change_linewidth may not be called  if flags & 1 == 0*/
-  xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+  set_dotsize_from_snap();
   if(dr && has_x) {
     draw();
     redraw_w_a_l_r_p_z_rubbers(1);
@@ -4335,7 +4663,12 @@ void zoom_rectangle(int what)
 
     xctx->nl_xx1=xctx->nl_x1;xctx->nl_yy1=xctx->nl_y1;xctx->nl_xx2=xctx->nl_x2;xctx->nl_yy2=xctx->nl_y2;
     RECTORDER(xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
-    drawtemprect(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+    /* RUBBER|CLEAR: erase only -- see new_polygon() (abort_shape_draw(), callback.c). The
+     * draw_selection() overlay above is NOT skipped: the tiled erase wipes the SELLAYER highlight
+     * of everything inside the band bbox, and restoring it is not part of the band. */
+    if(!(what & CLEAR)) {
+      drawtemprect(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+    }
   }
 }
 
@@ -4625,7 +4958,10 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       xctx->nl_xx2 = xctx->mousex_snap;
       xctx->nl_yy2 = xctx->mousey_snap;
       ORDER(xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
-      drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      /* RUBBER|CLEAR: erase only -- see new_polygon() above (abort_shape_draw(), callback.c) */
+      if(!(what & CLEAR)) {
+        drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      }
     }
     else if(xctx->nl_state==1) {
       xctx->nl_x3 = xctx->mousex_snap;
@@ -4638,7 +4974,8 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       arc_bbox(xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b,
                 &xctx->nl_xx1, &xctx->nl_yy1, &xctx->nl_xx2, &xctx->nl_yy2);
       if(xctx->nl_sweep_angle==360.) xctx->nl_b=360.;
-      if(xctx->nl_r>0.) drawtemparc(xctx->gc[xctx->rectcolor], NOW,
+      /* RUBBER|CLEAR: erase only -- see new_polygon() (abort_shape_draw(), callback.c) */
+      if(!(what & CLEAR) && xctx->nl_r>0.) drawtemparc(xctx->gc[xctx->rectcolor], NOW,
            xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b);
     }
   }
@@ -4759,7 +5096,11 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
    xctx->nl_x2 = xctx->mousex_snap;xctx->nl_y2 = xctx->mousey_snap;
    nl_xx1 = xctx->nl_x1;nl_yy1 = xctx->nl_y1;nl_xx2 = xctx->nl_x2;nl_yy2 = xctx->nl_y2;
    RECTORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
-   drawtemprect(xctx->gc[xctx->rectcolor], NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+   /* RUBBER|CLEAR: erase only, no re-stroke -- see the same guard in new_wire()/new_line() and the
+    * reason in new_polygon() above (abort_shape_draw(), callback.c). */
+   if(!(what & CLEAR)) {
+     drawtemprect(xctx->gc[xctx->rectcolor], NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+   }
   }
 }
 
@@ -4785,7 +5126,14 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
          xctx->nl_polyy[xctx->nl_points-1]); */
      xctx->nl_x1=xctx->nl_x2=mousex_snap;xctx->nl_y1=xctx->nl_y2=mousey_snap;
      xctx->ui_state |= STARTPOLYGON;
-     set_modify(1);
+     /* ISSUE 0270 -- the set_modify(1) that used to sit HERE has moved to the commit branch, beside
+      * store_poly(). It was the polygon's ONLY modify write, and it fired at the ARM: `xschem
+      * polygon gui` on a clean document reported the buffer dirty with nothing stored (measured,
+      * modified 0 -> 1). Harmless while the only exit was ESC (which COMMITS the polygon, so the
+      * flag became true one call later), but abort_shape_draw() (callback.c) can now abandon the
+      * gesture, and a teardown that leaves a false `modified` is the issue 0244 class. Moving it
+      * rather than deleting it: the commit branch had no set_modify of its own, so deleting it
+      * would stop a finished polygon marking the file dirty at all. */
    }
    if( what & ADD)
    {
@@ -4820,6 +5168,7 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      xctx->push_undo();
      drawtemppolygon(xctx->gctiled, NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
      store_poly(-1, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points, xctx->rectcolor, 0, NULL);
+     set_modify(1);   /* ISSUE 0270 -- moved down from the PLACE arm; see the comment there */
      /* action-log Layer C: the stored point list replays through the
       * `xschem polygon x1 y1 ...` coordinate form (Phase 3 slice B);
       * dynamic length, so the line is assembled before logging */
@@ -4854,7 +5203,13 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      xctx->nl_polyx[xctx->nl_points] = mousex_snap;
      restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
      /* xctx->nl_x2 = mousex_snap; xctx->nl_y2 = mousey_snap; */
-     drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+     /* RUBBER|CLEAR erases the band and does NOT re-stroke it -- the idiom new_wire()/new_line()
+      * have always had, added here for abort_shape_draw() (callback.c, plan phase 3): a teardown
+      * owes the erase, and the erase must tile from save_pixmap BEFORE any full draw() regenerates
+      * it. The `nl_points+1` above is load-bearing: index nl_points is the live rubber vertex. */
+     if(!(what & CLEAR)) {
+       drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+     }
    }
 }
 

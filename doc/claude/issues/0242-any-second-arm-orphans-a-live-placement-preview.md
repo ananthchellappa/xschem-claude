@@ -1,13 +1,17 @@
 # 0242 — arming anything on top of a live placement preview orphans it: `sympin_preview` outlives `START_SYMPIN` and the canvas goes dead (closes issue 0123's open residual)
 
-Status: **OPEN** — measured headless repro (4 keystrokes), 17 doors enumerated, fix sketched, not
-implemented. **Critical**: 6 doors leave the terminal issue-0123 desync; all 9 defective doors
-commit a net label the user never dropped, and the merge/paste doors then report the document
-**clean**.
-Area: `src/select.c:1066-1068` (`unselect_all()` zeroes `ui_state` wholesale) vs the placement
-teardown that only exists inside `src/callback.c:383-400`
-Tests: none yet. `xschem get sympin_preview` (`scheduler.c:4513`, added by 0240) makes the invariant
-directly assertable; the fluid tripwire on stderr is a usable second oracle
+Status: **FIXED 2026-08-08** — all 9 defective doors gated, **plus 5 arms the census did not
+contain** (found by the new tripwire, `place_net_label` among them — Alt+Shift+L / Ctrl+P /
+Ctrl+Shift+P / `xschem net_label`), invariant made atomic at the three `-place` arms, C tripwire
+added. Was: measured headless repro (4 keystrokes), 17 doors enumerated, fix sketched. **Critical**: 6 doors left the terminal issue-0123 desync; all 9 defective doors
+committed a net label the user never dropped, and the merge/paste doors then reported the document
+**clean** (that last half is issue **0244**, landing separately — see "What did NOT change").
+Area: `src/select.c:1258` (`unselect_all()` zeroes `ui_state` wholesale) vs the placement teardown
+that only existed inside `src/callback.c`'s `abort_operation()`
+Tests: `tests/headless/test_placement_preview_doors.tcl` (115 checks, `--nogui`, registered in
+`full_audit.sh`'s `nogui_tests`) — 30 of them RED on the pre-fix tree. `xschem get sympin_preview`
+(added by 0240) makes the invariant directly assertable; the new C tripwire on stderr is the
+second oracle.
 Found: 2026-08-06, verifying issue **0240**'s out-of-scope list
 Related: **0123** — this is that issue's *"desync ROOT open (no headless repro — needs GUI eyeball)"*
 residual; the repro now exists, so 0123's blocker is gone. **0240** (parent; its pre-existing item
@@ -196,3 +200,148 @@ Fold in `callback.c:415`'s unconditional `set_modify(0)` (issue **0244**) — it
   FAILs).
 - **The visual half is not headless-testable** (`WIRING.md` §8 I/K) — expect the grey rubber ghost
   in the GUI and confirm by eye, as in 0240.
+
+---
+
+## What landed (2026-08-08)
+
+The sketch above was written before **0241** and **0243 F2** landed. Those two already did step 1:
+`abort_placement_preview()` exists (`callback.c`), scoped to the preview's stamped identity, and
+`leave_placement_for()` (`callback.c`) is the ratified *door* wrapper around it — gate, teardown,
+`statusmsg_hold()`. Step 2's gate is likewise already in place and is *broader* than the sketch
+asked (`ui_state & (START_SYMPIN | PLACE_SYMBOL | PLACE_TEXT)`), which still satisfies the
+load-bearing requirement: the three `-place` re-arms clear `START_SYMPIN` before their
+`unselect_all(1)` and set neither `PLACE_` bit, so the helper no-ops there.
+
+So this issue landed steps **3** and **4**, plus one thing the sketch did not anticipate.
+
+### 1. Door calls (step 3) — `leave_placement_for()`, not a bare teardown
+
+Using the ratified wrapper rather than calling `abort_placement_preview()` directly buys the
+0248 status line, the `readonly` carve-out and the `gate_bypass` test seam for free, and keeps one
+policy in one place. Its doc comment is generalized accordingly.
+
+| site | file | why there |
+|---|---|---|
+| `merge_file()`, inside `if(fd)`, before `push_undo()` | `paste.c` | the ONE funnel behind `paste`, `merge`, Ctrl+V **and** the `-file` replay form. Inside `if(fd)` so a cancelled Merge dialog does not destroy the preview; before `push_undo()` so the merge's undo baseline is the schematic *without* the preview (otherwise undoing the paste resurrects it) |
+| `place_symbol` | `scheduler.c` | reaches the orphan with no `unselect_all` at all — it ORs `PLACE_SYMBOL` over the live preview, so both placements share one `STARTMOVE` |
+| `place_text` | `scheduler.c` | before the text dialog, so a **cancelled** dialog cannot leave the terminal state |
+| `add_graph` | `scheduler.c` | also repairs the undo landmine below |
+| `add_image` | `scheduler.c` | before the file chooser, same rule as the wire gate beside it |
+| `undo` / `redo` verbs | `scheduler.c` (`perform_action`) | at the VERB, never inside `pop_undo_keep_selection()` — the teardown is a `delete()` and must run against a consistent object model, before the stack pointer moves |
+| `place_net_label()` | `actions.c` | **a door the census did not contain** — see below |
+| `start_place_symbol()` | `callback.c` | keyboard `I`/Insert + context-menu twin of the `place_symbol` verb |
+| context-menu Insert text | `callback.c` | twin of the `place_text` verb |
+| `t` key | `callback.c` | twin of the `place_text` verb |
+| screen grab release | `draw.c` | arms `START_SYMPIN`+`STARTMOVE` like `add_image`; GUI-only, proved by code |
+
+**The census was five arms short**, and the fix would have shipped that way if the tripwire had not
+been built first. The doors were enumerated from the 17 verbs the issue measured; the *arms* are
+the twelve `stamp_placement_preview()` sites (`ui_state |= START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT`),
+four of which are the form re-arms that must NOT be gated and five of which had no gate. This is
+0247's lesson repeating verbatim (`WIRING.md` §8 D): *enumerate the arms from the ui_state bits
+they set, not from the verbs the bug report happened to name.*
+
+The one that matters most is **`place_net_label()`** — Alt+Shift+L, Ctrl+P, Ctrl+Shift+P and the
+scripted `xschem net_label 0|1|2|3`, four everyday keybindings on the same helper. Measured
+`orphan=1` on every type before the gate, and it is *headlessly testable*, so it is now rows
+B10–B13 of the test. It was found by the tripwire firing on a run that had nothing to do with it,
+which is the entire argument for building the tripwire before declaring the census closed.
+
+### 2. The tripwire (step 4)
+
+`check_placement_preview_invariant()` (`callback.c`), called at the entry of `callback()` and of
+`xschem()`. `dbg(0)`, so no `-d` flag is needed. It reports the **transition**, once per desync
+episode, not the state — at `callback()` entry it runs on every motion event and a stuck flag
+would otherwise emit thousands of identical lines.
+
+### 3. The thing the sketch did not anticipate: the invariant was not testable
+
+Sited as specified, the tripwire fired on **every healthy arm**. The three `-place` arms raise
+`sympin_preview` *before* the preview exists and hold it across the whole arm — and
+`place_symbol()` re-enters `xschem()` through its own `tcleval`s (`abs_sym_path`,
+`is_xschem_file`, `tcl_hook2`). So `sympin_preview && !START_SYMPIN` — the exact desync
+signature — was **also the normal mid-arm state**, and the re-arm window repeated it on every
+keystroke.
+
+Fix: make the pair atomic in all three arms (`add_symbol_pin`, `add_sch_pin`, `add_wire_label`) —
+clear `sympin_preview` with `START_SYMPIN` at the re-arm, raise it with `START_SYMPIN` on the
+success path, instead of before the object is placed. The undo contract is untouched: which branch
+runs still decides whether a baseline is pushed, and that decision is read before either flag is
+written.
+
+Measured: a healthy 6-keystroke arm emitted **11** tripwire lines before this change and **0**
+after. The whole 115-check suite now emits exactly **one** line — the door deliberately left
+ungated (below).
+
+### 4. Comment corrected (landmine)
+
+0240's claim at the `delete(0)/delete(1)` discriminator — *"a live preview always has
+`START_SYMPIN` set"* — was **false for `add_graph`**, which re-sets `START_SYMPIN` after its own
+`unselect_all(1)`, so an aborted graph was removed with no undo baseline. The door call makes the
+premise true rather than assumed; the comment now says so, and the conjunct stays as the local
+guard for a future ungated arm. Side effect noted in the issue text: `add_graph`'s undo depth on
+that path legitimately moves, because a live bug is being removed.
+
+## Verification
+
+Repro from §"Repro" above, re-measured on today's tree before the fix — byte-identical to the
+2026-08-06 capture. After the fix:
+
+```
+BUG RUN
+  armed      ui_state=16424  inst=1  modified=1  sympin_preview=1
+  after ^V   ui_state=296    inst=0  modified=1  sympin_preview=0
+  ESC        ui_state=0      inst=0  modified=0  sympin_preview=0
+  leftover: none
+```
+
+Door census re-measured (17 verbs armed against a live label preview, then 3x ESC). 0241/0243 had
+already closed `select_all`, `wire gui` and `cut`/`delete`; the 9 rows this issue names are all
+clean now, with two documented exceptions:
+
+| row | after | note |
+|---|---|---|
+| paste / merge / paste-replay / redo / undo / place_text / place_symbol / add_graph / add_image | `sp=0`, no orphan | fixed |
+| `xschem unselect_all` (verb) | `sp=1`, orphan | **issue 0262** — deliberately not gated. **DECIDED 2026-08-11**: the carve-out is permanent (the verb arms nothing, and gating it would put a `delete()` behind 866 scripted / 82 C call sites), and the *terminal* half is answered class-wide instead — `check_placement_preview_invariant()` now REPAIRS (`repair_orphan_placement_preview()`, callback.c), so this row is `sp=0`, orphan **only**. Asserted in section F of the doors suite, 29 checks. The bare verb was also **not** the only class-D door: `save`/`saveas`/Ctrl+S is the second (issue **0358**), and the verb IS GUI-reachable (issue **0397**) |
+| `netlist` | `sp=0`, orphan | **issue 0263** — this note said "clears no gesture bits, so not a door". Measured FALSE 2026-08-09: the driver's `push_undo`/`unselect_all(1)`/`pop_undo` round trip clears every bit AND commits the preview, on top of emitting a wrong deck. It was a door; **FIXED**, gated at both netlist verbs |
+
+### Sabotage results — two of the three predictions were wrong, honestly reported
+
+- **"Drop the `START_SYMPIN` term and the undo-depth checks go red."** It does nothing. Once the
+  flag pair is atomic, `sympin_preview` is never 1 without `START_SYMPIN`, so the conjunct in the
+  `delete()` discriminator is provably redundant. Kept as defence in depth, not as a live guard.
+- **"…the undo-depth checks in `test_add_wire_label.tcl` / `test_sch_add_pin.tcl`."** Those checks
+  **do not exist**: neither file asserts undo depth (`grep`). The one-baseline-per-gesture contract
+  was unasserted anywhere in the suite. Section C3b of the new test is that oracle.
+- The sabotage that *does* bite — forcing the teardown to fire AT a `-place` re-arm, which is what
+  step 2's gate really prevents — turns **exactly one** check red (`C3b undo 2 reaches PAST the
+  gesture`) and nothing else. It needs **two** real edits and **two** undos: one undo cannot tell
+  the cases apart, because every spurious per-keystroke baseline snapshots the same document.
+
+Re-run green: `test_add_wire_label` (178), `test_sch_add_pin` (21), `test_label_ride` (157),
+`test_label_strand_oracle` (32), `test_wire_split` (`OVERALL: ok`), `test_placement_wire_gate`,
+the replay/log group, `wireedit`, `headless/run.sh`, `run_regression.tcl` (same pre-existing
+`test_ihp_sg13g2_libmgr` FAILs).
+
+## What did NOT change
+
+- **Issue 0244** (`callback.c`'s unconditional `set_modify(0)` in the two `STARTMERGE` arms) was
+  **not** folded in — user decision, 2026-08-08. It is independent: after this fix the paste door
+  tears the preview down *before* `merge_file()` runs, so no orphan exists to be reported clean,
+  and the `set_modify(0)` clobber survives only on 0244's own repro (dirty doc + plain paste + ESC,
+  no preview). Different root cause (a missing pre-merge latch), different files, its own control
+  matrix and its own user-visible change. The new test therefore does **not** assert `modified` on
+  the merge doors.
+  **UPDATE, later the same day: 0244 is FIXED**, so the `modified=0` half of the damage named in
+  this issue's header is closed — the merge arms latch the pre-merge flag
+  (`xctx->pre_merge_modified`) and restore it, and their `delete(1)` is narrowed to a stamp exactly
+  the way 0241 narrowed the placement one. 0244's census also **corrected a premise recorded here**:
+  the gating closed only *placement-then-merge*. Nothing tears down a pending `STARTMERGE`, so
+  *merge-then-placement* still orphans — the pending paste is silently **committed**, measured on
+  both doors and filed as issue **0265**.
+- **The teardown is still not inside `unselect_all()`** — 87 C call sites and 817 scripted ones,
+  several inside netlisting and live fluid passes, and it would make a *deselect* silently delete
+  objects. Issue 0123's stated reason still holds.
+- **The visual half is not headless-testable** (`WIRING.md` §8 I/K): the grey rubber ghost on each
+  door needs a GUI eyeball, as 0240 did. Not yet done.

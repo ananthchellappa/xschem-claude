@@ -295,6 +295,15 @@ typedef int Tcl_Size;
                                 * read-only backstop mask in check_menu_start_commands().
                                 * see doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
 
+/* The SHAPE sub-mask of ui_state2: the menu-armed half of the shape-draw family, i.e. the
+ * `infix_interface 0` (cadence) branch where the verb only arms MENUSTART and the FIRST CANVAS
+ * CLICK sets STARTRECT/STARTPOLYGON/STARTARC/STARTZOOM. abort_shape_draw() (callback.c) must test
+ * BOTH halves: a gate that looks only at ui_state is a no-op for every cadence user (plan
+ * landmine 5, doc/claude/suggestions/plan_modal_gesture_exclusion.md). Circle has no ui_state bit
+ * of its own -- it is new_arc(PLACE, 360.), so it lands on STARTARC. */
+#define MENUSTARTSHAPE (MENUSTARTRECT | MENUSTARTZOOM | MENUSTARTPOLYGON | MENUSTARTARC | \
+                        MENUSTARTCIRCLE)
+
 /* xctx->menu_pending_transform codes: which transform a pending MENUSTARTROTATE applies */
 #define PENDING_TR_NONE      0
 #define PENDING_TR_ROTATE    1  /* rotate about click point            (Shift-R / xschem rotate) */
@@ -1579,8 +1588,23 @@ typedef struct {
                        * exists when has_x, so this is what makes the hold assertable headlessly --
                        * `xschem get statusmsg`. Fixed array on purpose: no allocation to free on
                        * context teardown. */
-  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables the
-                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for) so a
+  char descend_err[192]; /* issues 0249/0251/0254: WHY the last descend attempt on THIS context
+                       * refused. A reason token, never a sentence -- read as `xschem get
+                       * descend_error`. Empty = the last attempt succeeded, or none has run.
+                       * Written at EVERY refusal in descend_schematic()/descend_symbol() (record
+                       * always) whether or not that refusal also SPEAKS (speak selectively): the
+                       * annotation class -- 262 shipped lab_pin/gnd/title/launcher symbols the
+                       * user never asked to descend -- must stay byte-silent, and that silence is
+                       * locked by tests/headless/test_descend_inert_class.tcl. This is a SECOND
+                       * channel: the "0"/"1" result of `xschem descend` is load-bearing in the
+                       * PDK glue and must never be widened into a reason string.
+                       * Per-context, not a file static: open_sub_schematic / hi_descend_newwin
+                       * switch contexts mid-flight, so a static would be read in the wrong window.
+                       * Fixed array on purpose: no allocation to free on context teardown.
+                       * doc/claude/code_analysis/descend_silent_refusal_census.md */
+  int gate_bypass;   /* TEST-ONLY seam (xschem test_gate_bypass, issue 0247): 1 disables all four
+                       * modal-gesture gates (leave_wire_draw_for / leave_placement_for /
+                       * leave_merge_for / leave_shape_draw_for) so a
                        * headless test can still CONSTRUCT the co-armed state (a live wire draw +
                        * a second modal gesture) that every production verb now refuses to build.
                        * abort_operation()'s co-armed teardown has no other constructor left --
@@ -1590,7 +1614,20 @@ typedef struct {
                        * funnel; aborts and off-copper label refusals never reach it). The Tcl
                        * form procs snapshot `xschem get sympin_drops` at arm and compare after a
                        * drop: an unchanged count means NO real drop happened (an external gesture
-                       * aborted the preview), so the queue/name entry must NOT drain. */
+                       * aborted the preview), so the queue/name entry must NOT drain.
+                       * KEPT as the total for existing callers (issue 0246 D2); the two parts
+                       * below carry the OWNER and are what the forms actually compare now. */
+  /* issue 0246: the SAME witness split by OWNER, so a form can never be credited with a sibling
+   * form's drop (`::sympin_place`, the write-only Tcl owner latch these replace, was written
+   * unconditionally after a `-place` that could be a no-op, was never cleared, and was read ABOVE
+   * the E1 compare -- so a stale value suppressed the very pause E1 exists to deliver).
+   * Bumped in the SAME funnel inside the SAME gate as the total, discriminated by
+   * wirelabel_preview (1 = a net-label commit, 0 = a pin commit: both pin arms force it to 0
+   * (scheduler.c), the label arm sets it, and wire_label_try_commit clears it only AFTER calling
+   * end_move_copy_logged). Invariant asserted by the tests:
+   *   sympin_drops == sympin_drops_pin + sympin_drops_label. */
+  int sympin_drops_pin;
+  int sympin_drops_label;
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1611,6 +1648,26 @@ typedef struct {
                                 * opened it -- read by the drop logger (callback.c
                                 * end_move_copy_logged) to record `xschem paste ... -file {f}`
                                 * for non-clipboard merges (issue 0069) */
+  int pre_merge_modified; /* ISSUE 0244: xctx->modified as it was BEFORE the pending STARTMERGE,
+                           * latched by merge_file() (paste.c) and read by abort_operation()'s two
+                           * merge arms (callback.c) to decide whether cancelling the paste may
+                           * clear the flag. It must be LATCHED and cannot be read at abort time:
+                           * merge_file() ends with an unconditional set_modify(1), so by then the
+                           * pre-merge value is already gone. Per-window, like merge_source. */
+  unsigned int modify_seq;  /* ISSUE 0267: bumped by set_modify() (actions.c) every time something
+                             * DECLARES this buffer dirty (mod 1/3, not suppressed by readonly).
+                             * Not a change counter and not user-visible -- it exists so a latched
+                             * "the flag before X" can tell whether anything else has claimed a
+                             * modification since X was latched. Wraps harmlessly: only equality
+                             * against a value latched in the same session is ever tested. */
+  unsigned int merge_modify_seq; /* ISSUE 0267: modify_seq as it stood immediately after the
+                             * pending STARTMERGE armed (latched at the bottom of merge_file(),
+                             * paste.c, after its own set_modify(1)). The merge teardown
+                             * (abort_pending_merge(), callback.c) restores pre_merge_modified only
+                             * while this still matches: STARTMERGE has an unbounded lifetime on the
+                             * ungated pure-commit surface (`xschem wire x1 y1 x2 y2`, `xschem text
+                             * ...`), so real edits can happen between the arm and the ESC, and
+                             * restoring a flag that predates them reported them saved. */
   size_t tok_size;
   char netlist_name[PATH_MAX];
   char current_dirname[PATH_MAX];
@@ -2401,6 +2458,10 @@ extern void sleep_ms(int milliseconds);
 extern double timer(int start);
 extern void enable_layers(void);
 extern void set_snap(double);
+/* reference length the auto line width / junction-dot radius scale with; the live
+ * cadsnap only when `linewidth_follows_snap` (MIRRORED IN TCL) is set. actions.c */
+extern double linewidth_ref_snap(void);
+extern void set_dotsize_from_snap(void);
 extern void set_grid(double);
 extern void create_plot_cmd(void);
 extern int set_modify(int mod); /* return number of floaters */
@@ -2419,7 +2480,8 @@ extern void select_all(void);
 extern void change_linewidth(double w);
 extern int copy_hierarchy_data(const char *from_win_path, const char *to_win_path);
 extern int schematic_in_new_window(int new_process, int dr, int force, int win);
-extern void symbol_in_new_window(int new_process);
+/* issue 0258: 0 nothing done, 1 opened, 2 switched to the window already holding it, 3 refused */
+extern int symbol_in_new_window(int new_process);
 extern void new_xschem_process(const char *cell, int symbol);
 extern void ask_new_file(int in_new_window, char *filename);
 extern void saveas(const char *f, int type);
@@ -2566,6 +2628,12 @@ extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
 extern void abort_operation(int deselect);
+/* issue 0245: the body of `case XK_Escape:` -- abort_operation(escape_deselects) behind the
+ * `semaphore < 2` guard, plus the four reentrant siblings (tclstop, MENUSTARTWIRE clear,
+ * snap-cursor erase, the cadence resting-wire fixup). Named and exported so a Tk form that
+ * seized `.drw <Key-Escape>` can forward to it (`xschem escape`) instead of swallowing Escape.
+ * NOT the same teardown as abort_operation() -- see the comment in callback.c. */
+extern void escape_terminal(void);
 extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
@@ -2573,12 +2641,38 @@ extern void start_wire(double mx, double my);
 /* issue 0243 F2 (and 0242): tear down a modal cursor placement preview / the gate that does it
  * before a wire or line draw is armed on top of one. See callback.c. */
 extern int abort_placement_preview(void);
+extern void check_placement_preview_invariant(const char *where); /* issue 0242 tripwire */
+/* issue 0262 (ratified 2026-08-11): the tripwire's REPAIR half -- un-stick sympin_preview /
+ * wirelabel_preview / the preview_sel stamp after an ungated door dropped the gesture bits, so the
+ * canvas is orphan-only instead of dead. Deletes nothing. See callback.c. */
+extern int repair_orphan_placement_preview(void);
 extern int leave_placement_for(const char *what);
+/* issue 0265: the same pair for a pending PASTE/MERGE (STARTMERGE). abort_pending_merge() is the
+ * teardown abort_operation()'s two arms carried inline until it grew a third caller;
+ * leave_merge_for() is the gate every ARM calls so a second gesture cancels the pending paste
+ * instead of silently committing it. See callback.c. */
+extern int abort_pending_merge(void);
+extern int leave_merge_for(const char *what);
 /* the forward gate (issue 0240 / 0243 F1, widened to every remaining draw and placement verb by
  * phases 1-2 of doc/claude/suggestions/plan_modal_gesture_exclusion.md). Lives in scheduler.c
  * next to the arms that first needed it; callback.c / actions.c / draw.c arms call it too. */
 extern void leave_wire_draw_for(const char *what);
 extern int abort_wire_line_command(void); /* issue 0240 */
+/* issue 0269 / plan phase 3: the fourth pair, for a SHAPE draw (rectangle, polygon, arc, circle,
+ * zoom box) in both its states -- STARTRECT|STARTPOLYGON|STARTARC|STARTZOOM in ui_state, or
+ * MENUSTART plus a MENUSTARTSHAPE bit in ui_state2. abort_shape_draw() is the teardown (band erase
+ * + bit clear, no delete and no undo baseline: a shape draw stores nothing until it completes);
+ * leave_shape_draw_for() is the gate every ARM calls. See callback.c. */
+extern int abort_shape_draw(void);
+extern void leave_shape_draw_for(const char *what);
+/* issue 0257: the FIFTH teardown, for a persistent CLICK MODE (NET_HILIGHT / NET_UNHILIGHT /
+ * DESEL_MODE) -- the three gestures that own Button-1 from a resting ui_state bit and whose press
+ * arms `return` ahead of check_menu_start_commands(), so an armed descend pick never sees its
+ * click. Returns the NAME of the mode it ended (static string) or NULL. It has no
+ * leave_click_mode_for() wrapper on purpose: its only caller arms a held prompt one statement
+ * later, which would replace any gate line written here, so the caller composes one sentence
+ * carrying both facts (issue 0241). See callback.c. */
+extern const char *abort_click_mode(void);
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
@@ -2865,6 +2959,23 @@ extern void toggle_ignore(void);
 extern void get_additional_symbols(int what);
 extern int change_sch_path(int instnumber, int dr);
 extern int descend_schematic(int instnumber, int fallback, int alert, int set_title);
+/* ---------------------------------------------------------------------------
+ * The descend refusal channel (issues 0249 / 0251 / 0254 / 0366). Record ALWAYS,
+ * speak SELECTIVELY. See xctx->descend_err above and
+ * doc/claude/code_analysis/descend_silent_refusal_census.md.
+ * Each piece is a NAMED callee rather than inline code so a sabotage build can
+ * neutralize exactly one of them (#define it away) and see which rows go red. */
+extern void descend_clear_error(void);   /* both verbs call this on entry */
+extern int  descend_speak_p(int speak);  /* the loud/silent PREDICATE */
+extern void descend_speak(const char *msg); /* statusmsg_hold(): 0248-safe, never dbg(0) */
+extern void descend_set_error(const char *code, const char *detail, const char *msg, int speak);
+/* Resolve WHICH instance to descend into from the VISIBLE selection (ELEMENT
+ * entries only -- xctx->lastsel also counts INST_PIN pseudo-selections the user
+ * cannot see). Never reads sel_array[0] before proving an entry is live: that is
+ * issue 0366's whole defect. Records+speaks its own refusal. 1 = *n is set. */
+extern int  descend_pick_target(int *n, int multi_ok, const char *verb);
+/* 1 (and reported) when instance n is a ---MISSING SYMBOL--- placeholder. */
+extern int  descend_missing_sym(int n, const char *symname);
 extern void go_back(int what); /* what == 1: confirm save; what == 2: do not reset window title */
 extern void clear_schematic(int cancel, int symbol);
 extern void view_unzoom(double z);
@@ -3153,6 +3264,7 @@ extern void hilight_net_styled(void);
 extern void propagate_hilights(int set, int clear, int mode);
 extern void  select_connected_nets(int stop_at_junction);
 extern int   select_grow_connected_step(double mx, double my, int pick_seed);
+extern int   select_same_net_by_name(double mx, double my, int pick_seed, int add);
 extern char *resolved_net(const char *net);
 extern char *resolved_net_from(const char *net, int from_level);
 extern void draw_hilight_net(int on_window);

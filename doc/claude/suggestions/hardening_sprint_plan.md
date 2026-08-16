@@ -46,6 +46,19 @@ amnesty c2dc1848) · A4 ae50f70e · A5 d65591c5 (+runner hardening 0d21208e; pro
 a431e959 red → 3bdabf0c green). A2 note: the audit summary already printed separate
 counts — the step's remaining work was the banner conversion + is_skip/is_pass.
 
+> **A2 CORRECTION, 2026-08-09 (issue 0350).** A2 is landed but was NOT finished, and
+> reading it as DONE cost a month. Widening `is_skip` to three tokens while leaving it
+> an UNANCHORED substring test over the whole stdout+stderr blob — evaluated *ahead of*
+> `is_pass` — created a new false positive: the token appearing anywhere, including
+> inside a check NAME a test echoes mid-run, reclassified the whole test as SKIP. Four
+> fully-passing suites (59 checks) were being discarded, and since SKIP touches neither
+> FAIL nor CRASH and `AUDIT_MIN_PASS` defaults to 0, they were *structurally incapable*
+> of failing the audit. A2's own sabotage check ("force one test to skip, confirm it is
+> not counted as PASS") could not catch this — it only probes the direction A2 fixed.
+> The predicate is now line-anchored, a `has_failure()` guard beats any skip banner, and
+> the chain is a testable `classify` verb locked by
+> `tests/headless/test_audit_classifier.tcl`. See `doc/claude/issues/0350-*.md`.
+
 ### A1 — Commit the untracked repro corpus
 **Problem:** most of the evidence base for issues 0090–0111 exists only in the working
 tree (`git status` shows `??`): `tests/from_user/after_10..28*.sch`,

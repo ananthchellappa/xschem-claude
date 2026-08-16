@@ -134,3 +134,12 @@ same gotcha as the `Ctrl-Shift-2` bindkey; the examples use the actual produced 
 7. Menu accelerator labels blanked (no stale `G`/`Shift-G`/`%` claims).
 8. `cadence_style_rc` contains the **active** `view.toggle_draw_grid` Ctrl-G line plus the
    commented recipes for the other four.
+
+## 8. Amendment — snap gets an active chord (Alt+Up / Alt+Down)
+
+`cadence_style_rc` now also binds `view.snap_double` to **Alt+Up** and `view.snap_half`
+to **Alt+Down**, and `view_snap_change()` self-logs the resolved absolute value. §4 is
+unchanged: the actions still ship **unbound** in the built-in table / `keybindings.csv`
+— the chord is attached by the user's rc, which is exactly what §1 asks for. The
+commented `g`/`G` recipes in §6 stay as alternative mappings. Spec:
+`doc/claude/specs/snap_spacing_bindkeys.md`.

@@ -5,8 +5,9 @@ Status: implemented (fluid-editing), adversarial-review-hardened. Author: sessio
 Review pass (workflow, 4 dimensions × adversarial verify): 10 confirmed / 2 refuted, all 8 distinct
 fixed — leading-zero octal bus parse (`scan %d`), `wirelabel_preview` invariant leaks
 (clear_drawing + add_sch_pin/add_symbol_pin arm both now zero it), `editing_symbol_view()` guard on
-`add_wire_label`, bus-range width cap (4096), cross-form drop cross-talk (`::sympin_place` owner
-latch), two stale binding-assertion tests (test_key_graph_context / test_phase3_mints), menu
+`add_wire_label`, bus-range width cap (4096), cross-form drop cross-talk (#8; the original
+`::sympin_place` owner latch was **replaced** in issue 0246 by a per-owner drop witness — see
+below), two stale binding-assertion tests (test_key_graph_context / test_phase3_mints), menu
 accelerator. Refuted: exact-double pin compare (pins are on-grid), `place_wire_label` name lifetime.
 Related: [schematic_add_pin.md](schematic_add_pin.md) (the sibling Add-Pin form this mirrors),
 `cadence_pin_name_text.md`, `wire_stub_netlabel.md`.
@@ -162,6 +163,67 @@ Beware when testing this class: `xschem add_wire_label -drop` calls `wire_label_
 directly and bypasses `end_place_move_copy_zoom()`, so headlessly a label DOES drop while
 `STARTWIRE` is live, where the GUI click cannot. Assert on the flags, not on `-drop`'s return.
 
+### The read verbs: `netlist` also abandons the preview (issue 0263, 2026-08-09)
+
+`xschem netlist` (and Shift-N, the toolbar button, and the `-keep_symbols` cellview/reroute calls
+in `xschem.tcl`) **abandons a live label preview** and says so —
+`Netlist: pending placement abandoned`, held for 5 s so the netlister's own status lines cannot
+bury it. Same `leave_placement_for()` teardown, same ratified rule, at the netlist verb.
+
+This is not a courtesy: an undropped preview is a fully-formed `lab_pin` in `xctx->inst[]`, so
+`name_nodes_of_pins_labels_and_propagate()` took its `lab=` as a node name and `name_attached_nets()`
+stamped it on the whole net — a cell that netlists as `R1 net1 GND 1k` came out `R1 FOO GND 1k`, in
+every backend, with no error. Worse, the hierarchical driver's
+`push_undo` → `unselect_all(1)` → `pop_undo` round trip then **committed** the preview as an
+ordinary instance, so ESC could not take it back and `modified` still read 0. Filtering the
+traversal instead was rejected: `preview_sel`, the stamp such a filter would key off, is cleared by
+the driver's own `clear_drawing()` before the pass that needs it.
+
+The user-visible consequence for this feature: **a netlist taken while you are still typing a label
+throws the label away.** That is the open question the fix records (issue 0263 decision D2) — the
+alternative, preserving the gesture across the driver's document round trip, is a much larger
+change in five backend drivers. `-drop` is unaffected, and so is a netlist taken with nothing armed
+(the gate is a total no-op then — asserted, because it is what keeps the committed goldens
+byte-identical).
+
+### #8 Cross-form drop cross-talk — who owns the drop that just committed (issue 0246, 2026-08-11)
+
+Both modeless forms are singletons and both append `after_drop` to the **same** `.drw
+<ButtonRelease>`, so on every canvas release *both* run. Each must answer one question: "was that
+**my** drop?" — because the wrong answer drains a queued name the form never placed, consumes it
+from the entry field, and re-arms the *other* form's preview on the user's cursor.
+
+The first answer was `::sympin_place`, a bare Tcl global each `arm()` set to `pin`/`label`. It was
+**write-only**: written unconditionally *after* a `-place` that can arm nothing (in a `.sym` view
+`add_wire_label` short-circuits and returns OK), never cleared by any escape/destroy path, and —
+worst — read **above** the issue-0122-E1 witness compare in both `after_drop`s, so a stale value
+made the non-owner return silently with `armed=1` and *suppressed* the "placement paused" recovery
+E1 exists to deliver. Measured zombie (no state injection): label arms → pin arms on top (the C
+tears the label preview down) → the label form's redundant-rearm shortcut returns before the latch
+write (`placing()` is owner-blind, issue **0401**) → the pin form closes without clearing the latch
+→ one stray release leaves the label form armed, queued and silent.
+
+It is now **the C that answers**, at the one place the fact is still live. `end_move_copy_logged()`
+is the single commit funnel; inside its existing `(ui & START_SYMPIN) && sympin_preview` gate it
+bumps `sympin_drops` (the total, unchanged for existing callers) and **also** exactly one of
+`sympin_drops_pin` / `sympin_drops_label`, chosen by `wirelabel_preview` — 1 for a net-label
+commit, 0 for a pin commit, because both pin arms force it to 0, the label arm sets it, and
+`wire_label_try_commit()` clears it only *after* calling the funnel. Invariant:
+`sympin_drops == sympin_drops_pin + sympin_drops_label`.
+
+Each form snapshots and compares **only its own part** (`addpin::drops` / `addlabel::drops` over
+`xschem get sympin_drops_pin|_label`), so a sibling's commit leaves it equal to `drop_snap` and the
+form takes the ordinary E1 path: disarm, keep the queue, and post *"placement paused (another
+action took over) — edit the name or reopen to resume"*. That last line is the one behaviour
+change: where the non-owner used to bail silently while still claiming `armed=1`, it now says so.
+Its `armed=1` was already false at that moment — the sibling's `-place` had torn its preview down
+— and an aborted gesture must not lie about its state (0244/0267/0270).
+
+Residues filed, not fixed here: `placing()` is still owner-blind (**0401**) and an arm that armed
+nothing still sets `armed=1` and posts "placing …" in a symbol view (**0402**). 0246 removes the
+*harm* of the latter — a symbol-view label form can never move `sympin_drops_label`, so it can
+never drain — not the claim.
+
 ## Implementation map
 
 C:
@@ -182,6 +244,10 @@ C:
   clear flags) iff `point_on_wire_or_pin(snap)`, else refuses (keeps preview). Used by BOTH the
   GUI button path (`end_place_move_copy_zoom` STARTMOVE branch: commit→return 1, refuse→**swallow**
   the click, return 1) and `add_wire_label -drop`.
+- `xctx->sympin_drops{,_pin,_label}` — **xschem.h**: the committed-drop witness and its per-owner
+  split (#8). Bumped together in `end_move_copy_logged` (**callback.c**, helpers
+  `sympin_owner_is_label` / `sympin_count_owner`); read back via `xschem get sympin_drops`,
+  `… sympin_drops_pin`, `… sympin_drops_label` (**scheduler.c**, beside the existing getter).
 - Registry + default binds — **callback.c**: add `edit.add_wire_label`, `tools.insert_line`;
   `set_input_binding_idle('l', …add_wire_label)`, `('L', …insert_line)`; drop the `'L'`
   toggle_orthogonal default. Repoint Alt+L branch (~4846) to `addlabel::open`.
@@ -190,6 +256,8 @@ Tcl:
 - `addlabel::` namespace — **xschem.tcl** (modeled on `addpin::`): `expand_names`,
   `open`/`start_pass`/`arm`/`after_drop`/`escape`/`on_destroy`, status. Arms via `xschem
   add_wire_label -place` (`::label_new_name`). `on_reject` updates the status on a refused drop.
+  `addlabel::drops` (and its `addpin::` twin) is the form's own drop witness — the #8 owner split;
+  `arm` snapshots it into `drop_snap`, `after_drop` requires it to have risen.
 - Menu — **xschem.tcl**: repoint the Place-net-pin-label item to `addlabel::open`, relabel
   "Add Wire Label", accelerator `l`.
 

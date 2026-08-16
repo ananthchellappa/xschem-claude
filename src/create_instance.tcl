@@ -106,6 +106,7 @@ proc ciform::open {{lcv {}}} {
   if {[winfo exists $w]} {
     # singleton: optionally re-fill from the list, then raise and re-arm.
     if {$have} { ciform::set_fields $lcv }
+    ciform::grab_esc   ;# 0122 E2: the re-focused form re-claims the shared canvas-Esc slot
     ciform::raise_to_front
     ciform::arm
     return
@@ -146,10 +147,14 @@ proc ciform::open {{lcv {}}} {
   pack $w.b -side bottom -fill x
 
   # Esc ends placement AND dismisses the form (and the browser), whether the
-  # canvas or the form has focus. `break` on the canvas pre-empts the generic
-  # <KeyPress> -> C dispatcher.
-  bind .drw <Key-Escape> {ciform::escape; break}
-  bind $w   <Key-Escape> {ciform::escape}
+  # canvas or the form has focus. The CANVAS one goes through grab_esc (issue 0245): it claims
+  # the shared slot with a guarded, total script and ends at the C Escape terminal, where the
+  # bare `{ciform::escape; break}` it replaces ended at a `destroy` and aborted nothing.
+  # The FORM-focused one forwards too: open() ends by focusing $w.f.elib, so until the user next
+  # clicks the canvas this binding -- not the `.drw` slot -- is the one Tk fires (issue 0245).
+  # The Close BUTTON keeps plain ::escape.
+  ciform::grab_esc
+  bind $w   <Key-Escape> {ciform::canvas_escape}
   bind $w   <Destroy>    {if {{%W} eq {.ciform}} {ciform::on_destroy}}
 
   if {$have} { ciform::set_fields $lcv }
@@ -239,12 +244,31 @@ proc ciform::escape {} {
   catch {destroy .mkinst}
   catch {destroy .ciform}
 }
-# Form destroyed by any means: abort an armed placement, restore default Esc,
-# and take the browser down with it.
+# The CANVAS Escape (issue 0245): ::escape and THEN the C Escape terminal. This form seizes the
+# shared `.drw <Key-Escape>` slot, and Tk fires only the specific <Key-Escape> binding -- never
+# the generic <KeyPress> -> C dispatcher on the same bindtag -- so without this forward a canvas
+# Escape with the form open ran no abort_operation, no tclstop, no MENUSTARTWIRE clear (measured:
+# an armed `xschem wire` survived it and the next click began an unrequested wire draw).
+# NOT folded into ::escape, which is also the form-focused <Key-Escape> and never reached C.
+proc ciform::canvas_escape {} {
+  ciform::escape
+  catch {xschem escape}
+}
+# issue 0122 E2 / 0245: the shared canvas-Esc slot, same protocol as the Add-Pin / Add-Wire-Label
+# forms (see addpin::grab_esc in xschem.tcl). The script is TOTAL: form alive -> canvas_escape,
+# form gone -> the C terminal, so a grab that outlives its form cannot swallow Escape.
+proc ciform::grab_esc {} {
+  bind .drw <Key-Escape> {if {[winfo exists .ciform]} {ciform::canvas_escape} else {xschem escape}; break}
+}
+proc ciform::release_esc {} { canvas_esc_release .ciform }
+# Form destroyed by any means: abort an armed placement, hand canvas-Esc to a surviving sibling
+# form, and take the browser down with it. It used to blank the shared slot unconditionally --
+# a teardown that named nothing (0241) and left a still-open Add-Wire-Label form with no canvas
+# Escape at all (issue 0245, measured).
 proc ciform::on_destroy {} {
   variable armed
   set armed 0
-  catch {bind .drw <Key-Escape> {}}
+  catch {ciform::release_esc}
   ciform::abort_if_placing
   catch {destroy .mkinst}
 }

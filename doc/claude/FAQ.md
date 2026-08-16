@@ -14,7 +14,321 @@ Newest entries on top.
 
 ---
 
-## Q40. Why did a digital signal have to be "bridged" to analog before I could plot it — and is that still true?
+## Q46. `xschem move_objects END` did nothing and my test still passed. Is a typo'd sub-verb an error now, and how far does the check reach?
+
+- **Asked:** 2026-08-12
+- **Project state:** branch `open_pdk` @ `d99f3791` + this session — issue **0266** (item D10).
+
+**Yes — but only in the first two argument slots of the one-shot form.** Know exactly where the
+line is, because the interesting half of this answer is what is still silent.
+
+The mechanism: the verb dispatched on `argv[2]` with four bare `strcmp`s against the lowercase
+literals `start`/`step`/`end`/`abort`, and *everything else* fell into the one-shot coordinate form,
+whose only commit-vs-arm discriminator was an argument **count** (`argc > 3 + nparam`). Nothing ever
+asked whether `argv[2]` was a number, so `atof()` turned every typo into `0.0`. Three shapes of
+silent wrong answer followed, all measured: `move_objects END` armed a **deferred menu move**
+(`ui_state 296 → 65832`) and committed nothing — the next ESC then deleted the paste the caller
+believed it had dropped; `move_objects END 40 40` was worse, because `argc` alone put it on the
+commit path with `dx = atof("END") = 0.0`, writing the document at the wrong coordinate with rc 0;
+and a **truncated** `move_objects 40` armed too, which is the replay hazard, since a log is
+`source`d as Tcl and every spelling answered `TCL_OK`.
+
+**The ratified answer, in three parts:**
+
+1. **A verb that cannot mean what it was handed says so.** An unrecognised, non-numeric dispatch
+   slot is now a `TCL_ERROR` naming the token, not a silent arm. The sub-verbs stay
+   **case-sensitive on purpose** — the alternative on the table was to accept `END` via the tree's
+   existing `my_strcasecmp`, and that was rejected because it only *widens* the grammar of a verb
+   whose log-replay surface wants exactly one spelling, and it still leaves `foo` and a truncated
+   `40` arming silently. This is user-visible: a script that used to run past the no-op now aborts
+   at that line. That is the point.
+2. **Validate the argument shape, never the program state.** The check inspects only the TYPE and
+   COUNT of the verb's own arguments. It adds no precondition to `move_objects <dx> <dy> …`, which
+   still commits from any `ui_state` — that form is the replay/test seam (`WIRING.md` landmine 2),
+   and gating it is how you break every test that drives the editor without a mouse.
+3. **Order: refuse read-only first, validate second, side-effect third.** `scheduler_readonly_reject`
+   stays the first statement of the branch, so a read-only buffer still answers "read-only" even for
+   a bad spelling — the more important thing to tell the user. And the validator runs *before*
+   `connect_by_kissing` is armed and before `select_attached_nets()` grows the selection, so a
+   rejected line leaves nothing behind. Both orderings have a dedicated sabotage variant and a
+   single witness row each; relocating the call by four lines reddens exactly one check.
+
+**Where the line is** (this is the part to remember): the check guards `argv[2]` and `argv[3]` of the
+**one-shot** form and nothing else. Still silent, still `atof`/`atoi`, still rc 0 —
+`move_objects end END 40` commits at `dx = 0` (issue **0405**, and that is the very form the docs
+recommend as the scripted commit constructor); `0 0 1 0 -anchor 50` drops the anchor and rotates
+about the wrong pivot (**0406**, and truncation in that tail is what a corrupted *emitted* log line
+actually looks like); `nan`/`inf` pass a `strtod` check and then corrupt or erase the saved record
+(**0407**); and `copy_objects`, `rect`, `polygon`, `line`, `arc`, `circle` all still arm on an
+unknown slot (**0404**). The general lesson: a validator earns exactly the promise it tests, and the
+first draft of this one had three doc surfaces promising more than the code delivered.
+
+---
+
+## Q45. Something deselected while I was placing a label and the canvas went dead. Is that still a thing?
+
+- **Asked:** 2026-08-11
+- **Project state:** branch `open_pdk` @ `2f866dec` + this session — issue **0262** (item D8).
+
+**No — the canvas repairs itself now. But the label you never dropped stays in the drawing, and it
+still renames the net it landed on.** That trade is the whole decision, and it is deliberate.
+
+The mechanism: `unselect_all()` zeroes `ui_state` wholesale, and a live placement preview is always
+selected — so the gesture bits vanish without the placement teardown ever running. The flags that
+say "a preview is live" (`sympin_preview`, `wirelabel_preview`) are *not* `ui_state` bits, so they
+survived, and with them stuck the Button-1 select/grab block and `wire_label_try_commit()` both
+refuse forever. **ESC could not repair it** — the teardown is gated on the very bit that is gone —
+so the only recovery was to throw the document away.
+
+Reachable how? Not just from scripts, which is what 0262 originally assumed. Measured: the
+**default Ctrl+Button2 chord** (its pin-type-cycle fallback runs a bare deselect when the *Add Pin*
+form is not the one that is open), the **Hilight ▸ Compare schematics** menu item (its entire body
+is a deselect), and **Ctrl+S** (`save` deselects one line before it writes the file — issue
+**0358**, which additionally writes the undropped object into your `.sch` and then tells you the
+buffer is clean).
+
+**The ratified answer, in two parts** — and the shape matters more than this one bug:
+
+* **A. The dead-canvas half is fixed ONCE, class-wide, not door by door.** The tripwire that used to
+  merely *report* this state now **repairs** it, at the two funnels every command and every GUI
+  event passes through. So any door — the three above, or a fourth nobody has found — is now at
+  worst *orphan-only*, never terminal. **No command was given a new `delete()`** to achieve that:
+  gating the deselect verb would have put a silent delete behind 866 scripted call sites whose
+  normal use is "deselect, then select this other thing" (including the Property form's **Cancel**).
+* **B. A command that also *commits* or *persists* the stray object still needs its own gate**,
+  because a repair happens afterwards and cannot un-write a file or un-emit a netlist. `netlist` got
+  that gate (issue **0263**); `save` has not yet (issue **0358**).
+
+**What you should do:** drop the label (click) or ESC it before you deselect, save or netlist —
+same advice as Q41. If it happens anyway you will see one status line, *"Pending placement
+abandoned…"*, the canvas will work again, and **you should look for a stray label** — undo removes
+it. Watch out on a freshly-saved file: the stray object does not currently set the modify flag
+(issue **0398**), so nothing will prompt you on close.
+
+---
+
+## Q44. Two commands both want the next Button-1. Who wins, and where is that decided?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `ee290c5b` + this session — issue **0257** (item D6).
+
+**The one the user pressed most recently wins, it takes ownership at its own VERB, and it must name
+what it displaced.** Three ratified rules produce that answer together: "whatever you just pressed
+is what you meant" (0240/0242/0243/0247/0265/0269), "gates live at the verbs, never at the shared
+per-click primitive" (0243 F2), and "a teardown must name what it is tearing down" (0241).
+
+Concretely, `xschem descend_pick` arms a click-pick. If net-highlight mode, deselect mode, or a
+resting `persistent_command` wire already owns Button-1, the *press* used to be eaten by whichever
+arm of `handle_button_press()` came first — the pick simply never happened, and in the wire case the
+press even **started a wire** on the instance the user meant to descend into. The fix is not in the
+press dispatcher. It is three statements at the top of the verb: tear down the wire/line command,
+tear down the click mode, *then* set the arm bits, then say one sentence that names both
+(`Descend: net-highlight mode ended -- click the instance to descend into (ESC to cancel)`).
+
+Three things make this a pattern rather than a one-off:
+
+* **Teardown primitives are named functions that return what they ended**, not inline bit-clearing:
+  `abort_wire_line_command()`, `abort_placement_preview()`, `abort_pending_merge()`,
+  `abort_shape_draw()`, and now `abort_click_mode()`. The name is what lets the caller compose an
+  honest sentence, and every one of them must honour `xctx->gate_bypass` and touch no selection.
+* **Order is load-bearing.** Several teardowns write `ui_state2` wholesale, so all of them run
+  *before* the arming assignment. Getting this backwards silently deletes the arm you just set.
+* **The gate is one-directional unless you write the other half.** D6 gated the pick against the
+  modes; nothing gates the modes against a live pick, so the reverse order still swallows
+  ([0386](issues/0386-entering-net-highlight-or-deselect-mode-over-a-live-descend-pick-arm-still-swallows-it.md)),
+  and a live shape draw is a door nobody gated at all
+  ([0387](issues/0387-descend-pick-neither-aborts-nor-names-a-live-shape-draw-and-clobbers-its-discriminator.md)).
+  When you add a mode, add both directions.
+
+A corollary about ESC: the arm's liveness test must not depend on a bit some *other* handler clears.
+The descend continuation in `abort_operation()` used to require `MENUSTART && MENUSTARTDESCEND`, and
+the matching ButtonRelease burns `MENUSTART` unconditionally — so precisely the stranded state that
+most needs rescuing was the one ESC could not see, and command mode stayed suspended forever. The
+discriminator alone (`MENUSTARTDESCEND`) is the honest test.
+
+---
+
+## Q43. Why did a fix with 67 green checks, a clean sabotage matrix and an adversary pass still get reverted?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `b1326180` + this session — issues **0250/0252/0253/0261/0369** (item D5).
+
+**Short answer: because every one of those checks addressed instances by name, and the user
+addresses them by selection.** The suite and the user were exercising different code paths, so the
+green was real and the workflow was still broken.
+
+The fix added a chooser filter so the descend view list stops offering a schematic view the C guard
+is going to veto (issue 0252). It decided with `xschem get_sym_type $symabs`. That command answers
+correctly on a freshly loaded sheet and returns **empty once an instance is selected** — which is
+exactly the state a user is in when they select an instance and press descend
+([0379](issues/0379-get-sym-type-returns-empty-while-an-instance-is-selected.md)). The filter then
+collapsed to a bare `[file exists]` test and dropped the schematic row for a `type=subcircuit`
+whose child does not exist yet, deleting the create-the-child-by-descending workflow — the very
+capability the rest of the same commit had gone out of its way to preserve.
+
+The test row that was supposed to catch this (*"a subcircuit whose .sch does not exist yet is still
+offered"*) passed, because it called `hi_descend inst=XN`. Nothing in the suite ever set a
+selection first.
+
+Three durable lessons:
+
+1. **A test must reproduce the user's gesture, not just the user's intent.** `inst=<name>` and
+   *select-then-descend* are different states. When a feature is reachable two ways, pin both, or
+   the cheaper one silently becomes the only one you have covered.
+2. **Sabotage verifies the mechanism you built, not the mechanism you needed.** All eight variants
+   behaved, including the one aimed at this filter (S6 turned its row red exactly as predicted).
+   Sabotage proves a check is load-bearing; it cannot tell you the check is asking the wrong
+   question.
+3. **Do not build a user-visible decision on an accessor whose stability you have not measured in
+   the caller's state.** The lookup was correct in every state the tests put it in and wrong in the
+   state that mattered. Read it once from the state the feature will actually run in before making
+   it load-bearing.
+
+Corollary for bundling: the 0250/0261/0369 verdict mechanism, the 0253 threshold work and the 0252
+filter were independent, and one bad component forced all of them out. Land independent mechanisms
+in independent commits.
+
+---
+
+## Q42. When should a refused operation tell the user, and when is silence the right answer?
+
+- **Asked:** 2026-08-10
+- **Project state:** branch `open_pdk` @ `ee290c5b` + this session — issues **0249/0251/0254/0256/0366** (item D4).
+
+**Short answer: silence is correct exactly when nothing the user saw, typed or clicked
+promised the operation.** Record the reason always; speak it selectively.
+
+Descend was the case that settled it. It had thirteen refusal sites and no status protocol —
+only one of them said anything, and that one used `dbg(0)`, which a desktop-launched user
+never sees. A refused `xschem descend_symbol` and a successful one both evaluated to the
+empty string, so no script could tell them apart.
+
+The tempting fix — "make every refusal speak" — is wrong, and there is a committed
+regression lock proving it: `tests/headless/test_descend_inert_class.tcl` pins that 262
+shipped annotation symbols (`lab_pin`, `gnd`, `vdd`, `ipin`/`opin`, title blocks, probes)
+must be refused **silently**. Pressing `e` with a title block somewhere in a rubber-band
+selection is not a request to descend into a title block, and answering it with a status
+line trains the user to ignore the status line.
+
+So the shape is two mechanisms, not one:
+
+- **Record always** — a reason token on the context (`xschem get descend_error`), written at
+  every refusal, including the silent ones. Tests and scripts get a machine-readable cause
+  even where the UI stays quiet.
+- **Speak selectively** — a separate predicate decides. Loud when the user pressed the key on
+  something they picked (nothing selected, ambiguous multi-selection, a `---MISSING SYMBOL---`
+  box they clicked precisely to interrogate). Silent when the refusal is about an object the
+  user never aimed at.
+
+Two implementation lessons worth carrying:
+
+1. **The silent sites must still build their message and pass `speak = 0`.** The first cut
+   passed `NULL` instead, and a sabotage run that forced the predicate to "always speak" left
+   the lock green — the silence came from a missing string, not from policy. A policy you
+   cannot falsify is not a policy.
+2. **The reason must be a second channel, never a widened result.** `xschem descend`'s
+   `"0"`/`"1"` string is load-bearing in seven places, one of which compares it as a string.
+   Reason codes go in a new key; the boolean stays a boolean.
+
+**Speak via `statusmsg_hold()`, not `statusmsg()`** — a plain status message is immediately
+clobbered by `select.c`'s `n= x= y= w= h=` info line (0248), so an ordinary `statusmsg()` on a
+refusal is indistinguishable from not reporting at all.
+
+**Related trap:** a refusal channel documents "empty means success", which makes every
+*unreported failure* actively worse than before, because callers now trust the channel.
+`descend_symbol()` still drops `load_schematic()`'s result and returns success for a failed
+load — see **0369**. When you add a reason channel, audit the failure sites, not just the
+refusal sites.
+
+---
+
+## Q41. I netlisted while a label was still riding the cursor. Is the deck safe, and where did my label go?
+
+- **Asked:** 2026-08-09
+- **Project state:** branch `open_pdk` @ `825d69ce` + this session — issue **0263**.
+
+**The deck is safe now. The label is gone, deliberately, and the status bar tells you so** —
+`Netlist: pending placement abandoned`, held for 5 s. Same for a paste riding the cursor
+(`Netlist: pending paste abandoned`).
+
+**What used to happen was much worse than "the label was included".** An undropped label preview is
+a real `lab_pin` instance, so the netlister treated it as a label you had dropped and renamed
+**the whole net** it happened to be sitting on. A cell that netlists as
+
+```
+R1 net1 GND 1k
+R2 net1 GND 2k
+```
+
+came out as `R1 FOO GND 1k` / `R2 FOO GND 2k` — *both* devices, because it is the net that gets
+renamed — in SPICE, Spectre, tedax, Verilog and VHDL alike, with no warning anywhere. And on a
+hierarchical netlist the preview was then **silently committed**: the netlister saves the document,
+netlists, and restores it, and the restore baked the preview in as an ordinary instance. Three ESCs
+could not remove it, the modify flag still read *unmodified*, and the next save wrote it to disk.
+The same round trip also turned a `place_symbol` preview into a real device and an undropped input
+pin into a **port of the subcircuit**.
+
+**Why the label is thrown away rather than kept.** This is the honest trade and it is written down
+as an open question. Keeping the gesture alive across a netlist means preserving five different
+pieces of gesture state through a full document save/restore, in five backend drivers. Abandoning
+it is two lines at the verb, reuses the teardown every other gesture already uses, and — critically
+— *the status quo was not "the gesture survives"*: the hierarchical netlist already destroyed it and
+gave you an object you could not delete. So the change trades a silently wrong netlist plus an
+undeletable stray object for a cancelled label you were told about.
+
+**What you should do:** drop the label (click) or ESC it before you netlist, exactly as you already
+do before saving. A netlist with nothing armed is completely unaffected — the gate is a no-op, and
+that is asserted by test, because it is what keeps the committed golden decks byte-identical.
+
+**Still rough** (filed, not fixed): if a *previous* action stripped the gesture bits without tearing
+the preview down (issue **0262** — the bare `unselect_all` verb, reachable after a property edit or
+from Compare Schematics), the stray object is by then an ordinary instance and the netlist will
+still emit it. *(2026-08-11: 0262 has been decided — see Q45 — and this stays true. The repair
+brings the canvas back and deletes nothing, so the stray object still reaches the deck, and on a
+freshly-saved file `modified` can still read 0 while it does: issue **0398**.)* And pressing **undo** after the abandon brings the preview back as a committed
+instance (issue **0361**) — the same thing ESC has always done.
+
+---
+
+## Q40. I started drawing a rectangle, changed my mind and pressed `w`. Both were armed at once and nothing worked until ESC. Fixed?
+
+- **Asked:** 2026-08-09
+- **Project state:** branch `open_pdk` @ `6e7f1c55` + this session — issue **0269**, phase 3 of
+  `doc/claude/suggestions/plan_modal_gesture_exclusion.md` (the last open phase).
+
+**Yes.** Starting a rectangle, polygon, arc, circle or zoom box and then pressing anything else now
+**abandons the shape** and starts what you actually pressed. The status bar says which verb took
+over (`Wire: in-progress shape abandoned`), held for 5 s.
+
+**What was happening.** The shape draws were the last gesture family with no teardown at all. Their
+state bits were set when you armed them and cleared only when the gesture *finished*, so a second
+gesture armed straight on top: `r` then `w` left both live. That is not merely untidy, because the
+click handler tests every shape bit **before** the branch that would let a placement or a paste land
+— so while a shape is armed no click can complete anything else. With a half-drawn **polygon** it
+never resolves at all: every click just adds another polygon point. ESC was the only exit, and it
+had to serve two gestures at once.
+
+**What changed for you, concretely.**
+
+- Any draw, placement, paste, insert, undo or redo cancels a live shape draw — including the two
+  cadence-mode cases where the shape is armed but you have not clicked yet.
+- The reverse too: starting a shape now cancels a live wire draw, a pin/label/symbol/text preview,
+  or a paste riding the cursor. It used to cancel only the wire draw.
+- A half-drawn **polygon** is discarded when another gesture takes over. Pressing **ESC** on one
+  still closes and commits it, exactly as before — that is the gesture's own terminal, and it is
+  unchanged deliberately.
+- `z` (zoom box) used to do *nothing at all* while another draw was live. It now cancels that draw
+  and starts the zoom box.
+- Three side defects went with it: arming a polygon no longer marks a clean file modified with
+  nothing drawn (**0270**); `Ctrl+V` / File ▸ Merge now cancels a wire you were drawing, which three
+  documents claimed it already did and it never did (**0271**); and `xschem circle` /
+  `xschem zoom_box` — the scripted forms, whose key and menu twins were already covered — now cancel
+  what is live, with `circle` also gaining the read-only refusal its `arc` sibling always had
+  (**0272**).
+
+---
+
+## Q47. Why did a digital signal have to be "bridged" to analog before I could plot it — and is that still true?
 
 - **Asked:** 2026-08-08
 - **Project state:** branch `fluid-editing` @ `1d776f33` + this session — §C of
@@ -89,8 +403,13 @@ drawing. Three more doors were closed with it:
   this bug. It is gone: `w` now abandons the placement and starts drawing like every other verb,
   and what else you had selected survives.
 
-**Still not scoped: paste / merge.** `Ctrl+V` then `Ctrl+A` then ESC is the same wipe on a sibling
-code path (issues **0242** / **0244**). Treat a pending paste the same way until those land.
+**Paste / merge: scoped too, as of 2026-08-08 (issue 0244 part B).** `Ctrl+V` then `Ctrl+A` then ESC
+used to be the same wipe on a sibling code path, and worse — the emptied drawing also reported
+itself *unmodified*, so nothing prompted. Both are fixed: the cancel now removes exactly what the
+paste brought in, and the `*` stays on the title if the document had unsaved edits before the paste.
+One user-visible consequence to expect: **ESC-ing a paste no longer cleans the "unsaved changes"
+star**, so Close / Quit / File ▸ New prompt again where they had gone quiet. That is the intent, not
+a regression.
 
 ---
 

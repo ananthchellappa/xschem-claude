@@ -308,3 +308,45 @@ stale; optionally refresh them in `xschem.tcl` (labels only, no behaviour) — d
         chord), Save as Symbol / Clear symbol / crosshair (menus, or new chords if bound).
 - [ ] Optional: refresh menu `-accelerator` labels in `xschem.tcl`.
 ```
+
+---
+
+## 9. Addendum, 2026-08-15 — `Ctrl-Y` = descend into the selected instance's SYMBOL
+
+Added by crew item **D11** ([issue 0410](../issues/0410-descend-into-symbol-has-no-key-in-cadence-mode.md)).
+The chord inventory above predates it and the "verified free" table has no
+descend-into-symbol row; this section is that row.
+
+```tcl
+bind .drw <Control-Key-y>       {xschem descend_symbol;           break}
+```
+
+**Why the chord had to exist.** §1's precedent — `bind .drw <Key-i> {xschem create_instance;
+break}` — has a cost the plan never priced: the `break` stops the event reaching the generic
+`<KeyPress>` → C dispatcher, and that dispatcher (`callback.c` case `'i'`) is the **only** key
+route to descend-into-symbol. So cadence mode left that verb with **no key at all** — menu,
+toolbar, right-click and the `e` chooser only. `i` cannot be given back (cadence mode needs it
+for Create Instance) and Shift-`i` is not a fallback (`case 'I'` is insert-symbol).
+
+| Chord | Currently | Verdict |
+|-------|-----------|---------|
+| `Ctrl-Y` | Tk: nothing (`bind .drw <Control-Key-y>` and `<Control-Key-Y>` empty before *and* after the rc, and in all three PDK rc copies). C `switch`: `case 'y'` migrated out (`callback.c:8112`). C binding table: the sole `y` row is `key 121 0 canvas edit.toggle_stretch`, modifier 0, **no ctrl variant**. Tree-wide grep of `src/` + `utils/`: one hit, `utils/toggle_pins_netlabels.tcl:57`, a **commented-out** suggestion for the different chord `<Control-Shift-Key-Y>`. | **free** |
+
+Cadence's own default for descend-into-symbol with an instance selected is Ctrl-Y, which is why
+that chord and not another.
+
+**It calls the bare verb, not a `cadence::` proc** — unlike every other member of the hierarchy
+family. `xschem descend_symbol` already refuses out loud (returns 0, `descend_error` =
+`no-selection`, statusmsg `Descend symbol: select an instance to descend into` — the issue-0251
+channel), while `cadence::descend_into_inst`'s gate is silent; and that gate accepts a strictly
+smaller set than the core (measured: instance + wire selected → the core descends, the gate
+refuses), so wrapping would add a silent refusal on a selection the core handles. See 0410 for
+the full decision and its rejected alternatives.
+
+**Known asymmetry:** `descend_readonly` (§ `descend_readonly.md`) is applied in
+`descend_schematic()` only, so in browse mode Ctrl-Y opens the `.sym` editable while Ctrl-X opens
+a child schematic read-only. Pre-existing, shared with the Edit menu / toolbar / right-click;
+filed as [0412](../issues/0412-descend-symbol-ignores-descend-readonly.md).
+
+Covered by `tests/headless/test_cadence_descend_newwin_ro.tcl` (CY1–CY10, true headless) and
+`tests/headless/test_altf5_ciw.tcl` (CYT1–CYT3, live Tk).

@@ -285,6 +285,97 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* --- issue 0266: `move_objects` argument-shape validation ---------------------------------
+ * The move_objects verb dispatches on argv[2] with four bare strcmp()s against the LOWERCASE
+ * literals "start"/"step"/"end"/"abort"; everything else falls through into the one-shot
+ * coordinate form, whose only commit-vs-arm discriminator is an argument COUNT
+ * (argc > 3 + nparam). Nothing ever asked whether argv[2] was a NUMBER, so atof() turned every
+ * typo into 0.0 and four distinct SILENT wrong answers followed (all measured at d99f3791):
+ *   `move_objects END`       argc 3, count test false -> ui_state |= MENUSTART / ui_state2 =
+ *                            MENUSTARTMOVE, rc 0, NOTHING COMMITTED. On a pending merge
+ *                            ui_state went 296 -> 65832 and the next ESC deleted the paste the
+ *                            caller believed it had just committed.
+ *   `move_objects END 40 40` argc 5, count test TRUE -> it really commits, at
+ *                            dx = atof("END") = 0.0: the wire landed at `N 0 40 100 40` where
+ *                            `move_objects 40 40` gives `N 40 40 140 40`. Worse than the no-op,
+ *                            because it writes the document at the wrong coordinate, rc 0.
+ *   `40 END` / `40 {}` / `kissing 40 40` / `stretch 40 40`
+ *                            the same species in the other slots -- each committed at a
+ *                            corrupted delta ((40,0), (40,0), (0,40), (0,40)) with rc 0.
+ *   `move_objects 40`        a TRUNCATED line armed a menu move (ui 8 -> 65544). That is the
+ *                            action-log replay hazard this fix exists for: a replay log is
+ *                            `source`d as Tcl, and because the branch answered TCL_OK for every
+ *                            spelling, a truncated / hand-edited / mis-cased move line replayed
+ *                            as a ui_state mutation with NO diagnostic.
+ * The rejecter inspects ONLY the TYPE and COUNT of the verb's own arguments; it adds NO state
+ * precondition to the pure-commit coordinate form `move_objects <dx> <dy> ...`, which is the
+ * replay/test seam (WIRING.md landmine 2). The four sub-verb branches sit ahead of it and never
+ * reach it, so the incremental start/step/end/abort seam is untouched, and the sub-verbs stay
+ * case-SENSITIVE on purpose: a verb whose log-replay surface wants exactly one spelling gets
+ * exactly one (the rejected alternative -- accept them case-insensitively via my_strcasecmp --
+ * would only widen the grammar and would still let `foo` and a truncated `40` arm silently).
+ * scheduler_readonly_reject stays FIRST in the branch, so a read-only buffer still answers
+ * "read-only" for every spelling including a bad one (test_readonly_guard.tcl pins that).
+ * The sibling copy_objects has no sub-verb layer at all and is deliberately NOT touched here --
+ * `xschem copy_objects end` arms a menu copy the same way; filed as issue 0404 (which also covers
+ * rect/polygon/line/arc/circle, measured to arm MENUSTART on an unknown slot exactly the same way).
+ * SCOPE, measured 2026-08-12 and deliberately NOT widened here: this guards argv[2] and argv[3] of
+ * the ONE-SHOT form and nothing else. The sub-verb coordinates (`move_objects end END 40` still
+ * commits at dx = 0, `end 40` at (0,0), `start END END` anchors at (0,0)) are issue 0405, and the
+ * trailing transform slots (`0 0 1 0 -anchor 50` silently drops the anchor and rotates about the
+ * wrong pivot; `0 0 X 0 ...` reads atoi("X") = 0) are issue 0406 -- so a truncated *emitted* log
+ * line can still replay as a different transform. Do not read the messages below as covering them.
+ * Covered by tests/headless/test_paste_modify_flag_0244.tcl section F. */
+
+/* The two flag words that legitimately occupy the dispatch slot: `xschem move_objects stretch`
+ * (Control+M, actions.csv) and `xschem move_objects kissing` (Shift+M) arm a deferred move with
+ * no deltas at all, so a plain "non-numeric argv[2] is an error" rule must whitelist them. */
+static int move_objects_slot_is_flag(const char *s)
+{
+  return s && (!strcmp(s, "kissing") || !strcmp(s, "stretch"));
+}
+
+/* Full strtod parse -- the idiom this file already uses (see the `pan` verb, and the
+ * strtod-not-atof comment in the `simulate` arm) rather than atof, which answers 0.0 for
+ * garbage. NOT an isdigit test: negative (`-90 -40`, wireedit_54), fractional (`40.5 -0.5`)
+ * and exponent (`1e2 40`) deltas are all live shipped forms. */
+static int move_objects_slot_is_number(const char *s)
+{
+  char *endp;
+  if(!s || !*s) return 0;
+  strtod(s, &endp);
+  return endp != s && *endp == '\0';
+}
+
+/* Returns 1 (with the interp error result set) when the move_objects argument shape must be
+ * refused, 0 when it may proceed. `nparam` is the caller's own count of kissing/stretch flag
+ * words, so the accept test uses the SAME commit-vs-arm discriminator the branch uses. */
+static int move_objects_args_reject(Tcl_Interp *interp, int argc, const char *argv[], int nparam)
+{
+  int commit_shape;
+  if(argc <= 2) return 0;                  /* bare arm: toolbar, Edit > Move objects, M key */
+  commit_shape = (argc > 3 + nparam);      /* the branch's own commit-vs-arm discriminator */
+  if(move_objects_slot_is_flag(argv[2])) {
+    if(!commit_shape) return 0;            /* `stretch` / `kissing` / `stretch kissing` arms */
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem move_objects: \"", argv[2],
+                     "\" must follow <dx> <dy>, not precede them", NULL);
+    return 1;
+  }
+  if(!move_objects_slot_is_number(argv[2])) {
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem move_objects: unrecognized argument \"", argv[2],
+                     "\": expected sub-verb start|step|end|abort (lowercase), "
+                     "flag kissing|stretch, or a numeric <dx> <dy>", NULL);
+    return 1;
+  }
+  if(commit_shape && argc > 3 && move_objects_slot_is_number(argv[3])) return 0;
+  Tcl_ResetResult(interp);
+  Tcl_AppendResult(interp, "xschem move_objects: <dx> <dy> must both be numbers (got \"",
+                   argv[2], "\" \"", (argc > 3 ? argv[3] : ""), "\")", NULL);
+  return 1;
+}
+
 /* Forward decl: pin_scope_resolve() is defined below (after the xschem_cmds_a group) but
  * run_core's apply_pin_prop arm (Refactor B atom 18) calls it above its definition. */
 static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out);
@@ -1193,6 +1284,24 @@ static int run_core(const char *verb, int argc, const char *argv[])
      * pop_undo_keep_selection(redo, set_modify) with argv-parsed ints (`xschem undo 1 1` = a
      * redo with its OWN `xschem undo %d %d` log) -- the argv-parsed site, distinct
      * verb, distinct line, no double-log path; the S7 exact-count rows lock both call sites. */
+    /* issue 0242 -- see leave_placement_for(). Sited HERE, at the VERB, and deliberately NOT
+     * inside pop_undo_keep_selection(): the teardown is a delete() and must run against a
+     * consistent object model, BEFORE the undo stack pointer moves. redo is a door even with an
+     * EMPTY redo stack, because pop_undo_keep_selection() ends with an unconditional
+     * unselect_all(0) (select.c) that zeroes ui_state whether or not the core popped anything. */
+    /* ISSUE 0269 -- phase 3, and the shape draw lands on leave_placement_for()'s side of the
+     * undo question, NOT leave_merge_for()'s. The merge gate is deliberately absent from undo/redo
+     * because a pending merge is undo-covered (merge_file() pushes its baseline before loading) and
+     * a delete()+push_undo in front of the pop would make undo RESTORE the paste. None of that
+     * applies here: a shape teardown runs no delete() and pushes no undo, so there is nothing for
+     * the pop to invert. Positively, it is needed -- pop_undo_keep_selection() ends in an
+     * unconditional unselect_all(0) whose `ui_state = 0` drops the shape bits with the band still
+     * stroked and no owner to erase it, and when NOTHING is selected the bits survive the pop
+     * intact (measured: `rect gui` + `undo` -> ui_state still 2), so the anchor nl_x1/nl_y1
+     * outlives a reloaded document and the next click commits geometry measured against a drawing
+     * that no longer exists. */
+    leave_shape_draw_for("Redo");
+    leave_placement_for("Redo");
     pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
     return TCL_OK;
   }
@@ -1217,6 +1326,16 @@ static int run_core(const char *verb, int argc, const char *argv[])
     int redo = 0, set_modify = 1;
     if(argc > 2) redo = atoi(argv[2]);
     if(argc > 3) set_modify = atoi(argv[3]);
+    /* issue 0242 -- same siting argument as the redo arm above (at the verb, before the stack
+     * pointer moves). Needed on the undo side too even though a DISK undo happens to clean up on
+     * its own: it does so only via clear_drawing()'s sympin_preview reset (actions.c) on the
+     * reload, which does not run for the MEMORY backend, for `xschem undo 1 1` (a redo wearing
+     * the undo verb) or for an empty stack -- while the unconditional unselect_all(0) at the end
+     * of pop_undo_keep_selection() drops START_SYMPIN on every one of those paths. */
+    leave_shape_draw_for(redo ? "Redo" : "Undo");   /* issue 0269 -- phase 3; see the redo
+                                                    * verb above for why undo/redo gate the
+                                                    * shape draw but not the merge */
+    leave_placement_for(redo ? "Redo" : "Undo");
     pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
     return TCL_OK;
   }
@@ -1828,6 +1947,19 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* issue 0243 F1 -- see leave_wire_draw_for(). In a symbol view the modal draw this
          * collides with is the graphic LINE (`l`/`L`), which the same helper covers. */
         leave_wire_draw_for("Add Pin");
+        leave_shape_draw_for("Add Pin");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+        /* issue 0265 -- a pending PASTE is the third modal gesture this arm can land on, and this
+         * is one of the three arms that carry NO leave_placement_for(): they handle a previous
+         * PLACEMENT themselves, with the undo-clean per-keystroke re-arm dance below, because the
+         * form is modeless and re-issues `-place` on every character typed. That dance is scoped
+         * to sympin_preview and knows nothing about STARTMERGE, so the unselect_all(1) further
+         * down dropped the merge bit with no delete() and left the paste committed. The gate is
+         * the right tool here and the re-arm dance is not: a merge is a DIFFERENT gesture (it has
+         * its own undo baseline, taken by merge_file()), not a re-issue of this one, so it must be
+         * torn down with its own delete(1)+push_undo rather than folded into this arm's single
+         * baseline. Placed before the re-arm block so the paste dies before this gesture's undo
+         * bookkeeping starts, exactly as it is placed before push_undo() in merge_file(). */
+        leave_merge_for("Add Pin");
         /* this arms a symbol PIN preview, never a net-label: clear wirelabel_preview so a
          * still-live Add-Wire-Label preview (both modeless forms open) cannot leak its
          * drop-on-copper gate onto this pin's drop (add_wire_label.md invariant). */
@@ -1854,9 +1986,21 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          /* ISSUE 0242: sympin_preview and START_SYMPIN are ONE fact ("a placement preview is
+           * live"), so they must move together. This clear is the re-arm half; the set moved to
+           * the success path below, next to `ui_state |= START_SYMPIN`. Before that, the flag was
+           * raised BEFORE the preview existed and stayed raised across the whole arm, so
+           * `sympin_preview && !START_SYMPIN` -- the exact desync signature this issue is about --
+           * was ALSO the normal state in the middle of every arm and every keystroke re-arm. That
+           * made the invariant unassertable: place_symbol() runs tclevals (abs_sym_path /
+           * is_xschem_file / tcl_hook2) that re-enter xschem(), so a tripwire on it fired on
+           * healthy arms. Narrowing the window to zero is what lets
+           * check_placement_preview_invariant() (callback.c) be believed.
+           * The undo contract is untouched: which branch we are in still decides whether a
+           * baseline is pushed, and that decision is read BEFORE either flag is written. */
+          xctx->sympin_preview = 0;
         } else {
           xctx->push_undo();        /* one undo baseline (no preview pin) per gesture */
-          xctx->sympin_preview = 1;
         }
         unselect_all(1);
         create_pin(x, y, nm, dr, SELECTED);
@@ -1867,6 +2011,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
          * owned name-view text, both SELECTED. Stamping the selection takes both. */
         stamp_placement_preview();
         xctx->ui_state |= START_SYMPIN;
+        xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
       } else {
         /* no args: open the Add-pin dialog (Name + Direction); its Place button
          * re-invokes this command as `add_symbol_pin -place`. */
@@ -1892,6 +2037,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *nm = tclgetvar("pin_new_name");
         const char *dr = tclgetvar("pin_new_dir");
         leave_wire_draw_for("Add Pin");   /* issue 0243 F1 -- see leave_wire_draw_for() */
+        leave_shape_draw_for("Add Pin");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+        leave_merge_for("Add Pin");       /* issue 0265 -- see the add_symbol_pin twin above for
+                                           * why the gate, and not the re-arm dance below, is what
+                                           * a pending merge needs */
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
         /* arming a schematic PIN preview, never a net-label: clear wirelabel_preview so a
@@ -1916,9 +2065,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          xctx->sympin_preview = 0;   /* issue 0242 -- see the add_symbol_pin arm above */
         } else {
           xctx->push_undo();        /* one undo baseline per gesture */
-          xctx->sympin_preview = 1;
         }
         unselect_all(1);
         if(place_sch_pin(nm, dr)) { /* selects the new instance (place_symbol draw&4) */
@@ -1927,6 +2076,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           move_objects(START,0,0,0);
           stamp_placement_preview();  /* issue 0241 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
+          xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
         } else {
           /* Pin symbol unresolvable (e.g. a misconfigured library path with no ipin.sym):
            * place_symbol placed and selected NOTHING, so do NOT arm a phantom preview.
@@ -1971,9 +2121,16 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * it -- `l` is Tcl-backed, so dispatch_input_action() cannot gate it (callback.c:5249).
        * NOT applied to -drop: that is the pure commit seam, and by then the wire is long gone. */
       if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_wire_draw_for("Add Wire Label");
+      if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_shape_draw_for("Add Wire Label");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
         if(!nm) nm = "";
+        /* issue 0265 -- see the add_symbol_pin arm above. Inside the `-place` branch, not beside
+         * the wire gate on the line above: that one deliberately also covers the bare form-open
+         * (`xschem add_wire_label` with no args), and opening a dialog arms nothing, so it has no
+         * claim on a pending paste under the "whatever you just pressed is what you meant" rule.
+         * -drop is a pure commit seam and is excluded by the same branch test. */
+        leave_merge_for("Add Wire Label");
         if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
           /* re-arm: discard the previous preview instance WITHOUT pushing undo */
           if(xctx->ui_state & STARTMOVE) {
@@ -1992,9 +2149,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           xctx->ui_state &= ~START_SYMPIN;
+          xctx->sympin_preview = 0;   /* issue 0242 -- see the add_symbol_pin arm above */
         } else {
           xctx->push_undo();        /* one undo baseline per gesture */
-          xctx->sympin_preview = 1;
         }
         xctx->wirelabel_preview = 1;  /* mark this preview as a constrained net-label */
         unselect_all(1);
@@ -2007,6 +2164,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->x2 = xctx->x1; xctx->y2 = xctx->y1;
           stamp_placement_preview();  /* issue 0241 -- see stamp_placement_preview() in select.c */
           xctx->ui_state |= START_SYMPIN;
+          xctx->sympin_preview = 1;   /* issue 0242: raised WITH the bit, once the preview exists */
         } else {
           /* lab_pin.sym unresolvable, or a .sym view forbids instances: nothing was placed, so do
            * NOT arm a phantom preview (mirror of the add_sch_pin guard, callback.c:237). */
@@ -2040,6 +2198,21 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * back: there is no form to re-trigger, so before the gate ESC was the only exit from the
        * jam and it threw the graph away (issue 0247). */
       leave_wire_draw_for("Add graph");
+      leave_shape_draw_for("Add graph");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+      /* issue 0242 -- see leave_placement_for(). The OTHER modal gesture this arm can land on
+       * top of. Load-bearing beyond the orphan: this branch re-sets START_SYMPIN below, so a
+       * leaked sympin_preview would still be 1 when the graph is later ESC-ed, and
+       * abort_placement_preview()'s `(sympin_preview && START_SYMPIN) ? delete(0) : delete(1)`
+       * discriminator would then read TRUE for the GRAPH and remove it with no undo baseline of
+       * its own. Tearing the preview down here makes the premise that discriminator documents
+       * ("a live preview always has START_SYMPIN set") true for this path instead of merely
+       * assumed -- so an aborted graph regains its undo snapshot. */
+      leave_placement_for("Add graph");
+      /* issue 0265 -- and a pending PASTE. The unselect_all(1) on the next line is precisely the
+       * wholesale `ui_state = 0` that dropped STARTMERGE with no delete(), so the merged objects
+       * stayed committed in the drawing (measured: merge, add_graph -> ui 296 -> 16424, merged
+       * wire kept). Always after the placement gate: shared xctx->preview_sel. */
+      leave_merge_for("Add graph");
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -2087,6 +2260,17 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        * on the keystroke/menu pick, not on whether the follow-up dialog is confirmed. Cancelling
        * the chooser therefore does NOT bring the wire back -- stated in issue 0247. */
       leave_wire_draw_for("Add image");
+      leave_shape_draw_for("Add image");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+      /* issue 0242 -- see leave_placement_for(). Same siting argument as the wire gate right
+       * above: on the pick, before the chooser, because the unselect_all(1) on the next line has
+       * already ended the previous state either way. A CANCELLED chooser therefore leaves neither
+       * gesture live -- which is the terminal case this issue measured (ui=0 with
+       * sympin_preview stuck at 1), so gating before the dialog is what actually fixes it. */
+      leave_placement_for("Add image");
+      leave_merge_for("Add image");   /* issue 0265 -- same door, same siting argument as the wire
+                                       * and placement gates above: on the pick, before the chooser,
+                                       * because the unselect_all(1) on the next line has already
+                                       * ended the previous state either way */
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -2319,6 +2503,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* ARM branch only -- the coordinate form above commits an arc outright and is a replay
          * seam. phase 1, see leave_wire_draw_for(). */
         leave_wire_draw_for("Arc");
+        leave_shape_draw_for("Arc");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Arc");
+        leave_merge_for("Arc");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTARC;
         Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -2689,6 +2876,19 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "circle"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 0272 -- and the read-only reject its sibling `xschem arc` has always had. Without it
+       * a read-only window armed a circle and the third click stored an arc in it (store_arc runs
+       * unconditionally; only set_modify is readonly-suppressed). Same unfinished verb, same fix. */
+      if(scheduler_readonly_reject(interp, "circle")) return TCL_ERROR;
+      /* ISSUE 0272 -- this verb carried NO gate of any kind until phase 3, while its key
+       * (callback.c `C`) and context-menu (pick 20) twins have been gated since phase 1:
+       * `xschem wire gui` + `xschem circle` left ui_state 65537 (STARTWIRE|MENUSTART) with
+       * last_command still armed (measured). Phase 1 gated the shape KEYS and missed the two
+       * shape VERBS that arm MENUSTART directly. */
+      leave_shape_draw_for("Circle");
+      leave_wire_draw_for("Circle");
+      leave_placement_for("Circle");
+      leave_merge_for("Circle");
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTCIRCLE;
     }
@@ -3047,6 +3247,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
             ret = descend_schematic(0, 0, 0, set_title);
           }
         }
+      } else {
+        /* issue 0251: a call the dispatcher's semaphore gate swallowed returns the
+         * same "0" as a refusal, but nothing was even attempted. Give it its own
+         * token so a caller can tell "I was ignored" from "I was declined". */
+        descend_set_error("busy", NULL, NULL, 0);
       }
       Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
     }
@@ -3056,9 +3261,15 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   With -inst <name>: name-addressed, self-contained form -- resolve the
      *   instance by its instname, select it, then descend. This IS the
      *   replay-stable form the action log emits (mirrors `descend -inst`).
-     *   Note: descend_symbol() logs its own outcome line, so no log here. */
+     *   Note: descend_symbol() logs its own outcome line, so no log here.
+     *   Evaluates to "1" (descended) or "0" (refused / not attempted), mirroring
+     *   the `descend` branch above. It used to Tcl_ResetResult() the C function's
+     *   perfectly good int away, so a refused descend and a successful one were
+     *   BOTH the empty string and no script could tell them apart -- issue 0251.
+     *   `xschem get descend_error` carries WHY on the "0". */
     else if(!strcmp(argv[1], "descend_symbol"))
     {
+      int ret = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(xctx->semaphore == 0) {
         if(argc > 2 && !strcmp(argv[2], "-inst")) {
@@ -3075,9 +3286,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
           unselect_all(1);
           select_element(inst, SELECTED, 1, 1);
         }
-        descend_symbol();
+        ret = descend_symbol();
+      } else {
+        descend_set_error("busy", NULL, NULL, 0); /* never entered the function */
       }
-      Tcl_ResetResult(interp);
+      Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
     }
 
     /* descend_pick
@@ -3090,10 +3303,52 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   doc/claude/issues/0200-descend-has-no-verb-noun-pick.md */
     else if(!strcmp(argv[1], "descend_pick"))
     {
+      /* ISSUE 0257 -- THE GATE, at the verb. This arm is the single door into the pick, so it is
+       * where the ratified rule applies: "whatever you just pressed is what you meant" (0240 /
+       * 0242 / 0243 / 0247 / 0265 / 0269), and gates live at the VERBS, never at the shared
+       * per-click primitive (0243 F2). Three Button-1 owners were measured swallowing the armed
+       * pick outright, and one of them MUTATES while doing it:
+       *   - a resting wire/line command under `persistent_command` (last_command != 0). The press
+       *     handler tests last_command alone and calls start_wire(), so the click meant as
+       *     "descend into this instance" BEGINS A WIRE DRAW on it instead (measured: arming gave
+       *     ui_state 65536, the pick press came back 65537 = MENUSTART|STARTWIRE). Killed by
+       *     abort_wire_line_command(), whose third arm is exactly that resting state.
+       *   - interactive net-highlight / net-unhighlight, and deselect-one-at-a-time. Killed by
+       *     abort_click_mode() (callback.c).
+       * ORDER IS LOAD-BEARING: abort_wire_line_command()'s menu-armed branch does
+       * `ui_state2 = 0`, so both teardowns must run BEFORE MENUSTARTDESCEND is assigned.
+       * Exactly two gates, not the four-gate battery the shape verbs carry: these are the doors
+       * that were MEASURED to eat the press. A placement preview cannot be live here (it is
+       * SELECTED, and hi_descend only arms a pick on an EMPTY selection), and a pending merge was
+       * not measured -- see doc/claude/issues/0257-* for the next door if one ever is.
+       * gate_bypass is the test-only construction seam (xschem.h), honoured the same way
+       * leave_wire_draw_for() honours it; abort_click_mode() checks it itself. */
+      int wire_gone;
+      const char *mode_ended;
+      char msg[192];
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      wire_gone = xctx->gate_bypass ? 0 : abort_wire_line_command();
+      mode_ended = abort_click_mode();
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTDESCEND; /* assign, like every other arming site */
-      statusmsg_hold("Descend: click the instance to descend into (ESC to cancel)", 1);
+      /* ONE held sentence carrying the prompt AND whatever was torn down for it (issue 0241): a
+       * separate gate line would be replaced by this prompt one statement later, since a held
+       * message is displaced by the next held message (statusmsg_hold() above). With nothing torn
+       * down the sentence is byte-identical to the one this verb has always spoken. */
+      if(!wire_gone && !mode_ended) {
+        statusmsg_hold("Descend: click the instance to descend into (ESC to cancel)", 1);
+      } else if(wire_gone && !mode_ended) {
+        statusmsg_hold("Descend: in-progress wire abandoned -- "
+                       "click the instance to descend into (ESC to cancel)", 1);
+      } else if(!wire_gone) {
+        my_snprintf(msg, S(msg), "Descend: %s mode ended -- "
+                    "click the instance to descend into (ESC to cancel)", mode_ended);
+        statusmsg_hold(msg, 1);
+      } else {
+        my_snprintf(msg, S(msg), "Descend: in-progress wire abandoned and %s mode ended -- "
+                    "click the instance to descend into (ESC to cancel)", mode_ended);
+        statusmsg_hold(msg, 1);
+      }
       Tcl_ResetResult(interp);
     }
 
@@ -3269,6 +3524,22 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       enable_layers();
+      Tcl_ResetResult(interp);
+    }
+
+    /* escape
+     *   Run the C Escape terminal: exactly what pressing Escape on the canvas does
+     *   (callback.c, escape_terminal()). Takes NO argument: the idle-case deselect is
+     *   read from `escape_deselects` (default 0) by the terminal itself, deliberately
+     *   NOT exposed here -- a no-arg `xschem abort_operation` is deselect=1, the opposite
+     *   default, and an optional argument would let a caller quietly change what Escape
+     *   means to the selection. Issue 0245: the three modeless placement forms seize
+     *   `.drw <Key-Escape>` and Tk then never fires the generic <KeyPress> -> C
+     *   dispatcher, so their canvas-Escape handlers forward here. */
+    else if(!strcmp(argv[1], "escape"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      escape_terminal();
       Tcl_ResetResult(interp);
     }
 
@@ -3975,6 +4246,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
             Tcl_SetResult(interp, my_itoa(debug_var),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "descend_error")) {
+            /* issues 0249/0251/0254: WHY the last descend attempt on THIS context
+             * refused. Empty = it succeeded, or none has run. A SECOND channel --
+             * the "0"/"1" of `xschem descend` is load-bearing and is never widened.
+             * Tokens: maxdepth, busy, no-selection, no-instance-selected,
+             * multi-selection, missing-symbol:<name>, not-descendable:<type>,
+             * no-schematic, save-cancelled, save-failed, iter-cancelled, load-failed.
+             *   busy        = the dispatcher's semaphore gate blocked the call; the
+             *                 C function never ran (nothing was attempted).
+             *   load-failed = the hierarchy ALREADY ADVANCED and the load then
+             *                 failed. Must NOT be read as "nothing happened": the
+             *                 caller has to go_back (issue 0250).
+             * A refusal RECORDS here whether or not it also speaks -- the annotation
+             * class is deliberately silent (test_descend_inert_class.tcl). */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->descend_err, TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "draw_window")) { /* direct draw into window */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->draw_window),TCL_VOLATILE);
@@ -4679,6 +4967,26 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, s, TCL_VOLATILE);
             net_hilight_restore_ctx(borrowed);
           }
+          else if(!strcmp(argv[2], "paste_from")) { /* pending-merge source: 0 named file, 1 selection
+                                                     * transfer, 2 clipboard, 3 merge dialog (xschem.h).
+                                                     * Test seam added by issue 0265: the two teardowns
+                                                     * merge_file() now runs before arming both call
+                                                     * move_objects(ABORT), which zeroes this field, so
+                                                     * the restore that puts it back needs an oracle. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->paste_from), TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "preview_sel_n")) { /* issue 0241 identity stamp: how many objects the
+                                                        * live cursor placement / pending merge names, i.e.
+                                                        * exactly what a cancel would delete. 0 = nothing
+                                                        * stamped. Read-only seam added by issue 0262: the
+                                                        * repair (repair_orphan_placement_preview(),
+                                                        * callback.c) clears this stamp so a stale one can
+                                                        * never delete a now-real object, and without a
+                                                        * probe that effect has no oracle. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->preview_sel_n),TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) {
@@ -4751,6 +5059,18 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "sympin_drops")) { /* issue 0122 E1: committed Add-Pin/Add-Wire-Label drop count */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->sympin_drops),TCL_VOLATILE);
+          }
+          /* issue 0246: the same witness split by OWNER. Each form snapshots and compares only
+           * its own part, so a sibling form's commit can never drain its queue (this replaces
+           * the write-only `::sympin_place` Tcl latch). sympin_drops above stays the total for
+           * existing callers: sympin_drops == sympin_drops_pin + sympin_drops_label. */
+          else if(!strcmp(argv[2], "sympin_drops_pin")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops_pin),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "sympin_drops_label")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops_label),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "sympin_preview")) { /* issue 0240: live form preview flag; it must
                                                          * never outlive START_SYMPIN (issue 0123 desync) */
@@ -4925,6 +5245,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'w':
+          /* xschem get wirelabel_preview
+           * add_wire_label.md: 1 while the live cursor placement is a CONSTRAINED net label rather
+           * than an ordinary pin/symbol -- it is what end_place_move_copy_zoom() reads to route the
+           * drop into wire_label_try_commit(). Read-only seam added by issue 0262: left stale by a
+           * door it swallows the NEXT symbol drop (the branch claims the click and the commit
+           * refuses it), so the repair clears it and that effect needs an oracle. */
+          if(!strcmp(argv[2], "wirelabel_preview")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->wirelabel_preview),TCL_VOLATILE);
+          }
           /* ---- net-highlight styles on waveform TRACES ----------------------
            * doc/claude/specs/wave_trace_hilight.md §7.1. Three read-only
            * getters, all FAIL SOFT (a sentinel + TCL_OK on a short or bad
@@ -4938,7 +5268,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
            * rather than graph_preview_set's flat one, because a triple read
            * back as a flat list is one transcription slip away from a silent
            * off-by-one. */
-          if(!strcmp(argv[2], "wave_hilights")) {
+          else if(!strcmp(argv[2], "wave_hilights")) {
             int k;
             Tcl_Obj *lst;
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -6924,7 +7254,13 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         int infix_interface = tclgetboolvar("infix_interface");
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a line outright and is the replay seam. */
+        leave_shape_draw_for("Line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Line")) return TCL_OK;
+        /* issue 0265 / plan_modal_gesture_exclusion.md phase 4 -- a DRAW cancels a live merge, the
+         * direction that was missing (the reverse already worked: merge_file() calls
+         * leave_placement_for(), which is the wire/line teardown too). Same branch discipline as
+         * the placement gate: ARM forms only, never the coordinate commit form above. */
+        if(!leave_merge_for("Line")) return TCL_OK;
         prev_state = xctx->ui_state;
         if(infix_interface) {
           start_line(xctx->mousex_snap, xctx->mousey_snap);
@@ -6939,7 +7275,9 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       else {
+        leave_shape_draw_for("Line");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Line")) return TCL_OK;  /* issue 0243 F2 */
+        if(!leave_merge_for("Line")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTLINE;
@@ -7792,6 +8130,13 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
           }
         }
+        /* issue 0266: refuse an argument shape this form cannot mean, instead of letting atof()
+         * turn the typo into a 0.0 delta or letting the argument COUNT alone arm a deferred menu
+         * move. PLACEMENT IS LOAD-BEARING: this sits BEFORE the two side effects below, so a
+         * rejected line leaves no connect_by_kissing arm and no select_attached_nets() selection
+         * growth behind (test_paste_modify_flag_0244.tcl F15 is the witness). See the rejecter's
+         * header comment for the four measured silent wrong answers it closes. */
+        if(move_objects_args_reject(interp, argc, argv, nparam)) return TCL_ERROR;
         /* arm kissing BEFORE select_attached_nets so the latter can see it and skip
          * grabbing a through-run tap arm (a stub will replace it). See wire_through_tap_arm(). */
         if(kissing) xctx->connect_by_kissing = 2;
@@ -8429,6 +8774,51 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       if(set_netlist_dir(0, NULL) ) {
         done_netlist = 1;
+
+        /* ISSUE 0263 -- a live placement preview / pending paste must not reach the netlister.
+         * MEASURED (2026-08-09): with an Add-Wire-Label preview named FOO riding the cursor on a
+         * cell whose one unnamed net carries two resistors, `xschem netlist` emitted
+         * `R1 FOO GND 1k` / `R2 FOO GND 2k` instead of `R1 net1 GND 1k` / `R2 net1 GND 2k` -- the
+         * preview is a fully formed lab_pin in xctx->inst[], so name_nodes_of_pins_labels_and_-
+         * propagate() (netlist.c) takes its lab as a node name and name_attached_nets() stamps it
+         * on the whole net. skip_instance() filters only *_IGNORE/*_SHORT/LVS, so nothing
+         * downstream can tell the difference, and every backend (spice/spectre/tedax/verilog/vhdl)
+         * emits the same wrong deck with no error anywhere.
+         * AND IT IS A DOOR, terminal, not merely a wrong read -- which is why the fix is a
+         * TEARDOWN here and not a filter in the emit loops (0263's own option 1). The
+         * hierarchical driver push_undo()s the document WITH the preview (spice_netlist.c),
+         * unselect_all(1)s -- which zeroes ui_state wholesale (select.c), a live preview being
+         * always selected -- then pop_undo(2,0) runs clear_drawing(), which clears
+         * sympin_preview / wirelabel_preview / the preview_sel stamp (actions.c), and finally
+         * pop_undo(4,0) restores the snapshot with the preview baked in as an ordinary object.
+         * Measured: ui_state 16424 -> 0, sympin_preview 1 -> 0, three ESCs later the stray
+         * `lab_pin.sym {l1 FOO}` is STILL there with modified == 0, and the abandoned gesture also
+         * leaks a fluid snapshot that outlives the next file load. A preview_sel-keyed filter
+         * cannot fix any of that -- and preview_sel is itself destroyed by the driver's own
+         * clear_drawing(), so the predicate would not even survive the pass that needs it.
+         * SITED HERE, not at branch entry: on the dir-unwritable path (the else below) the netlist
+         * never runs, and a verb that did nothing must not consume the user's gesture.
+         * Placement teardown FIRST, merge second -- they share xctx->preview_sel and the placement
+         * stamp is a superset (see abort_pending_merge(), callback.c).
+         * Only these two gates: leave_wire_draw_for()/leave_shape_draw_for() are deliberately NOT
+         * called. A rubber-band draw parks no object in inst[]/wire[], so the netlister cannot see
+         * it, and unselect_all() zeroes ui_state only when something is selected (select.c), which
+         * a bare draw is not -- so the round trip provably cannot clobber a draw either. Ending an
+         * in-flight draw on every `n` would be user-visible harm for zero correctness gain.
+         * Both gates are no-ops when nothing is armed, so idle netlists (the committed goldens,
+         * tests/netlisting, the `-keep_symbols` cellview/reroute calls in xschem.tcl) are
+         * byte-identical and silent. The `-keep_symbols` axis is NOT excluded: that axis exists
+         * for action-log replay fidelity, not for gesture ownership -- a wrong deck is wrong
+         * whoever asked for it.
+         * The Shift-N current-level key is the same verb by another door and is gated the same way
+         * at its callback.c handler. The CLI `-n` batch (xinit.c) is deliberately ungated: it runs
+         * BEFORE `--script` is sourced, so no gesture can exist there.
+         * RESIDUE, recorded not fixed: leave_placement_for() early-returns on xctx->readonly (the
+         * teardown IS a delete()) and on the already-stripped 0262 orphan state, so a netlist taken
+         * in either state still emits the stray object; and `save` has the identical blindness
+         * (issue 0358). See doc/claude/issues/0263-*.md. */
+        leave_placement_for("Netlist");
+        leave_merge_for("Netlist");
 
         save_keep = tclgetboolvar("keep_symbols");
         if(keep_symbols) tclsetboolvar("keep_symbols", keep_symbols);
@@ -9167,6 +9557,17 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * (they differ only in whether the symbol/prop is given up front), so all three are gated;
        * scripted instantiation that commits outright goes through `xschem instance`, not here. */
       leave_wire_draw_for("Insert symbol");
+      leave_shape_draw_for("Insert symbol");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+      /* issue 0242 -- see leave_placement_for(). place_symbol reaches the orphan WITHOUT an
+       * unselect_all: it just ORs PLACE_SYMBOL over the live preview below, so the two placements
+       * share one STARTMOVE and the first one's instance is left committed when the second is
+       * dropped or aborted. Gated with all three arg forms, like the wire gate above. */
+      leave_placement_for("Insert symbol");
+      /* issue 0265 -- and a pending PASTE, the door this verb reaches the SAME way it reaches the
+       * placement one: place_symbol() runs its own unselect_all, which zeroes ui_state wholesale
+       * and dropped STARTMERGE with no delete() (measured: merge, place_symbol -> ui 296 -> 8232,
+       * merged wire committed, ESC then removes only the symbol). */
+      leave_merge_for("Insert symbol");
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -9203,6 +9604,15 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* phase 2 -- see leave_wire_draw_for(). The scriptable twin of `case 't'` (callback.c) and
        * of context-menu pick 6; all three arm a PLACE_TEXT cursor placement. */
       leave_wire_draw_for("Place text");
+      leave_shape_draw_for("Place text");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
+      /* issue 0242 -- see leave_placement_for(). Gated before the unselect_all(1) below AND
+       * before place_text()'s modal text dialog, so a CANCELLED dialog cannot leave the terminal
+       * state (measured ui=0 with sympin_preview stuck at 1: the deselect had already dropped
+       * START_SYMPIN, and no PLACE_TEXT was ever armed to give abort_operation() something to
+       * tear down). Same pick-time rule as `Add image`. */
+      leave_placement_for("Place text");
+      leave_merge_for("Place text");   /* issue 0265 -- and a pending paste, before the same
+                                        * unselect_all(1) and the same modal dialog */
       xctx->semaphore++;
       xctx->last_command = 0;
       unselect_all(1);
@@ -9302,6 +9712,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* phase 1 -- see leave_wire_draw_for(). This is also the `P` key: Shift+P is bound to the
          * registry action tools.insert_polygon, whose command IS `xschem polygon gui`. */
         leave_wire_draw_for("Polygon");
+        leave_shape_draw_for("Polygon");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Polygon");
+        leave_merge_for("Polygon");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -9313,6 +9726,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       } else {
         leave_wire_draw_for("Polygon");   /* truncated coordinate forms arm here too */
+        leave_shape_draw_for("Polygon");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Polygon");
+        leave_merge_for("Polygon");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTPOLYGON;
       }
@@ -10265,6 +10681,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * cadence_style_rc sets) the rectangle only arms MENUSTART and the FIRST CLICK starts it,
          * and that click is exactly what the live wire draw would keep stealing. */
         leave_wire_draw_for("Rectangle");
+        leave_shape_draw_for("Rectangle");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Rectangle");
+        leave_merge_for("Rectangle");
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -10278,6 +10697,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* argc <= 5 and not "gui": a TRUNCATED coordinate form (`xschem rect 10 20`) lands here,
          * in the ARM branch, not in the commit branch above -- gate by branch, not by verb name */
         leave_wire_draw_for("Rectangle");
+        leave_shape_draw_for("Rectangle");   /* issue 0269 -- phase 3, all four gates at every shape arm: see the ctx-menu Rectangle pick (callback.c) */
+        leave_placement_for("Rectangle");
+        leave_merge_for("Rectangle");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTRECT;
       }
@@ -11071,6 +11493,45 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* select_same_net [x y] [add]
+     *   Select the whole LOGICAL net -- every wire segment carrying the same net
+     *   name, INCLUDING segments that touch nothing but share a wire-label (and are
+     *   therefore one node in the netlist), plus the net-labels / ports / probes that
+     *   name it. The geometric counterpart is select_grow_connected above, which
+     *   stops where the copper stops.
+     *   With [x y] the object under that schematic coord is the seed (a wire, a
+     *   net-label, or an instance pin under the pin pick radius). Without coords every
+     *   wire / net-label in the CURRENT selection seeds a net and all of them are
+     *   selected in full. 'add' keeps the existing selection instead of replacing it.
+     *   Matching is on the whole node name: bus notation is NOT expanded (A[3:0] and
+     *   A[1] are different names). See doc/claude/specs/select_same_net_by_label.md.
+     *   Returns the number of objects selected. */
+    else if(!strcmp(argv[1], "select_same_net"))
+    {
+      int add = 0, nsel, argi = 2;
+      double x = 0.0, y = 0.0;
+      int pick_seed = 0;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc >= 4 && argv[2][0] && strcmp(argv[2], "add")) { /* coords given */
+        x = atof(argv[2]);
+        y = atof(argv[3]);
+        pick_seed = 1;
+        argi = 4;
+      }
+      if(argc > argi) {
+        if(!strcmp(argv[argi], "add")) add = 1;
+        else {
+          Tcl_SetResult(interp, "xschem select_same_net: usage: select_same_net [x y] [add]", TCL_STATIC);
+          return TCL_ERROR;
+        }
+      }
+      /* No log_action here: select_same_net_by_name() self-logs at its CORE so the
+       * bound Ctrl+Alt+Shift+Button1 gesture (which calls the core directly from
+       * callback.c) is covered too -- same rule as select_grow_connected above. */
+      nsel = select_same_net_by_name(x, y, pick_seed, add);
+      Tcl_SetResult(interp, my_itoa(nsel), TCL_VOLATILE);
+    }
+
     /* selected_set [what]
      *   Return a list of selected instance names
      *   If what is not given or set to 'inst' return list of selected instance names
@@ -11300,6 +11761,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             xctx->change_lw = atoi(argv[3]);
             dbg(1, "xschem change_lw: change_lw = %d\n", xctx->change_lw);
             tclsetboolvar("change_lw", xctx->change_lw);
+          }
+          /* whether the auto line width / junction-dot radius scale with the LIVE snap
+           * (1) or with the startup snap (0, default: snap stays orthogonal to how the
+           * drawing renders -- linewidth_ref_snap, actions.c). Pure display preference,
+           * so unlogged by 0066 policy c; recompute + redraw so the toggle is live. */
+          else if(!strcmp(argv[2], "linewidth_follows_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            tclsetboolvar("linewidth_follows_snap", atoi(argv[3]) ? 1 : 0);
+            change_linewidth(-1.);
+            draw();
           }
           else if(!strcmp(argv[2], "color_ps")) { /* set color psoscript (1 or 0) */
             color_ps=atoi(argv[3]);
@@ -12373,23 +12844,35 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "snap_wire"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      leave_shape_draw_for("Snap wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(!leave_placement_for("Snap wire")) return TCL_OK;  /* issue 0243 F2 */
+      if(!leave_merge_for("Snap wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
       xctx->ui_state |= MENUSTART;
       xctx->ui_state2 = MENUSTARTSNAPWIRE;
     }
 
-    /* statusmsg [text]
+    /* statusmsg [-hold] [text]
      *   Write 'text' (default: a blank) to the wide status bar field, exactly as an internal
      *   command message does. A script asking for the field is deliberate news, so this RELEASES
      *   any hold a gate/prompt message has on it (issue 0248) instead of being dropped by it --
      *   which is also what makes the hold testable: it is how a test resets the field between
      *   checks (tests/headless/test_placement_wire_gate.tcl section H). No-op on the screen when
-     *   !has_x; the hold flag is maintained either way. */
+     *   !has_x; the hold flag is maintained either way.
+     *   -hold: write it as a line the user must be able to READ (statusmsg_hold()), so the
+     *   next selection/coordinate readout cannot eat it. Tcl-side refusals that mirror a C-side
+     *   one need the same discipline -- open_sub_schematic's descend refusals (issue 0256) are
+     *   the first caller. */
     else if(!strcmp(argv[1], "statusmsg"))
     {
+      int hold = 0, ti = 2;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      statusmsg_hold_clear();
-      statusmsg(argc > 2 ? (char *)argv[2] : (char *)" ", 1);
+      if(argc > 2 && !strcmp(argv[2], "-hold")) { hold = 1; ti = 3; }
+      if(hold) {
+        statusmsg_hold(argc > ti ? (char *)argv[ti] : (char *)" ", 1);
+      } else {
+        statusmsg_hold_clear();
+        statusmsg(argc > ti ? (char *)argv[ti] : (char *)" ", 1);
+      }
       Tcl_ResetResult(interp);
     }
 
@@ -12447,14 +12930,17 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* symbol_in_new_window [new_process]
      *   When a symbol is selected edit it in a new tab/window if not already open.
      *   If nothing selected open another window of the second schematic (issues a warning).
-     *   if 'new_process' is given start a new xschem process */
+     *   if 'new_process' is given start a new xschem process
+     *   Returns what happened (issue 0258): 0 nothing done, 1 opened, 2 switched to the
+     *   tab/window that already holds it, 3 refused (new_process on an already-open symbol).
+     *   It used to be Tcl_ResetResult() over a void function, so a caller could not tell a
+     *   switch from a silent no-op. */
     else if(!strcmp(argv[1], "symbol_in_new_window"))
     {
       int new_process = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2 && !strcmp(argv[2], "new_process")) new_process = 1;
-      symbol_in_new_window(new_process);
-      Tcl_ResetResult(interp);
+      Tcl_SetResult(interp, my_itoa(symbol_in_new_window(new_process)), TCL_VOLATILE);
     }
 
     /* swap_cursors
@@ -12708,8 +13194,9 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* test_gate_bypass [0|1]
      *   TEST-ONLY seam (issue 0247, phases 1-2 of plan_modal_gesture_exclusion.md). Returns the
-     *   current setting; with an argument, sets it. 1 disables the modal-gesture gates
-     *   (leave_wire_draw_for / leave_placement_for) for this context.
+     *   current setting; with an argument, sets it. 1 disables ALL FOUR modal-gesture gates
+     *   (leave_wire_draw_for / leave_placement_for / leave_merge_for / leave_shape_draw_for) for
+     *   this context.
      *   Why it has to exist: those gates now cover EVERY verb that can arm a second modal gesture,
      *   which is the point -- but it also means the CO-ARMED state (a live wire draw plus a
      *   placement or shape draw) can no longer be built from any verb, and abort_operation()'s
@@ -12726,6 +13213,39 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) xctx->gate_bypass = atoi(argv[2]) ? 1 : 0;
       Tcl_SetResult(interp, my_itoa(xctx->gate_bypass), TCL_VOLATILE);
+    }
+
+    /* test_shape_click
+     *   TEST-ONLY seam (issue 0269, phase 3 of plan_modal_gesture_exclusion.md). Performs, for a
+     *   MENU-ARMED shape, exactly what the FIRST CANVAS CLICK does: the matching arm of
+     *   check_menu_start_commands() (callback.c) followed by the release-side `ui_state &=
+     *   ~MENUSTART` (callback.c). Returns 1 if a menu-armed shape was advanced, 0 otherwise.
+     *   Why it has to exist: `xschem arc|circle|zoom_box` only ever arm MENUSTART plus a ui_state2
+     *   discriminator -- STARTARC and STARTZOOM are set by the click, and `xschem callback ...`
+     *   SEGFAULTS under --nogui, so the post-click half of three of the five shape gestures had no
+     *   headless state at all. Without it, abort_shape_draw()'s STARTARC / STARTZOOM paths would be
+     *   shipped with no oracle, which is the issue 0246 residue class.
+     *   It is a stand-in for the click, NOT a bypass: it runs the same primitives in the same order
+     *   and does not touch any gate. Not bound to any key, menu or toolbar item, and not logged. */
+    else if(!strcmp(argv[1], "test_shape_click"))
+    {
+      int done = 0;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(xctx->ui_state & MENUSTART) {
+        if(xctx->ui_state2 & MENUSTARTRECT) {
+          new_rect(PLACE, xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTPOLYGON) {
+          new_polygon(PLACE, xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTARC) {
+          new_arc(PLACE, 180., xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTCIRCLE) {
+          new_arc(PLACE, 360., xctx->mousex_snap, xctx->mousey_snap); done = 1;
+        } else if(xctx->ui_state2 & MENUSTARTZOOM) {
+          zoom_rectangle(START); done = 1;
+        }
+        if(done) xctx->ui_state &= ~MENUSTART;   /* the release, callback.c */
+      }
+      Tcl_SetResult(interp, my_itoa(done), TCL_VOLATILE);
     }
 
     /* text x y rot flip text props size draw
@@ -13404,7 +13924,10 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         int infix_interface = tclgetboolvar("infix_interface");
         /* issue 0243 F2 -- see leave_placement_for() (callback.c). Only the ARM forms below gate:
          * the `argc > 5` coordinate form above commits a wire outright and is the replay seam. */
+        leave_shape_draw_for("Wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Wire")) return TCL_OK;
+        if(!leave_merge_for("Wire")) return TCL_OK;   /* issue 0265 -- phase 4, see the `line gui`
+                                                       * arm above for the branch discipline */
         prev_state = xctx->ui_state;
         if(infix_interface) {
           start_wire(xctx->mousex_snap, xctx->mousey_snap);
@@ -13418,7 +13941,9 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->ui_state2 = MENUSTARTWIRE;
         }
       } else {
+        leave_shape_draw_for("Wire");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
         if(!leave_placement_for("Wire")) return TCL_OK;  /* issue 0243 F2 */
+        if(!leave_merge_for("Wire")) return TCL_OK;      /* issue 0265 -- phase 4 */
         xctx->last_command = 0;
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTWIRE;
@@ -13503,6 +14028,15 @@ static int xschem_cmds_z(Tcl_Interp *interp, int argc, const char *argv[], int *
         draw();
       }
       else {
+        /* ISSUE 0272 -- the ARM branch, which carried no gate of any kind until phase 3 (the
+         * coordinate form above is a pure commit and stays ungated). Measured: `xschem wire gui`
+         * + `xschem zoom_box` -> ui_state 65537. A zoom box owns the next click exactly as an
+         * edit shape does, so leaving one armed under a fresh gesture steals that click --
+         * which is why the zoom box is inside abort_shape_draw() at all (ratified 2026-08-09). */
+        leave_shape_draw_for("Zoom box");
+        leave_wire_draw_for("Zoom box");
+        leave_placement_for("Zoom box");
+        leave_merge_for("Zoom box");
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTZOOM;
       }
@@ -13592,6 +14126,10 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
    }
    fprintf(errfp, "\n");
  }
+ /* issue 0242 tripwire -- see check_placement_preview_invariant() (callback.c). The scripted
+  * twin of the callback() call site: every Tcl-driven actor (tests, menus, the modeless form
+  * procs, a user's rc) enters here, so a door opened from Tcl is caught even with no GUI. */
+ check_placement_preview_invariant("xschem()");
  /*
   * ********** xschem commands  IN SORTED ORDER !!! *********
   */

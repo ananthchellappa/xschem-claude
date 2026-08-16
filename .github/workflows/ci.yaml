@@ -25,8 +25,57 @@ jobs:
         path: src/xschem
     # Hard gate: the true-headless tests (no X). test_sweep_diff round-trips every
     # cell in tests/test_sweep_diff/; a load/save regression or parser crash fails CI.
+    #
+    # Issue 0351: this gate used to be exactly test_sweep_diff + test_nogui, so not
+    # one suite the 2026-08 gesture work produced could fail CI -- they existed only
+    # in the informational audit at the bottom of this file. Every suite listed here
+    # is measured to pass with DISPLAY unset (9 of them are not even in full_audit's
+    # nogui_tests list -- they pass in the plain --pipe -q --nolog arm), so they
+    # belong in this cheap deterministic step and not behind xvfb. The tenth,
+    # test_placement_wire_gate, joined nogui_tests in issue 0355: DISPLAY is unset in
+    # this step so it was always safe here, but it hangs forever under the xvfb audit
+    # below and for anyone running it by hand.
+    #
+    # AUDIT_MIN_PASS is the EXACT count of listed suites, not a slack floor like the
+    # xvfb gate's 15-of-33: none of these may legitimately skip, so a skip IS the
+    # regression. That floor is what repairs "a SKIP can never fail the audit"
+    # (issue 0350). The floor counts PASSes, so it is only as honest as full_audit's
+    # is_pass: that predicate used to be an unanchored substring test, and a suite
+    # that printed FAIL lines and exited 1 was scored PASS -- and counted toward this
+    # floor -- if ANY line of its output merely contained "OVERALL: ok" (measured,
+    # issue 0354). Every classifier predicate is now line-anchored, so a banner
+    # counts only at COLUMN 0 -- which narrows that hole but does not close it:
+    # is_pass still consults neither has_failure nor the exit code, so a column-0
+    # pass banner next to real column-0 FAIL lines would still count here. No suite
+    # emits that shape today (measured across 296); see 0354 "still open" item 1.
+    # A renamed or deleted test is caught separately by full_audit's
+    # `MISSING | <name>` -> FAIL arm, so this explicit list cannot silently shrink.
+    # Keep the list and the floor in sync with $GATED in
+    # tests/headless/test_audit_classifier.tcl, which asserts both.
+    #
+    # AUDIT_DISPLAY=none is LOAD-BEARING, not decoration (merge 5,
+    # doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md section 5.4). Since merge 5,
+    # full_audit.sh arms its OWN private Xvfb by default (tests/headless/xvfb_arm.sh), so
+    # this step would silently acquire the display it is defined by not having. Three
+    # issue-0246 blocks guard on `[info commands winfo] ne {}` and self-SKIP when Tk exists
+    # (test_add_wire_label.tcl:603, test_sch_add_pin.tcl:156,
+    # test_add_pin_lib_symbol_view.tcl:85), so their suites would still be scored PASS and
+    # counted toward AUDIT_MIN_PASS while measuring nothing -- hollow green, the exact shape
+    # issues 0350/0354 exist to prevent.
     - name: Headless gate
-      run: tests/headless/full_audit.sh test_sweep_diff test_nogui
+      run: |
+        set -euo pipefail
+        AUDIT_DISPLAY=none AUDIT_MIN_PASS=15 tests/headless/full_audit.sh \
+          test_sweep_diff test_nogui \
+          test_shape_draw_gate test_paste_modify_flag_0244 test_add_wire_label \
+          test_placement_wire_gate test_label_ride test_placement_preview_doors \
+          test_label_strand_oracle test_sch_add_pin test_wire_split \
+          test_crossview_paste test_instance_update \
+          test_audit_classifier test_descend_inert_class
+    # Hard gate: the committed netlist goldens (tests/headless/run.sh, 6 cases).
+    # It was in no CI step at all before issue 0351.
+    - name: Netlist golden gate
+      run: tests/headless/run.sh
     # Hard gate: the fluid-editing suites under a virtual X (hardening plan A5) --
     # the 52-test wireedit scripted suite plus every fluid / rotate-stretch /
     # cadence-gesture test (globbed, so new fluid tests are gated automatically).
@@ -42,14 +91,17 @@ jobs:
         set -euo pipefail
         cd tests/headless
         gate_tests=$(ls test_fluid_*.tcl test_rotate_*.tcl test_cadence_stretch_move.tcl test_drag_keeps_selection.tcl | sed 's/\.tcl$//')
-        AUDIT_MIN_PASS=15 xvfb-run -a ./full_audit.sh wireedit $gate_tests
+        # No outer `xvfb-run -a` since merge 5: full_audit.sh arms its own private Xvfb, so
+        # wrapping it nested one xvfb-run inside another and warned about a missing openbox
+        # in the outer one. The virtual display these suites need is still there.
+        AUDIT_MIN_PASS=15 ./full_audit.sh wireedit $gate_tests
     # Informational: the whole tests/headless/ suite under a virtual X. Non-blocking
     # (|| true) because several GUI/library-migration cases are environment-sensitive
     # (deterministically red on GH runners); the log is uploaded so results are
     # visible without flaking the build. The fluid suites above are the hard gate.
     - name: Full headless audit (informational)
       run: |
-        xvfb-run -a tests/headless/full_audit.sh > full_audit.log 2>&1 || true
+        tests/headless/full_audit.sh > full_audit.log 2>&1 || true   # self-arms its own Xvfb
         grep -E '^(PASS|FAIL|SKIP|CRASH|TIMEOUT) ' full_audit.log || true
         grep -E '^SUMMARY' full_audit.log || true
     - name: Archive headless audit log

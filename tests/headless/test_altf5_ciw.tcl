@@ -56,6 +56,19 @@ if {[catch {source src/cadence_style_rc} err] && \
   check "cadence F5 forwards Alt-F5 to the C dispatch" \
     [string match {*if {%s & 8}*xschem callback*} $b]
   check "cadence F5 keeps plain-F5 highlight" [string match {*apply_hilight*} $b]
+
+  # --- Ctrl-Y = descend into the selected instance's SYMBOL (issue 0410) ----
+  # cadence mode steals `i` for Create Instance with a `break`, which is the only key
+  # route to descend-into-symbol, leaving that verb with NO key. Ctrl-Y restores it.
+  # This block is the LIVE-Tk half: the rc TEXT and the verb's behaviour are asserted
+  # true-headless in test_cadence_descend_newwin_ro.tcl (CY1-CY10); only a real Tk can
+  # show the line actually EXECUTED and installed the binding on the canvas.
+  set cy [bind .drw <Control-Key-y>]
+  check "CYT1 cadence Ctrl-Y is installed and non-empty on .drw" [expr {[string trim $cy] ne {}}]
+  check "CYT2 cadence Ctrl-Y runs the bare `xschem descend_symbol`" \
+    [string match {*xschem descend_symbol*} $cy]
+  check "CYT3 cadence Ctrl-Y did not displace the `i` -> Create Instance steal" \
+    [string match {*xschem create_instance*} [bind .drw <Key-i>]]
 }
 
 if {$::fail} { puts "RESULT: FAIL" } else { puts "RESULT: ALL PASS" }

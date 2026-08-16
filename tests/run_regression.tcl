@@ -40,7 +40,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_add_pin_lib_symbol_view" \
                  "headless/test_add_wire_label" \
                  "headless/test_placement_wire_gate" \
+                 "headless/test_shape_draw_gate" \
                  "headless/test_crossview_paste" \
+                 "headless/test_paste_modify_flag_0244" \
                  "headless/test_pin_type_edit" \
                  "headless/test_find_helper" \
                  "headless/test_instance_update" \

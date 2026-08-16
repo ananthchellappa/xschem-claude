@@ -351,7 +351,17 @@ the schematic's name, not the simulator's.
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —
   FIX the v1 bug); Load State (library browser like Create Instance,
-  filtered to simulation-state views); Save State (always Save-As: Library
+  filtered to simulation-state views, **opening defaulted to the session's
+  own Library and Cell** — the states worth loading are nearly always the
+  other states of the cell being simulated, so the View column is the only
+  pick left; the View itself is left unselected on purpose, since a default
+  pick would put "discard this session for a state nobody chose" one OK
+  press away. Focus lands on the View list so no mouse trip is needed —
+  though Tk's listbox moves `active` before selecting, so the first Down
+  lands on the SECOND view and Home reaches the first. Degrades one column
+  at a time: an unknown library leaves the browser as it was before the
+  defaulting, a known library with an unknown cell keeps the library chosen
+  and its Cell column filled); Save State (always Save-As: Library
   dropdown + editable Cell/View text fields prefilled with current; if
   current view was opened read-only and target = same view, Overwrite needs
   a confirmation popup); Close.

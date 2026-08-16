@@ -1,0 +1,344 @@
+diff --git a/src/actions.c b/src/actions.c
+index 12cf33a5..01935a50 100644
+--- a/src/actions.c
++++ b/src/actions.c
+@@ -3970,14 +3970,31 @@ void go_back(int what)
+ 
+ void clear_schematic(int cancel, int symbol)
+ {
++      /* ISSUE 0264 -- latch whether this buffer had unsaved work BEFORE save(1,0) can
++       * clear the flag. A discard may destroy only the work it was asked about, and
++       * save(1,0) only asks when xctx->modified (see save() above). */
++      int had_unsaved = xctx->modified;
+       if(cancel == 1) cancel=save(1, 0);
+       if(cancel != -1) { /* -1 means user cancel save request */
+         char name[PATH_MAX];
+         /* The current buffer is being discarded (saved above, or the user declined
+          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
+          * next open unambiguously means a crash, not an intentional discard. (A real
+-         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8) */
+-        remove_backup();
++         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8)
++         *
++         * ISSUE 0264 -- guarded by had_unsaved. This used to unlink unconditionally, so
++         * File > New on a CLEAN buffer silently deleted a ~ nobody was ever prompted
++         * about. That is not a hypothetical state: `xschem reload` and an in-place load
++         * of another cell both clear xctx->modified and leave the ~ behind holding the
++         * user's only copy of the edits, so the next File>New ate the work with zero
++         * prompts (measured). When the buffer is clean the ~ is by definition not THIS
++         * session's unsaved content -- it is a crash/discard leftover that
++         * xschem_recover_backup and `xschem load_backup` exist to surface, and a discard
++         * of an already-clean buffer has no standing to delete it. Consented discards are
++         * unchanged: dirty + "no" (and `clear force` on a dirty buffer) still remove it,
++         * and dirty + "yes" is removed by save_schematic itself.
++         * doc/claude/issues/0264-hierarchy-modified-ignores-the-current-cells-own-backup.md */
++        if(had_unsaved) remove_backup();
+         xctx->currsch = 0;
+         unselect_all(1);
+         /* incremental_wire_reroute Phase II: if a fluid stretch gesture is still armed, tearing down
+diff --git a/src/paste.c b/src/paste.c
+index b61815b4..59328ea3 100644
+--- a/src/paste.c
++++ b/src/paste.c
+@@ -605,7 +605,10 @@ void merge_file(int selection_load, const char ext[])
+       * ESC-ing a Ctrl+V reported it UNMODIFIED, which kills the Close/Quit prompts, save()'s
+       * `if(force || xctx->modified)` gate and go_back()'s ascend prompt -- and File > New then
+       * runs clear_schematic()'s silent save(1,0) followed by remove_backup(), deleting the `~`
+-      * file that held the only copy of the work.
++      * file that held the only copy of the work. (Issue 0264 has since guarded that
++      * remove_backup() with the buffer's PRE-save modify flag, so a clean-looking buffer no
++      * longer loses its `~` -- but the flag lie still silences every prompt named above, and
++      * now silences that guard too, so this latch stays load-bearing.)
+       * Latched, NOT read at the abort: the unconditional set_modify(1) at the bottom of this
+       * function runs on every exit, so by abort time xctx->modified is always 1 and the
+       * save/restore idiom the PLACEMENT arm uses (abort_placement_preview()) would read the
+diff --git a/src/save.c b/src/save.c
+index 910d15d8..3c58abe7 100644
+--- a/src/save.c
++++ b/src/save.c
+@@ -3535,8 +3535,15 @@ void write_backup(void)
+   dbg(1, "write_backup(): wrote %s\n", bak);
+ }
+ 
+-/* Remove the current cell's "~" backup file (after a real save, or when the
+- * buffer returns to a clean state). No-op if it does not exist. */
++/* Remove the current cell's "~" backup file (after a real save, or when the buffer
++ * returns to a clean state). No-op if it does not exist.
++ *
++ * CALLER CONTRACT (issue 0264): this unlinks unconditionally -- it never asks whose
++ * work the ~ holds. The ~ is keyed on a FILENAME, not on the buffer that wrote it, so
++ * the caller must first establish that the content being torn down is the content this
++ * ~ backs (a real save of this buffer, or a discard the user consented to). Calling it
++ * on a CLEAN buffer destroys whatever a previous session or an earlier discard left
++ * there -- which is exactly the copy crash recovery exists to offer. */
+ void remove_backup(void)
+ {
+   char bak[PATH_MAX];
+@@ -3573,26 +3580,69 @@ int load_backup_as(const char *cellfile, int set_title)
+   return 1;
+ }
+ 
++/* Does cellfile have a "~" autosave backup on disk at all? This is the ANCESTOR
++ * rule of hierarchy_modified(): while you are descended past an unsaved parent,
++ * that parent's ~ IS the live copy of its edits (B5/B6 wrote it on the way down
++ * and go_back reads it back), so bare existence is exactly the right question. */
++static int backup_exists(const char *cellfile)
++{
++  char bak[PATH_MAX];
++  struct stat sb;
++  if(!cellfile || !cellfile[0]) return 0;
++  if(!backup_file_name(bak, S(bak), cellfile)) return 0;
++  return stat(bak, &sb) ? 0 : 1;
++}
++
++/* Does cellfile's "~" hold work that is NOT already in the cell file? This is the
++ * CURRENT-level rule (issue 0264). Unlike an ancestor's, the current buffer's ~ can
++ * also be a SUPERSEDED leftover -- the cell was saved from another window/session
++ * after the ~ was written -- so bare existence would warn about junk. It counts when
++ * it is NEWER than the cell, or when the cell has no on-disk file at all (an untitled
++ * buffer's ~ is all there is). Deliberately the SAME staleness test that
++ * xschem_recover_backup already applies on open (src/xschem.tcl: "cell at least as
++ * new as the backup -> drop it silently"), which buys a statable invariant:
++ * Close/Quit warns about the current cell exactly when reopening it would offer
++ * recovery. */
++static int backup_is_live(const char *cellfile)
++{
++  char bak[PATH_MAX];
++  struct stat bsb, csb;
++  if(!cellfile || !cellfile[0]) return 0;
++  if(!backup_file_name(bak, S(bak), cellfile)) return 0;
++  if(stat(bak, &bsb)) return 0;         /* no backup at all */
++  if(stat(cellfile, &csb)) return 1;    /* backup but no cell: the ~ is all there is */
++  return bsb.st_mtime > csb.st_mtime;
++}
++
+ /* Return 1 if the current hierarchy has unsaved edits the user must be warned about
+- * before closing/quitting: the current level (xctx->modified) OR any ANCESTOR level
+- * on the descend stack whose cellName~ autosave backup still exists. Before B5,
+- * descending forced a save so every ancestor was clean-on-disk when you were deep,
+- * and checking xctx->modified alone was enough; B5/B6 let you descend past an
+- * unsaved parent (edits live in cellName~.sch), so a deep close/quit must look up
+- * the WHOLE stack. (With autosave_backup off the ~ trail is gone, so we can only
+- * report the current level -- consistent with there being no crash protection then.)
+- * doc/claude/specs/descend_hierarchy_in_memory.md */
++ * before closing/quitting: the current level (xctx->modified, OR its own cellName~
++ * still holding content the cell file does not) OR any ANCESTOR level on the descend
++ * stack whose cellName~ autosave backup still exists. Before B5, descending forced a
++ * save so every ancestor was clean-on-disk when you were deep, and checking
++ * xctx->modified alone was enough; B5/B6 let you descend past an unsaved parent
++ * (edits live in cellName~.sch), so a deep close/quit must look up the WHOLE stack.
++ * (With autosave_backup off the ~ trail is gone, so we can only report the current
++ * level -- consistent with there being no crash protection then.)
++ *
++ * ISSUE 0264: the scan used to stop at `i < currsch`, i.e. ancestors ONLY, so the
++ * cell the user is actually looking at was never in it -- and at top level
++ * (currsch == 0) the loop body never ran and the whole predicate degenerated to
++ * xctx->modified. xctx->modified is an IN-MEMORY flag: `xschem reload` and an
++ * in-place load both clear it while leaving the ~ on disk holding the only copy of
++ * the edits (load_schematic -> set_modify(0), no remove_backup), so a clean buffer
++ * beside a live ~ answered "nothing to lose here". The two levels ask different
++ * questions on purpose -- see backup_exists() and backup_is_live() above.
++ * doc/claude/specs/descend_hierarchy_in_memory.md,
++ * doc/claude/issues/0264-hierarchy-modified-ignores-the-current-cells-own-backup.md */
+ int hierarchy_modified(void)
+ {
+   int i;
+-  char bak[PATH_MAX];
+-  struct stat sb;
+   if(xctx->modified) return 1;
+   if(!tclgetboolvar("autosave_backup")) return 0;
+   for(i = 0; i < xctx->currsch; i++) {
+-    if(xctx->sch[i] && backup_file_name(bak, S(bak), xctx->sch[i]) && !stat(bak, &sb))
+-      return 1;
++    if(backup_exists(xctx->sch[i])) return 1;
+   }
++  if(backup_is_live(xctx->sch[xctx->currsch])) return 1;
+   return 0;
+ }
+ 
+diff --git a/tests/headless/test_backup_recovery.tcl b/tests/headless/test_backup_recovery.tcl
+index 54290eee..85807b3a 100644
+--- a/tests/headless/test_backup_recovery.tcl
++++ b/tests/headless/test_backup_recovery.tcl
+@@ -11,6 +11,10 @@
+ # R3  recovery offer (xschem_recover_backup): a ~ newer than the saved cell is a
+ #     crash artifact -> offered (yes restores it, no removes it); a ~ older than the
+ #     cell is stale junk -> silently removed, never offered.
++# R4  (issue 0264) a discard destroys only the work it was ASKED about: clearing a
++#     CLEAN buffer must leave its ~ alone, because that ~ is then not this session's
++#     unsaved content -- it is the only surviving copy of work Reload/open-another
++#     dropped from the buffer. The consented half (dirty + yes/no) is unchanged.
+ #
+ # Works on a /tmp copy so the ~ backups never pollute the committed fixtures.
+ 
+@@ -38,6 +42,17 @@ proc write_sch {path n} {
+   close $fp
+ }
+ 
++# count the "N " wire records of an on-disk schematic (-1 if the file is gone):
++# proves CONTENT survived, not merely a filename.
++proc count_wires {path} {
++  if {![file exists $path]} { return -1 }
++  set fp [open $path r]
++  set n 0
++  foreach l [split [read $fp] \n] { if {[string match "N *" $l]} { incr n } }
++  close $fp
++  return $n
++}
++
+ # ---------------------------------------------------------------------------
+ # R1: load_backup loads the ~ content under the cell's identity, modified.
+ # ---------------------------------------------------------------------------
+@@ -113,4 +128,87 @@ set rec [xschem_recover_backup $cell3]
+ check "R3c: a stale (older) ~ is removed without asking" \
+   [expr {$rec == 0 && $::mb_calls == 0 && ![file exists $bak3]}]
+ 
++# ---------------------------------------------------------------------------
++# R4 (issue 0264): File > New / `xschem clear` must not destroy a ~ it never
++# asked about. clear_schematic() calls save(1,0) -- which only prompts when
++# xctx->modified -- and then remove_backup() UNCONDITIONALLY. So on a CLEAN
++# buffer nothing is asked and the ~ is unlinked anyway. That ~ is exactly where
++# `xschem reload` and an in-place load of another cell leave the user's only
++# copy of their edits, so the discard eats work with zero prompts (measured).
++# The consented discards (dirty + "no", dirty + "yes") must keep removing it.
++# doc/claude/issues/0264-hierarchy-modified-ignores-the-current-cells-own-backup.md
++# ---------------------------------------------------------------------------
++set ::ask_answer no
++set ::ask_calls 0
++proc ask_save {{ask {}} {cancel 1}} { incr ::ask_calls; return $::ask_answer }
++
++# (a) precondition: headless never auto-recovers (the offer is has_x-gated), so
++# opening a cell that still has a live ~ gives a clean buffer beside a live ~.
++set cell4 $work/r4.sch
++set bak4  $work/r4~.sch
++write_sch $cell4 1
++write_sch $bak4  2                                  ;# the unsaved work: 2 wires
++file mtime $bak4 [expr {[file mtime $cell4] + 5}]   ;# ~ NEWER than the cell
++xschem load $cell4
++check "R4a: opening a cell with a live ~ is clean and keeps the ~" \
++  [expr {[xschem get modified] == 0 && [xschem get wires] == 1 && [file exists $bak4]}]
++
++# (h) tripwire for (b)/(g): save(1,0) silently force-saves when the cell's mtime
++# moved under us, which would remove the ~ for a reason unrelated to 0264.
++check "R4h: buffer is clean right before the clear (no forced save)" \
++  [expr {[xschem get modified] == 0}]
++
++set ::ask_calls 0
++xschem clear
++check "R4b: clear did NOT delete a ~ it never asked about" [file exists $bak4]
++check "R4g: that clear asked the user nothing (0 ask_save calls)" \
++  [expr {$::ask_calls == 0}]
++
++xschem load $cell4
++check "R4c: the work is still recoverable after the clear (2 wires)" \
++  [expr {[xschem load_backup $cell4] == 1 && [xschem get wires] == 2}]
++
++# (d) the measured 0264 repro end to end: edit -> File>Reload (buffer clean
++# again, ~ untouched and holding the edit) -> File>New.
++set cell5 $work/r4d.sch
++set bak5  $work/r4d~.sch
++write_sch $cell5 1
++file delete -force $bak5
++xschem load $cell5
++xschem wire 200 300 300 300                         ;# 2 wires, autosaved to the ~
++xschem reload
++check "R4d: after reload the buffer is clean but the ~ still holds the edit" \
++  [expr {[xschem get modified] == 0 && [xschem get wires] == 1 && \
++         [count_wires $bak5] == 2 && [count_wires $cell5] == 1}]
++xschem clear
++xschem load $cell5
++check "R4d: File>New after a Reload leaves the edit recoverable (2 wires)" \
++  [expr {[xschem load_backup $cell5] == 1 && [xschem get wires] == 2}]
++
++# (e) the consented half is UNCHANGED: a DIRTY buffer discarded with "no" still
++# drops its ~ (guards against a fix that guards too much).
++set cell6 $work/r4e.sch
++set bak6  $work/r4e~.sch
++write_sch $cell6 1
++file delete -force $bak6
++xschem load $cell6
++xschem wire 200 300 300 300
++check "R4e: the dirty edit autosaved its ~" [file exists $bak6]
++set ::ask_answer no; set ::ask_calls 0
++xschem clear
++check "R4e: a CONSENTED discard (asked, answered no) still removes the ~" \
++  [expr {$::ask_calls == 1 && ![file exists $bak6]}]
++
++# (f) answering "yes" saves the cell; save_schematic's own removal still runs.
++set cell7 $work/r4f.sch
++set bak7  $work/r4f~.sch
++write_sch $cell7 1
++file delete -force $bak7
++xschem load $cell7
++xschem wire 200 300 300 300
++set ::ask_answer yes; set ::ask_calls 0
++xschem clear
++check "R4f: answering yes saved the cell (2 wires) and removed the ~" \
++  [expr {$::ask_calls == 1 && ![file exists $bak7] && [count_wires $cell7] == 2}]
++
+ result
+diff --git a/tests/headless/test_hier_close_prompt.tcl b/tests/headless/test_hier_close_prompt.tcl
+index a5e730c3..aa1f5332 100644
+--- a/tests/headless/test_hier_close_prompt.tcl
++++ b/tests/headless/test_hier_close_prompt.tcl
+@@ -61,4 +61,60 @@ check "descend again into now-clean parent (currsch=1)" [expr {[xschem get currs
+ check "clean hierarchy: hierarchy_modified=0 (no ancestor ~)" \
+   [expr {[xschem get hierarchy_modified] == 0}]
+ 
++# ---------------------------------------------------------------------------
++# issue 0264: the scan covered ONLY the ancestors (`for(i = 0; i < currsch; i++)`),
++# so the cell the user is actually looking at was never in it -- and at top level
++# (currsch==0) the loop body never runs at all and the predicate degenerates to
++# xctx->modified. A clean buffer whose OWN ~ is newer than the cell (exactly what
++# `xschem reload` and an in-place load of another cell leave behind) therefore
++# reported "clean" while the only copy of the work sat on disk.
++# The current level counts when its ~ is LIVE -- newer than the cell, or the cell
++# is gone -- which is the same staleness rule xschem_recover_backup uses (R3c of
++# test_backup_recovery.tcl). That buys a statable invariant: Close/Quit warns for
++# the current cell exactly when reopening it would offer recovery. ANCESTORS keep
++# the bare-existence rule of B5/B6 (their ~ is the live descend artifact).
++# doc/claude/issues/0264-hierarchy-modified-ignores-the-current-cells-own-backup.md
++# ---------------------------------------------------------------------------
++
++# --- D/E: the CURRENT level while descended (currsch=1, ancestor scan empty) ---
++set cbak [xschem backup name]
++xschem backup write                     ;# the child's own unsaved copy on disk
++file mtime $cbak [expr {[file mtime $work/descend_child.sch] + 5}]
++check "0264 D: descended child's OWN live ~ counts (hierarchy_modified=1)" \
++  [expr {[xschem get modified] == 0 && [xschem get hierarchy_modified] == 1}]
++file delete -force $cbak
++check "0264 E: never-edited descended child with no ~ stays clean (hierarchy_modified=0)" \
++  [expr {[xschem get hierarchy_modified] == 0}]
++
++# --- A/B/C: the CURRENT level at top level (currsch=0, the loop never runs) ---
++xschem go_back
++check "0264: back at a clean top level (currsch=0, modified=0)" \
++  [expr {[xschem get currsch] == 0 && [xschem get modified] == 0}]
++set pbak [xschem backup name]
++xschem backup write
++file mtime $pbak [expr {[file mtime $work/descend_parent.sch] + 5}]
++check "0264 A: clean top level whose own ~ is NEWER than the cell -> hierarchy_modified=1" \
++  [expr {[xschem get modified] == 0 && [xschem get hierarchy_modified] == 1}]
++
++file mtime $pbak [expr {[file mtime $work/descend_parent.sch] - 5}]
++check "0264 C: a superseded (older) ~ is stale junk -> hierarchy_modified=0" \
++  [expr {[xschem get hierarchy_modified] == 0}]
++
++file delete -force $pbak
++check "0264 B: no ~ on disk at all -> hierarchy_modified=0" \
++  [expr {[xschem get hierarchy_modified] == 0}]
++
++# --- F/G: autosave_backup off -> no ~ trail to consult, only xctx->modified ---
++xschem backup write
++file mtime $pbak [expr {[file mtime $work/descend_parent.sch] + 5}]
++set autosave_backup 0
++check "0264 F: autosave_backup off -> a live ~ does not count (hierarchy_modified=0)" \
++  [expr {[xschem get hierarchy_modified] == 0}]
++xschem wire 200 300 300 300
++check "0264 G: autosave_backup off -> a real edit still counts (hierarchy_modified=1)" \
++  [expr {[xschem get hierarchy_modified] == 1}]
++set autosave_backup 1
++file delete -force $pbak
++xschem load $work/descend_parent.sch    ;# leave the buffer clean for exit
++
+ result

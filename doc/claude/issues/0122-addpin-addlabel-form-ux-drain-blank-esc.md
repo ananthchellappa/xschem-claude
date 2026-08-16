@@ -28,7 +28,9 @@ blank-reopen both forms, Esc idle/armed/entry-focus). Headless regressions
 `after_drop`'s only "a real drop happened" witness was `armed && !placing()`. If the user left the
 form open with a name armed and started an **unrelated** canvas gesture (e.g. `w` wire, `m` move)
 that calls `abort_operation`, the C side cleared `START_SYMPIN` (`placing()→0`) but nothing reset
-the Tcl `armed` flag or the `::sympin_place` latch. The next stray left-`ButtonRelease` then
+the Tcl `armed` flag or the `::sympin_place` latch (**issue 0246, 2026-08-11: that latch is gone
+— the drop witness below is now split per owner, `sympin_drops_pin` / `sympin_drops_label`, and
+each form compares only its own part**). The next stray left-`ButtonRelease` then
 satisfied every `after_drop` guard, advanced the queue, and (with fix 1) drained an un-placed name.
 
 Fix: a **per-context commit counter** `xctx->sympin_drops` (xschem.h), bumped **only** in

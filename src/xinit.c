@@ -2670,11 +2670,14 @@ void change_linewidth(double w)
   /* choose line width automatically based on zoom */
   dbg(1, "change_linewidth(): w = %g, win_path=%s lw=%g\n", w, xctx->current_win_path, xctx->lw);
   if(w<0. || xctx->lw == -1.0) {
-    double cs = tclgetdoublevar("cadsnap");
+    /* NOT the live cadsnap: the reference length is fixed at the startup snap unless
+     * `linewidth_follows_snap` is set, so changing the snap does not restyle the
+     * drawing (linewidth_ref_snap, actions.c). */
+    double cs = linewidth_ref_snap();
     if(xctx->change_lw)  {
       xctx->lw=xctx->mooz * 0.09 * cs * (1.0 + MAJOR(xctx->min_lw, 1.0) / 4.0);
       if(xctx->lw > 100.) xctx->lw = 100.;
-      xctx->cadhalfdotsize = CADHALFDOTSIZE * (cs < 20. ? cs : 20.) / 10.;
+      set_dotsize_from_snap();
     }
   /* explicitly set line width */
   } else {
@@ -3573,9 +3576,40 @@ int Tcl_AppInit(Tcl_Interp *inter)
     if(xctx->change_lw) l_width = -1.0;
     change_linewidth(l_width);
     dbg(1, "Tcl_AppInit(): done xinit()\n");
-    /* Set backing store window attribute */
-    winattr.backing_store = WhenMapped;
-    /* winattr.backing_store = NotUseful; */
+    /* The drawing window's backing-store attribute. See
+     * doc/claude/issues/0413-backing-store-on-the-drawing-window-kills-vcxsrv.md.
+     *
+     * ⚠⚠ NotUseful, NOT WhenMapped, AND THE DEFAULT IS THE WHOLE FIX. Asking a
+     * server for backing store on this window lets a CLIENT KILL THE SERVER:
+     * under VcXsrv (21.1.16, -multiwindow, the usual Windows/WSL setup) moving
+     * this window inside its toplevel — which is what packing ANY widget to its
+     * left or above it does, e.g. the waveform viewer's Ctrl-B Signal Browser —
+     * makes VcXsrv's own internal window manager issue a ConfigureWindow that
+     * comes back BadMatch, and winMultiWindowWMProc treats that as fatal:
+     *
+     *   winMultiWindowWMProc - Error code: 8 (Match), Major opcode: 12 (ConfigureWindow)
+     *
+     * The X server then exits, taking every other client with it. Measured A/B
+     * on one binary: WhenMapped kills it every time, NotUseful survives every
+     * time, same gesture, same server. Packing to the RIGHT of the window (a
+     * resize with no move) and `wm geometry` on the toplevel are both harmless,
+     * which is what makes it a *move* bug.
+     *
+     * ⚠ IT COSTS US NOTHING, which is why this is a fix and not a workaround.
+     * XSCHEM double-buffers into xctx->save_pixmap and handle_expose()
+     * (callback.c) repaints from it with MyXCopyArea on every Expose — the
+     * comment there has said "needed if no backing store available on the
+     * server" since 2017. Server-side backing store was only ever a redundant
+     * second copy of a buffer we already keep.
+     *
+     * XSCHEM_BACKING_STORE=1 restores the old request for anyone who wants to
+     * measure it; there is deliberately no Tcl preference, because the only
+     * thing the old value buys is the crash. */
+    winattr.backing_store = NotUseful;
+    {
+      const char *bs_env = getenv("XSCHEM_BACKING_STORE");
+      if(bs_env && bs_env[0] == '1') winattr.backing_store = WhenMapped;
+    }
     Tk_ChangeWindowAttributes(tkwindow, CWBackingStore, &winattr);
 
     dbg(1, "Tcl_AppInit(): sizeof xInstance=%lu , sizeof xSymbol=%lu\n",

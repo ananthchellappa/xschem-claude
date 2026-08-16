@@ -82,10 +82,21 @@ behaviour change for a single owner. The existing three call sites migrate one a
 Keying on the widget path costs nothing and removes the 0122-F3 single-canvas assumption
 for free. `addpin`/`addlabel` can keep passing `.drw` until someone fixes them.
 
-### D3 — does this need C? → **no**
+### D3 — does this need C? → **no** … ~~and Tk seizes do not displace the C ESC arm~~ **WRONG**
 Pure Tcl. The C side already has its own mode teardown (`abort_operation()`,
-`callback.c:246`) and its own ESC arm (`callback.c:6918`), and neither is displaced by
-Tk-level seizes — the `break` is what keeps them apart.
+`callback.c:246`) and its own ESC arm (`callback.c:6918`), ~~and neither is displaced by
+Tk-level seizes — the `break` is what keeps them apart.~~
+
+**CORRECTED 2026-08-11 (issue 0245).** The struck sentence is exactly backwards and the `break`
+is not what keeps them apart. Tk fires the **most specific** binding for a bindtag: with both
+`<KeyPress>` and `<Key-Escape>` bound on `.drw`, Escape runs *only* the `<Key-Escape>` script —
+**with or without `break`** — so a Tk-level seize **does** displace the C ESC arm, completely.
+Worse, Tk routes a key to `[focus]`, so a seize on a *form's own toplevel* displaces it just as
+effectively as one on `.drw`. Measured under xvfb: an armed `xschem wire` (`ui_state` 65536,
+`ui_state2` 1) survived a real canvas Escape **byte-identically** while a placement form was
+open. 0245 fixed it by giving the C terminal a name (`escape_terminal()`) and a verb
+(`xschem escape`) that every seizing handler forwards to. The D3 verdict itself still stands —
+the *stack* is pure Tcl — but "needs no C" was true only by accident.
 
 ### D4 — is this worth fixing on its own merits? — OPEN, and now the *only* question
 Standalone, it is a latent hazard with no known user-visible symptom (nobody has reported

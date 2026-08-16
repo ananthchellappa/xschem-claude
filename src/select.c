@@ -320,6 +320,196 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
   return xctx->dblgrow_level;
 }
 
+/* ===========================================================================
+ * Logical (net-name) connected select -- doc/claude/specs/select_same_net_by_label.md
+ *
+ * The geometric twin of this feature is select_grow_connected_step() above (the
+ * Cadence double-click grow): it walks COPPER, so it stops where the wire stops.
+ * This one walks the NETLIST: it selects every wire segment whose node name
+ * equals the seed's, so segments that touch nothing at all but carry the same
+ * wire-label -- and are therefore the same node in the SPICE netlist -- come
+ * along, together with the labels/ports that name them.
+ *
+ * Node names come from prepare_netlist_structs(0), the same pass net highlighting
+ * uses, so "same net" here means exactly what the netlister means. Unnamed nets
+ * get their own synthetic "#netN" name per electrically distinct net, so on an
+ * unlabelled net this degenerates to "the whole physical net" and never
+ * over-selects.
+ *
+ * MATCHING IS ON THE WHOLE NODE NAME. Bus notation is not expanded: a segment
+ * labelled A[3:0] and one labelled A[1] are different names and are NOT selected
+ * together, even though the netlist shorts A[1] into the bus. Highlighting
+ * (bus_hilight_hash_lookup) does expand; doing it here would mean either
+ * mutating the highlight tables or duplicating the expander, and whole-name
+ * matching is what "same wire-label" means to the user.
+ * ===========================================================================*/
+
+/* Mirror one human-readable outcome line to BOTH sinks the action log feeds:
+ * the log FILE (as a '#= ' comment, so the file stays source-able for replay)
+ * and the CIW pane. log_action() below carries the replayable command itself;
+ * this carries the result. The text travels to Tcl through a variable and is
+ * never substituted into the eval string, so a net name containing braces,
+ * brackets or '$' cannot be re-interpreted (same rule as util.c's
+ * log_action_echo, which owns the ciw_line variable). */
+static void select_net_report(const char *msg)
+{
+  log_action_result(msg);   /* util.c: the shared file '#= ' + CIW-pane sink */
+}
+
+/* The net name carried by the object under (mx,my), or NULL if there is none.
+ * Resolution order follows what the user sees under the cursor:
+ *   1. an instance PIN inside the tight pin pick radius (find_closest_pin, the
+ *      same test en_pin_select uses) -> the net wired to that pin, so the chord
+ *      also works when aimed at a device terminal rather than at the wire;
+ *   2. a wire -> wire.node;
+ *   3. a net-label / port / probe / show_label / bus_tap instance -> node[0]
+ *      (IS_LABEL_SH_OR_PIN, matching select_hilight_net's rule).
+ * Anything else (device body, text, graphics, empty space) has no net.
+ * The caller must have run prepare_netlist_structs() first. */
+static const char *net_name_at(double mx, double my)
+{
+  Selected sel;
+  char *type;
+
+  if(find_closest_pin(mx, my, &sel)) {
+    int rects = (xctx->inst[sel.n].ptr + xctx->sym)->rects[PINLAYER];
+    if(xctx->inst[sel.n].node && (int)sel.col < rects) return xctx->inst[sel.n].node[sel.col];
+    return NULL;
+  }
+  sel = find_closest_obj(mx, my, 1); /* read-only: no selection side effect */
+  if(sel.type == WIRE) return xctx->wire[sel.n].node;
+  if(sel.type == ELEMENT && xctx->inst[sel.n].ptr >= 0) {
+    type = (xctx->inst[sel.n].ptr + xctx->sym)->type;
+    if(type && xctx->inst[sel.n].node && IS_LABEL_SH_OR_PIN(type)) return xctx->inst[sel.n].node[0];
+  }
+  return NULL;
+}
+
+/* Select every wire and every net-label/port/probe instance whose node name is
+ * `netname`, adding to whatever is already selected. Counts land in *n_wires /
+ * *n_labels (accumulated, so a multi-net call totals up). Selection is done with
+ * the fast+nodraw form; the caller strokes the whole selection once at the end.
+ * Returns how many objects this call newly selected. */
+static int select_objects_on_net(const char *netname, int *n_wires, int *n_labels)
+{
+  int i, added = 0;
+  char *type;
+
+  for(i = 0; i < xctx->wires; ++i) {
+    if(xctx->wire[i].sel == SELECTED) continue;
+    if(!xctx->wire[i].node) continue;
+    if(strcmp(xctx->wire[i].node, netname)) continue;
+    select_wire(i, SELECTED, 3, 1); /* quiet + nodraw; override_lock (as select_connected_nets) */
+    ++added;
+    ++(*n_wires);
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].sel == SELECTED) continue;
+    if(xctx->inst[i].ptr < 0) continue;
+    if(!xctx->inst[i].node || !xctx->inst[i].node[0]) continue;
+    type = (xctx->inst[i].ptr + xctx->sym)->type;
+    if(!type || !IS_LABEL_SH_OR_PIN(type)) continue;
+    if(strcmp(xctx->inst[i].node[0], netname)) continue;
+    select_element(i, SELECTED, 3, 1);
+    ++added;
+    ++(*n_labels);
+  }
+  return added;
+}
+
+/* Select the whole LOGICAL net -- see the block comment above. Two entry modes,
+ * mirroring select_grow_connected_step():
+ *
+ * - pick_seed (the interactive chord / `xschem select_same_net x y`): the object
+ *   under (mx,my) names the net.
+ * - !pick_seed (`xschem select_same_net`): every wire / net-label already
+ *   selected names a net, and ALL of those nets are selected in full. This is
+ *   the form the command palette and scripts use.
+ *
+ * add==0 replaces the selection, add==1 grows it.
+ *
+ * Self-logs at the CORE (the recurring issue-0071 gap: the shared unit is this
+ * function, not the command string -- the bound chord calls it directly from
+ * callback.c and would otherwise log nothing). Both the scheduler branch and the
+ * action wrapper therefore must NOT log; the csv rows are marked nolog so
+ * dispatch_input_action's Layer A line cannot double up either.
+ * Returns the number of objects selected. */
+int select_same_net_by_name(double mx, double my, int pick_seed, int add)
+{
+  char **names = NULL;
+  int nnames = 0;
+  int i, j, n, added = 0, n_wires = 0, n_labels = 0;
+  char msg[512];
+  char *type;
+
+  prepare_netlist_structs(0); /* fills wire[].node and inst[].node */
+  if(xctx->need_reb_sel_arr) rebuild_selected_array();
+
+  /* Collect the seed net name(s). Strings are COPIED out of the node fields
+   * before anything touches the selection, so no later call can invalidate
+   * them under us. */
+  if(pick_seed) {
+    const char *nm = net_name_at(mx, my);
+    if(nm && nm[0]) {
+      names = my_malloc(_ALLOC_ID_, sizeof(char *));
+      names[0] = NULL;
+      my_strdup(_ALLOC_ID_, &names[0], nm);
+      nnames = 1;
+    }
+  } else {
+    for(n = 0; n < xctx->lastsel; ++n) {
+      const char *nm = NULL;
+      i = xctx->sel_array[n].n;
+      if(xctx->sel_array[n].type == WIRE) nm = xctx->wire[i].node;
+      else if(xctx->sel_array[n].type == ELEMENT && xctx->inst[i].ptr >= 0) {
+        type = (xctx->inst[i].ptr + xctx->sym)->type;
+        if(type && xctx->inst[i].node && IS_LABEL_SH_OR_PIN(type)) nm = xctx->inst[i].node[0];
+      }
+      if(!nm || !nm[0]) continue;
+      for(j = 0; j < nnames; ++j) if(!strcmp(names[j], nm)) break;
+      if(j < nnames) continue; /* net already collected */
+      my_realloc(_ALLOC_ID_, &names, (size_t)(nnames + 1) * sizeof(char *));
+      names[nnames] = NULL;
+      my_strdup(_ALLOC_ID_, &names[nnames], nm);
+      ++nnames;
+    }
+  }
+
+  if(nnames == 0) {
+    /* Nothing to work from: report and leave the selection exactly as it was.
+     * No log_action -- a no-op must not leave a replayable phantom line (same
+     * rule as select_grow_connected_step's empty-click early return). */
+    my_snprintf(msg, S(msg), "select_same_net: %s", pick_seed
+                ? "no net under the pointer (aim at a wire, a net label or an instance pin)"
+                : "no wire or net label in the current selection");
+    select_net_report(msg);
+    if(xctx->need_reb_sel_arr) rebuild_selected_array();
+    return 0;
+  }
+
+  if(!add) unselect_all(1);
+  for(j = 0; j < nnames; ++j) added += select_objects_on_net(names[j], &n_wires, &n_labels);
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+
+  if(pick_seed) log_action("xschem select_same_net %.10g %.10g%s",
+                           snap_to_grid(mx), snap_to_grid(my), add ? " add" : "");
+  else          log_action("xschem select_same_net%s", add ? " add" : "");
+  if(nnames == 1) {
+    my_snprintf(msg, S(msg), "select_same_net: net %s -- %d wire segment%s, %d label/pin%s selected",
+                names[0], n_wires, n_wires == 1 ? "" : "s", n_labels, n_labels == 1 ? "" : "s");
+  } else {
+    my_snprintf(msg, S(msg), "select_same_net: %d nets -- %d wire segment%s, %d label/pin%s selected",
+                nnames, n_wires, n_wires == 1 ? "" : "s", n_labels, n_labels == 1 ? "" : "s");
+  }
+  select_net_report(msg);
+
+  for(j = 0; j < nnames; ++j) my_free(_ALLOC_ID_, &names[j]);
+  my_free(_ALLOC_ID_, &names);
+  if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
+  return added;
+}
+
 int select_dangling_nets(void)
 {
   int netlist_lvs_ignore=tclgetboolvar("lvs_ignore");

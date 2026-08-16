@@ -163,16 +163,26 @@ for _r in $(seq 1 "$REPEAT"); do
       fi
     fi
 
-    # A SELF-SKIP IS NOT A PASS. full_audit.sh:131's is_skip runs before its
-    # is_pass for exactly this reason, and without it the sentinel arm above
-    # forges a green: test_grid_toggle_sel_gc.tcl:34-36 prints "SKIP: no X
-    # connection" and a bare "OVERALL: ok" with zero checks run, and the legacy
-    # banner "RESULT: ALL PASS (0 checks, skipped: no X)" already scored a hollow
-    # PASS here through the ^RESULT path. SKIP is neither pass nor fail
-    # (full_audit.sh:7); a nonzero exit is never a skip.
+    # A SELF-SKIP IS NOT A PASS. full_audit.sh's is_skip runs before its is_pass
+    # for exactly this reason, and without it the sentinel arm above forges a
+    # green: test_grid_toggle_sel_gc.tcl:34-36 prints "SKIP: no X connection" and
+    # a bare "OVERALL: ok" with zero checks run, and the legacy banner
+    # "RESULT: ALL PASS (0 checks, skipped: no X)" already scored a hollow PASS
+    # here through the ^RESULT path. SKIP is neither pass nor fail; a nonzero exit
+    # is never a skip.
+    #
+    # THE REGEXP IS LINE-ANCHORED, and must stay byte-identical to full_audit.sh's
+    # is_skip (issue 0354 H1; asserted by test_audit_classifier.tcl so the two
+    # copies cannot drift). Unanchored, "skipped: no X" matches inside a CHECK
+    # NAME: test_save_reload_copy_selflog.tcl:139,205,280 name three checks
+    # "keyboard ... (skipped: no X)", so the suite ran every check, passed and
+    # exited 0 while this driver reported SKIP and full_audit reported PASS --
+    # and since run_suites.sh exits 0 on skips, that read as a green run in which
+    # four suites appeared never to have executed (merge 5,
+    # doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md section 5.5).
     skipped=0
     if [ "$ec" -eq 0 ] && printf '%s\n' "$out" \
-         | grep -qE 'RESULT: SKIP|skipped: no X|SKIP: no X connection'; then
+         | grep -qE '^(RESULT: SKIP|SKIP: no X connection|RESULT: ALL PASS \(0 checks, skipped: no X\))'; then
       skipped=1
     fi
 

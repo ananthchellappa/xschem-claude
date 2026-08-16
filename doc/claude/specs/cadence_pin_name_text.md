@@ -546,9 +546,17 @@ pin tokens, no separate persisted object.
     preview always has it) else pushes a fresh baseline; `clear_drawing()` resets the flag;
     `abort_operation`'s `delete(0)` is likewise gated on START_SYMPIN. Regression test 11c
     (load pinned sym → arm → clear → re-arm → abort → undo must NOT resurrect the cleared
-    pin) sabotage-verified (got 1 want 0). (F2) the canvas `<Key-Escape>` binding now only
+    pin) sabotage-verified (got 1 want 0). (F2) ~~the canvas `<Key-Escape>` binding now only
     swallows Esc *while actually placing* (`if {[addpin::placing]}`), so Esc still cancels an
-    unrelated in-progress wire/move when the form is open but idle. (F5) `addpin::arm` caches
+    unrelated in-progress wire/move when the form is open but idle.~~ **F2 CORRECTED
+    2026-08-11 — see issue 0245.** That guard did not survive, and the property it claims was
+    never true afterwards: the binding became an unconditional `{if {[winfo exists .addpin]}
+    {addpin::escape; break}}`, and `addpin::escape`'s `abort_if_placing` is itself gated on
+    `START_SYMPIN`. So with the form open but **idle** the entire Escape was `destroy` plus a
+    variable write, and it cancelled **nothing** — measured under xvfb, an armed `xschem wire`
+    (`ui_state` 65536, `ui_state2` 1) survived it byte-identically and the next canvas click
+    began an unrequested wire draw. 0245 restored the intent by routing both Escape paths
+    through `addpin::canvas_escape` → `xschem escape` → `escape_terminal()`. (F5) `addpin::arm` caches
     the last-armed `{name dir}` and early-returns when unchanged AND still placing, so
     non-editing keystrokes (arrows/Shift/Ctrl/Tab) no longer tear down + rebuild the preview.
     DEFERRED (user call): F3 the redundant no-op undo baseline after closing the form (extra

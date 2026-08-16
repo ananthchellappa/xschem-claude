@@ -258,6 +258,154 @@ update idletasks
 check "CI13e bare reopen keeps the last fields" [expr {$::ciform::cell eq {withsym}}] "(=> $::ciform::cell)"
 xschem abort_operation
 
+# === CI14 — issue 0245: the `.drw <Key-Escape>` grab must not SWALLOW canvas Escape ====
+# The form seizes the single `.drw <Key-Escape>` slot so Escape closes it from the canvas.
+# create_instance.tcl does that with an UNGUARDED `{ciform::escape; break}` -- no
+# `winfo exists` test at all -- and ciform::escape is `armed 0; abort_if_placing; destroy`,
+# where abort_if_placing only fires while PLACE_SYMBOL is set. With the form open but no
+# preview armed, the whole Escape is a destroy, and the sixteen lines of callback.c's
+# `case XK_Escape:` never run: no abort_operation, no tclstop, no MENUSTARTWIRE clear, no
+# snap-cursor erase, no cadence last_command fixup.
+# Measured under xvfb: `xschem wire` (ui=65536 ui2=1), one real `<Key-Escape>` on .drw with
+# a form open -> ui/ui2 BYTE-IDENTICAL, and the next canvas click began an unrequested wire
+# draw (ui 65537, last_command 1). With .addpin AND .addlabel open it took THREE Escapes to
+# reach ui=0. Tk delivers Escape to `<Key-Escape>` ONLY -- the generic `<KeyPress>` -> C
+# dispatcher on the same bindtag never fires, with or without the `break` -- so this half is
+# measurable only under a real display, which is why it lives in THIS suite.
+# The fix: a TOTAL slot script (form alive -> ciform::canvas_escape, else -> `xschem escape`,
+# the named C terminal) and a release-to-sibling on_destroy instead of a blanket unbind.
+proc esc14 {} { focus -force .drw ; update ; event generate .drw <Key-Escape> ; update }
+
+catch {destroy .addlabel}; catch {destroy .addpin}; catch {destroy .mkinst}
+catch {destroy .ciform}
+xschem clear force
+xschem abort_operation
+ciform::open
+update idletasks
+set b14 [bind .drw <Key-Escape>]
+check "CI14a the slot names the form it is tearing down" \
+  [expr {[string match {*winfo exists .ciform*} $b14] && \
+         [string match {*ciform::canvas_escape*} $b14]}] "(=> '$b14')"
+check "CI14b the slot is TOTAL: a dead form falls through to the C terminal" \
+  [string match {*xschem escape*} $b14] "(=> '$b14')"
+
+# CI14c/d — REAL delivery: one canvas Escape with the form open must run the C terminal.
+xschem abort_operation
+xschem wire
+check "CI14c precondition: menu wire armed" \
+  [expr {[xschem get ui_state] == 65536 && [xschem get ui_state2] == 1}] \
+  "(=> ui=[xschem get ui_state] ui2=[xschem get ui_state2])"
+esc14
+check "CI14c one canvas Escape aborted the arm" [expr {[xschem get ui_state] == 0}] \
+  "(=> ui=[xschem get ui_state])"
+check "CI14d one canvas Escape cleared MENUSTARTWIRE" [expr {[xschem get ui_state2] == 0}] \
+  "(=> ui2=[xschem get ui_state2])"
+xschem abort_operation
+
+# CI14e — 0122-E2 clobber: ciform::on_destroy clears the SHARED slot unconditionally, so
+#   closing the Create-Instance form strands a still-open Add-Wire-Label form with no canvas
+#   Escape at all. Asserted on the SLOT CONTENT, not on the Escape outcome: with a total slot
+#   script the Escape still works, so an outcome-only row would stay green over the clobber.
+catch {destroy .ciform}; catch {destroy .addlabel}
+xschem clear force
+xschem abort_operation
+addlabel::open
+update idletasks
+ciform::open
+update idletasks
+destroy .ciform
+update idletasks
+check "CI14e closing the form releases the slot to the live sibling" \
+  [expr {[winfo exists .addlabel] && [string match {*addlabel::*} [bind .drw <Key-Escape>]]}] \
+  "(=> alive=[winfo exists .addlabel] slot='[bind .drw <Key-Escape>]')"
+catch {destroy .addlabel}
+update idletasks
+
+# CI14f — ONE Escape is enough. Two sibling forms open, addlabel owns the slot; today the
+#   first Escape only closes addlabel and hands the slot to addpin, the second closes addpin,
+#   and only the THIRD reaches C.
+xschem clear force
+xschem abort_operation
+addpin::open
+update idletasks
+addlabel::open
+update idletasks
+xschem abort_operation
+xschem wire
+check "CI14f precondition: two forms open, wire armed" \
+  [expr {[winfo exists .addpin] && [winfo exists .addlabel] && [xschem get ui_state] == 65536}] \
+  "(=> ui=[xschem get ui_state])"
+esc14
+check "CI14f one Escape aborts the gesture with two forms open" \
+  [expr {[xschem get ui_state] == 0}] "(=> ui=[xschem get ui_state])"
+catch {destroy .addlabel}; catch {destroy .addpin}
+update idletasks
+
+# CI14g — a STALE grab. clone_canvas_bindings copies a live grab onto every newly created
+#   canvas and release_esc only ever unbinds `.drw`, so a grab whose form is gone becomes a
+#   permanent Escape sink (0122-F3). The total slot script makes that harmless.
+xschem clear force
+xschem abort_operation
+catch {destroy .addlabel}
+addlabel::grab_esc          ;# the grab, with no .addlabel toplevel behind it
+xschem wire
+check "CI14g precondition: stale grab installed, wire armed" \
+  [expr {![winfo exists .addlabel] && [bind .drw <Key-Escape>] ne {} && \
+         [xschem get ui_state] == 65536}] "(=> ui=[xschem get ui_state])"
+esc14
+check "CI14g a stale grab no longer swallows Escape" [expr {[xschem get ui_state] == 0}] \
+  "(=> ui=[xschem get ui_state])"
+catch {bind .drw <Key-Escape> {}}
+xschem abort_operation
+
+# === CI15 — issue 0245, the half CI14 cannot see: Tk routes a key to `[focus]`, NOT to the
+#   window named in `event generate`. Every placement form ends open() by focusing its first
+#   entry (.addlabel.f.ename / .addpin.f.ename / .ciform.f.elib), so from the moment the form
+#   appears until the user next CLICKS the canvas it is the form's own toplevel <Key-Escape>
+#   that fires and the `.drw` slot never runs at all. CI14's esc14 does `focus -force .drw`
+#   first, which manufactures a state the product does not reach unaided -- so CI14 alone
+#   stayed green while the defect was still live on the plainest user path there is:
+#     arm a wire, open Add-Wire-Label from the menu, press Escape.
+#   Measured under xvfb with the form-focused binding still `{addlabel::escape}`:
+#     armed ui=65536 ui2=1 -> Escape -> ui=65536 ui2=1 (BYTE-IDENTICAL), form destroyed,
+#   i.e. exactly the 0245 damage, and the next canvas click began an unrequested wire draw.
+#   Note the arm SURVIVES form open (measured: `xschem wire` then addlabel::open leaves
+#   ui=65536 ui2=1 and moves focus into the form), so the sequence needs no trickery.
+#   The fix points each form's own <Key-Escape> at ::canvas_escape too. The Close BUTTON
+#   keeps plain ::escape -- rows L3/P3 in the sibling suites pin that.
+#   DELIBERATELY no `focus -force` here: these rows must fail if form focus ever regresses.
+proc esc15 {} { event generate .drw <Key-Escape> ; update }
+
+foreach {ci15 opener top wantfocus} {
+  a addlabel::open .addlabel .addlabel.f.ename
+  b addpin::open   .addpin   .addpin.f.ename
+  c ciform::open   .ciform   .ciform.f.elib
+} {
+  foreach w {.addlabel .addpin .ciform .mkinst} { catch {destroy $w} }
+  xschem clear force
+  xschem abort_operation
+  xschem abort_operation
+  focus -force .drw
+  update
+  catch {$opener}
+  update                      ;# FULL update: `update idletasks` does not process the X
+                              ;# FocusIn that open()'s `focus $w.f.ename` depends on, and
+                              ;# without it focus stays on .drw and these rows go hollow --
+                              ;# they would pass through the `.drw` slot CI14 already covers.
+  xschem wire
+  check "CI15$ci15 precondition: $top open, focus in the FORM, wire armed" \
+    [expr {[winfo exists $top] && [focus] eq $wantfocus && \
+           [xschem get ui_state] == 65536 && [xschem get ui_state2] == 1}] \
+    "(=> focus=[focus] ui=[xschem get ui_state] ui2=[xschem get ui_state2])"
+  esc15
+  check "CI15$ci15 form-focused Escape aborted the arm ($top)" \
+    [expr {[xschem get ui_state] == 0 && [xschem get ui_state2] == 0}] \
+    "(=> ui=[xschem get ui_state] ui2=[xschem get ui_state2])"
+  xschem abort_operation
+}
+foreach w {.addlabel .addpin .ciform .mkinst} { catch {destroy $w} }
+catch {bind .drw <Key-Escape> {}}
+
 catch {destroy .ciform}; catch {destroy .mkinst}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

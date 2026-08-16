@@ -5655,18 +5655,80 @@ proc newwin_restore_unsaved {src} {
   catch { xschem load_backup $src }
 }
 
+# Say WHY a new-window descend did not happen. Held (issue 0248), because the plain
+# status line is clobbered one call later by select.c's "n= x= y= w= h=" info line --
+# the same discipline the C-side descend refusals use (descend_speak, actions.c).
+proc newwin_refuse {msg} {
+  catch { xschem statusmsg -hold $msg }
+  if {[info procs ciw_echo] ne {}} { ciw_echo $msg error }
+  return 0
+}
+
+# Did `xschem schematic_in_new_window` really open something?
+#
+# Two ways it can say yes and mean no, and BOTH end with open_sub_schematic
+# descending into somebody else's window (issue 0256 c1/c2):
+#   * schematic_in_new_window returns 0 for a selection it will not act on -- but the
+#     old code read last_created_window and ran copy_hierarchy BEFORE testing $res.
+#   * new_schematic() is void on refusal: past MAX_NEW_WINDOWS it logs "no more free
+#     slots" and returns, and schematic_in_new_window still returns 1. last_created_window
+#     is a static in xinit.c, only ever assigned on a SUCCESSFUL create and never reset,
+#     so it then names an unrelated earlier window -- the user's 20th window gets hijacked
+#     and the call reports success.
+# The window COUNT is the honest test for the second one: a slot was taken or it was not.
+# (A last_created_window delta is not: destroying a window frees its slot, so the next
+# create legitimately reuses the same path.)
+# Closed in Tcl rather than by plumbing a return value out of new_schematic()/
+# create_new_tab()/create_new_window() -- see issue 0256 for that (larger, deferred) fix.
+proc newwin_open_ok {res nwin_before} {
+  if {!$res} { return 0 }
+  if {[llength [xschem windows]] <= $nwin_before} { return 0 }
+  if {[xschem get last_created_window] eq {}} { return 0 }
+  return 1
+}
+
+# The new window is open but the descend into it was refused (a label/title-block
+# instance, a missing symbol, ...). Leaving it up is issue 0256(b'): an orphan window
+# sitting on the PARENT sheet, reported to the caller as a successful descend.
+# Tear it down and report the reason the C side recorded. issue 0251.
+proc newwin_descend_failed {src_win new_win} {
+  set why [xschem get descend_error]
+  # must be IN the tab to close it (destroy_tab refuses otherwise); and the doomed
+  # context carries the source's restored edits, so drop its modified flag first or the
+  # close prompts about data that still lives in the source window. set_modify 0 does
+  # NOT delete the crash-recovery ~ backup.
+  catch { xschem new_schematic switch $new_win }
+  catch { xschem set_modify 0 }
+  catch { xschem new_schematic destroy $new_win }
+  catch { xschem new_schematic switch $src_win }
+  set tail [expr {$why eq {} ? {} : " ($why)"}]
+  newwin_refuse "Open in new window: cannot descend into the selected instance$tail"
+  return 0
+}
+
 # opens indicated instance (or selected one) into a separate tab/window
 # keeping the hierarchy path, as it was descended into (as with 'e' key).
+#
+# issue 0256. Three things this proc used to get wrong, all of the same shape as the
+# rest of the descend census -- a refusal that is indistinguishable from a success:
+#  (a) it refused, silently and without creating anything, any selection of 2+ objects
+#      (control fell into the else-arm written for the ARGUMENT form, where
+#      `lsearch -exact $instlist {}` is -1) -- while `e` accepts that same selection.
+#  (b) it returned 1 for a selection with no instance in it, having duplicated the
+#      PARENT sheet into a new window and descended nothing.
+#  (c) it read last_created_window and ran copy_hierarchy before testing whether the
+#      open had worked at all.
+# The results of `xschem select instance` and `xschem descend` were both discarded and
+# the tail `return 1` was unconditional.
 proc open_sub_schematic {{inst {}} {inst_number 0}} {
   global search_schematic
   set rawfile {}
   set n_sel [xschem get lastsel]
   set current_win_path [xschem get current_win_path] ;# .drw or .x1.drw or .x2.drw ...
-  # carry the source window's unsaved edits across to the new window (issue 0037) -- capture
-  # BEFORE unselect_all / opening the new window, while the source is still the active context
-  set src_unsaved [newwin_capture_unsaved]
 
   if { $inst eq {} && $n_sel == 0} {
+    # documented arm: nothing selected -> re-open THIS sheet in another window/tab
+    set src_unsaved [newwin_capture_unsaved]
     if {$search_schematic == 1} {
       set f [abs_sym_path [xschem get current_name] {.sch}]
     } else {
@@ -5674,49 +5736,69 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
     }
     xschem new_schematic create {} $f
     return 1
-  } elseif { $inst eq {} && $n_sel == 1} {
+  } elseif { $inst eq {} } {
+    # ANY selection that contains an instance -- selected_set is ELEMENT-only, so a
+    # rubber-band that also caught wires/text/pins resolves to the same instance `e`
+    # would descend into. 0256(a).
     set inst [lindex [xschem selected_set] 0]
+    if {$inst eq {}} {
+      # 0256(b): this used to fall through the whole window-creating body and return 1
+      return [newwin_refuse "Open in new window: select an instance to descend into"]
+    }
     xschem unselect_all
   } else {
     set instlist {}
     # get list of instances (instance names only)
     foreach {i s t} [xschem instance_list] {lappend instlist $i}
-    # if provided $inst is not in the list return 0
-    if {[lsearch -exact $instlist $inst] == -1} {return 0}
+    # if provided $inst is not in the list refuse -- and now say so
+    if {[lsearch -exact $instlist $inst] == -1} {
+      return [newwin_refuse "Open in new window: no such instance: $inst"]
+    }
   }
+  # carry the source window's unsaved edits across to the new window (issue 0037) -- capture
+  # BEFORE opening the new window, while the source is still the active context, but AFTER
+  # the refusals above: `xschem backup write` for an operation that never happened leaves a
+  # <cell>~.sch nobody asked for (issue 0256).
+  set src_unsaved [newwin_capture_unsaved]
   # open a new top level in another window / tab
   if {[xschem raw loaded] >= 0} {
     set rawfile [xschem raw_query rawfile]
     set sim_type [xschem raw_query sim_type]
     set raw_level [xschem get raw_level]
   }
+  set nwin_before [llength [xschem windows]]
   set res [xschem schematic_in_new_window force]
+  # 0256(c): check the open BEFORE touching last_created_window -- on failure it names a
+  # stale earlier window, and copy_hierarchy into it clobbers that window's hierarchy.
+  if {![newwin_open_ok $res $nwin_before]} {
+    return [newwin_refuse "Open in new window: could not open a new window or tab"]
+  }
   set new_window_path [xschem get last_created_window] ;# something like .x1.drw
   xschem copy_hierarchy $current_win_path $new_window_path
-  # if successfull descend into indicated sub-schematic
-  if {$res} {
-    xschem copy_hilights
-    xschem new_schematic switch $new_window_path
-    newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
-    if { $rawfile ne {}} {
-      if {$sim_type eq {op}} {
-        xschem annotate_op $rawfile
-      } else {
-        xschem raw_read $rawfile $sim_type
-      }
-      xschem set raw_level $raw_level
+  xschem copy_hilights
+  xschem new_schematic switch $new_window_path
+  newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
+  if { $rawfile ne {}} {
+    if {$sim_type eq {op}} {
+      xschem annotate_op $rawfile
+    } else {
+      xschem raw_read $rawfile $sim_type
     }
-    xschem select instance $inst fast
-    xschem descend
-    # In window mode the just-created window has not settled to its real size, so the
-    # descend's zoom_full used a transient geometry (blank / off-screen until F). A new tab
-    # shares the already-sized main canvas, so skip it there. issue 0035/0037.
-    if {!([info exists ::tabbed_interface] && $::tabbed_interface)} {
-      newwin_defer_fullzoom $new_window_path
-    }
-    return 1
+    xschem set raw_level $raw_level
   }
-  return 0
+  xschem select instance $inst fast
+  if {![xschem descend]} {
+    # before newwin_defer_fullzoom, so no `after` is scheduled against a window path
+    # that is about to disappear
+    return [newwin_descend_failed $current_win_path $new_window_path]
+  }
+  # In window mode the just-created window has not settled to its real size, so the
+  # descend's zoom_full used a transient geometry (blank / off-screen until F). A new tab
+  # shares the already-sized main canvas, so skip it there. issue 0035/0037.
+  if {!([info exists ::tabbed_interface] && $::tabbed_interface)} {
+    newwin_defer_fullzoom $new_window_path
+  }
+  return 1
 }
 
 # ===========================================================================
@@ -5769,7 +5851,32 @@ proc hi_descend_target_inst {inst} {
   # first selected instance when several are selected.
   set sel [xschem selected_set]
   if {[llength $sel] == 0} { ciw_echo "hi_descend: select an instance to descend into" error; return {} }
+  # ISSUE 0260. `selected_set` brace-wraps each selected instance's instname with no emptiness
+  # check, so an instance with no name= property comes back as a 1-element list whose element is
+  # the EMPTY STRING (measured on xschem_library/logic/test_ngspice.sch, instances 2 and 14).
+  # Every consumer of this resolver is NAME-keyed, and hi_descend_inst_sym {} matches the FIRST
+  # nameless row in `xschem instance_list` -- so letting "" through does not fail, it silently
+  # enumerates and descends into ANOTHER CELL. It must keep refusing. What it owes is a reason:
+  # before this, hi_descend and hi_descend_dialog both returned 0 with ZERO echoes, an untouched
+  # descend_error and an untouched status line -- byte-identical to having done nothing at all.
+  if {[lindex $sel 0] eq {}} { return [hi_descend_nameless_refuse] }
   return [lindex $sel 0]
+}
+
+# The refusal 0260 was missing. Both channels, because neither alone reaches everyone: ciw_echo is
+# the CIW transcript (absent in a plain xschem session), the held status line is what a user
+# without a CIW actually reads. -hold so the next selection/coordinate readout cannot eat it
+# (issue 0248). Deliberately NO descend_error stamp: issue 0378 records that a Tcl-level stamp must
+# be opt-in -- hi_descend_finish and hier_traversal reach their refusal path AFTER the C verb has
+# recorded an accurate token, and an unconditional stamp here would destroy
+# not-descendable:<type> / missing-symbol:<name> / load-failed. (There is no `xschem set
+# descend_error` in this tree, so there is no way to stamp it from Tcl anyway.)
+# Returns {} so it is a drop-in for the `return [lindex $sel 0]` it replaces.
+proc hi_descend_nameless_refuse {} {
+  set m "hi_descend: the selected instance has no name= property; it cannot be addressed by name"
+  ciw_echo $m error
+  xschem statusmsg -hold $m
+  return {}
 }
 
 # Enumerate the views available for the cell behind instance $instname.
@@ -5873,11 +5980,12 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
   }
   set lvl [xschem get currsch]
   if {$vtype eq {symbol}} {
-    # descend_symbol has no return value; detect success by the hierarchy level rising,
-    # so a no-op symbol descend does not falsely report success and then mislabel /
-    # clear the modified flag of the CURRENT (un-descended) schematic.
-    xschem descend_symbol
-    set ok [expr {[xschem get currsch] > $lvl}]
+    # `xschem descend_symbol` now evaluates to 1/0 like `xschem descend` (issue 0251):
+    # the C function always had a return value, the dispatcher used to Tcl_ResetResult
+    # it away, and this arm compensated by watching the hierarchy level rise. The proxy
+    # is gone -- it could not carry a REASON, so a refusal (missing symbol, ambiguous
+    # selection) arrived here as an indistinguishable 0.
+    set ok [xschem descend_symbol]
   } else {
     if {![hi_descend_is_default_sch $instname $vpath]} {
       set ::hi_descend_view_path $vpath        ;# one-shot, consumed by get_sch_from_sym
@@ -5898,6 +6006,16 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
       # close (issue 0035). set_modify 0 does not delete the crash-recovery ~ backup.
       xschem set_modify 0
     }
+  } else {
+    # issue 0251. Eleven sibling failure arms in this proc family already echo to the
+    # CIW; the one that fires when the DESCEND ITSELF is refused said nothing, so a
+    # refused hi_descend was indistinguishable from a successful one at the console.
+    # `xschem get descend_error` is the per-context reason the C side recorded
+    # (not-descendable:<type>, missing-symbol:<name>, no-selection, load-failed, ...).
+    # Also covers hi_descend_newwin, which routes every descend through here.
+    set why [xschem get descend_error]
+    set tail [expr {$why eq {} ? {} : " ($why)"}]
+    ciw_echo "hi_descend: cannot descend into $instname$tail" error
   }
   return $ok
 }
@@ -10868,9 +10986,11 @@ namespace eval addpin {
   # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
   variable pending        {}
   variable current        {}
-  # issue 0122 E1: `xschem get sympin_drops` snapshot taken when the current preview is armed.
+  # issue 0122 E1: `xschem get sympin_drops_pin` snapshot taken when the current preview is armed.
   # after_drop only advances/drains if the count actually rose (a real commit) -- so an external
   # gesture that abandoned the preview cannot make a stray click consume an un-placed name.
+  # issue 0246: it is the PIN part of the witness, not the shared total, so a drop committed by
+  # the Add-Wire-Label form leaves it equal and this form pauses instead of draining.
   variable drop_snap      0
 }
 
@@ -10878,6 +10998,12 @@ proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
 
 # START_SYMPIN (xschem.h) = 16384: an Add-Pin preview is attached to the cursor.
 proc addpin::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+# issue 0246: MY committed drops. The C splits the one commit-funnel count by owner
+# (wirelabel_preview at the bump, callback.c), which is the only place that fact is still live --
+# it is already cleared by the time after_drop runs. This replaces `::sympin_place`, a bare global
+# that was written after a `-place` that may have armed nothing, never cleared, and read ABOVE the
+# E1 compare, so a stale value silently suppressed the pause.
+proc addpin::drops {} { return [xschem get sympin_drops_pin] }
 proc addpin::abort_if_placing {} { if {[addpin::placing]} { catch {xschem abort_operation} } }
 
 # map the human Direction label to the stored dir token (in/out/inout)
@@ -10925,14 +11051,15 @@ proc addpin::after_drop {b} {
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[addpin::placing]} return   ;# preview still attached -> no drop happened
-  # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
-  # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
-  if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
-  # issue 0122 E1: require a REAL commit. If the drop count did not rise, this ButtonRelease is
-  # not our pin drop -- e.g. the user started an unrelated canvas gesture (wire/move) that
-  # abandoned the preview (placing cleared, but armed/latch still ours). Do not consume a name;
-  # disarm and tell the user placement paused (E1-F2) -- editing the name or reopening re-arms.
-  if {[xschem get sympin_drops] == $drop_snap} {
+  # issue 0122 E1: require a REAL PIN commit. If MY part of the drop count did not rise, this
+  # ButtonRelease is not our pin drop. Two ways that happens, and both end here (issue 0246):
+  #  - an unrelated canvas gesture (wire/move) abandoned the preview (placing cleared, armed ours);
+  #  - the Add-Wire-Label form is ALSO open and IT armed the preview that just committed
+  #    (add_wire_label.md #8, cross-form drop cross-talk) -- its commit moves the LABEL part only.
+  # Either way do not consume a name: disarm and tell the user placement paused (E1-F2) -- editing
+  # the name or reopening re-arms. Saying so is the point: the sibling's `-place` already tore this
+  # form's preview down, so staying armed and silent was a lie about the gesture (0244/0267/0270).
+  if {[addpin::drops] == $drop_snap} {
     set armed 0
     addpin::status "placement paused (another action took over) -- edit the name or reopen to resume"
     return
@@ -10982,10 +11109,9 @@ proc addpin::arm {} {
   set ::pin_new_name $current
   set ::pin_new_dir  $d
   xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
-  set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
   variable drop_snap
-  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
+  set drop_snap [addpin::drops]  ;# issue 0122 E1 / 0246: PIN witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
@@ -11018,17 +11144,36 @@ proc addpin::cycle_type {} {
   }
 }
 
-# issue 0122 E2: the Add-Pin and Add-Wire-Label forms share the single `.drw <Key-Escape>` slot.
+# issue 0122 E2 / 0245: THREE modeless placement forms (.addpin, .addlabel, .ciform) share the
+# single `.drw <Key-Escape>` slot. canvas_esc_release is the one owner-handoff: the dying form
+# names itself and the slot goes to the first surviving sibling, or is cleared if there is none.
+# `self` is excluded EXPLICITLY rather than trusted to `winfo exists`, because this runs from a
+# <Destroy> handler where the dying toplevel can still answer yes. It replaces three pairwise
+# release procs (and create_instance.tcl's blanket unbind, which named nothing and stranded a
+# still-open sibling -- issue 0245 K5, the live 0122-E2 clobber).
+proc canvas_esc_release {self} {
+  if {[info commands winfo] eq {}} return          ;# no Tk (headless): nothing to hand over
+  foreach {w grab} {.addlabel addlabel::grab_esc .addpin addpin::grab_esc .ciform ciform::grab_esc} {
+    if {$w eq $self} continue
+    # only the SUCCESSFUL handover ends the walk: if the sibling's grab proc errored the slot
+    # still holds the dying form's script, so fall through and clear it rather than leave it.
+    if {[winfo exists $w] && ![catch {$grab}]} return
+  }
+  catch {bind .drw <Key-Escape> {}}
+}
+
 # grab_esc points that slot at THIS form -- called on open/raise so the form the user just focused
-# owns canvas-Esc. release_esc (on close) hands the slot BACK to the sibling form if it is still
-# open, else clears it -- so closing one form no longer kills the survivor's canvas-Esc.
+# owns canvas-Esc. The script is TOTAL (issue 0245): form alive -> the form's canvas_escape, form
+# gone -> straight to the C Escape terminal. The else arm matters because a grab can outlive its
+# form -- clone_canvas_bindings copies a live grab onto every newly created canvas and release_esc
+# only ever unbinds `.drw` (0122-F3) -- and a stale grab with an empty else swallows Escape forever.
 # SCOPE (0122-F3): like the whole form mechanism (the `.drw <ButtonRelease>` drop hook in
 # install_drop_hook, and the sibling ciform), this targets the MAIN window canvas `.drw` only --
 # not a detached window / non-first tab (`.xN.drw`). Pre-existing single-canvas assumption.
-proc addpin::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::escape; break}} }
-proc addpin::release_esc {} {
-  if {[winfo exists .addlabel]} { addlabel::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+proc addpin::grab_esc {} {
+  bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::canvas_escape} else {xschem escape}; break}
 }
+proc addpin::release_esc {} { canvas_esc_release .addpin }
 
 # Esc / Close: end placement and dismiss the form.
 proc addpin::escape {} {
@@ -11036,6 +11181,19 @@ proc addpin::escape {} {
   set armed 0
   addpin::abort_if_placing
   catch {destroy .addpin}
+}
+# The CANVAS Escape (issue 0245). Everything ::escape does, and THEN the C Escape terminal that
+# the seized `.drw <Key-Escape>` slot would otherwise swallow whole: with the form idle,
+# abort_if_placing is a no-op (it is gated on START_SYMPIN), so a canvas Escape used to close the
+# form and abort NOTHING -- measured under xvfb, an armed `xschem wire` survived it byte-identical
+# and the next canvas click began an unrequested wire draw.
+# Deliberately NOT folded into ::escape: that is also the Close BUTTON's -command and the
+# form-focused <Key-Escape>, and with focus in the form neither ever reached callback.c. Neither
+# may gain the terminal -- clicking Close must not stop a running simulation (tclstop) or abort an
+# unrelated armed gesture. See tests/headless/test_sch_add_pin.tcl row P3.
+proc addpin::canvas_escape {} {
+  addpin::escape
+  catch {xschem escape}
 }
 # Form destroyed by any means: abort an armed preview and hand canvas-Esc back to the sibling form.
 # Also wipe the Pin Name so a NEW invocation opens blank (never retains the previous names).
@@ -11188,8 +11346,14 @@ proc addpin::open {} {
   # (mirror of the Add-Wire-Label form); dismiss whenever the form exists. `break` pre-empts
   # the generic <KeyPress> -> C dispatcher so the same key does not also fire a canvas verb.
   # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  # BOTH Escape routes end at the C terminal (issue 0245). The form-focused one matters as much as
+  # the canvas one: Tk routes a key to `[focus]`, and open() below ends with `focus $w.f.ename`, so
+  # from the moment the form appears until the user next clicks the canvas THIS binding is the one
+  # that fires -- not the `.drw` slot. Measured under xvfb: `xschem wire` (ui 65536, ui2 1) then
+  # addpin::open then Escape left both words byte-identical until this line forwarded too.
+  # The Close BUTTON keeps plain ::escape -- a mouse click on Close is not the Escape key.
   addpin::grab_esc
-  bind $w   <Key-Escape> {addpin::escape}
+  bind $w   <Key-Escape> {addpin::canvas_escape}
   bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
 
   raise_activate_toplevel $w
@@ -11216,7 +11380,10 @@ namespace eval addlabel {
   variable last           {}
   variable pending        {}
   variable current        {}
-  variable drop_snap      0   ;# issue 0122 E1: sympin_drops witness for the armed preview
+  # issue 0122 E1 / 0246: the LABEL part of the committed-drop witness, snapshotted at the arm.
+  # Not the shared total: a drop committed by the Add-Pin form must leave it equal, so this form
+  # pauses instead of draining a name it never placed.
+  variable drop_snap      0
 }
 
 proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
@@ -11226,6 +11393,8 @@ proc addlabel::status_error {msg} { catch {.addlabel.status configure -style Add
 # START_SYMPIN (xschem.h) = 16384: a preview is attached to the cursor.
 proc addlabel::placing {} { return [expr {[xschem get ui_state] & 16384}] }
 proc addlabel::abort_if_placing {} { if {[addlabel::placing]} { catch {xschem abort_operation} } }
+# issue 0246: MY committed drops -- the LABEL half of the split C witness (see addpin::drops).
+proc addlabel::drops {} { return [xschem get sympin_drops_label] }
 
 # ---- pure helper (no Tk; headless-testable, see tests/headless/test_add_wire_label.tcl) ----
 # Split a Label Name entry into placement names. Tokens separate on any run of whitespace and/or
@@ -11289,13 +11458,12 @@ proc addlabel::after_drop {b} {
   if {!$armed} return
   if {![winfo exists .addlabel]} { set armed 0; return }
   if {[addlabel::placing]} return   ;# preview still attached (not committed, or refused) -> wait
-  # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
-  # label queue (add_wire_label.md #8: cross-form drop cross-talk).
-  if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
-  # issue 0122 E1: require a REAL commit -- a stray ButtonRelease after an external gesture
-  # abandoned the preview must not consume a queued label (see addpin::after_drop). Disarm and
-  # tell the user placement paused (E1-F2); editing the name or reopening re-arms.
-  if {[xschem get sympin_drops] == $drop_snap} {
+  # issue 0122 E1 / 0246: require a REAL LABEL commit -- a stray ButtonRelease after an external
+  # gesture abandoned the preview, or after the ALSO-open Add-Pin form's own drop committed
+  # (add_wire_label.md #8, cross-form drop cross-talk: a pin commit moves the PIN part only), must
+  # not consume a queued label (see addpin::after_drop). Disarm and tell the user placement paused
+  # (E1-F2); editing the name or reopening re-arms.
+  if {[addlabel::drops] == $drop_snap} {
     set armed 0
     addlabel::status "placement paused (another action took over) -- edit the name or reopen to resume"
     return
@@ -11347,10 +11515,9 @@ proc addlabel::arm {} {
   set last $current
   set ::label_new_name $current
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
-  set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
   set armed 1
   variable drop_snap
-  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
+  set drop_snap [addlabel::drops]  ;# issue 0122 E1 / 0246: LABEL witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"
@@ -11365,12 +11532,13 @@ proc addlabel::on_reject {} {
   addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
 }
 
-# issue 0122 E2: shared `.drw <Key-Escape>` slot (see addpin::grab_esc). grab_esc claims it for
-# THIS form; release_esc hands it back to the sibling Add-Pin form if still open, else clears it.
-proc addlabel::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}} }
-proc addlabel::release_esc {} {
-  if {[winfo exists .addpin]} { addpin::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+# issue 0122 E2 / 0245: shared `.drw <Key-Escape>` slot (see addpin::grab_esc for the full note).
+# grab_esc claims it for THIS form with a TOTAL script (form alive -> canvas_escape, form gone ->
+# the C Escape terminal); release_esc hands the slot to the first surviving sibling.
+proc addlabel::grab_esc {} {
+  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::canvas_escape} else {xschem escape}; break}
 }
+proc addlabel::release_esc {} { canvas_esc_release .addlabel }
 
 # Esc / Close: end placement and dismiss the form.
 proc addlabel::escape {} {
@@ -11378,6 +11546,13 @@ proc addlabel::escape {} {
   set armed 0
   addlabel::abort_if_placing
   catch {destroy .addlabel}
+}
+# The CANVAS Escape (issue 0245) -- ::escape, then the C Escape terminal the seized slot would
+# otherwise swallow. NOT folded into ::escape: that is the Close button and the form-focused key,
+# which never reached callback.c and must gain nothing. See addpin::canvas_escape.
+proc addlabel::canvas_escape {} {
+  addlabel::escape
+  catch {xschem escape}
 }
 # Hand canvas-Esc back to the sibling form on close; wipe the Label Name so a NEW invocation opens
 # blank (never retains the previous names).
@@ -11436,8 +11611,11 @@ proc addlabel::open {} {
   # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
   # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
   # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  # The FORM-focused Escape forwards to the C terminal as well (issue 0245): open() ends with
+  # `focus $w.f.ename`, so until the user next clicks the canvas Tk fires THIS binding and never
+  # the `.drw` slot. The Close BUTTON keeps plain ::escape. See addpin::open for the measurement.
   addlabel::grab_esc
-  bind $w   <Key-Escape> {addlabel::escape}
+  bind $w   <Key-Escape> {addlabel::canvas_escape}
   bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
 
   raise_activate_toplevel $w
@@ -13802,6 +13980,7 @@ set tctx::global_list {
  graph_vlegend hide_empty_graphs
  hide_symbols incr_hilight incremental_select infix_interface infowindow_text intuitive_interface
  keep_symbols label_ride label_splits_wires launcher_default_program light_colors line_width
+ linewidth_follows_snap
  live_cursor2_backannotate
  local_netlist_dir lvs_ignore lvs_netlist measure_text netlist_dir netlist_show netlist_type
  new_file_browser_depth new_file_browser_ext
@@ -14806,6 +14985,12 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar.view add checkbutton -label "Toggle variable line width" -variable change_lw \
      -selectcolor $selectcolor -accelerator {_} -command {xschem set change_lw $change_lw}
+  # Off by default: the automatic line width and the junction/pin dot radius then
+  # scale with the STARTUP snap, not the live one, so changing the snap spacing does
+  # not restyle the drawing. Ticking this restores the old stock coupling.
+  $topwin.menubar.view add checkbutton -label "Line width follows snap" \
+     -variable linewidth_follows_snap -selectcolor $selectcolor -accelerator {} \
+     -command {xschem set linewidth_follows_snap $linewidth_follows_snap}
   $topwin.menubar.view add command -label "Set line width" -accelerator {Alt+-} \
        -command {
          input_line "Enter linewidth (float):" "xschem line_width"
@@ -15732,6 +15917,17 @@ set_ne fullscreen 0
 set_ne unzoom_nodrift 0
 set_ne zoom_full_center 0
 set_ne change_lw 1
+## MIRRORED IN C (actions.c linewidth_ref_snap). Whether the automatic line width
+## and the wire-junction / pin dot radius scale with the LIVE snap.
+##   0 = DEFAULT: they scale with the snap in force at STARTUP, so line weight and
+##       dot size track zoom only and changing the snap (Alt+Up/Alt+Down, the View
+##       menu items, the snap dialog, the statusbar entry, `xschem set cadsnap`)
+##       leaves the drawing's weight alone. At the default snap this renders exactly
+##       as it always did.
+##   1 = the old stock coupling: doubling the snap doubles every wire/symbol/pin
+##       outline and grows the junction dots.
+## See doc/claude/specs/snap_spacing_bindkeys.md section 5.
+set_ne linewidth_follows_snap 0
 set_ne line_width 0
 set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}

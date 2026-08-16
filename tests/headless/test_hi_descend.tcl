@@ -147,6 +147,75 @@ check "NOLEAK plain descend after override uses default" \
   [expr {[has /schematic/leaf.sch] && ![has /schematic_old/leaf.sch]}] "(name=[schname])"
 xschem go_back
 
+# --- NAMELESS: an instance with no name= property (issue 0260) -------------------
+# `xschem selected_set` brace-wraps each selected instance's instname with no emptiness
+# check, so a NAMELESS instance comes back as a ONE-element list whose element is the
+# empty string -- llength 1, so every "did I get a target" test above passes and
+# hi_descend_target_inst's `lindex $sel 0` then returns "". Before this, hi_descend and
+# hi_descend_dialog both returned 0 with ZERO echoes, an untouched descend_error and an
+# untouched status line: byte-identical to having done nothing.
+#
+# It must keep REFUSING, not start guessing: every consumer of the resolver is name-keyed
+# and hi_descend_inst_sym {} matches the FIRST nameless row of `xschem instance_list`, so
+# letting "" through enumerates and descends into ANOTHER CELL.
+#
+# Works on a /tmp copy of the library: inserting the instance dirties the sheet, and the
+# set_modify hook would write top~.sch into the COMMITTED fixture (observed).
+set nlwork /tmp/hi_descend_nameless_work
+file delete -force $nlwork; file mkdir $nlwork
+file copy -force $lib $nlwork/nlib          ;# a different lib NAME, so `hidlib/leaf` still resolves via $lib
+set nltop [file join $nlwork nlib top schematic top.sch]
+
+# collect the CIW channel and count enumerations (the aliasing guard has to hold: a
+# refused nameless instance must never reach hi_descend_enum_views)
+rename ciw_echo ciw_echo_real
+set ::REC {}
+proc ciw_echo {msg args} { lappend ::REC [list $msg [lindex $args 0]]; }
+rename hi_descend_enum_views hi_descend_enum_views_real
+set ::nenum 0
+proc hi_descend_enum_views {instname} { incr ::nenum; return [hi_descend_enum_views_real $instname] }
+proc rec_has {pat} { foreach r $::REC { if {[string match $pat [lindex $r 0]]} { return 1 } }; return 0 }
+
+set ::hi_descend_view_path {}
+xschem load $nltop
+xschem unselect_all
+xschem instance hidlib/leaf 600 600 0 0 {name=}
+xschem unselect_all
+xschem select instance 2 fast
+set nlsel [xschem selected_set]
+check "NAMELESS-setup the nameless instance selects as a 1-element list holding {}" \
+  [expr {[xschem get lastsel] == 1 && [llength $nlsel] == 1 && [lindex $nlsel 0] eq {}}] \
+  "(lastsel=[xschem get lastsel] set={$nlsel} llength=[llength $nlsel])"
+
+set ::REC {} ; set ::nenum 0
+xschem statusmsg { }
+set c0 [xschem get currsch]
+set rnl [hi_descend target=current]
+check "NAMELESS-echo hi_descend refuses AND says why (pre-fix: 0 echoes)" \
+  [expr {$rnl == 0 && [xschem get currsch] == $c0 && [rec_has {*no name=*}]}] \
+  "(ret=$rnl currsch=[xschem get currsch] echoes={$::REC})"
+check "NAMELESS-hold the same sentence reached the HELD status line (no CIW needed)" \
+  [expr {[string match {*no name=*} [xschem get statusmsg]] && [xschem get statusmsg_hold] == 1}] \
+  "(msg={[xschem get statusmsg]} hold=[xschem get statusmsg_hold])"
+check "NAMELESS-noalias the refusal never reached hi_descend_enum_views" \
+  [expr {$::nenum == 0}] "(enum calls=$::nenum)"
+
+# the control: the new check is not a blanket refusal
+xschem unselect_all
+xschem select instance x1 fast
+set ::REC {} ; set ::nenum 0
+set rnc [hi_descend target=current]
+check "NAMELESS-control a NAMED instance in the same sheet still descends" \
+  [expr {$rnc == 1 && $::nenum > 0 && [has /schematic/leaf.sch]}] \
+  "(ret=$rnc enum=$::nenum name=[schname])"
+xschem go_back
+
+rename hi_descend_enum_views {}
+rename hi_descend_enum_views_real hi_descend_enum_views
+rename ciw_echo {}
+rename ciw_echo_real ciw_echo
+file delete -force $nlwork
+
 # --- SELNW: new-window descend with the instance SELECTED is a REAL descend --------
 # Regression: hi_descend_newwin must unselect before schematic_in_new_window, else it
 # opens the child as a flat top-level (currsch 0, hierarchy lost) and the descend no-ops.

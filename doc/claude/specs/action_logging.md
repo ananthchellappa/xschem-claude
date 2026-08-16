@@ -189,7 +189,19 @@ Window. Not full-featured for v1.
   yet logged), and Layer A's gesture-START commands (`xschem wire`, no-arg
   `xschem move_objects`, …) still precede the END line in the log — replaying
   them leaves benign MENUSTART state; whether to csv-`nolog` them is a
-  Phase 3 reconciliation question. Smoke
+  Phase 3 reconciliation question. (The no-arg arm is still a legal, still
+  unvalidated form — but as of issue **0266** a `move_objects` line whose
+  FIRST TWO SLOTS are mis-cased or missing — `move_objects END`,
+  `move_objects 40` — is a `TCL_ERROR` on replay instead of a silent
+  `ui_state |= MENUSTART` mutation: it stops the replay with a message naming
+  the bad token instead of diverging with no diagnostic. **That is the leading
+  delta pair only.** The emitted form is
+  `move_objects <dx> <dy> <rot> <flip> [-anchor <ax> <ay>] [kissing]`, and a
+  line truncated in the TAIL still replays silently as a different transform —
+  measured, `… 0 0 1 0 -anchor 50` drops the anchor and rotates about the wrong
+  pivot with rc 0 — issue **0406**; the sub-verb coordinates are unvalidated
+  too, issue **0405**; and `copy_objects` has no validation at all, issue
+  **0404**.) Smoke
   `tests/headless/test_gesture_end_log.tcl`; acceptance smoke extended with
   wire/rect/instance gestures + a byte-identical saved-schematic diff.
 - **Phase 3 — DONE** (commits `bc4e2fc9` A, `3e911386` B, `a9111307` C,

@@ -17,6 +17,20 @@
 # Pure headless. Run from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_placement_wire_gate.tcl
 # Prints "OVERALL: ok" on success (run_regression sentinel).
+#
+# --nogui is a PRESCRIPTION, not a preference (issue 0355). Section G4 drives
+# `catch {xschem place_text}`: headlessly place_text() fails fast because the text
+# dialog needs a Tk toplevel, which is exactly the CANCELLED-dialog path G4 means to
+# exercise -- but under ANY display the modal is raised for real and nothing is there
+# to dismiss it, so the suite blocks forever mid-run. Measured: killed at 120s under
+# WSLg, still stalled at the same 143 ok-lines after 300s under `xvfb-run -a`.
+# full_audit.sh runs it from nogui_tests; this guard is the other half, so a human or
+# an agent invoking it by hand under X gets an honest instant skip instead of a hang
+# (and a hung terminal is how this defect ate two measurement windows).
+if {[info commands winfo] ne {} && [winfo exists .]} {
+  puts "RESULT: SKIP (needs --nogui: G4's place_text raises a modal nothing can dismiss -- issue 0355)"
+  exit 0
+}
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -121,7 +135,13 @@ xschem abort_operation
 set ::infix_interface 1
 
 # D1 -- STARTRECT residue: pins the flag mask added above the :406 return.
-reset ; xschem add_sch_pin -place ; xschem rect gui
+#   CONSTRUCTOR NOTE (phase 3, 2026-08-09, issue 0269): `rect gui` now carries all four gates, so
+#   it tears the pin placement down instead of arming on top of it -- which is what phase 3 is for,
+#   and it is asserted directly in test_shape_draw_gate.tcl C. The co-armed state this row needs is
+#   therefore built through `xschem test_gate_bypass`, exactly as D3 below has done since phase 2.
+#   The ESC under test still runs with the gates live.
+reset ; xschem add_sch_pin -place
+xschem test_gate_bypass 1 ; xschem rect gui ; xschem test_gate_bypass 0
 check "D1 armed: placement + rect"       [expr {[placing] && [startrect]}] 1
 check "D1 armed: last_command zeroed"    [lc] 0
 xschem abort_operation
@@ -134,7 +154,9 @@ check "D1 ESC committed no rect"         [xschem get rects 4] 0
 
 # D2 -- MENUSTART residue: the same return, on a bit the issue's fix sketch omits.
 reset ; xschem add_sch_pin -place
-set ::infix_interface 0 ; xschem rect ; set ::infix_interface 1
+set ::infix_interface 0
+xschem test_gate_bypass 1 ; xschem rect ; xschem test_gate_bypass 0   ;# see D1's constructor note
+set ::infix_interface 1
 check "D2 armed: placement + menu rect"  [expr {[placing] && [menustart]}] 1
 xschem abort_operation
 check "D2 ESC clears MENUSTART"          [menustart] 0
@@ -586,6 +608,101 @@ xschem abort_operation ; xschem abort_operation
 nreset ; xschem wire gui ; xschem rect gui
 check "H5 gate live again: wire dropped"  [startwire] 0
 xschem abort_operation
+
+# ---------------------------------------------------------------------------
+# I. issue 0245 -- the C Escape terminal as a NAMED VERB.
+#    `case XK_Escape:` (callback.c) is sixteen lines that nothing in Tcl could execute:
+#    the `semaphore < 2` guard around abort_operation(escape_deselects), then four
+#    REENTRANT siblings that run even when the guard skips the abort --
+#      tclstop=1                    (the only break-out of hilight.c's propagate loop)
+#      ui_state2 &= ~MENUSTARTWIRE  (abort_operation NEVER clears this -- see I4)
+#      draw_snap_cursor(1)          (erase the diamond)
+#      persistent_command && (last_command & STARTWIRE) && cadence_compat -> drop the
+#                                   RESTING wire mode in one stage
+#    Reachable ONLY from a real X key event, which is exactly why a Tk form that grabs
+#    `.drw <Key-Escape>` swallows Escape whole: measured under xvfb, one canvas Escape
+#    with an IDLE Add-Wire-Label form open left ui_state/ui_state2/last_command
+#    BYTE-IDENTICAL (65536 / 1 / 0) and the very next canvas click began an unrequested
+#    wire draw. `xschem escape` is that terminal, and this section is the seam the
+#    headless suite has never had.
+#    Every row is paired with a CONTRAST against `xschem abort_operation`. The contrast
+#    IS the argument: if the two teardowns were the same thing, the forms could simply
+#    forward to abort_operation and no new verb would be needed.
+# ---------------------------------------------------------------------------
+
+# I1 -- the verb exists at all. Today `xschem escape` is "invalid command." -> catch 1.
+check "I1 xschem escape is a verb"        [catch {xschem escape}] 0
+
+# I2/I3 -- the MENU-armed wire is torn down whole, ui_state AND ui_state2.
+nreset ; xschem wire
+check "I2 precondition: menu wire armed"  [menuwire] 1
+catch {xschem escape}
+check "I2 escape cleared ui_state"        [ui] 0
+check "I3 escape cleared MENUSTARTWIRE"   [xschem get ui_state2] 0
+xschem abort_operation
+
+# I4 CONTRAST -- and the whole reason I3 means something: abort_operation alone leaves
+#    MENUSTARTWIRE set (measured: ui=0 ui2=1). wire_draw_active (callback.c) reads that bit
+#    conjoined with MENUSTART, so a fix that merely forwarded to abort_operation would not
+#    reproduce the C Escape. This row is GREEN before the fix and must STAY green after.
+nreset ; xschem wire ; xschem abort_operation
+check "I4 contrast: abort_operation keeps ui_state2" [xschem get ui_state2] 1
+xschem abort_operation
+
+# I5/I6a -- tclstop, the reentrant sibling that stops a running simulation.
+nreset ; set ::tclstop 0 ; xschem wire
+catch {xschem escape}
+check "I5 escape sets tclstop"            $::tclstop 1
+xschem abort_operation
+# I6a CONTRAST (green before AND after): abort_operation must not stop a simulation --
+#   this is why the four siblings are NOT hoisted into it (24 C + 10 Tcl call sites, a
+#   .load dialog Cancel among them).
+nreset ; set ::tclstop 0 ; xschem wire ; xschem abort_operation
+check "I6a contrast: abort_operation leaves tclstop" $::tclstop 0
+set ::tclstop 0
+
+# I7 -- the cadence one-stage fixup: with persistent_command the RESTING wire command mode
+#    survives abort_operation (the keep_last_command latch, issue 0240) and only the Escape
+#    terminal drops it.
+set saved_persist $::persistent_command ; set saved_cadence $::cadence_compat
+set ::persistent_command 1 ; set ::cadence_compat 1
+nreset ; xschem wire gui ; xschem abort_operation
+check "I7a precondition: resting wire mode" [expr {[lc] & 1}] 1
+catch {xschem escape}
+check "I7b escape drops the resting mode"   [expr {[lc] & 1}] 0
+set ::persistent_command $saved_persist ; set ::cadence_compat $saved_cadence
+xschem abort_operation ; xschem abort_operation
+
+# I8 -- the `semaphore < 2` re-entrancy guard is part of the terminal and must survive the
+#    extraction. With the semaphore raised the ABORT is skipped but the reentrant siblings
+#    still run. I8a is GREEN before the fix (the verb does not exist, so nothing happens for
+#    the wrong reason); it earns its keep against a fix that drops the guard.
+nreset ; xschem wire ; set ::tclstop 0
+xschem set semaphore 2
+catch {xschem escape}
+check "I8a semaphore>=2 skips the abort"  [ui] 65536
+check "I8b reentrant half still cleared ui_state2" [xschem get ui_state2] 0
+check "I8b reentrant half still set tclstop"       $::tclstop 1
+xschem set semaphore 0
+check "I8c semaphore switched back"       [xschem get semaphore] 0
+set ::tclstop 0
+xschem abort_operation ; xschem abort_operation
+
+# I9 -- the deselect argument. The terminal reads `escape_deselects` (default 0) ITSELF; it
+#    does not take an argument, precisely so no caller can quietly change Escape's selection
+#    semantics (a no-arg `xschem abort_operation` is deselect=1 -- the opposite default).
+set saved_deselect $::escape_deselects
+nreset ; xschem select_all
+check "I9 precondition: something selected" [expr {[xschem get lastsel] > 0}] 1
+set ::escape_deselects 0
+catch {xschem escape}
+check "I9a escape_deselects 0 keeps selection" [expr {[xschem get lastsel] > 0}] 1
+xschem select_all
+set ::escape_deselects 1
+catch {xschem escape}
+check "I9b escape_deselects 1 drops selection" [xschem get lastsel] 0
+set ::escape_deselects $saved_deselect
+xschem abort_operation ; xschem unselect_all
 
 set ::infix_interface $saved_infix
 set ::autosave_backup $saved_autosave_backup

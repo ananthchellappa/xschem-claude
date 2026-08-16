@@ -6158,15 +6158,23 @@ int descend_symbol(void)
   struct stat buf;
   int save_netlist_type = xctx->netlist_type;
   instname_log[0] = '\0';
+  descend_clear_error();
   if(xctx->currsch + 1 >= CADMAXHIER) {
+    char msg[128];
+    my_snprintf(msg, S(msg), "Descend symbol: maximum hierarchy depth (%d) reached", CADMAXHIER);
     dbg(0, "descend_symbol(): max hierarchy depth reached: %d", CADMAXHIER);
+    descend_set_error("maxdepth", NULL, msg, 1);
     return 0;
   }
 
-  rebuild_selected_array();
-  if(xctx->lastsel > 1)  return 0;
-  if(xctx->lastsel==1 && xctx->sel_array[0].type==ELEMENT) {
-    n =xctx->sel_array[0].n;
+  /* was: `rebuild_selected_array(); if(lastsel > 1) return 0;` plus a trailing
+   * `else return 0`. Three silent exits on a verb the user reached by pressing
+   * `i` on something they picked -- and the lastsel phrasing refused selections
+   * the user cannot see: an instance plus its own INST_PIN counts 2 while
+   * `xschem selected_set` (and the screen) show exactly one symbol (issue 0249).
+   * The picker counts ELEMENTs, refuses a genuinely ambiguous pick (multi_ok = 0)
+   * and SAYS which of the three mistakes it was. */
+  if(descend_pick_target(&n, 0, "Descend symbol")) {
     /* No save prompt on descend into a NON-embedded symbol (B6, mirrors
      * descend_schematic/B5): a genuine edit to the parent schematic was already
      * persisted to cellName~.sch by the autosave hook (set_modify -> write_backup),
@@ -6185,17 +6193,24 @@ int descend_symbol(void)
       int ret = save(1, 1);
       /* save() return: 1 saved, -1 user cancel, 0 not saved (errors/declined) */
       if(ret == 0) clear_all_hilights();
-      if(ret == -1) return 0; /* user cancel */
+      /* user cancel: recorded, not narrated -- the Cancel they clicked IS the feedback.
+       * The sentence is still built: speak = 0 is the only thing keeping it quiet. */
+      if(ret == -1) {
+        descend_set_error("save-cancelled", NULL,
+          "Descend symbol: save cancelled -- not descending", 0);
+        return 0;
+      }
     }
     my_snprintf(name, S(name), "%s", translate(n, xctx->inst[n].name));
-    /* dont allow descend in the default missing symbol */
-    if((xctx->inst[n].ptr+ xctx->sym)->type &&
-       !strcmp( (xctx->inst[n].ptr+ xctx->sym)->type,"missing")) return 0;
+    /* dont allow descend in the default missing symbol. issue 0254: the unresolved
+     * name is right here and used to be told to nobody -- descend_missing_sym()
+     * records `missing-symbol:<name>` and puts it on the held status line. */
+    if(descend_missing_sym(n, name)) return 0;
     /* capture BEFORE load_schematic replaces the inst array (log emitted at the tail) */
     my_strncpy(instname_log, xctx->inst[n].instname ? xctx->inst[n].instname : "",
                S(instname_log));
   }
-  else return 0;
+  else return 0; /* descend_pick_target() already recorded + spoke the reason */
 
   /* build up current hierarchy path */
   my_strdup(_ALLOC_ID_,  &str, xctx->inst[n].instname);

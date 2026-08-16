@@ -1,8 +1,38 @@
 # Roadmap — one modal gesture at a time
 
-Status: **phases 0, 1 and 2 done; 3 open; 4 blocked.** Owner: `open_pdk`. Phases 1–2 landed
-2026-08-08 (issue **0247** FIXED, issue **0248** FIXED first), user-ratified the same day as
-option (a) cancel. Last measured 2026-08-08.
+Status: **COMPLETE — all phases done.** Owner: `open_pdk`. Phases 1–2 landed 2026-08-08 (issue
+**0247** FIXED, issue **0248** FIXED first), user-ratified the same day as option (a) cancel;
+phase 4 landed 2026-08-08 (issue **0265**); phase 3, the last one, landed 2026-08-09 (issue
+**0269**, with **0268** / **0270** / **0271** / **0272** found by its census and fixed with it).
+Last measured 2026-08-09.
+
+**The plan as a whole is done.** All four gesture families now have a teardown/gate pair and every
+arm calls every gate that applies to it, in both interface branches. ~~What remains of `WIRING.md`
+§8 class **D** is the one deliberate residue **0262**~~ (the bare `xschem unselect_all` verb: it
+arms nothing, so the rule has no subject), plus the wire-family `ui_state2` residue recorded and
+asserted-as-present in issue **0268**.
+
+**Correction, 2026-08-11 (item D8).** "The one deliberate residue" was wrong twice. There were at
+least **two** class-D doors — the bare verb (**0262**) and `save`/`saveas`/Ctrl+S (**0358**, still
+open, and it persists the orphan to disk) — and the bare verb is **GUI-reachable** through the
+default Ctrl+Button2 chord and the Compare-schematics menu item (**0397**), against 0262's own
+premise. **0262 is now DECIDED**: the verb stays ungated permanently, and the *terminal* half of
+class D is answered once, class-wide, by a **repairing**
+`check_placement_preview_invariant()` — it clears the stuck flags and the stamp, deletes nothing,
+and turns every door named or unnamed from *terminal* into *orphan-only*. A door that also **commits
+or persists** the orphan still needs its own verb gate (0262 decision **D9** rule B), which is what
+keeps **0358** open. The residue that remains is the object itself, its net rename, and a modify
+flag that can deny both (**0398**).
+
+**Correction, 2026-08-09.** This list used to carry a second residue, **0263** (`netlist`),
+excluded on the grounds that it "netlists a live preview but clears no gesture bits — a different
+defect, not a door". Measured, that is false: the hierarchical driver's
+`push_undo` → `unselect_all(1)` → `pop_undo` round trip clears every gesture bit AND restores the
+preview as an ordinary committed instance that ESC can never take back, on top of emitting a wrong
+deck in every backend. `netlist` was a door all along and is now gated like one, at both its verbs
+(`scheduler.c`'s branch and `callback.c`'s Shift-N) — issue **0263**, FIXED. The phase-plan lesson:
+this list was assembled from what each verb *arms*, and a verb that arms nothing can still destroy
+a gesture by the way it saves and restores the document.
 
 ## The invariant
 
@@ -95,7 +125,7 @@ Effort: ~7 call sites, same pattern as `p`. **Breaks `test_add_wire_label.tcl` G
       only by running the suite
 - [x] issue **0247** → FIXED (merge/`Ctrl+V` stays open, tracked there and in phase 4)
 
-### Phase 3 — wire/line and placements cancel a live SHAPE draw
+### Phase 3 — wire/line and placements cancel a live SHAPE draw — **COMPLETE 2026-08-09**
 
 The reverse of phase 1; needs the new `abort_shape_draw()` helper. **Unchanged by phases 1-2**, and
 now the only asymmetry left outside merge: `r` then `w` still leaves `STARTRECT` armed under a
@@ -103,21 +133,71 @@ fresh wire draw. Two things phases 1-2 hand it: the statusbar message will actua
 (issue 0248), and `xschem test_gate_bypass` already exists for building whatever co-armed state its
 own tests need.
 
-- [ ] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair
-- [ ] call from every wire/line verb (the 11 sites `leave_placement_for()` already uses)
-- [ ] call from every placement verb (the sites `leave_wire_draw_for()` already uses)
-- [ ] decide what an in-progress polygon does — `abort_operation()` currently **commits** it
-      (`new_polygon(END, …)` runs before the teardown); abandoning it instead is a behaviour change
-- [ ] tests + sabotage
+- [x] write `abort_shape_draw()` + `leave_shape_draw_for()` mirroring the wire/line pair — done
+      2026-08-09, `src/callback.c`. Delete-free, undo-free, and (after issue **0270** moved the
+      polygon's `set_modify`) modify-flag-free, so it needs none of the 0241/0244/0267 machinery
+      the other two teardowns carry. It DOES owe the rubber band, and none of
+      `new_rect`/`new_arc`/`new_polygon`/`zoom_rectangle` honoured `CLEAR` — the `RUBBER|CLEAR`
+      guard was added to all four (`src/actions.c`), a strict no-op for every existing caller
+- [x] call from every wire/line verb, every placement verb and every shape verb — **41 sites**,
+      enumerated from the state rather than the verbs: 24 (exactly `leave_merge_for()`'s list) +
+      15 shape arms + `undo`/`redo`. The 15 shape arms also gained `leave_placement_for()` and
+      `leave_merge_for()`, which they had never carried
+- [x] decide what an in-progress polygon does — **ratified 2026-08-09**: a competing gesture
+      ABANDONS it; ESC keeps COMMITTING it (`abort_operation()`'s `new_polygon(END, …)` is
+      unchanged, and so is its action-log line)
+- [x] decide whether the ZOOM BOX belongs in the helper — **ratified 2026-08-09: included.** It
+      stores nothing and needs no viewport restore, but it owns the next click exactly as an edit
+      shape does. The `z` key's decline guard became a cancel
+- [x] tests + sabotage — `tests/headless/test_shape_draw_gate.tcl`, 412 checks, six sabotage runs
+      with disjoint red sets; `test_placement_wire_gate.tcl` D1/D2 constructors rebuilt on
+      `test_gate_bypass`; new test seam `xschem test_shape_click` for the post-click state of
+      arc/circle/zoom, which `xschem callback` cannot reach headlessly
 
-### Phase 4 — merge / paste (`Ctrl+V`), both directions
+### Phase 4 — merge / paste (`Ctrl+V`), both directions — **COMPLETE 2026-08-08**
 
-**Blocked** on issues **0242** (shared teardown for the merge/paste arms) and **0244** (aborted
-paste marks a dirty schematic clean). A merge preview carries `STARTMERGE`, not the placement bits,
-so `abort_placement_preview()` deliberately does not see it.
+Closed by issue **0265**: `abort_pending_merge()` + `leave_merge_for()` (`callback.c`), the merge
+twins of `abort_placement_preview()` + `leave_placement_for()`. The teardown was factored out of
+`abort_operation()`'s two arms (both are now one call to it) and the gate is called from **24**
+sites — the merge funnel, all twelve `stamp_placement_preview()` placement arms, and all eleven
+wire/line draw arms. `undo`/`redo` are deliberately **excluded**, unlike the placement side: a
+pending merge is undo-covered (`merge_file()` pushes its baseline before loading), so `undo` already
+removes the paste, and a `delete()`+`push_undo` in front of the pop would make undo *restore* it.
+Issue **0267** closed with the same change but **not** as a byproduct of it — the pure-commit forms
+stay ungated, so the stale `pre_merge_modified` latch needed `xctx->modify_seq` of its own.
+Tests: section **E** of `tests/headless/test_paste_modify_flag_0244.tcl`, 247 checks (129 → 376),
+five sabotage runs with disjoint red sets.
 
-- [ ] wait for 0242/0244
-- [ ] then: merge cancels a live draw, and a draw cancels a live merge
+**Downstream:** phase 3 (shape draws) is the only phase left and is **not** blocked by anything this
+phase produced — it needs `abort_shape_draw()`, which does not exist yet. `test_gate_bypass` now
+also disables the merge gate, so phase 3's tests can construct a co-armed shape+merge state the same
+way. The one thing phase 4 hands it: `abort_pending_merge()`/`leave_merge_for()` is the third worked
+example of the teardown/gate pair, so `abort_shape_draw()`/`leave_shape_draw_for()` has a template
+and the `preview_sel` slot-ordering rule is now written down in two places.
+
+**UNBLOCKED 2026-08-08** — both named blockers are FIXED: **0242** (every door now calls
+`leave_placement_for()`; a merge tears down a live placement) and **0244** (the aborted-paste flag
+lie *and* the un-narrowed merge `delete(1)`, both arms). A merge preview still carries `STARTMERGE`
+and not the placement bits, so `abort_placement_preview()` still deliberately does not see it —
+but the merge arms now have their own scoped, flag-correct teardown to call from, which is exactly
+what this phase needs.
+
+The direction *merge cancels a live draw* already works (`merge_file()` calls
+`leave_placement_for()`, which is the wire/line-draw teardown too). The direction *a draw cancels a
+live merge* is the remaining work, and it now has a named prerequisite of its own: **issue 0265** —
+nothing tears down a pending `STARTMERGE` at all, so today a second `Ctrl+V` or any placement arm
+silently **commits** the pending paste (measured). Phase 4 should factor the merge teardown out of
+`abort_operation()`'s two arms into a `leave_merge_for()` sibling and call it from the draw verbs;
+that closes 0265 in the same move.
+
+- [x] 0242 / 0244 landed
+- [x] factor the merge teardown out of `abort_operation()` (select-stamp + `delete(1)` +
+      `pre_merge_modified` restore + `clear_placement_preview()`) into `abort_pending_merge()`, with
+      `leave_merge_for()` as its gate wrapper — two functions, not one, so ESC keeps raising no
+      statusbar hold (the same split as `abort_placement_preview()` / `leave_placement_for()`)
+- [x] then: a draw cancels a live merge — `wire gui`, `line gui`, `snap_wire` and their key / menu /
+      context-menu twins, both interface branches (`snap_wire` arms `MENUSTART`, not `STARTWIRE`)
+- [x] issue **0265** closed; issue **0267** closed with it, by a separate mechanism
 
 ## Cross-cutting blockers
 
@@ -130,8 +210,9 @@ so `abort_placement_preview()` deliberately does not see it.
   "resolves to nothing → delete nothing" as the backstop. The decline guard came out with it, so
   **the blocker on later phases is lifted**: a new caller may now reach the placement teardown with
   a foreign selection live. `tests/headless/test_placement_wire_gate.tcl` **E7** was rewritten to
-  assert the opposite of what it used to. Still NOT scoped: the **merge/paste** `delete(1)` in
-  `abort_operation()` (issues **0242**/**0244**), so phase 4 inherits the un-narrowed version.
+  assert the opposite of what it used to. The **merge/paste** `delete(1)` in `abort_operation()` was
+  scoped the same way on 2026-08-08 by **issue 0244** part B (same stamp, same slot, both arms), so
+  phase 4 no longer inherits an un-narrowed version.
 - **Issue 0246** — `wirelabel_preview` has no `xschem get` seam, so its teardown is unassertable.
 - **Issue 0248** — FIXED 2026-08-08. Gate/prompt messages now hold `.statusbar.1` for 5 s or until
   the next click; an ordinary `statusmsg(…, 1)` is dropped while a hold is up. Seams:

@@ -1,0 +1,6 @@
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+COUNTS 14 0 14 0 14
+SETPROP rc=0 res=
+CHILD_DONE
+

@@ -732,6 +732,11 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    attribute. </pre>
    <li><kbd>       enable_layers</kbd></li><pre>
    Enable/disable layers depending on tcl array variable enable_layer() </pre>
+   <li><kbd>       escape</kbd></li><pre>
+   Do exactly what pressing Escape on the canvas does: abort any pending
+   operation (honoring the 'escape_deselects' variable), stop a running
+   simulation, drop a menu-armed or resting wire command. Takes no argument.
+   Used by the modeless placement forms, which grab the canvas Escape key. </pre>
    <li><kbd>       escape_chars source [charset]</kbd></li><pre>
    escape tcl special characters with backslash
    if charset is given escape characters in charset </pre>
@@ -1118,11 +1123,28 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    resets instance coordinates, and rotaton/flip. A dash will keep existing value
    if 'nodraw' is given do not draw the moved instance
    if 'noundo' is given operation is not undoable </pre>
-   <li><kbd>       move_objects [dx dy] [kissing] [stretch]</kbd></li><pre>
+   <li><kbd>       move_objects [dx dy [rot flip [local] [-anchor ax ay]]] [kissing] [stretch]</kbd></li><pre>
    Start a move operation on selection and let user terminate the operation in the GUI
    if kissing is given add nets to pins that touch other instances or nets
    if stretch is given stretch connected nets to follow instace pins
    if dx and dy are given move by that amount. </pre>
+   <li><kbd>       move_objects start ax ay [kissing] [stretch]</kbd></li><pre>
+   Arm a move gesture at anchor (ax, ay) without committing it </pre>
+   <li><kbd>       move_objects step x y</kbd></li><pre>
+   Advance an armed move gesture to (x, y), one snap step, as a Motion event does </pre>
+   <li><kbd>       move_objects end [dx dy]</kbd></li><pre>
+   Commit an armed move gesture, by the given delta if one is supplied </pre>
+   <li><kbd>       move_objects abort</kbd></li><pre>
+   Abandon an armed move gesture.
+   The four sub-verbs above are lowercase-only. In the ONE-SHOT form
+   'move_objects &lt;dx&gt; &lt;dy&gt; ...' an argument in the first slot that is neither a
+   sub-verb, nor 'kissing'/'stretch', nor a number is refused with an error naming it
+   (it used to arm a deferred menu move silently), and there dx and dy must both be
+   numbers, so 'move_objects END 40 40' or a truncated 'move_objects 40' is an error
+   too, rather than a move by a 0 delta. That check covers the first two slots of the
+   one-shot form ONLY: the sub-verb coordinates ('move_objects end &lt;dx&gt; &lt;dy&gt;',
+   'start ax ay', 'step x y') and the trailing rot/flip/local/-anchor arguments are
+   still read with atof()/atoi(), so a non-number there is still silently 0. </pre>
    <li><kbd>       my_strtok_r str delim quote keep_quote</kbd></li><pre>
        test for my_strtok_r() function </pre>
    <li><kbd>       net_label [type]</kbd></li><pre>

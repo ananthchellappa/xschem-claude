@@ -16,8 +16,12 @@
 #          add/delete; Save All -> save_all_i + Save Options column + deck
 #          line + disabled Levels; Simulation Options add/delete; Save-As
 #          prefill / new-view create / same-target clean save; read-only
-#          same-target confirm gate; Load State browser (state-view filter,
-#          import + dirty, dirty-prompt-first); --> strip = Add Output;
+#          same-target confirm gate; Load State browser (opens defaulted to
+#          the session's own Library/Cell with the View column filled and no
+#          View preselected -- G9a; a Library change clears the stale status
+#          -- G9b; an unknown cell degrades one column only -- G9c; a bare OK
+#          names the missing View -- G9d; state-view filter, import + dirty,
+#          dirty-prompt-first); --> strip = Add Output;
 #          no todo_stub left on any rewired item-07 entry.
 #   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog dismisses on a real
 #          generated <Key-Escape> through its CANCEL path — dialog destroyed,
@@ -509,6 +513,55 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.mb.session invoke {Load State}
   update
   check_true "G9 Load State browser opens" [winfo exists $top.loadst]
+  # G9a: the browser opens ALREADY on this session's own cell, so the only
+  # pick left is the state View. Library + Cell selected, View column filled
+  # and filtered, View deliberately UNselected (a default pick would be one
+  # OK press from discarding the session for a state nobody chose).
+  check "G9a defaults to the session Library" \
+    [ase::ui::lb_sel $top.loadst.pw.lib.lb] aselib
+  check "G9a defaults to the session Cell" \
+    [ase::ui::lb_sel $top.loadst.pw.cell.lb] nfet_clean
+  check_true "G9a View column already filled and filtered" [expr {
+    [lsearch -exact [$top.loadst.pw.view.lb get 0 end] ngspice_state1] >= 0 &&
+    [lsearch -exact [$top.loadst.pw.view.lb get 0 end] schematic] < 0}]
+  check "G9a no View preselected" [ase::ui::lb_sel $top.loadst.pw.view.lb] {}
+  check "G9a status names the defaulted cell" [$top.loadst.status cget -text] \
+    {aselib/nfet_clean — choose a state View}
+  # a library the browser does not list must fall back rather than
+  # half-select or error, and it must not disturb what is already chosen
+  check "G9a unknown library falls back" \
+    [ase::ui::lb_select_value $top.loadst.pw.lib.lb no_such_lib] 0
+  check "G9a a missed library leaves the selection alone" \
+    [ase::ui::lb_sel $top.loadst.pw.lib.lb] aselib
+  # G9b: picking a different Library must clear the status that described the
+  # OLD cell -- only reachable on the first click now the browser opens
+  # defaulted, so the defaulting is what makes this stale text visible
+  $top.loadst.pw.lib.lb selection clear 0 end
+  ase::ui::loadst_on_lib $key
+  check "G9b library change resets the stale status" \
+    [$top.loadst.status cget -text] \
+    {pick a Library / Cell / simulation-state View}
+  check "G9b library change empties the Cell column" \
+    [$top.loadst.pw.cell.lb size] 0
+  # G9c: an unknown CELL degrades one column only -- library stays chosen and
+  # its Cell list stays filled (more useful than clearing it)
+  ase::ui::lb_select_value $top.loadst.pw.lib.lb aselib
+  ase::ui::loadst_on_lib $key
+  check "G9c unknown cell falls back" \
+    [ase::ui::lb_select_value $top.loadst.pw.cell.lb no_such_cell] 0
+  check "G9c library stays chosen after a cell miss" \
+    [ase::ui::lb_sel $top.loadst.pw.lib.lb] aselib
+  check_true "G9c cell column stays filled after a cell miss" \
+    [expr {[$top.loadst.pw.cell.lb size] > 0}]
+  # G9d: bare OK with Library+Cell chosen and no View must name the MISSING
+  # View, not tell the user to pick a Library they already picked
+  ase::ui::lb_select_value $top.loadst.pw.cell.lb nfet_clean
+  ase::ui::loadst_on_cell $key
+  $top.loadst.b.ok invoke
+  update
+  check_true "G9d bare OK keeps the browser open" [winfo exists $top.loadst]
+  check "G9d bare OK names the missing View" \
+    [$top.loadst.status cget -text] {aselib/nfet_clean — choose a state View}
   set llb $top.loadst.pw.lib.lb
   set i9 [lsearch -exact [$llb get 0 end] aselib]
   $llb selection clear 0 end; $llb selection set $i9
