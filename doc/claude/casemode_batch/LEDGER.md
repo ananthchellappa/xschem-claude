@@ -45,7 +45,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 0b | decisions + design revision + plan/ledger correction | `[x]` | `f7ab5f65` | – | – | 6 docs | no | docs-only, no build/suite owed. `DECISIONS.md`, `DESIGN_REVISION.md`, `OPEN_QUESTIONS.md`, PLAN §3b marked superseded in place |
 | 0a | suite sweep for folded-name assertions | `[x]` | `f7ab5f65` | – | – | 1 doc | no | `receipts/00a-suite-sweep.md`: **zero rows expected to move**. Static sweep; 34 suites touch `raw read`/`raw list`, 2 tracked `.raw` fixtures, no test reads either. THIS IS ITEM 1's EXPECTED-DIFF CONTRACT |
 | 1 | delete the fold + `Raw.case_sensitive` | `[x]` | `fbfc6395` | 81 | 33 | 7 code + spec | no | audit diff = **one added row** (`test_raw_case_mode PASS`), **zero movers** — 00a's contract met exactly. Review found 5 real bugs beyond scope, all fixed. Xyce **RULED: no fold**. Spec `specs/raw_case_mode.md` |
-| 2 | one lookup ladder (+ absorbs the VCD sub-step) | | | | | | no | |
+| 2 | one lookup ladder (+ absorbs the VCD sub-step) | `[x]` | `532b1768` | 105 new (186 in file) | 26 | 11 + 3 audits | no | audit diff vs item 1 **EMPTY**, verified independently. Ladder no longer mutates the query; alias index is a **separate lazy table**, overriding DESIGN_REVISION §4's *mechanism* (rule stands, correction written in place). Fixed a live **default-mode** viewer defect + a 32-byte leak |
 | 3 | four-source mode resolution | | | | | | no | |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | | | | | | no | |
 | 5 | viewer Tcl + two-pane browser scan | | | | | | no | |
@@ -106,6 +106,48 @@ item 1 defects; they are scope that lands elsewhere:
   the configured simulator command, never the file), so a fold would gate a
   destructive transform on a heuristic. The spec records what would reopen it.
   **Item 15 must still record Xyce's behaviour as unverified.**
+
+## Carry-forwards item 2 handed on
+
+Source: `receipts/02-one-lookup-ladder.md` §5. **The baseline did NOT roll at
+item 2** — its closer audit is byte-identical by name and status to item 1's, so
+`audit_item01_closer_2026-08-16.txt` remains the pipeline's baseline.
+
+- **Item 4** — `hilight.c:329`'s `strstr(n, "i(v.")` carries **the same two bugs
+  on the sender side** that item 2 just fixed on the reader side: it is
+  case-sensitive, and it is the 4-character `"i(v."` against the reader's
+  5-character `"i(v.x"`. Item 2 fixed its own rung by making it **anchored** as
+  well as case-blind — the old unanchored `strstr` matched at any offset but
+  rewrote `inode[2..3]` regardless, so a match anywhere else probed garbage. Item
+  4 should expect the same shape and check the anchoring, not only the case.
+- **Item 5 SHRANK, and what is left is precise.** Item 2 already did
+  `wviewer::validate_rpn`, because at the **default `fold`** mode it was a live
+  defect, not a `distinguish`-only one: on a `Count`/`count` raw,
+  `xschem raw index COUNT` returned −1 while the gate called the token valid and
+  `raw add` returned 1 — a **silent all-zero trace**. What remains for item 5 is
+  `wviewer::resolve_signal_db` (`:2538`), **a second folding matcher that still
+  ignores D2**. It is harmless today only because it never calls `raw add`. Item
+  5 deletes both mirrors; one is already gone.
+- **Issue `0418` filed** (driver, from item 2's "named, not fixed"):
+  `raw_add_vector()` swallows `plot_raw_custom_data()`'s `−1`, so
+  `xschem raw add x {BADTOK 2 *}` registers an **all-zero column and returns 1**.
+  Same silent-wrong-data family as the gate defect above. Item 2 correctly did
+  not fix it — two committed suites lean on that engine semantics, and changing
+  it would have moved audit rows for a reason unrelated to the case ladder,
+  breaking the empty-diff contract.
+- **A weak check inherited from item 1**, named by item 2's reviewers: `CS23c`
+  string-compares `ERR:No raw file loaded` against `>= 0` and therefore prints
+  `ok:` under a reader sabotage. Not load-bearing, but do not cite it as
+  evidence.
+- **Two abort-proofing guards** went into `test_backannotate_digital.tcl` and
+  item 1's `CS36f`: arithmetic on a value a broken reader empties raised a Tcl
+  error that **aborted the file with no RESULT line**, under which a sabotage
+  reads as "nothing went red". Worth knowing for any later sabotage round.
+- **Honest gaps item 2 declared:** 31 of its sabotage rows were not
+  independently re-driven, and of the two a reviewer did re-drive, one
+  (`CS39f`) **failed** — which is why the `i(.x1.vp)` bait column now exists.
+  No real mixed-case simulator run was involved; every fixture is committed or
+  inline.
 
 ## Environment — re-verified 2026-08-16
 
