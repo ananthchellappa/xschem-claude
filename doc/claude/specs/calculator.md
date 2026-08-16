@@ -200,7 +200,7 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 | W04 | `.calc.res.lab` | label | `Results Dir:` — **plus the provenance, when the raw is not this window's own**: `Results Dir (waveform viewer):` / `Results Dir (ASE-L session):`. See W05. |
 | W05 | `.calc.res.path` | entry | full path of the loaded raw; readonly unless edited via Browse. **⚠ Resolved from the raw the USER is looking at, not only from this window's context. Ruled by the crew 2026-08-15 (item 13).** The report: the Calculator was opened from the schematic editor while an ASE-L session had a state loaded and waveforms on screen, and the row read `(no raw file loaded)` — true of `xschem raw rawfile` in the editor's context and useless, because there *was* a raw and the user was looking at it. The order is `calc::results_source`: **self** (`xschem raw rawfile` in the current context) → **viewer** (a waveform viewer's context, the active token first then registry order) → **ase** (`ase::last_rawfile` of a live session, which already answers `{}` unless the file exists) → **none** (the phase-1a wording, unchanged). **A borrowed path MUST say whose it is** — a path with no provenance is worse than no path, because it reads as the current context's and is silently somebody else's; the short form is on W04's label, the long form (which viewer token / which session key) is the `balloon` tooltip on the entry. Two mechanics are load-bearing: the viewer read goes through `wviewer::enter_ctx`/`leave_ctx` with `borrow 1` — a bare `new_schematic switch` clobbers the viewer's title (issue 0173) and an unborrowed switch is refused 100% of the time from a menu callback, which holds `callback()`'s semaphore (issue 0314) — and a **refused** ticket is *skipped*, never read as "that viewer has no raw" (issues 0313/0314). **R705 binds**: this is a live query, never a cached or persisted value, and it has **three** callers — `calc::build_res`, at the end of building the row, which is the only one that runs on a **first** open and is therefore the one that delivers the reported fix; `calc::open`'s raise arm, for a later open onto a world that has moved; and the row's own **expand**, whose whole meaning is "show me that path again". Do not delete the build-time call as an unlisted extra: the raise arm does not run when there is nothing to raise. |
 | W06 | `.calc.sel` | frame | the 22-button radio grid |
-| W07 | `.calc.sel.<id>` | radiobutton | one per §5 row; variable `calc::selmode`, **empty = nothing armed**. ⚠ Each carries a `-tristatevalue` that no legitimate `calc::selmode` value can hold: Tk's default tristate value is the EMPTY STRING, which is exactly the "nothing armed" value, so without it all 22 render in Tk's mixed look (a panel-grey disc with a grey dot) at first open — the window ships looking as though every selector were half-armed. Ruled by the crew, 2026-08-15 (phase 1b fix round): `{}` stays the normative unarmed value, the sentinel moves. |
+| W07 | `.calc.sel.<id>` | radiobutton | one per §5 row; variable `calc::selmode`, **empty = nothing armed**. ⚠ Each carries a `-tristatevalue` that no legitimate `calc::selmode` value can hold: Tk's default tristate value is the EMPTY STRING, which is exactly the "nothing armed" value, so without it all 22 render in Tk's mixed look (a panel-grey disc with a grey dot) at first open — the window ships looking as though every selector were half-armed. Ruled by the crew, 2026-08-15 (phase 1b fix round): `{}` stays the normative unarmed value, the sentinel moves. **Restated by the crew, 2026-08-15 (phase 1e), because a driver brief asked the inventory sweep to assert that `calc::selmode` "is initialised (never the empty string)" and that reads against this row**: two different things are being asked for and only one of them is `{}`-shaped. What must never be the empty string is the **`-tristatevalue`**; what must be `{}` at first open is **`calc::selmode` itself**. "Initialised" is the third fact and it is neither — it means the variable is **seeded before the first radiobutton is created**, because a `-variable` that does not exist yet is created by the widget at its off value, and no check can then tell "deliberately unarmed" from "happened to be empty" (`wave_viewer.tcl:8051-8082` records the same rule for the browser's checkbuttons). `test_calc_widgets` CW3 asserts all three separately. |
 | W08 | `.calc.mode` | frame | mode strip |
 | W09 | `.calc.mode.off/.family/.wave` | radiobutton | variable `calc::pickscope`, initial `off` |
 | W10 | `.calc.mode.clip` | checkbutton | variable `calc::clip`, **initial 1** |
@@ -233,9 +233,40 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 
 - **R110** Panels W03, W06, W08, W23, W26 are individually collapsible from the **View**
   menu; collapse state persists across sessions.
-- **R111** The window is resizable. Only the buffer (W15) and the stack (W24) take the
-  extra vertical space; the selector grid, mode strip, keypad and status keep natural
-  height.
+- **R111** The window is resizable. The buffer (W15), the stack (W24) **and the function
+  browser (W26–W28)** take the extra vertical space; the selector grid, mode strip and
+  status bar keep natural height, and **the keypad keeps its natural *width* and its keys
+  their natural *height*** — its frame shares the bottom pane's growth (see below).
+  **The function browser was added to that list by the crew, 2026-08-15 (phase 1e).** The
+  original sentence named *widgets* and was written before the pane tree existed; growth is
+  a property of *panes*, and the mapping is what the build actually carries:
+  `.calc.pw.sel` `-stretch never` (the Results Dir row, the selector grid and the mode
+  strip — exactly what R111 says keeps its natural height), `.calc.pw.buf` and
+  `.calc.pw.stk` `always`, `.calc.pw.bot.pad` `never` **in the axis its own pane splits on**
+  (the keypad keeps its natural *width*), and `.calc.status` packed outside the panes
+  altogether so no sash can move it. The one row the original sentence did not mention at
+  all is the function browser, and `.calc.pw.bot -stretch always` is what feeds it —
+  which is **R112's** requirement, not a contradiction of it: a browser pinned to its
+  natural height would leave 56 entries ten rows deep in an eight-row box no matter how
+  large the user made the window, and R112 says the browser is what *scrolls*, not what
+  is permanently too small to read. Pinned by `test_calc_widgets` (CW11).
+  **The keypad clause was finished by the crew, 2026-08-15 (phase 1e fix round), because
+  the sentence above still claimed the keypad "keeps natural height" and the build does not
+  do it — and no check covered the clause, so the spec asserted something nothing could
+  see.** Measured on `:99`: at first open `.calc.pad` is **198 px** tall against a
+  `reqheight` of **115**, and at `900x1000` it is **345 px** against the same unchanged
+  `reqheight`, while `.calc.pad.k1` stays **21 px** throughout. The growth arrives through
+  the very clause that feeds the browser — `.calc.pw.bot -stretch always` grows the whole
+  bottom pane, and `.calc.pad` is packed `-expand 1 -fill both` inside its half of it — so
+  refusing it would mean pinning `.calc.pw.bot`, i.e. taking the browser's growth away
+  again. **The ruling: only the keypad's WIDTH and its KEYS' height are pinned; the frame
+  around the keys grows and the extra is empty pane.** Whether that empty band should be
+  filled, or the split changed so it is not there, is a LAYOUT question and phase 0's
+  fractions are frozen — it stays recorded as item 4's open look debt (`owed.sh`, "the
+  ~180 px of empty pane under `user 3`/`user 4`"), not fixed by rewording a rule.
+  Pinned by `test_calc_widgets` CW11 (`the keypad's FRAME grows with the bottom pane`,
+  `...while the KEYS keep their natural height`, and a fixture leg that proves the window
+  really grew).
 - **R112** Minimum size must keep every control reachable — if the layout cannot honour
   that, the function browser is what scrolls, not what disappears.
   **R112 is about pixels, and it is enforced by derivation, not by a constant** (§4.2).
@@ -799,7 +830,7 @@ Press `Allow 30m` once before the batch.
 
 | Test | Covers |
 |---|---|
-| `test_calc_widgets.tcl` | R101–R113: every W-row exists, has the right class and initial state |
+| `test_calc_widgets.tcl` | R101–R113: every W-row exists, has the right class and initial state. **Landed 2026-08-15 (phase 1e), 244 checks in bands CW1–CW13.** Three boundaries are deliberate and a later item must not blur them. (1) It is an *inventory*, not a geometry suite: `test_calc_skeleton` S11/S19/S21/S22 owns pixels, sash fractions and the derived minimum, and this file measures geometry only where a spec row is itself a rendered requirement (W15's four lines) or where a rule has no other oracle (R112's derivation, R111's amended keypad clause). (2) **R113 is proved by moving the source, not by comparing two colours.** A check that reads `.calc.sel cget -background` and compares it to `ase::palette panel` is equally green for a hardcoded `#f2f2f2`; CW12 shims `ase::palette`, rebuilds the window and asserts the widgets followed it, then restores and asserts they came back. A literal-equality colour check is vacuous evidence for R113 and must not be counted as coverage of it. **And that proof is a WALK, not a table** (crew, phase 1e fix round): the first draft named 22 widgets and one colour option each, and the window carries **91 widgets and 580 colour options, 326 of them palette-fed** — so 73 widgets and every `-active*`/`-highlight*`/`-disabled*`/`-select*`/`-insert*` option sat outside the proof and a widget divorced from the accessor kept the file green. CW12 now walks the live window (every widget × every option whose name ends in background/foreground/colour) and the source scan anchors on that same option-name **suffix** rather than on a list of six option names — an allow-list of option names cannot see `-activebackground`, which is 16 of the file's palette-fed sites. (3) **`winfo exists` + class + `cget` is not evidence a control is on screen.** A widget built and never handed to a geometry manager passes all three and is invisible to the user; CW2 therefore asserts `winfo manager` and `winfo ismapped` for every W-row and pins the slave list of every container the spec gives rows to. |
 | `test_calc_pick.tcl` | R201–R206, R301–R307: full Tk event sequence for arm → click canvas → buffer text. **Replay the whole sequence** (press/motion/release), per the gesture-test lesson — a synthesised click alone does not reach the handler |
 | `test_calc_plot.tcl` | R601–R606 against a live viewer |
 
