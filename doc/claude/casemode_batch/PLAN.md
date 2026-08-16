@@ -2,6 +2,41 @@
 
 Branch `fluid-editing`. Base HEAD `7924d0db`. Nothing is pushed.
 
+> # ⚠ READ THESE TWO FIRST — 2026-08-16
+>
+> Large parts of this plan are **superseded**. Nothing below has been deleted,
+> because the wrong text is why several things were misjudged and the next
+> reader needs to see the shape of the mistake. But do not work from this file
+> alone.
+>
+> 1. **`DECISIONS.md`** — the 13 open decisions, settled with the user
+>    2026-08-16, one at a time. Its §3 is the authoritative item-by-item impact
+>    table. Four of the user's answers overturned the recommendation recorded
+>    here.
+> 2. **`DESIGN_REVISION.md`** — the read path is redesigned. The fold at
+>    `save.c:1008` is **deleted outright** rather than gated on a mode, and the
+>    lookup becomes case-insensitive. This shrinks items 1/2/3/5 and absorbs the
+>    VCD sub-step (§5.6) entirely.
+>
+> **The authoritative item list is now §3b of this file**, not §3.
+>
+> Base HEAD above is stale. Current base is `577ef5bc`; `open_pdk` merge 5
+> landed at `e7ae4d77`. The `full_audit` baseline debt is **paid** — see
+> `LEDGER.md`.
+>
+> Headline reversals, so nobody re-derives them from the stale text:
+>
+> | § | what this file says | what was decided |
+> |---|---|---|
+> | §D1/§D2, item 1 | `Raw.case_mode`, three-valued, gates the fold | fold **deleted**; `Raw` gains a **boolean** `case_sensitive`, set only by `distinguish` |
+> | §4 Q1 | recommend `preserve` default | **`fold`** default everywhere; both modes opt-in; dialog pre-fill is probe-driven |
+> | §D4, item 6 | new registry file `$USER_CONF_DIR/ase_simulators` | **extend the existing** `sim()` array / `simconf` dialog / `simrc` / `cadence_style_rc` |
+> | item 8 | report a mismatch and keep going | split — `preserve` reports and continues, **`distinguish` refuses** |
+> | §5.6 / item D2 | VCD is a deliberate separate sub-step | **absorbed** into item 2 |
+> | §5.7 | backannotation left folding; breaks under `distinguish`; accepted | **superseded** — one lookup authority, schematic-case queries, lazy `ngspice_data` |
+> | §5.10 | phantom `v(all)`, undecided | **leave and document** — and it is `v(all)` **and `i(all)`** |
+> | item 14a | warn or error, undecided | warn, and **only** under `fold`/`preserve`; silent under `distinguish` |
+
 **Goal.** A net drawn as `EN` reaches the waveform viewer, the signal browser
 and the legend as `v(EN)` — the schematic's own spelling — when the user's
 ngspice supports it, with **byte-identical behaviour** for every existing user,
@@ -179,6 +214,25 @@ Four of the nine moved. What that does to the items:
 
 Three things measured in round 2 change work here and are not in §0:
 
+> **WRONG — corrected 2026-08-15 (receipt `00c`), re-measured 2026-08-16.**
+> Item 1 below is false for the shape we actually emit, and it misled this batch
+> for four days. It was measured on `ctl_fail.cir`, a deck carrying an analysis
+> **dot card *and* a `.control run`**. `render_deck` emits neither: analyses are
+> **control commands** (`op`/`dc`/`ac`/`tran`), no dot card, no `run`, bare
+> `write <abs path>` with no vector list. In *that* shape a failed analysis
+> returns **rc=1**, on both binaries:
+>
+> ```
+> ver_50  rc=1 | Plotname: constants | No. Variables: 12 | names the bad token: 0
+> stock   rc=1 | Plotname: constants | No. Variables: 12 | names the bad token: 0
+> ```
+>
+> So `rc` **is** a legitimate corroborating signal — but rc=1 arrives **with the
+> constants file already written**, so the content checks stay mandatory, and
+> the `$sim_status` guard is better still (it quits before `write`, leaving no
+> artefact, and works on stock). The rest of item 1's advice — test content, not
+> the exit code — survives for that reason. See `DECISIONS.md` §C3/§C4.
+
 1. **`rc` is unavailable in our deck shape.** The same failing `.save` exits 1
    from a plain `-b -r` deck and **0** from a deck that drives the run from a
    `.control` block — which is exactly what `render_deck` emits (`ase.tcl:3169`,
@@ -332,7 +386,11 @@ prefix letter taking the case of the instance's own first character. Two parts:
 
 ---
 
-## 3. Items
+## 3. Items — SUPERSEDED 2026-08-16 by §3b below
+
+> The table in this section is kept for its scope notes and file lists, which
+> are still largely accurate. **Its item definitions are not authoritative any
+> more** — see §3b, and `DECISIONS.md` §3 for the reasoning behind each change.
 
 Verdicts: `[x]` done+verified · `[E]` done, eyeball pending (pixels) ·
 `[D]` deferred (needs a filed issue) · `[F]` failed (needs a filed issue).
@@ -365,7 +423,59 @@ who does not opt in; the audit diff for items 1–8 should be *empty*.
 
 ---
 
-## 4. Open decisions — need the user before item 8
+## 3b. Items — AUTHORITATIVE, 2026-08-16
+
+Every item, unchanged from the batch's standing rule: build → its own tests →
+**sabotage-verify** → full headless suite → commit. Never push. Receipts in
+`receipts/NN-<slug>.md`, 120 lines max. **Default at every stage is `fold`**, so
+the audit diff for items 1–9 must be **empty** — judged by DIFFING the baseline
+by test NAME and STATUS, never by the red count.
+
+| # | item | scope | depends |
+|---|------|-------|---------|
+| **0a** | **Suite sweep.** ~20 headless suites touch `raw read`/`raw list`. `DESIGN_REVISION.md` changes what a VCD or table lookup returns, so find every committed assertion that encodes a folded name **before** item 1. Record the list; it is item 1's expected-diff contract. | tests | — |
+| 1 | **Delete the fold + `Raw.case_sensitive`.** Remove `strtolower(varname)` (`save.c:1008`). `Raw` gains a **boolean** `case_sensitive`, set only by `distinguish`. `xschem raw read <f> <t> -case <mode>`, and `xschem raw case` becomes settable (a set **re-reads** the file — folding is destructive and cannot be undone in memory). | C: `xschem.h`, `save.c`, `scheduler.c` | 0a |
+| 2 | **One lookup ladder.** `get_raw_index` (`save.c:2251`): exact → case-folded alias → `v()` wrap → the `i(v.x` fixup (`save.c:2274`, now case-aware) + the `@dev[param]` shape (`i(@R.X1.Rq[i])`). **Build no folded alias when two stored names collide** (D2) — exact lookups unaffected, the fuzzy rung declines to guess. Alias entries go in `raw->table`; verified nothing enumerates that table, so they are invisible to `raw list`. Covers all four AC-derived names per variable. Suppressed entirely when `case_sensitive`. **Absorbs the VCD sub-step** (old §5.6): retire `vcd_read.c:140`'s apology. | C: `save.c` | 1 |
+| 3 | **Mode resolution, four sources in order** (B2a): explicit user setting → `Option: casemode=` header (match the **key anywhere in the header**, two positions, trim around the first `=`) → **schematic-name comparison** → capital sniff (last resort, off by default). Absence is **unknown, never `fold`** (B2b). The old `sim_case_mode` global shrinks to the floor for the no-profile path. | C + `xschem.tcl` | 1 |
+| 4 | **The four `hilight.c` senders** — `:1601`, `:1718`, gaw `:1639`/`:1758`. Gate each `strtolower` on the loaded `Raw`, falling back to the global. This is the Ctrl-K path, outside ASE-L. | C: `hilight.c` | 1 |
+| 5 | **Viewer Tcl + browser scan.** `resolve_signal_db` and `validate_rpn` consult `xschem raw case`; keep `validate_rpn`'s rule identical to `get_raw_index`'s. Audit the two-pane browser's group/class parser against `i(@R.X1.Rq[i])`. Narrower than before: only `distinguish` needs it. | `wave_viewer.tcl` | 2 |
+| **5b** | **NEW (D3) — one lookup authority.** Backannotation calls `get_raw_index`; the Tcl-side `string tolower` and hand-rolled `v(...)` rung in `ngspice::get_diff_voltage` / `get_current` (`xschem.tcl:2669`, `:2688`–`:2700`, `:2724`) are **deleted, not ported**. Queries carry the **schematic's own spelling**, so the mode never appears in backannotation code. Then `ngspice_data` becomes a **read-traced lazy view** over the same authority — no eager `Tcl_SetVar2` per variable. Keep `info exists` working (`actions.c:4081`) and turn the five `array unset`/`Tcl_UnsetVar` sites into trace resets. | C + `xschem.tcl`, `ngspice_backannotate.tcl` | 2 |
+| 6 | **Extend the existing simulator config** (B1 i) — **not** a new registry file. `sim($tool,$i,exe|args|casemode|detected|probed)` alongside the untouched `cmd` strings; `save_sim_defaults` writes them; `simrc` and any `cadence_style_rc` set them. New `sim_profile` ASE-L state key in `schema_keys` + `omit_if_empty`. Byte-stability round-trip on a pre-batch state file. Pure Tcl, **no Tk** (`test_ase_core` runs this headless). | `xschem.tcl`, `ase.tcl` | 0a |
+| 7 | **The capability probe.** `printf 'echo CCM=$curcasemode\nquit\n' \| $exe -p {*}$args`, cwd = **the deck's directory**. **Hard timeout, mandatory** (B3) — a missing `quit` hangs forever; measured. Empty/absent ⇒ `unknown`. Test against both binaries **and** with a `.spiceinit` beside the deck **and** a `~/.spiceinit` (both override — measured). Skip, not fail, when ver_50 is absent. | `ase.tcl` | 6 |
+| 8 | **Profile-aware `run_cmd` + mismatch policy.** Replace the hardcoded `[list ngspice -b $deckpath 2>@1]` (`ase.tcl:3238`). No `-n` by default; per-profile `-n` checkbox. Probe immediately before the run, in the rundir. **`preserve` mismatch → report in log + CIW and continue. `distinguish` mismatch → REFUSE** (B4 d). | `ase.tcl` | 7 |
+| 9 | **`sod_expr` stops folding** + `sod_qualify`'s current arm (§D6 part 1). Flips ~20 committed assertions — that breakage **is** the evidence; the receipt shows before/after and which mode each surrounding check exercises. | `ase_window.tcl` + tests | 8 |
+| 10 | **Three defences** (C3 + C4), all required: (a) **pre-flight refusal** naming every `.save`/`print` identifier absent from the netlist map, **and offering the legacy corrections** for confirmation (D1) — never a silent rewrite; (b) the **`$sim_status` guard** emitted after **each** analysis (`$?sim_status` existence check first; last-writer-wins per analysis), which leaves no artefact at all and works on stock; (c) **content-based rejection** of the constants raw (`Plotname: constants`, `Date:` == build stamp, vector-count floor, the `appendwrite` shape). `rc` is a legitimate corroborating signal but arrives with the file already written. | `ase.tcl` | 9 |
+| 11 | **`result_probe` `-nocase`** (F3). Without it item 9 silently empties the Outputs pane's Value column for every mixed-case net under fold. | `ase.tcl` | 9 |
+| 12 | **Post-load current repair** (§D6 part 2) — resolve unmatched current expressions against `xschem raw list` after `attach_raw`, rewrite to the database's real spelling. | `ase_window.tcl` / `wave_viewer.tcl` | 8 |
+| 13 | **Simulator dialog** — extends the existing `simconf` (`xschem.tcl:3092`), not a new window. Per-row exe/args/casemode, **Test** button running item 7's probe, auto-probe on Add **only** when the exe filename matches `*ngspice*` (B3). Mode dropdown offers **only what the probe measured** (A1); pre-fill is probe-driven, never a constant. `[E]`, pixels — record `owed.sh add look`. | `xschem.tcl` | 6,7 |
+| 14 | **Netlister side.** (a) fold-collision check firing **only under `fold`/`preserve`** where xschem and the simulator disagree; **silent under `distinguish`**; **warn, not error**; assume `fold` when no profile is set. Plus **relay** ngspice's own line (parse-time, so off the run log, deduped on the quoted pair — it repeats per subckt instantiation). (b) `model_name()` dedup key gated on `distinguish` only. | C | 3 |
+| 15 | **Docs.** Rewrite `ngspice_case_sensitivity.md` §Part 3; new `specs/simulator_profiles.md`; FAQ entry; `references/` pointer. Must document: the phantom as **`v(all)` AND `i(all)`** (C1), and that Xyce remains **unverified**. | docs | 1–14 |
+
+**Two open items carried into the batch, neither blocking:**
+
+* **Xyce is unverified.** This plan asserts Xyce writes `V(EN)` uppercase. There
+  is no Xyce on this machine and it has **not** been measured. Item 1 must
+  either measure a real Xyce raw or keep a Xyce-specific fold. Note a Xyce raw
+  already gets one transformation (`:` → `.`, `save.c:1010`), so there is a
+  Xyce-shaped branch to hang it on.
+* **The one ver_50 ask worth making:** send the written-but-unsent `cp_remvar`
+  patch that makes `casemodewrite` default on. It is what turns the `Option:`
+  header from "files we generated" into "any file from a modern ngspice", which
+  is the difference between an exact read and a guess on the File→Open path.
+
+---
+
+## 4. Open decisions — ALL SETTLED 2026-08-16, see `DECISIONS.md`
+
+> Q1, Q2 and Q3 below are **answered**. Kept for the evidence they carry, not as
+> live questions. Q1 → **`fold`** default (not the `preserve` recommended here);
+> Q2 → **no `-n`**, with a per-profile checkbox; Q3 → **warn**, and only under
+> `fold`/`preserve`. Ten further decisions that this section never contemplated
+> are in `DECISIONS.md`.
+
+### (original text follows)
+
+## 4-orig. Open decisions — need the user before item 8
 
 **Q1. `preserve` or `distinguish` as the default requested mode?**
 The stated goal ("display names from the schematic identically") is exactly
