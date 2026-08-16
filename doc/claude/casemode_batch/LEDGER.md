@@ -42,8 +42,8 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | # | item | verdict | commit | checks | sabotages | files | eyeball | note |
 |---|------|---------|--------|--------|-----------|-------|---------|------|
 | 0 | setup: fixtures + docs + upstream exchange | `[x]` | `fc65f14a`, `2cbc999e` | – | – | 97 docs | no | fixtures + plan + rounds 1–3. Audit debt discharged above; base HEAD corrected from `7924d0db` |
-| 0b | decisions + design revision + plan/ledger correction | | | – | – | docs | no | `DECISIONS.md`, `DESIGN_REVISION.md`, `OPEN_QUESTIONS.md`, PLAN §3b — commit docs-only before item 0a |
-| 0a | suite sweep for folded-name assertions | | | | | | no | ~20 suites touch `raw read`/`raw list`; the list IS item 1's expected-diff contract |
+| 0b | decisions + design revision + plan/ledger correction | `[x]` | `f7ab5f65` | – | – | 6 docs | no | docs-only, no build/suite owed. `DECISIONS.md`, `DESIGN_REVISION.md`, `OPEN_QUESTIONS.md`, PLAN §3b marked superseded in place |
+| 0a | suite sweep for folded-name assertions | `[x]` | `f7ab5f65` | – | – | 1 doc | no | `receipts/00a-suite-sweep.md`: **zero rows expected to move**. Static sweep; 34 suites touch `raw read`/`raw list`, 2 tracked `.raw` fixtures, no test reads either. THIS IS ITEM 1's EXPECTED-DIFF CONTRACT |
 | 1 | delete the fold + `Raw.case_sensitive` | | | | | | no | |
 | 2 | one lookup ladder (+ absorbs the VCD sub-step) | | | | | | no | |
 | 3 | four-source mode resolution | | | | | | no | |
