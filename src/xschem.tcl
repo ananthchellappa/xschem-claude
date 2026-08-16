@@ -14545,6 +14545,12 @@ source $XSCHEM_SHAREDIR/copy_form.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+# Operating-point annotation: the ONE raw-vector name builder (op_annot::vector) that
+# the save-card emitter and the on-screen display must share -- invariant I1 of
+# doc/claude/specs/op_annotation.md. Proc definitions only at source time; nothing is
+# registered here (a PDK does that from its own procs file; a user from a file sourced
+# after startup -- NOT from xschemrc, which is read before this line, spec I5).
+source $XSCHEM_SHAREDIR/op_annot.tcl
 # Generic command-mode suspend/resume registry (cmdmode; no Tk, no ASE knowledge).
 # doc/claude/issues/0201-no-command-suspend-resume-contract.md. MUST precede ase_window.tcl,
 # which calls cmdmode::register at source time.

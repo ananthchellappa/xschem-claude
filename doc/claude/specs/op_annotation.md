@@ -4,8 +4,16 @@
 parameters — on the schematic, under three keys, with the displayed parameter
 list editable by the user and portable across PDKs.*
 
-Status: **specified, not implemented.** Branch `annotate`.
+Status: **S1 landed; S2–S12 not implemented.** Branch `annotate`.
 Plan of atomic steps: `doc/claude/suggestions/next_session_prompt_op_annotation.md`.
+
+**S1** (2026-08-16) delivered `src/op_annot.tcl` — the namespace, `register` /
+`descriptor` / `type` / `devpath` / `vector`, sourced from `src/xschem.tcl` —
+plus `tests/headless/test_op_annot.tcl` (32 checks). Implementing it corrected
+four things this spec asserted: the `devpath` templates in §4.2 (issue 0422),
+the save-card side of **I1** (rule **R4** and §5 below), **I5**'s claim about
+user rcs, and §8's cross-PDK test. Each correction is marked *measured* where it
+appears.
 
 Related:
 `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 (the existing
@@ -157,6 +165,30 @@ Three rules follow, and they are load-bearing for everything below:
   `modelparam` 0/1/2 convention, and exactly what the IHP prototype writes by
   hand. Transient saves are sampled at every timestep, so D (OP info at a
   timepoint) is free once C works.
+* **R4. The name you *save* is not the name you *read* — you always save the
+  bare one.** Added by S1; measured on `ngspice-42`, one card per throwaway deck
+  so no card could mask another. This is implicit in the fourth row of the table
+  above (bare cards in, wrapped names out) but was never stated, and getting it
+  backwards is the whole of the S3 risk:
+
+  | save card written | vector that appears in the raw |
+  |---|---|
+  | `.save @m.xm1.m1[id]` | `i(@m.xm1.m1[id])` |
+  | `.save i(@m.xm1.m1[id])` | **nothing at all — silently dropped, no diagnostic** |
+  | `.save @m.xm1.m1[vdsat]` | `v(@m.xm1.m1[vdsat])` |
+  | `.save v(@m.xm1.m1[vdsat])` | `v(@m.xm1.m1[vdsat])` |
+  | `.save @m.xm1.m1[gm]` | `@m.xm1.m1[gm]` |
+
+  **ngspice applies the wrapper itself, from the parameter's own type** —
+  current → `i(…)`, voltage → `v(…)`, admittance → bare. The bare card is the
+  only form that works for all three kinds; the `i(…)` card works for none.
+
+  Two consequences, both binding:
+  1. A save-card emitter must write `devpath` + `[param]` and **never**
+     `op_annot::vector`. See the restatement of **I1** in §5.
+  2. The descriptor's `kind` is therefore not a free label — it is a *claim
+     about the parameter's ngspice type*, and it is only ever used on the read
+     side. A wrong `kind` makes the save succeed and the read silently miss.
 
 ---
 
@@ -194,10 +226,26 @@ Three rules follow, and they are load-bearing for everything below:
                                   └──────────────────────┘
 ```
 
-**The central invariant (I1):** the save-card generator and the display read the
-same `op_annot::vector`. If they ever build names independently they will
-disagree, and the failure is silent — you save vectors nobody shows, and show
-`-` for vectors you saved. One builder, two consumers, always.
+**The central invariant (I1):** the save-card generator and the display derive
+their names from the same builder. If they ever build names independently they
+will disagree, and the failure is silent — you save vectors nobody shows, and
+show `-` for vectors you saved. One builder, two consumers, always.
+
+> **⚠ Corrected by S1, measured — the shared builder is `op_annot::devpath`, not
+> `op_annot::vector`.** The first revision of this spec said both consumers call
+> `op_annot::vector`. They cannot: rule **R4** shows `.save i(<dev>[id])`
+> produces no vector at all, so a save card built from `vector`'s kind-0 output
+> is silently discarded by ngspice. The correct split is
+>
+> | side | name | who wraps |
+> |---|---|---|
+> | **write** (save cards, S3/S4) | `[op_annot::devpath $inst][param]`, always bare | ngspice, from the parameter's type |
+> | **read** (display, S5/S9) | `op_annot::vector $inst $param` | us, from the descriptor's `kind` |
+>
+> I1 is unchanged in substance and if anything sharper: `devpath` is the single
+> builder both sides share, and `vector` is the *read shape* layered on top of
+> it. The place the two sides can still drift is the `kind` field — and that
+> drift is exactly what §8's raw-header diff has to catch.
 
 ### 4.2 The PDK descriptor
 
@@ -219,12 +267,76 @@ where `<symbol-type>` is the symbol `K`-record `type=` token (`nmos`, `pmos`,
 | `derived` | ordered list of `{label expr}`, evaluated after `params` are read, with each `label` from `params` available as a Tcl variable. Non-numeric inputs yield a blank, never a fabricated number. |
 | `pinexpr` | ordered list of `{label expr-over-pin-voltages}` for quantities that need no save card at all (`vgs = @#1 - @#2`). |
 
-Worked, for the three PDKs in this tree:
+**⚠ THE `devpath` TEMPLATE MUST BE ESCAPED.** Measured on branch `annotate`;
+the first revision of this section got it wrong and issue
+`doc/claude/issues/0422-op-annot-spec-devpath-templates-do-not-survive-translate.md`
+records the measurement. `xschem translate` tokenises on `SPACE(c)` =
+`{\n, space, \t, \0, ;}` only (`token.c:24`), so **`.` does not terminate an
+`@`-token**, and a token that misses `get_tok_value()` appends **nothing**
+(`token.c:5351-5366`). The natural-looking
+
+```
+@m.$path@spiceprefix@name.msky130_fd_pr__@model
+```
+
+therefore expands to `Xnfet_01v8` — no error, no warning, a plausible-looking
+wrong string, i.e. exactly the silent drift **I1** exists to prevent. Escape the
+leading `@` and the `.` that must end a token, the way the shipped sky130 symbol
+already does (`sky130A/…/nfet_01v8.sym:63-64`):
+
+```
+\@m.@path@spiceprefix@name\.msky130_fd_pr__@model
+```
+
+Two further rules that fall out of the same measurement:
+
+* `@path` (translate-native, `token.c:4719`) and `$path` (substituted by
+  `op_annot::devpath` with `string map`) are both accepted and give the same
+  string. **`@path` is canonical** — C resolves it for free. The Tcl pass is
+  `string map` and never `subst`: a template is user data, and `subst` would
+  execute any `[...]` in it. (Consequence: `string map` also rewrites a literal
+  `$pathological`.)
+* `translate` runs a trailing `expr(…)` / `expr_eng(…)` / `tcleval(…)` pass
+  (`token.c:5424-5432`; measured: `translate M1 {expr(1+1)}` → `2`), so a
+  `devpath` template is restricted to plain `@`-token text.
+
+**What S1 settled about the registry** (implemented in `src/op_annot.tcl`;
+recorded here because S2 writes the descriptors and S5 reads them):
+
+* **`register` replaces, it does not merge.** A dict-merge reads better for the
+  "user edits one line in their own rc" story, but it lets one PDK's
+  `pinexpr`/`derived` leak into another PDK's later-registered `nmos` in the
+  same interpreter. To tweak one key, round-trip:
+  `set d [op_annot::descriptor nmos]; dict set d params …; op_annot::register nmos $d`.
+* **⚠ The key is not unique.** `type=nmos` is carried by sky130, gf180, IHP
+  *and* `xschem_library/devices/nmos*.sym`, so a generic device sitting next to
+  PDK devices picks up the PDK's descriptor, and a second PDK's registration
+  silently overwrites the first. Measured; issue **0425**; unresolved, and S2 is
+  the step that should decide it.
+* **The error discipline: data conditions are blank, caller bugs are loud.**
+  `descriptor`, `devpath` and `vector` return `{}` for *every* data condition —
+  no descriptor, unknown instance, unknown symbol, `translate` failure, a
+  `devproc` that raises — because S6/S9 call them from inside a draw/`tcleval`
+  path where a raise breaks rendering (I3). `register` with a malformed dict, and
+  `vector` with a kind omitted for a param that is not in `params`, both **raise**:
+  an rc typo must be caught at registration rather than becoming a blank at draw
+  time, which is indistinguishable from "this PDK is not supported".
+* **`kind` may be omitted at the call site** — `op_annot::vector M1 gm` reads it
+  from `params`. Prefer that: the kind is descriptor data, and a consumer that
+  retypes `0` at its call site has quietly become a second builder of the same
+  decision. Note the lookup matches the **param** field, not the label, so
+  `{Ids ids 0}` is resolved by `ids`.
+* **Not validated yet**: a `params` row with a missing or non-numeric `kind`
+  silently falls into the `v(…)` branch (mirroring `token.c`), and a
+  whitespace-only `devpath` survives as a device name. Issue **0426** — worth
+  closing before S6 puts this surface in front of users (requirement F).
+
+Worked, for the three PDKs in this tree (escaped, as above):
 
 ```tcl
 # --- sky130 ---------------------------------------------------------------
 op_annot::register nmos {
-  devpath {@m.$path@spiceprefix@name.msky130_fd_pr__@model}
+  devpath {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model}
   params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
   pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
   derived {{gm/id {$gm/$id}}}
@@ -232,7 +344,7 @@ op_annot::register nmos {
 
 # --- gf180mcu -------------------------------------------------------------
 op_annot::register nmos {
-  devpath {@m.$path@spiceprefix@name.m0}
+  devpath {\@m.@path@spiceprefix@name\.m0}
   params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
   pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
   derived {{gm/id {$gm/$id}}}
@@ -240,7 +352,7 @@ op_annot::register nmos {
 
 # --- IHP sg13g2 (psp103 via OSDI: element letter `n`, inner device n<model>) --
 op_annot::register nmos {
-  devpath {@n.$path@spiceprefix@name.n@model}
+  devpath {\@n.@path@spiceprefix@name\.n@model}
   params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
            {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}
   derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
@@ -365,11 +477,11 @@ Verified free / safely overridable in this tree:
 
 | id | invariant |
 |---|---|
-| **I1** | Save cards and display share `op_annot::vector`. Never two name builders. |
+| **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* |
 | **I2** | A generated save block always carries `save all` (rule R2). |
 | **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
-| **I5** | A user's `op_annot::register` in their own rc overrides the PDK's, and takes effect on redraw — no restart, no rebuild. |
+| **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference. |
 | **I7** | `hide=true` semantics are unchanged for every existing symbol in every library. |
 
@@ -403,6 +515,31 @@ Verified free / safely overridable in this tree:
 8. **A one-point OP raw and a multi-point tran raw are the same code path.**
    `xschem raw value <v> -1` returns the OP value in the first case and the
    cursor-B value in the second, which is exactly what makes C and D one feature.
+9. **⚠ A save card for a device that does not exist produces a column of
+   `0.0`, not a missing vector.** Added by S1, measured on `ngspice-42` and the
+   sharpest threat to **I3** in the whole design. A deck carrying
+   `.save @m.xnope.m1[id]` for a device that is not in the netlist emits one
+   line — `Warning: unrecognized variable - @m.xnope.m1[id]` — on stderr and
+   then writes a **full column named exactly what was asked for**, holding
+   `0.0`. Confirmed for all three kinds (`[id]` → `i(…)`, `[vdsat]` → `v(…)`,
+   `[gm]` → bare); the value was decoded out of the binary raw and is `0.0`, not
+   a NaN and not an absent point.
+
+   So a wrong descriptor — wrong element letter, wrong inner-device name, wrong
+   hierarchy prefix — does **not** render blank. It renders `0`, which the
+   display cannot distinguish from a real `gm` of zero. That is precisely the
+   "plausible wrong number" I3 and `save.c` RULING D5-1 exist to forbid, and it
+   arrives from the simulator rather than from our code, so no amount of care in
+   `op_annot` prevents it. The two things that *do* detect it are: capturing
+   ngspice's `unrecognized variable` warnings and saying so on the status line
+   (§4's requirement 4), and noticing that a device's parameters are *all*
+   exactly zero. Neither is implemented.
+10. **A new `.tcl` helper is not installed until `./configure` is re-run.**
+   `src/Makefile` is generated from `Makefile.in`, gitignored, and has no
+   regeneration rule, so adding a file to `install_shares` leaves `make install`
+   stale — and a `source` line for a file that is not installed is a **startup
+   SIGSEGV**, not a missing feature (issues 0424 and 0423). Invisible in-tree,
+   because `XSCHEM_SHAREDIR` resolves to `src/` there.
 
 ---
 
@@ -432,5 +569,22 @@ Verified free / safely overridable in this tree:
 * **Cross-PDK**: the same test cell shape under each registered descriptor,
   asserting the built vector names match what ngspice actually wrote — read the
   raw header back and diff the two name sets. This is the direct test of I1.
+  Two corrections from S1, both measured:
+  * **One interpreter per PDK.** All three PDKs (and the generic
+    `xschem_library/devices/nmos.sym`) use the symbol type `nmos`, which is the
+    descriptor key, so the second `op_annot::register nmos` destroys the first.
+    Issue 0425.
+  * **The name diff is necessary but NOT sufficient.** Landmine 9: ngspice
+    fabricates a `0.0` column under exactly the name you asked for, so a
+    completely wrong descriptor still passes a name-set diff. The diff proves
+    the two *sides* agree; it does not prove the name is *real*. Pair it with an
+    assertion that the values are not all zero, and with a check of ngspice's
+    stderr for `unrecognized variable`.
+* **The name builder itself**: `tests/headless/test_op_annot.tcl` (S1, 32
+  checks) — golden device path and all three wrapper kinds against a sky130
+  `nfet_01v8` at `sim_sch_path` `x1.`, descriptor storage/replacement, the
+  blank-vs-raise error discipline, live (uncached) `sim_sch_path`, and a check
+  that building a name modifies nothing (I4). Run it as
+  `./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_op_annot.tcl`.
 * **Pixels**: the overlay is a look-at-it deliverable and no green suite can
   clear it. `tests/headless/owed.sh add look "op annotation on tb_bandgap"`.

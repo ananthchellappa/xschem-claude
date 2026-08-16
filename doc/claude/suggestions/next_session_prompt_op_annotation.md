@@ -44,7 +44,18 @@ Branch is `annotate`. Number new issues from **0418** (0417 is the highest taken
 
 ---
 
-## S1 — the core namespace and the name builder
+## S1 — the core namespace and the name builder ✅ LANDED (2026-08-16)
+
+Delivered: `src/op_annot.tcl` (`register` / `descriptor` / `type` / `devpath` /
+`vector`), sourced at `src/xschem.tcl:14548`, listed in `src/Makefile.in`'s
+`install_shares`, with `tests/headless/test_op_annot.tcl` — **RESULT: ALL PASS
+(32 checks)**. All three acceptance goldens reproduce byte for byte. Tiers T1/T2
+and eleven T3 suites are identical to the branch baseline (3 pre-existing T1
+FAILs, all explained: issues 0420 and 0421).
+
+**Read the five bullets under "What later steps must change" below before
+starting S2 or S3** — S1 measured four things this plan and the spec asserted
+wrongly, and two of them change what a later step has to do.
 
 **Files:** new `src/op_annot.tcl`; sourced from `src/xschem.tcl` alongside the
 other loadable helpers.
@@ -65,9 +76,14 @@ and `$path` from `xschem get sim_sch_path`; or calls `devproc` when the
 descriptor has one. `vector` applies the kind wrapper (`0` → `i(…[p])`, `1` →
 bare `…[p]`, `2` → `v(…[p])`) — the `get_fqdevice()` convention, spec §3 R3.
 
-**Acceptance:** with no schematic loaded, `op_annot::register` + a stubbed
-instance yields the exact strings ngspice writes. Golden strings to match,
-measured from real raw headers:
+**Acceptance:** ~~with no schematic loaded, `op_annot::register` + a stubbed
+instance~~ — **measured false, corrected:** the goldens need a **real loaded
+instance**. `xschem translate` raises when the instance does not exist, and
+`xschem translate -1 <tmpl>` substitutes every token with its own *name*
+(`@spiceprefix` → `spiceprefix`), yielding a plausible-looking wrong string. The
+S1 suite therefore builds a 3-file fixture in a scratch dir and does
+`load` / `select instance 0` / `descend 1 2` to reach `sim_sch_path` `x1.`.
+Golden strings to match, measured from real raw headers:
 
 ```
 sky130 nfet_01v8, inst M1 (spiceprefix X) at path x1. :
@@ -78,6 +94,57 @@ sky130 nfet_01v8, inst M1 (spiceprefix X) at path x1. :
 
 **Risk:** low. **Blocks:** everything.
 
+### What later steps must change — measured during S1
+
+1. **S3/S4: a save card is BARE. Never `op_annot::vector`.** The single most
+   important thing on this page. Measured on `ngspice-42`, one card per deck:
+   `.save i(@m.xm1.m1[id])` produces **no vector and no diagnostic**, while
+   `.save @m.xm1.m1[id]` produces `i(@m.xm1.m1[id])`. ngspice applies the
+   wrapper itself from the parameter's type. So the emitter writes
+   `[op_annot::devpath $inst][param]` and `vector` is the **read** shape only.
+   Spec rule **R4** and the restated **I1** carry the table. The wording in the
+   original plan ("one builder `op_annot::vector`, two consumers") points S3
+   straight at the broken form.
+2. **S3/S4/S5: a wrong device name yields `0.0`, not a blank.** A save card for
+   a device that is not in the netlist still writes a full column under exactly
+   the requested name, holding `0.0`, with only `Warning: unrecognized variable`
+   on stderr. So the S4 raw-header name diff — billed here as "the single most
+   valuable test in this plan" — **cannot detect a wrong descriptor**, because
+   the raw contains the wrong name too. Keep the diff (it proves the two sides
+   agree) and add: capture ngspice's stderr warnings and surface them, and
+   assert the values are not all zero. Spec landmine 9.
+3. **S2: copy the spec's §4.2 descriptors, they are now correct** — but only
+   because S1 rewrote them. The originals expanded to `Xnfet_01v8` with no
+   error (issue 0422); templates must be escaped as
+   `\@m.@path@spiceprefix@name\.msky130_fd_pr__@model`. Two more for S2:
+   **do not port** `sg13g2_procs.tcl:374/:453/:512`'s
+   `getprop instance … spiceprefix` (measured empty on sky130 — use
+   `xschem translate <inst> @spiceprefix`), and note all three PDKs plus the
+   generic `devices/nmos.sym` share the descriptor key `type=nmos`, so the
+   second `register nmos` silently overwrites the first (issue **0425** — S2
+   owns the decision, and spec §8's cross-PDK test needs one interpreter per
+   PDK until it is made).
+4. **S5: the slots are there and the readers must `catch`.** `derived` and
+   `pinexpr` are stored verbatim by `register`, so S5 adds no schema. But
+   `xschem raw value <v> -1` **raises** `No raw file loaded` rather than
+   returning empty, and `sim_sch_path` is read live on every `devpath` call and
+   shifts with the raw's load level (landmine 4) — a raw loaded at a different
+   level silently blanks every annotation.
+5. **Any step that adds a new `.tcl` must re-run `./configure`.** `src/Makefile`
+   is generated, gitignored and never self-regenerates, so a new
+   `install_shares` entry leaves `make install` stale — and an installed
+   `xschem.tcl` sourcing a file that is not installed **segfaults at startup**
+   (exit 139), it does not degrade. Issues **0424** (the live instance of this,
+   still open on this tree) and **0423** (why a Tcl error becomes a SIGSEGV).
+
+Smaller findings that cost time if rediscovered: `getprop symbol <cell> type`
+**raises** `Symbol not found` for a cell name without `.sym` (so `op_annot::type`
+reads `getprop instance <n> cell::type` instead — one call, no raise);
+`op_annot::register` from `~/.xschem/xschemrc` fails, because xschemrc is sourced
+before `xschem.tcl` (I5 corrected — use a `--script` rc); and `xschem translate`
+runs a trailing `expr()`/`tcleval()` pass, so a descriptor template is executable
+and must stay plain `@`-token text.
+
 ---
 
 ## S2 — the three PDK descriptors
@@ -86,7 +153,12 @@ sky130 nfet_01v8, inst M1 (spiceprefix X) at path x1. :
 `ihp-sg13g2/sg13g2_procs.tcl` (add registrations; leave the existing sg13g2
 procs alone for now).
 
-Descriptors are written out in spec §4.2 — copy them. The IHP one must reproduce
+Descriptors are written out in spec §4.2 — copy them; **S1 rewrote them and they
+are now correct** (the originals silently expanded to `Xnfet_01v8`, issue 0422).
+Decide issue **0425** here: all three PDKs and the generic
+`xschem_library/devices/nmos*.sym` share the key `type=nmos`, so registering a
+second PDK destroys the first, and a generic `nmos` on a PDK schematic picks up
+the PDK's device path. The IHP one must reproduce
 `sg13g2_write_save_lines`' ten FET parameters and thirteen NPN parameters
 exactly, including the `_5t` model-suffix strip via `devproc`.
 
@@ -105,7 +177,16 @@ and §6.3.
 
 Port `sg13g2_sch_expand` / `sg13g2_hier_sch_expand` into
 `op_annot::save_cards {}`, de-prefixed and descriptor-driven: visit every
-instance, look up its symbol `type`, emit one `save <vector>` per `params` entry.
+instance, look up its symbol `type` (use `op_annot::type`), emit one save card
+per `params` entry.
+
+> **⚠ The card is `[op_annot::devpath $inst][param]` — BARE, not
+> `op_annot::vector`.** Measured in S1 on ngspice-42: `.save i(<dev>[id])`
+> produces no vector and no diagnostic; the bare card produces
+> `i(<dev>[id])` because ngspice applies the wrapper itself. Spec rule **R4**.
+> `vector` is the read shape and belongs to S5, not here. Also: a card naming a
+> device that does not exist writes a `0.0` column under that exact name, so a
+> broken walk fails as zeros, not as blanks (spec landmine 9).
 Skip `pinexpr` and `derived` (nothing to save). **Prepend `save all`** — spec
 rule R2, measured: without it the node voltages vanish from the raw.
 
@@ -142,6 +223,17 @@ contains those exact vector names. **Read the raw header back and diff the two
 name sets** — that is the direct test of I1 and it is the single most valuable
 test in this plan.
 
+> **⚠ The diff is necessary but not sufficient — measured in S1.** ngspice
+> writes a `0.0` column under whatever name you save, existing device or not,
+> with only a `Warning: unrecognized variable` on stderr. So a completely wrong
+> descriptor passes the name diff with every number zero. Add two assertions:
+> ngspice's stderr carries no `unrecognized variable`, and the read-back values
+> are not all exactly zero. Note also that the save card is bare while the raw
+> name is wrapped (rule **R4**), so the diff compares
+> `devpath+[param]` cards against `op_annot::vector` names — that asymmetry *is*
+> the thing being tested, and a naive string diff of card-vs-header will fail
+> for the right reason if you forget it.
+
 **Risk:** low. **Unblocks:** real numbers on tb_bandgap.
 
 ---
@@ -157,7 +249,15 @@ from the read values, format `label = <to_eng value>` per line.
 Port `sg13g2_raw_or_double` / `sg13g2_to_eng_safe` as
 `op_annot::raw_or_blank` / `op_annot::eng_or_blank` — but **blank, not `NaN`**
 (I3; the IHP prototype prints `NaN`, and that is the one behaviour not to carry
-over).
+over). The `catch` is mandatory, not defensive: measured in S1,
+`xschem raw value <v> -1` **raises** `No raw file loaded` rather than returning
+empty. `derived` and `pinexpr` are already stored verbatim by `register`, so
+there is no schema work here — read them with `dict exists`.
+
+> **⚠ I3 has a hole S5 cannot close on its own** (spec landmine 9): a card for a
+> device that does not exist yields a real `0.0`, so "blank when missing" only
+> covers names ngspice rejected outright. A wrong descriptor reaches the
+> formatter as a legitimate-looking zero.
 
 **Acceptance:** on a run with the cards saved, the block for one FET matches a
 golden string; on a run without them, every line is `label =` with nothing after
@@ -266,7 +366,11 @@ block; press `Ctrl-6` and they all vanish; save the file and `git diff` is empty
 Export to SVG and PS and the annotation is there.
 
 **Risk:** medium — performance on a large hierarchy (the text is rebuilt per
-redraw; cache per instance and invalidate on annotation change).
+redraw; cache per instance and invalidate on annotation change). Note
+`op_annot::vector` resolves the symbol type and the descriptor **twice** per
+call (once inside `devpath`, once inside `_kind`), i.e. two `xschem getprop`
+round-trips per parameter per device. Fine for S1–S5's call rate, worth
+collapsing before it runs over every instance on screen.
 
 ---
 
@@ -309,6 +413,21 @@ interpolate from `xctx->raw` at `x = t` with no graph involved. Then the `6`/
   IHP device — `get_fqdevice()` switches on the *element letter*, which for a
   subcircuit-wrapped PDK device is always `x`.
 - Update `doc/claude/specs/op_annotation.md` status as steps land.
+
+Already filed by the S1 crew, and **0418/0419 are still free for S12 as
+described above** — nothing was numbered into them:
+
+| # | what |
+|---|---|
+| 0420 | `run_regression.tcl:117`'s anchored `^OVERALL: ok$` rejects `OVERALL: ok (N checks)`, so `test_pdk_launcher` is a permanent false HARNESS FAIL |
+| 0421 | `test_ihp_sg13g2_libmgr` pins a 9-library list; the tree now has 10 |
+| 0422 | spec §4.2's `devpath` templates did not survive `translate` (fixed in the spec by S1) |
+| 0423 | a Tcl error in any sourced helper SIGSEGVs in `alloc_xschem_data()` instead of reporting |
+| 0424 | **open on this tree** — `make install` ships `xschem.tcl` sourcing an uninstalled `op_annot.tcl`; re-run `./configure` |
+| 0425 | the descriptor key `type=nmos` collides across all three PDKs and the generic device library |
+| 0426 | `op_annot` accepts a malformed `params` row (silently becomes `v(…)`) and a whitespace-only template |
+
+Number new issues from **0427**.
 
 ---
 

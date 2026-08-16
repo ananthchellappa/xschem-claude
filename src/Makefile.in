@@ -20,7 +20,7 @@ put /local/install_shares {
  action_registry.tcl actions.csv keybindings.csv mousebindings.csv ciw.tcl
  property_form.tcl library_defs.tcl library_git.tcl library_manager.tcl xschem_subcommands.txt
  create_instance.tcl save_as_form.tcl copy_form.tcl alt2_toggle_view.tcl ase.tcl ase_window.tcl
- wave_viewer.tcl cmdmode.tcl calculator.tcl
+ wave_viewer.tcl cmdmode.tcl calculator.tcl op_annot.tcl
 }
 
 # generate a list of objects from the list of source files
