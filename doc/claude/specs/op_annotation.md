@@ -1,0 +1,436 @@
+# Spec — operating-point annotation on the schematic
+
+*Put simulation results — node voltages and per-device operating-point
+parameters — on the schematic, under three keys, with the displayed parameter
+list editable by the user and portable across PDKs.*
+
+Status: **specified, not implemented.** Branch `annotate`.
+Plan of atomic steps: `doc/claude/suggestions/next_session_prompt_op_annotation.md`.
+
+Related:
+`doc/claude/code_analysis/waveform_subsystem_reference.md` §6 (the existing
+back-annotation write-up), `doc/claude/specs/cadence_bindkey_plan.md` (the key
+profile this adds to), `doc/claude/specs/ase_l.md` (the deck renderer that must
+carry the generated save cards), `ihp-sg13g2/sg13g2_procs.tcl` (the working
+single-PDK prototype this generalizes).
+
+---
+
+## 1. The problem
+
+Four things a user wants on the schematic after a run:
+
+| # | want | today |
+|---|---|---|
+| A | DC operating-point node voltages | works, on labelled nets only |
+| B | node voltages at a chosen transient timepoint | works, needs a graph object on the canvas |
+| C | per-device OP info (vgs, id, gm, gds, vdsat, …) from a DC OP | display machinery exists; **the data is not in the raw file** |
+| D | the same at a transient timepoint | as C |
+
+and three interaction requirements:
+
+| # | want |
+|---|---|
+| E | `Ctrl-6` default info, `6` device OP info, `Alt-6` also node voltages |
+| F | the user edits *which* parameters are shown, without editing symbols |
+| G | it works on sky130, gf180 and IHP sg13g2, not just one of them |
+
+C is the blocker, F is the design problem, G is what decides the shape of the
+design.
+
+---
+
+## 2. What exists, precisely
+
+### 2.1 The annotation value pipeline (C)
+
+`xschem annotate_op [rawfile] [level] [sim_type]` (`scheduler.c` ~2329) loads a
+raw via `extra_rawfile()` — trying `op`, then `dc` (Xyce writes OP as a one-point
+DC sweep), then `tran` (point 0) — forces `live_cursor2_backannotate=1`, and
+calls `update_op()`.
+
+`update_op()` (`save.c:1988`) copies point 0 of every vector into
+`xctx->raw->cursor_b_val[]` **and** publishes every vector into the Tcl array
+`ngspice::ngspice_data`.
+
+`backannotate_at_cursor_b_pos()` (`callback.c:1531`) does the same at an
+arbitrary sweep position when graph cursor B moves, so every annotated number
+follows the cursor live.
+
+**The single value accessor**, and the one this spec builds on:
+
+```tcl
+xschem raw value <vector-name> -1     ;# value at the current annotation point
+```
+
+(`scheduler.c:10312` — with point `-1` it falls through to `cursor_b_val[idx]`,
+i.e. the OP point or the cursor-B point, whichever is current.) `get_raw_index()`
+already tries the name as-is, uppercased, lowercased, and `v(...)`-wrapped.
+
+### 2.2 The display mechanisms (4 of them, all symbol-text based)
+
+| # | form | where the name comes from | used by |
+|---|---|---|---|
+| D1 | `@spice_get_voltage` on a 1-pin symbol | the attached net | `lab_pin`, `lab_wire`, `ipin`, `opin`, `vdd`, `ngspice_probe` |
+| D2 | `@spice_get_diff_voltage` on a 2-pin symbol | its two nets | `spice_probe_vdiff` |
+| D3 | `@spice_get_node <literal raw name>` | typed into the symbol text | sky130 FET symbols (`id`, `gm`) |
+| D4 | `tcleval([<proc> …])` | a Tcl proc | gf180 FET symbols, `device_param_probe`, `ngspice_get_value`, all IHP annotators |
+
+Plus the bare tokens `@spice_get_current_<p>` / `@spice_get_modelparam_<p>` /
+`@spice_get_modelvoltage_<p>` (`token.c:5163`, name built by `get_fqdevice()`
+`token.c:4514`), which **do not work for any of the three PDKs**: those symbols
+netlist as `X<name>` subcircuit wrappers, so the element prefix seen is `x` and
+the generic branch emits `i(@x…[i])`. That is exactly why every PDK spells the
+name out by hand.
+
+> The parenthesised forms `@spice_get_modelparam_<p>(<dev>)` and
+> `@spice_get_modelvoltage_<p>(<dev>)` are matched by the regex at `token.c:4646`
+> and then silently produce nothing — only the `@spice_get_current` variants are
+> implemented in that branch. Reserved-but-dead; see issue list.
+
+### 2.3 The IHP prototype — the thing to generalize
+
+`ihp-sg13g2/sg13g2_procs.tcl` already implements, for sg13g2 only, most of what
+this spec asks for:
+
+| piece | proc | what it does |
+|---|---|---|
+| hierarchy walk | `sg13g2_sch_expand` / `sg13g2_hier_sch_expand` (:345, :366) | descends the whole design with `no_draw`/`no_undo` set, visiting every instance |
+| save-card emitter | `sg13g2_write_save_lines` (:304) | per FET, appends 10 `.save @n.<path><X><name>.n<model>[<p>]` lines; per NPN, 13 |
+| deliverable | `sg13g2_save_params` (:425) + IHP menu (:604) | writes `<netlist_dir>/<cell>.save`, opens it in a text window; user `.include`s it by hand |
+| display | `sg13g2_display_fet_params` (:449) | reads each vector with `xschem raw value <p> -1`, formats a block, adds derived `ft` and `gm/id` |
+| carrier symbol | `sg13g2_pr/annotate_fet_params.sym` | `K {type=annotator template="name=annot1 ref=M1"}` + one text `tcleval([sg13g2_display_fet_params @ref])` |
+| placement | IHP menu "Add FET param annotator" (:640) | places the annotator pre-filled with the selected instance's name |
+
+What it does **not** do, and this spec must:
+
+1. the parameter lists are hardcoded inside two Tcl procs — not user-editable;
+2. every name is sg13g2-specific (`@n.` prefix, `n<model>` inner device, the
+   `_5t` model-suffix strip) and the procs are `sg13g2_`-prefixed by design, so
+   nothing is reusable by sky130 or gf180;
+3. the annotator is a symbol the user places **one per device, by hand**;
+4. the save cards land in a file the user must remember to `.include`;
+5. no keys, no toggle, no interaction with `show_hidden_texts`.
+
+### 2.4 The visibility switch
+
+One global boolean: `show_hidden_texts` (`xctx->show_hidden_texts`, mirrored in
+Tcl), gating texts whose attribute is `hide=true` (`HIDE_TEXT`, set in
+`set_text_flags()` `actions.c:1121`). The test is copy-pasted at **nine** sites:
+`draw.c:868, 1131, 10266, 10556`, `svgdraw.c:923, 1290`, `psprint.c:1205, 1664`,
+`select.c:709`, `actions.c:4422`.
+
+It is all-or-nothing and it hides unrelated things too. It also behaves
+differently per PDK: **sky130's OP texts do not set `hide=true`**, so once data
+is loaded they are on screen permanently; gf180's do.
+
+> `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 says "Op text is
+> layer-15 (hidden unless `show_hidden_texts=1`)". That is wrong — hiding comes
+> from the attribute, not the layer — and should be corrected when this lands.
+
+---
+
+## 3. The measured constraint: ngspice saves nothing by default
+
+Measured with the installed `ngspice` on throwaway decks (`.op` on a
+subckt-wrapped MOS, mirroring the PDK device shape):
+
+| deck | vectors in the raw |
+|---|---|
+| `.op`, nothing saved | `v(d) v(g) i(vd) i(vg)` |
+| `.op` + `save all` | **identical** |
+| `.options savecurrents` alone | `i(@m.xm1.m0[id]) [ib] [ig] [is]` — **and the node voltages are gone** |
+| `save all @m.xm1.m0[gm] [id] [vdsat] [vth]` | node voltages *and* `@m.xm1.m0[gm]`, `i(@m.xm1.m0[id])`, `v(@m.xm1.m0[vdsat])`, `v(@m.xm1.m0[vth])` |
+| the same list with `tran 0.1n 20n` | the same device vectors at every timestep (220 points) |
+
+Three rules follow, and they are load-bearing for everything below:
+
+* **R1.** `gm`, `gds`, `vth`, `vdsat`, `cgg`, … exist in the raw **only** if the
+  deck explicitly saved them, one card per device per parameter.
+* **R2.** Any explicit `save` **cancels the implicit save-everything**. A deck
+  that adds device saves must also carry `save all`, or the node voltages
+  disappear. (The shipped sky130 examples already pair them; a generated block
+  must not assume the user did.)
+* **R3.** The vector names follow a fixed shape —
+  `i(<dev>[<p>])` for currents, bare `<dev>[<p>]` for conductances,
+  `v(<dev>[<p>])` for voltages — which is exactly `get_fqdevice()`'s
+  `modelparam` 0/1/2 convention, and exactly what the IHP prototype writes by
+  hand. Transient saves are sampled at every timestep, so D (OP info at a
+  timepoint) is free once C works.
+
+---
+
+## 4. Design
+
+### 4.1 Shape
+
+```
+              ┌─────────────────────────────┐
+              │  PDK descriptor (Tcl)       │   <- the ONLY thing a PDK author
+              │  op_annot::register <type>  │      or a user writes
+              │    devpath / params /       │
+              │    derived                  │
+              └──────────────┬──────────────┘
+                             │
+                 ┌───────────┴────────────┐
+                 │  op_annot::vector      │   ONE name builder
+                 │  (type, inst, param)   │   -> "@m.x1.xm1.msky…[gm]"
+                 └───────────┬────────────┘
+                             │
+              ┌──────────────┴───────────────┐
+              │                              │
+   ┌──────────▼──────────┐        ┌──────────▼───────────┐
+   │ op_annot::save_cards│        │ op_annot::text <inst>│
+   │  walk hierarchy,    │        │  read each vector via│
+   │  emit `save …`      │        │  `xschem raw value`  │
+   │  into the deck      │        │  format a block      │
+   └─────────────────────┘        └──────────┬───────────┘
+                                             │
+                                  ┌──────────┴───────────┐
+                                  │ carrier: annotator   │
+                                  │ symbol (phase 1) or  │
+                                  │ draw-time overlay    │
+                                  │ (phase 2)            │
+                                  └──────────────────────┘
+```
+
+**The central invariant (I1):** the save-card generator and the display read the
+same `op_annot::vector`. If they ever build names independently they will
+disagree, and the failure is silent — you save vectors nobody shows, and show
+`-` for vectors you saved. One builder, two consumers, always.
+
+### 4.2 The PDK descriptor
+
+A PDK contributes one registration per device class it wants annotated, in its
+own rc / procs file. Nothing else about a PDK is touched.
+
+```tcl
+op_annot::register <symbol-type> <dict>
+```
+
+where `<symbol-type>` is the symbol `K`-record `type=` token (`nmos`, `pmos`,
+`vertical_npn`, `res`, …), and the dict carries:
+
+| key | meaning |
+|---|---|
+| `devpath` | template for the raw-file device path, **including the element-letter prefix**. Expanded with `xschem translate <inst> …` (so `@name`, `@model`, `@spiceprefix`, `@path` all work) plus `$path` for the hierarchy prefix. |
+| `devproc` | *alternative to* `devpath`: name of a Tcl proc called as `<proc> <instname> <model> <path> <spiceprefix>` returning the device path. The escape hatch for PDKs that mangle the model name. |
+| `params` | ordered list of `{label param kind}`. `kind` is `0` = wrap in `i(…)`, `1` = bare, `2` = wrap in `v(…)` — the R3 shape, and `get_fqdevice()`'s convention. |
+| `derived` | ordered list of `{label expr}`, evaluated after `params` are read, with each `label` from `params` available as a Tcl variable. Non-numeric inputs yield a blank, never a fabricated number. |
+| `pinexpr` | ordered list of `{label expr-over-pin-voltages}` for quantities that need no save card at all (`vgs = @#1 - @#2`). |
+
+Worked, for the three PDKs in this tree:
+
+```tcl
+# --- sky130 ---------------------------------------------------------------
+op_annot::register nmos {
+  devpath {@m.$path@spiceprefix@name.msky130_fd_pr__@model}
+  params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
+  pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
+  derived {{gm/id {$gm/$id}}}
+}
+
+# --- gf180mcu -------------------------------------------------------------
+op_annot::register nmos {
+  devpath {@m.$path@spiceprefix@name.m0}
+  params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
+  pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
+  derived {{gm/id {$gm/$id}}}
+}
+
+# --- IHP sg13g2 (psp103 via OSDI: element letter `n`, inner device n<model>) --
+op_annot::register nmos {
+  devpath {@n.$path@spiceprefix@name.n@model}
+  params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
+           {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}
+  derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
+           {ft      {$gm/(2*3.141592654*$cgg_tot)}}
+           {gm/id   {$gm/$ids}}}
+}
+op_annot::register vertical_npn {
+  devproc ihp_npn_devpath          ;# strips the `_5t` model suffix, then @q.<path><X><name>.q<model>
+  params  {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2} {vbc vbc 2}}
+}
+```
+
+Every sg13g2 number in the existing prototype is expressible; the `_5t` strip is
+the reason `devproc` exists.
+
+**What the user edits** is the `params` list — one line in their own rc, which
+overrides the PDK's registration. No symbol is touched, no C is rebuilt, and the
+change takes effect on the next redraw.
+
+### 4.3 The two consumers
+
+**`op_annot::save_cards {}`** — walk the hierarchy (the `sg13g2_sch_expand`
+recursion, generalized and de-prefixed: `no_draw 1` / `no_undo 1` /
+`keep_symbols 1` around it, `xschem descend` / `go_back`, `nolist_libs`
+respected). For each instance whose symbol `type` has a registration, emit one
+`save <vector>` per `params` entry, skipping `pinexpr` and `derived` (nothing to
+save for those). Returns the block as text. **Always prepend `save all`** (rule
+R2).
+
+**`op_annot::text <instname>`** — look up the registration for the instance's
+symbol type; read each `params` vector with `xschem raw value <v> -1`; compute
+`pinexpr` from pin voltages and `derived` from the read values; format
+`label = <engineering>` per line, blank (not `NaN`, not `0`) for anything
+missing. Returns the block. This is `sg13g2_display_fet_params` with the
+parameter list lifted out into data.
+
+### 4.4 Getting the block onto the screen — two carriers
+
+**Carrier 1: the annotator symbol.** A PDK-neutral
+`xschem_library/devices/annotate_params.sym`, modelled exactly on IHP's:
+
+```
+K {type=annotator template="name=annot1 ref=M1"}
+T {tcleval([op_annot::text @ref])} … {layer=15 font=Monospace hide=op}
+T {@ref} … {layer=4}
+```
+
+Placed next to a device (menu item / key pre-fills `ref` from the selection).
+**Needs no C change and no PDK symbol edit** — it is the phase-1 deliverable and
+it works on every PDK the moment its descriptor is registered.
+
+**Carrier 2: the draw-time overlay.** For every instance whose symbol type is
+registered, and only while the annotation mask says so, `draw()` renders
+`op_annot::text` next to the symbol bounding box. No symbol placed, no schematic
+modified, nothing saved to the `.sch`. This is what makes `6` behave like
+Cadence: press it and *every* transistor lights up.
+
+Consequences of carrier 2 that the plan must handle:
+
+* it must be replicated in `svgdraw.c` and `psprint.c` or exports lose the
+  annotation (2 further sites);
+* it **duplicates** what a PDK symbol already prints. sky130's `id=`/`gm=` texts
+  have no `hide=true`, so they are always on. Removing the duplication is a
+  one-time scripted edit per PDK (mark those texts `hide=op`), tracked as its own
+  step, not a prerequisite;
+* placement must be deterministic and collision-tolerant — anchor to the symbol
+  bbox corner, with a per-instance `annot_dx`/`annot_dy` override attribute.
+
+### 4.5 Visibility: annotation classes
+
+Replace the single boolean with a mask.
+
+* Text attribute gains classes: `hide=op`, `hide=voltage`, alongside the existing
+  `hide=true` / `hide=instance`. New flag bits next to `HIDE_TEXT`
+  (`xschem.h:387`), set in `set_text_flags()` (`actions.c:1121`).
+* New `xctx->annot_show` bitmask (`bit0 = device OP info`, `bit1 = node
+  voltages`), mirrored in Tcl as `annot_show`, per the `MIRRORED IN TCL`
+  convention.
+* The nine copy-pasted visibility tests collapse into one helper
+  `text_hidden(flags)`. **That refactor is the substance of the change**; the
+  class logic is a few lines inside it.
+* `hide=true` keeps its exact present meaning under `show_hidden_texts`. Nothing
+  existing changes behaviour.
+
+### 4.6 The keys
+
+In `src/cadence_style_rc` (and the per-PDK copies), following the `Ctrl-4`
+precedent in that file:
+
+```tcl
+bind .drw <Control-Key-6> {cadence::annot_mode none;   break}
+bind .drw <Key-6>         {cadence::annot_mode op;     break}
+bind .drw <Alt-Key-6>     {cadence::annot_mode opvolt; break}
+```
+
+Verified free / safely overridable in this tree:
+
+* plain `6` reaches `callback.c:7272` and is a **no-op** unless Control is held;
+* `Ctrl-6` is "select drawing layer 6" — overridden with a trailing `break`,
+  exactly as `Ctrl-4` already overrides "select layer 4" for
+  `ase::direct_plot_for_current`;
+* `Alt-6` (keysym 54) appears in **no** row of `src/keybindings.csv`; the only
+  alt+digit row is `key,50,alt,canvas,view.toggle_view_type` (Alt-2);
+* no Shift is involved, so the shifted-keysym trap documented in that file for
+  `Ctrl-Shift-2` / `Ctrl-Shift-4` does not apply.
+
+`cadence::annot_mode <mode>` must:
+
+1. set `annot_show` (`none` → 0, `op` → 1, `opvolt` → 3);
+2. if no raw is loaded and the mode is not `none`, load one for the current cell —
+   `ase::last_rawfile` / `ase::session_for_current` when an ASE session exists,
+   else `$netlist_dir/<cell>.raw` — via `xschem annotate_op`;
+3. `xschem update_all_sym_bboxes; xschem redraw` (the pair the existing
+   "Show hidden texts" checkbutton uses; bboxes change when texts appear);
+4. **say what happened on the status line.** A key that finds no raw file must
+   report that, not fail silently. Same for "no descriptor registered for this
+   PDK" — that is the single most likely first-run confusion.
+
+---
+
+## 5. Contracts and invariants
+
+| id | invariant |
+|---|---|
+| **I1** | Save cards and display share `op_annot::vector`. Never two name builders. |
+| **I2** | A generated save block always carries `save all` (rule R2). |
+| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
+| **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
+| **I5** | A user's `op_annot::register` in their own rc overrides the PDK's, and takes effect on redraw — no restart, no rebuild. |
+| **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference. |
+| **I7** | `hide=true` semantics are unchanged for every existing symbol in every library. |
+
+---
+
+## 6. Landmines
+
+1. **R2 — an explicit save cancels save-all.** Measured. A generated block
+   without `save all` silently deletes every node voltage from the raw, so the
+   feature that was supposed to *add* information removes some.
+2. **The element-letter prefix is PDK-specific and is not `m`.** sky130 and
+   gf180 use `@m.`; IHP uses `@n.` (psp103 through OSDI) and `@q.` for HBTs.
+   Anything that hardcodes `m` works on two PDKs out of three.
+3. **The inner device name is PDK-specific**: `msky130_fd_pr__<model>` vs `m0`
+   vs `n<model>` (with `_5t` stripped for some IHP bipolars). This is why the
+   descriptor takes a template and a proc escape hatch, not a fixed rule.
+4. **`sch_waves_loaded()` ties the data to `raw->schname` / `level`.** Descending,
+   ascending or opening another schematic makes the same data silently invisible
+   (returns −1) without freeing it — easy to misread as data loss. Set
+   `raw_level` when a top-level raw must annotate a sub-schematic.
+5. **The hierarchy walk is destructive if it leaks.** It descends the real
+   design with undo and drawing disabled. Any early return that skips the
+   restore leaves the editor in a state where edits are not undoable and the
+   canvas does not repaint.
+6. **`show_hidden_texts` is not a per-PDK-consistent switch today** — sky130's OP
+   texts ignore it. Anything that reasons "the OP text is hidden unless the user
+   asked" is wrong on sky130.
+7. **Instance names are case-mixed.** `get_raw_index()` retries as-is, upper,
+   lower and `v(…)`-wrapped, which covers it — but a new name builder that
+   bypasses `get_raw_index` will not be covered.
+8. **A one-point OP raw and a multi-point tran raw are the same code path.**
+   `xschem raw value <v> -1` returns the OP value in the first case and the
+   cursor-B value in the second, which is exactly what makes C and D one feature.
+
+---
+
+## 7. Out of scope (named, so it is not accidentally assumed)
+
+* Voltages on **unlabelled** nets. Today a voltage needs a label/pin/probe
+  symbol on the net (D1). A per-net overlay is a separate feature.
+* Xyce and Vacask device-parameter naming. The descriptor can express them, but
+  no descriptor is written here and none is tested.
+* Implementing the dead `@spice_get_modelparam_<p>(<dev>)` /
+  `@spice_get_modelvoltage_<p>(<dev>)` token branch (`token.c:5023`). File it;
+  this design does not need it.
+* Removing the PDK symbols' own OP texts. A one-time scripted edit per PDK,
+  sequenced after the overlay, not a prerequisite for it.
+* Annotation of AC / noise / sweep results.
+
+---
+
+## 8. Verification
+
+* **Headless gold**: a one-MOSFET cell → `op_annot::save_cards` output golded as
+  text → run ngspice → `annotate_op` → `op_annot::text` output golded as text.
+  `tests/headless/` has the gold infrastructure; `create_save` / `open_close` /
+  `netlisting` have no baseline and can only report `NOGOLD`.
+* **Hierarchy walk**: a 3-level design, gold the card list, and assert
+  `no_draw` / `no_undo` / `keep_symbols` / `sch_path` are restored (I6).
+* **Cross-PDK**: the same test cell shape under each registered descriptor,
+  asserting the built vector names match what ngspice actually wrote — read the
+  raw header back and diff the two name sets. This is the direct test of I1.
+* **Pixels**: the overlay is a look-at-it deliverable and no green suite can
+  clear it. `tests/headless/owed.sh add look "op annotation on tb_bandgap"`.
