@@ -1329,6 +1329,7 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
     Raw *raw = xctx->raw;
     int  save_datasets = -1, save_npoints = -1;
     int use_window = 1;   /* RULING D4-7, see the rescan below */
+    char *nd_key = NULL;  /* scratch for ngspice_data_key(), freed at the end */
     if(!raw || !raw->values || !raw->cursor_b_val || raw->nvars <= 0) return;
     /* transform multiple OP points into a dc sweep */
     if(raw->sim_type && !strcmp(raw->sim_type, "op") && raw->datasets > 1 && raw->npoints[0] == 1) {
@@ -1462,7 +1463,12 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
         if(write_tcl) {
           sprintf(s, "%.*g", xctx->ev_precision, raw->cursor_b_val[i]);
           /* tclvareval("array set ngspice::ngspice_data [list {",  raw->names[i], "} ", s, "]", NULL); */
-          Tcl_SetVar2(interp, "ngspice::ngspice_data", raw->names[i], s, TCL_GLOBAL_ONLY);
+          /* the key is the stored name FOLDED, and a second variable wanting the
+           * same folded key is refused with a dbg(0) instead of silently
+           * overwriting the first: read_dataset() no longer folds, and these
+           * keys are a published Tcl interface. save.c,
+           * ngspice_data_publish(), and doc/claude/specs/raw_case_mode.md */
+          ngspice_data_publish(&nd_key, raw->names[i], s);
         }
       }
       if(write_tcl) {
@@ -1474,6 +1480,7 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
       raw->datasets = save_datasets;
       raw->npoints[0] = save_npoints;
     }
+    if(nd_key) my_free(_ALLOC_ID_, &nd_key);
   }
 }
 

@@ -1263,15 +1263,25 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    <li><kbd>       push_undo</kbd></li><pre>
    Push current state on undo stack </pre>
    <li><kbd>       raw what ...</kbd></li><pre>
-     what = add | clear | datasets | index | info | loaded | list |
+     what = add | case | clear | datasets | index | info | loaded | list |
             new | points | rawfile | del | read | set | rename |
             sim_type | switch | switch_back | table_read | value | values | pos_at | vars |
       
-   xschem raw read filename [type [sweep1 sweep2]]
+   xschem raw read filename [type [sweep1 sweep2]] [-case mode]
      if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
      sweep1 &lt;= sweep_var &lt; sweep2
      type is the analysis type to load (tran, dc, ac, op, ...). If not given load first found in
      raw file.
+     -case may appear anywhere after 'read'; mode is fold | preserve | distinguish (or 0 | 1).
+     Variable names are always stored exactly as the file spells them; the mode only says
+     whether a name lookup in this database may match a name differing only in case.
+     Only 'distinguish' makes the lookup case sensitive.
+      
+   xschem raw case [mode]
+     with no argument: 1 if name lookup in the current raw file is case sensitive, else 0.
+     with a mode (fold | preserve | distinguish | 0 | 1): set it. The file is RE-READ, not
+     just flagged. If the file can not be re-read (deleted, or a database that never had a
+     backing file) this raises a Tcl error and the loaded database is left untouched.
       
    xschem raw clear [rawfile [type]]
      unload given file and type. If type not given delete all type sfrom rawfile

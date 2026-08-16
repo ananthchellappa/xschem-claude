@@ -1005,7 +1005,33 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         exit_status = 0;
         goto read_dataset_done;
       }
-      strtolower(varname);
+      /* NAMES ARE STORED VERBATIM. There used to be a strtolower(varname) right
+       * here, and deleting it is the whole of casemode item 1
+       * (doc/claude/specs/raw_case_mode.md, doc/claude/casemode_batch/
+       * DESIGN_REVISION.md sections 4 and 5).
+       *
+       * The fold was never about display: it made a query spelled in one case
+       * resolve against a name stored in another. get_raw_index() transforms
+       * the QUERY (verbatim -> UPPER -> lower -> v(...)), so with every stored
+       * name lowercase both `v(en)` and `v(EN)` hit. That is what it bought,
+       * and it cost the thing a case-capable simulator exists to deliver: under
+       * ngspice `preserve` the file says `v(EN)` and the browser said `v(en)`,
+       * and under `distinguish` `EN` and `en` are two real signals that folded
+       * to one key -- XINSERT_NOREPLACE then silently dropped the second.
+       *
+       * The two other readers, vcd_read() and table_read(), already stored
+       * verbatim, so this reader was the odd one out, not the rule. The query
+       * side is where case-insensitivity belongs and where item 2 puts it (a
+       * folded-alias rung in get_raw_index(), suppressed when
+       * raw->case_sensitive). UNTIL ITEM 2 LANDS a lowercase query against a
+       * mixed-case stored name misses -- which for every simulator that folds
+       * (all released ngspice) is unreachable, because it stores lowercase
+       * anyway.
+       *
+       * ngspice::ngspice_data keys are NOT affected: they are a published Tcl
+       * interface and are folded at the two publish sites instead, via
+       * ngspice_data_key() -- update_op() below and callback.c's cursor-B
+       * publisher. */
       /* transform ':' hierarchy separators (Xyce) to '.' */
       ptr = varname;
       while(*ptr) {
@@ -1013,23 +1039,37 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         ++ptr;
       }
       if(ac || (sim_type && !strcmp(sim_type, "ac")) ) { /* AC */
+        /* THE `v(` PREFIX TEST IS CASE-INSENSITIVE, and it has to be now that the
+         * fold above is gone. It used to be spelled `strstr(varname, "v(") ==
+         * varname`, which only ever matched because strtolower() had just
+         * guaranteed a lowercase prefix. Deleting the fold without touching it
+         * changed the SHAPE of the derived names, not just their case: `V(Out)`
+         * fell to the else-branch and derived `ph(V(Out))` instead of `ph(Out)`,
+         * so a name that used to resolve returned -1 and item 2's folded-alias
+         * rung could never repair it (folding `ph(V(Out))` yields `ph(v(out))`,
+         * never `ph(out)`). Xyce -- the one simulator this batch believes writes
+         * an uppercase `V(` -- is exactly the case it hit.
+         * `varname` itself is NOT touched: the magnitude name keeps the file's
+         * own spelling, only the prefix RECOGNITION is case-blind.
+         * doc/claude/specs/raw_case_mode.md section 8. */
+        int vpfx = (varname[0] == 'v' || varname[0] == 'V') && varname[1] == '(';
         my_strcat(_ALLOC_ID_, &raw->names[i << 2], varname);
         int_hash_lookup(&raw->table, raw->names[i << 2], (i << 2), XINSERT_NOREPLACE);
-        if(strstr(varname, "v(") == varname /* || strstr(varname, "i(") == varname */) {
+        if(vpfx /* || strstr(varname, "i(") == varname */) {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 1], "ph(", varname + 2, NULL);
         } else {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 1], "ph(", varname, ")", NULL);
         }
         int_hash_lookup(&raw->table, raw->names[(i << 2) + 1], (i << 2) + 1, XINSERT_NOREPLACE);
 
-        if(strstr(varname, "v(") == varname /* || strstr(varname, "i(") == varname */) {
+        if(vpfx /* || strstr(varname, "i(") == varname */) {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 2], "re(", varname + 2, NULL);
         } else {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 2], "re(", varname, ")", NULL);
         }
         int_hash_lookup(&raw->table, raw->names[(i << 2) + 2], (i << 2) + 2, XINSERT_NOREPLACE);
 
-        if(strstr(varname, "v(") == varname /* || strstr(varname, "i(") == varname */) {
+        if(vpfx /* || strstr(varname, "i(") == varname */) {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 3], "im(", varname + 2, NULL);
         } else {
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 3], "im(", varname, ")", NULL);
@@ -1097,6 +1137,7 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
     my_free(_ALLOC_ID_, &raw->values);
   }
   if(raw->sim_type) my_free(_ALLOC_ID_, &raw->sim_type);
+  if(raw->req_sim_type) my_free(_ALLOC_ID_, &raw->req_sim_type);
   if(raw->npoints) my_free(_ALLOC_ID_, &raw->npoints);
   if(raw->rawfile) my_free(_ALLOC_ID_, &raw->rawfile);
   if(raw->schname) my_free(_ALLOC_ID_, &raw->schname);
@@ -1760,6 +1801,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       /* dispatches on `type` and stamps raw->sim_type on success */
       read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
       if(read_ret) {
+        /* remember the type the CALLER asked for, not the one the reader ended
+         * up storing -- see Raw.req_sim_type in xschem.h */
+        if(xctx->raw) my_strdup(_ALLOC_ID_, &xctx->raw->req_sim_type, type);
         xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
         xctx->extra_prev_idx = xctx->extra_idx;
         xctx->extra_idx = xctx->extra_raw_n;
@@ -1809,6 +1853,10 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       if(read_ret) {
         dbg(1, "extra_rawfile(): read %s %s, switch to it. raw->sim_type=%s\n", f,
           type ? type : "<NULL>", xctx->raw->sim_type ? xctx->raw->sim_type : "<NULL>");
+        /* remember the type the CALLER asked for. It is NOT raw->sim_type: a
+         * multi-point "Operating Point" raw read as "op" is stored as "dc", and
+         * re-reading that file as "dc" can never match. See Raw.req_sim_type. */
+        if(xctx->raw) my_strdup(_ALLOC_ID_, &xctx->raw->req_sim_type, type);
         xctx->extra_raw_arr[xctx->extra_raw_n] = xctx->raw;
         xctx->extra_prev_idx = xctx->extra_idx;
         xctx->extra_idx = xctx->extra_raw_n;
@@ -1985,9 +2033,86 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   return ret;
 }
 
+/* ===========================================================================
+ * CASE MODE -- one parser, one publish-key rule (casemode batch item 1)
+ * doc/claude/specs/raw_case_mode.md
+ * ===========================================================================
+ */
+
+/* The one place a mode token becomes the Raw.case_sensitive boolean, so
+ * `xschem raw read -case <mode>` and `xschem raw case <mode>` cannot disagree
+ * about what a word means.
+ *
+ * `preserve` maps to 0, not 1, and that is the point of the boolean: preserve
+ * keeps the FILE's spelling, it does not make `EN` and `en` two signals. Only
+ * `distinguish` does, and only there can a case-insensitive fallback return the
+ * wrong vector. 0/1 are accepted so `xschem raw case [xschem raw case]`
+ * round-trips.
+ * Returns -1 for an unknown token; the caller reports it rather than guessing. */
+int raw_case_mode_parse(const char *mode)
+{
+  if(!mode || !mode[0]) return -1;
+  if(!strcmp(mode, "distinguish") || !strcmp(mode, "1")) return 1;
+  if(!strcmp(mode, "fold") || !strcmp(mode, "preserve") || !strcmp(mode, "0")) return 0;
+  return -1;
+}
+
+/* ngspice::ngspice_data KEYS STAY FOLDED. Tcl array keys are case-sensitive and
+ * this array is a PUBLISHED INTERFACE: ngspice_backannotate.tcl and any user
+ * script read $ngspice::ngspice_data(v(en)). They were lowercase only because
+ * read_dataset() folded the stored name; now that it stores verbatim, the fold
+ * has to happen here or every key silently gains capitals and every consumer
+ * misses (DESIGN_REVISION.md section 6).
+ *
+ * Two publish sites, and only two: update_op() below and the cursor-B publisher
+ * in callback.c. Both go through ngspice_data_publish() so the rule is stated
+ * once. (DECISIONS.md D3 replaces the whole eager array with a lazy view in
+ * item 5b; this is the interim, and it is not optional in the meantime.)
+ *
+ * *keyptr is the caller's buffer: pass a char* initialised to NULL, my_free()
+ * it after the loop. Grown, not truncated -- a fixed buffer would fold two long
+ * names onto one key. */
+const char *ngspice_data_key(char **keyptr, const char *name)
+{
+  my_strdup2(_ALLOC_ID_, keyptr, name ? name : "");
+  strtolower(*keyptr);
+  return *keyptr;
+}
+
+/* Publish one variable into ngspice::ngspice_data under its FOLDED key, and say
+ * so out loud when two variables want the same key.
+ *
+ * FIRST WRITER WINS, and the loser is named in a dbg(0). Folding a key is the
+ * same lossy operation read_dataset() was condemned for, moved to the publish
+ * side because the array's keys are an interface that cannot change until item
+ * 5b retires the array entirely -- but "lossy" must not mean "silent". Under
+ * `distinguish` a database can legitimately hold both `v(EN)` and `v(en)`; they
+ * collapse onto one key here and one of the two values cannot be published.
+ * Keeping the FIRST matches the read side, where int_hash_lookup() inserts the
+ * names with XINSERT_NOREPLACE. Neither value is lost from the DATABASE: both
+ * are still reachable by `xschem raw index` / `xschem raw value` under their
+ * own spelling, and item 5b's lazy view resolves them properly.
+ *
+ * Both publishers Tcl_UnsetVar the whole array immediately before their loop,
+ * so "the key already exists" means "set by this pass", never "left over".
+ * doc/claude/specs/raw_case_mode.md section 4. */
+void ngspice_data_publish(char **keyptr, const char *name, const char *value)
+{
+  const char *key = ngspice_data_key(keyptr, name);
+  if(Tcl_GetVar2(interp, "ngspice::ngspice_data", key, TCL_GLOBAL_ONLY)) {
+    dbg(0, "ngspice_data_publish(): ngspice_data key collision on \"%s\": "
+           "\"%s\" is not published, the variable read earlier keeps the key. "
+           "Use `xschem raw value \"%s\"` to read it.\n",
+           key, name ? name : "", name ? name : "");
+    return;
+  }
+  Tcl_SetVar2(interp, "ngspice::ngspice_data", key, value, TCL_GLOBAL_ONLY);
+}
+
 int update_op()
 {
   int res = 0, p = 0, i;
+  char *key = NULL;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
   /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
    * This is the choke point every "annotate the operating point" request funnels
@@ -2010,11 +2135,12 @@ int update_op()
       xctx->raw->cursor_b_val[i] =  xctx->raw->values[i][p];
       my_snprintf(s, S(s), "%.4g", xctx->raw->values[i][p]);
       dbg(1, "%s = %g\n", xctx->raw->names[i], xctx->raw->values[i][p]);
-      Tcl_SetVar2(interp, "ngspice::ngspice_data", xctx->raw->names[i], s, TCL_GLOBAL_ONLY);
+      ngspice_data_publish(&key, xctx->raw->names[i], s);
     }
     Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( xctx->raw->nvars), TCL_GLOBAL_ONLY);
     Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
   }
+  if(key) my_free(_ALLOC_ID_, &key);
   return res;
 }
 

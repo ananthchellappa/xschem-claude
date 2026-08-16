@@ -172,6 +172,18 @@ those derived names carry case too, which is correct and consistent. No extra
 work, but it is four names per variable rather than one, so the alias insertion
 in rule 2 must cover all four.
 
+> **CORRECTION, 2026-08-16 (item 1 fix round).** "No extra work" was wrong: it
+> took one line. The derivation recognises the node inside a `v(` prefix with
+> `strstr(varname, "v(") == varname`, a **case-sensitive** test that only ever
+> matched because the fold had just lowercased `varname`. With the fold gone and
+> the test untouched, a variable spelled `V(Out)` derived `ph(V(Out))` — a
+> different STRING, not a differently-cased one — so `xschem raw index ph(Out)`
+> returned `-1`, and rule 2's folded-alias rung could never repair it (folding
+> `ph(V(Out))` yields `ph(v(out))`, never `ph(out)`). Uppercase `V(` is exactly
+> the shape §5 and §10.1 believe Xyce writes. The prefix test is now
+> case-insensitive; `varname` itself is still stored verbatim. See
+> `doc/claude/specs/raw_case_mode.md` §8 and checks CS29–CS29d.
+
 ## 9. What this does to the plan
 
 | plan item | was | becomes |

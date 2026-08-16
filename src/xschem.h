@@ -1151,6 +1151,26 @@ typedef struct {
   char *schname;
   int level;  /* hierarchy level where raw file has been read */
   double sweep1, sweep2;
+  /* CASE SENSITIVITY OF THE LOOKUP, and nothing else. 0 (the default) means a
+   * name query may resolve against a stored name that differs only in case;
+   * 1 means it may not. Set ONLY by the `distinguish` mode -- `fold` and
+   * `preserve` both leave it 0, because both produce a database in which two
+   * names never differ only by case, so a case-insensitive lookup cannot pick
+   * the wrong one. It is NOT a record of the simulator's mode and must not be
+   * read as one (DECISIONS.md B2b: absence of evidence is "unknown", never
+   * "fold"). Every reader now stores names VERBATIM, so this flag changes no
+   * stored data -- see read_dataset() and doc/claude/specs/raw_case_mode.md */
+  int case_sensitive;
+  /* THE ANALYSIS TYPE THE CALLER ASKED FOR, verbatim, or NULL for "unspecified"
+   * (take the first analysis in the file). NOT the same string as sim_type:
+   * read_dataset() PROMOTES a multi-point "Operating Point" raw to sim_type
+   * "dc", and re-reading that file as "dc" can never match, because the match is
+   * against the Plotname line. So sim_type is the right key to find this
+   * database in the registry and the WRONG argument to read it again with -- the
+   * `xschem raw case <mode>` re-read needs this one. Set by extra_rawfile()'s
+   * two read arms; NULL for databases built another way (raw_read_from_attr(),
+   * new_rawfile()). doc/claude/specs/raw_case_mode.md section 3. */
+  char *req_sim_type;
 } Raw;
 
 /*  for netlist.c */
@@ -2300,6 +2320,21 @@ extern char *base64_encode(const unsigned char *data, const size_t input_length,
 extern unsigned char *ascii85_encode(const unsigned char *data, const size_t input_length, size_t *output_length);
 extern int raw_get_pos(const char *node, double value, int dset, int from_start, int to_end);
 extern int  get_raw_index(const char *node, Int_hashentry **entry_ret);
+/* "fold"|"preserve"|"0" -> 0, "distinguish"|"1" -> 1, anything else -> -1.
+ * The one parser for the `-case <mode>` option and `xschem raw case <mode>`;
+ * see doc/claude/specs/raw_case_mode.md */
+extern int  raw_case_mode_parse(const char *mode);
+/* The key `ngspice::ngspice_data` publishes a variable under: the stored name
+ * FOLDED. Keys of that array are a published Tcl interface and stay lowercase
+ * even though the stored names no longer do. *keyptr is grown as needed and is
+ * the caller's to my_free(). See update_op() and doc/claude/specs/raw_case_mode.md */
+extern const char *ngspice_data_key(char **keyptr, const char *name);
+/* Publish one variable into that array under its folded key. Two variables whose
+ * names differ only in case (only possible under `distinguish`) collapse onto
+ * one key: the FIRST keeps it and the second is refused with a dbg(0), never
+ * silently overwritten. The one publish rule for both call sites -- update_op()
+ * and callback.c's cursor-B publisher. doc/claude/specs/raw_case_mode.md */
+extern void ngspice_data_publish(char **keyptr, const char *name, const char *value);
 extern void free_rawfile(Raw **rawptr, int dr, int no_warning);
 extern int update_op();
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);

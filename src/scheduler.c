@@ -10058,6 +10058,89 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* RE-READ THE CURRENT DATABASE IN PLACE, for a case-mode change.
+ * doc/claude/specs/raw_case_mode.md section 3.
+ *
+ * A case-mode change is a RE-READ, never a flag flip: folding is destructive, so
+ * a control that only moved a flag would be lying about every database read
+ * before it moved. This is that re-read, shared by `xschem raw case <mode>` and
+ * by `xschem raw read ... -case <mode>` when the file it names is already
+ * loaded (where extra_rawfile() only SWITCHES, so without this the option would
+ * be exactly the flag flip the design forbids).
+ *
+ * TWO THINGS IT MUST NOT DO, both of which it used to:
+ *
+ * 1. DESTROY THE DATABASE ON A RE-READ THAT CANNOT SUCCEED. The registry dedups
+ *    on filename+sim_type, so the old entry has to go before the new one can be
+ *    read -- which put extra_rawfile(3, ...) ahead of any knowledge that the
+ *    read would work. An unreadable backing file then annihilated the loaded
+ *    data and reported it as the string "0". That is not exotic: a re-running
+ *    simulator replaces its raw file, `raw new` invents a database whose
+ *    "rawfile" is a bare label, and raw_read_from_attr() unlink()s the temp file
+ *    whose name it leaves behind, so an embedded spice_data raw is ALWAYS in
+ *    that state. So: probe the file open FIRST, and refuse with a Tcl error --
+ *    leaving the database untouched -- when it cannot be read.
+ *
+ * 2. RE-READ WITH THE PROMOTED sim_type. read_dataset() rewrites a multi-point
+ *    "Operating Point" raw's sim_type to "dc", and the type argument is matched
+ *    against the Plotname line, so asking for "dc" can never match that file:
+ *    an ordinary multi-point .op database failed here every time, and (1) then
+ *    destroyed it. raw->req_sim_type is what the caller originally asked for and
+ *    is the right argument to read with; raw->sim_type stays the right key to
+ *    find the entry to delete.
+ *
+ * Returns 1 on success. On 0 it has set a Tcl error message; the caller returns
+ * TCL_ERROR. `type_override`, when non-NULL and non-empty, is the type the
+ * caller just named on the command line and wins over req_sim_type. */
+static int raw_case_reread(Tcl_Interp *interp, const char *type_override)
+{
+  Raw *raw = xctx->raw;
+  char fname[PATH_MAX], delotype[100], rdtype[100];
+  double s1, s2;
+  FILE *fd;
+  int ret;
+
+  if(!raw) {
+    Tcl_SetResult(interp, "xschem raw case: no raw file loaded", TCL_STATIC);
+    return 0;
+  }
+  if(!raw->rawfile) {
+    Tcl_SetResult(interp,
+      "xschem raw case: current database has no backing file to re-read", TCL_STATIC);
+    return 0;
+  }
+  /* copy first: free_rawfile() frees all of these out from under us */
+  my_strncpy(fname, raw->rawfile, S(fname));
+  my_strncpy(delotype, raw->sim_type ? raw->sim_type : "", S(delotype));
+  if(type_override && type_override[0]) my_strncpy(rdtype, type_override, S(rdtype));
+  else my_strncpy(rdtype, raw->req_sim_type ? raw->req_sim_type : "", S(rdtype));
+  s1 = raw->sweep1;
+  s2 = raw->sweep2;
+
+  /* PROBE BEFORE DESTROYING -- see (1) above. A plain open is enough for every
+   * measured loss (deleted file, unlinked embedded temp, synthetic label) and
+   * costs no second parse of the data. */
+  fd = my_fopen(fname, fopen_read_mode);
+  if(!fd) {
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem raw case: cannot re-read \"", fname,
+                     "\": the database is left as it was", NULL);
+    return 0;
+  }
+  fclose(fd);
+
+  extra_rawfile(3, fname, delotype[0] ? delotype : NULL, -1.0, -1.0);
+  ret = extra_rawfile(1, fname, rdtype[0] ? rdtype : NULL, s1, s2);
+  /* the old `raw` is dangling from here on -- the delete freed it */
+  if(!ret) {
+    Tcl_ResetResult(interp);
+    Tcl_AppendResult(interp, "xschem raw case: re-reading \"", fname,
+                     "\" failed", NULL);
+    return 0;
+  }
+  return ret;
+}
+
 /* `xschem r...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 3). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -10065,7 +10148,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
 
     /* raw what ...
-     *     what = add | annot | clear | datasets | index | info | loaded | list |
+     *     what = add | annot | case | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
      *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
      *            pos_at | vars |
@@ -10077,11 +10160,21 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     vector plus one vector per bit (`count` and `count[3]`..`count[0]`).
      *     See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md.
      *
-     *   xschem raw read filename [type [sweep1 sweep2]]
+     *   xschem raw read filename [type [sweep1 sweep2]] [-case mode]
      *     if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
      *     sweep1 <= sweep_var < sweep2
      *     type is the analysis type to load (tran, dc, ac, op, ...). If not given load first found in
      *     raw file.
+     *     -case mode sets the case sensitivity of name lookup in the database just read;
+     *     mode is fold | preserve | distinguish | 0 | 1, and it is an OPTION, so it may
+     *     appear anywhere after `read`. See doc/claude/specs/raw_case_mode.md
+     *
+     *   xschem raw case [mode]
+     *     with no argument: 1 if name lookup in the current database is case-sensitive,
+     *     else 0. With a mode (fold | preserve | distinguish | 0 | 1): set it, which
+     *     RE-READS the file rather than flipping a flag, and raises a Tcl error --
+     *     leaving the database untouched -- if the file cannot be re-read.
+     *     See doc/claude/specs/raw_case_mode.md
      *
      *   xschem raw clear [rawfile [type]]
      *     unload given file and type. If type not given delete all type sfrom rawfile
@@ -10237,12 +10330,61 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         ret = extra_rawfile(1, argv[3], "vcd", sweep1, sweep2);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "read")) {
-        if(argc > 6) {
-          sweep1 = atof_spice(argv[5]);
-          sweep2 = atof_spice(argv[6]);
+        /* xschem raw read <file> [<type>] [<sweep1> <sweep2>] [-case <mode>]
+         *
+         * `-case` is an OPTION, extracted before the positionals are counted,
+         * so it may appear anywhere after the subcommand and the three shipped
+         * positional forms are byte-identical to what they were. Parsing it
+         * positionally would have made `raw read f tran -case distinguish` feed
+         * "-case" to atof_spice() as sweep1. <mode> is fold | preserve |
+         * distinguish (or 0 | 1); only `distinguish` sets Raw.case_sensitive.
+         * NOTHING here folds a name any more -- see read_dataset() in save.c
+         * and doc/claude/specs/raw_case_mode.md */
+        const char *pos[8];
+        int npos = 0, k, cs = -1, n_before;
+        for(k = 3; k < argc; ++k) {
+          if(!strcmp(argv[k], "-case")) {
+            if(k + 1 >= argc) {
+              Tcl_SetResult(interp, "xschem raw read: -case needs a mode", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            cs = raw_case_mode_parse(argv[++k]);
+            if(cs < 0) {
+              Tcl_SetResult(interp,
+                "xschem raw read: -case mode must be fold, preserve, distinguish, 0 or 1",
+                TCL_STATIC);
+              return TCL_ERROR;
+            }
+          } else if(npos < 8) pos[npos++] = argv[k];
         }
-        if(argc > 4) ret = extra_rawfile(1, argv[3], argv[4], sweep1, sweep2);
-        else ret = extra_rawfile(1, argv[3], NULL, sweep1, sweep2);
+        if(npos < 1) {
+          Tcl_SetResult(interp, "xschem raw read: no file given", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(npos > 3) {
+          sweep1 = atof_spice(pos[2]);
+          sweep2 = atof_spice(pos[3]);
+        }
+        n_before = xctx->extra_raw_n;
+        ret = extra_rawfile(1, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
+        /* extra_rawfile(what == 1) makes the database it just read the CURRENT
+         * one, so xctx->raw is the Raw this option is about. On a failed read it
+         * is the restored previous one and must not be stamped. */
+        if(ret && cs >= 0 && xctx->raw) {
+          /* IF THE FILE WAS ALREADY LOADED extra_rawfile() only SWITCHED to it --
+           * the registry did not grow -- so nothing was read and stamping the
+           * flag here would be precisely the flag-flip-without-a-re-read that
+           * `xschem raw case` is forbidden to do. Measured: with an in-memory
+           * `raw rename` outstanding, `raw read <same file> -case distinguish`
+           * left the rename in place and moved the flag 0 -> 1. Route it through
+           * the same re-read, so `-case` means one thing by either verb.
+           * doc/claude/specs/raw_case_mode.md section 3. */
+          if(xctx->extra_raw_n == n_before) {
+            ret = raw_case_reread(interp, npos > 1 ? pos[1] : NULL);
+            if(!ret) return TCL_ERROR;
+          }
+          if(xctx->raw) xctx->raw->case_sensitive = cs;
+        }
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "switch")) {
         if(argc > 4) {
@@ -10428,6 +10570,40 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           for(i = 0 ; i < raw->nvars; ++i) {
             if(i > 0) Tcl_AppendResult(interp, "\n", NULL);
             Tcl_AppendResult(interp, raw->names[i], NULL);
+          }
+        /* xschem raw case [<mode>]
+         *   get: 1 if name lookup in the CURRENT database is case-sensitive,
+         *        else 0. Deliberately a boolean and not a mode word: the Raw
+         *        records what the LOOKUP does, not what the simulator did, and
+         *        answering "fold" would assert a fact nobody established
+         *        (DECISIONS.md B2b -- absence is "unknown", never "fold").
+         *   set: <mode> is fold | preserve | distinguish | 0 | 1, and the file
+         *        is RE-READ, not flagged. Folding is destructive: once v(EN)
+         *        has been lowercased the capitals are gone from memory, so a
+         *        control that only flipped a flag would be lying about every
+         *        database read before the flip. Under this design nothing folds
+         *        on read, so the re-read costs a file read and changes no name
+         *        -- but the contract is the re-read, and a flag flip that
+         *        happens to look right on a file that was never folded is not
+         *        the same guarantee. doc/claude/specs/raw_case_mode.md */
+        } else if(argc > 2 && !strcmp(argv[2], "case")) {
+          if(argc > 3) {
+            int cs = raw_case_mode_parse(argv[3]);
+            if(cs < 0) {
+              Tcl_SetResult(interp,
+                "xschem raw case: mode must be fold, preserve, distinguish, 0 or 1",
+                TCL_STATIC);
+              return TCL_ERROR;
+            }
+            /* raw_case_reread() probes before it destroys and reports its own
+             * reason; a failure here leaves the database exactly as it was */
+            ret = raw_case_reread(interp, NULL);
+            if(!ret) return TCL_ERROR;
+            /* `raw` is dangling from here on -- the re-read freed it */
+            if(xctx->raw) xctx->raw->case_sensitive = cs;
+            Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
+          } else {
+            Tcl_SetResult(interp, my_itoa(raw->case_sensitive), TCL_VOLATILE);
           }
         /*    0      1        2   3   4   5       6
          *  xschem raw set node n value [dataset] */
