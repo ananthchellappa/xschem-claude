@@ -3,6 +3,17 @@
 
 Status: **design proposal, nothing implemented.** Written 2026-08-12.
 
+> ⚠ **DATED — this describes the tree BEFORE the casemode batch (2026-08-16).**
+> Everything below about *how names are folded today* is now history, kept
+> because it is the analysis the batch was planned from. Two statements in
+> particular have been overtaken: `read_dataset()` no longer `strtolower()`s
+> stored spice names (batch item 1), and `get_raw_index()` no longer probes
+> `XXyy -> XXYY -> xxyy -> v(xxyy)` on one mutated buffer — it is one
+> non-mutating ladder, exact then case-folded, then the same two `v()`-wrapped,
+> then the same two with a leading `i(v.x` rewritten (batch item 2), declining
+> rather than guessing when two stored names differ only in case. The live
+> account is `doc/claude/specs/raw_case_mode.md`.
+
 Motivating request: a build of ngspice that honours case everywhere (`EN`,
 `en` and `En` are three different names, for nets and for everything else).
 A net called `EN` on the schematic should reach the waveform viewer as

@@ -1161,6 +1161,23 @@ typedef struct {
    * "fold"). Every reader now stores names VERBATIM, so this flag changes no
    * stored data -- see read_dataset() and doc/claude/specs/raw_case_mode.md */
   int case_sensitive;
+  /* CASE-FOLDED ALIAS INDEX over names[], the fuzzy rung of get_raw_index().
+   * Keys are strtolower(names[i]), values are the index i, or -1 meaning
+   * AMBIGUOUS: two DIFFERENT stored names fold to that key, so per DECISIONS.md
+   * D2 neither of them gets an alias and the fuzzy rung declines to guess
+   * (`Count` and `count` in a VCD are two real Verilog signals). Two identical
+   * stored strings are not a collision -- ngspice upstream 0073 writes byte
+   * identical duplicate columns -- and keep the alias, first index wins, which
+   * is what `table` does with XINSERT_NOREPLACE.
+   *
+   * It is a SEPARATE table from `table`, deliberately: see
+   * doc/claude/specs/raw_case_mode.md section 9. Built LAZILY on the first
+   * fuzzy lookup (table == NULL means "not built"), so a query that hits
+   * exactly -- every query on a stock all-lowercase raw -- never pays for it.
+   * Invalidated by raw_fold_table_clear() at the three places names[] moves:
+   * raw_renamevar(), raw_deletevar() (which RE-INDEXES) and raw_add_vector().
+   * Never consulted when case_sensitive. */
+  Int_hashtable fold_table;
   /* THE ANALYSIS TYPE THE CALLER ASKED FOR, verbatim, or NULL for "unspecified"
    * (take the first analysis in the file). NOT the same string as sim_type:
    * read_dataset() PROMOTES a multi-point "Operating Point" raw to sim_type

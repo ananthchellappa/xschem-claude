@@ -1,7 +1,7 @@
 # Raw case mode — names are stored verbatim; `case_sensitive` is a lookup flag
 
-Status: **item 1 of the casemode batch is implemented** (this document); items
-2–15 are not. Written 2026-08-16.
+Status: **items 1 and 2 of the casemode batch are implemented** (this
+document); items 3–15 are not. Written 2026-08-16.
 
 Design origin: `doc/claude/casemode_batch/DESIGN_REVISION.md` (sections 4, 5, 6,
 7, 8) and `doc/claude/casemode_batch/DECISIONS.md`. Plan item list:
@@ -49,12 +49,18 @@ may.
 - It is **not a record of the simulator's mode.** `DECISIONS.md` B2b: absence of
   evidence is "unknown", never "fold". Item 3 adds the four-source mode
   resolution; this flag is not it.
-- Nothing in the read path reads it. Item 2 is its first consumer: it suppresses
-  the folded-alias rung in `get_raw_index()`.
+- Nothing in the read path reads it. Item 2 is its first and only consumer: it
+  suppresses the folded-alias rung in `get_raw_index()` (§9).
 
-### The item-1 lookup gap, stated precisely
+### The item-1 lookup gap, stated precisely — CLOSED by item 2
 
-Until item 2 lands, **every BARE (unwrapped) node name misses against a
+> **Item 2 has landed.** Everything in this subsection describes the state
+> between item 1 and item 2 and is kept because it is what §9's ladder was
+> built to fix. The acceptance check it hands item 2 —
+> `xschem raw index MidNode == 2` on `tr_preserve.raw` — is now `CS37b`, and
+> the bare device-vector shapes are `CS38c`–`CS38g`. All pass.
+
+Until item 2 landed, **every BARE (unwrapped) node name missed against a
 mixed-case raw — including the correctly-spelled one.** Not just a lowercase
 query: `get_raw_index()` mutates its `inode` buffer in place (verbatim →
 `strtoupper` → `strtolower`) before it builds the `v(%s)` rung, so that rung is
@@ -229,7 +235,6 @@ Until then, `Xyce is UNVERIFIED` stays in item 15's documentation.
 
 ## 6. What is deliberately NOT here
 
-- The case-folded alias rung and the collision rule — item 2.
 - Mode detection from the `Option: casemode=` header, schematic comparison or a
   capital sniff — item 3.
 - The four `hilight.c` senders, the viewer Tcl, `sod_expr`, the simulator
@@ -237,11 +242,15 @@ Until then, `Xyce is UNVERIFIED` stays in item 15's documentation.
 
 ## 7. Tests
 
-`tests/headless/test_raw_case_mode.tcl` (prefix `CS`, 81 checks, true headless).
+`tests/headless/test_raw_case_mode.tcl` (prefix `CS`, **186 checks** — 81 from
+item 1, 88 from item 2, 17 more from item 2's fix round: the anchoring bait
+`CS39g`/`CS39h` and the viewer-gate section `CS49`–`CS49o` — true headless).
 Data: the two committed fixtures
 `doc/claude/casemode_batch/fixtures/tr_{fold,preserve}.raw` — byte-comparable
 229-point binary raws differing only in their Variables section, so no simulator
-is needed — plus an inline ASCII AC raw for the four-derived-names case.
+is needed — plus inline ASCII raws (AC, device vectors, hierarchical currents,
+duplicate columns), an inline **VCD** for the collision rule and an inline
+**table** file, all written to `test_scratch`.
 
 ## 8. The AC `v(` prefix test is CASE-BLIND
 
@@ -269,3 +278,230 @@ magnitude name keeps the file's own spelling; only the prefix *recognition* is
 case-blind. Checks CS29–CS29d.
 
 `DESIGN_REVISION.md` §8 said this needed "no extra work". It needed one line.
+
+## 9. THE ONE LOOKUP LADDER (`get_raw_index`) — casemode item 2
+
+`get_raw_index()` (`src/save.c`) is the single name-resolution authority for
+every raw database, whatever reader built it. Item 2 rewrote it. Given a node:
+
+| rung | tries | example |
+|---|---|---|
+| 1 | the exact spelling | `v(MidNode)` |
+| 2 | the **case-folded alias** | `v(midnode)`, `V(MIDNODE)` → `v(MidNode)` |
+| 3 | rungs 1–2 on `v(<node>)` | `MidNode` → `v(MidNode)` → `v(midnode)` |
+| 4 | rungs 1–2 with a leading `i(v.x` rewritten to `i(x` (the `x` is part of the prefix, and it is anchored) | `i(V.X1.Vp)` → `i(X1.Vp)` |
+
+Rung 2 (and the folded half of 3 and 4) is the whole of the case
+insensitivity the deleted read-path fold used to buy. It is suppressed for a
+`distinguish` database (`Raw.case_sensitive`, §2) and by the collision rule
+below.
+
+### RULING — the ladder does NOT mutate the query
+
+The old ladder was `verbatim → strtoupper(inode) → strtolower(inode) →
+"v(%s)" of inode → strstr(inode,"i(v.x")`, **all on one buffer, in place**. By
+the time it built the `v(%s)` rung the query was already lowercased, so
+`MidNode` could only ever probe `v(midnode)`. That is why, after item 1,
+**every bare mixed-case name missed on a `preserve` raw — including the
+correctly spelled one** (§2), and why the `i(v.x` rung could only ever probe a
+lowercased name, which after item 1 no longer matched a stored `i(X1.Vp)` (the
+rung *was* reachable in any casing — see the ruling on it below, which corrects
+an earlier backwards account). Each rung now starts from the caller's own
+spelling and asks for the fold explicitly. Checks `CS37b`–`CS37l`, `CS39d`,
+`CS39e`.
+
+### RULING — the alias index is a SEPARATE table, not extra entries in `raw->table`
+
+`DESIGN_REVISION.md` §4 proposed inserting folded aliases into `raw->table`
+itself with `XINSERT_NOREPLACE`. That is not implementable together with
+`DECISIONS.md` D2, and it breaks two other consumers. `Raw.fold_table`
+(`src/xschem.h`) is therefore a second `Int_hashtable`, keys
+`strtolower(names[i])`, values `i` or `-1` for ambiguous. Three reasons, each
+sufficient:
+
+1. **D2 needs a poison value, and poisoning would destroy a real entry.** When
+   a database holds `v(EN)` and `v(en)`, the folded key *is* `v(en)`, a real
+   stored name. Marking that key ambiguous in `raw->table` would break the
+   **exact** lookup of `v(en)` — and "exact lookups unaffected" is the first
+   half of D2. One table cannot hold both meanings.
+2. **`raw_add_vector()` tests `raw->table` for existence.** An alias entry
+   under a folded key would make `xschem raw add v(en)` a silent no-op on a
+   database whose real name is `v(EN)`.
+3. **`raw_renamevar()`/`raw_deletevar()` delete by `entry->token`.** With
+   aliases in the same table they would delete the alias and leave the real
+   entry — or, worse, delete a real entry that happens to be the lowercase
+   spelling of another name.
+
+The property that licensed the original proposal is preserved and strengthened:
+**nothing enumerates either table.** Every listing — `xschem raw list`
+(`src/scheduler.c`), the viewer's browsers — iterates `raw->names[]`, so no
+alias can appear as a phantom signal. Checks `CS44`–`CS44c` assert it after a
+battery of fuzzy queries, **as absolute assertions**: `raw list` must equal the
+fixture's own four names and `raw vars` must equal 4.
+
+> **Why absolute and not before/after** (review finding, fix round). The first
+> version captured `raw list`/`raw vars` into `_before` variables and compared
+> them with themselves after the battery. That cannot fail: there is no
+> "before" — the graph rect built earlier in the suite makes `xschem raw read`
+> itself resolve a node, so the index already exists — and a self-comparison is
+> green for any defect stable across two calls. Measured: with
+> `raw_build_fold_table()` appending its alias to `names[]`/`nvars` as a real
+> variable, `raw list` returned `time v(In) v(MidNode) i(Vs) __alias__` and
+> `raw vars` returned `5`, and all three checks printed `ok:`.
+
+### RULING — the index is built LAZILY and dropped whenever `names[]` moves
+
+`fold_table.table == NULL` means "not built". It is built on the first fuzzy
+lookup, so a query that hits exactly — every query on a stock all-lowercase raw
+— never pays for it, and a database nobody queries fuzzily never allocates it.
+`raw_fold_table_clear()` drops it at the three places `names[]` changes
+identity or position: `raw_renamevar()`, `raw_deletevar()` and
+`raw_add_vector()`. `raw_deletevar()` is the sharp one — it **re-indexes** every
+name below the deleted one, so a surviving alias resolves to the **wrong
+column**, which is silently wrong data rather than a miss. Checks `CS45`–`CS47d`.
+
+`raw_lookup_name()` also bounds the index with `idx < raw->nvars`. That is not
+belt-and-braces: measured with the invalidation deliberately disabled, `names[]`
+after a `raw del` is one shorter but `names[nvars]` still held the old last
+pointer in the shrunk-in-place allocation, so the stale lookup answered
+**correctly** off out-of-bounds memory and the check written to catch a stale
+index stayed green by luck of the allocator.
+
+### RULING — D2: no alias when two DIFFERENT stored names collide
+
+Two stored names folding to one key means the fuzzy rung has no answer, only a
+guess, so it declines: the key's value is set to `-1` and **neither** name gets
+an alias. Exact lookups are untouched, which is the point — `Count` and `count`
+each resolve to themselves, and `COUNT` resolves to nothing.
+
+Plain `XINSERT_NOREPLACE` first-wins is **not** the rule: it would answer a
+`COUNT` query with an arbitrary `Count`. (Item 1 took the *other* decision for
+`ngspice_data`'s publish keys — first writer wins, loser in a `dbg(0)` — because
+that array is a published Tcl interface that cannot represent both keys at all;
+§4. It is a compatibility shim, not a precedent for the lookup table, which can
+represent both perfectly well.)
+
+**Byte-identical duplicates are deliberately NOT a collision.** ngspice upstream
+`0073` writes two columns with the same name (`write f.raw v(In)`), and
+declining there would break a lookup that has exactly one sensible answer. The
+test is `strcmp(names[first], names[i]) != 0`, and first-wins keeps the alias —
+matching what `raw->table` already does. Checks `CS40`–`CS42d`.
+
+VCD is where the collision is legitimate — Verilog identifiers are
+case-sensitive — so `tests/headless/test_raw_case_mode.tcl` builds an inline VCD
+declaring `Count` and `count` in one scope. `receipts/00a-suite-sweep.md`
+finding 4: no committed test exercised a collision at all before this one.
+
+### RULING — the `i(v.x` rung is case-blind and ANCHORED
+
+ngspice names the current of a voltage source inside subcircuit `x1`
+`i(v.x1.vp)` in some versions and `i(x1.vp)` in others; the rung drops the `v.`.
+The old test was `strstr(inode, "i(v.x")` — a search *anywhere* — but the
+rewrite then overwrote `inode[2]` and `inode[3]` regardless, so a match at any
+other offset produced a garbage string (`xi(v.x1.vp)` probed `i(.x1.vp)`).
+It is now `my_strncasecmp(node, "i(v.x", 5)`: case-blind and anchored.
+
+**The history, stated the right way round** (an earlier revision of this
+paragraph, the source comment and the receipt had it backwards). An uppercase
+query *did* reach the old rung — the in-place `strtolower()` two rungs up had
+already destroyed the query's case, so `I(V.X1.VP)` arrived as `i(v.x1.vp)`.
+Measured on the pre-item-2 binary against an all-lowercase-stored fixture, all
+four of `i(v.x1.vp)`, `I(V.X1.VP)`, `i(V.X1.Vp)`, `I(v.x1.vp)` resolved. What
+broke the rung was **item 1**, which stopped folding the *stored* name: the
+lowercased probe `i(x1.vp)` no longer matched a stored `i(X1.Vp)`. Since the
+ladder no longer mutates the query, the test must be case-blind against the
+caller's own spelling, and the rewritten name goes back through
+`raw_lookup_name()` so the folded rung can still reach `i(X1.Vp)`. Checks
+`CS39c`–`CS39e`.
+
+**The anchoring needs a bait column to be checkable, and now has one** (review
+finding, fix round). `CS39f` asserts `xi(v.x1.vp)` → `-1`, but with only
+`i(X1.Vp)` in the fixture that query misses under anchored *and* unanchored code
+alike — measured: a deliberately unanchored rung left the whole suite ALL PASS.
+The fixture therefore stores a second column spelled `i(.x1.vp)`, which is
+exactly what the unanchored rewrite produces from that query: `CS39h` proves the
+bait resolves exactly (index 2), and `CS39f` is red the moment the anchor goes.
+
+### The `@dev[param]` shape needs no rung of its own
+
+`.options savecurrents` under `preserve` writes `i(@R.X1.Rq[i])` (plan F4,
+`receipts/00c-round3-verification.md`). It is an ordinary stored name, so rungs
+1–2 resolve it in any casing — which the pre-item-2 ladder could not do, because
+it never compared a folded *query* against a folded *stored name*, only against
+whatever the in-place mutation had left. Checks `CS38c`–`CS38h`.
+
+### `get_raw_index` always returns the entry of the REAL name
+
+`raw_renamevar()` and `raw_deletevar()` take `entry_ret` and delete by
+`entry->token`. Resolving through the alias index therefore looks the canonical
+name up again in `raw->table` and returns *that* entry; handing back the alias
+entry would leave the real one behind, pointing at a renamed or shifted column.
+Checks `CS45e`–`CS45h` rename **through** a folded query and then assert the old
+exact spelling no longer resolves.
+
+### One pre-existing leak fixed in passing
+
+`free_rawfile()` freed `raw->cursor_b_val` inside its `if(raw->names)` block,
+but `raw_deletevar()` ends with `my_realloc(&raw->names, 0)`, which NULLs
+`names[]` — so deleting the **last** variable leaked it (measured under
+valgrind: 32 bytes definitely lost on a 4-variable raw whose every column is
+deleted; the same script without the deletes, and one doing fuzzy lookups
+without deletes, both report 0). Pre-existing, unrelated to the alias index —
+fixed here because the review that measured it also measured that the index
+itself leaks nothing.
+
+### Other readers
+
+The ladder is reader-agnostic: it works off `raw->names[]`, which `raw_read()`,
+`vcd_read()` and `table_read()` all fill verbatim. Item 1 drove `raw case` on
+spice and VCD databases only; `table_read` is now covered too (`CS48`–`CS48l`),
+including the `raw case <mode>` re-read contract of §3 on a table database.
+
+### What this does NOT change
+
+- Nothing folds on **read**; only the query side is case-insensitive.
+- `ngspice::ngspice_data` keys are still folded at the publish sites (§4);
+  item 5b replaces that machinery.
+- No consumer of `xschem raw list` folds in the dangerous direction — none does
+  an exact lowercase comparison that this item's more forgiving lookup could
+  make miss (item 2's sweep, item 1 carry-forward 3).
+
+### RULING — the viewer's RPN gate mirrors the ladder, D2 included
+
+The sweep above found the divergence running the *other* way, and it is a real
+defect at the **default `fold` mode**, not a `distinguish`-only curiosity as an
+earlier revision of this section claimed. `wviewer::validate_rpn`
+(`src/wave_viewer.tcl`) lowercased both sides unconditionally, so it **approved
+a token `get_raw_index()` declines** — and `raw_add_vector()` swallows
+`plot_raw_custom_data()`'s `-1`, so `wviewer::add_trace` then plotted a
+registered, all-zero vector with no error anywhere. Measured on a plain `fold`
+database holding `Count` and `count`:
+
+```
+xschem raw index COUNT              -> -1     (D2 declines, correctly)
+wviewer::validate_rpn {COUNT 2 *} … -> {}     (VALID — the gate disagreed)
+xschem raw add tst {COUNT 2 *}      -> 1
+xschem raw value tst 0              -> 0      <-- silently wrong
+```
+
+The gate now mirrors the ladder rung for rung — exact, case-folded, the same two
+`v()`-wrapped — declines a folded key that two **different** stored names answer
+(D2), and turns the folded rungs off when `xschem raw case` reports
+`distinguish`. Checks `CS49`–`CS49o` assert **agreement in both directions** on
+one token at a time: every check reads the engine's `raw index` and the gate's
+verdict and fails if they differ, so "refuse everything" fails as loudly as
+"approve everything".
+
+Three residues remain, none of them able to produce a silent wrong number:
+
+- rung 4 (`i(v.x…`) is not mirrored — the gate refuses a token the engine would
+  resolve, loudly;
+- `xschem raw case` reports the *current* database, so validating a **foreign**
+  database's name list (`mixed_signal_signal_browser.md` §D1) uses the current
+  one's mode;
+- `wviewer::resolve_signal_db` (`:2538`) is a *second* case-folding matcher on
+  the plain-vector path and still ignores D2. It cannot cause the defect above:
+  that path never calls `xschem raw add`, so an unresolvable name yields a trace
+  that plots **nothing**, not a column of zeros.
+
+**Item 5** removes the mirror entirely by making both of them ask the engine.

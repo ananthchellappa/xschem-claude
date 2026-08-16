@@ -111,6 +111,22 @@ phantom signals.
 Cost: one extra hash entry per mixed-case name. Zero for a stock ngspice file,
 where every name is already lowercase.
 
+> **CORRECTION, 2026-08-16 (item 2).** The *mechanism* above is wrong in two
+> ways; the *rule* and the invisibility argument are right and are what shipped.
+> (a) The aliases cannot live in `raw->table`. D2 (adopted after this document
+> was written) requires a colliding key to resolve to NOTHING, and the folded
+> key of `v(EN)` in a database that also holds `v(en)` **is** a real stored
+> name, so poisoning it would break the exact lookup D2 promises to leave alone;
+> `raw_add_vector()` also tests that table for existence and would silently
+> refuse a genuinely new vector, and `raw_renamevar()`/`raw_deletevar()` delete
+> by `entry->token` and would delete the alias instead of the entry. So the
+> index is a **second** table, `Raw.fold_table`. (b) `XINSERT_NOREPLACE` "so the
+> first spelling wins" is exactly the guess D2 forbids. (c) It is built
+> **lazily**, so the cost is zero rather than small for the stock case, and it
+> must be **dropped** whenever `names[]` moves — `raw_deletevar()` re-indexes,
+> and a surviving alias would return the wrong column. Full reasoning:
+> `doc/claude/specs/raw_case_mode.md` §9.
+
 ### What the mode is still for
 
 Only this: under `distinguish`, `EN` and `en` are two genuinely different
@@ -209,8 +225,34 @@ because the read path no longer needs to guess anything.
 3. **`get_raw_index`'s `i(v.x` fixup** (`save.c:2274`) still hardcodes lowercase
    and still needs the case-aware treatment planned for item 2, plus the
    `@dev[param]` shape (`i(@R.X1.Rq[i])`) that round 3 found.
+
+   > **CLOSED by item 2, 2026-08-16.** The rung is now
+   > `my_strncasecmp(node, "i(v.x", 5)` — case-blind, and **anchored**: the old
+   > `strstr()` matched anywhere but rewrote `inode[2]`/`inode[3]` regardless,
+   > so a match at any other offset probed a garbage string. The root cause was
+   > wider than "hardcodes lowercase": the whole ladder mutated its query buffer
+   > in place, so the `v()` wrap and this rung both saw a lowercased query and
+   > never the caller's spelling. The ladder no longer mutates. The
+   > `@dev[param]` shape needs no rung of its own — it is an ordinary stored
+   > name that rungs 1–2 resolve in any casing. See
+   > `doc/claude/specs/raw_case_mode.md` §9, checks CS38c–CS38h, CS39b–CS39h
+   > (the fixture carries a **bait** column `i(.x1.vp)`, the exact string the
+   > unanchored rewrite produces, without which CS39f cannot fail).
+
 4. **Alias collisions.** Two stored names folding to the same key is impossible
    for a spice raw under `preserve` (identity folds in the simulator) but is
    possible for VCD, where `Count` and `count` are legitimately two signals.
    `XINSERT_NOREPLACE` makes the first win; decide whether that silent
    first-wins is acceptable or wants a diagnostic.
+
+   > **CLOSED — by `DECISIONS.md` D2 (no alias when two names collide), and
+   > implemented in item 2.** First-wins was rejected: it answers a `COUNT`
+   > query with an arbitrary `Count`. Both colliding names lose their alias;
+   > exact lookups are untouched. Two consequences this section did not
+   > anticipate, both recorded in `specs/raw_case_mode.md` §9: the rule cannot
+   > be implemented inside `raw->table` at all (the poison value would destroy
+   > the exact entry of whichever real name *is* the folded key, and
+   > `raw_add_vector`/`raw_renamevar`/`raw_deletevar` would misread alias
+   > entries), so the alias index is a **separate lazily-built table**; and
+   > byte-identical duplicate names — which ngspice upstream `0073` really does
+   > write — are deliberately **not** a collision.

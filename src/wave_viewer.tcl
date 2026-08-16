@@ -3216,14 +3216,43 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
 }
 
-# PURE (D4): pre-validate a whitespace-separated RPN expression against the
-# raw variable list. Returns {} when every token is (a) an operator/function
+# NEARLY PURE (D4): pre-validate a whitespace-separated RPN expression against
+# the raw variable list. One engine read, `xschem raw case`, tells it whether
+# folding is allowed at all; it is wrapped in `catch` so a caller with no
+# engine (every unit-style call in test_wave_viewer.tcl) still gets the
+# fold-mode answer and the proc stays unit-testable.
+# Returns {} when every token is (a) an operator/function
 # from the C table, (b) a number by the strtod-prefix rule (spice suffixes
-# fine: 1k), or (c) a raw variable (case-insensitive, plus the v(tok)
-# wrapping get_raw_index applies); else a message naming the bad token.
+# fine: 1k), or (c) a name the engine's ONE LOOKUP LADDER would resolve; else a
+# message naming the bad token.
 # WHY Tcl-side: the C evaluator DISCARDS its own error — raw_add_vector
 # (save.c) ignores plot_raw_custom_data's -1 and leaves the vector
 # uninitialized, so a bad expression would silently plot garbage.
+#
+# THE NAME RULE IS get_raw_index()'s, NOT A LOOSER ONE (casemode item 2,
+# doc/claude/specs/raw_case_mode.md §9). It used to be a flat `string tolower`
+# on both sides, which APPROVED tokens the engine declines, and because
+# raw_add_vector() swallows the evaluator's -1 the user then got a silent
+# all-zero trace instead of an error. Measured on a default-`fold` database
+# holding `Count` and `count`: `xschem raw index COUNT` -> -1, validate_rpn
+# {COUNT 2 *} -> {} (valid), `xschem raw add tst {COUNT 2 *}` -> 1, and
+# `xschem raw value tst 0` -> 0. So the ladder is mirrored here rung for rung:
+#   1/2  the exact spelling, then a case-folded match
+#   3    the same two wrapped as v(tok)
+# plus D2 (DECISIONS.md): a folded match that two DIFFERENT stored names answer
+# is declined, loudly, rather than guessed; and the folded rungs are off
+# entirely on a `distinguish` database.
+# Three deliberate residues, none of which can produce a silent wrong number
+# (this gate refuses and says why; it never approves what the engine declines):
+#   - rung 4 (`i(v.x…` -> `i(…`) is not mirrored;
+#   - `xschem raw case` reports the CURRENT database, so validating a FOREIGN
+#     database's name list (spec §D1, the `hit` call site below) uses the
+#     current one's mode;
+#   - resolve_signal_db (:2538) is a SECOND folding matcher, on the plain-vector
+#     path, and still ignores D2 — harmless because that path never calls
+#     `xschem raw add`, so an unresolvable name plots nothing, not zeros.
+# All three disappear with item 5, which makes both procs ask the engine
+# instead of re-implementing it.
 proc wviewer::validate_rpn {rpn varlist} {
   # operator/function tokens verbatim from plot_raw_custom_data
   # (save.c:1855-1939) — case-SENSITIVE like the C strcmp table
@@ -3233,17 +3262,39 @@ proc wviewer::validate_rpn {rpn varlist} {
              ln() log10() integ() avg() ravg() max() min() im() re()
              pi() k() e() q() del() db20() deriv() deriv0() deriv2()
              deriv20() prev() exch() dup() idx()}
-  set lvars {}
-  foreach v $varlist { lappend lvars [string tolower $v] }
+  # exact: every stored spelling. fold: folded key -> the DISTINCT spellings
+  # that fold to it, so a key with two of them is a D2 collision and a key with
+  # one is a safe alias. Byte-identical duplicates (ngspice upstream 0073) are
+  # one distinct spelling and stay resolvable, exactly as the engine has them.
+  set exact {}
+  set fold {}
+  foreach v $varlist {
+    dict set exact $v 1
+    set k [string tolower $v]
+    set spell {}
+    if {[dict exists $fold $k]} { set spell [dict get $fold $k] }
+    if {[lsearch -exact $spell $v] < 0} { lappend spell $v }
+    dict set fold $k $spell
+  }
+  set fuzzy 1
+  catch { if {[xschem raw case]} { set fuzzy 0 } }
   set toks [regexp -all -inline {\S+} $rpn]
   if {![llength $toks]} { return "empty expression" }
   foreach t $toks {
     if {[lsearch -exact $ops $t] >= 0} { continue }
     if {[lsearch -exact $funcs $t] >= 0} { continue }
     if {[regexp {^[-+]?(\d|\.\d)} $t]} { continue }
-    set lt [string tolower $t]
-    if {[lsearch -exact $lvars $lt] >= 0} { continue }
-    if {[lsearch -exact $lvars "v($lt)"] >= 0} { continue }
+    if {[dict exists $exact $t]} { continue }
+    if {[dict exists $exact "v($t)"]} { continue }
+    if {$fuzzy} {
+      set lt [string tolower $t]
+      set lw "v($lt)"
+      if {[dict exists $fold $lt] && [llength [dict get $fold $lt]] == 1} { continue }
+      if {[dict exists $fold $lw] && [llength [dict get $fold $lw]] == 1} { continue }
+      if {[dict exists $fold $lt] || [dict exists $fold $lw]} {
+        return "ambiguous token '$t' (two variables differ only in case; use one of their exact spellings)"
+      }
+    }
     return "unknown token '$t' (not an operator/function, number or raw variable)"
   }
   return {}

@@ -136,14 +136,26 @@
  * nothing: every literal sim_type comparison in the tree tests for "op", "dc", "ac" or
  * "table", so "vcd" behaves identically to "tran" at all of them.
  *
- * NAMES ARE STORED VERBATIM -- a deliberate divergence from read_dataset(), which
- * strtolower()s every variable name (save.c) because spice node names are case-
- * insensitive. Verilog identifiers are NOT: `Count` and `count` are two different
- * signals, and folding them would merge two columns into one silently. The cost is that
- * get_raw_index() (save.c) probes verbatim, then uppercased, then lowercased, so a
- * lower-case query does not find a mixed-case VCD name -- the caller must use the name
- * the browser shows. Mapping a schematic path onto a VCD scope path is F2's job and is
- * explicitly NOT a case-folding problem.
+ * NAMES ARE STORED VERBATIM, and that is now the rule for EVERY reader, not a divergence
+ * from one. read_dataset() used to strtolower() each spice variable name on the grounds
+ * that spice node names are case-insensitive; the casemode batch deleted that fold
+ * (item 1), because a case-capable ngspice writes `v(EN)` and the whole point of running
+ * one is to see it. Verilog identifiers were never case-insensitive anyway: `Count` and
+ * `count` are two different signals and folding them would merge two columns silently.
+ *
+ * WHERE THE CASE INSENSITIVITY LIVES NOW: in the query, not the store. get_raw_index()
+ * (save.c) tries the exact spelling first and then a CASE-FOLDED ALIAS INDEX built over
+ * names[] -- so a lower-case query does find a mixed-case VCD name, which it could not
+ * before (item 2; this paragraph used to apologise for that and is now the statement of
+ * the rule). THE ONE EXCEPTION IS THE VERILOG ONE: when two DIFFERENT stored names fold
+ * to the same key -- exactly the `Count`/`count` pair -- neither gets an alias, so
+ * `Count` and `count` each resolve to themselves and `COUNT` resolves to NOTHING rather
+ * than to an arbitrary one of them (DECISIONS.md D2, doc/claude/specs/raw_case_mode.md
+ * section 9, checks CS40-CS40h). A VCD is the database where that collision is
+ * legitimate, so it is the fixture the rule is tested on.
+ *
+ * Mapping a schematic path onto a VCD scope path is F2's job and is still explicitly NOT
+ * a case-folding problem.
  *
  * TIME: VCD time is an integer tick count; $timescale gives the tick. Raw stores
  * SECONDS in names[0] == "time", converted once, here, so that D3's off-by-1e3 class of

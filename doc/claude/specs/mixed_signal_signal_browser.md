@@ -1436,15 +1436,17 @@ reddens `BA52`/`BA58`/`BA59`.
 node name that collides with an analog one change which value is annotated?* No
 — and the fixture is built to be able to tell. `coll.raw` carries
 `top.m.same` = 0.75…0.79 (a voltage) and `coll.vcd` carries `top.m.same` =
-logic 0/1, **the same stored name**. ⚠ **The case trap**: `read_dataset()`
-`strtolower()`s every spice variable name (`src/save.c:1008`) while
-`vcd_read()` stores Verilog identifiers **verbatim**, so an upper-case VCD scope
-gives `TOP.m.same` against the raw's `top.m.same` — *two different keys*, no
+logic 0/1, **the same stored name**. ⚠ **The case trap**: **every reader stores
+names verbatim** — `read_dataset()` folded spice names until the casemode batch
+deleted that fold (item 1, `doc/claude/specs/raw_case_mode.md`), `vcd_read()`
+and `table_read()` never folded — so an upper-case VCD scope gives
+`TOP.m.same` against the raw's `top.m.same`: *two different keys*, no
 collision, and the whole leg would be green against an implementation that
-merges the two namespaces. `xschem raw index` hides this (it probes verbatim,
-then upper, then lower), so the collision is asserted against `xschem raw list`,
-the **stored** names (`BA1d`; sabotage `SF` upper-cases the VCD scope and
-reddens it). This is item 7's lesson (`f51a19d1`) in the annotation array
+merges the two namespaces. `xschem raw index` hides this — its ladder is the
+exact spelling, then a case-folded match against the stored names, then the same
+two `v()`-wrapped (casemode item 2) — so the collision is asserted against
+`xschem raw list`, the **stored** names (`BA1d`; sabotage `SF` upper-cases the
+VCD scope and reddens it). This is item 7's lesson (`f51a19d1`) in the annotation array
 instead of the browser inventory.
 
 **The one duplicate answer that remains, named rather than hidden.**

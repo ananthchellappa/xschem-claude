@@ -4,9 +4,11 @@
 # sections 4/6/7/8; spec: doc/claude/specs/raw_case_mode.md.
 #
 # WHAT CHANGED. read_dataset() used to strtolower() every variable name
-# (save.c:1008). That fold was never about display -- get_raw_index()
-# transforms the QUERY (verbatim -> UPPER -> lower -> v(...)), so with every
-# stored name lowercase, both `v(en)` and `v(EN)` resolved. The price was the
+# (save.c:1008). That fold was never about display -- get_raw_index() also
+# transformed the QUERY (verbatim -> UPPER -> lower -> v(...), all in place on
+# one buffer), so with every stored name lowercase, both `v(en)` and `v(EN)`
+# resolved. (Item 2 replaced that ladder; see section N and the file's later
+# sections for the shape it has now.) The price was the
 # whole feature a case-capable ngspice exists for: under `preserve` the file
 # says v(EN) and the browser said v(en), and under `distinguish` `EN` and `en`
 # are two real signals whose folded keys collide, with XINSERT_NOREPLACE
@@ -221,6 +223,11 @@ check CS23-published-current-key-folded \
 xschem raw clear
 xschem raw read $presraw tran
 set tend [pcall xschem raw value time 228]
+# a broken reader hands back "" or an ERR: string here, and `$tend / 2.0` below
+# would then be a Tcl ERROR that ABORTS the whole file -- no RESULT line, every
+# later check silently unmeasured, and a sabotage measurement that reads as
+# "nothing went red". Degrade to a number and let the checks fail instead.
+if {![string is double -strict $tend]} { set tend 0.0 }
 xschem set rectcolor 2
 xschem rect 0 0 800 400 -1 {flags=graph} 0
 xschem setprop rect 2 0 node "v(MidNode)"
@@ -461,9 +468,403 @@ eqcheck CS36e-no-capitalised-key $collide_upper <missing>
 # nothing is lost from the DATABASE itself
 set dbEN [pcall xschem raw value {v(EN)} 0]
 set dben [pcall xschem raw value {v(en)} 0]
+# both halves must be NUMBERS before arithmetic: a mutation of the exact lookup
+# rung empties them, and `abs("" - 1.111)` is a Tcl error that ABORTS the file
+# rather than failing this check -- which makes every later check unmeasured and
+# a sabotage look harmless. Same hardening as CS40e.
 check CS36f-both-readable-from-db \
-  [expr {abs($dbEN - 1.111) < 1e-4 && abs($dben - 2.222) < 1e-4}] \
+  [expr {[string is double -strict $dbEN] && [string is double -strict $dben] &&
+         abs($dbEN - 1.111) < 1e-4 && abs($dben - 2.222) < 1e-4}] \
   "(EN='$dbEN' en='$dben')"
+
+# ===========================================================================
+# ITEM 2 — ONE LOOKUP LADDER (get_raw_index)
+# ===========================================================================
+# spec doc/claude/specs/raw_case_mode.md section 9; PLAN.md 3b item 2;
+# DECISIONS.md D2. The ladder is now
+#     exact -> case-folded alias -> v() wrap (exact, then folded)
+#           -> `i(v.x` prefix rewritten to `i(` (exact, then folded)
+# and it NO LONGER MUTATES THE QUERY, which is what made every bare mixed-case
+# name miss after item 1 -- including the correctly spelled one.
+
+# ---------------------------------------------------------------------------
+# L. the acceptance check item 1's spec section 2 owed this item
+# ---------------------------------------------------------------------------
+xschem raw clear
+eqcheck CS37-read-preserve [pcall xschem raw read $presraw tran] 1
+# `MidNode` is the NORMAL spelling of a graph rect's node= attribute. Before
+# item 2 this answered -1 on this very fixture: the ladder lowercased its own
+# buffer before building the v(%s) rung, so it could only ever probe
+# v(midnode), which is not in this file.
+eqcheck CS37b-bare-exact-case    [pcall xschem raw index MidNode] 2
+eqcheck CS37c-bare-lower         [pcall xschem raw index midnode] 2
+eqcheck CS37d-bare-upper         [pcall xschem raw index MIDNODE] 2
+eqcheck CS37e-bare-other-node    [pcall xschem raw index In] 1
+# the wrapped forms, in every casing
+eqcheck CS37f-wrapped-exact      [pcall xschem raw index {v(MidNode)}] 2
+eqcheck CS37g-wrapped-lower      [pcall xschem raw index {v(midnode)}] 2
+eqcheck CS37h-wrapped-upper      [pcall xschem raw index {V(MIDNODE)}] 2
+# currents are not a special case
+eqcheck CS37i-current-lower      [pcall xschem raw index {i(vs)}] 3
+eqcheck CS37j-current-upper      [pcall xschem raw index {I(VS)}] 3
+# ... and the ladder still says NO. A rung that answers everything is not a
+# lookup; this is the check that keeps the ones above from being vacuous.
+eqcheck CS37k-absent-still-misses [pcall xschem raw index NoSuchNodeAtAll] -1
+eqcheck CS37l-absent-wrapped      [pcall xschem raw index {v(nosuchnode)}] -1
+
+# ---------------------------------------------------------------------------
+# M. bare device vectors and the @dev[param] shape (savecurrents, preserve)
+# ---------------------------------------------------------------------------
+# `.options savecurrents` under `preserve` writes i(@R.X1.Rq[i]); F4 of the
+# plan measured it. These are ordinary stored names, so rungs 1-2 resolve them
+# -- but the v() rung never could, which is why the pre-item-2 ladder failed
+# them outright. `i(V.X1.Vp)` is the hierarchical voltage-source current from
+# the same measurement.
+wr $tmp/devvec.raw "Title: device vectors, preserve
+Date: Sat Aug 16 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 4
+No. Points: 2
+Variables:
+\t0\ttime\ttime
+\t1\ti(@R.X1.Rq\[i\])\tcurrent
+\t2\ti(V.X1.Vp)\tcurrent
+\t3\tMyNode\tvoltage
+Values:
+0\t0.0
+\t1.0
+\t2.0
+\t3.0
+
+1\t1e-9
+\t1.5
+\t2.5
+\t3.5
+
+"
+xschem raw clear
+eqcheck CS38-read-devvec [pcall xschem raw read $tmp/devvec.raw tran] 1
+eqcheck CS38b-devvec-verbatim [pcall xschem raw list] \
+  "time\ni(@R.X1.Rq\[i\])\ni(V.X1.Vp)\nMyNode"
+eqcheck CS38c-atdev-exact   [pcall xschem raw index {i(@R.X1.Rq[i])}] 1
+eqcheck CS38d-atdev-folded  [pcall xschem raw index {i(@r.x1.rq[i])}] 1
+eqcheck CS38e-atdev-upper   [pcall xschem raw index {I(@R.X1.RQ[I])}] 1
+eqcheck CS38f-hier-i-folded [pcall xschem raw index {i(v.x1.vp)}] 2
+eqcheck CS38g-bare-folded   [pcall xschem raw index mynode] 3
+# and the two device shapes are still distinguishable from each other
+eqcheck CS38h-not-everything-hits [pcall xschem raw index {i(@R.X1.Rz[i])}] -1
+
+# ---------------------------------------------------------------------------
+# N. the `i(v.x` fixup, now case-aware
+# ---------------------------------------------------------------------------
+# ngspice names the current of a voltage source inside subcircuit x1
+# `i(v.x1.vp)` in some versions and `i(x1.vp)` in others; the ladder drops the
+# `v.`. The rung broke at item 1 -- not because of the QUERY's case (the old
+# in-place strtolower() destroyed that before the rung ever ran) but because the
+# STORED name kept its capitals, so the lowercased probe `i(x1.vp)` no longer
+# matched `i(X1.Vp)`.
+#
+# THE BAIT COLUMN, `i(.x1.vp)`, is what makes CS39f a real check. The old rung
+# was an UNANCHORED strstr() that rewrote bytes 2 and 3 regardless of where it
+# matched, so the query `xi(v.x1.vp)` probed exactly `i(.x1.vp)`. Without a
+# stored name of that spelling the query misses under anchored and unanchored
+# code alike and the check cannot fail; with it, an unanchored rung resolves it
+# to column 2 and CS39f goes red. (Measured: the first version of CS39f stayed
+# green under a deliberately unanchored rung -- review finding, fix round.)
+wr $tmp/hiercur.raw "Title: hierarchical current
+Date: Sat Aug 16 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 3
+No. Points: 2
+Variables:
+\t0\ttime\ttime
+\t1\ti(X1.Vp)\tcurrent
+\t2\ti(.x1.vp)\tcurrent
+Values:
+0\t0.0
+\t1.0
+\t7.0
+
+1\t1e-9
+\t1.5
+\t7.5
+
+"
+xschem raw clear
+eqcheck CS39-read-hiercur [pcall xschem raw read $tmp/hiercur.raw tran] 1
+eqcheck CS39b-exact           [pcall xschem raw index {i(X1.Vp)}] 1
+# the fixup, in the spelling the OLD ladder handled (must not regress) ...
+eqcheck CS39c-fixup-lower     [pcall xschem raw index {i(v.x1.vp)}] 1
+# ... and in the spellings it could not reach
+eqcheck CS39d-fixup-mixed     [pcall xschem raw index {i(V.X1.Vp)}] 1
+eqcheck CS39e-fixup-upper     [pcall xschem raw index {I(V.X1.VP)}] 1
+# the bait really is in the database (without this CS39f is vacuous) ...
+eqcheck CS39g-bait-stored [pcall xschem raw list] "time\ni(X1.Vp)\ni(.x1.vp)"
+eqcheck CS39h-bait-resolves-exactly [pcall xschem raw index {i(.x1.vp)}] 2
+# ... and the rewrite is ANCHORED, so the query that the unanchored rung turned
+# into the bait's own spelling resolves to nothing
+eqcheck CS39f-not-anchored-misses [pcall xschem raw index {xi(v.x1.vp)}] -1
+
+# ---------------------------------------------------------------------------
+# O. D2 — no folded alias when two DIFFERENT stored names collide
+# ---------------------------------------------------------------------------
+# VCD is where a case collision is legitimate: Verilog identifiers are
+# case-sensitive, so `Count` and `count` are two real signals. Answering a
+# `COUNT` query with an arbitrary one of them is the guess D2 forbids.
+# receipts/00a-suite-sweep.md finding 4: no committed test exercises a
+# collision at all -- TOP and top live in different fixtures of
+# test_vcd_read.tcl, never in one database. This is that fixture.
+wr $tmp/collide.vcd "\$timescale 1ps \$end
+\$scope module m \$end
+\$var wire 1 ! Count \$end
+\$var wire 1 \" count \$end
+\$var wire 1 # Enable \$end
+\$upscope \$end
+\$enddefinitions \$end
+#0
+\$dumpvars
+1!
+0\"
+1#
+\$end
+#1000
+"
+xschem raw clear
+eqcheck CS40-read-vcd-collision [pcall xschem raw read $tmp/collide.vcd vcd] 1
+eqcheck CS40b-both-signals-stored [pcall xschem raw list] \
+  "time\nm.Count\nm.count\nm.Enable"
+# EXACT lookups are untouched by the rule -- that is the whole point of it
+eqcheck CS40c-exact-Count [pcall xschem raw index m.Count] 1
+eqcheck CS40d-exact-count [pcall xschem raw index m.count] 2
+set vCount [pcall xschem raw value m.Count 0]
+set vcount [pcall xschem raw value m.count 0]
+# string comparison, and both halves required non-empty: `!=` on an empty
+# string is a Tcl ERROR, which would abort the whole file rather than fail one
+# check -- and a mutation that empties both would otherwise "pass"
+check CS40e-exact-values-differ \
+  [expr {$vCount ne "" && $vcount ne "" && $vCount ne $vcount}] \
+  "(Count='$vCount' count='$vcount')"
+# ... and only the FUZZY rung declines. First-wins (plain XINSERT_NOREPLACE)
+# would answer this with an arbitrary one of the two.
+eqcheck CS40f-ambiguous-declines [pcall xschem raw index m.COUNT] -1
+# the helpful case is KEPT: a mixed-case name with no colliding twin still
+# resolves from a differently-cased query, in the same database
+eqcheck CS40g-noncolliding-still-folds [pcall xschem raw index m.enable] 3
+eqcheck CS40h-noncolliding-upper       [pcall xschem raw index M.ENABLE] 3
+
+# the same rule on a spice raw, read WITHOUT -case distinguish, so the flag is
+# not what is doing the work: op_case.raw holds v(EN) and v(en)
+xschem raw clear
+eqcheck CS41-read-spice-collision [pcall xschem raw read $tmp/op_case.raw op] 1
+eqcheck CS41b-flag-is-off [pcall xschem raw case] 0
+eqcheck CS41c-exact-EN [pcall xschem raw index {v(EN)}] 1
+eqcheck CS41d-exact-en [pcall xschem raw index {v(en)}] 2
+eqcheck CS41e-ambiguous-declines [pcall xschem raw index {V(EN)}] -1
+# the bare forms go through the v() wrap, where the ladder's ORDER decides:
+# `EN` and `en` wrap to a name that exists EXACTLY, so they resolve to their
+# own column and the collision rule never gets a say ...
+eqcheck CS41f-bare-EN-exact-through-wrap [pcall xschem raw index EN] 1
+eqcheck CS41g-bare-en-exact-through-wrap [pcall xschem raw index en] 2
+# ... and only a spelling that matches NEITHER exactly reaches the folded rung
+# and is declined
+eqcheck CS41h-bare-mixed-ambiguous [pcall xschem raw index En] -1
+eqcheck CS41i-noncolliding-in-same-db [pcall xschem raw index {V(SWEEP)}] 0
+
+# ---------------------------------------------------------------------------
+# P. two IDENTICAL stored names are NOT a collision (ngspice upstream 0073)
+# ---------------------------------------------------------------------------
+# `write f.raw v(In)` writes two columns with byte-identical names. Declining
+# there would break a lookup that has exactly one sensible answer, so the rule
+# is "two DIFFERENT names", not "two entries".
+wr $tmp/dupcol.raw "Title: duplicate column names
+Date: Sat Aug 16 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 3
+No. Points: 2
+Variables:
+\t0\ttime\ttime
+\t1\tv(Dup)\tvoltage
+\t2\tv(Dup)\tvoltage
+Values:
+0\t0.0
+\t1.0
+\t1.0
+
+1\t1e-9
+\t1.5
+\t1.5
+
+"
+xschem raw clear
+eqcheck CS42-read-dupcol [pcall xschem raw read $tmp/dupcol.raw tran] 1
+eqcheck CS42b-exact-first-wins [pcall xschem raw index {v(Dup)}] 1
+eqcheck CS42c-folded-still-resolves [pcall xschem raw index {v(dup)}] 1
+eqcheck CS42d-folded-bare [pcall xschem raw index DUP] 1
+
+# ---------------------------------------------------------------------------
+# Q. suppressed entirely when the database is case_sensitive
+# ---------------------------------------------------------------------------
+xschem raw clear
+eqcheck CS43-read-distinguish [pcall xschem raw read $presraw tran -case distinguish] 1
+eqcheck CS43b-flag-set [pcall xschem raw case] 1
+# exact spellings, wrapped or not, still resolve: the flag turns off the FOLD,
+# not the ladder
+eqcheck CS43c-exact-wrapped [pcall xschem raw index {v(MidNode)}] 2
+eqcheck CS43d-exact-bare-through-wrap [pcall xschem raw index MidNode] 2
+# and every folded form is refused
+eqcheck CS43e-folded-bare-refused    [pcall xschem raw index midnode] -1
+eqcheck CS43f-folded-wrapped-refused [pcall xschem raw index {v(midnode)}] -1
+eqcheck CS43g-folded-upper-refused   [pcall xschem raw index {V(MIDNODE)}] -1
+# clearing the flag (which re-reads) brings the folded rung back
+eqcheck CS43h-clear-flag [pcall xschem raw case 0] 1
+eqcheck CS43i-folded-resolves-again [pcall xschem raw index midnode] 2
+
+# ---------------------------------------------------------------------------
+# R. the alias index is INVISIBLE to every consumer
+# ---------------------------------------------------------------------------
+# This is the property that licenses building it at all. `xschem raw list` and
+# `raw vars` iterate names[], never a hash table, so no alias can show up as a
+# phantom signal -- driven AFTER a battery of fuzzy queries has forced the
+# index to exist.
+#
+# THESE ARE ABSOLUTE ASSERTIONS, NOT BEFORE/AFTER COMPARISONS, and that is a
+# review finding paid in full: the first version captured `raw list` and
+# `raw vars` into `_before` variables and compared them with themselves after
+# the fuzzy battery. There is no "before" to capture -- the graph rect built at
+# CS23c makes `xschem raw read` itself resolve a node, so the index already
+# exists by the time the section starts -- and worse, a self-comparison is green
+# for ANY defect stable across two calls. Measured: with raw_build_fold_table()
+# appending its alias to names[]/nvars as a real variable, `raw list` returned
+# `time v(In) v(MidNode) i(Vs) __alias__` and `raw vars` returned 5, and all
+# three checks printed `ok:` with `__alias__` inside the very string they
+# compared. Spelling the fixture's own four names out is what makes them fail.
+xschem raw clear
+xschem raw read $presraw tran
+foreach q {midnode MIDNODE v(midnode) I(VS) in nosuch} { pcall xschem raw index $q }
+eqcheck CS44-list-unchanged-by-aliases [pcall xschem raw list] \
+  "time\nv(In)\nv(MidNode)\ni(Vs)"
+eqcheck CS44b-vars-unchanged-by-aliases [pcall xschem raw vars] 4
+eqcheck CS44c-list-length-is-vars [llength [split [pcall xschem raw list] \n]] 4
+
+# ---------------------------------------------------------------------------
+# S. the alias index is dropped when names[] moves
+# ---------------------------------------------------------------------------
+# A stale index is worse than no index: after `raw del` every name below the
+# deleted one has shifted down a column, so a surviving alias resolves to the
+# WRONG DATA rather than missing.
+xschem raw clear
+xschem raw read $presraw tran
+eqcheck CS45-fuzzy-before-rename [pcall xschem raw index midnode] 2
+eqcheck CS45b-rename [pcall xschem raw rename {v(MidNode)} ZzTop] 1
+eqcheck CS45c-old-fuzzy-name-gone [pcall xschem raw index midnode] -1
+eqcheck CS45d-new-fuzzy-name-hits [pcall xschem raw index zztop] 2
+
+# ... and a rename REACHED THROUGH the folded rung must delete the real hash
+# entry, not the alias. get_raw_index() hands its caller the entry of the REAL
+# name for exactly this reason: raw_renamevar() deletes by entry->token, so a
+# folded token would leave `v(In)` in the table pointing at a column now called
+# something else -- the old name would keep resolving.
+xschem raw clear
+xschem raw read $presraw tran
+eqcheck CS45e-rename-via-folded-query [pcall xschem raw rename {v(in)} ZzIn] 1
+eqcheck CS45f-renamed [pcall xschem raw list] "time\nZzIn\nv(MidNode)\ni(Vs)"
+eqcheck CS45g-old-exact-entry-really-gone [pcall xschem raw index {v(In)}] -1
+eqcheck CS45h-new-name-resolves [pcall xschem raw index zzin] 1
+
+xschem raw clear
+xschem raw read $presraw tran
+eqcheck CS46-fuzzy-before-del [pcall xschem raw index {i(vs)}] 3
+eqcheck CS46b-del [pcall xschem raw del {v(In)}] 1
+eqcheck CS46c-names-shifted [pcall xschem raw list] "time\nv(MidNode)\ni(Vs)"
+# 3 here would be a stale alias pointing one column past the end
+eqcheck CS46d-fuzzy-follows-the-shift [pcall xschem raw index {i(vs)}] 2
+eqcheck CS46e-deleted-name-gone [pcall xschem raw index in] -1
+
+xschem raw clear
+xschem raw read $presraw tran
+eqcheck CS47-fuzzy-before-add [pcall xschem raw index newcol] -1
+eqcheck CS47b-add [pcall xschem raw add NewCol {v(MidNode)}] 1
+eqcheck CS47c-added-fuzzy-hits [pcall xschem raw index newcol] 4
+eqcheck CS47d-added-exact-hits [pcall xschem raw index NewCol] 4
+
+# ---------------------------------------------------------------------------
+# T. a table_read database, which item 1 never drove
+# ---------------------------------------------------------------------------
+# Carry-forward from item 1's receipt section 5: `raw case` was driven on spice
+# and VCD databases only. table_read() stores its header fields verbatim too,
+# so the same ladder and the same re-read contract have to hold there.
+wr $tmp/tab_mixed.txt "Time,V(Out),I(Rload)
+0.0,1.0,0.1
+1e-9,2.0,0.2
+2e-9,3.0,0.3
+"
+xschem raw clear
+eqcheck CS48-read-table [pcall xschem raw read $tmp/tab_mixed.txt table] 1
+eqcheck CS48b-table-names-verbatim [pcall xschem raw list] "Time\nV(Out)\nI(Rload)"
+eqcheck CS48c-table-exact  [pcall xschem raw index {V(Out)}] 1
+eqcheck CS48d-table-folded [pcall xschem raw index {v(out)}] 1
+eqcheck CS48e-table-bare-folded [pcall xschem raw index out] 1
+eqcheck CS48f-table-current-folded [pcall xschem raw index {i(rload)}] 2
+# `raw case` on a table database: the set re-reads (the in-memory-only rename
+# is discarded) and the folded rung then declines
+eqcheck CS48g-table-rename [pcall xschem raw rename {V(Out)} zz_tabmark] 1
+eqcheck CS48h-table-set-case [pcall xschem raw case distinguish] 1
+eqcheck CS48i-table-reread [pcall xschem raw list] "Time\nV(Out)\nI(Rload)"
+eqcheck CS48j-table-flag [pcall xschem raw case] 1
+eqcheck CS48k-table-folded-refused [pcall xschem raw index {v(out)}] -1
+eqcheck CS48l-table-exact-still-hits [pcall xschem raw index {V(Out)}] 1
+
+# ---------------------------------------------------------------------------
+# U. the viewer's Tcl gate must not APPROVE what the ladder declines
+# ---------------------------------------------------------------------------
+# wviewer::validate_rpn is the gate wviewer::add_trace puts in front of
+# `xschem raw add`, and it exists because raw_add_vector() swallows
+# plot_raw_custom_data()'s -1: an unresolvable token produces a registered,
+# plottable, all-ZERO vector, not an error. So a gate that is more permissive
+# than get_raw_index() is not merely inconsistent, it is a silent wrong answer
+# on the user's screen. Measured before the fix, at the DEFAULT `fold` mode with
+# no mode change at all, on the very database D2 exists for:
+#   xschem raw index COUNT      -> -1     (D2 declines, correctly)
+#   validate_rpn {COUNT 2 *}    -> {}     (VALID -- the gate disagreed)
+#   xschem raw add tst {COUNT 2 *} -> 1 ; xschem raw value tst 0 -> 0
+# The gate now mirrors the ladder, D2 and `distinguish` included.
+set wvsrc [file join $here .. .. src wave_viewer.tcl]
+eqcheck CS49-source-wave-viewer [catch {source $wvsrc}] 0
+
+# both verdicts on one token: want=1 means the engine resolves it AND the gate
+# passes it; want=0 means both refuse. Disagreement in EITHER direction fails.
+proc gatecheck {name tok want} {
+  set vl [split [pcall xschem raw list] "\n"]
+  set gate [pcall wviewer::validate_rpn "$tok 2 *" $vl]
+  set eng [pcall xschem raw index $tok]
+  set engok [expr {[string is integer -strict $eng] && $eng >= 0}]
+  set gateok [expr {$gate eq {}}]
+  check $name [expr {$engok == $want && $gateok == $want}] \
+    "(token '$tok' engine=$eng gate='$gate' want [expr {$want ? {both resolve} : {both refuse}}])"
+}
+
+xschem raw clear
+eqcheck CS49b-read-collision [pcall xschem raw read $tmp/op_case.raw op] 1
+eqcheck CS49c-default-fold [pcall xschem raw case] 0
+# the D2 collision: neither side may resolve `V(EN)` ...
+gatecheck CS49d-collision-refused-by-both {V(EN)} 0
+gatecheck CS49e-bare-mixed-refused-by-both En 0
+# ... while every spelling the ladder DOES resolve still passes the gate, so the
+# fix is not "refuse more"
+gatecheck CS49f-exact-EN     {v(EN)} 1
+gatecheck CS49g-exact-en     {v(en)} 1
+gatecheck CS49h-bare-EN      EN 1
+gatecheck CS49i-folded-noncolliding {V(SWEEP)} 1
+gatecheck CS49j-unknown-refused-by-both nosuchnode 0
+# a `distinguish` database turns the folded rung off on BOTH sides
+eqcheck CS49k-set-distinguish [pcall xschem raw case distinguish] 1
+gatecheck CS49l-folded-refused-under-distinguish {V(SWEEP)} 0
+gatecheck CS49m-exact-kept-under-distinguish {v(sweep)} 1
+eqcheck CS49n-clear-distinguish [pcall xschem raw case 0] 1
+gatecheck CS49o-folded-resolves-again {V(SWEEP)} 1
 
 xschem raw clear
 catch {test_scratch_drop $tmp}

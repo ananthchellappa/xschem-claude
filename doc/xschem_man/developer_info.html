@@ -1336,9 +1336,22 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
       return raw loaded simulation type (ac, op, tran, ...)
       
    xschem raw index node
-     get index of simulation variable 'node'.
+     get index of simulation variable 'node', or -1 if it does not resolve.
      Example:  raw index v(led) --&gt; 46
-      
+     The name is resolved by one ladder: the exact spelling, then a
+     case-folded match against the stored names, then the same two wrapped as
+     v(node), then the same two with a leading "i(v.x" rewritten to "i(x"
+     ('i(v.x1.vp)' finds the stored 'i(X1.Vp)'). That last step is a prefix:
+     the 'x' is part of it, so a subcircuit instance not named x... is not
+     rewritten, and 'i(v.' anywhere but at the start is left alone.
+     So on a raw written by a case-preserving simulator, 'MidNode',
+     'midnode', 'v(MidNode)' and 'V(MIDNODE)' all find the stored v(MidNode).
+     Two exceptions: 'xschem raw case 1' (distinguish) turns the case-folded
+     step off entirely, and when two DIFFERENT stored names differ only in
+     case -- 'Count' and 'count' in a VCD -- neither gets a folded match, so
+     each resolves only under its own spelling and 'COUNT' resolves to
+     nothing.
+
    xschem raw values node [dset]
      print all simulation values of 'node' for dataset 'dset' (default dset=0)
      dset= -1: print all values for all datasets

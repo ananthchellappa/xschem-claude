@@ -84,15 +84,18 @@ proc wr {p s} { set fp [open $p w]; puts -nonewline $fp $s; close $fp }
 # names with dots) and the natural name for `$scope module top / module m /
 # $var wire 1 ! same` in a VCD, so the collision is the real shape.
 #
-# ⚠ THE CASE TRAP, and why the VCD scopes here are lower case. read_dataset()
-# strtolower()s every spice variable name (src/save.c:1008) because spice node
-# names are case-insensitive; vcd_read() stores Verilog identifiers VERBATIM
-# because they are not. So an UPPER-case VCD scope produces the stored name
-# "TOP.m.same" against the raw's "top.m.same" -- two different keys in
+# ⚠ THE CASE TRAP, and why the VCD scopes here are lower case. EVERY reader
+# now stores variable names VERBATIM -- read_dataset() folded spice names until
+# the casemode batch deleted that fold (item 1, doc/claude/specs/
+# raw_case_mode.md), vcd_read() and table_read() never folded at all. So the
+# stored spelling is whatever the file says: an UPPER-case VCD scope produces
+# "TOP.m.same" against a raw's "top.m.same" -- two different keys in
 # ngspice::ngspice_data, i.e. NO collision, and the whole colliding-name leg
 # would be green against an implementation that merges the two namespaces.
-# `xschem raw index` hides this (it probes verbatim, then upper, then lower), so
-# the collision is asserted against `xschem raw list`, the STORED names, at BA1d.
+# `xschem raw index` hides this: its ladder is exact, then a case-folded match
+# against the stored names, then the same two v()-wrapped (casemode item 2), so
+# either spelling resolves. The collision is therefore asserted against
+# `xschem raw list`, the STORED names, at BA1d.
 #
 # Every value band is disjoint from every logic level, so a readout says WHICH
 # database answered rather than merely "something did".

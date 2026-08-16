@@ -1021,12 +1021,12 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
        *
        * The two other readers, vcd_read() and table_read(), already stored
        * verbatim, so this reader was the odd one out, not the rule. The query
-       * side is where case-insensitivity belongs and where item 2 puts it (a
-       * folded-alias rung in get_raw_index(), suppressed when
-       * raw->case_sensitive). UNTIL ITEM 2 LANDS a lowercase query against a
-       * mixed-case stored name misses -- which for every simulator that folds
-       * (all released ngspice) is unreachable, because it stores lowercase
-       * anyway.
+       * side is where case-insensitivity belongs, and item 2 has now put it
+       * there: get_raw_index() tries the exact spelling and then a case-folded
+       * ALIAS INDEX over names[] (Raw.fold_table), suppressed when
+       * raw->case_sensitive, and declining rather than guessing when two
+       * different stored names fold to one key. So `v(en)` finds `v(EN)`
+       * again, without any stored name being altered.
        *
        * ngspice::ngspice_data keys are NOT affected: they are a published Tcl
        * interface and are folded at the two publish sites instead, via
@@ -1127,8 +1127,14 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
       my_free(_ALLOC_ID_, &raw->names[i]);
     }
     my_free(_ALLOC_ID_, &raw->names);
-    my_free(_ALLOC_ID_, &raw->cursor_b_val);
   }
+  /* NOT inside the `if(raw->names)` above: raw_deletevar() ends with
+   * my_realloc(&raw->names, 0), which NULLs names[], so deleting the LAST
+   * variable used to leak cursor_b_val (measured: valgrind, 32 bytes definitely
+   * lost on a 4-variable raw whose every column is deleted). Pre-existing, not
+   * introduced by the casemode work; fixed here because the same review that
+   * measured it also measured that the alias index itself leaks nothing. */
+  if(raw->cursor_b_val) my_free(_ALLOC_ID_, &raw->cursor_b_val);
   if(raw->values) {
     /* free also extra column for custom data plots */
     for(i = 0 ; i <= raw->nvars; ++i) {
@@ -1142,6 +1148,9 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
   if(raw->rawfile) my_free(_ALLOC_ID_, &raw->rawfile);
   if(raw->schname) my_free(_ALLOC_ID_, &raw->schname);
   if(raw->table.table) int_hash_free(&raw->table);
+  /* the case-folded alias index (casemode item 2); it is lazily built, so it is
+   * usually NULL here, and int_hash_free() on a NULL table is a no-op anyway */
+  if(raw->fold_table.table) int_hash_free(&raw->fold_table);
   my_free(_ALLOC_ID_, rawptr);
 
   if(has_x) {
@@ -1224,6 +1233,10 @@ int raw_read_from_attr(Raw **rawptr, const char *type, double sweep1, double swe
   return res;
 }
 
+/* casemode item 2: defined with get_raw_index()'s ladder, below; the three
+ * places names[] moves have to drop the case-folded alias index */
+static void raw_fold_table_clear(Raw *raw);
+
 int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
 {
   int f;
@@ -1242,6 +1255,7 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
     my_realloc(_ALLOC_ID_, &raw->values, (raw->nvars + 1) * sizeof(SPICE_DATA *));
     raw->values[raw->nvars] = NULL;
     my_realloc(_ALLOC_ID_, &raw->values[raw->nvars], raw->allpoints * sizeof(SPICE_DATA));
+    raw_fold_table_clear(raw); /* names[] grew: the alias index no longer covers it */
     res = 1;
   }
   /* Zero a freshly created column BEFORE evaluating anything into it, not only
@@ -1356,6 +1370,7 @@ int raw_renamevar(const char *old_name, const char *new_name)
   int_hash_lookup(&raw->table, entry->token, 0, XDELETE);
   my_strdup2(_ALLOC_ID_, &raw->names[n], new_name);
   int_hash_lookup(&raw->table, raw->names[n], n, XINSERT); /* update hash table */
+  raw_fold_table_clear(raw); /* names[n] changed spelling */
   ret = 1;
   return ret;
 }
@@ -1394,6 +1409,10 @@ int raw_deletevar(const char *name)
    * because tests/headless/test_wave_markers.tcl is the tree's first caller of
    * `xschem raw del`. */
   my_realloc(_ALLOC_ID_, &raw->values, sizeof(SPICE_DATA *) * (raw->nvars + 1));
+  /* EVERY name after n moved down one column, so a surviving alias index would
+   * resolve a fuzzy query to the wrong column -- silently wrong data, not a
+   * miss. Dropping it is the only correct answer. */
+  raw_fold_table_clear(raw);
   ret = 1;
   return ret;
 }
@@ -2373,36 +2392,164 @@ int raw_get_pos(const char *node, double value, int dset, int from_start, int to
 
   return x;
 }
-/* given a node XXyy try XXyy , xxyy, XXYY, v(XXyy), v(xxyy), V(XXYY) */
+/* One folded key on the heap; caller frees it. NOT a fixed buffer: a VCD
+ * hierarchical name is unbounded (every $scope level joined with '.'), and two
+ * long names truncated to a common prefix would fold to one key and be reported
+ * as a D2 collision -- both would then stop resolving fuzzily. */
+static char *raw_fold_key(const char *name)
+{
+  char *key = NULL;
+  my_strdup2(_ALLOC_ID_, &key, name);
+  strtolower(key);
+  return key;
+}
+
+/* Build Raw.fold_table: strtolower(names[i]) -> i, with -1 for ambiguous.
+ * Called at most once per database per mutation, from raw_fold_index(). */
+static void raw_build_fold_table(Raw *raw)
+{
+  int i;
+  int_hash_init(&raw->fold_table, HASHSIZE);
+  if(!raw->names) return;
+  for(i = 0; i < raw->nvars; ++i) {
+    char *key;
+    Int_hashentry *entry;
+    if(!raw->names[i]) continue;
+    key = raw_fold_key(raw->names[i]);
+    /* XINSERT_NOREPLACE returns NULL when it INSERTED (the key was free) and
+     * the existing entry when it did not -- so a non-NULL return here means
+     * some earlier name already folded onto this key. */
+    entry = int_hash_lookup(&raw->fold_table, key, i, XINSERT_NOREPLACE);
+    if(entry && entry->value >= 0 && raw->names[entry->value] &&
+       strcmp(raw->names[entry->value], raw->names[i])) {
+      /* DECISIONS.md D2: two DIFFERENT stored names fold to one key, so the
+       * fuzzy rung must decline rather than guess -- answering a `COUNT` query
+       * with an arbitrary `Count` is the failure the rule exists to prevent.
+       * First-wins (what XINSERT_NOREPLACE alone would give) is NOT the rule.
+       * Byte-identical duplicates are deliberately NOT a collision: ngspice
+       * upstream 0073 writes two identical columns with identical names, and
+       * declining there would break a lookup that has only one answer. */
+      dbg(1, "raw_build_fold_table(): \"%s\" and \"%s\" fold to \"%s\": "
+             "no alias for either (DECISIONS.md D2)\n",
+             raw->names[entry->value], raw->names[i], key);
+      entry->value = -1;
+    }
+    my_free(_ALLOC_ID_, &key);
+  }
+}
+
+/* Drop the alias index. MUST be called wherever names[] changes identity or
+ * position -- raw_deletevar() re-indexes every name after the deleted one, so a
+ * surviving alias would resolve to the wrong column, which is silently wrong
+ * data rather than a miss. */
+static void raw_fold_table_clear(Raw *raw)
+{
+  if(raw && raw->fold_table.table) int_hash_free(&raw->fold_table);
+}
+
+/* The fuzzy rung: index of the single stored name that folds to name's fold
+ * key, or -1 for "no such name" / "ambiguous" / "this database is
+ * case_sensitive". */
+static int raw_fold_index(Raw *raw, const char *name)
+{
+  char *key;
+  Int_hashentry *entry;
+  int idx = -1;
+
+  if(raw->case_sensitive) return -1; /* `distinguish`: EN and en are two signals */
+  if(!raw->fold_table.table) raw_build_fold_table(raw);
+  key = raw_fold_key(name);
+  entry = int_hash_lookup(&raw->fold_table, key, 0, XLOOKUP);
+  if(entry && entry->value >= 0) idx = entry->value;
+  my_free(_ALLOC_ID_, &key);
+  return idx;
+}
+
+/* ONE RUNG of the ladder: the exact spelling first, then the case-folded alias.
+ * Returns the entry of the REAL name in raw->table, never an alias entry --
+ * raw_renamevar() and raw_deletevar() delete by entry->token, so handing them a
+ * folded token would leave the real entry behind, pointing at a renamed or
+ * shifted column. */
+static Int_hashentry *raw_lookup_name(Raw *raw, const char *name)
+{
+  Int_hashentry *entry = int_hash_lookup(&raw->table, name, 0, XLOOKUP);
+  if(!entry) {
+    int idx = raw_fold_index(raw, name);
+    /* `idx < raw->nvars` is not redundant: it is what makes a stale index a
+     * clean miss instead of an out-of-bounds read of names[]. Measured with the
+     * invalidation deliberately disabled -- after `raw del` the array is one
+     * shorter, and names[nvars] still held the old last pointer in place, so
+     * the lookup answered CORRECTLY off freed-shrunk memory and the test that
+     * exists to catch a stale index stayed green by luck of the allocator. */
+    if(idx >= 0 && idx < raw->nvars && raw->names && raw->names[idx]) {
+      entry = int_hash_lookup(&raw->table, raw->names[idx], 0, XLOOKUP);
+    }
+  }
+  return entry;
+}
+
+/* THE ONE LOOKUP LADDER (casemode batch item 2, doc/claude/specs/
+ * raw_case_mode.md section 9). Given a node, in order:
+ *
+ *   1  the exact spelling                       v(MidNode)
+ *   2  the case-folded alias                    v(midnode), V(MIDNODE), ...
+ *   3  the same two, v()-wrapped                MidNode -> v(MidNode) -> v(midnode)
+ *   4  the same two, with an `i(v.x` prefix     i(v.x1.vp) -> i(x1.vp)
+ *      rewritten to `i(`
+ *
+ * Rung 2 (and the folded half of 3 and 4) is the whole of the case
+ * insensitivity the deleted read-path fold used to provide, and it is
+ * suppressed for a `distinguish` database (Raw.case_sensitive).
+ *
+ * IT DOES NOT MUTATE THE QUERY. The old ladder did -- strtoupper() then
+ * strtolower() in place -- so by the time it built the `v(%s)` rung the query
+ * was already lowercased, and `MidNode` could only ever probe `v(midnode)`.
+ * That is why every BARE mixed-case name missed after item 1, including the
+ * correctly spelled one, and why the `i(v.x` rung could not see an uppercase
+ * query. Each rung here starts from the caller's own spelling and asks for the
+ * fold explicitly.
+ *
+ * The `@dev[param]` shape (`i(@R.X1.Rq[i])`, what `.options savecurrents`
+ * writes under `preserve`) needs no rung of its own: it is an ordinary stored
+ * name, so rungs 1-2 resolve it, which the pre-item-2 ladder could not do
+ * because it never looked at a folded form of a stored name at all. */
 int get_raw_index(const char *node, Int_hashentry **entry_ret)
 {
-  char inode[512];
   char vnode[512];
   Int_hashentry *entry;
-
+  Raw *raw;
 
   dbg(1, "get_raw_index(): node=%s\n", node);
   if(sch_waves_loaded() >= 0) {
-    my_strncpy(inode, node, S(inode));
-    entry = int_hash_lookup(&xctx->raw->table, inode, 0, XLOOKUP);
-    if(!entry) {
-      strtoupper(inode);
-      entry = int_hash_lookup(&xctx->raw->table, inode, 0, XLOOKUP);
+    raw = xctx->raw;
+    entry = raw_lookup_name(raw, node);              /* rungs 1 and 2 */
+    if(!entry) {                                     /* rung 3: v() wrap */
+      my_snprintf(vnode, S(vnode), "v(%s)", node);
+      entry = raw_lookup_name(raw, vnode);
     }
-    if(!entry) {
-      strtolower(inode);
-      entry = int_hash_lookup(&xctx->raw->table, inode, 0, XLOOKUP);
-    }
-    if(!entry) {
-      my_snprintf(vnode, S(vnode), "v(%s)", inode);
-      entry = int_hash_lookup(&xctx->raw->table, vnode, 0, XLOOKUP);
-    }
-    if(!entry && strstr(inode, "i(v.x")) {
-      char *ptr = inode;
-      inode[2] = 'i';
-      inode[3] = '(';
-      ptr += 2;
-      entry = int_hash_lookup(&xctx->raw->table, ptr, 0, XLOOKUP);
+    /* Rung 4: ngspice names the current of a voltage source inside subcircuit
+     * x1 `i(v.x1.vp)` in some versions and `i(x1.vp)` in others; drop the `v.`.
+     * The prefix test is now case-INSENSITIVE and ANCHORED at offset 0.
+     *
+     * WHY case-insensitive, stated the right way round (an earlier revision of
+     * this comment had the history backwards): the old ladder reached this rung
+     * in ANY casing, because the in-place strtolower() two rungs up had already
+     * destroyed the query's case -- `I(V.X1.VP)` arrived here as `i(v.x1.vp)`.
+     * What broke the rung was item 1, which stopped folding the STORED name: the
+     * lowercased probe `i(x1.vp)` no longer matched a stored `i(X1.Vp)`. The
+     * ladder no longer mutates the query, so the test must be case-blind against
+     * the caller's own spelling, and the rewritten name goes back through
+     * raw_lookup_name() so the folded rung can still find a stored `i(X1.Vp)`.
+     *
+     * ANCHORED: the old strstr() matched anywhere but then rewrote inode[2] and
+     * inode[3] regardless, so a match at any other offset produced a garbage
+     * string -- e.g. "xi(v.x1.vp)" probed "i(.x1.vp)". Anchoring removes only
+     * that garbage path; no name it could ever have found is lost. A database
+     * that really does store the garbage spelling is what test check CS39f
+     * measures: the anchored form declines it, an unanchored one resolves it. */
+    if(!entry && !my_strncasecmp(node, "i(v.x", 5)) {
+      my_snprintf(vnode, S(vnode), "i(%s", node + 4);
+      entry = raw_lookup_name(raw, vnode);
     }
 
     if(entry_ret) *entry_ret = entry;
