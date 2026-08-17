@@ -46,7 +46,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 0a | suite sweep for folded-name assertions | `[x]` | `f7ab5f65` | – | – | 1 doc | no | `receipts/00a-suite-sweep.md`: **zero rows expected to move**. Static sweep; 34 suites touch `raw read`/`raw list`, 2 tracked `.raw` fixtures, no test reads either. THIS IS ITEM 1's EXPECTED-DIFF CONTRACT |
 | 1 | delete the fold + `Raw.case_sensitive` | `[x]` | `fbfc6395` | 81 | 33 | 7 code + spec | no | audit diff = **one added row** (`test_raw_case_mode PASS`), **zero movers** — 00a's contract met exactly. Review found 5 real bugs beyond scope, all fixed. Xyce **RULED: no fold**. Spec `specs/raw_case_mode.md` |
 | 2 | one lookup ladder (+ absorbs the VCD sub-step) | `[x]` | `532b1768` | 105 new (186 in file) | 26 | 11 + 3 audits | no | audit diff vs item 1 **EMPTY**, verified independently. Ladder no longer mutates the query; alias index is a **separate lazy table**, overriding DESIGN_REVISION §4's *mechanism* (rule stands, correction written in place). Fixed a live **default-mode** viewer defect + a 32-byte leak |
-| 3 | four-source mode resolution | | | | | | no | |
+| 3 | four-source mode resolution | `[x]` | `26cff1d3` | 91 new (277 in file) | 53 | 8 + 3 audits | no | audit diff **EMPTY**, verified independently. `xschem raw casemode` REPORTS, never acts. **Refuted two design premises by measurement** (see below). Spec §10 |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | | | | | | no | |
 | 5 | viewer Tcl + two-pane browser scan | | | | | | no | |
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | | | | | | no | new item; the "perfect" fix the user chose over three papering-over options |
@@ -148,6 +148,53 @@ item 2** — its closer audit is byte-identical by name and status to item 1's, 
   (`CS39f`) **failed** — which is why the `i(.x1.vp)` bait column now exists.
   No real mixed-case simulator run was involved; every fixture is committed or
   inline.
+
+## Carry-forwards item 3 handed on
+
+Source: `receipts/03-mode-resolution.md` §5 + `-annex.md`. Baseline still did not
+roll — item 3's closer audit is again identical by name and status.
+
+**Two design premises this item REFUTED by measurement. Both were in our docs.**
+
+1. **`Casemode:` as a header key is REFUSED, and the reason is measured, not
+   stylistic: ngspice's own reader ABORTS the load on it** (`FINDINGS.md` §1).
+   The driver's dispatch hint treated `hdr_newkey.raw` as simply "the other
+   position". It is not — it is a shape that breaks the file. Only `Option:` is
+   accepted, in **both** header positions, first line wins. `Command: set
+   casemode=` is refused too: `Command:` is free-text that nothing parses.
+2. **"One raw, one mode" was FALSE.** The `Option:` branch was the only header
+   branch with no `sim_type` guard, so a **two-plot raw reported the other
+   plot's mode** (ngspice `rawfile.c:204` vs `222/262`). Found by review, fixed,
+   and spec §10 corrected in place. Anything later that assumes a raw file has a
+   single mode is wrong.
+
+Other carry-forwards:
+
+- **PERFORMANCE — items 5 and 13 must not poll source 3 from a redraw.** The
+  schematic-name comparison has **no cache**, and `-schematic` and `-all` each
+  recompute it. Measured at 2000 instances × 500 names: exact-hit 21 ms
+  (unchanged), **folded-hit 147 ms** (was ~20), **all-miss 189 ms** (was ~135).
+  That is a measured cost, not a defect — but it is per call.
+- **B2a's user-facing control is items 5 and 13, not item 3.** Item 3 shipped the
+  engine only. So item 5's scope shrank at item 2 (`validate_rpn` already done)
+  and **grows here**: showing the detected mode and offering the override.
+- **Untested reader kinds — item 2's carry-forward stays OPEN and is now
+  compounded.** `raw casemode` on a VCD or `table_read` database has **no
+  committed check**; both were hand-driven only. Whoever next touches the read
+  path should close this rather than pass it on a fourth time.
+- **Not driven, stated plainly:** no binary raw in the suite carries an `Option:`
+  line, so parsing one is *reasoned, not driven*; and no check reads the `dbg(0)`
+  emitted on a second, disagreeing `Option:` line.
+- **The upstream `repro/hdr_*.raw` files are GITIGNORED.** The driver's item-3
+  hint pointed at them as fixtures; they cannot be committed, so item 3 inlined
+  the header lines into the suite and hand-drove the eleven real files. Point
+  future items at the *lines*, not the paths.
+- **Two audit reds that are NOT ours, named so a later closer does not read them
+  as new:** `test_wave_markers` passes standalone but FAILs in both audits, and a
+  `test_ase_core` failure reproduces on the **HEAD** binary too.
+- **Checks item 3 declares as NOT evidence:** `CS60`, `CS61l`, `CS62c` have no
+  item-3 code beneath them (fixture/premise checks, movable only by data
+  drives), and `CS61d` is over-determined with no single-edit mutation.
 
 ## Environment — re-verified 2026-08-16
 
