@@ -53,9 +53,12 @@ Delivered: `src/op_annot.tcl` (`register` / `descriptor` / `type` / `devpath` /
 and eleven T3 suites are identical to the branch baseline (3 pre-existing T1
 FAILs, all explained: issues 0420 and 0421).
 
-**Read the five bullets under "What later steps must change" below before
-starting S2 or S3** — S1 measured four things this plan and the spec asserted
-wrongly, and two of them change what a later step has to do.
+**Read the thirteen bullets under "What later steps must change" before starting
+any step** — bullets 1-5 were measured by S1, bullets 6-13 by S2 (they live under
+the S2 section, since that is where they were found). Between them they correct
+this plan and the spec on nine points, several of which change what a later step
+has to do. Bullets **6, 7 and 8 are binding on S3**; **9, 10 on S5**; **11 on
+S4**; and the open question in the S2 section is **S4/S5's to answer**.
 
 **Files:** new `src/op_annot.tcl`; sourced from `src/xschem.tcl` alongside the
 other loadable helpers.
@@ -113,17 +116,20 @@ sky130 nfet_01v8, inst M1 (spiceprefix X) at path x1. :
    the raw contains the wrong name too. Keep the diff (it proves the two sides
    agree) and add: capture ngspice's stderr warnings and surface them, and
    assert the values are not all zero. Spec landmine 9.
-3. **S2: copy the spec's §4.2 descriptors, they are now correct** — but only
-   because S1 rewrote them. The originals expanded to `Xnfet_01v8` with no
-   error (issue 0422); templates must be escaped as
-   `\@m.@path@spiceprefix@name\.msky130_fd_pr__@model`. Two more for S2:
-   **do not port** `sg13g2_procs.tcl:374/:453/:512`'s
-   `getprop instance … spiceprefix` (measured empty on sky130 — use
-   `xschem translate <inst> @spiceprefix`), and note all three PDKs plus the
-   generic `devices/nmos.sym` share the descriptor key `type=nmos`, so the
-   second `register nmos` silently overwrites the first (issue **0425** — S2
-   owns the decision, and spec §8's cross-PDK test needs one interpreter per
-   PDK until it is made).
+3. ~~**S2: copy the spec's §4.2 descriptors, they are now correct.**~~
+   **DONE, and the "they are now correct" half was wrong** — S1 fixed the
+   *escaping* (issue 0422) but not the *content*. S2 measured four content
+   errors and §4.2 has been rewritten to what actually shipped: sky130 needs a
+   **devproc**, not a template (its single template mismatches 35 of 119
+   prototype cards — the `g5v0d16v0` and `20v0` families); **`pmos` must be
+   registered too** (the prototypes branch on `regexp {[pn]mos}` while
+   `op_annot`'s key is an exact array index, so 17+9+4 PMOS symbols would have
+   gone unannotated in silence); `vertical_npn` has **thirteen** parameters, not
+   six; and `pinexpr` must use the shipped `expr(@#N:spice_get_voltage …)`
+   spelling. The escaping rule and the "do not port `getprop … spiceprefix`"
+   rule both held — see finding 10 for the three shipped cells that prove the
+   second. Issue **0425** is now **decided and implemented** (the `match` key,
+   finding 6); spec §8's *one interpreter per PDK* still stands.
 4. **S5: the slots are there and the readers must `catch`.** `derived` and
    `pinexpr` are stored verbatim by `register`, so S5 adds no schema. But
    `xschem raw value <v> -1` **raises** `No raw file loaded` rather than
@@ -147,27 +153,111 @@ and must stay plain `@`-token text.
 
 ---
 
-## S2 — the three PDK descriptors
+## S2 — the three PDK descriptors ✅ DONE (status **E** — one question below)
 
-**Files:** `sky130A/sky130_procs.tcl`, `gf180mcuD/…_procs.tcl`,
-`ihp-sg13g2/sg13g2_procs.tcl` (add registrations; leave the existing sg13g2
-procs alone for now).
+**Files:** `sky130A/sky130_procs.tcl`, `gf180mcuD/gf180_procs.tcl`,
+`ihp-sg13g2/sg13g2_procs.tcl` (registrations appended; the existing prototype
+procs left byte-for-byte untouched — they are the acceptance oracle),
+`src/op_annot.tcl` (the `match` key), `tests/headless/test_op_annot.tcl`
+(Section P, +33 checks).
 
-Descriptors are written out in spec §4.2 — copy them; **S1 rewrote them and they
-are now correct** (the originals silently expanded to `Xnfet_01v8`, issue 0422).
-Decide issue **0425** here: all three PDKs and the generic
-`xschem_library/devices/nmos*.sym` share the key `type=nmos`, so registering a
-second PDK destroys the first, and a generic `nmos` on a PDK schematic picks up
-the PDK's device path. The IHP one must reproduce
-`sg13g2_write_save_lines`' ten FET parameters and thirteen NPN parameters
-exactly, including the `_5t` model-suffix strip via `devproc`.
+**Landed.** Seven registrations: sky130 `nmos`/`pmos` (a **devproc**),
+gf180 `nmos`/`pmos` (template), IHP `nmos`/`pmos` (template) and IHP
+`vertical_npn` (a devproc for the `_5t` strip). Issue **0425** ratified and
+implemented as an optional `match` glob list on the descriptor.
 
-**Acceptance:** for the IHP `dc_lv_nmos` test cell, `op_annot::vector` reproduces
-every line `sg13g2_write_save_lines` emits, byte for byte. That diff being empty
-is the proof the generalization lost nothing.
+**Acceptance, met — but note the acceptance wording on this page was wrong.**
+It said "`op_annot::vector` reproduces every line", which is measurably
+impossible: a save card is **bare** (finding 1 above, rule R4), so a
+vector-based diff would mismatch 30 of the 46 IHP cards by construction. The
+real diff is `devpath+[param]`, bare, filtered on `[string match ".save *"]`
+because the oracle's first two lines are a comment and a blank. It is empty:
+IHP **49/49 loadable `sg13g2_tests` cells** (26 with cards, `IHP_testcases` at
+405 cards, the `_5t` HBT cells at 26 each), sky130 `test_nmos` **119/119**.
 
-**Risk:** low, but it is where every PDK naming quirk shows up. Landmines §6.2
-and §6.3.
+> **⚠ THE ONE OPEN QUESTION (why S2 is E, and it lands on S4/S5).** sky130's
+> `params` carry `cgso` and `cgdo`. **Measured on ngspice-42 against the real
+> sky130 models: both are invalid vectors** (`cgs`/`cgd` are the valid
+> spellings), and **one invalid `.save` card makes ngspice write no raw file at
+> all** in the `.control … write <cell>.raw … .endc` idiom every shipped bench
+> uses — `rc=0`, one `checkvalid` warning, no file. They are registered because
+> the acceptance above *demanded* byte-equality with `sky130_write_save_lines`,
+> which has emitted them for years. **Correcting them breaks that acceptance.**
+> Issue **0429**. Answer needed: correct the parameters (and re-baseline both the
+> prototype and test row P3), or keep bug-compatibility until S5 deletes the
+> prototypes?
+
+**Risk:** was billed low. It was low for the *mechanism* and not low for the
+*data* — every card matched the prototype and the prototype was wrong.
+
+### What S2 changed for later steps — measured
+
+6. **S3/S5: a non-empty `descriptor` NO LONGER implies a non-empty `devpath`.**
+   The 0425 ruling added an optional `match` glob list (`{*sky130_fd_pr/*}`,
+   `{*gf180mcu_pr/*}`, `{*sg13g2_pr/*}`) checked against
+   `getprop instance <n> cell::name`. A device the descriptor does not claim gets
+   `{}`. **Skip on a blank `devpath`, never on a blank `descriptor`.** Grounded
+   in I3 via landmine 9 (re-measured: a nonexistent device name yields
+   `… admittance dims=0`, no stderr warning, and `xschem raw value` → `0`).
+   Descriptors with no `match` key stay permissive, so S1's 32 rows and a user's
+   I5 override are unaffected. Accepted residual: two PDKs in one interpreter
+   still lose the first registration — it now degrades to **blank** rather than
+   to a wrong name.
+7. **S3: I2 (`save all`) and S2's byte-diff acceptance are in direct tension —
+   resolve it, do not inherit it.** The prototypes emit bare `.save` cards and
+   **no `save all`**, so a block reproducing them byte for byte violates I2 (rule
+   R2: any explicit save cancels save-everything, and every node voltage
+   disappears). The byte-diff was right for a *name builder* and is wrong for a
+   *block emitter*. Assert I2 on the block; keep the byte-diff on card names only.
+8. **S3: the I6 reference does not satisfy I6.** `sky130_save_fet_params` on the
+   shipped `sky130_tests/test_generators` raises `Symbol not found` and leaves
+   `no_draw=1 keep_symbols=1` set — the restore is on the normal path, there is
+   no `catch`/`finally`, and `sg13g2_hier_sch_expand` has the same shape. Wrap
+   the walk in `catch`, restore unconditionally, re-raise; and **force a raise in
+   the test** rather than asserting only on the happy path. Issue **0431**.
+9. **S5: `pinexpr` is `expr(@#1:spice_get_voltage - @#2:spice_get_voltage)`**, the
+   shipped spelling (`nfet_01v8.sym:65-66`), not §4.2's old `{@#1 - @#2}`
+   shorthand — which has no evaluator anywhere in the tree. **⚠ With no raw
+   loaded it translates to the literal `" - "`**, so S5 must test
+   `string is double -strict` and blank (I3). Pin order D=0 G=1 S=2 B=3.
+   Also: `derived` rows are **self-contained** (each `ft` inlines its own
+   capacitance sum, no derived label shadows a param), so S5 needs no
+   evaluation-order contract. **Deferred user-visible consequence, S5/S6's to
+   answer:** an IHP FET block will now show `cgg` (raw) *and* `cgg_tot`, where
+   `sg13g2_display_fet_params` shows one `cgg` holding the sum.
+10. **S5: deleting the prototypes also fixes a live bug.** They read the prefix
+    with `getprop instance … spiceprefix`, which is empty when the token lives
+    only in the symbol `template=`. On 3 of 45 shipped sky130 cells
+    (`nfet_test_claude`, `test_nfet_TRAN`, `test_nfet_final`) the prototype emits
+    `@m.m1.…` where the netlist says `XM1` — a name that names nothing, i.e. a
+    fabricated `0.0` per landmine 9. `op_annot::devpath` uses `translate` and is
+    correct. Issue **0430**. Corollary for anyone quoting S2: "byte-identical,
+    lost nothing" is tree-wide true for **IHP only**.
+11. **S4: build the ngspice round trip on sky130 or gf180 — IHP cannot be
+    simulated on this box.** `pre_osdi ihp-sg13g2/osdi/psp103.osdi` fails on
+    ngspice-42 (the vendored OSDI targets v0.4, ngspice-42 supports v0.3). And
+    **add the check S2 could not have**: assert every registered parameter yields
+    a real vector in a real raw. S2's acceptance was a string diff between two
+    pieces of our own code, which is exactly the shape of check that cannot catch
+    issue 0429. Note also that S2 could only validate `kind` where ngspice runs —
+    on sky130/gf180 it matched exactly (`i(…[id])`, `v(…[vth])`, bare `…[gm]`);
+    IHP's ten FET and thirteen NPN kinds are **unvalidated against a simulator**.
+12. **Anyone touching a PDK procs file: registrations go at the END, guarded by
+    `[info commands ::op_annot::register] ne {}`.** A raise inside a procs file
+    prints `Tcl_AppInit() error: can not execute <rc>`, **abandons the rest of
+    the workarea rc** (the PDK menu, `user_startup_commands`, the library-manager
+    autostart) and still exits 0. Issue 0424 makes `invalid command name` live in
+    an installed tree. Do **not** `catch` `register`'s own malformed-dict raise —
+    that is an rc typo and must stay loud. Verified under xvfb: all three
+    `cadence_style_rc` still source clean and still define their menus.
+13. **Smaller, but each cost time:** `xschem` honours only **one** `--script`
+    flag (two silently drops the first); the `match` ruling introduces a new
+    silent-blank mode for a PDK symbol **copied into a project library**
+    (cell name `mylib/nfet_01v8.sym` matches no glob → no annotation, no
+    diagnostic — recorded in 0425, worth an `op_annot::why <inst>` diagnostic in
+    a later step); and `xschem raw value <v> -1` returned `0` for a valid vector
+    when the raw was not tied to the schematic (`xschem raw loaded` = 0) while
+    index `0` returned the true value — an I3 hazard sitting in S5/S6's path.
 
 ---
 

@@ -653,3 +653,87 @@ pre_osdi $::SG13G2_OSDI/mosvar.osdi
     }
   }
 }
+
+########################## op_annot descriptors (S2) #########################
+# doc/claude/specs/op_annotation.md §4.2. This is a DATA lift of
+# sg13g2_write_save_lines (:304-341): its two `if/elseif` arms become two
+# registrations, its ten FET `.save` lines and thirteen HBT ones become the
+# `params` lists IN THAT ORDER, and its device-path concatenation becomes the
+# template / devproc below. Nothing of its control flow survives — S3's generic
+# hierarchy walk plus these descriptors replace it.
+#
+# ⚠ THE PROTOTYPE PROCS ABOVE ARE LEFT EXACTLY AS THEY WERE, ON PURPOSE. They
+# are the acceptance ORACLE: tests/headless/test_op_annot.tcl rows P19/P20/P21
+# diff `.save [op_annot::devpath $i][param]` against live `sg13g2_save_params`
+# output on dc_lv_nmos / dc_lv_pmos / dc_hbt_13g2_5t and require it byte for
+# byte (10, 10 and 26 cards). Editing them in the same step would destroy the
+# only evidence the generalization lost nothing.
+#
+# ⚠ THE CARDS ARE BARE. The diff goes through `devpath`, never `vector`:
+# measured on ngspice-42, `.save i(@n.…[ids])` puts NOTHING in the raw while
+# `.save @n.…[ids]` yields `i(@n.…[ids])` — ngspice applies the i()/v() wrapper
+# itself from the parameter's own type (spec §3 R4).
+#
+# ⚠ kinds are NOT invented here: they are sg13g2_display_fet_params:461-470 and
+# sg13g2_display_bip_params:524-536 read off verbatim (`i($devpath[ids])` -> 0,
+# bare `$devpath[gm]` -> 1, `v($devpath[vth])` -> 2). Those lines are the only
+# authority for kind in the tree, and a wrong kind makes the save card succeed
+# while the read silently misses.
+
+# The ONE part of the prototype that cannot be a template: `xschem translate`
+# has no regsub, so the `_5t` model-suffix strip (:321-324) needs a devproc.
+# ⚠ NO `string tolower` (op_annot::devpath lowercases every exit) and NO
+# `getprop instance … spiceprefix` (the prototype's :374/:453/:512 read it that
+# way and work only because IHP's own test schematics spell `spiceprefix=` on
+# the instance line; the prefix arrives here as an argument, from `translate`).
+proc sg13g2_op_npn_devpath {instname model path spiceprefix} {
+  if {[regexp {_5t$} $model]} {
+    set model [string range $model 0 end-3]
+  }
+  return "@q.$path$spiceprefix$instname.q$model"
+}
+
+# ⚠ GUARDED, NOT MERELY APPENDED — see ../sky130A/sky130_procs.tcl for the
+# measurement. `register`'s own malformed-dict raise is deliberately NOT caught.
+if {[info commands ::op_annot::register] ne {}} {
+  # ⚠ BOTH nmos AND pmos, sharing one dict: measured on dc_lv_pmos, IHP spells
+  # the inner device `n<model>` for the PMOS too (`@n.xm1.nsg13_lv_pmos`).
+  # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, gf180 and
+  # xschem_library/devices/nmos.sym.
+  # ⚠ NO pinexpr: vgs and vds are saved DEVICE parameters on this PDK, so they
+  # are already rows in `params` and need no pin-voltage expression.
+  # ⚠ derived rows are SELF-CONTAINED: `ft` inlines the capacitance sum instead
+  # of referencing the derived label `cgg_tot`, so S5 needs no evaluation order.
+  # And the sum is `cgg_tot`, NOT a second `cgg` — the prototype prints the sum
+  # under the label `cgg` (:486) while also reading the raw param `cgg`, which
+  # would make `$cgg` ambiguous inside a derived expr.
+  foreach _sg13g2_op_type {nmos pmos} {
+    op_annot::register $_sg13g2_op_type {
+      devpath {\@n.@path@spiceprefix@name\.n@model}
+      match   {*sg13g2_pr/*}
+      params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
+               {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1}
+               {cgdol cgdol 1}}
+      derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
+               {ft      {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}}
+               {gm/id   {$gm/$ids}}}
+    }
+  }
+  unset _sg13g2_op_type
+
+  # ⚠ THIRTEEN params, in sg13g2_write_save_lines:327-339's order. Spec §4.2
+  # shows six ({ic ib gm go vbe vbc}); that list silently drops gmu gpi gx cbe
+  # cbc cbep cbcp, and with them the prototype's `rin` and `ft`.
+  op_annot::register vertical_npn {
+    devproc sg13g2_op_npn_devpath
+    match   {*sg13g2_pr/*}
+    params  {{gm gm 1} {go go 1} {gmu gmu 1} {gpi gpi 1} {gx gx 1}
+             {vbe vbe 2} {vbc vbc 2} {ib ib 0} {ic ic 0} {cbe cbe 1}
+             {cbc cbc 1} {cbep cbep 1} {cbcp cbcp 1}}
+    derived {{rin {1.0/$gx + 1.0/($gmu + $gpi)}}
+             {vce {$vbe - $vbc}}
+             {ft  {$gm/(2*3.141592654*($cbe + $cbc + $cbep + $cbcp))}}}
+  }
+} else {
+  puts stderr {sg13g2_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
+}

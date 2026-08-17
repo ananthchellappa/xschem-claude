@@ -83,6 +83,45 @@
 #            wrapper (below). The lookup in `vector` matches `param`, not `label`.
 #   derived  ordered {label expr} — computed from params after they are read (S5)
 #   pinexpr  ordered {label expr-over-pin-voltages} — needs no save card (S5)
+#   match    OPTIONAL list of globs tested against the instance's CELL NAME
+#            (`getprop instance <n> cell::name`, e.g. `sky130_fd_pr/nfet_01v8.sym`).
+#            Absent or empty = permissive, i.e. exactly the behaviour before this
+#            key existed. See the 0425 block below.
+#
+# ============================================================================
+# ⚠ `match` — ISSUE 0425, RATIFIED BY S2. AND ITS CONSUMER CONTRACT
+# ============================================================================
+# The lookup key is the symbol K-record `type=` token, and it is NOT UNIQUE:
+# sky130, gf180, IHP *and* xschem_library/devices/{nmos,nmos3,nmos4,…}.sym all
+# spell `type=nmos`. Two consequences, both measured before this key existed:
+#
+#   (1) register sky130's nmos, then ask for a generic devices/nmos instance:
+#         devpath M2 -> @m.m2.msky130_fd_pr__cmosn      <- a sky130 name on a
+#                                                          non-sky130 device
+#   (2) register sky130's nmos then IHP's in one interpreter (which is exactly
+#       what spec §8's cross-PDK test does — `register` REPLACES, see below):
+#         devpath M1 -> @n.xm1.nnfet_01v8               <- an IHP name on a
+#                                                          sky130 device
+#
+# Neither is blank, and per spec landmine 9 neither blanks at READ time either:
+# ngspice writes a full column of 0.0 under exactly the name it was asked for,
+# with only `Warning: unrecognized variable` on stderr. So a wrong descriptor is
+# indistinguishable from a real zero on the schematic. I3 (blank, never a
+# fabricated number) therefore forces the fix, and `match` is it: a device whose
+# cell name matches no glob in the list gets NO devpath.
+#
+# REJECTED: qualified keys (`sky130:nmos`) plus an "active PDK" concept — a new
+# user-facing concept and a rewrite of every lookup; and "document it and move
+# on", which leaves (1) fabricating numbers on an ordinary mixed schematic.
+#
+# ⚠ ACCEPTED RESIDUAL: case (2) still LOSES the sky130 registration — the second
+# `register nmos` replaces the first. What `match` buys is that the loss degrades
+# to BLANK rather than to a confidently wrong name. One interpreter per PDK
+# (spec §8) still stands.
+#
+# ⚠ CONSUMER CONTRACT, and it is a CHANGE: A NON-EMPTY DESCRIPTOR NO LONGER
+# IMPLIES A NON-EMPTY DEVPATH. S3's walk and S5's formatter must skip on a blank
+# `devpath`, never on a blank `descriptor`.
 #
 # ============================================================================
 # ⚠ THE TEMPLATE MUST BE ESCAPED — MEASURED, AND SPEC §4.2 GETS IT WRONG
@@ -236,6 +275,33 @@ proc op_annot::_lower {s} {
   return [string tolower $s]
 }
 
+## Does <instname>'s CELL belong to the PDK that registered <d>?  (issue 0425)
+##
+## 1 when the descriptor carries no `match` key, or an empty one — permissive,
+## which is what keeps every descriptor written before this key existed, and a
+## user's own `op_annot::register` in their rc (I5), working unchanged.
+## Otherwise `string match -nocase` each glob against
+## `getprop instance <n> cell::name` (`sky130_fd_pr/nfet_01v8.sym`, `nmos.sym`),
+## 1 on the first hit and 0 if none.
+##
+## ⚠ NEVER RAISES. This runs inside devpath, which S6/S9 call from a draw /
+## tcleval path — a raise there breaks rendering outright (I3). An unreadable
+## instance and a malformed glob list are both DATA conditions: 0, i.e. this
+## descriptor does not claim the device, i.e. blank.
+proc op_annot::_matches {instname d} {
+  if {![dict exists $d match]} { return 1 }
+  if {[catch {dict get $d match} globs]} { return 1 }
+  if {[string trim $globs] eq {}} { return 1 }
+  if {[catch {xschem getprop instance $instname cell::name} cell]} { return 0 }
+  set hit 0
+  if {[catch {
+    foreach g $globs {
+      if {[string match -nocase $g $cell]} { set hit 1 ; break }
+    }
+  }]} { return 0 }
+  return $hit
+}
+
 ## The R3 / get_fqdevice kind wrapper. THE AUTHORITY IS token.c:4524-4525:
 ##   iprefix  = modelparam == 0 ? "i(" : modelparam == 1 ? "" : "v("
 ##   ipostfix = modelparam == 1 ? ""   : ")"
@@ -280,6 +346,9 @@ proc op_annot::devpath {instname} {
   if {$t eq {}} { return {} }
   set d [::op_annot::descriptor $t]
   if {$d eq {}} { return {} }
+  ## Issue 0425: the type key is shared by every PDK and by the generic
+  ## devices/*.sym. A descriptor only builds a name for a cell it claims.
+  if {![::op_annot::_matches $instname $d]} { return {} }
 
   ## devproc wins over devpath when a descriptor carries both: a PDK that needed
   ## the escape hatch needs it for every device of that type.

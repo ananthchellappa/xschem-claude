@@ -52,3 +52,40 @@ spice_ignore=false
     }
   }
 }
+
+########################## op_annot descriptors (S2) #########################
+# doc/claude/specs/op_annotation.md §4.2. gf180 has NO prototype save/display
+# procs to port — annotation lives entirely inside the 19 FET symbols as
+# `tcleval(gm=[ngspice::get_node …\@m.${path}@spiceprefix@name\.m0\[gm\]])`
+# texts. Those texts are therefore the ORACLE for the descriptor below, and they
+# are uniformly `m0` across all 19 nfet*/pfet* symbols (measured, not assumed).
+#
+# ⚠ THE TEMPLATE MUST BE ESCAPED — issue 0422. `xschem translate` tokenises on
+# whitespace only (token.c:24), so an unescaped `.` does NOT terminate an
+# @-token and an @-token that misses get_tok_value() appends NOTHING: the
+# unescaped spelling yields a plausible wrong string with no error at all. The
+# escaping below is the shipped symbols' own.
+#
+# ⚠ GUARDED, NOT MERELY APPENDED — see the same block in
+# ../sky130A/sky130_procs.tcl for the measurement (a raise here abandons the
+# rest of cadence_style_rc, menu and all, while still exiting 0). `register`'s
+# own malformed-dict raise is deliberately NOT caught.
+if {[info commands ::op_annot::register] ne {}} {
+  # ⚠ BOTH nmos AND pmos (§4.2 registers only nmos; op_annot's key is an exact
+  # index, not the prototypes' `[pn]mos` regexp).
+  # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, IHP and
+  # xschem_library/devices/nmos.sym.
+  foreach _gf180_op_type {nmos pmos} {
+    op_annot::register $_gf180_op_type {
+      devpath {\@m.@path@spiceprefix@name\.m0}
+      match   {*gf180mcu_pr/*}
+      params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
+      derived {{gm/id {$gm/$id}}}
+      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
+               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+    }
+  }
+  unset _gf180_op_type
+} else {
+  puts stderr {gf180_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
+}

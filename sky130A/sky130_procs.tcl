@@ -271,3 +271,76 @@ spice_ignore=false
   }
 }
 
+########################## op_annot descriptors (S2) #########################
+# doc/claude/specs/op_annotation.md §4.2. These hand sky130's device-naming
+# rules to the ONE generic name builder (src/op_annot.tcl) that invariant I1
+# requires, so the save-card emitter and the on-screen display stop being two
+# independent copies of the switch below.
+#
+# ⚠ A DEVPROC, NOT SPEC §4.2's SINGLE TEMPLATE. §4.2 shows
+#   devpath {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model}
+# and that is wrong for three model families. sky130_write_save_lines:76-78 has
+# FOUR inner-device spellings and `xschem translate` cannot express a switch.
+# Measured on the shipped sky130_tests/test_nmos: the single template mismatches
+# 35 of the prototype's 119 cards (the g5v0d16v0 and 20v0 families, e.g. proto
+# `@m.xm6.xsky130_fd_pr__nfet_g5v0d16v0.msky130_fd_pr__nfet_g5v0d16v0_base[gm]`
+# vs template `@m.xm6.msky130_fd_pr__nfet_g5v0d16v0[gm]`); the devproc below is
+# byte-identical 119/119. Per landmine 9 a wrong name does not blank at read
+# time — ngspice fabricates a 0.0 column — so shipping the template would put
+# plausible zeros on three families of device.
+
+# The devproc contract is fixed by op_annot.tcl: <inst> <model> <path> <prefix>.
+# ⚠ NO `string tolower` here (op_annot::devpath lowercases every exit, and a
+# devproc that lowercased its own answer would be a second copy of that
+# decision) and NO `getprop instance … spiceprefix` (measured EMPTY when the
+# token lives in the symbol template=; the prefix arrives as an argument, from
+# `xschem translate`).
+proc sky130_op_devpath {instname model path spiceprefix} {
+  set m msky130_fd_pr__$model
+  if {[regexp {g5v0d16} $model]} {
+    set m xsky130_fd_pr__$model.msky130_fd_pr__${model}_base
+  } elseif {[regexp {20v0_(iso|nvt)} $model]} {
+    set m msky130_fd_pr__${model}_base
+  } elseif {[regexp {20v0} $model]} {
+    set m m1
+  }
+  return "@m.$path$spiceprefix$instname.$m"
+}
+
+# ⚠ GUARDED, NOT MERELY APPENDED. Measured: a raise inside a PDK procs file
+# prints `Tcl_AppInit() error: can not execute <rc>` and ABANDONS the rest of
+# cadence_style_rc — the SKY130 menu, user_startup_commands, the library-manager
+# autostart — while still exiting 0. Issue 0424 (an installed tree can ship
+# xschem.tcl sourcing an uninstalled op_annot.tcl) makes `invalid command name`
+# a live possibility here. What is NOT caught is `register`'s own malformed-dict
+# raise: that is an rc typo and must stay loud (op_annot.tcl's error discipline).
+if {[info commands ::op_annot::register] ne {}} {
+  # ⚠ BOTH nmos AND pmos. §4.2 registers only `nmos`; the prototypes branch on
+  # `regexp {[pn]mos}` while op_annot's key is an exact array index, so a
+  # verbatim copy would leave all 17 sky130 PMOS symbols unannotated in silence.
+  # ⚠ `id` IS CARRIED although sky130_write_save_lines never saves it — every
+  # shipped sky130 FET symbol displays `id=@spice_get_node i(…[id])`. Issue 0427.
+  # ⚠ `match`: issue 0425 — `type=nmos` is shared with gf180, IHP and
+  # xschem_library/devices/nmos.sym.
+  # ⚠ pinexpr uses the SHIPPED spelling (nfet_01v8.sym:65-66), not §4.2's
+  # `{@#1 - @#2}` shorthand, which has no evaluator anywhere in the tree.
+  # Pin order measured from the B records: D=0 G=1 S=2 B=3.
+  # ⚠ derived rows are SELF-CONTAINED — `ft` inlines its own capacitance sum
+  # rather than referencing a derived label, so S5 needs no evaluation order.
+  foreach _sky130_op_type {nmos pmos} {
+    op_annot::register $_sky130_op_type {
+      devproc sky130_op_devpath
+      match   {*sky130_fd_pr/*}
+      params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
+               {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}
+      derived {{ft    {$gm/(2*3.141592654*($cgg + $cgdo + $cgso))}}
+               {gm/id {$gm/$id}}}
+      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
+               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+    }
+  }
+  unset _sky130_op_type
+} else {
+  puts stderr {sky130_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
+}
+

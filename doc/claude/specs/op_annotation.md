@@ -265,7 +265,8 @@ where `<symbol-type>` is the symbol `K`-record `type=` token (`nmos`, `pmos`,
 | `devproc` | *alternative to* `devpath`: name of a Tcl proc called as `<proc> <instname> <model> <path> <spiceprefix>` returning the device path. The escape hatch for PDKs that mangle the model name. |
 | `params` | ordered list of `{label param kind}`. `kind` is `0` = wrap in `i(…)`, `1` = bare, `2` = wrap in `v(…)` — the R3 shape, and `get_fqdevice()`'s convention. |
 | `derived` | ordered list of `{label expr}`, evaluated after `params` are read, with each `label` from `params` available as a Tcl variable. Non-numeric inputs yield a blank, never a fabricated number. |
-| `pinexpr` | ordered list of `{label expr-over-pin-voltages}` for quantities that need no save card at all (`vgs = @#1 - @#2`). |
+| `pinexpr` | ordered list of `{label expr-over-pin-voltages}` for quantities that need no save card at all. **The spelling is the shipped one**, `expr(@#1:spice_get_voltage - @#2:spice_get_voltage)` — see the pinexpr note below. |
+| `match` | **optional** list of globs tested (`string match -nocase`) against the instance's cell name, `getprop instance <n> cell::name` → `sky130_fd_pr/nfet_01v8.sym`. A descriptor that matches nothing builds **no devpath**. Absent or empty = permissive, i.e. the behaviour before the key existed. Added by S2 as the ruling on issue **0425** — see below. |
 
 **⚠ THE `devpath` TEMPLATE MUST BE ESCAPED.** Measured on branch `annotate`;
 the first revision of this section got it wrong and issue
@@ -308,11 +309,25 @@ recorded here because S2 writes the descriptors and S5 reads them):
   `pinexpr`/`derived` leak into another PDK's later-registered `nmos` in the
   same interpreter. To tweak one key, round-trip:
   `set d [op_annot::descriptor nmos]; dict set d params …; op_annot::register nmos $d`.
-* **⚠ The key is not unique.** `type=nmos` is carried by sky130, gf180, IHP
-  *and* `xschem_library/devices/nmos*.sym`, so a generic device sitting next to
-  PDK devices picks up the PDK's descriptor, and a second PDK's registration
-  silently overwrites the first. Measured; issue **0425**; unresolved, and S2 is
-  the step that should decide it.
+* **⚠ The key is not unique — SETTLED BY S2 with the `match` key.** `type=nmos`
+  is carried by sky130, gf180, IHP *and* `xschem_library/devices/nmos*.sym`, so a
+  generic device sitting next to PDK devices picked up the PDK's descriptor
+  (`devpath M2` → `@m.m2.msky130_fd_pr__cmosn`), and a second PDK's registration
+  silently overwrote the first (`devpath M1` → `@n.xm1.nnfet_01v8` on a *sky130*
+  device). Both are now blank. Grounding is **I3 via landmine 9**, re-measured
+  rather than trusted: a raw asked for a nonexistent device name yields
+  `@m.xm1.msky130_fd_pr__nfet_01v8[gm] admittance dims=0` with **no stderr
+  warning**, and `xschem raw value` returns `0` — a wrong descriptor is
+  indistinguishable from a real zero, so blank is the only compliant outcome.
+  Rejected: qualified keys (`sky130:nmos`) plus an "active PDK" concept, and
+  "document it and move on". **Accepted residual: the overwrite itself is not
+  fixed** — two PDKs in one interpreter still lose the first registration; it now
+  degrades to blank rather than to a confidently wrong name, so §8's *one
+  interpreter per PDK* still stands. Full ruling, transcript and residuals in
+  issue **0425**.
+* **⚠ CONSUMER CONTRACT CHANGE, from the same ruling: a non-empty `descriptor` no
+  longer implies a non-empty `devpath`.** S3's walk and S5's formatter must skip
+  on a blank **devpath**, never on a blank descriptor.
 * **The error discipline: data conditions are blank, caller bugs are loud.**
   `descriptor`, `devpath` and `vector` return `{}` for *every* data condition —
   no descriptor, unknown instance, unknown symbol, `translate` failure, a
@@ -331,42 +346,143 @@ recorded here because S2 writes the descriptors and S5 reads them):
   whitespace-only `devpath` survives as a device name. Issue **0426** — worth
   closing before S6 puts this surface in front of users (requirement F).
 
-Worked, for the three PDKs in this tree (escaped, as above):
+**What S2 actually shipped**, in `sky130A/sky130_procs.tcl`,
+`gf180mcuD/gf180_procs.tcl` and `ihp-sg13g2/sg13g2_procs.tcl`. This block
+**replaces** an earlier, hand-written one that was wrong in four ways; the
+divergences are called out because each was measured and each binds a later step.
 
 ```tcl
 # --- sky130 ---------------------------------------------------------------
-op_annot::register nmos {
-  devpath {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model}
-  params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
-  pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
-  derived {{gm/id {$gm/$id}}}
+# ⚠ A DEVPROC, NOT A TEMPLATE. See "the sky130 four-way switch" below.
+proc sky130_op_devpath {instname model path spiceprefix} {
+  set m msky130_fd_pr__$model
+  if {[regexp {g5v0d16} $model]} {
+    set m xsky130_fd_pr__$model.msky130_fd_pr__${model}_base
+  } elseif {[regexp {20v0_(iso|nvt)} $model]} {
+    set m msky130_fd_pr__${model}_base
+  } elseif {[regexp {20v0} $model]} {
+    set m m1
+  }
+  return "@m.$path$spiceprefix$instname.$m"
+}
+foreach t {nmos pmos} {
+  op_annot::register $t {
+    devproc sky130_op_devpath
+    match   {*sky130_fd_pr/*}
+    params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
+             {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}   ;# ⚠ cgso/cgdo: issue 0429
+    derived {{ft    {$gm/(2*3.141592654*($cgg + $cgdo + $cgso))}}
+             {gm/id {$gm/$id}}}
+    pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
+             {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+  }
 }
 
 # --- gf180mcu -------------------------------------------------------------
-op_annot::register nmos {
-  devpath {\@m.@path@spiceprefix@name\.m0}
-  params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
-  pinexpr {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
-  derived {{gm/id {$gm/$id}}}
+# Inner device measured uniform `m0` across all 19 nfet*/pfet* symbols.
+foreach t {nmos pmos} {
+  op_annot::register $t {
+    devpath {\@m.@path@spiceprefix@name\.m0}
+    match   {*gf180mcu_pr/*}
+    params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
+    derived {{gm/id {$gm/$id}}}
+    pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
+             {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+  }
 }
 
 # --- IHP sg13g2 (psp103 via OSDI: element letter `n`, inner device n<model>) --
-op_annot::register nmos {
-  devpath {\@n.@path@spiceprefix@name\.n@model}
-  params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
-           {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}
-  derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
-           {ft      {$gm/(2*3.141592654*$cgg_tot)}}
-           {gm/id   {$gm/$ids}}}
+foreach t {nmos pmos} {
+  op_annot::register $t {
+    devpath {\@n.@path@spiceprefix@name\.n@model}
+    match   {*sg13g2_pr/*}
+    params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
+             {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}
+    derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
+             {ft      {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}}
+             {gm/id   {$gm/$ids}}}
+  }
 }
 op_annot::register vertical_npn {
-  devproc ihp_npn_devpath          ;# strips the `_5t` model suffix, then @q.<path><X><name>.q<model>
-  params  {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2} {vbc vbc 2}}
+  devproc sg13g2_op_npn_devpath   ;# strips `_5t`, then @q.<path><X><name>.q<model>
+  match   {*sg13g2_pr/*}
+  params  {{gm gm 1} {go go 1} {gmu gmu 1} {gpi gpi 1} {gx gx 1}
+           {vbe vbe 2} {vbc vbc 2} {ib ib 0} {ic ic 0}
+           {cbe cbe 1} {cbc cbc 1} {cbep cbep 1} {cbcp cbcp 1}}
+  derived {{rin {1.0/$gx + 1.0/($gmu + $gpi)}}
+           {vce {$vbe - $vbc}}
+           {ft  {$gm/(2*3.141592654*($cbe + $cbc + $cbep + $cbcp))}}}
 }
 ```
 
+Registrations go at the **end** of each procs file, guarded by
+`[info commands ::op_annot::register] ne {}` with a one-line stderr note when
+absent. Measured: a raise inside a PDK procs file prints
+`Tcl_AppInit() error: can not execute <rc>`, **abandons the rest of the workarea
+rc** (the PDK menu, `user_startup_commands`, the library-manager autostart) and
+still exits 0 — and issue 0424 makes `invalid command name` a live possibility in
+an installed tree. `register`'s own malformed-dict raise is deliberately **not**
+caught: that is an rc typo and must stay loud.
+
+**Five things the earlier hand-written block got wrong. All measured.**
+
+1. **The sky130 four-way switch.** `sky130_write_save_lines:76-78` has FOUR
+   inner-device spellings and `xschem translate` cannot express a switch, so
+   sky130 needs a `devproc`. Measured on the shipped `sky130_tests/test_nmos`:
+   the single template mismatches **35 of 119** prototype cards — the
+   `g5v0d16v0` and `20v0` families, e.g. proto
+   `@m.xm6.xsky130_fd_pr__nfet_g5v0d16v0.msky130_fd_pr__nfet_g5v0d16v0_base[gm]`
+   vs template `@m.xm6.msky130_fd_pr__nfet_g5v0d16v0[gm]`. Corroborated
+   independently: `grep -rho 'gm=@spice_get_node …' sky130A/…/*fet*/symbol/*.sym
+   | sort -u` returns exactly those four spellings. Per landmine 9 the wrong
+   names would not blank — they would show fabricated zeros on three families.
+2. **`pmos` must be registered too.** The prototypes branch on
+   `regexp {[pn]mos}`; `op_annot`'s key is an *exact array index*. Registering
+   only `nmos` would have left 17 sky130, 9 gf180 and 4 IHP PMOS symbols
+   unannotated with no diagnostic. **Six FET registrations, not three.**
+3. **`vertical_npn` has THIRTEEN parameters, not six.** The earlier list
+   (`ic ib gm go vbe vbc`) silently dropped `gmu gpi gx cbe cbc cbep cbcp`, and
+   with them the prototype's `rin` and `ft`. Order and kinds come from
+   `sg13g2_write_save_lines:331-339` and `sg13g2_display_bip_params:524-536` —
+   the only authority for `kind` in the tree.
+4. **`pinexpr` uses the shipped spelling.** `{@#1 - @#2}` has **no evaluator
+   anywhere in the tree**; `nfet_01v8.sym:65-66` spells it
+   `expr(@#1:spice_get_voltage - @#2:spice_get_voltage)`, which is
+   measured-working through `translate`'s trailing `expr()` pass. `register`
+   stores verbatim, so whatever is written here is what S5 inherits — leaving the
+   shorthand would have forced S5 to invent a second expansion convention, which
+   is the I1 drift shape exactly. Pin order confirmed D=0 G=1 S=2 B=3 on both
+   sky130 and IHP B-records. **⚠ Trap for S5: with no raw loaded this expression
+   translates to the literal `" - "`, so S5 must test `string is double -strict`
+   and blank (I3).**
+5. **`derived` rows are self-contained.** Each `ft` inlines its own capacitance
+   sum instead of referencing the derived label `cgg_tot`, and no derived label
+   shadows a `params` label. That removes any evaluation-order contract S5 would
+   otherwise have to discover. **Deferred user-visible consequence, and it is
+   S5/S6's question:** an IHP FET block will show `cgg` (the raw parameter) *and*
+   a new `cgg_tot` line, where `sg13g2_display_fet_params` today shows a single
+   `cgg` holding the sum.
+
+**⚠ The sky130 `params` list carries two parameter names ngspice-42 rejects.**
+`cgso` and `cgdo` are not valid vectors for the sky130 models
+(`cgs`/`cgd` are), and **one rejected `.save` card makes ngspice write no raw
+file at all** under the `.control … write <cell>.raw … .endc` idiom every shipped
+bench uses — exit 0, one `checkvalid` warning, no file. They are here because the
+step's acceptance was byte-for-byte equality with `sky130_write_save_lines`,
+which has emitted them for years. Issue **0429**; this is the open question that
+put S2 at status E, and S4 owns the ngspice-side check that would have caught it.
+
 Every sg13g2 number in the existing prototype is expressible; the `_5t` strip is
-the reason `devproc` exists.
+the reason `devproc` exists. **Acceptance measured**: bare
+`.save [op_annot::devpath $i][param]` cards reproduce `sg13g2_save_params` byte
+for byte on **all 49 loadable `sg13g2_tests` cells** (26 with cards, 0
+mismatches, including `IHP_testcases` at 405 cards and the three `_5t` HBT cells
+at 26 each), and `sky130_save_fet_params` on `test_nmos` 119/119. **⚠ Not
+tree-wide for sky130**, though: 3 of 45 shipped sky130 cells differ, because the
+prototype reads the prefix with `getprop instance … spiceprefix` (empty when the
+token lives only in the symbol `template=`) while `op_annot` uses `translate`.
+The generic answer is the correct one — those cells netlist as `XM1` — so this is
+a fix, not a regression. Issue **0430**.
 
 **What the user edits** is the `params` list — one line in their own rc, which
 overrides the PDK's registration. No symbol is touched, no C is rebuilt, and the
@@ -478,11 +594,11 @@ Verified free / safely overridable in this tree:
 | id | invariant |
 |---|---|
 | **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* |
-| **I2** | A generated save block always carries `save all` (rule R2). |
+| **I2** | A generated save block always carries `save all` (rule R2). **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
 | **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
-| **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference. |
+| **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. |
 | **I7** | `hide=true` semantics are unchanged for every existing symbol in every library. |
 
 ---
