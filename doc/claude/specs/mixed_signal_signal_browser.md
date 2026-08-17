@@ -485,6 +485,15 @@ Landed in `src/wave_viewer.tcl`:
 * `wviewer::resolve_signal_db` — searches EVERY registered database through the existing
   all-DBs reader `signal_list_all`, which yields the current DB first, so a name present
   in both resolves to the current one and earns no suffix.
+  **CASEMODE ITEM 5, 2026-08-16:** its match rule is no longer a flat
+  `string tolower` of both sides. It is `wviewer::name_lookup` — the same code
+  `validate_rpn` runs, mirroring `get_raw_index()`'s ladder — so a folded key that two
+  DIFFERENT stored names answer resolves to NOTHING (`DECISIONS.md` D2) instead of to
+  the first of them, and each slot is judged by **its own** `case` flag, which
+  `signal_list_all` now carries per database. The tie-break is unchanged and is now
+  stated precisely: the first slot that RESOLVES wins, so an exact hit in a foreign
+  database does not beat a folded hit in the current one.
+  See `doc/claude/specs/raw_case_mode.md` §12, checks `CS92`–`CS93n`.
 * `graph_props` emits the **alias** form `"<display>;<vec>%<path> <type>"` whenever a
   suffix is present. Not cosmetic: `draw_graph()` hands the WHOLE token to
   `draw_graph_variables()` for the legend (`draw.c:8247`), so a bare `vec%path type`

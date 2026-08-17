@@ -352,6 +352,45 @@ namespace eval wviewer {
   variable sharedx; array set sharedx {}
   # viewer plan item 3: Graph > Grid checkbutton mirror, per window
   variable gridshow; array set gridshow {}
+  # CASEMODE ITEM 5 (DECISIONS.md B2a): the per-window CASE-MODE CACHE and the
+  # Options > Case Mode radio mirror.
+  #   casemode($token)     "<mode> <source>" as `xschem raw casemode -all` last
+  #                        answered for THIS window's current database, or {}
+  #                        for "not resolved since the last raw changed".
+  #   casemodepick($token) the radio -variable: the EXPLICIT setting alone
+  #                        (`auto` when there is none), pushed by the cascade's
+  #                        -postcommand so the tick can never go stale.
+  #   casemodeuser($token) `{<mode> <normalized rawfile>}` — the LAST OVERRIDE
+  #                        THE USER MADE IN THIS WINDOW, and the only one of the
+  #                        three that an `attach_raw` does NOT drop. It exists
+  #                        because the explicit source lives on the Raw
+  #                        (xschem.h:1240) and `ase::attach_dbs` destroys and
+  #                        re-reads, so without it a re-run — the commonest
+  #                        viewer action there is — silently threw the user's
+  #                        setting away and put the tick back on `auto`.
+  #                        RULED per-FILE per-WINDOW: re-applied only when the
+  #                        path coming back is the path it was made on (a re-run
+  #                        overwrites <rundir>/<cell>_ase.raw in place, so that
+  #                        is exactly the re-run case), never onto some other
+  #                        simulator's file. `forget` drops it with the window;
+  #                        nothing persists it to disk.
+  # ⚠⚠ THE CACHE IS NOT AN OPTIMISATION, IT IS THE PERFORMANCE CONTRACT.
+  # `xschem raw casemode` has NO cache on the C side and source 3 recomputes a
+  # whole-schematic name comparison on every call: item 3 measured 21 ms for an
+  # exact hit, 147 ms for a folded hit and 189 ms for an all-miss at 2000
+  # instances x 500 names, and its receipt says in terms that items 5 and 13
+  # must not poll it from a redraw. The viewer redraws constantly. So the engine
+  # is asked in exactly TWO places, both of them a user action and both one-shot:
+  # the cascade's -postcommand (which fires when the menu is POSTED) and
+  # `set_case_mode`. `attach_raw` is a third site but it only DROPS the entry --
+  # it does not resolve, because a re-run must not pay 189 ms for a value
+  # nothing has asked for yet (check CS95q).
+  # Anything that wants the value on a draw path reads `casemode_cached`, which
+  # never calls the engine. `xschem raw case` -- the boolean -- is a struct field
+  # read and is NOT this; do not conflate them.
+  variable casemode;     array set casemode {}
+  variable casemodepick; array set casemodepick {}
+  variable casemodeuser; array set casemodeuser {}
   # signal-browser PLAN item 8: the LEFT SIDEBAR's per-window state. TWO arrays,
   # deliberately the `gridshow` shape: `browser` is the AUTHORITY (0/1 = the
   # sidebar is packed) and `browsershow` exists ONLY because Tk's checkbutton
@@ -903,6 +942,14 @@ proc wviewer::forget {token} {
   catch {unset cvr($token)}
   catch {unset sharedx($token)}
   catch {unset gridshow($token)}
+  # CASEMODE ITEM 5: the Case Mode cache and its radio mirror. Same rule as
+  # `gridshow` above — an undeclared `variable` makes an `unset` address a LOCAL
+  # array and leaks one entry per closed window forever — obeyed by CALLING the
+  # owner rather than by adding three more `variable` lines here, so there is
+  # one place that knows which arrays the feature owns. `casemode_forget`, not
+  # `casemode_invalidate` (what `attach_raw` uses): the window is going, so the
+  # user's override goes with it, while a re-attach must keep it.
+  wviewer::casemode_forget $token
   catch {unset mode($token)}
   catch {unset target($token)}
   catch {unset dest($token)}
@@ -2418,12 +2465,25 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
           if {!$reached} { continue }
           set names {}
           if {![catch {xschem raw list} rl]} { set names [split $rl "\n"] }
+          # CASEMODE ITEM 5: each slot's OWN lookup flag, read while the engine
+          # is standing on it. `xschem raw case` reports the CURRENT database
+          # only, so this is the one moment in the program where a FOREIGN
+          # database's `distinguish` bit is knowable without a second switch
+          # cycle -- and `resolve_signal_db` (and add_trace's named-DB arm) need
+          # it, or they judge a foreign name list by the current DB's mode. That
+          # was residue 2 of the three doc/claude/specs/raw_case_mode.md section
+          # 9 recorded against item 2. Costs one engine call per slot, inside a
+          # switch we were doing anyway; 0 on the no-database path.
+          set cs 0
+          catch {set cs [xschem raw case]}
+          if {![string is integer -strict $cs]} { set cs 0 }
           lappend out [dict create \
             idx   $idx \
             path  [dict get $db path] \
             type  [dict get $db type] \
             cur   [expr {$idx == $cur ? 1 : 0}] \
             label [wviewer::db_label [dict get $db path] [dict get $db type]] \
+            case  $cs \
             names $names]
         }
       } lerr]
@@ -2522,6 +2582,143 @@ proc wviewer::db_suffix {tr} {
   return "%$rf $st"
 }
 
+# --- CASEMODE ITEM 5: ONE Tcl mirror of get_raw_index(), not two -------------
+# PLAN.md section 3b item 5; doc/claude/specs/raw_case_mode.md section 9 and
+# section 12; DECISIONS.md D2.
+#
+# There used to be TWO case-folding matchers in this file, each with its own
+# idea of the rule: `validate_rpn` (item 2 rebuilt it to mirror the C ladder)
+# and `resolve_signal_db` (a flat `string tolower` on both sides that ignored
+# D2 entirely). Item 5's job is that there is ONE, and these three procs are it
+# — both callers now ask the same question of the same code.
+#
+# ⚠⚠ IT STAYS A Tcl RE-IMPLEMENTATION AND CANNOT BECOME `xschem raw index`,
+# which is the obvious-looking fix and is wrong twice. (a) Both callers judge a
+# name list that is NOT the current database's: `resolve_signal_db` walks every
+# registered slot, and `add_trace`'s named-DB arm validates against the list a
+# `db_by_index` snapshot carries. `raw index` answers for the CURRENT database
+# only, so routing through it would need a `raw switch` per candidate — the
+# expensive, side-effecting thing `signal_list_all` already did once. (b)
+# `validate_rpn` must stay callable with NO engine at all: test_wave_viewer.tcl
+# drives it on synthetic lists, and the whole reason the gate exists is that
+# `raw_add_vector()` swallows the evaluator's -1 (issue 0418).
+# So the mirror is verified by AGREEMENT instead: every check in
+# test_wave_casemode.tcl's G leg reads `xschem raw index` and this code's
+# verdict on ONE token and fails if they differ, in either direction.
+
+# The candidate spellings `get_raw_index()` probes for `tok`, in its order:
+#   rung 1/2   the query itself                       v(MidNode)
+#   rung 3     the v()-wrapped query                  MidNode -> v(MidNode)
+#   rung 4     an anchored, case-blind `i(v.x` prefix rewritten to `i(`
+#              (save.c:2994; `i(v.x1.vp)` -> `i(x1.vp)`)
+# Each is then looked up EXACTLY and, when folding is allowed, case-folded —
+# that pairing is `raw_lookup_name()` (save.c:2917) and it is why the rungs and
+# the fold are two separate loops in `name_lookup` below.
+#
+# ⚠ RUNG 4 IS NEW HERE and is the item-5 half of the mirror: item 2 left it
+# unmirrored as a declared residue, so the gate REFUSED `i(v.x1.vp)` against a
+# database storing `i(x1.vp)` while the engine resolved it. Loud, never a wrong
+# number — but it made "the rule is get_raw_index's" false on one input.
+# ⚠ The rewrite is `i(` + everything from index 4, NOT a regsub: the C is
+# `my_snprintf(vnode, "i(%s", node + 4)`, so the `x` is KEPT (it is `i(v.` that
+# goes, four characters) even though the guard tests five.
+# ⚠ AND NOTHING IS APPENDED AFTER IT. `node + 4` still carries the name's own
+# closing paren, so the format string ends at `%s`. Writing the obvious-looking
+# `"i(<rest>)"` here turned `i(v.x1.vp)` into `i(x1.vp))` and rung 4 matched
+# nothing at all — measured, before the G-leg checks below existed to say so.
+proc wviewer::name_rungs {tok} {
+  set out [list $tok "v($tok)"]
+  if {[string match -nocase {i(v.x*} $tok]} {
+    set rest [string range $tok 4 end]
+    lappend out "i($rest"
+  }
+  return $out
+}
+
+# THE FOLD KEY, AND IT IS ASCII-ONLY ON PURPOSE — do not "simplify" it to
+# `string tolower`.
+# The authority is `raw_fold_key()` -> `strtolower()` (util.c:1006), a byte-wise
+# `tolower()` loop with no `setlocale` anywhere in src/, so it folds A-Z and
+# NOTHING else: the two UTF-8 bytes of `Ä` are both >127 and come back
+# unchanged. Tcl's `string tolower` is Unicode-aware and folds `Ä` to `ä`, so on
+# a database holding both `v(CÄ)` and `v(cä)` it INVENTS a D2 collision the
+# engine does not have — measured against a live engine, `xschem raw index
+# {v(Cä)}` = 2 while the Tcl mirror said `ambiguous`. Since item 5 made
+# `resolve_signal_db` act on that verdict, the divergence turned a slot that
+# resolves into one that is skipped (loud, never a wrong number, but a
+# disagreement — and this mirror's whole contract is that there is none).
+# Checks CS89x/CS89y/CS89z and the agreement leg's CS90x/CS90y.
+proc wviewer::fold_key {s} {
+  return [string map {A a B b C c D d E e F f G g H h I i J j K k L l M m \
+                      N n O o P p Q q R r S s T t U u V v W w X x Y y Z z} $s]
+}
+
+# `{exact <dict> fold <dict>}` over a database's variable names, built ONCE per
+# name list and reused for every token.
+#   exact   spelling -> 1
+#   fold    folded key -> the list of DISTINCT spellings that fold to it
+# A folded key with TWO distinct spellings is D2's collision and resolves to
+# nothing; byte-identical duplicates (ngspice upstream 0073 writes two identical
+# columns) are ONE distinct spelling and stay resolvable, exactly as
+# raw_build_fold_table() has them (save.c:2867).
+proc wviewer::name_index {names} {
+  set exact {}
+  set fold {}
+  foreach v $names {
+    dict set exact $v 1
+    set k [wviewer::fold_key $v]
+    set spell {}
+    if {[dict exists $fold $k]} { set spell [dict get $fold $k] }
+    if {[lsearch -exact $spell $v] < 0} { lappend spell $v }
+    dict set fold $k $spell
+  }
+  return [dict create exact $exact fold $fold]
+}
+
+# `ok` | `ambiguous` | `no` for one token against one name index.
+# `fuzzy` 0 is a `distinguish` database: raw_fold_index() returns -1 outright
+# there (save.c:2903), so only the exact rungs may answer.
+#
+# ⚠ EXACTS FIRST, ACROSS ALL RUNGS, THEN THE FOLDS. The C interleaves them
+# (exact tok, fold tok, exact v(tok), fold v(tok), ...) and the two orders give
+# the same ANSWER for every input — the C returns the first hit and a hit on any
+# rung is a hit — but they differ on which name a hit came from, and this proc
+# deliberately does not report that. Doing the exacts first is what lets an
+# exact `v(EN)` still resolve when the bare `EN` folds ambiguously, which is the
+# C's behaviour too (rung 3 runs after rung 2 has declined).
+proc wviewer::name_lookup {index tok {fuzzy 1}} {
+  set exact [dict get $index exact]
+  set fold  [dict get $index fold]
+  set rungs [wviewer::name_rungs $tok]
+  foreach cand $rungs {
+    if {[dict exists $exact $cand]} { return ok }
+  }
+  if {!$fuzzy} { return no }
+  set amb 0
+  foreach cand $rungs {
+    set k [wviewer::fold_key $cand]
+    if {![dict exists $fold $k]} { continue }
+    if {[llength [dict get $fold $k]] == 1} { return ok }
+    set amb 1
+  }
+  if {$amb} { return ambiguous }
+  return no
+}
+
+# Is the CURRENT database's folded rung live? `xschem raw case` is the boolean
+# item 1 put on the Raw (1 = `distinguish` = case_sensitive = no folding). It is
+# CHEAP — a struct field read — and is not `xschem raw casemode`, the four-source
+# resolution, which recomputes a schematic-name comparison per call and which
+# item 3 measured at up to 189 ms. Do not swap one for the other here.
+# `catch`-wrapped so a caller with no engine (or no raw) folds, which is the
+# shipped default and keeps this proc's callers unit-testable.
+proc wviewer::db_fuzzy {} {
+  set cs 0
+  catch { set cs [xschem raw case] }
+  if {![string is integer -strict $cs]} { set cs 0 }
+  return [expr {$cs ? 0 : 1}]
+}
+
 # Which loaded DB holds signal `vec`? Returns {} when NO registered database has
 # it, else `{idx .. path .. type .. cur 0|1 label ..}`.
 #
@@ -2530,16 +2727,29 @@ proc wviewer::db_suffix {tr} {
 # deliberate — it is what makes this proc a pure ADDITION to add_trace rather
 # than a change of behaviour for every existing single-DB trace.
 #
-# The match rule is validate_rpn's, verbatim: case-insensitive, and a bare `x`
-# also matches a stored `v(x)` (get_raw_index's own probe ladder does the same on
-# the C side, save.c). lsearch over the split list is the C-speed form; this proc
-# is only ever reached after the CURRENT DB has already refused the name.
+# ⚠ CASEMODE ITEM 5: the match rule is `name_lookup`'s — the SAME code
+# `validate_rpn` runs, not a paraphrase of it. It used to be a flat
+# `string tolower` of the query against a flat `string tolower` of every stored
+# name, which is precisely the structure that cannot express D2: on a VCD
+# holding both `Count` and `count`, a `COUNT` query matched the first of them
+# and this proc named a database that the engine would then decline. It could
+# not produce a silent wrong NUMBER (this path never reaches `xschem raw add`,
+# so an unresolvable name plots nothing), but it did name the wrong DATABASE,
+# and under `distinguish` it folded where the engine does not.
+#
+# ⚠ EACH SLOT IS JUDGED BY ITS OWN `case` FLAG, not the current DB's. That is
+# what the `case` key `signal_list_all` now carries is for.
+#
+# ⚠ AN AMBIGUOUS SLOT IS SKIPPED, NOT A GLOBAL REFUSAL. D2 says decline to guess
+# WHICH OF TWO NAMES the user meant; it says nothing about a different database
+# that has exactly one. Skipping keeps the search useful and keeps this proc's
+# "the current DB wins" tie-break (settled decision 4) meaning what it always
+# meant — the first slot that RESOLVES wins.
 proc wviewer::resolve_signal_db {token vec} {
-  set lv [string tolower $vec]
   foreach db [wviewer::signal_list_all $token] {
-    set names {}
-    foreach n [dict get $db names] { lappend names [string tolower $n] }
-    if {[lsearch -exact $names $lv] < 0 && [lsearch -exact $names "v($lv)"] < 0} { continue }
+    set fuzzy [expr {[wviewer::dget $db case 0] ? 0 : 1}]
+    set idx [wviewer::name_index [dict get $db names]]
+    if {[wviewer::name_lookup $idx $vec $fuzzy] ne {ok}} { continue }
     return [dict create idx [dict get $db idx] path [dict get $db path] \
                         type [dict get $db type] cur [dict get $db cur] \
                         label [dict get $db label]]
@@ -2565,7 +2775,8 @@ proc wviewer::db_by_index {token idx} {
     if {[dict get $db idx] != $idx} { continue }
     return [dict create idx [dict get $db idx] path [dict get $db path] \
                         type [dict get $db type] cur [dict get $db cur] \
-                        label [dict get $db label] names [dict get $db names]]
+                        label [dict get $db label] \
+                        case [wviewer::dget $db case 0] names [dict get $db names]]
   }
   return {}
 }
@@ -3242,18 +3453,25 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
 # plus D2 (DECISIONS.md): a folded match that two DIFFERENT stored names answer
 # is declined, loudly, rather than guessed; and the folded rungs are off
 # entirely on a `distinguish` database.
-# Three deliberate residues, none of which can produce a silent wrong number
-# (this gate refuses and says why; it never approves what the engine declines):
-#   - rung 4 (`i(v.x…` -> `i(…`) is not mirrored;
-#   - `xschem raw case` reports the CURRENT database, so validating a FOREIGN
-#     database's name list (spec §D1, the `hit` call site below) uses the
-#     current one's mode;
-#   - resolve_signal_db (:2538) is a SECOND folding matcher, on the plain-vector
-#     path, and still ignores D2 — harmless because that path never calls
-#     `xschem raw add`, so an unresolvable name plots nothing, not zeros.
-# All three disappear with item 5, which makes both procs ask the engine
-# instead of re-implementing it.
-proc wviewer::validate_rpn {rpn varlist} {
+#
+# ⚠ CASEMODE ITEM 5 CLOSED ALL THREE OF ITEM 2's DECLARED RESIDUES, and the way
+# it closed them is that the rungs and the fold now live in `name_rungs` /
+# `name_index` / `name_lookup` (:2613) and this proc is one of their two
+# callers. What changed for THIS proc:
+#   - rung 4 (`i(v.x…` -> `i(…`) IS mirrored now. It was the one input on which
+#     "the rule is get_raw_index's" was false: the gate refused `i(v.x1.vp)`
+#     against a database storing `i(x1.vp)` while the engine resolved it.
+#   - `fuzzy` is an ARGUMENT with a default, so a caller holding a FOREIGN
+#     database's name list can pass THAT database's `case` flag. Omitted, it
+#     still asks `xschem raw case` about the current database, which is right
+#     for the ordinary current-DB call and is what every existing caller and
+#     every unit-style test does.
+#   - `resolve_signal_db`'s rival matcher is gone; it calls `name_lookup` too.
+# It stays a Tcl mirror rather than a call to `xschem raw index` for the two
+# reasons written out at `name_rungs`, and the mirror is held down by AGREEMENT
+# checks (test_wave_casemode.tcl leg G, test_raw_case_mode.tcl CS49*) rather
+# than by inspection.
+proc wviewer::validate_rpn {rpn varlist {fuzzy {}}} {
   # operator/function tokens verbatim from plot_raw_custom_data
   # (save.c:1855-1939) — case-SENSITIVE like the C strcmp table
   set ops {+ - * / ** == != > < >= <= ?}
@@ -3262,36 +3480,21 @@ proc wviewer::validate_rpn {rpn varlist} {
              ln() log10() integ() avg() ravg() max() min() im() re()
              pi() k() e() q() del() db20() deriv() deriv0() deriv2()
              deriv20() prev() exch() dup() idx()}
-  # exact: every stored spelling. fold: folded key -> the DISTINCT spellings
-  # that fold to it, so a key with two of them is a D2 collision and a key with
-  # one is a safe alias. Byte-identical duplicates (ngspice upstream 0073) are
-  # one distinct spelling and stay resolvable, exactly as the engine has them.
-  set exact {}
-  set fold {}
-  foreach v $varlist {
-    dict set exact $v 1
-    set k [string tolower $v]
-    set spell {}
-    if {[dict exists $fold $k]} { set spell [dict get $fold $k] }
-    if {[lsearch -exact $spell $v] < 0} { lappend spell $v }
-    dict set fold $k $spell
-  }
-  set fuzzy 1
-  catch { if {[xschem raw case]} { set fuzzy 0 } }
+  # ONE index over the name list, built once and reused for every token, and
+  # ONE lookup rule — `name_index`/`name_lookup` (:2613), which is also what
+  # `resolve_signal_db` runs. The D2 collision rule and the `v()` wrap live
+  # there; the operator/number alphabet below is this proc's own.
+  set index [wviewer::name_index $varlist]
+  if {$fuzzy eq {}} { set fuzzy [wviewer::db_fuzzy] }
   set toks [regexp -all -inline {\S+} $rpn]
   if {![llength $toks]} { return "empty expression" }
   foreach t $toks {
     if {[lsearch -exact $ops $t] >= 0} { continue }
     if {[lsearch -exact $funcs $t] >= 0} { continue }
     if {[regexp {^[-+]?(\d|\.\d)} $t]} { continue }
-    if {[dict exists $exact $t]} { continue }
-    if {[dict exists $exact "v($t)"]} { continue }
-    if {$fuzzy} {
-      set lt [string tolower $t]
-      set lw "v($lt)"
-      if {[dict exists $fold $lt] && [llength [dict get $fold $lt]] == 1} { continue }
-      if {[dict exists $fold $lw] && [llength [dict get $fold $lw]] == 1} { continue }
-      if {[dict exists $fold $lt] || [dict exists $fold $lw]} {
+    switch -- [wviewer::name_lookup $index $t $fuzzy] {
+      ok { continue }
+      ambiguous {
         return "ambiguous token '$t' (two variables differ only in case; use one of their exact spellings)"
       }
     }
@@ -3481,6 +3684,16 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   foreach v [dict get $att skipped] {
     catch {::ase::echo "ase: digital database not attached (missing or unreadable): $v" error}
   }
+  # CASEMODE ITEM 5: the database this window's Case Mode readout describes has
+  # just been replaced, so the cached verdict is about a file that is no longer
+  # loaded. Dropped rather than recomputed: item 3's resolution costs up to
+  # 189 ms with no cache behind it, and nothing needs the value until somebody
+  # posts the menu. Resolving eagerly here would put that cost on every re-run.
+  wviewer::casemode_invalidate $token
+  # ... but the USER'S OWN OVERRIDE is not a cached fact and is re-applied, or a
+  # re-run of the same file silently discards it and puts the tick back on
+  # `auto`. Costs one field write, no resolution. See casemode_reapply.
+  wviewer::casemode_reapply $token $rawfile
   wviewer::regenerate $token
   return 1
 }
@@ -3861,7 +4074,14 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}}} {
         # THE NAMED DATABASE AND NOWHERE ELSE. A name it does not have is
         # REFUSED naming it, never quietly satisfied out of another DB — that
         # silent substitution is the whole of DEFECT 2.
-        set err [wviewer::validate_rpn $rpn [dict get $hit names]]
+        #
+        # ⚠ CASEMODE ITEM 5: judged by THAT database's `case` flag, not the
+        # current one's. Validating a foreign name list against the current DB's
+        # mode was residue 2 of the three item 2 declared — it made a
+        # `distinguish` VCD fold, and a plain VCD refuse, according to whichever
+        # database the user happened to be standing on.
+        set err [wviewer::validate_rpn $rpn [dict get $hit names] \
+                   [expr {[wviewer::dget $hit case 0] ? 0 : 1}]]
         if {$err ne {}} {
           return "'$rpn' is not in [dict get $hit label] ($err)"
         }
@@ -13957,6 +14177,238 @@ proc wviewer::plot_mode_menu_post {token m} {
   catch {$m entryconfigure 0 -label $lab}
 }
 
+# --- CASEMODE ITEM 5: Options > Case Mode ------------------------------------
+# DECISIONS.md B2a, the source it ranks FIRST: "an explicit user setting, in the
+# GUI. The raw is loaded in the viewer, so that is where the control belongs —
+# showing what was detected and allowing an override."
+# doc/claude/specs/raw_case_mode.md section 12.
+#
+# ⚠⚠ THIS CONTROL WRITES THE RESOLUTION'S EXPLICIT SOURCE AND NOTHING ELSE. It
+# does NOT touch `Raw.case_sensitive`, the lookup flag, even though a user
+# picking `distinguish` might be imagined to want both. Two reasons, and they
+# are rulings, not caution:
+#   1. THE LOOKUP FLAG'S SETTER RE-READS THE FILE. `xschem raw case <mode>`
+#      calls raw_case_reread() (scheduler.c:10697), which destroys and reloads
+#      the current database — folding is destructive, so a mode change on a
+#      loaded file cannot be a flag flip (DESIGN_REVISION.md section 7). A
+#      menubar pick that silently rebuilt the user's database, mid-session, with
+#      traces plotted from it, is not a thing a menu should do quietly.
+#   2. ITEM 3 SEPARATED REPORTING FROM ACTING ON PURPOSE (spec section 10,
+#      check CS59e): "coupling them would make merely RECORDING a mode rebuild
+#      the database". Re-coupling them one layer up in the GUI would put the
+#      same defect back with a different spelling.
+#
+# ⚠⚠ WHAT THE OVERRIDE REACHES, MEASURED — AND IT IS NOT THE Ctrl-K SENDERS.
+# An earlier revision of this comment claimed "item 4's cross-probe senders
+# consult that answer". THAT IS FALSE and the measurement is worth keeping so it
+# is not re-asserted. `explicit_case_mode` is a field on ONE Raw (xschem.h:1240)
+# and every context owns its own; the viewer is a separate xschem window
+# (`.x1.drw` beside the schematic's `.drw`) with its own `xctx->raw`. The only
+# functional consumer in the tree is `hilight_sender_case_mode()`
+# (hilight.c:364), which reads `xctx->raw` of the window the Ctrl-K /
+# Ctrl-Shift-X gesture happens in — the SCHEMATIC window. Probed on :99 with the
+# same file loaded in both: viewer `raw casemode -all` = `distinguish explicit`
+# while the schematic window's is `unknown none`, so the sender falls through to
+# `sim_case_mode_floor()` regardless of this menu.
+# So the override's reach today is: this window's `xschem raw casemode` answer
+# (hence the readout, and anything scripted against this context), and it
+# survives a later `raw case` re-read here (CS59m). It is NOT a session-wide
+# setting, and it is not the place to put one — a mode that should govern every
+# window is a property of the SIMULATOR PROFILE, which is item 13's `simconf`
+# row (DECISIONS.md B1). Pinned by CS95x so the claim cannot drift back.
+#
+# The mode words the override may set. `unknown` is spelled `auto` in the UI
+# because that is what clearing an override MEANS to a person — fall back to the
+# header, then the schematic comparison, then the sniff — while `unknown` is
+# what the engine calls the absence of an answer. `upper` is deliberately absent
+# on both sides: it is a verdict the schematic comparison can reach, not a mode
+# anyone runs a simulator in (scheduler.c:10520).
+proc wviewer::casemode_choices {} { return {auto fold preserve distinguish} }
+
+# WHERE THE ENGINE IS ACTUALLY ASKED. One `xschem raw casemode -all` inside one
+# context loan; the answer is cached per window. Returns "<mode> <source>", or
+# {} when there is no database (the verb raises "no raw file loaded" then, which
+# is an answer, not an error to propagate into a menu post).
+#
+# ⚠ THE CACHE IS READ HERE, AND THIS IS THE ONLY READER THAT SAVES AN ENGINE
+# CALL. A warm entry short-circuits: posting the menu a second time inside one
+# session costs nothing, which is what "resolve once and cache it" was supposed
+# to mean and what an earlier revision did not actually do (it called the engine
+# unconditionally and the array had no consumer at all — the performance ruling
+# was satisfied only by WHERE the two call sites sit). `force` is for the one
+# caller that has just CHANGED the answer, `set_case_mode`; every invalidation
+# path unsets the entry instead.
+# ⚠ Only a resolved PAIR counts as warm. A cached {} means "there was no
+# database when we last looked", and re-asking that is the cheap arm — the verb
+# errors out before any resolution work — so a window that gains a raw after an
+# empty post resolves it on the next one.
+proc wviewer::casemode_refresh {token {force 0}} {
+  variable casemode
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  if {!$force} {
+    set warm [wviewer::casemode_cached $token]
+    if {[llength $warm] == 2} { return $warm }
+  }
+  set v {}
+  # `1` = borrow (issue 0314): this is a READ that runs no update/after and
+  # always restores, exactly signal_list_all's contract, and a menu post can
+  # ride a gesture frame whose semaphore would otherwise refuse the loan.
+  set ticket [wviewer::enter_ctx $token 1]
+  if {[lindex $ticket 0]} {
+    catch {set v [xschem raw casemode -all]}
+    wviewer::leave_ctx $token $ticket
+  }
+  if {[llength $v] != 2} { set v {} }
+  set casemode($token) $v
+  return $v
+}
+
+# THE DRAW-SAFE READ. Never calls the engine — see the performance note on the
+# `casemode` array. {} means "nothing has resolved it since the raw last
+# changed", which a caller must render as such rather than as `fold` (B2b).
+proc wviewer::casemode_cached {token} {
+  variable casemode
+  if {![info exists casemode($token)]} { return {} }
+  return $casemode($token)
+}
+
+# Drop the cache. Called wherever the window's database can have changed under
+# it — attach_raw is the one that matters, and `forget` (via casemode_forget) so
+# a closed window does not leave an entry behind.
+# ⚠ IT DOES NOT DROP `casemodeuser`. That array is the USER'S OWN STATEMENT, not
+# a cached fact about a database, and `attach_raw` is precisely the path across
+# which it has to survive. Use `casemode_forget` to drop everything.
+proc wviewer::casemode_invalidate {token} {
+  variable casemode
+  variable casemodepick
+  catch {unset casemode($token)}
+  catch {unset casemodepick($token)}
+}
+
+# Drop EVERYTHING this feature owns for a window, the user's override included.
+# The window is going away, so there is nothing left for the override to be
+# about. One place that knows the array set, which is what `forget` calls.
+proc wviewer::casemode_forget {token} {
+  variable casemodeuser
+  wviewer::casemode_invalidate $token
+  catch {unset casemodeuser($token)}
+}
+
+# RE-APPLY the window's override after its database was replaced. Called from
+# `attach_raw`, standing in the viewer's own ctx, immediately after
+# `ase::attach_dbs` has made the incoming analog raw current.
+#
+# ⚠ WHY THIS EXISTS AT ALL. The explicit source is a field on the Raw and
+# `attach_dbs` does clear+read, so the object carrying it is destroyed. The C
+# side already refuses this loss on its own re-read path — `raw_case_reread()`
+# (scheduler.c:10125/10148) carries `keep_explicit` across the destroy with the
+# comment "losing it here would mean an unrelated `raw case` set silently
+# discarding something the user said". A re-run is exactly that sentence with a
+# different subject, and without this the tick silently went back to `auto`.
+#
+# ⚠ PER FILE, NOT PER WINDOW-FOREVER. The stored path must match the one coming
+# back. A re-run overwrites `<rundir>/<cell>_ase.raw` in place so it always
+# does; attaching some other simulator's output gets a fresh four-source
+# detection instead of inheriting a statement that was never about it.
+# Returns 1 when it re-applied, else 0. Checks CS95t-CS95w.
+proc wviewer::casemode_reapply {token rawfile} {
+  variable casemodeuser
+  variable casemodepick
+  if {![info exists casemodeuser($token)]} { return 0 }
+  set rec $casemodeuser($token)
+  if {[llength $rec] != 2} { return 0 }
+  set mode [lindex $rec 0]
+  if {$mode eq {auto}} { return 0 }
+  if {[lindex $rec 1] ne [file normalize $rawfile]} { return 0 }
+  set arg [expr {$mode eq {unknown} ? {unknown} : $mode}]
+  if {[catch {xschem raw casemode $arg} r] || $r != 1} { return 0 }
+  set casemodepick($token) $mode
+  return 1
+}
+
+# PURE: the one-line readout, from a "<mode> <source>" pair. Its job is B2b —
+# say which source answered rather than assert a bare mode, and say `unknown`
+# rather than quietly claiming `fold`.
+proc wviewer::casemode_label {pair} {
+  if {[llength $pair] != 2} { return {Case mode: no database loaded} }
+  set mode [lindex $pair 0]
+  set src  [lindex $pair 1]
+  switch -- $src {
+    explicit  { return "Case mode: $mode — your setting" }
+    header    { return "Case mode: $mode — the file's Option: casemode= header" }
+    schematic { return "Case mode: $mode — compared with the schematic's net names" }
+    sniff     { return "Case mode: $mode — a capital-letter sniff" }
+    default   { return "Case mode: unknown — nothing could tell" }
+  }
+}
+
+# The cascade's -postcommand: ONE engine read per posting (a user action, never
+# a redraw), then the readout line and the radio tick are both rebuilt from it.
+# Pushed, not polled, for the same reason the Grid checkbutton's mirror is
+# pushed: a value that is only correct when someone remembers to refresh it goes
+# stale exactly when it matters.
+proc wviewer::casemode_menu_post {token m} {
+  variable casemodepick
+  if {![winfo exists $m]} { return }
+  set pair [wviewer::casemode_refresh $token]
+  catch {$m entryconfigure 0 -label [wviewer::casemode_label $pair]}
+  set pick auto
+  set ticket [wviewer::enter_ctx $token 1]
+  if {[lindex $ticket 0]} {
+    set ex {}
+    catch {set ex [xschem raw casemode -explicit]}
+    wviewer::leave_ctx $token $ticket
+    if {[lsearch -exact [wviewer::casemode_choices] $ex] >= 0} { set pick $ex }
+  }
+  set casemodepick($token) $pick
+}
+
+# The override itself. `auto` clears the explicit source (`unknown` to the
+# engine); anything else records it. Returns 1 when the engine took it.
+# The CIW line is deliberate: this changes what a later Ctrl-K sends, which is
+# not visible in the viewer, so the one place a user can see it happened is the
+# log they already read for simulator messages.
+proc wviewer::set_case_mode {token mode} {
+  variable casemodepick
+  variable casemodeuser
+  if {[lsearch -exact [wviewer::casemode_choices] $mode] < 0} { return 0 }
+  set arg [expr {$mode eq {auto} ? {unknown} : $mode}]
+  set ok 0
+  set rf {}
+  set ticket [wviewer::enter_ctx $token]
+  if {[lindex $ticket 0]} {
+    if {![catch {xschem raw casemode $arg} r] && $r == 1} { set ok 1 }
+    # WHICH FILE THE STATEMENT IS ABOUT, read in the same loan (one ctx switch,
+    # not two). {} when the engine has no backing path, which simply makes the
+    # override un-re-appliable rather than mis-applied.
+    catch {set rf [xschem raw rawfile]}
+    wviewer::leave_ctx $token $ticket
+  }
+  if {!$ok} {
+    set casemodepick($token) $mode
+    catch {::ase::echo "viewer: could not set the case mode (no database loaded?)" error}
+    return 0
+  }
+  set casemodepick($token) $mode
+  # REMEMBERED ACROSS A RE-ATTACH — see casemode_reapply. `auto` is remembered
+  # too, as the statement "I want the detection back", so a re-run does not
+  # resurrect an override the user just cleared.
+  if {$rf ne {}} { set casemodeuser($token) [list $mode [file normalize $rf]] } \
+  else { catch {unset casemodeuser($token)} }
+  # `1` = FORCE: this call is what changed the answer, so the entry it would
+  # otherwise serve is the pre-change one.
+  set pair [wviewer::casemode_refresh $token 1]
+  catch {::ase::echo "viewer: [wviewer::casemode_label $pair]"}
+  # ACTION LOG. Every other state-changing Options command in this file logs
+  # (set_plot_mode, set_plot_dest, grid_toggle, browser_toggle, 26 sites), and
+  # this one changes what a scripted `xschem raw casemode` in this context
+  # answers — a replay that skipped it would diverge from the recorded session.
+  # Argument order is the PROC'S OWN, so the logged line is directly callable.
+  wviewer::log_action [list wviewer::set_case_mode $token $mode]
+  return 1
+}
+
 # Graph > Shared X Axis checkbutton: mirror -> model + regenerate.
 proc wviewer::sharedx_toggle {token} {
   variable windows
@@ -17724,5 +18176,35 @@ proc wviewer::build_menubar {token top} {
       -command [list wviewer::set_plot_dest [wviewer::dest_norm $lbl] $token]
   }
   $mb.options add cascade -label {Plot Destination} -menu $mb.options.plotdest
+  # CASEMODE ITEM 5 (DECISIONS.md B2a): show what was DETECTED for the loaded
+  # database and let the user override it. Entry 0 is the readout, disabled
+  # because it is a statement and not a command; the radios below it write the
+  # explicit source, ranked first of the four.
+  # ⚠ A CASCADE UNDER Options, NOT A NEW TOP-LEVEL MENU: test_wave_viewer G2
+  # asserts this menubar's cascade set is exactly {File View Graph Cursors
+  # Options}, the same rule the Calculator and Signal Browser entries obey.
+  # ⚠ THE -postcommand IS THE WHOLE PERFORMANCE STORY. It is the only thing that
+  # asks the engine, and it fires when the user POSTS the menu — never on a
+  # redraw. Item 3 measured `raw casemode` at up to 189 ms with no cache behind
+  # it and told items 5 and 13 not to poll it; a readout drawn on the canvas or
+  # refreshed from a motion handler would have been exactly that.
+  menu $mb.options.casemode -tearoff 0 -takefocus 0 \
+    -font AseLabelFont -background $panel -activebackground $header \
+    -postcommand [list wviewer::casemode_menu_post $token $mb.options.casemode]
+  $mb.options.casemode add command -label [wviewer::casemode_label {}] -state disabled
+  $mb.options.casemode add separator
+  # RADIOBUTTONS are safe here where Plot Destination's comment says they are
+  # not: the trap there is that Tk writes -variable before firing -command, so a
+  # "did this change?" test inside the command always says no. These commands
+  # take the mode as a LITERAL argument and never read the variable, so the
+  # write-first order costs nothing — and the tick is the only way the menu can
+  # show which of the four is in force.
+  foreach cm_m [wviewer::casemode_choices] {
+    $mb.options.casemode add radiobutton \
+      -label [expr {$cm_m eq {auto} ? {auto (use what was detected)} : $cm_m}] \
+      -variable ::wviewer::casemodepick($token) -value $cm_m \
+      -command [list wviewer::set_case_mode $token $cm_m]
+  }
+  $mb.options add cascade -label {Case Mode} -menu $mb.options.casemode
   $top configure -menu $mb
 }

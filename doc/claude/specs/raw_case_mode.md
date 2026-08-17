@@ -516,7 +516,18 @@ Three residues remain, none of them able to produce a silent wrong number:
   that path never calls `xschem raw add`, so an unresolvable name yields a trace
   that plots **nothing**, not a column of zeros.
 
-**Item 5** removes the mirror entirely by making both of them ask the engine.
+> **CLOSED by item 5, 2026-08-16 — all three, but NOT the way this line said.**
+> "Removes the mirror entirely by making both of them ask the engine" was
+> wrong, and §12 records why: `raw index` answers for the **current** database
+> only, while both callers judge a *foreign* name list, and `validate_rpn` must
+> stay callable with no engine at all. What item 5 actually did is make it ONE
+> mirror instead of two — `wviewer::name_rungs` / `name_index` / `name_lookup`,
+> with these two procs as their only callers — and hold it down by AGREEMENT
+> checks against `xschem raw index` rather than by construction. Residue 1
+> (rung 4) is now mirrored, including the two traps in the rewrite; residue 2 is
+> gone because `signal_list_all` carries a per-slot `case` key and
+> `validate_rpn` takes a `fuzzy` override; residue 3 is gone because
+> `resolve_signal_db` runs the same code. See §12, checks `CS89`–`CS93n`.
 
 ## 10. MODE RESOLUTION — four sources in order — casemode item 3
 
@@ -1051,3 +1062,303 @@ undriven; the `upper` verdict reaches the senders only through the code path
 `CS67`/`CS67c` exercise, never from a real uppercasing simulator; and the
 "only the viewers that use the answer resolve it" fix has no check at all — it
 produces no observable output and was driven with an instrumented build.
+
+## 12. THE VIEWER'S Tcl HALF — casemode item 5
+
+`PLAN.md` §3b item 5; `DECISIONS.md` **B2a** and **D2**. Three things, related
+only by living in `src/wave_viewer.tcl`: the second copy of the lookup ladder,
+the two-pane browser's group/class parser audited against the `@dev[param]`
+shape, and B2a's first-ranked source — the explicit user setting, in the GUI.
+
+Tests: `tests/headless/test_wave_casemode.tcl`, checks **`CS89`–`CS95y`**
+(134 checks; `CS0`–`CS64f` are item 1/2/3's in `test_raw_case_mode.tcl`,
+`CS65`–`CS88` item 4's). Seventy-four of them run true headless; the rest need a
+window and self-skip with a `NOTE`, never a `RESULT: SKIP` banner.
+
+### RULING — one Tcl mirror of `get_raw_index()`, and it stays a mirror
+
+§9 recorded three residues after item 2 rebuilt `wviewer::validate_rpn`. All
+three are closed here, and the way they are closed is that the rungs and the
+fold now live in three procs — `wviewer::name_rungs`, `name_index`,
+`name_lookup` — with `validate_rpn` and `resolve_signal_db` as their two
+callers. Before this there were two rules in one file:
+
+| | `validate_rpn` (item 2) | `resolve_signal_db` (before item 5) |
+|---|---|---|
+| exact spelling | yes | no — both sides `string tolower`ed |
+| D2 collision | declines, loudly | **first match wins** |
+| `distinguish` | folded rungs off | **ignored** |
+| whose mode | the current database | the current database, for every slot |
+
+**It is NOT routed through `xschem raw index`, and that is deliberate.** Two
+reasons, either sufficient. (a) Both callers judge a name list that is *not* the
+current database's: `resolve_signal_db` walks every registered slot and
+`add_trace`'s named-DB arm validates against a `db_by_index` snapshot, so
+`raw index` — which answers for the current database only — would need a
+`raw switch` per candidate. (b) `validate_rpn` must stay callable with no engine
+at all (`test_wave_viewer.tcl` drives it on synthetic lists), and the gate
+exists precisely because `raw_add_vector()` swallows the evaluator's `-1`
+(issue **0418**). So the mirror is held down by **agreement** instead: every
+check in the `CS90*` leg reads `xschem raw index` *and* the Tcl verdict for one
+token and fails if they differ, in either direction — "refuse everything" fails
+as loudly as "approve everything" (measured: mutation `M28` reddens 36 checks,
+`M29` reddens 20).
+
+**Rung 4 is now mirrored.** It was the one input on which "the rule is
+`get_raw_index`'s" was false: against a database storing `i(x1.vp)`, the engine
+resolves the query `i(v.x1.vp)` and the gate refused it. Two traps in the
+rewrite, both hit:
+
+- **nothing is appended after the `%s`.** The C is
+  `my_snprintf(vnode, "i(%s", node + 4)` and `node + 4` still carries the
+  name's own closing paren. The obvious `"i(<rest>)"` turns `i(v.x1.vp)` into
+  `i(x1.vp))`, which matches nothing — measured, before `CS89d` existed.
+- **anchored, and five characters.** `CS90m` can only fail because the fixture
+  carries the **bait** column `i(.x1.vp)`, exactly the string an unanchored
+  rewrite of `xi(v.x1.vp)` produces. This is item 2's `CS39f` bait on the Tcl
+  side; without it both sides refuse for a boring reason and the check is
+  vacuous.
+
+**RULING — the fold key is ASCII-only, because the authority is byte-wise.**
+`wviewer::fold_key` is a 26-pair `string map`, not `string tolower`. The engine
+folds with `raw_fold_key()` → `strtolower()` (`util.c:1006`), a `tolower()` loop
+over **bytes** with no `setlocale` anywhere in `src/`, so the two UTF-8 bytes of
+`Ä` come back unchanged. Tcl's `string tolower` is Unicode-aware and folds
+`Ä`→`ä`, which on a database holding both `v(CÄ)` and `v(cä)` **invents a D2
+collision the engine does not have** — measured against a live engine,
+`xschem raw index {v(Cä)}` = 2 while the mirror said `ambiguous` — and because
+item 5 made `resolve_signal_db` act on that verdict, it turned a slot that
+resolves into one that is skipped. Loud, never a wrong number, but a
+disagreement, and this mirror's whole contract is that there is none. Pinned by
+`CS89x`–`CS89z` and by the agreement pair `CS90y`/`CS90z`, whose database really
+does store both spellings; `CS90x` is the control (an exact hit needs no fold).
+An identity fold reddens 22 checks, so the rule is load-bearing in both
+directions.
+
+**Per-slot modes.** `signal_list_all` now carries a `case` key per registered
+database, read while the engine is standing on that slot — the one moment a
+foreign database's `distinguish` bit is knowable without a second switch cycle.
+`db_by_index` passes it on, `validate_rpn` takes it as an optional third
+argument, and `resolve_signal_db` judges each slot by its own. Omitted, the
+argument still asks `xschem raw case` about the current database, so every
+pre-item-5 caller keeps its exact meaning.
+
+**An ambiguous slot is skipped, not a global refusal.** D2 says decline to guess
+*which of two names* the user meant. It says nothing about a different database
+that has exactly one, and skipping keeps `resolve_signal_db`'s documented
+tie-break meaning what it always meant: **the first slot that RESOLVES wins**
+(`signal_list_all` yields the current database first). `CS92f` pins the
+consequence a first draft of it got wrong — an *exact* hit in a foreign slot
+does **not** beat a *folded* hit in the one the user is standing on.
+
+⚠ **`CS92e` does not pin the skip and must not be cited for it** — an earlier
+revision of this section did, wrongly. In the fixture the clean slot answers
+`COUNT` on its own and comes first, so inverting the rule (accept an ambiguous
+slot instead of skipping it) left the whole suite green: the skip was never on
+the critical path. **`CS92e2`** is the check that pins it. `Amb`/`amb` live in
+the poisoned slot *only*, so the folded query `AMB` has exactly one slot that
+could answer and that slot is ambiguous; the answer must be nothing, and the
+inversion reddens `CS92e2` alone. `CS92e3` (the exact spelling `Amb` still
+resolves) is what makes that `{}` D2's refusal rather than an absent signal.
+`CS92e` keeps a narrower job of its own: a poisoned slot does not stop a clean
+one answering.
+
+### The `@dev[param]` shape — the audit, and what it found
+
+Measured on `build-ver_50`, 2026-08-16, one deck with a top-level `R1` and an
+`Rq` inside `X1`, `.options savecurrents`:
+
+```
+-D casemode=fold      v(in)  i(v1)  i(@r1[i])  i(@r.x1.rq[i])
+-D casemode=preserve  v(In)  i(V1)  i(@R1[i])  i(@R.X1.Rq[i])
+```
+
+**The shape is handled, contrary to the expectation that opened the audit.**
+`grep` for `@` in `wave_viewer.tcl` finds only three lines, which is what made
+"no `@`-shape handling anywhere" look true — but all three are the handling:
+`sig_declass`'s `^@?[A-Za-z]$`, `sig_class`'s `@*` arm, and `browser_label`'s
+`regsub {^@}`. And **none of them is case-sensitive**, so the `preserve` and
+`fold` spellings of one signal parse identically (`CS91`–`CS91e`, `CS91k`):
+
+| name | class | path | leaf | pane label |
+|---|---|---|---|---|
+| `i(@R.X1.Rq[i])` | `devmeas` | `X1` | `Rq[i]` | `Rq:i` |
+| `i(@r.x1.rq[i])` | `devmeas` | `x1` | `rq[i]` | `rq:i` |
+| `@r.x1.rq[i]` (unwrapped) | `devmeas` | `x1` | `rq[i]` | `rq:i` |
+| `i(@r1[i])` (**top level**) | **`net`** | `` | `@r1[i]` | `r1:i` |
+
+**The finding is the last row, and it is recorded rather than fixed.** A
+top-level device-parameter accessor has no dots, so `sig_declass`'s "three or
+more segments" guard — DC09, load-bearing: it is what stops `m.foo` from being
+stripped to an *empty* path — never sees the `@` tag, and the signal classes
+`net`. The consequence is an asymmetry in the lower pane: with **Show device
+internals** off, `browser_class_filter` hides `i(@r.x1.rq[i])` and **keeps**
+`i(@r1[i])`, so one device parameter sits among the design nets and its
+in-subcircuit twin does not (`CS91h`, `CS91i`, `CS91j`).
+
+Not fixed here because relaxing the guard for `@`-headed names moves
+`sig_declass`, which is pinned by DC09/DC12/DC13 and by the two-pane suites'
+counts, and item 5's audit contract is an **empty** diff. It is a
+classification question for the two-pane owner, not a case question — nothing
+about it changes with the mode.
+
+### RULING — the viewer's Case Mode control writes the EXPLICIT SOURCE only
+
+`DECISIONS.md` B2a ranks an explicit user setting first of the four sources and
+says where it belongs: *"The raw is loaded in the viewer, so that is where the
+control belongs — showing what was detected and allowing an override."* Item 3
+shipped the engine (§10) and named items 5 and 13 as the owners of the control.
+This is item 5's half: **Options ▸ Case Mode** in the waveform viewer's
+menubar — a disabled readout line naming the mode *and the source that
+answered*, then four radio entries `auto` / `fold` / `preserve` / `distinguish`.
+
+**It does not touch `Raw.case_sensitive`.** A user picking `distinguish` might
+be imagined to want the lookup flag too. Two reasons it does not get it, and
+they are rulings rather than caution:
+
+1. **That flag's setter re-reads the file.** `xschem raw case <mode>` calls
+   `raw_case_reread()` (`scheduler.c:10697`) — folding is destructive, so a mode
+   change on a loaded file cannot be a flag flip (`DESIGN_REVISION.md` §7). A
+   menubar pick that silently rebuilt a database with traces plotted from it is
+   not a thing a menu should do quietly.
+2. **Item 3 separated reporting from acting on purpose** (§10, `CS59e`):
+   "coupling them would make merely *recording* a mode rebuild the database".
+   Re-coupling them one layer up in the GUI puts the same defect back with a
+   different spelling.
+
+`CS95h0`/`CS95m` prove the non-re-read with an **in-memory rename**, not with a
+name-list comparison: a re-read of the same file gives back the same names, so
+only a change that exists solely in memory can tell the two apart. It is item 1's
+own `CS24`/`CS25` technique, run in the opposite direction.
+
+**CORRECTION, MEASURED — the override does NOT reach item 4's cross-probe
+senders.** An earlier revision of this section, and of the comment at
+`wave_viewer.tcl`, claimed it did. `explicit_case_mode` is a field on **one**
+`Raw` (`xschem.h:1240`) and every context owns its own; the viewer is a separate
+xschem window (`.x1.drw` beside the schematic's `.drw`). The only functional
+consumer of the resolution in the tree is `hilight_sender_case_mode()`
+(`hilight.c:364`, reached from `:966` and `:2591`), and it reads `xctx->raw` of
+the window the **Ctrl-K / Ctrl-Shift-X gesture happens in** — the schematic
+window. Probed on `:99` with the same file loaded in both contexts: the viewer
+answers `distinguish explicit` while the schematic window answers
+`unknown none`, so the sender falls through to `sim_case_mode_floor()` whatever
+the menu says. Pinned by **`CS95x2`/`CS95x3`**, which load the same file into
+both and assert the two answers diverge, so the claim cannot drift back in.
+
+So the override's reach is: **this window's `xschem raw casemode` answer** — the
+readout, and anything scripted against this context — and it survives a later
+`raw case` re-read here (`CS59m`). That is what it is for and it is worth a
+menu, but it is **not a session-wide setting and this is not the place to build
+one**: a mode that should govern every window is a property of the *simulator
+profile*, which is item 13's `simconf` row (`DECISIONS.md` B1). Left as an
+explicitly named limit rather than half-solved here, because "which Raw is
+authoritative when a session has several" is a question the profile answers and
+a menubar cannot.
+
+`auto` is the UI's word for `unknown` — to a person, clearing an
+override means "fall back to the header, then the schematic, then the sniff",
+while `unknown` is what the engine calls the absence of an answer. `upper` is
+offered by neither: it is a verdict the comparison can reach, not a mode anyone
+runs a simulator in.
+
+### RULING — the readout is resolved on a user action, never on a redraw
+
+Item 3 measured the four-source resolution with **no cache behind it**: at 2000
+instances × 500 names, an exact hit is 21 ms, a **folded hit 147 ms** and an
+all-miss **189 ms**, recomputed per call, and its receipt told items 5 and 13
+not to poll it from a redraw. The viewer redraws constantly. So:
+
+- the engine is asked from exactly **two** call sites, both one-shot — the
+  cascade's `-postcommand` (which fires when the user posts the menu) and
+  `wviewer::set_case_mode`;
+- the answer is cached per window in `wviewer::casemode($token)`, **and the
+  cache is read**: `casemode_refresh` returns a warm pair instead of re-asking,
+  so a second post inside one session costs nothing. ⚠ An earlier revision did
+  **not** do this — both sites called `casemode_refresh` and it re-asked
+  unconditionally, so the array had no consumer at all and the ruling was
+  satisfied only by *where* the two calls sit. `CS95o2` pins the hit (the entry
+  is poked to a value the engine would never return) and `CS95o3`/`CS95o3b` pin
+  `set_case_mode`'s `force`, without which the readout would show the
+  pre-change verdict for the rest of the session;
+- **`attach_raw` DROPS the cache and does not recompute it** (`CS95q`) — a
+  re-run must not pay 189 ms for a value nothing has asked for yet;
+- `wviewer::casemode_cached` is the draw-safe read and never calls the engine;
+  it is what `casemode_refresh`'s warm path reads;
+- `wviewer::forget` drops all three arrays with the window (`CS95s`).
+
+### RULING — the override survives a re-attach of the SAME file, per window
+
+`explicit_case_mode` lives on the `Raw` and `ase::attach_dbs` does clear+read,
+so **a re-run — the commonest viewer action there is — destroyed the object
+carrying the user's setting**. Measured before the fix: `-explicit` went
+`distinguish` → `unknown`, `casemodepick` was unset, and the next menu post
+silently showed the tick back on `auto` with no notice. Nothing covered it; the
+`attach_raw DROPS the cache` bullet above documented only the cache, which hid
+it.
+
+The C side already refuses exactly this loss on its own destroy-and-reload path:
+`raw_case_reread()` carries `keep_explicit` across the re-read
+(`scheduler.c:10125`/`:10148`) because *"losing it here would mean an unrelated
+`raw case` set silently discarding something the user said"*. A re-run is that
+sentence with a different subject.
+
+So `wviewer::casemodeuser($token)` records `{<mode> <normalized rawfile>}` — the
+one array `casemode_invalidate` does **not** drop — and `attach_raw` re-applies
+it through `wviewer::casemode_reapply`. **Per file, per window**, both halves
+pinned:
+
+| what happens | what the override does | check |
+|---|---|---|
+| re-run: the same path is re-attached | re-applied, tick restored | `CS95u`, `CS95v` |
+| a different file is attached | dropped; fresh four-source detection | `CS95w` |
+| the window is closed | dropped with it (`casemode_forget`) | `CS95s` |
+| xschem exits | gone — nothing persists it to disk | — |
+
+The path test is what keeps it honest: a re-run overwrites
+`<rundir>/<cell>_ase.raw` in place, so it always matches there, while a
+statement about one simulator's output is not a statement about another's.
+
+### RULING — the override is action-logged
+
+`wviewer::set_case_mode` emits `wviewer::log_action [list wviewer::set_case_mode
+$token $mode]` on its success path, in the proc's own argument order so the
+logged line is directly callable. Every other state-changing Options command in
+`wave_viewer.tcl` logs (26 sites, `set_plot_mode` and `set_plot_dest` among
+them) and this one changes what a scripted `xschem raw casemode` in this context
+answers, so a replay that skipped it would diverge from the recorded session.
+`CS95y` spies `log_action` by rename and asserts exactly one line per use.
+
+`xschem raw case` — the boolean the matcher uses — is a struct-field read and is
+**not** this. Do not conflate them: `db_fuzzy` calls it freely.
+
+### Tests, and what is NOT covered
+
+`CS89*` pure matcher · `CS90*` agreement with the engine · `CS91*` the browser
+audit · `CS92*`/`CS93*` several databases at once · `CS94*`/`CS95*` the control.
+**118 of the 134 have a named mutation that reddens them.** The other **16** are
+premise, setup and guard checks with no item-5 code beneath them, and are named
+here so nobody counts them as evidence: `CS89` (the source itself — a syntax
+error in `wave_viewer.tcl` SIGSEGVs before any check prints), `CS90`, `CS90b`,
+`CS90c`, `CS90q`, `CS90v`, `CS92b`, `CS93`, `CS93b`, `CS93m`, `CS95h0`,
+`CS95x` (engine verbs items 1–3 own), `CS92` (the viewer opening; only
+collateral reddens it), `CS94k` (doubly guarded — `enter_ctx` refuses the bogus
+token before the whitelist is reached), and two deliberate controls: `CS90x`, an
+exact non-ASCII hit that needs no fold, and `CS91g`, a name with no class tag.
+
+⚠ **Five checks used to be written so that a throwing `resolve_signal_db` killed
+the file with no `RESULT:` line at all**, which an automated sabotage driver
+reads as "nothing went red" — the exact trap `CS92f2`'s own comment describes
+and then five neighbours broke. Every call is now hoisted onto its own `pcall`
+line. Measured both ways with the same mutation (`error {sabotage}` at the top
+of the proc): one call left inline → **0 `RESULT` lines**; all hoisted →
+`RESULT: 9 FAILED (125 passed)`.
+
+Not covered: **no menu was posted by a human** — `CS95e0` posts it with
+`$m post`, which fires `-postcommand` exactly as a click does, but what the
+cascade *looks like* is unverified and an eyeball is owed. **No simulator ran
+during the suite**: the `@`-shape raws above were measured by hand and their
+Variables lines transcribed into an inline ASCII fixture. **The two-pane
+browser's own panes were not re-rendered** — the `CS91*` leg drives the parser
+procs, not the widget. **`xschem raw casemode` on a VCD or `table_read`
+database still has no committed check** (item 2's carry-forward, now passed on
+a fourth time — the viewer legs here use two spice raws).

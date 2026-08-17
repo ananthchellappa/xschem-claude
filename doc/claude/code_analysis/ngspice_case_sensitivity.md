@@ -91,6 +91,19 @@ implemented, spread over six sites, is:
    `wviewer::validate_rpn` (`:3237`) lowercase both sides and additionally try
    `v($lv)`.
 
+   > **SUPERSEDED, 2026-08-16 (casemode items 2 and 5).** Both halves of that
+   > last sentence are now false and the ladder above is not the shipped one.
+   > `get_raw_index()` no longer mutates its query, the stored names are no
+   > longer folded, and the two Tcl matchers are no longer two: they are one
+   > pair of procs (`wviewer::name_index` / `name_lookup`) that mirror the C
+   > ladder rung for rung, decline a folded key that two different stored names
+   > answer (`DECISIONS.md` D2), and fold nothing on a `distinguish` database.
+   > Their fold key is `wviewer::fold_key`, an **ASCII-only** `string map`, not
+   > `string tolower`: the C authority is `strtolower()` (`util.c:1006`), a
+   > byte-wise `tolower()` loop with no `setlocale` in the tree, so a
+   > Unicode-aware fold would invent case collisions the engine does not have.
+   > `doc/claude/specs/raw_case_mode.md` §9 and §12.
+
 ### The parallel C path (Ctrl-K hilight → graph)
 
 Entirely outside ASE-L, same recipe, hand-written twice in `hilight.c`:
