@@ -301,6 +301,131 @@ static int there_are_hilights()
   return 0;
 }
 
+/* ===========================================================================
+ * THE CASE A CROSS-PROBE QUERY IS SPELLED IN -- casemode batch item 4.
+ * doc/claude/specs/raw_case_mode.md section 11, PLAN.md section 3b item 4.
+ * ===========================================================================
+ * Ctrl-K ("highlight and send to the waveform viewer") and Ctrl-Shift-X
+ * (create_plot_cmd) build a query out of the SCHEMATIC's own spelling and hand
+ * it to a plotter: our own graph, gaw, or bespice. Every one of those queries
+ * used to be strtolower()ed unconditionally, which was right only while
+ * read_dataset() folded every stored name too -- item 1 deleted that fold, so a
+ * `preserve` database now really does hold v(MidNode) and a lowercased query
+ * reaches it only through get_raw_index()'s folded rung, which `distinguish`
+ * switches OFF (spec sections 2 and 9). Folding a query into a database that
+ * was told not to fold is how a cross-probe silently plots nothing.
+ *
+ * FOUR input states, not two (DECISIONS.md B2b), in this rank order:
+ *   1. the four ranked sources answer `fold`      -> lowercase, as before
+ *      ... `preserve` / `distinguish` / `upper`   -> send the schematic's own
+ *                                                    spelling, verbatim
+ *   2. they answer `unknown` but the LOOKUP IS CASE-SENSITIVE
+ *                                                 -> treat as `distinguish`
+ *   3. they answer `unknown` and it is not        -> the GLOBAL FLOOR
+ *                                                    (sim_case_mode, default
+ *                                                    fold) decides
+ *
+ * WHY case_sensitive IS RANKED HERE AND NOT HIGHER, which is the whole of it.
+ * `Raw.case_sensitive` is set by exactly one thing -- `xschem raw read ... -case
+ * distinguish` -- and it does exactly one thing: it switches OFF rung 2 of
+ * get_raw_index(), the folded rung that rescues a wrong-case query (spec
+ * sections 2 and 9). So on such a database a folded query is not "probably
+ * fine", it is unrescuable, and raw_add_vector() turns the miss into a silent
+ * all-zero column (0418). That makes it far too strong to sit under a global
+ * default the user may never have looked at -- so it BEATS THE FLOOR.
+ *
+ * But it is weaker than the four sources, and the difference is measurable, not
+ * stylistic. `case_sensitive` is a statement about the LOOKUP; the four sources
+ * read the file's actual BYTES. Read tr_fold.raw (which holds v(in), v(midnode),
+ * i(vs)) with `-case distinguish` and the two disagree: the lookup will not
+ * fold, and the stored names are folded. There the folded query is the ONLY one
+ * that resolves --
+ *     xschem raw index {v(midnode)} ->  2        the folded query hits
+ *     xschem raw index {v(MidNode)} -> -1        the verbatim one cannot
+ * -- so a blanket "never fold when case_sensitive" would break the very case it
+ * was written to protect. Evidence about the bytes wins; check `CS83`.
+ *
+ * THE FLOOR is legitimate here and nowhere near the file resolver: item 3 ruled
+ * that `sim_case_mode` may never leak into a *file's* verdict, because that
+ * would assert a fact about somebody else's bytes. A cross-probe is a request
+ * about a RUN's data -- "which spelling will the thing I am about to talk to
+ * understand?" -- which is exactly what the floor answers, and it is the only
+ * answer available when gaw is reading a file we never loaded.
+ *
+ * PERFORMANCE. raw_resolve_case_mode()'s third source walks every instance and
+ * wire of the schematic: 147 ms at 2000 instances x 500 names (item 3 receipt
+ * section 5), now primed once at raw-read time (Raw.sch_case_mode). So it is
+ * resolved ONCE PER GESTURE, and only for the viewers that can actually use the
+ * answer -- never once per selected net, and never from a redraw.
+ * hilight_graph_node() is on the redraw path and deliberately takes no mode at
+ * all (section 11 of the spec). */
+static int hilight_sender_case_mode(void)
+{
+  int mode = raw_resolve_case_mode(xctx->raw, NULL);
+  if(mode != RAW_CASE_UNKNOWN) return mode;
+  if(xctx->raw && xctx->raw->case_sensitive) return RAW_CASE_DISTINGUISH;
+  return sim_case_mode_floor();
+}
+
+/* 1 when a query built from the schematic's spelling must be lowercased. */
+static int sender_folds_lower(int case_mode)
+{
+  return case_mode == RAW_CASE_FOLD;
+}
+
+/* 1 when the Xyce arm of create_plot_cmd() must UPPERCASE. That arm asserts in
+ * code what section 5 declined to assert about a *file* -- "Xyce uppercases" --
+ * and the two are reconciled rather than left contradicting each other:
+ *   - section 5 is about identifying an unknown file. There is no measured way
+ *     to do it, so a destructive fold gated on a guess was refused.
+ *   - here the simulator's identity is not guessed: `sim_is_xyce` reports the
+ *     CONFIGURED simulator command, a property of the session the user set up.
+ * So the convention survives as a FALLBACK, not as an assertion: positive
+ * evidence that this database keeps its case (preserve/distinguish) overrides
+ * it, and `upper` -- the verdict the schematic comparison reaches when a net
+ * drawn MidNode arrived as V(MIDNODE) -- confirms it. Unverified Xyce stays
+ * exactly as it was whenever nothing is known, so this changes no behaviour on
+ * the path nobody has measured. */
+static int sender_folds_upper(int case_mode)
+{
+  return case_mode != RAW_CASE_PRESERVE && case_mode != RAW_CASE_DISTINGUISH;
+}
+
+/* NGSPICE'S HIERARCHICAL-CURRENT PREFIX, AND IT IS NOT ALWAYS `v.`.
+ *
+ * A subcircuit device current is written by ngspice as
+ * `i(<L>.<path>.<device>)` where <L> is the DEVICE'S OWN FIRST CHARACTER, not a
+ * fixed letter -- and case-folding applies to the constructed name as a whole.
+ * Measured 2026-08-16 on the batch's case-capable build (ver_50,
+ * /home/qflow/dev/ngspice_test/build-ver_50/src/ngspice), one `.subckt SubX`
+ * holding one vsource, bare `write`:
+ *
+ *   deck says `Vs`  -D casemode=fold        ->  i(v.x1.vs)
+ *   deck says `Vs`  -D casemode=preserve    ->  i(V.X1.Vs)     <- UPPERCASE V.
+ *   deck says `Vs`  -D casemode=distinguish ->  i(V.X1.Vs)
+ *   deck says `vs`  -D casemode=preserve    ->  i(v.X1.vs)     <- lowercase v.
+ *   deck says `vs`  -D casemode=distinguish ->  i(v.X1.vs)
+ *
+ * The prefix therefore TRACKS THE TOKEN and needs no mode branch of its own:
+ * take the first character of the token as this sender is about to emit it.
+ * Under `fold` the token is already lowercased, so this yields the literal `v.`
+ * the code emitted before item 4 -- byte-for-byte unchanged on the stock path.
+ * Under `preserve`/`distinguish` it yields whatever ngspice will have written.
+ *
+ * The earlier claim here -- "`v.` is ngspice's own prefix, not a user name, so
+ * it stays lowercase in every mode" -- was FALSE and is deleted, not softened:
+ * it sent `i(v.X1.Vs)` into a database holding `i(V.X1.Vs)`, which resolves to
+ * -1 under `distinguish` (rung 2 off) and only by luck under `preserve`. For
+ * gaw, which has no folded rung at all, it was wrong in both. Checks
+ * `CS72`/`CS72b`/`CS75`/`CS75b`. */
+static const char *sender_current_prefix(const char *t, char *buf)
+{
+  buf[0] = (t && t[0]) ? t[0] : 'v';
+  buf[1] = '.';
+  buf[2] = '\0';
+  return buf;
+}
+
 int hilight_graph_node(const char *node, int col)
 {
   int current = 0;
@@ -326,12 +451,37 @@ int hilight_graph_node(const char *node, int col)
   nptr = n;
 
   dbg(1, "hilight_graph_node(): path_skip=%s, %s: %d\n", path_skip, node, col);
-  if(strstr(n, "i(v.")) {current = 1; nptr += 4;}
-  else if(strstr(n, "I(V.")) {current = 1; nptr += 4;}
-  else if(strstr(n, "i(")) {current = 1; nptr += 2;}
-  else if(strstr(n, "I(")) {current = 1; nptr += 2;}
-  else if(strstr(n, "v(")) {nptr += 2;}
-  else if(strstr(n, "V(")) {nptr += 2;}
+  /* THE RECEIVER-SIDE TWIN of get_raw_index()'s rung 4 -- casemode item 4,
+   * spec section 11. A graph's node= is a simulator name and this turns it back
+   * into a (path, net-or-device) pair. It had the two defects item 2 fixed on
+   * the reader side, plus one item 2 could not have:
+   *
+   *  ANCHORED. strstr() matched the prefix at ANY offset while nptr advanced a
+   *  fixed 2 or 4 from the START, so a hit anywhere else sliced the name at the
+   *  wrong place -- the same shape as the old `strstr(inode, "i(v.x")` whose
+   *  rewrite clobbered inode[2..3] regardless (spec section 9).
+   *
+   *  CASE-BLIND, not case-ENUMERATED. The six arms spelled out pure-lower and
+   *  pure-UPPER only, so a MIXED `i(V.X1.Vd)` fell through to the `i(` arm and
+   *  advanced 2 instead of 4: path `.V.X1.` instead of `.X1.`. Before item 1
+   *  that spelling was unreachable; under `preserve` it is what a case-capable
+   *  ngspice writes, and item 4's senders now emit it.
+   *
+   *  FOUR characters, not the reader's five, and that is NOT the same
+   *  disagreement. Both drop the two characters `v.`; the reader keeps the `x`
+   *  because it REWRITES `i(v.x` -> `i(x` and needs it in the result, while
+   *  this arm SKIPS the prefix and hands the rest on. Requiring the `x` here
+   *  would push `i(v.foo)` into the `i(` arm, which then splits a bogus path
+   *  component `v` off the front of it -- strictly worse than treating it as
+   *  the current of `foo`. See the spec for the round trip against
+   *  send_current_to_graph(), which is what writes these names.
+   *
+   * NO MODE HERE, deliberately: this is called per graph node per REDRAW
+   * (draw.c, auto_hilight_graph_nodes) and must not touch the uncached
+   * resolver. It is a parse, and the parse is the same in every mode. */
+  if(!my_strncasecmp(n, "i(v.", 4)) {current = 1; nptr += 4;}
+  else if(!my_strncasecmp(n, "i(", 2)) {current = 1; nptr += 2;}
+  else if(!my_strncasecmp(n, "v(", 2)) {nptr += 2;}
   if((ptr = strrchr(n, ')'))) *ptr = '\0';
 
   if((ptr2 = strrchr(nptr, '.'))) {
@@ -774,6 +924,10 @@ void create_plot_cmd(void)
   char tcl_str[200];
   char rawfile[PATH_MAX];
   int simtype;
+  /* casemode item 4: resolved ONCE per gesture -- source 3
+   * of the resolution walks the whole schematic and has no cache.
+   * RAW_CASE_UNKNOWN is the never-reached-a-sender value. */
+  int case_mode = RAW_CASE_UNKNOWN;
 
   tcleval("sim_is_xyce");
   simtype = atoi( tclresult() );
@@ -803,6 +957,13 @@ void create_plot_cmd(void)
   }
   if(viewer == GAW) tcleval("setup_tcp_gaw");
   if(tclresult()[0] == '0')  return;
+  /* casemode item 4: resolved here, ONCE, and only where the answer can be
+   * used. The GAW arm below is the only one that consults it -- the NGSPICE arm
+   * writes `tok` verbatim and the BESPICE arm folds nothing -- and this sits
+   * after the socket check, so a gaw that is configured but not running pays
+   * nothing either. Before the highlight loop, so the loop does not pay per
+   * net. */
+  if(viewer == GAW) case_mode = hilight_sender_case_mode();
   if(viewer == BESPICE) set_rawfile_for_bespice();
   idx = 1;
   first = 1;
@@ -844,7 +1005,12 @@ void create_plot_cmd(void)
           my_strdup(_ALLOC_ID_, &t, tok);
           my_strdup2(_ALLOC_ID_, &p, (entry->path)+1);
           if(simtype == 0 ) { /* spice */
-            tclvareval("puts $gaw_fd {copyvar v(", strtolower(p), strtolower(t),
+            /* casemode item 4: BOTH halves are gated, never just the token. A
+             * path folded beside a verbatim token is a half-fix that looks
+             * green on a flat schematic and misses the moment anything is
+             * hierarchical. */
+            if(sender_folds_lower(case_mode)) { strtolower(p); strtolower(t); }
+            tclvareval("puts $gaw_fd {copyvar v(", p, t,
                         ") sel #", color_str, "}\nvwait gaw_fd\n", NULL);
           } else { /* Xyce */
             char *c=p;
@@ -852,7 +1018,10 @@ void create_plot_cmd(void)
               if(*c == '.') *c = ':'; /* Xyce uses : as path separator */
               ++c;
             }
-            tclvareval("puts $gaw_fd {copyvar ", strtoupper(p), strtoupper(t),
+            /* casemode item 4: the uppercase is now a FALLBACK, not an
+             * assertion -- see sender_folds_upper(). */
+            if(sender_folds_upper(case_mode)) { strtoupper(p); strtoupper(t); }
+            tclvareval("puts $gaw_fd {copyvar ", p, t,
                         " sel #", color_str, "}\nvwait gaw_fd\n", NULL);
           }
           my_free(_ALLOC_ID_, &p);
@@ -1582,7 +1751,11 @@ static void send_net_to_bespice(int simtype, const char *node)
   }
 }
 
-static void send_net_to_graph(char **s, int simtype, const char *tok)
+/* casemode item 4: `case_mode` is the gesture's resolved mode -- see
+ * hilight_sender_case_mode(). It is a parameter and not a call because
+ * hilight_net() sends one query per selected net and the resolution is
+ * uncached. Spec doc/claude/specs/raw_case_mode.md section 11. */
+static void send_net_to_graph(char **s, int simtype, const char *tok, int case_mode)
 {
   int c, k, tok_mult;
   char ss[1024] = "";
@@ -1598,7 +1771,7 @@ static void send_net_to_graph(char **s, int simtype, const char *tok)
   for(k=1; k<=tok_mult; ++k) {
     my_strdup(_ALLOC_ID_, &t, find_nth(fqnet, ",", "", 0, k));
     if(!t) continue;
-    strtolower(t);
+    if(sender_folds_lower(case_mode)) strtolower(t);
     if(simtype == 0 ) { /* ngspice */
       dbg(1, "s color=%d\n", t, c);
       my_snprintf(ss, S(ss), "%s %d ", t, c);
@@ -1613,7 +1786,7 @@ static void send_net_to_graph(char **s, int simtype, const char *tok)
   my_free(_ALLOC_ID_, &fqnet);
 }
 
-static void send_net_to_gaw(int simtype, const char *node)
+static void send_net_to_gaw(int simtype, const char *node, int case_mode)
 {
   int c, k, tok_mult;
   Node_hashentry *node_entry;
@@ -1636,10 +1809,11 @@ static void send_net_to_gaw(int simtype, const char *node)
     if(tclresult()[0] == '0') return;
     my_strdup2(_ALLOC_ID_, &p, xctx->sch_path[xctx->currsch]+1);
     path = p;
-    strtolower(path);
+    /* casemode item 4: the PATH is gated too, not only the token. */
+    if(sender_folds_lower(case_mode)) strtolower(path);
     for(k=1; k<=tok_mult; ++k) {
       my_strdup(_ALLOC_ID_, &t, find_nth(expanded_tok, ",", "", 0, k));
-      strtolower(t);
+      if(sender_folds_lower(case_mode)) strtolower(t);
       if(simtype == 0 ) { /* ngspice */
         tclvareval("puts $gaw_fd {copyvar v(", path, t,
                     ") sel #", color_str, "}\nvwait gaw_fd\n", NULL);
@@ -1688,13 +1862,14 @@ static void send_current_to_bespice(int simtype, const char *node)
   my_free(_ALLOC_ID_, &t);
 }
 
-static void send_current_to_graph(char **s, int simtype, const char *node)
+static void send_current_to_graph(char **s, int simtype, const char *node, int case_mode)
 {
   int c, k, tok_mult, start_level, there_is_hierarchy;
   const char *expanded_tok;
   const char *tok;
   char *t=NULL, *p=NULL, *path;
   char ss[1024] = "";
+  char vdot[3];
 
   if(!node || !node[0]) return;
   tok = node;
@@ -1711,13 +1886,17 @@ static void send_current_to_graph(char **s, int simtype, const char *node)
       ++path;
     }
   }
-  strtolower(path);
+  /* casemode item 4: the PATH is gated too. */
+  if(sender_folds_lower(case_mode)) strtolower(path);
   there_is_hierarchy = (strstr(path, ".") != NULL);
   for(k=1; k<=tok_mult; ++k) {
     my_strdup(_ALLOC_ID_, &t, find_nth(expanded_tok, ",", "", 0, k));
-    strtolower(t);
+    if(sender_folds_lower(case_mode)) strtolower(t);
     if(!simtype) { /* ngspice */
-      my_snprintf(ss, S(ss), "i(%s%s%s) %d", there_is_hierarchy ? "v." : "", path, t, c);
+      /* the prefix follows the token's own first character -- see
+       * sender_current_prefix(), which records the measurement */
+      my_snprintf(ss, S(ss), "i(%s%s%s) %d",
+                  there_is_hierarchy ? sender_current_prefix(t, vdot) : "", path, t, c);
       my_strcat(_ALLOC_ID_, s, ss);
     } else { /* Xyce */
       /*
@@ -1732,13 +1911,14 @@ static void send_current_to_graph(char **s, int simtype, const char *node)
   my_free(_ALLOC_ID_, &t);
 }
 
-static void send_current_to_gaw(int simtype, const char *node)
+static void send_current_to_gaw(int simtype, const char *node, int case_mode)
 {
   int c, k, tok_mult, there_is_hierarchy;
   const char *expanded_tok;
   const char *tok;
   char color_str[8];
   char *t=NULL, *p=NULL, *path;
+  char vdot[3];
 
   if(!node || !node[0]) return;
   tok = node;
@@ -1751,13 +1931,20 @@ static void send_current_to_gaw(int simtype, const char *node)
   if(tclresult()[0] == '0') return;
   my_strdup2(_ALLOC_ID_, &p, xctx->sch_path[xctx->currsch]+1);
   path = p;
-  strtolower(path);
+  /* casemode item 4: path and token both gated. NOTE, observed and deliberately
+   * NOT changed here: this function's Xyce arm LOWERCASES (it shares these two
+   * calls with the spice arm) while create_plot_cmd()'s Xyce arm UPPERCASES.
+   * That divergence predates this item and unifying it is not item 4's scope --
+   * recorded in spec section 11 so it is a known hole, not a surprise. */
+  if(sender_folds_lower(case_mode)) strtolower(path);
   there_is_hierarchy = (xctx->currsch > 0);
   for(k=1; k<=tok_mult; ++k) {
     my_strdup(_ALLOC_ID_, &t, find_nth(expanded_tok, ",", "", 0, k));
-    strtolower(t);
+    if(sender_folds_lower(case_mode)) strtolower(t);
     if(!simtype) { /* spice */
-      tclvareval("puts $gaw_fd {copyvar i(", there_is_hierarchy ? "v." : "", path, t,
+      /* the prefix follows the token -- see sender_current_prefix() */
+      tclvareval("puts $gaw_fd {copyvar i(",
+                  there_is_hierarchy ? sender_current_prefix(t, vdot) : "", path, t,
                   ") sel #", color_str, "}\nvwait gaw_fd\n", NULL);
     } else {       /* Xyce */
       char *c=p;
@@ -2387,12 +2574,21 @@ void hilight_net(int viewer)
    * pressing 9 again on the same net steps to the next style (spec net_hilight_styles §5.4) */
   int what = xctx->hilight_replace ? XINSERT : XINSERT_NOREPLACE;
   int adv  = xctx->hilight_replace; /* force per-net advance even when nothing newly added */
+  /* casemode item 4: ONE resolution for the whole gesture, and only for the two
+   * viewers that consult it. Source 3 of raw_resolve_case_mode() walks every
+   * instance and wire (147 ms at 2000 instances), while this loop can send one
+   * query per selected net -- and `viewer == 0` is the plain `xschem hilight` /
+   * key-9 path, which sends nothing at all. The three send_*_to_bespice() arms
+   * fold nothing and take no mode, so BESPICE must not pay for one either.
+   * RAW_CASE_UNKNOWN is the unreachable-by-a-sender value. */
+  int case_mode = RAW_CASE_UNKNOWN;
   incr_hi = tclgetboolvar("incr_hilight");
   prepare_netlist_structs(0);
   dbg(1, "hilight_net(): entering\n");
   rebuild_selected_array();
   tcleval("sim_is_xyce");
   sim_is_xyce = atoi( tclresult() );
+  if(viewer == XSCHEM_GRAPH || viewer == GAW) case_mode = hilight_sender_case_mode();
   for(i=0;i<xctx->lastsel; ++i) {
    n = xctx->sel_array[i].n;
    switch(xctx->sel_array[i].type) {
@@ -2402,10 +2598,10 @@ void hilight_net(int viewer)
      dbg(1, "hilight_net(): wire[n].node=%s, incr_hi=%d\n", xctx->wire[n].node, incr_hi);
      if(!bus_hilight_hash_lookup(xctx->wire[n].node, xctx->hilight_color, what)) {
        if(viewer == XSCHEM_GRAPH) {
-         send_net_to_graph(&s, sim_is_xyce, xctx->wire[n].node);
+         send_net_to_graph(&s, sim_is_xyce, xctx->wire[n].node, case_mode);
          dbg(1, "1 hilight_net(): send_net_to_graph() sets s=%s\n", s);
          dbg(1, "hilight_net(): wire[n].node=%s\n", xctx->wire[n].node);
-       } else if(viewer == GAW) send_net_to_gaw(sim_is_xyce, xctx->wire[n].node);
+       } else if(viewer == GAW) send_net_to_gaw(sim_is_xyce, xctx->wire[n].node, case_mode);
        else if(viewer == BESPICE) send_net_to_bespice(sim_is_xyce, xctx->wire[n].node);
      }
      if((xctx->some_nets_added || adv) && incr_hi) {
@@ -2419,11 +2615,11 @@ void hilight_net(int viewer)
        dbg(1, "hilight_net(): node[0]=%s, incr_hi=%d\n", xctx->inst[n].node[0], incr_hi);
        if(!bus_hilight_hash_lookup(xctx->inst[n].node[0], xctx->hilight_color, what)) {
          if(viewer == XSCHEM_GRAPH) {
-           send_net_to_graph(&s, sim_is_xyce, xctx->inst[n].node[0]);
+           send_net_to_graph(&s, sim_is_xyce, xctx->inst[n].node[0], case_mode);
            dbg(1, "2 hilight_net(): send_net_to_graph() sets s=%s\n", s);
            dbg(1, "hilight_net(): inst[n].node[0]=%s\n", xctx->inst[n].node[0]);
          }
-         else if(viewer == GAW) send_net_to_gaw(sim_is_xyce, xctx->inst[n].node[0]);
+         else if(viewer == GAW) send_net_to_gaw(sim_is_xyce, xctx->inst[n].node[0], case_mode);
          else if(viewer == BESPICE) send_net_to_bespice(sim_is_xyce, xctx->inst[n].node[0]);
        }
        if((xctx->some_nets_added || adv) && incr_hi) {
@@ -2435,8 +2631,8 @@ void hilight_net(int viewer)
        xctx->inst[n].color = xctx->hilight_color;
        inst_hilight_hash_lookup(n, xctx->hilight_color, XINSERT_NOREPLACE);
        if(type &&  (!strcmp(type, "ammeter") || !strcmp(type, "vsource")) ) {
-         if(viewer == XSCHEM_GRAPH) send_current_to_graph(&s, sim_is_xyce, xctx->inst[n].instname);
-         else if(viewer == GAW) send_current_to_gaw(sim_is_xyce, xctx->inst[n].instname);
+         if(viewer == XSCHEM_GRAPH) send_current_to_graph(&s, sim_is_xyce, xctx->inst[n].instname, case_mode);
+         else if(viewer == GAW) send_current_to_gaw(sim_is_xyce, xctx->inst[n].instname, case_mode);
          else if(viewer == BESPICE) send_current_to_bespice(sim_is_xyce, xctx->inst[n].instname);
        }
        if(incr_hi) incr_hilight_color();

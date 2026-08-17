@@ -1215,6 +1215,23 @@ typedef struct {
    * (DECISIONS.md B2b; the upstream patch that would make the line appear by
    * default is written and NOT SENT). Source 2 of 4. */
   int hdr_case_mode;
+  /* SOURCE 3's LAST VERDICT, REMEMBERED SO DESCENDING CANNOT UN-RESOLVE IT.
+   * raw_case_mode_schematic() compares the raw's names against the labels of
+   * the schematic that is CURRENT (sch_owned_name() walks xctx->inst and
+   * xctx->wire), so it can only speak while the raw's own schematic is the
+   * current one -- and the moment the user descends into X1, xctx holds the
+   * CHILD's objects and the source falls silent. That silence was a real
+   * defect: it made the item-4 cross-probe gate go inert exactly one level
+   * down, which is the hierarchical case the gate exists for.
+   *
+   * The comparison is therefore stamped here whenever it is computed for real,
+   * and replayed -- never recomputed against the wrong objects -- while the
+   * user is somewhere BELOW inside that same hierarchy (raw->schname still
+   * equals xctx->sch[raw->level]). It is primed once at read time, so a raw
+   * that is loaded and immediately descended into still has an answer.
+   * RAW_CASE_UNKNOWN means "source 3 has never had anything to say".
+   * doc/claude/specs/raw_case_mode.md sections 10 and 11. */
+  int sch_case_mode;
   /* THE USER'S EXPLICIT STATEMENT about this database, set by
    * `xschem raw casemode <mode>`; RAW_CASE_UNKNOWN (the default) means the user
    * has not said. Source 1 of 4, and it beats the header, because a person

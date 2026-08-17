@@ -1,7 +1,7 @@
 # Raw case mode — names are stored verbatim; `case_sensitive` is a lookup flag
 
-Status: **items 1, 2 and 3 of the casemode batch are implemented** (this
-document); items 4–15 are not. Written 2026-08-16.
+Status: **items 1, 2, 3 and 4 of the casemode batch are implemented** (this
+document); items 5–15 are not. Written 2026-08-16.
 
 Design origin: `doc/claude/casemode_batch/DESIGN_REVISION.md` (sections 4, 5, 6,
 7, 8) and `doc/claude/casemode_batch/DECISIONS.md`. Plan item list:
@@ -225,6 +225,17 @@ Xyce-specific fold hung off the existing Xyce-shaped branch (`:` → `.`,
    revision is that the read path stops guessing; adding a per-vendor fold back
    into `read_dataset()` re-creates the thing being deleted.
 
+> **EXTENDED by item 4, 2026-08-16 — the SENDER side, and it does not
+> contradict this.** `create_plot_cmd()`'s gaw Xyce arm `strtoupper()`s the
+> query it sends, i.e. it asserts in code the premise this section declined to
+> assert about a *file*. The two are reconciled in **§11**: this ruling is about
+> identifying an unknown FILE, where no measured identification exists; a sender
+> takes the simulator's identity from the CONFIGURED command (`sim_is_xyce`),
+> which is a property of the session the user set up, not a guess about bytes.
+> Item 4 demoted the uppercase from an assertion to a **no-evidence fallback** —
+> positive evidence that the database keeps its case beats it, `fold` and
+> `unknown` are byte-for-byte unchanged. Xyce is still UNVERIFIED.
+
 **What would reopen this:** a real Xyce raw. If one turns up and Xyce is
 confirmed to uppercase, the fix belongs in the **lookup** (a case-insensitive
 rung, which item 2 provides anyway) or in item 3's four-source mode resolution —
@@ -237,8 +248,9 @@ Until then, `Xyce is UNVERIFIED` stays in item 15's documentation.
 
 - Mode detection from the `Option: casemode=` header, schematic comparison or a
   capital sniff — item 3, now **§10 below**.
-- The four `hilight.c` senders, the viewer Tcl, `sod_expr`, the simulator
-  profile and its probe — items 4–13.
+- The viewer Tcl, `sod_expr`, the simulator profile and its probe — items 5–13.
+  The `hilight.c` senders were item 4 and are now **§11 below** (and there are
+  five of them plus a receiver-side parse, not four).
 
 ## 7. Tests
 
@@ -713,6 +725,27 @@ two files that have nothing to do with each other. A comparison against a
 schematic the file was not produced from is not weak evidence, it is none.
 Checks `CS62b`–`CS62d`.
 
+**AMENDED by item 4's fix round — "not its own schematic" was TWO cases, and
+conflating them silenced the source one level down.** `sch_owned_name()` walks
+`xctx->inst`/`xctx->wire`, i.e. whatever level the user is *currently* standing
+on, so the gate as first written also fired the moment you descended into `X1` —
+where the file does belong to the design and only the objects in `xctx` changed.
+The sender gate in §11 therefore went inert in exactly the hierarchical case it
+exists for (measured: `raw casemode -all` = `preserve schematic` at the top,
+`unknown none` one level down).
+
+Recomputing there is not an option: it would compare the raw's top-level names
+against the *child's* labels, which is a spelling-coincidence test, not
+evidence. So the verdict is **stamped on the Raw** (`Raw.sch_case_mode`)
+whenever it is computed against the right schematic, and **replayed** — never
+recomputed — while the user is somewhere below inside that same hierarchy
+(`raw->schname` still equals `xctx->sch[raw->level]`). It is primed once at
+**read time**, in `raw_read()` and `table_read()` right after `raw->level` is
+stamped, which is the one moment the raw's own schematic is guaranteed current;
+so a raw that is loaded and immediately descended into still has an answer
+(`CS84b`). The unrelated-design case above is untouched and still answers
+`unknown` (`CS62b`–`CS62d`, and the `OTHER:` leg of item 4's probe).
+
 `CS61h` is the one that holds the candidate filter down, and it is worth stating
 because `CS61d` does not: a name the schematic does not own cannot pollute the
 vote anyway, so excluding `v(x1.…)` is only observable when the schematic
@@ -762,3 +795,259 @@ driven through this binary by hand — see the item 3 receipt.
 Not covered: no simulator writes a raw during the suite (no ngspice is invoked);
 the GUI control B2a asks for — "show what was detected and allow an override" —
 is **items 5 and 13**, and this item deliberately ships only the engine side.
+
+## 11. THE CROSS-PROBE SENDERS (Ctrl-K, Ctrl-Shift-X) — casemode item 4
+
+`PLAN.md` §3b item 4. Everything above is about what a database holds and how a
+query resolves against it. This is about who **writes** the query: the paths
+that take a name off the schematic and hand it to a plotter.
+
+### The real site map — five senders and one receiver, not four senders
+
+The plan names "the four `hilight.c` senders". Grepped at `577ef5bc`, the file
+does nine `strtolower()` calls on eight lines, two `strtoupper()` on one more,
+and carries a **receiver-side** parse nothing in the plan mentions:
+
+| site | what it is | folds |
+|---|---|---|
+| `hilight_graph_node()` | RECEIVER: a graph's `node=` → (path, net/device) | — (a parse) |
+| `create_plot_cmd()`, gaw spice arm | THE FIFTH SENDER, `Ctrl-Shift-X` | `strtolower(p)`, `strtolower(t)` |
+| `create_plot_cmd()`, gaw Xyce arm | ditto | `strtoupper(p)`, `strtoupper(t)` |
+| `send_net_to_graph()` | Ctrl-K → the built-in graph | `strtolower(t)` |
+| `send_net_to_gaw()` | Ctrl-K → gaw | `strtolower(path)`, `strtolower(t)` |
+| `send_current_to_graph()` | Ctrl-K → the built-in graph | `strtolower(path)`, `strtolower(t)` |
+| `send_current_to_gaw()` | Ctrl-K → gaw | `strtolower(path)`, `strtolower(t)` |
+
+The three `send_*_to_bespice()` functions fold **nothing** and are unchanged;
+`create_plot_cmd()`'s ngspice arm writes `tok` verbatim and is unchanged too.
+
+**Every sender folds BOTH the path and the token**, so "four senders" is really
+four sender pairs plus `create_plot_cmd`'s. A gate applied to the token but not
+the path is a half-fix that is green on a flat schematic and wrong the moment
+anything is hierarchical — measured, not asserted, **on every one of the five**:
+mutations `MH`/`MJ`/`MM` ungate a path and redden `CS73`/`CS72`/`CS75`, and
+`M8`/`M9` do it to `create_plot_cmd()`'s two arms and redden `CS87`/`CS88`.
+
+Getting that coverage cost two fixture corrections, both worth recording:
+
+- Every `create_plot_cmd` check in the item's first round ran **flat**, where
+  `entry->path` is `"."` and the path string is empty — so the fifth sender's
+  path half was driven by nothing at all and `M8` passed 21/21. `CS87`/`CS88`
+  run it descended.
+- The Xyce arm **uppercases**, so its path half is invisible unless the path
+  contains a lowercase character. With the sub-instance named `X1`, `strtoupper`
+  on `X1:` is a no-op and `M9` still passed 30/30. The fixture gained a second
+  instance named **`Xa1`**, and `M9` then reddens `CS88` alone.
+
+### RULING — the fold is gated on the LOADED database, then on the LOOKUP, then on the floor
+
+```
+mode = raw_resolve_case_mode(xctx->raw, NULL)          /* §10's four sources */
+if mode != unknown:            use it
+else if raw->case_sensitive:   mode = distinguish      /* §2's lookup flag   */
+else:                          mode = sim_case_mode_floor()   /* §10's floor */
+fold the query  <=>  mode == fold
+```
+
+`fold` folds, `preserve` / `distinguish` / `upper` send the schematic's own
+spelling verbatim. So **a stock ngspice user sees no change whatsoever**.
+
+Why not fold always, as before? Because item 1 stopped folding stored names and
+item 2's folded rung — the thing that made a lowercased query still resolve — is
+**suppressed under `distinguish`** (§9). A lowercased cross-probe into a
+`distinguish` database resolves by luck or not at all, and `raw_add_vector()`
+turns a miss into a silent all-zero column (`0418`). Under `preserve` the
+verbatim query is also strictly better: it hits rung 1 instead of rung 2, and it
+is what gets **persisted** into the graph's `node=` attribute.
+
+**Why `Raw.case_sensitive` is consulted at all, and why it is ranked SECOND.**
+It is set by exactly one thing — `xschem raw read … -case distinguish` — and it
+does exactly one thing: it switches OFF the folded rung. On such a database a
+folded query is not "probably fine", it is *unrescuable*. That is far too strong
+to sit under a global default the user may never have looked at, so it **beats
+the floor** (`CS82`: `raw casemode -all` = `unknown none`, floor = `fold`, and
+the gesture still emits `v(MidNode)`, which resolves — where before the fix
+round it emitted `v(midnode)` and `xschem raw index midnode` returned `-1`).
+
+But it is weaker than the four sources, and that ordering is **measured, not
+stylistic**. `case_sensitive` is a statement about the *lookup*; the four sources
+read the file's actual *bytes*, and the two can genuinely disagree. Read
+`tr_fold.raw` — which really does hold `v(in) v(midnode) i(vs)` — with `-case
+distinguish` against a schematic drawn `In`/`MidNode`:
+
+```
+xschem raw casemode -all      -> fold schematic
+xschem raw index {v(midnode)} ->  2      the folded query is the only one
+xschem raw index {v(MidNode)} -> -1      that can resolve
+```
+
+A blanket "never fold when `case_sensitive`" — the shape two reviewers proposed
+— breaks exactly the case it was written to protect. It is driven as mutation
+`M2` of the fix round and reddens `CS83` alone. Evidence about the bytes wins.
+
+**Why the floor is legitimate here and forbidden in §10.** §10 rules that
+`sim_case_mode` may never leak into a *file's* verdict, because that asserts a
+fact about bytes somebody else wrote. A cross-probe is not a claim about a file:
+it is a request about a **run's** data — "which spelling will the thing I am
+about to talk to understand?" — which is exactly what the floor answers, and it
+is the *only* answer available for gaw, which reads a file xschem may never have
+opened. Checks `CS66b`, `CS70`.
+
+**And the gate must survive a DESCEND.** Source 3 is the only source a user gets
+without typing anything, and it fell silent one level down — see §10's amended
+"a comparison only speaks for its own schematic". The verdict is stamped on the
+Raw and replayed inside its own hierarchy; `CS84` drives a full Ctrl-K, top and
+descended, with **no `xschem raw casemode` verb and no `-case`** anywhere, and
+`CS84b` drives read-then-descend-immediately so the priming is covered too.
+
+### RULING — resolve ONCE PER GESTURE, and never from a redraw
+
+`raw_resolve_case_mode()`'s third source walks every instance and wire and has
+**no cache**: 147 ms at 2000 instances × 500 names (item 3 receipt §5). So the
+mode is resolved once per gesture — once in `hilight_net()`, once in
+`create_plot_cmd()` — and passed down as a parameter. `hilight_net()` sends one
+query per selected net, and a per-net resolution would multiply the cost by the
+selection size.
+
+Both resolutions sit **behind the "nowhere to send to" test AND behind the
+viewer test**, not at the top of their function. Only two arms consult
+`case_mode` at all: `create_plot_cmd()`'s GAW arm (its NGSPICE arm writes `tok`
+verbatim) and `hilight_net()`'s XSCHEM_GRAPH and GAW arms (all three
+`send_*_to_bespice()` fold nothing and take no mode). So:
+
+- `hilight_net()` resolves only when `viewer == XSCHEM_GRAPH || viewer == GAW`.
+  `viewer == 0` is plain `xschem hilight` / the Cadence key 9, which sends
+  nothing and is the most common highlight gesture in the tool.
+- `create_plot_cmd()` resolves after `if(!exists || !viewer) return;` **and**
+  after the `setup_tcp_gaw` socket check, under `if(viewer == GAW)` — so a gaw
+  that is configured but not running pays nothing either.
+
+**A gesture that cannot use the answer does not pay for it.** The first draft of
+this item said "a gesture that sends nothing pays nothing", which was true but
+narrower than it read: `create_plot_cmd()` resolved for *every* viewer,
+including NGSPICE and BESPICE. Driven with an `fprintf` in
+`hilight_sender_case_mode()` and three viewer names in turn: before the fix
+round all three printed `SENDERMODE-RESOLVED`, after it only `Gaw viewer` does.
+No check covers this — it has no observable output — and it is listed as such in
+the item's receipt.
+
+`hilight_graph_node()` takes **no mode at all**. It is called per graph node per
+**redraw** (`draw.c`, `auto_hilight_graph_nodes`), which is precisely the hot
+path item 3 warned against polling — and it needs none: it is a parse, and the
+parse is the same in every mode.
+
+### RULING — ngspice's hierarchical-current prefix is the DEVICE'S OWN first letter
+
+The item's first round emitted `i(` + `"v."` + path + token whenever the send
+was hierarchical, and asserted in three places — `hilight.c`, this section, and
+a check comment — that `v.` is "ngspice's own prefix, not a user name, so it
+stays lowercase in every mode". **That is false.** Measured 2026-08-16 on the
+batch's case-capable build (`ver_50`, `.subckt SubX` holding one vsource, bare
+`write`, no vector list):
+
+| deck writes | `-D casemode=fold` | `preserve` | `distinguish` |
+|---|---|---|---|
+| `Vs` | `i(v.x1.vs)` | **`i(V.X1.Vs)`** | **`i(V.X1.Vs)`** |
+| `vs` | `i(v.x1.vs)` | **`i(v.X1.vs)`** | **`i(v.X1.vs)`** |
+
+So the prefix is not a fixed letter *and* not a fixed function of the mode: it
+is **the device's own first character**, case-folded along with everything else.
+Under `distinguish` the old spelling `i(v.X1.Vs)` resolved to `-1` — the
+all-zero column of `0418`, in the configuration this item exists to close — and
+for gaw, which has no folded rung at all, `preserve` was wrong too.
+
+The fix needs no mode branch: take the first character of the token **as this
+sender is about to emit it** (`sender_current_prefix()`). Under `fold` the token
+is already lowercased, so the result is the literal `v.` the code emitted before
+item 4 — byte-for-byte unchanged on the stock path. Checks `CS72`/`CS75` drive
+the uppercase device, `CS72b`/`CS75b` the lowercase one; driving only the first
+would let a hard-coded `"V."` pass, which is what a reviewer's prescribed fix
+("`v.` under `fold`, `V.` under `preserve`/`distinguish`/`upper`") would have
+shipped — mutation `M4` implements exactly that and reddens `CS72b`/`CS75b`.
+
+### RULING — Xyce's uppercase becomes a FALLBACK, not an assertion
+
+`create_plot_cmd()`'s Xyce arm `strtoupper()`s the query. That asserts in code
+the very premise §5 declined to assert — "Xyce uppercases" — and leaving the two
+documents disagreeing was not acceptable. They are reconciled, not merged:
+
+- **§5 is about identifying an unknown FILE.** There is no measured way to do
+  it (`Command:` is never parsed; `sim_is_xyce` regexps the *configured
+  simulator command*, never the file), so a destructive read-path fold gated on
+  a heuristic was refused.
+- **Here the identity is not guessed.** `sim_is_xyce` is exactly the right
+  authority for a *sender*: the user configured which simulator this session
+  talks to, and the query is being written for that program.
+
+So the convention survives, demoted to the no-evidence default:
+`sender_folds_upper()` uppercases unless the resolution says `preserve` or
+`distinguish`. `fold` and `unknown` are byte-for-byte what they were
+(`CS67c`), so nothing changes on the path nobody has measured; a database known
+to keep its case is sent verbatim (`CS67`, `CS67b`). **Xyce remains
+UNVERIFIED** — item 15 still has to say so.
+
+**Observed and deliberately NOT changed:** `send_current_to_gaw()`'s Xyce arm
+**lowercases** (it shares the two `strtolower` calls with its spice arm) while
+`create_plot_cmd()`'s Xyce arm **uppercases**, and `send_net_to_gaw()`'s Xyce
+branch is byte-identical to its ngspice branch. That three-way divergence
+predates this item and unifying it is not item 4's scope; recorded here so it is
+a known hole rather than a surprise for item 15.
+
+### RULING — the receiver-side parse is ANCHORED and CASE-BLIND, and keeps its 4
+
+`hilight_graph_node()` is the sender's twin: it takes a graph's `node=` — a
+simulator name — and turns it back into a (path, net-or-device) pair. It had
+both defects item 2 fixed in `get_raw_index()`'s rung 4, plus one item 2 could
+not have:
+
+1. **Unanchored.** `strstr(n, "i(")` matched at *any* offset while `nptr`
+   advanced a fixed 2 or 4 **from position 0**, so a hit anywhere else sliced
+   the name at the wrong place. Measured on the pre-item binary: `zi(vs)`
+   parsed to the device current `" (vs"`. Now `my_strncasecmp(n, …, 2|4)`.
+2. **Case ENUMERATED, not handled.** Six arms spelled out pure-lower and
+   pure-UPPER only (`i(v.`/`I(V.`, `i(`/`I(`, `v(`/`V(`), so a **mixed**
+   `i(V.X1.Vs)` fell through to the 2-character `i(` arm and produced path
+   `.V.X1.` instead of `.X1.` — measured, `CS77`. Before item 1 that spelling
+   was unreachable; under `preserve` it is exactly what the senders above now
+   emit, which is why the two halves of item 4 belong together.
+3. **Four characters, not the reader's five — and that is NOT a disagreement.**
+   Both drop the two characters `v.`. The reader keeps the `x` because it
+   *rewrites* `i(v.x` → `i(x` and needs it in the result; this arm *skips* the
+   prefix and hands the rest on, so its advance of 4 = `i(` + `v.` is the same
+   drop. Requiring the `x` here would push `i(v.foo)` into the `i(` arm, which
+   then splits a bogus path component `v` off the front of it — strictly worse
+   than reading it as the current of `foo`. The round trip that matters is
+   against `send_current_to_graph()`, which writes `i(` + `v.` + `<path>` +
+   `<token>` where `<path>` is a hierarchy of instance names; `CS76`–`CS79`
+   drive both spellings of it.
+
+### Tests
+
+`tests/headless/test_hilight_case_senders.tcl`, checks `CS65`–`CS88` (30
+checks — 21 from the item, 9 added by the fix round: `CS72b` rewritten plus
+`CS75b`, `CS82`–`CS88`). **It needs a display**, unlike `test_raw_case_mode.tcl`: the four
+`hilight_net()` senders are reachable only through the action registry
+(`hilight.send_to_waveform`), and `xschem callback .drw …` segfaults with no
+window. gaw is faked — `setup_tcp_gaw` shadowed, `gaw_fd` a plain file, and
+`vwait` renamed away because the real handshake blocks on a variable only the
+absent gaw writes. Nothing in it prints the substring `SKIP`: a machine with no
+gaw is the normal case here, not a skipped test.
+
+Most checks compare the **pair** (what the sender emits under `fold` and under
+`preserve`) in one assertion, so "always fold" and "never fold" fail equally
+loudly — mutations `MA` and `MB` of the item 4 sabotage table produce
+overlapping red sets of 17 and 15, which is the design working. `CS82` and
+`CS83` go one step further and assert that the emitted query **resolves**
+(`xschem raw index` ≥ 0), because "spelled correctly" is a proxy and "resolves"
+is the outcome.
+
+`CS71` (a descend precondition) has no item-4 code beneath it and is **not
+evidence**; `CS65` is a fixture guard, movable only by a data sabotage. The
+other 28 each have a named mutation that reddens them.
+
+Not covered: no gaw and no Xyce were involved, so what those two programs do
+with the query is still unmeasured; `send_*_to_bespice()` is untouched and
+undriven; the `upper` verdict reaches the senders only through the code path
+`CS67`/`CS67c` exercise, never from a real uppercasing simulator; and the
+"only the viewers that use the answer resolve it" fix has no check at all — it
+produces no observable output and was driven with an instrumented build.

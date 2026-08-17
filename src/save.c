@@ -1371,6 +1371,13 @@ int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, doub
       my_strdup2(_ALLOC_ID_, &raw->rawfile, f);
       my_strdup2(_ALLOC_ID_, &raw->schname, xctx->sch[xctx->currsch]);
       raw->level = xctx->currsch;
+      /* PRIME SOURCE 3 while its own schematic is still the current one. The
+       * comparison is read-only (no prepare_netlist_structs, no side effects)
+       * and this is the one moment it is guaranteed answerable, so the verdict
+       * survives a descend -- see Raw.sch_case_mode. Off any hot path: one walk
+       * per raw READ, against 147 ms per call if a Ctrl-K asked for it instead
+       * (item 3 receipt section 5). */
+      raw_case_mode_schematic(raw);
       raw->allpoints = 0;
       for(i = 0; i < raw->datasets; ++i) {
         raw->allpoints +=  raw->npoints[i];
@@ -2450,6 +2457,27 @@ int raw_case_mode_schematic(Raw *raw)
   if(!raw || !raw->names || !xctx) return RAW_CASE_UNKNOWN;
   if(raw->level < 0 || !raw->schname ||
      !xctx->sch[xctx->currsch] || strcmp(raw->schname, xctx->sch[xctx->currsch])) {
+    /* NOT THE RAW'S OWN SCHEMATIC. Two very different reasons land here, and
+     * conflating them made this source go silent one level down -- casemode
+     * item 4 fix round, spec section 11.
+     *
+     * DESCENDED INSIDE THE RAW'S OWN HIERARCHY. raw->schname is still what sits
+     * at raw->level of the current stack, so the file does belong to this
+     * design; what changed is only WHICH level's objects xctx holds. Recompute
+     * we cannot -- sch_owned_name() would compare the raw's top-level names
+     * against the child's labels, which is a coincidence test, not evidence --
+     * so the verdict reached at the raw's own level is REPLAYED. It was primed
+     * at read time, so descending immediately after a read still has it. */
+    if(raw->level >= 0 && raw->level <= xctx->currsch && raw->schname &&
+       xctx->sch[raw->level] && !strcmp(raw->schname, xctx->sch[raw->level])) {
+      dbg(1, "raw_case_mode_schematic(): descended to %s inside %s -> cached %s\n",
+          xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "<NULL>",
+          raw->schname, raw_case_mode_word(raw->sch_case_mode));
+      return raw->sch_case_mode;
+    }
+    /* AN UNRELATED DESIGN. Item 3's rule stands untouched: `xschem load` does
+     * not clear a loaded database, and a comparison against a schematic the
+     * file has nothing to do with is not weak evidence, it is no evidence. */
     dbg(1, "raw_case_mode_schematic(): raw belongs to %s, current is %s -> unknown\n",
         raw->schname ? raw->schname : "<NULL>",
         xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "<NULL>");
@@ -2474,14 +2502,18 @@ int raw_case_mode_schematic(Raw *raw)
     /* else: some other casing entirely -- it counts against a clean answer
      * (it is in `comparable`) and votes for nothing */
   }
-  if(comparable < 2) return RAW_CASE_UNKNOWN;
+  /* Every exit below is a verdict computed against the RIGHT schematic, so each
+   * one is stamped -- including an honest `unknown`, which must be able to
+   * overwrite a stale answer when names[] changes under a raw_add_vector(). */
+  if(comparable < 2) return (raw->sch_case_mode = RAW_CASE_UNKNOWN);
   best = fold; mode = RAW_CASE_FOLD;
   if(preserve > best) { best = preserve; mode = RAW_CASE_PRESERVE; }
   if(upper > best)    { best = upper;    mode = RAW_CASE_UPPER; }
-  if(2 * best <= comparable) return RAW_CASE_UNKNOWN;  /* no majority, or a tie */
+  /* no majority, or a tie */
+  if(2 * best <= comparable) return (raw->sch_case_mode = RAW_CASE_UNKNOWN);
   dbg(1, "raw_case_mode_schematic(): %d comparable, fold=%d preserve=%d upper=%d -> %s\n",
       comparable, fold, preserve, upper, raw_case_mode_word(mode));
-  return mode;
+  return (raw->sch_case_mode = mode);
 }
 
 /* SOURCE 4, THE CAPITAL SNIFF. Last resort, off unless the Tcl variable
@@ -2708,6 +2740,7 @@ int table_read(const char *f)
       my_strdup2(_ALLOC_ID_, &raw->rawfile, f);
       my_strdup2(_ALLOC_ID_, &raw->schname, xctx->sch[xctx->currsch]);
       raw->level = xctx->currsch;
+      raw_case_mode_schematic(raw);   /* prime source 3 -- see raw_read() */
       raw->allpoints = 0;
       for(i = 0; i < raw->datasets; ++i) {
         raw->allpoints +=  raw->npoints[i];
