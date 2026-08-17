@@ -58,7 +58,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 11 | `result_probe` `-nocase` | | | | | | no | |
 | 12 | post-load current repair | | | | | | no | |
 | 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
-| 14 | netlister collision warning + `model_name()` key | | | | | | no | fires only under `fold`/`preserve`; silent under `distinguish` |
+| 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0421`. Spec §14 |
 | 15 | docs | | | | | | no | must name `v(all)` **and** `i(all)`; must record Xyce as unverified |
 
 ## The baseline ROLLED FORWARD at item 1 — read this before diffing an audit
@@ -385,6 +385,68 @@ point, achieved.
   comment calls it load-bearing) is **unpinned by any check**; `CS103g` is
   **valgrind-only** evidence; and a script's own write into a materialised key is
   silently discarded — documented, not fixed.
+
+## Carry-forwards item 14 handed on — C CHAIN COMPLETE, baseline `audit_item14_closer`
+
+**Baseline is `audit_item14_closer_2026-08-17.txt` — 322/15/0/0 of 337** at
+`a7f56fa6`. **Items 1, 2, 3, 4, 5, 5b and 14 each moved ZERO statuses.** All
+growth across the whole C chain is the six suites they added. Item 14 is `[E]`
+with **two `look` debts**; only the user clears those.
+
+**A WARNING THAT REACHED NOBODY — the fix round's real find.** C2 says warn, not
+error. But the netlist ERC window opens only when the pref is `always` or when
+`err != 0`, default `onerror` — so a warning that correctly left `err == 0`
+**was invisible by construction**. The fix paints both spellings into the
+highlight table (`!netlist_count`, one colour per pair) exactly as its five
+sibling netlist warnings already do, plus a status-bar summary. **Still two
+channels, not three:** `statusmsg(str, 2)` for netlist-time detail (where all
+fifteen `netlist.c` warnings go) and `ciw_echo … note` for the relay.
+
+**IT FIRES ON A SHIPPED EXAMPLE, AND THE WARNING IS TRUE — issue `0421` filed.**
+`xschem_library/examples/test_bus_tap.sch` genuinely carries `VCC`+`vcc` **and**
+`VSS`+`vss` (driver-verified by grep). §14's premise "no committed fixture
+collides" is corrected in place. No audit row moved because no test netlists that
+example — so the empty-diff contract held while user-visible behaviour changed.
+**`xschem_library/` is otherwise UNSWEPT for collisions.**
+
+**Two of its own citations were struck as non-evidence, self-caught:**
+`CS121`/`CS121b` were cited for "warn, never error" and **were not evidence** — an
+`err |=` left them green while flipping the netlist's exit code 0→10. The ruling's
+real check is `CS143`.
+
+**C2's mechanic 2 partly REFUTED by measurement.** C2 says ngspice's collision
+line "repeats once per subcircuit instantiation", implying dedup is what stops
+forty identical lines. Measured: ngspice **prefixes the instance path**, so three
+instantiations are three *different* pairs and all survive. The dedup earns its
+keep against one line arriving twice on our **two-stream scan**, not against
+per-instantiation repeats. The line is on **stderr only**.
+
+**RULING — the relay is ALWAYS ON, unlike the check**, for three reasons: it names
+the outcome itself, it sees `.include`d cards our netlister cannot, and it carries
+the mode the run *actually* had, which a `.spiceinit` can change.
+
+Other rulings (spec §14):
+
+- **Called from `spice_netlist()`, not `traverse_node_hash()`** — the latter is
+  also the interactive `show_unconnected_pins()` pass and serves all five
+  backends; the former is per-level, so a **subcircuit-body** collision is caught,
+  which is the case upstream misses under `fold`. §14's `spice_primitive` trigger
+  claim was false and is corrected: a `spice_netlist=true` child **with
+  `split_files`** gets the check inside a spectre/Verilog run.
+- **Part (b) narrowed an existing fold and added none.** The trap was the
+  **parse**, not the hash — the `sscanf` literals matched only because the fold
+  had just run, so they became a length skip. The card **keyword** stays
+  case-blind in every mode.
+- **`my_snprintf` drops a whole conversion** on a long pair: names-first, a
+  973-char pair emitted 1990 chars carrying neither the diagnostic phrase nor
+  `(casemode=…)`. The phrase now comes first.
+- **The dedup key is anchored** on `'…' and '…' differ only in case` so a
+  mis-parse **fails safe**.
+
+**Pre-existing droppings, driver-verified, NOT item 14's:** `relaycheck.tcl`
+(2026-08-11, predates the batch) and `tr_MODE.raw` (2026-08-16 06:30, from the
+`repro2`/`repro3` re-runs — the documented cwd-relative `write` trap). Both left
+unstaged, correctly.
 
 ## Environment — re-verified 2026-08-16
 
