@@ -646,6 +646,407 @@ proc ase::sim_probe_run {state args} {
   return [dict merge $out $p [dict create delivers $delivers agree $agree]]
 }
 
+# --- THE PROFILE-AWARE RUN (casemode batch item 8) ---------------------------
+#
+# Spec: doc/claude/specs/simulator_profiles.md section 12. Authority:
+# DECISIONS.md B1 (the profile the command is built from), A2 (no `-n` by
+# default), B4 (requested != measured: `preserve` reports, `distinguish`
+# REFUSES).
+#
+# Until this item `run_cmd` was one hardcoded line -- `ngspice -b <deck> 2>@1`,
+# a bare `ngspice` off PATH -- so ASE-L could not be pointed at a specific
+# simulator at all. Casemode is one consequence of that, not the whole of it.
+#
+# THE BACKWARD-COMPATIBILITY CONTRACT, and it is a check (CS175), not a hope:
+# with no profile configured the composed command is BYTE-IDENTICAL to
+# `[list ngspice -b $deckpath 2>@1]`. Everything below is inert until a row
+# carries an `exe`, `args`, `nospiceinit`, or a `casemode` other than `fold`.
+
+# RULING -- the run filter drops exec-syntax redirection and pipeline words, and
+# ONE class of simulator option: the ones that redirect the STDOUT ASE-L reads
+# the run back out of (`-o` / `--output`). It KEEPS every other option, `-r` /
+# `--rawfile` / `--soa-log` included, because those write a file BESIDE the run
+# without taking the pipe away.
+#
+# This is NOT `sim_probe_safe_args` (xschem.tcl) and MUST NOT become it. That
+# filter is a PROBE filter and its reasons are about a probe: a probe may have
+# no side effects, so `-r` had to go because it made the probe overwrite the
+# previous run's raw, and `> zap.txt` had to go because it wrote a file into the
+# probe's cwd -- the user's own rundir. A REAL RUN's output files are the point,
+# and `-r` is exactly what xschem's own shipped batch row carries
+# (`sim(spice,2,cmd)` is `ngspice -b -r "$n.raw" "$N"` -- xschem.tcl:4086; note
+# it carries NO `-o`, and no shipped row anywhere does). Inheriting the probe's
+# whole filter here would break configured simulators for a reason nobody could
+# find, so `-r` stays; `-o` is a separate, MEASURED case, below.
+#
+# What is dropped, and why each shape is a defect rather than a preference:
+#
+# (A) TCL EXEC SYNTAX -- `execute` does `open "|$args"`, so these words are not
+#     arguments at all:
+#   1. `>` / `>>` / `2>` / `>&` ... : ASE-L reads the run's output back through
+#      `execute(data,$id)` and writes it to the log; a redirection silently
+#      empties that, so the log is written EMPTY and `result_probe` finds no
+#      values -- a run that looks fine and reports nothing.
+#   2. A BARE redirection operator additionally EATS THE NEXT WORD as its
+#      filename. `run_cmd` appends `$deckpath` last, so a trailing `>` would
+#      consume the deck and ngspice would run with no deck at all.
+#   3. `|` / `|&` splice a foreign program into a pipeline we then report to the
+#      user as "the simulator"; everything after one was written for another
+#      program, so it goes too. `&` would be handed to ngspice as a literal
+#      argument (it only backgrounds a Tcl pipeline as the LAST word, and
+#      `run_cmd` always appends the deck and `2>@1` after these), so it goes as
+#      the meaningless word it is.
+#
+# (B) `-o <file>` / `--output=<file>` / `-o<file>` -- the ONE simulator option
+#     that is incompatible with ASE-L existing. MEASURED, 2026-08-17, real
+#     /usr/local/bin/ngspice on a `v1 a 0 1 / r1 a 0 1k` deck:
+#       ngspice -b d.cir            -> `v(a) = 1.000000e+00` on STDOUT
+#       ngspice -b -o o.log d.cir   -> STDOUT says only "Comments and warnings
+#                                      go to log-file: o.log"; the numbers are
+#                                      in o.log
+#     Driven through `ase::run_deck` + `ase::wait` the second shape exits 0,
+#     writes a banner-only `<cell>_ase.log`, and `ase::last_result` comes back
+#     EMPTY -- the exact "runs fine and reports nothing" failure (A) exists to
+#     prevent, reached by a different route. `-r`/`--rawfile` were driven the
+#     same way and are unaffected (`result=<va 1.000000e+00>`), which is why
+#     this is a one-option carve-out and not a return to the probe's filter.
+#
+# A dropped word is REPORTED, never silent (ase::run_precheck): the user typed
+# it into a profile field and it is not reaching the simulator.
+#
+# `2>@1` stays run_cmd's own, appended after this filter, so a profile cannot
+# unfold stderr out of the captured log either.
+#
+# DECLARED: the option list is ngspice's, enumerated, not derived -- and `-o` is
+# assumed to be the only ngspice option whose short form starts with `o` (it is,
+# in ngspice 46: -b -s -i -n -t -r -o -p -q -a -D -h -v).
+proc ase::run_filter_args {arglist} {
+  set keep {}
+  set drop {}
+  set skip 0
+  set n [llength $arglist]
+  for {set i 0} {$i < $n} {incr i} {
+    set w [lindex $arglist $i]
+    if {$skip} { set skip 0 ; lappend drop $w ; continue }
+    if {$w eq {|} || $w eq {|&}} {
+      foreach r [lrange $arglist $i end] { lappend drop $r }
+      break
+    }
+    if {$w eq {&}} { lappend drop $w ; continue }
+    if {[regexp {^(<|<<|<@|>|>>|>&|>>&|>@|>&@|2>|2>>|2>@)$} $w]} {
+      lappend drop $w ; set skip 1 ; continue
+    }
+    if {[string index $w 0] eq {<} || [string index $w 0] eq {>}} { lappend drop $w ; continue }
+    if {[string range $w 0 1] eq {2>}} { lappend drop $w ; continue }
+    if {$w eq {-o} || $w eq {--output}} { lappend drop $w ; set skip 1 ; continue }
+    if {[regexp {^--output=} $w]} { lappend drop $w ; continue }
+    if {[regexp {^-o.} $w]} { lappend drop $w ; continue }
+    lappend keep $w
+  }
+  return [dict create keep $keep drop $drop]
+}
+
+proc ase::run_safe_args {arglist} {
+  return [dict get [ase::run_filter_args $arglist] keep]
+}
+
+# The profile the run is composed from, as one dict, so `run_cmd` and the B4
+# gate cannot disagree about which binary is about to run:
+#   tool index status   from ase::sim_profile_resolve
+#   exe                 the resolved row's executable, {} = the row names none
+#   exe_named           1 when the row NAMES an exe (whether or not it resolved)
+#   args                the row's args, run-filtered
+#   dropped             the words the run filter REMOVED from those args ({} is
+#                       the normal case); ase::run_precheck reports them, so a
+#                       field the user typed never disappears silently
+#   nospiceinit         A2's `-n`, 0/1
+#   requested           the requested mode (row -> global floor -> fold)
+proc ase::run_profile {state} {
+  set r [ase::sim_profile_resolve $state]
+  set tool [dict get $r tool]
+  set idx  [dict get $r index]
+  set named [expr {[::sim_profile_get $tool $idx exe] ne {} ? 1 : 0}]
+  set nsi [::sim_profile_get $tool $idx nospiceinit]
+  if {![string is boolean -strict $nsi]} { set nsi 0 }
+  set fa [ase::run_filter_args [::sim_profile_get $tool $idx args]]
+  return [dict create tool $tool index $idx status [dict get $r status] \
+              exe [::sim_profile_exe_path $tool $idx] exe_named $named \
+              args [dict get $fa keep] dropped [dict get $fa drop] \
+              nospiceinit [expr {$nsi ? 1 : 0}] \
+              requested [::sim_profile_casemode $tool $idx]]
+}
+
+# RULING -- `-D casemode=` is emitted only for a request that is NOT `fold`.
+#
+# `fold` is what every user gets by default (A1, and `set_ne sim_case_mode
+# fold`), and appending `-D casemode=fold` to every ASE-L run forever would buy
+# exactly nothing:
+#   * a released ngspice ACCEPTS AND IGNORES the flag (measured, A1), so the
+#     command changes and the run does not;
+#   * a case-capable ngspice defaults to `fold` anyway (measured here: the
+#     capability probe's "ask for nothing" leg answers `CCM=fold`);
+#   * a `.spiceinit` overrides `-D casemode=` regardless (measured, A2, both
+#     beside the deck and in $HOME), so the flag cannot even enforce it.
+# What it WOULD buy is a changed command line for every existing user, which is
+# the one thing this item's compatibility contract forbids.
+#
+# The floor counts as a request: `sim_case_mode` is documented as "the mode we
+# ask a simulator for when no simulator profile names one" (xschem.tcl), so a
+# user who sets it to `preserve` in an rc gets `-D casemode=preserve` with no
+# profile row at all -- B1's "per profile, with a global floor".
+proc ase::run_casemode_flag {state} {
+  set m [dict get [ase::run_profile $state] requested]
+  if {$m eq {} || $m eq {fold}} { return {} }
+  return [list -D casemode=$m]
+}
+
+# B4's POLICY, as a PURE FUNCTION of a request and item 7's measurement, so the
+# ruling can be driven without launching anything. Returns a dict:
+#   action    ok | report | refuse
+#   delivers  the measured mode ({} when nothing was measured)
+#   reason    why, in the user's words
+#
+# B4, in full, and WHY it is split (this overturned a flat "run and report"):
+#   * requested `preserve`, got `fold` -> RUN AND REPORT. Cosmetic: same
+#     circuit, same numbers, lower-case labels. Blocking work over that would
+#     be silly.
+#   * requested `distinguish`, got anything else -> REFUSE. A `distinguish`
+#     downgrade means the simulator MERGES nets the user deliberately kept
+#     separate -- the same deck file, a DIFFERENT CIRCUIT. The run exits
+#     cleanly and the numbers are wrong, which is the silent-wrong-answer class
+#     A1 was chosen to avoid; and on a stock binary the merge is completely
+#     silent, because the fold-collision warning does not exist there. So
+#     `distinguish` may only ever run on a binary CONFIRMED to support it,
+#     immediately before the run.
+#
+# RULING -- "not confirmed" is a REFUSAL under `distinguish`, not a warning.
+# A timeout, an unlocatable executable, a probe that errored: none of them
+# confirm anything, and B4's clause is "confirmed to support it", not "not
+# known to fail". This is the clause that catches B4's own third route -- the
+# binary changing under the path -- because a moved ver_50 probes as `noexe`.
+#
+# RULING -- a mismatch that is NOT a `distinguish` REQUEST reports, never
+# refuses. B4 scopes the refusal to the request, and that is where the harm is:
+# only a `distinguish` request states "these nets are different", so only its
+# downgrade merges anything. The reverse (asked `fold`, got `distinguish` from
+# a `.spiceinit`) cannot merge nets -- it can only split them, which shows up
+# as an absent vector rather than as a wrong number, and item 10's pre-flight
+# owns that. It is reported so it is never silent. Note the gate is not even
+# ARMED for a `fold` request (see ase::run_precheck), so in practice this arm
+# is reached for an explicit `preserve` request.
+proc ase::run_casemode_verdict {requested probe} {
+  set delivers {}
+  catch {set delivers [dict get $probe delivers]}
+  set status {} ; catch {set status [dict get $probe status]}
+  if {$requested eq {} || $requested eq {fold} || $delivers eq $requested} {
+    return [dict create action ok delivers $delivers reason {}]
+  }
+  if {$delivers ne {}} {
+    set reason "the simulator was measured to deliver '$delivers'"
+  } elseif {$status eq {noexe}} {
+    set reason {no executable could be located for this profile, so nothing could be measured}
+  } elseif {$status eq {timeout}} {
+    set ms 0 ; catch {set ms [dict get $probe ms]}
+    set reason "the simulator did not answer within ${ms} ms, so nothing could be measured"
+  } else {
+    set e {} ; catch {set e [dict get $probe err]}
+    set reason "its case mode could not be measured[expr {$e eq {} ? {} : " ($e)"}]"
+  }
+  if {$requested eq {distinguish}} {
+    return [dict create action refuse delivers $delivers reason $reason]
+  }
+  return [dict create action report delivers $delivers reason $reason]
+}
+
+# Does this backend's `run_cmd` compose from the profile? Identity, not a name:
+# the policy below describes exactly what ::ase::backend::ngspice::run_cmd
+# builds (`-D casemode=`, `-n`, the row's exe/args), so it may only be applied
+# where that proc is the composer. A test backend with its own run_cmd
+# (test_ase_core E2) hardcodes its own binary and reads no profile, so a
+# refusal about a profile exe it never runs would be a lie. A sixth registered
+# hook was rejected: `register_backend` requires all five it knows, so adding
+# one would break every already-registered backend.
+proc ase::run_composes_profile {sim} {
+  if {[catch {ase::backend_hook $sim run_cmd} h]} { return 0 }
+  return [expr {$h eq {::ase::backend::ngspice::run_cmd}}]
+}
+
+# The pre-run gate. Called from ase::run_deck BEFORE ANY ARTEFACT IS TOUCHED --
+# before the netlist is read, before the cosim VCDs are deleted, before the
+# .so rebuild, before the deck is written -- so a refusal leaves NOTHING
+# half-written that a later read could mistake for a result (item 10 is about
+# exactly that class of defect and this must not manufacture a new instance of
+# it). It returns the text to prepend to the run log ({} = nothing to say), or
+# raises with a `ase: ...` message for a refusal.
+#
+# WHAT "REFUSE" MEANS, CONCRETELY, and it is stated here because the three
+# possible meanings behave very differently: it is a refusal BEFORE ANYTHING IS
+# GENERATED, not a refusal after the deck is written and not a started-then-
+# killed run. `ase::run_deck` raises before its first `open`, so: no deck, no
+# raw, no log, no VCD deleted, no `.so` rebuilt, no process started, no
+# `last_run` update, and no completion callback. The one thing that HAS
+# happened when `ase::run` is the entry point is the circuit netlist artifact
+# (`<rundir>/<cell>.spice`), regenerated by `ase::netlist` before run_deck is
+# reached -- that is a source artifact, never a result, and it is what the
+# state already said the design is. The user sees the refusal on the CIW pane
+# (red) and in the action log, and the message says in so many words that any
+# raw/log already in the rundir belongs to an EARLIER run.
+#
+# ARMING -- the probe runs only when the requested mode is not `fold`. A1 is
+# explicit that the mismatch warning "never fires for a stock user -- only for
+# someone who deliberately requested a mode and did not get it", and a probe on
+# every run would cost every ASE-L user up to `sim_probe_timeout` ms to compare
+# `fold` against `fold`. The consequence is declared in spec section 12: a
+# `.spiceinit` that turns a `fold` request into `preserve` is not detected.
+#
+# THE EXE CHECK IS NOT GATED ON THE MODE and runs on every profile-composed run:
+# a row that NAMES an `exe` we cannot locate must never fall back to the bare
+# `ngspice` off PATH. That fallback would run a DIFFERENT SIMULATOR than the one
+# configured, silently -- and with ver_50 having moved three times in four days,
+# "the configured exe is gone" is the normal case here, not an edge case.
+#
+# NEITHER IS THE RESOLVE-STATUS REPORT, NOR THE DROPPED-ARGS REPORT. Both are
+# about a command that is not the command the user configured, which is a harm
+# independent of the mode, so both run for a `fold` request too.
+
+# RULING (item 6 delegated this decision here; spec section 12.9) -- a `stale`
+# or `invalid` resolve status is REPORTED, not refused.
+#
+# `stale` means the row index this session stored now carries a DIFFERENT name
+# than the one stamped beside it: a row was inserted above, or the row was
+# renamed or re-pointed. `invalid` means the stored index is gone entirely and
+# `sim_profile_resolve` fell back to the tool's default row. Either way the
+# command about to run may name a DIFFERENT BINARY than the session was
+# configured with -- the same substitution harm the exe guard refuses over.
+#
+# Why report rather than refuse, when the exe guard refuses: the exe guard's
+# case has no run left in it (the named binary is not there, and the only
+# alternative is a silent substitution). Here a real, configured, locatable
+# simulator IS resolved; refusing would make a saved session UNRUNNABLE because
+# somebody renamed a row, and spec section 5 already rules that a hand-edited
+# `simrc` "must not make a saved session unopenable". Reporting turns a silent
+# substitution into a loud one, which is the whole complaint. And the
+# substitution cannot smuggle a mode past B4 either: the casemode probe below
+# measures the binary that will ACTUALLY run, so a stale row resolving to a
+# folding binary under a `distinguish` request still REFUSES.
+#
+# Item 13 owns offering to re-point the row; this owes the user the sentence.
+proc ase::run_status_note {state p} {
+  set st [dict get $p status]
+  if {$st ne {stale} && $st ne {invalid}} { return {} }
+  set tool [dict get $p tool]
+  set idx [dict get $p index]
+  # `name` is NOT one of item 6's profile fields (sim_profile_field_defaults),
+  # so sim_profile_get would answer {} for it. Read the array element, exactly
+  # as ase::sim_profile_resolve does when it decides `stale` in the first place.
+  set cur {}
+  if {[info exists ::sim($tool,$idx,name)]} { set cur $::sim($tool,$idx,name) }
+  set exe [dict get $p exe]
+  set willrun [expr {$exe eq {} ? {the bare 'ngspice' off PATH} : $exe}]
+  if {$st eq {stale}} {
+    set was {}
+    catch {set was [dict get [ase::state_get $state sim_profile] name]}
+    return "ase: simulator profile — this session was configured with\
+ '$was' (row $tool,$idx), but row $tool,$idx now reads '$cur'. Rows are\
+ addressed by INDEX, so inserting or renaming one re-points every session that\
+ stored it. The run will use $willrun. Re-select the simulator if that is not\
+ what you meant."
+  }
+  set stored {}
+  catch {set stored [dict get [ase::state_get $state sim_profile] index]}
+  return "ase: simulator profile — this session names simulator profile row\
+ '$stored', which does not exist; falling back to this tool's default row\
+ $tool,$idx ('$cur'). The run will use $willrun. Re-select the simulator if that\
+ is not what you meant."
+}
+
+# The advice clause of a mismatch message. RULING -- it must not tell a user to
+# fix "the profile" when the session HAS no profile row. On the global-floor
+# path (`status default`, which is every user who has configured nothing but an
+# `rc` line) there is no row to re-point and no `-n` checkbox to turn on: the
+# user's actual lever is `sim_case_mode`. Naming the wrong lever is how a
+# diagnostic wastes more time than the defect.
+proc ase::run_mode_advice {p kind} {
+  set floor [expr {[dict get $p status] eq {default}}]
+  if {$kind eq {refuse}} {
+    if {$floor} {
+      return "This session has NO simulator profile row — the request came from\
+ the global floor 'sim_case_mode'. Set sim_case_mode to a mode this binary\
+ delivers, or configure a profile (Simulation > Configure simulators and tools)\
+ naming a simulator that supports distinguish."
+    }
+    return "Point the profile at a simulator that supports distinguish, or turn\
+ on the profile's -n if a .spiceinit is overriding the request, or request a\
+ mode the binary delivers."
+  }
+  if {$floor} {
+    return "A .spiceinit — beside the deck or in \$HOME — overrides -D casemode=.\
+ This session has NO simulator profile row, so the mode came from the global\
+ floor 'sim_case_mode'; there is no profile -n to turn on."
+  }
+  return "A .spiceinit — beside the deck or in \$HOME — overrides -D casemode=;\
+ turn on the profile's -n if that is the cause."
+}
+
+proc ase::run_precheck {state} {
+  set p [ase::run_profile $state]
+  if {[dict get $p exe_named] && [dict get $p exe] eq {}} {
+    set raw [::sim_profile_get [dict get $p tool] [dict get $p index] exe]
+    set msg "ase: REFUSED — simulator profile [dict get $p tool],[dict get $p index]\
+ names the executable '$raw' and it cannot be located (missing, not executable,\
+ or an unset variable in the path). Falling back to a bare 'ngspice' off PATH\
+ would silently run a DIFFERENT simulator than the one configured, so nothing was\
+ generated: no deck, no raw, no log. Any files already in [ase::rundir $state]\
+ are from an earlier run."
+    ::ase::echo $msg error
+    return -code error $msg
+  }
+  # Everything that is not a refusal accumulates here, one line each, and every
+  # line reaches BOTH channels: the CIW pane now and the head of the run log
+  # when the run finishes (run_deck -> run_done's `notes`).
+  set notes {}
+  set sn [ase::run_status_note $state $p]
+  if {$sn ne {}} { ::ase::echo $sn note ; lappend notes $sn }
+  if {[llength [dict get $p dropped]]} {
+    set dn "ase: profile args — dropped [join [dict get $p dropped] { }] from the\
+ simulator command. ASE-L reads the run's output back out of the pipe to write\
+ the run log and to parse the results, so a word that redirects or pipes that\
+ output (>, |, -o/--output) would give a clean exit, an empty log and no\
+ results. -r/--rawfile/--soa-log are NOT affected and are passed through. Remove\
+ the word from the profile's args."
+    ::ase::echo $dn note
+    lappend notes $dn
+  }
+  set requested [dict get $p requested]
+  if {$requested eq {} || $requested eq {fold}} { return [join $notes "\n"] }
+  # The executable the run is really going to use -- item 7's run probe does not
+  # reimplement run_cmd's bare-`ngspice` fallback and documents that its caller
+  # passes what it is really going to run.
+  set exe [dict get $p exe]
+  if {$exe eq {}} { set exe [lindex [auto_execok ngspice] 0] }
+  set probe [ase::sim_probe_run $state -cwd [ase::rundir $state] -exe $exe]
+  set v [ase::run_casemode_verdict $requested $probe]
+  set act [dict get $v action]
+  if {$act eq {ok}} { return [join $notes "\n"] }
+  set who [expr {$exe eq {} ? {the simulator} : $exe}]
+  if {$act eq {refuse}} {
+    set msg "ase: REFUSED — this session requests casemode 'distinguish' but\
+ [dict get $v reason] ($who). Under 'distinguish' a simulator that folds MERGES\
+ nets you deliberately kept apart: the same deck file, a different circuit, a\
+ clean exit and wrong numbers — and on a stock binary the merge is completely\
+ silent. Nothing was generated: no deck, no raw, no log. Any files already in\
+ [ase::rundir $state] are from an earlier run. [ase::run_mode_advice $p refuse]"
+    ::ase::echo $msg error
+    return -code error $msg
+  }
+  set msg "ase: casemode — this session requested '$requested' but\
+ [dict get $v reason] ($who). The run CONTINUES: the circuit and the numbers are\
+ the same, only the vector names differ. [ase::run_mode_advice $p report]"
+  ::ase::echo $msg note
+  lappend notes $msg
+  return [join $notes "\n"]
+}
+
 # --- Run directory ----------------------------------------------------------
 
 # The run directory for a state: non-empty `rundir` -> normalized + created;
@@ -768,6 +1169,15 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set log_file    [ase::backend_hook $sim log_file]
   ase::backend_hook $sim result_probe
 
+  # casemode batch item 8 (B4): the pre-run gate, FIRST, before any artefact is
+  # read, deleted, rebuilt or written. A refusal raises from here, so nothing
+  # half-written can be left behind; a `preserve` mismatch returns the line to
+  # put in the run log and has already reached the CIW pane.
+  set casenote {}
+  if {[ase::run_composes_profile $sim]} {
+    set casenote [ase::run_precheck $state]
+  }
+
   set f [open $netlistfile r]
   set netlist_text [read $f]
   close $f
@@ -818,7 +1228,7 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set logpath [$log_file $state]
   set cmd [$run_cmd $state $deckpath]
 
-  set ::execute(callback) [list ase::run_done $logpath $state $callback]
+  set ::execute(callback) [list ase::run_done $logpath $state $callback $casenote]
   set save [pwd]
   cd $rd
   set id [eval execute 0 $cmd]   ;# simulate-proc precedent (xschem.tcl)
@@ -835,12 +1245,21 @@ proc ase::run_deck {state netlistfile {callback {}}} {
 # Completion hook (runs from execute_fileevent on EOF). execute(data,last) /
 # execute(exitcode,last) are written immediately before the callback in the
 # same event dispatch, so reading them here is race-free.
-proc ase::run_done {logpath state callback} {
+proc ase::run_done {logpath state callback {notes {}}} {
   variable last_run
   set data {}
   if {[info exists ::execute(data,last)]} { set data $::execute(data,last) }
   set exitcode -1
   if {[info exists ::execute(exitcode,last)]} { set exitcode $::execute(exitcode,last) }
+  # casemode batch item 8: §3b says "report in the log AND the CIW". The CIW half
+  # already happened in ase::run_precheck, before the simulator started; the log
+  # half can only happen here, because this proc OVERWRITES $logpath with the
+  # captured output. It goes FIRST, on its own line: a mismatch is a statement
+  # about the whole run, and the head of the file is the one place a reader who
+  # scrolls nothing at all still sees. `notes` defaults to {} so the log of an
+  # ordinary run is byte-identical to before, and so a caller that predates this
+  # parameter (an out-of-tree script, a stale execute(callback,<id>)) still runs.
+  if {$notes ne {}} { set data "[string trimright $notes "\n"]\n\n$data" }
   if {![catch {open $logpath w} f]} {
     puts -nonewline $f $data
     close $f
@@ -3482,10 +3901,48 @@ namespace eval ase::backend::ngspice {
     return "[join $lines "\n"]\n"
   }
 
-  # Batch invocation arg list. 2>@1 folds stderr warnings into the captured
-  # log; stdout must flow into execute(data,$id), so no -o here.
+  # Batch invocation arg list, composed from the simulator profile (casemode
+  # batch item 8; DECISIONS.md B1). 2>@1 folds stderr warnings into the captured
+  # log; stdout must flow into execute(data,$id), so no -o here -- not ours, and
+  # not the profile's either: `-o` is the one option ase::run_safe_args drops,
+  # because it takes that stdout away (measured; see the filter).
+  #
+  # Word order, and it mirrors the probe's (`sim_probe_argv`, xschem.tcl) so the
+  # measurement describes the run:
+  #
+  #   <exe> -b <profile args...> [-n] [-D casemode=<mode>] <deckpath> 2>@1
+  #
+  #   exe        the resolved profile row's executable, else the bare `ngspice`
+  #              off PATH this proc has always used. A row that NAMES an exe we
+  #              cannot locate never reaches here -- ase::run_precheck refuses,
+  #              because falling back would silently run another simulator.
+  #   args       the row's own args, run-filtered (ase::run_safe_args: exec-syntax
+  #              redirections and pipelines out, and `-o`/`--output` with them
+  #              because they take away the stdout ASE-L parses; `-r`,
+  #              `--rawfile`, `--soa-log` and every other option KEPT --
+  #              xschem's own shipped batch row is `-r`-shaped
+  #              (`sim(spice,2,cmd)`, xschem.tcl:4086) and ships no `-o` at all.
+  #              sim_probe_safe_args is a PROBE filter, drops `-r` too, and is
+  #              deliberately NOT used here; see ase::run_filter_args. Anything
+  #              dropped is REPORTED by ase::run_precheck, never silent.
+  #   -n         A2's `--no-spiceinit`, OFF BY DEFAULT and only when the row's
+  #              `nospiceinit` says so. A2's whole point is to probe with the real
+  #              argv and run in whatever mode came back, rather than suppressing
+  #              `.spiceinit` and pretending.
+  #   -D         only for a request that is not `fold` (ase::run_casemode_flag).
+  #
+  # COMPATIBILITY, pinned by CS175: with no profile configured this returns
+  # exactly `[list ngspice -b $deckpath 2>@1]`, the literal it replaced.
   proc run_cmd {state deckpath} {
-    return [list ngspice -b $deckpath 2>@1]
+    set p [ase::run_profile $state]
+    set exe [dict get $p exe]
+    if {$exe eq {}} { set exe ngspice }
+    set cmd [list $exe -b]
+    foreach w [dict get $p args] { lappend cmd $w }
+    if {[dict get $p nospiceinit]} { lappend cmd -n }
+    foreach w [ase::run_casemode_flag $state] { lappend cmd $w }
+    lappend cmd $deckpath 2>@1
+    return $cmd
   }
 
   # <rundir>/<cell>_ase.log

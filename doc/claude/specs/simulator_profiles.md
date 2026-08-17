@@ -1134,3 +1134,391 @@ whatever it is really about to run (`CS170l`).
 - **The pipe transport is gone, not kept as a fallback.** A build too old to run
   a `.control` `echo` in batch mode would need one; none is in reach to measure,
   and a second transport nobody can exercise is worse than one that is driven.
+
+---
+
+# 12. The profile-aware run, and B4's mismatch policy
+
+Casemode batch **item 8**. Authority: `DECISIONS.md` **B1** (the command is
+built from the profile), **A2** (no `-n` by default; probe with the real argv
+and run in whatever mode came back), **B4** (requested ≠ measured: `preserve`
+reports and continues, `distinguish` **refuses**). `PLAN.md` §3b item 8.
+Item 6 owns §1–§10, item 7 owns §11, this item owns §12. Checks
+**`CS175`–`CS191`** in `tests/headless/test_sim_run_profile.tcl` — 38 of them,
+counted from a run, every one with a mutation that drives it red.
+
+Items 6 and 7 built a model and two probes that **no run consulted**. Until this
+item `ase::backend::ngspice::run_cmd` was one line:
+
+```tcl
+proc run_cmd {state deckpath} { return [list ngspice -b $deckpath 2>@1] }
+```
+
+A bare `ngspice` off `PATH`, so ASE-L could not be pointed at a specific
+simulator at all. Casemode is one consequence of that, not the whole of it.
+
+## 12.1 The composed command
+
+```
+<exe> -b <profile args…> [-n] [-D casemode=<mode>] <deckpath> 2>@1
+```
+
+| word | source | rule |
+|---|---|---|
+| `exe` | `sim_profile_exe_path` | the resolved row's executable, else the bare `ngspice` this proc has always used. A row that **names** an exe we cannot locate never reaches here — §12.4 refuses. |
+| args | the row's `args` | run-filtered by `ase::run_safe_args` (§12.2). Every option survives **except the `-o`/`--output` family**, which takes away the stdout ASE-L parses; `-r`/`--rawfile`/`--soa-log` are kept. Anything dropped is **reported** (§12.7). |
+| `-n` | the row's `nospiceinit` | **off by default** (A2). This item is the first consumer of item 6's field; item 13 owns the checkbox. |
+| `-D casemode=` | the requested mode | only when the request is **not** `fold` (§12.3). |
+| `2>@1` | `run_cmd`'s own | folds stderr into the captured log, as before. A profile cannot unfold it: the filter drops redirections. |
+
+The word order mirrors `sim_probe_argv`'s (§11.2) so the measurement describes
+the run.
+
+### RULING — the compatibility contract is a CHECK, not a hope
+
+With no profile configured the composed list is **byte-identical** to
+`[list ngspice -b $deckpath 2>@1]`, the literal it replaced. `CS175` compares
+against that literal — and composes a *configured* row in the same assertion, so
+it cannot pass by the feature being absent. This is what keeps the batch's
+empty-audit contract intact: nothing below is reachable until a row carries an
+`exe`, `args`, `nospiceinit`, or a `casemode` other than `fold`.
+
+## 12.2 RULING — the run filter is NOT the probe filter, and must never become it
+
+`sim_probe_safe_args` (§11.2) drops redirections **and every output-directing
+option**. Every one of its reasons is about a *probe*: a probe may have no side
+effects, so `-r`/`-o` had to go because they made the run probe overwrite the
+previous run's outputs, and `> zap.txt` had to go because it wrote a file into
+the probe's cwd — the user's own rundir.
+
+**A real run legitimately needs `-r`.** That is xschem's own shipped batch shape:
+`sim(spice,2,cmd)` — "Ngspice batch" — is `ngspice -b -r "$n.raw" "$N"`
+(`src/xschem.tcl:4086`). Inheriting the probe's filter here would break
+configured simulators for a reason nobody could find. `CS177c` reads both
+filters on the same words (`-r`, `--rawfile`, `--soa-log`) and fails if they
+ever agree about one.
+
+> **Correction, recorded because it was load-bearing.** The first version of
+> this ruling cited `sim(spice,1,cmd)` as `ngspice -b -r "$N.raw" -o "$N.out"
+> "$N"` and used it to justify keeping `-o` as well. **No such row exists in
+> this tree.** `sim(spice,1,cmd)` is `{ngspice "$N" -a}` ("Ngspice Control
+> mode"), the batch row is `sim(spice,2,cmd)` above, and `grep -rn '\$N\.out'
+> src/` matched nothing but that comment itself. xschem ships **no `-o`
+> anywhere**. Once corrected, the surviving justification covers `-r` only —
+> and `-r` is also the only one of the two that measures harmless.
+
+`ase::run_safe_args` therefore drops two classes, and neither is a preference.
+
+**(A) Exec-syntax words** — `execute` does `open "|$args"`, so these are not
+arguments at all:
+
+1. `>` `>>` `2>` `>&` … : ASE-L reads the run's output back out of
+   `execute(data,$id)` and writes it to the log; a redirection silently empties
+   that, so the log is written **empty** and `result_probe` finds no values — a
+   run that looks fine and reports nothing.
+2. A **bare** redirection operator additionally **eats the next word** as its
+   filename. `run_cmd` appends `$deckpath` last, so a trailing `>` would consume
+   the deck and ngspice would run with **no deck at all** (`CS177b`).
+3. `|` / `|&` splice a foreign program into a pipeline we then report to the user
+   as "the simulator", and everything after one was written for another program,
+   so it goes too. `&` goes as well — **not** because it could background the
+   run (an earlier draft of this comment said so and was wrong: `&` only
+   backgrounds a Tcl pipeline as the **last** word, and `run_cmd` always appends
+   the deck and `2>@1` after the filtered args), but because ngspice would
+   otherwise be handed a literal `&` as an argument. `CS177`'s word list carries
+   one.
+
+### RULING — `-o` / `--output` is dropped too, and that is a measured carve-out
+
+This is the one **simulator option** the run filter removes, and it is removed
+for the same reason as class (A)(1) reached by a different route: `-o` sends the
+stdout ASE-L parses to a file.
+
+| | measured, 2026-08-17, real `/usr/local/bin/ngspice`, deck `v1 a 0 1 / r1 a 0 1k` |
+|---|---|
+| `ngspice -b d.cir` | `v(a) = 1.000000e+00` on **stdout** |
+| `ngspice -b -o o.log d.cir` | stdout carries only `Comments and warnings go to log-file: o.log`; the numbers are in `o.log` |
+
+Driven through `ase::run_deck` + `ase::wait` with a profile row carrying
+`args {-o <rundir>/out.log}`, the second shape exits **0**, writes a
+banner-only `<cell>_ase.log`, and `ase::last_result` comes back **EMPTY** with
+no diagnostic — exactly the "runs fine and reports nothing" failure the filter
+exists to prevent. `--output=<file>` behaves identically. The controls
+`-r extra.raw` and `--rawfile=z.raw` were driven the same way and still yield
+`va 1.000000e+00`, so this is a one-option carve-out, **not** a return to the
+probe's filter (`CS186`).
+
+All three spellings go: `-o <file>` (with its operand), `--output <file>`,
+`--output=<file>`, `-o<file>`. **Declared:** the list is ngspice's, enumerated,
+not derived, and it assumes `-o` is the only ngspice short option beginning with
+`o` — true in ngspice 46 (`-b -s -i -n -t -r -o -p -q -a -D -h -v`).
+
+**A dropped word is reported, never silent** (§12.7): the user typed it into a
+profile field and it is not reaching the simulator (`CS186b`).
+
+## 12.3 RULING — `-D casemode=` is emitted only for a request that is not `fold`
+
+`fold` is what every user gets by default (A1, and `set_ne sim_case_mode fold`).
+Appending `-D casemode=fold` to every ASE-L run forever would buy nothing:
+
+| | measured |
+|---|---|
+| released ngspice-46 | **accepts and ignores** `-D casemode=` (A1) |
+| `build-ver_50`, no `-D` at all | `CCM=fold` — the case-capable build already defaults to fold (measured 2026-08-17, `.control` `echo CCM=$curcasemode` under `-b`) |
+| any binary, with a `.spiceinit` | `.spiceinit` **overrides** `-D casemode=`, beside the deck and in `$HOME` (A2) — so the flag cannot even enforce it |
+
+What it *would* buy is a changed command line for every existing user, which is
+the one thing §12.1's contract forbids. `CS176c` pins both directions.
+
+**The global floor counts as a request.** `sim_case_mode` is documented as "the
+mode we ask a simulator for when no simulator profile names one", so an rc that
+sets it to `preserve` yields `-D casemode=preserve` with no profile row at all —
+B1's "per profile, with a global floor" (`CS176d`).
+
+## 12.4 RULING — a row naming an exe we cannot locate is a REFUSAL, in every mode
+
+Not a fallback. Falling back to the bare `ngspice` off `PATH` would silently run
+a **different simulator** than the one configured — which under a
+`preserve`/`distinguish` request is exactly the silent substitution B4 exists to
+prevent, and even under `fold` is not the simulator the user chose. With
+`build-ver_50` having moved three times in four days, "the configured exe is
+gone" is the normal case here, not an edge case. `CS180` drives it under a
+**`fold`** request specifically, because the mode gate must not reach this check.
+
+## 12.5 B4's policy, and what REFUSE means concretely
+
+`ase::run_casemode_verdict` is a **pure function** of a request and item 7's
+measurement, so the ruling is drivable without launching anything:
+
+| requested | measured | action |
+|---|---|---|
+| `fold` (or none) | anything | **ok** — never reports, never refuses |
+| `preserve` | `preserve` | ok |
+| `preserve` | anything else, **or nothing** | **report**, and continue |
+| `distinguish` | `distinguish` | ok |
+| `distinguish` | anything else, **or nothing** | **REFUSE** |
+
+**Why the split** (it overturned a flat "run and report"): a `distinguish`
+downgrade means the simulator **merges nets the user deliberately kept
+separate** — the same deck file, a *different circuit*. The run exits cleanly
+and the numbers are wrong, the silent-wrong-answer class A1 was chosen to avoid;
+and on a stock binary the merge is completely **silent**, because the
+fold-collision warning does not exist there. A `preserve` downgrade is cosmetic:
+same circuit, same numbers, lower-case labels.
+
+### RULING — "not confirmed" is a refusal under `distinguish`
+
+A timeout, an unlocatable executable, a probe that errored: none of them
+*confirm* anything, and B4's clause is "confirmed to support it", not "not known
+to fail". This is the clause that catches B4's own third route — **the binary
+changing under the path** — because a moved `ver_50` probes as `noexe`
+(`CS178c`). The other two routes B4 names are covered by the same probe: a
+hand-edited `simrc`/rc naming a mode the binary cannot do, and a `.spiceinit`
+override, both show up as a measured `delivers` that is not the request.
+
+### RULING — a mismatch that is not a `distinguish` REQUEST reports, never refuses
+
+B4 scopes the refusal to the *request*, and that is where the harm is: only a
+`distinguish` request states "these nets are different", so only its downgrade
+merges anything. The reverse — asked `fold`, got `distinguish` from a
+`.spiceinit` — cannot merge nets; it can only split them, which shows up as an
+absent vector rather than as a wrong number, and item 10's pre-flight owns that.
+
+### What REFUSE means, concretely
+
+Refusing after the deck is written, refusing before anything is generated, and
+letting the run start and killing it are three different things. This is the
+**second**: `ase::run_precheck` is called from `ase::run_deck` **before its first
+`open`** — before the netlist is read, before the cosim VCDs are deleted, before
+any `.so` is rebuilt, before the deck is written. A refusal therefore leaves:
+
+- **no deck, no raw, no log, no VCD deleted, no `.so` rebuilt**, no process
+  started, no `last_run` update, no completion callback;
+- the previous run's files exactly as they were, and **the message says so** —
+  it names the run directory and states that anything in it is from an earlier
+  run (`CS181`, `CS181b`).
+
+Item 10 is about a file that *looks like* a result (the twelve-constants raw);
+this must not manufacture a new instance of that class, and a refusal that
+writes nothing cannot. The one artefact that *has* been produced when
+`ase::run` is the entry point is the circuit netlist `<rundir>/<cell>.spice`,
+regenerated by `ase::netlist` before `run_deck` is reached — a **source**
+artifact, never a result.
+
+**The "no VCD deleted" half of that list is pinned by a check, not only by
+words** (`CS190`). Two procs a few lines below the gate would break it if the
+gate ever moved: `ase::cosim_save_map` **deletes** the sidecar
+`<rundir>/<cell>_ase.cosim` when the map is empty, and
+`ase::cosim_clear_artifacts` deletes every VCD the deck promises. Moving the
+gate to just after `cosim_clear_artifacts` leaves `CS181` green and destroys the
+previous run's cosim map; `CS190` drives a refusal against a netlist carrying a
+real `d_cosim` card with both artefacts planted, and is the check that notices.
+
+### RULING — the advice clause must name a lever that EXISTS
+
+The refusal and report messages end with what to do about it, and on the
+global-floor path (`status default` — no profile row at all, the request coming
+from `sim_case_mode` in an rc) "point the profile at…" and "turn on the
+profile's `-n`" name **a profile the session does not have**. So the clause
+branches on the resolve status: with no row the message names `sim_case_mode`
+and offers configuring a profile instead (`CS188`, which drives the floor path
+with a real refusal and a real report and asserts the string does *not* say
+"the profile's -n" — that leg had no coverage at all before).
+
+The user sees the refusal as a red CIW line **and** as the error raised to the
+caller. `ase_window.tcl`'s Run button (`do_run` / `do_run_existing`) catches
+that error, echoes it `error` and turns the session status red — so in the GUI
+the refusal line appears **twice**, once from the gate and once from the UI's
+own catch. That duplication is deliberate rather than unnoticed: the gate's echo
+is the only channel a *scripted* or headless caller has (and the only one that
+reaches the action log at all when the caller swallows the error), and a refusal
+is worth saying twice. Item 13 may dedupe it in the UI; nothing here may drop
+the gate's copy.
+
+## 12.6 RULING — the gate is armed only by a non-`fold` request
+
+The probe costs up to `sim_probe_timeout` ms and runs immediately before the
+run. It is skipped entirely for a `fold` request, which is every user who has
+configured nothing. A1 is explicit: the mismatch warning "never fires for a
+stock user — only for someone who deliberately requested a mode and did not get
+it". `CS179d` reads the stand-in's own launch log, so it measures the launches
+rather than an absence of output.
+
+**Declared consequence:** a `.spiceinit` that turns a `fold` request into
+`preserve` or `distinguish` is **not detected**. Detecting it would mean probing
+every ASE-L run forever to compare `fold` against `fold`.
+
+**The `exe` check of §12.4 is not gated on the mode** and runs on every
+profile-composed run. Neither is the resolve-status report (§12.9) nor the
+dropped-args report (§12.2): both are about a command that is not the command
+the user configured, which is a harm independent of the mode.
+
+### The probe's cwd is the RUNDIR, and that is a check now
+
+A2's whole detection route is a `.spiceinit` **beside the deck**, so a probe
+asked from anywhere else cannot see it. `ase::run_precheck` passes
+`-cwd [ase::rundir $state]`, and `CS189` is the only assertion in the file that
+can notice: its stand-in answers `CCM=fold` when a `.spiceinit` is in **its own
+cwd** and `CCM=distinguish` when it is not, so with the marker planted in the
+rundir a `distinguish` request REFUSES and without it the same row runs. Every
+other stand-in in the suite answers the same mode from any directory, which is
+why mutating the cwd used to leave the suite green.
+
+### RULING — the policy applies only where the ngspice composer runs
+
+`ase::run_composes_profile` compares the backend's `run_cmd` **hook identity**
+against `::ase::backend::ngspice::run_cmd`. The policy describes exactly what
+that proc builds, so it may only be applied where that proc is the composer: a
+test backend with its own `run_cmd` (`test_ase_core` E2) hardcodes its own binary
+and reads no profile, and a refusal about a profile exe it never runs would be a
+lie. A sixth registered hook was rejected — `register_backend` requires all five
+it knows, so adding one would break every already-registered backend.
+
+The guard is driven **at the call site**, not only as a predicate: `CS180c`
+tests `ase::run_composes_profile`, and `CS191` registers a second backend with
+its own `run_cmd`, gives the *spice* profile an unlocatable `exe`, and asserts
+`ase::run_deck` on that state runs to exit 0 without a refusal and without a
+casemode line on the CIW. Deleting the guard (`if {1}`) leaves both
+`test_sim_run_profile`'s predicate check and `test_ase_core` green, so `CS191`
+is the one that notices.
+
+## 12.7 The report reaches the CIW **and** the run log
+
+§3b says "report in the log and the CIW". Item 14 found the hard way that a
+channel can be **correct and still reach nobody** (its ERC window opens only on
+error, so a warn-level diagnostic went nowhere). So both, and neither is
+conditional on a window being open:
+
+| channel | when | how |
+|---|---|---|
+| CIW pane | immediately, **before** the simulator starts | `::ase::echo … note` (dark orange) for a report, `… error` (red) for a refusal |
+| action log (`Xschem.log`) | same call | `ase::echo`'s file half, `xschem log_action -result\|-error` |
+| **the run log** `<rundir>/<cell>_ase.log` | when the run finishes | `ase::run_done`'s new optional `notes` argument, **prepended**, on its own line |
+
+**Three kinds of line use those channels**, all assembled by `ase::run_precheck`
+and all returned to `run_deck` as one newline-joined `notes` block:
+
+1. the **casemode mismatch** report (B4's `report` verdict) — this section's
+   original subject;
+2. the **resolve-status** report (§12.9), when the row that will run is not the
+   row the session stamped;
+3. the **dropped-args** report (§12.2), naming the words the run filter removed.
+
+(2) and (3) are emitted for a `fold` request too, so the `fold` early return
+carries the accumulated notes rather than `{}`.
+
+The run log half can only happen in `ase::run_done`, because that proc
+**overwrites** the log with the captured output. The note goes **first**: a
+mismatch is a statement about the whole run, and the head of the file is the one
+place a reader who scrolls nothing at all still sees it. `notes` defaults to `{}`
+so an ordinary run's log is byte-identical to before **and** a caller that
+predates the parameter still works (`CS183`); `CS182` reads the note back out of
+the log after a real `execute`, and `CS182b` is the control.
+
+## 12.8 What is NOT here
+
+- **`sod_expr`** (item 9), the **pre-flight / `$sim_status` guard / constants-raw
+  rejection** (item 10), **`result_probe -nocase`** (item 11), **post-load
+  current repair** (item 12), **every widget** (item 13). `render_deck` is
+  byte-identical: this item changes the **command**, not the deck.
+- **No real simulator is in the test.** Every launch is a `/bin/sh` stand-in, so
+  the suite needs no ngspice and has no skip arm to mis-score. Two measurements
+  were taken by hand against real binaries and are recorded rather than
+  asserted: §12.3's "`build-ver_50` with no `-D` yields `CCM=fold`", and
+  §12.2's `-o` table plus its end-to-end drive through `ase::run_deck` on
+  `/usr/local/bin/ngspice` (`-o` → empty `last_result` before the fix,
+  `va 1.000000e+00` after; `-r`/`--rawfile` unaffected either way).
+- **The probe's argv and the run's argv differ by exactly `-r` / `--rawfile` /
+  `--soa-log`**, because the probe filters those and the run keeps them. (`-o`
+  is no longer part of that gap: both filters drop it, for different reasons.)
+  Nothing about those options can change a case mode, so A2's "probe with the
+  real argv" is honoured in substance; it is stated here rather than hidden.
+- **`ase::expand_path` is untouched** — issue `0422`, pre-existing. `exe` is
+  expanded by item 6's `sim_profile_expand_vars`, which refuses that shape; no
+  new path routes through `expand_path`.
+- **The refusal does not delete the previous run's artefacts.** Deleting a user's
+  results because a *new* run was refused would be worse, and item 10 owns
+  recognising a bad artefact on read. What this item owes — writing nothing new —
+  it does.
+
+
+## 12.9 RULING — a `stale` or `invalid` resolve is REPORTED, not refused
+
+§8 states that `ase::sim_profile_resolve` returns four statuses and that "the
+index still resolves: **item 8 decides whether to run it**, item 13 whether to
+offer to re-point it". This is that decision, and it was missing from the first
+version of this section: the status was computed and **no consumer read it**.
+
+**What was at stake, measured.** With two stand-in binaries, a state stamped on
+row `spice,5` named `Ngspice ver_50`, and that index coming to hold a row named
+`Ngspice 44` (item 6's own "a row inserted above" scenario):
+
+```
+resolve-before: tool spice index 5 status ok      cmd: …/ngspice_ver50 -b … 2>@1
+resolve-after:  tool spice index 5 status stale   cmd: …/ngspice_44     -b … 2>@1
+```
+
+— a **different binary**, with no word to the user. The `invalid` facet is the
+same harm by another route: the stored index is gone, `resolve` falls back to
+the tool's **default** row, and that row's `exe` runs instead. Before item 8
+neither substitution was possible (`run_cmd` was a literal), so this item
+created the exposure and owes the fix.
+
+**Reported, not refused**, and the split is deliberate:
+
+- the §12.4 **exe** guard refuses because its case has **no run left in it** —
+  the named binary is not there and the only alternative *is* the silent
+  substitution;
+- here a real, configured, locatable simulator **is** resolved. Refusing would
+  make a saved session unrunnable because somebody renamed a row, and §5 already
+  rules that a hand-edited `simrc` "must not make a saved session unopenable".
+  Reporting turns a silent substitution into a loud one, which is the whole
+  complaint.
+- The substitution cannot smuggle a **mode** past B4 either: the casemode probe
+  runs against the binary that will *actually* run, so a stale row resolving to
+  a folding binary under a `distinguish` request still **refuses**.
+
+The message names the stamped name, the name the row carries now, and the
+executable that will run (`CS187`); an `ok` resolve says nothing at all
+(`CS187b`, the control — without it the report could fire on every run).
+Item 13 owns *offering* to re-point the row; this item owes the sentence.

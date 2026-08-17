@@ -1,0 +1,2319 @@
+display arm: ATTACHED to persistent dev display :99 (devdisplay.sh), GUI_GATE=0
+PASS     | test_accelerators
+PASS     | test_action_log_dispatch
+PASS     | test_action_log_libmgr
+PASS     | test_actionlog_suppress_gate
+PASS     | test_add_pin_lib_symbol_view
+PASS     | test_add_wire_label
+PASS     | test_alt_transform_group_0116
+PASS     | test_altf5_ciw
+PASS     | test_apply_hilight_log
+PASS     | test_apply_properties_readonly
+PASS     | test_ase_bus_bits_0159
+PASS     | test_ase_core
+PASS     | test_ase_cosim
+PASS     | test_ase_dialogs
+PASS     | test_ase_dirty
+PASS     | test_ase_final
+PASS     | test_ase_final_gf180
+PASS     | test_ase_hier_pick_0161
+PASS     | test_ase_hier_plot_0168
+PASS     | test_ase_interact
+PASS     | test_ase_launch
+PASS     | test_ase_locked_wire_pick_0160
+PASS     | test_ase_log_seam_0207
+PASS     | test_ase_persist
+PASS     | test_ase_plot
+PASS     | test_ase_print_bracket_0167
+PASS     | test_ase_savestate_adopt
+PASS     | test_ase_unnamed_net
+PASS     | test_ase_view
+FAIL     | test_ase_window
+PASS     | test_audit_classifier
+PASS     | test_autosave_hook
+PASS     | test_backannotate_digital
+PASS     | test_backing_store_0413
+PASS     | test_backup_file
+PASS     | test_backup_hidden
+PASS     | test_backup_recovery
+PASS     | test_binding_precedence
+PASS     | test_bindings_file
+PASS     | test_cadence_descend_newwin_ro
+FAIL     | test_cadence_drag
+PASS     | test_cadence_stretch_move
+PASS     | test_cadence_window_hop_log
+PASS     | test_calc_skeleton
+PASS     | test_calc_widgets
+PASS     | test_callback_argc
+PASS     | test_cellview_resolve
+FAIL     | test_ciw
+PASS     | test_ciw_actionlog_output
+PASS     | test_ciw_autocomplete
+PASS     | test_ciw_interactive_load
+PASS     | test_ciw_puts_capture
+PASS     | test_clone_canvas_bindings
+PASS     | test_close_window_force
+PASS     | test_close_window_restores_prev_tab
+PASS     | test_cmdmode_0201
+PASS     | test_cmdmode_descend_0201
+PASS     | test_connected_drag_group_transform_0114
+PASS     | test_connected_drag_keeps_selection_0113
+PASS     | test_context_menu_descend_edit
+PASS     | test_context_menu_descend_refusal_0249
+PASS     | test_context_menu_log
+PASS     | test_coordlog_precision
+PASS     | test_copy_form
+PASS     | test_cosim_golden_e2e
+PASS     | test_create_instance
+PASS     | test_crossview_paste
+PASS     | test_dblclick_connected_grow
+PASS     | test_del_negative_arg
+PASS     | test_delete_cut_selflog
+PASS     | test_descend_efficiency
+PASS     | test_descend_fidelity
+PASS     | test_descend_goback_selflog
+PASS     | test_descend_inert_class
+PASS     | test_descend_log_absorb
+PASS     | test_descend_newwin_return
+PASS     | test_descend_preserve
+PASS     | test_descend_readonly
+PASS     | test_descend_refusal_channel_0251
+PASS     | test_descend_symbol
+PASS     | test_descend_untitled_preserve
+PASS     | test_descend_views
+PASS     | test_deselect_mode
+PASS     | test_drag_keeps_selection
+PASS     | test_edit_vi_prop_readonly
+PASS     | test_editprop_preserve
+PASS     | test_empty_value_swallows_token_0183
+PASS     | test_expandlabel_zero_neg_mult_0182
+PASS     | test_find_helper
+PASS     | test_fluid_backbone_short_vertical_0098
+PASS     | test_fluid_bodyshove_guards_0132
+PASS     | test_fluid_collinear_backbone_short_0105
+PASS     | test_fluid_compact_escape_stub_0137
+PASS     | test_fluid_compact_named_crossbar_0138
+PASS     | test_fluid_diagonal_neighbor_bus_0134
+PASS     | test_fluid_diagonal_ref_drop_0132
+PASS     | test_fluid_diagonal_shove_throughbody_0135
+PASS     | test_fluid_drag_onto_backbone_row_0106
+PASS     | test_fluid_drag_through_anchor_0109
+PASS     | test_fluid_editing
+PASS     | test_fluid_exit_stub_staircase_0111
+PASS     | test_fluid_jog_separated_trunk_0136
+PASS     | test_fluid_loop_0088
+PASS     | test_fluid_ortho_ctrl1_shove_0132
+PASS     | test_fluid_ortho_second_drag_0132
+PASS     | test_fluid_relay_manhattanize_0107
+PASS     | test_fluid_relay_reanchor_0108
+PASS     | test_fluid_reversal_0089
+PASS     | test_fluid_reversal_0096
+PASS     | test_fluid_rotate_body_route_0130
+PASS     | test_fluid_rotate_second_drag_0132
+PASS     | test_fluid_second_gesture_body_cross_0139
+PASS     | test_fluid_sibling_pin_backbone_short_0098
+PASS     | test_flylines_render
+PASS     | test_geometry_sanity
+PASS     | test_gesture_bindings
+PASS     | test_gesture_end_log
+PASS     | test_getprop_index_bounds
+PASS     | test_gf180_ase_defaults
+FAIL     | test_gf180mcud_libmgr
+PASS     | test_graph_box_zoom_xy
+PASS     | test_graph_context
+PASS     | test_grid_toggle_sel_gc
+PASS     | test_hash_extra_node_warn_0165
+PASS     | test_hash_label_crash_0156
+PASS     | test_hi_descend
+PASS     | test_hier_close_prompt
+PASS     | test_hier_walkup
+PASS     | test_hilight_case_senders
+PASS     | test_hover_highlight
+PASS     | test_hover_selection_repair
+FAIL     | test_ihp_sg13g2_libmgr
+PASS     | test_instance_refusal
+PASS     | test_instance_update
+PASS     | test_isources
+PASS     | test_key_graph_context
+PASS     | test_key_make_sch_from_sel_log
+PASS     | test_keybind_snap_grid
+PASS     | test_keybindings_help
+PASS     | test_label_ride
+PASS     | test_label_strand_oracle
+PASS     | test_launch_context
+PASS     | test_lib_browse
+PASS     | test_lib_manager_bold
+PASS     | test_lib_manager_checkin
+PASS     | test_lib_manager_ctx
+FAIL     | test_lib_manager_gui
+PASS     | test_lib_manager_history
+PASS     | test_lib_manager_launch
+FAIL     | test_lib_manager_locate
+PASS     | test_lib_manager_maintain
+PASS     | test_lib_new_discovered_defs
+PASS     | test_lib_roundtrip
+FAIL     | test_lib_sweep
+PASS     | test_libmgr_mutation_log
+PASS     | test_libmgr_refresh_reentrancy
+PASS     | test_library_defs
+PASS     | test_library_git
+PASS     | test_library_git_history
+PASS     | test_library_git_report
+PASS     | test_library_ops
+PASS     | test_list_nets_null_token_0180
+PASS     | test_load_window_routing
+PASS     | test_make_symbol_dialog
+PASS     | test_make_symbol_view
+PASS     | test_migrate_engine
+PASS     | test_migrate_pin_names
+PASS     | test_modify_symbol_pins
+PASS     | test_mouse_bindings
+PASS     | test_multi_window
+PASS     | test_netlist_case_collision
+PASS     | test_netlist_log
+PASS     | test_ngspice_data_ctx
+PASS     | test_ngspice_data_view
+PASS     | test_nh_angle_clamp
+PASS     | test_nh_angle_editor
+PASS     | test_nh_angle_range
+PASS     | test_nh_angle_render
+PASS     | test_nh_anim_rearm
+PASS     | test_nh_editor_align
+PASS     | test_nh_editor_buttons
+PASS     | test_nh_editor_cells
+PASS     | test_nh_editor_discover
+PASS     | test_nh_editor_flush_scroll
+PASS     | test_nh_editor_free
+PASS     | test_nh_editor_load
+PASS     | test_nh_editor_persist
+PASS     | test_nh_editor_preview
+PASS     | test_nh_editor_rowops
+PASS     | test_nh_editor_staged
+PASS     | test_nh_editor_table
+PASS     | test_nh_export_custom_color
+PASS     | test_nhse_mutation_log
+PASS     | test_node_token_split
+PASS     | test_nogui
+PASS     | test_nolog
+PASS     | test_noncairo_verbs_ungated
+PASS     | test_palette
+PASS     | test_paste_at_log
+PASS     | test_paste_modify_flag_0244
+PASS     | test_pdk_launcher
+PASS     | test_perform_action_add_pin_stubs
+PASS     | test_perform_action_align
+PASS     | test_perform_action_apply_pin_prop
+PASS     | test_perform_action_attach_labels
+PASS     | test_perform_action_break_wires
+PASS     | test_perform_action_change_elem_order
+PASS     | test_perform_action_check_unique_names
+PASS     | test_perform_action_clear_drawing
+PASS     | test_perform_action_delete
+PASS     | test_perform_action_embed_rawfile
+PASS     | test_perform_action_flip
+PASS     | test_perform_action_flip_in_place
+PASS     | test_perform_action_flipv
+PASS     | test_perform_action_flipv_in_place
+PASS     | test_perform_action_floaters_from_selected_inst
+PASS     | test_perform_action_image
+PASS     | test_perform_action_instance_number
+PASS     | test_perform_action_move_instance
+PASS     | test_perform_action_redo
+PASS     | test_perform_action_replace_symbol
+PASS     | test_perform_action_reset_inst_prop
+PASS     | test_perform_action_reset_symbol
+PASS     | test_perform_action_rotate
+PASS     | test_perform_action_rotate_in_place
+PASS     | test_perform_action_show_unconnected_pins
+PASS     | test_perform_action_toggle_ignore
+PASS     | test_perform_action_trim_wires
+PASS     | test_perform_action_undo
+PASS     | test_perform_action_wire_cut
+PASS     | test_phase3_mints
+PASS     | test_pin_name_size_win
+PASS     | test_pin_rename_propagate
+PASS     | test_pin_type_edit
+PASS     | test_placement_preview_doors
+PASS     | test_placement_wire_gate
+PASS     | test_prep_result_contamination_0155
+PASS     | test_pristine_untitled_basename
+PASS     | test_pristine_untitled_viewer_0172
+PASS     | test_prop_form_field_width_0170
+PASS     | test_raw_ascii_point_bounds
+PASS     | test_raw_case_mode
+PASS     | test_raw_read_dispatch
+PASS     | test_raw_read_failure_0306
+PASS     | test_readonly
+PASS     | test_readonly_action_dispatch
+PASS     | test_readonly_guard
+PASS     | test_remap
+FAIL     | test_reopen_readonly
+PASS     | test_resolved_net_attr_scope_0163
+PASS     | test_resolved_net_bus_global_0157
+PASS     | test_resolved_net_hash_bus_0158
+PASS     | test_resolved_net_templ_fallback_0164
+PASS     | test_rotate_prompt_object
+PASS     | test_rotate_stretch_dangling_0103
+PASS     | test_rotate_stretch_reconnect
+PASS     | test_rotate_stretch_reconnect_0099
+PASS     | test_rotate_stretch_reconnect_0100
+PASS     | test_rotate_stretch_route_quality_0110
+FAIL     | test_rotate_stretch_short_0104
+PASS     | test_rotmove_drop_log
+PASS     | test_save_as_cellview
+PASS     | test_save_as_form
+PASS     | test_save_reload_copy_selflog
+PASS     | test_sch_add_pin
+PASS     | test_schpins_stale_lab_0185
+PASS     | test_scripted_shape_undo
+PASS     | test_select_at
+PASS     | test_select_inside_argc
+PASS     | test_select_same_net_by_label
+PASS     | test_selflog_grep_guard
+FAIL     | test_selflog_output
+PASS     | test_shape_draw_gate
+PASS     | test_shape_setprop_log
+PASS     | test_signal_short_nohier_0230
+PASS     | test_sim_probe
+PASS     | test_sim_profiles
+PASS     | test_sim_run_profile
+FAIL     | test_sky130a_libmgr
+PASS     | test_snap_bindkeys
+PASS     | test_sod_pick_no_select_0204
+PASS     | test_statusmsg_hold_0248
+PASS     | test_stdin_tcp_log
+PASS     | test_sweep_diff
+PASS     | test_symbol_view_resolve
+PASS     | test_sympin_drop_log
+PASS     | test_tedax_extra_pinnumber_0179
+PASS     | test_text_view_model
+PASS     | test_toggle_editmode_log
+PASS     | test_transform_keys_remap
+PASS     | test_undo_link_symbols
+PASS     | test_undo_move_keep_selection
+PASS     | test_undo_selection
+PASS     | test_untitled_name_dir_0323
+PASS     | test_untitled_reuse
+PASS     | test_vcd_read
+PASS     | test_vcd_time_base
+PASS     | test_verb_noun_copy_move
+PASS     | test_verb_noun_descend_0200
+PASS     | test_verilog_view_model
+PASS     | test_vpulse
+PASS     | test_vpwl
+PASS     | test_wave_axis_zoom
+PASS     | test_wave_casemode
+PASS     | test_wave_clear_all
+PASS     | test_wave_crossdb_trace
+PASS     | test_wave_cursor_crossdb
+PASS     | test_wave_drag_preview
+PASS     | test_wave_empty_strips
+PASS     | test_wave_grid
+PASS     | test_wave_hilight
+PASS     | test_wave_legend
+FAIL     | test_wave_markers
+PASS     | test_wave_modes
+PASS     | test_wave_sigbrowser
+FAIL     | test_wave_sigbrowser_0312
+PASS     | test_wave_sigbrowser_0315
+PASS     | test_wave_sigbrowser_0318
+PASS     | test_wave_sigbrowser_0319
+PASS     | test_wave_sigbrowser_2pane
+PASS     | test_wave_sigbrowser_digital
+PASS     | test_wave_sigbrowser_i11
+PASS     | test_wave_sigbrowser_i12
+PASS     | test_wave_sigbrowser_i1315
+PASS     | test_wave_sigbrowser_i14
+FAIL     | test_wave_sigbrowser_keys
+PASS     | test_wave_sigbrowser_panes
+PASS     | test_wave_sigbrowser_sea
+PASS     | test_wave_sigsearch
+PASS     | test_wave_snap
+PASS     | test_wave_split_strip
+PASS     | test_wave_tabs
+PASS     | test_wave_trace_menu
+PASS     | test_wave_viewer
+PASS     | test_window_numbering
+PASS     | test_window_switch_bogus_enter
+PASS     | test_wire_complete_with_selection
+PASS     | test_wire_split
+PASS     | test_wire_stub_bindings
+PASS     | test_wire_vertex_grab
+--------- wireedit suite ---------
+test_wireedit_00_selftest.tcl: RESULT: ALL PASS
+test_wireedit_01_stretch_off.tcl: RESULT: ALL PASS
+test_wireedit_02_parallel_stretch.tcl: RESULT: ALL PASS
+test_wireedit_03_perp_lone.tcl: RESULT: ALL PASS
+test_wireedit_04_subgrid.tcl: RESULT: ALL PASS
+test_wireedit_05_tjunction.tcl: RESULT: ALL PASS
+test_wireedit_06_corner_slide.tcl: RESULT: ALL PASS
+test_wireedit_07_colinear_merge.tcl: RESULT: ALL PASS
+test_wireedit_08_overlap_dedup.tcl: RESULT: ALL PASS
+test_wireedit_09_orphan_stub.tcl: RESULT: ALL PASS
+test_wireedit_10_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_11_two_nets_no_short.tcl: RESULT: ALL PASS
+test_wireedit_12_bus.tcl: RESULT: ALL PASS
+test_wireedit_13_multi_rigid.tcl: RESULT: ALL PASS
+test_wireedit_14_undo.tcl: RESULT: ALL PASS
+test_wireedit_15_far_fixed_pin.tcl: RESULT: ALL PASS
+test_wireedit_16_pin_abutment.tcl: RESULT: ALL PASS
+test_wireedit_17_wire_drag_junction.tcl: RESULT: ALL PASS
+test_wireedit_18_subgrid_corner.tcl: RESULT: ALL PASS
+test_wireedit_19_multipin_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_20_F1_netlabel_tap.tcl: RESULT: ALL PASS
+test_wireedit_22_F5_no_short.tcl: RESULT: ALL PASS
+test_wireedit_23_F4_body_detour.tcl: RESULT: ALL PASS
+test_wireedit_24_F3_same_edge.tcl: RESULT: ALL PASS
+test_wireedit_25_F8_mos_bundle.tcl: RESULT: ALL PASS
+test_wireedit_26_phase1_runtime_guard.tcl: RESULT: ALL PASS
+test_wireedit_27_phase1_disconnect.tcl: RESULT: ALL PASS
+test_wireedit_28_escape_normal.tcl: RESULT: ALL PASS
+test_wireedit_29_exit_stub_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_30_F2_two_pin_res.tcl: RESULT: ALL PASS
+test_wireedit_31_tapped_leg_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_32_decouple_ownership.tcl: RESULT: ALL PASS
+test_wireedit_33_incremental_step.tcl: RESULT: ALL PASS
+test_wireedit_34_r18_no_short.tcl: RESULT: ALL PASS
+test_wireedit_35_flip_generality.tcl: RESULT: ALL PASS
+test_wireedit_36_both_blocked_detour.tcl: RESULT: ALL PASS
+test_wireedit_37_connected_wire_shove.tcl: RESULT: ALL PASS
+test_wireedit_38_shove_declines.tcl: RESULT: ALL PASS
+test_wireedit_39_p6_min_bend.tcl: RESULT: ALL PASS
+test_wireedit_40_diagonal_shove.tcl: RESULT: ALL PASS
+test_wireedit_41_no_short_offset_solder.tcl: RESULT: ALL PASS
+test_wireedit_42_farpin_never_worse.tcl: RESULT: ALL PASS
+test_wireedit_43_diagonal_fallback_no_short.tcl: RESULT: ALL PASS
+test_wireedit_44_diagonal_manhattan_quality.tcl: RESULT: ALL PASS
+test_wireedit_45_redundant_loop_0088.tcl: RESULT: ALL PASS
+test_wireedit_46_reversal_0089.tcl: RESULT: ALL PASS
+test_wireedit_47_staircase_0090.tcl: RESULT: ALL PASS
+test_wireedit_48_body_cross_0091.tcl: RESULT: ALL PASS
+test_wireedit_49_axis_overshoot_0092.tcl: RESULT: ALL PASS
+test_wireedit_50_regrab_partial_disconnect_0093.tcl: RESULT: ALL PASS
+test_wireedit_51_offpin_foreign_backbone_0094.tcl: RESULT: ALL PASS
+test_wireedit_52_pushthrough_amnesty_0112.tcl: RESULT: ALL PASS
+test_wireedit_53_mixed_selection_safetynet_0113.tcl: RESULT: ALL PASS
+test_wireedit_54_enforce_refuse_named_rail_0105.tcl: RESULT: ALL PASS
+test_wireedit_55_failsafe_counter_b4.tcl: RESULT: ALL PASS
+test_wireedit_56_fluid_pass_harness_d6.tcl: RESULT: ALL PASS
+test_wireedit_57_enforce_preexisting_foreign_short_0123.tcl: RESULT: ALL PASS
+test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
+WIREEDIT: ALL PASS
+--------- working-tree delta (report only) ---------
+TREEADD | ?? doc/claude/casemode_batch/receipts/08-profile-aware-run-cmd-annex.md
+TREEADD | ?? doc/claude/casemode_batch/receipts/08-profile-aware-run-cmd.md
+TREEDEL | ?? doc/claude/casemode_batch/receipts/08-profile-aware-run.md
+========================================
+SUMMARY: 325 pass  15 fail  0 crash/timeout  0 skip  (total 340)
+WIREEDIT: PASS
+SCRATCH:  0 leaked dir(s)
+TREE:     2 appeared  1 vanished (report only, gitignored paths excluded; issues 0352/0353)
+========================================
+
+=== FAIL / CRASH / TIMEOUT output ===
+
+###### FAIL: test_ase_window ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   H1 design lib
+ok:   H1 design cell
+ok:   H1 design view points at the schematic
+ok:   H1 fresh session not dirty
+ok:   H2 dirty after update
+ok:   H2 saved file contains the new Vgs value
+ok:   H2 clean after save
+ok:   H3 dirty after second update
+ok:   H3 revert restores the saved variables
+ok:   H3 clean after revert
+ok:   H3 session_load re-reads the file from disk
+ok:   H4 existing view -> 1
+ok:   H4 session registered by open_state
+ok:   H4 missing view throws no error
+ok:   H4 missing view -> 0
+ok:   H5 allocator returns integers
+ok:   H5 second call == first+1 (counter advances)
+ok:   H5 numbers start at/after the editor floor (>= 3)
+ok:   H6 backend_names contains ngspice
+ok:   T1 run_existing without a netlist artifact raises
+ok:   T1 error points at Netlist > Recreate
+ok:   P2 output_display_name prefers the user name
+ok:   P2 unnamed short expr shown whole
+ok:   P2 unnamed long expr truncated to 21+...
+ok:   P2 truncated form is exactly 24 chars
+ok:   P3 output_kind v(net) -> voltage
+ok:   P3 output_kind -i(v1) -> current
+ok:   P3 save_options_cell voltage+save_all_v -> allv
+ok:   P3 current+save_all_i -> alli
+ok:   P3 blanket off -> blank
+ok:   P4 arg_summary dc row
+ok:   W1 open_state -> 1
+ok:   W1 window_for returns a live toplevel
+ok:   W1 toplevel named .ase<N>
+ok:   W1 v2 title Analog Sim Environment <design cell>
+ok:   W1 no log pane in the session window
+ok:   W1 temperature entry shows 27
+ok:   W1 toplevel panel background #f2f2f2
+ok:   W1 named fonts exist
+ok:   W1 pane title dark-red accent
+ok:   W1 temperature entry white + AseEntryFont
+ok:   W1m menubar cascades in order
+ok:   W1m Launch cascade disabled
+ok:   W1m Tools cascade NOT disabled
+ok:   W1m Tools menu entries
+ok:   W1m Tools Waveform Viewer NOT disabled
+ok:   W1m Tools Waveform Viewer command
+ok:   W1m Tools Calculator NOT disabled (item 13: live)
+ok:   W1m Tools Calculator command is the bare calc::open
+ok:   W1m Results Direct Plot NOT disabled (item 13: live)
+ok:   W1m Results Direct Plot has a command
+ok:   W1m Results Annotate OP info disabled
+ok:   W1m Results Annotate DC Node Voltages disabled
+ok:   W1m Simulation menu entries
+ok:   W1m Netlist cascade entries
+ok:   W1m Session menu entries (v2, no Revert)
+ok:   W1p exactly the three v2 panes
+ok:   W1p no inline add/del buttons under the panes
+ok:   W1p variables columns
+ok:   W1p analyses columns
+ok:   W1p outputs columns
+ok:   W1p analyses rows numbered 1..4
+ok:   W1p variables pane has a Vgs row
+ok:   W1p Vgs row shows 1.8
+ok:   W1p outputs pane has the id row
+ok:   W1p id output row Value blank pre-run
+ok:   W1p id Save Options blank while blankets off
+ok:   W1p treeview themed (style Ase.Treeview)
+ok:   W1p heading strip carries the locked header color
+ok:   W1s strip buttons in order
+ok:   W1s plot button normal (item 13: ~ live)
+ok:   W1c vars context menu entries
+ok:   W1c ana context menu entries
+ok:   W1c outs context menu entries
+ok:   W2 re-open returns 1
+ok:   W2 same toplevel
+ok:   W2 still exactly one .ase* toplevel
+ok:   W2 no number consumed by the re-open (delta == the probe only)
+ok:   W3 double-click opens the variable editor
+ok:   W3 editor prefilled with the row name
+ok:   W3 editor prefilled with the row value
+ok:   W3 editor closed on Return
+ok:   W3 title gained the dirty marker
+ok:   W3 session dirty after widget commit
+ok:   W3 tree shows 2.2
+ok:   W3 saved file contains the widget's value
+ok:   W3 dirty marker gone after save
+ok:   W3 session clean after save
+ok:   W3 Vgs restored to 1.8 + saved
+ok:   W3t session dirty after temperature commit
+ok:   W3t status bar carries T=33 C
+ok:   W3t saved file contains temperature 33
+ok:   W3t non-numeric input keeps the stored temperature
+ok:   W3t entry restored after invalid input
+ok:   W3t temperature restored + saved
+ok:   W3s variables row selected
+ok:   W3s selecting in outputs clears the variables selection
+ok:   W3c analyses pane has the dc row
+ok:   W3c click toggles dc enabled in state
+ok:   W3c save persists the toggle
+ok:   W3c second click + save restores enabled 0
+ok:   W3v = opens the Add Variable dialog
+ok:   W3v add dialog closed on Return
+ok:   W3v tmpA in the tree
+ok:   W3v tmpA in the session state
+ok:   W3v tmpB added too
+ok:   W3v duplicate name rejected (state unchanged)
+ok:   W3v duplicate add keeps the dialog up
+ok:   W3v cancel closes the dialog
+ok:   W3x X removed both rows from the state
+ok:   W3x survivors intact
+ok:   W3x X with empty selection is a clean no-op
+ok:   W3o id row Save Options shows alli
+ok:   W3o blanket off -> Save Options blank again
+ok:   W3o session clean after the round trip
+ok:   W3e add-variable 1.04e-4 shows 104u in the pane
+ok:   W3e session state keeps the raw value
+ok:   W3e saved state file stores the raw value
+ok:   W3e saved state file has no formatted value
+ok:   W3e gate off shows the raw scientific value
+ok:   W3e gate back on shows 104u again
+ok:   W3e double-click opens the variable editor
+ok:   W3e editor prefill is the RAW value
+ok:   W3e cleanup leaves the session clean
+ok:   W3e cleanup restored the seeded variables
+ok:   W4 design is now the current schematic
+ok:   W4 window list has the design schematic
+ok:   W4 design toplevel raised above the ASE window
+ok:   W5 Recreate produced the netlist artifact
+ok:   W5 netlist textwindow opened (titled with the path)
+ok:   W5 netlist viewer shows the device line (XM1)
+ok:   W6 run started (integer execute id)
+ok:   W6 log toplevel appears
+ok:   W6 status orange while running
+ok:   W6 status text Running
+ok:   W6 log window non-empty
+ok:   W6 log window has the Data Rows banner
+ok:   W6 log window has the -i(v1) result line
+ok:   W6 status light Green on success
+ok:   W6 status text back to Ready
+ok:   W6 log file written in the scratch rundir
+ok:   W6 deck contains .temp 27
+ok:   W6 id row Value filled after run
+ok:   W6b run-existing started
+ok:   W6b run-existing exit 0
+ok:   W6b netlist artifact still carries the sentinel
+ok:   W6b deck carries the sentinel
+ok:   W6c log toplevel open before Ctrl-W
+ok:   W6c Ctrl-W destroyed the log window
+ok:   W6c Simulation > Log reopened the window
+ok:   W6c reopened log shows the log file content
+ok:   W7 long tran started
+FAIL: W7 simulator produced output before Stop -> {0} (exp {1}) : FAIL
+ok:   W7 nonzero exit after Stop
+ok:   W7 status light red after Stop
+ok:   W7 status text Error after Stop
+ok:   W7 execute pipe cleaned up
+ok:   W7 revert leaves the session clean
+ok:   W7v Tools > Waveform Viewer opened a viewer toplevel
+ok:   W7v the viewer is a toplevel
+ok:   W7v second invoke raises the SAME viewer
+ok:   W7v no second viewer window
+ok:   W7v Calculator invoke does not throw
+ok:   W7v Calculator invoke opened .calc
+ok:   W7v ...and it is a NEW toplevel, not one that was already there
+ok:   W7v Calculator closed again, toplevel set back as it was
+ok:   W7v viewer closed, registry clean
+ok:   W8 toplevel destroyed
+ok:   W8 window_for now empty
+RESULT: 1 FAILED (168 passed)
+
+###### FAIL: test_cadence_drag ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   fixture has instances
+ok:   plain click selects instance 0
+ok:   Shift+drag duplicates the instance (copy)
+ok:   forced intuitive: plain drag moves the instance (intuitive_interface=0)
+fluid_editing INVARIANT (P2): net label 'VCC' (l5) on net 'A' -- possible short/merge
+fluid_editing INVARIANT (P1): 3 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+ok:   plain drag moves the gate
+ok:   plain drag carries attached wires (enable_stretch=0)
+fluid_editing INVARIANT (P1): 6 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm1' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P1): net label 'VCC' (l5) was on copper at move START and now touches none -- stranded, its net reverts to an auto #net name
+ok:   Ctrl+drag moves the gate
+FAIL: Ctrl+drag leaves wires behind (detached)
+ok:   Ctrl+drag is a move not a copy (count unchanged)
+fluid_editing INVARIANT (P1): 6 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm1' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P1): net label 'VCC' (l5) was on copper at move START and now touches none -- stranded, its net reverts to an auto #net name
+ok:   non-cadence plain drag still moves the gate
+FAIL: non-cadence plain drag leaves wires behind (enable_stretch=0 stock)
+ok:   abutment fixture starts with no wire
+ok:   plain cadence drag of abutted pin GENERATES a connecting wire
+ok:   no-motion click on abutted instance leaves no stub wire
+ok:   no-motion click on abutted (kissing) instance stays selected
+ok:   Shift+copy after a no-kiss click draws no spurious wire
+ok:   Shift+copy still duplicated the instance
+ok:   cadence click-to-isolate still leaves exactly one selected
+RESULT: 2 FAILED
+
+###### FAIL: test_ciw ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   CIW toplevel exists
+ok:   panedwindow split
+ok:   log pane is a text
+ok:   log pane is read-only
+ok:   entry pane exists
+ok:   entry is editable (log pane is not)
+ok:   sash has a fat grab target
+ok:   entry height follows the sash
+ok:   actionlog_filename set
+ok:   CIW title shows the log path
+ok:   log_action mirrored to pane
+ok:   tricky line verbatim in pane
+ok:   typed cmd echoed with > prefix
+ok:   input tag used
+ok:   result tag used
+ok:   entry cleared after exec
+ok:   Return executes, no stray newline
+ok:   Ctrl-BackSpace eats trailing space + word
+ok:   Ctrl-BackSpace bound
+ok:   Up recalls newest command
+ok:   Up again walks older
+ok:   Down restores stashed draft
+ok:   Up/Down bound
+ok:   error text shown
+ok:   error tag used
+ok:   file header comment
+ok:   log_action line in file
+ok:   tricky line verbatim in file
+ok:   typed cmd recorded raw
+ok:   failed cmd is a comment
+ok:   no echo prefix in file
+FAIL: no result/error text in file
+ok:   file is source-able
+ok:   close withdraws, not destroys
+ok:   ciw_create re-shows
+RESULT: 1 FAILED
+
+###### FAIL: test_gf180mcud_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   library.defs exists
+ok:   cadence_style_rc exists
+FAIL: library_list = exactly the 8 intended libs -> {SANDBOX TEST analyses devices examples gf180mcu_pr gf180mcu_tests ngspice ngspice_verilog_cosim xschem_simulator} (exp {analyses devices examples gf180mcu_pr gf180mcu_tests ngspice ngspice_verilog_cosim xschem_simulator}) : FAIL
+ok:   devices -> xschem_libs_newsym/devices (outside gf180mcuD/)
+ok:   analyses -> xschem_libs_newsym/analyses (outside gf180mcuD/)
+ok:   examples -> xschem_libs_newsym/examples (outside gf180mcuD/)
+ok:   ngspice -> xschem_libs_newsym/ngspice (outside gf180mcuD/)
+ok:   ngspice_verilog_cosim -> xschem_libs_newsym/ngspice_verilog_cosim (outside gf180mcuD/)
+ok:   xschem_simulator -> xschem_libs_newsym/xschem_simulator (outside gf180mcuD/)
+ok:   gf180mcu_pr/nfet_03v3 symbol resolves
+ok:   gf180mcu_pr/pfet_03v3 symbol resolves
+ok:   gf180mcu_pr/cap_mim_1f0fF symbol resolves
+ok:   gf180mcu_tests/test_nfet_03v3 schematic resolves
+ok:   gf180mcu_tests/0_top schematic resolves (device gallery)
+ok:   devices/vsource symbol resolves (cross-lib -> newsym)
+ok:   devices/code_shown symbol resolves (models block host)
+ok:   testbench references gf180mcu_pr/nfet_03v3 (lib-qualified primitive)
+ok:   testbench references devices/code_shown (index-only strip)
+ok:   testbench carries no stale symbols/ dir-prefixed ref
+ok:   gf180mcu_pr has 66 cell dirs
+ok:   gf180mcu_tests has >= 59 cell dirs (migration floor; got 62)
+ok:   model design.spice vendored
+ok:   model sm141064.spice vendored
+ok:   model sm141064_mim.spice vendored
+ok:   model smbb000149.spice vendored
+ok:   sm141064.ngspice symlink resolves
+ok:   rc points XSCHEM_LIBRARY_DEFS at xschem_libs/library.defs
+ok:   rc sets library_registry_defs_only 1
+ok:   rc sets 180MCU_MODELS under models/
+RESULT: 1 FAILED (28 passed)
+OVERALL: notok
+
+###### FAIL: test_ihp_sg13g2_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   library.defs exists
+ok:   cadence_style_rc exists
+ok:   sg13g2_procs.tcl exists
+ok:   run.sh is executable
+FAIL: library_list = exactly the 9 intended libs -> {SANDBOX TEST analyses devices examples ngspice ngspice_verilog_cosim sg13g2_pr sg13g2_stdcells sg13g2_tests sg13g2_tests_ase xschem_simulator} (exp {analyses devices examples ngspice ngspice_verilog_cosim sg13g2_pr sg13g2_stdcells sg13g2_tests xschem_simulator}) : FAIL
+ok:   devices -> xschem_libs_newsym/devices (outside ihp-sg13g2/)
+ok:   analyses -> xschem_libs_newsym/analyses (outside ihp-sg13g2/)
+ok:   examples -> xschem_libs_newsym/examples (outside ihp-sg13g2/)
+ok:   ngspice -> xschem_libs_newsym/ngspice (outside ihp-sg13g2/)
+ok:   ngspice_verilog_cosim -> xschem_libs_newsym/ngspice_verilog_cosim (outside ihp-sg13g2/)
+ok:   xschem_simulator -> xschem_libs_newsym/xschem_simulator (outside ihp-sg13g2/)
+ok:   sg13g2_pr lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_stdcells lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_tests lives inside ihp-sg13g2/xschem_libs
+ok:   sg13g2_pr/sg13_lv_nmos symbol resolves
+ok:   sg13g2_pr/sg13_hv_nmos symbol resolves
+ok:   sg13g2_pr/cap_cmim symbol resolves
+ok:   sg13g2_pr/dantenna symbol resolves
+ok:   sg13g2_pr/annotate_fet_params symbol resolves
+ok:   sg13g2_pr/annotate_bip_params symbol resolves
+ok:   sg13g2_tests/dc_lv_nmos schematic resolves
+ok:   sg13g2_tests/dc_hbt_13g2 schematic resolves
+ok:   sg13g2_tests/ac_mim_cap schematic resolves
+ok:   sg13g2_stdcells/IHP130_stdcells schematic resolves
+ok:   devices/code_shown (cross-lib) resolves
+ok:   devices/vsource (cross-lib) resolves
+ok:   devices/gnd (cross-lib) resolves
+ok:   devices/lab_pin (cross-lib) resolves
+ok:   models/cornerMOSlv.lib vendored
+ok:   models/cornerMOShv.lib vendored
+ok:   models/cornerHBT.lib vendored
+ok:   models/cornerRES.lib vendored
+ok:   models/cornerCAP.lib vendored
+ok:   models/cornerDIO.lib vendored
+ok:   rc points the registry at this workarea
+ok:   rc is registry-only
+ok:   rc clears XSCHEM_LIBRARY_PATH
+ok:   rc sets ::MODELS_NGSPICE (benches need it)
+ok:   rc sets ::SG13G2_MODELS alias
+ok:   rc sources sg13g2_procs.tcl
+ok:   rc appends the IHP menu builder
+ok:   rc layers the repo Cadence UX
+ok:   sg13g2_procs.tcl defines sg13g2_fet_drc
+ok:   sg13g2_procs.tcl defines sg13g2_res_drc
+ok:   sg13g2_procs.tcl defines sg13g2_mim_drc
+ok:   sg13g2_procs.tcl defines sg13g2_hbt_drc
+ok:   sg13g2_procs.tcl defines sg13g2_diode_drc
+ok:   sg13g2_procs.tcl defines sg13g2_svaricap_drc
+ok:   sg13g2_procs.tcl defines sg13g2_save_params
+ok:   sg13g2_procs.tcl defines sg13g2_display_fet_params
+ok:   sg13g2_procs.tcl defines sg13g2_display_bip_params
+ok:   sg13g2_procs.tcl defines sg13g2_menupdk
+ok:   sg13g2_pr symbols carry prefixed drc= calls
+ok:   no sg13g2_pr symbol still calls a BARE *_drc
+ok:   benches reference models via $::MODELS_NGSPICE
+ok:   no bench still has a BARE model .lib/.include
+ok:   the .save includes were left bare (correct)
+ok:   osdi/psp103.osdi built
+ok:   osdi/psp103_nqs.osdi built
+ok:   osdi/r3_cmc.osdi built
+ok:   osdi/mosvar.osdi built
+ok:   build_ihp_osdi.sh is executable
+ok:   rc sets ::SG13G2_OSDI
+ok:   some benches pull in a model library
+ok:   every model-using bench registers the OSDI modules
+ok:   none uses a bare `osdi` (must be pre_osdi)
+
+OVERALL: 1 FAILED (65 passed)
+
+###### FAIL: test_lib_manager_gui ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   GUI1 three panes exist 
+ok:   GUI2 library pane populated (=> 15 libs)
+ok:   GUI3 cell+view panes start empty 
+ok:   GUI4 selecting a library fills cells (=> 127 cells)
+ok:   GUI5 switching library replaces cells (=> 76 cells)
+ok:   GUI6 selecting a cell fills views (=> schematic symbol)
+ok:   GUI7 current_cell resolves selection (=> examples cmos_inv)
+FAIL: GUI8 new-window mode adds a tab per open (=> 0 0 1)
+FAIL: GUI9 current-window mode reuses the tab (=> 1 -> 2)
+ok:   GUI10 symbol view opens for editing (=> /home/qflow/dev/xschem/claude_1/xschem/xschem_library/devices/res.sym)
+RESULT: 2 FAILED
+
+###### FAIL: test_lib_manager_locate ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   LM-LOC1 locate runs without error (no listbox API on treeview) (rc=0 e=)
+ok:   LM-LOC2 lib+cell+view stay selected after update (no deferred clobber) (lib=SANDBOX cell=cs_amp view=schematic want SANDBOX/cs_amp/schematic)
+FAIL: LM-LOC3 picking another library still clears the old cell/view selection (cell sel= cells=0)
+RESULT: 1 FAILED (2 passed)
+
+###### FAIL: test_lib_sweep ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+    (missing cells for devices)
+    (missing cells for examples)
+    (missing cells for ngspice)
+    (missing cells for ngspice_verilog_cosim)
+    (missing cells for logic)
+    (missing cells for xschem_simulator)
+    (missing cells for binto7seg)
+    (missing cells for pcb)
+    (missing cells for rom8k)
+    (missing cells for analyses)
+    (missing cells for xTAG)
+    (missing cells for rulz-r8c33)
+FAIL: P1 all 12 libraries migrated with view dirs 
+FAIL: P1b flat tree untouched 
+FAIL: P2 library.defs registers all 12 (=> 0/12)
+FAIL: P3 refs lib-qualified 
+FAIL: P4 netlist equivalence over all migrated schematics (compared=0, diffs=0)
+RESULT: 5 FAILED
+
+###### FAIL: test_reopen_readonly ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   R1 plain load of a writable file opens EDITABLE (ro=0)
+ok:   R2 load -readonly opens READ mode (ro=1)
+ok:   R3 plain load after -readonly is editable again (ro=0)
+ok:   R8 plain load of fb is editable (ro=0)
+l_s_d(): Symbol not found: sky130_tests_ase/bandgap
+ok:   R9 -lastopened (keyboard reopen) implies READ mode (ro=1)
+FAIL: R10 -lastopened resolved to the prior file (fa) (=> /home/qflow/dev/xschem/claude_1/xschem/sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/schematic/tb_bandgap.sch)
+ok:   R4 open_most_recent (Ctrl+Shift+O) passes -readonly (=> file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened -readonly,,,Open the most recently used file (read-only; Ctrl-2 to edit),,1)
+ok:   R5 open_last_closed (Ctrl+Shift+T) passes -readonly (=> file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed -readonly,,,Reopen the most recently closed file (read-only; Ctrl-2 to edit),,1)
+ok:   R6 recent menu (setup_recent_menu) passes -readonly 
+ok:   R7 File>Open stays editable (no -readonly in file_chooser_place) 
+RESULT: 1 FAILED
+
+###### FAIL: test_rotate_stretch_short_0104 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   fixture has R18
+ok:   pre: R18.P=#net2
+ok:   pre: R18.M=#net1
+ok:   rot90-ip user drop (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip user drop (-30,70): pre-existing user stubs survive
+ok:   rot90-ip user drop (-30,70): R18 landed at delta (-30,70)
+ok:   rot90-ip user drop (-30,70): R18 rot == 1
+ok:   rot90-ip user drop (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip user drop (-30,70): R18.P still shares a C12 pin net
+ok:   rot90-ip user drop (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip user drop (-30,70): R18.M still on the v8/backbone subtree
+ok:   user drop: no wire endpoint left at stale anchor (-120,-40)
+ok:   rot90-ip (-60,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-60,70): pre-existing user stubs survive
+ok:   rot90-ip (-60,70): R18 landed at delta (-60,70)
+ok:   rot90-ip (-60,70): R18 rot == 1
+ok:   rot90-ip (-60,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-60,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-60,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-60,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-50,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-50,70): pre-existing user stubs survive
+ok:   rot90-ip (-50,70): R18 landed at delta (-50,70)
+ok:   rot90-ip (-50,70): R18 rot == 1
+ok:   rot90-ip (-50,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-50,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-50,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-50,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-40,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-40,70): pre-existing user stubs survive
+ok:   rot90-ip (-40,70): R18 landed at delta (-40,70)
+ok:   rot90-ip (-40,70): R18 rot == 1
+ok:   rot90-ip (-40,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-40,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-40,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-40,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-20,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-20,70): pre-existing user stubs survive
+ok:   rot90-ip (-20,70): R18 landed at delta (-20,70)
+ok:   rot90-ip (-20,70): R18 rot == 1
+ok:   rot90-ip (-20,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-20,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-20,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-20,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-10,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-10,70): pre-existing user stubs survive
+ok:   rot90-ip (-10,70): R18 landed at delta (-10,70)
+ok:   rot90-ip (-10,70): R18 rot == 1
+ok:   rot90-ip (-10,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-10,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-10,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-10,70): R18.M still on the v8/backbone subtree
+ok:   rot90+flip-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90+flip-ip (-30,70): pre-existing user stubs survive
+ok:   rot90+flip-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot90+flip-ip (-30,70): R18 flip toggled
+ok:   rot90+flip-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90+flip-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot90+flip-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90+flip-ip (-30,70): R18.M still on the v8/backbone subtree
+FAIL: rot180-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300} {-120 -50})
+ok:   rot180-ip (-30,70): pre-existing user stubs survive
+ok:   rot180-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot180-ip (-30,70): R18 rot == 2
+ok:   rot180-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot180-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot180-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot180-ip (-30,70): R18.M still on the v8/backbone subtree
+ok:   rot270-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot270-ip (-30,70): pre-existing user stubs survive
+ok:   rot270-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot270-ip (-30,70): R18 rot == 3
+ok:   rot270-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot270-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot270-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot270-ip (-30,70): R18.M still on the v8/backbone subtree
+
+RESULT: 1 FAIL (76 checks)
+OVERALL: FAIL
+
+###### FAIL: test_selflog_output ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok   - action log open
+ok   - raw delete self-logs
+ok   - raw undo self-logs
+ok   - raw redo self-logs
+ok   - raw cut self-logs
+ok   - menu wrapper logs undo exactly once
+ok   - core self-log sets -emitted
+ok   - non-mutating cmd leaves -emitted 0
+ok   - flip self-logs with pivot
+ok   - flipv self-logs with pivot
+ok   - rotate self-logs with pivot
+ok   - flip_in_place self-logs
+ok   - flipv_in_place self-logs
+ok   - rotate_in_place self-logs
+ok   - align self-logs
+ok   - menu wrapper logs rotate exactly once
+ok   - trim_wires self-logs
+ok   - break_wires (bare) self-logs
+ok   - break_wires 1 self-logs with arg
+ok   - menu wrapper logs trim_wires exactly once
+ok   - read-only rejects flipv with no log line
+ok   - read-only rejects flip_in_place with no log line
+ok   - read-only rejects flipv_in_place with no log line
+ok   - read-only rejects rotate_in_place with no log line
+ok   - read-only rejects break_wires with no log line
+FAIL - key Shift-F logs flip
+FAIL - key Alt-F logs flip_in_place
+FAIL - key Shift-R logs rotate
+FAIL - key Alt-R logs rotate_in_place
+FAIL - key Shift-V logs flipv
+FAIL - key Alt-V logs flipv_in_place
+ok   - key Alt-U logs align
+ok   - key & logs trim_wires
+ok   - key ! logs break_wires
+ok   - key Ctrl-! logs break_wires 1
+ok   - setprop instance (non-fast) self-logs
+ok   - setprop -fast does NOT log
+ok   - setprop -fastundo (undoable) self-logs
+ok   - setprop rect (graph) is nolog
+ok   - change_elem_order (w/ sel) self-logs
+ok   - key Shift-S logs change_elem_order
+ok   - change_elem_order (no sel) is nolog
+ok   - set rectcolor w/ selection logs
+ok   - set rectcolor w/o selection is nolog
+ok   - set rectcolor on read-only rejects (TCL_ERROR)
+ok   - make_symbol read-only does NOT overwrite .sch
+ok   - make_symbol self-logs
+ok   - key 'a' logs make_symbol
+ok   - make_sch multi-select logs nothing (no phantom)
+ok   - make_sch_from_sel cancel logs nothing (no phantom)
+ok   - make_sch_from_sel (real edit) self-logs
+ok   - make_sch_from_sel read-only rejects (TCL_ERROR)
+ok   - make_sch_from_sel read-only logs nothing
+ok   - edit wire property logs a replayable setprop line
+ok   - edit rect property logs a replayable setprop line
+can't read "user_wants_copy_cell": no such variable
+ok   - edit instance property (vi editor) logs a replayable setprop line
+ok   - edit global schematic property logs a replayable set line
+ok   - property-edit marker no longer emitted
+ok   - cancelled property edit logs nothing
+ok   - attach_labels self-logs
+ok   - floaters_from_selected_inst self-logs
+check_unique_names(): found duplicate: i=11 name=m1
+check_unique_names(): found duplicate: i=13 name=m2
+ok   - check_unique_names 1 (rename) self-logs
+ok   - check_unique_names 0 (highlight) self-logs
+ok   - print_hilight_net 4 (create labels) self-logs
+ok   - print_hilight_net 1 (print) self-logs
+ok   - add_pin_stubs no-op STILL logs +1 (atom 25 option c no-op-still-logs)
+ok   - set header_text self-logs replayable
+ok   - set header_text no-op logs nothing
+ok   - set header_text read-only rejects (TCL_ERROR)
+ok   - set header_text read-only logs nothing
+ok   - set cadsnap self-logs resolved value
+ok   - set cadgrid self-logs resolved value
+ok   - set cadsnap 0 logs the RESOLVED default (not 0)
+ok   - pure-display set (color_ps) is nolog
+ok   - unhilight_all self-logs (key 0)
+ok   - hilight_net_interactive noun-verb self-logs (key 9)
+ok   - unhilight_net_interactive noun-verb self-logs (key 8)
+ok   - hilight_net_interactive interactive-mode logs nothing (gesture start)
+ok   - change_index (+/-) routes through logged setprop
+ok   - result -> '#= ' comment
+ok   - error  -> '#! ' comment
+ok   - multiline result prefixes each line
+ok   - log file is source-able
+RESULT: FAIL
+
+###### FAIL: test_sky130a_libmgr ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   library.defs exists
+ok:   cadence_style_rc exists
+FAIL: library_list = exactly the 12 intended libs -> {SANDBOX TEST analyses devices examples mips_cpu ngspice ngspice_verilog_cosim sky130_fd_pr sky130_stdcells sky130_tests sky130_tests_ase stdcells xschem_simulator} (exp {analyses devices examples mips_cpu ngspice ngspice_verilog_cosim sky130_fd_pr sky130_stdcells sky130_tests sky130_tests_ase stdcells xschem_simulator}) : FAIL
+ok:   devices -> xschem_libs_newsym/devices
+ok:   devices path is outside sky130A/
+ok:   sky130_fd_pr/nfet_01v8 symbol resolves
+ok:   sky130_fd_pr/corner symbol resolves
+ok:   devices/vsource symbol resolves (cross-lib -> newsym)
+ok:   stdcells/AND2 symbol resolves (draft lib)
+ok:   analyses registered from newsym (outside sky130A/)
+ok:   examples registered from newsym (outside sky130A/)
+ok:   ngspice registered from newsym (outside sky130A/)
+ok:   ngspice_verilog_cosim registered from newsym (outside sky130A/)
+ok:   xschem_simulator registered from newsym (outside sky130A/)
+ok:   sky130_stdcells has 437 cell dirs
+ok:   rc points XSCHEM_LIBRARY_DEFS at xschem_libs/library.defs
+ok:   rc sets library_registry_defs_only 1
+ok:   rc sets SKYWATER_MODELS under models/
+RESULT: 1 FAILED (17 passed)
+OVERALL: notok
+
+###### FAIL: test_wave_markers ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   MA0 the arm that ran is the arm that was asked for (--nogui=0 DISPLAY-wanted=1 has_x=1)
+ok:   MK1 one record decodes to one dict
+ok:   MK1 the 17-significant-digit x is kept as the ORIGINAL STRING
+ok:   MK1 encode(decode(s)) is BYTE-equal for a 17-digit value
+ok:   MK1 three records decode to three dicts
+ok:   MK1 encode(decode(s)) is BYTE-equal for a 3-record token
+ok:   MK1 {} decodes to the empty list
+ok:   MK1 the empty record list encodes to {}
+ok:   MK1 a non-zero prev survives
+ok:   MK1 a dragged label's ldx/ldy survive verbatim
+ok:   MK1 a garbage line is dropped and the rest kept
+ok:   MK1 an 8-field line is dropped (short record)
+ok:   MK1 a 10-field line is KEPT (forward tolerance) and re-emitted verbatim
+ok:   MK1 the 10th field lands in `extra`
+ok:   MK1 a leading-zero integer is normalised to decimal, never octal
+ok:   MK2 {} is NOT valid (the vacuous-truth trap)
+ok:   MK2 a 9-field record is valid
+ok:   MK2 a 10-field record is valid (forward tolerance)
+ok:   MK2 a 3-record token is valid
+ok:   MK2 an 8-field record is not valid
+ok:   MK2 a double quote is rejected
+ok:   MK2 a backslash is rejected
+ok:   MK2 a semicolon is rejected (SPACE() terminates a value at one)
+ok:   MK2 a tcleval( prefix is rejected
+ok:   MK2 nan is rejected (deliberately NOT `string is double`)
+ok:   MK2 inf is rejected
+ok:   MK2 a tab is rejected (get_tok_value would truncate the token there)
+ok:   MK2 extra spaces are tolerated
+ok:   MK2 ONE bad line invalidates the WHOLE token (all-or-nothing)
+ok:   MK2 markers_num_ok accepts a signed exponent
+ok:   MK2 markers_num_ok rejects a bare letter
+ok:   MK2 markers_num_ok rejects the empty field
+ok:   MK3 an unmarked graph carries NO markers token
+ok:   MK3 flags=graph is still the FIRST token
+ok:   MK3 a valid model value is emitted, quoted, verbatim
+ok:   MK3 ... and flags=graph is still first
+ok:   MK3 an EMPTY model value emits nothing
+ok:   MK3 an INVALID model value emits nothing (a stray quote never reaches subst_token)
+ok:   MK3 a 3-record value survives the emitter whole
+ok:   MK3 reorder_handle=1 is still emitted alongside markers
+ok:   MK3 hilight_wave still round-trips next to markers
+ok:   MK3 active=1 still round-trips next to markers
+ok:   MK4 the marker ON the moved node migrated out of the source
+ok:   MK4 ... and landed in the destination at the new node index
+ok:   MK4 the migrated record's wave is the DESTINATION node index
+ok:   MK4 a marker BELOW the moved node keeps its index
+ok:   MK4 a marker ABOVE the moved node shifts down by one
+ok:   MK4 the destination's OWN marker is untouched
+ok:   MK4 an empty source token stays empty
+ok:   MK4 a non-integer index is a no-op on both sides
+ok:   MK4 a negative index is a no-op on both sides
+ok:   MK4 move_trace_in_graphs rewrites the SOURCE token
+ok:   MK4 move_trace_in_graphs rewrites the DESTINATION token
+ok:   MK4 a source emptied by the move loses the markers KEY
+ok:   MK4 ... and the destination GAINS one
+ok:   MK4 a strip with no markers never gains an empty key
+ok:   MK5 remap_node_after_trace_delete: doomed node -> {}
+ok:   MK5 ... a node above one doomed shifts down by one
+ok:   MK5 ... a node below is untouched
+ok:   MK5 ... two doomed below shift it down by two
+ok:   MK5 ... a doomed list that is all ABOVE changes nothing
+ok:   MK5 ... a non-integer index -> {}
+ok:   MK5 a marker on a DOOMED trace is dropped
+ok:   MK5 the survivor above the hole is decremented
+ok:   MK5 multi-delete: two doomed, one survivor, shifted by the count BELOW it
+ok:   MK5 deleting every node empties the token
+ok:   MK5 an empty doomed list is a no-op
+ok:   MK5 an empty token is a no-op
+ok:   MK5b the record itself is removed
+ok:   MK5b every prev that pointed at it is zeroed
+ok:   MK5b dropping a number that is not there is a no-op
+ok:   MK5b dropping from an empty token gives {}
+ok:   MK5b a non-integer / zero number is refused (token unchanged)
+ok:   MK5b markers_numbers of a token
+ok:   MK5b markers_numbers of {}
+ok:   MK5b the sweep removed the record in strip 0
+ok:   MK5b ... and zeroed the CROSS-STRIP prev in strip 1
+ok:   MK5b a strip with no markers key never gains one
+ok:   MK5b an empty number list is a no-op
+ok:   MK6 graph_props re-emits a 17-digit value byte-identically
+ok:   MK6 ... and a multi-record one, newlines intact
+ok:   MK6 decode->encode->graph_props is still byte-identical
+ok:   MK7 two graph rects placed
+ok:   MK7 graph_rects is not `rects 2` (a non-graph layer-2 rect is excluded)
+ok:   MK7 no token to start
+ok:   MK7 a 3-record multi-line value round-trips BYTE-identically
+ok:   MK7 the flags token is undisturbed
+ok:   MK7 a 300-record value survives the prop layer
+ok:   MK7 ... and the C parser reads all 300 back
+ok:   MK7 re-writing the identical value leaves modified at 0
+ok:   MK7 an empty value deletes the token
+ok:   MK7 ... and the C parser then reports zero records
+ok:   MK7 flags survived the delete
+ok:   MK8 two records listed
+ok:   MK8 each sublist has exactly 10 elements {num graph wave dset point x y prev ldx ldy}
+ok:   MK8 the GRAPH index is field 1 (not present in the token itself)
+ok:   MK8 num/wave/dset/point round-trip
+ok:   MK8 x comes back at FULL %.17g precision, byte-identical
+ok:   MK8 y comes back at FULL %.17g precision, byte-identical
+ok:   MK8 ... i.e. MORE than the 8 significant digits dtoa() would keep
+ok:   MK8 a tiny denormal-ish magnitude survives
+ok:   MK8 prev/ldx/ldy of the second record
+ok:   MK8 an explicit graph index filters
+ok:   MK8 `list` with no index sweeps the whole window
+ok:   MK8 `list` of a non-graph rect index yields nothing (never an error)
+ok:   MK8 `list` of an out-of-range index yields nothing
+ok:   MK9 M1 in rect A and M3 in rect B
+ok:   MK9 the window-wide next number is 4, not 2
+ok:   MK9 both rects are visible to the window-wide walk
+ok:   MK9 clearing both leaves nothing
+ok:   MK10 hermetic raw created
+ok:   MK10 v_a added as a real column
+ok:   MK10 the raw has the expected 11-sample grid
+ok:   MK10 a bus-first graph RETURNS from graph_trace_at (was an infinite loop)
+ok:   MK10 ... and from graph_near_wave too
+ok:   MK10b the trace AFTER the bus is still pickable (node index 1)
+ok:   MK10 two leading buses still return
+ok:   MK10b ... and the third entry is node index 2
+ok:   MK11 the dataset-skip path is STABLE across 20 repetitions
+ok:   MK11 ... and the same node with no selector IS found
+ok:   MK11 find_closest_wave: 20 wave-bold releases over a %<n>-selected node are stable
+ok:   MK11 ... and hilight_wave is always a valid index
+ok:   MK12 graph_marker_at over empty space -> {}
+ok:   MK12 graph_marker_at with an explicit tol -> {}
+ok:   MK12 graph_marker_at on a bad graph index -> {} (never an error)
+ok:   MK12 graph_marker_at with too few args -> {}
+ok:   MK12 graph_marker_drag with nothing armed -> 0
+ok:   MK12 graph_marker_sel with nothing selected -> -1
+ok:   MK12 graph_rects counts GRAPH rects only
+ok:   MK12 an unknown graph_marker sub-verb fails LOUD
+ok:   MK12 `graph_marker` with no sub-verb fails LOUD
+ok:   MK12 graph_marker text of an unknown number -> {}
+ok:   MK12 graph_marker delete of an unknown number -> 0
+ok:   MK12 graph_marker delete -all with nothing there -> 0
+ok:   MS0 two graph rects staged
+ok:   MS0 the hand-written records are visible to C
+ok:   MS0 ... with the intended prev links (M2<-M1, M3<-M2)
+ok:   MS0 they are all on rect 0, rect 1 is empty
+ok:   MS1 `select -pair 2` returns the HEAD, not the list
+ok:   MS1 `xschem get graph_marker_sel` is still the head
+ok:   MS1 the SET is the pair, HEAD FIRST (not sorted)
+ok:   MS2 `select -pair 1` on a marker with no delta block -> just it
+ok:   MS3 `select 2` still returns 2
+ok:   MS3 ... and the set is that one number
+ok:   MS3 `select -none` still returns -1
+ok:   MS3 ... and clears the head
+ok:   MS3 ... and empties the set (INV-1)
+ok:   MS5 chain M1<-M2<-M3: `select -pair 3` takes the IMMEDIATE pair only
+ok:   MS5 ... and 1 is NOT in it
+ok:   MS6 `select -pair 1` while M2.prev==1 selects the reference ALONE
+ok:   MS11 `select -set 2 2 1` dedupes and keeps the order given
+ok:   MS11 ... and returns the head
+ok:   MS11 a number no record carries is ACCEPTED (permissive, like `select <n>`)
+ok:   MS12 `delete -selected` with nothing selected -> 0
+ok:   MS12 ... and nothing was deleted
+ok:   MS4 deleting M1 sweeps M2's prev to 0
+ok:   MS4 `select -pair 2` on the orphan selects just it, silently
+ok:   MS4b the dangling link really is in the token
+ok:   MS4b `select -pair` resolves nothing and selects the one number
+ok:   MS4b ... with no error raised
+ok:   MS7 M1 is on rect 0 and M2 on rect 1 (different strips)
+ok:   MS7 the pair spans the two rects
+ok:   MS7 the head is the marker that was double-clicked
+ok:   MS8 the buffer is clean before the selection
+ok:   MS8 a two-marker selection is really in effect
+ok:   MS8 selecting does NOT set the modify flag
+ok:   MS8 rect 0's markers token is byte-identical
+ok:   MS8 rect 1's markers token is byte-identical
+ok:   MS8 no sel_markers-style token appeared on rect 0
+ok:   MS8 no sel_markers-style token appeared on rect 1
+ok:   MS8 the -pair form does not dirty the buffer either
+ok:   MS8 the whole serialised buffer is BYTE-identical across the selection
+ok:   MS9 `delete -selected` returns the COUNT
+ok:   MS9 rect 0's record is gone
+ok:   MS9 rect 1's record is gone too (the partner on the OTHER strip)
+ok:   MS9 the head is cleared
+ok:   MS9 the set is empty
+ok:   MS10 ONE undo restores rect 0's record
+ok:   MS10 ... and rect 1's, in the same undo step
+ok:   MS10 ... with the delta link intact
+ok:   MS14 the buffer really is read-only
+ok:   MS14 `select -pair` is NOT rejected (pure UI state)
+ok:   MS14 ... and it really selected (the head moved)
+ok:   MS14 `delete -selected` IS rejected by the scheduler
+ok:   MS14 ... and nothing was deleted
+ok:   MS14 read-only lifted again
+ok:   MS13 the draw_graph_markers() body was located
+ok:   MS13 draw_graph_markers() has NO bare graph_marker_sel comparison left
+ok:   MS13 ... and it asks the predicate exactly once
+ok:   MS13 the graph_marker_press() body was located
+ok:   MS13 the RIGID drag latch has no bare graph_marker_sel comparison
+ok:   MS13 ... it asks the predicate
+ok:   MS13 the graph_marker_release() body was located
+ok:   MS13 the click toggle has no bare graph_marker_sel comparison
+ok:   MS13 ... i.e. only the repaint-scope hint (`int oldsel = ...`) survives
+ok:   MS13 ... and the toggle itself asks the predicate
+ok:   MS13 draw.c names the head ONLY inside graph_marker_select_set()
+ok:   MS13 callback.c keeps exactly the 3 sanctioned HEAD readers
+free_rawfile(): clearing data
+ok:   MR0 hermetic raw: `raw new` accepted
+ok:   MR0 `raw add v_a` accepted
+ok:   MR0 `raw add v_b` accepted
+ok:   MR0 v_b is redefined as a DIFFERENT column
+ok:   MR0 v_p carries more than 8 significant digits
+ok:   MR0 the fixture raw knows the vectors the graphs use
+ok:   MR0 exactly 11 samples on an exact 0.1 grid
+ok:   MR0 two graph rects
+ok:   MR1 add_at returns the new number 1
+ok:   MR1 exactly one record on strip 0
+ok:   MR1 the rect actually carries the token
+ok:   MR1 a NORMAL (editable) window is marked modified
+ok:   MR1 ... and readonly is unchanged
+ok:   MR2 x is EXACTLY the sample, at %.17g
+ok:   MR2 y matches `xschem raw value` numerically (1e-7 relative)
+ok:   MR2 the identity fields name the trace, dataset and ABSOLUTE point
+ok:   MR2 the default label offset is up and to the right
+ok:   MR2b point 3 keeps its 17 significant digits
+ok:   MR2b ... and its y agrees with raw value numerically
+ok:   MR2b a string compare against `raw value` would be WRONG by construction
+ok:   MR3 the second marker in strip 0 is M2
+ok:   MR3 a marker in strip 1 continues the WINDOW-wide sequence
+ok:   MR3 strip 1 holds exactly M3
+ok:   MR3 the window-wide list is M1 M2 M3
+ok:   MR3 after deleting M3 the next number is 3 again (no hidden counter)
+ok:   MR4 -delta sets prev to the previous max
+ok:   MR4 the label's first line is M<N>:<x>,<y>
+ok:   MR4 the delta line reads <D>x:<dx>,<D>y:<dy>
+ok:   MR4 the slope line
+ok:   MR4 the delta glyph is the Greek capital delta (cairo build)
+ok:   MR4 a plain marker has NO delta block
+ok:   MR4 dx == 0 yields slope:undef
+ok:   MR4 a cross-strip delta partner resolves
+ok:   MR4 ... and its prev really names the marker in the other strip
+ok:   MR4 deleting the partner clears the dangling prev
+ok:   MR4 ... and the delta block is gone from the label
+ok:   MR4b marking the SECOND expression leaves its values in the scratch column
+ok:   MR4b the FIRST expression marker still reads v_a(5) squared, not the scratch
+ok:   MR4b ... and the two markers really hold DIFFERENT values
+ok:   MR4b the expression marker's x is still the sweep sample
+ok:   MR5 `xschem redraw` returns rc 0 with markers present
+ok:   MR5 the flags token is still `graph` after the redraw
+ok:   MR5 the marker survived the redraw
+ok:   MR9 fixture: M1, M2(prev 1), M3(prev 2)
+ok:   MR9 delete 1 returns 1
+ok:   MR9 ... the record is gone
+ok:   MR9 ... and M2's dangling prev was cleared
+ok:   MR9 ... while M3's prev (a live partner) is untouched
+ok:   MR9 the selection is reset when the SELECTED marker is deleted
+ok:   MR9 delete -all <gi> returns the count for that graph only
+ok:   MR9 ... and left the other strip alone
+ok:   MR9 delete -all with no index sweeps the window
+ok:   MR9 nothing left anywhere
+ok:   MR15 select returns the new selection
+ok:   MR15 ... and the getter agrees
+ok:   MR15 selection is NOT written into the token
+ok:   MR15 -none clears it
+ok:   MR15 ... and the getter says -1
+ok:   MR15 a non-resolving number can be selected (documented, not a bug)
+ok:   MR15 ... but deleting through it removes nothing
+ok:   MR15 ... and the live marker is untouched
+ok:   MR15 with nothing selected the token is untouched
+ok:   MR15 `select` is NOT readonly-rejected (it is UI state)
+ok:   MR15 a mutating sub-verb IS readonly-rejected
+ok:   MR13 a bad graph index refuses with {}
+ok:   MR13 a bad wave index refuses with {}
+ok:   MR13 an out-of-range point refuses with {}
+ok:   MR13 a negative point refuses with {}
+ok:   MR13 a wrong dataset refuses with {}
+ok:   MR13 a NON-GRAPH layer-2 rect refuses with {}
+ok:   MR13 ... and lists nothing
+ok:   MR13 a BUS-only graph refuses with {}
+ok:   MR13 a DIGITAL strip refuses the pixel creator with {}
+ok:   MR13 move/anchor/label of an unknown number all return 0
+ok:   MR13 a non-finite label offset is refused
+ok:   MR13 the label offset is CLAMPED to -2..2
+ok:   MR13 anchor_at moves only dataset/point/x/y
+ok:   MR13 ... and left ldx/ldy exactly where the clamp put them
+ok:   MR13 nothing above threw
+ok:   MR14 a marker on a value needing >8 significant digits
+ok:   MR14 the stored y agrees with `raw value` numerically
+ok:   MR14 the token has the 9 fields of one record
+ok:   MR14 the TOKEN's y carries MORE than 8 significant digits (not dtoa)
+ok:   MR14 ... and so does the TOKEN's x
+ok:   MR14 the token and the list read-back agree exactly
+ok:   MR14 the reloaded schematic has one graph rect
+ok:   MR14 the whole TOKEN survived save+load byte-for-byte
+ok:   MR14 y survived save+load BYTE-for-BYTE
+ok:   MR14 x survived save+load BYTE-for-BYTE
+ok:   MR14 the identity fields survived too
+ok:   MR10 the buffer really was cleared
+ok:   MR10 a 3-record multi-line token survives save+load byte-identically
+ok:   MR10 ... and parses back into 3 records
+ok:   MR10 the flags token came back too
+ok:   MR11 fixture: one graph rect carrying M1 and M2(prev 1)
+ok:   MR11 the paste produced a second graph rect
+ok:   MR11 four markers in the window
+ok:   MR11 ALL FOUR numbers are distinct (base computed ONCE per rect)
+ok:   MR11 the pasted numbers continue the sequence
+ok:   MR11 the ORIGINAL rect's prev link is untouched
+ok:   MR11 every PASTED prev was cleared (a delta partner is not copied)
+free_rawfile(): clearing data
+ok:   MR12 (memory) a marker is created
+ok:   MR12 (memory) undo REMOVES it
+ok:   MR12 (memory) ... and the rect token is gone too
+ok:   MR12 (memory) redo restores it byte-identically
+free_rawfile(): clearing data
+ok:   MR12 (disk) a marker is created
+ok:   MR12 (disk) undo REMOVES it
+ok:   MR12 (disk) ... and the rect token is gone too
+ok:   MR12 (disk) redo restores it byte-identically
+free_rawfile(): clearing data
+ok:   MF1 fixture raw
+ok:   MF1 v_a added
+ok:   MF1 an ALTERNATE sweep column 100..101 added
+ok:   MF1 v_b added
+ok:   MF1 the alternate sweep really is far from column 0
+ok:   MF1 one sweep entry for two nodes (the carry-forward case)
+ok:   MF1 a marker on the SECOND node (the one that needs the carry-forward)
+ok:   MF1 ... anchored on the alternate sweep, not column 0
+ok:   MF1 graph_marker move committed at every pixel (was 0/5 before the fix)
+ok:   MF1 the anchor really SLID (more than one distinct sample visited)
+ok:   MF1 every landing x came from the CARRIED-FORWARD sweep (100..101)
+ok:   MF1 ... i.e. never from raw column 0 (0..1)
+ok:   MF1 the anchor stayed on its OWN node
+ok:   MF1 and y still agrees with the raw across the landing segment
+ok:   MF1 the UNRESTRICTED walk finds the same graph too (the control)
+free_rawfile(): clearing data
+ok:   MF4 raw A created
+ok:   MF4 A: v_x = vsweep*10
+ok:   MF4 raw B created (and made current)
+ok:   MF4 B: v_x = vsweep+1, the SAME node name
+ok:   MF4 the CURRENT raw is B
+ok:   MF4 the graph names raw A
+ok:   MF4 add_at created a marker
+ok:   MF4 it stored the GRAPH's raw (A: 5), not the current one
+ok:   MF4 ... and specifically NOT raw B's 1.5 (the measured pre-fix value)
+ok:   MF4 the anchor-drag COMMIT path re-anchors
+ok:   MF4 ... also out of raw A (8.0, not 1.8)
+ok:   MF4 the graph's raw was switched BACK afterwards (B is current again)
+ok:   MF5 fixture: M1 on strip 0, M2(prev 1) on strip 1
+ok:   MF5 delete -all 0 removed exactly one record
+ok:   MF5 ... M2 survived on the untouched strip
+ok:   MF5 ... and its prev link was CLEARED (was left at 1 before the fix)
+ok:   MF5 ... so the callout degraded to a plain one, not a ghost delta
+ok:   MF5 delete -all with no index removes everything
+ok:   MF5 ... leaving nothing to dangle
+ok:   MD1 fixture: three markers spread over two strips
+ok:   MD1 the window-wide delete reports how many it removed
+ok:   MD1 ... and the window is empty
+ok:   MD1 ... on BOTH rects, as an ABSENT token (not an empty one)
+ok:   MD1 the strips themselves SURVIVED — this is annotation, not Clear All
+ok:   MD1 a second call deletes nothing and says 0 (the wrapper's no-op gate)
+ok:   MD1 ... and the window is still empty
+ok:   MD2 wviewer::delete_all_markers is defined
+ok:   MD2 ... and so is its %W shim
+ok:   MD2 no viewer resolves -> {} (never an error, never a delete)
+ok:   MD2 an unknown token -> {} too
+ok:   MD2 the shim on a canvas that is not a viewer -> {}, silently
+ok:   MD3 the --logdir child ran to its end
+ok:   MD3 the child really had a log open
+ok:   MD3 exactly ONE wviewer:: line for three calls (real + no-op + refused)
+ok:   MD3 ... fully resolved, naming the token it acted on
+ok:   MD3 the raw C self-log line is ABSENT (it would abort a replay)
+ok:   MD3 a self-logging verb AFTER the throwing call still logs (the suppress pop is unconditional)
+free_rawfile(): clearing data
+free_rawfile(): clearing data
+ok:   MF6 all 520 records are parsed back (was 512 before the fix)
+ok:   MF6 the last record is reachable by number
+ok:   MF6 a mutating op on record 3 succeeds
+ok:   MF6 ... and it really took effect
+ok:   MF6 the rewrite kept all 520 records (before: 8 silently destroyed)
+ok:   MF6 ... and the TOKEN itself still has 520 lines
+ok:   MF6 record 520 survived the rewrite
+ok:   MF6 creation IS refused above the cap
+ok:   MF6 ... and the same call succeeds under it (so the refusal was the cap)
+ok:   MF12 fixture: one graph rect carrying M1 and M2(prev 1)
+ok:   MF12 the copy produced a second graph rect
+ok:   MF12 four markers in the window
+ok:   MF12 ALL FOUR numbers are distinct (was {1 2 1 2} before the fix)
+ok:   MF12 the copies continue the window-wide sequence
+ok:   MF12 the ORIGINAL rect's prev link is untouched
+ok:   MF12 every COPIED prev was cleared (a delta partner is not copied)
+ok:   MF12 ... and every number still resolves to exactly one record
+ok:   MF13a the selection is armed
+ok:   MF13a ... and the getter agrees
+ok:   MF13a `xschem clear` reset it (was left at 1 before the fix)
+ok:   MF13a ... and no drag survived either
+ok:   MF13a a fresh document's M1 exists
+ok:   MF13a ... and is NOT selected (the latch is gone)
+ok:   MF13a re-armed before the load
+ok:   MF13a a `xschem load` clears it too
+ok:   MF13a ... and the loaded document still carries its M1
+ok:   MF14 draw_graph 0 returns (SIGSEGV'd under --nogui before the fix)
+ok:   MF14 an out-of-range index is a no-op, not a deref
+ok:   MF14 a NEGATIVE index is a no-op too
+ok:   MF14 an explicit flags argument is still accepted
+ok:   MF14 draw_graph with no index does nothing and does not throw
+ok:   MF14 the marker is untouched by all of that
+ok:   MF14 ... and the process is still alive to say so
+free_rawfile(): clearing data
+ok:   MP0 three graph strips (analog / digital / traceless)
+ok:   MP0 strip 0's plot box was scanned and is more than 100 px wide (box=69 37 370 170)
+ok:   MP0 a FAR pixel inside the box was scanned (219,169)
+ok:   MP0 a HALO pixel outside the box but near a trace was scanned (68,97)
+ok:   MP0 an ON-TRACE pixel was scanned (219,88)
+ok:   MP0 the far pixel's nearest trace is node 1, not node 0 (SAB-3 has nothing to kill otherwise)
+ok:   MP1 the far pixel is INSIDE the plot box
+ok:   MP1 ... and no trace is within GRAPH_TRACE_PICK_TOL (10 px) of it
+ok:   MP1 ... nor within 25 px, which is past the old 20-px creation gate
+ok:   MP1 ... while an unbounded pick still finds a trace there
+ok:   MP2 `m`'s primitive CREATES at a plot-box pixel far from every trace (before 0188: refused, 'no trace near the pointer')
+ok:   MP2 ... while trace SELECTION at that very pixel still answers -1
+ok:   MP3 the anchor is the NEAREST trace, not node 0
+ok:   MP4 the anchor's x lies inside its OWN segment p/10 .. (p+1)/10
+ok:   MP4 ... and its y is the raw INTERPOLATED across that segment
+ok:   MP5 the anchor's x is inside the graph's x window (0 .. 1)
+ok:   MP6 the anchor is within one sample step of the pointer's own x (graph_coord, a different verb)
+ok:   MP7 the halo pixel is OUTSIDE the plot box
+ok:   MP7 ... yet within the OLD 20-px creation tolerance of a trace
+ok:   MP7 ... and creation there is REFUSED (before 0188: it created one)
+ok:   MP8 `d` gets the same relaxation (a number came back)
+ok:   MP8 ... and it carries a delta block against the previous marker
+  note: MP9 vertical sweep at x=219 through rows 37..170: 17/17 created
+ok:   MP9 the sweep had something to measure
+ok:   MP9 essentially EVERY pixel of the box creates (fraction > 0.95, got 17/17)
+ok:   MP9 8 px ABOVE the box top creates nothing
+ok:   MP9 8 px BELOW the box bottom creates nothing
+ok:   MP9 the sweep left nothing behind
+ok:   MP10 a DIGITAL strip has no plot box at all
+ok:   MP10 ... and still refuses creation, anywhere in it
+ok:   MP11 the TRACELESS strip has a real plot box (box={69 502 370 635})
+ok:   MP11 ... where graph_plotbox_at says 1
+ok:   MP11 ... and creation is refused: there is no trace to mark
+ok:   MP0 both sources were read for the tripwires
+ok:   MP13 at the far pixel trace SELECTION still answers -1 at the default tol
+ok:   MP13 ... while an on-trace pixel still selects
+ok:   MP13 ... and GRAPH_TRACE_PICK_TOL is still 10.0 in xschem.h
+ok:   MP15 the buffer starts clean
+ok:   MP15 a far-pixel creation still succeeds
+ok:   MP15 ... and still dirties the buffer (landmine 19's exception intact)
+ok:   MP14 graph_marker_create gates on the PLOT BOX
+ok:   MP14 ... and hands graph_point_at a threshold nothing can exceed
+ok:   MP14 GRAPH_MARKER_PICK_TOL is gone from draw.c
+ok:   MP14 ... and from xschem.h
+free_rawfile(): clearing data
+ok:   MP12 with the raw cleared the far pixel has no plot box
+ok:   MP12 ... and creation there is refused
+ok:   MF0 two graph strips in the main window
+ok:   MF0 both strip bands resolved through the engine transform
+ok:   MF0 two well-separated trace pixels were SCANNED in strip 0
+ok:   MF0 a trace pixel was scanned in strip 1
+ok:   MF0 empty waveform space was found well inside strip 1's band
+ok:   MF0 no stale ui_state latch is in force before the first gesture
+ok:   MF9 control: a marker to drag
+ok:   MF9 control: its anchor pixel was scanned
+ok:   MF9 control: the press armed the anchor drag
+ok:   MF9 control: WITH a release the drag really commits (the arm is live)
+ok:   MF9 a fresh marker for the swallowed-release run
+ok:   MF9 its anchor pixel was scanned
+ok:   MF9 the press armed the anchor drag
+ok:   MF9 the drag is still armed after travel
+ok:   MF9 ... and the stored record is untouched mid-drag
+ok:   MF9 the next fresh press ABORTED the stale arm (was left at 1)
+ok:   MF9 ... so its release committed NOTHING (before: the old move landed)
+ok:   MF9 and no arm is left behind either
+ok:   MF2 a marker to drag
+ok:   MF2 the pre-drag readout is an M1:<x>,<y> line
+ok:   MF2 its anchor pixel was scanned
+ok:   MF2 the drag is armed
+ok:   MF2 a full redraw mid-drag returns rc 0
+ok:   MF2 a single-strip draw_graph mid-drag returns rc 0
+ok:   MF2 neither redraw tore the gesture down
+ok:   MF2 neither redraw mutated the STORED record
+ok:   MF2 the BY-NUMBER verb is frozen mid-drag (it reads the stored token)
+ok:   MF2 ... and the hit-test still finds the marker after those redraws
+ok:   MF2 the release committed a DIFFERENT sample
+ok:   MF2 ... and only then does the readout change
+ok:   MF10 M1 on strip 0
+ok:   MF10 M2 on strip 1
+ok:   MF10 both anchor pixels were scanned
+ok:   MF10 a no-travel click selects M1
+ok:   MF10 a press on empty space of ANOTHER strip clears the selection
+ok:   MF10 the repaint after it returns rc 0
+ok:   MF10 M1 is still there and still hit-testable
+ok:   MF10 M2 too
+ok:   MF10 M1 re-selected
+ok:   MF10 clicking M2 on the OTHER strip moves the selection there
+ok:   MF10 exactly one marker per strip, both intact
+ok:   MF10 the marker arm consumed both releases (no trace was bolded)
+ok:   MF10 a full repaint after the cross-strip change returns rc 0
+ok:   MF8 one marker, on strip 1
+ok:   MF8 its anchor pixel was scanned
+ok:   MF8 selected with a STALE selgraph of 0 (what a reorder leaves behind)
+ok:   MF8 Delete over the TRUE owner deleted it (was refused before the fix)
+ok:   MF8 ... and the selection went with it
+ok:   MF8 a second marker, again on strip 1
+ok:   MF8 empty space was found in the OTHER strip
+ok:   MF8 Delete hovering ANOTHER strip still refuses (the scope test holds)
+ok:   MF8 ... and the selection is untouched
+ok:   MF8 a redraw with a stale selgraph returns rc 0
+ok:   MF8 ... and the marker is still hit-testable on its real strip
+ok:   MF7 a marker on the strip WITHOUT hcursors
+ok:   MF7 strip 0's hcursors are live (bits 128|256 set)
+ok:   MF7 the other strip's anchor pixel was scanned
+ok:   MF7 the query answers on the OTHER strip
+ok:   MF7 ... and left the hcursor bits alone (before: cleared to 0)
+ok:   MF7 a miss on the same strip does not clear them either
+ok:   MF7 no other graph_flags bit was disturbed
+ok:   MF11a the buffer is read-only
+ok:   MF11a `m` over a trace created NOTHING (before: it created a marker)
+ok:   MF11a `d` is refused the same way
+ok:   MF11a the buffer is still read-only afterwards
+ok:   MF11a the SAME key on the SAME pixel creates one once editable
+ok:   MF11a ... and `d` adds a second, with a delta partner
+ok:   MF11a Delete of a SELECTED marker is refused read-only
+ok:   MF11a ... and goes through once editable
+ok:   MP20 the strip starts with no markers
+ok:   MP20 no stale ui_state latch before the key
+ok:   MP20 `m` in EMPTY plot-box space creates a marker (before 0188: none)
+ok:   MP20 ... on strip 1, at a real sample of the 11-point grid
+ok:   MP20 ... whose y agrees with the raw INTERPOLATED at its x
+ok:   MP20 the control: the same key on a trace pixel of strip 0 also creates
+ok:   MP21 `d` gets the same relaxation: a second marker on strip 1
+ok:   MP21 ... and it carries a delta block against the first
+ok:   MP22 the diamond published a snapped sample there {1 0 0.5068186487 1.013637297}
+ok:   MP22 the key created exactly one marker at that pixel
+ok:   MP22 the marker is on the strip the diamond snapped in
+ok:   MP22 ... on the trace the diamond snapped to
+ok:   MP22 ... at the diamond's x
+ok:   MP22 ... and at the diamond's y
+ok:   MS-X5 two markers on strip 0
+ok:   MS-X5 the second carries a delta block against the first
+ok:   MS-X5 ... and they sit on DIFFERENT samples
+ok:   MS-X5 the delta marker's anchor pixel was found {423 127}
+  note: MS-X5 at (423,127): marker_at={2 anchor} plotbox=1 band=16 10 596 299
+ok:   MS-X5 the `-3` on a marker anchor selects the PAIR
+ok:   MS-X5 ... and never reached graph_edit_properties
+ok:   MS-X5 ... and wrote nothing to the rect
+ok:   MS-X5 control: the same `-3` on empty plot space opens the dialog ONCE
+ok:   MS-X5 control: ... and selected nothing
+ok:   MS-X6 the pair is selected before the keystroke
+ok:   MS-X6 the Delete KEY removed BOTH members
+ok:   MS-X6 ... and cleared the selection
+ok:   MS-X6 ONE undo brings both back (one undo point per gesture)
+ok:   MS-X6 ... with the delta link intact
+ok:   MF3 400 chained (delta) markers on one strip
+ok:   MF3 they really are chained (the partner lookup is exercised)
+note: MF3 400 markers -> 20 redraws 152 ms, 20 hit-tests 143 ms
+ok:   MF3 20 redraws at 400 markers stay under 1200 ms (pre-fix ~2800)
+ok:   MF3 20 hit-tests at 400 markers stay under 1200 ms (pre-fix ~2800)
+ok:   MF3 nothing was mutated by all that measuring
+ok:   MF13b a marker to arm a drag with
+ok:   MF13b the selection is armed
+ok:   MF13b its anchor pixel was scanned
+ok:   MF13b ... and so is a drag
+ok:   MF13b `xschem clear` dropped the drag (was left at 1 before the fix)
+ok:   MF13b ... and the selection with it
+ok:   MF13b the buffer really was cleared
+ok:   MF13b the leg handed ui_state back with no routing latch left
+free_rawfile(): clearing data
+ok:   MV0 wviewer::open returns 1
+ok:   MV0 hermetic raw in the viewer ctx
+ok:   MV0 v_a/v_b are real columns
+ok:   MV0 two strips, two graph rects, both carrying their trace
+ok:   MV0 the inert strip witnesses are in place
+ok:   MV0 the viewer buffer is readonly
+ok:   MR1v the mutating verb is readonly-rejected without with_edit
+ok:   MR1v with_edit lets it through and returns the new number
+ok:   MR1v the rect carries the token
+ok:   MR1v the viewer buffer is NOT left modified
+ok:   MR1v ... and is readonly again
+ok:   MR1v the PUSH HOOK folded it into the model
+ok:   MR1v the other strip stayed clean
+ok:   MR8 exactly one undo point was pushed
+ok:   MR8 a no-op notify returns 1
+ok:   MR8 ... and pushes NO phantom point
+ok:   MR8 undo runs
+ok:   MR8 undo removed the marker from the MODEL
+ok:   MR8 undo removed it from the RECT too (the ordering contract)
+ok:   MR8 redo brings it back
+ok:   MR8 ... byte-identically, in the model
+ok:   MR8 ... and back on the rect
+ok:   MR8 a rect/model count mismatch bails with 0
+ok:   MR8 ... and works again once they agree
+ok:   MR6 the token survives a bare regenerate (model -> graph_props -> rect)
+ok:   MR6 the model still has it
+ok:   MR6 the unmarked strip STILL has no token (absent means absent)
+ok:   MR6 the model was deliberately blanked
+ok:   MR6 capture_live_graph_state read it back off the rect
+ok:   MR7 the marker survives configure_apply (a window resize)
+ok:   MR7 ... in the model too
+ok:   MR7 ... and through a real <Configure> event
+ok:   MR7b a second marker was created (push only, no capture)
+ok:   MR7b it survived the resize, i.e. the PUSH reached the model
+ok:   MR7b back to one marker for the legs below
+ok:   MR16 the snapshot carries the markers key
+ok:   MR16 state_apply put it back byte-identically
+ok:   MR16 ... and onto the rect
+ok:   MR16 clear_graph_traces drops the markers key with the traces
+ok:   MF15 the model holds the marker to start
+ok:   MF15 the model markers key was deliberately blanked
+ok:   MF15 capture with skip_markers=1 is ACCEPTED (was a Tcl error before)
+ok:   MF15 ... and it did NOT re-read the markers off the rect
+ok:   MF15 ... while it DID fold the view state in (x1 is a real number)
+ok:   MF15 a plain capture still reads the markers back
+ok:   MF15 the counts are deliberately out of step
+ok:   MF15 a count mismatch BAILS with 0
+ok:   MF15 ... and the unmatched graph's markers were NOT wiped (before: gone)
+ok:   MF15 ... nor were strip 0's
+ok:   MF15 and it works again once they agree
+ok:   MF16 the model has a starting x1
+ok:   MF16 the rect carries the panned x1
+ok:   MF16 ... while the model still has the OLD one
+ok:   MF16 a marker was created
+ok:   MF16 exactly one undo point
+ok:   MF16 the push hook folded the PAN into the model too
+ok:   MF16 undo runs
+ok:   MF16 ... and removed the marker
+ok:   MF16 ... while KEEPING the user's pan (before: reverted to 0)
+ok:   MF16 ... on the rect as well
+ok:   MD4 one marker on each of the two strips
+ok:   MD4 both rects carry a token
+ok:   MD4 the push hook put both into the MODEL
+ok:   MD5 delete_all_markers returns the number it removed
+ok:   MD5 ... and repainted the viewer canvas exactly once
+ok:   MD5 no marker is left anywhere in the window
+ok:   MD5 strip 0's model dict LOST its markers key
+ok:   MD5 ... and so did strip 1's
+ok:   MD5 the strips, their traces and their order all SURVIVED
+ok:   MD5 the read-only discipline held: the buffer is NOT modified
+ok:   MD5 ... and the viewer is read-only again
+ok:   MD5 exactly ONE undo point — the hook's, with no second one added here
+ok:   MD5 exactly one replayable log line
+ok:   MD5 ... naming the proc and the RESOLVED token
+ok:   MD6 a second call deletes nothing and reports 0
+ok:   MD6 ... and logs nothing (a no-op must not enter a replay)
+ok:   MD6 ... and pushes no undo point
+ok:   MD7 undo runs
+ok:   MD7 undo restored both strips' markers to the MODEL, byte-identically
+ok:   MD7 ... and onto the RECTS (the model -> graph_props -> rect round trip)
+ok:   MD7 ONE press was enough — the delete pushed one point, not two
+ok:   MD7 redo deletes them again, in the model
+ok:   MD7 ... and on the rects
+ok:   MD8 a refused context switch propagates as an error
+ok:   MD8 ... saying so
+ok:   MD8 ... and nothing was logged for it
+ok:   MD8 ... and the marker is untouched
+ok:   MD8 the binding shim swallows it and answers {}
+ok:   MD8 the shim resolves %W to THIS viewer's token and deletes
+ok:   MD8 ... logging the resolved token, not the canvas
+ok:   MD9 Ctrl-E is bound on the WaveViewer tag by default
+ok:   MD9 the default calls delete_all_markers_at with the EVENT's canvas
+ok:   MD9 the tag binding survives a re-sweep
+ok:   MD9 the sweep does not duplicate the tag
+ok:   MD9 Ctrl-E is NOT bound on the canvas widget itself (the rc clone is swept)
+ok:   MD9 a hand-planted widget-level Ctrl-E really IS swept (the mechanism, not a snapshot)
+ok:   MD9 keysym 101 (e) is not a graphkeys member, so nothing is forwarded
+ok:   MD10 two markers to delete
+ok:   MD10 Ctrl-E deleted every marker (Tk route or the tag body)
+ok:   MD10 ... in the model too
+ok:   MD10 the gesture logs the same single line the command does
+ok:   MD10 the viewer did NOT ascend/close (Ctrl-E never reached go_back)
+ok:   MD11 install_default_binds runs once per session
+ok:   MD11 an rc binding is NOT overwritten by the defaults
+ok:   MD11 a second call is a no-op
+ok:   MD11 remapping Ctrl-E left the OTHER defaults alone
+ok:   MD11 shipped default restored
+ok:   MD12 the Graph menu carries a Delete All Markers entry
+ok:   MD12 ... immediately after Clear All
+ok:   MD12 ... labelled with the Ctrl+E accelerator
+ok:   MD12 ... and wired to the resolved token
+ok:   MD12 a marker to delete
+ok:   MD12 invoking the entry deletes it
+ok:   MQ0 v_c/v_d are real columns
+ok:   MQ1 fixture: three markers, numbered 1 2 3
+ok:   MQ1 fixture: 3 traces on strip 0, 1 on strip 1
+ok:   MQ1 marker 2 is a DELTA whose partner is marker 1
+ok:   MQ1 marker 3 is the selected one
+ok:   MQ1 DEL over strip 0 reports ONE thing deleted
+ok:   MQ1 the selected marker is gone, the other two are not
+ok:   MQ1 not one trace was touched
+ok:   MQ1 exactly ONE undo point for the gesture
+ok:   MQ1 exactly one replayable log line, with EXPLICIT resolved targets
+ok:   MQ1 the marker selection was reset (it pointed at a dead marker)
+ok:   MQ1 one `u` brings it back
+ok:   MQ1 ... to the model
+ok:   MQ1 ... and onto the rects
+ok:   MQ2 before: marker 1 sits on node 1, marker 3 on node 2
+ok:   MQ2 exactly one trace is selected, and it is v_b (node 1)
+ok:   MQ2 no marker is selected
+ok:   MQ2 DEL reports ONE thing deleted
+ok:   MQ2 the trace is gone and its neighbours are not
+ok:   MQ2 the OTHER strip is untouched
+ok:   MQ2 CASCADE: the marker ON the deleted trace is gone
+ok:   MQ2 SURVIVOR REMAP: the marker above the hole shifted 2 -> 1
+ok:   MQ2 WINDOW-WIDE SWEEP: the delta partner on the OTHER strip was zeroed
+ok:   MQ2 ... and that partner itself survived, on its own node
+ok:   MQ2 the selection is empty — the selected trace died
+ok:   MQ2 exactly ONE undo point
+ok:   MQ2 exactly one log line, naming the MODEL {gi ti} pair explicitly
+ok:   MQ2 one `u` brings the trace AND its marker back together
+ok:   MQ2 ... with the survivor's index and the partner's link restored
+ok:   MQ3 a trace on strip 1 AND a marker on strip 0 are selected
+ok:   MQ3 DEL over strip 0 reports TWO things deleted (the marker + the trace)
+ok:   MQ3 the asked-for marker went, and so did the one riding the trace
+ok:   MQ3 ... and so did the trace, on the OTHER strip
+ok:   MQ3 D3: the strip that lost its last trace STAYS (that is bare `e`'s job)
+ok:   MQ3 ONE undo point for the whole gesture, not one per kind
+ok:   MQ3 ONE log line, carrying both payloads
+ok:   MQ3 one `u` brings BOTH back
+ok:   MQ4 DEL with nothing selected reports 0
+ok:   MQ4 ... and NEVER forwarded to C (the canvas delete verb is a readonly modal)
+ok:   MQ4 ... the model is byte-identical
+ok:   MQ4 ... no undo point was pushed
+ok:   MQ4 ... and nothing was logged for a replay to re-run
+ok:   MQ5 DEL on the WRONG strip deletes nothing
+ok:   MQ5 ... the marker survives
+ok:   MQ5 ... nothing reached C (no fall-through to the readonly modal)
+ok:   MQ5 ... no undo point, no log line
+ok:   MQ5 ... and the model is byte-identical
+ok:   MQ5 the SAME gesture on the OWNING strip does delete it (the A/B control)
+ok:   MQ6 an empty request is a 0, not a mutation
+ok:   MQ6 an out-of-range strip index is refused LOUDLY ({}, not a wrong delete)
+ok:   MQ6 an out-of-range trace index is refused
+ok:   MQ6 a malformed pair is refused
+ok:   MQ6 a marker number that does not exist is DROPPED, not counted
+ok:   MQ6 none of those pushed an undo point or logged
+ok:   MQ6 a duplicate pair deletes ONE trace, not two
+ok:   MQ6 ... leaving the neighbours alone
+ok:   MQ6 ... and the log line carries the DEDUPED pair list
+ok:   MQ7 the recorded line replays without error
+ok:   MQ7 ... and lands on the same model, with no selection to guide it
+ok:   MQ8 undo restores the pre-delete model exactly
+ok:   MQ8 ... and it is now redoable
+ok:   MQ8 redo deletes it again, identically
+ok:   MQ8 the rects followed the model both ways
+ok:   MQ9 <KeyPress> on the viewer canvas still routes to key_filter (the direct calls above are the same proc)
+ok:   MQ9 Delete is NOT a graphkeys member (membership = unconditional forwarding, and a forwarded Delete lands on the canvas delete verb)
+ok:   MQ9 the viewer canvas is fully tiled, so there is no off-graph pixel to park a pointer in (this is why D7 is asserted at the seam)
+ok:   MQ9 D7: with over_graph refusing, DEL does nothing — even though a trace IS selected and the same key deletes it a line later
+ok:   MQ9 ... and it is not forwarded to C either
+ok:   MQ9 nothing was logged and no undo point was pushed
+ok:   MQ9 the SAME key with over_graph restored DOES delete it (the control)
+ok:   MQ9 ... so the refusal above really was the gate
+ok:   MQ10 a real Delete deleted the selected trace (Tk route or the handler)
+ok:   MQ10 ... taking its marker with it
+ok:   MQ10 ... and logging the same single line the command does
+ok:   MQ10 ... and one `u` is enough
+ok:   MQ11 two traces of the same strip are selected
+ok:   MQ11 DEL reports TWO traces deleted
+ok:   MQ11 both went, and the one between them stayed
+ok:   MQ11 the marker on the surviving trace shifted 1 -> 0
+ok:   MQ11 ONE undo point for TWO traces (per gesture, not per trace)
+ok:   MQ11 ONE log line for TWO traces, carrying both pairs
+ok:   MQ11 one `u` brings BOTH traces and BOTH markers back
+ok:   MQ12 fixture: three strips
+ok:   MQ12 the LAST strip is the target
+ok:   MQ12 deleting strip 0 removes it
+ok:   MQ12 the target FOLLOWED its strip (it is now index 1, not 0)
+ok:   MQ12 ... and it is still the same strip (the inert witness proves it)
+ok:   MQ12 a target BELOW the deleted strip does not move
+ok:   MQ12 undo restores the strip, and the target with it
+ok:   MX0 a pixel ON the trace was found in strip 0 (the press pixel is SCANNED)
+ok:   MX0 a pixel in EMPTY waveform space, well inside the band, was found
+ok:   MXK <KeyPress> on the viewer canvas routes to wviewer::key_filter
+ok:   MXK the WaveViewer bindtag is on the canvas
+ok:   MXK `u` is bound on that tag to the viewer undo
+ok:   MXK `U` is bound on that tag to the viewer redo
+ok:   MXK graphkeys carries m (109), d (100) and M (77)
+ok:   MXK Delete (65535) is deliberately NOT a graphkeys member
+ok:   MXK the shipped keybindings.csv carries the ctx=graph row for d
+ok:   MX1 the pointer is over a graph as far as the key gate is concerned
+  note: send_key: <Key-m> -x 499 -y 208 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX1 the m KeyPress was delivered
+ok:   MX1 exactly one marker exists
+ok:   MX1 it is M1 on strip 0, node 0, dataset 0
+ok:   MX1 its point is a real sample of the 11-point grid
+ok:   MX1 its x lies inside its own segment
+ok:   MX1 its y agrees with the raw INTERPOLATED at its x
+ok:   MX1 the measurement-tooltip bit 64 is UNCHANGED (the m/M collision witness)
+ok:   MX1 the PUSH HOOK put it in the model
+ok:   MX1 the viewer buffer is still clean
+ok:   MX1 no viewer log line (this is not a reorder or a trace move)
+  note: send_key: <Key-M> -x 499 -y 208 -state 1 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX2 the M KeyPress was delivered
+ok:   MX2 M set the measurement bit 64
+ok:   MX2 M created NO marker
+  note: send_key: <Key-M> -x 499 -y 208 -state 1 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX2 a second M cleared bit 64
+ok:   MX2 ... and still created nothing
+  note: send_key: <Key-d> -x 777 -y 128 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX3 the d KeyPress was delivered
+ok:   MX3 two markers now
+ok:   MX3 the new marker is M2 and its prev is M1
+ok:   MX3 it snapped to a DIFFERENT sample than M1
+ok:   MX3 its y agrees with the raw INTERPOLATED (numeric, 1e-7 relative)
+ok:   MX3 the label carries the delta block
+ok:   MX3 still no viewer log line
+ok:   MX4 the empty pixel is still CLAIMED by the graph (the key reaches C)
+ok:   MX4 ... and is inside strip 0's PLOT BOX
+ok:   MX4 ... with no trace within 25 px of it
+  note: send_key: <Key-m> -x 499 -y 253 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX4 the m KeyPress was delivered
+ok:   MX4 `m` in empty plot-box space CREATES one (before 0188: nothing)
+ok:   MX4 ... and did not throw
+ok:   MX4 the pixel-addressed verb creates there too
+ok:   MX4 ... anchored to the NEAREST trace however far (the 1e30 answer)
+ok:   MX4 ... while the same verb on a trace pixel succeeds too (the control)
+ok:   MX4b a margin pixel was scanned {155 287}
+ok:   MX4b it is OUTSIDE the plot box
+ok:   MX4b ... yet within the OLD 20-px creation halo of a trace
+ok:   MX4b ... and the VERB refuses there (before 0188: it created one)
+ok:   MX4b nothing was left behind by the refusal
+ok:   MX5 a marker was placed on the scanned trace pixel
+ok:   MX5 the marker's ANCHOR pixel was found by the engine hit-tester
+ok:   MX5 the marker's LABEL pixel was found too (a distinct part)
+ok:   MX5 the two pixels are distinct and belong to the same marker
+ok:   MX5 nothing bold to start
+ok:   MX5 the press armed an ANCHOR drag (part 1)
+ok:   MX5 a no-travel release SELECTS the marker
+ok:   MX5 the wave-bold was SUPPRESSED (the marker arm consumed the release)
+ok:   MX5 the drag arm was torn down
+ok:   MX5 marker_selected agrees with the engine
+ok:   MX5 a near-trace click that hit no marker still bolds
+ok:   MX5 ... and cleared the marker selection
+ok:   MX6 the anchor pixel was (re-)found by scanning
+ok:   MX6 press: graph_marker_drag == 1 (anchor)
+ok:   MX6 press: the TRACE drag did not arm
+ok:   MX6 press: the STRIP reorder did not arm
+ok:   MX6 press: no cursor was grabbed (graph_flags 16|32|512|1024 all clear)
+ok:   MX6 the model is NOT mutated mid-drag (the scratch is)
+ok:   MX6 the drag arm is torn down on release
+ok:   MX6 the anchor moved to a DIFFERENT real sample
+ok:   MX6 x lies inside its new segment
+ok:   MX6 y agrees with the raw INTERPOLATED at the new x
+ok:   MX6 the marker stayed on its OWN trace (wave unchanged)
+ok:   MX6 the label offset is UNTOUCHED by an anchor drag
+ok:   MX6 the strips did not reorder (inert sdid witness)
+ok:   MX6 no trace moved between strips
+ok:   MX6 no viewer log line was emitted
+ok:   MX6 the viewer buffer is still unmodified / readonly
+ok:   MX6 the model picked the commit up through the push hook
+ok:   MX6b the anchor pixel was (re-)found by scanning
+ok:   MX6b an 8-px drag moved the anchor's x (it SLID, it did not snap)
+ok:   MX6b ... and it is still ON the curve
+ok:   MX6b ... on its own trace
+ok:   MX7 precondition: the marker is NOT selected
+ok:   MX7 the moved marker's label pixel was found
+ok:   MX7 press on the LABEL arms drag part 2
+ok:   MX7 press: the trace drag did not arm
+ok:   MX7 press: the strip reorder did not arm
+ok:   MX7 ldx/ldy CHANGED
+ok:   MX7 dataset/point/x/y are UNCHANGED (the other half of the assertion)
+ok:   MX7 the wave is unchanged too
+ok:   MX7 the strips did not reorder (inert sdid witness)
+ok:   MX7 no trace moved between strips
+ok:   MX7 no viewer log line was emitted
+ok:   MX7 the drag arm is torn down
+ok:   MX7 the model picked the label commit up
+ok:   MX7e a marker on a freshly scanned trace pixel
+ok:   MX7e the anchor pixel was found
+ok:   MX7e the no-travel click SELECTED the marker
+ok:   MX7e the label pixel was found
+ok:   MX7e the marker is still selected at press time (the latch input)
+ok:   MX7e the GRABBED part is still 2 — the Tcl seams read this value
+ok:   MX7e press: the trace drag did not arm
+ok:   MX7e press: the strip reorder did not arm
+ok:   MX7e the model is NOT mutated mid-drag (the scratch is)
+ok:   MX7e the drag arm is torn down on release
+ok:   MX7e the ANCHOR moved to a DIFFERENT real sample
+ok:   MX7e x lies inside its new segment (it SLID along the curve)
+ok:   MX7e y agrees with the raw INTERPOLATED at the new x
+ok:   MX7e the marker stayed on its OWN trace (wave unchanged)
+ok:   MX7e ldx/ldy are FROZEN — a rigid translation, not a label move
+ok:   MX7e the marker is still selected (a drag never changes the selection)
+ok:   MX7e the strips did not reorder (inert sdid witness)
+ok:   MX7e no trace moved between strips
+ok:   MX7e no viewer log line was emitted
+ok:   MX7e the viewer buffer is still unmodified / readonly
+ok:   MX7e the model picked the ANCHOR commit up through the push hook
+ok:   MX7f the label pixel was re-found after deselecting
+ok:   MX7f DESELECTED: ldx/ldy move again
+ok:   MX7f DESELECTED: the anchor is left alone
+ok:   MX7g the label pixel was found
+ok:   MX7g SELECTED at press
+ok:   MX7g DESELECTING mid-drag did not change the mode: the anchor moved
+ok:   MX7g ... and ldx/ldy stayed frozen
+ok:   MX7h the label pixel was found
+ok:   MX7h NOT selected at press
+ok:   MX7h SELECTING mid-drag did not change the mode: the anchor is untouched
+ok:   MX7h ... and it stayed a label move
+ok:   MX7e the selection is handed back cleared
+ok:   MX7c strip_bands_px returned strip 0's band
+ok:   MX7c a press in the grip column armed the STRIP reorder
+ok:   MX7c ... and armed NO marker drag
+ok:   MX7c the cancelled reorder left the stack alone
+ok:   MX8 the anchor pixel was re-found for the drag
+ok:   MX8 the press still armed the MARKER, not the cursor
+ok:   MX8 no cursor grab flag was set
+ok:   MX8 the graph x range did not pan
+ok:   MX8 the drag did not bold a trace
+ok:   MX8 cursor A did not move
+ok:   MX8b the anchor pixel was re-found
+ok:   MX8b a B2/B3 chord during a marker drag did NOT pan the graph
+ok:   MX8b a Button3 release tore the stale arm down
+ok:   MX8b ... and the following Button1 release moved nothing
+ok:   MX9 the anchor pixel was re-found
+ok:   MX9 ESC was delivered
+ok:   MX9 the drag arm is gone
+ok:   MX9 the marker is back where it was, byte-identically
+ok:   MX9 nothing was logged
+ok:   MX10 a marker to delete, on a freshly scanned trace pixel
+ok:   MX10 the anchor pixel was re-found
+ok:   MX10 there is a marker to try to delete
+ok:   MX10 the (negative) Delete was delivered once
+ok:   MX10 Delete with NOTHING selected leaves the markers alone
+ok:   MX10 the marker is selected
+ok:   MX10 the second strip band was resolvable
+ok:   MX10 the wrong-strip Delete was delivered once
+ok:   MX10 Delete while hovering ANOTHER strip leaves the marker alone
+  note: send_key: <Key-Delete> -x 499 -y 209 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX10 Delete over the owning strip was delivered
+ok:   MX10 the selected marker is gone
+ok:   MX10 the selection was reset with it
+ok:   MX10 the model followed
+ok:   MX11 a trace pixel was re-scanned after the fit
+  note: send_key: <Key-m> -x 499 -y 208 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MX11 a marker was created with m
+ok:   MX11 the rect carries a token
+ok:   MX11 exactly one undo point
+ok:   MX11 the u key was delivered
+ok:   MX11 u removed the marker from the RECT
+ok:   MX11 ... and from the model
+ok:   MX11 the U key was delivered
+ok:   MX11 U restored the RECT token byte-identically
+ok:   MX12 MMB still pans the graph with a marker present
+ok:   MX12 RMB still box-zooms with a marker present (x span narrowed)
+ok:   MX13 a marker for the face-agreement check
+ok:   MX13 after `xschem draw_graph 0` the ANCHOR is still hit-testable
+ok:   MX13 ... and so is the LABEL box
+ok:   MX13 both parts belong to the same marker
+ok:   MX7b a marker on the TOPMOST sample (anchor on the plot box top)
+  note: MX7b no anchor pixel in the scan (try 1)
+  note: MX7b no anchor pixel in the scan (try 2)
+  note: MX7b no anchor pixel in the scan (try 3)
+  MARKER-TEST-STALL: MX7b could not arm a viewer marker drag (1) after 3 tries — ui_state=0 ctx=.x1.drw. ui_state 0 after the press means C never even latched GRAPHPAN, i.e. waves_selected() did not claim the pixel — the usual cause is a part drawn inside the `border = 5 * tk_scaling` rim waves_selected() insets the rect by (callback.c:128), which graph_marker_at still answers for but no press can reach
+FAIL: MX7b its anchor pixel was found -> {0} (exp {1}) : FAIL
+FAIL: MX7b a press ABOVE the plot box still grabbed the anchor -> {0} (exp {1}) : FAIL
+FAIL: MX7b the drag COMMITTED even though the pointer left the window -> {0} (exp {1}) : FAIL
+ok:   MX7b it re-anchored ON the same trace (curve point, issue 0193)
+ok:   MX7b the marker still belongs to the ORIGINAL strip
+ok:   MX7b ... and did NOT migrate to the strip the pointer crossed
+ok:   MX7b an anchor drag leaves the label offset alone
+ok:   MX7b the drag arm is torn down
+  note: MX7d no label pixel in the scan (try 1)
+  note: MX7d no label pixel in the scan (try 2)
+  note: MX7d no label pixel in the scan (try 3)
+  MARKER-TEST-STALL: MX7d could not arm a viewer marker drag (2) after 3 tries — ui_state=0 ctx=.x1.drw. ui_state 0 after the press means C never even latched GRAPHPAN, i.e. waves_selected() did not claim the pixel — the usual cause is a part drawn inside the `border = 5 * tk_scaling` rim waves_selected() insets the rect by (callback.c:128), which graph_marker_at still answers for but no press can reach
+FAIL: MX7d the label pixel was found -> {0} (exp {1}) : FAIL
+FAIL: MX7d the press armed the LABEL drag -> {0} (exp {2}) : FAIL
+FAIL: MX7d ldx/ldy changed even though the pointer ended over strip 1 -> {0} (exp {1}) : FAIL
+ok:   MX7d the marker stayed on strip 0
+ok:   MX7d ... and strip 1 gained nothing
+ok:   MX7d the anchor is untouched by a label drag
+ok:   MF11b the pointer is over a graph
+ok:   MF11b the viewer buffer is read-only, as always
+ok:   MF11b a RAW C forward of `m` is refused (before: it created a marker)
+ok:   MF11b ... while key_filter's with_edit bracket lets it through
+ok:   MF11b the buffer is readonly again afterwards
+ok:   MF11b ... and still unmodified
+ok:   MF11b the push hook folded it into the model
+ok:   MF11b a RAW C forward of `d` is refused too
+ok:   MF11b ... and key_filter creates the delta marker
+ok:   MF11b no viewer log line for the m/d halves (not a reorder, not a move)
+ok:   MF11b no trace is selected, so Delete is purely the marker arm (0176)
+ok:   MF11b a RAW C forward of Delete is refused
+ok:   MF11b ... and key_filter deletes the selected marker
+ok:   MF11b Delete, unlike m/d, logs exactly ONE viewer line (issue 0176)
+ok:   MS-X0 the REFERENCE marker M1 was placed
+ok:   MS-X0 the DIFFERENCE marker M2 was placed with -delta
+ok:   MS-X0 two markers on strip 0
+ok:   MS-X0 M2 carries a delta block against M1
+ok:   MS-X0 ... and they sit on DIFFERENT samples
+ok:   MS-X0 M2's anchor pixel was found by the engine hit-tester
+ok:   MS-X1a the first press armed the marker gesture (part 1, the anchor)
+ok:   MS-X1a the FIRST click still SINGLE-selects (D-14)
+ok:   MS-X1a ... and the set holds just that one number
+ok:   MS-X1b the double-click WIDENS it to the pair
+ok:   MS-X1b ... with the clicked marker as the head
+ok:   MS-X1c the trailing release did NOT wave-bold (the -1e30 poison holds)
+ok:   MS-X1d no graph-properties dialog appeared (D9 intact)
+ok:   MS-X1e the viewer buffer is still unmodified / readonly (no with_edit)
+ok:   MS-X1e ... and selecting emitted no viewer log line (D-17)
+ok:   MS-X1e ... and wrote no token onto the rect
+ok:   MS-X1f a SECOND double-click leaves the pair selected (it SETS)
+ok:   MS-X1f ... still no dialog
+ok:   MS-X2 an empty plot-box pixel was scanned (499,253)
+ok:   MS-X2 a double-click on empty waveform space selects nothing
+ok:   MS-X2 ... and still opens no graph-properties dialog (D9)
+ok:   MS-X3 M1's anchor pixel was found
+ok:   MS-X3 a marker with no delta block selects ALONE (D-4)
+ok:   MS-X4 the pair is selected before the keystroke
+  note: send_key: <Key-Delete> -x 785 -y 127 to .x1.drw never took effect (200 tries)
+  note: Tk key delivery stalled (WSLg focus) — driving the shipping handler (round 1)
+ok:   MS-X4 the Delete keystroke was delivered
+ok:   MS-X4 Delete removed BOTH members of the pair
+ok:   MS-X4 ... and cleared the selection
+ok:   MS-X4 the whole gesture is ONE undo point
+ok:   MS-X4 one `u` was delivered
+ok:   MS-X4 one `u` brings BOTH markers back
+ok:   MS-X4 ... with the delta link intact
+free_rawfile(): clearing data
+ok:   MZ1 the DISPLAY arm ran its full complement of checks (a silent shortfall is the failure this guards)
+ok:   MZ2 the file body reached its end (no group unwound into the outer catch)
+RESULT: 6 FAILED (977 passed)
+
+###### FAIL: test_wave_sigbrowser_0312 ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   BG00 every proc this file names was found in the source
+ok:   BG01 browser_show still packs the sidebar into the TOPLEVEL, verbatim,
+       exactly once (frozen BS01/BS02's claim, restated)
+ok:   BG02 the grip packs into the same LEFT slot, before the canvas
+ok:   BG03 the grip's hide is spelled against $g, never $f
+ok:   BG04 the drag handler carries NO cap/floor arithmetic of its own
+ok:   BG05 browser_width still carries all four of BT08's literals
+ok:   BG06b the three gesture bindings exist, on the right sequences, and pass
+       the ROOT x (%X) the delta arithmetic needs
+ok:   BG07a the idle flush is GATED on the deriving path, so a drag does
+            not pump the event loop once per motion event
+ok:   BG07b ...and the derivation ignores the WRAP by asking what the bar
+            needs FLAT
+ok:   BG07c browser_build destroys the grip with the sidebar it belongs to
+ok:   BG07d the divider drag has a guide row, and GH8's sixteen bseq rows are
+       untouched
+ok:   BG06 the teardown sweep drops BOTH new per-token arrays
+ok:   BG07 an unknown token has NO width preference
+ok:   BG08 a positive integer is stored and read back; 0, a negative and a
+       word are all IGNORED rather than stored
+ok:   BF01 searchbar_build leaves the bar FLAT and grids nothing itself
+ok:   BF02 the build arms the ONE trigger: <Configure> -> searchbar_reflow
+ok:   BF03 each layout releases the other geometry manager before claiming the
+       children
+ok:   BF04 the requirement EXCLUDES the error label, exactly as the width
+            rule's derivation does
+ok:   BF05 the wrapped layout weights column 1 only, so the entry is what
+            grows and what shrinks
+ok:   BF06 searchbar_forget drops the layout flag with the bar
+ok:   BF20a the fixture bar is really on screen
+  BF: bar requirement (excluding err) = 669 px
+ok:   BF20b the requirement is a sane pixel count, not 0 and not the
+              whole screen
+ok:   BF20c the requirement AGREES with browser_width's own derivation
+              (reqwidth of the bar minus the clippable err label)
+FAIL: BF21a wide: the bar really got the width, is FLAT — every child packed, none gridded, and the
+         pack order is ViVA §3.2's -> {0 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err}} (exp {1 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err}}) : FAIL
+ok:   BF21b wide: every control is ON SCREEN
+ok:   BF22a (THE DEFECT) flat at the shipped 450 px: All DBs, Search and the
+         error label are BUILT but NOT ON SCREEN
+ok:   BF22b ...while `winfo exists` and the checkbutton's variable both still
+         answer normally — which is why 353 green checks missed this
+ok:   BF22c (THE FIX) reflowed at the SAME 450 px: two rows, and All DBs and
+         Search are on screen
+ok:   BF23a wrapped: the children are GRID-managed, none packed, and the error
+         label is the one deliberately withheld
+ok:   BF23b wrapped: row 0 is the QUERY, row 1 the MODIFIERS
+FAIL: BF24a widened again: back to FLAT, with BAR03's pack order restored
+         byte-for-byte -> {0 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err} {1 1 1 1 1 1 1}} (exp {1 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err} {1 1 1 1 1 1 1}}) : FAIL
+ok:   BF24b ...including the asymmetric pads the build shipped
+ok:   BF25a the hysteresis band holds: wrapped just under the requirement,
+         and still wrapped 8 px over it — it unwraps only past the band
+ok:   BF25b ...and past the band it really does go flat again
+ok:   BF26a reflow DECLINES on a bar in a FIXED container that was never
+         mapped, and leaves it flat
+ok:   BF26b ...and on a widget that is not a searchbar at all
+ok:   BF28a the -showbutton 0 variant needs LESS width than the full bar
+ok:   BF28b ...and wraps on its own five, keeping all four visible controls
+ok:   BF30 a bar in an AUTO-SIZING container is never reflowed, however
+         narrow the container gets — no latch, and BAR03's pack slaves survive
+ok:   BF29 destroying a bar drops its layout flag
+ok:   BG20 before the sidebar is shown there is no grip at all
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG21 the grip exists and is packed, and the ORDER is sidebar, grip,
+         canvas — the sidebar is STILL a pack slave of the toplevel
+ok:   BG22 it is a full-height strip, wide enough to actually grab, with the
+         resize cursor
+  BG: sidebar width at the shipped default = 450 px
+ok:   BG23a the window is really 1000 px and the sidebar starts at its 45%
+         cap
+ok:   BG33a (THE REAL GESTURE) a Button-1 / B1-Motion / ButtonRelease-1
+         sequence generated ON THE GRIP WIDGET moves the sidebar by the drag
+         delta — the bindings are reachable, not just the procs
+ok:   BG33b ...and the real release stored the preference and dropped the
+         anchor
+ok:   BG23b dragging LEFT narrows the sidebar to the dragged width (item 5
+         step 7's ~250 px is now reachable)
+ok:   BG23c ...and the canvas grew by what the sidebar gave up
+ok:   BG24a the 240 px FLOOR holds — dragging past the left edge stops there
+         rather than collapsing or jumping back to the derived width
+ok:   BG24b (THE DISCRIMINATING ONE's PRECONDITION) a 1600 px window with a
+         700 px sidebar really does hold the bar FLAT, so the derived width and
+         the floor now disagree
+ok:   BG24c (THE DISCRIMINATING ONE) with the two answers apart, dragging off
+         the left edge stops at the 240 px floor — it does not jump right to the
+         derivation
+ok:   BG24d the window is back at the shipped size before the cap is measured
+ok:   BG25 the 45% CAP holds — a right drag from 300 px stops at 450 on a
+         1000 px window, which is browser_width's own clamp
+ok:   BG26 the RELEASE clears the anchor, so a stray motion afterwards is a
+         NO-OP rather than a divider that follows the mouse for good
+ok:   BG27a the RELEASE is what stores the preference, and it stores the
+         CLAMPED width the frame really has
+ok:   BG27b hiding the sidebar unpacks the GRIP too — no orphan divider
+         against a hidden pane
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG28a a Ctrl-B/Ctrl-B round trip re-applies the dragged width — it does
+         NOT re-derive it from the (now wrapped) bar
+ok:   BG28b (BG28a's PREMISE, measured) the sidebar's own bar is wrapped at
+         this width, so its RAW reqwidth would floor at 240 — the dragged 320
+         can only have come from the stored preference
+ok:   BF27 (END TO END) at the shipped default 450 px the sidebar's search
+         bar shows All DBs and Search — the controls issue 0312 dropped
+ok:   BG29a a fresh window has NO width preference before its first show
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG29b the FIRST show derives 450 and leaves the window with NO
+         preference of its own
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG29c (THE REGRESSION GUARD) a Ctrl-B/Ctrl-B on a never-dragged,
+         WRAPPED sidebar re-derives 450 — it does NOT collapse onto the floor,
+         and it still mints no preference
+ok:   BG29d (BG29c's PREMISE) the wrapped bar's raw reqwidth really is under
+         the floor, while what it needs FLAT is not
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG32 a RESTORED width becomes the preference, so it survives hiding and
+         re-showing the sidebar
+ok:   BG34 rebuilding the sidebar takes the grip with it
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG34 ...and the next show puts it back on the RIGHT side, between the
+         sidebar and the canvas
+ok:   BG35 press anchors on the CONFIGURED width: with the two reads 80 px
+         apart and the cap far away, a zero-delta drag lands on the configured
+         500, not on the granted 420
+ok:   BG30 wviewer::forget drops the width preference AND a live mid-drag
+         anchor with the window
+ok:   BG31 the three grip gestures answer 0 on a forgotten token instead of
+         throwing
+----
+test_wave_sigbrowser_0312: 67 passed, 2 failed
+RESULT: 2 FAILED (67 passed)
+
+###### FAIL: test_wave_sigbrowser_keys ######
+Using run time directory XSCHEM_SHAREDIR = /home/qflow/dev/xschem/claude_1/xschem/src
+Sourcing /home/qflow/dev/xschem/claude_1/xschem/src/xschemrc init file
+ok:   BK01 (SOURCE) the carve-out names BOTH keysyms in ONE expression, and the
+       single-keysym form is gone
+ok:   BK02 (PURE) the SHIPPED expression, evaluated: bare b forwards, Ctrl-b
+       does not, Ctrl-d does not, Ctrl-a / Ctrl-Shift-B / bare d all still do
+ok:   BK03 (SOURCE, POSITIVE CONTROL) graphkeys STILL contains 98 and is
+       otherwise untouched — the fix is a carve-out, not a deletion
+ok:   BK04 (FILE) no ctrl row for 98 survives in the shipped keybindings.csv,
+       and the file is not simply empty
+ok:   BK05 (FILE, BK04's CONTROL) ...while the BARE-b graph row does
+ok:   BK06 (SOURCE, C) callback.c lost the Ctrl-b over_graph row and KEPT the
+       bare-b idle one
+ok:   BK07 install_default_binds was found in the source
+ok:   BK07 (SOURCE) the default is <Control-Key-b>, behind the rc-wins guard,
+       with the break — and <Control-Key-l> is gone from the proc
+ok:   BK08 build_menubar was found in the source
+ok:   BK08 (SOURCE) the View entry spells the new accelerator adjacently, and
+       Ctrl+L is gone from the proc
+ok:   BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
+       no Ctrl-L spelling survives anywhere in the guide
+ok:   BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide still has
+       sixteen data-seq rows and eleven menu/accel pairs, and test_wave_grid
+       still pins exactly those two numbers
+ok:   BK20 (FILE) actions.csv carries EXACTLY ONE wave.show_in_signal_browser
+       row, and it is the row the cheat-sheet and the palette read: the label
+       and the DISPLAY accel
+ok:   BK21 (FILE) the regenerated keybindings.csv row is spelled EXACTLY,
+       mods order included, and it is the file's only ctrl+alt row
+FAIL: BK22 (SOURCE, C) the registry row is Tcl-backed with a NULL fn, and the
+       action id appears in callback.c exactly TWICE -> {1 3} (exp {1 2}) : FAIL
+ok:   BK23 (SOURCE, C) the canvas chord is ControlMask|Mod1Mask on keysym 'v',
+       and the Tcl command takes NO window argument and no %W
+ok:   BK24 (FILE) cadence_style_rc no longer binds Control-Key-5 — R10 is a
+       MOVE, not an ADD
+ok:   BK25 (BK24's CONTROL, SAME FILE) ...and it still binds Control-Key-4 for
+       Direct Plot and Control-Key-dollar for the plot mode
+ok:   BK26 (FILE, REMAPPABILITY) no rc file binds the chord in EITHER Tk
+       spelling — an rc bind bypasses `xschem bind` — and the C table does
+ok:   BK27 (FILE) the Tools entry spells the new accelerator adjacent to the
+       label, and the phrase still occurs EXACTLY ONCE in src/xschem.tcl
+ok:   BK28 (FILE, GUIDE, LOCKSTEP) the guide's prose names the new chord, the
+       old one is gone, and NO guide row was added for either
+ok:   BK32 (PURE, TWO-PANE item 18) browser_msg renders the new `unhidden`
+       result as ONE sentence naming the node it had to unhide to reach
+ok:   BK33 (BK32's CONTROL, RESTATED by batch F item 5) all NINE shipped
+       renderings are byte-unchanged, the tenth is §F's new `alldbs`, and the
+       count leg still moves so "nothing happened" cannot pass this
+ok:   BK34 (SOURCE, THE ONE-FORMATTER ORACLE) the sentence is spelled in
+       exactly ONE place in the file and that place is browser_msg; the kind is
+       minted in browser_say and called from exactly one arm
+ok:   BK35 (SOURCE, TP44's TWIN) the R12 arm reuses the ONE decode, adds no
+       third refresh and no sch_path read — while really adding the two
+       class-scope reads that make its probe scoped
+ok:   BK11 wviewer::open returns 1
+ok:   BK12 (X, THE LANDMINE) Ctrl-b over a strip is NOT forwarded, so it
+         cannot fall through to the C switch and flip sym_txt — and the drive
+         really was over a graph
+ok:   BK13 (X, R9's SAFETY CLAIM) bare b over the same strip still forwards,
+         still moves the cursor-B engine bit AND its Tcl mirror, and still
+         leaves sym_txt alone
+ok:   BK14 (X, CONTROL) Ctrl-d is still refused (the carve-out's other half,
+         unchanged by this item)
+ok:   BK14 (X, CONTROL) ...and Ctrl-Shift-B (keysym 66) still forwards, so
+         the carve-out did not swallow the shifted twin
+ok:   BK15 (X) Ctrl-B is on the WaveViewer tag, calls browser_toggle_at with
+         the EVENT's canvas, and breaks so the chord never travels on
+ok:   BK15 (X) ...it survives the strip_bindings sweep, and it is NOT bound
+         on the canvas widget itself (which is what the sweep would take)
+ok:   BK16 (X) the live binding table's 98 rows are exactly the bare-b
+         idle over_graph row — the ctrl row is gone from the TABLE, not just
+         from the file
+ok:   BK17 (X) the shipped keybindings.csv is byte-identical to a fresh
+         generation from the live table, and that generation is a real table
+ok:   BK18 (X, MEASURED) Ctrl-B typed INTO the browser's search entry moves
+           no insert cursor, edits no text, toggles no sidebar and flips no
+           sym_txt — the chord's one new collision class does not fire
+ok:   BK18 (X) a REAL Ctrl-B on the canvas flipped the sidebar and its mirror together
+           and left sym_txt exactly where it was
+FAIL: BK29 (X) the LIVE binding table carries the ctrl+alt row, still has no
+         canvas row for keysym 53, and grew by exactly one -> {1 0 78} (exp {1 0 72}) : FAIL
+ok:   BK30 (X) the cheat-sheet renders the chord WITH its actions.csv label,
+         lowercase v, and no `(bare:` fallback anywhere
+FAIL: BK31 (X, REMAPPABILITY) bound -> unbind removes the row and the table
+         shrinks -> rebind puts it back and the table grows again -> {1 0 77 1 78} (exp {1 0 71 1 72}) : FAIL
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK36 (FIXTURE) the item-18 toplevel builds, the sidebar is PACKED, and
+         the 424-name corpus really drove the measured 45-node box-OFF tree
+ok:   BK36 (X, R12) with the box OFF and the node genuinely ABSENT, a reveal
+         onto a device instance unhides it, lands on it, selects it, and leaves
+         the box TICKED
+ok:   BK37 (X) ...and it SAYS SO, in the SAME "Signal Browser\n<msg>" format
+         the rest of the family pins byte-for-byte
+ok:   BK38 (X, R12's LAST SENTENCE) one refresh later the box is STILL
+         ticked, the accessor and the -variable agree, the node is still
+         selected, and item 13's reveal left the ANCESTORS open and the TARGET
+         closed
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK39 (X, THE DUAL PAIR) the SAME call that ticks for a hidden device
+         node leaves the box UNTICKED for a path in NEITHER model, reports the
+         SHIPPED err sentence, and spends exactly the ONE refresh the shipped
+         retry already spent
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK40 (X, THE OTHER CONTROL) with a pattern in the Search bar the same
+         absent path STILL does not tick and the sentence still carries the
+         shipped bars hedge — while clearing the bar and asking for a real
+         hidden node ticks it after all
+ok:   BK41 (X) the auto-tick costs exactly ONE refresh — and with the box
+         ALREADY on the very same call is a plain `ok` costing ZERO, so there is
+         no spurious "I turned it on"
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK43 (X, THE FULL-RESOLUTION RULE) a path whose would-be model resolves
+         DEEPER but still NOT FULLY leaves the box UNTICKED, leaves the tree at
+         its 45 nodes and reports the SHIPPED partial sentence at the shallower
+         landing — while the fully-resolving path on the same fixture moments
+         later ticks, says so, and grows the tree to 129
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK42 (X, THE IMPROVE-OR-RESTORE CONTROL) the shipped retry re-reads the
+         raw, finds LESS, and puts browsersigs, browserrows, browserdbsigs AND
+         the selection back exactly — and the restored inventory is one the R12
+         probe can still see a hidden node through
+ok:   BK42 (TEARDOWN, spec §9's live note) the fixture leaves NOTHING behind
+         — no toplevel, no windows entry, no ticked box for another file's
+         snapshot to inherit, and the refresh spy really was un-installed
+----
+test_wave_sigbrowser_keys: 46 passed, 3 failed
+RESULT: 3 FAILED (46 passed)
