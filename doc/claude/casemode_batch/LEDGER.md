@@ -51,7 +51,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 5 | viewer Tcl + two-pane browser scan | `[E]` | `9b1394c9` | 134 | 66 | 5 + 3 audits | **YES ×2** | audit = one added row, zero movers. **B2a's control BUILT, not passed on** (`Options ▸ Case Mode`). Review caught the radios as a **dead control** — no-op left 113/113 green. Spec §12. **2 look debts recorded** |
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0420` filed |
 | 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0422`** filed (code execution) |
-| 7 | the capability probe (+ hard timeout) | | | | | | no | |
+| 7 | the capability probe (+ hard timeout) | `[x]` | `ebf4c952` | 61 | 69 | 4 + 3 audits | no | audit = one added row, zero movers. **Two probes built** (capability + run), §3b's contradiction resolved. **Transport changed `-p` → batch deck** (`-p` opens `$DISPLAY` and CORES with it unset). Spec §11 |
 | 8 | profile-aware `run_cmd` + mismatch policy | | | | | | no | `distinguish` mismatch REFUSES |
 | 9 | `sod_expr` stops folding + current arm | | | | | | no | flips ~20 assertions; that breakage is the evidence |
 | 10 | three defences: pre-flight + `$sim_status` + content | | | | | | no | pre-flight also OFFERS legacy corrections (D1) |
@@ -523,6 +523,74 @@ it worse.
 - **Two `06-` receipts now exist and they are different items:**
   `receipts/06-one-lookup-authority.md` is **item 5b**;
   `receipts/06-simulator-profiles.md` is **item 6**. Both say so in their headers.
+
+## Carry-forwards item 7 handed on — baseline `audit_item07_closer_2026-08-17`
+
+**Baseline is `audit_item07_closer_2026-08-17.txt` — 324/15/0/0 of 339** at
+`ebf4c952`. Every casemode item so far has moved **zero** statuses.
+
+**THE PROBE TRANSPORT CHANGED, AND IT INVALIDATES A MEASUREMENT THE DRIVER MADE.**
+`§3b` (and the driver's own dispatch, which had run it successfully) specified
+`printf … | $exe -p`. Measured live, mid-item: **`ngspice -p` opens `$DISPLAY`.**
+On an exhausted X server it exits with **no answer**; with `DISPLAY` **unset it
+dumps core**; on `:99` it answers. A three-mode binary was reporting as supporting
+**none** because X was busy. The driver's confirming run only worked because `:99`
+happened to be up. **The transport is now `-b <abs deck>`**, which answers
+identically under all three conditions and is nearer the real run. `CS170n` pins
+all three; reverting to `-p` reddens it. **The pipe transport is gone, not kept as
+a fallback.**
+
+**Rulings (spec §11), each with its measurement:**
+
+- **TWO probes, one mechanism parameterised by cwd.** §3b's row is
+  self-contradictory — it says "capability probe" but specifies the deck's
+  directory, and at registration there is no deck. `sim_profile_probe_capability`
+  (`xschem.tcl:3503`, fresh empty temp dir, **records** `detected`+`probed`) serves
+  item 13; `ase::sim_probe_run` (`ase.tcl:585`, the **deck's own** directory,
+  **records nothing**) serves item 8. Building one would have blocked the other.
+- **A1 resolved as (b): probe EACH mode, three invocations.** "Presence implies
+  all three" rejected — `$curcasemode` reports the *current* mode, never the
+  supported *set*, and both known failure shapes (item 3's wrong-case **key**
+  silent ignore, A2's `.spiceinit` override) are request-vs-measurement failures
+  that presence-implies-support cannot see.
+- **`no such variable` is an ANSWER**, recorded as `detected {fold}` — not a B2b
+  breach, because B2b governs *no answer*. Recording `{}` would offer the ordinary
+  `apt install` user nothing.
+- **A timed-out leg never contributes a mode and invalidates the WHOLE
+  measurement** (new `partial` status, never recorded). The first cut recorded a
+  partial as `ok`, so one transient stall **permanently narrowed the row** — and
+  with `fold` stalled, claimed the row could not deliver the global default.
+- **The timeout is Tcl-native and bounds the WHOLE probe.** The first cut timed
+  out per *leg*: 3 × 5000 = **15016 ms frozen**, the exact outcome B3 mandated it
+  to prevent. Now one budget, re-measured **5006 ms**. `timeout(1)` rejected
+  (GNU-only; this tree ships on Windows), `fileevent`+`vwait` rejected
+  (re-entrancy inside item 13's modal dialog). Driven by actually hanging it.
+
+**⚠ `sim_probe_safe_args` IS A PROBE-ONLY FILTER — ITEM 8 MUST NOT COPY IT.** A
+profile's `args` are spliced into Tcl exec syntax, so for a **probe** they had to
+be filtered: `args {> zap.txt}` wrote a file into the probe's cwd (**the user's own
+rundir** for a run probe), `args {| cat}` swallowed the answer and was recorded as
+"delivers nothing", and `-r`/`-o` — xschem's own shipped batch shape — made the run
+probe **overwrite the previous run's outputs**. That filtering is correct for a
+probe and **wrong for the real run**, which legitimately needs `-r`/`-o`.
+
+**Other traps found:** `sim_probe_tmpdir` needs a per-process counter plus
+`file normalize`, because `file mkdir` **succeeds silently on an existing
+directory** — two calls in one millisecond shared one dir and the second's cleanup
+deleted the first's. The probe deck never lands in the caller's cwd, and the
+child's stdin is the null device.
+
+**Nothing was written to the developer's home directory** — `~/.spiceinit` does not
+exist on this machine, checked before and after; ngspice was **measured to honour
+`HOME`**, so that layer is driven with `HOME` pointed at a scratch dir and
+`CS170e` asserts the override, the real-`HOME` control, and the restore together.
+Still true and recorded in §11.8: **the capability probe is not clean either** — an
+empty cwd cannot exclude `~/.spiceinit`.
+
+**Declared holes:** the 64 KB output cap and `truncated` flag are undriven; only
+the two measured `.spiceinit` layers (cwd, `$HOME`); no `-D` key but `casemode`;
+`CS169q` and `alive` are Linux-specific (`/proc`, `kill -0`); and `CS170e`'s
+`home_restored` / `CS170n`'s `display_restored` rest on the test's own bookkeeping.
 
 ## Environment — re-verified 2026-08-16
 
