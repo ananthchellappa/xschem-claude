@@ -3016,6 +3016,569 @@ proc sim_profile_row {tool idx} {
   return $row
 }
 
+# =========================================================================
+# THE PROBE (casemode batch item 7; doc/claude/specs/simulator_profiles.md 11)
+# =========================================================================
+#
+# One mechanism, PARAMETERISED BY CWD, answering two different questions. The
+# plan's item-7 row blurs them into one line ("the capability probe ... cwd = the
+# deck's directory"); DECISIONS.md B3 draws the distinction and says so:
+#
+#   THE CAPABILITY PROBE  -- at registration (item 13's Add / Test button).
+#     "Can this binary do casemode at all, and WHICH modes can it deliver?"
+#     THERE IS NO DECK YET, so "cwd = the deck's directory" is meaningless for
+#     it; it runs in a freshly created EMPTY directory so no deck-local
+#     `.spiceinit` joins in. Its answer is RECORDED on the profile
+#     (`detected`/`probed`), because item 13's dropdown is built from it (A1).
+#     B3: "B3 is only about the first."
+#
+#   THE RUN PROBE -- immediately before each simulation (item 8's caller).
+#     "What mode will THIS run get?", asked with the run's own argv from the
+#     DECK'S OWN DIRECTORY, because that is where ngspice looks for a
+#     `.spiceinit` (A2). It RECORDS NOTHING: an answer skewed by a `.spiceinit`
+#     is a fact about one run, not a capability of the binary, and storing it
+#     would corrupt the dropdown A1 asked for. `ase::sim_probe_run` (ase.tcl) is
+#     the ASE-L entry point; the mismatch POLICY (B4 -- `preserve` reports,
+#     `distinguish` refuses) is item 8's, not this code's.
+#
+# THE HARD TIMEOUT IS MANDATORY (B3) AND THERE IS NO IDIOM HERE TO COPY.
+# MEASURED on this tree, 2026-08-17, with today's build-ver_50:
+#
+#   printf 'echo CCM=$curcasemode\n' | ngspice -p     ->  never returns
+#
+# i.e. EOF on stdin does NOT end an interactive ngspice -- it sat there for the
+# full 8 s of a `timeout 8` while burning 2.4 s user + 5.6 s system, so a hung
+# probe is not even idle, it SPINS. (The first attempt at this probe during the
+# decision session hung for two minutes.) So: closing our write end is NOT a
+# belt, `quit` is the only clean exit, and a binary that ignores `quit` must be
+# KILLED. In a GUI dialog the alternative is a permanently frozen window.
+#
+# ROUTE CHOSEN: Tcl-native pipe + deadline poll + kill. Rejected alternatives,
+# deliberately:
+#   * `timeout(1)` (coreutils) -- simple, but Linux/GNU only, and this codebase
+#     ships on Windows (XSchemWin/). A Tcl-only probe needs no external tool.
+#   * `fileevent` + `vwait` -- the portable-looking answer, but `vwait` runs the
+#     event loop, and the capability probe's caller is item 13's MODAL dialog
+#     (and item 8's is a run about to start): re-entering the event loop there
+#     means arbitrary callbacks, another Test click, or a window teardown
+#     running inside the probe. `after ms` with no script does NOT process
+#     events, so the poll below blocks this interpreter and nothing else, for at
+#     most the timeout.
+# The poll is therefore a bounded busy-wait: read what is there, sleep 5 ms,
+# check the deadline. Cost measured below.
+#
+# `close` ON A COMMAND PIPELINE WAITS FOR THE CHILD -- so the kill must come
+# FIRST or `close` inherits the hang. MEASURED: kill then close returns in 0 ms
+# with no surviving process; that ordering is not cosmetic.
+
+# The hard timeout in ms: an explicit argument, else the global, else 5000.
+# 5000 is ~240x the measured cost of a good probe (21 ms per invocation on
+# build-ver_50, 52 ms on stock-46; PLAN F5 recorded ~12 ms), so it can only be
+# reached by a binary that is not answering.
+proc sim_probe_timeout_ms {{tmo {}}} {
+  if {[string is integer -strict $tmo] && $tmo > 0} { return $tmo }
+  if {[info exists ::sim_probe_timeout] && [string is integer -strict $::sim_probe_timeout] &&
+      $::sim_probe_timeout > 0} {
+    return $::sim_probe_timeout
+  }
+  return 5000
+}
+
+# Kill the probe's child. Tcl has no portable kill, so this is the one platform
+# branch in the probe. The unix arm is driven by every timeout check in
+# tests/headless/test_sim_probe.tcl (which also asserts the process is gone);
+# the windows arm is written from the documented `taskkill` interface and is
+# UNVERIFIED -- there is no Windows here (declared in the spec).
+proc sim_probe_kill {pids} {
+  foreach p $pids {
+    if {$::tcl_platform(platform) eq {windows}} {
+      catch {exec taskkill /F /PID $p}
+    } else {
+      catch {exec kill -9 $p}
+    }
+  }
+}
+
+# A fresh empty directory for a CAPABILITY probe, so that no `.spiceinit` next to
+# whatever the process's cwd happens to be can answer for the binary. Returns {}
+# if it cannot make one (the caller then probes in place and says so).
+#
+# NOTE, and the spec repeats it: this cannot exclude `~/.spiceinit`. MEASURED
+# 2026-08-17 -- a `.spiceinit` in the HOME directory beats `-D casemode=preserve`
+# exactly as one beside the deck does, so NO capability probe is entirely clean.
+# That is why the run probe exists at all, and why A2 says report what came back.
+proc sim_probe_tmpdir {} {
+  set base {}
+  foreach v {TMPDIR TEMP TMP} {
+    if {[info exists ::env($v)] && [file isdirectory $::env($v)]} { set base $::env($v) ; break }
+  }
+  if {$base eq {}} {
+    set base [expr {$::tcl_platform(platform) eq {windows} ? {C:/Windows/Temp} : {/tmp}}]
+  }
+  if {![file isdirectory $base]} { return {} }
+  # THE BASE MUST BE ABSOLUTE. `$TMPDIR` is whatever the environment says, and a
+  # RELATIVE one (`TMPDIR=reltmp`) hands out a relative deck path -- which the
+  # probe then writes correctly (it writes before the `cd`) and the SIMULATOR
+  # cannot open, because the child runs in `cwd`. Measured with a stand-in that
+  # answers one mode when its deck is readable and another when it is not:
+  # absolute TMPDIR -> preserve, relative TMPDIR -> fold, with no error anywhere.
+  # A real ngspice would say "can't open file" and the probe would report
+  # `unknown` for a perfectly good binary. `file normalize` is against `[pwd]`,
+  # which is this process's cwd at the moment the deck is written -- the right
+  # anchor, since that is where a relative name would have landed.
+  set base [file normalize $base]
+  # THE NAME MUST BE UNIQUE PER CALL, and a timestamp is not: `file mkdir`
+  # SUCCEEDS SILENTLY on a directory that already exists, so two calls inside the
+  # same millisecond hand out the SAME directory -- and the second caller's
+  # cleanup then deletes the first caller's. MEASURED: the capability probe takes
+  # one for its cwd and each leg takes one for its deck, so leg 1's cleanup
+  # removed the cwd and legs 2 and 3 failed to `cd` into it; the probe reported
+  # `error` for a binary that had just answered. Hence a per-process counter, and
+  # a loop that refuses a name that exists.
+  if {![info exists ::sim_probe_seq]} { set ::sim_probe_seq 0 }
+  for {set try 0} {$try < 100} {incr try} {
+    incr ::sim_probe_seq
+    set d [file join $base \
+               xschem_probe_[pid]_[clock clicks -milliseconds]_$::sim_probe_seq]
+    if {[file exists $d]} { continue }
+    if {[catch {file mkdir $d}]} { return {} }
+    return $d
+  }
+  return {}
+}
+
+# The probe deck. Three lines of `.control` in a BATCH deck, and the first line
+# is a TITLE on purpose: a SPICE deck whose first line is a card loses that card
+# silently, which killed a whole round of this batch's measurements.
+#
+# RULING -- THE TRANSPORT IS A BATCH DECK, NOT THE INTERACTIVE PIPE, AND THE
+# REASON IS AN X SERVER. The shape this item started from was
+#     printf 'echo CCM=$curcasemode\nquit\n' | $exe -p …
+# which works and is what PLAN F5 records. It also needs a **working X display**,
+# and that turns a perfectly good binary into "unknown" for reasons that have
+# nothing to do with casemode. MEASURED on this machine, 2026-08-17, all three
+# with the identical command:
+#
+#   DISPLAY=:0 with the server out of client slots
+#       -> `Maximum number of clients reached` / `Error: Can't open display: :0`,
+#          ngspice exits WITHOUT running our commands: no answer at all
+#   DISPLAY unset (a headless server, a CI box, a remote sim host)
+#       -> `ERROR: (external) no graphics interface;` and the process DUMPS CORE
+#   DISPLAY=:99 (a live Xvfb)
+#       -> answers normally
+#
+# This was not theory: it is how the capability probe failed live during this
+# item, when a WSLg `:0` filled up and every real-binary check went "unknown"
+# while the binary was perfectly fine. A capability probe whose answer depends on
+# whether an X server has a free slot is exactly the silent-wrong-answer class
+# this batch keeps finding -- it would have narrowed item 13's dropdown to `fold`
+# on a machine that supports all three.
+#
+# A batch deck needs no X at all (measured: `-b` answers identically with DISPLAY
+# unset, with DISPLAY exhausted, and with a good one), and it is also nearer the
+# real run, which is `ngspice -b <deck>` (A2 asks for the real argv). `quit` is
+# kept even though `.endc` would end the run anyway.
+proc sim_probe_deck {} {
+  return "* xschem casemode capability probe\n.control\necho CCM=\$curcasemode\nquit\n.endc\n.end\n"
+}
+
+# WORDS FROM THE PROFILE'S `args` THAT A PROBE MUST NOT PASS ON. Two classes,
+# both measured, and both worse for the RUN probe -- whose cwd is the user's own
+# run directory -- than for the capability probe:
+#
+#  (1) TCL EXEC REDIRECTION. The argv is spliced into
+#      `open [list | $exe {*}$argv < $devnull 2>@1]`, which is exec SYNTAX, so a
+#      word that is `>`, `>file`, `>>`, `>&`, `<`, `<@`, `2>…`, `|`, `|&` or `&`
+#      is eaten as a redirection instead of reaching the simulator, and
+#      `sim_profile_valid` cannot refuse it (any well-formed Tcl list is a valid
+#      `args`). MEASURED: `args {> zap.txt}` CREATED `zap.txt` in the probe's cwd
+#      and returned `status error`; `args {| cat}` swallowed the answer and the
+#      probe recorded "measured, delivers nothing", which is item 13's dropdown
+#      offering NO mode at all.
+#  (2) OUTPUT-DIRECTING SIMULATOR OPTIONS. `-o <log>` / `-r <raw>` and their long
+#      forms are exactly what a batch profile carries (xschem's own shipped
+#      `Ngspice batch` row is `-r <raw>`-shaped), and the run probe runs in the
+#      deck's directory. MEASURED: the probe OVERWROTE the previous run's
+#      `tb.log` with its own two-line probe log, and -- stdout now being in that
+#      file -- answered `mode {}` for a binary that delivers all three modes.
+#
+# So the probe asks with the profile's args MINUS anything that redirects output.
+# It is a PROBE: it needs the binary's identity and its `.spiceinit`/`-D`
+# behaviour, never the run's artifacts. Item 8's `run_cmd` inherits neither the
+# exposure nor this filter -- it is a real run and its output files are the point.
+# DECLARED: the list of output-directing options is ngspice's, enumerated, not
+# derived; another simulator's equivalent (or `--soa-log`'s neighbours) would
+# need adding here.
+proc sim_probe_safe_args {arglist} {
+  set out {}
+  set skip 0
+  foreach w $arglist {
+    if {$skip} { set skip 0 ; continue }
+    # a pipeline separator ends the words that belong to THIS command: whatever
+    # follows was written for another program, not for the simulator
+    if {$w eq {|} || $w eq {|&}} { break }
+    if {$w eq {&}} { continue }
+    # a BARE redirection operator takes the next word as its file, so both go
+    # (`> zap.txt`); an ATTACHED one is a single word (`2>/dev/null`, `>zap.txt`)
+    if {[regexp {^(<|<<|<@|>|>>|>&|>>&|>@|>&@|2>|2>>|2>@)$} $w]} { set skip 1 ; continue }
+    if {[string index $w 0] eq {<} || [string index $w 0] eq {>}} { continue }
+    if {[string range $w 0 1] eq {2>}} { continue }
+    # output-directing options, with their operand
+    if {[lsearch -exact {-o --output -r --rawfile --soa-log} $w] >= 0} { set skip 1 ; continue }
+    if {[regexp {^--(output|rawfile|soa-log)=} $w]} { continue }
+    if {[regexp {^-(o|r).+$} $w]} { continue }
+    lappend out $w
+  }
+  return $out
+}
+
+# The words after the executable, EXCEPT the deck path, which sim_probe_once
+# appends because it owns the temp deck. `-b` is batch mode; the profile's own
+# `args` come next (filtered -- see sim_probe_safe_args) so a configured argument
+# can still be overridden by what follows; then A2's `-n`, then the mode request.
+# `mode` empty means "ask for nothing" -- which is how you find out what the
+# binary does by DEFAULT (no `-D casemode=` at all).
+proc sim_probe_argv {arglist mode nospiceinit} {
+  set a [list -b]
+  foreach w [sim_probe_safe_args $arglist] { lappend a $w }
+  if {[string is boolean -strict $nospiceinit] && $nospiceinit} { lappend a -n }
+  if {$mode ne {}} { lappend a -D casemode=$mode }
+  return $a
+}
+
+# Read the probe's answer out of its output.
+#
+# THE ONE PARSING TRAP, measured: in `-p` mode ngspice ECHOES the command before
+# answering it, so the output carries the literal line
+#     echo CCM=$curcasemode
+# and a parser that takes "the first line containing CCM=" reads back
+# `$curcasemode` instead of the value. Two independent defences: the answer must
+# be a line that STARTS with `CCM=` (the echo line starts with `echo`, or with a
+# prompt), and the value must be letters only, which `$curcasemode` is not.
+# The batch transport this item settled on does not echo -- the defences stay,
+# because the pipe shape is what every earlier note in this batch records and
+# because a future ngspice may print an echo, a banner or a prompt anywhere.
+#
+# Returns a dict:
+#   answered     1 when a `CCM=<letters>` line was seen at all
+#   value        that line's raw value ({} is a REAL answer -- see below)
+#   mode         the value when it is one of the three modes, else {}
+#   nocasemode   1 when the binary answered that it has no such variable
+#
+# `CCM=` with an EMPTY value plus an `Error: curcasemode: no such variable.`
+# line is what a released ngspice replies (MEASURED on /usr/local/bin/ngspice
+# 46, both with and without `-D casemode=preserve`). That is an ANSWER, not an
+# absence: the binary read our command and told us the feature is not there.
+# Both halves are required -- an empty value on its own (something that is not
+# ngspice, a truncated pipe) leaves `nocasemode` 0 and the caller records
+# nothing (B2b).
+proc sim_probe_parse {out} {
+  set r [dict create answered 0 value {} mode {} nocasemode 0]
+  foreach line [split $out "\n"] {
+    # a prompt can precede a line ("ngspice 10002 -> "); strip only that shape
+    regsub -all {^(ngspice[ \t]+[0-9]+[ \t]*->[ \t]*)+} $line {} line
+    set line [string trimright $line "\r \t"]
+    if {[regexp {^CCM=([A-Za-z]*)$} $line -> v]} {
+      dict set r answered 1
+      dict set r value $v
+      if {[sim_casemode_valid $v]} { dict set r mode $v }
+      break
+    }
+  }
+  if {[dict get $r answered] && [dict get $r value] eq {} &&
+      [regexp -nocase {curcasemode[^\n]*no such variable} $out]} {
+    dict set r nocasemode 1
+  }
+  return $r
+}
+
+# ONE probe invocation. `exe` is an executable path, `arglist` the words after
+# it (from sim_probe_argv), `cwd` the directory to run in -- which IS the
+# question being asked: an empty scratch dir asks about the binary, the deck's
+# own directory asks about the run.
+#
+# Returns a dict: the sim_probe_parse fields plus
+#   status   ok       the child exited on its own; `mode`/`answered` describe it
+#            timeout  the hard deadline fired and the child was killed
+#            error    could not run it at all (no such exe, bad cwd, ...)
+#   ms       wall time, argv, cwd, out (capped), err, truncated
+#
+# A `timeout` answer is DELIBERATELY still parsed, because it can carry a real
+# `CCM=` line (measured: the no-`quit` hang answers first and hangs afterwards) --
+# but no caller may RECORD a mode from it; see sim_profile_probe_capability.
+proc sim_probe_once {exe arglist cwd {tmo {}}} {
+  set tmo [sim_probe_timeout_ms $tmo]
+  # `pids` is the child's pid list -- carried out so a caller (and the timeout's
+  # own test) can assert that a killed probe really is gone.
+  set r [dict create status error answered 0 value {} mode {} nocasemode 0 \
+             ms 0 argv [linsert $arglist 0 $exe] cwd $cwd out {} err {} truncated 0 pids {}]
+  set t0 [clock milliseconds]
+  if {$exe eq {}} { dict set r err {no executable} ; return $r }
+  # THE DECK LIVES IN ITS OWN TEMP DIRECTORY, NEVER IN `cwd`. `cwd` is the
+  # question being asked -- the deck's own directory for a run probe -- and that
+  # is a directory belonging to the user's project; a probe may not drop a file
+  # in it, nor risk colliding with a name there. MEASURED: ngspice reads
+  # `.spiceinit` from the CWD (and from $HOME), not from the deck's directory, so
+  # an absolute deck path elsewhere loses nothing.
+  set deckdir [sim_probe_tmpdir]
+  if {$deckdir eq {}} {
+    dict set r err {cannot create a probe deck directory}
+    return $r
+  }
+  set deck [file join $deckdir casemode_probe.cir]
+  if {[catch {
+        set f [open $deck w]
+        puts -nonewline $f [sim_probe_deck]
+        close $f
+      } e]} {
+    catch {file delete -force -- $deckdir}
+    dict set r err $e
+    return $r
+  }
+  set argv [linsert $arglist end $deck]
+  dict set r argv [linsert $argv 0 $exe]
+  set old [pwd]
+  if {$cwd ne {}} {
+    if {[catch {cd $cwd} e]} {
+      catch {file delete -force -- $deckdir}
+      dict set r err $e
+      return $r
+    }
+  }
+  # `2>@1` folds the Error: line into the same channel -- that line is half of
+  # the no-casemode answer, so losing stderr would lose the answer. STDIN COMES
+  # FROM THE NULL DEVICE: without that the child inherits ours, and in `--pipe`
+  # mode xschem's own stdin is the command channel -- a simulator reading from it
+  # would eat the commands driving xschem.
+  set devnull [expr {$::tcl_platform(platform) eq {windows} ? {NUL} : {/dev/null}}]
+  if {[catch {open [list | $exe {*}$argv < $devnull 2>@1] r} ch]} {
+    catch {cd $old}
+    catch {file delete -force -- $deckdir}
+    dict set r err $ch
+    dict set r ms [expr {[clock milliseconds] - $t0}]
+    return $r
+  }
+  catch {cd $old}
+  set pids [pid $ch]
+  dict set r pids $pids
+  fconfigure $ch -blocking 0
+  set out {}
+  set trunc 0
+  set st ok
+  set deadline [expr {[clock milliseconds] + $tmo}]
+  while {1} {
+    if {[catch {read $ch} chunk]} { break }
+    if {$chunk ne {}} {
+      if {!$trunc && [string length $out] < 65536} {
+        append out $chunk
+        if {[string length $out] >= 65536} { set trunc 1 }
+      } else {
+        set trunc 1
+      }
+    }
+    if {[eof $ch]} { break }
+    if {[clock milliseconds] >= $deadline} { set st timeout ; break }
+    after 5
+  }
+  # KILL BEFORE CLOSE, and here is what each half actually buys, MEASURED
+  # 2026-08-17 on a `#!/bin/sh exec sleep 40` child (an earlier note in this file
+  # gave the wrong reason for the right ordering):
+  #   close on a NON-BLOCKING pipeline  -> returns in 0 ms and DETACHES; the
+  #                                        child is still alive afterwards
+  #   close on a BLOCKING pipeline      -> waits for the child: 39702 ms
+  # So `fconfigure -blocking 0` above is load-bearing and must not be dropped or
+  # reordered -- without it `close` inherits the hang and the timeout is a lie --
+  # and the kill is what stops the child, not what unblocks `close`. Without the
+  # kill the deadline still fires on time and a spinning simulator is left
+  # running (the ~260-orphan incident in the spec); CS169b's `child=dead` term is
+  # the one that reddens.
+  if {$st eq {timeout}} { sim_probe_kill $pids }
+  catch {close $ch} cerr
+  catch {file delete -force -- $deckdir}
+  dict set r status $st
+  dict set r out $out
+  dict set r truncated $trunc
+  dict set r err $cerr
+  dict set r ms [expr {[clock milliseconds] - $t0}]
+  set p [sim_probe_parse $out]
+  foreach k {answered value mode nocasemode} { dict set r $k [dict get $p $k] }
+  return $r
+}
+
+# One probe leg for a configured row: the row's exe, args and `-n`, asking for
+# `mode` ({} = ask for nothing), in `cwd`.
+proc sim_profile_probe_once {tool idx mode cwd {tmo {}}} {
+  set exe [sim_profile_exe_path $tool $idx]
+  set arglist [sim_probe_argv [sim_profile_get $tool $idx args] $mode \
+                   [sim_profile_get $tool $idx nospiceinit]]
+  if {$exe eq {}} {
+    return [dict create status error answered 0 value {} mode {} nocasemode 0 ms 0 \
+                argv $arglist cwd $cwd out {} err {no executable} truncated 0 pids {}]
+  }
+
+  return [sim_probe_once $exe $arglist $cwd $tmo]
+}
+
+# B3's AUTO-PROBE GATE: probe on Add only when the executable's filename
+# contains `ngspice`, case-insensitively. `casemode` is an ngspice feature, so
+# nothing else can answer -- and this is what stops xschem auto-launching a
+# licensed simulator (Spectre, a commercial Xyce) that may check out a license or
+# take seconds to start, merely because somebody typed a path. Everything else
+# gets item 13's Test button, which is a deliberate click.
+proc sim_profile_probe_autoprobe_ok {tool idx} {
+  set exe [sim_profile_get $tool $idx exe]
+  if {$exe eq {}} { return 0 }
+  return [expr {[string match -nocase {*ngspice*} [file tail $exe]] ? 1 : 0}]
+}
+
+# THE CAPABILITY PROBE. Which of the three modes can this binary be measured to
+# deliver? Records the answer on the profile (item 6's `detected`/`probed`) so
+# item 13's dropdown offers only what A1 allows.
+#
+# Options: -cwd <dir> (default: a fresh empty temp dir), -timeout <ms>.
+#
+# `-timeout` IS A BUDGET FOR THE WHOLE PROBE, NOT PER LEG. It used to be per leg,
+# and three sequential legs against a non-answering binary then blocked this
+# interpreter for 3 x 5000 = 15 s at the shipped default -- measured, 15016 ms --
+# while B3's whole reason for a mandatory timeout is that item 13's dialog must
+# not freeze. So the clock starts here, each leg gets what is LEFT of it, and the
+# loop stops when the budget is gone. Worst case is one timeout, not three.
+#
+# Returns {status <s> detected <modes> recorded 0|1 timedout 0|1
+#          legs <dict mode->leg> ms <n> cwd <dir>}, status being:
+#   nocasemode  the binary replied that `$curcasemode` does not exist
+#   ok          every leg that ran completed, and at least one answered
+#   partial     some leg ANSWERED and some leg had to be killed -- an INCOMPLETE
+#               measurement; `detected` reports what did answer and NOTHING is
+#               recorded (see the third ruling below)
+#   timeout     no leg answered and at least one had to be killed
+#   unknown     it ran and never answered (not ngspice? too old to echo?)
+#   error       it could not be run at all
+#
+# RULING -- WHY EACH MODE IS PROBED SEPARATELY, and not inferred from one
+# invocation. `$curcasemode` reports the CURRENT mode, never the supported SET,
+# so "the variable exists, therefore all three modes work" is an inference, and
+# A1's requirement ("nobody can select a mode their simulator will silently
+# ignore") is a statement about what a REQUEST yields. Item 3 measured the exact
+# shape that inference misses: `-D CaseMode=` / `-D CASEMODE=` -- a wrong-case
+# KEY -- leave `$curcasemode` at `fold` SILENTLY, because it is a different
+# variable, while a wrong-case VALUE (`=PRESERVE`) works. A request-versus-
+# measurement comparison catches that class; presence cannot. It also catches
+# the case that made A2 a decision: with a `.spiceinit` forcing `fold`, asking
+# for `preserve` yields `fold`, so `preserve` is NOT deliverable in this
+# configuration and must not be offered. Cost: three invocations, ~65 ms
+# measured on build-ver_50 (one for a binary with no casemode at all).
+#
+# RULING -- `nocasemode` RECORDS `detected {fold}`, and it is the one place this
+# code records a mode it did not watch a run deliver. A1's consequence clause is
+# explicit: "No case support => pre-fill `fold` and offer nothing else", and item
+# 6's model expresses "offer exactly fold" as `detected {fold}` (spec 4, row 1);
+# recording {} instead would land on spec 4 row 3 ("measured, delivers nothing")
+# and offer the user NOTHING, which contradicts A1 for the ordinary
+# `apt install` binary. This is not B2b's "absence": B2b is about having no
+# ANSWER, and here the binary answered -- it named `curcasemode` as a variable it
+# does not have. The `fold` half is measured, twice: PLAN F1/F5 recorded
+# ngspice-46 folding for all four flag values, and this batch re-measured
+# /usr/local/bin/ngspice accepting and ignoring `-D casemode=preserve`
+# (2026-08-17). Both halves of the answer are required before this fires.
+#
+# RULING -- a `timeout` leg NEVER contributes a mode, AND A TIMED-OUT LEG
+# INVALIDATES THE WHOLE MEASUREMENT. A process we had to kill did not complete a
+# measurement, and the conservative outcome (nothing recorded, `probed` stays
+# empty, the row keeps item 6's unprobed `selectable` of `fold` alone) is
+# byte-identical to today's behaviour.
+# The second half is the one that was wrong at first and is the sharper case: if
+# ONE leg stalls (a loaded box, an NFS mount, a licence wait) and the other two
+# answer, recording the survivors PERMANENTLY NARROWS the row -- and when the
+# stalled leg is `fold`, the row ends up claiming it cannot deliver `fold`, the
+# global default and the one request no binary can silently fail. That is worse
+# than never having probed, because an unprobed row still answers `fold` and a
+# recorded one is not stale, so nothing ever re-probes it. So a partial
+# measurement is `partial`, is NOT recorded, and `detected` in the returned dict
+# is a display value only. A probe that times out is a DEFECT SIGNAL item 13 must
+# show, not something to paper over: `status`, `timedout` and `legs` carry it.
+# The one exception is `nocasemode`, which is a definitive answer about the
+# binary's own variable namespace rather than a per-mode measurement: it settles
+# the question by itself and is recorded even if an earlier leg had to be killed.
+proc sim_profile_probe_capability {tool idx args} {
+  set cwd {}
+  set tmo {}
+  set madetmp 0
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -cwd     { set cwd $v }
+      -timeout { set tmo $v }
+      default  { return -code error "sim_profile_probe_capability: unknown option '$o'" }
+    }
+  }
+  set t0 [clock milliseconds]
+  if {$cwd eq {}} {
+    set cwd [sim_probe_tmpdir]
+    if {$cwd ne {}} { set madetmp 1 }
+  }
+  set legs [dict create]
+  set detected {}
+  set status unknown
+  set answered 0
+  set timedout 0
+  set ran 0
+  # ONE budget for all three legs (see the header): each leg gets what is left.
+  set deadline [expr {$t0 + [sim_probe_timeout_ms $tmo]}]
+  foreach m {fold preserve distinguish} {
+    set left [expr {$deadline - [clock milliseconds]}]
+    if {$left <= 0} {
+      # the budget is spent; the remaining legs are UNMEASURED, which is the same
+      # incompleteness as a kill and is reported the same way
+      set timedout 1
+      break
+    }
+    set leg [sim_profile_probe_once $tool $idx $m $cwd $left]
+    dict set legs $m $leg
+    switch -exact -- [dict get $leg status] {
+      error   { set status error ; break }
+      timeout { set timedout 1 ; continue }
+      ok      {
+        incr ran
+        if {[dict get $leg nocasemode]} {
+          # no casemode feature at all: one leg settles it, the other two would
+          # only re-measure the same absence
+          set status nocasemode
+          set detected fold
+          break
+        }
+        if {[dict get $leg answered]} {
+          set answered 1
+          if {[dict get $leg mode] eq $m} { lappend detected $m }
+        }
+      }
+    }
+  }
+  if {$status eq {unknown}} {
+    # A KILLED OR UNMEASURED LEG DOMINATES: the measurement is incomplete, and
+    # `ok` would say the opposite.
+    if {$timedout} {
+      set status [expr {$answered ? {partial} : {timeout}}]
+    } elseif {$answered} {
+      set status ok
+    } elseif {$ran} {
+      set status unknown
+    }
+  }
+  # RECORD only a COMPLETE measurement. `ok` with an empty `detected` is a real
+  # and useful outcome -- spec 4's third row, "measured, delivers nothing we
+  # recognise" -- so it is recorded; `partial`, `timeout`, `unknown` and `error`
+  # are not, and the row stays "never probed" (B2b), which item 6 answers with
+  # `fold` alone. `nocasemode` is recorded even alongside a killed leg: see the
+  # ruling above.
+  set recorded 0
+  if {$status eq {ok} || $status eq {nocasemode}} {
+    if {![catch {sim_profile_probe_record $tool $idx $detected}]} { set recorded 1 }
+  }
+  if {$madetmp} { catch {file delete -force -- $cwd} }
+  return [dict create status $status detected $detected recorded $recorded legs $legs \
+              timedout $timedout cwd $cwd ms [expr {[clock milliseconds] - $t0}]]
+}
+
 proc load_recent_file {} {
   global USER_CONF_DIR has_x
   # recent files
@@ -16591,6 +17154,19 @@ set_ne sim_case_mode fold
 ## schematic's own net names) are all better evidence. Set to 1 to let the sniff
 ## answer when all three of them are silent.
 set_ne raw_case_sniff 0
+## The simulator probe's HARD TIMEOUT, in milliseconds (casemode batch item 7,
+## DECISIONS.md B3 -- "mandatory regardless of this decision"). The probe pipes
+## commands into an interactive ngspice, and MEASURED on this tree: EOF on stdin
+## does not end one. A probe whose `quit` does not take effect never returns (the
+## first attempt hung for two minutes), and in a dialog that is a frozen window.
+## A good probe costs 21 ms on build-ver_50 and 52 ms on stock-46, so 5 s can
+## only be reached by a binary that is not answering. Raise it for a simulator
+## that is slow to start; it is a ceiling, never a wait.
+## IT BOUNDS A WHOLE PROBE, NOT ONE INVOCATION: the capability probe runs three
+## legs and shares this budget across them (it used to spend it three times over,
+## measured at 15016 ms against a silent binary), so the longest an interpreter
+## can be blocked by either probe is this value.
+set_ne sim_probe_timeout 5000
 set_ne hide_empty_graphs 0 ;# if set to 1 waveform boxes will be hidden if no raw file loaded
 set_ne graph_use_ctrl_key 0;# if set forces to use Control key to operate on graphs
 set_ne spiceprefix 1

@@ -575,3 +575,562 @@ sim_profile_casemode $netlist_type [sim_profile_default_index $netlist_type]
 Whoever wires it owns two things this item did not do: a `-1` index (a tool with
 no configured row) and the fact that `netlist_type` is not always a `sim()` tool
 name.
+
+---
+
+# 11. The probe — casemode batch item 7
+
+Item 6 built the model and started no process. **Item 7 starts it.** Authority:
+`PLAN.md` §3b item 7, `DECISIONS.md` **B3** (the two probes, and "the probe needs
+a hard timeout"), **A1** (the dialog offers only what the binary can deliver) and
+**A2** (`.spiceinit` overrides, so ask the simulator instead of guessing). Checks
+`CS167`–`CS172` in `tests/headless/test_sim_probe.tcl` — **49 of them**, counted
+from a run; the whole file goes red when both source files are reverted to `HEAD`.
+
+Item 7 is still **model plus mechanism**: it composes an argv, runs it, parses one
+line and records the outcome through item 6's `sim_profile_probe_record`. It does
+**not** touch `run_cmd` (item 8), it writes **no widget** (item 13), and it
+delivers **no verdict** on a mismatch (B4 is item 8's).
+
+## 11.1 RULING — there are TWO probes, and §3b's row blurs them
+
+`PLAN.md` §3b item 7 says "**the capability probe** … cwd = **the deck's
+directory**", which cannot be right as one sentence: at registration there is no
+deck. `DECISIONS.md` B3 draws the distinction and says the plan blurs it —
+"*B3 is only about the first*". So this item builds **one mechanism,
+parameterised by cwd**, and names the two questions:
+
+| | capability probe | run probe |
+|---|---|---|
+| asked | at registration (item 13's Add / **Test**) | immediately before each run (item 8) |
+| question | "which modes can this binary **deliver**?" | "what mode will **this run** get?" |
+| cwd | a **fresh empty directory**, created and removed | the **deck's own directory** |
+| argv | the profile's `exe`/`args` (filtered, §11.2) /`-n`, plus `-D casemode=<m>` **per mode** | the same, `-D casemode=<requested>`, with `-exe`/`-args` overridable by item 8 (`CS173j`) |
+| records | **yes** — `detected` + `probed` | **nothing** |
+| entry point | `sim_profile_probe_capability` (`xschem.tcl`) | `ase::sim_probe_run` (`ase.tcl`) |
+
+Both are needed and building only one would block an item: item 13 needs the
+capability answer to build A1's dropdown, item 8 needs the run answer to apply
+B4's policy.
+
+**Why the run probe records nothing.** `detected` is a claim about a *binary*,
+and item 13's dropdown is built from it. A run-probe answer is a fact about **one
+directory** — a `.spiceinit` beside that deck can push it to `fold` — so storing
+it would let one project's config permanently narrow what the user may select
+everywhere else. `CS170i` pins it: after a run probe that measured `fold`,
+`detected` still reads `fold preserve distinguish`.
+
+**Where the code lives, and why not all of it in `ase.tcl`** (§3b's file column
+says `ase.tcl`): the capability probe's caller is item 13's `simconf` dialog, in
+`xschem.tcl`, and the thing being probed is a `sim()` row, whose whole accessor
+layer item 6 put in `xschem.tcl`. So the mechanism sits beside the model, and
+`ase.tcl` gets only the ASE-L-shaped wrapper that knows about states, rundirs and
+deck paths. Same split item 6 used.
+
+## 11.2 The transport — and the RULING that it is a batch deck, not the pipe
+
+This item started from the shape `PLAN.md` F5 prescribes and the driver
+re-measured minutes before dispatch:
+
+```
+$ printf 'echo CCM=$curcasemode\nquit\n' | ngspice -p [-n] [-D casemode=<m>]
+```
+
+It works, and **it is not what shipped**, because it needs a working **X
+display**. Measured on this machine 2026-08-17, the identical command three
+times:
+
+| `$DISPLAY` | what ngspice `-p` does |
+|---|---|
+| `:0`, server out of client slots | `Maximum number of clients reached` / `Error: Can't open display: :0`, **exits without running our commands** — no answer at all |
+| **unset** (headless server, CI box, remote sim host) | `ERROR: (external) no graphics interface;` and the process **DUMPS CORE** |
+| `:99`, a live Xvfb | answers normally |
+
+**This is not a hypothetical: it happened live inside this item.** A WSLg `:0`
+filled up, and every real-binary check went from a clean `fold preserve
+distinguish` to "unknown" — a binary that supports all three modes reported as
+supporting none, which would have narrowed item 13's dropdown to `fold` because
+an X server was busy. Exactly the silent-wrong-answer class this batch keeps
+finding.
+
+**So the probe runs a two-card batch deck instead**, written into a temp
+directory of its own:
+
+```
+* xschem casemode capability probe
+.control
+echo CCM=$curcasemode
+quit
+.endc
+.end
+```
+
+```
+$ cd <the directory being asked about> ; $exe -b [args] [-n] [-D casemode=<m>] <abs deck path>
+```
+
+Measured with `-b`: identical answers with `$DISPLAY` unset, with `$DISPLAY`
+exhausted and with a good one; and `-b` is also **nearer the real run**, which is
+`ngspice -b <deck>` — A2 asks for the real argv. `CS170n` pins all three display
+conditions in one expectation. The first line is a **title** on purpose: a deck
+whose first line is a card loses that card silently, which killed a whole round
+of this batch's earlier measurements (`CREW_BRIEF` §4); mutation **M37** removes
+it and the real-binary checks go red.
+
+**The deck never goes in `cwd`.** `cwd` is the question being asked — for a run
+probe it is the user's own rundir — so the deck lives in a temp directory and is
+deleted with it (`CS169p`). Measured, and it is what makes this possible:
+**ngspice reads `.spiceinit` from the CWD** (and from `$HOME`), *not* from the
+deck's directory, so an absolute deck path elsewhere costs nothing.
+
+**The child's stdin is the null device.** Without that it inherits ours, and in
+`--pipe` mode xschem's own stdin is the command channel: a simulator reading from
+it would eat the commands driving xschem, and — since that channel never reaches
+EOF — would then block until the deadline (`CS169q`).
+
+### RULING — the profile's `args` are FILTERED before they reach a probe
+
+`sim_probe_safe_args` drops two classes of word from the profile's `args`, and
+both were **live defects found in review**, not theory. `sim_profile_valid`
+cannot refuse either: any well-formed Tcl list is a valid `args`.
+
+1. **Tcl exec redirection.** The argv is spliced into
+   `open [list | $exe {*}$argv < $devnull 2>@1]`, which is exec *syntax*.
+   Measured: `args {> zap.txt}` **created `zap.txt` in the probe's cwd** — the
+   user's own run directory, for a run probe, which is precisely the leak
+   `CS169p` guards the *deck* against — and returned `status error`;
+   `args {| cat}` swallowed the answer, and the capability probe recorded that as
+   "measured, delivers nothing", i.e. item 13's dropdown offering **no mode at
+   all**. A bare operator (`>`, `<`, `2>`, `>>`, `>&`, `<@`, …) takes its
+   filename word with it; an attached one (`2>/dev/null`) is one word; `|` and
+   `|&` end the words that belong to this command.
+2. **Output-directing simulator options** — `-o`/`--output`, `-r`/`--rawfile`,
+   `--soa-log`, with their operands and `--opt=value` forms. `-r <raw> -o <log>`
+   is the shape of an ordinary batch profile, and the run probe runs **in the
+   deck's own directory**. Measured with the real `build-ver_50`: the probe
+   **overwrote the previous run's `tb.log`** with its own two-line probe log,
+   and — stdout now being in that file — answered `mode {}` for a binary that
+   delivers all three modes. The same argv from a shell also **deletes** the
+   named rawfile outright.
+
+A probe wants the binary's identity and its `.spiceinit`/`-D` behaviour, never
+the run's artifacts, so dropping these costs the measurement nothing.
+`CS173`/`CS173b` drive the filter directly, `CS173i` drives the clobber with a
+stand-in that writes its `-o` file, and `CS174` drives it end to end with a real
+ngspice over a rundir holding `tb.raw`/`tb.log` (both byte-identical afterwards,
+and the mode still comes back).
+
+**DECLARED:** the option list is ngspice's, enumerated by hand. Another
+simulator's equivalent needs adding. **Item 8's `run_cmd` must NOT inherit this
+filter** — a real run's output files are the point; it inherits only the
+redirection exposure, which is its own to handle.
+
+The answers themselves, measured on `build-ver_50` (`Sat Aug 15 23:54`) and
+`/usr/local/bin/ngspice` (46):
+
+| binary / flag | the answer line |
+|---|---|
+| ver_50, no flag | `CCM=fold` |
+| ver_50 `-D casemode=preserve` / `=distinguish` | `CCM=preserve` / `CCM=distinguish` (the latter behind an `experimental` warning banner) |
+| ver_50 `-D casemode=sideways` | `Warning: unknown casemode 'sideways', using 'fold'` · `CCM=fold` |
+| **stock 46**, with or without the flag | `Error: curcasemode: no such variable.` · **`CCM=`** |
+
+**THE PARSING TRAP, kept even though the batch transport does not trigger it:**
+in `-p` mode ngspice **echoes the command before answering it**, so the output
+carries a literal `echo CCM=$curcasemode` line and "the first line containing
+`CCM=`" reads back `$curcasemode`. Two independent defences, both in
+`sim_probe_parse`: the answer must be a line that **starts** with `CCM=` (after a
+`ngspice <n> -> ` prompt is stripped), and the value must be **letters only**,
+which `$curcasemode` is not. They stay because every earlier note in this batch
+records the pipe shape and because a future build may print an echo, a banner or
+a prompt anywhere. `CS167`/`CS167b` carry both halves.
+
+**`CCM=` with an EMPTY value is an ANSWER, not a silence** — see §11.4.
+
+## 11.3 RULING — each mode is probed SEPARATELY (three invocations), not inferred
+
+The cheap alternative was "if `$curcasemode` exists at all, the feature is
+compiled in, so all three modes work" — one invocation. **Rejected**, and the
+reason is measured rather than stylistic:
+
+1. **`$curcasemode` reports the CURRENT mode, never the supported set.** A1's
+   requirement is about what a **request** yields, so a request-versus-measurement
+   comparison is the only thing that answers it.
+2. **Item 3 measured a request that is silently ignored**: `-D CaseMode=` /
+   `-D CASEMODE=` — a wrong-case **key** — leave `$curcasemode` at `fold` with no
+   diagnostic, because it is a different variable, while a wrong-case **value**
+   (`=PRESERVE`) works. Presence cannot see that class; asking for each mode and
+   checking what came back can. `CS169h` drives exactly this shape with a
+   stand-in binary that accepts every `-D casemode=` and always answers `fold`:
+   the honest answer is `detected {fold}`, and the rejected design (mutation
+   **M22**) reddens it by offering all three.
+3. **A2's `.spiceinit` case has the same shape.** With one forcing `fold`, asking
+   for `preserve` yields `fold`, so `preserve` is not deliverable *in this
+   configuration* and A1 says it must not be offered.
+
+Cost: three invocations, ~65 ms measured (21 ms each on `build-ver_50`); one
+invocation for a binary with no casemode at all (§11.4's short circuit).
+`PLAN.md` F5 recorded ~12 ms for the original probe, so this is the same order.
+
+**The ruling is driven with NO simulator present, and that gap was real.**
+`CS169h`'s `always_fold` stand-in answers `fold` whatever it is asked, so it
+cannot tell "ask each mode" from "ask **one** mode three times": a mechanism that
+asked the profile's single `casemode` three times — the rejected design wearing
+three invocations — kept `CS169h` green and was caught only by the ver_50 legs,
+which SKIP wherever that private build is absent. Two stand-ins close it by
+reading `-D casemode=<m>` back out of their own argv: `CS173d` (echoes the
+request → `detected {fold preserve distinguish}`) and `CS173e` (honours
+`preserve`, silently downgrades `distinguish` → `detected {fold preserve}`, which
+is the partial implementation A1 is actually about).
+
+## 11.4 RULING — "no such variable" is an ANSWER, and it records `detected {fold}`
+
+A released ngspice replies `Error: curcasemode: no such variable.` and prints
+`CCM=` with an empty value. That is the **capability answer**, and the probe
+records `detected {fold}`, `probed {time … mtime …}` — status `nocasemode`.
+
+**Why this is not a B2b violation.** B2b rules that *absence of an answer* stays
+`unknown`, permanently. Here the binary **answered**: it parsed our command and
+named `curcasemode` as a variable it does not have. Both halves are required
+before the claim fires — an empty value **and** an error line naming
+`curcasemode` — so a program that merely prints `CCM=` (a truncated pipe,
+something that is not ngspice) records nothing (`CS167e`, `CS169f`).
+
+**Why `fold` rather than `{}`.** A1's consequence clause is explicit: *"No case
+support ⇒ pre-fill `fold` and offer nothing else"*. Item 6's model expresses
+"offer exactly fold" as `detected {fold}` (§4 row 1); recording `{}` would land on
+§4 **row 3** — "measured, delivers nothing" — whose whole point is to offer the
+user **nothing**, which is wrong for the ordinary `apt install` binary. The
+`fold` half is measured twice, not assumed: `PLAN.md` F1/F5 recorded ngspice-46
+folding for all four flag values, and this item re-measured
+`/usr/local/bin/ngspice` accepting and ignoring `-D casemode=preserve`
+(`CS171b`). **This is the one place the probe records a mode it did not watch a
+run deliver**, and it is written here so nobody has to reverse-engineer it.
+
+§4 row 3 stays reachable and is now driven for the first time: a binary that
+answers `CCM=sideways` records `detected {}` with `probed` set, and
+`sim_profile_selectable` answers `{}` (`CS169i`).
+
+## 11.5 RULING — a TIMED-OUT leg never contributes a mode
+
+A timed-out probe can carry a perfectly good `CCM=` line — measured with a
+stand-in that answers and then blocks (`CS169j`: status `timeout`, parsed mode
+`preserve`). The mode is still reported in the returned dict, and it is **not
+recorded**:
+
+* a process we had to **kill** did not complete a measurement, and B2b's rule for
+  "no answer" is the conservative one;
+* the fallback is byte-identical to today's behaviour — nothing recorded means
+  `probed` stays empty, which item 6's §4 row 2 answers with `fold` alone;
+* a probe that times out is a **defect signal** item 13 must show. `status`,
+  `timedout` and `legs` carry it out for exactly that.
+
+`CS169j` (a stand-in that answers, then hangs) and `CS170g` (a real ngspice that
+hangs) pin it.
+
+### RULING — and a TIMED-OUT LEG INVALIDATES THE WHOLE MEASUREMENT (`partial`)
+
+The paragraph above was originally true only when **every** leg timed out, and
+the mixed case — some legs answer, one stalls — was the sharper defect. Measured
+with a stand-in that answers `preserve` and `distinguish` and sleeps on `fold`:
+
+```
+status = ok   detected = <preserve distinguish>   recorded = 1   stale = 0
+```
+
+`fold` — the global default, A1's pre-fill, and the one request no binary can
+silently fail — was recorded as **not deliverable**, from one transient stall
+(a loaded box, an NFS mount, a licence wait). And it is **worse than never
+probing**: an unprobed row still offers `fold` (§4 row 2) and reads as stale, so
+something re-probes it; a recorded row is not stale, so nothing ever does. The
+returned `status` said `ok`, carrying no signal that a child had to be killed.
+
+So an incomplete measurement is never recorded, and it says so:
+
+| what happened | `status` | recorded |
+|---|---|---|
+| every leg completed, at least one answered | `ok` | yes |
+| the binary said `no such variable` | `nocasemode` | yes (§11.4) |
+| **some leg answered, some leg was killed or never started** | **`partial`** | **no** |
+| nothing answered and something was killed | `timeout` | no |
+| it ran and never answered | `unknown` | no |
+| it could not be run | `error` | no |
+
+`detected` in the returned dict still reports what *did* answer, as a display
+value for item 13's "probe incomplete" case; the authority on whether it means
+anything is `status`, and `timedout` is carried out beside it.
+
+**The one exception is `nocasemode`**, which is a statement about the binary's
+own variable namespace rather than a per-mode measurement: it settles the
+question by itself and is recorded even if an earlier leg had to be killed.
+
+`CS173f` drives the mixed case (`partial`, `recorded 0`, `probed` empty, `fold`
+still selectable, still stale).
+
+**The real binary's timed-out probe usually carries NOTHING**, which is a second
+measurement in the same direction: a batch ngspice killed mid-run has flushed no
+output at all — its stdout is block-buffered into the pipe, and `timeout 3` on a
+deck whose `.control` blocks in `shell sleep` yields **0 bytes** (`CS170f`
+asserts the empty parse deliberately). So under the shipped transport this ruling
+costs nothing in the common case, and `CS169j` is what drives the case where an
+answer *is* present and is discarded anyway.
+
+## 11.6 RULING — the hard timeout is Tcl-native: deadline poll + kill
+
+B3 makes the timeout **mandatory**, and there was no idiom in the tree to copy:
+`ase.tcl`'s only exec is the blocking `exec {*}$cmd 2>@1`.
+
+**The measurement that forced it**, re-taken 2026-08-17 on today's build, on the
+pipe transport this item started from:
+
+```
+printf 'echo CCM=$curcasemode\n' | ngspice -p      # no `quit`
+  -> still running at 8 s, 2.4 s user + 5.6 s system
+```
+
+So **EOF on stdin does not end an interactive ngspice** — closing our write end
+was not a belt, `quit` was the only clean exit, and a hung probe is not even
+idle, it **spins**. (The first attempt at this probe, during the decision
+session, hung for two minutes. In a dialog that is a frozen window.)
+
+**The batch transport removes that particular hang** — a deck ends at `.endc`
+whether or not anyone says `quit` — and **the timeout is still mandatory**, for
+two reasons that outlive the transport: B3 is a decision, not an optimisation;
+and a simulator has other ways to block (a license checkout, an NFS stall, a
+`shell` command in a `.control` block — which is exactly how `CS170f` hangs a
+real ngspice for the drive).
+
+Two acceptable routes; the choice and the reasons:
+
+* **Chosen — non-blocking pipe + deadline poll + kill.** `open |… r`,
+  `fconfigure -blocking 0`, `read`, `after 5` (which **does not process events**),
+  compare against a deadline; on expiry kill the child, then close. Portable Tcl,
+  no external tool, and **no event-loop re-entrancy** — which matters because the
+  capability probe's caller is item 13's modal dialog and the run probe's is a run
+  about to start; a `vwait` there would let another Test click, a window teardown
+  or any other callback run *inside* the probe.
+* **Rejected — `timeout(1)`.** Simple, but GNU/Linux-only, and this codebase
+  ships on Windows (`XSchemWin/`).
+* **Rejected — `fileevent` + `vwait` + an `after` cancel.** The portable-looking
+  answer, and the re-entrancy above is why it is not used here.
+
+**KILL BEFORE CLOSE — and the reason first written here was wrong.** The claim
+was "`close` on a command pipeline waits for the child, so closing a hung probe
+inherits the hang", with mutation **M14** (no kill) said to turn a 0.7 s deadline
+into a two-minute call. That does not reproduce, because the channel is
+`fconfigure -blocking 0` by then. Re-measured 2026-08-17 against a
+`#!/bin/sh` + `exec sleep 40` child:
+
+```
+close on a NON-BLOCKING pipeline  ->  returns in 0 ms and DETACHES; the child is
+                                      still alive afterwards
+close on a BLOCKING pipeline      ->  waits for the child: 39702 ms
+M14 (kill removed, shipped non-blocking channel), 700 ms deadline
+                                  ->  returns in 705 ms, child survives
+```
+
+So the two facts are separate and both matter: **`fconfigure -blocking 0` is
+load-bearing** — dropping it, or reordering the close ahead of it, is what would
+make `close` inherit the hang and the timeout a lie — and **the kill is what
+stops the child**, not what unblocks `close`. Without the kill the deadline still
+fires on time and a spinning simulator is left running, which is the ~260-orphan
+incident below; the term that reddens under M14 is `CS169b`'s `child=dead`.
+`CS169b` asserts all three facts in one expectation — the deadline fired, the
+call returned inside it, and the child is **dead**.
+
+`sim_probe_kill` is the **one platform branch** in the probe. The unix arm
+(`kill -9`) is driven by every timeout check; the **windows arm (`taskkill`) is
+written from the documented interface and is UNVERIFIED** — there is no Windows
+on this machine.
+
+**DECLARED LIMIT — the kill reaches the child, not its grandchildren**, and this
+one bit hard enough to be worth writing down. `pid $chan` gives the pipeline's
+own process; if a configured `exe` is a *wrapper script* that starts the
+simulator without `exec`, killing the wrapper leaves the simulator running.
+Measured, by accident, during this item: an earlier test wrapper of exactly that
+shape orphaned **~260 spinning `ngspice -p` processes** over a session, which
+(a) drove the load average to 260 and made a full audit report bogus TIMEOUTs,
+and (b) **exhausted the X server's client slots**, which is how the display
+failure in §11.2 was discovered in the first place. A hung probe is not idle: it
+spins, and it holds an X connection. The interactive transport is what made that
+possible (a batch deck ends by itself), and a process-group kill is the real fix
+if a wrapper `exe` ever becomes a supported shape.
+
+**The same limit bit the test file itself**, and is worth recording because it is
+the cheap half of the fix: the suite's hang stand-ins were `/bin/sh` scripts that
+*ran* `sleep 120` instead of `exec`ing it, so every run of `test_sim_probe`
+reparented **8 two-minute sleeps** to init — the ~260-orphan failure in miniature,
+inside a suite `full_audit.sh` runs. They now `exec`, so the pid the probe kills
+*is* the blocker. What remains is inherent: `CS170f` hangs a **real** ngspice with
+`shell sleep`, whose `sh -c` is a grandchild the kill cannot reach; it is bounded
+at 25 s instead of 60.
+
+**The timeout is a ceiling, never a wait — and it bounds the WHOLE probe.**
+`sim_probe_timeout` (`xschem.tcl`, `set_ne`, **5000 ms**) is ~240× a good probe.
+An explicit argument beats the global beats the built-in default
+(`CS168e`/`CS168f`).
+
+It used to be **per leg**, which the text above did not say and which mattered:
+`sim_profile_probe_capability` runs three sequential legs, the poll is `after ms`
+with no event processing, and against a silent binary the interpreter therefore
+blocked for **3 × 5000 = 15016 ms, measured** — while B3's entire reason for a
+mandatory timeout is that item 13's dialog must not freeze. So the clock now
+starts in `sim_profile_probe_capability`, each leg is given what is **left** of
+it, and the loop stops when the budget is gone (the unstarted legs count as
+incomplete, exactly like a killed one — §11.5). Re-measured at the shipped
+default against the same silent binary: **5006 ms, `legs 1`**. `CS173g` pins the
+bound and the leg count.
+
+## 11.7 What the probe does to process state
+
+`exec`/`open |…` cannot set a child's cwd, so the probe `cd`s, opens the pipe and
+`cd`s **back before reading a byte** — `[pwd]` is process-global and the GUI
+writes files relative to it. Every exit path restores it, including an
+unreachable cwd, which is an `error` and not a probe (`CS169c`, `CS169e`).
+
+Output is capped at 64 KB with a `truncated` flag; the channel keeps draining, so
+a chatty binary cannot block on a full pipe and stall its own exit. **Not
+driven** — declared.
+
+**A temp directory name needs a counter, not a timestamp, and this was a real
+bug.** `file mkdir` **succeeds silently on a directory that already exists**, so
+two calls inside the same millisecond hand out the *same* directory — and the
+second caller's cleanup deletes the first caller's. Measured: the capability
+probe takes one for its cwd and each leg takes one for its deck, leg 1's cleanup
+removed the cwd, and legs 2 and 3 then failed to `cd` into it — the probe
+reported `error` for a binary that had just answered `fold`. `sim_probe_tmpdir`
+now carries a per-process counter and refuses a name that exists; mutation
+**M38** reverts it and reddens `CS170`.
+
+**And the base is normalised**, because `$TMPDIR` is whatever the environment
+says. A **relative** one (`TMPDIR=reltmp`) produced a relative deck path: the
+deck was written correctly (that happens before the `cd`) but the child runs in
+`cwd` and cannot open it. Measured with a stand-in that answers one mode when its
+deck is readable and another when it is not — absolute `TMPDIR` → `preserve`,
+relative → `fold`, with no error anywhere; a real ngspice would say "can't open
+file" and the probe would report `unknown` for a perfectly good binary.
+`file normalize` resolves against `[pwd]`, which is where a relative name would
+have landed. `CS173c`.
+
+## 11.8 The capability probe's cwd, and the layer nothing can exclude
+
+The capability probe runs in a **fresh empty directory** (`sim_probe_tmpdir`,
+`$TMPDIR`/`$TEMP`/`/tmp`), removed afterwards (`CS169l`), so that no `.spiceinit`
+beside whatever the process's cwd happens to be answers for the binary.
+
+`-cwd` overrides it, and that option is the whole of §11.1's "one mechanism,
+parameterised by cwd" — a caller that wants the question asked *somewhere
+specific* passes it. A caller-supplied directory is **never removed**; only a
+temp directory the probe made itself is (`CS173h` asserts both halves, and that
+the probe really runs there, with a stand-in that answers by what is in its own
+cwd).
+
+**It is still not a clean room, and this is measured, not theory.** A2 records
+that `~/.spiceinit` — the **home** directory one — overrides `-D casemode=` just
+as one beside the deck does, and it applies from **any** cwd:
+
+```
+.spiceinit beside the deck says fold, -D casemode=preserve  ->  fold
+   the same, plus -n                                        ->  preserve
+no .spiceinit anywhere,               -D casemode=preserve  ->  preserve
+HOME/.spiceinit says fold,            -D casemode=preserve  ->  fold
+```
+
+(all four re-measured on today's build; `CS170c`–`CS170e`). So a capability
+answer means "what this binary delivers **for this user, as configured today**",
+which is also the answer A1 wants — a mode the user cannot actually obtain must
+not be offered — and it is why the run probe exists as well. A user who knows
+their `.spiceinit` is the problem turns on A2's per-profile `-n`, which reaches
+both probes (`CS169o`, `CS170k`).
+
+**How the `~/.spiceinit` layer is tested without touching a developer's home
+directory:** ngspice honours `HOME` (measured), so the check points `HOME` at a
+scratch directory for the duration and asserts the override **and** the control
+answer with the real `HOME` in the same expectation (`CS170e`). Nothing in this
+item ever writes to `~`.
+
+`CS170e` used to carry a `home_restored=` term as well, and `CS170n` a
+`display_restored=` one; **both were dropped, because neither could fail**. Each
+re-read a variable the test itself had assigned two lines earlier, with no
+product code in between that can touch it (nothing in the probe writes
+`::env(HOME)` or `::env(DISPLAY)`; `sim_probe_tmpdir` only *reads* `TMPDIR`). They
+read as environment-safety evidence and were bookkeeping. What does notice a
+missed restore is the **control** probe in the same expectation: it re-asks with
+the real `HOME` and requires `preserve` back.
+
+## 11.9 B3's auto-probe gate
+
+`sim_profile_probe_autoprobe_ok` answers 1 only when the executable's **filename**
+contains `ngspice`, case-insensitively — B3's rule, for B3's reason: `casemode` is
+an ngspice feature, so nothing else can answer, and this is what stops xschem
+auto-launching a **licensed** simulator (Spectre, a commercial Xyce) that may
+check out a license or take seconds to start, merely because somebody typed a
+path into a dialog. Everything else gets the deliberate click of item 13's
+**Test** button.
+
+It reads `file tail`, not the path: a `Xyce` binary living under a directory
+called `ngspice_builds` must **not** be auto-launched (`CS169k2`).
+
+## 11.10 The ASE-L run probe
+
+`ase::sim_probe_run $state ?-deck <path>? ?-cwd <dir>? ?-exe <path>? ?-args <l>?
+?-timeout <ms>?` resolves the state's profile (item 6's `sim_profile_resolve`),
+takes the **requested** mode from it, and probes with the run's own argv from the
+**deck's own directory** (`-deck` supplies it; `-cwd` wins; otherwise
+`ase::rundir`). It returns the measurement and **no verdict**:
+
+```
+tool index profile_status requested mode delivers agree answered status ms argv cwd out …
+```
+
+`mode` is the raw parse. **`delivers` is the mode this run will actually get**,
+and `agree` compares it against `requested`; both are `{}` when nothing was
+measured — B2b again: no answer is unknown, never `fold`. **B4's policy** —
+`preserve` mismatch reports and continues, `distinguish` mismatch **refuses** — is
+item 8's, and deliberately absent here; item 8 drives it off `delivers`/`agree`.
+
+### RULING — `nocasemode` is a MEASURED delivery of `fold`
+
+`delivers` exists because `mode` alone got the commonest real case wrong. A
+released ngspice replies `Error: curcasemode: no such variable.` + an empty
+`CCM=`; `mode` is then `{}`, and `agree` used to be `{}` too — documented in this
+section as "nothing was measured". Measured, with `/usr/local/bin/ngspice` and a
+real deck:
+
+```
+requested=preserve      status=ok  mode=<>  nocasemode=1  agree=<>     (before)
+requested=distinguish   status=ok  mode=<>  nocasemode=1  agree=<>     (before)
+```
+
+`distinguish` against a binary that cannot do it is exactly the case B4 tells
+item 8 to **REFUSE**, and the run probe was handing it "unknown". Worse, the two
+halves of this item disagreed about the same bytes: §11.4 records that reply as
+`detected {fold}` — an **answer**. So when `status` is `ok` and `nocasemode` is
+1, `delivers` is `fold` and `agree` is `requested eq fold`. `CS173k` drives both
+directions (a `distinguish` request → `agree 0`, a `fold` request → `agree 1`).
+
+**It does not reimplement `run_cmd`'s fallback.** ASE-L today runs a bare
+`ngspice` off `PATH` when a profile names no `exe` (`ase.tcl`, item 8's line to
+change). A profile with no `exe` therefore returns status **`noexe`** rather than
+guessing at an executable this item does not own; item 8 passes `-exe` for
+whatever it is really about to run (`CS170l`).
+
+## 11.11 What is NOT here
+
+- **`run_cmd`** and B4's mismatch policy — item 8. Untouched: `ase.tcl`'s
+  `run_cmd` is byte-identical.
+- **Every pixel** — item 13: the Test button, the auto-probe on Add (this item
+  ships only the *predicate*), the probe-driven pre-fill and the dropdown built
+  from `sim_profile_selectable`.
+- **`-D` for anything but `casemode`.** The probe composes exactly `-b`, the
+  profile's `args` (filtered, §11.2), `-n`, `-D casemode=<m>` and its own deck
+  path.
+- **Any use of `ase::expand_path`.** Issue `0422` (a command substitution inside
+  an array index runs during a *path* expansion) is pre-existing and unfixed; no
+  probe path routes through it. `exe` is expanded by item 6's
+  `sim_profile_expand_vars`, which refuses that shape.
+- **Windows.** The `taskkill` arm, the `NUL` null device and the
+  `C:/Windows/Temp` fallback are written, not measured.
+- **The pipe transport is gone, not kept as a fallback.** A build too old to run
+  a `.control` `echo` in batch mode would need one; none is in reach to measure,
+  and a second transport nobody can exercise is worse than one that is driven.

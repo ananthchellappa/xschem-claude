@@ -542,6 +542,110 @@ proc ase::sim_profile_clear {state} {
   return [dict set state sim_profile {}]
 }
 
+# --- THE RUN PROBE (casemode batch item 7) -----------------------------------
+#
+# "What case mode will THIS run get?", asked with the run's own argv from the
+# DECK'S OWN DIRECTORY, immediately before the simulation. It is the probe a
+# `.spiceinit` can override, and the reason DECISIONS.md A2 chose "no `-n`, probe
+# and report" over passing `-n`: MEASURED on this tree 2026-08-17, with today's
+# build-ver_50,
+#
+#   .spiceinit beside the deck, `set casemode=fold`, -D casemode=preserve -> fold
+#   the same, plus -n                                                     -> preserve
+#   NO .spiceinit anywhere,          -D casemode=preserve                 -> preserve
+#   HOME/.spiceinit says fold,       -D casemode=preserve                 -> fold
+#
+# The last row is why there is no shortcut: it is not enough to look beside the
+# deck, and `~/.spiceinit` cannot be excluded from any cwd. The simulator has to
+# be ASKED.
+#
+# THIS RECORDS NOTHING on the profile, deliberately. `detected` is a claim about
+# the binary that item 13's dropdown is built from (A1); an answer skewed by one
+# directory's `.spiceinit` is a fact about one run. The capability probe
+# (`sim_profile_probe_capability`, xschem.tcl) is the one that records.
+#
+# The B4 POLICY -- `preserve` mismatch reports and continues, `distinguish`
+# mismatch REFUSES -- is item 8's, and is not here: this returns the measurement
+# (`requested`, `mode`, `delivers`, `agree`) and nobody's verdict. `mode` is the
+# raw parse (empty when the binary has no `$curcasemode` at all); `delivers` is
+# the mode the run will actually get, which for that binary is `fold`; `agree`
+# compares `delivers` against `requested`, and is {} only when NOTHING was
+# measured.
+#
+# Options:
+#   -deck <path>   the deck about to run; its DIRECTORY becomes the cwd
+#   -cwd <dir>     the cwd outright (wins over -deck)
+#   -exe <path>    override the resolved profile's executable. Item 8 owns what
+#                  ASE-L falls back to when a profile names no exe (today a bare
+#                  `ngspice` off PATH, hardcoded in run_cmd), so this proc does
+#                  NOT reimplement that fallback -- it reports status `noexe` and
+#                  lets its caller pass the executable it is really going to run.
+#   -args <list>   override the profile's extra args
+#   -timeout <ms>  the hard timeout (default: the global `sim_probe_timeout`)
+proc ase::sim_probe_run {state args} {
+  set deck {} ; set cwd {} ; set exe {} ; set arglist {} ; set tmo {}
+  set haveargs 0
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -deck    { set deck $v }
+      -cwd     { set cwd $v }
+      -exe     { set exe $v }
+      -args    { set arglist $v ; set haveargs 1 }
+      -timeout { set tmo $v }
+      default  { return -code error "ase::sim_probe_run: unknown option '$o'" }
+    }
+  }
+  set r [ase::sim_profile_resolve $state]
+  set tool [dict get $r tool]
+  set idx  [dict get $r index]
+  set requested [::sim_profile_casemode $tool $idx]
+  if {$cwd eq {}} {
+    if {$deck ne {}} {
+      set cwd [file dirname [file normalize $deck]]
+    } else {
+      catch {set cwd [ase::rundir $state]}
+    }
+  }
+  set nsi [::sim_profile_get $tool $idx nospiceinit]
+  if {!$haveargs} { set arglist [::sim_profile_get $tool $idx args] }
+  if {$exe eq {}} { set exe [::sim_profile_exe_path $tool $idx] }
+  set out [dict create tool $tool index $idx profile_status [dict get $r status] \
+               requested $requested cwd $cwd]
+  if {$exe eq {}} {
+    # `delivers` is present and empty here too: every return from this proc
+    # carries the same keys, so item 8 can read one field without first asking
+    # which branch produced the dict.
+    return [dict merge $out [dict create status noexe mode {} answered 0 \
+                                 delivers {} agree {} \
+                                 nocasemode 0 ms 0 argv {} out {} \
+                                 err {profile names no executable}]]
+  }
+  set p [::sim_probe_once $exe [::sim_probe_argv $arglist $requested $nsi] $cwd $tmo]
+  # `delivers` is WHAT THIS RUN WILL GET, and `agree` is the comparison against
+  # what was requested -- not a verdict. Both are {} when nothing was measured
+  # (B2b -- no answer is unknown, never `fold`).
+  #
+  # `nocasemode` IS A MEASURED DELIVERY OF `fold`, and getting that wrong made
+  # the two halves of this item disagree about the same reply: the capability
+  # probe records `Error: curcasemode: no such variable.` + an empty `CCM=` as
+  # `detected {fold}` (spec 11.4), while this proc used to answer `agree {}`,
+  # i.e. "nothing was measured", for the single commonest real mismatch there is
+  # -- a released ngspice under a `distinguish` request, which is precisely the
+  # case B4 tells item 8 to REFUSE. The binary did answer: it named `curcasemode`
+  # as a variable it does not have, which is a statement that it folds.
+  set delivers {}
+  if {[dict get $p status] eq {ok}} {
+    if {[dict get $p answered] && [dict get $p mode] ne {}} {
+      set delivers [dict get $p mode]
+    } elseif {[dict get $p nocasemode]} {
+      set delivers fold
+    }
+  }
+  set agree {}
+  if {$delivers ne {}} { set agree [expr {$delivers eq $requested ? 1 : 0}] }
+  return [dict merge $out $p [dict create delivers $delivers agree $agree]]
+}
+
 # --- Run directory ----------------------------------------------------------
 
 # The run directory for a state: non-empty `rundir` -> normalized + created;
