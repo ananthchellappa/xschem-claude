@@ -49,7 +49,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 3 | four-source mode resolution | `[x]` | `26cff1d3` | 91 new (277 in file) | 53 | 8 + 3 audits | no | audit diff **EMPTY**, verified independently. `xschem raw casemode` REPORTS, never acts. **Refuted two design premises by measurement** (see below). Spec §10 |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | `[x]` | `5c7ee761` | 30 | 30 | 5 + 2 audits | no | **11 folds gated, not the brief's 4** — 9 `strtolower` on 8 lines + 2 `strtoupper`, five senders + a receiver parse. Audit = one added row (its own suite), zero movers. **Refuted 2 reviewer-prescribed fixes and 1 driver hint by measurement.** Spec §11 |
 | 5 | viewer Tcl + two-pane browser scan | `[E]` | `9b1394c9` | 134 | 66 | 5 + 3 audits | **YES ×2** | audit = one added row, zero movers. **B2a's control BUILT, not passed on** (`Options ▸ Case Mode`). Review caught the radios as a **dead control** — no-op left 113/113 green. Spec §12. **2 look debts recorded** |
-| 5b | **one lookup authority + lazy `ngspice_data`** (D3) | | | | | | no | new item; the "perfect" fix the user chose over three papering-over options |
+| 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0420` filed |
 | 6 | extend `sim()` / `simconf` / `simrc` | | | | | | no | replaces the plan's new `ase_simulators` file |
 | 7 | the capability probe (+ hard timeout) | | | | | | no | |
 | 8 | profile-aware `run_cmd` + mismatch policy | | | | | | no | `distinguish` mismatch REFUSES |
@@ -310,6 +310,81 @@ A green suite never discharges an eyeball.
   *different* one satisfy the trace — better than the pre-item-5 answer (issue
   `0418`'s all-zero column), but disclosed nowhere else.
 - **The override is deliberately NOT persisted** — item 13 owns durability.
+
+## Carry-forwards item 5b handed on — baseline now `audit_item05b_closer_2026-08-17`
+
+**Baseline is `audit_item05b_closer_2026-08-17.txt` — 321/15/0/0 of 336** at
+`9f354aa0`. Items 1–5b moved **zero** statuses between them; all growth is the
+five suites they added.
+
+**This item's workflow DIED after the Verify stage and was resumed** with
+`resumeFromRunId`. Before resuming, the driver confirmed the tree was the one the
+verifier had measured (98/277/81 all pass) rather than sitting on a half-restored
+sabotage — worth repeating, because the item-5b verifier recorded being fooled
+once by `cp -p` restoring an older mtime so `make` skipped the rebuild and it was
+still measuring sabotaged code.
+
+**The verifier caught a real shipped defect, and it is fixed.**
+`ngspice_data_trace()`'s read arm recorded a `my_strdup2`'d key on **every**
+resolvable read, and a Tcl read trace fires for elements that already exist — so
+every repeat read grew the list, on the path every redraw of an annotated
+schematic walks. Now guarded by an existence probe before recording.
+
+**A premise WE wrote was withdrawn, in five places.** "A materialised element is
+a cache … a read trace does not fire for an element that already exists" went
+into `save.c`, the spec, the receipt, the annex **and** the test. It is false on
+Tcl 8.6.14 — the trace fires on every read and re-resolves. All five corrected;
+`CS111c`/`CS111d` pin the truth. The `n\ vars` backslash claim was wrong too.
+
+**The driver's own framing dissolved under measurement, which is the right
+outcome.** The dispatch called the whole-array `upvar` "the hard one, worse than
+enumeration". Measured first, before any code: **unsetting the array DESTROYS the
+trace** (Tcl 8.6.14; the manual is not explicit). So an unset **is** the trace
+reset — the five clear sites needed **no edit**, arming re-installs, and the
+pure-Tcl third publisher's `unset -nocomplain` **disarms the view before it
+writes**. They cannot interleave.
+
+Rulings worth carrying (spec §13.5–§13.8):
+
+- **Enumeration is REBUILT from `names[]`, never accumulated.**
+- **The view is pinned to the PUBLISHING `Raw`, never `xctx->raw`** — hence
+  `get_raw_index_in()`. A "current"-resolving view answers out of another
+  database after a `raw switch`.
+- **It answers only for a window that OWNS it** (`nd_view_owned()`); without
+  that, window B read window A's numbers.
+- **`free_rawfile()` disarms, and VALGRIND is the evidence a check could not
+  be**: removed → `Invalid read of size 8 at ngspice_data_trace`; in place →
+  clean, ×3.
+- **The third publisher keeps its own fold and is NOT made an authority** —
+  `ngspice::read_raw_dataset` never builds a `Raw`. Its fallback in
+  `ngspice::lookup` is **gated** on `raw view_armed`; ungated it folds `En` and
+  violates D2.
+
+**Two latent defects were found inside the very lines D3 ordered deleted:**
+`ngspice::get_diff_voltage` **never returned a difference** (`res` was assigned
+only in its failure branch, so the success path hit `can't read "res"`), and
+`my_snprintf` cannot see `%.*g` here (no `HAS_SNPRINTF`) so it needed a bare
+`sprintf`. Both went with the deletion.
+
+**Property 1 reached a FOURTH proc D3 does not name:** `get_node`, the one the
+shipped `ngspice_get_value.sym` / `device_param_probe.sym` actually call. Folded
+too, fixed too. **No mode branch exists anywhere in backannotation** — D3's whole
+point, achieved.
+
+- **MANDATORY SCOPE CLOSED, not passed a sixth time:** `raw casemode` on a VCD
+  (`CS107`–`CS107m`) and on a `table_read` database (`CS108`–`CS108n`).
+- **Five checks RESTATED, none renumbered or deleted** — `CS22 CS23 CS23d CS36d
+  CS36e` asserted `DESIGN_REVISION` §6's interim folded key that D3 supersedes,
+  and item 1's own file had flagged them "tolerable UNTIL ITEM 5B".
+- **Issue `0420` filed:** `token.c`'s six `@spice_get_*` branches fold the query
+  first (13 `strtolower()`), so the two roads agree under `fold`/`preserve` and
+  **diverge under `distinguish`**. Each fold feeds case-sensitive logic
+  downstream, so it is **item-4-shaped work, not a deletion** — which is why it
+  was filed rather than done here.
+- **Declared holes:** `M13` (the `Tcl_UnsetVar` in `ngspice_data_arm()`, whose own
+  comment calls it load-bearing) is **unpinned by any check**; `CS103g` is
+  **valgrind-only** evidence; and a script's own write into a materialised key is
+  silently discarded — documented, not fixed.
 
 ## Environment — re-verified 2026-08-16
 
