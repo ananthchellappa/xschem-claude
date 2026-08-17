@@ -47,7 +47,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 1 | delete the fold + `Raw.case_sensitive` | `[x]` | `fbfc6395` | 81 | 33 | 7 code + spec | no | audit diff = **one added row** (`test_raw_case_mode PASS`), **zero movers** — 00a's contract met exactly. Review found 5 real bugs beyond scope, all fixed. Xyce **RULED: no fold**. Spec `specs/raw_case_mode.md` |
 | 2 | one lookup ladder (+ absorbs the VCD sub-step) | `[x]` | `532b1768` | 105 new (186 in file) | 26 | 11 + 3 audits | no | audit diff vs item 1 **EMPTY**, verified independently. Ladder no longer mutates the query; alias index is a **separate lazy table**, overriding DESIGN_REVISION §4's *mechanism* (rule stands, correction written in place). Fixed a live **default-mode** viewer defect + a 32-byte leak |
 | 3 | four-source mode resolution | `[x]` | `26cff1d3` | 91 new (277 in file) | 53 | 8 + 3 audits | no | audit diff **EMPTY**, verified independently. `xschem raw casemode` REPORTS, never acts. **Refuted two design premises by measurement** (see below). Spec §10 |
-| 4 | the four `hilight.c` senders (Ctrl-K path) | | | | | | no | |
+| 4 | the four `hilight.c` senders (Ctrl-K path) | `[x]` | `5c7ee761` | 30 | 30 | 5 + 2 audits | no | **11 folds gated, not the brief's 4** — 9 `strtolower` on 8 lines + 2 `strtoupper`, five senders + a receiver parse. Audit = one added row (its own suite), zero movers. **Refuted 2 reviewer-prescribed fixes and 1 driver hint by measurement.** Spec §11 |
 | 5 | viewer Tcl + two-pane browser scan | | | | | | no | |
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | | | | | | no | new item; the "perfect" fix the user chose over three papering-over options |
 | 6 | extend `sim()` / `simconf` / `simrc` | | | | | | no | replaces the plan's new `ase_simulators` file |
@@ -195,6 +195,65 @@ Other carry-forwards:
 - **Checks item 3 declares as NOT evidence:** `CS60`, `CS61l`, `CS62c` have no
   item-3 code beneath them (fixture/premise checks, movable only by data
   drives), and `CS61d` is over-determined with no single-edit mutation.
+
+## Carry-forwards item 4 handed on — AND THE BASELINE ROLLED AGAIN
+
+Source: `receipts/04-hilight-senders.md` §2 and §5. **The pipeline baseline is now
+`audit_item04_closer_2026-08-16.txt` — 318 pass / 15 fail / 0 / 0 of 333**, at
+`5c7ee761`. Items 1–4 each moved zero statuses; the only growth is the two suites
+they added. The two known reds inside it (`test_wave_markers`, `test_ase_core`)
+are still not ours.
+
+**Item 4 refuted three prescriptions by measurement — two from its own reviewers,
+one from the driver's dispatch hint. Record them so they are not re-prescribed.**
+
+1. **`Raw.case_sensitive` ranks SECOND, not first.** Three reviewers prescribed
+   "fold only when the resolution says fold AND the lookup is not
+   case-sensitive". Refuted with a committed fixture: `tr_fold.raw` read `-case
+   distinguish` against a schematic drawn `In`/`MidNode` resolves to `fold`, and
+   only the **folded** query hits (`raw index {v(midnode)}` = 2,
+   `{v(MidNode)}` = −1). The rule is **bytes beat the flag; the flag beats the
+   floor.**
+2. **The hierarchical-current prefix follows the TOKEN**, not the mode. The
+   prescription was "`v.` when folding, `V.` otherwise". Re-measured on `ver_50`
+   with the device renamed: deck `Vs` gives `i(v.x1.vs)`/`i(V.X1.Vs)`, deck `vs`
+   gives `i(v.x1.vs)`/`i(v.X1.vs)` — it is the device's own first character,
+   folded with everything else. "`v.` stays lowercase in every mode" is **deleted
+   from the spec.**
+3. **The 4-vs-5-character difference is NOT a disagreement** — this corrects the
+   driver's item-4 hint, which called it a bug. Both sides drop `v.`; the reader
+   keeps the `x` because it **rewrites** where this arm **skips**. Requiring five
+   would push `i(v.foo)` into the `i(` arm and split off a bogus component `v`.
+   The receiver parse is now anchored and case-blind, and **keeps its 4**.
+
+Other carry-forwards:
+
+- **Xyce is resolved without being asserted.** `hilight.c`'s uppercase became a
+  **fallback, not an assertion**: `sim_is_xyce` reports the *configured simulator
+  command*, which is the right authority for a **sender**, where §5 refused a
+  fold for a **reader** because no measured way to identify a Xyce *file* exists.
+  Uppercase unless the resolution says `preserve`/`distinguish`; `fold`/`unknown`
+  byte-for-byte unchanged. **Xyce remains UNVERIFIED** — item 15 still says so.
+- **New field `Raw.sch_case_mode`.** Source 3 compares against whatever level
+  `xctx` holds, so **descending silenced the verdict** — inert one level down,
+  which is the case the gate exists for. The verdict is now stamped when computed
+  for real and replayed in that hierarchy. Whether this belongs here or in item
+  3's `schname` gate is **not settled**.
+- **A latency risk with a diagnostic pointer:** the read-time prime costs **one
+  schematic walk per `raw read`** (and per `table_read`), reasoned off item 3's
+  147 ms worst case but **not measured**. If item 5 or 13 sees raw-read latency
+  regress, look here first.
+- **An open risk nobody has constructed:** `xctx->raw` may be **the wrong
+  database when several are loaded** — a graph entry can plot from another via a
+  `%rawfile` cross-DB entry (D1). Not built, not tested.
+- **A pre-existing inconsistency left unfixed, deliberately:**
+  `send_current_to_gaw`'s Xyce arm *lowercases* where `create_plot_cmd`'s
+  *uppercases*, and `send_net_to_gaw`'s Xyce branch is identical to its ngspice
+  branch. Recorded in spec §11, out of item 4's scope.
+- **Never driven end to end:** no gaw and no Xyce were involved (the socket is
+  faked); `RAW_CASE_UPPER` never came from a real uppercasing simulator; source 2
+  (the `Option:` header) never drives a sender; `send_*_to_bespice()` is
+  untouched and undriven.
 
 ## Environment — re-verified 2026-08-16
 
