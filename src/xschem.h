@@ -2437,6 +2437,11 @@ extern int  raw_resolve_case_mode(Raw *raw, int *source);
  * somebody else wrote (DECISIONS.md B1's global floor, C2's "assume fold when
  * no profile is set"). Item 6 layers the per-profile mode on top of it. */
 extern int  sim_case_mode_floor(void);
+/* The mode the deck we are WRITING will be run in -- casemode item 14. Today
+ * the floor; item 6 layers the per-profile mode here, in one place. Deliberately
+ * does NOT consult xctx->raw: that describes a run that already happened. See
+ * doc/claude/specs/raw_case_mode.md section 14. */
+extern int  netlist_case_mode(void);
 /* MAKE `ngspice::ngspice_data` A LAZY VIEW over `raw`, printing with `prec`
  * significant digits. Replaces the eager per-variable publish loop both C
  * publishers used to run: update_op() (prec 4) and callback.c's cursor-B
@@ -3406,6 +3411,12 @@ extern int count_items(const char *s, const char *sep, const char *quote);
 extern int get_unnamed_node(int what, int mult, int node);
 extern void node_hash_free(void);
 extern int traverse_node_hash();
+/* Warn where xschem and the simulator disagree about how many nets the design
+ * has: two net names folding to one key, under `fold`/`preserve` only. Silent
+ * under `distinguish`, which is the one mode that AGREES with the schematic.
+ * Warns, never errors; returns how many pairs it reported. casemode item 14(a),
+ * DECISIONS.md C2, doc/claude/specs/raw_case_mode.md section 14. */
+extern int netlist_case_collision_check(void);
 extern Node_hashentry
                 *bus_node_hash_lookup(const char *token, const char *dir,int what, int port, char *sig_type,
                 char *verilog_type, char *value, char *class);

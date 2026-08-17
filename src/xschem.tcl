@@ -4115,6 +4115,7 @@ proc simulate {{callback {}}} {
     #  .x2       .x2.drw      {}        .x2.drw
     set execute(callback) "
        set_simulate_button [list [xschem get top_path] [xschem get current_win_path]]
+       relay_sim_case_collisions
        $callback
     "
     if {$fg eq {execute_wait}} {xschem set semaphore [expr {[xschem get semaphore] +1}]}
@@ -4144,6 +4145,95 @@ proc simulate {{callback {}}} {
   } else {
     return -1
   }
+}
+
+## RELAY THE SIMULATOR'S OWN CASE-COLLISION LINE -- casemode item 14(a).
+## DECISIONS.md C2, doc/claude/specs/raw_case_mode.md section 14.
+##
+## ngspice (ver_50 and later) emits, MEASURED on the 2026-08-15 build:
+##   Warning: node names 'Out' and 'OUT' differ only in case and name one node (casemode=fold)
+##   ... name two nodes (casemode=distinguish)
+## and it emits it on STDERR, at PARSE time -- before any `.control` block runs,
+## so a deck cannot capture it with a redirect from inside one. The run log is
+## the only place it can be picked up, which is why this half lives in Tcl: the
+## run log is `execute(data,last)` + `execute(error,last)`, and there is no run
+## log in C at all.
+##
+## BOTH streams are scanned, and stderr is not the optional one: measured, the
+## line appears ONLY on stderr for `ngspice -b -n -D casemode=... deck.cir`, so a
+## stdout-only scan finds nothing at all. Tcl hands us stderr in the error text
+## of the pipe `close`, which execute_fileevent already stores.
+##
+## ALWAYS ON, not gated by mode -- deliberately unlike our own netlist-time check
+## (node_hash.c), which is silent under `distinguish`. Three reasons:
+##   1. It is the simulator's own statement about a run that has happened, and it
+##      NAMES THE OUTCOME ("one node" / "two nodes"), so under `distinguish` it
+##      reads as information rather than as an alarm.
+##   2. It sees `.include`d PDK cards, which our netlister structurally cannot --
+##      C2's reason for warning rather than erroring. Suppressing it would throw
+##      away the only evidence available for the one class we are blind to.
+##   3. The line carries `(casemode=<mode>)`, i.e. the mode the run ACTUALLY had.
+##      A `.spiceinit` can override what we requested (A2, measured), so anything
+##      we could gate on is less authoritative than the line itself.
+##
+## Deduped on the QUOTED PAIR, order-normalised, because a pair inside a
+## `.subckt` body is reported once per instantiation. MEASURED REFINEMENT, and it
+## partly refutes the premise: ngspice prefixes the instance path, so three
+## instantiations give 'X1.Mid'/'X2.Mid'/'X3.Mid' -- three DIFFERENT pairs, all
+## of which correctly survive. What the dedup really earns its place against is
+## the same line reaching us twice, which our own two-stream scan can do whenever
+## a configured command merges stderr into stdout.
+##
+## Returns the lines it relayed (verbatim, as C2 asks -- ngspice's wording names
+## the outcome better than a paraphrase would), so the behaviour is testable
+## without a CIW: ciw_echo is silent when there is no window.
+proc sim_case_collision_lines {text} {
+  set out {}
+  array set seen {}
+  foreach ln [split $text \n] {
+    set ln [string trim $ln]
+    if {$ln eq {}} continue
+    if {![regexp -nocase {differ only in case} $ln]} continue
+    ## key on the two quoted names when they parse, else on the whole line: the
+    ## phrase is the stable half of upstream's sentence, the wording around it is
+    ## not ours to depend on.
+    ##
+    ## ANCHORED ON THE PHRASE, not on the first apostrophe on the line -- the fix
+    ## round's finding 4. `'([^']*)'[^']*'([^']*)'` keyed a line reading
+    ## "Warning: can't parse: node names 'Out' and 'OUT' differ only in case ..."
+    ## on a="t parse: node names " b=" and ", which is the SAME key for every such
+    ## line, so two genuinely different collisions collapsed into one and the
+    ## second was silently dropped (measured: 1 line back, 2 expected). Anchoring
+    ## on `' and '` + the phrase makes a mis-parse fail SAFE: the key falls back to
+    ## the whole line, i.e. no dedup, never an over-dedup that loses a collision.
+    set key $ln
+    if {[regexp {'([^']*)' and '([^']*)' differ only in case} $ln -> a b]} {
+      set key [join [lsort [list $a $b]] \x1f]
+    }
+    if {[info exists seen($key)]} continue
+    set seen($key) 1
+    lappend out $ln
+  }
+  return $out
+}
+
+## Scan the last finished process's run log and relay what it said. Hooked from
+## proc simulate's execute callback, which runs after execute_fileevent has set
+## data,last / error,last. The CIW is the channel because this is a Tcl-side
+## message about a RUN: the netlist-time half uses statusmsg(str, 2), i.e. the
+## ERC/info window, because that is where every other netlist warning goes -- and
+## that window's text belongs to the netlist pass, not to a simulation that
+## happens minutes later. Two channels, each the established one for its own
+## side; no third channel.
+proc relay_sim_case_collisions {} {
+  global execute
+  set txt {}
+  foreach k {data error} {
+    if {[info exists execute($k,last)]} { append txt $execute($k,last) \n }
+  }
+  set lines [sim_case_collision_lines $txt]
+  foreach ln $lines { catch {ciw_echo $ln note} }
+  return $lines
 }
 
 proc gaw_echoline {} {

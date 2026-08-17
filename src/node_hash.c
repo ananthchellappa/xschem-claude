@@ -255,6 +255,136 @@ int traverse_node_hash()
  return err;
 }
 
+/* THE FOLD-COLLISION CHECK -- casemode item 14(a).
+ * DECISIONS.md C2, doc/claude/specs/raw_case_mode.md section 14.
+ *
+ * WHAT IT IS NOT: "you named two nets similarly". Two names differing only in
+ * case are two perfectly good nets, and xschem really does hold them as two --
+ * node_hash_lookup() above compares with strcmp() (line 82), so `Out` and `OUT`
+ * hash to two entries and every pass downstream treats them as two nets.
+ *
+ * WHAT IT IS: xschem and the simulator DISAGREE about how many nets the design
+ * has. That is why the gate runs the way it does, and the original option text
+ * had it backwards:
+ *
+ *   fold         ngspice sees one net,  xschem sees two  -> disagree, WARN
+ *   preserve     ngspice sees one net,  xschem sees two  -> disagree, WARN
+ *   distinguish  ngspice sees two nets, xschem sees two  -> agree, SILENT
+ *
+ * `distinguish` is the only mode that agrees with what the schematic shows, so
+ * it is the one mode with nothing to report -- and a warning that fires when
+ * nothing is wrong teaches people to ignore warnings.
+ *
+ * WARN, NEVER ERROR, and C2 gives the reason: our netlister cannot see nets
+ * arriving through an `.include`d PDK file, so a blocking error built on an
+ * admittedly incomplete check is a bad thing to ship. The return value is a
+ * count for the caller's benefit; it is deliberately not OR-ed into `err`.
+ *
+ * The complement is the relayed ngspice line (spec section 14): measured on
+ * build-ver_50, upstream's own warning does NOT fire at all under `fold` for a
+ * collision confined to a subcircuit body, which is exactly the case this pass
+ * catches, while it DOES see `.include`d cards that this pass cannot. Neither
+ * one subsumes the other.
+ *
+ * WHAT THE USER ACTUALLY SEES, and the fix round's finding 1. The detail lines go
+ * to xctx->infowindow_text (statusmsg(str, 2)), the ERC/info window every other
+ * netlist warning goes to -- but that window is only DEICONIFIED when the pref
+ * `show_infowindow_after_netlist` is `always` or when err != 0, and the shipped
+ * default is `onerror` (xschem.tcl). A warning that (correctly, C2) leaves
+ * err == 0 therefore reaches nobody through that window alone: measured, `xschem
+ * netlist -erc` on a colliding design left `wm state .infotext` = withdrawn while
+ * the same command on a design with a real ERC error gave `normal`. So this pass
+ * does what its five siblings in traverse_node_hash() above do, and one thing
+ * more:
+ *
+ *   1. the CANVAS CUE -- both spellings are entered in the highlight table, so
+ *      the two nets are painted exactly as "open net" / "goes nowhere" paint
+ *      theirs. Those two are warnings that leave err == 0 as well, so the canvas
+ *      is precisely the established channel for this class, and it is the one
+ *      channel the `onerror` default cannot hide. Guarded by !netlist_count like
+ *      every sibling: below the top level the nets are not on the drawing.
+ *   2. ONE SUMMARY LINE on the status bar (statusmsg(str, 1)) naming the count,
+ *      the cell and the mode, so the highlight explains itself and the user knows
+ *      to open the info window for the list. Same function, one line per level
+ *      that has a collision (last writer wins on the field, and the line names
+ *      its own cell so it is never ambiguous). This is not a third message
+ *      channel: statusmsg() is the netlister's own, and the relay's `ciw_echo` is
+ *      about a RUN, minutes later. */
+int netlist_case_collision_check(void)
+{
+  int i, n = 0, mode;
+  int incr_hi;
+  Node_hashentry *entry;
+  Str_hashtable fold_table = {NULL, 0};
+  Str_hashentry *hit;
+  char *key = NULL;
+  char str[2048];
+
+  if(!xctx) return 0;
+  mode = netlist_case_mode();
+  if(mode == RAW_CASE_DISTINGUISH) return 0;   /* C2: the two agree, so be silent */
+  incr_hi = tclgetboolvar("incr_hilight");
+  str_hash_init(&fold_table, HASHSIZE);
+  for(i = 0; i < HASHSIZE; ++i) {
+    entry = xctx->node_table[i];
+    while(entry) {
+      if(entry->token && entry->token[0]) {
+        /* the fold key is ASCII-only, like every other fold key in the tree:
+         * strtolower() is a tolower() loop over BYTES and there is no setlocale
+         * anywhere in src/ (spec section 12's ruling). */
+        my_strdup2(_ALLOC_ID_, &key, entry->token);
+        strtolower(key);
+        hit = str_hash_lookup(&fold_table, key, entry->token, XINSERT_NOREPLACE);
+        /* A hit means some other entry already claimed this folded key. Entries
+         * are unique by strcmp, so the two spellings always differ -- the
+         * strcmp() below is belt and braces, not a filter for the byte-identical
+         * duplicates a raw file can carry (spec section 9's D2 note). */
+        if(hit && hit->value && strcmp(hit->value, entry->token)) {
+          /* THE DIAGNOSTIC COMES FIRST, and that is the fix round's finding 2, not
+           * a style choice: net names are unbounded and str[] is not. MEASURED on
+           * a pair of 973-character names (this tree's my_snprintf is the hand
+           * rolled one, util.c, which on overflow drops the whole conversion that
+           * does not fit rather than cutting mid-way): with both names ahead of the
+           * phrase the emitted line was 1990 chars and contained neither `differ
+           * only in case` nor `(casemode=...)` -- the entire diagnostic half was
+           * gone, and so was the grep every test and every user relies on. Every
+           * sibling above puts its phrase first for the same reason. In this order
+           * an overflow can only cost the second NAME, never the meaning. */
+          my_snprintf(str, S(str),
+            "Warning: (casemode=%s) net names in cell %s differ only in case and "
+            "the simulator will merge them into ONE node: '%s' and '%s'",
+            raw_case_mode_word(mode), get_cell(xctx->current_name, 0), hit->value, entry->token);
+          statusmsg(str, 2);
+          /* the canvas cue, sibling-exact (see the header comment): both spellings,
+           * one colour per pair, top level only. */
+          if(!xctx->netlist_count) {
+            bus_hilight_hash_lookup(hit->value, xctx->hilight_color, XINSERT_NOREPLACE);
+            bus_hilight_hash_lookup(entry->token, xctx->hilight_color, XINSERT_NOREPLACE);
+            if(incr_hi) incr_hilight_color();
+          }
+          ++n;
+        }
+      }
+      entry = entry->next;
+    }
+  }
+  my_free(_ALLOC_ID_, &key);
+  str_hash_free(&fold_table);
+  /* the summary line -- the channel the `onerror` default cannot hide. Written
+   * even when !has_x: statusmsg() records it in xctx->statusmsg_text before its
+   * own has_x return (issue 0248), which is this half's headless seam
+   * (`xschem get statusmsg`). */
+  if(n) {
+    my_snprintf(str, S(str),
+      "Warning: (casemode=%s) %d net name pair%s in cell %s differ only in case and the simulator "
+      "will merge each pair into ONE node -- highlighted; see the netlist info window for the list",
+      raw_case_mode_word(mode), n, n == 1 ? "" : "s", get_cell(xctx->current_name, 0));
+    statusmsg(str, 1);
+  }
+  dbg(1, "netlist_case_collision_check(): mode=%s collisions=%d\n", raw_case_mode_word(mode), n);
+  return n;
+}
+
 void print_vhdl_signals(FILE *fd)
 {
   Node_hashentry *ptr;

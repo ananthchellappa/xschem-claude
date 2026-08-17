@@ -26,25 +26,32 @@ static Str_hashtable spectre_model_table = {NULL, 0}; /* safe even with multiple
 
 static char *spectre_mod_name_res = NULL; /* safe even with multiple schematics */
 
-static char *spectre_model_name(const char *m)
+/* THE MODEL DEDUP KEY, spectre half -- casemode item 14(b). The second of the
+ * two sites; the reasoning, the keyword-vs-identity split and the reason the
+ * sscanf() literals became a length skip are all in model_name()
+ * (spice_netlist.c) and in doc/claude/specs/raw_case_mode.md section 14.
+ * `keep_case` is 1 only under `distinguish`. */
+static char *spectre_model_name(const char *m, int keep_case)
 {
   char *m_lower = NULL;
   char *modelname = NULL;
   char *ptr;
+  const char *src;
   int n;
   size_t l = strlen(m) + 1;
   my_strdup(_ALLOC_ID_, &m_lower, m);
   strtolower(m_lower);
+  src = keep_case ? m : m_lower;   /* what the KEY is built from */
   my_realloc(_ALLOC_ID_, &modelname, l);
   my_realloc(_ALLOC_ID_, &spectre_mod_name_res, l);
   if((ptr = strstr(m_lower, "subckt"))) {
-    n = sscanf(ptr, "subckt %s %s", spectre_mod_name_res, modelname);
+    n = sscanf(src + (ptr - m_lower) + 6, " %s %s", spectre_mod_name_res, modelname);
   } else if((ptr = strstr(m_lower, "model"))) {
-    n = sscanf(ptr, "model %s %s", spectre_mod_name_res, modelname);
+    n = sscanf(src + (ptr - m_lower) + 5, " %s %s", spectre_mod_name_res, modelname);
   } else {
-     n = sscanf(m_lower, " %s %s", spectre_mod_name_res, modelname);
+     n = sscanf(src, " %s %s", spectre_mod_name_res, modelname);
   }
-  if(n<2) my_strncpy(spectre_mod_name_res, m_lower, l);
+  if(n<2) my_strncpy(spectre_mod_name_res, src, l);
   else {
     /* build a hash key value with no spaces to make device_model attributes with different spaces equivalent*/
     my_strcat(_ALLOC_ID_, &spectre_mod_name_res, modelname);
@@ -62,6 +69,9 @@ static int spectre_netlist(FILE *fd, int spectre_stop )
   int lvs_netlist =  tclgetboolvar("lvs_netlist");
   int top_sub = lvs_netlist || tclgetboolvar("top_is_subckt");
   int lvs_ignore = tclgetboolvar("lvs_ignore");
+  /* casemode item 14(b): the dedup key keeps its fold unless `distinguish`.
+   * Resolved once per level rather than per instance -- it reads a Tcl var. */
+  int keep_model_case = (netlist_case_mode() == RAW_CASE_DISTINGUISH);
   if(lvs_netlist) my_strdup(_ALLOC_ID_, &xctx->format, "lvs_format");
   else my_strdup(_ALLOC_ID_, &xctx->format, xctx->custom_format);
   if(!spectre_stop) {
@@ -115,14 +125,14 @@ static int spectre_netlist(FILE *fd, int spectre_stop )
          m = val;
          if(strchr(val, '@')) m = translate(i, val);
          else m = tcl_hook2(m);
-         if(m[0]) str_hash_lookup(&spectre_model_table, spectre_model_name(m), m, XINSERT);
+         if(m[0]) str_hash_lookup(&spectre_model_table, spectre_model_name(m, keep_model_case), m, XINSERT);
          else {
            my_strdup2(_ALLOC_ID_, &val,
                get_tok_value(xctx->sym[xctx->inst[i].ptr].prop_ptr, "spectre_device_model", 2));
            m = val;
            if(strchr(val, '@')) m = translate(i, val);
            else m = tcl_hook2(m);
-           if(m[0]) str_hash_lookup(&spectre_model_table, spectre_model_name(m), m, XINSERT);
+           if(m[0]) str_hash_lookup(&spectre_model_table, spectre_model_name(m, keep_model_case), m, XINSERT);
          }
          my_free(_ALLOC_ID_, &spectre_mod_name_res);
          my_free(_ALLOC_ID_, &val);

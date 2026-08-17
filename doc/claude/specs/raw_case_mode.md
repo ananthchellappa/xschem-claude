@@ -1647,3 +1647,401 @@ It was **not** done here because it is not a 13-line deletion: each fold feeds
 case-sensitive logic downstream (`prefix == 'v'`, `'q'`, `'d'`, `'m'`, `'i'`,
 `strncmp(fqdev, "i(@r", 4)`), so it is item-4-shaped work — gate or blind each
 classification, then drive all six branches. Issue `0420` carries the list.
+
+## 14. THE NETLISTER SIDE — casemode item 14
+
+`PLAN.md` §3b item 14, authority `DECISIONS.md` **C2**. Everything above is about
+names coming *out* of a simulator and queries going *at* them. This is about the
+deck going *in*: what we can tell the user before they run it, and one dedup key
+of our own that the mode changes.
+
+Two halves plus a relay:
+
+| half | where | fires |
+|---|---|---|
+| (a) fold-collision warning | `netlist_case_collision_check()`, `node_hash.c`, called from `spice_netlist()` | under `fold`/`preserve`, per netlisted level |
+| (a′) relay of ngspice's own line | `sim_case_collision_lines` / `relay_sim_case_collisions`, `xschem.tcl` | always, after a run, off the run log |
+| (b) model dedup key | `model_name()` (`spice_netlist.c`) and `spectre_model_name()` (`spectre_netlist.c`) | keeps its fold unless `distinguish` |
+
+### RULING — the check is about DISAGREEMENT, not about similar names
+
+The option as originally written was **backwards** — "warn under `fold`/`preserve`,
+**error** under `distinguish`" — from the intuition that a strict mode deserves
+strict errors. The user caught it. The semantics run the other way:
+
+| mode | ngspice sees | xschem sees | agree? |
+|---|---|---|---|
+| `fold` | one net | two nets | **no — hazard, warn** |
+| `preserve` | one net | two nets | **no — hazard, warn** |
+| `distinguish` | two nets | two nets | **yes — nothing wrong, silent** |
+
+xschem's net table compares with `strcmp` (`node_hash.c:82` — `hash==hashcode &&
+strcmp(token, entry->token)==0`), so `Out` and `OUT` genuinely **are** two nets
+here, and every pass downstream treats them as two. `distinguish` is the only
+mode that agrees with what the schematic shows. There is nothing to report there,
+and a warning that fires when nothing is wrong teaches people to ignore warnings.
+
+So the check is not "you named two nets similarly". It is **"xschem and the
+simulator disagree about how many nets you have"** (`CS115`–`CS118`).
+
+### RULING — warn, never error
+
+C2's reason, and it is a limit of our own instrument: the netlister **cannot see
+nets arriving through an `.include`d PDK file**, so a blocking error built on an
+admittedly incomplete check is a bad thing to ship. `netlist_case_collision_check()`
+returns a count and the caller deliberately does **not** OR it into `err`; the
+deck is written complete, with both spellings verbatim (`CS121`, `CS121b`). The
+same limit is why the relay below is not redundant with it.
+
+**The check that actually guards this ruling is `CS143`, and it exists because the
+first pass had none.** `CS121`/`CS121b` were cited here as the evidence and are
+not: they assert the deck's contents and the warning count, and
+`err |= netlist_case_collision_check();` at the call site leaves both of them
+green while changing real behaviour — `spice_netlist.c` sets
+`exit_code = err ? 10 : 0`, so a colliding design's netlist starts exiting 10, and
+`show_infotext(err)` force-pops the ERC window. `CS143` asserts the `xschem
+netlist` branch's own returned error status is **0** in the same assertion as
+`ncoll == 2`, which is the seam that mutation moves.
+
+### RULING — no profile means `fold`, and the floor is legitimate here
+
+The mode is resolved by `netlist_case_mode()` (`save.c`), which today is
+`sim_case_mode_floor()` and from item 6 will be the per-profile mode with the
+floor underneath. Two things follow, both stated rather than inherited:
+
+- **`fold` is assumed when nothing is set.** The floor validates and falls back,
+  so an unparseable request behaves as `fold` rather than as `unknown`
+  (`CS120`). C2 asks for the conservative direction, and `fold` is what a stock
+  `apt` ngspice does (**A1**).
+- **§10 bars the floor from a *file's* verdict; this is not a file's verdict.**
+  A netlist is a question about a **run**, and item 4 recorded the same
+  distinction for the cross-probe senders (§11). It is the one place `fold` is
+  asserted without evidence, and this is one of the places that is allowed.
+
+**`xctx->raw` is deliberately not consulted**, which is where this differs from
+item 4's "bytes beat the flag, the flag beats the floor". That ladder exists
+because a loaded database's bytes are evidence *about the question being asked*.
+Here the question is about a deck that has not been run yet: a raw in the viewer
+describes a run that already happened, possibly of another design, so its bytes
+are evidence about something else. There are no relevant bytes, so the request is
+all there is.
+
+### RULING — called from `spice_netlist()`, not from `traverse_node_hash()`
+
+`traverse_node_hash()` is where the neighbouring ERC warnings live and would have
+been the obvious host. It is the wrong one for two measured reasons:
+
+1. It is also the **interactive** `show_unconnected_pins()` pass (`netlist.c:1727`),
+   where a question about a simulator run has no business firing (`CS124`).
+2. It is called by all five backends. The mode we can consult is the **ngspice**
+   requested mode; applying it to a VHDL, Verilog or tEDAx deck would assert
+   something about a tool we never asked. Verilog is the clearest case — it is
+   case-sensitive, so xschem and the simulator *agree*, which is C2's silent row.
+
+`spice_netlist()` is the **per-level** spice pass — `spice_block_netlist()` calls
+it once per non-`spice_stop` cell — so a collision confined to a subcircuit body
+is reported at its own level and names that cell (`CS122`, `CS122b`). That
+per-level reach is not a nicety; see the measurement below.
+
+**What per-level costs.** One `Str_hashtable` of `HASHSIZE` (31627) pointers,
+i.e. a 253 KB `calloc` + `free` per netlisted cell, plus one `my_strdup2` of each
+node name. That is an mmap-backed allocation on glibc — order 10 µs, so ~15 ms
+for a thousand-cell hierarchy — against `prepare_netlist_structs(1)`, which walks
+every instance pin of the same level immediately before it. Reasoned, not
+measured; the sizing is deliberately the same constant `xctx->node_table` uses,
+and correctness does not depend on it (a chain collision costs one `strcmp`).
+
+**One honest consequence of hanging it off `spice_netlist()`, with the trigger
+named correctly.** The VHDL, Verilog and spectre drivers all call
+`spice_block_netlist()`, and that calls `spice_netlist()`. The gate is **not**
+`spice_primitive` — an earlier revision of this paragraph said so and the token
+appears **nowhere** in `vhdl_netlist.c`, `verilog_netlist.c` or
+`spectre_netlist.c`. The real gate is two conditions together:
+
+```
+get_tok_value(sym prop, "spice_netlist", 0) == "true"   AND   split_files
+  spectre_netlist.c:395-396   vhdl_netlist.c:446-447   verilog_netlist.c:356-357
+```
+
+So a **SPICE block embedded in one of those netlists** does get the check, and
+only when the netlist is being written as split files. Measured both ways on a
+`spice_netlist=true` child whose own nets collide: `split_files 1` → one warning
+naming the child cell, `split_files 0` → none (`CS146`). That is the right answer
+rather than an accident — those cards are literally SPICE, written for a SPICE
+simulator in a mixed-signal cosim — but be clear about what the user then reads:
+the sentence says `casemode=fold`, which is an **ngspice** notion, in the middle of
+a spectre or Verilog run. Verilog is case-sensitive and spectre has no `casemode`
+knob at all, so the line is a claim about the SPICE block's own simulator, not
+about the one being netlisted for. What does not get the check at all is a level
+netlisted *as* VHDL, Verilog or tEDAx.
+
+**Spectre gets half of this item and not the other half, on purpose.** Part (b)
+is about *our own* hash key, and "are `NAND2` and `nand2` one model?" is a
+question about the identity we were handed, symmetric across both backends. Part
+(a) is a claim about what *a specific simulator* will do with a node table, and
+`casemode` is an ngspice feature.
+
+### MEASURED — upstream's own warning, and where it is blind
+
+Measured 2026-08-16 on `/home/qflow/dev/ngspice_test/build-ver_50/src/ngspice`
+(build stamp 2026-08-15 23:54), decks run with `-b -n -D casemode=<mode>`:
+
+```
+top-level pair (repro/case_collision.cir), all three modes:
+  STDERR: Warning: node names 'Out' and 'OUT' differ only in case and name one node (casemode=fold)
+          ... name one node (casemode=preserve)
+          ... name two nodes (casemode=distinguish)
+pair confined to a .subckt body, instantiated 3x:
+  fold        -> ZERO lines
+  preserve    -> 3 lines: 'X1.Mid'/'X1.MID', 'X2.Mid'/'X2.MID', 'X3.Mid'/'X3.MID'
+  distinguish -> 3 lines, same shape
+top-level pair with a `.op` card AND `.control run` + `op` (two analyses):
+  -> 1 line, i.e. once per PARSE, not once per analysis
+```
+
+Three facts come out of that, all load-bearing:
+
+1. **The line is on STDERR**, never on stdout. A relay scraping stdout only
+   finds nothing at all (`CS138`).
+2. **Under `fold` upstream says nothing about a subcircuit-body collision** —
+   the gap `RESPONSE.md` §Q3 enumerates. That is exactly the case part (a) does
+   report, because it runs per level. Neither half subsumes the other: ours sees
+   every level of our own hierarchy, theirs sees `.include`d PDK cards we cannot.
+3. **The per-instantiation repeats carry the instance path**, so they are three
+   *different* quoted pairs. See the dedup ruling.
+
+### RULING — the relay is always on, and it is not gated by mode
+
+Our own check is silent under `distinguish`; the relay is not (`CS136` on the pure
+helper, **`CS148` on `relay_sim_case_collisions` itself**, which is the only entry
+point `proc simulate` calls — a mode gate added there was invisible to every check
+in the first pass). Three reasons, any one sufficient:
+
+1. It is the **simulator's own statement about a run that happened**, and its
+   wording **names the outcome** ("one node" / "two nodes"), so under
+   `distinguish` it reads as information rather than as an alarm. C2 says relay
+   it as-is, and it is relayed verbatim (`CS132`) — the wording is better than a
+   paraphrase.
+2. It **sees `.include`d PDK cards**, the one class our own check is structurally
+   blind to and the reason C2 says warn rather than error. Suppressing it under
+   `distinguish` would throw away the only evidence available there.
+3. The line carries `(casemode=<mode>)`, i.e. the mode the run **actually** had.
+   A `.spiceinit` can override what we requested (**A2**, measured), so anything
+   we could gate on is less authoritative than the line itself.
+
+### RULING — the relay lives in Tcl, because that is where the run log is
+
+C2 records that the line is emitted at **parse** time, before any `.control`
+block runs, so a deck cannot capture it with a redirect from inside one — it has
+to come off the run log. The run log exists only in Tcl: `execute(data,$id)`
+accumulates stdout, and `close`ing the pipe hands Tcl the child's **stderr** in
+the error text, which `execute_fileevent` stores as `execute(error,last)`
+(verified with a two-stream probe: `catch {close $f} err` returns `ERRLINE` even
+on exit 0). Both are scanned, and stderr is the one that matters.
+
+The hook is `proc simulate`'s existing `execute(callback)`, which
+`execute_fileevent` evals **after** setting `data,last`/`error,last` — so no new
+plumbing. The scan itself is a pure function returning the relayed lines, which
+is what makes it testable without a CIW (`ciw_echo` is silent when there is no
+window, so a dead relay would otherwise look green — item 5's lesson).
+
+**The one path this does not cover is ASE-L's own `run_cmd`** (`ase.tcl:3238`),
+which is items 6–12's. When that path gains a captured log it should call
+`sim_case_collision_lines` rather than grow a second scanner.
+
+### RULING — dedupe on the quoted pair; and what that actually buys
+
+C2: "it repeats once per subcircuit instantiation, so dedupe on the quoted pair."
+The dedup is implemented on the two quoted names, **order-normalised** so
+`'Out','OUT'` and `'OUT','Out'` are one pair (`CS133`, `CS134`), falling back to
+the whole line when the pair does not parse — the phrase `differ only in case` is
+the stable half of upstream's sentence, the wording around it is not ours to
+depend on.
+
+**The pair is extracted by anchoring on the phrase, not on the first apostrophe on
+the line.** The first pass used `'([^']*)'[^']*'([^']*)'`, which on a line carrying
+an apostrophe *before* the quoted pair keys on the wrong two spans: measured,
+`Warning: can't parse: node names 'Out' and 'OUT' differ only in case …` and the
+same sentence about `'In'`/`'IN'` both keyed on `a = "t parse: node names "`,
+`b = " and "` — one key for both, so the second collision was silently **dropped**
+(1 line relayed, 2 expected). The anchored form `'…' and '…' differ only in case`
+makes a mis-parse fail **safe**: the key falls back to the whole line, i.e. no
+dedup, which over-reports at worst. Over-deduping loses a collision, which is the
+one outcome this half cannot afford. `CS147`. (Upstream's measured line carries no
+apostrophe today, so this needs a node name or some other log text on the same line
+to supply one — a latent defect, fixed rather than argued about.)
+
+**MEASURED REFINEMENT, and it partly refutes the premise.** ngspice prefixes the
+instance path, so three instantiations produce `'X1.Mid'/'X1.MID'`,
+`'X2.Mid'/'X2.MID'`, `'X3.Mid'/'X3.MID'` — three genuinely different pairs, and
+all three correctly survive the dedup (`CS135`). They are three different node
+pairs, so collapsing them would *lose* information; a dedup that stripped the
+path to "the net pair" would report one collision where there are three, which is
+why that shape is a sabotage rather than an implementation. What the dedup really
+earns its place against is the same line reaching us twice, which our own
+two-stream scan does whenever a configured command merges stderr into stdout
+(`CS139`).
+
+### RULING — two channels, each the established one for its own side
+
+- The **netlist-time** warning uses `statusmsg(str, 2)`, which appends to
+  `xctx->infowindow_text` — the ERC/info window every other netlist warning goes
+  to (`node_hash.c`'s "undriven node", "open net", "shorted output node", and
+  **fifteen** `statusmsg(str,2)` sites in `netlist.c` — grepped, the six the item
+  brief names among them). `global_spice_netlist()` clears it at the start of each
+  run (`spice_netlist.c`, `statusmsg("",2)`), which is why each transcript the
+  tests read belongs to exactly one netlist run.
+- The **relay** uses `ciw_echo … note`, the house channel for a Tcl-side user
+  message (never `puts`, never the status bar). It could not use
+  `statusmsg(str, 2)` even if it wanted to: that window's text belongs to the
+  netlist pass, and a simulation finishes minutes later. `CS149` asserts the line
+  actually lands in `.ciw.l.t` with that tag — the CIW *can* be created and read
+  headlessly under the `--pipe` arm, so "ciw_echo is silent without a window" was
+  never a reason to leave the only user-visible effect of the relay unchecked.
+
+### CORRECTION — the info window is NOT popped for a warning that leaves `err == 0`
+
+An earlier revision of the paragraph above said of `xctx->infowindow_text` "it is
+the window the netlister pops up". **Measured false, and false in exactly this
+item's own configuration.** `.infotext` is created `wm withdraw`n
+(`proc infowindow`, `xschem.tcl`), and `show_infotext` deiconifies it only when
+`show_infowindow_after_netlist` is `always` or when `err != 0`. The shipped default
+is `onerror`, and this warning deliberately leaves `err == 0`:
+
+```
+A  colliding design, `xschem netlist -erc`  -> wm state .infotext = withdrawn   (1 collision line in the buffer)
+B  design with a real ERC error, same cmd   -> wm state .infotext = normal
+C  colliding design, plain `xschem netlist` -> withdrawn (the branch forces the pref to "never")
+```
+
+So the info window carries the **list**, and something else has to tell the user
+there is one. Two additions, neither of them a new mechanism:
+
+1. **The canvas cue.** Both spellings go into the highlight table
+   (`bus_hilight_hash_lookup(…, XINSERT_NOREPLACE)`, guarded by
+   `!xctx->netlist_count` and one colour per pair) so the offending nets are
+   painted. This is precisely what the five sibling warnings in
+   `traverse_node_hash()` do — and two of them ("open net", "goes nowhere") also
+   leave `err == 0`, so the canvas is the *established* channel for this class of
+   warning, and the one channel the `onerror` default cannot hide.
+2. **One summary line on the status bar**, `statusmsg(str, 1)`, naming the count,
+   the cell and the mode, so the highlight explains itself and the user knows to
+   open the info window. Same function as the detail lines, one line per level that
+   has a collision (last writer wins on that field, and the line names its own
+   cell so it is never ambiguous). Recorded in `xctx->statusmsg_text` before
+   `statusmsg()`'s own `has_x` return (issue 0248), which is the headless seam:
+   `xschem get statusmsg`.
+
+`CS141` is the summary line (including "a clean design writes none", which is only
+evidence because it is the **first** netlist in the file — nothing ever clears that
+field). `CS142` is the cue, on a fixture whose two colliding nets carry two device
+pins each so that **no** sibling ERC warning highlights them: on `nc_top` the
+"open net" warning paints `Out`/`OUT` by itself and the leg would pass with the cue
+deleted.
+
+Still no message channel beyond those two: `statusmsg` for the netlist, `ciw_echo`
+for the run.
+
+### RULING — the diagnostic goes FIRST in the message
+
+Net names are unbounded; `str[]` is 2048 bytes. Measured with two 973-character
+names, and this tree's `my_snprintf` is the hand-rolled one (`util.c`), which on
+overflow drops the whole conversion that does not fit rather than cutting mid-way:
+
+```
+names first (the shape the first pass shipped):
+  emitted 1990 chars, containing NEITHER `differ only in case` NOR `(casemode=`
+diagnostic first (shipped):
+  emitted 1101 chars: phrase and mode present, the SECOND NAME dropped
+```
+
+The first shape loses the entire meaning of the sentence — and with it every grep,
+every test helper keyed on that phrase, and any chance the user understands the
+line. Enlarging the buffer is not the fix, because the names have no bound. Every
+sibling warning already puts its phrase first (`"Warning: open net: %s"`), so this
+is also the house form. `CS144`.
+
+### The model dedup key — a narrowing, not a new fold
+
+Items 1–5b spent this batch deleting folds. Part (b) does not add one: both
+`model_name()` and `spectre_model_name()` already `strtolower()` the whole model
+string before building the dedup key, and that stays for `fold`/`preserve`, where
+it is **correct** — SPICE model and subckt identity really is case-insensitive
+there, `.SUBCKT NAND2` is callable as `nand2`, and two `device_model` attributes
+spelling one model differently must be emitted once (`CS125`, `CS126`, `CS129`).
+Only `distinguish` makes `NAND2` and `nand2` two models, and there emitting one of
+them drops a model the deck needs (`CS127`, `CS130`).
+
+**The narrowing is deliberately partial: the card KEYWORD stays case-blind in
+every mode.** `.model` and `.MODEL` naming one model are one model whatever the
+mode (`CS128`), so the keyword is still located on a folded copy; only the
+identity — the model name and the token after it, which is what the key is built
+from — follows the mode.
+
+**The trap this half carries, and it is not the hashing.** The fold fed the
+`sscanf` **parse** as well as the key: the format strings carried the literals
+`.subckt ` / `.model `, which only ever matched because `strtolower()` had just
+run. Point the parse at a verbatim string and a `.SUBCKT` card fails the literal,
+`sscanf` returns 0, and the **whole card** becomes the key — two spellings of one
+subckt then hash apart. The keyword is therefore skipped by **length** instead
+(`strtolower()` is byte-wise and length-preserving, so an offset found in the
+folded copy is the offset in the original). `CS131`/`CS131b` are that check for the
+spice site, and the old literal is sabotage `M13`.
+
+**The spectre site needed its own fixture shape, and the first pass had none.**
+`nc_spectre`'s two cards differ in the model **name's** case as well as the
+keyword's, so "two cards under `distinguish`" is the right answer whether
+`spectre_model_name()` parses the name or keys on the whole card — reverting its
+length skip to `"model %s %s"` left the whole suite green. `CS145` and `CS145b` hold
+the NAME identical and vary only the KEYWORD (`model`/`MODEL`, and `subckt`/`SUBCKT`
+for the branch that had no fixture at all), which is the only shape that can see the
+difference: with the old literal a verbatim `MODEL spmod …` card fails the literal,
+`sscanf` returns 0, the whole card becomes the key, and one model is emitted twice
+under `distinguish`.
+
+### THE CHECK'S FIRST CUSTOMER IS A SHIPPED EXAMPLE
+
+`xschem_library/examples/test_bus_tap.sch` carries ~20 `lab=VCC`/`lab=VSS`
+`lab_pin`s **plus** `{name=p29 lab=vcc}` and `{name=p30 lab=vss}` (lines 329-330),
+so under the default `fold` the new pass emits two warnings on it — and again every
+time the flagship `0_examples_top.sch`, which instantiates it, is netlisted. A sweep
+of all 147 `*.sch` under `xschem_library/{examples,ngspice,logic,pcb,rom8k,binto7seg,
+analyses,xschem_simulator}` found exactly that and nothing else: three files, six
+lines, all the same two pairs.
+
+**That is the check working, not a false positive** — `VCC` and `vcc` really are two
+nets in xschem and one node in ngspice, which is the whole subject of this section.
+It is recorded here for two reasons. First, the shipped example is now the warning's
+own first customer, so anyone who netlists it sees the sentence and the two painted
+nets; whether those two stray labels should be corrected upstream is a question for
+the library, not for this item, and it is deliberately left alone. Second, and this
+is the correction: **the empty audit contract must not be justified with "no
+committed fixture collides".** It does. The real reason the audit diff is empty is
+that **no headless test asserts that example's ERC transcript or its highlight
+table**.
+
+### Tests
+
+`tests/headless/test_netlist_case_collision.tcl`, checks **`CS115`–`CS149`**
+— **39 checks in the `--nogui` arm, 40 under `--pipe`** (`CS149` needs a Tk window
+to read the CIW back; it prints a `NOTE:` and is skipped otherwise). Band grepped,
+`CS114` was the highest id in use elsewhere. No simulator is invoked in either arm:
+every relayed line is copied byte for byte from the measurements above. Master
+red-before-green on the first pass: the six touched files replaced by
+`git show HEAD:` copies and rebuilt → **30 FAILED (0 passed)** of the 30 checks that
+existed then, i.e. not one check in the file passed without the item.
+
+**Not covered, stated plainly.** No simulator is invoked by the suite, so the
+relay is driven against captured text and not against a live run; the CIW's text and
+its `note` tag are asserted (`CS149`) but **what that colour looks like, and whether
+the three user-facing sentences read sensibly, is still owed to a human eye** — the
+`look` debt stands; the `.include`d-PDK class both halves are blind to has no
+fixture, because constructing one means shipping a PDK; and no Xyce, gaw or ASE-L
+path is exercised. The VHDL/Verilog/tEDAx backends are deliberately untouched;
+`CS124` guards the placement ruling and `CS146` the one cross-backend path that does
+fire. Two known-inert details, recorded so nobody re-finds them: the
+`strcmp(hit->value, entry->token)` guard cannot fail (node-table entries are already
+unique by `strcmp`, so dropping it changes nothing — it is belt and braces, as its
+comment says), and `CS121`'s "both spellings reach the deck verbatim" half has no
+reachable sabotage because nothing this item adds touches the strings the deck is
+written from; it is a regression guard, not evidence about new code.

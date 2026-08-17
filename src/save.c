@@ -2899,6 +2899,34 @@ int sim_case_mode_floor(void)
   return mode;
 }
 
+/* THE MODE THE DECK WE ARE WRITING WILL BE RUN IN -- casemode item 14.
+ * doc/claude/specs/raw_case_mode.md section 14, DECISIONS.md C2 and B1.
+ *
+ * A netlist is a question about a RUN, and about a run that has not happened
+ * yet, so none of the four file sources of raw_resolve_case_mode() can answer
+ * it: they read the bytes of a file some simulator already wrote. What answers
+ * it is the REQUESTED mode -- today the global floor, from item 6 onwards the
+ * per-profile mode with the floor underneath it. This wrapper exists so that
+ * item 6 has exactly ONE place to layer that on, and so the netlister's
+ * question ("what will run this deck?") is not confused with the resolver's
+ * ("what wrote this file?").
+ *
+ * The floor asserting `fold` without evidence is legitimate HERE and is stated,
+ * not inherited: section 10 bars the floor from a FILE's verdict, and item 4
+ * recorded the same distinction for the cross-probe senders -- a question about
+ * a run may use it. C2 spells out the direction: assume `fold` when no profile
+ * is set, because that is what a stock `apt` ngspice does (A1).
+ *
+ * NOT consulted: xctx->raw. A database loaded in the viewer describes a run
+ * that already happened, possibly of another design, and its mode is a
+ * statement about those bytes -- letting it steer the deck we are about to
+ * write would be the reverse of item 4's "bytes beat the flag" rule, since here
+ * there are no relevant bytes at all yet. */
+int netlist_case_mode(void)
+{
+  return sim_case_mode_floor();
+}
+
 int update_op()
 {
   int res = 0, p = 0, i;

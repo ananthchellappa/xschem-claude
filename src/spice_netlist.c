@@ -140,25 +140,50 @@ void hier_psprint(char **res, int what)  /* netlister driver */
 
 static char *model_name_result = NULL; /* safe even with multiple schematics */
 
-static char *model_name(const char *m)
+/* THE MODEL DEDUP KEY -- casemode item 14(b). doc/claude/specs/raw_case_mode.md
+ * section 14. `keep_case` is 1 only under `distinguish`.
+ *
+ * The fold is CORRECT under fold/preserve and stays: SPICE model and subckt
+ * identity really is case-insensitive there, so `.SUBCKT NAND2` is callable as
+ * `nand2` and two device_model attributes spelling one model differently must
+ * hash to one entry and be emitted once. Only `distinguish` makes `NAND2` and
+ * `nand2` two different models, and there emitting one of them would drop a
+ * model the deck needs.
+ *
+ * The narrowing is deliberately partial: the CARD KEYWORD is still located on a
+ * folded copy, so `.SUBCKT`/`.Model` are recognised in every mode. Only the
+ * IDENTITY -- the model name and the token after it, which is what the key is
+ * built from -- follows the mode. Two spellings of one card keyword name the
+ * same model, so merging them is right whatever the mode; two spellings of one
+ * model NAME do not, under `distinguish`.
+ *
+ * Note the fold used to feed the sscanf() parse as well as the key, which is why
+ * the literal `.subckt ` in the format string is gone: with a verbatim source
+ * string a `.SUBCKT` card would not match that literal, sscanf would return 0,
+ * and the whole card would become the key. The keyword is skipped by LENGTH
+ * instead -- strtolower() is byte-wise and length-preserving, so the offset
+ * found in the folded copy is the offset in the original. */
+static char *model_name(const char *m, int keep_case)
 {
   char *m_lower = NULL;
   char *modelname = NULL;
   char *ptr;
+  const char *src;
   int n;
   size_t l = strlen(m) + 1;
   my_strdup(_ALLOC_ID_, &m_lower, m);
   strtolower(m_lower);
+  src = keep_case ? m : m_lower;   /* what the KEY is built from */
   my_realloc(_ALLOC_ID_, &modelname, l);
   my_realloc(_ALLOC_ID_, &model_name_result, l);
   if((ptr = strstr(m_lower, ".subckt"))) {
-    n = sscanf(ptr, ".subckt %s %s", model_name_result, modelname);
+    n = sscanf(src + (ptr - m_lower) + 7, " %s %s", model_name_result, modelname);
   } else if((ptr = strstr(m_lower, ".model"))) {
-    n = sscanf(ptr, ".model %s %s", model_name_result, modelname);
+    n = sscanf(src + (ptr - m_lower) + 6, " %s %s", model_name_result, modelname);
   } else {
-     n = sscanf(m_lower, " %s %s", model_name_result, modelname);
+     n = sscanf(src, " %s %s", model_name_result, modelname);
   }
-  if(n<2) my_strncpy(model_name_result, m_lower, l);
+  if(n<2) my_strncpy(model_name_result, src, l);
   else {
     /* build a hash key value with no spaces to make device_model attributes with different spaces equivalent*/
     my_strcat(_ALLOC_ID_, &model_name_result, modelname);
@@ -176,6 +201,9 @@ static int spice_netlist(FILE *fd, int spice_stop )
   int lvs_netlist =  tclgetboolvar("lvs_netlist");
   int top_sub = lvs_netlist || tclgetboolvar("top_is_subckt");
   int lvs_ignore = tclgetboolvar("lvs_ignore");
+  /* casemode item 14(b): the dedup key keeps its fold unless `distinguish`.
+   * Resolved once per level rather than per instance -- it reads a Tcl var. */
+  int keep_model_case = (netlist_case_mode() == RAW_CASE_DISTINGUISH);
   if(lvs_netlist) my_strdup(_ALLOC_ID_, &xctx->format, "lvs_format");
   else my_strdup(_ALLOC_ID_, &xctx->format, xctx->custom_format);
   if(!spice_stop) {
@@ -183,6 +211,14 @@ static int spice_netlist(FILE *fd, int spice_stop )
     xctx->prep_net_structs = 0;
     err |= prepare_netlist_structs(1);
     err |= traverse_node_hash();  /* print all warnings about unconnected floatings etc */
+    /* casemode item 14(a): warn where xschem and the simulator disagree about how
+     * many nets this level has. Here and not inside traverse_node_hash() for two
+     * reasons: this is the per-LEVEL spice pass, so a collision confined to a
+     * subcircuit body is reported (the one upstream misses under `fold`), and
+     * traverse_node_hash() is also the interactive show_unconnected_pins() pass,
+     * where a question about a simulator run has no business firing.
+     * WARN, NOT ERROR (C2): the count is deliberately not OR-ed into `err`. */
+    netlist_case_collision_check();
     for(i=0;i<xctx->instances; ++i) /* print first ipin/opin defs ... */
     {
      if(skip_instance(i, 1, lvs_ignore)) continue;
@@ -229,14 +265,14 @@ static int spice_netlist(FILE *fd, int spice_stop )
          m = val;
          if(strchr(val, '@')) m = translate(i, val);
          else m = tcl_hook2(m);
-         if(m[0]) str_hash_lookup(&model_table, model_name(m), m, XINSERT);
+         if(m[0]) str_hash_lookup(&model_table, model_name(m, keep_model_case), m, XINSERT);
          else {
            my_strdup2(_ALLOC_ID_, &val,
                get_tok_value(xctx->sym[xctx->inst[i].ptr].prop_ptr, "device_model", 2));
            m = val;
            if(strchr(val, '@')) m = translate(i, val);
            else m = tcl_hook2(m);
-           if(m[0]) str_hash_lookup(&model_table, model_name(m), m, XINSERT);
+           if(m[0]) str_hash_lookup(&model_table, model_name(m, keep_model_case), m, XINSERT);
          }
          my_free(_ALLOC_ID_, &model_name_result);
          my_free(_ALLOC_ID_, &val);
