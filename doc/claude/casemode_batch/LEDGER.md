@@ -52,7 +52,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0420` filed |
 | 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0422`** filed (code execution) |
 | 7 | the capability probe (+ hard timeout) | `[x]` | `ebf4c952` | 61 | 69 | 4 + 3 audits | no | audit = one added row, zero movers. **Two probes built** (capability + run), §3b's contradiction resolved. **Transport changed `-p` → batch deck** (`-p` opens `$DISPLAY` and CORES with it unset). Spec §11 |
-| 8 | profile-aware `run_cmd` + mismatch policy | | | | | | no | `distinguish` mismatch REFUSES |
+| 8 | profile-aware `run_cmd` + mismatch policy | `[x]` | `d44febbd` | 38 | 38 | 3 + 3 audits | no | audit = one added row, zero movers (`_closer2_` authoritative). REFUSE = **before anything is generated**, `run_deck`'s first statement. `CS177c` **pins the two arg filters apart forever**. Spec §12 |
 | 9 | `sod_expr` stops folding + current arm | | | | | | no | flips ~20 assertions; that breakage is the evidence |
 | 10 | three defences: pre-flight + `$sim_status` + content | | | | | | no | pre-flight also OFFERS legacy corrections (D1) |
 | 11 | `result_probe` `-nocase` | | | | | | no | |
@@ -591,6 +591,56 @@ empty cwd cannot exclude `~/.spiceinit`.
 the two measured `.spiceinit` layers (cwd, `$HOME`); no `-D` key but `casemode`;
 `CS169q` and `alive` are Linux-specific (`/proc`, `kill -0`); and `CS170e`'s
 `home_restored` / `CS170n`'s `display_restored` rest on the test's own bookkeeping.
+
+## Carry-forwards item 8 handed on — baseline `audit_item08_closer2_2026-08-17`
+
+**Baseline is `audit_item08_closer2_2026-08-17.txt` — 325/15/0/0 of 340** at
+`d44febbd`. Item 8 kept three audit files for provenance; **`_closer2_` is the
+authoritative one** (the driver checked: `_closer_` and `_closer2_` are identical
+by name and status anyway). Its closer also **self-checked its differ** by
+diffing the baseline against itself.
+
+**The probe filter did NOT leak into the run, and a check now pins them apart
+permanently.** `CS177c` reads **both** filters on `-r` / `--rawfile` / `--soa-log`
+and **reddens if they ever agree**; wiring the probe filter in reddens it. That is
+the driver's dispatch warning turned into a standing guard, which is better than
+the warning.
+
+**Rulings (spec §12), each measured:**
+
+- **`-o`/`--output` IS dropped from a run, and reported.** Measured on real
+  `/usr/local/bin/ngspice`: `-b d.cir` prints `v(a) = 1.000000e+00` on stdout;
+  `-b -o o.log d.cir` prints only the log-file banner and **`ase::last_result`
+  comes back empty**. Reading `-o`'s file back was rejected — it would make
+  ASE-L's parse depend on a path the user chose.
+- **`-D casemode=` is emitted only for a NON-`fold` request.** `build-ver_50` with
+  no `-D` already answers `CCM=fold`; stock accepts and ignores it; a
+  `.spiceinit` overrides it anyway. Always emitting would change every existing
+  user's command line and buy nothing.
+- **An exe a row NAMES but we cannot locate REFUSES in every mode.** The bare-PATH
+  fallback would silently run a **different simulator** — and ver_50 has moved
+  three times in four days.
+- **REFUSE means before anything is generated.** The gate is `run_deck`'s **first
+  statement**, before its first `open` and before the cosim artefacts are cleared:
+  no deck, raw, log, VCD deletion, `.so` rebuild, process, `last_run` or callback.
+  The message says the rundir's files are from an earlier run. "Not confirmed"
+  (timeout, noexe, probe error) **also** refuses under `distinguish`, because
+  B4's clause is *confirmed to support it* — which is what catches B4's third
+  route, the binary moving under the path.
+- **The gate is armed only by a non-`fold` request**, so per A1 it never fires for
+  a stock user.
+- **A `stale`/`invalid` resolve is REPORTED, not refused.** Item 6 delegated this
+  here, and the first cut computed the status and **read it nowhere**, so a
+  renamed row **silently ran a different binary** (measured, two stand-ins).
+  Refusing was rejected: a hand-edited `simrc` must not make a saved session
+  unopenable, and the probe still measures the binary that will actually run.
+- **The advice must name a lever that exists** — on the global-floor path there is
+  no profile row and no `-n` checkbox, so "turn on the profile's `-n`" was
+  nonsense there.
+- **The report reaches three channels:** `ase::echo` → CIW pane (item 14's house
+  rule), the action log, and the head of `<rundir>/<cell>_ase.log` via
+  `run_done`'s new **optional** `notes` argument — optional so `test_ase_cosim`'s
+  six 3-argument callers keep working.
 
 ## Environment — re-verified 2026-08-16
 
