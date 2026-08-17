@@ -156,9 +156,34 @@ Three rules follow, and they are load-bearing for everything below:
 * **R1.** `gm`, `gds`, `vth`, `vdsat`, `cgg`, … exist in the raw **only** if the
   deck explicitly saved them, one card per device per parameter.
 * **R2.** Any explicit `save` **cancels the implicit save-everything**. A deck
-  that adds device saves must also carry `save all`, or the node voltages
+  that adds device saves must also carry `.save all`, or the node voltages
   disappear. (The shipped sky130 examples already pair them; a generated block
   must not assume the user did.)
+
+  **⚠ The spelling is the DOT-card `.save all`.** Corrected by S3 after three
+  independent measurements on **both** binaries now on this box
+  (`/usr/bin/ngspice` = 42, `/usr/local/bin/ngspice` = 46+, which now *shadows*
+  42 on `PATH`). A bare deck-level `save all` line is **not** a no-op and not a
+  cosmetic difference: ngspice parses it as an `s`-prefixed **switch instance**
+  and dies with `Error on line N … Unable to find definition of model`, writing
+  **no raw file at all**. That is strictly worse than omitting it — it removes
+  the whole raw rather than only the node voltages this rule is about. Earlier
+  revisions of this spec and of the S3 plan cell said "prepend `save all`"; taken
+  literally that instruction produces a deck that cannot simulate.
+
+* **R5. One bad card costs the whole raw — and which failure you get depends on
+  how ngspice was invoked.** Added by S3. This resolves an apparent contradiction
+  between landmine 9 and issue 0429: both are correct, for different idioms.
+
+  | invocation | one bogus `.save` card |
+  |---|---|
+  | `ngspice -b -r out.raw deck` | `Warning: unrecognized variable`, raw written, **fabricated `0.0` column** (landmine 9) |
+  | `.control … write out.raw … .endc` — **what every shipped PDK bench uses** | `Warning from checkvalid`, and **NO RAW FILE AT ALL** |
+
+  ngspice-46+ adds `Error during 'write': no writable vector found.` So under the
+  benches a wrong descriptor is not a plausible wrong number, it is *no data* —
+  and one rejected parameter anywhere in a generated block suppresses the entire
+  run. Issue **0434**.
 * **R3.** The vector names follow a fixed shape —
   `i(<dev>[<p>])` for currents, bare `<dev>[<p>]` for conductances,
   `v(<dev>[<p>])` for voltages — which is exactly `get_fqdevice()`'s
@@ -593,12 +618,13 @@ Verified free / safely overridable in this tree:
 
 | id | invariant |
 |---|---|
-| **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* |
-| **I2** | A generated save block always carries `save all` (rule R2). **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
+| **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* **⚠ AMENDED BY S3 — "one builder" was under-specified and it reverted a complete implementation. One builder, but it must take a BASIS.** `devpath`'s hierarchy prefix comes from `sim_sch_path`, which is **relative to the level where the raw was loaded** — the right basis for *reading* a vector out of a loaded raw, and the wrong one for *writing* a save card, which needs a **deck-absolute** name. They coincide only when no raw is loaded or the raw is at the top, which is why 85 green checks missed it. The fix is a basis argument on the one builder (`op_annot::devpath <inst> ?basis?`, `absolute` for save cards), **not** path arithmetic in the walk — that would be the second builder this invariant forbids, and is exactly what the prototypes' `startpath` was. Issue **0436**, mechanism confirmed in the C at `save.c:1260`, `draw.c:2831-2838`, `scheduler.c:5150`. |
+| **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
+| **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* `spice_ignore` device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. `spice_ignore=short` and `only_toplevel` are the same class, unmeasured. Issue **0437**. |
 | **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
-| **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. |
+| **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
 | **I7** | `hide=true` semantics are unchanged for every existing symbol in every library. |
 
 ---
@@ -618,6 +644,22 @@ Verified free / safely overridable in this tree:
    ascending or opening another schematic makes the same data silently invisible
    (returns −1) without freeing it — easy to misread as data loss. Set
    `raw_level` when a top-level raw must annotate a sub-schematic.
+
+   **⚠ THIS IS THE LANDMINE THAT REVERTED S3, and it is sharper than the
+   paragraph above suggests.** It does not only hide data; it silently *rewrites
+   the names a hierarchy walk emits*. The chain, all confirmed in the C:
+   `save.c:1260/1410/2153` bind `raw->schname` to `xctx->sch[xctx->currsch]` —
+   **whatever cell the user happened to be standing in when the raw was loaded**;
+   `draw.c:2831-2838` then re-matches that filename against every level *as the
+   walk descends*, so the match point moves during the walk; and
+   `scheduler.c:5150` `sim_sch_path` **strips every path component above the
+   matched level**. Consequence: with a raw loaded one level down, two different
+   instances of the same subcircuit **collapse to the same device path**.
+   Measured on a 3-level fixture: 8 cards, only **5 unique**, and no warning
+   anywhere. Reachable in two clicks, because "Annotate Operating Point into
+   schematic" loads a raw at the current level. So `sim_sch_path` is a **read**
+   primitive; anything that *writes* a name for a deck must ask for an absolute
+   basis. Issue **0436**.
 5. **The hierarchy walk is destructive if it leaks.** It descends the real
    design with undo and drawing disabled. Any early return that skips the
    restore leaves the editor in a state where edits are not undoable and the
@@ -632,8 +674,14 @@ Verified free / safely overridable in this tree:
    `xschem raw value <v> -1` returns the OP value in the first case and the
    cursor-B value in the second, which is exactly what makes C and D one feature.
 9. **⚠ A save card for a device that does not exist produces a column of
-   `0.0`, not a missing vector.** Added by S1, measured on `ngspice-42` and the
-   sharpest threat to **I3** in the whole design. A deck carrying
+   `0.0`, not a missing vector — under `-b -r`. Under the bench idiom it
+   produces NO RAW AT ALL.** Added by S1, measured on `ngspice-42`; the idiom
+   split was added by S3 — see **R5**, and read it before trusting the paragraph
+   below, which describes `ngspice -b -r out.raw` only. Under the
+   `.control … write … .endc` form every shipped PDK bench uses, the same bogus
+   card gives `Warning from checkvalid` and no raw file (issue 0429/0434). Both
+   are threats to **I3**; the first fabricates a number, the second destroys the
+   whole run. A deck carrying
    `.save @m.xnope.m1[id]` for a device that is not in the netlist emits one
    line — `Warning: unrecognized variable - @m.xnope.m1[id]` — on stderr and
    then writes a **full column named exactly what was asked for**, holding

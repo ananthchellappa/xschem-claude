@@ -1,0 +1,1032 @@
+diff --git a/src/op_annot.tcl b/src/op_annot.tcl
+index 589fcc4f..6876ddbb 100644
+--- a/src/op_annot.tcl
++++ b/src/op_annot.tcl
+@@ -401,3 +401,367 @@ proc op_annot::vector {instname param {kind {}}} {
+   if {$kind eq {}} { set kind [::op_annot::_kind $instname $param] }
+   return [::op_annot::_wrap $dev $param $kind]
+ }
++
++# =============================================================================
++# S3 — THE HIERARCHY WALK, THE SAVE-CARD BLOCK, AND THE .save FILE WRITER
++# =============================================================================
++# doc/claude/specs/op_annotation.md §3 (R2/R4), §5 (I1/I2/I4/I6), §6.
++#
++#   op_annot::save_cards {}       -> the `.save` block as TEXT, {} when empty
++#   op_annot::last_warnings {}    -> the warning LIST from the most recent walk
++#   op_annot::write_save_file {}  -> $netlist_dir/<cell>.save, returns the path
++#
++# Ported from sg13g2_sch_expand / sg13g2_hier_sch_expand (sg13g2_procs.tcl:345-421,
++# byte-identical twin at sky130A/sky130_procs.tcl:93-170) and de-PDK'd. What was
++# taken verbatim: the entry/exit flag block, the recursion body, the `nolist_libs`
++# skip, and the vector-instance handling (expandlabel for the multiplicity,
++# descend once at n==1 then `change_sch_path $n`, `go_back 2` at n==ninst) — the
++# piece src/xschem.tcl's generic `hier_traversal` lacks and the reason to port the
++# PDK version rather than the in-tree one. What was DROPPED: the per-PDK
++# `savelist` accumulator array, `only_subckts` / `all_hierarchy` / `pattern` (the
++# descriptor's own `match` globs are the only filter — a regexp over the cell name
++# would be a fourth, competing one) and `startpath` (re-deriving the hierarchy
++# prefix here would be a SECOND name builder, which is exactly what I1 forbids).
++#
++# ============================================================================
++# ⚠ THE CARD IS BARE. THIS FILE NEVER CALLS op_annot::vector.  (spec §3 R4)
++# ============================================================================
++# Re-measured for this step on BOTH ngspice binaries on this box (/usr/bin =
++# 42, /usr/local/bin = 46+, which now SHADOWS 42 on PATH):
++#
++#     .save @m.xm1.m1[id]     -> raw contains  i(@m.xm1.m1[id])
++#     .save i(@m.xm1.m1[id])  -> raw contains  NOTHING. no vector, no message.
++#
++# ngspice applies the wrapper itself from the parameter's own type. The emitter
++# writes `[op_annot::devpath $inst][param]`; `vector` is the READ shape only.
++#
++# ============================================================================
++# ⚠ I2's SPELLING IS `.save all` (DOT-CARD), NOT the bare `save all`
++# ============================================================================
++# Spec §5 I2 and this step's brief both say "prepend `save all`". Taken
++# literally that is WORSE than emitting nothing. Measured on ngspice-42 AND
++# 46+: a bare deck-level `save all` line is `Error on line N … Unable to find
++# definition of model` — ngspice parses it as an `s`-prefixed switch instance —
++# and NO RAW FILE IS WRITTEN AT ALL, so it removes the whole raw rather than
++# only the node voltages R2 is about. The dot-card works on both. Both
++# consumers want a deck-level dot-card anyway: the `.include`-able <cell>.save
++# file, and ase.tcl:3161's render_deck (which already emits its own `.save all`
++# — a duplicate is harmless, measured).
++#
++# I2 is honoured as "any NON-EMPTY block carries `.save all` as its first
++# line". An empty walk returns {}, not a lone `.save all`: a file whose entire
++# content is `.save all` says nothing while reporting success, and {} is what
++# lets the caller name WHICH first-run confusion it hit (spec §4.6).
++#
++# ============================================================================
++# ⚠ NO VALIDATION. THE DESCRIPTOR IS THE ONLY POLICY ABOUT WHAT IS SAVABLE.
++# ============================================================================
++# save_cards does NOT filter what it emits — not even parameters a given
++# ngspice rejects. sky130's inherited `cgso`/`cgdo` (issue 0429) therefore go
++# into the block unchanged, and under the `.control … write … .endc` idiom every
++# shipped PDK bench uses ONE rejected card makes ngspice write no raw file at
++# all. That is deliberate (I1): `params` is the single list the save side and
++# the display side share, and an emitter that dropped a parameter the display
++# still reads would be a second, silently drifting policy. The fix belongs in
++# the DESCRIPTOR data, not here. REJECTED: a hardcoded invalid-param blocklist
++# inside the emitter, and validating against a real raw at emit time (the raw
++# does not exist yet — that is the whole point of a .save file).
++#
++# ============================================================================
++# ⚠ I6 IS THE WHOLE RISK OF THIS FILE, AND IT IS FIVE THINGS
++# ============================================================================
++# The walk sets no_draw 1, no_undo 1, keep_symbols 1, pushes a log-suppress
++# scope and DESCENDS THE REAL DESIGN. Every exit path — including a raise three
++# levels down — restores all of them AND the entry hierarchy level. Before-state
++# on this tree: `sky130_save_fet_params` raises `Symbol not found` and returns
++# with no_draw=1 keep_symbols=1 still set (issue 0431). Shape:
++# `catch {_walk} res opts` -> an unconditional `_restore` whose every line is
++# individually catch-wrapped -> `return -options $opts $res`.
++#
++#  * THE UNWIND IS BOUNDED BY THE ENTRY LEVEL, not by 0. src/xschem.tcl:3857's
++#    `while {[xschem get currsch]} {xschem go_back}` would ascend past a caller
++#    that was already descended, leaving the user in a different cell than the
++#    one they invoked this from.
++#  * `xschem get no_undo` DOES NOT EXIST (setter only, scheduler.c:11958; it
++#    returns {} whether the flag is 0 or 1 — measured). So the entry value is
++#    unobservable and 0 is the only value that can be restored. Issue 0432.
++#  * AN UNPOPPED SUPPRESS SCOPE SILENCES THE USER'S ACTION LOG for the rest of
++#    the session — a worse defect than the navigation noise it removes — so the
++#    pop lives in the same unconditional block as the flags.
++#
++# ============================================================================
++# ⚠ `xschem descend` RETURNS 0 IN TWO CLASSES WITH OPPOSITE RESPONSES (0250)
++# ============================================================================
++# Measured on this tree (actions.c:4055-4065): a refusal BEFORE descending
++# (`no-selection`, `maxdepth`, `not-descendable:<type>`) returns 0 with currsch
++# UNCHANGED, while a blank/missing schematic returns 0 with currsch ALREADY
++# INCREMENTED (`load-failed`). Both PDK prototypes answer 0 with an
++# unconditional `go_back 2` (sg13g2_procs.tcl:401-407): right for the second
++# class, and for the first it pops a level it never pushed — at the top level
++# go_back is a no-op so nobody noticed, but one level down it corrupts sch_path
++# for the rest of the walk and the walk re-visits levels, emitting DUPLICATE
++# cards. Reachable for real at CADMAXHIER=40 on a recursive design. Issue 0433.
++# So the decision is driven off `xschem get currsch` before/after, NEVER off
++# descend's return value. Both prototypes still carry the bug; S5 deletes them.
++#
++# ============================================================================
++# ⚠ WHICH LEVEL THE BLOCK IS VALID FOR (spec landmine 4)
++# ============================================================================
++# The names come from op_annot::devpath verbatim — this file does no path
++# arithmetic (I1). devpath's prefix is translate's `@path` / `sim_sch_path`,
++# which is relative to the RAW LOAD LEVEL and degrades to the full path from the
++# TOP when no raw is loaded. So a walk run anywhere in the hierarchy emits
++# TOP-RELATIVE names and the block is always a block for a deck of the TOP cell.
++# The prototypes instead subtracted their entry path and emitted names relative
++# to wherever the user happened to be standing; the two disagree by design (same
++# class as issue 0430), which is why the golden is this step's own and never a
++# byte-diff against sky130_save_fet_params.
++# REJECTED: unwinding to currsch 0 before walking and re-descending after — it
++# would make a read-only report the most invasive operation in the feature.
++# RESIDUAL, unmeasured: a VECTOR DEVICE instance (`name=M1[3:0]` on a symbol
++# that has a descriptor) gets ONE card set built from the literal bracketed
++# name. Both prototypes have the same hole.
++
++namespace eval op_annot {
++  ## Cards accumulated by the CURRENT walk, and the warnings from the most
++  ## recent one. Namespace state rather than a `global <pdk>_sch_expand` array
++  ## (the prototype's shape) so nothing leaks into the user's global namespace.
++  variable _acc
++  variable warnings
++  if {![info exists _acc]}      { set _acc {} }
++  if {![info exists warnings]}  { set warnings {} }
++}
++
++## op_annot::last_warnings -> the list of human-readable warnings from the most
++## recent save_cards, {} when it was clean.
++##
++## The prototype's answer to an undescendable instance is a bare
++## `puts "Can not descend into $instname"` (sg13g2_procs.tcl:405), which is
++## invisible under --nogui, unassertable from a test, and lost in a GUI session
++## where nobody watches stdout. A collected list can be shown, tested, or
++## ignored by the caller.
++proc op_annot::last_warnings {} {
++  variable warnings
++  return $warnings
++}
++
++## The cards for ONE instance, or {} when it contributes none.
++##
++## ⚠ THE 0425 CONSUMER CONTRACT (see op_annot.tcl:122-124): skip on a blank
++## DEVPATH, never on a blank DESCRIPTOR. A descriptor whose `match` globs do not
++## claim this cell is still fully registered; emitting its params against an
++## empty device name would write `.save [id]` cards, and per spec landmine 9
++## ngspice answers a bogus card with a fabricated 0.0 column rather than a blank.
++##
++## ⚠ NO CATCH. devpath returns {} for every DATA condition, so anything that
++## raises in here is a caller bug or a broken PDK three levels down, and I6's
++## whole point is that such a raise reaches save_cards' restore.
++##
++## `derived` and `pinexpr` are not iterated: neither has a vector in any raw
++## (spec §4.3). `derived` is computed from params after they are read, `pinexpr`
++## is an expression over pin voltages.
++proc op_annot::_cards_for {instname} {
++  set t [::op_annot::type $instname]
++  if {$t eq {}} { return {} }
++  set d [::op_annot::descriptor $t]
++  if {![dict exists $d params]} { return {} }
++  set dev [::op_annot::devpath $instname]
++  if {$dev eq {}} { return {} }
++  set out {}
++  foreach row [dict get $d params] {
++    lappend out ".save ${dev}\[[lindex $row 1]\]"
++  }
++  return $out
++}
++
++## Did the descend just issued actually land us in a USABLE child?
++## <c0> is `xschem get currsch` from immediately BEFORE the descend.
++##
++## THIS IS THE 0250 CLASS SPLIT (see the header). Return value of `xschem
++## descend` is deliberately not consulted: it is 0 for both classes.
++##   currsch unchanged  -> class 1, nothing was pushed. NO go_back — the
++##                         prototype's unconditional one pops a caller's level.
++##   currsch advanced, descend_error set -> class 2 (`load-failed`): the
++##                         hierarchy ALREADY advanced, so this one DOES owe a
++##                         go_back before the walk can continue.
++##   currsch advanced, descend_error empty -> success.
++proc op_annot::_descended {c0} {
++  if {[catch {xschem get currsch} c1]} { return 0 }
++  if {$c1 <= $c0} { return 0 }
++  if {[catch {xschem get descend_error} derr]} { set derr {} }
++  if {$derr eq {}} { return 1 }
++  catch {xschem go_back 2}
++  return 0
++}
++
++## The recursion. Ported from sg13g2_hier_sch_expand (sg13g2_procs.tcl:366-421).
++## Appends to the namespace accumulator and returns nothing useful; a raise
++## anywhere inside it is caught exactly once, by save_cards.
++proc op_annot::_walk {} {
++  variable _acc
++  variable warnings
++  global nolist_libs
++  set ninstances [xschem get instances]
++  for {set i 0} {$i < $ninstances} {incr i} {
++    set instname [xschem getprop instance $i name]
++    ## ⚠ `getprop instance <n> cell::type`, NOT `getprop symbol <cell> type`.
++    ## The symbol form RAISES for generator cells (measured: 6 of the 14
++    ## instances of sky130_tests/test_generators) and is the literal trigger of
++    ## issue 0431. The index form resolves for a vector instance name too.
++    set type [::op_annot::type $i]
++
++    ## nolist_libs, verbatim from the prototype: libraries the user has excluded
++    ## from hierarchy traversal (empty in every stock workarea).
++    set skip 0
++    if {[info exists nolist_libs] && [llength $nolist_libs]} {
++      if {[catch {abs_sym_path [xschem getprop instance $i cell::name]} abs_symbol]} {
++        set abs_symbol {}
++      }
++      foreach j $nolist_libs {
++        if {[catch {regexp $j $abs_symbol} hit]} { set hit 0 }
++        if {$hit} { set skip 1 ; break }
++      }
++    }
++    if {$skip} { continue }
++
++    ## Emit BEFORE descending: depth-first, parents before children. Order is
++    ## part of this step's golden.
++    foreach c [::op_annot::_cards_for $instname] { lappend _acc $c }
++
++    if {$type ne {subcircuit}} { continue }
++
++    ## Vector instances: `expandlabel x2[1:0]` -> `x2[1],x2[0] 2` (never raises,
++    ## answers `x1 1` for a scalar). Descend ONCE, then walk the members with
++    ## change_sch_path, then go_back ONCE.
++    set ninst [lindex [split [xschem expandlabel $instname] { }] 1]
++    for {set n 1} {$n <= $ninst} {incr n} {
++      if {$n == 1} {
++        set c0 [xschem get currsch]
++        ## ⚠ `xschem select instance <i>` TOGGLES, and go_back leaves the
++        ## instance we came from selected — so unselect first or the next
++        ## descend refuses with `no-selection` / picks the wrong target.
++        ## `fast nodraw` is src/xschem.tcl:3717's cheaper form: no status
++        ## traffic, no selection draw.
++        catch {xschem unselect_all}
++        catch {xschem select instance $i fast nodraw}
++        xschem descend $n 2
++        if {[catch {xschem get descend_error} derr]} { set derr {} }
++        if {![::op_annot::_descended $c0]} {
++          lappend warnings "cannot descend into $instname ($derr)"
++          break
++        }
++      }
++      if {$n > 1} { xschem change_sch_path $n }
++      ::op_annot::_walk
++      if {$n == $ninst} { xschem go_back 2 }
++    }
++  }
++  return 1
++}
++
++## Ascend back to the level the walk started from — and NO FURTHER.
++##
++## Bounded by the ENTRY currsch, not by 0 (see I6 in the header). The guards are
++## because this runs on an unattended error path: a go_back that refuses to move
++## must break the loop rather than spin it forever.
++proc op_annot::_unwind {entry} {
++  set target [lindex $entry 0]
++  set guard 0
++  while {1} {
++    if {[catch {xschem get currsch} c]} { break }
++    if {$c <= $target} { break }
++    if {[catch {xschem go_back 2}]} { break }
++    if {[catch {xschem get currsch} c2]} { break }
++    if {$c2 >= $c} { break }
++    if {[incr guard] > 64} { break }
++  }
++}
++
++## THE UNCONDITIONAL RESTORE (I6). Every line is individually catch-wrapped so
++## one failure cannot skip the rest — the prototypes' straight-line reset is
++## simply not reached when the walk raises, which is issue 0431.
++##
++## <rc> is the catch code of the walk. It is deliberately NOT branched on: the
++## whole point is that this block runs identically on both paths.
++proc op_annot::_restore {entry rc} {
++  catch {::op_annot::_unwind $entry}
++  ## no_undo has no getter (issue 0432), so 0 is the only restorable value.
++  catch {xschem set no_undo 0}
++  catch {xschem set no_draw [lindex $entry 2]}
++  catch {set ::keep_symbols [lindex $entry 3]}
++  catch {xschem log_action -suppress pop}
++}
++
++## `.save all` first (I2 / rule R2, DOT-card — see the header), then the cards.
++## No prose header: write_save_file adds the human one, and S4's deck consumer
++## would only have to strip it.
++proc op_annot::_block {cards} {
++  if {[llength $cards] == 0} { return {} }
++  return "[join [linsert $cards 0 {.save all}] \n]\n"
++}
++
++## op_annot::save_cards -> the `.save` block for the whole hierarchy below the
++## CURRENT cell, as text; {} when no device produced a card.
++##
++## ⚠ IT RE-RAISES. A partial block silently returned is spec landmine 9's
++## fabricated-zeros hazard wearing a different hat: the devices the walk never
++## reached do not blank in the raw, they get a 0.0 column. Callers (including
++## S4's render_deck) must call this inside a catch.
++##
++## I4: reads context, never writes it. No instance placed, no set_modify,
++## nothing written to the .sch.
++proc op_annot::save_cards {} {
++  variable _acc
++  variable warnings
++  set _acc {}
++  set warnings {}
++  set kd 0
++  if {[info exists ::keep_symbols]} { set kd $::keep_symbols }
++  set entry [list [xschem get currsch] [xschem get sch_path] \
++                  [xschem get no_draw] $kd]
++  ## Pushed OUTSIDE the catch and popped inside _restore, so the pair survives
++  ## a raise. descend and go_back self-log (actions.c:4073, :4229) and a walk
++  ## over a real design would otherwise flood a log whose contract is
++  ## REPLAYABLE USER EDITS with hundreds of navigation lines.
++  catch {xschem log_action -suppress push}
++  set rc [catch {
++    set ::keep_symbols 1
++    ## The prototype's entry unselect_all, kept: descend acts on the selection,
++    ## so this is a real precondition. The selection is NOT saved and restored —
++    ## `xschem selected_set` answers instance NAMES only, so a "restore" would
++    ## silently drop every wire and text the user had selected, which is more
++    ## surprising than clearing it.
++    xschem unselect_all
++    xschem set no_draw 1
++    xschem set no_undo 1
++    ::op_annot::_walk
++  } res opts]
++  ::op_annot::_restore $entry $rc
++  if {$rc} { return -options $opts $res }
++  return [::op_annot::_block $_acc]
++}
++
++## op_annot::write_save_file -> writes the block to
++## $netlist_dir/<current cell>.save and returns the path; {} when there was
++## nothing to save (and then NO file is written — a .save file containing only
++## a header says nothing while reporting success).
++##
++## Modelled on IHP's `Create FET and BIP .save file` menu command
++## (sg13g2_procs.tcl:602-606), including its `file mkdir $netlist_dir`, which
++## sky130_procs.tcl:235 lacks. The textwindow is X-only: under --nogui / --pipe
++## there is no Tk and `textwindow` would raise.
++##
++## Definition only at source time — the SOURCE-TIME RULE above. Nothing here
++## runs until a menu item or a script calls it.
++proc op_annot::write_save_file {} {
++  global netlist_dir
++  set block [::op_annot::save_cards]
++  if {$block eq {}} { return {} }
++  file mkdir $netlist_dir
++  set path [file join $netlist_dir \
++    "[file rootname [file tail [xschem get current_name]]].save"]
++  ## ASCII only: this line goes into a file a SPICE parser reads.
++  write_data "* operating-point .save cards - .include this file in your testbench\n\n$block" $path
++  if {[info exists ::has_x] && $::has_x} { catch {textwindow $path} }
++  return $path
++}
+diff --git a/src/xschem.tcl b/src/xschem.tcl
+index 9d04d592..2636c4dd 100644
+--- a/src/xschem.tcl
++++ b/src/xschem.tcl
+@@ -15322,6 +15322,19 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
+          xschem annotate_op
+        }
+     }
++  # The first PDK-NEUTRAL route to a .save file in the tree: sky130 and IHP each
++  # have their own menu item driving their own private hierarchy walk, and gf180
++  # has none at all. Modelled on IHP's `Create FET and BIP .save file`
++  # (ihp-sg13g2/sg13g2_procs.tcl:602-606); the walk and the writer live in
++  # src/op_annot.tcl. See doc/claude/specs/op_annotation.md.
++  $topwin.menubar.simulation.graph add command -label {Create device OP .save file} \
++    -command {
++       if {[catch {op_annot::write_save_file} tctx::retval]} {
++         alert_ "Could not create the .save file:\n$tctx::retval"
++       } elseif {$tctx::retval eq {}} {
++         alert_ "Nothing to save: no operating-point descriptor claims any device\nin this schematic. A PDK registers them with op_annot::register."
++       }
++    }
+   $topwin.menubar.simulation.graph add checkbutton -label "Live annotate probes with 'b' cursor" \
+      -selectcolor $selectcolor -variable live_cursor2_backannotate
+   $topwin.menubar.simulation.graph add checkbutton -label "Hide graphs if no spice data loaded" \
+diff --git a/tests/headless/test_op_annot.tcl b/tests/headless/test_op_annot.tcl
+index 880d9aea..f8c5d4cb 100644
+--- a/tests/headless/test_op_annot.tcl
++++ b/tests/headless/test_op_annot.tcl
+@@ -1034,6 +1034,631 @@ check {P30 0425(2) a cross-PDK overwrite degrades to BLANK, not a wrong name} \
+   incr fail
+ }
+ 
++# =============================================================================
++# SECTION S — S3 of doc/claude/specs/op_annotation.md: THE HIERARCHY WALK,
++#             THE SAVE-CARD BLOCK, AND THE .save FILE WRITER
++# =============================================================================
++# S1 built the name builder; S2 filled the descriptor store. S3 adds the two
++# consumers that turn a descriptor into a deck:
++#
++#   op_annot::save_cards {}       -> the `.save` block as TEXT, {} when empty
++#   op_annot::last_warnings {}    -> the warning LIST from the most recent walk
++#   op_annot::write_save_file {}  -> $netlist_dir/<cell>.save, returns the path
++#
++# and the hierarchy walk underneath them, ported from sg13g2_sch_expand /
++# sg13g2_hier_sch_expand (sg13g2_procs.tcl:345-421) and de-PDK'd.
++#
++# ============================================================================
++# ⚠ THE CARD IS BARE. NEVER op_annot::vector.  (spec §3 R4, src/op_annot.tcl:43)
++# ============================================================================
++# Re-measured for this section on BOTH ngspice binaries now on this box
++# (/usr/bin/ngspice = 42, /usr/local/bin/ngspice = 46+ and FIRST on PATH):
++#
++#     .save @m.xm1.m1[id]     -> raw contains  i(@m.xm1.m1[id])
++#     .save i(@m.xm1.m1[id])  -> raw contains  NOTHING. no vector, no message.
++#
++# The emitter writes `[op_annot::devpath $inst][param]`. Row S3 is the guardian.
++#
++# ============================================================================
++# ⚠ I2's SPELLING IS `.save all`, NOT the bare `save all` the step brief says
++# ============================================================================
++# MEASURED on ngspice-42 AND 46+: a bare deck-level `save all` line is
++# `Error on line N … Unable to find definition of model` — ngspice parses it as
++# an `s`-prefixed switch instance — and NO RAW FILE IS WRITTEN AT ALL. The
++# dot-card `.save all` works on both (raw = node voltages plus the bare device
++# vectors). Emitting the bare form is strictly WORSE than omitting it: it
++# removes the whole raw rather than only the node voltages. Rows S4 and S5.
++#
++# ============================================================================
++# ⚠ I6 IS THE WHOLE RISK OF THIS STEP, AND IT IS FOUR THINGS, NOT THREE
++# ============================================================================
++# The walk sets no_draw 1, no_undo 1, keep_symbols 1 and DESCENDS THE REAL
++# DESIGN. Every exit path — including the forced mid-walk raise — must restore
++# all of them AND the entry hierarchy level. Reproduced before-state, on this
++# tree: `sky130_save_fet_params` on sky130_tests/test_generators raises
++# `Symbol not found` and returns with no_draw=1 keep_symbols=1 still set
++# (issue 0431). Rows S8/S10/S11/S12.
++#
++# ⚠ `xschem get no_undo` DOES NOT EXIST (setter only, scheduler.c:11958). It
++# returns {} both before and after `xschem set no_undo 1` — measured. So the
++# step's stated "assert no_undo is back to its entry value" is UNWRITABLE as a
++# flag read: as `== 0` it fails, as `equals the entry value` it passes
++# vacuously against {}. Row S9 probes the FLAG'S EFFECT instead — push_undo /
++# delete / undo round-trips the instance count — with a PAIRED CONTROL under an
++# explicit `no_undo 1` proving the probe discriminates. Issue 0432.
++#
++# ⚠ EVERY FORCED-FAILURE ROW ALSO ASSERTS THE SHIM FIRED. Without that, an
++# ABSENT op_annot::save_cards raises `invalid command name` before touching
++# anything, "the state is unchanged" is trivially true, and S11/S12 would pass
++# green against a feature that does not exist. `$::opa_s3_shim_hits > 0` is
++# what makes the restore a claim. Same reason the happy-path rows carry the
++# `rcall` rc in their golden.
++#
++# ============================================================================
++# ⚠ THE GOLDEN IS S3's OWN — NEVER A BYTE-DIFF AGAINST THE PDK PROTOTYPE
++# ============================================================================
++# Measured on this fixture the generic walk and sky130_save_fet_params disagree
++# BY DESIGN: the prototype reads `getprop instance <n> spiceprefix` (empty when
++# spiceprefix lives in the symbol template) and answers `@m.x1.x2[1].m1.…`
++# without the `x` (issue 0430), and it never saves `id` (issue 0427). Section P
++# keeps the prototype diff where it belongs — at name level, on cells that
++# spell `spiceprefix=` on the instance line.
++#
++# ============================================================================
++# ⚠ FIXTURE TRAP, MEASURED AND EXPENSIVE: THE `~.sch` BACKUP
++# ============================================================================
++# A row that leaves the buffer modified (row S9's undo probe does) makes the
++# NEXT `xschem load` write `s3top~.sch`, and `go_back` prefers that backup over
++# the on-disk cell (actions.c load_backup_as). Measured consequence: a later
++# descend/go_back round trip came back with ONE instance instead of two and
++# every subsequent descend answered `not-descendable:nmos`. `xschem set
++# modified 0` does NOT clear the flag (measured: rc 0, flag still 1). So every
++# fixture load in this section goes through opa_s3_load, which deletes the
++# backups on BOTH sides of the load.
++#
++# ⚠ `xschem select instance <i>` TOGGLES. After a go_back the instance you came
++# from is left selected, so a bare re-select DESELECTS it and the next descend
++# fails `no-selection`. Every re-descend here is `unselect_all` first.
++#
++# True headless is the default invocation; rows S16 and S19 need more:
++#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_op_annot.tcl
++#   GUI_GATE=0 xvfb-run -a ./src/xschem --pipe -q --logdir $(mktemp -d) \
++#     --script tests/headless/test_op_annot.tcl
++
++## A row that cannot run in THIS invocation. Neither counter moves: a skip that
++## incremented $npass would be a hollow pass, and one that incremented $fail
++## would red the default headless run for the absence of an X server.
++proc skiprow {name why} { puts "skip: $name  ($why)" ; flush stdout }
++
++## Backup-safe fixture load. See the `~.sch` trap above.
++proc opa_s3_load {name} {
++  global lib
++  foreach f [glob -nocomplain [file join $lib *~.sch]] { catch {file delete -force $f} }
++  catch {xschem load [file join $lib $name]}
++  foreach f [glob -nocomplain [file join $lib *~.sch]] { catch {file delete -force $f} }
++  return [list [xschem get instances] [xschem get currsch] [xschem get sch_path] \
++               [xschem get modified]]
++}
++
++## THE I6 4-TUPLE. no_draw and currsch/sch_path are real getters; keep_symbols
++## is the Tcl global the walk overwrites. no_undo is absent by construction —
++## see the header, and row S9.
++proc opa_s3_state {} {
++  set kd 0
++  if {[info exists ::keep_symbols]} { set kd $::keep_symbols }
++  return [list [xschem get no_draw] $kd [xschem get currsch] [xschem get sch_path]]
++}
++
++## Does undo actually work right now? -> {before after-delete after-undo}.
++## Measured: {2 1 2} with undo live, {2 1 1} under `xschem set no_undo 1`.
++proc opa_s3_undo_probe {} {
++  set n0 [xschem get instances]
++  catch {xschem push_undo}
++  catch {xschem unselect_all}
++  catch {xschem select instance 0 fast nodraw}
++  catch {xschem delete}
++  set n1 [xschem get instances]
++  catch {xschem undo}
++  return [list $n0 $n1 [xschem get instances]]
++}
++
++proc opa_s3_lines {block} { return [split [string trimright $block "\n"] "\n"] }
++
++## The forced mid-walk failure. devpath is the ONE call every emitted card goes
++## through, so raising inside it whenever the walk has descended reproduces the
++## "a devproc / translate / expandlabel blew up three levels down" case without
++## needing a broken PDK. The hit counter is what stops the rows it feeds from
++## passing vacuously against an absent save_cards.
++set ::opa_s3_shim_hits 0
++proc opa_s3_shim_on {} {
++  set ::opa_s3_shim_hits 0
++  if {[info commands ::op_annot::devpath_real] eq {}} {
++    catch {rename ::op_annot::devpath ::op_annot::devpath_real}
++  }
++  proc ::op_annot::devpath {instname} {
++    if {[xschem get currsch] > 0} {
++      incr ::opa_s3_shim_hits
++      return -code error "opa forced mid-walk failure"
++    }
++    return [::op_annot::devpath_real $instname]
++  }
++}
++proc opa_s3_shim_off {} {
++  if {[info commands ::op_annot::devpath_real] ne {}} {
++    catch {rename ::op_annot::devpath {}}
++    catch {rename ::op_annot::devpath_real ::op_annot::devpath}
++  }
++}
++
++## Action-log line counter (row S16 only). The log is line-buffered
++## (util.c:405), so a mid-run read sees every line already written.
++proc opa_s3_logcount {pat} {
++  if {[catch {open [xschem get actionlog_filename] r} fd]} { return -1 }
++  set b [read $fd] ; close $fd
++  set n 0
++  foreach line [split $b \n] { if {[string match $pat $line]} { incr n } }
++  return $n
++}
++
++# --- the S3 fixture: top -> mid -> leaf, with a VECTOR instance in the middle -
++# s3top.sch   x1 (s3mid.sym)        + M9 (sky130 nfet)
++# s3mid.sch   x2[1:0] (s3leaf.sym)  + M5 (sky130 nfet)
++# s3leaf.sch  M1 (sky130 nfet)
++# s3badtop.sch  xb (s3bad.sym, which has NO .sch) + M3   -> the warning channel
++# s3rectop.sch  xr (s3rec.sym, whose .sch instantiates s3rec.sym again) + M1
++#               at every level  -> CADMAXHIER=40, the class-1 descend refusal
++foreach s {s3mid s3leaf s3rec s3bad} {
++  set f [open [file join $lib $s.sym] w]
++  puts $f "v {xschem version=3.4.4 file_version=1.2}
++G {type=subcircuit
++format=\"@name @pinlist @symname\"
++template=\"name=x1\"}
++V {}
++S {}
++E {}
++L 4 -20 -20 20 -20 {}
++L 4 20 -20 20 20 {}
++L 4 20 20 -20 20 {}
++L 4 -20 20 -20 -20 {}
++B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
++T {@symname} -20 -34 0 0 0.2 0.2 {}"
++  close $f
++}
++set f [open [file join $lib s3top.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {s3mid.sym} 120 0 0 0 {name=x1}
++C {sky130_fd_pr/nfet_01v8.sym} 400 -300 0 0 {name=M9 W=1 L=0.15 nf=1}}
++close $f
++set f [open [file join $lib s3mid.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {s3leaf.sym} 120 0 0 0 {name=x2[1:0]}
++C {sky130_fd_pr/nfet_01v8.sym} 400 -300 0 0 {name=M5 W=1 L=0.15 nf=1}}
++close $f
++set f [open [file join $lib s3leaf.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {sky130_fd_pr/nfet_01v8.sym} 400 -300 0 0 {name=M1 W=1 L=0.15 nf=1}}
++close $f
++set f [open [file join $lib s3badtop.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {s3bad.sym} 120 0 0 0 {name=xb}
++C {sky130_fd_pr/nfet_01v8.sym} 400 -300 0 0 {name=M3 W=1 L=0.15 nf=1}}
++close $f
++set f [open [file join $lib s3rec.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {s3rec.sym} 120 0 0 0 {name=xr}
++C {sky130_fd_pr/nfet_01v8.sym} 400 -300 0 0 {name=M1 W=1 L=0.15 nf=1}}
++close $f
++set f [open [file join $lib s3rectop.sch] w]
++puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {s3rec.sym} 120 0 0 0 {name=xr}}
++close $f
++
++set XSCHEM_LIBRARY_PATH ":[file join $repo sky130A xschem_libs]:[file join $repo xschem_library devices]:$lib"
++
++# --- the S3 goldens -----------------------------------------------------------
++set S3_TMPL   {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model}
++set S3_PARAMS {{id id 0} {gm gm 1} {vth vth 2}}
++set S3_MATCH  {*sky130_fd_pr/*}
++set S3_DESC   [list devpath $S3_TMPL params $S3_PARAMS match $S3_MATCH]
++
++# ⚠ ORDER IS PART OF THE GOLDEN, and it is the walk's contract made visible:
++# DEPTH-FIRST, cards emitted for an instance BEFORE descending into it, vector
++# members leftmost-first (x2[1] precedes x2[0] — `expandlabel x2[1:0]` answers
++# `x2[1],x2[0] 2`). Measured on this fixture with the prototype's own recursion
++# shape; a walk that emitted the top-level M9 first, or that visited x2[0]
++# first, reds here and should.
++set S3_GOLD [list \
++  {.save all} \
++  {.save @m.x1.x2[1].xm1.msky130_fd_pr__nfet_01v8[id]} \
++  {.save @m.x1.x2[1].xm1.msky130_fd_pr__nfet_01v8[gm]} \
++  {.save @m.x1.x2[1].xm1.msky130_fd_pr__nfet_01v8[vth]} \
++  {.save @m.x1.x2[0].xm1.msky130_fd_pr__nfet_01v8[id]} \
++  {.save @m.x1.x2[0].xm1.msky130_fd_pr__nfet_01v8[gm]} \
++  {.save @m.x1.x2[0].xm1.msky130_fd_pr__nfet_01v8[vth]} \
++  {.save @m.x1.xm5.msky130_fd_pr__nfet_01v8[id]} \
++  {.save @m.x1.xm5.msky130_fd_pr__nfet_01v8[gm]} \
++  {.save @m.x1.xm5.msky130_fd_pr__nfet_01v8[vth]} \
++  {.save @m.xm9.msky130_fd_pr__nfet_01v8[id]} \
++  {.save @m.xm9.msky130_fd_pr__nfet_01v8[gm]} \
++  {.save @m.xm9.msky130_fd_pr__nfet_01v8[vth]}]
++
++# s3badtop: the FET at the top still gets its cards; only xb is skipped.
++set S3_BADGOLD [list \
++  {.save all} \
++  {.save @m.xm3.msky130_fd_pr__nfet_01v8[id]} \
++  {.save @m.xm3.msky130_fd_pr__nfet_01v8[gm]} \
++  {.save @m.xm3.msky130_fd_pr__nfet_01v8[vth]}]
++
++# The entry state every row in this section starts from and must get back.
++set S3_ENTRY {0 0 0 .}
++
++if {[catch {
++
++# ===========================================================================
++# S0 — FIXTURE, asserted rather than assumed
++# ===========================================================================
++# ⚠ CONTROL, green before and after. Section P leaves an IHP-shaped `nmos` in
++# the store and a different library path; without this row a broken fixture
++# would degrade every S row below into a hollow pass.
++check {S0 FIXTURE store cleared, and the 3-level fixture loads at every level} \
++  [list [rcall {opa_clear_store}] \
++        [opa_s3_load s3leaf.sch] [xschem getprop instance 0 name] \
++        [xschem getprop instance 0 cell::type] \
++        [opa_s3_load s3top.sch] [xschem getprop instance 0 name] \
++        [xschem getprop instance 0 cell::type] [xschem getprop instance 1 name] \
++        [xschem getprop instance 1 cell::type] [opa_s3_state]] \
++  [list {0 {{} {} {}}} {1 0 . 0} M1 nmos {2 0 . 0} x1 subcircuit M9 nmos \
++        $S3_ENTRY]
++
++# ===========================================================================
++# S1 — the three deliverables exist
++# ===========================================================================
++# ⚠ THE rcall DISCIPLINE'S PARTNER. An absent proc must red ONE legible row;
++# without this the expects-blank rows below would be satisfied by
++# `invalid command name`.
++check {S1 save_cards, last_warnings and write_save_file all exist} \
++  [list [expr {[info commands ::op_annot::save_cards]      ne {}}] \
++        [expr {[info commands ::op_annot::last_warnings]   ne {}}] \
++        [expr {[info commands ::op_annot::write_save_file] ne {}}]] \
++  {1 1 1}
++
++# ===========================================================================
++# S2 — THE GOLDEN CARD LIST
++# ===========================================================================
++catch {op_annot::register nmos $S3_DESC}
++opa_s3_load s3top.sch
++check {S2 GOLDEN 13-line block, depth-first, cards BEFORE descending} \
++  [rcall {opa_s3_lines [op_annot::save_cards]}] [list 0 $S3_GOLD]
++
++set s3_block {}
++catch {set s3_block [op_annot::save_cards]}
++set s3_lines [opa_s3_lines $s3_block]
++
++# ===========================================================================
++# S3 — THE CARD IS BARE (spec §3 R4). THE MOST IMPORTANT ROW IN THE STEP.
++# ===========================================================================
++# The three params deliberately span all three kinds (id=0, gm=1, vth=2). If
++# the emitter went through op_annot::vector, 8 of the 12 cards would gain an
++# `i(` or `v(` wrapper — and ngspice would then put NOTHING in the raw for
++# them, with no diagnostic. The second half recomputes the top-level cards from
++# op_annot::devpath at the call site: same builder (I1), no wrapper.
++set s3_m9 {}
++catch { foreach p {id gm vth} { lappend s3_m9 ".save [op_annot::devpath M9]\[$p\]" } }
++check {S3 R4/I1 no card is wrapped, and the M9 cards are [devpath][param]} \
++  [list [llength [lsearch -all -glob $s3_lines {*i(*}]] \
++        [llength [lsearch -all -glob $s3_lines {*v(*}]] \
++        [expr {[lrange $s3_lines end-2 end] eq $s3_m9}] [llength $s3_m9]] \
++  {0 0 1 3}
++
++# ===========================================================================
++# S4/S5 — I2 / rule R2, and I2's SPELLING
++# ===========================================================================
++check {S4 I2/R2 the block's FIRST line is `.save all`, and exactly one line is} \
++  [list [lindex $s3_lines 0] [llength [lsearch -all -exact $s3_lines {.save all}]]] \
++  [list {.save all} 1]
++
++# ⚠ Measured on ngspice-42 AND 46+: the bare deck-level form is a hard error and
++# writes NO raw file at all. The line count is in the golden so an absent
++# save_cards (one empty line) cannot satisfy the row.
++check {S5 I2 SPELLING no line is the bare `save all` (it kills the whole run)} \
++  [list [llength [lsearch -all -exact $s3_lines {save all}]] [llength $s3_lines]] \
++  {0 13}
++
++# ===========================================================================
++# S6 — the 0425 CONSUMER CONTRACT: skip on a blank DEVPATH, never on a blank
++#      DESCRIPTOR (src/op_annot.tcl:122-124)
++# ===========================================================================
++# The descriptor is still fully registered; only its `match` glob stops
++# claiming the cell. An emitter that tested the DESCRIPTOR would emit twelve
++# cards with an EMPTY device name — and per spec landmine 9 ngspice answers a
++# bogus card with a fabricated 0.0 column, not a blank.
++catch {op_annot::register nmos [list devpath $S3_TMPL params $S3_PARAMS \
++                                    match {*nothing_matches_this*}]}
++check {S6 0425 a non-matching cell yields {} — not a lone `.save all`, not a raise} \
++  [list [expr {[op_annot::descriptor nmos] ne {}}] [rcall {op_annot::save_cards}]] \
++  [list 1 {0 {}}]
++
++# ===========================================================================
++# S7 — `derived` and `pinexpr` CONTRIBUTE NO CARDS (spec §4.3)
++# ===========================================================================
++# `gm/id` is computed from params after they are read and `vgs` is a pin
++# expression; neither has a vector in any raw. The S2 descriptor deliberately
++# carries neither key, so this row is their sole guardian.
++catch {op_annot::register nmos [list devpath $S3_TMPL params $S3_PARAMS \
++        match $S3_MATCH derived {{gm/id {$gm/$id}}} \
++        pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}}]}
++check {S7 derived and pinexpr add no cards: the block is byte-identical to S2} \
++  [rcall {opa_s3_lines [op_annot::save_cards]}] [list 0 $S3_GOLD]
++
++# ===========================================================================
++# S8 — I6, HAPPY PATH
++# ===========================================================================
++# ⚠ THE rc IS IN THE GOLDEN. Without it the row passes against an absent
++# save_cards: a call that raises before touching anything leaves the state
++# trivially unchanged.
++catch {op_annot::register nmos $S3_DESC}
++opa_s3_load s3top.sch
++set s8_before [opa_s3_state]
++set s8_rc [lindex [rcall {op_annot::save_cards}] 0]
++check {S8 I6 no_draw / keep_symbols / currsch / sch_path all back after a walk} \
++  [list $s8_rc $s8_before [expr {[opa_s3_state] eq $s8_before}]] \
++  [list 0 $S3_ENTRY 1]
++
++# ===========================================================================
++# S9 — I6 for no_undo, FUNCTIONALLY (issue 0432: there is no getter)
++# ===========================================================================
++# ⚠ `xschem get no_undo` returns {} whether the flag is 0 or 1 — measured
++# before and after `xschem set no_undo 1`. So the flag is probed by its EFFECT.
++# The paired control under an explicit `no_undo 1` is what proves the probe
++# discriminates instead of passing on any binary at all.
++opa_s3_load s3top.sch
++set s9_rc [lindex [rcall {op_annot::save_cards}] 0]
++set s9_live [opa_s3_undo_probe]
++opa_s3_load s3top.sch
++xschem set no_undo 1
++set s9_dead [opa_s3_undo_probe]
++xschem set no_undo 0
++check {S9 I6 undo still works after the walk; control: no_undo 1 breaks it} \
++  [list $s9_rc $s9_live $s9_dead] [list 0 {2 1 2} {2 1 1}]
++
++# ===========================================================================
++# S10 — I6, FORCED MID-WALK FAILURE: RE-RAISED, NOT SWALLOWED
++# ===========================================================================
++# A partial block silently returned is spec landmine 9's fabricated-zeros
++# hazard wearing a different hat: the missing devices do not blank, they get a
++# 0.0 column. The walk must re-raise and let the caller decide.
++opa_s3_load s3top.sch
++set s10_before [opa_s3_state]
++opa_s3_shim_on
++set s10 [rcall {op_annot::save_cards}]
++set s10_after [opa_s3_state]
++set s10_hits $::opa_s3_shim_hits
++opa_s3_shim_off
++check {S10 I6 a forced mid-walk failure propagates out of save_cards} \
++  [list [lindex $s10 0] \
++        [string match {*opa forced mid-walk failure*} [lindex $s10 1]] \
++        [expr {$s10_hits > 0}]] \
++  {1 1 1}
++
++# ===========================================================================
++# S11 — I6, THE ROW ISSUE 0431 EXISTS FOR
++# ===========================================================================
++# Before-state, reproduced on this tree: sky130_save_fet_params raises and
++# returns with no_draw=1 keep_symbols=1 still set. The shim-hit count is what
++# stops this row passing against an absent save_cards.
++check {S11 I6 after the forced failure the entry state is fully restored (0431)} \
++  [list [expr {$s10_hits > 0}] $s10_before $s10_after \
++        [expr {$s10_after eq $s10_before}] [opa_s3_undo_probe]] \
++  [list 1 $S3_ENTRY $S3_ENTRY 1 {2 1 2}]
++
++# ===========================================================================
++# S12 — I6, THE UNWIND IS BOUNDED BY THE ENTRY LEVEL, NOT BY 0
++# ===========================================================================
++# This is the half of I6 that issue 0431 never measured: its cell raises at the
++# TOP level, where sch_path survives by luck. Entering the walk already
++# descended into x1 and forcing the same raise two levels down, the restore
++# must land back on currsch=1 / sch_path=.x1. — the src/xschem.tcl:3857 idiom
++# `while {[xschem get currsch]} {xschem go_back}` would ascend past the caller.
++opa_s3_load s3top.sch
++xschem unselect_all
++xschem select instance 0 fast nodraw
++xschem descend 1 2
++set s12_before [opa_s3_state]
++opa_s3_shim_on
++set s12 [rcall {op_annot::save_cards}]
++set s12_after [opa_s3_state]
++set s12_hits $::opa_s3_shim_hits
++opa_s3_shim_off
++while {[xschem get currsch] > 0} { catch {xschem go_back 2} }
++check {S12 I6 the unwind stops at the ENTRY level (currsch 1, sch_path .x1.)} \
++  [list [expr {$s12_hits > 0}] $s12_before $s12_after] \
++  [list 1 {0 0 1 .x1.} {0 0 1 .x1.}]
++
++# ===========================================================================
++# S13 — I4: the overlay never modifies the schematic
++# ===========================================================================
++opa_s3_load s3top.sch
++set s13_m0 [xschem get modified]
++set s13_rc1 [lindex [rcall {op_annot::save_cards}] 0]
++set s13_m1 [xschem get modified]
++opa_s3_shim_on
++set s13_rc2 [lindex [rcall {op_annot::save_cards}] 0]
++set s13_hits $::opa_s3_shim_hits
++opa_s3_shim_off
++set s13_m2 [xschem get modified]
++check {S13 I4 the walk never dirties the .sch, happy path or forced failure} \
++  [list $s13_m0 $s13_rc1 $s13_m1 [expr {$s13_hits > 0}] $s13_rc2 $s13_m2] \
++  {0 0 0 1 1 0}
++
++# ===========================================================================
++# S14 — THE WARNINGS CHANNEL
++# ===========================================================================
++# The prototype's answer to an undescendable instance is a bare `puts` (
++# sg13g2_procs.tcl:405), which is invisible under --nogui and unassertable.
++# s3bad.sym has NO .sch: measured, `xschem descend` returns 0, currsch DOES
++# increment (issue 0250 class 2) and `xschem get descend_error` is
++# `load-failed`. The walk must still emit the sibling FET's cards.
++opa_s3_load s3top.sch
++set s14_clean [rcall {op_annot::save_cards ; op_annot::last_warnings}]
++opa_s3_load s3badtop.sch
++set s14 [rcall {op_annot::save_cards}]
++set s14_w [rcall {op_annot::last_warnings}]
++check {S14 an undescendable subcircuit is reported in last_warnings, not `puts`} \
++  [list $s14_clean [lindex $s14 0] [opa_s3_lines [lindex $s14 1]] \
++        [lindex $s14_w 0] [llength [lindex $s14_w 1]] \
++        [string match {*xb*} [lindex $s14_w 1]] \
++        [string match {*load-failed*} [lindex $s14_w 1]] [opa_s3_state]] \
++  [list {0 {}} 0 $S3_BADGOLD 0 1 1 1 $S3_ENTRY]
++
++# ===========================================================================
++# S15 — issue 0433: A CLASS-1 DESCEND REFUSAL MUST NOT OVER-ASCEND
++# ===========================================================================
++# `xschem descend` returns 0 in TWO classes with OPPOSITE required responses
++# (actions.c:4055-4065). Measured on this tree: a blank/missing schematic
++# returns 0 with currsch INCREMENTED (`load-failed`), while a refusal BEFORE
++# descending returns 0 with currsch UNCHANGED (`no-selection`, `maxdepth`,
++# `not-descendable:<type>`). Both PDK prototypes answer 0 with an unconditional
++# `go_back 2` — right for the first class, and for the second it pops a level
++# it never pushed, so the walk re-visits levels and emits DUPLICATE cards.
++# s3rec.sym instantiates itself, so the walk hits CADMAXHIER=40 and takes the
++# class-1 path for real. 118 lines = `.save all` + 39 levels x 3 params.
++opa_s3_load s3rectop.sch
++set s15 [rcall {op_annot::save_cards}]
++set s15_w [rcall {op_annot::last_warnings}]
++set s15_lines [opa_s3_lines [lindex $s15 1]]
++check {S15 0433 the recursive walk terminates, emits no duplicate card, restores} \
++  [list [lindex $s15 0] [llength $s15_lines] \
++        [expr {[llength $s15_lines] == [llength [lsort -unique $s15_lines]]}] \
++        [lindex $s15_w 0] [llength [lindex $s15_w 1]] \
++        [string match {*xr*} [lindex $s15_w 1]] \
++        [string match {*maxdepth*} [lindex $s15_w 1]] [opa_s3_state]] \
++  [list 0 118 1 0 1 1 1 $S3_ENTRY]
++
++# ===========================================================================
++# S16 — THE ACTION LOG (fires only under --logdir)
++# ===========================================================================
++# descend and go_back SELF-LOG (actions.c:4073, :4229). A walk over a real
++# design would flood a log whose contract is REPLAYABLE USER EDITS with
++# hundreds of navigation lines. The control half is the important one: an
++# unpopped `log_action -suppress push` silences the user's log for the rest of
++# the session, which is a worse defect than the noise it removes.
++if {[xschem get actionlog_filename] eq {}} {
++  skiprow {S16 the walk suppresses its own descend/go_back log traffic} \
++          {no action log open -- run with --logdir}
++} else {
++  opa_s3_load s3top.sch
++  set s16_d0 [opa_s3_logcount {xschem descend*}]
++  set s16_g0 [opa_s3_logcount {xschem go_back*}]
++  set s16 [rcall {opa_s3_lines [op_annot::save_cards]}]
++  set s16_d1 [opa_s3_logcount {xschem descend*}]
++  set s16_g1 [opa_s3_logcount {xschem go_back*}]
++  xschem unselect_all
++  xschem select instance 0 fast nodraw
++  xschem descend 1 2
++  xschem go_back 2
++  set s16_d2 [opa_s3_logcount {xschem descend*}]
++  set s16_g2 [opa_s3_logcount {xschem go_back*}]
++  check {S16 the walk logs no navigation, and the suppress scope IS popped after} \
++    [list [lindex $s16 0] [llength [lindex $s16 1]] \
++          [expr {$s16_d1 - $s16_d0}] [expr {$s16_g1 - $s16_g0}] \
++          [expr {$s16_d2 - $s16_d1}] [expr {$s16_g2 - $s16_g1}]] \
++    {0 13 0 0 1 1}
++}
++
++# ===========================================================================
++# S17 — THE MENU DELIVERABLE: $netlist_dir/<cell>.save
++# ===========================================================================
++# Modelled on IHP's `Create FET and BIP .save file` (sg13g2_procs.tcl:602-606),
++# whose `file mkdir $netlist_dir` sky130_procs.tcl:235 lacks — keep IHP's. The
++# header is the writer's, not save_cards': S4's consumer injects the block into
++# a deck where a prose comment is noise, while a human opening this file needs
++# the `.include` instruction. Structure is asserted, prose is not.
++set s17_dir [file join $scratch savedir]
++file mkdir $s17_dir
++set s17_saved_nd {}
++if {[info exists ::netlist_dir]} { set s17_saved_nd $::netlist_dir }
++set ::netlist_dir $s17_dir
++opa_s3_load s3top.sch
++catch {file delete -force [file join $s17_dir s3top.save]}
++set s17 [rcall {op_annot::write_save_file}]
++set s17_body {}
++if {[file isfile [file join $s17_dir s3top.save]]} {
++  set fh [open [file join $s17_dir s3top.save] r]
++  set s17_body [read $fh] ; close $fh
++}
++set s17_lines [opa_s3_lines $s17_body]
++check {S17 write_save_file writes <netlist_dir>/s3top.save: header, blank, block} \
++  [list $s17 [file isfile [file join $s17_dir s3top.save]] \
++        [string index [lindex $s17_lines 0] 0] [lindex $s17_lines 1] \
++        [lrange $s17_lines 2 end]] \
++  [list [list 0 [file join $s17_dir s3top.save]] 1 * {} $S3_GOLD]
++
++# ===========================================================================
++# S18 — AN EMPTY BLOCK WRITES NO FILE
++# ===========================================================================
++# A .save file containing only a header says nothing and reports success. {} is
++# what lets the caller say WHICH first-run confusion it hit (spec §4.6).
++catch {op_annot::register nmos [list devpath $S3_TMPL params $S3_PARAMS \
++                                    match {*nothing_matches_this*}]}
++catch {file delete -force [file join $s17_dir s3top.save]}
++set s18 [rcall {op_annot::write_save_file}]
++check {S18 with nothing to save, write_save_file returns {} and writes no file} \
++  [list $s18 [file exists [file join $s17_dir s3top.save]]] \
++  [list {0 {}} 0]
++catch {op_annot::register nmos $S3_DESC}
++if {$s17_saved_nd ne {}} { set ::netlist_dir $s17_saved_nd }
++
++# ===========================================================================
++# S19 — THE MENU IS WIRED (X only)
++# ===========================================================================
++# Its real job is to prove the new src/xschem.tcl line did not break
++# build_widgets: a raise there kills GUI startup outright.
++if {![info exists ::has_x] || !$::has_x} {
++  skiprow {S19 Simulation > Graphs carries `Create device OP .save file`} \
++          {no X -- run under xvfb without --nogui}
++} else {
++  set s19_menu "[xschem get top_path].menubar.simulation.graph"
++  set s19_labels {}
++  if {[winfo exists $s19_menu]} {
++    for {set i 0} {$i <= [$s19_menu index end]} {incr i} {
++      catch {lappend s19_labels [$s19_menu entrycget $i -label]}
++    }
++  }
++  check {S19 Simulation > Graphs carries `Create device OP .save file`} \
++    [list [winfo exists $s19_menu] \
++          [expr {[lsearch -exact $s19_labels {Create device OP .save file}] >= 0}]] \
++    {1 1}
++}
++
++} serr]} {
++  puts "UNEXPECTED ERROR (section S): $serr"
++  incr fail
++}
++
+ # --- verdict -----------------------------------------------------------------
+ if {$fail == 0} {
+   puts "RESULT: ALL PASS ($npass checks)"

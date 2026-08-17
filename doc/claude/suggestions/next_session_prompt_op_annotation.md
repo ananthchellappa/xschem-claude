@@ -259,9 +259,128 @@ IHP **49/49 loadable `sg13g2_tests` cells** (26 with cards, `IHP_testcases` at
     when the raw was not tied to the schematic (`xschem raw loaded` = 0) while
     index `0` returned the true value — an I3 hazard sitting in S5/S6's path.
 
+### What S3's REVERTED attempt proved — measured, and binding on the retry
+
+**S3 was implemented in full, passed 85 checks and 11 sabotage variants, and was
+then REVERTED.** The machinery was right; the *names it emits* are wrong in two
+reachable states, both silent, both with zero coverage. The whole attempt is
+preserved as `doc/claude/issues/0436-attempt-1-reverted.patch` (1032 lines,
+applies cleanly to `2be60ece`) — **start from that patch, do not retype it.**
+Everything below is what the retry must add to it.
+
+14. **⚠ S3/S4/S5: `op_annot::devpath` answers a RAW-RELATIVE name. A save card
+    needs a DECK-ABSOLUTE one. These are two different jobs and I1's "one
+    builder" does not settle which basis to use.** This is the finding that
+    reverted S3 and it is the single most important line on this page for the
+    retry. Confirmed in the C, not just measured: `save.c:1260/1410/2153` bind
+    `raw->schname` to `xctx->sch[xctx->currsch]` — **whatever cell the user was
+    standing in when the raw was loaded**; `draw.c:2831-2838` `sch_waves_loaded()`
+    then re-matches that filename against every level *as the walk descends*; and
+    `scheduler.c:5150` `sim_sch_path` **strips every path component above the
+    matched level**. So a raw loaded one level down makes two different instances
+    of the same subcircuit collapse to the *same* device path. Measured on a
+    3-level fixture: 8 cards, only **5 unique**, `.save @m.xa[1].xmleaf.…` for
+    both `x1`'s and `x3`'s leaf where the netlist says `x1.xa[1].xmleaf` and
+    `x3.xa[1].xmleaf`. `last_warnings` was **empty**. Controls: no raw → 8/8
+    unique and correct; raw loaded at the top → 8/8 correct. **Two clicks
+    reproduce it**: the menu entry immediately *above* the new one ("Annotate
+    Operating Point into schematic") calls `xschem annotate_op` at the current
+    level, and the next entry is the writer. The retry needs an explicit basis —
+    `op_annot::devpath <inst> ?basis?` with `absolute` for save cards is the
+    shape that keeps one builder — **not** path arithmetic in the walk, which
+    would recreate the second builder I1 forbids and is what the prototypes'
+    `startpath` was. Issue **0436**. Note the prototypes are *immune* to this:
+    they use `xschem get sch_path`, which no raw can perturb.
+15. **⚠ S3/S4: the walk must not emit cards for instances that are not in the
+    netlist.** Measured: an instance carrying the standard `spice_ignore=true` is
+    **absent from `xschem netlist`** (only `XMOK` appears) yet still gets a full
+    card set, silently. Combined with bullet 16 that means **one `spice_ignore`
+    device anywhere in a design makes the generated `.save` file kill the
+    simulation it was generated for**. `spice_ignore=short` and `only_toplevel`
+    are the same class and were not measured. The suite has no `spice_ignore`
+    row anywhere (`grep -c` = 0). Issue **0437**.
+16. **⚠ ONE bad card costs the WHOLE raw, and which failure you get depends on
+    the invocation idiom — the spec's landmine 9 and issue 0429 are both true and
+    describe different idioms.** Re-measured on both binaries: under
+    `.control … write out.raw … .endc` — **the idiom every shipped PDK bench
+    uses** — one bogus card gives `Warning from checkvalid` and **NO RAW FILE AT
+    ALL**. Under `ngspice -b -r out.raw` the same card gives
+    `Warning: unrecognized variable` plus a fabricated `0.0` column (landmine 9's
+    behaviour). So bullet 2 above is right only for `-b -r`; for the benches, a
+    bad card is not a wrong number, it is *no data*. Issue **0434**.
+17. **`.save all`, never the bare `save all` — the wording in the S3 cell below
+    and in spec I2 is a trap that has now been measured three times
+    independently.** A bare deck-level `save all` is `Error on line N … Unable
+    to find definition of model` on ngspice-42 **and** 46+ (it parses as an
+    `s`-prefixed switch instance) and **no raw file is written** — strictly worse
+    than emitting nothing, because it removes the whole raw rather than only the
+    node voltages R2 is about. The dot-card works on both. Spec §5 I2 has been
+    corrected; this bullet is here because the S3 cell's own wording still reads
+    "Prepend `save all`" in every older copy of this plan.
+18. **`xschem get no_undo` DOES NOT EXIST** (setter only, `scheduler.c:11958`);
+    it returns `{}` whether the flag is 0 or 1. So a quarter of the S3 acceptance
+    row below ("`no_undo` back to its entry value") is **unwritable as a flag
+    read** — as `== 0` it fails, as "equals the entry value" it passes vacuously
+    against `{}`. The reverted attempt restored it to 0 and probed the flag's
+    *effect* (`push_undo` → delete → `undo`; `{2 1 2}` live vs `{2 1 1}` dead, so
+    the probe provably discriminates). **Residual that probe cannot see:** a
+    caller who wraps the walk in its own `no_undo 1` scope has it silently
+    disarmed — measured `{3 2 2}` before, `{3 2 3}` after. **S4's `render_deck`
+    is exactly such a caller.** Issue **0432**; a 4-line getter beside
+    `scheduler.c:4898` fixes it but makes the step a build step.
+19. **Do not port `if {$res} … else {go_back 2}` from either prototype.**
+    `xschem descend` returns 0 in two classes (`actions.c:4055-4065`, issue 0250):
+    a refusal *before* descending leaves `currsch` **unchanged**, a blank/missing
+    schematic leaves it **already incremented**. The prototypes' unconditional
+    `go_back` is right for the second and pops a level it never pushed for the
+    first — invisible at the top level, but one level down it corrupts `sch_path`
+    for the rest of the walk and the walk re-visits levels, emitting **duplicate**
+    cards. Drive off `xschem get currsch` before/after plus `descend_error`
+    (empty on success — `descend_clear_error()`, `actions.c:3855`). The reverted
+    patch already does this correctly and its `_descended` seam is worth keeping.
+    Issue **0433**; both shipped prototypes still carry the bug.
+20. **The walk self-logs and must suppress itself.** `descend`/`go_back` self-log
+    (`actions.c:4073`, `:4229`); a walk over a real design floods a log whose
+    contract is *replayable user edits*. `xschem log_action -suppress push|pop`
+    (`scheduler.c:7795`) is the re-entrant guard; the pop belongs in the same
+    unconditional restore block as the flags, because an unpopped scope silences
+    the user's log for the rest of the session. **⚠ Measured coverage trap:** a
+    test for this is **dark** under `--nolog` — dropping the pop still gave
+    `RESULT: ALL PASS`. It only reddens under
+    `GUI_GATE=0 xvfb-run -a … --pipe -q --logdir <dir>`. **Ship both invocations
+    or the row is decoration.**
+21. **`getprop symbol <cell> type` RAISES for generator cells** (6 of the 14
+    instances of `sky130_tests/test_generators`) and is the literal trigger of
+    0431. Use `op_annot::type` / `getprop instance <n> cell::type`, which raises
+    zero times on the same loop and resolves for a vector instance name too.
+22. **Smaller, each cost this crew time:** the `sky130A/cadence_style_rc`
+    workarea rc needs Tk and dies under `--nogui` with
+    `invalid command name "bind"`, so the library path is never set and **every
+    sky130 symbol fails to resolve** — a walk over a real sky130 design under
+    `--nogui` returns 0 cards as an *artefact*, not a measurement; build fixtures
+    self-containedly or launch under xvfb with the real rc. `xschem set <var>`
+    silently accepts any unknown variable sorting before `n` (issue **0435**).
+    `test_descend_goback_selflog` self-skips under `--nolog`;
+    `test_context_menu_descend_refusal_0249` cannot run under `--nogui` at all
+    (`invalid command name "focus"`) — neither is a failure.
+23. **ENVIRONMENT:** `/usr/local/bin/ngspice` (46+) was installed 2026-08-16 and
+    now **shadows** the `/usr/bin/ngspice` (42) that every measurement in this
+    plan and the spec quotes. All rules above were re-measured on both and are
+    identical, but **S4 must pin the binary path** rather than say `ngspice`.
+
 ---
 
 ## S3 — hierarchy walk and save-card generation
+
+> **STATUS: ATTEMPTED 2026-08-16, REVERTED, NOT DONE.** The implementation was
+> complete and green (85 checks, 11 sabotage variants, tiers clean) but the
+> adversary pass refuted its output in two reachable silent states — see bullets
+> 14 and 15 above, issues **0436** and **0437**. Nothing from it is in the tree.
+> **The retry starts from `doc/claude/issues/0436-attempt-1-reverted.patch`**,
+> which is correct in every respect the two issues do not name, and adds: a
+> device-path *basis* argument, a not-in-the-netlist filter, and the two test
+> rows (a `raw_read` row and a `spice_ignore` row) whose absence let both
+> defects through 85 green checks.
 
 **Files:** `src/op_annot.tcl`.
 
@@ -277,8 +396,11 @@ per `params` entry.
 > `vector` is the read shape and belongs to S5, not here. Also: a card naming a
 > device that does not exist writes a `0.0` column under that exact name, so a
 > broken walk fails as zeros, not as blanks (spec landmine 9).
-Skip `pinexpr` and `derived` (nothing to save). **Prepend `save all`** — spec
-rule R2, measured: without it the node voltages vanish from the raw.
+Skip `pinexpr` and `derived` (nothing to save). **Prepend `.save all`** — spec
+rule R2, measured: without it the node voltages vanish from the raw. ⚠ **The
+DOT-card.** This cell used to read "prepend `save all`"; taken literally that is
+worse than emitting nothing (bullet 17 above — no raw file is written at all, on
+ngspice-42 and 46+).
 
 **I6 is the whole risk of this step.** The walk sets `no_draw 1`, `no_undo 1`,
 `keep_symbols 1` and descends the *real* design. Every exit path — including the
@@ -292,8 +414,19 @@ gives non-ASE users the feature immediately, by `.include`.
 **Acceptance:** 3-level test design, card list golded; a test asserting
 `no_draw` / `no_undo` / `keep_symbols` / `sch_path` are all back to their
 entry values afterwards, including after a forced mid-walk failure.
+**Amended by the reverted attempt — these three rows are what it lacked, and all
+three are cheap:** (a) a row that loads a raw **one level down** and asserts the
+cards are still unique and top-relative (bullet 14 / issue 0436); (b) a row with
+a `spice_ignore=true` instance asserting it contributes **no** card (bullet 15 /
+issue 0437); (c) the `--logdir` invocation alongside the `--nolog` one, or the
+log-suppress row is dark (bullet 20). `no_undo` cannot be asserted as a flag read
+at all (bullet 18) — probe its effect, and do not let the row pass vacuously.
 
-**Risk:** medium — the walk is the only destructive thing in S1–S6.
+**Risk:** medium — the walk is the only destructive thing in S1–S6. **Measured
+correction: the walk was not what bit.** The I6 restore worked on every path the
+crew could force, including a raise three levels down and an entry that was
+already descended. What bit was the *name basis* of the cards it emitted — the
+read-only half nobody had it on the risk list.
 
 ---
 
