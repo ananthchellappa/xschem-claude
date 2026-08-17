@@ -95,8 +95,18 @@ set d [ase::state_default]
 # ase::omit_if_empty, so an empty one is NOT serialized and every state file
 # written before it existed still round-trips byte-identically — F3/G3 in
 # test_ase_final{,_gf180} are the golden files that assert exactly that.
-check "R1 default has exactly the 16 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands cosim viewer}]
+# RESTATED 2026-08-17 (casemode item 6): 16 -> 17 keys. `sim_profile` names the
+# simulator-profile ROW an ASE session runs with (DECISIONS.md B1,
+# doc/claude/specs/simulator_profiles.md). Not renumbered and not deleted — the
+# expectation genuinely changed, and the property the check exists for (the
+# schema is a CLOSED set, so a stray dict key is caught) is unchanged. Like
+# `cosim` it is in ase::omit_if_empty, so the byte-stability claim above still
+# holds; check CS165 in test_sim_profiles.tcl is the frozen-fixture proof.
+check "R1 default has exactly the 17 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator sim_profile design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands cosim viewer}]
+check "R1 sim_profile defaults to empty and is omitted from the serialized form" \
+  [list [dict get $d sim_profile] \
+        [expr {[string first "sim_profile" [ase::state_serialize $d]] >= 0}]] {{} 0}
 check "R1 cosim defaults to empty and is omitted from the serialized form" \
   [list [dict get $d cosim] [expr {[string first "cosim" [ase::state_serialize $d]] >= 0}]] {{} 0}
 check "R1 a NON-empty cosim IS serialized" \

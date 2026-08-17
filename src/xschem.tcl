@@ -2497,11 +2497,523 @@ proc save_sim_defaults {f} {
       puts $fd "set sim($tool,$i,name) {$sim($tool,$i,name)}"
       puts $fd "set sim($tool,$i,fg) $sim($tool,$i,fg)"
       puts $fd "set sim($tool,$i,st) $sim($tool,$i,st)"
+      # The per-profile simulator-profile fields (casemode batch item 6,
+      # doc/claude/specs/simulator_profiles.md). Written ONLY when they differ
+      # from their default, for two reasons that are requirements, not tidiness:
+      #  * a simrc written before these fields existed must round-trip
+      #    BYTE-IDENTICALLY (tests/headless/fixtures/simrc_pre_casemode +
+      #    check CS150 pin that), so nothing may be appended to a row nobody
+      #    configured -- 15 rows x 6 fields of noise would also bury the two
+      #    lines that carry information;
+      #  * an OLDER xschem sourcing this file must see nothing new. It cannot:
+      #    every reader of `sim` names its suffix explicitly (`cmd`, `name`,
+      #    `fg`, `st`, `n`, `default` -- and `sim(spicewave,%d,name)` from C at
+      #    hilight.c:941 / scheduler.c:11948 / callback.c:5598), and nothing in
+      #    the tree does `array names sim` / `array get sim`. Extra elements are
+      #    unreachable rather than merely harmless.
+      # Braced exactly like `cmd`/`name` above so a `$` in an exe or an arg
+      # survives to the run-time `subst`; `sim_profile_valid` refuses a value
+      # that would not come back out of this very line unchanged (see its
+      # round-trip guard -- and note that `cmd`/`name` above have no such guard,
+      # which is pre-existing and is NOT item 6's to change).
+      foreach {sp_f sp_d} [sim_profile_field_defaults] {
+        set sp_v [sim_profile_get $tool $i $sp_f]
+        if {$sp_v eq $sp_d} { continue }
+        puts $fd "set sim($tool,$i,$sp_f) {$sp_v}"
+      }
       puts $fd {}
     }
     puts $fd {}
   }
   close $fd
+}
+
+# ============================================================
+#      SIMULATOR PROFILES (casemode batch item 6)
+#      spec: doc/claude/specs/simulator_profiles.md
+# ============================================================
+#
+# DECISIONS.md B1 (option a + option i): the requested case mode is a property
+# of a specific simulator BINARY, not a user preference, so it rides on the
+# simulator profile -- and the profile is the `sim()` row xschem already has,
+# extended, NOT a second registry beside it (B1 killed the plan's
+# `$USER_CONF_DIR/ase_simulators`).
+#
+# A row keeps `cmd`/`name`/`fg`/`st` untouched and gains:
+#
+#   exe          the executable, as a path or a bare name. EMPTY means "no
+#                profile executable", i.e. today's behaviour (`cmd` for the
+#                Simulation menu, a bare `ngspice` off PATH for ASE-L). No
+#                built-in row gets one -- see the spec's ruling.
+#   args         extra arguments, a Tcl list, composed after `exe`.
+#   casemode     the REQUESTED mode: fold | preserve | distinguish, or empty
+#                for "this profile does not name one" -- then the global floor
+#                `sim_case_mode` answers (B1's "per profile, with a global
+#                floor"). Empty is NOT `fold`; the floor happens to default to
+#                `fold` (A1) and it is the only place a mode is asserted
+#                without evidence (specs/raw_case_mode.md section 10).
+#   detected     what the binary was MEASURED to deliver: a subset of
+#                {fold preserve distinguish}, empty = never probed = unknown
+#                (B2b). Deliberately a SEPARATE field from `casemode`: A1 bars
+#                selecting a mode the simulator will silently ignore, which is
+#                a comparison between a request and a measurement, so
+#                collapsing the two would make item 13's dropdown unbuildable.
+#   probed       provenance of that measurement: a dict {time <epoch> mtime
+#                <epoch>}, empty = never probed. `mtime` is the exe's mtime when
+#                probed, because the case-capable ngspice build moved THREE
+#                times in four days during this batch -- a stale measurement is
+#                the normal case, not an edge case.
+#   nospiceinit  DECISIONS.md A2's per-profile `-n` (--no-spiceinit) boolean,
+#                default 0: do NOT pass it by default (a `.spiceinit`, including
+#                `~/.spiceinit`, overrides `-D casemode=` and the answer must
+#                describe the real run), but a user who knows their
+#                `.spiceinit` is the problem can turn it on. The CHECKBOX is
+#                item 13's; the stored field is this item's.
+#
+# This item is the MODEL ONLY: no probe runs here (item 7), no run path changes
+# (item 8), no widget exists (item 13). Nothing below touches Tk.
+
+# field -> default, in canonical order. The single source of truth: the
+# normalizer, the reader, the writer, the persister and the tests all walk this
+# list, so adding a field is one edit here.
+proc sim_profile_field_defaults {} {
+  return [list exe {} args {} casemode {} detected {} probed {} nospiceinit 0]
+}
+
+# just the field names, canonical order
+proc sim_profile_fields {} {
+  set r {}
+  foreach {f d} [sim_profile_field_defaults] { lappend r $f }
+  return $r
+}
+
+# the default of one field ({} for an unknown field name)
+proc sim_profile_field_default {field} {
+  set d [sim_profile_field_defaults]
+  if {[dict exists $d $field]} { return [dict get $d $field] }
+  return {}
+}
+
+# the three real modes. `unknown` is NOT one of them: it is the absence of an
+# answer about a FILE (specs/raw_case_mode.md section 10), never a mode a
+# profile can request of a run.
+proc sim_casemode_valid {mode} {
+  return [expr {[lsearch -exact {fold preserve distinguish} $mode] >= 0}]
+}
+
+# May `value` be stored in profile field `field`?
+#
+# Validation happens on WRITE and again on READ, and the read half is the
+# important one: a hand-edited `~/.xschem/simrc` is plain Tcl and never goes
+# through `sim_profile_set`, so `detected {yes please}` would otherwise become a
+# capability claim and `casemode sideways` a requested mode.
+proc sim_profile_valid {field value} {
+  # PERSISTENCE GUARD, every field. save_sim_defaults writes exactly one line,
+  #     set sim(<tool>,<i>,<field>) {<value>}
+  # so the only storable values are the ones that come back out of that line
+  # unchanged WHEN THE SIMRC IS SOURCED. Two halves, and the second exists
+  # because the first is not enough.
+  #
+  # (1) The line must parse into three words whose third is the value byte for
+  #     byte. `info complete` on the braced value was the first guard here and
+  #     it is NOT this test -- MEASURED, and it shipped a broken file: a value
+  #     carrying an unbalanced CLOSE brace passes it. Take the three characters
+  #     a, close-brace, b: bracing them yields a line whose braces do not
+  #     balance, `info complete` calls it complete anyway, and sourcing the
+  #     emitted line fails with `extra characters after close-brace` -- so the
+  #     whole of the user's ~/.xschem/simrc stops loading, the exact failure
+  #     this guard exists to prevent. CS153e drives it.
+  #
+  # (2) The sequences on which the LIST parser (`llength`/`lindex`, below) and
+  #     the SCRIPT parser (`source`, which is what actually reads the simrc)
+  #     DISAGREE inside braces must be refused outright. The list parse ALONE
+  #     was the second revision of this guard and it shipped the same class of
+  #     bug one layer down: inside braces the script parser performs exactly
+  #     one substitution, backslash-newline -> space, and the list parser
+  #     performs none, so a value carrying backslash-newline passed the guard,
+  #     was written, and came back one byte shorter. MEASURED end to end through
+  #     save_sim_defaults + source: `x BACKSLASH NEWLINE y` (78-5c-0a-79) reads
+  #     back as `x SPACE y` (78-20-79) and a second save then DIFFERS from the
+  #     first, breaking the byte-stability CS153f/CS158d advertise. A bare CR is
+  #     the same defect by another route -- channel translation turns it into a
+  #     newline on the way in (78-0d-79 -> 78-0a-79, measured) -- so it cannot
+  #     survive either and is refused with it.
+  #     Everything else DOES survive and must keep being accepted, or the guard
+  #     becomes a refuse-everything: a lone backslash, a bare newline, a `$`, a
+  #     space and balanced inner braces all round-trip byte-identically
+  #     (measured in the same probe; CS153f and CS153g are the acceptance half).
+  # (No literal unbalanced brace appears in this comment on purpose: a comment
+  #  inside a proc body is still inside that body's braces, and one here aborted
+  #  the source of this entire file.)
+  set sp_line "set v \{$value\}"
+  if {[catch {llength $sp_line} sp_n]} { return 0 }
+  if {$sp_n != 3 || [lindex $sp_line 2] ne $value} { return 0 }
+  if {[string first "\\\n" $value] >= 0} { return 0 }
+  if {[string first "\r" $value] >= 0} { return 0 }
+  switch -exact -- $field {
+    exe         { return 1 }
+    args        { return [expr {![catch {llength $value}]}] }
+    casemode    { return [expr {$value eq {} || [sim_casemode_valid $value]}] }
+    detected {
+      if {[catch {llength $value}]} { return 0 }
+      foreach m $value { if {![sim_casemode_valid $m]} { return 0 } }
+      return 1
+    }
+    probed {
+      if {[catch {llength $value} n]} { return 0 }
+      return [expr {($n % 2) == 0}]
+    }
+    nospiceinit { return [string is boolean -strict $value] }
+  }
+  return 0
+}
+
+# Give every configured row every profile field, so the array shape is complete
+# whatever route populated it: a simrc that predates the fields, the built-in
+# defaults, or a `cadence_style_rc` that set only `exe`. Reads do not depend on
+# it (sim_profile_get is defensive); item 13's widgets do, because a Tk
+# -textvariable on a missing array element creates it with an empty value and
+# would silently lose a 0 default.
+#
+# UNCONDITIONAL, per row and per field: whoever calls this gets a complete
+# shape, full stop. An earlier revision short-circuited a row on `[info exists
+# sim($tool,$i,nospiceinit)]` -- the LAST field -- on the stated grounds that the
+# six fields are "only ever set as a group". THAT IS FALSE FOR THE ROUTE THAT
+# MATTERS, and it shipped a hole, MEASURED: save_sim_defaults writes only the
+# fields that DIFFER from their default, so a user who changed nothing but A2's
+# `-n` box gets a simrc row carrying `nospiceinit` and nothing else, the
+# short circuit then skips that row, and `exe args casemode detected probed` stay
+# missing on it for the whole session. Ordinary configuration, not an edge case.
+# CS151g drives it end to end through a real save + reload.
+#
+# The cost that short circuit was buying is bought at the CALLER instead, and
+# the caller's guard is a ROW-COUNT MEMO, not "did this call rebuild the array".
+# That distinction is the whole of a defect that got past a first revision of
+# this item, MEASURED: `set_sim_defaults` normalized only when it had (re)built
+# the array, so the SECOND population route B1 and the item scope both name --
+# an rc (`cadence_style_rc`, `~/.xschem/xschemrc`) that calls set_sim_defaults
+# and then APPENDS a row --
+#     set sim(spice,5,cmd) ... ; set sim(spice,5,name) ... ;
+#     set sim(spice,5,exe) /path/ngspice ; incr sim(spice,n)
+# left that row with `args casemode detected probed nospiceinit` missing for the
+# WHOLE SESSION: `sim` exists by then, so no later set_sim_defaults (and
+# `sim_is_xyce`/`sim_is_ngspice`/`simconf`/`simulate` all re-enter it) ever
+# walked again. CS151i drives exactly that route, with no hand call to this proc.
+#
+# The memo keeps the property the rebuild flag was there for, because
+# `xschem get_fqdevice` (token.c) reaches `sim_is_xyce` from a
+# `node="tcleval([xschem get_fqdevice …])"` attribute, i.e. from a graph REDRAW
+# -- item 3's rule is "never poll a walk from a redraw". MEASURED on this tree,
+# 500 iterations of set_sim_defaults with the array already built and unchanged:
+# 8.36 us when the full walk ran on every call, 1.0 us for the old rebuild flag,
+# 1.6 us for the memo. The full walk costs 19.6 us and now happens once per
+# array build AND once per row-count change, which is the only thing that can
+# introduce an unshaped row.
+proc sim_profile_normalize {} {
+  global sim
+  if {![info exists sim(tool_list)]} { return }
+  set defs [sim_profile_field_defaults]
+  foreach tool $sim(tool_list) {
+    if {![info exists sim($tool,n)]} { continue }
+    if {![string is integer -strict $sim($tool,n)]} { continue }
+    for {set i 0} {$i < $sim($tool,n)} {incr i} {
+      foreach {f d} $defs {
+        if {![info exists sim($tool,$i,$f)]} { set sim($tool,$i,$f) $d }
+      }
+    }
+  }
+}
+
+# The shape the last normalize saw: every tool and its row count. A row can only
+# become unshaped by appearing, and a row can only appear by moving some
+# `sim($tool,n)` (the setter, the persister and item 13's dialog all address rows
+# below `n`; anything at or above it is not configured and nothing reads it).
+proc sim_profile_shape_stamp {} {
+  global sim
+  set s {}
+  if {![info exists sim(tool_list)]} { return $s }
+  foreach tool $sim(tool_list) {
+    set n {}
+    if {[info exists sim($tool,n)]} { set n $sim($tool,n) }
+    lappend s $tool $n
+  }
+  return $s
+}
+
+# Normalize when the shape moved (or has never been stamped). Returns 1 when it
+# walked. The memo lives INSIDE the `sim` array on purpose: every route that
+# resets the configuration does it by `unset sim` (set_sim_defaults' own reset
+# arm, every reload, and every test), so the memo is invalidated for free. A
+# separate global would survive an `unset sim`, go stale, and silently skip the
+# one walk that mattered -- exactly the failure mode being fixed here.
+proc sim_profile_normalize_if_changed {} {
+  global sim
+  set s [sim_profile_shape_stamp]
+  if {[info exists sim(profile_shape)] && $sim(profile_shape) eq $s} { return 0 }
+  sim_profile_normalize
+  set sim(profile_shape) $s
+  return 1
+}
+
+# Read a profile field. Missing element, unknown field or a value that fails
+# validation all return the field's default -- so a garbage value from a
+# hand-edited simrc reads as "not set" instead of being believed.
+proc sim_profile_get {tool idx field} {
+  global sim
+  set d [sim_profile_field_default $field]
+  if {![info exists sim($tool,$idx,$field)]} { return $d }
+  set v $sim($tool,$idx,$field)
+  if {![sim_profile_valid $field $v]} { return $d }
+  return $v
+}
+
+# Write a profile field. Errors on an unknown field, an invalid value, or a row
+# that is not configured -- a write to an out-of-range index would land in an
+# element save_sim_defaults never visits (it loops to sim($tool,n)), i.e. a
+# setting that vanishes at the next save.
+proc sim_profile_set {tool idx field value} {
+  global sim
+  if {[lsearch -exact [sim_profile_fields] $field] < 0} {
+    return -code error "sim_profile_set: unknown profile field '$field'"
+  }
+  if {![info exists sim($tool,n)] || ![string is integer -strict $idx] ||
+      $idx < 0 || $idx >= $sim($tool,n)} {
+    return -code error "sim_profile_set: no such profile row: $tool,$idx"
+  }
+  if {![sim_profile_valid $field $value]} {
+    return -code error "sim_profile_set: invalid $field value: $value"
+  }
+  set sim($tool,$idx,$field) $value
+  return $value
+}
+
+# The mode this profile REQUESTS: its own field, else the global floor, else
+# fold. B1's "per profile, with a global floor". The floor is validated here
+# too (a `set sim_case_mode sideways` in an rc must not become a request).
+proc sim_profile_casemode {tool idx} {
+  global sim_case_mode
+  set m [sim_profile_get $tool $idx casemode]
+  if {$m ne {}} { return $m }
+  if {[info exists sim_case_mode] && [sim_casemode_valid $sim_case_mode]} {
+    return $sim_case_mode
+  }
+  return fold
+}
+
+# What the binary was measured to deliver, canonical order, garbage dropped.
+proc sim_profile_detected {tool idx} {
+  set d [sim_profile_get $tool $idx detected]
+  set r {}
+  foreach m {fold preserve distinguish} {
+    if {[lsearch -exact $d $m] >= 0} { lappend r $m }
+  }
+  return $r
+}
+
+# A1: has this binary been MEASURED to deliver `mode`? Never probed => 0 for
+# every mode, including fold: an unmeasured binary is unknown, not a claim.
+proc sim_profile_supports {tool idx mode} {
+  if {![sim_casemode_valid $mode]} { return 0 }
+  set d [sim_profile_detected $tool $idx]
+  if {$d eq {}} { return 0 }
+  return [expr {[lsearch -exact $d $mode] >= 0}]
+}
+
+# RULING (spec section 4): the modes a user may SELECT for this profile.
+# Measured => exactly what was measured (A1: nobody may pick a mode their
+# simulator will silently ignore). Never probed => `fold` alone. That is not
+# B2b-style invention: `fold` is what a released ngspice does whether or not it
+# was asked (it accepts `-D casemode=preserve` and ignores it, measured), so
+# requesting `fold` is the one request no binary can silently fail. It also
+# makes item 13's dropdown probe-driven rather than constant, which is A1's
+# consequence clause.
+proc sim_profile_selectable {tool idx} {
+  set d [sim_profile_detected $tool $idx]
+  if {$d ne {}} { return $d }
+  # MEASURED, delivering nothing we recognise: offer NOTHING. Keying this
+  # fallback off `detected` being empty was a defect -- `sim_profile_probe_record
+  # $tool $idx {}` is a legal call and documents itself as "measured, delivers
+  # nothing", and a freshly measured row then got offered `fold` while
+  # `sim_profile_supports … fold` answered 0 in the same breath: two procs of one
+  # item disagreeing about one binary, and A1's rule ("never selectable when the
+  # binary cannot deliver it") broken for the one binary we actually know about.
+  # Item 13's dropdown reads this list, so empty is the answer that lets it say
+  # "probed: no supported mode" instead of offering one the model refuses.
+  if {[sim_profile_get $tool $idx probed] ne {}} { return {} }
+  # NEVER probed: `fold` alone. That is not B2b-style invention -- `fold` is what
+  # a released ngspice does whether or not it was asked (it accepts
+  # `-D casemode=preserve` and ignores it, measured), so it is the one request no
+  # binary can silently fail.
+  return fold
+}
+
+# Expand VARIABLE references in a configured path: `$name`, `${name}` and
+# `$name(index)`, at global level, the way every `cmd` string already writes one.
+# Raises when a reference cannot be resolved (an unset variable) or when it is a
+# form this expander refuses, so a caller can answer "cannot locate" rather than
+# guess.
+#
+# THIS EXISTS BECAUSE `subst -nocommands` IS NOT A SANDBOX. MEASURED on
+# 8.6.14: `set ::RAN 0; subst -nocommands -nobackslashes {$A([set ::RAN 1])/x}`
+# leaves `$::RAN` at 1 -- Tcl still evaluates a `[...]` that sits inside the
+# ARRAY INDEX of a variable substitution, because the index is parsed as a
+# script word before the (suppressed) command substitution pass ever applies.
+# Driven end to end on this tree: an `exe` of
+# `$env([exec touch /tmp/.../PWNED])/ngspice` created the file during a pure
+# STALENESS query -- `sim_profile_exe_path` returned {} and looked innocent.
+# A profile field is config data (a hand-edited simrc, a shipped rc, later a
+# dialog); it may not be able to run a process, least of all from a redraw.
+# So: no `subst` on this path at all. Literal index characters only, and an
+# index carrying `[`, `$` or a backslash is refused outright rather than
+# resolved. CS157k and CS157l drive both halves.
+#
+# The same hole is in `ase::expand_path` (src/ase.tcl), which expands MODEL paths
+# out of a state file with the identical `subst -nocommands -nobackslashes`. It
+# is pre-existing and out of item 6's scope; it is written down in
+# doc/claude/specs/simulator_profiles.md section 5 and flagged at its own call
+# site so whoever owns model paths next cannot miss it.
+proc sim_profile_expand_vars {s} {
+  set out {}
+  set i 0
+  set n [string length $s]
+  while {$i < $n} {
+    set d [string first "\$" $s $i]
+    if {$d < 0} { append out [string range $s $i end] ; break }
+    append out [string range $s $i [expr {$d - 1}]]
+    set hasidx 0
+    set idx {}
+    set matched 0
+    # NOTE, and it cost a defect in this proc's first draft: `regexp -start` does
+    # NOT move the `^` anchor -- with `-start 5`, `^` still means "beginning of the
+    # string", so an anchored pattern silently fails for every reference that is
+    # not at offset 0 and `/opt/$env(HOME)/ngspice` came back UNEXPANDED (measured
+    # in tclsh). So the patterns are unanchored and the match is required to start
+    # exactly at this `$`; a match further along means this one is a literal `$`.
+    if {[regexp -start $d -indices -- {\$\{([^{}]+)\}} $s whole nmi]
+        && [lindex $whole 0] == $d} {
+      set name [string range $s [lindex $nmi 0] [lindex $nmi 1]]
+      set matched 1
+    } elseif {[regexp -start $d -indices -- \
+                {\$([A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*|::[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*)(\(([^()]*)\))?} \
+                $s whole nmi pari idxi]
+               && [lindex $whole 0] == $d} {
+      set name [string range $s [lindex $nmi 0] [lindex $nmi 1]]
+      set matched 1
+      if {[lindex $pari 0] >= 0} {
+        set hasidx 1
+        if {[lindex $idxi 0] >= 0} {
+          set idx [string range $s [lindex $idxi 0] [lindex $idxi 1]]
+        }
+      }
+    }
+    if {!$matched} {
+      # a `$` that starts no variable reference is a literal `$` to Tcl too
+      append out "\$"
+      set i [expr {$d + 1}]
+      continue
+    }
+    if {$hasidx} {
+      if {[regexp {[\[\]\$\\]} $idx]} {
+        return -code error "sim_profile_expand_vars: refusing a substitution\
+                            inside an array index: $idx"
+      }
+      set ref ${name}($idx)
+    } else {
+      set ref $name
+    }
+    append out [uplevel #0 [list set $ref]]
+    set i [expr {[lindex $whole 1] + 1}]
+  }
+  return $out
+}
+
+# Absolute path of this profile's exe, resolving a bare name through PATH; {}
+# when there is no exe or it cannot be found. No process is started.
+proc sim_profile_exe_path {tool idx} {
+  set exe [sim_profile_get $tool $idx exe]
+  if {$exe eq {}} { return {} }
+  # `exe` is stored VERBATIM, so an rc or a hand-edited simrc can write
+  # `$env(HOME)/dev/ngspice` the way every `cmd` string already does. Expand
+  # variables here or this proc answers {} for a perfectly good profile and
+  # sim_profile_probe_stale then says "stale" forever.
+  #
+  # VARIABLES ONLY, and through sim_profile_expand_vars rather than `subst`
+  # (which is not a sandbox even with -nocommands -- see that proc). Catch'd:
+  # an unset variable, or a form the expander refuses, means "cannot locate",
+  # not an error.
+  if {[catch {sim_profile_expand_vars $exe} exe]} {
+    return {}
+  }
+  if {$exe eq {}} { return {} }
+  if {[file pathtype $exe] ne {relative} } {
+    return [expr {[file executable $exe] ? $exe : {}}]
+  }
+  set p [auto_execok $exe]
+  if {$p eq {}} { return {} }
+  return [lindex $p 0]
+}
+
+# Is this profile's capability measurement missing or out of date? Never
+# probed, no exe, an exe that cannot be found, or an exe whose mtime has moved
+# since the probe all answer 1. MODEL ONLY -- it stats a file, it never runs
+# one (the probe is item 7, and it needs a hard timeout).
+proc sim_profile_probe_stale {tool idx} {
+  set p [sim_profile_get $tool $idx probed]
+  if {$p eq {} || ![dict exists $p mtime]} { return 1 }
+  set path [sim_profile_exe_path $tool $idx]
+  if {$path eq {}} { return 1 }
+  if {[catch {file mtime $path} m]} { return 1 }
+  return [expr {$m ne [dict get $p mtime] ? 1 : 0}]
+}
+
+# Record a probe's OUTCOME: the modes measured plus the provenance stamp. Item
+# 7 calls this with what its probe returned; this item never probes. `modes`
+# empty is legal and means "measured, delivers nothing we recognise".
+proc sim_profile_probe_record {tool idx modes} {
+  set m {}
+  foreach x {fold preserve distinguish} {
+    if {[lsearch -exact $modes $x] >= 0} { lappend m $x }
+  }
+  sim_profile_set $tool $idx detected $m
+  set mt {}
+  set path [sim_profile_exe_path $tool $idx]
+  if {$path ne {}} { catch {set mt [file mtime $path]} }
+  sim_profile_set $tool $idx probed [list time [clock seconds] mtime $mt]
+  return $m
+}
+
+# The row index a tool actually launches: its `default`, bounded. -1 when the
+# tool has no configured row at all.
+proc sim_profile_default_index {tool} {
+  global sim
+  if {![info exists sim($tool,n)] || ![string is integer -strict $sim($tool,n)]} { return -1 }
+  set n $sim($tool,n)
+  if {$n <= 0} { return -1 }
+  set d 0
+  if {[info exists sim($tool,default)] && [string is integer -strict $sim($tool,default)]} {
+    set d $sim($tool,default)
+  }
+  if {$d < 0 || $d >= $n} { set d 0 }
+  return $d
+}
+
+# The whole row as one dict, for item 8's run path and item 13's dialog:
+# tool index name cmd fg st + every profile field + `requested` (the resolved
+# mode, floor included) and `selectable`. `casemode` stays the RAW field, so a
+# caller can still tell "this profile names no mode" from "this profile
+# requests fold".
+proc sim_profile_row {tool idx} {
+  global sim
+  set row [dict create tool $tool index $idx]
+  foreach f {name cmd fg st} {
+    set v {}
+    if {[info exists sim($tool,$idx,$f)]} { set v $sim($tool,$idx,$f) }
+    dict set row $f $v
+  }
+  foreach f [sim_profile_fields] { dict set row $f [sim_profile_get $tool $idx $f] }
+  dict set row requested [sim_profile_casemode $tool $idx]
+  dict set row selectable [sim_profile_selectable $tool $idx]
+  return $row
 }
 
 proc load_recent_file {} {
@@ -2958,6 +3470,11 @@ proc substring_remove {needle haystack {where {begin}}} {
 # setting up simulator / wave viewer commands
 proc set_sim_defaults {{reset {}}} {
   global sim terminal USER_CONF_DIR has_x bespice_listen_port env OS
+  # (A "did this call rebuild the array?" flag used to be computed here and used
+  # to gate the item-6 profile normalization at the end of this proc. It was
+  # wrong -- an rc that APPENDS a row to an already-built array rebuilds nothing
+  # and still needs the walk -- and the gate is now a row-count memo instead;
+  # see sim_profile_normalize / sim_profile_normalize_if_changed.)
   if {$reset eq {reset} } { file delete ${USER_CONF_DIR}/simrc }
   if { $reset eq {} } {
     set failure 0
@@ -3102,6 +3619,16 @@ proc set_sim_defaults {{reset {}}} {
     set_ne sim(vhdlwave,n) 1
     set_ne sim(vhdlwave,default) 0
   }
+  # Give every row the item-6 profile fields, on every route that can have
+  # introduced an unshaped one: a simrc that predates them (the defaults block
+  # above is skipped entirely then, so those rows carry cmd/name/fg/st and
+  # nothing else), a simrc that carries only the one field its user changed, the
+  # built-in defaults, a `reset`, AND an rc that appended a row to an array that
+  # was already built -- that last one is the route a rebuild-only guard missed
+  # for a whole session (see sim_profile_normalize). Idempotent and Tk-free; the
+  # memo inside sim_profile_normalize_if_changed keeps this off the redraw path
+  # that reaches here through `sim_is_xyce`.
+  sim_profile_normalize_if_changed
 }
 
 proc simconf_reset {} {
@@ -3288,7 +3815,11 @@ proc simconf_add {tool} {
   set sim($tool,$n,name) {}
   set sim($tool,$n,fg) 0
   set sim($tool,$n,st) 0
+  # a new row gets the full item-6 shape too, so item 13's Add path can
+  # sim_profile_set into it immediately (that setter refuses an unconfigured
+  # row, and `incr sim($tool,n)` below is what configures this one)
   incr sim($tool,n)
+  foreach {sp_f sp_d} [sim_profile_field_defaults] { set sim($tool,$n,$sp_f) $sp_d }
 }
 
 

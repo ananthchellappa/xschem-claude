@@ -36,8 +36,15 @@ namespace eval ase {
   # `cosim` follows it for the same reason — it is deck/simulation config the
   # state owns (spec section E, E4). It is POLICY ONLY: it never lists the
   # digital artifacts, which are DERIVED from the netlist at run time.
-  variable schema_keys {version simulator design rundir temperature models
-                        variables analyses outputs save_all_v save_all_i
+  # `sim_profile` sits beside `simulator` because it QUALIFIES it: `simulator`
+  # names the backend (ngspice), `sim_profile` names WHICH configured `sim()`
+  # row of the matching tool that backend runs -- the exe, its args, its
+  # requested case mode and its `-n` flag all live on that row
+  # (DECISIONS.md B1, doc/claude/specs/simulator_profiles.md). Empty means
+  # "the tool's own default row", which is every state file written so far, so
+  # it is in omit_if_empty below and no existing state view gains a line.
+  variable schema_keys {version simulator sim_profile design rundir temperature
+                        models variables analyses outputs save_all_v save_all_i
                         options includes pre_commands cosim viewer}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
@@ -46,7 +53,12 @@ namespace eval ase {
   # round-tripping byte-identically (which two committed-golden tests assert,
   # and which is what keeps a `git diff` of a state view meaningful). Empty
   # carries no information here: `cosim {}` means exactly "every default".
-  variable omit_if_empty {cosim}
+  # `sim_profile {}` means exactly "the tool's default row" (item 6) -- the same
+  # shape of statement, and the same reason for omitting it: the frozen fixture
+  # tests/headless/fixtures/ase_state_v1_pre_cosim.state must keep round-tripping
+  # BYTE-IDENTICALLY (checks ST13 and CS165), and the two committed goldens in
+  # test_ase_final{,_gf180} would otherwise gain a line on their next save.
+  variable omit_if_empty {cosim sim_profile}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -148,6 +160,17 @@ proc ase::state_get {state key {dflt {}}} {
 # (-nocommands) and backslashes are kept verbatim for Windows paths
 # (-nobackslashes). Substitutes at global level so unqualified names resolve
 # like the rc wrote them. Clean error when a referenced variable is unset.
+# WARNING, pre-existing and NOT closed here (casemode batch item 6 found it while
+# fixing the same defect in its own field expansion): `-nocommands` does NOT stop
+# a command substitution that sits inside the ARRAY INDEX of a variable
+# reference. MEASURED on 8.6.14 --
+#   set ::RAN 0 ; subst -nocommands -nobackslashes {$A([set ::RAN 1])/x}
+# leaves ::RAN at 1. So a model path of the form `$env([exec ...])/models` in a
+# STATE FILE runs that command when the path is expanded. `::sim_profile_expand_vars`
+# (src/xschem.tcl) is the variables-only expander written for the profile fields
+# and is what this should use; it is left alone here because model paths are not
+# item 6's to change and every consumer of this proc is another item's. Recorded
+# in doc/claude/specs/simulator_profiles.md section 5.
 proc ase::expand_path {p} {
   if {[catch {uplevel #0 [list subst -nocommands -nobackslashes $p]} out]} {
     return -code error "ase: cannot expand model path '$p': $out"
@@ -229,6 +252,7 @@ proc ase::state_default {} {
   return [dict create \
     version   1 \
     simulator ngspice \
+    sim_profile {} \
     design    {} \
     rundir    {} \
     temperature 27 \
@@ -395,6 +419,127 @@ proc ase::backend_hook {sim hook} {
 proc ase::backend_names {} {
   variable backends
   return [lsort [dict keys $backends]]
+}
+
+# --- Simulator profiles (casemode batch item 6) ------------------------------
+#
+# DECISIONS.md B1: the requested case mode -- and the exe, the args and the `-n`
+# flag -- live on a simulator PROFILE, and a profile is a `sim()` row of the
+# xschem simulator configuration (`sim_profile_*` in src/xschem.tcl), NOT a new
+# registry. ASE-L's part is only to NAME the row a session runs with; that is
+# the `sim_profile` state key. Nothing here starts a process: the capability
+# probe is item 7 and `run_cmd` is item 8.
+#
+# Backend name -> the `sim(tool_list)` tool whose rows configure it. A backend is
+# a deck dialect (`ngspice`); a tool is a netlist type (`spice`), and xschem
+# already keys `sim()` by the latter. Anything unmapped falls back to `spice`,
+# because every backend this file can register renders a spice deck.
+namespace eval ase { variable backend_tools {ngspice spice} }
+
+proc ase::backend_tool {name} {
+  variable backend_tools
+  if {[dict exists $backend_tools $name]} { return [dict get $backend_tools $name] }
+  return spice
+}
+
+# Which `sim()` row does this state run with?  Returns
+# {tool <t> index <i> status <s>}, where status is:
+#   default  the state names no profile -- the tool's own `default` row (this is
+#            every state file written before item 6, hence `omit_if_empty`)
+#   ok       the state names a configured row
+#   stale    it names a configured row whose `name` no longer matches the one
+#            recorded when the state was stamped: rows are addressed by INDEX,
+#            and inserting a row above silently re-points every state that
+#            stored one. The index still resolves -- the caller decides whether
+#            to run it (item 8) or offer to re-point it (item 13) -- but it is
+#            never reported as `ok`.
+#   invalid  it names a tool or an index that does not exist; falls back to the
+#            backend's tool default, and says so rather than erroring, because a
+#            simrc the user edited must not make a saved session unopenable.
+proc ase::sim_profile_resolve {state} {
+  # `sim()` is built LAZILY -- nothing populates it at startup, and its five
+  # readers (`sim_is_ngspice`, `sim_is_xyce`, `sim_is_vacask`, `simconf`,
+  # `simulate`) each open with a `set_sim_defaults` for exactly that reason. So
+  # does this one, and it is not belt: MEASURED, a session that had not yet
+  # touched the Simulation menu resolved a virgin state to `index -1` -- "the
+  # tool's default row" naming no row at all, which item 8 would have to read as
+  # "no profile" from a tool that has three. 0.8 us when the array is already
+  # there. The xschem.tcl-side accessors deliberately do NOT do this: they are
+  # reached FROM set_sim_defaults (via save_sim_defaults -> sim_profile_get), and
+  # a lazy init down there would recurse.
+  ::set_sim_defaults
+  set btool [ase::backend_tool [ase::state_get $state simulator]]
+  set p [ase::state_get $state sim_profile]
+  set status ok
+  if {$p eq {}} {
+    return [dict create tool $btool index [::sim_profile_default_index $btool] status default]
+  }
+  # No separate "is this a well-formed dict?" guard, deliberately, and it is not
+  # an omission: `dict exists` returns 0 for an INVALID dict rather than raising
+  # (measured on 8.6 with `{a b c}`), so a malformed value reads as "names no
+  # index" and lands on the range check below with status `invalid` anyway. A
+  # guard was written first and deleted after a sabotage proved it could not
+  # change any answer (mutation M31 left all checks green). CS163g pins the
+  # odd-length case, CS163i the missing-index case.
+  set tool $btool
+  if {[dict exists $p tool] && [dict get $p tool] ne {}} { set tool [dict get $p tool] }
+  set idx {}
+  if {[dict exists $p index]} { set idx [dict get $p index] }
+  set n -1
+  if {[info exists ::sim($tool,n)] && [string is integer -strict $::sim($tool,n)]} {
+    set n $::sim($tool,n)
+  }
+  if {![string is integer -strict $idx] || [catch {expr {int($idx)}} cidx] ||
+      $cidx < 0 || $cidx >= $n} {
+    return [dict create tool $btool index [::sim_profile_default_index $btool] status invalid]
+  }
+  # CANONICALIZE, and it is not cosmetic: the index is about to be used as an
+  # ARRAY KEY. `string is integer -strict` accepts non-canonical spellings --
+  # `02`, `-0`, and a value with surrounding whitespace -- and each of those
+  # passed the range test above and then indexed `sim(spice,02,...)`, an element
+  # that does not exist, while this proc reported status `ok`. MEASURED: with
+  # `sim(spice,2,casemode)` set to `preserve`, a state naming `index 02` resolved
+  # `ok` and ase::sim_profile_casemode answered `fold` -- the session's requested
+  # mode silently lost, and reported as fine to item 8, which is told it may run
+  # an `ok`. A hand-edited state file is the route (we always write a canonical
+  # integer), and the batch rule for one of those is "must not make a saved
+  # session unopenable", so this normalizes rather than refusing.
+  set idx $cidx
+  if {[dict exists $p name] && [dict get $p name] ne {}} {
+    set cur {}
+    if {[info exists ::sim($tool,$idx,name)]} { set cur $::sim($tool,$idx,name) }
+    if {$cur ne [dict get $p name]} { set status stale }
+  }
+  return [dict create tool $tool index $idx status $status]
+}
+
+# The case mode this session REQUESTS: the resolved row's own mode, else the
+# global floor `sim_case_mode` (B1's "per profile, with a global floor"). The
+# mode is NOT stored in the state file -- it is a property of the binary, and a
+# state that carried its own copy would go stale the moment the profile changed.
+#
+# `::sim_profile_casemode` is ABSOLUTELY QUALIFIED, and must stay that way: the
+# xschem.tcl proc and this one differ only in namespace, so the relative name
+# would resolve against `ase` FIRST and this proc would call itself forever.
+# Same reason the file's 56 `::ase::echo` call sites are qualified.
+proc ase::sim_profile_casemode {state} {
+  set r [ase::sim_profile_resolve $state]
+  return [::sim_profile_casemode [dict get $r tool] [dict get $r index]]
+}
+
+# Point a state at a profile row, recording the row's current `name` alongside
+# the index so a later resolve can report `stale`. Returns the new state dict
+# (states are values here; the caller stores it back).
+proc ase::sim_profile_stamp {state tool idx} {
+  set nm {}
+  if {[info exists ::sim($tool,$idx,name)]} { set nm $::sim($tool,$idx,name) }
+  return [dict set state sim_profile [dict create tool $tool index $idx name $nm]]
+}
+
+# Back to "the tool's default row" -- and back to a state file that carries no
+# sim_profile line at all.
+proc ase::sim_profile_clear {state} {
+  return [dict set state sim_profile {}]
 }
 
 # --- Run directory ----------------------------------------------------------
