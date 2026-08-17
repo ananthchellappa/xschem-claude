@@ -1,6 +1,21 @@
 # 0436 — save cards built from `op_annot::devpath` carry RAW-RELATIVE names, so a loaded raw silently collapses two instances onto one device path
 
-Status: **OPEN, measured, not fixed. This issue reverted step S3.**
+Status: **FIXED AND VERIFIED IN S3b, THEN REVERTED WITH THE REST OF THE STEP —
+the fix is not in the tree, it is preserved in
+`doc/claude/issues/0442-attempt-2-reverted.patch`.**
+
+⚠ **THE FIX IS GOOD; NOTHING HERE WAS REFUTED.** S3b built it as four named
+seams and the S3b adversary attacked it along six independent lines — template
+arm with a raw open two levels down, devproc arm, entry-relativity, vector
+members, case folding, basis validation — and **could not break any of them**.
+The step was reverted for an unrelated defect in the *filter* (issue 0442), and
+this fix was carried out with it only because it lives in the same file. Whoever
+retries S3 should re-apply the preserved patch rather than re-deriving this;
+`git apply --check` on it was verified rc=0 against the post-revert tree, and a
+round-trip was measured (apply → `ALL PASS (96 checks)`, revert → `ALL PASS (65
+checks)`).
+
+Previously: OPEN, measured, not fixed. This issue reverted step S3 (attempt 1).
 Filed by the S3 write-up agent (op-annotation crew, branch `annotate`).
 Found by the S3 adversary pass; reproduced independently by the write-up agent
 from the C source before the revert was ordered.
@@ -253,3 +268,94 @@ invocations or that row is decoration.
   schematic" entry does, and the Graphs cascade is semantically about graphs. The
   alternative is the already-crowded top-level Simulation menu next to
   `Edit Netlist`.
+
+# ============================================================================
+# THE FIX, AS SHIPPED IN S3b (2026-08-16) — decisions D1/D2/D3/D4
+# ============================================================================
+
+Status of this issue: **FIXED**, with rows S20-S25 of
+`tests/headless/test_op_annot.tcl` as the guardians and a four-variant sabotage
+matrix proving each guardian is load-bearing.
+
+## D1 — the basis lives ON THE ONE BUILDER, not beside it
+
+`op_annot::devpath <instname> ?basis? ?root?`, values `read` (default, byte-for-
+byte the old behaviour) and `deck`. Ladder rung L1, invariant I1.
+
+REJECTED: a sibling proc `op_annot::deckpath` — two public names for one
+decision is the drift I1 exists to forbid; and leaving the arithmetic in the
+walk, which is precisely the prototypes' `startpath` this issue condemned.
+
+## D2 — ⚠ `deck` MEANS ENTRY-RELATIVE, NOT LEVEL-0-ABSOLUTE. **This issue's own
+## fix sketch proposed the other one, and it is the rejected alternative.**
+
+This file's sketch says `absolute` = `xschem get sch_path` rooted at level 0.
+S3b ruled the other way, on measurement rather than preference: **`xschem
+netlist` invoked while descended into a cell writes THAT cell as the deck top**
+(`**.subckt <cell>`, measured on this binary). So the deck a user simulates from
+level N is rooted at level N, and only an entry-relative card names a device the
+generated deck actually contains. It is also what both PDK prototypes'
+`startpath` arithmetic produces — the arithmetic was in the wrong house, not
+wrong — and it is what resolves this issue's own last residual below:
+
+> **`write_save_file`'s filename contradicts its own content.**
+
+Entry-relative content makes `<current cell>.save` honest: the file is named for
+the cell it is a deck for. Row S24 asserts exactly that, and it is the row that
+separates the two candidate definitions — they COINCIDE when the walk starts at
+currsch 0, which is why every golden attempt 1 wrote was blind to the difference.
+
+Rejected alternative, recorded per rung L2: level-0-absolute. It is the right
+answer only for a user who always simulates from the top, and it makes the
+filename lie for everyone else.
+
+## D3 — a wrong basis is LOUD
+
+An unrecognised basis raises naming `basis`; a `root` passed with basis `read`
+raises naming `root`; and in `deck` a root that is not a prefix of the live
+`sch_path` raises naming `root`. Rung L1 (this file's existing error discipline:
+data conditions blank, caller bugs loud — applicable because `deck` is
+unreachable from any draw / tcleval path).
+
+This raise IS the brief's "impossible to get wrong by name" mechanism.
+REJECTED: silently defaulting an unrecognised basis to `read`, which reproduces
+this issue's failure shape exactly — a caller asks for the write name, gets the
+read name, and nothing anywhere says so.
+
+## D4 — ⚠ THE HALF THIS ISSUE DID NOT RECORD: `@path` IS A SECOND RAW-RELATIVE
+## SOURCE, AND IT LIVES IN THE C
+
+`@path` inside `xschem translate` (`token.c:4719`) is a byte-for-byte copy of
+`sim_sch_path`'s stripping loop (`scheduler.c:5150`) — same skip counter, same
+`sch_waves_loaded()` start level. gf180's and IHP's descriptors are `@path`
+TEMPLATES while sky130's is a `devproc`. **A fix that swapped only
+`op_annot::_simpath` would pass every sky130 test and leave gf180 and IHP
+silently raw-relative.** So the `deck` basis `string map`s `@path` away before
+translate sees it (`op_annot::_subst_path`) and hands the same prefix to a
+devproc's `path` argument (`op_annot::_devproc_call`). The two arms have
+separate test rows (S20/S21 template, S22 devproc) and separate sabotage
+variants for exactly this reason — `basis_atpath_left_to_translate` leaves S22
+green, `basis_devproc_not_plumbed` leaves S20/S21 green, and each is caught only
+by its own row.
+
+REJECTED: `subst` over the template (a template is user data; `subst` would
+execute embedded `[...]`). `string map` only, with the documented consequence
+that a literal `@pathological` is also rewritten.
+
+## The four seams, and why they are four procs
+
+`_check_basis` (validates, the only raiser), `_pathfor` (the ONE prefix),
+`_subst_path` (template arm), `_devproc_call` (devproc arm). Each can be wrong
+on its own while the other three are right, and each has its own sabotage
+variant. Measured reds (`RESULT: ALL PASS (96 checks)` clean, headless):
+
+```
+basis_deckpath_is_simpath        -> S20 S21 S22 S24 S29   (S2/S3/S17 stay green)
+basis_atpath_left_to_translate   -> S20 S21 S24 S29       (S22 stays green)
+basis_devproc_not_plumbed        -> S22                   (S20/S21 stay green)
+basis_validation_dead            -> S23a S23b S25         (S2/S20 stay green)
+```
+
+The first two produced one MORE red than predicted (S29, the `only_toplevel`
+row, whose third walk enters descended and so also sees the prefix collapse).
+Prediction error in the conservative direction; recorded rather than smoothed.

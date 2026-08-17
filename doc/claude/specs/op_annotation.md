@@ -620,7 +620,7 @@ Verified free / safely overridable in this tree:
 |---|---|
 | **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* **⚠ AMENDED BY S3 — "one builder" was under-specified and it reverted a complete implementation. One builder, but it must take a BASIS.** `devpath`'s hierarchy prefix comes from `sim_sch_path`, which is **relative to the level where the raw was loaded** — the right basis for *reading* a vector out of a loaded raw, and the wrong one for *writing* a save card, which needs a **deck-absolute** name. They coincide only when no raw is loaded or the raw is at the top, which is why 85 green checks missed it. The fix is a basis argument on the one builder (`op_annot::devpath <inst> ?basis?`, `absolute` for save cards), **not** path arithmetic in the walk — that would be the second builder this invariant forbids, and is exactly what the prototypes' `startpath` was. Issue **0436**, mechanism confirmed in the C at `save.c:1260`, `draw.c:2831-2838`, `scheduler.c:5150`. |
 | **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
-| **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* `spice_ignore` device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. `spice_ignore=short` and `only_toplevel` are the same class, unmeasured. Issue **0437**. |
+| **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* such device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. Issue **0437**. **⚠ THE FILTER IS SEVEN CLASSES, NOT ONE — AND GETTING THREE OF THEM REFUTED S3b.** Measured (issue **0442**): `spice_ignore` (true/`open`/`short`, instance **or** symbol), `only_toplevel` below the walk entry, `lvs_ignore` gated on `::lvs_ignore` — *and four symbol-level classes S3b missed entirely*: empty/absent `format` (`spice_netlist.c:639`, the instance vanishes from the deck completely), `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`, body replaced by attribute text), `spice_stop=true` (`:635`+`:695`, `.subckt` emitted **empty**). The last two drop the **subtree** while the instance call survives — so "may I emit a card for this?" and "may I descend into this?" genuinely diverge and cannot be aliases. **Any implementation of this invariant must be acceptance-tested against `xschem netlist` on a HIERARCHICAL fixture carrying all seven**; S3b's cross-check row was correct but its fixture was flat, which is exactly why 96 green checks and 8 sabotage variants missed the gap. Strongly consider deriving the device set from `xschem netlist` output, or exposing `skip_instance()` (netlist.c:1245) to Tcl, rather than re-implementing the netlister's filter in Tcl a class at a time — that reimplementation has now drifted twice, and `skip_instance()` also branches on `xctx->netlist_type`, which no Tcl copy has ever consulted. |
 | **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
@@ -660,6 +660,29 @@ Verified free / safely overridable in this tree:
    schematic" loads a raw at the current level. So `sim_sch_path` is a **read**
    primitive; anything that *writes* a name for a deck must ask for an absolute
    basis. Issue **0436**.
+
+   **✅ SETTLED BY S3b, ruling D2 — and the answer has a second half the issue
+   did not record.** The write basis is `xschem get sch_path` (which no loaded
+   raw can perturb) minus the walk's **entry** path — i.e. **ENTRY-RELATIVE, not
+   level-0-absolute**. Settled by measurement, not preference: `xschem netlist`
+   invoked from a descended cell writes **that** cell as the deck top, so
+   entry-relative is the only basis naming devices the generated deck actually
+   contains; it is also what both PDK prototypes' `startpath` arithmetic
+   produces, and it makes `<cell>.save` agree with its own body. The two bases
+   coincide only when the walk starts at `currsch 0` — which is why a test suite
+   that never enters descended and never loads a raw cannot tell them apart.
+
+   **⚠ `@path` IS A SECOND RAW-RELATIVE SOURCE, AND IT LIVES IN THE C.**
+   `token.c:4719` is a byte-for-byte copy of `sim_sch_path`'s stripping loop, so
+   a fix that only swaps the Tcl `sim_sch_path` call passes every sky130 test
+   (sky130 goes through a `devproc`) while leaving gf180's and IHP's `@path`
+   **templates** silently raw-relative. The write basis must `string map` `@path`
+   away *before* `xschem translate` sees it — never `subst`, since a template is
+   user data and `subst` would execute embedded `[...]`. Any test for this must
+   cover the template arm **and** the devproc arm; each is caught only by its own
+   row. S3b implemented all of this, the adversary could not break it along six
+   attack lines, and the code is preserved in
+   `doc/claude/issues/0442-attempt-2-reverted.patch`.
 5. **The hierarchy walk is destructive if it leaks.** It descends the real
    design with undo and drawing disabled. Any early return that skips the
    restore leaves the editor in a state where edits are not undoable and the
@@ -704,6 +727,20 @@ Verified free / safely overridable in this tree:
    stale — and a `source` line for a file that is not installed is a **startup
    SIGSEGV**, not a missing feature (issues 0424 and 0423). Invisible in-tree,
    because `XSCHEM_SHAREDIR` resolves to `src/` there.
+11. **⚠ A CORRECT ORACLE ASKED THE WRONG FIXTURE PROVES NOTHING — this is how
+   BOTH S3 attempts shipped a refuted deliverable past a green suite.** Attempt 1
+   passed 85 checks and 11 sabotage variants while missing two defects, because
+   no row loaded a raw or placed a non-netlisted instance. Attempt 2 passed 96
+   checks and 8 sabotage variants while missing four netlister drop classes,
+   because its `xschem netlist` cross-check row — the right idea, and the very
+   acceptance issue 0437 asked for — ran on a **flat** fixture whose only
+   variants were the classes already handled. Verify-B caught the tell both
+   times and it is worth naming: a sabotage variant whose predicted red **does
+   not appear** means the fixture cannot reach that code path. In attempt 2,
+   `filter_skips_cards_but_still_descends` was predicted to red the cross-check
+   row and did not, which was the visible edge of the whole gap. **Treat a
+   missing predicted red as a fixture defect to be fixed before the step
+   lands — not as a lucky pass and not as a prediction error to be footnoted.**
 
 ---
 

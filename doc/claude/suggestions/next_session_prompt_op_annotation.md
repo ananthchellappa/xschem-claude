@@ -372,15 +372,67 @@ Everything below is what the retry must add to it.
 
 ## S3 — hierarchy walk and save-card generation
 
-> **STATUS: ATTEMPTED 2026-08-16, REVERTED, NOT DONE.** The implementation was
-> complete and green (85 checks, 11 sabotage variants, tiers clean) but the
-> adversary pass refuted its output in two reachable silent states — see bullets
-> 14 and 15 above, issues **0436** and **0437**. Nothing from it is in the tree.
-> **The retry starts from `doc/claude/issues/0436-attempt-1-reverted.patch`**,
-> which is correct in every respect the two issues do not name, and adds: a
-> device-path *basis* argument, a not-in-the-netlist filter, and the two test
-> rows (a `raw_read` row and a `spice_ignore` row) whose absence let both
-> defects through 85 green checks.
+> **STATUS: ATTEMPTED TWICE (2026-08-16), REVERTED TWICE, NOT DONE.**
+> Attempt 2 was green at **96 checks / 8 sabotage variants / tiers clean** and
+> was refuted by its adversary pass on ONE of its three mandated fixes. Start
+> from **`doc/claude/issues/0442-attempt-2-reverted.patch`** — verified
+> `git apply --check` rc=0 against the post-revert tree, and round-tripped
+> (apply → `ALL PASS (96 checks)`, revert → `ALL PASS (65 checks)`).
+>
+> **WHAT ATTEMPT 2 GOT RIGHT — DO NOT RE-LITIGATE, DO NOT RE-DERIVE:**
+> * **The basis fix (0436) is CORRECT and survived six independent adversary
+>   attack lines.** Four named seams (`_check_basis`, `_pathfor`, `_subst_path`,
+>   `_devproc_call`), `devpath <inst> ?basis? ?root?`, `deck` = `sch_path` minus
+>   the walk-entry root, `@path` `string map`ped away before `translate` sees it.
+>   Ruling **D2**: the deck basis is **ENTRY-RELATIVE**, not level-0-absolute —
+>   settled by measuring that `xschem netlist` from a descended cell makes THAT
+>   cell the deck top. Issue 0436's own fix sketch (level-0) is the rejected
+>   alternative.
+> * **I6** held against a forced raise below entry, a descended entry, and the
+>   log-suppress scope on the error path. The `_descended` class-1/class-2 split
+>   (0433) is right.
+> * **The cgso/cgdo ruling (0429, D8) LANDED AND IS IN THE TREE** — the only part
+>   of attempt 2 that was kept, because it is in `sky130A/sky130_procs.tcl`,
+>   depends on nothing reverted, and the brief forbade deferring it again.
+>   Guarded by goldens **P2 and P9** (two, not the three the report claimed —
+>   P25 does not fire). **Do not re-decide it. Do not re-implement it.**
+>
+> **WHAT REFUTED IT — issue 0442, and it is the whole of attempt 3's job:**
+> The not-in-the-netlist filter implements **three** of the SPICE netlister's
+> **seven** drop classes. Missing, all symbol-level, all in `spice_netlist.c`:
+> empty `format` (`:639` — the instance vanishes from the deck entirely),
+> `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`), `spice_stop=true`
+> (`:635`+`:695`, `.subckt` emitted **empty**). Measured: cards were emitted for
+> three devices that are nowhere in the generated deck, and
+> `write_save_file` wrote that block to the file the new menu item hands the user.
+> Severity is not cosmetic — re-measured on **both** installed ngspice binaries
+> under the dot-card idiom the feature generates, **either** bad-card shape (a
+> missing instance prefix, or a missing device inside a present instance) makes
+> ngspice write **no raw file at all** at rc=0. That is the same criterion ruling
+> D8 used to delete `cgso`/`cgdo`, so the step deleted a parameter to prevent a
+> harm while shipping a broader instance of it.
+>
+> **WHY 96 GREEN CHECKS MISSED IT, AND THE ONE RULE THAT WOULD HAVE CAUGHT IT:**
+> Row S31 cross-checks the cards against `xschem netlist` — the right oracle, the
+> exact acceptance 0437 asked for. Its **fixture is flat**, and its only variants
+> are the classes already handled, so it could not fail. The tell was visible in
+> Verify-B: `filter_skips_cards_but_still_descends` was **predicted to red S31 and
+> did not**. **A predicted red that does not appear is a fixture defect, not a
+> footnote** — fix it before landing. This is now spec landmine 11.
+>
+> **ATTEMPT 3, CONCRETELY:** re-apply the patch; extend `_netlisted` with the four
+> classes (all probed as `getprop instance <n> cell::<attr>`); make `_netlisted`
+> and `_descendable` genuinely diverge (`spice_sym_def`/`spice_stop` drop the
+> *subtree* while the instance call survives — attempt 2 made them aliases, which
+> is why D6 has only one guardian, S28); give S31 a **hierarchical** fixture
+> carrying all seven; and correct the two false comments in `op_annot.tcl` (the
+> "EMITS ONLY WHAT THE NETLISTER WOULD" box and the `0.0`-column harm model,
+> which is wrong under the shipped idiom).
+> **Weigh first, because this filter has now drifted twice:** derive the device
+> set from `xschem netlist` output, or expose `skip_instance()` (netlist.c:1245)
+> to Tcl, instead of maintaining a second copy of the netlister's rules in Tcl.
+> The C is the only thing that knows all seven — and it also branches on
+> `xctx->netlist_type`, which no Tcl copy has ever consulted.
 
 **Files:** `src/op_annot.tcl`.
 
@@ -421,12 +473,25 @@ a `spice_ignore=true` instance asserting it contributes **no** card (bullet 15 /
 issue 0437); (c) the `--logdir` invocation alongside the `--nolog` one, or the
 log-suppress row is dark (bullet 20). `no_undo` cannot be asserted as a flag read
 at all (bullet 18) — probe its effect, and do not let the row pass vacuously.
+**Attempt 2 delivered all three and they are in the preserved patch. The row it
+still lacks, and the one that decides attempt 3:** a **hierarchical** fixture
+whose subcircuits carry `spice_stop`, `spice_sym_def`, `default_schematic=ignore`
+and an empty `format`, cross-checked against `xschem netlist` (issue 0442).
+
+**Menu anchor, corrected and re-verified:** "Annotate Operating Point into
+schematic" is `src/xschem.tcl:15315`; the new item goes after `:15324`. Earlier
+revisions of this plan and of issue 0436 cited `14943`, which is **stale** and
+lands the item in the wrong cascade. The cascade choice (Simulation → Graphs)
+was never ratified and rides in the same status-E row as D8.
 
 **Risk:** medium — the walk is the only destructive thing in S1–S6. **Measured
-correction: the walk was not what bit.** The I6 restore worked on every path the
-crew could force, including a raise three levels down and an entry that was
-already descended. What bit was the *name basis* of the cards it emitted — the
-read-only half nobody had it on the risk list.
+correction, twice over: the walk was never what bit.** The I6 restore worked on
+every path either crew could force, including a raise three levels down and an
+entry that was already descended. Attempt 1 died on the *name basis* of the cards
+and attempt 2 on *which instances got cards* — both times the read-only,
+undramatic half that nobody had on the risk list. Weight the risk accordingly:
+the destructive-walk story is well covered, and the emitted **content** is where
+this step has failed every time.
 
 ---
 
@@ -440,6 +505,24 @@ New state key `save_op_params`, default `0`, in the same group as
 `op_annot::save_cards` output after the `.save all` line (`ase.tcl:3162`).
 Add the checkbox to the Save All dialog (`ase_window.tcl:2854`).
 
+> **⚠ CARRIED FROM S3b — `render_deck` IS THE CALLER ISSUE 0432 IS ABOUT.**
+> `xschem get no_undo` does not exist (setter only, `scheduler.c:11958`) and it
+> does not raise — it returns the **empty string** whether the flag is 0 or 1, so
+> a `catch`-based probe cannot detect it. `save_cards` can therefore only restore
+> `no_undo` to **0**. If `render_deck` wraps the call in its own `no_undo 1`
+> scope, `save_cards` will **silently disarm it** on the way out and the rest of
+> `render_deck` runs with undo re-armed. Either set `no_undo 1` again after the
+> call, or fix 0432 first. Do not assume the flag survives.
+>
+> **⚠ `save_cards` returns `{}` for an empty walk, not a lone `.save all`.**
+> Append nothing in that case — a deck carrying only `.save all` from this
+> feature says nothing while reporting success.
+>
+> **⚠ The block is DOT-cards and is already self-sufficient**: it prepends its
+> own `.save all` (R2). Appending it *after* ASE's existing `.save all` line
+> means two — measured harmless, but do not "tidy" it by stripping the block's
+> own leader without re-measuring, and never emit the bare `save all` spelling.
+
 **Acceptance:** `tb_bandgap` with `save_op_params 1` renders a deck whose device
 save cards match `op_annot::save_cards`; running it produces a raw whose header
 contains those exact vector names. **Read the raw header back and diff the two
@@ -451,7 +534,21 @@ test in this plan.
 > with only a `Warning: unrecognized variable` on stderr. So a completely wrong
 > descriptor passes the name diff with every number zero. Add two assertions:
 > ngspice's stderr carries no `unrecognized variable`, and the read-back values
-> are not all exactly zero. Note also that the save card is bare while the raw
+> are not all exactly zero.
+>
+> **⚠⚠ THAT PARAGRAPH DESCRIBES `ngspice -b -r out.raw` ONLY, AND THIS STEP WILL
+> NOT USE THAT IDIOM.** Re-measured in S3b on **both** installed binaries
+> (`/usr/bin` = 42, `/usr/local/bin` = 46+) under the dot-card + `.control … write
+> … .endc` form that ASE renders and every shipped bench uses: one bad card gives
+> `rc=0`, one `checkvalid` line, and **NO RAW FILE AT ALL** — for a missing
+> instance prefix *and* for a missing device inside a present instance. So under
+> this step's own idiom the failure is not a fabricated zero, it is total silent
+> data loss, and the acceptance above inverts: **the tell is that the raw is
+> missing, not that a column is zero.** Assert the raw file exists before
+> diffing anything, or the test will report a confusing absence. Spec R5 /
+> landmine 9 / issues 0434 and 0442.
+>
+> Note also that the save card is bare while the raw
 > name is wrapped (rule **R4**), so the diff compares
 > `devpath+[param]` cards against `op_annot::vector` names — that asymmetry *is*
 > the thing being tested, and a naive string diff of card-vs-header will fail
@@ -481,6 +578,29 @@ there is no schema work here — read them with `dict exists`.
 > device that does not exist yields a real `0.0`, so "blank when missing" only
 > covers names ngspice rejected outright. A wrong descriptor reaches the
 > formatter as a legitimate-looking zero.
+
+> **⚠ CARRIED FROM S3b — S5 OWNS DELETING THE PROTOTYPES, AND ONE OF THEM IS A
+> LIVE HAZARD UNTIL IT DOES.** The 0429/D8 ruling removed `cgso`/`cgdo` from the
+> sky130 **descriptor**, but `sky130_write_save_lines`
+> (`sky130A/sky130_procs.tcl:86-87`) still emits `.save …[cgso]` / `[cgdo]`
+> behind its still-live `Create FET .save file` menu item (`:235`), and
+> `sky130_display_fet_params` (`:201-208`) still divides by them. On ngspice-42
+> that menu item is one click from a `.save` file that suppresses the whole raw —
+> the exact harm D8 called unshippable. Until S5 deletes the prototypes, **three**
+> save-card emitters and **two** competing menu items ship at once (sky130's,
+> IHP's `Create FET and BIP .save file` at `sg13g2_procs.tcl:602`, and the new
+> PDK-neutral one), producing different parameter sets for the same design.
+> Deleting them is therefore not cleanup — it closes an open defect.
+>
+> **⚠ I1 IS NOT LITERALLY ACHIEVED FOR THE VECTOR *SYNTAX*, and S5 is where it
+> gets fixed cheaply.** The *device path* is genuinely single-sourced
+> (`devpath`/`_pathfor`), but `op_annot::_wrap` and the save emitter's
+> `_cards_for` each build the `dev[param]` bracket shape independently. The
+> structural cause is that `op_annot::vector` takes **no `basis` argument**, so
+> it is permanently `read`-basis and the save consumer cannot route through it
+> even in principle. Give `vector` the same `?basis? ?root?` pass-through and
+> have the emitter call `vector $inst $param 1`; that collapses the two builders
+> and makes I1 true rather than aspirational.
 
 **Acceptance:** on a run with the cards saved, the block for one FET matches a
 golden string; on a run without them, every line is `label =` with nothing after

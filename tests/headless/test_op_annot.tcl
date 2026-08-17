@@ -686,10 +686,46 @@ proc opa_sky_probe_devpath {instname model path spiceprefix} {
 # --- the S2 goldens ----------------------------------------------------------
 # D7: the prototype's seven PLUS `id`. sky130_write_save_lines never saves `id`
 # although every shipped sky130 FET symbol displays it — issue 0427.
+#
+# ============================================================================
+# ⚠ S3b / DECISION D8 — cgso AND cgdo ARE GONE, AND THIS IS THEIR GUARDIAN
+# ============================================================================
+# ISSUE 0429, RE-MEASURED FOR S3b ON BOTH ngspice BINARIES INSTALLED HERE, one
+# parameter per throwaway deck, real sky130 tt models, under the
+# `.control … write … .endc` idiom every shipped PDK bench uses:
+#
+#   /usr/bin/ngspice (42)         gm cgg cgs cgd -> raw written, 0 warnings
+#                                 cgso cgdo      -> exit 0, ONE `checkvalid`
+#                                                   line, and NO RAW FILE AT ALL
+#   /usr/local/bin/ngspice (46+)  cgso cgdo      -> raw written, real values
+#                                                   (2.463135e-16 each)
+#
+# So on 42 a single unknown model parameter suppresses the WHOLE raw while the
+# exit status stays 0 — silent total waveform loss. S3b ships the first
+# PDK-neutral `Create device OP .save file` menu item, i.e. the first time this
+# descriptor is handed to every PDK's users as a generated deck, and a feature
+# that destroys the data it exists to display is not shippable. The rows drop.
+# ft becomes gm/(2*pi*cgg). A 46+ user who wants them back does one
+# `op_annot::register` round-trip in their own rc (I5) — no rebuild, no restart.
+#
+# REJECTED, and issue 0429's OWN fix sketch is the one refuted by arithmetic:
+# relabelling to `cgs`/`cgd` keeps two display rows but cgs measures NEGATIVE
+# (-5.52e-16) and cgd is three orders down (6.04e-19), so ft's denominator goes
+# from cgg+cgdo+cgso = 1.254e-15 to cgg+cgd+cgs = 2.097e-16 — a silently ~6x
+# wrong fT on every sky130 FET on EVERY ngspice. That is exactly I3's
+# plausible-wrong-number, arriving from a "fix".
+#
+# ⚠ TWO GOLDENS GUARD THIS, NOT ONE: P2 asserts the params list itself and P9
+# asserts its order and membership. P25's `not-a-param:` scan is the third
+# guard and needs no edit — it goes red on its own if `ft` is left referencing
+# a $cgso that params no longer carries.
 set P_SKY_PARAMS {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
-                  {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}
-set P_SKY_PNAMES {id gm gds vth vdsat cgg cgso cgdo}
-# The prototype's exact seven, for the byte-for-byte card diff only.
+                  {cgg cgg 1}}
+set P_SKY_PNAMES {id gm gds vth vdsat cgg}
+# The prototype's exact seven, for the byte-for-byte card diff only. ⚠ NOT
+# touched by D8: row P3 temporarily overrides `params` with this list to diff
+# against sky130_save_fet_params, and the PROTOTYPE still emits cgso/cgdo. When
+# S5 deletes the prototype this list goes with it.
 set P_SKY_P7     {{gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
                   {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}
 set P_GF_PARAMS  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
@@ -834,7 +870,12 @@ check {P8 sky130 kinds come from params: gm bare, id i(), vth v()} \
 # yet every shipped sky130 FET symbol displays `id=@spice_get_node i(…[id])`.
 # The descriptor carries `id`; this row is what stops a later "align with the
 # prototype" edit from silently deleting a parameter users already see.
-check {P9 sky130 param order, with `id` the prototype never saves (0427)} \
+#
+# ⚠ AND SINCE S3b, THE GUARDIAN OF DECISION D8 IN THE OTHER DIRECTION: cgso and
+# cgdo are NOT here, and an edit that puts them back — "align with the
+# prototype" is exactly how they would come back — reds this row. See the D8
+# block above P_SKY_PARAMS for the two-binary measurement.
+check {P9 sky130 param order: `id` the prototype never saves (0427), no cgso/cgdo (0429)} \
   [rcall {opa_param_names nmos}] [list 0 $P_SKY_PNAMES]
 
 # ⚠ D6, and a MEASURED TRAP FOR S5: with no raw loaded the pin expression

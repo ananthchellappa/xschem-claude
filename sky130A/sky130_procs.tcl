@@ -327,13 +327,52 @@ if {[info commands ::op_annot::register] ne {}} {
   # Pin order measured from the B records: D=0 G=1 S=2 B=3.
   # ⚠ derived rows are SELF-CONTAINED — `ft` inlines its own capacitance sum
   # rather than referencing a derived label, so S5 needs no evaluation order.
+  #
+  # ==========================================================================
+  # ⚠ cgso AND cgdo ARE DELIBERATELY ABSENT — ISSUE 0429, RULING D8 (status E)
+  # ==========================================================================
+  # The prototype `sky130_write_save_lines` saves them and this descriptor used
+  # to inherit them. RE-MEASURED on BOTH ngspice binaries installed here, one
+  # parameter per throwaway deck, real sky130 tt models, under the
+  # `.control … write … .endc` idiom every shipped PDK bench uses:
+  #
+  #   /usr/bin/ngspice (42)        gm cgg cgs cgd -> raw written, 0 warnings
+  #                                cgso cgdo      -> exit 0, ONE `checkvalid`
+  #                                                  line, and NO RAW FILE AT ALL
+  #   /usr/local/bin/ngspice (46+) cgso cgdo      -> raw written, real values
+  #                                                  (2.463135e-16 each)
+  #
+  # So on 42 a single unknown model parameter suppresses the WHOLE raw while the
+  # exit status stays 0 — silent, total waveform loss. S3 ships the first
+  # PDK-neutral `Create device OP .save file` menu item, i.e. the first time this
+  # descriptor is handed to every PDK's users as a generated deck, and a feature
+  # that destroys the data it exists to display is not shippable. The two rows
+  # go, and `ft` becomes gm/(2*pi*cgg).
+  #
+  # RECOVERY for a 46+ user who wants them back is one `op_annot::register`
+  # round-trip in their own rc (I5) — no rebuild, no restart:
+  #     set d [op_annot::descriptor nmos]
+  #     dict set d params [concat [dict get $d params] {{cgso cgso 1} {cgdo cgdo 1}}]
+  #     op_annot::register nmos $d
+  #
+  # REJECTED (a): keep them — correct on 46+, catastrophic on 42, and the
+  # generated deck cannot know which ngspice will run it.
+  # REJECTED (b): issue 0429's OWN fix sketch, relabelling to `cgs`/`cgd`.
+  # Refuted by arithmetic: cgs measures NEGATIVE (-5.52e-16) and cgd is three
+  # orders down (6.04e-19), so ft's denominator would go from
+  # cgg+cgdo+cgso = 1.254e-15 to cgg+cgd+cgs = 2.097e-16 — a silently ~6x wrong
+  # fT on every sky130 FET on EVERY ngspice, i.e. exactly I3's
+  # plausible-wrong-number arriving from a "fix".
+  # REJECTED (c): a per-parameter descriptor guard plus a simulator-version
+  # probe — new descriptor grammar, policy back inside the emitter, and the
+  # probe cannot know which ngspice will run the generated deck. Filed forward.
   foreach _sky130_op_type {nmos pmos} {
     op_annot::register $_sky130_op_type {
       devproc sky130_op_devpath
       match   {*sky130_fd_pr/*}
       params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
-               {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}
-      derived {{ft    {$gm/(2*3.141592654*($cgg + $cgdo + $cgso))}}
+               {cgg cgg 1}}
+      derived {{ft    {$gm/(2*3.141592654*$cgg)}}
                {gm/id {$gm/$id}}}
       pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
                {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}

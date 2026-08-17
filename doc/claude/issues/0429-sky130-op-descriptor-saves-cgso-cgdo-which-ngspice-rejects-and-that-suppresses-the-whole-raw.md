@@ -1,9 +1,31 @@
 # 0429 — sky130 saves `cgso` and `cgdo`, which ngspice-42 rejects, and ONE rejected `.save` card suppresses the ENTIRE raw file
 
-Status: **open — measured, not fixed. This is the finding that downgraded S2 to
-status E.** Found by the S2 Verify-C adversary of the op-annotation run
+Status: **RULED AND FIXED IN S3b (2026-08-16), ruling D8 — the ratification
+question is at the bottom of this file.** The two rows are gone from
+`sky130A/sky130_procs.tcl` and `ft` is now `gm/(2*pi*cgg)`. Read the RULING
+section before the historical sections below it: **one of this file's own
+premises turned out to be wrong**, and the fix sketch it proposed is measurably
+refuted.
+
+⚠ **THIS FIX SURVIVED S3b's REVERT — DELIBERATELY.** Step S3b as a whole was
+refuted (issue 0442) and its walk, menu item and test section were reverted. The
+descriptor change here was kept, because it is in a different file, depends on
+nothing that was reverted, and the brief for the step forbade deferring this
+ruling a second time. With `save_cards` gone the changed `params`/`derived` are
+inert data consumed only by the test goldens until S5 lands the display path, so
+keeping it carries no behavioural risk. Guarded by two goldens in
+`tests/headless/test_op_annot.tcl`, **P2 and P9** — verified by re-arming:
+reinstating the two rows reds exactly those two and nothing else.
+
+⚠ **CORRECTION to the count claimed when the fix landed.** The S3b implement
+report said the ruling was "guarded by THREE goldens: P2, P9 and P25's
+not-a-param scan". Measured: P25 stays **green** when `cgso`/`cgdo` are
+reinstated. There are **two** guardians, not three.
+
+Previously: open — measured, not fixed; the finding that downgraded S2 to
+status E. Found by the S2 Verify-C adversary of the op-annotation run
 (2026-08-16) on branch `annotate`, then re-measured independently by the S2
-write-up agent before the step was committed.
+write-up agent before the step was committed, and a third time by the S3b crew.
 
 Inherited, not introduced: `sky130A/sky130_procs.tcl:86-87`
 (`sky130_write_save_lines`) has emitted these two cards since long before the
@@ -90,19 +112,143 @@ question in the S2 ledger row:
 > was given. Correct the parameters (and re-baseline the prototype and the test),
 > or keep bug-compatibility and fix it when S5 deletes the prototypes?
 
-## Fix sketch, whichever way the answer goes
+## Fix sketch as originally filed — ⚠ REFUTED, DO NOT IMPLEMENT
 
-1. Replace `{cgso cgso 1}` / `{cgdo cgdo 1}` with `{cgso cgs 1}` / `{cgdo cgd 1}`
-   — keeping the *label* stable so the on-screen text does not change, and moving
-   only the raw *parameter*. That is the smallest blast radius (I3/L2) and it
-   keeps `ft` meaningful.
-2. Fix `sky130_write_save_lines:86-87` the same way, so the prototype and the
-   generic builder still agree and `P3` can stay a byte-for-byte assertion.
+1. ~~Replace `{cgso cgso 1}` / `{cgdo cgdo 1}` with `{cgso cgs 1}` /
+   `{cgdo cgd 1}` — keeping the *label* stable so the on-screen text does not
+   change, and moving only the raw *parameter*.~~ **Measurably wrong**, see the
+   RULING below: `cgs` and `cgd` are different physical quantities from the
+   overlap capacitances, `cgs` is NEGATIVE, and substituting them makes `ft`
+   about 6x wrong on every sky130 FET on every ngspice.
+2. ~~Fix `sky130_write_save_lines:86-87` the same way.~~ Superseded: the
+   prototype is deleted by S5, and `P3` already handles the disagreement by
+   overriding `params` with the prototype's own seven for the byte-diff row only.
 3. Add a test row that is not a self-comparison: assert against **ngspice**, not
    against the prototype, that every registered sky130 parameter yields a vector
    in a real raw. S2's acceptance was a string diff between two pieces of our own
    code, and that is exactly the shape of check that cannot catch this class of
    defect. Spec §8's "the names are real in a raw" leg is the one that would
-   have.
-4. S4 (the ngspice round trip) is the natural owner of step 3 and must build it
-   on sky130 or gf180 — IHP cannot be simulated on this box.
+   have. **Still owed** — S4 (the ngspice round trip) is its natural owner and
+   must build it on sky130 or gf180, since IHP cannot be simulated on this box.
+
+# ============================================================================
+# THE RULING — S3b decision D8 (2026-08-16), ladder rung L3, step status E
+# ============================================================================
+
+## What ships
+
+`sky130A/sky130_procs.tcl` loses `{cgso cgso 1}` and `{cgdo cgdo 1}` from
+`params` for both `nmos` and `pmos`, and its `derived` row becomes
+
+```tcl
+derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id {$gm/$id}}}
+```
+
+Guarded by two test goldens, deliberately: `P_SKY_PARAMS` (row P2, the list
+itself) and `P_SKY_PNAMES` (row P9, its order and membership), plus row P25's
+`not-a-param:` scan which reds on its own if a later edit leaves `ft`
+referencing a `$cgso` the params list no longer carries. "Align with the
+prototype" is exactly how these two rows would come back, and all three rows
+exist to stop that.
+
+## The version-dependence, re-measured on BOTH binaries installed here
+
+`which -a ngspice` -> `/usr/local/bin` (46+), `/usr/bin` (42). **46+ shadows 42
+on PATH, so an unpinned `ngspice` measures the forgiving one.** One parameter
+per throwaway deck, real sky130 tt models, under the
+`.control … write … .endc` idiom every shipped PDK bench uses:
+
+```
+/usr/bin/ngspice (42)         gm cgg cgs cgd -> raw written, 0 warnings
+                              cgso cgdo      -> exit 0, ONE `checkvalid` line,
+                                                and NO RAW FILE AT ALL
+/usr/local/bin/ngspice (46+)  gm cgg cgs cgd cgso cgdo -> raw written, 0 warnings
+                              bogusparam     -> exit 0, no raw
+```
+
+S3b ships the first PDK-NEUTRAL `Create device OP .save file` menu item — the
+first time this descriptor is handed to every PDK's users as a generated deck —
+and a feature that destroys the data it exists to display is not shippable.
+
+## ⚠ AND IT IS ALSO A CORRECTNESS FIX: cgg ALREADY CONTAINS THE OVERLAP
+
+The step brief asked for one more deck before the question was written down:
+does `cgg` already include the overlap terms? Measured on ngspice-46+, same
+device (`sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1`), Vds=1.8, two gate biases:
+
+```
+                 Vgs = 0            Vgs = 0.9
+cgg           3.845297e-16        7.611204e-16
+cgso          2.463135e-16        2.463135e-16
+cgdo          2.463135e-16        2.463135e-16
+cgs          -5.09461e-18        -5.52001e-16
+cgd           6.340177e-20        6.042782e-19
+cgb          -3.79499e-16        -2.09724e-16
+```
+
+Two readings, and they agree:
+
+* **The identity holds to 7 digits at both bias points**:
+  `cgg == -(cgs + cgd + cgb)`. At Vgs=0.9, `-(-5.52001e-16 + 6.042782e-19 +
+  -2.09724e-16) = 7.611207e-16` against a printed `cgg` of `7.611204e-16`; at
+  Vgs=0, `3.845302e-16` against `3.845297e-16`. So `cgg` is the TOTAL gate
+  capacitance, the sum of the three partial derivatives — and BSIM's `cgs`/`cgd`
+  are total (intrinsic **plus** overlap) partials.
+* **With the channel off (Vgs=0) `cgg` is still 3.8e-16**, the same order as
+  `cgso + cgdo = 4.93e-16`. An intrinsic-only `cgg` would be near zero there.
+
+So the shipped `ft = gm/(2*pi*(cgg + cgdo + cgso))` **double-counts the
+overlap**: it adds 4.93e-16 on top of a `cgg` that already contains it, making
+the denominator 1.254e-15 where the physically correct one is 7.61e-16 — the
+shipped fT was roughly **40% too low on every sky130 FET, on every ngspice
+version**. Dropping the two rows is therefore not a loss forced by a
+compatibility problem; `gm/(2*pi*cgg)` is both the textbook definition and the
+arithmetically consistent one. This shrinks the ratification question to the two
+lost DISPLAY rows.
+
+## Rejected alternatives, with why
+
+* **(a) Keep `cgso`/`cgdo`.** Correct on 46+ only. On 42 it suppresses the whole
+  raw with exit status 0, and a generated `.save` file cannot know which ngspice
+  will read it — it may be `.include`d on another machine entirely.
+* **(b) This issue's own sketch: relabel to `cgs`/`cgd`.** Refuted by
+  arithmetic. `cgs` measures NEGATIVE (-5.52e-16) and `cgd` is three orders down
+  (6.04e-19); the ft denominator would go from `cgg+cgdo+cgso` = 1.254e-15 to
+  `cgg+cgd+cgs` = 2.097e-16, a factor of 5.98 — a silently ~6x wrong fT on every
+  sky130 FET on every ngspice. That is precisely invariant I3's
+  plausible-wrong-number, arriving from a "fix". They are also different
+  physical quantities: `cgs`/`cgd` are bias-dependent totals, `cgso`/`cgdo` are
+  the fixed overlaps.
+* **(c) Keep them behind a per-parameter descriptor guard plus a
+  simulator-version probe.** New descriptor grammar on a key three PDKs already
+  use, policy back inside the emitter (contrary to the "the descriptor is the
+  only policy about what is savable" rule the emitter documents), and the probe
+  cannot know which ngspice will run the generated deck. Filed forward as
+  **issue 0440** rather than discarded.
+
+## Recovery for a 46+ user who wants the two rows back
+
+One `op_annot::register` round-trip in their own `--script` rc (invariant I5) —
+no rebuild, no restart, effective on the next redraw:
+
+```tcl
+set d [op_annot::descriptor nmos]
+dict set d params [concat [dict get $d params] {{cgso cgso 1} {cgdo cgdo 1}}]
+op_annot::register nmos $d
+```
+
+That reversibility is half the reason the ruling could be made at all: the
+option that loses data on ngspice-42 is unrecoverable for that user, and the
+option that loses two display rows on 46+ is three lines in an rc.
+
+## THE STATUS-E QUESTION for the ledger row
+
+> sky130 FET annotation now drops the `cgso`/`cgdo` rows and defines fT as
+> `gm/(2*pi*cgg)`, so a generated `.save` block can no longer suppress the whole
+> raw on ngspice-42. Measurement since the question was drafted shows `cgg`
+> already contains the overlap (`cgg == -(cgs+cgd+cgb)` to 7 digits at two bias
+> points), so the old fT double-counted it and was ~40% low — the new one is a
+> correctness fix, not a compromise. What is left to ratify is the loss of the
+> two `cgso`/`cgdo` DISPLAY rows for ngspice-46+ users: accept the loss (they
+> are recoverable with a three-line `op_annot::register` in a user rc), or
+> reinstate them behind a per-descriptor simulator guard (issue 0440)?
