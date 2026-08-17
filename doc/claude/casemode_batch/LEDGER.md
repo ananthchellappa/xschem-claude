@@ -48,7 +48,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 2 | one lookup ladder (+ absorbs the VCD sub-step) | `[x]` | `532b1768` | 105 new (186 in file) | 26 | 11 + 3 audits | no | audit diff vs item 1 **EMPTY**, verified independently. Ladder no longer mutates the query; alias index is a **separate lazy table**, overriding DESIGN_REVISION §4's *mechanism* (rule stands, correction written in place). Fixed a live **default-mode** viewer defect + a 32-byte leak |
 | 3 | four-source mode resolution | `[x]` | `26cff1d3` | 91 new (277 in file) | 53 | 8 + 3 audits | no | audit diff **EMPTY**, verified independently. `xschem raw casemode` REPORTS, never acts. **Refuted two design premises by measurement** (see below). Spec §10 |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | `[x]` | `5c7ee761` | 30 | 30 | 5 + 2 audits | no | **11 folds gated, not the brief's 4** — 9 `strtolower` on 8 lines + 2 `strtoupper`, five senders + a receiver parse. Audit = one added row (its own suite), zero movers. **Refuted 2 reviewer-prescribed fixes and 1 driver hint by measurement.** Spec §11 |
-| 5 | viewer Tcl + two-pane browser scan | | | | | | no | |
+| 5 | viewer Tcl + two-pane browser scan | `[E]` | `9b1394c9` | 134 | 66 | 5 + 3 audits | **YES ×2** | audit = one added row, zero movers. **B2a's control BUILT, not passed on** (`Options ▸ Case Mode`). Review caught the radios as a **dead control** — no-op left 113/113 green. Spec §12. **2 look debts recorded** |
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | | | | | | no | new item; the "perfect" fix the user chose over three papering-over options |
 | 6 | extend `sim()` / `simconf` / `simrc` | | | | | | no | replaces the plan's new `ase_simulators` file |
 | 7 | the capability probe (+ hard timeout) | | | | | | no | |
@@ -254,6 +254,62 @@ Other carry-forwards:
   faked); `RAW_CASE_UPPER` never came from a real uppercasing simulator; source 2
   (the `Option:` header) never drives a sender; `send_*_to_bespice()` is
   untouched and undriven.
+
+## Carry-forwards item 5 handed on — baseline rolled to `audit_item05_commit`
+
+**Baseline is now `audit_item05_commit_2026-08-16.txt` — 319/15/0/0 of 334** at
+`9b1394c9`. ⚠ **Item 5 committed THREE audit files and `_closer` is MISNAMED** —
+it is the implementer's first cut. Judge by **`_commit`**. (All three happen to
+agree by name and status; the driver checked. Do not rely on that next time.)
+
+**Item 5 is `[E]`. Two `look` debts are recorded and only the user clears them.**
+A green suite never discharges an eyeball.
+
+- **The review caught a DEAD CONTROL, which is the whole reason the fix round
+  exists.** The four Case Mode radios' `-command` was never driven by any check —
+  replacing it with a no-op left **113/113 green**. Textbook green-but-hollow,
+  found by a reviewer, not by the suite. Checks went 113 → 134.
+- **RULING that corrects spec §9's closing line: the Tcl matcher STAYS a mirror**
+  and does **not** become `xschem raw index`. Two independently sufficient
+  reasons: both callers judge a **foreign** name list (`raw index` answers only
+  for the *current* database, so routing would need a `raw switch` per
+  candidate), and `validate_rpn` must stay callable **with no engine at all**
+  (`test_wave_viewer.tcl`). It is held down by an **agreement check** instead —
+  a leg that reads `raw index` *and* the gate for one token and fails on any
+  difference. This partly overrides the driver's dispatch hint, which said
+  "route through the authority"; reproduce-plus-agreement is the ruling.
+- **RULING — the fold key is ASCII-only.** The authority is `raw_fold_key()` →
+  `strtolower()` (`util.c:1006`), a `tolower()` loop over **bytes**, and there is
+  no `setlocale` anywhere in `src/`. Tcl's Unicode fold **invented a D2 collision
+  the engine does not have** (`v(CÄ)` + `v(cä)`) and made `resolve_signal_db`
+  skip a slot that resolves.
+- **RULING — the override does NOT reach the Ctrl-K senders, and the claim that
+  it did is deleted.** `hilight_sender_case_mode()` (`hilight.c:364`) reads the
+  **schematic** window's `xctx->raw`; the viewer is a separate context with its
+  own — measured by loading one file into both and watching them diverge. Not
+  plumbed across: "which `Raw` is authoritative when a session has several" is
+  not a question a menubar can answer, and **B1 already puts a session-wide mode
+  on the simulator profile — item 13.**
+- **The override writes the EXPLICIT SOURCE ONLY, never `Raw.case_sensitive`**,
+  whose setter re-reads the file. Item 3 separated reporting from acting on
+  purpose; a menubar pick must not silently rebuild a loaded database.
+- **Issue `0419` filed** (driver): a **top-level** `@dev[param]` current has no
+  dots, so the ≥3-segment guard never sees the tag and `sig_declass` classes it a
+  `net` — `Show device internals` OFF hides `i(@r.x1.rq[i])` and **keeps**
+  `i(@r1[i])`. A classification bug, not a case bug; all three `@` sites are
+  already case-blind. It had no home, so it has one now.
+- **`raw casemode` on a VCD or `table_read` database has now been passed on FIVE
+  TIMES.** It is **mandatory scope for item 5b** — the last item that touches
+  this code. If 5b declines it, 5b files the issue; it does not get passed a
+  sixth time.
+- **Item 4's latency pointer is still unmeasured.** Nineteen suite runs at
+  unchanged counts is *an absence of a symptom, not a measurement*.
+- **Measured, not filed:** the new per-slot index costs 1.4×–1.7× the old flat
+  list (3.8 ms at 5000 names), on a path reached only after the current database
+  has already refused. And a D2-poisoned *current* database now lets a
+  *different* one satisfy the trace — better than the pre-item-5 answer (issue
+  `0418`'s all-zero column), but disclosed nowhere else.
+- **The override is deliberately NOT persisted** — item 13 owns durability.
 
 ## Environment — re-verified 2026-08-16
 
