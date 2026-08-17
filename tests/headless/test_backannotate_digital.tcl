@@ -186,8 +186,11 @@ proc annot_get {n} {
   return $r
 }
 # what the SCHEMATIC would print for node `n`: `?` when nothing is annotated.
-# ngspice::get_voltage lowercases its argument, so this reads the array the same
-# way the overlay does, with the same fallback.
+# It reads the array the same way the overlay does, with the same fallback.
+# (Item 5b deleted ngspice::get_voltage's `string tolower` -- it now hands the
+# schematic's own spelling to the one lookup authority. These fixtures are all
+# lowercase, so the reads here are byte-identical either way; the case behaviour
+# itself is test_ngspice_data_view.tcl's CS97*.)
 proc overlay_reads {n} { return [ngspice::get_voltage $n] }
 
 proc xc_cursor {t} { xschem set cursor2_x $t }

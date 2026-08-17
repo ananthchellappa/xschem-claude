@@ -1176,6 +1176,10 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
     return;
   }
   raw = *rawptr;
+  /* casemode item 5b: the lazy ngspice::ngspice_data view is PINNED to the
+   * database that published it, so this is the one place that can leave it
+   * holding a dangling Raw*. Disarm before anything is freed. */
+  ngspice_data_forget(raw);
   if(!no_warning) {
     dbg(0, "free_rawfile(): clearing data\n");
   }
@@ -2140,56 +2144,380 @@ int raw_case_mode_parse(const char *mode)
   return -1;
 }
 
-/* ngspice::ngspice_data KEYS STAY FOLDED. Tcl array keys are case-sensitive and
- * this array is a PUBLISHED INTERFACE: ngspice_backannotate.tcl and any user
- * script read $ngspice::ngspice_data(v(en)). They were lowercase only because
- * read_dataset() folded the stored name; now that it stores verbatim, the fold
- * has to happen here or every key silently gains capitals and every consumer
- * misses (DESIGN_REVISION.md section 6).
+/* ===========================================================================
+ * ngspice::ngspice_data IS A LAZY VIEW OVER get_raw_index()
+ * casemode batch item 5b -- DECISIONS.md D3, doc/claude/specs/raw_case_mode.md
+ * section 13. SUPERSEDES DESIGN_REVISION.md section 6 ("keys stay folded") and
+ * this file's own interim ngspice_data_key()/ngspice_data_publish(), both gone.
+ * ===========================================================================
  *
- * Two publish sites, and only two: update_op() below and the cursor-B publisher
- * in callback.c. Both go through ngspice_data_publish() so the rule is stated
- * once. (DECISIONS.md D3 replaces the whole eager array with a lazy view in
- * item 5b; this is the interim, and it is not optional in the meantime.)
+ * WHAT CHANGED. The publishers used to walk nvars and do one Tcl_SetVar2 per
+ * variable under a FOLDED key, duplicating in Tcl a database that already
+ * exists in C. They now do two Tcl_SetVar2 calls (the `n vars` / `n points`
+ * sentinels) and arm a READ TRACE. A read of $ngspice::ngspice_data(v(EN))
+ * runs get_raw_index_in() on the publishing database and materialises that one
+ * element. Consequences, in the order they matter:
  *
- * *keyptr is the caller's buffer: pass a char* initialised to NULL, my_free()
- * it after the loop. Grown, not truncated -- a fixed buffer would fold two long
- * names onto one key. */
-const char *ngspice_data_key(char **keyptr, const char *name)
+ *   - ONE LOOKUP AUTHORITY. The Tcl backannotation procs had their own ladder
+ *     -- their own `string tolower`, their own `v(...)` wrap. Those are DELETED
+ *     (src/xschem.tcl), not ported: the array read IS the authority call now.
+ *   - NO KEYS, SO NO KEY COLLISIONS. Under `distinguish` a database may hold
+ *     both `v(EN)` and `v(en)`; the folded key collapsed them onto one and one
+ *     value could not be published at all. Both now resolve, each to its own
+ *     value, exactly as `xschem raw value` already did.
+ *   - THE MODE DISAPPEARS FROM BACKANNOTATION. A query carries the schematic's
+ *     own spelling and the ladder decides: `distinguish` exact-matches,
+ *     `fold`/`preserve` fall through to the folded rung. No branch anywhere
+ *     asks what mode we are in.
+ *
+ * PINNED TO THE PUBLISHER, NOT TO xctx->raw. The eager array froze one
+ * database's numbers; nd_view.raw keeps that property. See get_raw_index_in().
+ *
+ * MEASURED, AND IT DECIDES THE DESIGN: unsetting the array DESTROYS THE TRACE.
+ * `array unset ngspice::ngspice_data`, Tcl's `unset`, and C's Tcl_UnsetVar all
+ * remove every trace on the variable (tcl 8.6.14, measured; the manual is not
+ * explicit). Three things follow, and all three are wanted:
+ *   1. the five existing clear sites (save.c x3, callback.c, scheduler.c) need
+ *      no edit at all -- an unset IS the trace reset, and after it nothing
+ *      resolves lazily until a publisher arms again;
+ *   2. so arming must (re)install the trace every time, which it does;
+ *   3. ngspice::read_raw_dataset (ngspice_backannotate.tcl), the THIRD
+ *      publisher and a pure-Tcl one, opens with `unset -nocomplain var`
+ *      through an `upvar` alias -- so it disarms this view before writing its
+ *      own keys, and the two publishers cannot interleave. That was the one
+ *      hazard worth measuring before writing any of this.
+ *
+ * THE ARRAY MUST STILL EXIST: actions.c:4081 uses
+ * `info exists ngspice::ngspice_data` as "is an operating point loaded?", and a
+ * traced-but-undefined array answers 0 (measured). The `n vars` / `n points`
+ * sentinels stay real elements and are what makes it answer 1.
+ *
+ * ENUMERATION IS SUPPORTED, not merely mitigated. D3 assumed nothing in the
+ * tree does `array names`; six sites in four files do, plus one whole-array
+ * `upvar`. A TCL_TRACE_ARRAY callback DROPS EVERY MATERIALISED KEY AND REBUILDS
+ * from names[], so `array names` / `array get` / `array size` answer exactly
+ * {the database's own spellings} + {the two sentinels}, however many
+ * odd-spelled reads happened first and whatever `raw rename` did since.
+ * test_wave_cursor_crossdb's XC54 counts that set.
+ *
+ * A READ TRACE FIRES ON EVERY READ, INCLUDING FOR AN ELEMENT THAT ALREADY
+ * EXISTS. Measured on tcl 8.6.14, and the opposite of what the first cut of this
+ * comment (and spec section 13.6, and the receipt) claimed -- corrected in the
+ * item-5b fix round after a reviewer measured it:
+ *   set ::ngspice::ngspice_data(v(In)) BOGUS   ;# then read it back -> the
+ *   NUMBER, not BOGUS: the trace fired again and re-resolved the element.
+ * Two consequences, both DECLARED rather than papered over:
+ *   - a materialised element is NOT a cache. It is RE-RESOLVED against the
+ *     pinned database on every read, so it cannot go stale while the name still
+ *     resolves. What it does keep is its LAST value once the name stops
+ *     resolving (a `raw rename` out from under it): the trace has nothing to
+ *     answer with and leaves the element alone. That is the one staleness a lazy
+ *     view does not fix, and CS100e/CS100f are about exactly it.
+ *   - a Tcl WRITE into the array while the view is armed is silently discarded
+ *     on the next read. The eager array accepted such a write until the next
+ *     publish. Nothing in the tree writes it (the two C publishers and the
+ *     pure-Tcl one all own the whole array), so this is documented, not fixed.
+ * The read arm below therefore records a materialised key only when the element
+ * DID NOT ALREADY EXIST -- without that, a repeat read appended one strdup'd key
+ * per read and the list grew without bound (measured: 200000 repeat reads of one
+ * element grew RSS by 7808 kB, ~40 bytes a read, on the schematic redraw path).
+ * Spec section 13. */
+
+typedef struct {
+  Raw *raw;      /* the publishing database, or NULL for "disarmed" */
+  int prec;      /* significant digits, i.e. the `%.*g` the publisher used */
+  char **mkey;   /* every key the read trace has MATERIALISED, see below */
+  int nmkey;
+  int smkey;
+} NdView;
+
+static NdView nd_view = {NULL, 4, NULL, 0, 0};
+
+/* Forget everything. Called when the array (and with it our trace) is
+ * destroyed, and when the publishing database is freed. */
+static void nd_view_reset(void)
 {
-  my_strdup2(_ALLOC_ID_, keyptr, name ? name : "");
-  strtolower(*keyptr);
-  return *keyptr;
+  int i;
+  for(i = 0; i < nd_view.nmkey; ++i) my_free(_ALLOC_ID_, &nd_view.mkey[i]);
+  if(nd_view.mkey) my_free(_ALLOC_ID_, &nd_view.mkey);
+  nd_view.mkey = NULL;
+  nd_view.nmkey = nd_view.smkey = 0;
+  nd_view.raw = NULL;
 }
 
-/* Publish one variable into ngspice::ngspice_data under its FOLDED key, and say
- * so out loud when two variables want the same key.
- *
- * FIRST WRITER WINS, and the loser is named in a dbg(0). Folding a key is the
- * same lossy operation read_dataset() was condemned for, moved to the publish
- * side because the array's keys are an interface that cannot change until item
- * 5b retires the array entirely -- but "lossy" must not mean "silent". Under
- * `distinguish` a database can legitimately hold both `v(EN)` and `v(en)`; they
- * collapse onto one key here and one of the two values cannot be published.
- * Keeping the FIRST matches the read side, where int_hash_lookup() inserts the
- * names with XINSERT_NOREPLACE. Neither value is lost from the DATABASE: both
- * are still reachable by `xschem raw index` / `xschem raw value` under their
- * own spelling, and item 5b's lazy view resolves them properly.
- *
- * Both publishers Tcl_UnsetVar the whole array immediately before their loop,
- * so "the key already exists" means "set by this pass", never "left over".
- * doc/claude/specs/raw_case_mode.md section 4. */
-void ngspice_data_publish(char **keyptr, const char *name, const char *value)
+/* free_rawfile() calls this before it frees `raw`: a view pinned to a database
+ * that no longer exists must not resolve anything, and nd_view.raw must never
+ * be a dangling pointer. The array's already-materialised elements are left
+ * alone -- they are exactly as stale as the eager array's were after the same
+ * free, and inventing a new clear here would move rows for an unrelated
+ * reason. */
+void ngspice_data_forget(Raw *raw)
 {
-  const char *key = ngspice_data_key(keyptr, name);
-  if(Tcl_GetVar2(interp, "ngspice::ngspice_data", key, TCL_GLOBAL_ONLY)) {
-    dbg(0, "ngspice_data_publish(): ngspice_data key collision on \"%s\": "
-           "\"%s\" is not published, the variable read earlier keeps the key. "
-           "Use `xschem raw value \"%s\"` to read it.\n",
-           key, name ? name : "", name ? name : "");
-    return;
+  if(raw && nd_view.raw == raw) nd_view_reset();
+}
+
+/* `xschem raw view_keys`: how many elements the view has materialised. Only a test
+ * asks. See the declaration in xschem.h for why it has to exist. */
+int ngspice_data_nkeys(void)
+{
+  return nd_view.nmkey;
+}
+
+
+/* Remember a key the read trace created, so enumeration can throw it away
+ * again. Every materialised key is recorded, not just the odd-spelled ones:
+ * `raw rename` / `raw del` / `raw add` move names[] under a view that is still
+ * armed, and an element materialised before the move would otherwise outlive
+ * the name it came from and be counted by `array names`. */
+static void nd_view_record_key(const char *key)
+{
+  if(nd_view.nmkey >= nd_view.smkey) {
+    nd_view.smkey = nd_view.smkey ? nd_view.smkey * 2 : 8;
+    my_realloc(_ALLOC_ID_, &nd_view.mkey, (size_t)nd_view.smkey * sizeof(char *));
   }
-  Tcl_SetVar2(interp, "ngspice::ngspice_data", key, value, TCL_GLOBAL_ONLY);
+  nd_view.mkey[nd_view.nmkey] = NULL;
+  my_strdup2(_ALLOC_ID_, &nd_view.mkey[nd_view.nmkey], key);
+  nd_view.nmkey++;
+}
+
+/* Drop one key from the materialised list, because the element it names is gone:
+ * a script unset it. Order is not meaningful, so the tail fills the hole. */
+static void nd_view_forget_key(const char *key)
+{
+  int i;
+  for(i = 0; i < nd_view.nmkey; ++i) {
+    if(nd_view.mkey[i] && !strcmp(nd_view.mkey[i], key)) {
+      my_free(_ALLOC_ID_, &nd_view.mkey[i]);
+      nd_view.mkey[i] = nd_view.mkey[nd_view.nmkey - 1];
+      nd_view.mkey[nd_view.nmkey - 1] = NULL;
+      nd_view.nmkey--;
+      return;
+    }
+  }
+}
+
+/* Format one variable the way the publisher that armed us would have.
+ *
+ * BARE sprintf, not my_snprintf, and that is load-bearing: this tree builds
+ * WITHOUT HAS_SNPRINTF, so my_snprintf() is the hand-rolled formatter in
+ * util.c, which copies the conversion spec verbatim and cannot see a `*`. Given
+ * "%.*g" it reads the double out of the varargs and then lets libc's own
+ * sprintf go looking for a precision argument that is no longer there --
+ * measured: 1.111 printed as 1.111000061035156. The cursor-B publisher this
+ * replaces already used bare sprintf for exactly this format. 100 bytes is
+ * ample for one %g. */
+static void nd_view_set(const char *key, int idx)
+{
+  char s[100];
+  sprintf(s, "%.*g", nd_view.prec, nd_view.raw->cursor_b_val[idx]);
+  Tcl_SetVar2(interp, "ngspice::ngspice_data", key, s, TCL_GLOBAL_ONLY);
+}
+
+/* THE PUBLISHING DATABASE MUST BELONG TO THE WINDOW ASKING.
+ *
+ * `ngspice::ngspice_data` used to be in tctx::global_array_list, i.e. per-window
+ * Tcl state that a tab/window switch snapshotted and restored. That is fatal to a
+ * traced array -- the restore's `unset` DESTROYS the trace (the same measured fact
+ * this whole design rests on) and re-created a frozen eager copy, so after one
+ * Ctrl-T the overlay read `?` for every node. The array is no longer in that list
+ * (src/xschem.tcl); it is C-owned derived state, and the trace now survives a
+ * context switch.
+ *
+ * What the list membership DID buy was per-window isolation: a window that never
+ * annotated saw an empty array. This guard buys it back, without a per-window
+ * snapshot -- the view answers only while the publishing Raw is still reachable
+ * from the CURRENT context, i.e. it is xctx->raw or one of xctx->extra_raw_arr[].
+ * A sibling window with its own (or no) database therefore reads `?`, and
+ * switching back to the publisher's window resolves again, live. This is NOT the
+ * "follows xctx->raw" behaviour CS103c2/CS103d/CS103h forbid: two databases loaded
+ * in one window are both reachable, so making the OTHER one current changes no
+ * answer -- the view still resolves through the publisher.
+ *
+ * The two bookkeeping sentinels are plain elements of one global Tcl array, so
+ * `info exists ngspice::ngspice_data` (actions.c) still answers 1 in a sibling
+ * window that never annotated. Declared in spec section 13.7: it costs that
+ * window the automatic cursor-B backannotation on descend, and nothing else. */
+static int nd_view_owned(void)
+{
+  int i;
+  if(!xctx) return 0;
+  if(xctx->raw == nd_view.raw) return 1;
+  for(i = 0; i < xctx->extra_raw_n; ++i) {
+    if(xctx->extra_raw_arr && xctx->extra_raw_arr[i] == nd_view.raw) return 1;
+  }
+  return 0;
+}
+
+static int nd_view_resolvable(void)
+{
+  return nd_view.raw && nd_view.raw->cursor_b_val && nd_view.raw->nvars > 0 &&
+         nd_view_owned();
+}
+
+/* `xschem raw view_armed`: 1 while an indexed read of ngspice::ngspice_data IS a
+ * call into the one lookup authority for THIS window. 0 means the array is a plain
+ * Tcl array that no C view owns -- which is exactly the state the pure-Tcl third
+ * publisher (ngspice::read_raw_dataset) leaves it in, and the state ngspice::lookup
+ * has to know about before it may fall back. Declared in xschem.h. */
+int ngspice_data_armed(void)
+{
+  return nd_view_resolvable() ? 1 : 0;
+}
+
+/* Throw away every element a read (or a previous enumeration) materialised, and
+ * with it our record of them. The two sentinels are written by the arm, not by the
+ * trace, so they are not in this list and survive -- which is what keeps
+ * `info exists ngspice::ngspice_data` answering 1.
+ *
+ * Two callers, and the second is what makes the ownership guard above complete:
+ * enumeration drops before it rebuilds, and a read from a window that does NOT own
+ * the publishing database drops so that a value materialised in the OWNING window
+ * cannot answer here. Without that second call the guard only stopped NEW
+ * resolutions -- measured: a sibling window still read `0` for a net whose element
+ * the publisher's window had already materialised.
+ *
+ * THE LIST IS DETACHED BEFORE THE FIRST UNSET, and that is not tidiness.
+ * MEASURED: Tcl suppresses a variable's traces only for the element whose trace is
+ * running, so unsetting a DIFFERENT element from inside one delivers our own
+ * TCL_TRACE_UNSETS callback re-entrantly -- which used to run nd_view_forget_key()
+ * (or, before this fix round, nd_view_reset()) on the very list being walked, so
+ * the walk skipped an entry and left a materialised element behind that then
+ * answered in the wrong window (measured: `In` survived, and read `0`, in a sibling
+ * window). Detached, a re-entrant callback finds an empty list and can do no harm.
+ * The suppressed case is the one element that needs no callback anyway. */
+static void nd_view_drop_materialised(void)
+{
+  char **k = nd_view.mkey;
+  int n = nd_view.nmkey, i;
+  nd_view.mkey = NULL;
+  nd_view.nmkey = nd_view.smkey = 0;
+  for(i = 0; i < n; ++i) {
+    if(!k[i]) continue;
+    Tcl_UnsetVar2(interp, "ngspice::ngspice_data", k[i], TCL_GLOBAL_ONLY);
+    my_free(_ALLOC_ID_, &k[i]);
+  }
+  if(k) my_free(_ALLOC_ID_, &k);
+}
+
+static char *ngspice_data_trace(ClientData cd, Tcl_Interp *ip,
+                                const char *n1, const char *n2, int flags)
+{
+  int i, idx;
+  (void)cd; (void)ip; (void)n1;
+  if(flags & TCL_TRACE_UNSETS) {
+    /* THE TRACE IS ON THE ARRAY WITH name2 == NULL, so this arm fires for an
+     * unset of ONE ELEMENT as well as for the destruction of the whole array.
+     * Only the second one takes our trace with it, and only the second one may
+     * reset the view: `unset arr(v(In))` used to disarm everything while leaving
+     * the sentinels (hence `info exists` == 1) behind, so nothing resolved lazily
+     * any more and enumeration stopped being rebuilt -- measured before the fix.
+     * A single element just leaves the materialised list, so a later enumeration
+     * does not try to unset a key that is already gone. */
+    if(n2 && n2[0]) {
+      nd_view_forget_key(n2);
+      return NULL;
+    }
+    nd_view_reset();               /* the array went away, and so did this trace */
+    return NULL;
+  }
+  if(!nd_view_resolvable()) {
+    /* ARMED, BUT NOT FOR THIS WINDOW. nd_view_owned() said no, so a value some
+     * other window's read materialised must not be able to answer here either --
+     * drop the lot. (nd_view.raw == NULL is the other, deliberately different,
+     * case: free_rawfile() disarmed us and leaves the elements exactly as stale as
+     * the eager array's were, see ngspice_data_forget().) */
+    if(nd_view.raw) nd_view_drop_materialised();
+    return NULL;
+  }
+  if(flags & TCL_TRACE_ARRAY) {
+    /* somebody asked for the whole array: array names / get / size. THROW AWAY
+     * EVERY MATERIALISED KEY FIRST, then rebuild from names[]. Rebuilding is
+     * what makes enumeration authoritative rather than a record of which
+     * spellings happened to be read earlier: the odd-spelled ones go (a folded
+     * read of `v(MidNode)` left a real `v(midnode)` element behind), and so do
+     * exact ones whose name the database no longer has. The two bookkeeping
+     * entries are set by the arm, not by the trace, so they are not in this
+     * list and survive. Setting and unsetting elements from inside the array's
+     * own trace is safe: Tcl suppresses the variable's traces while one runs. */
+    nd_view_drop_materialised();
+    /* re-checked, because the drop unsets elements and a re-entrant unset callback
+     * (see nd_view_drop_materialised) is allowed to have disarmed us */
+    if(!nd_view_resolvable()) return NULL;
+    for(i = 0; i < nd_view.raw->nvars; ++i) {
+      if(!nd_view.raw->names || !nd_view.raw->names[i]) continue;
+      /* through the ladder, not through `i`: two byte-identical stored names
+       * (upstream 0073 writes duplicate columns) share one key, and the key
+       * must hold what a lazy read of that name would hold -- the FIRST
+       * column, which is what raw->table's XINSERT_NOREPLACE recorded. */
+      idx = get_raw_index_in(nd_view.raw, nd_view.raw->names[i], NULL);
+      if(idx < 0 || idx >= nd_view.raw->nvars) idx = i;
+      nd_view_set(nd_view.raw->names[i], idx);
+      nd_view_record_key(nd_view.raw->names[i]);
+    }
+    return NULL;
+  }
+  if(flags & TCL_TRACE_READS) {
+    /* n2 empty is a read of the array as a whole -- `info exists arr` on an
+     * undefined traced array does exactly that. Nothing to resolve. */
+    if(!n2 || !n2[0]) return NULL;
+    idx = get_raw_index_in(nd_view.raw, n2, NULL);
+    if(idx < 0 || idx >= nd_view.raw->nvars) return NULL;  /* stays unset: the read errors */
+    /* RECORD ONLY WHAT THIS READ CREATED. The trace fires on every read, existing
+     * element included (measured -- see the header comment), so recording
+     * unconditionally appended one strdup'd key per read: unbounded growth on the
+     * path every redraw of an annotated schematic walks. A key already in the
+     * array is either already ours, or a script's own write about to be
+     * overwritten; either way the list must not grow. Tcl suppresses this
+     * variable's traces while this callback runs, so the Tcl_GetVar2 probe cannot
+     * re-enter. */
+    if(!Tcl_GetVar2(interp, "ngspice::ngspice_data", n2, TCL_GLOBAL_ONLY)) {
+      nd_view_set(n2, idx);
+      nd_view_record_key(n2);
+    } else {
+      nd_view_set(n2, idx);        /* re-resolve in place; the key is already known */
+    }
+  }
+  return NULL;
+}
+
+/* THE ONE PUBLISH CALL. Both C publishers -- update_op() below and
+ * backannotate_cursor_b_in_db() (callback.c) -- fill raw->cursor_b_val[] and
+ * then call this instead of looping Tcl_SetVar2 over nvars.
+ *
+ * `prec` is the significant-digit count that publisher used to print with, so
+ * the strings a script reads are byte-identical to the eager array's: 4 for
+ * update_op()'s "%.4g", xctx->ev_precision for the cursor-B publisher.
+ *
+ * The unset is not tidiness: it is what removes any previous trace, so the
+ * Tcl_TraceVar2 below cannot stack a second copy of the callback. */
+void ngspice_data_arm(Raw *raw, int prec)
+{
+  /* unreachable from either publisher (both already require a Raw with values);
+   * the guard is here so the sentinel write below can never be the crash. */
+  if(!raw) return;
+  Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+  nd_view_reset();                  /* belt and braces: the unset trace did this */
+  nd_view.raw = raw;
+  nd_view.prec = prec;
+  Tcl_TraceVar2(interp, "ngspice::ngspice_data", NULL,
+                TCL_GLOBAL_ONLY | TCL_TRACE_READS | TCL_TRACE_ARRAY | TCL_TRACE_UNSETS,
+                ngspice_data_trace, NULL);
+  /* The sentinels stay REAL elements: they are what makes `info exists
+   * ngspice::ngspice_data` (actions.c) answer 1, and the key spellings are
+   * byte-for-byte the ones the eager publishers wrote -- a LITERAL BACKSLASH
+   * before the space.
+   *
+   * WHICH IS NOT WHAT `$arr(n\ vars)` READS, and an earlier revision of this
+   * comment said it was. Tcl performs backslash substitution on an array index,
+   * so that source form asks for the key `n vars` and errors with "no such
+   * element"; a script must double the backslash (`$arr(n\\ vars)`, or
+   * `set arr("n\\ vars")` through a variable). The spelling is pre-existing --
+   * both eager publishers wrote the same literal, and src/ngspice_backannotate.tcl
+   * (the pure-Tcl publisher) writes the PLAIN `n vars` instead, so the two do not
+   * agree. Preserved byte-for-byte rather than fixed: changing it here would move
+   * rows for a reason that has nothing to do with case mode. */
+  Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa(raw->nvars), TCL_GLOBAL_ONLY);
+  Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
 }
 
 /* ===========================================================================
@@ -2574,7 +2902,6 @@ int sim_case_mode_floor(void)
 int update_op()
 {
   int res = 0, p = 0, i;
-  char *key = NULL;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
   /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
    * This is the choke point every "annotate the operating point" request funnels
@@ -2592,17 +2919,17 @@ int update_op()
     xctx->raw->annot_p = 0;
     dbg(1, "update_op(): nvars=%d\n", xctx->raw->nvars);
     for(i = 0; i < xctx->raw->nvars; ++i) {
-      char s[100];
       res = 1;
       xctx->raw->cursor_b_val[i] =  xctx->raw->values[i][p];
-      my_snprintf(s, S(s), "%.4g", xctx->raw->values[i][p]);
       dbg(1, "%s = %g\n", xctx->raw->names[i], xctx->raw->values[i][p]);
-      ngspice_data_publish(&key, xctx->raw->names[i], s);
     }
-    Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ vars", my_itoa( xctx->raw->nvars), TCL_GLOBAL_ONLY);
-    Tcl_SetVar2(interp, "ngspice::ngspice_data", "n\\ points", "1", TCL_GLOBAL_ONLY);
+    /* casemode item 5b: no per-variable Tcl_SetVar2 any more. cursor_b_val[]
+     * above IS the published data; ngspice_data_arm() makes the Tcl array a
+     * read-traced view over it, resolved through get_raw_index_in(). `4` is
+     * the "%.4g" this loop used to print with, kept so the strings a script
+     * reads do not change. */
+    ngspice_data_arm(xctx->raw, 4);
   }
-  if(key) my_free(_ALLOC_ID_, &key);
   return res;
 }
 
@@ -2956,16 +3283,27 @@ static Int_hashentry *raw_lookup_name(Raw *raw, const char *name)
  * The `@dev[param]` shape (`i(@R.X1.Rq[i])`, what `.options savecurrents`
  * writes under `preserve`) needs no rung of its own: it is an ordinary stored
  * name, so rungs 1-2 resolve it, which the pre-item-2 ladder could not do
- * because it never looked at a folded form of a stored name at all. */
-int get_raw_index(const char *node, Int_hashentry **entry_ret)
+ * because it never looked at a folded form of a stored name at all.
+ *
+ * ASK A NAMED DATABASE: get_raw_index_in(). get_raw_index() is this ladder run
+ * against xctx->raw, and it is still the only entry point anything in the
+ * schematic or the viewer should use. The Raw* form exists for ONE caller --
+ * the lazy ngspice::ngspice_data view (casemode item 5b, DECISIONS.md D3),
+ * which is pinned to the database that PUBLISHED, not to whichever database is
+ * current when a script happens to read the array. The eager array froze the
+ * publisher's numbers at publish time; a lazy view that resolved against
+ * xctx->raw would silently start answering out of another database after a
+ * `raw switch`, which is a different answer to the same question.
+ * Splitting the function is all that keeps that honest: there is still exactly
+ * one ladder, and the two entry points differ only in which Raw they ask. */
+int get_raw_index_in(Raw *raw, const char *node, Int_hashentry **entry_ret)
 {
   char vnode[512];
   Int_hashentry *entry;
-  Raw *raw;
 
-  dbg(1, "get_raw_index(): node=%s\n", node);
-  if(sch_waves_loaded() >= 0) {
-    raw = xctx->raw;
+  dbg(1, "get_raw_index_in(): node=%s\n", node);
+  if(entry_ret) *entry_ret = NULL;
+  if(raw) {
     entry = raw_lookup_name(raw, node);              /* rungs 1 and 2 */
     if(!entry) {                                     /* rung 3: v() wrap */
       my_snprintf(vnode, S(vnode), "v(%s)", node);
@@ -2999,6 +3337,13 @@ int get_raw_index(const char *node, Int_hashentry **entry_ret)
     if(entry_ret) *entry_ret = entry;
     if(entry) return entry->value;
   }
+  return -1;
+}
+
+int get_raw_index(const char *node, Int_hashentry **entry_ret)
+{
+  if(sch_waves_loaded() >= 0) return get_raw_index_in(xctx->raw, node, entry_ret);
+  if(entry_ret) *entry_ret = NULL;
   return -1;
 }
 

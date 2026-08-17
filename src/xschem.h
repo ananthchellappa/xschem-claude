@@ -2397,6 +2397,11 @@ extern char *base64_encode(const unsigned char *data, const size_t input_length,
 extern unsigned char *ascii85_encode(const unsigned char *data, const size_t input_length, size_t *output_length);
 extern int raw_get_pos(const char *node, double value, int dset, int from_start, int to_end);
 extern int  get_raw_index(const char *node, Int_hashentry **entry_ret);
+/* The same ladder against a NAMED database instead of xctx->raw. One caller:
+ * the lazy ngspice::ngspice_data view, which is pinned to the database that
+ * published and must not start answering out of whatever is current later.
+ * Everything else asks get_raw_index(). casemode item 5b. */
+extern int  get_raw_index_in(Raw *raw, const char *node, Int_hashentry **entry_ret);
 /* "fold"|"preserve"|"0" -> 0, "distinguish"|"1" -> 1, anything else -> -1.
  * The one parser for the `-case <mode>` option and `xschem raw case <mode>`;
  * see doc/claude/specs/raw_case_mode.md */
@@ -2432,17 +2437,30 @@ extern int  raw_resolve_case_mode(Raw *raw, int *source);
  * somebody else wrote (DECISIONS.md B1's global floor, C2's "assume fold when
  * no profile is set"). Item 6 layers the per-profile mode on top of it. */
 extern int  sim_case_mode_floor(void);
-/* The key `ngspice::ngspice_data` publishes a variable under: the stored name
- * FOLDED. Keys of that array are a published Tcl interface and stay lowercase
- * even though the stored names no longer do. *keyptr is grown as needed and is
- * the caller's to my_free(). See update_op() and doc/claude/specs/raw_case_mode.md */
-extern const char *ngspice_data_key(char **keyptr, const char *name);
-/* Publish one variable into that array under its folded key. Two variables whose
- * names differ only in case (only possible under `distinguish`) collapse onto
- * one key: the FIRST keeps it and the second is refused with a dbg(0), never
- * silently overwritten. The one publish rule for both call sites -- update_op()
- * and callback.c's cursor-B publisher. doc/claude/specs/raw_case_mode.md */
-extern void ngspice_data_publish(char **keyptr, const char *name, const char *value);
+/* MAKE `ngspice::ngspice_data` A LAZY VIEW over `raw`, printing with `prec`
+ * significant digits. Replaces the eager per-variable publish loop both C
+ * publishers used to run: update_op() (prec 4) and callback.c's cursor-B
+ * publisher (prec xctx->ev_precision). A read of one element runs
+ * get_raw_index_in() on `raw`; `array names` and friends materialise the lot.
+ * The array is unset first, which also destroys any previous trace.
+ * casemode item 5b -- DECISIONS.md D3, doc/claude/specs/raw_case_mode.md 13.
+ * The interim ngspice_data_key()/ngspice_data_publish() (folded keys,
+ * first-writer-wins) are GONE: there are no stored keys left to collide. */
+extern void ngspice_data_arm(Raw *raw, int prec);
+/* Disarm the view if it is pinned to `raw`. free_rawfile() calls it; nothing
+ * else should need to. */
+extern void ngspice_data_forget(Raw *raw);
+/* How many array elements the view has MATERIALISED and is responsible for --
+ * `xschem raw view_keys`. Introspection only: it exists because the growth defect
+ * of the item-5b fix round (one recorded key per READ, repeats included) has no
+ * other Tcl-visible signature. RSS is the harm, but RSS reuses freed heap and so
+ * cannot be asserted on inside a long-running suite; this count is exact. */
+extern int ngspice_data_nkeys(void);
+/* 1 while an indexed read of the array IS a call into the one lookup authority for
+ * the CURRENT context -- `xschem raw view_armed`. `ngspice::lookup` (src/xschem.tcl)
+ * asks before it falls back, so the fallback can never run while the authority is
+ * reachable; see the comment on that proc. */
+extern int ngspice_data_armed(void);
 extern void free_rawfile(Raw **rawptr, int dr, int no_warning);
 extern int update_op();
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);

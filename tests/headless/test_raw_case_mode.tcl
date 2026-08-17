@@ -21,12 +21,14 @@
 #            from varname AFTER the point the fold used to sit at
 #            (save.c AC arm). All four must carry the case, not just the first;
 #            item 2's alias work has to cover all four too.
-#   CS20     ngspice::ngspice_data KEYS STAY FOLDED. They are a published Tcl
-#            interface (ngspice_backannotate.tcl, user scripts doing
-#            $ngspice::ngspice_data(v(en))) and were lowercase only because the
-#            stored name was. One assertion, both halves: capitals stored AND
-#            the published key lowercase. Splitting it would leave a half that
-#            passes before the feature exists.
+#   CS22/23  ngspice::ngspice_data. RESTATED AT ITEM 5B and the old rule is
+#            gone: these used to assert "the published key is the stored name
+#            FOLDED" (DESIGN_REVISION section 6, the interim). DECISIONS.md D3
+#            supersedes that ruling -- the array is now a read-traced lazy view
+#            over get_raw_index_in(), so there are no stored keys, both
+#            spellings resolve, and enumeration answers with the database's own.
+#            Same for CS23d and for CS36d/CS36e (section K), whose collision
+#            cannot happen any more. See the note above each.
 #   CS24/25  `xschem raw case <mode>` RE-READS the file. Proven by a change made
 #            only in memory (a rename) being gone afterwards -- a flag flip that
 #            happens to look right on a file that was never folded is not
@@ -193,23 +195,44 @@ eqcheck CS20b-sweep-window-with-option [pcall xschem raw points] $sweep_pts
 eqcheck CS20c-and-the-flag-took [pcall xschem raw case] 1
 
 # ---------------------------------------------------------------------------
-# D. ngspice_data keys stay FOLDED (DESIGN_REVISION section 6)
+# D. ngspice_data is a LAZY VIEW over the one ladder -- RESTATED at item 5b
 # ---------------------------------------------------------------------------
+# WHAT CHANGED AND WHY. CS22 / CS23 / CS23d asserted DESIGN_REVISION section 6's
+# interim rule -- "the published key is the stored name FOLDED", so `v(midnode)`
+# is present and `v(MidNode)` is absent. DECISIONS.md **D3** supersedes section 6
+# (see its own text: "this supersedes that ruling") and item 5b implements it:
+# there are no published keys at all any more. The array is a read-traced lazy
+# view whose trace calls get_raw_index_in(), so BOTH spellings resolve, through
+# the same ladder the rest of the program uses, and enumeration answers with the
+# database's own spelling.
+#
+# The ids and the subject are kept; only the expected answer moves, and it moves
+# in the direction D3 predicted. Each check still fails on a broken publisher --
+# an unarmed view makes every half false.
 xschem raw clear
 xschem raw read $presraw tran
 catch {array unset ::ngspice::ngspice_data}
 eqcheck CS21-update_op [pcall xschem update_op] 1
-# ONE assertion, both halves: the stored name has capitals AND the published
-# key is lowercase. Either half alone would pass before the fold was deleted.
-check CS22-published-keys-folded \
+# FOUR halves in one assertion, and no half is redundant: the stored name has
+# capitals; the FOLDED query resolves (ladder rung 2); the EXACT query resolves
+# (rung 1, which the folded-key publisher could not answer at all); and
+# enumeration lists the STORED spelling and NOT the folded one, which is what
+# tells a lazy verbatim view apart from an eager folded publish.
+check CS22-lazy-view-resolves-both-spellings \
   [expr {[string first {v(MidNode)} [pcall xschem raw list]] >= 0 &&
          [info exists ::ngspice::ngspice_data(v(midnode))] &&
-         ![info exists ::ngspice::ngspice_data(v(MidNode))]}] \
+         [info exists ::ngspice::ngspice_data(v(MidNode))] &&
+         [set ::ngspice::ngspice_data(v(midnode))] eq [set ::ngspice::ngspice_data(v(MidNode))] &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {v(MidNode)}] >= 0 &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {v(midnode)}] < 0}] \
   "(list='[string map {\n |} [pcall xschem raw list]]' keys='[lsort [array names ::ngspice::ngspice_data]]')"
 # the current arm too, not just voltages
-check CS23-published-current-key-folded \
+check CS23-lazy-view-resolves-both-current-spellings \
   [expr {[info exists ::ngspice::ngspice_data(i(vs))] &&
-         ![info exists ::ngspice::ngspice_data(i(Vs))]}] \
+         [info exists ::ngspice::ngspice_data(i(Vs))] &&
+         [set ::ngspice::ngspice_data(i(vs))] eq [set ::ngspice::ngspice_data(i(Vs))] &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {i(Vs)}] >= 0 &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {i(vs)}] < 0}] \
   "(keys='[lsort [array names ::ngspice::ngspice_data]]')"
 
 # ---------------------------------------------------------------------------
@@ -238,10 +261,15 @@ catch {array unset ::ngspice::ngspice_data}
 xschem set cursor2_x [expr {$tend / 2.0}]
 check CS23c-cursor-b-annotated [expr {[lindex [pcall xschem raw annot] 0] >= 0}] \
   "(annot='[pcall xschem raw annot]')"
-check CS23d-cursor-publisher-keys-folded \
+# RESTATED at item 5b for the same reason as CS22: the second publisher arms the
+# same lazy view, so it answers both spellings and enumerates the stored one.
+check CS23d-cursor-publisher-lazy-view \
   [expr {[string first {v(MidNode)} [pcall xschem raw list]] >= 0 &&
          [info exists ::ngspice::ngspice_data(v(midnode))] &&
-         ![info exists ::ngspice::ngspice_data(v(MidNode))]}] \
+         [info exists ::ngspice::ngspice_data(v(MidNode))] &&
+         [set ::ngspice::ngspice_data(v(midnode))] eq [set ::ngspice::ngspice_data(v(MidNode))] &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {v(MidNode)}] >= 0 &&
+         [lsearch -exact [array names ::ngspice::ngspice_data] {v(midnode)}] < 0}] \
   "(keys='[lsort [array names ::ngspice::ngspice_data]]')"
 xschem unselect_all
 
@@ -423,14 +451,19 @@ eqcheck CS35-roundtrip-1 [pcall xschem raw case [pcall xschem raw case]] 1
 eqcheck CS35b-still-1 [pcall xschem raw case] 1
 
 # ---------------------------------------------------------------------------
-# K. two names differing only in case collide on ONE published key
+# K. two names differing only in case NO LONGER collide -- RESTATED at item 5b
 # ---------------------------------------------------------------------------
-# Folding the publish key is the same lossy operation the read path was
-# condemned for. Under `distinguish` a database can hold v(EN) and v(en); they
-# collapse onto one ngspice_data key. FIRST WRITER WINS (matching the read
-# side's XINSERT_NOREPLACE) and the loser is named in a dbg(0) -- lossy is
-# tolerable here until item 5b, silent is not. Both values stay reachable from
-# the DATABASE under their own spelling, which is what the last two check.
+# WHAT CHANGED AND WHY. Until item 5b the publisher folded the key, so under
+# `distinguish` a database holding both v(EN) and v(en) collapsed them onto one
+# array key: FIRST WRITER WON, the loser was named in a dbg(0), and the second
+# value was simply not in the array. That was the interim (DESIGN_REVISION 6),
+# and this file said so: "lossy is tolerable here UNTIL ITEM 5B".
+#
+# Item 5b is here. The array is a lazy view, there are no stored keys, so keys
+# cannot collide -- DECISIONS.md D3's second property, verbatim. CS36d and CS36e
+# keep their ids and their subject (what does each spelling read back?) and
+# invert their expectation: each name now answers with its OWN value. CS36f is
+# unchanged and still says both are reachable from the database.
 wr $tmp/op_case.raw "Title: case collision
 Date: Sat Aug 16 00:00:00 2026
 Plotname: Operating Point
@@ -452,19 +485,24 @@ eqcheck CS36-read-collision [pcall xschem raw read $tmp/op_case.raw op -case dis
 eqcheck CS36b-both-stored [pcall xschem raw list] "v(sweep)\nv(EN)\nv(en)"
 catch {array unset ::ngspice::ngspice_data}
 eqcheck CS36c-update_op [pcall xschem update_op] 1
-# one key, and it holds the FIRST variable's value, not the last one's
+# each spelling reads back ITS OWN column, not the other's and not nothing
 # (the array key has to come out through a plain variable: `v(en)` inside an
 # expr{} reads as a function call and dies on the parens)
 set collide_key <missing>
 catch {set collide_key [set ::ngspice::ngspice_data(v(en))]}
 set collide_upper <missing>
 catch {set collide_upper [set ::ngspice::ngspice_data(v(EN))]}
-check CS36d-first-writer-keeps-the-key \
-  [expr {[string is double -strict $collide_key] && abs($collide_key - 1.111) < 1e-4}] \
+# 2.222 is v(en)'s own value. 1.111 -- what the folded-key publisher used to
+# answer here, because v(EN) was written first and won the shared key -- is now
+# the WRONG answer and reddens this check.
+check CS36d-lowercase-name-reads-its-own-column \
+  [expr {[string is double -strict $collide_key] && abs($collide_key - 2.222) < 1e-4}] \
   "(key v(en)='$collide_key')"
-# and the loser was NOT published under a capitalised key either: the array's
-# keys stay folded (section 4), the second value simply is not in the array
-eqcheck CS36e-no-capitalised-key $collide_upper <missing>
+# and the OTHER one is not lost: the second variable is readable through the
+# array under its own spelling, which under the folded key it could never be
+check CS36e-uppercase-name-reads-its-own-column \
+  [expr {[string is double -strict $collide_upper] && abs($collide_upper - 1.111) < 1e-4}] \
+  "(key v(EN)='$collide_upper')"
 # nothing is lost from the DATABASE itself
 set dbEN [pcall xschem raw value {v(EN)} 0]
 set dben [pcall xschem raw value {v(en)} 0]

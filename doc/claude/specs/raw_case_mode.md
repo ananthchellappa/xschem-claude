@@ -1362,3 +1362,288 @@ browser's own panes were not re-rendered** — the `CS91*` leg drives the parser
 procs, not the widget. **`xschem raw casemode` on a VCD or `table_read`
 database still has no committed check** (item 2's carry-forward, now passed on
 a fourth time — the viewer legs here use two spice raws).
+
+## 13. ONE LOOKUP AUTHORITY, AND A LAZY `ngspice_data` — casemode item 5b
+
+Decision: `DECISIONS.md` **D3** — "the perfect fix", chosen by the user over
+three papering-over options. This section **supersedes**
+`DESIGN_REVISION.md` §6 and §4 above ("`ngspice_data` keys stay FOLDED") and
+`PLAN.md` §5.7 ("backannotation is left folding and keeps working; under
+`distinguish` it will break").
+
+Suites:
+- `tests/headless/test_ngspice_data_view.tcl`, `CS96`–`CS114j2`, **139 checks**,
+  true headless (`--nogui`; it is in `full_audit.sh`'s `nogui_tests`).
+- `tests/headless/test_ngspice_data_ctx.tcl`, `CS113*`, **21 checks**, and it
+  needs a **display**: it drives real windows, which is the one thing the file
+  above cannot. §13.7.
+
+`CS110`–`CS114j2` are the **fix round** (five confirmed review findings: the
+context-switch blocker, the third publisher's road reading nothing, unbounded growth
+on the read path, a single-element unset disarming the whole view, and two false
+"measured" claims in this spec). Each is marked in place below rather than quietly
+rewritten.
+
+### 13.1 The defect
+
+`ngspice::get_voltage` / `get_current` / `get_diff_voltage` / `get_node`
+(`src/xschem.tcl`) each ran **a second copy of `get_raw_index()`'s ladder** —
+their own `string tolower` on the query, and (in two of them) their own
+hand-rolled `v(...)` fallback rung. Written in Tcl, in another file. Every case
+rule this batch decided would have applied to one authority and not the other,
+forever.
+
+D3 names three procs; there are **four**. `get_node` is the one the shipped
+`ngspice_get_value.sym` and `device_param_probe.sym` symbols actually call, so
+leaving it folded would have left the most-used road on the old authority.
+
+### 13.2 The three properties, as built
+
+1. **One authority.** The Tcl rungs are **deleted, not ported**. What replaces
+   them is nothing: `ngspice::ngspice_data` is a read-traced lazy view whose
+   trace calls `get_raw_index_in()`, so an indexed read of the array **is** the
+   authority call, with all four rungs, D2's no-alias-on-collision rule, and
+   `distinguish`'s suppression of the folded rung already applied. The one
+   shared helper is `ngspice::lookup`, four lines, no ladder of its own.
+2. **The query carries the schematic's own spelling.** A net drawn `EN` asks for
+   `EN`. Under `distinguish` that exact-matches `v(EN)`; under `fold` it falls
+   through to the folded rung. **No mode branch exists in backannotation and
+   none may be added** — if you find yourself writing `if {$casemode ...}`
+   there, the design has gone wrong. Driven by `CS97`/`CS97b`/`CS97c`: under
+   `distinguish` the exact spelling resolves and the folded one must **not**.
+   On the old procs both answered `?`.
+3. **Lazy view, not eager copy.** Two `Tcl_SetVar2` calls (the sentinels)
+   replace one per variable. `ngspice_data_arm(raw, prec)` (`save.c`) is the one
+   publish call; `update_op()` passes 4, the cursor-B publisher passes
+   `xctx->ev_precision`, so the strings a script reads are byte-identical to
+   before (`CS106c2`).
+
+### 13.3 Three case-blind classifications in `get_current`
+
+Deleting the fold made `[regexp $prefix {[ve]}]`, the `\[i[bcedgsb]\]$`
+terminal match and `$prefix == {d}` case-sensitive against a schematic-spelled
+token. All three are now `-nocase`. This is item 4's rule, not a new one: they
+ask *what kind of device is this*, which is not a question about capitalisation.
+Without it a device named `Vs` built `i(@V.Vs)` — a name nothing writes in any
+mode (`CS97b`).
+
+### 13.4 `get_diff_voltage` never returned a difference
+
+It assigned `res` only in its failure branch, so on the **success** path it read
+an unset variable and raised `can't read "res"`. It could never work. Nothing in
+the tree called it — the shipped `@spice_get_diff_voltage` floater is `token.c`'s
+own C implementation, which does subtract. Fixed here because the two dead rungs
+being deleted are the same four lines the bug lived in. `CS99b*`.
+
+⚠ Its first fixture was `tr_preserve.raw` at point 0, where every node reads
+0.0 — and `0 - 0 == 0`, so "return the first operand instead of the difference"
+passed. The check now has its own two-distinct-voltage raw.
+
+### 13.5 MEASURED: unsetting the array destroys the trace
+
+tcl 8.6.14, measured before any code was written; the manual is not explicit.
+`array unset`, Tcl's `unset` and C's `Tcl_UnsetVar` all remove **every** trace on
+the variable. Three consequences, all wanted:
+
+1. **The five `array unset` / `Tcl_UnsetVar` clear sites need no edit.** An unset
+   *is* the trace reset (`CS104b`–`CS104g`).
+2. Arming must **re**-install the trace, and unsets first so a second copy of the
+   callback cannot stack.
+3. **The third publisher cannot interleave with this one.**
+   `ngspice::read_raw_dataset` (`ngspice_backannotate.tcl:24`) is a **pure-Tcl**
+   publisher of the same array, reached through
+   `upvar ::ngspice::ngspice_data arr` — a whole-array alias — and it opens with
+   `unset -nocomplain var`. That unset disarms the C view, so the array is never
+   half one publisher's and half the other's (`CS105*`; deleting that one line
+   reddens `CS105c`–`CS105f`).
+
+Also measured: `info exists arr(k)` **does** fire a read trace (so a lazy element
+answers it), `array names` fires the `array` op, and `info exists arr` on a
+traced-but-**undefined** array fires a read with an empty name2 and answers 0 —
+which is why the sentinels stay real elements (`CS101*`).
+
+### 13.6 Rules the view obeys
+
+- **Pinned to the publisher, never to `xctx->raw`.** The eager array froze one
+  database's numbers; `get_raw_index_in(Raw*, ...)` exists so the view keeps that
+  property. A `raw switch` moves nothing (`CS103*`).
+- **`free_rawfile()` disarms a view pinned to the Raw it is about to free.**
+  This is the one place `nd_view.raw` could dangle, and `xschem raw clear <file>`
+  with other databases still loaded reaches it **without** unsetting the array.
+  **Measured with valgrind:** with the disarm removed, that path gives
+  `Invalid read of size 8 at ngspice_data_trace`; with it, valgrind is clean.
+- **Enumeration is rebuilt, not accumulated.** The `array` trace drops every
+  materialised key and repopulates from `names[]`, so `array names` is exactly
+  {stored spellings} + {`n\ vars`, `n\ points`} however many odd-spelled reads
+  happened first and whatever `raw rename` did since (`CS100d`, `CS102*`).
+- **A read trace fires on EVERY read, including for an element that already
+  exists.** *CORRECTED in the item-5b fix round.* This bullet used to say the
+  opposite — "a materialised element is a cache … a read trace does not fire for
+  an element that already exists" — and a reviewer measured that it is **false**
+  on tcl 8.6.14:
+
+  ```
+  set _ [set ::ngspice::ngspice_data(v(In))]   ;# -> 0, materialised
+  set ::ngspice::ngspice_data(v(In)) BOGUS
+  set ::ngspice::ngspice_data(v(In))           ;# -> 0, NOT BOGUS
+  ```
+
+  So a materialised element is **re-resolved on every read** against the pinned
+  database and cannot go stale while its name still resolves. What it does keep is
+  its **last** value once the name stops resolving — `raw rename` out from under
+  it, and the trace has nothing to answer with and leaves the element alone. That,
+  not a cache, is why `CS100e`/`CS100f` read as they do, and `CS111c`–`CS111d` pin
+  the measured behaviour directly.
+  - **Consequence, declared not fixed: a Tcl write into the armed array is
+    silently discarded** on the next read. The eager array accepted such a write
+    until the next publish. Nothing in the tree writes the array (both C
+    publishers and the pure-Tcl one own all of it), so this is documented rather
+    than papered over with a `TCL_TRACE_WRITES` pin.
+  - **Consequence, fixed: the read arm records a materialised key only when the
+    element did not already exist.** Recording unconditionally appended one
+    `my_strdup2`'d key per read — **measured: 200000 repeat reads of one element
+    grew RSS by 7808 kB, ~40 bytes a read**, on the path every redraw of an
+    annotated schematic walks; an untraced control array in the same loop grew 0.
+    `xschem raw view_keys` reports the list length so a check can pin it exactly
+    (`CS111f`); RSS cannot be asserted on inside a long suite because it reuses
+    heap the suite has already freed, and an RSS assertion at that point in the
+    file passed **with the defect in place**.
+- **Unsetting ONE ELEMENT does not disarm the view; unsetting the ARRAY does.**
+  The trace is installed with `name2 == NULL`, so `TCL_TRACE_UNSETS` fires for
+  both, and the handler used to `nd_view_reset()` either way — so
+  `unset arr(v(In))` disarmed everything while leaving the sentinels (and hence
+  `info exists` == 1) behind: nothing resolved lazily any more and enumeration
+  stopped being rebuilt. The single-element case now just drops that key from the
+  materialised list (`CS112*`).
+- **The drop walks a DETACHED copy of the materialised list.** Measured: Tcl
+  suppresses a variable's traces only for the element whose trace is running, so
+  unsetting a *different* element from inside one delivers our own unset callback
+  re-entrantly — which mutated the very list being walked and left an element
+  behind (`CS113e3`).
+- **No key collisions, because there are no keys.** Under `distinguish` a
+  database may hold `v(EN)` and `v(en)`; each resolves to its **own** value and
+  the ambiguous `v(En)` declines (D2). The folded-key publisher's first-writer-
+  wins rule and its `dbg(0)` are gone with it (`CS106*`; `CS36d`/`CS36e` in
+  `test_raw_case_mode.tcl` are restated in place).
+- **A digital database still publishes nothing** (D5-3): the refusal unsets and
+  does not arm, so the view cannot answer either (`CS109*`).
+- **Bare `sprintf`, not `my_snprintf`.** This tree builds without
+  `HAS_SNPRINTF`, so `my_snprintf()` is util.c's hand-rolled formatter, which
+  copies the conversion spec verbatim and **cannot see a `*`**. Measured:
+  `my_snprintf(s, S(s), "%.*g", 4, 1.111)` printed `1.111000061035156`.
+
+### 13.6b The sentinel keys, and one false claim about them
+
+`ngspice_data_arm()` writes two real elements whose keys carry a **literal
+backslash** before the space — `n\ vars`, `n\ points` — byte-for-byte what both
+eager publishers wrote. An earlier revision of the comment above them claimed that
+is "what `$arr(n\ vars)` reads in Tcl". **It is not**, and it is corrected:
+
+```
+% set ::ngspice::ngspice_data(n\ vars)
+can't read "::ngspice::ngspice_data(n vars)": no such element in array
+```
+
+Tcl performs backslash substitution on an array index, so that source form asks for
+the key `n vars`. A script must double it (`arr_get "n\\ vars"`, which is what
+`CS101d`/`CS101e` do). The spelling itself is **pre-existing** and deliberately
+unchanged — and note the third, pure-Tcl publisher
+(`src/ngspice_backannotate.tcl:57`) writes the plain `n vars` instead, so the two
+publishers do not agree on the sentinel key. Changing either would move rows for a
+reason that has nothing to do with case mode.
+
+### 13.7 THE ARRAY IS NOT PER-WINDOW Tcl STATE (item 5b fix round)
+
+**The defect.** `ngspice::ngspice_data` was a member of `tctx::global_array_list`
+(`src/xschem.tcl`), the list of global arrays a tab/window create, switch or close
+snapshots and restores. `restore_ctx`'s arm over that list opens with
+`unset -nocomplain <arr>` — and by §13.5's own measured fact **an unset destroys
+every trace on the variable**. The lazy view therefore became a frozen eager copy
+keyed only by the database's stored spellings, and because item 5b **deleted** the
+Tcl-side `string tolower` and `v(...)` rungs, the schematic operating-point overlay
+read `?` for **every** node after one Ctrl-T — lowercase ones included. Measured on
+the real road (`xschem new_schematic create` + `switch`: `0` → `?`, while a
+pristine-HEAD binary was unaffected) and headlessly through the shipped
+`save_ctx`/`restore_ctx` pair. All 375 checks of the batch's other suites stayed
+green through it, which is the whole reason this section exists.
+
+**RULING — the array leaves that list.** It is C-owned derived state, not
+per-window Tcl state: one publisher's `Raw`, one trace, resolved live. `CS110c`
+pins the membership and `CS110d`/`CS113h` pin the product.
+
+**RULING — per-window isolation moves into C.** The membership did buy something
+real: a window that never annotated saw an empty array. `nd_view_owned()`
+(`src/save.c`) buys it back without a snapshot — the view answers only while the
+publishing `Raw` is still reachable from the **current** context (`xctx->raw` or
+one of `xctx->extra_raw_arr[]`), and a read from a window that does **not** own it
+also **drops** the elements the owning window materialised, or a value already
+materialised there would still answer (measured: it did). Switching back resolves
+again, live. This is *not* the "follows `xctx->raw`" behaviour `CS103c2`/`CS103d`/
+`CS103h` forbid: two databases loaded in one window are both reachable, so making
+the other one current changes no answer.
+
+**DECLARED cost.** The two sentinels are plain elements of one global Tcl array, so
+`info exists ngspice::ngspice_data` still answers **1** in a sibling window that
+never annotated. What that costs is one thing: `actions.c`'s descend hook uses it as
+"is an operating point loaded?" and will skip the automatic cursor-B backannotation
+in that window. Making it per-window would need the array re-created on every
+context switch from a per-window record, which is a redesign this fix round
+deliberately did not do. `CS113f` pins that the *elements* are gone even so.
+
+### 13.7b RULING — ONE GATED FALLBACK, for the road that has no authority
+
+**The third publisher has no `Raw`, so it has no authority to share.**
+`ngspice::read_raw_dataset` / `ngspice::read_raw` (`src/ngspice_backannotate.tcl`,
+shipped and installed, sourced by a user's own rc) populate this array from pure Tcl
+under keys folded by their own `string tolower` — `v(midnode)`. §13.5 records that
+their `unset -nocomplain` disarms the C view first, so the array is never half one
+publisher's and half the other's; the price is that on that road an indexed read is
+**not** an authority call, and deleting the procs' rungs left it reading `?` for
+every node, all-lowercase ones included, where HEAD read a number.
+
+**RULING.** `ngspice::lookup` carries **one** fallback ladder — `v($name)`, the
+folded name, the folded name wrapped — **gated on `xschem raw view_armed`**
+(`ngspice_data_armed()`, `save.c`), which answers whether an indexed read of the
+array *is* an authority call for the current window. While the answer is yes, not
+one fallback probe happens; the gate is what keeps this from being the second
+authority D3 deletes.
+
+**The gate is load-bearing and a sabotage says so.** Remove it and
+`ngspice::get_voltage En`, on a `distinguish` database holding both `v(EN)` and
+`v(en)`, answers `v(en)`'s value — a D2 violation, with `CS106i` and `CS114j` red
+together. `CS114*` drives the whole thing: the third publisher's own binary op raw,
+then the same query with the C view armed.
+
+**`xschem raw view_keys` / `xschem raw view_armed`** are the view's two
+introspection verbs. `view_keys` exists because the growth defect of §13.6 has no
+other Tcl-visible signature; `view_armed` exists because the gate above needs it and
+a test needs to pin the gate.
+
+### 13.7c `xschem raw casemode` on a VCD and on a `table_read` database
+
+Mandatory scope, passed on by items 2, 3, 4 and 5, closed here (`CS107*`,
+`CS108*`). Both readers store names verbatim; on both, with no schematic and no
+header, the answer is `unknown` / `none` (**B2b**, never `fold`), `-sniff`
+reports what it *would* have said, the explicit source sets, reports and clears,
+and `raw casemode` **never touches `Raw.case_sensitive`** — reporting only. The
+ladder itself is case-blind on a table database and exact-only under
+`distinguish` (`CS108l`–`CS108n`).
+
+### 13.8 What is NOT here — the C floaters still fold (issue `0420`)
+
+`token.c` reaches the SAME authority from six `@spice_get_*` floater branches —
+the schematic voltage overlay by a second road, as its own comment says — and
+**folds the query first**: 13 `strtolower()` calls at `:4358 :4535 :4572 :4855
+:4951 :4954 :4957 :5036 :5065 :5126 :5132 :5217 :5258`.
+
+Under `fold` and `preserve` both roads agree (the folded rung rescues either
+query). **Under `distinguish` they diverge**: with `v(EN)` stored, the Tcl
+overlay resolves it exactly and the floater probes `v(en)`, misses, and finds
+the folded rung suppressed. That is item 5b **improving one half** of what
+`PLAN.md` §5.7 said would break, not creating a new defect — but it is a
+divergence and it is filed rather than hidden.
+
+It was **not** done here because it is not a 13-line deletion: each fold feeds
+case-sensitive logic downstream (`prefix == 'v'`, `'q'`, `'d'`, `'m'`, `'i'`,
+`strncmp(fqdev, "i(@r", 4)`), so it is item-4-shaped work — gate or blind each
+classification, then drive all six branches. Issue `0420` carries the list.

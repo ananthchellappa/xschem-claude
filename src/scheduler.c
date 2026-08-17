@@ -10533,6 +10533,23 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, (char *)raw_case_mode_word(raw_resolve_case_mode(raw, &src)),
                         TCL_VOLATILE);
         }
+      } else if(argc > 2 && !strcmp(argv[2], "view_keys")) {
+        /* xschem raw view_keys -- how many elements the lazy ngspice::ngspice_data
+         * view has MATERIALISED. INTROSPECTION FOR A TEST, and outside the
+         * `raw && raw->values` arm below on purpose: it must also answer in a window
+         * with no database at all. It is the only Tcl-visible signature of the
+         * item-5b fix round's growth defect -- a Tcl read trace fires for an element
+         * that ALREADY EXISTS, so recording a key on every read appended one strdup
+         * per read (measured: ~40 bytes a read on the schematic redraw path). RSS is
+         * the harm, but RSS reuses freed heap and cannot be asserted on inside a long
+         * suite; this count is exact. See ngspice_data_nkeys(), src/save.c. */
+        Tcl_SetResult(interp, my_itoa(ngspice_data_nkeys()), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "view_armed")) {
+        /* xschem raw view_armed -- 1 while an indexed read of ngspice::ngspice_data is
+         * a call into the one lookup authority for THIS window. `ngspice::lookup` asks
+         * before it falls back; outside the `raw && raw->values` arm because "no
+         * database here" is one of the answers it has to be able to give. */
+        Tcl_SetResult(interp, my_itoa(ngspice_data_armed()), TCL_VOLATILE);
       } else if(raw && raw->values) {
         /* xschem raw annot
          *   read-only: the CURRENT database's cursor-B annotation state, as

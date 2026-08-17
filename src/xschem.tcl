@@ -2629,6 +2629,60 @@ namespace eval ngspice {
   variable op_point_read
 }
 
+# ONE LOOKUP AUTHORITY -- casemode item 5b, DECISIONS.md D3,
+# doc/claude/specs/raw_case_mode.md section 13.
+#
+# Every proc below used to run its own private copy of get_raw_index()'s ladder:
+# its own `string tolower` on the query, and (in get_voltage / get_diff_voltage)
+# its own hand-rolled `v(...)` fallback rung. Two authorities, in two languages,
+# in two files -- so every case rule this batch decided would have applied to one
+# of them and not the other, forever. They are DELETED, not ported.
+#
+# What replaces them is nothing at all: `ngspice::ngspice_data` is now a
+# read-traced lazy view whose trace calls get_raw_index_in() (src/save.c), so a
+# plain indexed read of the array IS the authority call, with all four rungs --
+# exact, case-folded alias, `v()` wrap, the `i(v.x` rewrite -- and with D2's
+# no-alias-on-collision rule and `distinguish`'s suppression of the folded rung
+# already applied.
+#
+# THE QUERY THEREFORE CARRIES THE SCHEMATIC'S OWN SPELLING. A net drawn `EN`
+# asks for `EN`; under `distinguish` that exact-matches `v(EN)` and under
+# `fold` it falls through to `v(en)`. The mode does not appear in this code, and
+# must not be reintroduced here: if you find yourself writing `if {$casemode ...`
+# in a backannotation proc, the design has gone wrong.
+#
+# Returns the value, or `?` -- which is what the schematic overlay prints for
+# "no measurement", and cannot collide with a real value (always a `%.*g` of a
+# double). The array is UNSET, not empty, when no database has published, and it
+# has no element for a name the ladder cannot resolve; both arrive here as the
+# same `catch` failure and the same `?`.
+#
+# ONE FALLBACK, FOR THE ONE ROAD WHERE THERE IS NO AUTHORITY TO REACH.
+# `ngspice::read_raw_dataset` (src/ngspice_backannotate.tcl) is a THIRD publisher of
+# this array, pure Tcl, reached through `upvar ::ngspice::ngspice_data arr`. It never
+# builds a `Raw`, so it cannot be an authority and is not made one; its
+# `unset -nocomplain` disarms the C view and it then owns the array outright, with
+# keys folded by its own `string tolower` (`v(midnode)`). On THAT road the deletions
+# above left the overlay unable to read anything at all -- every node, lowercase
+# included, answered `?` where HEAD answered a number. Found in review, fixed here.
+#
+# THE GATE IS WHAT KEEPS THIS FROM BEING A SECOND AUTHORITY: it runs only when
+# `xschem raw view_armed` says no C view owns the array, so while the authority IS
+# reachable not one of these probes happens and every rule the batch decided still
+# comes from `get_raw_index_in()` alone. Without the gate the folded probe would
+# resolve `En` to `v(en)`'s value under `distinguish`, which is exactly what D2 and
+# `CS106i` forbid. The rungs mirror the C ladder's 1-3 deliberately: an authority
+# that does not exist for this publisher cannot be shared with it.
+proc ngspice::lookup {name} {
+  if { ![catch {set ::ngspice::ngspice_data($name)} res] } { return $res }
+  if { [catch {xschem raw view_armed} armed] || $armed } { return {?} }
+  set lc [string tolower $name]
+  foreach k [list v($name) $lc v($lc)] {
+    if { ![catch {set ::ngspice::ngspice_data($k)} res] } { return $res }
+  }
+  return {?}
+}
+
 proc ngspice::get_current {n} {
   set raw_level [xschem get raw_level]
   set path [string range [xschem get sch_path] 1 end]
@@ -2640,7 +2694,8 @@ proc ngspice::get_current {n} {
     regsub {^[^.]*\.} $path {} path
     incr skip
   }
-  set n [string tolower $n]
+  # NO `string tolower $n` any more (casemode item 5b): the device name keeps
+  # the spelling the schematic gave it and the one authority resolves it.
   set prefix $n
   # if xm1.rd is given get prefix (r) by removing path components (xm1.)
   regsub {.*\.} $prefix {} prefix
@@ -2648,30 +2703,32 @@ proc ngspice::get_current {n} {
   # puts "ngspice::get_current: path=$path n=$n prefix=$prefix"
   set n $path$n
   set currname i
+  # THE THREE CLASSIFICATIONS BELOW ARE NOW CASE-BLIND, and that is not a new
+  # rule -- it is the same one item 4 applied to the Ctrl-K senders. They are
+  # asking "is this device a voltage source / a diode / a BJT terminal", which
+  # is a question about the device, not about its capitalisation. They only ever
+  # worked because the deleted fold had lowercased the token first, so leaving
+  # them alone would make a schematic device named `Vs` build `i(@V.x1.Vs)`
+  # instead of `i(V.x1.Vs)` -- a name no simulator writes in any mode.
   if { ![sim_is_xyce] } { ;# ngspice
     if {$path ne {} } {
       set n $prefix.$n
     }
-    if { ![regexp $prefix {[ve]}] } {
+    if { ![regexp -nocase {^[ve]$} $prefix] } {
       set n @$n
     }
     set n i($n)
   } else { ;# xyce
-    if { [regexp {\[i[bcedgsb]\]$} $n] } {
-      regexp {\[(i[bcesdgb])\]$} $n curr1 currname
-      if { $prefix == {d} } {set currname i}
-      regsub {\[(i[bcesdgb])\]$} $n {} n
+    if { [regexp -nocase {\[i[bcedgsb]\]$} $n] } {
+      regexp -nocase {\[(i[bcesdgb])\]$} $n curr1 currname
+      if { [string equal -nocase $prefix {d}] } {set currname i}
+      regsub -nocase {\[(i[bcesdgb])\]$} $n {} n
     }
-    regsub {\[i\]} $n {} n
+    regsub -nocase {\[i\]} $n {} n
     set n $currname\($n\)
   }
   # puts "ngspice::get_current --> $n"
-  set err [catch {set ::ngspice::ngspice_data($n)} res]
-  if { $err } {
-    set res {?}
-  }
-  # puts "$n --> $res"
-  return $res
+  return [ngspice::lookup $n]
 }
 
 proc ngspice::get_diff_voltage {n m} {
@@ -2685,24 +2742,22 @@ proc ngspice::get_diff_voltage {n m} {
     regsub {^[^.]*\.} $path {} path
     incr skip
   }
-  set n [string tolower $n]
-  set m [string tolower $m]
-  set nn $path$n
-  set mm $path$m
-  set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
-  if {$errn} {
-    set nn v(${path}${n})
-    set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
-  }
-  set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
-  if {$errm} {
-    set mm v(${path}${m})
-    set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
-  }
-  if { $errn  || $errm} {
-    set res {?}
-  }
-  return $res
+  # The `string tolower` AND the hand-rolled `v(...)` rung are both deleted
+  # (casemode item 5b): rung 3 of the one ladder is that same `v()` wrap, so
+  # nothing is lost, and the query now carries the schematic's own spelling.
+  #
+  # AND THIS PROC NEVER RETURNED A DIFFERENCE. `res` was assigned in exactly one
+  # place -- the failure branch -- so on the SUCCESS path it was read unset and
+  # the proc raised `can't read "res": no such variable`, aborting whatever was
+  # evaluating it. Nothing in the tree calls it (the shipped
+  # `@spice_get_diff_voltage` floater is token.c's own C implementation, which
+  # does subtract), which is why a proc that could never work shipped. Fixed
+  # here rather than left standing, because the two dead rungs being deleted are
+  # the same four lines the bug lives in.
+  set resn [ngspice::lookup $path$n]
+  set resm [ngspice::lookup $path$m]
+  if { $resn eq {?} || $resm eq {?} } { return {?} }
+  return [expr {$resn - $resm}]
 }
 
 
@@ -2717,20 +2772,10 @@ proc ngspice::get_voltage {n} {
     regsub {^[^.]*\.} $path {} path
     incr skip
   }
-  set n [string tolower $n]
+  # casemode item 5b: no fold, and no second `v(...)` probe -- that IS rung 3 of
+  # the one ladder, reached through the array's read trace.
   # puts "ngspice::get_voltage: path=$path n=$n"
-  set node $path$n
-  # puts "ngspice::get_voltage: trying $node"
-  set err [catch {set ::ngspice::ngspice_data($node)} res]
-  if {$err} {
-    set node v(${path}${n})
-    # puts "ngspice::get_voltage: trying $node"
-    set err [catch {set ::ngspice::ngspice_data($node)} res]
-  }
-  if { $err } {
-    set res {?}
-  }
-  return $res
+  return [ngspice::lookup $path$n]
 }
 
 proc update_schematic_header {} {
@@ -2752,14 +2797,13 @@ proc ngspice::get_node {n} {
     regsub {^[^.]*\.} $path {} path
     incr skip
   }
-  set n [string tolower $n]
+  # casemode item 5b: the fold is deleted here too. This is the FOURTH proc --
+  # D3 names three; `get_node` is the one the shipped ngspice_get_value.sym and
+  # device_param_probe.sym symbols actually call, so leaving it folded would
+  # have left the most-used road on the old authority.
   # n may contain $path, so substitute its value
   set n [ subst -nocommand $n ]
-  set err [catch {set ::ngspice::ngspice_data($n)} res]
-  if { $err } {
-    set res {?}
-  }
-  return $res
+  return [ngspice::lookup $n]
 }
 
 ## end ngspice:: functions
@@ -14007,8 +14051,21 @@ set tctx::global_list {
 ## will be saved as tctx::.drw_dircolor, tctx::.x1.drw_dircolor and so on
 ## EXCEPTIONS, not to be saved/restored:
 ## execute
+## `ngspice::ngspice_data` IS DELIBERATELY NOT IN THIS LIST -- casemode item 5b
+## fix round, doc/claude/specs/raw_case_mode.md section 13.7. It is no longer
+## per-window Tcl state: it is a READ-TRACED LAZY VIEW owned by C (save.c,
+## ngspice_data_arm). This list's restore arm below opens with
+## `unset -nocomplain <arr>`, and an unset DESTROYS every trace on the variable
+## (tcl 8.6.14, measured -- it is the same fact the whole design rests on), after
+## which `array set` put back a frozen eager copy keyed only by the database's
+## stored spellings. With the Tcl-side fold and `v(...)` rungs deleted (that is
+## the point of item 5b), the schematic operating-point overlay then read `?` for
+## EVERY node after one tab or window switch. Measured before and after.
+## Per-window isolation, which the membership really did buy, is now enforced in C
+## instead: the view answers only while the publishing database is reachable from
+## the current context (nd_view_owned(), save.c).
 set tctx::global_array_list {
-  replace_key dircolor sim enable_layer ngspice::ngspice_data
+  replace_key dircolor sim enable_layer
 }
 
 proc delete_ctx {context} {
