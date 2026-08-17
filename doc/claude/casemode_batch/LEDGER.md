@@ -50,7 +50,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 4 | the four `hilight.c` senders (Ctrl-K path) | `[x]` | `5c7ee761` | 30 | 30 | 5 + 2 audits | no | **11 folds gated, not the brief's 4** — 9 `strtolower` on 8 lines + 2 `strtoupper`, five senders + a receiver parse. Audit = one added row (its own suite), zero movers. **Refuted 2 reviewer-prescribed fixes and 1 driver hint by measurement.** Spec §11 |
 | 5 | viewer Tcl + two-pane browser scan | `[E]` | `9b1394c9` | 134 | 66 | 5 + 3 audits | **YES ×2** | audit = one added row, zero movers. **B2a's control BUILT, not passed on** (`Options ▸ Case Mode`). Review caught the radios as a **dead control** — no-op left 113/113 green. Spec §12. **2 look debts recorded** |
 | 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0420` filed |
-| 6 | extend `sim()` / `simconf` / `simrc` | | | | | | no | replaces the plan's new `ase_simulators` file |
+| 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0422`** filed (code execution) |
 | 7 | the capability probe (+ hard timeout) | | | | | | no | |
 | 8 | profile-aware `run_cmd` + mismatch policy | | | | | | no | `distinguish` mismatch REFUSES |
 | 9 | `sod_expr` stops folding + current arm | | | | | | no | flips ~20 assertions; that breakage is the evidence |
@@ -447,6 +447,82 @@ Other rulings (spec §14):
 (2026-08-11, predates the batch) and `tr_MODE.raw` (2026-08-16 06:30, from the
 `repro2`/`repro3` re-runs — the documented cwd-relative `write` trap). Both left
 unstaged, correctly.
+
+## Carry-forwards item 6 handed on — baseline `audit_item06_closer_2026-08-17`
+
+**Baseline is `audit_item06_closer_2026-08-17.txt` — 323/15/0/0 of 338** at
+`169495a4`. Items 1, 2, 3, 4, 5, 5b, 14 and 6 have each moved **zero** statuses.
+
+### A PIPELINE FAILURE MODE WORTH KNOWING — read before relaunching any item
+
+Item 6's first attempt **died on an API 529, not a logic failure**. The
+implementer errored *while returning*, so the pipeline saw `impl == null` and
+`if (impl)` **skipped the Verify stage and all three Review lenses**. The closer
+then 529'd too. Result: 470 lines of finished-looking work on disk, **committed by
+nobody and attacked by nothing** — no verifier, no reviewer, no sabotage row.
+
+**A 529 in the implementer silently downgrades the pipeline to "write code, hope".**
+When an item returns `[F]` with `commit: ""`, check `git status` before assuming
+nothing happened, and relaunch with the disk state described in the hints so the
+next crew assesses rather than restarts. A plain `resumeFromRunId` would have
+replayed a cached-null implementer without telling anyone the tree was half-built.
+
+### A driver hint that was wrong, and the correction
+
+An earlier dispatch told crews "the baseline carries a `test_ase_core` failure that
+reproduces on a pristine HEAD binary — do not chase it". **Half wrong, and
+dangerously phrased.** Measured:
+
+```
+test_ase_core  --nogui      ALL PASS (75 checks)
+test_ase_core  display arm  1 FAILED (58 passed)
+   UNEXPECTED ERROR: ase: design aselib/nfet_clean is not the current schematic
+pristine tree, same arm     1 FAILED (57 passed)   <- identical abort, so NOT a regression
+```
+
+The failure is **display-arm only**, and `full_audit.sh` runs that suite `--nogui`,
+which is why the baseline records `test_ase_core` as **PASS**. So: it is genuinely
+pre-existing, but "it's a known red" must never be used to wave away a
+`test_ase_core` failure. **If it goes red in `full_audit.sh`, that is a
+regression.** The 15 real baseline reds are now listed verbatim in the pipeline's
+POLICY block so this cannot recur.
+
+### Issue `0422` — CODE EXECUTION, pre-existing, filed not fixed
+
+`ase::expand_path` (`src/ase.tcl:174`) expands `$VAR` in model / `.include` /
+`.lib` / `pre_commands` paths **taken out of an ASE-L state file**, via
+`subst -nocommands`. That flag does **not** stop command substitution inside an
+**array index** — Tcl parses the index of `$A(...)` itself. Verified independently
+by the driver:
+
+```tcl
+set ::RAN 0
+catch {subst -nocommands -nobackslashes {$A([set ::RAN 1])/x}} out
+# out = can't read "A(1)": no such variable      ... and ::RAN is now 1
+```
+
+So **opening a state file someone else wrote can execute arbitrary commands.**
+Item 6 guarded its own new field (`sim_profile_exe_path`, `xschem.tcl:2932`) and
+filed the issue; the **three original call sites remain unguarded** —
+`ase.tcl:3271` (`.include`), `:3274` (`.lib`), `:3327` (`pre_commands`). Not this
+batch's scope. Item 8 and item 10 both touch the deck renderer and should not make
+it worse.
+
+### Other carry-forwards
+
+- **The row fields as shipped:** `exe`, `args`, `casemode`, `detected`, `probed`,
+  and **`nospiceinit`** (A2's `-n`, the field only — item 13 owns the checkbox).
+  `detected` is kept **separate from** `casemode` precisely so item 13 can build
+  A1's probe-driven dropdown; collapsing them would have made that impossible.
+- **`sim_profile`** is in `schema_keys` **and** `omit_if_empty`, so no existing
+  ASE-L state file grows a line on first save. `test_ase_core`'s `R1` was
+  **restated 16 → 17 keys**, not renumbered or deleted, and the closed-set
+  property it exists for is unchanged.
+- **`simrc_pre_casemode`** is the frozen pre-batch fixture proving an old
+  hand-written `simrc` still round-trips byte-identically.
+- **Two `06-` receipts now exist and they are different items:**
+  `receipts/06-one-lookup-authority.md` is **item 5b**;
+  `receipts/06-simulator-profiles.md` is **item 6**. Both say so in their headers.
 
 ## Environment — re-verified 2026-08-16
 
