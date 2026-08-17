@@ -796,6 +796,7 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
    * 0213 fix added (issue 0213 review, 2026-08-09). */
   int exit_status = 0, npoints = 0, nvars = 0;
   int dbglev=1;
+  int seen_plotname = 0;
   const char *sim_type = NULL;
   Raw *raw;
 
@@ -816,6 +817,11 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   while((line = my_fgets(fd, NULL))) {
     my_strdup2(_ALLOC_ID_, &lowerline, line);
     strtolower(lowerline);
+    /* Has any plot started yet? Only the casemode branch below needs this, to
+     * tell a FILE-level `Option:` line (there is no plot above it) from one
+     * that belongs to a particular plot. Set here rather than in the eight
+     * Plotname: branches so there is one place to read and one to break. */
+    if(!strncmp(line, "Plotname:", 9)) seen_plotname = 1;
 
     /* after this line comes the ascii or binary blob made of nvars * npoints * sizeof(double) bytes */
     if(!strcmp(line, "Values:\n") || !strcmp(line, "Values:\r\n")) {
@@ -921,6 +927,57 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         if(!type) type = name;
         if(!strcmp(type, name)) sim_type = name;
         dbg(dbglev, "read_dataset(): sim_type=%s\n", sim_type ? sim_type : "<NULL>");
+      }
+    }
+    /* SOURCE 2 OF THE MODE RESOLUTION -- the `Option: casemode=<mode>` header
+     * line (casemode item 3, DECISIONS.md B2a). raw_header_case_mode() owns the
+     * parse and its three anchoring rules; here we only decide WHICH line wins.
+     *
+     * The FIRST casemode line anywhere in the file's headers wins. Upstream
+     * emits exactly one, but in two PLACES -- immediately after `Plotname:` in
+     * the session's own file, and after `No. Points:` in a copy -- so a line-5
+     * check would miss the second (RESPONSE.md sections 1(b) and 2). Matching
+     * the key anywhere in the header covers both, and covers the misplaced
+     * before-`Plotname:` position too. A second, DISAGREEING line is ignored
+     * and said out loud: a header can carry more than one of a key (the repro's
+     * hdr_cmd.raw carries two `Command:` lines), and letting a later line win
+     * would let an appended one overrule the writer.
+     *
+     * IT MUST BE THIS DATASET'S LINE. An earlier revision stamped any casemode
+     * line in the file, on the premise that "every dataset in one raw was
+     * written by one session in one mode". THAT PREMISE IS FALSE and ngspice's
+     * own writer contradicts it: rawfile.c:204 emits the casemode line only for
+     * `!pl->pl_fromfile`, while rawfile.c:222/262 re-emit a from-file plot's own
+     * `Option: casemode=` out of pl_env -- so `write all.raw <a plot loaded from
+     * a preserve file> <this session's fold plot>` really does produce two
+     * DISAGREEING lines in one file. Stamping the first of them reported, at
+     * source rank 2, the mode of a dataset the user did not load.
+     *
+     * So the line is attributed the way its neighbours (`No. of Data Rows :`,
+     * `No. Variables:`, `No. Points:`) attribute theirs: `sim_type` is set only
+     * inside the dataset being loaded. The one exception is a line that arrives
+     * BEFORE ANY `Plotname:` -- there is no plot for it to belong to, it is the
+     * file's own, and it is one of the two positions upstream actually emits
+     * (RESPONSE.md section 1(b)); `sim_type` is still NULL there.
+     *
+     * The branch test is DELIBERATELY the loose `strstr`, not the anchored
+     * `strncmp` the parse needs: raw_header_case_mode() owns the anchor, and it
+     * has to be the only place that does. With the anchor stated twice, either
+     * copy alone still refuses `Title: Option: casemode=distinguish`, so the
+     * check written to catch a lost anchor passes with one of the two deleted
+     * -- measured, the whole suite stayed ALL PASS with the parser's anchor
+     * removed. One authority, one sabotage, one red check (CS53b, CS53c). */
+    else if(strstr(line, "Option:")) {
+      int hm = (sim_type || !seen_plotname) ? raw_header_case_mode(line) : -1;
+      if(hm > RAW_CASE_UNKNOWN) {
+        if(raw->hdr_case_mode == RAW_CASE_UNKNOWN) {
+          raw->hdr_case_mode = hm;
+          dbg(dbglev, "read_dataset(): header records casemode=%s\n", raw_case_mode_word(hm));
+        } else if(raw->hdr_case_mode != hm) {
+          dbg(0, "read_dataset(): a second `Option: casemode=%s` disagrees with the "
+                 "first (%s); the first is kept\n",
+                 raw_case_mode_word(hm), raw_case_mode_word(raw->hdr_case_mode));
+        }
       }
     }
     /* points and vars are needed for all sections (also ones we are not interested in)
@@ -2126,6 +2183,360 @@ void ngspice_data_publish(char **keyptr, const char *name, const char *value)
     return;
   }
   Tcl_SetVar2(interp, "ngspice::ngspice_data", key, value, TCL_GLOBAL_ONLY);
+}
+
+/* ===========================================================================
+ * MODE RESOLUTION -- four sources, in order (casemode batch item 3)
+ * DECISIONS.md B2a/B2b, doc/claude/specs/raw_case_mode.md section 10.
+ * ===========================================================================
+ * explicit user setting -> `Option: casemode=` header -> schematic-name
+ * comparison -> capital sniff (off by default). None of them answering is
+ * "unknown", never "fold": B2b, and permanent, because the upstream patch that
+ * would make the header appear by default is written and has not been sent.
+ *
+ * This resolves the mode of a FILE. It is REPORTING: nothing here touches
+ * Raw.case_sensitive, which has its own verb (`xschem raw case`) and its own
+ * re-read contract (spec section 3). The mode REQUESTED for a run lives on the
+ * simulator profile (item 6), with sim_case_mode_floor() underneath it.
+ */
+
+/* One parser for the four mode words, so the verb, the header and the floor
+ * cannot disagree about what a word means. Exact and lowercase, matching
+ * raw_case_mode_parse() above; callers that must be liberal (the header value)
+ * fold their own copy first. */
+int raw_case_word_parse(const char *word)
+{
+  if(!word || !word[0]) return -1;
+  if(!strcmp(word, "unknown")) return RAW_CASE_UNKNOWN;
+  if(!strcmp(word, "fold")) return RAW_CASE_FOLD;
+  if(!strcmp(word, "preserve")) return RAW_CASE_PRESERVE;
+  if(!strcmp(word, "distinguish")) return RAW_CASE_DISTINGUISH;
+  /* NOT "upper": see the RAW_CASE_UPPER comment in xschem.h */
+  return -1;
+}
+
+const char *raw_case_mode_word(int mode)
+{
+  switch(mode) {
+    case RAW_CASE_FOLD:        return "fold";
+    case RAW_CASE_PRESERVE:    return "preserve";
+    case RAW_CASE_DISTINGUISH: return "distinguish";
+    case RAW_CASE_UPPER:       return "upper";
+    default:                   return "unknown";
+  }
+}
+
+const char *raw_case_source_word(int src)
+{
+  switch(src) {
+    case RAW_CASE_SRC_EXPLICIT:  return "explicit";
+    case RAW_CASE_SRC_HEADER:    return "header";
+    case RAW_CASE_SRC_SCHEMATIC: return "schematic";
+    case RAW_CASE_SRC_SNIFF:     return "sniff";
+    default:                     return "none";
+  }
+}
+
+/* Copy s[0..len) into dst, trimming ASCII blanks and CR/LF from both ends.
+ * Returns 0 (and leaves dst empty) if the trimmed text does not fit, so an
+ * over-long key can never be truncated INTO a match. */
+static int raw_hdr_trim(char *dst, size_t dstsize, const char *s, size_t len)
+{
+  size_t a = 0, b = len;
+  dst[0] = '\0';
+  while(a < b && (s[a] == ' ' || s[a] == '\t')) ++a;
+  while(b > a && (s[b-1] == ' ' || s[b-1] == '\t' || s[b-1] == '\n' || s[b-1] == '\r')) --b;
+  if(b - a >= dstsize) return 0;
+  memcpy(dst, s + a, b - a);
+  dst[b - a] = '\0';
+  return 1;
+}
+
+/* THE HEADER SOURCE. Three rules, each measured, each an injection defence:
+ *
+ * 1. ANCHORED at the start of the line, on `Option:`. `Title:` is the deck's
+ *    own first line and it is USER TEXT -- the upstream repro's own title reads
+ *    "* writes an ascii raw, so finding 1's header experiments can splice a
+ *    line in". A deck titled `* casemode=distinguish` must not set the mode,
+ *    and a deck titled `Option: casemode=distinguish` still arrives as
+ *    `Title: Option: ...`, so the anchor holds against both.
+ * 2. The KEY IS MATCHED EXACTLY, not case-insensitively. ngspice's variable
+ *    names are case-SENSITIVE: measured 2026-08-16 on build-ver_50,
+ *    `-D CaseMode=distinguish` and `-D CASEMODE=distinguish` both leave
+ *    $curcasemode at `fold`, silently (upstream FINDINGS section 6 -- a
+ *    misspelled variable NAME is a no-op). So `Option: CaseMode=preserve`
+ *    records some other variable, and reading it as the case mode would claim a
+ *    mode for a file whose mode was never set. Fixtures hdr_optname_upper.raw /
+ *    hdr_optname_mixed.raw are exactly that shape and are REFUSED.
+ * 3. The VALUE is matched case-insensitively, because ngspice's own value
+ *    compare is: measured on the same build, `-D casemode=PRESERVE` and
+ *    `-D casemode=Preserve` both give $curcasemode == preserve. Fixtures
+ *    hdr_optval_upper.raw / hdr_optval_mixed.raw are ACCEPTED.
+ *
+ * Only the `Option:` key is read. A `Casemode:` key is refused even though it
+ * is the obvious spelling: ngspice's own reader ABORTS THE LOAD on it ("Error:
+ * strange line in rawfile", measured on 46 and on ver_50, upstream FINDINGS
+ * section 1), so no writer can be emitting it and accepting it would only widen
+ * the surface. `Command: set casemode=preserve` is refused for the same reason
+ * -- `Command:` is a free-text provenance line, never parsed here.
+ *
+ * Returns -1 for "not an Option: casemode line", which is the overwhelmingly
+ * common case, so the caller can tell "no verdict" from RAW_CASE_UNKNOWN. */
+int raw_header_case_mode(const char *line)
+{
+  const char *eq;
+  char key[64], val[64];
+
+  if(!line) return -1;
+  if(strncmp(line, "Option:", 7)) return -1;
+  eq = strchr(line + 7, '=');
+  if(!eq) return -1;
+  /* split on the FIRST `=` and trim both halves -- upstream keeps the trim
+   * because a foreign Option: value beginning `,`, `<=` or `>=` is re-emitted
+   * with spaces around the `=`. A casemode value never can be, but the parse
+   * is shared with whatever else lands on an Option: line. */
+  if(!raw_hdr_trim(key, sizeof(key), line + 7, (size_t)(eq - (line + 7)))) return -1;
+  if(strcmp(key, "casemode")) return -1;
+  if(!raw_hdr_trim(val, sizeof(val), eq + 1, strlen(eq + 1))) return -1;
+  strtolower(val);
+  return raw_case_word_parse(val);
+}
+
+/* SOURCE 3, THE SCHEMATIC COMPARISON -- helpers.
+ *
+ * The candidate set from the raw side is deliberately narrow, and every
+ * exclusion is one of the limits DECISIONS.md B2a records:
+ *   - only `v(<node>)`, so device currents (`i(Vs)`, `i(@R.X1.Rq[i])`) and the
+ *     sweep axis (`time`, `frequency`) are out;
+ *   - <node> must be a plain identifier, so hierarchy-prefixed names
+ *     (`v(x1.midnode)`, Xyce's `v(x1:midnode)`) and simulator-constructed ones
+ *     (`v(v-sweep)`, the .dc scale) are out. Those are not names the schematic
+ *     owns, and comparing them to a top-level net name is meaningless. */
+static int raw_v_node(const char *name, char *out, size_t outsize)
+{
+  size_t n, i;
+  if(!name) return 0;
+  if(!(name[0] == 'v' || name[0] == 'V') || name[1] != '(') return 0;
+  n = strlen(name);
+  if(n < 4 || name[n-1] != ')') return 0;
+  n -= 3;                                  /* the text between "v(" and ")" */
+  if(n >= outsize) return 0;
+  for(i = 0; i < n; ++i) {
+    int c = (unsigned char)name[2 + i];
+    if(!isalnum(c) && c != '_' && c != '$') return 0;
+    out[i] = (char)c;
+  }
+  out[n] = '\0';
+  return 1;
+}
+
+/* The schematic's own spelling of `node`, or "" when the schematic does not own
+ * that name. NAMES THE SCHEMATIC OWNS = the `lab=` attribute of an instance or
+ * of a wire, which is where a person writes a net name; `#`-prefixed names are
+ * the netlister's inventions and are skipped.
+ *
+ * Deliberately NOT xctx->node_table: reaching it means calling
+ * prepare_netlist_structs(), which is not a read-only query (it runs
+ * free_simdata(), delete_netlist_structs() and a statusmsg), and its tokens
+ * include propagated and auto-generated names as well as drawn ones. A
+ * heuristic ranked THIRD may not have side effects.
+ *
+ * get_tok_value() returns a pointer into one static buffer that the next call
+ * overwrites, hence the copy.
+ *
+ * EXACT SPELLING FIRST, then a UNIQUE case-insensitive one, and AMBIGUOUS when
+ * there are two of those. Taking the FIRST case-insensitive hit was a real
+ * defect, found by two independent reviewers of item 3 and fixed here: in a
+ * case-DISTINGUISHING design -- the exact design a case-capable simulator
+ * exists for -- `EN` and `en` are two different nets, and attributing the raw's
+ * `en` to the schematic's `EN` scored a confident `fold` vote for a file that
+ * had preserved every name. It gave the identical verdict for the folded and
+ * the case-kept file, and the answer flipped when the two labels were merely
+ * REORDERED in the .sch. Exactness settles it where the design itself is
+ * unambiguous; where it is not, nothing may vote.
+ *
+ * Returns SCH_NAME_NONE      -- the schematic does not own that name;
+ *         SCH_NAME_OWNED     -- it does, and `out` carries its spelling;
+ *         SCH_NAME_AMBIGUOUS -- it owns two or more DIFFERENT spellings that
+ *           fold to the same key and none of them is the raw's, so no spelling
+ *           can speak for it: the caller skips the name entirely, exactly as it
+ *           already skips an all-CAPITALS name the raw kept. */
+#define SCH_NAME_NONE      0
+#define SCH_NAME_OWNED     1
+#define SCH_NAME_AMBIGUOUS 2
+#define SCH_NAME_EXACT     3   /* internal: an exact hit, which nothing can beat */
+
+static void sch_owned_consider(const char *lab, const char *node,
+                               char *out, size_t outsize, int *state)
+{
+  if(!lab || !lab[0] || lab[0] == '#') return;
+  if(!strcmp(lab, node)) {                 /* the schematic spells it exactly so */
+    my_strncpy(out, lab, outsize);
+    *state = SCH_NAME_EXACT;
+    return;
+  }
+  if(my_strcasecmp(lab, node)) return;     /* not this net at all */
+  if(*state == SCH_NAME_NONE) {
+    my_strncpy(out, lab, outsize);
+    *state = SCH_NAME_OWNED;
+  } else if(*state == SCH_NAME_OWNED && strcmp(lab, out)) {
+    *state = SCH_NAME_AMBIGUOUS;           /* two spellings, one folded key */
+  }
+}
+
+static int sch_owned_name(const char *node, char *out, size_t outsize)
+{
+  int i, state = SCH_NAME_NONE;
+  out[0] = '\0';
+  if(!xctx) return SCH_NAME_NONE;
+  for(i = 0; i < xctx->instances; ++i) {
+    sch_owned_consider(get_tok_value(xctx->inst[i].prop_ptr, "lab", 0),
+                       node, out, outsize, &state);
+    if(state == SCH_NAME_EXACT) break;
+  }
+  if(state != SCH_NAME_EXACT) for(i = 0; i < xctx->wires; ++i) {
+    sch_owned_consider(get_tok_value(xctx->wire[i].prop_ptr, "lab", 0),
+                       node, out, outsize, &state);
+    if(state == SCH_NAME_EXACT) break;
+  }
+  if(state == SCH_NAME_EXACT) return SCH_NAME_OWNED;
+  if(state == SCH_NAME_AMBIGUOUS) out[0] = '\0';
+  return state;
+}
+
+static int str_has_upper(const char *s)
+{
+  for(; *s; ++s) if(isupper((unsigned char)*s)) return 1;
+  return 0;
+}
+
+/* SOURCE 3. Compare the raw's node names against the schematic's own spelling
+ * of the same nets and report what the writer did to them. This is strictly
+ * better than the capital sniff it replaces, because it has a reference point:
+ * a net drawn `MidNode` arriving as `V(MIDNODE)` is neither `fold` nor
+ * `preserve`, and the sniff calls it `preserve` and is wrong.
+ *
+ * Its limits are the ones B2a records, implemented rather than merely
+ * documented:
+ *   - it needs a schematic, and the File->Open-raw path may have none: no
+ *     candidates then, and the answer is unknown;
+ *   - an all-lowercase design gives no signal at all, so a schematic name with
+ *     no capital in it is not counted -- `fold` and `preserve` produce the same
+ *     bytes for it;
+ *   - an all-CAPITALS schematic name (`EN`, `VDD`) is not counted when the raw
+ *     kept it, because `preserve` and `upper` are then indistinguishable; the
+ *     folded spelling of one still is, and still votes;
+ *   - it cannot separate `preserve` from `distinguish` (both keep capitals), so
+ *     case-kept reads as `preserve`, the safe reading;
+ *   - a design that legitimately owns two nets differing only in case cannot be
+ *     read at all: sch_owned_name() reports such a name AMBIGUOUS and it does
+ *     not vote (a fold run over such a design is genuinely undecidable);
+ *   - and it wants MOST OF THEM TO AGREE, not a single hit: at least two
+ *     comparable names and a strict majority, so one coincidence decides
+ *     nothing and a tie is unknown.
+ *
+ * AND IT ONLY SPEAKS FOR ITS OWN SCHEMATIC. The Raw records the schematic it
+ * was read against (raw->schname / raw->level, stamped by raw_read(),
+ * table_read() and extra_rawfile()), and `xschem load` does NOT clear a loaded
+ * database -- so without this gate, opening an unrelated design flipped an
+ * untouched file from an honest `unknown` to a confident and wrong `fold`
+ * (item 3 fix round). A comparison against a schematic the file has nothing to
+ * do with is not weak evidence, it is no evidence. */
+int raw_case_mode_schematic(Raw *raw)
+{
+  int i, r, comparable = 0, fold = 0, preserve = 0, upper = 0, best, mode;
+  char node[512], sname[512], folded[512], upped[512];
+
+  if(!raw || !raw->names || !xctx) return RAW_CASE_UNKNOWN;
+  if(raw->level < 0 || !raw->schname ||
+     !xctx->sch[xctx->currsch] || strcmp(raw->schname, xctx->sch[xctx->currsch])) {
+    dbg(1, "raw_case_mode_schematic(): raw belongs to %s, current is %s -> unknown\n",
+        raw->schname ? raw->schname : "<NULL>",
+        xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "<NULL>");
+    return RAW_CASE_UNKNOWN;
+  }
+  for(i = 0; i < raw->nvars; ++i) {
+    if(!raw->names[i]) continue;
+    if(!raw_v_node(raw->names[i], node, sizeof(node))) continue;
+    r = sch_owned_name(node, sname, sizeof(sname));
+    if(r != SCH_NAME_OWNED) continue;          /* not owned, or owned twice over */
+    if(!sname[0]) continue;
+    if(!str_has_upper(sname)) continue;        /* no case signal in this name */
+    my_strncpy(folded, sname, sizeof(folded));
+    strtolower(folded);
+    my_strncpy(upped, sname, sizeof(upped));
+    strtoupper(upped);
+    if(!strcmp(node, sname) && !strcmp(node, upped)) continue; /* ambiguous */
+    ++comparable;
+    if(!strcmp(node, sname)) ++preserve;
+    else if(!strcmp(node, folded)) ++fold;
+    else if(!strcmp(node, upped)) ++upper;
+    /* else: some other casing entirely -- it counts against a clean answer
+     * (it is in `comparable`) and votes for nothing */
+  }
+  if(comparable < 2) return RAW_CASE_UNKNOWN;
+  best = fold; mode = RAW_CASE_FOLD;
+  if(preserve > best) { best = preserve; mode = RAW_CASE_PRESERVE; }
+  if(upper > best)    { best = upper;    mode = RAW_CASE_UPPER; }
+  if(2 * best <= comparable) return RAW_CASE_UNKNOWN;  /* no majority, or a tie */
+  dbg(1, "raw_case_mode_schematic(): %d comparable, fold=%d preserve=%d upper=%d -> %s\n",
+      comparable, fold, preserve, upper, raw_case_mode_word(mode));
+  return mode;
+}
+
+/* SOURCE 4, THE CAPITAL SNIFF. Last resort, off unless the Tcl variable
+ * `raw_case_sniff` is set, and it can only ever answer `preserve`.
+ *
+ * "No capitals" is NOT evidence of `fold`: an all-lowercase design under
+ * `preserve` writes exactly the same file. And a capital is weak evidence the
+ * other way too -- upstream RESPONSE.md section 4 records that a `fold` run
+ * hands back the DECK's spelling when the deck names the vector, so
+ * `write f.raw v(In)` under fold labels the column `v(In)`. That is why this
+ * source is ranked last and defaults off, and why the schematic comparison
+ * above exists at all. */
+int raw_case_mode_sniff(Raw *raw)
+{
+  int i;
+  if(!raw || !raw->names) return RAW_CASE_UNKNOWN;
+  for(i = 0; i < raw->nvars; ++i) {
+    if(raw->names[i] && str_has_upper(raw->names[i])) return RAW_CASE_PRESERVE;
+  }
+  return RAW_CASE_UNKNOWN;
+}
+
+int raw_resolve_case_mode(Raw *raw, int *source)
+{
+  int mode;
+  if(source) *source = RAW_CASE_SRC_NONE;
+  if(!raw) return RAW_CASE_UNKNOWN;
+  if(raw->explicit_case_mode != RAW_CASE_UNKNOWN) {
+    if(source) *source = RAW_CASE_SRC_EXPLICIT;
+    return raw->explicit_case_mode;
+  }
+  if(raw->hdr_case_mode != RAW_CASE_UNKNOWN) {
+    if(source) *source = RAW_CASE_SRC_HEADER;
+    return raw->hdr_case_mode;
+  }
+  mode = raw_case_mode_schematic(raw);
+  if(mode != RAW_CASE_UNKNOWN) {
+    if(source) *source = RAW_CASE_SRC_SCHEMATIC;
+    return mode;
+  }
+  if(tclgetboolvar("raw_case_sniff")) {
+    mode = raw_case_mode_sniff(raw);
+    if(mode != RAW_CASE_UNKNOWN) {
+      if(source) *source = RAW_CASE_SRC_SNIFF;
+      return mode;
+    }
+  }
+  return RAW_CASE_UNKNOWN;   /* B2b: unknown, and NOT fold */
+}
+
+int sim_case_mode_floor(void)
+{
+  int mode = raw_case_word_parse(tclgetvar("sim_case_mode"));
+  if(mode <= RAW_CASE_UNKNOWN) return RAW_CASE_FOLD;
+  return mode;
 }
 
 int update_op()

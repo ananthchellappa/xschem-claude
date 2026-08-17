@@ -10098,7 +10098,7 @@ static int raw_case_reread(Tcl_Interp *interp, const char *type_override)
   char fname[PATH_MAX], delotype[100], rdtype[100];
   double s1, s2;
   FILE *fd;
-  int ret;
+  int ret, keep_explicit;
 
   if(!raw) {
     Tcl_SetResult(interp, "xschem raw case: no raw file loaded", TCL_STATIC);
@@ -10116,6 +10116,13 @@ static int raw_case_reread(Tcl_Interp *interp, const char *type_override)
   else my_strncpy(rdtype, raw->req_sim_type ? raw->req_sim_type : "", S(rdtype));
   s1 = raw->sweep1;
   s2 = raw->sweep2;
+  /* The user's explicit mode statement (casemode item 3) is a property of THIS
+   * DATABASE, not of the bytes on disk, so it does not survive the destroy and
+   * re-read below unless it is carried. Losing it here would mean an unrelated
+   * `raw case` set silently discarding something the user said. hdr_case_mode
+   * is deliberately NOT carried: the re-read parses the header again, which is
+   * the authority for it. */
+  keep_explicit = raw->explicit_case_mode;
 
   /* PROBE BEFORE DESTROYING -- see (1) above. A plain open is enough for every
    * measured loss (deleted file, unlinked embedded temp, synthetic label) and
@@ -10138,6 +10145,7 @@ static int raw_case_reread(Tcl_Interp *interp, const char *type_override)
                      "\" failed", NULL);
     return 0;
   }
+  if(xctx->raw) xctx->raw->explicit_case_mode = keep_explicit;
   return ret;
 }
 
@@ -10148,7 +10156,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
 
     /* raw what ...
-     *     what = add | annot | case | clear | datasets | index | info | loaded | list |
+     *     what = add | annot | case | casemode | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
      *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
      *            pos_at | vars |
@@ -10175,6 +10183,15 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     RE-READS the file rather than flipping a flag, and raises a Tcl error --
      *     leaving the database untouched -- if the file cannot be re-read.
      *     See doc/claude/specs/raw_case_mode.md
+     *
+     *   xschem raw casemode [<mode> | -source | -all | -explicit | -header |
+     *                        -schematic | -sniff | -floor]
+     *     the MODE THE FILE WAS WRITTEN IN, resolved from four sources in order
+     *     (explicit setting, `Option: casemode=` header, schematic-name
+     *     comparison, capital sniff), or `unknown` -- which is a real answer and
+     *     is never silently `fold`. Reporting only; it does not touch the
+     *     lookup flag `raw case` owns. Full contract at the implementation
+     *     below and in doc/claude/specs/raw_case_mode.md section 10.
      *
      *   xschem raw clear [rawfile [type]]
      *     unload given file and type. If type not given delete all type sfrom rawfile
@@ -10436,6 +10453,86 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          *   type digital?" is answerable with nothing loaded at all. */
         if(argc > 3) Tcl_SetResult(interp, my_itoa(raw_type_is_digital(argv[3])), TCL_VOLATILE);
         else Tcl_SetResult(interp, my_itoa(raw_is_digital(raw)), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "casemode")) {
+        /* xschem raw casemode [<mode> | -<what>]     (casemode batch item 3)
+         *
+         *   no argument   the mode of the CURRENT database, resolved from four
+         *                 sources in order -- explicit user setting, the
+         *                 `Option: casemode=` header, the schematic-name
+         *                 comparison, the capital sniff (off by default).
+         *                 One of: unknown | fold | preserve | distinguish |
+         *                 upper. UNKNOWN IS A REAL ANSWER and it is not `fold`:
+         *                 DECISIONS.md B2b, permanently, because the upstream
+         *                 patch that would make the header appear by default is
+         *                 written and has not been sent.
+         *   <mode>        set the EXPLICIT source: fold | preserve |
+         *                 distinguish, or `unknown` to clear it. Returns 1.
+         *   -source       which source answered: none | explicit | header |
+         *                 schematic | sniff. A UI must say this rather than
+         *                 assert a bare mode -- that is B2b's whole point.
+         *   -all          "<mode> <source>", the two in one call.
+         *   -explicit     the explicit setting alone, `unknown` if unset.
+         *   -header       what THIS FILE's header records, alone.
+         *   -schematic    the schematic comparison's verdict, alone.
+         *   -sniff        the capital sniff's verdict, alone -- computed
+         *                 whatever `raw_case_sniff` says, because "what would
+         *                 it have answered?" is a fair question to ask of a
+         *                 source that is off.
+         *   -floor        the GLOBAL requested-mode floor (Tcl `sim_case_mode`,
+         *                 validated, default fold). Not about this file at all:
+         *                 it is what we ask a simulator for when no profile
+         *                 names a mode (item 6 layers profiles above it), and
+         *                 it answers with nothing loaded.
+         *
+         * REPORTING ONLY. Nothing here touches Raw.case_sensitive: that is
+         * `xschem raw case`, it is a boolean about the LOOKUP, and its setter
+         * re-reads the file (spec section 3). Coupling the two would mean a
+         * mode the user merely *recorded* silently re-reading their database.
+         * doc/claude/specs/raw_case_mode.md section 10. */
+        int src = RAW_CASE_SRC_NONE, m;
+        if(argc > 3 && !strcmp(argv[3], "-floor")) {
+          Tcl_SetResult(interp, (char *)raw_case_mode_word(sim_case_mode_floor()), TCL_VOLATILE);
+        } else if(!raw) {
+          Tcl_SetResult(interp, "xschem raw casemode: no raw file loaded", TCL_STATIC);
+          return TCL_ERROR;
+        } else if(argc > 3 && argv[3][0] == '-') {
+          if(!strcmp(argv[3], "-source")) {
+            raw_resolve_case_mode(raw, &src);
+            Tcl_SetResult(interp, (char *)raw_case_source_word(src), TCL_VOLATILE);
+          } else if(!strcmp(argv[3], "-all")) {
+            m = raw_resolve_case_mode(raw, &src);
+            Tcl_ResetResult(interp);
+            Tcl_AppendResult(interp, raw_case_mode_word(m), " ", raw_case_source_word(src), NULL);
+          } else if(!strcmp(argv[3], "-explicit")) {
+            Tcl_SetResult(interp, (char *)raw_case_mode_word(raw->explicit_case_mode), TCL_VOLATILE);
+          } else if(!strcmp(argv[3], "-header")) {
+            Tcl_SetResult(interp, (char *)raw_case_mode_word(raw->hdr_case_mode), TCL_VOLATILE);
+          } else if(!strcmp(argv[3], "-schematic")) {
+            Tcl_SetResult(interp, (char *)raw_case_mode_word(raw_case_mode_schematic(raw)), TCL_VOLATILE);
+          } else if(!strcmp(argv[3], "-sniff")) {
+            Tcl_SetResult(interp, (char *)raw_case_mode_word(raw_case_mode_sniff(raw)), TCL_VOLATILE);
+          } else {
+            Tcl_SetResult(interp, "xschem raw casemode: unknown option; use -source, -all, "
+              "-explicit, -header, -schematic, -sniff or -floor", TCL_STATIC);
+            return TCL_ERROR;
+          }
+        } else if(argc > 3) {
+          /* set the explicit source. `upper` is refused on purpose: it is a
+           * verdict the schematic comparison can reach, not a mode anybody runs
+           * a simulator in. */
+          m = raw_case_word_parse(argv[3]);
+          if(m < 0) {
+            Tcl_SetResult(interp,
+              "xschem raw casemode: mode must be fold, preserve, distinguish or unknown",
+              TCL_STATIC);
+            return TCL_ERROR;
+          }
+          raw->explicit_case_mode = m;
+          Tcl_SetResult(interp, "1", TCL_VOLATILE);
+        } else {
+          Tcl_SetResult(interp, (char *)raw_case_mode_word(raw_resolve_case_mode(raw, &src)),
+                        TCL_VOLATILE);
+        }
       } else if(raw && raw->values) {
         /* xschem raw annot
          *   read-only: the CURRENT database's cursor-B annotation state, as

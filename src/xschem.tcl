@@ -15892,6 +15892,27 @@ set_ne lvs_netlist 0
 set_ne top_is_subckt 0
 set_ne uppercase_subckt 0
 set_ne lvs_ignore 0
+## CASE MODE (casemode batch item 3; doc/claude/specs/raw_case_mode.md section 10)
+##
+## sim_case_mode is the GLOBAL REQUESTED-MODE FLOOR: the mode we ask a simulator
+## for when no simulator profile names one. fold | preserve | distinguish.
+## `fold` is the default because that is what a released ngspice does -- an
+## `apt install` binary, or a clone of this repo that never builds a case-capable
+## fork, accepts `-D casemode=preserve` and silently ignores it (DECISIONS.md A1).
+## It is a REQUEST about a run, never a claim about a file somebody else wrote:
+## the mode OF A FILE is resolved by `xschem raw casemode`, and when nothing
+## establishes it the answer is `unknown`, not this value (B2b).
+## Read from C by sim_case_mode_floor(), which validates it and falls back to
+## fold; item 6 layers per-profile modes on top of it.
+set_ne sim_case_mode fold
+## The capital sniff, source 4 of 4 and OFF BY DEFAULT. It looks at the raw file
+## alone -- "are there capitals?" -- with no reference point, and upstream
+## measured a `fold` run handing back the deck's own spelling when the deck names
+## the vector, so `write f.raw v(In)` under fold writes a capital. Sources 1-3
+## (an explicit setting, the `Option: casemode=` header, comparison against the
+## schematic's own net names) are all better evidence. Set to 1 to let the sniff
+## answer when all three of them are silent.
+set_ne raw_case_sniff 0
 set_ne hide_empty_graphs 0 ;# if set to 1 waveform boxes will be hidden if no raw file loaded
 set_ne graph_use_ctrl_key 0;# if set forces to use Control key to operate on graphs
 set_ne spiceprefix 1

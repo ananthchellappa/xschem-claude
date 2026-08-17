@@ -1,7 +1,7 @@
 # Raw case mode — names are stored verbatim; `case_sensitive` is a lookup flag
 
-Status: **items 1 and 2 of the casemode batch are implemented** (this
-document); items 3–15 are not. Written 2026-08-16.
+Status: **items 1, 2 and 3 of the casemode batch are implemented** (this
+document); items 4–15 are not. Written 2026-08-16.
 
 Design origin: `doc/claude/casemode_batch/DESIGN_REVISION.md` (sections 4, 5, 6,
 7, 8) and `doc/claude/casemode_batch/DECISIONS.md`. Plan item list:
@@ -47,8 +47,8 @@ may.
   because neither can produce a database in which two names differ only by case,
   so a case-insensitive lookup cannot pick the wrong one.
 - It is **not a record of the simulator's mode.** `DECISIONS.md` B2b: absence of
-  evidence is "unknown", never "fold". Item 3 adds the four-source mode
-  resolution; this flag is not it.
+  evidence is "unknown", never "fold". §10 is the four-source mode resolution
+  item 3 added; this flag is not it, and nothing in §10 writes it.
 - Nothing in the read path reads it. Item 2 is its first and only consumer: it
   suppresses the folded-alias rung in `get_raw_index()` (§9).
 
@@ -236,7 +236,7 @@ Until then, `Xyce is UNVERIFIED` stays in item 15's documentation.
 ## 6. What is deliberately NOT here
 
 - Mode detection from the `Option: casemode=` header, schematic comparison or a
-  capital sniff — item 3.
+  capital sniff — item 3, now **§10 below**.
 - The four `hilight.c` senders, the viewer Tcl, `sod_expr`, the simulator
   profile and its probe — items 4–13.
 
@@ -505,3 +505,260 @@ Three residues remain, none of them able to produce a silent wrong number:
   that plots **nothing**, not a column of zeros.
 
 **Item 5** removes the mirror entirely by making both of them ask the engine.
+
+## 10. MODE RESOLUTION — four sources in order — casemode item 3
+
+`DECISIONS.md` **B2a** and **B2b**. `PLAN.md` §3b item 3; `DESIGN_REVISION.md`
+§9 records why the item shrank to this (the File→Open-raw path needs no mode at
+all, so what survives is the resolution order and the requested-mode floor).
+
+**The question this answers is not the one §2 answers.** `Raw.case_sensitive` is
+what the *lookup* does. This is what the *writer* did, and it is frequently not
+knowable:
+
+```
+xschem raw casemode                -> unknown | fold | preserve | distinguish | upper
+xschem raw casemode -source        -> none | explicit | header | schematic | sniff
+xschem raw casemode -all           -> "<mode> <source>"
+xschem raw casemode -explicit|-header|-schematic|-sniff   -> that source alone
+xschem raw casemode <mode>         -> set the explicit source; `unknown` clears it
+xschem raw casemode -floor         -> the global requested-mode floor
+```
+
+| rank | source | can answer | where |
+|---|---|---|---|
+| 1 | the user's explicit setting | fold, preserve, distinguish | `Raw.explicit_case_mode` |
+| 2 | the `Option: casemode=` header | fold, preserve, distinguish | `raw_header_case_mode()`, stamped by `read_dataset()` |
+| 3 | comparison against the schematic's own net names | fold, preserve, **upper** | `raw_case_mode_schematic()` |
+| 4 | the capital sniff, **off by default** | preserve | `raw_case_mode_sniff()` |
+
+### RULING — it REPORTS; it does not change behaviour
+
+Nothing in §10 writes `Raw.case_sensitive`, and `xschem raw casemode
+distinguish` deliberately leaves the lookup case-insensitive (check `CS59e`).
+B2b is a **reporting** rule: the behaviour under `unknown` is still fold, and the
+point is that the UI says "mode unknown" instead of asserting a fact nobody
+established. The lookup flag has its own verb and its own contract — a set
+**re-reads the file** (§3) — so coupling the two would mean merely *recording*
+what a file is silently re-reading the user's database.
+
+The one place the two touch: `raw_case_reread()` carries
+`explicit_case_mode` across the destroy-and-re-read, because the explicit
+setting is a property of the database, not of the bytes on disk, and losing it
+to an unrelated `raw case` set would be a defect (`CS59m`). `hdr_case_mode` is
+deliberately *not* carried — the re-read parses the header again, which is the
+authority for it.
+
+### RULING — absence is `unknown`, and the floor may not leak into it
+
+The resolver returns `RAW_CASE_UNKNOWN` when all four sources are silent, and
+`unknown` is a real answer rather than a failure. It is **permanent**: the
+upstream patch that would make `casemodewrite` default on is written and has not
+been sent (`RESPONSE.md` §9), so every released ngspice and every ver_50 file
+written without `set casemodewrite` carries no line, indefinitely.
+
+`sim_case_mode` — the global floor — is a **request about a run we are about to
+make**, never a claim about a file somebody else wrote, and the resolver never
+returns it. `CS64f` is that guard: with the global set to `distinguish`, an
+evidence-free database still resolves `unknown none`.
+
+### RULING — the header parse: anchored line, EXACT key, case-blind value
+
+All three halves are measured, not chosen for symmetry.
+
+1. **Anchored** on `Option:` at the start of the line. `Title:` is the deck's own
+   first line and is user text — the upstream repro's own title is
+   `* writes an ascii raw, so finding 1's header experiments can splice a line
+   in`. A deck titled `* casemode=distinguish` must not set the mode, and one
+   titled `Option: casemode=distinguish` arrives as `Title: Option: …` and must
+   not either. Variable rows are tab-indented and are refused by the same
+   anchor. Checks `CS53`–`CS53d`.
+2. **The key is matched EXACTLY.** Measured 2026-08-16 on `build-ver_50`:
+   `-D CaseMode=distinguish` and `-D CASEMODE=distinguish` both leave
+   `$curcasemode` at `fold`, **silently** — ngspice variable names are
+   case-sensitive (upstream `FINDINGS.md` §6, "a misspelled variable *name* is
+   silent"). So `Option: CaseMode=preserve` records some *other* variable, and
+   reading it as the case mode would claim a mode for a file whose mode was
+   never set. Checks `CS54`, `CS54b`.
+3. **The value is matched case-INSENSITIVELY.** Measured on the same build:
+   `-D casemode=PRESERVE` and `-D casemode=Preserve` both give
+   `$curcasemode == preserve`. Checks `CS55`, `CS55b`.
+
+Split on the **first `=`** and **trim both halves** — upstream keeps the trim
+because a foreign `Option:` value beginning `,`, `<=` or `>=` is re-emitted with
+spaces around the `=` (`RESPONSE.md` §1(b)). Check `CS56`.
+
+**Only the `Option:` key.** A `Casemode:` key is refused although it is the
+obvious spelling: ngspice's own reader **aborts the load** on it (`Error:
+strange line in rawfile`, measured on 46 and on ver_50, `FINDINGS.md` §1), so
+nothing can be writing it. `Command: set casemode=preserve` is refused too —
+`Command:` is free-text provenance and is never parsed, which is also why item 1
+could not identify a Xyce raw (§5). Checks `CS52b`, `CS52c`.
+
+**The key anywhere in the header, and the FIRST one wins.** Upstream writes
+exactly one line but in two *places* — immediately after `Plotname:` in the
+session's own file, after `No. Points:` in a copy — so a line-5 check misses the
+second (`RESPONSE.md` §2). Scanning every header line covers both and covers the
+misplaced before-`Plotname:` position as well. A second, *disagreeing* line is
+ignored and named in a `dbg(0)`: a header can carry a key twice (the repro's
+`hdr_cmd.raw` carries two `Command:` lines), and letting a later line win would
+let an appended one overrule the writer. Checks `CS50`–`CS51c`, `CS57b`.
+
+### RULING — the line belongs to its DATASET, not to the file
+
+The first revision of this section said "this is per FILE, not per dataset:
+every dataset in one raw was written by one session in one mode". **That premise
+is false**, and ngspice's own writer is the counter-example: `rawfile.c:204`
+emits the casemode line only for a plot that is **not** `pl_fromfile`, while
+`rawfile.c:222/262` **re-emit** a from-file plot's own `Option: casemode=` out of
+`pl_env`. So `write all.raw <a plot loaded from a preserve file> <this session's
+fold plot>` really does produce two *disagreeing* lines in one file, and
+first-wins then reported, at source rank 2, the mode of a dataset **the user did
+not load**.
+
+The line is therefore attributed the way `read_dataset()`'s neighbouring header
+branches (`No. of Data Rows :`, `No. Variables:`, `No. Points:`) attribute
+theirs — `sim_type` is non-NULL only inside the dataset being loaded. **One
+exception:** a line arriving *before any* `Plotname:` has no plot to belong to,
+is the file's own, and is one of the two positions upstream actually emits
+(`RESPONSE.md` §1(b)); `sim_type` is still NULL there, so the test is
+`sim_type || !seen_plotname`. Both halves are load-bearing: dropping `sim_type`
+reddens `CS57d`, dropping `!seen_plotname` reddens `CS51`. Checks `CS57c`–`CS57f`
+(a two-plot raw whose OP says `fold` and whose TRAN says `preserve`; each load
+reports its own).
+
+**One anchor, not two.** `read_dataset()`'s branch test is the loose
+`strstr(line, "Option:")` on purpose. With the anchor stated in both the caller
+and the parser, deleting either copy still refuses the Title injection —
+measured, the whole suite stayed ALL PASS with the parser's anchor removed. The
+parse owns the rule; the branch only avoids calling it on every line.
+
+### RULING — the schematic comparison, and its limits, implemented
+
+Source 3 compares the raw's **plain `v(<node>)`** names against the names the
+schematic owns and reports what the writer did to them. Its advantage over the
+capital sniff it replaces is a reference point, and a **third outcome**: a net
+drawn `MidNode` arriving as `V(MIDNODE)` is neither mode — the sniff calls it
+`preserve` and is wrong (`CS60d` against `CS63h`, which asserts the sniff would
+have said `preserve` on the same file).
+
+**Names the schematic owns** = the `lab=` attribute of an instance **or of a
+wire** — both arms carry checks (`CS61m`/`CS61n` drive a design whose nets are
+wire `lab=` records and zero instances; deleting the wire loop used to leave the
+whole suite ALL PASS). Deliberately **not** `xctx->node_table`: reaching it means calling
+`prepare_netlist_structs()`, which is not a read-only query (it runs
+`free_simdata()`, `delete_netlist_structs()` and a `statusmsg`), and its tokens
+include propagated and auto-generated names as well as drawn ones. A heuristic
+ranked third may not have side effects.
+
+The limits `DECISIONS.md` B2a records, each with the check that holds it down:
+
+| limit | how it is implemented | check |
+|---|---|---|
+| it needs a schematic; File→Open-raw may have none | no candidates ⇒ unknown | `CS62` |
+| an all-lowercase design gives no signal | a schematic name with no capital is not counted — `fold` and `preserve` write the same bytes for it | `CS61e` |
+| never against simulator-constructed names | only `v(<node>)`, and `<node>` must be a plain identifier: hierarchy separators (`x1.midnode`, Xyce's `x1:midnode`), the `.dc` axis `v(v-sweep)` and every `i(…)` are out | `CS61d`, `CS61h` |
+| it cannot separate `preserve` from `distinguish` | case-kept reads as `preserve`, the safe reading | `CS60c` |
+| "most of them agree", not a single hit | ≥ 2 comparable names **and** a strict majority; a tie is unknown | `CS61`, `CS61b`, `CS61c` |
+| a design that owns two nets differing **only in case** cannot be read | the exact spelling wins; two different spellings folding to one key are AMBIGUOUS and nothing votes | `CS61i`–`CS61k`, `CS61o` |
+| it only speaks for **its own** schematic | `raw->schname`/`raw->level` must match `xctx->sch[xctx->currsch]`, else unknown | `CS62b`–`CS62d` |
+
+One case B2a does not name and the implementation has to: an **all-CAPITALS**
+schematic name (`EN`, `VDD`) that came back unchanged is ambiguous — `preserve`
+and `upper` produce the same bytes — so it does not vote. The *folded* spelling
+of the same name is still unambiguous and still does. Checks `CS61f`, `CS61g`.
+
+### RULING — exact spelling first, and two spellings mean none
+
+`sch_owned_name()` returns the schematic's spelling of a raw node name. It used
+to return the **first case-insensitive hit**, and that was a defect, found by two
+independent reviewers of item 3: in a `distinguish` design — the exact design a
+case-capable simulator exists for — `EN` and `en` are two different nets, and
+attributing the raw's `en` to the schematic's `EN` scored a confident `fold`
+vote for a file that had **preserved** every name. It gave the identical verdict
+for the folded and the case-kept file, and the answer **flipped when the two
+labels were merely reordered in the `.sch`**.
+
+Three rules now, in order:
+
+1. **An exact `strcmp` match wins outright**, wherever in the file it sits.
+   Where the design itself is unambiguous about a spelling, exactness settles it.
+2. Failing that, a **unique** case-insensitive match is the schematic's spelling.
+3. **Two or more different spellings folding to the same key are AMBIGUOUS** and
+   the name is skipped entirely — the same treatment the all-CAPITALS case
+   already gets. `V(MIDNODE)` against a design owning both `MidNode` and
+   `midnode` would otherwise read `upper` off one spelling and "no signal" off
+   the other: one file, two answers, decided by `.sch` order (`CS61o`).
+
+**Cost.** Returning early only on an exact hit means a *folded* raw walks the
+whole instance+wire list per candidate. Measured at 2000 instances x 500 `v()`
+names: all-exact-hit 21 ms, all-folded-hit 147 ms, all-miss 189 ms. The source
+has no cache and the verb recomputes it for both `-schematic` and `-all`, so a
+UI must call it **on demand, never from a redraw**.
+
+**Residual limit, stated rather than fixed:** a `fold` run over a design that
+owns two case-twin nets is genuinely undecidable — the two nets collided into one
+column and there is nothing left in the file to tell fold from preserve. The
+answer is `unknown`, which is the honest one (`CS61j`).
+
+### RULING — a comparison only speaks for its own schematic
+
+`raw_case_mode_schematic()` returns `RAW_CASE_UNKNOWN` unless `raw->schname`
+matches `xctx->sch[xctx->currsch]` (and `raw->level >= 0`). Those fields are
+already stamped on every Raw by `raw_read()`, `table_read()` and
+`extra_rawfile()`. Without the gate, and because **`xschem load` does not clear a
+loaded database**, opening an unrelated design flipped an untouched file from an
+honest `unknown` to a confident and wrong verdict — evidence manufactured out of
+two files that have nothing to do with each other. A comparison against a
+schematic the file was not produced from is not weak evidence, it is none.
+Checks `CS62b`–`CS62d`.
+
+`CS61h` is the one that holds the candidate filter down, and it is worth stating
+because `CS61d` does not: a name the schematic does not own cannot pollute the
+vote anyway, so excluding `v(x1.…)` is only observable when the schematic
+*happens to own* a colliding name. `CS61h` builds exactly that — a design with a
+net called `V-Sweep`, read against a sweep whose axis ngspice spells
+`v(v-sweep)`. Counting the axis would give a confident `fold` off one real net
+plus a name the simulator invented.
+
+### RULING — the sniff can never answer `fold`, and defaults off
+
+Source 4 answers `preserve` when **any** stored name carries a capital and
+`unknown` otherwise — *any*, not the first: the realistic tran shape has the
+capital-free `time` in `names[0]`, and restricting the scan to `names[0]` left
+the suite ALL PASS while the sniff answered `unknown` for the committed
+`tr_preserve.raw` (`CS63i`, `CS63j`). **"No capitals" is not evidence of `fold`**: an
+all-lowercase design under `preserve` writes exactly the same file (`CS63e`).
+And a capital is weak evidence the other way — `RESPONSE.md` §4 records that a
+`fold` run hands back the *deck's* spelling when the deck names the vector, so
+`write f.raw v(In)` under `fold` writes a capital. Hence last place, and hence
+the Tcl gate `raw_case_sniff`, default `0` (`CS63`, `CS63c`).
+
+### The global floor, `sim_case_mode`
+
+A Tcl global, default `fold`, read from C by `sim_case_mode_floor()`, which
+validates it and falls back to `fold` for anything it does not recognise —
+including `unknown`, because the floor is never unknown. It is **the one place
+`fold` is asserted without evidence**, and that is legitimate: it is what we ask
+a simulator for when no profile names a mode, and `fold` is what a released
+ngspice does (`DECISIONS.md` A1; C2's "assume `fold` when no profile is set").
+Item 6 layers per-profile modes on top of it; item 14 is its first consumer.
+Checks `CS64`–`CS64f`.
+
+### Tests, and what is NOT covered
+
+`tests/headless/test_raw_case_mode.tcl` sections V–AA, checks `CS50`–`CS64f`
+(91 new, 277 in the file — 75 from the item, 16 added by the fix round:
+`CS57c`–`CS57f`, `CS61i`–`CS61o`, `CS62b`–`CS62d`, `CS63i`, `CS63j`).
+The header shapes are written **inline** rather than
+read from
+`doc/claude/ngspice_upstream/feedback/ngspice_upstream/repro/hdr_*.raw`, which is
+where they come from: those files are gitignored (`repro/.gitignore` is `*.raw`)
+and regenerated by `hdr_variants.sh` from a live case-capable ngspice, so a
+committed suite cannot read them. Every header line is copied byte for byte from
+the real spliced file it names, and all eleven of those files were additionally
+driven through this binary by hand — see the item 3 receipt.
+
+Not covered: no simulator writes a raw during the suite (no ngspice is invoked);
+the GUI control B2a asks for — "show what was detected and allow an override" —
+is **items 5 and 13**, and this item deliberately ships only the engine side.

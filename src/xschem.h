@@ -1128,6 +1128,35 @@ typedef struct {
                           * re-walking dash_arr per wire per frame. Read via net_hilight_dash_period. */
 } NetHilightStyle;
 
+/* THE CASE MODE OF A FILE -- casemode batch item 3, DECISIONS.md B2a/B2b,
+ * doc/claude/specs/raw_case_mode.md section 10.
+ *
+ * This vocabulary answers "how were the names in this database spelled?", which
+ * is NOT what Raw.case_sensitive answers ("may a query resolve against a name
+ * differing only in case?"). Keep them apart: the flag is what the LOOKUP does,
+ * these are what the WRITER did, and the second is frequently unknown.
+ *
+ * RAW_CASE_UNKNOWN is 0 so a calloc'd Raw starts out honest, and it is a real
+ * answer, not a failure: absence of evidence is "unknown", NEVER "fold" (B2b).
+ * RAW_CASE_UPPER is a VERDICT ONLY -- the schematic comparison can observe that
+ * a net drawn `MidNode` arrived as `V(MIDNODE)`, which is neither of the two
+ * modes a capital-sniff can name ("this simulator has its own convention"). No
+ * user setting parses to it; see raw_case_word_parse(). */
+#define RAW_CASE_UNKNOWN     0
+#define RAW_CASE_FOLD        1
+#define RAW_CASE_PRESERVE    2
+#define RAW_CASE_DISTINGUISH 3
+#define RAW_CASE_UPPER       4
+
+/* Which of the four sources answered, in resolution order. Reported alongside
+ * the mode so a UI can say "preserve, from the file header" rather than
+ * asserting a bare fact -- the whole point of B2b. */
+#define RAW_CASE_SRC_NONE      0
+#define RAW_CASE_SRC_EXPLICIT  1
+#define RAW_CASE_SRC_HEADER    2
+#define RAW_CASE_SRC_SCHEMATIC 3
+#define RAW_CASE_SRC_SNIFF     4
+
 typedef struct {
   /* spice raw file specific data */
   char **names;
@@ -1178,6 +1207,20 @@ typedef struct {
    * raw_renamevar(), raw_deletevar() (which RE-INDEXES) and raw_add_vector().
    * Never consulted when case_sensitive. */
   Int_hashtable fold_table;
+  /* THE MODE THIS FILE'S HEADER RECORDS, parsed from an `Option: casemode=<m>`
+   * line by raw_header_case_mode() while read_dataset() walks the header.
+   * RAW_CASE_UNKNOWN when the file carries no such line, which is EVERY file
+   * from every released ngspice and every file from ver_50 written without
+   * `set casemodewrite` -- and that stays "unknown", never "fold"
+   * (DECISIONS.md B2b; the upstream patch that would make the line appear by
+   * default is written and NOT SENT). Source 2 of 4. */
+  int hdr_case_mode;
+  /* THE USER'S EXPLICIT STATEMENT about this database, set by
+   * `xschem raw casemode <mode>`; RAW_CASE_UNKNOWN (the default) means the user
+   * has not said. Source 1 of 4, and it beats the header, because a person
+   * looking at the file knows things the writer did not record. Carried across
+   * the `xschem raw case <mode>` re-read by raw_case_reread(). */
+  int explicit_case_mode;
   /* THE ANALYSIS TYPE THE CALLER ASKED FOR, verbatim, or NULL for "unspecified"
    * (take the first analysis in the file). NOT the same string as sim_type:
    * read_dataset() PROMOTES a multi-point "Operating Point" raw to sim_type
@@ -2341,6 +2384,37 @@ extern int  get_raw_index(const char *node, Int_hashentry **entry_ret);
  * The one parser for the `-case <mode>` option and `xschem raw case <mode>`;
  * see doc/claude/specs/raw_case_mode.md */
 extern int  raw_case_mode_parse(const char *mode);
+/* CASE MODE RESOLUTION -- casemode item 3. doc/claude/specs/raw_case_mode.md
+ * section 10. "unknown"|"fold"|"preserve"|"distinguish" -> the RAW_CASE_*
+ * constant, anything else -> -1. "upper" is deliberately NOT parsed: it is a
+ * verdict the schematic comparison reaches, never something anyone may set. */
+extern int  raw_case_word_parse(const char *word);
+extern const char *raw_case_mode_word(int mode);
+extern const char *raw_case_source_word(int src);
+/* The mode an `Option: casemode=<mode>` header line records, or -1 when the
+ * line is not one -- which is every other line in the header, Title: included.
+ * ANCHORED at the start of the line and the key matched EXACTLY; the value is
+ * matched case-insensitively. All three rules are measured -- see the spec. */
+extern int  raw_header_case_mode(const char *line);
+/* Source 3: compare the database's plain v(<node>) names against the names the
+ * SCHEMATIC owns. Answers fold | preserve | upper | unknown. */
+extern int  raw_case_mode_schematic(Raw *raw);
+/* Source 4, the capital sniff, last resort and off by default (Tcl
+ * `raw_case_sniff`): preserve when any stored name carries a capital, else
+ * unknown. It never answers `fold` -- an all-lowercase file is exactly what an
+ * all-lowercase design under `preserve` produces. */
+extern int  raw_case_mode_sniff(Raw *raw);
+/* The four sources in order: explicit -> header -> schematic -> sniff. Returns
+ * the mode and, through *source (may be NULL), which source answered.
+ * RAW_CASE_UNKNOWN / RAW_CASE_SRC_NONE when none of them did. */
+extern int  raw_resolve_case_mode(Raw *raw, int *source);
+/* The global REQUESTED-mode floor for the path with no simulator profile: the
+ * Tcl variable `sim_case_mode`, validated, defaulting to fold. This is the one
+ * place `fold` is asserted without evidence, and it is legitimate there because
+ * it is a REQUEST about a run we are about to make, not a claim about a file
+ * somebody else wrote (DECISIONS.md B1's global floor, C2's "assume fold when
+ * no profile is set"). Item 6 layers the per-profile mode on top of it. */
+extern int  sim_case_mode_floor(void);
 /* The key `ngspice::ngspice_data` publishes a variable under: the stored name
  * FOLDED. Keys of that array are a published Tcl interface and stay lowercase
  * even though the stored names no longer do. *keyptr is grown as needed and is

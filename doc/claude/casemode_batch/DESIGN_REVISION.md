@@ -215,6 +215,22 @@ Net effect: items 1 and 2 get simpler, item 3 shrinks a lot, D2 disappears as a
 separate unit, and the `auto` sniff question (B2a) loses most of its weight
 because the read path no longer needs to guess anything.
 
+> **CORRECTION, 2026-08-16 (item 3).** Row 3's "what survives is the *requested*
+> mode for runs" is one of two things that survived, and the smaller one. The
+> other is **B2a's four-source resolution**, and it survived as a **reporting**
+> surface rather than a behavioural one: `xschem raw casemode` answers what mode
+> a loaded file was written in — explicit setting → `Option: casemode=` header →
+> schematic-name comparison → capital sniff — and **writes nothing**. That is
+> what B2b is for: the behaviour under `unknown` is still fold, and the point is
+> that the UI can say "mode unknown" instead of asserting a fact nobody
+> established, and that a later fallback has something to hang off. The
+> requested mode does live on the profile (item 6), with a validated global
+> **floor** (`sim_case_mode`, default `fold`) underneath it for the no-profile
+> path — and that floor is deliberately unreachable from the file resolver, so
+> it can never turn an unknown file into a confident `fold`. Full contract and
+> the measurements behind the header parse: `doc/claude/specs/raw_case_mode.md`
+> §10; checks `CS50`–`CS64f`.
+
 ## 10. Open items this revision creates
 
 1. **Xyce is unverified** (§5). Measure, or keep a Xyce-specific fold.

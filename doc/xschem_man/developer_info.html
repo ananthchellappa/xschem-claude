@@ -1283,6 +1283,27 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
      just flagged. If the file can not be re-read (deleted, or a database that never had a
      backing file) this raises a Tcl error and the loaded database is left untouched.
       
+   xschem raw casemode [mode | -source | -all | -explicit | -header | -schematic | -sniff | -floor]
+     the mode the CURRENT raw file was WRITTEN in, which is a different question from
+     'xschem raw case' (that one is what a name lookup does). Resolved from four sources,
+     in this order: an explicit setting made here, an 'Option: casemode=&lt;mode&gt;' line in the
+     file header, a comparison of the file's v(node) names against the net names the
+     schematic owns, and -- only if the Tcl variable raw_case_sniff is set -- a capital
+     sniff. Answers one of:
+       unknown | fold | preserve | distinguish | upper
+     'unknown' is a real answer and never silently becomes 'fold': no released ngspice
+     writes the header line, so most files simply do not say. 'upper' means the names came
+     back uppercased, which is neither mode ("this simulator has its own convention").
+     with a mode (fold | preserve | distinguish): record it as the explicit source;
+     'unknown' clears it. This only REPORTS -- it does not change name lookup, which is
+     'xschem raw case'.
+     -source names which of the four answered (none | explicit | header | schematic |
+     sniff), -all gives "&lt;mode&gt; &lt;source&gt;", and -explicit/-header/-schematic/-sniff give
+     one source's own verdict. -floor gives the global requested-mode floor (the Tcl
+     variable sim_case_mode, default fold), which is what to ask a simulator for when no
+     simulator profile names a mode; it is not about the loaded file and answers with no
+     file loaded.
+
    xschem raw clear [rawfile [type]]
      unload given file and type. If type not given delete all type sfrom rawfile
      If a number 'n' is given as 'rawfile' delete the 'nth' raw file
