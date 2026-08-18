@@ -1,7 +1,13 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `577ef5bc`
 
-Driver-mode unattended batch. **Item 0 CLOSED. Items 0a–15 not started.**
-Nothing is pushed.
+Driver-mode unattended batch. **DONE: 0, 0a, 0b, 1, 2, 3, 4, 5 `[E]`, 5b, 6, 7,
+8, 9, 14 `[E]`. REMAINING: 10, 11, 12, 13, 15.** Nothing is pushed.
+
+**Current baseline: `audit_item09_closer_2026-08-17.txt` — 326/15/0/0 of 341** at
+`799cd912`. Every item so far has moved **zero** audit statuses; all growth is the
+ten suites they added. **4 `look` debts are open** (items 5 ×2, 14 ×2) and only the
+user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
+`0422` (code execution), `0423`.**
 
 State lives HERE, not in the driver's context. After a compaction, re-read this
 file and continue from the first row that is not `[x]`/`[E]`/`[D]`/`[F]`.
