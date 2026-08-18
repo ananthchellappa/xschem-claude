@@ -1085,10 +1085,17 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
        * different stored names fold to one key. So `v(en)` finds `v(EN)`
        * again, without any stored name being altered.
        *
-       * ngspice::ngspice_data keys are NOT affected: they are a published Tcl
-       * interface and are folded at the two publish sites instead, via
-       * ngspice_data_key() -- update_op() below and callback.c's cursor-B
-       * publisher. */
+       * ngspice::ngspice_data is NOT a set of folded keys either -- and this
+       * paragraph used to say it was. Item 1 published every variable eagerly
+       * under a folded key via an interim ngspice_data_key(); item 5b DELETED
+       * both that helper and ngspice_data_publish(), and the array became a
+       * lazy read-traced VIEW resolving through get_raw_index_in(), so there
+       * are no stored keys to fold. See the block headed
+       * "ngspice::ngspice_data IS A LAZY VIEW" further down this file and
+       * doc/claude/specs/raw_case_mode.md section 13; DESIGN_REVISION.md
+       * section 6's "keys stay folded" is superseded there. Corrected by
+       * casemode item 15, which found this comment naming two functions that
+       * no longer exist. */
       /* transform ':' hierarchy separators (Xyce) to '.' */
       ptr = varname;
       while(*ptr) {

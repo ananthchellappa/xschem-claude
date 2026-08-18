@@ -1,16 +1,83 @@
 # Simulator profiles — exe, args, requested case mode, `-n`
 
+> **READER'S MAP — added 2026-08-18 by casemode batch item 15. Start here.**
+>
+> **What the feature is.** A row in xschem's existing simulator configuration
+> (`Simulation ▸ Configure simulators and tools`, persisted to
+> `$USER_CONF_DIR/simrc`) can now name a **specific executable**, its arguments,
+> a **requested case mode**, and whether to pass `-n`. ASE-L runs *that* binary
+> instead of a bare `ngspice` off `$PATH`, asks it — with a probe, not a guess —
+> what case mode the run will really get, and reports or **refuses** when the
+> answer is not what was asked for. **With no profile configured the composed
+> command line is byte-identical to the hardcoded one that shipped before**
+> (§12.1, `CS175`), and the mismatch gate is armed only by a non-`fold` request
+> (§12.6) — which is why fourteen items moved zero rows of `full_audit.sh`.
+>
+> **What it is for.** A net drawn `MidNode` reaches the waveform viewer, the
+> signal browser and the legend as `v(MidNode)` when the user's ngspice can
+> deliver that — and nothing changes at all when it cannot.
+>
+> **This file was written one item at a time by eight crews** (items 6–13),
+> §1 onwards, each extending it in place. **Nothing is ever renumbered** —
+> source comments, tests and the companion spec cite these sections by number.
+>
+> | you want to know | section | item |
+> |---|---|---|
+> | why the existing `sim()` array and not a new registry file | §1 | 6 |
+> | the row's fields, and why `casemode` and `detected` are separate forever | §2, §4 | 6 |
+> | how a **request** is resolved: profile → global floor → `fold` | §3 | 6 |
+> | persistence, backward compatibility, and the round-trip guard | §5 | 6 |
+> | `sim_is_xyce` does **not** consult `exe` | §6 | 6 |
+> | the ASE-L state key `sim_profile`, and `sim_profile_resolve`'s four statuses | §8 | 6 |
+> | the two probes (capability vs run), the batch-deck transport, the hard timeout | §11 | 7 |
+> | the composed command, the arg filters, and B4's report-vs-**REFUSE** policy | §12 | 8 |
+> | the expressions a Ctrl-4 pick produces, and whose mode governs them | §13 | 9 |
+> | the three defences: pre-flight, the `$sim_status` guard, the content check | §14 | 10 |
+> | reading a value back out of the run log | §15 | 11 |
+> | post-load current repair (a **guard**, not a rescue) | §16 | 12 |
+> | the dialog, A1 as a widget, and what `Test` says | §17 | 13 |
+>
+> Everything about **the raw file itself** — what a reader stores, how a query
+> resolves, how a *file's* mode is worked out, the cross-probe senders, the
+> viewer's Case Mode control, backannotation, the netlister warning and the
+> phantom `v(all)`/`i(all)` column — is the companion spec,
+> `doc/claude/specs/raw_case_mode.md` (§1–§15, items 1–5b, 14, 15).
+>
+> **Two facts that are easy to lose and that this map exists to keep:** the
+> phantom is `v(all)` **and** `i(all)` (`raw_case_mode.md` §15), and **Xyce has
+> never been measured here** (`raw_case_mode.md` §5 and §11 — no reader-side
+> fold, an uppercase *sender* fallback, and those two are consistent, not a
+> contradiction).
+>
+> The rulings and the measurements that drove them:
+> `doc/claude/casemode_batch/DECISIONS.md` (13 decisions),
+> `DESIGN_REVISION.md`, `LEDGER.md`'s carry-forward sections and
+> `receipts/`. Overview of the whole chain, and what the pre-batch design
+> proposal got wrong: `doc/claude/code_analysis/ngspice_case_sensitivity.md`
+> Part 3. The ngspice side: `references/casemode-distinguish-guide.md`
+> (tracked, committed at `fc65f14a`; Part 3 §3.8 records the three places we
+> deliberately do **not** follow its advice, each with the measurement).
+
+---
+
 Casemode batch **item 6**. Authority: `doc/claude/casemode_batch/DECISIONS.md`
 **B1** (both halves), with **A1**'s requested-vs-measured split and **A2**'s
 per-profile `-n`. `PLAN.md` §3b item 6. Companion spec:
 `doc/claude/specs/raw_case_mode.md` §10 (the *file's* mode, and the global
 floor).
 
+**Scope of the paragraphs below: item 6 alone.** §11 onwards were added by
+items 7–13 and each says so in its own heading.
+
 Item 6 is the **model only**: the fields, their validation, their persistence,
 and the ASE-L state key that names a profile. **No probe runs** (item 7), **no
 run path changes** (item 8), **no widget exists** (item 13). Checks
-`CS150`–`CS166` in `tests/headless/test_sim_profiles.tcl` — **82 of them**,
-counted from a run, and every one of them has a mutation that drives it red.
+`CS150`–`CS166` in `tests/headless/test_sim_profiles.tcl` — **97 of them**, and
+every one of them has a mutation that drives it red. (This line said **82**
+until 2026-08-18: that was the count before the item's own fix round added
+fifteen. Corrected by item 15 after counting the ids in the file, not the
+doc — `grep -o 'CS1[0-9][0-9][a-z0-9]*' tests/headless/test_sim_profiles.tcl |
+sort -u | wc -l` = 97, matching the receipt's `RESULT: ALL PASS (97 checks)`.)
 
 > **Three defects were found in this item's own first cut and fixed here**, each
 > measured before it was believed. They are recorded in place below rather than in
@@ -1905,7 +1972,13 @@ silently spell it wrong — see §13.6.
   survives green): `sod_expr` folds `{}` exactly as it folds `fold`. It is kept
   so the proc's own return value is always a mode name.
 - **`doc/claude/code_analysis/ngspice_case_sensitivity.md:62` still quotes the
-  two-argument call site.** Item 15 owns rewriting that file's §Part 3.
+  two-argument call site.** ~~Item 15 owns rewriting that file's §Part 3.~~
+  **DISCHARGED by item 15, deliberately without touching the quote.** Part 3 was
+  rewritten, and Parts 1–2 now carry a banner saying they describe the pre-batch
+  tree and that their `file:line` citations are that tree's — so the two-argument
+  quote reads as dated history rather than a current claim. The live proc is
+  `ase::ui::sod_expr {kind token mode}`, `src/ase_window.tcl:961`, three
+  arguments, the third **required**.
 
 ---
 

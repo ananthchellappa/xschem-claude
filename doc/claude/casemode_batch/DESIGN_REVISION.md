@@ -156,6 +156,27 @@ and we have not measured it. Two things follow:
 
 ## 6. One consumer that must keep folding
 
+> **CORRECTION, 2026-08-18 (item 15). THIS SECTION'S RULING WAS OVERTURNED, and
+> the marker was missing.** `DECISIONS.md` **D3** — settled with the user after
+> this document was written — replaced the eager array with a **read-traced
+> lazy view**, so the question "what case are the keys in?" no longer has a
+> subject: there are no stored keys. Item 5b implemented it; both publish-site
+> helpers this section's ruling relied on (`ngspice_data_key()`,
+> `ngspice_data_publish()`) are **deleted**, and **the mode does not appear
+> anywhere in backannotation code**. Precisely: while the C view is armed the
+> backannotation procs' own `string tolower` and hand-rolled `v(...)` rungs are
+> gone and every query goes to `get_raw_index_in()`. **One gated fallback
+> survives** in `ngspice::lookup` (`src/xschem.tcl:3751`), running only when
+> `xschem raw view_armed` reports that no C view owns the array — that is the
+> road of the third, pure-Tcl publisher `ngspice::read_raw_dataset`, which has
+> no `Raw` and therefore no authority to share (`raw_case_mode.md` §13.7b).
+> The gate is what keeps it from being a second authority. The live account is
+> `doc/claude/specs/raw_case_mode.md` §13; §4 of that file is the same interim
+> ruling and now carries the same marker. The concern below was real — it is
+> why D3 also had to handle `array names`, `info exists` and the third,
+> pure-Tcl publisher — but the *ruling* ("keep publishing folded") is not what
+> shipped.
+
 `ngspice::ngspice_data` is a **Tcl array published to scripts**, and its keys
 come straight from `raw->names[i]` — `callback.c:1465` and `save.c:2013`. Tcl
 array keys are case-sensitive, so if the stored names gain capitals, every key

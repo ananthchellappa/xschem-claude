@@ -14,6 +14,90 @@ Newest entries on top.
 
 ---
 
+## Q48. My net is called `MidNode` but the waveform viewer shows `v(midnode)`. Why, and can I change it?
+
+- **Asked:** 2026-08-18
+- **Project state:** branch `fluid-editing` @ `af001a12` + this session — the casemode
+  batch, items 1–14 landed. Specs `doc/claude/specs/raw_case_mode.md` and
+  `doc/claude/specs/simulator_profiles.md`.
+
+**Because ngspice folded it, and — as of this batch — xschem no longer does.** Whether
+you can change it depends entirely on which ngspice you run, and there is nothing you can
+set inside xschem that will make a released ngspice keep your capitals.
+
+**What used to happen, and what happens now.** The lowercase `midnode` used to be
+produced *twice*: once by ngspice, whose node names are case-insensitive and whose raw
+file comes back all lowercase, and once again by xschem's own raw reader, which
+`strtolower()`d every variable name as it stored it (`src/save.c`, the fold that used to
+sit where the long comment at `:1065` now is). **The second fold is deleted.** Every
+reader — spice raw, VCD, table — now stores the name exactly as the file spells it. So
+what you see in the browser is now *the simulator's answer*, not xschem's opinion of it.
+On a released ngspice that answer is still `v(midnode)`, and it will not change.
+
+**To get `v(MidNode)` you need two things.**
+
+1. **An ngspice that can preserve case.** Released ngspice (46, what `apt install` gives
+   you) cannot; it accepts `-D casemode=preserve` **without complaint, and ignores it**,
+   which is the most likely way to convince yourself it worked when it did not.
+2. **A profile row pointing at that binary, asking for it.** `Simulation ▸ Configure
+   simulators and tools`: give the row an **Exe**, press **Test**, then pick from the
+   **Case** menu. The menu offers *only what the probe measured that binary can actually
+   deliver* — an ordinary ngspice offers `fold` and nothing else, on purpose. ASE-L then
+   runs **that** executable, not a bare `ngspice` off `$PATH` (which is all it could do
+   before), and emits `-D casemode=` only when you asked for something other than `fold`.
+
+**Which mode to ask for.** `preserve` keeps the capitals in labels while *identity* still
+folds, so `Out` and `OUT` remain one node and none of the sharp edges apply — it is what
+you want. `distinguish` makes them **two different nets**, which is a different circuit,
+and it is only right if that is what you actually mean. Because a silent downgrade of
+`distinguish` would run the same deck as a different circuit and exit cleanly with wrong
+numbers, xschem **refuses the run** — before the deck is handed to the simulator —
+when a `distinguish` request cannot be confirmed against the binary that is about
+to run. A `preserve` downgrade only costs you lowercase labels, so that one
+reports and carries on.
+
+**Why xschem asks the simulator instead of trusting the flag.** A `.spiceinit` is sourced
+*after* the command line and silently overrides it — and not only one beside your deck:
+`~/.spiceinit` does it too. So the mode is measured, from the deck's own directory, with
+the same arguments the real run will use. If you know your `.spiceinit` is the problem
+there is a per-row `-n` checkbox; it is off by default, because `-n` also throws away your
+own customisations.
+
+**If you cannot change simulator, nothing is worse than before.** The lookup is now
+case-insensitive in both directions, so a graph attribute saved years ago as
+`node="v(en)"` still finds a stored `v(EN)`, and a query typed as `v(EN)` still finds a
+stored `v(en)`. The one case where it deliberately answers *nothing* is a file that really
+holds both spellings — a VCD with `Count` **and** `count`, say — where any answer to
+`COUNT` would be a guess.
+
+**The viewer's `Options ▸ Case Mode` is not this control, and it is narrower than it
+looks.** It tells you which mode the *loaded file* appears to have been written in, and
+which of four sources answered (an explicit setting, the file's own `Option: casemode=`
+header, a comparison against your schematic's net names, or a last-resort capital sniff),
+and it lets you override that answer. What the override changes is **what this window
+reports** — it does *not* re-run anything, does *not* rewrite or re-read the loaded
+database, does *not* change how names are looked up, and does *not* reach the Ctrl-K
+cross-probe in the schematic window, which reads that window's own database. It is also
+**not remembered** between sessions: issue `0425` records that nobody has yet decided
+whether it should be.
+
+**Two things you may notice that are not bugs in xschem.**
+
+- **An extra row named `v(all)` or `i(all)`.** A released ngspice adds a phantom duplicate
+  column, carrying the same value, when a run saves *exactly one* vector and the analysis
+  is an `op` (a `tran` or `dc` has a sweep axis, so its count is already two). It is fixed
+  in newer ngspice. We deliberately do not filter it: a real net could be called `all`, and
+  deleting a user's signal is worse than showing one extra row. Full account:
+  `raw_case_mode.md` §15.
+- **A netlist warning about two net names differing only in case.** It fires when *xschem
+  and the simulator disagree about how many nets you have* — xschem compares net names with
+  `strcmp`, so `Out` and `OUT` are two nets on your schematic while a folding ngspice will
+  merge them into one. It is a warning, never an error, and it stays silent under
+  `distinguish`, which is the one mode that agrees with the drawing. One shipped example
+  (`xschem_library/examples/test_bus_tap.sch`) trips it truthfully — issue `0421`.
+
+---
+
 ## Q46. `xschem move_objects END` did nothing and my test still passed. Is a typo'd sub-verb an error now, and how far does the check reach?
 
 - **Asked:** 2026-08-12

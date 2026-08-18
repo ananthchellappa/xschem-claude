@@ -1,13 +1,53 @@
 # Raw case mode — names are stored verbatim; `case_sensitive` is a lookup flag
 
-Status: **items 1, 2, 3 and 4 of the casemode batch are implemented** (this
-document); items 5–15 are not. Written 2026-08-16.
+Status: **the whole casemode batch is implemented** — items 1–14 landed, item
+15 (docs) is this correction. Written 2026-08-16, corrected 2026-08-18. The
+status line here used to read *"items 1, 2, 3 and 4 are implemented; items 5–15
+are not"*, which stopped being true the moment §12 was added; it is fixed in
+place rather than rewritten, because later sections cite earlier ones by number.
 
 Design origin: `doc/claude/casemode_batch/DESIGN_REVISION.md` (sections 4, 5, 6,
 7, 8) and `doc/claude/casemode_batch/DECISIONS.md`. Plan item list:
-`doc/claude/casemode_batch/PLAN.md` §3b. Background on where case is folded
-across the whole tool: `doc/claude/code_analysis/ngspice_case_sensitivity.md`
-(its Part 3 is superseded by the above).
+`doc/claude/casemode_batch/PLAN.md` §3b. Background on where case was folded
+across the whole tool **before** the batch, and a map of what shipped:
+`doc/claude/code_analysis/ngspice_case_sensitivity.md` (Parts 1–2 are
+pre-batch history; its Part 3 was rewritten by item 15 and is the shipped
+overview). The ngspice side of the feature — how to run a deck under
+`-D casemode=`, what splits by case and what never does — is
+`references/casemode-distinguish-guide.md` (tracked, committed at `fc65f14a`);
+Part 3 §3.8 of that analysis records the three places our shipped behaviour
+deliberately differs from its advice, each with the measurement that forced it.
+
+---
+
+## Reader's map — which section answers which question
+
+This file was written **one item at a time by eight different crews**, each
+extending it in place. Nothing here is renumbered, ever: source comments, tests
+and the other spec cite these sections by number.
+
+| you want to know | section | batch item |
+|---|---|---|
+| what a reader stores, and why the fold was deleted | §1 | 1 |
+| what `Raw.case_sensitive` is (a **lookup** flag, not "this file has capitals") | §2 | 1 |
+| the commands: `raw read … -case`, `raw case`, and why a set **re-reads** | §3 | 1 |
+| `ngspice::ngspice_data` keys — **superseded by §13**, kept for the reasoning | §4 | 1 |
+| **Xyce: no reader-side fold, and it is UNVERIFIED** | §5 | 1 |
+| the AC `v(` prefix test, and why it had to become case-blind | §8 | 1 |
+| the one lookup ladder, the separate lazy alias index, D2's decline | §9 | 2 |
+| how a **file's** mode is worked out — four sources — and the global floor | §10 | 3 |
+| the Ctrl-K / gaw senders, and the Xyce uppercase **fallback** | §11 | 4 |
+| the viewer's Tcl mirror and its `Options ▸ Case Mode` control | §12 | 5 |
+| one lookup authority; `ngspice_data` as a lazy view; the mode leaving backannotation | §13 | 5b |
+| the netlister's collision warning, the relay, the model dedup key | §14 | 14 |
+| **the phantom `v(all)` / `i(all)` column** | §15 | 15 (C1) |
+
+§6 (*what item 1 deliberately left out*) and §7 (*item 1's tests*) are item-1
+bookkeeping and are not in the table.
+
+Everything about **profiles, probes, the composed run, the deck, reading the log
+back, the current repair and the dialog** is the companion spec,
+`doc/claude/specs/simulator_profiles.md` (§1–§17, items 6–13).
 
 ---
 
@@ -153,6 +193,21 @@ carries it. A first read is unaffected: the file has just been read, so nothing
 re-reads it. Checks CS34–CS34d.
 
 ## 4. `ngspice::ngspice_data` keys stay FOLDED
+
+> **SUPERSEDED by §13 (item 5b), and this marker was missing until 2026-08-18
+> (item 15).** §13 says it supersedes this section; **this section did not say
+> so**, so a reader landing here got the opposite of the shipped behaviour with
+> nothing to warn them. Everything below describes the **interim** state between
+> items 1 and 5b, in the present tense, and it is kept because its reasoning —
+> why a published Tcl interface may not silently gain capitals — is what made
+> D3's lazy view the right answer rather than a nicety.
+>
+> **What actually shipped:** `ngspice_data_key()` and `ngspice_data_publish()`
+> are **deleted** (verified 2026-08-18: `grep -rn ngspice_data_key src/` finds
+> only comments saying they are gone), the array is a **read-traced lazy view**
+> over `get_raw_index_in()`, there are **no stored keys to fold**, and a
+> `distinguish` database publishes both `v(EN)` and `v(en)` under their own
+> spellings. Read §13.
 
 That Tcl array is a **published interface**: `ngspice_backannotate.tcl` and user
 scripts read `$ngspice::ngspice_data(v(en))`. Tcl array keys are case-sensitive.
@@ -1404,7 +1459,10 @@ leaving it folded would have left the most-used road on the old authority.
    trace calls `get_raw_index_in()`, so an indexed read of the array **is** the
    authority call, with all four rungs, D2's no-alias-on-collision rule, and
    `distinguish`'s suppression of the folded rung already applied. The one
-   shared helper is `ngspice::lookup`, four lines, no ladder of its own.
+   shared helper is `ngspice::lookup` (`src/xschem.tcl:3751`): one authority
+   call, then a fallback ladder **gated on `xschem raw view_armed`** that runs
+   only for the third, pure-Tcl publisher, which has no authority to share —
+   see §13.7b. While the C view is armed not one fallback probe happens.
 2. **The query carries the schematic's own spelling.** A net drawn `EN` asks for
    `EN`. Under `distinguish` that exact-matches `v(EN)`; under `fold` it falls
    through to the folded rung. **No mode branch exists in backannotation and
@@ -2045,3 +2103,103 @@ unique by `strcmp`, so dropping it changes nothing — it is belt and braces, as
 comment says), and `CS121`'s "both spellings reach the deck verbatim" half has no
 reachable sabotage because nothing this item adds touches the strings the deck is
 written from; it is a regression guard, not evidence about new code.
+
+---
+
+## 15. THE PHANTOM COLUMN — `v(all)` **and** `i(all)` — casemode item 15
+
+`DECISIONS.md` **C1**, the one decision this batch settled by deciding to do
+nothing: **leave it, document it, cite upstream. No filter, no warning.** This
+section is that documentation. It is here rather than in `simulator_profiles.md`
+because the phantom is something a **reader** sees — it arrives in the raw file
+and shows up in the signal browser as if it were a net.
+
+### 15.1 What it is
+
+A released ngspice writing a raw file for an analysis whose total saved-vector
+count is **exactly one** adds a second vector, named after the wildcard token
+`all`, carrying **the same value as the real one**. It is a duplicate column
+under a wrong name — not wrong data, and not a missing signal.
+
+**Measured 2026-08-18 (item 15), in `render_deck`'s own deck shape** — `.save`
+cards outside `.control`, the analysis as a control command, and a **bare**
+`write <abs path>` naming no vectors, which is the only shape whose measurements
+mean anything for this tool (`CREW_BRIEF.md` §4):
+
+| deck | `/usr/local/bin/ngspice` (46, released) | `build-ver_50` |
+|---|---|---|
+| `op`, exactly one saved **voltage** (`.save v(in)`) | `v(in)` **`v(all)`** | `v(in)` — clean |
+| `op`, exactly one saved **current** (`.save i(V1)`) | `i(v1)` **`i(all)`** | `i(v1)` — clean |
+| `op`, two saved signals | clean | clean |
+| `tran`, one saved signal | `time v(in)` — clean | clean |
+
+Both columns carry the identical value in every reproducing row (`1.0`/`1.0` for
+the voltage deck, `-1e-3`/`-1e-3` for the current deck).
+
+**`i(all)` is the half every note written before 2026-08-16 missed.** Each of
+them records only `v(all)`, and a reader who filtered on that string alone —
+which is exactly what an earlier revision of the plan proposed — would have left
+half the defect in place.
+
+**`tran` and `dc` are immune**, and the reason is worth keeping: their sweep axis
+(`time`, `v-sweep`) is itself a vector, so the count is already two and the
+rename never triggers. **Only `op` has no axis.**
+
+### 15.2 Why it reaches us at all
+
+ASE-L emits **one `.save` card per output row** (`ase::backend::ngspice::render_deck`,
+`src/ase.tcl:4532`), so a session with a single output and an `op` analysis hits
+the count-of-one case **every time** on a released binary. `.options savecurrents`
+(the UI's *save all terminal currents*) incidentally dodges it, by pushing the
+count past one.
+
+Upstream's cause, from their round-3 response: `ft_evaluate()` renamed its result
+to the parse node's own text whenever the result was a **single** vector —
+correct for an expression (`print v(a)+v(b)` should be labelled `v(a)+v(b)`) and
+wrong for a wildcard, whose text is not a name for what it matched.
+
+**Fixed on `ver_50` by upstream `0064` (`25e891ec3`); broken on every release.**
+So this is a defect of the **installed base**, not of the enabler, and it will
+outlive the fix by however long it takes to reach a distribution.
+
+### 15.3 RULING (C1) — no filter, and no warning
+
+Verified for this item: **nothing in `src/` mentions `v(all)`** (`grep -rn "v(all)" src/`
+is empty), so "leave it" is what shipped, by omission rather than by a suppressed
+branch.
+
+Three reasons the filter was refused, in the order they matter:
+
+1. **A real net can be called `all`.** Filtering by name would delete a user's
+   signal. The wildcard token set upstream intercepts is wider than one word —
+   `all`, `allv`, `alli`, `ally`, `alle`, matched case-insensitively — so a
+   name-based filter is five chances to delete something real, not one.
+2. **It is cosmetic.** The column carries the correct value of the signal beside
+   it. Nothing plots wrong; one extra row appears in the browser.
+3. **Upstream has already fixed it.** Unlike `DECISIONS.md` C3's absent-`.save`
+   defect — where the fix has been withdrawn three times upstream and the
+   symptom is a *silently empty plot* — this one is fixed at the source and the
+   only question is release timing. C3 got three defences for exactly that
+   asymmetry; C1 gets a paragraph.
+
+**A warning was refused for the same reason as the filter**: we cannot tell a
+phantom from a net called `all` without knowing the deck's saved-vector count at
+read time, and the reader does not have it.
+
+### 15.4 What would reopen it
+
+- A user with a net genuinely named `all` reporting that the two columns are
+  indistinguishable — at which point the answer is still not a name filter, it
+  is the count rule (`nvars == 2` and the two columns byte-identical), and it
+  still cannot be applied to a file we did not write.
+- The count rule becoming safe because the raw carries the deck's own
+  `.save` list. It does not today.
+
+### 15.5 One trap that is NOT this, and must not be confused with it
+
+**Never name vectors on a `write` line** (upstream `0073`, unfixed): `write f.raw
+v(In)` produces two columns with **byte-identical names**, which no filter and no
+lookup can separate — and under `fold` on a released binary both are `v(in)`.
+`render_deck` writes a bare `write <abs path>`; items 10 and 12 were told not to
+change that, and did not. The phantom above is a *differently* named duplicate
+and is a different bug with a different upstream number.
