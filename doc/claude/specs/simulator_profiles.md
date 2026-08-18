@@ -1860,6 +1860,18 @@ silently spell it wrong — see §13.6.
   constructed current name (`i(V.Xm.Xl.Vs)`) is only as right as our model of the
   simulator's construction, and `get_raw_index`'s `i(v.x` fixup is item 2's, not
   ours.
+  > **CORRECTED IN PLACE by item 12 (§16.2–§16.4), in three directions.**
+  > (1) The construction model is **right** — measured on `build-ver_50`, all
+  > three modes, hierarchical `Vs` and a non-`v` `E1`: the raw carries exactly
+  > what `sod_qualify` + `sod_expr` compose, so a correctly-picked expression
+  > never needs the repair. (2) "A constructed current name" is **one producer
+  > short**, the same way this section was for item 11: `output_editor_ok`, a
+  > hand-written state file and `expand_bus_outputs` all ship a current
+  > verbatim, and `plot_map_expr` buries one inside an RPN — hence a token-wise
+  > repair. (3) The **real** gate is `Raw.case_sensitive`: item 2's folded rung
+  > answers every case-only mismatch on any other database, so the repair is
+  > structurally incapable of firing there, and since nothing in ASE-L passes
+  > `-case` it is a **standing guard** on the run path rather than a live fix.
 
 ## 13.7 What is NOT here
 
@@ -2612,3 +2624,394 @@ is lenient (§F3), so rung 1 answers.
 - **Nothing else that reads a log was touched.** `ase::run_diagnostics`, the
   cosim VCD check and item 8's mismatch report are all upstream of this proc and
   see the same text they always did.
+
+---
+
+# 16. POST-LOAD CURRENT REPAIR — casemode item 12
+
+`PLAN.md` §3b item 12 and **§D6 part 2**. `DECISIONS.md` **D2** (no guess when
+two names collide), **D1** (a correction is offered, never a silent rewrite of
+the user's saved work) and **A1** (`fold` is the default, so a stock user's
+behaviour may not change). Item 6 owns §1–§10, item 7 §11, item 8 §12, item 9
+§13, item 10 §14, item 11 §15.
+
+Checks: `tests/headless/test_ase_current_repair.tcl`, **`CU231`–`CU243c`, 56
+checks** on a display and **53** with none (the three `CU243*` legs need a real
+viewer window and stand down without one). Three of them are premises about the
+fixture and about the *engine* rather than evidence about this item's code, and
+they are named in §16.9; the evidential count is 53 of 56.
+
+**§16.10 and §16.11 are new in the fix round** (2026-08-18); §16.1, §16.3,
+§16.5, §16.8 and §16.9 carry corrections written **in place**, marked as such.
+Review found seven defects in the first cut: a repair that ran on the no-run path, a name
+index rebuilt per token, the `@` current form skipped, one CIW line per
+occurrence, a queue that could carry the same expression twice, a decline that
+misdescribed its own candidates, and prose in §16.5 about a call the code does
+not make.
+
+## 16.1 What a current expression is, and why it alone gets a repair
+
+A voltage expression is **resolved**: `ase::ui::sod_qualify`'s voltage arm asks
+`xschem resolved_net`, which is the engine's own answer about the design, and
+`ase::ui::sod_expr` only wraps and case-maps it. A current expression is
+**constructed**: there is no resolver for an instance name, so the current arm
+composes
+
+```
+i( <the device's own first character> . <instance path> <name> )
+```
+
+mirroring `send_current_to_graph()` in `hilight.c`. That composition is a model
+of how the simulator names a branch, and a model can be wrong where a resolver
+cannot. §D6 part 2's remedy is therefore the right one: after the run's
+databases are attached, look an unmatched current up **case-insensitively
+against the databases' own name lists** and rewrite it to the spelling they
+carry, because those names are what the simulator actually wrote.
+
+This is why the repair is **currents only** (`wviewer::is_current_ref`,
+`CU231`). Widening the predicate to `v(...)` is a one-line change and it is
+deliberately not made: nothing in item 12 measures a voltage, and the viewer's
+voltage matching is item 5's ground.
+
+**RULING (fix round) — a current has TWO shipped forms, and both are repaired.**
+The first cut matched `i(...)` only, which left the ngspice `.options
+savecurrents` terminal-current form `@m.x1.m0[id]` — ASE-L's `alli` save flavour
+— skipped. That is not a narrower scope, it is **two predicates in one feature
+disagreeing about what a current is**: `ase::ui::output_kind` classifies a token
+as `current` when it matches `i(*` **or** `@*`, so a hand-written row, a bus
+expansion or an `alli` save ships an `@` current into exactly the same seam. The
+`@` name is composed the same way (device letter, instance path, name), is wrong
+in the same ways, and repairs the same way — its stored spelling is just another
+name in `xschem raw list`. The predicate is now `^(i\(.+\)|@.+)$` (`CU231d`,
+`CU232f`); a bare `@` is still not a current.
+
+## 16.2 MEASURED — item 9's construction model is RIGHT, and that narrows this item
+
+Measured 2026-08-18 on `build-ver_50` (stamp `Sun Aug 16 06:52:46 UTC 2026`),
+deck `.subckt Blk` holding `Vs` and a VCVS `E1`, instantiated as `X1`, `tran`,
+`write` from a scratch directory:
+
+| requested | the raw's current names |
+|---|---|
+| `fold` | `i(v.x1.vs)` `i(e.x1.e1)` `i(v1)` |
+| `preserve` | `i(V.X1.Vs)` `i(E.X1.E1)` `i(V1)` |
+| `distinguish` | `i(V.X1.Vs)` `i(E.X1.E1)` `i(V1)` |
+
+That is byte for byte what `sod_qualify` + `sod_expr` compose in each mode
+(§13.3's rule — the prefix follows the token, item 4's measurement). **So the
+constructed name is not wrong today**, and the dispatch's expectation that this
+repair would be "needed less often than the plan assumed" is confirmed and can
+be quantified: on a correctly-picked expression it is needed **never**.
+
+## 16.3 RULING — the repair can fire ONLY on a `case_sensitive` database, and that is a theorem
+
+Measured through the real engine on the same three files:
+
+```
+h_distinguish.raw  -case distinguish   raw index i(v.x1.vs) = -1   i(V.X1.Vs) = 4
+h_preserve.raw     -case preserve      raw index i(v.x1.vs) =  4   i(V.X1.Vs) = 4
+h_fold.raw         -case fold          raw index i(V.X1.Vs) =  4   i(v.x1.vs) = 4
+```
+
+Item 2's folded rung answers **every** case-only mismatch on a database that is
+not `case_sensitive`. So on such a database "unmatched" and "matchable
+case-insensitively" are **disjoint sets**, and the repair is structurally
+incapable of firing — it is not gated off there, it simply has nothing to do
+(`CU232d`, and `CU236f` through the real engine).
+
+The one apparent exception proves the rule: a database whose folded key is
+**D2-poisoned** (two stored spellings) makes the ladder decline while a
+case-insensitive scan still has matter to look at — and it offers *two*
+spellings, so this repair declines as well.
+
+**CORRECTION (fix round) — the citation here was `CU233c`, whose slot is
+`case 1`.** The exception is about a database that is **not** case_sensitive, so
+a `case 1` fixture cannot demonstrate it, and the only route by which a folding
+database reaches the repair at all therefore had **no** coverage: a `continue`
+on every `case 0` slot left the suite fully green while turning a real D2
+decline into silence. `CU233f` is the exception in its own shape — a `case 0`
+slot holding `i(VS)` and `i(vs)`, `name_lookup` answering `ambiguous` (so the
+ladder really has declined) and the repair answering `ambiguous` in turn.
+
+**Consequence, stated plainly rather than hidden.** Nothing in ASE-L's attach
+path passes `-case`: `ase::attach_dbs` calls `xschem raw read <f> <t>` and no
+more, and `Raw.case_sensitive` is set by exactly one thing —
+`raw_case_mode_parse()` behind `xschem raw read … -case distinguish` or
+`xschem raw case 1` (`save.c`, and the `Option:` header deliberately does **not**
+set it: item 3 REPORTS, it does not act). So **a session's own raw is never
+case_sensitive today, and on that path this item is a standing guard**, kept in
+exactly the shape item 11 keeps its own unreachable D2 decline (§15.5).
+
+**CORRECTION (fix round) — "the scripted and `File → Open`-raw routes" named an
+empty set.** Measured 2026-08-18: `grep -n 'raw read .*-case\|raw case 1'
+src/*.tcl` finds **no caller at all**. `wviewer::rawbar_load` — the single commit
+path for the viewer's `File → Open` raw, the Location bar and the Browse button
+— reads bare, so the database it attaches comes back `xschem raw case` = 0; and
+the viewer's `Options ▸ Case Mode ▸ distinguish` control calls `xschem raw
+casemode`, which item 3 made **reporting only**. So the repair is unreachable
+from **every gesture a user can make today**. The one route that does reach it
+is a composite only a script or the console can drive: `xschem raw case 1` on an
+already-loaded raw, then `dp_finish`/`auto_plot` (and for `dp_finish`, on a
+session with no run artefact, so it does not re-attach and reset the flag). It
+is already correct for the day item 13 wires a profile's `distinguish` into the
+read — which is the change that would otherwise ship a silently blank strip.
+
+## 16.4 CORRECTION to §13.6 — "a constructed current name" is one producer short
+
+§13.6 handed this item a narrowing: *"a constructed current name (`i(V.Xm.Xl.Vs)`)
+is only as right as our model of the simulator's construction"*. Verified rather
+than inherited, exactly as item 11 was asked to verify its own (§15.2), and it
+is short by the same three producers plus one more:
+
+- `ase::ui::output_editor_ok` stores an Add/Edit Output expression **verbatim**;
+- a hand-written or migrated state file stores what it says;
+- `ase::expand_bus_outputs` carries a bus row's own spelling into every bit;
+- `ase::ui::plot_map_expr` turns the canonical `-i(v1)` output row into the RPN
+  `i(v1) -1 *`, so the current arrives as **one token inside an expression**.
+
+None of those is "constructed", all of them can be mis-cased, and all four reach
+the same seam. The repair is therefore **token-wise over the whole expression**
+(`wviewer::repair_current_expr`, `CU234b`, `CU239b`) rather than a test on a
+single-token expression, and `auto_plot` maps *before* it repairs so the RPN is
+repaired in the form `add_trace` will actually validate (`M19` reddens
+`CU239`/`CU239b`).
+
+## 16.5 RULING — it is NOT a second lookup ladder
+
+The repair runs only on a token the ladder has **already declined**, and the
+"has it declined" test is `wviewer::resolve_signal_db`'s **rule** — item 5's
+mirror of `get_raw_index`, held down by its own agreement check — applied per
+slot, with each slot judged by **its own `case` flag**. The candidate scan then
+runs over
+`wviewer::name_rungs`, so the `i(v.x` → `i(x` rewrite stays item 2's: a database
+that names the branch without the prefix is still repaired to *its* spelling
+(`CU235`, mutation `M6`). `CU235b` is the agreement leg — `keep` and
+`resolve_signal_db` must answer identically for every probe over every slot, and
+a divergence is the thing item 5's mirror ruling forbids.
+
+**CORRECTION (fix round) — the rule is RE-APPLIED INLINE, not called, and this
+section used to say otherwise.** `repair_current_token` does not call
+`resolve_signal_db`; it repeats its loop body (`name_index` + `case`→fuzzy +
+`name_lookup`). That is deliberate and it has a measured reason:
+`resolve_signal_db` reads the inventory itself, so calling it would cost one
+`signal_list_all` **per token**, which is exactly what §16.8 and `CU242` forbid.
+But in a batch whose banner is *one lookup authority*, prose that hides a second
+copy of that loop is worse than the copy. So, stated plainly: **there are two
+copies of this loop and exactly one thing holds them together — `CU235b`**, the
+agreement leg, which runs both over the same probes and the same slots and fails
+if they ever answer differently. Edit one, edit the other, and let `CU235b`
+prove it. The same correction is written into the `src/wave_viewer.tcl` header.
+
+**If a rung is missing, it belongs in `name_rungs` and in `get_raw_index`, not
+here.** The `i(v.x` anchor is on the literal `v`, so a database that drops the
+prefix for a non-`v` device (`i(x1.e1)` against a constructed `i(E.X1.E1)`) is
+*not* repaired by anything — named here as a known gap, and it is item 2's rung
+to widen, not this item's.
+
+## 16.6 RULING — D2 governs the rewrite, and it counts SPELLINGS
+
+Exactly one differently-cased spelling is a repair; two or more is a guess, and
+a guess written into a trace plots **another signal's waveform under this one's
+legend entry** — strictly worse than the blank strip the item exists to remove.
+So the repair declines, and the caller says so at tag `error` naming every
+candidate (`CU233`, `CU233c`, `CU240`; mutations `M3`, `M14`).
+
+Spellings are counted, not slots — item 11 §15.5's rule, for the same reason:
+the same name in two attached databases is **one** answer (`CU233d`, mutation
+`M8`), while two databases offering two different spellings collide (`CU233e`).
+
+The scan is deliberately case-insensitive on **every** slot, including a
+`case_sensitive` one. That is not a re-introduction of the fold item 2
+suppressed: the *lookup* stays strict, this is a one-shot, announced, D2-guarded
+rewrite of a name that has already failed to resolve, and by §16.3 the
+`case_sensitive` slot is the only place a candidate can come from at all.
+
+## 16.7 RULING — the repair is IN MEMORY; the session is never rewritten
+
+"Rewrite to the database's real spelling" is ambiguous and the ambiguity is
+settled here, on `DECISIONS.md` **D1**'s precedent: D1 refused a silent re-case
+pass because a wrong map corrupts saved work with no trace, and item 10 made its
+correction an **explicit command** (`ase::preflight_fix_session`) rather than an
+implicit edit.
+
+- The output row's stored `expr`, and the state file, keep the **user's own
+  text**. The session is **not** marked dirty (`CU241c`).
+- What is repaired is the expression **handed to the viewer for this attach** —
+  and hence the trace the viewer stores, which is a description of the data now
+  on screen and is the viewer's own document, not the user's.
+- **On the next load the row is still stale**, the repair fires again and
+  announces again. That is idempotent and honest; the alternative is an
+  implicit edit of a file the user owns.
+
+## 16.8 RULING — announced in both directions, and once per batch
+
+A spelling the user never typed appearing in a legend is exactly the surprise
+item 14's relay ruling is about, so a repair emits one CIW line at tag `note`
+naming both spellings (`CU238c`, mutation `M13`), and a decline one line at tag
+`error` naming every candidate.
+
+**RULING (fix round) — one line per offending SPELLING, not per occurrence.**
+The first cut looped straight over the notes, and `wviewer::repair_currents`
+returns one note per token **occurrence** because its caller needs the
+positions — so one mis-cased current referenced by three output rows produced
+three byte-identical CIW lines, which is precisely the noise item 10's
+per-offender rule was written against and which the candidate scan already obeys
+(item 11 §15.5 counts spellings, not lines). `ase::ui::repair_currents` now folds
+the notes onto `{status old new}` before it speaks (`CU240e`).
+
+**RULING (fix round) — the decline says the candidates MATCH CASE-INSENSITIVELY,
+not that they "differ only in case".** The candidates come off `name_rungs`, so
+one of them can differ by the whole dropped branch prefix as well — item 2's
+`i(v.x` → `i(x` rung offers `i(X1.Vs)` for a query of `i(V.X1.VS)`. The old
+sentence was simply false for that candidate, and a user being asked to choose
+between two names is owed an accurate account of why both are in the list
+(`CU240d`). A token **nothing** folds to is *not* announced
+here: `add_trace` and `plot_signals` already report it per expression, and two
+lines for one failure is the noise item 10's per-offender rule was written
+against (`CU240c`, mutation `M17`).
+
+**Performance.** `wviewer::repair_currents` reads the inventory **once per
+batch** — `signal_list_all` moves the engine's current-database pointer once per
+attached database and puts it back, and item 3 measured the neighbouring
+resolution at up to 189 ms with no cache. Item 4's rule is "resolve once per
+gesture, never from a redraw"; an attach is a gesture, and both call sites sit
+immediately after `attach_raw` and nowhere near `regenerate` (`CU242`, mutation
+`M9`). An empty batch and an unreadable inventory both cost nothing and change
+nothing (`CU242b`–`CU242d`).
+
+**RULING (fix round) — and ONE `name_index` PER SLOT, not per token.** The first
+cut built the index inside the token loop, which made the *pure* pass
+O(tokens × names) and silently violated `name_index`'s own documented contract
+("built ONCE per name list and reused for every token"). `CU242` counts
+`signal_list_all` calls and is blind to it. Measured on this tree before the
+hoist: 40 expressions × 2 slots × 2001 names = **219.9 ms**, and 30 expressions
+over 10001 names = **581.2 ms** — with every one of those tokens answering
+`keep`, so the entire cost was waste on the shipped folding path where §16.3
+proves the repair cannot fire at all. `wviewer::prepare_slots` now builds one
+index per slot per batch and stashes it on the slot under **`nameidx`** (not
+`idx`, which is already the slot's *database* index); `repair_current_token`
+uses it when it is there and builds its own only for a caller handing over raw
+slots, so every pure check keeps its signature and every verdict is
+byte-identical. `CU242f` counts the builds: six expressions over two slots build
+**two** indexes. `fuzzy` stays computed per slot per token — it is one dict read.
+Re-measured after the hoist, both shapes in the same process on the same
+10001-name slot: **450.9 ms → 17.7 ms** for 30 expressions, every verdict
+unchanged.
+
+The caller checks two contracts rather than trusting them: the answer's
+**length**, because `dp_finish` pairs it with `qcolors` positionally so a short
+answer would repaint the survivors in the wrong colours (`CU241`, `M15`), and a
+**throw**, which leaves the expressions exactly as they were (`CU241b`, `M16`).
+
+## 16.9 What is NOT here
+
+- **`CU236`, `CU236b` and `CU236c` are premises, not evidence about this item.**
+  They assert that the committed fixture exists, that `-case distinguish` makes
+  `xschem raw case` answer 1, and that the engine then MISSES `i(vs)` — all of
+  which go red if item 1/2's C changes, never if this item's Tcl does. The
+  evidential count is **40 of 43**. `CU236d`–`CU236f` are evidence: the same
+  live engine, through the real repair.
+- **`CU237` runs `build-ver_50` and SKIPS when it is absent** or when the build
+  has stopped keeping the case, printing no substring `full_audit.sh` scores a
+  whole file on. It is the only leg that launches a simulator.
+- **`wviewer::signal_list_all` IS driven, on a display (fix round).** The first
+  cut stubbed it everywhere with a token-**ignoring** proc, and that left the
+  one impure call in the feature — the half that actually reads `xschem raw
+  list` — with no coverage at all: replacing `signal_list_all $token` with
+  `signal_list_all {}` makes the repair a permanent no-op for every user in the
+  shipped program, and the suite stayed at ALL PASS. Two things fix it. The stub
+  is now **token-aware**, mirroring the real proc's own first line
+  (`if {![dict exists $windows $token]} { return {} }`), so a wrong key reddens
+  `CU238`/`CU239`/`CU241c` and `CU242e` asserts the bail directly; and `CU243`–
+  `CU243c` drive the **real** proc through a real viewer window holding a real
+  `-case distinguish` database, repairing `i(vs)` → `i(Vs)` end to end. The file
+  is therefore **no longer registered in `full_audit.sh`'s `nogui_tests`** — it
+  runs on the display arm, where all 56 checks run; with no display the three
+  `CU243*` legs stand down and 53 run.
+- **No trace is ever painted.** The suite asserts the strings handed to
+  `plot_signals` and `add_trace`; whether the strip then draws is those procs'
+  own ground, already covered by their suites. **No eyeball is owed** — nothing
+  here is pixels.
+- **Nothing repairs a trace that is ALREADY IN the viewer's model.** A layout
+  restored from a saved state, or a trace added before the first run, keeps the
+  spelling it was stored with; this item repairs expressions **on their way in**,
+  at the two ASE-L seams that attach a database (`dp_finish`, `auto_plot`). The
+  viewer's own `File → Open` raw path (`rawbar_load`) is untouched.
+- **Issue `0423` is still NARROWED, not closed**, and this pass is not the one
+  that closes it. `0423` asks for a **schematic-derived** re-case pass; this is
+  **database-derived** and only sees names the run happened to write, so it
+  cannot re-case a row for a signal the run did not save. It does remove one of
+  `0423`'s consequences on the *plot* side, for a `case_sensitive` database.
+- **The `i(v.x` anchor gap of §16.5 is named, not fixed.**
+- **A candidate spelling containing WHITESPACE is not filtered out**, and the
+  case was reasoned rather than guarded. `xschem raw list` joins names with
+  `\n`, so a name with a space in it survives into the inventory and the repair
+  would happily rewrite to it — after which `join`ing the tokens back would
+  change the expression's token count. It is harmless because such a name is
+  already unusable as a trace token: `validate_rpn` splits on whitespace too, so
+  `add_trace` refuses it with a message rather than plotting anything. A guard
+  would be one `string match` and is not added here because nothing in this item
+  measures such a name.
+- **The cost IS timed now (fix round).** The first cut declared it un-timed and
+  the term it was not measuring was real: see §16.8's hoist ruling (219.9 ms and
+  581.2 ms of pure waste, all of it `name_index` rebuilds). The added work is now
+  one `signal_list_all` per attach plus one `name_index` build **per slot**, and
+  a batch whose expressions all resolve pays only the inventory read (measured at
+  0.073 ms per batch on a 1-database / 4-name inventory).
+- **`wviewer::repair_currents` reads the inventory even when no token in the
+  batch is a current.** A one-line `is_current_ref` pre-scan would skip it. Not
+  added: the read is once per attach and measured at 0.073 ms, and the pre-scan
+  would be a second place that decides what a current is (§16.1 has just
+  finished paying for having two).
+- **`signal_list_all` is called without its `statusVar`**, so a REFUSED context
+  loan (issue `0314`) is indistinguishable from "no databases attached". The
+  consequence is benign — no repair, no announcement, the expressions untouched
+  — but it is silent, and it is exactly the conflation `0314` was filed about.
+  Named, not fixed: threading the status through would owe a user-facing
+  distinction this item has no ruling for.
+## 16.10 RULING (fix round) — the repair runs only when THIS call attached
+
+`dp_finish` has an explicit **no-run** path: `ase::last_rawfile` answers `{}`,
+nothing is attached, and the user is told the queued traces "resolve after the
+run". The first cut ran the repair unconditionally, *below* that branch — so on
+the no-run path it repaired against whatever database happened to be open in
+that viewer window already. That is reachable: open the session viewer, load
+somebody else's raw with `File → Open` (`rawbar_load`), then Direct Plot before
+the first run. Measured, with one foreign slot in the inventory and no run
+artefact: **0 attaches, and the queue rewritten anyway** — `i(v.x1.vs)` pinned
+to the foreign file's `i(V.X1.Vs)`, while the notice printed one line earlier
+promised the opposite. Two statements contradicting each other in one breath,
+and the wrong one wins, permanently, because §16.9 says nothing ever repairs a
+trace once it is in the viewer's model.
+
+The repair is now gated on `wviewer::attach_raw`'s **own return value** — not on
+`$rf ne {}`, because an unreadable or missing raw returns 0 from a non-empty
+path too, and in that case nothing was attached either. **Zero attaches means
+zero rewrites** (`CU238e`, which asserts the negative that `CU238b`'s
+`nattach == 1` never could).
+
+## 16.11 RULING (fix round) — `dp_queue`'s dedupe is RE-APPLIED after the repair
+
+`ase::ui::dp_queue` refuses a duplicate pick with `lsearch -exact`, which is the
+right test at pick time. But on a `case_sensitive` database `i(v.x1.vs)` and
+`i(V.x1.Vs)` are two distinct, legal picks of the same source, `dp_hilight`
+paints them **two different colours**, and the repair rewrites both to
+`i(V.X1.Vs)` — after which `plot_signals` lands the same data twice (two strips
+in multi-plot, two same-data traces in one strip in single-plot) at two
+colours, so one of the two schematic net cues issue `0153` painted can never
+match its trace.
+
+So the exact-string dedupe runs **twice**: once at pick time and once after the
+repair. `ase::ui::dedupe_plot_queue` keeps the **first** occurrence and its
+colour — the colour already painted on the wire the user clicked first — and
+filters `qcolors` **in lockstep**, because `dp_finish` pairs the two lists
+positionally and dropping an expression without its colour would repaint every
+survivor after it. A colour list that is empty or not the same length as the
+expressions is not positional (a scripted or replayed call, where `plot_signals`
+derives them) and comes back untouched. `CU238f`, `CU238g`.
+
+**It does NOT run inside `ase::ui::repair_currents`.** That proc's length
+contract is load-bearing for `auto_plot`, which walks `$rows` and the repaired
+list by the same index; a dedupe there would silently shift every row after the
+first duplicate onto the wrong output name.
+

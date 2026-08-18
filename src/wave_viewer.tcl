@@ -2757,6 +2757,208 @@ proc wviewer::resolve_signal_db {token vec} {
   return {}
 }
 
+# ===========================================================================
+# POST-LOAD CURRENT REPAIR — casemode batch item 12
+# PLAN.md §3b item 12 and §D6 part 2; DECISIONS.md D2 (no guess on collision);
+# spec doc/claude/specs/simulator_profiles.md §16.
+# ===========================================================================
+#
+# WHAT THIS IS FOR. A current expression is CONSTRUCTED, not resolved: for a
+# device inside a subcircuit, ase::ui::sod_qualify composes the branch prefix
+# (the device's own first character), the instance path and the name, and
+# ase::ui::sod_expr maps the case. A voltage is not — it comes back from
+# `xschem resolved_net`, the engine's own answer. So a current name is only as
+# right as our MODEL of how the simulator builds one, and the database the run
+# actually produced is the only authority that can correct it. After the raw is
+# attached, an unmatched current is looked up case-insensitively against the
+# loaded databases' own name lists and rewritten to the spelling they carry.
+#
+# ⚠ THIS IS NOT A SECOND LOOKUP LADDER, and it must never become one. It runs
+# only on a token the ladder has ALREADY declined, and the "has it declined"
+# test is `resolve_signal_db`'s RULE — name_rungs + name_index + name_lookup,
+# the `i(v.x` -> `i(x` rung included, each slot judged by its own `case` flag.
+#
+# ⚠ THAT RULE IS RE-APPLIED INLINE HERE, NOT CALLED, and the duplication is
+# deliberate rather than an oversight: `resolve_signal_db` reads the inventory
+# itself, so calling it would cost one `signal_list_all` PER TOKEN — exactly
+# what CU242 forbids and what the once-per-batch note below exists to prevent.
+# The two copies are held together by ONE thing, and it is the only thing: the
+# CU235b agreement leg, which runs both over the same probes and the same slots
+# and fails if they ever answer differently. If you edit resolve_signal_db's
+# loop body, edit repair_current_token's too and let CU235b prove it.
+# If you find yourself adding a RUNG here, it belongs in name_rungs and in
+# save.c's get_raw_index, not in this file.
+#
+# ⚠ MEASURED (2026-08-18, this tree): ON A DATABASE THAT IS NOT case_sensitive
+# THIS CAN NEVER FIRE, and that is a theorem rather than a policy. Item 2's
+# folded rung answers every case-only mismatch there, so "unmatched" and
+# "matchable case-insensitively" are disjoint — the one exception is a database
+# whose folded key is D2-POISONED, and that offers two spellings, so the repair
+# declines. The repair therefore fires only where item 2's rung is suppressed:
+# `xschem raw read <f> <t> -case distinguish` / `xschem raw case 1`.
+#
+# ⚠ AND NO SHIPPED ROUTE PASSES EITHER, TODAY — measured 2026-08-18, not
+# assumed. `grep -n 'raw read .*-case\|raw case 1' src/*.tcl` finds no caller:
+# ase::attach_dbs (the ASE-L run path) reads bare, and so does the viewer's own
+# rawbar_load, which is the single commit path for File -> Open raw / the
+# Location bar. The viewer's Options > Case Mode control calls `xschem raw
+# casemode`, which item 3 made REPORTING ONLY (scheduler.c). So this is a
+# STANDING GUARD on every route a user can click, in the shape item 11's own
+# unreachable D2 decline is kept in; the one route that reaches it today is the
+# composite a script or the console can drive — `xschem raw case 1` on a loaded
+# raw, then dp_finish/auto_plot — and item 13 wiring a profile's `distinguish`
+# into the read is what turns the guard live. Evidence: CU236/CU236b (the
+# theorem, on the committed fixture through the REAL engine) and CU237.
+#
+# ⚠ D2 GOVERNS THE REWRITE. Exactly one differently-cased spelling is a repair;
+# two or more is a guess, and a guess written into a trace plots another
+# signal's waveform under this one's legend entry. Two or more DECLINES, and the
+# caller says so out loud (item 14's lesson: a silent decline is the same blank
+# strip this exists to remove). Spellings are counted, not slots: the same name
+# in two attached databases is one answer.
+
+# Is `tok` a CURRENT reference? TWO forms, because ASE-L already ships two and
+# a feature whose two predicates disagree about what a current is would repair
+# one of them and silently skip the other:
+#   `i(...)`        the branch current, case-blind on the `i`
+#   `@m.x1.m0[id]`  ngspice's `.options savecurrents` TERMINAL current, which
+#                   `ase::ui::output_kind` classifies as `current` (it matches
+#                   `i(*` OR `@*`) and which the `alli` save flavour produces.
+# The `@` form is composed exactly the way `i(...)` is — device letter, instance
+# path, name — so it is wrong in exactly the same ways and repairs the same way
+# (its stored spelling is just another name in `xschem raw list`).
+#
+# Voltages are deliberately out: `v(...)` carries the schematic's own net name
+# straight from `xschem resolved_net`, so there is no construction to be wrong
+# about, and the viewer's voltage matching is casemode item 5's ground. Widening
+# THAT is the whole of what a later item would take, and it is not taken here
+# because no measurement in item 12 covers a voltage.
+proc wviewer::is_current_ref {tok} {
+  return [expr {[regexp -nocase {^(i\(.+\)|@.+)$} $tok] ? 1 : 0}]
+}
+
+# The DISTINCT stored spellings a case-insensitive pass over the ladder's own
+# rungs offers for `tok`, in `name_index` order. Exact hits are included, so a
+# caller that has not already established a miss would get them back too — every
+# caller here has (see repair_current_token).
+proc wviewer::name_fold_candidates {index tok} {
+  set fold [dict get $index fold]
+  set out {}
+  foreach cand [wviewer::name_rungs $tok] {
+    set k [wviewer::fold_key $cand]
+    if {![dict exists $fold $k]} { continue }
+    foreach s [dict get $fold $k] {
+      if {[lsearch -exact $out $s] < 0} { lappend out $s }
+    }
+  }
+  return $out
+}
+
+# PURE. One token against an INVENTORY — `signal_list_all`'s shape, current
+# database first, each slot carrying `names` and its own `case` flag. Returns
+#   {keep      <tok> {}}        not a current, or it already resolves somewhere
+#   {repaired  <db spelling> {<it>}}   exactly one differently-cased name
+#   {ambiguous <tok> {<all of them>}}  D2: more than one, decline
+#   {none      <tok> {}}        nothing in any database folds to it
+#
+# ⚠ EACH SLOT IS JUDGED BY ITS OWN `case` FLAG for the "does it already
+# resolve" test — resolve_signal_db's rule, and for its reason: a foreign
+# database's mode is not the current one's. The CANDIDATE scan is deliberately
+# case-insensitive on every slot including a case_sensitive one, because that is
+# the only slot a candidate can come from at all (see the theorem above).
+#
+# ⚠ THE NAME INDEX IS PER SLOT, NOT PER TOKEN. `name_index`'s own contract is
+# "built ONCE per name list and reused for every token", and building it here
+# would break that: it is O(names), so a batch of N currents against a slot of
+# M names would cost N*M (measured before this was hoisted: 40 exprs x 2 slots x
+# 2001 names = 219.9 ms, and 30 exprs over 10001 names = 581.2 ms, ALL of it the
+# rebuild — every one of those tokens answered `keep`). `prepare_slots` builds
+# one index per slot per batch and stashes it under `nameidx`; this proc uses
+# that when it is there and builds its own only for a caller (the pure unit
+# checks) that hands over raw slots. `fuzzy` stays computed here: it is one
+# dict read, O(1), and hoisting it would buy nothing.
+proc wviewer::repair_current_token {tok slots} {
+  if {![wviewer::is_current_ref $tok]} { return [list keep $tok {}] }
+  set cands {}
+  foreach db $slots {
+    if {[dict exists $db nameidx]} {
+      set idx [dict get $db nameidx]
+    } else {
+      set idx [wviewer::name_index [wviewer::dget $db names {}]]
+    }
+    set fuzzy [expr {[wviewer::dget $db case 0] ? 0 : 1}]
+    if {[wviewer::name_lookup $idx $tok $fuzzy] eq {ok}} { return [list keep $tok {}] }
+    foreach s [wviewer::name_fold_candidates $idx $tok] {
+      if {[lsearch -exact $cands $s] < 0} { lappend cands $s }
+    }
+  }
+  if {![llength $cands]} { return [list none $tok {}] }
+  if {[llength $cands] > 1} { return [list ambiguous $tok [lsort $cands]] }
+  return [list repaired [lindex $cands 0] $cands]
+}
+
+# PURE. Every whitespace-separated token of one expression, so the RPN form
+# ase::ui::plot_map_expr builds for the canonical `-i(v1)` output row
+# (`i(v1) -1 *`) is covered by the same pass as a bare vector reference.
+# Returns {<expression> <notes>}; notes is one {status old new candidates} per
+# token that is not `keep`. THE EXPRESSION COMES BACK BYTE-IDENTICAL when
+# nothing was repaired — no re-joining, no whitespace normalisation, so a run
+# with nothing to fix cannot change what is plotted (DECISIONS.md A1's rule
+# applied to this seam).
+proc wviewer::repair_current_expr {ex slots} {
+  set notes {}
+  set out {}
+  set changed 0
+  foreach t [regexp -all -inline {\S+} $ex] {
+    lassign [wviewer::repair_current_token $t $slots] st sp cands
+    lappend out $sp
+    if {$st eq {keep}} { continue }
+    if {$st eq {repaired}} { set changed 1 }
+    lappend notes [list $st $t $sp $cands]
+  }
+  if {!$changed} { return [list $ex $notes] }
+  return [list [join $out { }] $notes]
+}
+
+# The impure half: ONE inventory read for the WHOLE batch, then the pure pass.
+# Returns {<expressions> <notes>} with the list length preserved, so a caller's
+# parallel per-expression list (dp_finish's `qcolors`) stays aligned.
+#
+# ⚠ ONE `signal_list_all` PER BATCH, AND NEVER FROM A REDRAW. That proc moves
+# the engine's current-database pointer once per attached database and puts it
+# back; item 3 measured the neighbouring resolution at up to 189 ms with no
+# cache, and item 4's rule is "resolve once per gesture". An attach is a gesture.
+# Per-expression calls here would multiply it by the size of the queue.
+proc wviewer::repair_currents {token exprs} {
+  if {![llength $exprs]} { return [list $exprs {}] }
+  set slots {}
+  if {[catch {set slots [wviewer::signal_list_all $token]}]} { return [list $exprs {}] }
+  if {![llength $slots]} { return [list $exprs {}] }
+  set slots [wviewer::prepare_slots $slots]
+  set out {}
+  set notes {}
+  foreach ex $exprs {
+    lassign [wviewer::repair_current_expr $ex $slots] nex n
+    lappend out $nex
+    foreach e $n { lappend notes $e }
+  }
+  return [list $out $notes]
+}
+
+# PURE. One `name_index` per SLOT for the whole batch, stashed on the slot under
+# `nameidx` — the hoist the paragraph above repair_current_token explains. The
+# key is `nameidx` and NOT `idx`: `idx` is already the slot's DATABASE index in
+# signal_list_all's shape, and re-using it here would make db_by_index answer
+# with a dict instead of an integer.
+proc wviewer::prepare_slots {slots} {
+  set out {}
+  foreach db $slots {
+    dict set db nameidx [wviewer::name_index [wviewer::dget $db names {}]]
+    lappend out $db
+  }
+  return $out
+}
+
 # ONE registry slot by its INDEX, in `resolve_signal_db`'s dict shape plus the
 # slot's `names`; {} when no slot has that index.
 #

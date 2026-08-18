@@ -2184,6 +2184,111 @@ proc ase::ui::dp_queue {key ex {kind {}} {token {}}} {
   catch {::ase::echo "ase: queued trace '$ex'"}
 }
 
+# POST-LOAD CURRENT REPAIR — casemode batch item 12 (PLAN.md §3b item 12 and
+# §D6 part 2; DECISIONS.md D2; spec doc/claude/specs/simulator_profiles.md §16).
+#
+# Called AFTER the run's databases are attached and BEFORE the expressions are
+# handed to the viewer, at the two seams that attach one: dp_finish (Direct
+# Plot) and auto_plot (the session's `plot` rows). A CURRENT expression is
+# constructed from our model of how the simulator names a branch — the device's
+# own first character, the instance path, the name (sod_qualify) plus the case
+# map (sod_expr) — so the database the run actually wrote is the only authority
+# that can correct it. wviewer::repair_currents does the lookup; this proc owns
+# the ANNOUNCEMENT, which is ASE-L's channel (ase::echo -> the CIW pane and the
+# action log), and returns the list with its length preserved.
+#
+# ⚠ THE SESSION IS NEVER REWRITTEN, and that is DECISIONS.md D1's precedent, not
+# an omission. D1 refused a silent re-case pass because a wrong map would
+# corrupt saved work with no trace, and item 10 made its correction an EXPLICIT
+# command (ase::preflight_fix_session) rather than an implicit edit. The repair
+# is therefore in memory, for this attach: the row's stored `expr` and the
+# state file keep the user's own text, the session is not marked dirty, and the
+# next attach repairs — and re-announces — again. What DOES carry the repaired
+# spelling is the trace the viewer stores, because that is a description of the
+# data now on screen and it is the viewer's own document, not the user's.
+#
+# ⚠ NOT SILENT IN EITHER DIRECTION. A repair says which spelling it plotted (a
+# name the user never typed, appearing in a legend, is exactly the surprise
+# item 14's relay ruling is about) and a D2 decline names every candidate at tag
+# `error`. A token nothing folds to is NOT announced here: add_trace and
+# plot_signals already report it per expression, and two lines for one failure
+# is the noise item 10's per-offender rule was written against.
+#
+# ⚠ AND THE COUNTING UNIT IS THE OFFENDING SPELLING, NOT THE OCCURRENCE — the
+# same rule again, applied to this loop rather than only to the candidate scan.
+# One mis-cased current referenced by N output rows (or twice inside one RPN)
+# produces ONE line, not N byte-identical ones: `wviewer::repair_currents`
+# returns a note per token OCCURRENCE, because its caller needs the positions,
+# and this proc folds them onto {status old new} before it speaks. Item 11
+# §15.5 counts spellings for the same reason.
+proc ase::ui::repair_currents {key exprs} {
+  set out $exprs
+  set notes {}
+  if {[catch {lassign [wviewer::repair_currents $key $exprs] out notes}]} {
+    return $exprs
+  }
+  # LENGTH IS THE CONTRACT, and it is checked rather than trusted: dp_finish
+  # pairs this list with `qcolors` positionally, so a short answer would not
+  # merely lose a trace, it would repaint the survivors in the wrong colours.
+  if {[llength $out] != [llength $exprs]} { return $exprs }
+  set said {}
+  foreach n $notes {
+    lassign $n st old new cands
+    set sig [list $st $old $new]
+    if {[lsearch -exact $said $sig] >= 0} { continue }
+    lappend said $sig
+    if {$st eq {repaired}} {
+      catch {::ase::echo "ase: current '$old' is not in the results database —\
+ plotting its own spelling '$new'" note}
+    } elseif {$st eq {ambiguous}} {
+      # ⚠ "MATCH IT CASE-INSENSITIVELY", not "differ from it only in case": the
+      # candidates come off `name_rungs`, so one of them can differ by the whole
+      # dropped branch prefix as well (item 2's `i(v.x` -> `i(x` rung, e.g.
+      # `i(X1.Vs)` against `i(V.X1.VS)`). The old wording was simply false for
+      # that candidate, and a user asked to choose between two names deserves an
+      # accurate description of why they are both in the list.
+      catch {::ase::echo "ase: current '$old' is not in the results database and\
+ [llength $cands] names in it match case-insensitively ([join $cands {, }]) —\
+ declining to guess which one you meant" error}
+    }
+  }
+  return $out
+}
+
+# The exact-string dedupe `ase::ui::dp_queue` applies at PICK time, re-applied
+# after the repair — in LOCKSTEP with the parallel colour list.
+#
+# ⚠ WHY IT HAS TO RUN TWICE. dp_queue refuses a duplicate with `lsearch -exact`,
+# which is the right test at pick time; but the repair can rewrite two DISTINCT
+# queued spellings of one current (`i(v.x1.vs)` and `i(V.x1.Vs)`, both legal
+# picks on a case_sensitive database) into one identical string. Handing that to
+# plot_signals plots the same data twice — two strips in multi-plot, two
+# same-data traces in one strip in single-plot — at two DIFFERENT colours, so
+# one of the two schematic net cues issue 0153 paints can never match its trace.
+# The FIRST occurrence and its colour survive; that keeps the colour the picker
+# already painted on the wire the user clicked first.
+#
+# ⚠ COLOURS ARE FILTERED WITH IT OR NOT AT ALL. dp_finish pairs the two lists
+# positionally, so dropping an expression without its colour would repaint every
+# survivor after it. A colour list that is empty (a scripted or replayed call —
+# plot_signals then derives them) or that is not the same length as the
+# expressions is not positional and comes back untouched.
+proc ase::ui::dedupe_plot_queue {exprs {colors {}}} {
+  set paired [expr {[llength $colors] == [llength $exprs]}]
+  set oe {}
+  set oc {}
+  set i 0
+  foreach ex $exprs {
+    if {[lsearch -exact $oe $ex] < 0} {
+      lappend oe $ex
+      if {$paired} { lappend oc [lindex $colors $i] }
+    }
+    incr i
+  }
+  if {!$paired} { return [list $oe $colors] }
+  return [list $oe $oc]
+}
+
 # Direct Plot finish (item 13, D3): runs AFTER sod_end restored the canvas
 # bindings, with the queued trace expressions. Policy: (1) op-only results
 # have no sweep -> notice, queue discarded, viewer untouched; (2) viewer
@@ -2206,13 +2311,32 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
     return
   }
   set rf [ase::last_rawfile $key]
+  set attached 0
   if {$rf ne {}} {
-    wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
+    if {[wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]]} { set attached 1 }
   } else {
     catch {::ase::echo "ase: no simulation results yet — run first (queued\
  traces are recorded and resolve after the run)"}
   }
   if {![llength $queue]} { return }
+  # casemode item 12: the databases are attached now, so a constructed current
+  # that misses can be resolved against what the run actually wrote. Once, for
+  # the whole queue, before plot_signals — `qcolors` stays aligned because the
+  # list length is preserved (and the dedupe below filters both together).
+  #
+  # ⚠ ONLY WHEN THIS CALL ACTUALLY ATTACHED, and that is the "post-load" in the
+  # item's name rather than a belt-and-braces guard. On the NO-RUN path above
+  # there is no session database — but the viewer window may still hold a raw
+  # somebody opened by hand (rawbar_load), and repairing against THAT rewrites a
+  # queued trace to a foreign file's spelling and then pins it there, while the
+  # notice one line up promises the trace "resolves after the run". Two
+  # statements contradicting each other in the same breath, and the wrong one
+  # wins. Nothing attached -> nothing to repair against -> the queue goes
+  # through exactly as dp_queue recorded it (CU238e).
+  if {$attached} {
+    set queue [ase::ui::repair_currents $key $queue]
+    lassign [ase::ui::dedupe_plot_queue $queue $qcolors] queue qcolors
+  }
   # issue 0151: WHERE the queued signals land is the viewer window's plot mode
   # (doc/claude/specs/waveform_viewer_modes.md) — single-plot appends them all
   # into the target strip, multi-plot gives each one its own new strip. The
@@ -3836,8 +3960,18 @@ proc ase::ui::auto_plot {key} {
   set gi [wviewer::ensure_auto_graph $key]
   wviewer::clear_graph_traces $key $gi
   wviewer::regenerate $key   ;# reflect the clear even if every add fails
+  # casemode item 12: map every row FIRST, then repair the batch in ONE pass —
+  # wviewer::repair_currents reads the whole database inventory per call, so a
+  # per-row call would pay that once per output row instead of once per attach.
+  # plot_map_expr runs first so the `-i(v1)` -> `i(v1) -1 *` RPN is repaired in
+  # the form add_trace will actually validate.
+  set exs {}
+  foreach o $rows { lappend exs [ase::ui::plot_map_expr [ase::state_get $o expr]] }
+  set exs [ase::ui::repair_currents $key $exs]
+  set ei 0
   foreach o $rows {
-    set ex [ase::ui::plot_map_expr [ase::state_get $o expr]]
+    set ex [lindex $exs $ei]
+    incr ei
     set nm [ase::state_get $o name]
     if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }
     set err [wviewer::add_trace $key $gi $ex $nm]
