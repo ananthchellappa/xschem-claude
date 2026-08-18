@@ -1,13 +1,13 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `577ef5bc`
 
 Driver-mode unattended batch. **DONE: 0, 0a, 0b, 1, 2, 3, 4, 5 `[E]`, 5b, 6, 7,
-8, 9, 10, 11, 12, 14 `[E]`. REMAINING: 13, 15.** Nothing is pushed.
+8, 9, 10, 11, 12, 13 `[E]`, 14 `[E]`. REMAINING: 15 (docs) only.** Nothing is pushed.
 
-**Current baseline: `audit_item12_closer_2026-08-18.txt` — 329/15/0/0 of 344** at
-`66d7122f`. Every item so far has moved **zero** audit statuses; all growth is the
-ten suites they added. **4 `look` debts are open** (items 5 ×2, 14 ×2) and only the
+**Current baseline: `audit_item13_closer_2026-08-18.txt` — 330/15/0/0 of 345** at
+`e998e853`. Every item so far has moved **zero** audit statuses; all growth is the
+ten suites they added. **8 `look` debts are open** (items 5 ×2, 13 ×4, 14 ×2) plus a `:0` suite debt and only the
 user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
-`0422` (code execution), `0423`.**
+`0422` (code execution), `0423`, `0424`, `0425`.**
 
 State lives HERE, not in the driver's context. After a compaction, re-read this
 file and continue from the first row that is not `[x]`/`[E]`/`[D]`/`[F]`.
@@ -63,7 +63,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0423` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
 | 11 | `result_probe` `-nocase` | `[x]` | `1d217632` | 28 | 19 | 6 + 3 audits | no | audit = one added row, zero movers. **A LADDER with a D2 decline + a delivered-mode veto, NOT a `-nocase` flag** — the naive fix was re-run and reddens 10 checks. **Corrected §13.6**: a plain `fold` run reaches the defect too. Spec §15 |
 | 12 | post-load current repair | `[x]` | `66d7122f` | 56 | 51 | 6 + 1 audit | no | audit = one added row, zero movers. **A GUARD, not a rescue** — item 9's construction model is right, so on a correctly-picked expression the repair is needed **never**. In memory only; the session is never rewritten. Spec §16 |
-| 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
+| 13 | simulator dialog (extends `simconf`) | `[E]` | `e998e853` | 69 | 69 | 6 + 1 audit | **YES ×4** | audit = one added row, zero movers. Makes items 8/10/12's dormant paths **reachable by gesture**. 4 look debts + a `:0` suite debt. Two findings carried out → issues `0424`, `0425`. Spec §17 |
 | 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0421`. Spec §14 |
 | 15 | docs | | | | | | no | must name `v(all)` **and** `i(all)`; must record Xyce as unverified |
 
@@ -885,6 +885,35 @@ repairs. §13.6 carries the correction in place.
 - **"Post-load" means after an attach actually happened.** `dp_finish`'s no-run
   branch attaches nothing, and the first cut repaired there against whatever raw
   the viewer already held; the call is now gated on `attach_raw`'s return value.
+
+## Carry-forwards item 13 handed on — baseline `audit_item13_closer_2026-08-18`
+
+**Baseline is `audit_item13_closer_2026-08-18.txt` — 330/15/0/0 of 345** at
+`e998e853`. Zero statuses moved. **Item 13 is `[E]` with four `look` debts and a
+`:0` suite debt; only the user clears the looks.**
+
+**IT MAKES THREE EARLIER ITEMS' CODE REACHABLE BY GESTURE.** Until this dialog
+existed, nothing in ASE-L could set a `distinguish` profile, so item 8's REFUSE
+path, item 10's pre-flight and item 12's repair were all dormant — item 12's
+receipt said in terms that "item 13 is what turns it live". They are live now.
+
+**TWO FINDINGS CARRIED OUT OF THE ITEM, BOTH FILED BY THE DRIVER:**
+
+- **Issue `0424`** — `ase::run_mode_advice` (`src/ase.tcl:990`) keys on
+  `sim_profile_resolve` returning status `default`, which happens whenever the
+  session **names** no explicit `sim_profile` — not whether a usable row exists.
+  So a user who configured a row **through this very dialog** is told "This
+  session has NO simulator profile row … or configure a profile": **both clauses
+  false, and the second instructs them to repeat what they just did.** Reachable
+  by hand-edited `simrc` since item 6; **item 13 makes it reachable by gesture**,
+  which is why it is filed rather than noted. Item 8's own rule — *the advice must
+  name a lever that exists* — is what it violates.
+- **Issue `0425`** — item 5 wrote "the override is deliberately NOT persisted —
+  item 13 owns durability", and **that hand-off was never carried into item 13's
+  scope by the driver**. Item 13 correctly refused to absorb a *viewer* setting
+  into a *simulator profile* dialog rather than silently widening. The issue
+  records that **nobody has decided whether it should persist at all**, and notes
+  that a persisted explicit setting is the same staleness class as `0423`.
 
 ## Environment — re-verified 2026-08-16
 
