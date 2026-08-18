@@ -1884,3 +1884,486 @@ silently spell it wrong — see §13.6.
   so the proc's own return value is always a mode name.
 - **`doc/claude/code_analysis/ngspice_case_sensitivity.md:62` still quotes the
   two-argument call site.** Item 15 owns rewriting that file's §Part 3.
+
+---
+
+# 14. THE THREE DEFENCES — casemode item 10
+
+`PLAN.md` §3b item 10 and §D5. `DECISIONS.md` **C3** (build both defences),
+**C4** (all three, none redundant, with the measured guard shape) and **D1**
+(the pre-flight *offers* the legacy corrections; never a silent re-case). Item 6
+owns §1–§10, item 7 §11, item 8 §12, item 9 §13.
+
+Checks: `tests/headless/test_ase_preflight.tcl`, **`PF212`–`PF220e`, 74 checks**,
+true headless. Seventy-three of the seventy-four are driven by a mutation; the
+one that is not is named in §14.8.
+
+## 14.1 The defect, and why it is not a casemode defect
+
+A `.save` of a node the circuit does not have **does not fail usefully**.
+Re-measured 2026-08-17 in `render_deck`'s own deck shape (analyses inside
+`.control`, bare `write`, no vector list), on **both** binaries:
+
+```
+.save v(nosuchnode) + tran
+  rc=1
+  "Error: no data saved for Transient analysis; analysis not run"
+  ZERO mentions of the bad token on either stream
+  ...and a 569-byte raw file IS WRITTEN:
+      Title: Constant values
+      Date: Sun Aug  2 23:29:26 UTC 2026     <- the BUILD stamp, not the run
+      Command: ngspice-46, Build Sun Aug  2 23:29:26 UTC 2026
+      Plotname: constants
+      No. Variables: 12      (yes false true boltz c e echarge i kelvin no pi planck)
+      No. Points: 1
+```
+
+`ver_50` is **identical to stock here** — upstream has withdrawn that fix three
+times, which is why C3 rules differently from C1 (`v(all)`, fixed on ver_50,
+left alone). So this is not a case-mode defect at all: it reaches every user of
+every ngspice, from a plain typo, with no flag set.
+
+Downstream, that file exists, parses and attaches, and the session shows twelve
+mathematical constants where its waveforms should be. `rc=1` is a real
+corroborating signal, but **it arrives with the file already written**, so it
+cannot replace the content check.
+
+**C4's table, and why none of the three is redundant:**
+
+| defence | catches | blind to |
+|---|---|---|
+| (a) pre-flight (`ase::preflight_gate`) | the **specific bad expression**, named, before any simulator starts | a name that is legal only because an `.include`d PDK file defines it |
+| (b) `$sim_status` guard (`render_deck`) | **any** failed analysis, leaving **no artefact at all** | any file we did not generate |
+| (c) content check (`ase::raw_content_verdict`) | a bad file from **anywhere** — old, another tool's, pre-guard | cannot say **why** it is bad |
+
+(c) is the cheapest (one comparison against `Plotname:`) and the only one that
+can protect a raw someone hands you.
+
+## 14.2 (a) The pre-flight
+
+`ase::preflight_scan` is a **pure function** of a state and the circuit netlist
+text, so every ruling below is drivable with no simulator and no files.
+
+### RULING — the map is built from the NETLIST ARTIFACT, never from the schematic
+
+The deck is what runs, and `ase::run_existing` deliberately runs a netlist the
+design may no longer match (hand edits survive it, by design). Asking the
+schematic would answer about a different circuit. `ase::netlist_map` parses:
+
+```
+scopes   <subckt name, folded> -> {nodes {..} devs {..} insts {<inst> <master>}}
+         the TOP level is the scope named {}
+globals  nodes visible in every scope (`.global`, plus `0`)
+includes <scope> -> 1 for every scope carrying an `.include`/`.inc`/`.lib` card
+```
+
+### RULING (fix round) — a `+` CONTINUATION IS FOLDED ONTO ITS CARD, not skipped
+
+The first cut skipped continuation lines, and an earlier revision of §14.7
+justified it with "xschem's netlister does not emit them for element cards".
+**That premise is false**: the user's own `~/.xschem/simulations/tb_bandgap.spice`
+carries 46 of them (`0_examples_top.spice`, 439), all element-card continuations
+of the `XM4 … \n+ mult=1` shape. Skipping them left a node declared only on a
+continuation out of the map, and a legal run was **falsely refused** — the one
+direction the pre-flight must never take. They are now folded onto the preceding
+logical card before anything is parsed, which also fixes the X-card master being
+read from the wrong token when the wrap lands between the last node and the
+master (`PF221o`, `PF221p`, `PF221q`; mutation `F16`).
+
+Shape verified against a real xschem netlist (`tests/headless/fixtures/ase_hier`
+netlisted): the top-level body sits between `**.subckt` / `**.ends` **comment**
+markers, real `.subckt`/`.ends` bodies follow, and an X-card's **last** non-`k=v`
+token is its master.
+
+### RULING — the map OVER-approximates, deliberately, and that is the safe direction
+
+A device card's node count is device-dependent (`M` has four, `X` has as many as
+its master), and a model name or a bare value is indistinguishable from a node
+without a full device grammar. So **every non-`k=v` token after the instance
+name is recorded as a node**. The error that introduces can only make a name
+look *present* that is not — a miss, which defences (b) and (c) still catch. The
+opposite error is a **false refusal**, which blocks work that would have
+succeeded, and the pre-flight is the only one of the three that can do that.
+
+Currents and voltages keep **separate name spaces** (`devs` vs `nodes`), because
+`i(midnode)` is nonsense where `v(midnode)` is fine (`PF214h`; mutation `M16`,
+one shared space, reddens ten checks).
+
+### RULING — `unknown` is a REFUSAL TO JUDGE, and the gate never refuses on it
+
+Four arms reach it, and each is a place where the netlist genuinely cannot
+answer:
+
+* an `@dev[param]` shape — simulator-constructed, item 12 / issue `0419`;
+* a bracketed name that is not an exact hit — a bus bit is a whole sub-language
+  (issue `0159`) and the **base name of `bus[1]` is not itself a node**, so a
+  base-name test would false-refuse every bus;
+* a hierarchy segment whose master subckt is **not in this netlist** — it came
+  from an `.include`d PDK file. This is C4's named blind spot, written down as
+  code rather than as a caveat;
+* **(fix round)** a name that **nothing in its scope even folds to**, when that
+  scope carries an `.include`/`.inc`/`.lib` card. See the ruling below.
+
+An instance path segment that names **nothing in a scope we did parse** is
+`absent`, not `unknown` (`PF214j`): that we can prove.
+
+*(An earlier revision of this list named a fifth arm, "the empty case (no
+top-level body parsed at all)". **That arm does not exist and never did**:
+`ase::netlist_map` always creates the `{}` scope, so the `![dict exists $scopes
+$scope]` test can never fire for the top level. Driven:
+`ase::netlist_map "* only a comment\n.end\n"` gives `scopes {{}}` and
+`ase::netlist_map_resolve voltage out 0` returns `absent`. The behaviour is
+right — such a deck would have produced the constants raw anyway — only the
+spec's claim was wrong.)*
+
+### RULING (fix round) — AN INCLUDE-BEARING SCOPE STANDS DOWN, BUT ONLY WHERE IT IS BLIND
+
+A design whose stimulus or supply cards live in an `.include`d file was
+**refused outright** for a run the simulator completes perfectly: netlist
+`.include stim.sp` + `R1 in out 1k`, output row `i(V1)` with `V1` defined in
+`stim.sp` — measured `rc=0` and a 2071-byte transient raw. C4 says the
+pre-flight is **blind** there, and blind means **stand down**, not refuse.
+
+But downgrading *every* miss in an include-bearing scope would leave defence (a)
+inert on every real design, since they all `.include` a PDK. So the downgrade is
+narrowed to the case where this netlist genuinely has nothing to say: **no
+stored name in that scope even folds to the one asked about**. A fold hit is a
+proof about *this* netlist — it is D1's correction and issue `0423`'s whole
+subject — and it keeps refusing (`PF221k`, `PF221l`, `PF221m`, `PF221n`;
+mutations `F34`, `F35`, `F36`).
+
+### RULING (fix round) — a mis-cased HIERARCHY SEGMENT is as fatal as a mis-cased leaf
+
+`ase::netlist_map_resolve` returned the **leaf's** verdict and threw away the
+case verdict of every intermediate segment. With the netlist spelling the
+instance `X1`, a stale fold-picked `v(x1.out)` under `distinguish` therefore
+resolved `present`: the pre-flight passed through, in silence, the exact `0423`
+row it exists to catch — while the case-keeping binary aborts that analysis
+(measured: `rc=1`, `RUN-FAILED`, no raw). Any segment that came back as a
+fold-only hit now makes the whole identifier `absent`, carrying the
+already-assembled whole-path correction (`PF221f`–`PF221i`; mutations `F32`,
+`F33`).
+
+### RULING (fix round) — `vi(...)`, `deriv(...)` AND FRIENDS ARE NOT `v()`/`i()` IDENTIFIERS
+
+Unanchored, `([vi])\(` matched the `i(` inside ngspice's standard AC output form
+`vi(out)`, which was then read as a **current named `out`**, looked up in the
+device table, found absent, and the whole run **refused with a nonsense
+diagnosis** — reachable straight from the free-text Expression entry of the
+output editor. `deriv(time)` was read as `v(time)` the same way. The hole was
+asymmetric (`vdb`/`vm`/`vp`/`vr` all passed), which is why no family-level test
+could see it. The identifier regexp now requires a non-identifier character, or
+the string start, in front of the letter. That costs the `vi`/`vdb`/… family
+their pre-flight — a **miss**, still caught by (b) and (c) — and never a false
+refusal (`PF221`–`PF221e`; mutations `F06`, `F07`, `F08`).
+
+### RULING — under `fold` the pre-flight folds BOTH sides (§13.6's trap)
+
+Item 9 emits `v(topnet)` under `fold` and the netlist says `TOPNET`. A
+case-sensitive comparison would report **every mixed-case net in the design** as
+absent and refuse the **default** mode's every run — worse than no pre-flight at
+all. So the comparison is case-sensitive **only** when the requested mode is
+`distinguish` (`PF214`; mutation `M8` removes the fold arm and reddens five).
+
+The mode is the **run's request** — item 9 §13.4's ruling and item 8's source:
+profile `casemode` → global floor `sim_case_mode` → `fold`. It is asked with
+`init 0`, item 9's **read-only** form: a pre-flight is a question, and
+`::set_sim_defaults` is not a read (§13.4).
+
+### RULING — where the gate sits, and what REFUSE means here
+
+`ase::preflight_gate` is called from `ase::run_deck` **immediately after the
+netlist text is read** and before anything else: before `cosim_map`,
+`cosim_save_map` (which deletes the sidecar), `cosim_clear_artifacts` (which
+deletes every VCD the deck promises), any `.so` rebuild, the deck write and the
+process. It cannot be item 8's neighbour any earlier than that, because it needs
+the netlist text; everything between item 8's gate and this one only **reads**.
+
+A refusal therefore leaves **no deck, no raw, no log, no deleted VCD, no rebuilt
+`.so`, no `last_run`, no callback**, and the message says the rundir's files are
+from an earlier run — item 8 §12.5's shape, and it matters more here than
+anywhere: **item 10 exists because a file that looks like a result is not one,
+so this gate must not manufacture a new instance of that class.** `PF216g` pins
+it with a planted previous-run artefact, exactly as `CS181` does.
+
+### RULING — every offending expression gets its OWN line, and `ase_preflight 0` is a real lever
+
+Item 14's lesson is that a channel can be correct and still reach nobody. A
+refusal is loud by nature, but a one-line summary of twelve corrections is a
+summary nobody can act on, so the gate echoes **one `error` line per offender**
+naming the expression, the identifier, and the correction when there is one
+(`PF216c`, `PF217b`).
+
+**Fix round — the HEAD counts EXPRESSIONS, the DETAIL LINES count identifiers.**
+The head counted `[llength $rows]`, which is the number of offending
+*identifiers*, and worded it as expressions (and drove the singular/plural off
+it), so one output row naming two absent nodes announced "2 output expressions".
+Rows are now grouped by expression: the head counts the groups, each identifier
+still gets its own line, and the **correction is composed once per expression**
+and offered on that expression's last line — a row naming two mis-cased nodes
+has one repaired spelling, not two mutually exclusive halves (`PF221t`–`PF221v`,
+`PF221z`; mutations `F49`, `F50`, `F51`, `F52`).
+
+`ase_preflight 0` disables the refusal, and the refusal message says so. The
+map's blind spot is real — a top-level node that only an `.include`d file
+defines is the case the over-approximation cannot reach — and a user who is
+right must not be locked out of their own simulator. Defences (b) and (c) are
+unaffected by the flag, which is why giving the lever is cheap.
+
+## 14.3 (b) The `$sim_status` guard
+
+C4's shape, copied rather than reinvented, and re-measured here on both binaries
+in this deck's own shape:
+
+```
+op                          <- each enabled analysis
+if $?sim_status = 0
+  echo NO-SIM-STATUS
+end
+if $sim_status ne 0
+  echo RUN-FAILED
+  quit 1
+end
+...
+remzerovec
+write <abs path>
+```
+
+| | rc | stdout | file |
+|---|---|---|---|
+| bad run (`.save` of an absent node) | **1** | `RUN-FAILED` | **none written** |
+| good run | 0 | — | the real raw |
+
+Both `/usr/local/bin/ngspice` (46) and `build-ver_50`, identical.
+
+**Trap 1 — `$sim_status` does not exist before the first analysis, and on a
+build that has no such variable at all defence (b) is INERT.** The `$?` test in
+front is the **marker that says so**: `NO-SIM-STATUS` in a run log means that
+run was protected by (a) and (c) only (`PF218d`, `PF220d`).
+
+**CORRECTION (fix round) — the `$?` test is NOT an error suppressor**, and an
+earlier revision of this paragraph said it was ("hence the `$?` existence test
+first", to avoid `Error: sim_status: no such variable.` reaching the log).
+Re-measured 2026-08-17 on ngspice-46, the full guard alone in a `.control` block
+with no analysis before it:
+
+```
+with the $?sim_status block     -> rc=1, log line 1 = Error: sim_status: no such variable.
+without the $?sim_status block  -> rc=1, log line 1 = Error: sim_status: no such variable.
+```
+
+The two logs differ **only** by the `NO-SIM-STATUS` line: ngspice emits that
+error at parse time regardless. The shipped guard is unaffected — `render_deck`
+emits no guard at all in a deck with no analysis (`PF218e`), so as shipped the
+guard is only ever parsed with an analysis in front of it — but the *rationale*
+recorded for a "MEASURED, copy it" shape was wrong and is corrected here.
+
+**Trap 2 — it is LAST-WRITER-WINS PER ANALYSIS, so one guard at the end is the
+defect, not the fix.** Measured with a failing `dc` followed by a good `tran`:
+
+```
+guard only at the end   -> rc=0, a 2198-byte raw written, the failure MASKED
+guard after each        -> rc=1, RUN-FAILED, nothing written
+```
+
+So the guard is emitted inside the analyses loop, after **each** analysis
+(`PF218b`, `PF218c`; mutation `M35` is exactly C4's named defect and reddens
+five checks).
+
+**Fix round — the guard is now DRIVEN for all four analysis types.** The first
+cut only ever rendered a deck of `op` and `tran`, so restricting the emission to
+those two left five suites and 336 checks green with `dc` and `ac` completely
+unguarded — and C4's masking measurement is built on exactly a failing `dc`.
+`PF221al` renders `op`+`dc`+`ac`+`tran` and asserts one guard immediately after
+**each**; `PF221am`/`PF221an` do the single-analysis `dc` and `ac` decks
+(mutation `F63` is the reviewer's own `if {$type eq {op} || $type eq {tran}}`).
+
+**The deck's shape is otherwise untouched** (`CREW_BRIEF` §4): no dot card for
+the analyses, no `run`, and the `write` line still names **no vectors** —
+upstream `0073` is unfixed and naming them writes two identical columns with
+byte-identical names that no filter can separate. `PF218g`/`PF218h` are the
+standing guards against drifting any of that.
+
+**One committed assertion moved, and it is the golden deck** —
+`test_ase_core`'s `D1`, restated in place with its id and a why-comment. It is
+the drive for the emission itself: without the restatement the shipped suite
+goes red the moment a guard is emitted, and with it a suppressed guard goes red.
+
+## 14.4 (c) Content-based rejection
+
+`ase::raw_content_verdict <path>` → `{ok constants appended plotname nvars
+npoints signature why}`.
+
+**The signature**, all four of C3's markers, measured on the real file:
+`Plotname: constants`; `Title: Constant values`; `Date:` **equal to the build
+stamp the `Command:` line repeats**; and `No. Variables:` at or below the twelve
+the constants plot carries.
+
+**RULING (fix round) — the count may CONTRADICT the plot name, not only
+corroborate it.** `let`-created vectors written from the constants plot land in
+a file headed `Plotname: constants` that holds **real user data** — the tree's
+own `doc/claude/ngspice_upstream/feedback/…/repro/letonly.raw` is 14 variables
+over 5 points. Rejecting on the plot name alone threw that data away while
+asserting the file "holds ngspice's twelve built-in mathematical constants",
+which it demonstrably does not. **More than twelve variables, or more than one
+point, and the file is REPORTED rather than rejected** — the same treatment the
+`appendwrite` shape already gets, and the same lean as everywhere else here.
+The genuine 12-over-1 raw is still rejected, asserted in the same breath so
+"never reject anything" cannot satisfy the check (`PF221ai`, `PF221aj`,
+`PF221ak`; mutations `F72`, `F73`). `attach_dbs` reports any accepted verdict
+that carries a `why`, at tag `note`.
+
+**RULING — the count is a FLOOR and only ever corroboration.** A legitimate plot
+can hold twelve vectors, so the count (and the `Date`) are recorded only once a
+**decisive** marker has already fired. Otherwise the verdict prints
+"No. Variables: 2 (the constants plot has 12)" about a perfectly good raw
+(`PF219d`; mutation `M38`).
+
+**RULING — the `set appendwrite` shape is REPORTED, not rejected.** C3 names it:
+a constants plot hiding behind a real one. Plot 1 is genuine data and the C
+reader selects a plot by `sim_type`, which `constants` never matches, so
+rejecting the file would throw away a good result. Reproduced with
+`set appendwrite` + `setplot const` + a second `write`: two plot headers in one
+file, the second `constants`, 12 variables.
+
+**RULING — a file it cannot parse as a spice raw is NOT judged.** Empty
+`Plotname:` ⇒ the verdict says nothing at all, so VCD and table databases, and
+any file that merely *quotes* the header (our own refusal message does, and so
+does any run log that captured it), pass through untouched. Judging a format we
+did not parse is how a content check turns into a false rejection (`PF219e3`,
+`PF219f`).
+
+**RULING — the scan is BOUNDED to the first and last 64 KB.** A plot header is a
+few hundred bytes at the very start and an appended constants plot is 569 bytes
+at the very end, so both shapes are reachable without reading a 50 MB raw on
+every attach. `PF219e`'s fixture is deliberately over 64 KB so the tail read is
+load-bearing (mutation `M41`).
+
+**Where it is wired:** `ase::attach_dbs`, **before the registry is touched**. A
+rejected file therefore leaves the previously loaded database exactly where it
+was — "a stale-but-loaded DB beats an empty viewer" is that proc's own stated
+policy, and a rejection that cleared first would trade one wrong answer for
+another (`PF219k`; mutation `M45` moves the check one line later and reddens it
+alone). The rejection is echoed at tag **`error`**; the appendwrite report at
+`note`.
+
+## 14.5 D1 — the corrections are OFFERED, and the confirmation is DEFERRED
+
+The pre-flight is already computing the comparison a re-case pass needs, so an
+absent identifier that folds to exactly **one** netlist name yields that name as
+its correction — for the whole dotted path, not only the leaf, and for a
+hierarchical current the branch prefix is **re-derived from the device's own
+first character** (item 9 §13.3's ruling, `PF214g`). Two netlist names folding
+together yield `ambiguous`: there is no correction to offer, only a question
+(D2's rule, one layer up).
+
+**RULING — the apply is an explicitly-invoked command, and the modal is not
+built.** D1 says "applies them on confirmation", which implies a prompt. A modal
+in the run path is a **pixel deliverable**, and this item's verdict would become
+`[E]` with a fifth `look` debt for a dialog nobody has specified. What ships is:
+
+* `ase::preflight_fix_session <key>` — rewrites that session's output rows from
+  the corrections found against the **current** netlist artifact, marks the
+  session dirty (the user still has to save), and echoes every rewrite;
+* the refusal message **names that command**, beside the list of corrections it
+  found;
+* **nothing** rewrites a row implicitly. `PF217d` asserts the gate alone changes
+  no stored row, and mutation `M27` — the gate silently applying the corrections
+  and running on — is exactly D1's forbidden shape and reddens three checks.
+
+**Why deferring the presentation is the right call and not a shortcut:** the
+detection, the corrections and the apply are all headless-testable and all
+driven; what is missing is one button. The refusal is already loud on the CIW,
+in the action log and as the raised error, and item 13 owns the run-path UI
+surface where such a button belongs. Building a prompt and calling the item
+`[x]` was the one option the dispatch explicitly forbade; building it and taking
+`[E]` would have bought a dialog no decision in this batch specifies.
+
+## 14.6 Issue `0423` — NARROWED, not closed, and why
+
+Item 9's declared departure (§13.5b) leaves a row picked under a `fold` profile
+storing `v(topnet)` forever; run under a later `distinguish` profile the deck
+ships that folded card and loses the whole run. §13.6 made the mitigation item
+10's: **refuse and say why.**
+
+That is built and driven end to end (`PF217`, `PF217b`): the folded row is
+absent from a case-kept netlist map, the gate refuses, names both rows, offers
+both corrections, and names issue `0423` in the message.
+
+**It does not close `0423`**, and the reason is precise. The issue asks for a
+**re-case pass**: expressions re-derived from the schematic in the mode about to
+be requested, so a stored row is never stale in the first place. What is here is
+a **confirmation-gated repair** of a session that has already gone stale, driven
+from the netlist rather than from the schematic, and it inherits the map's
+blind spots — an `.include`-scoped or bracketed name is `unknown`, so a stale
+row of that shape is neither refused nor corrected. The silent-wrong-answer half
+of `0423` is gone; the staleness itself is not. Recorded in the issue.
+
+## 14.7 What is NOT here
+
+- **The File → Open path is not wired to the content check.** C4 names it as the
+  place only (c) can protect, and `ase::raw_content_verdict` is written to serve
+  it — but the reader there is C (`xschem raw read`, `save.c`), and item 10's
+  scope in `PLAN.md` §3b is `ase.tcl`. Every ASE-L attach goes through
+  `ase::attach_dbs` and is covered; a raw opened straight from the File menu is
+  **not**. Whoever wires the C reader should call the same rules, not a second
+  copy of them.
+- **THREE OTHER READ PATHS BYPASS DEFENCE (c), and they are named rather than
+  guessed at.** Only `ase::attach_dbs` consults `raw_content_verdict`; grepped,
+  the callers that read a raw *without* going through it are
+  `wviewer::restore`'s inline attach (`wave_viewer.tcl:3876`), the cross-probe
+  add path (`:3648`) and the Location bar (`:8211`), plus the C `File → Open`
+  reader above. They are all *re-attach* paths for a file a run already
+  produced, so the guard and the pre-flight cover the same defect upstream of
+  them — but a constants raw handed to any of the four is still attached.
+  Consolidating them behind one seam is a bigger change than this item's fence
+  allows.
+- **`wviewer::attach_raw` still returns 1 after a rejection**, exactly as it
+  already does after a raw that fails to parse. Both of its callers ignore the
+  return value (grepped: `ase_window.tcl:2202`, `:3827`), and the rejection is
+  loud on the CIW, so this is pre-existing shape left alone rather than a new
+  hole — but a future caller that reads it would be misled.
+- **A rejected attach leaves the PREVIOUS run's data on screen.** That is
+  `attach_dbs`' own stated policy ("a stale-but-loaded DB beats an empty
+  viewer") and the alternative is an empty viewer with no explanation, but the
+  only thing distinguishing the two on screen is the red CIW line.
+- **`i(...)` of a device inside an `.include`d PDK subcircuit is `unknown`**, so
+  a typo there is not caught by (a). It is caught by (b).
+- ~~**A continuation line (`+`) is skipped, not parsed.**~~ **FIXED in the fix
+  round, and the premise recorded here was false** — see §14.2's continuation
+  ruling. Continuations are folded onto their card and driven (`PF221o`–`q`).
+- **The `vi`/`vdb`/`vm`/`vp`/`vr` AC output family gets no pre-flight at all.**
+  The anchor that stopped `vi(out)` being false-refused as a current also stops
+  the node inside it being checked. That is a **miss**, caught by (b) and (c),
+  and it is the deliberate direction. Declared, and `PF221c` pins that the whole
+  family is left alone rather than half-parsed.
+- **An include-bearing scope cannot refuse a name it has never heard of**
+  (§14.2's stand-down ruling), so a genuine typo in a design that `.include`s
+  its stimulus reaches (b) and (c) rather than (a). A **case** mistake in such a
+  design is still refused, because a fold hit is a proof about this netlist.
+- **A constants plot buried in the MIDDLE of a three-plot file is not seen** —
+  the scan is head+tail (§14.4).
+- **No `.spiceinit`, no profile and no ver_50 are involved anywhere in this
+  item.** The mode only selects the comparison's case-sensitivity.
+- **`ase_preflight` is a global, not a per-profile field.** It is an escape
+  hatch for a defect in *our* map, not a property of a simulator, so it does not
+  belong on a profile row.
+
+## 14.8 Checks that are NOT evidence
+
+- **`PF219h2`** ("the control database really did load") is a fixture
+  precondition with no item-10 code beneath it. It exists so `PF219k` cannot
+  compare one failure against another and pass on both — which is what it did
+  before the control was added, because `xschem raw list` throws with nothing
+  loaded and the check was comparing that error string with itself.
+- **Half of the fix round's 40 checks are COVERAGE, not defect pins.**
+  `PF221c`/`d`/`g`/`h`/`m`/`n`/`p`/`q`/`s`/`u`/`v`/`w`/`y`/`ad`/`ae`/`af`/`ah`/
+  `aj`/`am`/`an` were already satisfied by the shipped code; they exist because
+  a reviewer's mutation of that code left all 74 original checks green. Each has
+  its own mutation in the fix round's table (`F07`, `F08`, `F17`, `F33`–`F36`,
+  `F38`–`F40`, `F50`, `F51`, `F63`, `F72`, `F74`, `F84`). The other twenty went
+  red against the first cut's own bytes and that master red is recorded in the
+  receipt.
+- **`PF220`'s legs are skipped, never failed, when no ngspice is on `PATH`**,
+  and print no substring `full_audit.sh` scores a file on. They are the only
+  end-to-end measurement in the file; everything else is a pure function.

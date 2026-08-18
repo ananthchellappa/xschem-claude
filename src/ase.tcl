@@ -1068,6 +1068,573 @@ proc ase::run_precheck {state} {
   return [join $notes "\n"]
 }
 
+# --- casemode batch item 10: the three defences ------------------------------
+#
+# `PLAN.md` §3b item 10 and §D5; `DECISIONS.md` **C3** (build both defences),
+# **C4** (all three, none redundant) and **D1** (the pre-flight OFFERS the
+# legacy corrections, never a silent rewrite). Long form, with every
+# measurement: doc/claude/specs/simulator_profiles.md §14.
+#
+# THE DEFECT, and it is MODE-INDEPENDENT — a `.save` of a node that is not in
+# the circuit does not produce an error a caller can see. Measured 2026-08-17 on
+# BOTH binaries (/usr/local/bin/ngspice 46 and build-ver_50), in render_deck's
+# own deck shape (analyses inside `.control`, bare `write`, no vector list):
+#
+#   .save v(nosuchnode) + tran  ->  rc=1, and a 569-byte raw IS WRITTEN:
+#       Title: Constant values / Plotname: constants / No. Variables: 12
+#       Date: == the `Command: ngspice-46, Build <stamp>` build stamp
+#   ... and NOTHING on either stream names the bad token.
+#
+# So the run leaves a file that exists, parses, and holds twelve mathematical
+# constants. `rc` is a real corroborating signal but it arrives WITH the file
+# already written, which is why C3 rules it cannot replace the content check.
+#
+# THREE DEFENCES, and C4's table says why none of them is redundant:
+#
+#   (a) the pre-flight below  names the SPECIFIC bad expression before any
+#                             simulator starts; blind to a name that is legal
+#                             only because an .include'd PDK file defines it
+#   (b) the $sim_status guard catches ANY failed analysis and leaves no
+#                             artefact at all (render_deck); blind to a file we
+#                             did not generate
+#   (c) ase::raw_content_verdict  catches a bad file from ANYWHERE — old,
+#                             another tool's, written before the guard existed —
+#                             but cannot say WHY it is bad. Cheapest of the
+#                             three (one comparison against `Plotname:`).
+#
+# The pre-flight is the only one that can refuse BEFORE the run, so it is the
+# only one that can be wrong in the expensive direction: a false refusal blocks
+# work that would have succeeded. Every ruling below therefore leans the same
+# way — the map OVER-approximates, and anything it cannot adjudicate is
+# `unknown` and passes.
+
+# The identifiers an output expression names, WITH THE SPAN each one occupies
+# in the expression text: {kind name first last} ..., in order.
+#
+# An expr is not always one identifier: it can be derived (`v(a)-v(b)`), an RPN
+# row, negated (`-i(v1)`, test_ase_core's D1 golden), or differential
+# (`v(a,b)`, which names TWO nodes — ase::bus_expr_bits' comment records that
+# ngspice reads it as a difference and that `.save v(d,e)` saves both).
+# `@dev[param]` shapes come back too and the resolver declines them.
+#
+# THE SPANS ARE WHAT MAKES D1's CORRECTION HONEST. A token-level `string map` of
+# `v(<ident>)` cannot see `v(a,b)` at all (the ident is not wrapped in its own
+# parens), so a differential row was refused with a remedy that silently did
+# nothing; and two corrections for the same row could not both be applied,
+# because the second no longer matched the string the first had already
+# rewritten. Replacing by POSITION, right to left, repairs a row of any shape in
+# one pass. (Fix round, item 10: two independently-reproduced defects.)
+#
+# THE LEADING ANCHOR IS LOAD-BEARING, NOT TIDINESS. Unanchored, `([vi])\(` also
+# matches the `i(` inside ngspice's standard AC output form `vi(...)` and the
+# `v(` inside `deriv(...)`: `vi(out)` was read as a CURRENT named `out`, found
+# absent in the device table, and the whole run REFUSED with a nonsense
+# diagnosis — a live false refusal of a legitimate expression, reachable
+# straight from the Expression entry of the output editor. Requiring a
+# non-identifier character (or the string start) before the letter costs the
+# `vi`/`vdb`/`vm`/`vp`/`vr` family their pre-flight, which is a MISS (defences
+# (b) and (c) still catch it) and never a false refusal — the direction every
+# ruling in this file leans.
+proc ase::preflight_ident_spans {ex} {
+  set out {}
+  foreach {wp kp ip} [regexp -all -inline -indices -nocase \
+                        {(?:^|[^A-Za-z0-9_])([vi])\(([^()]*)\)} $ex] {
+    set kind [expr {[string tolower [string index $ex [lindex $kp 0]]] eq {v}
+                    ? {voltage} : {current}}]
+    lassign $ip is ie
+    if {$ie < $is} continue                       ;# `v()` — nothing named
+    set inner [string range $ex $is $ie]
+    set off $is
+    foreach part [split $inner ,] {
+      set len [string length $part]
+      set lead 0
+      while {$lead < $len && [string is space [string index $part $lead]]} { incr lead }
+      set trail 0
+      while {$trail < $len - $lead &&
+             [string is space [string index $part end-$trail]]} { incr trail }
+      set name [string range $part $lead [expr {$len - 1 - $trail}]]
+      if {$name ne {}} {
+        lappend out [list $kind $name [expr {$off + $lead}] \
+                          [expr {$off + $len - 1 - $trail}]]
+      }
+      incr off [expr {$len + 1}]                  ;# +1 for the comma
+    }
+  }
+  return $out
+}
+
+# The same identifiers as {kind name} pairs, spans dropped.
+proc ase::preflight_idents {ex} {
+  set out {}
+  foreach s [ase::preflight_ident_spans $ex] {
+    lappend out [list [lindex $s 0] [lindex $s 1]]
+  }
+  return $out
+}
+
+# The netlist's own name map: what the SIMULATOR will see, parsed out of the
+# circuit netlist artifact rather than asked of the schematic — the deck is what
+# runs, and `ase::run_existing` runs a netlist the design may no longer match.
+#
+#   scopes  <subckt name, folded> -> {nodes {<name> 1 ...}
+#                                     devs  {<name> 1 ...}
+#                                     insts {<inst> <master> ...}}
+#           the TOP level is the scope named {}.
+#   globals nodes visible in every scope (`.global`, plus `0`).
+#   includes <scope> -> 1 for every scope that carries an `.include`/`.inc`/
+#           `.lib` card, i.e. every scope whose contents this netlist only
+#           PARTLY knows. C4's named blind spot, written down where the
+#           resolver can act on it.
+#
+# A `+` CONTINUATION IS FOLDED ONTO ITS CARD, not skipped. Skipping it was a
+# false refusal: a node declared only on a continuation was missing from the
+# map and a legal run was refused. The premise that xschem never emits them for
+# element cards is false — the user's own `~/.xschem/simulations/tb_bandgap.spice`
+# carries 46, and `0_examples_top.spice` 439. Folding also fixes the X-card
+# master being taken from the wrong token when the wrap lands between the last
+# node and the master. (Fix round, item 10.)
+#
+# DELIBERATE OVER-APPROXIMATION, and it is the safe direction: a device card's
+# node count is device-dependent (`M` has four, `X` has as many as its master),
+# and a model name or a bare value is indistinguishable from a node without a
+# device grammar. So every non-`k=v` token after the instance name is recorded
+# as a node. That can only make a name look PRESENT that is not — a miss, which
+# defences (b) and (c) still catch — and never the reverse, which would be a
+# false refusal.
+proc ase::netlist_map {netlist_text} {
+  set scopes [dict create {} [dict create nodes {} devs {} insts {}]]
+  set globals [dict create 0 1]
+  set includes [dict create]
+  set stack [list {}]
+  # fold `+` continuations onto the card above before anything is parsed
+  set logical {}
+  foreach raw [split $netlist_text "\n"] {
+    set t [string trimleft $raw]
+    if {[string index $t 0] eq {+}} {
+      if {[llength $logical]} {
+        lset logical end "[lindex $logical end] [string range $t 1 end]"
+      }
+      continue                        ;# a stray continuation joins nothing
+    }
+    lappend logical $raw
+  }
+  foreach line $logical {
+    set toks [regexp -all -inline {\S+} $line]
+    if {![llength $toks]} continue
+    set first [lindex $toks 0]
+    set c [string index $first 0]
+    if {$c eq {*} || $c eq {;} || $c eq {+}} continue
+    if {$c eq {.}} {
+      set kw [string tolower $first]
+      if {$kw eq {.subckt}} {
+        set key [string tolower [lindex $toks 1]]
+        if {![dict exists $scopes $key]} {
+          dict set scopes $key [dict create nodes {} devs {} insts {}]
+        }
+        foreach p [lrange $toks 2 end] {
+          if {[string first = $p] >= 0} continue
+          dict set scopes $key nodes $p 1
+        }
+        lappend stack $key
+      } elseif {$kw eq {.ends} || $kw eq {.eom}} {
+        if {[llength $stack] > 1} { set stack [lrange $stack 0 end-1] }
+      } elseif {$kw eq {.global}} {
+        foreach g [lrange $toks 1 end] { dict set globals $g 1 }
+      } elseif {$kw eq {.include} || $kw eq {.inc} || $kw eq {.lib}} {
+        dict set includes [lindex $stack end] 1
+      }
+      continue
+    }
+    set keep {}
+    foreach t $toks { if {[string first = $t] < 0} { lappend keep $t } }
+    set scope [lindex $stack end]
+    dict set scopes $scope devs $first 1
+    set rest [lrange $keep 1 end]
+    if {[string match -nocase {x*} $first] && [llength $rest]} {
+      dict set scopes $scope insts $first [lindex $rest end]
+      set rest [lrange $rest 0 end-1]
+    }
+    foreach t $rest { dict set scopes $scope nodes $t 1 }
+  }
+  return [dict create scopes $scopes globals $globals includes $includes]
+}
+
+# One lookup in one name table. `cs` is the case-sensitivity of the comparison,
+# NOT the mode: spec §13.6 — under `distinguish` a case-sensitive comparison is
+# the right one, under `fold` the EXPRESSION is already folded and the map is
+# not, so both sides must be folded or every mixed-case net reads as absent.
+#
+# -> {status present|absent  real <the netlist's own spelling>  ambiguous 0|1}
+# An exact hit wins in either mode. A case-sensitive miss that folds to exactly
+# ONE stored name yields that name as `real` — this is D1's correction, computed
+# by the comparison the pre-flight was doing anyway. Two stored names folding
+# together yield `ambiguous`: there is no correction to offer, only a question.
+proc ase::preflight_pick {tbl name cs} {
+  if {[dict exists $tbl $name]} {
+    return [dict create status present real $name ambiguous 0]
+  }
+  set hits {}
+  set f [string tolower $name]
+  dict for {k v} $tbl {
+    if {[string tolower $k] eq $f} { lappend hits $k }
+  }
+  if {![llength $hits]} {
+    return [dict create status absent real {} ambiguous 0]
+  }
+  if {!$cs} {
+    return [dict create status present real [lindex $hits 0] ambiguous 0]
+  }
+  if {[llength $hits] > 1} {
+    return [dict create status absent real {} ambiguous 1]
+  }
+  return [dict create status absent real [lindex $hits 0] ambiguous 0]
+}
+
+# Resolve ONE identifier against the map.
+#
+# -> {status present|absent|unknown  real <the corrected identifier, or {}>
+#     ambiguous 0|1  why <text, for unknown>}
+#
+# `unknown` is not a weaker `absent`, it is a REFUSAL TO JUDGE, and every arm
+# that reaches it is a place where the netlist genuinely cannot answer:
+#   * an `@dev[param]` shape (item 12 / issue 0419 territory);
+#   * a bracketed name that is not an exact hit — a bus bit is a whole
+#     sub-language (issue 0159) and the base name of `bus[1]` is not itself a
+#     node, so a base-name test would false-refuse every bus;
+#   * a hierarchy segment whose master subckt is not IN this netlist, i.e. it
+#     came from an `.include`d PDK file — C4's named blind spot, and the one
+#     place the pre-flight must stand down rather than guess.
+#   * a name NOTHING in its scope even folds to, when that scope carries an
+#     `.include`/`.inc`/`.lib` card. See the RULING below.
+# An instance path segment that names NOTHING in a scope we did parse is
+# `absent`, not `unknown`: that we can prove.
+#
+# RULING (fix round, item 10; spec §14.2) — AN INCLUDE-BEARING SCOPE STANDS
+# DOWN, BUT ONLY WHERE IT HAS NOTHING TO SAY. A design whose stimulus or supply
+# cards live in an `.include`d file was REFUSED outright: `i(V1)` with `V1` in
+# `stim.sp` is absent from our map and the simulator runs it perfectly (measured:
+# rc=0, a 2071-byte transient raw). C4 says the pre-flight is BLIND there, and
+# blind means stand down, not refuse. But downgrading EVERY miss in an
+# include-bearing scope would gut defence (a) for every real design, because
+# every real design `.include`s a PDK. So the downgrade is narrowed to the case
+# where the netlist genuinely has nothing to say: no stored name in that scope
+# even FOLDS to the one asked about. A fold hit is a proof about THIS netlist —
+# it is D1's correction and issue 0423's whole subject — and it keeps refusing.
+proc ase::netlist_map_resolve {map kind name cs} {
+  set unk [dict create status unknown real {} ambiguous 0 why {}]
+  set includes {}
+  catch {set includes [dict get $map includes]}
+  if {[string first @ $name] >= 0} {
+    dict set unk why {an @dev[param] name is constructed by the simulator}
+    return $unk
+  }
+  set scopes [dict get $map scopes]
+  set segs [split $name .]
+  set prefix {}
+  # A hierarchical CURRENT carries the branch prefix letter as its first
+  # segment: `i(v.x1.x2.v1)`. It follows the TOKEN, not the mode (item 9 §13.3,
+  # hilight.c's sender_current_prefix()), so the corrected spelling below
+  # re-derives it from the device's own first character.
+  if {$kind eq {current} && [llength $segs] > 1 &&
+      [string length [lindex $segs 0]] == 1} {
+    set prefix [lindex $segs 0]
+    set segs [lrange $segs 1 end]
+  }
+  set scope {}
+  set real {}
+  # Whether ANY segment of the instance path came back mis-cased. The leaf's
+  # verdict alone is not the identifier's verdict: with the netlist spelling the
+  # instance `X1`, a stale fold-picked `v(x1.out)` under `distinguish` used to
+  # resolve `present` on the strength of its leaf, so the pre-flight passed
+  # through the exact 0423 row it exists to catch — while the case-keeping
+  # binary aborted the analysis (measured: rc=1, RUN-FAILED, no raw).
+  # (Fix round, item 10.)
+  set segstale 0
+  foreach s [lrange $segs 0 end-1] {
+    if {![dict exists $scopes $scope]} {
+      dict set unk why "subcircuit '$scope' is not defined in this netlist"
+      return $unk
+    }
+    set insts [dict get $scopes $scope insts]
+    if {[string first {[} $s] >= 0 && ![dict exists $insts $s]} {
+      dict set unk why "bracketed instance name '$s'"
+      return $unk
+    }
+    set hit [ase::preflight_pick $insts $s $cs]
+    if {[dict get $hit real] eq {}} {
+      if {![dict get $hit ambiguous] && [dict exists $includes $scope]} {
+        dict set unk why "nothing in this netlist is named '$s', but an\
+ .include'd file can add cards to this scope"
+        return $unk
+      }
+      return [dict create status absent real {} ambiguous [dict get $hit ambiguous] \
+                          why "no instance '$s'"]
+    }
+    if {[dict get $hit status] ne {present}} { set segstale 1 }
+    lappend real [dict get $hit real]
+    set master [dict get $insts [dict get $hit real]]
+    set scope [string tolower $master]
+    if {![dict exists $scopes $scope]} {
+      dict set unk why "instance '$s' is a '$master', which this netlist does\
+ not define (an .include'd model or subcircuit)"
+      return $unk
+    }
+  }
+  set leaf [lindex $segs end]
+  set space [expr {$kind eq {current} ? {devs} : {nodes}}]
+  set tbl [dict get $scopes $scope $space]
+  if {$kind eq {voltage}} { set tbl [dict merge [dict get $map globals] $tbl] }
+  if {[string first {[} $leaf] >= 0 && ![dict exists $tbl $leaf]} {
+    dict set unk why "bracketed name '$leaf' (a bus bit is not adjudicable here)"
+    return $unk
+  }
+  set hit [ase::preflight_pick $tbl $leaf $cs]
+  if {[dict get $hit real] eq {}} {
+    if {![dict get $hit ambiguous] && [dict exists $includes $scope]} {
+      dict set unk why "nothing in this netlist is named '$leaf', but an\
+ .include'd file can add cards to this scope"
+      return $unk
+    }
+    return [dict create status absent real {} ambiguous [dict get $hit ambiguous] why {}]
+  }
+  lappend real [dict get $hit real]
+  # the corrected identifier, in the netlist's own spelling from end to end
+  set fixed [join $real .]
+  if {$prefix ne {}} {
+    set fixed "[string index [lindex $real end] 0].$fixed"
+  }
+  # a mis-cased HIERARCHY SEGMENT is as fatal as a mis-cased leaf, and `fixed`
+  # already carries every segment's own spelling
+  set st [dict get $hit status]
+  if {$segstale} { set st absent }
+  return [dict create status $st real $fixed \
+                      ambiguous [dict get $hit ambiguous] why {}]
+}
+
+# THE PRE-FLIGHT. A pure function of a state and the circuit netlist text, so
+# every ruling here is drivable with no simulator and no files.
+#
+#   -> {mode <requested>  cs 0|1  absent {<row> ...}  unknown {<row> ...}}
+#      row = {expr <e> kind <k> ident <n> correction <c> ambiguous 0|1 why <w>}
+#
+# The mode is the RUN's REQUEST — item 9 §13.4's ruling, and the same value item
+# 8's gate uses (profile `casemode` -> global floor `sim_case_mode` -> fold).
+# It decides one thing only: whether the comparison is case-sensitive.
+proc ase::preflight_scan {state netlist_text} {
+  set mode fold
+  # The same value item 8's gate uses -- but asked with `init 0`, item 9's
+  # read-only form: a pre-flight is a question, and `::set_sim_defaults` is not
+  # a read (with the Simulation Configuration dialog open it slurps every
+  # unsaved `cmd` edit into the global array; spec §13.4).
+  catch {set mode [ase::sim_profile_casemode $state 0]}
+  if {$mode eq {}} { set mode fold }
+  set cs [expr {$mode eq {distinguish}}]
+  set map [ase::netlist_map $netlist_text]
+  set absent {}
+  set unknown {}
+  set seen [dict create]
+  foreach o [ase::state_get $state outputs] {
+    if {[ase::state_get $o save 0] ne {1}} continue
+    set ex [ase::state_get $o expr]
+    if {$ex eq {}} continue
+    foreach id [ase::preflight_idents $ex] {
+      lassign $id kind ident
+      set skey [list $ex $ident]
+      if {[dict exists $seen $skey]} continue
+      dict set seen $skey 1
+      set r [ase::netlist_map_resolve $map $kind $ident $cs]
+      set row [dict create expr $ex kind $kind ident $ident \
+                 correction [dict get $r real] ambiguous [dict get $r ambiguous] \
+                 why [dict get $r why]]
+      switch -- [dict get $r status] {
+        absent  { lappend absent $row }
+        unknown { lappend unknown $row }
+      }
+    }
+  }
+  return [dict create mode $mode cs $cs absent $absent unknown $unknown]
+}
+
+# A scan's absent rows grouped by the OUTPUT ROW they came from, in
+# first-appearance order: -> {<expr> {<row> ...} ...}. One output row can name
+# several absent identifiers (`v(a)-v(b)`, `v(a,b)`), and every consumer below
+# has to treat those as ONE thing to report and ONE thing to repair.
+proc ase::preflight_group_rows {rows} {
+  set g [dict create]
+  foreach row $rows { dict lappend g [dict get $row expr] $row }
+  return $g
+}
+
+# The corrected expression for ONE output row, with EVERY correction the scan
+# found for it applied — each identifier replaced by the netlist's own spelling
+# AT ITS OWN POSITION, right to left so no earlier span moves, leaving the rest
+# of a derived expression (`v(a)-v(b)`, an RPN row, a leading `-`) untouched.
+# {} when there is nothing to offer.
+#
+# `rows` is the LIST of that expression's absent rows (see
+# ase::preflight_group_rows). It used to be a single row rewritten by a
+# `string map` of the literal `v(<ident>)`, which had two reproduced defects:
+# `v(a,b)` matched nothing at all, so the refusal named a remedy command that
+# silently did nothing; and a second correction for the same row could never
+# match, because the first had already rewritten the string it was looking for —
+# yet the apply reported success. (Fix round, item 10.)
+proc ase::preflight_fixed_expr {rows} {
+  if {![llength $rows]} { return {} }
+  set ex [dict get [lindex $rows 0] expr]
+  set want [dict create]
+  foreach row $rows {
+    set c [dict get $row correction]
+    if {$c eq {}} continue
+    # keyed by KIND as well as name: the same spelling can be a node and a device
+    dict set want [list [dict get $row kind] [dict get $row ident]] $c
+  }
+  if {![dict size $want]} { return {} }
+  set out $ex
+  foreach s [lsort -integer -index 2 -decreasing [ase::preflight_ident_spans $ex]] {
+    lassign $s kind nm st en
+    set k [list $kind $nm]
+    if {![dict exists $want $k]} continue
+    set out [string replace $out $st $en [dict get $want $k]]
+  }
+  if {$out eq $ex} { return {} }
+  return $out
+}
+
+# D1 — the corrections are APPLIED ON CONFIRMATION, never silently. This is the
+# apply half, and it is deliberately a separate, explicitly-invoked command:
+# a silent rewrite of a saved session means that when our map is wrong about
+# something we corrupt saved work with no trace.
+#
+# Rewrites session `key`'s output rows from the corrections the pre-flight found
+# against the CURRENT netlist artifact, marks the session dirty (the user still
+# has to save), and says what it changed. -> the number of rows rewritten.
+proc ase::preflight_fix_session {key} {
+  set state [ase::session_state $key]
+  if {$state eq {}} { return -code error "ase: no such session: $key" }
+  set design [ase::state_get $state design]
+  if {$design eq {} || ![dict exists $design cell]} {
+    return -code error "ase: session $key has no design cell"
+  }
+  set nl [file join [ase::rundir $state] [dict get $design cell].spice]
+  if {![file isfile $nl]} {
+    return -code error "ase: no netlist artifact to check against: $nl\
+ (Simulation > Netlist > Recreate first)"
+  }
+  set f [open $nl r] ; set txt [read $f] ; close $f
+  set scan [ase::preflight_scan $state $txt]
+  # ONE REWRITE PER OUTPUT ROW, carrying ALL of that row's corrections. Applying
+  # them one absent identifier at a time matched rows by the ORIGINAL expr, so
+  # after the first rewrite every later correction for the same row silently
+  # failed to match and was dropped — while the count still reported success and
+  # the only signal was the next run refusing again. (Fix round, item 10.)
+  set n 0
+  set nskip 0
+  dict for {ex grows} [ase::preflight_group_rows [dict get $scan absent]] {
+    set fixed [ase::preflight_fixed_expr $grows]
+    if {$fixed eq {}} { incr nskip ; continue }
+    set outs {}
+    foreach o [ase::state_get $state outputs] {
+      if {[ase::state_get $o expr] eq $ex} {
+        dict set o expr $fixed
+        incr n
+        ::ase::echo "ase: pre-flight — output '$ex' rewritten to\
+ '$fixed' (the netlist's own spelling). The session is now unsaved."
+      }
+      lappend outs $o
+    }
+    dict set state outputs $outs
+  }
+  if {$n} { ase::session_update $key $state }
+  # SAY SO WHEN THERE WAS NOTHING TO DO. A silent `0` from a command the refusal
+  # itself told the user to run reads as "it worked".
+  if {!$n} {
+    ::ase::echo "ase: pre-flight — nothing was rewritten in session '$key':\
+ [expr {$nskip ? "the $nskip refused output row(s) have no correction to offer"
+        : {the pre-flight found nothing to correct}}]." note
+  }
+  return $n
+}
+
+# THE GATE. Called from ase::run_deck once the circuit netlist has been READ and
+# before anything at all has been written, deleted or rebuilt — the same place
+# in the sequence item 8's gate occupies (spec §12.5): a refusal must not
+# manufacture a new instance of the very defect this item exists to kill.
+#
+# Refuses on `absent`, never on `unknown`. Every offending expression is named,
+# one CIW line each — item 14's lesson is that a channel can be correct and
+# still reach nobody, and a one-line summary of twelve corrections is a summary
+# nobody can act on.
+#
+# `ase_preflight 0` disables the refusal. It is a real lever, named in the
+# message, because the map's blind spot is real (a top-level node that only an
+# .include'd file defines) and a user who is right must not be locked out of
+# their own simulator. Defences (b) and (c) are unaffected by it.
+proc ase::preflight_gate {state netlist_text} {
+  if {[info exists ::ase_preflight] && !$::ase_preflight} { return {} }
+  set scan [ase::preflight_scan $state $netlist_text]
+  set rows [dict get $scan absent]
+  if {![llength $rows]} { return {} }
+  # COUNT EXPRESSIONS, NOT IDENTIFIERS. `[llength $rows]` is the number of
+  # offending identifiers, and one output row naming two absent nodes was
+  # reported as "2 output expressions". The per-identifier detail lines below
+  # still get one line each. (Fix round, item 10.)
+  set groups [ase::preflight_group_rows $rows]
+  set nex [dict size $groups]
+  set head "ase: REFUSED — $nex output expression[expr {$nex == 1 ? {} : {s}}]\
+ name[expr {$nex == 1 ? {s} : {}}] something this circuit does not have.\
+ ngspice does NOT fail usefully on that: NOTHING on either stream names the bad\
+ token, and what lands in the run directory is a raw file holding TWELVE\
+ MATHEMATICAL CONSTANTS (Plotname: constants) which reads back as a perfectly\
+ valid result. Nothing was generated: no deck, no raw,\
+ no log. Any files already in [ase::rundir $state] are from an earlier run."
+  ::ase::echo $head error
+  set lines [list $head]
+  # Every offending IDENTIFIER gets its own line — item 14's lesson is that a
+  # summary nobody can act on reaches nobody — but the CORRECTION is composed
+  # once per expression and offered once, on that expression's last line: a row
+  # naming two mis-cased nodes has ONE repaired spelling, not two mutually
+  # exclusive halves.
+  set nfix 0
+  dict for {ex grows} $groups {
+    set fixed [ase::preflight_fixed_expr $grows]
+    set glines {}
+    foreach row $grows {
+      set l "ase:   '$ex' — [dict get $row kind] '[dict get $row ident]'\
+ is not in the netlist"
+      if {$fixed eq {} && [dict get $row ambiguous]} {
+        append l ". Two netlist names differ from it only in case, so there is no\
+ single correction to offer"
+      }
+      lappend glines $l
+    }
+    if {$fixed ne {}} {
+      incr nfix
+      set l [lindex $glines end]
+      append l ". Same name in another case IS: '$ex' -> '$fixed'"
+      lset glines end $l
+    }
+    foreach l $glines {
+      ::ase::echo $l error
+      lappend lines $l
+    }
+  }
+  if {$nfix} {
+    set l "ase: $nfix of them look like a CASE mismatch — an output row picked\
+ under a 'fold' profile and run under 'distinguish' stores the folded spelling\
+ forever (issue 0423). Nothing is rewritten automatically: run\
+ `ase::preflight_fix_session <key>` to apply the corrections above to this\
+ session's output rows, then save."
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  set l "ase: set ase_preflight 0 to disable this check (the \$sim_status guard\
+ and the constants-raw rejection stay on)."
+  ::ase::echo $l error
+  lappend lines $l
+  return -code error [join $lines "\n"]
+}
+set_ne ase_preflight 1
+
 # --- Run directory ----------------------------------------------------------
 
 # The run directory for a state: non-empty `rundir` -> normalized + created;
@@ -1202,6 +1769,13 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set f [open $netlistfile r]
   set netlist_text [read $f]
   close $f
+
+  # casemode batch item 10 (C3/C4, defence (a)): the PRE-FLIGHT, and it sits
+  # here for the same reason item 8's gate sits above — everything before this
+  # line only READS, so a refusal leaves no deck, no raw, no log, no deleted
+  # VCD, no rebuilt .so and no started process. It needs the netlist text, so it
+  # cannot be item 8's neighbour any earlier than this.
+  ase::preflight_gate $state $netlist_text
 
   set rd   [ase::rundir $state]
   set cell [dict get [dict get $state design] cell]
@@ -2133,9 +2707,182 @@ proc ase::cosim_has_bridges {state {netlist_text {}}} {
 # Returns {n <dbs attached> current <index> vcds <attached> skipped <not>}.
 # `xschem raw read` returns "1"/"0" WITHOUT throwing on a parse failure, so the
 # return value is checked, not just the catch.
+# --- casemode item 10, defence (c): CONTENT-BASED REJECTION ------------------
+#
+# `DECISIONS.md` C3/C4; spec §14.4. The cheapest of the three defences (one
+# comparison against `Plotname:`) and the only one that protects a raw file we
+# did NOT generate — one from an older xschem, from another tool, or from a run
+# that predates the $sim_status guard. It cannot say WHY the file is bad, which
+# is why it does not replace the pre-flight.
+#
+# THE SIGNATURE, measured 2026-08-17 on ngspice-46 and build-ver_50 alike, from
+# a deck whose only fault is one `.save` of a node that does not exist:
+#
+#   Title: Constant values
+#   Date: Sun Aug  2 23:29:26 UTC 2026        <- the BUILD stamp, not the run
+#   Command: ngspice-46, Build Sun Aug  2 23:29:26 UTC 2026
+#   Plotname: constants
+#   No. Variables: 12                          <- yes false true boltz c e
+#   No. Points: 1                                 echarge i kelvin no pi planck
+#
+# `Plotname: constants` is decisive ONLY WHILE THE COUNTS AGREE WITH IT; the
+# other three markers are recorded in the verdict so the message can show its
+# work, and so a future ngspice that renames the plot still trips at least one
+# of them.
+#
+# THE COUNT MAY CONTRADICT THE NAME, NOT ONLY CORROBORATE IT (fix round, item
+# 10; RULING, spec §14.4). `let`-created vectors written from the constants
+# plot land in a file whose header says `Plotname: constants` and which holds
+# real user data — the tree's own
+# `doc/claude/ngspice_upstream/feedback/.../repro/letonly.raw` is 14 variables
+# over 5 points. Rejecting it wholesale threw away genuine data while asserting
+# it "holds ngspice's twelve built-in mathematical constants", which it
+# demonstrably does not. More than twelve variables, or more than one point, and
+# the file is REPORTED rather than rejected — the same treatment the
+# `appendwrite` shape already gets, and the same lean as everywhere else here.
+#
+# The `set appendwrite` shape C3 names — a constants plot appended BEHIND a real
+# one — is detected but NOT rejected: plot 1 is genuine data, and the C reader
+# selects a plot by `sim_type`, which `constants` never matches. It is reported.
+#
+# BOUNDED: the first and last 64 KB only. A raw's plot header is a few hundred
+# bytes at the very start, and an appended constants plot is 569 bytes at the
+# very end, so both shapes are reachable without reading a 50 MB file on every
+# attach. Declared limit: a constants plot buried in the MIDDLE of a
+# three-plot file is not seen.
+proc ase::raw_head_tail {path {n 65536}} {
+  set f [open $path rb]
+  set head [read $f $n]
+  set size [file size $path]
+  set tail {}
+  if {$size > $n} {
+    seek $f [expr {$size - $n}]
+    set tail [read $f $n]
+  }
+  close $f
+  return [list $head $tail $size]
+}
+
+# The first plot header in `text`, as a dict of the fields that matter. Empty
+# `plotname` means "this does not look like a spice raw at all" — a VCD, a table
+# file, garbage — and the caller must then say nothing: judging a format we did
+# not parse is how a content check turns into a false rejection.
+proc ase::raw_first_header {text} {
+  set d [dict create title {} date {} command {} plotname {} nvars {} npoints {}]
+  foreach line [split $text "\n"] {
+    set line [string trimright $line "\r"]
+    if {[regexp {^Title:[ \t]*(.*)$} $line -> v]} {
+      if {[dict get $d title] eq {}} { dict set d title [string trim $v] }
+    } elseif {[regexp {^Date:[ \t]*(.*)$} $line -> v]} {
+      if {[dict get $d date] eq {}} { dict set d date [string trim $v] }
+    } elseif {[regexp {^Command:[ \t]*(.*)$} $line -> v]} {
+      if {[dict get $d command] eq {}} { dict set d command [string trim $v] }
+    } elseif {[regexp {^Plotname:[ \t]*(.*)$} $line -> v]} {
+      dict set d plotname [string trim $v]
+    } elseif {[regexp {^No\. Variables:[ \t]*(.*)$} $line -> v]} {
+      dict set d nvars [string trim $v]
+    } elseif {[regexp {^No\. Points:[ \t]*(.*)$} $line -> v]} {
+      dict set d npoints [string trim $v]
+      break                       ;# the header ends here; Variables/Binary follow
+    }
+  }
+  return $d
+}
+
+# -> {ok 0|1  constants 0|1  appended 0|1  plotname .. nvars .. npoints ..
+#     signature {..} why <one sentence, or {}>}
+proc ase::raw_content_verdict {path} {
+  set v [dict create ok 1 constants 0 appended 0 plotname {} nvars {} npoints {} \
+                     signature {} why {}]
+  if {$path eq {} || ![file isfile $path]} { return $v }
+  if {[catch {ase::raw_head_tail $path} ht]} { return $v }
+  lassign $ht head tail size
+  set h [ase::raw_first_header $head]
+  set pn [dict get $h plotname]
+  dict set v plotname $pn
+  dict set v nvars [dict get $h nvars]
+  dict set v npoints [dict get $h npoints]
+  if {$pn eq {}} { return $v }                  ;# not a spice raw; say nothing
+  # The four markers C3 names. The count is a FLOOR and is only ever
+  # corroboration: a legitimate plot can hold twelve vectors, so it is recorded
+  # only once a decisive marker (the plot name, or the title ngspice gives the
+  # constants plot) has already fired. Otherwise this would print
+  # "No. Variables: 2 (the constants plot has 12)" about a perfectly good raw.
+  set sig {}
+  set nv [dict get $h nvars]
+  if {[string equal -nocase $pn constants]} { lappend sig {Plotname: constants} }
+  if {[string equal -nocase [dict get $h title] {Constant values}]} {
+    lappend sig {Title: Constant values}
+  }
+  if {[llength $sig]} {
+    # the Date is the BUILD stamp, which the Command line repeats verbatim
+    if {[regexp {Build[ \t]+(.+)$} [dict get $h command] -> stamp] &&
+        [string trim $stamp] eq [dict get $h date] && [dict get $h date] ne {}} {
+      lappend sig {Date: == the simulator's own build stamp}
+    }
+    if {[string is integer -strict $nv] && $nv <= 12} {
+      lappend sig "No. Variables: $nv (the constants plot has 12)"
+    }
+  }
+  dict set v signature $sig
+  set np [dict get $h npoints]
+  if {[string equal -nocase $pn constants]} {
+    dict set v constants 1
+    set nvi [expr {[string is integer -strict $nv] ? $nv : -1}]
+    set npi [expr {[string is integer -strict $np] ? $np : -1}]
+    if {$nvi > 12 || $npi > 1} {
+      # the counts CONTRADICT the plot name: vectors the constants plot does not
+      # have, or more than its single point. Report; do not reject.
+      dict set v why "this raw file's first plot is named 'constants' but carries\
+ $nv variable(s) over $np point(s) — more than ngspice's twelve built-in\
+ constants over one point, so it holds real vectors (the `let`-into-the-constants-plot\
+ shape). It is NOT rejected: the extra vectors are data."
+      return $v
+    }
+    dict set v ok 0
+    dict set v why "this raw file holds ngspice's twelve built-in mathematical\
+ constants, not simulation data — the analysis did not run (typically a .save of\
+ a node the circuit does not have). Signature: [join $sig {; }]."
+    return $v
+  }
+  if {([string is integer -strict $np] && $np == 0) ||
+      ([string is integer -strict $nv] && $nv == 0)} {
+    dict set v ok 0
+    dict set v why "this raw file's first plot '$pn' carries $nv variable(s) over\
+ $np point(s) — an empty result, which is what an analysis that did not run\
+ leaves behind."
+    return $v
+  }
+  if {[string first "Plotname: constants" $tail] >= 0 ||
+      [string first "Plotname: constants" $head] >= 0} {
+    dict set v appended 1
+    dict set v why "a 'constants' plot is appended behind the real data in this\
+ file (the `set appendwrite` shape). The real plot is used; the appended one is\
+ not simulation data."
+  }
+  return $v
+}
+
 proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
   if {$rawfile eq {} || ![file isfile $rawfile]} {
     return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
+  }
+  # casemode batch item 10 (C3/C4, defence (c)): a file that LOOKS like a result
+  # and is not. Judged BEFORE the registry is touched, so a rejected file leaves
+  # the previously loaded database exactly where it was -- "a stale-but-loaded DB
+  # beats an empty viewer", the same policy the read-before-clear order below is
+  # here to deliver. The verdict says nothing at all about a file it could not
+  # parse as a spice raw, so VCD and table databases are unaffected.
+  set verdict [ase::raw_content_verdict $rawfile]
+  if {![dict get $verdict ok]} {
+    ::ase::echo "ase: NOT ATTACHED -- [file tail $rawfile]: [dict get $verdict why]" error
+    return [dict create n 0 current -1 vcds {} skipped $vcdfiles \
+                        rejected [dict get $verdict why]]
+  }
+  # An ACCEPTED file can still be worth a word: the `appendwrite` shape, and a
+  # 'constants'-named plot whose counts contradict the name (fix round, item 10).
+  if {[dict get $verdict why] ne {}} {
+    ::ase::echo "ase: [file tail $rawfile]: [dict get $verdict why]" note
   }
   # READ FIRST, DROP THE OLD DBs AFTER. `xschem raw read` APPENDS and makes what
   # it read current (save.c:1277-1280), so the incoming raw can be validated
@@ -3894,6 +4641,9 @@ namespace eval ase::backend::ngspice {
  [dict get $a stop]" }
           tran { lappend lines "tran [dict get $a step] [dict get $a stop]" }
         }
+        # casemode item 10, defence (b): after EVERY analysis, never once at
+        # the end -- $sim_status is last-writer-wins per analysis (C4).
+        foreach g [::ase::backend::ngspice::sim_status_guard] { lappend lines $g }
       }
     }
     foreach o [ase::state_get $state outputs] {
@@ -3964,6 +4714,52 @@ namespace eval ase::backend::ngspice {
     foreach w [ase::run_casemode_flag $state] { lappend cmd $w }
     lappend cmd $deckpath 2>@1
     return $cmd
+  }
+
+  # DEFENCE (b) -- casemode batch item 10, DECISIONS.md C4. The lines that go
+  # into the .control block after EVERY analysis.
+  #
+  # MEASURED 2026-08-17, both binaries (/usr/local/bin/ngspice 46 and
+  # build-ver_50), in this deck's own shape:
+  #
+  #   bad run  (.save of a node that does not exist)  -> rc=1, `RUN-FAILED` on
+  #                                                      stdout, and NO FILE AT
+  #                                                      ALL where the 569-byte
+  #                                                      constants raw used to be
+  #   good run                                        -> rc=0, the real raw
+  #
+  # Two traps, both C4's, both re-measured here:
+  #
+  #  * `$sim_status` DOES NOT EXIST before the first analysis, and on a build
+  #    that has no such variable at all defence (b) is INERT. The `$?` test is
+  #    the MARKER that says so: `NO-SIM-STATUS` in the log means this run was
+  #    protected by (a) and (c) only.
+  #    IT IS NOT AN ERROR SUPPRESSOR, and an earlier revision of this comment
+  #    said it was. Re-measured 2026-08-17 on ngspice-46, guard alone in a
+  #    .control block with no analysis before it: `Error: sim_status: no such
+  #    variable.` is printed at PARSE time, with the `$?` block present
+  #    (rc=1, log line 1) exactly as without it. Byte-identical logs but for the
+  #    `NO-SIM-STATUS` line. render_deck never emits that shape anyway --
+  #    no analysis, no guard (PF218e) -- so the guard as shipped is only ever
+  #    parsed in a deck where an analysis precedes it.
+  #  * it is LAST-WRITER-WINS PER ANALYSIS, so ONE guard at the end is the
+  #    defect, not the fix. Measured with a failing `dc` followed by a good
+  #    `tran`: guard only at the end -> rc=0 and a 2198-byte raw written, the
+  #    failure completely masked; guard after each -> rc=1, RUN-FAILED, no file.
+  #
+  # `echo`, not a comment: the words are what ase::run_diagnostics-class readers
+  # and a human reading the log actually see. The deck shape itself is untouched
+  # otherwise -- no dot card, no `run`, and the `write` line still names no
+  # vectors (upstream 0073; CREW_BRIEF §4).
+  proc sim_status_guard {} {
+    return [list \
+      {if $?sim_status = 0} \
+      {  echo NO-SIM-STATUS} \
+      {end} \
+      {if $sim_status ne 0} \
+      {  echo RUN-FAILED} \
+      {  quit 1} \
+      {end}]
   }
 
   # <rundir>/<cell>_ase.log

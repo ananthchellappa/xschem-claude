@@ -169,6 +169,18 @@ foreach h {render_deck run_cmd log_file result_probe} {
 check_true "B1 ngspice registered, all four hooks resolve to commands" $ok
 
 # --- D1: golden deck render --------------------------------------------------
+## RESTATED (casemode batch item 10, 2026-08-17): the golden now carries the
+## seven-line `$sim_status` guard after the `op`. Same check, same id, one
+## genuinely changed expectation — DECISIONS.md C4 makes the guard part of every
+## deck this backend renders, and it is emitted after EVERY analysis because
+## `$sim_status` is last-writer-wins per analysis (measured: a failing `dc`
+## followed by a good `tran` exits 0 and writes a raw with one guard at the end,
+## and exits 1 writing nothing with a guard after each). The `$?` existence test
+## in front of it is a MARKER, not an error suppressor: `$sim_status` does not
+## exist before the first analysis, and on a build that has no such variable at
+## all defence (b) is inert, which `NO-SIM-STATUS` in the log says out loud.
+## Re-measured 2026-08-17: `Error: sim_status: no such variable.` is printed at
+## parse time with the `$?` block exactly as without it. Spec §14.3.
 set netlist_text {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
@@ -197,6 +209,13 @@ V2 G GND 1.8
 .save -i(v1)
 .control
 op
+if $?sim_status = 0
+  echo NO-SIM-STATUS
+end
+if $sim_status ne 0
+  echo RUN-FAILED
+  quit 1
+end
 print -i(v1)
 remzerovec
 write @RAWFILE@
