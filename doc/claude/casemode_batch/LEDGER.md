@@ -1,10 +1,10 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `577ef5bc`
 
 Driver-mode unattended batch. **DONE: 0, 0a, 0b, 1, 2, 3, 4, 5 `[E]`, 5b, 6, 7,
-8, 9, 14 `[E]`. REMAINING: 10, 11, 12, 13, 15.** Nothing is pushed.
+8, 9, 10, 14 `[E]`. REMAINING: 11, 12, 13, 15.** Nothing is pushed.
 
-**Current baseline: `audit_item09_closer_2026-08-17.txt` — 326/15/0/0 of 341** at
-`799cd912`. Every item so far has moved **zero** audit statuses; all growth is the
+**Current baseline: `audit_item10_closer_2026-08-17.txt` — 327/15/0/0 of 342** at
+`c56581a4`. Every item so far has moved **zero** audit statuses; all growth is the
 ten suites they added. **4 `look` debts are open** (items 5 ×2, 14 ×2) and only the
 user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
 `0422` (code execution), `0423`.**
@@ -60,7 +60,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 7 | the capability probe (+ hard timeout) | `[x]` | `ebf4c952` | 61 | 69 | 4 + 3 audits | no | audit = one added row, zero movers. **Two probes built** (capability + run), §3b's contradiction resolved. **Transport changed `-p` → batch deck** (`-p` opens `$DISPLAY` and CORES with it unset). Spec §11 |
 | 8 | profile-aware `run_cmd` + mismatch policy | `[x]` | `d44febbd` | 38 | 38 | 3 + 3 audits | no | audit = one added row, zero movers (`_closer2_` authoritative). REFUSE = **before anything is generated**, `run_deck`'s first statement. `CS177c` **pins the two arg filters apart forever**. Spec §12 |
 | 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0423`. Spec §13 |
-| 10 | three defences: pre-flight + `$sim_status` + content | | | | | | no | pre-flight also OFFERS legacy corrections (D1) |
+| 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0423` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
 | 11 | `result_probe` `-nocase` | | | | | | no | |
 | 12 | post-load current repair | | | | | | no | |
 | 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
@@ -703,6 +703,74 @@ requirement outranks it** and forces the mode-conditional shape. The property §
 bought is therefore lost: **a row picked under `fold` is stale under a later
 `distinguish` profile** — filed as issue **`0423`**. The mitigation is written
 into spec §13.6 and is **item 10's**: its pre-flight must **REFUSE** such a run.
+
+## Carry-forwards item 10 handed on — baseline `audit_item10_closer_2026-08-17`
+
+**Baseline is `audit_item10_closer_2026-08-17.txt` — 327/15/0/0 of 342** at
+`c56581a4`. Zero statuses moved, as for every item before it.
+
+**A CORRECTION TO `DECISIONS.md` C4's REASONING (not its shape).** C4 presents the
+`$?sim_status` existence block as guarding against the variable being absent.
+Re-measured: it is a **MARKER that defence (b) is inert on that build, NOT an
+error suppressor** — `Error: sim_status: no such variable.` is printed at parse
+time with the block exactly as without it. The guard shape is unchanged; the
+comment and spec §14.3 now say what the block actually does.
+
+**C4's MASKING TRAP REPRODUCED, which is why the guard is per-analysis.** A
+failing `dc` followed by a good `tran` with **one end-guard** gives `rc=0` and a
+2198-byte raw — **the failure masked**. Per-analysis gives `rc=1` and nothing
+written. `F64` is that defect wired back in, and it reddens 6 checks.
+
+**Rulings (spec §14):**
+
+- **The map is built from the NETLIST ARTIFACT, never the schematic**, because
+  `ase::run_existing` deliberately runs a netlist the design may no longer match.
+- **The map OVER-approximates deliberately**, and the asymmetry is the argument:
+  a device card's node count is device-dependent, so every non-`k=v` token after
+  the instance name is treated as a node. That error can only make a name look
+  **present** when it is not — a miss, caught by (b) and (c). The opposite is a
+  **false refusal**, and (a) is the only defence that can block a *good* run.
+- **`unknown` is a refusal to judge, and the gate NEVER refuses on it** —
+  `@dev[param]`, a bracketed non-exact hit, a hierarchy segment whose master this
+  netlist does not define, and a flat name in an `.include`-bearing scope where
+  nothing even folds to it. The stand-down is **deliberately narrow**: a fold hit
+  is a proof about *this* netlist and still refuses with its correction, or
+  defence (a) would be **inert on every PDK design**.
+- **Under `fold` BOTH sides fold** — §13.6's trap, built and pinned **first**
+  (`PF214`). Item 9 emits `v(midnode)` where the netlist says `MidNode`; a
+  case-sensitive comparison would false-refuse **the default mode's every run** on
+  any mixed-case design. `preserve` compares case-insensitively (D1's scope).
+- **REFUSE = `run_deck`'s first statement after the netlist read**; everything
+  between item 8's gate and it only reads. No deck, raw, log, deleted VCD, rebuilt
+  `.so`, `last_run` or callback.
+- **Every offender gets its own CIW line at tag `error`**, and `ase_preflight 0`
+  is a real lever named in the message — item 14's lesson applied: a one-line
+  summary of twelve corrections is unactionable.
+- **The content check's variable count is a FLOOR that only corroborates**,
+  recorded after a decisive marker fires, else a good 2-variable raw would be
+  annotated. `set appendwrite` is **reported, not rejected** (plot 1 is genuine); a
+  file it cannot parse as a spice raw is **not judged at all** (including one that
+  merely quotes the header, as our own refusal message does); and a
+  `constants`-named plot carrying **real data** (>12 variables or >1 point, e.g.
+  `let`-created vectors) is reported, not thrown away. Scan bounded to head+tail
+  64 KB.
+- **Wired into `attach_dbs` BEFORE the registry is touched**, so a rejection
+  leaves the previously loaded database exactly where it was.
+
+**D1: THE MODAL IS DELIBERATELY NOT BUILT, and the reasoning is sound.**
+`ase::preflight_fix_session <key>` composes one whole correction per expression,
+rewrites the rows, marks the session dirty and echoes each rewrite; the refusal
+names the command. **Nothing rewrites implicitly.** A run-path modal would force
+`[E]` plus a fifth look debt for a dialog **no decision in this batch specifies**,
+and item 13 owns that surface. Detection, corrections and apply are all headless
+and driven — what is deferred is **one button**. Hence `[x]`.
+
+**Issue `0423` is NARROWED, not closed.** The silent-wrong-answer half is gone —
+the run refuses, names both stale rows, offers both corrections and names the
+issue. The staleness remains, because `0423` asks for a re-case pass derived from
+the **schematic** while this is a confirmation-gated repair derived from the
+**netlist**, inheriting the map's blind spots. **Whoever builds the re-case pass
+closes it.**
 
 ## Environment — re-verified 2026-08-16
 
