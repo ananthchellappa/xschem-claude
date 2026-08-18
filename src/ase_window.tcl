@@ -900,9 +900,35 @@ proc ase::ui::arg_summary {row} {
 }
 
 # Select On Design expression builder: kind `voltage` + a net name ->
-# `v(<net>)`, kind `current` + an instance name -> `i(<inst>)`. The token is
-# LOWERCASED: ngspice echoes `print` expressions lowercased and result_probe
-# matches the expr literally, so only a lowercase token can ever get a Value.
+# `v(<net>)`, kind `current` + an instance name -> `i(<inst>)`.
+#
+# CASE (casemode batch item 9; spec doc/claude/specs/simulator_profiles.md §13).
+# The token is lowercased ONLY when the run's requested mode is `fold`. Under
+# `preserve`/`distinguish` the schematic's own spelling is what goes into the
+# deck, which is what those modes exist for; ngspice accepts the schematic case
+# in `.save` in all three modes (PLAN §F2), while the FOLDED spelling is
+# `rc=1, zero vectors, analysis not run` under `distinguish` — the whole
+# session's data. `fold` is DECISIONS A1's default everywhere, so a stock user's
+# expression is byte-identical to the one this proc shipped before item 9.
+#
+# `$mode` is a REQUIRED argument and deliberately has no default value. A
+# defaulted mode is a silent fold, and the failure a silent fold causes under
+# `distinguish` is the one above: nothing to see, no diagnostic, every trace
+# gone. A missing argument is a Tcl error at the call site instead. Anything
+# that is not `preserve`/`distinguish` folds — an unrecognised mode must not
+# fall through to "emit verbatim".
+#
+# The mode is passed IN rather than looked up because this proc must stay pure
+# (see below); ase::ui::sod_case_mode resolves it once per click at the impure
+# call site.
+#
+# The sentence this replaced said the token must be lower case because
+# result_probe matches `print`'s echo literally. That is still true of ONE
+# combination and no others (spec §13.6): requested `preserve`, measured `fold`,
+# where we ship `v(In)` and ngspice echoes `v(in)`. Under fold both sides are
+# lower case, under delivered preserve both carry the case, and a `distinguish`
+# mismatch is refused before the run (item 8). Casemode item 11 owns the
+# `-nocase` match for that one path.
 #
 # The leading `#` of an AUTO-NAMED net is stripped (issue 0154). An unlabeled
 # net carries the engine's marker name `#netN` (get_unnamed_node, netlist.c) but
@@ -924,11 +950,75 @@ proc ase::ui::arg_summary {row} {
 # byte. Descended, they do NOT — and that is `sod_qualify`'s job below, not this
 # proc's: the token arrives here already hierarchy-qualified (issue 0161), so
 # this stays the pure wrap H1 asserts.
-proc ase::ui::sod_expr {kind token} {
-  if {$kind eq {voltage}} {
-    return "v([string tolower [string trimleft $token #]])"
+proc ase::ui::sod_expr {kind token mode} {
+  if {$kind eq {voltage}} { set token [string trimleft $token #] }
+  if {$mode ne {preserve} && $mode ne {distinguish}} {
+    set token [string tolower $token]
   }
-  return "i([string tolower $token])"
+  if {$kind eq {voltage}} { return "v($token)" }
+  return "i($token)"
+}
+
+# The case mode this click's expressions must be written in: the session's
+# REQUESTED run mode (the resolved simulator profile's `casemode`, else the
+# global floor `sim_case_mode`, else `fold` — B1, spec §3), never a loaded raw's
+# `case_sensitive` and never a file's resolved verdict. These strings are `.save`
+# and `print` cards in a deck we are about to run, so the question is "what will
+# this run be asked to do", which item 3 explicitly allows the floor to answer
+# and item 8 already treats as a request.
+#
+# Resolved ONCE PER GESTURE at the call site (item 4's rule), not per bus bit and
+# never from inside sod_expr, which must stay pure.
+#
+# AN UNKNOWN KEY IS NOT AN ERROR — it is the `{}` state, which resolves to the
+# tool's own DEFAULT profile row, and that is the right answer for the scripted
+# and stubbed picks every headless harness makes (`ase::session_state` cannot
+# throw: its `sessions` dict is initialised at namespace-eval time, ase.tcl:68).
+# A THROW from the resolver IS an error, and the fix round made it stop being
+# silent: a blanket `catch` around the whole thing turned any resolver failure
+# into a mute `fold`, which is exactly the silent-fold failure §13.2 made the
+# `mode` argument required to prevent — a `distinguish` session emitting folded
+# cards with no error, no CIW notice and no log line. So the catch is narrowed to
+# the resolver call and it ECHOES before falling back (SC208c).
+#
+# It DELEGATES rather than re-validating, and that is deliberate. A first cut
+# ended `if {$m ne {preserve} && $m ne {distinguish}} { return fold }` — a second
+# copy of the validation `::sim_profile_casemode` already does (spec §3: a
+# `set sim_case_mode sideways` in an rc cannot become a request). It survived
+# every sabotage green, because the authority above it had already answered
+# `fold`; worse, it MASKED a real one — with the copy in place, a mutation that
+# bypassed the authority and read `$::sim_case_mode` raw still folded garbage, so
+# SC206 could not see it. Deleted, SC206 covers both. `sod_expr` is the backstop
+# for anything unrecognised that gets this far (SC192d).
+#
+# The `{}` line normalises an empty answer into a mode name so this proc's own
+# return value is always one; it has no behavioural drive of its own, since
+# sod_expr folds `{}` exactly as it folds `fold`.
+#
+# THE INIT IS OURS, NOT THE RESOLVER'S, and that is the fix round's other half.
+# `ase::sim_profile_resolve` opens with `::set_sim_defaults` because `sim()` is
+# built lazily — but `::set_sim_defaults` is NOT a read: with the Simulation
+# Configuration dialog open it slurps every `.sim…r.$i.cmd` widget back into
+# `sim($tool,$i,cmd)`. Reached from here it therefore COMMITTED the user's
+# unsaved dialog edits on every Direct-Plot / Select-On-Design click and defeated
+# that dialog's Cancel — measured, `USER-IS-STILL-TYPING` typed into the spice
+# row-0 cmd box survived one pick AND the Cancel that followed. A read-only pick
+# (issue 0204) must not write unrelated global config. So we ask with `init 0`
+# and do the lazy build ourselves, ONCE, and only when the array does not exist
+# yet — a state in which `.sim` cannot exist either, since `simconf` builds
+# `sim()` before it builds the dialog. SC208 pins that a pick makes no
+# `set_sim_defaults` call; SC208b pins that a virgin array is still built;
+# test_ase_dialogs G13 pins the dialog symptom itself, with real widgets.
+proc ase::ui::sod_case_mode {key} {
+  if {![info exists ::sim(tool_list)]} { catch {::set_sim_defaults} }
+  set m {}
+  if {[catch {ase::sim_profile_casemode [ase::session_state $key] 0} m]} {
+    catch {::ase::echo "ase: cannot resolve this session's requested case mode\
+ ($m) — writing FOLDED expressions" error}
+    return fold
+  }
+  if {$m eq {}} { return fold }
+  return $m
 }
 
 # The simulator's name for a token picked at hierarchy depth (issue 0161).
@@ -954,8 +1044,36 @@ proc ase::ui::sod_expr {kind token} {
 # so the comma-list arm of resolved_net never fires here.
 #
 # CURRENT — no such resolver exists for instance names, so this mirrors
-# send_current_to_graph() (hilight.c:1720): `i(` + `v.` + the lowercased
-# sch_path + the name, and the bare `i(name)` at the top.
+# send_current_to_graph() (hilight.c): the branch prefix + the sch_path + the
+# name, and the bare `i(name)` at the top.
+#
+# THIS PROC TAKES NO MODE, and that is a ruling (casemode item 9, spec
+# simulator_profiles.md §13.3): it answers in the SCHEMATIC's own spelling in
+# every mode, and the whole simulator-side case mapping lives in sod_expr and
+# nowhere else — the statement sod_net_at's comment already makes. Two folds used
+# to leak out of sod_expr into here (the path, and the hard-coded lower-case
+# prefix letter); both are gone, and under `fold` sod_expr folds the composed
+# name to exactly the bytes this arm used to produce.
+#
+# THE BRANCH PREFIX FOLLOWS THE TOKEN. It is the device's own first character,
+# not a literal `v.` and not a letter chosen by the mode. Item 4 MEASURED this on
+# ver_50 with the device renamed (receipts/04-hilight-senders.md, spec
+# raw_case_mode.md §11): a deck naming the source `Vs` gives `i(V.X1.Vs)` under
+# preserve, one naming it `vs` gives `i(v.X1.vs)`, and both fold to `i(v.x1.vs)`.
+# hilight.c's sender_current_prefix() is the C half of the same rule; if the two
+# ever disagree about the spelling of one current, one of them is wrong.
+#
+# A1 SCOPE, corrected in the fix round — this is byte-for-byte the old literal
+# `v.` for every token whose FIRST CHARACTER FOLDS TO `v`, which is every
+# conformant vsource/ammeter name (`V1`, `Vmeas`), and NOT universally. A device
+# the user renamed away from v/V moves under `fold` too, and it moves TOWARDS the
+# simulator: MEASURED on ver_50 with a VCVS `E1` inside `X1` (a `type=vsource`
+# cell — `vsource_pwl.sym` is templated `name=E1`, and nothing here validates the
+# first letter), the raw carries `i(e.x1.e1)`; `.save i(e.x1.e1)` is accepted,
+# while the old spelling `.save i(v.x1.e1)` produces "no data saved for Transient
+# analysis; analysis not run" and a 570-byte empty raw — the whole run lost. So
+# the old hard-coded `v.` was not "unchanged" for those devices, it was broken,
+# and the derivation repairs it. SC211/SC211b pin both columns.
 #
 # Known limits, both inherited rather than introduced (see the issue doc):
 # resolved_net measures its path from `sch_waves_loaded()`, so an expression
@@ -983,7 +1101,7 @@ proc ase::ui::sod_qualify {kind token {baselvl 0}} {
   }
   set path [ase::ui::sod_rel_path $baselvl]
   if {$path eq {}} { return $token }
-  return "v.[string tolower $path]$token"
+  return "[string index $token 0].$path$token"
 }
 
 # The instance path from hierarchy level `baselvl` down to the current level,
@@ -1962,10 +2080,15 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # issue 0168: names are measured from the level of the SESSION's own design in
   # this window's stack, not blindly from the window's top — a pick made under a
   # session bound to an intermediate cell must match THAT session's deck.
+  # casemode item 9: the expression is written in the mode this session will
+  # REQUEST of its simulator (profile, then the global floor, then fold). Both
+  # the level and the mode are resolved ONCE per gesture, before the fan-out, so
+  # a bus's bits cannot disagree with each other.
   set base [ase::ui::sod_base_level $key]
+  set cmode [ase::ui::sod_case_mode $key]
   set first 1
   foreach t $toks {
-    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t $base]]
+    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t $base] $cmode]
     if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
       # 0153's schematic cue: colour the picked object ONCE, in the first
       # trace's colour. The bus is a single wire, so N cues would just repaint

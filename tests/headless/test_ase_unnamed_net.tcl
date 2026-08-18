@@ -199,14 +199,21 @@ check "AN9 flylines still resolves a NAMED net at the same depth" \
   [dict get [eval xschem flylines at $P_NAMED] net] OUT
 
 # --- AN10-AN13: the expression mapping ---------------------------------------
+## RESTATED, casemode batch item 9 (same ids, same expected strings): `sod_expr`
+## no longer folds unconditionally, so the mode is now a REQUIRED third argument
+## and these four calls name it. `fold` is DECISIONS A1's default everywhere and
+## every expected value below is unchanged byte for byte — which is the point of
+## restating them here rather than deleting them: they are 0154's assertions AND
+## this item's A1 guard. The preserve/distinguish columns live in
+## test_ase_sod_case.tcl (SC192-SC194d).
 check "AN10 sod_expr strips the auto-name marker" \
-  [ase::ui::sod_expr voltage {#net1}] {v(net1)}
+  [ase::ui::sod_expr voltage {#net1} fold] {v(net1)}
 check "AN11 sod_expr strips AND lowercases" \
-  [ase::ui::sod_expr voltage {#NET1}] {v(net1)}
+  [ase::ui::sod_expr voltage {#NET1} fold] {v(net1)}
 check "AN12 sod_expr leaves a named net alone" \
-  [ase::ui::sod_expr voltage OUT] {v(out)}
+  [ase::ui::sod_expr voltage OUT fold] {v(out)}
 check "AN12 sod_expr leaves an instance name alone" \
-  [ase::ui::sod_expr current V1] {i(v1)}
+  [ase::ui::sod_expr current V1 fold] {i(v1)}
 
 # the netlist is the authority on what ngspice will call that node
 set ::netlist_dir [file join $scratch nl]

@@ -901,6 +901,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [bind $cv <Key-Escape>] $prev
   }
 
+  # --- G13 (casemode item 9, fix round) ---------------------------------------
+  # A Direct-Plot / Select-On-Design pick asks the session's profile for the case
+  # mode its expressions must be written in (ase::ui::sod_case_mode). That
+  # question used to travel ase::sim_profile_casemode -> ase::sim_profile_resolve
+  # -> ::set_sim_defaults, and set_sim_defaults is NOT a read: while the
+  # Simulation Configuration dialog is open its first loop SLURPS every
+  # `.sim…r.$i.cmd` text widget back into `sim($tool,$i,cmd)`. So one pick
+  # COMMITTED the user's unsaved edits into global config and defeated that
+  # dialog's Cancel — a read-only pick (issue 0204) writing something it has no
+  # business writing. Fixed by asking with the resolver's `init 0` form and doing
+  # a guarded one-time init instead; test_ase_sod_case SC208 pins the cause
+  # headless, THIS pins the symptom with a real dialog and a real widget.
+  ::set_sim_defaults
+  set g13_before $::sim(spice,0,cmd)
+  simconf
+  update
+  set g13_w .sim.topf.f.scrl.center.spice.r.0.cmd
+  check_true "G13 fixture: the simconf row-0 cmd widget exists" \
+    [expr {[winfo exists $g13_w] ? 1 : 0}]
+  if {[winfo exists $g13_w]} {
+    $g13_w delete 1.0 end
+    $g13_w insert 1.0 {G13-USER-IS-STILL-TYPING}
+    update
+    set g13_mode {}
+    catch {set g13_mode [ase::ui::sod_case_mode $key]}
+    check "G13 a case-mode resolve leaves an OPEN simconf's unsaved edit uncommitted" \
+      [list $::sim(spice,0,cmd) [expr {$g13_mode ne {} ? 1 : 0}]] [list $g13_before 1]
+  }
+  if {[winfo exists .sim]} {
+    destroy .sim
+    xschem set semaphore [expr {[xschem get semaphore] -1}]
+  }
+  update
+  set ::sim(spice,0,cmd) $g13_before
+
   # done: close the session window (unsaved edits are discarded by contract).
   # item 16: this session is DIRTY; the menu Close now routes through
   # close_request's save prompt, so tear down directly (behavior-identical to

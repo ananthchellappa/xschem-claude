@@ -1522,3 +1522,365 @@ The message names the stamped name, the name the row carries now, and the
 executable that will run (`CS187`); an `ok` resolve says nothing at all
 (`CS187b`, the control — without it the report could fire on every run).
 Item 13 owns *offering* to re-point the row; this item owes the sentence.
+
+---
+
+# 13. THE EXPRESSIONS ASE-L SHIPS — casemode item 9
+
+`PLAN.md` §3b item 9 and §D6 part 1. `DECISIONS.md` **A1** (fold is the default,
+so a stock user must see no change) and **B1** (the requested mode is the
+profile's, with the global floor underneath). Item 6 owns §1–§10, item 7 §11,
+item 8 §12.
+
+Items 1–8 built the read path and the run command. This is the **write** path:
+the two procs that turn a Direct-Plot / Select-On-Design click into the `.save`
+and `print` cards of the deck about to be run.
+
+Checks: `tests/headless/test_ase_sod_case.tcl`, `SC192`–`SC211b` (52), true
+headless, no simulator involved — plus `test_ase_dialogs` **`G13`** (2), which
+needs a real Tk dialog and therefore runs on the display arm.
+
+## 13.1 What was there, and why it had to move
+
+```tcl
+proc ase::ui::sod_expr {kind token} {
+  if {$kind eq {voltage}} { return "v([string tolower [string trimleft $token #]])" }
+  return "i([string tolower $token])"
+}
+...
+  return "v.[string tolower $path]$token"        ;# sod_qualify's current arm
+```
+
+Three unconditional folds. A net drawn `TopNet` reached the deck as `v(topnet)`
+in **every** mode, and a source `Vs` two levels down as `i(v.xm.xl.vs)`.
+
+| the card we emit | fold | preserve | distinguish |
+|---|---|---|---|
+| `.save v(TopNet)` (schematic case) | rc=0 → `v(topnet)` | rc=0 → `v(TopNet)` | rc=0 → `v(TopNet)` |
+| `.save v(topnet)` (folded) | rc=0 → `v(topnet)` | rc=0 (upstream `0056`) | **rc=1, ZERO VECTORS, "analysis not run"** |
+
+(`PLAN.md` §F2, re-measured 2026-08-14.) The bottom-right cell is the whole
+reason this item exists: under `distinguish` a folded card does not mis-label a
+trace, it **destroys the run** — every trace in the session, with rc=1 and a raw
+file that exists and holds nothing.
+
+## 13.2 RULING — the mode is a REQUIRED argument of `sod_expr`, never a default
+
+`sod_expr {kind token mode}`. There is no default value and there must not be
+one (`SC195`, which goes green the moment somebody adds `{mode fold}`).
+
+The proc **must stay pure** — its own comment records that it is called with no
+design loaded (`test_ase_interact` H1, `0161` HP1/HP2, and `SC196` here, which
+renames the `xschem` command away and still expects an answer). So it cannot ask
+the engine, and the mode has to arrive from outside. The two candidates were a
+defaulted argument and a mirrored global; the argument won, and it is required
+rather than defaulted because of the table above:
+
+- a **defaulted** mode is a silent fold. Under `distinguish` a caller who forgot
+  it loses the whole simulation, and **nothing on the ASE side says why** — the
+  run comes back `rc=1` with a raw file that exists and holds no vectors.
+  (Corrected in the fix round: an earlier wording said "with no diagnostic
+  anywhere", and that is false as measured. `ver_50` *does* warn, precisely, once
+  per vector, in its own log — `Warning: no vector named 'topnet'; 'TopNet'
+  differs only in case (casemode=distinguish)` — alongside `Error: no data saved
+  for Transient analysis; analysis not run`. The ruling stands on the `rc=1`
+  half, which is the half ASE-L can see);
+- a **required** mode is a Tcl error at the call site, at the first run.
+
+There is exactly one production caller (`sod_click`), and the nine committed
+assertions that called it with two arguments were restated with an explicit
+`fold` — same ids, same expected strings, because `fold` is A1's default and
+those strings are now this item's A1 guard as well as their own suites'.
+
+Inside, anything that is **not** `preserve`/`distinguish` folds (`SC192d`,
+`SC206`). An unrecognised mode must never fall through to "emit verbatim": that
+is the same conservative direction A1 already takes, and it is the backstop that
+lets §13.4 delegate instead of re-validating.
+
+## 13.3 RULING — `sod_qualify` gains NO mode, and its prefix follows the TOKEN
+
+The obvious shape was a second mode argument down here, so the current arm could
+choose `v.` or `V.`. It is wrong twice.
+
+**Wrong once because item 4 measured it.** Item 4's reviewers prescribed exactly
+that — "`v.` when folding, `V.` otherwise" — and it was refuted on `ver_50` with
+the device renamed (`receipts/04-hilight-senders.md`, `raw_case_mode.md` §11):
+
+```
+deck names the source `Vs`:  fold -> i(v.x1.vs)   preserve -> i(V.X1.Vs)
+deck names the source `vs`:  fold -> i(v.x1.vs)   preserve -> i(v.X1.vs)
+```
+
+The prefix is **the device's own first character**, folded along with everything
+else — not a letter chosen by the mode. `hilight.c`'s `sender_current_prefix()`
+is the C half of the same rule (`buf[0] = t[0]`), and the two are two roads to
+the same simulator: if they disagreed about the spelling of one current, one of
+them would be wrong. `SC203`/`SC203b` reproduce **both** measured rows byte for
+byte on a mixed-case fixture; `SC201` is the teeth against re-introducing a mode
+branch here, and the reviewers' prescribed fix is mutation `M6`, which reddens
+`SC203b` alone (an uppercasing prefix is invisible without a lower-case subject —
+item 4's `M9` carry-forward).
+
+**Wrong twice because the case mapping already has a home.** `sod_net_at`'s
+comment states it: *"The simulator-side mapping belongs to sod_expr, and only
+there."* Both folds in `sod_qualify` — the path, and the hard-coded lower-case
+prefix letter — were that mapping leaking downhill. So:
+
+```tcl
+  return "[string index $token 0].$path$token"
+```
+
+`sod_qualify` now answers in the **schematic's own spelling**, identically in
+every mode, and `sod_expr` folds the composed name when (and only when) the mode
+is `fold`. This mirrors D3's result in backannotation: the mode does not get a
+branch here, it **disappears** from here.
+
+**Under `fold` this is byte-identical for every token whose first character folds
+to `v`** — and that is the honest quantifier, corrected in the fix round. An
+earlier wording here, in `sod_qualify`'s own comment and in the receipt said
+"byte-identical for every token that can reach it", justified by "a SPICE voltage
+source's name necessarily begins with `v`/`V`, and both accepted cell types are
+templated V-devices". **The templates are only defaults.** `sod_click` validates
+`cell::type` and takes `name` verbatim, so `V1`, `Vmeas`, `Vs` fold to the old
+literal `v.` and **a device renamed away from v/V does not**:
+
+| pick, `fold` mode | HEAD (`v.` literal) | here (token-derived) |
+|---|---|---|
+| `V1` at depth | `i(v.x1.x2.v1)` | `i(v.x1.x2.v1)` — same |
+| `E1` at depth (`vsource_pwl.sym` ships `template="name=E1"`) | `i(v.x1.e1)` | `i(e.x1.e1)` — **moves** |
+| `Imeas` at depth (renamed ammeter) | `i(v.x1.imeas)` | `i(i.x1.imeas)` — **moves** |
+
+**Measured which of the two the simulator actually has** (`ver_50`, a VCVS `E1`
+inside `X1`, `render_deck`'s own deck shape — analyses inside `.control`, bare
+`write`, no vector list):
+
+```
+raw Variables:        time  i(e.x1.e1)  v(n1)  i(v.x1.v1)  i(v2)  v(x1.mid)  v(x1.vc)
+.save i(e.x1.e1)  ->  rc 0, 1192-byte raw, the vector is there
+.save i(v.x1.e1)  ->  "no data saved for Transient analysis; analysis not run",
+                      570-byte empty raw — the whole run lost
+```
+
+So for those devices the old hard-coded `v.` was not "unchanged", it was
+**broken**, and the derivation repairs it — in the direction of
+`hilight.c`'s `sender_current_prefix()` (`buf[0] = t[0]`), which had the token
+rule already. `SC211`/`SC211b` pin both columns on a fixture instance named `E1`.
+(An `I`-named ammeter is a *current source* card in SPICE and has no branch
+current at all; both spellings name nothing there. That is a schematic error, not
+a case question.)
+
+This is the **one** documented exception to A1 byte-identity in this item; §13.5's
+table is otherwise exact.
+
+## 13.4 Whose mode is it: the RUN's request, resolved once per gesture
+
+`ase::ui::sod_case_mode {key}` → `ase::sim_profile_casemode` on the session's
+state → the resolved profile row's `casemode`, else the global floor
+`sim_case_mode`, else `fold` (§3, B1).
+
+Stated rather than inherited: these strings are `.save`/`print` cards in a deck
+**about to be run**, so the question is *what will this run be asked to do*. It
+is **not** a loaded raw's `case_sensitive` and **not** a file's resolved verdict.
+`raw_case_mode.md` §10 bars the floor from colouring a *file's* verdict; item 4
+already ruled that a question about a **run's** data may use it, and item 8
+treats the floor as a request. This is the run side of that line.
+
+Resolved **once per gesture** (item 4's rule), in `sod_click`, before the bus
+fan-out — so a bus's bits cannot disagree with one another (`SC204b`; mutation
+`M9`, which passes the resolved mode only for the first bit, reddens it alone).
+Once per **gesture**, not once per session or once per mode-arm: a memo across
+clicks was tried as a sabotage in the fix round (`N10`) and reddens twenty
+checks, `SC209c` among them.
+
+**The SESSION's own row, driven** (fix round). Every `SC205`–`SC207` check passes
+the literal key `k`, which names no session, so `ase::session_state` returns `{}`
+and the answer comes from the tool's *default* row — a `sod_case_mode` that
+ignored its key entirely stayed green across all of them (raised in review, with
+a mutation). `SC209` closes it: a **real** session, stamped with
+`ase::sim_profile_stamp` at a **non-default** row carrying `distinguish`, with the
+floor at `fold` and the default row carrying no mode at all. `SC209` asserts the
+stamped key answers `distinguish` **and** `k` answers `fold` in the same breath;
+`SC209b` asserts the queued expression follows the stamped row; `SC209c` is the
+control that the unstamped key, same floor and same click, still folds.
+
+One qualification on "a deck about to be run": that is exactly true of `outputs`
+mode. In `plot` mode the same fan-out sends the same expression to
+`dp_queue`/`dp_finish` and the waveform viewer, where it is matched against an
+already-loaded raw by the one-lookup authority rather than written into a deck.
+The ruling is unchanged there (the requested run mode is still the best available
+statement of how this session spells things) and no combination misbehaves —
+under `fold` nothing moved, under requested-`preserve`/delivered-`fold` item 2's
+case-blind rungs resolve it, and `distinguish` never has a raw because item 8
+refuses the run — but the justification above is written for the deck consumer.
+
+**It DELEGATES and does not re-validate.** The first cut ended with
+`if {$m ne {preserve} && $m ne {distinguish}} { return fold }` — a second copy of
+the validation `::sim_profile_casemode` already performs. It survived every
+mutation green, and worse, it **masked** a real one: with the copy in place, a
+`sod_case_mode` that bypassed the authority and read `$::sim_case_mode` raw still
+folded garbage, so `SC206` could not see it. Deleted; `M10b` now reddens `SC206`,
+`SC207b` and `SC207c` together. `sod_expr`'s "anything unrecognised folds" is the
+backstop (§13.2).
+
+**It asks with `init 0`, and that is a correctness fix, not a micro-optimisation**
+(fix round). `ase::sim_profile_resolve` opens with `::set_sim_defaults` because
+`sim()` is built lazily (§1, `CS163k`) — but **`::set_sim_defaults` is not a
+read**. Its first loop is
+
+```tcl
+if { [info exists has_x] && [winfo exists .sim] } {
+  foreach tool $sim(tool_list) { for {set i 0} {$i < $sim($tool,n)} {incr i} {
+    set sim($tool,$i,cmd) [.sim.topf.f.scrl.center.$tool.r.$i.cmd get 1.0 {end - 1 chars}]
+  } }
+}
+```
+
+i.e. with the Simulation Configuration dialog open it **slurps every unsaved cmd
+edit into the global array**. Reached from a Direct-Plot / Select-On-Design click
+it therefore committed the user's in-progress typing and defeated that dialog's
+Cancel — measured: `USER-IS-STILL-TYPING` in the spice row-0 box survived one
+`sod_click`, and survived the Cancel after it. A pick is deliberately **read-only**
+(issue 0204); it may not write unrelated global config. So:
+
+- `ase::sim_profile_resolve {state {init 1}}` and
+  `ase::sim_profile_casemode {state {init 1}}` gained a **read-only form**;
+  `init 0` skips the lazy `set_sim_defaults`. Every existing caller keeps `1` and
+  `CS163k` (resolve builds the array it reads) is untouched.
+- `sod_case_mode` does the lazy build **itself, guarded**:
+  `if {![info exists ::sim(tool_list)]} { catch {::set_sim_defaults} }`. That is
+  the only state in which the array is missing, and it is a state in which `.sim`
+  cannot exist either — `simconf` builds `sim()` before it builds the dialog — so
+  the guarded call can never reach the slurp.
+
+`SC208` pins that a pick makes **zero** `set_sim_defaults` calls; `SC208b` pins
+that a virgin array is still built, once, with the right answer; and
+`test_ase_dialogs` **`G13`** pins the symptom itself with a real dialog, a real
+widget and a real edit.
+
+**A THROW IS ANNOUNCED, NOT FOLDED SILENTLY** (fix round). The first cut wrapped
+the whole resolve in a blanket `catch` and returned `fold` on any failure — which
+is the very silent fold §13.2 made the `mode` argument required to prevent, only
+one layer up: a `distinguish` session would emit folded cards with no error, no
+CIW notice and no log line. An unknown key is *not* that case — it is the `{}`
+state, which legitimately resolves to the tool's default row, and
+`ase::session_state` cannot throw (its dict is initialised at namespace-eval
+time). So the catch is narrowed to the resolver call, and on a genuine throw
+`sod_case_mode` still answers `fold` (it cannot invent a mode) but says so
+through `::ase::echo` first. `SC208c` pins both halves in one assertion.
+
+## 13.5 A1, as a check rather than a hope
+
+Under `fold` every composed expression is **byte-identical** to the literal the
+shipped suites already assert. Those literals are repeated inside
+`test_ase_sod_case.tcl` on purpose — this is where a fold regression is supposed
+to be caught, and a check that only said "the two modes differ" would pass with
+both of them wrong:
+
+| literal | its home | here |
+|---|---|---|
+| `v(topnet)` | `0161` HP4 | `SC197` |
+| `i(v9)` | `0161` HP5 | `SC198` |
+| `v(x1.x2.mid)` | `0161` HP10 | `SC199b` |
+| `i(v.x1.x2.v1)` | `0161` HP11 | `SC200` |
+| `v(net1)`, `v(out)`, `i(v1)` | `unnamed_net` AN10–AN12, `interact` H1 | `SC192`–`SC194c` |
+| `v(xm.xl.midnode)`, `i(v.xm.xl.vs)` | (new mixed-case fixture) | `SC202b`, `SC203c` |
+
+Mutation `M18` (the fold arm disarmed) reddens fourteen of them at once; that is
+the drive those guards exist for.
+
+## 13.5b DECLARED DEPARTURE — `PLAN.md` §D3 says "unconditionally"
+
+Said out loud rather than chosen quietly (`CREW_BRIEF` §2), because it was not
+declared in the first cut and two reviewers raised it.
+
+`PLAN.md` **§D3** says `sod_expr` stops folding **unconditionally** — "It does not
+need to know the mode" — and buys one specific property with that: *a state file
+written today is correct under a simulator installed tomorrow*, because the row
+stores the schematic's own spelling and the mapping happens at deck-render time.
+
+**This item is mode-CONDITIONAL instead, and the driver's `A1` instruction
+outranks §D3.** A1 requires every shipped expression under `fold` to be
+byte-identical to today's, and `fold` is the default at every stage; an
+unconditional stop-folding would move ten committed assertions' *values* and every
+stock user's deck with them. The audit-empty contract for items 1–9 is the same
+statement from the other side.
+
+**The consequence §D3 was buying, named:** the mode is resolved at **pick** time,
+so an output row picked while the profile said `fold` stores `v(topnet)`
+*forever*. Re-point that session at a `distinguish` profile later and
+`render_deck` (`ase.tcl`, `.save [dict get $o expr]`) ships the folded card
+verbatim — the bottom-right cell of §13.1's table, rc=1, zero vectors, analysis
+not run. Reproduced end to end (real `ase::session_open`, real `sod_click`, real
+`render_deck` hook) by two reviewers independently. Item 8 does not refuse it,
+because requested == measured == `distinguish`; nothing on the path re-cases a
+stored row.
+
+**Owner:** filed as `doc/claude/issues/0423-a-fold-picked-output-row-goes-stale-under-a-later-distinguish-profile.md`,
+so it cannot be lost between item 9 and item 10. It is **not** repaired here:
+`PLAN.md` §D5 allows the distinguish-only re-case pass to be built or deferred
+with a filed issue, and the driver's item-10 fence names only the pre-flight, the
+`$sim_status` guard and the constants-raw rejection. Until it is built, the
+mitigation is item 10's pre-flight, which must **REFUSE** such a run rather than
+silently spell it wrong — see §13.6.
+
+## 13.6 What this hands to items 10, 11 and 12
+
+- **Item 11 (`result_probe -nocase`) is needed for exactly one combination**, and
+  it is worth naming precisely because the plan's wording is broader than the
+  truth. Under `fold` we now emit `v(in)` and ngspice echoes `v(in)` — a match.
+  Under `preserve` **delivered**, we emit `v(In)` and it echoes `v(In)` — a
+  match. The mismatch is B4's *run-and-report* path: **requested `preserve`,
+  measured `fold`**. There we ship `v(In)` and `print` answers `v(in)`
+  (`PLAN.md` §F3), and without item 11 the Outputs pane's Value column is
+  silently empty for every mixed-case net. `distinguish` cannot reach this state
+  — item 8 refuses the run.
+- **Item 10's pre-flight** now compares expressions that carry the schematic's
+  own case against the netlist map, which also carries it. Under `distinguish` a
+  case-sensitive comparison is the right one; under `fold` the expression is
+  already folded and the map is not, so the pre-flight must fold **both sides**
+  or it will report every mixed-case net as absent.
+- **Item 10 also inherits §13.5b's stale row** (`0423`). A row picked under a
+  `fold` profile and run under a `distinguish` one is a *folded* expression the
+  pre-flight will see as absent from a case-kept netlist map — which is the right
+  answer, and the pre-flight must **refuse the run and say why** rather than pass
+  it through. Item 9's expressions are correct for the mode that was requested
+  when they were picked; nothing between the pick and `render_deck` re-cases
+  them. Whoever builds the re-case pass closes `0423`.
+- **Item 12's post-load repair** is still needed and is now *narrower*: a
+  constructed current name (`i(V.Xm.Xl.Vs)`) is only as right as our model of the
+  simulator's construction, and `get_raw_index`'s `i(v.x` fixup is item 2's, not
+  ours.
+
+## 13.7 What is NOT here
+
+- **No simulator was launched by any check in this item.** The three-mode
+  behaviour rests on item 4's measurements on `ver_50` (quoted above) and on
+  `PLAN.md` §F1–§F4; nothing in `test_ase_sod_case.tcl` runs ngspice, and it
+  needs none.
+- **The deck itself is not re-measured.** These are the strings `render_deck`
+  writes; that a `preserve` deck full of `v(TopNet)` cards runs green end to end
+  on `ver_50` is asserted by `PLAN.md` §F2, not by a check here.
+- **The Xyce arm is untouched and stays UNVERIFIED.** ASE-L's pick path has no
+  Xyce branch at all; `hilight.c`'s does (item 4), and the two therefore differ
+  for Xyce by construction.
+- **`ase::ui::sod_rel_path` contains no fold** and was not modified; the
+  dispatch's "three folds" are the two in `sod_expr` plus the one in
+  `sod_qualify`.
+- **Ammeters are reasoned about, not driven.** No check picks an `ammeter`
+  instance; the claim that its *template* name is V-prefixed comes from
+  `xschem_library/devices/ammeter.sym`'s `template="name=Vmeas"` — and §13.3 now
+  says out loud that a template is only a default. The non-`v` prefix class is
+  driven, on a `vsource` instance named `E1` (`SC211`), which is the same code
+  path.
+- **Four checks are fixture preconditions with no item-9 code beneath them and
+  are NOT evidence**: `SC199` and `SC202` (the descend worked), `SC207` (the
+  spice tool has a default profile row) and `G13 fixture` (the simconf row-0 cmd
+  widget exists).
+- **`SC208c-sane` is test hygiene**, not a product assertion: it checks the real
+  `ase::sim_profile_casemode` was renamed back after `SC208c`'s stub. It has a
+  drive anyway (`N11`/`N10`).
+- **`sod_case_mode`'s `{}` normalisation has no behavioural drive** (`M17`
+  survives green): `sod_expr` folds `{}` exactly as it folds `fold`. It is kept
+  so the proc's own return value is always a mode name.
+- **`doc/claude/code_analysis/ngspice_case_sensitivity.md:62` still quotes the
+  two-argument call site.** Item 15 owns rewriting that file's §Part 3.

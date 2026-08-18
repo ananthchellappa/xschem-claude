@@ -127,9 +127,17 @@ dict set cst rundir $rundir
 ase::state_save $clonestate $cst
 
 # --- H1: sod_expr (pure helper) ----------------------------------------------
-check "H1 sod_expr voltage lowercases the net" [ase::ui::sod_expr voltage D] {v(d)}
+## RESTATED, casemode batch item 9 (same ids, same expected strings): the case
+## mode is now a REQUIRED third argument -- sod_expr folds only when the run's
+## requested mode is `fold`, which is A1's default everywhere, so both expected
+## values are unchanged. H1's real subject, that sod_expr is a PURE string op
+## callable with no design loaded, is untouched: the mode arrives as an argument
+## precisely so this proc never has to ask the engine (spec
+## simulator_profiles.md §13.2).
+check "H1 sod_expr voltage lowercases the net" \
+  [ase::ui::sod_expr voltage D fold] {v(d)}
 check "H1 sod_expr current lowercases the source" \
-  [ase::ui::sod_expr current V1] {i(v1)}
+  [ase::ui::sod_expr current V1 fold] {i(v1)}
 
 # --- H2: sod_merge (pure helper) ---------------------------------------------
 lassign [ase::ui::sod_merge {} {v(d)} {save 1 plot 0}] rows2 st2

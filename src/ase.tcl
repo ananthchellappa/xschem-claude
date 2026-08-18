@@ -456,7 +456,13 @@ proc ase::backend_tool {name} {
 #   invalid  it names a tool or an index that does not exist; falls back to the
 #            backend's tool default, and says so rather than erroring, because a
 #            simrc the user edited must not make a saved session unopenable.
-proc ase::sim_profile_resolve {state} {
+#
+# `init 0` is the READ-ONLY form (casemode item 9 fix round). It skips the lazy
+# `::set_sim_defaults` below and is for callers that are NOT about to run
+# anything and must not touch global config -- see the WARNING in that comment.
+# A caller that passes 0 owes its own guarded init, or accepts `index -1` on a
+# virgin array.
+proc ase::sim_profile_resolve {state {init 1}} {
   # `sim()` is built LAZILY -- nothing populates it at startup, and its five
   # readers (`sim_is_ngspice`, `sim_is_xyce`, `sim_is_vacask`, `simconf`,
   # `simulate`) each open with a `set_sim_defaults` for exactly that reason. So
@@ -467,7 +473,18 @@ proc ase::sim_profile_resolve {state} {
   # there. The xschem.tcl-side accessors deliberately do NOT do this: they are
   # reached FROM set_sim_defaults (via save_sim_defaults -> sim_profile_get), and
   # a lazy init down there would recurse.
-  ::set_sim_defaults
+  #
+  # WARNING -- `::set_sim_defaults` IS NOT A READ. When the Simulation
+  # Configuration dialog is open it SLURPS every `.sim...r.$i.cmd` text widget
+  # back into `sim($tool,$i,cmd)` (xschem.tcl, the `[winfo exists .sim]` loop at
+  # the top of the proc), i.e. it COMMITS the user's unsaved edits and defeats
+  # that dialog's Cancel. Measured on the shipped tree: with `.sim` open and
+  # `USER-IS-STILL-TYPING` typed into the spice row-0 cmd box, ONE
+  # `ase::ui::sod_click` -- a deliberately read-only pick (issue 0204) -- left
+  # `sim(spice,0,cmd)` holding that text, and Cancel could not take it back.
+  # So a hot GUI path that only wants to ASK a question must pass `init 0`
+  # (`ase::ui::sod_case_mode` does, and does its own one-time init instead).
+  if {$init} { ::set_sim_defaults }
   set btool [ase::backend_tool [ase::state_get $state simulator]]
   set p [ase::state_get $state sim_profile]
   set status ok
@@ -522,8 +539,12 @@ proc ase::sim_profile_resolve {state} {
 # xschem.tcl proc and this one differ only in namespace, so the relative name
 # would resolve against `ase` FIRST and this proc would call itself forever.
 # Same reason the file's 56 `::ase::echo` call sites are qualified.
-proc ase::sim_profile_casemode {state} {
-  set r [ase::sim_profile_resolve $state]
+#
+# `init` is passed straight through to the resolve (item 9's fix round): 0 for a
+# read-only caller that must not commit an open Simulation Configuration
+# dialog's unsaved edits. See ase::sim_profile_resolve's WARNING.
+proc ase::sim_profile_casemode {state {init 1}} {
+  set r [ase::sim_profile_resolve $state $init]
   return [::sim_profile_casemode [dict get $r tool] [dict get $r index]]
 }
 

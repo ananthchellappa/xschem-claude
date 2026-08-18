@@ -23,8 +23,14 @@
 # `xschem resolved_net` (hilight.c) already does all four; nothing in Tcl could.
 #
 # Currents have no such resolver, so sod_qualify mirrors send_current_to_graph()
-# (hilight.c:1720): `i(` + "v." + lowercased sch_path + name + `)` when there is
+# (hilight.c): `i(` + the branch prefix + sch_path + name + `)` when there is
 # hierarchy, bare `i(name)` at the top -- which is exactly what ngspice showed.
+# CORRECTED for casemode item 9: that used to read "v." + the LOWERCASED
+# sch_path. sod_qualify no longer folds anything -- it answers in the schematic's
+# own spelling and the prefix follows the token's first character -- and sod_expr
+# folds the composed name when (and only when) the requested mode is `fold`. The
+# fold-mode literals below are therefore unchanged byte for byte; the other two
+# modes are pinned in test_ase_sod_case.tcl.
 #
 # Legs (HP*):
 #   HP1-HP3   sod_expr stays PURE (no design loaded) and stays UNQUALIFIED even
@@ -59,10 +65,15 @@ set here   [file normalize [file dirname [info script]]]
 set fixdir [file join $here fixtures ase_hier]
 
 # --- HP1-HP2  purity: sod_expr with NOTHING loaded (test_ase_interact H1) ------
+## RESTATED, casemode batch item 9 (same ids, same expected strings): sod_expr's
+## case mode is now a REQUIRED third argument. `fold` is A1's default everywhere,
+## so both literals are unchanged; the purity contract these two legs exist for is
+## strengthened rather than weakened, because passing the mode in is exactly what
+## keeps sod_expr from having to ask the engine for it.
 check "HP1 sod_expr is pure and lowercases a net (no design loaded)" \
-  [ase::ui::sod_expr voltage MID] {v(mid)}
+  [ase::ui::sod_expr voltage MID fold] {v(mid)}
 check "HP2 sod_expr is pure and lowercases a source (no design loaded)" \
-  [ase::ui::sod_expr current V1] {i(v1)}
+  [ase::ui::sod_expr current V1 fold] {i(v1)}
 check "HP3 sod_qualify is a no-op with no design loaded" \
   [q voltage mid] {mid}
 
@@ -149,8 +160,9 @@ check "HP17 the 0153 colour cue still gets the RAW token, not the qualified one"
 ## sod_expr itself must STILL be the pure wrap, even here: it is the caller that
 ## qualifies. If this ever fails, the resolution leaked into the pure helper and
 ## H1 (no design loaded) is living on borrowed time.
+## RESTATED with an explicit `fold` (casemode item 9); expectation unchanged.
 check "HP3b sod_expr stays unqualified while descended (purity contract)" \
-  [ase::ui::sod_expr voltage mid] {v(mid)}
+  [ase::ui::sod_expr voltage mid fold] {v(mid)}
 
 # --- HP18  ascending leaves no residue ----------------------------------------
 xschem go_back; xschem go_back

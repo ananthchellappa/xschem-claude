@@ -165,8 +165,17 @@ check "HL15 (control) base 0 keeps the shipped whole-path name" \
   [pcall {ase::ui::sod_qualify voltage mid 0}] {x1.x2.mid}
 check "HL16 base 1 measures the name from the MID deck" \
   [pcall {ase::ui::sod_qualify voltage mid 1}] {x2.mid}
+## RESTATED, casemode batch item 9 -- the only committed expectation this item
+## genuinely MOVES, and it moves because sod_qualify stopped folding. It used to
+## answer `v.x2.V1`: a hard-coded lower-case branch prefix and a lower-cased path,
+## both of which were sod_expr's job leaking down here. It now answers in the
+## schematic's own spelling with the prefix taken from the TOKEN's first character
+## (item 4 measured that rule on ver_50: deck `Vs` -> `i(V.X1.Vs)`, deck `vs` ->
+## `i(v.X1.vs)`). The 0168 leg this check exists for -- that a current is measured
+## from the SESSION's base level, `x2.` and not `x1.x2.` -- is unchanged, and so
+## is the shipped `fold` expression: sod_expr folds `V.x2.V1` back to `i(v.x2.v1)`.
 check "HL17 a current is base-relative too" \
-  [pcall {ase::ui::sod_qualify current V1 1}] {v.x2.V1}
+  [pcall {ase::ui::sod_qualify current V1 1}] {V.x2.V1}
 check "HL18 identity once the pick is AT the session's own level" \
   [pcall {ase::ui::sod_qualify voltage {a[1:0]} 2}] {a[1:0]}
 
