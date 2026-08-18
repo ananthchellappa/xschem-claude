@@ -923,12 +923,20 @@ proc ase::ui::arg_summary {row} {
 # call site.
 #
 # The sentence this replaced said the token must be lower case because
-# result_probe matches `print`'s echo literally. That is still true of ONE
-# combination and no others (spec §13.6): requested `preserve`, measured `fold`,
-# where we ship `v(In)` and ngspice echoes `v(in)`. Under fold both sides are
-# lower case, under delivered preserve both carry the case, and a `distinguish`
-# mismatch is refused before the run (item 8). Casemode item 11 owns the
-# `-nocase` match for that one path.
+# result_probe matches `print`'s echo literally. §13.6 first said that mattered
+# for exactly ONE combination — requested `preserve`, measured `fold` — and
+# **item 11 measured that to be one combination too few** (spec §15.2, and
+# §13.6 is corrected in place). This proc is the only fold in the whole file,
+# so every expression that did NOT come through it keeps its typed case: the
+# Add/Edit Output dialog (ase::ui::output_editor_ok) stores the string as
+# typed, a hand-written state file stores what it says, and
+# ase::expand_bus_outputs carries a row's spelling into every bit. A plain
+# `fold` run therefore ships `v(In)` too and gets `v(in)` back.
+# What item 11 owns is NOT a `-nocase` flag: it is a ladder in result_probe —
+# exact spelling first, a case-insensitive pass second, and a D2 decline when
+# that pass offers more than one differently-cased label — with the lenient
+# rung switched off whenever the LOG says the run delivered `distinguish`,
+# whatever it requested (§15.3–§15.4b).
 #
 # The leading `#` of an AUTO-NAMED net is stripped (issue 0154). An unlabeled
 # net carries the engine's marker name `#netN` (get_unnamed_node, netlist.c) but

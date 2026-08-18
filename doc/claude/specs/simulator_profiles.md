@@ -1834,6 +1834,16 @@ silently spell it wrong — see §13.6.
   (`PLAN.md` §F3), and without item 11 the Outputs pane's Value column is
   silently empty for every mixed-case net. `distinguish` cannot reach this state
   — item 8 refuses the run.
+  > **CORRECTED IN PLACE by item 11 (§15.2): "exactly one combination" is one
+  > combination too few, and the sentence above is true only of expressions
+  > that came from item 9's PICK path.** `render_deck` writes an output row's
+  > `expr` verbatim (`ase.tcl`, the `print [print_arg [dict get $o expr]]`
+  > loop), and **nothing else in ASE-L folds one**: the Add/Edit Output dialog
+  > stores exactly what was typed (`ase_window.tcl`
+  > `ase::ui::output_editor_ok`) and a hand-written state file stores exactly
+  > what it says. So a plain `fold` run also ships `v(In)` and also gets
+  > `v(in)` back. The item's shape is unchanged — the fix serves both — but a
+  > later reader must not conclude that a `fold` session cannot reach it.
 - **Item 10's pre-flight** now compares expressions that carry the schematic's
   own case against the netlist map, which also carries it. Under `distinguish` a
   case-sensitive comparison is the right one; under `fold` the expression is
@@ -2367,3 +2377,238 @@ of `0423` is gone; the staleness itself is not. Recorded in the issue.
 - **`PF220`'s legs are skipped, never failed, when no ngspice is on `PATH`**,
   and print no substring `full_audit.sh` scores a file on. They are the only
   end-to-end measurement in the file; everything else is a pure function.
+
+---
+
+# 15. READING THE LOG BACK — casemode item 11
+
+`PLAN.md` §3b item 11 and §F3. `DECISIONS.md` **B4** (which requested-vs-measured
+states can occur), **D2** (no alias, and no guess, when two names collide) and
+**A1** (`fold` is the default, so a stock user's behaviour may not change). Item
+6 owns §1–§10, item 7 §11, item 8 §12, item 9 §13, item 10 §14.
+
+Checks: `tests/headless/test_ase_result_case.tcl`, **`NC222`–`NC230d`, 28
+checks**, true headless. One of the twenty-eight is not evidence about our code
+and is named in §15.8. (The band grew from 22 in the fix round: `NC226e` pins
+the ladder's ORDER and `NC230`–`NC230d` + `NC228d` pin §15.4b.)
+
+## 15.1 The defect, re-measured 2026-08-17 on this tree
+
+`print` does not echo the spelling it was given. A deck with `V1 In 0 3`,
+`R1 In MidNode 1k`, `R2 MidNode 0 1k`, `.control op / print v(In) / …`, run from
+a scratch directory:
+
+| binary and flag | `print v(In)` echoes |
+|---|---|
+| `/usr/local/bin/ngspice -b` (46) | `v(in) = 3.000000e+00` |
+| `build-ver_50 -b -D casemode=fold` | `v(in) = 3.000000e+00` |
+| `build-ver_50 -b -D casemode=preserve` | `v(In) = 3.000000e+00` |
+| `build-ver_50 -b -D casemode=distinguish`, card `print v(in)` | **nothing at all** — a `checkvalid` warning, while `v(In) = 3.000000e+00` prints two lines away |
+
+(build stamp `Sun Aug 16 06:52:46 UTC 2026`, unmoved since item 7. `PLAN.md`
+§F3's table is confirmed row for row, **including the `distinguish` row, which
+§F3 already carried** — it is re-measured here, not discovered. What is new is
+the detail: the suppressed card prints *nothing at all* while the case-kept
+`v(In) = 3.000000e+00` prints two lines away, which is what makes a lenient
+match there a wrong number rather than a miss.)
+
+`ase::backend::ngspice::result_probe` matched that echo **literally**, so an
+expression the run folded matched nothing, and the Outputs pane's Value column —
+which is exactly this dict, looked up by `ase::ui::output_result_key`
+(`ase_window.tcl`, `populate` and `refresh_output_values`) — was **silently
+empty** for every mixed-case name.
+
+## 15.2 CORRECTION to §13.6 — it is not "exactly one combination"
+
+§13.6 says the mismatch is B4's run-and-report path alone (requested `preserve`,
+measured `fold`). That is true of expressions produced by item 9's **pick** path,
+and only of those. `render_deck` writes an output row's `expr` **verbatim**, and
+nothing else in ASE-L folds one:
+
+- `ase::ui::output_editor_ok` (`ase_window.tcl:1642`) stores what the user typed
+  into Add/Edit Output. **The whole-file evidence:** a grep of `ase_window.tcl`
+  for `tolower`/`toupper` returns **one** hit, `:956`, and it is inside item 9's
+  `sod_expr`. No other producer of an output expression folds anything;
+- a hand-written or migrated state file stores what it says;
+- `ase::expand_bus_outputs` carries a bus row's own spelling into every bit.
+
+Item 10's pre-flight passes all of these under `fold`, correctly — it folds both
+sides (§14.2), so `v(In)` against a netlist that says `In` is *present*. The run
+then goes ahead and the value comes back under a name we never asked for. So the
+combination set is **`fold` and requested-`preserve`-measured-`fold`**, and the
+fix is the same for both. §13.6 is corrected in place rather than rewritten,
+because its reasoning about the *pick* path is right and worth keeping.
+
+## 15.3 RULING — a LADDER, not a `-nocase` flag
+
+The plan's one-word wording (`result_probe -nocase`) describes a flag on the
+regexp. A flag is wrong, and D2 already says why: under a case-keeping run
+`v(EN)` and `v(en)` are two genuinely different signals, and a flagged pattern
+would let `v(EN)`'s row bind to the `v(en) = …` line — **a wrong number in the
+Value column, silently**. Every other lookup in this batch answers this the same
+way (item 2's `get_raw_index`, item 5's `resolve_signal_db`), so this one does
+too:
+
+1. **the expression's own spelling**, first line wins — unchanged behaviour, and
+   what answers under `fold` (both sides folded) and delivered `preserve` (both
+   sides case-kept);
+2. **a case-insensitive pass** that **declines** when the log offers more than
+   one differently-cased label for that expression.
+
+Declining means: record nothing, and **say so** — one CIW line at tag `error`
+naming every candidate. An empty Value cell with no explanation is the defect
+this item exists to remove; replacing it with an arbitrary number would be a
+worse one, and a silent decline would be the same defect wearing a different hat
+(item 14's lesson: a channel can be correct and reach nobody).
+
+## 15.4 RULING — rung 2 is OFF under `distinguish`, and that is measured
+
+Not caution: the fourth row of §15.1's table. Under `distinguish` a card naming a
+spelling the circuit does not have prints **nothing**, while the case-kept
+spelling prints normally two lines away. An ungated rung 2 hands the stale
+`v(in)` row the `v(In) = 3.000000e+00` line — a number for a signal the simulator
+has just refused to print, attributed to a row whose whole point is that it is a
+*different* net. That is the silent-wrong-answer class `DECISIONS.md` A1 and B4
+exist to avoid, and item 2 suppresses its own folded rung on a `case_sensitive`
+database for the same reason.
+
+Nothing is lost by being strict: item 8 refuses a `distinguish` run that is not
+confirmed to be delivered, so under `distinguish` both sides carry the case and
+rung 1 answers (`NC225c`, and `NC225b` is the positive control that proves
+`NC225` is the gate and not an unmatchable pattern).
+
+**This section gates on the run's REQUEST, and that is necessary but not
+sufficient — read §15.4b next.** A run can deliver `distinguish` without ever
+asking for it, and item 8's refusal does not reach that case.
+
+## 15.4b RULING (fix round) — what the run DELIVERED outranks what it ASKED for
+
+§15.4 gates rung 2 on the run's *request*, and a reviewer produced the run that
+breaks: **requested `fold`, delivered `distinguish`.** It is reachable and
+nothing else measures it —
+
+- `~/.spiceinit` overrides `-D casemode=` (CREW_BRIEF §4), so a user with
+  `set casemode=distinguish` in that file gets a case-sensitive simulator no
+  matter what ASE-L asked for;
+- item 7's capability probe and item 8's mismatch report are armed **only by a
+  non-`fold` request** (§12.6), so the plain-`fold` run is probed by nobody;
+- item 8's refusal, which §15.4 leans on, therefore never fires here either.
+
+Measured on `build-ver_50` with that init file, deck `V1 In 0 DC 3` /
+`R1 In 0 1k`, cards `print v(in)` and `print v(In)`:
+
+```
+Warning: casemode 'distinguish' is experimental. Identifier identity is case sensitive. …
+Warning: no vector named 'in'; 'In' differs only in case (casemode=distinguish)
+Warning from checkvalid: vector in is not available or has zero length.
+…
+v(In) = 3.000000e+00
+```
+
+With rung 2 gated on the request, the `v(in)` row was handed
+`3.000000e+00` — **the value of a signal the simulator had just refused to
+print**, in the Value column, silently. That is the exact failure §15.4 exists
+to prevent, and it was *introduced* by this item: before it, the cell was empty.
+
+**RULING: read the log.** The delivery announces itself, so the delivered mode
+overrides the requested one **in the strict direction only** — a distinguish
+banner or a `differs only in case` warning turns rung 2 off whatever was asked.
+The reverse never happens: no log makes a strict run lenient.
+
+- **Two tells, not one.** The banner is printed on **every** `distinguish` run,
+  mismatch or not (measured: a deck with no mis-cased card still prints it), and
+  the per-miss warning only when a card actually misses. Matching the banner
+  alone would miss a hand-edited log; matching the warning alone would let a
+  *later* row be fabricated on a log whose earlier cards all happened to hit
+  (`NC230c`, mutation `F2`).
+- **A false positive costs an empty Value cell**, which is precisely the
+  pre-item-11 behaviour — the same safe direction §14.2's map takes. A false
+  negative is a wrong number. `NC230b` is the positive control: strip the two
+  warnings out of that same log and the folded row resolves again, so the gate
+  is the detector's doing and not an unmatchable pattern (mutation `F3`, the
+  always-strict detector, reddens it).
+- **The override is ANNOUNCED**, once per log, at tag `note`: a request that did
+  not survive contact with the simulator is exactly the surprise a user cannot
+  otherwise see, and no other channel reports it for a `fold` request. A run
+  that *asked* for `distinguish` learns nothing from its own log and stays quiet
+  (`NC230d`).
+- **This is not item 8's ground.** Item 8 owns the pre-run probe and the
+  requested-vs-measured report for a non-`fold` request; this reads a log that
+  already exists, changes no deck and launches nothing.
+
+`NC230`–`NC230d` drive it synthetically on the measured text; **`NC228d` drives
+the real binary end to end** — a real `~/.spiceinit`, a real `build-ver_50` run,
+a virgin `fold` request — and skips (never fails) when that binary is absent or
+has stopped honouring the setting.
+
+## 15.5 RULING — the collision counts SPELLINGS, not lines
+
+Two log lines are not a collision; two *labels* are. A two-analysis run prints
+`v(in) = …` twice with different values, and rung 1 has always taken the first —
+so rung 2 takes the first too, and only a second **distinct** spelling makes the
+answer ambiguous. Counting lines instead would lose the value of every
+multi-analysis run (`NC226c`, mutation `M7`).
+
+**Reachability, stated plainly:** with rung 2 off under `distinguish`, and with
+`fold`/`preserve` merging two case-variant nets into one before they can both be
+printed (`DECISIONS.md` C2's measured table, not an assumption), **no run this
+crew could construct reaches the decline today**. It is
+driven synthetically (`NC226`, `NC226b`, `NC226d`) and it is kept because the
+alternative is an unguarded `-nocase` that becomes wrong the moment item 8's
+policy is relaxed, a hand-written log is read back, or a simulator with other
+rules is added. A guard whose cost is four lines and whose absence is a wrong
+number is not worth "optimising" away.
+
+## 15.6 RULING — the KEY is never folded; only the MATCH is
+
+The results dict is keyed by the row's `name` when it has one and by its `expr`
+otherwise (`ase::ui::output_result_key` is the pane's half of the same rule).
+Nothing in this item touches that. Folding the key would put a named row's value
+under a key the pane never looks up — the value would be *found* and still not
+*displayed*, which is the same empty cell arrived at more expensively
+(`NC222b`, mutation `M5`).
+
+## 15.7 The mode is the RUN'S REQUEST, asked read-only (and the log's veto)
+
+Item 9 §13.4's ruling applies unchanged: profile `casemode` → global floor
+`sim_case_mode` → `fold`, resolved through `ase::sim_profile_casemode`, and asked
+in item 9's **read-only** form (`init 0`) — `::set_sim_defaults` is not a read,
+and with the Simulation Configuration dialog open it commits every unsaved `cmd`
+edit (§13.4's measurement). Resolved **once per log**, not once per output row.
+
+The request is the **floor**, not the last word — see §15.4b, which was written
+in the fix round after a reviewer showed the request alone is not enough. Where
+the request still decides: a requested-`preserve` run that measured `fold` is
+precisely the case rung 2 exists for (`NC222`), and a requested-`fold` run that
+measured `preserve` needs nothing — we shipped `v(in)` and `preserve`'s `print`
+is lenient (§F3), so rung 1 answers.
+
+## 15.8 What is NOT here
+
+- **`NC228` is the item's PREMISE, not evidence about our code.** It runs the
+  released simulator and asserts the echo of a `v(In)` card is `v(in)` — it goes
+  red if ngspice changes, not if `result_probe` does. `NC228b`/`NC228c` are
+  evidence: the same real log through the real probe.
+- **No `ver_50` leg for §15.1's three-mode table.** That table was measured by
+  hand at the shell, because wiring a `-D casemode=` run into the suite would
+  have meant driving item 8's composer, which is item 8's ground, not this
+  item's. The fix round did add ONE `ver_50` leg, `NC228d`, and it needs no
+  composer: it writes a `~/.spiceinit` and runs the binary with no `-D` at all,
+  which is the §15.4b run exactly. Both real-simulator legs skip, never fail,
+  when their binary is absent — printing no substring `full_audit.sh` scores a
+  whole file on.
+- **The Outputs pane is not painted by any check.** The Value cell is a pure
+  function of this dict and the row's key, and the suite drives exactly that
+  function (`cell` in the test, mirroring `ase_window.tcl`'s two lines). Tk is
+  never loaded; no eyeball is owed for a value that is asserted byte for byte.
+- **The decline's wording is asserted, not read by a user** — `NC226b` matches
+  the tag and both labels, on item 8's and item 10's precedent for their own
+  refusal texts.
+- **The cost is reasoned, not measured.** A row that matches on rung 1 costs
+  exactly what it always did; a row that misses now pays **one additional whole-
+  text scan** (`regexp -all -inline -line -nocase`), the same order as the scan
+  it already paid, plus one more when a single label survives. Only *missing*
+  rows pay, and a run whose rows all resolve pays nothing. No timing was taken.
+- **Nothing else that reads a log was touched.** `ase::run_diagnostics`, the
+  cosim VCD check and item 8's mismatch report are all upstream of this proc and
+  see the same text they always did.

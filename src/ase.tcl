@@ -4804,19 +4804,115 @@ namespace eval ase::backend::ngspice {
   # output's `name` when present and non-empty, else by its `expr` (UI v2: the
   # Outputs pane needs a Value for unnamed rows too); outputs without an `expr`
   # are skipped.
+  #
+  # CASE (casemode batch item 11; spec doc/claude/specs/simulator_profiles.md
+  # §15). `print` does NOT always echo the spelling it was given: measured today
+  # on this tree, a deck whose net is drawn `In` and whose card says
+  # `print v(In)` echoes `v(in) = 3.000000e+00` on every folding binary
+  # (`/usr/local/bin/ngspice`, and build-ver_50 under `-D casemode=fold`),
+  # while build-ver_50 under `-D casemode=preserve` echoes `v(In)` (PLAN §F3).
+  # A literal match therefore silently leaves the Outputs pane's Value column
+  # EMPTY for every mixed-case expression whenever the run folded and the
+  # expression did not -- B4's run-and-report path (requested `preserve`,
+  # measured `fold`), and equally a `fold` run whose expression came from
+  # anywhere other than item 9's pick path (the Add/Edit Output dialog stores
+  # what was typed, ase_window.tcl output_editor_ok; a hand-written state file
+  # stores what it says).
+  #
+  # So the match is a LADDER, the same shape every other lookup in this batch
+  # uses (item 2's get_raw_index, item 5's resolve_signal_db):
+  #
+  #   1. the expression's own spelling, first-wins -- unchanged, and it is what
+  #      answers under `fold` (both sides folded) and delivered `preserve`
+  #      (both sides case-kept);
+  #   2. a case-insensitive pass, WHICH DECLINES TO GUESS when the log offers
+  #      more than one differently-cased label for it (DECISIONS.md D2's
+  #      no-alias-on-collision rule: `v(EN)` binding to `v(en) = ...` is a wrong
+  #      number in a Value column, which is worse than an empty one).
+  #
+  # Rung 2 is OFF under `distinguish`, and that is not caution, it is measured:
+  # there `print v(in)` against a design that only has `In` prints NOTHING
+  # (a checkvalid warning), so an ungated rung 2 hands the `v(in)` row the
+  # `v(In) = 3.000000e+00` line sitting beside it -- a number for a signal the
+  # simulator just said it does not have. That mode's contract is byte-exact
+  # (item 2 suppresses its own folded rung on a case_sensitive database for the
+  # same reason), and item 8 refuses a `distinguish` run that is not confirmed
+  # to be delivered, so nothing is lost by being strict here.
+  #
+  # The mode is the RUN'S REQUEST (item 9 §13.4's ruling), asked in item 9's
+  # READ-ONLY form (`init 0`): a probe is a question, and `::set_sim_defaults`
+  # is not a read. Resolved once per log, not once per output row.
+  #
+  # ...BUT THE REQUEST IS ONLY THE FLOOR, because the request is not what the
+  # binary did (spec §15.4b). `~/.spiceinit` overrides `-D casemode=` (CREW_BRIEF
+  # §4), and item 7's capability probe / item 8's mismatch report only run for a
+  # request that is NOT `fold` (§12.6), so a plain `fold` run against a
+  # `set casemode=distinguish` init file is measured by nobody. Measured today
+  # on build-ver_50: that run answers `print v(in)` on a design that only has
+  # `In` with `Warning: no vector named 'in'; 'In' differs only in case
+  # (casemode=distinguish)` and NO value line, while `v(In) = 3.000000e+00`
+  # prints two lines away -- so a request-gated rung 2 hands the `v(in)` row
+  # the number belonging to a signal the simulator explicitly refused it.
+  # The log ANNOUNCES the delivery, so read it: a distinguish banner or a
+  # differs-only-in-case warning forces the strict path regardless of the
+  # request. A false positive costs an empty Value cell, which is exactly the
+  # pre-item-11 behaviour -- the safe direction (§14.2's over-approximate rule).
+  #
+  # The KEY is untouched by all of this: `name` when the row has one, else the
+  # `expr` exactly as stored. Only the MATCH is case-blind -- fold the key and a
+  # named row's value lands where ase::ui::output_result_key will not look.
   proc result_probe {state logtext} {
     set results [dict create]
+    set mode fold
+    catch {set mode [ase::sim_profile_casemode $state 0]}
+    if {$mode eq {}} { set mode fold }
+    # what the run DELIVERED outranks what it asked for, in the strict
+    # direction only. Announced once per log, because a request that did not
+    # survive contact with the simulator is exactly the surprise a user cannot
+    # otherwise see: a requested `distinguish` says nothing new and stays quiet.
+    if {$mode ne {distinguish} && [regexp -nocase \
+          {casemode[ =]'?distinguish|differs only in case} $logtext]} {
+      ::ase::echo "ase: result -- this log says the simulator ran with\
+ casemode=distinguish although the run asked for '$mode', so output\
+ expressions are matched case-sensitively: a row whose spelling the simulator\
+ refused gets no value rather than a differently-cased one." note
+      set mode distinguish
+    }
     foreach o [ase::state_get $state outputs] {
       if {![dict exists $o expr]} { continue }
-      set rkey [dict get $o expr]
+      set ex [dict get $o expr]
+      set rkey $ex
       if {[dict exists $o name] && [dict get $o name] ne {}} {
         set rkey [dict get $o name]
       }
-      regsub -all {\W} [dict get $o expr] {\\&} esc
-      set pat [format {^\s*"?%s"?\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
-      if {[regexp -line $pat $logtext -> val]} {
+      # every non-word character backslash-escaped, so the parentheses and
+      # brackets of `v(In)` / `"a[0]"` are literals and not regexp syntax; the
+      # label is captured so rung 2 can see WHICH spelling it matched
+      regsub -all {\W} $ex {\\&} esc
+      set pat [format {^\s*"?(%s)"?\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
+      if {[regexp -line $pat $logtext -> lbl val]} {
         dict set results $rkey $val
+        continue
       }
+      if {$mode eq {distinguish}} { continue }
+      set labels {}
+      foreach {whole lbl val} [regexp -all -inline -line -nocase $pat $logtext] {
+        if {[lsearch -exact $labels $lbl] < 0} { lappend labels $lbl }
+      }
+      if {![llength $labels]} { continue }
+      if {[llength $labels] > 1} {
+        # D2: decline, and SAY SO. An empty Value cell with no explanation is
+        # the defect this item exists to remove; replacing it with a silently
+        # arbitrary number would be a worse one.
+        ::ase::echo "ase: result -- output '$ex' matches [llength $labels]\
+ log labels that differ only in case ([join [lsort $labels] {, }]), so no\
+ value is recorded for it: which one it means cannot be known, and a guess\
+ would put a wrong number in the Outputs pane." error
+        continue
+      }
+      # exactly one spelling on offer -- take its FIRST line, as rung 1 does
+      regexp -line -nocase $pat $logtext -> lbl val
+      dict set results $rkey $val
     }
     return $results
   }
