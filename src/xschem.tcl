@@ -4194,6 +4194,673 @@ proc set_sim_defaults {{reset {}}} {
   sim_profile_normalize_if_changed
 }
 
+# =========================================================================
+# THE SIMULATOR DIALOG -- casemode batch item 13
+#   spec: doc/claude/specs/simulator_profiles.md section 17
+#   authority: DECISIONS.md B1 (extend `sim()`, no new registry), A1
+#   (probe-driven pre-fill; nobody may select a mode their simulator will
+#   silently ignore), A2 (the per-profile `-n` checkbox), B3 (auto-probe gated
+#   on the executable's NAME, and the hard timeout).
+# =========================================================================
+#
+# Item 6 built the field model, item 7 the probe. Neither wrote a widget. This
+# is the widget, and it EXTENDS the dialog xschem already has
+# (`Simulation > Configure simulators and tools`) rather than opening a second
+# one: B1's whole point is that there is one simulator configuration system.
+#
+# Each row grows a second line: Exe / Args / Case / -n / Test / a status label.
+# The first line -- name, the default radio, the free-form `cmd` text, Fg,
+# Status -- is UNTOUCHED, and so are the widget PATHS on it
+# (`.sim.topf.f.scrl.center.<tool>.r.<i>.cmd` is read by `set_sim_defaults` and
+# by test_ase_dialogs G13).
+#
+# WHEN DOES A WIDGET COMMIT TO `sim()`? THIS IS THE ITEM'S SHARPEST QUESTION,
+# because the answer shipped before this item was "at unpredictable moments,
+# and Cancel could not take it back". MEASURED TWICE (casemode items 9 and 11,
+# and pinned by test_ase_dialogs G13): `::set_sim_defaults` IS NOT A READ -- with
+# `.sim` open its first loop slurps every `...r.$i.cmd` text widget back into
+# `sim($tool,$i,cmd)`, so any code that merely ASKED a question about the
+# simulator configuration committed the user's half-typed edits. Items 9 and 11
+# stopped asking (`init 0`); that fixed the two callers, not the dialog.
+#
+# The answer this item gives, in two halves:
+#
+#   1. THE NEW PROFILE FIELDS NEVER TOUCH `sim()` UNTIL A COMMIT POINT. They are
+#      staged in `::simconf_ui(<tool>,<i>,<field>)` -- that, not `sim()`, is
+#      what the entries and the checkbutton are bound to. There are exactly
+#      three commit points: `Test` (commits the row it is about to measure,
+#      because a probe of a path the user has not committed would measure the
+#      wrong binary), `Accept, no Save and Close`, and `Accept, Save and Close`.
+#      Validation happens AT the commit, through item 6's `sim_profile_set`, so
+#      a typo is REPORTED (spec section 5 says this dialog is where that
+#      happens) instead of being silently dropped by the persister.
+#
+#   2. CANCEL RESTORES THE WHOLE ARRAY to the snapshot taken when the dialog
+#      opened. The pre-existing widgets bind `-textvariable`/`-variable`
+#      straight to `sim($tool,$i,name)`, `,fg)`, `,st)` and `sim($tool,default)`,
+#      so those have ALWAYS been written the instant a key is pressed and Cancel
+#      has never taken them back; and any code anywhere may still slurp the
+#      `cmd` widgets. A per-field discipline cannot fix somebody else's write,
+#      and a snapshot does: Cancel means "the configuration is what it was when
+#      this window opened", including a `detected`/`probed` the Test button
+#      recorded. THE ORDER MATTERS -- the window is destroyed FIRST, because Tk
+#      re-creates a `-textvariable` element the moment it is unset and an
+#      `array unset sim` under a live widget would put the widget's own string
+#      straight back.
+#
+# A1, WHICH IS THE HARD REQUIREMENT AND IS NOT COSMETIC. The Case menu is built
+# from `sim_profile_selectable` (item 6, spec section 4), which is built from
+# `detected`, which is what the probe MEASURED -- never from a constant list.
+# An unprobed row offers `fold` and nothing else; a probed one offers exactly
+# what came back; a row measured to deliver nothing offers nothing. A mode that
+# is stored on the row but was never measured (a hand-edited simrc, or a binary
+# that moved) is DISPLAYED, marked `NOT measured`, and is NOT an entry in the
+# menu: A1 governs what a user may SELECT, and hiding an existing setting would
+# be worse than warning about it.
+#
+# B3, AND WHY THE GATE IS NOT WIDENED. The auto-probe fires only for a row this
+# dialog just ADDED, and only when `sim_profile_probe_autoprobe_ok` says the
+# executable's filename contains `ngspice`. Two reasons, both B3's: casemode is
+# an ngspice feature so nothing else can answer usefully, and a dialog that
+# launches whatever path was typed would check out a Spectre or commercial Xyce
+# licence for nobody. Everything else gets the Test button, which is a
+# deliberate click. The arm is per-row and is consumed once.
+#
+# NO RETRY LOOP, AND NOTHING ON A REDRAW PATH. `sim_profile_probe_capability`
+# already bounds the WHOLE probe (item 7 spec section 11.6, after its own first
+# cut froze for 15016 ms); this code calls it exactly once per Test click and
+# once per armed Add, and calls it from nowhere a `<Configure>`, a redraw or a
+# keystroke can reach. Building the dialog starts no process.
+
+# The row frame's widget path. Hard-coded the same way `set_sim_defaults`
+# hard-codes it (and test_ase_dialogs G13 with it): the scroll frame `sframe`
+# builds is always `.sim.topf.f.scrl`.
+proc simconf_rowpath {tool i} { return .sim.topf.f.scrl.center.$tool.r.$i }
+
+# Tk present at all? xschem runs --nogui, where `winfo` does not exist; every
+# proc here must be callable in that mode so the model half of this item is
+# testable without a display.
+proc simconf_have_tk {} {
+  return [expr {[info exists ::has_x] && [llength [info commands winfo]] > 0}]
+}
+proc simconf_dialog_open {} {
+  if {![simconf_have_tk]} { return 0 }
+  return [expr {[winfo exists .sim] ? 1 : 0}]
+}
+
+# The fields this dialog STAGES. `detected` and `probed` are deliberately not
+# among them: they are a MEASUREMENT, written by the probe itself through item
+# 6's `sim_profile_probe_record`, and there is no widget that could edit them.
+# They are still undone by Cancel, because Cancel restores the whole array.
+proc simconf_stage_fields {} { return {exe args casemode nospiceinit} }
+
+proc simconf_stage_row {tool i} {
+  global simconf_ui
+  foreach f [simconf_stage_fields] {
+    set simconf_ui($tool,$i,$f) [sim_profile_get $tool $i $f]
+  }
+  # A2'S `-n` BOX IS A Tk CHECKBUTTON AND COMPARES AGAINST THE LITERAL 1.
+  # `sim_profile_valid` accepts every Tcl boolean spelling and B1 explicitly
+  # blesses a hand-edited simrc, so a row carrying `nospiceinit true` reached
+  # the widget as "not 1" and DISPLAYED UNCHECKED while `-n` really was being
+  # passed to the simulator -- the box telling the user the opposite of what
+  # the run does. Canonicalise on the way in; the checkbutton carries
+  # -onvalue 1 -offvalue 0 so it stays canonical on the way out.
+  set simconf_ui($tool,$i,nospiceinit) \
+    [expr {$simconf_ui($tool,$i,nospiceinit) ? 1 : 0}]
+  set simconf_ui($tool,$i,autoprobe) 0
+  set simconf_ui($tool,$i,probenote) {}
+  set simconf_ui($tool,$i,modelabel) [simconf_mode_label $tool $i $simconf_ui($tool,$i,casemode)]
+  set simconf_ui($tool,$i,note) [simconf_status_line $tool $i]
+}
+
+proc simconf_stage_all {} {
+  global sim
+  if {![info exists sim(tool_list)]} { return 0 }
+  set n 0
+  foreach tool $sim(tool_list) {
+    if {![info exists sim($tool,n)]} { continue }
+    for {set i 0} {$i < $sim($tool,n)} {incr i} { simconf_stage_row $tool $i ; incr n }
+  }
+  return $n
+}
+
+# Drop the staging area. MUST run after the window is gone: an `array unset` on
+# a live `-textvariable` makes Tk write the widget's own string back into it.
+proc simconf_stage_clear {} {
+  global simconf_ui
+  array unset simconf_ui
+  set simconf_ui(status) {}
+}
+
+# Commit one row's staged fields into `sim()`, validated. Returns a list of
+# {tool index field message} for the values that were REFUSED; a refused field
+# leaves the stored value alone -- a typo must not destroy a working setting.
+proc simconf_commit_row {tool i} {
+  global simconf_ui
+  set errs {}
+  # A MEASUREMENT BELONGS TO THE BINARY AND ARGV IT WAS TAKEN WITH. Committing
+  # a new `exe` (or `args`, or `-n`) leaves `detected`/`probed` describing a
+  # program this row no longer names, and A1's whole sentence is that nobody may
+  # select a mode their simulator will silently ignore: measured, the Case menu
+  # kept offering the PREVIOUS binary's modes and `sim_profile_supports`
+  # answered 1 for a binary nobody had measured. The status line's
+  # "(STALE - the binary moved)" is only a caption, it gates nothing, and when
+  # the two files share an mtime `sim_profile_probe_stale` cannot see the change
+  # at all -- so the measurement is DROPPED here, at the commit, before the new
+  # value is stored. The row then reads "not probed - press Test", which is the
+  # truth.
+  set drop 0
+  foreach f {exe args nospiceinit} {
+    if {![info exists simconf_ui($tool,$i,$f)]} { continue }
+    set new $simconf_ui($tool,$i,$f)
+    if {![sim_profile_valid $f $new]} { continue }
+    set old [sim_profile_get $tool $i $f]
+    if {$f eq {nospiceinit}} {
+      # a canonicalised 1 and a stored `true` are the SAME setting; dropping a
+      # measurement for that would be a spurious re-probe, not a fix
+      set new [expr {$new ? 1 : 0}]
+      set old [expr {$old ? 1 : 0}]
+    }
+    if {$new ne $old} { set drop 1 }
+  }
+  if {$drop && ([sim_profile_get $tool $i detected] ne {} ||
+                [sim_profile_get $tool $i probed] ne {})} {
+    catch {sim_profile_set $tool $i detected {}}
+    catch {sim_profile_set $tool $i probed {}}
+  }
+  foreach f [simconf_stage_fields] {
+    if {![info exists simconf_ui($tool,$i,$f)]} { continue }
+    if {[catch {sim_profile_set $tool $i $f $simconf_ui($tool,$i,$f)} msg]} {
+      lappend errs [list $tool $i $f $msg]
+    }
+  }
+  return $errs
+}
+
+proc simconf_commit_all {} {
+  global sim
+  set errs {}
+  if {![info exists sim(tool_list)]} { return $errs }
+  foreach tool $sim(tool_list) {
+    if {![info exists sim($tool,n)]} { continue }
+    for {set i 0} {$i < $sim($tool,n)} {incr i} {
+      foreach e [simconf_commit_row $tool $i] { lappend errs $e }
+    }
+  }
+  return $errs
+}
+
+# The `cmd` text widgets are the one first-line control that is NOT bound to a
+# variable, so they are read here -- at a commit point, and only here. (The copy
+# of this loop at the top of `set_sim_defaults` is the pre-existing one that
+# commits behind the user's back; Cancel's snapshot is what neutralises it.)
+proc simconf_read_cmds {} {
+  global sim
+  if {![simconf_dialog_open]} { return 0 }
+  set n 0
+  foreach tool $sim(tool_list) {
+    for {set i 0} {$i < $sim($tool,n)} {incr i} {
+      set w [simconf_rowpath $tool $i].cmd
+      if {[winfo exists $w]} { set sim($tool,$i,cmd) [$w get 1.0 {end - 1 chars}] ; incr n }
+    }
+  }
+  return $n
+}
+
+proc simconf_snapshot_take {} {
+  global sim USER_CONF_DIR
+  set ::simconf_snap [array get sim]
+  # THE FILE, TOO, AND THAT IS NOT BELT-AND-BRACES. `Reset to default` calls
+  # `set_sim_defaults reset`, which DELETES $USER_CONF_DIR/simrc from disk
+  # immediately; restoring only the in-memory array left the session looking
+  # recovered while the user's configuration was gone at the next xschem start
+  # -- with this dialog's own Help text and spec section 17.11 both promising
+  # that Cancel undid it. Measured through the real buttons: simrc exists at
+  # open = 1, after Reset = 0, after Cancel = 0.
+  set f [file join $USER_CONF_DIR simrc]
+  set ::simconf_filesnap [list path $f exists 0 bytes {}]
+  if {[file isfile $f]} {
+    if {![catch {open $f rb} fd]} {
+      set d [read $fd]
+      close $fd
+      set ::simconf_filesnap [list path $f exists 1 bytes $d]
+    }
+  }
+  return [llength $::simconf_snap]
+}
+
+# Put $USER_CONF_DIR/simrc back the way the dialog found it -- and ONLY when it
+# has actually moved. Cancel may not write a file nobody asked it to write
+# (SDG14b pins that), so this is a no-op unless something inside this dialog
+# session changed the file on disk. In practice that is exactly one route:
+# `Reset to default`, which writes through immediately.
+# Returns 1 when it put something back.
+proc simconf_file_restore {} {
+  if {![info exists ::simconf_filesnap]} { return 0 }
+  set f    [dict get $::simconf_filesnap path]
+  set want [dict get $::simconf_filesnap exists]
+  set body [dict get $::simconf_filesnap bytes]
+  set now [expr {[file isfile $f] ? 1 : 0}]
+  set cur {}
+  if {$now} {
+    if {[catch {open $f rb} fd]} { return 0 }
+    set cur [read $fd]
+    close $fd
+  }
+  if {$want == $now && $cur eq $body} { return 0 }
+  if {!$want} {
+    catch {file delete -force $f}
+    return 1
+  }
+  if {[catch {open $f wb} fd]} { return 0 }
+  puts -nonewline $fd $body
+  close $fd
+  return 1
+}
+
+# Put the configuration back exactly as the dialog found it. Refuses while the
+# window still exists -- see the header: Tk would resurrect every
+# `-textvariable` element from the widget that owns it.
+proc simconf_snapshot_restore {} {
+  global sim
+  if {![info exists ::simconf_snap]} { return 0 }
+  if {[simconf_dialog_open]} {
+    return -code error {simconf_snapshot_restore: the dialog must be destroyed first}
+  }
+  array unset sim
+  array set sim $::simconf_snap
+  unset ::simconf_snap
+  return 1
+}
+
+# The global floor a row with no mode of its own falls back to (B1's "per
+# profile, with a global floor"), validated the same way sim_profile_casemode
+# validates it.
+proc simconf_mode_floor {} {
+  global sim_case_mode
+  if {[info exists sim_case_mode] && [sim_casemode_valid $sim_case_mode]} { return $sim_case_mode }
+  return fold
+}
+
+# A1: the Case menu, built from what the probe MEASURED. The first entry is
+# always "use the global default", because empty is a real and different setting
+# (the profile names no mode) and a user who picked one must be able to go back.
+# The floor entry's LABEL. B1 mandates that the entry exist -- "leave the choice
+# to the global default" is a real and different setting -- so it cannot be
+# filtered out of the menu the way an unmeasured mode is. But with a non-fold
+# `sim_case_mode` it is a selectable route to requesting a mode THIS row was
+# measured not to deliver, which is A1's one seam and is recorded as such in
+# spec section 17.4. It is therefore labelled with the consequence rather than
+# removed: the user is told, in the entry itself, that the mode it will request
+# is not one this binary was measured to deliver.
+proc simconf_mode_floor_label {tool i} {
+  set f [simconf_mode_floor]
+  set s "use global default ($f)"
+  if {[lsearch -exact [sim_profile_selectable $tool $i] $f] < 0} {
+    set s "use global default ($f - NOT measured)"
+  }
+  return $s
+}
+
+proc simconf_mode_menu_items {tool i} {
+  set out [list [list [simconf_mode_floor_label $tool $i] {}]]
+  foreach m [sim_profile_selectable $tool $i] { lappend out [list $m $m] }
+  return $out
+}
+
+# What the menubutton SHOWS. A stored mode the binary was never measured to
+# deliver is shown -- with the warning -- and is NOT in the menu above: A1
+# governs selection, and hiding a setting somebody's simrc really carries would
+# be worse than saying it is unverified.
+proc simconf_mode_label {tool i val} {
+  if {$val eq {}} { return [simconf_mode_floor_label $tool $i] }
+  if {[lsearch -exact [sim_profile_selectable $tool $i] $val] >= 0} { return $val }
+  return "$val (NOT measured)"
+}
+
+proc simconf_mode_pick {tool i val} {
+  global simconf_ui
+  set simconf_ui($tool,$i,casemode) $val
+  simconf_mode_refresh $tool $i
+  return $val
+}
+
+# Rebuild one row's menu and its two display strings from the current model +
+# staging state. Called after anything that can change either.
+proc simconf_mode_refresh {tool i} {
+  global simconf_ui
+  set cur {}
+  if {[info exists simconf_ui($tool,$i,casemode)]} { set cur $simconf_ui($tool,$i,casemode) }
+  set simconf_ui($tool,$i,modelabel) [simconf_mode_label $tool $i $cur]
+  set simconf_ui($tool,$i,note) [simconf_status_line $tool $i]
+  if {![simconf_dialog_open]} { return 0 }
+  # an empty status line takes its whole grid row out, or fifteen blank strips
+  # would push the useful rows off the bottom
+  set stw [simconf_rowpath $tool $i].prof.st
+  if {[winfo exists $stw]} {
+    if {$simconf_ui($tool,$i,note) eq {}} { grid remove $stw } else { grid $stw }
+  }
+  set m [simconf_rowpath $tool $i].prof.mode.m
+  if {![winfo exists $m]} { return 0 }
+  $m delete 0 end
+  foreach e [simconf_mode_menu_items $tool $i] {
+    $m add command -label [lindex $e 0] -command [list simconf_mode_pick $tool $i [lindex $e 1]]
+  }
+  return 1
+}
+
+# The per-row status line. A Test result, once there is one, outranks the
+# stored state: the point of the button is that its answer is legible.
+proc simconf_status_line {tool i} {
+  global simconf_ui
+  if {[info exists simconf_ui($tool,$i,probenote)] && $simconf_ui($tool,$i,probenote) ne {}} {
+    return $simconf_ui($tool,$i,probenote)
+  }
+  if {[info exists simconf_ui($tool,$i,exe)]} {
+    set exe $simconf_ui($tool,$i,exe)
+  } else {
+    set exe [sim_profile_get $tool $i exe]
+  }
+  if {[sim_profile_get $tool $i probed] eq {}} {
+    # SILENT for a row that names no executable, which is every shipped default
+    # row: "no executable" is already visible in the empty Exe box beside it, and
+    # fifteen copies of a sentence saying so is the noise item 14's lesson is
+    # about. The line appears the moment the row has something to say.
+    if {$exe eq {}} { return {} }
+    return {not probed - press Test}
+  }
+  set d [sim_profile_detected $tool $i]
+  if {$d eq {}} { return {probed: no supported mode} }
+  set s "probed: [join $d { }]"
+  if {[sim_profile_probe_stale $tool $i]} { append s {  (STALE - the binary moved)} }
+  return $s
+}
+
+# One sentence a human can read, for every outcome item 7's probe can return.
+# `partial`, `timeout`, `unknown` and `error` all say "nothing recorded",
+# because that is item 7's ruling and a dialog that hid it would leave the row
+# looking unprobed for no stated reason.
+proc simconf_probe_note {r} {
+  if {[catch {dict get $r status} st]} { return {Test: the probe returned nothing} }
+  set ms {?}  ; catch {set ms [dict get $r ms]}
+  set d  {}   ; catch {set d  [dict get $r detected]}
+  switch -exact -- $st {
+    ok {
+      if {$d eq {}} { return "Test: ran, delivers no mode we recognise (${ms} ms)" }
+      return "Test: delivers [join $d { }] (${ms} ms)"
+    }
+    nocasemode { return "Test: no casemode support - fold only (${ms} ms)" }
+    partial    { return "Test: INCOMPLETE - a probe leg timed out (${ms} ms); nothing recorded" }
+    timeout    { return "Test: TIMED OUT after ${ms} ms - nothing recorded" }
+    unknown    { return "Test: ran but never answered (not ngspice?) - nothing recorded" }
+    error      { return "Test: cannot run this executable - nothing recorded" }
+  }
+  return "Test: $st (${ms} ms)"
+}
+
+# Run the capability probe for one row and show the answer. ONE call, no retry:
+# item 7's probe already bounds itself, and wrapping it in a loop is exactly the
+# frozen window B3 forbids.
+#
+# A1's PRE-FILL is here and it is PROBE-DRIVEN: after a measurement that was
+# recorded, a row that names no mode is pre-filled with the FIRST mode the
+# binary was measured to deliver, in the canonical order fold, preserve,
+# distinguish. That is `fold` for anything that can fold -- A1's own
+# "no case support => pre-fill fold" -- but it is not a constant: a binary
+# measured to deliver only `preserve` pre-fills `preserve`, and one measured to
+# deliver nothing pre-fills nothing. It never overwrites a mode the user has
+# already chosen, and it is STAGED, so Cancel discards it like any other edit.
+proc simconf_do_probe {tool i why} {
+  global simconf_ui
+  set simconf_ui($tool,$i,probenote) {probing...}
+  set simconf_ui($tool,$i,note) {probing...}
+  if {[simconf_dialog_open]} { update idletasks }
+  # A THROW MUST NOT LEAVE THE ROW SAYING `probing...` FOREVER. The probe
+  # answers with a status for everything it expects, so this is the unexpected
+  # case only -- but the unexpected case is exactly the one where a stuck
+  # progress message is indistinguishable from a hung dialog, which is what B3's
+  # timeout exists to prevent.
+  if {[catch {sim_profile_probe_capability $tool $i} r]} {
+    set simconf_ui($tool,$i,probenote) "Test: the probe could not run - $r"
+    simconf_mode_refresh $tool $i
+    return {}
+  }
+  set simconf_ui($tool,$i,probenote) [simconf_probe_note $r]
+  set recorded 0 ; catch {set recorded [dict get $r recorded]}
+  if {$recorded && [info exists simconf_ui($tool,$i,casemode)] &&
+      $simconf_ui($tool,$i,casemode) eq {}} {
+    set simconf_ui($tool,$i,casemode) [lindex [sim_profile_selectable $tool $i] 0]
+  }
+  simconf_mode_refresh $tool $i
+  return $r
+}
+
+# The Test button. It commits its own row first: probing a path the user typed
+# but has not committed would measure a different binary from the one the row
+# names, and item 7's probe reads `exe`/`args`/`nospiceinit` out of `sim()`.
+proc simconf_test_row {tool i} {
+  global simconf_ui
+  set errs [simconf_commit_row $tool $i]
+  if {[llength $errs]} { simconf_report_errors $errs ; return {} }
+  # A DELIBERATE TEST IS A REGISTRATION, SO IT CONSUMES B3'S ADD ARM. Without
+  # this the arm survived the click and `simconf_accept`'s
+  # `simconf_register_armed` probed the same binary a SECOND time: six process
+  # launches for one configured row, and an Accept that blocks for another whole
+  # probe budget -- up to item 7's hard timeout if the binary hangs. Spec
+  # section 17.6's ruling is one probe per click and none on a build path, and
+  # pressing <Return> in the Exe box (the other registration gesture) already
+  # consumed it, so the two were asymmetric as well as wasteful.
+  # An armed row that still names no executable KEEPS its arm, exactly as
+  # `simconf_row_register`'s `noexe` outcome does -- a Test on an empty box
+  # measured nothing, so it registered nothing.
+  if {[sim_profile_get $tool $i exe] ne {}} { set simconf_ui($tool,$i,autoprobe) 0 }
+  return [simconf_do_probe $tool $i test]
+}
+
+# B3's AUTO-PROBE, and the only place it can fire. Returns a dict
+# {probed 0|1 reason <r> ...}; `reason` is one of
+#   notarmed  this row was not added by this dialog session
+#   noexe     the added row still names no executable (stays armed)
+#   namegate  B3 refused: the filename does not contain `ngspice`
+#   ok        it probed
+proc simconf_row_register {tool i} {
+  global simconf_ui
+  if {![info exists simconf_ui($tool,$i,autoprobe)] || !$simconf_ui($tool,$i,autoprobe)} {
+    return [dict create probed 0 reason notarmed]
+  }
+  set errs [simconf_commit_row $tool $i]
+  if {[llength $errs]} { simconf_report_errors $errs ; return [dict create probed 0 reason invalid] }
+  if {[sim_profile_get $tool $i exe] eq {}} { return [dict create probed 0 reason noexe] }
+  set simconf_ui($tool,$i,autoprobe) 0
+  if {![sim_profile_probe_autoprobe_ok $tool $i]} {
+    set simconf_ui($tool,$i,probenote) \
+      {not auto-probed: not an ngspice-named executable - press Test}
+    simconf_mode_refresh $tool $i
+    return [dict create probed 0 reason namegate]
+  }
+  set r [simconf_do_probe $tool $i add]
+  set st {} ; catch {set st [dict get $r status]}
+  set d  {} ; catch {set d  [dict get $r detected]}
+  return [dict create probed 1 reason ok status $st detected $d]
+}
+
+# Every armed row, at a commit point.
+proc simconf_register_armed {} {
+  global sim simconf_ui
+  set done {}
+  if {![info exists sim(tool_list)]} { return $done }
+  foreach tool $sim(tool_list) {
+    if {![info exists sim($tool,n)]} { continue }
+    for {set i 0} {$i < $sim($tool,n)} {incr i} {
+      if {![info exists simconf_ui($tool,$i,autoprobe)] || !$simconf_ui($tool,$i,autoprobe)} { continue }
+      lappend done [list $tool $i [simconf_row_register $tool $i]]
+    }
+  }
+  return $done
+}
+
+# A refused value is REPORTED -- on the dialog's own status line, on the row
+# that carries it, and on the CIW. Spec section 5 promised that this dialog is
+# where a typo in a hand-edited value gets reported instead of being silently
+# dropped at the next save.
+proc simconf_report_errors {errs} {
+  global simconf_ui
+  set msgs {}
+  foreach e $errs {
+    foreach {tool i f msg} $e break
+    lappend msgs "$tool row $i: $f rejected"
+    set simconf_ui($tool,$i,probenote) "INVALID $f - not stored ($msg)"
+    simconf_mode_refresh $tool $i
+  }
+  set simconf_ui(status) [join $msgs {; }]
+  catch { ciw_echo "simconf: [join $msgs {; }]" error }
+  return [llength $errs]
+}
+
+# The two Accept buttons. Returns 1 when the dialog closed. An invalid value
+# KEEPS THE WINDOW OPEN: a report destroyed together with the window it was
+# printed on is not a report.
+proc simconf_accept {save} {
+  global USER_CONF_DIR simconf_ui
+  simconf_read_cmds
+  set errs [simconf_commit_all]
+  if {[llength $errs]} { simconf_report_errors $errs ; return 0 }
+  # an armed Add registers here if it never registered on its own
+  simconf_register_armed
+  set errs [simconf_commit_all]
+  if {[llength $errs]} { simconf_report_errors $errs ; return 0 }
+  if {$save} { save_sim_defaults ${USER_CONF_DIR}/simrc }
+  unset -nocomplain ::simconf_snap
+  unset -nocomplain ::simconf_filesnap
+  simconf_close
+  simconf_stage_clear
+  return 1
+}
+
+proc simconf_close {} {
+  if {![simconf_have_tk]} { return 0 }
+  if {![winfo exists .sim]} { return 0 }
+  destroy .sim
+  xschem set semaphore [expr {[xschem get semaphore] -1}]
+  return 1
+}
+
+# CANCEL MEANS CANCEL. Window first, then the array, then the staging area --
+# see the header for why that order is not cosmetic.
+proc simconf_cancel {} {
+  simconf_close
+  simconf_snapshot_restore
+  simconf_file_restore
+  unset -nocomplain ::simconf_filesnap
+  simconf_stage_clear
+  return 1
+}
+
+# Add a row to a tool and ARM B3's auto-probe on it. The arm is what makes the
+# auto-probe "on Add" and nothing else: editing an existing row's exe never
+# launches anything.
+proc simconf_add_gui {tool} {
+  global sim simconf_ui
+  set i $sim($tool,n)
+  simconf_add $tool
+  simconf_stage_row $tool $i
+  set simconf_ui($tool,$i,autoprobe) 1
+  if {[simconf_dialog_open]} {
+    set sf .sim.topf.f.scrl
+    simconf_build_row $sf $tool $i
+    set e [simconf_rowpath $tool $i].prof.exe
+    if {[winfo exists $e]} { focus $e }
+    sframeyview .sim.topf
+  }
+  return $i
+}
+
+# One row's widgets. The FIRST line is byte-for-byte the widgets simconf built
+# before this item, at the same paths; the profile line is packed `-side bottom`
+# FIRST so it takes a full-width strip underneath and the original five widgets
+# keep the cavity above them.
+proc simconf_build_row {sf tool i} {
+  global sim simconf_ui
+  set bg {#dddddd}
+  if {[info exists simconf_ui(bg,$tool)]} { set bg $simconf_ui(bg,$tool) }
+  set row ${sf}.center.$tool.r.$i
+  frame $row
+  pack $row -fill x -expand yes
+  simconf_build_profile_row $row $tool $i $bg
+  entry $row.lab -textvariable sim($tool,$i,name) -width 18 -background $bg -fg black
+  entry_replace_selection $row.lab
+  radiobutton $row.radio -background $bg -fg black \
+     -selectcolor white -variable sim($tool,default) -value $i
+  text $row.cmd -undo 1 -width 20 -height 3 -wrap none -background $bg -fg black
+  $row.cmd insert 1.0 $sim($tool,$i,cmd)
+  checkbutton $row.fg -text Fg -variable sim($tool,$i,fg) \
+    -selectcolor white -background $bg -fg black
+  checkbutton $row.st -text Status -variable sim($tool,$i,st) \
+    -selectcolor white -background $bg -fg black
+  pack $row.lab -side left -fill y
+  pack $row.radio -side left -fill y
+  pack $row.cmd -side left -fill x -expand yes
+  pack $row.fg -side left -fill y
+  pack $row.st -side left -fill y
+  return $row
+}
+
+# The item-13 line: Exe / Args / Case / -n / Test / status.
+proc simconf_build_profile_row {row tool i bg} {
+  global simconf_ui
+  frame $row.prof -background $bg
+  pack $row.prof -side bottom -fill x
+  label $row.prof.exel -text {Exe} -background $bg -fg black
+  entry $row.prof.exe -textvariable simconf_ui($tool,$i,exe) -width 22 \
+     -background $bg -fg black
+  entry_replace_selection $row.prof.exe
+  label $row.prof.argl -text {Args} -background $bg -fg black
+  entry $row.prof.arg -textvariable simconf_ui($tool,$i,args) -width 8 \
+     -background $bg -fg black
+  entry_replace_selection $row.prof.arg
+  label $row.prof.casel -text {Case} -background $bg -fg black
+  menubutton $row.prof.mode -textvariable simconf_ui($tool,$i,modelabel) \
+     -indicatoron 1 -relief raised -width 20 -anchor w \
+     -menu $row.prof.mode.m -background $bg -fg black
+  menu $row.prof.mode.m -tearoff 0
+  # -onvalue/-offvalue are explicit: a Tk checkbutton defaults to comparing its
+  # variable against the literal 1, and A2's field legitimately arrives as any
+  # Tcl boolean out of a hand-edited simrc. simconf_stage_row canonicalises on
+  # the way in; these keep it canonical on the way out.
+  checkbutton $row.prof.nsi -text {-n} -variable simconf_ui($tool,$i,nospiceinit) \
+     -onvalue 1 -offvalue 0 \
+     -selectcolor white -background $bg -fg black
+  button $row.prof.test -text {Test} -command [list simconf_test_row $tool $i]
+  # `-width 1` is load-bearing, not cosmetic: without it this label's own text
+  # sets the row's requested width, the scroll frame sizes the whole dialog to
+  # the LONGEST probe sentence, and every row is then clipped at the window edge
+  # -- measured on :99, "Test: delivers fold preserve distinguish (65 ms)" ran
+  # off the right-hand side, which is the one thing the Test button exists to
+  # show. At width 1 + `-fill x -expand yes` it takes whatever is left instead.
+  label $row.prof.st -textvariable simconf_ui($tool,$i,note) -anchor w -width 1 \
+     -background $bg -fg black
+  # GRID, not pack, and the status label gets a LINE OF ITS OWN spanning the
+  # whole row. MEASURED on :99 with everything on one line: the label was left
+  # 184 px -- about 26 characters -- and
+  # "Test: delivers fold preserve distinguish (65 ms)" is 48, so the one thing
+  # the Test button exists to show was clipped at the window edge on every row.
+  # Widening the window instead would have needed ~1250 px of screen for a
+  # sentence that is only ever there after a click.
+  set c 0
+  foreach w {exel exe argl arg casel mode nsi test} {
+    grid $row.prof.$w -row 0 -column $c -sticky w
+    incr c
+  }
+  grid columnconfigure $row.prof $c -weight 1
+  grid $row.prof.st -row 1 -column 0 -columnspan [expr {$c + 1}] -sticky ew
+  # B3's arm is consumed by Return in the Exe box of a row this dialog just
+  # added -- the "registration" gesture. Nothing else here starts a process.
+  bind $row.prof.exe <Return> [list simconf_row_register $tool $i]
+  simconf_mode_refresh $tool $i
+  return $row.prof
+}
+
 proc simconf_reset {} {
   global sim
 
@@ -4201,30 +4868,31 @@ proc simconf_reset {} {
             -icon warning -parent .sim  -type okcancel]
   if { $answer eq {ok}} {
     set_sim_defaults reset
-    foreach tool $sim(tool_list) {
-      for {set i 0} { $i < $sim($tool,n)} {incr i} {
-        .sim.topf.f.scrl.center.$tool.r.$i.cmd delete 1.0 end
-        .sim.topf.f.scrl.center.$tool.r.$i.cmd insert 1.0 $sim($tool,$i,cmd)
-      }
-    }
+    # REBUILD, do not patch the `cmd` boxes in place (casemode item 13). A reset
+    # changes the ROW COUNT as well as the text -- the old loop walked to the NEW
+    # `n` and left any extra row's widgets standing, and it knew nothing about
+    # the profile line. The snapshot is KEPT across the rebuild -- BOTH halves of
+    # it, the array and the simrc bytes -- so Cancel still undoes the reset
+    # itself. `set_sim_defaults reset` unlinks the file immediately, so the array
+    # half alone would have restored the session and still lost the user's
+    # configuration at the next start.
+    simconf 1
   }
 }
 
-proc simconf_saveconf {scrollframe} {
-  global sim USER_CONF_DIR
-  foreach tool $sim(tool_list) {
-    for {set i 0} { $i < $sim($tool,n)} {incr i} {
-      set sim($tool,$i,cmd) [${scrollframe}.center.$tool.r.$i.cmd get 1.0 {end - 1 chars}]
-    }
-  }
-  # destroy .sim
-  # xschem set semaphore [expr {[xschem get semaphore] -1}]
-  save_sim_defaults ${USER_CONF_DIR}/simrc
-  # puts "saving simrc"
-}
+# `simconf_saveconf` USED TO BE HERE. It was the old `Accept, Save and Close`
+# body: slurp every cmd box, then save. Casemode item 13 rewired that button to
+# `simconf_accept 1`, which validates the staged profile fields, registers an
+# armed Add and refuses to close on a bad value before it saves -- so the old
+# proc became a second, DIVERGENT save path with no caller anywhere in the tree
+# (grep: definition only). Left standing it was a trap for the next editor, who
+# would have wired up a save that skips every guard this item added. Removed
+# rather than commented: spec section 17.12.
 
-proc simconf {} {
-  global sim USER_CONF_DIR simconf_default_geometry
+# `keepsnap` 1 rebuilds the window WITHOUT re-taking Cancel's snapshot -- the
+# route simconf_reset uses, so that Cancel can still undo a "Reset to default".
+proc simconf {{keepsnap 0}} {
+  global sim USER_CONF_DIR simconf_default_geometry simconf_ui
 
   if {[winfo exists .sim]} {
     destroy .sim
@@ -4232,9 +4900,17 @@ proc simconf {} {
   }
   xschem set semaphore [expr {[xschem get semaphore] +1}]
   set_sim_defaults
+  # CANCEL'S SNAPSHOT (casemode item 13). Taken after set_sim_defaults, so it is
+  # the configuration the user is about to see -- and taken for the WHOLE array,
+  # because the pre-existing widgets write `name`/`fg`/`st`/`default` straight
+  # into it through -textvariable and anybody's `set_sim_defaults` may still
+  # slurp the `cmd` boxes.
+  if {!$keepsnap} { simconf_snapshot_take }
+  simconf_stage_clear
+  simconf_stage_all
   toplevel .sim -class Dialog
   wm title .sim {Simulation Configuration}
-  wm geometry .sim 790x370
+  wm geometry .sim 1010x520
   # wm transient .sim [xschem get topwindow]
   frame .sim.topf
   set scrollframe [sframe .sim.topf]
@@ -4251,33 +4927,15 @@ proc simconf {} {
     pack ${scrollframe}.center.$tool -fill both -expand yes
     pack ${scrollframe}.center.$tool.l -fill y -side left
     pack ${scrollframe}.center.$tool.r -fill both -expand yes
+    # remembered so simconf_add_gui can build a NEW row in the same colour
+    set simconf_ui(bg,$tool) $bg($toggle)
     for {set i 0} { $i < $sim($tool,n)} {incr i} {
-      frame ${scrollframe}.center.$tool.r.$i
-      pack ${scrollframe}.center.$tool.r.$i -fill x -expand yes
-      entry ${scrollframe}.center.$tool.r.$i.lab -textvariable sim($tool,$i,name) -width 18 \
-         -background $bg($toggle) -fg black
-      entry_replace_selection  ${scrollframe}.center.$tool.r.$i.lab
-      radiobutton ${scrollframe}.center.$tool.r.$i.radio -background $bg($toggle) -fg black \
-         -selectcolor white -variable sim($tool,default) -value $i
-      text ${scrollframe}.center.$tool.r.$i.cmd -undo 1 -width 20 -height 3 -wrap none -background $bg($toggle) -fg black
-      ${scrollframe}.center.$tool.r.$i.cmd insert 1.0 $sim($tool,$i,cmd)
-      checkbutton ${scrollframe}.center.$tool.r.$i.fg -text Fg -variable sim($tool,$i,fg) \
-        -selectcolor white -background $bg($toggle) -fg black
-      checkbutton ${scrollframe}.center.$tool.r.$i.st -text Status -variable sim($tool,$i,st) \
-        -selectcolor white -background $bg($toggle) -fg black
-      pack ${scrollframe}.center.$tool.r.$i.lab -side left -fill y
-      pack ${scrollframe}.center.$tool.r.$i.radio -side left -fill y
-      pack ${scrollframe}.center.$tool.r.$i.cmd -side left -fill x -expand yes
-      pack ${scrollframe}.center.$tool.r.$i.fg -side left -fill y
-      pack ${scrollframe}.center.$tool.r.$i.st -side left -fill y
+      simconf_build_row $scrollframe $tool $i
     }
     incr toggle
     set toggle [expr {$toggle %2}]
   }
-  button .sim.bottom.cancel  -text Cancel -command {
-    destroy .sim
-    xschem set semaphore [expr {[xschem get semaphore] -1}]
-  }
+  button .sim.bottom.cancel  -text Cancel -command { simconf_cancel }
   button .sim.bottom.help  -text Help -command {
     viewdata {In this dialog box you set the commands xschem uses to launch the
 various external tools. The commands go through a tcl 'subst' round
@@ -4317,42 +4975,72 @@ if xschem is restarted changes will be lost.
 If no ~/.xschem/simrc is present then a minimal default setup is presented.
 To reset to default use the corresponding button or just delete the
 ~/.xschem/simrc file manually.
+
+SIMULATOR PROFILE (the second line of each row)
+
+ - Exe: the simulator executable, as an absolute path or a bare name looked
+   up on PATH. It may contain variable references ($env(HOME)/...). EMPTY
+   means "behave exactly as before": the row runs its cmd string, and ASE-L
+   falls back to a bare ngspice on PATH.
+ - Args: extra arguments, as a Tcl list, composed after Exe.
+ - Case: the case mode this simulator is ASKED for
+   (fold / preserve / distinguish; ngspice -D casemode=...).
+   THE MENU OFFERS ONLY WHAT THE BINARY WAS MEASURED TO DELIVER. Before a
+   row is probed the only offer is fold, which every ngspice delivers
+   whether or not it is asked. "use global default" leaves the choice to
+   the global sim_case_mode floor. A mode already stored on the row that
+   was never measured is shown marked "NOT measured".
+ - -n: pass --no-spiceinit. A .spiceinit -- in the run directory OR in your
+   home directory -- overrides -D casemode=, so the mode you asked for is
+   not always the mode you get. Leave this off unless you know your
+   .spiceinit is the problem.
+ - Test: run the executable once per mode and report what it delivers. The
+   answer is recorded on the row and the Case menu is rebuilt from it.
+   A row added with the Add button is probed automatically, but ONLY when
+   the executable is named *ngspice* -- so that adding a licensed simulator
+   never checks out a licence just because a path was typed.
+
+Cancel restores the whole configuration to what it was when this window
+opened: every row, every profile field, a measurement the Test button
+recorded, and the ~/.xschem/simrc file itself -- so a 'Reset to default'
+you change your mind about is put back on disk as well as in memory.
+The window manager's close button (X) is Cancel too.
+
+Editing a row's Exe, Args or -n DISCARDS that row's measurement, because a
+measurement belongs to the binary it was taken on. The Case menu drops back
+to offering fold alone until you press Test again.
     } ro
   }
-  button .sim.bottom.ok  -text {Accept, Save and Close} -command "
-    set_sim_defaults
-    simconf_saveconf $scrollframe
-    destroy .sim
-    xschem set semaphore [expr {[xschem get semaphore] -1}]
-  "
+  button .sim.bottom.ok  -text {Accept, Save and Close} -command { simconf_accept 1 }
   button .sim.bottom.reset -text {Reset to default} -command {
     simconf_reset
   }
-  button .sim.bottom.close -text {Accept, no Save and Close} -command {
-    set_sim_defaults
-    destroy .sim
-    xschem set semaphore [expr {[xschem get semaphore] -1}]
+  button .sim.bottom.close -text {Accept, no Save and Close} -command { simconf_accept 0 }
+  # THE TITLEBAR X IS CANCEL (casemode item 13's fix round). Before this item
+  # every route out of this dialog committed, so pointing WM_DELETE_WINDOW at
+  # Accept matched. Once a real Cancel exists, an X that COMMITS is the one way
+  # to lose an edit you meant to abandon -- and worse, `simconf_accept` returns
+  # without closing when a field is invalid, so the X button went inert exactly
+  # when a user most wants out. Cancel always closes and always rolls back.
+  wm protocol .sim WM_DELETE_WINDOW { simconf_cancel }
+  # ADD, wired up at last (casemode item 13). It used to be a commented-out block
+  # that destroyed the dialog, WROTE THE SIMRC and reopened; a row is appended in
+  # place now, nothing is saved behind the user's back, and B3's auto-probe is
+  # ARMED on that row and on no other.
+  menubutton .sim.bottom.add -text {Add row} -relief raised -indicatoron 1 \
+     -menu .sim.bottom.add.m
+  menu .sim.bottom.add.m -tearoff 0
+  foreach tool $sim(tool_list) {
+    .sim.bottom.add.m add command -label $tool -command [list simconf_add_gui $tool]
   }
-  wm protocol .sim WM_DELETE_WINDOW {
-    set_sim_defaults
-    destroy .sim
-    xschem set semaphore [expr {[xschem get semaphore] -1}]
-  }
+  label .sim.bottom.msg -textvariable simconf_ui(status) -anchor w -fg red
   pack .sim.bottom.cancel -side left -anchor w
   pack .sim.bottom.help -side left
-  #foreach tool $sim(tool_list) {
-  #  button .sim.bottom.add${tool} -text +${tool} -command "
-  #    simconf_add $tool
-  #    destroy .sim
-  #    xschem set semaphore [expr {[xschem get semaphore] -1}]
-  #    save_sim_defaults ${USER_CONF_DIR}/simrc
-  ##    simconf
-  #  "
-  #  pack .sim.bottom.add${tool} -side left
-  #}
+  pack .sim.bottom.add -side left
   pack .sim.bottom.ok -side right -anchor e
   pack .sim.bottom.close -side right
   pack .sim.bottom.reset -side right
+  pack .sim.bottom.msg -side left -fill x -expand yes
   pack .sim.topf -fill both -expand yes
   pack .sim.bottom -fill x
   if { [info exists simconf_default_geometry]} {

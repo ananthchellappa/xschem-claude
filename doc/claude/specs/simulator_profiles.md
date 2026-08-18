@@ -3015,3 +3015,574 @@ contract is load-bearing for `auto_plot`, which walks `$rows` and the repaired
 list by the same index; a dedupe there would silently shift every row after the
 first duplicate onto the wrong output name.
 
+
+---
+
+# 17. THE DIALOG — casemode item 13
+
+Authority: `PLAN.md` §3b item 13 · `DECISIONS.md` **B1** (extend the existing
+`simconf`, not a second registry), **A1** (probe-driven pre-fill; nobody may
+select a mode their simulator will silently ignore), **A2** (the per-profile
+`-n` checkbox), **B3** (auto-probe gated on the executable's *name*, and the
+hard timeout). Checks `SDG1`–`SDG16e` in `tests/headless/test_sim_dialog.tcl`
+— **53 of them** on a display, 35 true-headless, counted from a run.
+
+Item 6 built the field model and wrote no widget. Item 7 built the probes and
+wrote no widget. **This is the widget**, and its payload is pixels, so the item
+is `[E]` and owes an eyeball however many checks pass.
+
+## 17.1 It extends `simconf`; it does not open a second window
+
+B1 option (i). Each row of `Simulation ▸ Configure simulators and tools` grows a
+**second line**: `Exe` · `Args` · `Case` · `-n` · `Test` · a status label. The
+first line — name, the default radio, the free-form `cmd` text, `Fg`, `Status` —
+is untouched, **and so are its widget paths**: `set_sim_defaults`'s own slurp
+loop and `test_ase_dialogs`'s `G13` both name
+`.sim.topf.f.scrl.center.<tool>.r.<i>.cmd` literally. `SDG4` asserts all five
+legacy paths still exist; mutation **M44**, which renames only `.cmd`, reddens
+13 checks.
+
+Two things that were dead are now wired: the `Add` buttons (a commented-out
+block that destroyed the dialog, **wrote the simrc** and reopened — a row is
+appended in place now and nothing is saved behind the user's back), and a
+bottom status line for refusals.
+
+## 17.2 RULING — where a widget commits to `sim()`, and Cancel
+
+This is the item's sharpest question, because the answer that shipped before it
+was *"at unpredictable moments, and Cancel could not take it back"*. Measured
+twice — casemode items 9 and 11, and pinned by `test_ase_dialogs` `G13`:
+**`::set_sim_defaults` is not a read.** With `.sim` open its first loop slurps
+every `…r.$i.cmd` widget back into `sim($tool,$i,cmd)`, so any code that merely
+*asked* a question about the simulator configuration committed the user's
+half-typed edits. Items 9 and 11 stopped asking (`init 0`). That fixed the two
+callers; it did not fix the dialog.
+
+**The answer, in two halves.**
+
+1. **The new profile fields never touch `sim()` until a commit point.** They are
+   staged in `::simconf_ui(<tool>,<i>,<field>)`; that, not `sim()`, is what the
+   entries and the checkbutton are bound to. There are exactly three commit
+   points — **Test** (it commits the row it is about to measure), **Accept, no
+   Save and Close**, and **Accept, Save and Close**. `SDG2b` and `SDG5d` pin the
+   contract from the model side and from the widget; mutation **M42**, binding
+   the `Exe` entry straight to `sim($tool,$i,exe)` — the obvious wiring, and the
+   one item 6's normalizer comment anticipated — reddens five checks.
+
+2. **Cancel restores the whole array** to a snapshot taken when the dialog
+   opened. This is not belt-and-braces on top of (1); it is the only thing that
+   can work for the *pre-existing* controls. `name`, `fg`, `st` and the default
+   radio bind `-textvariable`/`-variable` straight into `sim()`, so they have
+   **always** been written the instant a key is pressed and Cancel has never
+   taken them back — and any code anywhere may still slurp the `cmd` boxes. A
+   per-field discipline cannot undo somebody else's write; a snapshot can.
+   `SDG5` types into the `cmd` box, edits a `-textvariable` field *and* the new
+   `Exe` box, **forces the slurp**, asserts in `SDG5b` that the slurp really
+   happened (or the cancel assertion would be vacuous), then cancels and
+   requires all three back.
+
+### RULING — the window is destroyed BEFORE the array is restored
+
+`array unset sim` under a live widget is not a rollback: Tk **re-creates** a
+`-textvariable` element the moment it is unset, from the widget's own current
+string. So `simconf_snapshot_restore` refuses outright while `.sim` exists
+(`SDG15b`), and `simconf_cancel` closes first. Mutation **M20** removes the
+refusal; **M21** removes the snapshot itself.
+
+A consequence worth stating because it is the surprising one: **Cancel also
+undoes a measurement the `Test` button recorded** (`SDG5c`). `detected`/`probed`
+live in `sim()`, and "the configuration is what it was when this window opened"
+is a simpler promise than "…except the measurements".
+
+## 17.3 RULING — an invalid value is REPORTED, and it BLOCKS THE CLOSE
+
+§5 promised that this dialog is where a typo gets reported rather than being
+silently dropped by the persister at the next save. The commit goes through item
+6's `sim_profile_set`, so a value that would not survive its own `simrc` line
+(an unbalanced brace; a backslash-newline; an `args` that is not a Tcl list) is
+**refused, the stored value survives, and the window stays open** (`SDG3b`,
+`SDG3d`, `SDG13b`). Closing on a refusal would destroy the report together with
+the surface it was printed on. Mutation **M23c** — dropping *both* early returns
+— is the one that reddens `SDG13b`; dropping either alone changes nothing, which
+is why the first two attempts at that mutation were green and are recorded here
+rather than quietly re-run.
+
+**Three channels, exactly as item 14 ruled.** The offending row's own status
+label, the dialog's bottom status line, and `ciw_echo … error` (`SDG3c`,
+`SDG3e`). The CIW leg exists because nothing else in the file would have noticed
+its removal — mutation **M32** was green until `SDG3e` was written.
+
+## 17.4 A1, AS A WIDGET
+
+The `Case` control is a menubutton whose menu is rebuilt from
+`sim_profile_selectable` (§4) every time anything can have changed it. It is
+**never** a constant list, and the three states are all driven:
+
+| the row | the menu offers |
+|---|---|
+| never probed | `use global default (<floor>)` + **`fold`** |
+| measured `fold preserve distinguish` | the floor entry + all three |
+| measured `preserve` only | the floor entry + **`preserve` alone** — not `fold` |
+| measured, delivers nothing we recognise | **the floor entry only** |
+
+`SDG7`, `SDG7b`, `SDG7c`, `SDG7e`, and `SDG10b`/`SDG4c` for the same list read
+back out of the real Tk menu. Mutation **M06** (a constant three-mode list)
+reddens nine checks; **M07** (dropping the floor entry) ten.
+
+**The floor entry is not decoration.** Empty is a real and different setting —
+"this profile names no mode, ask the global floor" — and a user who picked a
+mode must be able to go back to it. It names the floor it will actually use
+(`SDG7f`), and a garbage `sim_case_mode` is not a request (`SDG7g`, mutation
+**M46**).
+
+### RULING (fix round) — the floor entry is A1's ONE SEAM, and it must SAY so
+
+The table above is true of the *mode* entries and was, as first written, not the
+whole truth about the first one. B1 mandates that the floor entry exist, so it
+is the one entry `sim_profile_selectable` does **not** filter — and with a
+non-`fold` `sim_case_mode` it is therefore a selectable route to **requesting a
+mode this row was measured not to deliver**.
+
+Measured, before the fix, with `sim_case_mode distinguish`:
+
+```
+unprobed row:  menu = {use global default (distinguish)} {fold}
+pick entry 0:  stored casemode = {}   sim_profile_casemode -> distinguish
+               sim_profile_supports … distinguish -> 0
+row MEASURED detected={fold}:  same menu, same outcome
+```
+
+The second line is the sharp one: the binary **was** measured, is known not to
+deliver `distinguish`, and the menu still carried a selectable entry that
+requests it. A1's sentence is "nobody can select a mode their simulator will
+silently ignore".
+
+Three ways out were available. **Omitting the entry** breaks B1 and takes away
+the only route back to "no mode of my own". **Filtering it through
+`sim_profile_selectable`** is the same thing by another name. **Labelling it
+with the consequence** keeps both rules, so that is the ruling:
+
+```tcl
+proc simconf_mode_floor_label {tool i} {
+  set f [simconf_mode_floor]
+  if {[lsearch -exact [sim_profile_selectable $tool $i] $f] < 0} {
+    return "use global default ($f - NOT measured)"
+  }
+  return "use global default ($f)"
+}
+```
+
+The entry stays; it now says `use global default (distinguish - NOT measured)`
+on a row that cannot deliver it, and reads exactly as before on a row that can —
+so the mark is a warning, not fifteen rows of noise. It is the same wording the
+row already uses for a stored-but-unmeasured mode, deliberately.
+
+`SDG7h` drives the marked case (menu entry, menubutton label and
+`sim_profile_supports` in one assertion); `SDG7i` drives the unmarked twin, so a
+mark that fired unconditionally reddens too; `SDG7f` and `SDG4c` still pin the
+plain wording.
+
+**This is a label, not a gate.** A user may still ask for the floor and get a
+request their binary will ignore — item 8's B4 gate is what refuses that at run
+time, and it re-probes the exe live. The dialog's job is that the choice is not
+made blind.
+
+### RULING — a stored mode that was never measured is SHOWN, marked, and NOT offered
+
+A hand-edited `simrc`, or a binary that moved under the path, can leave a row
+carrying `casemode distinguish` on something measured to deliver only `fold`.
+The menubutton displays it as **`distinguish (NOT measured)`**; the menu does
+**not** contain it (`SDG7d`, mutation **M08**).
+
+Both halves are the ruling. Hiding it would lose a setting the user really has,
+with no way to see or correct it. Offering it as a menu entry would make an
+undeliverable mode selectable, which is precisely A1's prohibition. Displaying a
+warning is the only reading of A1 that keeps both.
+
+### RULING — the pre-fill is the FIRST SELECTABLE mode, staged, and never overwrites
+
+A1's consequence clause says the pre-fill is *probe-driven, never a constant*.
+After a probe **that was recorded**, a row whose mode is still empty is
+pre-filled with `[lindex [sim_profile_selectable …] 0]` — canonical order, so
+`fold` for anything that can fold, which is A1's own "no case support ⇒ pre-fill
+`fold`". It is not a constant: a binary measured to deliver only `preserve`
+pre-fills `preserve`, and one measured to deliver nothing pre-fills **nothing**
+(`SDG6`, `SDG6c`, `SDG6d`; mutation **M16** hard-codes `fold` and reddens
+`SDG6d`).
+
+Three guards ride with it, each with its own mutation:
+
+* it fires **only on a recorded measurement** — a timed-out probe pre-fills
+  nothing (`SDG12`'s `prefill=<>` term, mutation **M39**);
+* it **never overwrites** a mode the user chose (`SDG6b`, mutation **M15**);
+* it is **staged**, so `Cancel` discards it like any other edit (`SDG6`'s
+  `stored=` term).
+
+## 17.5 B3 — "on Add" is an ARM on a row, and it is consumed once
+
+`sim_profile_probe_autoprobe_ok` (item 7, §11.9) is the name gate. This item
+supplies the *occasion*: `simconf_add_gui` sets
+`simconf_ui(<tool>,<i>,autoprobe) 1` on the row it just created and on no other.
+`simconf_row_register` is the only thing that reads it, and it disarms before it
+probes.
+
+| situation | outcome |
+|---|---|
+| an existing row, however it is named | `notarmed` — **no process** (`SDG9c`, mutation **M10**) |
+| an added row still naming no exe | `noexe`, **stays armed** (`SDG8b`) |
+| an added row naming `…/zzz_echo` | `namegate` — no process, and the row **says so and points at Test** (`SDG9`, `SDG9b`; mutations **M11**, **M31**) |
+| an added row naming `…/ngspice_echo` | probed, recorded, disarmed (`SDG9d`, mutations **M12**, **M13**) |
+
+The two stand-ins in `SDG9`/`SDG10` differ **only in filename** and answer
+identically, which is what makes the gate testable at all: B3 refuses to
+*launch* a non-ngspice binary, never to support it — the same row is measured
+happily by a deliberate **Test** click (`SDG10`), and its menu then grows from
+one mode to three (`SDG10b`). That is B3's whole bargain: no licence checkout
+for a path somebody typed, and a button for the case where the user means it.
+
+The registration gesture in the GUI is **Return in the Exe box of an added row**
+(`SDG16c`, mutation **M27**), plus the Accept path for a user who fills the box
+and clicks straight through.
+
+## 17.6 One probe per click, and nothing on a build path
+
+`sim_profile_probe_capability` already bounds the **whole** probe (§11.6, after
+its own first cut froze for 15016 ms). This layer adds no loop around it:
+
+* one click = **one capability probe = three legs**; a second click is three
+  more (`SDG11` counts the stand-in's own invocations, so a retry shows up as
+  six);
+* a **hung** probe launches **once**, returns inside the budget, records
+  nothing, and says `TIMED OUT` on the row (`SDG12`). Mutation **M17** — retry
+  when the status is not `ok` — is caught by the launch count, not by the clock;
+  a timing bound alone let it through and is recorded here because that is the
+  same shape item 7 removed one layer down;
+* a **throw** out of the probe does not leave the row saying `probing...`
+  (`SDG12d`) — a stuck progress message is indistinguishable from the frozen
+  dialog B3's timeout exists to prevent;
+* **building the dialog, and adding a row, launch nothing at all** (`SDG4d`,
+  whose baseline is deliberately taken *before* the window is built; mutation
+  **M45** probes at row-build time and reddens it). Item 3's rule — never poll a
+  walk from a redraw — applies with more force to a process launch.
+
+## 17.7 What `Test` says
+
+Every outcome item 7 can return has one sentence (`SDG12b` requires all six to
+be real sentences, after an earlier version of that check was found to pass on
+six `ERR:invalid command name` strings under a master red):
+
+```
+Test: delivers fold preserve distinguish (65 ms)
+Test: no casemode support - fold only (52 ms)
+Test: ran, delivers no mode we recognise (31 ms)
+Test: INCOMPLETE - a probe leg timed out (5006 ms); nothing recorded
+Test: TIMED OUT after 5006 ms - nothing recorded
+Test: ran but never answered (not ngspice?) - nothing recorded
+Test: cannot run this executable - nothing recorded
+```
+
+`partial`, `timeout`, `unknown` and `error` all say **nothing recorded**,
+because that is item 7's ruling (§11.5) and a dialog that hid it would leave the
+row looking merely unprobed for no stated reason. The sentence reaches the
+label the user is looking at, not only the return value (`SDG16e`, mutation
+**M38**).
+
+## 17.8 Backward compatibility, re-driven through the dialog
+
+Item 6 froze `tests/headless/fixtures/simrc_pre_casemode` to prove a pre-batch
+`simrc` round-trips byte-identically. A dialog that rewrote rows on open,
+reordered them on save, or pre-filled a field nobody set would break that.
+`SDG14` loads the fixture, opens the dialog, presses **Accept, Save and Close**
+having changed nothing, and requires the file back byte for byte; `SDG14b`
+requires **Cancel to write no file at all**, with a live `-textvariable` edit in
+flight so that a cancel which wrongly saved would write different bytes
+(mutation **M41** — the first version of that check could not fail, because the
+bytes it would have saved were the bytes it started from). Mutation **M24**,
+staging a constant `casemode fold` on open, reddens `SDG14`.
+
+## 17.9 THE TWO DORMANT THINGS — what actually became live, measured
+
+Item 12's receipt says its repair is "unreachable from every gesture a user can
+make today" and that **item 13 is what turns it live**. Driven end to end on
+`:99`, through the real dialog into a real `ase::run_deck`, with an execution
+trace on the procs in question:
+
+```
+dialog: Add -> Exe=<build-ver_50 ngspice> -> Return
+        auto-probe (B3 name gate passes) -> detected = fold preserve distinguish
+        Case menu now offers all three   -> pick `distinguish` -> Accept
+run:    ase::run_deck on a real netlist
+OBSERVED EXECUTING: ase::run_precheck   (item 8, B4's gate)
+                    ase::sim_probe_run  (item 7's run probe, from the rundir)
+                    ase::preflight_gate (item 10's pre-flight)
+```
+
+and with the **released** `/usr/local/bin/ngspice`, the same gesture:
+
+```
+dialog: the Case menu REFUSES to offer `distinguish` for that binary (A1, live)
+        forced the way a hand-edited simrc would ->
+run:    ase: REFUSED - this session requests casemode 'distinguish' but the
+        simulator was measured to deliver 'fold' ...
+        artefacts left in the rundir: cell.spice   (nothing generated)
+```
+
+So **items 8, 9 and 10 are now reachable from a user gesture** — the first time
+in this batch.
+
+### CORRECTION — item 12's repair is STILL dormant, and the reason is measured
+
+It needs `Raw.case_sensitive`, which only `xschem raw read … -case distinguish`
+or `xschem raw case 1` can set. Two measurements:
+
+1. **No caller passes it.** `ase::attach_dbs` reads
+   `xschem raw read $rawfile $sim_type` (`ase.tcl:2905/2907`), the viewer's four
+   readers the same; a whole-tree grep finds no `-case` and no `raw case 1`
+   outside comments. Setting a `distinguish` **profile** does not change that.
+2. **The raw carries no evidence either.** Today's `build-ver_50`, run
+   `-D casemode=distinguish`, writes a header with `Title:`, `Date:`,
+   `Command:`, `Plotname:`, `Flags:` — and **no `Option: casemode=` line**
+   (`casemodewrite` is still off by default; the `cp_remvar` patch that would
+   change it is the batch's written-but-unsent upstream ask). So item 3's source
+   2 cannot answer either, and the names come back case-kept
+   (`v(In) v(MidNode) i(V1)`) into a **folding** lookup — which is exactly item
+   12's own theorem for why the repair cannot fire.
+
+**RULING — item 13 does not wire it, and this is not a shortfall.** Making the
+*run's requested mode* set the *file's* `case_sensitive` would install the
+global floor as if it were evidence about somebody's bytes, in the one place
+items 3, 4 and 5 all refused to: item 3 separated reporting from acting, item 4
+measured that **bytes beat the flag and the flag beats the floor**, and item 5
+ruled that the viewer's own override writes the explicit source only and never
+`Raw.case_sensitive`, "whose setter re-reads the file". A run-request-driven
+`-case` is the floor jumping the queue. What would legitimately turn item 12
+live is the `Option:` header — i.e. the upstream ask — or an explicit
+`-case` on the attach path, which belongs to whoever owns `attach_dbs` and
+needs its own empty-diff round.
+
+## 17.10 RULING — D1's confirmation modal is DECLINED, and why
+
+Item 10 built `ase::preflight_fix_session <key>` and deferred D1's confirmation
+prompt with the words: a run-path modal "would force `[E]` plus a fifth look
+debt for a dialog **no decision in this batch specifies**, item 13 owns that
+surface". This item is already `[E]`, so half that objection is gone. **The
+other half stands, and three more join it.**
+
+1. **The surface is the wrong one.** Item 13's scope line names `simconf` —
+   `Simulation ▸ Configure simulators and tools`. D1's confirmation belongs
+   where the refusal happens, which is an ASE-L **run**. Building it here would
+   be a second, unrelated pixel surface inside a configuration dialog.
+2. **No decision specifies it, and there is nothing to measure.** D1 says
+   "applies them on confirmation" and says nothing about modality, wording,
+   all-or-nothing versus per-expression, or what a partial acceptance means.
+   Every other ruling in this batch was driven by a measurement; a ruling about
+   a *presentation* nobody has specified would be taste with no evidence
+   underneath it, and this batch has no human to ask.
+3. **A modal in the run path re-opens the re-entrancy §11.6 rejected `vwait`
+   for.** `tk_messageBox` runs a nested event loop; the probe deliberately does
+   not, precisely so nothing can run inside it. Putting one between the
+   pre-flight and the run puts arbitrary callbacks there.
+4. **The cost is a third look debt for one button.** The function is already
+   reachable (`ase::preflight_fix_session`), already named in the refusal
+   message, already announced on the CIW and in the action log, and already
+   driven headlessly.
+
+**What it should look like when somebody builds it**, so this is a ruling and
+not a shrug: the refusal message the pre-flight already composes, verbatim, in a
+scrolling read-only text; one line per correction, `v(en) → v(EN)`, each with
+its own checkbox defaulting to **on**; `Apply and run` / `Apply` / `Cancel`;
+`Apply` calls the existing command and nothing else, so a wrong map costs a
+visible list rather than a silent rewrite. The `Test` button's status line in
+this item is the presentation precedent — say what was measured, say what was
+recorded, and say when nothing was.
+
+## 17.11 What is NOT here
+
+- **The profile line is shown on EVERY row**, including the `*wave` viewer
+  tools. Hiding it on "non-simulator" tools would invent a taxonomy `sim()` does
+  not have and would make an `exe` set by a hand-edited `simrc` invisible and
+  uneditable. The cost is noise on seven viewer rows, and it is a cost the
+  eyeball is asked about.
+- **The window got taller and wider** (790x370 → 1010x520). A user who has
+  saved a `simconf_default_geometry` keeps theirs, so their dialog will be
+  cramped until they resize it. Not fixed: silently discarding a saved geometry
+  is worse.
+- **`simconf_saveconf` is GONE** (fix round). Leaving it "in place, unused" was
+  the wrong call: `grep -rn simconf_saveconf src/` returned the definition and
+  no caller anywhere in the tree, and what it actually was is a **second,
+  divergent save path** — it slurps the `cmd` boxes and calls
+  `save_sim_defaults` with none of the staged-field validation, none of the
+  armed-Add registration and none of the refusal-blocks-the-close behaviour the
+  Accept button now carries. A future editor wiring that button back to it would
+  have re-opened every hole this item closed. Removed, with a comment at the
+  site saying what it was and what replaced it.
+- **`simconf_reset` now REBUILDS the window** rather than patching the `cmd`
+  boxes in place. The old loop walked to the *new* row count and left any extra
+  row's widgets standing, and knew nothing about the profile line.
+- **No C, nothing built, no valgrind.**
+- **Nothing touches `ase::expand_path`** (issue `0422`). The `Exe` field is
+  expanded by item 6's `sim_profile_expand_vars`, which refuses the
+  array-index shape; the dialog adds no new route to a path expander, and the
+  commit-time validation makes `0422` neither easier nor harder to trip.
+
+## 17.12 Checks that are NOT evidence, and declared holes
+
+- **Six checks survive the MASTER RED** (`git show HEAD:src/xschem.tcl`, 47 of
+  53 red): `SDG1b`, `SDG2b`, `SDG6b`, `SDG4d`, `SDG14b`, `SDG15b`. All six
+  assert that something does **not** happen, which is trivially true when
+  nothing exists — each has its own targeted mutation instead (`M35`, `M43`,
+  `M15`, `M45`, `M41`, `M20`), and that is where their evidence is.
+- ~~**The `Reset to default` path is undriven**~~ — CLOSED in the fix round:
+  `SDG18` stubs `tk_messageBox` and drives the real button. Reasoning it instead
+  of driving it is how §17.13's false promise shipped.
+- ~~**`simconf_reset`'s Cancel-after-reset** is reasoned, not driven.~~ — the
+  reasoning was **wrong**; see §17.13.
+- **No `simconf_default_geometry` interaction is driven.**
+- **The dialog has never been looked at.** Two `look` debts are recorded; a
+  green suite does not discharge either.
+
+## 17.13 RULING (fix round) — Cancel restores the FILE, not only the array
+
+`Reset to default` calls `set_sim_defaults reset`, whose first act is
+`file delete ${USER_CONF_DIR}/simrc`. `simconf_cancel`'s snapshot restored the
+in-memory `sim` array and nothing else, so the *promise* this item wrote into
+its own Help text and into §17.11 —
+
+> Cancel restores the whole configuration to what it was when this window opened
+
+— was false on exactly the path a person presses Cancel for. Measured through
+the real buttons on `:99`, with `USER_CONF_DIR` pointed at a scratch dir:
+
+```
+simrc exists at open   = 1
+after `Reset to default` invoke = 0    (array reset, window rebuilt)
+after `Cancel` invoke           = 0    (array RESTORED, file still gone)
+```
+
+The session looked recovered and the user's configuration was gone at the next
+xschem start. That is worse than no Cancel at all, because the dialog told them
+otherwise.
+
+**Ruling: the snapshot has two halves.** `simconf_snapshot_take` now also
+records `{path … exists 0|1 bytes …}` for `$USER_CONF_DIR/simrc`, and
+`simconf_cancel` calls `simconf_file_restore` after the array restore.
+
+Two properties make this safe rather than merely symmetric:
+
+* **It is conditional.** `simconf_file_restore` compares the file's current
+  existence and bytes against the snapshot and returns 0 unchanged. Cancel must
+  not write a file nobody asked it to write, and `SDG14b` — a *content*
+  comparison against the bytes it started from — could never see an
+  unconditional rewrite. `SDG18b` pins the file's **mtime** across a plain
+  Cancel for that reason.
+* **It survives the reset's rebuild.** `simconf_reset` calls `simconf 1`
+  (`keepsnap`), and the file snapshot is taken inside `simconf_snapshot_take`,
+  so both halves are kept for exactly the same reason and by the same switch.
+
+`SDG18` drives it end to end through the real `.sim.bottom.reset` and
+`.sim.bottom.cancel` buttons with `tk_messageBox` stubbed, asserting that the
+reset really deleted the file, that the window really rebuilt, and that the
+bytes came back identical. The "undriven Reset path" declared above is
+therefore no longer undriven.
+
+## 17.14 RULING (fix round) — a measurement belongs to the binary it was taken on
+
+Committing a new `exe` left `detected`/`probed` in place, so the Case menu kept
+offering the **previous** binary's measured modes and `sim_profile_supports`
+answered 1 for a binary nobody had measured — on the single edit this dialog
+exists to make. Measured, driven through the real widgets:
+
+```
+exe = <ver_50 build>, Test -> "Test: delivers fold preserve distinguish"
+exe box retyped to /usr/local/bin/ngspice (folds only), Accept
+  -> status line STILL "delivers fold preserve distinguish"
+  -> menu STILL offers fold preserve distinguish
+  -> committed casemode = distinguish, sim_profile_supports … = 1
+```
+
+The status line's `(STALE - the binary moved)` suffix is a **caption, not a
+gate**: nothing consults `sim_profile_probe_stale` except that suffix, and when
+the two files share an mtime the suffix does not appear at all — measured with
+`touch -r`, `stale=0` and no warning anywhere.
+
+**Ruling: `simconf_commit_row` drops the measurement when its subject changes.**
+Before storing, it compares the staged `exe`, `args` and `nospiceinit` against
+what is stored; if any differs, `detected` and `probed` are cleared. The row
+then reads `not probed - press Test`, the menu falls back to the unprobed floor
+(`fold` alone), and `sim_profile_supports` answers 0 — which is the truth.
+
+Comparing `nospiceinit` as a **boolean** rather than a string is deliberate: a
+canonicalised `1` and a stored `true` are the same setting, and dropping a
+measurement for that would be a spurious re-probe, not a fix.
+
+Chosen over the alternative (record the resolved path in the `probed` dict and
+make `sim_profile_selectable` consult staleness) because that spreads a dialog
+concern across item 6's model, and because clearing at the commit closes the
+same-mtime hole that no staleness comparison can see. `SDG20` drives the
+different-mtime case, `SDG20b` the same-mtime one.
+
+## 17.15 RULING (fix round) — a deliberate Test is a REGISTRATION
+
+`simconf_test_row` did not consume B3's per-row Add arm, so a freshly added row
+probed **twice**: three legs for the Test click, three more when
+`simconf_accept` ran `simconf_register_armed`. Measured with a counting
+stand-in: `launches after Test = 3 ; armed still 1 ; launches after Accept = 6`.
+Pressing `<Return>` in the Exe box instead left the total at 3, so the two
+registration gestures were asymmetric as well as wasteful — and on a binary that
+hangs, the Accept blocks for a **second whole probe budget** (§17.6's ruling is
+one probe per click, and B3's whole subject is the frozen window).
+
+**Ruling: `simconf_test_row` clears the arm**, exactly as `simconf_row_register`
+does, **when the row names an executable**. A Test on an empty Exe box measured
+nothing, so it registers nothing and the arm survives — the same carve-out
+`simconf_row_register`'s `noexe` outcome already makes. `SDG19` and `SDG19b`.
+
+## 17.16 RULING (fix round) — the titlebar X is Cancel
+
+`wm protocol .sim WM_DELETE_WINDOW` was `simconf_accept 0`. Before this item
+every route out of the dialog committed, so that matched. Once a real Cancel
+exists it does not: the X became the one gesture by which a user loses an edit
+they meant to abandon, and — because `simconf_accept` deliberately refuses to
+close on an invalid value (§17.3) — the **only** route that could go *inert*,
+precisely when someone most wants out.
+
+**Ruling: `WM_DELETE_WINDOW` is `simconf_cancel`.** It always closes and always
+rolls back, which is the conventional reading of a titlebar close once a Cancel
+button is present, and it can never be blocked by a refusal. The Help text says
+so. `SDG22` asserts the protocol string *and* drives it, so a silent revert
+reddens even if the window still closes.
+
+## 17.17 RULING (fix round) — A2's `-n` box is canonicalised at the boundary
+
+The checkbutton was created with no `-onvalue`/`-offvalue`, so it compares its
+variable against the literal `1`. `sim_profile_valid` accepts every Tcl boolean
+spelling and B1 explicitly blesses a hand-edited `simrc`, so a row carrying
+`nospiceinit true` **displayed unchecked while `-n` really was in the argv** —
+the box telling the user the opposite of what the run does. Measured:
+`stored=true valid=1`, `argv = -b -n -D casemode=fold`, `displayed as selected =
+0`.
+
+**Ruling: canonicalise on the way in, pin the values on the way out.**
+`simconf_stage_row` stages `[expr {$v ? 1 : 0}]`, and the checkbutton carries
+`-onvalue 1 -offvalue 0`. A save after an Accept therefore rewrites `true` as
+`1`; that is a deliberate canonicalisation of a field with a boolean domain, it
+does not touch the frozen `simrc_pre_casemode` fixture (which carries no profile
+fields at all), and `SDG14`/`SDG14c` still pin byte-stability. `SDG21`.
+
+## 17.18 The test defects this round closed, and how they were found
+
+Every one of these was a check that could not fail. They are recorded because
+"53 green" was true while all four holes were open.
+
+| hole | the mutation that proved it |
+|---|---|
+| both Accept **buttons** never invoked as widgets | emptying `-command` on `.sim.bottom.ok` **and** `.sim.bottom.close` left `test_sim_dialog` (53), `test_ase_dialogs` (149) and `test_sim_profiles` (97) fully green |
+| `Accept, Save` could write **nothing** | `if {0} { save_sim_defaults … }` left 8 suites / 836 checks green — `SDG14` compared the file against the bytes it had copied there itself |
+| B3's fallback registration inside `simconf_accept` | deleting the lone `simconf_register_armed` line left all 53 green |
+| the `Args` entry's staging | rebinding it to `sim($tool,$i,args)` — bypassing the staging area *and* item 6's validation — left all 53 green |
+
+Closed by: `SDG13`/`SDG13b`/`SDG14`/`SDG14c`/`SDG16f` (every commit now goes
+**through** a button), `SDG14c` (delete the file, edit one field, require the
+file back with exactly one line moved), `SDG17`/`SDG17b` (Add → type → Accept,
+both sides of the name gate), and `SDG5e`/`SDG3f` (all four staged fields pinned
+at their own widget, and the unparsable-list refusal reachable by typing).
