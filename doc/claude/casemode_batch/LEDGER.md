@@ -1,10 +1,10 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `577ef5bc`
 
 Driver-mode unattended batch. **DONE: 0, 0a, 0b, 1, 2, 3, 4, 5 `[E]`, 5b, 6, 7,
-8, 9, 10, 11, 14 `[E]`. REMAINING: 12, 13, 15.** Nothing is pushed.
+8, 9, 10, 11, 12, 14 `[E]`. REMAINING: 13, 15.** Nothing is pushed.
 
-**Current baseline: `audit_item11_closer_2026-08-18.txt` — 328/15/0/0 of 343** at
-`1d217632`. Every item so far has moved **zero** audit statuses; all growth is the
+**Current baseline: `audit_item12_closer_2026-08-18.txt` — 329/15/0/0 of 344** at
+`66d7122f`. Every item so far has moved **zero** audit statuses; all growth is the
 ten suites they added. **4 `look` debts are open** (items 5 ×2, 14 ×2) and only the
 user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
 `0422` (code execution), `0423`.**
@@ -62,7 +62,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0423`. Spec §13 |
 | 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0423` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
 | 11 | `result_probe` `-nocase` | `[x]` | `1d217632` | 28 | 19 | 6 + 3 audits | no | audit = one added row, zero movers. **A LADDER with a D2 decline + a delivered-mode veto, NOT a `-nocase` flag** — the naive fix was re-run and reddens 10 checks. **Corrected §13.6**: a plain `fold` run reaches the defect too. Spec §15 |
-| 12 | post-load current repair | | | | | | no | |
+| 12 | post-load current repair | `[x]` | `66d7122f` | 56 | 51 | 6 + 1 audit | no | audit = one added row, zero movers. **A GUARD, not a rescue** — item 9's construction model is right, so on a correctly-picked expression the repair is needed **never**. In memory only; the session is never rewritten. Spec §16 |
 | 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
 | 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0421`. Spec §14 |
 | 15 | docs | | | | | | no | must name `v(all)` **and** `i(all)`; must record Xyce as unverified |
@@ -823,6 +823,68 @@ direction.
 can produce reaches it today**. Kept as a standing guard and driven
 synthetically, because the alternative is an unguarded `-nocase` that becomes
 wrong the moment item 8's policy is relaxed.
+
+## Carry-forwards item 12 handed on — baseline `audit_item12_closer_2026-08-18`
+
+**Baseline is `audit_item12_closer_2026-08-18.txt` — 329/15/0/0 of 344** at
+`66d7122f`. Zero statuses moved.
+
+**IT IS A GUARD, NOT A RESCUE — and that is a measurement, not a hedge.** On
+`build-ver_50`, a `.subckt` holding `Vs` and VCVS `E1` in `X1`: `fold` gives
+`i(v.x1.vs) i(e.x1.e1) i(v1)`; `preserve`/`distinguish` give
+`i(V.X1.Vs) i(E.X1.E1) i(V1)` — **byte for byte what item 9's
+`sod_qualify`+`sod_expr` compose**. So item 9's construction model is right and
+**on a correctly-picked expression the repair is needed never.**
+
+**THE REAL GATE IS `Raw.case_sensitive`, AND IT IS A THEOREM.** Under
+`preserve`/`fold`, item 2's folded rung already answers every case-only mismatch,
+so "unmatched" and "matchable case-insensitively" are **disjoint** and this code
+cannot fire. Only `-case distinguish` separates them (`raw index i(v.x1.vs)` = −1
+while `i(V.X1.Vs)` = 4). One exception, covered: a folding DB whose fold key is
+**D2-poisoned**.
+
+**Reachability stated, not overstated:** nothing in ASE-L passes `-case`; no
+shipped caller does `raw read … -case` or `raw case 1`; `rawbar_load` reads bare;
+the viewer's Case Mode control is item 3's **reporting-only** verb. So it is
+**unreachable from every gesture a user can make today** — the one live route is a
+script/console `xschem raw case 1` then `dp_finish`/`auto_plot`. Kept as a
+standing guard in item 11 §15.5's shape. **Item 13 is what turns it live.**
+
+**§13.6 WAS ONE PRODUCER SHORT AGAIN — the same shape item 11 found.** A current
+also arrives verbatim from `output_editor_ok`, a hand-written state file and
+`expand_bus_outputs`, and `plot_map_expr` **buries one inside the RPN**
+`i(v1) -1 *`. Hence the repair is **token-wise**, and `auto_plot` maps *before* it
+repairs. §13.6 carries the correction in place.
+
+**Other rulings (spec §16):**
+
+- **Not a second lookup ladder.** The candidate scan runs over
+  `wviewer::name_rungs`, so item 2's `i(v.x`→`i(x` rung is honoured rather than
+  re-implemented, with an agreement leg against `resolve_signal_db`. The rule is
+  re-applied inline rather than by calling that proc, because calling it costs one
+  `signal_list_all` per token.
+- **D2 counts SPELLINGS, not slots or occurrences.** One differently-cased
+  spelling repairs; two decline at `error` naming every candidate; one name in two
+  databases is one answer.
+- **In memory; the session is NEVER rewritten** — D1's precedent and item 10's
+  explicit `ase::preflight_fix_session`. The row's `expr` and the state file keep
+  the user's text, nothing is marked dirty, and the next load repairs and
+  announces again.
+- **Currents only, by argument not by fence:** a voltage is *resolved* by
+  `xschem resolved_net`, so there is nothing constructed to be wrong about. The
+  predicate was **widened** to ngspice's `savecurrents` form `@m.x1.m0[id]`,
+  because `ase::ui::output_kind` in the same feature already calls that a current
+  — two predicates disagreeing was a review finding.
+- **A PERFORMANCE DEFECT THE DISPATCH'S WARNING DID NOT COVER.** Item 3's 147 ms
+  figure was about the *schematic* comparison; review found a **per-token
+  `name_index` rebuild** costing **581.2 ms** on 30 expressions over 10001 names.
+  Hoisted into `prepare_slots`: **450.9 ms → 17.7 ms**, verdicts byte-identical.
+- **The repair may collapse two queue entries into one string**, so `dp_finish`
+  re-dedupes afterwards and filters `qcolors` in lockstep, keeping issue `0153`'s
+  one-colour-per-signal invariant.
+- **"Post-load" means after an attach actually happened.** `dp_finish`'s no-run
+  branch attaches nothing, and the first cut repaired there against whatever raw
+  the viewer already held; the call is now gated on `attach_raw`'s return value.
 
 ## Environment — re-verified 2026-08-16
 
