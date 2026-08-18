@@ -53,7 +53,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0422`** filed (code execution) |
 | 7 | the capability probe (+ hard timeout) | `[x]` | `ebf4c952` | 61 | 69 | 4 + 3 audits | no | audit = one added row, zero movers. **Two probes built** (capability + run), §3b's contradiction resolved. **Transport changed `-p` → batch deck** (`-p` opens `$DISPLAY` and CORES with it unset). Spec §11 |
 | 8 | profile-aware `run_cmd` + mismatch policy | `[x]` | `d44febbd` | 38 | 38 | 3 + 3 audits | no | audit = one added row, zero movers (`_closer2_` authoritative). REFUSE = **before anything is generated**, `run_deck`'s first statement. `CS177c` **pins the two arg filters apart forever**. Spec §12 |
-| 9 | `sod_expr` stops folding + current arm | | | | | | no | flips ~20 assertions; that breakage is the evidence |
+| 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0423`. Spec §13 |
 | 10 | three defences: pre-flight + `$sim_status` + content | | | | | | no | pre-flight also OFFERS legacy corrections (D1) |
 | 11 | `result_probe` `-nocase` | | | | | | no | |
 | 12 | post-load current repair | | | | | | no | |
@@ -641,6 +641,62 @@ the warning.
   rule), the action log, and the head of `<rundir>/<cell>_ase.log` via
   `run_done`'s new **optional** `notes` argument — optional so `test_ase_cosim`'s
   six 3-argument callers keep working.
+
+## Carry-forwards item 9 handed on — baseline `audit_item09_closer_2026-08-17`
+
+**Baseline is `audit_item09_closer_2026-08-17.txt` — 326/15/0/0 of 341** at
+`799cd912`. Every casemode item has still moved **zero** statuses.
+
+**THE DISPATCH'S "~20 ASSERTIONS FLIP" WAS WRONG, AND THE REAL NUMBER IS BETTER.**
+Enumerated across all ten named files plus a whole-tree grep: **ten change, and
+only `HL17` changes its expected VALUE** (`v.x2.V1` → `V.x2.V1`). The other nine
+(`AN10`, `AN11`, `AN12`×2, `H1`×2, `HP1`, `HP2`, `HP3b`) gain an explicit `fold`
+argument with **unchanged values** — which is A1 working, not a shortfall. All ten
+keep their ids and gained a why-comment; none renumbered, none deleted.
+
+**A REAL DATA-CORRUPTION BUG, found by review and reproduced before fixing.**
+`sim_profile_resolve` opened with `::set_sim_defaults`, which is **not a read**:
+with `.sim` open it slurps every `…r.$i.cmd` widget into `sim()`. Measured on the
+shipped tree — `USER-IS-STILL-TYPING` typed into the spice row-0 box **survived one
+`sod_click` and the Cancel after it**. A read-only pick (issue `0204`) may not
+write global config. Fixed by asking with `init 0` plus a one-time build guarded
+by `![info exists ::sim(tool_list)]`; other callers keep `init 1`.
+
+**A RULING FOUND BY SABOTAGE.** `sod_case_mode` **delegates and does not
+re-validate**. The first cut kept a second copy of `::sim_profile_casemode`'s
+validation; it **survived every mutation green and masked a real defect** — a
+`sod_case_mode` reading `$::sim_case_mode` raw still folded garbage, so `SC206`
+was blind. Deleted; three checks now redden.
+
+**Other rulings (spec §13):**
+
+- **The mode is a REQUIRED third argument of `sod_expr`, never defaulted.** A
+  defaulted mode is a *silent* fold, and a folded `.save` under `distinguish` is
+  `rc=1`, zero vectors, "analysis not run" — the whole session's data. A missing
+  argument is a loud Tcl error instead.
+- **`sod_qualify` gains NO mode; the branch prefix follows the TOKEN**, re-using
+  item 4's `ver_50` measurement. `sod_expr` owns the whole case mapping, and
+  `hilight.c`'s `sender_current_prefix()` (`buf[0]=t[0]`) is the C half of the
+  same rule — the two roads now agree by construction.
+- **The governing mode is the RUN's request** — profile `casemode` → floor
+  `sim_case_mode` → `fold`; never a loaded raw's `case_sensitive`. Resolved **once
+  per gesture**, before the bus fan-out.
+- **A resolver throw folds but is ANNOUNCED** — the blanket `catch` was the same
+  silent fold one layer up.
+- **A1 IS NOT UNIVERSAL, AND THE EXCEPTION IS A REPAIR.** `vsource_pwl` /
+  `vsource_arith` ship `type=vsource` templated `name=E1`, `filesource`
+  `name=A1`, so the expression *does* move for them — because **the old literal
+  `v.` was BROKEN for those devices**. Measured on `ver_50`: the raw carries
+  `i(e.x1.e1)`; `.save i(e.x1.e1)` → rc 0 with the vector, `.save i(v.x1.e1)` →
+  "analysis not run" and a 570-byte empty raw. The false quantifier was struck
+  from the comment, the spec and the receipt; both columns are pinned.
+
+**⚠ DECLARED DEPARTURE FROM `PLAN` §D3, WITH A MITIGATION ITEM 10 MUST BUILD.**
+§D3 says `sod_expr` stops folding *unconditionally*; **A1's byte-identity
+requirement outranks it** and forces the mode-conditional shape. The property §D3
+bought is therefore lost: **a row picked under `fold` is stale under a later
+`distinguish` profile** — filed as issue **`0423`**. The mitigation is written
+into spec §13.6 and is **item 10's**: its pre-flight must **REFUSE** such a run.
 
 ## Environment — re-verified 2026-08-16
 
