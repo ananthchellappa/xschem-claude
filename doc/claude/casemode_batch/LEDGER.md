@@ -1022,3 +1022,43 @@ section — so items 1–5 can be tested with no ngspice present at all.
 **Trap:** `fixtures/tr_source.cir` uses `write tr_MODE.raw` inside `.control`,
 which is **cwd-relative**. Running it with `-r /tmp/x.raw` silently writes
 `tr_MODE.raw` into the caller's directory instead. Run it from a scratch dir.
+
+---
+
+# POST-BATCH — issue 0426, the gap the batch's own scope lines deferred
+
+Added 2026-08-18, after the batch closed at item 15. Not an item; recorded here
+because this ledger is what a later session reads to find out where things stand,
+and "the batch is closed" was true while the stated goal was still one wire short.
+
+**How it was found.** By asking, of the shipped tree, how far it was from the goal
+in plain words: *a net named `EN` in the schematic, shown in the waveform viewer as
+`v(EN)`*. The answer was "everything except the last hop" — and no item owned the
+last hop, because two scope lines had each correctly declined it.
+
+| the scope line | the item it was right for | now |
+|---|---|---|
+| `simulator_profiles.md` §10 "Any `cmd` rewriting. Nothing derives a `cmd` from an `exe`" | item 6 — empty audit diff, byte-identical simrc | **superseded narrowly** by §18: one word, three conditions, declines both shipped templates it was written about |
+| §10 "`netlist_case_mode()` stays unwired… this is the expression that goes in it when a consumer needs it" | item 6 — no consumer existed | **wired**; the consumer arrived with §18 |
+| `raw_case_mode.md` §10 "unknown is **permanent**… no released ngspice writes the header" | item 3 — true of files others wrote | **corrected** for files we cause to be written; we now emit `casemodewrite` |
+
+**What this says about the batch, and it is the useful part.** Every one of those
+three was a *correct* deferral with a *stated* reason, and the batch still shipped
+a tool whose dialog measured one binary while its Simulate button ran another. A
+scope line that is right for its item is not the same as a gap that is owned. The
+three were each visible in a different file, and nothing joined them up — no item
+was ever asked "does the thing work end to end", because every item was asked
+"does your slice hold". **The end-to-end question needs an owner of its own.**
+
+**Carry-forwards.**
+- The **dialog is still silent** about a `cmd` that cannot take the flags: an
+  `unplaceable` row is discovered at run time, in the CIW. Item 13's status line
+  is where it belongs.
+- **No probe on this path**, so no B4 verdict — a `distinguish` request here
+  composes and launches where ASE-L would refuse. The raw's own header is what
+  reports back, which is the other half of why `casemodewrite` is emitted.
+- **Spectre/VACASK with a `Case` field is unmeasured** and nothing is emitted.
+- The `look` debts are **10** now, not 8. `EYEBALL_SIGNOFF.md` steps 48–59.
+
+Receipt: `receipts/16-issue-0426-plain-simulate-wire.md`. Audit:
+`audit_issue0426_2026-08-18.txt`, diffed against `audit_item15_closer_2026-08-18.txt`.

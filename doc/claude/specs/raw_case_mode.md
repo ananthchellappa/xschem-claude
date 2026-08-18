@@ -635,6 +635,22 @@ upstream patch that would make `casemodewrite` default on is written and has not
 been sent (`RESPONSE.md` §9), so every released ngspice and every ver_50 file
 written without `set casemodewrite` carries no line, indefinitely.
 
+> **CORRECTED by issue 0426 for the files WE cause to be written.** The paragraph
+> above is still true of a file somebody else wrote, and that is most files. But
+> it silently assumed xschem would never set `casemodewrite` itself — and at the
+> time it was written that was right, because nothing in the tool ever did (one
+> grep hit in `src/`, a comment). Both run paths now emit `-D casemodewrite`
+> alongside any non-`fold` `-D casemode=` (`simulator_profiles.md` §18.3), so a
+> run **this tool** launched at `preserve` or `distinguish` produces a raw whose
+> header answers source 2 outright. Measured on one preserved raw of one deck:
+> without the flag `xschem raw casemode` answers `unknown`/`none`; with it,
+> `preserve`/`header`.
+>
+> A `fold` run still emits nothing and still carries no header — deliberately, per
+> the compatibility contract — and there source 3's schematic comparison answers
+> `fold` on its own, because a *mismatch* between the schematic's spelling and the
+> raw's is diagnostic where a *match* is not.
+
 `sim_case_mode` — the global floor — is a **request about a run we are about to
 make**, never a claim about a file somebody else wrote, and the resolver never
 returns it. `CS64f` is that guard: with the global set to `distinguish`, an

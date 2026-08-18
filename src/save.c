@@ -2912,11 +2912,14 @@ int sim_case_mode_floor(void)
  * A netlist is a question about a RUN, and about a run that has not happened
  * yet, so none of the four file sources of raw_resolve_case_mode() can answer
  * it: they read the bytes of a file some simulator already wrote. What answers
- * it is the REQUESTED mode -- today the global floor, from item 6 onwards the
- * per-profile mode with the floor underneath it. This wrapper exists so that
- * item 6 has exactly ONE place to layer that on, and so the netlister's
- * question ("what will run this deck?") is not confused with the resolver's
- * ("what wrote this file?").
+ * it is the REQUESTED mode -- the per-profile mode, with the global floor
+ * underneath it. This wrapper is the ONE place that layering lives, and it keeps
+ * the netlister's question ("what will run this deck?") separate from the
+ * resolver's ("what wrote this file?").
+ *
+ * (This paragraph read "today the global floor, from item 6 onwards the
+ * per-profile mode" until issue 0426 took the layering point below. Item 6
+ * deliberately did not, and section 10 records why.)
  *
  * The floor asserting `fold` without evidence is legitimate HERE and is stated,
  * not inherited: section 10 bars the floor from a FILE's verdict, and item 4
@@ -2931,7 +2934,32 @@ int sim_case_mode_floor(void)
  * there are no relevant bytes at all yet. */
 int netlist_case_mode(void)
 {
-  return sim_case_mode_floor();
+  int mode;
+  /* ISSUE 0426 -- the layering point above is now taken. `simulator_profiles.md`
+   * section 10 left this wrapper returning the floor and said, in as many words,
+   * that this is the expression that goes in it "when a consumer needs it". The
+   * consumer arrived: once `proc simulate` composes the run from the profile,
+   * a netlister still asserting the global floor would be describing a different
+   * run from the one about to happen -- and under a `distinguish` profile that is
+   * not cosmetic, because C2's collision warning is silent under `distinguish`
+   * and loud under `fold`, so the wrong source makes it fire on a design where
+   * the two spellings really are two nodes.
+   *
+   * SPICE ONLY, and that disposes of section 10's second caveat by construction
+   * rather than by handling it: `netlist_type` is not always a `sim()` tool name,
+   * so we ask only for the one type whose tool name is known -- and it is also
+   * the only netlist type for which the question means anything at all. Every
+   * other type keeps the floor, i.e. the pre-0426 answer.
+   *
+   * ZERO CHANGE FOR THE SHIPPED STATE. No default row carries a `casemode`, so
+   * `sim_profile_casemode` falls through to `sim_case_mode` -- the same variable
+   * `sim_case_mode_floor()` reads -- and the two answers are identical until a
+   * user sets a per-profile mode in item 13's dialog. */
+  if(!xctx || xctx->netlist_type != CAD_SPICE_NETLIST) return sim_case_mode_floor();
+  tcleval("sim_profile_netlist_casemode spice");
+  mode = raw_case_word_parse(tclresult());
+  if(mode <= RAW_CASE_UNKNOWN) return sim_case_mode_floor();
+  return mode;
 }
 
 int update_op()

@@ -615,8 +615,19 @@ forever, which is the same trap `ase.tcl`'s 56 `::ase::echo` call sites document
   auto-probe gated on an `*ngspice*` filename (B3), and the probe-driven
   pre-fill. Every pixel is item 13's.
 - **Any `cmd` rewriting.** Nothing derives a `cmd` from an `exe` or vice versa.
+  **SUPERSEDED for the plain Simulate path by §18 (issue 0426)** — narrowly, and
+  the reasoning here was never wrong. §18 rewrites exactly one word of a `cmd`,
+  under three conditions that decline both shipped templates this ban was
+  written about, and reports rather than guesses everywhere else.
 
 ### RULING — `netlist_case_mode()` stays unwired, and this is where that is said
+
+> **SUPERSEDED by §18 (issue 0426): it is wired now.** Everything below stayed
+> true for item 6, whose contract was an empty audit diff, and the consumer this
+> ruling anticipated ("when a consumer needs it") arrived the moment `proc
+> simulate` began composing the run from the profile. The expression it names is
+> the one that went in, and both things it says the wirer would own are answered
+> in §18.3 — one of them by construction rather than by code.
 
 `save.c:netlist_case_mode()` returns `sim_case_mode_floor()` and its own comment
 says it "exists so that item 6 has exactly ONE place to layer that on". **Item 6
@@ -3659,3 +3670,155 @@ Closed by: `SDG13`/`SDG13b`/`SDG14`/`SDG14c`/`SDG16f` (every commit now goes
 file back with exactly one line moved), `SDG17`/`SDG17b` (Add → type → Accept,
 both sides of the name gate), and `SDG5e`/`SDG3f` (all four staged fields pinned
 at their own widget, and the unparsable-list refusal reachable by typing).
+
+---
+
+# 18. The plain Simulate path, composed from the profile — issue 0426
+
+**Not a casemode batch item.** The batch closed at item 15; this is the gap the
+batch's own scope lines named and deferred, found by asking how far the shipped
+tree was from the stated goal — *"a net named `EN` in the schematic, displayed in
+the waveform viewer as `v(EN)`"*. Issue:
+`doc/claude/issues/0426-the-plain-simulate-path-ignores-the-simulator-profile-it-just-measured.md`.
+Checks: `CS200`–`CS221` in `tests/headless/test_sim_plain_run.tcl` — **27 of
+them**, counted from a run.
+
+## 18.1 The gap
+
+Items 6, 7 and 13 built the profile and item 8 wired it into **ASE-L's** run.
+Nothing wired it into the other run path. `proc simulate` (`xschem.tcl`) executed
+`sim($tool,$def,cmd)` verbatim, and the shipped batch row is
+
+```tcl
+set sim(spice,2,cmd) {ngspice -b -r "$n.raw" "$N"}
+```
+
+— a bare `ngspice` off `PATH`, with no `-D casemode=`. So a user could register a
+case-capable ngspice, set `Case = preserve`, press **Test**, read *"delivers fold
+preserve distinguish"*, press **Simulate**, and get a different binary at `fold`.
+**The dialog told the truth about a binary it then did not run.**
+
+## 18.2 RULING — the exe: the first word, a bare literal, a matching tail
+
+All three conditions, and each one is load-bearing **against a shipped row**:
+
+| condition | the row it declines |
+|---|---|
+| the **first word** — the only position in a shell-ish template whose meaning is fixed | anything needing a parser; §10 is right that there is none |
+| a **bare literal** (no `$`, no `[`) | row 0, `$terminal -e {ngspice -i "$N" -a \|\| sh}` — a *variable* first word with the simulator nested two levels in |
+| a matching **`file tail`** | row 4, `mpirun /path/to/parallel/Xyce "$N"` — a literal first word that is not the simulator; and every wrapper (`nice`, `time`, `flatpak-spawn`) for the same reason |
+
+The **decision** is taken on the raw template, before `subst`, because that is the
+only place a `$terminal` is still distinguishable from what it expands to. The
+**substitution** is applied to the substituted string — safe precisely *because*
+the word passed these tests: a literal carrying no `$` and no `[` is what `subst`
+leaves alone, so it is still the first word afterwards. The path goes in through
+`[list]`, because `proc simulate` ends in `eval execute $st $cmd` and a path with
+a space would otherwise become two words (`CS201c`).
+
+A registered exe that cannot be applied is **reported at tag `error`** (`CS214`).
+Silence there would reproduce this issue's own defect one layer along.
+
+## 18.3 RULING — the flags, and where they may be put
+
+Emitted when the row's requested mode is not `fold`, the tool is `spice`, and the
+row is not Xyce. The non-`fold` gate mirrors §12.3 and is what keeps the
+compatibility contract true: `fold` is A1's default, so **a configuration nobody
+has touched composes a byte-identical command line** (`CS200`, which carries a
+configured half in the same assertion so it cannot pass by the feature being
+absent).
+
+**The gate is negative (not-Xyce), not a positive "is this ngspice?".** A positive
+gate keyed on spelling would silently drop the flag for a case-capable binary
+someone installed as `spice-dev` — this issue's own defect class. And a non-`fold`
+value is not idly arrived at: item 13's Case menu offers a mode only where the
+probe measured the binary delivering it (§4), and that probe is ngspice-shaped.
+
+**`casemodewrite` rides along with the mode, never alone and never for `fold`.**
+ngspice stamps the self-describing `Option: casemode=<mode>` raw header only when
+that variable is set (`outitf.c:994`), so item 3's header parser — **mode source
+2, the second-strongest of four** — could never fire on a file this tool caused to
+be written, because nothing here had ever set it. Measured on one preserved raw of
+one deck: without it `xschem raw casemode` answers `unknown`/`none`; with it,
+`preserve`/`header`. `CS213` pins that the two travel together; dropping
+`casemodewrite` alone reddens `CS221`'s `src=<header>` term.
+
+### RULING — appended ONLY where the first word is known to be the simulator
+
+**This was a defect in the first revision, caught by driving row 0.** Its exe was
+correctly declined and the flags were appended anyway:
+
+```
+xterm -e {ngspice -i "$N" -a || sh} -D casemode=preserve -D casemodewrite
+```
+
+— flags for the **terminal emulator**, two levels out from the simulator they were
+meant for. The measured fact that licenses appending at all (below) is about a
+*direct* ngspice invocation and says nothing about a wrapped one.
+
+Two routes to that confidence, and no third: `exe_status` is `applied` (the tail
+matched a registered executable, so the first word **is** the simulator), or no exe
+is registered and the first word's tail matches `ngspice*`. Everything else — a
+shell, a terminal, a launcher, an `mpirun` — is **`unplaceable`**: nothing is
+appended, and it is **reported at tag `error`** (`CS210`, `CS211`, `CS215`),
+because the user set a Case field and is not getting it.
+
+A `casemode` already hand-written into the template **wins**, and nothing is
+appended (`CS209`). Two contradictory `-D casemode=` words on one command line is
+a coin toss dressed as a configuration.
+
+### MEASURED 2026-08-18, and it is what makes appending safe at all
+
+* **The flags may follow the deck filename.**
+  `ngspice -b -r q1.raw deck.cir -D casemode=preserve -D casemodewrite` → rc 0,
+  the header, `v(EN)`. So nothing parses a `cmd` template hunting for an
+  insertion point.
+* **A released ngspice ignores both in silence** — more than `DECISIONS.md` A1
+  claimed, which was only that the flag is accepted and ignored.
+  `/usr/local/bin/ngspice` (46), same deck, with and without the two flags: rc 0
+  both ways, run logs differing only in the raw filename and timing noise, no
+  "unknown option", nothing on stderr. *An earlier reading of this measurement
+  said `rc=141`; that was `SIGPIPE` from a `| head` in the measuring command, not
+  the simulator.*
+
+## 18.4 `netlist_case_mode()` — §10's layering point, taken
+
+`save.c` asks `sim_profile_netlist_casemode spice` and keeps the floor for
+anything it cannot answer. Once the run is composed from the profile, a netlister
+still asserting the global floor describes a **different run from the one about to
+happen** — and under a `distinguish` profile that is not cosmetic: C2's collision
+warning is silent under `distinguish` and loud under `fold`, so the wrong source
+fires it on a design where the two spellings really are two nodes.
+
+§10 named the two things the wirer would own. Both are answered, one of them
+without code:
+
+* **a `-1` index** — `sim_profile_get` returns the field default for an element
+  that does not exist, so `casemode` reads as unset and `sim_profile_casemode`
+  falls through to the floor: the pre-0426 answer exactly (`CS219b`);
+* **`netlist_type` is not always a `sim()` tool name** — so C asks **only** for
+  `CAD_SPICE_NETLIST`, the one type whose tool name is known and the only one where
+  the question means anything. Every other type keeps the floor, by construction.
+
+**Zero change for the shipped state.** No default row carries a `casemode`, so the
+bridge falls through to `sim_case_mode` — the same variable `sim_case_mode_floor()`
+reads. `CS220` is the only check that can tell whether the wire really moved, and
+it observes behaviour rather than asserting: it netlists a colliding schematic
+twice, moving only the default row's mode, and requires the warning to appear and
+then vanish.
+
+## 18.5 What is NOT here
+
+* **`-n` (`--no-spiceinit`) stays ASE-L-only.** A2's reasoning is about a run
+  ASE-L probes immediately beforehand; the plain path runs no probe, so honouring
+  `-n` there would suppress a user's init file with nothing watching the result.
+* **No probe, and therefore no B4 verdict.** ASE-L refuses a `distinguish` run it
+  has not confirmed (§12.5). The plain path composes and launches; a `.spiceinit`
+  can still override the request (A2), and what the run actually delivered is read
+  back from the raw's own header — which is the other half of why
+  `casemodewrite` is emitted.
+* **Spectre/VACASK.** Nobody has measured what such a row does with a `Case`
+  field, and nothing is emitted for it.
+* **The dialog says nothing about any of this.** A row whose `cmd` cannot take the
+  flags is discovered at run time, in the CIW, not at configure time in `simconf`.
+  Surfacing it in item 13's status line is a real improvement and is not done here.

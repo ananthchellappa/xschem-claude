@@ -2,10 +2,15 @@
 
 Tick as you go. Written 2026-08-18 at HEAD `9c14b829`, after all 16 items landed.
 
-**What this covers:** the **8 `look` debts** this batch owes (items 5 ×2, 13 ×4,
-14 ×2) plus the one `:0` **suite** debt (`test_sim_dialog`). Nothing else in
-`owed.sh list` belongs to this batch — the Calculator and GUI-gate debts are from
-other work.
+**What this covers:** the **10 `look` debts** this batch owes (items 5 ×2, 13 ×4,
+14 ×2, **issue 0426 ×2**) plus the one `:0` **suite** debt (`test_sim_dialog`).
+Nothing else in `owed.sh list` belongs to this batch — the Calculator and GUI-gate
+debts are from other work.
+
+**Updated 2026-08-18** with §0426: the batch closed with the profile dialog
+measuring one binary and the plain **Simulate** button running another. That is
+now wired, and steps 48–59 are the part that proves the whole point — a schematic
+net `EN` arriving in the viewer as `v(EN)`.
 
 **Do all of this on your real screen.** Not `:99`. The whole point is a human
 looking at pixels, and the dev display is invisible.
@@ -111,12 +116,38 @@ tests/headless/owed.sh clear look casemode_item_14_fix_round__the_netlist-time_c
 
 - [ ] 47. Both item-14 debts cleared.
 
+## Issue 0426 — the profile actually reaching the run (2 debts)
+
+**This is the goal.** Everything above proves parts; this proves the whole chain.
+A fixture is committed for it: `doc/claude/casemode_batch/eyeball_en_goal.sch`,
+whose only interesting feature is a net labelled **`EN`** in capitals.
+
+- [ ] 48. Confirm you have a case-capable ngspice. Stock 46 **cannot** do this — it lower-cases at parse time and the capital is gone before xschem sees the file.
+- [ ] 49. Open `Simulation > Configure simulators and tools`. On the **Ngspice batch** row set Exe to your case-capable binary and press **Test**.
+- [ ] 50. Set that row's **Case** to `preserve`, make it the default row, then **Accept, Save**.
+- [ ] 51. Open `doc/claude/casemode_batch/eyeball_en_goal.sch` and netlist it. The deck must read `V1 EN 0 1.5` — capitals, verbatim.
+- [ ] 52. Press **Simulate**. Watch the CIW for the note: `Simulator profile case mode: appending -D casemode=preserve -D casemodewrite`.
+- [ ] 53. Judge that note. Useful confirmation, or noise on every single run once you have configured a mode?
+- [ ] 54. Open the waveform viewer and look at the **signal browser list**. It must show `v(EN)`, not `v(en)`. **That is the goal.**
+- [ ] 55. Open `Options > Case Mode`. The readout must now say **preserve**, not "unknown — nothing could tell". Before this change it could never say anything else.
+- [ ] 56. Now the error paths. On the **Ngspice interactive** row (the one whose command starts with `$terminal`) set an Exe and set Case to `preserve`, Accept, and Simulate.
+- [ ] 57. Read the two red CIW lines: the executable was not used, and the case mode had nowhere to go. Do they tell you what to actually do about it?
+- [ ] 58. Judge their length. They are long by CIW standards — deliberately, because a short version of either reads as a mystery. Too long in practice?
+- [ ] 59. **The compatibility check.** Clear the Exe and set Case back to the global default, Accept, Simulate. The CIW must say **nothing new at all** — a user who configured nothing must see no change.
+
+Clear when satisfied:
+
+```sh
+tests/headless/owed.sh clear look issue_0426_-_the_three_new_CIW_lines_in_situ__declined_exe___unp.1787083043.493534
+tests/headless/owed.sh clear look issue_0426_-_the_whole_goal_end_to_end__net_EN_-__Simulate_butto.1787083043.493546
+```
+
 ## Finish
 
-- [ ] 48. `tests/headless/owed.sh list` — confirm no casemode debts remain.
-- [ ] 49. Restore config if anything went wrong: `cp ~/.xschem/simrc.backup ~/.xschem/simrc`.
-- [ ] 50. **Decide issue `0421`** — see below. You saw the warning fire at step 41; that is the decision point.
-- [ ] 51. Report anything that read badly. That is a follow-up item, not a sign-off.
+- [ ] 60. `tests/headless/owed.sh list` — confirm no casemode debts remain.
+- [ ] 61. Restore config if anything went wrong: `cp ~/.xschem/simrc.backup ~/.xschem/simrc`.
+- [ ] 62. **Decide issue `0421`** — see below. You saw the warning fire at step 41; that is the decision point.
+- [ ] 63. Report anything that read badly. That is a follow-up item, not a sign-off.
 
 ---
 
@@ -141,13 +172,15 @@ collisions. This one was found because the check fired on it, not by searching.
 
 ## Also worth knowing before you sign off
 
-- **Nothing is pushed.** 36 commits sit on `fluid-editing`.
+- **Nothing is pushed.** 37 commits sit on `fluid-editing`.
 - **Issue `0422` is a code-execution surface, pre-existing and unfixed.**
   `ase::expand_path` runs a command substitution hidden in an array index, so
   opening an ASE-L state file someone else wrote can execute arbitrary commands.
   Item 6 guarded its own new field; the three original call sites are untouched.
-- **Eight issues filed by this batch:** `0418` `0419` `0420` `0421` `0422` `0423`
-  `0424` `0425`. `0424` and `0425` came out of item 13 and are the two most likely
+- **Nine issues filed:** `0418` `0419` `0420` `0421` `0422` `0423` `0424` `0425`
+  by the batch, and **`0426`** after it — the plain Simulate path ignoring the
+  profile the dialog had just measured, now fixed (steps 48–59, spec
+  `simulator_profiles.md` §18, 27 checks in `test_sim_plain_run.tcl`). `0424` and `0425` came out of item 13 and are the two most likely
   to annoy you in the dialog you are about to open — `0424` is a message that tells
   a user who just configured a profile to configure a profile.
 - **Audit result, verified by diffing name and status against the pre-batch

@@ -3017,6 +3017,265 @@ proc sim_profile_row {tool idx} {
 }
 
 # =========================================================================
+#      THE PLAIN SIMULATE PATH, COMPOSED FROM THE PROFILE -- issue 0426
+# =========================================================================
+#
+# Items 6/7/13 built the profile -- an `exe`, a requested `Case` mode, and a
+# Test button that offers only the modes the binary was MEASURED to deliver --
+# and `proc simulate` read none of it. It runs `sim($tool,$def,cmd)` verbatim,
+# and the shipped batch row is a bare `ngspice` off PATH with no `-D casemode=`.
+# So: register a case-capable ngspice, set Case=preserve, press Test, read
+# "delivers fold preserve distinguish", press Simulate -- and a DIFFERENT binary
+# runs, at `fold`. The dialog told the truth about a binary it then did not run.
+#
+# `simulator_profiles.md` §10 forbade this wiring ("Any `cmd` rewriting. Nothing
+# derives a `cmd` from an `exe` or vice versa"), and that ban was sound reasoning
+# about a real hazard rather than squeamishness: row 0 is
+# `$terminal -e {ngspice -i "$N" -a || sh}` and row 4 is
+# `mpirun /path/to/parallel/Xyce "$N"`. "Replace the simulator in this string"
+# has no general answer. What is wired here is the NARROW case that does have
+# one; every case that does not is REPORTED, never guessed at.
+
+# The extra argv words the plain Simulate path appends for a profile row.
+# Returns {} -- the byte-identical-command-line answer -- for every
+# configuration that has not explicitly asked for something.
+#
+# RULING -- gated on a NON-`fold` request, mirroring ASE-L (§12.3). `fold` is
+# what every user gets by default (A1), so the default appends nothing and a
+# stock `apt install` command line does not move. A `fold` emission would buy
+# nothing anyway: a released ngspice ignores the flag, a case-capable one
+# defaults to `fold`, and a `.spiceinit` overrides it regardless (A2).
+#
+# RULING -- `spice` only, and never Xyce. `-D casemode=` is an ngspice spelling.
+# It means nothing to Xyce and nothing to a spectre/VACASK row, and emitting a
+# flag whose effect we cannot claim is how a "configured" tool starts lying.
+# The Xyce test is done HERE on the row's own `cmd` rather than through
+# `sim_is_xyce`, which answers only for the *default* row and reads the GLOBAL
+# `netlist_type` -- while `proc simulate` works from a LOCAL of that name. Same
+# regexp, no dependency on the two agreeing.
+#
+# RULING -- the gate is NEGATIVE (not-Xyce), not a positive "is this ngspice?".
+# A positive gate keyed on the exe/cmd spelling would silently drop the flag for
+# a case-capable binary a user installed as `spice-dev`, which is precisely the
+# defect class this issue is about. And a non-`fold` value is not idly arrived
+# at: item 13's Case menu offers a mode only where the PROBE measured the binary
+# delivering it, and that probe is ngspice-shaped (`echo CCM=$curcasemode`).
+#
+# RULING -- `casemodewrite` rides ALONG with the mode, never alone and never for
+# `fold`. ngspice stamps the self-describing `Option: casemode=<mode>` raw header
+# only when that variable is set (`outitf.c:994`), so item 3's header parser --
+# mode SOURCE 2, the second-strongest of four -- could never fire on a file this
+# tool caused to be written, because nothing here has ever set it. Measured on
+# one preserved raw of one deck: without it `xschem raw casemode` answers
+# `unknown`/`none`; with it, `preserve`/`header`.
+#
+# MEASURED 2026-08-18 on this machine, and it is what makes appending safe:
+#   * the flags MAY FOLLOW THE DECK FILENAME -- `ngspice -b -r q1.raw deck.cir
+#     -D casemode=preserve -D casemodewrite` gives rc 0, the header and `v(EN)`
+#     -- so nothing here parses a `cmd` template looking for an insertion point;
+#   * a released ngspice ignores both IN SILENCE, which is more than A1 claimed.
+#     `/usr/local/bin/ngspice` (46) with and without them, same deck: rc 0 both
+#     ways, run logs differing only in the raw filename and timing noise, no
+#     "unknown option", nothing on stderr. (An earlier reading of this said
+#     rc=141 -- that was SIGPIPE from a `| head` in the measuring command, not
+#     the simulator.)
+proc sim_profile_run_flags {tool idx} {
+  global sim
+  if {$tool ne {spice}} { return {} }
+  if {[info exists sim($tool,$idx,cmd)] && [regexp {[xX]yce} $sim($tool,$idx,cmd)]} {
+    return {}
+  }
+  set m [sim_profile_casemode $tool $idx]
+  if {$m eq {} || $m eq {fold} || ![sim_casemode_valid $m]} { return {} }
+  return [list -D casemode=$m -D casemodewrite]
+}
+
+# Can the profile row's executable be applied to this command template, and to
+# which word? Returns a dict: `status` none|applied|declined, `exe` the resolved
+# path, `word` the template's first word.
+#
+# RULING -- the FIRST WORD, a bare LITERAL, and a matching `file tail`. Three
+# conditions, each load-bearing against a SHIPPED row:
+#   * first word -- the only position in a shell-ish template whose meaning is
+#     fixed. Anywhere else needs a parser, and §10 is right that there is none.
+#   * bare literal (no `$`, no `[`) -- row 0 is `$terminal -e {ngspice ...}`: a
+#     VARIABLE first word, with the simulator nested two levels in. Rewriting
+#     that is exactly the guess §10 forbade.
+#   * matching tail -- row 4 is `mpirun /path/to/parallel/Xyce "$N"`: a literal
+#     first word that is NOT the simulator. Requiring
+#     `[file tail $word] eq [file tail $exe]` declines it, and declines every
+#     wrapper (`nice`, `time`, `flatpak-spawn`, `mpirun`) for the same reason.
+#
+# The DECISION is taken on the RAW template, before `subst`, because that is the
+# only place a `$terminal` is still distinguishable from whatever it expands to.
+# The SUBSTITUTION is performed on the substituted string -- safe precisely
+# BECAUSE the word passed these tests: a literal carrying no `$` and no `[` is
+# what `subst` leaves alone, so it is still the first word afterwards.
+#
+# A first word is taken by regexp, not `lindex`: a `cmd` template is free text a
+# user may hand-edit in a simrc and is not required to be a valid Tcl list.
+proc sim_profile_cmd_exe_plan {tool idx cmd} {
+  set exe [sim_profile_exe_path $tool $idx]
+  if {$exe eq {}} { return [dict create status none exe {} word {}] }
+  if {![regexp {^[ \t]*([^ \t\n]+)} $cmd -> word]} {
+    return [dict create status declined exe $exe word {}]
+  }
+  if {[string first {$} $word] >= 0 || [string first {[} $word] >= 0} {
+    return [dict create status declined exe $exe word $word]
+  }
+  if {[file tail $word] ne [file tail $exe]} {
+    return [dict create status declined exe $exe word $word]
+  }
+  return [dict create status applied exe $exe word $word]
+}
+
+# Compose the command the plain Simulate path will actually run. A PURE
+# FUNCTION of the two strings and the profile, so the whole wiring is driveable
+# without launching a simulator -- which is the only reason any of item 6-13's
+# rulings could be checked at all, and this one is no different.
+#
+# `rawcmd` is the template as stored; `subcmd` is that template after
+# `proc simulate`'s own `subst`. They are separate arguments because the exe
+# decision may only be taken on the first and the edit may only be applied to
+# the second (see sim_profile_cmd_exe_plan).
+#
+# Returns a dict: `cmd` the composed string, `exe_status`/`exe`/`word` from the
+# plan, `flags` the words appended ({} when none) and `flag_status`:
+#   none         nothing was requested (the `fold` default -- the usual answer)
+#   appended     the flags are on the command line
+#   template     the template names `casemode` itself, so it was left alone
+#   unplaceable  a mode WAS requested and there is nowhere safe to put it
+#
+# RULING -- the flags are appended ONLY where the first word is known to be the
+# simulator, and this was a DEFECT in the first revision of this proc, caught by
+# driving row 0. `$terminal -e {ngspice -i "$N" -a || sh}` had the exe correctly
+# declined and the flags appended anyway, producing
+# `xterm -e {ngspice ...} -D casemode=preserve` -- flags for the TERMINAL
+# EMULATOR, two levels out from the simulator they were meant for. The measured
+# fact that licensed appending ("the flags may follow the deck filename") is
+# about a DIRECT ngspice invocation and says nothing about a wrapped one.
+#
+# Two routes to that confidence, and no third:
+#   * `exe_status` is `applied` -- the first word's tail matched the registered
+#     executable, so the first word IS the simulator, definitively;
+#   * no exe is registered and the first word's tail matches `ngspice*` -- the
+#     convenience route for a user who set only the Case field.
+# Everything else -- a shell (`sh -c "..."`), a terminal, a launcher, an
+# `mpirun` -- is `unplaceable`, because trailing words on those do not reach the
+# simulator's argv and appending anyway is how a configuration starts lying.
+#
+# RULING -- `unplaceable` is REPORTED, never silent. The user set a Case field
+# and is not getting it; swallowing that would be the same defect as the one
+# this issue exists to fix, one layer along. The earlier objection to a positive
+# "is this ngspice?" test -- that it would silently drop the flag for a binary
+# someone installed as `spice-dev` -- is answered by the first route, not by
+# guessing: registering the Exe is already required to probe the binary and
+# unlock any non-`fold` mode in item 13's menu.
+#
+# RULING -- an already-hand-written `casemode` in the template WINS, and nothing
+# is appended. A user who typed `-D casemode=distinguish` into their `cmd` has
+# stated a preference at the same level of explicitness as the Case field, and
+# two contradictory `-D casemode=` words on one command line is a coin toss
+# dressed as a configuration.
+proc sim_profile_compose_cmd {tool idx rawcmd subcmd} {
+  set plan [sim_profile_cmd_exe_plan $tool $idx $rawcmd]
+  set cmd $subcmd
+  if {[dict get $plan status] eq {applied}} {
+    if {[regexp {^([ \t]*)([^ \t\n]+)(.*)$} $cmd -> lead word rest]} {
+      set cmd $lead[list [dict get $plan exe]]$rest
+    }
+  }
+  set flags [sim_profile_run_flags $tool $idx]
+  set fstatus none
+  if {[llength $flags]} {
+    if {[regexp {casemode} $rawcmd]} {
+      set fstatus template
+      set flags {}
+    } elseif {[sim_profile_cmd_takes_flags $plan $rawcmd]} {
+      set fstatus appended
+      append cmd { } [join $flags { }]
+    } else {
+      set fstatus unplaceable
+    }
+  }
+  return [dict create tool $tool index $idx cmd $cmd \
+              exe_status [dict get $plan status] \
+              exe [dict get $plan exe] word [dict get $plan word] \
+              flags $flags flag_status $fstatus]
+}
+
+# Is this template's first word the simulator itself, so that appended words
+# land on its argv? See sim_profile_compose_cmd's placement ruling.
+proc sim_profile_cmd_takes_flags {plan rawcmd} {
+  if {[dict get $plan status] eq {applied}} { return 1 }
+  if {[dict get $plan status] ne {none}} { return 0 }
+  if {![regexp {^[ \t]*([^ \t\n]+)} $rawcmd -> word]} { return 0 }
+  if {[string first {$} $word] >= 0 || [string first {[} $word] >= 0} { return 0 }
+  return [string match -nocase {ngspice*} [file tail $word]]
+}
+
+# Say what the composition did, once, at run time. Returns the lines so the
+# behaviour is testable without a CIW (`ciw_echo` is silent with no window), the
+# same shape `sim_case_collision_lines` settled on for item 14.
+#
+# RULING -- a DECLINED exe and an UNPLACEABLE mode are both reported at tag
+# `error`, not `note`. In each case the user configured something, the dialog
+# measured it, and the run is not honouring it. A quiet note would leave them
+# with a measurement of one binary and the results of another -- the defect this
+# whole issue is about. Being loud is the point. Only a successful append is a
+# `note`, and only because a user who asked for a mode and got it is entitled to
+# see that on the record without it reading as a problem.
+proc sim_profile_compose_report {c} {
+  set out {}
+  if {[dict get $c exe_status] eq {declined}} {
+    lappend out [list error "Simulator profile names an executable\
+      '[dict get $c exe]' but the command line starts with\
+      '[dict get $c word]', so the profile's executable was NOT used. Edit the\
+      command in Simulation > Configure simulators and tools, or clear the Exe\
+      field. The Test button measured the profile's executable, not this one."]
+  }
+  switch -- [dict get $c flag_status] {
+    appended {
+      lappend out [list note "Simulator profile case mode: appending\
+        [join [dict get $c flags] { }]"]
+    }
+    unplaceable {
+      lappend out [list error "Simulator profile requests case mode\
+        '[sim_profile_casemode [dict get $c tool] [dict get $c index]]' but the\
+        command line does not start with the simulator ('[dict get $c word]'),\
+        so there is nowhere to put -D casemode= where the simulator would see\
+        it. The run will use whatever mode that command produces. Set the Exe\
+        field, or put -D casemode= in the command yourself."]
+    }
+  }
+  foreach l $out { catch {ciw_echo [lindex $l 1] [lindex $l 0]} }
+  return $out
+}
+
+# The requested case mode of the profile row a netlist of THIS tool will
+# launch. C's netlist_case_mode() calls this (issue 0426); it exists as a proc
+# rather than as an expression inlined in a tcleval() so the C side has one
+# thing to call, the fallback is written once, and the wiring is driveable from
+# a test without netlisting anything.
+#
+# `simulator_profiles.md` §10 named this expression and the two things whoever
+# wired it would own. Both are answered, and neither needed code here:
+#   * a `-1` index (a tool with no configured row) -- `sim_profile_get` returns
+#     the field default for an element that does not exist, so `casemode` reads
+#     as unset and `sim_profile_casemode` falls through to the global floor,
+#     which is exactly the pre-0426 answer;
+#   * `netlist_type` not always being a `sim()` tool name -- the C caller asks
+#     only for CAD_SPICE_NETLIST, the one type whose tool name is known and the
+#     only one where the question means anything.
+# Anything unexpected answers {} and the C side keeps the floor.
+proc sim_profile_netlist_casemode {tool} {
+  if {[catch {sim_profile_casemode $tool [sim_profile_default_index $tool]} m]} {
+    return {}
+  }
+  return $m
+}
+
+# =========================================================================
 # THE PROBE (casemode batch item 7; doc/claude/specs/simulator_profiles.md 11)
 # =========================================================================
 #
@@ -5888,6 +6147,19 @@ proc simulate {{callback {}}} {
       set fg {execute}
     }
     set cmd [subst -nobackslashes $sim($tool,$def,cmd)]
+
+    ## COMPOSE FROM THE SIMULATOR PROFILE -- issue 0426.
+    ## Until this landed, everything items 6/7/13 measured about a registered
+    ## simulator -- its executable, and the case mode its Test button proved it
+    ## could deliver -- stopped at the dialog: this proc ran `cmd` verbatim, so a
+    ## user could probe one binary and simulate with another, at `fold`.
+    ## A row naming no `exe` and requesting `fold` (the shipped state, and A1's
+    ## default) composes to a BYTE-IDENTICAL command line, which is item 6's
+    ## compatibility contract. See sim_profile_compose_cmd for the three rulings
+    ## that keep the rewrite narrow enough to be sound.
+    set compose [sim_profile_compose_cmd $tool $def $sim($tool,$def,cmd) $cmd]
+    set cmd [dict get $compose cmd]
+    sim_profile_compose_report $compose
 
     # window interface       tabbed interface
     # -----------------------------------------
