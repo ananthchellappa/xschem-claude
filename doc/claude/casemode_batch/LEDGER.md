@@ -1,10 +1,10 @@
 # Casemode batch ledger — branch `fluid-editing`, base HEAD `577ef5bc`
 
 Driver-mode unattended batch. **DONE: 0, 0a, 0b, 1, 2, 3, 4, 5 `[E]`, 5b, 6, 7,
-8, 9, 10, 14 `[E]`. REMAINING: 11, 12, 13, 15.** Nothing is pushed.
+8, 9, 10, 11, 14 `[E]`. REMAINING: 12, 13, 15.** Nothing is pushed.
 
-**Current baseline: `audit_item10_closer_2026-08-17.txt` — 327/15/0/0 of 342** at
-`c56581a4`. Every item so far has moved **zero** audit statuses; all growth is the
+**Current baseline: `audit_item11_closer_2026-08-18.txt` — 328/15/0/0 of 343** at
+`1d217632`. Every item so far has moved **zero** audit statuses; all growth is the
 ten suites they added. **4 `look` debts are open** (items 5 ×2, 14 ×2) and only the
 user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
 `0422` (code execution), `0423`.**
@@ -61,7 +61,7 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 8 | profile-aware `run_cmd` + mismatch policy | `[x]` | `d44febbd` | 38 | 38 | 3 + 3 audits | no | audit = one added row, zero movers (`_closer2_` authoritative). REFUSE = **before anything is generated**, `run_deck`'s first statement. `CS177c` **pins the two arg filters apart forever**. Spec §12 |
 | 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0423`. Spec §13 |
 | 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0423` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
-| 11 | `result_probe` `-nocase` | | | | | | no | |
+| 11 | `result_probe` `-nocase` | `[x]` | `1d217632` | 28 | 19 | 6 + 3 audits | no | audit = one added row, zero movers. **A LADDER with a D2 decline + a delivered-mode veto, NOT a `-nocase` flag** — the naive fix was re-run and reddens 10 checks. **Corrected §13.6**: a plain `fold` run reaches the defect too. Spec §15 |
 | 12 | post-load current repair | | | | | | no | |
 | 13 | simulator dialog (extends `simconf`) | | | | | | **YES** | only item with pixels; `owed.sh add look`, never "done on a green suite" |
 | 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0421`. Spec §14 |
@@ -771,6 +771,58 @@ issue. The staleness remains, because `0423` asks for a re-case pass derived fro
 the **schematic** while this is a confirmation-gated repair derived from the
 **netlist**, inheriting the map's blind spots. **Whoever builds the re-case pass
 closes it.**
+
+## Carry-forwards item 11 handed on — baseline `audit_item11_closer_2026-08-18`
+
+**Baseline is `audit_item11_closer_2026-08-18.txt` — 328/15/0/0 of 343** at
+`1d217632`. Zero statuses moved.
+
+**IT CORRECTED SPEC §13.6, WHICH ITEM 9 HAD WRITTEN FOR IT.** §13.6 narrowed item
+11 to one combination (requested `preserve`, measured `fold`). Verified rather
+than trusted, and the doc was **one combination short**: `render_deck` writes an
+output row's `expr` **verbatim**, and the only fold in `ase_window.tcl` is at
+`:956` inside item 9's `sod_expr` (whole-file grep, one hit). **Add/Edit Output,
+hand-written state files and `expand_bus_outputs` all ship mixed case**, so a
+**plain `fold` run reaches the defect too**. The ladder serves both.
+
+**THE NAIVE FIX WAS RE-RUN, NOT ASSUMED WRONG.** `-nocase` as a flag on rung 1
+reddens **10** checks — `v(EN)`'s row taking `v(en) = 1.0`, a wrong number in the
+Value column. So the shape is the batch's house ladder: exact spelling first
+(first line wins, unchanged), a case-insensitive pass second, and **decline when
+the second offers more than one differently-cased label** — D2's rule, matching
+item 2's `get_raw_index` and item 5's `resolve_signal_db`.
+
+**A NEW RULE THE BATCH DID NOT HAVE: what the run DELIVERED outranks what it
+REQUESTED** (§15.4b, added in the fix round after a reviewer produced the run).
+`~/.spiceinit` overrides `-D casemode=`, and items 7/8 arm only on a **non-`fold`**
+request — so **a plain `fold` run against a `distinguish` init file is measured by
+nobody**, and pre-fix it was handed the value of a signal ngspice had just
+refused to print. The log announces the delivery, so the log is read; a false
+positive costs an empty cell, which is the pre-item-11 behaviour and the safe
+direction.
+
+**Other rulings (spec §15):**
+
+- **Rung 2 is OFF under `distinguish` — measured, not cautious.** Under
+  `-D casemode=distinguish` a card naming a spelling the circuit lacks prints
+  **nothing** while the case-kept line prints two rows away, so a lenient match
+  attributes that number to a different net. `NC225b` is the positive control, so
+  `NC225` pins the gate rather than an unmatchable pattern.
+- **The collision counts SPELLINGS, not lines.** Two analyses print `v(in) = …`
+  twice; rung 1 always took the first, so rung 2 does too. Counting lines would
+  kill every multi-analysis run's values.
+- **The decline SAYS SO** — one CIW line at tag `error` naming every candidate.
+  Item 14's lesson: a silent decline is the same empty cell this item removes.
+- **The KEY is never folded, only the MATCH.** A folded key puts a named row's
+  value where `ase::ui::output_result_key` will not look.
+- **The mode is asked READ-ONLY, once per log** — `::set_sim_defaults` is not a
+  read; it commits an open Simulation Configuration dialog's unsaved edits.
+
+**Reachability of the decline is stated, not hidden:** with rung 2 off under
+`distinguish`, and `fold`/`preserve` merging case-variant nets, **no run this tree
+can produce reaches it today**. Kept as a standing guard and driven
+synthetically, because the alternative is an unguarded `-nocase` that becomes
+wrong the moment item 8's policy is relaxed.
 
 ## Environment — re-verified 2026-08-16
 
