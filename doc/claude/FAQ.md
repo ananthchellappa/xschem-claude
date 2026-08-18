@@ -14,6 +14,65 @@ Newest entries on top.
 
 ---
 
+## Q49. If a config view decides which view each cell uses, what happens to the `schematic=` attributes already sitting in my designs?
+
+- **Asked:** 2026-08-18
+- **Project state:** branch `fluid-editing` @ `b4a1c8ee` — Hierarchy Editor
+  **planning only**, no code. Spec `doc/claude/specs/hierarchy_editor.md`,
+  plan `doc/claude/hierarchy_editor_batch/PLAN.md`.
+
+**Under `cadence_compat` they are ignored, and netlisting warns about each one it
+ignored. Without `cadence_compat` they keep working exactly as they do today.**
+
+**What the attribute is.** XSCHEM lets an instance or a symbol carry
+`schematic=<something>` in its property string. It rebinds what that placement
+expands into: the canvas still draws `comp3.sym`, but descend and the netlister
+follow `comp3_parax.sch` instead of the default `comp3.sch`. The source calls
+these *polymorphic symbols* (`src/actions.c:3369`). The shipped demo
+`xschem_library/inst_sch_select/` is seven placements of one symbol bound seven
+different ways — a real schematic, a parasitic-annotated schematic, an inline
+SPICE body typed into `spice_sym_def`, an external `.include`d netlist, an empty
+body. That directory is XSCHEM's whole answer to the problem a Cadence config
+view solves, done by hand, one instance at a time, stored inside the design.
+
+**Why Cadence has no equivalent.** In Virtuoso an instance's master is
+lib/cell/**symbol** — the View field on the instance property form names the
+thing being *drawn*. There is nowhere in a Virtuoso schematic to record "expand
+this one as veriloga." That absence is precisely why the config cellview exists:
+it is the only place that choice can live. XSCHEM went the other way and put the
+choice in the design, so it faces a question Cadence never had to answer.
+
+**The ruling (user, 2026-08-18).** `cadence_compat` mode — set by
+`src/cadence_style_rc` (`set cadence_compat 1`) — is the direction XSCHEM is
+going, and in it the property editor is a structured per-field form with no
+free-text box, so there is no way to *author* a `schematic=` attribute in the
+first place. Under `cadence_compat` the config view is therefore the **only**
+mechanism: instance and symbol `schematic=` are ignored outright. Netlisting
+prints a warning, to the log and to the CIW, naming every instance and symbol
+whose attribute it ignored — silence there would turn a parasitic-annotated
+block back into an ideal one without telling anyone.
+
+Two facts make this cheaper than it sounds:
+
+1. **The attribute is already uncreatable through the GUI, for everyone.**
+   `edit_prop` delegates unconditionally to `slickprop::edit_form`
+   (`src/xschem.tcl:12332`); the raw text box survives only as
+   `edit_prop_legacy`, kept for rollback. The structured form preserves property
+   tokens it does not own verbatim (`src/property_form.tcl:278,293`) but offers
+   no way to add a new one. So a `schematic=` in a design today is a legacy
+   artifact or a hand-edited file, never something a current user just typed.
+2. **Nothing changes for anyone who does not opt in.** With `cadence_compat`
+   unset, the resolution ladder is byte-for-byte what it is today. That is a
+   tested invariant of the Hierarchy Editor batch (T-A), not an intention.
+
+**Migration.** `Bindings → Import` walks the expanded hierarchy and converts
+every `schematic=` it finds into an equivalent config binding — cell binding for
+a symbol attribute, occurrence binding for an instance attribute — so a design
+built the old way becomes a config in one step rather than by hand. `Export`
+does the inverse for tools that do not read configs.
+
+---
+
 ## Q48. My net is called `MidNode` but the waveform viewer shows `v(midnode)`. Why, and can I change it?
 
 - **Asked:** 2026-08-18
