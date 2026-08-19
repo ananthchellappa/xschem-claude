@@ -51,7 +51,7 @@ in the row that caused it.
 | # | item | verdict | commit | checks | sabotages | files | eyeball | note |
 |---|------|---------|--------|--------|-----------|-------|---------|------|
 | 1 | `read-restamp-0509` | `[x]` | `7aa76dca` | 74 | 21 | 7 | no | R110 + **R110a/b/c** ruled into spec §3.1; S1/S2 red sets disjoint ⇒ both twice-written arms proven; audit 332/15/0/0 of 347, **no status moved**. |
-| 2 | `results-tcl-resolver` | | | | | | | |
+| 2 | `results-tcl-resolver` | `[x]` | `91c6eb9a` | 139 | 34 | 11 | no | `src/results.tcl` 379 lines, sourced + in `Makefile.in` install. Scope fence held (no mutator). R201a-e/R304a-b/R305a-b/R803a/R805a ruled into spec. Audit 332/15/0/0 of 347, **no status moved**. |
 | 3 | `raw-select-subverb` | | | | | | | |
 | 4 | `results-select-orchestrator` | | | | | | | |
 | 5 | `rawbar-load-reexpress` | | | | | | | |
@@ -104,3 +104,6 @@ direction, belongs to the item that moved it.
 | from | what | disposition |
 |---|---|---|
 | item 1 §5 | **A THIRD verbatim copy of the "file found" branch exists in `new_rawfile()` (`src/save.c:1570-1577`) and does not re-stamp.** Different function, different contract (`0` = already loaded); no reproducer was built either way, and 0509 closed naming it. | **Handed to item 3.** Its crew is already inside `extra_rawfile()`'s neighbourhood: MEASURE it, then either fix it or file an issue with a real reproducer. Do not file a speculative one. |
+| item 2 §2 R305b | **`raw_type_is_non_spice()` (`src/save.c:1622`) has no Tcl verb**, so `results::current`'s R102 gate hard-codes the one reader token `table` beside its C predicate. `xschem raw is_digital` answers the reader table's *other* column and returns 0 for `table` on purpose. | **Offered to item 3** as a bounded extra: add `xschem raw non_spice <type>` while in the same C file, then let `results.tcl` ask the engine. The crew may decline with evidence. |
+| item 2 §5 | **`results::list` shadows Tcl's `list` inside the namespace** (documented in the header; every construction written `::list`). And `resolve` does not normalize `..` while `list` returns the engine's verbatim spelling — the engine dedupes by `strcmp`. | **Both are item 4's hazard**, since "is this path already loaded?" sits on top of the second one. Named in item 4's brief. |
+| item 2 §5 | Seven reviewer observations raised, **none confirmed, none filed**: 0-byte raw and `.vcd` both resolve `ok`; `named` not absolute-ised without a `rundir`; a non-existent explicit `derived` blocks the `key` fallback; a throwing `raw_content_verdict` swallowed as `ok`; whitespace-padded `rawfile` resolves `invalid`; R201e suspected-uncovered. | Left standing. Re-raise only with a reproducer. |
