@@ -1,6 +1,10 @@
 # Results selection — binding a saved simulation result to a session
 
 **Status:** SPEC. No code yet. No companion PLAN.md yet.
+**§17 was RULED by the user on 2026-08-18** — ten decisions, the result model
+(§17.1) and the `cadence_compat` gate (§17.2). Two questions remain open (§17.1
+and §17.2 are not among them): how much C v1 needs, and whether a run history is
+wanted.
 **Owner branch:** `fluid-editing`
 **Audience:** Claude Code, in a future session, asked to build xschem's answer to
 Cadence ADE-L's **`Results ▸ Select…`** — the command that binds a saved
@@ -41,8 +45,9 @@ copy one without re-grepping it.
 > | verification invariants | §12 |
 > | decisions that can change | §13 |
 > | beyond Cadence / deviations / non-goals | §14–§16 |
-> | what the driver must rule before building | §17 |
+> | the rulings, and the result model they correct | §17, §17.1, §17.2 |
 > | what is deliberately NOT here | §18 |
+> | the `v(out)` -> `VT(out)` move, and why it is not here | §19 |
 
 ---
 
@@ -351,9 +356,9 @@ paths that will still bypass it and names them, following
 `results::list`.
 
 **R305** `results::current {}` returns the selected result's dict or `{}`.
-Whether the Calculator's Results Dir row consumes it or keeps
-`calc::results_source`'s self→viewer→ASE borrow chain is **§17 Q3's to rule** —
-the two answer different questions and R503 states the contradiction. It answers
+**RULED (§17 decisions 3 and 6): the Calculator's Results Dir row consumes it,
+and `calc::results_source`'s `self` arm is removed entirely** — the Calculator
+reads the ASE-L session's result and nothing else. It answers
 R103's three-part definition, so it returns `{}` for a
 database that is loaded and current but whose stamp does not resolve (F4) —
 **a loaded-but-blind database is not a selection.**
@@ -430,7 +435,12 @@ which steps move into `results::select` and which stay in `rawbar_load`:
 `results::select` so the status sentence and the MRU push happen in one place —
 **its user-visible behaviour must not change**, and §12 T-C pins that.
 
-**R502 — the Calculator's `Browse` stops being a stub.** `.calc.res.path` is
+**R502 — the Calculator's `Browse` stays disabled. RULED §17 decision 9,
+reversing this rule's original text.** Browsing to a result is
+`ASE-L ▸ Results ▸ Select`'s job; the Calculator consumes the session's
+selection and never makes one. The stub keeps its shape and its reason, and the
+spec now says why it is inert rather than promising it will not be.
+For the record, the state it is reversing: `.calc.res.path` is
 `-state readonly` (`src/calculator.tcl:712`) and `.calc.res.browse` is
 `-state disabled` with a command that writes *"Browse: not implemented"*
 (`:723-727`, with the reason at `:719-722`). It becomes
@@ -446,8 +456,8 @@ lands, Evaluate runs against **this window's own context**, and the Calculator s
 R601–R607 (`doc/claude/specs/calculator.md:753-768`) never name one, and its
 only "current raw" statements are §5 (`:461`) and R705 (`:786`). That silence is
 the gap: the row can name a borrowed path while the computation uses a different
-database, or none. **This spec does not resolve it unilaterally**; §17 Q3 puts it
-to the driver. Whatever is ruled, the invariant is: *the row names the database
+database, or none. **RULED §17 decision 3: the row PICKS.** What it names is what Evaluate reads,
+and the `self` arm that could disagree with it is gone (decision 6). Whatever is ruled, the invariant is: *the row names the database
 Evaluate will use, or it says it is only reporting.*
 
 **R504 — `Results ▸ Select…` does not appear in the waveform viewer's menubar.**
@@ -457,7 +467,10 @@ records the rule. The viewer's selection surface is the Location bar it already
 has. Adding a cascade there is a separate decision with a frozen test in front
 of it.
 
-**R505 — the Waves menu is fixed, not extended.** Issue **0428**: `load_raw`
+**R505 — the Waves menu is GATED, not fixed, not extended. RULED §17.2.**
+Under `cadence_compat` its eight loading entries and `Op Annotate` are blocked
+with a message naming the setting and pointing at `ASE-L ▸ Results ▸ Select`;
+without `cadence_compat` it behaves exactly as it always has. The background: Issue **0428**: `load_raw`
 (`src/xschem.tcl:16687`) calls `xschem raw_clear` and then `xschem raw_read`,
 which *itself* clears the whole registry — so the eight `waves <type>` entries
 (`Load first analysis found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`, `Sp`,
@@ -704,9 +717,12 @@ source is proved by **moving** the source, not by re-reading it.
 | **D7** | v1 has no per-run result directories | none (R704) | §9 entirely; a read-side migration of ~293 `raw_read` launcher sites |
 | **D8** | v1 has no key chord | none | an `action_registry[]` entry + `keybindings.csv` row |
 | **D9** | `stale` is selected anyway | yes (R202) | §4, T-H |
-| **D10** | The eight Waves *load* entries stop clearing the registry | stop (R505) | §7, T-L, and issue 0428's ruling |
+| **D10** | The eight Waves *load* entries + `Op Annotate` are **blocked under `cadence_compat`**, and unchanged without it | RULED §17.2 | §7, T-L, and issue 0428 |
 | **D11** | Digital/VCD databases are not independently selectable | not (R102) | §2, §16 |
 | **D12** | No cascade added to the waveform viewer's menubar | none (R504) | `test_wave_viewer` G2's frozen list |
+| **D13** | `Results ▸ Select…` lives only in ASE-L | RULED §17 decision 5 | §6 |
+| **D14** | The Calculator's `Browse` stays disabled | RULED §17 decision 9 | §7 R502 |
+| **D15** | Analysis choice is not part of result selection | RULED §17.1 | §19, and the accessor spec |
 
 ---
 
@@ -756,41 +772,115 @@ source is proved by **moving** the source, not by re-reading it.
 
 ---
 
-## 17. Open decisions for the driver
+## 17. Decisions — RULED 2026-08-18 by the user
 
-Do not guess these; they change the shape of the work.
+Every question below was put to the user in plain language with worked
+examples, and answered. The original question is kept; the answer follows in
+bold. **Nothing here is an assumption any more.**
 
 1. **How much C does v1 need — a new `raw select` sub-verb, R110's re-stamp on
    `read`, or neither?** (D3.) Three rungs: a new verb buys a three-valued
    return and a clean name; `read` + R110 buys the same behaviour with no new
    verb; and **`xschem set raw_level` already re-stamps from Tcl**
    (`src/scheduler.c:12275-12297`), so a v1 with **zero C change** is possible.
-   Default assumption: **R110 plus the new verb**, because a Tcl-only re-bind
-   works only for the caller that remembers to follow up — which is exactly how
-   0429 came to exist.
+   **NOT RULED — still open.** Assumption stands: R110 plus the new verb.
 2. **Is a run history (per-run result directories) wanted at all, and when?**
-   (R704, D7.) It is the difference between "select among what is open" and
-   Cadence's actual feature. The blocker is 429 schematics with a hardcoded
-   relative `write <cell>.raw` (R703), which no code change can rewrite. Default
-   assumption: **not in v1.** Note R703's correction: the 390 bare relative
-   `write` lines are *not* the blocker (a per-run cwd moves them for free); the
-   ~293 `raw_read $netlist_dir/<cell>.raw` launcher sites are.
-3. **What does the Calculator's Results Dir row promise?** (R503.) Today it
-   reports a possibly-borrowed path; phase 3's Evaluate will use this window's
-   own context. Either the row becomes a *selector* that changes what Evaluate
-   uses, or it stays a *reporter* and must say so in its label. Default
-   assumption: **it becomes a selector**, because a field the user can edit that
-   does not change the answer is the defect this whole spec is about.
+   (R704, D7.) **NOT RULED — still open.** Assumption stands: not in v1. Note
+   R703's correction: the 390 bare relative `write` lines are *not* the blocker
+   (a per-run cwd moves them for free); the ~293
+   `raw_read $netlist_dir/<cell>.raw` launcher sites are.
+3. **What does the Calculator's Results Dir row promise?** (R503.)
+   **RULED: the row PICKS the result.** It stops being a label. The Calculator
+   loads what the row names into its own context and evaluates against it —
+   what the row shows is what you get, and changing the row changes what
+   Evaluate reads. R503's contradiction is closed in favour of the selector.
 4. **Do the Waves-menu entries stop clearing the registry?** (R505, D10, issue
-   0428.) This changes shipped behaviour for a menu users have muscle memory
-   for. Default assumption: **stop clearing**, with `Clear` still available as
-   its own entry (it already is).
+   0428.) **RULED, and reshaped — see §17.2.** The Waves menu is *legacy upstream
+   xschem*, not ours (`proc waves` arrives in `5e8df730`, the repo's first
+   commit). It is gated on `cadence_compat` rather than repaired in place.
 5. **Does `Results ▸ Select…` also appear on the schematic editor's menubar**,
-   or is ASE-L its only home? ASE-L is the session; the schematic editor is where
-   the Waves menu lives. Default assumption: **ASE-L only in v1**, with the Waves
-   menu fixed rather than extended.
+   or is ASE-L its only home? **RULED: ASE-L only.** ASE-L is what ties a
+   *design* to results; the schematic editor is not a results holder and is not
+   given a second door to become one.
+6. **Where does the Calculator look for results?** (R305, R503.)
+   **RULED: the ASE-L session, and nothing else.** The `self` arm — this
+   window's own context — is **removed entirely** from `calc::results_source`,
+   not merely demoted. The Calculator never reads a raw that a legacy path put
+   into a schematic window.
+7. **What does Evaluate say when no result exists?** **RULED: refuse, and name
+   the next action** — *"No simulation results are loaded. Run a simulation, or
+   pick an existing one with ASE-L ▸ Results ▸ Select."* Naming the command
+   beats a neutral refusal; the Calculator does **not** offer to launch ASE-L
+   itself.
+8. **Does a Calculator selection drag the waveform viewer with it?**
+   **RULED: no.** Each window keeps its own choice, matching how xschem already
+   works. Comparing two runs stays possible.
+9. **Does the Calculator's `Browse` button come alive?** (R502.)
+   **RULED: no — it stays greyed out.** Browsing to a result is
+   `ASE-L ▸ Results ▸ Select`'s job. The Calculator consumes the session's
+   selection; it does not make one. **This supersedes R502**, which had Browse
+   becoming live; R502 is now "Browse stays disabled, and the spec says why".
+10. **Graph rects with `autoload=` are a third legacy door. Block them?**
+    **RULED: leave them alone for now.** They are drawn objects saved inside
+    `.sch` files and blocking them would change how existing schematics render.
+    Recorded in §18 as a known remaining door.
+
+### 17.1 The result model — RULED, and it corrects §2
+
+**ONE RUN PRODUCES ONE RESULT.** Analyses are *dimensions inside* a result, not
+separate results. This corrects R101's framing: `(rawfile, sim_type)` is the
+**engine's** identity key, and the engine stores one slot per analysis — but the
+thing a user selects is the **run**, and selecting it makes all of its analyses
+available at once.
+
+Measured, on a file holding both a DC sweep and a transient:
+
+```
+0  /…/multi.raw  dc
+1  /…/multi.raw  tran      <- current
+```
+
+Two registry slots, one file, one run, one result.
+
+**What "current result" means, ruled:** the most recently **finished run** is the
+loaded result, with no further action. A user may go to another ASE-L window and
+load results there, and that becomes the current result instead. It is a
+session-level pointer set by *running* or by *selecting* — never by which window
+happens to have focus (which is why decision 6 removes the `self` arm).
+
+**Which analysis is "current" is NOT part of this.** That question is answered by
+the expression itself, and belongs to the typed-accessor work — §19.
 
 ---
+
+### 17.2 The Waves menu is gated on `cadence_compat` — RULED
+
+Decision 4's answer, in full. The Waves menu is **legacy upstream xschem**:
+`proc waves` arrives in `5e8df730` *"populating xschem git repo"*, the repo's
+first commit; the menubar it hangs on came from `b23b162f`. It is not ours, and
+the direction is away from it.
+
+- **Under `cadence_compat`**: the **eight loading entries** (`Load first analysis
+  found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`, `Sp`, `Spectrum`) **and
+  `Op Annotate`** are blocked. Clicking one says why and names `cadence_compat`,
+  pointing at `ASE-L ▸ Results ▸ Select`. The user must not be able to reach a
+  bad state in Cadence mode; the expected number of Cadence-mode users who want
+  this menu is zero.
+- **`Clear` and `External viewer` keep working** — neither loads a result.
+- **Without `cadence_compat`**: the menu works as it always has. A user outside
+  Cadence mode may mess things up if they wish. Issue **0428**'s registry-wiping
+  behaviour is *documented* rather than repaired in that mode.
+
+`cadence_compat` is an established gate here, not a new mechanism:
+`set_ne cadence_compat 0` (`src/xschem.tcl:18236`), a menu checkbutton
+(`:16974`), read from C via `tclgetboolvar("cadence_compat")`
+(`src/callback.c:633`), and it already carries a write-trace that force-enables a
+bundled setting (`cadence_compat_sync` → `autotrim_wires`, `:18773-18778`).
+
+**This closes the wrong-cell case for Cadence-mode users.** F4's blind-database
+scenario is reachable only through the legacy doors; with eight of the nine
+blocked and only `autoload=` graph rects left (decision 10), a `cadence_compat`
+user cannot get there through a menu.
 
 ## 18. What is NOT here
 
@@ -825,3 +915,52 @@ produced*; this spec starts after a `.raw` exists. And the Calculator's own
 build (`doc/claude/specs/calculator.md` + `doc/claude/calculator_batch/PLAN.md`,
 phases 2–10; 0 and 1 have shipped), which consumes a selection but does not make
 one.
+
+---
+
+## 19. The `v(out)` → `VT(out)` transition — scope note
+
+Raised by the user 2026-08-18 while ruling §17, and **deliberately not built
+here**. Recorded so the rulings are not lost; the work gets its own spec and its
+own batch, **after** this one, because Results Selection settles *which file* and
+the accessors settle *which analysis inside it*.
+
+**The problem:** `v(out)` is ngspice's own vector name and says nothing about
+which analysis it came from. With a DC sweep and a transient both loaded from one
+run, `v(out)` resolves in both and gives different numbers depending on which
+slot is current. Cadence removes the ambiguity by putting the analysis in the
+expression: `VT("/out")`, `VS(...)`, `VDC(...)`.
+
+**Rulings already taken (user, 2026-08-18):**
+
+| # | ruling |
+|---|---|
+| A1 | **Its own spec and batch, after Results Selection.** Calculator item 8 ships speaking `v(out)`. |
+| A2 | **Spelling: xschem paths, no quotes** — `VT(out)`, `VT(x1.x2.net5)`. Cadence's quoted `VT("/x1/x2/net5")` is *not* copied: nothing else in xschem quotes a node name, and the engine splits on whitespace. |
+| A3 | **Full set in v1:** voltage and current, all four analyses — `VT`/`VS`/`VF`/`VDC` and `IT`/`IS`/`IF`/`IDC`. |
+| A4 | **`v(out)` keeps working**, meaning "the current analysis", so saved schematics keep rendering. But **nothing the tool emits uses it any more** — every generated expression is typed. |
+| A5 | **`VF(out)` alone is the magnitude.** |
+| A6 | **Add the Cadence wrapper names** `mag` / `phase` / `real` / `imag`, compiling to vectors that already exist; the existing `ph()` / `re()` / `im()` spellings keep working. |
+| A7 | **Rewrite the 24 tracked schematics** that carry `v(...)` inside a `node=`. Each graph box already records its own `sim_type=`, so the correct accessor is known without guessing. |
+| A8 | **Direct Plot** detects which analyses the run produced and offers the choice; with only one it plots straight away — but always emits the *typed* accessor, never `v()`. ASE-L knows the analysis. |
+| A9 | **Ctrl-4 is not Direct Plot.** It is the transient bindkey. If it is cheap, let Ctrl-4 also work when a run contains exactly one analysis, whatever that analysis is; Cadence restricts it to transient, and xschem need not. |
+
+**Two measured facts the accessor spec must start from, both cheaper than they
+look:**
+
+1. **The token shape already exists.** The RPN engine has 40 ops spelled
+   `name()` (`sin()`, `db20()`, `del()`, …, `src/save.c:3560-3612`), and a bare
+   token that is not an op is looked up as a vector name. `VT()` fits the
+   existing grammar — this is a **resolver** layer, not a parser rewrite.
+2. **AC is already split into four real vectors at read time.** For a complex
+   raw the reader produces `v(out)`, `ph(v(out))`, `re(v(out))`, `im(v(out))`
+   as separate named vectors — measured on `cmos_ac_sweep_ase.raw`. So there is
+   no complex object to carry: `mag`/`phase`/`real`/`imag` each compile to a
+   name that is already in the file. (Careful: `re()`/`im()` are *also* RPN
+   operator names doing magnitude+phase→rectangular — same spelling, different
+   thing.)
+
+Also note the analysis type is already recorded, just elsewhere: graph rects
+carry `sim_type=` (tracked schematics: 100 `tran`, 35 `ac`, 26 `dc`, 3 `op`) and
+node tokens can carry `%<dataset> <rawfile>`. The accessors move that fact into
+the expression.
