@@ -75,14 +75,24 @@ if {[info commands ::op_annot::register] ne {}} {
   # index, not the prototypes' `[pn]mos` regexp).
   # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, IHP and
   # xschem_library/devices/nmos.sym.
+  # ⚠ THE SPACE BEFORE EACH CLOSING `)` IS LOAD-BEARING — ISSUE 0444, DO NOT
+  # TIDY IT AWAY. `xschem translate` tokenises on SPACE(c) = {\n, space, \t,
+  # \0, ;} only (token.c:24), so `)` does NOT terminate an @-token: without the
+  # space the second token is `@#2:spice_get_voltage)`, misses get_tok_value()
+  # and appends NOTHING. Measured live on one instance with an annotated raw:
+  #     …spice_get_voltage)   -> `0.9 - `   string is double -strict = 0 -> BLANK
+  #     …spice_get_voltage )  -> `0.9`      string is double -strict = 1
+  # Every SHIPPED symbol in the tree already spells it with the space
+  # (sky130_fd_pr/nfet_01v8.sym:65-66, xschem_library/devices/nmos4.sym:56-57).
+  # Guarded by rows S28/S29 of tests/headless/test_op_annot.tcl.
   foreach _gf180_op_type {nmos pmos} {
     op_annot::register $_gf180_op_type {
       devpath {\@m.@path@spiceprefix@name\.m0}
       match   {*gf180mcu_pr/*}
       params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
       derived {{gm/id {$gm/$id}}}
-      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
-               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage )}}
+               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage )}}}
     }
   }
   unset _gf180_op_type

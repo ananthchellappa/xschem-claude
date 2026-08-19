@@ -225,6 +225,15 @@ IHP **49/49 loadable `sg13g2_tests` cells** (26 with cards, `IHP_testcases` at
    evaluation-order contract. **Deferred user-visible consequence, S5/S6's to
    answer:** an IHP FET block will now show `cgg` (raw) *and* `cgg_tot`, where
    `sg13g2_display_fet_params` shows one `cgg` holding the sum.
+   **✅ ANSWERED BY S5, AND IT IS ONE OF THE TWO REASONS S5 IS STATUS E.** The
+   IHP FET block is **13 rows** against the prototype's 10 (`vertical_npn`: 16),
+   `cgg` names the raw vector and `cgg_tot` the sum. A human must ratify or
+   relabel. **⚠ AND THE FIRST SENTENCE OF THIS BULLET IS NOW WRONG:** the
+   REGISTERED spelling was missing the space before `)` that the shipped symbol
+   has, which `token.c:24` requires (`)` does not terminate an @-token), so
+   `vgs`/`vds` were permanently blank on sky130 and gf180. Fixed at S5, one space
+   per line, issue **0444** — and that edit is outside S5's Files cell, which is
+   the other reason S5 is E. **Do not "tidy" that space away.**
 10. **S5: deleting the prototypes also fixes a live bug.** They read the prefix
     with `getprop instance … spiceprefix`, which is empty when the token lives
     only in the symbol `template=`. On 3 of 45 shipped sky130 cells
@@ -233,6 +242,15 @@ IHP **49/49 loadable `sg13g2_tests` cells** (26 with cards, `IHP_testcases` at
     fabricated `0.0` per landmine 9. `op_annot::devpath` uses `translate` and is
     correct. Issue **0430**. Corollary for anyone quoting S2: "byte-identical,
     lost nothing" is tree-wide true for **IHP only**.
+    **⚠ S5 DID NOT DELETE THE PROTOTYPES AND COULD NOT** — deletion dangles three
+    shipped annotator symbols into `invalid command name` inside a draw path and
+    destroys the acceptance oracle for four green rows, because the neutral
+    carrier is S6 and the neutral emitter is S3 (reverted three times). **0430
+    stays open and this bullet moves to whichever step lands both.** Measured at
+    S5 and worth knowing: on a correct raw, in the same process where
+    `op_annot::text` renders every value, `sky130_display_fet_params` returns
+    eight BLANK lines and no `id` row at all — builder #3 is already dead, which
+    is invariant I1's failure mode live in the tree.
 11. **S4: build the ngspice round trip on sky130 or gf180 — IHP cannot be
     simulated on this box.** `pre_osdi ihp-sg13g2/osdi/psp103.osdi` fails on
     ngspice-42 (the vendored OSDI targets v0.4, ngspice-42 supports v0.3). And
@@ -608,6 +626,114 @@ it, and no line is `0`.
 
 **Risk:** low.
 
+### ✅ S5 — DONE, status **E** (landed, committed, two questions owed to a human)
+
+`op_annot::text`, `op_annot::raw_or_blank`, `op_annot::eng_or_blank`, plus the
+privates `_finite` / `_annotated` / `_evalrow`, ship in `src/op_annot.tcl`. Pure
+Tcl, no build. `tests/headless/test_op_annot.tcl` 65 → **97 checks, 0 FAIL**;
+T1 3 FAIL / 0 FATAL and T2 6/6 goldens, both identical to baseline.
+The golden, asserted exact including the trailing newline:
+
+    id    = 10u    gm    = 100u   gds   = 1u     vth   = 0.7    vdsat = 0.1
+    cgg   = 1f     vgs   = 0.9    vds   = 1.8    ft    = 15.92G gm/id = 10
+
+**WHY E, AND WHAT A HUMAN MUST ANSWER — two unratified user-visible changes:**
+
+1. **S5 edited two files outside its declared Files cell.** `sky130A/sky130_procs.tcl:377-378`
+   and `gf180mcuD/gf180_procs.tcl:84-85` each gained **one space** before the
+   closing `)` of two `pinexpr` strings (issue **0444**). Without it those rows
+   are permanently blank on two of three PDKs and the acceptance golden would
+   have had to bless that. Ratify the out-of-cell edit, or revert it and ship
+   `vgs`/`vds` blank on sky130 and gf180.
+2. **An IHP FET block is now 13 rows where the prototype showed 10** (`vertical_npn`:
+   16), and **`cgg` now names the raw vector while `cgg_tot` names the sum** — the
+   prototype printed the sum under the label `cgg`. Ratify, or relabel `cgg_tot`
+   back to `cgg` and drop the raw row.
+
+### ⚠ WHAT S5 LEARNED THAT BINDS LATER STEPS — READ BEFORE S6
+
+* **TWO CONFIRMED DEFECTS GATE S6's CARRIER. Nothing calls `op_annot::text`
+  today, so neither is user-reachable — they become visible the instant a
+  carrier lands.** Close them or accept them explicitly, in writing, first:
+  * **0446 — `vgs = 0` / `vds = 0` fabricated on the wrong `.raw`.** Re-scoped:
+    it needs **no hierarchy**. A flat schematic, a FET with its source on GND
+    (the ordinary topology), and a valid raw from any other circuit is enough —
+    `token.c:4364` hardcodes GND to `0.0`, the absent net becomes `-`, and
+    `eval_expr` reads `expr(- - 0.0 )` as unary minus and returns a strict-double
+    `0`. Eight rows blank correctly, two fabricate. This is the first thing a
+    user will do wrong, not a corner case. **Direct I3 violation.** Fix is in C.
+  * **0447 — `op_annot::text` RAISES**, despite its own header having claimed it
+    never does (the claim is now corrected in the source). `register` validates
+    only `dict size`, so a malformed `params`/`pinexpr`/`derived` **list** is
+    stored at rc=0 and raises `unmatched open brace in list` at draw time, on all
+    three keys. Reachable via **I5** from one unbalanced brace. Through the real
+    draw path `tcl_hook2` absorbs it and renders `?`, so the cost is a `?` block,
+    not a crash. Fix at `register` (loud, preferred) or catch at read.
+* **THE ITEM ABOVE ABOUT DELETING THE PROTOTYPES WAS NOT EXECUTABLE AND WAS NOT
+  DONE.** Deleting `sky130_display_fet_params` / `sg13g2_display_fet_params` /
+  `sg13g2_display_bip_params` dangles **three shipped annotator symbols** that
+  name them by hand in `tcleval([<proc> @ref ])` into `invalid command name`
+  inside a draw path, and the PDK-neutral carrier that replaces them is **S6's**.
+  Deleting the save emitters destroys the acceptance oracle for four currently
+  green rows (P3, P19, P20, P21) and dangles two menu items, because S3 is
+  reverted three times and no neutral emitter exists. **Deletion belongs to
+  whichever step lands the neutral carrier AND emitter — i.e. S6 at the earliest.**
+  The 0429 residual the paragraph above is really worried about is now filed
+  separately as issue **0445**.
+* **THE `?basis? ?root?` PASS-THROUGH ON `op_annot::vector` WAS NOT ADDED, ON
+  PURPOSE.** `op_annot::devpath` on this tree takes exactly **one** argument —
+  the basis work exists only inside `0442-attempt-2-reverted.patch` — so a basis
+  on `vector` would pass through to nothing and would be inventing S3's
+  write-side API from the read side, where it cannot be tested. **Handed to the
+  S3 retry, which must add the basis to `devpath` AND `vector` in one change or
+  the two drift again.**
+* **THE BRIEF'S CLAIM THAT D8 "CORRECTED sky130's cgso/cgdo TO cgs/cgd" IS
+  FALSE** — found independently by three S5 agents. D8 **DELETED** both rows. The
+  live sky130 descriptor is six params `{id gm gds vth vdsat cgg}` with
+  `derived {ft, gm/id}`. Any golden written against a `cgs`/`cgd` assumption is
+  wrong. Do not re-propagate the claim.
+* **`derived` SEES LABELS, NOT PARAM NAMES**, and may reference `pinexpr` labels
+  too (row order `params` → `pinexpr` → `derived` is now a contract). Values bind
+  only when finite, so a missing input leaves the variable UNSET and the row
+  blanks. Evaluated in a proc-LOCAL scope — `uplevel #0` would let a descriptor
+  read and clobber globals, and `to_eng` (`xschem.tcl:1908`) really does run
+  embedded `[...]`.
+* **A PLAIN `catch` IS NOT ENOUGH FOR I3.** `expr {1.0/0.0}` → `Inf` with **no
+  raise**, `string is double -strict Inf` → 1, `to_eng Inf` → `infT`. Every
+  shipped derived row is a division. Use the finiteness test.
+* **`xschem raw annot` ITSELF RAISES with no raw loaded** — catch-wrap the gate
+  or it becomes a second raise source in a draw path.
+* **A RAW READ BUT NEVER PUBLISHED RETURNS A FABRICATED 0** (`xschem raw read`
+  never calls `update_op()`), and **this only reproduces in a FRESH process** —
+  once any `annotate_op` has published, `cursor_b_val` survives a later `xschem
+  load` and the same sequence returns the true value. Any test row for it must
+  run **first** in its process or it passes vacuously.
+* **STILL OPEN, LOWER PRIORITY, ALL MEASURED:** `_evalrow` uses an unbraced
+  `expr`, so a `derived` string containing `[...]` executes once per device per
+  redraw (descriptors are sourced Tcl, so same trust level — but D10's "controlled
+  scope" was about variables, not command substitution). `op_annot::_kind` is a
+  first-match lookup, so a descriptor with two `params` rows naming the same param
+  with different kinds makes `text` and `vector` disagree (row S12 detects it,
+  nothing prevents it). The committed golden is a hand-written ASCII raw — the
+  suite never reads a raw ngspice actually wrote, so an ngspice change to the
+  R1/R3 shapes would pass green. The block's numbers depend on the global
+  `ev_precision` (at 8 the golden becomes `gm = 99.999997u`).
+* **COVERAGE HOLE FOUND BY SABOTAGE, NOT CLOSED:** `op_annot::text`'s three early
+  returns (type, descriptor, devpath) are mutually redundant — deleting **any one**
+  reds nothing, 97/97 stays green. Rows S19/S20 claim to cover the type and
+  descriptor guards but are caught by an earlier guard and never reach the one
+  they name.
+* **CREW HAZARD, NOT A CODE DEFECT:** two agents applying sabotage to one shared
+  checkout concurrently made the same suite read 97 / 96 / 95 / 85 within minutes.
+  Anyone reading a red `test_op_annot.tcl` from this run's logs must check
+  `md5sum src/op_annot.tcl` (shipping value `1fc5e8bc3dd2f1877ea0c782c9ca2594`)
+  before believing it. Serialize sabotage, or use a worktree.
+* **UNRELATED, FILED AS 0448:** the parallel netlisting runner intermittently
+  loses a worker to SIGPIPE (exit 141) and `run_regression.tcl` scores it as a
+  leading `FATAL`, which reads as a regression to anyone diffing tier counts. Not
+  reproducible standalone (5/5 clean). The netlisting result-file count also
+  drifts run to run (1476–1496); harmless only while netlisting stays NOGOLD.
+
 ---
 
 ## S6 — the generic annotator symbol
@@ -786,6 +912,12 @@ Number new issues from **0427**.
 | S9 | C, draw + exports | press `6`, every device lights up |
 | S10 | bulk `.sym` | no duplication |
 | S11 | C, one arm | timepoint OP with no graph |
+
+**Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · **S5 ✅(E)**.
+S5 landed without S3/S4 by reading a raw produced from a hand-written deck — the
+formatter never needed the generator. **S6 is next and must first decide what to
+do about 0446 and 0447**, both of which become user-visible the moment a carrier
+calls `op_annot::text`.
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.

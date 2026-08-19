@@ -530,6 +530,55 @@ symbol type; read each `params` vector with `xschem raw value <v> -1`; compute
 missing. Returns the block. This is `sg13g2_display_fet_params` with the
 parameter list lifted out into data.
 
+**⚠ IMPLEMENTED BY S5 — the following is now measured behaviour, not intent.**
+`op_annot::text`, `op_annot::raw_or_blank` and `op_annot::eng_or_blank` ship in
+`src/op_annot.tcl`; `eng_or_blank` is `sg13g2_to_eng_safe` with its `return
+"NaN"` replaced by `return {}` (I3), and `raw_or_blank` is `sg13g2_raw_or_double`
+verbatim apart from the name. What S5 settled that this section did not specify:
+
+* **THREE OUTCOMES, NOT TWO.** A row with nothing after the `=` means "this
+  parameter exists and could not be read"; `{}` — no block at all — means "this
+  device is not annotated" (unknown instance, unknown type, no descriptor, a
+  `match` miss, or a descriptor with no rows). Collapsing them either way is
+  user-visible: blanks painted on an unrelated symbol, or a silently missing
+  parameter list on a real device. Skip on a blank **devpath**, never on a blank
+  descriptor.
+* **A WHOLE-BLOCK GATE, COPIED FROM THE C RATHER THAN INVENTED.** Nothing is read
+  unless `token.c:4318`/`:4339`'s own three terms hold: `live_cursor2_backannotate`
+  && `xschem raw loaded` >= 0 && `annot_p` >= 0 from `xschem raw annot`, each
+  catch-wrapped (`raw annot` itself raises with no raw). Without it, a raw that
+  was READ but never PUBLISHED — `xschem raw read <f> op` never calls
+  `update_op()` — returns a **fabricated 0** from the calloc-zeroed
+  `cursor_b_val[]` while point 0 holds the true value. That is the one I3 hole
+  the plan said S5 could not close, and one call closes it. The gate deliberately
+  omits the C's `!raw_is_digital` term: `annotate_op` refuses digital files
+  outright and a digital raw carries no device vectors.
+* **A FINITENESS TEST, NOT JUST A `catch`.** `expr {1.0/0.0}` yields `Inf` with
+  **no raise**, `string is double -strict Inf` is 1, and `to_eng Inf` renders
+  `infT`. Every shipped `derived` row (`ft`, `gm/id`, `rin`) is a division. The
+  guard is `[string is double -strict $v]` then `catch {expr {$v*0.0 == 0.0}}`,
+  which raises for both `Inf` and `NaN`, so no such literal enters the source.
+* **A MEASURED `0.0` STILL PRINTS `0`.** I3 forbids fabricating a number for a
+  *missing* vector; it does not forbid showing a real zero, and blanking every
+  zero would hide a genuinely cut-off device.
+* **ROW ORDER IS A CONTRACT**: `params`, then `pinexpr`, then `derived` — because
+  a `derived` expression sees every `params` **label** and every `pinexpr`
+  **label** as a Tcl variable. §4.2 says *label*, while `op_annot::_kind` matches
+  the *param*, so the two are genuinely different fields. Values are bound only
+  when finite, so a missing input leaves the variable UNSET and the row raises
+  inside the catch and blanks — which generalizes the prototype's per-denominator
+  guards without knowing which variable is a denominator. Evaluated in a
+  proc-LOCAL scope, never `uplevel #0`.
+* **THE LABEL COLUMN PADS TO THE LONGEST LABEL IN THAT BLOCK.** The prototypes
+  hardcode `gm    = `, which cannot fit `gm/id` or IHP's `cgg_tot`. Every row ends
+  in exactly one newline.
+* **`devpath` ONCE, `_wrap` PER ROW** — not `vector` per row. Both of `vector`'s
+  shared primitives are still the ones called and the kind still comes from the
+  descriptor's own triple, so I1 holds in substance; per-row `vector` would be 26
+  nested `xschem translate` calls on IHP's 13-param NPN while the outer
+  `translate`'s `static char *result` (`token.c:4604`) is live. Guarded by a row
+  asserting `[_wrap [devpath …] $p $kind] eq [vector … $p]` for every params row.
+
 ### 4.4 Getting the block onto the screen — two carriers
 
 **Carrier 1: the annotator symbol.** A PDK-neutral
@@ -621,7 +670,7 @@ Verified free / safely overridable in this tree:
 | **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* **⚠ AMENDED BY S3 — "one builder" was under-specified and it reverted a complete implementation. One builder, but it must take a BASIS.** `devpath`'s hierarchy prefix comes from `sim_sch_path`, which is **relative to the level where the raw was loaded** — the right basis for *reading* a vector out of a loaded raw, and the wrong one for *writing* a save card, which needs a **deck-absolute** name. They coincide only when no raw is loaded or the raw is at the top, which is why 85 green checks missed it. The fix is a basis argument on the one builder (`op_annot::devpath <inst> ?basis?`, `absolute` for save cards), **not** path arithmetic in the walk — that would be the second builder this invariant forbids, and is exactly what the prototypes' `startpath` was. Issue **0436**, mechanism confirmed in the C at `save.c:1260`, `draw.c:2831-2838`, `scheduler.c:5150`. |
 | **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
 | **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* such device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. Issue **0437**. **⚠ THE FILTER IS SEVEN CLASSES, NOT ONE — AND GETTING THREE OF THEM REFUTED S3b.** Measured (issue **0442**): `spice_ignore` (true/`open`/`short`, instance **or** symbol), `only_toplevel` below the walk entry, `lvs_ignore` gated on `::lvs_ignore` — *and four symbol-level classes S3b missed entirely*: empty/absent `format` (`spice_netlist.c:639`, the instance vanishes from the deck completely), `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`, body replaced by attribute text), `spice_stop=true` (`:635`+`:695`, `.subckt` emitted **empty**). The last two drop the **subtree** while the instance call survives — so "may I emit a card for this?" and "may I descend into this?" genuinely diverge and cannot be aliases. **Any implementation of this invariant must be acceptance-tested against `xschem netlist` on a HIERARCHICAL fixture carrying all seven**; S3b's cross-check row was correct but its fixture was flat, which is exactly why 96 green checks and 8 sabotage variants missed the gap. Strongly consider deriving the device set from `xschem netlist` output, or exposing `skip_instance()` (netlist.c:1245) to Tcl, rather than re-implementing the netlister's filter in Tcl a class at a time — that reimplementation has now drifted twice, and `skip_instance()` also branches on `xctx->netlist_type`, which no Tcl copy has ever consulted. |
-| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. |
+| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 must close it or explicitly accept it before landing a carrier**, because nothing calls `op_annot::text` today and this becomes user-visible the moment something does. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
@@ -741,6 +790,42 @@ Verified free / safely overridable in this tree:
    row and did not, which was the visible edge of the whole gap. **Treat a
    missing predicted red as a fixture defect to be fixed before the step
    lands — not as a lucky pass and not as a prediction error to be footnoted.**
+
+10. **⚠ `op_annot::register` VALIDATES ALMOST NOTHING, AND THE COST LANDS AT DRAW
+    TIME.** Measured at S5 (issue **0447**): `register` checks only `dict size`,
+    so a descriptor whose `params`, `pinexpr` or `derived` value is not a
+    well-formed Tcl **list** is accepted at rc=0 and stored; `op_annot::text`
+    then raises `unmatched open brace in list` from its `foreach row [dict get
+    $d …]`, at draw time, on all three keys independently. Reachable through
+    **I5** — a user's own `register` in an rc — from a single unbalanced brace.
+    The same file already treats exactly this class as a *data* condition for
+    the `match` glob list (`op_annot::_matches` catches, `devpath` returns `{}`),
+    so the discipline exists and was simply not carried across. Validate at
+    registration, where the failure lands next to the typo, rather than
+    catching at read, where it is silent. **Whoever fixes it should also close
+    the coverage hole found in the same pass**: `op_annot::text`'s three early
+    returns (type, descriptor, devpath) are mutually redundant, and deleting any
+    ONE of them reds nothing at all — 97/97 stays green — so no single-point
+    failure in any of them is currently detectable.
+
+11. **⚠ A GREEN SUITE CAN BE MEASURING A FILE YOU ARE NOT SHIPPING.** At S5 the
+    Red agent's reference implementation lived in `/tmp` and scored 97/97
+    through a source-shimming wrapper, and the planned edits were separately
+    found already on disk from an interrupted earlier attempt. Identical green,
+    two different files. The only thing that distinguished them was applying
+    every sabotage variant to the **production** file and confirming the
+    predicted rows red there. Do that before believing a pass, and record the
+    `md5sum` of each shipping file in the report — the S5 crew did, and it is
+    what let a later agent verify the tree had not drifted under it.
+
+12. **⚠ TWO AGENTS SABOTAGING ONE CHECKOUT CONCURRENTLY IS A CREW HAZARD.**
+    Across the S5 verification passes the same suite was observed at 97, 95, 96
+    and 85 checks within minutes, because sabotage was being applied and
+    reverted on the shared working tree while another agent measured. The red
+    sets matched other agents' sabotage predictions exactly. **Anyone reading a
+    red `test_op_annot.tcl` from this run's logs must check `md5sum
+    src/op_annot.tcl` before believing it.** Serialize sabotage passes, or give
+    each one its own worktree.
 
 ---
 

@@ -366,6 +366,16 @@ if {[info commands ::op_annot::register] ne {}} {
   # REJECTED (c): a per-parameter descriptor guard plus a simulator-version
   # probe — new descriptor grammar, policy back inside the emitter, and the
   # probe cannot know which ngspice will run the generated deck. Filed forward.
+  # ⚠ THE SPACE BEFORE EACH CLOSING `)` IS LOAD-BEARING — ISSUE 0444, DO NOT
+  # TIDY IT AWAY. `xschem translate` tokenises on SPACE(c) = {\n, space, \t,
+  # \0, ;} only (token.c:24), so `)` does NOT terminate an @-token: without the
+  # space the second token is `@#2:spice_get_voltage)`, misses get_tok_value()
+  # and appends NOTHING. Measured live on one instance with an annotated raw:
+  #     …spice_get_voltage)   -> `0.9 - `   string is double -strict = 0 -> BLANK
+  #     …spice_get_voltage )  -> `0.9`      string is double -strict = 1
+  # Every SHIPPED symbol in the tree already spells it with the space
+  # (sky130_fd_pr/nfet_01v8.sym:65-66, xschem_library/devices/nmos4.sym:56-57).
+  # Guarded by rows S28/S29 of tests/headless/test_op_annot.tcl.
   foreach _sky130_op_type {nmos pmos} {
     op_annot::register $_sky130_op_type {
       devproc sky130_op_devpath
@@ -374,8 +384,8 @@ if {[info commands ::op_annot::register] ne {}} {
                {cgg cgg 1}}
       derived {{ft    {$gm/(2*3.141592654*$cgg)}}
                {gm/id {$gm/$id}}}
-      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
-               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
+      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage )}}
+               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage )}}}
     }
   }
   unset _sky130_op_type

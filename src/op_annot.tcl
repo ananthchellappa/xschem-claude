@@ -27,8 +27,19 @@
 # save-card emitter and the on-screen display must call the SAME builder. When
 # two builders drift the failure is silent — you save vectors nobody displays and
 # display `-` for vectors you saved, with no error anywhere. So every consumer
-# (S3's save cards, S5's formatter, S9's overlay) calls op_annot::vector; none of
+# (S3's save cards, S5's formatter, S9's overlay) builds its names HERE; none of
 # them may re-derive the shape.
+#
+# ⚠ WHAT "HERE" MEANS EXACTLY, since S5 landed: a consumer calls op_annot::vector,
+# OR — when it is looping over a descriptor's whole `params` list — it calls
+# op_annot::devpath ONCE and op_annot::_wrap per row, which are the two shared
+# primitives `vector` itself composes, with the kind still taken from the
+# descriptor's own triple. Nothing is retyped either way. That is op_annot::text's
+# route and it exists for a measured reason: per-row `vector` on IHP's 13-param
+# NPN is 26 NESTED `xschem translate` calls while the outer translate's static
+# result buffer (token.c:4604) is live, because the overlay calls this from a
+# tcleval. tests/headless/test_op_annot.tcl row S12 asserts the two compositions
+# are byte-equal for every params row, so they cannot drift in silence.
 #
 # ============================================================================
 # THE API
@@ -38,6 +49,11 @@
 #   op_annot::type <instname>                  -> the symbol K-record `type=` token
 #   op_annot::devpath <instname>               -> "@m.x1.xm1.msky130_fd_pr__nfet_01v8"
 #   op_annot::vector <instname> <param> ?kind? -> "i(…[id])" / "…[gm]" / "v(…[vth])"
+#   op_annot::raw_or_blank <vector>            -> the value at the annotation
+#                                                 point, or {}          (S5)
+#   op_annot::eng_or_blank <value>             -> to_eng of it, or {}   (S5)
+#   op_annot::text <instname>                  -> the `label = value` block for
+#                                                 one device, or {}     (S5)
 #
 # ============================================================================
 # ⚠ A SAVE CARD IS BARE. `vector` IS THE READ SHAPE ONLY.  (spec §3 rule R4)
@@ -400,4 +416,323 @@ proc op_annot::vector {instname param {kind {}}} {
   if {$dev eq {}} { return {} }
   if {$kind eq {}} { set kind [::op_annot::_kind $instname $param] }
   return [::op_annot::_wrap $dev $param $kind]
+}
+
+# ============================================================================
+# S5 — THE DISPLAY FORMATTER
+# ============================================================================
+#   op_annot::raw_or_blank <vector-name>  -> the number, or {}
+#   op_annot::eng_or_blank <value>        -> to_eng of it, or {}
+#   op_annot::text <instname>             -> the `label = value` block, or {}
+#
+# PORTED FROM ihp-sg13g2/sg13g2_procs.tcl, the single-PDK prototype:
+#   * sg13g2_raw_or_double (:436-440) -> op_annot::raw_or_blank, verbatim apart
+#     from the name. Each of its three lines is load-bearing; see below.
+#   * sg13g2_to_eng_safe   (:443-446) -> op_annot::eng_or_blank, with THE ONE
+#     LINE THIS STEP EXISTS TO CHANGE: `return "NaN"` becomes `return {}` (I3).
+#   * sg13g2_display_fet_params (:449-505) contributes its SHAPE — read every
+#     vector, then compute, then format, `label = value` per line — with its
+#     three hand-written parameter lists lifted into the descriptor: its ten
+#     hand-written reads (:461-470) become one loop over `params`, its cgg sum
+#     (:473-477) and its ft / gm-id blocks (:488-502) become one loop over
+#     `derived`.
+# DELIBERATELY NOT PORTED:
+#   * its own device-path construction (:451-459). That is builder #3, exactly
+#     what I1 forbids, and it is already measurably wrong: :453 reads the prefix
+#     with `getprop instance … spiceprefix`, which is EMPTY when the token lives
+#     only in the symbol template=, so on three shipped sky130 cells it builds
+#     `@m.m1.…` against a raw holding `@m.xm1.…` (issue 0430) and every line of
+#     sky130_display_fet_params comes out blank with a CORRECT raw loaded.
+#   * its hand-spelled i()/v() wrappers (:461-470) — `_wrap` applies the kind
+#     from the descriptor, so no call site retypes that decision.
+#   * its `[pn]mos` regexp type dispatch (:457) — descriptor lookup replaces it.
+#   * `return "NaN"` (:445). A `NaN` painted on a schematic is a fabricated
+#     value in the same class as a stale 0. I3, and the one behaviour the step
+#     brief names as not-to-carry.
+#
+# ============================================================================
+# ⚠ THREE DISTINCT WAYS A NUMBER CAN BE FABRICATED HERE. NO ONE GUARD CLOSES
+#   TWO OF THEM.  (I3, and it is the whole point of this section)
+# ============================================================================
+#  (a) `xschem raw value <v> -1` RAISES "No raw file loaded" (scheduler.c:10461)
+#      when nothing is loaded — it does NOT return empty. An uncaught raise
+#      inside the tcleval draw path S6/S9 use breaks rendering outright.
+#      -> the catch in raw_or_blank, and it is mandatory, not defensive.
+#  (b) A raw READ but never PUBLISHED returns a FABRICATED 0. `xschem raw read
+#      <f> op` never calls update_op() (save.c:1988), so cursor_b_val stays
+#      my_calloc-zeroed and point -1 reads 0.0 for a vector whose true value is
+#      1e-4. `string is double -strict` cannot tell that 0 from a real one.
+#      -> the whole-block gate, op_annot::_annotated.
+#  (c) `expr {1.0/0.0}` yields `Inf` with NO raise, `string is double -strict
+#      Inf` is 1, and `to_eng Inf` is `infT`. Every shipped `derived` row (ft,
+#      gm/id, rin) is a division, so a plain catch — which is all a generic
+#      loop has, where the prototype had hand-written per-denominator zero
+#      tests — is not enough.  -> op_annot::_finite.
+#
+# ⚠ THE ONE THIS STEP CANNOT CLOSE, AND IT IS IN THE GOLDEN: issue 0446. When
+# one pin of a `pinexpr` is GND and the other net is absent from the raw,
+# translate builds `expr(- - 0.0 )` (token.c:4364 hardcodes 0.0 for GND, and
+# emits a literal `-` for an absent net) and its trailing eval_expr pass reads
+# the two `-` as unary minus, yielding a strict-double `0`. Nothing at this
+# level can tell that 0 from a real one. Both Tcl-side guards were rejected in
+# 0446: blanking pinexpr whenever params are blank breaks the legitimate
+# no-save-cards case pinexpr exists FOR, and decomposing the expression here is
+# a second evaluator, i.e. the I1 drift shape. The fix is in C.
+
+## Is <v> a FINITE double?  (hazard (c))
+##
+## Two terms, because neither alone is enough:
+##   `string is double -strict`  rejects {}, ` - `, `abc` — but PASSES Inf/NaN.
+##   `expr {$v*0.0 == 0.0}`      RAISES for both (measured on 8.6.13: "domain
+##                               error: argument not in valid range" for ±Inf,
+##                               "can't use non-numeric floating-point value"
+##                               for NaN) and is 1 for every finite double,
+##                               0.0 included.
+## Spelled as a raise-and-catch rather than `$v > -Inf && $v < Inf` on purpose:
+## the literal `Inf` is not parsed by every Tcl this file must survive, and a
+## regexp on the string would be a third spelling of "is this a number".
+proc op_annot::_finite {v} {
+  if {![string is double -strict $v]} { return 0 }
+  if {[catch {expr {$v*0.0 == 0.0}} ok]} { return 0 }
+  return $ok
+}
+
+## op_annot::raw_or_blank <vector-name> -> the value at the annotation point, or
+## {}. Port of sg13g2_raw_or_double. THREE OUTCOMES IT MUST TELL APART, all
+## measured on this tree:
+##   no raw loaded    -> `xschem raw value` RAISES (scheduler.c:10461)   -> {}
+##   vector absent    -> an EMPTY STRING at rc=0 (idx<0 leaves the interp
+##                       result reset). Not a raise, not a 0.            -> {}
+##   vector present   -> the number at cursor-B / the OP point.
+## Point -1 is THE accessor (scheduler.c:10326): it falls through to
+## xctx->raw->cursor_b_val[idx], i.e. whatever update_op() last published.
+proc op_annot::raw_or_blank {v} {
+  if {$v eq {}} { return {} }
+  if {[catch {xschem raw value $v -1} r]} { return {} }
+  if {[string is double -strict $r]} { return $r }
+  return {}
+}
+
+## op_annot::eng_or_blank <value> -> `46.78u`, or {} for anything that is not a
+## finite number. Port of sg13g2_to_eng_safe with its `return "NaN"` replaced by
+## a blank (I3).
+##
+## ⚠ THE NUMERIC GATE IS A SAFETY GATE, NOT DECORATION: to_eng (xschem.tcl:1902)
+## does `uplevel #0 expr [join $args]`, so it EVALUATES its argument at global
+## scope — `to_eng {[file tail /a/b/c]}` really runs `file tail`. Nothing that
+## has not already proved itself a finite double reaches it.
+##
+## A MEASURED 0.0 STILL PRINTS `0`. I3 forbids fabricating a number for a
+## MISSING vector; it does not forbid showing a real zero, and blanking every
+## zero would hide a genuinely cut-off device.
+proc op_annot::eng_or_blank {v} {
+  if {![::op_annot::_finite $v]} { return {} }
+  if {[catch {to_eng $v} e]} { return {} }
+  return $e
+}
+
+## Is there a PUBLISHED annotation point to read?  (hazard (b))
+##
+## The three terms are COPIED from the C's own read gate (token.c:4318/4339),
+## not invented, so op_annot::text shows exactly what the schematic's own
+## @spice_get_voltage texts show:
+##   live_cursor2_backannotate   the user's own on/off switch. Without this term
+##                               the block goes HALF blank when it is off — the
+##                               params rows still read while every pinexpr row
+##                               returns ` -  ` — which on a schematic reads as
+##                               "the save cards are missing", not as
+##                               "annotation is off".
+##   xschem raw loaded >= 0      sch_waves_loaded(). get_raw_index() is gated on
+##                               it (save.c:2259), so below 0 every lookup is -1
+##                               anyway; ascending out of the annotated level is
+##                               what reaches this (landmine 4).
+##   annot_p >= 0                `xschem raw annot` -> {annot_p annot_x
+##                               annot_sweep_idx}. -1 means NOTHING was ever
+##                               published, i.e. the fabricated-zero state.
+##
+## ⚠ EVERY TERM IS CATCH-WRAPPED, INCLUDING `xschem raw annot` — measured, it
+## RAISES "No raw file loaded" exactly like `raw value`. A gate that can raise
+## in a draw path is a second bug, not a guard.
+##
+## NOT MIRRORED: the C's `&& !raw_is_digital(xctx->raw)`. No Tcl accessor
+## exposes it, and it costs nothing here — a digital raw holds no device
+## parameter vectors, so every row blanks through raw_or_blank anyway.
+proc op_annot::_annotated {} {
+  if {[catch {uplevel #0 {set live_cursor2_backannotate}} lv]} { return 0 }
+  if {[catch {expr {$lv ? 1 : 0}} b]} { return 0 }
+  if {!$b} { return 0 }
+  if {[catch {xschem raw loaded} l]} { return 0 }
+  if {![string is integer -strict $l] || $l < 0} { return 0 }
+  if {[catch {xschem raw annot} a]} { return 0 }
+  if {![string is integer -strict [lindex $a 0]] || [lindex $a 0] < 0} { return 0 }
+  return 1
+}
+
+## Evaluate ONE `derived` expression with <varpairs> bound, or {} if it blows up.
+##
+## ⚠ A PROC-LOCAL SCOPE, NEVER `uplevel #0`. That is to_eng's defect shape
+## (xschem.tcl:1908) and it would let an unrelated global of the same name
+## silently satisfy a row the raw never supplied — a fabricated number wearing a
+## descriptor's label. Measured both ways: with ::gm set to 999 and the gm row
+## unreadable, a local scope blanks and `uplevel #0` prints 999.
+##
+## ⚠ A MISSING INPUT IS LEFT UNSET, NOT BOUND TO {}. An unset variable makes
+## `expr` raise inside this catch ("can't read \"gm\": no such variable"), which
+## is how a generic loop reproduces the prototype's per-denominator guards
+## without knowing which variable is a denominator. Binding {} raises too;
+## binding 0 would NOT, and 0 is the fabricated number I3 forbids.
+##
+## The locals are `__opa_`-prefixed because a descriptor's own labels are set as
+## variables in this scope; only a label spelled `__opa_expr` / `__opa_vars`
+## could collide, and that is not a name a display label takes.
+proc op_annot::_evalrow {__opa_expr __opa_vars} {
+  foreach {__opa_n __opa_v} $__opa_vars { set $__opa_n $__opa_v }
+  if {[catch {expr $__opa_expr} __opa_r]} { return {} }
+  return $__opa_r
+}
+
+## op_annot::text <instname> -> the annotation block for one device:
+##
+##     id    = 10u
+##     gm    = 100u
+##     vgs   = 0.9
+##     ft    = 15.92G
+##     gm/id = 10
+##
+## or {} when this device is not annotated at all.
+##
+## ⚠ THE TWO EMPTY OUTCOMES ARE DIFFERENT AND BOTH ARE LOAD-BEARING (D2):
+##   a row with NOTHING after the `=`  = "this parameter exists and could not be
+##                                       read" — the no-raw case, and the step's
+##                                       own acceptance shape.
+##   {} , i.e. no block at all         = "this device is not annotated": unknown
+##                                       instance, unknown symbol type, no
+##                                       descriptor, a `match` miss, or a
+##                                       descriptor with no rows to show.
+## Collapsing them either way is user-visible: blanks painted on an unrelated
+## symbol, or a silently missing parameter list on a real device.
+##
+## ⚠ SKIP ON A BLANK DEVPATH, NEVER ON A BLANK DESCRIPTOR — this file's own
+## consumer contract (the 0425 block above).
+##
+## ⚠ ROW ORDER IS params, THEN pinexpr, THEN derived, and that order is a
+## contract, not an accident: a `derived` expression sees every params LABEL and
+## every pinexpr LABEL as a Tcl variable, bound only when the value is a finite
+## double (D10; spec §4.2 says LABEL, and op_annot::_kind matches the PARAM, so
+## the two are genuinely different fields).
+##
+## ⚠ I1, AND WHY THIS CALLS devpath ONCE + _wrap PER ROW RATHER THAN vector PER
+## ROW (D5): both of vector's shared primitives are the ones called and the kind
+## still comes from the descriptor's own triple, so no decision is retyped here.
+## Measured: devpath 18.7 us, vector 21.8 us, raw value 0.5 us — per-row
+## `vector` on IHP's 13-param NPN is 26 NESTED `xschem translate` calls while
+## the outer translate's `static char *result` (token.c:4604) is live, since
+## S6/S9 call this from inside a tcleval. tests/headless/test_op_annot.tcl row
+## S12 asserts [_wrap [devpath …] $p $kind] eq [vector … $p] for every params
+## row, so the two compositions cannot drift silently.
+##
+## DOES NOT RAISE FOR ANY DATA CONDITION — S6/S9 call it from a draw/tcleval
+## path. I4: it reads context and never moves in it.
+##
+## ⚠ ONE MEASURED EXCEPTION, ISSUE 0447, AND IT IS NOT YET CLOSED. An earlier
+## revision of this comment claimed "NEVER RAISES, on any path". That is FALSE
+## and was measured false before this file was committed. op_annot::register
+## validates only `dict size`, so a descriptor whose `params`, `pinexpr` or
+## `derived` value is not a well-formed Tcl LIST is accepted at rc=0 and stored;
+## the three `foreach row [dict get $d …]` below then raise `unmatched open
+## brace in list` at DRAW time. Reachable via I5 — a user's own register in
+## their rc — from a single unbalanced brace. Measured, all three keys:
+##     register rc=0  |  text rc=1 'unmatched open brace in list'
+## op_annot::_matches already treats exactly this class as a DATA condition for
+## the `match` glob list and returns {}; that discipline was not carried here.
+## Fix at register (loud, preferred) or with a read-side catch (quiet) — see
+## doc/claude/issues/0447. S6 must not land the carrier symbol until it is
+## closed or explicitly accepted.
+proc op_annot::text {instname} {
+  set t [::op_annot::type $instname]
+  if {$t eq {}} { return {} }
+  set d [::op_annot::descriptor $t]
+  if {$d eq {}} { return {} }
+  set dev [::op_annot::devpath $instname]
+  if {$dev eq {}} { return {} }
+
+  ## Hazard (b): with nothing published, read NOTHING. The rows are still
+  ## emitted — blank — because the user is entitled to see which parameters
+  ## this device would show.
+  set gate [::op_annot::_annotated]
+  set rows {}
+  set vars {}
+
+  if {[dict exists $d params]} {
+    foreach row [dict get $d params] {
+      set lbl [lindex $row 0]
+      set val {}
+      if {$gate} {
+        set val [::op_annot::raw_or_blank \
+                   [::op_annot::_wrap $dev [lindex $row 1] [lindex $row 2]]]
+      }
+      if {![::op_annot::_finite $val]} {
+        set val {}
+      } else {
+        lappend vars $lbl $val
+      }
+      lappend rows [list $lbl $val]
+    }
+  }
+
+  ## pinexpr needs no save card: it is pin voltages, which `save all` already
+  ## carries. `xschem translate` RAISES for an unknown instance, and returns a
+  ## non-numeric string (` -  `) whenever a net is missing from the raw.
+  if {[dict exists $d pinexpr]} {
+    foreach row [dict get $d pinexpr] {
+      set lbl [lindex $row 0]
+      set val {}
+      if {$gate} {
+        if {[catch {xschem translate $instname [lindex $row 1]} r]} { set r {} }
+        set val $r
+      }
+      if {![::op_annot::_finite $val]} {
+        set val {}
+      } else {
+        lappend vars $lbl $val
+      }
+      lappend rows [list $lbl $val]
+    }
+  }
+
+  if {[dict exists $d derived]} {
+    foreach row [dict get $d derived] {
+      set lbl [lindex $row 0]
+      set val {}
+      if {$gate} { set val [::op_annot::_evalrow [lindex $row 1] $vars] }
+      ## Hazard (c): the RESULT is tested, not just the operands — a division by
+      ## a genuine 0.0 yields Inf with no raise at all.
+      if {![::op_annot::_finite $val]} { set val {} }
+      lappend rows [list $lbl $val]
+    }
+  }
+
+  ## A descriptor with a devpath but nothing to show draws no empty frame.
+  if {![llength $rows]} { return {} }
+
+  ## The label column pads to the longest label IN THIS BLOCK — the prototypes
+  ## hardcode `ids   = ` / `gm    = `, which cannot fit the 5-char `gm/id` or
+  ## IHP's 7-char `cgg_tot`. A blank row is `label =` with NOTHING after the
+  ## `=`, not even a space; every row ends in exactly one newline.
+  set w 0
+  foreach r $rows {
+    set n [string length [lindex $r 0]]
+    if {$n > $w} { set w $n }
+  }
+  set txt {}
+  foreach r $rows {
+    set e {}
+    if {[lindex $r 1] ne {}} { set e [::op_annot::eng_or_blank [lindex $r 1]] }
+    if {$e eq {}} {
+      append txt [format "%-*s =" $w [lindex $r 0]] \n
+    } else {
+      append txt [format "%-*s = %s" $w [lindex $r 0] $e] \n
+    }
+  }
+  return $txt
 }
