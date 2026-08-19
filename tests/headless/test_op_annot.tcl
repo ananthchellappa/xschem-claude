@@ -3043,6 +3043,530 @@ opa_l_annot 0 ; opa_l_sht 0
  }
 }
 
+
+# =============================================================================
+# SECTION N — S8 of doc/claude/specs/op_annotation.md: THE THREE KEYS
+# =============================================================================
+# S7 gave `hide=op` teeth and left the mask at 0 with NOTHING in a running
+# session able to write it: measured on this tree, a freshly started xschem
+# reports `annot_show` 0, and replaying what the shipped **Annotate Operating
+# Point** menu item does (src/xschem.tcl:15315 — `set show_hidden_texts 1`
+# then `xschem annotate_op`) leaves it at 0 too, so the user gets a loaded raw
+# and a still-dark annotator. S8 is the writer of that mask:
+#
+#   6        -> cadence::annot_mode op       annot_show 1  (device OP info)
+#   Ctrl-6   -> cadence::annot_mode none     annot_show 0
+#   Alt-6    -> cadence::annot_mode opvolt   annot_show 3  (+ node voltages)
+#
+# ============================================================================
+# WHAT IS UNDER TEST HERE, AND WHAT IS UNDER TEST UNDER X
+# ============================================================================
+# `bind` and `winfo` do NOT exist under --nogui (measured: `info commands` is
+# empty for both), so src/cadence_style_rc cannot even be sourced here and the
+# three chords can only be pressed under a display. This section therefore
+# tests the whole of `cadence::annot_mode` — every moving part of the feature —
+# plus a SOURCE GREP of the rc's three bind lines, and the six rows that press
+# real keys live in tests/headless/test_launch_context.tcl (G1-G6, DISPLAY=:99).
+# Same split S6 decision D3 used.
+#
+# ============================================================================
+# ⚠ THE STATUS LINE IS THE DELIVERABLE, NOT A COURTESY — AND IT MUST BE HELD
+# ============================================================================
+# The step's requirement 4 is "SAY WHAT HAPPENED", because the two first-run
+# confusions (no raw file; no descriptor for this symbol type) are today
+# SILENT: measured, `xschem annotate_op /nonexistent.raw` returns rc=0, sets
+# the interp result to the FILE PATH, writes nothing to the status line and
+# only prints `raw_read(): failed to open file` to stderr.
+#
+# `xschem statusmsg` alone does not satisfy it. Measured under :99: a plain
+# statusmsg is erased by ONE `<Motion>` event (the field reverts to
+# `mouse = -70 -80 - selected: 0 path: .`), and a key press is always followed
+# by pointer motion in real use — while a naive headless check, which never
+# generates motion, still passes. `-hold` (issue 0248, STATUSMSG_HOLD_MS) is
+# what survives it, and `xschem get statusmsg_hold` is its only headless seam.
+# That is row N7, and sabotage SB3 exists to prove N7 earns its place.
+#
+# ============================================================================
+# ⚠ A FAILED annotate_op DESTROYS A GOOD ANNOTATION, SILENTLY
+# ============================================================================
+# scheduler.c:2409-2411 deletes the previously loaded OP and unsets
+# `ngspice::ngspice_data` BEFORE it tries to open the new file. Measured: from
+# `raw loaded` 0 with a populated block, `xschem annotate_op <missing>` leaves
+# `raw loaded` -1 and every row blank, returns rc=0 and says nothing. So the
+# key must (a) not reload while an annotation is LIVE (row N5) and (b) `file
+# exists` the candidate before handing it over (rows N6/N10). Neither guard is
+# visible in a message string, which is why both rows assert `raw loaded` and
+# the rendered block rather than the text alone.
+#
+# ============================================================================
+# ⚠ THE SCAN PASSES INSTANCE NAMES, NEVER INDICES
+# ============================================================================
+# get_instance() (scheduler.c:187) takes an all-digit string as an INDEX, so
+# `op_annot::devpath 0` answers `@m.x0.mzz` — a plausible WRONG device path
+# rather than an error. The scan resolves each index to its NAME first; row
+# N14's `{0 zzs8probe}` half is what catches a loop that skipped that step,
+# since an index-fed devpath is never empty and the sheet would always look
+# annotatable.
+#
+# ============================================================================
+# ROWS THAT ARE GREEN BEFORE THE CHANGE — CONTROLS, NOT EVIDENCE
+# ============================================================================
+# N20 (the three PDK rcs delegate to src/cadence_style_rc) is TRUE TODAY. It is
+# here because the step plan's Files cell says to edit sky130A/ and ihp-sg13g2/
+# cadence_style_rc and omits gf180mcuD — and measured, all three merely
+# `source [file join $_ws .. src cadence_style_rc]`, so ONE bind block covers
+# the whole three-PDK acceptance and the two named per-PDK edits are wrong. A
+# run in which only N20 passes has measured nothing.
+
+## Count the lines of <path> matching <re>; -1 when the file is absent, so a
+## missing file reds one row instead of raising out of the section.
+proc opa_n_grep {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] { if {[regexp -- $re $l]} { incr n } }
+  return $n
+}
+## -> {mode has-trailing-break} for one `bind .drw <chord>` line of the rc.
+## The `break` half is not decoration: measured with `event generate`, Ctrl-6
+## without it still reaches callback.c:7272 and selects drawing layer 6.
+proc opa_n_rcbind {path chord} {
+  if {![file isfile $path]} { return {NO-FILE 0} }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  foreach l [split $d \n] {
+    if {[string first "bind .drw $chord" $l] < 0} continue
+    set mode NO-MODE
+    regexp {cadence::annot_mode\s+(\w+)} $l -> mode
+    return [list $mode [expr {[regexp {break\s*\}\s*$} $l] ? 1 : 0}]]
+  }
+  return {NO-BIND 0}
+}
+## 1 when <path> delegates to src/cadence_style_rc rather than copying it.
+proc opa_n_delegates {path} {
+  if {![file isfile $path]} { return NO-FILE }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  foreach l [split $d \n] {
+    if {[regexp {source\s+\[file join .*\.\.\s+src\s+cadence_style_rc\]} $l]} { return 1 }
+  }
+  return 0
+}
+## The rendered value of <label> in a block, or MISSING-ROW — section S's
+## reader, restated here so N5/N8 can say "the numbers are still there" without
+## pinning the whole block.
+proc opa_n_row {blk label} {
+  foreach l [split $blk \n] {
+    set i [string first " =" $l]
+    if {$i < 0} continue
+    if {[string trim [string range $l 0 [expr {$i - 1}]]] ne $label} continue
+    return [string trim [string range $l [expr {$i + 2}] end]]
+  }
+  return MISSING-ROW
+}
+
+## Press ONE key. Returns {} on success, or the raise text — and NEVER lets the
+## raise out. An absent or broken `cadence::annot_mode` must red every row that
+## depends on it, one legible row each, instead of collapsing the whole section
+## into a single UNEXPECTED ERROR line naming one missing command. Every row
+## below carries this result as an element of its golden, so the reason is in
+## the failure line rather than inferred from a stale status message.
+proc opa_n_mode {m} {
+  if {[catch {cadence::annot_mode $m} e]} { return "RAISED: $e" }
+  return {}
+}
+## The non-empty results of several presses, for the rows that press more than
+## once. {} when all of them worked.
+proc opa_n_errs {l} {
+  set o {}
+  foreach e $l { if {$e ne {}} { lappend o $e } }
+  return $o
+}
+
+if {[catch {
+
+set N_SRC   [file join $repo utils annot_mode.tcl]
+set N_RC    [file join $repo src cadence_style_rc]
+set N_TCL   [file join $repo src xschem.tcl]
+
+# ===========================================================================
+# N — THE SURFACE, AND THE THREE SOURCE GREPS. No fixture, nothing loaded.
+# ===========================================================================
+set n_srcrc [rcall [list source $N_SRC]]
+check {N0 utils/annot_mode.tcl sources cleanly under --nogui and defines the five procs} \
+  [list [lindex $n_srcrc 0] \
+        [expr {[llength [info commands ::cadence::annot_mode]]         ? 1 : 0}] \
+        [expr {[llength [info commands ::cadence::_annot_mask]]        ? 1 : 0}] \
+        [expr {[llength [info commands ::cadence::_annot_raw_candidate]] ? 1 : 0}] \
+        [expr {[llength [info commands ::cadence::_annot_scan]]        ? 1 : 0}] \
+        [expr {[llength [info commands ::cadence::_annot_msg]]         ? 1 : 0}]] \
+  {0 1 1 1 1 1}
+
+# ⚠ INTEGERS, NOT BOOLEAN WORDS. annot_show is an int and S7 measured that
+# `true`/`on`/`yes` all atoi to 0, i.e. silently OFF. Sabotage SB2 flips the
+# opvolt entry to 2 (bit1 only) — the exact drift this table forbids.
+check {N1 the mask table is the spec's three states as INTEGERS: none 0, op 1, opvolt 3} \
+  [list [rcall {cadence::_annot_mask none}] [rcall {cadence::_annot_mask op}] \
+        [rcall {cadence::_annot_mask opvolt}]] \
+  {{0 0} {0 1} {0 3}}
+
+# ⚠ A BIND-BODY TYPO IS A CALLER BUG, SO IT IS LOUD. op_annot's own discipline
+# is the opposite for DATA (a missing vector blanks, I3); a mode spelling is
+# not data.
+check_raises {N2 an unknown mode RAISES, and the message names the accepted spelling `opvolt`} \
+  {cadence::annot_mode zzs8garbage} {opvolt}
+
+# ⚠ THE ONE FILE, THE THREE CHORDS. `break` is the whole override: measured,
+# Ctrl-6 reaches callback.c:7272 and selects drawing layer 6 without it, and a
+# chord TYPO is worse than a missing bind — Tk matches a pattern whose
+# modifiers are a subset of the event's, so with only <Key-6> bound BOTH Ctrl-6
+# and Alt-6 fire it and the OFF key silently means ON (sabotage SB8).
+check {N19 src/cadence_style_rc binds all three chords to the right mode, each ending in `break`} \
+  [list [opa_n_rcbind $N_RC {<Key-6>}] [opa_n_rcbind $N_RC {<Control-Key-6>}] \
+        [opa_n_rcbind $N_RC {<Alt-Key-6>}]] \
+  {{op 1} {none 1} {opvolt 1}}
+
+# ⚠ CONTROL, GREEN BEFORE AND AFTER — see this section's header. It is the row
+# that says the step plan's two per-PDK edits are unnecessary and that
+# gf180mcuD, which the plan omits, is covered anyway.
+check {N20 CONTROL all three acceptance PDKs delegate to src/cadence_style_rc, so ONE bind block reaches them} \
+  [list [opa_n_delegates [file join $repo sky130A cadence_style_rc]] \
+        [opa_n_delegates [file join $repo gf180mcuD cadence_style_rc]] \
+        [opa_n_delegates [file join $repo ihp-sg13g2 cadence_style_rc]]] \
+  {1 1 1}
+
+# ⚠ A SOURCE GREP BECAUSE NO RUNTIME ROW CAN SEE IT. A bare `set ::annot_show N`
+# leaves the C field stale (S7 item 3) but the very next
+# `xschem update_all_sym_bboxes` syncs the cache — so every behavioural row
+# below would stay green over the wrong spelling. D4 says use the setter.
+check {N21 the mask is written through `xschem set annot_show`, never a bare `set ::annot_show`} \
+  [list [expr {[opa_n_grep $N_SRC {xschem set annot_show}] >= 1 ? 1 : 0}] \
+        [opa_n_grep $N_SRC {^\s*set\s+::annot_show}]] \
+  {1 0}
+
+# ⚠ THE ONE REPAIR A NON-CADENCE USER GETS (decision D8). Both shipped
+# **Annotate Operating Point** bodies (Waves > Op Annotate at :14938 and
+# Simulation > Graphs at :15315) set `show_hidden_texts 1` and call
+# annotate_op, and S7 made the class bits ignore show_hidden_texts entirely —
+# measured, that path yields a loaded raw and a carrier bbox of 29x22, i.e. a
+# still-dark annotator. The cascade never runs headless, so this is a K15-style
+# source guard.
+check {N22 both shipped Annotate-OP menu bodies now write the mask too (decision D8)} \
+  [opa_n_grep $N_TCL {xschem set annot_show}] 2
+
+# ===========================================================================
+# FIXTURE — one annotatable device, the SHIPPED carrier, its hide=true twin
+# ===========================================================================
+# ⚠ UNQUALIFIED, per this file's header note.
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+set f [open [file join $lib n_zzfet.sym] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "K \{type=zzs8fet\nformat=\"@name @pinlist @model\"\ntemplate=\"name=MZZ1 model=zzdev\"\}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "L 4 -10 -10 10 -10 {}"
+puts $f "L 4 10 -10 10 10 {}"
+puts $f "L 4 10 10 -10 10 {}"
+puts $f "L 4 -10 10 -10 -10 {}"
+close $f
+## A type NO descriptor claims — the second first-run confusion's fixture.
+set f [open [file join $lib n_probe.sym] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "K \{type=zzs8probe\ntemplate=\"name=zp1\"\}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "L 4 0 0 0 10 {}"
+close $f
+## The twin oracle, built from the SHIPPED bytes exactly as section L's L23
+## builds it: byte-identical but for hide=op -> hide=true, so N17 pins a
+## RELATION and never a font metric.
+set n_carrier [opa_k_slurp $K_FLATSYM]
+set f [open [file join $lib n_twin.sym] w]
+puts -nonewline $f [string map {hide=op hide=true} $n_carrier]
+close $f
+## Three vectors in the R3 shapes, one Operating Point point.
+proc opa_n_mkraw {path} {
+  set f [open $path w]
+  puts -nonewline $f "Title: S8 key fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 3
+No. Points: 1
+Variables:
+\t0\ti(@m.xmzz1.mzz\[id\])\tcurrent
+\t1\t@m.xmzz1.mzz\[gm\]\tadmittance
+\t2\t@m.xmzz1.mzz\[gds\]\tadmittance
+Values:
+0\t1e-05
+\t1e-04
+\t1e-06
+"
+  close $f
+}
+set N_RAW [file join $scratch n_op.raw]
+opa_n_mkraw $N_RAW
+## Its own symbol type, so nothing sections P/S/L left in the store is clobbered.
+proc opa_n_devproc {instname model path spiceprefix} { return {@m.xmzz1.mzz} }
+catch {op_annot::register zzs8fet \
+  [list devproc opa_n_devproc params {{id id 0} {gm gm 1} {gds gds 1}}]}
+
+## Three sheets, because the three claims need three different populations:
+##   n_dev     device + SHIPPED carrier + twin   (the acceptance, N17/N18)
+##   n_devonly device alone                      (the scan's positive half)
+##   n_probe   one type nothing can annotate     (the scan's negative half)
+foreach {fn body} [list \
+  n_dev.sch     "C \{n_zzfet.sym\} 0 0 0 0 \{name=MZZ1\}\nC \{devices/annotate_params\} 80 0 0 0 \{name=annot1 ref=MZZ1\}\nC \{n_twin.sym\} 220 0 0 0 \{name=annot2 ref=MZZ1\}" \
+  n_devonly.sch "C \{n_zzfet.sym\} 0 0 0 0 \{name=MZZ1\}" \
+  n_probe.sch   "C \{n_probe.sym\} 0 0 0 0 \{name=ZP1\}"] {
+  set f [open [file join $lib $fn] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f $body
+  close $f
+}
+## Three netlist_dir candidates: one with a GOOD <cell>.raw, one with an
+## UNPARSEABLE one, one empty. The key's behaviour differs in all three.
+set N_ND_GOOD  [file join $scratch n_nd_good]
+set N_ND_BAD   [file join $scratch n_nd_bad]
+set N_ND_EMPTY [file join $scratch n_nd_empty]
+foreach d [list $N_ND_GOOD $N_ND_BAD $N_ND_EMPTY] { file mkdir $d }
+opa_n_mkraw [file join $N_ND_GOOD n_dev.raw]
+set f [open [file join $N_ND_BAD n_dev.raw] w] ; puts $f "not a raw file at all" ; close $f
+
+set n_nd_saved   $::netlist_dir
+set n_live_saved $::live_cursor2_backannotate
+
+xschem load [file join $lib n_dev.sch]
+set n_ann [rcall [list xschem annotate_op $N_RAW]]
+check {X10 FIXTURE n_dev.sch: an annotatable device, the SHIPPED carrier and its hide=true twin, raw live} \
+  [list [lindex $n_ann 0] [xschem get instances] [xschem get modified] \
+        [xschem getprop instance annot1 cell::type] \
+        [op_annot::_annotated] [rcall {op_annot::text MZZ1}]] \
+  [list 0 3 0 annotator 1 [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\n"]]
+
+# ===========================================================================
+# N — THE MASK, THROUGH THE SURFACE THE KEYS PRESS
+# ===========================================================================
+set ::netlist_dir $N_ND_EMPTY
+check {N3 `none` writes mask 0 through BOTH halves of the mirror and says so, plainly} \
+  [list [opa_n_mode none] [rcall {xschem get annot_show}] \
+        [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}] \
+        [xschem get statusmsg]] \
+  {{} {0 0} 0 {OP annotation OFF}}
+
+# ⚠ BOTH HALVES IN ONE ROW (S7 D4). A setter that wrote only the Tcl var would
+# be healed by the `update_all_sym_bboxes` that follows it, so reading them
+# apart proves nothing; sabotage SB1 routes the mask through a proc that always
+# answers 0 and this is the row that sees it.
+set n4e [list [opa_n_mode op]]
+set n4a [list [rcall {xschem get annot_show}] \
+              [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}]]
+lappend n4e [opa_n_mode opvolt]
+set n4b [list [rcall {xschem get annot_show}] \
+              [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}]]
+check {N4 `op` -> mask 1 and `opvolt` -> mask 3, C field and Tcl mirror agreeing} \
+  [list [opa_n_errs $n4e] $n4a $n4b] {{} {{0 1} 1} {{0 3} 3}}
+
+# ⚠ THE GUARD THAT PROTECTS A GOOD ANNOTATION. netlist_dir points at an
+# UNPARSEABLE n_dev.raw here on purpose: an unguarded reload would hand it to
+# annotate_op, which clears the live OP BEFORE it fails (scheduler.c:2409-2411)
+# and returns rc=0. Sabotage SB5 deletes the short-circuit and this row is what
+# catches it — the message alone would not.
+set ::netlist_dir $N_ND_BAD
+check {N5 a LIVE annotation is never reloaded: the numbers survive and the line says so} \
+  [list [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
+        [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
+  {{} 0 1 100u {OP annotation ON (device OP info) -- raw already loaded}}
+
+# ⚠ I4: THE OVERLAY NEVER MODIFIES THE SCHEMATIC. Three keys, all three modes,
+# and the .sch must be untouched — no instance placed, no modify flag.
+set n16_i [xschem get instances]
+set n16e {}
+foreach m {none op opvolt none} { lappend n16e [opa_n_mode $m] }
+check {N16 I4 a full none/op/opvolt/none cycle leaves `modified` 0 and the instance count unchanged} \
+  [list [opa_n_errs $n16e] [xschem get modified] [xschem get instances]] \
+  [list {} 0 $n16_i]
+
+# ===========================================================================
+# N — THE ACCEPTANCE: THE SHIPPED CARRIER, DRIVEN BY THE KEY
+# ===========================================================================
+# ⚠ THE ORACLE IS THE TWIN, NOT A NUMBER (section L's L23 reasoning): the same
+# symbol with the same text measured 68 wide in one process and 66 in another,
+# so a hard-coded width would pin a FONT METRIC. annot2 is byte-identical to
+# the shipped carrier but for hide=true, so its bbox at show_hidden_texts 0 IS
+# "numbers hidden" and at 1 IS "numbers shown". The third element keeps a twin
+# that rendered nothing from satisfying the row.
+set n17e [list [opa_n_mode none]]
+opa_l_sht 0 ; set n_ref_hidden [opa_l_wh annot2]
+opa_l_sht 1 ; set n_ref_shown  [opa_l_wh annot2]
+opa_l_sht 0
+lappend n17e [opa_n_mode none] ; set n17a [opa_l_wh annot1]
+lappend n17e [opa_n_mode op]   ; set n17b [opa_l_wh annot1]
+check {N17 ACCEPTANCE the SHIPPED carrier follows the key: Ctrl-6 hides the numbers, 6 shows them} \
+  [list [opa_n_errs $n17e] [expr {$n17a eq $n_ref_hidden}] \
+        [expr {$n17b eq $n_ref_shown}] [expr {$n_ref_hidden ne $n_ref_shown}]] \
+  {{} 1 1 1}
+
+# ⚠ Alt-6 IS A SUPERSET OF 6, NOT A REPLACEMENT. Mask 3 keeps bit0, so every
+# device block a `6` shows an `Alt-6` shows too; SB2's opvolt=2 drops bit0 and
+# this row goes red with the carrier back at its numbers-hidden width.
+set n18e [opa_n_mode opvolt] ; set n18 [opa_l_wh annot1]
+check {N18 `opvolt` is a SUPERSET of `op`: mask 3 keeps bit0 and the carrier stays full} \
+  [list $n18e [expr {$n18 eq $n17b}] [expr {$n18 eq $n_ref_hidden}]] {{} 1 0}
+opa_n_mode none
+
+# ===========================================================================
+# N — THE FIVE RAW STATES, EACH SAID OUT LOUD
+# ===========================================================================
+# ⚠ REQUIREMENT 4 IS THE POINT OF THESE ROWS. Today the same three presses
+# produce an EMPTY status line in every one of these states.
+## ⚠ `xschem load` OF THE FILE ALREADY LOADED KEEPS THE RAW — measured, and it
+## is the difference between "no raw loaded" and "the same raw still loaded".
+## `raw_clear` is the Waves menu's own verb (xschem.tcl:14936) and the only
+## reliable way to reach the state these three rows are about; each asserts it
+## as its FIRST element so a precondition that silently failed reds legibly.
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+set n6_pre [xschem raw loaded]
+set ::netlist_dir $N_ND_EMPTY
+check {N6 no raw loaded and none on disk: the mask still moves, the missing file is NAMED} \
+  [list $n6_pre [opa_n_mode op] [xschem raw loaded] [rcall {xschem get annot_show}] \
+        [xschem get statusmsg]] \
+  [list -1 {} -1 {0 1} "OP annotation ON (device OP info) -- NO RAW FILE: [file join $N_ND_EMPTY n_dev.raw]"]
+
+# ⚠ WITHOUT THE HOLD THIS WHOLE SECTION IS A NO-OP IN REAL USE — see the
+# header. Sabotage SB3 drops `-hold` and ONLY this row reds.
+check {N7 that report is HELD (issue 0248), so the first pointer motion cannot eat it} \
+  [rcall {xschem get statusmsg_hold}] {0 1}
+
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+set n8_pre [xschem raw loaded]
+set ::netlist_dir $N_ND_GOOD
+check {N8 no raw loaded but one on disk: it is loaded, the block populates, the path is NAMED} \
+  [list $n8_pre [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
+        [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
+  [list -1 {} 0 1 100u "OP annotation ON (device OP info) -- loaded [file join $N_ND_GOOD n_dev.raw]"]
+
+# ⚠ SUCCESS IS RE-ASKED, NEVER TAKEN FROM annotate_op. Measured: on a garbage
+# file it returns rc=0 with the PATH as its result and `raw loaded` -1. A key
+# that reported "loaded" from that rc would be the prototype's one sin —
+# claiming a success it cannot prove.
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+set n9_pre [xschem raw loaded]
+set ::netlist_dir $N_ND_BAD
+check {N9 a candidate that will not parse is reported as a FAILURE, not as a load} \
+  [list $n9_pre [opa_n_mode op] [xschem raw loaded] [xschem get statusmsg]] \
+  [list -1 {} -1 "OP annotation ON (device OP info) -- COULD NOT LOAD [file join $N_ND_BAD n_dev.raw]"]
+
+# ⚠ THE FOURTH INDISTINGUISHABLE CAUSE (issue 0451). A raw IS loaded and every
+# row still renders blank, because live_cursor2_backannotate is off. Naming
+# `raw already loaded` here would be a lie about a blank block; the row also
+# asserts the loaded raw was not thrown away on the way to saying so.
+xschem load [file join $lib n_dev.sch]
+xschem annotate_op $N_RAW
+set ::netlist_dir $N_ND_EMPTY
+set ::live_cursor2_backannotate 0
+check {N10 a raw loaded with backannotation OFF is named as such, and is NOT cleared} \
+  [list [opa_n_mode op] [xschem raw loaded] [xschem get statusmsg]] \
+  {{} 0 {OP annotation ON (device OP info) -- a raw is loaded but backannotation is off (live_cursor2_backannotate 0)}}
+set ::live_cursor2_backannotate $n_live_saved
+
+# ⚠ AND *WHICH* TERM FAILED IS ASKED, NOT ASSUMED (issue 0459). N10 sets the
+# flag to 0 itself, so it can only ever confirm the wording it was written
+# from. The route a user actually takes — `Waves > Op`, i.e. `xschem raw_read`
+# — leaves `raw loaded` 0 and `raw annot` -1 with live_cursor2_backannotate
+# still 1: the block is blank for the OTHER reason. Naming the flag there
+# accused an innocent variable and never named the real cause, which is
+# save.c ruling D5-1's plausible-wrong-NUMBER defect wearing a reason's
+# clothes. The branch is also a dead end (the guard blocks the auto-load), so
+# the row pins that the way out is named.
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+catch {xschem raw_read $N_RAW}
+check {N10b a raw that published no OP point names THAT, not the backannotate flag} \
+  [list $::live_cursor2_backannotate [xschem raw loaded] [op_annot::_annotated] \
+        [opa_n_mode op] [xschem get statusmsg]] \
+  [list 1 0 0 {} "OP annotation ON (device OP info) -- a raw is loaded but it\
+     published no operating point: use Waves > Op Annotate, or `xschem raw_clear`\
+     then press again"]
+xschem raw_clear
+
+# ===========================================================================
+# N — THE CANDIDATE BUILDER (decision D7)
+# ===========================================================================
+# ⚠ THE ASE SESSION CARRIES ITS LEVEL. Passing the path alone binds the raw to
+# the CURRENT level and reproduces landmine 4's silent device-path collapse
+# when the user has descended. The stubs are renamed in and out so the real
+# ase:: procs are back before the next row.
+set n_have_sfc [expr {[llength [info commands ::ase::session_for_current]] ? 1 : 0}]
+set n_have_lrf [expr {[llength [info commands ::ase::last_rawfile]] ? 1 : 0}]
+if {$n_have_sfc} { rename ::ase::session_for_current ::ase::_n_sfc_saved }
+if {$n_have_lrf} { rename ::ase::last_rawfile        ::ase::_n_lrf_saved }
+namespace eval ase {}
+set ::n_ase_raw $N_RAW
+proc ::ase::session_for_current {} { return [list zzs8key 2 zzlib zzcell schematic] }
+proc ::ase::last_rawfile {key} { return [expr {$key eq {zzs8key} ? $::n_ase_raw : {}}] }
+xschem load [file join $lib n_dev.sch]
+set ::netlist_dir $N_ND_GOOD
+set n11 [rcall {cadence::_annot_raw_candidate}]
+catch {rename ::ase::session_for_current {}}
+catch {rename ::ase::last_rawfile        {}}
+if {$n_have_sfc} { rename ::ase::_n_sfc_saved ::ase::session_for_current }
+if {$n_have_lrf} { rename ::ase::_n_lrf_saved ::ase::last_rawfile }
+check {N11 an ASE session wins, and its LEVEL travels with the path} \
+  $n11 [list 0 [list $N_RAW 2 ase]]
+
+# ⚠ THE SHIPPED SPELLING, NOT A NEW ONE. select_raw (xschem.tcl:14471) is what
+# both Annotate-OP menu items already resolve through; a second spelling here
+# would be an I1-shaped drift in the path rather than in the vector name.
+check {N12 with no ASE session it falls back to select_raw's `$netlist_dir/<cell>.raw`} \
+  [rcall {cadence::_annot_raw_candidate}] \
+  [list 0 [list [file join $N_ND_GOOD n_dev.raw] {} netlist_dir]]
+
+# ⚠ select_raw ITSELF MUTATES THE USER'S GLOBAL — `regsub {/$} $netlist_dir {}
+# netlist_dir` under `global`. A key pressed forty times must not rewrite a
+# preference it only READ, so the trailing slash is stripped from a LOCAL copy.
+set ::netlist_dir "$N_ND_GOOD/"
+set n13 [rcall {cadence::_annot_raw_candidate}]
+check {N13 a trailing slash is handled in a LOCAL copy: single-slash path, ::netlist_dir untouched} \
+  [list $n13 $::netlist_dir] \
+  [list [list 0 [list [file join $N_ND_GOOD n_dev.raw] {} netlist_dir]] "$N_ND_GOOD/"]
+set ::netlist_dir $N_ND_EMPTY
+
+# ===========================================================================
+# N — "NOTHING HERE IS ANNOTATABLE", THE SECOND FIRST-RUN CONFUSION
+# ===========================================================================
+# ⚠ CURRENT LEVEL ONLY (decision D6, invariant I6). S3's hierarchy walk is
+# deferred (issues 0436/0442/0443) and its restore discipline is a known breach
+# (0431); answering "is anything on THIS sheet annotatable" needs none of it.
+xschem load [file join $lib n_devonly.sch]
+set n14a [rcall {cadence::_annot_scan}]
+xschem load [file join $lib n_probe.sch]
+set n14b [rcall {cadence::_annot_scan}]
+check {N14 the scan answers {n-annotatable types-with-no-devpath}, current level only} \
+  [list $n14a $n14b] {{0 {1 {}}} {0 {0 zzs8probe}}}
+
+# ⚠ THE OTHER SILENT FIRST RUN. A user whose PDK symbol type nobody registered
+# gets a blank block and no reason (issue 0451, four indistinguishable causes).
+# Both confusions are reported in ONE line (decision D5): fixing the raw only to
+# meet the descriptor problem on the next press is the shape D5 rejects.
+check {N15 with nothing annotatable on the sheet the missing descriptor is NAMED, alongside the raw} \
+  [list [opa_n_mode op] [xschem get statusmsg]] \
+  [list {} "OP annotation ON (device OP info) -- NO RAW FILE: [file join $N_ND_EMPTY n_probe.raw] -- no OP descriptor for symbol type(s): zzs8probe"]
+
+opa_n_mode none
+set ::netlist_dir $n_nd_saved
+set ::live_cursor2_backannotate $n_live_saved
+
+} nerr]} {
+  puts "UNEXPECTED ERROR (section N): $nerr"
+  incr fail
+}
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

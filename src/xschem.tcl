@@ -14939,11 +14939,25 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.waves add command -label {Op Annotate} -command {
        set tctx::retval [select_raw [xschem get topwindow]]
        set show_hidden_texts 1
+       # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+       # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+       # show_hidden_texts entirely (its decision D3), so this item used to
+       # produce a loaded raw and a STILL-DARK annotator -- measured, the
+       # carrier's bbox never grew. Mask 1 = device OP info; deliberately NOT 3,
+       # which would silently start meaning "node voltages too" the moment bit1
+       # gets producers. The cadence profile's 6 / Ctrl-6 / Alt-6 chords
+       # (utils/annot_mode.tcl) are the only other writers of this mask.
+       xschem set annot_show 1
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
        } else {
          xschem annotate_op
        }
+       # Bboxes change when hidden texts appear: the `Show hidden texts`
+       # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+       # first of them (scheduler.c), so no extra sync call is needed.
+       xschem update_all_sym_bboxes
+       xschem redraw
   }
   $topwin.menubar.waves add command -label Op -command {waves op}
   $topwin.menubar.waves add command -label Dc -command {waves dc}
@@ -15316,11 +15330,25 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
     -command {
        set tctx::retval [select_raw [xschem get topwindow]]
        set show_hidden_texts 1
+       # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+       # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+       # show_hidden_texts entirely (its decision D3), so this item used to
+       # produce a loaded raw and a STILL-DARK annotator -- measured, the
+       # carrier's bbox never grew. Mask 1 = device OP info; deliberately NOT 3,
+       # which would silently start meaning "node voltages too" the moment bit1
+       # gets producers. The cadence profile's 6 / Ctrl-6 / Alt-6 chords
+       # (utils/annot_mode.tcl) are the only other writers of this mask.
+       xschem set annot_show 1
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
        } else {
          xschem annotate_op
        }
+       # Bboxes change when hidden texts appear: the `Show hidden texts`
+       # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+       # first of them (scheduler.c), so no extra sync call is needed.
+       xschem update_all_sym_bboxes
+       xschem redraw
     }
   # doc/claude/specs/op_annotation.md §4.4 — the PDK-neutral OP-parameter
   # carrier. Every moving part lives in the proc called below (src/op_annot.tcl)

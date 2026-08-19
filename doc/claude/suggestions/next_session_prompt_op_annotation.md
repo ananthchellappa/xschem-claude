@@ -1208,7 +1208,7 @@ S7 default to 1 and let S8's `Ctrl-6` introduce the off state?*
 
 ---
 
-## S8 — the keys
+## S8 — the keys ✅ DONE (status **E** — one question below)
 
 **Files:** `src/cadence_style_rc`, `sky130A/cadence_style_rc`,
 `ihp-sg13g2/cadence_style_rc`; `cadence::annot_mode` in the cadence procs.
@@ -1244,6 +1244,163 @@ it with `xschem set annot_show N` and not a bare Tcl `set` (or
 pair above needs **no** extra sync call because S7's sync runs inside
 `update_all_sym_bboxes`. **S8 is also the step that gives the shipped annotator
 its off switch back** — see decision D2.
+
+---
+
+### ✅ S8 — DONE, status **E** (landed, committed, one question owed to a human)
+
+Pure Tcl. **No build** — nothing under `src/*.c|h|y|l` changed, and every number
+below was measured against the binary as committed at S7's `8ac98756`.
+
+**What shipped**
+
+* `utils/annot_mode.tcl` (new, proc definitions only) — `cadence::annot_mode
+  none|op|opvolt` plus `_annot_mask` / `_annot_raw_candidate` / `_annot_scan` /
+  `_annot_msg`. **No PDK token appears in it**, and it builds **no raw-vector
+  name** (I1): its whole vocabulary is `xschem set annot_show`, `raw loaded`,
+  `annotate_op`, `ase::*`, `op_annot::devpath|type|_annotated`,
+  `update_all_sym_bboxes`, `redraw`, `statusmsg -hold`.
+* `src/cadence_style_rc` — the three binds next to the `Ctrl-4` precedent, each
+  ending in `break`, plus one `source` line.
+* `src/xschem.tcl` — **both** shipped **Annotate Operating Point** menu bodies
+  now `xschem set annot_show 1` and run the bbox/redraw pair.
+
+**⚠ THE PLAN'S FILES CELL WAS WRONG TWICE — corrected for anyone reading it
+later.** `sky130A/cadence_style_rc:17`, `gf180mcuD/:18` and `ihp-sg13g2/:17`
+each `source [file join $_ws .. src cadence_style_rc]`, so **ONE bind block in
+`src/cadence_style_rc` reaches all three PDKs**; the two per-PDK edits the cell
+named were unnecessary, and it omitted **gf180mcuD**, one of the three
+acceptance PDKs, entirely. Verified by firing real `event generate` chords under
+all four profiles.
+
+**The regression S8 repaired, quoted from the BEFORE transcript**
+
+    S8| C5 SHIPPED MENU PATH (show_hidden_texts 1 + annotate_op):
+           annot_show=0 carrier bbox=29 22  <- STILL DARK
+
+S7's decision D3 made the class bits ignore `show_hidden_texts` entirely, so the
+shipped **Annotate Operating Point** item produced a loaded raw and a dark
+annotator. Decision D8 fixed that for non-cadence users too.
+
+### ⚠ WHAT S8 LEARNED THAT BINDS LATER STEPS — READ BEFORE S9
+
+1. **THERE IS NOW EXACTLY ONE WRITER OF THE MASK PER SURFACE. Do not add a
+   second.** `xschem set annot_show N` (never a bare `set ::annot_show` — the C
+   field reads stale until the next sync, and the var is an INT so
+   `true`/`on`/`yes` all mean *off*). S9's overlay must **read** the mask and
+   call `op_annot::text`; if it grows its own toggle the two will drift the
+   silent way I1 exists to prevent.
+
+2. **`Waves > Op` LEAVES A RAW LOADED WITH NO OPERATING POINT PUBLISHED.**
+   Measured: `xschem raw_read <op.raw>` gives `raw loaded` 0 with
+   `raw annot` `-1 0 -1` while `live_cursor2_backannotate` is still **1** —
+   annotate_op *forces that flag on* (`scheduler.c:2404`), so it is almost never
+   the reason a block is blank. `op_annot::_annotated` collapses both terms;
+   anyone writing a message or an overlay-skip from it must ask **which** term
+   failed. S8 shipped that bug and fixed it before commit — **issue 0459**, and
+   row **N10b** now pins it.
+
+3. **WRITE COVERAGE FROM THE STATE SPACE, NOT FROM THE BRANCH.** Two blind spots
+   in one step, both in a suite of 171 green checks: N10 set
+   `live_cursor2_backannotate` to 0 *itself*, so it could only confirm the
+   wording it was written from (0459); and no row makes the `file exists` guard
+   the last line of defence, because the two outer guards stop the destructive
+   path first (**issue 0462**). Sabotage SB6 predicted N10 red and N10 stayed
+   green — that miss is what surfaced it.
+
+4. **A FAILED `annotate_op` STILL DESTROYS A GOOD ANNOTATION, SILENTLY**
+   (`scheduler.c:2409` clears the previous OP and unsets
+   `ngspice::ngspice_data` *before* opening the new file; rc is 0 either way).
+   S8 guards it three ways and re-asks `xschem raw loaded` rather than trusting
+   the rc. **S9/S11 must do the same** — never report a load from annotate_op's
+   return value.
+
+5. **`statusmsg` WITHOUT `-hold` IS A NO-OP IN REAL USE.** One `<Motion>` event
+   reverts the field to `mouse = … selected: 0 path: .`, and a key press is
+   always followed by pointer motion — while a headless check that never
+   generates motion still passes. Every status line in this feature uses
+   `xschem statusmsg -hold`; `xschem get statusmsg_hold` is its only headless
+   seam (issue 0248).
+
+6. **FOR S10, TWO ITEMS INHERITED RATHER THAN CREATED.** The prototype's
+   *second* raw-vector name builder is still live in two profiles
+   (`sky130A/sky130_procs.tcl:194-207`, `ihp-sg13g2/sg13g2_procs.tcl:459-470,
+   521-536`), which is the I1 drift shape S10 retires. And
+   `cadence::_annot_skip_types` under-covers shipped sheets — measured, sky130
+   `mips_cpu tb.sch` reports `logo missing verilog_preprocessor` and gf180
+   reports `logo moscap resistor vsource`, with `missing` (an unresolvable
+   symbol) relabelled as a missing descriptor. **Issue 0460**, best fixed with
+   S10's full type inventory in hand.
+
+7. **FOR S3/S4, A LIVE I2 BREACH ALREADY IN THE TREE.** Both prototype save-card
+   emitters (`sky130_procs.tcl:79-87` → `:177`, `sg13g2_procs.tcl:310-339` →
+   `:429`) emit `.save <expr>` lines with **no `save all` anywhere** — by
+   measured rule R2 that cancels the implicit save-everything and drops every
+   node voltage. Not S8's to fix; do not port that shape.
+
+8. **Tk MATCHES A MODIFIER SUBSET, SO ALL THREE CHORDS MUST BE SPELLED OUT.**
+   With only `<Key-6>` bound, **both** `Ctrl-6` and `Alt-6` fire it — the OFF key
+   silently means ON. Sabotage SB8 reproduced exactly that live. `Ctrl+Alt+6`
+   falls into the Alt form; `Shift-6` matches nothing (keysym `asciicircum`).
+   Also: `Ctrl-6` joins `Ctrl-2` and `Ctrl-4` as a displaced *select drawing
+   layer N* — recorded in `doc/claude/specs/cadence_bindkey_plan.md` §10; the
+   verb survives on the Layers menu and as `xschem set rectcolor 6`.
+
+9. **THE WHOLE CADENCE PROFILE IS SOURCE-TREE-ONLY.** `utils/` is in no install
+   list, so an installed xschem sourcing the installed rc raises at its first
+   `source`; and `src/Makefile` is generated, gitignored and **stale**
+   (`grep -n op_annot src/Makefile` is empty though `src/Makefile.in:23` lists
+   it — S1 edited the template and `./configure` was never re-run). **Issue
+   0458.** Any step that adds a `.tcl` inherits this.
+
+**Decisions (ladder rung, and the rejected alternative)**
+
+| # | Rung | Decision | Rejected |
+|---|------|----------|----------|
+| D1 | L2 | One bind block in `src/cadence_style_rc` + a procs-only `utils/annot_mode.tcl` | Copying the block into each PDK rc (three copies of one decision, and it still misses gf180); appending to `utils/cadence_nav.tcl` (nine suites source it; annotation is not navigation) |
+| D2 | L2/I1 | The liveness gate is `op_annot::_annotated`, reused | A fresh `raw loaded >= 0` test in `cadence::` — a second copy of one decision |
+| D3 | L2 | `file exists` before `annotate_op`; success **re-asked** from `raw loaded` | Trusting annotate_op's rc (0 for a missing file); calling it with no argument (loses the guard and the ability to name the path) |
+| D4 | L2 | Every status line uses `statusmsg -hold` | Plain `statusmsg` — erased by one pointer motion |
+| D5 | L2 | Both first-run confusions in ONE line | First-match-wins, which makes a user fix one problem then meet the other |
+| D6 | L2/I6 | The "is anything annotatable" scan is **current level only**, passing instance NAMES | A hierarchy walk (S3's is deferred and breaches I6); indices — `get_instance()` reads an all-digit string as an INDEX and answers a plausible WRONG path |
+| D7 | L2 | ASE session first, its **level** travelling with the path; else select_raw's spelling on a LOCAL copy of `netlist_dir` | Passing the path alone (landmine 4's device-path collapse when descended); calling `select_raw` (pops a modal dialog per key press, and mutates the user's `netlist_dir`) |
+| D8 | L2 | Both shipped Annotate-OP menu items set the mask | Leaving them dark (S7 D7's position, taken before the keys existed); setting 3, which would silently start meaning "node voltages too" once bit1 has producers |
+| D9 | **L3** | `annot_show` keeps its default of **0**, ratifying S7 D2 | Defaulting to 1 — with no raw loaded, mask 1 paints label-only rows on every carrier at startup, and S10 multiplies that across every PDK FET |
+| D10 | L2 | Tk `bind .drw` chords, not C registered actions | `keybindings.csv` rows, which would make them remappable — needs a C action and a build, outside the rc-only scope. Residual recorded in the rc comment and in issue 0457 |
+
+**Sabotage matrix** (8 planned + 1 by the write-up agent; predicted → observed)
+
+| # | What | Predicted | Observed |
+|---|------|-----------|----------|
+| SB1 | mask always 0 | 5 | 12 — all 5, + 7 cascade (mask 0 short-circuits the load block) |
+| SB2 | `opvolt` drops bit0 | 4 | 4 exactly |
+| SB3 | drop `-hold` | 1 | 1 exactly (N7) |
+| SB4 | message constant | 7 | 7 exactly |
+| SB5 | no reload guard | 1 | 2 (N5 + N10; N5 shows the destruction in the DATA) |
+| SB6 | no `file exists` guard | N6, N10 | N6 + N15; **N10 stayed GREEN** → issue 0462 |
+| SB7 | scan always ok | 2 | 2 exactly |
+| SB8 | `Ctrl-Key-6` → `Ctrl-Key-7` | 3 | 3 exactly; Ctrl-6 fell into the plain bind and turned annotation **ON** |
+| SW1 | restore the assumed `notlive` cause | 1 (N10b) | 1 exactly — printed the falsehood verbatim |
+
+**Tiers:** `test_op_annot` 147 → **172** ALL PASS; `test_launch_context` 7 → **13**
+ALL PASS (`GUI_GATE=0 DISPLAY=:99`); `test_wave_sigbrowser_i12` 126 → 126;
+T1 3 pre-existing FAIL lines unchanged (issues 0455, 0456 — **0455's first
+diagnosis was wrong and its fix would have deleted 140 tracked files**; corrected
+in the issue); T2 harness PASS 6/6.
+
+**⚠ THE E QUESTION (issue 0457).** D9 was ratified by S8, not by a human:
+
+> Should `annot_show` get a first-class stock control — a View-menu pair of
+> checkbuttons, or three registered C actions in `keybindings.csv` so the chords
+> are remappable — or is the cadence profile the intended home for this feature?
+
+**Still owed, and a green suite cannot clear either:** a `:0` run of the six GUI
+rows (they have only ever run under Xvfb `:99`, which delivers 1 `<Configure>`
+where WSLg delivers 3), and a human **look** at `6` / `Ctrl-6` / `Alt-6` on a
+real PDK schematic with a raw loaded — N17 proves the carrier's bbox grows and
+shrinks with the key, which is a number, not a look at the numbers.
+Also never exercised by anyone: the ASE candidate branch against a **real**
+`ase::session_for_current` (N11 stubs both procs by rename).
 
 ---
 

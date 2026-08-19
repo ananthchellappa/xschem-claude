@@ -4,8 +4,8 @@
 parameters — on the schematic, under three keys, with the displayed parameter
 list editable by the user and portable across PDKs.*
 
-Status: **S1, S2, S5 and S6 landed; S3 refuted and reverted three times, S4 deferred
-with it; S7–S12 not implemented.** Branch `annotate`.
+Status: **S1, S2, S5, S6, S7 and S8 landed; S3 refuted and reverted three times, S4
+deferred with it; S9–S12 not implemented.** Branch `annotate`.
 Plan of atomic steps: `doc/claude/suggestions/next_session_prompt_op_annotation.md`.
 
 **S1** (2026-08-16) delivered `src/op_annot.tcl` — the namespace, `register` /
@@ -24,6 +24,17 @@ shipped a spelling that renders `?` on every row) and added §4.4's two-tree
 requirement. It landed with issues **0446** and **0447** explicitly ACCEPTED, not
 closed — see §5 I3 and both issue files; the step's status is **E** for those two
 questions and for the pixel deliverable.
+
+**S8** (2026-08-19) delivered the three keys — `6` / `Ctrl-6` / `Alt-6` bound in
+`src/cadence_style_rc`, body in the new `utils/annot_mode.tcl` — plus the repair
+of both shipped **Annotate Operating Point** menu items, which S7 had left
+producing a loaded raw and a dark annotator. It corrected §4.6's claim that the
+per-PDK rcs are copies (they delegate; one bind block covers all three PDKs) and
+added §4.6's guard, message-matrix and `-hold` requirements, all measured. Status
+**E** for the `annot_show` default (issue **0457**) and the pixel deliverable.
+Filed and not fixed: **0460** (the descriptor clause names decorations),
+**0461** (a specific load-failure reason is discarded), **0462** (a guard covered
+only by wording rows). Fixed within the step: **0459**.
 
 Related:
 `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 (the existing
@@ -773,18 +784,36 @@ Replace the single boolean with a mask.
 **silently off**; only `1`/`2`/`3` work. Anything setting this variable — S8's
 `cadence::annot_mode` above all — must write a number.
 
-### 4.6 The keys
+### 4.6 The keys ✅ LANDED (S8, 2026-08-19)
 
-In `src/cadence_style_rc` (and the per-PDK copies), following the `Ctrl-4`
-precedent in that file:
+Bound in **`src/cadence_style_rc` only**, following the `Ctrl-4` precedent in
+that file, with the body in `utils/annot_mode.tcl`:
 
 ```tcl
-bind .drw <Control-Key-6> {cadence::annot_mode none;   break}
 bind .drw <Key-6>         {cadence::annot_mode op;     break}
+bind .drw <Control-Key-6> {cadence::annot_mode none;   break}
 bind .drw <Alt-Key-6>     {cadence::annot_mode opvolt; break}
 ```
 
-Verified free / safely overridable in this tree:
+**⚠ CORRECTED BY S8 — "and the per-PDK copies" was wrong.** There are no
+copies. `sky130A/cadence_style_rc:17`, `gf180mcuD/:18` and `ihp-sg13g2/:17` each
+`source [file join $_ws .. src cadence_style_rc]`, so **one** block reaches all
+three PDKs; editing three files would have created the silent-drift shape this
+spec forbids elsewhere. (The plan's Files cell also omitted gf180mcuD, one of the
+three acceptance PDKs, entirely.) Verified by firing real `event generate`
+chords under all four profiles: `6` → mask 1, `Ctrl-6` → 0, `Alt-6` → 3,
+`rectcolor` unchanged at 4 throughout.
+
+**⚠ ALL THREE CHORDS MUST BE SPELLED OUT.** Tk matches a pattern whose modifiers
+are a **subset** of the event's, so with only `<Key-6>` bound both `Ctrl-6` and
+`Alt-6` fire it — the OFF key silently means ON. Measured, and reproduced live by
+sabotage SB8. `Ctrl+Alt+6` falls into the Alt form; `Shift-6` matches nothing
+(keysym `asciicircum`). `Ctrl-6` joins `Ctrl-2` and `Ctrl-4` as a displaced
+*select drawing layer N*; the verb survives on the Layers menu and as
+`xschem set rectcolor 6` (`cadence_bindkey_plan.md` §10).
+
+Verified free / safely overridable in this tree, all four confirmed by
+measurement:
 
 * plain `6` reaches `callback.c:7272` and is a **no-op** unless Control is held;
 * `Ctrl-6` is "select drawing layer 6" — overridden with a trailing `break`,
@@ -795,17 +824,73 @@ Verified free / safely overridable in this tree:
 * no Shift is involved, so the shifted-keysym trap documented in that file for
   `Ctrl-Shift-2` / `Ctrl-Shift-4` does not apply.
 
-`cadence::annot_mode <mode>` must:
+`cadence::annot_mode <mode>` does, in this order:
 
-1. set `annot_show` (`none` → 0, `op` → 1, `opvolt` → 3);
-2. if no raw is loaded and the mode is not `none`, load one for the current cell —
-   `ase::last_rawfile` / `ase::session_for_current` when an ASE session exists,
-   else `$netlist_dir/<cell>.raw` — via `xschem annotate_op`;
+1. set `annot_show` **through `xschem set annot_show N`** (`none` → 0, `op` → 1,
+   `opvolt` → 3). Never a bare `set ::annot_show`: the C field reads stale until
+   the next sync, and the variable is an **integer**, so `true`/`on`/`yes` all
+   `atoi` to 0 — silently *off*;
+2. if nothing is annotated **and** no raw is loaded and the mode is not `none`,
+   load one for the current cell — `ase::session_for_current` /
+   `ase::last_rawfile` when an ASE session exists (**its level travels with the
+   path**, or landmine 4's device-path collapse follows), else
+   `$netlist_dir/<cell>.raw` — via `xschem annotate_op`, **only after
+   `file exists`**, with success **re-asked from `xschem raw loaded`**;
 3. `xschem update_all_sym_bboxes; xschem redraw` (the pair the existing
-   "Show hidden texts" checkbutton uses; bboxes change when texts appear);
-4. **say what happened on the status line.** A key that finds no raw file must
-   report that, not fail silently. Same for "no descriptor registered for this
-   PDK" — that is the single most likely first-run confusion.
+   "Show hidden texts" checkbutton uses; bboxes change when texts appear, and
+   S7's sync rides inside the first, so no extra sync call);
+4. **say what happened on the status line, `-hold`.** A key that finds no raw
+   file must report that, not fail silently. Same for "no descriptor registered
+   for this PDK". **⚠ `-hold` IS NOT OPTIONAL** — measured, one `<Motion>` event
+   reverts a plain `statusmsg` to `mouse = … selected: 0 path: .`, and a key
+   press is always followed by pointer motion, while a headless check that never
+   generates motion still passes (issue 0248).
+
+**⚠ THE GUARD IN STEP 2 IS LOAD-BEARING, NOT AN OPTIMISATION.** `annotate_op`
+deletes the previously loaded OP and unsets `ngspice::ngspice_data` **before** it
+tries to open the new file (`scheduler.c:2409`) and returns rc=0 either way — so
+an unguarded reload silently destroys a good annotation. Three guards:
+`op_annot::_annotated`, then `raw loaded >= 0`, then `file exists`.
+
+**⚠ AND `op_annot::_annotated` COLLAPSES TWO CAUSES — ASK WHICH ONE.** It is
+false when *either* `live_cursor2_backannotate` is 0 *or* the raw published no OP
+point (`raw annot` `p == -1`). The shipped `Waves > Op` route
+(`xschem raw_read`) reaches the **second** with the flag still at 1, and
+`scheduler.c:2404` *forces that flag on*, so the first is almost never the
+reason. S8 shipped a status line that named the flag unconditionally — a
+plausible wrong **reason**, which is ruling **D5-1**'s plausible wrong *number*
+in different clothes — and repaired it before commit (issue **0459**, row N10b).
+
+The message matrix, as built:
+
+| state | line |
+|---|---|
+| `none` | `OP annotation OFF` |
+| `op` / `opvolt` | `OP annotation ON (device OP info)` / `… (device OP info + node voltages)` |
+| already live | `-- raw already loaded` |
+| loaded now | `-- loaded <path>` |
+| exists, won't parse | `-- COULD NOT LOAD <path>` |
+| candidate absent | `-- NO RAW FILE: <path>` |
+| no candidate buildable | `-- NO RAW FILE for this cell` |
+| loaded, flag off | `-- a raw is loaded but backannotation is off (live_cursor2_backannotate 0)` |
+| loaded, no OP point | `-- a raw is loaded but it published no operating point: use Waves > Op Annotate, or ``xschem raw_clear`` then press again` |
+| nothing annotatable | `-- no OP descriptor for symbol type(s): <t…>` appended to any of the above |
+
+Both first-run confusions land in the **same** line: fixing the raw only to meet
+the descriptor problem on the next press is the shape this rejects.
+
+**S8 also repaired the two shipped `Annotate Operating Point` menu items**
+(`src/xschem.tcl`), which set `show_hidden_texts` and — since S7 made the class
+bits ignore that variable entirely — produced a loaded raw and a **dark**
+annotator (measured: carrier bbox 29×22, unchanged). They now set
+`annot_show 1` and run the bbox/redraw pair. That is the only route to this
+feature for a non-cadence user; whether the mask deserves a first-class stock
+control is the open question in issue **0457**.
+
+**Not yet done here:** the "nothing annotatable" scan names decorations and
+relabels unresolvable symbols (`logo`, `missing`, `vsource` …) — issue **0460**,
+best fixed with S10's type inventory; and `annotate_op`'s own minted refusal
+sentence is discarded in favour of the generic `COULD NOT LOAD` — issue **0461**.
 
 ---
 
@@ -817,7 +902,7 @@ Verified free / safely overridable in this tree:
 | **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
 | **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* such device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. Issue **0437**. **⚠ THE FILTER IS SEVEN CLASSES, NOT ONE — AND GETTING THREE OF THEM REFUTED S3b.** Measured (issue **0442**): `spice_ignore` (true/`open`/`short`, instance **or** symbol), `only_toplevel` below the walk entry, `lvs_ignore` gated on `::lvs_ignore` — *and four symbol-level classes S3b missed entirely*: empty/absent `format` (`spice_netlist.c:639`, the instance vanishes from the deck completely), `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`, body replaced by attribute text), `spice_stop=true` (`:635`+`:695`, `.subckt` emitted **empty**). The last two drop the **subtree** while the instance call survives — so "may I emit a card for this?" and "may I descend into this?" genuinely diverge and cannot be aliases. **Any implementation of this invariant must be acceptance-tested against `xschem netlist` on a HIERARCHICAL fixture carrying all seven**; S3b's cross-check row was correct but its fixture was flat, which is exactly why 96 green checks and 8 sabotage variants missed the gap. Strongly consider deriving the device set from `xschem netlist` output, or exposing `skip_instance()` (netlist.c:1245) to Tcl, rather than re-implementing the netlister's filter in Tcl a class at a time — that reimplementation has now drifted twice, and `skip_instance()` also branches on `xctx->netlist_type`, which no Tcl copy has ever consulted. |
 | **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 ACCEPTED IT RATHER THAN CLOSING IT (2026-08-19, ladder rung L3, decision D5)** — the carrier ships, the fabrication is reproduced through the real draw path, and it is pinned by a green check (`test_op_annot.tcl` row **K16**) that asserts the WRONG behaviour on purpose, so the C fix reds a named line instead of silently changing what a schematic shows. Only the two descriptors carrying `pinexpr` can reach it (sky130, gf180); IHP cannot. The unanswered ledger question is in 0446 under §S6 ACCEPTANCE. |
-| **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
+| **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. **HELD AT S8** — row **N16** cycles `none`→`op`→`opvolt`→`none` through the real proc, including an auto-load, and asserts `xschem get modified` is 0 with the instance count unchanged. The mask is view state, so a key press is not an edit. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
 | **I7** | `hide=true` **and `hide=instance`** semantics are unchanged for every existing symbol in every library. **⚠ RESTATED BY S7 — the original wording named only `hide=true`, and `hide=instance` is the one that was actually at risk.** Counted across all tracked `.sym`/`.sch`: `hide=instance` **630 occurrences / 244 files**, `hide=true` **47 / 22**, `hide=op` **2** (the twin `annotate_params.sym`), `hide=voltage` **0** — no other `hide=` value exists anywhere, so the acceptance sweep is a bounded, nameable list rather than a spot check. The threat was never the class bits; it was collapsing ten visibility tests that mask **two different things** into one fixed mask (§2.4). **HELD AT S7**, verified three independent ways: rows L11–L14 and L19–L22 of `test_op_annot.tcl`; the adversary's own fixtures (all 57 `xschem_library/devices/*.sym` carrying `hide=instance`, and the 19 gf180mcu FETs carrying `hide=true`, exported to SVG at `annot_show` 0 vs 3 at both `show_hidden_texts` states — byte-identical, and **non-vacuous** because the same corpus does differ between `show_hidden_texts` 0 and 1); and a re-run of the pre-S7 before-state script, whose `hide=true` (0 at `sht=0`, 158 at `sht=1`) and `hide=instance` (0 on a symbol, visible at top level) numbers came back byte-for-byte. ⚠ **PS byte-comparison is unsound** until issue **0454** is fixed — `xschem print ps` ends every page with an uninitialised RGB triple that changes between exports of identical content; L20/L22 compare a normalised copy (`opa_l_normps`) and L21 keeps that normalisation non-vacuous. |
