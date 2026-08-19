@@ -50,7 +50,7 @@ in the row that caused it.
 
 | # | item | verdict | commit | checks | sabotages | files | eyeball | note |
 |---|------|---------|--------|--------|-----------|-------|---------|------|
-| 1 | `read-restamp-0509` | | | | | | | |
+| 1 | `read-restamp-0509` | `[x]` | `7aa76dca` | 74 | 21 | 7 | no | R110 + **R110a/b/c** ruled into spec §3.1; S1/S2 red sets disjoint ⇒ both twice-written arms proven; audit 332/15/0/0 of 347, **no status moved**. |
 | 2 | `results-tcl-resolver` | | | | | | | |
 | 3 | `raw-select-subverb` | | | | | | | |
 | 4 | `results-select-orchestrator` | | | | | | | |
@@ -65,7 +65,7 @@ in the row that caused it.
 
 | issue | item | status |
 |---|---|---|
-| 0509 | 1 | open |
+| 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
 | 0508 | 8 | open |
 | 0507 | 9 | open |
 | 0216 (shape only) | 4 | open |
@@ -87,3 +87,20 @@ Item 7 is a pixel deliverable and **may not be verdicted `[x]`**. Its closer owe
   caller, not the verb); D-B = no run history, no per-run result directories, no
   read-side migration.
 - **2026-08-19** — baseline shot at `226302f9`: **331/15/0/0 of 346**, byte-for-byte the same status set as the casemode batch closer audit, so the tree is stable going in. `BASELINE_SUMMARY` filled in `item_pipeline.js`.
+
+## Suites this batch has added — expected +1 PASS rows against the baseline
+
+The baseline file stays at `226302f9` (331/15/0/0 of 346). Rather than re-shoot
+it per item, the rows this batch legitimately ADDS are listed here and in the
+pipeline's `BASELINE_SUMMARY`. A row not in this list, moving in either
+direction, belongs to the item that moved it.
+
+| suite | added by | total after |
+|---|---|---|
+| `test_results_select` | item 1 | 347 |
+
+## Carried forward — raised by an item, not that item's to fix
+
+| from | what | disposition |
+|---|---|---|
+| item 1 §5 | **A THIRD verbatim copy of the "file found" branch exists in `new_rawfile()` (`src/save.c:1570-1577`) and does not re-stamp.** Different function, different contract (`0` = already loaded); no reproducer was built either way, and 0509 closed naming it. | **Handed to item 3.** Its crew is already inside `extra_rawfile()`'s neighbourhood: MEASURE it, then either fix it or file an issue with a real reproducer. Do not file a speculative one. |
