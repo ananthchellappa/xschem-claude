@@ -1,6 +1,8 @@
 # 0509 — `xschem raw read` of an already-loaded file reports success but leaves it bound to the old cell
 
-**Status:** OPEN. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
+**Status:** FIXED 2026-08-19 (results batch item 1) — candidate (1), the
+re-stamp on the dedupe path, with one refinement (R110a). See **Resolution** at
+the end. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
 **Area:** `extra_rawfile()`'s two "file found: switch to it" branches
 (`src/save.c:1916-1921` and `:1970-1975`), the `schname`/`level` stamp in `raw_read()`
 (`src/save.c:1383-1384`, `:1545-1547`, `:3131-3132`), the design gate
@@ -170,3 +172,78 @@ happened.
 - issue **0507** — `raw_is_loaded` parses `xschem raw info` by word.
 - issue **0508** — the Waves-menu chooser discards the whole registry.
 - `doc/claude/specs/results_selection.md` — the feature this blocks.
+
+---
+
+## Resolution — results batch item 1, 2026-08-19
+
+Candidate **(1)** was taken. `extra_rawfile()` gained one static helper,
+`raw_restamp_design()`, called from **both** `what == 1` "file found: switch to
+it" branches — the non-spice (table/vcd) arm and the spice arm. It refreshes
+`raw->schname` / `raw->level` from `xctx->sch[xctx->currsch]` and re-primes the
+case-mode comparison. Nothing is re-parsed. `xschem raw switch` is untouched
+(R111). `sch_waves_loaded()` is untouched (candidate 2 remains not taken).
+
+**One refinement, spec R110a:** the re-stamp fires **only when the current stamp
+does not already resolve against the stack**. The unconditional form was
+implemented first and measured to create this same defect pointing the other
+way — read at the top, descend, re-read, ascend, and the *top* level goes blind
+(`loaded=-1`, `raw index` -1) because the binding was moved down one level. Full
+measurement and rationale in `doc/claude/specs/results_selection.md` §3.1.
+
+**R112**, the return contract, is written into `extra_rawfile()`'s header
+comment: `1` means the request was satisfied, which for `what == 1` is
+deliberately not "the file was parsed"; a caller that needs to know which
+happened compares `xctx->extra_raw_n` across the call, as `xschem raw read`'s
+`-case` option already does.
+
+**Two further refinements, added by the item-1 fix round** (both in
+`doc/claude/specs/results_selection.md` §3.1):
+
+- **R110c — the re-bind is opt-in and only the `read` VERBS opt in.** With the
+  re-stamp unconditional inside `extra_rawfile()`, the ~14 `src/draw.c` graph
+  walkers — which reach the same dedupe arm with the rect's `autoload` flag —
+  re-bound too, so merely *opening* a schematic carrying an `autoload=` graph
+  that named an already-loaded raw moved the binding to it and blinded the cell
+  the user had read it under. That is this issue's symptom recreated one door
+  along, and it contradicts driver ruling **U10**. `what` gains bit 6,
+  `RAW_READ_REBIND` (`src/xschem.h`), set by `raw read` / `raw table_read` /
+  `raw vcd_read` and by nothing in `src/draw.c`.
+- **the R110a guard still refreshes `raw->level`.** Returning early left the
+  level able to sit above `xctx->currsch`, which `xschem set raw_level` refuses
+  to write and which makes four `ngspice::` path builders return an empty string
+  where they owe a `?`.
+
+**Coverage** — the gap this issue's own "Coverage" section named is closed by
+`tests/headless/test_results_select.tcl` (new, **74** checks, ids
+`SEL1`..`SEL74`):
+
+- group **A** (spice arm) and group **B** (table arm) each drive the whole
+  scenario — read under cell A, `xschem load` an unrelated cell B, re-read, and
+  assert `xschem raw index` ≥ 0 — because **the arm is written twice** and one
+  fixture proves only half the file formats. Sabotage confirms two *disjoint*
+  red sets: removing the non-spice call reds SEL22/23/24 only; removing the
+  spice call reds SEL11/12/13/33/47/48/49 only.
+- group **C** pins R111: `raw switch` to a database bound elsewhere succeeds and
+  stays blind, and a `raw read` of that same slot one line later re-binds it.
+- group **D** pins R110a's guard (red without it).
+- group **E** makes the *level* half observable: read one level down
+  (`raw_level` 1), load an unrelated top-level cell, re-read, and `raw_level`
+  must move 1 → 0. On cells A and B alone the level is 0 either way, so a
+  `raw_level` check there cannot go red.
+- group **F** pins **R110c**: opening (and explicitly redrawing) a cell whose
+  graph rect carries `autoload=1` and names the loaded raw must leave that cell
+  blind and the original cell still resolving — with and without an explicit
+  `rawfile=` token. Real under X, vacuous under `--nogui`, where
+  `xschem draw_graph` is `has_x`-gated.
+- group **G** pins **R110b**, the case-mode re-prime, which had no check at all:
+  read under a cell whose labels give `fold`, re-read under an unrelated
+  hierarchy, **descend** (the only state where the verdict is replayed rather
+  than recomputed) and assert the answer is that hierarchy's own `unknown`.
+- group **H** pins that the stamp comes from `xctx->sch[xctx->currsch]` and not
+  from `sch[0]`: every other re-read in the suite happens at `currsch == 0`, so
+  hardcoding the top level left all of groups A-E green.
+- group **I** pins the level refresh on the guard path.
+
+Against the pre-change binary the original 49 checks report **10 FAILED / 39
+passed**; the shipped suite is 74/74.

@@ -2468,6 +2468,24 @@ extern int ngspice_data_nkeys(void);
 extern int ngspice_data_armed(void);
 extern void free_rawfile(Raw **rawptr, int dr, int no_warning);
 extern int update_op();
+/* extra_rawfile() `what` is a mode in the low nibble plus option bits above it.
+ * Bit 5 (32) is the long-standing "do not warn". Bit 6 (64) is RAW_READ_REBIND:
+ *
+ *   THIS what == 1 CALL IS A USER `read` GESTURE, SO A DEDUPE HIT RE-BINDS.
+ *
+ * R110 (doc/claude/specs/results_selection.md section 3.1, issue 0509) makes a
+ * `read` of an already-loaded file re-stamp raw->schname/raw->level with the
+ * schematic that is current NOW. That is right for `xschem raw read` and wrong
+ * for the graph walkers: src/draw.c reaches extra_rawfile() with `autoload`
+ * (1, or 33 with the warning bit) at ~14 sites, purely as a reader-dispatch
+ * flag while PAINTING a graph rect that carries `autoload=`. Without this bit
+ * merely opening a schematic whose graph names an already-loaded raw silently
+ * re-bound that database to the newly opened cell, and the cell the user
+ * actually read it under went blind -- 0509's own symptom recreated one door
+ * along, and a direct contradiction of driver ruling U10 ("graph rects with
+ * autoload= are left alone", doc/claude/results_batch/DECISIONS.md). So the
+ * re-bind is opt-in and only the `read` verbs opt in (src/scheduler.c). */
+#define RAW_READ_REBIND 64
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
 extern int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, double sweep1, double sweep2);
 extern int table_read(const char *f);

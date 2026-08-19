@@ -10137,6 +10137,9 @@ static int raw_case_reread(Tcl_Interp *interp, const char *type_override)
   fclose(fd);
 
   extra_rawfile(3, fname, delotype[0] ? delotype : NULL, -1.0, -1.0);
+  /* no RAW_READ_REBIND: the delete above guarantees this is a REAL read, so the
+   * dedupe arm the bit guards is unreachable from here and raw_read() does its
+   * own stamp. Spelled out so the omission reads as a decision, not an oversight. */
   ret = extra_rawfile(1, fname, rdtype[0] ? rdtype : NULL, s1, s2);
   /* the old `raw` is dangling from here on -- the delete freed it */
   if(!ret) {
@@ -10339,12 +10342,15 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 3 && !strcmp(argv[2], "table_read")) {
-        ret = extra_rawfile(1, argv[3], "table", sweep1, sweep2);
+        /* RAW_READ_REBIND: a `read` verb is the user saying "this file is the
+         * current result, HERE", so a dedupe hit re-binds (R110). src/draw.c's
+         * graph walkers reach the same arm and deliberately do not set it. */
+        ret = extra_rawfile(1 | RAW_READ_REBIND, argv[3], "table", sweep1, sweep2);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "vcd_read")) {
         /* identical to `xschem raw read <file> vcd`; spelled out for symmetry with
          * table_read and so the type token cannot be mistyped by a caller */
-        ret = extra_rawfile(1, argv[3], "vcd", sweep1, sweep2);
+        ret = extra_rawfile(1 | RAW_READ_REBIND, argv[3], "vcd", sweep1, sweep2);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "read")) {
         /* xschem raw read <file> [<type>] [<sweep1> <sweep2>] [-case <mode>]
@@ -10383,7 +10389,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           sweep2 = atof_spice(pos[3]);
         }
         n_before = xctx->extra_raw_n;
-        ret = extra_rawfile(1, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
+        ret = extra_rawfile(1 | RAW_READ_REBIND, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
         /* extra_rawfile(what == 1) makes the database it just read the CURRENT
          * one, so xctx->raw is the Raw this option is about. On a failed read it
          * is the restored previous one and must not be stamped. */

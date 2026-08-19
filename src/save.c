@@ -1818,6 +1818,87 @@ static void update_waves_menu_cue(void)
   }
 }
 
+/* R110 -- doc/claude/specs/results_selection.md section 3.1, issue 0509.
+ *
+ * A database is bound to the schematic that was current WHEN IT WAS READ:
+ * raw->schname / raw->level, stamped by raw_read() (src/save.c:1383-1384) and
+ * the other readers, and every name lookup is gated on that stamp still
+ * matching the current hierarchy stack (sch_waves_loaded(), src/draw.c:2825 ->
+ * get_raw_index(), src/save.c:3477).
+ *
+ * extra_rawfile(what == 1) dedupes: asking to READ a file that is already in
+ * the registry only makes it current. Before R110 it left the stamp alone, so
+ * reading a raw under cell A, opening cell B and re-reading the SAME path
+ * there returned 1 while every `xschem raw index <name>` stayed -1 -- success
+ * reported for a database in which not one signal resolved. `read` means "this
+ * file is the current result, HERE", so the binding is refreshed against the
+ * schematic that is current now. NOTHING IS RE-PARSED: the data is the file's,
+ * only the binding is the read's.
+ *
+ * `xschem raw switch` deliberately does NOT do this (R111): switching is
+ * navigation between things already bound, re-binding is what `read` is for --
+ * the same separation doc/claude/specs/mixed_signal_signal_browser.md RULING
+ * D5-7 makes when it keeps `raw switch` off the annotation array. NOR DOES A
+ * DRAW: this runs only for a caller that set RAW_READ_REBIND (src/xschem.h),
+ * i.e. the `raw read` / `raw table_read` / `raw vcd_read` verbs, never for the
+ * graph walkers in src/draw.c that reach the same dedupe arm with `autoload`
+ * while merely painting a rect (driver ruling U10).
+ *
+ * IT RE-BINDS ONE ANALYSIS SLOT, NOT THE WHOLE RUN. The registry key is
+ * (rawfile, sim_type) and a file holding a dc and a tran occupies two slots,
+ * which ruling U11 calls ONE result; `read`ing one of them leaves the sibling
+ * bound where it was. That boundary is R110's, deliberately: `read` names an
+ * analysis, and the run-level gesture is item 3's `xschem raw select`. Recorded
+ * in doc/claude/specs/results_selection.md section 3.1 so it is a stated edge
+ * and not an unnoticed one.
+ *
+ * The case-mode prime is repeated for the reason raw_read() gives at its own
+ * call (src/save.c:1391): after the re-stamp the current schematic IS the
+ * raw's own one, so this is the one moment the comparison is answerable --
+ * and leaving it would let raw_case_mode_schematic()'s descend arm
+ * (src/save.c:2877-2883) REPLAY a verdict computed against cell A as this
+ * design's answer. Crew ruling, recorded under R110. */
+static void raw_restamp_design(void)
+{
+  int lev;
+  if(!xctx->raw) return;
+  /* ALREADY BOUND HERE -> LEAVE IT ALONE, and this guard is not a softening of
+   * R110, it is what stops R110 creating the same blindness in the other
+   * direction. sch_waves_loaded() accepts any stamp that is still ON the
+   * current hierarchy stack, ancestors included (src/draw.c:2831-2838), so a
+   * raw read at the top and re-read after a DESCEND is already the current
+   * result here. Re-stamping it to the child would move the binding DOWN, and
+   * measured on 2026-08-19 with the unconditional form: read at
+   * hidlib/top (loaded=0), descend to leaf, re-read the same path
+   * (loaded=1, raw_level 0 -> 1), ascend -- loaded=-1, `raw index v(n1)` -1.
+   * The top-level design goes blind to its own results because it was re-read
+   * one level down. The shipped descend path already treats the level as
+   * load-bearing for exactly this reason: open_sub_schematic and hi_descend's
+   * new-window arm follow their re-read with `xschem set raw_level <n>` to push
+   * the stamp back UP (src/scheduler.c:12275-12297).
+   * So: re-bind only what is not bound here. Crew refinement of R110, recorded
+   * in doc/claude/specs/results_selection.md section 3.1 with this measurement. */
+  lev = sch_waves_loaded();
+  if(lev >= 0) {
+    /* ...but the LEVEL half of the stamp is still refreshed, and this is not a
+     * softening of the guard either: sch_waves_loaded() just told us WHERE on
+     * the current stack the schname sits, and raw->level is supposed to be that
+     * index. It can be stale and even ABOVE xctx->currsch -- read one level down
+     * and then open that same schematic flat, and raw->level stays 1 while
+     * currsch is 0. `xschem set raw_level` refuses to write such a value at all
+     * (it bounds 0 <= n <= currsch, src/scheduler.c:12291), and the four ngspice
+     * path builders in src/xschem.tcl (:4025, :4071, :4101, :4126) read the
+     * field directly and hand back an EMPTY string instead of their normal `?`.
+     * schname is left alone, so R110a's rule -- the binding does not move off
+     * the stack -- is untouched. */
+    if(xctx->raw->level != lev) xctx->raw->level = lev;
+    return;
+  }
+  my_strdup2(_ALLOC_ID_, &xctx->raw->schname, xctx->sch[xctx->currsch]);
+  xctx->raw->level = xctx->currsch;
+  raw_case_mode_schematic(xctx->raw);
+}
+
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
@@ -1830,7 +1911,23 @@ static void update_waves_menu_cue(void)
  * what == 4: print info
  * what == 5: switch back to previous
  * if bit 5 (32) of what is set do not issue warnings
- * return 1 if sucessfull, 0 otherwise
+ * if bit 6 (64), RAW_READ_REBIND, is set a what == 1 dedupe hit RE-BINDS the
+ *   database to the current schematic (R110/R110c). Set by the `read` verbs in
+ *   src/scheduler.c and by nothing in src/draw.c -- see src/xschem.h.
+ *
+ * RETURN VALUE -- and for what == 1 it is deliberately NOT "the file was
+ * parsed" (R112, doc/claude/specs/results_selection.md section 3.1, issue 0509).
+ * 1 means the request was SATISFIED: after the call the requested database is
+ * the current one. A `read` dedupes on (rawfile, sim_type) -- on rawfile alone
+ * in the non-spice arm below, which has no type to compare -- so an
+ * already-loaded file returns 1 with nothing re-parsed, having only been made
+ * current -- and RE-STAMPED with the schematic that is current now IF the
+ * caller set RAW_READ_REBIND (src/xschem.h) to say it is a user `read` gesture;
+ * see raw_restamp_design() below. A caller that must know WHICH of the two
+ * happened compares xctx->extra_raw_n across the call; `xschem raw read`'s
+ * -case option already does exactly that (src/scheduler.c:10385-10402).
+ * 0 means nothing changed: file not found, no such analysis in it, or no such
+ * slot -- and on a failed read the previously current raw is restored.
  */
 int extra_rawfile(int what, const char *file, const char *type, double sweep1, double sweep2)
 {
@@ -1838,8 +1935,11 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   int ret = 1;
   char f[PATH_MAX];
   int no_warning = what & 32;
+  /* R110's opt-in re-bind. See RAW_READ_REBIND in src/xschem.h for why a `read`
+   * from the scheduler re-binds and a `read` from a graph walker must not. */
+  int user_read = what & RAW_READ_REBIND;
 
-  what &= 0xf; /* remove warning bit */
+  what &= 0xf; /* remove the option bits (32 no_warning, 64 RAW_READ_REBIND) */
   if(type && !type[0]) type = NULL; /* empty string as type will be considered NULL */
 
   dbg(1, "extra_rawfile(): what=%d, no_warning=%d, file=%s, type=%s\n",
@@ -1918,6 +2018,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       xctx->extra_prev_idx = xctx->extra_idx;
       xctx->extra_idx = i;
       xctx->raw = xctx->extra_raw_arr[xctx->extra_idx];
+      /* R110: a USER read RE-BINDS. Non-spice (table/vcd) arm. The bit test is
+       * the whole of U10's protection: draw.c gets here too. */
+      if(user_read) raw_restamp_design();
     }
   /* **************** read ************* */
   } else if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file /* && type*/) {
@@ -1972,6 +2075,11 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       xctx->extra_prev_idx = xctx->extra_idx;
       xctx->extra_idx = i;
       xctx->raw = xctx->extra_raw_arr[xctx->extra_idx];
+      /* R110: a USER read RE-BINDS. Spice arm -- THE ARM IS WRITTEN TWICE, and
+       * that is half of why issue 0509 survived: patching one copy leaves the
+       * defect alive for the other half of the file formats. Keep both in step,
+       * bit test included. */
+      if(user_read) raw_restamp_design();
     }
   /* **************** switch ************* */
   } else if(what == 2 && xctx->extra_raw_n > 0) {

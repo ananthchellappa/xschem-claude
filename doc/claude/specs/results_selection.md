@@ -235,6 +235,115 @@ branches (`src/save.c:1916-1921` and `:1970-1975`), must refresh
 No re-parse. This makes `read` mean one thing — *"this file is the current
 result, here"* — and is the cleanest fix. Issue **0509** candidate (1).
 
+**R110 re-binds ONE ANALYSIS SLOT, not the whole run — a stated boundary, added
+by the item-1 fix round.** The registry key is `(rawfile, sim_type)`, so one
+`multi.raw` holding a DC sweep and a transient occupies **two** slots, which
+**U11** calls one result. `xschem raw read <file> <type>` names an analysis and
+re-binds that slot; the sibling stays bound where it was, and a `raw switch` to
+it lands on a database that still answers `-1` to every name. Measured
+2026-08-19 with a two-plot ascii raw:
+
+```
+read multi.raw dc under cellA ; read multi.raw tran under cellA   -> 2 slots
+load cellB (unrelated)                                            -> loaded=-1
+raw read multi.raw tran   -> rc=1 loaded=0  index v(n1)=1   (tran re-bound)
+raw switch multi.raw dc   -> rc=1 loaded=-1 index v(n1)=-1  (dc still on cellA)
+```
+
+That is R110's boundary and not a defect in it: `read` is an analysis-level verb.
+The **run**-level gesture is item 3's `xschem raw select`, and re-binding every
+slot of the chosen run is that verb's job under U11. Recorded here so the gap is
+a boundary someone chose rather than one nobody noticed.
+
+**R110a — CREW RULING, 2026-08-19 (results batch item 1). The re-stamp fires
+only when the current stamp does NOT already resolve against the stack.**
+R110's literal wording — *refresh from `xctx->sch[xctx->currsch]` before
+returning* — was implemented, measured, and found to create the same blindness
+pointing the other way. `sch_waves_loaded()` accepts any stamp still **on** the
+current hierarchy stack, ancestors included (`src/draw.c:2831-2838`), so a
+database read at the top and re-read after a **descend** is already the current
+result here; re-stamping it to the child moves the binding *down*. Measured with
+the unconditional form, `tests/headless/fixtures/hi_descend/hidlib`:
+
+```
+read at top          : loaded=0  raw_level=0  idx=1
+descend to leaf      : loaded=0  raw_level=0  idx=1
+re-read same path    : loaded=1  raw_level=1
+ascend to top        : loaded=-1 raw_level=1  idx=-1     <-- top level now blind
+```
+
+The shipped descend path already treats the level as load-bearing for exactly
+this reason: `open_sub_schematic` and `hi_descend`'s new-window arm follow their
+re-read with `xschem set raw_level <n>` to push the stamp back **up**
+(`src/scheduler.c:12275-12297`). So the rule is **re-bind only what is not bound
+here**, which is R110's stated goal — *"this file is the current result, here"* —
+with no case where a **`read` verb** makes a result less reachable than before.
+(That qualifier is not decoration: the first cut of R110 applied to the *draw*
+callers too and did make a result less reachable — see **R110c**, which is the
+rule that earns the sentence back.) Implemented as one guard in
+`raw_restamp_design()` (`src/save.c`); pinned by group D (SEL39/SEL41/SEL42) of
+`tests/headless/test_results_select.tcl`, which goes red if the guard is removed.
+
+**The guard still refreshes `raw->level`** — item-1 fix round. Returning early
+left the level un-refreshed and able to sit **above** `xctx->currsch`: read a
+database one level down (`level = 1`), then open that same cell **flat**
+(`currsch = 0`) and the stamp still resolves, so the guard fires and `level`
+stays 1. `xschem set raw_level` refuses to write such a value at all (it bounds
+`0 <= n <= currsch`, `src/scheduler.c:12291`), and the four `ngspice::` path
+builders in `src/xschem.tcl` (`:4025`, `:4071`, `:4101`, `:4126`) read the field
+directly and hand back an **empty string** where they owe a `?`. So on the guard
+path `raw->level` is set to the index `sch_waves_loaded()` just reported and
+`raw->schname` is left alone — the binding does not move off the stack, which is
+all R110a ever claimed. Pinned by group I (SEL70-SEL74).
+
+**R110b — the re-stamp re-primes the case-mode comparison**, for the reason
+`raw_read()` gives at its own call (`src/save.c:1391`): after a re-bind the
+current schematic **is** the raw's own one, and that is the one moment the
+comparison is answerable. Without it a verdict computed against cell A survives
+as `raw->sch_case_mode` and is **replayed** as this design's answer by the
+descend arm of `raw_case_mode_schematic()` (`src/save.c:2877-2883`). It costs
+one schematic walk per re-bind, the same price the read path already pays, and
+because of R110a it only runs when a re-bind actually happens.
+
+**Coverage — corrected by the item-1 fix round.** This paragraph first claimed
+the re-prime was *"covered by `test_raw_case_mode` staying green (277 checks)"*.
+That was false and was measured to be false: deleting
+`raw_case_mode_schematic(xctx->raw)` from `raw_restamp_design()` left
+`test_raw_case_mode` at 277/277 **and** `test_results_select` at 49/49 — the
+whole ruling could be removed from the binary with zero red. It now has a real
+check, group **G** (SEL58-SEL63) of `tests/headless/test_results_select.tcl`:
+read a raw under a cell whose labels give a decidable verdict (`fold`), load an
+unrelated hierarchy, re-read there, **descend** — which is the only state in
+which `raw_case_mode_schematic()` replays `raw->sch_case_mode` instead of
+recomputing (`src/save.c:2877-2883`) — and assert the answer is that hierarchy's
+own `unknown`. With the re-prime removed it reads `fold`, the first cell's
+verdict, replayed for a design that has nothing to do with the file.
+
+**R110c — CREW RULING, 2026-08-19 (item-1 fix round). The re-bind is opt-in, and
+only the `read` VERBS opt in.** `src/draw.c` reaches the same `what == 1` dedupe
+arm at ~14 sites, passing the graph rect's `autoload` (1, or 33 with the warning
+bit) purely as a reader-dispatch flag while **painting** a rect. With the
+re-stamp unconditional inside `extra_rawfile()`, merely *opening* a schematic
+carrying an `autoload=` graph that names an already-loaded raw re-bound that
+database to the newly opened cell, and the cell the user had actually read it
+under went blind. Measured, item binary vs `HEAD:src/save.c`:
+
+```
+                     first cut of R110      pristine / with R110c
+read under cellA     loaded=0  idx=1        loaded=0  idx=1
+open graph cell      loaded=0  idx=1  <--   loaded=-1 idx=-1   (F4 blindness)
+back on cellA        loaded=-1 idx=-1 <--   loaded=0  idx=1
+```
+
+That is 0509's own symptom recreated one door along, and it contradicts driver
+ruling **U10** (*graph rects with `autoload=` are left alone*). So `what` gains
+bit 6, `RAW_READ_REBIND` (`src/xschem.h`), set by `xschem raw read`,
+`raw table_read` and `raw vcd_read` (`src/scheduler.c`) and by nothing in
+`src/draw.c`. `raw_case_reread()`'s read does not set it either, and does not
+need to: it deletes the slot first, so the dedupe arm is unreachable from there.
+Pinned by group **F** (SEL51-SEL57), which is real under X and vacuous under
+`--nogui` (`xschem draw_graph` is `has_x`-gated) — the audit arm has X.
+
 **It is not the only fix, and the alternative already ships.**
 `xschem set raw_level <n>` (`src/scheduler.c:12275-12297`) writes *both*
 `raw->level` and `raw->schname` from Tcl, bounded to `0 <= n <= xctx->currsch`,
