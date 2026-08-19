@@ -79,7 +79,7 @@ were re-grepped for this plan.
 | ASE-L Results menu (2 adds, **no separator today**) | `src/ase_window.tcl:526-535` |
 | `select_raw` (only `.raw` filetype filter in the tree) | `src/xschem.tcl:16672` |
 | `load_raw` · `proc waves` | `:16687` · `:6373` |
-| the Waves menubar cascade | `:17128-17149` (`Clear` at `:17131`) |
+| the Waves menubar cascade | `:17136-17157` (`Clear` at `:17139`) |
 | `raw_is_loaded` (the by-word parser, ZERO callers) | `:6980` |
 | `calc::results_source` | `src/calculator.tcl:838` (consumer at `:892`) |
 | `.calc.res.path` readonly · `.calc.res.browse` disabled | `src/calculator.tcl:712` · `:723-727` |
@@ -310,15 +310,15 @@ assert `winfo manager` / `winfo ismapped` / slave order.
 ### Item 8 — `waves-menu-cadence-gate`
 
 Gate, do not repair (U4, U12). Under `cadence_compat`, the **eight** loading
-entries of the Waves cascade (`src/xschem.tcl:17128-17149`) — `Load first
+entries of the Waves cascade (`src/xschem.tcl:17136-17157`) — `Load first
 analysis found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`, `Sp`, `Spectrum` — **and
 `Op Annotate`** are blocked, with a sentence that names `cadence_compat` and
-points at `ASE-L ▸ Results ▸ Select`. **`Clear` (`:17131`) and `External viewer`
+points at `ASE-L ▸ Results ▸ Select`. **`Clear` (`:17139`) and `External viewer`
 keep working** — neither loads a result. Without `cadence_compat`, the menu
 behaves exactly as it always has.
 
 `cadence_compat` is an established gate, not a new mechanism: `set_ne
-cadence_compat 0` (`src/xschem.tcl:18236`), a menu checkbutton (`:16974`), read
+cadence_compat 0` (`src/xschem.tcl:18244`), a menu checkbutton (`:16974`), read
 from C via `tclgetboolvar("cadence_compat")` (`src/callback.c:633`).
 
 Background, for the comment you leave behind: `load_raw` (`:16687`) calls

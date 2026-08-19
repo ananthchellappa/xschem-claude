@@ -1043,7 +1043,7 @@ action `hilight.send_to_waveform`, which **ships UNBOUND** — no row in
 `viewer = atoi($sim(spicewave,default))` and reaches the graph senders whenever
 that index is `XSCHEM_GRAPH` and the configured tool name contains neither `Gaw`
 nor `Bespice`. **That one has exactly one live route** — the hand-written menu item
-`Highlight ▸ Send selected net/pins to Viewer` (`src/xschem.tcl:17418-17419`).
+`Highlight ▸ Send selected net/pins to Viewer` (`src/xschem.tcl:17426-17427`).
 Its `-accelerator Alt+G` is a **label**, not a binding: there is no keysym-103 row
 in `keybindings.csv` and the C `case 'g'` is gone. So E4/E5 are live in a default
 install, through one menu item whose name does not mention waveforms.
@@ -1069,8 +1069,8 @@ rows a user picked most deliberately.
 |---|---|---|---|
 | **E1d** | the ASE-L **Save-Options** arm: `sod_expr` → `sod_queue` → `sod_merge` → the session's `outputs` list | `sod_expr` `src/ase_window.tcl:961`; `sod_queue` `:2144`; `sod_merge` `:1313`, row built `:1329`; stored `:2154` | `render_deck` emits `.save [dict get $o expr]` (`src/ase.tcl:4602`) and `print [ase::backend::ngspice::print_arg [dict get $o expr]]` (`:4651`) straight from that list. **Typing this arm writes `.save VT(out)` and `print VT(out)` into the deck.** Measured on ngspice-46 that does not abort — the run finishes and the raw is written — but the `.save` is silently meaningless and the `print` errors on its own line. A silent wrong answer, which is worse. This is the single most important entry in §6 |
 | **E7t** | the `@spice_get_current` / `@spice_get_modelparam` / `@spice_get_modelvoltage` back-annotation composer | an **inlined duplicate of `get_fqdevice()`'s body**, `src/token.c:5212-5270` — not a call; nothing in `token.c` calls `get_fqdevice()` | back-annotation: composed, read, printed on the schematic, discarded. Two bodies, so a fix to one is not a fix to the other |
-| **E16** | `print_hilight_net(3)` — writes `.save` cards into a temp file, shows it in a `viewdata` window (`:4530`) and unlinks it (`:4536-4537`); the user can Save As from there | `src/hilight.c:4442`, emit `.save v(%s%s)` at `:4484-4487` with the `#` strip at `:4487`; **bound**: menu `xschem print_hilight_net 3` at `src/xschem.tcl:17326` (Alt-Ctrl-J) and the C chord at `src/callback.c:7627` | not Class T, because the text leaves the program; not Class P, because nothing about it is a `node=`. **It is the reason this spec has three classes and not two**, and §6's own grep pattern `v(%s` finds it |
-| **E17a** | `create_plot_cmd()` — the batch plot-command composer | `src/hilight.c:911`, emit `:1013` / `:1024`; live via `Simulation ▸ Send highlighted nets to viewer` (`src/xschem.tcl:17492`) | writes another tool's protocol |
+| **E16** | `print_hilight_net(3)` — writes `.save` cards into a temp file, shows it in a `viewdata` window (`:4530`) and unlinks it (`:4536-4537`); the user can Save As from there | `src/hilight.c:4442`, emit `.save v(%s%s)` at `:4484-4487` with the `#` strip at `:4487`; **bound**: menu `xschem print_hilight_net 3` at `src/xschem.tcl:17334` (Alt-Ctrl-J) and the C chord at `src/callback.c:7627` | not Class T, because the text leaves the program; not Class P, because nothing about it is a `node=`. **It is the reason this spec has three classes and not two**, and §6's own grep pattern `v(%s` finds it |
+| **E17a** | `create_plot_cmd()` — the batch plot-command composer | `src/hilight.c:911`, emit `:1013` / `:1024`; live via `Simulation ▸ Send highlighted nets to viewer` (`src/xschem.tcl:17500`) | writes another tool's protocol |
 | **E17b** | `send_net_to_gaw` / `send_current_to_gaw` | `src/hilight.c:1789` / `:1914`, reached from `hilight_net(GAW)` | they write `copyvar v(<path><tok>) sel #rrggbb` down a socket to gaw. gaw does not speak this grammar |
 | **E18** | the BESPICE senders | the two composers `src/hilight.c:1715` and `:1830` (three call sites, `:2605`, `:2623`, `:2636`) | same argument |
 

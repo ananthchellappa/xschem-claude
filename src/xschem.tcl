@@ -16756,6 +16756,14 @@ source $XSCHEM_SHAREDIR/ase.tcl
 source $XSCHEM_SHAREDIR/ase_window.tcl
 # Waveform Viewer window shell (wviewer; doc/claude/specs/waveform_viewer.md)
 source $XSCHEM_SHAREDIR/wave_viewer.tcl
+# `Results > Select` — the pure resolver and the registry readers
+# (doc/claude/specs/results_selection.md sections 4 and 5). MUST follow ase.tcl and
+# wave_viewer.tcl: results::resolve calls ase::raw_content_verdict / ase::last_rawfile
+# and results::list is built on wviewer::rawinfo_parse. Proc definitions only at
+# source time. Also listed in src/Makefile.in's /local/install_shares — a helper
+# .tcl that is sourced but NOT installed works in the source tree and fails for
+# every installed user, which is why test_results_select pins both halves.
+source $XSCHEM_SHAREDIR/results.tcl
 # Calculator — waveform expression builder (calc; doc/claude/specs/calculator.md).
 # Proc definitions only at source time; the window is built on first calc::open.
 source $XSCHEM_SHAREDIR/calculator.tcl

@@ -415,6 +415,63 @@ reimplement it.
 **R204** The resolver is **pure** — it reads the filesystem and returns a dict.
 It never touches the registry. The caller decides whether to act.
 
+### 4.1 RULINGS — the resolver's exact shape (item 2, 2026-08-19)
+
+Taken by the crew per `doc/claude/results_batch/DECISIONS.md` §C: these were
+genuinely open in §4 above, there is no human in the loop, and the code cannot
+be written without answering them. Evidence for each is in
+`doc/claude/results_batch/receipts/02-results-tcl-resolver.md`.
+
+**R201a — `state` is a dict of RESOLUTION INPUTS, not an ASE session state.**
+Every key optional, unknown keys ignored:
+
+| key | meaning |
+|---|---|
+| `rawfile` | the named result, exactly as stored; may be **relative** (R602's saved form), resolved against `rundir` |
+| `rundir` | what a relative `rawfile` is resolved against |
+| `derived` | the fallback path |
+| `key` | an ASE session key — supplies `derived` via `ase::last_rawfile` when `derived` is absent |
+| `netlist` | the netlist the result was produced from; present → the mtime half of `stale` is checked, absent → only the content half |
+
+An ASE session state was rejected as the argument type for two measured
+reasons. It would make the resolver reach into `ase::` to find its own inputs,
+which kills R204's purity claim and makes the proc untestable without a live
+session and a backend hook. And *"the state"* was already ambiguous between two
+dicts: the saved `rawfile` lives in the **viewer** sub-dict
+(`wviewer::snapshot`, `src/wave_viewer.tcl:3995`), not the state root, which is
+why `ase::ui::viewer_restore` (`src/ase_window.tcl:3472`) reads `$vd` for the
+path and `$st` for the rundir. A caller holding both passes both; a caller
+holding only a path passes `[dict create rawfile $p]`.
+
+**R201b — the returned dict's key set is fixed**: `status`, `path`, `named`,
+`derived`, `why`, `reason`, `msg`. `path` is R201's third column — *what the
+caller gets anyway*. `named` is the absolute-ised named result and is kept even
+when the file is gone, because R804-class sentences name it. `reason` says
+which half fired (`content` | `mtime` | `missing` | `unreadable` | `{}`), so a
+caller can distinguish them without re-parsing `why`. `msg` is the one sentence
+and is never empty.
+
+**R201c — a file that exists but cannot be READ is `invalid`, not `stale`.**
+R201's table says `ok` requires "exists **and is readable**" but assigns the
+unreadable case to no status. It belongs with `invalid`: R202 makes `stale` a
+status the user may still **select**, and an unreadable file cannot be selected
+at all, so reporting it as stale would offer a choice that cannot be honoured.
+`reason unreadable` keeps it distinguishable from `reason missing` for a caller
+that wants to say which.
+
+**R201d — the derived path is existence-gated in every status that returns
+it.** `ase::last_rawfile` already gates itself (`src/ase.tcl:1952` returns `{}`
+unless the file is there); an explicitly passed `derived` gets the same gate.
+This is what makes T-H's *"`invalid` yields the derived path when one exists on
+disk and `{}` otherwise"* true for both sources rather than only for the ASE
+one.
+
+**R201e — `default` is a statement about the STATE, not about the file.** When
+nothing is named, the derived path is returned as-is without a content or mtime
+verdict. Running the verdict there would report a *derived* default as stale,
+which no user chose and cannot act on; the caller that goes on to select it
+resolves it again by name and gets the verdict then.
+
 ---
 
 ## 5. The verb and the Tcl API
@@ -464,6 +521,65 @@ paths that will still bypass it and names them, following
 **0507**'s ruling. If `raw_is_loaded` survives 0507, it is re-expressed on top of
 `results::list`.
 
+### 5.1 RULINGS — the two registry readers (item 2, 2026-08-19)
+
+**R304a — `results::list` lists EVERY registry slot, VCD and table included.**
+R102 says a VCD is not a selectable *result*, but `results::list` is the
+registry **reader**, not the policy: a dialog that wants analog only filters on
+`type` (item 7), and a caller asking *"is this path already loaded?"* — which is
+exactly what `results::select` asks before choosing between `read` and `switch`
+(R301) — must see every slot or it will re-read one it already has. Hiding
+slots here would put R102's policy in the one place that cannot express an
+exception.
+
+**R304b — the `cur` column MARKS the current slot, it does not MOVE it.** The
+list comes back in the engine's own order with `cur 1` on one row, rather than
+current-first. `wviewer::signal_list_all` sorts current-first because it is
+building a *tree for a human*; `results::list` is an API whose `idx` must stay
+the engine's index, since R301(1) and L10 pass that index back to
+`xschem raw switch`.
+
+**R305a — R103's third part is asked of the ENGINE, not re-derived in Tcl.**
+`results::current` returns `{}` unless `xschem raw loaded` (`src/scheduler.c:10448`
+→ `sch_waves_loaded()`, `src/draw.c:2825`) answers `>= 0`. Two properties of
+that answer look like bugs from Tcl and must not be "fixed" at the call site:
+an **ancestor** match counts, so a raw read at the top still resolves after a
+descend (this is R110a's basis, item 1 §2); and **level 0 is a legal answer**,
+so the test is `>= 0` and never `!= 0`. Re-deriving the comparison in Tcl would
+be a second copy of a rule with 52 C call sites.
+
+**R305b — R102 gates `results::current`: a VCD or a table slot is not a
+selection.** RULED by the crew 2026-08-19 in the item-2 FIX ROUND, because
+neither the code nor R304a covered it and the shape is reachable from the real
+run path. Measured: with an ascii transient raw and a VCD both read into one
+context, `xschem raw info` reports `1 current` on the **VCD**, and
+`results::current` was returning that row as *the selected result* — which
+R305 then hands to the Calculator's Results Dir row (a `.vcd` in a field that
+names the result Evaluate reads). `ase::attach_dbs` produces exactly this
+ordering: it reads the analog raw and **then** the VCDs (L8), switching back to
+slot 0 only `if {[llength $got]}`.
+
+So `results::current` returns `{}` when the current slot's `type` is not an
+analog result. It does **not** skip past it to another slot: the selection *is*
+`extra_idx` (R103, F2), and "the selection is a database that is not a result"
+is honestly answered by "there is no selected result", not by silently
+promoting a slot the user did not choose.
+
+**Where the predicate comes from, and the one token that is written down.** The
+authority for R102's *"not a VCD or a table"* is `raw_type_is_non_spice()`
+(`src/save.c:1622`), driven by `raw_reader_table[]` (`:1610-1613`) — the same
+table that picks the reader. **It has no Tcl verb.** `xschem raw is_digital
+<type>` (`src/scheduler.c:10450`) exposes the table's *other* column and answers
+a deliberately different question: `test_backannotate_digital` BA12 pins
+`is_digital table` -> **0**, "an ascii TABLE is not: it is columns of real
+numbers, an analog result by another reader — the ruling is about logic levels,
+not about 'anything that is not a spice raw'". So the engine can answer the VCD
+half of R102 and not the table half. `results::_is_result_type` therefore asks
+the engine first and names exactly one reader token, `table`, in one place with
+its C predicate cited beside it. When a `non_spice` question reaches Tcl —
+item 3's `xschem raw select` is the natural home for it — that proc becomes a
+one-line delegation. Do not copy the token to a second site.
+
 **R305** `results::current {}` returns the selected result's dict or `{}`.
 **RULED (§17 decisions 3 and 6): the Calculator's Results Dir row consumes it,
 and `calc::results_source`'s `self` arm is removed entirely** — the Calculator
@@ -481,7 +597,7 @@ database that is loaded and current but whose stamp does not resolve (F4) —
 today, so one is added if `Select…` is to be grouped apart). Hand-built plain
 Tk `$top.mb.results add command` — ASE-L's menubar is not generated from
 `actions.csv` (only the main File menu is, via `build_menu_from_table`,
-`src/xschem.tcl:16912`), so **no CSV row is needed**. A key chord would need one,
+`src/xschem.tcl:16920`), so **no CSV row is needed**. A key chord would need one,
 plus `action_registry[]` in `callback.c`; §16 says v1 has no chord.
 
 **R402** The dialog is a **modeless** ASE-family window — no `grab`, no
@@ -705,6 +821,19 @@ never the status bar directly** — the house rule.
 not by full path — the full path lives in the balloon. `wviewer::db_label`
 (`src/wave_viewer.tcl:2401`) already produces this.
 
+**R803a — the RESOLVER's sentences name the file by `file tail`, not by full
+path, and not by `db_label`.** RULED 2026-08-19 in the item-2 FIX ROUND. Two
+halves. First, the defect: the two `invalid` sentences interpolated the absolute
+path while `default`/`ok`/`stale` already used the tail, so the one status a
+user meets on a broken restore was the one that put a 120-character path into
+R404's one-line Status region. Fixed — R803 binds all four. Second, the limit:
+`db_label` is *file tail + analysis*, and the resolver has **no `sim_type` input
+at all** (R201a's key set is `rawfile`/`rundir`/`derived`/`key`/`netlist`) — it
+resolves a *path*, before anything is loaded, so there is no analysis to name.
+The full `db_label` form is reachable only in `results::select` (R302) and in
+the dialog (R404), which do know the type. The resolver's obligation is the
+tail; the full path stays in the balloon and in the returned `named` field.
+
 **R804** A selection that lands but cannot resolve (F4 — the stamp does not match
 the current hierarchy stack) is **reported as such, in those words**, and is not
 silently reported as success. This is the sentence the whole feature exists to
@@ -714,6 +843,15 @@ avoid having to guess at:
 
 **R805** The four resolver statuses each have exactly one sentence form, and
 `stale` says *why* it is stale (content verdict, or older than the netlist).
+
+**R805a — one terminator, not two.** `stale` composes *"Using `<tail>`, but
+`<why>`."*, and its two `why` sources are shaped differently: the mtime half's
+is written here as a clause, while the content half's is quoted verbatim from
+`ase::raw_content_verdict` (R203 forbids restyling it) and is already a
+finished, full-stopped sentence — so every content-half message ended in `..`.
+The composition strips one trailing full stop from `why`. **Only the composed
+`msg` is trimmed**: the returned `why` field stays the verdict's own words,
+because that is what R203 is pinned on.
 
 ---
 
@@ -780,6 +918,18 @@ scripted selection legitimately leaves no trace in the history.
 systematically stale (the `rawinfo_parse` comment alone is wrong twice — issue
 0507). Re-grep every one before quoting it.
 
+**And the twin, measured in the item-2 FIX ROUND: an insertion into
+`src/xschem.tcl` silently stales every `xschem.tcl:<line>` citation below it.**
+Item 2's 8-line `source $XSCHEM_SHAREDIR/results.tcl` block at `:16760` shifted
+12 citations across six documents by +8 — including two in this spec, two in
+`doc/claude/results_batch/PLAN.md` and two in issue **0508**, which item 8 of
+this same batch is scheduled to close. Nothing goes red: no check and no source
+comment cites a line above the insertion point, so the whole cost is paid by the
+next reader who follows a pointer. **Any insertion into a file other documents
+cite by line number obliges a re-grep** —
+`grep -rnoE 'xschem\.tcl[:# ]+1[6-8][0-9]{3}' doc/ src/ tests/` — and a
+re-derivation of each number from its symbol, never a blind `+N`.
+
 ---
 
 ## 12. Verification invariants
@@ -803,7 +953,7 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
 | **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. |
 | **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. |
-| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17131`) is the sole permitted caller. Issue 0508, pinned. |
+| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17139`) is the sole permitted caller. Issue 0508, pinned. |
 | **T-M** | A selection whose stamp does not match the current hierarchy stack is **not** reported as success (R804) — sabotage: make `results::select` return ok unconditionally, T-M goes red. |
 
 **Anti-vacuity, per `doc/claude/specs/calculator.md` §11.3's two notes:**
@@ -981,7 +1131,7 @@ the direction is away from it.
   behaviour is *documented* rather than repaired in that mode.
 
 `cadence_compat` is an established gate here, not a new mechanism:
-`set_ne cadence_compat 0` (`src/xschem.tcl:18236`), a menu checkbutton
+`set_ne cadence_compat 0` (`src/xschem.tcl:18244`), a menu checkbutton
 (`:16974`), read from C via `tclgetboolvar("cadence_compat")`
 (`src/callback.c:633`), and it already carries a write-trace that force-enables a
 bundled setting (`cadence_compat_sync` → `autotrim_wires`, `:18773-18778`).

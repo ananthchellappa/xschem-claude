@@ -3,7 +3,7 @@
 **Status:** OPEN. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
 **Area:** `proc load_raw` / `proc waves` / `proc select_raw`
 (`src/xschem.tcl:16687` / `:6373` / `:16672`), the Waves menubar cascade
-(`src/xschem.tcl:17126-17149`), the `raw_read` and `raw_clear` scheduler arms
+(`src/xschem.tcl:17134-17157`), the `raw_read` and `raw_clear` scheduler arms
 (`src/scheduler.c:10776` / `:10761`).
 **Found:** 2026-08-18, mapping xschem's surfaces against Cadence ADE-L's
 `Results > Select…`.
@@ -107,7 +107,7 @@ overwrites it with `tk_getOpenFile` inside `if {[info exists has_x]}`
 
 1. **Decide the semantics and write them down.** Either
    (a) `load_raw` moves to the appending `xschem raw read`, and the Waves menu
-   grows an explicit `Clear` (it already has one at `xschem.tcl:17131`), or
+   grows an explicit `Clear` (it already has one at `xschem.tcl:17139`), or
    (b) the replace-everything behaviour is kept as deliberate and *said so* — in
    the menu label, in `raw_read`'s comment, and in the spec.
    (a) is the better answer if `doc/claude/specs/results_selection.md` lands,
