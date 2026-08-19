@@ -300,6 +300,14 @@ ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 `doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).
 
+**Issue numbers on `fluid-editing` start at 0500.** File every new issue at the
+next free number **≥ 0500** (highest in use: 0512 → next 0513). The 04xx tail
+belongs to the live `annotate` branch, which has filed through 0448 and keeps
+counting upward; `open_pdk` is frozen at 0415 and already merged here. Taking a
+number below 0500 collides with `annotate` file-for-file — that has happened
+once already (0420–0432, renumbered +80 on 2026-08-19). The rule, the mapping
+and the derivation command are at the top of `doc/claude/issues/status.md`.
+
 **Wiring work**: before touching anything that creates, moves, deletes, or reroutes wires
 (move.c, the fluid passes, trim/break/merge, connected drag/rotate/flip), read
 `doc/claude/WIRING.md` — data model, END pipeline, pass contracts, landmines, open risks.

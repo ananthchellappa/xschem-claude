@@ -35,10 +35,38 @@
 > **Branch is the discriminator, not date.** `annotate`'s own 0420–0432 are
 > different issues and did not move; a `+80` applied to one of its numbers lands
 > on a real but unrelated file here.
-> **Residual risk, not fixed here:** 0416–0419 are unique to this branch and
-> `open_pdk` last filed 0415, so an `open_pdk` session resuming at 0416 would
-> collide. 0416/0417 are shared with `annotate` byte-for-byte and must not be
-> moved unilaterally; 0418/0419 were left with them.
+> **0416–0419 stay where they are, and that is now safe.** `open_pdk` is
+> **frozen** — ruled 2026-08-19, it will file nothing further, so the 0416+ gap it
+> left can never be re-entered. 0416/0417 are byte-identical on `annotate` and
+> must not be moved unilaterally in any case; 0418/0419 were left with them.
+
+---
+
+## Numbering rule for `fluid-editing` — **0500+ only** (ruled 2026-08-19)
+
+**Every new issue filed on this branch takes the next free number at or above
+0500.** Highest in use here is **0512**, so the next one is **0513**.
+
+Why, in one line each:
+
+- **`open_pdk` is frozen.** Its last issue is 0415 and there will be no more. It
+  is already fully merged here at `cad186ea`, so nothing below 0416 can move.
+- **`annotate` owns the 04xx tail.** It is live, branched at `577ef5bc`, and has
+  filed through **0448**. It keeps counting upward from there; this branch does
+  not follow it. Whoever works `annotate` should stay **below 0500** — that block
+  belongs to `fluid-editing`.
+- **The gap 0449–0499 is deliberate.** It is `annotate`'s headroom, not a pool to
+  draw from. Do not fill it from this branch.
+- **0418 and 0419 are the only 04xx numbers unique to this branch**, and they are
+  historical. Do not treat them as “the count continues here”.
+
+Deriving the next number, rather than trusting this line:
+
+```sh
+ls doc/claude/issues/ | grep -E '^0[0-9]{3}-' | cut -c1-4 | sort -n | tail -1
+```
+
+---
 
 Snapshot taken **2026-07-30**, immediately after issue 0176 was closed
 (`c8671825` + `d5968562`). This is a point-in-time answer to "what is still
