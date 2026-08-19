@@ -93,3 +93,61 @@ would ship without the crew's sabotage and adversary passes.
   suite stays 97/97. All three early returns in `text` are mutually redundant and no
   single-point failure in any one is detectable. Rows S19/S20 claim to cover them but are
   caught by an earlier guard and never reach the one they name.
+
+---
+
+## S6 ACCEPTANCE — measured through the shipped carrier, ACCEPTED, NOT FIXED (2026-08-19)
+
+`src/op_annot.tcl:636-650` says in terms that "S6 must not land the carrier
+symbol until it is closed or explicitly accepted." **S6 accepted it.** This is
+that record.
+
+### BEFORE (S6's Measure agent, verbatim)
+
+    B04 op_annot::text proc exists                               : 1
+    callers of op_annot::text tree-wide, excluding src/op_annot.tcl and
+      tests/headless/test_op_annot.tcl -> (count: 0)
+
+The raise existed but reached no draw path, because no draw path called the proc.
+
+### AFTER (S6, through `devices/annotate_params`)
+
+A descriptor whose `params` value is not a well-formed Tcl list still registers
+at **rc=0** (`register` validates only `dict size`), `op_annot::text` still
+raises `unmatched open brace in list` — and through the carrier the raise is
+absorbed by `tcl_hook2` → `tclpropeval2`'s `catch`, which returns `?\n`. The
+block renders a single **`?`**. Measured, in one process, both halves.
+
+So the cost through the carrier is **bounded degradation, never a crash**, and it
+is the same failure mode the three shipped PDK prototype carriers have had for
+years on their own failures.
+
+### The decision — ladder rung L3 (user-visible, no prior ratification)
+
+**D6. The carrier ships with 0447 open.** Rejected: adding list validation to
+`op_annot::register` (this issue's own option 1, and still the preferred fix). It
+is out of S6's Files cell, and — the substantive reason — it **changes a shipped
+proc's rc contract**, so a user's malformed rc would begin raising at STARTUP
+where today it degrades at draw. That is a better failure, but it is a
+user-visible behaviour change that belongs to a step that owns `op_annot.tcl`
+and can run the full sabotage/adversary passes on it. Reachable only via **I5**,
+from a user's own rc.
+
+### Pinned by a green check that asserts the DEGRADED behaviour
+
+`tests/headless/test_op_annot.tcl` row **K17**, which **must run last in section
+K** — it destroys the nmos descriptor. It asserts rc=0 at register, the raise
+from `text`, and `?` through `translate`.
+
+**⚠ K17 IS NOT SPECIFIC TO THIS MECHANISM.** S6's sabotage pass found it passes
+VACUOUSLY under variant SB1 (the `@ref])` no-space spelling), which also renders
+`?`. Any breakage that yields `?` satisfies K17. When this issue is fixed, K17
+must be replaced by the per-key rows this file's "Test rows owed" section
+specifies, not merely inverted.
+
+### LEDGER QUESTION STILL OWED TO A HUMAN
+
+> Is a `?` block an acceptable failure mode for a user's own malformed
+> descriptor, or must `op_annot::register` reject it loudly at rc-source time?
+
+S6's status is **E** for this question among others.

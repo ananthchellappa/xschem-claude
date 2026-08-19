@@ -15322,6 +15322,12 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
          xschem annotate_op
        }
     }
+  # doc/claude/specs/op_annotation.md §4.4 — the PDK-neutral OP-parameter
+  # carrier. Every moving part lives in the proc called below (src/op_annot.tcl)
+  # so a headless test can drive it; this cascade is built under
+  # `if {[info exists has_x]}` and --nogui never enters it.
+  $topwin.menubar.simulation.graph add command -label {Add device OP annotator} \
+    -command {op_annot::place_annotator}
   $topwin.menubar.simulation.graph add checkbutton -label "Live annotate probes with 'b' cursor" \
      -selectcolor $selectcolor -variable live_cursor2_backannotate
   $topwin.menubar.simulation.graph add checkbutton -label "Hide graphs if no spice data loaded" \

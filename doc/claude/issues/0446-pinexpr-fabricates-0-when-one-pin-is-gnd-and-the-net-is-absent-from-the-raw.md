@@ -145,3 +145,73 @@ measurement of a device with its gate shorted to its source.
 yet. The moment S6 lands the PDK-neutral carrier symbol, this becomes visible on real
 schematics. S6 must either close this first, or ship the carrier with a deliberate,
 recorded decision to accept it.
+
+---
+
+## S6 ACCEPTANCE — measured through the shipped carrier, ACCEPTED, NOT FIXED (2026-08-19)
+
+The paragraph above says S6 "must either close this first, or ship the carrier
+with a deliberate, recorded decision to accept it." **S6 accepted it.** This is
+that record.
+
+### BEFORE (S6's Measure agent, verbatim, on a tree with no carrier)
+
+    B01 flat   xschem_library/devices/annotate_params.sym exists : 0
+    B02 newsym xschem_libs_newsym/devices/annotate_params exists : 0
+    B03 find_file_first annotate_params.sym                      : ||
+    B04 op_annot::text proc exists                               : 1
+    callers of op_annot::text tree-wide, excluding src/op_annot.tcl and
+      tests/headless/test_op_annot.tcl -> (count: 0)
+
+i.e. the defect was real but **unreachable**: nothing rendered `op_annot::text`
+anywhere in the product.
+
+### AFTER (S6, through `devices/annotate_params` on a flat sky130 schematic)
+
+Same fixture, one FET with its source on GND, a raw containing neither `v(d)`
+nor `v(g)`. Eight rows blank correctly; two fabricate:
+
+    id    =        gm    =        gds   =        vth   =        vdsat =
+    cgg   =        vgs   = 0      vds   = 0      ft    =        gm/id =
+
+Independently reproduced by three S6 agents (plan, implement, adversary), the
+last of them through the **real draw path** under xvfb, not only through
+`xschem translate`.
+
+### The decision — ladder rung L3 (user-visible, no prior ratification)
+
+**D5. The carrier ships with 0446 open.** Rejected alternatives, both considered
+and both worse:
+
+* *(a) a Tcl-side per-pin finiteness pre-check inside `op_annot::text`.* It would
+  re-parse a user-supplied expression in Tcl, edit S5's contract-bearing proc,
+  and paper over a C defect (`token.c:4364` hardcodes GND to `0.0`; `eval_expr`
+  then reads `expr(- - 0.0 )` as a unary minus) that the S6 brief explicitly
+  forbade fixing in this step.
+* *(b) dropping the `pinexpr` rows from the carrier block.* Hides correct data in
+  the common case, and forks the block shape between carrier 1 (S6) and carrier 2
+  (S9).
+
+**Blast radius, measured:** only the two descriptors carrying `pinexpr` —
+`sky130A/sky130_procs.tcl:387-388` and `gf180mcuD/gf180_procs.tcl:94-95`. IHP
+(`ihp-sg13g2/sg13g2_procs.tcl:703`) deliberately has none and **cannot** hit
+this.
+
+### Pinned by a green check that asserts the WRONG behaviour
+
+`tests/headless/test_op_annot.tcl` row **K16** asserts `vgs = 0` / `vds = 0`
+against a raw with no `v(d)`/`v(g)`, and the other eight rows blank. It is green
+today **on purpose**: when this issue's C fix lands, K16 goes red, and that red
+is the signal that the fix reached the carrier. Do not "repair" K16 — update it
+in the same change that fixes the C, and say so in the commit.
+
+Row **S17b** already pinned the same fabrication one level down, before a carrier
+existed.
+
+### LEDGER QUESTION STILL OWED TO A HUMAN
+
+> Ship a carrier that paints `vgs = 0` / `vds = 0` on a FET against a wrong
+> `.raw` (sky130 and gf180 only), or hold the carrier until this issue's C fix
+> (`token.c:4364` / `:5441`) lands?
+
+S6's status is **E** for this question among others.

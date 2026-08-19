@@ -1830,6 +1830,476 @@ check {S18 after go_back raw loaded is -1, annot_p is STILL 0, and the block is 
   incr fail
 }
 
+# =============================================================================
+# SECTION K — S6 of doc/claude/specs/op_annotation.md: THE PDK-NEUTRAL CARRIER
+# =============================================================================
+# S1 built the name builder, S2 filled the descriptor store, S5 built the
+# formatter — and NOTHING CALLED IT. Measured at 9fe40128: `op_annot::text` has
+# zero callers tree-wide outside src/op_annot.tcl and this file, so 97 green
+# checks stood around a proc no schematic could reach. S6 is the consumer: one
+# PDK-neutral symbol whose single tcleval text is `op_annot::text @ref`, plus
+# the menu item that places it pre-filled from the selection.
+#
+#   xschem_library/devices/annotate_params.sym                  (flat tree)
+#   xschem_libs_newsym/devices/annotate_params/symbol/<same>.sym      (nested tree)
+#   op_annot::place_annotator                                    (src/op_annot.tcl)
+#   one `add command` in Simulation > Graphs                     (src/xschem.tcl)
+#
+# ============================================================================
+# ⚠ WHY THE SYMBOL IS WRITTEN TWICE — DECISION D1, AND ROW K1 IS ITS ONLY GUARD
+# ============================================================================
+# The step's Files cell names only the flat copy. Measured, that copy is
+# INVISIBLE in all three PDK workareas: each cadence_style_rc sets
+# `XSCHEM_LIBRARY_PATH {}` with `library_registry_defs_only 1`, and each
+# library.defs resolves `DEFINE devices` to ../../xschem_libs_newsym/devices.
+# Live proof, with this file's own sky130 path set:
+#     abs_sym_path devices/lab_pin .sym
+#       -> …/xschem_libs_newsym/devices/lab_pin/symbol/lab_pin.sym   (nested)
+#     abs_sym_path lab_pin .sym
+#       -> …/xschem_library/devices/lab_pin.sym                      (flat)
+# So the `devices/`-qualified spelling the menu item uses reaches the NESTED
+# tree only. Both copies must exist and must not drift; K1 is what says so.
+#
+# ============================================================================
+# ⚠ THE ONE SPACE THE BRIEF, THE PLAN AND SPEC §4.4 ALL OMIT — ISSUE 0444
+# ============================================================================
+# The carrier's text must be exactly
+#     tcleval([op_annot::text @ref ])
+# with a SPACE before the `]`. token.c:24's SPACE(c) = {\n, space, \t, \0, ;}
+# does not contain `]`, so without it the token is `@ref]`, misses
+# get_tok_value() and appends NOTHING (token.c:5351-5366); the tcleval body is
+# left unbalanced, tclpropeval2's catch turns it into `?`, and every row of the
+# block becomes a question mark. Measured side by side in one process:
+#     tcleval([op_annot::text @ref ])  -> the ten-row block
+#     tcleval([op_annot::text @ref])   -> `?`
+# All three shipped PDK prototypes already carry that space. K3 asserts the
+# literal, and K11 proves the causation MECHANICALLY — it takes the file's own
+# text, deletes that one space, and renders both.
+#
+# ============================================================================
+# ⚠ THE ROWS READ THE .sym BYTES, NOT A LOADED SYMBOL
+# ============================================================================
+# Section K claims things about the FILE that ships. Going through the loader
+# would let a normalisation hide exactly the spelling 0444 is about, so K2-K5
+# regexp the raw bytes and K8/K10/K11/K16/K17 feed THAT extracted string to
+# `xschem translate` — the real render path (translate() ends in
+# `spice_get_node(tcl_hook2(result))`, token.c:5437). A row that hand-typed the
+# text would stay green against a wrong symbol on disk.
+#
+# ============================================================================
+# ⚠ TWO DEFECTS ARE ACCEPTED HERE, NOT FIXED — DECISIONS D5 AND D6
+# ============================================================================
+# K16 (issue 0446) and K17 (issue 0447) assert the CURRENT WRONG behaviour, for
+# the same reason S17b does: both faults are outside this step's Files cell,
+# both are bounded (a fabricated 0; a `?` block), and pinning them means the
+# fix reds a named row instead of silently changing what a schematic shows.
+#
+# ============================================================================
+# ⚠ WHAT SECTION K CANNOT SEE
+# ============================================================================
+# * NO PIXELS. Nothing here draws, and `xschem print svg` under --nogui yields
+#   an empty 3 kB canvas (measured) — it is not an oracle. The carrier is the
+#   first user-visible deliverable of the whole plan and it owes an eyeball;
+#   the debt is recorded with tests/headless/owed.sh add look.
+# * THE MENU ITEM ITSELF. The Graphs cascade is built under `if {[info exists
+#   has_x]}` and never runs with --nogui, so K15 is a SOURCE GREP. What it
+#   guards is one line carrying a label and a call; everything that can go
+#   wrong lives in op_annot::place_annotator, which K12-K14 drive for real.
+# * hide=op HAS NO EFFECT YET. Measured on three scratch symbols differing only
+#   in the hide token (instance_bbox width at both show_hidden_texts states):
+#   hide=none 186/186, hide=op 186/186 — byte-identical — hide=true 16/186.
+#   set_text_flags (actions.c:1121) tests exact `instance` then
+#   strboolcmp(str,"true"); strboolcmp (util.c:72) classifies `op` as s=-1 and
+#   falls through to strcmp, so no bit is set. K4 is therefore the ONLY thing
+#   standing between now and S7 giving the token teeth: the carrier ships
+#   ALWAYS-ON, and the existing "Annotate Operating Point" item's
+#   `set show_hidden_texts 1` does not gate it either.
+
+set K_FLATSYM [file join $repo xschem_library devices annotate_params.sym]
+set K_NEWSYM  [file join $repo xschem_libs_newsym devices annotate_params \
+                         symbol annotate_params.sym]
+set K_QMARK   "?\n"
+
+## The bytes of a .sym, or the literal NO-FILE. NEVER raises: an absent symbol
+## must red section K row by row, not abort it at the first read and leave the
+## remaining claims unmade.
+proc opa_k_slurp {p} {
+  if {![file isfile $p]} { return NO-FILE }
+  set f [open $p r] ; set d [read $f] ; close $f
+  return $d
+}
+## Every T record of a .sym as {body attrs}, or NO-FILE. `-lineanchor` and NOT
+## `-line`: the attribute block spans newlines, and `-line` would also set
+## -linestop, which stops a bracket expression at a newline and truncates it.
+proc opa_k_texts {p} {
+  set d [opa_k_slurp $p]
+  if {$d eq {NO-FILE}} { return NO-FILE }
+  set out {}
+  foreach {all body attrs} [regexp -all -inline -lineanchor \
+        {^T \{([^{}]*)\}[- 0-9.]+\{([^{}]*)\}} $d] {
+    lappend out [list $body $attrs]
+  }
+  return $out
+}
+proc opa_k_text_at {p i} {
+  set t [opa_k_texts $p]
+  if {$t eq {NO-FILE}} { return NO-FILE }
+  if {[llength $t] <= $i} { return NO-SUCH-T-RECORD }
+  return [lindex $t $i]
+}
+## The K record's lines, or a marker. This is the `type=` the whole registry
+## dispatches on plus the template the menu item relies on for its default.
+proc opa_k_krec {p} {
+  set d [opa_k_slurp $p]
+  if {$d eq {NO-FILE}} { return NO-FILE }
+  if {![regexp -lineanchor {^K \{([^{}]*)\}} $d -> k]} { return NO-K-RECORD }
+  return [split $k \n]
+}
+## The body of the first tcleval T record, or a marker.
+proc opa_k_tcleval {p} {
+  set t [opa_k_texts $p]
+  if {$t eq {NO-FILE}} { return NO-FILE }
+  foreach r $t {
+    if {[string match tcleval* [lindex $r 0]]} { return [lindex $r 0] }
+  }
+  return NO-TCLEVAL-TEXT
+}
+## Which of <wanted> the tcleval text's attribute block carries, as 0/1 in the
+## order asked, or a marker. Presence rather than an exact golden so a later
+## legitimate attribute does not red the row that guards hide=op.
+proc opa_k_haveattrs {p wanted} {
+  set t [opa_k_texts $p]
+  if {$t eq {NO-FILE}} { return NO-FILE }
+  set a {}
+  foreach r $t {
+    if {[string match tcleval* [lindex $r 0]]} { set a [split [lindex $r 1] \n] ; break }
+  }
+  if {$a eq {}} { return NO-TCLEVAL-TEXT }
+  set out {}
+  foreach w $wanted { lappend out [expr {[lsearch -exact $a $w] >= 0 ? 1 : 0}] }
+  return $out
+}
+## Render <txt> on instance <inst> through the REAL translate path, or a marker.
+## `xschem translate` raises on an unknown instance; a marker keeps the row red
+## rather than aborting the section.
+proc opa_k_render {inst txt} {
+  if {[catch {xschem translate $inst $txt} r]} { return RAISED:$r }
+  return $r
+}
+## -> {ncalls in-the-graph-cascade}. The only headless detector for the menu
+## line: `add command` runs under `if {[info exists has_x]}`, which --nogui
+## never enters. A call is "in the cascade" if the .menubar.simulation.graph
+## widget path appears on its own line or the three above it (the shipped items
+## are written as a `\`-continued two-liner).
+proc opa_k_menugrep {p} {
+  if {![file isfile $p]} { return NO-FILE }
+  set f [open $p r] ; set lines [split [read $f] \n] ; close $f
+  set n 0 ; set inmenu 0
+  for {set i 0} {$i < [llength $lines]} {incr i} {
+    if {![string match {*op_annot::place_annotator*} [lindex $lines $i]]} continue
+    incr n
+    for {set j [expr {$i - 3}]} {$j <= $i} {incr j} {
+      if {$j < 0} continue
+      if {[string match {*menubar.simulation.graph*} [lindex $lines $j]]} { set inmenu 1 }
+    }
+  }
+  return [list $n $inmenu]
+}
+## Drive op_annot::place_annotator once and report everything the placement rows
+## care about, leaving NO instance behind:
+##   {rc delta symbol-resolves ref count-restored modified}
+## ⚠ "the instance count went up" IS NOT EVIDENCE, AND NEITHER IS abs_sym_path.
+## Two measured traps, and the second one is why this helper asks the LOADER:
+##  (a) `xschem place_symbol` returns rc=0 for a MISSING symbol, printing only
+##      `l_s_d(): Symbol not found` on stderr, and leaves a live instance whose
+##      cell::name points at nothing.
+##  (b) `abs_sym_path` AND THE C LOADER DISAGREE ON A LIBRARY-QUALIFIED NAME.
+##      Measured: with a scratch directory holding `devices/annotate_params.sym`
+##      on XSCHEM_LIBRARY_PATH, `abs_sym_path devices/annotate_params .sym`
+##      returns that scratch file while the loader still prints
+##      `l_s_d(): Symbol not found: devices/annotate_params` — the C side
+##      resolves a `<lib>/<cell>` name through library.defs only, and every PDK
+##      workarea's library.defs points `devices` at xschem_libs_newsym. So a
+##      file-existence test would pass on a flat-only write and this helper
+##      would bless a carrier that cannot load. `cell::type` is the loader's own
+##      verdict: `missing` when it failed, the symbol's K-record `type=`
+##      otherwise — the identical accessor op_annot::type uses.
+proc opa_k_place {} {
+  set n0 [xschem get instances]
+  set rc [lindex [rcall {op_annot::place_annotator}] 0]
+  set n1 [xschem get instances]
+  if {$n1 == $n0 + 1} {
+    set i [expr {$n1 - 1}]
+    set ok NO-TYPE ; set ref {}
+    catch {set ok  [xschem getprop instance $i cell::type]}
+    catch {set ref [xschem getprop instance $i ref]}
+  } else {
+    set ok NO-PLACEMENT ; set ref NO-PLACEMENT
+  }
+  catch {xschem abort_operation}
+  return [list $rc [expr {$n1 - $n0}] $ok $ref \
+               [expr {[xschem get instances] == $n0 ? 1 : 0}] [xschem get modified]]
+}
+
+if {[catch {
+
+# ⚠ UNQUALIFIED, per this file's header note: the qualified spelling never
+# reaches set_paths and would leave every symbol unresolved.
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+# ===========================================================================
+# FIXTURE — section S's flat cell PLUS the carrier and one wire
+# ===========================================================================
+# ⚠ ITS OWN CELL, NOT s5_flat.sch. X5 pins `instances = 5` and S14 must stay the
+# FIRST raw operation in this process or it passes vacuously (the fabricated-0
+# reproduction survives only until an annotate_op has published). The wire is
+# here for K14 alone: it is the object the pre-fill was feared to mis-read.
+set f [open [file join $lib k_flat.sch] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C {sky130_fd_pr/nfet_01v8.sym} 0 0 0 0 {name=M1 W=1 L=0.15 nf=1}
+C {lab_pin.sym} 20 -30 0 0 {name=p1 lab=d}
+C {lab_pin.sym} -20 0 0 0 {name=p2 lab=g}
+C {lab_pin.sym} 20 30 0 0 {name=p3 lab=0}
+C {lab_pin.sym} 20 0 0 0 {name=p4 lab=0}
+C {devices/annotate_params} 200 0 0 0 {name=annot1 ref=M1}
+N 300 -100 340 -100 {lab=w1}}
+close $f
+
+## The 0446 raw for row K16: a well-formed operating point that contains NEITHER
+## the device vectors NOR v(d)/v(g) — the ordinary "first wrong .raw" case.
+set f [open [file join $scratch k_bad.raw] w]
+puts -nonewline $f "Title: bad op fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\tv(zzz)\tvoltage
+\t1\tv(yyy)\tvoltage
+Values:
+0\t1.0
+\t2.0
+"
+close $f
+
+xschem load [file join $lib k_flat.sch]
+# ⚠ FIXTURE ROW, green before and after — and load-bearing for exactly that
+# reason. `xschem load` does NOT fail on a missing symbol (measured: rc=0, the
+# instance is created, only `l_s_d(): Symbol not found` on stderr), so without
+# this row a broken fixture would degrade every claim below into a hollow pass
+# instead of reding one legible line.
+check {X6 FIXTURE k_flat.sch: 6 instances, 1 wire, M1 an nmos, annot1 present} \
+  [list [xschem get instances] [xschem get wires] [op_annot::type M1] \
+        [xschem getprop instance annot1 ref] [xschem get sch_path]] \
+  {6 1 nmos M1 .}
+
+# ===========================================================================
+# K — THE SYMBOL FILE ITSELF
+# ===========================================================================
+# ⚠ D1. Both copies, and the same bytes. The equality is guarded by both
+# existence tests inside one expr on purpose: two absent files are trivially
+# equal, and a row that reported {0 0 1} would be telling a comforting lie.
+check {K1 D1 both copies of annotate_params.sym exist and are byte-identical} \
+  [list [expr {[file isfile $K_FLATSYM] ? 1 : 0}] \
+        [expr {[file isfile $K_NEWSYM] ? 1 : 0}] \
+        [expr {[file isfile $K_FLATSYM] && [file isfile $K_NEWSYM] &&
+               [opa_k_slurp $K_FLATSYM] eq [opa_k_slurp $K_NEWSYM] ? 1 : 0}]] \
+  {1 1 1}
+
+# ⚠ `type=annotator` is what op_annot::type reports and therefore what keeps the
+# carrier OUT of the registry (row K7); the template is the menu item's default
+# when nothing is selected (row K12).
+check {K2 the K record is type=annotator plus template="name=annot1 ref=M1"} \
+  [opa_k_krec $K_FLATSYM] \
+  [list type=annotator {template="name=annot1 ref=M1"}]
+
+# ⚠ ISSUE 0444, ASSERTED AS A LITERAL INCLUDING THE SPACE BEFORE THE `]`. The
+# brief's Files cell, the plan's §S6 and spec §4.4 all write `@ref])`, which
+# renders `?` on every row. See this section's header for the mechanism.
+check {K3 0444 the tcleval body is EXACTLY `tcleval([op_annot::text @ref ])`} \
+  [opa_k_tcleval $K_FLATSYM] {tcleval([op_annot::text @ref ])}
+
+# ⚠ THE ONLY ROW THAT CAN SEE hide=op WHILE IT IS INERT. Measured: the token
+# sets no flag bit today (bbox 186/186 at both show_hidden_texts states,
+# byte-identical to carrying no hide token at all). It is written now so S7 has
+# something to give meaning to; until then this row is the whole guard.
+check {K4 the tcleval text carries layer=15, font=Monospace AND hide=op} \
+  [opa_k_haveattrs $K_FLATSYM {layer=15 font=Monospace hide=op}] {1 1 1}
+
+# ⚠ THE SECOND TEXT IS THE LABEL, and it is what makes the block identifiable on
+# a schematic that carries several carriers. The translate half is green before
+# the symbol exists (`@ref` is an instance property, not a symbol one) — the
+# file half is the claim.
+check {K5 the label text is `T {@ref} … {layer=4}` and renders the ref} \
+  [list [opa_k_text_at $K_FLATSYM 1] [opa_k_render annot1 {@ref}]] \
+  [list {@ref layer=4} M1]
+
+# ⚠ D2, AND THE ROW THAT CATCHES A FLAT-ONLY WRITE. `devices/annotate_params` is
+# the spelling place_annotator uses — the same library-qualified form the IHP
+# menu already uses for devices/code_shown. Measured, the C loader resolves that
+# `<lib>/<cell>` form through library.defs ALONE, and every workarea's
+# library.defs points `devices` at ../../xschem_libs_newsym/devices. So this row
+# is red until the NESTED copy exists, whatever the flat tree holds.
+#
+# ⚠ IT ASKS THE LOADER, NOT abs_sym_path, AND THE DIFFERENCE IS NOT COSMETIC.
+# Measured with a scratch `devices/annotate_params.sym` on the path:
+#     abs_sym_path devices/annotate_params .sym -> the scratch file
+#     the C loader                              -> Symbol not found
+# A file-existence row would have gone green on a symbol that cannot load. The
+# second element keeps the resolver in view without letting it decide the row.
+# REJECTED as the resolver: `[find_file_first annotate_params.sym]`, the shipped
+# Graphs-menu precedent — under a registry-only PDK config it returns a stray
+# tests/test_sweep_diff/… path (issue 0449).
+check {K6 D2 the `devices/annotate_params` spelling LOADS: cell::type is annotator} \
+  [list [rcall {xschem getprop symbol devices/annotate_params type}] \
+        [file tail [abs_sym_path devices/annotate_params .sym]]] \
+  {{0 annotator} annotate_params.sym}
+
+# ⚠ NO SELF-ANNOTATION, NO RECURSION. The carrier's own type is `annotator`,
+# which no descriptor claims, so op_annot::text returns {} at rc 0 rather than
+# raising or rendering an empty frame around itself.
+check {K7 the carrier does not annotate itself: type annotator, text {} at rc 0} \
+  [list [op_annot::type annot1] [rcall {op_annot::text annot1}]] \
+  {annotator {0 {}}}
+
+# ===========================================================================
+# K — END TO END: THE FILE'S OWN TEXT THROUGH THE REAL RENDER PATH
+# ===========================================================================
+# ⚠ NO RAW IS LOADED HERE. Section S left `xschem raw loaded` at -1 (row S18),
+# so this is I3's headline case: the carrier a user places before simulating.
+set k_txt [opa_k_tcleval $K_FLATSYM]
+check {K8 I3 END-TO-END no raw: the FILE's own text renders ten BLANK rows} \
+  [list [opa_k_render annot1 $k_txt] [rcall {op_annot::text M1}]] \
+  [list $S_BLANK [list 0 $S_BLANK]]
+
+# ⚠ I4. The overlay is a READ. Rendering it must not modify the schematic and
+# must not move the hierarchy — the render is folded into the golden so a row
+# that rendered nothing at all cannot satisfy the "nothing moved" half.
+set k9_before [list [xschem get modified] [xschem get sch_path]]
+check {K9 I4 rendering the carrier modifies nothing and moves no sch_path} \
+  [list [opa_k_render annot1 $k_txt] [xschem get modified] [xschem get sch_path] \
+        [expr {$k9_before eq [list [xschem get modified] [xschem get sch_path]] ? 1 : 0}]] \
+  [list $S_BLANK 0 . 1]
+
+# ⚠ THE STEP'S ACCEPTANCE ROW. Same raw section S uses, so the numbers are
+# S5's audited golden; what is new is that they arrive through the SHIPPED
+# SYMBOL's text rather than a call this file typed.
+set k10_ann [rcall {xschem annotate_op [file join $scratch s5_op.raw]}]
+check {K10 ACCEPTANCE END-TO-END annotated: the FILE's own text renders the numbers} \
+  [list [lindex $k10_ann 0] [opa_k_render annot1 $k_txt] [rcall {op_annot::text M1}]] \
+  [list 0 $S_GOLD [list 0 $S_GOLD]]
+
+# ⚠ 0444 PROVED MECHANICALLY, NOT BY A HAND-TYPED LITERAL. The no-space variant
+# is DERIVED from the file's own text by deleting exactly one character, so this
+# row cannot drift away from what ships. The two must render differently and the
+# stripped one must be `?`.
+set k11_ns [string map {{ ])} {])}} $k_txt]
+check {K11 0444 CONTROL: deleting the FILE's own space before `]` renders `?`} \
+  [list [opa_k_render annot1 $k_txt] [opa_k_render annot1 $k11_ns] \
+        [expr {[opa_k_render annot1 $k_txt] eq [opa_k_render annot1 $k11_ns] ? 1 : 0}]] \
+  [list $S_GOLD $K_QMARK 0]
+
+# ===========================================================================
+# K — THE MENU ITEM'S ONE MOVING PART: op_annot::place_annotator
+# ===========================================================================
+# ⚠ D4, CORRECTING THE PROTOTYPES. Both shipped pre-fill idioms take
+# `[lindex [xschem selected_set] 0]` and then feed it to `xschem getprop
+# instance <that> name`, guarding nothing. Measured, the round-trip is
+# redundant and the feared hazard is unreachable: selected_set returns instance
+# NAMES (select_all -> `{M1} {p1} {p2} {p3} {p4} {annot1}`) and never a wire or
+# an index. K14 pins that; a defensive element check would be dead code.
+xschem unselect_all
+check {K12 place_annotator with nothing selected: the symbol LOADS, ref=M1 from the template} \
+  [opa_k_place] {0 1 annotator M1 1 0}
+
+# ⚠ NON-VACUOUS AGAINST K12 BY CONSTRUCTION: the template default is M1, so
+# `p1` can only come from a live read of the selection.
+xschem unselect_all
+xschem select instance 1
+## ⚠ `[lindex … 0]` AND NOT THE WHOLE SET: that is the exact expression
+## place_annotator reads, and `xschem selected_set` returns a LIST, so asserting
+## the set itself would compare `{p1}` against `p1` and stay red after the fix.
+check {K13 place_annotator with p1 selected pre-fills ref=p1 from the selection} \
+  [list [lindex [xschem selected_set] 0] [opa_k_place]] [list p1 {0 1 annotator p1 1 0}]
+
+# ⚠ THE WIRE CASE. selected_set is EMPTY with only a wire selected, so the
+# placement takes the nothing-selected branch and the template supplies ref=M1.
+xschem unselect_all
+xschem select wire 0
+check {K14 D4 a selected WIRE gives an empty selected_set; placement falls back} \
+  [list [xschem selected_set] [opa_k_place]] [list {} {0 1 annotator M1 1 0}]
+xschem unselect_all
+
+# ⚠ A SOURCE GREP, AND DECLARED AS ONE. The cascade is built under
+# `if {[info exists has_x]}`, which --nogui never enters, so no headless row can
+# click it. What this guards is one line carrying a label and a call; the risky
+# half is op_annot::place_annotator and K12-K14 drive it for real. The remaining
+# gap is a pixel gap and is recorded as a look debt, not as a check.
+check {K15 exactly ONE op_annot::place_annotator call, in the Graphs cascade} \
+  [opa_k_menugrep [file join $repo src xschem.tcl]] {1 1}
+
+# ===========================================================================
+# K — THE TWO ACCEPTED DEFECTS (D5, D6): PINNED, NOT PAPERED OVER
+# ===========================================================================
+# ⚠ ISSUE 0446, NOW MEASURED THROUGH THE CARRIER. A flat sky130 FET with its
+# source on GND, plus a raw containing neither v(d) nor v(g): eight rows blank
+# correctly and TWO FABRICATE A ZERO. `@#2:spice_get_voltage` is hardcoded to
+# `0.0 ` for a GND pin (token.c:4364) whether or not a raw is loaded, the absent
+# gate token appends nothing, and translate's trailing eval_expr pass
+# (token.c:5441) reads `expr(- - 0.0 )` as 0 — a strict double, so no test S5
+# can apply rejects it.
+#
+# THIS GOLDEN RECORDS THE DEFECT, IT DOES NOT BLESS IT. The fix is in C, outside
+# this step's Files cell, and belongs to 0446/S12; when it lands these two rows
+# blank and K16 reds, which is the intended signal. It is the same fault S17b
+# pins one hierarchy level down, and it is reached here by the ordinary route a
+# user takes: place the carrier, annotate the first raw to hand.
+set k16_ann [rcall {xschem annotate_op [file join $scratch k_bad.raw]}]
+check {K16 0446 ACCEPTED: a raw with no v(d)/v(g) makes the carrier print vgs=0 / vds=0} \
+  [list [lindex $k16_ann 0] [opa_k_render annot1 $k_txt] \
+        [rcall {list [opa_s5_rowval [op_annot::text M1] vgs] \
+                     [opa_s5_rowval [op_annot::text M1] vds] \
+                     [opa_s5_rowval [op_annot::text M1] gm] \
+                     [opa_s5_rowval [op_annot::text M1] ft]}]] \
+  [list 0 $S_LVLSHIFT {0 {0 0 {} {}}}]
+
+# ⚠ ISSUE 0447, AND IT MUST RUN LAST IN SECTION K — it leaves the nmos
+# descriptor malformed on purpose. op_annot::register validates only `dict
+# size`, so a user's own rc (invariant I5) can store a params/pinexpr/derived
+# value that is not a well-formed Tcl list; the three uncaught `foreach row
+# [dict get …]` in op_annot::text then raise. Through the carrier that is
+# CAUGHT by tclpropeval2 and rendered `?` — degraded, never fatal, and the same
+# failure mode the three shipped PDK carriers already have. Accepted (D6):
+# tightening register changes a shipped proc's rc contract so a malformed rc
+# would raise at STARTUP instead of degrading at draw.
+set k17_good [op_annot::descriptor nmos]
+set k17_bad $k17_good
+## The malformed value is an unmatched OPEN BRACE, and it is BUILT rather than
+## typed: a literal one inside this braced `catch` script would unbalance the
+## whole section at parse time (Tcl counts braces before it recognises
+## anything else, comments included). \x7b carries no brace for the scanner
+## to see and becomes one only after substitution.
+set k17_ob "\x7b"
+dict set k17_bad params "{id id 0} {gm gm 1} ${k17_ob}broken"
+set k17_reg [rcall {op_annot::register nmos $k17_bad}]
+check {K17 0447 ACCEPTED: a malformed descriptor degrades the carrier to `?`, no crash} \
+  [list [lindex $k17_reg 0] [rcall {op_annot::text M1}] \
+        [opa_k_render annot1 $k_txt]] \
+  [list 0 {1 {unmatched open brace in list}} $K_QMARK]
+## Put the good descriptor back, so a later section added to this file does not
+## inherit K17's wreckage.
+catch {op_annot::register nmos $k17_good}
+
+} kerr]} {
+  puts "UNEXPECTED ERROR (section K): $kerr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

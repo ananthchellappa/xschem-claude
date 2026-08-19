@@ -736,3 +736,45 @@ proc op_annot::text {instname} {
   }
   return $txt
 }
+
+# ============================================================================
+# op_annot::place_annotator — S6, the menu item's one moving part
+# ============================================================================
+# doc/claude/specs/op_annotation.md §4.4 (Carrier 1). Arms an interactive
+# placement of the PDK-neutral carrier symbol devices/annotate_params, with its
+# `ref` pre-filled from the selection when there is one. Ported from
+# ihp-sg13g2/sg13g2_procs.tcl:637-645 ("Add FET param annotator"), de-PDK'd.
+#
+# ⚠ WHY A PROC AND NOT AN INLINE -command BODY (decision D3). Every neighbouring
+# item in the Graphs cascade inlines its body, which matches local style but is
+# unreachable from any headless test — the cascade is built under
+# `if {[info exists has_x]}`, which --nogui never enters. Everything that can go
+# wrong lives here, where tests/headless/test_op_annot.tcl rows K12-K14 drive it
+# for real; what stays in src/xschem.tcl is one line carrying a label and a call.
+#
+# ⚠ THE SYMBOL IS NAMED LIBRARY-QUALIFIED, `devices/annotate_params` (D2), the
+# same spelling the IHP menu already uses for devices/code_shown — NOT
+# `[find_file_first annotate_params.sym]`, the shipped Graphs-menu precedent at
+# src/xschem.tcl:15309. Measured under a registry-only PDK config,
+# find_file_first returns a stray tests/test_sweep_diff/… path; filed as issue
+# 0449. The qualified form resolves through library.defs, which is what every
+# PDK workarea uses, and it reaches the NESTED copy of the symbol under
+# xschem_libs_newsym/devices — hence D1's requirement that both copies exist.
+#
+# ⚠ NO ELEMENT GUARD, AND NO getprop ROUND-TRIP (D4, correcting both shipped
+# prototypes). They take `[lindex [xschem selected_set] 0]` and feed it to
+# `xschem getprop instance <that> name`. Measured: `xschem selected_set` already
+# returns instance NAMES, and returns an EMPTY list when only a wire is
+# selected — so the round-trip is redundant and the feared "a wire index gets
+# read as an instance" hazard is unreachable. Row K14 pins that fact.
+#
+# ⚠ INVARIANT I1. Only the instance NAME is passed as `ref`; no path is built
+# here. Every raw-vector name still comes from op_annot::devpath / ::vector.
+proc op_annot::place_annotator {} {
+  set ref [lindex [xschem selected_set] 0]
+  if {$ref ne {}} {
+    xschem place_symbol devices/annotate_params "name=annot1 ref=$ref"
+  } else {
+    xschem place_symbol devices/annotate_params
+  }
+}

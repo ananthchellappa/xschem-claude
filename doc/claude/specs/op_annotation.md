@@ -4,7 +4,8 @@
 parameters — on the schematic, under three keys, with the displayed parameter
 list editable by the user and portable across PDKs.*
 
-Status: **S1 landed; S2–S12 not implemented.** Branch `annotate`.
+Status: **S1, S2, S5 and S6 landed; S3 refuted and reverted three times, S4 deferred
+with it; S7–S12 not implemented.** Branch `annotate`.
 Plan of atomic steps: `doc/claude/suggestions/next_session_prompt_op_annotation.md`.
 
 **S1** (2026-08-16) delivered `src/op_annot.tcl` — the namespace, `register` /
@@ -14,6 +15,15 @@ four things this spec asserted: the `devpath` templates in §4.2 (issue 0422),
 the save-card side of **I1** (rule **R4** and §5 below), **I5**'s claim about
 user rcs, and §8's cross-PDK test. Each correction is marked *measured* where it
 appears.
+
+**S6** (2026-08-19) delivered the first user-visible piece: `annotate_params.sym`
+in **both** device library trees, `op_annot::place_annotator`, and one
+`Simulation > Graphs > Add device OP annotator` item. It corrected §4.4's
+symbol text (the missing space before `]` — every earlier revision of this spec
+shipped a spelling that renders `?` on every row) and added §4.4's two-tree
+requirement. It landed with issues **0446** and **0447** explicitly ACCEPTED, not
+closed — see §5 I3 and both issue files; the step's status is **E** for those two
+questions and for the pixel deliverable.
 
 Related:
 `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 (the existing
@@ -581,18 +591,60 @@ verbatim apart from the name. What S5 settled that this section did not specify:
 
 ### 4.4 Getting the block onto the screen — two carriers
 
-**Carrier 1: the annotator symbol.** A PDK-neutral
-`xschem_library/devices/annotate_params.sym`, modelled exactly on IHP's:
+**Carrier 1: the annotator symbol.** A PDK-neutral `annotate_params.sym`,
+modelled exactly on IHP's. LANDED in S6, and its `type=annotator` is what keeps
+it out of the registry so it never annotates itself:
 
 ```
-K {type=annotator template="name=annot1 ref=M1"}
-T {tcleval([op_annot::text @ref])} … {layer=15 font=Monospace hide=op}
-T {@ref} … {layer=4}
+K {type=annotator
+template="name=annot1 ref=M1"}
+T {tcleval([op_annot::text @ref ])} 5 5 0 0 0.2 0.2 {layer=15
+font=Monospace
+hide=op}
+T {@ref} 0 0 2 1 0.2 0.2 {layer=4}
 ```
 
-Placed next to a device (menu item / key pre-fills `ref` from the selection).
-**Needs no C change and no PDK symbol edit** — it is the phase-1 deliverable and
-it works on every PDK the moment its descriptor is registered.
+⚠ **THE SPACE BEFORE THE `]` IS LOAD-BEARING, and every earlier revision of
+this section omitted it.** `SPACE(c)` (`token.c:24`) is `{\n, space, \t, \0, ;}`
+and does not contain `]`, so without it the token is `@ref]`, misses
+`get_tok_value()` and appends nothing; the `tcleval` body is left unbalanced,
+`tclpropeval2`'s catch turns it into `?`, and EVERY ROW of the block becomes a
+question mark. Measured side by side in one process:
+
+    tcleval([op_annot::text @ref ])   ->  the ten-row block
+    tcleval([op_annot::text @ref])    ->  `?`
+
+Same mechanism as issue 0444, applied to `]` instead of `)`. All three shipped
+PDK prototypes already carry that space. Pinned by rows K3 and K11 of
+`tests/headless/test_op_annot.tcl` — K11 derives the broken spelling from the
+shipped file's own bytes, so the two cannot drift apart.
+
+⚠ **THE SYMBOL IS WRITTEN TO BOTH DEVICE LIBRARIES** —
+`xschem_library/devices/annotate_params.sym` AND
+`xschem_libs_newsym/devices/annotate_params/symbol/annotate_params.sym`,
+byte-identical. The flat copy is the one `xschem_library/Makefile` installs; the
+nested one is the only copy the three PDK workareas can see, because each
+`cadence_style_rc` sets `XSCHEM_LIBRARY_PATH {}` with
+`library_registry_defs_only 1` and each `library.defs` resolves
+`DEFINE devices ../../xschem_libs_newsym/devices`. A flat-only write is invisible
+in exactly the three workareas the acceptance names. The fork itself is issue
+0450; row K1 guards this one cell.
+
+Placed next to a device — Simulation > Graphs > **Add device OP annotator**,
+which calls `op_annot::place_annotator` and pre-fills `ref` from the selection.
+The symbol is named library-qualified, `devices/annotate_params`, and NOT via
+`find_file_first` (issue 0449). **Needs no C change and no PDK symbol edit** —
+it is the phase-1 deliverable and it works on every PDK the moment its
+descriptor is registered.
+
+⚠ `hide=op` IS INERT UNTIL S7 and the carrier therefore ships ALWAYS-ON, with
+no user off switch. `set_text_flags` (`actions.c:1121`) tests exact `instance`
+then `strboolcmp(str,"true")`; `strboolcmp` (`util.c:72`) classifies `op` as
+`s=-1` and falls through to `strcmp`, so no bit is set. Measured on three
+scratch symbols differing only in the hide token (instance bbox width at both
+`show_hidden_texts` states): `hide=none` 186/186, `hide=op` 186/186 —
+byte-identical — `hide=true` 16/186. Row K4 is the only thing standing between
+now and S7 giving the token teeth.
 
 **Carrier 2: the draw-time overlay.** For every instance whose symbol type is
 registered, and only while the annotation mask says so, `draw()` renders
@@ -670,7 +722,7 @@ Verified free / safely overridable in this tree:
 | **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* **⚠ AMENDED BY S3 — "one builder" was under-specified and it reverted a complete implementation. One builder, but it must take a BASIS.** `devpath`'s hierarchy prefix comes from `sim_sch_path`, which is **relative to the level where the raw was loaded** — the right basis for *reading* a vector out of a loaded raw, and the wrong one for *writing* a save card, which needs a **deck-absolute** name. They coincide only when no raw is loaded or the raw is at the top, which is why 85 green checks missed it. The fix is a basis argument on the one builder (`op_annot::devpath <inst> ?basis?`, `absolute` for save cards), **not** path arithmetic in the walk — that would be the second builder this invariant forbids, and is exactly what the prototypes' `startpath` was. Issue **0436**, mechanism confirmed in the C at `save.c:1260`, `draw.c:2831-2838`, `scheduler.c:5150`. |
 | **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
 | **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* such device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. Issue **0437**. **⚠ THE FILTER IS SEVEN CLASSES, NOT ONE — AND GETTING THREE OF THEM REFUTED S3b.** Measured (issue **0442**): `spice_ignore` (true/`open`/`short`, instance **or** symbol), `only_toplevel` below the walk entry, `lvs_ignore` gated on `::lvs_ignore` — *and four symbol-level classes S3b missed entirely*: empty/absent `format` (`spice_netlist.c:639`, the instance vanishes from the deck completely), `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`, body replaced by attribute text), `spice_stop=true` (`:635`+`:695`, `.subckt` emitted **empty**). The last two drop the **subtree** while the instance call survives — so "may I emit a card for this?" and "may I descend into this?" genuinely diverge and cannot be aliases. **Any implementation of this invariant must be acceptance-tested against `xschem netlist` on a HIERARCHICAL fixture carrying all seven**; S3b's cross-check row was correct but its fixture was flat, which is exactly why 96 green checks and 8 sabotage variants missed the gap. Strongly consider deriving the device set from `xschem netlist` output, or exposing `skip_instance()` (netlist.c:1245) to Tcl, rather than re-implementing the netlister's filter in Tcl a class at a time — that reimplementation has now drifted twice, and `skip_instance()` also branches on `xctx->netlist_type`, which no Tcl copy has ever consulted. |
-| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 must close it or explicitly accept it before landing a carrier**, because nothing calls `op_annot::text` today and this becomes user-visible the moment something does. |
+| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 ACCEPTED IT RATHER THAN CLOSING IT (2026-08-19, ladder rung L3, decision D5)** — the carrier ships, the fabrication is reproduced through the real draw path, and it is pinned by a green check (`test_op_annot.tcl` row **K16**) that asserts the WRONG behaviour on purpose, so the C fix reds a named line instead of silently changing what a schematic shows. Only the two descriptors carrying `pinexpr` can reach it (sky130, gf180); IHP cannot. The unanswered ledger question is in 0446 under §S6 ACCEPTANCE. |
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
@@ -872,5 +924,23 @@ Verified free / safely overridable in this tree:
   blank-vs-raise error discipline, live (uncached) `sim_sch_path`, and a check
   that building a name modifies nothing (I4). Run it as
   `./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_op_annot.tcl`.
+* **The carrier** (S6, `test_op_annot.tcl` section K, 17 rows): both copies of
+  the symbol exist and are byte-identical (K1 — the only guard on issue 0450);
+  the `tcleval` text extracted **from the shipped file** renders the same block
+  as a direct `op_annot::text` call, blank without a raw and the S5 golden with
+  one (K8/K10); the no-space spelling derived from the same file's bytes renders
+  `?` (K11, the 0444 control); `place_annotator` pre-fills `ref` from the
+  selection, falls back to the template with nothing selected, and does not
+  disturb `modified` (K12–K14). **Known gaps, both real:**
+  * every committed row runs under ONE PDK (sky130). The step's own acceptance
+    — "place next to a FET on each of the three PDKs" — is verified by no
+    committed check; S6 verified it by hand under xvfb (IHP `@n.xm1.nsg13_lv_nmos`
+    with element letter **n**, gf180 `@m.xm1.m0`, sky130
+    `@m.xm1.msky130_fd_pr__nfet_01v8`, all populated). Issue 0425 (one
+    interpreter per PDK) is why it is not one suite.
+  * the menu item itself is covered only by a **source grep** (K15), because the
+    Graphs cascade is built under `if {[info exists has_x]}` and `--nogui` never
+    enters it. All the logic that can fail lives in `op_annot::place_annotator`,
+    which K12–K14 do drive for real.
 * **Pixels**: the overlay is a look-at-it deliverable and no green suite can
   clear it. `tests/headless/owed.sh add look "op annotation on tb_bandgap"`.

@@ -655,6 +655,11 @@ The golden, asserted exact including the trailing newline:
 * **TWO CONFIRMED DEFECTS GATE S6's CARRIER. Nothing calls `op_annot::text`
   today, so neither is user-reachable — they become visible the instant a
   carrier lands.** Close them or accept them explicitly, in writing, first:
+  **→ RESOLVED BY S6 (2026-08-19): both ACCEPTED, not closed** (decisions D5/D6,
+  ladder rung L3), each pinned by a green check asserting the current wrong
+  behaviour (rows K16/K17) and each with an unanswered ledger question recorded
+  under "S6 ACCEPTANCE" in its own issue file. Both are now user-reachable.
+  Details below in "WHAT S6 LEARNED".
   * **0446 — `vgs = 0` / `vds = 0` fabricated on the wrong `.raw`.** Re-scoped:
     it needs **no hierarchy**. A flat schematic, a FET with its source on GND
     (the ordinary topology), and a valid raw from any other circuit is enough —
@@ -678,6 +683,9 @@ The golden, asserted exact including the trailing newline:
   green rows (P3, P19, P20, P21) and dangles two menu items, because S3 is
   reverted three times and no neutral emitter exists. **Deletion belongs to
   whichever step lands the neutral carrier AND emitter — i.e. S6 at the earliest.**
+  **→ NOT S6 EITHER (2026-08-19, decision D7): S6 landed the carrier but NOT the
+  emitter, so the "and" is still unmet and all three prototypes remain wired.
+  This is S10's work and it still needs the neutral emitter first.**
   The 0429 residual the paragraph above is really worried about is now filed
   separately as issue **0445**.
 * **THE `?basis? ?root?` PASS-THROUGH ON `op_annot::vector` WAS NOT ADDED, ON
@@ -736,15 +744,29 @@ The golden, asserted exact including the trailing newline:
 
 ---
 
-## S6 — the generic annotator symbol
+## S6 — the generic annotator symbol ✅ DONE (status **E** — three questions below)
 
 **Files:** new `xschem_library/devices/annotate_params.sym`; a menu item and the
 "pre-fill `ref` from the selection" idiom from `sg13g2_procs.tcl:640`.
 
+⚠ **THE SPELLING THIS CELL ORIGINALLY CARRIED WAS BROKEN AND IS CORRECTED BELOW.**
+It said `tcleval([op_annot::text @ref])`, with no space before the `]`. Measured
+side by side in one process: that renders **`?` on every row**; with the space it
+renders the block. `SPACE(c)` (`token.c:24`) is `{\n, space, \t, \0, ;}` and does
+not contain `]`, so `@ref]` is one token, misses `get_tok_value` and appends
+nothing, leaving the `tcleval` body unbalanced for `tclpropeval2` to catch into
+`?`. Same mechanism as issue **0444**, applied to `]` instead of `)`. All three
+shipped PDK prototypes already carried the space. **Anyone writing a symbol text
+that ends in an `@token` must leave a space before the closing bracket** — that
+binds S9 and S10 too.
+
 ```
-K {type=annotator template="name=annot1 ref=M1"}
-T {tcleval([op_annot::text @ref])} … {layer=15 font=Monospace hide=op}
-T {@ref} … {layer=4}
+K {type=annotator
+template="name=annot1 ref=M1"}
+T {tcleval([op_annot::text @ref ])} 5 5 0 0 0.2 0.2 {layer=15
+font=Monospace
+hide=op}
+T {@ref} 0 0 2 1 0.2 0.2 {layer=4}
 ```
 
 **This is the first user-visible deliverable of the whole plan**, and it needs no
@@ -758,6 +780,195 @@ the token now and give it meaning in S7.
 numbers. Record `owed.sh add look "annotate_params on tb_bandgap"`.
 
 **Risk:** low.
+
+### ✅ S6 — DONE, status **E** (landed, committed, three questions owed to a human)
+
+Shipped, **no C, no build** (nothing `make` compiles was touched; every number
+below came from the same Aug 16 binary that measured the baseline):
+
+* `xschem_library/devices/annotate_params.sym` **and**
+  `xschem_libs_newsym/devices/annotate_params/symbol/annotate_params.sym`,
+  byte-identical (`md5 f47f409ddf74025496d9c2ebbf11c5f2`);
+* `op_annot::place_annotator` in `src/op_annot.tcl`;
+* one `Simulation > Graphs > Add device OP annotator` item in `src/xschem.tcl`;
+* `tests/headless/test_op_annot.tcl` **97 → 115 checks, 0 FAIL** (section K, 17
+  rows, plus one X6 fixture control).
+
+Tiers identical to the measured baseline: T1 `run_regression.tcl` 3 FAIL / 0
+GOLD? / 0 RESULT? / 0 FATAL — **the same three lines, verbatim** (issue 0421's
+sg13g2 9-vs-10 library list, its HARNESS consequence, and issue 0420's
+`test_pdk_launcher` false FAIL); T2 `headless/run.sh` HARNESS PASS, 6/6 goldens.
+Adjacent library suites all green (`test_sky130a_libmgr`, `test_gf180mcud_libmgr`,
+`test_lib_roundtrip`, `test_migrate_engine`, `test_migrate_pin_names`,
+`test_symbol_view_resolve`). Sabotage: 7 variants, every predicted red observed,
+suite restored to 115/115 green between each.
+
+**Verified by hand under xvfb, not by any committed check — this IS the step's
+acceptance:** the carrier populated on **all three PDKs** in their real
+registry-only workareas — IHP `@n.xm1.nsg13_lv_nmos` (element letter **n**, 10
+params + `cgg_tot`/`ft`/`gm-over-id`), gf180 `@m.xm1.m0`, sky130
+`@m.xm1.msky130_fd_pr__nfet_01v8`. Also on the **real draw path**: a printed SVG
+contains `15.92G`, `gm/id` and `>M1<` and no `>?<`, with `xschem get modified`
+still 0 across load, annotate, redraw and print (I4).
+
+**WHY E — three unratified user-visible things:**
+
+1. **Issue 0446 accepted, not closed (decision D5, ladder L3).** Against a raw
+   lacking `v(d)`/`v(g)`, the shipped carrier paints `vgs = 0` / `vds = 0` while
+   the other eight rows correctly blank — on sky130 and gf180 (the two `pinexpr`
+   descriptors); IHP cannot hit it. *Ship a carrier that paints a fabricated `0`
+   on a wrong `.raw`, or hold it until the C fix (`token.c:4364` / `:5441`)?*
+2. **Issue 0447 accepted, not closed (decision D6, ladder L3).** A user's
+   malformed descriptor degrades the whole block to `?` via `tclpropeval2`'s
+   catch. *Acceptable failure mode, or must `op_annot::register` reject it loudly
+   at rc-source time?*
+3. **The pixels are unseen.** `xschem print svg` proves the glyphs are emitted; it
+   proves nothing about clipping, overlap, or the data-dependent bbox
+   (`select.c:709`; the populated annotator measured `200,-12.1 .. 294.1,138.1`).
+   Look debt recorded: `annotate_params_on_tb_bandgap.1787153441.236473`. **Per
+   CLAUDE.md no green suite clears it — suites green, please look.**
+
+**THE SABOTAGE MATRIX (7 variants — every predicted red observed; the suite was
+restored to 115/115 green between each, and `grep -rn SABOTAGE src/` is empty):**
+
+| variant | what it broke | predicted | observed |
+|---|---|---|---|
+| SB1 `@ref])` | the load-bearing space | 5 | **6** — K3 K8 K9 K10 K11 K16 (K9 is a bonus: its I4 assertion reads the same rendered block and sees `?`) |
+| SB2 formatter renamed | `op_annot::text` gone | 12 | **28** — all 12, plus 16 of S5's own section-S rows, correctly collateral |
+| SB3 flat copy only | the Files cell read literally | 5 | **6** — K1 K6 K7 K12 K13 K14 (K7 bonus: an unresolved symbol reports type `missing`, not `annotator`) |
+| SB4 no `hide=op` | the S7 groundwork token | 1 | **1** — K4, exact |
+| SB5 dead pre-fill | `set ref {}` | 1 | **1** — K13; K12/K14 correctly stayed green |
+| SB6 menu line deleted | the one `xschem.tcl` line | 1 | **1** — K15 (a source grep — see the declared gap below) |
+| SB7 `ref=M1` dropped from the template | the K record | 2 | **3** — K2 K12 K14 (K14 bonus: its wire path also falls back to the template) |
+
+**No predicted red failed to appear.** Two honest weaknesses the matrix exposed,
+both recorded rather than papered over:
+
+* **K17 IS NOT SPECIFIC TO 0447.** It passed **vacuously** under SB1, because SB1
+  also renders `?`. Any breakage that yields `?` satisfies it. Whoever fixes 0447
+  must replace K17 with the per-key rows that issue specifies, not merely invert it.
+* **SB3 left K8/K10/K11/K16/K17 green**, because those rows extract the text from
+  the **flat** file and drive it through `xschem translate` without ever resolving
+  the symbol. All symbol-resolution coverage therefore rests on K1/K6/K12/K13/K14,
+  and **no committed row renders through the nested copy's own bytes** — K1's
+  byte-identity check is the only bridge between the two trees.
+
+**STILL OPEN AFTER S6 (adversary residual risks — none refuted the step, all
+measured):**
+
+1. Issue **0446** now reaches a user's sheet through a shipped symbol (sky130,
+   gf180 — not IHP). Accepted, pinned by K16.
+2. Issue **0447**'s `?` block is now user-reachable via I5. Accepted, pinned by K17.
+3. Issue **0451** — the block is blank with no way to say which of four causes did
+   it, and the menu item is enabled on a tree with no descriptors at all.
+4. Issue **0450** — two device trees, hand-synced, only one installed.
+5. Issue **0449** — the shipped launcher menu item places the wrong file in a PDK
+   workarea.
+6. `hide=op` inert → the overlay is **always-on** until S7.
+7. Section K covers **one** PDK; the three-PDK acceptance is hand-verified only.
+8. **No pixels anywhere.** SVG proves glyphs, not layout. D8 deliberately did NOT
+   add `xschem update_all_sym_bboxes` to the existing "Annotate Operating Point"
+   item even though `select.c:709` makes the annotator's bbox data-dependent
+   (16 wide blank vs 186 wide populated) — spec §4.6 already specifies that pair
+   for S8's `cadence::annot_mode`, which is where it belongs.
+
+**THE DECISIONS, WITH LADDER RUNG AND REJECTED ALTERNATIVE** (D1/D2/D4/D7 are
+expanded in "WHAT S6 LEARNED" below; D5/D6 in their issue files):
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | L2 | write the symbol to **both** device trees, byte-identical | the Files cell read literally (flat only) — invisible in all three PDK workareas |
+| D2 | L2 | name it library-qualified `devices/annotate_params` | `[find_file_first …]`, the shipped Graphs-menu precedent — itself defective (0449) |
+| D3 | L2 | the logic goes in `op_annot::place_annotator`; the menu keeps one line | inlining the body like every neighbouring item (unreachable headlessly); three per-PDK items (defeats the point of the step) |
+| D4 | L2 | no element guard, no `getprop` round-trip | porting the prototypes verbatim — the round-trip is redundant and the hazard it guards is unreachable |
+| D5 | **L3** | accept 0446 | a Tcl-side finiteness pre-check (papers over a C defect the brief forbade fixing); dropping the `pinexpr` rows (hides correct data, forks the block between carriers 1 and 2) |
+| D6 | **L3** | accept 0447 | validating in `op_annot::register` — right fix, but it changes a shipped proc's rc contract and belongs to a step that owns the file |
+| D7 | L2 | leave all three PDK prototypes wired | the plan's "deletion belongs to S6 at the earliest" — 22 shipped schematics would render `?` and four green rows lose their oracle |
+| D8 | L2 | do not touch the existing "Annotate Operating Point" item | adding `update_all_sym_bboxes` + `redraw` to it — out of cell, unmeasurable headlessly |
+| D9 | **L1 (I1, I3)** | build no raw-vector name anywhere in S6 | — |
+| D10 | L2 | extend `test_op_annot.tcl` as section K with its own fixtures | a new suite file; adding the annotator to `s5_flat.sch` (X5 pins `instances = 5`, and S14 must stay the first raw op in the process) |
+
+### ⚠ WHAT S6 LEARNED THAT BINDS LATER STEPS — READ BEFORE S7
+
+* **THE SYMBOL LIVES IN TWO TREES AND BOTH MUST BE WRITTEN (decision D1, and it
+  is load-bearing — proved by deletion).** `xschem_library/devices` (125 flat
+  cells) is the only tree any Makefile installs; `xschem_libs_newsym/devices`
+  (130 nested `<cell>/symbol/<cell>.sym`) is the only tree the three PDK
+  workareas resolve `devices` to, because each `cadence_style_rc` sets
+  `XSCHEM_LIBRARY_PATH {}` with `library_registry_defs_only 1` and each
+  `library.defs` carries `DEFINE devices ../../xschem_libs_newsym/devices`.
+  Deleting the nested copy reds **6** rows (K1 K6 K7 K12 K13 K14). **S10, which
+  edits `.sym` in bulk, must decide which tree it is editing.** The fork itself
+  is issue **0450**; row K1 guards exactly one cell, not the library. The
+  byte-identical `cp` was safe only because this symbol has no `B` pin records
+  and no `C {}` reference — a cell with either needs a real migrate run.
+* **NAME A SYMBOL LIBRARY-QUALIFIED, NOT VIA `find_file_first` (decision D2).**
+  Under a registry-only PDK config `find_file_first launcher.sym` returns a stray
+  `tests/test_sweep_diff/devices/launcher/symbol/launcher.sym`, so the **shipped**
+  "Add waveform reload launcher" item (`src/xschem.tcl:15309`) places the wrong
+  file in a PDK workarea. Filed as issue **0449**, routed around, not fixed. Use
+  `devices/<cell>`, the spelling the IHP menu already uses for `devices/code_shown`.
+  A fix must be validated against the **loader** (`xschem getprop symbol <n> type`),
+  not against `abs_sym_path` — the two disagree.
+* **`xschem selected_set` RETURNS INSTANCE *NAMES*, AND NEVER A WIRE (decision
+  D4, correcting both shipped prototypes and this plan's own scouting).**
+  Measured: `select_all` → `{M1} {p1}`; with only a wire selected → `{}`. So the
+  prototypes' `xschem getprop instance [lindex … 0] name` round-trip is redundant
+  and the feared "a wire index read as an instance" hazard is unreachable. **S8's
+  key binding must not re-add a guard for it.** Row K14 pins the fact.
+* **`hide=op` IS INERT AND THE CARRIER THEREFORE SHIPS ALWAYS-ON.** Re-confirmed
+  twice, by source and by measurement (instance bbox width at both
+  `show_hidden_texts` states: `hide=none` 186/186, `hide=op` 186/186 —
+  byte-identical — `hide=true` 16/186), and a third time on the real draw path (a
+  printed SVG is byte-identical in size at `show_hidden_texts` 0 and 1). **S7 is
+  what gives the token teeth, and row K4 is the only check standing between now
+  and then.** The existing "Annotate Operating Point" item's `set
+  show_hidden_texts 1` does not gate the carrier either.
+* **DELETING THE PROTOTYPES WAS *AGAIN* NOT DONE, AND S6 IS NO LONGER "THE
+  EARLIEST" (decision D7).** The S5 note above says deletion belongs to whichever
+  step lands the neutral carrier **and** emitter — S6 landed only the carrier, so
+  the condition is still unmet. 22 shipped sky130 test schematics instantiate
+  `sky130_fd_pr/annotate_fet_params` by name and would render `?` inside a draw
+  path; deleting the save emitters additionally destroys the acceptance oracle for
+  four currently green rows (P3, P19, P20, P21) while S3 stays reverted. **This is
+  S10's work, and it needs the neutral emitter first.** Measured side by side on
+  one sheet, same `M1`, same raw: the new carrier rendered the full block while
+  `sky130_fd_pr/annotate_fet_params` rendered ALL BLANK from its own spiceprefix
+  defect — the divergence is at least visible rather than silent.
+* **THE MENU ITEM IS UNCONDITIONAL AND ITS CONTENT IS NOT — new issue 0451.** On a
+  stock xschem with no PDK procs file sourced, `Add device OP annotator` places a
+  carrier that renders a **zero-length** block: a corner tick, an `M1` label, and
+  nothing, with no message. Blank is I3-honest but it is now the single output of
+  four different situations (no descriptor / dangling `ref` / raw loaded but never
+  annotated / vectors genuinely absent). **S9 inherits the same silence** — whoever
+  answers 0451 must answer it for both carriers.
+* **`xschem place_symbol` AND `xschem instance` ARE DIFFERENT VERBS.**
+  `place_symbol` (`scheduler.c:9551`) arms an *interactive* cursor placement —
+  correct for a menu item, and headless-safe for a test only when paired with
+  `xschem abort_operation`. `xschem instance` (`scheduler.c:6665`) commits
+  outright. **Both return rc=0 for a MISSING symbol** (only an `l_s_d(): Symbol
+  not found` on stderr), so any placement check must assert the placed instance's
+  symbol actually resolves, not merely that the instance count went up.
+* **ONLY THE LAST `--script` RUNS.** `cli_opt_tcl_script` is one fixed buffer
+  (`globals.c:261`, `options.c:103`, sourced once at `xinit.c:3869`), so
+  `--script <pdk rc> --script <test>` silently drops the rc and every PDK symbol
+  reports "Symbol not found". A cross-PDK test must be ONE script that sets
+  `XSCHEM_LIBRARY_PATH` and `source`s the PDK procs file itself — the idiom already
+  at `test_op_annot.tcl:801/923/962/1319`.
+* **DO NOT PUT THE STRING `op_annot::place_annotator` IN A COMMENT NEAR THE MENU
+  LINE.** Row K15 counts every matching line in `src/xschem.tcl` and requires
+  exactly 1; an explanatory comment naming the proc turns it red at `{2 1}`. This
+  cost the implement agent one red cycle.
+* **THE `1fc5e8bc…` DRIFT-CHECK md5 FOR `src/op_annot.tcl` RECORDED BY S5 IS
+  STALE** and produces a false positive. Do not use a hardcoded md5 as a
+  tree-integrity check across steps; `git diff --stat` is the check.
+* **LOCAL TREE HYGIENE, NOT A SHIPPING DEFECT (issue 0424, still open here).**
+  This checkout's generated `src/Makefile` predates `Makefile.in` gaining
+  `op_annot.tcl` (`grep -c 'op_annot.tcl' src/Makefile` → 0 while `Makefile.in:23`
+  has it). `make install` from this tree therefore omits the file, and the
+  **unguarded** `source $XSCHEM_SHAREDIR/op_annot.tcl` at `src/xschem.tcl:14553`
+  would abandon the rest of `xschem.tcl` — taking the new menu item with it.
+  Re-run `./configure`. A fresh clone is unaffected.
 
 ---
 
@@ -896,7 +1107,8 @@ described above** — nothing was numbered into them:
 | 0425 | the descriptor key `type=nmos` collides across all three PDKs and the generic device library |
 | 0426 | `op_annot` accepts a malformed `params` row (silently becomes `v(…)`) and a whitespace-only template |
 
-Number new issues from **0427**.
+Number new issues from **0427**. *(Superseded — see the Progress note at the
+end of this file: the next free number is **0452**.)*
 
 ---
 
@@ -906,18 +1118,23 @@ Number new issues from **0427**.
 |---|---|---|
 | S1–S2 | Tcl only | the name builder, three PDKs described |
 | **S3–S4** | Tcl + ASE | **numbers instead of `-`** — the blocker cleared |
-| S5–S6 | Tcl + one symbol | a user-placeable annotator, all PDKs, no C |
+| S5–S6 ✅ | Tcl + one symbol | a user-placeable annotator, all PDKs, no C |
 | S8 | rc only | the three keys (crude toggle) |
 | S7 | C, 9 sites + helper | the real three-state toggle |
 | S9 | C, draw + exports | press `6`, every device lights up |
 | S10 | bulk `.sym` | no duplication |
 | S11 | C, one arm | timepoint OP with no graph |
 
-**Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · **S5 ✅(E)**.
-S5 landed without S3/S4 by reading a raw produced from a hand-written deck — the
-formatter never needed the generator. **S6 is next and must first decide what to
-do about 0446 and 0447**, both of which become user-visible the moment a carrier
-calls `op_annot::text`.
+**Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
+**S6 ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw produced from a
+hand-written deck — neither the formatter nor the carrier needed the generator.
+S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6) rather than
+closing them, and pinned each with a green check that asserts the current wrong
+behaviour, so the eventual fix reds a named line. **S7 is next** (the nine
+visibility sites and `hide=op`'s meaning); until it lands the carrier is
+always-on with no off switch. New from S6: issues **0449**, **0450**, **0451**.
+
+Number new issues from **0452**.
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.
