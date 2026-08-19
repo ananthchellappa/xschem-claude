@@ -635,7 +635,7 @@ upstream patch that would make `casemodewrite` default on is written and has not
 been sent (`RESPONSE.md` §9), so every released ngspice and every ver_50 file
 written without `set casemodewrite` carries no line, indefinitely.
 
-> **CORRECTED by issue 0426 for the files WE cause to be written.** The paragraph
+> **CORRECTED by issue 0506 for the files WE cause to be written.** The paragraph
 > above is still true of a file somebody else wrote, and that is most files. But
 > it silently assumed xschem would never set `casemodewrite` itself — and at the
 > time it was written that was right, because nothing in the tool ever did (one
@@ -1703,7 +1703,7 @@ and `raw casemode` **never touches `Raw.case_sensitive`** — reporting only. Th
 ladder itself is case-blind on a table database and exact-only under
 `distinguish` (`CS108l`–`CS108n`).
 
-### 13.8 What is NOT here — the C floaters still fold (issue `0420`)
+### 13.8 What is NOT here — the C floaters still fold (issue `0500`)
 
 `token.c` reaches the SAME authority from six `@spice_get_*` floater branches —
 the schematic voltage overlay by a second road, as its own comment says — and
@@ -1720,7 +1720,7 @@ divergence and it is filed rather than hidden.
 It was **not** done here because it is not a 13-line deletion: each fold feeds
 case-sensitive logic downstream (`prefix == 'v'`, `'q'`, `'d'`, `'m'`, `'i'`,
 `strncmp(fqdev, "i(@r", 4)`), so it is item-4-shaped work — gate or blind each
-classification, then drive all six branches. Issue `0420` carries the list.
+classification, then drive all six branches. Issue `0500` carries the list.
 
 ## 14. THE NETLISTER SIDE — casemode item 14
 

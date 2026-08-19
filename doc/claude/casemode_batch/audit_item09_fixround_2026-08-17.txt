@@ -401,7 +401,7 @@ test_wireedit_57_enforce_preexisting_foreign_short_0123.tcl: RESULT: ALL PASS
 test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
 WIREEDIT: ALL PASS
 --------- working-tree delta (report only) ---------
-TREEADD | ?? doc/claude/issues/0423-a-fold-picked-output-row-goes-stale-under-a-later-distinguish-profile.md
+TREEADD | ?? doc/claude/issues/0503-a-fold-picked-output-row-goes-stale-under-a-later-distinguish-profile.md
 ========================================
 SUMMARY: 326 pass  15 fail  0 crash/timeout  0 skip  (total 341)
 WIREEDIT: PASS

@@ -3017,7 +3017,7 @@ proc sim_profile_row {tool idx} {
 }
 
 # =========================================================================
-#      THE PLAIN SIMULATE PATH, COMPOSED FROM THE PROFILE -- issue 0426
+#      THE PLAIN SIMULATE PATH, COMPOSED FROM THE PROFILE -- issue 0506
 # =========================================================================
 #
 # Items 6/7/13 built the profile -- an `exe`, a requested `Case` mode, and a
@@ -3253,7 +3253,7 @@ proc sim_profile_compose_report {c} {
 }
 
 # The requested case mode of the profile row a netlist of THIS tool will
-# launch. C's netlist_case_mode() calls this (issue 0426); it exists as a proc
+# launch. C's netlist_case_mode() calls this (issue 0506); it exists as a proc
 # rather than as an expression inlined in a tcleval() so the C side has one
 # thing to call, the fallback is written once, and the wiring is driveable from
 # a test without netlisting anything.
@@ -3263,7 +3263,7 @@ proc sim_profile_compose_report {c} {
 #   * a `-1` index (a tool with no configured row) -- `sim_profile_get` returns
 #     the field default for an element that does not exist, so `casemode` reads
 #     as unset and `sim_profile_casemode` falls through to the global floor,
-#     which is exactly the pre-0426 answer;
+#     which is exactly the pre-0506 answer;
 #   * `netlist_type` not always being a `sim()` tool name -- the C caller asks
 #     only for CAD_SPICE_NETLIST, the one type whose tool name is known and the
 #     only one where the question means anything.
@@ -6148,7 +6148,7 @@ proc simulate {{callback {}}} {
     }
     set cmd [subst -nobackslashes $sim($tool,$def,cmd)]
 
-    ## COMPOSE FROM THE SIMULATOR PROFILE -- issue 0426.
+    ## COMPOSE FROM THE SIMULATOR PROFILE -- issue 0506.
     ## Until this landed, everything items 6/7/13 measured about a registered
     ## simulator -- its executable, and the case mode its Test button proved it
     ## could deliver -- stopped at the dialog: this proc ran `cmd` verbatim, so a

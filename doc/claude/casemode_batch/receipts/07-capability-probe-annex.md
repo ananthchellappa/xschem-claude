@@ -3,7 +3,7 @@
 **This is the ANNEX to `07-capability-probe.md`** — the same material at full length: the transport measurements, the `.spiceinit` layers, the fix round's six code defects and four evidence defects, and both complete mutation tables. The receipt is authoritative for the verdict; this file is authoritative for the detail.
 
 **Casemode batch ITEM 7.** Authority: `PLAN.md` §3b item 7 · `DECISIONS.md` **B3** (the two probes + "the probe needs a hard timeout"), **A1** (offer only what the binary can deliver), **A2** (`.spiceinit` overrides — ask, do not guess). Spec **extended, not replaced**: `doc/claude/specs/simulator_profiles.md` **§11** (item 6 owns §1–§10). Base `ce1fe3b5`, branch `fluid-editing`, nothing pushed, nothing committed here.
-Consumes item 6's accessors and records through `sim_profile_probe_record`. **Untouched:** `run_cmd` (item 8 — `ase.tcl` is +104 −0, a pure addition), every widget (item 13), `ase::expand_path` (issue 0422). No C, nothing built.
+Consumes item 6's accessors and records through `sim_profile_probe_record`. **Untouched:** `run_cmd` (item 8 — `ase.tcl` is +104 −0, a pure addition), every widget (item 13), `ase::expand_path` (issue 0502). No C, nothing built.
 
 ## 1. Files changed
 

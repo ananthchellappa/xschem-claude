@@ -14,7 +14,7 @@ and the reviewers' not-proven list: **`06-…-annex.md`** beside this file.
 | `src/xschem.h` · `src/scheduler.c` · `src/callback.c` | +29 −11 · +17 −0 · +9 −18 | five prototypes in, the two interim out · `xschem raw view_keys` / `raw view_armed` (introspection; `view_armed` also gates the fallback) · the cursor-B publisher arms instead of publishing per variable |
 | `tests/headless/test_ngspice_data_view.tcl` · `test_ngspice_data_ctx.tcl` | **NEW, 803** · **NEW, 155** | `CS96`–`CS114j2`, **139 checks**, true headless · `CS113*`, **21 checks**, the real two-window road — **needs a display** |
 | `test_raw_case_mode.tcl` · `test_backannotate_digital.tcl` · `full_audit.sh` | +66 −28 · +5 −2 · +1 −1 | **five checks RESTATED in place**, same ids, still 277 · one stale comment · the headless suite into `nogui_tests` |
-| `specs/raw_case_mode.md` §13 · `issues/0420-*.md` | +285 −0 · new 82 | the spec section §13.1–§13.8 · the one filed residue |
+| `specs/raw_case_mode.md` §13 · `issues/0500-*.md` | +285 −0 · new 82 | the spec section §13.1–§13.8 · the one filed residue |
 
 ## 2. Decisions taken, and the evidence
 
@@ -42,7 +42,7 @@ and the reviewers' not-proven list: **`06-…-annex.md`** beside this file.
   (no `HAS_SNPRINTF`) — bare `sprintf`, and `CS106c2` pins the exact string.
 - **MANDATORY SCOPE CLOSED, not passed a sixth time:** `xschem raw casemode` on a **VCD** (`CS107`–`CS107m`) and a **`table_read`** database
   (`CS108`–`CS108n`) — `unknown`/`none` per B2b, `-sniff` says what it *would* have said, explicit set/report/clear, names verbatim, `Raw.case_sensitive`
-  untouched. **NAMED, NOT FIXED — issue `0420`, spec §13.8:** `token.c`'s six `@spice_get_*` branches fold the query first (13 `strtolower()`), so the roads
+  untouched. **NAMED, NOT FIXED — issue `0500`, spec §13.8:** `token.c`'s six `@spice_get_*` branches fold the query first (13 `strtolower()`), so the roads
   agree under `fold`/`preserve` and diverge under `distinguish`; each fold feeds case-sensitive logic downstream, so it is item-4-shaped work, not a deletion.
 - **Five checks RESTATED, none renumbered or deleted.** `CS22 CS23 CS23d CS36d CS36e` asserted `DESIGN_REVISION` §6's interim folded key, which D3 supersedes
   and item 1's own file flagged (*"tolerable UNTIL ITEM 5B"*) — same ids, same code under test, inverted expectation (the label text moved with it), and each
@@ -110,7 +110,7 @@ test file itself**, `CS112c`/`CS112h` pinning Tcl's own behaviour, and `CS114`/`
   **close** with an armed publisher, two windows publishing in turn, or item 5's separate viewer `xctx`. A Tcl write into the armed array is still discarded.
 - **No real simulator ran in the committed suites** (committed + inline fixtures). The real road was driven out of band twice — the case-capable fork on a
   fresh op deck through three shipped `ngspice_get_value.sym` instances (`2.25`/`2.25`/`?` under `distinguish`), and the third publisher on a real binary op
-  raw — neither is a check. **No allocation tracing** beyond two valgrind runs; `nd_view_set`'s `char s[100]` was not bounded; `token.c`'s folds and `0420`'s
+  raw — neither is a check. **No allocation tracing** beyond two valgrind runs; `nd_view_set`'s `char s[100]` was not bounded; `token.c`'s folds and `0500`'s
   claim are unmeasured by any reviewer.
 - **Precision and flag pins are one-sided:** only `update_op`'s `%.4g` is pinned (`CS106c2`) and `%.6g` leaves it green because the fixture's `1.111` renders
   identically; `CS107m`/`CS108k` catch only an *unconditional* `case_sensitive` flip; the cursor-B publisher's rendering is unpinned. **Cost moved rather than

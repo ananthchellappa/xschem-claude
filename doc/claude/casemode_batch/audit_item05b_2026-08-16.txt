@@ -398,7 +398,7 @@ WIREEDIT: ALL PASS
 TREEADD |  M doc/claude/specs/raw_case_mode.md
 TREEADD | ?? doc/claude/casemode_batch/receipts/06-one-lookup-authority-annex.md
 TREEADD | ?? doc/claude/casemode_batch/receipts/06-one-lookup-authority.md
-TREEADD | ?? doc/claude/issues/0420-the-c-spice-get-floaters-fold-the-query-before-the-one-lookup-authority.md
+TREEADD | ?? doc/claude/issues/0500-the-c-spice-get-floaters-fold-the-query-before-the-one-lookup-authority.md
 ========================================
 SUMMARY: 320 pass  15 fail  0 crash/timeout  0 skip  (total 335)
 WIREEDIT: PASS

@@ -3,11 +3,11 @@
 Tick as you go. Written 2026-08-18 at HEAD `9c14b829`, after all 16 items landed.
 
 **What this covers:** the **10 `look` debts** this batch owes (items 5 ×2, 13 ×4,
-14 ×2, **issue 0426 ×2**) plus the one `:0` **suite** debt (`test_sim_dialog`).
+14 ×2, **issue 0506 ×2**) plus the one `:0` **suite** debt (`test_sim_dialog`).
 Nothing else in `owed.sh list` belongs to this batch — the Calculator and GUI-gate
 debts are from other work.
 
-**Updated 2026-08-18** with §0426: the batch closed with the profile dialog
+**Updated 2026-08-18** with §0506: the batch closed with the profile dialog
 measuring one binary and the plain **Simulate** button running another. That is
 now wired, and steps 48–59 are the part that proves the whole point — a schematic
 net `EN` arriving in the viewer as `v(EN)`.
@@ -116,7 +116,7 @@ tests/headless/owed.sh clear look casemode_item_14_fix_round__the_netlist-time_c
 
 - [ ] 47. Both item-14 debts cleared.
 
-## Issue 0426 — the profile actually reaching the run (2 debts)
+## Issue 0506 — the profile actually reaching the run (2 debts)
 
 **This is the goal.** Everything above proves parts; this proves the whole chain.
 A fixture is committed for it: `doc/claude/casemode_batch/eyeball_en_goal.sch`,
@@ -146,14 +146,14 @@ tests/headless/owed.sh clear look issue_0426_-_the_whole_goal_end_to_end__net_EN
 
 - [ ] 60. `tests/headless/owed.sh list` — confirm no casemode debts remain.
 - [ ] 61. Restore config if anything went wrong: `cp ~/.xschem/simrc.backup ~/.xschem/simrc`.
-- [ ] 62. **Decide issue `0421`** — see below. You saw the warning fire at step 41; that is the decision point.
+- [ ] 62. **Decide issue `0501`** — see below. You saw the warning fire at step 41; that is the decision point.
 - [ ] 63. Report anything that read badly. That is a follow-up item, not a sign-off.
 
 ---
 
 ## The one judgement call that is yours, not a defect
 
-**Issue `0421`.** `xschem_library/examples/test_bus_tap.sch` is a **shipped
+**Issue `0501`.** `xschem_library/examples/test_bus_tap.sch` is a **shipped
 example** and it really does name `VCC` and `vcc`, `VSS` and `vss`. So item 14's
 warning fires on it, and **the warning is correct** — under the default `fold`
 mode those are one node to the simulator and two nets to xschem.
@@ -173,15 +173,15 @@ collisions. This one was found because the check fired on it, not by searching.
 ## Also worth knowing before you sign off
 
 - **Nothing is pushed.** 37 commits sit on `fluid-editing`.
-- **Issue `0422` is a code-execution surface, pre-existing and unfixed.**
+- **Issue `0502` is a code-execution surface, pre-existing and unfixed.**
   `ase::expand_path` runs a command substitution hidden in an array index, so
   opening an ASE-L state file someone else wrote can execute arbitrary commands.
   Item 6 guarded its own new field; the three original call sites are untouched.
-- **Nine issues filed:** `0418` `0419` `0420` `0421` `0422` `0423` `0424` `0425`
-  by the batch, and **`0426`** after it — the plain Simulate path ignoring the
+- **Nine issues filed:** `0418` `0419` `0500` `0501` `0502` `0503` `0504` `0505`
+  by the batch, and **`0506`** after it — the plain Simulate path ignoring the
   profile the dialog had just measured, now fixed (steps 48–59, spec
-  `simulator_profiles.md` §18, 27 checks in `test_sim_plain_run.tcl`). `0424` and `0425` came out of item 13 and are the two most likely
-  to annoy you in the dialog you are about to open — `0424` is a message that tells
+  `simulator_profiles.md` §18, 27 checks in `test_sim_plain_run.tcl`). `0504` and `0505` came out of item 13 and are the two most likely
+  to annoy you in the dialog you are about to open — `0504` is a message that tells
   a user who just configured a profile to configure a profile.
 - **Audit result, verified by diffing name and status against the pre-batch
   baseline:** 14 rows added, **zero statuses moved**. All 14 are suites this batch

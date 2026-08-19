@@ -1,4 +1,4 @@
-# 0431 — the `raw switch` / `switch_back` `update_op()` gate mixes PRE- and POST-switch state
+# 0511 — the `raw switch` / `switch_back` `update_op()` gate mixes PRE- and POST-switch state
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `89d0f13e`, 2026-08-19.
 **Area:** the `xschem raw` dispatcher (`src/scheduler.c:10338`) and the two

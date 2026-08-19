@@ -1,4 +1,4 @@
-# 0428 — the Waves-menu result chooser discards the whole registry, and no test drives it
+# 0508 — the Waves-menu result chooser discards the whole registry, and no test drives it
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
 **Area:** `proc load_raw` / `proc waves` / `proc select_raw`
@@ -126,7 +126,7 @@ overwrites it with `tk_getOpenFile` inside `if {[info exists has_x]}`
 
 ## Related
 
-- issue **0427** — `raw_is_loaded` parses `xschem raw info` by word; the sibling
+- issue **0507** — `raw_is_loaded` parses `xschem raw info` by word; the sibling
   defect on the same selection path.
 - `doc/claude/specs/results_selection.md` — the feature that makes the
   append-vs-replace question user-visible.

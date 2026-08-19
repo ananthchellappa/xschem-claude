@@ -1,4 +1,4 @@
-# 0423 — a `fold`-picked output row goes stale under a later `distinguish` profile
+# 0503 — a `fold`-picked output row goes stale under a later `distinguish` profile
 
 **Status:** OPEN, **NARROWED by casemode item 10** (2026-08-17) — the silent
 half is gone, the staleness is not. See "What item 10 changed" below.
@@ -117,7 +117,7 @@ and driven:
 
 * a **mis-cased hierarchy segment** (`v(x1.out)` where the netlist spells the
   instance `X1`) resolved `present` on the strength of its correctly-cased leaf,
-  so the pre-flight passed a stale `0423` row through in silence — while the
+  so the pre-flight passed a stale `0503` row through in silence — while the
   case-keeping binary aborts that analysis (`rc=1`, `RUN-FAILED`, no raw).
   Any segment that comes back a fold-only hit now makes the whole identifier
   `absent`, carrying the whole-path correction (`PF221f`–`PF221i`);

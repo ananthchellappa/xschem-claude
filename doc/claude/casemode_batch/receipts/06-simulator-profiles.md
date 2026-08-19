@@ -17,7 +17,7 @@ Long-form detail — recovery narrative, the three inherited defects, all 20 rev
 | `tests/headless/test_ase_persist.tcl` | +8 −3 | 16→**17** schema keys (restated) |
 | `tests/headless/full_audit.sh` | +1 −1 | `test_sim_profiles` → `nogui_tests` |
 
-New (untracked before this commit): `tests/headless/test_sim_profiles.tcl` (**949 lines, 97 checks**, band `CS150`–`CS166`, contiguous; highest elsewhere was `CS149`) · `tests/headless/fixtures/simrc_pre_casemode` (frozen **pre-change** `save_sim_defaults` output) · `doc/claude/specs/simulator_profiles.md` · this receipt + annex · `doc/claude/issues/0422-*.md` · two audit files (§3).
+New (untracked before this commit): `tests/headless/test_sim_profiles.tcl` (**949 lines, 97 checks**, band `CS150`–`CS166`, contiguous; highest elsewhere was `CS149`) · `tests/headless/fixtures/simrc_pre_casemode` (frozen **pre-change** `save_sim_defaults` output) · `doc/claude/specs/simulator_profiles.md` · this receipt + annex · `doc/claude/issues/0502-*.md` · two audit files (§3).
 **Not created:** `$USER_CONF_DIR/ase_simulators` — B1 killed it. **Untouched:** every existing `cmd` string, `run_cmd`, `simconf`'s widgets, `sod_expr`, all C.
 
 ## 2. Decisions, and the evidence for each
@@ -35,7 +35,7 @@ Spec is authoritative; every ruling is written there with its measurement.
 - **A state's profile index is CANONICALIZED once it validates** (spec §8): `string is integer -strict` accepts `02`, `-0`, ` 2 `, each of which passed the bounds test, then indexed a row that does not exist, while reporting `ok`. `CS163l`; `CS163j` pins why the integer test itself is load-bearing.
 - **`sim_profile` state key** sits after `simulator`, is in `omit_if_empty`, `version` stays **1** — so no existing state file gains a line on its first save (`CS161c`, `CS165`, frozen-fixture round trip).
 - **RULING — `save.c:netlist_case_mode()` stays UNWIRED** (spec §10), against its own comment's expectation: no shipped row carries a `casemode`, so wired and unwired answers are identical for every configuration that can exist before item 13, and re-pointing a green item-14 authority for zero observable difference can only move an audit row. The spec records the one-line expression a consumer uses and what its author then owes.
-- **Declared, not fixed** (all in the spec): a state naming another **tool**'s row resolves `ok`; a **nameless** row can never report `stale`; `default_index` answers `-1` with no downstream meaning yet; `sim_profile_row` on an out-of-range index returns a plausible dict with no "exists" flag; `ase::expand_path`'s pre-existing code-execution hole → **issue 0422**.
+- **Declared, not fixed** (all in the spec): a state naming another **tool**'s row resolves `ok`; a **nameless** row can never report `stale`; `default_index` answers `-1` with no downstream meaning yet; `sim_profile_row` on an out-of-range index returns a plausible dict with no "exists" flag; `ase::expand_path`'s pre-existing code-execution hole → **issue 0502**.
 
 ## 3. Test names, check count, RESULT
 
@@ -53,7 +53,7 @@ WIREEDIT: PASS    SCRATCH:  0 leaked dir(s)
 TREE:     2 appeared  0 vanished (report only, gitignored paths excluded)
 ```
 
-The two `TREEADD` rows are this receipt's own annex and `issues/0422-*.md`, written by
+The two `TREEADD` rows are this receipt's own annex and `issues/0502-*.md`, written by
 the closer while the audit ran — no source or test file moved, and the `md5`s of
 `src/xschem.tcl`, `src/ase.tcl`, `test_sim_profiles.tcl` and the `simrc` fixture are
 identical before and after the run.
@@ -112,7 +112,7 @@ then green again. The remaining 98 rows are the implement/fix rounds' measuremen
 - **No old xschem binary read a new `simrc`.** Compat half 2 rests on the grep argument (no `array names`/`array get sim` anywhere; the three C readers name `sim(spicewave,%d,name)` explicitly) plus write-only-what-differs. Not executed by anyone.
 - **The requested mode reaches NO consumer yet** — `netlist_case_mode()` is unwired on purpose (§2). `args`, `nospiceinit`, `probed` and `sim_profile` are storage whose USE is unproven by construction, and `simconf_add` is reachable only from commented-out dialog code, so `CS151e` drives a proc no user can reach until item 13.
 - **The rc route ships empty**: `src/cadence_style_rc` mentions `sim(` nowhere, and populating an `exe` there would break the no-built-in-`exe` ruling. It is exercised only by tests writing the same globals an rc writes.
-- **`ase::expand_path` is left unsafe on purpose** → **issue 0422**: it expands model paths from a state file with the same `subst -nocommands` this item measured to run a command inside an array index. Not item 6's surface to change.
+- **`ase::expand_path` is left unsafe on purpose** → **issue 0502**: it expands model paths from a state file with the same `subst -nocommands` this item measured to run a command inside an array index. Not item 6's surface to change.
 - **`CS166` is a static blocklist** with two declared blind spots: Tk reached by dynamic dispatch (`[$cmd .w]`), and a Tk word in a trailing `;#` comment. The primary no-Tk evidence is that the whole file runs under `--nogui`.
 - **Reviewer bookkeeping now corrected, not merely disclosed:** the earlier "66 mutations" was wrong (round-1 scripts drive 64) and the suite is 949 lines, not 616/617. Nothing was raised-but-unconfirmed — all 20 confirmed findings are fixed or listed here as declared.
 - **One unexplained single red**: a reviewer saw `CS153e` fail twice in 341 runs, never reproduced, most plausibly another reviewer's live mutation of the shared tree. Recorded, not attributed.

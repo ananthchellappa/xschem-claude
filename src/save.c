@@ -2918,7 +2918,7 @@ int sim_case_mode_floor(void)
  * resolver's ("what wrote this file?").
  *
  * (This paragraph read "today the global floor, from item 6 onwards the
- * per-profile mode" until issue 0426 took the layering point below. Item 6
+ * per-profile mode" until issue 0506 took the layering point below. Item 6
  * deliberately did not, and section 10 records why.)
  *
  * The floor asserting `fold` without evidence is legitimate HERE and is stated,
@@ -2935,7 +2935,7 @@ int sim_case_mode_floor(void)
 int netlist_case_mode(void)
 {
   int mode;
-  /* ISSUE 0426 -- the layering point above is now taken. `simulator_profiles.md`
+  /* ISSUE 0506 -- the layering point above is now taken. `simulator_profiles.md`
    * section 10 left this wrapper returning the floor and said, in as many words,
    * that this is the expression that goes in it "when a consumer needs it". The
    * consumer arrived: once `proc simulate` composes the run from the profile,
@@ -2949,7 +2949,7 @@ int netlist_case_mode(void)
    * rather than by handling it: `netlist_type` is not always a `sim()` tool name,
    * so we ask only for the one type whose tool name is known -- and it is also
    * the only netlist type for which the question means anything at all. Every
-   * other type keeps the floor, i.e. the pre-0426 answer.
+   * other type keeps the floor, i.e. the pre-0506 answer.
    *
    * ZERO CHANGE FOR THE SHIPPED STATE. No default row carries a `casemode`, so
    * `sim_profile_casemode` falls through to `sim_case_mode` -- the same variable

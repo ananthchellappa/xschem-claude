@@ -137,7 +137,7 @@ and it lets you override that answer. What the override changes is **what this w
 reports** — it does *not* re-run anything, does *not* rewrite or re-read the loaded
 database, does *not* change how names are looked up, and does *not* reach the Ctrl-K
 cross-probe in the schematic window, which reads that window's own database. It is also
-**not remembered** between sessions: issue `0425` records that nobody has yet decided
+**not remembered** between sessions: issue `0505` records that nobody has yet decided
 whether it should be.
 
 **Two things you may notice that are not bugs in xschem.**
@@ -153,7 +153,7 @@ whether it should be.
   `strcmp`, so `Out` and `OUT` are two nets on your schematic while a folding ngspice will
   merge them into one. It is a warning, never an error, and it stays silent under
   `distinguish`, which is the one mode that agrees with the drawing. One shipped example
-  (`xschem_library/examples/test_bus_tap.sch`) trips it truthfully — issue `0421`.
+  (`xschem_library/examples/test_bus_tap.sch`) trips it truthfully — issue `0501`.
 
 ---
 

@@ -1,5 +1,5 @@
 # test_sim_plain_run.tcl — THE PLAIN Simulate PATH COMPOSED FROM THE PROFILE.
-# Issue 0426. Spec: doc/claude/specs/simulator_profiles.md section 18.
+# Issue 0506. Spec: doc/claude/specs/simulator_profiles.md section 18.
 #
 # WHAT THIS IS. Items 6/7/13 built a per-simulator profile — an `exe`, a
 # requested `Case` mode, and a Test button that offers only the modes the binary

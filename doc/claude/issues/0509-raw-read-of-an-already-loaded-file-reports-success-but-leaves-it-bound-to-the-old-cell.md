@@ -1,4 +1,4 @@
-# 0429 — `xschem raw read` of an already-loaded file reports success but leaves it bound to the old cell
+# 0509 — `xschem raw read` of an already-loaded file reports success but leaves it bound to the old cell
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
 **Area:** `extra_rawfile()`'s two "file found: switch to it" branches
@@ -167,6 +167,6 @@ happened.
 
 ## Related
 
-- issue **0427** — `raw_is_loaded` parses `xschem raw info` by word.
-- issue **0428** — the Waves-menu chooser discards the whole registry.
+- issue **0507** — `raw_is_loaded` parses `xschem raw info` by word.
+- issue **0508** — the Waves-menu chooser discards the whole registry.
 - `doc/claude/specs/results_selection.md` — the feature this blocks.

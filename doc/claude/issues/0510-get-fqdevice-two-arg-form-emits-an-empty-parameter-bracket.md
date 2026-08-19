@@ -1,4 +1,4 @@
-# 0430 — `xschem get_fqdevice <inst>` emits an EMPTY parameter bracket
+# 0510 — `xschem get_fqdevice <inst>` emits an EMPTY parameter bracket
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `89d0f13e`, 2026-08-19.
 **Area:** the scheduler verb (`src/scheduler.c:5460-5472`) and the composer

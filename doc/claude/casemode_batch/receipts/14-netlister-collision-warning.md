@@ -31,7 +31,7 @@ can approve a colour or a sentence.
   `err == 0` reached nobody. It now **paints both spellings** into the highlight table (`!netlist_count`, one colour per pair) like its five siblings,
   plus a status-bar summary of count, cell and mode (`CS141`/`CS142`); and the **diagnostic phrase comes first**, because names-first a 973-char pair
   emitted 1990 chars carrying neither it nor `(casemode=…)` — `my_snprintf` here drops a whole conversion (`CS144`).
-- **Ruled, then deliberately left alone:** `examples/test_bus_tap.sch` really carries `VCC`/`vcc` + `VSS`/`vss`, so the check fires on a shipped example — and the warning is **true** there. §14's premise "no committed fixture collides" is corrected; that library file is not this item's to edit, and issue `0420` stays out of scope.
+- **Ruled, then deliberately left alone:** `examples/test_bus_tap.sch` really carries `VCC`/`vcc` + `VSS`/`vss`, so the check fires on a shipped example — and the warning is **true** there. §14's premise "no committed fixture collides" is corrected; that library file is not this item's to edit, and issue `0500` stays out of scope.
 
 ## 3. Test, checks, RESULT
 

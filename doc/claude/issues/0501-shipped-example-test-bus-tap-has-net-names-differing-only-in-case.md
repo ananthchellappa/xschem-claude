@@ -1,4 +1,4 @@
-# 0421 — the shipped example `test_bus_tap.sch` has net names differing only in case, so item 14's warning fires on it
+# 0501 — the shipped example `test_bus_tap.sch` has net names differing only in case, so item 14's warning fires on it
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `a7f56fa6` (casemode batch item 14).
 Documentation only — nothing changed.

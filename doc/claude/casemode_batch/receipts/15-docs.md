@@ -9,7 +9,7 @@ the reference material — and **check the docs against the source instead of tr
 
 | file | ± | what |
 |---|---|---|
-| `code_analysis/ngspice_case_sensitivity.md` | +248 −180 | **Part 3 rewritten as what shipped**: the rule (§3.1), which doc answers which question (§3.2), a **22-row site map** of re-grepped `file:line` (§3.3), per-simulator behaviour (§3.4), the phantom (§3.5), Xyce (§3.6), the issues with `0422` pulled out as a security issue rather than buried (§3.7), the `references/` pointer + the **three places we deliberately diverge** from that guide (§3.8), eleven rows of what the 2026-08-12 proposal got wrong (§3.9). Parts 1–2 kept, banner-marked pre-batch |
+| `code_analysis/ngspice_case_sensitivity.md` | +248 −180 | **Part 3 rewritten as what shipped**: the rule (§3.1), which doc answers which question (§3.2), a **22-row site map** of re-grepped `file:line` (§3.3), per-simulator behaviour (§3.4), the phantom (§3.5), Xyce (§3.6), the issues with `0502` pulled out as a security issue rather than buried (§3.7), the `references/` pointer + the **three places we deliberately diverge** from that guide (§3.8), eleven rows of what the 2026-08-12 proposal got wrong (§3.9). Parts 1–2 kept, banner-marked pre-batch |
 | `specs/raw_case_mode.md` | +164 −6 | reader's map (§1–§15 → question → item); §4 given the **SUPERSEDED-by-§13** marker it never had; **new §15**, the phantom; §13.2's `ngspice::lookup` sentence corrected (§2.4) |
 | `specs/simulator_profiles.md` | +76 −3 | reader's map (§1–§17 → question → item, the two mandatory facts, where the rulings live); **`82` → `97`** checks, counted from the file; item 9's carry-forward debt discharged in place (§2.5) |
 | `FAQ.md` | +84 | **Q48**, newest on top: *"my net is `MidNode` but the viewer shows `v(midnode)`"* |
@@ -53,7 +53,7 @@ and Parts 1–2 now carry a banner saying their citations are the pre-batch tree
 `ase::ui::sod_expr {kind token mode}` (`src/ase_window.tcl:961`, third argument **required**). Struck through, not deleted.
 
 **2.6 Not re-opened, deliberately.** No `DECISIONS.md` ruling touched — §2.4's findings are documentation defects, not decisions.
-`PLAN.md` §3/§4 left wrong with their existing markers, per instruction. `token.c`'s folds (`0420`) stay, named in the site map. One
+`PLAN.md` §3/§4 left wrong with their existing markers, per instruction. `token.c`'s folds (`0500`) stay, named in the site map. One
 FAQ overstatement softened: the `distinguish` refusal lands before the deck reaches the simulator, not "before generating anything"
 — `ase::netlist` has already run.
 

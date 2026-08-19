@@ -16,7 +16,7 @@ Location bar and the atomicity ruling) · `doc/claude/specs/ase_l.md` (the menu
 this extends) · `doc/claude/specs/simulator_profiles.md` §8 (the four-status
 resolver this copies) and §14.7 (the bypass enumeration this copies) ·
 `doc/claude/specs/hierarchy_editor.md` (structure and the §1.1 gap-table idiom).
-**Issues on this path:** **0427**, **0428**, **0429** (all filed 2026-08-18 by
+**Issues on this path:** **0507**, **0508**, **0509** (all filed 2026-08-18 by
 the survey that produced this spec), and the pre-existing **0216**.
 
 **Line numbers below are as of 2026-08-18 (`58b2c24d`) and will drift. Grep the
@@ -99,7 +99,7 @@ about run identity.
 | `File ▸ Open Results` → *Choose Data Directory* | **partial** — `Browse…` → `select_raw`, a `tk_getOpenFile` on `.raw` **files** | `src/wave_viewer.tcl:8440`; `src/xschem.tcl:16672` |
 | Search across **all open databases** (`All DBs`) | **yes** | `wviewer::browser_alldbs`, `src/wave_viewer.tcl:10206`; walker `wviewer::signal_list_all`, `:2430` |
 | `Update` vs `Reload` vs `Clear` on a selected result | **absent** as a distinction — every attach path re-reads | `references/viva_cadence_waveform_viewer.md:169` |
-| OCEAN `openResults(dir)` + `selectResult('tran)` sets the **current** selection | **partial** — `xschem raw read` / `raw switch` do this, but only from surfaces not framed as a selection (the viewer Location bar `src/wave_viewer.tcl:8413`; the graph dialog `src/xschem.tcl:6927`) plus scripts, and `read` mis-binds (0429) | `src/scheduler.c:10386`, `:10406`; issue **0429** |
+| OCEAN `openResults(dir)` + `selectResult('tran)` sets the **current** selection | **partial** — `xschem raw read` / `raw switch` do this, but only from surfaces not framed as a selection (the viewer Location bar `src/wave_viewer.tcl:8413`; the graph dialog `src/xschem.tcl:6927`) plus scripts, and `read` mis-binds (0509) | `src/scheduler.c:10386`, `:10406`; issue **0509** |
 | Per-call `?result` / `?resultsDir` override **without** changing the selection | **yes**, per trace — the `%<rawfile>` suffix is exactly this | `references/viva_research_raw.json` research[5].items[53]; `src/draw.c` node walkers |
 | `Edit ▸ Component Display ▸ Set Simulation Data Directory` — tell a *schematic* whose results are its | **absent as a UI** — the stamp can be re-pointed only by `xschem set raw_level <n>` or `xschem annotate_op <file> <level>`, neither framed as "whose results are these", and both bounded to a level already on the current stack | re-stamp `src/scheduler.c:12292-12293`, `:2432-2433`; gate `sch_waves_loaded()` `src/draw.c:2825-2840` |
 | Results **Display Window** for `Results ▸ Print` | **absent** (Calculator §9's Table, R606, is the nearest planned thing) | `references/viva_research_raw.json` research[5].items[33] |
@@ -167,7 +167,7 @@ that a re-stamp verb **already ships**: `xschem set raw_level <n>`
 already-loaded path takes `extra_rawfile()`'s *"file found: switch to it"* branch
 (`src/save.c:1916-1921`, **and again at `:1970-1975`** — the `what == 1` arm is
 written twice, once per reader family), which moves the cursor and never
-re-stamps. Measured: `rc=1`, and the database stays unusable. **Issue 0429.** A
+re-stamps. Measured: `rc=1`, and the database stays unusable. **Issue 0509.** A
 Select verb built naively on `xschem raw read` would report success and deliver
 nothing.
 
@@ -233,7 +233,7 @@ must be called.
 branches (`src/save.c:1916-1921` and `:1970-1975`), must refresh
 `raw->schname` and `raw->level` from `xctx->sch[xctx->currsch]` before returning.
 No re-parse. This makes `read` mean one thing — *"this file is the current
-result, here"* — and is the cleanest fix. Issue **0429** candidate (1).
+result, here"* — and is the cleanest fix. Issue **0509** candidate (1).
 
 **It is not the only fix, and the alternative already ships.**
 `xschem set raw_level <n>` (`src/scheduler.c:12275-12297`) writes *both*
@@ -255,7 +255,7 @@ that `raw switch` deliberately does not touch the annotation array.
 sucessfull, 0 otherwise"*) gains the distinction it currently hides: what the
 return value means when the file was already loaded.
 
-**Non-goal here:** relaxing `sch_waves_loaded()` itself (issue 0429 candidate 2).
+**Non-goal here:** relaxing `sch_waves_loaded()` itself (issue 0509 candidate 2).
 It has **52 call sites** across seven files (`draw.c` 21, `scheduler.c` 11,
 `token.c` 10, `save.c` 4, `hilight.c` 3, `actions.c` 2, `callback.c` 1);
 widening the gate is its own change with its own audit. R110 buys the
@@ -352,7 +352,7 @@ paths that will still bypass it and names them, following
 `{{idx .. path .. type .. cur 0|1 label ..} ..}`, built on
 `wviewer::rawinfo_parse` (`src/wave_viewer.tcl:2380`) and `wviewer::db_label`
 (`:2401`). **There must not be a second parser for `xschem raw info`** — issue
-**0427**'s ruling. If `raw_is_loaded` survives 0427, it is re-expressed on top of
+**0507**'s ruling. If `raw_is_loaded` survives 0507, it is re-expressed on top of
 `results::list`.
 
 **R305** `results::current {}` returns the selected result's dict or `{}`.
@@ -470,7 +470,7 @@ of it.
 **R505 — the Waves menu is GATED, not fixed, not extended. RULED §17.2.**
 Under `cadence_compat` its eight loading entries and `Op Annotate` are blocked
 with a message naming the setting and pointing at `ASE-L ▸ Results ▸ Select`;
-without `cadence_compat` it behaves exactly as it always has. The background: Issue **0428**: `load_raw`
+without `cadence_compat` it behaves exactly as it always has. The background: Issue **0508**: `load_raw`
 (`src/xschem.tcl:16687`) calls `xschem raw_clear` and then `xschem raw_read`,
 which *itself* clears the whole registry — so the eight `waves <type>` entries
 (`Load first analysis found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`, `Sp`,
@@ -619,10 +619,10 @@ in tests; never rely on its headless return.
 
 **L2 — two `xschem` verbs, one underscore apart, opposite semantics.**
 `xschem raw read` appends; `xschem raw_read` **clears the whole registry** and
-then reads (`src/scheduler.c:10776-10793`). Issue **0428**. Write `raw read`.
+then reads (`src/scheduler.c:10776-10793`). Issue **0508**. Write `raw read`.
 
 **L3 — `raw read` of an already-loaded file returns success without re-binding.**
-F5, issue **0429**. Until R110 lands, `results::select` must detect this case
+F5, issue **0509**. Until R110 lands, `results::select` must detect this case
 itself (registry size unchanged) and either re-stamp with `xschem set raw_level`
 or refuse honestly. It must **not** clear-then-read — R301(3), F7 and T-D forbid
 it.
@@ -669,7 +669,7 @@ scripted selection legitimately leaves no trace in the history.
 **L9 — stale in-source citations.** Comments in `wave_viewer.tcl`,
 `calculator.tcl` and `ase.tcl` that cite other files were measured to be
 systematically stale (the `rawinfo_parse` comment alone is wrong twice — issue
-0427). Re-grep every one before quoting it.
+0507). Re-grep every one before quoting it.
 
 ---
 
@@ -684,7 +684,7 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | id | invariant |
 |---|---|
 | **T-A** | Selecting a not-yet-loaded file leaves that path present exactly once in the registry and current, and `results::current` returns it. (Not "adds exactly one slot": the first read into an empty context also adopts the base raw into slot 0, `src/save.c:1857-1862`.) |
-| **T-B** | Selecting an already-loaded `(path, type)` adds **no** slot, makes it current, **and** leaves `xschem raw index <known name>` ≥ 0 **while standing on a different cell from the one it was originally read against** (0429's scenario: read under A, `xschem load` B, re-select there) — the R110 re-stamp. Sabotage: revert the re-stamp, T-B goes red. |
+| **T-B** | Selecting an already-loaded `(path, type)` adds **no** slot, makes it current, **and** leaves `xschem raw index <known name>` ≥ 0 **while standing on a different cell from the one it was originally read against** (0509's scenario: read under A, `xschem load` B, re-select there) — the R110 re-stamp. Sabotage: revert the re-stamp, T-B goes red. |
 | **T-C** | `wviewer::rawbar_load`'s observable behaviour is byte-identical before and after the re-expression: same rc, same registry delta, same MRU delta (with `::update_recent_files` set and restored — L11), same status string, and the same two arms staying silent. |
 | **T-D** | A failed selection (garbage path) leaves the previous selection intact — registry, `raw rawfile` and `raw list` all unchanged — and returns 0 with a sentence. F7. |
 | **T-E** | Restore of a state whose `viewer.rawfile` is **relative** attaches it (extends `test_ase_persist` G11); restore of one whose file was **deleted** falls back and says so (extends G10). |
@@ -693,8 +693,8 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-H** | The four resolver statuses each produce their own sentence; `stale` still yields the named path, and `invalid` yields the derived path when one exists on disk and `{}` otherwise — never an error. |
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
 | **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. |
-| **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0427's ruling, pinned. |
-| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17131`) is the sole permitted caller. Issue 0428, pinned. |
+| **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. |
+| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17131`) is the sole permitted caller. Issue 0508, pinned. |
 | **T-M** | A selection whose stamp does not match the current hierarchy stack is **not** reported as success (R804) — sabotage: make `results::select` return ok unconditionally, T-M goes red. |
 
 **Anti-vacuity, per `doc/claude/specs/calculator.md` §11.3's two notes:**
@@ -717,7 +717,7 @@ source is proved by **moving** the source, not by re-reading it.
 | **D7** | v1 has no per-run result directories | none (R704) | §9 entirely; a read-side migration of ~293 `raw_read` launcher sites |
 | **D8** | v1 has no key chord | none | an `action_registry[]` entry + `keybindings.csv` row |
 | **D9** | `stale` is selected anyway | yes (R202) | §4, T-H |
-| **D10** | The eight Waves *load* entries + `Op Annotate` are **blocked under `cadence_compat`**, and unchanged without it | RULED §17.2 | §7, T-L, and issue 0428 |
+| **D10** | The eight Waves *load* entries + `Op Annotate` are **blocked under `cadence_compat`**, and unchanged without it | RULED §17.2 | §7, T-L, and issue 0508 |
 | **D11** | Digital/VCD databases are not independently selectable | not (R102) | §2, §16 |
 | **D12** | No cascade added to the waveform viewer's menubar | none (R504) | `test_wave_viewer` G2's frozen list |
 | **D13** | `Results ▸ Select…` lives only in ASE-L | RULED §17 decision 5 | §6 |
@@ -739,7 +739,7 @@ source is proved by **moving** the source, not by re-reading it.
    no such coupling. We have the coupling; the least we can do is explain it.
 4. **The resolver never errors.** `invalid` falls back and says so (R202).
    Copied from the simulator-profile work, which learned it the same way.
-5. **One parser, pinned by a grep test** (T-K). Issue 0427 exists because there
+5. **One parser, pinned by a grep test** (T-K). Issue 0507 exists because there
    were two.
 
 ---
@@ -762,7 +762,7 @@ source is proved by **moving** the source, not by re-reading it.
 - **Independently selecting a VCD or table database.** R102.
 - **A PSF reader.** Not a ViVA format question — xschem does not read PSF at all
   and this spec does not change that.
-- **Relaxing `sch_waves_loaded()`.** §3.1's non-goal; issue 0429 candidate 2.
+- **Relaxing `sch_waves_loaded()`.** §3.1's non-goal; issue 0509 candidate 2.
 - **A Results Display Window** for `Results ▸ Print`. The Calculator's Table
   (its §9, R606) is the nearest planned surface.
 - **A key chord.** D8.
@@ -795,7 +795,7 @@ bold. **Nothing here is an assumption any more.**
    what the row shows is what you get, and changing the row changes what
    Evaluate reads. R503's contradiction is closed in favour of the selector.
 4. **Do the Waves-menu entries stop clearing the registry?** (R505, D10, issue
-   0428.) **RULED, and reshaped — see §17.2.** The Waves menu is *legacy upstream
+   0508.) **RULED, and reshaped — see §17.2.** The Waves menu is *legacy upstream
    xschem*, not ours (`proc waves` arrives in `5e8df730`, the repo's first
    commit). It is gated on `cadence_compat` rather than repaired in place.
 5. **Does `Results ▸ Select…` also appear on the schematic editor's menubar**,
@@ -868,7 +868,7 @@ the direction is away from it.
   this menu is zero.
 - **`Clear` and `External viewer` keep working** — neither loads a result.
 - **Without `cadence_compat`**: the menu works as it always has. A user outside
-  Cadence mode may mess things up if they wish. Issue **0428**'s registry-wiping
+  Cadence mode may mess things up if they wish. Issue **0508**'s registry-wiping
   behaviour is *documented* rather than repaired in that mode.
 
 `cadence_compat` is an established gate here, not a new mechanism:

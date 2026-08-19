@@ -31,7 +31,7 @@
 #   PF216      the gate: it refuses, it names every offender, it writes NOTHING,
 #              and `ase_preflight 0` is a real lever
 #   PF217      D1 — the corrections are OFFERED and applied only on an explicit
-#              call, never silently; and issue 0423's stale folded row
+#              call, never silently; and issue 0503's stale folded row
 #   PF218      defence (b): C4's guard shape, after EVERY analysis
 #   PF219      defence (c): the constants raw, the appendwrite shape, and a
 #              rejection that does not disturb the database already loaded
@@ -359,9 +359,9 @@ eqcheck PF216g-a-refused-run_deck-leaves-no-artefact \
   {raised=<1> refused=<1> deck=<0> log=<0> prev=<PREVIOUS RUN>}
 
 # ===========================================================================
-# PF217 — D1: the corrections are OFFERED, and issue 0423's stale row
+# PF217 — D1: the corrections are OFFERED, and issue 0503's stale row
 # ===========================================================================
-## The 0423 mitigation, end to end: a row picked under a `fold` profile stores
+## The 0503 mitigation, end to end: a row picked under a `fold` profile stores
 ## the folded spelling forever, and nothing between the pick and render_deck
 ## re-cases it. Run it under `distinguish` and the deck would be `.save
 ## v(topnet)` against a case-kept netlist — rc=1, zero vectors, analysis not
@@ -370,7 +370,7 @@ set ::sim_case_mode distinguish
 said_clear
 set c4 [catch {ase::preflight_gate [mkstate $RD c $STALE] $NL} e4]
 eqcheck PF217-a-stale-fold-picked-row-REFUSES-under-distinguish \
-  [list $c4 [said_count {*issue 0423*}]] {1 1}
+  [list $c4 [said_count {*issue 0503*}]] {1 1}
 eqcheck PF217b-the-correction-is-OFFERED-for-both-rows \
   [list [said_count {*'v(topnet)' -> 'v(TOPNET)'*}] \
         [said_count {*'-i(v.x1.x2.v1)' -> '-i(V.x1.x2.V1)'*}]] {1 1}
@@ -380,7 +380,7 @@ said_clear
 set c3b [catch {ase::preflight_gate [mkstate $RD c $TYPO] $NL}]
 eqcheck PF217c-a-row-with-no-correction-offers-none \
   [list $c3b [said_count {*v(nosuchnode)*is not in the netlist}] \
-        [said_count {*Same name in another case*}] [said_count {*issue 0423*}]] \
+        [said_count {*Same name in another case*}] [said_count {*issue 0503*}]] \
   {1 1 0 0}
 ## D1: NEVER A SILENT REWRITE. The gate alone changes no stored row — if our map
 ## is wrong about something, a silent pass corrupts saved work with no trace.
@@ -610,7 +610,7 @@ eqcheck PF221e-an-AC-output-row-is-NOT-refused \
 ## The leaf's verdict is not the identifier's verdict. With the netlist spelling
 ## the instance `X1`, a stale fold-picked `v(x1.out)` under `distinguish`
 ## resolved `present` on the strength of its correctly-cased leaf — the exact
-## 0423 row defence (a) exists to catch, passed through in silence, while the
+## 0503 row defence (a) exists to catch, passed through in silence, while the
 ## case-keeping binary aborts the analysis (rc=1, RUN-FAILED, no raw).
 set NLI "* seg\nX1 in out sub\nV1 in 0 1\n.subckt sub a out\nR1 a out 1k\n.ends\n.end\n"
 set MI [pcall ase::netlist_map $NLI]
@@ -648,7 +648,7 @@ eqcheck PF221l-and-that-run-is-NOT-refused \
            {{expr v(out) save 1} {expr i(V1) save 1}}] $NLX} ex21] \
         [said_count {ase: REFUSED*}]] {0 0}
 ## ...and the stand-down is NARROW ON PURPOSE. A FOLD HIT is a proof about THIS
-## netlist — it is D1's correction and issue 0423's whole subject — so an
+## netlist — it is D1's correction and issue 0503's whole subject — so an
 ## include-bearing netlist still refuses it. Downgrading every miss would leave
 ## defence (a) inert on every real design, all of which .include a PDK.
 set NLY "* tb\n.include models.lib\nV1 IN 0 1\nR1 IN OUT 1k\n.end\n"

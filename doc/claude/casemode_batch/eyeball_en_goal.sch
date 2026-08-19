@@ -17,4 +17,4 @@ C {devices/lab_pin} 100 -190 0 0 {name=p1 lab=EN}
 C {devices/lab_pin} 200 -110 0 0 {name=p2 lab=OUT}
 C {devices/code_shown} 460 -190 0 0 {name=STIMULI only_toplevel=false value=".tran 1n 10n
 "}
-C {devices/title} 160 -40 0 0 {name=l3 author="issue 0426 eyeball fixture: net EN must survive to the viewer as v(EN)"}
+C {devices/title} 160 -40 0 0 {name=l3 author="issue 0506 eyeball fixture: net EN must survive to the viewer as v(EN)"}

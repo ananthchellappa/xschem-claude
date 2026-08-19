@@ -7,8 +7,8 @@ pushed.** Nothing is pushed.
 **Final audit: `audit_item15_closer_2026-08-18.txt` — 330/15/0/0 of 345** at
 `ec2f553f`, IDENTICAL by name and status to item 13's. Every item so far has moved **zero** audit statuses; all growth is the
 ten suites they added. **8 `look` debts are open** (items 5 ×2, 13 ×4, 14 ×2) plus a `:0` suite debt; **only the user clears the looks** and only the
-user clears those. **Issues filed by this batch: `0418`, `0419`, `0420`, `0421`,
-`0422` (code execution), `0423`, `0424`, `0425`.**
+user clears those. **Issues filed by this batch: `0418`, `0419`, `0500`, `0501`,
+`0502` (code execution), `0503`, `0504`, `0505`.**
 
 State lives HERE, not in the driver's context. After a compaction, re-read this
 file and continue from the first row that is not `[x]`/`[E]`/`[D]`/`[F]`.
@@ -56,16 +56,16 @@ scorer and is **VOID**. `batch_F/baseline_status_2026-08-15_postmerge5.txt`
 | 3 | four-source mode resolution | `[x]` | `26cff1d3` | 91 new (277 in file) | 53 | 8 + 3 audits | no | audit diff **EMPTY**, verified independently. `xschem raw casemode` REPORTS, never acts. **Refuted two design premises by measurement** (see below). Spec §10 |
 | 4 | the four `hilight.c` senders (Ctrl-K path) | `[x]` | `5c7ee761` | 30 | 30 | 5 + 2 audits | no | **11 folds gated, not the brief's 4** — 9 `strtolower` on 8 lines + 2 `strtoupper`, five senders + a receiver parse. Audit = one added row (its own suite), zero movers. **Refuted 2 reviewer-prescribed fixes and 1 driver hint by measurement.** Spec §11 |
 | 5 | viewer Tcl + two-pane browser scan | `[E]` | `9b1394c9` | 134 | 66 | 5 + 3 audits | **YES ×2** | audit = one added row, zero movers. **B2a's control BUILT, not passed on** (`Options ▸ Case Mode`). Review caught the radios as a **dead control** — no-op left 113/113 green. Spec §12. **2 look debts recorded** |
-| 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0420` filed |
-| 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0422`** filed (code execution) |
+| 5b | **one lookup authority + lazy `ngspice_data`** (D3) | `[x]` | `9f354aa0` | 160 new | 43 | 8 + 4 audits | no | **All three D3 properties landed; property 3 NOT deferred.** Audit = two added rows (its own suites), zero movers. Workflow died after Verify and was RESUMED. Verifier found a **real shipped leak**, fixed. Spec §13. Issue `0500` filed |
+| 6 | extend `sim()` / `simconf` / `simrc` | `[x]` | `169495a4` | 97 | 100 | 9 + 2 audits | no | **RECOVERY RUN** — first attempt died on API 529 with impl null, so Verify + all 3 lenses were SKIPPED and nothing was ever attacked. Relaunched with the disk state described. Audit = one added row, zero movers. Fields: `exe|args|casemode|detected|probed|nospiceinit` + `sim_profile`. Issue **`0502`** filed (code execution) |
 | 7 | the capability probe (+ hard timeout) | `[x]` | `ebf4c952` | 61 | 69 | 4 + 3 audits | no | audit = one added row, zero movers. **Two probes built** (capability + run), §3b's contradiction resolved. **Transport changed `-p` → batch deck** (`-p` opens `$DISPLAY` and CORES with it unset). Spec §11 |
 | 8 | profile-aware `run_cmd` + mismatch policy | `[x]` | `d44febbd` | 38 | 38 | 3 + 3 audits | no | audit = one added row, zero movers (`_closer2_` authoritative). REFUSE = **before anything is generated**, `run_deck`'s first statement. `CS177c` **pins the two arg filters apart forever**. Spec §12 |
-| 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0423`. Spec §13 |
-| 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0423` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
+| 9 | `sod_expr` stops folding + current arm | `[x]` | `799cd912` | 54 | 51 | 8 + 3 audits | no | audit = one added row, zero movers. **TEN assertions moved, not ~20 — and only `HL17`'s VALUE changed.** Declared departure from §D3 → issue `0503`. Spec §13 |
+| 10 | three defences: pre-flight + `$sim_status` + content | `[x]` | `c56581a4` | 114 | 85 | 5 + 1 audit | no | audit = one added row, zero movers. All three defences + D1 offers + `0503` **narrowed**. The modal is deliberately NOT built (rationale §14.5) — hence `[x]`, not `[E]`. Spec §14 |
 | 11 | `result_probe` `-nocase` | `[x]` | `1d217632` | 28 | 19 | 6 + 3 audits | no | audit = one added row, zero movers. **A LADDER with a D2 decline + a delivered-mode veto, NOT a `-nocase` flag** — the naive fix was re-run and reddens 10 checks. **Corrected §13.6**: a plain `fold` run reaches the defect too. Spec §15 |
 | 12 | post-load current repair | `[x]` | `66d7122f` | 56 | 51 | 6 + 1 audit | no | audit = one added row, zero movers. **A GUARD, not a rescue** — item 9's construction model is right, so on a correctly-picked expression the repair is needed **never**. In memory only; the session is never rewritten. Spec §16 |
-| 13 | simulator dialog (extends `simconf`) | `[E]` | `e998e853` | 69 | 69 | 6 + 1 audit | **YES ×4** | audit = one added row, zero movers. Makes items 8/10/12's dormant paths **reachable by gesture**. 4 look debts + a `:0` suite debt. Two findings carried out → issues `0424`, `0425`. Spec §17 |
-| 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0421`. Spec §14 |
+| 13 | simulator dialog (extends `simconf`) | `[E]` | `e998e853` | 69 | 69 | 6 + 1 audit | **YES ×4** | audit = one added row, zero movers. Makes items 8/10/12's dormant paths **reachable by gesture**. 4 look debts + a `:0` suite debt. Two findings carried out → issues `0504`, `0505`. Spec §17 |
+| 14 | netlister collision warning + `model_name()` key | `[E]` | `a7f56fa6` | 40 | 39 | 8 + 2 audits | **YES ×2** | audit = one added row, zero movers. Fix round found the warning **reached nobody** (ERC window opens only on error) → canvas cue + status bar. Fires on a **shipped example** → issue `0501`. Spec §14 |
 | 15 | docs | `[x]` | `ec2f553f` | – | 10 | 8 + 3 audits | no | audit **IDENTICAL** to item 13's, both directions. Found a **fifth** stale doc claim and a `save.c` comment naming two functions item 5b had DELETED. `C1` (`v(all)` AND `i(all)`) and Xyce-unverified both documented |
 
 ## The baseline ROLLED FORWARD at item 1 — read this before diffing an audit
@@ -383,7 +383,7 @@ point, achieved.
 - **Five checks RESTATED, none renumbered or deleted** — `CS22 CS23 CS23d CS36d
   CS36e` asserted `DESIGN_REVISION` §6's interim folded key that D3 supersedes,
   and item 1's own file had flagged them "tolerable UNTIL ITEM 5B".
-- **Issue `0420` filed:** `token.c`'s six `@spice_get_*` branches fold the query
+- **Issue `0500` filed:** `token.c`'s six `@spice_get_*` branches fold the query
   first (13 `strtolower()`), so the two roads agree under `fold`/`preserve` and
   **diverge under `distinguish`**. Each fold feeds case-sensitive logic
   downstream, so it is **item-4-shaped work, not a deletion** — which is why it
@@ -409,7 +409,7 @@ sibling netlist warnings already do, plus a status-bar summary. **Still two
 channels, not three:** `statusmsg(str, 2)` for netlist-time detail (where all
 fifteen `netlist.c` warnings go) and `ciw_echo … note` for the relay.
 
-**IT FIRES ON A SHIPPED EXAMPLE, AND THE WARNING IS TRUE — issue `0421` filed.**
+**IT FIRES ON A SHIPPED EXAMPLE, AND THE WARNING IS TRUE — issue `0501` filed.**
 `xschem_library/examples/test_bus_tap.sch` genuinely carries `VCC`+`vcc` **and**
 `VSS`+`vss` (driver-verified by grep). §14's premise "no committed fixture
 collides" is corrected in place. No audit row moved because no test netlists that
@@ -494,7 +494,7 @@ pre-existing, but "it's a known red" must never be used to wave away a
 regression.** The 15 real baseline reds are now listed verbatim in the pipeline's
 POLICY block so this cannot recur.
 
-### Issue `0422` — CODE EXECUTION, pre-existing, filed not fixed
+### Issue `0502` — CODE EXECUTION, pre-existing, filed not fixed
 
 `ase::expand_path` (`src/ase.tcl:174`) expands `$VAR` in model / `.include` /
 `.lib` / `pre_commands` paths **taken out of an ASE-L state file**, via
@@ -702,7 +702,7 @@ was blind. Deleted; three checks now redden.
 §D3 says `sod_expr` stops folding *unconditionally*; **A1's byte-identity
 requirement outranks it** and forces the mode-conditional shape. The property §D3
 bought is therefore lost: **a row picked under `fold` is stale under a later
-`distinguish` profile** — filed as issue **`0423`**. The mitigation is written
+`distinguish` profile** — filed as issue **`0503`**. The mitigation is written
 into spec §13.6 and is **item 10's**: its pre-flight must **REFUSE** such a run.
 
 ## Carry-forwards item 10 handed on — baseline `audit_item10_closer_2026-08-17`
@@ -766,9 +766,9 @@ names the command. **Nothing rewrites implicitly.** A run-path modal would force
 and item 13 owns that surface. Detection, corrections and apply are all headless
 and driven — what is deferred is **one button**. Hence `[x]`.
 
-**Issue `0423` is NARROWED, not closed.** The silent-wrong-answer half is gone —
+**Issue `0503` is NARROWED, not closed.** The silent-wrong-answer half is gone —
 the run refuses, names both stale rows, offers both corrections and names the
-issue. The staleness remains, because `0423` asks for a re-case pass derived from
+issue. The staleness remains, because `0503` asks for a re-case pass derived from
 the **schematic** while this is a confirmation-gated repair derived from the
 **netlist**, inheriting the map's blind spots. **Whoever builds the re-case pass
 closes it.**
@@ -900,7 +900,7 @@ receipt said in terms that "item 13 is what turns it live". They are live now.
 
 **TWO FINDINGS CARRIED OUT OF THE ITEM, BOTH FILED BY THE DRIVER:**
 
-- **Issue `0424`** — `ase::run_mode_advice` (`src/ase.tcl:990`) keys on
+- **Issue `0504`** — `ase::run_mode_advice` (`src/ase.tcl:990`) keys on
   `sim_profile_resolve` returning status `default`, which happens whenever the
   session **names** no explicit `sim_profile` — not whether a usable row exists.
   So a user who configured a row **through this very dialog** is told "This
@@ -909,12 +909,12 @@ receipt said in terms that "item 13 is what turns it live". They are live now.
   by hand-edited `simrc` since item 6; **item 13 makes it reachable by gesture**,
   which is why it is filed rather than noted. Item 8's own rule — *the advice must
   name a lever that exists* — is what it violates.
-- **Issue `0425`** — item 5 wrote "the override is deliberately NOT persisted —
+- **Issue `0505`** — item 5 wrote "the override is deliberately NOT persisted —
   item 13 owns durability", and **that hand-off was never carried into item 13's
   scope by the driver**. Item 13 correctly refused to absorb a *viewer* setting
   into a *simulator profile* dialog rather than silently widening. The issue
   records that **nobody has decided whether it should persist at all**, and notes
-  that a persisted explicit setting is the same staleness class as `0423`.
+  that a persisted explicit setting is the same staleness class as `0503`.
 
 ## BATCH CLOSED — the whole-batch audit result
 
@@ -937,8 +937,8 @@ Sixteen items, roughly 1100 new checks and 800 sabotage drives, and **not one
 pre-existing test changed status**. That was `receipts/00a-suite-sweep.md`'s
 contract from before item 1, and it held for the whole batch.
 
-**Issues this batch filed (8):** `0418` `0419` `0420` `0421` `0422` `0423` `0424`
-`0425`. **`0422` is a code-execution surface** — `ase::expand_path` runs a command
+**Issues this batch filed (8):** `0418` `0419` `0500` `0501` `0502` `0503` `0504`
+`0505`. **`0502` is a code-execution surface** — `ase::expand_path` runs a command
 substitution hidden in an array index, so opening an ASE-L state file someone else
 wrote can execute arbitrary commands. **Pre-existing, filed not fixed.**
 
@@ -947,7 +947,7 @@ wrote can execute arbitrary commands. **Pre-existing, filed not fixed.**
 1. **8 `look` debts + 1 `:0` suite debt** — `tests/headless/owed.sh list`. A green
    suite never discharges an eyeball.
 2. **Nothing is pushed.** 30+ commits sit on `fluid-editing`.
-3. **Issue `0421`** is a judgement call about a shipped file: `test_bus_tap.sch`
+3. **Issue `0501`** is a judgement call about a shipped file: `test_bus_tap.sch`
    really does carry `VCC`+`vcc` and `VSS`+`vss`, so item 14's warning fires on a
    shipped example and the warning is **true**.
 
@@ -1025,7 +1025,7 @@ which is **cwd-relative**. Running it with `-r /tmp/x.raw` silently writes
 
 ---
 
-# POST-BATCH — issue 0426, the gap the batch's own scope lines deferred
+# POST-BATCH — issue 0506, the gap the batch's own scope lines deferred
 
 Added 2026-08-18, after the batch closed at item 15. Not an item; recorded here
 because this ledger is what a later session reads to find out where things stand,
@@ -1060,5 +1060,5 @@ was ever asked "does the thing work end to end", because every item was asked
 - **Spectre/VACASK with a `Case` field is unmeasured** and nothing is emitted.
 - The `look` debts are **10** now, not 8. `EYEBALL_SIGNOFF.md` steps 48–59.
 
-Receipt: `receipts/16-issue-0426-plain-simulate-wire.md`. Audit:
-`audit_issue0426_2026-08-18.txt`, diffed against `audit_item15_closer_2026-08-18.txt`.
+Receipt: `receipts/16-issue-0506-plain-simulate-wire.md`. Audit:
+`audit_issue0506_2026-08-18.txt`, diffed against `audit_item15_closer_2026-08-18.txt`.

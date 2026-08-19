@@ -1,4 +1,4 @@
-# 0426 — the plain Simulate path ignores the simulator profile the dialog just measured
+# 0506 — the plain Simulate path ignores the simulator profile the dialog just measured
 
 **Status:** OPEN → being fixed in this change. Measured on branch `fluid-editing` at
 `c126ac9a`, after the casemode batch closed.

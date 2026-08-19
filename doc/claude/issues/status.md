@@ -17,6 +17,29 @@
 > real but unrelated file. Our commits already mean the files on disk. See
 > `doc/claude/issues/0226-renumbering-note-is-scoped-by-date-not-by-branch.md`.
 
+
+> **Renumbering, 2026-08-19 — the old 0420–0432 block is now 0500–0512 (+80).**
+> `annotate` (branched off `fluid-editing` at `577ef5bc`, 2026-08-16) filed its
+> own 0420–0448 while this branch was filing 0420–0432, so the two blocks
+> collided file-for-file across thirteen numbers. This branch moved; `annotate`
+> did not. Every file, every in-document reference, and the two batch artefacts
+> named after a number (`casemode_batch/receipts/16-issue-0426-…` → `16-issue-0506-…`,
+> `casemode_batch/audit_issue0426_2026-08-18.txt` → `audit_issue0506_…`) were
+> shifted together. **0419 and below are untouched**, and `open_pdk` (fully
+> merged here at `cad186ea`) tops out at 0415, so nothing below the block moved.
+> No issue-named test and no `doc/claude/evidence/` directory carried a number in
+> the block, so none was renamed.
+> **Commit messages are not** — history is immutable. Three commits on this
+> branch name an old number: `b4a1c8ee` (0426 → **0506**), `af001a12` (0424, 0425
+> → **0504**, **0505**), `d0eb835d` (0421 → **0501**).
+> **Branch is the discriminator, not date.** `annotate`'s own 0420–0432 are
+> different issues and did not move; a `+80` applied to one of its numbers lands
+> on a real but unrelated file here.
+> **Residual risk, not fixed here:** 0416–0419 are unique to this branch and
+> `open_pdk` last filed 0415, so an `open_pdk` session resuming at 0416 would
+> collide. 0416/0417 are shared with `annotate` byte-for-byte and must not be
+> moved unilaterally; 0418/0419 were left with them.
+
 Snapshot taken **2026-07-30**, immediately after issue 0176 was closed
 (`c8671825` + `d5968562`). This is a point-in-time answer to "what is still
 open", not a live index — re-derive it rather than trusting it after any

@@ -3,7 +3,7 @@
 **Casemode batch ITEM 11.** Authority `PLAN.md` §3b item 11 + §F3; `DECISIONS.md` **B4**, **D2**, **A1**.
 Base `82b076ea`, branch `fluid-editing`. Pure Tcl — no C, nothing rebuilt, nothing pushed.
 Rulings live in `doc/claude/specs/simulator_profiles.md` **§15** (§15.1–§15.8, incl. §15.4b); **§13.6 is corrected in place**.
-Untouched by fence: item 12's post-load current repair, item 13's widgets, item 10's three defences, `render_deck`'s deck shape, `0422`, `0423` (still narrowed, not closed).
+Untouched by fence: item 12's post-load current repair, item 13's widgets, item 10's three defences, `render_deck`'s deck shape, `0502`, `0503` (still narrowed, not closed).
 
 ## 1. Files changed
 
@@ -105,4 +105,4 @@ Every mutation is one exact literal, applied to a byte-exact backup, run, restor
 - **The detector is a string match on the simulator's own wording, and `ver_50` keeps moving.** Both tells were measured today and each is pinned, but a reworded banner *and* warning silently reverts the gate to request-only. The failure is biased safe (empty cell, not a wrong one) and `NC228d` is the canary — it SKIPS rather than failing.
 - **Cost is reasoned, then spot-measured by a reviewer**, not by this item's checks: 30 missing rows against a 5.2 MB dump cost 493 ms before / 950 ms after. Real, small, declared.
 - **No `owed.sh look` filed — nothing here is pixels.** The payload is a dict and a CIW line, both asserted headlessly. **No eyeball owed.**
-- **Issue `0423` untouched** — still narrowed, not closed; closing it needs a schematic-derived re-case pass.
+- **Issue `0503` untouched** — still narrowed, not closed; closing it needs a schematic-derived re-case pass.

@@ -1,4 +1,4 @@
-# 0424 — `ase::run_mode_advice` tells a user who just configured a profile to configure a profile
+# 0504 — `ase::run_mode_advice` tells a user who just configured a profile to configure a profile
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `e998e853` (casemode batch item 13).
 Documentation only — nothing fixed.

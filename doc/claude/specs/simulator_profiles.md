@@ -615,14 +615,14 @@ forever, which is the same trap `ase.tcl`'s 56 `::ase::echo` call sites document
   auto-probe gated on an `*ngspice*` filename (B3), and the probe-driven
   pre-fill. Every pixel is item 13's.
 - **Any `cmd` rewriting.** Nothing derives a `cmd` from an `exe` or vice versa.
-  **SUPERSEDED for the plain Simulate path by §18 (issue 0426)** — narrowly, and
+  **SUPERSEDED for the plain Simulate path by §18 (issue 0506)** — narrowly, and
   the reasoning here was never wrong. §18 rewrites exactly one word of a `cmd`,
   under three conditions that decline both shipped templates this ban was
   written about, and reports rather than guesses everywhere else.
 
 ### RULING — `netlist_case_mode()` stays unwired, and this is where that is said
 
-> **SUPERSEDED by §18 (issue 0426): it is wired now.** Everything below stayed
+> **SUPERSEDED by §18 (issue 0506): it is wired now.** Everything below stayed
 > true for item 6, whose contract was an empty audit diff, and the consumer this
 > ruling anticipated ("when a consumer needs it") arrived the moment `proc
 > simulate` began composing the run from the profile. The expression it names is
@@ -1203,7 +1203,7 @@ whatever it is really about to run (`CS170l`).
 - **`-D` for anything but `casemode`.** The probe composes exactly `-b`, the
   profile's `args` (filtered, §11.2), `-n`, `-D casemode=<m>` and its own deck
   path.
-- **Any use of `ase::expand_path`.** Issue `0422` (a command substitution inside
+- **Any use of `ase::expand_path`.** Issue `0502` (a command substitution inside
   an array index runs during a *path* expansion) is pre-existing and unfixed; no
   probe path routes through it. `exe` is expanded by item 6's
   `sim_profile_expand_vars`, which refuses that shape.
@@ -1551,7 +1551,7 @@ the log after a real `execute`, and `CS182b` is the control.
   is no longer part of that gap: both filters drop it, for different reasons.)
   Nothing about those options can change a case mode, so A2's "probe with the
   real argv" is honoured in substance; it is stated here rather than hidden.
-- **`ase::expand_path` is untouched** — issue `0422`, pre-existing. `exe` is
+- **`ase::expand_path` is untouched** — issue `0502`, pre-existing. `exe` is
   expanded by item 6's `sim_profile_expand_vars`, which refuses that shape; no
   new path routes through `expand_path`.
 - **The refusal does not delete the previous run's artefacts.** Deleting a user's
@@ -1893,7 +1893,7 @@ not run. Reproduced end to end (real `ase::session_open`, real `sod_click`, real
 because requested == measured == `distinguish`; nothing on the path re-cases a
 stored row.
 
-**Owner:** filed as `doc/claude/issues/0423-a-fold-picked-output-row-goes-stale-under-a-later-distinguish-profile.md`,
+**Owner:** filed as `doc/claude/issues/0503-a-fold-picked-output-row-goes-stale-under-a-later-distinguish-profile.md`,
 so it cannot be lost between item 9 and item 10. It is **not** repaired here:
 `PLAN.md` §D5 allows the distinguish-only re-case pass to be built or deferred
 with a filed issue, and the driver's item-10 fence names only the pre-flight, the
@@ -1927,13 +1927,13 @@ silently spell it wrong — see §13.6.
   case-sensitive comparison is the right one; under `fold` the expression is
   already folded and the map is not, so the pre-flight must fold **both sides**
   or it will report every mixed-case net as absent.
-- **Item 10 also inherits §13.5b's stale row** (`0423`). A row picked under a
+- **Item 10 also inherits §13.5b's stale row** (`0503`). A row picked under a
   `fold` profile and run under a `distinguish` one is a *folded* expression the
   pre-flight will see as absent from a case-kept netlist map — which is the right
   answer, and the pre-flight must **refuse the run and say why** rather than pass
   it through. Item 9's expressions are correct for the mode that was requested
   when they were picked; nothing between the pick and `render_deck` re-cases
-  them. Whoever builds the re-case pass closes `0423`.
+  them. Whoever builds the re-case pass closes `0503`.
 - **Item 12's post-load repair** is still needed and is now *narrower*: a
   constructed current name (`i(V.Xm.Xl.Vs)`) is only as right as our model of the
   simulator's construction, and `get_raw_index`'s `i(v.x` fixup is item 2's, not
@@ -2134,7 +2134,7 @@ But downgrading *every* miss in an include-bearing scope would leave defence (a)
 inert on every real design, since they all `.include` a PDK. So the downgrade is
 narrowed to the case where this netlist genuinely has nothing to say: **no
 stored name in that scope even folds to the one asked about**. A fold hit is a
-proof about *this* netlist — it is D1's correction and issue `0423`'s whole
+proof about *this* netlist — it is D1's correction and issue `0503`'s whole
 subject — and it keeps refusing (`PF221k`, `PF221l`, `PF221m`, `PF221n`;
 mutations `F34`, `F35`, `F36`).
 
@@ -2143,7 +2143,7 @@ mutations `F34`, `F35`, `F36`).
 `ase::netlist_map_resolve` returned the **leaf's** verdict and threw away the
 case verdict of every intermediate segment. With the netlist spelling the
 instance `X1`, a stale fold-picked `v(x1.out)` under `distinguish` therefore
-resolved `present`: the pre-flight passed through, in silence, the exact `0423`
+resolved `present`: the pre-flight passed through, in silence, the exact `0503`
 row it exists to catch — while the case-keeping binary aborts that analysis
 (measured: `rc=1`, `RUN-FAILED`, no raw). Any segment that came back as a
 fold-only hit now makes the whole identifier `absent`, carrying the
@@ -2385,7 +2385,7 @@ surface where such a button belongs. Building a prompt and calling the item
 `[x]` was the one option the dispatch explicitly forbade; building it and taking
 `[E]` would have bought a dialog no decision in this batch specifies.
 
-## 14.6 Issue `0423` — NARROWED, not closed, and why
+## 14.6 Issue `0503` — NARROWED, not closed, and why
 
 Item 9's declared departure (§13.5b) leaves a row picked under a `fold` profile
 storing `v(topnet)` forever; run under a later `distinguish` profile the deck
@@ -2394,16 +2394,16 @@ ships that folded card and loses the whole run. §13.6 made the mitigation item
 
 That is built and driven end to end (`PF217`, `PF217b`): the folded row is
 absent from a case-kept netlist map, the gate refuses, names both rows, offers
-both corrections, and names issue `0423` in the message.
+both corrections, and names issue `0503` in the message.
 
-**It does not close `0423`**, and the reason is precise. The issue asks for a
+**It does not close `0503`**, and the reason is precise. The issue asks for a
 **re-case pass**: expressions re-derived from the schematic in the mode about to
 be requested, so a stored row is never stale in the first place. What is here is
 a **confirmation-gated repair** of a session that has already gone stale, driven
 from the netlist rather than from the schematic, and it inherits the map's
 blind spots — an `.include`-scoped or bracketed name is `unknown`, so a stale
 row of that shape is neither refused nor corrected. The silent-wrong-answer half
-of `0423` is gone; the staleness itself is not. Recorded in the issue.
+of `0503` is gone; the staleness itself is not. Recorded in the issue.
 
 ## 14.7 What is NOT here
 
@@ -3021,11 +3021,11 @@ answer would repaint the survivors in the wrong colours (`CU241`, `M15`), and a
   spelling it was stored with; this item repairs expressions **on their way in**,
   at the two ASE-L seams that attach a database (`dp_finish`, `auto_plot`). The
   viewer's own `File → Open` raw path (`rawbar_load`) is untouched.
-- **Issue `0423` is still NARROWED, not closed**, and this pass is not the one
-  that closes it. `0423` asks for a **schematic-derived** re-case pass; this is
+- **Issue `0503` is still NARROWED, not closed**, and this pass is not the one
+  that closes it. `0503` asks for a **schematic-derived** re-case pass; this is
   **database-derived** and only sees names the run happened to write, so it
   cannot re-case a row for a signal the run did not save. It does remove one of
-  `0423`'s consequences on the *plot* side, for a `case_sensitive` database.
+  `0503`'s consequences on the *plot* side, for a `case_sensitive` database.
 - **The `i(v.x` anchor gap of §16.5 is named, not fixed.**
 - **A candidate spelling containing WHITESPACE is not filtered out**, and the
   case was reasoned rather than guarded. `xschem raw list` joins names with
@@ -3504,10 +3504,10 @@ recorded, and say when nothing was.
   boxes in place. The old loop walked to the *new* row count and left any extra
   row's widgets standing, and knew nothing about the profile line.
 - **No C, nothing built, no valgrind.**
-- **Nothing touches `ase::expand_path`** (issue `0422`). The `Exe` field is
+- **Nothing touches `ase::expand_path`** (issue `0502`). The `Exe` field is
   expanded by item 6's `sim_profile_expand_vars`, which refuses the
   array-index shape; the dialog adds no new route to a path expander, and the
-  commit-time validation makes `0422` neither easier nor harder to trip.
+  commit-time validation makes `0502` neither easier nor harder to trip.
 
 ## 17.12 Checks that are NOT evidence, and declared holes
 
@@ -3673,13 +3673,13 @@ at their own widget, and the unparsable-list refusal reachable by typing).
 
 ---
 
-# 18. The plain Simulate path, composed from the profile — issue 0426
+# 18. The plain Simulate path, composed from the profile — issue 0506
 
 **Not a casemode batch item.** The batch closed at item 15; this is the gap the
 batch's own scope lines named and deferred, found by asking how far the shipped
 tree was from the stated goal — *"a net named `EN` in the schematic, displayed in
 the waveform viewer as `v(EN)`"*. Issue:
-`doc/claude/issues/0426-the-plain-simulate-path-ignores-the-simulator-profile-it-just-measured.md`.
+`doc/claude/issues/0506-the-plain-simulate-path-ignores-the-simulator-profile-it-just-measured.md`.
 Checks: `CS200`–`CS221` in `tests/headless/test_sim_plain_run.tcl` — **27 of
 them**, counted from a run.
 
@@ -3795,7 +3795,7 @@ without code:
 
 * **a `-1` index** — `sim_profile_get` returns the field default for an element
   that does not exist, so `casemode` reads as unset and `sim_profile_casemode`
-  falls through to the floor: the pre-0426 answer exactly (`CS219b`);
+  falls through to the floor: the pre-0506 answer exactly (`CS219b`);
 * **`netlist_type` is not always a `sim()` tool name** — so C asks **only** for
   `CAD_SPICE_NETLIST`, the one type whose tool name is known and the only one where
   the question means anything. Every other type keeps the floor, by construction.

@@ -1,4 +1,4 @@
-# 0420 — the C `@spice_get_*` floaters fold the query before the one lookup authority
+# 0500 — the C `@spice_get_*` floaters fold the query before the one lookup authority
 
 **Status:** OPEN
 **Filed:** 2026-08-16, casemode batch item 5b

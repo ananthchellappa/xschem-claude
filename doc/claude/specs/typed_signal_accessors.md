@@ -26,8 +26,8 @@ gap-table idiom) · `doc/claude/specs/simulator_profiles.md` §8 (the four-statu
 resolver shape) and §14.7 (the "name the bypassing call sites with file:line"
 idiom).
 **Issues on this path:** **0418** (`raw_add_vector()` swallows the evaluator's
-`-1`, measured again here — §10 L4), **0429**, **0305** (the one-parser rule this
-spec is bound by), and **0430**/**0431**/**0432**, filed by the survey that
+`-1`, measured again here — §10 L4), **0509**, **0305** (the one-parser rule this
+spec is bound by), and **0510**/**0511**/**0512**, filed by the survey that
 produced this spec (§19).
 
 **Line numbers below are as of 2026-08-19 (`89d0f13e`) and will drift. Grep the
@@ -1433,7 +1433,7 @@ point and not once per redraw.** §10 L6.
 | **L2** | **The case fold covers the WHOLE token, prefix included.** `raw_fold_key()` is `strdup` + `strtolower` over the entire string (`src/save.c:3233-3239`). Measured on a hand-written raw whose `Variables:` section names a vector `VT(MidNode)`: all six casings resolve to it on a fold/preserve database, and on the same file read `-case distinguish` **only the exact spelling survives** — including `vt(MidNode)`, where only the *keyword* differs in case. **So an accessor implemented as "a stored-name shape" inherits the database's case discipline, and `distinguish` breaks the keyword itself.** R106 puts the keyword compare in the parser, before the ladder, for exactly this reason. |
 | **L3** | **`re()` / `im()` are operators AND name prefixes AND (nearly) wrappers.** They cannot collide, because the operator arms are exact whole-token `strcmp` — but the reasoning is subtle enough that **R110 keeps the wrapper set to `mag`/`phase`/`real`/`imag`** and does not add `re`/`im` as prefix spellings. §2.3. |
 | **L4** | **`raw_add_vector()` reports success on a rejected expression and leaves an all-zero column** — issue **0418**, re-measured in R807. The only thing between a user and a silent zero trace is the Tcl pre-gate `wviewer::validate_rpn` (defined `src/wave_viewer.tcl:3676`, called from `add_trace` at `:4244`), which is *not* on the Calculator's or a scripted caller's path. **Fix or fence 0418 in the same batch**, or every accessor typo plots a flat line. |
-| **L5** | **`wviewer::sig_bare` already bares an accessor and `wviewer::sig_type` does not classify one.** `sig_bare` (`src/wave_viewer.tcl:2155`) matches the generic `^[A-Za-z_][A-Za-z_0-9]*\((.*)\)$`, so `VT(out)` → `out` **today**; `sig_type` (`:1951`) keys on the literal two-character prefixes `v(`/`i(` and returns `other`. **The two disagree the moment an accessor exists**, and both feed the Signal Browser's classification. Pinned by `test_wave_sigsearch.tcl` ST01/ST03, SB01/SB04/SB05/SB08/SB09. Filed as **0432**. |
+| **L5** | **`wviewer::sig_bare` already bares an accessor and `wviewer::sig_type` does not classify one.** `sig_bare` (`src/wave_viewer.tcl:2155`) matches the generic `^[A-Za-z_][A-Za-z_0-9]*\((.*)\)$`, so `VT(out)` → `out` **today**; `sig_type` (`:1951`) keys on the literal two-character prefixes `v(`/`i(` and returns `other`. **The two disagree the moment an accessor exists**, and both feed the Signal Browser's classification. Pinned by `test_wave_sigsearch.tcl` ST01/ST03, SB01/SB04/SB05/SB08/SB09. Filed as **0512**. |
 | **L6** | **A `node=` walker runs on every redraw.** A CIW line per failed entry is a CIW line per redraw — a pan over a broken graph floods the console. Rate-limit per (rect, entry) per resolution pass, the way the existing warning at `src/draw.c:9005` does *not*, and say so in the code. |
 | **L7** | **`wviewer::repair_currents` will not recognise an accessor.** Its predicate is `is_current_ref` (`src/wave_viewer.tcl:2836`), `regexp -nocase {^(i\(.+\)\|@.+)$}`, and the pass itself (`:2880`, `:2908`, `:2932`) exists to rewrite an unresolvable current token to the database's own spelling. `IT(vs)` fails that regexp, so a repairable accessor current is silently not repaired. |
 | **L8** | **`ase::ui::plot_map_expr` rewrites a leading minus into RPN** (`src/ase_window.tcl:1340`): `-i(v1)` → `i(v1) -1 *`. Checked, and it is **already generic** — the body tests only `[string index $ex 0] eq {-}` with no `v(`/`i(` test — so `-IT(v1)` → `IT(v1) -1 *` works unchanged. Listed so nobody "fixes" it into a wrapper-aware form and breaks the general case. |
@@ -1741,16 +1741,16 @@ the ruling when `tran` is present and disagrees with it when it is not.
 
 ## 19. Defects found while writing this spec
 
-Filed as issues **0430**, **0431** and **0432**. None is *caused* by this
-feature. **0432 blocks it** — its own severity line says so, and §10 L5 and R306
-depend on the fix. 0430 and 0431 do not block it; 0430 is in its blast radius
+Filed as issues **0510**, **0511** and **0512**. None is *caused* by this
+feature. **0512 blocks it** — its own severity line says so, and §10 L5 and R306
+depend on the fix. 0510 and 0511 do not block it; 0510 is in its blast radius
 through E7p.
 
 | # | issue | defect | evidence |
 |---|---|---|---|
-| 1 | **0430** | **`xschem get_fqdevice <inst>` in its 2-argument form emits an EMPTY parameter bracket.** `src/scheduler.c:5469` passes the literal `""` (not NULL) for `param`, so `token.c`'s `param ? param : "id"` selects the empty string. Measured: `xschem get_fqdevice M1` → `i(@m1[])`, `Q1` → `i(@q1[])`, `D1` → `i(@d1[])`, where the 3-argument form gives `i(@m1[id])`. §6.1 E7p inherits it | `src/scheduler.c:5469`; the no-path composition sites `src/token.c:4559`, `:4561` (and the hierarchical twins at `:4545-4549`) |
-| 2 | **0431** | **`xschem raw switch` / `switch_back` read the point count from the PRE-switch database and the analysis type from the POST-switch one, with no NULL guard.** The dispatcher captures `Raw *raw = xctx->raw` once at entry (`src/scheduler.c:10338`); the `update_op()` gate then tests `raw->allpoints == 1` against `xctx->raw->sim_type` | `src/scheduler.c:10338`, `:10415-10417`, `:10428-10430` |
-| 3 | **0432** | **`wviewer::sig_bare` and `wviewer::sig_type` will disagree the moment an accessor exists.** `sig_bare` (`src/wave_viewer.tcl:2155`) matches the generic `^[A-Za-z_][A-Za-z_0-9]*\((.*)\)$` and already bares `VT(out)` → `out`; `sig_type` (`:1951`) keys on the literal `v(`/`i(` and returns `other`. Both feed the Signal Browser's classification. §10 L5 | `src/wave_viewer.tcl:2155`, `:1951`; pinned by `test_wave_sigsearch.tcl` ST01/ST03, SB01/SB04/SB05/SB08/SB09 |
+| 1 | **0510** | **`xschem get_fqdevice <inst>` in its 2-argument form emits an EMPTY parameter bracket.** `src/scheduler.c:5469` passes the literal `""` (not NULL) for `param`, so `token.c`'s `param ? param : "id"` selects the empty string. Measured: `xschem get_fqdevice M1` → `i(@m1[])`, `Q1` → `i(@q1[])`, `D1` → `i(@d1[])`, where the 3-argument form gives `i(@m1[id])`. §6.1 E7p inherits it | `src/scheduler.c:5469`; the no-path composition sites `src/token.c:4559`, `:4561` (and the hierarchical twins at `:4545-4549`) |
+| 2 | **0511** | **`xschem raw switch` / `switch_back` read the point count from the PRE-switch database and the analysis type from the POST-switch one, with no NULL guard.** The dispatcher captures `Raw *raw = xctx->raw` once at entry (`src/scheduler.c:10338`); the `update_op()` gate then tests `raw->allpoints == 1` against `xctx->raw->sim_type` | `src/scheduler.c:10338`, `:10415-10417`, `:10428-10430` |
+| 3 | **0512** | **`wviewer::sig_bare` and `wviewer::sig_type` will disagree the moment an accessor exists.** `sig_bare` (`src/wave_viewer.tcl:2155`) matches the generic `^[A-Za-z_][A-Za-z_0-9]*\((.*)\)$` and already bares `VT(out)` → `out`; `sig_type` (`:1951`) keys on the literal `v(`/`i(` and returns `other`. Both feed the Signal Browser's classification. §10 L5 | `src/wave_viewer.tcl:2155`, `:1951`; pinned by `test_wave_sigsearch.tcl` ST01/ST03, SB01/SB04/SB05/SB08/SB09 |
 
 Plus the documentation corrections of **§10 L11** and the stale source citations
 of **§10 L12**, which are edits rather than issues.

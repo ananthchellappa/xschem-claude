@@ -1,8 +1,8 @@
-# 0426 — the plain Simulate path composed from the profile
+# 0506 — the plain Simulate path composed from the profile
 
 **Post-batch.** The casemode batch closed at item 15; this closes the gap the
 batch's own scope lines named and deferred. Issue:
-`doc/claude/issues/0426-*.md`. Spec: `simulator_profiles.md` **§18** (new),
+`doc/claude/issues/0506-*.md`. Spec: `simulator_profiles.md` **§18** (new),
 with §10's two rulings **corrected in place**, and `raw_case_mode.md` §10's
 "permanent unknown" ruling corrected for the files we cause to be written.
 
@@ -93,7 +93,7 @@ shipped state — composes **byte-identically**, while a configured row does not
 `test_sim_run_profile` 38, `test_netlist_case_collision` 39,
 `test_raw_case_mode` 277, `test_wave_casemode` 74, `test_ase_result_case` 28,
 `test_ase_current_repair` 53 — **all pass** (694 + 27).
-Full audit: `audit_issue0426_2026-08-18.txt`, diffed by NAME and STATUS against
+Full audit: `audit_issue0506_2026-08-18.txt`, diffed by NAME and STATUS against
 `audit_item15_closer_2026-08-18.txt`.
 
 ## Owed

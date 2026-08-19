@@ -1,4 +1,4 @@
-# 0427 — `raw_is_loaded` parses `xschem raw info` by WORD, and has no callers
+# 0507 — `raw_is_loaded` parses `xschem raw info` by WORD, and has no callers
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `58b2c24d`, 2026-08-18.
 **Area:** `proc raw_is_loaded` (`src/xschem.tcl:6980`), the `xschem raw info`
@@ -119,4 +119,4 @@ warning is stale. Fix both in the same change.
 
 - `doc/claude/specs/results_selection.md` — the feature that would give this
   proc its first live caller.
-- issue **0428** — the sibling coverage hole on the same selection path.
+- issue **0508** — the sibling coverage hole on the same selection path.

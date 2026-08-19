@@ -246,7 +246,7 @@ this one says what the site does now.
 | the read verbs | `src/scheduler.c:10363` (`raw read … -case`, the `"-case"` argv test), `:10703` (`raw case`, the `"case"` argv test), `:10095` `raw_case_reread()` | a *set* **re-reads the file** — folding is destructive, so a flag flip would lie |
 | cross-probe senders | `src/hilight.c:362` `hilight_sender_case_mode()`, `:421` `sender_current_prefix()` | eleven folds gated (Part 1 counted four); the hierarchical-current prefix follows the **token's own first letter** |
 | viewer matcher (Tcl) | `src/wave_viewer.tcl:2629/2651/2664/2689` (`name_rungs`/`fold_key`/`name_index`/`name_lookup`), `:2748` `resolve_signal_db`, `:3676` `validate_rpn` | one mirror of the C ladder, D2 included; `fold_key` is **ASCII-only**, because the C authority is a byte-wise `strtolower()` |
-| viewer control | `src/wave_viewer.tcl:14447` `casemode_refresh`, `:14574` `set_case_mode` | `Options ▸ Case Mode`: shows the mode **and which source answered**, writes the explicit source only. Not persisted — issue `0425` |
+| viewer control | `src/wave_viewer.tcl:14447` `casemode_refresh`, `:14574` `set_case_mode` | `Options ▸ Case Mode`: shows the mode **and which source answered**, writes the explicit source only. Not persisted — issue `0505` |
 | backannotation | `src/save.c:2155`ff (the lazy view), `src/xschem.tcl:3751` `ngspice::lookup` | `ngspice::ngspice_data` is a **read-traced view** over `get_raw_index_in()`, so while the C view is armed the Tcl `string tolower` + hand-rolled `v(...)` ladder is **gone** and every query goes to the one authority. **One gated fallback survives** — `v($name)`, the folded name, the folded name wrapped — running *only* when `xschem raw view_armed` says no C view owns the array, for the third, pure-Tcl publisher `ngspice::read_raw_dataset` (`src/ngspice_backannotate.tcl:39`, which folds its own keys and has no `Raw` to share). The gate is load-bearing: without it a `distinguish` database answers `En` with `v(en)`'s value (`raw_case_mode.md` §13.7b). **No mode branch exists anywhere in backannotation** |
 | profiles | `src/xschem.tcl:2774`ff `sim_profile_set()` and the `sim_profile_*` family, persisted to `$USER_CONF_DIR/simrc` | `exe args casemode detected probed nospiceinit` on the existing `sim()` rows — **no new registry file** |
 | probes | `src/xschem.tcl:3309` `sim_probe_once`, `:3503` `sim_profile_probe_capability`; `src/ase.tcl:606` `ase::sim_probe_run` | two probes, one mechanism parameterised by cwd; transport is a **batch deck**; one hard timeout bounding the whole probe |
@@ -256,7 +256,7 @@ this one says what the site does now.
 | log read-back | `src/ase.tcl:4864` `result_probe` | exact line first, then one case-insensitive pass, declining on two differently-cased labels; off under `distinguish`; what the run **delivered** outranks what it asked for |
 | current repair | `src/wave_viewer.tcl:2932` `repair_currents`, `src/ase_window.tcl:2224` | in memory only; the session is never rewritten |
 | netlister | `src/node_hash.c:313` `netlist_case_collision_check()` (called from `src/spice_netlist.c:221`); model key `keep_model_case` at `src/spice_netlist.c:206`, `src/spectre_netlist.c:74`; the relay at `src/xschem.tcl:5936`ff, which parses the netlister's `differ only in case` warning | warns when **xschem and the simulator disagree about how many nets there are** — under `fold`/`preserve`, **silent under `distinguish`**, never an error |
-| **still folding** | `src/token.c`, the six `@spice_get_*` branches | **not fixed** — issue `0420`. Agrees with the authority under `fold`/`preserve`, diverges under `distinguish` |
+| **still folding** | `src/token.c`, the six `@spice_get_*` branches | **not fixed** — issue `0500`. Agrees with the authority under `fold`/`preserve`, diverges under `distinguish` |
 
 ### 3.4 What a user actually gets
 
@@ -320,21 +320,21 @@ What would reopen either: one real Xyce raw file, measured.
 0418  raw_add_vector() swallows a -1 and registers an all-zero column
 0419  top-level @dev[param] currents are classed as nets and survive
       'hide device internals'
-0420  token.c's six @spice_get_* branches fold the query before the one
+0500  token.c's six @spice_get_* branches fold the query before the one
       lookup authority -- they agree under fold/preserve, diverge under
       distinguish
-0421  a SHIPPED EXAMPLE (xschem_library/examples/test_bus_tap.sch) carries
+0501  a SHIPPED EXAMPLE (xschem_library/examples/test_bus_tap.sch) carries
       VCC+vcc and VSS+vss, so the new netlist warning fires on it, truthfully
-0423  a fold-picked output row goes stale under a later distinguish profile
+0503  a fold-picked output row goes stale under a later distinguish profile
       (NARROWED by item 10 -- the run now refuses and offers the correction --
       not closed: whoever builds the schematic-derived re-case pass closes it)
-0424  ase::run_mode_advice tells a user who just configured a profile to
+0504  ase::run_mode_advice tells a user who just configured a profile to
       configure a profile
-0425  the viewer's Case Mode override is not persisted, and durability was
+0505  the viewer's Case Mode override is not persisted, and durability was
       never assigned to an item
 ```
 
-**`0422` is a security issue and does not belong in a list.** `ase::expand_path`
+**`0502` is a security issue and does not belong in a list.** `ase::expand_path`
 (`src/ase.tcl:174`) expands `$VAR` in model / `.include` / `.lib` /
 `pre_commands` paths taken **out of an ASE-L state file**, using
 `subst -nocommands` — and that flag does **not** stop a command substitution
@@ -394,5 +394,5 @@ proposal quoted somewhere else should be able to see which parts of it died.
 | `sod_expr {kind token {csens 0}}` — mode **defaulted** | the mode is a **required** third argument | a defaulted mode is a *silent* fold, and a folded `.save` under `distinguish` is rc=1, zero vectors and "analysis not run" — the whole session's data. A missing argument is a loud Tcl error instead |
 | `result_probe`: "add `-nocase` to the regexp — harmless" | a **ladder**: exact line first, one case-insensitive pass second, decline on two differently-cased labels, and off entirely under `distinguish` | the naive fix was re-run, not assumed wrong: `-nocase` on rung 1 reddens 10 checks, because `v(EN)`'s row takes `v(en)`'s number (ruling: `simulator_profiles.md` §15.3; the measurement itself: `casemode_batch/receipts/11-result-probe-nocase.md`) |
 | §E "a free win": the VCD reader "simply sets `case_sensitive` to 1" | VCD gets the same verbatim storage and the same folded-alias lookup as everything else; `case_sensitive` means `distinguish`, not "this file has capitals" | conflating "the file kept its capitals" with "two spellings are two signals" is exactly the bug D2 exists to prevent — a `COUNT` query must resolve to **nothing** when a VCD holds both `Count` and `count`, not to an arbitrary one |
-| "backannotation last, lowest risk: `token.c` … plus `ngspice_backannotate.tcl:39`" | backannotation became the **hardest** item (5b): a second lookup ladder in Tcl, deleted; `ngspice_data` rebuilt as a lazy view; **four** procs involved, not the two named. `token.c` is **still folding** — issue `0420` | the risk was in the opposite place from where the proposal put it. `ngspice::get_diff_voltage` had never returned a difference at all, and a third publisher of `ngspice_data` existed, in Tcl, that no analysis had noticed |
+| "backannotation last, lowest risk: `token.c` … plus `ngspice_backannotate.tcl:39`" | backannotation became the **hardest** item (5b): a second lookup ladder in Tcl, deleted; `ngspice_data` rebuilt as a lazy view; **four** procs involved, not the two named. `token.c` is **still folding** — issue `0500` | the risk was in the opposite place from where the proposal put it. `ngspice::get_diff_voltage` had never returned a difference at all, and a third publisher of `ngspice_data` existed, in Tcl, that no analysis had noticed |
 | "Default 0 everywhere ⇒ every golden test stays byte-identical" | **held** — fourteen items, zero audit statuses moved | the one thing the proposal got exactly right, and it is what made an unattended batch possible |

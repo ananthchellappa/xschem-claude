@@ -407,7 +407,7 @@ test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
 WIREEDIT: ALL PASS
 --------- working-tree delta (report only) ---------
 TREEADD |  M doc/claude/casemode_batch/LEDGER.md
-TREEADD | ?? doc/claude/casemode_batch/receipts/16-issue-0426-plain-simulate-wire.md
+TREEADD | ?? doc/claude/casemode_batch/receipts/16-issue-0506-plain-simulate-wire.md
 ========================================
 SUMMARY: 331 pass  15 fail  0 crash/timeout  0 skip  (total 346)
 WIREEDIT: PASS

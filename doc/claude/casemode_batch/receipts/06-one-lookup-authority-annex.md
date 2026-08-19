@@ -422,7 +422,7 @@ The receipt's §5 summarises; this is the full carried-forward list.
   matches, no `@` prepended; new: no match, `@` prepended) and a metacharacter prefix used
   to error or match spuriously. No reviewer built a schematic that reaches either, so it
   is recorded, not raised.
-- **Issue `0420`'s claim** that `token.c`'s `@spice_get_*` floaters diverge from the Tcl
+- **Issue `0500`'s claim** that `token.c`'s `@spice_get_*` floaters diverge from the Tcl
   road under `distinguish` was measured by the implementer and one verifier, by no
   reviewer.
 - **One reviewer saw the materialised alias key `in` still present in `array names` after

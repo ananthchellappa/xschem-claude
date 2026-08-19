@@ -1,4 +1,4 @@
-# 0432 — `wviewer::sig_bare` and `wviewer::sig_type` disagree about any wrapper that is not `v(`/`i(`
+# 0512 — `wviewer::sig_bare` and `wviewer::sig_type` disagree about any wrapper that is not `v(`/`i(`
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `89d0f13e`, 2026-08-19.
 **Area:** `wviewer::sig_bare` (`src/wave_viewer.tcl:2155`) and

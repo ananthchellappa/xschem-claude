@@ -1,4 +1,4 @@
-# 0422 — `ase::expand_path` runs a command substitution hidden in an array index, so opening a state file can execute arbitrary commands
+# 0502 — `ase::expand_path` runs a command substitution hidden in an array index, so opening a state file can execute arbitrary commands
 
 **Status:** OPEN. Measured on branch `fluid-editing` at `d0eb835d` (casemode batch item 6),
 Tcl 8.6.14. Pre-existing — **not** introduced by item 6.

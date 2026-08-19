@@ -11,7 +11,7 @@
 
 New: `tests/headless/test_sim_dialog.tcl` (**53 checks** on a display, **35** true-headless, band **`SDG1`–`SDG16e`** — measured by grepping `tests/headless/*.tcl` for the highest id in use, not quoted from a doc; `SDG1`–`SDG6` were already taken by `test_wave_viewer`/`test_schpins_stale_lab_0185`, hence a *new* two-letter band rather than an extension of `CS`, whose neighbour `SC192` would have been one transposition away), this receipt, and `audit_item13_2026-08-18.txt`.
 `full_audit.sh` needed **no edit**: it globs `test_*.tcl` and the default arm (`--pipe -q --nolog`) is the one this file wants.
-**Untouched:** every existing `cmd` string, `run_cmd`, `attach_dbs`, all C, `ase::expand_path` (issue `0422`).
+**Untouched:** every existing `cmd` string, `run_cmd`, `attach_dbs`, all C, `ase::expand_path` (issue `0502`).
 
 ## 2. Rulings, and the evidence for each (spec §17 carries the measurement)
 
@@ -79,7 +79,7 @@ Each is an exact literal replacement asserted to hit **exactly once**, applied o
 - **The layout is measured, not judged.** Two pixel decisions were driven by measurement on `:99` and are in the spec: the status label needed `-width 1` or its own text sized the whole dialog and clipped every row; and it needed a **line of its own** because 184 px is 26 characters and the Test sentence is 48. Rows are taller as a result — about five fit where nine did.
 - **`simconf_default_geometry`**: a user with a saved geometry keeps it, so their dialog opens cramped. Deliberate; discarding a saved geometry is worse.
 - **No `Option:`-bearing raw exists to test against**, and no Xyce. The `distinguish` end-to-end used the private `build-ver_50`; the REFUSE end-to-end used `/usr/local/bin/ngspice`.
-- **`0422` unchanged**: the dialog routes no path through `ase::expand_path`; `Exe` goes through item 6's `sim_profile_expand_vars`, and commit-time validation makes the hole neither easier nor harder to trip.
+- **`0502` unchanged**: the dialog routes no path through `ase::expand_path`; `Exe` goes through item 6's `sim_profile_expand_vars`, and commit-time validation makes the hole neither easier nor harder to trip.
 
 ---
 
@@ -294,6 +294,6 @@ really changes the binary, which is `SDG20`/`SDG20b`.
   and `SDG14c` still pin byte-stability, and `SDG14c` is the first check that
   can tell "saved identically" from "never saved".
 - **Everything else in §6 above still stands**: no Xyce, no `Option:`-bearing
-  raw, no C, nothing built, `0422` unchanged (the round added no new path
+  raw, no C, nothing built, `0502` unchanged (the round added no new path
   expander and no new route to one), and the six MASTER-RED survivors keep their
   own targeted mutations as their evidence.

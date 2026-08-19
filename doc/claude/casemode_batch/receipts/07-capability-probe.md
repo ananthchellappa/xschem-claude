@@ -1,6 +1,6 @@
 # 07 — the capability probe, the run probe, and the mandatory hard timeout
 
-**Casemode batch ITEM 7.** Authority: `PLAN.md` §3b item 7 · `DECISIONS.md` **B3** (the two probes + the hard timeout), **A1** (offer only what the binary can deliver), **A2** (`.spiceinit` overrides — ask, never guess). Spec **extended, not replaced**: `doc/claude/specs/simulator_profiles.md` **§11** (item 6 owns §1–§10). Base `ce1fe3b5`, branch `fluid-editing`. Long-form detail — the transport measurements, both `.spiceinit` layers, the fix round's six code and four evidence defects, both complete mutation tables — is in **`07-capability-probe-annex.md`**. **Untouched:** `run_cmd` (item 8), every widget (item 13), `ase::expand_path` (issue 0422). No C, nothing built.
+**Casemode batch ITEM 7.** Authority: `PLAN.md` §3b item 7 · `DECISIONS.md` **B3** (the two probes + the hard timeout), **A1** (offer only what the binary can deliver), **A2** (`.spiceinit` overrides — ask, never guess). Spec **extended, not replaced**: `doc/claude/specs/simulator_profiles.md` **§11** (item 6 owns §1–§10). Base `ce1fe3b5`, branch `fluid-editing`. Long-form detail — the transport measurements, both `.spiceinit` layers, the fix round's six code and four evidence defects, both complete mutation tables — is in **`07-capability-probe-annex.md`**. **Untouched:** `run_cmd` (item 8), every widget (item 13), `ase::expand_path` (issue 0502). No C, nothing built.
 
 ## 1. Files changed
 

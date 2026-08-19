@@ -1319,7 +1319,7 @@ proc ase::preflight_pick {tbl name cs} {
 # every real design `.include`s a PDK. So the downgrade is narrowed to the case
 # where the netlist genuinely has nothing to say: no stored name in that scope
 # even FOLDS to the one asked about. A fold hit is a proof about THIS netlist —
-# it is D1's correction and issue 0423's whole subject — and it keeps refusing.
+# it is D1's correction and issue 0503's whole subject — and it keeps refusing.
 proc ase::netlist_map_resolve {map kind name cs} {
   set unk [dict create status unknown real {} ambiguous 0 why {}]
   set includes {}
@@ -1346,7 +1346,7 @@ proc ase::netlist_map_resolve {map kind name cs} {
   # verdict alone is not the identifier's verdict: with the netlist spelling the
   # instance `X1`, a stale fold-picked `v(x1.out)` under `distinguish` used to
   # resolve `present` on the strength of its leaf, so the pre-flight passed
-  # through the exact 0423 row it exists to catch — while the case-keeping
+  # through the exact 0503 row it exists to catch — while the case-keeping
   # binary aborted the analysis (measured: rc=1, RUN-FAILED, no raw).
   # (Fix round, item 10.)
   set segstale 0
@@ -1621,7 +1621,7 @@ proc ase::preflight_gate {state netlist_text} {
   if {$nfix} {
     set l "ase: $nfix of them look like a CASE mismatch — an output row picked\
  under a 'fold' profile and run under 'distinguish' stores the folded spelling\
- forever (issue 0423). Nothing is rewritten automatically: run\
+ forever (issue 0503). Nothing is rewritten automatically: run\
  `ase::preflight_fix_session <key>` to apply the corrections above to this\
  session's output rows, then save."
     ::ase::echo $l error

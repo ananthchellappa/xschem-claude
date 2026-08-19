@@ -207,7 +207,7 @@ approve. Suites green — please look. Everything about the detection itself is 
 is the only thing pixels gate.
 
 Also left standing, deliberately: the two stray lower-case labels in `examples/test_bus_tap.sch` (F5 — a truthful
-warning, and a shipped library file is not this item's to edit), and issue **`0420`** (`token.c`'s `@spice_get_*` folds),
+warning, and a shipped library file is not this item's to edit), and issue **`0500`** (`token.c`'s `@spice_get_*` folds),
 which is item-4-shaped work and explicitly out of scope.
 
 ### 6d. Audit — the empty-diff contract, measured
