@@ -4122,6 +4122,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "actionlog_filename")) { /* path of the open action log, empty if disabled */
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
           }
+          /* (xschem get annot_show) annotation-class visibility mask: bit0 device OP
+           * info (hide=op), bit1 node voltages (hide=voltage). See the shared text
+           * visibility predicate in actions.c, and doc/claude/specs/op_annotation.md. */
+          else if(!strcmp(argv[2], "annot_show")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
+          }
           /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
            * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
            * string with rc 0 (an unknown `get` does not error). Added for the issue-0172
@@ -9784,6 +9791,10 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* P6: the svg/ps export paths (svg_draw_symbol/ps_draw_symbol) don't go through draw(),
        * so refresh the pin-name visibility cache here (png uses the screen draw() path). */
       pin_names_sync_cache();
+      /* S7: same reason -- the annotation-class mask is a cache and the export back ends
+       * never refresh it. Without this the FIRST export after any Tcl-side change renders
+       * with the previous value, which is the measured show_hidden_texts defect (0453). */
+      annot_show_sync_cache();
       if(argc > 3) {
         tclvareval("file normalize {", argv[3], "}", NULL);
         my_strncpy(xctx->plotfile, Tcl_GetStringResult(interp), S(xctx->plotfile));
@@ -11694,6 +11705,15 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
              * read-only guard. C int, not tcl-mirrored (globals.c). */
             actionlog_suppress = atoi(argv[3]);
             if(actionlog_suppress < 0) actionlog_suppress = 0;
+          }
+          /* set annot_show <mask>: annotation-class visibility (bit0 hide=op device OP
+           * info, bit1 hide=voltage node voltages). Writes BOTH the C field and the Tcl
+           * mirror (decision D4) -- show_hidden_texts' setter writes only C and the next
+           * pull silently discards it, which is why the GUI never calls that one. */
+          else if(!strcmp(argv[2], "annot_show")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->annot_show = atoi(argv[3]);
+            tclsetintvar("annot_show", xctx->annot_show);
           }
           else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -13624,6 +13644,11 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int i;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* S7: symbol_bbox() consults the annotation-class mask through the shared text
+       * visibility predicate and does not refresh it, so ONE `update_all_sym_bboxes`
+       * must pick up a Tcl-side change (the shipped idiom is
+       * `update_all_sym_bboxes; redraw`). */
+      annot_show_sync_cache();
       for(i = 0; i < xctx->texts; i++)
       if(xctx->text[i].flags & TEXT_FLOATER) {
         my_free(_ALLOC_ID_, &xctx->text[i].floater_ptr); /* clear floater cached value */

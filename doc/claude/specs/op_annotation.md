@@ -134,17 +134,38 @@ What it does **not** do, and this spec must:
 
 One global boolean: `show_hidden_texts` (`xctx->show_hidden_texts`, mirrored in
 Tcl), gating texts whose attribute is `hide=true` (`HIDE_TEXT`, set in
-`set_text_flags()` `actions.c:1121`). The test is copy-pasted at **nine** sites:
-`draw.c:868, 1131, 10266, 10556`, `svgdraw.c:923, 1290`, `psprint.c:1205, 1664`,
-`select.c:709`, `actions.c:4422`.
+`set_text_flags()` `actions.c:1121`).
+
+> **⚠ CORRECTED BY S7 — THIS SECTION SAID "NINE" AND THEN LISTED TEN, AND THE
+> TEN ARE NOT TEN COPIES OF ONE TEST.** Every downstream count in this spec and
+> in the plan inherited the wrong number. Measured: `grep -n HIDE_TEXT src/*.c`
+> returns exactly **ten** tests, and they split cleanly in two.
+>
+> * **Six** iterate a *symbol's* `symptr->text[j]` and mask
+>   `(HIDE_TEXT | HIDE_TEXT_INSTANTIATED)` — `draw.c:868`, `draw.c:1131`,
+>   `draw.c:10266`, `svgdraw.c:923`, `psprint.c:1205`, `select.c:709`.
+> * **Four** iterate the *schematic's own* `xctx->text[i]` and mask `HIDE_TEXT`
+>   alone — `draw.c:10556`, `svgdraw.c:1290`, `psprint.c:1664`, `actions.c:4422`.
+>   The last carries `/* | HIDE_TEXT_INSTANTIATED */` commented out **in place**,
+>   so the difference is deliberate and someone already thought about it.
+>
+> **That split *is* the meaning of `hide=instance`** — "hidden when this symbol
+> is instantiated, visible while you are editing the symbol itself". Measured end
+> to end through the real export path at `show_hidden_texts 0`: symbol texts
+> visible `{none, op, voltage}` but top-level texts visible
+> `{none, op, voltage, INSTANCE}`, identically in SVG and in PS. A helper with
+> one fixed mask — the literal reading of §4.5's original wording — silently
+> flips `hide=instance` for **630 occurrences across 244 tracked files** and
+> breaches I7 on the first line written. See §4.5 for the signature that shipped.
 
 It is all-or-nothing and it hides unrelated things too. It also behaves
 differently per PDK: **sky130's OP texts do not set `hide=true`**, so once data
 is loaded they are on screen permanently; gf180's do.
 
-> `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 says "Op text is
-> layer-15 (hidden unless `show_hidden_texts=1`)". That is wrong — hiding comes
-> from the attribute, not the layer — and should be corrected when this lands.
+> `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 said "Op text is
+> layer-15 (hidden unless `show_hidden_texts=1`)". That was wrong — hiding comes
+> from the attribute, not the layer — and **S7 corrected it in place** (that file
+> line 411), as this section asked.
 
 ---
 
@@ -637,14 +658,23 @@ The symbol is named library-qualified, `devices/annotate_params`, and NOT via
 it is the phase-1 deliverable and it works on every PDK the moment its
 descriptor is registered.
 
-⚠ `hide=op` IS INERT UNTIL S7 and the carrier therefore ships ALWAYS-ON, with
-no user off switch. `set_text_flags` (`actions.c:1121`) tests exact `instance`
-then `strboolcmp(str,"true")`; `strboolcmp` (`util.c:72`) classifies `op` as
-`s=-1` and falls through to `strcmp`, so no bit is set. Measured on three
-scratch symbols differing only in the hide token (instance bbox width at both
-`show_hidden_texts` states): `hide=none` 186/186, `hide=op` 186/186 —
-byte-identical — `hide=true` 16/186. Row K4 is the only thing standing between
-now and S7 giving the token teeth.
+~~⚠ `hide=op` IS INERT UNTIL S7 and the carrier therefore ships ALWAYS-ON, with
+no user off switch.~~ **✅ RESOLVED BY S7 (2026-08-19).** The measurement that
+stood here — three scratch symbols differing only in the hide token giving
+byte-identical instance bbox widths at both `show_hidden_texts` states
+(`hide=none` 186/186, `hide=op` 186/186, `hide=true` 16/186), because
+`strboolcmp` (`util.c:72`) classifies `op` as `s=-1` and falls through to
+`strcmp` so no bit is set — no longer holds. `set_text_flags` now tests exact
+`op` and `voltage` **before** the `strboolcmp` fallback, and the carrier's
+numeric block appears **iff `annot_show` bit0**, at both `show_hidden_texts`
+states. Its `T {@ref}` label and corner strokes still render at every setting,
+so a placed annotator is never invisible — only its numbers are gated.
+
+⚠ **THE CARRIER'S RESTING STATE FLIPPED, AND NOBODY HAS RATIFIED IT.**
+`annot_show` defaults to **0**, so the annotator S6 shipped always-on one day
+earlier now renders dark until `xschem set annot_show 1` or S8's `6` key.
+Decision D2, ladder rung **L3** — see the S7 block in the plan for the open
+question and the `~/.xschem/xschemrc` off-ramp.
 
 **Carrier 2: the draw-time overlay.** For every instance whose symbol type is
 registered, and only while the annotation mask says so, `draw()` renders
@@ -663,7 +693,7 @@ Consequences of carrier 2 that the plan must handle:
 * placement must be deterministic and collision-tolerant — anchor to the symbol
   bbox corner, with a per-instance `annot_dx`/`annot_dy` override attribute.
 
-### 4.5 Visibility: annotation classes
+### 4.5 Visibility: annotation classes ✅ LANDED (S7, 2026-08-19)
 
 Replace the single boolean with a mask.
 
@@ -673,11 +703,75 @@ Replace the single boolean with a mask.
 * New `xctx->annot_show` bitmask (`bit0 = device OP info`, `bit1 = node
   voltages`), mirrored in Tcl as `annot_show`, per the `MIRRORED IN TCL`
   convention.
-* The nine copy-pasted visibility tests collapse into one helper
-  `text_hidden(flags)`. **That refactor is the substance of the change**; the
+* ~~The nine copy-pasted visibility tests collapse into one helper
+  `text_hidden(flags)`.~~ **That refactor is the substance of the change**; the
   class logic is a few lines inside it.
 * `hide=true` keeps its exact present meaning under `show_hidden_texts`. Nothing
   existing changes behaviour.
+
+**AS BUILT — three things this section got wrong, all measured before the fix.**
+
+1. **It is TEN sites, not nine, and the helper takes a CONTEXT.** See the
+   correction box in §2.4. The signature that shipped is
+   `int text_hidden(int flags, int ctx)` with `TEXT_CTX_INSTANCE` /
+   `TEXT_CTX_SCHEMATIC`; the six symbol-text sites pass the former, the four
+   `xctx->text` sites the latter, so the mask difference that used to be
+   invisible in a copy-pasted expression is now an argument you can read at the
+   call site. *(Decision D1, ladder rung **L1**, invariant **I7**. Rejected: one
+   fixed mask, which flips `hide=instance` for 630 occurrences in 244 files;
+   also rejected, two thin wrappers `sym_text_hidden`/`sch_text_hidden`, which
+   re-create the two-tests problem at the name level.)* The predicate:
+
+   ```c
+   int text_hidden(int flags, int ctx)
+   {
+     if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
+     if(flags & HIDE_TEXT_VOLTAGE) return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
+     if(xctx->show_hidden_texts) return 0;
+     if(flags & HIDE_TEXT) return 1;
+     if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
+     return 0;
+   }
+   ```
+
+   `set_text_flags` zeroes `flags` and its `hide=` branch is an if/else chain,
+   so the four bits are mutually exclusive; with neither class bit set this
+   reduces **provably** to the six-plus-four split it replaced. Bits 64 and 128
+   were free, and `flags` is a plain `int` that is never serialised (always
+   recomputed by `set_text_flags`), so adding bits needs no file-format change.
+
+2. **The classes ignore `show_hidden_texts` entirely** — they are gated *solely*
+   by `annot_show`, per this spec's own acceptance wording "a `hide=op` text
+   appears iff bit0". *(Decision D3, ladder rung **L2**. Rejected: making
+   `show_hidden_texts` a master override for the new classes, which reads
+   naturally since `hide=op` is spelled as a hide token, but would make S8's
+   `Ctrl-6 → none` a silent no-op whenever the shipped **Annotate Operating
+   Point** menu items have already done `set show_hidden_texts 1` — which is the
+   exact flow a user reaches this feature through.)* **The cost, measured and
+   accepted:** a `hide=op` text cannot be revealed by View > Show hidden texts,
+   *including while editing the symbol that carries it*.
+
+3. **The mirror must NOT copy `show_hidden_texts`' shape.** `show_hidden_texts`
+   is a *pull* cache refreshed at only three places while `symbol_bbox()`,
+   `svg_draw()` and `create_ps()` all read it and none refresh it — so the first
+   export after any Tcl-side change renders with the **old** value, both
+   directions, both formats (three SVG in a row give `0 1 1`; reversed `1 0`),
+   and `update_all_sym_bboxes; redraw` is one toggle behind (`0/0/0/161`). That
+   is **issue 0453**, filed and deliberately left alone (decision D5 — fixing it
+   changes when `hide=true` texts appear in exports for every existing library
+   symbol, the behaviour change this commit was forbidden to carry). `annot_show`
+   instead follows the **P6 `pin_names_sync_cache` precedent**:
+   `annot_show_sync_cache()` is called at all six bulk-evaluation entry points
+   (`draw`, `calc_drawing_bbox`, `xschem print`, `xschem update_all_sym_bboxes`,
+   startup, CLI batch print) and `xschem set annot_show N` writes **both**
+   `xctx->annot_show` and the Tcl var so no later pull can undo the setter
+   *(decision D4)*. Rows L17/L18 assert the annotation mask is not stale.
+
+**⚠ `annot_show` IS AN INTEGER, NOT A BOOLEAN.** `annot_show_sync_cache` uses
+`tclgetintvar` (→ `atoi`), unlike its neighbour `show_hidden_texts` which uses
+`tclgetboolvar`. Measured: `set annot_show true|on|yes` all give C `0`, i.e.
+**silently off**; only `1`/`2`/`3` work. Anything setting this variable — S8's
+`cadence::annot_mode` above all — must write a number.
 
 ### 4.6 The keys
 
@@ -726,7 +820,7 @@ Verified free / safely overridable in this tree:
 | **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
-| **I7** | `hide=true` semantics are unchanged for every existing symbol in every library. |
+| **I7** | `hide=true` **and `hide=instance`** semantics are unchanged for every existing symbol in every library. **⚠ RESTATED BY S7 — the original wording named only `hide=true`, and `hide=instance` is the one that was actually at risk.** Counted across all tracked `.sym`/`.sch`: `hide=instance` **630 occurrences / 244 files**, `hide=true` **47 / 22**, `hide=op` **2** (the twin `annotate_params.sym`), `hide=voltage` **0** — no other `hide=` value exists anywhere, so the acceptance sweep is a bounded, nameable list rather than a spot check. The threat was never the class bits; it was collapsing ten visibility tests that mask **two different things** into one fixed mask (§2.4). **HELD AT S7**, verified three independent ways: rows L11–L14 and L19–L22 of `test_op_annot.tcl`; the adversary's own fixtures (all 57 `xschem_library/devices/*.sym` carrying `hide=instance`, and the 19 gf180mcu FETs carrying `hide=true`, exported to SVG at `annot_show` 0 vs 3 at both `show_hidden_texts` states — byte-identical, and **non-vacuous** because the same corpus does differ between `show_hidden_texts` 0 and 1); and a re-run of the pre-S7 before-state script, whose `hide=true` (0 at `sht=0`, 158 at `sht=1`) and `hide=instance` (0 on a symbol, visible at top level) numbers came back byte-for-byte. ⚠ **PS byte-comparison is unsound** until issue **0454** is fixed — `xschem print ps` ends every page with an uninitialised RGB triple that changes between exports of identical content; L20/L22 compare a normalised copy (`opa_l_normps`) and L21 keeps that normalisation non-vacuous. |
 
 ---
 
@@ -942,5 +1036,35 @@ Verified free / safely overridable in this tree:
     Graphs cascade is built under `if {[info exists has_x]}` and `--nogui` never
     enters it. All the logic that can fail lives in `op_annot::place_annotator`,
     which K12–K14 do drive for real.
+* **The annotation classes** (S7, `test_op_annot.tcl` sections L and M, 32
+  rows — 115 → **147** checks headless, **149** under a display). The mask's
+  surface (L1–L4: default 0, the Tcl mirror, the setter reaching C *and*
+  pushing back to Tcl); the gate itself (L5–L10: `hide=op` iff bit0, `hide=voltage`
+  iff bit1, and both ignoring `show_hidden_texts` in **both** directions);
+  I7 (L11–L14 the four hide values × both switches, L19–L22 the shipped
+  corpora with L21 as the non-vacuity partner); the two export paths the plan
+  called "the ones nobody looks at" (L15/L16, SVG **and** PS, symbol **and**
+  top-level); the anti-staleness rows 0453 would otherwise have inflicted
+  (L17 first-export-is-correct, L18 one `update_all_sym_bboxes` suffices);
+  the end-to-end carrier (L23–L25); and three structural rows (L26 the token
+  now has teeth, L27 `HIDE_TEXT` survives in `src/*.c` only inside
+  `set_text_flags` and `text_hidden`, L28 the two Tcl mirror lines). **L29 is
+  the control that makes L3 mean anything**: `xschem set zzz_garbage 1` still
+  errors while `xschem set annot_show 1` does not — without it, L3 could be
+  satisfied by the `argv[2][0] < 'n'` silent fall-through that swallowed
+  `xschem set annot_show 1` before this step.
+  * **Two things `--nogui` cannot reach.** `calc_drawing_bbox`'s text loop is
+    inside `if(has_x && selected != 2)` (`actions.c:4416`), so the tenth site is
+    reachable only under a display — rows M1/M2, which self-skip headless.
+    And `tests/property_form/wrap.tcl` **silently aborts** under `--nogui` at
+    `slickprop::init_fonts` after ~36 checks, never reaching the `hide`-token
+    rows; run it as `cd src && DISPLAY=:99 GUI_GATE=0 ./xschem -q --nolog
+    --script ../tests/property_form/wrap.tcl` (284 → **288**, the +4 being
+    PF-S7a..d, which pin issue 0452's *current wrong* behaviour on purpose).
+  * **`xschem print svg|ps` IS a headless oracle** in its explicit-viewport
+    form, `xschem print svg <file> <w> <h> <x1> <y1> <x2> <y2>`
+    (`scheduler.c:9829`). An earlier comment in `test_op_annot.tcl` claiming
+    otherwise was true only of the no-viewport form, and it would have pushed
+    four of the ten sites behind xvfb for no reason.
 * **Pixels**: the overlay is a look-at-it deliverable and no green suite can
   clear it. `tests/headless/owed.sh add look "op annotation on tb_bandgap"`.

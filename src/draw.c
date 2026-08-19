@@ -865,7 +865,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
-      if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+      if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
       if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
       ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
       textlayer = c_for_text;
@@ -1128,7 +1128,7 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
      get_sym_text_size(n, j, &xscale, &yscale);
      text = symptr->text[j];
      if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
-     if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+     if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
      ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&text);
@@ -10263,7 +10263,7 @@ static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
     #if HAS_CAIRO==1
     int customfont;
     #endif
-    if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+    if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
     get_sym_text_size(n, j, &xscale, &yscale);
     tmp_txt = translate(n, text.txt_ptr);
     if(!tmp_txt || !tmp_txt[0]) continue;
@@ -10412,6 +10412,7 @@ void draw(void)
   #endif
   #endif
   xctx->show_hidden_texts = tclgetboolvar("show_hidden_texts");
+  annot_show_sync_cache(); /* S7: the annotation-class mask read by text_hidden() */
   rebuild_selected_array();
   if(has_x) {
     Iterator_ctx ctx;
@@ -10553,7 +10554,7 @@ void draw(void)
     {
       const char *txt_ptr;
       textlayer = xctx->text[i].layer;
-      if(!xctx->show_hidden_texts && (xctx->text[i].flags & HIDE_TEXT)) continue;
+      if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
       if(xctx->only_probes) textlayer = GRIDLAYER;
       else if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
       #if HAS_CAIRO==1

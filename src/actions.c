@@ -1118,7 +1118,13 @@ int set_text_flags(xText *t)
     str = get_tok_value(t->prop_ptr, "weight", 0);
     t->flags |= strcmp(str, "bold")  ? 0 : TEXT_BOLD;
     str = get_tok_value(t->prop_ptr, "hide", 0);
+    /* S7: `hide=` now also names an ANNOTATION CLASS. Exact, case-sensitive strcmp,
+     * placed before the strboolcmp fallback and mirroring the `instance` branch, so
+     * no existing value changes class: the whole tree carries only hide=instance,
+     * hide=true and hide=op, and hide=1/on/yes still reach strboolcmp (invariant I7). */
     if(!strcmp(str, "instance")) t->flags |= HIDE_TEXT_INSTANTIATED;
+    else if(!strcmp(str, "op")) t->flags |= HIDE_TEXT_OP;
+    else if(!strcmp(str, "voltage")) t->flags |= HIDE_TEXT_VOLTAGE;
     else {
       t->flags |= strboolcmp(str, "true")  ? 0 : HIDE_TEXT;
     }
@@ -1130,6 +1136,50 @@ int set_text_flags(xText *t)
     t->flags |= xctx->tok_size ? TEXT_FLOATER : 0;
     my_strdup2(_ALLOC_ID_, &t->floater_instname, str);
   }
+  return 0;
+}
+
+/* ----------------------------------------------------------------------------
+ * TEXT VISIBILITY -- ONE predicate for every render/geometry back end (S7,
+ * doc/claude/specs/op_annotation.md). Before this there were TEN copy-pasted
+ * `if(!xctx->show_hidden_texts && (flags & ...)) continue;` tests spread over
+ * draw.c, svgdraw.c, psprint.c, select.c and actions.c -- and they were not ten
+ * copies of one test but two different tests (see TEXT_CTX_* in xschem.h), which
+ * is why the predicate takes the context instead of one folded mask.
+ *
+ * Annotation classes (hide=op / hide=voltage) are tested FIRST and answer only to
+ * the annot_show mask: they are deliberately NOT overridable by show_hidden_texts
+ * (decision D3). hide=true / hide=instance keep exactly their previous behaviour
+ * (invariant I7) -- with neither class bit set this function is provably identical
+ * to the ten tests it replaced.
+ * ------------------------------------------------------------------------- */
+
+/* Cached mirror of the annot_show Tcl var, shaped after pin_names_sync_cache()
+ * above (the P6 precedent): text_hidden() is evaluated per text per instance per
+ * frame, so a tclgetvar per call is too costly. Refreshed at each BULK visibility
+ * evaluation -- draw(), calc_drawing_bbox(), `xschem print`, `xschem
+ * update_all_sym_bboxes`, startup and the CLI batch print -- because svg_draw(),
+ * create_ps() and symbol_bbox() do NOT go through draw(). NOTE this is why the
+ * mirror is a push+pull: `xschem set annot_show` writes the Tcl var too, so a later
+ * sync can never undo the setter (decision D4). show_hidden_texts' own pull cache is
+ * refreshed at only three sites and is measurably stale in the export paths -- that
+ * is issue 0453 and is deliberately NOT fixed here. */
+void annot_show_sync_cache(void)
+{
+  if(!xctx) return;
+  xctx->annot_show = tclgetintvar("annot_show");
+}
+
+/* 1 == this text must not be drawn. ctx is TEXT_CTX_INSTANCE when iterating a
+ * symbol's text[] while drawing an instance, TEXT_CTX_SCHEMATIC when iterating the
+ * schematic's own xctx->text[]. */
+int text_hidden(int flags, int ctx)
+{
+  if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
+  if(flags & HIDE_TEXT_VOLTAGE) return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
+  if(xctx->show_hidden_texts) return 0;
+  if(flags & HIDE_TEXT) return 1;
+  if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
   return 0;
 }
 
@@ -4322,6 +4372,7 @@ void calc_drawing_bbox(xRect *boundbox, int selected)
  char *estr = NULL;
 
  xctx->show_hidden_texts = tclgetboolvar("show_hidden_texts");
+ annot_show_sync_cache();
  boundbox->x1=-100;
  boundbox->x2=100;
  boundbox->y1=-100;
@@ -4419,7 +4470,7 @@ void calc_drawing_bbox(xRect *boundbox, int selected)
      double longest_line;
      if(selected == 1 && !xctx->text[i].sel) continue;
 
-     if(!xctx->show_hidden_texts && xctx->text[i].flags & (HIDE_TEXT /* | HIDE_TEXT_INSTANTIATED */)) continue;
+     if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&xctx->text[i]);
      #endif

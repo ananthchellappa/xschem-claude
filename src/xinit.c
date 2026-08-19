@@ -938,6 +938,7 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->fill_type=my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
   xctx->case_insensitive = 0;
   xctx->show_hidden_texts = 0;
+  xctx->annot_show = 0; /* S7: annotation classes off by default (decision D2) */
   xctx->x_strcmp = strcmp;
   xctx->fill_pattern = 1;
   xctx->draw_window = 0;
@@ -3666,6 +3667,8 @@ int Tcl_AppInit(Tcl_Interp *inter)
  if(tclgetboolvar("show_hidden_texts")) {
    xctx->show_hidden_texts = 1;
  }
+ /* S7: honor an `set annot_show ...` done in xschemrc before the first draw. */
+ annot_show_sync_cache();
 
  /*                                */
  /*  START PROCESSING USER OPTIONS */
@@ -3795,6 +3798,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
     * `xschem print` handler), so the show_pin_names visibility cache is never refreshed here;
     * sync it so a show_pin_names on/off set in xschemrc is honored (png uses the draw() path). */
    pin_names_sync_cache();
+   annot_show_sync_cache(); /* S7: same, for the annotation-class mask */
    if(cli_opt_do_print==1) {
 
      xctx->xrect[0].x = 0;

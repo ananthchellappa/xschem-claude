@@ -38,8 +38,10 @@ Branch is `annotate`. Number new issues from **0418** (0417 is the highest taken
   precedent and the reason.
 - Steps S1–S6 are **pure Tcl and data**. No C, no rebuild. Land them first; they
   are what turns tb_bandgap's `-` into numbers.
-- Do not start S9 before S7 lands — the overlay with no mask to gate it is a
-  screenful of text nobody can turn off.
+- ~~Do not start S9 before S7 lands~~ — **S7 has landed**, so S9's gate exists.
+  S9 must call `text_hidden()` rather than re-test the mask inline in `draw.c`,
+  `svgdraw.c` and `psprint.c`: ten copies of that decision are what S7 removed,
+  and an overlay would put three of them straight back.
 - Per CLAUDE.md: do not run `make` while subagents are fanned out (~7.8 GB box).
 
 ---
@@ -972,13 +974,17 @@ expanded in "WHAT S6 LEARNED" below; D5/D6 in their issue files):
 
 ---
 
-## S7 — annotation classes (the only broad C change)
+## S7 — annotation classes (the only broad C change) ✅ DONE (status **E**)
 
 **Files:** `src/xschem.h` (flag bits + `annot_show` field), `src/actions.c`
 (`set_text_flags`, and the mirror read at :4324), `src/scheduler.c`
 (`xschem set annot_show`), plus the nine visibility sites:
 `draw.c:868, 1131, 10266, 10556` · `svgdraw.c:923, 1290` ·
 `psprint.c:1205, 1664` · `select.c:709` · `actions.c:4422`.
+
+> ⚠ **THE PARAGRAPHS BELOW ARE THE ORIGINAL BRIEF AND ARE WRONG IN TWO PLACES —
+> they say "nine" and then list ten, and the ten are not ten copies of one test.
+> Read the ✅ block after this section before believing any count here.**
 
 Collapse those nine copy-pasted tests into one helper `text_hidden(flags)` and
 put the class logic inside it. **The refactor is the substance; the feature is a
@@ -994,6 +1000,211 @@ appears iff bit0. Test both the draw path and the SVG/PS export paths — those
 are two of the nine sites and are the ones nobody looks at.
 
 **Risk:** medium, from breadth. Do it as one commit, no behaviour change mixed in.
+
+---
+
+### ✅ S7 — DONE, status **E** (landed, committed, one question owed to a human)
+
+Shipped, **one commit, C + Tcl, no behaviour change mixed in**:
+
+* `src/xschem.h` — `HIDE_TEXT_OP 64` / `HIDE_TEXT_VOLTAGE 128` (bits 64/128 were
+  free; `flags` is an `int`, never serialised, always recomputed by
+  `set_text_flags`, so no file-format change), `ANNOT_SHOW_OP 1` /
+  `ANNOT_SHOW_VOLTAGE 2`, `TEXT_CTX_SCHEMATIC 0` / `TEXT_CTX_INSTANCE 1`,
+  `int annot_show` beside `show_hidden_texts` with the `MIRRORED IN TCL` marker,
+  and the **already-stale** `xText.flags` doc comment repaired (it listed bits
+  0–4, omitted `HIDE_TEXT_INSTANTIATED=32`, and misspelled `TEXT_ITALICi`);
+* `src/actions.c` — two exact `strcmp` branches in `set_text_flags` **before**
+  the `strboolcmp` fallback, plus `annot_show_sync_cache()` and
+  `text_hidden(flags, ctx)`;
+* the **ten** former visibility sites, now one of two literal lines:
+  `text_hidden(<sym text>.flags, TEXT_CTX_INSTANCE)` (`draw.c:868/1131/10266`,
+  `svgdraw.c:923`, `psprint.c:1205`, `select.c:709`) or
+  `text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)` (`draw.c:10557`,
+  `svgdraw.c:1290`, `psprint.c:1664`, `actions.c:4473`);
+* `src/scheduler.c` `xschem get`/`set annot_show` + syncs in `print` and
+  `update_all_sym_bboxes`; `src/xinit.c` per-context init, startup pull, CLI-print
+  sync; `src/xschem.tcl` `set_ne annot_show 0` and `annot_show` in
+  `tctx::global_list`;
+* tests: `test_op_annot.tcl` **115 → 147** checks headless (**149** with a
+  display; sections L and M), `property_form/body.tcl` **284 → 288**.
+
+**Tiers, all re-measured independently against the branch's own baseline (there
+was none recorded before this run):** T1 `run_regression.tcl` 3 FAIL / 0 GOLD? /
+0 RESULT? / 0 FATAL — **the same two suites and the same three literal
+messages** (`test_ihp_sg13g2_libmgr`'s `sg13g2_tests_ase` extra-library line ×2,
+`test_pdk_launcher`'s false red over its own "OVERALL: ok (30 checks)"); T2
+`headless/run.sh` HARNESS PASS, 6/6 goldens. `tests/pin_name_text.tcl` (the P6
+precedent this step copied), `test_nh_export_custom_color` (the only other suite
+driving both `print svg` and `print ps`) and all **nine** `instance_bbox`
+consumer suites green. No `./configure` was needed and none was run.
+
+**THE MEASUREMENT THAT DEFINES BEFORE AND AFTER.** Before: the shipped
+`devices/annotate_params.sym` rendered `id = 10u / gm = 100u / gds = 1u` at
+instance bbox width **67**, present in **both** the SVG and the PS export, at
+**both** `show_hidden_texts` states — six numbers, all invariant, i.e. always-on
+with no off switch. After: all six follow `annot_show` bit0 and ignore
+`show_hidden_texts` entirely, while the carrier's `T {@ref}` label and corner
+strokes keep rendering at every setting (rows L23–L25).
+
+#### ⚠ WHAT S7 LEARNED THAT BINDS LATER STEPS — READ BEFORE S8
+
+1. **IT WAS TEN SITES, NOT NINE, AND THEY WERE TWO DIFFERENT TESTS.** This plan,
+   spec §2.4 and every downstream count said "nine" and then enumerated ten.
+   Worse: six mask `(HIDE_TEXT | HIDE_TEXT_INSTANTIATED)` and four mask
+   `HIDE_TEXT` alone, and that split **is** the meaning of `hide=instance`. The
+   helper this plan specified — `text_hidden(flags)`, one fixed mask — would have
+   flipped `hide=instance` for **630 occurrences in 244 tracked files** and
+   breached I7 on its first line. What shipped is
+   `text_hidden(int flags, int ctx)`. **Both spec §2.4 and §4.5 are corrected.**
+2. **`annot_show` IS AN INT, NOT A BOOL — `set annot_show true` SILENTLY MEANS
+   OFF.** `annot_show_sync_cache` uses `tclgetintvar` (→ `atoi`) while its
+   neighbour `show_hidden_texts` uses `tclgetboolvar`. Measured: `true`, `on` and
+   `yes` all give C `0` and a hidden text. **S8's `cadence::annot_mode` must write
+   a number** (`none`→0, `op`→1, `opvolt`→3), and the documented off-ramp
+   `set annot_show 1` in `~/.xschem/xschemrc` only works spelled as `1`.
+3. **S8 SHOULD CALL `xschem set annot_show N`, NOT `set ::annot_show N`.** The
+   setter writes both sides (decision D4); a bare Tcl `set` leaves
+   `xschem get annot_show` reading the stale C cache until the next bulk sync.
+   Measured: after `set ::annot_show 1` the getter still says `0`; one
+   `update_all_sym_bboxes` heals it. **If S8 reads the getter as its source of
+   truth it will read stale.**
+4. **THE `update_all_sym_bboxes; redraw` PAIR IS SAFE FOR `annot_show`, AND ONLY
+   FOR IT.** Spec §4.6 step 3 tells S8 to copy that idiom, and for
+   `show_hidden_texts` it is measurably **one toggle behind** (`0/0/0/161`,
+   issue **0453**). S7's sync is called *inside* `update_all_sym_bboxes`, so for
+   the mask **one** call suffices (row L18) — S8 needs no extra sync call and no
+   reordering.
+5. **TWO EXPORT ENTRY POINTS STILL NEVER SYNC:** `callback.c:8757` (`*` =
+   PostScript print) and `callback.c:8765` (Alt-`*` = SVG print) call
+   `ps_draw()`/`svg_draw()` directly, bypassing the `xschem print` handler that
+   carries the new sync. `xschem hier_psprint` escapes only *incidentally*, via
+   its own `zoom_full` → `calc_drawing_bbox`. Exposure is a `::annot_show` write
+   with no intervening draw or bbox — narrow, and identical to the hole
+   `show_hidden_texts` already has, but **S9 adds two more overlay call sites to
+   exactly these files and should close them while it is there.**
+6. **S9 MUST ROUTE THROUGH `text_hidden()`.** The whole point of this step was
+   that ten copies of one decision drift silently. An overlay that re-tests
+   `xctx->annot_show & ANNOT_SHOW_OP` inline in `draw.c`, `svgdraw.c` and
+   `psprint.c` re-creates the defect S7 removed, three sites at a time.
+7. **S10 IS NOW A USER-VISIBLE CHANGE, NOT A CLEANUP.** Marking gf180's 19
+   `hide=true` FET texts or sky130's un-tokened OP texts as `hide=op` no longer
+   merely de-duplicates: it moves them from "always on" / "on with
+   `show_hidden_texts`" to "off unless `annot_show` bit0". That is a default-state
+   change for shipped PDK symbols and needs its own ratification, not a rider.
+   S7 deliberately did **none** of it. The IHP carriers
+   (`annotate_fet_params.sym`, `annotate_bip_params.sym`) carry **no** `hide`
+   token, so they were unconditionally always-on before S7 and remain so — an I7
+   free pass, and the honest baseline for arguing about defaults.
+8. **`hide=op` TEXTS ARE INVISIBLE BUT STILL SELECTABLE, MOVABLE AND DELETABLE.**
+   No `select.c` path consults visibility, so `select_all` picks them up. This is
+   exactly how `hide=true` already behaves, so it is I7-consistent — but S7
+   *enlarges the population* of invisible-but-live objects by default, starting
+   with the shipped annotator.
+9. **PS EXPORT IS NOT BYTE-REPRODUCIBLE** (issue **0454**, filed by this crew).
+   Consecutive `xschem print ps` calls on identical content alternate between two
+   outputs differing in an uninitialised RGB triple. Any future PS oracle must
+   normalise colours the way `opa_l_normps` does, or it will flake on parity. It
+   briefly read as an I7 violation during verification.
+10. **`xschem print svg|ps` IS a headless oracle** in its explicit-viewport form
+    (`scheduler.c:9829`). The old note in `test_op_annot.tcl` saying otherwise was
+    true only of the no-viewport form, and would have pushed four of the ten
+    sites behind xvfb for nothing. Conversely, `tests/property_form/wrap.tcl`
+    **silently aborts** under `--nogui` after ~36 checks and never reaches the
+    `hide`-token rows — run it under a display or its coverage is imaginary.
+
+#### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L1** (I7) | helper is `text_hidden(flags, ctx)` | one fixed mask (flips `hide=instance`, 630 occurrences); also two wrappers `sym_`/`sch_text_hidden` (re-creates two-tests at the name level) |
+| **D2** | **L3** | `annot_show` defaults to **0** | default 1, which preserves S6's always-on but ships the mask as a no-op nobody would discover was broken — **this is the E question** |
+| D3 | L2 | classes gated **solely** by `annot_show`, ignoring `show_hidden_texts` | `show_hidden_texts` as master override — reads naturally, but makes S8's `Ctrl-6 → none` a silent no-op whenever the shipped **Annotate Operating Point** items have set it to 1 |
+| D4 | L2 | `xschem set annot_show N` writes **both** C field and Tcl var | copying `show_hidden_texts`' C-only setter, whose value the next pull discards (which is why the GUI never calls it) |
+| D5 | L1 (I7) | sync **only** `annot_show`; file 0453 and leave it | folding both variables into one sync — the right fix, free to write while there, but it changes when `hide=true` texts appear in exports for every library symbol |
+| D6 | L2 | don't touch `property_form.tcl`; file 0452 and **pin the wrong behaviour** | fixing the bool widget now — changes a shipped dialog's contract |
+| D7 | L2 | don't add `set annot_show 1` to the two **Annotate Operating Point** menu items | adding it preserves S6's end-to-end always-on, but those cascades never run under `--nogui` so it is unmeasurable, and it mixes a GUI change into a C refactor |
+| D8 | L2 | sync at the six bulk-evaluation entry points | a `tclgetintvar` inside `text_hidden()` — correct everywhere, and exactly the per-text-per-instance-per-frame cost the `pin_name_visible` comment exists to forbid; also rejected, syncing in `symbol_bbox()` (~25 callers, called in loops) |
+| D9 | L2 | exact case-sensitive `strcmp` for `op`/`voltage`, before the `strboolcmp` fallback | tolerant matching — widens what the token captures for no user benefit |
+| D10 | L2 | `annot_show` into `tctx::global_list` only | also pushing it from `housekeeping_ctx` — redundant (both sides are already per-context) and it returns early when `!has_x`, so no headless row could prove it |
+
+#### ⚠ THE SABOTAGE MATRIX IS **2 OF 11**, AND THAT IS THIS STEP'S WEAKEST LEG
+
+**Be suspicious of this step in exactly one way: the sabotage agent produced no
+report.** Eleven variants were designed; two were executed and confirmed, nine
+were not. This is a **process** gap, not a measured failure — but it is the
+reason S7 is not claimed clean, and a later crew that wants full confidence
+should re-run the nine.
+
+| variant | build? | predicted red | observed |
+|---|---|---|---|
+| SB7 `set_ne annot_show 0` renamed | no | L2, L28 | ✅ **exact** — `L2 -> {0 NO-VAR}`, `L28 -> {0 1}`, 2 FAILED / 145 passed |
+| SB8 `annot_show` dropped from `tctx::global_list` | no | L28 only | ✅ **exact** — `L28 -> {1 0}`, 1 FAILED / 146 passed |
+| SB1 class tokens never matched | yes | L5 L7–L9 L15–L18 L23 L25 L26 M1 | **not run** |
+| SB2 mask read as always-off | yes | L6 L8 L10 L15–L18 L23 L24 L26 M1 | **not run** |
+| SB3a ctx collapses to INSTANCE | yes | L13 L14 | **not run** |
+| SB3b ctx collapses to SCHEMATIC | yes | L12 L21 | **not run** — but Verify-A *independently observed* an SB3b binary in the tree showing `hide=instance` visible at `show_hidden_texts 0`, i.e. the predicted symptom, and nearly reported it as a real I7 breach |
+| SB4 export paths never sync | yes | L17 | **not run** |
+| SB5 classes folded under `show_hidden_texts` | yes | L9, L25 | **not run** |
+| SB6 `HIDE_TEXT_OP` collides with `HIDE_TEXT` | yes | L6 L9 L11 L22 L26 | **not run** |
+| SB9 refactor stops one site short (`psprint.c:1664`) | yes | L15, L27 | **not run** |
+
+The two that ran are the two that need no `make`; the write-up agent may not
+build. Both restored byte-identically (`md5 64b529a9…`) and the suite returned to
+147/147.
+
+**What stands in the gap, and it is not nothing.** An independent adversary ran
+**twelve** attacks and refuted none — including I7 on its *own* fixtures (all 57
+`devices/*.sym` carrying `hide=instance`, and the 19 gf180 FETs carrying
+`hide=true`, byte-identical across `annot_show` and **non-vacuous** across
+`show_hidden_texts`), the tenth site under a display, the full 4×2 feature matrix
+in both export formats, a hunt for an eleventh text loop (**none exists** —
+`grep HIDE_TEXT src/*.c` now returns only `set_text_flags` and `text_hidden`), a
+missed export entry point (`hier_psprint`, which syncs incidentally), save/load
+round-trip, I3 blank-not-zero against a raw missing vectors, and setter fuzzing
+(no crash). It also ran down a false positive — a PS byte difference that looked
+like an I7 breach and turned out to be issue 0454.
+
+#### STILL OPEN (the adversary's residual risks, none refuting the step)
+
+* **D3's real cost:** a `hide=op` text cannot be revealed by **View > Show hidden
+  texts**, *including while editing the symbol that carries it*. Until S8's key
+  lands, a user opening `devices/annotate_params.sym` sees no annotation text and
+  the standard affordance does not help.
+* `set annot_show true|on|yes` silently means **off** (item 2 above).
+* `xschem get annot_show` can disagree with `::annot_show` until the next bulk
+  sync (item 3 above).
+* `xschem set annot_show` does **no validation**: `-1` is accepted (every class
+  on) and an over-long integer saturates to `-1`, unlike the clamped
+  `actionlog_suppress` two lines above. Harmless with two bits defined; a trap
+  when bits 2+ get meanings.
+* A new tab/window starts at `xctx->annot_show = 0` regardless of `::annot_show`
+  (reproduced under a display). It self-heals at the first bulk evaluation and no
+  wrong pixel was produced, but the divergence window is real.
+* **`hide=voltage` (bit1) has zero producers** — no `.sym`/`.sch` in the tree
+  carries it, so it is exercised only by synthetic fixtures. Meanwhile a
+  *different* node-voltage path already exists (`xschem.tcl` `v(${path}${n})`,
+  and the gf180/pcb `@spice_get_voltage` texts tagged `hide=true`). **That is
+  precisely where an I1 two-builder drift will appear when a later step wires
+  the voltage class up**, and nothing in this commit prevents it.
+* `text_hidden()` dereferences `xctx` with no NULL guard while its sibling
+  `annot_show_sync_cache()` has one — an asymmetry suggesting one of the two was
+  thought reachable. No reachable NULL path was found (every caller sits behind
+  an existing guard).
+* Issues **0452** (Edit Properties' `hide` checkbox rewrites the class — silent
+  data loss now that the class means something), **0453** and **0454** are filed,
+  measured and deliberately unfixed.
+
+**WHY E — one unratified user-visible thing (decision D2, ladder rung L3):**
+
+`annot_show` defaults to **0**, so `devices/annotate_params.sym` — shipped
+**always-on** by S6 exactly one day earlier — now renders its numeric block dark
+until `xschem set annot_show 1` or S8's `6` key. Its `@ref` label and strokes
+still render, and the no-rebuild off-ramp is `set annot_show 1` in
+`~/.xschem/xschemrc` (spelled as a **number**), which survives the `set_ne`.
+**The question:** *is 0 the right resting state for a freshly started xschem,
+given S6 shipped the carrier always-on and S8's keys are not in yet — or should
+S7 default to 1 and let S8's `Ctrl-6` introduce the off state?*
 
 ---
 
@@ -1024,8 +1235,15 @@ swallowed.
 
 **Acceptance:** the three keys on all three PDKs; a no-raw press says so.
 
-**Risk:** low. Can land right after S6 driving `show_hidden_texts` as a crude
-two-state if S7 is not ready.
+**Risk:** low. ~~Can land right after S6 driving `show_hidden_texts` as a crude
+two-state if S7 is not ready.~~ **S7 has landed, so drive the real mask** — and
+read items 2–4 of "what S7 learned" first: `annot_show` is an **integer**
+(`none`→`0`, `op`→`1`, `opvolt`→`3`; `true`/`on`/`yes` silently mean *off*), set
+it with `xschem set annot_show N` and not a bare Tcl `set` (or
+`xschem get annot_show` reads stale), and the `update_all_sym_bboxes; redraw`
+pair above needs **no** extra sync call because S7's sync runs inside
+`update_all_sym_bboxes`. **S8 is also the step that gives the shipped annotator
+its off switch back** — see decision D2.
 
 ---
 
@@ -1064,7 +1282,21 @@ symbols carry currents only.
 **Acceptance:** with `annot_show 0`, a sky130 schematic looks exactly as it did
 before this whole plan started.
 
-**Risk:** medium blast radius, zero logic. Separate commit per PDK.
+⚠ **THAT ACCEPTANCE IS NOW FALSE AS WRITTEN, AND S10 IS A USER-VISIBLE DEFAULT
+CHANGE, NOT A CLEANUP** (measured by S7). `annot_show` defaults to **0**, and
+sky130's `id=`/`gm=` texts carry **no `hide=` token today**, so they are on
+permanently. Marking them `hide=op` moves them from *always on* to *off unless
+bit0* — a sky130 schematic at `annot_show 0` would look **emptier**, not
+identical. The same applies to gf180's 19 `hide=true` FET symbols, which move
+from "on with `show_hidden_texts`" to "off unless bit0", and to the two IHP
+carriers, which carry no token and are unconditionally always-on. Restate the
+acceptance against the *intended* resting state before scripting anything, and
+settle decision **D2** first — if `annot_show` ends up defaulting to 1 this step
+is nearly a no-op for the user, and if it stays 0 this step turns four PDKs'
+annotations off by default and needs its own ratification.
+
+**Risk:** ~~medium blast radius, zero logic~~ — **medium blast radius and a
+default-state change.** Separate commit per PDK.
 
 ---
 
@@ -1081,9 +1313,10 @@ interpolate from `xctx->raw` at `x = t` with no graph involved. Then the `6`/
 
 ## S12 — documentation and issues
 
-- Fix `doc/claude/code_analysis/waveform_subsystem_reference.md` §6: "Op text is
-  layer-15 (hidden unless `show_hidden_texts=1`)" is wrong — hiding comes from
-  the `hide=true` attribute, and the sky130 symbols do not set it.
+- ~~Fix `doc/claude/code_analysis/waveform_subsystem_reference.md` §6~~ ✅ **DONE
+  by S7** (that file, line 411): hiding comes from the `hide=` attribute, not
+  the layer; sky130's symbols set no token; and the note now also records the
+  `hide=op`/`hide=voltage` classes and the single `text_hidden()` predicate.
 - File **0418**: `@spice_get_modelparam_<p>(<dev>)` and
   `@spice_get_modelvoltage_<p>(<dev>)` are matched by the regex at
   `token.c:4646` and then silently produce nothing (`token.c:5023` handles only
@@ -1107,8 +1340,16 @@ described above** — nothing was numbered into them:
 | 0425 | the descriptor key `type=nmos` collides across all three PDKs and the generic device library |
 | 0426 | `op_annot` accepts a malformed `params` row (silently becomes `v(…)`) and a whitespace-only template |
 
+Filed by the **S7** crew, all measured and all deliberately unfixed:
+
+| # | what |
+|---|---|
+| 0452 | Edit Properties models `hide` as a two-state checkbox, so removing and restoring the token rewrites `hide=op` → `hide=true`. Inert before S7; **silent data loss** now that the classes differ. Pinned by rows PF-S7a..d in `tests/property_form/body.tcl` |
+| 0453 | `show_hidden_texts`' pull cache is stale in the export paths (first SVG/PS export after any Tcl-side change uses the old value, both directions, both formats) and one toggle behind in `update_all_sym_bboxes; redraw`. `annot_show` deliberately routes around it rather than inheriting it |
+| 0454 | `xschem print ps` ends every page with an **uninitialised RGB triple** that changes between exports of identical content, so PS export is not byte-reproducible and byte-level PS regression tests silently cannot work |
+
 Number new issues from **0427**. *(Superseded — see the Progress note at the
-end of this file: the next free number is **0452**.)*
+end of this file: the next free number is **0455**.)*
 
 ---
 
@@ -1119,22 +1360,34 @@ end of this file: the next free number is **0452**.)*
 | S1–S2 | Tcl only | the name builder, three PDKs described |
 | **S3–S4** | Tcl + ASE | **numbers instead of `-`** — the blocker cleared |
 | S5–S6 ✅ | Tcl + one symbol | a user-placeable annotator, all PDKs, no C |
-| S8 | rc only | the three keys (crude toggle) |
-| S7 | C, 9 sites + helper | the real three-state toggle |
+| **S7 ✅** | C, **10** sites → **one** helper | the real three-state toggle |
+| S8 | rc only | the three keys (now a real toggle, not a crude one) |
 | S9 | C, draw + exports | press `6`, every device lights up |
 | S10 | bulk `.sym` | no duplication |
 | S11 | C, one arm | timepoint OP with no graph |
 
 **Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
-**S6 ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw produced from a
-hand-written deck — neither the formatter nor the carrier needed the generator.
-S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6) rather than
-closing them, and pinned each with a green check that asserts the current wrong
-behaviour, so the eventual fix reds a named line. **S7 is next** (the nine
-visibility sites and `hide=op`'s meaning); until it lands the carrier is
-always-on with no off switch. New from S6: issues **0449**, **0450**, **0451**.
+S6 ✅(E) · **S7 ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw
+produced from a hand-written deck — neither the formatter nor the carrier needed
+the generator. S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6)
+rather than closing them, and pinned each with a green check that asserts the
+current wrong behaviour, so the eventual fix reds a named line; S7 did the same
+for 0452.
 
-Number new issues from **0452**.
+**S8 is next**, and it is small — the mask it drives now exists. Read items 2–4
+of "what S7 learned" before writing `cadence::annot_mode`: the mask is an
+**integer** (`set annot_show true` silently means *off*), S8 must use
+`xschem set annot_show N` rather than a bare Tcl `set`, and the
+`update_all_sym_bboxes; redraw` idiom in spec §4.6 **is** safe for `annot_show`
+even though it is one toggle behind for `show_hidden_texts`. S7 also turned the
+carrier off by default (decision D2) — until S8's `6` key lands, the only way to
+see it is `xschem set annot_show 1` or an `~/.xschem/xschemrc` line.
+
+New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
+sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
+unrun variants are tabulated in the S7 block, ready to re-run.
+
+Number new issues from **0455**.
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.

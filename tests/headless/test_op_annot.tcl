@@ -1905,15 +1905,17 @@ check {S18 after go_back raw loaded is -1, annot_p is STILL 0, and the block is 
 #   has_x]}` and never runs with --nogui, so K15 is a SOURCE GREP. What it
 #   guards is one line carrying a label and a call; everything that can go
 #   wrong lives in op_annot::place_annotator, which K12-K14 drive for real.
-# * hide=op HAS NO EFFECT YET. Measured on three scratch symbols differing only
-#   in the hide token (instance_bbox width at both show_hidden_texts states):
-#   hide=none 186/186, hide=op 186/186 — byte-identical — hide=true 16/186.
+# * WHAT hide=op MEANS IS SECTION L's SUBJECT, NOT K's. When S6 shipped, the
+#   token was INERT: measured on scratch symbols differing only in the hide
+#   token (instance_bbox width at both show_hidden_texts states) hide=none and
+#   hide=op were byte-identical while hide=true collapsed, because
 #   set_text_flags (actions.c:1121) tests exact `instance` then
-#   strboolcmp(str,"true"); strboolcmp (util.c:72) classifies `op` as s=-1 and
-#   falls through to strcmp, so no bit is set. K4 is therefore the ONLY thing
-#   standing between now and S7 giving the token teeth: the carrier ships
-#   ALWAYS-ON, and the existing "Annotate Operating Point" item's
-#   `set show_hidden_texts 1` does not gate it either.
+#   strboolcmp(str,"true") and strboolcmp (util.c:72) classifies `op` as s=-1
+#   and falls through to strcmp, setting no bit. K4 still pins that the token is
+#   IN the shipped file — that is a claim about the .sym bytes and it stays here
+#   — but a green K4 has never proved the token DOES anything. S7 (section L)
+#   carries that half: L26 is K4's successor and asserts hide=op and hide=true
+#   now land on OPPOSITE answers, and L23-L25 drive THIS symbol end to end.
 
 set K_FLATSYM [file join $repo xschem_library devices annotate_params.sym]
 set K_NEWSYM  [file join $repo xschem_libs_newsym devices annotate_params \
@@ -2298,6 +2300,747 @@ catch {op_annot::register nmos $k17_good}
 } kerr]} {
   puts "UNEXPECTED ERROR (section K): $kerr"
   incr fail
+}
+
+
+# =============================================================================
+# SECTION L — S7 of doc/claude/specs/op_annotation.md: ANNOTATION CLASSES
+# =============================================================================
+# S6 shipped a carrier symbol whose one tcleval text carries `hide=op`, and that
+# token does NOTHING: set_text_flags (actions.c:1121) tests an exact `instance`
+# and then strboolcmp(str,"true"); strboolcmp (util.c:72) classifies `op` as
+# s=-1 and degenerates to strcmp, so no flag bit is set and the block ships
+# ALWAYS-ON with no off switch. S7 gives the token teeth:
+#
+#   hide=op       -> HIDE_TEXT_OP       shown iff annot_show bit0 (device OP info)
+#   hide=voltage  -> HIDE_TEXT_VOLTAGE  shown iff annot_show bit1 (node voltages)
+#   annot_show    -> a new per-context int, MIRRORED IN TCL (xschem.h convention)
+#
+# and does it by collapsing the copy-pasted visibility tests into ONE predicate.
+#
+# ============================================================================
+# ⚠ IT IS TEN SITES, NOT NINE — AND THEY ARE TWO DIFFERENT TESTS
+# ============================================================================
+# The brief, the plan and spec §2.4 all say "nine" and then enumerate ten.
+# `grep -n HIDE_TEXT src/*.c` minus set_text_flags returns exactly ten, and they
+# do not all say the same thing:
+#
+#   SIX iterate a SYMBOL's text (symptr->text[j]) and mask
+#     (HIDE_TEXT | HIDE_TEXT_INSTANTIATED):
+#     draw.c:868, draw.c:1131, draw.c:10266, svgdraw.c:923, psprint.c:1205,
+#     select.c:709
+#   FOUR iterate the SCHEMATIC's own text (xctx->text[i]) and mask HIDE_TEXT
+#     alone -- actions.c:4422 even carries `/* | HIDE_TEXT_INSTANTIATED */`
+#     commented out IN PLACE, so the split is deliberate:
+#     draw.c:10556, svgdraw.c:1290, psprint.c:1664, actions.c:4422
+#
+# That split IS the meaning of `hide=instance`: hidden when the symbol is
+# instantiated, visible while you are editing the symbol itself. Measured end to
+# end through the real export path at show_hidden_texts 0, symbol texts visible
+# are {none op voltage} while top-level texts visible are {none op voltage
+# INSTANCE}. A single-mask `text_hidden(flags)` -- the literal reading of the
+# brief's "collapse into ONE helper" -- silently flips `hide=instance` for 630
+# occurrences across 244 tracked files and breaches I7 on the first line
+# written. Rows L13/L14 are that asymmetry's only guard in the whole tree; they
+# are GREEN before S7 and must STAY green.
+#
+# ============================================================================
+# ⚠ WHICH ROWS ARE RED BEFORE S7 AND WHICH ARE CONTROLS — SAY IT OUT LOUD
+# ============================================================================
+# RED before (18): L1 L2 L3 L4 L5 L7 L8 L9 L15 L16 L17 L18 L23 L24 L25 L26
+#                  L27 L28   (+ M1 under a display)
+# GREEN before and after, i.e. I7 guards and controls, NOT evidence that S7
+# happened: L6 L10 L11 L12 L13 L14 L19 L20 L21 L22 L29 (+ M2), and X7-X9.
+# A run in which only the green set passes has measured nothing.
+#
+# ============================================================================
+# ⚠ THE MIRROR IS A PULL CACHE AND THE EXPORTS DO NOT REFRESH IT
+# ============================================================================
+# `show_hidden_texts` is refreshed at exactly three places (actions.c:4324,
+# draw.c:10414, xinit.c:3666); symbol_bbox(), svg_draw() and create_ps() all
+# READ the cache and none refresh it. Measured on this tree: the FIRST svg or ps
+# export after any Tcl-side change renders with the OLD value, in both
+# directions and for both formats (three svg in a row give 0 1 1; reversed,
+# 1 0), and `update_all_sym_bboxes; redraw` is one toggle behind (0/0/0/161).
+# annot_show must NOT inherit that -- rows L17 and L18 are the ones that say so.
+# The in-tree pattern to copy is pin_names_sync_cache (actions.c:1167, called at
+# draw.c:10394, scheduler.c:9786, xinit.c:3797 under the tag "P6").
+# show_hidden_texts' own staleness is issue 0453 and is deliberately NOT fixed
+# by S7 -- that would be a behaviour change, which this commit must not carry.
+#
+# ============================================================================
+# ⚠ `xschem print` UNDER --nogui: THE VIEWPORT FORM IS AN ORACLE
+# ============================================================================
+# Section K's header says `xschem print svg` under --nogui yields an empty 3 kB
+# canvas. That is true only of the NO-VIEWPORT form. The 10-argument form
+# `xschem print svg|ps <f> <w> <h> <x1> <y1> <x2> <y2>` (scheduler.c:9829)
+# renders properly headless -- the same form test_nh_export_custom_color.tcl:29
+# already uses -- so four of the ten sites (svgdraw.c:923/1290,
+# psprint.c:1205/1664), the ones the brief calls "the ones nobody looks at",
+# need no display. The ONE site that does is actions.c:4422, whose whole text
+# loop sits inside `if(has_x && selected != 2)` at actions.c:4416: that is
+# section M, and it self-skips under --nogui.
+#
+# ============================================================================
+# ⚠ PS EXPORT CARRIES ONE VOLATILE LINE — ISSUE 0454, MEASURED HERE
+# ============================================================================
+# The last colour command before `showpage` is an UNINITIALISED RGB triple:
+# `4.06641 0 77.25 RGB` on one export and `0.316406 0 7.50066e+06 RGB` on the
+# next in the SAME process, values far outside PostScript's 0..1 range, and it
+# moves whenever an svg export runs in between. So two PS exports of identical
+# content are NOT byte-equal, and rows L20/L22 compare a normalised copy with
+# every `<r> <g> <b> RGB` line dropped. Nothing those rows claim lives in a
+# colour: a hidden text loses its `(MARKER) show` line too, and L21 keeps the
+# comparison non-vacuous. SVG needs no such treatment -- it IS byte-stable.
+#
+# ============================================================================
+# ⚠ THE CARRIER'S GOLDEN IS A TWIN, NOT A NUMBER
+# ============================================================================
+# L23 needs "the carrier's bbox with its numbers hidden". Hard-coding a width
+# would pin a FONT METRIC: the same symbol with the same text measured 68 wide
+# in one process and 66 in another. The oracle is instead a TWIN of the shipped
+# file, byte-identical but for `hide=op` -> `hide=true`, whose bbox at
+# show_hidden_texts 0 IS "numbers hidden" and at 1 IS "numbers shown". The row
+# also asserts the two differ, so a twin that rendered nothing cannot satisfy it.
+
+set L_LIBDIR   $lib
+set L_CORPUSDIR [file join $repo xschem_library devices]
+set L_GF_SCH   [file join $repo gf180mcuD xschem_libs gf180mcu_tests \
+                          test_nfet_06v0 schematic test_nfet_06v0.sch]
+## Viewports for the 10-argument `xschem print` form: {w h x1 y1 x2 y2}.
+set L_VP_MAIN   {1600 1000 -200 -200 2400 1600}
+set L_VP_CORPUS {1400  900 -100 -100 3000 2000}
+set L_VP_E2E    { 900  500  -60  -60  400  200}
+set L_VP_GF     {1800 1400 -100 -750 1300  100}
+
+## Instance bbox as {width height}, ints, or a marker. NEVER raises: a fixture
+## that lost an instance must red one row, not abort the section.
+proc opa_l_wh {inst} {
+  if {[catch {xschem instance_bbox $inst} r]} { return RAISED }
+  if {![regexp {Instance: (\S+) (\S+) (\S+) (\S+)} $r -> a b c d]} { return NO-BBOX }
+  return [list [expr {int($c - $a)}] [expr {int($d - $b)}]]
+}
+proc opa_l_w {inst} { set r [opa_l_wh $inst] ; if {[llength $r] != 2} { return $r } ; return [lindex $r 0] }
+
+## Set BOTH halves of the show_hidden_texts mirror and recompute the bboxes.
+## `xschem set` writes the C cache, the Tcl var keeps a later pull agreeing with
+## it; setting only one is the B2 trap the scout measured.
+proc opa_l_sht {v} {
+  catch {xschem set show_hidden_texts $v} ; set ::show_hidden_texts $v
+  xschem update_all_sym_bboxes
+}
+## Set annot_show THROUGH THE SURFACE UNDER TEST and recompute the bboxes.
+## Deliberately does NOT touch ::annot_show: a setter that only wrote the Tcl
+## var would then be indistinguishable from one that wrote the C field, and L4
+## exists to tell them apart. Before S7 this whole proc is a silent no-op --
+## `xschem set` splits on argv[2][0] < 'n' (scheduler.c:11685) and only the
+## >='n' half carries the `*cmd_found = 0` fall-through, so an unknown name
+## beginning with 'a' returns rc=0 and an empty result. That is why L29 is here.
+proc opa_l_annot {v} { catch {xschem set annot_show $v} ; xschem update_all_sym_bboxes }
+
+## One export through the 10-argument form; the file's bytes, or a marker.
+proc opa_l_print {fmt out vp} {
+  catch {file delete $out}
+  if {[catch {eval [linsert $vp 0 xschem print $fmt $out]} r]} { return RAISED:$r }
+  if {![file isfile $out]} { return NO-FILE }
+  set fd [open $out r] ; set d [read $fd] ; close $fd ; return $d
+}
+## A WARMED export: one throwaway of the same format first. Every row EXCEPT
+## L17 uses this, because L17 is the row whose whole subject is the first
+## export. The warm-up also settles issue 0454's volatile PS colour into the
+## same slot for both sides of a comparison.
+proc opa_l_print2 {fmt out vp} { opa_l_print $fmt $out.warm $vp ; return [opa_l_print $fmt $out $vp] }
+
+## Drop PostScript colour-set lines — issue 0454; see this section's header.
+proc opa_l_normps {s} {
+  set o {}
+  foreach x [split $s \n] {
+    if {[regexp {^[-0-9.e+]+ [-0-9.e+]+ [-0-9.e+]+ RGB$} $x]} continue
+    lappend o $x
+  }
+  return [join $o \n]
+}
+## 0/1 per marker, in the order asked. Presence, not position: the claim is
+## "this string was drawn", and both back ends spell it plainly (`>MARK<` in
+## SVG, `(MARK)` before `show` in PS).
+proc opa_l_seen {s markers} {
+  set o {}
+  foreach m $markers { lappend o [expr {[regexp -- $m $s] ? 1 : 0}] }
+  return $o
+}
+## Basenames of src/*.c containing <pat>, sorted. A FILE-set answer, not a line
+## count: "the ten copy-pasted tests are gone" is exactly "no .c outside
+## actions.c still spells HIDE_TEXT", and a count moves when someone reflows.
+proc opa_l_cfiles {dir pat} {
+  set out {}
+  foreach f [lsort [glob -nocomplain [file join $dir *.c]]] {
+    set fd [open $f r] ; set d [read $fd] ; close $fd
+    if {[string first $pat $d] >= 0} { lappend out [file tail $f] }
+  }
+  return $out
+}
+## -> {n_set_ne n_in_global_list} for src/xschem.tcl. The second half is the
+## per-tab hole NO headless row can otherwise see: save_ctx/restore_ctx
+## (xschem.tcl:14041/14071) walk tctx::global_list, and a mask left out of it
+## silently reverts when the user opens a second tab.
+proc opa_l_tclmirror {p} {
+  if {![file isfile $p]} { return NO-FILE }
+  set fd [open $p r] ; set lines [split [read $fd] \n] ; close $fd
+  set ndef 0 ; set nlist 0 ; set in 0
+  foreach l $lines {
+    if {[regexp {^\s*set_ne\s+annot_show\s} $l]} { incr ndef }
+    if {[regexp {^\s*set\s+tctx::global_list\s+\{} $l]} { set in 1 ; continue }
+    if {$in && [string trim $l] eq "\}"} { set in 0 ; continue }
+    if {$in} { incr nlist [llength [lsearch -all -exact [split [string trim $l]] annot_show]] }
+  }
+  return [list $ndef $nlist]
+}
+## Write one `type=zzs7probe` symbol: a 10-unit stroke plus ONE layer-15 text.
+## The five bbox probes all carry the SAME string so a visible width is
+## comparable across them; the four export probes carry distinct markers.
+proc opa_l_mkprobe {dir name hide text} {
+  set f [open [file join $dir $name] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "K \{type=zzs7probe\ntemplate=\"name=zp1\"\}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f "L 4 0 0 0 10 {}"
+  if {$hide eq {}} {
+    puts $f "T \{$text\} 5 5 0 0 0.2 0.2 \{layer=15\}"
+  } else {
+    puts $f "T \{$text\} 5 5 0 0 0.2 0.2 \{layer=15\nhide=$hide\}"
+  }
+  close $f
+}
+
+if {[catch {
+
+# ⚠ UNQUALIFIED, per this file's header note.
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+# ===========================================================================
+# L — THE SURFACE. Run FIRST, before anything sets the mask.
+# ===========================================================================
+# ⚠ ABSENCE HERE IS SILENT, NOT AN ERROR. `xschem set annot_show 1` returns
+# rc=0 with an empty result today (the argv[2][0] < 'n' half of the dispatcher
+# has no fall-through), and `xschem get <unknown>` likewise answers empty. So
+# these rows assert the VALUE, never a raise; L29 is the control that keeps
+# "the branch exists" from being a hollow claim.
+check {L1 D2 a fresh session reports annot_show 0 — the default resting state} \
+  [rcall {xschem get annot_show}] {0 0}
+
+check {L2 the Tcl mirror exists and defaults to 0 (set_ne annot_show 0)} \
+  [list [info exists ::annot_show] \
+        [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}]] \
+  {1 0}
+
+catch {xschem set annot_show 3}
+check {L3 `xschem set annot_show 3` reaches the C field: get answers 3} \
+  [rcall {xschem get annot_show}] {0 3}
+
+# ⚠ D4. show_hidden_texts' own setter (scheduler.c:12063) writes ONLY the C
+# field, and the next pull at draw.c:10414 silently discards it — which is why
+# the GUI never calls it. annot_show's setter must push both ways or every row
+# below becomes order-dependent.
+check {L4 D4 the setter pushes to Tcl too — no later pull can undo it} \
+  [list [info exists ::annot_show] \
+        [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}]] \
+  {1 3}
+
+# ===========================================================================
+# FIXTURE — nine probe symbols and four top-level texts in one schematic
+# ===========================================================================
+foreach {n h} {l_hid_none {} l_hid_op op l_hid_voltage voltage
+               l_hid_true true l_hid_instance instance} {
+  opa_l_mkprobe $L_LIBDIR $n.sym $h ZZS7_TEXT
+}
+foreach {n h m} {l_exp_none {} ZZSYMDNONE  l_exp_op op ZZSYMAOP
+                 l_exp_inst instance ZZSYMBINST  l_exp_true true ZZSYMCTRUE} {
+  opa_l_mkprobe $L_LIBDIR $n.sym $h $m
+}
+set f [open [file join $L_LIBDIR l_main.sch] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+set l_i 0
+foreach h {none op voltage true instance} {
+  puts $f "C \{l_hid_$h.sym\} [expr {$l_i * 120}] 0 0 0 \{name=i_$h\}" ; incr l_i
+}
+set l_i 0
+foreach {n m} {l_exp_none ZZSYMDNONE l_exp_op ZZSYMAOP
+               l_exp_inst ZZSYMBINST l_exp_true ZZSYMCTRUE} {
+  puts $f "C \{$n.sym\} [expr {$l_i * 120}] 100 0 0 \{name=e_$l_i\}" ; incr l_i
+}
+set l_i 0
+foreach {m h} {ZZTOPDNONE {} ZZTOPAOP op ZZTOPBINST instance ZZTOPCTRUE true} {
+  if {$h eq {}} {
+    puts $f "T \{$m\} 0 [expr {200 + $l_i * 30}] 0 0 0.4 0.4 \{layer=4\}"
+  } else {
+    puts $f "T \{$m\} 0 [expr {200 + $l_i * 30}] 0 0 0.4 0.4 \{layer=4\nhide=$h\}"
+  }
+  incr l_i
+}
+close $f
+xschem load [file join $L_LIBDIR l_main.sch]
+opa_l_annot 0 ; opa_l_sht 0
+
+## ⚠ THE VISIBLE WIDTH IS A FONT METRIC AND MOVES WITH THE DISPLAY — MEASURED.
+## The identical symbol measures 63 wide under --nogui and 64 under DISPLAY=:99,
+## because text_bbox goes through cairo's font metrics when a display exists.
+## So NO row below hard-codes a width: they all compare against $L_W, the
+## untokened control measured in THIS process, and X7 is what stops $L_W from
+## being 0 and turning every "hidden" row into a hollow pass.
+set L_W [opa_l_w i_none]
+
+# ⚠ FIXTURE ROW, green before and after. `xschem load` does NOT fail on a
+# missing symbol, so without this every claim below would degrade into a hollow
+# pass. The two widths pin that the probes really carry a text and that the
+# hide=true control really hides one.
+check {X7 FIXTURE l_main.sch: 9 probe instances, 4 top texts, a text that shows and one that hides} \
+  [list [xschem get instances] [xschem get texts] \
+        [xschem getprop instance i_op cell::type] \
+        [expr {$L_W > 40 ? 1 : 0}] [opa_l_w i_true]] \
+  {9 4 zzs7probe 1 0}
+
+# ===========================================================================
+# L — THE MASK, ON THE SYMBOL-TEXT PATH (select.c:709)
+# ===========================================================================
+# ⚠ The control width is folded into every row on purpose: a fixture whose text
+# vanished would answer {0 0} and satisfy a row that asked only for 0.
+opa_l_annot 0
+check {L5 hide=op is HIDDEN at annot_show 0 — bit0 clear} \
+  [list [opa_l_w i_op] [opa_l_w i_none]] [list 0 $L_W]
+
+opa_l_annot 1
+check {L6 hide=op is VISIBLE at annot_show 1, at the untokened control's exact width} \
+  [list [opa_l_w i_op] [opa_l_w i_none]] [list $L_W $L_W]
+
+# ⚠ THE MASK IS A MASK, NOT A FLAG. `annot_show 2` is bit1 only; a `!= 0` test
+# in text_hidden would show OP info whenever voltages are on.
+opa_l_annot 2
+check {L7 hide=op is HIDDEN at annot_show 2 — bit0 is the gate, not "any bit set"} \
+  [list [opa_l_w i_op] [opa_l_w i_none]] [list 0 $L_W]
+
+opa_l_annot 1 ; set l8a [opa_l_w i_voltage]
+opa_l_annot 2 ; set l8b [opa_l_w i_voltage]
+check {L8 hide=voltage follows bit1: hidden at annot_show 1, visible at annot_show 2} \
+  [list $l8a $l8b [opa_l_w i_none]] [list 0 $L_W $L_W]
+
+# ⚠ D3 — THE DECISION THAT MAKES S8's `Ctrl-6 -> none` WORK. Annotation classes
+# are gated SOLELY by annot_show. The rejected alternative (show_hidden_texts as
+# a master override for the new classes) reads naturally, but the two shipped
+# "Annotate Operating Point" menu items (xschem.tcl:14941 and :15318) BOTH do
+# `set show_hidden_texts 1`, and that is the exact flow a user reaches this
+# feature through — so the override would make the off switch a silent no-op
+# precisely when it is needed.
+opa_l_annot 0 ; opa_l_sht 1
+check {L9 D3 hide=op stays HIDDEN at annot_show 0 even with show_hidden_texts 1} \
+  [list [opa_l_w i_op] [opa_l_w i_true]] [list 0 $L_W]
+
+opa_l_annot 1 ; opa_l_sht 0
+check {L10 D3 hide=op is VISIBLE at annot_show 1 even with show_hidden_texts 0} \
+  [list [opa_l_w i_op] [opa_l_w i_true]] [list $L_W 0]
+
+# ===========================================================================
+# L — I7: hide=true / hide=instance ARE UNTOUCHED
+# ===========================================================================
+# ⚠ NOTHING ELSE IN tests/ ASSERTS THIS. A grep over the whole suite for
+# show_hidden_texts finds only this file's comments, so before these rows I7 was
+# guarded by nothing at all while 630 `hide=instance` and 47 `hide=true`
+# occurrences across 244 tracked files depended on it.
+set l11 {}
+foreach a {0 3} { foreach sh {0 1} { opa_l_annot $a ; opa_l_sht $sh
+  lappend l11 [opa_l_w i_true] } }
+check {L11 I7 hide=true tracks show_hidden_texts ONLY, identically at annot_show 0 and 3} \
+  $l11 [list 0 $L_W 0 $L_W]
+
+set l12 {}
+foreach a {0 3} { foreach sh {0 1} { opa_l_annot $a ; opa_l_sht $sh
+  lappend l12 [opa_l_w i_instance] } }
+check {L12 I7 hide=instance tracks show_hidden_texts ONLY, identically at annot_show 0 and 3} \
+  $l12 [list 0 $L_W 0 $L_W]
+
+# ===========================================================================
+# L — THE FOUR EXPORT SITES (svgdraw.c:923/1290, psprint.c:1205/1664)
+# ===========================================================================
+# ⚠ THE ASYMMETRY, AND IT IS THE WHOLE REASON text_hidden() TAKES A CONTEXT.
+# At show_hidden_texts 0 a `hide=instance` text is HIDDEN on a symbol and
+# VISIBLE at top level. Rows L13/L14 are green before AND after S7 — they are
+# not evidence the feature landed, they are the tripwire on the one-argument
+# helper the brief literally asked for.
+opa_l_annot 0 ; opa_l_sht 0
+set l_svg0 [opa_l_print2 svg [file join $scratch l_main.svg] $L_VP_MAIN]
+set l_ps0  [opa_l_print2 ps  [file join $scratch l_main.ps]  $L_VP_MAIN]
+
+check {L13 I7 ASYMMETRY SVG: top-level hide=instance is VISIBLE where the same token on a symbol is HIDDEN} \
+  [list [opa_l_seen $l_svg0 {ZZSYMBINST ZZSYMDNONE}] \
+        [opa_l_seen $l_svg0 {ZZTOPBINST ZZTOPDNONE}]] \
+  {{0 1} {1 1}}
+
+check {L14 I7 ASYMMETRY PS: the identical claim through psprint.c:1664 vs :1205} \
+  [list [opa_l_seen $l_ps0 {ZZSYMBINST ZZSYMDNONE}] \
+        [opa_l_seen $l_ps0 {ZZTOPBINST ZZTOPDNONE}]] \
+  {{0 1} {1 1}}
+
+opa_l_annot 1
+set l_svg1 [opa_l_print2 svg [file join $scratch l_main1.svg] $L_VP_MAIN]
+set l_ps1  [opa_l_print2 ps  [file join $scratch l_main1.ps]  $L_VP_MAIN]
+
+check {L15 top-level hide=op follows annot_show bit0 in SVG (svgdraw.c:1290) AND PS (psprint.c:1664)} \
+  [list [opa_l_seen $l_svg0 {ZZTOPAOP ZZTOPDNONE}] [opa_l_seen $l_ps0 {ZZTOPAOP ZZTOPDNONE}] \
+        [opa_l_seen $l_svg1 {ZZTOPAOP ZZTOPDNONE}] [opa_l_seen $l_ps1 {ZZTOPAOP ZZTOPDNONE}]] \
+  {{0 1} {0 1} {1 1} {1 1}}
+
+check {L16 symbol hide=op follows annot_show bit0 in SVG (svgdraw.c:923) AND PS (psprint.c:1205)} \
+  [list [opa_l_seen $l_svg0 {ZZSYMAOP ZZSYMDNONE}] [opa_l_seen $l_ps0 {ZZSYMAOP ZZSYMDNONE}] \
+        [opa_l_seen $l_svg1 {ZZSYMAOP ZZSYMDNONE}] [opa_l_seen $l_ps1 {ZZSYMAOP ZZSYMDNONE}]] \
+  {{0 1} {0 1} {1 1} {1 1}}
+
+# ⚠ THE STALENESS ROW. `set ::annot_show` alone, never `xschem set`, and the
+# FIRST export is the measurement — no warm-up. show_hidden_texts fails this
+# today in both directions and for both formats (issue 0453); annot_show must
+# not, or the brief's own "test the SVG/PS export paths" acceptance becomes
+# order-dependent and flaky.
+opa_l_annot 0
+set ::annot_show 1
+set l17a [opa_l_seen [opa_l_print svg [file join $scratch l_first.svg] $L_VP_MAIN] {ZZTOPAOP}]
+opa_l_annot 1
+set ::annot_show 0
+set l17b [opa_l_seen [opa_l_print ps [file join $scratch l_first.ps] $L_VP_MAIN] {ZZTOPAOP}]
+check {L17 NO STALE FIRST EXPORT: the mirror is synced at the export entry, not one export late} \
+  [list $l17a $l17b] {1 0}
+
+# ⚠ THE BBOX HALF OF THE SAME DEFECT. xschem.tcl:15036's shipped idiom is
+# `xschem update_all_sym_bboxes; xschem redraw`, and spec §4.6 step 3 tells S8's
+# annot mode to copy it. Measured for show_hidden_texts: 0 / 0 / 0 / 161 across
+# those four steps, i.e. only the SECOND update is right. One update must do.
+opa_l_annot 0
+set l18a [opa_l_w i_op]
+set ::annot_show 1
+xschem update_all_sym_bboxes
+set l18b [opa_l_w i_op]
+xschem update_all_sym_bboxes
+set l18c [opa_l_w i_op]
+check {L18 NO STALE BBOX: ONE update_all_sym_bboxes picks up a Tcl-side annot_show change} \
+  [list $l18a $l18b $l18c] [list 0 $L_W $L_W]
+
+# ===========================================================================
+# L — I7 ON THE SHIPPED CORPUS
+# ===========================================================================
+# ⚠ EXHAUSTIVE, NOT A SPOT CHECK, BECAUSE THE BLAST RADIUS IS COUNTABLE. Across
+# every tracked .sym/.sch: hide=instance 630 occurrences / 244 files, hide=true
+# 47 / 22, hide=op 2 (the twin annotate_params.sym), hide=voltage 0. No other
+# hide= value exists anywhere. So "every existing library symbol renders
+# identically with annot_show 0 and 3" is a bounded claim, and these rows make
+# it for all 57 shipped devices/*.sym that carry hide=instance at once.
+set l_corp {}
+foreach s [lsort [glob -nocomplain [file join $L_CORPUSDIR *.sym]]] {
+  set fd [open $s r] ; set d [read $fd] ; close $fd
+  if {[string first "hide=instance" $d] >= 0} { lappend l_corp [file tail $s] }
+}
+set f [open [file join $L_LIBDIR l_corpus.sch] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+set l_i 0
+foreach c $l_corp {
+  puts $f "C \{$c\} [expr {($l_i % 8) * 300}] [expr {($l_i / 8) * 200}] 0 0 \{name=zz$l_i\}"
+  incr l_i
+}
+close $f
+xschem load [file join $L_LIBDIR l_corpus.sch]
+check {X8 FIXTURE l_corpus.sch: every shipped devices/*.sym carrying hide=instance, all loaded} \
+  [list [llength $l_corp] [xschem get instances] \
+        [expr {[xschem getprop instance zz0 cell::type] eq {missing} ? {MISSING} : {OK}}]] \
+  {57 57 OK}
+
+foreach a {0 3} {
+  foreach sh {0 1} {
+    opa_l_annot $a ; opa_l_sht $sh
+    set l_cs($a,$sh) [opa_l_print2 svg [file join $scratch l_c_$a$sh.svg] $L_VP_CORPUS]
+    set l_cp($a,$sh) [opa_l_normps [opa_l_print2 ps [file join $scratch l_c_$a$sh.ps] $L_VP_CORPUS]]
+  }
+}
+check {L19 I7 CORPUS SVG: 57 shipped hide=instance symbols export byte-identically at annot_show 0 vs 3} \
+  [list [expr {$l_cs(0,0) eq $l_cs(3,0)}] [expr {$l_cs(0,1) eq $l_cs(3,1)}] \
+        [expr {[string length $l_cs(0,0)] > 10000}]] {1 1 1}
+
+check {L20 I7 CORPUS PS: the same 57 symbols, colour-normalised, identical at annot_show 0 vs 3} \
+  [list [expr {$l_cp(0,0) eq $l_cp(3,0)}] [expr {$l_cp(0,1) eq $l_cp(3,1)}] \
+        [expr {[string length $l_cp(0,0)] > 10000}]] {1 1 1}
+
+# ⚠ WITHOUT THIS ROW L19/L20 WOULD PASS ON AN EXPORTER THAT DREW NOTHING.
+check {L21 NON-VACUITY: the same corpus DOES differ between show_hidden_texts 0 and 1, in both formats} \
+  [list [expr {$l_cs(0,0) ne $l_cs(0,1)}] [expr {$l_cp(0,0) ne $l_cp(0,1)}]] {1 1}
+
+# ⚠ THE hide=true HALF OF I7, ON A SHIPPED SCHEMATIC. gf180's 19 FET symbols are
+# the tree's only hide=true TEXT records that render something without a raw
+# (`tcleval(gm=[ngspice::get_node …] )` leaves the `gm=` prefix), which is what
+# makes this row non-vacuous. REJECTED as the fixture:
+# xschem_library/pcb/pcb_current_protection_embed.sch, the file the plan names —
+# measured, its three hide=true texts are bare `@spice_get_voltage` /
+# `@spice_get_current` tokens that render to the EMPTY STRING with no raw
+# loaded, so its export is byte-identical at show_hidden_texts 0 and 1 and the
+# row would have been vacuous in exactly the way L21 exists to prevent.
+set XSCHEM_LIBRARY_PATH $P_GF_LIBS
+xschem load $L_GF_SCH
+foreach a {0 3} {
+  foreach sh {0 1} {
+    opa_l_annot $a ; opa_l_sht $sh
+    set l_gs($a,$sh) [opa_l_print2 svg [file join $scratch l_g_$a$sh.svg] $L_VP_GF]
+  }
+}
+check {L22 I7 SHIPPED hide=true: a gf180 FET schematic exports identically at annot_show 0 vs 3, and DOES move with show_hidden_texts} \
+  [list [expr {$l_gs(0,0) eq $l_gs(3,0)}] [expr {$l_gs(0,1) eq $l_gs(3,1)}] \
+        [expr {$l_gs(0,0) ne $l_gs(0,1)}] \
+        [opa_l_seen $l_gs(0,0) {gm=}] [opa_l_seen $l_gs(0,1) {gm=}]] {1 1 1 0 1}
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+# ===========================================================================
+# L — END TO END: THE SHIPPED CARRIER devices/annotate_params
+# ===========================================================================
+# ⚠ THE SHARPEST CHECK IN THE STEP. This is the one symbol in the whole tree
+# whose visible behaviour S7 changes: S6 shipped it ALWAYS-ON (measured: bbox
+# and both exports identical at BOTH show_hidden_texts states) because the token
+# was inert. After S7 it must follow annot_show bit0 and ignore
+# show_hidden_texts entirely. Its own type is `annotator`, which no descriptor
+# claims, so it cannot annotate itself (row K7).
+set f [open [file join $L_LIBDIR l_zzfet.sym] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "K \{type=zzs7fet\nformat=\"@name @pinlist @model\"\ntemplate=\"name=MZZ1 model=zzdev\"\}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "L 4 -10 -10 10 -10 {}"
+puts $f "L 4 10 -10 10 10 {}"
+puts $f "L 4 10 10 -10 10 {}"
+puts $f "L 4 -10 10 -10 -10 {}"
+close $f
+## The twin: the SHIPPED file byte-for-byte with hide=op rewritten to hide=true.
+## Built from the bytes on disk, never hand-typed, so it cannot drift away from
+## what ships. See this section's header for why it is the oracle.
+set l_carrier [opa_k_slurp $K_FLATSYM]
+set f [open [file join $L_LIBDIR l_twin.sym] w]
+puts -nonewline $f [string map {hide=op hide=true} $l_carrier]
+close $f
+## A three-vector operating point, same technique section S uses.
+set f [open [file join $scratch l_op.raw] w]
+puts -nonewline $f "Title: S7 carrier fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 3
+No. Points: 1
+Variables:
+\t0\ti(@m.xmzz1.mzz\[id\])\tcurrent
+\t1\t@m.xmzz1.mzz\[gm\]\tadmittance
+\t2\t@m.xmzz1.mzz\[gds\]\tadmittance
+Values:
+0\t1e-05
+\t1e-04
+\t1e-06
+"
+close $f
+## ⚠ ITS OWN SYMBOL TYPE. Registering `nmos` here would clobber the sky130
+## descriptor sections P and S left in the store; `zzs7fet` collides with
+## nothing, and the devproc convention is the one row C7 pinned.
+proc opa_l_devproc {instname model path spiceprefix} { return {@m.xmzz1.mzz} }
+catch {op_annot::register zzs7fet \
+  [list devproc opa_l_devproc params {{id id 0} {gm gm 1} {gds gds 1}}]}
+set f [open [file join $L_LIBDIR l_e2e.sch] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "C \{l_zzfet.sym\} 0 0 0 0 \{name=MZZ1\}"
+puts $f "C \{devices/annotate_params\} 80 0 0 0 \{name=annot1 ref=MZZ1\}"
+puts $f "C \{l_twin.sym\} 200 0 0 0 \{name=annot2 ref=MZZ1\}"
+close $f
+xschem load [file join $L_LIBDIR l_e2e.sch]
+set l_ann [rcall {xschem annotate_op [file join $scratch l_op.raw]}]
+check {X9 FIXTURE l_e2e.sch: the SHIPPED carrier plus its hide=true twin, both pointed at an annotated device} \
+  [list [lindex $l_ann 0] [xschem get instances] \
+        [xschem getprop instance annot1 cell::type] \
+        [xschem getprop instance annot2 cell::type] \
+        [rcall {op_annot::text MZZ1}]] \
+  [list 0 3 annotator annotator [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\n"]]
+
+## The oracle pair, measured from the twin in this same process.
+opa_l_annot 0 ; opa_l_sht 0 ; set l_ref_hidden [opa_l_wh annot2]
+opa_l_sht 1                 ; set l_ref_shown  [opa_l_wh annot2]
+opa_l_sht 0
+opa_l_annot 0 ; set l23a [opa_l_wh annot1]
+opa_l_annot 1 ; set l23b [opa_l_wh annot1]
+check {L23 the SHIPPED carrier's bbox follows annot_show bit0: numbers-hidden at 0, full at 1} \
+  [list [expr {$l23a eq $l_ref_hidden}] [expr {$l23b eq $l_ref_shown}] \
+        [expr {$l_ref_hidden ne $l_ref_shown}]] {1 1 1}
+
+opa_l_annot 0
+set l_es0 [opa_l_print2 svg [file join $scratch l_e2e0.svg] $L_VP_E2E]
+set l_ep0 [opa_l_print2 ps  [file join $scratch l_e2e0.ps]  $L_VP_E2E]
+opa_l_annot 1
+set l_es1 [opa_l_print2 svg [file join $scratch l_e2e1.svg] $L_VP_E2E]
+set l_ep1 [opa_l_print2 ps  [file join $scratch l_e2e1.ps]  $L_VP_E2E]
+## `100u` is the gm row's value and appears nowhere else in either export;
+## `MZZ1` is the carrier's OWN `T {@ref}` label, which carries no hide token and
+## must keep rendering at both states — that is what makes "hidden" mean "the
+## numbers went away", not "the symbol went away".
+check {L24 the carrier's numbers are ABSENT from both exports at annot_show 0 and PRESENT at 1} \
+  [list [opa_l_seen $l_es0 {100u}] [opa_l_seen $l_ep0 {100u}] \
+        [opa_l_seen $l_es1 {100u}] [opa_l_seen $l_ep1 {100u}]] \
+  {0 0 1 1}
+
+## ⚠ L25 NEEDS THE TWIN OUT OF FRAME, AND THE FIRST DRAFT OF THIS ROW DID NOT.
+## The row's marker is `100u`, and its comment claimed the string "appears nowhere
+## else in either export". In l_e2e.sch it does: annot2 is the hide=true twin, and
+## L23's oracle REQUIRES the twin to become visible at show_hidden_texts 1, which
+## puts `100u` in the export no matter what the carrier does. As written the row was
+## unsatisfiable by any I7-correct implementation — measured, with the carrier alone
+## it answers {{0 1} {0 1}} exactly as claimed, and it is the twin that supplies the
+## single `100u` at show_hidden_texts 1. So L25 gets its own two-instance schematic:
+## the device plus the SHIPPED carrier, no twin. Everything else about the row is
+## unchanged, including that it drives the shipped file and not a copy.
+set f [open [file join $L_LIBDIR l_e2e_solo.sch] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "C \{l_zzfet.sym\} 0 0 0 0 \{name=MZZ1\}"
+puts $f "C \{devices/annotate_params\} 80 0 0 0 \{name=annot1 ref=MZZ1\}"
+close $f
+xschem load [file join $L_LIBDIR l_e2e_solo.sch]
+## The raw is per-context and `xschem load` drops it, so re-annotate before exporting.
+set l_ann_solo [rcall {xschem annotate_op [file join $scratch l_op.raw]}]
+opa_l_annot 0 ; opa_l_sht 0
+set l_a [opa_l_print2 svg [file join $scratch l_e2e_s0.svg] $L_VP_E2E]
+opa_l_sht 1
+set l_b [opa_l_print2 svg [file join $scratch l_e2e_s1.svg] $L_VP_E2E]
+opa_l_sht 0
+## ⚠ THE PRE-S7 BEHAVIOUR IS GONE ON PURPOSE (decision D2, status E). S6 shipped
+## this symbol always-on one day earlier; with annot_show defaulting to 0 it now
+## renders dark until `xschem set annot_show 1` or S8's `6` key. The off-ramp
+## that needs no rebuild is `set annot_show 1` in ~/.xschem/xschemrc, which
+## survives the `set_ne`.
+check {L25 D3 the carrier ignores show_hidden_texts entirely, and its @ref label still renders} \
+  [list [lindex $l_ann_solo 0] \
+        [opa_l_seen $l_a {100u MZZ1}] [opa_l_seen $l_b {100u MZZ1}]] \
+  {0 {0 1} {0 1}}
+
+# ===========================================================================
+# L — K4's SUCCESSOR, THE REFACTOR, AND THE CONTROLS
+# ===========================================================================
+# ⚠ K4 pins only that the token is IN the shipped file. Until S7 that was the
+# whole guard, and it stayed green while the token did nothing. This is the row
+# that says the token now DOES something: at annot_show 0 with show_hidden_texts
+# 1, `hide=op` and `hide=true` must land on OPPOSITE answers.
+xschem load [file join $L_LIBDIR l_main.sch]
+opa_l_annot 0 ; opa_l_sht 1
+check {L26 K4's successor: hide=op and hide=true now differ at annot_show 0 / show_hidden_texts 1} \
+  [list [opa_l_w i_op] [opa_l_w i_true] \
+        [expr {[opa_l_w i_op] eq [opa_l_w i_true]}]] [list 0 $L_W 0]
+opa_l_sht 0
+
+# ⚠ THE REFACTOR IS THE SUBSTANCE OF S7; THE FEATURE IS A FEW LINES. Before the
+# change five .c files spell HIDE_TEXT and none calls a predicate. After it the
+# flag lives in ONE file — set_text_flags parses it, text_hidden interprets it —
+# and the four render/geometry files ask instead of testing. The second element
+# keeps a "delete the tests" reading from passing.
+check {L27 THE REFACTOR HAPPENED: HIDE_TEXT survives in ONE .c, and five .c files call text_hidden} \
+  [list [opa_l_cfiles [file join $repo src] HIDE_TEXT] \
+        [opa_l_cfiles [file join $repo src] text_hidden]] \
+  {actions.c {actions.c draw.c psprint.c select.c svgdraw.c}}
+
+# ⚠ THE PER-TAB HOLE. src/xschem.tcl is NOT in the step's Files cell but must
+# change twice: a `set_ne annot_show 0` default (without it every sync logs a
+# dbg(0) stderr line) and an entry in tctx::global_list (without it the mask
+# silently reverts when the user opens a second tab — and no headless row can
+# ever see that, which is why this one is a source grep).
+check {L28 the Tcl mirror is declared once and is per-tab (tctx::global_list)} \
+  [opa_l_tclmirror [file join $repo src xschem.tcl]] {1 1}
+
+# ⚠ CONTROL, GREEN BEFORE AND AFTER. `xschem set` splits on argv[2][0] < 'n'
+# (scheduler.c:11685) and only the >='n' half has the `*cmd_found = 0`
+# fall-through (scheduler.c:12073). `annot_show` starts with 'a', so it lands in
+# the half that silently accepts ANY name: today `xschem set annot_show 1`
+# returns rc=0 with an empty result. Without this row, L3 could be satisfied by
+# that fall-through rather than by a real branch.
+check {L29 CONTROL `xschem set` still rejects an unknown name, and accepts annot_show} \
+  [list [lindex [rcall {xschem set zzz_garbage 1}] 0] \
+        [lindex [rcall {xschem set annot_show 1}] 0]] {1 0}
+opa_l_annot 0
+
+} lerr]} {
+  puts "UNEXPECTED ERROR (section L): $lerr"
+  incr fail
+}
+
+# =============================================================================
+# SECTION M — THE TENTH SITE, actions.c:4422, WHICH NEEDS A DISPLAY
+# =============================================================================
+# calc_drawing_bbox's text loop sits inside `if(has_x && selected != 2)`
+# (actions.c:4416), so under --nogui it never inspects a top-level text and
+# `xschem get bbox` is identical at every visibility state. These two rows
+# therefore SELF-SKIP headless and are the only part of S7 that owes a display:
+#
+#   DISPLAY=:99 GUI_GATE=0 ./src/xschem --pipe -q --nolog \
+#       --script tests/headless/test_op_annot.tcl
+#
+# ⚠ `--pipe` IS MANDATORY THERE AND ITS ABSENCE IS SILENT. main.c:111 sets
+# cli_opt_detach whenever stdin is not a fifo and getpgrp() != tcgetpgrp(1) --
+# true of every non-interactive tool shell -- and main.c:133 then freopens BOTH
+# stdout and stderr to /dev/null. Measured: without --pipe the whole suite runs,
+# exits 1, and prints NOTHING AT ALL, so a reader sees an empty terminal rather
+# than a result. (tests/headless/devdisplay.sh start brings :99 up.)
+if {![info exists has_x]} {
+  puts "skip: M1/M2 need a display — actions.c:4422's text loop is inside `if(has_x && selected != 2)`"
+} else {
+ if {[catch {
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+## Two schematics, not one: with both texts in the same file the bbox is their
+## union and hiding one need not move it.
+foreach {fn hide} {l_m_op op l_m_true true} {
+  set f [open [file join $L_LIBDIR $fn.sch] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f "L 4 0 0 10 0 {}"
+  puts $f "T \{ZZBBOXWIDE\} 400 0 0 0 0.4 0.4 \{layer=4\nhide=$hide\}"
+  close $f
+}
+proc opa_m_bbox {} { return [xschem get bbox] }
+
+xschem load [file join $L_LIBDIR l_m_op.sch]
+opa_l_sht 0
+opa_l_annot 0 ; set m1a [opa_m_bbox]
+opa_l_annot 1 ; set m1b [opa_m_bbox]
+check {M1 actions.c:4422 a top-level hide=op text enters `xschem get bbox` only at annot_show 1} \
+  [expr {$m1a ne $m1b}] 1
+
+xschem load [file join $L_LIBDIR l_m_true.sch]
+opa_l_sht 0
+opa_l_annot 0 ; set m2a [opa_m_bbox]
+opa_l_annot 3 ; set m2b [opa_m_bbox]
+opa_l_sht 1   ; set m2c [opa_m_bbox]
+check {M2 I7 actions.c:4422 a top-level hide=true text is unmoved by annot_show and moved by show_hidden_texts} \
+  [list [expr {$m2a eq $m2b}] [expr {$m2a ne $m2c}]] {1 1}
+opa_l_annot 0 ; opa_l_sht 0
+
+} merr]} {
+   puts "UNEXPECTED ERROR (section M): $merr"
+   incr fail
+ }
 }
 
 # --- verdict -----------------------------------------------------------------

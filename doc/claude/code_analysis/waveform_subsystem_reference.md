@@ -408,7 +408,14 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `ngspice::get_current/get_node` reading `ngspice_data`.
 - **Two engines coexist** (C `update_op`/`cursor_b_val` + Tcl
   `ngspice::read_raw`/`ngspice_data`); `update_op` writes both. Op text is
-  layer-15 (hidden unless `show_hidden_texts=1`).
+  layer-15, and hiding comes from the text's **`hide=` attribute, not the
+  layer** — layer 15 is drawn like any other. *(Corrected 2026-08-19 by S7 of
+  `doc/claude/specs/op_annotation.md`, which flagged the original claim.)*
+  gf180's OP texts carry `hide=true` and so obey `show_hidden_texts`; sky130's
+  carry no `hide=` token at all and are on permanently. Since S7 the attribute
+  also has the classes `hide=op` / `hide=voltage`, gated by the `annot_show`
+  mask and **not** by `show_hidden_texts`; one predicate `text_hidden()`
+  (`actions.c`) now decides all ten former visibility sites.
 
 ---
 

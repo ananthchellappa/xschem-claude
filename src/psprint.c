@@ -1202,7 +1202,7 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       /* if(xscale*FONTWIDTH* xctx->mooz<1) continue; */
-      if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+      if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
       if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
       txtptr= translate(n, text.txt_ptr);
       ROTATION(rot, flip, 0.0,0.0,text.x0,text.y0,x1,y1);
@@ -1661,7 +1661,7 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
     for(i=0;i<xctx->texts; ++i)
     {
       textlayer = xctx->text[i].layer;
-      if(!xctx->show_hidden_texts && (xctx->text[i].flags & HIDE_TEXT)) continue;
+      if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
       if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
 
       my_snprintf(ps_font_family, S(ps_font_name), "Helvetica");

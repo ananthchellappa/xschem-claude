@@ -13989,7 +13989,7 @@ set tctx::global_list {
  preserve_unchanged_attrs prev_symbol ps_colors
  ps_paper_size rainbow_colors rotated_text search_case search_exact
  search_found search_schematic search_select search_value select_touch
- show_hidden_texts show_infowindow show_infowindow_after_netlist simconf_default_geometry
+ show_hidden_texts annot_show show_infowindow show_infowindow_after_netlist simconf_default_geometry
  simconf_vpos simulate_bg snap_cursor snap_cursor_size spiceprefix split_files svg_colors
  svg_font_name sym_txt symbol symbol_width tabstop tclcmd_txt tclstop
  tctx::colors tctx::delay_flag tctx::hsize tctx::recentfile tctx::recentdirs
@@ -15945,6 +15945,12 @@ set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0
+## S7 annotation classes: visibility mask for texts carrying hide=op (bit0, device
+## operating-point info) / hide=voltage (bit1, node voltages). MIRRORED IN C as
+## xctx->annot_show; see text_hidden() in src/actions.c and
+## doc/claude/specs/op_annotation.md. Default 0 = annotations off at rest; put
+## `set annot_show 1` in ~/.xschem/xschemrc to have them on from startup.
+set_ne annot_show 0
 set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0

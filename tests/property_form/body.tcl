@@ -1268,6 +1268,29 @@ check {TX10c toggled on writes schema on-value}   {[f_bvalue weight {} 0 1] eq "
 check {TX10d toggled off removes (empty)}         {[f_bvalue weight bold 1 0] eq ""}
 check {TX10e unchanged-unticked keeps 'normal'}   {[f_bvalue weight normal 0 0] eq "normal"}
 
+### PF-S7 - THE ANNOTATION CLASSES vs THE 'Hidden' CHECKBOX. ISSUE 0452.
+### S7 gave `hide=` two more meaningful values, `op` (device operating-point
+### info) and `voltage` (node voltages), each gated by its own bit of the
+### annot_show mask. The dialog still models the token as a two-state bool, so a
+### class is a value the on-value does not capture -- exactly the case TX10a/b
+### exist for, and the same "unchanged box preserves the loaded value" rule keeps
+### it safe for as long as the user leaves the box alone.
+###
+### THESE ROWS PIN THE CURRENT, WRONG BEHAVIOUR ON PURPOSE. Removing the token
+### and putting it back -- untick, OK, reopen, tick -- does NOT restore `hide=op`;
+### it writes `hide=true`, an unconditional hide that no annot_show setting can
+### undo. Before S7 that rewrite was inert (`op` set no flag bit); now it is
+### silent data loss. When 0452 is fixed these two rows go red BY NAME, which is
+### the point of asserting them.
+check {PF-S7a hide=op ticks the Hidden box (bool widget cannot show a class)} \
+  {[f_bchecked hide op] == 1}
+check {PF-S7b hide=voltage likewise ticks it} \
+  {[f_bchecked hide voltage] == 1}
+check {PF-S7c an untouched hide=op survives OK verbatim (TX10b's rule, still holding)} \
+  {[f_bvalue hide op 1 1] eq "op"}
+check {PF-S7d ISSUE 0452 remove-then-restore turns hide=op into hide=true} \
+  {[f_bvalue hide op 1 0] eq "" && [f_bvalue hide {} 0 1] eq "true"}
+
 # ===========================================================================
 # Slick text_line dialog — discoverable graphical-object attributes (L1: core +
 # Rectangle). Spec: doc/claude/specs/slick_text_line_dialog.md. Generalises the enter_text

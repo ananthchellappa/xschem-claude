@@ -387,6 +387,26 @@ typedef int Tcl_Size;
 #define HIDE_TEXT 8
 #define TEXT_FLOATER 16
 #define HIDE_TEXT_INSTANTIATED 32
+/* ANNOTATION CLASSES (S7, doc/claude/specs/op_annotation.md). A text whose hide=
+ * token names a class is shown iff the matching bit of the annot_show mask is set,
+ * and ignores show_hidden_texts entirely (decision D3: the two shipped "Annotate
+ * Operating Point" menu items already do `set show_hidden_texts 1`, so letting it
+ * override would make the annotation off-switch a no-op exactly when it is needed).
+ * These are a DIFFERENT namespace from HIDE_TEXT / HIDE_TEXT_INSTANTIATED, whose
+ * semantics are unchanged for every existing symbol (invariant I7). */
+#define HIDE_TEXT_OP 64        /* hide=op      : device operating-point info */
+#define HIDE_TEXT_VOLTAGE 128  /* hide=voltage : node voltages */
+/* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
+#define ANNOT_SHOW_OP 1
+#define ANNOT_SHOW_VOLTAGE 2
+/* text_hidden() context. The ten former copy-pasted visibility tests were not ten
+ * copies of one test but TWO tests: the six iterating a SYMBOL's text masked
+ * (HIDE_TEXT | HIDE_TEXT_INSTANTIATED), the four iterating the schematic's own text
+ * masked HIDE_TEXT alone. That difference IS the meaning of hide=instance -- hidden
+ * through an instance, visible while editing the symbol itself -- so the predicate
+ * takes the context rather than folding both into one mask. */
+#define TEXT_CTX_SCHEMATIC 0   /* iterating xctx->text[]: the schematic's own texts */
+#define TEXT_CTX_INSTANCE 1    /* iterating symptr->text[]: a symbol drawn as an instance */
 
 #define S(a) (sizeof(a)/sizeof(a[0]))
 #define BUS_WIDTH 4
@@ -817,9 +837,13 @@ typedef struct
   char *font; /*  20171201 for cairo */
   int flags; /* bit 0 : TEXT_BOLD
               * bit 1 : TEXT_OBLIQUE
-              * bit 2 : TEXT_ITALICi
+              * bit 2 : TEXT_ITALIC
               * bit 3 : HIDE_TEXT
-              * bit 4 : TEXT_FLOATER */
+              * bit 4 : TEXT_FLOATER
+              * bit 5 : HIDE_TEXT_INSTANTIATED
+              * bit 6 : HIDE_TEXT_OP        (annotation class, gated by annot_show)
+              * bit 7 : HIDE_TEXT_VOLTAGE   (annotation class, gated by annot_show)
+              * recomputed by set_text_flags() from prop_ptr, never serialised */
   unsigned int id; /* session-stable identity, stamped at birth in store.c
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
@@ -2163,6 +2187,9 @@ typedef struct {
   void (*clear_undo)(void);
   int case_insensitive; /* for case insensitive compare where needed MIRRORED IN TCL*/
   int show_hidden_texts; /* force show texts that have hide=true attribute set MIRRORED IN TCL*/
+  int annot_show; /* annotation-class visibility mask: bit0 device OP info (hide=op),
+                   * bit1 node voltages (hide=voltage). Independent of show_hidden_texts
+                   * (decision D3). See text_hidden() in actions.c MIRRORED IN TCL*/
   int en_pin_select; /* enable selecting individual instance pins (click on pin) MIRRORED IN TCL*/
   int (*x_strcmp)(const char *, const char *);
   Lcc hier_attr[CADMAXHIER]; /* hierarchical recursive attribute substitution when descending */
@@ -3110,6 +3137,9 @@ extern void pin_views_reconcile_after_move(void);
 extern void pin_views_reconcile_all(void);
 extern int pin_name_visible(const char *prop);
 extern void pin_names_sync_cache(void);
+/* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7). */
+extern int text_hidden(int flags, int ctx);
+extern void annot_show_sync_cache(void);
 extern int check_pin_names(char **result);
 /* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
  * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */
