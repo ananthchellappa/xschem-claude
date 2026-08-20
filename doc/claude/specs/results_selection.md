@@ -804,6 +804,152 @@ R103's three-part definition, so it returns `{}` for a
 database that is loaded and current but whose stamp does not resolve (F4) —
 **a loaded-but-blind database is not a selection.**
 
+### 5.2 RULINGS — `results::select`'s exact shape (item 4, 2026-08-19)
+
+**Nine** crew rulings, all measured, all in `src/results.tcl`, and they are
+R302a, R302d, R302e, R302f, R302g, R302h, R802a, R804b and R804c below. A tenth,
+**R805b**, belongs to the same item but is written under §10, because it is a
+message rule. (An earlier draft of this line
+said "six" and then listed eight — corrected in the item-4 fixer round, along
+with the section ordering: this block was inserted **ahead** of §5.1, so the
+spec's headings ran 5.0, 5.2, 5.1.) The dict R302 fixes
+(`ok how path type status msg`) is a **minimum**, not a closed set: `why`,
+`reason`, `named`, `resolves`, `channel` and `did` are added beside it, the same
+way R201b opened the resolver's.
+
+**R302a — ONE SPELLING PER RUN, and `file normalize` is where it is decided.**
+Item 3 measured the hazard and handed it here: `w/an.raw` and `w/../w/an.raw`
+**both read**, producing two registry slots for one file, because the engine
+dedupes by `strcmp` on the stored spelling; `~/` is the only normalisation the C
+verb does (R301h). Two halves, and the second is the one that actually fixes the
+duplicate:
+
+1. the path handed to the engine is `file normalize`d, so every caller coming
+   through R303's single door arrives in **one** spelling;
+2. **before** that, the registry is asked whether some slot's own spelling
+   normalises to the same file — and if one does, **the engine's own spelling**
+   is what is passed, so the select lands on the existing slot instead of
+   reading a second copy of it.
+
+Without (2), a slot some other path created as `w/../w/an.raw` would be
+permanently unreachable through `results::select`, which would go on adding a
+`w/an.raw` beside it every time; with it, this proc *converges* the registry on
+one slot per file rather than merely declining to make it worse. Not done in C:
+R113 forbids a new structure and the `strcmp` dedupe is shared by five loops in
+`extra_rawfile()`, so changing what those compare is a behaviour change to
+`raw read`, `raw switch` and the draw-time autoload walk at once. Pinned by
+SEL237-SEL242, whose SEL237/238 re-drive item 3's two-slot measurement as the
+control.
+
+**R302h — where "one spelling" STOPS: at a final-component symlink,
+deliberately.** Ruled in the item-4 fixer round, because R302a's original
+rationale asserted something Tcl does not do — that `file normalize` "resolves
+symlinks". It half does. Measured against a real link tree:
+
+| spelling | `file normalize` answers |
+|---|---|
+| `<d>/real/an.raw` | `<d>/real/an.raw` |
+| `<d>/linkdir/an.raw` (link in a **directory** component) | `<d>/real/an.raw` — **resolved** |
+| `<d>/linkfile.raw` (link naming the **.raw itself**) | `<d>/linkfile.raw` — **not resolved** |
+
+So `~`, `.`, `..`, relative→absolute, a trailing slash and every symlink in a
+directory component converge on one slot; reaching one file both by its real
+name and by a symlink *to that file* still makes two. **That boundary is ruled
+correct, not tolerated as a gap.** A final-component symlink is a name the user
+chose, and the reason to choose one is almost always that it is a **moving
+target** — `latest.raw` pointing at whichever run is current. Resolving it would
+push the run-specific path into the sentence (R803 labels by `file tail`, so
+*"Selected latest.raw"* would silently become *"Selected an.raw"*), into the MRU
+`rawhist_push` records, and into R302g's persistence slot — freezing the
+indirection the user built expressly so it would not freeze. The cost is one
+extra registry slot in that case, which **F7** already accepts as the declared
+cost of never clearing. `results::_engine_spelling` and `results::_same_path`
+therefore both answer *"same file?"* exactly as `file normalize` answers it, and
+no `file readlink` loop is added; a later item wanting link identity needs
+dev+inode from `file stat` **and** must answer the label/MRU/persistence
+question above first. Pinned in **both** directions: SEL289 (the intermediate
+link converges — red when `_engine_spelling` is neutered) and SEL290 (the final
+component does **not** — red when a `file readlink` loop is added, which is the
+"fix" this ruling declines).
+
+**R302d — the side effects follow the ENGINE, not `ok`.** Whenever
+`xschem raw select` returns non-zero the current database *has* changed, so the
+case-mode cache is stale, the browser's inventory is stale and the MRU owes the
+entry — whether or not the stamp resolves here and whether or not what landed is
+a *result* (R102). Gating them on `ok` would leave a window showing the **old**
+raw's signal list over the **new** raw's waveforms, which is the exact defect
+`browser_refresh $token 1` was added to `rawbar_load` to stop. Only a **refused**
+select (rc 0) runs none of them, because then nothing moved (F7, T-D). Measured
+with no shim at all by SEL287: a `.vcd` select answers `ok 0` and still
+invalidates the case-mode cache.
+
+**R302e — `results::select` does NOT switch context.** The selection happens in
+whatever `Xschem_ctx` is current and standing in the right one is the **caller's**
+job — `rawbar_load` already does `switch_ctx` (a move, not an 0173 loan) before
+it reads, and R501 keeps that. Two reasons: the registry is per-context (tabs do
+not share one — `src/xinit.c:1938`, `:2204`, `:2209`), so *which* context is a
+caller decision and not a resolver's; and a bracket here would put an
+enter/leave pair around the engine call, which is precisely the window **L7**
+forbids anything to redraw in. `opts token` is therefore used only for the
+viewer-side follow-ups and the channel, never to decide where the select lands.
+
+**R302f — `ok` is `results::current`'s answer, not a second opinion.** `ok 1`
+means all three parts of R103 hold **and** R102's type gate passes — which is
+exactly what `results::current` returns — so `ok 1` and a non-empty
+`results::current` can never disagree, which is what T-I needs. The F4 term
+(`xschem raw loaded >= 0`) is conjoined explicitly as well, and that is **not**
+redundant bookkeeping: the sentence branches on it, and a dict whose `msg` says
+*"no signal names will resolve"* beside an `ok 1` is the defect R804 names.
+One measurement, one verdict, one sentence.
+
+**R302g — the persistence write is a named seam, `results::persist {path type
+opts}`, and item 6 fills its body.** Today it is a documented no-op returning 0,
+which is honest: nothing has ever written `viewer.rawfile`. It is handed the
+**engine's own** spelling and sim_type plus the caller's whole `opts`, must not
+throw, and returns 1 when it wrote. Item 4 pins the **call**, not a write
+(SEL269-SEL272).
+
+**R802a — the channel default is derived from what the caller gave, and "no
+channel" is a legitimate answer.** `opts host` names it outright
+(`viewer`/`ase`/`calc`/`none`); with no `host`, a `token` means the viewer
+sidebar and an ASE session `key` means `ase::echo`, and a caller that gave
+neither gets **no emission at all** — the sentence is still in the returned
+`msg`, which is what a headless caller and the dialog's Status region both read.
+The alternative — falling back to a global channel when the named one is
+unreachable — was rejected: a message landing in the CIW because a sidebar was
+not packed is exactly the *"never the status bar directly"* R802 exists to stop.
+
+**R804b — the F4 state is measured UNREACHABLE through `xschem raw select`, and
+the guard stays.** Measured 2026-08-19 on the item-3 binary: read `an.raw` under
+cellA (`raw loaded` 0), `xschem load` cellB (`raw loaded` -1),
+`raw select an.raw tran` → 2 and `raw loaded` **0** again — because `raw select`
+sets `RAW_READ_REBIND`, so a dedupe hit re-stamps (R110/R110c) and a fresh read
+is stamped by the reader itself. A table and a VCD were measured the same way and
+also came back `>= 0`. R804's sentence was written before R110 landed and this is
+what R110 did to it. The guard is kept, and it is not decoration: R111 rules that
+`raw switch` deliberately does **not** re-bind; `draw.c`'s autoload walk reaches
+the same dedupe arm without the re-bind bit (U10); R303 makes this the single
+door for item 6's restore path and item 7's dialog; and it is what makes `ok 1`
+mean *"signal names resolve here"* rather than *"the engine did something"*.
+Because it is unreachable through the verb, T-M drives it through the
+`results::_resolves_here` seam — shimmed, as **L1** prescribes — with SEL247/248
+pinning that seam to `xschem raw loaded` so the shim is not the only evidence.
+
+**R804c — the "was read against X" clause needs a caller, because
+`raw->schname` has no Tcl accessor.** Measured: the whole `xschem raw` /
+`raw_query` arm answers `add annot datasets del index list points pos_at rawfile
+rename sim_type value values vars view_armed view_keys` and **no `schname`**;
+`xschem get raw_level` gives the level only, and in exactly the state this
+sentence describes that level indexes a *different* stack, so
+`xschem get schname <lev>` would name the wrong cell with total confidence. Item
+4 is Tcl-only, so the accessor is filed as issue **0514** rather than added
+there. The cell you *are* in comes from `xschem get schname` (tail, per R803);
+the cell it was **read against** comes from `opts read_against` when the caller
+knows it, and when it does not the clause is dropped and the sentence keeps the
+load-bearing half — *"no signal names will resolve until you return to the
+schematic it was read from."* Both forms are pinned (SEL251, SEL252).
+
+
 ---
 
 ## 6. `Results ▸ Select…` — the ASE-L dialog
@@ -1033,6 +1179,10 @@ This is `rawbar_load`'s existing contract and it is inherited whole.
 (`src/wave_viewer.tcl:10319`); the Calculator → `calc::status`. **Never `puts`,
 never the status bar directly** — the house rule.
 
+> **R802a is ruled in §5.2** (item 4): the channel default is derived from what
+> the caller gave — `token` → viewer sidebar, ASE `key` → `ase::echo`, neither →
+> **no emission at all**, with the sentence still in the returned `msg`.
+
 **R803** The sentences say which database, by `db_label` (file tail + analysis),
 not by full path — the full path lives in the balloon. `wviewer::db_label`
 (`src/wave_viewer.tcl:2401`) already produces this.
@@ -1057,8 +1207,27 @@ avoid having to guess at:
 
 > `Selected srlatch_ase.raw (dc), but this result was read against srlatch.sch and you are in tb_diff_amp.sch — no signal names will resolve until you return.`
 
+> **R804b and R804c are ruled in §5.2** (item 4): the F4 state is measured
+> unreachable through `xschem raw select` and the guard is kept anyway; and the
+> *"was read against X"* clause needs `opts read_against` from the caller,
+> because `raw->schname` has no Tcl accessor — issue **0514**.
+
 **R805** The four resolver statuses each have exactly one sentence form, and
 `stale` says *why* it is stale (content verdict, or older than the netlist).
+
+**R805b — `results::select` composes its own form per OUTCOME, and two outcomes
+outrank the resolver's verdict.** RULED 2026-08-19 (item 4). The order is: the
+F4 sentence (R804) first, then the R102 one — *"`<label>` is now the current
+database, but a digital or non-spice database is not a result you can evaluate
+against."* — then `stale`/`invalid`/`default`/`ok`, because a selection that
+landed somewhere unusable is not described by how its *path* resolved. Nine
+distinct outcomes produce nine distinct sentences and none is empty (SEL286).
+Two implementation notes worth keeping: `switch` is **not** used to dispatch on
+the status, because one of the four statuses is spelled `default`, which is also
+`switch`'s catch-all keyword and would answer the `default` STATUS for every
+unknown one without ever being seen to be wrong; and the refusal arms do **not**
+re-word the resolver's own sentence when it already said why (R805's one form
+per status).
 
 **R805a — one terminator, not two.** `stale` composes *"Using `<tail>`, but
 `<why>`."*, and its two `why` sources are shaped differently: the mtime half's
@@ -1167,10 +1336,30 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-G** | Selecting result B while a graph carries a `%<rawfileA>` trace suffix leaves that trace resolving against A. Per-trace addressing is not selection. |
 | **T-H** | The four resolver statuses each produce their own sentence; `stale` still yields the named path, and `invalid` yields the derived path when one exists on disk and `{}` otherwise — never an error. |
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
-| **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. |
+| **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. **Split across items in the item-4 fixer round — see the note below the table.** |
 | **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. |
 | **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17139`) is the sole permitted caller. Issue 0508, pinned. |
 | **T-M** | A selection whose stamp does not match the current hierarchy stack is **not** reported as success (R804) — sabotage: make `results::select` return ok unconditionally, T-M goes red. |
+
+**T-J IS TWO HALVES AND ONLY ONE OF THEM IS ITEM 4'S** (ruled in the item-4
+fixer round, after a reviewer found the receipt claiming the whole of T-J).
+T-J names an F6 **borrow ticket** — `wviewer::enter_ctx {token ?borrow?}` →
+`{ok prev ?sem?}` (§F6). **R302e removes the context switch, and therefore the
+borrow, from `results::select` entirely**, so a refused borrow ticket cannot
+arise inside that proc: `grep -n 'borrow\|enter_ctx\|leave_ctx' src/results.tcl`
+returns nothing, by design and not by omission. The halves are therefore:
+
+- **the refused-SELECT half — item 4, delivered.** A refused selection is
+  reported as refused, **naming the database**, and never as "no results";
+  *both* refusal arms emit, and the resolver's arm is a different route out of
+  the proc from the engine's. SEL230, SEL231, SEL279 and SEL288.
+- **the refused-BORROW half — items 5 and 10, owed.** R302e left `switch_ctx`
+  in `wviewer::rawbar_load` (R501), so item 5 owns the borrow on the viewer
+  side; the Calculator's cross-context read (R502, T-I) owns it on the other.
+  Whichever of them takes the ticket must drive a **refused** one and assert the
+  sentence names the database rather than reporting an empty result list (F6).
+
+Neither item may mark T-J complete on the strength of item 4's four checks.
 
 **Anti-vacuity, per `doc/claude/specs/calculator.md` §11.3's two notes:**
 existence + class + `cget` is not proof a control is mapped — assert
@@ -1383,6 +1572,16 @@ idiom, rather than gesturing at them:
 (`src/wave_viewer.tcl:4074-4081`) comes **onto** `results::select` under R605.
 What is deferred there is only its clear-then-read *order*, which is a measured
 behaviour change needing T-E.
+
+**Checked against the shipped `results::select` (item 4, 2026-08-19): the list
+above is unchanged — item 4 added no bypass and removed none.** It landed the
+door; it converted no caller, which is items 5, 6 and 10. The two paths that
+*could* have moved and did not: `results::select` does not switch context
+(R302e), so `rawbar_load`'s own `switch_ctx` stays where it is; and the
+persistence write is a named no-op seam (R302g), so nothing yet writes
+`viewer.rawfile` and §8's seam is still unfilled. `wviewer::rawbar_load`,
+`ase::ui::viewer_restore`, `wviewer::restore` and `calc::results_source` all
+still reach the engine directly, exactly as they did at `226302f9`.
 
 **Also not here:** the netlist-time and simulator-profile machinery
 (`doc/claude/specs/simulator_profiles.md`), which decides *how a run is

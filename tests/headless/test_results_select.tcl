@@ -1382,6 +1382,734 @@ eqcheck SEL213-AB-stored-spelling-is-expanded    [pcall xschem raw rawfile] $ab_
 xschem raw clear
 file delete -force $ab_dir
 
+# ===========================================================================
+# ITEM 4 -- `results::select` (src/results.tcl), THE ONE PLACE THAT SELECTS.
+# doc/claude/specs/results_selection.md section 5 (R302, R303), section 10
+# (R801-R805) and section 12's T-D / T-G / T-J / T-M.
+# Groups AC..AL, SEL214..SEL281. Band measured free 2026-08-19:
+# `grep -hoE '\bSEL[0-9]+\b' tests/headless/*.tcl | sed s/SEL// | sort -n | tail -1`
+# -> 213. No item-1, item-2 or item-3 id is renumbered, restated or deleted.
+#
+# WHAT THIS ITEM IS NOT. It does not re-express wviewer::rawbar_load (item 5),
+# does not touch wviewer::snapshot or viewer_restore (item 6), builds no dialog
+# (item 7), touches no menu (item 8) and no calculator.tcl (item 10). The
+# persistence WRITE is a documented seam -- `results::persist` -- and group AJ
+# pins the call, not a write, because there is nothing to write yet.
+# ===========================================================================
+
+# a scratch viewer token. `wviewer::windows` has no entry for it, which is the
+# point: casemode_invalidate/reapply are per-token ARRAY operations that need no
+# window, while browser_refresh and browser_status need one and answer 0. That
+# split is exactly what group AJ measures.
+set r4_tok r4tok
+
+# shim bookkeeping: every rename below is undone, and SEL280 asserts it -- by
+# BODY, not by name. Measured: a check written as `info procs <name> ne {}` is
+# satisfied by the SHIM still being installed, so dropping a restore line left
+# it green (item 2's SEL111 carries the same limitation, declared).
+set r4_calls {}
+# FIXER ROUND: `::puts` joined the list. SEL294 shims the global `puts` for the
+# duration of two selects, and that is the one shim in this item whose escape
+# would corrupt every later check silently rather than loudly. It is a BUILTIN,
+# so `info body ::puts` THROWS -> {MISSING} both before and after; if the
+# restore is dropped the shim is a real proc and the body compares unequal.
+set r4_shimmed {::ase::echo ::calc::status ::wviewer::browser_status \
+                ::wviewer::rawhist_write ::wviewer::browser_refresh \
+                ::results::persist ::results::_resolves_here ::puts}
+set r4_bodies {}
+# guarded: the PRE-FEATURE drive (results.tcl at its item-3 state) has no
+# ::results::persist and no ::results::_resolves_here, and an unguarded
+# `info body` there aborts the file before a single item-4 check can go red --
+# which would make the drive report "no reds" for the best possible reason.
+foreach r4p $r4_shimmed {
+  if {[catch {info body $r4p} r4b]} { set r4b {MISSING} }
+  lappend r4_bodies $r4p $r4b
+}
+
+proc r4_dictkeys {d} { if {[catch {dict keys $d} k]} { return "ERR" } ; return [lsort $k] }
+
+# ===========================================================================
+# AC -- IT SHIPS. `results::select` and its four helpers are defined in the
+#      RUNNING binary (the only one of the three J-group forms a comment cannot
+#      satisfy), and the file is still the one that is sourced and installed.
+# ===========================================================================
+eqcheck SEL214-AC-select-defined-in-the-running-binary \
+  [expr {[info procs ::results::select] ne {} ? 1 : 0}] 1
+eqcheck SEL215-AC-helpers-defined \
+  [lsort [list [expr {[info procs ::results::_engine_spelling] ne {}}] \
+               [expr {[info procs ::results::_resolves_here] ne {}}] \
+               [expr {[info procs ::results::_select_msg] ne {}}] \
+               [expr {[info procs ::results::_r804_msg] ne {}}] \
+               [expr {[info procs ::results::_emit] ne {}}] \
+               [expr {[info procs ::results::persist] ne {}}]]] {1 1 1 1 1 1}
+# the arity the spec fixes: path, plus TWO optional arguments.
+eqcheck SEL216-AC-signature [pcall info args ::results::select] {path sim_type opts}
+eqcheck SEL217-AC-both-optional \
+  [list [pcall info default ::results::select sim_type r4_d] \
+        [pcall info default ::results::select opts r4_d]] {1 1}
+
+# ===========================================================================
+# AD -- THE GESTURE. A fresh select reads; a second select of the same result
+#      switches; the returned dict says which, and `ok` is not `how`.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+set s1 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL218-AD-fresh-select-reads \
+  [list [dg $s1 ok] [dg $s1 how] [dg $s1 status]] {1 read ok}
+# T-A's wording, through the orchestrator: present EXACTLY ONCE and current.
+eqcheck SEL219-AD-present-once-and-current \
+  [list [slots_naming $tmp/an.raw] [pcall xschem raw rawfile]] [list 1 $tmp/an.raw]
+# the dict names the ENGINE's spelling and the ENGINE's analysis, not the
+# caller's -- R803's db_label is built from those two and nothing else.
+eqcheck SEL220-AD-dict-reports-the-engine \
+  [list [dg $s1 path] [dg $s1 type]] [list $tmp/an.raw tran]
+eqcheck SEL221-AD-one-sentence-names-by-db_label [dg $s1 msg] {Selected an.raw (tran).}
+# R803: the FULL PATH is never in the sentence -- it lives in the `path` field
+# and, for the dialog, in the balloon.
+# ...and the full path IS still handed back, in the `path` field -- both halves
+# in ONE assertion, so this cannot be satisfied by a select that never ran.
+eqcheck SEL222-AD-sentence-carries-no-full-path \
+  [list [string first $tmp [dg $s1 msg]] [dg $s1 path]] [list -1 $tmp/an.raw]
+eqcheck SEL223-AD-dict-keys [r4_dictkeys $s1] \
+  {channel did how msg named ok path reason resolves status type why}
+
+set s2 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL224-AD-second-select-switches \
+  [list [dg $s2 ok] [dg $s2 how] [slots_naming $tmp/an.raw]] {1 switch 1}
+# R301b: a TYPELESS select is the shape the MRU and the persistence slot can
+# actually produce -- both store a path and no analysis.
+xschem raw read $tmp/bn.raw tran
+set s3 [pcall results::select $tmp/an.raw]
+eqcheck SEL225-AD-typeless-select-switches \
+  [list [dg $s3 ok] [dg $s3 how] [dg $s3 path] [dg $s3 type]] \
+  [list 1 switch $tmp/an.raw tran]
+
+# ===========================================================================
+# AE -- T-D: A FAILED SELECTION LEAVES THE PREVIOUS SELECTION INTACT.
+#      Registry, `raw rawfile` and `raw list` all unchanged, rc 0 with a
+#      sentence, nothing thrown (R801). THREE refusal shapes are driven, because
+#      they take three different routes out of results::select and only one of
+#      them ever reaches the engine.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+xschem raw read $tmp/bn.raw tran
+set ae_slots [slot_list]
+set ae_file  [pcall xschem raw rawfile]
+set ae_list  [pcall xschem raw list]
+
+# (1) the file is not there: the RESOLVER refuses and the engine is never asked.
+set f1 [pcall results::select $tmp/nosuch.raw tran]
+eqcheck SEL226-AE-missing-file-refuses [list [dg $f1 ok] [dg $f1 how]] {0 refused}
+eqcheck SEL227-AE-missing-file-says-so \
+  [list [dg $f1 status] [dg $f1 reason] [expr {[dg $f1 msg] ne {} ? 1 : 0}]] {invalid missing 1}
+eqcheck SEL228-AE-no-side-effect-on-refusal [dg $f1 did] {}
+eqcheck SEL229-AE-registry-intact \
+  [list [dg $f1 how] [slot_list] [pcall xschem raw rawfile] [pcall xschem raw list]] \
+  [list refused $ae_slots $ae_file $ae_list]
+
+# (2) the file is there and the ANALYSIS is not: the ENGINE refuses (rc 0), and
+#     item 3's raw_select_undo() is what puts the cursor back.
+set f2 [pcall results::select $tmp/an.raw ac]
+eqcheck SEL230-AE-wrong-analysis-refuses [list [dg $f2 ok] [dg $f2 how]] {0 refused}
+# ...and it is NOT reported as "no results" (F6/T-J): the sentence names the
+# database it could not select, and the resolver's verdict on the PATH was `ok`.
+eqcheck SEL231-AE-engine-refusal-names-the-db \
+  [list [dg $f2 status] [dg $f2 msg]] \
+  [list ok "Could not select an.raw (ac) — nothing was loaded and the previous result is unchanged."]
+eqcheck SEL232-AE-engine-refusal-registry-intact \
+  [list [dg $f2 how] [slot_list] [pcall xschem raw rawfile] [pcall xschem raw list]] \
+  [list refused $ae_slots $ae_file $ae_list]
+eqcheck SEL233-AE-engine-refusal-no-side-effect [dg $f2 did] {}
+
+# (3) nothing named and nothing derived: the resolver's own `default` sentence,
+#     not a second one written here (R805 -- one form per status).
+set f3 [pcall results::select {}]
+eqcheck SEL234-AE-nothing-named-refuses \
+  [list [dg $f3 ok] [dg $f3 how] [dg $f3 status] [dg $f3 msg]] \
+  {0 refused default {No result is named and none has been produced yet.}}
+eqcheck SEL235-AE-nothing-named-registry-intact \
+  [list [dg $f3 how] [slot_list] [pcall xschem raw rawfile]] \
+  [list refused $ae_slots $ae_file]
+# the three refusals do not share one sentence: a caller can tell them apart.
+eqcheck SEL236-AE-three-distinct-refusal-sentences \
+  [llength [lsort -unique [list [dg $f1 msg] [dg $f2 msg] [dg $f3 msg]]]] 3
+
+# ===========================================================================
+# AF -- R302a: TWO SPELLINGS OF ONE PATH ARE TWO RUNS, AND THIS IS WHERE THAT
+#      STOPS. Carried forward from item 3, which MEASURED it: the engine dedupes
+#      by strcmp, so `w/an.raw` and `w/../w/an.raw` both read and produce two
+#      slots. `file normalize` is the Tcl-side call and it is item 4's.
+# ===========================================================================
+set af_odd [file join $tmp .. [file tail $tmp] an.raw]
+
+# THE CONTROL, re-driven here rather than quoted: the raw verb still makes two
+# slots out of the two spellings. If this ever stops being true, the check below
+# is measuring nothing.
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL237-AF-control-verb-reads-plain [pcall xschem raw select $tmp/an.raw tran] 1
+eqcheck SEL238-AF-control-verb-reads-odd-spelling-AGAIN \
+  [list [pcall xschem raw select $af_odd tran] [n_slots]] {1 2}
+
+# (a) the path handed to the engine is normalised, so one door means one
+#     spelling: selecting the odd spelling into an EMPTY registry stores the
+#     normalised one.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set a1 [pcall results::select $af_odd tran]
+eqcheck SEL239-AF-normalised-on-the-way-in \
+  [list [dg $a1 ok] [dg $a1 path] [n_slots]] [list 1 [file normalize $af_odd] 1]
+
+# (b) and the registry is ASKED first, so an existing slot is found however IT
+#     was spelled -- which is what stops a second copy being read beside it.
+#     Registry holds the PLAIN spelling; the odd one must switch, not read.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+set a2 [pcall results::select $af_odd tran]
+eqcheck SEL240-AF-odd-spelling-finds-the-plain-slot \
+  [list [dg $a2 ok] [dg $a2 how] [n_slots] [dg $a2 path]] [list 1 switch 1 $tmp/an.raw]
+
+# ...and the other direction: registry holds the ODD spelling, the plain one is
+# asked for. Without half (b) the odd slot would be permanently unreachable
+# through this door and a normalised twin would be read beside it every time.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $af_odd tran
+set a3 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL241-AF-plain-spelling-finds-the-odd-slot \
+  [list [dg $a3 ok] [dg $a3 how] [n_slots] [dg $a3 path]] [list 1 switch 1 $af_odd]
+# the helper answers the question on its own, with no registry at all
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL242-AF-engine_spelling-normalises-with-an-empty-registry \
+  [pcall results::_engine_spelling $af_odd] [file normalize $af_odd]
+
+# ---- R302h: WHERE "ONE SPELLING" STOPS, MEASURED IN BOTH DIRECTIONS.
+#      `file normalize` resolves a symlink in a DIRECTORY component and does NOT
+#      resolve one in the FINAL component. The first half is convergence the
+#      ruling claims; the second is the boundary the ruling DRAWS (a
+#      final-component link is a name the user chose and is usually a moving
+#      target -- resolving it would rewrite the sentence, the MRU and item 6's
+#      persistence slot into a run-specific path). Both are asserted, so neither
+#      the claim nor the boundary can drift without a red.
+set af_ldir  [file join $tmp linkdir]
+set af_lfile [file join $tmp linkfile.raw]
+catch {file delete -force $af_ldir}
+catch {file delete -force $af_lfile}
+set af_link_ok 1
+if {[catch {file link -symbolic $af_ldir  $tmp}] } { set af_link_ok 0 }
+if {[catch {file link -symbolic $af_lfile $tmp/an.raw}]} { set af_link_ok 0 }
+# INTERMEDIATE link: the registry's plain slot is found through it -> switch,
+# one slot, and the engine's own plain spelling comes back.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+if {$af_link_ok} {
+  set a4 [pcall results::select [file join $af_ldir an.raw] tran]
+  eqcheck SEL289-AF-intermediate-symlink-converges-on-the-existing-slot \
+    [list $af_link_ok [dg $a4 ok] [dg $a4 how] [n_slots] [dg $a4 path]] \
+    [list 1 1 switch 1 $tmp/an.raw]
+} else {
+  # NOT a tautology: the degenerate arm asserts the REASON it degenerated, so a
+  # future bug that leaves af_link_ok 0 for some other cause cannot hide here.
+  eqcheck SEL289-AF-intermediate-symlink-converges-on-the-existing-slot \
+    [list $af_link_ok NO-SYMLINK-SUPPORT] {0 NO-SYMLINK-SUPPORT}
+}
+# FINAL-COMPONENT link: DELIBERATELY a different slot. This is the measurement
+# the R302h ruling is read off -- it is not an aspiration that one day it will
+# converge, it is the recorded boundary.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+if {$af_link_ok} {
+  set a5 [pcall results::select $af_lfile tran]
+  eqcheck SEL290-AF-final-component-symlink-is-a-SECOND-slot-by-ruling \
+    [list $af_link_ok [pcall results::_engine_spelling $af_lfile] \
+          [dg $a5 how] [n_slots] [dg $a5 path]] \
+    [list 1 $af_lfile read 2 $af_lfile]
+} else {
+  eqcheck SEL290-AF-final-component-symlink-is-a-SECOND-slot-by-ruling \
+    [list $af_link_ok NO-SYMLINK-SUPPORT] {0 NO-SYMLINK-SUPPORT}
+}
+# ⚠ TYPE-GUARDED, and `-force` is NOT used. $af_ldir is a symlink TO $tmp; a
+#   recursive delete that followed it would take the whole scratch fixture with
+#   it and every group below would fail for a reason none of them names.
+#   `file delete` on a symlink removes the LINK, so the guard plus the missing
+#   -force is belt and braces.
+foreach af_l [list $af_ldir $af_lfile] {
+  if {[catch {file type $af_l} af_t]} continue
+  if {$af_t eq {link}} { catch {file delete $af_l} }
+}
+
+# ===========================================================================
+# AG -- T-G: PER-TRACE ADDRESSING IS NOT SELECTION. A graph entry written
+#      `alias;vec%<rawfileA> <type>` names its OWN database; selecting B moves
+#      the session's result and must leave that trace resolving against A.
+#      The shape is wviewer::graph_props's own (test_wave_cursor_crossdb XC0).
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+set ag_q "\\\"aslot;v(n1)%$tmp/an.raw tran\\\""
+xschem set rectcolor 2
+xschem rect 0 0 800 400 -1 {flags=graph} 0
+xschem setprop rect 2 0 node "v(n2)\n$ag_q"
+xschem setprop rect 2 0 x1 0
+xschem setprop rect 2 0 x2 2e-8
+xschem setprop rect 2 0 y1 -1
+xschem setprop rect 2 0 y2 8
+xschem setprop rect 2 0 fullyzoom
+xschem cursor 2 1
+set ag_node_before [pcall xschem getprop rect 2 0 node]
+
+# select B. an.raw and bn.raw carry DIFFERENT signal names on purpose, so
+# "resolves against A" is a statement no lookup in B could satisfy.
+set g1 [pcall results::select $tmp/bn.raw tran]
+eqcheck SEL243-AG-selection-moved-to-B \
+  [list [dg $g1 ok] [pcall xschem raw rawfile]] [list 1 $tmp/bn.raw]
+eqcheck SEL244-AG-the-selected-db-does-not-know-A-s-signal \
+  [pcall xschem raw index {v(n1)}] -1
+# the drawn object is untouched: results::select writes no schematic
+eqcheck SEL245-AG-graph-entry-unchanged \
+  [list [dg $g1 ok] [pcall xschem getprop rect 2 0 node]] [list 1 $ag_node_before]
+# ---- THE PAYLOAD: drive cursor B and the %-addressed database resolves it,
+#      with ITS OWN numbers, while B is the selection. an.raw at 5 ns
+#      interpolates between 1.0 (0 ns) and 2.0 (10 ns) -> 1.5.
+xschem set cursor2_x 5e-9
+xschem raw switch $tmp/an.raw tran
+set ag_v [pcall xschem raw value {v(n1)} {}]
+# THE SELECTION HAVING MOVED IS ASSERTED IN THE SAME CHECK. Without that term
+# this reads true when nothing was selected at all, which is the one shape a
+# T-G check must not have.
+eqcheck SEL246-AG-percent-trace-still-resolves-against-A \
+  [list [dg $g1 how] [expr {[lindex [pcall xschem raw annot] 0] >= 0 ? 1 : 0}] \
+        [expr {[string is double -strict $ag_v] && abs($ag_v - 1.5) < 1e-5 ? 1 : 0}]] {read 1 1}
+xschem raw switch $tmp/bn.raw tran
+xschem cursor 2 0
+loadcell $tmp/cellA.sch
+
+# ===========================================================================
+# AH -- T-M: A SELECTION WHOSE STAMP DOES NOT MATCH THE STACK IS NOT REPORTED
+#      AS SUCCESS (R804), AND NEITHER IS ONE THAT LANDS ON A DATABASE THAT IS
+#      NOT A RESULT (R102).
+#
+#      `ok` IS results::current's ANSWER, NOT A SECOND OPINION. That is the
+#      invariant the group drives from both ends, and it is what makes the named
+#      sabotage -- "make results::select return ok unconditionally" -- red.
+#
+#      R804b: the F4 state is MEASURED UNREACHABLE through `xschem raw select`
+#      (it sets RAW_READ_REBIND, so a dedupe hit re-stamps and a fresh read is
+#      stamped by the reader). The guard is driven through the
+#      `results::_resolves_here` seam, shimmed as landmine L1 prescribes for
+#      select_raw and as item 2 did for ase::last_rawfile -- with SEL247/SEL248
+#      pinning the seam to the engine so the shim is not the only evidence.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+eqcheck SEL247-AH-seam-is-the-engine-when-it-resolves \
+  [list [pcall results::_resolves_here] [pcall xschem raw loaded]] \
+  [list [pcall xschem raw loaded] [pcall xschem raw loaded]]
+loadcell $tmp/cellB.sch
+eqcheck SEL248-AH-seam-is-the-engine-when-it-does-not \
+  [list [pcall results::_resolves_here] [pcall xschem raw loaded]] {-1 -1}
+
+# the measurement behind R804b, re-driven: a select from the WRONG cell lands
+# and re-binds, so the honest answer here is success.
+set h1 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL249-AH-select-from-another-cell-rebinds-and-succeeds \
+  [list [dg $h1 ok] [dg $h1 how] [expr {[dg $h1 resolves] >= 0 ? 1 : 0}] [dg $h1 msg]] \
+  [list 1 switch 1 {Selected an.raw (tran).}]
+
+# ---- THE GUARD, driven through the seam ----
+rename results::_resolves_here r4_rh_orig
+proc results::_resolves_here {} { return -1 }
+set h2 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL250-AH-blind-selection-is-NOT-success \
+  [list [dg $h2 ok] [dg $h2 how] [dg $h2 resolves]] {0 switch -1}
+eqcheck SEL251-AH-R804-sentence-without-a-read_against \
+  [dg $h2 msg] {Selected an.raw (tran), but this result was not read against cellB.sch — no signal names will resolve until you return to the schematic it was read from.}
+# R804's own words, in full, when the caller can say what it was read against
+# (R804c: raw->schname has no Tcl verb, so the clause needs the caller).
+set h3 [pcall results::select $tmp/an.raw tran [dict create read_against $tmp/cellA.sch]]
+eqcheck SEL252-AH-R804-sentence-in-full \
+  [dg $h3 msg] {Selected an.raw (tran), but this result was read against cellA.sch and you are in cellB.sch — no signal names will resolve until you return.}
+# the load-bearing half is in BOTH forms, verbatim
+eqcheck SEL253-AH-both-forms-say-no-names-will-resolve \
+  [list [string match {*no signal names will resolve*} [dg $h2 msg]] \
+        [string match {*no signal names will resolve*} [dg $h3 msg]]] {1 1}
+# ...and the side effects STILL ran (R302d): the engine moved, so the browser
+# and the case-mode cache are stale whether or not the stamp resolves.
+eqcheck SEL254-AH-blind-selection-still-landed \
+  [list [pcall xschem raw rawfile] [dg $h3 how]] [list $tmp/an.raw switch]
+rename results::_resolves_here {}
+rename r4_rh_orig results::_resolves_here
+eqcheck SEL255-AH-seam-restored \
+  [list [expr {[info procs ::results::_resolves_here] ne {} ? 1 : 0}] \
+        [pcall results::_resolves_here]] [list 1 [pcall xschem raw loaded]]
+
+# ---- R102, AND THIS ONE NEEDS NO SHIM AT ALL. A VCD lands, is current, and is
+#      NOT a result -- which is the state every mixed-signal run leaves behind
+#      (ase::attach_dbs reads the analog raw and THEN the VCDs, L8).
+xschem raw clear
+loadcell $tmp/cellA.sch
+set h4 [pcall results::select $tmp/d.vcd vcd]
+eqcheck SEL256-AH-vcd-lands \
+  [list [dg $h4 how] [pcall xschem raw rawfile]] [list read $tmp/d.vcd]
+eqcheck SEL257-AH-vcd-is-not-reported-as-success [dg $h4 ok] 0
+eqcheck SEL258-AH-vcd-sentence-says-why \
+  [dg $h4 msg] {d.vcd (vcd) is now the current database, but a digital or non-spice database is not a result you can evaluate against.}
+# THE INVARIANT, from both ends: `ok` and results::current can never disagree.
+eqcheck SEL259-AH-ok-agrees-with-results-current \
+  [list [dg $h4 ok] [expr {[pcall results::current] ne {} ? 1 : 0}]] {0 0}
+# R302d, MEASURED WITH NO SHIM AT ALL: `ok 0` and the side effects STILL RAN.
+# The engine's current database moved, so the window's case-mode cache is stale
+# whether or not the thing that landed is a result -- gating the follow-ups on
+# `ok` would leave a browser showing the old raw's signal list over the new
+# raw's waveforms, which is the defect `browser_refresh $token 1` was added to
+# rawbar_load to stop.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::wviewer::casemode($r4_tok) {fold sniff}
+set h4b [pcall results::select $tmp/d.vcd vcd [dict create token $r4_tok]]
+eqcheck SEL287-AH-side-effects-follow-the-engine-not-ok \
+  [list [dg $h4b ok] [dg $h4b how] \
+        [expr {[lsearch -exact [dg $h4b did] casemode_invalidate] >= 0 ? 1 : 0}] \
+        [info exists ::wviewer::casemode($r4_tok)]] {0 read 1 0}
+
+xschem raw clear
+loadcell $tmp/cellA.sch
+set h5 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL260-AH-ok-agrees-with-results-current-positive \
+  [list [dg $h5 ok] [expr {[pcall results::current] ne {} ? 1 : 0}] \
+        [dg [pcall results::current] path]] [list 1 1 [dg $h5 path]]
+
+# ===========================================================================
+# AJ -- THE SIX SIDE EFFECTS (R302). MRU, case mode x2, browser refresh, the
+#      persistence seam -- and the ONE SENTENCE, which group AK takes.
+#      R302d: they follow the ENGINE, not `ok`; only a REFUSED select runs none.
+# ===========================================================================
+# ---- the MRU (0216's shape). L11: rawhist_push NO-OPS unless
+#      ::update_recent_files is set (issue 0119), so the flag is SET AND
+#      RESTORED here -- and `rawhist_write` is shimmed so a verification run
+#      cannot rewrite the user's own ~/.xschem/raw_history.
+set r4_urf_had [info exists ::update_recent_files]
+if {$r4_urf_had} { set r4_urf_old $::update_recent_files }
+set r4_hist_old $::wviewer::rawhist
+rename wviewer::rawhist_write r4_rhw_orig
+proc wviewer::rawhist_write {} { return 1 }
+
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::update_recent_files 0
+set ::wviewer::rawhist {}
+set j1 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL261-AJ-gated-session-leaves-no-MRU-trace \
+  [list [dg $j1 ok] [lsearch -exact [dg $j1 did] mru] $::wviewer::rawhist] {1 -1 {}}
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::update_recent_files 1
+set ::wviewer::rawhist {}
+set j2 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL262-AJ-ungated-session-pushes-the-MRU \
+  [list [dg $j2 ok] [expr {[lsearch -exact [dg $j2 did] mru] >= 0 ? 1 : 0}] \
+        [pcall wviewer::rawhist_get]] [list 1 1 [list $tmp/an.raw]]
+# a REFUSED select pushes nothing: the MRU is a list of results, not of attempts
+set j3 [pcall results::select $tmp/nosuch.raw tran]
+eqcheck SEL263-AJ-refusal-pushes-nothing \
+  [list [dg $j3 ok] [pcall wviewer::rawhist_get]] [list 0 [list $tmp/an.raw]]
+set ::wviewer::rawhist $r4_hist_old
+rename wviewer::rawhist_write {}
+rename r4_rhw_orig wviewer::rawhist_write
+if {$r4_urf_had} { set ::update_recent_files $r4_urf_old } else { unset ::update_recent_files }
+
+# ---- case mode (R104). casemode_invalidate is a per-token ARRAY operation and
+#      needs no window, so the REAL proc is driven and the REAL effect asserted.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::wviewer::casemode($r4_tok) {fold sniff}
+set ::wviewer::casemodepick($r4_tok) fold
+set j4 [pcall results::select $tmp/an.raw tran [dict create token $r4_tok]]
+eqcheck SEL264-AJ-casemode-cache-dropped \
+  [list [info exists ::wviewer::casemode($r4_tok)] \
+        [info exists ::wviewer::casemodepick($r4_tok)] \
+        [expr {[lsearch -exact [dg $j4 did] casemode_invalidate] >= 0 ? 1 : 0}]] {0 0 1}
+# ...and the user's own statement SURVIVES and is RE-APPLIED, which is the half
+# casemode_invalidate deliberately does not do (it never drops casemodeuser).
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::wviewer::casemodeuser($r4_tok) [list preserve [file normalize $tmp/an.raw]]
+set j5 [pcall results::select $tmp/an.raw tran [dict create token $r4_tok]]
+eqcheck SEL265-AJ-casemode-reapplied \
+  [list [dg $j5 ok] [expr {[lsearch -exact [dg $j5 did] casemode_reapply] >= 0 ? 1 : 0}] \
+        [expr {[info exists ::wviewer::casemodepick($r4_tok)] ? $::wviewer::casemodepick($r4_tok) : {NONE}}]] {1 1 preserve}
+catch {unset ::wviewer::casemodeuser($r4_tok)}
+catch {unset ::wviewer::casemodepick($r4_tok)}
+catch {unset ::wviewer::casemode($r4_tok)}
+# with NO token there is no window to invalidate, and nothing is claimed
+xschem raw clear
+loadcell $tmp/cellA.sch
+set j6 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL266-AJ-no-token-no-viewer-side-effects \
+  [list [lsearch -exact [dg $j6 did] casemode_invalidate] \
+        [lsearch -exact [dg $j6 did] browser_refresh]] {-1 -1}
+
+# ---- the browser refresh. `wviewer::browser_refresh $token 1` -- the RELOAD
+#      argument is not optional: without it the user gets the new raw's
+#      waveforms under the OLD raw's signal list (rawbar_load's own comment).
+#      Shimmed because the real one needs a packed sidebar; what is under test
+#      is that results::select CALLS it, and with which arguments.
+rename wviewer::browser_refresh r4_br_orig
+proc wviewer::browser_refresh {token {reload 0}} {
+  lappend ::r4_calls [list browser_refresh $token $reload]
+  return 1
+}
+xschem raw clear
+loadcell $tmp/cellA.sch
+set r4_calls {}
+set j7 [pcall results::select $tmp/an.raw tran [dict create token $r4_tok]]
+eqcheck SEL267-AJ-browser-refreshed-with-reload \
+  [list $r4_calls [expr {[lsearch -exact [dg $j7 did] browser_refresh] >= 0 ? 1 : 0}]] \
+  [list [list [list browser_refresh $r4_tok 1]] 1]
+# a REFUSED select refreshes nothing: item 12's improve-or-restore rule, reached
+# by never starting the reload at all
+set r4_calls {}
+pcall results::select $tmp/nosuch.raw tran [dict create token $r4_tok]
+eqcheck SEL268-AJ-refusal-refreshes-nothing $r4_calls {}
+rename wviewer::browser_refresh {}
+rename r4_br_orig wviewer::browser_refresh
+
+# ---- the PERSISTENCE SEAM. Item 6 lands the writer; item 4 calls it. Today it
+#      is a documented no-op returning 0, so what is pinned is the CALL and its
+#      arguments -- the engine's own spelling, the engine's analysis, and the
+#      caller's whole opts dict.
+eqcheck SEL269-AJ-persist-is-a-noop-stub-today \
+  [list [pcall results::persist /x/y.raw tran {}] [info args ::results::persist]] \
+  {0 {path type opts}}
+rename results::persist r4_ps_orig
+proc results::persist {path type opts} {
+  # ⚠ `::list`, NOT `list`. This proc's body runs in namespace `results`, where
+  # `results::list` SHADOWS Tcl's built-in -- the hazard results.tcl's own header
+  # documents and item 2 wrote every construction against. Driven: the first
+  # version of this shim died with `wrong # args: should be "list"` and the
+  # `catch` around the call site swallowed it, so the shim looked never-called.
+  lappend ::r4_calls [::list persist $path $type $opts]
+  return 1
+}
+xschem raw clear
+loadcell $tmp/cellA.sch
+set r4_calls {}
+set j8 [pcall results::select $af_odd tran [dict create key r4sess]]
+eqcheck SEL270-AJ-persist-called-with-the-engine-spelling \
+  $r4_calls [list [list persist [file normalize $af_odd] tran [dict create key r4sess]]]
+eqcheck SEL271-AJ-persist-recorded-in-did \
+  [expr {[lsearch -exact [dg $j8 did] persist] >= 0 ? 1 : 0}] 1
+set r4_calls {}
+pcall results::select $tmp/nosuch.raw tran
+eqcheck SEL272-AJ-refusal-persists-nothing $r4_calls {}
+rename results::persist {}
+rename r4_ps_orig results::persist
+
+# ---- THE ORDER, NOT JUST THE MEMBERSHIP. The returned dict documents `did` as
+#      "the side effects that actually FIRED, IN ORDER", and every check above
+#      asks only whether a name is PRESENT -- `lsearch >= 0`. Membership cannot
+#      see a re-ordering, and one re-ordering is destructive: R302's step list
+#      puts the ONE SENTENCE last, AFTER browser_refresh, and the real
+#      `wviewer::browser_refresh` writes the SAME sidebar status label the
+#      sentence goes to (src/wave_viewer.tcl:10363, :10639). Emit the sentence
+#      first and the refresh overwrites the sentence R804 exists for, with all
+#      the membership checks still green. Both halves are pinned here: the
+#      exact ordered `did`, and the sentence landing LAST in one shared call
+#      list that the refresh writes into the way the real one does.
+set r4_urf_had2 [info exists ::update_recent_files]
+if {$r4_urf_had2} { set r4_urf_old2 $::update_recent_files }
+set r4_hist_old2 $::wviewer::rawhist
+rename wviewer::rawhist_write r4_rhw_orig2
+proc wviewer::rawhist_write {} { return 1 }
+rename results::persist r4_ps_orig2
+proc results::persist {path type opts} { lappend ::r4_calls [::list persist] ; return 1 }
+rename wviewer::browser_refresh r4_br_orig2
+proc wviewer::browser_refresh {token {reload 0}} {
+  lappend ::r4_calls [list status {Signal Browser: n signals}]
+  return 1
+}
+rename wviewer::browser_status r4_bs_orig2
+proc wviewer::browser_status {token msg} { lappend ::r4_calls [list status $msg] ; return 1 }
+
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::update_recent_files 1
+set ::wviewer::rawhist {}
+set ::wviewer::casemodeuser($r4_tok) [list preserve [file normalize $tmp/an.raw]]
+set r4_calls {}
+set j9 [pcall results::select $tmp/an.raw tran [dict create token $r4_tok]]
+eqcheck SEL291-AJ-did-is-the-five-side-effects-IN-ORDER \
+  [dg $j9 did] {mru casemode_invalidate casemode_reapply browser_refresh persist}
+eqcheck SEL292-AJ-the-sentence-is-written-LAST \
+  [list $r4_calls [lindex $r4_calls end]] \
+  [list [list [list status {Signal Browser: n signals}] [list persist] \
+              [list status [dg $j9 msg]]] [list status [dg $j9 msg]]]
+catch {unset ::wviewer::casemodeuser($r4_tok)}
+catch {unset ::wviewer::casemodepick($r4_tok)}
+catch {unset ::wviewer::casemode($r4_tok)}
+rename wviewer::browser_status {} ; rename r4_bs_orig2 wviewer::browser_status
+rename wviewer::browser_refresh {} ; rename r4_br_orig2 wviewer::browser_refresh
+rename results::persist {} ; rename r4_ps_orig2 results::persist
+set ::wviewer::rawhist $r4_hist_old2
+rename wviewer::rawhist_write {} ; rename r4_rhw_orig2 wviewer::rawhist_write
+if {$r4_urf_had2} { set ::update_recent_files $r4_urf_old2 } else { unset ::update_recent_files }
+
+# ===========================================================================
+# AK -- R802: THE CHANNEL IS CHOSEN BY HOST, AND THERE IS NO OTHER CHANNEL.
+#      ASE-L -> ase::echo; the viewer sidebar -> wviewer::browser_status; the
+#      Calculator -> calc::status. Never `puts`, never the status bar directly.
+# ===========================================================================
+rename ase::echo r4_echo_orig
+proc ase::echo {msg {tag {}}} { lappend ::r4_calls [list ase $msg] }
+rename calc::status r4_cs_orig
+proc calc::status {{msg {}} {record 1}} { lappend ::r4_calls [list calc $msg] }
+rename wviewer::browser_status r4_bs_orig
+proc wviewer::browser_status {token msg} { lappend ::r4_calls [list viewer $token $msg] ; return 1 }
+
+xschem raw clear
+loadcell $tmp/cellA.sch
+set r4_calls {}
+set k1 [pcall results::select $tmp/an.raw tran [dict create host ase]]
+eqcheck SEL273-AK-host-ase-goes-to-ase-echo \
+  [list $r4_calls [dg $k1 channel]] [list [list [list ase [dg $k1 msg]]] ase]
+set r4_calls {}
+set k2 [pcall results::select $tmp/an.raw tran [dict create host calc]]
+eqcheck SEL274-AK-host-calc-goes-to-calc-status \
+  [list $r4_calls [dg $k2 channel]] [list [list [list calc [dg $k2 msg]]] calc]
+set r4_calls {}
+set k3 [pcall results::select $tmp/an.raw tran [dict create token $r4_tok]]
+eqcheck SEL275-AK-a-token-defaults-to-the-viewer-sidebar \
+  [list $r4_calls [dg $k3 channel]] [list [list [list viewer $r4_tok [dg $k3 msg]]] viewer]
+set r4_calls {}
+set k4 [pcall results::select $tmp/an.raw tran [dict create key r4sess]]
+eqcheck SEL276-AK-a-session-key-defaults-to-ASE \
+  [list $r4_calls [dg $k4 channel]] [list [list [list ase [dg $k4 msg]]] ase]
+set r4_calls {}
+set k5 [pcall results::select $tmp/an.raw tran [dict create host none token $r4_tok]]
+eqcheck SEL277-AK-host-none-emits-nothing \
+  [list $r4_calls [dg $k5 channel] [expr {[dg $k5 msg] ne {} ? 1 : 0}]] {{} {} 1}
+set r4_calls {}
+set k6 [pcall results::select $tmp/an.raw tran]
+eqcheck SEL278-AK-no-host-no-token-no-key-emits-nothing \
+  [list $r4_calls [dg $k6 channel]] {{} {}}
+# a REFUSAL is emitted too -- R801: every refusal writes ONE sentence
+set r4_calls {}
+set k7 [pcall results::select $tmp/nosuch.raw tran [dict create host ase]]
+eqcheck SEL279-AK-refusals-are-emitted-as-well \
+  [list $r4_calls [dg $k7 channel]] [list [list [list ase [dg $k7 msg]]] ase]
+# the ENGINE's refusal is emitted too, and it is a DIFFERENT arm of the proc
+# from the resolver's (SEL279): that one never reaches `xschem raw select`.
+set r4_calls {}
+set k8 [pcall results::select $tmp/an.raw ac [dict create host ase]]
+eqcheck SEL288-AK-engine-refusals-are-emitted-too \
+  [list $r4_calls [dg $k8 channel] [dg $k8 how]] \
+  [list [list [list ase [dg $k8 msg]]] ase refused]
+rename ase::echo {} ; rename r4_echo_orig ase::echo
+rename calc::status {} ; rename r4_cs_orig calc::status
+rename wviewer::browser_status {} ; rename r4_bs_orig wviewer::browser_status
+# ---- R802's HOUSE RULE HAS A DETECTOR NOW. "NEVER `puts`, NEVER the status bar
+#      directly", and R802a's own ruling REJECTS a fallback to a global channel
+#      when the named one is unreachable -- but every check above only proves
+#      the three named channels are REACHED. Adding a `puts` fallback beside
+#      them printed five lines during this suite and left all checks green.
+#      Two halves, because neither alone is enough: the SOURCE must not contain
+#      the word (comment lines stripped -- the file states the rule in prose and
+#      must not trip its own detector), and the two no-emission selects must not
+#      call ::puts at RUNTIME, which is where a fallback reached through some
+#      other name would show up.
+# The detector's blind-spot sentinel: it must SEE `puts` when `puts` is there.
+set ak_pre {(^|[^A-Za-z0-9_:.])puts([^A-Za-z0-9_:]|$)}
+set ak_blind {}
+foreach ak_s {{puts "x"} {  puts stderr $m} {catch {puts $ch $l}}} {
+  if {![regexp $ak_pre $ak_s]} { lappend ak_blind $ak_s }
+}
+eqcheck SEL293-AK-no-puts-anywhere-in-results-tcl-and-the-detector-can-see-puts \
+  [list [regexp -line $ak_pre [r2_code [r2_rd $r2_tcl]]] $ak_blind] {0 {}}
+# RUNTIME half: the two `no channel` outcomes (host none, and neither token nor
+# key) must write NOTHING anywhere. ::puts is shimmed for the duration of the
+# two calls ONLY -- results::select does no `update` and no `after` (L7), so
+# nothing else can be running inside that window.
+set ak_puts 0
+rename ::puts ak_puts_orig
+# FORWARDS to the original rather than swallowing. Driven: a swallowing shim
+# whose restore is dropped blanks the whole suite -- no RESULT line at all --
+# which full_audit scores FAIL for the wrong reason and no check can explain.
+# Forwarding keeps the file legible so SEL280 can report the dropped restore.
+proc ::puts {args} { incr ::ak_puts ; uplevel 1 [linsert $args 0 ak_puts_orig] }
+set ak_err {}
+if {[catch {
+  set m1 [results::select $tmp/an.raw tran [dict create host none token $r4_tok]]
+  set m2 [results::select $tmp/an.raw tran]
+} ak_res]} { set ak_err $ak_res }
+rename ::puts {} ; rename ak_puts_orig ::puts
+eqcheck SEL294-AK-a-no-channel-select-never-calls-puts \
+  [list $ak_err $ak_puts [dg $m1 channel] [dg $m2 channel] \
+        [expr {[dg $m1 msg] ne {} && [dg $m2 msg] ne {} ? 1 : 0}]] {{} 0 {} {} 1}
+
+set r4_back {}
+foreach {r4p r4b} $r4_bodies {
+  if {[catch {info body $r4p} r4n]} { set r4n {MISSING} }
+  lappend r4_back [expr {$r4n eq $r4b ? 1 : 0}]
+}
+eqcheck SEL280-AK-every-shim-restored-BY-BODY \
+  [list [llength $r4_back] [lsort -unique $r4_back]] {8 1}
+
+# ===========================================================================
+# AL -- R805: ONE SENTENCE FORM PER OUTCOME, ALL DIFFERENT, AND `stale` SAYS
+#      WHY. R202: a stale result is REPORTED AND STILL SELECTED; `invalid`
+#      falls back to the derived path and says which happened. Neither is an
+#      error.
+# ===========================================================================
+set al_net [file join $tmp al_net.spice]
+wr $al_net "* netlist\n"
+file mtime $al_net [expr {[file mtime $tmp/an.raw] + 60}]
+
+xschem raw clear
+loadcell $tmp/cellA.sch
+set l1 [pcall results::select $tmp/an.raw tran [dict create netlist $al_net]]
+eqcheck SEL281-AL-stale-is-still-selected \
+  [list [dg $l1 ok] [dg $l1 how] [dg $l1 status] [dg $l1 reason] \
+        [pcall xschem raw rawfile]] [list 1 read stale mtime $tmp/an.raw]
+eqcheck SEL282-AL-stale-says-why-and-terminates-once \
+  [list [string match {Selected an.raw (tran), but this result is older than the netlist*} [dg $l1 msg]] \
+        [string match {*..} [dg $l1 msg]]] {1 0}
+
+# `invalid` -> the derived path is selected, and the sentence says which
+xschem raw clear
+loadcell $tmp/cellA.sch
+set l2 [pcall results::select $tmp/nosuch.raw tran [dict create derived $tmp/bn.raw]]
+eqcheck SEL283-AL-invalid-falls-back-and-selects \
+  [list [dg $l2 ok] [dg $l2 how] [dg $l2 status] [dg $l2 path]] \
+  [list 1 read invalid $tmp/bn.raw]
+eqcheck SEL284-AL-invalid-sentence-names-both \
+  [dg $l2 msg] {nosuch.raw is no longer on disk, so bn.raw (tran) was selected instead.}
+
+# `default` -> nothing named, the derived one is selected
+xschem raw clear
+loadcell $tmp/cellA.sch
+set l3 [pcall results::select {} {} [dict create derived $tmp/an.raw]]
+eqcheck SEL285-AL-default-selects-the-derived-one \
+  [list [dg $l3 ok] [dg $l3 status] [dg $l3 path] [dg $l3 msg]] \
+  [list 1 default $tmp/an.raw {No result was named, so the derived one was selected: an.raw (tran).}]
+
+# NINE outcomes, NINE sentences, none empty and none shared (the check's own
+# assertion is `{9 -1}`; this comment said "six" until the fixer round). `ok` and the two
+# not-a-success forms are taken from the groups above so this is a comparison
+# across the WHOLE set, not a re-run of one arm.
+set al_msgs [list [dg $s1 msg] [dg $l1 msg] [dg $l2 msg] [dg $l3 msg] \
+                  [dg $h2 msg] [dg $h4 msg] [dg $f1 msg] [dg $f2 msg] [dg $f3 msg]]
+eqcheck SEL286-AL-nine-outcomes-nine-sentences \
+  [list [llength [lsort -unique $al_msgs]] [lsearch -exact $al_msgs {}]] {9 -1}
+
 xschem raw clear
 catch {test_scratch_drop $tmp}
 puts "----"

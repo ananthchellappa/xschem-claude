@@ -65,6 +65,19 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
   CRASHes.
 - `full_audit.sh` globs `test_*.tcl` only — **no `.sh` suite is scored by it.**
   If your item touches one, run it by hand and say so in the receipt.
+- **A HAND-WRITTEN DRIVE IS NOT EXEMPT FROM THE TEST FILE'S SHIMS.** Added in the
+  item-4 fixer round, because an ad-hoc verification drive of `results::select`
+  set `::update_recent_files` and did **not** shim `wviewer::rawhist_write` — so
+  the real writer ran and **truncated the user's `~/.xschem/raw_history`** to one
+  scratchpad path. That is issue 0119's exact class, and unlike `recent_files`
+  there is no `.bak`: the user's list was unrecoverable and the file has been
+  left holding an empty list. So: **any drive — suite or scratch script — that
+  sets `::update_recent_files` must first `rename wviewer::rawhist_write` to a
+  no-op and must save and restore `::wviewer::rawhist`**, exactly as
+  `test_results_select.tcl`'s group AJ does. The same rule holds for anything
+  else that writes under `$::USER_CONF_DIR`: repoint `$::USER_CONF_DIR` at
+  `test_scratch`, or shim the writer. "No droppings in `$HOME`" is a claim that
+  must be **checked** (`ls -la ~/.xschem`), never assumed from a green suite.
 
 ## 4. Landmines — measured while writing the spec, do not rediscover
 
@@ -160,7 +173,7 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
 ## 7. Issue numbering — READ THIS BEFORE FILING ONE
 
 **New issues on `fluid-editing` take the next free number at or above 0500.**
-Highest in use is **0513** (item 3 filed it). Derive it, never guess:
+Highest in use is **0514** (item 4 filed it). Derive it, never guess:
 
 ```sh
 ls doc/claude/issues/ | grep -E '^0[0-9]{3}-' | cut -c1-4 | sort -n | tail -1
