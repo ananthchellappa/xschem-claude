@@ -59,19 +59,20 @@ in the row that caused it.
 | 7 | `results-select-dialog` | **`[E]`** | `7315cb87` | 58 | 65 | 10 | **2 looks owed** | The door. `src/ase_window.tcl` +879, 25 `rsel_*` procs, new suite `test_results_dialog`. 10 rulings into spec §6.1, incl. **R407c** ruling item 4's open question. Audit 333/15/0/0 of 348, **0 status changes**, 2 declared new rows. |
 | 8 | `waves-menu-cadence-gate` | **`[E]`** | `a010fa63` | 42 | 50 | 9 | **2 looks owed** | Gated, **not repaired** (U4/U12). New suite `test_waves_gate` (741 lines). Nine confirmed defects fixed. **0508 FIXED** — worded so nobody reads it as `raw_read` having stopped clearing. Audit 334/15/0/0 of 349, **0 status changes**. |
 | 9 | `kill-second-rawinfo-parser` | `[x]` | `70801385` | 377 | 21 | 12 | no | **R304c** removed, not re-expressed; **R304d** tombstone keeps `xschem.tcl` line-neutral so no citation re-stales. T-K ships as group AP, SEL459-474. **0507 FIXED.** Audit 334/15/0/0 of 349, **0 status changes**, 3 declared new suites. |
-| 10 | `calculator-consumes-selection` | | | | | | | |
+| 10 | `calculator-consumes-selection` | **`[E]`** | `407dc86b` | 789 | 38 | 8 | **2 looks owed** | U3/U6/U7/U9 landed; `self` arm gone; T-J's other half ruled. **Issue 0516 filed: R407a's `here` arm collides with U6 — needs the USER's word.** Audit 334/15/0/0 of 349, **0 status changes**. |
 
 ## Issues this batch closes
 
 | issue | item | status |
 |---|---|---|
 | 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
+| 0516 | filed by item 10 | **OPEN, BLOCKED ON THE USER** — a result selected through `Results ▸ Select…`'s `here` arm is invisible to the Calculator. Two items of this batch, each correct on its own terms. See the closeout below. |
 | 0515 | filed by item 5 | **OPEN** — the Location bar's refused context switch says nothing at all. Ruled deliberately unfixed (T-C wins over T-J on this arm). |
 | 0514 | filed by item 4 | **OPEN** — no Tcl accessor for `raw->schname`, so R804's sentence cannot name the schematic a result was read against. Message-quality only; pre-existing. |
 | 0513 | filed by item 3 | **OPEN** — `raw switch`'s OP publish gate reads the PREVIOUS database. Pre-dates the batch, measured on a pristine binary. Not fixed: R111 binds. |
-| 0508 | 8 | open |
-| 0507 | 9 | open |
-| 0216 (shape only) | 4 | open |
+| 0508 | 8 | **FIXED** `a010fa63` — GATED, not repaired; `raw_read` still clears outside `cadence_compat` |
+| 0507 | 9 | **FIXED** `70801385` — removed, tombstone keeps the file line-neutral |
+| 0216 (shape only) | 4 | **shape fixed** `2b138685` — `results::select` pushes to the MRU |
 
 ## Eyeball debts
 
@@ -155,3 +156,52 @@ with `ls -la ~/.xschem`, never assumed from a green suite.
    Re-grep any citation the crew reports stale — `xschem.tcl` line numbers have
    now moved in items 2, 5, 7 and 8, so `CREW_BRIEF.md`'s own pointers rot.
 5. Snap, launch the next item.
+
+---
+
+# BATCH CLOSEOUT — 10 / 10 complete, 2026-08-20
+
+| | |
+|---|---|
+| Items | **10 of 10.** 7 `[x]`, 3 `[E]` (7, 8, 10 — all pixel deliverables) |
+| Commits | `7aa76dca` `91c6eb9a` `8377532a` `2b138685` `f22cade2` `e9e5389d` `7315cb87` `a010fa63` `70801385` `407dc86b` + driver rows. **NOTHING PUSHED.** |
+| Audit | **334 pass / 15 fail / 0 crash-timeout / 0 skip of 349**, against the baseline's 331/15/0/0 of 346. **Zero status changes in either direction, every item, all ten.** The +3 are this batch's own suites. |
+| New code | `src/results.tcl` (new), `xschem raw select` + `raw non_spice` (C), the ASE-L `Results ▸ Select…` dialog (+879 in `ase_window.tcl`) |
+| New suites | `test_results_select`, `test_results_dialog`, `test_waves_gate` |
+| Issues closed | **0507**, **0508**, **0509**; **0216**'s shape |
+| Issues filed | **0513**, **0514**, **0515**, **0516** — all measured, none speculative |
+| Eyeball debts | **5**, all unpaid. `owed.sh list` |
+| User data lost | `~/.xschem/raw_history` (item 4, unrecoverable) and five weeks of `~/.xschem/recent_files` (item 5). See the Damage section. |
+
+## The one thing that needs the user, not the driver
+
+**Issue 0516.** Item 7's **R407a** gave the Select dialog a `here` arm — with no
+viewer in the session it selects into the current context — and justified it
+verbatim: *"'evaluate against last night's raw' happens BEFORE a run, which is
+exactly when no viewer exists."* That sentence names Evaluate. Item 10's **U6**
+then removed the Calculator's `self` arm *"entirely, not demoted"*. So a
+selection made through **this batch's own door** can land where the Calculator
+will not look: the row says no result, Evaluate refuses. Measured on an unedited
+tree, A/B'd against `HEAD:src/calculator.tcl`.
+
+Both crews were right and neither could fix it: **U6 is a user ruling and a crew
+agent may not overturn one.** Nor may the driver.
+
+**Driver's reading, for the user to accept or reject.** U6's stated purpose is
+that the Calculator *"must never read a raw that a **legacy path** put into a
+schematic window"* — that is about **provenance**, not location. A selection made
+through `results::select` is the opposite of a legacy path; it is R303's one
+door. So the narrow arm the reviewer proposed does not defeat U6's intent, it
+serves it — provided the Calculator reads the current context **only** when the
+selection got there through `results::select`, which means stamping provenance
+rather than trusting the location. The alternative — deleting R407a's `here` arm
+so Select refuses without a viewer — is cheaper but breaks the pre-run case item
+7 built it for.
+
+## What is NOT in this batch, deliberately
+
+- **Run history / per-run result directories** (R704, D7, driver ruling D-B).
+- **Typed accessors `VT(out)`/`IT(...)`** — the half that makes a plotted name say
+  which analysis it came from. Own spec, own batch, **blocked on 0512**.
+- **R605's clear-then-read order** on the restore path.
+- **0511, 0513, 0514, 0515** — each filed with a reason for staying open.
