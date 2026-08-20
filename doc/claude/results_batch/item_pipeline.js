@@ -110,6 +110,7 @@ const POLICY = [
   '- WHERE A DECISION IS GENUINELY OPEN, THE CREW MAKES THE RULING. Write the ruling and its rationale into the relevant spec under doc/claude/specs/, and record it in the receipt with the evidence that drove it. There is no human to ask. Never stop and ask; never leave the item half-done pending an answer.',
   '- A green suite does not prove the changed code ran. Sabotage is the evidence: break the thing under test, name the check that goes red, restore from a byte-exact backup, re-run green. A check with no sabotage is not evidence. If this item adds NO new checks (a harness or run-only item), say so explicitly and give the red/green drive that stands in for it — the same rule applies to a list edit as to a feature.',
   '- While the item is uncommitted, revert a sabotage from a byte-exact BACKUP, never `git checkout -- <file>` (that reverts to the previous commit and deletes the item).',
+  '- NOTHING MAY WRITE UNDER $HOME OR $::USER_CONF_DIR — not the suite, and NOT a hand-written drive. In item 4 an ad-hoc drive set ::update_recent_files without shimming wviewer::rawhist_write, and the real writer TRUNCATED the user\'s ~/.xschem/raw_history. Unlike recent_files there is no .bak, and the list was unrecoverable. Any drive that sets ::update_recent_files must first `rename wviewer::rawhist_write` to a no-op AND save/restore ::wviewer::rawhist. For anything else that writes under $::USER_CONF_DIR, repoint $::USER_CONF_DIR at test_scratch or shim the writer. "No droppings in $HOME" is a claim you must CHECK with `ls -la ~/.xschem` before and after, never assume from a green suite.',
   '- Do NOT edit ' + LEDGER + '. The driver owns the ledger and appends the row itself.',
   '- Do NOT run tools/review_gate/review_gate.sh. That gate asks a human and there is no human in this batch.',
 ].join('\n')
@@ -293,15 +294,15 @@ const LENSES = [
   {
     key: 'correctness',
     text: [
-      'LENS 1 — CORRECTNESS. Read the actual diff (`git diff` plus `git status`) and the code around it, not the summary.',
+      'LENS 1 — CORRECTNESS. Read the actual diff (`git diff` plus `git status`) and the code around it, not the summary. YOU MAY NOT MODIFY ANY FILE IN THE REPO. Read, grep, build nothing, and run only READ-ONLY commands (suites, greps, the binary as it stands). The three lenses run CONCURRENTLY against ONE working tree, and in item 4 files were rewritten mid-measurement because two agents edited at once. If a sabotage is the only way to prove your point, WRITE IT DOWN in the finding's `fix` field as a precise recipe and let LENS 3 — the only reviewer permitted to mutate — or the fixer run it. A finding whose reproducer required an edit you did not make is still a valid finding; say so in the reproducer.',
       'Hunt for: wrong behaviour on edge inputs (empty, one element, trailing separator, escaped separator, missing file, unreadable file, a name that is also a prefix of another name); off-by-one in any index or count; a loop that skips its last element; state left behind on an error path; a return value nobody checks; memory freed twice or not at all if C was touched; a Tcl proc whose signature changed while a caller or a spy did not; a shell list membership test that matches on a substring where it meant a whole word.',
-      'For any change to how a string is split or a name is matched, construct the input that breaks it and RUN IT.',
+      'For any change to how a string is split or a name is matched, construct the input that breaks it and RUN IT — as a command against the tree AS IT STANDS, never by editing it.',
     ].join(' '),
   },
   {
     key: 'regression',
     text: [
-      'LENS 2 — REGRESSION AND SIDE EFFECTS. Assume the change broke something it never mentions.',
+      'LENS 2 — REGRESSION AND SIDE EFFECTS. Assume the change broke something it never mentions. YOU MAY NOT MODIFY ANY FILE IN THE REPO. Read, grep, build nothing, and run only READ-ONLY commands (suites, greps, the binary as it stands). The three lenses run CONCURRENTLY against ONE working tree, and in item 4 files were rewritten mid-measurement because two agents edited at once. If a sabotage is the only way to prove your point, WRITE IT DOWN in the finding's `fix` field as a precise recipe and let LENS 3 — the only reviewer permitted to mutate — or the fixer run it. A finding whose reproducer required an edit you did not make is still a valid finding; say so in the reproducer.',
       'Check: every other caller of every function, proc or shell variable that was touched (grep the whole tree, including *.tcl, *.sh and tests/); any frozen oracle or literal-string pin the change could red; any check elsewhere that asserts the OLD behaviour; scope leak in the diff — files touched that the brief never named; anything staged that was dirty before the item started.',
       'Then run a suite the implementer did NOT run, chosen because it exercises the same code, through tests/headless/run_suites.sh with GUI_GATE=1, and diff its status against ' + BASELINE + '.',
     ].join(' '),
@@ -309,7 +310,7 @@ const LENSES = [
   {
     key: 'evidence',
     text: [
-      'LENS 3 — DOES THE EVIDENCE ACTUALLY PROVE IT. Attack the tests and the run log, not the change.',
+      'LENS 3 — DOES THE EVIDENCE ACTUALLY PROVE IT. Attack the tests and the run log, not the change. YOU ARE THE ONLY REVIEWER PERMITTED TO MUTATE THE TREE — lenses 1 and 2 are read-only, so a file that changes under you is YOUR edit or a real defect, never another reviewer. Before and after every sabotage, record `md5sum` of every file you touched, restore from a byte-exact BACKUP (never `git checkout --`, the item is uncommitted), and prove the restore with `cmp -s`. Leave the tree exactly as you found it.',
       'For each new check ask: could this check ever fail? Does it assert on program behaviour, or on a value the test computed itself? Does it read back state that its own helper just restored? Does it throw instead of failing (a Tcl error escapes the check and the file dies quietly)? Does a negative check have a positive control on the same fixture? Are the expected literals string reps — `[list ok [list x]]` is `ok x`, not `{ok {x}}`? For a run-only item: does the reported PASS actually come from the run they claim, on the display they claim, or from a log that pre-dates it?',
       'Then INVENT A SABOTAGE NOBODY NAMED, aimed at the core of the item, and run it. If the suite stays green under your sabotage, the tests do not cover the item — that is a finding with a reproducer, however many checks passed. Also re-run ONE sabotage from the verifier table from scratch and confirm it behaves exactly as claimed.',
     ].join(' '),

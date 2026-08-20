@@ -53,7 +53,7 @@ in the row that caused it.
 | 1 | `read-restamp-0509` | `[x]` | `7aa76dca` | 74 | 21 | 7 | no | R110 + **R110a/b/c** ruled into spec §3.1; S1/S2 red sets disjoint ⇒ both twice-written arms proven; audit 332/15/0/0 of 347, **no status moved**. |
 | 2 | `results-tcl-resolver` | `[x]` | `91c6eb9a` | 139 | 34 | 11 | no | `src/results.tcl` 379 lines, sourced + in `Makefile.in` install. Scope fence held (no mutator). R201a-e/R304a-b/R305a-b/R803a/R805a ruled into spec. Audit 332/15/0/0 of 347, **no status moved**. |
 | 3 | `raw-select-subverb` | `[x]` | `8377532a` | 215 | 38 | 10 | no | `raw select` + `raw non_spice` shipped; **R110d** fixes `new_rawfile()`'s third copy. 10 rulings; **R301b overturns the brief — `<type>` is OPTIONAL**. 0513 filed w/ reproducer. Audit 332/15/0/0 of 347, **no status moved**. |
-| 4 | `results-select-orchestrator` | | | | | | | |
+| 4 | `results-select-orchestrator` | `[x]` | `2b138685` | 296 | 41 | 7 | **see below** | `results::select` shipped; 13 confirmed findings all reproduced+fixed, none unconfirmed. 0216 shape fixed for this path. **An ad-hoc drive destroyed the user's `~/.xschem/raw_history`.** Audit 332/15/0/0 of 347, **no status moved**. |
 | 5 | `rawbar-load-reexpress` | | | | | | | |
 | 6 | `persistence-write-side` | | | | | | | |
 | 7 | `results-select-dialog` | | | | | | | |
@@ -66,6 +66,7 @@ in the row that caused it.
 | issue | item | status |
 |---|---|---|
 | 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
+| 0514 | filed by item 4 | **OPEN** — no Tcl accessor for `raw->schname`, so R804's sentence cannot name the schematic a result was read against. Message-quality only; pre-existing. |
 | 0513 | filed by item 3 | **OPEN** — `raw switch`'s OP publish gate reads the PREVIOUS database. Pre-dates the batch, measured on a pristine binary. Not fixed: R111 binds. |
 | 0508 | 8 | open |
 | 0507 | 9 | open |
@@ -107,7 +108,33 @@ direction, belongs to the item that moved it.
 | item 3 §2 | **Two spellings of one path are TWO RUNS** — `w/an.raw` and `w/../w/an.raw` both read, two slots; the engine dedupes by `strcmp`. `~` expansion is the only normalisation the C verb does. | **`file normalize` is item 4's Tcl-side call.** Named in item 4's brief. |
 | item 3 §5 | Six reviewer not-proven items carried as known and unfixed: `xschem raw_query select` MUTATES (pre-existing `argv[1]` aliasing, as `raw_query read`/`clear`/`new` already do); `_is_result_type Table` answers 1 where old Tcl answered 0 (latent, no slot carries an uppercase token); `raw select {}` returns 0 rather than the no-file error and extra positional args are ignored; `save.c`'s `if(type && !type[0]) type = NULL;` is dead so citing it as the L6 guard is overstated; `developer_info.html`'s `raw what = …` list is stale (already was, for `is_digital`/`casemode`/`vcd_read`). | Left standing. Re-raise only with a reproducer. |
 | item 3 §5 | **SEL195 pins today's buggy `raw switch` behaviour on purpose and WILL INVERT when 0513 is fixed**; its own comment says so. Group AB writes `~/.xschem_results_select_<pid>/` under `$HOME` and removes it — outside where `full_audit.sh`'s TREE check can see it, because `~` cannot be redirected into `test_scratch`. | Known. Any later item touching `raw switch` must expect SEL195 to move. |
+| item 4 §5 | **T-J's F6 borrow half is NOT delivered by item 4** — `grep -n 'borrow\|enter_ctx\|leave_ctx'` over `src/results.tcl` and the suite returns nothing, by design. Reassigned in spec §12 under the invariant table. | **Split between item 5** (R501 leaves `switch_ctx` in `rawbar_load`) **and item 10** (R502/T-I). Neither may mark T-J done on item 4's four checks. |
+| item 4 §5 | **A typeless select of a VCD or table REFUSES**, because the no-type arm reaches the C reader as `<unspecified>` — so a non-spice database that reaches the MRU can never be re-selected through R303's door. Not called a bug. | **Item 7 is the first caller that can hit it and must rule it.** |
+| item 4 §5 | **Concurrency during review is real**: files were rewritten mid-measurement in the implementation round. Named by the crew as a batch-orchestration matter for the driver. | **FIXED BY THE DRIVER in `item_pipeline.js`**, from item 5 on: lenses 1 and 2 are now READ-ONLY and propose sabotage recipes; lens 3 is the sole reviewer permitted to mutate, and must md5 before/after and prove the restore with `cmp -s`. |
 | item 1 §5 | **A THIRD verbatim copy of the "file found" branch exists in `new_rawfile()` (`src/save.c:1570-1577`) and does not re-stamp.** Different function, different contract (`0` = already loaded); no reproducer was built either way, and 0509 closed naming it. | **Handed to item 3.** Its crew is already inside `extra_rawfile()`'s neighbourhood: MEASURE it, then either fix it or file an issue with a real reproducer. Do not file a speculative one. |
 | item 2 §2 R305b | **`raw_type_is_non_spice()` (`src/save.c:1622`) has no Tcl verb**, so `results::current`'s R102 gate hard-codes the one reader token `table` beside its C predicate. `xschem raw is_digital` answers the reader table's *other* column and returns 0 for `table` on purpose. | **Offered to item 3** as a bounded extra: add `xschem raw non_spice <type>` while in the same C file, then let `results.tcl` ask the engine. The crew may decline with evidence. |
 | item 2 §5 | **`results::list` shadows Tcl's `list` inside the namespace** (documented in the header; every construction written `::list`). And `resolve` does not normalize `..` while `list` returns the engine's verbatim spelling — the engine dedupes by `strcmp`. | **Both are item 4's hazard**, since "is this path already loaded?" sits on top of the second one. Named in item 4's brief. |
 | item 2 §5 | Seven reviewer observations raised, **none confirmed, none filed**: 0-byte raw and `.vcd` both resolve `ok`; `named` not absolute-ised without a `rundir`; a non-existent explicit `derived` blocks the `key` fallback; a throwing `raw_content_verdict` swallowed as `ok`; whitespace-padded `rawfile` resolves `invalid`; R201e suspected-uncovered. | Left standing. Re-raise only with a reproducer. |
+
+## Damage — item 4, `~/.xschem/raw_history`
+
+**The user's waveform-result MRU list was destroyed and is not recoverable.**
+
+An **ad-hoc** verification drive of `results::select` — not the suite; the
+suite's group AJ shims the writer *before* setting the flag — set
+`::update_recent_files` without renaming `wviewer::rawhist_write`, so the real
+writer ran and truncated `~/.xschem/raw_history` to the one scratchpad path it
+had just pushed. The file now holds an honest empty list
+(`set ::wviewer::rawhist {}`).
+
+**Recovery attempted and failed.** There is no `.bak` (unlike `recent_files`,
+which has one). The workflow transcripts were searched for a pre-damage capture:
+the only `rawhist` value recorded anywhere is the post-damage single scratchpad
+path. Nothing in the repo, in `$HOME`, or in any worktree holds the old list.
+
+**This is issue 0119's exact class.** Two durable guards now exist:
+`CREW_BRIEF.md` §3's rule (crew, item 4) and a POLICY line in
+`item_pipeline.js` that every stage of every later item reads (driver, before
+item 5). Both say the same thing: a hand-written drive is not exempt from the
+test file's shims, and *"no droppings in `$HOME`"* is a claim to be **checked**
+with `ls -la ~/.xschem`, never assumed from a green suite.
