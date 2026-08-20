@@ -2110,6 +2110,556 @@ set al_msgs [list [dg $s1 msg] [dg $l1 msg] [dg $l2 msg] [dg $l3 msg] \
 eqcheck SEL286-AL-nine-outcomes-nine-sentences \
   [list [llength [lsort -unique $al_msgs]] [lsearch -exact $al_msgs {}]] {9 -1}
 
+
+# ===========================================================================
+# AM -- T-C: `wviewer::rawbar_load`'s OBSERVABLE BEHAVIOUR, BEFORE AND AFTER
+#      THE RE-EXPRESSION, SIDE BY SIDE IN ONE PROCESS (results batch item 5,
+#      spec section 7 R501, section 12 T-C).
+#
+#      T-C IS A COMPARISON, NOT A FEATURE TEST. A suite that only exercised the
+#      new body would prove nothing about equivalence, so the PRE body is
+#      FROZEN HERE as `wviewer::rawbar_load_PRE` -- the shipped statements at
+#      base HEAD `226302f9`, comments dropped, name changed, nothing else --
+#      and every scenario is run twice from an identical starting registry with
+#      the two observable tuples compared.
+#
+#      THE TUPLE IS T-C's OWN LIST: rc, the registry before and after, the
+#      current database and its analysis, the MRU list, and the sidebar
+#      sentences -- an EMPTY sentence list is how "this arm is silent" is
+#      measured. It is deliberately NOT the whole call trace: three side
+#      effects legitimately differ and group AN measures every one of them.
+#
+#      EVERY LEAF IS SHIMMED EXCEPT THE ENGINE. `switch_ctx` is shimmed because
+#      arm 4 -- a REFUSED context switch -- is otherwise only reachable by
+#      raising a semaphore under a live window, and R501b's ruling is about
+#      exactly that arm. `xschem raw read` / `xschem raw select` are the REAL
+#      verbs, so every registry, analysis and MRU value below is a real
+#      measurement and not a shim's opinion.
+# ===========================================================================
+wr $tmp/notraw_am.txt "this is not a raw file at all\n"
+# a SECOND one-point operating point, with different numbers from op.raw. D3
+# needs two: the question is whether the schematic keeps showing the FIRST
+# file's voltages after the Location bar loads the second.
+wr $tmp/op2.raw "Title: results select op2
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\tv(o1)\tvoltage
+\t1\tv(o2)\tvoltage
+Values:
+0\t3.500000000000000e+00
+\t4.500000000000000e+00
+
+"
+file mkdir $tmp/amsub
+
+proc wviewer::rawbar_load_PRE {token path} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set path [string trim $path]
+  if {$path eq {}} {
+    wviewer::browser_status $token {Location: type the path of a raw file}
+    return 0
+  }
+  if {![file isfile $path]} {
+    wviewer::browser_status $token "Location: no such file '[file tail $path]'"
+    return 0
+  }
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  wviewer::capture_live_view_state $token
+  set rc 0
+  catch {set rc [xschem raw read $path]}
+  if {$rc != 1} {
+    wviewer::browser_status $token "Location: could not read '[file tail $path]'"
+    return 0
+  }
+  wviewer::regenerate $token
+  catch {wviewer::browser_refresh $token 1}
+  wviewer::rawhist_push $path
+  wviewer::rawbar_sync $token $path
+  wviewer::log_action [list wviewer::rawbar_load $token $path]
+  return 1
+}
+
+# THE ANTI-VACUITY GATE FOR THE WHOLE GROUP. Every check below compares two
+# procs, and if they were the same proc every comparison would be a tautology.
+# Both halves are asserted positively: the frozen body is the one that calls
+# the old verb and knows nothing of the door, the shipped one is the reverse.
+# THE OLD VERB IS GONE FROM THE SHIPPED PROC ENTIRELY -- comments included,
+# which is why the comment above the call site says "the old read verb" in
+# words rather than quoting it.
+set am_pre  [info body wviewer::rawbar_load_PRE]
+set am_post [info body wviewer::rawbar_load]
+eqcheck SEL295-AM-the-two-bodies-are-really-different \
+  [list [regexp {xschem raw read} $am_pre] [regexp {results::select} $am_pre] \
+        [regexp {xschem raw read} $am_post] [regexp {results::select} $am_post]] {1 0 0 1}
+
+# --- the harness -------------------------------------------------------
+set am_tok  am_tok
+set am_stat {}
+set am_swok 1
+set am_trace {}
+set am_leaves {browser_status switch_ctx capture_live_view_state regenerate
+               browser_refresh rawbar_sync log_action casemode_invalidate
+               casemode_reapply rawhist_write}
+# capture the REAL bodies now, so SEL333 can prove the restore BY BODY. Item
+# 4's SEL280 lesson: `info procs <name> ne {}` is satisfied by the shim still
+# being installed, so a dropped restore line stays green under a name test.
+set am_bodies {}
+foreach am_p $am_leaves { dict set am_bodies $am_p [info body wviewer::$am_p] }
+set am_wrf_body [info body write_recent_file]
+
+set am_urf_had [info exists ::update_recent_files]
+if {$am_urf_had} { set am_urf_old $::update_recent_files }
+set am_hist_old $::wviewer::rawhist
+# ⚠ EVERY WRITER IS SHIMMED BEFORE THE FLAG IS SET, NEVER AFTER. An ad-hoc
+# drive in item 4 set ::update_recent_files with the real `rawhist_write` in
+# place and TRUNCATED the user's ~/.xschem/raw_history; there is no .bak and the
+# list was unrecoverable. CREW_BRIEF.md section 3 is that damage written down.
+#
+# ⚠⚠ AND `rawhist_write` IS NOT THE ONLY WRITER THAT FLAG UNGATES. `::update_recent_files`
+# gates FOUR procs, and `update_recent_file` (src/xschem.tcl:3869) is one of
+# them: it fires on every `xschem load`, and `am_run` loads a cell on every
+# call. MEASURED, not assumed -- the first version of this group raised the flag
+# around the whole of `am_run` and rewrote the user's ~/.xschem/recent_files,
+# which the item-4 damage report says to CHECK for (`ls -la ~/.xschem`) rather
+# than infer from a green suite. `write_recent_file` is therefore shimmed too,
+# AND the flag is raised only around the call under test (see `am_run`).
+rename write_recent_file am_orig_write_recent_file
+proc write_recent_file {} { return }
+foreach am_p $am_leaves { rename wviewer::$am_p am_orig_$am_p }
+proc wviewer::rawhist_write {} { return 1 }
+set ::update_recent_files 0
+proc wviewer::browser_status {token msg} {
+  lappend ::am_stat $msg ; lappend ::am_trace status ; return 1
+}
+proc wviewer::switch_ctx {token} { lappend ::am_trace switch_ctx ; return $::am_swok }
+proc wviewer::capture_live_view_state {token} { lappend ::am_trace capture }
+proc wviewer::regenerate {token} { lappend ::am_trace regenerate }
+proc wviewer::browser_refresh {token {reload 0}} {
+  lappend ::am_trace [::list browser_refresh $reload] ; return 1
+}
+proc wviewer::rawbar_sync {token {path {}}} { lappend ::am_trace [::list rawbar_sync $path] }
+proc wviewer::log_action {line} { lappend ::am_trace [::list log_action $line] }
+proc wviewer::casemode_invalidate {token} { lappend ::am_trace casemode_invalidate }
+proc wviewer::casemode_reapply {token rawfile} { lappend ::am_trace casemode_reapply ; return 0 }
+dict set ::wviewer::windows $am_tok win_path .am_fake_drw
+
+# Run ONE scenario against ONE of the two bodies, from a reset registry.
+# `pre` is a script run at global level after the reset and before the call;
+# it uses the ENGINE directly, never either body, so both legs of a comparison
+# start from a state neither implementation produced.
+proc am_run {which token path swok pre} {
+  global tmp
+  xschem raw clear
+  loadcell $tmp/cellA.sch
+  catch {array unset ngspice::ngspice_data}
+  set ::wviewer::rawhist {}
+  set ::am_stat {}
+  set ::am_trace {}
+  set ::am_swok $swok
+  if {$pre ne {}} { uplevel #0 $pre }
+  set before [slot_list]
+  # L11: `rawhist_push` no-ops unless this is set, so the MRU delta is only
+  # measurable with it up -- and it is up for the CALL ALONE, never across the
+  # `loadcell` above, because the same flag ungates `update_recent_file`.
+  set ::update_recent_files 1
+  if {$which eq {PRE}} {
+    set rc [pcall wviewer::rawbar_load_PRE $token $path]
+  } else {
+    set rc [pcall wviewer::rawbar_load $token $path]
+  }
+  set ::update_recent_files 0
+  return [::list rc $rc before $before after [slot_list] \
+            cur [pcall xschem raw rawfile] type [pcall xschem raw_query sim_type] \
+            mru $::wviewer::rawhist stat $::am_stat trace $::am_trace]
+}
+proc am_tuple {r} {
+  return [::list [dict get $r rc] [dict get $r before] [dict get $r after] \
+            [dict get $r cur] [dict get $r type] [dict get $r mru] [dict get $r stat]]
+}
+proc am_same {id name path {swok 1} {pre {}}} {
+  global am_tok
+  set a [am_run PRE  $am_tok $path $swok $pre]
+  set b [am_run POST $am_tok $path $swok $pre]
+  eqcheck "$id-AM-$name" [am_tuple $b] [am_tuple $a]
+  return [::list $a $b]
+}
+proc am_silence {r} {
+  if {[llength [dict get $r stat]]} { return spoke }
+  return silent
+}
+proc am_pos {trace what} {
+  set i 0
+  foreach e $trace { if {[lindex $e 0] eq $what} { return $i } ; incr i }
+  return -1
+}
+
+# --- ARM 1: an unknown token. Silent in both, and nothing moves. Driven
+#     WITHOUT `am_same`, which always passes the registered token: the first
+#     version of this leg passed the unknown token in the PATH slot and landed
+#     in arm 3 instead -- caught by SEL297 and SEL318, which is why the silence
+#     ledger is asserted against measured VALUES and not only against itself.
+set am1a [am_run PRE  NOSUCHTOKEN $tmp/an.raw 1 {}]
+set am1b [am_run POST NOSUCHTOKEN $tmp/an.raw 1 {}]
+eqcheck SEL296-AM-arm1-unknown-token-identical [am_tuple $am1b] [am_tuple $am1a]
+set am1 [list $am1a $am1b]
+eqcheck SEL297-AM-arm1-is-silent-in-both \
+  [list [dict get [lindex $am1 0] stat] [dict get [lindex $am1 1] stat] \
+        [dict get [lindex $am1 1] rc] [dict get [lindex $am1 1] trace]] {{} {} 0 {}}
+
+# --- ARM 2: nothing typed.
+set am2 [am_same SEL298 arm2-empty-path-identical {   }]
+eqcheck SEL299-AM-arm2-sentence-verbatim \
+  [list [dict get [lindex $am2 1] stat] [dict get [lindex $am2 1] rc]] \
+  {{{Location: type the path of a raw file}} 0}
+
+# --- ARM 3: no such file -- the `file isfile` guard R501 says must survive.
+set am3 [am_same SEL300 arm3-no-such-file-identical $tmp/nosuch_am.raw]
+eqcheck SEL301-AM-arm3-sentence-verbatim \
+  [list [dict get [lindex $am3 1] stat] [dict get [lindex $am3 1] rc]] \
+  {{{Location: no such file 'nosuch_am.raw'}} 0}
+# ...and it still refuses BEFORE the context move, which is what makes it a
+# Location-bar sentence about a typo rather than an engine one.
+eqcheck SEL302-AM-arm3-refuses-before-switch-ctx \
+  [list [dict get [lindex $am3 0] trace] [dict get [lindex $am3 1] trace]] {status status}
+
+# --- ARM 4: A REFUSED CONTEXT SWITCH. SILENT, IN BOTH. R501b.
+set am4 [am_same SEL303 arm4-refused-switch-ctx-identical $tmp/an.raw 0]
+eqcheck SEL304-AM-arm4-is-silent-in-both \
+  [list [dict get [lindex $am4 0] stat] [dict get [lindex $am4 1] stat] \
+        [dict get [lindex $am4 1] rc] [dict get [lindex $am4 1] trace]] {{} {} 0 switch_ctx}
+
+# --- ARM 5: the engine refused. Two shapes -- a file that is not a raw at all,
+#     and a TABLE, a real database whose typeless read cannot be dispatched.
+#     ⚠ BOTH ARE DRIVEN WITH A RESULT ALREADY LOADED. The first version ran
+#     them on an EMPTY registry, where "a refusal leaves the previous result
+#     standing" is true of nothing at all -- a sabotage that put
+#     `xschem raw clear` into the refusal arm left SEL309 green.
+set am5 [am_same SEL305 arm5-not-a-raw-identical $tmp/notraw_am.txt \
+           1 {xschem raw read $tmp/an.raw}]
+eqcheck SEL306-AM-arm5-sentence-verbatim \
+  [list [dict get [lindex $am5 1] stat] [dict get [lindex $am5 1] rc]] \
+  {{{Location: could not read 'notraw_am.txt'}} 0}
+set am6 [am_same SEL307 arm5-table-typeless-identical $tmp/t.table \
+           1 {xschem raw read $tmp/an.raw}]
+eqcheck SEL308-AM-arm5-table-sentence-verbatim \
+  [dict get [lindex $am6 1] stat] {{Location: could not read 't.table'}}
+# F7/T-D through BOTH bodies: a refusal leaves the previous result standing.
+eqcheck SEL309-AM-refusal-leaves-the-registry-alone \
+  [list [expr {[dict get [lindex $am5 0] before] eq [dict get [lindex $am5 0] after]}] \
+        [expr {[dict get [lindex $am5 1] before] eq [dict get [lindex $am5 1] after]}] \
+        [expr {[dict get [lindex $am6 1] before] eq [dict get [lindex $am6 1] after]}] \
+        [llength [dict get [lindex $am5 1] before]] \
+        [dict get [lindex $am5 1] cur]] [list 1 1 1 1 $tmp/an.raw]
+
+# --- SUCCESS: a fresh read.
+set am7 [am_same SEL310 success-fresh-read-identical $tmp/an.raw]
+eqcheck SEL311-AM-fresh-read-really-loaded-and-pushed \
+  [list [dict get [lindex $am7 1] rc] [llength [dict get [lindex $am7 1] after]] \
+        [dict get [lindex $am7 1] cur] [dict get [lindex $am7 1] mru] \
+        [dict get [lindex $am7 1] stat]] \
+  [list 1 1 $tmp/an.raw [list [file normalize $tmp/an.raw]] {}]
+# THE MRU DELTA IS IDENTICAL, and it is not a coincidence: `rawhist_add`
+# normalises its argument, so pushing the caller's spelling (PRE) and the
+# engine's (POST) store the same string. L11's flag is set for the whole group
+# or neither body would push at all.
+eqcheck SEL312-AM-mru-delta-identical \
+  [list [dict get [lindex $am7 0] mru] [dict get [lindex $am7 1] mru]] \
+  [list [list [file normalize $tmp/an.raw]] [list [file normalize $tmp/an.raw]]]
+
+# --- SUCCESS: the SAME path again -- the dedupe path. No slot added.
+set am8 [am_same SEL313 success-same-path-again-identical $tmp/an.raw \
+           1 {xschem raw read $tmp/an.raw}]
+eqcheck SEL314-AM-same-path-adds-no-slot \
+  [list [dict get [lindex $am8 1] rc] \
+        [expr {[dict get [lindex $am8 1] before] eq [dict get [lindex $am8 1] after]}] \
+        [llength [dict get [lindex $am8 1] after]]] {1 1 1}
+
+# --- SUCCESS: a SECOND, different raw. F7: the registry accumulates, and
+#     neither body clears.
+set am9 [am_same SEL315 success-second-raw-identical $tmp/bn.raw \
+           1 {xschem raw read $tmp/an.raw}]
+eqcheck SEL316-AM-second-raw-accumulates \
+  [list [dict get [lindex $am9 1] rc] [llength [dict get [lindex $am9 1] before]] \
+        [llength [dict get [lindex $am9 1] after]] [dict get [lindex $am9 1] cur]] \
+  [list 1 1 2 $tmp/bn.raw]
+
+# --- THE SILENCE LEDGER, in one assertion, and then the ledger's own values.
+#     Five arms: three write exactly one sentence, two write none, and no
+#     success path writes any -- before and after.
+eqcheck SEL317-AM-the-five-arms-say-the-same-things \
+  [list [am_silence [lindex $am1 1]] [am_silence [lindex $am2 1]] [am_silence [lindex $am3 1]] \
+        [am_silence [lindex $am4 1]] [am_silence [lindex $am5 1]] [am_silence [lindex $am7 1]]] \
+  [list [am_silence [lindex $am1 0]] [am_silence [lindex $am2 0]] [am_silence [lindex $am3 0]] \
+        [am_silence [lindex $am4 0]] [am_silence [lindex $am5 0]] [am_silence [lindex $am7 0]]]
+eqcheck SEL318-AM-and-the-ledger-is-the-measured-one \
+  [list [am_silence [lindex $am1 1]] [am_silence [lindex $am2 1]] [am_silence [lindex $am3 1]] \
+        [am_silence [lindex $am4 1]] [am_silence [lindex $am5 1]] [am_silence [lindex $am7 1]]] \
+  {silent spoke spoke silent spoke silent}
+
+# --- RC IS TWO-VALUED, and that is R501b's load-bearing measurement. T-J/F6's
+#     defect is a refusal that READS LIKE AN ANSWER; this proc has no answer a
+#     refusal could be mistaken for. Every refusal is exactly 0, every success
+#     exactly 1, and nothing returns a list, a path or {}.
+eqcheck SEL319-AM-refusal-is-never-mistakable-for-a-result \
+  [lsort -unique [list [dict get [lindex $am1 1] rc] [dict get [lindex $am2 1] rc] \
+     [dict get [lindex $am3 1] rc] [dict get [lindex $am4 1] rc] \
+     [dict get [lindex $am5 1] rc] [dict get [lindex $am6 1] rc] \
+     [dict get [lindex $am7 1] rc] [dict get [lindex $am8 1] rc] \
+     [dict get [lindex $am9 1] rc]]] {0 1}
+
+# ===========================================================================
+# AN -- THE FOUR DIVERGENCES THAT ARE REAL, AND THE ORDERING THAT MOVED.
+#      RULED AS R501c. Coming through R303's one door brings R302a's spelling
+#      rule, R302d's side effects and R301d/R301f's verb semantics with it; a
+#      re-expression claiming to have none would be the lie. Each is MEASURED
+#      against the frozen PRE body in the same process, and each is a
+#      CORRECTNESS GAIN -- which is the argument the ruling rests on, so it is
+#      asserted rather than asserted about.
+# ===========================================================================
+
+# --- D1: ONE SPELLING PER RUN (R302a). `<d>/amsub/../an.raw` used to add a
+#     SECOND slot beside `<d>/an.raw` -- the engine dedupes by strcmp on the
+#     stored spelling -- and F7 means that duplicate is permanent.
+set an1p [am_run PRE  $am_tok $tmp/amsub/../an.raw 1 {xschem raw read $tmp/an.raw}]
+set an1q [am_run POST $am_tok $tmp/amsub/../an.raw 1 {xschem raw read $tmp/an.raw}]
+eqcheck SEL320-AN-d1-pre-made-a-duplicate-slot \
+  [list [dict get $an1p rc] [llength [dict get $an1p before]] [llength [dict get $an1p after]] \
+        [dict get $an1p cur]] [list 1 1 2 $tmp/amsub/../an.raw]
+eqcheck SEL321-AN-d1-post-converges-on-one-slot \
+  [list [dict get $an1q rc] [llength [dict get $an1q before]] [llength [dict get $an1q after]] \
+        [dict get $an1q cur]] [list 1 1 1 $tmp/an.raw]
+
+# --- D2: THE CASE-MODE CACHE (R302d). The PRE body changed the current
+#     database and left the cached readout for the OLD one standing. The REAL
+#     `casemode_invalidate` is put back for both legs: it is a per-token ARRAY
+#     operation needing no window, so the real effect is what is asserted, and
+#     the PRE body never calls it either way.
+rename wviewer::casemode_invalidate {}
+rename am_orig_casemode_invalidate wviewer::casemode_invalidate
+set an2pre {
+  set ::wviewer::casemode($::am_tok) {fold sniff}
+  set ::wviewer::casemodepick($::am_tok) fold
+}
+am_run PRE $am_tok $tmp/an.raw 1 $an2pre
+set an2p [list [info exists ::wviewer::casemode($am_tok)] [info exists ::wviewer::casemodepick($am_tok)]]
+catch {unset ::wviewer::casemode($am_tok)} ; catch {unset ::wviewer::casemodepick($am_tok)}
+am_run POST $am_tok $tmp/an.raw 1 $an2pre
+set an2q [list [info exists ::wviewer::casemode($am_tok)] [info exists ::wviewer::casemodepick($am_tok)]]
+catch {unset ::wviewer::casemode($am_tok)} ; catch {unset ::wviewer::casemodepick($am_tok)}
+rename wviewer::casemode_invalidate am_orig_casemode_invalidate
+proc wviewer::casemode_invalidate {token} { lappend ::am_trace casemode_invalidate }
+eqcheck SEL322-AN-d2-stale-cache-before-dropped-after [list $an2p $an2q] {{1 1} {0 0}}
+
+# --- D3: A ONE-POINT OP PUBLISHES (R301d). The PRE body left the SCHEMATIC
+#     annotated from one database while the VIEWER drew another -- the same
+#     staleness `browser_refresh $token 1` was added to this proc to stop.
+#     `?` is what get_voltage answers when nothing has been published.
+set an3pre {
+  catch {array unset ngspice::ngspice_data}
+  pcall xschem raw select $tmp/op.raw op
+}
+set an3p  [am_run PRE  $am_tok $tmp/op2.raw 1 $an3pre]
+set an3pv [pcall ngspice::get_voltage o1]
+set an3q  [am_run POST $am_tok $tmp/op2.raw 1 $an3pre]
+set an3qv [pcall ngspice::get_voltage o1]
+eqcheck SEL323-AN-d3-pre-left-the-previous-op-on-the-schematic \
+  [list [dict get $an3p rc] [dict get $an3p cur] $an3pv] [list 1 $tmp/op2.raw 1.5]
+eqcheck SEL324-AN-d3-post-publishes-the-selected-one \
+  [list [dict get $an3q rc] [dict get $an3q cur] $an3qv] [list 1 $tmp/op2.raw 3.5]
+catch {array unset ngspice::ngspice_data}
+
+# --- D4: A TYPELESS RE-LOAD KEEPS THE ANALYSIS YOU ARE ON (R301f). One file,
+#     two plots, two slots, ONE RUN (U11). The PRE body's dedupe matches on the
+#     FILENAME ALONE and lands on whichever slot comes first, so re-typing the
+#     path you are already looking at silently moved you off `tran`.
+set an4pre {
+  xschem raw read $tmp/multi.raw dc
+  xschem raw read $tmp/multi.raw tran
+  xschem raw switch $tmp/multi.raw tran
+}
+set an4p [am_run PRE  $am_tok $tmp/multi.raw 1 $an4pre]
+set an4q [am_run POST $am_tok $tmp/multi.raw 1 $an4pre]
+eqcheck SEL325-AN-d4-pre-moved-you-off-tran \
+  [list [dict get $an4p rc] [dict get $an4p type] [llength [dict get $an4p after]]] {1 dc 2}
+eqcheck SEL326-AN-d4-post-keeps-you-on-tran \
+  [list [dict get $an4q rc] [dict get $an4q type] [llength [dict get $an4q after]]] {1 tran 2}
+
+# --- D5: THE ORDERING THAT MOVED. `browser_refresh` is one of R302d's side
+#     effects, so it now runs BEFORE `regenerate` rather than after it. The
+#     `reload` argument survives, and so does the widget tail.
+set an5p [dict get [lindex $am7 0] trace]
+set an5q [dict get [lindex $am7 1] trace]
+eqcheck SEL327-AN-d5-pre-regenerated-then-refreshed \
+  [expr {[am_pos $an5p regenerate] < [am_pos $an5p browser_refresh] ? 1 : 0}] 1
+eqcheck SEL328-AN-d5-post-refreshes-then-regenerates \
+  [list [expr {[am_pos $an5q browser_refresh] < [am_pos $an5q regenerate] ? 1 : 0}] \
+        [lindex $an5q [am_pos $an5q browser_refresh]]] {1 {browser_refresh 1}}
+eqcheck SEL329-AN-d5-capture-still-comes-first-in-both \
+  [list [am_pos $an5p capture] [am_pos $an5q capture]] {1 1}
+# the tail is unchanged: `rawbar_sync` gets THE PATH THE USER TYPED, not the
+# engine's spelling, and `log_action` replays the gesture (R501c).
+eqcheck SEL330-AN-d5-the-widget-tail-is-unchanged \
+  [list [lindex $an5q [am_pos $an5q rawbar_sync]] [lindex $an5q [am_pos $an5q log_action]]] \
+  [list [list rawbar_sync $tmp/an.raw] \
+        [list log_action [list wviewer::rawbar_load $am_tok $tmp/an.raw]]]
+
+# ⚠ SEL330 ON ITS OWN IS NOT ENOUGH, AND THE FIXER ROUND MEASURED WHY. It reads
+#   `am7`'s trace, whose typed path IS the engine's spelling (`$tmp/an.raw` is
+#   already normalised), so a regression that handed the widget tail
+#   `[dict get $res path]` instead of `$path` passed every check in this file
+#   AND in test_wave_sigbrowser_i1315. The ONE fixture in this suite where the
+#   two spellings provably differ is D1's `an1q` (`$tmp/amsub/../an.raw`), and
+#   until SEL336 it never inspected `trace` at all. R501c's "the Location bar
+#   echoes the gesture, not its resolution" is only asserted where a resolution
+#   exists to be echoed by mistake.
+set an5r [dict get $an1q trace]
+eqcheck SEL336-AN-d5-the-widget-tail-carries-the-TYPED-spelling-when-they-differ \
+  [list [lindex $an5r [am_pos $an5r rawbar_sync]] [lindex $an5r [am_pos $an5r log_action]] \
+        [string equal $tmp/amsub/../an.raw [dict get $an1q cur]]] \
+  [list [list rawbar_sync $tmp/amsub/../an.raw] \
+        [list log_action [list wviewer::rawbar_load $am_tok $tmp/amsub/../an.raw]] 0]
+
+# ⚠ AND THE FOUR CALLS R501 KEEPS IN THE VIEWER MUST BE THERE ON *EVERY*
+#   SUCCESS PATH, NOT ONLY ON A FRESH READ. SEL327-SEL330 all read `am7`, which
+#   is the `how read` leg. The fixer round measured a sabotage
+#   (`if {$how eq {read}} { wviewer::regenerate $token }`) that survived all
+#   1008 checks in the four suites that touch `rawbar_load` while leaving the
+#   viewer drawing the OLD database after the engine had moved to the new one --
+#   exactly the case R501 says must not move. So the viewer tail is compared
+#   PRE vs POST as a SUBSEQUENCE, on the already-loaded (`how switch`) leg and
+#   on the second-raw (`how read`) leg, and its literal order is pinned.
+proc am_tail {r} {
+  set out {}
+  foreach e [dict get $r trace] {
+    if {[lindex $e 0] in {capture regenerate rawbar_sync log_action}} {
+      lappend out [lindex $e 0]
+    }
+  }
+  return $out
+}
+set am_tail_want {capture regenerate rawbar_sync log_action}
+# the third term is the anti-vacuity one: `am8` really IS the already-loaded
+# leg, i.e. the registry did not grow (SEL314's measurement, restated here so
+# this check does not depend on reading SEL314 to know which path it is on).
+eqcheck SEL334-AN-d5-viewer-tail-identical-on-the-already-loaded-path \
+  [list [am_tail [lindex $am8 1]] [am_tail [lindex $am8 0]] \
+        [expr {[dict get [lindex $am8 1] before] eq [dict get [lindex $am8 1] after]}] \
+        [llength [dict get [lindex $am8 1] before]]] \
+  [list $am_tail_want $am_tail_want 1 1]
+eqcheck SEL335-AN-d5-viewer-tail-identical-on-the-second-raw-path \
+  [list [am_tail [lindex $am9 1]] [am_tail [lindex $am9 0]] \
+        [llength [dict get [lindex $am9 1] before]] \
+        [llength [dict get [lindex $am9 1] after]]] \
+  [list $am_tail_want $am_tail_want 1 2]
+
+# --- D6: A `~/`-SPELLED PATH NOW LOADS, WHERE THE PRE-ITEM BODY REFUSED IT.
+#     THE FIFTH DIVERGENCE, found in the fixer round and the only one that moves
+#     rc AND the sentence together -- D1-D4 all keep rc 1 and an empty sentence
+#     list. `file isfile ~/x.raw` is 1 (Tcl expands `~`), so arm 3 passes in BOTH
+#     bodies; then the PRE body handed the tilde straight to `xschem raw read`,
+#     whose `extra_rawfile()` only runs Tcl `subst` and has never expanded `~`
+#     (measured: `raw_read(): failed to open file ~/... for reading`), so PRE
+#     landed in ARM 5. The door normalises first (`results::_engine_spelling`,
+#     src/results.tcl:475-486) and `raw select` expands `^~/` itself as of item
+#     3's fixer round (src/save.c:2408-2416) -- two independent expanders -- so
+#     POST loads. RULED ACCEPTABLE as R501c divergence 5: it is a correctness
+#     gain, and `wviewer::rawbar_commit` passes the combobox text verbatim, so
+#     a user typing `~/sim/foo.raw` and pressing Return reaches it.
+#
+#     ⚠ NOTHING IS WRITTEN UNDER $HOME BY THIS BLOCK. The fixture is the scratch
+#     `an.raw` that already exists, merely RE-SPELLED through `~` because the
+#     repo happens to live under $HOME; no file is created there. The guard is
+#     what makes that honest -- a tree outside $HOME cannot spell this path at
+#     all, and creating one under $HOME to force it would be exactly the class
+#     of damage CREW_BRIEF.md section 3 is about.
+set an7abs  [file normalize $tmp/an.raw]
+set an7home $::env(HOME)/
+if {[string first $an7home $an7abs] == 0} {
+  set an7t "~/[string range $an7abs [string length $an7home] end]"
+  set an7p [am_run PRE  $am_tok $an7t 1 {}]
+  set an7q [am_run POST $am_tok $an7t 1 {}]
+  # the third term is the anti-vacuity one: `file isfile` says yes to the tilde
+  # in both bodies, so PRE's refusal is the ENGINE's and not arm 3's.
+  eqcheck SEL337-AN-d6-pre-refused-a-tilde-path \
+    [list [dict get $an7p rc] [llength [dict get $an7p after]] [dict get $an7p mru] \
+          [dict get $an7p stat] [file isfile $an7t]] \
+    [list 0 0 {} {{Location: could not read 'an.raw'}} 1]
+  eqcheck SEL338-AN-d6-post-loads-a-tilde-path \
+    [list [dict get $an7q rc] [llength [dict get $an7q after]] [dict get $an7q mru] \
+          [dict get $an7q stat] [dict get $an7q cur]] \
+    [list 1 1 [::list $an7abs] {} $an7abs]
+}
+
+# --- R501a: THE SENTENCE IS NOT EMITTED TWICE. `host none` makes
+#     results::select compose its sentence into `msg` and emit NOTHING, so the
+#     sidebar sees exactly one string and it is the Location bar's. Driven
+#     positively as well: the same select WITH a token and NO `host` does emit,
+#     so the suppression is the option and not an accident of the harness.
+rename wviewer::browser_status {}
+proc wviewer::browser_status {token msg} { lappend ::an_e $msg ; return 1 }
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::an_e {}
+pcall results::select $tmp/an.raw {} [list token $am_tok host none]
+set an6a $::an_e
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::an_e {}
+pcall results::select $tmp/an.raw {} [list token $am_tok]
+set an6b $::an_e
+rename wviewer::browser_status {}
+proc wviewer::browser_status {token msg} {
+  lappend ::am_stat $msg ; lappend ::am_trace status ; return 1
+}
+# The FOURTH term is the POSITIVE one and it is what keeps this check out of
+# the vacuous band: the first three are true of item 4's proc on its own, so
+# they were green before this item existed. `host none` reaching the door from
+# HERE is the part item 5 added -- and the pattern matches the LIST
+# CONSTRUCTION, not the two words: a first version grepped for `host none` and
+# was satisfied by the comment three lines above the call, so the sabotage that
+# removed the option left it green.
+eqcheck SEL331-AN-host-none-suppresses-the-doors-own-sentence \
+  [list $an6a [llength $an6b] [string match {Selected an.raw*} [lindex $an6b 0]] \
+        [regexp {::list token \$token host none} [info body wviewer::rawbar_load]]] {{} 1 1 1}
+
+# --- T-J's BORROW HALF, RULED (R501b) AND PINNED BY GREP. `switch_ctx` is a
+#     MOVE, not an `enter_ctx` borrow TICKET: the ticket idiom is not in this
+#     path at all, and R302e put none into `results::select` either. So the
+#     refusal T-J is about cannot arise here, and SEL319 is the reason it could
+#     not be misreported if it did.
+#     The FOURTH term is the positive one: the first three were already true of
+#     the pre-item body, and the ruling is about the path AS RE-EXPRESSED.
+eqcheck SEL332-AN-tj-no-borrow-ticket-in-this-path \
+  [list [regexp {enter_ctx|leave_ctx} [info body wviewer::rawbar_load]] \
+        [regexp {switch_ctx} [info body wviewer::rawbar_load]] \
+        [regexp {enter_ctx|leave_ctx} [info body results::select]] \
+        [regexp {results::select} [info body wviewer::rawbar_load]]] {0 1 0 1}
+
+# --- restore every shim, and prove it BY BODY.
+rename wviewer::rawbar_load_PRE {}
+foreach am_p $am_leaves {
+  rename wviewer::$am_p {}
+  rename am_orig_$am_p wviewer::$am_p
+}
+rename write_recent_file {}
+rename am_orig_write_recent_file write_recent_file
+set ::wviewer::rawhist $am_hist_old
+if {$am_urf_had} { set ::update_recent_files $am_urf_old } else { unset ::update_recent_files }
+dict unset ::wviewer::windows $am_tok
+set am_restored {}
+foreach am_p $am_leaves {
+  if {[info body wviewer::$am_p] ne [dict get $am_bodies $am_p]} { lappend am_restored $am_p }
+}
+if {[info body write_recent_file] ne $am_wrf_body} { lappend am_restored write_recent_file }
+eqcheck SEL333-AN-every-shim-restored-by-body \
+  [list $am_restored [info procs ::wviewer::rawbar_load_PRE] \
+        [dict exists $::wviewer::windows $am_tok] \
+        [expr {$::wviewer::rawhist eq $am_hist_old}]] {{} {} 0 1}
+
 xschem raw clear
 catch {test_scratch_drop $tmp}
 puts "----"

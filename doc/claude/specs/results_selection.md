@@ -1016,11 +1016,183 @@ additive read with **no** clear (F7), `regenerate`, `browser_refresh`,
 `rawhist_push`, `rawbar_sync`, `log_action`, and every refusal returning 0 with
 nothing thrown. (Three of its five refusal arms write a one-line sidebar status;
 the unknown-token arm and the failed-`switch_ctx` arm return silently — the
-re-expression must not quietly change which.) The re-expression must also state
+re-expression must not quietly change which. **Delivered 2026-08-19; §7.1's
+R501a/R501b/R501c are the rulings it took, including the five measured
+divergences it did not pretend it had avoided — the fifth was found in the
+fixer round, not the implementation round.**) The re-expression must also state
 which steps move into `results::select` and which stay in `rawbar_load`:
 `capture_live_view_state` and `regenerate` are viewer concerns and stay. It is re-expressed on
 `results::select` so the status sentence and the MRU push happen in one place —
 **its user-visible behaviour must not change**, and §12 T-C pins that.
+
+### 7.1 RULINGS — the re-expression's exact shape (item 5, 2026-08-19)
+
+**Three** crew rulings, all measured against the **frozen pre-item body**, which
+lives on in `tests/headless/test_results_select.tcl` group AM as
+`wviewer::rawbar_load_PRE` so T-C stays a *comparison* rather than a claim. They
+are R501a, R501b and R501c. None re-opens `DECISIONS.md`.
+
+**R501a — T-C OUTRANKS THE SENTENCE HALF OF R501's RATIONALE, so `rawbar_load`
+passes `host none` and keeps its own three strings.** R501's stated payload is
+that "the status sentence and the MRU push happen in one place". The MRU push
+did move — it is `results::select`'s now, and the delta is provably identical
+because `wviewer::rawhist_add` (`src/wave_viewer.tcl:8208`) `file normalize`s
+its argument, so pushing the caller's spelling and pushing the engine's store
+the same string (SEL312). **The sentences did not, and could not.** T-C's own
+wording freezes "same status string", and the two texts are not the same text:
+the door says *"Could not select notraw.txt — nothing was loaded and the
+previous result is unchanged."* where the Location bar says *"Location: could
+not read 'notraw.txt'"*. Worse, `results::select` emits on **success** too, and
+`rawbar_load` never has — so routing the emission through the door would put a
+new sentence into the sidebar on every successful load. **The channel is
+unified either way** (both routes end in `wviewer::browser_status`); it is the
+TEXT that T-C freezes, and R802a's `host none` is the option item 4 built for
+exactly this caller. Pinned by SEL331, whose fourth term greps the *list
+construction* rather than the two words — a first version grepped `host none`
+and was satisfied by the comment three lines above the call.
+
+> **The unification the payload wanted is therefore HALF DONE, on purpose, and
+> the other half needs a behaviour change nobody has asked for.** If a later
+> item wants one sentence, it must restate SEL299/SEL301/SEL306/SEL308 and say
+> in its receipt that the Location bar's wording changed.
+
+**R501b — THE TWO SILENT ARMS STAY SILENT, AND THAT SATISFIES T-J RATHER THAN
+OVERRIDING IT.** §12's T-J was split in the item-4 fixer round and the **borrow
+half** was assigned here, because R302e left `switch_ctx` in this proc. Measured
+on the pre-item body, the five arms are:
+
+| arm | condition | sentence | rc |
+|---|---|---|---|
+| 1 | the token names no viewer window | **none** | 0 |
+| 2 | nothing typed | `Location: type the path of a raw file` | 0 |
+| 3 | `![file isfile $path]` | `Location: no such file '<tail>'` | 0 |
+| 4 | **`![wviewer::switch_ctx $token]`** | **none** | 0 |
+| 5 | the engine refused the file | `Location: could not read '<tail>'` | 0 |
+
+**That table is a table of ARMS, and it is unchanged. It is not a table of
+inputs, and ONE INPUT CLASS CHANGED ARM** — a `~/`-spelled path naming a
+readable raw used to land in arm 5 and now succeeds. That is R501c divergence 5
+below, and it is the only place in this item where the *sentence ledger* moves
+for a real user input. The five arms still say exactly what they said (SEL317 /
+SEL318 measure that against the frozen body); what moved is which arm a tilde
+reaches.
+
+The ruling has two parts.
+
+*First, T-J is satisfied and it is not close.* T-J names a refused **borrow
+ticket** — `wviewer::enter_ctx {token ?borrow?}` → `{ok prev ?sem?}` — and F6's
+defect is a refusal **that reads like an answer**: `enter_ctx`'s own comment
+says it, *"the refusal was invisible because a refused loan answers `{}` exactly
+like an empty registry"*. `rawbar_load` takes **no ticket at all**: `switch_ctx`
+is a MOVE, and the idiom is not in this path (SEL332 greps it, both here and in
+`results::select`). And it has **no answer a refusal could be mistaken for** —
+it returns 0 on every refusal and 1 on every success, nothing else, ever
+(SEL319 asserts the whole set is exactly `{0 1}`). There is no "no results" for
+a refusal to be dressed as.
+
+*Second, what remains is an R801 gap, and it is filed rather than fixed.* Arm
+1's silence is **forced** — no window means no sidebar, and `browser_status`
+looks the token up in the same dict that just failed. **Arm 4's is not**: the
+window is there, `browser_status` would deliver, and the sentence simply was
+never written, so a user who types a path while `ase::wait`'s `vwait` holds the
+semaphore gets nothing at all. That is issue **0515**, OPEN, with the one-line
+fix and the four checks that must be restated with it written into the issue.
+It is not fixed here because T-C's text names the silence — *"the same two arms
+staying silent"* — so repairing it inside this item would be the one change the
+item forbids.
+
+**R501c — FIVE DIVERGENCES ARE REAL, ARE RULED ACCEPTABLE, AND ARE EACH
+MEASURED.** (Four were measured in the implementation round; the fifth in the
+fixer round, by a reviewer's differential harness over fourteen spellings of the
+Location-bar path.) Coming through R303's single door brings R302a's spelling rule,
+R302d's side effects and R301d/R301f's verb semantics with it. Every one is a
+*correctness gain*, which is what the ruling rests on, so each is asserted
+against the frozen body rather than asserted about:
+
+1. **One spelling per run (R302a).** `<d>/sub/../an.raw` used to add a SECOND
+   slot beside `<d>/an.raw` — the engine dedupes by `strcmp` on the stored
+   spelling — and **F7 makes that duplicate permanent**. It now lands on the
+   slot already there. SEL320 (pre: 1 → 2 slots) / SEL321 (post: 1 → 1).
+2. **The case-mode cache (R302d).** The pre-item body changed the current
+   database and left the cached readout of the *old* one standing. SEL322.
+3. **A one-point OP or DC publishes (R301d).** Measured: select `op.raw`, then
+   Location-bar-load a *different* op raw, and the pre-item body left
+   `ngspice::get_voltage o1` answering the FIRST file's `1.5` — the schematic
+   annotated from one database while the viewer drew another. That is the same
+   staleness `browser_refresh $token 1` was added to this proc to stop.
+   SEL323/SEL324.
+4. **A typeless re-load keeps the analysis you are on (R301f).** One file
+   holding a dc and a tran is two slots and ONE RUN (U11); the old append-read
+   deduped on the FILENAME ALONE and landed on whichever slot came first, so
+   re-typing the path you were already looking at moved you from `tran` to `dc`.
+   SEL325/SEL326.
+5. **A LEADING `~/` NOW RESOLVES, WHERE THE PRE-ITEM BODY REFUSED IT.**
+   `file isfile ~/x.raw` is 1 — Tcl expands `~` — so arm 3 passes in **both**
+   bodies. The pre-item body then handed the tilde straight to
+   `xschem raw read`, whose `extra_rawfile()` runs only a Tcl `subst` and has
+   never expanded `~` (`src/save.c:2020`; measured, the engine prints
+   `raw_read(): failed to open file ~/... for reading`), so every tilde spelling
+   died in **arm 5** with `Location: could not read '<tail>'`. The door
+   normalises before the verb (`results::_engine_spelling`,
+   `src/results.tcl:475-486`) **and** `xschem raw select` expands `^~/` itself
+   as of item 3's fixer round (`src/save.c:2408-2416`) — two independent
+   expanders — so it now loads. SEL337 (pre: rc 0, no slot, the arm-5 sentence)
+   / SEL338 (post: rc 1, one slot, the MRU pushed, silent).
+
+   ⚠ **THIS IS THE ONLY DIVERGENCE THAT MOVES rc AND THE SENTENCE.** D1-D4 all
+   keep rc 1 and an empty sentence list; this one flips 0 → 1, adds a registry
+   slot and an MRU entry, and deletes a sidebar sentence — i.e. all four of the
+   things T-C freezes, in one input. It is **ruled acceptable anyway**, on the
+   same ground as the other four and more strongly: refusing `~/sim/foo.raw` was
+   never a behaviour anyone wanted, `wviewer::rawbar_commit` passes the combobox
+   text to `rawbar_load` verbatim so a user typing it and pressing Return hits
+   this, and R302a's whole point is that the door decides one spelling per run.
+   The honest statement is that T-C held for thirteen of the fourteen input
+   classes a reviewer drove, and this is the fourteenth.
+
+   ⚠ **AND IT IS BELT-AND-BRACES, WHICH THE SABOTAGE HAD TO PROVE.** Removing
+   *either* expander alone leaves SEL338 green — the fixer round measured both:
+   dropping `_engine_spelling`'s `file normalize` reds SEL336/SEL321 and six
+   others but not SEL338, and swapping the door's verb back to `raw read` reds
+   ten checks but not SEL338. Only removing **both** reds it. A later item that
+   takes one of the two expanders out must therefore not read a green SEL338 as
+   permission.
+
+And **one ordering moved**: `browser_refresh` is one of R302d's side effects, so
+it now runs BEFORE `regenerate` instead of after it (SEL327/SEL328). What did
+**not** move: `capture_live_view_state` is still the first thing after the
+context move (SEL329), and `rawbar_sync` and `log_action` still get **the path
+the user typed**, not the engine's spelling — the Location bar echoes the
+gesture and the replay log replays the gesture, not its resolution (SEL330,
+**and SEL336**).
+
+> **SEL330 ALONE WAS NOT ENOUGH, AND THE FIXER ROUND MEASURED WHY.** It reads
+> `am7`, whose typed path *is* the engine's spelling, so a regression handing the
+> widget tail `[dict get $res path]` passed all 335 checks in
+> `test_results_select` and all 192 in `test_wave_sigbrowser_i1315` while
+> silently rewriting the Location-bar text and the replay log under the user.
+> **SEL336** re-asserts it on D1's `an1q` fixture (`<d>/amsub/../an.raw`), the
+> one place in the suite where the two spellings provably differ.
+>
+> **And the four calls R501 keeps in the viewer must be present on EVERY success
+> path, not only on a fresh read.** SEL327-SEL330 all read `am7`, the `how read`
+> leg; a sabotage making the redraw conditional
+> (`if {$how eq {read}} { wviewer::regenerate $token }`) survived all 1008
+> checks in the four suites that touch `rawbar_load` while leaving the viewer
+> drawing the *old* database after the engine had moved — exactly the case R501
+> says must not move. **SEL334** (the already-loaded `how switch` leg) and
+> **SEL335** (the second-raw leg) compare the viewer tail
+> `{capture regenerate rawbar_sync log_action}` PRE vs POST as a subsequence,
+> with its order pinned.
+
+**What stayed in `rawbar_load`, and why.** R501 names `capture_live_view_state`
+and `regenerate` by hand; the full list is the `file isfile` guard (it is what
+makes arm 3's sentence about a *typo in an entry box* rather than about a stored
+selection that went missing), `switch_ctx` (R302e), those two viewer concerns,
+`rawbar_sync` and `log_action` (widget state and the replay log, neither of
+which is a selection), and the three sentences (R501a).
+
+---
 
 **R502 — the Calculator's `Browse` stays disabled. RULED §17 decision 9,
 reversing this rule's original text.** Browsing to a result is
@@ -1353,11 +1525,23 @@ returns nothing, by design and not by omission. The halves are therefore:
   reported as refused, **naming the database**, and never as "no results";
   *both* refusal arms emit, and the resolver's arm is a different route out of
   the proc from the engine's. SEL230, SEL231, SEL279 and SEL288.
-- **the refused-BORROW half — items 5 and 10, owed.** R302e left `switch_ctx`
-  in `wviewer::rawbar_load` (R501), so item 5 owns the borrow on the viewer
-  side; the Calculator's cross-context read (R502, T-I) owns it on the other.
+- **the refused-BORROW half — items 5 and 10.** R302e left `switch_ctx` in
+  `wviewer::rawbar_load` (R501), so item 5 owns the borrow on the viewer side;
+  the Calculator's cross-context read (R502, T-I) owns it on the other.
   Whichever of them takes the ticket must drive a **refused** one and assert the
   sentence names the database rather than reporting an empty result list (F6).
+  - **Item 5's side is RULED AND DISCHARGED, 2026-08-19 — see R501b (§7.1).**
+    `rawbar_load` takes **no ticket**: `switch_ctx` is a move and the
+    `enter_ctx`/`leave_ctx` idiom is in neither this proc nor `results::select`
+    (SEL332, both). Its refused switch is driven — through a shimmed
+    `switch_ctx`, which is the only way to reach it deterministically — and it
+    returns **0**, the same value every other refusal returns, with **1** the
+    only success value (SEL303/SEL304, SEL319). F6's defect is a refusal that
+    reads like an answer; this path has no answer for one to be mistaken for.
+    The remaining complaint is that arm 4 writes no *sentence*, which is an
+    **R801** gap and not a T-J one: filed as issue **0515**, left unfixed
+    because T-C's own wording freezes the silence.
+  - **Item 10's side is still owed.**
 
 Neither item may mark T-J complete on the strength of item 4's four checks.
 

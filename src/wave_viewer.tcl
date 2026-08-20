@@ -8374,6 +8374,72 @@ proc wviewer::rawbar_sync {token {path {}}} {
 # refusal — and every refusal leaves the previous raw AND the tree exactly as
 # they were.
 #
+# ============================================================================
+# RE-EXPRESSED ON `results::select` — results batch item 5, spec section 7 R501.
+# doc/claude/specs/results_selection.md. THE USER-VISIBLE BEHAVIOUR DID NOT
+# MOVE, and T-C (spec section 12) is the before/after comparison that pins it:
+# same rc, same registry delta, same MRU delta, same status strings, and the
+# same two arms staying silent. Group AM of tests/headless/test_results_select.tcl
+# runs the PRE body and this one side by side in one process and diffs the
+# observable tuple.
+#
+# WHAT MOVED INTO results::select (R303's one door): the resolver, one spelling
+# per run (R302a — `file normalize` plus the ask-the-registry half), the
+# `xschem raw select` verb itself, the MRU push, the case-mode cache
+# follow-ups, the browser refresh, and the persistence seam item 6 fills.
+#
+# WHAT STAYED HERE, and why (R501 names the first two by hand):
+#   - the `file isfile` guard — it is what makes arm 3's sentence a Location-bar
+#     sentence about a Location-bar typo, before any engine is asked anything;
+#   - `switch_ctx` — R302e rules that results::select does NOT switch context:
+#     the registry is per-Xschem_ctx (tabs do not share one) so WHICH context is
+#     a caller decision, and a bracket inside that proc would put an
+#     enter/leave pair around the engine call, the window L7 forbids anything
+#     to redraw in. A MOVE, not a 0173 loan — `regenerate` goes through
+#     `with_edit`, which deliberately does not restore the context;
+#   - `capture_live_view_state` and `regenerate` — viewer concerns, R501;
+#   - `rawbar_sync` and `log_action` — the Location bar's own widget state and
+#     the replay log, neither of which is a selection;
+#   - THE THREE SENTENCES. R501a (ruled by item 5, spec section 7): T-C outranks
+#     the sentence half of R501's rationale, so `host none` suppresses
+#     results::select's own emission and the `Location: ...` strings stay here
+#     verbatim. The CHANNEL is unified either way — both routes end in
+#     `wviewer::browser_status` — it is the TEXT that T-C freezes.
+#
+# THE FIVE DIVERGENCES THAT ARE REAL, ruled as R501c and each pinned by a
+# check, because a re-expression that pretended it had none would be the lie
+# (four were found in the implementation round, the fifth in the fixer round):
+#   1. one spelling per run. `<d>/sub/../an.raw` used to ADD A SECOND SLOT
+#      beside `<d>/an.raw` (the engine dedupes by strcmp); it now lands on the
+#      slot that is already there.
+#   2. the case-mode cache is invalidated and the user's per-file override
+#      re-applied, which this proc never did — R302d owes them to every path
+#      that changes the current database.
+#   3. a one-point OP or DC now publishes (R301d). Measured on the PRE body:
+#      selecting op.raw and then Location-bar-loading a DIFFERENT op raw left
+#      `ngspice::get_voltage o1` answering the FIRST file's 1.5 — the schematic
+#      annotated from one database while the viewer drew another. That is the
+#      same staleness `browser_refresh $token 1` was added here to stop.
+#   4. re-typing the path of the file you are ALREADY looking at keeps you on
+#      the analysis you are on (R301f). One file holding a dc and a tran is two
+#      slots and one run (U11); the old append-read deduped on the FILENAME
+#      ALONE and landed on whichever slot came first, so a re-load from `tran`
+#      silently moved you to `dc`.
+#   5. A LEADING `~/` NOW RESOLVES. `file isfile ~/x.raw` is 1 (Tcl expands
+#      `~`), so arm 3 passed in both bodies; then the old append-read verb
+#      handed the tilde to extra_rawfile(), which runs only a Tcl `subst` and
+#      has never expanded `~` — so EVERY tilde spelling died in arm 5. The door
+#      `file normalize`s first (results::_engine_spelling) and `raw select`
+#      regsubs `^~/` itself (save.c) — two independent expanders — so it loads.
+#      ⚠ THE ONLY ONE OF THE FIVE THAT MOVES rc AND THE SENTENCE TOGETHER:
+#      0 -> 1, a slot and an MRU entry gained, an arm-5 sentence gone. Ruled
+#      acceptable anyway (R501c); rawbar_commit passes the combobox text
+#      verbatim, so `~/sim/foo.raw` + Return is a real user gesture.
+# And the one ordering that moved: `browser_refresh` now runs BEFORE
+# `regenerate` rather than after it, because it is one of R302d's side effects.
+# Group AN of tests/headless/test_results_select.tcl measures all of them
+# against the frozen PRE body, SEL320-SEL338.
+#
 # ⚠ IT DOES NOT `raw clear` FIRST, and that is a DELIBERATE DIVERGENCE from
 # `attach_raw` (:2529), whose first act is `catch {xschem raw clear}`. MEASURED:
 # with A current, `xschem raw read <garbage>` returns 0 and leaves both
@@ -8385,22 +8451,37 @@ proc wviewer::rawbar_sync {token {path {}}} {
 # ⚠ THE `browser_refresh $token 1` IS NOT OPTIONAL — item 9's declared limit D6
 # says the inventory is a SNAPSHOT taken when the sidebar is SHOWN, and
 # `browser_show`'s pack branch was its ONLY caller. Without this line the user
-# gets the new raw's waveforms under the OLD raw's signal list. It is placed
-# after the successful read and inside it, so a failed read cannot replace a
-# good tree with an empty one (item 12's improve-or-restore guarantee, reached
-# here by never starting the reload at all).
+# gets the new raw's waveforms under the OLD raw's signal list. IT NOW LIVES IN
+# `results::select`, which is why `token` is passed: R302d rules the side
+# effects follow the ENGINE, so a refused select still runs none of them and a
+# failed read still cannot replace a good tree with an empty one.
 proc wviewer::rawbar_load {token path} {
   variable windows
+  # ARM 1 of 5 — UNKNOWN TOKEN, AND IT IS SILENT BECAUSE THERE IS NO CHANNEL.
+  # No window means no sidebar to write into: `browser_status` looks the token
+  # up in this same dict and answers 0. The silence is forced by the absence of
+  # a channel, not chosen over one (R501b).
   if {![dict exists $windows $token]} { return 0 }
   set path [string trim $path]
+  # ARM 2 of 5 — nothing typed.
   if {$path eq {}} {
     wviewer::browser_status $token {Location: type the path of a raw file}
     return 0
   }
+  # ARM 3 of 5 — no such file. KEPT HERE, ahead of the door: results::resolve
+  # answers `invalid` for the same path, but its sentence is about a stored
+  # selection that has gone missing, and this one is about a typo in an entry
+  # box the user is looking at.
   if {![file isfile $path]} {
     wviewer::browser_status $token "Location: no such file '[file tail $path]'"
     return 0
   }
+  # ARM 4 of 5 — A REFUSED CONTEXT SWITCH, AND IT IS SILENT. R501b rules the
+  # silence stays: T-C freezes it, and T-J/F6's defect — a refusal dressed up as
+  # an empty answer — cannot arise here, because 0 is this proc's ONLY refusal
+  # value and no caller reads it as "that file holds no results". The missing
+  # sentence is an R801 gap, filed as issue 0515 and deliberately not fixed.
+  #
   # attach_raw's precedent: a MOVE, not a 0173 loan. `regenerate` goes through
   # `with_edit`, which deliberately does not restore the context.
   if {![wviewer::switch_ctx $token]} { return 0 }
@@ -8409,15 +8490,28 @@ proc wviewer::rawbar_load {token path} {
   # the regenerate below owes the fold, and skip_ranges is what keeps the new
   # raw autozooming instead of being drawn in the outgoing raw's window.
   wviewer::capture_live_view_state $token
-  set rc 0
-  catch {set rc [xschem raw read $path]}
-  if {$rc != 1} {
+  # THE DOOR (R303). `host none` — R501a: the sentence stays this proc's, so
+  # results::select composes one into the returned `msg` and emits nothing.
+  # No sim_type: the Location bar has never had one, and R301b made the verb's
+  # type optional for exactly the callers — the MRU, the persistence slot —
+  # that store a path and nothing else.
+  # The `catch` mirrors the one that used to wrap the old append-read verb:
+  # results::select is documented never to throw (R801), and if it ever did, a
+  # Location-bar typo must still not pop bgerror. (The old verb's NAME is
+  # deliberately not spelled anywhere in this proc, comments included —
+  # SEL295 greps for it as the anti-vacuity gate of the whole T-C group.)
+  if {[catch {results::select $path {} [::list token $token host none]} res]} { set res {} }
+  if {[catch {dict get $res how} how]} { set how refused }
+  # ARM 5 of 5 — the engine refused. F7/T-D: nothing moved, and item 3's
+  # `raw_select_undo()` has already put the registry, the current database and
+  # the switch-back cursor back where they were.
+  if {$how eq {refused}} {
     wviewer::browser_status $token "Location: could not read '[file tail $path]'"
     return 0
   }
   wviewer::regenerate $token
-  catch {wviewer::browser_refresh $token 1}
-  wviewer::rawhist_push $path
+  # $path, NOT the engine's spelling: the Location bar echoes what the user
+  # typed and the replay log replays the gesture, not its resolution (R501c).
   wviewer::rawbar_sync $token $path
   wviewer::log_action [list wviewer::rawbar_load $token $path]
   return 1

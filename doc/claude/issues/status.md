@@ -45,7 +45,7 @@
 ## Numbering rule for `fluid-editing` — **0500+ only** (ruled 2026-08-19)
 
 **Every new issue filed on this branch takes the next free number at or above
-0500.** Highest in use here is **0514**, so the next one is **0515**.
+0500.** Highest in use here is **0515**, so the next one is **0516**.
 
 Why, in one line each:
 

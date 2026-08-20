@@ -446,23 +446,59 @@ check {BR05 rawbar_load folds the live view state BEFORE it regenerates} \
 check {BR05 rawbar_load reads ADDITIVELY: it never clears the current raw} \
   [regexp -all {raw clear} $br_bar] 0
 
+# ⚠ BR06 AND BR07 ARE RESTATED, NOT DELETED — results batch item 5, 2026-08-19.
+# THE RULE DID NOT CHANGE; THE PLACE IT IS ENFORCED DID. `wviewer::rawbar_load`
+# was re-expressed on `results::select` (spec R501/R303: one door, so the MRU
+# push and the status sentence stop being written twice), so the two calls these
+# legs used to find in `rawbar_load` now live in `src/results.tcl` and are
+# ordered against `results::select`'s OWN refusal return rather than against
+# `if {$rc != 1}`. Each leg therefore asserts BOTH halves: gone from the viewer
+# proc, AND present-and-correctly-placed in the door. Deleting either half would
+# re-open exactly the hole the original leg was written to close, and asserting
+# only "gone" would be satisfied by dropping the call altogether.
+# Behaviour is unchanged and is pinned by T-C: BR44/BR45/BR46 here, and
+# SEL295-SEL333 of tests/headless/test_results_select.tcl, which run the frozen
+# pre-item body beside the shipped one and diff the observable tuple.
+set br_rsrc {}
+if {![catch {open [file join $repo src results.tcl] r} br_fp]} {
+  set br_rsrc [read $br_fp] ; close $br_fp
+}
+set br_sel [wvproc_body $br_rsrc results::select]
+check {BR06 results::select's body was found (else every leg below is vacuous)} \
+  [expr {$br_sel ne {}}] 1
+
 # THE HISTORY IS ONLY TOUCHED ON SUCCESS. A path that could not be read is not
-# a raw the user opened, and must not take a slot in a twenty-deep list.
-set br_rci [string first {if {$rc != 1}} $br_bar]
-set br_hpi [string first {wviewer::rawhist_push} $br_bar]
+# a raw the user opened, and must not take a slot in a twenty-deep list. The
+# bail-out is now `results::select`'s `if {$rc == 0}` arm, whose F7/T-D contract
+# is that NOTHING moved -- so nothing is owed to the history either.
+# ⚠ THE ARM'S OPENING BRACE IS NOT PART OF THIS PATTERN, and it may not be.
+# Every word of this file lives inside one big catch block, and Tcl counts
+# braces inside a braced word REGARDLESS OF QUOTING -- so a pattern that ends
+# with an unmatched open brace makes the WHOLE script unparseable, with
+# "missing close-brace: possible unbalanced brace in comment" pointing at the
+# catch line hundreds of lines above. Measured, twice: once writing the pattern
+# and once writing the comment that explained it.
+set br_rci [string first "if {\$rc == 0}" $br_sel]
+set br_hpi [string first {wviewer::rawhist_push} $br_sel]
 check {BR06 the history push sits AFTER the failed-read bail-out} \
-  [expr {$br_rci >= 0 && $br_hpi >= 0 && $br_rci < $br_hpi}] 1
+  [list [regexp -all {wviewer::rawhist_push} $br_bar] \
+        [expr {$br_rci >= 0 && $br_hpi >= 0 && $br_rci < $br_hpi}]] [list 0 1]
 check {BR06 ...and after the read itself} \
-  [expr {[string first {xschem raw read} $br_bar] < $br_hpi}] 1
+  [list [expr {[string first {xschem raw select} $br_sel] >= 0}] \
+        [expr {[string first {xschem raw select} $br_sel] < $br_hpi}]] [list 1 1]
 
 # ITEM 9's DECLARED LIMIT D6: the inventory is a SNAPSHOT taken when the sidebar
 # is SHOWN, and browser_show's pack branch was its ONLY caller. A Location-bar
 # load that omits this leaves the NEW raw's waveforms under the OLD raw's signal
-# list. BR44 asserts the behaviour; this pins the call.
+# list. BR44 asserts the behaviour; these legs pin the call. `rawbar_load` no
+# longer makes it, so what it owes instead is the `token` -- without that,
+# results::select has no window to refresh and R302d's follow-ups all self-skip.
 check {BR07 rawbar_load refreshes the browser inventory after a good read} \
-  [regexp -all {wviewer::browser_refresh \$token 1} $br_bar] 1
+  [list [regexp -all {wviewer::browser_refresh \$token 1} $br_bar] \
+        [regexp -all {wviewer::browser_refresh \$token 1} $br_sel] \
+        [regexp -all {::list token \$token host none} $br_bar]] [list 0 1 1]
 check {BR07 ...and it is inside the success path, after the bail-out} \
-  [expr {$br_rci < [string first {wviewer::browser_refresh} $br_bar]}] 1
+  [expr {$br_rci >= 0 && $br_rci < [string first {wviewer::browser_refresh} $br_sel]}] 1
 
 # THE LONG-PATH ANSWER, pinned as the two mechanisms it really is.
 check {BR08 the combobox is fixed-width and right-justified} \

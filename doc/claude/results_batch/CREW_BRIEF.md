@@ -78,6 +78,18 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
   else that writes under `$::USER_CONF_DIR`: repoint `$::USER_CONF_DIR` at
   `test_scratch`, or shim the writer. "No droppings in `$HOME`" is a claim that
   must be **checked** (`ls -la ~/.xschem`), never assumed from a green suite.
+- **`::update_recent_files` UNGATES FOUR WRITERS, NOT ONE — added in the item-5
+  round, because naming only `wviewer::rawhist_write` above was not enough and a
+  SECOND `$HOME` file was destroyed.** `update_recent_file`
+  (`src/xschem.tcl:3869`) fires on every `xschem load`, so item 5's first draft
+  of group AM — which raised the flag across an `am_run` that does a `loadcell`
+  — pushed ten scratch `cellA.sch` paths into `~/.xschem/recent_files` and
+  evicted the user's ten real entries from a list capped at 10. Two rules follow
+  and both are binding: **shim `write_recent_file` as well as
+  `wviewer::rawhist_write`**, and **raise the flag only around the single call
+  under test**, never across a `loadcell` / `xschem load`. That file HAS a
+  `.bak`, so the entries as of the backup were recoverable and the repair was
+  applied in the item-5 fixer round; `raw_history` had none and is still gone.
 
 ## 4. Landmines — measured while writing the spec, do not rediscover
 
@@ -173,7 +185,7 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
 ## 7. Issue numbering — READ THIS BEFORE FILING ONE
 
 **New issues on `fluid-editing` take the next free number at or above 0500.**
-Highest in use is **0514** (item 4 filed it). Derive it, never guess:
+Highest in use is **0515** (item 5 filed it). Derive it, never guess:
 
 ```sh
 ls doc/claude/issues/ | grep -E '^0[0-9]{3}-' | cut -c1-4 | sort -n | tail -1
