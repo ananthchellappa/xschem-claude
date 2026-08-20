@@ -16684,8 +16684,204 @@ proc select_raw {{parent {.}}} {
   return $filename
 }
 
+# ---------------------------------------------------------------------------
+# THE WAVES MENU IS **GATED** ON `cadence_compat`, NOT REPAIRED.
+# User rulings U4 / U12 (doc/claude/results_batch/DECISIONS.md), spec
+# doc/claude/specs/results_selection.md R505 + section 17.2 + section 7.2,
+# invariant T-L (section 12), issue
+# doc/claude/issues/0508-waves-menu-chooser-discards-the-whole-registry-and-no-test-drives-it.md
+#
+# WHY GATED RATHER THAN FIXED. The Waves menu is LEGACY UPSTREAM xschem, not
+# ours: `proc waves` (above in this file) arrives in commit `5e8df730`,
+# "populating xschem git repo" -- the repo's FIRST commit -- and the menubar it
+# hangs on came from `b23b162f`. The direction is away from it; repairing it in
+# place would be adopting it.
+#
+# WHAT IS BROKEN, AND STAYS BROKEN OUTSIDE CADENCE MODE -- issue 0508.
+# `load_raw` below calls `xschem raw_clear` and THEN `xschem raw_read`, and
+# `raw_read` ITSELF clears the whole registry (src/scheduler.c:10850-10889, the
+# `extra_rawfile(3, NULL, NULL, ...)` at :10865, before the read at :10884) --
+# so the wipe happens twice. Those numbers were RE-DERIVED 2026-08-20: items 1
+# and 3 of this batch moved scheduler.c, and every doc citing `:10776` for this
+# arm (spec L2, CREW_BRIEF, issue 0508) was stale by ~74 lines.
+# That is landmine L2: `xschem raw read` (SPACE) APPENDS a database, `xschem
+# raw_read` (UNDERSCORE) CLEARS EVERY loaded database and then reads. One
+# underscore, opposite semantics. So the eight loading entries of the Waves
+# cascade silently discard EVERY other loaded result -- the second database a
+# graph was comparing against, or the VCD half of a mixed-signal cosim session
+# -- with no prompt and no message. `Op Annotate` does not route through
+# `load_raw` at all: it calls `select_raw` itself and then `xschem annotate_op`,
+# whose registry effect is a TARGETED delete of a standing 1-point op/dc slot
+# plus an APPENDING read (src/scheduler.c:2410-2427), not a registry wipe. It is
+# blocked here for the other half of the reason: it adopts a result without
+# going through `results::select`.
+#
+# WARNING -- THIS GATE DOES NOT FIX 0508. `xschem raw_read` still clears the
+# whole registry, in C, unchanged; that is the repair user ruling U4 declined.
+# WITHOUT `cadence_compat` the Waves menu still reaches it and behaves EXACTLY
+# as it always has: a user outside Cadence mode may mess things up if they wish,
+# and 0508's registry-wiping behaviour is DOCUMENTED in that mode rather than
+# repaired.
+#
+# WHAT IS BLOCKED, UNDER `cadence_compat` ONLY: the EIGHT loading entries of the
+# Waves cascade (`Load first analysis found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`,
+# `Sp`, `Spectrum`), every one of which reaches `load_raw` through
+# `waves <type>`, AND `Op Annotate`.
+# WHAT KEEPS WORKING, IN BOTH MODES: `Clear` and `External viewer`. Neither
+# loads a result, and the `Clear` entry's `xschem raw_clear` is the SOLE
+# PERMITTED CALLER of that verb on this surface -- invariant T-L, pinned by
+# tests/headless/test_waves_gate.tcl group WA.
+#
+# R505a -- CREW RULING (item 8, 2026-08-20): THE GATE SITS IN `load_raw`, NOT IN
+#   EIGHT MENU-ENTRY BODIES. `load_raw` has exactly ONE caller (`waves`, above)
+#   and `waves`'s non-external branch is exactly `load_raw $type`, so gating here
+#   gates precisely the eight entries -- plus the two OTHER invocations of the
+#   same action, the toolbar `Waves` button (`toolbar_add Waves { waves }`) and
+#   the `-W` / `--waves` command line (src/xinit.c:3839, `tcleval("waves ...")`).
+#   Gating those two as well is DELIBERATE, not an accident of placement: they
+#   perform the identical destructive action, and section 17.2's whole point is
+#   that a Cadence-mode user "must not be able to reach a bad state". A gate a
+#   toolbar button walks around is not a gate. Eight copies of the guard in eight
+#   menu bodies were rejected: they drift, and a T-L that greps eight entry
+#   bodies is satisfied by editing one of them.
+# R505b -- CREW RULING: `Op Annotate` carries its OWN gate, because it is the one
+#   Waves entry that does not route through `load_raw`. Its menu body is LIFTED
+#   VERBATIM into `waves_op_annotate` below so the gate is a call and not a ninth
+#   copy -- and so the entry is drivable without a menubar. The lift keeps the
+#   body's global-scope semantics by declaring `global show_hidden_texts` (the
+#   menu body ran at global scope and set the global; a proc would otherwise set
+#   a local). The IDENTICAL body under `Simulation > Graphs > Annotate Operating
+#   Point into schematic` is NOT touched -- U12 names the Waves cascade, and that
+#   entry is recorded as a remaining door in spec section 18.
+# R505c -- CREW RULING: ONE SENTENCE, COMPOSED ONCE, in `waves_gate_msg`. It says
+#   WHY, NAMES `cadence_compat` twice (the setting to look for, and the way out),
+#   and points at `ASE-L > Results > Select...` -- which, since results batch item
+#   7, is a menu entry that actually exists (src/ase_window.tcl, `$top.mb.results
+#   add command -label "Select…"`), so the sentence is a direction and not a
+#   promise.
+# R505d -- CREW RULING: the CHANNEL is `ciw_echo` plus a modal `alert_` when
+#   there is a GUI, and the sentence is ALSO the proc's own to compose so a
+#   headless caller can read it. NOT `puts` (results.tcl R802's house rule), and
+#   not `results::_emit`: that proc's four hosts are viewer / ase / calc / none
+#   and the schematic editor's menubar is none of them -- an emitter that
+#   answered a menu click on the ASE-L session's channel would be worse than no
+#   channel at all. `ciw_echo` is safe headless (it no-ops without `.ciw.l.t`)
+#   and `alert_` is guarded on `has_x`, so `--nogui` reaches neither.
+#
+# --- item 8 FIXER ROUND, 2026-08-20. Three more rulings, each from a defect a
+#     reviewer REPRODUCED against the first draft of this gate.
+# R505e -- CREW RULING: the sentence takes TWO parts from the caller, an entry
+#   name and a REASON, because the first draft got both wrong in ways its own
+#   comments already contradicted. (a) The reason was one hard-coded clause,
+#   "it discards every other result already loaded", and `Op Annotate` was told
+#   it too -- while the block above states, and src/scheduler.c:2410-2427
+#   confirms, that `annotate_op` does a TARGETED delete plus an APPENDING read
+#   and wipes nothing. The one sentence a blocked user reads may not assert
+#   something this item measured to be false, so `Op Annotate` now carries its
+#   own reason: it adopts a result without coming through the door. (b) The
+#   entry name was "Loading a result from the Waves menu", but R505a puts the
+#   guard in `load_raw`, which is also reached from the toolbar `Waves` button
+#   and from `-W`/`--waves` -- so a user who pressed a toolbar button was told a
+#   MENU had blocked them. It is now surface-neutral. (c) The pointer named
+#   `ASE-L > Results > Select...` without saying that the menu it lives on only
+#   exists on an ASE-L session window (src/ase_window.tcl, "ASE-L ONLY", U5): a
+#   Cadence-mode user with no session open could not find it in the window they
+#   had just clicked in. The sentence now names the step that opens the door,
+#   `Tools > Launch ASE-L` (src/xschem.tcl, the Tools cascade).
+# R505f -- CREW RULING: the flag is read THE WAY C READS IT -- see the comment
+#   in `waves_gate_blocked` below. A `!= 1` test is the house convention here
+#   (`cadence_compat_sync` does the same), but this is the first place where the
+#   mismatch let a DESTRUCTIVE action escape a gate, so the convention is the
+#   bug at this call site.
+# R505g -- CREW RULING: the GUI channel never creates a second `.alert`. See the
+#   comment in `waves_gate_blocked`. A blocked entry clicked twice threw an
+#   uncaught Tcl error before this; and a refusal may not destroy a modal it did
+#   not raise, because that would answer somebody else's question.
+# ---------------------------------------------------------------------------
+proc waves_gate_msg {entry why} {
+  return "$entry is blocked in Cadence mode (cadence_compat) because $why; pick a\
+result with ASE-L > Results > Select\u2026 instead -- open an ASE-L session first\
+from Tools > Launch ASE-L -- or turn cadence_compat off to get the legacy Waves\
+behaviour back."
+}
+
+## 1 when Cadence mode blocks this Waves entry (and the sentence has been said),
+## 0 when the caller may proceed. `cadence_compat` is an established gate, not a
+## new mechanism: `set_ne cadence_compat 0` below in this file, a menu
+## checkbutton in the Options cascade, read from C via
+## tclgetboolvar("cadence_compat") (src/callback.c), and it already carries a
+## write-trace that force-enables a bundled setting (cadence_compat_sync ->
+## autotrim_wires).
+proc waves_gate_blocked {entry why} {
+  global cadence_compat has_x waves_gate_alert
+  # R505f: read the flag THE WAY C READS IT. `tclgetboolvar("cadence_compat")`
+  # (src/callback.c:633) is Tcl_GetBoolean, which takes true/yes/on/TRUE as well
+  # as 1, and answers 0 for an unset or non-boolean value (src/scheduler.c:14601-14613).
+  # A `!= 1` test left the gate WIDE OPEN for `set cadence_compat true` while C
+  # considered the editor to be in Cadence mode -- a destructive action escaping
+  # the gate in exactly the state section 17.2 says must not be reachable.
+  if {![info exists cadence_compat]} { return 0 }
+  if {[catch {expr {$cadence_compat ? 1 : 0}} on]} { return 0 }
+  if {!$on} { return 0 }
+  set msg [waves_gate_msg $entry $why]
+  catch {ciw_echo $msg error}
+  if {[info exists has_x]} {
+    # R505g: the GUI channel is RE-ENTRANT. `alert_` blocks in
+    # `tkwait window .alert` but its `grab set .alert` is COMMENTED OUT (see
+    # proc alert_ above), so the menubar stays live while the box is up and a
+    # second blocked click re-enters here. A second `toplevel .alert` throws
+    # `window name "alert" already exists in parent` out of a menu -command --
+    # the user gets Tk's background-error dialog instead of a refusal. So: never
+    # create a second box. If the standing one is OUR OWN refusal, retext it in
+    # place (the label markup is alert_'s, deliberately copied) and raise it;
+    # if it belongs to somebody else, raise it and say nothing more -- destroying
+    # a foreign modal would answer its question for the user, and a refused
+    # entry must change nothing but the message.
+    if {![info exists waves_gate_alert]} { set waves_gate_alert 0 }
+    if {[winfo exists .alert]} {
+      if {$waves_gate_alert && [winfo exists .alert.l1]} {
+        catch {.alert.l1 configure -text "                              \n${msg}  \n"}
+      }
+      catch {raise .alert}
+    } else {
+      set waves_gate_alert 1
+      catch {alert_ $msg}
+      set waves_gate_alert 0
+    }
+  }
+  return 1
+}
+
+## The Waves cascade's `Op Annotate` entry (R505b). Body lifted verbatim from the
+## menu `-command` it used to be, with the gate in front of it.
+proc waves_op_annotate {} {
+  global show_hidden_texts
+  # R505e: Op Annotate's OWN reason. It does NOT discard the registry -- see the
+  # block above: `xschem annotate_op` does a targeted delete plus an APPENDING
+  # read. Telling the user it wipes their results would be a sentence this very
+  # item measured to be false.
+  if {[waves_gate_blocked {Waves > Op Annotate} \
+       {it adopts a result without going through Results > Select}]} { return }
+  set tctx::retval [select_raw [xschem get topwindow]]
+  set show_hidden_texts 1
+  if {$tctx::retval ne {}} {
+    xschem annotate_op $tctx::retval
+  } else {
+    xschem annotate_op
+  }
+}
+
 proc load_raw {{type {}}} {
   global netlist_dir has_x
+
+  # R505/U12: refuse in Cadence mode BEFORE anything is cleared or read. The
+  # eight loading entries of the Waves cascade all arrive here through
+  # `waves <type>`; see the block above for why this is a gate and not a fix.
+  # R505e: the entry name is SURFACE-NEUTRAL, because this guard is reached from
+  # three surfaces (the eight menu entries, the toolbar `Waves` button, and
+  # `-W`/`--waves`) and only one of them is a menu.
+  if {[waves_gate_blocked {Loading a simulation result} \
+       {it discards every other result already loaded}]} { return }
 
   regsub {/$} $netlist_dir {} netlist_dir
   if { [xschem raw_query loaded] != -1} { ;# unload existing raw file(s)
@@ -17139,15 +17335,10 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.waves add command -label Clear -command {xschem raw_clear}
   $topwin.menubar.waves add separator
   $topwin.menubar.waves add command -label {Load first analysis found} -command {waves {}}
-  $topwin.menubar.waves add command -label {Op Annotate} -command {
-       set tctx::retval [select_raw [xschem get topwindow]]
-       set show_hidden_texts 1
-       if {$tctx::retval ne {}} {
-         xschem annotate_op $tctx::retval
-       } else {
-         xschem annotate_op
-       }
-  }
+  # R505b: the one Waves entry that does NOT route through load_raw -- it calls
+  # select_raw itself -- so its body is lifted into waves_op_annotate, which
+  # carries the same cadence_compat gate. See the block above proc load_raw.
+  $topwin.menubar.waves add command -label {Op Annotate} -command {waves_op_annotate}
   $topwin.menubar.waves add command -label Op -command {waves op}
   $topwin.menubar.waves add command -label Dc -command {waves dc}
   $topwin.menubar.waves add command -label Ac -command {waves ac}

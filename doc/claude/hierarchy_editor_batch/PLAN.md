@@ -645,7 +645,7 @@ elsewhere if this is wrong).
   `test_bindings_file` stay green (they will, since nothing was claimed — which
   is the point of asserting it rather than assuming it).
 - **Blast:** D8 (ruled), D12. Note `Ctrl+Shift+H` is *make schematic from
-  selection* (`src/xschem.tcl:17307`); do not reach for it. Anyone who wants a
+  selection* (`src/xschem.tcl:17498`); do not reach for it. Anyone who wants a
   key gets one through the action registry, which is why the palette row matters
   more than a default chord.
 

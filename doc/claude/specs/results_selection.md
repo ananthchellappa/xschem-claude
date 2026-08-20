@@ -972,7 +972,7 @@ schematic it was read from."* Both forms are pinned (SEL251, SEL252).
 today, so one is added if `Select…` is to be grouped apart). Hand-built plain
 Tk `$top.mb.results add command` — ASE-L's menubar is not generated from
 `actions.csv` (only the main File menu is, via `build_menu_from_table`,
-`src/xschem.tcl:16920`), so **no CSV row is needed**. A key chord would need one,
+`src/xschem.tcl:17116`), so **no CSV row is needed**. A key chord would need one,
 plus `action_registry[]` in `callback.c`; §16 says v1 has no chord.
 
 **R402** The dialog is a **modeless** ASE-family window — no `grab`, no
@@ -1468,13 +1468,168 @@ of it.
 Under `cadence_compat` its eight loading entries and `Op Annotate` are blocked
 with a message naming the setting and pointing at `ASE-L ▸ Results ▸ Select`;
 without `cadence_compat` it behaves exactly as it always has. The background: Issue **0508**: `load_raw`
-(`src/xschem.tcl:16687`) calls `xschem raw_clear` and then `xschem raw_read`,
+(`src/xschem.tcl:16874`) calls `xschem raw_clear` and then `xschem raw_read`,
 which *itself* clears the whole registry — so the eight `waves <type>` entries
 (`Load first analysis found`, `Op`, `Dc`, `Ac`, `Tran`, `Noise`, `Sp`,
 `Spectrum`) silently discard every other loaded result. `External viewer` and
-`Clear` do not route there; `Op Annotate` calls `select_raw` directly. Under this spec those entries route through
-`results::select` and stop clearing. If the driver rules the destructive
-behaviour is wanted, it must be *said* in the menu and in the verb's comment.
+`Clear` do not route there; `Op Annotate` calls `select_raw` directly.
+
+**CORRECTED IN PLACE, item 8, 2026-08-20.** This paragraph used to end *"under
+this spec those entries route through `results::select` and stop clearing"*.
+**They do not, and they never will** — U4 ruled the menu GATED rather than
+repaired, and a reader who followed the old sentence would look for a fix that
+was deliberately not made. What shipped: under `cadence_compat` those entries
+refuse with the sentence §7.2 R505c specifies; **without `cadence_compat` they
+still call `xschem raw_clear` and then the registry-clearing `xschem raw_read`,
+exactly as they always have**, and `tests/headless/test_waves_gate.tcl` asserts
+that legacy behaviour POSITIVELY (SEL430, SEL437, SEL449) so "we broke the menu
+for everyone" cannot read as a pass. The second half of U12's answer to the
+driver's *"if the destructive behaviour is wanted it must be said"* is where it
+is now said: in `waves_gate_msg`'s sentence, in the block comment above
+`proc load_raw`, and in issue 0508's FIXED note.
+
+### 7.2 RULINGS — the Waves gate's exact shape (item 8, 2026-08-20)
+
+Four crew rulings, none of which re-opens `DECISIONS.md`. Each carries a check
+in `tests/headless/test_waves_gate.tcl` and a sabotage that reds it; the
+evidence is in `doc/claude/results_batch/receipts/08-waves-menu-cadence-gate.md`.
+
+**R505a — the gate sits in `load_raw`, not in eight menu-entry bodies.**
+`load_raw` has exactly ONE caller (`proc waves`, `src/xschem.tcl:6385`) and
+`waves`'s non-external branch is exactly `load_raw $type`, so one guard at the
+top of `load_raw` gates precisely the eight loading entries. Eight copies in
+eight menu bodies were rejected on two measured grounds: they drift, and a T-L
+that greps eight entry bodies is satisfied by editing one of them — the shape
+that made item 2's SEL82 satisfiable by a comment. The guard is the FIRST
+executable statement of the proc; SEL421 asserts its position ordinally against
+every `raw_clear`/`raw_read` in the body (comment-stripped), and SEL422 proves
+that detector can tell "no gate" and "gate too late" apart, so SEL421 is not
+vacuous.
+
+*The cost, stated rather than discovered later:* gating `load_raw` also gates the
+**two other invocations of the same action** — the toolbar `Waves` button
+(`toolbar_add Waves { waves }`, `src/xschem.tcl:15555`) and the `-W` / `--waves`
+command line (`src/xinit.c:3839`, which does `tcleval("waves ...")`). **That is
+deliberate.** §17.2's stated purpose is that a Cadence-mode user *"must not be
+able to reach a bad state"*, and a gate a toolbar button walks around is not a
+gate. Both perform the identical destructive action; neither is a new door.
+
+**R505b — `Op Annotate` carries its own gate, in a lifted proc.** It is the one
+Waves entry that does not route through `load_raw`: it calls `select_raw` itself
+and then `xschem annotate_op`, whose registry effect is a *targeted* delete of a
+standing 1-point `op`/`dc` slot plus an **appending** read
+(`src/scheduler.c:2410-2427`) — **not** a registry wipe. So it is blocked for the
+other half of U12's reason: it adopts a result without coming through the door.
+Its menu body is lifted VERBATIM into `waves_op_annotate` rather than gated
+in-place, for three reasons: the gate becomes a call and not a ninth copy; the
+entry becomes drivable without a menubar (SEL438/SEL439 run with no DISPLAY);
+and the `-command` script shrinks to a name a check can read
+(`entrycget -command`, SEL445). The lift declares `global show_hidden_texts` —
+the menu body ran at global scope and set the global, and a proc would otherwise
+have set a local. **The IDENTICAL body under `Simulation ▸ Graphs ▸ Annotate
+Operating Point into schematic` (`src/xschem.tcl:17709-17718`) is NOT touched**:
+U12 names the Waves cascade, and §18 records that twin as a remaining door.
+
+**R505c — one sentence, composed once, in `waves_gate_msg`.** It names the entry
+that was clicked, says WHY, names `cadence_compat` **twice** — the setting to
+look for and the way out — and points at `ASE-L > Results > Select…`. The
+pointer is checked to be a **direction and not a promise**: SEL429 asserts that
+`ase::ui::rsel_dialog` exists in the running binary AND that the ASE-L menu entry
+that runs it exists in `src/ase_window.tcl`. That is the whole reason item 8 is
+sequenced after item 7, and sabotage S20 (rename the proc, rename the label)
+reds it. **The entry name and the reason are both the CALLER's** — see R505e,
+which corrects the first draft's single hard-coded reason and its menu-only
+entry name.
+
+**R505d — the channel is `ciw_echo` plus a modal `alert_` under `has_x`, and the
+sentence is also the proc's own return value's twin.** NOT `puts` (R802's house
+rule), and NOT `results::_emit`: that proc's hosts are `viewer` / `ase` / `calc`
+/ `none`, and the schematic editor's menubar is none of them — an emitter that
+answered a menu click on the ASE-L session's channel would be worse than no
+channel. `ciw_echo` is safe headless (it no-ops without `.ciw.l.t`, which is how
+the suite shims and captures it) and `alert_` is guarded on `has_x`, so `--nogui`
+reaches neither. **A blocked entry is NOT greyed out** — SEL443/SEL444 assert
+every cascade entry stays `-state normal` in both flag states, because U12 says
+clicking one *says why*, and a disabled entry explains nothing.
+
+#### The fixer round — three more rulings (item 8, 2026-08-20)
+
+Each comes from a defect a reviewer **reproduced** against the first draft of the
+gate. All three are in `src/xschem.tcl`'s `waves_gate_*` procs and all three
+carry checks in `tests/headless/test_waves_gate.tcl`.
+
+**R505e — the sentence takes an ENTRY NAME *and* a REASON, both from the
+caller.** Three separate things were wrong with composing it from one hard-coded
+clause:
+
+- *The reason was false for `Op Annotate`.* It was told *"it discards every other
+  result already loaded"* — while R505b above, and `src/scheduler.c:2410-2427`,
+  both say `annotate_op` does a **targeted** delete plus an **appending** read
+  and wipes nothing. The one sentence a blocked user reads may not assert
+  something this very item measured to be untrue, and the suite was pinning the
+  false clause green. `Op Annotate` now says *"it adopts a result without going
+  through Results > Select"*, which is R505b's actual reason for blocking it.
+  **SEL451** reads both sentences off the wire and pins them apart — including
+  that Op Annotate's does **not** claim the wipe.
+- *The entry name named the wrong surface.* It read *"Loading a result from the
+  Waves menu"*, but R505a puts the guard in `load_raw`, which is also reached
+  from the toolbar `Waves` button and from `-W`/`--waves`; a user who pressed a
+  toolbar button was told a **menu** had blocked them. It is now surface-neutral
+  (*"Loading a simulation result"*). Passing a per-surface name instead was
+  considered and rejected: `proc waves` cannot tell its three callers apart
+  without a new argument on a path `src/xinit.c` also drives, and the C side is
+  out of item 8's scope.
+- *The pointer was not followable.* `Results ▸ Select…` lives **only** on an
+  ASE-L session window's menubar (`src/ase_window.tcl`, *"ASE-L ONLY (user ruling
+  U5)"*), so a Cadence-mode user with no session open has no such cascade
+  anywhere in the window they just clicked in. The sentence now names the step
+  that opens the door — `Tools ▸ Launch ASE-L` — and **SEL452** asserts both that
+  the sentence names it and that the entry exists in the schematic editor's own
+  menubar, comment-stripped.
+
+**R505f — the flag is read the way C reads it.** The gate tested
+`$cadence_compat != 1`; C reads the same variable with
+`tclgetboolvar("cadence_compat")` (`src/callback.c:633` →
+`Tcl_GetBoolean`, `src/scheduler.c:14601-14613`), which accepts
+`true`/`yes`/`on`/`TRUE` and answers 0 for an unset or non-boolean value. So
+`set cadence_compat true` in an rc file put the editor in Cadence mode as far as
+every C consumer was concerned **while the Waves gate stood wide open and the
+registry was silently wiped** — precisely the state §17.2 says must not be
+reachable. `!= 1` is the house convention here (`cadence_compat_sync` does the
+same), but this is the first site where the mismatch lets a **destructive**
+action escape a gate, so the convention is the bug at this call site. The gate
+now mirrors `tclgetboolvar` exactly, unset and non-boolean included, and
+**SEL453** drives `load_raw` once per value of a ten-row table.
+
+**R505g — the GUI channel never creates a second `.alert`.** `alert_` blocks in
+`tkwait window .alert` but its `grab set .alert` is **commented out**
+(`src/xschem.tcl`, `proc alert_`), so the menubar stays live while a refusal box
+is up and a second blocked click re-enters `waves_gate_blocked` from inside the
+first refusal's own event loop — which is exactly how a real second click
+arrives. The second `toplevel .alert` then threw `window name "alert" already
+exists in parent` **out of a menu `-command`**, and the user got Tk's
+background-error dialog instead of a refusal. The gate now retexts the standing
+box and raises it instead of creating one. It **retexts only its own** refusal
+box (tracked in `::waves_gate_alert`): destroying a modal it did not raise would
+answer somebody else's question for them — `alert_` returns `tctx::rcode`, which
+defaults to *Yes* — and a refused entry must change **nothing but the message**.
+**SEL458** drives it through the real menubar with the real unshimmed `alert_`;
+no check that counts a shim can see this class, which is why 34 green checks did
+not.
+
+**Two more holes the same round closed, in the suite rather than the code.**
+Neither was a defect in the shipped gate, and both were sabotage-proved to be
+invisible before: **SEL454/SEL455** drive a blocked entry with an **empty
+registry** in both flag states (every other drive in the file is preceded by
+`wg_two`, so a gate conditioned on *"something is already loaded"* passed all 34
+checks); **SEL456** asserts a refused entry leaves `show_hidden_texts` and
+`tctx::retval` untouched (a gate placed *after* `set show_hidden_texts 1` in
+`waves_op_annotate` also passed all 34); and **SEL457** extends T-L's census to
+`src/actions.csv`, the **second live dispatch surface** for the same Waves group
+(nine palette rows, `src/action_registry.tcl`), with `raw_read_from_attr` added
+to the verb pattern — a third registry-wiping verb (`src/scheduler.c:10898-10909`,
+same `extra_rawfile(3, NULL, NULL, …)` wipe) that a `raw_(clear|read)` pattern
+could not see by construction.
 
 ---
 
@@ -1851,8 +2006,12 @@ With no `has_x` it returns the guess.** A headless test that expects "cancel →
 in tests; never rely on its headless return.
 
 **L2 — two `xschem` verbs, one underscore apart, opposite semantics.**
-`xschem raw read` appends; `xschem raw_read` **clears the whole registry** and
-then reads (`src/scheduler.c:10776-10793`). Issue **0508**. Write `raw read`.
+`xschem raw read` appends (`src/scheduler.c:10355`, `extra_rawfile(1 | …)`);
+`xschem raw_read` **clears the whole registry** and then reads (arm
+`src/scheduler.c:10850-10889` — the `extra_rawfile(3, NULL, NULL, …)` at
+`:10865`, the read at `:10884`). Issue **0508**. Write `raw read`.
+**Re-derived 2026-08-20 (item 8): this line said `:10776-10793`, which items 1
+and 3 of this batch had already staled by ~74 lines.**
 
 **L3 — `raw read` of an already-loaded file returns success without re-binding.**
 F5, issue **0509**. Until R110 lands, `results::select` must detect this case
@@ -1939,7 +2098,7 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
 | **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. **Split across items in the item-4 fixer round — see the note below the table.** |
 | **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. |
-| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17139`) is the sole permitted caller. Issue 0508, pinned. |
+| **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17335`) is the sole permitted caller. Issue 0508, pinned. **DELIVERED, item 8** — as a `cadence_compat` GATE, not a repair (U4/U12): the eight loading entries funnel into `load_raw`, whose first executable statement is the guard, and `tests/headless/test_waves_gate.tcl` proves it by census + position (WA) and by clicking every cascade entry in BOTH flag states (WC/WD). Outside `cadence_compat` the destructive path is UNCHANGED and asserted so. **Fixer round 2026-08-20: the census is no longer one file and two verbs** — it reads `src/xschem.tcl` AND `src/actions.csv` (the command-palette surface, nine `waves` rows), and its pattern covers `raw_clear`, `raw_read` and `raw_read_from_attr` (SEL418/SEL419/SEL457). |
 | **T-M** | A selection whose stamp does not match the current hierarchy stack is **not** reported as success (R804) — sabotage: make `results::select` return ok unconditionally, T-M goes red. |
 
 **T-J IS TWO HALVES AND ONLY ONE OF THEM IS ITEM 4'S** (ruled in the item-4
@@ -2149,15 +2308,30 @@ the direction is away from it.
   behaviour is *documented* rather than repaired in that mode.
 
 `cadence_compat` is an established gate here, not a new mechanism:
-`set_ne cadence_compat 0` (`src/xschem.tcl:18244`), a menu checkbutton
-(`:16974`), read from C via `tclgetboolvar("cadence_compat")`
+`set_ne cadence_compat 0` (`src/xschem.tcl:18435`), a menu checkbutton
+(`:17177`), read from C via `tclgetboolvar("cadence_compat")`
 (`src/callback.c:633`), and it already carries a write-trace that force-enables a
-bundled setting (`cadence_compat_sync` → `autotrim_wires`, `:18773-18778`).
+bundled setting (`cadence_compat_sync` → `autotrim_wires`, `:18896-18907`).
 
-**This closes the wrong-cell case for Cadence-mode users.** F4's blind-database
-scenario is reachable only through the legacy doors; with eight of the nine
-blocked and only `autoload=` graph rects left (decision 10), a `cadence_compat`
-user cannot get there through a menu.
+**This closes the wrong-cell case for Cadence-mode users *through the Waves
+cascade*.** F4's blind-database scenario is reachable only through the legacy
+doors; with all nine Waves entries blocked and only `autoload=` graph rects left
+(decision 10), a `cadence_compat` user cannot get there through the **Waves**
+menu.
+
+**It is NOT true of the whole menubar, and item 8 measured that rather than
+assuming it** (corrected in place, fixer round 2026-08-20 — an earlier draft of
+this paragraph said *"cannot get there through a menu"* and put the correction
+sixty lines away in §18, where the reader who needs it does not land).
+`Simulation ▸ Graphs ▸ Annotate Operating Point into schematic`
+(`src/xschem.tcl:17709-17718`) is a **verbatim twin** of the Waves `Op Annotate`
+body — same `select_raw`, same `xschem annotate_op` — and is **ungated**; driven
+in Cadence mode it calls `select_raw` once and adopts a result with no refusal.
+`Simulation ▸ Graphs ▸ Add waveform reload launcher` (`:17704-17708`) places a
+`launcher.sym` whose `tclcommand=` is a bare registry-clearing `xschem raw_read`.
+Both are named in §18. Leaving them is a scope decision — U12 names the Waves
+cascade — and gating the twin is a one-line call to `waves_gate_blocked`
+(R505b made the gate a proc) for whoever wants the sentence to hold menubar-wide.
 
 ## 18. What is NOT here
 
@@ -2221,6 +2395,37 @@ it does not call `xschem raw read`/`raw switch`/`raw select` itself, and it does
 not touch `ase::attach_dbs` (L8 — a run is not a selection). It also adds no
 persistence write of its own: R602a's engine-read at snapshot time already
 covers a dialog selection, because the dialog moves the engine.
+
+**Re-checked after item 8 (2026-08-20): the five-path list is UNCHANGED, and the
+Waves menu was never on it.** §18 lists the paths that adopt a raw *without*
+`results::select`; the Waves menu was excluded because it was item 8's own
+business, and item 8 did not convert it — it **gated** it (U4/U12). So after item
+8 the Waves menu is still a bypass **whenever `cadence_compat` is 0**, which is
+the default, and 0508's registry wipe is still exactly what it was. `Clear` and
+`External viewer` adopt nothing and are not bypasses in either mode. Gating added
+no path and removed none: `load_raw` reaches the same two C verbs it always did,
+and `waves_gate_blocked` reads a Tcl flag and writes two message channels.
+
+**Two doors item 8 MEASURED and deliberately left open**, recorded here so the
+next reader finds them named rather than rediscovering them:
+
+- **`Simulation ▸ Graphs ▸ Annotate Operating Point into schematic`**
+  (`src/xschem.tcl:17709-17718`) is a **verbatim twin of the Waves cascade's
+  `Op Annotate` body** — same `select_raw`, same `xschem annotate_op`. U12 names
+  the Waves cascade, so gating it would be scope creep. **§17.2 was corrected in
+  place in the fixer round** to say so where the reader lands, rather than
+  claiming menubar-wide closure here and qualifying it sixty lines later. Gating
+  the twin (a one-line call to `waves_gate_blocked`, since R505b made the gate a
+  proc) is a bounded follow-up for whoever wants that sentence to hold
+  menubar-wide.
+- **`Simulation ▸ Graphs ▸ Add waveform reload launcher`**
+  (`src/xschem.tcl:17704-17708`) places a `launcher.sym` whose `tclcommand=` is a
+  bare `xschem raw_read $netlist_dir/<cell>.raw tran` — the registry-clearing
+  verb, inside a **drawn object saved into the `.sch`**. That is U10's territory
+  (graph rects with `autoload=`): blocking it would change how existing
+  schematics behave, so it stays. It is the third `other` row in
+  `test_waves_gate.tcl`'s SEL418/SEL419 census, which is where a NEW unclassified
+  caller of either verb would go red.
 
 **Also not here:** the netlist-time and simulator-profile machinery
 (`doc/claude/specs/simulator_profiles.md`), which decides *how a run is

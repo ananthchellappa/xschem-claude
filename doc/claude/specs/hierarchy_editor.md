@@ -483,7 +483,7 @@ expensive.)* Auto-update on binding change is a preference, default off — **D7
 **No keyboard accelerator** (**D8**, ruled by the user 2026-08-18). Virtuoso
 ships none for its Hierarchy Editor, xschem's Library Manager — the closest
 sibling tool — has none either, and `Ctrl+Shift+H` turns out to be *make
-schematic from selection* (`src/xschem.tcl:17307`). Four ways in:
+schematic from selection* (`src/xschem.tcl:17498`). Four ways in:
 
 1. **Tools → Hierarchy Editor** on the main menubar. **Pre-filled**: if the
    window is showing a schematic, the Config *Library* and *Cell* fields open
