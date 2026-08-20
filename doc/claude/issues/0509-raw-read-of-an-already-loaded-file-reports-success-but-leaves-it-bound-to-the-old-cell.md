@@ -169,7 +169,8 @@ happened.
 
 ## Related
 
-- issue **0507** — `raw_is_loaded` parses `xschem raw info` by word.
+- issue **0507** (**FIXED**, item 9 — the proc is removed) — `raw_is_loaded`
+  parsed `xschem raw info` by word.
 - issue **0508** — the Waves-menu chooser discards the whole registry.
 - `doc/claude/specs/results_selection.md` — the feature this blocks.
 

@@ -722,10 +722,10 @@ paths that will still bypass it and names them, following
 `{{idx .. path .. type .. cur 0|1 label ..} ..}`, built on
 `wviewer::rawinfo_parse` (`src/wave_viewer.tcl:2393`) and `wviewer::db_label`
 (`:2401`). **There must not be a second parser for `xschem raw info`** — issue
-**0507**'s ruling. If `raw_is_loaded` survives 0507, it is re-expressed on top of
-`results::list`.
+**0507**'s ruling. `raw_is_loaded` did **not** survive it: **R304c** removed the
+proc (item 9), so there is nothing left to re-express.
 
-### 5.1 RULINGS — the two registry readers (item 2, 2026-08-19)
+### 5.1 RULINGS — the two registry readers (item 2, 2026-08-19; R304c/R304d added by item 9, 2026-08-20)
 
 **R304a — `results::list` lists EVERY registry slot, VCD and table included.**
 R102 says a VCD is not a selectable *result*, but `results::list` is the
@@ -742,6 +742,109 @@ current-first. `wviewer::signal_list_all` sorts current-first because it is
 building a *tree for a human*; `results::list` is an API whose `idx` must stay
 the engine's index, since R301(1) and L10 pass that index back to
 `xschem raw switch`.
+
+**R304c — the by-word parser is deleted, and T-K is a grep over four shapes.**
+Issue **0507** left the choice open: (a) delete `raw_is_loaded`, or (b) keep the
+name and re-express it on `results::list`. **Removed.** The measurement that
+decided it, and it is a history measurement, not a taste one:
+
+- **Its four callers were all in the graph dialog, and upstream itself already
+  replaced them with an ENGINE call.** `23092fc9` added the proc together with
+  four `if {[raw_is_loaded [.graphdialog.center.right.rawentry get] …]}` guards;
+  `ad96e222` deleted all four and moved the same question into
+  `graph_fill_listbox` as `elseif {[xschem raw loaded] != -1}`. Tcl stopped
+  asking this question years ago, and it did not stop by accident.
+- **This batch asks it in C too.** `results::select` does not test "is it already
+  loaded?" and then branch: it calls `xschem raw select` (item 3, R301b), whose
+  `what == 1` dedupe arm makes the read-vs-switch decision inside
+  `extra_rawfile()`. The one Tcl-side identity question that remains — *which
+  spelling of this path is the registry's* — is `results::_engine_spelling`
+  (R302a), built on `results::list`.
+- So (b) would have shipped a proc with **zero callers and no caller in
+  prospect**, and a second name for a question `results::list` already answers.
+
+**What T-K asserts, precisely: NO BY-WORD PARSER OF `xschem raw info` SURVIVES.**
+It is **not** "exactly one parser" — LINE-wise readers exist and every one is
+legitimate (`wviewer::rawinfo_parse`, `ase::raw_indices`, `ase::raw_current`,
+the inline per-line regexp in `ase.tcl`'s gesture path at `src/ase.tcl:3241-3245`
+— a **fifth** reader, which SEL466 does not pin because SEL466 names the four
+*procs*, not a total — and the test helpers). The grep runs over
+**comment-stripped** source, because item 2's SEL82 was satisfied by a comment
+that merely *named* `rawinfo_parse` while a hand-rolled parser ran underneath
+it, and item 8 hit the same class again. **Both comment forms are stripped:**
+whole-line `#` and Tcl's trailing `;#`. The fixer round measured that stripping
+only the whole-line form made `set rows [results::list] ;# NOT the old foreach
+{n f t} [lrange [xschem raw info] 2 end]` — prose of exactly the kind this batch
+has written into five files — read as live code and reddened SEL461/SEL462 for
+files carrying no parser at all.
+
+**Four shapes are covered:** (a) a word-range over the blob; (b) a
+three-variable `foreach` whose list operand is the blob; (c) the blob captured
+whole into a variable and then consumed by `foreach`/`lrange`; and (d) that same
+capture consumed by **index or length** — `llength $blob`, `lindex $blob $i`,
+`lreplace $blob 0 1`, `lassign $blob i p t`. Shape (d) was added in the fixer
+round: with only (a)-(c), 0507's defect rewritten as a
+`for {set i 2} {$i < [llength $blob]} {incr i 3}` index walk — planted in
+`src/xschem.tcl` by a reviewer, and answering **0** where the truth is **1** for
+a rawfile path containing a space — left the suite 374/374 ALL PASS. A
+whole-blob `llength`/`lindex` is a by-word read by definition; every legitimate
+reader splits on `"\n"` first, and `lindex [split $txt "\n"] 0` (which is what
+`ase::raw_current` does) does not match.
+
+**DECLARED LIMITS.** T-K is a grep test, not a static analyser. Two holes are
+named rather than hidden:
+
+1. A proc that took the blob as a **parameter** and split it by word inside its
+   body evades it — no line of it mentions `xschem raw info` at all.
+2. The captured-variable arms (c)/(d) are **proc-scoped**: the detector clears
+   its taint list at every `^proc` line, so a capture at file scope whose
+   by-word consumption sits after an intervening `proc` definition evades them.
+   That scoping is deliberate and was measured. Without it the taint on a
+   variable **name** ran to end of file, and since the names actually captured
+   in this tree are `info` (`src/wave_viewer.tcl:2458`, `src/ase.tcl:3241`) and
+   `txt` (`src/ase.tcl:2936`, `:2944`, `src/results.tcl:289`) — two of the
+   commonest local names in Tcl, one of them in an 18,671-line file — any later
+   unrelated `lrange $txt …` or `foreach {a b c} $info …` in a **different**
+   proc reddened SEL461 and named the wrong file. A false red that points a
+   maintainer at innocent code is worse than the narrow miss above.
+
+The detector's negative lookahead is load-bearing — without it
+`lrange [split [xschem raw info] "\n"] 1 end-1`, a LINE-range over already-split
+lines used correctly by four headless suites, matches (measured: four innocent
+files went red).
+
+**R304d — a deletion from `src/xschem.tcl` is LINE-NEUTRAL or it pays for 478
+re-greps.** Measured 2026-08-20 —
+
+```sh
+grep -rhoE 'xschem\.tcl[:# ]*[0-9]{3,5}' doc/ src/ tests/ \
+  | grep -oE '[0-9]+$' | awk '$1>6997' | wc -l      # -> 478
+```
+
+— **478** citations point below the proc's old position, so removing its 18
+lines outright would have staled every one of them: L9's twin, at scale.
+The proc was therefore replaced by an **18-line comment** recording what it was,
+why it was wrong and why it is gone, and the neutrality is asserted
+(`test_results_select` SEL471).
+
+**SEL471 STATES IT RELATIVELY, and that is a ruling of its own.** Its first
+draft also pinned `proc waves` at `6373` and `proc load_raw` at `16874`; a
+reviewer showed that **one unrelated comment line added anywhere above line 6373
+of a 19,046-line file** turned a results-selection suite red, and four of the
+eight prior items in this batch edited `src/xschem.tcl`. A permanent check
+cannot pin a historical line count of a file other items legitimately edit. What
+it can pin is the **tombstone's shape**, and that is now the whole check, every
+element measured relative to `proc set_rect_flags`: the 18 lines above it are
+all comment lines (reds if one is deleted); the 19th line up is **not** a
+comment (reds if the block grows — the half the absolute anchors used to carry);
+and the block names `raw_is_loaded` (reds if some other comment drifts into the
+window). `18` is not arbitrary — it is the line count of the proc it replaced,
+`git show 226302f9:src/xschem.tcl | sed -n 6980,6997p`.
+
+The rule generalises: **a removal from a heavily-cited file states its citation
+cost, and either pays it or stays line-neutral — and the check that proves it
+must be stated relative to the removal site, not against absolute line numbers
+elsewhere in the file.**
 
 **R305a — R103's third part is asked of the ENGINE, not re-derived in Tcl.**
 `results::current` returns `{}` unless `xschem raw loaded` (`src/scheduler.c:10448`
@@ -2061,7 +2164,11 @@ scripted selection legitimately leaves no trace in the history.
 **L9 — stale in-source citations.** Comments in `wave_viewer.tcl`,
 `calculator.tcl` and `ase.tcl` that cite other files were measured to be
 systematically stale (the `rawinfo_parse` comment alone is wrong twice — issue
-0507). Re-grep every one before quoting it.
+0507). Re-grep every one before quoting it. **Item 9 fixed those two and two
+more in `ase.tcl`, and made them self-checking**: `test_results_select` SEL468 /
+SEL469 extract the `save.c:<a>-<b>` citation out of each comment and assert that
+the cited range actually contains the printer — a citation check that only
+matched the *shape* of a citation would be satisfied by any number at all.
 
 **And the twin, measured in the item-2 FIX ROUND: an insertion into
 `src/xschem.tcl` silently stales every `xschem.tcl:<line>` citation below it.**
@@ -2097,7 +2204,7 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-H** | The four resolver statuses each produce their own sentence; `stale` still yields the named path, and `invalid` yields the derived path when one exists on disk and `{}` otherwise — never an error. |
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
 | **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. **Split across items in the item-4 fixer round — see the note below the table.** |
-| **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` (`src/xschem.tcl:6989`) is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (Four line-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. |
+| **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (LINE-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, the inline per-line regexp at `src/ase.tcl:3241-3245`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. **DELIVERED IN TWO HALVES:** item 2's SEL82/SEL83/SEL84 over `src/results.tcl`, and item 9's group AP (SEL459-SEL474) — the proc **removed** (R304c), the detector run over **all 28** `src/*.tcl` and all **358** `tests/headless/*.tcl` on source stripped of both whole-line `#` and trailing `;#` comments, covering **four** by-word shapes with its own positive and negative controls, plus the two rotted citations 0507 filed now asserted to RESOLVE against `src/save.c`. |
 | **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17335`) is the sole permitted caller. Issue 0508, pinned. **DELIVERED, item 8** — as a `cadence_compat` GATE, not a repair (U4/U12): the eight loading entries funnel into `load_raw`, whose first executable statement is the guard, and `tests/headless/test_waves_gate.tcl` proves it by census + position (WA) and by clicking every cascade entry in BOTH flag states (WC/WD). Outside `cadence_compat` the destructive path is UNCHANGED and asserted so. **Fixer round 2026-08-20: the census is no longer one file and two verbs** — it reads `src/xschem.tcl` AND `src/actions.csv` (the command-palette surface, nine `waves` rows), and its pattern covers `raw_clear`, `raw_read` and `raw_read_from_attr` (SEL418/SEL419/SEL457). |
 | **T-M** | A selection whose stamp does not match the current hierarchy stack is **not** reported as success (R804) — sabotage: make `results::select` return ok unconditionally, T-M goes red. |
 

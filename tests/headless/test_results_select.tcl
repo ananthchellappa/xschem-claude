@@ -543,7 +543,8 @@ eqcheck SEL81-J-generated-uninstall-rule \
 # ===========================================================================
 # K -- T-K, FIRST HALF: this file introduces NO by-word parse of
 #      `xschem raw info` (R304, issue 0507's ruling). The second half -- that
-#      `raw_is_loaded`'s own by-word parser dies -- is item 9's.
+#      `raw_is_loaded`'s own by-word parser dies -- is item 9's, DELIVERED in
+#      group AP (SEL459-SEL474) at the bottom of this file.
 # ===========================================================================
 set r2_src [r2_rd $r2_tcl]
 # A CALL, NOT A MENTION. Measured: with this check written as a whole-file grep,
@@ -3093,6 +3094,375 @@ eqcheck SEL351-AO-no-per-token-leak-left-behind \
         [info procs ao_o_snap] [info procs ao_o_wf] [info procs ao_orig_rundir]] \
   {0 0 1 1 {} {} {} {} {} {}}
 
+
+# ===========================================================================
+# ITEM 9 -- T-K, SECOND HALF: NO BY-WORD PARSER OF `xschem raw info` SURVIVES.
+# Issue 0507, spec results_selection.md R304 / R304c. Group AP, SEL459..SEL474.
+# Band measured free 2026-08-20:
+#   grep -hoE 'SEL[0-9]+' tests/headless/*.tcl | sed s/SEL// | sort -n | tail -1
+# -> 458 (test_waves_gate, item 8) at first draft; SEL472-SEL474 were added in
+# the fixer round with the same command re-run (-> 471). No existing id is
+# renumbered or restated.
+#
+# WHAT T-K IS NOT. LINE-wise readers already exist and every one of them is
+# legitimate -- wviewer::rawinfo_parse (src/wave_viewer.tcl:2393),
+# ase::raw_indices (src/ase.tcl:2935), ase::raw_current (:2943), the inline
+# per-line regexp in ase.tcl's gesture path (:3241-3245, a FIFTH reader; SEL466
+# pins the four NAMED procs, it does not claim there are only four), and the
+# helpers in this and other test files. "Exactly one parser" is NOT the
+# assertion and a check asserting it would be wrong. The assertion is about the
+# by-WORD idiom.
+#
+# THE DETECTOR RUNS ON COMMENT-STRIPPED SOURCE, ON PURPOSE. Item 2's SEL82 was
+# satisfied by a comment that merely NAMED rawinfo_parse while a hand-rolled
+# parser ran underneath it, and item 8 hit the same class again. Every file in
+# scope here -- this one included -- describes the dead idiom in prose, so a
+# detector that read comments would be permanently red for the wrong reason.
+# WHOLE-LINE `#` AND TRAILING `;#` ARE BOTH STRIPPED. The fixer round measured
+# that only the whole-line form was: `set rows [results::list] ;# NOT the old
+# foreach {n f t} [lrange [xschem raw info] 2 end]` -- prose of exactly the kind
+# this batch has now written into five files -- was scanned as live code and
+# made SEL461/SEL462 red for a file that carried no parser at all.
+#
+# DECLARED LIMITS (spec R304c). This is a GREP TEST over a fixed set of shapes,
+# not a static analyser. Two holes are NAMED rather than hidden:
+#   * a proc that took the blob as a PARAMETER and split it by word inside its
+#     body evades it -- there is no `xschem raw info` on any line of it;
+#   * the captured-variable arms are PROC-SCOPED (see the reset below), so a
+#     capture at file scope whose by-word consumption sits after an intervening
+#     `proc` line evades them. That scoping is deliberate and was measured: the
+#     names actually captured in this tree are `info` and `txt`, and without the
+#     reset any later unrelated `lrange $txt ...` anywhere in the remaining
+#     ~12,500 lines of wave_viewer.tcl reddened SEL461 and named the wrong file.
+# ===========================================================================
+
+# the by-word detector. Shapes:
+#   (a) a WORD-range taken over the blob itself -- `lrange [xschem raw info] 2 end`.
+#       The negative lookahead is load-bearing and was measured: without it,
+#       `lrange [split [xschem raw info] "\n"] 1 end-1` -- a LINE-range over
+#       already-split lines, used by four headless suites and entirely correct --
+#       matched, and the check was red for four innocent files.
+#   (b) a THREE-variable foreach whose list operand IS the blob. Three variables
+#       is the signature: it is what assumes "every slot is exactly three words",
+#       which is the assumption a path containing a space breaks (0507).
+#   (c) the TWO-LINE form: the blob captured WHOLE into a variable (no split, no
+#       rawinfo_parse) and then consumed by word. This is the shape the removed
+#       proc actually had.
+#   (d) the same capture consumed by INDEX or LENGTH instead of by `foreach` --
+#       `llength $blob` / `lindex $blob $i` / `lreplace $blob 0 1` /
+#       `lassign $blob i p t`. Added in the fixer round: (c) covered only the
+#       `foreach`/`lrange` consumers, so 0507's defect rewritten as a
+#       `for {set i 2} {$i < [llength $blob]} {incr i 3}` index walk -- the shape
+#       a person reaches for without `foreach`, and one a reviewer planted in
+#       src/xschem.tcl to prove it -- left the suite 374/374 ALL PASS. A whole-
+#       blob `llength`/`lindex` is a by-word read BY DEFINITION: every legitimate
+#       reader splits on "\n" first, and `lindex [split $txt "\n"] 0` does not
+#       match these arms (measured -- ase::raw_current does exactly that and
+#       stays silent).
+proc t9_byword {text} {
+  set hits {}
+  set wordy {}
+  foreach line [split $text "\n"] {
+    set l [string trim $line]
+    if {[string index $l 0] eq "#"} continue
+    # ...and the TRAILING comment, which Tcl starts at `;#`. Guarded to `;\s*#`
+    # rather than a bare `#` so a `#` inside a braced/quoted argument survives.
+    regsub {;\s*#.*$} $l {} l
+    # a captured blob is a LOCAL: it does not survive into the next proc. Without
+    # this the taint on `info`/`txt` ran to end of file and named innocent files.
+    if {[regexp {^proc\s} $l]} { set wordy {} }
+    set hit 0
+    if {[regexp {lrange\s+\[(?![^\]]*split)[^\]]*raw\s+info} $l]} { set hit 1 }
+    if {[regexp {foreach\s+\{\s*[A-Za-z_]\w*\s+[A-Za-z_]\w*\s+[A-Za-z_]\w*\s*\}[^\n]*raw\s+info} $l]} { set hit 1 }
+    foreach v $wordy {
+      if {[regexp "foreach\\s+\\{\\s*\[A-Za-z_\]\\w*\\s+\[A-Za-z_\]\\w*\\s+\[A-Za-z_\]\\w*\\s*\\}\\s+\\\$${v}\\M" $l]} { set hit 1 }
+      if {[regexp "l(range|index|length|replace|assign)\\s+\\\$${v}\\M" $l]} { set hit 1 }
+    }
+    if {$hit} { lappend hits $l }
+    if {[regexp {raw\s+info} $l] && ![regexp {rawinfo_parse} $l] && ![regexp {split} $l]} {
+      if {[regexp {catch\s*\{[^\}]*raw\s+info[^\}]*\}\s+([A-Za-z_]\w*)} $l -> v]} { lappend wordy $v }
+      if {[regexp {set\s+([A-Za-z_]\w*)\s+\[} $l -> v]} { lappend wordy $v }
+    }
+  }
+  return $hits
+}
+# which FILES the detector fires in, and how often. Reported by tail name so a
+# failure names the offender instead of dumping the whole tree.
+proc t9_scan {files} {
+  set out {}
+  foreach f $files {
+    set h [t9_byword [r2_rd $f]]
+    if {[llength $h]} { lappend out [file tail $f]:[llength $h] }
+  }
+  return $out
+}
+# how many times a proc is DEFINED in a file, comments stripped.
+proc t9_procdef {text name} {
+  set n 0
+  foreach line [split $text "\n"] {
+    set l [string trim $line]
+    if {[string index $l 0] eq "#"} continue
+    if {[regexp "^proc\\s+${name}\\M" $l]} { incr n }
+  }
+  return $n
+}
+# the LAST `save.c:<a>-<b>` citation carried by the comment block above $anchor.
+proc t9_cite {text anchor} {
+  set out {}
+  foreach line [split $text "\n"] {
+    if {[string match "*$anchor*" $line]} break
+    if {[regexp {save\.c:(\d+)-(\d+)} $line -> x y]} { set out [list $x $y] }
+  }
+  return $out
+}
+# that citation's actual text in save.c, so a check can ask whether it RESOLVES
+# rather than whether it merely looks like a citation.
+proc t9_savec {root a b} {
+  if {$a eq {} || $b eq {}} { return {} }
+  set lines [split [r2_rd [file join $root src save.c]] "\n"]
+  return [join [lrange $lines [expr {$a - 1}] [expr {$b - 1}]] "\n"]
+}
+# a citation of the REMOVED proc that still names an xschem.tcl line number.
+# There is no line to name any more, so any hit is a dangling pointer.
+# ⚠ THE WINDOW IS 200 CHARACTERS EITHER SIDE, NOT THE LINE. Measured: the one
+# dangling pointer this item had to fix -- results.tcl's -- wrapped, with
+# `raw_is_loaded` ending one comment line and `(src/xschem.tcl:6980)` opening
+# the next, so a line-scoped probe was GREEN against the very text it exists to
+# catch. That probe shipped in this group's first draft.
+proc t9_dangle {text} {
+  set hits {}
+  set i 0
+  while {[set i [string first raw_is_loaded $text $i]] >= 0} {
+    set a [expr {$i - 200}] ; if {$a < 0} { set a 0 }
+    if {[regexp {xschem\.tcl[:# ]*[0-9][0-9][0-9]+} [string range $text $a [expr {$i + 200}]]]} {
+      lappend hits [string range $text $i [expr {$i + 40}]]
+    }
+    incr i 13
+  }
+  return $hits
+}
+proc t9_lineof {text pat} {
+  set n 0
+  foreach line [split $text "\n"] { incr n ; if {[string match $pat $line]} { return $n } }
+  return -1
+}
+
+set t9_srcs  [lsort [glob -nocomplain [file join $r2_root src *.tcl]]]
+set t9_tests [lsort [glob -nocomplain [file join $r2_root tests headless *.tcl]]]
+set t9_xtcl  [r2_rd [file join $r2_root src xschem.tcl]]
+set t9_wv    [r2_rd [file join $r2_root src wave_viewer.tcl]]
+set t9_ase   [r2_rd [file join $r2_root src ase.tcl]]
+set t9_res   [r2_rd [file join $r2_root src results.tcl]]
+
+# --- the proc is GONE, in the running binary and in the source -------------
+# The runtime half is the one that cannot be satisfied by a comment or by a
+# source edit that never reached the interpreter.
+eqcheck SEL459-AP-proc-gone-from-the-running-binary [info procs ::raw_is_loaded] {}
+# and the source half, with its own positive control: the same probe must find
+# a proc that IS still there, or "0 definitions" proves only that the probe is
+# broken.
+eqcheck SEL460-AP-gone-from-the-source-too \
+  [list [t9_procdef $t9_xtcl raw_is_loaded] [t9_procdef $t9_xtcl load_raw]] {0 1}
+
+# --- T-K itself ------------------------------------------------------------
+# every shipped .tcl, not just the one the proc lived in: the ruling is that NO
+# by-word parser survives, anywhere. The second element guards a glob that
+# silently matched nothing -- an empty file list also scans clean.
+eqcheck SEL461-AP-no-by-word-parser-in-any-shipped-tcl \
+  [list [t9_scan $t9_srcs] [expr {[llength $t9_srcs] >= 20}]] {{} 1}
+# ...and the headless suites, which is where a "quick helper" would land next.
+eqcheck SEL462-AP-no-by-word-parser-in-the-headless-suites \
+  [list [t9_scan $t9_tests] [expr {[llength $t9_tests] >= 100}]] {{} 1}
+
+# --- the detector's own evidence -------------------------------------------
+# A detector that finds nothing is not evidence until it has been shown to find
+# something. The text below is the REMOVED PROC, carried here as DATA. It is
+# byte-verbatim (trailing newline aside) against
+# `git show 226302f9:src/xschem.tcl | sed -n '6980,6997p'`, so this is the
+# actual code, not a paraphrase of it: two of its lines are hits, which is what
+# made SEL461 red on the tree this item started from.
+set t9_dead "proc raw_is_loaded {rawfile type} {
+  set loaded 0
+
+  set r \[catch \"uplevel #0 {subst \$rawfile}\" res\]
+  if {\$r == 0} {
+    set rawfile \$res
+  } else {
+    return \$loaded
+  }
+  set rawlist \[lrange \[xschem raw info\] 2 end\]
+  foreach {n f t} \$rawlist {
+    if {\$rawfile eq \$f && \$type eq \$t} {
+       set loaded 1
+       break
+    }
+  }
+  return \$loaded
+}"
+eqcheck SEL463-AP-detector-fires-on-the-removed-proc-verbatim \
+  [llength [t9_byword $t9_dead]] 2
+# ⚠ THE OTHER FIXTURES ARE ASSEMBLED, NOT WRITTEN LITERALLY. SEL462 scans THIS
+# FILE too -- deliberately, because "a quick helper in a suite" is exactly where
+# the next by-word reader would land -- so a control written as one literal
+# source line would make the suite trip its own detector and the honest fix
+# would be an exemption. Holding the blob command in a variable keeps
+# `foreach {n f t}` and `raw info` off the same SOURCE line while feeding the
+# detector byte-for-byte what it would see in real code. (The verbatim removed
+# proc above needs no such care: its `set rawlist \[lrange ...` is escaped, so
+# the source line is not the idiom while the STRING is.)
+set t9_cmd     {xschem raw info}
+set t9_inline  "foreach {n f t} \[lrange \[$t9_cmd\] 2 end\] { }"
+set t9_var     "set blob \[$t9_cmd\]\nforeach {n f t} \$blob { }"
+set t9_ok      "set txt \[$t9_cmd\]\nforeach line \[lrange \[split \$txt \"\\n\"\] 1 end\] { }"
+set t9_pp      "set p \[wviewer::rawinfo_parse \[$t9_cmd\]\]"
+set t9_cmt     "# foreach {n f t} \[lrange \[$t9_cmd\] 2 end\]"
+eqcheck SEL464-AP-detector-fires-on-the-other-two-shapes \
+  [list [llength [t9_byword $t9_inline]] [llength [t9_byword $t9_var]]] {1 1}
+# and is SILENT on the line-wise idioms that are correct -- the ase.tcl shape,
+# the rawinfo_parse shape, and a by-word parse that exists only in a COMMENT.
+eqcheck SEL465-AP-detector-silent-on-the-legitimate-readers \
+  [list [llength [t9_byword $t9_ok]] [llength [t9_byword $t9_pp]] \
+        [llength [t9_byword $t9_cmt]]] {0 0 0}
+
+# --- the three controls the FIXER round added ------------------------------
+# Same assembly rule as above: every fixture is built from $t9_cmd so that no
+# SOURCE line of this file is the idiom while the STRING handed to the detector
+# is byte-for-byte what real code would look like.
+#
+# (d) POSITIVE -- the INDEX WALK. `graph_raw_present` below is the body a
+# reviewer appended to src/xschem.tcl to prove the hole: 0507's defect with no
+# `foreach` anywhere in it, and with the first draft's arms it left the suite
+# 374/374 ALL PASS. Two of its lines are hits (`llength $blob`, `lindex $blob`).
+set t9_walk  "proc graph_raw_present {rawfile type} {\nif {\[catch {$t9_cmd} blob\]} { return 0 }\nset n \[llength \$blob\]\nfor {set i 2} {\$i < \$n} {incr i 3} {\nif {\$rawfile eq \[lindex \$blob \[expr {\$i + 1}\]\]} { return 1 }\n}\nreturn 0\n}"
+set t9_lrepl "set blob \[$t9_cmd\]\nforeach {a b c} \[lreplace \$blob 0 1\] { }"
+set t9_lass  "set blob \[$t9_cmd\]\nwhile {\[llength \$blob\] > 2} { set blob \[lassign \$blob i p ty\] }"
+eqcheck SEL472-AP-detector-fires-on-the-index-walk \
+  [list [llength [t9_byword $t9_walk]] [llength [t9_byword $t9_lrepl]] \
+        [llength [t9_byword $t9_lass]]] {2 1 1}
+# the capture taint is PROC-SCOPED, in both directions. Without the reset the
+# name `txt` stayed tainted for the rest of the file and an unrelated later
+# `lrange $txt ...` in a DIFFERENT proc reddened SEL461 naming the wrong file
+# (measured on a /tmp copy of src/results.tcl and src/wave_viewer.tcl). With
+# the reset written too widely -- clearing on every line -- the second element
+# goes 0, so this check is not satisfiable by simply disarming arms (c)/(d).
+set t9_leak "proc a {} {\nset txt \[$t9_cmd\]\nreturn \[wviewer::rawinfo_parse \$txt\]\n}\nproc b {txt} {\nreturn \[lrange \$txt 0 1\]\n}"
+set t9_same "proc a {} {\nset txt \[$t9_cmd\]\nreturn \[lrange \$txt 2 end\]\n}"
+eqcheck SEL473-AP-capture-taint-does-not-leak-into-the-next-proc \
+  [list [llength [t9_byword $t9_leak]] [llength [t9_byword $t9_same]]] {0 1}
+# a TRAILING `;#` comment is stripped too, not just a whole-line one -- SEL465's
+# fixture only ever covered the whole-line form, and every file in SEL461/462's
+# scope now carries prose about the removed idiom. Third element is the
+# over-strip guard, and it is written to BITE: the `#` sits inside a quoted
+# argument BEFORE the idiom, so a stripper widened to a bare `#` eats the rest
+# of a live line and the hit vanishes. Measured -- with the guard first written
+# as a trailing `puts "#$n"` the wider stripper left the suite ALL PASS, which
+# is exactly the vacuous control this file exists to avoid.
+set t9_cmt2 "set x 1 ;# foreach {n f t} \[lrange \[$t9_cmd\] 2 end\]"
+set t9_cmt3 "set rows \[results::list\] ;# NOT the old lrange \[$t9_cmd\] 2 end"
+set t9_hash "set msg \"slot #1: \[lrange \[$t9_cmd\] 2 end\]\""
+eqcheck SEL474-AP-detector-silent-on-a-trailing-comment \
+  [list [llength [t9_byword $t9_cmt2]] [llength [t9_byword $t9_cmt3]] \
+        [llength [t9_byword $t9_hash]]] {0 0 1}
+# T-K is not "exactly one parser": the four line-wise readers must still BE
+# there. A tree with all of them deleted would pass SEL461 too.
+eqcheck SEL466-AP-the-line-wise-readers-are-all-still-there \
+  [list [t9_procdef $t9_wv wviewer::rawinfo_parse] \
+        [t9_procdef $t9_ase ase::raw_indices] \
+        [t9_procdef $t9_ase ase::raw_current] \
+        [t9_procdef $t9_res results::list]] {1 1 1 1}
+
+# --- 0507's REPRODUCER: the FIXTURE really is hazardous ---------------------
+# Item 2's SEL118 already proves the round trip -- a rawfile path with a space
+# comes back out of `results::list` whole. What it does NOT measure is that the
+# fixture is hazardous in the first place, and that half is what makes T-K's
+# grep worth having: the engine's slot line for such a path WORD-SPLITS into
+# more fields than the record has, so a reader taking three words per slot
+# cannot represent the row at all, whatever it then returns. Measured here on a
+# fresh registry, with the space in the DIRECTORY (SEL118 puts one in the file
+# name too), so the two fixtures are not the same shape.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set t9_sd [file join $tmp "raw dir"]
+file mkdir $t9_sd
+set t9_sp [file join $t9_sd an.raw]
+file copy -force $tmp/an.raw $t9_sp
+set t9_rc   [pcall xschem raw read $t9_sp tran]
+set t9_rows [pcall results::list]
+set t9_line [string trim [lindex [split [pcall xschem raw info] "\n"] 1]]
+eqcheck SEL467-AP-the-slot-line-really-is-0507s-hazard \
+  [list $t9_rc [llength $t9_line] [llength $t9_rows] [dg [lindex $t9_rows 0] path]] \
+  [list 1 4 1 $t9_sp]
+
+# --- the two citations 0507 filed as ROTTED ---------------------------------
+# The warning comment above rawinfo_parse is the only place in the tree that
+# records this trap, and both of its pointers had rotted (`src/save.c:1456-1465`
+# ~655 lines short, `xschem.tcl:4801` ~2188 lines short). A citation check that
+# only matched the shape of a citation would be satisfied by any number, so
+# these RESOLVE it: the cited range must contain the printer, and the range the
+# comment used to cite must not.
+set t9_wvcite [t9_cite $t9_wv {proc wviewer::rawinfo_parse}]
+eqcheck SEL468-AP-viewer-save-c-citation-resolves \
+  [list [expr {[string first {" current} [t9_savec $r2_root [lindex $t9_wvcite 0] [lindex $t9_wvcite 1]]] >= 0}] \
+        [expr {[string first {sim_type ?} [t9_savec $r2_root [lindex $t9_wvcite 0] [lindex $t9_wvcite 1]]] >= 0}] \
+        [expr {[string first {" current} [t9_savec $r2_root 1456 1465]] >= 0}]] \
+  {1 1 0}
+# ase.tcl cites the same blob's format and had rotted the same way
+# (`save.c:1469-1477`). Both comments must now name the SAME printer.
+# ⚠ THIS CHECK DOES PIN src/save.c LINE NUMBERS, and the first draft's comment
+# here claimed the opposite. Measured in the fixer round on a /tmp copy: three
+# unrelated lines inserted ABOVE the printer and the cited window stops
+# containing `sim_type ?`, so SEL468's and SEL469's resolve elements go red --
+# and the `1469 1477` / `1456 1465` negative controls are literals besides.
+# That reddening is the POINT: a citation that no longer resolves has rotted
+# and must be restated (L9). When save.c moves, re-grep the `what == 4` printer
+# in extra_rawfile(), restate the two source comments AND the two literals
+# here; do not delete the check.
+set t9_asecite [t9_cite $t9_ase {proc ase::raw_indices}]
+eqcheck SEL469-AP-ase-cites-the-same-printer-and-it-resolves \
+  [list [expr {$t9_asecite eq $t9_wvcite}] \
+        [expr {[string first {" current} [t9_savec $r2_root [lindex $t9_asecite 0] [lindex $t9_asecite 1]]] >= 0}] \
+        [expr {[string first {" current} [t9_savec $r2_root 1469 1477]] >= 0}]] \
+  {1 1 0}
+# ...and no comment anywhere in src/ still points a reader at an xschem.tcl LINE
+# for a proc that is not there. results.tcl carried exactly that pointer.
+set t9_dang {}
+foreach f $t9_srcs { if {[llength [t9_dangle [r2_rd $f]]]} { lappend t9_dang [file tail $f] } }
+eqcheck SEL470-AP-no-dangling-citation-of-the-removed-proc \
+  [list $t9_dang [llength [t9_dangle "# raw_is_loaded (src/xschem.tcl:6980) reads it BY WORD"]]] \
+  {{} 1}
+
+# --- the removal is LINE-NEUTRAL -------------------------------------------
+# 478 `xschem.tcl:<line>` citations in doc/, src/ and tests/ point BELOW the
+# proc's old position, so an 18-line deletion would have staled every one of
+# them (spec section 11, L9's twin). The 18-line tombstone that replaced it
+# keeps them all valid. 18 is not an arbitrary number: it is the line count of
+# the proc it replaced, `git show 226302f9:src/xschem.tcl | sed -n 6980,6997p`.
+# ⚠ STATED RELATIVELY, ON PURPOSE. The first draft also pinned `proc waves` at
+# 6373 and `proc load_raw` at 16874, and a reviewer showed that ONE unrelated
+# comment line added anywhere above line 6373 of a 19,046-line file reddened a
+# results-selection suite -- four of the eight prior items in this batch edited
+# src/xschem.tcl. Every element below is relative to `proc set_rect_flags`, so
+# it survives unrelated edits while still pinning the block exactly:
+#   1-2  the 18 lines above `proc set_rect_flags` are ALL comment lines
+#        (they were the proc body before) -- reds if one is deleted, because
+#        the 19th line up, a blank, is then inside the window;
+#   3    the 19th line up is NOT a comment -- reds if the block GROWS, which is
+#        the half the two absolute anchors used to carry;
+#   4    the block is the tombstone and not some other comment -- it names the
+#        proc that is gone.
+set t9_setrect [t9_lineof $t9_xtcl {proc set_rect_flags *}]
+set t9_xlines [split $t9_xtcl "\n"]
+set t9_tomb {}
+for {set i [expr {$t9_setrect - 18}]} {$i < $t9_setrect} {incr i} {
+  lappend t9_tomb [string index [string trim [lindex $t9_xlines [expr {$i - 1}]]] 0]
+}
+set t9_above [string index [string trim [lindex $t9_xlines [expr {$t9_setrect - 20}]]] 0]
+set t9_tombtxt [join [lrange $t9_xlines [expr {$t9_setrect - 19}] [expr {$t9_setrect - 2}]] "\n"]
+eqcheck SEL471-AP-removal-is-line-neutral \
+  [list [llength [lsort -unique $t9_tomb]] [lindex [lsort -unique $t9_tomb] 0] \
+        [expr {$t9_above ne "#"}] \
+        [expr {[string first raw_is_loaded $t9_tombtxt] >= 0}]] \
+  {1 # 1 1}
 xschem raw clear
 catch {test_scratch_drop $tmp}
 puts "----"

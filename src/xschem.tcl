@@ -6977,24 +6977,24 @@ proc graph_set_linewidth {graph_sel} {
   }
 }
 
-proc raw_is_loaded {rawfile type} {
-  set loaded 0
-
-  set r [catch "uplevel #0 {subst $rawfile}" res]
-  if {$r == 0} {
-    set rawfile $res
-  } else {
-    return $loaded
-  }
-  set rawlist [lrange [xschem raw info] 2 end]
-  foreach {n f t} $rawlist {
-    if {$rawfile eq $f && $type eq $t} {
-       set loaded 1
-       break
-    }
-  }
-  return $loaded
-}
+# `raw_is_loaded {rawfile type}` WAS HERE, AND IS DELIBERATELY GONE.
+# Issue 0507, closed by the results batch item 9 -- doc/claude/specs/
+# results_selection.md R304c, invariant T-K.
+#
+# WHAT IT DID WRONG. It answered "is this (rawfile, sim_type) in the registry?"
+# by reading `xschem raw info` BY WORD: a word-range over the whole blob, then
+# three variables at a time. The blob is LINE-structured -- one
+# `<i> <rawfile> <sim_type-or-<NULL>>` line per slot (extra_rawfile() what == 4,
+# src/save.c:2264-2277) -- so ONE rawfile path containing a space turned one
+# database into two malformed slots and truncated the path.
+#
+# WHY REMOVED, NOT RE-EXPRESSED. Its four callers were all in the graph dialog
+# and ad96e222 replaced every one with `xschem raw loaded`: the ENGINE answers
+# this. Nothing has asked in Tcl since. What needs the registry reads it per
+# LINE -- wviewer::rawinfo_parse (src/wave_viewer.tcl) via results::list
+# (src/results.tcl) -- and read-vs-switch lives in C in `xschem raw select`.
+# LINE-NEUTRAL WITH THE PROC IT REPLACES ON PURPOSE: 478 `xschem.tcl:<line>`
+# citations point below here; deleting 18 lines would stale every one (L9).
 proc set_rect_flags {graph_selected} {
       global graph_private_cursor graph_unlocked
 

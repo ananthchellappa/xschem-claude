@@ -2924,14 +2924,14 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
     lappend got $v
   }
   # the analog DB is slot 0: it is the only survivor of the loop above, and
-  # `raw clear <n>` leaves extra_idx at 0 (save.c:1417-1421).
+  # `raw clear <n>` leaves extra_idx at 0 (save.c:2207-2211).
   if {[llength $got]} { catch {xschem raw switch 0} }
   return [dict create n [expr {1 + [llength $got]}] current 0 vcds $got skipped $skipped]
 }
 
 # The registry slot indices, and the current one; {} / -1 when nothing is
 # loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
-# line per slot (save.c:1469-1477) and nothing at all with no raw loaded.
+# line per slot (save.c:2264-2277, what == 4) and nothing at all with no raw.
 proc ase::raw_indices {} {
   if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
   set out {}

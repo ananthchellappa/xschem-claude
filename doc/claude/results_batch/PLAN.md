@@ -80,7 +80,7 @@ were re-grepped for this plan.
 | `select_raw` (only `.raw` filetype filter in the tree) | `src/xschem.tcl:16672` |
 | `load_raw` · `proc waves` | `:16874` · `:6373` |
 | the Waves menubar cascade | `:17332-17348` (`Clear` at `:17335`) |
-| `raw_is_loaded` (the by-word parser, ZERO callers) | `:6980` |
+| ~~`raw_is_loaded` (the by-word parser, ZERO callers)~~ | **REMOVED by item 9** — `:6980-6997` is now the tombstone comment (spec R304c/R304d) |
 | `calc::results_source` | `src/calculator.tcl:838` (consumer at `:892`) |
 | `.calc.res.path` readonly · `.calc.res.browse` disabled | `src/calculator.tcl:712` · `:723-727` |
 | `src/results.tcl` | **does not exist yet** |
@@ -101,7 +101,7 @@ were re-grepped for this plan.
 | **T-H** the four resolver statuses, one sentence each | 2 |
 | **T-I** Calculator row and `results::current` agree | 10 |
 | **T-J** a refused borrow ticket is reported as refused, not "no results" | 4 |
-| **T-K** grep: no by-word parser of `xschem raw info` survives | 2, 9 |
+| **T-K** grep: no by-word parser of `xschem raw info` survives | 2, 9 — **DONE**, group AP `SEL459-SEL474` |
 | **T-L** grep: no Waves *load* entry reaches `raw_clear` / `raw_read` | 8 |
 | **T-M** a stamp that does not match the stack is not reported as success | 4 |
 

@@ -416,17 +416,20 @@ check {BD11 one loaded DB parses to one entry, cur 0} \
   [wviewer::rawinfo_parse "0 current\n0 /x/a.raw op\n"] \
   {cur 0 dbs {{idx 0 path /x/a.raw type op}}}
 
-# `xschem raw info` prints NOTHING AT ALL when no raw is loaded (src/save.c:1456
-# guards the whole block on `xctx->raw`). That is the COMMON case, not an edge
+# `xschem raw info` prints NOTHING AT ALL when no raw is loaded
+# (src/save.c:2265 guards the whole block on `xctx->raw`; re-grepped 2026-08-20,
+# it was cited as `:1456` and had drifted). That is the COMMON case, not an edge
 # one, and it must answer rather than throw — browser_reload rides the refresh
 # path, which must not throw.
 check {BD12 no raw loaded -> empty text -> cur -1, no DBs, no throw} \
   [pcall wviewer::rawinfo_parse {}] {cur -1 dbs {}}
 
-# ⚠ THE DELIBERATE IMPROVEMENT ON THE LEGACY PARSE. xschem.tcl:4801 reads the
-# same blob BY WORD (`foreach {n f t} [lrange [xschem raw info] 2 end]`), so a
-# path with a space shifts every field after it. Per-line and anchored gets it
-# right, and this is the leg that proves it.
+# ⚠ THE DELIBERATE IMPROVEMENT ON THE LEGACY PARSE. xschem.tcl used to read the
+# same blob BY WORD (`proc raw_is_loaded`), so a path with a space shifted every
+# field after it. Per-line and anchored gets it right, and this is the leg that
+# proves it. That legacy parser is now REMOVED (issue 0507, results batch item
+# 9) and `test_results_select` group AP greps to keep it removed; BD13 stays,
+# because it is what pins the surviving reader's behaviour on that input.
 set bd_sp [wviewer::rawinfo_parse "0 current\n0 /home/my sims/a b.raw tran\n"]
 check {BD13 a rawfile path CONTAINING SPACES parses whole} \
   [list [dict get [lindex [dict get $bd_sp dbs] 0] path] \

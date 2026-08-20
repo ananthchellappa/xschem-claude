@@ -2378,16 +2378,16 @@ proc wviewer::signal_list {token {statusVar {}}} {
 # it.
 
 # PURE. `xschem raw info`'s output -> {cur <int> dbs {{idx .. path .. type ..} ..}}.
-# The engine prints (src/save.c:1456-1465) `<extra_idx> current` and then one
-# `<i> <rawfile> <sim_type-or-<NULL>>` line per registry slot — and NOTHING AT
-# ALL when no raw is loaded, which is why the empty text has to answer
-# `cur -1` rather than throw.
+# The engine prints (src/save.c:2264-2277, extra_rawfile() what == 4, RE-GREPPED
+# 2026-08-20) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
+# <NULL>>` line per registry slot — and NOTHING AT ALL when no raw is loaded,
+# which is why the empty text has to answer `cur -1` rather than throw.
 #
-# ⚠ A DELIBERATE IMPROVEMENT ON THE LEGACY PARSE. xschem.tcl:4801 reads the same
-# blob as `foreach {n f t} [lrange [xschem raw info] 2 end]`, i.e. by WORD — so a
-# rawfile path containing a space shifts every field after it and the listbox
-# fills with garbage. Parsing per LINE, anchored, with a greedy path and a
-# trailing `\S+` type, gets that case right (pinned by BD13).
+# ⚠ THE ONLY WAY TO READ THIS BLOB. It is LINE-structured, so parsing per LINE,
+# anchored, with a greedy path and a trailing `\S+` type is what gets a rawfile
+# path CONTAINING A SPACE right (pinned by BD13). xschem.tcl once read the same
+# blob by WORD (`raw_is_loaded`, REMOVED — issue 0507, results batch item 9);
+# T-K forbids a new one: tests/headless/test_results_select.tcl group AP.
 # An unparseable line is SKIPPED, never fatal: this rides the browser refresh
 # path, which must not throw.
 proc wviewer::rawinfo_parse {text} {

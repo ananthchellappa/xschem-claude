@@ -266,9 +266,9 @@ proc results::_unterminated {s} {
 #
 # ⚠ THERE MUST NOT BE A SECOND PARSER FOR `xschem raw info` (R304, issue
 # 0507's ruling). The blob is LINE-structured — `<extra_idx> current`, then one
-# `<i> <rawfile> <sim_type-or-<NULL>>` per slot — and `raw_is_loaded`
-# (src/xschem.tcl:6980) reads it BY WORD, so one rawfile path containing a space
-# turns one database into two malformed slots and truncates the path. This proc
+# `<i> <rawfile> <sim_type-or-<NULL>>` per slot — and `raw_is_loaded` used to
+# read it BY WORD (REMOVED, item 9: issue 0507 is FIXED), so one rawfile path
+# containing a space turned one database into two malformed slots. This proc
 # is built on `wviewer::rawinfo_parse` (src/wave_viewer.tcl:2393), which parses
 # per LINE with a greedy path and a trailing `\S+` type and gets that case
 # right. Note what the rule is NOT: four line-wise readers already exist
