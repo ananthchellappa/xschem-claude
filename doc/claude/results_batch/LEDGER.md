@@ -56,7 +56,7 @@ in the row that caused it.
 | 4 | `results-select-orchestrator` | `[x]` | `2b138685` | 296 | 41 | 7 | **see below** | `results::select` shipped; 13 confirmed findings all reproduced+fixed, none unconfirmed. 0216 shape fixed for this path. **An ad-hoc drive destroyed the user's `~/.xschem/raw_history`.** Audit 332/15/0/0 of 347, **no status moved**. |
 | 5 | `rawbar-load-reexpress` | `[x]` | `f22cade2` | 532 | 27 | 8 | **see below** | R501a/b/c into spec §7.1; five refusal arms measured and pinned; T-J half ruled → **0515** filed OPEN (refused ctx switch says nothing). **Damaged `~/.xschem/recent_files`; repaired from a 5-week-stale `.bak`.** Audit 332/15/0/0 of 347, **no status moved**. |
 | 6 | `persistence-write-side` | `[x]` | `e9e5389d` | 497 | 29 | 7 | **look owed** | Slot finally WRITTEN. R602a-f/R604a/R605a into spec §8.1; **R602a overturns item 4's own description of its seam** and §5.2 was corrected in place. T-E made non-skippable three ways. Audit **no status moved**. |
-| 7 | `results-select-dialog` | | | | | | | |
+| 7 | `results-select-dialog` | **`[E]`** | `7315cb87` | 58 | 65 | 10 | **2 looks owed** | The door. `src/ase_window.tcl` +879, 25 `rsel_*` procs, new suite `test_results_dialog`. 10 rulings into spec §6.1, incl. **R407c** ruling item 4's open question. Audit 333/15/0/0 of 348, **0 status changes**, 2 declared new rows. |
 | 8 | `waves-menu-cadence-gate` | | | | | | | |
 | 9 | `kill-second-rawinfo-parser` | | | | | | | |
 | 10 | `calculator-consumes-selection` | | | | | | | |
@@ -101,6 +101,7 @@ direction, belongs to the item that moved it.
 | suite | added by | total after |
 |---|---|---|
 | `test_results_select` | item 1 | 347 |
+| `test_results_dialog` | item 7 | 348 |
 
 ## Carried forward — raised by an item, not that item's to fix
 

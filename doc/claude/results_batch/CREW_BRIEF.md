@@ -175,7 +175,10 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
   per-group skip** — `full_audit.sh` scores the WHOLE FILE as SKIP on that
   substring and silently discards every check that ran in it.
 - Use `test_scratch` (`tests/headless/scratch.tcl`); leave no droppings in the
-  repo. A helper file must **not** be named `test_*.tcl` — `full_audit.sh` globs
+  repo. **Sabotage drivers, join scripts and commit-message drafts belong in the
+  session scratchpad under `/tmp`, not in the repo-root `scratchpad/`** — that
+  directory already carries hundreds of files from earlier sessions and every
+  addition shows up as a `TREE | appeared` row in the audit. A helper file must **not** be named `test_*.tcl` — `full_audit.sh` globs
   those and scores a zero-check file FAIL forever.
 - Known WSLg flakes that are **not** regressions: `test_ase_plot` P4/P6/P8
   (1-2 in 10), TG9 root-coords (4 in 10 on a pristine tree), bare
