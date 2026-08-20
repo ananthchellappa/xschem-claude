@@ -201,6 +201,142 @@ check "R4 snapshot: no window + prev -> open flipped to 0" \
 check "R4 snapshot closed arm KEEPS the graphs" \
   [dict get [wviewer::snapshot tokR4 $prevd] graphs] [dict get $prevd graphs]
 
+# --- R6: viewer_restore RE-EXPRESSED ON results::resolve, and R604's ONE ------
+#     SENTENCE. Results batch item 6, doc/claude/specs/results_selection.md
+#     section 8 (R601/R604/R604a) and section 4 (R201).
+#
+# ⚠ THIS GROUP RUNS WITH OR WITHOUT A DISPLAY AND WITH OR WITHOUT NGSPICE, on
+# purpose. T-E's other half lives in G10/G11 below, which self-skip -- and
+# spec section 12 names T-E as the batch's one invariant that can be green by
+# not having run. Everything here is pure Tcl over shims, so the sentence half
+# of T-E is asserted on every single run of this file.
+#
+# `ase::ui::viewer_restore` used to implement section 4's `ok` and `invalid`
+# arms BY HAND (absolute-ise against the rundir -> `file isfile` -> else
+# `ase::last_rawfile`). It now asks `results::resolve`, which is the proc that
+# was copied FROM it. The sentences below are the RESOLVER's own text, which the
+# hand-written version never produced anywhere -- that is what makes these
+# checks non-vacuous rather than a re-reading of the source.
+set r6_top [ase::state_default]
+set r6_rundir [file join $scratch r6run]
+file mkdir $r6_rundir
+set r6_real [file join $r6_rundir r6_present.raw]
+set fp [open $r6_real w] ; puts $fp "Title: r6" ; close $fp
+
+proc r6_state {rawfile} {
+  global r6_top r6_rundir
+  set st $r6_top
+  dict set st rundir $r6_rundir
+  dict set st viewer [dict create open 1 sharedx 0 rawfile $rawfile graphs {} \
+                        mode single target 0]
+  return $st
+}
+# the shims. `wviewer::restore` returns 1 so the generic no-results line is
+# reachable (it is gated on the rc), and records what it was handed.
+rename ase::session_state   r6_o_session_state
+rename ase::last_rawfile    r6_o_last_rawfile
+rename ase::last_vcdfiles   r6_o_last_vcdfiles
+rename ase::plot_sim_type   r6_o_plot_sim_type
+rename wviewer::restore     r6_o_wrestore
+rename ::ase::echo          r6_o_echo
+proc ase::session_state {key} { return $::r6_st }
+proc ase::last_rawfile {key} { return $::r6_derived }
+proc ase::last_vcdfiles {key} { return {} }
+proc ase::plot_sim_type {st} { return tran }
+proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
+  set ::r6_gotraw $rawfile
+  return 1
+}
+proc ::ase::echo {msg {tag {}}} { lappend ::r6_said $msg ; return 1 }
+
+proc r6_run {rawfile derived} {
+  set ::r6_st [r6_state $rawfile]
+  set ::r6_derived $derived
+  set ::r6_said {}
+  set ::r6_gotraw {NOT-CALLED}
+  set rc [ase::ui::viewer_restore r6key]
+  return [list $rc $::r6_gotraw $::r6_said]
+}
+proc r6_hits {said pat} { return [llength [lsearch -all -glob $said $pat]] }
+
+# (1) nothing named, a derived result exists -> `default`: the derived path is
+#     used and NOTHING is said. Every state file written before item 6 carries
+#     `rawfile {}`, so a sentence here would land in the CIW on every session
+#     open forever -- R604a.
+lassign [r6_run {} $r6_real] r6rc r6raw r6msg
+check "R6a default: the derived result is used" $r6raw $r6_real
+check "R6a default: ...and nothing is said (R604a)" [llength $r6msg] 0
+# (2) nothing named and nothing derived -> the pre-existing no-results sentence,
+#     unchanged, still exactly once.
+lassign [r6_run {} {}] r6rc r6raw r6msg
+check "R6b nothing at all: no raw handed to the viewer" $r6raw {}
+check "R6b nothing at all: the no-results sentence, once" \
+  [r6_hits $r6msg {*no simulation results for this state*}] 1
+# (3) a RELATIVE name that exists under the rundir -> `ok`: absolute-ised and
+#     used, silently. This is G11's shape, asserted without a display.
+lassign [r6_run r6_present.raw {}] r6rc r6raw r6msg
+check "R6c ok: a relative name is resolved against the rundir" \
+  [file normalize $r6raw] [file normalize $r6_real]
+check "R6c ok: ...and nothing is said (R604a)" [llength $r6msg] 0
+# (4) a named result that is GONE, with a derived one to fall back to ->
+#     `invalid`: the resolver's own sentence, naming BOTH files.
+lassign [r6_run r6_missing.raw $r6_real] r6rc r6raw r6msg
+check "R6d invalid: falls back to the derived result" $r6raw $r6_real
+check "R6d invalid: SAYS which result went missing, once (T-E, R604)" \
+  [r6_hits $r6msg {*r6_missing.raw is no longer on disk*}] 1
+check "R6d invalid: ...and names what it fell back to" \
+  [r6_hits $r6msg {*falling back to r6_present.raw*}] 1
+# (5) gone, and nothing to fall back to -> ONE sentence, not two: R604a
+#     suppresses the generic no-results line when the resolver already spoke
+#     about the same event.
+lassign [r6_run r6_missing.raw {}] r6rc r6raw r6msg
+check "R6e invalid+empty: no raw handed to the viewer" $r6raw {}
+check "R6e invalid+empty: the resolver's sentence is emitted" \
+  [r6_hits $r6msg {*r6_missing.raw is no longer on disk*}] 1
+check "R6e invalid+empty: REPORTED ONCE -- no second, generic sentence (R604)" \
+  [r6_hits $r6msg {*no simulation results for this state*}] 0
+check "R6e invalid+empty: exactly one sentence in total" [llength $r6msg] 1
+# (6) the `open 1` gate is untouched by the re-expression: a closed viewer
+#     resolves nothing and says nothing.
+set ::r6_st [r6_state r6_missing.raw]
+dict set ::r6_st viewer [dict replace [dict get $::r6_st viewer] open 0]
+set ::r6_derived {} ; set ::r6_said {} ; set ::r6_gotraw {NOT-CALLED}
+check "R6f open 0 still returns 0 without touching the resolver" \
+  [list [ase::ui::viewer_restore r6key] $::r6_gotraw [llength $::r6_said]] \
+  {0 NOT-CALLED 0}
+
+# restore every shim and PROVE it by body, not by name (a rename that left the
+# shim in place would otherwise poison every leg below it).
+foreach {r6_orig r6_name} {r6_o_session_state ase::session_state \
+                           r6_o_last_rawfile ase::last_rawfile \
+                           r6_o_last_vcdfiles ase::last_vcdfiles \
+                           r6_o_plot_sim_type ase::plot_sim_type \
+                           r6_o_wrestore wviewer::restore \
+                           r6_o_echo ::ase::echo} {
+  rename $r6_name {}
+  rename $r6_orig $r6_name
+}
+# ⚠ FIX ROUND: the last element used to be
+# `string first {results::resolve} [info body ase::ui::viewer_restore] >= 0`,
+# and the proc's own COMMENT block contains that literal -- so replacing the
+# CALL with the verbatim pre-item hand-written arms left this element GREEN.
+# It now matches the CALL SHAPE on a line of its own, which no comment can
+# satisfy. (Same repair as test_results_select's SEL350 element 1.)
+check "R6 every shim restored" \
+  [list [info procs r6_o_session_state] [info procs r6_o_wrestore] \
+        [info procs r6_o_echo] \
+        [regexp {\n\s*set res \[results::resolve} [info body ase::ui::viewer_restore]]] \
+  {{} {} {} 1}
+
+# --- T-E BOOKKEEPING: WHY THE LEGS DID OR DID NOT RUN ------------------------
+# doc/claude/specs/results_selection.md section 12: T-E is the batch's ONE test
+# that can be green BY NOT HAVING RUN -- G10/G11 self-skip without a usable
+# DISPLAY and without ngspice, and a count that matches while the leg skipped is
+# exactly the failure mode. So the REASON is recorded as it happens and then
+# checked against the preconditions measured independently at the bottom of the
+# file. A leg that stopped for some OTHER reason reds that check.
+set te_why {no usable DISPLAY}
+
 # --- GUI legs (DISPLAY-guarded partial skip) ---------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
@@ -286,6 +422,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set have_ng [expr {[auto_execok ngspice] ne {}}]
 
   if {!$mainok} {
+    set te_why {main window never became usable}
     puts "SKIPPED: G1-G11 acceptance legs (WSLg geometry: main window never became usable)"
   } else {
 
@@ -366,6 +503,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list [ase::state_get $vrow save 0] [ase::state_get $vrow plot 0]] {1 0}
 
     if {!$have_ng} {
+      set te_why {ngspice not found}
       puts "SKIPPED: G4-G11 run/relaunch acceptance legs (ngspice not found)"
       ase::ui::close $key
       update
@@ -457,8 +595,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set pst [ase::state_load $persistfile]
       set vd7 [dict get $pst viewer]
       check "G7 snapshot: viewer open 1" [ase::state_get $vd7 open] 1
-      check "G7 snapshot: rawfile {} (current run's raw)" \
-        [ase::state_get $vd7 rawfile x] {}
+      # ⚠ RESTATED BY THE RESULTS BATCH'S ITEM 6 (T-F), not deleted and not
+      # renumbered: its EXPECTATION genuinely changed. `wviewer::snapshot`
+      # hardcoded `rawfile {}` from item 14 until item 6, and this check is what
+      # pinned that hardcode -- the read side was complete, covered and correct
+      # the whole time while NOTHING had ever written the slot. It now carries
+      # THE SELECTED RESULT, written by the snapshot (absolute) and stored
+      # RELATIVE to the state's rundir by ase::ui::viewer_snapshot (R602/R602a).
+      # THIS IS THE ASSERTION THAT WOULD HAVE FAILED FOR THE WHOLE LIFE OF THE
+      # SEAM -- doc/claude/specs/results_selection.md section 12, T-F.
+      check "G7 snapshot: rawfile = the selected result, relative (T-F)" \
+        [ase::state_get $vd7 rawfile x] test_nfet_final_ase.raw
+      # ...and the relative form is not merely a shorter string: it resolves,
+      # against the state's own rundir, to the raw the run actually produced.
+      check_true "G7 snapshot: ...and it resolves to the run's raw (T-F)" \
+        [expr {[file pathtype [ase::state_get $vd7 rawfile x]] ne {absolute} &&
+               [file normalize [file join $rundir \
+                  [ase::state_get $vd7 rawfile x]]] eq
+               [file normalize [file join $rundir test_nfet_final_ase.raw]]}]
       set g7 [ase::state_get $vd7 graphs]
       check "G7 snapshot: 2 graphs" [llength $g7] 2
       check "G7 snapshot: auto marker on graph 0" \
@@ -503,6 +657,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                [rawq {xschem raw loaded}] >= 0}]
       check "G8 raw sim_type dc" [rawq {xschem raw sim_type}] dc
       check "G8 raw points 181" [rawq {xschem raw points}] 181
+      # T-F's second half: a save->restore round trip RE-SELECTS THE SAME
+      # RESULT. Before item 6 the state named nothing, so what came back was
+      # whatever ase::last_rawfile derived -- the right answer by luck, and
+      # nothing distinguished the two. Here the stored name is what was
+      # followed (G11b below is the leg that proves the two can differ).
+      check "G8 T-F: the round trip re-attached the SAME result" \
+        [file normalize [rawq {xschem raw rawfile}]] \
+        [file normalize [file join $rundir test_nfet_final_ase.raw]]
       check_true "G8 raw index id >= 0 (RPN re-materialized)" \
         [expr {[string is integer -strict [rawq {xschem raw index id}]] &&
                [rawq {xschem raw index id}] >= 0}]
@@ -569,9 +731,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       dict set pst viewer $vd_live
       ase::state_save $persistfile $pst
       file delete -force -- $rawfile
+      # T-E, the DELETED half. Item 6's writer means $vd_live now NAMES the raw
+      # (it carried the hardcoded empty `rawfile` before), so this arm stopped
+      # being "nothing was named" and became `invalid`: the named result is
+      # gone, the derived one (ase::last_rawfile) is the same deleted file, and
+      # there is nothing to fall back to. R604 says the status is reported ONCE,
+      # on restore, through ase::echo -- so the channel is captured here rather
+      # than asserted from a green rc.
+      set ::g10_said {}
+      rename ::ase::echo g10_echo_orig
+      proc ::ase::echo {msg {tag {}}} { lappend ::g10_said $msg ; return 1 }
+      check "G10 sanity: the stored state NAMES the deleted result (T-E)" \
+        [ase::state_get $vd_live rawfile x] test_nfet_final_ase.raw
       check "G10 reopen (open 1, raw deleted) -> 1" \
         [ase::open_state sky130_tests test_nfet_final ngspice_persist1] 1
       update
+      rename ::ase::echo {}
+      rename g10_echo_orig ::ase::echo
+      check "G10 T-E: the echo shim was restored" \
+        [expr {[info procs ::ase::echo] ne {} && [info procs g10_echo_orig] eq {}}] 1
+      # the sentence NAMES the result that went missing, and it is the
+      # resolver's own -- not the generic "no simulation results" line, which
+      # R604a suppresses when the resolver has already spoken about the event.
+      set g10_hit {}
+      foreach m $::g10_said {
+        if {[string first {test_nfet_final_ase.raw is no longer on disk} $m] >= 0} {
+          set g10_hit $m
+        }
+      }
+      check_true "G10 T-E: restore SAID which result went missing" \
+        [expr {$g10_hit ne {}}]
+      check "G10 T-E: ...and said it exactly once" \
+        [llength [lsearch -all -glob $::g10_said {*is no longer on disk*}]] 1
+      check "G10 T-E: ...and did NOT also emit the generic no-results line" \
+        [llength [lsearch -all -glob $::g10_said \
+                    {*no simulation results for this state*}]] 0
       set top10 [ase::ui::window_for $key2]
       check_true "G10 session window up" \
         [expr {$top10 ne {} && [winfo exists $top10]}]
@@ -613,6 +807,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       ase::ui::close $key2
       update
       check "G11 session closed clean" [ase::ui::window_for $key2] {}
+
+      # --- G11b: T-E, the RELATIVE half, made DISCRIMINATING -----------------
+      # G11 above cannot tell "the stored name was followed" from "the derived
+      # default happened to be the same file", because it is. So: a SECOND raw
+      # in the same rundir under a name the derived default can never produce.
+      # If the seam is honoured, THAT is what the registry ends up holding.
+      set altraw [file join $rundir alt_pick.raw]
+      file copy -force $rawbak $altraw
+      set pst [ase::state_load $persistfile]
+      dict set pst viewer [dict replace $vd_live rawfile alt_pick.raw]
+      ase::state_save $persistfile $pst
+      check "G11b reopen (relative name of a DIFFERENT raw) -> 1" \
+        [ase::open_state sky130_tests test_nfet_final ngspice_persist1] 1
+      update
+      set vtop11b [wviewer::window_for $key2]
+      check_true "G11b viewer up" [expr {$vtop11b ne {}}]
+      if {$vtop11b ne {}} { viewer_ready $vtop11b }
+      xschem new_schematic switch $vtop11b.drw
+      check "G11b T-E: the STORED name was followed, not the derived default" \
+        [file tail [rawq {xschem raw rawfile}]] alt_pick.raw
+      check_true "G11b ...and it really attached (loaded >= 0)" \
+        [expr {[string is integer -strict [rawq {xschem raw loaded}]] &&
+               [rawq {xschem raw loaded}] >= 0}]
+      ase::ui::close $key2
+      update
+      set te_why RAN
     }
   }
 
@@ -627,6 +847,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::session_close $key
   puts "gui legs skipped (no DISPLAY)"
 }
+
+# --- T-E: ASSERT THE SKIP REASON, NOT JUST THE COUNT -------------------------
+# The preconditions are re-measured HERE, independently of the branches that
+# recorded `te_why`, and the two are compared. A leg that stopped for any other
+# cause -- or one that silently never reached its end -- reds this check instead
+# of leaving a matching check count behind. Nothing here prints a SKIP
+# substring: full_audit.sh would score the WHOLE FILE as SKIP on one.
+set te_expect {no usable DISPLAY}
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+  if {[info exists mainok] && !$mainok} {
+    set te_expect {main window never became usable}
+  } elseif {[info exists have_ng] && !$have_ng} {
+    set te_expect {ngspice not found}
+  } elseif {[info exists mainok] && [info exists have_ng]} {
+    set te_expect RAN
+  }
+}
+puts "T-E legs: $te_why"
+check "T-E legs: the recorded reason matches the measured preconditions" \
+  $te_why $te_expect
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

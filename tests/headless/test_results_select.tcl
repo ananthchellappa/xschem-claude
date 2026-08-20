@@ -1883,11 +1883,16 @@ eqcheck SEL268-AJ-refusal-refreshes-nothing $r4_calls {}
 rename wviewer::browser_refresh {}
 rename r4_br_orig wviewer::browser_refresh
 
-# ---- the PERSISTENCE SEAM. Item 6 lands the writer; item 4 calls it. Today it
-#      is a documented no-op returning 0, so what is pinned is the CALL and its
-#      arguments -- the engine's own spelling, the engine's analysis, and the
-#      caller's whole opts dict.
-eqcheck SEL269-AJ-persist-is-a-noop-stub-today \
+# ---- the PERSISTENCE SEAM. Item 4 wrote the CALL; ITEM 6 LANDED THE WRITER,
+#      so what is pinned here is still the call and its arguments -- the
+#      engine's own spelling, the engine's analysis, and the caller's whole opts
+#      dict.
+#      ⚠ RESTATED BY ITEM 6: the VALUE below did not move (an opts dict naming
+#      neither a `token` nor a `key` still answers 0 -- there is no window or
+#      session to record the choice against), but the CLAIM its old name made,
+#      "a no-op stub today", stopped being true. Group AO is where the filled
+#      body is pinned.
+eqcheck SEL269-AJ-persist-declines-when-no-window-or-session-is-named \
   [list [pcall results::persist /x/y.raw tran {}] [info args ::results::persist]] \
   {0 {path type opts}}
 rename results::persist r4_ps_orig
@@ -2659,6 +2664,434 @@ eqcheck SEL333-AN-every-shim-restored-by-body \
   [list $am_restored [info procs ::wviewer::rawbar_load_PRE] \
         [dict exists $::wviewer::windows $am_tok] \
         [expr {$::wviewer::rawhist eq $am_hist_old}]] {{} {} 0 1}
+
+
+# ===========================================================================
+# AO -- ITEM 6: `viewer.rawfile` IS FINALLY WRITTEN (R601-R605, R602a, R604a).
+#      doc/claude/specs/results_selection.md section 8, invariants T-E and T-F.
+#
+#      The READ side of the selection's persistence was complete, covered by
+#      test_ase_persist G10/G11 and correct from item 14 onwards. NOTHING HAD
+#      EVER WRITTEN THE SLOT: `wviewer::snapshot` hardcoded `rawfile {}`. This
+#      group pins the WRITE side's machinery -- the recorder, the reader, the
+#      two-source rule and the two re-expressed readers. T-F's end-to-end round
+#      trip and T-E's restore arms live in `tests/headless/test_ase_persist.tcl`
+#      (G7/G8/G10/G11/G11b + the always-running R6 group), because they need a
+#      real run and a real Save State.
+# ===========================================================================
+set ao_tok ao_win_[pid]
+set ao_sel_had [info exists ::wviewer::selected($ao_tok)]
+catch {unset ::wviewer::selected($ao_tok)}
+
+# ---- the RECORDER. `results::persist` stopped being a no-op stub: it records
+#      the user's choice for the window, and it DECLINES when there is no window
+#      or session to record it against -- which is what a headless
+#      `results::select $p $t {}` is, and why SEL269 above still reads 0.
+eqcheck SEL339-AO-persist-declines-without-a-window \
+  [list [pcall results::persist /x/y.raw tran {}] \
+        [pcall results::persist {} tran [::list token $ao_tok]] \
+        [info exists ::wviewer::selected($ao_tok)]] {0 0 0}
+eqcheck SEL340-AO-persist-records-under-token-and-under-key \
+  [list [pcall results::persist /x/y.raw tran [::list token $ao_tok]] \
+        [pcall wviewer::selected_rawfile $ao_tok] \
+        [pcall results::persist /x/z.raw dc [::list key $ao_tok]] \
+        [pcall wviewer::selected_rawfile $ao_tok]] \
+  [::list 1 {/x/y.raw tran} 1 {/x/z.raw dc}]
+# `token` OUTRANKS `key`: a viewer window is a narrower statement about where
+# the selection happened than a session is, and results::select passes both
+# whenever the caller gave both.
+catch {unset ::wviewer::selected($ao_tok)}
+eqcheck SEL341-AO-token-outranks-key \
+  [list [pcall results::persist /x/tok.raw tran \
+           [::list token $ao_tok key ao_other_key]] \
+        [info exists ::wviewer::selected(ao_other_key)] \
+        [pcall wviewer::selected_rawfile $ao_tok]] \
+  [::list 1 0 {/x/tok.raw tran}]
+
+# ---- THE TWO-SOURCE RULE (R602a). The ENGINE is primary and the recorded
+#      choice is only the fallback, because a remembered selection goes stale
+#      and the engine never does: the RUN path (`ase::attach_dbs`) is section
+#      18's deliberate bypass of R303, so it records nothing at all -- which is
+#      exactly the flow T-F's round trip runs through.
+#
+#      `enter_ctx` is given a `win_path` that IS the current one, so its "already
+#      there" fast path (src/wave_viewer.tcl) returns a granted ticket with
+#      nothing to restore. That exercises the ENGINE arm with no context switch
+#      and no viewer window -- the borrow itself is proven in the viewer's own
+#      suites, not re-proven here.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+set ao_wp [pcall xschem get current_win_path]
+dict set ::wviewer::windows $ao_tok win_path $ao_wp
+catch {unset ::wviewer::selected($ao_tok)}
+eqcheck SEL342-AO-the-engine-answers-when-it-can \
+  [list [pcall wviewer::selected_rawfile $ao_tok] \
+        [info exists ::wviewer::selected($ao_tok)]] \
+  [::list [::list $tmp/an.raw tran] 0]
+# ...and it OUTRANKS a stale recorded choice. This is the check that goes red if
+# a later edit ever prefers the record: the record here names a file that is not
+# even loaded.
+eqcheck SEL343-AO-a-stale-record-does-not-beat-the-engine \
+  [list [pcall results::persist /x/stale.raw dc [::list token $ao_tok]] \
+        [pcall wviewer::selected_rawfile $ao_tok]] \
+  [::list 1 [::list $tmp/an.raw tran]]
+# ...and the record IS used in the one state the engine cannot answer: F4, a
+# result selected while standing on another schematic, where results::current
+# correctly returns {} (R305 -- a loaded-but-blind database is not a selection)
+# and the user's own choice would otherwise not survive the save.
+loadcell $tmp/cellB.sch
+eqcheck SEL344-AO-F4-falls-back-to-the-recorded-choice \
+  [list [pcall results::current] [pcall wviewer::selected_rawfile $ao_tok]] \
+  [::list {} {/x/stale.raw dc}]
+# no window and no record -> {}, which is what the slot held before this item
+# and what the restore side has always handled.
+catch {unset ::wviewer::selected($ao_tok)}
+dict unset ::wviewer::windows $ao_tok
+eqcheck SEL345-AO-nothing-known-is-empty-not-an-error \
+  [pcall wviewer::selected_rawfile $ao_tok] {}
+
+# ---- THE WRITER ITSELF. `wviewer::snapshot`'s open arm no longer hardcodes the
+#      slot. Source-shape, and it carries its POSITIVE term in the same
+#      assertion: the hardcode is gone AND the reader is called AND the key is
+#      still in the fixed build order the state file's byte-determinism rests on.
+#      ⚠ RESTATED IN THE FIX ROUND, and the restatement is why the pattern is
+#      so specific: R602f put a legitimate `rawfile {}` INTO the proc (the
+#      default of `[wviewer::dget $prev rawfile {}]`, the previous value it
+#      keeps when neither source can answer), so a bare `rawfile \{\}` test now
+#      matches the fix instead of the defect. What must be absent is the
+#      HARDCODE INSIDE THE `dict create` -- matched by the key that FOLLOWS it
+#      in the fixed build order, because `info body` collapses every
+#      backslash-newline to a space (measured: the whole `dict create` comes
+#      back as ONE line) so the continuation itself cannot be matched on. What
+#      must be present is the reader, and the dict taking its value from the
+#      variable the reader fed.
+set ao_snapbody [info body wviewer::snapshot]
+eqcheck SEL346-AO-snapshot-writes-the-slot \
+  [list [regexp {rawfile \{\} +graphs} $ao_snapbody] \
+        [regexp {wviewer::selected_rawfile \$token} $ao_snapbody] \
+        [regexp {rawfile +\$selraw} $ao_snapbody] \
+        [regexp {open 1} $ao_snapbody]] {0 1 1 1}
+
+# ---- R602's STORED FORM, and the trap in it. Relative to the rundir when it is
+#      UNDER it, absolute otherwise -- decided COMPONENT-WISE. A `string first`
+#      prefix test would call `<rundir>bis/x.raw` a child of `<rundir>` and store
+#      a relative path that resolves to the wrong file on restore.
+set ao_st [dict create rundir $tmp/aorun]
+eqcheck SEL347-AO-r602-stored-form \
+  [list [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+            [dict create rawfile $tmp/aorun/sub/an.raw] $ao_st] rawfile] \
+        [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+            [dict create rawfile ${tmp}/aorunbis/an.raw] $ao_st] rawfile] \
+        [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+            [dict create rawfile {}] $ao_st] rawfile x]] \
+  [::list sub/an.raw ${tmp}/aorunbis/an.raw {}]
+
+# ---- R605: THE RESTORE PATH COMES THROUGH R303's ONE DOOR, AND ITS
+#      CLEAR-THEN-READ ORDER DID NOT MOVE. The order is a measured behaviour
+#      that this batch explicitly does NOT change (PLAN.md "Out of this batch");
+#      `results::select` never clears (F7), so what must hold is that the
+#      viewer's own `raw clear` still precedes the door.
+set ao_restbody [info body wviewer::restore]
+set ao_iclear [string first {catch {xschem raw clear}} $ao_restbody]
+set ao_idoor  [string first {results::select $rawfile $sim_type} $ao_restbody]
+eqcheck SEL348-AO-restore-reads-through-the-door-after-the-clear \
+  [list [expr {$ao_idoor >= 0 ? 1 : 0}] \
+        [expr {$ao_iclear >= 0 ? 1 : 0}] \
+        [expr {$ao_iclear >= 0 && $ao_idoor > $ao_iclear ? 1 : 0}] \
+        [regexp {xschem raw read \$rawfile} $ao_restbody]] {1 1 1 0}
+# ...and it passes `host none` (R802a): the restore's ONE sentence is
+# ase::ui::viewer_restore's, through ase::echo (R604). A derived channel here
+# would put a second sentence in the viewer sidebar on every session open.
+eqcheck SEL349-AO-restore-passes-host-none \
+  [regexp {results::select \$rawfile \$sim_type \[::list host none\]|results::select \$rawfile \$sim_type \[list host none\]} \
+     $ao_restbody] 1
+
+# ---- R604/R201: `ase::ui::viewer_restore` is re-expressed on the resolver, and
+#      the hand-written copy of section 4's two arms is GONE. The behavioural
+#      half of this is test_ase_persist's R6 group, which runs on every arm.
+set ao_vrbody [info body ase::ui::viewer_restore]
+# ⚠ FIX ROUND: element 1 used to be `string first {results::resolve}` over the
+# whole body -- and the proc's own COMMENT block contains that literal, so
+# replacing the CALL with the verbatim pre-item hand-written arms left it GREEN.
+# It now matches the CALL SHAPE on a line of its own, which a comment cannot
+# satisfy. (Elements 2 and 3 did catch that revert; this one is now able to.)
+eqcheck SEL350-AO-viewer-restore-uses-the-one-resolver \
+  [list [regexp {\n\s*set res \[results::resolve} $ao_vrbody] \
+        [regexp {file isfile \$vraw} $ao_vrbody] \
+        [regexp {ase::last_rawfile \$key} $ao_vrbody]] {1 0 0}
+
+# ---- the per-token array dies with the window, like every other one in
+#      wave_viewer.tcl's family. An undeclared `variable` in `wviewer::forget`
+#      makes the `unset` address a LOCAL array and leaks one entry per closed
+#      window forever -- the file's own repeated ⚠, and the reason `forget` is
+#      driven here rather than the `unset` being trusted.
+catch {unset ::wviewer::selected($ao_tok)}
+eqcheck SEL352-AO-forget-drops-the-recorded-choice \
+  [list [pcall results::persist /x/y.raw tran [::list token $ao_tok]] \
+        [info exists ::wviewer::selected($ao_tok)] \
+        [pcall wviewer::forget $ao_tok] \
+        [info exists ::wviewer::selected($ao_tok)]] {1 1 {} 0}
+
+
+# ===========================================================================
+# AO (cont.) -- THE ITEM-6 FIX ROUND. Six defects, one per confirmed finding,
+#      each with the drive that reproduced it. Spec R602c-R602f, R605a.
+# ===========================================================================
+
+# ---- R602d: AN ALREADY-RELATIVE `viewer.rawfile` IS A FIXED POINT.
+#      `file normalize` resolves a relative path against the PROCESS CWD, which
+#      is not the rundir and has nothing to do with it. Without the pathtype
+#      guard the relativiser re-relativised its OWN OUTPUT -- and it is fed its
+#      own output by the ordinary flow, because `ase::ui::viewer_snapshot`
+#      passes it whatever `wviewer::snapshot` returned, including the
+#      closed-viewer arm's `[dict replace $prev open 0]`.
+#      ⚠ THE CWD IS THE WHOLE POINT: measured from <rundir>/sub, `an.raw`
+#      became `sub/an.raw`, then `sub/sub/an.raw`, one component per Save
+#      State, until the state named a file that does not exist and the read
+#      side told the user their result had gone missing. Every suite runs from
+#      the repo root, which is never under a scratch rundir, which is exactly
+#      why 490 checks were blind to it.
+set ao_pwd0 [pwd]
+set ao_relrun [file join $tmp aorun]
+file mkdir [file join $ao_relrun sub]
+set ao_relst [dict create rundir $ao_relrun]
+set ao_pwd [pwd]
+cd [file join $ao_relrun sub]
+set ao_fp1 [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+              [dict create rawfile an.raw] $ao_relst] rawfile]
+set ao_fp2 [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+              [dict create rawfile $ao_fp1] $ao_relst] rawfile]
+set ao_fp3 [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+              [dict create rawfile $ao_fp2] $ao_relst] rawfile]
+# ...and the ABSOLUTE input still relativises from the same cwd, so the guard
+# did not simply switch the proc off.
+set ao_fpabs [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+              [dict create rawfile [file join $ao_relrun sub an.raw]] $ao_relst] rawfile]
+cd $ao_pwd
+eqcheck SEL353-AO-r602d-already-relative-is-a-fixed-point \
+  [::list $ao_fp1 $ao_fp2 $ao_fp3 $ao_fpabs] \
+  [::list an.raw an.raw an.raw [file join sub an.raw]]
+
+# ---- R602c: THE SLOT IS ABSOLUTE BECAUSE IT IS MADE ABSOLUTE, not because the
+#      engine happens to answer absolutely. The registry keeps the spelling it
+#      was handed -- measured right here: read `an.raw` from its own directory
+#      and `xschem raw rawfile` answers `an.raw`. A relative spelling in the
+#      state file means "under the rundir" and nothing else, so it would name
+#      the wrong file (or no file) on restore.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ao_pwd [pwd]
+cd $tmp
+set ao_relread [pcall xschem raw read an.raw tran]
+set ao_engspell [pcall xschem raw rawfile]
+dict set ::wviewer::windows $ao_tok win_path [pcall xschem get current_win_path]
+catch {unset ::wviewer::selected($ao_tok)}
+set ao_absfromeng [pcall wviewer::selected_rawfile $ao_tok]
+# ...and the RECORDER absolutises too, on the same rule and for the same reason.
+dict unset ::wviewer::windows $ao_tok
+catch {unset ::wviewer::selected($ao_tok)}
+set ao_recrc [pcall results::persist bn.raw tran [::list token $ao_tok]]
+set ao_absfromrec [pcall wviewer::selected_rawfile $ao_tok]
+cd $ao_pwd
+eqcheck SEL358-AO-r602c-a-relative-engine-spelling-is-absolutised \
+  [::list $ao_relread $ao_engspell $ao_absfromeng $ao_recrc $ao_absfromrec] \
+  [::list 1 an.raw [::list [file join $tmp an.raw] tran] 1 \
+          [::list [file join $tmp bn.raw] tran]]
+catch {unset ::wviewer::selected($ao_tok)}
+
+# ---- THE WRITER MUST ANSWER *THE SELECTED* RESULT, NOT *A LOADED* ONE. The
+#      item's whole claim is the first of those, and with one database loaded
+#      the two are indistinguishable -- so this leg loads TWO result-typed raws
+#      and switches back to the first. A reader that returned any loaded result
+#      (the last one, say) passed all 490 checks of the first round.
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ao_r1 [pcall xschem raw read $tmp/an.raw tran]
+set ao_r2 [pcall xschem raw read $tmp/bn.raw tran]
+set ao_curB [pcall xschem raw rawfile]
+set ao_sw [pcall xschem raw switch $tmp/an.raw tran]
+dict set ::wviewer::windows $ao_tok win_path [pcall xschem get current_win_path]
+eqcheck SEL354-AO-the-writer-answers-the-CURRENT-of-two-results \
+  [::list $ao_r1 $ao_r2 $ao_curB $ao_sw [pcall wviewer::selected_rawfile $ao_tok]] \
+  [::list 1 1 $tmp/bn.raw 1 [::list $tmp/an.raw tran]]
+dict unset ::wviewer::windows $ao_tok
+
+# ---- R602e: THE RUNDIR IS QUERIED, `ase::rundir` IS NOT CALLED. That proc is a
+#      create-and-default helper: it `file mkdir`s the rundir a state names, and
+#      for the far commoner EMPTY rundir it falls through to `set_netlist_dir 0`,
+#      which creates `$USER_CONF_DIR/simulations` and rewrites the global
+#      `::netlist_dir`. A Save State may do neither. Proved by SHIMMING
+#      `ase::rundir` to a counter that returns {}: the count must stay 0, and
+#      the state that DOES name a rundir must still relativise -- which it can
+#      only do by reading the key itself.
+set ao_rd_body [info body ase::rundir]
+rename ase::rundir ao_orig_rundir
+set ::ao_rd_calls 0
+proc ase::rundir {state} { incr ::ao_rd_calls ; return {} }
+set ao_nord [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+               [dict create rawfile [file join $ao_relrun sub an.raw]] \
+               [dict create rundir {}]] rawfile]
+set ao_yesrd [ase::state_get [pcall ase::ui::viewer_rawfile_relative \
+               [dict create rawfile [file join $ao_relrun sub an.raw]] \
+               $ao_relst] rawfile]
+rename ase::rundir {}
+rename ao_orig_rundir ase::rundir
+eqcheck SEL355-AO-r602e-no-rundir-means-no-relativisation-and-no-ase-rundir \
+  [::list $ao_nord $ao_yesrd $::ao_rd_calls \
+          [expr {[info body ase::rundir] eq $ao_rd_body}]] \
+  [::list [file join $ao_relrun sub an.raw] [file join sub an.raw] 0 1]
+
+# ---- R602b's WIRING, on the ALWAYS-RUNNING arm. The relativisation itself is
+#      pinned by SEL347/SEL353, but until this check the only thing asserting it
+#      was WIRED INTO the save path was test_ase_persist's G7/G10 -- the display
+#      + ngspice legs, i.e. exactly the ones spec section 12 warns can be green
+#      by not having run. This drives the production entry point,
+#      `ase::ui::viewer_snapshot`, over shimmed session state.
+#
+#      Leg 1: an absolute path under the rundir is folded in RELATIVE, rc 1.
+#      Leg 2: THE FIXED POINT THROUGH THE REAL DOOR, from a cwd under the
+#             rundir, with `wviewer::snapshot` returning the closed arm's own
+#             `[dict replace $prev open 0]` shape. Three consecutive Save States
+#             must leave the stored name alone AND must not dirty the session
+#             (rc 0) -- the compounding regression showed up as `sub/an.raw`,
+#             `sub/sub/an.raw`, `sub/sub/sub/an.raw` with rc 1 every time.
+set ao_ss_body [info body ase::session_state]
+set ao_su_body [info body ase::session_update]
+set ao_sn_body [info body wviewer::snapshot]
+rename ase::session_state  ao_o_ss
+rename ase::session_update ao_o_su
+rename wviewer::snapshot   ao_o_snap
+proc ase::session_state {key} { return $::ao_ws_st }
+proc ase::session_update {key st} { set ::ao_ws_st $st ; incr ::ao_ws_upd ; return 1 }
+proc wviewer::snapshot {token prev} { return $::ao_ws_vd }
+set ::ao_ws_upd 0
+set ::ao_ws_st [dict create rundir $ao_relrun viewer {}]
+set ::ao_ws_vd [dict create open 1 sharedx 0 rawfile [file join $ao_relrun sub w.raw] \
+                  graphs {} mode single target 0]
+set ao_wrc [pcall ase::ui::viewer_snapshot ao_ws_key]
+set ao_wstored [ase::state_get [ase::state_get $::ao_ws_st viewer] rawfile]
+# leg 2 -- the closed arm's pass-through, three times, cwd UNDER the rundir
+rename wviewer::snapshot {}
+proc wviewer::snapshot {token prev} { return [dict replace $prev open 0] }
+set ao_pwd [pwd]
+cd [file join $ao_relrun sub]
+set ao_fixrc {}
+set ao_fixstored {}
+for {set ao_i 0} {$ao_i < 3} {incr ao_i} {
+  lappend ao_fixrc [pcall ase::ui::viewer_snapshot ao_ws_key]
+  lappend ao_fixstored [ase::state_get [ase::state_get $::ao_ws_st viewer] rawfile]
+}
+cd $ao_pwd
+rename wviewer::snapshot {} ; rename ao_o_snap wviewer::snapshot
+rename ase::session_state {} ; rename ao_o_ss ase::session_state
+rename ase::session_update {} ; rename ao_o_su ase::session_update
+eqcheck SEL359-AO-r602b-the-save-path-really-folds-in-the-relative-form \
+  [::list $ao_wrc $ao_wstored $ao_fixrc $ao_fixstored $::ao_ws_upd \
+          [expr {[info body ase::session_state] eq $ao_ss_body \
+              && [info body ase::session_update] eq $ao_su_body \
+              && [info body wviewer::snapshot] eq $ao_sn_body}]] \
+  [::list 1 [file join sub w.raw] {1 0 0} \
+          [::list [file join sub w.raw] [file join sub w.raw] [file join sub w.raw]] 2 1]
+
+# ---- R602f: A SAVE NEVER *ERASES* THE STORED SELECTION. When neither source
+#      can answer -- the engine blind or its ticket refused, AND no choice
+#      recorded -- the PREVIOUS dict's value is kept rather than overwritten
+#      with {}. Measured on a real viewer window with no raw loaded in its
+#      context: one Save State turned a stored `my_chosen.raw` into {}. And
+#      R602a's fallback does NOT cover it, because a selection restored FROM a
+#      state file has no record behind it: `wviewer::restore` passes neither
+#      `token` nor `key` to the door, so `results::persist` declines.
+#      Only `window_for` and `browser_state` are shimmed: everything else on
+#      snapshot's open arm answers a sane default for an unknown token
+#      (measured), and shimming what already works would only hide it.
+set ao_wf_body [info body wviewer::window_for]
+set ao_bs_body [info body wviewer::browser_state]
+set ao_sr_body [info body wviewer::selected_rawfile]
+rename wviewer::window_for       ao_o_wf
+rename wviewer::browser_state    ao_o_bs
+rename wviewer::selected_rawfile ao_o_sr
+proc wviewer::window_for {token} { return .ao_fake_top }
+proc wviewer::browser_state {token} { return {} }
+proc wviewer::selected_rawfile {token} { return $::ao_sr_answer }
+set ao_prev [dict create open 1 sharedx 0 rawfile my_chosen.raw graphs {} \
+               mode single target 0]
+set ::ao_sr_answer {}
+set ao_kept  [wviewer::dget [pcall wviewer::snapshot $ao_tok $ao_prev] rawfile MISSING]
+set ao_kept0 [wviewer::dget [pcall wviewer::snapshot $ao_tok {}] rawfile MISSING]
+set ::ao_sr_answer [::list /x/fresh.raw tran]
+set ao_fresh [wviewer::dget [pcall wviewer::snapshot $ao_tok $ao_prev] rawfile MISSING]
+rename wviewer::window_for {}       ; rename ao_o_wf wviewer::window_for
+rename wviewer::browser_state {}    ; rename ao_o_bs wviewer::browser_state
+rename wviewer::selected_rawfile {} ; rename ao_o_sr wviewer::selected_rawfile
+eqcheck SEL357-AO-r602f-a-save-never-erases-the-stored-selection \
+  [::list $ao_kept $ao_kept0 $ao_fresh \
+          [expr {[info body wviewer::window_for] eq $ao_wf_body \
+              && [info body wviewer::browser_state] eq $ao_bs_body \
+              && [info body wviewer::selected_rawfile] eq $ao_sr_body}]] \
+  [::list my_chosen.raw {} /x/fresh.raw 1]
+
+# ---- R605a: A SESSION RESTORE IS A SELECTION FOR THE MRU, and it is ASSERTED.
+#      R605 moved `wviewer::restore`'s attach onto `results::select`, and the
+#      door pushes the attached path into the persisted MRU unconditionally --
+#      so merely RE-OPENING a saved session now writes
+#      `$USER_CONF_DIR/raw_history`, which the bare `xschem raw read` it
+#      replaced never did. That is KEPT (0216's shape: the one durable list
+#      should carry the results the user actually worked with) and it is bounded
+#      (`rawhist_add` dedupes on the normalised path and caps at 20, so
+#      re-opening the same session writes once). It is pinned here because this
+#      batch has destroyed two $HOME files by leaving a writer's reachability
+#      unasserted -- the third such change may not go unchecked.
+#
+#      ⚠ EVERY WRITER THE FLAG UNGATES IS SHIMMED **BEFORE** THE FLAG IS RAISED,
+#      the flag is raised around the SINGLE call under test and never across the
+#      `loadcell`, and `::wviewer::rawhist` is saved and restored. CREW_BRIEF
+#      section 3 is two incidents' worth of damage written down.
+set ao_urf_had [info exists ::update_recent_files]
+if {$ao_urf_had} { set ao_urf_old $::update_recent_files }
+set ao_hist_old $::wviewer::rawhist
+set ao_wrf_body [info body write_recent_file]
+set ao_rhw_body [info body wviewer::rawhist_write]
+rename write_recent_file      ao_o_wrf
+rename wviewer::rawhist_write ao_o_rhw
+proc write_recent_file {} { return }
+proc wviewer::rawhist_write {} { return 1 }
+set ::update_recent_files 0
+xschem raw clear
+loadcell $tmp/cellA.sch
+set ::wviewer::rawhist {}
+set ::update_recent_files 1
+set ao_selr [pcall results::select $tmp/an.raw tran [::list host none]]
+set ao_selr2 [pcall results::select $tmp/an.raw tran [::list host none]]
+set ::update_recent_files 0
+set ao_mru_now $::wviewer::rawhist
+rename write_recent_file {}      ; rename ao_o_wrf write_recent_file
+rename wviewer::rawhist_write {} ; rename ao_o_rhw wviewer::rawhist_write
+set ::wviewer::rawhist $ao_hist_old
+if {$ao_urf_had} { set ::update_recent_files $ao_urf_old } else { unset ::update_recent_files }
+eqcheck SEL356-AO-r605a-a-restore-shaped-selection-moves-the-mru \
+  [::list [expr {[lsearch [results::_get $ao_selr did] mru] >= 0 ? 1 : 0}] \
+          $ao_mru_now \
+          [expr {[lsearch [results::_get $ao_selr2 did] mru] >= 0 ? 1 : 0}] \
+          [expr {[info body write_recent_file] eq $ao_wrf_body \
+              && [info body wviewer::rawhist_write] eq $ao_rhw_body}]] \
+  [::list 1 [::list [file normalize $tmp/an.raw]] 0 1]
+
+catch {unset ::wviewer::selected($ao_tok)}
+catch {unset ::wviewer::selected(ao_other_key)}
+dict unset ::wviewer::windows $ao_tok
+# ...and the fix round's own droppings: the cwd it changed three times, the MRU
+# list it emptied, and every proc it renamed away. `::wviewer::rawhist` is the
+# one this batch has already destroyed on disk twice, so it is asserted here,
+# not assumed from a green suite.
+eqcheck SEL351-AO-no-per-token-leak-left-behind \
+  [list [info exists ::wviewer::selected($ao_tok)] \
+        [dict exists $::wviewer::windows $ao_tok] \
+        [expr {[pwd] eq $ao_pwd0}] \
+        [expr {$::wviewer::rawhist eq $ao_hist_old}] \
+        [info procs ao_o_wrf] [info procs ao_o_rhw] [info procs ao_o_ss] \
+        [info procs ao_o_snap] [info procs ao_o_wf] [info procs ao_orig_rundir]] \
+  {0 0 1 1 {} {} {} {} {} {}}
 
 xschem raw clear
 catch {test_scratch_drop $tmp}

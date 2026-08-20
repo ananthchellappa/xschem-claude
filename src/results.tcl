@@ -26,7 +26,7 @@
 # status hands the caller something it can still act on.
 #
 # THE MODEL IS ALREADY IN THE TREE: `ase::ui::viewer_restore`
-# (src/ase_window.tcl:3472) implements the `ok` and `invalid` arms by hand —
+# (src/ase_window.tcl:3562) implements the `ok` and `invalid` arms by hand —
 # absolute-ise against the rundir, `file isfile`, else `ase::last_rawfile`. That
 # is what this proc generalises, and item 6 re-expresses viewer_restore on top
 # of it rather than the other way round.
@@ -37,12 +37,12 @@
 # systematically stale — issue 0507's comment alone is wrong twice, so every
 # pointer below was checked, not copied):
 #
-#   wviewer::rawinfo_parse      src/wave_viewer.tcl:2380   (PURE, per-LINE)
-#   wviewer::db_label           src/wave_viewer.tcl:2401
+#   wviewer::rawinfo_parse      src/wave_viewer.tcl:2393   (PURE, per-LINE)
+#   wviewer::db_label           src/wave_viewer.tcl:2414
 #   ase::raw_content_verdict    src/ase.tcl:2794           (the ONLY content check)
 #   ase::last_rawfile           src/ase.tcl:1952
 #   ase::rundir                 src/ase.tcl:1643
-#   ase::ui::viewer_restore     src/ase_window.tcl:3472
+#   ase::ui::viewer_restore     src/ase_window.tcl:3562
 #   sch_waves_loaded()          src/draw.c:2825   -> `xschem raw loaded`,
 #                               src/scheduler.c:10494
 #
@@ -134,7 +134,9 @@ proc results::resolve {state} {
   }
 
   # relative paths resolve against the rundir — R602's saved form, and
-  # `ase::ui::viewer_restore`'s existing shape (src/ase_window.tcl:3477-3484).
+  # `ase::ui::viewer_restore`'s existing shape -- which, as of results batch
+  # item 6, IS this proc: viewer_restore (src/ase_window.tcl:3562) was
+  # re-expressed onto it, so the model and its copy are one again (R604).
   set abs $named
   if {[catch {file pathtype $abs} pt]} { set pt relative }
   if {$pt ne {absolute} && $rundir ne {}} {
@@ -267,7 +269,7 @@ proc results::_unterminated {s} {
 # `<i> <rawfile> <sim_type-or-<NULL>>` per slot — and `raw_is_loaded`
 # (src/xschem.tcl:6980) reads it BY WORD, so one rawfile path containing a space
 # turns one database into two malformed slots and truncates the path. This proc
-# is built on `wviewer::rawinfo_parse` (src/wave_viewer.tcl:2380), which parses
+# is built on `wviewer::rawinfo_parse` (src/wave_viewer.tcl:2393), which parses
 # per LINE with a greedy path and a trailing `\S+` type and gets that case
 # right. Note what the rule is NOT: four line-wise readers already exist
 # (rawinfo_parse, ase::raw_indices src/ase.tcl:2935, ase::raw_current :2943, and
@@ -526,7 +528,7 @@ proc results::_label {path type} {
 # ---------------------------------------------------------------------------
 # R802 -- THE CHANNEL IS CHOSEN BY HOST, AND THERE IS NO OTHER CHANNEL.
 # ASE-L -> ase::echo (src/ase.tcl:138); the viewer sidebar ->
-# wviewer::browser_status (src/wave_viewer.tcl:10319); the Calculator ->
+# wviewer::browser_status (src/wave_viewer.tcl:10538); the Calculator ->
 # calc::status (src/calculator.tcl:637). NEVER `puts`, NEVER the status bar
 # directly -- the house rule.
 #
@@ -567,37 +569,65 @@ proc results::_emit {host token key msg} {
 }
 
 # ---------------------------------------------------------------------------
-# THE PERSISTENCE SEAM -- ITEM 6 FILLS THIS BODY. R302 lists "writes the
-# persistence slot" among the six things results::select is the one place to do,
-# and R601 says the slot is the ASE state's `viewer.rawfile`. THE READ SIDE IS
-# COMPLETE AND COVERED; NOTHING HAS EVER WRITTEN IT -- `wviewer::snapshot`
-# (src/wave_viewer.tcl:3982) hardcodes `rawfile {}` at :3995, and the
-# build-order comment at :3905 names it too.
+# THE PERSISTENCE SEAM -- FILLED BY ITEM 6 (R602a). R302 lists "writes the
+# persistence slot" among the six things results::select is the one place to
+# do, and R601 says the slot is the ASE state's `viewer.rawfile`. The READ side
+# was complete and covered from the start; NOTHING HAD EVER WRITTEN IT --
+# `wviewer::snapshot` (src/wave_viewer.tcl:4101) hardcoded `rawfile {}`, which
+# is the assertion T-F says would have failed for the whole life of the seam.
 #
-# ⚠ WHAT ITEM 6 MUST FILL, EXACTLY:
-#   - the arguments it is handed are the ENGINE'S OWN spelling of the selected
-#     path, the engine's sim_type, and the caller's whole `opts` dict (so `key`
-#     and `rundir` are reachable without this proc guessing them);
-#   - R602's form: RELATIVE to `ase::rundir` when the path is under it, ABSOLUTE
-#     otherwise. G11 already proves the relative form round-trips, and a
-#     relative path is what makes a state file movable;
-#   - `snapshot` does not know the rundir and `ase::ui::viewer_snapshot`
-#     (src/ase_window.tcl:3451) does, so item 6 must DECIDE which of the two
-#     relativises and say which in its receipt -- its brief already requires
-#     that choice, and this hook is the third possible home for it;
-#   - return 1 when it wrote, 0 when it declined. `results::select` records the
-#     answer in the returned dict's `did` list and does nothing else with it.
+# ⚠⚠ WHAT THIS PROC IS **NOT**, AND WHY ITEM 4'S SEAM DESCRIPTION WAS THE WRONG
+# SHAPE (ruled by item 6, spec R602a, evidence in
+# doc/claude/results_batch/receipts/06-persistence-write-side.md). Item 4's
+# header said this proc would relativise a path and "write" it. It does not
+# write the state, for two measured reasons:
 #
-# ⚠ IT MUST NOT THROW (R801). This proc is called from the middle of a gesture;
-# the call site catches, but a hook that throws would still lose whatever it was
-# in the middle of writing.
+#   1. THE STATE DICT IS BUILT AT SAVE TIME, NOT AT SELECT TIME. `viewer.rawfile`
+#      reaches disk through `wviewer::snapshot` -> `ase::ui::viewer_snapshot`
+#      -> `ase::state_save`, and `wviewer::snapshot` REBUILDS the whole viewer
+#      sub-dict from the live window. Anything written here would be rebuilt
+#      over on the next Save State unless snapshot read it back -- so the write
+#      belongs where the dict is built.
+#   2. A SELECTION MAY NOT DIRTY THE SESSION. `ase::session_dirty`
+#      (src/ase.tcl:3589) is DERIVED -- it serializes `state` and compares it to
+#      `saved` -- so an `ase::session_update` from here would mark the session
+#      dirty and repaint its title on every Location-bar load, breaking the
+#      "snapshot-at-Save-only" contract `ase::ui::viewer_snapshot` documents.
 #
-# Until then it is a NO-OP that returns 0, and that is honest: today no
-# selection persists, which is the seam T-F says has been broken for its whole
-# life. This item does NOT write wviewer::snapshot's change -- that is item 6's
-# scope fence, stated in this item's brief.
+#   3. And it could not have carried T-F on its own anyway: the acceptance flow
+#      that T-F names (run -> Save State, test_ase_persist G7) never comes
+#      through R303's door at all -- `ase::attach_dbs` is a deliberate bypass
+#      (spec section 18) -- so a selection RECORDED here would be absent exactly
+#      where the round-trip has to hold.
+#
+# ⚠ WHAT IT DOES: it RECORDS the user's choice for this window, so that
+# `wviewer::selected_rawfile` (src/wave_viewer.tcl) can answer with it when the
+# engine cannot. The engine is the primary source and is always right when it
+# can answer; the recorded choice is the fallback for the one state where it
+# cannot -- F4, a result selected while standing on another schematic, where
+# `results::current` correctly answers {} (R305) and the user's choice would
+# otherwise not survive the save. See `wviewer::selected_rawfile`'s own header.
+#
+# ⚠ NO RELATIVISATION HERE. R602's relative-when-under-the-rundir form is
+# applied by `ase::ui::viewer_snapshot` (src/ase_window.tcl), at the point the
+# value is folded INTO the state -- ruled in R602a, and the receipt says why the
+# other two candidates lost. What is recorded here is the ENGINE'S OWN spelling,
+# absolute, exactly as it was handed to this proc.
+#
+# ⚠ IT MUST NOT THROW (R801). This is called from the middle of a gesture; the
+# call site catches, but a hook that throws would still lose whatever it was in
+# the middle of doing. Every step is guarded.
+#
+# Returns 1 when the choice was recorded, 0 when it declined -- and it declines
+# whenever there is no window/session to record it against, which is what a
+# headless `results::select $p $t {}` is.
 proc results::persist {path type opts} {
-  return 0
+  if {[string trim $path] eq {}} { return 0 }
+  set tok [results::_get $opts token]
+  if {$tok eq {}} { set tok [results::_get $opts key] }
+  if {$tok eq {}} { return 0 }
+  if {[catch {wviewer::selection_record $tok $path $type} rc]} { return 0 }
+  return [expr {$rc eq {1} ? 1 : 0}]
 }
 
 # ---------------------------------------------------------------------------

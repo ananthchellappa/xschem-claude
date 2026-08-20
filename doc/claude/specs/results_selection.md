@@ -71,12 +71,12 @@ deterministic path.
 | "Make this loaded one current" | `xschem raw switch <n \| file type>`, `src/scheduler.c:10406`; back-out `raw switch_back`, `:10425` |
 | "Load this file and make it current" | `xschem raw read <file> [type]`, `src/scheduler.c:10386` |
 | Registry listing | `xschem raw info` → `<idx> current` + one `<i> <path> <type>` line per slot, `src/save.c:2110-2122` |
-| A correct parser for that listing | `wviewer::rawinfo_parse {text}`, `src/wave_viewer.tcl:2380` (PURE, per-LINE) |
+| A correct parser for that listing | `wviewer::rawinfo_parse {text}`, `src/wave_viewer.tcl:2393` (PURE, per-LINE) |
 | A content check that refuses ngspice's `constants` plot and an empty plot (and deliberately says nothing about a file it cannot parse) | `ase::raw_content_verdict {path}`, `src/ase.tcl:2794` |
 | A safe adopt sequence | `ase::attach_dbs {rawfile sim_type {vcdfiles {}}}`, `src/ase.tcl:2866` |
-| A shipped path-picker with a 20-deep persisted MRU | the Location bar: `wviewer::rawbar_load {token path}`, `src/wave_viewer.tcl:8392`; MRU `wviewer::rawhist_*`, `:8185-8325`, disk `$USER_CONF_DIR/raw_history` |
+| A shipped path-picker with a 20-deep persisted MRU | the Location bar: `wviewer::rawbar_load {token path}`, `src/wave_viewer.tcl:8583`; MRU `wviewer::rawhist_*`, `:8185-8325`, disk `$USER_CONF_DIR/raw_history` |
 | A file chooser filtered on `.raw` | `select_raw {{parent {.}}}`, `src/xschem.tcl:16672` — **the only `.raw` filetype filter in the tree** |
-| A persistence slot for the choice | ASE state `viewer.rawfile`, restored by `ase::ui::viewer_restore`, `src/ase_window.tcl:3472-3504` |
+| A persistence slot for the choice | ASE state `viewer.rawfile`, restored by `ase::ui::viewer_restore`, `src/ase_window.tcl:3562-3638` |
 | Tests that already drive that slot | `tests/headless/test_ase_persist.tcl` **G11** (G9 pins the open-gate, G10 the missing-raw fallback); `tests/headless/test_wave_crossdb_trace.tcl` `xs_state` (`:1000-1012`) |
 | A "which configured row is the one" selector idiom | `sim($tool,default)` radiobuttons, `src/xschem.tcl:5042-5170` |
 
@@ -94,16 +94,16 @@ about run identity.
 | `Results ▸ Select…` — a chooser that binds a result to the **session** | **absent** | `$top.mb.results` gets two adds — Direct Plot and a cascade onto a two-entry disabled Annotate submenu, `src/ase_window.tcl:526-535` |
 | Selection is a **prerequisite**: Calculator selectors and every `Results ▸ Print` refuse until a result is bound | **partial** — refusal exists but is per-*name*, not per-*session*: `get_raw_index()` returns -1 | `src/save.c:3406`; `references/viva_research_raw.json` research[5].items[55] |
 | `Results ▸ Save` — **names** the current results into a history (`Interactive.32.R0`) | **absent** | `references/viva_research_raw.json` research[7].items[28]; no producer varies a path per run (§9) |
-| Plot signals from **several histories** into one window | **yes** — better than the framing suggests | per-trace `%<rawfile> <sim_type>` suffix via `node_token_split()`; `wviewer::db_suffix`, `src/wave_viewer.tcl:2571` |
-| Results Browser **Location field** + last-20-directories drop-down | **yes**, for files not directories | `wviewer::rawbar_load`, `src/wave_viewer.tcl:8392`; MRU `:8185-8325`, cap `::raw_history_max` = 20 |
-| `File ▸ Open Results` → *Choose Data Directory* | **partial** — `Browse…` → `select_raw`, a `tk_getOpenFile` on `.raw` **files** | `src/wave_viewer.tcl:8440`; `src/xschem.tcl:16672` |
-| Search across **all open databases** (`All DBs`) | **yes** | `wviewer::browser_alldbs`, `src/wave_viewer.tcl:10206`; walker `wviewer::signal_list_all`, `:2430` |
+| Plot signals from **several histories** into one window | **yes** — better than the framing suggests | per-trace `%<rawfile> <sim_type>` suffix via `node_token_split()`; `wviewer::db_suffix`, `src/wave_viewer.tcl:2584` |
+| Results Browser **Location field** + last-20-directories drop-down | **yes**, for files not directories | `wviewer::rawbar_load`, `src/wave_viewer.tcl:8583`; MRU `:8185-8325`, cap `::raw_history_max` = 20 |
+| `File ▸ Open Results` → *Choose Data Directory* | **partial** — `Browse…` → `select_raw`, a `tk_getOpenFile` on `.raw` **files** | `src/wave_viewer.tcl:8659`; `src/xschem.tcl:16672` |
+| Search across **all open databases** (`All DBs`) | **yes** | `wviewer::browser_alldbs`, `src/wave_viewer.tcl:10425`; walker `wviewer::signal_list_all`, `:2443` |
 | `Update` vs `Reload` vs `Clear` on a selected result | **absent** as a distinction — every attach path re-reads | `references/viva_cadence_waveform_viewer.md:169` |
-| OCEAN `openResults(dir)` + `selectResult('tran)` sets the **current** selection | **partial** — `xschem raw read` / `raw switch` do this, but only from surfaces not framed as a selection (the viewer Location bar `src/wave_viewer.tcl:8413`; the graph dialog `src/xschem.tcl:6927`) plus scripts, and `read` mis-binds (0509) | `src/scheduler.c:10386`, `:10406`; issue **0509** |
+| OCEAN `openResults(dir)` + `selectResult('tran)` sets the **current** selection | **partial** — `xschem raw read` / `raw switch` do this, but only from surfaces not framed as a selection (the viewer Location bar `src/wave_viewer.tcl:8647`; the graph dialog `src/xschem.tcl:6927`) plus scripts, and `read` mis-binds (0509) | `src/scheduler.c:10386`, `:10406`; issue **0509** |
 | Per-call `?result` / `?resultsDir` override **without** changing the selection | **yes**, per trace — the `%<rawfile>` suffix is exactly this | `references/viva_research_raw.json` research[5].items[53]; `src/draw.c` node walkers |
 | `Edit ▸ Component Display ▸ Set Simulation Data Directory` — tell a *schematic* whose results are its | **absent as a UI** — the stamp can be re-pointed only by `xschem set raw_level <n>` or `xschem annotate_op <file> <level>`, neither framed as "whose results are these", and both bounded to a level already on the current stack | re-stamp `src/scheduler.c:12292-12293`, `:2432-2433`; gate `sch_waves_loaded()` `src/draw.c:2825-2840` |
 | Results **Display Window** for `Results ▸ Print` | **absent** (Calculator §9's Table, R606, is the nearest planned thing) | `references/viva_research_raw.json` research[5].items[33] |
-| A selection survives a session save/restore | **half-built** — the slot is read, resolved, existence-gated and tested; **nothing ever writes it** | read `src/ase_window.tcl:3472-3504`; writer hardcodes `rawfile {}`, `src/wave_viewer.tcl:3995` |
+| A selection survives a session save/restore | **was half-built** — the slot was read, resolved, existence-gated and tested while **nothing ever wrote it**; **BUILT by item 6** (§8.1) | read `src/ase_window.tcl:3562-3638`; writer `src/wave_viewer.tcl:4101` (hardcoded `rawfile {}` until 2026-08-19) |
 
 **Score: xschem has the machinery and none of the concept.** Every mechanical
 primitive Cadence's Select rests on is shipped and tested — a multi-database
@@ -173,7 +173,7 @@ nothing.
 
 **F6 — the borrow idiom is the only legal cross-context read.**
 `wviewer::enter_ctx {token ?borrow?}` → ticket `{ok prev ?sem?}` → work →
-`wviewer::leave_ctx {token ticket}` (`src/wave_viewer.tcl:1391`, `:1462`).
+`wviewer::leave_ctx {token ticket}` (`src/wave_viewer.tcl:1404`, `:1475`).
 `borrow 1` lowers a `semaphore == 1` gesture frame so a menu-driven read is not
 refused (issue 0314). **A REFUSED ticket is skipped, never read as "no raw"** —
 `doc/claude/specs/calculator.md:201`. Five borrow sites exist today; a Select
@@ -218,7 +218,7 @@ All three, or the selection is not real — R103 is the definition every check i
 lazily-built `fold_table` and `req_sim_type` (`src/xschem.h:1183-1250`, from the
 casemode batch). Selecting a result must not silently change the mode a viewer's
 Case Mode readout is describing — `wviewer::casemode_invalidate` /
-`casemode_reapply` (`src/wave_viewer.tcl:14484`, `:14517`) exist for this and
+`casemode_reapply` (`src/wave_viewer.tcl:14703`, `:14736`) exist for this and
 must be called.
 
 ---
@@ -445,9 +445,11 @@ column is what the caller gets *anyway*.
 **R202** `stale` is reported and **still selected**. A user who deliberately kept
 last night's run is not wrong; the sentence says why it looks old. `invalid`
 falls back silently to the derived path and says which happened — this is exactly
-`ase::ui::viewer_restore`'s existing shape (`src/ase_window.tcl:3477-3484`:
-absolute-ise → `file isfile` → else `ase::last_rawfile`), which is the model
-`results::resolve` copies. The resolver itself is a new **pure** proc in
+`ase::ui::viewer_restore`'s existing shape (absolute-ise → `file isfile` → else
+`ase::last_rawfile`), which is the model `results::resolve` copies. **That
+hand-written shape is GONE as of item 6** — `viewer_restore`
+(`src/ase_window.tcl:3562`) now asks this resolver, so the model and its copy
+are one proc again (R604, §8.1). The resolver itself is a new **pure** proc in
 `src/results.tcl` (R204), and `viewer_restore` is re-expressed on top of it.
 
 **R203** The content half of `stale` is `ase::raw_content_verdict {path}`
@@ -482,8 +484,8 @@ reasons. It would make the resolver reach into `ase::` to find its own inputs,
 which kills R204's purity claim and makes the proc untestable without a live
 session and a backend hook. And *"the state"* was already ambiguous between two
 dicts: the saved `rawfile` lives in the **viewer** sub-dict
-(`wviewer::snapshot`, `src/wave_viewer.tcl:3995`), not the state root, which is
-why `ase::ui::viewer_restore` (`src/ase_window.tcl:3472`) reads `$vd` for the
+(`wviewer::snapshot`, `src/wave_viewer.tcl:4101`), not the state root, which is
+why `ase::ui::viewer_restore` (`src/ase_window.tcl:3562`) reads `$vd` for the
 path and `$st` for the rundir. A caller holding both passes both; a caller
 holding only a path passes `[dict create rawfile $p]`.
 
@@ -718,7 +720,7 @@ paths that will still bypass it and names them, following
 
 **R304** `results::list {}` returns the registry as
 `{{idx .. path .. type .. cur 0|1 label ..} ..}`, built on
-`wviewer::rawinfo_parse` (`src/wave_viewer.tcl:2380`) and `wviewer::db_label`
+`wviewer::rawinfo_parse` (`src/wave_viewer.tcl:2393`) and `wviewer::db_label`
 (`:2401`). **There must not be a second parser for `xschem raw info`** — issue
 **0507**'s ruling. If `raw_is_loaded` survives 0507, it is re-expressed on top of
 `results::list`.
@@ -903,11 +905,22 @@ redundant bookkeeping: the sentence branches on it, and a dict whose `msg` says
 One measurement, one verdict, one sentence.
 
 **R302g — the persistence write is a named seam, `results::persist {path type
-opts}`, and item 6 fills its body.** Today it is a documented no-op returning 0,
-which is honest: nothing has ever written `viewer.rawfile`. It is handed the
-**engine's own** spelling and sim_type plus the caller's whole `opts`, must not
-throw, and returns 1 when it wrote. Item 4 pins the **call**, not a write
-(SEL269-SEL272).
+opts}`, and item 6 fills its body.** At item 4 it was a documented no-op
+returning 0, which was honest: nothing had ever written `viewer.rawfile`. It is
+handed the **engine's own** spelling and sim_type plus the caller's whole
+`opts`, must not throw, and returns 1 when it wrote. Item 4 pins the **call**,
+not a write (SEL269-SEL272).
+
+> **Item 6 FILLED IT AND CORRECTED THIS DESCRIPTION — see §8.1, R602a.** The
+> sentence *"returns 1 when it wrote"* survives, but what it writes is a
+> **record of the choice**, not the state: `viewer.rawfile` reaches disk through
+> `wviewer::snapshot`, which rebuilds the viewer sub-dict from the live window,
+> and `ase::session_dirty` is derived, so writing the state from inside a
+> selection would both be overwritten at save time and mark the session dirty on
+> every Location-bar load. The persisted value is read from the **engine** at
+> snapshot time; this record is the fallback for the one state the engine cannot
+> answer (F4). Measured: with this proc neutered entirely, the acceptance flow's
+> stored `viewer.rawfile` is unchanged, because the run path never calls it.
 
 **R802a — the channel default is derived from what the caller gave, and "no
 channel" is a legitimate answer.** `opts host` names it outright
@@ -986,7 +999,7 @@ RULING-1.
 | region | what | built on |
 |---|---|---|
 | **Loaded** | the registry of this session's context — one row per slot, the current one marked, showing `db_label` (file tail + analysis) with the full path in a balloon | `results::list` (R304) |
-| **Recent** | the MRU, newest first, entries already in the registry visually distinguished from ones that are not | `wviewer::rawhist_get`, `src/wave_viewer.tcl:8224` |
+| **Recent** | the MRU, newest first, entries already in the registry visually distinguished from ones that are not | `wviewer::rawhist_get`, `src/wave_viewer.tcl:8349` |
 | **Path** | an editable path entry + `Browse…` | `select_raw`, `src/xschem.tcl:16672` |
 | **Status** | one sentence: the resolver's verdict for the highlighted candidate | §4, §10 |
 | **Buttons** | `Select` · `Close`. No OK/Apply pair. | — |
@@ -1010,7 +1023,7 @@ refused ticket is reported as such, never as "no results" (F6, R305).
 ## 7. The two surfaces that already select
 
 **R501 — the viewer Location bar keeps its behaviour and gains the resolver.**
-`wviewer::rawbar_load` (`src/wave_viewer.tcl:8392-8424`) is already correct on
+`wviewer::rawbar_load` (`src/wave_viewer.tcl:8583-8642`) is already correct on
 the hard points: `file isfile` guard, `switch_ctx` (a move, not a loan),
 additive read with **no** clear (F7), `regenerate`, `browser_refresh`,
 `rawhist_push`, `rawbar_sync`, `log_action`, and every refusal returning 0 with
@@ -1036,7 +1049,7 @@ are R501a, R501b and R501c. None re-opens `DECISIONS.md`.
 passes `host none` and keeps its own three strings.** R501's stated payload is
 that "the status sentence and the MRU push happen in one place". The MRU push
 did move — it is `results::select`'s now, and the delta is provably identical
-because `wviewer::rawhist_add` (`src/wave_viewer.tcl:8208`) `file normalize`s
+because `wviewer::rawhist_add` (`src/wave_viewer.tcl:8333`) `file normalize`s
 its argument, so pushing the caller's spelling and pushing the engine's store
 the same string (SEL312). **The sentences did not, and could not.** T-C's own
 wording freezes "same status string", and the two texts are not the same text:
@@ -1221,7 +1234,7 @@ Evaluate will use, or it says it is only reporting.*
 
 **R504 — `Results ▸ Select…` does not appear in the waveform viewer's menubar.**
 `tests/headless/test_wave_viewer.tcl:586-587` (G2) asserts the cascade set is
-**exactly** `{File View Graph Cursors Options}`, and `src/wave_viewer.tcl:18249`
+**exactly** `{File View Graph Cursors Options}`, and `src/wave_viewer.tcl:18469`
 records the rule. The viewer's selection surface is the Location bar it already
 has. Adding a cascade there is a separate decision with a frozen test in front
 of it.
@@ -1243,9 +1256,12 @@ behaviour is wanted, it must be *said* in the menu and in the verb's comment.
 ## 8. Persistence — the seam that is already built
 
 **R601** The selection persists in the ASE state's `viewer.rawfile`. **Do not
-invent a slot.** The read side is complete and covered:
+invent a slot.** The read side is complete and covered — and as of item 6
+(2026-08-19) the **write** side exists too; §8.1 below carries its rulings, and
+everything in this section is written in the tense of the seam as item 6 found
+it:
 
-- `ase::ui::viewer_restore` (`src/ase_window.tcl:3472-3504`) gates on
+- `ase::ui::viewer_restore` (`src/ase_window.tcl:3562-3638`) gates on
   `viewer.open eq 1`, takes `viewer.rawfile`, absolute-ises a relative value
   against `ase::rundir`, gates on `file isfile`, and falls back to
   `ase::last_rawfile` on any miss — i.e. it *already implements* §4's
@@ -1260,15 +1276,20 @@ invent a slot.** The read side is complete and covered:
   stronger still: a state whose `viewer.rawfile` names an analog raw *and* whose
   traces carry a cross-database VCD suffix.
 
-**R602** The write side is small but not one line. `wviewer::snapshot
-{token prev}` (`src/wave_viewer.tcl:3982-4016`) hardcodes `rawfile {}` at
+**R602** The write side is small but not one line. (⚠ THE LINE NUMBERS IN THIS
+PARAGRAPH AND IN R604 BELOW ARE THE **PRE-ITEM-6** TREE'S, kept because the
+sentences describe the tree as it was when the item was written; R605's were
+re-derived because that block still exists.) `wviewer::snapshot
+{token prev}` (`src/wave_viewer.tcl:4077-4113`) hardcodes `rawfile {}` at
 `:3995`; it writes the selected result's path instead — **relative to `rundir`
 when it is under it, absolute otherwise**, because G11 already proves the
 relative form round-trips and a relative path is what makes a state file
 movable. `snapshot` does not know the rundir, so either it is passed in or the
 relativisation happens in `ase::ui::viewer_snapshot`
-(`src/ase_window.tcl:3451-3459`), which does. Decide that in the item, not in
-the patch.
+(`src/ase_window.tcl:3475-3484`), which does. Decide that in the item, not in
+the patch. **RULED in §8.1: `ase::ui::viewer_snapshot` relativises (R602b), and
+the value it relativises is read from the ENGINE, not from a remembered
+selection (R602a).**
 
 **R603** `doc/claude/specs/calculator.md:786-787` R705 forbids the *Calculator*
 from persisting anything about the current raw ("Reopening the Calculator against
@@ -1280,14 +1301,197 @@ selection, and R705 is satisfied because the Calculator reads it live through
 **R604** A restored selection runs through the resolver (§4) exactly as a fresh
 one does, and its status is reported once, on restore, through `ase::echo`.
 `viewer_restore` already emits a sentence for the no-results case
-(`src/ase_window.tcl:3499-3501`); this extends that vocabulary rather than adding
+(`src/ase_window.tcl:3595-3597`); this extends that vocabulary rather than adding
 a channel.
 
-**R605** `wviewer::restore`'s inline attach block (`src/wave_viewer.tcl:4074-4081`)
+**R605** `wviewer::restore`'s inline attach block (`src/wave_viewer.tcl:4213-4246`)
 does `catch {xschem raw clear}` and then `xschem raw read`. That is a **clear
 before read** (F7) on the restore path, and it is one of the paths §18 names as
 bypassing the content check. Bringing it onto `results::select` is in scope;
 changing the *order* is a measured behaviour change and needs T-E.
+
+
+### 8.1 RULINGS — the write side's exact shape (item 6, 2026-08-19)
+
+Taken by the crew per `doc/claude/results_batch/DECISIONS.md` §C: R602 says
+*"decide that in the item, not in the patch"* and R604 leaves the vocabulary
+open. Evidence for each is in
+`doc/claude/results_batch/receipts/06-persistence-write-side.md`.
+
+**R602a — THE VALUE IS READ FROM THE ENGINE AT SNAPSHOT TIME, and
+`results::persist` is only its fallback.** Two sources were possible and they
+are not equivalent:
+
+| source | what it knows |
+|---|---|
+| a **remembered** selection (`results::persist`) | only what came through R303's door |
+| the **engine** (`results::current`, in the viewer's context) | whatever is actually loaded now, however it got there |
+
+The run path is `ase::attach_dbs` via `wviewer::attach_raw`, and §18 keeps it a
+**deliberate bypass** of R303 — a run is not a selection. So the acceptance flow
+**T-F names** — run, then Save State (`test_ase_persist` G4→G7) — comes through
+the door **not once**, and a `persist`-only slot would have been empty in exactly
+the round trip T-F exists to prove. Measured: with the writer wired to the engine,
+G7's stored `viewer.rawfile` is `test_nfet_final_ase.raw`; with `results::persist`
+neutered (sabotage **S4**) it is *still* `test_nfet_final_ase.raw`, because the
+run never called it. The same holds for a Waves-menu load and for `draw.c`'s
+`autoload=` walk (U10).
+
+So `wviewer::snapshot` asks `wviewer::selected_rawfile`, which asks
+`results::current` through the **0173 loan** (`wviewer::enter_ctx $token 1` —
+the registry is per-`Xschem_ctx`, and this is exactly the read-only
+registry-reader class the `borrow` door was opened for in issue 0314). Asking
+`results::current` rather than `xschem raw rawfile` is deliberate: it is R305's
+definition of *the selected result*, so R102's type gate (a VCD or a table is a
+loaded database, not a result) and R103's stamp test come with it.
+
+**`results::persist` keeps a real job**: it records the choice for the window
+(`token`, else `key`), and that record is what `selected_rawfile` answers with
+when the engine **cannot** — the F4 state, a result selected while standing on
+another schematic, where `results::current` correctly returns `{}` and the
+user's own choice would otherwise not survive the save. Engine first, record
+second, both pinned in both directions (SEL342/SEL343 for the order, SEL344 for
+the fallback).
+
+**Item 4's description of the seam was the wrong shape and is corrected here.**
+It said this proc would relativise a path and *write* it. It cannot write the
+state: `viewer.rawfile` reaches disk through `wviewer::snapshot`, which
+**rebuilds** the whole viewer sub-dict from the live window, so anything written
+at select time is rebuilt over at save time; and `ase::session_dirty`
+(`src/ase.tcl:3589`) is **derived** — it serialises `state` and compares it to
+`saved` — so an `ase::session_update` from inside a selection would mark the
+session dirty and repaint its title on every Location-bar load, breaking the
+*snapshot-at-Save-only* contract `ase::ui::viewer_snapshot` documents.
+
+**R602b — `ase::ui::viewer_snapshot` IS WHERE THE PATH BECOMES RELATIVE.**
+R602 named three possible homes; this is the ruling R602 asked for.
+`wviewer::snapshot` writes the **absolute** path and
+`ase::ui::viewer_rawfile_relative` (`src/ase_window.tcl`) turns it into R602's
+stored form — relative to the state's rundir when it is **under** it, absolute
+otherwise. Why not the other two:
+
+- **not `wviewer::snapshot`**: a rundir is an *ASE state* concept and a viewer
+  need not belong to an ASE session at all (`wviewer::echo` exists for exactly
+  that reason). Making the viewer layer reach into `ase::` for its own inputs is
+  the mistake **R201a** already rejected when it refused to let the resolver take
+  an ASE state as its argument. Passing the rundir in would change `snapshot`'s
+  arity for one production caller and a dozen suite calls, and would only move
+  the decision rather than remove it.
+- **not `results::persist`**: see R602a — the flow T-F names never reaches it.
+
+Relativising at the point the value is folded **into** the state also keeps
+*absolute in memory, relative on disk* one checkable boundary, and it means
+`viewer_snapshot`'s difference test (`$vd eq $prev`) compares the **stored** form
+against the stored form.
+
+**The "under it" test is COMPONENT-WISE, not a string prefix.** `<rundir>bis/x.raw`
+is not under `<rundir>`, and a `string first` test says it is — which would store
+a relative path resolving to a different file on restore. Pinned by SEL347, whose
+sabotage **S2** is precisely that substitution.
+
+**R602c — `absolute in memory` IS MADE TRUE, NOT ASSERTED (fix round,
+2026-08-20).** The registry stores whatever spelling it was handed — measured:
+`cd <dir>; xschem raw read x.raw tran` leaves `xschem raw rawfile` answering
+`x.raw` and `results::current` reporting `path x.raw` — so the "absolute here"
+half of R602a was a claim the code did not enforce, and a relative engine
+spelling flowed straight into the slot. On disk a relative `viewer.rawfile`
+means *under the rundir* and nothing else, so such a value named the wrong file
+or no file at all on restore (driven: stored `x.raw`, restore status `invalid`,
+the user told a result that was current a moment ago "is no longer on disk").
+Both sources of the slot therefore normalise **where the cwd is still the one
+the path was read in**: `wviewer::selection_record` at record time and
+`wviewer::selected_rawfile`'s engine arm at read time.
+
+**R602d — AN ALREADY-RELATIVE `viewer.rawfile` IS A FIXED POINT (fix round,
+2026-08-20).** `ase::ui::viewer_rawfile_relative` returns `$vd` untouched when
+`file pathtype` is not `absolute`. Without that guard `file normalize` resolved
+the value against the **process cwd**, which has nothing to do with the rundir,
+and the proc re-relativised its own output. `ase::ui::viewer_snapshot` feeds it
+whatever `wviewer::snapshot` returned, *including* the closed-viewer arm's
+`[dict replace $prev open 0]` — already in the stored form — so with the cwd
+under the rundir a Save State compounded one directory component per save
+(`an.raw` → `sub/an.raw` → `sub/sub/an.raw` → …) until the state named a file
+that does not exist; the read side then called it `invalid` and told the user
+their result had gone missing while it sat on disk. It also made `$vd` differ
+from `$prev` every time, dirtying the session on every save of a closed-viewer
+state. **Do not `file join $rundir $rf` first either**: that re-absolutises a
+value whose meaning was already rundir-relative, which is a different behaviour
+change. Pinned by **SEL353**, which drives the proc from a cwd *under* the
+rundir and asserts a fixed point.
+
+**R602e — THE RUNDIR IS QUERIED, `ase::rundir` IS NOT CALLED (fix round,
+2026-08-20).** `ase::rundir` (`src/ase.tcl:1643`) is a *create-and-default*
+helper, not a query: it `file mkdir`s the directory a state names, and for the
+common empty `rundir` it falls through to `set_netlist_dir 0`, which **creates
+`$USER_CONF_DIR/simulations` and rewrites the global `::netlist_dir`**. Driven
+with an empty `::netlist_dir` and `$USER_CONF_DIR` repointed at an empty dir,
+one call to `ase::ui::viewer_rawfile_relative` created `simulations/` and moved
+the global. A Save State may do neither, so the relativiser reads the state's
+own `rundir` key and **an empty one means no relativisation** — the slot keeps
+the absolute path, which the read side has always resolved as-is. The cost is
+that a session naming no rundir stores a machine-specific path; guessing the
+default from `::netlist_dir` instead can disagree with what `viewer_restore`
+resolves against once `local_netlist_dir` re-points it per schematic, and a
+stored path that resolves to the **wrong** file is worse than one that is merely
+unportable. Pinned by **SEL355**.
+
+**R602f — A SAVE NEVER *ERASES* THE STORED SELECTION (fix round, 2026-08-20).**
+When neither source can answer — the engine is blind or its ticket was refused,
+*and* no choice is recorded for this window — `wviewer::snapshot` keeps the
+**previous** dict's `rawfile` instead of writing `{}` over it. Driven: a real
+viewer window with no raw loaded in its context turned a stored
+`my_chosen.raw` into `{}` in one Save State. R602a's fallback does not cover
+this, and the header that said it did was wrong: a selection that came back
+**from** a state file has no record behind it at all, because `wviewer::restore`
+calls `results::select` with neither `token` nor `key` (R605's own ⚠), so
+`results::persist` declines and `selected($token)` is never set. `{}` still
+reaches the slot the one way it should — nothing ever selected, nothing ever
+stored. Pinned by **SEL357**.
+
+**R605a — A SESSION RESTORE *IS* A SELECTION FOR THE MRU (fix round,
+2026-08-20), and it is asserted rather than incidental.** Moving the restore
+attach onto `results::select` (R605) made re-opening a saved session push the
+attached path into `$USER_CONF_DIR/raw_history` (`results.tcl`'s unconditional
+`wviewer::rawhist_push`), which the bare `xschem raw read` it replaced never
+did. That is **kept**, because it is 0216's shape — the one durable list should
+carry the results the user actually worked with, and a restore attaches and uses
+one. It is bounded: `wviewer::rawhist_add` dedupes on the normalised path and
+caps at 20, so re-opening the same session repeatedly writes the file **once**
+(the second push finds the path already at the head, returns 0, and does not
+write). The batch has destroyed two `$HOME` files by leaving a writer's
+reachability unasserted, so this one is pinned by **SEL356**, in group AJ's
+shape: every writer the flag ungates is shimmed *before* the flag is raised, the
+flag is raised around the single call under test, and `::wviewer::rawhist` is
+saved and restored.
+
+**R604a — `ok` AND `default` SAY NOTHING; `stale` AND `invalid` SPEAK.** R604
+says the status is reported once, on restore, through `ase::echo`, and that this
+*extends* `viewer_restore`'s existing no-results sentence rather than adding a
+channel. It does not say every status is announced, and announcing every status
+is wrong twice over: **every state file written before this item carries
+`rawfile {}`**, which resolves `default`, so a sentence there would put a line in
+the CIW on every single session open forever; and a successful restore reports
+itself in the only way that matters, by drawing the waveforms. `stale` and
+`invalid` are exactly the two statuses where what the user **gets** is not what
+the state **named** — R202's *"the sentence says why it looks old"* and R201's
+*"says which happened"*.
+
+**And it is ONE sentence, not two.** The pre-existing *"no simulation results for
+this state"* line keeps the case it was written for and is suppressed when the
+resolver has already spoken about the same event — otherwise an `invalid` state
+with nothing to fall back to produces both. Pinned by `test_ase_persist`'s
+R6a-R6f, which run on **every** arm of that file (no DISPLAY and no ngspice
+needed) precisely because §12 names T-E as the batch's one invariant that can be
+green by not having run.
+
+**R605 — the clear-then-read ORDER did not move, and that is checked.**
+`wviewer::restore`'s `catch {xschem raw clear}` stays exactly where it was and
+the door is asked to read into the empty registry it leaves. `results::select`
+never clears (F7), so the whole of the "clear before read" behaviour is still the
+viewer's own line, in its original position. SEL348 asserts the door is called,
+the clear is present, and the clear's offset in the body is **before** the door's.
+The restore passes `host none` (R802a) so the one sentence stays
+`ase::ui::viewer_restore`'s (SEL349).
 
 ---
 
@@ -1348,7 +1552,7 @@ This is `rawbar_load`'s existing contract and it is inherited whole.
 
 **R802** The channels, by host: ASE-L → `ase::echo {msg {tag {}}}`
 (`src/ase.tcl:138`); the viewer sidebar → `wviewer::browser_status {token msg}`
-(`src/wave_viewer.tcl:10319`); the Calculator → `calc::status`. **Never `puts`,
+(`src/wave_viewer.tcl:10538`); the Calculator → `calc::status`. **Never `puts`,
 never the status bar directly** — the house rule.
 
 > **R802a is ruled in §5.2** (item 4): the channel default is derived from what
@@ -1357,7 +1561,7 @@ never the status bar directly** — the house rule.
 
 **R803** The sentences say which database, by `db_label` (file tail + analysis),
 not by full path — the full path lives in the balloon. `wviewer::db_label`
-(`src/wave_viewer.tcl:2401`) already produces this.
+(`src/wave_viewer.tcl:2414`) already produces this.
 
 **R803a — the RESOLVER's sentences name the file by `file tail`, not by full
 path, and not by `db_label`.** RULED 2026-08-19 in the item-2 FIX ROUND. Two
@@ -1451,7 +1655,7 @@ through as NULL when the caller had one.
 **L7 — no `update`, no `after`, while the current-DB pointer is swapped.** A
 redraw during a walk draws the wrong waveforms
 (`doc/claude/specs/waveform_signal_browser.md:917-918`). `signal_list_all`
-(`src/wave_viewer.tcl:2430`) restores the cursor unconditionally *outside* the
+(`src/wave_viewer.tcl:2443`) restores the cursor unconditionally *outside* the
 loop's catch; copy that shape.
 
 **L8 — `ase::attach_dbs` purges more than it looks like.** It does a targeted
@@ -1503,8 +1707,8 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-B** | Selecting an already-loaded `(path, type)` adds **no** slot, makes it current, **and** leaves `xschem raw index <known name>` ≥ 0 **while standing on a different cell from the one it was originally read against** (0509's scenario: read under A, `xschem load` B, re-select there) — the R110 re-stamp. Sabotage: revert the re-stamp, T-B goes red. |
 | **T-C** | `wviewer::rawbar_load`'s observable behaviour is byte-identical before and after the re-expression: same rc, same registry delta, same MRU delta (with `::update_recent_files` set and restored — L11), same status string, and the same two arms staying silent. |
 | **T-D** | A failed selection (garbage path) leaves the previous selection intact — registry, `raw rawfile` and `raw list` all unchanged — and returns 0 with a sentence. F7. |
-| **T-E** | Restore of a state whose `viewer.rawfile` is **relative** attaches it (extends `test_ase_persist` G11); restore of one whose file was **deleted** falls back and says so (extends G10). |
-| **T-F** | `wviewer::snapshot` writes a non-empty `rawfile`, relative when under `rundir`, and a save→restore round-trip re-selects the same result. This is the assertion that would have failed for the whole life of the seam. |
+| **T-E** | Restore of a state whose `viewer.rawfile` is **relative** attaches it (extends `test_ase_persist` G11); restore of one whose file was **deleted** falls back and says so (extends G10). **DELIVERED, item 6** — G11 could not tell "the stored name was followed" from "the derived default is the same file", so **G11b** stores a *second* raw under a name the derived default can never produce; the "says so" half is `test_ase_persist`'s **R6a-R6f**, which run on **every** arm of that file (shims, no DISPLAY and no ngspice needed) plus the G10 capture, and `te_why` re-measures the skip preconditions and asserts the recorded reason against them. |
+| **T-F** | `wviewer::snapshot` writes a non-empty `rawfile`, relative when under `rundir`, and a save→restore round-trip re-selects the same result. This is the assertion that would have failed for the whole life of the seam. **DELIVERED, item 6** — `test_ase_persist` G7 (restated: it used to pin the hardcoded `{}`) and G8, with the writer's machinery in `test_results_select` group AO. |
 | **T-G** | Selecting result B while a graph carries a `%<rawfileA>` trace suffix leaves that trace resolving against A. Per-trace addressing is not selection. |
 | **T-H** | The four resolver statuses each produce their own sentence; `stale` still yields the named path, and `invalid` yields the derived path when one exists on disk and `{}` otherwise — never an error. |
 | **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
@@ -1753,7 +1957,7 @@ idiom, rather than gesturing at them:
   that survives a re-run without a manual copy, and it is out of scope.
 
 **Not a bypass, deliberately:** `wviewer::restore`'s inline attach
-(`src/wave_viewer.tcl:4074-4081`) comes **onto** `results::select` under R605.
+(`src/wave_viewer.tcl:4213-4246`) comes **onto** `results::select` under R605.
 What is deferred there is only its clear-then-read *order*, which is a measured
 behaviour change needing T-E.
 
@@ -1766,6 +1970,20 @@ persistence write is a named no-op seam (R302g), so nothing yet writes
 `viewer.rawfile` and §8's seam is still unfilled. `wviewer::rawbar_load`,
 `ase::ui::viewer_restore`, `wviewer::restore` and `calc::results_source` all
 still reach the engine directly, exactly as they did at `226302f9`.
+
+**Re-checked after item 6 (2026-08-19): the five-path list is STILL unchanged,
+and two of the four callers named above have moved off the engine.**
+`wviewer::rawbar_load` came onto the door in item 5;
+`wviewer::restore`'s inline attach and `ase::ui::viewer_restore`'s hand-written
+resolver came onto it in item 6 (R605 / R604), leaving `calc::results_source`
+(item 10) as the last one. Item 6 added **no** bypass: the value
+`wviewer::snapshot` writes is read through `results::current`, not through a
+second registry reader, and `wviewer::selected_rawfile`'s engine call is the one
+new `xschem raw`-adjacent read it introduces — read-only, inside the 0173 loan.
+**`ase::attach_dbs` stays exactly where it is**, and R602a turns that on its
+head as a *design input* rather than a gap: because the run path does not come
+through the door, the persisted value is taken from the engine and not from a
+remembered selection.
 
 **Also not here:** the netlist-time and simulator-profile machinery
 (`doc/claude/specs/simulator_profiles.md`), which decides *how a run is

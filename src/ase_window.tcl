@@ -3448,24 +3448,114 @@ proc ase::ui::save_state_ok {key} {
 # (issue 0141): an UNTITLED session's first Save-As instead ADOPTS the target
 # (do_save_state_as, own eq {}) and becomes CLEAN — do not "fix" it back to
 # dirty. Returns 1 when a snapshot was folded in, else 0.
+#
+# ⚠ R602/R602a (results batch item 6) — THIS IS WHERE `viewer.rawfile` BECOMES
+# RELATIVE, and the choice was ruled here rather than in `wviewer::snapshot` or
+# in `results::persist`. `wviewer::snapshot` writes the SELECTED RESULT as an
+# ABSOLUTE path; this proc turns it into a path relative to the state's rundir
+# when it is under it, which is R602's stored form and is what makes a state
+# file movable (test_ase_persist G11 already proved the relative form
+# round-trips on the read side).
+#
+# Why here and not in `wviewer::snapshot`: a rundir is an ASE STATE concept and
+# a viewer need not belong to an ASE session at all (`wviewer::echo` exists for
+# exactly that reason), so making the viewer layer reach into `ase::` for its
+# own inputs is the same mistake R201a rejected when it refused to let the
+# resolver take an ASE state as its argument. Passing the rundir IN would change
+# `wviewer::snapshot`'s arity for its one production caller and a dozen suite
+# calls, and would only move the decision rather than remove it. Why not in
+# `results::persist`: that proc is only reached through R303's door, and the
+# acceptance flow T-F names — run, then Save State — never comes through it
+# (`ase::attach_dbs` is section 18's deliberate bypass), so the relativisation
+# would be absent exactly where the round trip has to hold.
+#
+# `ase::rundir` IS NOT ASKED AT ALL on this path (R602e, fix round): it is a
+# create-and-default helper — it `file mkdir`s the state's rundir, and for an
+# empty one falls into `set_netlist_dir 0`, which creates
+# `$USER_CONF_DIR/simulations` AND rewrites the global `::netlist_dir`. A Save
+# State must not make a directory or move a global as a side effect, so
+# `ase::ui::viewer_rawfile_relative` reads the state's own `rundir` key and
+# relativises against nothing else.
 proc ase::ui::viewer_snapshot {key} {
   set st [ase::session_state $key]
   if {$st eq {}} { return 0 }
   set prev [ase::state_get $st viewer]
   set vd [wviewer::snapshot $key $prev]
+  set vd [ase::ui::viewer_rawfile_relative $vd $st]
   if {$vd eq $prev} { return 0 }
   dict set st viewer $vd
   ase::session_update $key $st
   return 1
 }
 
+# R602's stored form, and nothing else: `viewer.rawfile` relative to the state's
+# rundir when it is UNDER it, absolute otherwise. Component-wise, not a string
+# prefix — `<rundir>bis/x.raw` is not under `<rundir>`, and a `string first`
+# test would say it was. Never throws; an unrelativisable value is left exactly
+# as it came in.
+#
+# ⚠⚠ TWO GUARDS, BOTH ADDED IN THE ITEM-6 FIX ROUND, BOTH WITH A REPRODUCER.
+#
+# R602d — AN ALREADY-RELATIVE VALUE IS A FIXED POINT, AND IS RETURNED
+# UNTOUCHED. `file normalize` resolves a relative path against the PROCESS CWD,
+# which is not the rundir and has nothing to do with it, so without this guard
+# the proc re-relativised its own output: `ase::ui::viewer_snapshot` feeds it
+# whatever `wviewer::snapshot` returned, INCLUDING the closed-viewer arm's
+# `[dict replace $prev open 0]`, whose `rawfile` is already in this proc's own
+# stored form. Measured with cwd = <rundir>/sub: `an.raw` -> `sub/an.raw` ->
+# `sub/sub/an.raw` -> `sub/sub/sub/an.raw`, one component per Save State, until
+# the state named a file that does not exist and the read side told the user
+# their result had gone missing while it sat on disk. (It also made the dict
+# differ from `prev` every time, so the session was marked dirty on every save.)
+# Pinned by SEL353.
+#
+# R602e — THE RUNDIR IS *QUERIED*, NOT `ase::rundir`. `ase::rundir`
+# (src/ase.tcl:1643) is a create-and-default helper, not a query: it `file
+# mkdir`s the directory the state names, and for the far more common empty
+# `rundir` it falls through to `set_netlist_dir 0` (src/xschem.tcl), which
+# CREATES `$USER_CONF_DIR/simulations` and REWRITES the global `::netlist_dir`.
+# A Save State may do neither. So the state's own `rundir` is read directly and
+# an empty one means NO RELATIVISATION — the slot keeps the absolute path, which
+# the read side has always resolved as-is. The cost is that a session which
+# names no rundir stores a machine-specific path; the alternative (guessing the
+# default from `::netlist_dir`) can disagree with what `viewer_restore` resolves
+# against once `local_netlist_dir` re-points it per schematic, and a stored path
+# that resolves to the wrong file is worse than one that is merely unportable.
+# Pinned by SEL355 (no directory made, `::netlist_dir` unmoved, value unchanged).
+proc ase::ui::viewer_rawfile_relative {vd st} {
+  if {[catch {ase::state_get $vd rawfile} rf]} { return $vd }
+  if {[string trim $rf] eq {}} { return $vd }
+  # R602d: already in the stored form -> nothing to do. Never `file join
+  # $rundir $rf` first either: that would silently re-absolutise a value whose
+  # meaning was ALREADY rundir-relative, which is a different behaviour change.
+  if {[catch {file pathtype $rf} pt]} { return $vd }
+  if {$pt ne {absolute}} { return $vd }
+  if {[catch {file normalize $rf} np]} { return $vd }
+  # R602e: query only.
+  if {[catch {ase::state_get $st rundir} rd]} { return $vd }
+  if {[string trim $rd] eq {}} { return $vd }
+  if {[catch {file normalize $rd} rd]} { return $vd }
+  set rdl [file split $rd]
+  set npl [file split $np]
+  if {[llength $npl] <= [llength $rdl]} { return $vd }
+  if {[lrange $npl 0 [expr {[llength $rdl] - 1}]] ne $rdl} { return $vd }
+  set tail [lrange $npl [llength $rdl] end]
+  if {[catch {eval [linsert $tail 0 file join]} rel]} { return $vd }
+  if {[string trim $rel] eq {}} { return $vd }
+  dict set vd rawfile $rel
+  return $vd
+}
+
 # Relaunch/rebuild the session's viewer from the state's `viewer` dict. Acts
 # ONLY when the dict carries `open 1` (open 0 / absent / `viewer {}` -> 0, no
 # viewer action — an already-open viewer is left exactly as it is). Raw
-# resolution (D4): a non-{} `rawfile` in the dict is the saved-results seam —
+# resolution (D4) is `results::resolve`'s, since the results batch's item 6: a
+# non-{} `rawfile` in the dict is the SELECTED RESULT (item 6 is what finally
+# WRITES it; until then it was only the hand-editable saved-results seam) —
 # absolute used as-is, relative resolved against the state's rundir, attached
-# IFF it exists; else fall back to ase::last_rawfile (file existence == "has
-# results"). sim_type from ase::plot_sim_type (NO op-only gate: restoring an
+# IFF it exists AND is readable; else fall back to ase::last_rawfile (file
+# existence == "has results"). Its status is reported once, through ase::echo,
+# for `stale` and `invalid` only (R604/R604a). sim_type from ase::plot_sim_type (NO op-only gate: restoring an
 # op raw is harmless, unlike plotting into it). No rawfile at all -> the
 # viewer still opens with its layout, traces draw empty, ase::echo notice, no
 # crash. Returns wviewer::restore's rc (0 headless: wviewer::open bails).
@@ -3473,15 +3563,54 @@ proc ase::ui::viewer_restore {key} {
   set st [ase::session_state $key]
   set vd [ase::state_get $st viewer]
   if {[ase::state_get $vd open 0] ne {1}} { return 0 }
-  set rf {}
+  # --- R604 / R201: THE RESOLVER, NOT A SECOND COPY OF IT ------------------
+  # doc/claude/specs/results_selection.md section 4. This block used to
+  # implement the `ok` and `invalid` arms BY HAND — absolute-ise a relative
+  # value against the rundir, gate on `file isfile`, fall back to
+  # `ase::last_rawfile` — and that hand-written shape is precisely what
+  # `results::resolve` was copied FROM (its own header says so). It is now
+  # asked of the one resolver, so a restored selection runs exactly the
+  # machinery a fresh one does (R604).
+  #
+  # OBSERVABLE BEHAVIOUR IS KEPT, with ONE ruled divergence: a named result
+  # that EXISTS but cannot be READ used to be attached anyway (the old test was
+  # `file isfile` alone) and now falls back to the derived path, because R201c
+  # rules an unreadable file `invalid` rather than `stale` — a status the user
+  # could still select would be offering a choice that cannot be honoured.
+  #
+  # `ase::rundir` is asked ONLY for a non-empty RELATIVE stored value, exactly
+  # as before: it CREATES the directory the state names (src/ase.tcl:1643), and
+  # opening a session must not make one on account of an absolute path.
   set vraw [ase::state_get $vd rawfile]
-  if {$vraw ne {}} {
-    if {[file pathtype $vraw] ne {absolute}} {
-      set vraw [file join [ase::rundir $st] $vraw]
-    }
-    if {[file isfile $vraw]} { set rf $vraw }
+  set rd {}
+  if {$vraw ne {} && [catch {file pathtype $vraw} pt] == 0 && $pt ne {absolute}} {
+    set rd [ase::rundir $st]
   }
-  if {$rf eq {}} { set rf [ase::last_rawfile $key] }
+  set res [results::resolve [dict create rawfile $vraw rundir $rd key $key]]
+  set rf [ase::state_get $res path]
+  # R604 — THE STATUS IS REPORTED ONCE, ON RESTORE, THROUGH `ase::echo`, and it
+  # EXTENDS the vocabulary of the no-results sentence below rather than adding a
+  # channel.
+  #
+  # ⚠ CREW RULING R604a (item 6): `ok` and `default` say NOTHING; `stale` and
+  # `invalid` speak. Reporting every status would put a line in the CIW on every
+  # single session open — every state file written before item 6 carries
+  # `rawfile {}`, which resolves `default`, and a successful restore reports
+  # itself in the only way that matters, by drawing the waveforms. `stale` and
+  # `invalid` are exactly the two where what the user GETS is not what the state
+  # NAMED, which is the thing a sentence has to carry (R202's "the sentence says
+  # why it looks old"; R201's "says which happened").
+  #
+  # Emitted BEFORE the restore, and unconditionally: it describes the
+  # RESOLUTION, which happened before any attach, and `wviewer::restore` returns
+  # 0 headlessly — gating it on the rc would make the one sentence T-E has to
+  # assert unreachable in a headless suite.
+  set said 0
+  set rstat [ase::state_get $res status]
+  if {$rstat eq {stale} || $rstat eq {invalid}} {
+    set said 1
+    catch {::ase::echo "ase: [ase::state_get $res msg]"}
+  }
   set sim_t [ase::plot_sim_type $st]
   # spec §D1 (DEFECT 1, 2026-08-09): THE DIGITAL DATABASES GO IN TOO. This was
   # the ONE attach site of the three that did not pass them — `dp_finish`
@@ -3496,7 +3625,12 @@ proc ase::ui::viewer_restore {key} {
   set vcds {}
   foreach v [ase::last_vcdfiles $key] { lappend vcds [list $v vcd] }
   set rc [wviewer::restore $key $vd $rf $sim_t $vcds]
-  if {$rc && $rf eq {}} {
+  # ...and this one keeps the case it was written for, gated on `said` so R604's
+  # "reported ONCE" holds: an `invalid` state with nothing to fall back to has
+  # already been told which result went missing, and saying "no simulation
+  # results for this state" after it would be the second sentence about one
+  # event.
+  if {$rc && $rf eq {} && !$said} {
     catch {::ase::echo "ase: no simulation results for this state — viewer\
  restored, traces will fill after a run"}
   }

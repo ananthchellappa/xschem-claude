@@ -588,6 +588,14 @@ namespace eval wviewer {
   # NO viewer pref was persisted anywhere. Never written from a gated
   # (--nogui/--pipe/--script) session -- issue 0119, see rawhist_push.
   variable rawhist {}
+  # RESULTS BATCH item 6 (spec doc/claude/specs/results_selection.md R602a):
+  # the SELECTED RESULT this window is working against, as `{path sim_type}`,
+  # recorded by `results::persist` through `wviewer::selection_record` on every
+  # selection that comes through R303's one door. It is the FALLBACK source for
+  # `wviewer::selected_rawfile`, never the primary one -- the engine is asked
+  # first and is right whenever it can answer. Per-token array, so it is
+  # declared in `wviewer::forget` and dropped there with the window.
+  variable selected; array set selected {}
   # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
   # graph index). Window properties, not graph properties — hence arrays
   # keyed by session token like the mirrors above, NOT layout-dict keys (the
@@ -899,6 +907,10 @@ proc wviewer::forget {token} {
   variable axl; variable delmap
   variable cfgafter; variable fillwh
   variable b3x0; variable b3y0; variable b3mk
+  # RESULTS BATCH item 6: the recorded selection, same rule as every array
+  # above -- an undeclared `variable` would make the `unset` below address a
+  # LOCAL array and leak one entry per closed window forever.
+  variable selected
   if {[dict exists $windows $token]} {
     set wp_ [dict get $windows $token win_path]
     # item 7: take down a posted context menu BEFORE the window goes, so its
@@ -952,6 +964,7 @@ proc wviewer::forget {token} {
   wviewer::casemode_forget $token
   catch {unset mode($token)}
   catch {unset target($token)}
+  catch {unset selected($token)}
   catch {unset dest($token)}
   catch {unset browser($token)}
   catch {unset browsershow($token)}
@@ -3902,16 +3915,24 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
 
 # --- persistence (item 14, D5/D8) --------------------------------------------
 # The ASE state's `viewer` key (doc/claude/specs/waveform_viewer.md): fixed
-# build order `open <0|1> sharedx <0|1> rawfile {} graphs <model graph list>`
-# so snapshots serialize byte-deterministically. Graphs go in VERBATIM from
-# the model — incl. the `auto 1` marker (dropping it would make post-reload
-# runs append a SECOND auto graph, receipts/13). Cursor state (cva/cvb/cvr)
-# is NOT persisted: the mirrors die with the window by item-12 design.
+# build order `open <0|1> sharedx <0|1> rawfile <selected result> graphs <model
+# graph list>` so snapshots serialize byte-deterministically. Graphs go in
+# VERBATIM from the model — incl. the `auto 1` marker (dropping it would make
+# post-reload runs append a SECOND auto graph, receipts/13). Cursor state
+# (cva/cvb/cvr) is NOT persisted: the mirrors die with the window by item-12
+# design.
+#
+# ⚠ `rawfile` WAS HARDCODED `{}` FROM ITEM 14 UNTIL THE RESULTS BATCH'S ITEM 6.
+# The READ side (ase::ui::viewer_restore, test_ase_persist G10/G11,
+# test_wave_crossdb_trace's xs_state) was complete, covered and correct the
+# whole time; nothing had ever written the slot. It now carries THE SELECTED
+# RESULT — see wviewer::selected_rawfile below and
+# doc/claude/specs/results_selection.md section 8 (R601-R605, R602a).
 
 # Snapshot of `token`'s viewer for the state dict. Window open -> `open 1` +
-# the LIVE layout (sharedx + graphs; rawfile always {} in v1 = "the current
-# run's raw" — a non-{} value is the hand-editable saved-results seam the
-# restore side honors). Window closed -> the PREVIOUS dict with `open 0` and
+# the LIVE layout (sharedx + graphs; rawfile = the SELECTED RESULT, absolute
+# here and relativised against the rundir by ase::ui::viewer_snapshot — R602a).
+# Window closed -> the PREVIOUS dict with `open 0` and
 # its graphs KEPT (last-known layout: wviewer::forget wiped the live model
 # with the window, so the state dict is the only survivor); no previous dict
 # -> {} (a session that never opened a viewer keeps a clean `viewer {}`).
@@ -3979,6 +4000,104 @@ proc wviewer::tabs_serialize {token} {
   return $out
 }
 
+# ---------------------------------------------------------------------------
+# RESULTS BATCH item 6 — WHAT THE SNAPSHOT WRITES INTO `viewer.rawfile`.
+# doc/claude/specs/results_selection.md section 8, R601/R602/R602a.
+#
+# `wviewer::selection_record` is the recorder `results::persist` calls on every
+# selection that comes through R303's one door; `wviewer::selected_rawfile` is
+# the reader `wviewer::snapshot` asks. Both answer `{path sim_type}` / {}.
+#
+# ⚠⚠ THE ENGINE IS THE PRIMARY SOURCE, AND THE RECORDED CHOICE IS ONLY THE
+# FALLBACK. This is the ruling (R602a) and it is not a preference:
+#
+#   - a REMEMBERED selection goes stale and the engine never does. The run path
+#     (`ase::attach_dbs` via `wviewer::attach_raw`) is a DELIBERATE bypass of
+#     R303 (spec section 18: a run is not a selection), so the acceptance flow
+#     T-F names — run, then Save State (test_ase_persist G7) — records nothing
+#     at all; a `results::persist`-only slot would have been empty in exactly
+#     the round trip T-F exists to prove. The same is true of a Waves-menu load
+#     and of `draw.c`'s `autoload=` walk (U10).
+#   - so the value written is WHAT IS ACTUALLY LOADED NOW, read through
+#     `results::current` — which is R305's definition of "the selected result"
+#     and applies R102's type gate (a VCD or a table is a loaded database, not
+#     a result) and R103's stamp test for free.
+#   - the recorded choice covers the state the engine cannot answer: F4, a
+#     result selected while standing on another schematic. `results::current`
+#     correctly returns {} there (a loaded-but-blind database is not a
+#     selection), and without the record the user's own choice would not
+#     survive the save.
+#   - ⚠ BUT THE RECORD DOES NOT COVER *EVERY* SUCH STATE, and the fix round
+#     corrected this header for saying it did. A selection that came back FROM a
+#     state file has NO record behind it: `wviewer::restore` calls
+#     `results::select` with neither `token` nor `key` (deliberately -- see the
+#     block there), so `results::persist` declines and `selected($token)` is
+#     never set for a RESTORED selection. That is why `wviewer::snapshot` keeps
+#     the PREVIOUS dict's value when both sources answer nothing (R602f) rather
+#     than trusting this array to be populated.
+#
+# ⚠ THE 0173 LOAN, WITH `borrow 1`. The registry is per-Xschem_ctx (tabs do not
+# share one), so asking the engine means standing in the viewer's context —
+# and switching INTO a viewer is a LOAN, not a move (issue 0173: switch_window
+# rewrites the target's wm title). This proc is a READ-ONLY registry reader with
+# no `update`/`after` in it, which is exactly the caller class enter_ctx's
+# `borrow` door was opened for (issue 0314, see its ⚠ block): without the borrow
+# every snapshot taken from inside a gesture frame would be refused and would
+# silently write {}. A REFUSED ticket is not an error here — it falls through to
+# the recorded choice, and then to {}, which is what the slot held before this
+# item and which the restore side has always handled.
+#
+# ⚠ IT IS STILL A PURE-ISH READ, which is what `wviewer::tabs_serialize`'s own
+# note demands of everything on the snapshot path: enter_ctx/leave_ctx restore
+# the context and re-assert the viewer's title, so unlike `tab_freeze`'s bare
+# switch this leaves the caller exactly where it was found.
+#
+# ⚠ NEVER THROWS. It rides Save State.
+proc wviewer::selection_record {token path type} {
+  variable selected
+  if {$token eq {} || [string trim $path] eq {}} { return 0 }
+  # R602c's "absolute here" is a CONTRACT, so it is made true rather than
+  # asserted: the engine stores whatever spelling it was handed (`cd <dir>;
+  # xschem raw read x.raw tran` leaves `xschem raw rawfile` answering `x.raw`),
+  # and a relative spelling that reaches the state file is meaningless there --
+  # the read side resolves a relative `viewer.rawfile` against the RUNDIR, not
+  # against the cwd the read happened in, so it would name the wrong file or no
+  # file. Normalised HERE, where the cwd is still the one the path was read in.
+  if {[catch {file normalize $path} p]} { set p $path }
+  if {[string trim $p] eq {}} { set p $path }
+  set selected($token) [list $p $type]
+  return 1
+}
+
+proc wviewer::selected_rawfile {token} {
+  variable selected
+  variable windows
+  set cur {}
+  if {[dict exists $windows $token]} {
+    set ticket [wviewer::enter_ctx $token 1]
+    if {[lindex $ticket 0]} {
+      if {[catch {results::current} c]} { set c {} }
+      wviewer::leave_ctx $token $ticket
+      if {$c ne {}} {
+        set p {}; set t {}
+        catch {set p [dict get $c path]}
+        catch {set t [dict get $c type]}
+        # ABSOLUTE, same contract and same reason as selection_record's: the
+        # registry hands back its verbatim spelling, which is relative whenever
+        # the read was, and the state file's relative form means "under the
+        # rundir" and nothing else.
+        if {[string trim $p] ne {}} {
+          if {[catch {file normalize $p} np] == 0 && [string trim $np] ne {}} { set p $np }
+          set cur [list $p $t]
+        }
+      }
+    }
+  }
+  if {$cur ne {}} { return $cur }
+  if {[info exists selected($token)]} { return $selected($token) }
+  return {}
+}
+
 proc wviewer::snapshot {token prev} {
   if {[wviewer::window_for $token] ne {}} {
     set lay [wviewer::layout_for $token]
@@ -3990,9 +4109,28 @@ proc wviewer::snapshot {token prev} {
     # file sees the active tab and ignores `tabs`; a new build reading an old
     # file finds no `tabs` and builds a one-tab viewer. No version bump.
     set tabs [wviewer::tabs_serialize $token]
+    # RESULTS BATCH item 6 (R601/R602/R602a): THE SLOT IS FINALLY WRITTEN.
+    # Absolute here; ase::ui::viewer_snapshot relativises it against the state's
+    # rundir when it is under it, which is where the rundir is known.
+    #
+    # ⚠ R602f (fix round) — A SAVE NEVER *ERASES* THE STORED SELECTION. When
+    # neither source can answer (the engine is blind or the ticket was refused,
+    # AND no choice was recorded for this window) the PREVIOUS dict's value is
+    # kept instead of writing {} over it. Measured: with a viewer window open
+    # and no raw loaded in its context, one Save State turned a stored
+    # `my_chosen.raw` into `{}` — and the record that the header leans on as the
+    # fallback is empty on the restore path, because `wviewer::restore` calls
+    # `results::select` with neither `token` nor `key`, so a selection that came
+    # back FROM a state file has nothing standing behind it. `{}` still reaches
+    # the slot the only way it should: when nothing was ever selected and
+    # nothing was ever stored. Pinned by SEL357.
+    set selraw [lindex [wviewer::selected_rawfile $token] 0]
+    if {[string trim $selraw] eq {}} {
+      if {[catch {wviewer::dget $prev rawfile {}} selraw]} { set selraw {} }
+    }
     set d [dict create open 1 \
                        sharedx [wviewer::dget $lay sharedx 0] \
-                       rawfile {} \
+                       rawfile $selraw \
                        graphs  [wviewer::dget $lay graphs {}] \
                        mode    [wviewer::plot_mode $token] \
                        target  [wviewer::target_index $token]]
@@ -4020,9 +4158,10 @@ proc wviewer::snapshot {token prev} {
 # window (headless returns 0 -> bail, no Tk side effects); OVERWRITE the
 # layout from the dict (open zeroed it on a fresh window) + sync the Shared-X
 # menu mirror; when a usable rawfile is given, attach it INLINE (raw clear +
-# raw read, the attach_raw shape — attach_raw itself is NOT called: it
+# results::select, the attach_raw shape — attach_raw itself is NOT called: it
 # regenerates internally and would double-regenerate before the trace
-# re-materialize below) and RE-MATERIALIZE every multi-token RPN expression
+# re-materialize below; R605 moved the READ half onto R303's one door and left
+# the clear where it was, see the block itself) and RE-MATERIALIZE every multi-token RPN expression
 # trace via `xschem raw add` (the raw clear killed those vectors; without the
 # re-add restored traces draw empty and the readout interp throws — the RPNs
 # were validated when the traces were created, so the catch is enough); ONE
@@ -4074,11 +4213,37 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   if {$rawfile ne {} && [file isfile $rawfile] \
       && [wviewer::switch_ctx $token]} {
     catch {xschem raw clear}
-    if {$sim_type ne {}} {
-      xschem raw read $rawfile $sim_type
-    } else {
-      xschem raw read $rawfile
-    }
+    # --- R605: THE ATTACH COMES THROUGH R303's ONE DOOR ---------------------
+    # doc/claude/specs/results_selection.md section 8. This used to be a bare
+    # `xschem raw read`, one of the paths section 18 named as bypassing both the
+    # resolver and the content check. It is now `results::select`, so a restored
+    # selection runs the SAME machinery a fresh one does — the resolver, R302a's
+    # one-spelling-per-run, the `raw select` verb (which re-stamps, R110/R301a),
+    # and the MRU push that fixes 0216's shape for this path too.
+    #
+    # ⚠⚠ THE `raw clear` ABOVE STAYS WHERE IT IS AND KEEPS ITS ORDER. R605 says
+    # the clear-before-read on the restore path is a MEASURED behaviour and that
+    # changing it is a separate change needing its own T-E; the results batch
+    # forbids it (PLAN.md "Out of this batch"). `results::select` never clears
+    # (F7) — the clear is this proc's, it happens first exactly as it always
+    # did, and the door is asked to read into the empty registry it leaves.
+    #
+    # ⚠ `host none` (R802a): the sentence for a restore is emitted ONCE, by
+    # `ase::ui::viewer_restore`, through `ase::echo` (R604). Letting the door
+    # derive a channel here would put a second sentence in the viewer sidebar on
+    # every session open.
+    #
+    # ⚠ NO `token` IN THE OPTS, DELIBERATELY. `token` turns on the viewer-side
+    # follow-ups (case-mode cache, browser refresh) — and this proc is in the
+    # middle of a hand-built attach sequence that depends on the viewer context
+    # staying current for the `raw add` loop and the extra-database reads below.
+    # The follow-ups are not owed here anyway: `regenerate` and
+    # `browser_state_apply` at the tail of this proc rebuild both.
+    #
+    # ⚠ IT NO LONGER THROWS. The old `xschem raw read` was uncaught, so a bad
+    # stored `sim_type` propagated out of a session restore; the door returns a
+    # dict and this catch is belt-and-braces on top of it.
+    catch {results::select $rawfile $sim_type [list host none]}
     foreach G [dict get [wviewer::layout_for $token] graphs] {
       foreach tr [wviewer::dget $G traces {}] {
         set ex  [wviewer::dget $tr expr {}]
@@ -4167,7 +4332,7 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
       # nothing. The message NAMES THE TRACES that will draw nothing, which is
       # precisely what tells "flat" apart from "gone" — a flat signal is not
       # listed in an error line. `wviewer::echo` is byte-for-byte `ase::echo`'s
-      # shape (ciw_echo pane half + `xschem log_action`, src/wave_viewer.tcl:637
+      # shape (ciw_echo pane half + `xschem log_action`, src/wave_viewer.tcl:782
       # / src/ase.tcl:126), so this reaches the CIW AND the log file; it is used
       # instead of `ase::echo` only because a viewer need not belong to an ASE
       # session. The traces are LEFT ALONE on purpose: stripping the `%` suffix
