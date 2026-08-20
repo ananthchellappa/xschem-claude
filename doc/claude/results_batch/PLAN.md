@@ -65,7 +65,7 @@ were re-grepped for this plan.
 | `xschem get raw_level` | `src/scheduler.c:5007` |
 | `sch_waves_loaded()` (52 call sites) · `get_raw_index()` | `src/draw.c:2825` · `src/save.c:3406` |
 | `wviewer::rawinfo_parse` (the correct, per-LINE parser) | `src/wave_viewer.tcl:2380` |
-| `wviewer::db_label` · `wviewer::db_suffix` | `:2401` · `:2571` |
+| `wviewer::db_label` · `wviewer::db_suffix` | `:2414` · `:2571` (**re-grepped 2026-08-20**; `:2401` was the pre-batch line) |
 | `wviewer::rawbar_load` | `:8392` |
 | `wviewer::rawhist_get` · `wviewer::rawhist_push` | `:8224` · `:8279` |
 | `wviewer::snapshot` · its hardcoded `rawfile {}` | `:3982` · **`:3995`** |
@@ -338,6 +338,11 @@ registry-clearing `xschem raw_read`; the `Clear` entry is the sole permitted
 caller. Drive the menu in **both** flag states.
 
 ### Item 9 — `kill-second-rawinfo-parser`
+
+> **HISTORICAL — this brief is written in the present tense and the proc is
+> GONE** (item 9, `70801385`, ruling R304c: removed, not re-expressed; a
+> tombstone comment at `src/xschem.tcl:6980` keeps the file line-neutral,
+> R304d). Kept as briefed, per this batch's convention.
 
 Issue **0507**. `raw_is_loaded` (`src/xschem.tcl:6980`) parses `xschem raw info`
 **by word** (`foreach {n f t} [lrange … 2 end]`), so it breaks on a path with a
