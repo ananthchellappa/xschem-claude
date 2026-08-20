@@ -101,7 +101,7 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
   never rely on its headless return.
 - **L2 — two verbs one underscore apart, opposite semantics.** `xschem raw read`
   appends; `xschem raw_read` **clears the whole registry** then reads
-  (`src/scheduler.c:10776-10793`). **Write `raw read`.**
+  (`src/scheduler.c:10850`; the `raw_clear` arm is `:10835`). **Write `raw read`.**
 - **L3 — until item 1 lands, `raw read` of an already-loaded file returns
   success without re-binding.** Before item 1, `results::select` must detect it
   (registry size unchanged) and either re-stamp with `xschem set raw_level` or
