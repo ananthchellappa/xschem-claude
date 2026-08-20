@@ -118,7 +118,7 @@ four already at parity or ahead.
 
 **F1 — a result is a FILE, and this is already ruled.** Cadence's PSF is a
 *directory* (`references/viva_cadence_waveform_viewer.md:38-40`); ngspice writes
-one flat `.raw`. `doc/claude/specs/calculator.md:885-895` §13 (the ruling row is `:891`) already rules
+one flat `.raw`. `doc/claude/specs/calculator.md:911-921` §13 (the ruling row is `:917`) already rules
 "Results Dir = a PSF directory → a `.raw` **file** path". This spec inherits that
 ruling and does not re-litigate it. It also means Cadence's *two* mechanisms —
 `Results ▸ Select` (picks a **data file**) and the Results Browser Location field
@@ -721,7 +721,9 @@ paths that will still bypass it and names them, following
 **R304** `results::list {}` returns the registry as
 `{{idx .. path .. type .. cur 0|1 label ..} ..}`, built on
 `wviewer::rawinfo_parse` (`src/wave_viewer.tcl:2393`) and `wviewer::db_label`
-(`:2401`). **There must not be a second parser for `xschem raw info`** — issue
+(**`:2414`** — re-grepped 2026-08-20 by item 10, handed on by item 9's
+reviewers; `:2401` was the pre-batch line and `PLAN.md` §2 had already been
+corrected). **There must not be a second parser for `xschem raw info`** — issue
 **0507**'s ruling. `raw_is_loaded` did **not** survive it: **R304c** removed the
 proc (item 9), so there is nothing left to re-express.
 
@@ -904,7 +906,10 @@ check, so a future "simplification" that collapses the two verbs reds it.
 **R305** `results::current {}` returns the selected result's dict or `{}`.
 **RULED (§17 decisions 3 and 6): the Calculator's Results Dir row consumes it,
 and `calc::results_source`'s `self` arm is removed entirely** — the Calculator
-reads the ASE-L session's result and nothing else. It answers
+reads the ASE-L session's result and nothing else. **DONE, item 10, 2026-08-20:
+§7.1a carries the seven rulings that shape the consumption**, including R503d
+(the borrowed read asks this proc rather than `xschem raw rawfile`) and R502a
+(a derived path is not an answer, so the old `ase` arm went too). It answers
 R103's three-part definition, so it returns `{}` for a
 database that is loaded and current but whose stamp does not resolve (F4) —
 **a loaded-but-blind database is not a selection.**
@@ -1147,6 +1152,12 @@ A loan and not `rawbar_load`'s move, because a browsing dialog belongs to the
 ASE window and must not leave the user's context somewhere else. Refusing to
 work at all in the `here` arm was rejected: *"evaluate against last night's
 raw"* happens **before** a run, which is exactly when no viewer exists.
+**⚠ ITEM 10 COLLIDES WITH THAT ARM AND THE COLLISION IS OPEN.** U6 removes the
+Calculator's read of the current context entirely, so a result selected through
+the `here` arm is a real selection that the Calculator cannot see — filed as
+issue **0516**, ruled *not* closable by a crew agent (U6 is the user's), and
+mitigated only in the message R503f rules. If the `here` arm is ever withdrawn,
+withdraw R503f's sentence with it.
 Pinned: SEL365 (here), SEL368/SEL369 (refused — the sentence is asserted for
 what it must **not** say, "no results", as well as for what it must),
 SEL410 (the loan really is a loan: `current_win_path` is unchanged by both the
@@ -1540,25 +1551,43 @@ reversing this rule's original text.** Browsing to a result is
 `ASE-L ▸ Results ▸ Select`'s job; the Calculator consumes the session's
 selection and never makes one. The stub keeps its shape and its reason, and the
 spec now says why it is inert rather than promising it will not be.
-For the record, the state it is reversing: `.calc.res.path` is
-`-state readonly` (`src/calculator.tcl:712`) and `.calc.res.browse` is
-`-state disabled` with a command that writes *"Browse: not implemented"*
-(`:723-727`, with the reason at `:719-722`). It becomes
-`results::select` + `select_raw`. **Browse has no R-number and no plan row in
+
+**DELIVERED, item 10, 2026-08-20 — and the reversal is written into the code as
+well as into this rule.** `.calc.res.path` is still `-state readonly`
+(`src/calculator.tcl:728`) and `.calc.res.browse` is still `-state disabled`
+(`:749`), but its command is no longer `{calc::status {Browse: not
+implemented}}`: it is `calc::browse_inert` (`:1184`), whose sentence gives the
+*reason* — *"Browse is deliberately inert: the Calculator consumes the session's
+result and does not make one. Pick one with ASE-L ▸ Results ▸ Select."* — and
+the block comment above the widget (`:735-748`) records the ruling that made it
+so. **"Not implemented (phase N)" is a promise and may only be made where a
+phase really is coming**; there is no phase coming for this control, and the
+previous wording was an invitation to a later reader to "finish" it. What this
+rule USED to say, for the record, is that Browse *"becomes `results::select` +
+`select_raw`"*. It does not, and it will not.
+**Browse has no R-number and no plan row in
 `doc/claude/calculator_batch/PLAN.md`** — it is named once, at
 `doc/claude/specs/calculator.md:201`. This spec is where it acquires one.
 
 **R503 — the Calculator's Results Dir row must report what Evaluate will use.**
-Today `calc::results_source` resolves self → viewer → ASE → none and labels
-which won (`doc/claude/specs/calculator.md:201`, pinned by
-`tests/headless/test_calc_skeleton.tcl` S26). That is a *reporter*. When phase 3
-lands, Evaluate runs against **this window's own context**, and the Calculator spec is **silent** on which database Evaluate uses —
-R601–R607 (`doc/claude/specs/calculator.md:753-768`) never name one, and its
-only "current raw" statements are §5 (`:461`) and R705 (`:786`). That silence is
-the gap: the row can name a borrowed path while the computation uses a different
-database, or none. **RULED §17 decision 3: the row PICKS.** What it names is what Evaluate reads,
-and the `self` arm that could disagree with it is gone (decision 6). Whatever is ruled, the invariant is: *the row names the database
-Evaluate will use, or it says it is only reporting.*
+Before item 10, `calc::results_source` resolved self → viewer → ASE → none and
+labelled which won (`doc/claude/specs/calculator.md:201`, pinned by
+`tests/headless/test_calc_skeleton.tcl` S26). That is a *reporter*, and the
+Calculator spec is **silent** on which database Evaluate uses — R601–R607
+(`doc/claude/specs/calculator.md`, §9) never name one, and its only "current
+raw" statements are §5 and R705. That silence is the gap: the row could name a
+borrowed path while the computation used a different database, or none.
+**RULED §17 decision 3: the row PICKS.** What it names is what Evaluate reads,
+and the `self` arm that could disagree with it is gone (decision 6). The
+invariant is: *the row names the database Evaluate will use, or it says it is
+only reporting* — and under U3 it is the **first** arm that must hold.
+
+**DELIVERED, item 10, 2026-08-20.** The mechanism is §7.1a's R503a: there is
+exactly **one** resolver (`calc::results_source`, `src/calculator.tcl:948`), and
+Evaluate reaches it through `calc::require_result` (`:1154`), which resolves
+ONCE, publishes the row from that same measurement, and only then decides. The
+row cannot name one database while the decision uses another, because there is
+no second measurement for it to name.
 
 **R504 — `Results ▸ Select…` does not appear in the waveform viewer's menubar.**
 `tests/headless/test_wave_viewer.tcl:586-587` (G2) asserts the cascade set is
@@ -1590,6 +1619,176 @@ for everyone" cannot read as a pass. The second half of U12's answer to the
 driver's *"if the destructive behaviour is wanted it must be said"* is where it
 is now said: in `waves_gate_msg`'s sentence, in the block comment above
 `proc load_raw`, and in issue 0508's FIXED note.
+
+### 7.1a RULINGS — the Calculator's consumption (item 10, 2026-08-20)
+
+**Seven** crew rulings, taken per `doc/claude/results_batch/DECISIONS.md` §C
+because U3/U6/U7/U9 settle *what* the Calculator must do and leave *how* open.
+None re-opens a user ruling. Every one carries a check in
+`tests/headless/test_calc_skeleton.tcl` (S15/S18/S26/S27) and a sabotage that
+reds it; the evidence is in
+`doc/claude/results_batch/receipts/10-calculator-consumes-selection.md`.
+
+**R503d — the borrowed read asks `results::current`, not `xschem raw rawfile`.**
+The old row read the raw verb. The two answers differ exactly where this batch
+lives: `raw rawfile` names the current database even when it is a **VCD or a
+table** (R102/R305b — `ase::attach_dbs` reads the analog raw and *then* the
+VCDs, L8, so a digital slot really can be current) and even when its
+`schname`/`level` stamp no longer resolves against the hierarchy stack (F4 — a
+loaded-but-blind database in which every name lookup answers −1).
+`results::current` (R305) answers R103's three parts and returns `{}` for both.
+Naming either of them in a row that PICKS is precisely how the Calculator ends
+up evaluating against a database in which no signal name resolves — the failure
+R204 of `calculator.md` exists to prevent, one layer further out. Pinned by the
+whole of S26 (the shim is on `results::current`), with SB8 — the reader reverted
+to `raw rawfile` — reddening 17 checks.
+
+**R502a — a DERIVED path is not an answer, so `calc::ase_raw` is GONE.** The old
+`ase` arm returned `ase::last_rawfile` (`src/ase.tcl:1952`): the run directory's
+raw, gated on the file existing. That is a **file on disk**, not a selection, and
+under U3 the row must name what Evaluate READS. Evaluate cannot read a file that
+nothing has loaded, so offering it would re-open R503's contradiction one arm to
+the left — the row naming a path while the computation had none. The honest
+answer there is *"no result is loaded"*, and **U7's sentence is what makes that
+actionable**: it names the gesture that turns that file into a selection.
+Item 13's original report is unaffected — a session with waveforms on screen has
+a viewer context and is answered by the `ase` provenance below. Pinned S26 *"a
+DERIVED session path is not a selection and is not reported"*, whose positive
+term asserts the derivation really does answer; SB9 restores the arm and reds it
+alone.
+
+**R503b — the provenance vocabulary is `ase | viewer | refused | none`, and
+`ase` is a LOOKUP.** The viewer token **is** the ASE-L session key —
+`ase_window.tcl` attaches with `wviewer::attach_raw $key …` (`:2334`, `:4972`),
+which is the same fact R407a rests on — so "whose result is this?" is answered
+by `dict exists $::ase::sessions $tok`, not by a guess. A viewer with no session
+behind it stays `viewer`: it is a results holder in its own right (its Location
+bar selects through `results::select`, R501), so it is **not** the legacy door
+U6 closes. U6 closes the **schematic window's own context**, which is now
+consulted by nothing — **and that has a measured cost this rule does not pay:
+R407a's `here` arm selects INTO that context, so a selection made through this
+batch's own door can be invisible to the Calculator. See R503f and issue 0516.** Pinned S26 *"a token that IS a live ASE-L session key
+reports as one"* (SB10) and *"a result in THIS window's own context is NOT
+consulted"* (SB1, which restores the `self` arm and reds that leg alone).
+
+**R503a — ONE resolver, and Evaluate publishes the row from the measurement it
+decides on.** This is the mechanism of U3's *"the row PICKS"*, and it matters
+that it is a mechanism rather than a pair of equal strings: two resolutions can
+agree by luck and disagree under a world that moves between them (a viewer
+closing, a session attaching). So `calc::require_result` calls
+`calc::results_source` **once**, hands the result to `calc::results_publish`,
+and answers from the same value. Pinned S27 *"the row is published from the SAME
+resolution the decision used"*, which counts the calls (`1`), with SB3 — a second
+resolve through `results_refresh` — reddening it.
+
+**R503c — the refusal sentences MUST NOT COLLAPSE, and that is T-J's other
+half.** §12's T-J is *"a refused borrow ticket is reported AS REFUSED, never as
+'no results'"*. It is sharper here than anywhere else in the batch, because *"no
+results are loaded"* is **also a legitimate answer this window gives** — U7's,
+in fact. So the Calculator carries two procs with two texts: `calc::busy_msg`
+(*"…the waveform viewer's context is busy — that is a refused context switch,
+not an empty result list."*) and `calc::no_result_msg` (U7's, verbatim). The
+refusal **denies the wrong reading in so many words**, the same shape as
+`ase::ui::rsel_borrow`'s (R407a). A refused loan is still *skipped* first —
+another viewer may hold the session's result and a refusal says nothing about
+that one (issues 0313/0314) — but it is **remembered**, and if the walk ends with
+nothing it becomes the origin. Pinned S26 (four legs) and S27 (two), with **SB6
+— `busy_msg` returning `no_result_msg`** reddening three, and **SB2 — the
+refusal not recorded at all** reddening six. SB2 is F6's defect exactly: a
+refusal that reads like an answer.
+
+**R503e — EVALUATE is gated; PLOT and TABLE are not.** U7 names Evaluate. Gating
+the other two would be scope creep in an item whose fence is explicit, and their
+phase-1 stubs still say what they always said. `calc::eval_click` refuses when
+there is no result and otherwise **falls through to `calc::inert Eval 3`** — the
+computation is `doc/claude/calculator_batch` phase 3's and item 10 builds none of
+it. Pinned S27 *"Evaluate WITH a result falls through to the phase-3 stub"*: an
+item that quietly grew a phase reds it.
+
+**R503f — U7's SENTENCE IS NEVER SAID TO A USER WHO HAS ALREADY DONE WHAT IT
+ASKS (fixer round, 2026-08-20).** This ruling exists because two items of this
+same batch collide, and the spec argued both sides without noticing.
+
+**The collision.** R407a (item 7, §6.1) gives the dialog a **`here` arm**: with
+no waveform viewer the session reads — and selects into — the **current**
+context, and the justification recorded there is verbatim *"Refusing to work at
+all in the `here` arm was rejected: 'evaluate against last night's raw' happens
+BEFORE a run, which is exactly when no viewer exists."* That sentence names the
+Calculator's Evaluate. U6 then says the Calculator does **not** read that
+context. So a selection made through this batch's **own door** can be invisible
+to the Calculator, and — measured by a reviewer with no repo edit at all — the
+row read `(no raw file loaded)` while `results::current` in that same context
+returned the selection, and Evaluate answered *"pick an existing one with
+ASE-L ▸ Results ▸ Select"*: **the gesture the user had just performed
+successfully.**
+
+**What is NOT ruled here, and why.** U6 is a **user** ruling whose words are
+*"removed entirely, not demoted"*. An arm that reads this window's own context —
+however late in the order, however tightly conditioned on "a live session with
+no viewer" — is the demotion it forbids, and a crew agent may not take that
+decision back. R503b's *"U6 closes the schematic window's own context, which is
+now consulted by nothing"* therefore **stands**, and the gap is **filed, not
+closed**: issue **0516**, with the reviewer's reproducer, for the driver and the
+user to rule.
+
+**What IS ruled.** The Calculator stops giving useless advice in that state. The
+test is **structural** — is there a live ASE-L session with no waveform viewer
+window (`wviewer::window_for`, which is exactly R407a's `here` precondition)? —
+and it therefore reads **no database**, enters **no context** and produces **no
+path**. Evaluate still refuses; it refuses *accurately*, in
+`calc::no_viewer_msg`'s words, which name the obstacle and a door that works:
+
+> *The ASE-L session has no waveform viewer, and the Calculator reads the
+> session's viewer — a result selected while the session has no viewer is not
+> visible here. Run a simulation, or open the session's waveforms and then pick
+> a result with ASE-L ▸ Results ▸ Select.*
+
+Both steps of that door are real: with a viewer open `ase::ui::rsel_borrow`
+takes its `viewer` arm and `rsel_commit` passes `token $key`, so the select
+happens **inside** the borrowed context — which is where `calc::session_result`
+looks.
+
+**⚠ `calc::no_result_msg` STAYS UNCONDITIONAL.** U7 ruled a *string*; making it
+state-dependent would turn the ruled sentence into a branch and the check that
+asserts it by text into an assertion about one arm. The choice lives one level
+up, in `calc::no_result_advice`, which **both** the row's tooltip and
+`calc::require_result` reach — so the row and Evaluate can never give different
+advice about the same world. Pinned S27 (five legs, including the discriminating
+positive control: the **same** session, now **with** a viewer whose context holds
+no result, gets U7's ruled sentence back), sabotaged in both directions and once
+more by making `sessions_without_viewer` skip `wviewer::window_for`.
+
+**R503g — THE GATE NAMES A SLOT, NOT A FILE (fixer round, 2026-08-20).**
+`calc::require_result` answers
+`{ok .. origin .. path .. type .. idx .. msg ..}`, and the `type`/`idx` are
+carried the whole way from `results::current` through `calc::ctx_result` →
+`calc::session_result` → `calc::results_source`. The first draft identified a
+result **by path alone**, which this spec already rules insufficient: R407c
+clause (1) says in so many words that *"a by-path lookup would select the wrong
+analysis of the right file"* (pinned SEL372 on a two-plot `multi.raw`), U11 says
+one run is one result but the **engine's** identity key is `(rawfile,
+sim_type)` and it stores one slot per analysis, and landmines **L6** and **L10**
+say a slot is reachable by name only with its type. Measured on the item tree
+before the fix: with `multi.raw` current as `dc` and then as `tran`,
+`calc::require_result` and the row returned **byte-identical** answers, so phase
+3 could not have been told which analysis it had been given. **The ROW still
+names the path** — W05 is a path entry (§4) and the two rows of one file are one
+*result* (U11) — **the GATE names the slot.** Pinned S27 *"the same FILE as two
+analyses gives two answers, not one"* and *"T-I …and the same SLOT, not just the
+same file"*, with the reviewer's own recipe (delete the keys) reddening both.
+
+**R502b — a permanently inert control states WHY, and never "not
+implemented".** The Browse stub keeps the shape phase 1a shipped (a control that
+is missing "because it comes later" is not allowed; a control that is inert is),
+and its command is now `calc::browse_inert`, whose sentence names the door. The
+generalisation, which is the reason this is a ruling and not a code comment: **a
+control that is inert BY RULING and one that is inert UNTIL A PHASE LANDS must
+not say the same thing**, because the second sentence is a promise and a reader
+who believes it will implement the control the user declined. Pinned S27 (four
+legs, including that a press on the disabled button says nothing, with an
+enabled control as the positive gesture), SB7, SB19 and SB20.
+
+---
 
 ### 7.2 RULINGS — the Waves gate's exact shape (item 8, 2026-08-20)
 
@@ -1774,7 +1973,7 @@ the patch. **RULED in §8.1: `ase::ui::viewer_snapshot` relativises (R602b), and
 the value it relativises is read from the ENGINE, not from a remembered
 selection (R602a).**
 
-**R603** `doc/claude/specs/calculator.md:786-787` R705 forbids the *Calculator*
+**R603** `doc/claude/specs/calculator.md:806-807` R705 forbids the *Calculator*
 from persisting anything about the current raw ("Reopening the Calculator against
 a different simulation must not resurrect stale vector names as if valid").
 **R705 binds the Calculator, not the session.** This spec persists the session's
@@ -2202,7 +2401,7 @@ T-E can be green by not having run. Assert the skip reason, not just the count.
 | **T-F** | `wviewer::snapshot` writes a non-empty `rawfile`, relative when under `rundir`, and a save→restore round-trip re-selects the same result. This is the assertion that would have failed for the whole life of the seam. **DELIVERED, item 6** — `test_ase_persist` G7 (restated: it used to pin the hardcoded `{}`) and G8, with the writer's machinery in `test_results_select` group AO. |
 | **T-G** | Selecting result B while a graph carries a `%<rawfileA>` trace suffix leaves that trace resolving against A. Per-trace addressing is not selection. |
 | **T-H** | The four resolver statuses each produce their own sentence; `stale` still yields the named path, and `invalid` yields the derived path when one exists on disk and `{}` otherwise — never an error. |
-| **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. (Whichever §17 Q3 rules.) |
+| **T-I** | Cross-context: the Calculator's Results Dir row and `results::current` agree, or the row says it is reporting a borrowed path. §17 Q3 ruled the **first** arm (U3: the row PICKS). **DELIVERED, item 10** — `test_calc_skeleton` S27 asserts the row, `calc::require_result`'s answer and `results::current` (read in the borrowed context, which is where the read happens) name one path; and §7.1a R503a makes it structural rather than coincidental by resolving ONCE and publishing the row from that measurement; **R503g** extends the assertion from the file to the SLOT (`type` and `idx`), because R407c clause (1) and U11 make a by-path answer ambiguous across a two-plot raw. S26 is RESTATED, not deleted: it used to pin the `self → viewer → ase → none` order that U6 and R502a dismantled. **⚠ ONE STATE IS STILL OUTSIDE T-I's first arm and is filed rather than fixed:** in R407a's `here` arm the row says `(no raw file loaded)` while `results::current` in the same context names a selection — it neither agrees nor says it is reporting. Issue **0516**; the refusal at least stops naming a gesture that cannot help (R503f). |
 | **T-J** | A **refused** borrow ticket is reported as refused, never as "no results". F6. **Split across items in the item-4 fixer round — see the note below the table.** |
 | **T-K** | Grep test: no **by-word** parser of `xschem raw info` survives — `raw_is_loaded`'s `foreach {n f t} [lrange … 2 end]` is gone, and every new consumer is built on `wviewer::rawinfo_parse`. (LINE-wise readers already exist — `rawinfo_parse`, `ase::raw_indices` `src/ase.tcl:2935`, `ase::raw_current` `:2943`, the inline per-line regexp at `src/ase.tcl:3241-3245`, and the test helpers — so "exactly one parser" is not the assertion.) Issue 0507's ruling, pinned. **DELIVERED IN TWO HALVES:** item 2's SEL82/SEL83/SEL84 over `src/results.tcl`, and item 9's group AP (SEL459-SEL474) — the proc **removed** (R304c), the detector run over **all 28** `src/*.tcl` and all **358** `tests/headless/*.tcl` on source stripped of both whole-line `#` and trailing `;#` comments, covering **four** by-word shapes with its own positive and negative controls, plus the two rotted citations 0507 filed now asserted to RESOLVE against `src/save.c`. |
 | **T-L** | Grep test: no Waves-menu **load** entry reaches `xschem raw_clear` or the registry-clearing `xschem raw_read`; the `Clear` entry (`src/xschem.tcl:17335`) is the sole permitted caller. Issue 0508, pinned. **DELIVERED, item 8** — as a `cadence_compat` GATE, not a repair (U4/U12): the eight loading entries funnel into `load_raw`, whose first executable statement is the guard, and `tests/headless/test_waves_gate.tcl` proves it by census + position (WA) and by clicking every cascade entry in BOTH flag states (WC/WD). Outside `cadence_compat` the destructive path is UNCHANGED and asserted so. **Fixer round 2026-08-20: the census is no longer one file and two verbs** — it reads `src/xschem.tcl` AND `src/actions.csv` (the command-palette surface, nine `waves` rows), and its pattern covers `raw_clear`, `raw_read` and `raw_read_from_attr` (SEL418/SEL419/SEL457). |
@@ -2236,7 +2435,18 @@ returns nothing, by design and not by omission. The halves are therefore:
     The remaining complaint is that arm 4 writes no *sentence*, which is an
     **R801** gap and not a T-J one: filed as issue **0515**, left unfixed
     because T-C's own wording freezes the silence.
-  - **Item 10's side is still owed.**
+  - **Item 10's side is RULED AND DISCHARGED, 2026-08-20 — see R503c
+    (§7.1a).** The Calculator takes a **real ticket**: `calc::session_result`
+    (`src/calculator.tcl:924`) brackets every cross-window read in
+    `wviewer::enter_ctx $tok 1` / `leave_ctx`, and a refused ticket is *skipped*
+    (another viewer may hold the session's result) **and remembered**, so a walk
+    that ends with nothing reports `refused`, never `none`. It is the sharpest
+    instance of T-J in the batch, because *"No simulation results are loaded"* is
+    **also a legitimate answer this window gives** (U7's) — so the two sentences
+    are two procs with two texts, the refusal denies the wrong reading in words,
+    and a check asserts they are different strings. Driven at both surfaces (the
+    row and Evaluate) and sabotaged twice: `busy_msg` returning `no_result_msg`
+    reds three checks, and dropping the refusal record altogether reds six.
 
 Neither item may mark T-J complete on the strength of item 4's four checks.
 
@@ -2533,6 +2743,23 @@ next reader finds them named rather than rediscovering them:
   schematics behave, so it stays. It is the third `other` row in
   `test_waves_gate.tcl`'s SEL418/SEL419 census, which is where a NEW unclassified
   caller of either verb would go red.
+
+**Re-checked after item 10 (2026-08-20): the five-path list is UNCHANGED, and
+the LAST of the four callers named above has come off the engine.**
+`calc::results_source` no longer reaches `xschem raw rawfile` at all — a grep of
+the comment-stripped `src/calculator.tcl` for that verb returns **zero** lines,
+asserted by `test_calc_skeleton` S27 — and what replaced it is a **reader**,
+`results::current`, taken under the 0173 loan. So all four of §18's
+directly-reaching callers (`wviewer::rawbar_load`, `ase::ui::viewer_restore`,
+`wviewer::restore`, `calc::results_source`) are now converted.
+
+Item 10 adds **no** bypass and could not: the Calculator **adopts nothing**. It
+does not call `results::select`, `xschem raw read`, `raw switch` or `raw select`
+— a second S27 grep pins the first of those at zero, which is U8's mechanism as
+well as R303's (each window keeps its own choice, so comparing two runs stays
+possible). The one thing it writes is its own row and its own status line. The
+five paths that still adopt a raw without the door are exactly the five listed
+above, and the Waves menu is still a bypass whenever `cadence_compat` is 0.
 
 **Also not here:** the netlist-time and simulator-profile machinery
 (`doc/claude/specs/simulator_profiles.md`), which decides *how a run is

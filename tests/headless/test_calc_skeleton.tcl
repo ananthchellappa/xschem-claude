@@ -79,10 +79,24 @@
 #        target and has no wheel class binding of its own; direction, the
 #        Shift horizontal axis, the <MouseWheel> arm, and that each binding
 #        `break`s so one notch is not scrolled twice
-#   S26  the Results Dir row answers about the raw the USER is looking at: this
-#        context first, then a waveform viewer's (through the 0173 loan, with a
-#        refused ticket skipped and the loan given back), then an ASE-L
-#        session's — and the label SAYS which. R705: nothing cached
+#   S26  the Results Dir row answers about the result the USER is looking at:
+#        a waveform viewer's context through the 0173 loan, with a refused
+#        ticket skipped and the loan given back, and the label SAYS whose it
+#        is. R705: nothing cached.
+#        ⚠ RESTATED by results batch item 10 — it used to pin `self -> viewer
+#        -> ase -> none`; the `self` arm was removed by the user (U6) and the
+#        `ase` arm's derived-path source by crew ruling R502a, and the borrowed
+#        read now asks `results::current` rather than `xschem raw rawfile`.
+#        The reasons are at the head of the block itself.
+#
+# Results batch item 10 (doc/claude/results_batch/PLAN.md §1) adds, and restates
+# three legs of S15 and one of S18 in place:
+#   S27  the Results Dir row PICKS: ONE resolution feeds both the row and
+#        Evaluate (U3/T-I), Evaluate with no result refuses in the ruled words
+#        and does not offer to launch ASE-L (U7), a REFUSED loan is reported as
+#        refused rather than as "no results" (T-J), the read is a loan that is
+#        given back and the Calculator selects nothing (U8), and `Browse` is
+#        permanently inert with the reason in the code (U9)
 #
 # Needs a DISPLAY (Tk widgets). Under Xvfb set GUI_GATE=0. Standalone:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_skeleton.tcl
@@ -348,6 +362,36 @@ calc::close
 # error-guarded call: a sabotage that makes the code under test THROW would
 # otherwise hit the outer catch and delete every remaining check
 proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
+
+# ⚠ A TK BUTTON UNDER THE POINTER READS BACK `active`, NOT `normal` — FIXER
+# ROUND, results batch item 10 (2026-08-20). `-state active` is Tk's HOVER
+# state (set by the class <Enter> binding), not a widget-state defect, and on
+# the dev display :99 the pointer stays wherever the PREVIOUS suite left it. A
+# reviewer measured it deterministically 3/3: after
+# `run_suites.sh test_results_dialog test_waves_gate test_results_select
+# test_wave_viewer` the pointer sat at (1309,463) and `S17 exactly the 7 RF ids
+# and mp are disabled` reported `{var=active}`; warping the pointer to (6,340)
+# and re-running the SAME unmodified file gave ALL PASS. It reds at HEAD too
+# (with `{vt=active}`), so it is not this item's edit — but a check whose
+# PASS/FAIL depends on where the mouse happens to sit is not evidence, and it
+# is not on the batch's known-flake list.
+#
+# So every sweep that asks "is this button enabled?" asks it through here.
+# `disabled` is unaffected (Tk never makes a disabled widget active), so the
+# only thing collapsed is the enabled/hovered distinction — which no check in
+# this file is about.
+# a dict read that cannot ABORT the file. `dict get` on a key the code under
+# test never wrote THROWS, which would hit the outer catch and delete every
+# remaining check — so the reviewer's own sabotage recipe for the slot-identity
+# legs ("make the key not exist") would have been unreadable. It must red the
+# check that asked for the key, and nothing else.
+proc dg {d k} { if {[catch {dict get $d $k} v]} { return NO-SUCH-KEY } ; return $v }
+
+proc btnstate {w} {
+    set st [pcall $w cget -state]
+    if {$st eq {active}} { return normal }
+    return $st
+}
 
 # --- S13 the palette accessor (spec R113 / RULING-1) -------------------------
 # .calc does not exist here (S12 closed it), which is deliberate: the palette
@@ -676,16 +720,26 @@ check "S15 no control in the row is still stock grey" $rowbgs {}
 check "S15 Browse stub disabled" [pcall .calc.res.browse cget -state] disabled
 
 # no raw loaded: the entry must SAY so, not sit empty and not throw
-check "S15 results_path with no raw is empty, not an error" [pcall calc::results_path] {}
 check "S15 entry says no raw is loaded" [pcall .calc.res.path get] {(no raw file loaded)}
 check_true "S15 entry reads as a sentence, not empty" \
     [expr {[set t [pcall .calc.res.path get]] ne {}
            && ![string match ERR:* $t] && [string match {*no raw*} $t]}]
 
-# ...and with one loaded it shows the full path. `xschem raw rawfile` needs a
-# real .raw, so the C command is shimmed for exactly this leg and restored
-# immediately: the branch under test is calc::results_refresh's, not the
-# engine's.
+# ⚠⚠ RESTATED, RESULTS BATCH ITEM 10 (U6) — SAME SUBJECT, OPPOSITE EXPECTATION.
+# These legs used to shim `xschem raw rawfile` and assert the row showed the
+# path: they pinned the `self` arm. The user removed that arm ENTIRELY on
+# 2026-08-18 (doc/claude/specs/results_selection.md §17 decision 6, U6): the
+# Calculator reads the ASE-L session's result and nothing else, and must never
+# evaluate against a raw that a legacy path — the Waves menu, a graph rect's
+# `autoload=`, `raw_read_from_attr` — dropped into a SCHEMATIC window's context.
+# `calc::results_path`, which was that arm's reader, went with it.
+#
+# The subject is unchanged (what the row says while a raw IS loaded in THIS
+# context) and the expectation is now the opposite, so the leg carries its own
+# positive evidence in the same assertion: the shim really answers, and the row
+# still refuses to use it. A `results_source` that quietly kept the self arm
+# reds this, and so does one that lost the ability to see a raw at all.
+check "S15 the self-arm reader is gone (U6)" [pcall info procs ::calc::results_path] {}
 set shimerr [catch {
     rename ::xschem ::calc_test_real_xschem
     proc ::xschem {args} {
@@ -695,14 +749,18 @@ set shimerr [catch {
     calc::results_refresh
 } shimmsg]
 set shown [pcall .calc.res.path get]
+set shimlive [pcall xschem raw rawfile]
+set shimsrc [pcall calc::results_source]
 catch {rename ::xschem {}}
 catch {rename ::calc_test_real_xschem ::xschem}
 check "S15 shim installed cleanly"       $shimerr 0
-check "S15 loaded raw shows its full path" $shown {/tmp/calc test/sim.raw}
+check "S15 a raw in THIS window's context is not what the row names (U6)" \
+    [list $shimlive $shown $shimsrc] \
+    {{/tmp/calc test/sim.raw} {(no raw file loaded)} {none {} {} {} {}}}
 # the shim WAS live (it answered) and is gone again: with no raw loaded the
 # real command throws (scheduler.c:10462) while other verbs still answer
 check_true "S15 shim was live and is now gone" \
-    [expr {$shown eq {/tmp/calc test/sim.raw}
+    [expr {$shimlive eq {/tmp/calc test/sim.raw}
            && ![string match ERR:* [pcall xschem get current_win_path]]
            && [string match ERR:* [pcall xschem raw rawfile]]}]
 pcall calc::results_refresh
@@ -998,7 +1056,7 @@ check "S17 both group separators are drawn" $badsep {}
 set want_disabled {sp zp yp hp vswr zm gd mp}
 set badstate {}
 foreach id $selall {
-    set st [pcall .calc.sel.$id cget -state]
+    set st [btnstate .calc.sel.$id]
     set want [expr {[lsearch -exact $want_disabled $id] >= 0 ? {disabled} : {normal}}]
     if {$st ne $want} { lappend badstate $id=$st }
 }
@@ -1241,13 +1299,28 @@ check "S18 choosing a destination says so" [pcall .calc.status.msg get] \
     {plot destination Replace: not implemented (phase 3)}
 pcall .calc.mode.dest set {Append}
 
-# the three action buttons are INERT, and each names itself and its phase
+# the three action buttons are INERT, and each names itself and its phase.
+#
+# ⚠ RESTATED FOR `eval` ONLY, results batch item 10 (U7). Evaluate is no longer
+# plain-inert: it resolves the session's result FIRST, and with none loaded it
+# refuses in the ruled words instead of naming a phase. That is the point of the
+# ruling — "not implemented (phase 3)" is true and useless to a user who has no
+# results, and the sentence that replaces it names the gesture that fixes it.
+# Plot and Table are deliberately untouched: U7 names Evaluate, and gating the
+# other two would be scope creep (the phase-3 stub is still what a press WITH a
+# result reaches — S27 drives that arm).
 foreach {id label phase} {plot Plot 3 eval Eval 3 table Table 10} {
     check "S18 $id text" [pcall .calc.mode.$id cget -text] $label
-    check "S18 $id enabled" [pcall .calc.mode.$id cget -state] normal
+    check "S18 $id enabled" [btnstate .calc.mode.$id] normal
     pcall .calc.mode.$id invoke
-    check "S18 $id is inert and says so" [pcall .calc.status.msg get] \
-        "$label: not implemented (phase $phase)"
+    if {$id eq {eval}} {
+        check "S18 $id with no result refuses and names the next action (U7)" \
+            [pcall .calc.status.msg get] \
+            "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."
+    } else {
+        check "S18 $id is inert and says so" [pcall .calc.status.msg get] \
+            "$label: not implemented (phase $phase)"
+    }
 }
 
 # --- S17/S18 inert purity: nothing pressed above touched the work surfaces ---
@@ -1326,7 +1399,7 @@ check "S19 redo starts disabled" [pcall .calc.btb.redo cget -state] disabled
 set badenabled {}
 foreach {id label} $btb {
     if {$id in {undo redo}} continue
-    if {[pcall .calc.btb.$id cget -state] ne {normal}} { lappend badenabled $id }
+    if {[btnstate .calc.btb.$id] ne {normal}} { lappend badenabled $id }
 }
 check "S19 the other eight are pressable" $badenabled {}
 
@@ -1415,7 +1488,7 @@ foreach {id label} {push Push pop Pop del Del recall Recall} {
     if {![winfo exists $w]} { lappend badstk $id=MISSING ; continue }
     if {[winfo class $w] ne {Button}} { lappend badstk $id=[winfo class $w] }
     if {[pcall $w cget -text] ne $label} { lappend badstk $id=[pcall $w cget -text] }
-    if {[pcall $w cget -state] ne {normal}} { lappend badstk $id=[pcall $w cget -state] }
+    if {[btnstate $w] ne {normal}} { lappend badstk $id=[btnstate $w] }
 }
 check "S20 the four side buttons, with the spec's labels" $badstk {}
 # ...and they are ONE COLUMN, not two groups. The obvious way to make the
@@ -1656,7 +1729,7 @@ foreach tok $padkeys {
     if {![winfo exists $w]} { lappend badkey k$n=MISSING ; incr n ; continue }
     if {[winfo class $w] ne {Button}}   { lappend badkey k$n=[winfo class $w] }
     if {[pcall $w cget -text] ne $tok}  { lappend badkey k$n=[pcall $w cget -text] }
-    if {[pcall $w cget -state] ne {normal}} { lappend badkey k$n=[pcall $w cget -state] }
+    if {[btnstate $w] ne {normal}} { lappend badkey k$n=[btnstate $w] }
     incr n
 }
 check "S22 the twelve operator keys, in order, all pressable" $badkey {}
@@ -2870,31 +2943,76 @@ update idletasks
 check "S25 fixture cleaned up" \
     [list [pcall .calc.stk.list size] [string trim [pcall .calc.buf get 1.0 end]]] {0 {}}
 
-# --- S26 Results Dir against a NEIGHBOURING raw (item 13, Part C) -------------
-# The report: the Calculator was opened from the schematic editor while an ASE-L
-# session had a state loaded and waveforms on screen, and the row said "(no raw
-# file loaded)". True of `xschem raw rawfile` in the editor's context, and
-# useless — there WAS a raw and the user was looking at it.
+# --- S26 Results Dir against the SESSION'S result (item 13 Part C, RESTATED by
+#     results batch item 10) --------------------------------------------------
 #
-# The three sources are shimmed rather than mocked away: calc::viewer_raw's real
-# loop runs against a fake registry and a fake 0173 loan bracket, so the ticket
-# bail, the ordering and the give-back are all exercised. R705 forbids caching
-# any of it, which the last leg checks by taking the shims away again.
+# ⚠⚠ RESTATED, NOT DELETED, AND THE EXPECTATION GENUINELY CHANGED. As shipped,
+# S26 pinned `calc::results_source`'s resolution as **self -> viewer -> ase ->
+# none**, with the first arm reading `xschem raw rawfile` in THIS window's
+# context. Two of those three arms are gone by ruling, and the third answers a
+# different question:
+#
+#   * the `self` arm was removed ENTIRELY by the user on 2026-08-18 (U6,
+#     doc/claude/specs/results_selection.md §17 decision 6). The Calculator
+#     reads the ASE-L session's result and nothing else; it must never evaluate
+#     against a raw a legacy path dropped into a schematic window's context.
+#   * the `ase` arm's `ase::last_rawfile` derivation went with it (CREW RULING
+#     R502a, spec §7.1a). It names a FILE ON DISK, not a selection, and under
+#     U3 the row must name what Evaluate READS. `ase` survives as a PROVENANCE
+#     — the borrowed context belongs to a live session — not as a path source.
+#   * the borrowed read now asks `results::current` (R305) instead of
+#     `xschem raw rawfile`. The two differ exactly where it matters: `raw
+#     rawfile` names the current database even when it is a VCD or a table (L8)
+#     and even when its stamp no longer resolves against the hierarchy stack
+#     (F4), and naming one of those in a row that PICKS is how the Calculator
+#     ends up evaluating against a database no signal name resolves in.
+#
+# ⚠ FIVE ELEMENTS, NOT THREE (fixer round). `calc::results_source` answers
+# `{origin path detail type idx}`: a result is a SLOT, not a file, and the two
+# trailing terms are what let `calc::require_result` hand phase 3 an analysis
+# rather than a filename (U11 / R407c clause 1 / landmines L6, L10). Every
+# expectation below carries them, which is why they read `... good_tok tran 0`
+# and `{none {} {} {} {}}`.
+#
+# What did NOT change, and is asserted below exactly as before: the ACTIVE
+# viewer answers first, a REFUSED loan is skipped rather than read as "that
+# viewer has none", the loan is taken with borrow=1 and given back, the label
+# says WHOSE the path is, the tooltip really reaches the widget, nothing is
+# cached (R705), and the row re-resolves on expand and not on collapse.
+#
+# The shims sit one layer lower than they did: `results::current` is shimmed
+# rather than `xschem raw rawfile`, because that is the reader item 10 put in
+# calc::ctx_result. `calc::session_result`'s real loop (`src/calculator.tcl:924`)
+# still runs against a fake registry and a fake 0173 loan bracket, so the ticket
+# bail, the ordering and the give-back are all still exercised.
+# (⚠ FIXER ROUND: this paragraph named `calc::viewer_raw`, the proc item 10
+# DELETED — landmine L9's exact class, in text written fresh in the item. The
+# subject is `calc::session_result`; S15 asserts its sibling reader is gone.)
 check "S26 with nothing anywhere it is still the phase-1a wording" \
-    [pcall calc::results_source] {none {} {}}
+    [pcall calc::results_source] {none {} {} {} {}}
 check "S26 ...and the label is untouched in that case" \
     [pcall .calc.res.lab cget -text] {Results Dir:}
 
 set ::s26_log {}
 set ::s26_inctx 0
+# what a BORROWED context answers, and what THIS one answers. Two variables on
+# purpose: U6's whole content is that the second is never used.
+set ::s26_cur [dict create idx 0 path /tmp/s26/from_viewer.raw type tran cur 1 \
+                   label {from_viewer.raw (tran)}]
+set ::s26_here {}
+# which token the loan is currently standing in, and which tokens answer "no
+# result selected here" — the pair that lets the walk be driven past a context
+# it CAN enter but that holds nothing.
+set ::s26_tok {}
+set ::s26_noresult {}
 set ::s26_shimerr [catch {
-    rename ::xschem ::calc_s26_xschem
-    proc ::xschem {args} {
-        if {[lrange $args 0 1] eq {raw rawfile}} {
-            if {$::s26_inctx} { return {/tmp/s26/from_viewer.raw} }
-            error {No raw file loaded}
+    rename ::results::current ::calc_s26_current
+    proc ::results::current {} {
+        if {$::s26_inctx} {
+            if {[lsearch -exact $::s26_noresult $::s26_tok] >= 0} { return {} }
+            return $::s26_cur
         }
-        return [uplevel 1 [linsert $args 0 ::calc_s26_xschem]]
+        return $::s26_here
     }
     rename ::wviewer::enter_ctx ::calc_s26_enter
     rename ::wviewer::leave_ctx ::calc_s26_leave
@@ -2903,6 +3021,7 @@ set ::s26_shimerr [catch {
         # a REFUSED loan is not an answer about that viewer (issues 0313/0314)
         if {$token eq {refused_tok}} { return {0 {}} }
         set ::s26_inctx 1
+        set ::s26_tok $token
         return {1 .somewhere}
     }
     proc ::wviewer::leave_ctx {token ticket} {
@@ -2911,15 +3030,17 @@ set ::s26_shimerr [catch {
         return 1
     }
     set ::s26_savedwin $::wviewer::windows
+    set ::s26_savedsess $::ase::sessions
     set ::wviewer::windows [dict create \
         refused_tok [dict create win_path .nosuch1 top .nosuch1] \
         good_tok    [dict create win_path .nosuch2 top .nosuch2]]
+    set ::ase::sessions [dict create]
 } s26msg]
 check "S26 shims installed cleanly" $::s26_shimerr 0
 
 set src [pcall calc::results_source]
-check "S26 with no raw here, the VIEWER's raw is what the row reports" \
-    $src {viewer /tmp/s26/from_viewer.raw good_tok}
+check "S26 the borrowed context's SELECTED RESULT is what the row reports" \
+    $src {viewer /tmp/s26/from_viewer.raw good_tok tran 0}
 check "S26 a REFUSED loan is skipped, not read as 'that viewer has none'" \
     [lsearch -exact $::s26_log {enter refused_tok borrow=1}] 0
 check "S26 the loan is taken with borrow=1 (issue 0314: a menu open holds the semaphore)" \
@@ -2940,14 +3061,34 @@ check_true "S26 the tooltip names the source and the path" \
            && [string match {*/tmp/s26/from_viewer.raw*} $tip]}]
 # ⚠ THE WIDGET, NOT THE FORMATTER (item 13 review). The leg above calls the pure
 # formatter with arguments the TEST supplies, so the whole `balloon` attach can
-# be deleted from calc::results_refresh and it stays green — measured, 487/487,
+# be deleted from calc::results_publish and it stays green — measured, 487/487,
 # with the row carrying no tooltip in any state. `balloon` bakes its text into
-# the <Enter> script it binds (xschem.tcl:12729), so the BINDING is the evidence
-# that the provenance actually reached the user.
+# the <Enter> script it binds (xschem.tcl's balloon), so the BINDING is the
+# evidence that the provenance actually reached the user.
 set tipbind [pcall bind .calc.res.path <Enter>]
 check_true "S26 ...and the ROW really carries it: balloon attached, naming source and path" \
     [expr {[string match {*waveform viewer*} $tipbind]
            && [string match {*/tmp/s26/from_viewer.raw*} $tipbind]}]
+
+# ⚠⚠ RESTATED — this leg used to read *"a session with no results is skipped,
+# not reported as empty"* and drove `calc::ase_raw`, which R502a deleted. The
+# same rule now lives one layer down and is worth more there: a context the walk
+# CAN enter but which holds no selected result is skipped and the NEXT token is
+# asked. Without the second leg the first is satisfied by a walk that never
+# entered the empty one at all.
+set ::s26_log {}
+set ::wviewer::windows [dict create empty_tok [dict create win_path .nosuch3] \
+                                    good_tok  [dict create win_path .nosuch2]]
+set ::s26_noresult {empty_tok}
+check "S26 a context with no selected result is skipped, and the next is asked" \
+    [pcall calc::results_source] {viewer /tmp/s26/from_viewer.raw good_tok tran 0}
+check_true "S26 ...and the empty one really WAS entered and given back" \
+    [expr {[lsearch -exact $::s26_log {enter empty_tok borrow=1}] >= 0
+           && [lsearch -exact $::s26_log {leave empty_tok}] >= 0}]
+set ::s26_noresult {}
+set ::wviewer::windows [dict create \
+    refused_tok [dict create win_path .nosuch1 top .nosuch1] \
+    good_tok    [dict create win_path .nosuch2 top .nosuch2]]
 
 # ⚠ THE ACTIVE VIEWER ANSWERS FIRST, not whichever the registry happens to list
 # first — that is the whole premise of Part C (two viewers open, the user is
@@ -2965,61 +3106,92 @@ check "S26 with no ACTIVE viewer, the registry order decides" \
 set ::s26_curtok good2_tok
 check "S26 ...but the ACTIVE viewer outranks it (viewer_tokens puts it first)" \
     [lindex [pcall calc::results_source] 2] good2_tok
+
+# ⚠ NEW, item 10: THE PROVENANCE IS THE SESSION WHEN THE TOKEN IS ONE. The
+# viewer token IS the ASE-L session key — ase_window.tcl attaches with
+# `wviewer::attach_raw $key ...` — so "whose result is this" is a lookup, not a
+# guess, and U6's answer ("the ASE-L session's") is what the label then says.
+set ::ase::sessions [dict create good2_tok [dict create path /tmp/s26/s.ase]]
+set asesrc [pcall calc::results_source]
+pcall calc::results_refresh
+check "S26 a token that IS a live ASE-L session key reports as one" \
+    $asesrc {ase /tmp/s26/from_viewer.raw good2_tok tran 0}
+check "S26 ...and the label names ASE-L, not the viewer" \
+    [pcall .calc.res.lab cget -text] {Results Dir (ASE-L session):}
+
+# ⚠⚠ THE NEGATIVE CONTROL FOR THAT LOOKUP — FIXER ROUND, results batch item 10.
+# R503b says `ase` is a LOOKUP ("the viewer token IS the session key"), not the
+# question "is ANY ASE-L session open?". Without a case where a session EXISTS
+# and the answering token is NOT one of its keys, a `calc::token_origin` that
+# ignored its argument entirely stays fully green: a reviewer replaced the
+# `dict exists $::ase::sessions $tok` with `[dict size $::ase::sessions] > 0`
+# and the whole suite passed, while a plain waveform viewer holding the
+# selection was reported `ase` and labelled `Results Dir (ASE-L session):`.
+# Same world as the leg above, ONE key changed.
+set ::ase::sessions [dict create some_other_sess [dict create path /tmp/s26/o.ase]]
+set plainsrc [pcall calc::results_source]
+pcall calc::results_refresh
+check "S26 a token that is NOT a session key stays 'viewer', with a session open" \
+    $plainsrc {viewer /tmp/s26/from_viewer.raw good2_tok tran 0}
+check "S26 ...and the label still names the waveform viewer" \
+    [pcall .calc.res.lab cget -text] {Results Dir (waveform viewer):}
+set ::ase::sessions [dict create]
 catch {rename ::wviewer::current_token {}}
 if {$::s26_hadcur} { catch {rename ::calc_s26_curtok ::wviewer::current_token} }
 catch {set ::wviewer::windows $::s26_savedwin2}
 
-# THE ORDER: this window's own context outranks a borrowed one.
-set ::s26_inctx 1
-check "S26 a raw in THIS context outranks the viewer's" \
-    [pcall calc::results_source] {self /tmp/s26/from_viewer.raw {}}
-pcall calc::results_refresh
-check "S26 ...and then the label is the plain one again" \
-    [pcall .calc.res.lab cget -text] {Results Dir:}
-set ::s26_inctx 0
-
-# ASE-L is the third source, and it is a pure path read (ase::last_rawfile
-# already answers {} unless the file exists) — no context switch at all.
-set ::s26_savedsess $::ase::sessions
-rename ::ase::last_rawfile ::calc_s26_lastraw
-proc ::ase::last_rawfile {key} {
-    if {$key eq {sess_b}} { return /tmp/s26/from_ase.raw }
-    return {}
-}
-set ::ase::sessions [dict create sess_a {} sess_b {}]
-# with the viewer registry emptied, the ASE session is the only source left
+# ⚠⚠ RESTATED — THIS LEG USED TO READ "a raw in THIS context outranks the
+# viewer's". U6 reverses it: THIS window's own context is not consulted AT ALL.
+# The positive term is in the same assertion, because "the row says none" is
+# also what a broken resolver says: `results::current` really does answer here,
+# and the row still refuses to name it.
 set ::wviewer::windows [dict create]
-check "S26 with no viewer either, the ASE-L session's raw is reported" \
-    [pcall calc::results_source] {ase /tmp/s26/from_ase.raw sess_b}
+set ::s26_here [dict create idx 0 path /tmp/s26/from_self.raw type tran cur 1 \
+                    label {from_self.raw (tran)}]
 pcall calc::results_refresh
-check "S26 ...and the label names ASE-L, not the viewer" \
-    [pcall .calc.res.lab cget -text] {Results Dir (ASE-L session):}
-check "S26 a session with no results is skipped, not reported as empty" \
-    [lindex [pcall calc::ase_raw] 2] sess_b
+check "S26 a result in THIS window's own context is NOT consulted (U6)" \
+    [list [dict get [pcall results::current] path] [pcall calc::results_source] \
+          [pcall .calc.res.path get]] \
+    {/tmp/s26/from_self.raw {none {} {} {} {}} {(no raw file loaded)}}
+set ::s26_here {}
 
-# R705: NOTHING about the current raw is persisted or cached. Take every shim
-# away and the very next query must answer from the world as it now is.
-catch {rename ::ase::last_rawfile {}}
-catch {rename ::calc_s26_lastraw ::ase::last_rawfile}
-catch {set ::ase::sessions $::s26_savedsess}
-catch {rename ::wviewer::enter_ctx {}}
-catch {rename ::calc_s26_enter ::wviewer::enter_ctx}
-catch {rename ::wviewer::leave_ctx {}}
-catch {rename ::calc_s26_leave ::wviewer::leave_ctx}
-catch {set ::wviewer::windows $::s26_savedwin}
-catch {rename ::xschem {}}
-catch {rename ::calc_s26_xschem ::xschem}
-check_true "S26 shims are gone again (the real raw verb throws, others answer)" \
-    [expr {[string match ERR:* [pcall xschem raw rawfile]]
-           && ![string match ERR:* [pcall xschem get current_win_path]]}]
-check "S26 R705: nothing was cached — the answer is live" \
-    [pcall calc::results_source] {none {} {}}
+# ⚠ NEW, item 10 — T-J: A REFUSED BORROW IS REPORTED AS REFUSED, NEVER AS "no
+# results". Both sentences are legitimate answers this window gives, which is
+# exactly why they may not collapse into one: "no results are loaded" is a fact
+# about the user's simulations, and a busy window is not.
+set ::wviewer::windows [dict create refused_tok [dict create win_path .nosuch1]]
+set refsrc [pcall calc::results_source]
 pcall calc::results_refresh
-check "S26 ...so the row is back to the no-raw wording and the plain label" \
-    [list [pcall .calc.res.path get] [pcall .calc.res.lab cget -text]] \
-    {{(no raw file loaded)} {Results Dir:}}
-check_true "S26 ...and the balloon reverted with it (the widget, not the formatter)" \
-    [string match {*No .raw file is loaded here*} [pcall bind .calc.res.path <Enter>]]
+check "S26 the only loan refused: the ORIGIN is the refusal, not 'none'" \
+    $refsrc {refused {} refused_tok {} {}}
+check "S26 ...and the row says so in its own words, not the no-raw ones" \
+    [pcall .calc.res.path get] {(results unavailable: the session's context is busy)}
+check "S26 ...and the label marks it unavailable" \
+    [pcall .calc.res.lab cget -text] {Results Dir (unavailable):}
+check_true "S26 ...the tooltip is the refusal, and it DENIES the wrong reading" \
+    [expr {[set rt [pcall bind .calc.res.path <Enter>]] ne {}
+           && [string match {*refused context switch*} $rt]
+           && [string match {*not an empty result list*} $rt]
+           && ![string match {*No simulation results are loaded*} $rt]}]
+check_true "S26 ...and the two sentences are genuinely different strings" \
+    [expr {[pcall calc::busy_msg] ne [pcall calc::no_result_msg]}]
+
+# ⚠ NEW, item 10 — CREW RULING R502a: A DERIVED PATH IS NOT AN ANSWER. The old
+# `ase` arm returned `ase::last_rawfile` — the run directory's raw, gated on the
+# file existing. Under U3 the row names what Evaluate READS, and Evaluate cannot
+# read a file nothing has loaded; offering it would re-open R503's contradiction
+# one arm to the left. The positive term: the derivation really does answer.
+set ::wviewer::windows [dict create]
+set ::s26_lastraw_had [expr {[info commands ::ase::last_rawfile] ne {}}]
+if {$::s26_lastraw_had} { rename ::ase::last_rawfile ::calc_s26_lastraw }
+proc ::ase::last_rawfile {key} { return /tmp/s26/derived.raw }
+set ::ase::sessions [dict create sess_b [dict create path /tmp/s26/b.ase]]
+check "S26 a DERIVED session path is not a selection and is not reported (R502a)" \
+    [list [pcall ase::last_rawfile sess_b] [pcall calc::results_source]] \
+    {/tmp/s26/derived.raw {none {} {} {} {}}}
+catch {rename ::ase::last_rawfile {}}
+if {$::s26_lastraw_had} { catch {rename ::calc_s26_lastraw ::ase::last_rawfile} }
+set ::ase::sessions [dict create]
 
 # ⚠ THE "ON DEMAND" HALF, AND WHY THE WORLD MUST CHANGE IN THE MIDDLE OF IT.
 # The first draft collapsed the row, expanded it, and asserted the entry still
@@ -3033,28 +3205,319 @@ check_true "S26 ...and the balloon reverted with it (the widget, not the formatt
 # proves the collapse arm does NOT refresh (it would otherwise pick the new
 # value up and make the expand leg indistinguishable from a leftover again),
 # and the expand leg proves the expand arm DOES.
-set ::s26_shim2 [catch {
-    rename ::xschem ::calc_s26_xschem2
-    proc ::xschem {args} {
-        if {[lrange $args 0 1] eq {raw rawfile}} { return {/tmp/s26/on_demand.raw} }
-        return [uplevel 1 [linsert $args 0 ::calc_s26_xschem2]]
-    }
-}]
-check "S26 a raw appeared while the row was showing the old answer (shim installed)" $::s26_shim2 0
+pcall calc::results_refresh
+check "S26 the row starts this leg with no result" \
+    [pcall .calc.res.path get] {(no raw file loaded)}
+set ::s26_cur [dict create idx 0 path /tmp/s26/on_demand.raw type tran cur 1 \
+                   label {on_demand.raw (tran)}]
+set ::wviewer::windows [dict create good_tok [dict create win_path .nosuch2]]
 pcall calc::res_toggle
 check "S26 ...collapsing does NOT refresh: the row still holds the OLD string" \
     [pcall .calc.res.path get] {(no raw file loaded)}
 pcall calc::res_toggle
 check "S26 re-expanding the row re-resolves it (on demand, never remembered)" \
     [pcall .calc.res.path get] {/tmp/s26/on_demand.raw}
-check "S26 ...and the re-resolve reached the label too (this context's own raw)" \
-    [pcall .calc.res.lab cget -text] {Results Dir:}
-catch {rename ::xschem {}}
-catch {rename ::calc_s26_xschem2 ::xschem}
+check "S26 ...and the re-resolve reached the label too" \
+    [pcall .calc.res.lab cget -text] {Results Dir (waveform viewer):}
+
+# =============================================================================
+# S27 — RESULTS BATCH ITEM 10: THE ROW PICKS, AND EVALUATE READS WHAT IT NAMES.
+#
+# Four user rulings and one invariant, all of them about WHICH DATABASE the
+# Calculator works against — never about what it computes, which is
+# calculator_batch phase 3's and is deliberately absent here.
+#
+#   U3   the Results Dir row PICKS: what it NAMES is what Evaluate READS
+#   U7   Evaluate with no result refuses and names the next action
+#   U8   a Calculator read does not drag the waveform viewer with it
+#   U9   `Browse` stays disabled, and the stub carries the REASON
+#   T-I  the row and `results::current` agree
+#   T-J  a refused borrow is reported AS REFUSED (S26 above, plus Evaluate here)
+#
+# The shims from S26 are still installed: `good_tok` answers with
+# `/tmp/s26/on_demand.raw`.
+# =============================================================================
+
+# --- U3 / T-I: ONE resolution feeds the row AND the decision ------------------
+# The strongest form of "the row names what Evaluate reads" is not two equal
+# strings — two resolutions can agree by luck — it is that there is only ONE
+# resolution. `calc::require_result` resolves once, publishes the row from that
+# measurement and then answers, so a world that changes between the two cannot
+# put a different path in the row from the one the decision used.
+set ::s27_calls 0
+rename ::calc::results_source ::calc_s27_src
+proc ::calc::results_source {} {
+    incr ::s27_calls
+    return [::calc_s27_src]
+}
+set ::s27_calls 0
+set g [pcall calc::require_result]
+# T-I is asked WHERE THE READ HAPPENS. `results::current` reads whatever context
+# is current, and this window's own is not consulted at all (U6) — so the third
+# term stands inside the borrowed context, which is where `calc::ctx_result`
+# asks it. Asking it out here would measure the arm the ruling removed.
+set ::s26_inctx 1
+set cur_in_viewer [pcall results::current]
+set ::s26_inctx 0
+check "S27 T-I the row and results::current name the same database" \
+    [list [pcall .calc.res.path get] [dict get $g path] \
+          [dict get $cur_in_viewer path]] \
+    {/tmp/s26/on_demand.raw /tmp/s26/on_demand.raw /tmp/s26/on_demand.raw}
+# ⚠ FIXER ROUND — A RESULT IS NOT A PATH. T-I compared only `path`, so the gate
+# could identify a database BY FILE and the leg could not see it (measured: the
+# first draft's dict had no `type` key at all).
+check "S27 T-I ...and the same SLOT, not just the same file (type and idx)" \
+    [list [dg $g type] [dg $g idx] \
+          [dg $cur_in_viewer type] [dg $cur_in_viewer idx]] \
+    {tran 0 tran 0}
+check "S27 U3 the row is published from the SAME resolution the decision used" \
+    $::s27_calls 1
+check "S27 ...and it says a result IS available" [dict get $g ok] 1
+check "S27 ...naming the provenance it came from" [dict get $g origin] viewer
+rename ::calc::results_source {}
+rename ::calc_s27_src ::calc::results_source
+
+# --- U3, the other direction: change the selection, the row and the decision
+# move TOGETHER. This is what "changing the row changes what Evaluate reads"
+# means for a row the user cannot type into (U9): the session's selection is the
+# only input, and both read it live.
+set ::s26_cur [dict create idx 1 path /tmp/s26/second_run.raw type tran cur 1 \
+                   label {second_run.raw (tran)}]
+set g2 [pcall calc::require_result]
+check "S27 U3 a new session selection moves the row and the decision together" \
+    [list [pcall .calc.res.path get] [dict get $g2 path]] \
+    {/tmp/s26/second_run.raw /tmp/s26/second_run.raw}
+
+# --- ONE FILE, TWO ANALYSES, TWO SLOTS (fixer round) -------------------------
+# U11: one run is one result and analyses are dimensions INSIDE it, but the
+# ENGINE's identity key is `(rawfile, sim_type)` and it stores one slot per
+# analysis — so a two-plot `multi.raw` is two rows of `results::list`, and
+# R407c clause (1) rules that a by-path lookup selects "the WRONG ANALYSIS OF
+# THE RIGHT FILE" (pinned SEL372 on that exact fixture; L6/L10 say the same
+# from the engine's side). The gate's answer must therefore name the SLOT. The
+# ROW is right to stay identical across the pair: W05 is a path entry.
+set ::s26_cur [dict create idx 0 path /tmp/s26/multi.raw type dc cur 1 \
+                   label {multi.raw (dc)}]
+set gdc [pcall calc::require_result]
+set rowdc [pcall .calc.res.path get]
+set ::s26_cur [dict create idx 1 path /tmp/s26/multi.raw type tran cur 1 \
+                   label {multi.raw (tran)}]
+set gtr [pcall calc::require_result]
+check "S27 U11 the same FILE as two analyses gives two answers, not one" \
+    [list [dg $gdc path] [dg $gdc type] [dg $gdc idx] \
+          [dg $gtr path] [dg $gtr type] [dg $gtr idx]] \
+    {/tmp/s26/multi.raw dc 0 /tmp/s26/multi.raw tran 1}
+check "S27 ...and the ROW names the file, so it is identical for both (W05)" \
+    [list $rowdc [pcall .calc.res.path get]] \
+    {/tmp/s26/multi.raw /tmp/s26/multi.raw}
+# back to the world the rest of S27 expects
+set ::s26_cur [dict create idx 1 path /tmp/s26/second_run.raw type tran cur 1 \
+                   label {second_run.raw (tran)}]
 pcall calc::results_refresh
-check "S26 shim 2 gone, and the row is live again" \
-    [list [pcall calc::results_source] [pcall .calc.res.path get]] \
-    {{none {} {}} {(no raw file loaded)}}
+check "S27 the multi-analysis fixture is put back" \
+    [pcall .calc.res.path get] {/tmp/s26/second_run.raw}
+
+# --- Evaluate WITH a result still lands on the phase-3 stub (SCOPE FENCE) ----
+# Item 10 settles which database Evaluate reads; it does NOT build the
+# computation. A press with a result must therefore still say what it always
+# said, or this item has quietly grown a phase.
+pcall .calc.mode.eval invoke
+check "S27 Evaluate WITH a result falls through to the phase-3 stub" \
+    [pcall .calc.status.msg get] {Eval: not implemented (phase 3)}
+
+# --- U8: the read is a LOAN, and the viewer is not dragged along -------------
+set ::s26_log {}
+set winbefore [pcall xschem get current_win_path]
+pcall calc::require_result
+set winafter [pcall xschem get current_win_path]
+check "S27 U8 every loan taken is given back (the viewer keeps its context)" \
+    [list [llength [lsearch -all -exact $::s26_log {enter good_tok borrow=1}]] \
+          [llength [lsearch -all -exact $::s26_log {leave good_tok}]]] {1 1}
+check "S27 U8 ...and this window did not move" [list $winbefore $winafter] \
+    [list $winbefore $winbefore]
+check_true "S27 U8 ...the window path was really readable (not two empty strings)" \
+    [expr {$winbefore ne {} && ![string match ERR:* $winbefore]}]
+
+# --- U7: with NO result, Evaluate refuses in the ruled words ------------------
+set ::wviewer::windows [dict create]
+pcall calc::status {} 0
+pcall .calc.mode.eval invoke
+check "S27 U7 Evaluate with no result refuses in the ruled words" \
+    [pcall .calc.status.msg get] \
+    "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."
+check_true "S27 U7 ...it names the command, and does NOT offer to launch ASE-L" \
+    [expr {[string match {*Results*Select*} [set m [pcall calc::no_result_msg]]]
+           && [string match {*Run a simulation*} $m]
+           && ![string match {*[Ll]aunch*} $m] && ![string match {*[Oo]pen ASE*} $m]}]
+check "S27 U7 ...and the gate says why it refused" \
+    [list [dict get [set gr [pcall calc::require_result]] ok] [dict get $gr origin]] {0 none}
+
+# --- R503f (FIXER ROUND): U7's sentence is never said to a user who has
+#     ALREADY done what it asks -----------------------------------------------
+# THE COLLISION, between two items of this same batch. R407a (item 7, spec
+# §6.1) gives the `Results ▸ Select…` dialog a `here` arm: with no waveform
+# viewer the session selects into the CURRENT context — ruled in deliberately,
+# because "evaluate against last night's raw" happens BEFORE a run, which is
+# exactly when no viewer exists. U6 says the Calculator does not read that
+# context. A reviewer drove it with NO repo edit: the row read
+# `(no raw file loaded)` and Evaluate answered "pick an existing one with
+# ASE-L ▸ Results ▸ Select" — the gesture just performed successfully.
+#
+# The GAP is filed as issue 0516 and is deliberately NOT closed here: U6 is a
+# USER ruling that says "removed entirely, not demoted", and an arm that reads
+# this window's context — however conditioned — is the demotion it forbids.
+# What IS closed is the advice. The test is STRUCTURAL (is there a live session
+# with no viewer window?), reads no database, and hands Evaluate nothing: the
+# refusal stands, it is only accurate now.
+set ::ase::sessions [dict create sess_noview [dict create path /tmp/s26/nv.ase]]
+set ::wviewer::windows [dict create]
+# ⚠ AND THIS IS ISSUE 0516'S STATE EXACTLY: a result really IS selected in THIS
+# window's context — that is what the `here` arm leaves behind — and U6 says the
+# Calculator does not read it. The leg below carries both halves in one
+# assertion, so it reds if the gate ever starts answering from here.
+set ::s26_here [dict create idx 0 path /tmp/s26/here_arm.raw type tran cur 1 \
+                    label {here_arm.raw (tran)}]
+pcall calc::status {} 0
+pcall .calc.mode.eval invoke
+set nvmsg [pcall .calc.status.msg get]
+check "S27 R503f a session with NO viewer is told the obstacle, not 'pick one'" \
+    $nvmsg [pcall calc::no_viewer_msg]
+check_true "S27 R503f ...and that sentence is not U7's, and does not re-ask the gesture" \
+    [expr {[string match {*no waveform viewer*} $nvmsg]
+           && [string match {*open the session's waveforms*} $nvmsg]
+           && $nvmsg ne [pcall calc::no_result_msg]}]
+check_true "S27 R503f ...the ROW's balloon gives the same advice as Evaluate" \
+    [string match {*no waveform viewer*} [pcall bind .calc.res.path <Enter>]]
+check "S27 R503f Evaluate still REFUSES — nothing is adopted from this window (U6)" \
+    [list [dict get [pcall results::current] path] \
+          [dg [set gnv [pcall calc::require_result]] ok] \
+          [dg $gnv origin] [dg $gnv path]] {/tmp/s26/here_arm.raw 0 none {}}
+set ::s26_here {}
+# THE DISCRIMINATING POSITIVE CONTROL: the same session, now WITH a viewer whose
+# context holds no result, gets U7's ruled sentence back. Without it, "always
+# say the obstacle" would pass.
+set ::wviewer::windows [dict create sess_noview [dict create win_path .nosuch9 top .]]
+set ::s26_noresult {sess_noview}
+pcall calc::status {} 0
+pcall .calc.mode.eval invoke
+check "S27 R503f ...and a session that HAS a viewer gets U7's ruled sentence" \
+    [pcall .calc.status.msg get] [pcall calc::no_result_msg]
+set ::s26_noresult {}
+set ::wviewer::windows [dict create]
+set ::ase::sessions [dict create]
+
+# --- T-J again, at Evaluate: a refused borrow is not "no results" ------------
+set ::wviewer::windows [dict create refused_tok [dict create win_path .nosuch1]]
+pcall calc::status {} 0
+pcall .calc.mode.eval invoke
+set evalmsg [pcall .calc.status.msg get]
+check_true "S27 T-J Evaluate reports a REFUSED loan as refused, not as 'no results'" \
+    [expr {[string match {*refused context switch*} $evalmsg]
+           && [string match {*not an empty result list*} $evalmsg]
+           && ![string match {*No simulation results are loaded*} $evalmsg]}]
+check "S27 T-J ...and the gate carries the refusal as its own origin" \
+    [dict get [pcall calc::require_result] origin] refused
+
+# --- U9: Browse is DISABLED and it is not "not implemented" -------------------
+check "S27 U9 Browse is still disabled" [pcall .calc.res.browse cget -state] disabled
+check "S27 U9 ...the path entry is still readonly (nothing here edits it)" \
+    [pcall .calc.res.path cget -state] readonly
+check "S27 U9 ...and its command is the ruled stub" \
+    [pcall .calc.res.browse cget -command] calc::browse_inert
+check_true "S27 U9 the stub's sentence gives the REASON and points at the door" \
+    [expr {[string match {*ASE-L*Results*Select*} [set b [pcall calc::browse_inert]]]
+           && [string match {*consumes*} $b]
+           && ![string match {*not implemented*} $b]}]
+# ⚠ ANTI-VACUITY: a disabled button is only inert if Tk really refuses the
+# press. `invoke` on a disabled button is a no-op, so the status line must not
+# move — and the positive control is that the SAME gesture on an enabled button
+# does move it.
+pcall calc::status {} 0
+pcall .calc.res.browse invoke
+set afterbrowse [pcall .calc.status.msg get]
+pcall .calc.mode.table invoke
+check "S27 U9 a press on the disabled Browse says nothing (and Table proves the gesture works)" \
+    [list $afterbrowse [pcall .calc.status.msg get]] \
+    {{} {Table: not implemented (phase 10)}}
+
+# --- U8 / R303, by grep: the Calculator SELECTS nothing ----------------------
+# It consumes the session's selection and never makes one, so `results::select`
+# — the one gesture that moves the engine — must not appear in calculator.tcl at
+# all. Comment-stripped, because item 2's SEL82 and item 8 both met a check that
+# a COMMENT satisfied.
+set calcsrc {}
+set s27_calcfile [file normalize \
+    [file join [file dirname [info script]] .. .. src calculator.tcl]]
+if {![catch {open $s27_calcfile r} fh]} {
+    set calcsrc [read $fh] ; close $fh
+}
+set calccode {}
+foreach ln [split $calcsrc "\n"] {
+    if {[regexp {^\s*#} $ln]} continue
+    regsub {;\s*#.*$} $ln {} ln
+    append calccode $ln "\n"
+}
+check_true "S27 the source really was read (positive control)" \
+    [expr {[string length $calccode] > 20000 && [string match {*proc calc::eval_click*} $calccode]}]
+check "S27 U8 the Calculator never calls results::select" \
+    [llength [lsearch -all -regexp [split $calccode "\n"] {results::select}]] 0
+check "S27 U6 and the self-arm reader is gone from the source too" \
+    [llength [lsearch -all -regexp [split $calccode "\n"] {raw rawfile}]] 0
+
+# --- the row is a MAPPED widget carrying this, not just a variable -----------
+set ::wviewer::windows [dict create good_tok [dict create win_path .nosuch2]]
+pcall calc::results_refresh
+update idletasks
+check "S27 the picked path is in a MAPPED row, not just in a variable" \
+    [list [pcall winfo ismapped .calc.res.path] [pcall winfo manager .calc.res.path] \
+          [pcall .calc.res.path get]] \
+    {1 pack /tmp/s26/second_run.raw}
+
+# --- R705: nothing is cached. Take every shim away and the next query answers
+#     from the world as it now is.
+catch {rename ::results::current {}}
+catch {rename ::calc_s26_current ::results::current}
+catch {rename ::wviewer::enter_ctx {}}
+catch {rename ::calc_s26_enter ::wviewer::enter_ctx}
+catch {rename ::wviewer::leave_ctx {}}
+catch {rename ::calc_s26_leave ::wviewer::leave_ctx}
+catch {set ::wviewer::windows $::s26_savedwin}
+catch {set ::ase::sessions $::s26_savedsess}
+check_true "S27 shims are gone again (the real procs answer)" \
+    [expr {[info commands ::calc_s26_current] eq {}
+           && [pcall results::current] eq {}
+           && ![string match ERR:* [pcall xschem get current_win_path]]}]
+check "S27 R705: nothing was cached — the answer is live" \
+    [pcall calc::results_source] {none {} {} {} {}}
+pcall calc::results_refresh
+check "S27 ...so the row is back to the no-result wording and the plain label" \
+    [list [pcall .calc.res.path get] [pcall .calc.res.lab cget -text]] \
+    {{(no raw file loaded)} {Results Dir:}}
+check_true "S27 ...and the balloon reverted with it (the widget, not the formatter)" \
+    [string match {*No simulation results are loaded*} [pcall bind .calc.res.path <Enter>]]
+
+# --- A FIRST OPEN PUBLISHES THE ROW (fixer round) ----------------------------
+# `calc::build_res` ends with `calc::results_refresh`, and its own comment flags
+# that call as load-bearing — "do not delete it as an unlisted extra:
+# `calc::open`'s raise arm does not run when there is nothing to raise". It had
+# ZERO coverage: a reviewer deleted the line and the suite stayed ALL PASS,
+# while a user's first Calculator open showed an EMPTY Results Dir entry and no
+# tooltip at all — exactly the "an empty readonly entry and a broken one look
+# identical" state W05's wording exists to prevent. Nothing could see it because
+# S1's "second open is raise" calls `calc::open` twice and the RAISE arm
+# refreshes before any later leg reads the row. So: close, clear the variable
+# the entry is bound to, and open ONCE.
+pcall calc::close
+set ::calc::respath {}
+check "S27 the row's variable really was cleared first (control)" \
+    [nsval ::calc::respath] {}
+pcall calc::open
+update idletasks
+check "S27 a FIRST open publishes the row — build_res's own refresh ran" \
+    [list [pcall .calc.res.path get] [pcall .calc.res.lab cget -text]] \
+    {{(no raw file loaded)} {Results Dir:}}
+check_true "S27 ...and the balloon was attached on that first build too" \
+    [string match {*No simulation results are loaded*} [pcall bind .calc.res.path <Enter>]]
 
 calc::close
 catch {destroy .calccbprobe}

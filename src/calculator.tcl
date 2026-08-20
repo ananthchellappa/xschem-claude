@@ -25,6 +25,15 @@
 #       is .calc.pw.bot.pad's, which item 4 was explicitly sent to judge
 #       against the real buttons (see the note on build_panes).
 #
+# RESULTS BATCH ITEM 10 (2026-08-20) is the first behaviour to land out of that
+# order, and deliberately so: it does not build a phase, it settles WHICH
+# DATABASE the Calculator works against.  The `self` arm is gone (U6), the
+# Results Dir row PICKS rather than reports (U3), Evaluate refuses and names the
+# next action when there is no result (U7), and `Browse` is ruled permanently
+# inert rather than unfinished (U9).  Evaluate's COMPUTATION is still phase 3's
+# — this is the gate that phase was waiting on.  The four rulings and their
+# mechanism are in the block above `calc::viewer_tokens`.
+#
 # THE POINT OF THE FILE, once it is finished: the Calculator is an EXPRESSION
 # BUILDER, not a pocket calculator.  Its deliverable is a string — an RPN
 # expression the existing engine (plot_raw_custom_data(), save.c:2381) can
@@ -588,6 +597,13 @@ proc calc::style_init {} {
 # inert window here: every phase-1 -command routes through this one proc, which
 # names the control and the plan phase that will implement it.  A user pressing
 # a button that does nothing and says nothing cannot tell it from a broken one.
+#
+# ⚠ TWO CONTROLS NO LONGER ROUTE STRAIGHT HERE, both by ruling and both still
+# speaking: `Eval` goes through `calc::eval_click`, which refuses in U7's words
+# when there is no result and falls through to this proc when there is one; and
+# `Browse` goes through `calc::browse_inert`, which is not "not implemented" at
+# all but permanently inert (U9).  "Not implemented (phase N)" is a promise, and
+# it may only be made where a phase really is coming.
 proc calc::inert {what phase} {
     return [calc::status "$what: not implemented (phase $phase)"]
 }
@@ -716,12 +732,21 @@ proc calc::build_res {} {
         -foreground [calc::color fieldfg] \
         -selectbackground [calc::color selectbg] \
         -selectforeground [calc::color selectfg]
-    # W05's note allows editing the path via Browse.  Browse is NOT phase 1a;
-    # the button exists disabled so the row has its final shape (plan's rule:
-    # a control that is missing "because it comes later" is not allowed, a
-    # control that is inert is).
+    # BROWSE STAYS DISABLED, AND IT IS NOT "NOT IMPLEMENTED" -- IT IS RULED
+    # INERT.  U9 (spec section 17 decision 9, ruled by the user 2026-08-18) and
+    # doc/claude/specs/results_selection.md R502: browsing TO a result is
+    # `ASE-L > Results > Select...`'s job, and the Calculator CONSUMES the
+    # session's selection -- it does not MAKE one.  R502's original text had
+    # this button becoming live; the ruling reversed it, and the spec now says
+    # why it is inert rather than promising it will not be.
+    #
+    # The stub keeps the shape phase 1a shipped -- a control that is missing
+    # "because it comes later" is not allowed, a control that is inert is -- and
+    # gains the REASON, here and in `calc::browse_inert`'s sentence, so that the
+    # next reader does not "finish" it.  The path entry stays `-state readonly`
+    # for the same ruling: there is nothing in this window that edits it.
     button .calc.res.browse -text {...} -width 2 -takefocus 0 -padx 1 -pady 0 \
-        -state disabled -command {calc::status {Browse: not implemented}} \
+        -state disabled -command calc::browse_inert \
         -background [calc::color panel] -activebackground [calc::color header] \
         -foreground [calc::color fieldfg] -activeforeground [calc::color fieldfg] \
         -disabledforeground [calc::color disabledfg]
@@ -734,64 +759,99 @@ proc calc::build_res {} {
     calc::results_refresh
 }
 
-# The loaded raw's full path, or {}.
-#
-# ⚠ `xschem raw rawfile` (scheduler.c:10421) sits inside the `raw && raw->values`
-# gate at scheduler.c:10297, and the chain's final else THROWS "No raw file
-# loaded" (scheduler.c:10462) — it does not return the empty string.  The house
-# idiom is therefore a catch, exactly as wave_viewer.tcl:17341 does it.
-proc calc::results_path {} {
-    set p {}
-    catch {set p [xschem raw rawfile]}
-    return $p
-}
-
 # ---------------------------------------------------------------------------
-# W05 ANSWERS ABOUT THE SIMULATION THE USER IS LOOKING AT, NOT ABOUT THIS
-# WINDOW'S CONTEXT.  Ruled by the crew 2026-08-15 (item 13), written into spec
-# §4's W05 row.
+# W05 ANSWERS ABOUT THE ASE-L SESSION'S RESULT, AND THE ROW *PICKS*.
 #
-# THE REPORT.  The user opened the Calculator from the schematic editor while an
-# ASE-L session had a saved state loaded and its waveforms on screen, and the
-# row said `(no raw file loaded)`.  That was TRUE of `xschem raw rawfile` in the
-# editor's context and useless: there was a raw, they were looking at it, and
-# the tool that exists to build expressions over it said there was none.
+# RESULTS BATCH ITEM 10 (2026-08-20).  Four user rulings land in this block,
+# taken 2026-08-18 one question at a time; they are decisions 3, 6, 7 and 9 of
+# doc/claude/specs/results_selection.md section 17, carried as U3, U6, U7 and U9
+# in doc/claude/results_batch/DECISIONS.md.  None is re-openable here.
 #
-# THE RULE.  Resolve in the order a user would: this window's own context first,
-# then the waveform viewer's, then the ASE-L session's; and say WHICH ONE it
-# came from, because a path with no provenance is worse than no path — it looks
-# like the current context's and is silently somebody else's.
+#   U6  THE `self` ARM IS GONE ENTIRELY -- not demoted, removed.  The Calculator
+#       reads the ASE-L session's result and NOTHING else, and must never
+#       evaluate against a raw that a legacy path (the Waves menu, a graph
+#       rect's `autoload=`, `raw_read_from_attr`) dropped into a SCHEMATIC
+#       window's context.  `calc::results_path` -- the `xschem raw rawfile` read
+#       of THIS context -- went with it.
+#   U3  THE ROW PICKS.  It stops being a reporter: what the row NAMES is what
+#       Evaluate READS.  That is a property of the code and not a promise,
+#       because there is ONE resolver (`calc::results_source`) and Evaluate goes
+#       through `calc::require_result`, which resolves ONCE, publishes the row
+#       from that same measurement and only then decides.  The row cannot name
+#       one database while the computation uses another -- which is exactly the
+#       contradiction R503 recorded, now closed in favour of the selector.
+#   U7  EVALUATE WITH NO RESULT REFUSES AND NAMES THE NEXT ACTION, in
+#       `calc::no_result_msg`'s words.  The Calculator does NOT offer to launch
+#       ASE-L itself.
+#   U9  `Browse` STAYS DISABLED (see build_res above and `calc::browse_inert`).
 #
-#   self    `xschem raw rawfile` in the CURRENT context (scheduler.c:10421)
-#   viewer  a viewer window's context, ACTIVE one first (wviewer::current_token)
-#           then registry order.  Read through the 0173 loan bracket, never a
-#           bare `new_schematic switch` — see below.
-#   ase     ase::last_rawfile of a live session: the run directory's raw, and it
-#           already answers {} unless the FILE EXISTS (ase.tcl:689).  A pure
-#           path derivation, no context switch at all.
-#   none    nothing anywhere — the wording phase 1a shipped, unchanged.
+# and U8, which is a property of this block rather than a line in it: A
+# CALCULATOR READ DOES NOT DRAG THE WAVEFORM VIEWER WITH IT.  Every cross-window
+# read here is a LOAN that is given back, and nothing in this file calls
+# `results::select` -- so each window keeps its own choice and comparing two runs
+# stays possible.
 #
-# ⚠ R705 STILL BINDS.  Nothing here is persisted or cached: every call is a live
-# query, and the THREE callers are the moments the answer can have changed —
-# calc::build_res, at the end of building the row, which is the only one that
-# runs on a FIRST open and is therefore the one that delivers the reported fix
-# (do not delete it as an unlisted extra: `calc::open`'s raise arm does not run
-# when there is nothing to raise); calc::open's raise arm, for a second open
-# onto a world that has moved; and the Results Dir row's own expand.  A remembered
-# path is exactly the "resurrect stale vector names as if valid" R705 forbids,
-# and it would be worse across a fallback: the viewer that supplied it may be
-# closed by the time it is read back.
+# THE ORIGINAL REPORT, and why the row reaches across windows at all (item 13,
+# 2026-08-15): the Calculator was opened from the schematic editor while an
+# ASE-L session had a state loaded and waveforms on screen, and the row said
+# `(no raw file loaded)`.  That was TRUE of `xschem raw rawfile` in the editor's
+# context and useless -- there WAS a result and the user was looking at it.  The
+# fix stands.  What item 10 changes is WHICH answers are allowed to count:
 #
-# ⚠ THE VIEWER READ TAKES A LOAN AND GIVES IT BACK (issue 0173).  Switching into
-# a viewer runs save_ctx/restore_ctx and ends in set_modify(-1), which rewrites
-# the target window's title; wviewer::enter_ctx/leave_ctx is the bracket that
+#   ase      the borrowed context belongs to a live ASE-L session.  The viewer
+#            token IS the session key -- ase_window.tcl calls
+#            `wviewer::attach_raw $key ...` (:2334, :4972), and R407a
+#            (results_selection.md section 6.1) states the rule: an ASE
+#            session's results live in ITS waveform viewer's context.
+#   viewer   a waveform viewer window that is not an ASE-L session's.  It is a
+#            results holder in its own right -- its Location bar selects through
+#            `results::select` (R501, item 5) -- so it is not the legacy door U6
+#            closes.
+#   refused  the loan came back REFUSED (F6).  REPORTED AS REFUSED, never as
+#            "no results" -- `calc::busy_msg`, and see the warning on it.
+#   none     nothing anywhere.
+#
+# ⚠ THE ANSWER IS `results::current` (R305), NOT `xschem raw rawfile`.  The two
+# differ exactly where it matters.  `raw rawfile` names the current database
+# whether or not it is a RESULT -- a VCD or a table slot can be the current one,
+# because `ase::attach_dbs` reads the analog raw and THEN the VCDs (landmine L8)
+# -- and whether or not its `schname`/`level` stamp still resolves against the
+# current hierarchy stack (F4: a loaded-but-blind database, in which every name
+# lookup answers -1).  `results::current` answers R103's three parts and returns
+# {} for both.  Naming either of them in a row that PICKS is precisely how the
+# Calculator ends up evaluating against a database no signal name resolves in.
+#
+# ⚠ AND `ase::last_rawfile` IS NOT AN ANSWER EITHER -- CREW RULING R502a
+# (results_selection.md section 7.1a), which is why there is no `calc::ase_raw`
+# any more.  It derives `<rundir>/<cell>.raw` and gates it on the file existing:
+# a FILE ON DISK, not a selection.  Under U3 the row must name what Evaluate
+# reads, and Evaluate cannot read a file nothing has loaded -- offering it would
+# re-open R503's contradiction one arm to the left.  The honest answer there is
+# "no result is loaded", and U7's sentence is what makes that actionable: it
+# names the gesture that turns that file into a selection.  The item-13 report
+# is unaffected: a session with waveforms on screen HAS a viewer context and is
+# answered by the `ase` arm above.
+#
+# ⚠ R705 (doc/claude/specs/calculator.md) STILL BINDS, and results_selection.md
+# R603 says why this is not a loophole: nothing here is persisted or cached.
+# Every call is a live query through `results::current` -- "the Calculator reads
+# the session's selection live rather than remembering it" is exactly that
+# sentence.  The callers are the moments the answer can have changed:
+# `calc::build_res`, at the end of building the row, which is the only one that
+# runs on a FIRST open and is therefore the one that delivered item 13's fix (do
+# not delete it as an unlisted extra -- `calc::open`'s raise arm does not run
+# when there is nothing to raise); `calc::open`'s raise arm, for a later open
+# onto a world that has moved; the row's own expand, whose whole meaning is
+# "show me that path again"; and now Evaluate (U3).
+#
+# ⚠ THE READ TAKES A LOAN AND GIVES IT BACK (issue 0173).  Switching into a
+# viewer runs save_ctx/restore_ctx and ends in set_modify(-1), which rewrites the
+# target window's title; `wviewer::enter_ctx`/`leave_ctx` is the bracket that
 # repairs it, and `1` = borrow is issue 0314's arm for the case that matters
-# here — EVERY menu-driven open holds callback()'s semaphore, and an unborrowed
-# switch is refused 100% of the time from there while the identical call from
-# the CIW works.  This body reads only, runs no update/after, and always
-# restores, which is exactly the door that arm was opened for.  A refused loan
-# is not an answer about the viewer: it is skipped, and the next source is
-# tried.
+# here -- EVERY menu-driven open holds `callback()`'s semaphore, and an
+# unborrowed switch is refused 100% of the time from there while the identical
+# call from the CIW works.  This body reads only, runs no update/after, and
+# always restores, which is the door that arm was opened for.
 proc calc::viewer_tokens {} {
     if {![info exists ::wviewer::windows]} { return {} }
     set out {}
@@ -807,57 +867,207 @@ proc calc::viewer_tokens {} {
     return $out
 }
 
-# {viewer <path> <token>}, or {} when no viewer has one.
-proc calc::viewer_raw {} {
-    foreach tok [calc::viewer_tokens] {
-        set ticket {}
-        if {[catch {wviewer::enter_ctx $tok 1} ticket]} continue
-        if {![lindex $ticket 0]} continue
-        set p {}
-        catch {set p [xschem raw rawfile]}
-        catch {wviewer::leave_ctx $tok $ticket}
-        if {$p ne {}} { return [list viewer $p $tok] }
-    }
-    return {}
+# The SELECTED RESULT of whatever context is CURRENT, as {path type idx}, or {}.
+#
+# ⚠ CALLED ONLY FROM INSIDE A LOAN.  It reads the current context, so calling it
+# from the Calculator's own context is the `self` arm U6 removed.  The one call
+# site is `calc::session_result`, between `enter_ctx` and `leave_ctx`.
+#
+# ⚠⚠ THE TYPE AND THE INDEX TRAVEL WITH THE PATH -- A RESULT IS NOT A PATH
+# (FIXER ROUND, item 10, 2026-08-20).  The first draft returned {path type} and
+# then dropped the type one proc later, so `calc::require_result` identified the
+# database it had chosen BY PATH ALONE.  That is exactly what R407c clause (1)
+# rules out and what U11 explains: one `multi.raw` read as `dc` and as `tran` is
+# TWO registry slots, one file, one run -- and a by-path lookup selects the
+# WRONG ANALYSIS OF THE RIGHT FILE (pinned SEL372 on that very fixture).  L6 and
+# L10 say the same thing from the engine's side: a slot is reachable by name
+# only with its `sim_type`, and `xschem raw switch <path>` with no type finds
+# nothing.  So the slot's own `type` -- and its `idx`, which `results::current`
+# already returns and which reaches the slot even when the type is `<NULL>` --
+# are carried all the way to the dict phase 3 will read.  The ROW still names
+# the path (W05 is a path entry, spec section 4); the GATE names the slot.
+proc calc::ctx_result {} {
+    set c {}
+    if {[catch {results::current} c]} { return {} }
+    if {$c eq {}} { return {} }
+    set p {} ; set t {} ; set i {}
+    catch {set p [dict get $c path]}
+    catch {set t [dict get $c type]}
+    catch {set i [dict get $c idx]}
+    if {[string trim $p] eq {}} { return {} }
+    return [list $p $t $i]
 }
 
-# {ase <path> <session key>}, or {} when no ASE-L session has results.
-proc calc::ase_raw {} {
-    if {[info commands ::ase::last_rawfile] eq {}} { return {} }
+# Which provenance a viewer token carries.  The token IS the ASE-L session key
+# for every viewer ASE opened (`wviewer::attach_raw $key ...`), so this is a
+# lookup and not a guess; a viewer with no session behind it is `viewer`.
+proc calc::token_origin {tok} {
+    set has 0
+    catch {set has [dict exists $::ase::sessions $tok]}
+    return [expr {$has ? {ase} : {viewer}}]
+}
+
+# {origin path detail type idx}, origin `ase` | `viewer` | `refused` | `none`.
+# Never throws.  The active viewer is asked first (`calc::viewer_tokens`), then
+# the registry order.
+#
+# ⚠ FIVE ELEMENTS SINCE THE FIXER ROUND, not three: `type` and `idx` name the
+# SLOT (see `calc::ctx_result`).  They are empty for every arm that has no
+# result to name, which is every arm but the first two.
+#
+# ⚠ A REFUSED LOAN IS SKIPPED **AND REMEMBERED**.  Skipping is right -- another
+# viewer may hold the session's result and a refusal says nothing about that one
+# (issues 0313/0314).  But if the walk ends with no answer and a loan was
+# refused, "there is no result" is NOT what was measured, and F6's whole defect
+# is a refusal that reads like an answer.  So the refusal becomes the origin and
+# `calc::busy_msg` is what the user is told (spec section 12, T-J).
+proc calc::session_result {} {
+    set refused {}
+    foreach tok [calc::viewer_tokens] {
+        set ticket {}
+        if {[catch {wviewer::enter_ctx $tok 1} ticket]} { lappend refused $tok ; continue }
+        if {![lindex $ticket 0]} { lappend refused $tok ; continue }
+        set r {}
+        catch {set r [calc::ctx_result]}
+        catch {wviewer::leave_ctx $tok $ticket}
+        if {[llength $r] == 3} {
+            return [list [calc::token_origin $tok] [lindex $r 0] $tok \
+                        [lindex $r 1] [lindex $r 2]]
+        }
+    }
+    if {[llength $refused]} { return [list refused {} [lindex $refused 0] {} {}] }
+    return [list none {} {} {} {}]
+}
+
+# {origin path detail type idx}: origin is ase|viewer|refused|none.
+#
+# ⚠ THE ONE ENTRY POINT, and that is the whole of U3's mechanism.  The row, the
+# label, the tooltip and Evaluate all read THIS proc and nothing else, so "what
+# the row names is what Evaluate reads" cannot drift into a promise: there is no
+# second resolver for it to drift away from.
+proc calc::results_source {} {
+    set r {}
+    if {[catch {calc::session_result} r]} { set r {} }
+    if {[llength $r] == 5} { return $r }
+    return [list none {} {} {} {}]
+}
+
+# U7's sentence, VERBATIM as ruled (spec section 17 decision 7).  Naming the
+# command beats a neutral refusal, and as of results batch item 7 that menu
+# entry really exists (`src/ase_window.tcl`, the ASE-L Results cascade), so the
+# sentence is not a promise.  THE CALCULATOR DOES NOT OFFER TO LAUNCH ASE-L
+# ITSELF: a refusal that opens a window is a second gesture the user did not
+# ask for.
+#
+# The menu-path separator the ruling is written with is U+25B8; it is written
+# as `\u25b8` rather than typed so the exactness of the sentence does not depend
+# on this file's encoding surviving an editor.
+proc calc::no_result_msg {} {
+    return "No simulation results are loaded. Run a simulation, or pick an\
+ existing one with ASE-L \u25b8 Results \u25b8 Select."
+}
+
+# F6 / T-J: A REFUSED BORROW IS REPORTED AS REFUSED.
+#
+# ⚠⚠ THIS SENTENCE AND `calc::no_result_msg` MUST NOT COLLAPSE INTO ONE.  "No
+# results are loaded" is a legitimate answer the Calculator gives, which is
+# exactly why a refused context switch may never borrow its words: the user
+# would be told a fact about their simulations when what happened was that a
+# window was busy for a moment.  Same shape as the dialog's own refusal
+# (`ase::ui::rsel_borrow`, src/ase_window.tcl) -- it names the mechanism and
+# then denies the wrong reading in so many words.
+proc calc::busy_msg {} {
+    return "Could not read the ASE-L session's result: the waveform viewer's\
+ context is busy \u2014 that is a refused context switch, not an empty result\
+ list."
+}
+
+# ---------------------------------------------------------------------------
+# CREW RULING R503f, FIXER ROUND (item 10, 2026-08-20) -- U7'S SENTENCE MAY NOT
+# BE SAID TO A USER WHO HAS ALREADY DONE WHAT IT ASKS.
+#
+# THE COLLISION, and it is between two items of this same batch.  R407a
+# (`doc/claude/specs/results_selection.md` section 6.1, item 7) gives the
+# `Results > Select...` dialog THREE arms: it borrows the session's waveform
+# viewer when the session has one, it reads **the current context** when it has
+# not (the `here` arm), and it reports a refusal as a refusal.  The `here` arm
+# was ruled in deliberately -- *"evaluate against last night's raw happens
+# BEFORE a run, which is exactly when no viewer exists"*.  So an ASE-L session
+# with no waveform viewer can hold a perfectly good selection that lives in the
+# HOST WINDOW'S context -- and U6 says the Calculator does not read that
+# context.  Result, measured by a reviewer with no repo edit at all: the row
+# said `(no raw file loaded)` and Evaluate told the user to *"pick an existing
+# one with ASE-L > Results > Select"* -- the gesture they had just performed
+# successfully.
+#
+# WHAT IS **NOT** DONE HERE, and why.  U6 is a USER ruling and reads *"removed
+# entirely, not demoted"*; an arm that reads this window's own context, however
+# late in the order and however tightly conditioned, is the demotion it forbids.
+# A fixer may not take that decision, and the reviewer who found this said the
+# same ("DO NOT quietly restore the `self` arm ... that needs the user's word").
+# The gap is therefore FILED, not closed: issue **0516**, with the reviewer's
+# reproducer, for the driver and the user to rule.
+#
+# WHAT **IS** DONE, which is the part that needs no ruling: the Calculator stops
+# giving useless advice in that state.  The test is STRUCTURAL and reads no
+# database at all -- is there a live ASE-L session that has no waveform viewer
+# window?  That is exactly R407a's `here` precondition, asked with
+# `wviewer::window_for`, and it answers with a BOOLEAN, never with a path.  It
+# is not the `self` arm by any reading: it supplies nothing to Evaluate, it
+# opens no context, and Evaluate still refuses.  It only refuses ACCURATELY.
+proc calc::sessions_without_viewer {} {
+    set out {}
     set keys {}
     catch {set keys [dict keys $::ase::sessions]}
     foreach k $keys {
-        set p {}
-        catch {set p [ase::last_rawfile $k]}
-        if {$p ne {}} { return [list ase $p $k] }
+        set wv {}
+        catch {set wv [wviewer::window_for $k]}
+        if {$wv eq {}} { lappend out $k }
     }
-    return {}
+    return $out
 }
 
-# {origin path detail}: origin is self|viewer|ase|none.
-proc calc::results_source {} {
-    set p [calc::results_path]
-    if {$p ne {}} { return [list self $p {}] }
-    foreach probe {calc::viewer_raw calc::ase_raw} {
-        set r {}
-        catch {set r [$probe]}
-        if {[llength $r] == 3} { return $r }
-    }
-    return [list none {} {}]
+# R503f's sentence.  It keeps U7's shape -- state the fact, then name the next
+# action -- and differs from `calc::no_result_msg` in the one way that matters:
+# it names the OBSTACLE (the session has no viewer, so its selection is not
+# somewhere the Calculator reads) instead of asking for a gesture that cannot
+# help.  The door it names is a TWO-step one on purpose, and both steps are
+# real: with a viewer open, `ase::ui::rsel_borrow` takes its `viewer` arm, and
+# `rsel_commit` then passes `token $key` and selects INSIDE that borrowed
+# context -- which is precisely where `calc::session_result` looks.
+proc calc::no_viewer_msg {} {
+    return "The ASE-L session has no waveform viewer, and the Calculator reads\
+ the session's viewer \u2014 a result selected while the session has no viewer\
+ is not visible here. Run a simulation, or open the session's waveforms and\
+ then pick a result with ASE-L \u25b8 Results \u25b8 Select."
+}
+
+# WHICH of the two "nothing to evaluate against" sentences this world deserves.
+#
+# ⚠ `calc::no_result_msg` STAYS UNCONDITIONAL, and this proc is why.  U7 ruled
+# that string; making it state-dependent would make the ruled sentence a
+# variable, and the check that asserts it by text would be asserting a branch.
+# The choice lives HERE, one level up, where both callers -- the row's tooltip
+# and `calc::require_result` -- reach it, so the row and Evaluate can never give
+# different advice about the same world.
+proc calc::no_result_advice {} {
+    if {[llength [calc::sessions_without_viewer]]} { return [calc::no_viewer_msg] }
+    return [calc::no_result_msg]
 }
 
 # W04's text carries the provenance, and it is W04 that carries it rather than a
 # new widget or a decorated path for two reasons.  (1) The path stays a PATH:
 # `.calc.res.path` is a readonly entry precisely so it can be selected and
 # copied, and `sim.raw  (waveform viewer)` is not a filename.  (2) The row's
-# widget set is normative (spec §4 W03-W05) and its slave order is asserted; a
-# fourth widget would change both for a string that has a natural home.  Empty
-# provenance for `self` and for `none` keeps the label EXACTLY as phase 1a
-# shipped it in the two cases the user already approved.
+# widget set is normative (spec section 4, W03-W05) and its slave order is
+# asserted; a fourth widget would change both for a string that has a natural
+# home.  The empty provenance for `none` keeps the label EXACTLY as phase 1a
+# shipped it in the case the user already approved.
 proc calc::results_label {origin} {
     switch -exact -- $origin {
         viewer  {return {Results Dir (waveform viewer):}}
         ase     {return {Results Dir (ASE-L session):}}
+        refused {return {Results Dir (unavailable):}}
         default {return {Results Dir:}}
     }
 }
@@ -866,31 +1076,39 @@ proc calc::results_label {origin} {
 # fit a label (which viewer token / which session key).
 proc calc::results_tip {origin path detail} {
     switch -exact -- $origin {
-        self   {return "The raw file loaded in this xschem window.\n$path"}
-        viewer {return "No raw in this window: showing the raw loaded in the\
-                        waveform viewer[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
-        ase    {return "No raw in this window: showing the results of the\
-                        ASE-L session[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
-        default {return "No .raw file is loaded here, in any waveform viewer,\
-                         or in any ASE-L session."}
+        ase     {return "The result selected in the ASE-L\
+                         session[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
+        viewer  {return "The result selected in the waveform\
+                         viewer[expr {$detail eq {} ? {} : " ($detail)"}].\n$path"}
+        refused {return [calc::busy_msg]}
+        default {return [calc::no_result_advice]}
     }
 }
 
 # W05's text.  With nothing loaded the entry says so in words: an empty readonly
 # entry and a broken one look identical, and this row is the first thing a user
 # reads when an expression fails to resolve.  The wording is the browser's own
-# (wave_viewer.tcl:7886).
+# (wave_viewer.tcl's browser status), and it is KEPT unchanged by item 10 --
+# what the row MEANS changed (U3), what it says when there is nothing to name
+# did not, and it is a string the user has already approved.
+#
+# ⚠ `refused` GETS ITS OWN STRING.  It is not "no raw file loaded": nothing was
+# measured about the raws at all (T-J again).
 #
 # ⚠ THIS PROC WRITES NO STATUS LINE, deliberately.  R508 makes the message
 # history a property of the window and S16 pins "a fresh window starts silent";
 # a refresh runs at BUILD time, so a line here would make every Calculator open
 # with a message it did not earn.  The provenance is on the label and in the
 # tooltip, where it is readable for as long as it is true rather than until the
-# next message displaces it.
-proc calc::results_refresh {} {
+# next message displaces it.  Evaluate is the one caller that DOES speak, and it
+# speaks in `calc::eval_click`, after this has published the row.
+proc calc::results_publish {src} {
     variable respath
-    foreach {origin p detail} [calc::results_source] break
-    if {$p eq {}} {
+    set origin none ; set p {} ; set detail {}
+    foreach {origin p detail} $src break
+    if {$origin eq {refused}} {
+        set respath {(results unavailable: the session's context is busy)}
+    } elseif {$p eq {}} {
         set respath {(no raw file loaded)}
     } else {
         set respath $p
@@ -898,7 +1116,7 @@ proc calc::results_refresh {} {
     if {[winfo exists .calc.res.lab]} {
         .calc.res.lab configure -text [calc::results_label $origin]
     }
-    # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl:12729), so
+    # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl's balloon), so
     # re-attaching is how a baked-in string is UPDATED — the same property that
     # makes it useless for the 56 function entries makes it right here, where
     # there is one string and it changes rarely.
@@ -906,6 +1124,67 @@ proc calc::results_refresh {} {
         catch {balloon .calc.res.path [calc::results_tip $origin $p $detail]}
     }
     return $respath
+}
+
+# Resolve, then publish.  Split from `results_publish` so that Evaluate can
+# publish the SAME measurement it decides on (U3) instead of resolving twice --
+# two resolutions are two loans and two answers, and the row would be naming the
+# earlier one.
+proc calc::results_refresh {} {
+    return [calc::results_publish [calc::results_source]]
+}
+
+# ---------------------------------------------------------------------------
+# THE GATE EVALUATE ASKS (U3, U7, T-I).  Resolves ONCE, publishes the row from
+# that measurement, and then answers
+# `{ok 0|1 origin .. path .. type .. idx .. msg ..}`.  Never throws.
+#
+# ⚠ THE ANSWER NAMES A SLOT, NOT A FILE (fixer round).  `type` and `idx` are
+# carried the whole way from `results::current` (see `calc::ctx_result`) because
+# one file read as two analyses is TWO slots and one result (U11), and phase 3
+# handed only a path could not tell them apart -- it would reach the engine
+# through a by-path lookup and get the wrong analysis of the right file (R407c
+# clause 1, landmines L6/L10).  Both are `{}` on every refusing arm, because
+# there is no slot to name.
+#
+# ⚠ SCOPE, and it is a fence rather than an omission: this settles WHICH
+# DATABASE Evaluate reads and what it says when there is none.  The computation
+# is calculator_batch phase 3 (doc/claude/specs/calculator.md R603-R607) and is
+# deliberately NOT built here -- item 10 is the gate that phase was waiting on.
+proc calc::require_result {} {
+    set src [calc::results_source]
+    catch {calc::results_publish $src}
+    set origin none ; set p {} ; set detail {} ; set type {} ; set idx {}
+    foreach {origin p detail type idx} $src break
+    if {$origin eq {refused}} {
+        return [dict create ok 0 origin refused path {} type {} idx {} \
+                    msg [calc::busy_msg]]
+    }
+    if {$p eq {}} {
+        # R503f: which "nothing to evaluate against" sentence this world earns.
+        return [dict create ok 0 origin none path {} type {} idx {} \
+                    msg [calc::no_result_advice]]
+    }
+    return [dict create ok 1 origin $origin path $p type $type idx $idx msg {}]
+}
+
+# W12's press.  The refusal is U7's and it comes BEFORE the phase-3 stub,
+# because "which database" is settled by this item and "what to compute" is not.
+proc calc::eval_click {} {
+    set g [calc::require_result]
+    if {![dict get $g ok]} { return [calc::status [dict get $g msg]] }
+    return [calc::inert {Eval} 3]
+}
+
+# The Browse stub's sentence (U9 / results_selection.md R502).  The button is
+# `-state disabled`, so Tk runs this from no click -- it is here so the REASON
+# lives in the code, in one sentence, where the next reader of the stub finds
+# it, and so a check can read it.  NEVER "not implemented": that word promises a
+# later phase, and there is no later phase for this control.
+proc calc::browse_inert {} {
+    return [calc::status "Browse is deliberately inert: the Calculator consumes\
+ the session's result and does not make one. Pick one with ASE-L \u25b8 Results\
+ \u25b8 Select."]
 }
 
 # W03 collapse.  Hides everything except the toggle itself, which is what makes
@@ -1156,14 +1435,25 @@ proc calc::build_mode {} {
         -command [list calc::inert {Clip} 6]
     pack .calc.mode.clip -side left -padx {8 6} -pady 1
 
+    # ⚠ W12 (Eval) IS NOT PLAIN INERT ANY MORE.  Results batch item 10 settles
+    # WHICH DATABASE Evaluate reads -- the session's selection, through
+    # `calc::require_result` -- and U7's refusal for when there is none.  The
+    # computation is still calculator_batch phase 3's and is NOT built here, so
+    # a press WITH a result still lands on the phase-3 stub; what changed is
+    # that a press with NO result now says the one useful thing instead.
     foreach {id label phase} {plot Plot 3 eval Eval 3} {
+        if {$id eq {eval}} {
+            set cmd calc::eval_click
+        } else {
+            set cmd [list calc::inert $label $phase]
+        }
         button .calc.mode.$id -text $label -takefocus 0 -padx 4 -pady 0 \
             -background [calc::color panel] \
             -activebackground [calc::color header] \
             -foreground [calc::color fieldfg] \
             -activeforeground [calc::color fieldfg] \
             -disabledforeground [calc::color disabledfg] \
-            -command [list calc::inert $label $phase]
+            -command $cmd
         pack .calc.mode.$id -side left -padx {0 3} -pady 1
     }
 

@@ -1391,8 +1391,20 @@ group CW13 {
     #     one that names the owning phase; sel_click/pad_click/dest_changed
     #     compose a message and hand it to inert; res_toggle is LAYOUT, which
     #     phase 1 does own; status is R202's refusal path.
+    #
+    # ⚠ RESTATED, results batch item 10: TWO MORE ENTRIES, and neither is a
+    # phase leaking in early.  `calc::eval_click` (W12) resolves the session's
+    # result and either refuses in U7's ruled words or FALLS THROUGH TO
+    # `calc::inert` — the phase-3 stub is still what a press with a result
+    # reaches, which is why part (b) below still finds it inert.
+    # `calc::browse_inert` (Browse) replaced `{calc::status {Browse: not
+    # implemented}}`: U9 ruled that control permanently inert rather than
+    # unfinished, and "not implemented" is a promise that may only be made
+    # where a phase really is coming.  Both were pinned by name here, so the
+    # list is the honest place to record the change rather than a hole to widen.
     set allowed {calc::inert calc::status calc::sel_click calc::sel_refuse
-                 calc::pad_click calc::dest_changed calc::res_toggle}
+                 calc::pad_click calc::dest_changed calc::res_toggle
+                 calc::eval_click calc::browse_inert}
     set rogue {} ; set mute {}
     foreach w $ctrls {
         set cmd [wcg $w -command]
