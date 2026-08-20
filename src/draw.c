@@ -10374,6 +10374,61 @@ void draw_hover_shape(GC g, int type, int n, int c)
 }
 
 
+/* S9: the draw-time OP-annotation overlay, SCREEN back end. One of three
+ * structurally identical mirrors (svgdraw.c svg_draw_annot_overlay(),
+ * psprint.c ps_draw_annot_overlay()); every decision is in the shared reader
+ * get_annot_overlay() (actions.c) so the three cannot disagree.
+ *
+ * DELIBERATELY NOT INSIDE draw_symbol() -- decision D3. The P6 pin-name pass
+ * sits there, but the layer `cadlayers-1` text call is guarded by
+ * `((c == cadlayers-1) && symptr->texts)` in draw()'s instance loop below and by
+ * hilight.c's copy of it, while the SVG and PS export loops carry no such guard.
+ * A registered symbol with ZERO T records would therefore render its block in
+ * SVG and PS and NOT on screen -- a silent screen/export divergence. Calling
+ * from the instance loop dissolves that, and also stops hilight.c's second text
+ * pass from building and painting every highlighted device's block twice a frame.
+ *
+ * It is also the only safe place for a Tcl call: translate()'s result lives in
+ * one static buffer (token.c:4604) which svgdraw.c:924 and psprint.c:1207 hold
+ * LIVE across their text-loop bodies. Outside the loop, nothing is live. */
+static void draw_annot_overlay(int n)
+{
+  const char *txt = NULL;
+  double x, y, size;
+  int layer;
+  #if HAS_CAIRO==1
+  int didfont = 0;
+  #endif
+  if(!has_x) return;
+  if(!get_annot_overlay(n, &txt, &x, &y, &size, &layer)) return;
+  if(layer < 0 || layer >= cadlayers) layer = TEXTLAYER;
+  if(xctx->draw_single_layer != -1 && layer != xctx->draw_single_layer) return;
+  if(!xctx->enable_layer[layer]) return;
+  if(size * FONTWIDTH * xctx->mooz < 1) return;   /* zoom-cull, as the texts loop */
+  #if HAS_CAIRO==1
+  xctx->cairo_font = cairo_toy_font_face_create(ANNOT_OVERLAY_FONT,
+    CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  cairo_save(xctx->cairo_ctx);
+  cairo_save(xctx->cairo_save_ctx);
+  cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
+  cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
+  cairo_font_face_destroy(xctx->cairo_font);
+  didfont = 1;
+  #endif
+  /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
+  draw_string(layer, ADD, txt, 0, 0, 0, 0, x, y, size, size);
+  #if HAS_CAIRO!=1
+  drawrect(layer, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+  drawline(layer, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+  #endif
+  #if HAS_CAIRO==1
+  if(didfont) {
+    cairo_restore(xctx->cairo_ctx);
+    cairo_restore(xctx->cairo_save_ctx);
+  }
+  #endif
+}
+
 void draw(void)
 {
   /* inst_ptr  and wire hash iterator 20171224 */
@@ -10413,6 +10468,7 @@ void draw(void)
   #endif
   xctx->show_hidden_texts = tclgetboolvar("show_hidden_texts");
   annot_show_sync_cache(); /* S7: the annotation-class mask read by text_hidden() */
+  annot_overlay_sync();    /* S9: epoch compare + wholesale flush of the overlay cache */
   rebuild_selected_array();
   if(has_x) {
     Iterator_ctx ctx;
@@ -10492,6 +10548,9 @@ void draw(void)
         }
         if(xctx->inst[i].ptr == -1 || (c > 0 && (xctx->inst[i].flags & 1)) ) continue;
         symptr = (xctx->inst[i].ptr+ xctx->sym);
+        /* S9: the OP-annotation overlay, once per instance per frame, OUTSIDE the
+         * `symptr->texts` guard below (decision D3 -- see draw_annot_overlay()) */
+        if(c == cadlayers - 1) draw_annot_overlay(i);
         if(
             c==0 || /*draw_symbol call is needed on layer 0 to avoid redundant work (outside check) */
             symptr->lines[c] ||

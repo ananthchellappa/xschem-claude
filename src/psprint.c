@@ -1293,6 +1293,35 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
 }
 
 
+/* S9: the draw-time OP-annotation overlay, POSTSCRIPT/PDF back end -- the exact
+ * mirror of draw.c draw_annot_overlay() and svg_draw_annot_overlay(), with every
+ * decision in the shared reader get_annot_overlay() (actions.c). This is the
+ * SECOND of the two "call sites nobody looks at" and it has its own test row,
+ * because a stubbed PS site is invisible to every SVG check.
+ *
+ * Called from the export instance loop, NOT from ps_draw_symbol(): psprint.c's
+ * text loop holds `txtptr = translate(n, ...)` LIVE across its body and
+ * translate()'s result is one static buffer. Unlike SVG this back end also has
+ * to bracket the write with set_ps_colors(), exactly as the P6 pin pass does. */
+static void ps_draw_annot_overlay(int n, int c)
+{
+  const char *txt = NULL;
+  double x, y, size;
+  int layer;
+  if(!get_annot_overlay(n, &txt, &x, &y, &size, &layer)) return;
+  if(layer < 0 || layer >= cadlayers) layer = TEXTLAYER;
+  if(!xctx->enable_layer[layer]) return;
+  set_ps_colors(layer);
+  my_snprintf(ps_font_family, S(ps_font_family), "%s", ANNOT_OVERLAY_FONT);
+  my_snprintf(ps_font_name,   S(ps_font_name),   "%s", ANNOT_OVERLAY_FONT);
+  /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
+  if(text_ps)
+    ps_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+  else
+    old_ps_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+  if(layer != c) set_ps_colors(c);
+}
+
 static void fill_ps_colors()
 {
  char s[200]; /* overflow safe 20161122 */
@@ -1333,6 +1362,9 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
   Hilight_hashentry *entry;
 
   dbg(1, "create_ps(): what = %d, fullzoom=%d\n", what, fullzoom);
+  /* S7/S9: freshened at the callee, for the reason svg_draw() records. */
+  annot_show_sync_cache();
+  annot_overlay_sync();
   if(tcleval("info exists ps_paper_size")[0] == '1') {
     double tmp;
     my_strncpy(papername, tcleval("lindex $ps_paper_size 0"), S(papername));
@@ -1614,6 +1646,8 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
           ps_draw_symbol(c + 1 , i, c + 1, what, 0, 0, 0.0, 0.0); /* ... draw texts */
         }
         ps_pop_hilight(hlayer, did, &sv);
+        /* S9: the OP-annotation overlay, once per instance per export (decision D3) */
+        if(c == cadlayers - 1) ps_draw_annot_overlay(i, c);
       }
     }
     prepare_netlist_structs(0); /* NEEDED: data was cleared by trim_wires() */

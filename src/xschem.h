@@ -399,6 +399,11 @@ typedef int Tcl_Size;
 /* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
 #define ANNOT_SHOW_OP 1
 #define ANNOT_SHOW_VOLTAGE 2
+/* S9: the font the draw-time OP-annotation overlay renders in, needed by all three
+ * back ends. Lifted verbatim from the shipped carrier xschem_library/devices/
+ * annotate_params.sym (font=Monospace) so carrier and overlay look identical side
+ * by side. Its size/layer siblings travel through get_annot_overlay() instead. */
+#define ANNOT_OVERLAY_FONT "Monospace"
 /* text_hidden() context. The ten former copy-pasted visibility tests were not ten
  * copies of one test but TWO tests: the six iterating a SYMBOL's text masked
  * (HIDE_TEXT | HIDE_TEXT_INSTANTIATED), the four iterating the schematic's own text
@@ -3140,6 +3145,47 @@ extern void pin_names_sync_cache(void);
 /* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7). */
 extern int text_hidden(int flags, int ctx);
 extern void annot_show_sync_cache(void);
+/* ---------------------------------------------------------------------------
+ * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).
+ * ONE shared reader, three thin call sites (draw.c, svgdraw.c, psprint.c). Every
+ * policy decision -- the visibility gate, the "is this device annotated at all"
+ * gate, the anchor, the render constants -- lives in get_annot_overlay() so the
+ * screen and the two exports cannot disagree (decision D2/D3/D9).
+ *
+ * get_annot_overlay() answers "draw instance n's operating-point block, here":
+ * returns 1 and fills *txt (a cached, my_strdup'd block owned by actions.c --
+ * do NOT free), the ABSOLUTE anchor *x/*y, the text *size and the text *layer;
+ * returns 0 when the instance must not carry a block. It NEVER modifies the
+ * schematic (invariant I4): no set_modify, no instance placed, nothing written.
+ *
+ * annot_overlay_sync() compares the observed-state epoch and flushes the whole
+ * per-instance cache when anything it depends on moved. Call it ONCE per frame /
+ * per export, beside annot_show_sync_cache().
+ *
+ * annot_data_changed() is the explicit invalidation the epoch cannot observe: a
+ * re-run of the SAME deck republishes into the SAME Raw allocation with identical
+ * nvars/level, so without this bump the overlay would show the previous run's
+ * numbers -- the one thing invariant I3 forbids. Called by update_op() (save.c)
+ * and backannotate_at_cursor_b_pos() (callback.c).
+ * ------------------------------------------------------------------------- */
+extern int get_annot_overlay(int n, const char **txt, double *x, double *y,
+                             double *size, int *layer);
+extern void annot_overlay_sync(void);
+extern void annot_data_changed(void);
+/* hold(1)/hold(0) around an INTERNAL maintenance reset that must not be read as
+ * a document change. One caller: prepare_netlist_structs() (netlist.c). */
+extern void annot_invalidate_hold(int on);
+/* monotonic count of blocks the overlay reader approved; the ONLY seam that can
+ * see the draw.c call site, whose whole body is inside if(has_x). Read with
+ * `xschem get annot_overlay_count` (scheduler.c), mirroring draw_count. */
+extern unsigned int annot_overlay_count;
+/* monotonic count of WHOLESALE cache flushes; read with
+ * `xschem get annot_overlay_flushes`. The companion seam to annot_overlay_count:
+ * that one proves blocks were rendered, this one proves the cache still EXISTS
+ * (a correct implementation flushes once per real change and zero times on an
+ * unchanged repeat frame). Bumped in annot_overlay_sync() at the flush, never in
+ * annot_data_changed() -- several hooks fire for one user action. */
+extern unsigned int annot_overlay_flushes;
 extern int check_pin_names(char **result);
 /* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
  * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */

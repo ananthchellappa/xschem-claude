@@ -1189,6 +1189,15 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
   int res = 0;
   Raw *raw = xctx->raw;
   if(!raw || !raw->values) return 0;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
 
   if(!int_hash_lookup(&raw->table, varname, 0, XLOOKUP)) {
     raw->nvars++;
@@ -1311,6 +1320,15 @@ int raw_renamevar(const char *old_name, const char *new_name)
 
   n = get_raw_index(old_name, &entry);
   if(n < 0) return ret;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
   dbg(1, "n=%d, %s \n", n, entry->token);
   int_hash_lookup(&raw->table, entry->token, 0, XDELETE);
   my_strdup2(_ALLOC_ID_, &raw->names[n], new_name);
@@ -1328,6 +1346,15 @@ int raw_deletevar(const char *name)
 
   n = get_raw_index(name, &entry);
   if(n < 0) return ret;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
   dbg(1, "n=%d, %s \n", n, entry->token);
   int_hash_lookup(&raw->table, entry->token, 0, XDELETE);
   my_free(_ALLOC_ID_, &raw->names[n]);
@@ -1989,6 +2016,14 @@ int update_op()
 {
   int res = 0, p = 0, i;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+  /* S9 / invariant I3: the OP-annotation overlay caches one rendered block per
+   * instance and flushes it on an observed-state epoch. Re-running the SAME deck
+   * and re-annotating republishes into the SAME Raw allocation with identical
+   * nvars/level and annot_p 0 -> 0, so nothing observable moves and the overlay
+   * would keep showing THE PREVIOUS RUN'S NUMBERS. This is the explicit bump.
+   * It is placed before the digital refusal below on purpose: "nothing was
+   * published" invalidates the cache exactly as a new point does. */
+  annot_data_changed();
   /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
    * This is the choke point every "annotate the operating point" request funnels
    * through: the `annotate_op` arm, both `raw switch` gates and the bare

@@ -687,9 +687,10 @@ earlier now renders dark until `xschem set annot_show 1` or S8's `6` key.
 Decision D2, ladder rung **L3** — see the S7 block in the plan for the open
 question and the `~/.xschem/xschemrc` off-ramp.
 
-**Carrier 2: the draw-time overlay.** ⚠ **ATTEMPTED IN FULL AT S9 (2026-08-19),
-REFUTED AND REVERTED — issue 0466; the implementation is preserved as
-`doc/claude/issues/0466-attempt-1-reverted.patch`.** For every instance whose
+**Carrier 2: the draw-time overlay.** ✅ **LANDED AT S9b (2026-08-20).**
+(⚠ Attempted in full at S9 (2026-08-19), refuted and reverted — issue 0466; S9b
+re-landed that implementation's src/ half unchanged and replaced its
+invalidation. Full record in issue 0466 § S9b.) For every instance whose
 **`op_annot::text` block is non-blank** — *not* "whose symbol type is
 registered": §4.2's `match` ruling and §4.3's consumer contract both say skip on
 a blank **devpath**, and measured, `devices/nmos.sym` answers descriptor?=1 with
@@ -716,16 +717,38 @@ Consequences of carrier 2 that the plan must handle:
   Rotating with the instance was rejected (a 90° FET prints a vertical wall of
   monospace rows); absolute offsets were rejected (they break when the instance
   moves);
-* ⚠ **the per-instance cache the risk cell asks for must be invalidated by the
-  schematic FILE being re-read, not only by the annotation data changing.** This
-  is what reverted attempt 1: thirteen epoch fields — path hash, `modify_seq`,
-  four raw terms, the mask, a data counter, a descriptor generation — and **not
-  one moves on `xschem reload`**, so the overlay paints the previous file's
-  numbers, breaching **I3**. One `annot_data_changed()` in `load_schematic()`
-  (`save.c:4319`) covers `load`, `reload`, the toolbar/menu reload and `Alt-S`;
-  the covering test row must re-load the **same path** with changed content
-  (a different path moves the hash and flushes anyway, which is why 192 checks
-  missed it). Issue **0466**;
+* ⚠ **the per-instance cache must be invalidated by enumerating the FORMATTER'S
+  INPUTS, not by listing the obvious user actions.** This is what reverted attempt
+  1: thirteen epoch fields — path hash, `modify_seq`, four raw terms, the mask, a
+  data counter, a descriptor generation — and **not one moves on `xschem reload`**,
+  so the overlay painted the previous file's numbers, breaching **I3** (issue
+  **0466**). ⚠ **And the one-line fix that issue proposed was necessary but not
+  sufficient, and its anchor was wrong**: `load_schematic()` is at **`save.c:4311`**
+  (not `:4319`, which this spec asserted and which is mid-prologue) and has an early
+  `return 0` at `:4391` reached *after* `xctx->sch[currsch]` is rewritten. What
+  S9b landed instead, each hook one line:
+
+      HOOK A  actions.c clear_drawing()   — every file re-read: load, reload,
+              `load -keep_symbols`, descend, ascend, undo, redo, `clear`, teardown
+      HOOK B  actions.c set_modify(), INSIDE its existing
+              `if(mod == 1 || mod == -2 || mod == -1)` floater-cache block — the
+              codebase's own per-object-render-cache channel; the only cover for
+              `editprop.c:1263`'s `set_modify(-2); draw();` (a full frame BEFORE
+              its caller's `set_modify(1)` at :1289) and for readonly buffers
+              (`ro_suppress`, actions.c:189, kills `modify_seq`)
+      HOOK C  actions.c remove_symbols() — the ONLY cover for `xschem reload_symbols`,
+              which is `remove_symbols(); link_symbols_to_instances(-1);` and nothing
+              else. A `.sym` whose `type=` changed on disk otherwise keeps the old
+              descriptor's block forever
+      HOOK D  save.c raw_add_vector / raw_renamevar / raw_deletevar + the
+              `xschem raw set` arm — in-place raw mutation moves NO epoch field
+      TERM 14 `live_cursor2_backannotate`, a shipped menu checkbutton
+              (`xschem.tcl:15360`) that is `op_annot::_annotated`'s FIRST gate
+
+  The covering rows must re-load the **same path** with changed content (a
+  different path moves the hash and flushes anyway, which is why 192 checks missed
+  it), and each hook needs its **own** row — S9b's sabotage matrix reds exactly one
+  row per hook;
 * ⚠ **it is deliberately NOT folded into `symbol_bbox()`**, so zoom-full and the
   auto-viewport print form clip the rightmost blocks (issue **0463**). Folding it
   in was rejected: `symbol_bbox()` is reached from netlist/save paths and run over
@@ -736,11 +759,35 @@ Consequences of carrier 2 that the plan must handle:
   **pre-existing**, reproduced identically through the S6 carrier with the overlay
   never running, but carrier 2 makes every registered device an entry point;
 * ⚠ **`draw()`'s whole body is inside `if(has_x)`**, so no headless check can see
-  the screen back end. Measured: stubbing the screen renderer leaves the suite at
-  `ALL PASS (192 checks)`. A monotonic `xschem get annot_overlay_count` seam plus
-  a DISPLAY leg is the only coverage that path can have — and `xschem get
-  drawcount` is not a substitute, because `draw_count++` sits *above* the `has_x`
-  guard (`draw.c:10393`).
+  the screen back end. Measured **twice**: stubbing the screen renderer leaves the
+  suite at `ALL PASS` (192 checks at S9, 209 at S9b) while reddening four rows on
+  a display. A monotonic `xschem get annot_overlay_count` seam plus a DISPLAY leg
+  is the only coverage that path can have — and `xschem get drawcount` is not a
+  substitute, because `draw_count++` sits *above* the `has_x` guard
+  (`draw.c:10393`). ⚠ Run the display leg **without `--nogui`**, or the
+  display-only rows self-skip (209 instead of 214);
+* ⚠ **a cache needs a SECOND seam, `xschem get annot_overlay_flushes`** — a
+  monotonic count of wholesale flushes, incremented **inside the sync at the moment
+  of the flush**, never on invalidation *requests* (several hooks legitimately fire
+  for one user action). Without it every staleness row is satisfiable by deleting
+  the cache, i.e. flushing every frame — measured invisible to all 31 staleness
+  rows, and worth ~1.16 ms/frame on a 13-device sheet;
+* ⚠ **a renderer resets your caches behind your back.**
+  `prepare_netlist_structs()` calls `set_modify(-2)` (`netlist.c:1798`), and
+  `svg_draw()` (`svgdraw.c:1282`) and `create_ps()` (`psprint.c:1653`) both call it
+  **after** their instance loop — so one export tears down the caches it just
+  filled. S9b brackets that single line with a depth-counted
+  `annot_invalidate_hold()`; the hold **drops** rather than defers, so it is safe
+  only at that one site. The floater half is untouched — issue **0473**;
+* ⚠ **the overlay resolves a device by NAME and it should not.**
+  `get_annot_overlay(n, …)` holds the index, discards it, and passes
+  `inst[n].instname` into `op_annot::text`, which re-resolves through
+  `get_instance()` (`scheduler.c:187`) whose first branch reads an all-digit name
+  as an **index**. Measured: an instance renamed `1`, or two instances sharing a
+  name, render **another device's numbers** in all three back ends with no warning
+  — I3's forbidden case. Pre-existing (the S6 carrier's `ref=` has it) but carrier
+  2 widens it to every registered device. Issue **0469**; **do not default the mask
+  on until it is closed**.
 
 ### 4.5 Visibility: annotation classes ✅ LANDED (S7, 2026-08-19)
 
@@ -939,8 +986,8 @@ sentence is discarded in favour of the generic `COULD NOT LOAD` — issue **0461
 | **I1** | Save cards and display share one name builder, `op_annot::devpath`. The save card is bare `devpath+[param]`; the display name is `op_annot::vector`, i.e. `devpath` plus the descriptor's `kind` wrapper. Never two independent builders. *(Restated by S1 — R4; the original wording named `vector` on both sides and is measurably impossible.)* **⚠ AMENDED BY S3 — "one builder" was under-specified and it reverted a complete implementation. One builder, but it must take a BASIS.** `devpath`'s hierarchy prefix comes from `sim_sch_path`, which is **relative to the level where the raw was loaded** — the right basis for *reading* a vector out of a loaded raw, and the wrong one for *writing* a save card, which needs a **deck-absolute** name. They coincide only when no raw is loaded or the raw is at the top, which is why 85 green checks missed it. The fix is a basis argument on the one builder (`op_annot::devpath <inst> ?basis?`, `absolute` for save cards), **not** path arithmetic in the walk — that would be the second builder this invariant forbids, and is exactly what the prototypes' `startpath` was. Issue **0436**, mechanism confirmed in the C at `save.c:1260`, `draw.c:2831-2838`, `scheduler.c:5150`. |
 | **I2** | A generated save block always carries **`.save all`** — the DOT-card (rule R2; the bare `save all` writes no raw at all — see R2). Honoured as *"any **non-empty** block carries `.save all` as its first line"*: an empty walk returns `{}`, because a file whose entire content is `.save all` says nothing while reporting success. **⚠ This is in direct tension with S2's acceptance criterion and S3 must resolve it, not inherit it.** The prototypes (`sg13g2_save_params`, `sky130_save_fet_params`) emit a comment plus bare `.save` cards and **no `save all`** — so a block that reproduces them byte for byte violates I2, and a block that satisfies I2 is by construction *not* byte-equal to them. S2's byte-diff was the right acceptance for a **name builder**; it is the wrong acceptance for a **block emitter**. S3 asserts I2 on the block and keeps the byte-diff on the card names only. |
 | **I2b** | **A generated save block names only devices that are in the netlist.** Added by S3. An instance carrying `spice_ignore=true` is absent from `xschem netlist` but is still visited by a hierarchy walk, and per **R5** one card for a non-existent device suppresses the entire raw under the bench idiom. So *one* such device anywhere in a design is enough to make a generated `.save` file kill the simulation it was generated for. Issue **0437**. **⚠ THE FILTER IS SEVEN CLASSES, NOT ONE — AND GETTING THREE OF THEM REFUTED S3b.** Measured (issue **0442**): `spice_ignore` (true/`open`/`short`, instance **or** symbol), `only_toplevel` below the walk entry, `lvs_ignore` gated on `::lvs_ignore` — *and four symbol-level classes S3b missed entirely*: empty/absent `format` (`spice_netlist.c:639`, the instance vanishes from the deck completely), `default_schematic=ignore` (`:643`), `spice_sym_def` (`:665`, body replaced by attribute text), `spice_stop=true` (`:635`+`:695`, `.subckt` emitted **empty**). The last two drop the **subtree** while the instance call survives — so "may I emit a card for this?" and "may I descend into this?" genuinely diverge and cannot be aliases. **Any implementation of this invariant must be acceptance-tested against `xschem netlist` on a HIERARCHICAL fixture carrying all seven**; S3b's cross-check row was correct but its fixture was flat, which is exactly why 96 green checks and 8 sabotage variants missed the gap. Strongly consider deriving the device set from `xschem netlist` output, or exposing `skip_instance()` (netlist.c:1245) to Tcl, rather than re-implementing the netlister's filter in Tcl a class at a time — that reimplementation has now drifted twice, and `skip_instance()` also branches on `xctx->netlist_type`, which no Tcl copy has ever consulted. |
-| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number, **and never the previous run's — or the previous FILE's — number. ⚠ AMENDED BY S9, which it reverted (issue 0466): a cross-frame render cache makes 'the previous file's number' reachable in one click.** `xschem reload` re-reads the `.sch` at the same path and moves none of the state a cache can observe — `set_modify(0)` bumps `modify_seq` only for mod 1|3 (`actions.c:200`), the path hash is unchanged, the raw is untouched — so a device renamed on disk keeps rendering its predecessor's value on every later frame and export until an unrelated flush. Any implementation that caches across frames must therefore invalidate on `load_schematic()` (`save.c:4319`), and must be tested by re-loading the **same path** with changed content. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 ACCEPTED IT RATHER THAN CLOSING IT (2026-08-19, ladder rung L3, decision D5)** — the carrier ships, the fabrication is reproduced through the real draw path, and it is pinned by a green check (`test_op_annot.tcl` row **K16**) that asserts the WRONG behaviour on purpose, so the C fix reds a named line instead of silently changing what a schematic shows. Only the two descriptors carrying `pinexpr` can reach it (sky130, gf180); IHP cannot. The unanswered ledger question is in 0446 under §S6 ACCEPTANCE. |
-| **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. **HELD AT S8** — row **N16** cycles `none`→`op`→`opvolt`→`none` through the real proc, including an auto-load, and asserts `xschem get modified` is 0 with the instance count unchanged. The mask is view state, so a key press is not an edit. **HELD AT S9 TOO, measured four ways on the full overlay** — `xschem get modified` 0 after five mask changes and five exports; a byte-identical `.sch` across a save (7618 → 7618); `git diff` over four shipped sky130 cells after the acceptance run = **0 bytes**; and a deliberate `set_modify(1)` sabotage inside the reader was caught. ⚠ **But the row that names itself the I4 row was VACUOUS**: it read `xschem get modified` *after* its own `xschem save` (1 before, 0 after), and its file-bytes element is order-dependent — on a display `xschem load` itself redraws, so the row's first save normalises the fixture and the trailing save writes identical bytes. On `:99` the breach was caught only by two *other* rows. Read `modified` **before** the save. |
+| **I3** | A missing vector renders **blank**, never `0`, never a fabricated number, **and never the previous run's — or the previous FILE's — number. ⚠ AMENDED BY S9, which it reverted (issue 0466): a cross-frame render cache makes 'the previous file's number' reachable in one click.** `xschem reload` re-reads the `.sch` at the same path and moves none of the state a cache can observe — `set_modify(0)` bumps `modify_seq` only for mod 1|3 (`actions.c:200`), the path hash is unchanged, the raw is untouched — so a device renamed on disk keeps rendering its predecessor's value on every later frame and export until an unrelated flush. **✅ CLOSED BY S9b (2026-08-20), and the amendment is sharper than the revert made it look.** Invalidating on `load_schematic()` — whose real anchor is **`save.c:4311`**, not the `:4319` this line asserted (that is mid-prologue), and which has an early `return 0` at `:4391` reached *after* `sch[currsch]` is rewritten — is **necessary but NOT sufficient**. Four further inputs move with no epoch field behind them: `xschem reload_symbols` (`remove_symbols(); link_symbols_to_instances(-1);` and nothing else — no `set_modify`, no `clear_drawing`) changes the symbol `type=` the descriptor is keyed on; `editprop.c:1263`'s `set_modify(-2); draw();` paints a full frame *before* its caller's `set_modify(1)` at `:1289`; in-place raw mutation (`raw rename`, `raw set`) keeps the same pointer, nvars, level and `annot_p`; and `live_cursor2_backannotate` — a shipped menu checkbutton — is the formatter's FIRST gate with no C mirror. **The generalisable rule S9b settled: enumerate by INPUT OF THE FORMATTER, not by obvious user action**, give each input its own hook and its own test row (S9b's sabotage matrix reds exactly one row per hook), and add a second seam (`xschem get annot_overlay_flushes`, counting wholesale flushes inside the sync) so that "invalidate correctly" cannot be satisfied by "delete the cache". ⚠ **A DIFFERENT I3 FABRICATION IS STILL OPEN — issue 0469**: the overlay looks a device up by NAME, and `get_instance()` (`scheduler.c:187`) reads an all-digit name as an index, so a device renamed `1` — or a sheet with duplicate instance names — renders **another device's numbers** in all three back ends with no warning. Any implementation that caches across frames must be tested by re-loading the **same path** with changed content. Same discipline as the digital-database refusal in `save.c` (RULING D5-1): a plausible wrong number on a schematic is worse than no number. **⚠ HELD FOR EVERY `params` AND `derived` ROW AT S5, AND MEASURABLY VIOLATED BY `pinexpr` — issue 0446, confirmed twice.** `token.c:4364` hardcodes a GND net to `0.0` whether or not any raw is loaded, while a net absent from the raw expands to the literal `-`; `translate`'s trailing `eval_expr()` pass (`token.c:5441`) then reads `expr(- - 0.0 )` as unary minus and returns a strict-double **`0`**. So a FET with its source on GND — the ordinary topology — renders `vgs = 0` / `vds = 0` while all eight other rows correctly blank. **This needs no hierarchy and no exotic state: a flat schematic and the wrong `.raw` is enough**, which makes it the first thing a user will do wrong, not a corner case (0446 was re-scoped after its original filing described only the level-shift path). Fabrication requires exactly one operand to be a hardcoded GND; with both nets absent the expression stays non-numeric and is correctly rejected. The fix is in C — make the missing-net marker something `eval_expr` cannot absorb, or refuse the `expr()` pass over an expansion that contained it — so it is not a rider on any Tcl step. **S6 ACCEPTED IT RATHER THAN CLOSING IT (2026-08-19, ladder rung L3, decision D5)** — the carrier ships, the fabrication is reproduced through the real draw path, and it is pinned by a green check (`test_op_annot.tcl` row **K16**) that asserts the WRONG behaviour on purpose, so the C fix reds a named line instead of silently changing what a schematic shows. Only the two descriptors carrying `pinexpr` can reach it (sky130, gf180); IHP cannot. The unanswered ledger question is in 0446 under §S6 ACCEPTANCE. |
+| **I4** | The overlay never modifies the schematic. No instances placed, no `set_modify`, nothing written to the `.sch`. **HELD AT S8** — row **N16** cycles `none`→`op`→`opvolt`→`none` through the real proc, including an auto-load, and asserts `xschem get modified` is 0 with the instance count unchanged. The mask is view state, so a key press is not an edit. **HELD AT S9b ON SHIPPED DATA**: `xschem get modified` = 0 on `sky130_tests_ase/bandgap_opamp` with `annot_show 1` and 13 blocks rendered, read **before** any save; `git diff -- sky130A` = 0 bytes; row **O17** asserts the same inside the suite (13 devices, all rows blank, nothing modified). **HELD AT S9 TOO, measured four ways on the full overlay** — `xschem get modified` 0 after five mask changes and five exports; a byte-identical `.sch` across a save (7618 → 7618); `git diff` over four shipped sky130 cells after the acceptance run = **0 bytes**; and a deliberate `set_modify(1)` sabotage inside the reader was caught. ⚠ **But the row that names itself the I4 row was VACUOUS**: it read `xschem get modified` *after* its own `xschem save` (1 before, 0 after), and its file-bytes element is order-dependent — on a display `xschem load` itself redraws, so the row's first save normalises the fixture and the trailing save writes identical bytes. On `:99` the breach was caught only by two *other* rows. Read `modified` **before** the save. |
 | **I5** | A user's `op_annot::register` overrides the PDK's, and takes effect on redraw — no restart, no rebuild. **⚠ "their own rc" is measurably wrong for `~/.xschem/xschemrc`**: xschemrc is sourced at `xinit.c:3234-3292`, *before* `xschem.tcl` at `:3401`, so `op_annot::register` there dies with `invalid command name`. The override must go in a file sourced after startup — a `--script` rc such as the PDK workareas' `cadence_style_rc`, or the console. S1 corrected the claim rather than the ordering; making xschemrc work would mean defining the namespace before the rc pass, which is a C change nobody has needed yet. |
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
 | **I7** | `hide=true` **and `hide=instance`** semantics are unchanged for every existing symbol in every library. **⚠ RESTATED BY S7 — the original wording named only `hide=true`, and `hide=instance` is the one that was actually at risk.** Counted across all tracked `.sym`/`.sch`: `hide=instance` **630 occurrences / 244 files**, `hide=true` **47 / 22**, `hide=op` **2** (the twin `annotate_params.sym`), `hide=voltage` **0** — no other `hide=` value exists anywhere, so the acceptance sweep is a bounded, nameable list rather than a spot check. The threat was never the class bits; it was collapsing ten visibility tests that mask **two different things** into one fixed mask (§2.4). **HELD AT S7**, verified three independent ways: rows L11–L14 and L19–L22 of `test_op_annot.tcl`; the adversary's own fixtures (all 57 `xschem_library/devices/*.sym` carrying `hide=instance`, and the 19 gf180mcu FETs carrying `hide=true`, exported to SVG at `annot_show` 0 vs 3 at both `show_hidden_texts` states — byte-identical, and **non-vacuous** because the same corpus does differ between `show_hidden_texts` 0 and 1); and a re-run of the pre-S7 before-state script, whose `hide=true` (0 at `sht=0`, 158 at `sht=1`) and `hide=instance` (0 on a symbol, visible at top level) numbers came back byte-for-byte. ⚠ **PS byte-comparison is unsound** until issue **0454** is fixed — `xschem print ps` ends every page with an uninitialised RGB triple that changes between exports of identical content; L20/L22 compare a normalised copy (`opa_l_normps`) and L21 keeps that normalisation non-vacuous. |
@@ -1189,5 +1236,47 @@ sentence is discarded in favour of the generic `COULD NOT LOAD` — issue **0461
     (`scheduler.c:9829`). An earlier comment in `test_op_annot.tcl` claiming
     otherwise was true only of the no-viewport form, and it would have pushed
     four of the ten sites behind xvfb for no reason.
+* **The draw-time overlay** (S9b, `test_op_annot.tcl` section **O**, 38 rows —
+  172 → **209** checks headless, **214** under a display). Two halves, and the
+  second is the one the retry exists for:
+  * **the overlay itself** (O1–O20): the SVG site, the PS site, the screen seam,
+    the D1 non-blank-block gate, `annot_dx`/`annot_dy`, I4 read **before** the
+    save, and O17's honest acceptance — 13 devices annotate on
+    `sky130_tests_ase/bandgap_opamp`, **all rows blank** (S3/S4 deferred, no
+    save-card generator, so a real PDK raw carries no device vectors and I3
+    requires blank), nothing modified.
+  * **the invalidation** (O21–O38): a device renamed on disk and re-read by
+    `xschem reload` (O21, issue 0466's literal repro) and by
+    `load -keep_symbols` (O22, the clean HOOK-A isolator, where
+    `remove_symbols()` never runs); `model=` rewritten under an unchanged name
+    (O23, which reds any implementation whose only guard is
+    `strcmp(cached_name, instname)`); a no-change reload leaving two exports
+    **byte-identical** (O24, the anti-fabrication control — "invalidate more"
+    must not become "render non-deterministically"); sibling descend (O25, but
+    see issue **0471** — it guards the wrong mechanism); undo/redo (O26); the
+    same raw path rewritten and re-annotated (O27); `setprop … name` (O28,
+    honestly already covered by `set_modify(1)`); `live_cursor2_backannotate`
+    (O29, the only row that reds if epoch term 14 is missing); `raw rename`
+    blanking **only its own row** while siblings keep their values (O30, the
+    discriminator between correct invalidation and blanking everything);
+    `reload_symbols` after a `type=` change (O31, the only row that reds if
+    HOOK C is missing); the four **flush-seam** rows (O32–O35, without which
+    every staleness row above is satisfiable by deleting the cache); a
+    window/tab switch (O36); `raw switch` under a static schematic (O37); and
+    two consecutive redraws flushing **zero** times (O38, the screen-path proof
+    that a cache still exists).
+  * ⚠ **Run it on a display as well as headless, and WITHOUT `--nogui`**:
+    `GUI_GATE=0 xvfb-run -a -s "-screen 0 1920x1080x24" ./src/xschem --pipe -q
+    --nolog --script tests/headless/test_op_annot.tcl`. O14, O36 and O38
+    self-skip headless, and the `draw_site_stub` sabotage variant (screen
+    renderer replaced by an empty static) prints `ALL PASS (209 checks)`
+    headless while reddening O13/O14/O17/O38 on the display.
+  * ⚠ **The suite is in NO tier runner** (issue **0465**): `grep -c op_annot` is
+    0 in both `tests/run_regression.tcl` and `tests/headless/run.sh`. T1 and T2
+    cannot see this feature in either direction.
 * **Pixels**: the overlay is a look-at-it deliverable and no green suite can
   clear it. `tests/headless/owed.sh add look "op annotation on tb_bandgap"`.
+  ⚠ S9b's acceptance was met **programmatically** (13 devices, `modified` 0,
+  `git diff` 0 bytes, perf table re-measured); the `6` / `Ctrl-6` **keystroke**
+  leg and a human eyeball on the pixels are recorded as a `look` debt, not
+  discharged. A green suite never clears a look debt.

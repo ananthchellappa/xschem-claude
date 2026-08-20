@@ -3567,6 +3567,1407 @@ set ::live_cursor2_backannotate $n_live_saved
   puts "UNEXPECTED ERROR (section N): $nerr"
   incr fail
 }
+# =============================================================================
+# SECTION O — S9 of doc/claude/specs/op_annotation.md: THE DRAW-TIME OVERLAY
+# =============================================================================
+# S6 shipped a CARRIER: the user places one devices/annotate_params per device
+# and types the device name into its `ref=`. S7 gave that carrier's `hide=op`
+# text an off switch and S8 gave the switch three keys. S9 removes the placed
+# symbol entirely: draw.c, svgdraw.c and psprint.c render op_annot::text on the
+# DEVICE ITSELF, anchored to the instance bounding box, gated by the annot_show
+# mask alone — there is no text record, so text_hidden() has no flags word to
+# read and the gate is `xctx->annot_show & ANNOT_SHOW_OP` (through the shared
+# reader, plan decision D2).
+#
+# ============================================================================
+# ⚠ THE FIXTURE CARRIES NO CARRIER SYMBOL, AND THAT IS THE SHARPEST TRAP HERE
+# ============================================================================
+# Measured on this tree BEFORE S9: a schematic holding one `zzs9fet` instance
+# and one devices/annotate_params pointed at it exports `ZZOA = 10u` today, at
+# annot_show 1, from S6's carrier and S7's `hide=op` — no S9 code involved. Put
+# that carrier in these fixtures and EVERY row below goes green against an
+# unmodified binary while measuring nothing about the overlay. So o_main.sch,
+# o_solo.sch, o_row.sch and o_hide.sch hold DEVICE INSTANCES ONLY; row X11
+# greps the fixture for `annotate_params` and pins that it is absent.
+#
+# ============================================================================
+# ⚠ THE GATE IS A NON-BLANK op_annot::text, NOT "the type has a descriptor"
+# ============================================================================
+# The step brief says "every instance whose symbol type has a REGISTERED
+# DESCRIPTOR". Spec §4.2 (issue 0425) and §4.3 both rule the other way: skip on
+# a blank DEVPATH, never on a blank descriptor, because the `type=` key is
+# shared by every PDK and by the generic xschem_library/devices/*.sym.
+# Measured: with only sky130 registered, devices/nmos.sym answers descriptor?=1
+# and devpath {}. The descriptor gate would paint a block on 13 generic symbols
+# and RED rows L19/L20/L21 (the 57-symbol shipped corpus) and L22 (a gf180 FET
+# under a sky130-only registration) on the first run. O5 is the row that states
+# the corrected gate; L19-L22 are its regression guard and must stay green.
+#
+# ============================================================================
+# ⚠ THE FIXTURE SYMBOL CARRIES NO T RECORD, DELIBERATELY
+# ============================================================================
+# draw.c:10500 and hilight.c:4188 guard the layer `cadlayers-1` text pass with
+# `((c == cadlayers-1) && symptr->texts)`; svgdraw.c:1239 and psprint.c:1612
+# have no such guard. An overlay hung inside draw_symbol() therefore renders in
+# SVG and PS and NOT on screen for a texts-free symbol — a silent screen/export
+# divergence that no export row can see. Plan decision D3 puts the call in each
+# back end's INSTANCE LOOP instead. O14 is the only row in the tree that can
+# catch the guarded position, and only under a display.
+#
+# ============================================================================
+# ⚠ THE SCREEN CALL SITE NEEDS A SEAM OR IT HAS NO POSSIBLE RED
+# ============================================================================
+# draw()'s entire body is inside `if(has_x)` (draw.c:10377), so under --nogui
+# nothing on the screen path executes at all. Plan decision D6 adds
+# `xschem get annot_overlay_count`, a monotonic counter bumped once per block
+# rendered, mirroring `drawcount` (scheduler.c:4283). Rows O13/O14 are that
+# seam. ⚠ ITS ABSENCE IS SILENT: measured, `xschem get annot_overlay_count`
+# today returns rc=0 with the EMPTY STRING (the `get` dispatcher's unknown-name
+# fall-through), exactly as `xschem set annot_show` did before S7 — which is
+# why opa_o_count reports NO-SEAM rather than trusting a catch.
+#
+# ============================================================================
+# ⚠ I4 IS MEASURED AS BYTES, NOT AS `git diff`
+# ============================================================================
+# The acceptance cell says "save the file and git diff is EMPTY". A headless
+# row cannot run git against a fixture it just wrote, and `xschem save` may
+# legitimately normalise a hand-written .sch. O4 therefore saves ONCE before
+# measuring (canonical bytes), exports at all three mask values, saves again,
+# and compares the two byte strings plus `xschem get modified` plus the
+# instance count. ⚠ O4 IS GREEN BEFORE S9 — no overlay, no modification. It is
+# an invariant guard, not evidence the feature landed; the sabotage variant it
+# exists for is a `set_modify(1)` ADDED inside the shared reader.
+#
+# ============================================================================
+# ⚠ THE PLAN'S ACCEPTANCE CELL IS THE WRONG CELL — MEASURED TWICE
+# ============================================================================
+# `sky130_tests_ase/bandgap` has 115 instances and ZERO with a non-blank
+# op_annot devpath (its FETs are one level down; the census is 53 lab_pin, 14
+# not, 11 res_xhigh_po, 8 spice_probe, 6 ammeter, 5 passgate, 4 cap_mim, 2
+# pnp_05v5 …). Pressing `6` there correctly shows nothing even after S9 lands.
+# The acceptance cell is `sky130_tests_ase/bandgap_opamp` (13 devices) — row
+# O17 — and O18 pins bandgap's zero so the correction cannot be lost again.
+#
+# ============================================================================
+# ⚠ POSITIONS ARE ASSERTED AS SIGNS, NOT AS PIXELS
+# ============================================================================
+# annot_dx / annot_dy are RELATIVE offsets in schematic units (plan D7, the
+# P6 name_dx/name_dy precedent). The pixel delta they produce depends on the
+# print viewport's scale, which is not part of anybody's contract, so O6/O7/O8
+# assert direction (`+`/`0`/`-`, with a 1-pixel dead band) and the axis that
+# must NOT move. A pixel golden here would pin the viewport instead.
+#
+# ============================================================================
+# ⚠ PS EXPORT CARRIES ONE VOLATILE LINE — ISSUE 0454
+# ============================================================================
+# Section L's header records it: two PS exports of identical content are not
+# byte-equal because the last colour command before `showpage` is an
+# uninitialised RGB triple. O3 compares through opa_l_normps, the same
+# normaliser L20/L22 use, and keeps a label assertion alongside so the row
+# cannot pass on an exporter that drew nothing.
+#
+# ============================================================================
+# ⚠ WHICH ROWS ARE RED BEFORE S9 AND WHICH ARE CONTROLS — SAY IT OUT LOUD
+# ============================================================================
+# RED before (16): O1 O2 O3 O5 O6 O7 O8 O9 O10 O11 O12 O13 O15 O16 O17 O20
+#                  (+ O14 under a display; O18 reds on its seam element alone)
+# O19 IS NOT A ROW. The plan's O19 is a regression guard on rows that already
+# exist — L19/L20/L21/L22, the 57 shipped devices/*.sym and the gf180 FET under
+# a sky130-only registration. They are what decision D1's gate rests on and
+# they must stay GREEN; nothing new is written for them.
+# GREEN before and after, i.e. invariant guards and fixture controls, NOT
+# evidence that S9 happened: O4, X11, X12, and the three quiet halves of
+# O5/O10/O18. A run in which only the green set passes has measured nothing.
+#
+# ============================================================================
+# ⚠ THE GOLDENS WERE PROVED SATISFIABLE BEFORE THEY WERE COMMITTED
+# ============================================================================
+# L25 records what happens when they are not: a row whose marker could not be
+# absent under ANY correct implementation, which no amount of green would have
+# revealed. So each of O1 O2 O3 O5 O6 O7 O8 O9 O10 O11 O12 O15 O16 was replayed
+# against a rendering back end BEFORE S9 existed, by standing S6's carrier
+# where S9's overlay will be: the same fixtures with one
+# devices/annotate_params per device at the device's own coordinates, driven
+# through these same helpers. All thirteen answered their golden exactly
+# (13 satisfiable, 0 unsatisfiable). The four claims that could NOT be replayed
+# that way are the ones that need new C and nothing else: O13, O14, and the
+# count element of O17/O18 — the `annot_overlay_count` seam.
+
+## The fixture devproc. One device path per instance NAME, so two instances of
+## one symbol get two different raw vectors and O8 can tell their blocks apart.
+## I1: the test never composes a vector itself — the raw below is written from
+## op_annot::_wrap's own shapes (kind 0 -> i(…), kind 1 -> bare).
+proc opa_o_devproc {instname model path spiceprefix} {
+  return "@m.zz[string tolower $instname]"
+}
+
+## One `type=<type>` device symbol: four strokes and NO T RECORD — see this
+## section's header for why the absence is load-bearing.
+proc opa_o_mkfet {dir name type} {
+  set f [open [file join $dir $name] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "K \{type=$type\nformat=\"@name @pinlist @model\"\ntemplate=\"name=MZZA model=zzdev\"\}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f "L 4 -10 -10 10 -10 {}"
+  puts $f "L 4 10 -10 10 10 {}"
+  puts $f "L 4 10 10 -10 10 {}"
+  puts $f "L 4 -10 10 -10 -10 {}"
+  close $f
+}
+## One schematic from {symbol x y props} quadruples.
+proc opa_o_mksch {path insts} {
+  set f [open $path w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  foreach {sym x y props} $insts {
+    puts $f "C \{$sym\} $x $y 0 0 \{$props\}"
+  }
+  close $f
+}
+## How many instances of the CURRENT sheet op_annot would annotate. The scan
+## resolves each index to its NAME first: get_instance() (scheduler.c:187)
+## reads an all-digit string as an INDEX, so a devpath fed an index answers a
+## plausible WRONG path and every sheet would look annotatable (N14's finding).
+proc opa_o_annotatable {} {
+  set n 0
+  for {set i 0} {$i < [xschem get instances]} {incr i} {
+    if {[catch {xschem getprop instance $i name} nm]} continue
+    if {[catch {op_annot::devpath $nm} d]} continue
+    if {$d ne {}} { incr n }
+  }
+  return $n
+}
+## The first annotatable instance NAME of the current sheet, or {}.
+proc opa_o_first_annot {} {
+  for {set i 0} {$i < [xschem get instances]} {incr i} {
+    if {[catch {xschem getprop instance $i name} nm]} continue
+    if {[catch {op_annot::devpath $nm} d]} continue
+    if {$d ne {}} { return $nm }
+  }
+  return {}
+}
+## How many SVG/PS lines carry <marker>. One line per rendered row — measured:
+## every back end's draw_string splits the block on \n (draw.c:485,
+## svgdraw.c:527, psprint.c:861), so a three-row block is three elements.
+proc opa_o_nseen {s marker} {
+  set n 0
+  foreach l [split $s \n] { if {[string first $marker $l] >= 0} { incr n } }
+  return $n
+}
+## The {x y} of every SVG <text> element carrying <marker>, sorted by x. The
+## element is one line and its position is a transform, not x=/y= — measured:
+##   <text fill="#ff7777" … transform="translate(240.385, 258.545)" >ZZOA = 10u</text>
+## Floats, NOT rounded: every consumer below compares with a dead band, and an
+## int would make a 0.5-pixel difference look like a move.
+proc opa_o_blocks {svg marker} {
+  set o {}
+  foreach l [split $svg \n] {
+    if {[string first $marker $l] < 0} continue
+    if {![regexp {translate\(([-0-9.e+]+), *([-0-9.e+]+)\)} $l -> x y]} continue
+    lappend o [list $x $y]
+  }
+  return [lsort -real -index 0 $o]
+}
+## The text CONTENT of every SVG <text> element carrying <marker>, in document
+## order — what the user reads, which is what I3 makes a claim about.
+proc opa_o_rowtexts {svg marker} {
+  set o {}
+  foreach l [split $svg \n] {
+    if {[string first $marker $l] < 0} continue
+    if {[regexp {>([^<]*)</text>} $l -> t]} { lappend o $t }
+  }
+  return $o
+}
+## `+` / `-` / `0` with a one-pixel dead band. See the header: the viewport
+## scale is not part of the contract, the DIRECTION is.
+proc opa_o_sign {v} {
+  if {$v > 1.0} { return + }
+  if {$v < -1.0} { return - }
+  return 0
+}
+## {x-direction y-direction} of the single ZZOA block between two exports, or a
+## NO-BLOCK marker naming how many blocks each export actually had. The marker
+## matters: before S9 both are 0, and a bare `lindex {} 0` fed to expr would
+## raise and collapse the whole section into one UNEXPECTED ERROR line.
+proc opa_o_shift {svgA svgB} {
+  set a [opa_o_blocks $svgA ZZOA]
+  set b [opa_o_blocks $svgB ZZOA]
+  if {[llength $a] != 1 || [llength $b] != 1} {
+    return "NO-BLOCK:[llength $a]/[llength $b]"
+  }
+  return [list [opa_o_sign [expr {[lindex $b 0 0] - [lindex $a 0 0]}]] \
+               [opa_o_sign [expr {[lindex $b 0 1] - [lindex $a 0 1]}]]]
+}
+## {left-to-right even-spacing same-row} for a three-instance sheet, or a
+## marker. "Even spacing" IS "each block follows its own instance": the three
+## instances are 200 units apart, so blocks anchored per-instance are evenly
+## spaced at any scale, and blocks anchored to the origin would pile up.
+proc opa_o_row3 {svg} {
+  set b [opa_o_blocks $svg ZZOA]
+  if {[llength $b] != 3} { return "NBLOCKS:[llength $b]" }
+  set x0 [lindex $b 0 0] ; set x1 [lindex $b 1 0] ; set x2 [lindex $b 2 0]
+  set y0 [lindex $b 0 1] ; set y1 [lindex $b 1 1] ; set y2 [lindex $b 2 1]
+  return [list [opa_o_sign [expr {$x1 - $x0}]] \
+               [expr {abs(($x2 - $x1) - ($x1 - $x0)) < 1.0 ? 1 : 0}] \
+               [expr {abs($y1 - $y0) < 1.0 && abs($y2 - $y1) < 1.0 ? 1 : 0}]]
+}
+## {fill font-family font-size} of every SVG <text> element carrying <marker>.
+## Read off the element rather than hardcoded, because O20's oracle is a TWIN
+## rendered in the same process, not a palette constant — L23's technique.
+proc opa_o_style {svg marker} {
+  set o {}
+  foreach l [split $svg \n] {
+    if {[string first $marker $l] < 0} continue
+    set fill NO-FILL ; set fam NO-FONT ; set size NO-SIZE
+    regexp {fill="([^"]*)"} $l -> fill
+    regexp {font-family:([^;"]*)} $l -> fam
+    regexp {font-size="([^"]*)"} $l -> size
+    lappend o [list $fill $fam $size]
+  }
+  return $o
+}
+## The S9 test seam as an int, or NO-SEAM:{<what it said>}. NEVER a bare catch:
+## `xschem get <unknown>` answers rc=0 and the empty string, so a catch-only
+## reader would report 0 and a deleted call site would look like an idle frame.
+proc opa_o_count {} {
+  if {[catch {xschem get annot_overlay_count} r]} { return "RAISED:$r" }
+  if {![string is integer -strict $r]} { return "NO-SEAM:\{$r\}" }
+  return $r
+}
+## HOW MANY OVERLAY PASSES ONE `xschem print` RUNS HERE.
+## ⚠ WITHOUT THIS THE COUNT ROWS ARE SATISFIABLE IN ONE ENVIRONMENT ONLY. The
+## print path exports AND THEN REDRAWS THE SCREEN to restore the viewport, so
+## under a display the same two-device sheet bumps the seam twice — measured on
+## this tree: one `xschem print svg` of the 13-device bandgap_opamp moves the
+## seam by 26 on :99 and by 13 headless. draw()'s whole body is inside
+## `if(has_x)` (draw.c:10377), so headless the second pass does not exist.
+## ⚠ AND `xschem get drawcount` CANNOT TELL THE TWO APART — measured,
+## `draw_count++` sits ABOVE that if(has_x) guard (draw.c:10393), so it moves by
+## 1 in BOTH modes and a factor derived from it reads 2 headless. The one honest
+## discriminator is has_x itself, the same flag O14 and M1/M2 self-skip on.
+proc opa_o_printpasses {} { return [expr {[info exists ::has_x] ? 2 : 1}] }
+## The seam's delta across <script>, or the endpoint marker that broke it.
+proc opa_o_delta {script} {
+  set a [opa_o_count]
+  uplevel #0 $script
+  set b [opa_o_count]
+  if {![string is integer -strict $a]} { return $a }
+  if {![string is integer -strict $b]} { return $b }
+  return [expr {$b - $a}]
+}
+
+if {[catch {
+
+# ⚠ UNQUALIFIED, per this file's header note.
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+set O_VP      {1600  900 -100 -150  700 300}   ;# o_main / o_row / o_hide
+set O_VP_SOLO {1000  800 -200 -300  500 400}   ;# o_solo: room for dx/dy 200
+set O_VP_BG   {2000 1400 -100 -1400 2400 200}  ;# the two sky130_tests_ase cells
+set O_BGOPAMP [file join $repo sky130A xschem_libs sky130_tests_ase \
+                         bandgap_opamp schematic bandgap_opamp.sch]
+set O_BANDGAP [file join $repo sky130A xschem_libs sky130_tests_ase \
+                         bandgap schematic bandgap.sch]
+
+# --- the fixtures ------------------------------------------------------------
+opa_o_mkfet $lib o_fet.sym  zzs9fet
+opa_o_mkfet $lib o_skip.sym zzs9skip
+opa_o_mksch [file join $lib o_main.sch] \
+  {o_fet.sym 0 0 {name=MZZA}  o_fet.sym 200 0 {name=MZZB}}
+opa_o_mksch [file join $lib o_solo.sch] {o_fet.sym 0 0 {name=MZZA}}
+opa_o_mksch [file join $lib o_row.sch] \
+  {o_fet.sym 0 0 {name=MZZA}  o_fet.sym 200 0 {name=MZZB}  o_fet.sym 400 0 {name=MZZC}}
+## hide=true -> HIDE_INST, hide_texts=true -> HIDE_SYMBOL_TEXTS (actions.c:1051-1053).
+opa_o_mksch [file join $lib o_hide.sch] \
+  {o_fet.sym 0 0 {name=MZZA}  o_fet.sym 200 0 {name=MZZC hide=true}
+   o_fet.sym 400 0 {name=MZZD hide_texts=true}}
+opa_o_mksch [file join $lib o_skip.sch] {o_skip.sym 0 0 {name=MZZS}}
+## ⚠ THE ONE FIXTURE THAT DOES CARRY THE CARRIER, AND ONLY O20 USES IT. O20
+## compares S9's overlay AGAINST S6's carrier, so it needs both blocks in one
+## frame and asserts there are TWO — which is exactly what an absent overlay
+## cannot supply. Every other fixture in this section is carrier-free for the
+## reason the header gives.
+opa_o_mksch [file join $lib o_twin.sch] \
+  {o_fet.sym 0 0 {name=MZZA}  devices/annotate_params 300 0 {name=an1 ref=MZZA}}
+
+## Three params, three kinds' worth of shapes, labels that appear nowhere else
+## in an SVG or a PS file. ⚠ ZZOA/ZZOB/ZZOC are the LABELS; zzid/zzgm/zzgds are
+## the raw parameter names. S5's formatter keys the two apart (rows S12/S13) and
+## a fixture that spelled them the same would hide a swap.
+set O_PARAMS {{ZZOA zzid 0} {ZZOB zzgm 1} {ZZOC zzgds 1}}
+catch {op_annot::register zzs9fet [list devproc opa_o_devproc params $O_PARAMS]}
+
+## An operating point for MZZA only, written from op_annot::_wrap's own shapes.
+set O_RAW [file join $scratch o_op.raw]
+set f [open $O_RAW w]
+puts -nonewline $f "Title: S9 overlay fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 3
+No. Points: 1
+Variables:
+\t0\ti(@m.zzmzza\[zzid\])\tcurrent
+\t1\t@m.zzmzza\[zzgm\]\tadmittance
+\t2\t@m.zzmzza\[zzgds\]\tadmittance
+Values:
+0\t1e-05
+\t1e-04
+\t1e-06
+"
+close $f
+
+## The two goldens the whole section rests on: what op_annot::text returns with
+## no raw (I3: `label =`, nothing after the `=`) and with the raw above.
+set O_BLANK {{ZZOA =} {ZZOB =} {ZZOC =}}
+set O_VALUED {{ZZOA = 10u} {ZZOB = 100u} {ZZOC = 1u}}
+
+xschem load [file join $lib o_main.sch]
+check {X11 FIXTURE o_main.sch: two annotatable devices, three rows each, and NO carrier symbol in the file} \
+  [list [xschem get instances] \
+        [list [op_annot::devpath MZZA] [op_annot::devpath MZZB]] \
+        [opa_s5_lines [op_annot::text MZZA]] \
+        [string first annotate_params [opa_k_slurp [file join $lib o_main.sch]]]] \
+  [list 2 {@m.zzmzza @m.zzmzzb} $O_BLANK -1]
+
+check {X12 CONTROL the fixture symbol carries NO T record — the texts-free case draw.c:10500 guards away} \
+  [list [llength [opa_k_texts [file join $lib o_fet.sym]]] \
+        [xschem getprop instance MZZA cell::type]] \
+  {0 zzs9fet}
+
+# ===========================================================================
+# O — THE THREE BACK ENDS
+# ===========================================================================
+opa_l_annot 0
+set o_svg0 [opa_l_print2 svg [file join $scratch o_m0.svg] $O_VP]
+set o_ps0  [opa_l_normps [opa_l_print2 ps [file join $scratch o_m0.ps] $O_VP]]
+opa_l_annot 1
+set o_svg1 [opa_l_print2 svg [file join $scratch o_m1.svg] $O_VP]
+set o_ps1  [opa_l_normps [opa_l_print2 ps [file join $scratch o_m1.ps] $O_VP]]
+
+check {O1 the overlay RENDERS, and only with annot_show bit0: the two SVG exports differ} \
+  [list [expr {$o_svg0 ne $o_svg1}] [expr {[string length $o_svg0] > 1000}]] {1 1}
+
+check {O2 I1 every label op_annot::text returns is in the annot_show 1 SVG and in none of the 0 SVG} \
+  [list [opa_l_seen $o_svg1 {ZZOA ZZOB ZZOC}] [opa_l_seen $o_svg0 {ZZOA ZZOB ZZOC}]] \
+  {{1 1 1} {0 0 0}}
+
+## ⚠ psprint.c IS A SEPARATE CALL SITE AND THIS IS ITS ONLY ROW — the brief
+## calls SVG and PS "the ones nobody looks at". Colour-normalised per 0454.
+check {O3 the SAME claim through psprint.c: normalised PS differs, and carries the labels} \
+  [list [expr {$o_ps0 ne $o_ps1}] \
+        [opa_l_seen $o_ps1 {ZZOA ZZOB ZZOC}] [opa_l_seen $o_ps0 {ZZOA ZZOB ZZOC}]] \
+  {1 {1 1 1} {0 0 0}}
+
+# ===========================================================================
+# O — I4: THE SCHEMATIC IS NEVER MODIFIED
+# ===========================================================================
+# ⚠ GREEN BEFORE AND AFTER. Its sabotage variant is a `set_modify(1)` added
+# inside the shared reader, not a removed line — see the header for why the
+# claim is bytes plus `modified` plus the instance count rather than `git diff`.
+xschem load [file join $lib o_main.sch]
+catch {xschem save}
+set o4_before [opa_k_slurp [file join $lib o_main.sch]]
+foreach a {0 1 3} {
+  opa_l_annot $a
+  opa_l_print svg [file join $scratch o_i4_$a.svg] $O_VP
+  opa_l_print ps  [file join $scratch o_i4_$a.ps]  $O_VP
+}
+## ⚠ THE FLAG IS READ BEFORE THE TRAILING SAVE, NOT AFTER — issue 0466's own
+## named test defect. `xschem save` ends in set_modify(0), so an element read
+## after it is 0 whether or not I4 was breached: this row stayed GREEN on :99
+## with a live set_modify(1) planted inside the shared reader. The byte compare
+## still needs the second save (a hand-written .sch may legitimately normalise),
+## so the two measurements are taken in the order that makes each one mean
+## something.
+set o4_mod [xschem get modified]
+catch {xschem save}
+set o4_after [opa_k_slurp [file join $lib o_main.sch]]
+check {O4 I4 exporting at every mask value places nothing, sets no modify flag and writes no byte} \
+  [list [expr {$o4_before eq $o4_after}] $o4_mod [xschem get instances] \
+        [expr {[string length $o4_before] > 50}]] \
+  {1 0 2 1}
+
+# ===========================================================================
+# O — D1: THE GATE IS A BLANK DEVPATH, NEVER A BLANK DESCRIPTOR
+# ===========================================================================
+# ⚠ TWO HALVES ON PURPOSE. The first is TRUE TODAY and stays true — it is the
+# same claim rows L19-L22 make on 57 shipped symbols. The second is the one
+# that reds before S9, and without it the row would pass on an exporter that
+# renders nothing at all.
+xschem load [file join $lib o_skip.sch]
+catch {op_annot::register zzs9skip \
+  [list devproc opa_o_devproc params $O_PARAMS match {*sky130_fd_pr/*}]}
+set o5_desc [expr {[op_annot::descriptor zzs9skip] ne {} ? 1 : 0}]
+set o5_dev  [op_annot::devpath MZZS]
+opa_l_annot 0 ; set o5a [opa_l_print2 svg [file join $scratch o_skip0.svg] $O_VP]
+opa_l_annot 1 ; set o5b [opa_l_print2 svg [file join $scratch o_skip1.svg] $O_VP]
+catch {op_annot::register zzs9skip [list devproc opa_o_devproc params $O_PARAMS]}
+opa_l_annot 0 ; set o5c [opa_l_print2 svg [file join $scratch o_skip2.svg] $O_VP]
+opa_l_annot 1 ; set o5d [opa_l_print2 svg [file join $scratch o_skip3.svg] $O_VP]
+check {O5 D1 a non-matching `match` glob blanks the DEVPATH and the overlay, though the descriptor is registered} \
+  [list $o5_desc $o5_dev [expr {$o5a eq $o5b}] [expr {$o5c ne $o5d}]] \
+  {1 {} 1 1}
+
+# ===========================================================================
+# O — THE ANCHOR AND THE annot_dx / annot_dy OVERRIDE
+# ===========================================================================
+# ⚠ `xschem setprop` MARKS THE SCHEMATIC MODIFIED — that is the SETTER's doing,
+# not the overlay's, and every row here reloads afterwards so O4's claim is
+# never measured through it. Setting the token also bumps `modify_seq`, which
+# is the epoch field the plan's cache invalidation reads (decision D4), so
+# these two rows double as the cache-staleness rows.
+xschem load [file join $lib o_solo.sch]
+opa_l_annot 1
+set o6a [opa_l_print2 svg [file join $scratch o_dx0.svg] $O_VP_SOLO]
+xschem setprop instance MZZA annot_dx 200
+xschem update_all_sym_bboxes
+set o6b [opa_l_print2 svg [file join $scratch o_dx1.svg] $O_VP_SOLO]
+check {O6 annot_dx moves the block RIGHT and leaves its row unchanged} \
+  [opa_o_shift $o6a $o6b] {+ 0}
+
+xschem load [file join $lib o_solo.sch]
+opa_l_annot 1
+set o7a [opa_l_print2 svg [file join $scratch o_dy0.svg] $O_VP_SOLO]
+xschem setprop instance MZZA annot_dy 200
+xschem update_all_sym_bboxes
+set o7b [opa_l_print2 svg [file join $scratch o_dy1.svg] $O_VP_SOLO]
+check {O7 annot_dy moves the block DOWN and leaves its column unchanged — dx and dy are not swapped} \
+  [opa_o_shift $o7a $o7b] {0 +}
+
+## ⚠ THE ANCHOR IS THE INSTANCE, NOT THE ORIGIN. Three identical devices 200
+## units apart: blocks anchored per-instance are evenly spaced at any viewport
+## scale, blocks anchored to the sheet origin pile up on top of each other.
+xschem load [file join $lib o_row.sch]
+opa_l_annot 1
+set o8 [opa_l_print2 svg [file join $scratch o_row1.svg] $O_VP]
+check {O8 three instances give three blocks, left to right, evenly spaced and on one row} \
+  [opa_o_row3 $o8] {+ 1 1}
+
+# ===========================================================================
+# O — I3: A MISSING VECTOR RENDERS BLANK, AND THAT IS WHAT REACHES THE SVG
+# ===========================================================================
+# ⚠ THE ROW COMPARES THE EXPORT AGAINST THE FORMATTER, BOTH WAYS. Element 2 is
+# op_annot::text's own answer and is GREEN today: if S9 ever re-derives the
+# rows in C (an I1 breach) or prints 0 / NaN / the previous run's number
+# (save.c ruling D5-1), element 1 moves and element 2 does not.
+xschem load [file join $lib o_solo.sch]
+opa_l_annot 1
+set o9 [opa_l_print2 svg [file join $scratch o_i3.svg] $O_VP_SOLO]
+check {O9 I3 with no raw loaded the exported rows are `label =` verbatim — no 0, no NaN, no digit} \
+  [list [opa_o_rowtexts $o9 ZZO] [opa_s5_lines [op_annot::text MZZA]]] \
+  [list $O_BLANK $O_BLANK]
+
+# ===========================================================================
+# O — THE MASK ROUND TRIP AND THE DESCRIPTOR GENERATION (I5)
+# ===========================================================================
+xschem load [file join $lib o_main.sch]
+opa_l_annot 1 ; set o10a [opa_l_print2 svg [file join $scratch o_rt1a.svg] $O_VP]
+opa_l_annot 0 ; set o10b [opa_l_print2 svg [file join $scratch o_rt0.svg]  $O_VP]
+opa_l_annot 1 ; set o10c [opa_l_print2 svg [file join $scratch o_rt1b.svg] $O_VP]
+check {O10 mask round trip 1 -> 0 -> 1: the two ON exports are byte-identical and the OFF one differs} \
+  [list [expr {$o10a eq $o10c}] [expr {$o10a ne $o10b}]] {1 1}
+
+## ⚠ I5: "a user's op_annot::register in their own rc overrides the PDK's, and
+## takes effect ON REDRAW — no restart, no rebuild". Nothing in C can see a Tcl
+## re-registration today, so a cross-frame cache defeats I5 unless op_annot
+## publishes a generation the sync reads (plan decision D5). Element 2 is
+## op_annot::text's own answer, green today, so a red element 1 names the cache
+## rather than the formatter.
+catch {op_annot::register zzs9fet [list devproc opa_o_devproc params {{ZZQA zzid 0}}]}
+set o11 [opa_l_print2 svg [file join $scratch o_i5.svg] $O_VP]
+check {O11 I5 a re-registered descriptor changes the block on the NEXT export, with no restart} \
+  [list [opa_l_seen $o11 {ZZQA ZZOA}] [opa_s5_lines [op_annot::text MZZA]]] \
+  [list {1 0} {{ZZQA =}}]
+catch {op_annot::register zzs9fet [list devproc opa_o_devproc params $O_PARAMS]}
+
+# ===========================================================================
+# O — I3's OTHER HALF: A NEW OPERATING POINT MUST REACH THE OVERLAY
+# ===========================================================================
+# ⚠ THE STALE-PREVIOUS-RUN CASE IS THIS ROW'S WHOLE POINT. Re-simulating and
+# re-annotating the SAME file reuses the Raw allocation with identical
+# nvars/level, so a cache epoch built only from fields already in xctx does not
+# move and the overlay keeps showing the previous run's numbers — the literal
+# wording I3 forbids. Plan decision D4 adds an explicit bump in update_op()
+# (save.c:1988) and backannotate_at_cursor_b_pos() (callback.c:1531).
+xschem load [file join $lib o_solo.sch]
+opa_l_annot 1
+set o12a [opa_l_print2 svg [file join $scratch o_op0.svg] $O_VP_SOLO]
+set o12r [rcall {xschem annotate_op $O_RAW}]
+set o12b [opa_l_print2 svg [file join $scratch o_op1.svg] $O_VP_SOLO]
+check {O12 a raw published between two exports CHANGES the rendered numbers} \
+  [list [lindex $o12r 0] [opa_o_rowtexts $o12a ZZO] [opa_o_rowtexts $o12b ZZO] \
+        [opa_s5_lines [op_annot::text MZZA]]] \
+  [list 0 $O_BLANK $O_VALUED $O_VALUED]
+
+# ===========================================================================
+# O — THE SEAM (decision D6)
+# ===========================================================================
+# ⚠ opa_l_print, NOT opa_l_print2: the warmed form exports TWICE and would
+# double every delta measured through it.
+xschem load [file join $lib o_main.sch]
+opa_l_annot 1
+set o_pp [opa_o_printpasses]
+set o13a [opa_o_delta {opa_l_print svg [file join $scratch o_cnt1.svg] $O_VP}]
+opa_l_annot 0
+set o13b [opa_o_delta {opa_l_print svg [file join $scratch o_cnt0.svg] $O_VP}]
+check {O13 `xschem get annot_overlay_count` counts one bump per block per export, and none at mask 0} \
+  [list $o13a $o13b] [list [expr {2 * $o_pp}] 0]
+
+# ===========================================================================
+# O — sym_txt, hide=true AND hide_texts=true (decision D9)
+# ===========================================================================
+# ⚠ ONE READER DECIDES, THREE BACK ENDS OBEY. A user who switched symbol text
+# off, or hid one instance's texts, must not still get a block of numbers
+# pinned to that instance — and the screen and the two exports must not be able
+# to disagree about it, which is what putting the test in the shared reader buys.
+opa_l_annot 1
+set o15a [opa_l_print2 svg [file join $scratch o_st1.svg] $O_VP]
+catch {xschem set sym_txt 0}
+set o15b [opa_l_print2 svg [file join $scratch o_st0.svg] $O_VP]
+catch {xschem set sym_txt 1}
+set o15c [opa_l_print2 svg [file join $scratch o_st1b.svg] $O_VP]
+check {O15 D9 sym_txt 0 removes the overlay and sym_txt 1 restores it} \
+  [list [opa_o_nseen $o15a ZZOA] [opa_o_nseen $o15b ZZOA] [opa_o_nseen $o15c ZZOA]] \
+  {2 0 2}
+
+xschem load [file join $lib o_row.sch]
+opa_l_annot 1
+set o16a [opa_l_print2 svg [file join $scratch o_h3.svg] $O_VP]
+xschem load [file join $lib o_hide.sch]
+opa_l_annot 1
+set o16b [opa_l_print2 svg [file join $scratch o_h1.svg] $O_VP]
+check {O16 D9 hide=true and hide_texts=true each suppress the block, and the neighbour keeps its own} \
+  [list [opa_o_nseen $o16a ZZOA] [opa_o_nseen $o16b ZZOA]] {3 1}
+
+# ===========================================================================
+# O — THE RENDER CONSTANTS, AS A TWIN AND NOT AS A PALETTE (decision D7)
+# ===========================================================================
+# ⚠ D7 lifts layer 15, font Monospace and size 0.2 VERBATIM from the shipped
+# devices/annotate_params so that "carrier 1 and carrier 2 look identical side
+# by side" — that sentence is the whole reason the constants are not freshly
+# invented. Asserting `fill="#ff7777"` would pin the PALETTE instead, and the
+# next person to edit a colour table would red a row about fonts. So the oracle
+# is L23's: the SHIPPED carrier rendering the SAME block in the SAME frame, and
+# the claim is that the two blocks are indistinguishable in fill, family and
+# size. ⚠ ELEMENT 1 IS WHAT KEEPS IT HONEST — with no overlay there is ONE
+# block and one style, which would otherwise satisfy "all styles agree".
+xschem load [file join $lib o_twin.sch]
+opa_l_annot 1
+set o20 [opa_l_print2 svg [file join $scratch o_twin.svg] $O_VP]
+set o20s [opa_o_style $o20 ZZOA]
+check {O20 D7 the overlay and the shipped carrier render the same block in the same fill, family and size} \
+  [list [llength $o20s] [llength [lsort -unique $o20s]]] {2 1}
+
+# ===========================================================================
+# O — ACCEPTANCE ON SHIPPED DATA
+# ===========================================================================
+# ⚠ EVERY ROW RENDERS BLANK HERE AND THAT IS THE HONEST RESULT. No save-card
+# generator exists (S3/S4 deferred, issues 0436/0442/0443), so a real bandgap
+# raw carries no device vectors and I3 blanks all ten rows. The row asserts the
+# blankness rather than hunting for a raw that makes the demo look good.
+set XSCHEM_LIBRARY_PATH $P_SKY_LIBS
+opa_source [file join $repo sky130A sky130_procs.tcl]
+xschem load $O_BGOPAMP
+set o17n [opa_o_annotatable]
+set o17i [opa_o_first_annot]
+opa_l_annot 0
+set o17a [opa_l_print2 svg [file join $scratch o_bg0.svg] $O_VP_BG]
+opa_l_annot 1
+set o17d [opa_o_delta {set o17b [opa_l_print svg [file join $scratch o_bg1.svg] $O_VP_BG]}]
+check {O17 ACCEPTANCE sky130_tests_ase/bandgap_opamp: 13 devices annotate, all rows blank, nothing modified} \
+  [list $o17n [opa_l_seen $o17a {vdsat}] [opa_l_seen $o17b {vdsat}] $o17d \
+        [xschem get modified] [opa_s5_allblank [op_annot::text $o17i]]] \
+  [list 13 0 1 [expr {13 * $o_pp}] 0 {10 {}}]
+
+# ⚠ THE PLAN'S OWN ACCEPTANCE CELL, PINNED AS THE COUNTEREXAMPLE. Its FETs are
+# one level down; `6` here correctly shows nothing even after S9 lands. Without
+# this row the wrong cell comes back the next time somebody reads the plan.
+xschem load $O_BANDGAP
+set o18n [opa_o_annotatable]
+opa_l_annot 0
+set o18a [opa_l_print2 svg [file join $scratch o_bgp0.svg] $O_VP_BG]
+opa_l_annot 1
+set o18d [opa_o_delta {set o18b [opa_l_print svg [file join $scratch o_bgp1.svg] $O_VP_BG]}]
+check {O18 sky130_tests_ase/bandgap has 115 instances and ZERO annotatable — the plan named the wrong cell} \
+  [list [xschem get instances] $o18n [expr {$o18a eq $o18b}] $o18d] \
+  {115 0 1 0}
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+opa_l_annot 0
+
+} oerr]} {
+  puts "UNEXPECTED ERROR (section O): $oerr"
+  incr fail
+}
+
+# =============================================================================
+# SECTION O (cont) — INVALIDATION: EVERY WAY A NAME OR A VALUE CHANGES
+# =============================================================================
+# Attempt 1 of S9 was BUILT, went green on 192 of these checks and on nine
+# sabotage variants, and was then REVERTED by its own write-up agent (issue
+# 0466). Nothing above this line was wrong. What was wrong is that the
+# per-instance cache the overlay carries is invalidated by a 13-field EPOCH,
+# and `xschem reload` moves none of those fields:
+#
+#   * load_schematic's set_modify(0) does not bump modify_seq — actions.c:200
+#     is `if((mod == 1 || mod == 3) && !ro_suppress) ++xctx->modify_seq;`
+#   * the same path hashes the same
+#   * the Raw allocation, its nvars and its level are untouched
+#
+# so a device RENAMED ON DISK keeps rendering its PREDECESSOR'S number on every
+# later frame and every later export. That is literally invariant I3's
+# forbidden "the previous run's number", it is one click from the FileReload
+# toolbar button, and it was silent to all 192 checks because the four `reload`
+# hits in this file never re-load a schematic.
+#
+# ⚠ MEASURED ON THIS TREE, WITH NO OVERLAY COMPILED IN, so the defect statement
+# survives a rebuild: after `xschem load` the sheet holds instances=1
+# inst0.name=MZZA modified=0; after rewriting the file on disk and `xschem
+# reload` it holds instances=1 inst0.name=MZZB modified=0. The device's NAME
+# changed while the instance count and the dirtiness signal both stood still.
+#
+# ============================================================================
+# ⚠ THE ONE-LINE FIX 0466 NAMED IS NOT ENOUGH, AND EACH GAP HAS ITS OWN ROW
+# ============================================================================
+# 0466 proposes one annot_data_changed() in load_schematic(). Measured, eight
+# more ways exist to change what a device is CALLED or what it is WORTH without
+# moving any epoch field. Each gets a row, because an enumeration that is not
+# tested is an enumeration that leaks — which is exactly how attempt 1 died:
+#
+#   O21 same-path `xschem reload` after a rename      the 0466 repro, user path
+#   O22 `xschem load -keep_symbols` same path         isolates the load hook
+#   O23 same path, same NAME, `model=` rewritten      the half a name guard
+#                                                     cannot see
+#   O24 same-path reload with NOTHING changed         a flush must not fabricate
+#   O25 two SIBLING instances of one subcircuit       sim_sch_path, not sch[]
+#   O26 setprop rename, undo, redo                    the restore paths
+#   O27 the SAME raw path rewritten and re-annotated  same alloc, same nvars
+#   O28 `xschem setprop instance … name`              the scripted rename
+#   O29 `live_cursor2_backannotate` toggled           a SHIPPED menu checkbutton
+#   O30 `xschem raw rename` under a static schematic  nvars/ptr/level unmoved
+#   O31 `xschem reload_symbols` after a type= change  zero set_modify calls
+#   O37 two OP raws loaded, `raw switch` between them  the xctx->raw pointer
+#
+# and one more on the screen back end, in section O2 beside O14:
+#
+#   O38 two consecutive steady-state redraws            the cache must SURVIVE
+#
+# ============================================================================
+# ⚠ MECHANISM ISOLATION — WHY THREE ROWS SAY ALMOST THE SAME THING
+# ============================================================================
+# `xschem reload` (scheduler.c:10804) calls remove_symbols() BEFORE
+# load_schematic (:10808/:10809), so the FileReload button is covered three
+# times over and O21 alone can never red for a cache reason. O22 drives the
+# identical rename through `xschem load -keep_symbols <same absolute path>`,
+# which measurably does NOT reload symbols — verified on this tree: with the
+# .sym's `type=` rewritten on disk, `load -keep_symbols` still answers the OLD
+# type and a plain `load` answers the new one. O23 then removes the NAME from
+# the picture entirely. O21 is the user path; O22 and O23 are the isolators.
+#
+# ============================================================================
+# ⚠ THE SEAM ROWS ARE NOT DECORATION: WITHOUT THEM THE CACHE CAN BE DELETED
+# ============================================================================
+# Every staleness row above is satisfied by an implementation that flushes the
+# cache on every single frame — i.e. by deleting the cache, which is precisely
+# what the measured redraw cost says must not happen. `xschem get
+# annot_overlay_flushes` (a monotonic count of WHOLESALE flushes, beside D6's
+# per-block annot_overlay_count) is the only handle that can tell "invalidated"
+# from "never cached": O34 asserts the second of two identical exports flushes
+# ZERO times. It is also the only headless handle on editprop.c:1263's
+# `set_modify(-2); draw();` — the property form's Apply button paints one frame
+# BEFORE its caller's set_modify(1) at editprop.c:1289, and mod -2 does not move
+# modify_seq (O33).
+#
+# ============================================================================
+# ⚠ THE SEAM DELTAS ARE MEASURED WITH THE INVALIDATION INSIDE THE SCRIPT
+# ============================================================================
+# `xschem load` DRAWS under a display and does not headless (draw()'s body is
+# inside `if(has_x)`, draw.c:10377). Measuring "load, then export" as two steps
+# therefore gives {0,…} on :99 and {1,…} headless for the same correct code.
+# Wrapping the invalidating call AND the export in one opa_o_fdelta makes every
+# golden below arm-independent — no opa_o_printpasses factor, unlike O13/O17.
+#
+# ============================================================================
+# ⚠ WHICH ROWS ARE RED BEFORE S9 AND WHICH ARE GREEN CONTROLS — OUT LOUD
+# ============================================================================
+# RED before (16): O21 O22 O23 O24 O25 O26 O27 O28 O29 O30 O31 O32 O33 O34 O35
+#                  O37  (+ O36 and O38 under a display)
+# GREEN before and after (1): X13. It is a FIXTURE control and it measures
+# nothing about the overlay — its job is to prove that two sibling instances
+# really do present an identical (currsch, file, instance count, modified)
+# tuple with DIFFERENT devpaths, which is what makes O25 non-vacuous. A run in
+# which only X13 passes has measured nothing.
+#
+# ============================================================================
+# ⚠ THE GOLDENS WERE PROVED SATISFIABLE BEFORE THEY WERE COMMITTED (L25)
+# ============================================================================
+# Eleven of these rows — O21 O22 O23 O24 O25 O26 O27 O28 O29 O30 O31, plus O36
+# in section O2 — were replayed against a rendering back end BEFORE S9 existed,
+# by standing S6's carrier where S9's overlay will be: the same fixtures with
+# one devices/annotate_params per device, driven through these same helpers.
+# All twelve answered their golden exactly (12 satisfiable, 0 unsatisfiable).
+# The rows that could NOT be replayed that way are the ones that need new C and
+# nothing else: O32 O33 O34 O35 and O38, the annot_overlay_flushes seam. O37 is
+# a later addition and was not in that replay either; what WAS measured for it,
+# on this tree with no overlay compiled in, is every leg of its sequence read
+# through op_annot::text — 10u/100u/1u, then blank after `raw read`, then
+# 70u/700u/7u after `raw switch`, then 10u/100u/1u back — so its goldens are
+# observed behaviour of the formatter, not a guess about it.
+
+## The SECOND S9 seam, read exactly like opa_o_count and for the same reason:
+## `xschem get <unknown>` answers rc=0 and the EMPTY STRING, so a catch-only
+## reader would report 0 and a never-flushing cache would look correct.
+proc opa_o_flushes {} {
+  if {[catch {xschem get annot_overlay_flushes} r]} { return "RAISED:$r" }
+  if {![string is integer -strict $r]} { return "NO-SEAM:\{$r\}" }
+  return $r
+}
+proc opa_o_fdelta {script} {
+  set a [opa_o_flushes]
+  uplevel #0 $script
+  set b [opa_o_flushes]
+  if {![string is integer -strict $a]} { return $a }
+  if {![string is integer -strict $b]} { return $b }
+  return [expr {$b - $a}]
+}
+## BOTH seams across ONE script, as {count-delta flush-delta}, or the first
+## endpoint marker that broke — the same never-a-bare-catch discipline as
+## opa_o_count and opa_o_flushes, and the same reason the arithmetic is guarded:
+## an expr on `NO-SEAM:{}` raises and collapses the whole section into a single
+## UNEXPECTED ERROR line instead of reddening one legible row.
+##
+## ⚠ NOT two separate opa_o_delta / opa_o_fdelta wrappers around two DIFFERENT
+## frames. The claim row O38 makes is about ONE frame — blocks were RENDERED and
+## the cache was NOT flushed — and measuring the two halves on different frames
+## is exactly the "well, it flushed on the other one" hole. One script, both
+## endpoints, read either side of it.
+proc opa_o_bfdelta {script} {
+  set ca [opa_o_count] ; set fa [opa_o_flushes]
+  uplevel #0 $script
+  set cb [opa_o_count] ; set fb [opa_o_flushes]
+  foreach __v [list $ca $fa $cb $fb] {
+    if {![string is integer -strict $__v]} { return $__v }
+  }
+  return [list [expr {$cb - $ca}] [expr {$fb - $fa}]]
+}
+
+## This section's devproc folds in the model AND the hierarchy path as well as
+## the instance name — unlike opa_o_devproc, which sees the name only. The three
+## things these rows must tell apart are exactly (a) the instance NAME, (b) the
+## `model=` token and (c) sim_sch_path, and a devproc blind to any one of them
+## cannot produce a row that reds when that input is missed. ⚠ At top level
+## `$path` is empty, so this is not a second name builder: it is I1's single one
+## (op_annot::devpath -> _lower) fed one more descriptor-supplied input.
+proc opa_o_rldevproc {instname model path spiceprefix} {
+  return "@m.zz${path}[string tolower $model]_[string tolower $instname]"
+}
+## Rewrite the ONE reload fixture in place — same absolute path, every time.
+## The path never changing is the whole point: a path hash cannot see this.
+proc opa_o_mkrl {name model} {
+  global lib
+  opa_o_mksch [file join $lib o_rl.sch] \
+    [list o_rl.sym 0 0 "name=$name model=$model"]
+}
+## The five-device raw. Device 1's triple is a parameter because O27 rewrites
+## the SAME FILE with new numbers and re-annotates: same allocation, same nvars,
+## same level, annot_p 0 -> 0.
+proc opa_o_mkrlraw {path {a {1e-05 1e-04 1e-06}}} {
+  set devs [list [concat {@m.zzzzda_mzza} $a] \
+                 {@m.zzzzda_mzzb    2e-05 2e-04 2e-06} \
+                 {@m.zzzzdb_mzza    3e-05 3e-04 3e-06} \
+                 {@m.zzx1.zzda_mzza 4e-05 4e-04 4e-06} \
+                 {@m.zzx2.zzda_mzza 5e-05 5e-04 5e-06}]
+  set vecs {} ; set vals {}
+  foreach d $devs {
+    set nm [lindex $d 0]
+    lappend vecs [list "i(${nm}\[zzid\])" current] \
+                 [list "${nm}\[zzgm\]"    admittance] \
+                 [list "${nm}\[zzgds\]"   admittance]
+    lappend vals [lindex $d 1] [lindex $d 2] [lindex $d 3]
+  }
+  set f [open $path w]
+  puts -nonewline $f "Title: S9b invalidation fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: [llength $vecs]
+No. Points: 1
+Variables:
+"
+  set k 0
+  foreach v $vecs { puts -nonewline $f "\t$k\t[lindex $v 0]\t[lindex $v 1]\n" ; incr k }
+  puts -nonewline $f "Values:\n"
+  ## ⚠ NOT `puts [expr {$k == 0 ? "0\t$v\n" : "\t$v\n"}]`. Measured: expr does
+  ## its OWN substitution pass over a quoted operand, so the \t and \n survive
+  ## as literal backslashes AND `1e-04` comes back as `0.0001` — the whole
+  ## values block collapses onto one line and ngspice's reader answers
+  ## "ascii block is not of correct size", i.e. every row of every check below
+  ## blanks for a FIXTURE reason wearing the defect's clothes.
+  set k 0
+  foreach v $vals {
+    if {$k == 0} { puts -nonewline $f "0\t$v\n" } else { puts -nonewline $f "\t$v\n" }
+    incr k
+  }
+  close $f
+}
+
+if {[catch {
+
+# ⚠ UNQUALIFIED, per this file's header note.
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+set O_RLRAW [file join $scratch o_rl.raw]
+opa_o_mkrlraw $O_RLRAW
+opa_o_mkfet $lib o_rl.sym zzs9rl
+opa_o_mkrl MZZA zzda
+## A 12-line type=subcircuit box, the same shape as this file's own leaf.sym.
+## Its schematic is o_leaf.sch, which holds ONE annotatable device — the two
+## sibling instances in o_htop.sch therefore differ in nothing a per-file epoch
+## can see.
+set f [open [file join $lib o_leaf.sym] w]
+puts $f {v {xschem version=3.4.6 file_version=1.2}
+G {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}}
+close $f
+opa_o_mksch [file join $lib o_leaf.sch] {o_rl.sym 0 0 {name=MZZA model=zzda}}
+opa_o_mksch [file join $lib o_htop.sch] \
+  {o_leaf.sym 0 0 {name=x1}  o_leaf.sym 300 0 {name=x2}}
+
+catch {op_annot::register zzs9rl [list devproc opa_o_rldevproc params $O_PARAMS]}
+
+## The six blocks this section's raw can produce. Written out rather than
+## computed so a formatter drift reds here instead of agreeing with itself.
+set O_RL_A     {{ZZOA = 10u} {ZZOB = 100u} {ZZOC = 1u}}   ;# zzda_mzza
+set O_RL_B     {{ZZOA = 20u} {ZZOB = 200u} {ZZOC = 2u}}   ;# zzda_mzzb
+set O_RL_C     {{ZZOA = 30u} {ZZOB = 300u} {ZZOC = 3u}}   ;# zzdb_mzza
+set O_RL_X1    {{ZZOA = 40u} {ZZOB = 400u} {ZZOC = 4u}}   ;# x1.zzda_mzza
+set O_RL_X2    {{ZZOA = 50u} {ZZOB = 500u} {ZZOC = 5u}}   ;# x2.zzda_mzza
+set O_RL_NEW   {{ZZOA = 70u} {ZZOB = 700u} {ZZOC = 7u}}   ;# O27's rewrite
+
+# ===========================================================================
+# X13 — THE SIBLING FIXTURE. GREEN BEFORE AND AFTER; IT MAKES O25 NON-VACUOUS
+# ===========================================================================
+# ⚠ THIS ROW MEASURES NOTHING ABOUT THE OVERLAY and must not be read as
+# evidence S9 happened. It states the precondition O25 rests on, and it is the
+# reason the epoch needs sch_path[currsch] and not just sch[currsch]: descending
+# into two SIBLING instances of ONE subcircuit leaves currsch, the loaded FILE,
+# the instance count and `modified` bit-identical, while sim_sch_path moves
+# `x1.` -> `x2.` and the device path moves @m.zzx1.… -> @m.zzx2.…  Measured on
+# this tree today. op_annot::_simpath (op_annot.tcl:278) reads sim_sch_path LIVE
+# and its comment says caching it "would pass every golden and silently produce
+# the wrong device path the moment the user descends"; a C cache one level up
+# re-freezes exactly that.
+xschem load [file join $lib o_htop.sch]
+set x13r  [rcall {xschem annotate_op $O_RLRAW 0}]
+set x13ks $::keep_symbols
+set ::keep_symbols 1
+xschem select instance 0 ; xschem descend 1 2
+set x13a [list [xschem get currsch] [file tail [xschem get schname]] \
+               [xschem get instances] [xschem get modified] [op_annot::devpath MZZA]]
+xschem go_back
+xschem select instance 1 ; xschem descend 1 2
+set x13b [list [xschem get currsch] [file tail [xschem get schname]] \
+               [xschem get instances] [xschem get modified] [op_annot::devpath MZZA]]
+xschem go_back
+set ::keep_symbols $x13ks
+check {X13 FIXTURE two SIBLING instances of one subcircuit: same currsch/file/count/modified, DIFFERENT devpath} \
+  [list [lindex $x13r 0] $x13a $x13b] \
+  [list 0 {1 o_leaf.sch 1 0 @m.zzx1.zzda_mzza} {1 o_leaf.sch 1 0 @m.zzx2.zzda_mzza}]
+
+# ===========================================================================
+# O21 — ISSUE 0466's LITERAL REPRO, THROUGH THE USER'S OWN BUTTON
+# ===========================================================================
+# ⚠ COVERED THREE TIMES OVER ON PURPOSE (remove_symbols, then clear_drawing,
+# then the per-entry name guard), because this is the PATH A USER TAKES, not a
+# mechanism isolator: File > Reload, the FileReload toolbar button and Alt-S all
+# end here. Element 4 is op_annot::text's own answer — I1's single formatter —
+# so a red element 3 names the CACHE and never the formatter.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+set o21r [rcall {xschem annotate_op $O_RLRAW}]
+opa_l_annot 1
+set o21a [opa_l_print2 svg [file join $scratch o_rl21a.svg] $O_VP]
+opa_o_mkrl MZZB zzda
+xschem reload
+set o21b [opa_l_print2 svg [file join $scratch o_rl21b.svg] $O_VP]
+check {O21 issue 0466: a device RENAMED on disk and reloaded renders its OWN number, not its predecessor's} \
+  [list [lindex $o21r 0] [opa_o_rowtexts $o21a ZZO] [opa_o_rowtexts $o21b ZZO] \
+        [opa_s5_lines [op_annot::text MZZB]]] \
+  [list 0 $O_RL_A $O_RL_B $O_RL_B]
+
+# ===========================================================================
+# O22 — THE SAME RENAME WITH remove_symbols() OUT OF THE PICTURE
+# ===========================================================================
+# ⚠ THE ISOLATOR. `xschem reload` purges symbols first, so O21 cannot fail for a
+# cache reason alone. `load -keep_symbols` measurably does not: verified on this
+# tree with the .sym's type= rewritten on disk, `load -keep_symbols` answers the
+# OLD type and a plain `load` answers the new one. Element 4 is the formatter.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o22a [opa_l_print2 svg [file join $scratch o_rl22a.svg] $O_VP]
+opa_o_mkrl MZZB zzda
+xschem load -keep_symbols [file join $lib o_rl.sch]
+set o22b [opa_l_print2 svg [file join $scratch o_rl22b.svg] $O_VP]
+check {O22 the same rename through `load -keep_symbols`, where remove_symbols never runs} \
+  [list [opa_o_rowtexts $o22a ZZO] [opa_o_rowtexts $o22b ZZO] \
+        [opa_s5_lines [op_annot::text MZZB]]] \
+  [list $O_RL_A $O_RL_B $O_RL_B]
+
+# ===========================================================================
+# O23 — THE HALF A PER-INSTANCE NAME GUARD CANNOT SEE
+# ===========================================================================
+# ⚠ THE ROW THAT SAYS "COMPARE THE NAME" IS NOT THE WHOLE FIX. Same file, same
+# path, same instance NAME, same instance COUNT — only `model=` moves, and the
+# device path moves with it because it is the descriptor that composes the
+# vector. An implementation whose only new guard is `strcmp(cached_name,
+# inst.instname)` passes O22 and reds here.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o23a [opa_l_print2 svg [file join $scratch o_rl23a.svg] $O_VP]
+opa_o_mkrl MZZA zzdb
+xschem load -keep_symbols [file join $lib o_rl.sch]
+set o23b [opa_l_print2 svg [file join $scratch o_rl23b.svg] $O_VP]
+check {O23 the instance NAME unchanged and `model=` rewritten: the value follows the model} \
+  [list [opa_o_rowtexts $o23a ZZO] [opa_o_rowtexts $o23b ZZO] \
+        [op_annot::devpath MZZA] [opa_s5_lines [op_annot::text MZZA]]] \
+  [list $O_RL_A $O_RL_C {@m.zzzzdb_mzza} $O_RL_C]
+
+# ===========================================================================
+# O24 — THE CONTROL: A FLUSH MUST NOT FABRICATE A DIFFERENCE
+# ===========================================================================
+# ⚠ THE OTHER HALF OF EVERY ROW ABOVE. "Invalidate more" is trivially achieved
+# by making the render non-deterministic; this row pins that a same-path reload
+# with NOTHING changed leaves two exports BYTE-IDENTICAL. Measured: `xschem
+# reload` is byte-stable through opa_l_print2, while `load -keep_symbols` is NOT
+# (it re-zooms and moves stroke-width), which is why this row reloads and O22/23
+# compare row TEXTS rather than bytes.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o24a [opa_l_print2 svg [file join $scratch o_rl24a.svg] $O_VP]
+xschem reload
+set o24b [opa_l_print2 svg [file join $scratch o_rl24b.svg] $O_VP]
+check {O24 CONTROL a same-path reload with nothing changed leaves the two exports byte-identical} \
+  [list [expr {$o24a eq $o24b}] [opa_o_rowtexts $o24a ZZO]] \
+  [list 1 $O_RL_A]
+
+# ===========================================================================
+# O25 — TWO SIBLINGS OF ONE SUBCIRCUIT (the sch_path / sch_waves_loaded terms)
+# ===========================================================================
+# ⚠ NO TOP-LEVEL EXPORT BETWEEN THE TWO DESCENTS, DELIBERATELY. On screen this
+# case is correct BY ACCIDENT: go_back runs its own draw() at the top level and
+# that intermediate frame is what flushes. Headless there is no intervening
+# draw, so this row measures the epoch and not the luck. X13 above states the
+# precondition: the two contexts are identical in currsch, file, instance count
+# and `modified`.
+xschem load [file join $lib o_htop.sch]
+rcall {xschem annotate_op $O_RLRAW 0}
+set o25ks $::keep_symbols
+set ::keep_symbols 1
+opa_l_annot 1
+xschem select instance 0 ; xschem descend 1 2
+set o25a [opa_l_print2 svg [file join $scratch o_rl25a.svg] $O_VP_SOLO]
+xschem go_back
+xschem select instance 1 ; xschem descend 1 2
+set o25b [opa_l_print2 svg [file join $scratch o_rl25b.svg] $O_VP_SOLO]
+xschem go_back
+set ::keep_symbols $o25ks
+check {O25 each SIBLING carries its own number: x1. and x2. are different devices in one file} \
+  [list [opa_o_rowtexts $o25a ZZO] [opa_o_rowtexts $o25b ZZO]] \
+  [list $O_RL_X1 $O_RL_X2]
+
+# ===========================================================================
+# O26 / O28 — THE PROPERTY-SETTER RENAME, AND THE RESTORE PATHS
+# ===========================================================================
+# ⚠ GREEN UNDER 0466's EPOCH TOO, AND STILL WORTH A ROW. `xschem setprop
+# instance` bumps modify_seq at scheduler.c:12377, and `xschem undo` / `redo`
+# reach it through in_memory_undo.c:587 / save.c:4868 only because the default
+# set_modify argument is 1 — `xschem undo 0 0` and the netlisters'
+# pop_undo(2|4|0, 0) do not, and they replace the WHOLE instance array. These
+# two rows are the regression guard on the paths that are currently correct for
+# a reason nobody wrote down.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o28a [opa_l_print2 svg [file join $scratch o_rl28a.svg] $O_VP]
+xschem setprop instance MZZA name MZZB
+set o28b [opa_l_print2 svg [file join $scratch o_rl28b.svg] $O_VP]
+check {O28 `xschem setprop instance … name` moves the block to the new device between two exports} \
+  [list [opa_o_rowtexts $o28a ZZO] [opa_o_rowtexts $o28b ZZO] \
+        [xschem getprop instance 0 name]] \
+  [list $O_RL_A $O_RL_B MZZB]
+
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o26a [opa_l_print2 svg [file join $scratch o_rl26a.svg] $O_VP]
+xschem setprop instance MZZA name MZZB
+set o26b [opa_l_print2 svg [file join $scratch o_rl26b.svg] $O_VP]
+xschem undo
+set o26c [opa_l_print2 svg [file join $scratch o_rl26c.svg] $O_VP]
+xschem redo
+set o26d [opa_l_print2 svg [file join $scratch o_rl26d.svg] $O_VP]
+check {O26 undo reverts the block to the old device and redo restores the new one} \
+  [list [opa_o_rowtexts $o26a ZZO] [opa_o_rowtexts $o26b ZZO] \
+        [opa_o_rowtexts $o26c ZZO] [opa_o_rowtexts $o26d ZZO]] \
+  [list $O_RL_A $O_RL_B $O_RL_A $O_RL_B]
+
+# ===========================================================================
+# O27 — THE SAME RAW FILE, RE-SIMULATED. D4's REAL TEST
+# ===========================================================================
+# ⚠ O12 ABOVE ONLY COVERS blank -> valued. This is the case D4 was written for
+# and the one the user actually hits: re-run the simulator, re-annotate the SAME
+# path, and the numbers must move. Same Raw allocation, same nvars, same level,
+# annot_p 0 -> 0 — nothing an epoch built from xctx fields alone can see.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o27a [opa_l_print2 svg [file join $scratch o_rl27a.svg] $O_VP]
+opa_o_mkrlraw $O_RLRAW {7e-05 7e-04 7e-06}
+set o27r [rcall {xschem annotate_op $O_RLRAW}]
+set o27b [opa_l_print2 svg [file join $scratch o_rl27b.svg] $O_VP]
+opa_o_mkrlraw $O_RLRAW
+check {O27 the SAME raw path rewritten and re-annotated between two exports CHANGES the numbers} \
+  [list [lindex $o27r 0] [opa_o_rowtexts $o27a ZZO] [opa_o_rowtexts $o27b ZZO] \
+        [opa_s5_lines [op_annot::text MZZA]]] \
+  [list 0 $O_RL_A $O_RL_NEW $O_RL_NEW]
+
+# ===========================================================================
+# O29 — THE SHIPPED MENU CHECKBUTTON (hole A, invariant I3)
+# ===========================================================================
+# ⚠ ONE CLICK, PERMANENTLY STALE. `Live annotate probes with 'b' cursor`
+# (src/xschem.tcl:15360, Simulation > Graphs) is a shipped checkbutton on
+# `live_cursor2_backannotate` with NO -command, so it does not even redraw, and
+# op_annot::_annotated (op_annot.tcl:561) reads it as its FIRST gate. Nothing in
+# a 13-field xctx epoch can see a Tcl variable. Off must BLANK every row — I3's
+# forbidden previous-run's-number arriving from a different button — and back on
+# must restore them. That the checkbutton has no -command is filed separately;
+# this row is about the CACHE, and it drives the variable directly so it holds
+# whether or not the -command ever lands.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o29lv $::live_cursor2_backannotate
+set o29a [opa_l_print2 svg [file join $scratch o_rl29a.svg] $O_VP]
+set ::live_cursor2_backannotate 0
+set o29b [opa_l_print2 svg [file join $scratch o_rl29b.svg] $O_VP]
+set o29t [opa_s5_lines [op_annot::text MZZA]]
+set ::live_cursor2_backannotate 1
+set o29c [opa_l_print2 svg [file join $scratch o_rl29c.svg] $O_VP]
+set ::live_cursor2_backannotate $o29lv
+check {O29 `live_cursor2_backannotate` 1 -> 0 -> 1 blanks every row and restores it, with no other change} \
+  [list [opa_o_rowtexts $o29a ZZO] [opa_o_rowtexts $o29b ZZO] \
+        [opa_o_rowtexts $o29c ZZO] $o29t] \
+  [list $O_RL_A {{ZZOA =} {ZZOB =} {ZZOC =}} $O_RL_A {{ZZOA =} {ZZOB =} {ZZOC =}}]
+
+# ===========================================================================
+# O30 — A VECTOR RENAMED UNDER A STATIC SCHEMATIC (hole B, invariant I3)
+# ===========================================================================
+# ⚠ ONE VECTOR, NOT THE WHOLE BLOCK, AND THAT IS THE DISCRIMINATOR. raw_renamevar
+# (save.c:1306, `xschem raw rename`) leaves nvars, the Raw pointer, the level and
+# annot_p all unmoved. The renamed row must go BLANK — never 0, never NaN, never
+# the previous number (I3, save.c RULING D5-1) — while the two untouched rows
+# KEEP their values, which is what separates a correct invalidation from a
+# cache that simply blanked everything.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o30a [opa_l_print2 svg [file join $scratch o_rl30a.svg] $O_VP]
+set o30r [rcall {xschem raw rename {i(@m.zzzzda_mzza[zzid])} {i(@m.zzzzda_zzgone[zzid])}}]
+set o30b [opa_l_print2 svg [file join $scratch o_rl30b.svg] $O_VP]
+check {O30 I3 a raw vector renamed under a static schematic blanks ONLY its own row} \
+  [list [lindex $o30r 0] [opa_o_rowtexts $o30a ZZO] [opa_o_rowtexts $o30b ZZO] \
+        [opa_s5_lines [op_annot::text MZZA]]] \
+  [list 0 $O_RL_A {{ZZOA =} {ZZOB = 100u} {ZZOC = 1u}} {{ZZOA =} {ZZOB = 100u} {ZZOC = 1u}}]
+
+# ===========================================================================
+# O37 — TWO OP DATABASES LOADED AT ONCE, SWITCHED UNDER A STATIC SCHEMATIC
+# ===========================================================================
+# ⚠ THE STEP BRIEF NAMED THIS PATH BY HAND — "a raw switched under a static
+# schematic" — and no row above reaches it. O27 re-reads the SAME file into the
+# SAME registry slot; this one holds TWO databases at once and moves the CURRENT
+# pointer between them, which is what `xschem raw switch` and the Waves menu do.
+# Nothing about the schematic moves: same file, same instance, same instance
+# count, same `modified`, same sim_sch_path, same descriptor.
+#
+# ⚠ IT CANNOT BE DRIVEN WITH annotate_op, AND THAT IS NOT A FIXTURE QUIRK.
+# `xschem annotate_op` DELETES the currently loaded operating point before it
+# reads (scheduler.c:2409, extra_rawfile(3, ...)), so two OP raws can never be
+# resident at once through that door. `xschem raw read <f> op` is the door that
+# leaves both — measured on this tree, `xschem raw info` afterwards lists both
+# files with the second marked current.
+#
+# ⚠ AND `raw read` DELIBERATELY LEAVES A BLANK LEG IN THE MIDDLE, WHICH IS I3.
+# Measured: extra_rawfile(what=1) makes the new database CURRENT but publishes
+# no annotation point, so `xschem raw annot` answers -1 and op_annot::_annotated
+# (op_annot.tcl:561) gates every row to blank. `raw switch` then calls update_op()
+# (scheduler.c:10266) and the numbers appear. That middle export is the sharpest
+# leg of the row: the truth there is BLANK while the cache is holding the FIRST
+# database's numbers, so an overlay that misses it prints the previous run's
+# number — I3's forbidden case, arriving from the Waves menu instead of from a
+# reload.
+#
+# ⚠ WHAT ACTUALLY CATCHES THIS, SAID HONESTLY: the epoch's `xctx->raw` POINTER
+# term, not the update_op() bump. Every leg here swaps xctx->raw to a different
+# allocation. O27 is the row that covers the bump (same allocation, new numbers)
+# and this row is the regression guard on the pointer term and on the
+# `allpoints == 1 && op|dc` condition the switch arm's update_op() call carries.
+# Element 5 is op_annot::text's own answer, so a red element 4 names the CACHE.
+opa_o_mkrl MZZA zzda
+set O_RLRAW2 [file join $scratch o_rl37.raw]
+opa_o_mkrlraw $O_RLRAW2 {7e-05 7e-04 7e-06}
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o37a [opa_l_print2 svg [file join $scratch o_rl37a.svg] $O_VP]
+set o37r1 [rcall {xschem raw read $O_RLRAW2 op}]
+set o37b [opa_l_print2 svg [file join $scratch o_rl37b.svg] $O_VP]
+set o37r2 [rcall {xschem raw switch $O_RLRAW2 op}]
+set o37c [opa_l_print2 svg [file join $scratch o_rl37c.svg] $O_VP]
+set o37r3 [rcall {xschem raw switch $O_RLRAW op}]
+set o37d [opa_l_print2 svg [file join $scratch o_rl37d.svg] $O_VP]
+set o37t [opa_s5_lines [op_annot::text MZZA]]
+## The second database must not outlive the row: every later row reaches its
+## raw through `annotate_op`, which deletes only the CURRENT database, and a
+## stranded entry would make a later read find-and-switch instead of read.
+rcall {xschem raw clear}
+check {O37 two OP databases loaded at once: `raw switch` under a STATIC schematic moves the numbers BOTH ways} \
+  [list [lindex $o37r1 1] [lindex $o37r2 1] [lindex $o37r3 1] \
+        [opa_o_rowtexts $o37a ZZO] [opa_o_rowtexts $o37b ZZO] \
+        [opa_o_rowtexts $o37c ZZO] [opa_o_rowtexts $o37d ZZO] $o37t] \
+  [list 1 1 1 $O_RL_A {{ZZOA =} {ZZOB =} {ZZOC =}} $O_RL_NEW $O_RL_A $O_RL_A]
+
+# ===========================================================================
+# O31 — `xschem reload_symbols` AFTER A type= CHANGE (hole C)
+# ===========================================================================
+# ⚠ ZERO set_modify CALLS ON THIS PATH. scheduler.c:10827 is remove_symbols() +
+# link_symbols_to_instances(-1), and actions.c's remove_symbols contains no
+# set_modify at all. Rewrite the .sym's `type=` to something no descriptor
+# claims and the whole block must DISAPPEAR — op_annot::text returns {} (not a
+# blank block: the two empty outcomes are different and both load-bearing, see
+# op_annot.tcl's contract) — so the count of ZZO lines goes to zero.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o31a [opa_l_print2 svg [file join $scratch o_rl31a.svg] $O_VP]
+opa_o_mkfet $lib o_rl.sym zzs9nobodyclaims
+xschem reload_symbols
+set o31b [opa_l_print2 svg [file join $scratch o_rl31b.svg] $O_VP]
+set o31t [op_annot::text MZZA]
+opa_o_mkfet $lib o_rl.sym zzs9rl
+xschem reload_symbols
+set o31c [opa_l_print2 svg [file join $scratch o_rl31c.svg] $O_VP]
+check {O31 a symbol `type=` changed on disk and reload_symbols'd removes the block entirely} \
+  [list [opa_o_nseen $o31a ZZO] [opa_o_nseen $o31b ZZO] [opa_o_nseen $o31c ZZO] $o31t] \
+  [list 3 0 3 {}]
+
+# ===========================================================================
+# O32..O35 — THE FLUSH SEAM. THE ONLY THING THAT CAN SEE A DELETED CACHE
+# ===========================================================================
+# ⚠ EVERY DELTA HERE WRAPS ITS OWN INVALIDATING CALL, so the goldens are the
+# same headless and on a display — see this section's header. And ⚠ ONE DEVICE
+# PER SHEET, so a per-block counter and a per-frame counter cannot be confused.
+opa_o_mkrl MZZA zzda
+opa_l_annot 1
+set o32 [opa_o_fdelta {
+  xschem load -keep_symbols [file join $lib o_rl.sch]
+  opa_l_print svg [file join $scratch o_rl32.svg] $O_VP
+}]
+check {O32 SEAM `load -keep_symbols` of the same path flushes the cache exactly ONCE} $o32 1
+
+## ⚠ THE ONLY HEADLESS HANDLE ON editprop.c:1263. apply_symbol_prop does
+## `set_modify(-2); draw();` and its caller apply_instance_properties bumps at
+## editprop.c:1289 — AFTER that draw — so the property form's Apply button
+## paints one frame from the stale cache and nothing redraws again. mod -2 does
+## not move modify_seq (actions.c:200) but IS in set_modify's floater-cache
+## block (actions.c:238), which is the codebase's own "my rendered caches are
+## stale" signal and the contract this cache should always have had.
+set o33 [opa_o_fdelta {
+  xschem set_modify -2
+  opa_l_print svg [file join $scratch o_rl33.svg] $O_VP
+}]
+check {O33 SEAM `set_modify -2`, the mode modify_seq cannot see, still flushes the cache} $o33 1
+
+## ⚠ THE ROW THAT PROVES A CACHE STILL EXISTS. Without it every staleness row in
+## this section is satisfied by flushing on every frame — i.e. by deleting the
+## cache, which is exactly the per-frame cost the cache was added to avoid.
+set o34a [opa_o_fdelta {
+  xschem load -keep_symbols [file join $lib o_rl.sch]
+  opa_l_print svg [file join $scratch o_rl34a.svg] $O_VP
+}]
+set o34b [opa_o_fdelta {opa_l_print svg [file join $scratch o_rl34b.svg] $O_VP}]
+check {O34 SEAM CONTROL two identical consecutive exports flush ONCE and then NOT AT ALL} \
+  [list $o34a $o34b] {1 0}
+
+## ⚠ THE MASK-CLOSED COST CLAIM, ON BOTH SEAMS AT ONCE. With annot_show 0 a
+## repeated export must build no block and flush no cache: the feature costs
+## nothing when it is off.
+opa_l_annot 0
+opa_l_print svg [file join $scratch o_rl35s.svg] $O_VP
+set o35c [opa_o_delta  {opa_l_print svg [file join $scratch o_rl35a.svg] $O_VP}]
+set o35f [opa_o_fdelta {opa_l_print svg [file join $scratch o_rl35b.svg] $O_VP}]
+check {O35 SEAM CONTROL at mask 0 a repeated export moves NEITHER seam} \
+  [list $o35c $o35f] {0 0}
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+opa_l_annot 0
+
+} ocerr]} {
+  puts "UNEXPECTED ERROR (section O cont): $ocerr"
+  incr fail
+}
+
+# =============================================================================
+# SECTION O2 — THE SCREEN CALL SITE, WHICH NEEDS A DISPLAY
+# =============================================================================
+# draw()'s entire body is inside `if(has_x)` (draw.c:10377) and `xschem redraw`
+# is a no-op under --nogui, so this is the ONLY automated proof that the draw.c
+# call site exists at all: sabotage could delete it and every row above would
+# stay green. O38 adds the second screen claim — that between two frames the
+# cache is not thrown away — which is likewise unreachable headless. Both
+# self-skip, exactly like M1/M2:
+#
+#   DISPLAY=:99 GUI_GATE=0 ./src/xschem --pipe -q --nolog \
+#       --script tests/headless/test_op_annot.tcl
+#
+# ⚠ `--pipe` IS MANDATORY THERE AND ITS ABSENCE IS SILENT — see section M.
+if {![info exists has_x]} {
+  puts "skip: O14/O36/O38 need a display — draw()'s whole body is inside `if(has_x)` (draw.c:10377), and `new_schematic create_window` is a Tk call"
+} else {
+ if {[catch {
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+xschem load [file join $lib o_main.sch]
+opa_l_annot 1
+set o14a [opa_o_delta {xschem redraw}]
+opa_l_annot 0
+set o14b [opa_o_delta {xschem redraw}]
+## ⚠ THE TEXTS-FREE SYMBOL IS THE POINT. o_fet.sym carries no T record, so an
+## overlay hung inside draw_symbol() under draw.c:10500's
+## `((c == cadlayers-1) && symptr->texts)` guard renders in SVG and PS (O1/O3
+## green) and NOT here. Decision D3 puts the call in the instance loop instead.
+## ⚠ AND THE GOLDEN IS EXACTLY 2, NOT "at least 2", ON PURPOSE. Two devices,
+## one frame, one block each. A 4 here is not a harmless surplus: hilight.c:4192
+## calls the same layer `cadlayers-1` text pass a SECOND time for every
+## highlighted instance, so a block built twice per frame is the named
+## PERFORMANCE risk arriving quietly — the uncached sweep already costs
+## +20..35% of a frame with the annotation gate closed and +66..100% with a raw
+## loaded. Read a 4 as "the overlay is on two code paths", not as a test nit.
+check {O14 one screen redraw bumps the seam once per block at mask 1 and not at all at mask 0} \
+  [list $o14a $o14b] {2 0}
+opa_l_annot 0
+
+# ===========================================================================
+# O38 — THE STEADY-STATE SCREEN FRAME: THE CACHE MUST SURVIVE A REDRAW
+# ===========================================================================
+# ⚠ O34's COUNTERPART ON THE ONLY BACK END A USER LOOKS AT. O34 proves a cache
+# still exists across two identical EXPORTS; nothing above proves it across two
+# consecutive SCREEN FRAMES, and the screen is where the cost is paid — a
+# redraw runs on every pan, zoom, selection and cursor drag, while an export
+# runs when the user asks for one.
+#
+# ⚠ WITHOUT THIS ROW THE PERF CLAIM IS UNGUARDED ON EXACTLY THE PATH IT IS
+# ABOUT. Every staleness row in section O (cont) is satisfied by an
+# implementation that flushes on every frame — i.e. by deleting the cache —
+# and the measured price of that is the whole reason the cache exists: an
+# uncached sweep costs +20..35% of a frame with the annotation gate CLOSED and
+# +66..100% with a raw loaded. A flush-every-frame overlay reds O34 and O35 on
+# the export path only; this row is the screen half, and draw()'s whole body is
+# inside `if(has_x)` (draw.c:10377), so no headless row can reach it.
+#
+# ⚠ BOTH SEAMS ON THE SAME FRAME, NOT ONE SEAM ON EACH — see opa_o_bfdelta.
+# `{1 0}` is the whole claim in two numbers: the block WAS rendered (count +1,
+# one device on this sheet) and the cache was NOT thrown away (flushes +0). The
+# count half is the non-vacuity guard: a `{0 0}` would also satisfy "nothing
+# flushed", and it is what an overlay whose screen call site was deleted
+# answers — which is precisely the sabotage attempt 1 shipped past.
+#
+# ⚠ THE FIRST FRAME IS DELIBERATELY THROWN AWAY. The load and the annotate_op
+# ahead of it legitimately invalidate, so the frame that absorbs their flush is
+# not the frame this row is about. Both MEASURED frames are steady-state.
+#
+# ⚠ NOT REPLAYABLE AGAINST S6's CARRIER, unlike O21-O31/O36. Like O32-O35 it
+# reads a seam that does not exist yet, so it was reasoned from the counter's
+# contract (one bump per rendered block per frame, actions.c get_annot_overlay)
+# rather than measured green in advance. Say so rather than implying it was.
+opa_o_mkrl MZZA zzda
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+xschem redraw
+set o38a [opa_o_bfdelta {xschem redraw}]
+set o38b [opa_o_bfdelta {xschem redraw}]
+check {O38 two consecutive steady-state screen redraws each RENDER the block and flush the cache NEITHER time} \
+  [list $o38a $o38b] {{1 0} {1 0}}
+opa_l_annot 0
+
+# ===========================================================================
+# O36 — A TAB / WINDOW SWITCH, IN BOTH DIRECTIONS (issue 0464 residuals 3+4)
+# ===========================================================================
+# ⚠ THE EPOCH'S `ctx` FIELD IS A FREED POINTER COMPARED BY VALUE. Each open
+# window/tab owns its own Xschem_ctx and `xctx = save_xctx[i]` (xinit.c:1731)
+# moves the pointer, so a switch is seen today only because the ADDRESS
+# happens to differ — a destroyed-and-recreated context can land on the same
+# address, and nothing frees the final cache at teardown. Hence: both
+# directions, and each export must carry its OWN sheet's numbers.
+# ⚠ NEEDS A DISPLAY, which is why it lives here: `new_schematic create_window`
+# is a Tk operation. Measured satisfiable under xvfb with S6's carrier standing
+# where S9's overlay will be — all four legs, mask 1 surviving every switch.
+set o36ks $::keep_symbols
+opa_o_mkrl MZZA zzda
+opa_o_mksch [file join $lib o_rl2.sch] {o_rl.sym 0 0 {name=MZZB model=zzda}}
+xschem load [file join $lib o_rl.sch]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o36a [opa_o_rowtexts [opa_l_print2 svg [file join $scratch o_w36a.svg] $O_VP] ZZO]
+set o36r [rcall {xschem new_schematic create_window .xo9 [file join $lib o_rl2.sch]}]
+rcall {xschem annotate_op $O_RLRAW}
+opa_l_annot 1
+set o36b [opa_o_rowtexts [opa_l_print2 svg [file join $scratch o_w36b.svg] $O_VP] ZZO]
+rcall {xschem new_schematic switch .drw}
+set o36c [opa_o_rowtexts [opa_l_print2 svg [file join $scratch o_w36c.svg] $O_VP] ZZO]
+rcall {xschem new_schematic switch .xo9.drw}
+set o36d [opa_o_rowtexts [opa_l_print2 svg [file join $scratch o_w36d.svg] $O_VP] ZZO]
+rcall {xschem new_schematic switch .drw}
+catch {xschem new_schematic destroy .xo9.drw}
+set ::keep_symbols $o36ks
+check {O36 a window switch renders each sheet's OWN block, in both directions} \
+  [list [lindex $o36r 0] $o36a $o36b $o36c $o36d] \
+  [list 0 $O_RL_A $O_RL_B $O_RL_A $O_RL_B]
+opa_l_annot 0
+
+} o2err]} {
+   puts "UNEXPECTED ERROR (section O2): $o2err"
+   incr fail
+ }
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

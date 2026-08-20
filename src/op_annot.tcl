@@ -209,6 +209,14 @@ namespace eval op_annot {
   # --script rc such as the PDK workareas' cadence_style_rc works.
   variable desc
   if {![array exists desc]} { array set desc {} }
+  ## S9 / invariant I5: "a user's op_annot::register in their own rc overrides
+  ## the PDK's, and takes effect ON REDRAW -- no restart, no rebuild". The C
+  ## overlay caches one rendered block per instance and can observe nothing about
+  ## this namespace, so `register` publishes a generation counter that
+  ## annot_overlay_sync() (actions.c) folds into its epoch. Two lines, and
+  ## without them a cross-frame cache silently defeats I5.
+  variable gen
+  if {![info exists gen]} { set gen 0 }
 }
 
 ## op_annot::register <symbol-type> <dict>
@@ -239,6 +247,11 @@ proc op_annot::register {type descriptor} {
  well-formed dict ($err)"
   }
   set desc($type) $descriptor
+  ## I5: tell the draw-time overlay its cached blocks are stale (see the
+  ## namespace header). Bumped on EVERY register, including a re-register with
+  ## identical content -- a no-op bump costs one cache rebuild, a missed one
+  ## leaves the user staring at the descriptor they just replaced.
+  incr ::op_annot::gen
   return $type
 }
 

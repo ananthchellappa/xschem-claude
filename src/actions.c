@@ -242,6 +242,17 @@ int set_modify(int mod)
       my_free(_ALLOC_ID_, &xctx->text[i].floater_ptr); /* clear floater cached value */
     }
     int_hash_free(&xctx->floater_inst_table);
+    /* S9 HOOK B (decision D3, issue 0466). THIS BLOCK is the codebase's own
+     * "my per-object rendered caches are stale" channel, and the OP-annotation
+     * overlay cache is exactly that object class -- one lazily-built rendered
+     * string per object, same as xText.floater_ptr above. The epoch's modify_seq
+     * term is NOT enough: it moves only for mod 1|3 and never when ro_suppress
+     * is set, so it misses editprop.c apply_symbol_prop()'s `set_modify(-2);
+     * draw();` -- which paints a FULL FRAME before its caller's set_modify(1) --
+     * and every read-only-buffer path. Inside the `if`, deliberately: outside it
+     * this would fire on mod 0/2/3 too, and it must not perturb the function's
+     * `return floaters` contract (callback.c and scheduler.c read that value). */
+    annot_data_changed();
   }
 
   /* force title   no mod      mod */
@@ -902,6 +913,14 @@ void remove_symbols(void)
 {
   int j;
 
+  /* S9 HOOK C (decision D4, issue 0466). The ONE function that sets every
+   * inst[].ptr = -1 and tears the symbol table down. `xschem reload_symbols`
+   * (scheduler.c) is remove_symbols() + link_symbols_to_instances(-1) and
+   * NOTHING else -- no set_modify, no clear_drawing, no load_schematic -- so a
+   * .sym whose `type=` changed on disk would otherwise keep rendering the OLD
+   * descriptor's block, `type=` being exactly what op_annot::type reads to pick
+   * the descriptor. editprop.c's copy_cell path is covered here too. */
+  annot_data_changed();
   for(j = 0; j < xctx->instances; ++j) {
     delete_inst_node(j); /* must be deleted before symbols are deleted */
     xctx->inst[j].ptr = -1; /* clear symbol reference on instanecs */
@@ -1181,6 +1200,296 @@ int text_hidden(int flags, int ctx)
   if(flags & HIDE_TEXT) return 1;
   if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
   return 0;
+}
+
+/* ----------------------------------------------------------------------------
+ * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).
+ *
+ * S6 shipped a CARRIER: the user places one devices/annotate_params per device
+ * and types the device's name into its `ref=`. This is the second carrier: the
+ * block is drawn ON THE DEVICE, with no placed symbol and no text record at all.
+ *
+ * ONE shared reader, THREE thin call sites (draw.c, svgdraw.c, psprint.c), and
+ * every policy decision here so the screen and the two exports cannot disagree:
+ *
+ *   D1  THE GATE IS A NON-BLANK op_annot::text BLOCK, not "the symbol type has a
+ *       registered descriptor". Spec 4.2 (issue 0425) and 4.3 both rule: skip on
+ *       a blank DEVPATH, never on a blank descriptor -- the `type=` key is shared
+ *       by every PDK and by the generic xschem_library/devices/*.sym, so with
+ *       only sky130 registered devices/nmos.sym answers descriptor?=1, devpath {}.
+ *       The descriptor gate would paint a block on 13 generic symbols.
+ *   D2  THE MASK GATE IS text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE), i.e. the
+ *       overlay is exactly as visible as a `hide=op` text on an instance would
+ *       be. HIDE_TEXT_OP is tested first in text_hidden and answers only to
+ *       annot_show, so this is the mask alone -- through S7's single predicate,
+ *       and NOT a fourth inline `xctx->annot_show & ANNOT_SHOW_OP` test.
+ *   D9  It also obeys xctx->sym_txt, hide_texts=true (HIDE_SYMBOL_TEXTS) and
+ *       hide=true (HIDE_INST): a user who switched symbol text off must not
+ *       still get a block of numbers pinned to the instance.
+ *   I4  NOTHING HERE MODIFIES THE SCHEMATIC. No instance placed, no set_modify,
+ *       no byte written. Every path is a read.
+ *
+ * PERFORMANCE (the step's named risk). Measured on this tree before the cache:
+ * one uncached op_annot::text sweep costs +0.67 ms on bandgap_opamp (73 inst /
+ * 13 devices), +1.22 ms on test_comparator and +2.49 ms on top -- 20..35% of a
+ * frame with the annotation gate closed, and +66..100% with a raw loaded (the
+ * sky130 descriptor's two pinexpr rows add two more `xschem translate` calls per
+ * FET). So the block is cached PER INSTANCE, lazily, and flushed wholesale by
+ * annot_overlay_sync() whenever the observed-state epoch moves.
+ * ------------------------------------------------------------------------- */
+
+/* forward: the numeric-token reader defined with the pin-name layout below.
+ * annot_dx / annot_dy are read with exactly the same helper, and the same
+ * "absent token -> default" rule, as P6's name_dx / name_dy -- deliberately. */
+static double pin_dtok(const char *prop, const char *tok, double dflt);
+
+/* The render constants are lifted VERBATIM from the shipped carrier symbol
+ * xschem_library/devices/annotate_params.sym, whose one text record is
+ *   T {tcleval([op_annot::text @ref ])} 5 5 0 0 0.2 0.2 {layer=15
+ *   font=Monospace hide=op}
+ * so a placed carrier (S6) and the overlay (S9) render the same block in the
+ * same fill, family and size when both are on screen. The carrier's SECOND text
+ * record (`T {@ref} ... layer=4`) is deliberately NOT ported: it exists only so
+ * a FLOATING annotator can say which device it belongs to, and the overlay is
+ * drawn on the device itself. */
+#define ANNOT_OVERLAY_SIZE  0.2
+#define ANNOT_OVERLAY_LAYER 15
+#define ANNOT_OVERLAY_DX    5.0
+#define ANNOT_OVERLAY_DY    0.0
+
+/* monotonic count of blocks this reader approved. draw()'s entire body is inside
+ * if(has_x), so `xschem get annot_overlay_count` is the only seam any automated
+ * check can use to prove the screen call site exists. Mirrors draw_count. */
+unsigned int annot_overlay_count = 0;
+
+/* monotonic count of WHOLESALE cache flushes (S9b). Read with
+ * `xschem get annot_overlay_flushes`. Without this seam every staleness check in
+ * the suite is satisfiable by flushing on EVERY frame -- i.e. by deleting the
+ * cache -- which is precisely the +1.77 / +3.05 / +3.33 ms regression the cache
+ * exists to avoid, and which no other check can see. Bumped INSIDE
+ * annot_overlay_sync() at the moment of the flush and NEVER inside
+ * annot_data_changed() (decision D1): several hooks legitimately fire for ONE
+ * user action -- a `reload` bumps via remove_symbols() AND clear_drawing() --
+ * so a counter of invalidation REQUESTS would report 2 where 1 flush happened. */
+unsigned int annot_overlay_flushes = 0;
+
+/* The observed-state epoch. Any field moving flushes the whole cache.
+ * data_seq is the half the epoch CANNOT observe: re-running the same deck and
+ * re-annotating republishes into the SAME Raw allocation with identical
+ * nvars/level and annot_p 0 -> 0, so without the explicit bump the overlay would
+ * keep showing the previous run's numbers (invariant I3's literal wording).
+ * desc_gen is invariant I5: a user's op_annot::register in their own rc takes
+ * effect ON REDRAW, and nothing in C can otherwise see a Tcl re-registration. */
+typedef struct {
+  void *ctx;
+  void *raw;
+  int valid;
+  int instances;
+  int currsch;
+  int annot_show;
+  int raw_level;
+  int raw_nvars;
+  int raw_annot_p;
+  unsigned int schhash;
+  unsigned int modify_seq;
+  unsigned int data_seq;
+  int desc_gen;
+  int live_annot;
+} Annot_epoch;
+
+static Annot_epoch annot_epoch;      /* zero-initialised: .valid == 0 == "no epoch yet" */
+static char **annot_cache = NULL;    /* per-instance rendered block, lazily filled */
+static int annot_cache_n = 0;
+static int annot_overlay_ok = 0;     /* ::op_annot::text is defined in this interpreter */
+static int annot_overlay_busy = 0;   /* re-entrancy guard: a devproc that redraws */
+static unsigned int annot_data_seq = 0;
+static int annot_invalidate_held = 0;
+
+/* S9b -- HOLD/RELEASE, depth-counted. ONE caller: prepare_netlist_structs()
+ * (netlist.c), whose `set_modify(-2)` is a MAINTENANCE reset of derived data and
+ * not a document change. Without the hold that call lands inside the export
+ * itself (svg_draw() and create_ps() both run prepare_netlist_structs(0) after
+ * their instance loop), so a single `load` + export flushed the cache TWICE:
+ * once correctly for the load, and once more at the trailing draw() -- throwing
+ * away the very blocks the export had just built and forcing the next frame to
+ * rebuild all of them. MEASURED, not theorised: `xschem load -keep_symbols` plus
+ * one SVG export moved annot_overlay_flushes by 2 (test rows O32/O34 pin 1).
+ *
+ * It is SAFE because the hold is strictly downstream: prepare_netlist_structs()
+ * does work only when the netlist structs were invalidated, and every path that
+ * invalidates them (a document edit, a paste, a property change, a load) has
+ * ALREADY bumped through HOOK A or HOOK B before reaching here. The hold drops
+ * a redundant bump, never the first one. */
+void annot_invalidate_hold(int on)
+{
+  if(on) ++annot_invalidate_held;
+  else if(annot_invalidate_held > 0) --annot_invalidate_held;
+}
+
+/* The two OP publishers call this: update_op() (save.c, the point-0 publisher
+ * every `annotate_op` / `raw switch` / `update_op` request funnels through) and
+ * backannotate_at_cursor_b_pos() (callback.c, the cursor-B live path), plus the
+ * S9b invalidation hooks A (clear_drawing), B (set_modify's floater block),
+ * C (remove_symbols) and D (the four raw-content mutators). */
+void annot_data_changed(void)
+{
+  if(annot_invalidate_held) return;
+  ++annot_data_seq;
+}
+
+static void annot_overlay_flush(void)
+{
+  int i;
+  if(annot_cache) {
+    for(i = 0; i < annot_cache_n; ++i) {
+      if(annot_cache[i]) my_free(_ALLOC_ID_, &annot_cache[i]);
+    }
+    my_free(_ALLOC_ID_, &annot_cache);
+  }
+  annot_cache = NULL;
+  annot_cache_n = 0;
+}
+
+/* Once per frame / per export, beside annot_show_sync_cache(). Compares the epoch
+ * and flushes wholesale -- the xText.floater_ptr model (get_text_floater above),
+ * not a per-instance field: a field on xInstance would have to be copied,
+ * cleared and freed at the nine store/select/paste/undo sites `pin_sel` touches. */
+void annot_overlay_sync(void)
+{
+  Annot_epoch e;
+  const char *g;
+  /* S9b hardening (decision D8). annot_overlay_busy guarded get_annot_overlay()
+   * but NOT this function, which is the one that FREES the cache -- so a devproc
+   * that re-enters xschem from inside annot_overlay_cached_text()'s tcleval
+   * could free the block the outer frame is still holding (the documented
+   * signal-11, issue 0464 residual #2). This NARROWS that window; it does not
+   * close it, and 0464 stays open. It cannot move any golden: busy is set only
+   * inside the cached-text fill, and no legitimate sync is nested in one. */
+  if(annot_overlay_busy) return;
+  if(!xctx) {
+    annot_overlay_flush();
+    annot_epoch.valid = 0;
+    annot_overlay_ok = 0;
+    return;
+  }
+  e.valid = 1;
+  e.ctx = (void *)xctx;
+  e.instances = xctx->instances;
+  e.currsch = xctx->currsch;
+  e.annot_show = xctx->annot_show;
+  e.modify_seq = xctx->modify_seq;
+  e.data_seq = annot_data_seq;
+  e.schhash = 0;
+  if(xctx->currsch >= 0 && xctx->currsch < CADMAXHIER && xctx->sch[xctx->currsch]) {
+    e.schhash = str_hash(xctx->sch[xctx->currsch]);
+  }
+  e.raw = (void *)xctx->raw;
+  e.raw_level   = xctx->raw ? xctx->raw->level   : -1;
+  e.raw_nvars   = xctx->raw ? xctx->raw->nvars   : -1;
+  e.raw_annot_p = xctx->raw ? xctx->raw->annot_p : -1;
+  g = tclgetvar("::op_annot::gen");
+  e.desc_gen = g ? atoi(g) : -1;
+  /* THE 14th TERM (S9b, decision D6). op_annot::_annotated reads the Tcl global
+   * live_cursor2_backannotate as its FIRST gate, so flipping the shipped
+   * "Simulation > Live annotate" menu checkbutton flips every row of every block
+   * between its value and blank -- while moving nothing else: not modify_seq,
+   * not the raw, not ::op_annot::gen, not any field of xctx. Without this term
+   * the cache strands real numbers on screen after the user switched annotation
+   * OFF, which is invariant I3's "not the previous run's number" in the other
+   * direction. One tclgetboolvar per frame, the same cost class as the
+   * ::op_annot::gen read above. A Tcl variable trace was rejected: it would be
+   * installed on a SHIPPED global that C also writes, and a trace body that
+   * errors makes the variable WRITE fail. */
+  e.live_annot = tclgetboolvar("live_cursor2_backannotate");
+  if(annot_epoch.valid &&
+     e.ctx == annot_epoch.ctx && e.raw == annot_epoch.raw &&
+     e.instances == annot_epoch.instances && e.currsch == annot_epoch.currsch &&
+     e.annot_show == annot_epoch.annot_show &&
+     e.raw_level == annot_epoch.raw_level && e.raw_nvars == annot_epoch.raw_nvars &&
+     e.raw_annot_p == annot_epoch.raw_annot_p && e.schhash == annot_epoch.schhash &&
+     e.modify_seq == annot_epoch.modify_seq && e.data_seq == annot_epoch.data_seq &&
+     e.desc_gen == annot_epoch.desc_gen && e.live_annot == annot_epoch.live_annot) return;
+  annot_overlay_flush();
+  ++annot_overlay_flushes;
+  annot_epoch = e;
+  /* op_annot.tcl is sourced from xschem.tcl; an installed tree with a stale
+   * Makefile (issues 0424/0458) can lack it. Probing ONCE per epoch beats a
+   * per-instance tcleval that can only fail -- tcleval() swallows a Tcl error
+   * into the empty string but prints two lines to stderr first, which for a
+   * per-FET per-frame call is a flood, not a diagnostic. */
+  annot_overlay_ok = 0;
+  if(interp) {
+    const char *r = tcleval("info commands ::op_annot::text");
+    if(r && r[0]) annot_overlay_ok = 1;
+  }
+}
+
+/* The cached block for instance n. NULL == "no cache available"; "" == computed
+ * and this device carries no block. The fixed script + a carrier variable avoids
+ * every quoting hazard an instance name could raise, and the `catch` keeps a
+ * malformed user descriptor (issue 0447: op_annot::register validates only
+ * `dict size`) from printing two stderr lines per device per frame. */
+static const char *annot_overlay_cached_text(int n)
+{
+  const char *r;
+  if(!annot_cache) {
+    if(xctx->instances <= 0) return NULL;
+    annot_cache = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(char *));
+    if(!annot_cache) return NULL;
+    annot_cache_n = xctx->instances;
+  }
+  if(n < 0 || n >= annot_cache_n) return NULL;
+  if(!annot_cache[n]) {
+    annot_overlay_busy = 1;
+    tclsetvar("::op_annot::_ovi", xctx->inst[n].instname ? xctx->inst[n].instname : "");
+    r = tcleval("if {[catch {::op_annot::text $::op_annot::_ovi} ::op_annot::_ovr]}"
+                " {set ::op_annot::_ovr {}}\nset ::op_annot::_ovr");
+    annot_overlay_busy = 0;
+    my_strdup2(_ALLOC_ID_, &annot_cache[n], r ? r : "");
+  }
+  return annot_cache[n];
+}
+
+/* 1 == draw instance n's operating-point block, at *x/*y, size *size, layer
+ * *layer, text *txt (owned here -- the caller must NOT free it).
+ * 0 == this instance carries no block. */
+int get_annot_overlay(int n, const char **txt, double *x, double *y,
+                      double *size, int *layer)
+{
+  const char *t;
+  int lay;
+  if(txt) *txt = NULL;
+  if(!xctx) return 0;
+  if(annot_overlay_busy) return 0;
+  if(!annot_overlay_ok) return 0;
+  if(n < 0 || n >= xctx->instances) return 0;
+  if(xctx->inst[n].ptr == -1) return 0;
+  if(!xctx->sym_txt) return 0;                                    /* D9 */
+  if(xctx->inst[n].flags & HIDE_SYMBOL_TEXTS) return 0;           /* D9 */
+  /* the same `hide` expression draw_symbol/svg_draw_symbol/ps_draw_symbol compute */
+  if((xctx->inst[n].flags & HIDE_INST) ||
+     ((xctx->inst[n].ptr + xctx->sym)->flags & HIDE_INST) ||
+     (xctx->hide_symbols == 1 && (xctx->inst[n].ptr + xctx->sym)->type &&
+      !strcmp((xctx->inst[n].ptr + xctx->sym)->type, "subcircuit")) ||
+     (xctx->hide_symbols == 2)) return 0;                         /* D9 */
+  if(text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)) return 0;      /* D2: the mask, alone */
+  t = annot_overlay_cached_text(n);
+  if(!t || !t[0]) return 0;                                       /* D1: a blank block */
+  lay = ANNOT_OVERLAY_LAYER;
+  if(lay < 0 || lay >= cadlayers) lay = TEXTLAYER;
+  /* D7: anchored at the instance's TEXT-FREE bbox corner (xx2, yy1 -- absolute,
+   * rot/flip already applied by symbol_bbox), with annot_dx / annot_dy as
+   * RELATIVE offsets. Relative, not absolute, for the P6 name_dx/name_dy reason:
+   * an absolute override breaks the moment the instance is moved. The block is
+   * always upright (rot 0 / flip 0): a 90-degree FET would otherwise print a
+   * vertical wall of monospace rows. */
+  if(x) *x = xctx->inst[n].xx2 + pin_dtok(xctx->inst[n].prop_ptr, "annot_dx", ANNOT_OVERLAY_DX);
+  if(y) *y = xctx->inst[n].yy1 + pin_dtok(xctx->inst[n].prop_ptr, "annot_dy", ANNOT_OVERLAY_DY);
+  if(size) *size = ANNOT_OVERLAY_SIZE;
+  if(layer) *layer = lay;
+  if(txt) *txt = t;
+  ++annot_overlay_count;
+  return 1;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1996,6 +2305,20 @@ void clear_drawing(void)
   xctx->graph_snap_on = 0;
   xctx->graph_snap_have_prev = 0;
  int i,j;
+ /* S9 HOOK A (decision D2, issue 0466). THE file-re-read choke point, and the
+  * reason this is here rather than in load_schematic() as issue 0466 originally
+  * named: load_schematic() (save.c) has an early `return 0` reached AFTER
+  * xctx->sch[currsch] is already rewritten, and it covers strictly less. One
+  * line here covers `xschem reload` (the FileReload button -- the literal 0466
+  * repro), `xschem load` of a different file, `load -keep_symbols` of the SAME
+  * path (where remove_symbols never runs, so HOOK C cannot help), descend,
+  * ascend, descend_symbol, disk undo via pop_undo(), in-memory undo/redo via
+  * mem_restore_slot(), `xschem clear`, font reload and window/tab teardown --
+  * the last of which also retires the epoch's dangling-ctx-compared-by-value
+  * residual, since the data seq has moved by the time a recycled malloc address
+  * could alias. The netlisters reach here per sub-sheet too; that is free (this
+  * is a counter bump) but it is why every seam test wraps a SINGLE action. */
+ annot_data_changed();
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
   * item #3) -- otherwise it would survive into the next document and mislead the next

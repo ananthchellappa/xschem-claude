@@ -25,7 +25,8 @@ Also read, before touching anything:
   it up, including the "place annotator pre-filled from selection" idiom.
 - `doc/claude/code_analysis/waveform_subsystem_reference.md` §6.
 
-Branch is `annotate`. Number new issues from **0418** (0417 is the highest taken).
+Branch is `annotate`. Number new issues from **0475** (0474 is the highest taken
+after S9b; the plan originally said 0418).
 
 ---
 
@@ -43,6 +44,22 @@ Branch is `annotate`. Number new issues from **0418** (0417 is the highest taken
   `svgdraw.c` and `psprint.c`: ten copies of that decision are what S7 removed,
   and an overlay would put three of them straight back.
 - Per CLAUDE.md: do not run `make` while subagents are fanned out (~7.8 GB box).
+  ⚠ **S9b sharpened this**: never run a tier-measuring agent concurrently with a
+  sabotage-running agent against one tree — S9b's Verify-A sampled another
+  session's sabotage build and got a plausible false regression
+  (`1 FAILED (208 passed)`, the exact `symbols_flush_off` signature). Take every
+  number under an md5 guard on the binary **and** the test file.
+- **⚠ THE MASK MUST NOT BE DEFAULTED ON UNTIL ISSUE 0469 IS CLOSED.** The overlay
+  resolves a device by **name**, and `get_instance()` (`scheduler.c:187`) reads an
+  all-digit name as an **index** — so `xschem setprop instance MZZA name 1`, or any
+  `.sch` with duplicate instance names, makes a device render **another device's
+  numbers** in all three back ends, silently. This is I3's forbidden case. It is
+  survivable today only because `annot_show` defaults to 0 (issue 0457).
+- **The op_annot suite must be run on a DISPLAY as well as headless**, and without
+  `--nogui`: `GUI_GATE=0 xvfb-run -a -s "-screen 0 1920x1080x24" ./src/xschem
+  --pipe -q --nolog --script tests/headless/test_op_annot.tcl` (214 checks vs 209).
+  `draw()`'s whole body is inside `if(has_x)`, so the screen back end can be
+  deleted outright without reddening a headless run — measured, twice.
 
 ---
 
@@ -1404,9 +1421,11 @@ Also never exercised by anyone: the ASE candidate branch against a **real**
 
 ---
 
-## S9 — the draw-time overlay ❌ ATTEMPTED IN FULL, REFUTED, REVERTED (2026-08-19)
+## S9 — the draw-time overlay ✅ LANDED at S9b (2026-08-20, status **E** — one question below)
 
-**Files:** `src/draw.c`, then `src/svgdraw.c` and `src/psprint.c`.
+**Files:** `src/draw.c`, `src/svgdraw.c`, `src/psprint.c`, plus the shared reader
+and the four invalidation hooks in `src/actions.c` / `src/save.c` /
+`src/scheduler.c` / `src/netlist.c`.
 
 For every instance whose `op_annot::text` block is non-blank (**not** "whose
 symbol type has a descriptor" — see bullet 1 below), while the mask allows, draw
@@ -1421,126 +1440,185 @@ That is known, documented and not a blocker.
 all vanish; save the file and `git diff` is empty. Export to SVG and PS and the
 annotation is there.
 
-**Risk:** medium — performance on a large hierarchy (the text is rebuilt per
-redraw; cache per instance and invalidate on annotation change). ⚠ **The cache
-is where attempt 1 died, not the perf.**
+**Risk:** medium — performance on a large hierarchy. ⚠ **The cache is where
+attempt 1 died, not the perf**, and the retry is 90 % cache-invalidation work.
 
-### ❌ S9 attempt 1 — DONE, GREEN, AND NOT IN THE TREE. START FROM THE PATCH.
+### ✅ S9b — DONE. Attempt 1's src/ half re-landed unchanged + an enumerated invalidation set.
 
-**Implemented in full** (one shared reader in `actions.c` + three thin call
-sites), **192 headless / 195 display checks ALL PASS**, T1 and T2 unchanged,
-nine sabotage variants all red where predicted, and an adversary pass that could
-not break I1, I2, I4, I6, I7, the anchor, case folding, undo/redo, the cache
-flush or the acceptance. It was **reverted** for one hole: **the cache cannot see
-a schematic RELOAD, so it paints the previous file's numbers.** Issue **0466**;
-the whole 1273-line attempt is preserved as
-`doc/claude/issues/0466-attempt-1-reverted.patch` (applies to `523aa507`) —
-**apply it, add the two lines below, add the row, and S9 is done. Do not retype it.**
+    T3 test_op_annot HEADLESS   32 FAILED (176 passed)  ->  ALL PASS (209 checks)
+    T3 test_op_annot DISPLAY    36 FAILED (178 passed)  ->  ALL PASS (214 checks)
+    T1 run_regression           3 FAIL / 3 NOGOLD       ->  UNCHANGED (same 2 identities: 0455, 0456)
+    T2 headless/run.sh          HARNESS PASS 6/6        ->  UNCHANGED
+    perf, bandgap_opamp (73 inst / 13 devices, xvfb, median of 3 × 20 frames after 5 warm):
+      mask 0  3.196 ms   |   mask 1 CACHED  3.652 ms   |   mask 0 again  3.266 ms
+      mask 1 with the cache deleted  4.807 ms   -> the cache is worth ~1.16 ms/frame
 
-    $ ./src/xschem --nogui --pipe -q --nolog --script scratch_S9C/atk_reload3.tcl
-    R3: t0 RENDERED={ZZAA = 10u}
-    R3: after reload         RENDERED={ZZAA = 10u}  TRUTH=ZZAA = 20u
-    R3: after a bare redraw  RENDERED={ZZAA = 10u}  (persists across frames)
-    R3: after a mask toggle  RENDERED={ZZAA = 20u}  <- user-invisible workaround
+The full record — before/after transcripts, decisions **D1–D11** with ladder rungs
+and rejected alternatives, the **9-variant sabotage matrix** including the one
+predicted red that did not appear, the perf table and the residual risks — is in
+issue **0466 § S9b**. Do not re-derive it.
 
-### ⚠ WHAT S9 LEARNED THAT BINDS THE RETRY AND LATER STEPS
+### ⚠ WHAT S9 AND S9b LEARNED THAT BINDS LATER STEPS
 
-1. **THE STEP BRIEF'S RENDER GATE WAS WRONG AND WOULD HAVE REDDENED THE SUITE ON
-   THE FIRST RUN.** Gate on a **non-blank `op_annot::text` block**, never on
-   "the symbol type has a registered descriptor" — measured,
-   `xschem_library/devices/nmos.sym` answers descriptor?=1 / devpath `{}` under a
-   sky130-only registration, so the descriptor gate paints blocks on 13 generic
-   symbols and reds L19/L20/L21/L22 (the 57-symbol corpus and the gf180 FET).
-   Sabotage v3 confirmed it: 17 rows red. Spec §4.2/§4.3 already said this; the
-   brief did not.
+1. **THE RENDER GATE IS A NON-BLANK `op_annot::text` BLOCK, never "the symbol type
+   has a registered descriptor."** Measured: `xschem_library/devices/nmos.sym`
+   answers descriptor?=1 / devpath `{}` under a sky130-only registration, so the
+   descriptor gate paints blocks on 13 generic symbols and reds L19–L22. Spec
+   §4.2/§4.3 already said this; attempt 1's brief did not.
 
-2. **THE PLAN'S OWN ACCEPTANCE CELL HAS ZERO ANNOTATABLE DEVICES.**
-   `sky130_tests_ase/bandgap` — 115 instances, **0** with a non-blank devpath
-   (`grep -c 'sky130_fd_pr__[np]fet'` = 0); its FETs are one level down and the
-   overlay is inherently current-sheet-only. Use `bandgap_opamp` (13 devices),
-   `test_comparator` (26) or `top` (43 — the perf cell). Corrected in the cell
-   above and pinned by a test row so it cannot come back.
+2. **THE PLAN'S ORIGINAL ACCEPTANCE CELL HAD ZERO ANNOTATABLE DEVICES.**
+   `sky130_tests_ase/bandgap` — 115 instances, **0** with a non-blank devpath; its
+   FETs are one level down and the overlay is inherently current-sheet-only. Use
+   `bandgap_opamp` (13 devices), `test_comparator` (26) or `top` (43 — the perf
+   cell). Corrected above and pinned by a test row.
 
-3. **⚠ A CROSS-FRAME CACHE MUST BE INVALIDATED BY THE FILE BEING RE-READ, NOT ONLY
-   BY THE DATA CHANGING.** This is the finding that reverted the step. Thirteen
-   epoch fields — including `modify_seq`, the path hash and four raw terms — and
-   **not one moves** on `xschem reload`: `set_modify(0)` bumps `modify_seq` only
-   for mod 1|3 (`actions.c:200`), the path is unchanged so the hash is unchanged,
-   the raw is untouched. Fix: **one `annot_data_changed();` in `load_schematic()`
-   (`save.c:4319`)** — the single choke point for `xschem load`, `xschem reload`
-   (`scheduler.c:10813`), the toolbar/menu reload and the `Alt-S` inline reload.
-   **And the row: load the SAME path twice with different content and the same
-   instance count between two exports.** A row that loads a *different* path
-   proves nothing (the hash moves and it flushes anyway) — which is exactly why
-   192 checks missed it.
+3. **⚠ THE ONE-LINE FIX THIS PLAN PRESCRIBED WAS NECESSARY BUT NOT SUFFICIENT, AND
+   ITS ANCHOR WAS WRONG. THE ENUMERATION MATTERS MORE THAN THE LINE.**
+   `load_schematic()` is at **`save.c:4311`**, not `save.c:4319` (which this plan,
+   issue 0466 and the S9b brief all stated — `:4319` is mid-prologue). It has an
+   early `return 0` at `save.c:4391` reached **after** `xctx->sch[currsch]` is
+   rewritten, so a tail-appended call misses it. And it covers **strictly less**
+   than the choke point that actually landed:
 
-4. **`draw()`'s WHOLE BODY IS INSIDE `if(has_x)`, SO A HEADLESS-ONLY RUN CANNOT
-   SEE THE SCREEN BACK END AT ALL.** Measured: stub `draw_annot_overlay()` and
-   the suite still prints `RESULT: ALL PASS (192 checks)`. The `xschem get
-   annot_overlay_count` seam (decision D6) plus a **DISPLAY leg** is the only
-   coverage the screen path can have. ⚠ `xschem get drawcount` is NOT a
-   substitute and NOT a way to derive the display/headless pass factor:
-   `draw_count++` sits *above* the `if(has_x)` guard (`draw.c:10393`) and moves
-   by 1 in both modes. Under a display one `xschem print` runs **two** overlay
-   passes (the export, then the viewport-restoring redraw); headless, one.
+       HOOK A  actions.c clear_drawing()  — load, `xschem reload`,
+               `load -keep_symbols`, descend, ascend, descend_symbol, disk undo,
+               in-memory undo/redo, `xschem clear`, font reload, tab/window teardown
+       HOOK B  actions.c set_modify(), INSIDE the existing
+               `if(mod == 1 || mod == -2 || mod == -1)` floater-cache block —
+               the codebase's OWN "my per-object rendered caches are stale" channel.
+               It is the only thing covering `editprop.c:1263`'s `set_modify(-2); draw();`,
+               which paints a full frame BEFORE its caller's `set_modify(1)` at :1289,
+               and the readonly-buffer case (`ro_suppress`, actions.c:189, kills modify_seq)
+       HOOK C  actions.c remove_symbols() — the ONLY cover for `xschem reload_symbols`
+               (= `remove_symbols(); link_symbols_to_instances(-1);` and nothing else:
+               no set_modify, no clear_drawing). A `.sym` whose `type=` changed on disk
+               otherwise keeps the old descriptor's block forever
+       HOOK D  save.c raw_add_vector / raw_renamevar / raw_deletevar +
+               the `xschem raw set` arm (scheduler.c) — in-place raw mutation moves
+               NO epoch field: same pointer, same nvars, same level, same annot_p
+       TERM 14 `live_cursor2_backannotate` — a SHIPPED menu checkbutton
+               (`xschem.tcl:15360`) that is `op_annot::_annotated`'s FIRST gate
+               (`op_annot.tcl:561`) and has no C mirror and no epoch field
 
-5. **A ROW THAT READS `xschem get modified` AFTER ITS OWN `xschem save` IS
-   VACUOUS.** Instrumented under a deliberate `set_modify(1)` breach: `modified`
-   is 1 before the row's trailing save and 0 after, so the element cannot fail;
-   and its file-bytes element is order-dependent (on a display `xschem load`
-   itself redraws and the *first* save normalises the fixture, so the trailing
-   save writes identical bytes). The I4 row was **green under a live I4 breach on
-   `:99`**. Read `modified` **before** the save, keep the byte compare after it.
+   **The generalisable lesson for any later cache in this codebase:** enumerate by
+   **input of the formatter**, not by "the obvious user action". Two of the four
+   hooks (C and D) cover paths no reasonable person would have listed.
 
-6. **THE OVERLAY IS DELIBERATELY OUTSIDE `symbol_bbox()`** (D8), so zoom-full and
+4. **⚠ A SECOND SEAM IS MANDATORY WHEREVER A CACHE IS ADDED.**
+   `xschem get annot_overlay_flushes` (a monotonic count of **wholesale flushes**)
+   sits beside `annot_overlay_count`. Without it, every staleness row is
+   satisfiable by **deleting the cache** — flushing every frame — which the
+   `cache_deleted` sabotage variant proves is otherwise completely invisible while
+   costing ~1.16 ms/frame. ⚠ Count **flushes**, inside the sync, **never
+   invalidation requests** (decision D1): several hooks legitimately fire for one
+   user action, so a request counter reds the exact-1 goldens and makes every
+   future hook a test edit.
+
+5. **`draw()`'s WHOLE BODY IS INSIDE `if(has_x)`, SO A HEADLESS-ONLY RUN CANNOT SEE
+   THE SCREEN BACK END AT ALL — AND S9b RE-DEMONSTRATED IT RATHER THAN ASSUMING IT.**
+   The `draw_site_stub` variant (screen renderer replaced by an empty static)
+   prints `ALL PASS (209 checks)` headless and reds **O13 O14 O17 O38** on the
+   display arm. **Every later step touching `draw.c` must run this suite on a
+   display**: `GUI_GATE=0 xvfb-run -a -s "-screen 0 1920x1080x24" ./src/xschem
+   --pipe -q --nolog --script tests/headless/test_op_annot.tcl` — ⚠ **without
+   `--nogui`**, or the display-only rows self-skip and you get 209 instead of 214.
+   `xschem get drawcount` is NOT a substitute (`draw_count++` sits *above* the
+   `has_x` guard, `draw.c:10393`).
+
+6. **A ROW THAT READS `xschem get modified` AFTER ITS OWN `xschem save` IS VACUOUS.**
+   Instrumented under a deliberate `set_modify(1)` breach: `modified` is 1 before
+   the trailing save and 0 after, so the element cannot fail. Read `modified`
+   **before** the save, keep the byte compare after it. (Fixed in the S9b suite.)
+
+7. **THE OVERLAY IS DELIBERATELY OUTSIDE `symbol_bbox()`** (D8), so zoom-full and
    the **auto-viewport** print form clip the rightmost blocks — and every S9 row
    uses the 10-argument explicit-viewport form, so no row can ever see it. Issue
-   **0463**. Folding it in was rejected: `symbol_bbox()` is reached from
+   **0463**, unfixed. Folding it in was rejected: `symbol_bbox()` is reached from
    netlist/save paths (`save.c:4301`) and run over every instance by
    `update_all_sym_bboxes`, so a per-instance Tcl call there is a re-entrancy
    hazard against `translate()`'s single static result buffer.
 
-7. **THE OVERLAY MULTIPLIES A PRE-EXISTING RE-ENTRANCY HAZARD BY EVERY DEVICE ON
-   THE SHEET.** A devproc that re-enters xschem (nested export/redraw) segfaults
-   — `signal 11`, the nested sync frees the cache under the outer `tcleval`.
-   **Verified pre-existing**: the same devproc crashes identically through the S6
-   carrier with the overlay never running. Issue 0447 (register validates only
-   `dict size`) makes a malformed user rc a live input to it. `catch` covers Tcl
-   *errors*, not Tcl *re-entry*.
+8. **THE OVERLAY MULTIPLIES A PRE-EXISTING RE-ENTRANCY HAZARD BY EVERY DEVICE ON
+   THE SHEET.** A devproc that re-enters xschem segfaults (`signal 11`).
+   **Verified pre-existing twice** — most convincingly by S9b's apples-to-apples
+   control: an ordinary symbol whose own `T` record is `tcleval([reproc @ref])`,
+   with `annot_show=0` and nothing registered, crashes identically. S9b's D8 adds
+   `if(annot_overlay_busy) return;` at the top of `annot_overlay_sync()` (the busy
+   flag guarded the reader but not the function that **frees**), which **narrows,
+   does not close** it. Issue **0464** stays open; 0447 (register validates only
+   `dict size`) makes a malformed user rc a live input.
 
-8. **PLACE THE PASS IN THE BACK END'S INSTANCE LOOP, NOT IN `draw_symbol()`.**
+9. **PLACE THE PASS IN THE BACK END'S INSTANCE LOOP, NOT IN `draw_symbol()`.**
    On screen the text pass is guarded `((c==cadlayers-1) && symptr->texts)`
-   (`draw.c:10500`) while `svgdraw.c`/`psprint.c` have no such guard — a
-   registered symbol with zero T records would render in the exports and not on
-   screen — and `hilight.c:4192` calls that same pass a second time for every
-   highlighted instance. The loop position dissolves both and leaves P6's
-   pin-name behaviour bit-identical.
+   (`draw.c:10500`) while `svgdraw.c`/`psprint.c` have no such guard, and
+   `hilight.c:4192` calls that same pass a second time per highlighted instance.
+   The loop position dissolves both.
 
-9. **NEVER HOLD `translate()`'s RESULT ACROSS A Tcl CALL.** `svgdraw.c:924` and
-   `psprint.c:1207` keep `txtptr = translate(...)` live through the rest of the
-   loop body without copying (`draw.c:912` copies immediately, which is what
-   makes the screen back end the least dangerous and the most misleading).
+10. **NEVER HOLD `translate()`'s RESULT ACROSS A Tcl CALL.** `svgdraw.c:924` and
+    `psprint.c:1207` keep `txtptr = translate(...)` live through the rest of the
+    loop body without copying (`draw.c:912` copies immediately, which is what makes
+    the screen back end the least dangerous and the most misleading).
 
-10. **FOR S10 AND S11, TWO THINGS THIS STEP DID NOT CHANGE.** The duplication with
+11. **⚠ A RENDERER RESETS YOUR CACHES BEHIND YOUR BACK — BINDS ANY LATER PER-OBJECT
+    CACHE.** `prepare_netlist_structs()` calls `set_modify(-2)` (`netlist.c:1798`),
+    and **`svg_draw()` (`svgdraw.c:1282`) and `create_ps()` (`psprint.c:1653`) both
+    call it AFTER their instance loop** — so one export tears down the very caches
+    it just filled. Found only because S9b's exact-1 flush goldens refused to be
+    loosened (the field-by-field epoch dump named it: `dseq=8/7`). S9b brackets that
+    one line with a depth-counted `annot_invalidate_hold(1)/(0)` (decision **D11**,
+    `actions.c:1323`, exactly one call site). ⚠ **The hold DROPS a suppressed bump
+    rather than deferring it** — safe at that single site, unsafe as a general
+    primitive. The **floater** half is untouched and is issue **0473**.
+
+12. **FOR S10 AND S11, TWO THINGS THIS STEP DID NOT CHANGE.** The duplication with
     sky130's always-on `id=`/`gm=` texts is visible in
     `doc/claude/evidence/s9_overlay_bandgap_opamp_on.png` and is S10's to remove.
     And with S3/S4 still deferred, **every row renders BLANK on a real PDK raw**
-    (no save cards → no device vectors) — that is I3 behaving correctly, it is
-    what the evidence PNG shows, and it means S9's demo cannot look good until
-    S3/S4 land. Do not let "the demo needs numbers" turn into an S3 attempt.
+    (no save cards → no device vectors) — that is I3 behaving correctly, it is what
+    row O17 asserts (13 devices, all rows blank, nothing modified), and it means
+    S9's demo cannot look good until S3/S4 land. Do not let "the demo needs numbers"
+    turn into an S3 attempt. S9b did not.
 
-11. **THE SUITE IS IN NO RUNNER** (issue **0465**), so T1 cannot see this feature
-    in either direction — it would not have shown S9's RED and it will not show a
-    later regression. With S9 reverted the suite is green again, so the one-line
-    fix to `run_regression.tcl` is now safe to land on its own.
+13. **⚠ NEW AND THE MOST IMPORTANT THING FOR WHOEVER TURNS THE MASK ON: ISSUE 0469.**
+    `get_annot_overlay(n, …)` **holds the instance index and discards it**, passing
+    `inst[n].instname` into `op_annot::text`, which re-resolves through
+    `get_instance()` (`scheduler.c:187`) whose first branch is
+    `if(isonlydigit(s)) i = atoi(s);`. Measured: `xschem setprop instance MZZA
+    name 1` is accepted with no warning and the device then renders **another
+    device's numbers** (`VA = 77u` where its truth is `11u`), identically in SVG,
+    PS and on screen; two instances sharing a name both render the first one's.
+    **Not new to S9b** (the S6 carrier's `ref=` has it) but S9b widens it from
+    "devices the user placed a carrier on" to "every registered device on every
+    sheet". It is survivable today **only** because `annot_show` defaults to 0
+    (issue **0457**). **S10/S11/S12 must not default the mask on before 0469 is
+    closed**, and any step that changes `op_annot::text`'s signature should take
+    the index instead of the name while it is in there.
 
-**Decisions D1–D10, the full sabotage matrix (including v8's and v9's missing
-reds), the before/after transcripts and the perf table are in issue 0466.**
+14. **THE SUITE IS STILL IN NO RUNNER** (issue **0465**) — `grep -c op_annot` is 0
+    in both `tests/run_regression.tcl` and `tests/headless/run.sh`. T1 and T2
+    genuinely did not move when S9b landed, and they will not show a later
+    regression either. S9b deliberately left 0465 open (adding a T1 case on the
+    same step that adds C would have muddied Verify-A's tier diff, and the leg that
+    matters here is the DISPLAY leg, which `run_regression` cannot supply). **It is
+    now safe and cheap to land on its own** — but pair it with a note that the
+    display leg still has to be run by hand.
 
-**⚠ THE E QUESTION, unratified and carried forward:** should the overlay's
-anchor / size / layer (bbox-right, 0.2, layer 15, offsets +5/0) be user-settable
-— a preference or an rc variable — before this ships, rather than compiled-in
-constants whose only escape is per-instance `annot_dx`/`annot_dy`?
+15. **PROCESS, RECORDED TWICE NOW.** Concurrent `make` loops against one working
+    tree produce false results. S9b's Verify-A sampled another session's sabotage
+    build and got `1 FAILED (208 passed)` with exactly the `symbols_flush_off`
+    signature; it was disproved four ways (source, `nm`, md5 snapshot, re-run).
+    **Never schedule a tier-measuring agent concurrently with a sabotage-running
+    agent against one tree**, and take every number under an md5 guard on the
+    binary **and** the test file.
+
+**⚠ THE E QUESTION, unratified and carried forward AGAIN (decision D10):** should
+the overlay's anchor / size / layer (bbox-right at `inst.xx2/inst.yy1`, size 0.2,
+layer 15, offsets +5/0, font Monospace — all lifted verbatim from the shipped
+carrier `annotate_params.sym` so the two carriers match side by side) be
+**user-settable** — a preference or an rc variable — before this ships, rather
+than compiled-in constants whose only escape is per-instance
+`annot_dx`/`annot_dy`? S9b implemented the compiled-in form and did not answer
+this. Related and also unratified: `annot_show` still defaults to 0 (issue 0457).
 
 
 ## S10 — per-PDK symbol text cleanup

@@ -1,6 +1,14 @@
 # 0466 — the S9 draw-time overlay's per-instance cache cannot observe a schematic RELOAD, so it renders the PREVIOUS file's numbers
 
-Status: **OPEN, measured, NOT fixed. This issue reverted step S9 (attempt 1).**
+Status: **✅ FIXED BY S9b (2026-08-20), retry landed and committed.**
+The reload defect below no longer reproduces; row **O21** (its literal repro) is
+green, along with 14 further invalidation rows O22–O35 and O37 that the one-line
+fix this issue proposed would NOT have covered. See **§ S9b — HOW IT WAS ACTUALLY
+FIXED** at the end of this file, which also carries the decisions D1–D11, the full
+sabotage matrix, and the residual risks that are still open.
+
+Historical status (kept verbatim, it is the record of the revert):
+**OPEN, measured, NOT fixed. This issue reverted step S9 (attempt 1).**
 The full 1273-line attempt is preserved as
 `doc/claude/issues/0466-attempt-1-reverted.patch` (applies to `523aa507`,
 the `0264-` / `0436-attempt-1-reverted.patch` precedent) — **start from that
@@ -238,3 +246,278 @@ Every number in this issue was taken under a byte-level guard (md5 of the source
 the binary and the test file before and after, plus a `SABOTAGE` grep) or against
 a validated snapshot binary. **Do not trust an S9 number without re-validating
 the binary that produced it.**
+
+---
+
+# § S9b — HOW IT WAS ACTUALLY FIXED (2026-08-20)
+
+The retry took the src/ half of `0466-attempt-1-reverted.patch` **unchanged**
+(`git apply --exclude='tests/*'`, rc=0 — the full patch collides with the
+already-modified test file) and replaced its invalidation with an **enumerated
+set of four hooks, a 14th epoch term, one hold, and a second seam**. The one-line
+fix this issue proposed was **necessary but not sufficient**, and its anchor was
+wrong; both corrections are below.
+
+## BEFORE — the S9b Measure agent's transcript, verbatim
+
+Binary `bd5381a3e9fd4c2835d23709bac0b7b8` (fresh; 0 sources newer), test file
+`7e94007d90ad4405eb3fb3d5dab8cfbf`.
+
+    OVERLAY-IN-SRC: src/psprint.c:0,src/svgdraw.c:0,src/draw.c:0
+    annot_overlay_count in binary: 0
+    B0 annot_overlay_count  -> {}
+    B0 annot_overlay_flushes-> {}
+    B1 after-load   instances=1 inst0.name=MZZA inst0.w=10u modified=0 currsch=0 schname=sheet.sch annot_show=0
+    B1 after-reload instances=1 inst0.name=MZZB inst0.w=20u modified=0 currsch=0 schname=sheet.sch annot_show=0
+    B4 annot_show=1 instances=1 name=MZZA
+    B4 SVG bytes=4458 hits(MZZA)=1 hits(gm|vth|vdsat)=0
+    B4 PS  bytes=4953 hits(MZZA)=1 hits(gm|vth|vdsat)=0
+    B5 P2 before name=MZZA w=10u type=nmos instances=1 modified=0 currsch=0 file=sheet2.sch
+    B5 P2 after  name=MZZB w=20u type=nmos instances=1 modified=0 currsch=0 file=sheet2.sch
+    B5 P6 before name=MZZA w=10u type=nmos  instances=1 modified=0 currsch=0 file=sheet2.sch
+    B5 P6 after  name=MZZA w=10u type=zzzzz instances=1 modified=0 currsch=0 file=sheet2.sch
+    RESULT: 32 FAILED (176 passed)
+    FAIL: O21 issue 0466: a device RENAMED on disk and reloaded renders its OWN number,
+          not its predecessor's -> {0 {} {} {{ZZOA = 20u} {ZZOB = 200u} {ZZOC = 2u}}}
+          (exp {0 {{ZZOA = 10u} ...} {{ZZOA = 20u} ...} {{ZZOA = 20u} ...}}) : FAIL
+    FAIL: O13 `xschem get annot_overlay_count` counts one bump per block per export,
+          and none at mask 0 -> {NO-SEAM:{} NO-SEAM:{}} (exp {2 0}) : FAIL
+
+`B1` is the premise reproduced on the **unpatched** tree, so the defect statement
+survives any rebuild: name **and** value both change across `xschem reload` while
+`instances`, `modified`, `currsch`, `schname` and `annot_show` all stand still.
+`B5 P6` is the finding this issue's proposed fix would have **missed** entirely.
+
+## AFTER
+
+    T3 test_op_annot HEADLESS                     RESULT: ALL PASS (209 checks)
+    T3 test_op_annot DISPLAY (xvfb 1920x1080x24)  RESULT: ALL PASS (214 checks)
+    T1 tclsh run_regression.tcl                   3 FAIL / 0 GOLD? / 0 RESULT? / 0 FATAL / 3 NOGOLD  (identical to baseline)
+    T2 tests/headless/run.sh                      exit 0, == HARNESS: PASS ==, 6/6 goldens
+    T4 cd src && make                             SUCCEEDED, zero warnings
+
+Baseline was 32 FAILED (176 passed) = 208 checks; the RED agent added O37 during
+the run, so 176 + 32 + 1 = 209. Nothing that was green went red.
+
+## THE ANCHOR CORRECTION — this issue, the spec and the step brief were all wrong
+
+`load_schematic()` is at **`src/save.c:4311`**, not `save.c:4319` as this issue,
+spec §5 I3 and the S9b brief all state (`:4319` is mid-prologue). It has exactly
+**two** exits — an early `return 0` at `save.c:4391` reached **after**
+`xctx->sch[currsch]` has already been rewritten, and `return ret` at `:4509` — so
+a call appended at the tail misses the early one.
+
+## WHY THE ONE-LINE FIX WAS NOT ENOUGH — the enumeration, by input
+
+`op_annot::text`'s complete external-state surface, and the mutator for each:
+
+| input | source | mutators the 13-field epoch could not see |
+|---|---|---|
+| instance name, index→identity | `getprop cell::name` (`op_annot.tcl:311`) | any file re-read; every edit; a **readonly** buffer's edit (`ro_suppress` kills `modify_seq`, `actions.c:189`) |
+| symbol `type=` | `getprop cell::type` (`op_annot.tcl:266`) | **`xschem reload_symbols`** = `remove_symbols(); link_symbols_to_instances(-1);` and *nothing else* — no `set_modify`, no `clear_drawing` |
+| `@model` / `@spiceprefix` / template / pinexpr | `translate` | as above |
+| `sim_sch_path` | `xschem get sim_sch_path` | descend / ascend / sibling descend |
+| raw contents | `raw value -1`, `raw loaded`, `raw annot` | **in-place** mutation: `raw rename`, `raw set` (same pointer, same nvars, same level, same `annot_p`) |
+| `::op_annot::desc` | `op_annot::register` | covered by `::op_annot::gen` (attempt 1) |
+| **`live_cursor2_backannotate`** | `op_annot::_annotated`'s FIRST gate (`op_annot.tcl:561`) | a **shipped menu checkbutton** (`xschem.tcl:15360`); no C mirror, no epoch field. Strands real numbers on screen after the user turns annotation OFF — I3 in the other direction |
+
+One path this issue named as a hole is **honestly already covered**:
+`xschem setprop instance <n> name <new>` does call `set_modify(1)`
+(`scheduler.c:12377`), so `modify_seq` bumps. Row O28 is a regression guard, not
+a new hole.
+
+## WHAT LANDED
+
+    HOOK A  src/actions.c clear_drawing()  (:2321)
+            the file-re-read choke point. Covers load, `xschem reload`,
+            `load -keep_symbols`, descend, ascend, descend_symbol, disk undo
+            (save.c pop_undo), in-memory undo/redo (in_memory_undo.c
+            mem_restore_slot), `xschem clear`, font reload, tab/window teardown
+            (xinit.c:962 — which also retires residual #3 below).
+    HOOK B  src/actions.c set_modify()  (:255), INSIDE the existing
+            `if(mod == 1 || mod == -2 || mod == -1)` floater-cache block.
+            `return floaters` contract untouched.
+    HOOK C  src/actions.c remove_symbols()  (:923)
+            the only thing that covers `xschem reload_symbols`.
+    HOOK D  src/save.c raw_add_vector (:1200) / raw_renamevar (:1331) /
+            raw_deletevar (:1357), and the `xschem raw set` arm
+            (src/scheduler.c:10490).
+    TERM 14 live_cursor2_backannotate, via tclgetboolvar in annot_overlay_sync().
+    SEAM 2  `xschem get annot_overlay_flushes` (scheduler.c:4148), a monotonic
+            count of WHOLESALE flushes, incremented INSIDE annot_overlay_sync()
+            at the moment of the flush.
+    HOLD    annot_invalidate_hold(1)/(0) (actions.c:1323), depth-counted, ONE
+            call site: netlist.c:1805-1807. See D11.
+    HARDEN  `if(annot_overlay_busy) return;` at the top of annot_overlay_sync().
+
+## DECISIONS (ladder rung + rejected alternative)
+
+* **D1 (L2)** — `annot_overlay_flushes` counts **flushes**, inside
+  `annot_overlay_sync()`, not inside `annot_data_changed()`. *Rejected: counting
+  invalidation **requests*** — several hooks legitimately fire for one user
+  action (a `reload` bumps via both `remove_symbols` and `clear_drawing`), so a
+  request counter reds O32/O34's exact-1 goldens and makes every future hook a
+  test edit.
+* **D2 (L2, under L1/I3)** — the file-re-read hook goes in `clear_drawing()`.
+  *Rejected: this issue's own one-liner in `load_schematic()`* — wrong anchor
+  (`:4311` not `:4319`), an early exit at `:4391` after `sch[currsch]` is
+  rewritten, and strictly less coverage (it misses `pop_undo`,
+  `mem_restore_slot`, `xschem clear` and window/tab teardown).
+* **D3 (L2)** — the edit hook goes **inside** `set_modify()`'s floater block,
+  the codebase's own "my per-object rendered caches are stale" channel.
+  *Rejected: relying on the epoch's `modify_seq` term alone* — it moves only for
+  mod 1|3 and never when `ro_suppress` is set, so it misses `editprop.c:1263`'s
+  `set_modify(-2); draw();` (which paints a full frame **before** its caller's
+  `set_modify(1)` at `editprop.c:1289`) and every readonly-buffer path.
+* **D4 (L2)** — the symbol hook goes in `remove_symbols()`. *Rejected: hooking
+  the `reload_symbols` scheduler arm only* — would satisfy O31 and cover nothing
+  else (misses `editprop.c:1124`'s copy_cell path and `callback.c:8130`).
+  Accepted cost: `annot_overlay_flushes` also moves during netlisting, which is
+  why every seam row wraps a **single** action and never a netlist.
+* **D5 (L1 / I3)** — the four raw-content mutators each bump. *Rejected: bumping
+  at the top of the whole `raw` dispatcher arm* — `xschem raw value` is called by
+  `op_annot::text` itself, once per row per device, so that would self-invalidate
+  every frame and silently become the flush-every-frame design D1 forbids.
+* **D6 (L2)** — `live_cursor2_backannotate` becomes epoch term 14, one
+  `tclgetboolvar` per frame. *Rejected: a Tcl `trace add variable` bumping
+  `::op_annot::gen`* — it installs a trace on a **shipped** global that C also
+  writes (`scheduler.c:2409`), affecting every writer, and a trace body that
+  errors makes the variable **write** fail.
+* **D7 (L2)** — **no** per-entry `strcmp(cached_name, inst[n].instname)` guard.
+  *Rejected although it would make renames structurally safe*: it covers one of
+  three input classes (name vs `model=` vs raw contents), buys false confidence,
+  and would leave O21/O22 green under the `load_flush_off` sabotage variant —
+  hiding a missing hook behind a partial guard. Row O23 exists to red such an
+  implementation. ⚠ **See issue 0469** — the *name-vs-index* hazard is real and
+  separate, and D7 is not a ruling against fixing that.
+* **D8 (L2)** — one line of hardening, `if(annot_overlay_busy) return;`.
+  *Rejected: a full re-entrancy redesign (a deferred-flush pending flag)* —
+  larger than the step. Residual #2 is **narrowed, not closed**; 0464 stays open.
+* **D9 (L2)** — keep the name `annot_data_changed()`. *Rejected: renaming to
+  `annot_overlay_invalidate()`* — 0464/0466 and spec §5 cite the old name; the
+  paper trail is worth more than the wording.
+* **D10 (L3 — THE STEP'S E QUESTION, unratified, carried forward)** — anchor,
+  size 0.2, layer 15, offsets +5/0, font Monospace ship **compiled-in**, with
+  per-instance `annot_dx`/`annot_dy` as the only escape. *Rejected for now:
+  making them preferences first* — a second feature, and the two carriers must
+  keep matching side by side. **The question stands: should they be user-settable
+  before this ships?**
+* **D11 (L2) — NOT IN THE PLAN, found by measurement.** With the six planned
+  hooks in, the suite went 33 FAILED → **2** FAILED: O32 `{2}` vs `{1}` and O34
+  `{2 0}` vs `{1 0}`. A temporary field-by-field epoch dump named it exactly
+  (`dseq=8/7`): `prepare_netlist_structs()`'s `set_modify(-2)` (`netlist.c:1798`),
+  which `svg_draw()` and `create_ps()` both call **after** their instance loop, so
+  a single load+export flushed twice and threw away the blocks the export had just
+  built. Fix: a depth-counted `annot_invalidate_hold()` bracket around that one
+  line. *Rejected: loosening O32/O34 to 2* — that would legitimise a wasted
+  full-cache rebuild per load and blunt the seam against future over-invalidation.
+  See issue **0473** for the half this did NOT fix (the floater caches) and for
+  the drop-vs-defer contract.
+
+## SABOTAGE MATRIX (8 planned + 1 added; each rebuilt, each run)
+
+| variant | predicted | observed |
+|---|---|---|
+| `load_flush_off` (HOOK A → real no-op callee) | O22 O23 **O25** O32 O34 | **O22 O23 O32 O34** on both arms; O21/O24 green as required |
+| `modify_flush_off` (HOOK B) | O33 | **exactly O33**; O26/O28 green (they ride `modify_seq`) |
+| `symbols_flush_off` (HOOK C) | O31 | **exactly O31**; O21/O22/O23 green |
+| `raw_mutator_flush_off` (HOOK D ×4) | O30 | **exactly O30**; O27/O37 green (`update_op` untouched) |
+| `live_gate_epoch_off` (term 14 → constant 0) | O29 | **exactly O29**, and diagnostically: element 2 rendered stale `{ZZOA = 10u}` while element 4 (`op_annot::text`'s own answer) was correctly blank — the red names the **cache**, not the formatter |
+| `cache_deleted` (epoch always mismatches) | O34 O35 | **O32 O33 O34 O35** headless + **O38** on display; every staleness row O21–O31/O36/O37 stayed green — which is exactly why the second seam had to exist |
+| `ps_site_stub` | O3 | **exactly O3** |
+| `draw_site_stub` — **the variant attempt 1 shipped past** | 0 headless, 4 on display | **exactly that.** Headless printed `ALL PASS (209 checks)` with the screen renderer deleted (re-demonstrating, not assuming, that `draw()`'s body is inside `if(has_x)`); display reds **O13 O14 O17 O38** |
+| `cache_frozen` (**added by Verify-B**: `if(annot_epoch.valid) return;`, i.e. this issue's bug in its purest form) | broad | **31 rows red** — the complement of `cache_deleted`, proving the suite is sharp in both directions and that O25 is not vacuous |
+
+### ⚠ THE ONE PREDICTED RED THAT DID NOT APPEAR
+
+**O25 under `load_flush_off`** stays green. Verify-B did not leave that
+unexplained: instrumented with the seam, `go_back` runs an intervening
+`annot_overlay_sync()` that re-stamps the epoch at `instances=2 / currsch=0`, so
+the second descent mismatches on those two ordinary terms. O25's coverage comes
+from `instances`+`currsch`, **not** from HOOK A and **not** from the
+`sim_sch_path` dependency its own comment claims. Not vacuous (`cache_frozen`
+reds it), not a live correctness hole (every descend moves both terms), but a
+**mislabelled guard** — filed as issue **0471**.
+
+## PERFORMANCE, re-measured on the acceptance cell
+
+`sky130_tests_ase/bandgap_opamp` (73 instances / 13 annotated devices), median of
+3 runs of 20 timed redraws after 5 warm, under xvfb:
+
+    mask 0            3.196 ms/frame
+    mask 1 CACHED     3.652 ms/frame
+    mask 0 again      3.266 ms/frame     (0.07 ms spread either side)
+    mask 1, cache_deleted binary   4.807 ms/frame
+
+The cache is worth **~1.16 ms/frame**, and mask-0 costs nothing. Steady state on
+the screen back end: 13 blocks per frame with `annot_overlay_flushes` moving by
+**0** across two consecutive redraws (against 1 on `cache_deleted`) — O38's
+golden reproduced outside the suite.
+
+## I4 ON SHIPPED DATA
+
+`xschem get modified` = **0** on `bandgap_opamp` with `annot_show 1` and 13
+blocks rendered, read **before** any save; `git diff -- sky130A` = **0 bytes**;
+`git status --short -- sky130A` empty. Row O17 asserts the same inside the suite,
+together with the honest result: **13 devices, all rows blank** — S3/S4 are
+deferred, there is no save-card generator, so a real PDK raw carries no device
+vectors and I3 requires blank.
+
+## STILL OPEN (the S9b adversary's residual risks)
+
+1. **Issue 0469 — a device is resolved by NAME, so an all-digit or duplicated
+   instance name renders ANOTHER device's numbers.** The one adversary attack
+   that succeeded. `get_annot_overlay(n, …)` holds the index and passes
+   `inst[n].instname`; `get_instance()` (`scheduler.c:187`) reads an all-digit
+   name as an index. Reachable via `xschem setprop instance MZZA name 1` with no
+   warning, and via any `.sch` with duplicate names (`load` does not uniquify).
+   **Not new to S9b** (the S6 carrier's `ref=` has it) but S9b widens it from
+   "devices the user placed a carrier on" to "every registered device on every
+   sheet". Survivable today only because `annot_show` defaults to 0 (0457).
+   **Close it before the mask is ever defaulted on.**
+2. **Issue 0470 — `xschem raw switch <file>` without a sim type** returns 1 yet
+   leaves the outgoing raw's point published, so every consumer lags one switch.
+   Row O37 uses only the working 3-argument form.
+3. **The re-entrancy segfault is still live and its blast radius grew** (0464
+   residual 2, 0447). A devproc that re-enters an export crashes xschem — proved
+   **pre-existing** by the apples-to-apples control (an ordinary symbol whose own
+   `T` record is `tcleval([reproc @ref])`, with `annot_show=0` and nothing
+   registered, crashes identically). D8 narrows it. **Do not close 0464 on the
+   strength of this step.**
+4. **A descriptor mutated by writing `::op_annot::desc(<type>)` directly** does
+   not bump `::op_annot::gen` — measured: `op_annot::text` answered `VQ = 10u`
+   while the export still drew `VZ = 10u`. Unsupported path (0464 residual 1),
+   but the array is namespace-visible.
+5. **Issue 0474 — `annot_overlay_count` counts blocks the reader APPROVED, not
+   blocks DRAWN.** The layer/zoom-cull returns all happen after the bump, so the
+   screen back end's only seam cannot tell paint from approval.
+6. **Issue 0473 — the `annot_invalidate_hold()` workaround DROPS rather than
+   defers**, and `prepare_netlist_structs()` still resets every floater cache
+   mid-export.
+7. **Over-invalidation is the normal state and nothing measures it** — 13 flushes
+   across 5 exports plus 4 navigations was observed, because `reload` bumps
+   through both HOOK A and HOOK C and the netlisters bump per sub-sheet.
+   Correctness-safe; the exact-1 goldens only pin single wrapped actions.
+8. **Issue 0465 is still open** — `grep -c op_annot` is 0 in both
+   `tests/run_regression.tcl` and `tests/headless/run.sh`, so T1 and T2 cannot
+   see this feature in either direction. Combined with `draw()`'s body being
+   inside `if(has_x)`, a screen-renderer regression is invisible to every runner
+   unless someone remembers the xvfb leg by hand.
+9. **0463** (outside `symbol_bbox()`, zoom-full clipping) unfixed and unfixable
+   from the suite; **0454** (PS trailing RGB triple) still requires the
+   `opa_l_normps` normaliser.
+10. **D10's E question is unanswered**, and `annot_show` still defaults to 0
+    (0457).
+
+## PROCESS WARNING, RECORDED AGAIN
+
+The measurement-environment warning above repeated itself. During S9b's Verify-A
+pass another `claude` session ran a **repeated `make` loop** against the shared
+`src/xschem` (four builds in ~10 minutes, pids 91417/91867/92597/93794), and
+Verify-A's first T3 sample landed on a sabotage build: `RESULT: 1 FAILED (208
+passed)` with the single red row **O31** — exactly the `symbols_flush_off`
+prediction. It was disproved four ways (HOOK C present in source at
+`actions.c:923`; `nm` shows zero sabotage symbols; all 11 sources byte-identical
+to the pre-campaign snapshot; the re-run on the settled binary is ALL PASS 209).
+**Verify-A and a sabotage-running Verify-B must not be scheduled concurrently
+against one working tree.**

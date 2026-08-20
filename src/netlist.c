@@ -1795,7 +1795,16 @@ int prepare_netlist_structs(int for_netl)
 
   reset_caches(); /* update cached flags: necessary if some tcleval() is used for cached attrs */
 
+  /* S9b: this reset is MAINTENANCE of derived data, not a document change, and
+   * it runs INSIDE svg_draw()/create_ps() (both call prepare_netlist_structs(0)
+   * after their instance loop) as well as inside draw(). Letting it reach the
+   * OP-annotation cache made one `load` + one export flush that cache twice --
+   * discarding the blocks the export had just built. Held, not removed: the
+   * floater reset below is unaffected, and every path that can get here with
+   * stale netlist structs has already invalidated the overlay itself. */
+  annot_invalidate_hold(1);
   set_modify(-2); /* to reset floater cached values */
+  annot_invalidate_hold(0);
   /* delete instance pins spatial hash, wires spatial hash, node_hash, wires and inst nodes.*/
   if(for_netlist) {
     my_snprintf(nn, S(nn), "-----------%s", xctx->sch[xctx->currsch]);

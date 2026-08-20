@@ -1530,6 +1530,10 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
  */
 void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
 {
+  /* S9 / invariant I3: the cursor-B live path republishes the annotation point
+   * without changing anything the overlay's epoch can observe. See update_op()
+   * (save.c) for the same bump and the reason it exists. */
+  annot_data_changed();
   tcleval("catch {eval $cursor_2_hook}");
   if(sch_waves_loaded() >= 0) {
     int *slots = NULL, n, k;

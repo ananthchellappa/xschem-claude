@@ -4129,6 +4129,27 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
           }
+          /* (xschem get annot_overlay_count) monotonic count of OP-annotation
+           * blocks the shared reader approved (S9). draw()'s entire body is inside
+           * if(has_x), so this is the only seam a headless or scripted check can
+           * use to see the screen call site at all. Mirrors `get drawcount`. */
+          else if(!strcmp(argv[2], "annot_overlay_count")) {
+            char b[32];
+            my_snprintf(b, S(b), "%u", annot_overlay_count);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
+          /* (xschem get annot_overlay_flushes) monotonic count of WHOLESALE
+           * OP-annotation cache flushes (S9b). The COMPANION of the count seam
+           * above and not a duplicate of it: `annot_overlay_count` proves blocks
+           * were RENDERED, this proves they were not rebuilt from scratch every
+           * frame. Without it "invalidate correctly" and "delete the cache" are
+           * indistinguishable to every check in the suite, and the measured
+           * per-frame cost of the second regresses silently. */
+          else if(!strcmp(argv[2], "annot_overlay_flushes")) {
+            char b[32];
+            my_snprintf(b, S(b), "%u", annot_overlay_flushes);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
           /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
            * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
            * string with rc 0 (an unknown `get` does not error). Added for the issue-0172
@@ -10463,6 +10484,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
                 }
               }
               xctx->raw->values[idx][point] = (SPICE_DATA) atof(argv[5]);
+              /* S9 HOOK D (decision D5): an in-place value write moves no field
+               * of the overlay's epoch -- same Raw pointer, same nvars, same
+               * level, same annot_p. See raw_renamevar() (save.c). */
+              annot_data_changed();
               Tcl_SetResult(interp, dtoa(xctx->raw->values[idx][point]), TCL_VOLATILE);
             }
           }
