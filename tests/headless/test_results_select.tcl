@@ -882,6 +882,506 @@ eqcheck SEL135-N-table-current-is-not-a-selection \
 xschem raw clear
 eqcheck SEL126-N-nothing-loaded-no-selection [pcall results::current] {}
 
+# ===========================================================================
+# ITEM 3 -- `xschem raw select <file> [<type>]`, the RUN-LEVEL selection verb.
+# doc/claude/specs/results_selection.md section 5 (R301, R301a, R301b), section
+# 3.2 (R113 no new C data structure, R114 no new top-level command), and the
+# two carried-forward tasks: R110d (new_rawfile()'s copy of the "file found"
+# branch) and `xschem raw non_spice` (R305b's missing Tcl verb).
+# Groups O..Y, SEL138..SEL195, plus the FIXER ROUND's SEL196..SEL213 (the T-D
+# other half, the R301d negative control, and groups Z/AA/AB). Band measured
+# free 2026-08-19:
+# `grep -hoE '\bSEL[0-9]+\b' tests/headless/*.tcl | sed s/SEL// | sort -n | tail -1`
+# -> 137. No item-1 or item-2 id is renumbered, restated or deleted.
+#
+# `results::select` -- the MRU push, the casemode invalidate, the browser
+# refresh, the persistence write and the sentence -- is ITEM 4 and must not
+# appear anywhere below.
+# ===========================================================================
+
+# a two-plot raw: ONE FILE, ONE RUN, TWO REGISTRY SLOTS (U11). This is the
+# fixture R301a exists for: the engine keys the registry on (rawfile, sim_type),
+# so a dc and a tran in one file are two slots and one result.
+wr $tmp/multi.raw "Title: results select multi
+Plotname: DC transfer characteristic
+Flags: real
+No. Variables: 2
+No. Points: 2
+Variables:
+\t0\tv-sweep\tvoltage
+\t1\tv(m1)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t1.000000000000000e+00
+
+1\t1.000000000000000e+00
+\t2.000000000000000e+00
+
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 2
+Variables:
+\t0\ttime\ttime
+\t1\tv(m2)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t7.000000000000000e+00
+
+1\t1.000000000000000e-08
+\t8.000000000000000e+00
+
+"
+# a ONE-POINT operating point raw: the only shape the update_op() follow-up
+# fires for (allpoints == 1 and sim_type op/dc).
+wr $tmp/op.raw "Title: results select op
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\tv(o1)\tvoltage
+\t1\tv(o2)\tvoltage
+Values:
+0\t1.500000000000000e+00
+\t2.500000000000000e+00
+
+"
+# a MULTI-POINT dc sweep carrying the SAME variable name as op.raw. This is the
+# NEGATIVE control for R301d's gate (fixer round): the gate's `allpoints == 1`
+# term had no check, so widening it to `>= 1` left all 197 checks green while a
+# 3-point sweep started annotating the schematic with its first point.
+wr $tmp/dcmulti.raw "Title: results select dc multipoint
+Plotname: DC transfer characteristic
+Flags: real
+No. Variables: 2
+No. Points: 3
+Variables:
+\t0\tv-sweep\tvoltage
+\t1\tv(o1)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t9.000000000000000e+00
+
+1\t1.000000000000000e+00
+\t8.000000000000000e+00
+
+2\t2.000000000000000e+00
+\t7.000000000000000e+00
+
+"
+# how many registry slots name this path. T-A is worded "present EXACTLY ONCE
+# in the registry", not "adds exactly one slot", because the first read into a
+# context that already has a base raw ALSO adopts that base into slot 0
+# (extra_rawfile(), "insert extra_raw_arr[0]") -- see group U, which is that
+# case and is the reason the verb has to predict the adopt.
+proc slots_naming {path} {
+  set n 0
+  foreach line [slot_list] {
+    if {[lindex [split $line] 1] eq $path} { incr n }
+  }
+  return $n
+}
+
+# ===========================================================================
+# O -- THE VERB IS A SUB-VERB OF `raw` (R114) AND THE SELECTION IS extra_idx
+#      (R113). No new top-level `xschem` command and no second registry: the
+#      cursor `raw switch_back` restores is the SAME cursor a select moves.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL138-O-no-file-is-an-error \
+  [string match "ERR:*no file given*" [pcall xschem raw select]] 1
+# R114: `xschem select` is an EXISTING top-level command (it selects objects),
+# and nothing was added to it. Handed a path and a type it must not read a
+# database -- if this ever starts loading one, a second door has been opened.
+catch {xschem select $tmp/an.raw tran}
+eqcheck SEL139-O-no-new-top-level-command [n_slots] 0
+
+eqcheck SEL140-O-select-reads             [pcall xschem raw select $tmp/an.raw tran] 1
+eqcheck SEL141-O-second-file-reads        [pcall xschem raw select $tmp/bn.raw tran] 1
+# R113: the selection is extra_idx and extra_prev_idx, the engine's own cursor.
+# A select that kept its choice anywhere else would leave switch_back pointing
+# at the slot the LAST switch left, not at the one the select left.
+eqcheck SEL142-O-select-moved-the-cursor  [pcall xschem raw rawfile] $tmp/bn.raw
+eqcheck SEL143-O-select-set-prev-idx      [expr {[pcall xschem raw switch_back] eq "1" \
+                                            && [pcall xschem raw rawfile] eq "$tmp/an.raw"}] 1
+
+# ===========================================================================
+# P -- T-A: SELECTING A NOT-YET-LOADED FILE. Present exactly once, current,
+#      and `results::current` (item 2) returns it -- which is the three-part
+#      definition of a selection (R103), not just "a read happened".
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL144-P-rc-is-1-read             [pcall xschem raw select $tmp/an.raw tran] 1
+eqcheck SEL145-P-present-exactly-once     [slots_naming $tmp/an.raw] 1
+eqcheck SEL146-P-is-current               [pcall xschem raw rawfile] $tmp/an.raw
+gecheck SEL147-P-names-resolve            [pcall xschem raw index v(n1)]
+set p1 [pcall results::current]
+eqcheck SEL148-P-results-current-returns-it \
+  [list [dg $p1 path] [dg $p1 cur]] [list $tmp/an.raw 1]
+
+# ===========================================================================
+# Q -- SELECTING AN ALREADY-LOADED (path, type) FROM A DIFFERENT CELL.
+#      rc 2 -- "selected by switch", nothing parsed -- AND the re-bind, which
+#      is what makes select more than switch (R111 keeps `raw switch` blind).
+# ===========================================================================
+loadcell $tmp/cellB.sch
+eqcheck SEL149-Q-blind-before             [list [pcall xschem raw loaded] [pcall xschem raw index v(n1)]] {-1 -1}
+set q_slots [slot_list]
+eqcheck SEL150-Q-rc-is-2-switch           [pcall xschem raw select $tmp/an.raw tran] 2
+eqcheck SEL151-Q-no-slot-added            [slot_list] $q_slots
+eqcheck SEL152-Q-restamped                [pcall xschem raw loaded] [pcall xschem get currsch]
+gecheck SEL153-Q-resolves-here            [pcall xschem raw index v(n1)]
+eqcheck SEL154-Q-selection-is-real-here   [dg [pcall results::current] path] $tmp/an.raw
+# the data is the FILE's: a switch parses nothing and must not change a value
+eqcheck SEL155-Q-value-unchanged          [pcall xschem raw value v(n1) 2] 3
+# R110a's guard is inherited, not re-implemented: a select while DESCENDED
+# inside the raw's own hierarchy must not drag the binding down a level.
+xschem raw clear
+loadcell $hidtop
+eqcheck SEL156-Q-top-read                 [pcall xschem raw select $tmp/an.raw tran] 1
+xschem select instance 0
+xschem descend
+eqcheck SEL157-Q-descended                [file tail [pcall xschem get schname]] leaf.sch
+eqcheck SEL158-Q-select-while-descended   [pcall xschem raw select $tmp/an.raw tran] 2
+eqcheck SEL159-Q-guard-held-level-at-0    [pcall xschem get raw_level] 0
+xschem go_back
+eqcheck SEL160-Q-top-still-bound          [pcall xschem raw loaded] 0
+
+# ===========================================================================
+# R -- R301b: <type> IS OPTIONAL, and this is the L10 trap it walks past.
+#      `xschem raw switch <path>` with NO type does not fail: the by-name arm
+#      is guarded `if(file && type)` and a typeless call falls through to the
+#      by-index form and switches to the NEXT database. `raw select <path>`
+#      must land on the named file instead, because it goes through the
+#      what == 1 dedupe loop, which matches on the filename alone when the
+#      type is NULL.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+# THREE slots, not two, and that is load-bearing: the typeless arm steps to the
+# NEXT index, and with two slots "next" and "the file I named" are the same
+# place half the time -- a wrong implementation passes by coincidence. Measured:
+# with two slots, routing a typeless select through the by-name switch arm left
+# the whole suite green.
+xschem raw read $tmp/an.raw tran
+xschem raw read $tmp/bn.raw tran
+xschem raw read $tmp/cn.raw tran
+xschem raw switch $tmp/an.raw tran
+eqcheck SEL161-R-an-is-current             [pcall xschem raw rawfile] $tmp/an.raw
+# THE TRAP ITSELF, measured here so the next check is a contrast and not a
+# claim: a typeless `raw switch` at an.raw does not refuse and does not stay --
+# it reports success and steps to the NEXT slot, which is the other file.
+eqcheck SEL162-R-typeless-switch-steps-the-cursor \
+  [list [pcall xschem raw switch $tmp/an.raw] [pcall xschem raw rawfile]] [list 1 $tmp/bn.raw]
+set r_slots [slot_list]
+eqcheck SEL163-R-typeless-select-lands-on-the-named-file \
+  [list [pcall xschem raw select $tmp/an.raw] [pcall xschem raw rawfile]] [list 2 $tmp/an.raw]
+eqcheck SEL164-R-typeless-select-added-nothing [slot_list] $r_slots
+
+# ===========================================================================
+# S -- R301a: SELECT IS A RUN-LEVEL GESTURE. One file, two analyses, two
+#      registry slots, ONE result (U11). Selecting the run re-binds EVERY slot
+#      of it, so the sibling analysis is reachable in the cell you selected it
+#      in -- the boundary spec section 3.1 states for R110 ("read is an
+#      analysis-level verb ... re-binding every slot of the chosen run is that
+#      verb's job under U11").
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL165-S-two-slots-one-file \
+  [list [pcall xschem raw read $tmp/multi.raw dc] [pcall xschem raw read $tmp/multi.raw tran] \
+        [slots_naming $tmp/multi.raw]] {1 1 2}
+loadcell $tmp/cellB.sch
+# R111, and the precondition: NAVIGATION does not re-bind either slot, so both
+# analyses of the run are blind here before the select.
+xschem raw switch $tmp/multi.raw dc
+eqcheck SEL166-S-dc-blind-before   [list [pcall xschem raw loaded] [pcall xschem raw index v(m1)]] {-1 -1}
+xschem raw switch $tmp/multi.raw tran
+eqcheck SEL167-S-tran-blind-before [list [pcall xschem raw loaded] [pcall xschem raw index v(m2)]] {-1 -1}
+set s_slots [slot_list]
+eqcheck SEL168-S-select-tran-rc    [pcall xschem raw select $tmp/multi.raw tran] 2
+gecheck SEL169-S-tran-resolves     [pcall xschem raw index v(m2)]
+# ---- THE PAYLOAD: the analysis NOT named is re-bound too ----
+xschem raw switch $tmp/multi.raw dc
+eqcheck SEL170-S-sibling-dc-rebound \
+  [list [expr {[pcall xschem raw loaded] >= 0}] [expr {[pcall xschem raw index v(m1)] >= 0}]] {1 1}
+eqcheck SEL171-S-run-rebind-added-nothing [slot_list] $s_slots
+# and it did not reach an UNRELATED database: an.raw is a DIFFERENT run, read
+# under cell A like the rest, and selecting this run must leave it where it is.
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/multi.raw dc
+xschem raw read $tmp/multi.raw tran
+xschem raw read $tmp/an.raw tran
+loadcell $tmp/cellB.sch
+pcall xschem raw select $tmp/multi.raw tran
+xschem raw switch $tmp/an.raw tran
+eqcheck SEL172-S-other-run-untouched [pcall xschem raw loaded] -1
+
+# ===========================================================================
+# T -- T-D: A REFUSED SELECTION CHANGES NOTHING. F7 -- selection never clears,
+#      and a failed one may not take the previous one down with it.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+pcall xschem raw select $tmp/an.raw tran
+set t_slots [slot_list]
+set t_file  [pcall xschem raw rawfile]
+set t_cur   [pcall results::current]
+eqcheck SEL173-T-garbage-rc-is-0   [pcall xschem raw select $tmp/nope.raw tran] 0
+eqcheck SEL174-T-registry-intact   [slot_list] $t_slots
+eqcheck SEL175-T-current-intact    [pcall xschem raw rawfile] $t_file
+gecheck SEL176-T-still-resolves    [pcall xschem raw index v(n1)]
+eqcheck SEL177-T-selection-intact  [pcall results::current] $t_cur
+# ---- THE OTHER HALF OF THE SELECTION (R113), added by the FIXER ROUND ----
+# SEL143 rules that the selection is extra_idx AND extra_prev_idx, so "the
+# previous selection is intact" has to be measured on both. It was not:
+# extra_rawfile()'s failure arm restores xctx->raw and then does
+# `xctx->extra_prev_idx = xctx->extra_idx;`, which silently destroyed the
+# switch-back cursor -- a refused select turned `xschem raw switch_back` into a
+# no-op, so after a mistyped path in Results > Select the user's "go back to the
+# previous result" gesture did nothing. Measured on the item binary before the
+# fix (select an, select bn, refuse nope, switch_back -> bn instead of an) and
+# undone in raw_select(), not in extra_rawfile()'s shared failure path (`raw
+# read` has the same wart; that is R112's item).
+xschem raw clear
+loadcell $tmp/cellA.sch
+pcall xschem raw select $tmp/an.raw tran
+pcall xschem raw select $tmp/bn.raw tran
+# CONTROL: with no refusal in between, switch_back lands on the previous one
+eqcheck SEL196-T-switch-back-control \
+  [list [pcall xschem raw switch_back] [pcall xschem raw rawfile]] [list 1 $tmp/an.raw]
+pcall xschem raw select $tmp/bn.raw tran
+eqcheck SEL197-T-refused-rc-is-0  [pcall xschem raw select $tmp/nope.raw tran] 0
+eqcheck SEL198-T-refused-kept-the-switch-back-cursor \
+  [list [pcall xschem raw switch_back] [pcall xschem raw rawfile]] [list 1 $tmp/an.raw]
+
+# ===========================================================================
+# U -- THE ADOPT CORRECTION, i.e. WHY T-A IS NOT WORDED "adds one slot".
+#      `xschem raw_read` (the ~293 launcher sites' verb, L2 -- it CLEARS the
+#      registry and reads) leaves xctx->raw set with an EMPTY registry. The
+#      next extra_rawfile() call of any kind adopts that base into slot 0, so
+#      the slot count moves by one for a reason that has nothing to do with the
+#      requested file. A `select` that read the count naively reports "read"
+#      for a file it only switched to. NOTHING may touch `xschem raw ...`
+#      between the raw_read and the select: `raw info` itself adopts.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL178-U-raw_read-rc       [pcall xschem raw_read $tmp/an.raw tran] 1
+eqcheck SEL179-U-select-says-switch-not-read [pcall xschem raw select $tmp/an.raw tran] 2
+eqcheck SEL180-U-present-exactly-once        [slots_naming $tmp/an.raw] 1
+
+# ===========================================================================
+# V -- `xschem raw non_spice <type>`: R305b's missing Tcl verb, and the token
+#      it removes from src/results.tcl. It is the OTHER column of the reader
+#      table from `raw is_digital`, which answers 0 for `table` on purpose
+#      (test_backannotate_digital BA12).
+# ===========================================================================
+eqcheck SEL181-V-non_spice-by-type \
+  [list [pcall xschem raw non_spice tran] [pcall xschem raw non_spice table] \
+        [pcall xschem raw non_spice vcd]] {0 1 1}
+eqcheck SEL182-V-is-not-is_digital \
+  [list [pcall xschem raw non_spice table] [pcall xschem raw is_digital table]] {1 0}
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/t.table table
+eqcheck SEL183-V-non_spice-of-current-db [pcall xschem raw non_spice] 1
+xschem raw read $tmp/an.raw tran
+eqcheck SEL184-V-non_spice-of-spice-db   [pcall xschem raw non_spice] 0
+# the delegation is REAL: no reader token survives in results.tcl's CODE.
+# Comment lines are stripped -- the file explains the ruling in prose and must
+# not trip its own detector.
+# FIXER ROUND: matched as a WORD, not as a substring. The bare `regexp {table}`
+# this started as reds on any future code line merely CONTAINING the letters --
+# a proc named `_fmt_table`, a variable `$mutable_state` -- and item 4 is
+# scheduled to add results::select to this very file. Driven: appending
+# `proc results::_stable_sort {l} {lsort $l}` to src/results.tcl failed the old
+# form and passes this one, while the S20 sabotage (the token put back beside
+# the delegation) still reds. `:` is excluded on both sides too, so a
+# hypothetical `results::table` identifier is not a reader token either.
+# -line makes ^ and $ line anchors: the argument is the whole file.
+eqcheck SEL185-V-no-reader-token-left-in-tcl \
+  [regexp -line {(^|[^A-Za-z0-9_:])table([^A-Za-z0-9_:]|$)} [r2_code [r2_rd $r2_tcl]]] 0
+
+# ===========================================================================
+# W -- R110d: THE THIRD COPY OF THE "file found: switch to it" BRANCH, in
+#      new_rawfile(). Carried forward from item 1, which closed 0509 naming it
+#      with no reproducer built either way. This is the reproducer: `xschem raw
+#      new` builds an in-memory dataset, finds the name already taken, makes it
+#      current and -- before this item -- left it bound to the cell it was first
+#      built under, so the `xschem raw add` / `xschem raw set` calls that always
+#      follow wrote into a database no lookup in this design could see.
+#      WHO REACHES IT -- corrected by the fixer round. An earlier version of this
+#      header blamed the SHIPPED launcher, whose dataset name is the constant
+#      `distrib` (xschem_library/ngspice/autozero_comp.sch:542). It does not
+#      reach the branch: that launcher's first line is `xschem raw_read`, which
+#      CLEARS THE WHOLE REGISTRY, so its `xschem raw new distrib` always creates
+#      (rc 1) and never finds -- measured on the item binary. The reachable
+#      sequence is a Tcl author calling `xschem raw new <same name>` a second
+#      time with no intervening clear, which is what this group drives.
+#      The return value is UNCHANGED: 0 still means "already loaded".
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL186-W-raw-new-created   [pcall xschem raw new hist.raw distrib vsweep 0 1.0 0.1] 1
+gecheck SEL187-W-resolves-under-A  [pcall xschem raw index vsweep]
+loadcell $tmp/cellB.sch
+eqcheck SEL188-W-blind-before      [list [pcall xschem raw loaded] [pcall xschem raw index vsweep]] {-1 -1}
+set w_slots [slot_list]
+eqcheck SEL189-W-second-new-rc-still-0 [pcall xschem raw new hist.raw distrib vsweep 0 1.0 0.1] 0
+# ---- THE PAYLOAD ----
+eqcheck SEL190-W-restamped         [pcall xschem raw loaded] [pcall xschem get currsch]
+gecheck SEL191-W-resolves-here     [pcall xschem raw index vsweep]
+eqcheck SEL192-W-no-slot-added     [slot_list] $w_slots
+
+# ===========================================================================
+# X -- THE OPERATING-POINT FOLLOW-UP (R301d). Making a one-point OP the result
+#      you are working against is exactly when its numbers belong on the
+#      schematic, so the `select` arm repeats the `switch` arm's update_op()
+#      call. TWO contrasts make SEL194 non-vacuous, and both are measurements
+#      of shipped behaviour taken right here rather than claims:
+#        SEL193 -- `raw read` of the same file publishes NOTHING.
+#        SEL195 -- `raw switch` into it, from a multi-point database, publishes
+#                  nothing either: the shipped gate tests `allpoints` on the
+#                  database it is LEAVING and `sim_type` on the one it is
+#                  ARRIVING at (issue 0513). That is why the select arm gates on
+#                  xctx->raw AFTER the call, and why a select-gate copied
+#                  verbatim from the switch arm would fail SEL194 here.
+#      ⚠ WHEN 0513 IS FIXED, SEL195 INVERTS -- it will publish. Update it there;
+#      it is written as a measurement of today's engine, not as a rule.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL193-X-read-does-not-publish \
+  [list [pcall xschem raw read $tmp/op.raw op] [pcall ngspice::get_voltage o1]] {1 ?}
+# a MULTI-POINT database becomes current, so the two halves of the shipped
+# switch gate now disagree
+xschem raw read $tmp/an.raw tran
+set x_src [pcall xschem raw switch $tmp/op.raw op]
+set x_sv  [pcall ngspice::get_voltage o1]
+eqcheck SEL195-X-switch-does-not-publish-here-0513 [list $x_src $x_sv] {1 ?}
+# back onto the multi-point database, so the SELECT below also runs with a
+# 3-point raw current. Without this line the select is made FROM the op itself
+# and a gate copied verbatim from the switch arm would pass by coincidence --
+# measured: it does.
+xschem raw switch $tmp/an.raw tran
+set x_rc [pcall xschem raw select $tmp/op.raw op]
+set x_v  [pcall ngspice::get_voltage o1]
+# `?` is what get_voltage answers when nothing is published, so the value is
+# tested for NUMBER-ness before arithmetic -- a bare expr on `?` aborts the
+# whole script, which is how a red check becomes a missing check.
+eqcheck SEL194-X-select-publishes \
+  [list $x_rc [expr {[string is double -strict $x_v] && abs($x_v - 1.5) < 1e-9}]] {2 1}
+# ---- THE NEGATIVE CONTROL for the gate's `allpoints == 1` term (FIXER ROUND).
+# SEL194 proves the gate FIRES; nothing proved it does not OVER-fire, and that
+# is a hole a later fixer falls into: `sed -i 's/allpoints == 1/allpoints >= 1/'`
+# in the select arm left all 197 checks green while a 3-point dc sweep started
+# annotating the schematic with its FIRST point (measured: get_voltage o1 went
+# from `?` to `9`). A multi-point sweep is not an operating point.
+# The array is unset first because SEL194 published into it: `?` is the answer
+# only while nothing has been published, so without this the check would be
+# measuring SEL194's leftovers.
+catch {array unset ngspice::ngspice_data}
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL199-X-nothing-published-baseline [pcall ngspice::get_voltage o1] ?
+eqcheck SEL200-X-multipoint-dc-does-not-publish \
+  [list [pcall xschem raw select $tmp/dcmulti.raw dc] [pcall ngspice::get_voltage o1]] {1 ?}
+
+# ===========================================================================
+# Z -- FIXER ROUND. A TYPELESS SELECT PREFERS THE ANALYSIS YOU ARE ON.
+#      R301b makes <type> optional precisely so item 4 can pass a bare path (the
+#      MRU and the persistence slot store a path only). The what == 1 spice
+#      dedupe matches on the FILENAME ALONE when the type is NULL, so with one
+#      run read twice -- a dc plot and a tran plot of one file are two slots and
+#      ONE result (U11) -- a bare select landed on the run's FIRST slot and moved
+#      the user off the analysis they were plotting: measured before the fix,
+#      sim_type went tran -> dc and `raw index v(m2)` went 1 -> -1.
+#      THE OVER-FIRE GUARD IS SEL163, not a new check: when the current database
+#      is a DIFFERENT file, a typeless select must still land on the file it
+#      names. This arm only fires when the current database already IS that file.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/multi.raw dc
+xschem raw read $tmp/multi.raw tran
+eqcheck SEL201-Z-tran-is-the-current-analysis \
+  [list [pcall xschem raw_query sim_type] [expr {[pcall xschem raw index v(m2)] >= 0}]] {tran 1}
+set z_slots [slot_list]
+eqcheck SEL202-Z-typeless-select-rc         [pcall xschem raw select $tmp/multi.raw] 2
+eqcheck SEL203-Z-stayed-on-the-analysis \
+  [list [pcall xschem raw_query sim_type] [expr {[pcall xschem raw index v(m2)] >= 0}]] {tran 1}
+eqcheck SEL204-Z-added-nothing               [slot_list] $z_slots
+# and the same from an unrelated cell -- the shape item 4's gesture actually has
+loadcell $tmp/cellB.sch
+pcall xschem raw select $tmp/multi.raw
+eqcheck SEL205-Z-from-another-cell-same-analysis \
+  [list [dg [pcall results::current] type] [expr {[pcall xschem raw index v(m2)] >= 0}]] {tran 1}
+
+# ===========================================================================
+# AA -- FIXER ROUND. AN EXPLICIT NON-SPICE TYPE STILL NAMES ONE ANALYSIS.
+#       The non-spice what == 1 arm dedupes on the FILENAME ALONE (it must: a
+#       table or a VCD has no sim_type until its reader stamps one), so
+#       `raw select <an ngspice raw> table` FOUND the tran slot and answered
+#       2 = "selected by switch" -- a successful selection of an analysis that
+#       is not in the registry, which item 4 would push onto the MRU and write
+#       to disk as a (path, type) pair naming no slot. The opposite direction
+#       needs no guard: a spice type goes through the spice loop, which compares
+#       sim_type and refuses by itself.
+# ===========================================================================
+xschem raw clear
+loadcell $tmp/cellA.sch
+xschem raw read $tmp/an.raw tran
+# a SECOND run is read after it, so bn.raw -- not the file the refused select
+# names -- is the current one. That is what makes SEL208 a measurement of the
+# undo rather than a coincidence: the refused select's own extra_rawfile() call
+# DOES find and switch to the an.raw slot before the type mismatch is noticed,
+# so without the restore the cursor is left on the wrong run.
+xschem raw read $tmp/bn.raw tran
+set aa_slots [slot_list]
+eqcheck SEL206-AA-non-spice-type-on-a-spice-run-refuses \
+  [pcall xschem raw select $tmp/an.raw table] 0
+eqcheck SEL207-AA-registry-intact [slot_list] $aa_slots
+eqcheck SEL208-AA-current-intact \
+  [list [pcall xschem raw rawfile] [pcall xschem raw_query sim_type]] [list $tmp/bn.raw tran]
+# the verb is not broken for the types that ARE non-spice: a real table still
+# selects, and the WRONG non-spice token on it is refused for the same reason
+eqcheck SEL209-AA-a-real-table-still-selects [pcall xschem raw select $tmp/t.table table] 1
+eqcheck SEL210-AA-wrong-non-spice-token-refuses [pcall xschem raw select $tmp/t.table vcd] 0
+
+# ===========================================================================
+# AB -- FIXER ROUND. A LEADING `~/` IS EXPANDED. `xschem raw_read` expands it
+#       (its arm's own `regsub {^~/}`), and `select` is the verb meant to
+#       front-end those ~293 launcher sites -- so `~/x.raw` must not be the one
+#       spelling that works for one verb and fails for the other.
+#       extra_rawfile() only runs Tcl `subst`, which does not expand `~`.
+#       SEL211 is the control: if THIS reds too, the C `home_dir` (getpwuid) and
+#       $env(HOME) disagree in this environment and neither verb expanded it.
+#       The file is written under $HOME because that is the only place `~` can
+#       name; it is removed again below.
+# ===========================================================================
+set ab_dir  [file join $env(HOME) .xschem_results_select_[pid]]
+set ab_file [file join $ab_dir an.raw]
+file mkdir $ab_dir
+file copy -force $tmp/an.raw $ab_file
+set ab_tilde ~/[file tail $ab_dir]/an.raw
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL211-AB-raw_read-expands-tilde-control [pcall xschem raw_read $ab_tilde tran] 1
+xschem raw clear
+loadcell $tmp/cellA.sch
+eqcheck SEL212-AB-select-expands-tilde           [pcall xschem raw select $ab_tilde tran] 1
+# not just "it worked": the spelling STORED is the expanded one, which is what
+# makes a slot read by `raw_read` and one selected here the SAME slot (the
+# registry dedupes by strcmp, so `~/x.raw` beside `$HOME/x.raw` would be two runs)
+eqcheck SEL213-AB-stored-spelling-is-expanded    [pcall xschem raw rawfile] $ab_file
+xschem raw clear
+file delete -force $ab_dir
+
 xschem raw clear
 catch {test_scratch_drop $tmp}
 puts "----"

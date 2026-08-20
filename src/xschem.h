@@ -2487,6 +2487,15 @@ extern int update_op();
  * re-bind is opt-in and only the `read` verbs opt in (src/scheduler.c). */
 #define RAW_READ_REBIND 64
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
+/* R301 -- `xschem raw select <file> [<type>]`. Make this result the one the
+ * session works against: read it if it is not loaded, switch to it if it is,
+ * re-bind it (and every other analysis of the same run, R301a) to the schematic
+ * that is current now, and NEVER clear (F7). <type> is optional (R301b).
+ * RETURNS THREE VALUES, not two: 2 selected by switch, 1 selected by read, 0
+ * refused -- the distinction R112 says `read` should have had. The message, the
+ * MRU push and the persistence write are results::select's, not this verb's
+ * (R302). doc/claude/specs/results_selection.md section 5. */
+extern int raw_select(const char *file, const char *type);
 extern int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, double sweep1, double sweep2);
 extern int table_read(const char *f);
 /* VCD (Value Change Dump) -> Raw. Same contract as table_read(): xctx->raw must be NULL

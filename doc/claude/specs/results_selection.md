@@ -354,6 +354,50 @@ R110 is still preferred — it makes the verb correct for every caller rather th
 for the one that remembers to follow up — but §17 Q1 may rule otherwise, and a
 C-free v1 is a real option.
 
+**R110d — CREW RULING, 2026-08-19 (item 3). The THIRD verbatim copy of the
+"file found: switch to it" branch, in `new_rawfile()` (`src/save.c`), re-stamps
+too — unconditionally.** Item 1 fixed the two copies inside `extra_rawfile()`
+and closed 0509 naming this one, with no reproducer built either way. It IS
+reachable with a stale stamp, measured on the shipped verb and the pristine
+binary:
+
+```
+load cellA ; xschem raw new hist.raw distrib vsweep 0 1.0 0.1
+   -> rc=1  raw loaded=0   raw index vsweep=0
+load cellB (unrelated)          -> raw loaded=-1  index=-1   (F4, by design)
+xschem raw new hist.raw ...     -> rc=0  raw loaded=-1  index=-1
+```
+
+*"Build me this dataset, here"* found the name already taken, made it current,
+and left it bound to `cellA` — so the `xschem raw add` / `xschem raw set` calls
+that always follow write into a database no lookup in this design can see.
+
+**Who reaches it — corrected by the fixer round.** This ruling first justified
+itself with the *shipped* launcher, on the grounds that its dataset name is the
+constant `distrib` (`xschem_library/ngspice/autozero_comp.sch:542`), so two
+designs carrying it would collide by construction. **That is false and the
+measurement says why:** the launcher's FIRST line is
+`xschem raw_read $netlist_dir/<cell>.raw`, which clears the whole registry
+(`extra_rawfile(3, …)`) and takes the previous design's `distrib` dataset with
+it, so the `xschem raw new distrib distrib …` further down always **creates**
+(rc 1) and never finds. Measured on the item binary: cellA `raw_read` →
+`raw new distrib` → rc 1, slots `{0 an.raw tran} {1 distrib distrib}`; load
+cellB, `raw_read` → slots `{0 an.raw tran}` only, `distrib` **gone**;
+`raw new distrib` → rc 1 again, never 0. R110d itself stands on what remains
+true: `xschem raw new` is a documented Tcl verb
+(`doc/xschem_man/developer_info.html`) and a Tcl author calling it twice with
+one name and no intervening clear reaches the branch — which is the sequence
+group W drives, and is exactly the measurement quoted above.
+
+**Unconditional, unlike the two `extra_rawfile()` arms, and that is not an
+inconsistency.** `RAW_READ_REBIND` exists because `src/draw.c` reaches those
+arms while merely painting a graph rect (R110c/U10). `new_rawfile()` has exactly
+**one** caller in the tree — the `xschem raw new` verb in `src/scheduler.c` —
+and a Tcl verb is a user gesture by definition; `grep -rn new_rawfile src/` is
+the whole audience. **The return value is unchanged**: `0` still means "already
+loaded" (SEL189 pins it, and goes red if the branch starts returning 1). Pinned
+by group W (SEL186-SEL192).
+
 **R111** `xschem raw switch` keeps its current behaviour and does **not**
 re-stamp. Switching is navigation between things already bound; re-binding is
 what `read` is for. This is the same separation
@@ -487,8 +531,166 @@ resolves it again by name and gets the verdict then.
 2. Otherwise → `extra_rawfile(1, …)` (read + make current + stamp).
 3. Never clear. F7.
 
-Return: `1` selected-by-switch, `2` selected-by-read, `0` refused. **Three
+Return: `2` selected-by-switch, `1` selected-by-read, `0` refused. **Three
 values, not two** — this is the distinction R112 says `read` should have had.
+
+> **Corrected 2026-08-19 (item 3).** This line read *"`1` selected-by-switch,
+> `2` selected-by-read"* — the two values the other way round from
+> `doc/claude/results_batch/PLAN.md` §4 item 3 and from the item brief, which
+> both say **2 = switch, 1 = read**. Two documents against one, and 1-for-read
+> is also the value `extra_rawfile()` already returns for the read it performs,
+> so the majority spelling is the one implemented and this sentence is the one
+> that moved. Nothing had been written against the old spelling.
+
+### 5.0 RULINGS — the sub-verb's exact shape (item 3, 2026-08-19)
+
+Taken by the crew per `doc/claude/results_batch/DECISIONS.md` §C. Evidence for
+each is in `doc/claude/results_batch/receipts/03-raw-select-subverb.md`; the
+implementation is `raw_select()` in `src/save.c`, dispatched from the `raw` arm
+of `src/scheduler.c`.
+
+**R301a — SELECT IS A RUN-LEVEL GESTURE: IT RE-BINDS EVERY SLOT OF THE CHOSEN
+RUN, not only the analysis named.** U11 rules that one run produces one result
+and that analyses are *dimensions inside* a result, while the engine keys the
+registry on `(rawfile, sim_type)` — so one `multi.raw` holding a dc and a tran
+is **two slots and one result**. §3.1's own boundary note already assigns this
+to `select`: *"`read` is an analysis-level verb … re-binding every slot of the
+chosen run is that verb's job under U11"*. Measured on `cellB` with both
+analyses of one file read under `cellA`:
+
+```
+raw switch multi.raw dc   -> loaded=-1  index v(m1)=-1
+raw switch multi.raw tran -> loaded=-1  index v(m2)=-1
+raw select multi.raw tran -> rc=2  loaded=0  index v(m2)=1
+raw switch multi.raw dc   -> loaded=0   index v(m1)=1     <-- the sibling, re-bound
+```
+
+Without it, selecting the run in `cellB` leaves the sibling answering `-1` to
+every name there, and a `raw switch` to it — navigation, which by **R111** does
+not re-bind — drops the user on a blind database *inside the result they just
+chose*. The re-stamp is `raw_restamp_design()`, so **R110a's guard applies to
+each sibling in turn**: a slot already bound somewhere on the current stack is
+left alone. The match is `strcmp` on the stored spelling, the same rule the
+registry itself dedupes by, so two spellings of one path are two runs here as
+everywhere else. Pinned by group S (SEL165-SEL172).
+
+**R301b — `<type>` IS OPTIONAL.** R301 above calls it *required, or resolve the
+index from `results::list` first* because it assumed the `what == 2` by-name
+switch loop, which is guarded `if(file && type)` (**L10**). This verb does not
+use that loop: it goes through the `what == 1` dedupe arm, which matches on the
+**filename alone** when the type is NULL. So a caller holding only a path — which
+is exactly what `results::select` is handed, and what the MRU and the
+persistence slot store — reaches the already-loaded slot without resolving its
+analysis first. An explicit type still names ONE analysis of the run, and is
+still required to *read* a table or a VCD that is not loaded yet, because the
+type is the reader dispatch key (issue 0290).
+
+L10 is not merely awkward, it is silently wrong, and the check that says so
+(SEL162) measures it rather than asserting it: with three slots loaded and
+`an.raw` current, `xschem raw switch <an.raw>` with no type returns **1** and
+leaves `bn.raw` current — the by-name arm never ran, the "switch to next" arm
+did. `raw select <an.raw>` with no type stays on `an.raw`.
+
+**R301c — the verb is ONE `extra_rawfile()` CALL, and the read/switch
+distinction is computed, not branched on.** R301's step 1 and step 2 describe
+two calls; the `what == 1` dedupe arm with `RAW_READ_REBIND` set *is* step 1
+byte for byte (it moves `extra_prev_idx`/`extra_idx`/`xctx->raw` exactly as the
+`what == 2` by-name arm does, then re-stamps). Routing through one call avoids a
+**third** copy of the "is this file already loaded?" loop — the rule is written
+twice already and that duplication is half of why issue **0509** survived — and
+keeps the `spectrum`/`sp` → `ac` aliasing in one place. Which of the two
+happened is then computed the way `extra_rawfile()`'s own header prescribes
+(compare `xctx->extra_raw_n` across the call) **with the adopt correction**: the
+first `extra_rawfile()` call in a context that has a base raw and an empty
+registry also adopts that base into slot 0, so the count moves by one for a
+reason that has nothing to do with the requested file. `xschem raw_read` — the
+~293 launcher sites' verb — leaves exactly that state, so this is the common
+case, not a corner: without the correction a select of the file `raw_read` just
+loaded reports itself as a **read**. Pinned by group U (SEL178-SEL180), and it
+is also why **T-A** is worded *"present exactly once in the registry"* rather
+than *"adds exactly one slot"*.
+
+**R301d — a select of a one-point OP/DC database publishes it, exactly as
+`raw switch` does.** The `switch` arm's `update_op()` follow-up
+(`src/scheduler.c`) is repeated in the `select` arm: making an operating point
+*the result you are working against* is precisely when its numbers belong on the
+schematic. Measured: `raw read op.raw op` publishes nothing
+(`ngspice::get_voltage o1` → `?`), `raw select op.raw op` publishes `1.5`.
+Pinned by SEL193/SEL194, the first of which is the contrast that makes the
+second non-vacuous.
+
+**Not copied from the `switch` arm: its gate.** That arm tests
+`raw->allpoints == 1` on the local `Raw *raw` captured at the TOP of the
+dispatcher — i.e. the database that was current *before* the switch — while
+reading `xctx->raw->sim_type`, the one *after*. Measured on the pristine binary:
+with a 3-point tran current, `raw switch <op.raw> op` does **not** publish. The
+`select` arm therefore gates on `xctx->raw` after the call. The `switch` arm was
+left alone (R111, and scope), and the observation is recorded in item 3's
+receipt with its reproducer rather than filed. **The `allpoints == 1` term is
+pinned in BOTH directions** (fixer round): SEL194 proves the gate fires, SEL200
+proves it does not over-fire — widening `== 1` to `>= 1` left all 197 checks
+green while a 3-point dc sweep started annotating the schematic with its first
+point (`ngspice::get_voltage o1` went from `?` to `9`).
+
+### R301e–R301h — the fixer round, 2026-08-19
+
+Four rulings taken while fixing the item's confirmed review findings. All four
+narrow `select`; none of them changes `raw read`, `raw switch` or
+`extra_rawfile()`, which keep their behaviour and their audits (R111, R112).
+
+**R301e — A REFUSED SELECT RESTORES BOTH HALVES OF THE CURSOR.** R113 rules that
+the selection *is* `extra_idx` **and** `extra_prev_idx` (SEL143 is written on
+that), so T-D's *"a failed selection leaves the previous selection intact"* has
+to hold for both. It did not: `extra_rawfile()`'s two restore-on-failure arms put
+`xctx->raw` back and then do `xctx->extra_prev_idx = xctx->extra_idx;`, which
+silently destroys the switch-back cursor. Measured — select `an.raw`, select
+`bn.raw`, refuse `nope.raw`, then `xschem raw switch_back` lands on **`bn.raw`**
+instead of `an.raw`, i.e. the gesture becomes a no-op after a mistyped path.
+`raw_select()` now saves `xctx->raw`/`extra_idx`/`extra_prev_idx` before the call
+and restores them on every refusal (guarded on the registry surviving the failed
+read at all — `read_rawfile()` can dispose of every database on its way out).
+**Deliberately not fixed in `extra_rawfile()`:** `xschem raw read` has the same
+wart, and repairing the shared failure path is R112's item with R112's audit.
+Pinned by SEL196 (control), SEL197, SEL198.
+
+**R301f — A TYPELESS SELECT PREFERS THE ANALYSIS YOU ARE ON.** R301b makes
+`<type>` optional precisely so item 4 can pass a bare path (the MRU and the
+persistence slot store a path only) — and the `what == 1` spice dedupe matches on
+the **filename alone** when the type is NULL, so with one run read twice a bare
+select landed on the run's FIRST slot. Measured: `raw read multi.raw dc`,
+`raw read multi.raw tran`, `raw select multi.raw` → `sim_type` went `tran` → `dc`
+and `raw index v(m2)` went `1` → `-1`; the user asked to select the run they were
+plotting from and lost the analysis inside it. `raw_select()` now fills the type
+in from the current database when — and only when — the current database already
+names the requested file. Every other input is untouched, and SEL163 is the
+over-fire guard: with a *different* file current, a typeless select must still
+land on the file it names. Pinned by group Z (SEL201-SEL205).
+
+**R301g — AN EXPLICIT NON-SPICE TYPE STILL NAMES ONE ANALYSIS.** The non-spice
+`what == 1` arm dedupes on the filename **alone** — it must, because a table or a
+VCD has no `sim_type` until its reader stamps one — so `raw select <an ngspice
+raw> table` found the `tran` slot and answered **2 = selected by switch**: a
+successful selection of an analysis that is not in the registry, which item 4
+would push onto the MRU and write to disk as a `(path, type)` pair naming no
+slot. Measured: `raw select an.raw table` → 2 with `raw_query sim_type` still
+`tran`. `raw_select()` now verifies, on the switch path only, that the database
+it landed on carries the requested non-spice type, and refuses (0) with a
+sentence otherwise. The other direction needs no guard: a spice type goes through
+the spice loop, which compares `sim_type` and refuses by itself; and a *read*
+with a non-spice type is dispatched by that same token and stamps it, so it
+cannot disagree. Pinned by group AA (SEL206-SEL210).
+
+**R301h — A LEADING `~/` IS EXPANDED.** `xschem raw_read` expands it (its arm's
+own `regsub {^~/}`) and `select` is the verb meant to front-end those ~293
+launcher sites, so `~/x.raw` must not be the one spelling that works for one verb
+and fails for the other — `extra_rawfile()` only runs Tcl `subst`, which does not
+expand `~`. Measured before the fix: `raw_read ~/…/an.raw tran` → 1,
+`raw select ~/…/an.raw tran` → **0**. Done with the same `regsub`, so both verbs
+store the **same** spelling and a slot read by one is found by the other — the
+registry dedupes by `strcmp`, so a `~` slot beside a `$HOME` slot would be two
+runs of one file. This is the ONE normalisation `select` does: `..` and other
+spellings are still two runs (measured, §5.0's note stands), and item 4 must
+`file normalize` if it wants more. Pinned by group AB (SEL211-SEL213).
 
 > **Why a new verb rather than fixing `read`.** R110 fixes `read` and is
 > required regardless. `select` exists because the *intent* differs: `read`
@@ -579,6 +781,20 @@ the engine first and names exactly one reader token, `table`, in one place with
 its C predicate cited beside it. When a `non_spice` question reaches Tcl —
 item 3's `xschem raw select` is the natural home for it — that proc becomes a
 one-line delegation. Do not copy the token to a second site.
+
+**R305c — DONE, 2026-08-19 (item 3): `xschem raw non_spice [<type>]` exists and
+the token is gone.** The verb is the other column of the same reader-table row
+as `raw is_digital`, sits beside it in the `raw` arm, and answers
+`raw_type_is_non_spice()` directly: `non_spice tran` → 0, `non_spice table` → 1,
+`non_spice vcd` → 1, and with no argument, of the current database. It is
+deliberately outside the `raw && raw->values` gate, like `is_digital`: *"is this
+type non-spice?"* is answerable with nothing loaded at all.
+`results::_is_result_type` is now the one-line delegation this paragraph
+predicted, and `table` appears nowhere in `src/results.tcl`'s **code** —
+SEL185 greps the comment-stripped file and goes red the moment the token comes
+back. The distinction that made this necessary is pinned in the same place:
+SEL182 asserts `non_spice table` = 1 **and** `is_digital table` = 0 in one
+check, so a future "simplification" that collapses the two verbs reds it.
 
 **R305** `results::current {}` returns the selected result's dict or `{}`.
 **RULED (§17 decisions 3 and 6): the Calculator's Results Dir row consumes it,

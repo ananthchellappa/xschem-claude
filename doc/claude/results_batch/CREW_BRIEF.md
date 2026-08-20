@@ -160,7 +160,7 @@ Authority for everything technical: `doc/claude/specs/results_selection.md`.
 ## 7. Issue numbering — READ THIS BEFORE FILING ONE
 
 **New issues on `fluid-editing` take the next free number at or above 0500.**
-Highest in use is **0512**. Derive it, never guess:
+Highest in use is **0513** (item 3 filed it). Derive it, never guess:
 
 ```sh
 ls doc/claude/issues/ | grep -E '^0[0-9]{3}-' | cut -c1-4 | sort -n | tail -1

@@ -1492,6 +1492,11 @@ int raw_deletevar(const char *name)
   return ret;
 }
 
+/* R110d needs it here and it is defined next to extra_rawfile(), a few hundred
+ * lines below. Forward-declared rather than moved, the way raw_fold_table_clear()
+ * already is above: the re-stamp belongs beside the arm it was written for. */
+static void raw_restamp_design(void);
+
 /* create a new raw file with '(max - min) / step' points with only a sweep variable in it. */
 int new_rawfile(const char *name, const char *type, const char *sweepvar,
                        double start, double end, double step)
@@ -1572,6 +1577,47 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
       xctx->extra_prev_idx = xctx->extra_idx;
       xctx->extra_idx = i;
       xctx->raw = xctx->extra_raw_arr[xctx->extra_idx];
+      /* R110d -- doc/claude/specs/results_selection.md section 3.1, the THIRD
+       * verbatim copy of the "file found: switch to it" branch, measured by
+       * results batch item 3 (0509 closed naming it, with no reproducer built
+       * either way). It IS reachable with a stale stamp, and this is the
+       * measurement, on the shipped verb and the pristine binary:
+       *
+       *   load cellA ; xschem raw new hist.raw distrib vsweep 0 1.0 0.1
+       *     -> rc=1  loaded=0  index vsweep=0
+       *   load cellB (unrelated)      -> loaded=-1 index=-1   (F4, by design)
+       *   xschem raw new hist.raw ... -> rc=0  loaded=-1 index=-1
+       *
+       * i.e. "build me this dataset, here" found the name already taken,
+       * made it current, and left it bound to cellA -- so the `xschem raw
+       * add` / `xschem raw set` calls that always follow write into a database
+       * no lookup in this design can see. That is 0509's symptom with a
+       * different verb.
+       *
+       * WHO REACHES IT -- CORRECTED BY THE FIXER ROUND. An earlier version of
+       * this note said the SHIPPED launcher reaches it, because the dataset
+       * name in xschem_library/ngspice/autozero_comp.sch is the constant
+       * `distrib`. IT DOES NOT, and the measurement says why: that launcher's
+       * FIRST line is `xschem raw_read ...`, which CLEARS THE WHOLE REGISTRY
+       * (extra_rawfile(3, ...), src/scheduler.c) and takes the previous design's
+       * `distrib` dataset with it, so the `xschem raw new distrib` further down
+       * always CREATES (rc 1) and never finds. Measured on the item binary:
+       * cellA raw_read -> raw new distrib -> rc 1, slots {an.raw tran} {distrib
+       * distrib}; load cellB, raw_read -> slots {an.raw tran} only, distrib
+       * gone; raw new distrib -> rc 1 again. What DOES reach the branch is a
+       * Tcl author calling `xschem raw new <same name>` a second time without
+       * an intervening clear -- a documented verb (doc/xschem_man/
+       * developer_info.html) typed twice, which is the sequence group W of
+       * tests/headless/test_results_select.tcl drives.
+       *
+       * UNCONDITIONAL here, unlike the two extra_rawfile() arms, and that is
+       * not an inconsistency: RAW_READ_REBIND exists because src/draw.c reaches
+       * those arms while merely painting a graph rect (R110c/U10). new_rawfile()
+       * has exactly ONE caller in the tree -- the `xschem raw new` verb,
+       * src/scheduler.c -- and a Tcl verb is a user gesture by definition.
+       * `grep -rn new_rawfile src/` is the whole audience.
+       * The return value is NOT changed: 0 still means "already loaded". */
+      raw_restamp_design();
       ret = 0;
     }
   } else {
@@ -2233,6 +2279,226 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     ret = 0;
   }
   return ret;
+}
+
+/* ===========================================================================
+ * R301 -- `xschem raw select <file> [<type>]`: THE RUN-LEVEL SELECTION VERB
+ * doc/claude/specs/results_selection.md section 5, driver ruling D-A
+ * (doc/claude/results_batch/DECISIONS.md).
+ * ===========================================================================
+ *
+ * WHAT IT IS. "This is the result I am working against now." `read` is "get
+ * this file into memory" and `switch` is navigation between things already
+ * bound; only `select` is allowed to be a user-facing gesture with a message,
+ * a history push and a persistence write (all three of which are Tcl, in
+ * results::select -- R302, and NOT here).
+ *
+ * NO NEW DATA STRUCTURE (R113) AND NO NEW TOP-LEVEL COMMAND (R114). The
+ * selection is xctx->extra_idx and nothing else, and the verb lands in the
+ * existing `raw` arm of the dispatcher. Nothing here clears (R301(3), F7):
+ * accumulating databases is this design's declared cost.
+ *
+ * IT IS ONE extra_rawfile() CALL, DELIBERATELY. R301 spells the semantics as
+ * "already in the registry -> extra_rawfile(2) plus a re-stamp; otherwise
+ * extra_rawfile(1)", and the what == 1 dedupe arm with RAW_READ_REBIND set IS
+ * that first branch, byte for byte: it sets extra_prev_idx/extra_idx/xctx->raw
+ * exactly as the what == 2 by-name arm does and then re-stamps (R110/R110c).
+ * Routing through one call rather than two buys three things measured to
+ * matter here:
+ *   - NO THIRD COPY OF THE "is this file already loaded?" LOOP. The rule is
+ *     written twice already (rawfile alone for table/vcd, rawfile+sim_type for
+ *     spice) and that duplication is half of why issue 0509 survived. A verb
+ *     that asks the question itself would make it three.
+ *   - NO L10 TRAP. `xschem raw switch <path>` with no type does not fail, it
+ *     falls through to the by-index arm and switches to the NEXT database
+ *     (src/save.c, what == 2, `file && type` guard). Pre-testing with a
+ *     by-name switch would inherit that; the what == 1 spice loop matches on
+ *     the filename alone when type is NULL, so `raw select <path>` with no
+ *     type finds the already-loaded slot instead of stepping the cursor.
+ *   - the sim_type aliasing (spectrum/sp -> ac) stays in one place.
+ *
+ * THE THREE-VALUED RETURN (R301, and the distinction R112 says `read` should
+ * have had): 2 = selected by SWITCH (it was already loaded, nothing parsed),
+ * 1 = selected by READ (a slot was added), 0 = refused, nothing changed.
+ * WHICH of the two happened is computed the way extra_rawfile()'s own header
+ * prescribes -- compare xctx->extra_raw_n across the call -- with the one
+ * correction that comparison needs: the FIRST read into a context that has a
+ * base raw and an empty registry also ADOPTS that base into slot 0
+ * (src/save.c, "insert extra_raw_arr[0]"), so the count moves by one for a
+ * reason that has nothing to do with this file. Predicting the adopt is the
+ * whole of it, and without it a select-by-switch into a fresh context reports
+ * itself as a read. This is also why T-A is worded "present exactly once in
+ * the registry and current" rather than "adds exactly one slot".
+ *
+ * R301a -- CREW RULING, 2026-08-19 (results batch item 3). SELECT IS A
+ * RUN-LEVEL GESTURE: IT RE-BINDS EVERY SLOT OF THE CHOSEN RUN, not only the
+ * analysis named. U11 rules that one run produces one result and that
+ * analyses are DIMENSIONS INSIDE a result, while the engine's registry key is
+ * (rawfile, sim_type) -- so one multi.raw holding a dc and a tran is two slots
+ * and one result. R110's own boundary note in spec section 3.1 already assigns
+ * this to `select`: "read is an analysis-level verb ... re-binding every slot
+ * of the chosen run is that verb's job under U11". Without it, selecting the
+ * run in cell B leaves the sibling analysis answering -1 to every name there,
+ * and `raw switch`ing to it (navigation, which by R111 does not re-bind) puts
+ * the user on a blind database inside the result they just chose. With it,
+ * `select` is measurably more than `read` with a different return encoding.
+ * The re-stamp is raw_restamp_design(), so R110a's guard applies to each
+ * sibling in turn: a slot already bound somewhere on the current stack is left
+ * alone.
+ *
+ * R301b -- CREW RULING. <type> IS OPTIONAL. R301 calls it "required, or resolve
+ * the index from results::list first" because it assumed the what == 2 by-name
+ * loop (L10). This verb does not use that loop, so a caller holding only a
+ * path -- which is exactly what results::select is handed, and what the MRU and
+ * the persistence slot store -- gets the already-loaded slot for that path
+ * without having to resolve its analysis first. An explicit type still selects
+ * a NAMED analysis of the run, and is still required to READ a file that is not
+ * loaded yet if it is a table or a VCD (the reader dispatch, issue 0290).
+ *
+ * WHAT IT DOES NOT DO. It does not free anything: a Raw the caller may still
+ * hold a SPICE_DATA * into is never freed by a selection, but a cached
+ * SPICE_DATA * still belongs to ONE Raw and a selection reassigns xctx->raw,
+ * so a pointer cached across a select silently reads the OTHER database (L5).
+ * Nothing here caches one. It does not redraw, does not `update`, and does not
+ * touch the annotation array (L7): every side effect a human can see belongs
+ * to results::select (R302).
+ */
+/* Put the registry cursor back exactly where the caller found it.
+ *
+ * FIXER ROUND (results batch item 3): extra_rawfile()'s two restore-on-failure
+ * arms put xctx->raw back and then do `xctx->extra_prev_idx = xctx->extra_idx;`
+ * -- which silently destroys the switch-back cursor. R113 rules that THE
+ * SELECTION IS extra_idx AND extra_prev_idx, and T-D says a failed selection
+ * leaves the previous selection intact, so a refused `select` has to put both
+ * halves back. It is done HERE, in the user-facing verb, and not in
+ * extra_rawfile()'s shared failure path: `xschem raw read` has the same wart and
+ * repairing it there is R112's item with R112's audit, not this one's.
+ *
+ * Guarded on the registry having survived the failed read at all: read_rawfile()
+ * can dispose of every database on its way out (extra_rawfile() tests
+ * `if(xctx->extra_raw_n)` for exactly that reason), and then `before` is a
+ * dangling pointer and the saved indices name nothing. */
+static void raw_select_undo(Raw *before, int idx_before, int prev_before)
+{
+  if(xctx->extra_raw_n > 0 && idx_before >= 0 && prev_before >= 0 &&
+     idx_before < xctx->extra_raw_n && prev_before < xctx->extra_raw_n) {
+    xctx->raw = before;
+    xctx->extra_idx = idx_before;
+    xctx->extra_prev_idx = prev_before;
+  }
+}
+
+int raw_select(const char *file, const char *type)
+{
+  int i, n_before, adopt, ret, idx_before, prev_before, is_read;
+  Raw *cur, *sib, *raw_before;
+  const char *want_type;
+  char f[PATH_MAX];
+  char resolved[PATH_MAX];
+  char curtype[256];
+  char cmd[PATH_MAX + 100];
+
+  if(!file || !file[0]) return 0;
+  if(type && !type[0]) type = NULL; /* L6: an empty type is NULL, and NULL means
+                                     * "any analysis of this file" to the spice
+                                     * dedupe loop -- never a type of "" */
+  want_type = type; /* the type the CALLER named, kept because the typeless arm
+                     * below fills `type` in from the current database */
+
+  /* FIXER ROUND -- A LEADING `~/` IS EXPANDED, the way `xschem raw_read` expands
+   * it (src/scheduler.c, the raw_read arm's `regsub {^~/}`). `select` is the verb
+   * meant to front-end those ~293 launcher sites, so `~/x.raw` must not be the one
+   * spelling that works for raw_read and fails here: extra_rawfile() only runs Tcl
+   * `subst`, which does not expand `~`. Doing it with the same regsub also means
+   * both verbs store the SAME spelling, so a slot read by one is found by the
+   * other -- the registry dedupes by strcmp, and a `~` slot beside a `$HOME` slot
+   * would be two runs of one file (the two-spellings measurement in the receipt). */
+  my_snprintf(cmd, S(cmd), "regsub {^~/} {%s} {%s/}", file, home_dir);
+  tcleval(cmd);
+  my_strncpy(f, tclresult(), S(f));
+
+  /* the spelling extra_rawfile() will actually compare against the registry: it
+   * substs its file argument first, so the test below has to ask the same
+   * question the dedupe loop asks, not a different one. */
+  tclvareval("subst {", f, "}", NULL);
+  my_strncpy(resolved, tclresult(), S(resolved));
+
+  /* FIXER ROUND -- R301b, A TYPELESS SELECT PREFERS THE ANALYSIS YOU ARE ON.
+   * The what == 1 spice dedupe matches on the filename ALONE when the type is
+   * NULL, so with one run read twice (a dc plot and a tran plot of one file are
+   * two slots and one result, U11) a bare `raw select <path>` finds the FIRST
+   * slot of that file -- not the one that is current. Measured before this fix:
+   * read multi.raw dc, read multi.raw tran, `raw select multi.raw` -> sim_type
+   * went tran -> dc and `raw index v(m2)` went 1 -> -1. The user asked to select
+   * the run they were plotting from and lost the analysis inside it, and R301b
+   * makes <type> optional precisely so item 4 can pass a bare path (the MRU and
+   * the persistence slot store a path only). Naming the current slot's own type
+   * makes the dedupe land on it; every other input is unaffected, because the
+   * arm only fires when the current database already IS the file asked for. */
+  if(!type && xctx->raw && xctx->raw->rawfile && xctx->raw->sim_type &&
+     !strcmp(xctx->raw->rawfile, resolved)) {
+    /* copied out, not aliased: `type` is handed to extra_rawfile(), which may
+     * my_strdup() over sim_type on a read path */
+    my_strncpy(curtype, xctx->raw->sim_type, S(curtype));
+    type = curtype;
+  }
+
+  /* the base-raw adoption extra_rawfile() is about to do, predicted; see above */
+  adopt = (xctx->raw && xctx->extra_raw_n == 0) ? 1 : 0;
+  n_before = xctx->extra_raw_n;
+  idx_before = xctx->extra_idx;
+  prev_before = xctx->extra_prev_idx;
+  raw_before = xctx->raw;
+  ret = extra_rawfile(1 | RAW_READ_REBIND, f, type, -1.0, -1.0);
+  dbg(1, "raw_select(): file=%s type=%s rc=%d n %d -> %d adopt=%d\n",
+      f, type ? type : "<NULL>", ret, n_before, xctx->extra_raw_n, adopt);
+  if(!ret) {
+    /* refused: extra_rawfile() restored the previous current database and said
+     * why on the debug channel -- but it also clobbered extra_prev_idx, so T-D
+     * needs the undo below. */
+    raw_select_undo(raw_before, idx_before, prev_before);
+    return 0;
+  }
+  is_read = (xctx->extra_raw_n - n_before - adopt) > 0;
+
+  /* FIXER ROUND -- AN EXPLICIT NON-SPICE TYPE STILL NAMES ONE ANALYSIS (R301b).
+   * The non-spice what == 1 arm dedupes on the filename ALONE (it has to: a
+   * table or a VCD has no sim_type of its own until the reader stamps one), so
+   * `raw select <an ngspice raw> table` FOUND the tran slot and answered 2 --
+   * a successful selection of an analysis that is not in the registry, which
+   * item 4 would then push onto the MRU and write to disk as a (path, type)
+   * pair naming no slot. Measured before this fix: `raw select an.raw table`
+   * -> 2 with `raw_query sim_type` still `tran`. The other direction needs no
+   * guard: a spice type goes through the spice loop, which compares sim_type
+   * and refuses by itself. Only a switch can land here -- a READ with a
+   * non-spice type is dispatched by that same token and stamps it (see
+   * read_rawfile_by_type()), so it cannot disagree. */
+  if(!is_read && want_type && raw_type_is_non_spice(want_type) &&
+     (!xctx->raw || !xctx->raw->sim_type || strcmp(xctx->raw->sim_type, want_type))) {
+    dbg(0, "raw_select(): %s is loaded, but not as a \"%s\" database\n", f, want_type);
+    raw_select_undo(raw_before, idx_before, prev_before);
+    return 0;
+  }
+  /* R301a: the rest of the RUN. Same file, other analyses. */
+  cur = xctx->raw;
+  if(cur && cur->rawfile) {
+    for(i = 0; i < xctx->extra_raw_n; i++) {
+      sib = xctx->extra_raw_arr[i];
+      if(!sib || sib == cur) continue;
+      /* the engine dedupes by strcmp on the stored spelling and so does this:
+       * two spellings of one path (`a/../b.raw` vs `b.raw`) are two runs to the
+       * registry, here as everywhere else. Measured, not promised. */
+      if(!sib->rawfile || strcmp(sib->rawfile, cur->rawfile)) continue;
+      /* raw_restamp_design() reads xctx->raw (through sch_waves_loaded(), which
+       * is a xctx->raw predicate), so the pointer is lent for the call and put
+       * back immediately. Nothing between the two assignments can redraw: no
+       * update, no after, no Tcl (L7). */
+      xctx->raw = sib;
+      raw_restamp_design();
+      xctx->raw = cur;
+    }
+  }
+  return is_read ? 1 : 2;
 }
 
 /* ===========================================================================

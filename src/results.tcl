@@ -349,31 +349,29 @@ proc results::current {} {
 # is the registry reader, not the policy); `results::current` is where the
 # policy lives, because it answers "what is THE selected result".
 #
-# ⚠ NO SECOND TYPE TABLE, as far as the engine's Tcl surface reaches. The
-# authority is `raw_type_is_non_spice()` (src/save.c:1622), which is driven by
-# `raw_reader_table[]` (src/save.c:1610-1613) — the same table that picks the
-# reader — and it is the exact predicate R102 needs. It has NO Tcl verb.
-# `xschem raw is_digital <type>` (src/scheduler.c:10450) exposes the table's
-# OTHER column, `raw_type_is_digital()`, and answers a DIFFERENT question on
-# purpose: test_backannotate_digital BA12 pins `is_digital table` -> 0, because
-# a table is columns of real numbers, i.e. analog data by another reader. So
-# `is_digital` covers the VCD half of R102 and cannot cover the table half.
+# ⚠ NO SECOND TYPE TABLE, AND NO LONGER EVEN ONE TOKEN. The authority is
+# `raw_type_is_non_spice()` (src/save.c), driven by `raw_reader_table[]` — the
+# same table that picks the reader — and it is the exact predicate R102 needs.
+# When item 2 wrote this proc that C function had NO Tcl verb, so the proc asked
+# `xschem raw is_digital <type>` (the table's OTHER column) and wrote the one
+# remaining reader token, `table`, down in Tcl beside it: `is_digital table` is
+# 0 ON PURPOSE (test_backannotate_digital BA12 — a table is columns of real
+# numbers, analog data by another reader, RULING D5-2), so the digital column
+# covers the VCD half of R102 and cannot cover the table half.
 #
-# The engine is therefore asked for everything it can answer, and exactly one
-# reader token — `table` — is named here, in ONE place, with its C predicate
-# cited next to it. When a `raw non_spice` question reaches Tcl (item 3's verb
-# is the natural home), this proc becomes a one-line delegation and the token
-# goes away. Do not spread the token to a second site.
+# ITEM 3 ADDED THE VERB and this proc became the one-line delegation R305b said
+# it should be: `xschem raw non_spice <type>` asks raw_type_is_non_spice()
+# directly, and the token is gone from Tcl entirely. Do not bring it back —
+# adding a reader type must stay ONE ROW in raw_reader_table[] (issue 0290).
 #
 # An EMPTY or `<NULL>` type is a spice raw — "first analysis found in the file"
-# — which is what raw_type_is_non_spice()/raw_type_is_digital() both answer for
-# a NULL type, so it stays a result.
+# — which is what raw_type_is_non_spice() answers for a NULL type, so it stays a
+# result. `<NULL>` is `xschem raw info`'s rendering of a NULL sim_type, not a
+# type token, so it is mapped here rather than in C.
 proc results::_is_result_type {type} {
   set t [string trim $type]
   if {$t eq {} || $t eq {<NULL>}} { return 1 }
-  if {![catch {xschem raw is_digital $t} d] && [string is integer -strict $d] && $d} {
-    return 0
-  }
-  if {[string equal -nocase $t table]} { return 0 }
+  if {[catch {xschem raw non_spice $t} ns]} { return 1 }
+  if {[string is integer -strict $ns] && $ns} { return 0 }
   return 1
 }

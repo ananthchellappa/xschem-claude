@@ -10423,6 +10423,52 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           update_op();
         }
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "select")) {
+        /* xschem raw select <file> [<type>]   -- R301, results batch item 3.
+         * doc/claude/specs/results_selection.md section 5.
+         *
+         * "This is the result I am working against now": read it if it is not
+         * loaded, switch to it if it is, and re-bind it -- and every other
+         * analysis of the same run (R301a) -- to the schematic that is current
+         * now. NEVER CLEARS (F7). <type> is optional (R301b); it names ONE
+         * analysis of the run, and is still needed to read a table or a VCD
+         * that is not loaded yet, because the type is the reader dispatch key
+         * (issue 0290).
+         *
+         * RETURNS 2 (switched: already loaded, nothing parsed), 1 (read: a slot
+         * was added) or 0 (refused). A Tcl caller testing the result as a
+         * boolean gets "selected" for both 1 and 2, which is what nearly every
+         * caller wants; the two are distinguishable for the one caller --
+         * results::select (R302) -- that has to say which happened.
+         *
+         * NOT `raw_read`, which is one underscore away and CLEARS THE WHOLE
+         * REGISTRY before reading (L2, issue 0508). Nothing in this arm frees a
+         * database. */
+        if(argc < 4) {
+          Tcl_SetResult(interp, "xschem raw select: no file given", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        ret = raw_select(argv[3], argc > 4 ? argv[4] : NULL);
+        /* the same follow-up the `switch` arm above does, for the same reason:
+         * a one-point OP or DC database is an operating point, and making it
+         * the current result is exactly when its numbers should reach the
+         * schematic.
+         *
+         * GATED ON xctx->raw AFTER THE CALL, and that is NOT how the `switch`
+         * arm above is written: it tests `raw->allpoints` on the local `raw`,
+         * captured at the top of this dispatcher -- the database it is LEAVING
+         * -- while reading `xctx->raw->sim_type`, the one it is ARRIVING at.
+         * Measured on the pristine binary: with a 3-point transient current,
+         * `raw switch <op.raw> op` does not publish at all. That is issue 0513;
+         * the arm is left alone here (R111, and scope), and this arm asks both
+         * halves of the question about the same database. SEL194/SEL195 of
+         * tests/headless/test_results_select.tcl pin the difference. */
+        if(ret && xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
+           xctx->raw->sim_type &&
+           (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {
+          update_op();
+        }
+        Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc ==9 && !strcmp(argv[2], "new")) {
         ret = new_rawfile(argv[3], argv[4], argv[5], atof(argv[6]), atof(argv[7]),atof(argv[8]));
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
@@ -10459,6 +10505,28 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          *   type digital?" is answerable with nothing loaded at all. */
         if(argc > 3) Tcl_SetResult(interp, my_itoa(raw_type_is_digital(argv[3])), TCL_VOLATILE);
         else Tcl_SetResult(interp, my_itoa(raw_is_digital(raw)), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "non_spice")) {
+        /* xschem raw non_spice [<sim_type>]
+         *   read-only: 1 if this type selects one of the NON-SPICE readers --
+         *   table_read() or vcd_read() -- and 0 for a spice raw (and for a
+         *   NULL/empty type, which means "first analysis found in the file").
+         *   With no argument, asks it of the CURRENT database.
+         *
+         *   THE OTHER COLUMN OF THE SAME ROW as `raw is_digital`, and the two
+         *   are not interchangeable: `is_digital table` is 0 ON PURPOSE (a
+         *   table is columns of real numbers, analog data by another reader --
+         *   RULING D5-2, pinned by test_backannotate_digital BA12), while
+         *   `non_spice table` is 1. R102 ("a result is not a VCD or a table
+         *   database") needs the second question, and until this verb existed
+         *   src/results.tcl could only ask the first and had to write the token
+         *   `table` down beside it in Tcl -- a second type table in the making
+         *   (R305b, results batch item 2, offered to item 3 and taken).
+         *   Deliberately outside the `raw && raw->values` gate below, like
+         *   is_digital: "is this type non-spice?" is answerable with nothing
+         *   loaded at all. */
+        if(argc > 3) Tcl_SetResult(interp, my_itoa(raw_type_is_non_spice(argv[3])), TCL_VOLATILE);
+        else Tcl_SetResult(interp,
+               my_itoa(raw_type_is_non_spice(raw ? raw->sim_type : NULL)), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "casemode")) {
         /* xschem raw casemode [<mode> | -<what>]     (casemode batch item 3)
          *
