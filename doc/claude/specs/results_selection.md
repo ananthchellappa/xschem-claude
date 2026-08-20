@@ -2650,6 +2650,59 @@ Both are named in §18. Leaving them is a scope decision — U12 names the Waves
 cascade — and gating the twin is a one-line call to `waves_gate_blocked`
 (R505b made the gate a proc) for whoever wants the sentence to hold menubar-wide.
 
+### 17.3 Who owns a result, and how the Calculator gets one — RULED 2026-08-20
+
+Put to the user by the driver after issue **0516** showed items 7 and 10
+colliding, and answered one question at a time. **These supersede the parts of
+R407a and R503 they touch, and they are not re-openable by a crew.**
+
+**U13 — THE ASE-L SESSION OWNS THE RESULT.** Not a waveform viewer window, not a
+schematic window. A session's result is what a finished simulation produced or
+what `Results ▸ Select…` bound to it. *Consequence:* item 10's
+`calc::viewer_tokens` walk — which asks the open **viewer windows** — is the
+wrong lookup and is rework, not a patch.
+
+**U14 — THE CALCULATOR IS SEIZED, NOT SHARED.** There is one Calculator per
+process (R101). `ASE-L ▸ Tools ▸ Calculator` launches it, or **seizes** an
+existing one. **Only the holder is followed live**: change the result inside the
+holding ASE-L and the open Calculator follows immediately. An ASE-L that does
+**not** hold it does not drag it.
+
+**U15 — THE DOOR DECIDES; ASE-L is the usual door.** All three entry points stay:
+
+| opened from | the result it works against |
+|---|---|
+| an **ASE-L** session | that session's result — and it **seizes** the Calculator |
+| a **waveform viewer** | that viewer's **hand-loaded** result — **even when an ASE-L session exists elsewhere that has never held the Calculator.** "No ASE-L active" means *no ASE-L holds the Calculator*, not *no ASE-L exists* |
+| a **schematic** | the ASE-L bound to that schematic's `(lib, cell, view)`, and it seizes for that ASE-L. The binding is already unique and automatic: `ase::launch_for_current` resolves it through `ase::session_for_design` and **reuses** an existing session rather than creating a second, so a schematic can never have two ASE-Ls competing for it. With none, there is no result and the Calculator says so. Launching from the schematic is a **convenience**, not a fourth model. |
+
+**U16 — THE RESULTS ROW'S PATH BOX BECOMES A DROP-DOWN.** The row keeps
+**three** widgets in the same order — the toggle, the box, the greyed `…` — and
+the read-only box becomes the drop-down itself, so §4's normative widget set and
+its asserted slave order do **not** change. It lists **everything loaded,
+labelled by source** — every open ASE-L session's results plus any result a
+waveform viewer holds because the user loaded it by hand
+(`an.raw (tran) — ASE-L cellA`). **Picking a result belonging to another ASE-L is
+equivalent to that ASE-L seizing the Calculator.** This is what **U3** ("the row
+PICKS") actually means; **U9** (Browse stays greyed) is untouched, because
+browsing to a *file* is still `Results ▸ Select…`'s job.
+
+**U17 — WHEN THE HOLDING ASE-L CLOSES, FALL BACK** to another open ASE-L session
+and **say so**. A silent re-point is not acceptable; the sentence names the new
+source.
+
+**U18 — U10 STANDS.** Embedded graph elements (`autoload=` graph rects) keep
+working and keep drawing exactly as they do. **The Calculator has nothing to do
+with them** — it supports Cadence-world results only. The earlier statement
+*"we do not support the old xschem where a schematic can have a graph element"*
+scopes the **Calculator's sources**; it is not a request to disable a drawing
+feature.
+
+**U8 survives unchanged.** Picking in the Calculator re-points *who holds the
+Calculator*; it does not change what a waveform viewer is showing.
+
+---
+
 ## 18. What is NOT here
 
 **Five paths adopt a raw and will still bypass `results::select` after this

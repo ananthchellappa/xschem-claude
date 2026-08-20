@@ -66,7 +66,7 @@ in the row that caused it.
 | issue | item | status |
 |---|---|---|
 | 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
-| 0516 | filed by item 10 | **OPEN, BLOCKED ON THE USER** — a result selected through `Results ▸ Select…`'s `here` arm is invisible to the Calculator. Two items of this batch, each correct on its own terms. See the closeout below. |
+| 0516 | filed by item 10 | **RULED 2026-08-20** (spec §17.3, U13-U18); open, awaiting a follow-on batch. Was: **BLOCKED ON THE USER** — a result selected through `Results ▸ Select…`'s `here` arm is invisible to the Calculator. Two items of this batch, each correct on its own terms. See the closeout below. |
 | 0515 | filed by item 5 | **OPEN** — the Location bar's refused context switch says nothing at all. Ruled deliberately unfixed (T-C wins over T-J on this arm). |
 | 0514 | filed by item 4 | **OPEN** — no Tcl accessor for `raw->schname`, so R804's sentence cannot name the schematic a result was read against. Message-quality only; pre-existing. |
 | 0513 | filed by item 3 | **OPEN** — `raw switch`'s OP publish gate reads the PREVIOUS database. Pre-dates the batch, measured on a pristine binary. Not fixed: R111 binds. |
@@ -173,7 +173,7 @@ with `ls -la ~/.xschem`, never assumed from a green suite.
 | Eyeball debts | **5**, all unpaid. `owed.sh list` |
 | User data lost | `~/.xschem/raw_history` (item 4, unrecoverable) and five weeks of `~/.xschem/recent_files` (item 5). See the Damage section. |
 
-## The one thing that needs the user, not the driver
+## RESOLVED 2026-08-20 — the one thing that needed the user
 
 **Issue 0516.** Item 7's **R407a** gave the Select dialog a `here` arm — with no
 viewer in the session it selects into the current context — and justified it
@@ -187,7 +187,7 @@ tree, A/B'd against `HEAD:src/calculator.tcl`.
 Both crews were right and neither could fix it: **U6 is a user ruling and a crew
 agent may not overturn one.** Nor may the driver.
 
-**Driver's reading, for the user to accept or reject.** U6's stated purpose is
+**Driver's reading, put to the user and OVERTAKEN by a better answer — kept because it is what was proposed.** U6's stated purpose is
 that the Calculator *"must never read a raw that a **legacy path** put into a
 schematic window"* — that is about **provenance**, not location. A selection made
 through `results::select` is the opposite of a legacy path; it is R303's one
@@ -205,3 +205,19 @@ so Select refuses without a viewer — is cheaper but breaks the pre-run case it
   which analysis it came from. Own spec, own batch, **blocked on 0512**.
 - **R605's clear-then-read order** on the restore path.
 - **0511, 0513, 0514, 0515** — each filed with a reason for staying open.
+
+### The user's answer — the model was wrong on BOTH sides
+
+Neither arm was right. **The ASE-L session owns the result** (U13), so the
+question "viewer window or schematic window?" had no correct answer. Six rulings
+in `doc/claude/specs/results_selection.md` **§17.3** and in `DECISIONS.md` §D.
+
+U6 is **not** overturned. It is **superseded** by U13, which puts the result
+somewhere U6 never objected to: U6 was about provenance — never read a raw a
+*legacy path* dropped into a schematic window — and a session-owned result is
+not that.
+
+**This is rework for a follow-on batch, not a patch to this one:** item 10's
+lookup, item 7's `here` arm (measure whether it still has a case), the Results
+row's box becoming a source-labelled drop-down, and the seize/follow/fall-back
+rules. Nothing starts until the five look debts are drained.

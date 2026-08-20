@@ -107,3 +107,27 @@ start the read-side migration.
 - **A deliverable made of pixels may not be verdicted `[x]`.** It is `[E]`, and
   it owes a `tests/headless/owed.sh add look` entry.
 - **Commit when green; NEVER push.**
+
+---
+
+## D. Post-batch — the ownership rulings (2026-08-20)
+
+Taken after issue **0516** showed items 7 and 10 colliding. Full text:
+`doc/claude/specs/results_selection.md` **§17.3**. Summary, binding on any
+follow-on batch:
+
+| # | ruling |
+|---|---|
+| **U13** | **The ASE-L session owns the result** — not a viewer window, not a schematic window. Item 10's `calc::viewer_tokens` walk is the wrong lookup. |
+| **U14** | **The Calculator is SEIZED, not shared.** One per process; `Tools ▸ Calculator` launches or seizes. **Only the holder is followed live.** |
+| **U15** | **The door decides.** ASE-L → its result (seizes). Viewer → its hand-loaded result, *even when an unrelated ASE-L exists*. Schematic → the ASE-L bound to its `(lib, cell, view)`, which `ase::session_for_design` already resolves uniquely. |
+| **U16** | **The Results row's path box becomes the drop-down** — still three widgets in the same order. Lists everything loaded, labelled by source; picking another session's result **is** that session seizing the Calculator. Makes U3 real; U9 untouched. |
+| **U17** | **Holding ASE-L closes → fall back** to another open ASE-L, **and say so**. |
+| **U18** | **U10 stands.** `autoload=` graph rects keep drawing; the Calculator simply has nothing to do with them. |
+
+**U8 survives**: picking in the Calculator re-points who holds it, not what a
+viewer shows.
+
+**Rework this implies** — a follow-on batch, not a patch: item 10's lookup, item
+7's `here` arm (measure whether it still has a case at all once U13 holds), the
+Results row widget, and the source-labelled list.

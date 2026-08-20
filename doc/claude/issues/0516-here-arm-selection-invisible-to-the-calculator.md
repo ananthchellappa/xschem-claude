@@ -1,6 +1,14 @@
 # 0516 — a result selected through `Results ▸ Select…`'s `here` arm is invisible to the Calculator
 
-**Status:** OPEN — filed 2026-08-20 by the results batch item-10 fixer round.
+**Status:** **RULED 2026-08-20 by the user — OPEN, awaiting implementation.**
+The collision is real and the resolution is neither of the two arms: **the model
+was wrong on both sides.** The ASE-L *session* owns the result, so neither
+"the viewer windows" (item 10) nor "the current context" (item 7's `here` arm)
+is the right place to look. Six rulings, `doc/claude/specs/results_selection.md`
+**§17.3** (U13-U18). U6 is not overturned — it is superseded by U13, which puts
+the result somewhere U6 never objected to.
+
+Filed 2026-08-20 by the results batch item-10 fixer round.
 **Branch:** `fluid-editing`. **Filed at the next free number ≥ 0500.**
 **Specs:** `doc/claude/specs/results_selection.md` R407a (§6.1), R503f (§7.1a),
 §17 decisions 6 and 7 (U6, U7).
