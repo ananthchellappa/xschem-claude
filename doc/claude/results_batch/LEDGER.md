@@ -55,7 +55,7 @@ in the row that caused it.
 | 3 | `raw-select-subverb` | `[x]` | `8377532a` | 215 | 38 | 10 | no | `raw select` + `raw non_spice` shipped; **R110d** fixes `new_rawfile()`'s third copy. 10 rulings; **R301b overturns the brief — `<type>` is OPTIONAL**. 0513 filed w/ reproducer. Audit 332/15/0/0 of 347, **no status moved**. |
 | 4 | `results-select-orchestrator` | `[x]` | `2b138685` | 296 | 41 | 7 | **see below** | `results::select` shipped; 13 confirmed findings all reproduced+fixed, none unconfirmed. 0216 shape fixed for this path. **An ad-hoc drive destroyed the user's `~/.xschem/raw_history`.** Audit 332/15/0/0 of 347, **no status moved**. |
 | 5 | `rawbar-load-reexpress` | `[x]` | `f22cade2` | 532 | 27 | 8 | **see below** | R501a/b/c into spec §7.1; five refusal arms measured and pinned; T-J half ruled → **0515** filed OPEN (refused ctx switch says nothing). **Damaged `~/.xschem/recent_files`; repaired from a 5-week-stale `.bak`.** Audit 332/15/0/0 of 347, **no status moved**. |
-| 6 | `persistence-write-side` | | | | | | | |
+| 6 | `persistence-write-side` | `[x]` | `e9e5389d` | 497 | 29 | 7 | **look owed** | Slot finally WRITTEN. R602a-f/R604a/R605a into spec §8.1; **R602a overturns item 4's own description of its seam** and §5.2 was corrected in place. T-E made non-skippable three ways. Audit **no status moved**. |
 | 7 | `results-select-dialog` | | | | | | | |
 | 8 | `waves-menu-cadence-gate` | | | | | | | |
 | 9 | `kill-second-rawinfo-parser` | | | | | | | |
@@ -141,3 +141,11 @@ path. Nothing in the repo, in `$HOME`, or in any worktree holds the old list.
 item 5). Both say the same thing: a hand-written drive is not exempt from the
 test file's shims, and *"no droppings in `$HOME`"* is a claim to be **checked**
 with `ls -la ~/.xschem`, never assumed from a green suite.
+
+## Driver routine, per item
+
+1. `homeguard.sh snap pre-item<N>` before launching.
+2. Launch `Workflow({scriptPath: 'doc/claude/results_batch/item_pipeline.js', args: {...}})`, then **END THE TURN**. Do not poll.
+3. On the completion notification: `homeguard.sh check pre-item<N>` — restore `geometry` from the snap, investigate anything else.
+4. Read the receipt. Append the row here, plus any hand-off, issue or `owed.sh look` debt.
+5. Snap, launch the next item.
