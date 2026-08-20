@@ -52,7 +52,7 @@ in the row that caused it.
 |---|------|---------|--------|--------|-----------|-------|---------|------|
 | 1 | `read-restamp-0509` | `[x]` | `7aa76dca` | 74 | 21 | 7 | no | R110 + **R110a/b/c** ruled into spec §3.1; S1/S2 red sets disjoint ⇒ both twice-written arms proven; audit 332/15/0/0 of 347, **no status moved**. |
 | 2 | `results-tcl-resolver` | `[x]` | `91c6eb9a` | 139 | 34 | 11 | no | `src/results.tcl` 379 lines, sourced + in `Makefile.in` install. Scope fence held (no mutator). R201a-e/R304a-b/R305a-b/R803a/R805a ruled into spec. Audit 332/15/0/0 of 347, **no status moved**. |
-| 3 | `raw-select-subverb` | | | | | | | |
+| 3 | `raw-select-subverb` | `[x]` | `8377532a` | 215 | 38 | 10 | no | `raw select` + `raw non_spice` shipped; **R110d** fixes `new_rawfile()`'s third copy. 10 rulings; **R301b overturns the brief — `<type>` is OPTIONAL**. 0513 filed w/ reproducer. Audit 332/15/0/0 of 347, **no status moved**. |
 | 4 | `results-select-orchestrator` | | | | | | | |
 | 5 | `rawbar-load-reexpress` | | | | | | | |
 | 6 | `persistence-write-side` | | | | | | | |
@@ -66,6 +66,7 @@ in the row that caused it.
 | issue | item | status |
 |---|---|---|
 | 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
+| 0513 | filed by item 3 | **OPEN** — `raw switch`'s OP publish gate reads the PREVIOUS database. Pre-dates the batch, measured on a pristine binary. Not fixed: R111 binds. |
 | 0508 | 8 | open |
 | 0507 | 9 | open |
 | 0216 (shape only) | 4 | open |
@@ -103,6 +104,9 @@ direction, belongs to the item that moved it.
 
 | from | what | disposition |
 |---|---|---|
+| item 3 §2 | **Two spellings of one path are TWO RUNS** — `w/an.raw` and `w/../w/an.raw` both read, two slots; the engine dedupes by `strcmp`. `~` expansion is the only normalisation the C verb does. | **`file normalize` is item 4's Tcl-side call.** Named in item 4's brief. |
+| item 3 §5 | Six reviewer not-proven items carried as known and unfixed: `xschem raw_query select` MUTATES (pre-existing `argv[1]` aliasing, as `raw_query read`/`clear`/`new` already do); `_is_result_type Table` answers 1 where old Tcl answered 0 (latent, no slot carries an uppercase token); `raw select {}` returns 0 rather than the no-file error and extra positional args are ignored; `save.c`'s `if(type && !type[0]) type = NULL;` is dead so citing it as the L6 guard is overstated; `developer_info.html`'s `raw what = …` list is stale (already was, for `is_digital`/`casemode`/`vcd_read`). | Left standing. Re-raise only with a reproducer. |
+| item 3 §5 | **SEL195 pins today's buggy `raw switch` behaviour on purpose and WILL INVERT when 0513 is fixed**; its own comment says so. Group AB writes `~/.xschem_results_select_<pid>/` under `$HOME` and removes it — outside where `full_audit.sh`'s TREE check can see it, because `~` cannot be redirected into `test_scratch`. | Known. Any later item touching `raw switch` must expect SEL195 to move. |
 | item 1 §5 | **A THIRD verbatim copy of the "file found" branch exists in `new_rawfile()` (`src/save.c:1570-1577`) and does not re-stamp.** Different function, different contract (`0` = already loaded); no reproducer was built either way, and 0509 closed naming it. | **Handed to item 3.** Its crew is already inside `extra_rawfile()`'s neighbourhood: MEASURE it, then either fix it or file an issue with a real reproducer. Do not file a speculative one. |
 | item 2 §2 R305b | **`raw_type_is_non_spice()` (`src/save.c:1622`) has no Tcl verb**, so `results::current`'s R102 gate hard-codes the one reader token `table` beside its C predicate. `xschem raw is_digital` answers the reader table's *other* column and returns 0 for `table` on purpose. | **Offered to item 3** as a bounded extra: add `xschem raw non_spice <type>` while in the same C file, then let `results.tcl` ask the engine. The crew may decline with evidence. |
 | item 2 §5 | **`results::list` shadows Tcl's `list` inside the namespace** (documented in the header; every construction written `::list`). And `resolve` does not normalize `..` while `list` returns the engine's verbatim spelling — the engine dedupes by `strcmp`. | **Both are item 4's hazard**, since "is this path already loaded?" sits on top of the second one. Named in item 4's brief. |

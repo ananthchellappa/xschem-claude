@@ -179,6 +179,13 @@ Semantics, in order (R301):
    *navigate*. `<type>` is therefore **required** here, or resolve it from
    `results::list` first and pass the slot **index** — the switch-by-name loop
    refuses without it.
+
+   > **SUPERSEDED by ruling R301b (item 3, `8377532a`).** `<type>` is
+   > **OPTIONAL**: the verb routes through the `what == 1` dedupe arm, which
+   > matches on filename alone, so L10's by-name refusal never applies. An
+   > explicit type still works — R301b is a superset. There is **no by-index
+   > form** (`raw select 0` → 0). The wrong text is kept in place because it is
+   > what the item was briefed with, and R301b was measured against it.
 2. otherwise → `extra_rawfile(1, …)` (read + make current + stamp).
 3. **Never clear.** F7.
 
