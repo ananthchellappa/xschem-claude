@@ -26,7 +26,7 @@
 # status hands the caller something it can still act on.
 #
 # THE MODEL IS ALREADY IN THE TREE: `ase::ui::viewer_restore`
-# (src/ase_window.tcl:3562) implements the `ok` and `invalid` arms by hand —
+# (src/ase_window.tcl:4441) implements the `ok` and `invalid` arms by hand —
 # absolute-ise against the rundir, `file isfile`, else `ase::last_rawfile`. That
 # is what this proc generalises, and item 6 re-expresses viewer_restore on top
 # of it rather than the other way round.
@@ -42,7 +42,7 @@
 #   ase::raw_content_verdict    src/ase.tcl:2794           (the ONLY content check)
 #   ase::last_rawfile           src/ase.tcl:1952
 #   ase::rundir                 src/ase.tcl:1643
-#   ase::ui::viewer_restore     src/ase_window.tcl:3562
+#   ase::ui::viewer_restore     src/ase_window.tcl:4441
 #   sch_waves_loaded()          src/draw.c:2825   -> `xschem raw loaded`,
 #                               src/scheduler.c:10494
 #
@@ -135,7 +135,7 @@ proc results::resolve {state} {
 
   # relative paths resolve against the rundir — R602's saved form, and
   # `ase::ui::viewer_restore`'s existing shape -- which, as of results batch
-  # item 6, IS this proc: viewer_restore (src/ase_window.tcl:3562) was
+  # item 6, IS this proc: viewer_restore (src/ase_window.tcl:4441) was
   # re-expressed onto it, so the model and its copy are one again (R604).
   set abs $named
   if {[catch {file pathtype $abs} pt]} { set pt relative }

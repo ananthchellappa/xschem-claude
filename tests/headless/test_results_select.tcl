@@ -625,7 +625,7 @@ eqcheck SEL87-L-default-derived-must-exist [list [dg $d2 status] [dg $d2 path]] 
 set o1 [pcall results::resolve [dict create rawfile $tmp/an.raw]]
 eqcheck SEL88-L-ok-absolute           [list [dg $o1 status] [dg $o1 path]] [list ok $tmp/an.raw]
 # R602's saved form: a RELATIVE rawfile is resolved against the rundir. This is
-# the shape ase::ui::viewer_restore already implements by hand (ase_window.tcl:3477-3484).
+# the shape ase::ui::viewer_restore already implements by hand (ase_window.tcl:4356-4363).
 set o2 [pcall results::resolve [dict create rawfile an.raw rundir $tmp]]
 eqcheck SEL89-L-ok-relative-vs-rundir [list [dg $o2 status] [dg $o2 path]] [list ok [file join $tmp an.raw]]
 eqcheck SEL90-L-ok-sentence-names-the-file \

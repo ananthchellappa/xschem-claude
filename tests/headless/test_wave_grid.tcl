@@ -348,8 +348,16 @@ foreach p {grid_toggle sharedx_toggle} {
 # count cannot see it and neither could an audit that only read wave_viewer.tcl.
 set aw [file join $repo src ase_window.tcl]
 set fp [open $aw r]; set asrc [read $fp]; close $fp
-check "GX9 ase_window.tcl has exactly the two known regenerate sites" \
-  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 2
+# ⚠ RESTATED 2026-08-20 (results batch item 7), from TWO sites to THREE. The
+# expectation genuinely changed: `ase::ui::rsel_commit` -- the `Results >
+# Select…` dialog's one commit path -- replaces the DATA of the session's
+# viewer, so it is a regenerate site of exactly the kind this check exists to
+# police, and it owes the same 0194 fold. The check keeps its subject (every
+# regenerate site in this file is a KNOWN one) and gains the new site's own
+# fold-order leg below, so raising the count cannot be a way of getting a third
+# unaudited site past it.
+check "GX9 ase_window.tcl has exactly the three known regenerate sites" \
+  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 3
 # auto_plot's no-plottable-rows branch clears the AUTO strip's traces and
 # regenerates — every other strip carries forward, so it owes the fold, and it
 # must take it BEFORE clear_graph_traces (the model mutation).
@@ -363,6 +371,20 @@ check_true "GX9 auto_plot folds before it clears the auto strip" \
 check_true "GX9 the re-plot path still regenerates after attach_raw" \
   [expr {[string first {wviewer::attach_raw $key} $gx_ap] <
          [string last {wviewer::regenerate $key} $gx_ap]}]
+# THE THIRD SITE (results batch item 7): the Select dialog's commit replaces the
+# viewer's data, so it takes the fold BEFORE the door (`results::select`) and
+# regenerates AFTER it -- same order, same reason, and additionally inside the
+# context loan (spec results_selection.md R407f), which is why the regenerate
+# sits before the release rather than after it.
+set gx_rs [wvproc_body $asrc ase::ui::rsel_commit]
+check_true "GX9 the Select dialog folds before the door and regenerates after" \
+  [expr {[string first {wviewer::capture_live_view_state $key} $gx_rs] >= 0 &&
+         [string first {wviewer::capture_live_view_state $key} $gx_rs] <
+         [string first {results::select $path} $gx_rs] &&
+         [string first {results::select $path} $gx_rs] <
+         [string first {wviewer::regenerate $key} $gx_rs] &&
+         [string first {wviewer::regenerate $key} $gx_rs] <
+         [string last {ase::ui::rsel_release $key $b} $gx_rs]}]
 
 # ============================================================================
 # GH* — the USER GUIDE's shortcut table must match the shipped bindings

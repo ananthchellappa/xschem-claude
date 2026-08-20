@@ -76,7 +76,7 @@ deterministic path.
 | A safe adopt sequence | `ase::attach_dbs {rawfile sim_type {vcdfiles {}}}`, `src/ase.tcl:2866` |
 | A shipped path-picker with a 20-deep persisted MRU | the Location bar: `wviewer::rawbar_load {token path}`, `src/wave_viewer.tcl:8583`; MRU `wviewer::rawhist_*`, `:8185-8325`, disk `$USER_CONF_DIR/raw_history` |
 | A file chooser filtered on `.raw` | `select_raw {{parent {.}}}`, `src/xschem.tcl:16672` — **the only `.raw` filetype filter in the tree** |
-| A persistence slot for the choice | ASE state `viewer.rawfile`, restored by `ase::ui::viewer_restore`, `src/ase_window.tcl:3562-3638` |
+| A persistence slot for the choice | ASE state `viewer.rawfile`, restored by `ase::ui::viewer_restore`, `src/ase_window.tcl:4441-4517` |
 | Tests that already drive that slot | `tests/headless/test_ase_persist.tcl` **G11** (G9 pins the open-gate, G10 the missing-raw fallback); `tests/headless/test_wave_crossdb_trace.tcl` `xs_state` (`:1000-1012`) |
 | A "which configured row is the one" selector idiom | `sim($tool,default)` radiobuttons, `src/xschem.tcl:5042-5170` |
 
@@ -103,7 +103,7 @@ about run identity.
 | Per-call `?result` / `?resultsDir` override **without** changing the selection | **yes**, per trace — the `%<rawfile>` suffix is exactly this | `references/viva_research_raw.json` research[5].items[53]; `src/draw.c` node walkers |
 | `Edit ▸ Component Display ▸ Set Simulation Data Directory` — tell a *schematic* whose results are its | **absent as a UI** — the stamp can be re-pointed only by `xschem set raw_level <n>` or `xschem annotate_op <file> <level>`, neither framed as "whose results are these", and both bounded to a level already on the current stack | re-stamp `src/scheduler.c:12292-12293`, `:2432-2433`; gate `sch_waves_loaded()` `src/draw.c:2825-2840` |
 | Results **Display Window** for `Results ▸ Print` | **absent** (Calculator §9's Table, R606, is the nearest planned thing) | `references/viva_research_raw.json` research[5].items[33] |
-| A selection survives a session save/restore | **was half-built** — the slot was read, resolved, existence-gated and tested while **nothing ever wrote it**; **BUILT by item 6** (§8.1) | read `src/ase_window.tcl:3562-3638`; writer `src/wave_viewer.tcl:4101` (hardcoded `rawfile {}` until 2026-08-19) |
+| A selection survives a session save/restore | **was half-built** — the slot was read, resolved, existence-gated and tested while **nothing ever wrote it**; **BUILT by item 6** (§8.1) | read `src/ase_window.tcl:4441-4517`; writer `src/wave_viewer.tcl:4101` (hardcoded `rawfile {}` until 2026-08-19) |
 
 **Score: xschem has the machinery and none of the concept.** Every mechanical
 primitive Cadence's Select rests on is shipped and tested — a multi-database
@@ -448,7 +448,7 @@ falls back silently to the derived path and says which happened — this is exac
 `ase::ui::viewer_restore`'s existing shape (absolute-ise → `file isfile` → else
 `ase::last_rawfile`), which is the model `results::resolve` copies. **That
 hand-written shape is GONE as of item 6** — `viewer_restore`
-(`src/ase_window.tcl:3562`) now asks this resolver, so the model and its copy
+(`src/ase_window.tcl:4441`) now asks this resolver, so the model and its copy
 are one proc again (R604, §8.1). The resolver itself is a new **pure** proc in
 `src/results.tcl` (R204), and `viewer_restore` is re-expressed on top of it.
 
@@ -485,7 +485,7 @@ which kills R204's purity claim and makes the proc untestable without a live
 session and a backend hook. And *"the state"* was already ambiguous between two
 dicts: the saved `rawfile` lives in the **viewer** sub-dict
 (`wviewer::snapshot`, `src/wave_viewer.tcl:4101`), not the state root, which is
-why `ase::ui::viewer_restore` (`src/ase_window.tcl:3562`) reads `$vd` for the
+why `ase::ui::viewer_restore` (`src/ase_window.tcl:4441`) reads `$vd` for the
 path and `$st` for the rundir. A caller holding both passes both; a caller
 holding only a path passes `[dict create rawfile $p]`.
 
@@ -1018,6 +1018,231 @@ runs means selecting twice.
 window it acts on that session's viewer context via the borrow idiom (F6); a
 refused ticket is reported as such, never as "no results" (F6, R305).
 
+### 6.1 RULINGS — the dialog's exact shape (item 7, 2026-08-20)
+
+Taken by the crew per `doc/claude/results_batch/DECISIONS.md` §C: each was
+genuinely open in §6 above, there is no human in the loop, and the window could
+not be written without answering it. Evidence for every one of them is in
+`doc/claude/results_batch/receipts/07-results-select-dialog.md`, and each is
+pinned by a check with a sabotage that reds it.
+
+**R407a — WHICH CONTEXT THE DIALOG READS: the session's viewer when it has one,
+the current one when it has not, and a refusal is reported as a refusal.**
+The registry is per-`Xschem_ctx` (F2), so "the loaded results" is only a
+question once you have said *whose*. An ASE session's results live in its
+**waveform viewer's** context: `wviewer::attach_raw` (`src/wave_viewer.tcl:3888`)
+does `switch_ctx $token` before `ase::attach_dbs` reads, and the viewer token
+**is** the session key. Three arms:
+
+| arm | when | what the dialog does |
+|---|---|---|
+| `viewer` | the session has a viewer window | **borrows** it — `enter_ctx $key 1` / `leave_ctx`, the 0173 loan `wviewer::selected_rawfile` (`:4072`) already uses — for the read **and** for the select |
+| `here` | it has none | reads the **current** context and says so, in the `Loaded` region's own title (`Loaded — current window`) |
+| refused | the ticket came back refused | **reports the refusal** (R407), never an empty list |
+
+A loan and not `rawbar_load`'s move, because a browsing dialog belongs to the
+ASE window and must not leave the user's context somewhere else. Refusing to
+work at all in the `here` arm was rejected: *"evaluate against last night's
+raw"* happens **before** a run, which is exactly when no viewer exists.
+Pinned: SEL365 (here), SEL368/SEL369 (refused — the sentence is asserted for
+what it must **not** say, "no results", as well as for what it must),
+SEL410 (the loan really is a loan: `current_win_path` is unchanged by both the
+read and the select, with the viewer open and the context standing elsewhere).
+
+**R407b — the sentence goes to the ASE channel AND into the dialog's Status
+region, and it is ONE sentence, composed once.** `results::select` is called
+with `host ase` (R802's channel for this host) and the dict it returns carries
+the same `msg` into the Status label. This is not R604a's "two sentences for one
+event": it is one string, in the place the user is looking and in the session's
+log. R802a anticipated exactly this reader — *"the sentence is still in the
+returned `msg`, which is what a headless caller and the dialog's Status region
+both read"*. Pinned: SEL371 (the Status text **is** the door's), SEL375 (`host
+ase` is named outright).
+
+**R407b.1 — CORRECTED IN THE FIXER ROUND (item 7). The door's sentence is the
+LAST word on the gesture, and no debounced preview may land on top of it.** The
+Path entry binds `<Return>` to `rsel_commit` and `<KeyRelease>` to the 250 ms
+debounced preview, and **one physical Return is a KeyPress *and* a
+KeyRelease** — so a quarter of a second after every Return-commit the resolver's
+*"Using an.raw."* replaced the door's *"Selected an.raw (tran)."*, in the Status
+region and in the `dlg($key,rselstatus)` record. On a **refused** Return it was
+worse than cosmetic: the refusal sentence was erased and the user was left
+reading a verdict that says the opposite of what happened. Two races, two
+closures, and neither alone is enough: **the keystrokes that COMMIT schedule
+nothing** (`Return`/`KP_Enter`/`Escape` are the dialog's own gestures, not edits
+to the path — the binding passes `%K` and `rsel_preview_soon` skips them), and
+**`rsel_commit` cancels any preview already pending** from an earlier keystroke,
+which the binding guard cannot reach because that timer was set before it ran.
+Pinned SEL415 (a real `<KeyPress-Return>` commits) and SEL412 (the release half
+schedules nothing, a pending timer is cancelled by the commit, and the sentence
+still stands 400 ms later — the race is FORCED, not hoped for).
+
+**R407c — THE TYPE RULE, and the answer to the question item 4 left open.**
+Item 4's receipt §5 recorded that a **typeless** select of a VCD or a table
+refuses, because with no type the C reader dispatches to the spice parser
+(`no "<unspecified>" analysis`, `src/save.c:2110`) — and the MRU and the
+persistence slot store a path and nothing else, so a non-spice database that
+reaches `Recent` could never be re-selected. Item 7 is the first caller that can
+put such an entry in front of a user. **Ruled in three clauses:**
+
+1. **A `Loaded` row carries its own type and that type is what is passed** — the
+   engine's own token, from `results::list`, **per slot**. One file read as `dc`
+   and as `tran` is two rows and one result (U11), so a by-path lookup would
+   select the *wrong analysis of the right file*. Pinned SEL372 on a two-plot
+   `multi.raw` where the by-path answer (`dc`) differs from the row's (`tran`);
+   SEL409 measures that fixture.
+2. **A `Recent` or typed path that normalises onto a loaded slot inherits that
+   slot's type** — so a VCD stays re-selectable by name for exactly as long as
+   it is a loaded database, which is the whole window in which R102 calls it one.
+   Pinned SEL367, SEL373.
+3. **Otherwise no type is passed and none is invented.** The engine then means
+   "first analysis found in the file", which is right for the spice raws that
+   are almost all of the MRU, and refuses a non-spice file that is not loaded —
+   reported by `results::select`'s own refusal sentence (T-D). Pinned SEL374.
+
+`<NULL>` is mapped to the empty type at every hand-off (`rsel_type_norm`): it is
+`xschem raw info`'s **rendering** of a NULL `sim_type`, and passing it on would
+ask the engine for an analysis literally called `<NULL>` — no reader knows it,
+so the verb would fall through to a read with a bogus type. Pinned SEL360,
+SEL364.
+
+**Two alternatives were considered and rejected, and the reasons are the
+ruling's evidence.** *Sniffing the type from the extension* (`.vcd` → `vcd`) is
+a guess dressed as knowledge: `raw_reader_table[]` (`src/save.c:1660`) is keyed
+by a declared token, never by a filename, `table` databases have no
+distinguishing extension, and a **wrong** guess is worse than none — an explicit
+non-spice type makes `raw_select()` refuse a file that is loaded under another
+analysis (R301b's guard, `:2466`), breaking the case clause 2 gets right.
+*Showing such an entry disabled with a reason* needs the same sniff, so it would
+either be wrong or would grey out every `Recent` entry that is not currently
+loaded — most of them, and every spice one would have worked. **The residual
+case is one MRU entry of a digital database that is no longer loaded, refused
+with a sentence**, which is inside §16's declared non-goal rather than a gap
+this dialog opened.
+
+**R407d — one armed candidate, and the Path entry is its readout.** Picking a
+row fills the Path entry with that row's full path and records the row's own
+type; `Select` and double-click act on the armed row while the entry still shows
+it, and on the entry's text once it has been edited (a different path is a
+different candidate, and its type is re-derived by clause 2). So the two lists
+and the Path region can never disagree about what is about to happen, and there
+is ONE commit path for both gestures — `searchbar_fire`'s rule, so no route can
+apply a policy another route skips. Pinned SEL403 (a pick fills the entry),
+SEL402 (double-click reaches the commit).
+
+**R407e — the resolver inputs the dialog supplies, and the two it refuses to.**
+It fills `rawfile`, `rundir` (from the state, when it names one) and `netlist`.
+The netlist input is what enables the **mtime** half of `stale` — *"older than
+the netlist it was produced from"*, the one verdict a user cannot reach by
+looking at a file list — and it is derived **only where deriving it writes
+nothing**: `ase::netlist` (`src/ase.tcl:1663`) is a regenerator (it deletes the
+artifact, re-netlists, can `xschem load` the design), so the name it writes,
+`<rundir>/<cell>.spice` (`:1691`), is composed from the state's **own** `rundir`
+and passed only when that file already exists.
+
+**`key` is deliberately NOT passed.** R201a says a `key` supplies `derived` via
+`ase::last_rawfile`, which reaches the ngspice backend's `raw_file` hook
+(`:4777`) → **`ase::rundir`**, the create-and-default helper R602e was ruled
+about: it `file mkdir`s, and for an empty `rundir` it creates
+`$USER_CONF_DIR/simulations` and rewrites the global `::netlist_dir`. A preview
+fires on every row click, so passing `key` would make merely *looking* at a
+candidate create a directory and move a global. Second reason, independent:
+with no `derived` there is no fallback, and R407g means the dialog never takes
+one — a resolver answer promising a fall-back the dialog will refuse to perform
+would be a sentence that lies. Pinned SEL381/382/383 (which keys, and when),
+SEL384 (counted: zero `ase::rundir` and zero `ase::last_rawfile` calls, with the
+counters carrying their own positive term), SEL385 (the mtime half is really
+reached).
+
+**R407f — the redraw happens INSIDE the loan.** `wviewer::regenerate` goes
+through `with_edit`, which does its own `switch_ctx` and deliberately does not
+restore — right for `rawbar_load`, whose gesture belongs to the viewer window,
+wrong here. Run inside the bracket the switch is a no-op (we are already there)
+and `leave_ctx` still puts everything back. It runs **after** the door returns,
+so nothing redraws while the current-database pointer is moving (L7), and it is
+`catch`ed because a dialog may not throw (R801). `capture_live_view_state` runs
+**before** the door, issue 0194's rule: a selection replaces the DATA, not the
+plot, so the regenerate owes the fold. Pinned SEL410 — moving the regenerate
+outside the bracket reds it.
+
+**R407g — a candidate that is not a file is refused by the dialog, ahead of the
+door.** `results::resolve` would answer `invalid` and hand back the **derived**
+result (R202, *"never make a session unopenable"*), which is right for a session
+restore and wrong for a browsing gesture: the user picked *this* file and must
+not be given a different one. This is `wviewer::rawbar_load`'s ARM 3 (`:8640`)
+and its stated reasoning, in shape — *"its sentence is about a stored selection
+that has gone missing, and this one is about a typo in an entry box the user is
+looking at"*. Pinned SEL376 (the door is not called at all — the counter carries
+its positive term in the same drive) and SEL377 (the sentence names the file and
+says nothing was selected).
+
+**R407g.1 — CORRECTED IN THE FIXER ROUND (item 7). The guard asks the question
+the PREVIEW asks, which means it resolves a relative candidate against the
+`rundir` first.** As first shipped the guard was `file isfile $path` against the
+**process CWD**, while `rsel_preview` one region above it resolved the same
+candidate against the session's `rundir` (through `results::resolve`, whose
+own rule is *"relative paths resolve against the rundir"*). The engine keeps the
+spelling it was handed, so `xschem raw read an.raw tran` issued from inside a
+rundir puts a **relative** path in the registry and the `Loaded` list renders
+it — and that row previewed as *"Using an.raw."* and was then refused by
+`Select` with *"No such result file 'an.raw' — nothing was selected."*, while
+`results::select` handed the identical path **selected it**. The dialog's own
+preview and its own button contradicted each other on one candidate, and a row
+the `Loaded` list displays could not be selected from the `Loaded` list.
+R407g exists so the resolver's **derived fallback** cannot substitute a
+different file; it was never a licence to refuse files that are there. The
+resolution is a proc (`ase::ui::rsel_abs`) and the **original spelling is still
+what the door is handed** — R302a's "one spelling per run" is
+`results::_engine_spelling`'s ruling to make, not the dialog's. Clause (2)'s
+type lookup asks the resolved path for the same reason: `results::_same_path`
+normalises both sides against the CWD, so a relative candidate would otherwise
+match no loaded slot and be passed typeless. Pinned SEL411 (CWD deliberately
+**not** the rundir; the preview, the select and the resolved form asserted in
+one check). SEL376/SEL377 could not see this — they only ever feed the guard an
+**absolute** non-existent path, which is refused either way.
+
+**R407h — three statuses speak in the resolver's own words; `invalid` does
+not.** §10 requires the Status region to carry the resolver's verdict, and
+`default`, `ok` and `stale` are quoted **verbatim** — R805 fixes one form per
+status and R803a shortened them to `file tail` precisely so a one-line region
+could hold them. The two `invalid` sentences describe a **fall-back**, which
+R407g means will not happen, so the dialog says its own *"No such result file
+'x.raw'."* (or *"The result file 'x.raw' cannot be read."* for
+`reason unreadable`) instead. Same precedent as R407g. Pinned SEL386 (the three
+are byte-identical to `results::resolve`'s `msg`) and SEL387 (`invalid` is not
+quoted and promises no fallback).
+
+**R407i — CORRECTED IN THE FIXER ROUND (item 7). `rsel_close` takes ALL the
+per-window records, `rselstatus` included.** Its own header says a bare
+`destroy` *"would leave the per-window records behind"*, and it was leaving
+exactly one of them — the sentence — so a reopened dialog could be read back
+holding the verdict of a candidate from the window's previous life, before its
+first fill. Bounded (`ase::ui::close`'s `array unset dlg $key,*` sweeps it at
+session teardown), and closed anyway because the promise was written down.
+Pinned SEL407 and SEL414, both of which assert the record's presence **before**
+the dismiss in the same check, so its absence after is the close path running.
+
+**The controls are INVOKED, not read (the anti-vacuity rule, applied in the
+fixer round).** `-text` and a slave list prove a button is on screen; they prove
+nothing about what pressing it does. Retargeting `Select`'s `-command` at a
+command that does not exist, emptying `Close`'s, and deleting the
+`wm protocol WM_DELETE_WINDOW` line each left all 51 original checks green.
+Pinned SEL413 (`$w.btns.select invoke` really moves the current database and the
+dialog stays mapped), SEL414 (`$w.btns.close invoke` plus the `wm protocol`
+command) and SEL416 (R407c clause (1) driven through the **gesture** R406
+defines — a real `<<TreeviewSelect>>` on the `(tran)` row — because SEL372 arms
+by calling `rsel_arm` directly and so cannot see `rsel_pick` dropping the row's
+own type, which is U11's wrong analysis of the right file).
+
+**Where the dialog reaches into `results::` private surface, and why.**
+`results::_same_path` is called directly. "Are these two spellings the same
+file?" is ruled once, in R302a and R302h; a second copy of that predicate in
+`ase_window.tcl` would be a second place for the ruling to drift, and the drift
+would show up as a `Recent` entry marked "not loaded" while `results::select`
+lands on the slot it already has. A public alias in `src/results.tcl` was
+declined as a wider edit than item 7's fence allows. Named here rather than
+hidden.
+
 ---
 
 ## 7. The two surfaces that already select
@@ -1261,7 +1486,7 @@ invent a slot.** The read side is complete and covered — and as of item 6
 everything in this section is written in the tense of the seam as item 6 found
 it:
 
-- `ase::ui::viewer_restore` (`src/ase_window.tcl:3562-3638`) gates on
+- `ase::ui::viewer_restore` (`src/ase_window.tcl:4441-4517`) gates on
   `viewer.open eq 1`, takes `viewer.rawfile`, absolute-ises a relative value
   against `ase::rundir`, gates on `file isfile`, and falls back to
   `ase::last_rawfile` on any miss — i.e. it *already implements* §4's
@@ -1286,7 +1511,7 @@ when it is under it, absolute otherwise**, because G11 already proves the
 relative form round-trips and a relative path is what makes a state file
 movable. `snapshot` does not know the rundir, so either it is passed in or the
 relativisation happens in `ase::ui::viewer_snapshot`
-(`src/ase_window.tcl:3475-3484`), which does. Decide that in the item, not in
+(`src/ase_window.tcl:4354-4363`), which does. Decide that in the item, not in
 the patch. **RULED in §8.1: `ase::ui::viewer_snapshot` relativises (R602b), and
 the value it relativises is read from the ENGINE, not from a remembered
 selection (R602a).**
@@ -1301,7 +1526,7 @@ selection, and R705 is satisfied because the Calculator reads it live through
 **R604** A restored selection runs through the resolver (§4) exactly as a fresh
 one does, and its status is reported once, on restore, through `ase::echo`.
 `viewer_restore` already emits a sentence for the no-results case
-(`src/ase_window.tcl:3595-3597`); this extends that vocabulary rather than adding
+(`src/ase_window.tcl:4474-4476`); this extends that vocabulary rather than adding
 a channel.
 
 **R605** `wviewer::restore`'s inline attach block (`src/wave_viewer.tcl:4213-4246`)
@@ -1984,6 +2209,18 @@ new `xschem raw`-adjacent read it introduces — read-only, inside the 0173 loan
 head as a *design input* rather than a gap: because the run path does not come
 through the door, the persisted value is taken from the engine and not from a
 remembered selection.
+
+**Re-checked after item 7 (2026-08-20): the five-path list is STILL unchanged,
+and the dialog is a NEW caller that comes through the door rather than a sixth
+bypass.** `ase::ui::rsel_commit` reaches the engine only through
+`results::select`; every other engine call the dialog makes is a **read** —
+`results::list` (through `results::resolve`/`results::current`'s own reader),
+`xschem get current_win_path` inside the 0173 loan, and nothing else. Two things
+item 7 deliberately did **not** do, both of which would have widened this list:
+it does not call `xschem raw read`/`raw switch`/`raw select` itself, and it does
+not touch `ase::attach_dbs` (L8 — a run is not a selection). It also adds no
+persistence write of its own: R602a's engine-read at snapshot time already
+covers a dialog selection, because the dialog moves the engine.
 
 **Also not here:** the netlist-time and simulator-profile machinery
 (`doc/claude/specs/simulator_profiles.md`), which decides *how a run is

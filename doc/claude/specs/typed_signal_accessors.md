@@ -1051,8 +1051,8 @@ install, through one menu item whose name does not mention waveforms.
 **⚠ E19 — AND ONE STRING IS IN BOTH CLASSES AT ONCE.** An outputs row picked
 through `Outputs ▸ To Be Plotted ▸ Select On Design` is stored `{save 1 plot 1}`,
 so the **same** `sod_expr` string is `.save`d/`print`ed into the deck (E1d) *and*,
-after each run, handed by `ase::ui::auto_plot` (`src/ase_window.tcl:3919`; the
-per-row map at `:3969`, the add at `:3977`) to `wviewer::add_trace` — from which
+after each run, handed by `ase::ui::auto_plot` (`src/ase_window.tcl:4932`; the
+per-row map at `:4982`, the add at `:4990`) to `wviewer::add_trace` — from which
 `graph_props` writes it into a persisted `node=` (E11). **The E1p/E1d split is a
 split of *arms*, not of strings**, and this is the string that takes both.
 

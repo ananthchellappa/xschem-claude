@@ -75,7 +75,7 @@ were re-grepped for this plan.
 | `ase::raw_content_verdict` (the ONLY content check) | `src/ase.tcl:2794` |
 | `ase::attach_dbs` (the run path — out of scope, §18) | `:2866` |
 | `ase::last_rawfile` · `ase::rundir` · `ase::echo` | `:1952` · `:1643` · `:138` |
-| `ase::ui::viewer_snapshot` · `ase::ui::viewer_restore` | `src/ase_window.tcl:3451` · `:3472` |
+| `ase::ui::viewer_snapshot` · `ase::ui::viewer_restore` | `src/ase_window.tcl:4358` · `:4441` |
 | ASE-L Results menu (2 adds, **no separator today**) | `src/ase_window.tcl:526-535` |
 | `select_raw` (only `.raw` filetype filter in the tree) | `src/xschem.tcl:16672` |
 | `load_raw` · `proc waves` | `:16687` · `:6373` |
@@ -257,9 +257,9 @@ slot.**
   it, absolute otherwise** (R602) — G11 already proves the relative form
   round-trips, and a relative path is what makes a state file movable.
   `snapshot` does not know the rundir, so either pass it in or relativise in
-  `ase::ui::viewer_snapshot` (`src/ase_window.tcl:3451`), which does. **Decide
+  `ase::ui::viewer_snapshot` (`src/ase_window.tcl:4358`), which does. **Decide
   that in the item, not in the patch**, and say which in the receipt. The
-  build-order comment at `:3905` names `rawfile {}` too — update it.
+  build-order comment at `:4477` names `rawfile {}` too — update it.
 - Re-express `ase::ui::viewer_restore` (`:3472-3504`) on `results::resolve`. It
   *already implements* §4's `ok`/`invalid` arms by hand (absolute-ise → `file
   isfile` → else `ase::last_rawfile`); that is the model, not a rewrite target.

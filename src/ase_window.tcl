@@ -525,6 +525,24 @@ proc ase::ui::build {key top} {
   # disabled (spec: "Menu entries may exist disabled").
   menu $top.mb.results -tearoff 0
   $top.mb add cascade -label Results -menu $top.mb.results
+  # RESULTS BATCH item 7 (R401): `Select\u2026` is the door onto
+  # `results::select` -- ABOVE Direct Plot, because choosing WHICH result you
+  # are working against precedes plotting from it, and separated because it
+  # acts on the session's result binding while everything below it acts on the
+  # result already bound. The menu had no separator before this entry.
+  #
+  # ⚠ HAND-BUILT, AND NO actions.csv ROW IS NEEDED. ASE-L's menubar is plain Tk
+  # (only the main File menu is generated from the action table, via
+  # build_menu_from_table in xschem.tcl); a KEY CHORD would need a csv row AND
+  # an action_registry[] entry in callback.c, and spec section 16 / D8 give v1
+  # no chord.
+  #
+  # ⚠ ASE-L ONLY (user ruling U5) and NO CASCADE IS ADDED TO THE WAVEFORM
+  # VIEWER'S MENUBAR (R504/D12) -- tests/headless/test_wave_viewer.tcl G2
+  # freezes that cascade set at {File View Graph Cursors Options}.
+  $top.mb.results add command -label "Select\u2026" \
+    -command [list ase::ui::rsel_dialog $key]
+  $top.mb.results add separator
   $top.mb.results add command -label {Direct Plot} \
     -command [list ase::ui::direct_plot $key]
   menu $top.mb.results.annotate -tearoff 0
@@ -2362,6 +2380,867 @@ proc ase::ui::direct_plot {key {do_raise 1}} {
 # D13): no traces added; headless / unknown-session safe via the catch.
 proc ase::ui::open_viewer {key} {
   catch {wviewer::open $key}
+}
+
+# ===========================================================================
+# RESULTS BATCH ITEM 7 -- `Results > Select...`, THE ASE-L DIALOG.
+# doc/claude/specs/results_selection.md section 6 (R401-R407), section 4 (the
+# resolver), section 10 (the sentences) and section 15 (why Loaded comes
+# first). doc/claude/results_batch/receipts/07-results-select-dialog.md.
+#
+# THIS IS THE DOOR ITEMS 1-6 BUILT THE ROOM BEHIND. Item 1 made `raw read`
+# re-stamp, item 2 wrote the resolver and the registry readers, item 3 added
+# the `xschem raw select` sub-verb, item 4 built `results::select` -- the ONE
+# place that selects (R303) -- item 5 re-expressed the viewer's Location bar on
+# it and item 6 finally WROTE the persisted slot. Nothing here selects: every
+# gesture below ends in `results::select` and every sentence below is either
+# the resolver's own or this proc's refusal.
+#
+# ⚠ ASE-L ONLY (user ruling U5, DECISIONS.md). The schematic editor is not a
+# results holder and is not given a second door to become one, and NO CASCADE
+# IS ADDED TO THE WAVEFORM VIEWER'S MENUBAR (R504/D12 -- test_wave_viewer G2
+# freezes that cascade set at {File View Graph Cursors Options}).
+#
+# ⚠ MODELESS (R402): no `grab`, no `tkwait`, no vwait latch. The ASE dialog
+# doctrine is stated at the head of this file's dialog scaffold -- "no
+# grab/tkwait, which is what keeps them test-drivable" -- and this dialog is a
+# BROWSING window, not a blocking question: R406 requires it to stay open and
+# refresh, because comparing two runs means selecting twice.
+#
+# ⚠ THE WIDGETS ARE THE ASE HOUSE MIX (R403): plain Tk chrome (toplevel,
+# labelframe, label, entry, button) painted by `ase::ui::apply_theme` from the
+# locked `ase::palette`, plus `ttk::treeview -style Ase.Treeview` where a table
+# is needed. NO COLOUR IS SPELLED HERE: every one comes through that single
+# accessor, per the Calculator's RULING-1.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# R407a -- CREW RULING (item 7, 2026-08-20). WHICH CONTEXT THE DIALOG READS,
+# AND WHAT IT SAYS WHEN IT CANNOT.
+#
+# The registry is per-`Xschem_ctx` and tabs do not share one (F2, measured:
+# src/xinit.c:1938/:2204/:2209), so "the loaded results" is only a question
+# once you have said WHOSE. An ASE session's results live in ITS WAVEFORM
+# VIEWER'S context: `wviewer::attach_raw` (src/wave_viewer.tcl:3888) does
+# `switch_ctx $token` before `ase::attach_dbs` reads, and the viewer token IS
+# the session key. So:
+#
+#   viewer arm -- the session HAS a viewer window: borrow it, the 0173 way
+#                 (`enter_ctx $key 1` / `leave_ctx`), exactly as
+#                 `wviewer::selected_rawfile` (:4072) does. A dialog is a
+#                 browsing window and must not leave the user's context moved,
+#                 which is why this is a LOAN and not `rawbar_load`'s move.
+#   here arm   -- the session has NO viewer window (nothing has ever been
+#                 attached for it): there is no other context to borrow, so
+#                 the dialog reads the CURRENT one and SAYS SO, in the Loaded
+#                 region's own title. Refusing to work before the first run
+#                 would break the dialog's main use -- "I want to evaluate
+#                 against last night's raw" happens before a run, not after.
+#   refused    -- the ticket came back refused (F6): REPORTED AS REFUSED
+#                 (R407), never as an empty list. That is the whole of F6's
+#                 defect: a refusal that reads like an answer.
+#
+# Returns {ok 0|1 ticket <enter_ctx ticket or {}> where viewer|here msg <one
+# sentence, only when refused>}. Never throws.
+proc ase::ui::rsel_borrow {key} {
+  set r [dict create ok 1 ticket {} where here msg {}]
+  if {[catch {wviewer::window_for $key} wv]} { set wv {} }
+  if {$wv eq {}} { return $r }
+  if {[catch {wviewer::enter_ctx $key 1} t]} { set t {0 {}} }
+  if {![lindex $t 0]} {
+    dict set r ok 0
+    dict set r where viewer
+    dict set r msg "Could not read this session's loaded results: the\
+ waveform viewer's context is busy — that is a refused context switch, not an\
+ empty result list."
+    return $r
+  }
+  dict set r ticket $t
+  dict set r where viewer
+  return $r
+}
+
+# The other half. A `here` borrow has no ticket and nothing to give back.
+proc ase::ui::rsel_release {key b} {
+  if {[catch {ase::state_get $b ticket} t]} { return 0 }
+  if {$t eq {}} { return 1 }
+  if {[catch {wviewer::leave_ctx $key $t} ok]} { return 0 }
+  return $ok
+}
+
+# ---------------------------------------------------------------------------
+# R404's two lists, as DATA. Widget-free on purpose: everything the dialog
+# shows is computable and assertable without a DISPLAY, and `rsel_fill` below
+# is the only proc that needs one.
+#
+#   Loaded  -- `results::list` (R304), one row per registry SLOT, the current
+#              one marked. LISTED FIRST, DELIBERATELY INVERTING CADENCE
+#              (R405/section 15): xschem already accumulates databases (F7's
+#              declared cost), so "switch back to the one I had" is the common
+#              case AND it is free; a file chooser is the fallback, not the
+#              primary control.
+#   Recent  -- `wviewer::rawhist_get` (src/wave_viewer.tcl:8389), newest first
+#              (`rawhist_add` prepends), entries ALREADY IN THE REGISTRY
+#              distinguished -- here by the same bullet the current slot
+#              carries plus a tag, never by dropping them from the list.
+#
+# ⚠ R407c's clause (2) LIVES HERE: a Recent entry whose path normalises onto a
+# loaded slot INHERITS THAT SLOT'S sim_type, so the select that follows is
+# never typeless for a file the engine can already name. See rsel_type_for.
+#
+# ⚠ `results::_same_path` IS USED DELIBERATELY, private underscore and all.
+# "Are these two spellings the same file?" is ruled ONCE, in R302a and R302h:
+# `file normalize` decides it, an intermediate symlink converges and a
+# FINAL-COMPONENT one does not, on purpose. A second copy of that predicate
+# here would be a second place for the ruling to drift -- and drift is
+# precisely how this file ends up marking a Recent entry "not loaded" while
+# `results::select` lands on the slot it already has. The alternative (a public
+# alias in `src/results.tcl`) was declined as a wider edit than item 7's fence
+# allows; the coupling is named here instead of being hidden.
+#
+# Returns {ok .. where .. msg .. loaded {..} recent {..}}; on a refused ticket
+# both lists are EMPTY and `ok 0` with the sentence -- the caller must render
+# the refusal, not the emptiness (R407/F6).
+proc ase::ui::rsel_rows {key} {
+  set b [ase::ui::rsel_borrow $key]
+  set out [dict create ok [ase::state_get $b ok 0] \
+                       where [ase::state_get $b where here] \
+                       msg [ase::state_get $b msg] loaded {} recent {}]
+  if {![dict get $out ok]} { return $out }
+  set loaded {}
+  if {[catch {results::list} rows]} { set rows {} }
+  foreach row $rows {
+    set p [ase::state_get $row path]
+    set t [ase::state_get $row type]
+    lappend loaded [dict create kind loaded idx [ase::state_get $row idx] \
+                      path $p type [ase::ui::rsel_type_norm $t] \
+                      cur [ase::state_get $row cur 0] \
+                      label [ase::state_get $row label]]
+  }
+  ase::ui::rsel_release $key $b
+  # the MRU is a GLOBAL disk-backed list, not a per-context one, so it is read
+  # outside the loan on purpose -- nothing about it depends on which context we
+  # are standing in.
+  set recent {}
+  if {[catch {wviewer::rawhist_get} hist]} { set hist {} }
+  foreach p $hist {
+    if {[string trim $p] eq {}} continue
+    set t {}
+    set inreg 0
+    foreach l $loaded {
+      if {[results::_same_path [ase::state_get $l path] $p]} {
+        set inreg 1
+        set t [ase::state_get $l type]
+        break
+      }
+    }
+    set lab [file tail $p]
+    if {$inreg} { catch {set lab [wviewer::db_label $p $t]} }
+    lappend recent [dict create kind recent path $p type $t inreg $inreg label $lab]
+  }
+  dict set out loaded $loaded
+  dict set out recent $recent
+  return $out
+}
+
+# ---------------------------------------------------------------------------
+# R407c -- CREW RULING (item 7, 2026-08-20). THE DIALOG NEVER SELECTS
+# TYPELESSLY WHEN IT KNOWS A TYPE, AND IT DOES NOT GUESS ONE WHEN IT DOES NOT.
+#
+# THE QUESTION ITEM 4 LEFT OPEN (its receipt section 5): a TYPELESS select of a
+# VCD or a table refuses, because with no type `read_rawfile_by_type()`
+# dispatches to the SPICE parser and `extra_rawfile()` reports
+# `no "<unspecified>" analysis` (src/save.c:2110). The MRU and the persistence
+# slot store A PATH AND NOTHING ELSE, so a non-spice database that reaches the
+# Recent list can never be re-read through R303's door. Item 7 is the first
+# caller that can put such an entry in front of a user, so item 7 rules it.
+#
+# THE RULING, in three clauses:
+#   (1) A LOADED ROW CARRIES ITS OWN TYPE and that type is what is passed. It
+#       is the ENGINE's own token, from `results::list`, and it is per SLOT --
+#       which matters, because one file read as `dc` and as `tran` is TWO rows
+#       and one result (U11), and a by-path lookup would silently select the
+#       wrong analysis of the right file. This is why the type travels with the
+#       ROW and is not recomputed from the path at commit time.
+#   (2) A RECENT OR TYPED PATH THAT NORMALISES ONTO A LOADED SLOT inherits that
+#       slot's type (rsel_rows above). So a VCD is re-selectable by name for as
+#       long as it is loaded -- which is the entire window in which R102 says
+#       it is a database at all.
+#   (3) OTHERWISE NO TYPE IS PASSED, AND NONE IS INVENTED. The engine then
+#       means "first analysis found in the file", which is right for the spice
+#       raws that are ~all of the MRU, and refuses a non-spice file that is not
+#       loaded -- reported by `results::select`'s own refusal sentence, which
+#       names the file and says the previous result is unchanged (T-D).
+#
+# TWO ALTERNATIVES WERE CONSIDERED AND REJECTED, and the reasons are the
+# ruling's evidence:
+#   * SNIFF THE TYPE FROM THE EXTENSION (`.vcd` -> `vcd`). That is a guess
+#     dressed as knowledge: the reader table (`raw_reader_table[]`,
+#     src/save.c:1660) is keyed by a TYPE TOKEN a caller declares, never by a
+#     filename, and `table` databases carry no distinguishing extension at all.
+#     A wrong guess is worse than no guess here, because passing an explicit
+#     non-spice type makes `raw_select()` REFUSE a file that is loaded under
+#     another analysis (R301b's guard, src/save.c:2466) -- so a sniff that got
+#     it wrong would break the case clause (2) gets right.
+#   * SHOW SUCH AN ENTRY DISABLED WITH A REASON. It cannot be identified
+#     without the same sniff, so "disabled" would either be wrong or would grey
+#     out every Recent entry that is not currently loaded -- which is most of
+#     them, and every one of the spice ones would have worked.
+# The residual case is therefore ONE MRU ENTRY of a digital database that is no
+# longer loaded, refused with a sentence. That is inside section 16's declared
+# non-goal ("independently selecting a VCD or table database"), not a gap this
+# dialog opened: R102 says a VCD is not a result, and clause (2) keeps it
+# reachable for exactly as long as it is a database.
+#
+# `rows` is `rsel_rows`'s loaded list (already read, under the loan). Returns
+# the engine's sim_type or {}.
+proc ase::ui::rsel_type_for {rows path} {
+  if {[string trim $path] eq {}} { return {} }
+  foreach l $rows {
+    if {[catch {results::_same_path [ase::state_get $l path] $path} same]} continue
+    if {$same} { return [ase::ui::rsel_type_norm [ase::state_get $l type]] }
+  }
+  return {}
+}
+
+# `<NULL>` IS NOT A TYPE TOKEN. It is `xschem raw info`'s rendering of a NULL
+# `sim_type` (src/save.c's registry dump), so `results::list` hands it back
+# verbatim and `wviewer::db_label` / `results::_is_result_type` both map it.
+# Passing it on to `xschem raw select` would ask the engine for an analysis
+# literally called `<NULL>`: `raw_type_is_non_spice()` says no, the spice dedupe
+# loop compares it against every stored sim_type and matches none, and the verb
+# falls through to a READ with a type no reader knows. Every type this dialog
+# hands the door goes through here first, and an empty type is exactly L6's
+# "any analysis of this file" -- which is also the only thing that can be meant
+# by a slot with no sim_type at all (both name-lookup loops in
+# `extra_rawfile()` skip such a slot, src/save.c:1934/:1985).
+proc ase::ui::rsel_type_norm {t} {
+  set t [string trim $t]
+  if {$t eq {<NULL>}} { return {} }
+  return $t
+}
+
+# ---------------------------------------------------------------------------
+# THE ARMED CANDIDATE -- what `Select` acts on, and there is exactly one.
+#
+# Picking a row FILLS THE PATH ENTRY with that row's full path and records the
+# row's own type (R407c clause 1). So the Path region is not a third source
+# competing with the two lists: it is the single readout of the armed
+# candidate, and `Select` always acts on what the user can see. When the entry
+# has been edited away from the armed row the entry wins, and the type is
+# re-derived by path (clause 2) -- an edited path is a different candidate.
+proc ase::ui::rsel_arm {key path type kind} {
+  variable dlg; variable wins
+  set dlg($key,rselcand) [dict create path $path type \
+                            [ase::ui::rsel_type_norm $type] kind $kind]
+  if {[dict exists $wins $key]} {
+    set e [dict get $wins $key].rsel.path.e
+    if {[winfo exists $e]} {
+      $e delete 0 end
+      $e insert 0 $path
+    }
+  }
+  return $dlg($key,rselcand)
+}
+
+# The candidate `Select`/double-click acts on: the armed row when the Path
+# entry still shows it, else whatever the entry now holds. Widget-free when the
+# dialog is not up (the armed record alone), so the whole gesture is drivable
+# headlessly.
+proc ase::ui::rsel_candidate {key {rows {}}} {
+  variable dlg; variable wins
+  set armed {}
+  if {[info exists dlg($key,rselcand)]} { set armed $dlg($key,rselcand) }
+  set typed {}
+  set have_entry 0
+  if {[dict exists $wins $key]} {
+    set e [dict get $wins $key].rsel.path.e
+    if {[winfo exists $e]} {
+      set have_entry 1
+      catch {set typed [string trim [$e get]]}
+    }
+  }
+  if {!$have_entry} { return $armed }
+  if {$armed ne {} && [ase::state_get $armed path] eq $typed} { return $armed }
+  if {$typed eq {}} { return [dict create path {} type {} kind path] }
+  return [dict create path $typed type [ase::ui::rsel_type_for $rows $typed] \
+                     kind path]
+}
+
+# ---------------------------------------------------------------------------
+# R407e -- CREW RULING (item 7, 2026-08-20). THE RESOLVER INPUTS THE DIALOG
+# CAN HONESTLY SUPPLY, AND THE ONE IT REFUSES TO CREATE.
+#
+# R201a's input keys are all optional and this dialog can fill three of them:
+# `rawfile` (the candidate), `key` (the session -- which supplies `derived` via
+# `ase::last_rawfile`, already existence-gated) and `rundir`, so a RELATIVE
+# path typed into the Path entry resolves the same way a stored one does.
+#
+# `netlist` -- the input that enables the MTIME half of `stale` (R201a, "older
+# than the netlist it was produced from") -- is DERIVED, but only where doing
+# so writes nothing: `ase::netlist` (src/ase.tcl:1663) is a REGENERATOR (it
+# deletes the artifact, re-netlists and can `xschem load` the design) and
+# `ase::rundir` (:1643) is a create-and-default helper that `file mkdir`s and
+# rewrites the global `::netlist_dir` -- R602e already ruled that a READ may
+# call neither. So the state's OWN `rundir` is read directly, `<rundir>/
+# <cell>.spice` is the name `ase::netlist` writes (:1691), and it is passed
+# ONLY when that file already exists. A session with no rundir simply gets the
+# content half of `stale`, which is R201a's documented "absent" behaviour.
+#
+# THAT HALF IS WORTH THE SIX LINES: "this result is older than the netlist it
+# was produced from" is exactly the question a Select dialog exists to answer,
+# and it is the one verdict a user cannot reach by looking at the file list.
+#
+# ⚠ AND THE INPUT THIS DIALOG DELIBERATELY DOES *NOT* PASS: `key`. R201a says a
+# `key` supplies the resolver's `derived` fallback via `ase::last_rawfile`, and
+# `ase::last_rawfile` (src/ase.tcl:1952) reaches the ngspice backend's
+# `raw_file` hook (:4777), which calls `ase::rundir` -- THE CREATE-AND-DEFAULT
+# HELPER R602e was ruled about: it `file mkdir`s the state's rundir, and for an
+# EMPTY rundir it falls through to `set_netlist_dir 0`, which creates
+# `$USER_CONF_DIR/simulations` and rewrites the global `::netlist_dir`. A
+# preview fires on every row click and (debounced) on typing, so passing `key`
+# would make merely LOOKING at a candidate create a directory and move a global.
+# Second reason, independent of the first: with no `derived` there is no
+# fallback, and R407g means this dialog never takes one anyway -- a resolver
+# answer promising a fall-back the dialog will refuse to perform would be a
+# sentence that lies. `results::select` is handed the same dict for the same two
+# reasons; R802's ASE channel is named by `host ase` outright, not inferred from
+# a `key`.
+proc ase::ui::rsel_resolve_input {key path} {
+  set st [ase::session_state $key]
+  set inp [dict create rawfile $path]
+  set rd [ase::state_get $st rundir]
+  if {[string trim $rd] ne {}} {
+    dict set inp rundir $rd
+    set cell [ase::ui::design_cell_name $key]
+    if {$cell ne {}} {
+      if {[catch {file join $rd $cell.spice} nl] == 0 && [file isfile $nl]} {
+        dict set inp netlist $nl
+      }
+    }
+  }
+  return $inp
+}
+
+# ...and THE SAME RESOLUTION, ON ITS OWN, for the one caller that has to ask a
+# question about the file rather than hand it to the resolver.
+#
+# ⚠ FIXER ROUND (item 7). `rsel_commit`'s R407g guard used to ask
+# `file isfile $path` -- i.e. it tested a RELATIVE candidate against the
+# PROCESS CWD while `rsel_preview`, one region above it, tested the same
+# candidate against the session's `rundir` (through `results::resolve`, which
+# joins the two: src/results.tcl's "relative paths resolve against the rundir").
+# So a Loaded row the engine holds under a relative spelling -- `xschem raw
+# read an.raw tran` keeps the spelling it was handed -- previewed as
+# `Using an.raw.` and was then REFUSED by `Select` with `No such result file
+# 'an.raw'`, while `results::select` handed the identical path selected it. The
+# dialog's preview and its own button contradicted each other on one candidate,
+# and R407g's own header says the guard exists so the resolver's DERIVED
+# fallback cannot substitute a different file -- not to refuse files that are
+# there. The guard now asks the preview's question.
+#
+# The ORIGINAL SPELLING is still what `results::select` is handed: R302a's "one
+# spelling per run" is the door's ruling to make, and `results::_engine_spelling`
+# is where it is made. This proc answers only "is the thing the user pointed at
+# on disk?".
+proc ase::ui::rsel_abs {key path {inp {}}} {
+  if {[string trim $path] eq {}} { return $path }
+  if {$inp eq {}} { set inp [ase::ui::rsel_resolve_input $key $path] }
+  if {[catch {dict exists $inp rundir} hasrd] || !$hasrd} { return $path }
+  if {[catch {file pathtype $path} pt]} { return $path }
+  if {$pt eq {absolute}} { return $path }
+  if {[catch {file join [dict get $inp rundir] $path} j]} { return $path }
+  return $j
+}
+
+# R404's Status region: ONE SENTENCE, and for a highlighted candidate it is THE
+# RESOLVER'S, IN THE RESOLVER'S OWN WORDS (section 10). It is deliberately not
+# re-worded here: R805 fixes one sentence form per status and R803a made the
+# resolver name the file by `file tail` precisely so this one-line region can
+# hold it.
+proc ase::ui::rsel_preview {key} {
+  set rows {}
+  set cand [ase::ui::rsel_candidate $key]
+  set p [ase::state_get $cand path]
+  if {[string trim $p] eq {}} {
+    return [ase::ui::rsel_status $key "Pick a result, or type the path of one."]
+  }
+  if {[catch {results::resolve [ase::ui::rsel_resolve_input $key $p]} res]} {
+    return [ase::ui::rsel_status $key "Could not resolve [file tail $p]."]
+  }
+  # R407h -- CREW RULING (item 7). THREE STATUSES SPEAK IN THE RESOLVER'S OWN
+  # WORDS; `invalid` DOES NOT, AND THE PRECEDENT IS R501's ARM 3.
+  # The resolver's two `invalid` sentences describe A FALL-BACK -- "no longer on
+  # disk — falling back to X", or "and there is no other result to fall back
+  # to". Both are right for a stored selection being restored, which is what
+  # R202 wrote them for, and both are wrong here: R407g refuses a missing file
+  # outright rather than substituting another one, so quoting them would promise
+  # the user something the very next click will not do. `wviewer::rawbar_load`
+  # made exactly this call for exactly this reason (its ARM 3 keeps its own
+  # "no such file" ahead of the door, "because its sentence is about a stored
+  # selection that has gone missing, and this one is about a typo in an entry
+  # box the user is looking at"). `default`, `ok` and `stale` are quoted
+  # verbatim -- R805 fixes one form per status and R803a shortened them to
+  # `file tail` precisely so this one-line region could hold them.
+  if {[ase::state_get $res status] eq {invalid}} {
+    if {[ase::state_get $res reason] eq {unreadable}} {
+      return [ase::ui::rsel_status $key \
+                "The result file '[file tail $p]' cannot be read."]
+    }
+    return [ase::ui::rsel_status $key "No such result file '[file tail $p]'."]
+  }
+  return [ase::ui::rsel_status $key [ase::state_get $res msg]]
+}
+
+# ...and the same preview, DEBOUNCED, for the one caller that fires per
+# keystroke. `results::resolve` stats the file AND asks
+# `ase::raw_content_verdict` for the content half, which opens it and parses
+# the first plot header -- bounded work, but not per-character work. The
+# pending id is cancelled on close so no balloon or sentence can arrive after
+# the window is gone.
+#
+# ⚠ FIXER ROUND (item 7). TWO CALLERS CANCEL AND ONE OF THEM IS THE COMMIT, so
+# the cancel is a proc and not three copies of three lines. The defect it
+# closes: `<Return>` on the Path entry fires `rsel_commit`, and the SAME
+# keystroke then fires `<KeyRelease>` -- one physical Return is a KeyPress and
+# a KeyRelease -- so 250 ms after the commit the debounced preview overwrote the
+# door's own sentence (`Selected an.raw (tran).`) with the resolver's
+# (`Using an.raw.`), in the Status region and in `dlg($key,rselstatus)`. That
+# breaks R407b/R805b outright ("what the user just did was select, not
+# resolve") on a shipped gesture, and after a REFUSED Return it erased the
+# refusal and left a sentence that says the opposite of what happened.
+#
+# Both halves are closed, because they are two different races:
+#   * the keystroke that COMMITS schedules nothing -- Return/KP_Enter/Escape
+#     are the dialog's own gestures, not edits to the path, and there is
+#     nothing to re-preview after them;
+#   * a preview already pending from an EARLIER keystroke (type a character,
+#     press Return 100 ms later) is cancelled by `rsel_commit` itself.
+# Neither alone is enough: the first does not reach a pending timer, and the
+# second cannot reach a timer scheduled after it returned.
+proc ase::ui::rsel_preview_cancel {key} {
+  variable dlg
+  if {![info exists dlg($key,rselprevid)]} { return 0 }
+  catch {after cancel $dlg($key,rselprevid)}
+  unset dlg($key,rselprevid)
+  return 1
+}
+
+proc ase::ui::rsel_preview_soon {key {keysym {}}} {
+  variable dlg
+  ase::ui::rsel_preview_cancel $key
+  if {[lsearch -exact {Return KP_Enter Escape} $keysym] >= 0} { return {} }
+  set dlg($key,rselprevid) [after 250 [list ase::ui::rsel_preview $key]]
+  return $dlg($key,rselprevid)
+}
+
+# The Status region, and the record behind it. The record is kept whether or
+# not a widget exists so the sentence is assertable headlessly -- the same
+# reason `results::select` returns its `msg` instead of only emitting it.
+proc ase::ui::rsel_status {key msg} {
+  variable dlg; variable wins
+  set dlg($key,rselstatus) $msg
+  if {[dict exists $wins $key]} {
+    set l [dict get $wins $key].rsel.status
+    if {[winfo exists $l]} { catch {$l configure -text $msg} }
+  }
+  return $msg
+}
+
+# ---------------------------------------------------------------------------
+# R406 -- ONE GESTURE, ONE COMMIT PATH. Double-click and the `Select` button
+# both end here (searchbar_fire's rule: no route may apply a policy another
+# route skips), and THE DIALOG STAYS OPEN AND REFRESHES, because comparing two
+# runs means selecting twice.
+#
+# THE ORDER, and every step of it is somebody else's ruling being obeyed:
+#   1. the armed candidate, read ONCE (rsel_candidate);
+#   2. R407g's own arm -- a path that is not a file is refused HERE, ahead of
+#      the door. `results::resolve` would answer `invalid` and hand back the
+#      DERIVED result instead (R202's "never make a session unopenable"), which
+#      is right for a session restore and wrong for a browsing gesture: the
+#      user picked THIS file and must not be given a different one. This is
+#      `wviewer::rawbar_load`'s ARM 3 (:8640) and its reasoning, verbatim in
+#      shape;
+#   3. the borrow (R407a) -- a refused ticket is reported as refused;
+#   4. `capture_live_view_state` before the door, issue 0194's rule: a
+#      selection replaces the DATA, not the plot, so the regenerate below owes
+#      the fold and skip_ranges is what re-autozooms the incoming raw;
+#   5. THE DOOR (R303) -- `results::select`, with the type R407c ruled and
+#      `host ase` (R802: ASE-L's channel is `ase::echo`);
+#   6. the regenerate, INSIDE the loan (R407f below);
+#   7. the sentence -- the door's own `msg`, in this dialog's Status region as
+#      well as on the session channel, and a refill so the marks move.
+#
+# ⚠ R407f -- CREW RULING (item 7). THE REDRAW HAPPENS INSIDE THE LOAN.
+# `wviewer::regenerate` goes through `with_edit`, which does its own
+# `switch_ctx` and deliberately does NOT restore the context -- that is right
+# for `rawbar_load`, whose gesture belongs to the viewer window, and wrong
+# here: this dialog belongs to the ASE window and R407's borrow idiom exists so
+# that reading and selecting from it cannot leave the user's current context
+# somewhere else. Run inside the bracket, the switch is a no-op (we are already
+# there) and `leave_ctx` still puts everything back. It runs AFTER the door
+# returns, so nothing redraws while the current-database pointer is moving
+# (L7), and it is `catch`ed because a dialog may not throw (R801).
+#
+# Returns 1 when the engine selected something, 0 on any refusal.
+proc ase::ui::rsel_commit {key} {
+  variable wins
+  # the door's sentence is the LAST word on this gesture -- no debounced
+  # preview scheduled before it may land on top of it (see rsel_preview_soon).
+  ase::ui::rsel_preview_cancel $key
+  set b [ase::ui::rsel_borrow $key]
+  if {![ase::state_get $b ok 0]} {
+    ase::ui::rsel_status $key [ase::state_get $b msg]
+    return 0
+  }
+  set rows {}
+  if {[catch {results::list} rl] == 0} {
+    foreach row $rl {
+      lappend rows [dict create path [ase::state_get $row path] \
+                     type [ase::ui::rsel_type_norm [ase::state_get $row type]]]
+    }
+  }
+  set cand [ase::ui::rsel_candidate $key $rows]
+  set path [string trim [ase::state_get $cand path]]
+  if {$path eq {}} {
+    ase::ui::rsel_release $key $b
+    ase::ui::rsel_status $key "Pick a result, or type the path of one."
+    return 0
+  }
+  # R407g, asked the way the PREVIEW asks it: a relative candidate is resolved
+  # against the session's rundir first (rsel_abs), so the guard and the Status
+  # region can no longer disagree about the same file.
+  set opts [ase::ui::rsel_resolve_input $key $path]
+  set abs [ase::ui::rsel_abs $key $path $opts]
+  if {![file isfile $abs]} {
+    ase::ui::rsel_release $key $b
+    ase::ui::rsel_status $key "No such result file '[file tail $path]' —\
+ nothing was selected."
+    return 0
+  }
+  # R407c clause (2): a candidate that carries no type of its own -- a Recent
+  # entry that was not loaded when the list was built, a Browse result, a typed
+  # path -- inherits the type of the slot it normalises onto, if any. Clause
+  # (1)'s row type is already set and is NOT re-derived: one file read as `dc`
+  # and as `tran` is two rows and one result (U11), and a by-path lookup would
+  # answer the first row for both.
+  # clause (2) is asked of the RESOLVED path for the same reason the guard is:
+  # `results::_same_path` normalises both sides against the CWD, so a relative
+  # candidate would otherwise match no loaded slot and be passed typeless.
+  set type [ase::ui::rsel_type_norm [ase::state_get $cand type]]
+  if {$type eq {}} { set type [ase::ui::rsel_type_for $rows $abs] }
+  dict unset opts rawfile
+  dict set opts host ase
+  set haswin [expr {[wviewer::window_for $key] ne {}}]
+  if {$haswin} {
+    dict set opts token $key
+    catch {wviewer::capture_live_view_state $key}
+  }
+  if {[catch {results::select $path $type $opts} res]} { set res {} }
+  set how [ase::state_get $res how refused]
+  if {$how ne {refused} && $haswin} { catch {wviewer::regenerate $key} }
+  ase::ui::rsel_release $key $b
+  set msg [ase::state_get $res msg]
+  if {$msg eq {}} {
+    set msg "Could not select [file tail $path] — nothing was loaded and the\
+ previous result is unchanged."
+  }
+  ase::ui::rsel_status $key $msg
+  # R406: the dialog STAYS OPEN and refreshes -- the current-slot mark has
+  # moved, and a first select of a new file has added a row to both lists.
+  ase::ui::rsel_fill $key
+  return [expr {$how eq {refused} ? 0 : 1}]
+}
+
+# ---------------------------------------------------------------------------
+# The two list widgets, filled from `rsel_rows`. Every row's data is recorded
+# under `dlg($key,rselmap,<which>,<item>)` so a click reaches the row's PATH
+# and its own TYPE (R407c clause 1) without re-deriving either from the text a
+# treeview cell happens to show.
+proc ase::ui::rsel_fill {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return 0 }
+  set w [dict get $wins $key].rsel
+  if {![winfo exists $w]} { return 0 }
+  set data [ase::ui::rsel_rows $key]
+  array unset dlg $key,rselmap,*
+  foreach which {loaded recent} {
+    set tv $w.$which.tv
+    if {![winfo exists $tv]} continue
+    catch {$tv delete [$tv children {}]}
+  }
+  # R405: Loaded first, and its title says WHOSE registry it is (R407a).
+  set ttl {Loaded}
+  switch -- [ase::state_get $data where here] {
+    viewer { set ttl {Loaded — this session's viewer} }
+    here   { set ttl {Loaded — current window} }
+  }
+  if {![ase::state_get $data ok 0]} { set ttl {Loaded — unavailable} }
+  catch {$w.loaded configure -text $ttl}
+  if {![ase::state_get $data ok 0]} {
+    ase::ui::rsel_status $key [ase::state_get $data msg]
+    return 0
+  }
+  set i 0
+  foreach row [ase::state_get $data loaded] {
+    set id L$i; incr i
+    set mark [expr {[ase::state_get $row cur 0] ? "\u2022" : {}}]
+    $w.loaded.tv insert {} end -id $id \
+      -values [list $mark [ase::state_get $row label]] \
+      -tags [expr {[ase::state_get $row cur 0] ? {cur} : {plain}}]
+    set dlg($key,rselmap,loaded,$id) $row
+  }
+  set i 0
+  foreach row [ase::state_get $data recent] {
+    set id R$i; incr i
+    set mark [expr {[ase::state_get $row inreg 0] ? "\u2022" : {}}]
+    $w.recent.tv insert {} end -id $id \
+      -values [list $mark [ase::state_get $row label]] \
+      -tags [expr {[ase::state_get $row inreg 0] ? {inreg} : {plain}}]
+    set dlg($key,rselmap,recent,$id) $row
+  }
+  # first fill of a session: arm the CURRENT result, so the Status region has
+  # something true to say the moment the dialog opens.
+  if {![info exists dlg($key,rselcand)]} {
+    foreach row [ase::state_get $data loaded] {
+      if {[ase::state_get $row cur 0]} {
+        ase::ui::rsel_arm $key [ase::state_get $row path] \
+          [ase::state_get $row type] loaded
+        ase::ui::rsel_preview $key
+        break
+      }
+    }
+  }
+  return 1
+}
+
+# <<TreeviewSelect>>: arm the clicked row and preview its verdict. The other
+# list's selection is cleared so the armed candidate is never ambiguous; the
+# suppress flag is `pane_selected`'s (libmgr::suppress_select) idiom, because
+# clearing re-fires this handler.
+proc ase::ui::rsel_pick {key which} {
+  variable wins; variable dlg
+  if {[info exists dlg($key,rselsupp)] && $dlg($key,rselsupp)} { return {} }
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].rsel
+  set tv $w.$which.tv
+  if {![winfo exists $tv]} { return {} }
+  set sel [$tv selection]
+  if {$sel eq {}} { return {} }
+  set dlg($key,rselsupp) 1
+  set other [expr {$which eq {loaded} ? {recent} : {loaded}}]
+  if {[winfo exists $w.$other.tv]} { catch {$w.$other.tv selection set {}} }
+  set dlg($key,rselsupp) 0
+  set id [lindex $sel 0]
+  if {![info exists dlg($key,rselmap,$which,$id)]} { return {} }
+  set row $dlg($key,rselmap,$which,$id)
+  ase::ui::rsel_arm $key [ase::state_get $row path] [ase::state_get $row type] \
+    [ase::state_get $row kind $which]
+  ase::ui::rsel_preview $key
+  return $row
+}
+
+# R406's other half of the ONE gesture. Binding <Double-1> is legal; only
+# `event generate <Double-1>` is refused, which is why the tests replay two
+# press/release pairs.
+proc ase::ui::rsel_dblclick {key which} {
+  if {[ase::ui::rsel_pick $key $which] eq {}} { return 0 }
+  return [ase::ui::rsel_commit $key]
+}
+
+# ---------------------------------------------------------------------------
+# R404's balloon: THE FULL PATH, on the row under the pointer.
+#
+# `balloon` (src/xschem.tcl:14917) is the tree's ONE tooltip mechanism and it
+# BAKES its string into a widget's <Enter> binding at attach time, so it cannot
+# carry a PER-ROW string. The renderer underneath it, `balloon_show`, can --
+# it takes the text as an argument -- so this is that renderer driven from a
+# <Motion> handler rather than a second tooltip mechanism.
+#
+# ⚠ DECLARED LIMIT: `balloon_show` returns early unless the X pointer is
+# physically over the widget (`winfo containing [winfo pointerxy .]`), so the
+# rendered balloon is not drivable from a script; what IS driven is the text
+# the handler resolves and schedules (recorded in `dlg($key,rseltip)`) and the
+# binding that reaches it. The pixels are part of item 7's eyeball debt.
+proc ase::ui::rsel_tip_text {key which item} {
+  variable dlg
+  if {![info exists dlg($key,rselmap,$which,$item)]} { return {} }
+  return [ase::state_get $dlg($key,rselmap,$which,$item) path]
+}
+
+proc ase::ui::rsel_tip_show {W txt} {
+  catch {balloon_show $W $txt 0}
+}
+
+proc ase::ui::rsel_tip {key which W x y} {
+  variable dlg
+  set item {}
+  catch {set item [$W identify row $x $y]}
+  set txt {}
+  if {$item ne {}} { set txt [ase::ui::rsel_tip_text $key $which $item] }
+  if {[info exists dlg($key,rseltip)] && $dlg($key,rseltip) eq $txt} { return $txt }
+  ase::ui::rsel_tip_cancel $key $W
+  set dlg($key,rseltip) $txt
+  if {$txt eq {}} { return {} }
+  set dlg($key,rseltipid) [after 700 [list ase::ui::rsel_tip_show $W $txt]]
+  return $txt
+}
+
+proc ase::ui::rsel_tip_cancel {key W} {
+  variable dlg
+  if {[info exists dlg($key,rseltipid)]} {
+    catch {after cancel $dlg($key,rseltipid)}
+    unset dlg($key,rseltipid)
+  }
+  set dlg($key,rseltip) {}
+  catch {destroy $W.balloon}
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# R404's Path region. `select_raw` (src/xschem.tcl:16672) is REUSED, not
+# reimplemented -- it is the tree's only `.raw` file chooser.
+#
+# ⚠ LANDMINE L1: it does NOT return {} headlessly. It computes a guessed
+# default (`$netlist_dir/<current cell>.raw`) FIRST and only overwrites it with
+# `tk_getOpenFile` inside `if {[info exists has_x]}`, so a script that calls it
+# gets a plausible path and no cancel. Browse therefore only ARMS the entry --
+# it never selects -- so even a bogus return costs the user a filled entry and
+# nothing else, and the tests shim it.
+proc ase::ui::rsel_browse {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set p {}
+  if {[catch {select_raw} p]} { return {} }
+  set p [string trim $p]
+  if {$p eq {}} { return {} }
+  ase::ui::rsel_arm $key $p [ase::ui::rsel_type_for {} $p] path
+  ase::ui::rsel_preview $key
+  return $p
+}
+
+# ESC and the `Close` button, through ONE path (the listdlg_open rule): a bare
+# destroy would leave the per-window records and a pending balloon behind.
+proc ase::ui::rsel_close {key} {
+  variable wins; variable dlg
+  if {[dict exists $wins $key]} {
+    set w [dict get $wins $key].rsel
+    foreach which {loaded recent} {
+      if {[winfo exists $w.$which.tv]} { ase::ui::rsel_tip_cancel $key $w.$which.tv }
+    }
+    catch {destroy $w}
+  }
+  ase::ui::rsel_preview_cancel $key
+  array unset dlg $key,rselmap,*
+  catch {unset dlg($key,rselcand)}
+  catch {unset dlg($key,rselsupp)}
+  catch {unset dlg($key,rseltip)}
+  # ⚠ FIXER ROUND (item 7): `rselstatus` goes with them. This proc's own header
+  # says a bare destroy "would leave the per-window records behind"; it was
+  # leaving exactly one of them -- the sentence -- so a reopened dialog could
+  # be read back holding the verdict of a candidate from the previous session
+  # of the window before its first fill.
+  catch {unset dlg($key,rselstatus)}
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# R401/R402/R403/R404 -- THE WINDOW. Modeless, ASE-themed, regions in R404's
+# order top to bottom: Loaded, Recent, Path, Status, Buttons. Gridded, so the
+# ORDER is a property of the window and not of the order the widgets happened
+# to be created in -- and so a test can assert it (`grid info -row`), which is
+# what R405/D2 needs.
+#
+# Re-invoking the menu entry RAISES and REFRESHES the existing window rather
+# than rebuilding it: a modeless dialog the user has moved and sized must not
+# jump back to the origin because they hit the menu twice.
+proc ase::ui::rsel_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  if {![info exists ::has_x] || [info commands winfo] eq {}} { return {} }
+  set w [dict get $wins $key].rsel
+  if {[winfo exists $w]} {
+    catch {raise $w}
+    ase::ui::rsel_fill $key
+    return $w
+  }
+  toplevel $w
+  set cell [ase::ui::design_cell_name $key]
+  wm title $w [expr {$cell eq {} ? {Select Results} : "Select Results — $cell"}]
+  grid columnconfigure $w 0 -weight 1
+
+  # --- R405: LOADED FIRST. This is the primary control, not the chooser.
+  labelframe $w.loaded -text {Loaded}
+  ase::ui::rsel_build_list $key $w loaded
+  grid $w.loaded -row 0 -column 0 -sticky nsew -padx 6 -pady {6 2}
+  grid rowconfigure $w 0 -weight 2
+
+  labelframe $w.recent -text {Recent}
+  ase::ui::rsel_build_list $key $w recent
+  grid $w.recent -row 1 -column 0 -sticky nsew -padx 6 -pady 2
+  grid rowconfigure $w 1 -weight 1
+
+  frame $w.path
+  label $w.path.l -text {Path:} -anchor w
+  entry $w.path.e -width 44 -font AseEntryFont
+  button $w.path.browse -text "Browse\u2026" \
+    -command [list ase::ui::rsel_browse $key]
+  pack $w.path.l -side left -padx {0 4}
+  pack $w.path.browse -side right -padx {6 0}
+  pack $w.path.e -side left -fill x -expand 1
+  grid $w.path -row 2 -column 0 -sticky we -padx 6 -pady 2
+
+  # R404's Status region: ONE line, and it is the resolver's sentence.
+  label $w.status -anchor w -justify left -text {}
+  grid $w.status -row 3 -column 0 -sticky we -padx 6 -pady 2
+
+  # R404: `Select` and `Close`, and NO OK/Apply pair -- selecting is not a
+  # form submission, and the dialog does not close on it (R406).
+  frame $w.btns
+  button $w.btns.select -text Select -command [list ase::ui::rsel_commit $key]
+  button $w.btns.close -text Close -command [list ase::ui::rsel_close $key]
+  pack $w.btns.select -side left -padx 5
+  pack $w.btns.close -side right -padx 5
+  grid $w.btns -row 4 -column 0 -sticky we -padx 6 -pady {2 6}
+
+  bind $w.path.e <Return> [list ase::ui::rsel_commit $key]
+  bind $w.path.e <KeyRelease> [list ase::ui::rsel_preview_soon $key %K]
+  # R402: modeless -- ESC dismisses through the SAME path as Close, and there
+  # is no grab and no tkwait anywhere in this proc.
+  ase::ui::bind_dialog_esc $w [list ase::ui::rsel_close $key]
+  wm protocol $w WM_DELETE_WINDOW [list ase::ui::rsel_close $key]
+  ase::ui::apply_theme $w
+  # tag colours AFTER apply_theme (which sets the Ase.Treeview style) and
+  # through the single accessor only -- R403 / the Calculator's RULING-1.
+  foreach which {loaded recent} {
+    catch {$w.$which.tv tag configure cur -foreground [ase::theme accent]}
+    catch {$w.$which.tv tag configure inreg -foreground [ase::theme accent]}
+    catch {$w.$which.tv tag configure plain -foreground [ase::theme fieldfg]}
+  }
+  ase::ui::rsel_fill $key
+  return $w
+}
+
+# One themed list: the ASE pane shape (ttk::treeview + scrollbar), two columns
+# -- the current/loaded MARK and the `db_label` (file tail + analysis, R803).
+proc ase::ui::rsel_build_list {key w which} {
+  set f $w.$which
+  ttk::treeview $f.tv -columns {mark result} -show headings \
+    -selectmode browse -height [expr {$which eq {loaded} ? 6 : 5}] \
+    -style Ase.Treeview -yscrollcommand [list $f.sb set]
+  $f.tv heading mark -text {}
+  $f.tv heading result -text {Result}
+  $f.tv column mark -width 22 -anchor center -stretch 0
+  $f.tv column result -width 320 -anchor w -stretch 1
+  scrollbar $f.sb -orient vertical -command [list $f.tv yview]
+  pack $f.sb -side right -fill y
+  pack $f.tv -side left -fill both -expand 1
+  bind $f.tv <<TreeviewSelect>> [list ase::ui::rsel_pick $key $which]
+  bind $f.tv <Double-1> [list ase::ui::rsel_dblclick $key $which]
+  bind $f.tv <Motion> [list ase::ui::rsel_tip $key $which %W %x %y]
+  bind $f.tv <Leave> [list ase::ui::rsel_tip_cancel $key %W]
+  return $f.tv
 }
 
 # The Add/Edit Output dialog's "From Design…" button: flavor = the dialog's

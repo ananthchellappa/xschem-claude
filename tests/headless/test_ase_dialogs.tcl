@@ -23,8 +23,12 @@
 #          names the missing View -- G9d; state-view filter, import + dirty,
 #          dirty-prompt-first); --> strip = Add Output;
 #          no todo_stub left on any rewired item-07 entry.
-#   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog dismisses on a real
-#          generated <Key-Escape> through its CANCEL path — dialog destroyed,
+#   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog OF THE ITEM-10 SET
+#          dismisses on a real generated <Key-Escape> through its CANCEL path
+#          (the results-batch item-7 `Results > Select…` dialog is newer and
+#          carries its own ESC leg, tests/headless/test_results_dialog.tcl
+#          SEL407 -- destroyed AND its per-window dlg records cleaned, which is
+#          what tells the close path apart from a bare destroy) — dialog destroyed,
 #          per-window records (edrow/edchk/dlg) cleaned, ZERO state mutation
 #          (serialize snapshot unchanged); ESC from inside an entry bubbles
 #          to the dialog toplevel (GE2); the .chana.x subdialog dismisses
