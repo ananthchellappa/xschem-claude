@@ -54,7 +54,7 @@ in the row that caused it.
 | 2 | `results-tcl-resolver` | `[x]` | `91c6eb9a` | 139 | 34 | 11 | no | `src/results.tcl` 379 lines, sourced + in `Makefile.in` install. Scope fence held (no mutator). R201a-e/R304a-b/R305a-b/R803a/R805a ruled into spec. Audit 332/15/0/0 of 347, **no status moved**. |
 | 3 | `raw-select-subverb` | `[x]` | `8377532a` | 215 | 38 | 10 | no | `raw select` + `raw non_spice` shipped; **R110d** fixes `new_rawfile()`'s third copy. 10 rulings; **R301b overturns the brief — `<type>` is OPTIONAL**. 0513 filed w/ reproducer. Audit 332/15/0/0 of 347, **no status moved**. |
 | 4 | `results-select-orchestrator` | `[x]` | `2b138685` | 296 | 41 | 7 | **see below** | `results::select` shipped; 13 confirmed findings all reproduced+fixed, none unconfirmed. 0216 shape fixed for this path. **An ad-hoc drive destroyed the user's `~/.xschem/raw_history`.** Audit 332/15/0/0 of 347, **no status moved**. |
-| 5 | `rawbar-load-reexpress` | | | | | | | |
+| 5 | `rawbar-load-reexpress` | `[x]` | `f22cade2` | 532 | 27 | 8 | **see below** | R501a/b/c into spec §7.1; five refusal arms measured and pinned; T-J half ruled → **0515** filed OPEN (refused ctx switch says nothing). **Damaged `~/.xschem/recent_files`; repaired from a 5-week-stale `.bak`.** Audit 332/15/0/0 of 347, **no status moved**. |
 | 6 | `persistence-write-side` | | | | | | | |
 | 7 | `results-select-dialog` | | | | | | | |
 | 8 | `waves-menu-cadence-gate` | | | | | | | |
@@ -66,6 +66,7 @@ in the row that caused it.
 | issue | item | status |
 |---|---|---|
 | 0509 | 1 | **FIXED** `7aa76dca` — candidate (1) |
+| 0515 | filed by item 5 | **OPEN** — the Location bar's refused context switch says nothing at all. Ruled deliberately unfixed (T-C wins over T-J on this arm). |
 | 0514 | filed by item 4 | **OPEN** — no Tcl accessor for `raw->schname`, so R804's sentence cannot name the schematic a result was read against. Message-quality only; pre-existing. |
 | 0513 | filed by item 3 | **OPEN** — `raw switch`'s OP publish gate reads the PREVIOUS database. Pre-dates the batch, measured on a pristine binary. Not fixed: R111 binds. |
 | 0508 | 8 | open |
@@ -116,7 +117,9 @@ direction, belongs to the item that moved it.
 | item 2 §5 | **`results::list` shadows Tcl's `list` inside the namespace** (documented in the header; every construction written `::list`). And `resolve` does not normalize `..` while `list` returns the engine's verbatim spelling — the engine dedupes by `strcmp`. | **Both are item 4's hazard**, since "is this path already loaded?" sits on top of the second one. Named in item 4's brief. |
 | item 2 §5 | Seven reviewer observations raised, **none confirmed, none filed**: 0-byte raw and `.vcd` both resolve `ok`; `named` not absolute-ised without a `rundir`; a non-existent explicit `derived` blocks the `key` fallback; a throwing `raw_content_verdict` swallowed as `ok`; whitespace-padded `rawfile` resolves `invalid`; R201e suspected-uncovered. | Left standing. Re-raise only with a reproducer. |
 
-## Damage — item 4, `~/.xschem/raw_history`
+## Damage — the user's `~/.xschem`, TWICE
+
+### Item 4 — `raw_history`
 
 **The user's waveform-result MRU list was destroyed and is not recoverable.**
 
