@@ -28,3 +28,12 @@ other action can (S8 decision D10).
 
 Answering it needs a C action and a build, which S8's rc-only, no-build scope
 excluded. Recorded here so the decision is made once, deliberately.
+
+**⚠ S10b sharpens this from a carrier nobody has placed to 40 shipped symbols in
+every sky130 design** (issue **0475**): the sky130 FET annotation texts are now
+`hide=true`, so a user whose rc never sources `sky130_procs.tcl` gets no overlay at
+any mask and the numbers are reachable only through View > Show hidden texts — and
+per 0475 §11.2 that also hits users who *do* source it but reached the symbol
+through a vendored or aliased library, because the descriptor matches on
+`cell::name`. Neither of 0475 §7's alternatives (a built-in fallback registration,
+or defaulting the mask on) can be evaluated until this residual is settled.

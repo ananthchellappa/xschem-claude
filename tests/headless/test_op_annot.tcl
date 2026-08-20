@@ -4968,6 +4968,369 @@ opa_l_annot 0
  }
 }
 
+# =============================================================================
+# SECTION Q — S10 of doc/claude/specs/op_annotation.md: THE PER-PDK SYMBOL
+#             TEXT CLEANUP (sky130), AND THE DEDUPLICATION IT OWES
+# =============================================================================
+# S10 marks the annotation texts the 40 shipped sky130_fd_pr FET symbols have
+# always carried — `id=`, `gm=` and the ONE two-line record holding `vgs=` and
+# `vds=` — `hide=true`, so that the S9b draw-time overlay becomes the single
+# source of those numbers and the double-printing measured at annot_show 1 goes
+# away. The plan asked for the S7 class token `hide=op`; it was implemented,
+# measured, and refuted — see the ruling table below.
+#
+# THE MEASURED INVENTORY (this tree, today). It is not the one the step brief
+# assumed, so the goldens below are counted, not quoted:
+#   * 40 files under sky130A/xschem_libs/sky130_fd_pr/*/symbol/*.sym, out of 77
+#     in that library and 724 .sym in all of sky130A.
+#   * 119 T records, NOT 160: `vgs=` and `vds=` share ONE record that spans two
+#     lines, with its attribute group at the end of the SECOND line. 39 files
+#     carry 3 records; nfet_20v0_iso carries 2 (it has no vgs/vds record).
+#   * their attribute tails are exactly 40 x {layer=17} (the id records) and
+#     79 x {layer=15} (40 gm + 39 vgs/vds) — summing to 119, which is what makes
+#     an attribute-tail anchor provably unambiguous in that tree.
+#   * the ONLY pre-existing hide= token in all 724 sky130A .sym files is one
+#     unrelated `hide=instance` in sky130_tests/diff_amp/symbol/diff_amp.sym:35.
+#   * gf180 is untouched by S10: 19 files x 2 texts = 38 records, ALL already
+#     `hide=true`. Row Q8 is the file-level tripwire for that, and row L22 is its
+#     render-level companion — L22 is the tree's ONLY non-vacuous fixture for the
+#     hide=true half of invariant I7, so converting those 38 records would
+#     destroy the guard and the thing it guards in one edit.
+#
+# ============================================================================
+# ⚠ THE TOKEN IS `hide=true`, NOT `hide=op`, AND THAT RULING IS THIS TABLE
+# ============================================================================
+# The step plan asked for the S7 class token `hide=op`. It was implemented,
+# measured on all 40 shipped files, and REFUTED -- it does not deduplicate.
+# text_hidden() (actions.c:1194) gates a hide=op TEXT on annot_show bit0:
+#     if(flags & HIDE_TEXT_OP) return (xctx->annot_show & ANNOT_SHOW_OP) ? 0 : 1;
+# and get_annot_overlay() (actions.c:1475) gates the WHOLE overlay on the SAME
+# bit:
+#     if(text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)) return 0;  /* D2 */
+# So a symbol text tokened `hide=op` becomes visible EXACTLY when the overlay
+# that is supposed to replace it becomes visible. Measured on this tree, on the
+# real 40 files, 10 FETs in Q_VP, sky130_procs.tcl sourced (sym = the four
+# symbol spellings, ovl = the overlay's rows):
+#
+#   token       mask0 sht0    mask1 sht0        mask3 sht0      mask0 sht1     mask1 sht1
+#   ---------   -----------   ---------------   -------------   ------------   -------------
+#   (shipped)   sym10 ovl 0   sym10 ovl10 (!)   sym10 ovl10     sym10 ovl 0    sym10 ovl10
+#   hide=op     sym 0 ovl 0   sym10 ovl10 (!)   sym10 ovl10     sym 0 ovl 0    sym10 ovl10
+#   hide=true   sym 0 ovl 0   sym 0 ovl10       sym 0 ovl10     sym10 ovl 0    sym10 ovl10
+#
+# i.e. hide=op removes the double-printing ONLY at the mask where NOTHING is
+# drawn at all, and leaves it intact at exactly the two masks where the step
+# says it must go away. hide=true removes it at both.
+#
+# THE RULING (ladder L1, invariant I1 -- "ONE name builder, TWO consumers; never
+# two independent builders, because when they drift the failure is SILENT"). The
+# symbol's own text is a THIRD, independent builder of the same vector names --
+# D8's own header says so, and issue 0428 is that drift already realised, one
+# shipped symbol whose builder disagrees with the other 39 and has always
+# rendered blank. I1 is satisfied only by the row of this table in which the two
+# builders are never both painting: `hide=true`.
+#
+# SECOND GROUND (ladder L2, least surprising / smallest blast radius): hide=true
+# is the spelling gf180 ALREADY SHIPS for exactly this content
+# (gf180mcu_pr/nfet_03v3/symbol/nfet_03v3.sym:64-70, `{layer=15\nhide=true}`), so
+# after S10 the two PDKs behave alike instead of three ways; it is data-only, so
+# no C moves and section L's S7/S9b goldens stay put; and it leaves the legacy
+# numbers one stock menu item away (View > Show hidden texts, xschem.tcl:15050)
+# for the user whose rc never sources sky130_procs.tcl and who therefore gets no
+# overlay at any mask. That escape hatch is row Q7, and it materially softens the
+# ledger's E question rather than answering it.
+#
+# REJECTED: (a) `hide=op` as planned -- measured above, does not deliver the step.
+# (b) changing text_hidden()/get_annot_overlay() so the class means "superseded BY
+# the overlay" -- that is real C surgery outside a step declared ZERO LOGIC, it
+# would move section L's goldens, and S7 decision D3 (classes ahead of
+# show_hidden_texts) was ratified deliberately. Q1/Q2/Q7 below are the rows that
+# MOVED to record this ruling; none was silenced, and Q7 still discriminates the
+# two tokens -- it simply now reds if someone writes hide=op.
+#
+# ⚠ KNOWN GAP, MEASURED AND NOT COVERED BY ANY ROW BELOW: the bottom-right cell
+# of the table above. At annot_show 1 WITH show_hidden_texts 1 the duplication
+# returns in full -- measured with a real raw, `id=12.34u` AND `id    = 12.34u`
+# on the same device -- so the ruling's phrase "the two builders are never both
+# painting" is false in that one state. hide=true is still strictly better than
+# hide=op, which double-paints in the COMMON case (mask 1, sht 0), and Q7 below
+# exercises mask 0 + sht 1 only. Whoever closes this should ADD the mask1+sht1
+# cell, not re-litigate the token. Issue 0475 section 11 item 1.
+#
+# ⚠ SECOND KNOWN GAP: every row below uses ONE fixture at ONE viewport. Nothing
+# here exercises a cell name that does NOT match the descriptor's
+# `match {*sky130_fd_pr/*}` -- and op_annot::_matches tests that against
+# cell::name, not the file's location, so a vendored or aliased copy of an edited
+# symbol is silent at EVERY mask even with sky130_procs.tcl sourced. That is the
+# widened form of the ledger's E question. Issue 0475 section 11 item 2.
+#
+# ⚠ THE VIEWPORT COUNT 10 IS A GOLDEN, NOT A SHAPE. The shipped 17-FET
+# sky130_tests_ase/test_nmos schematic puts exactly 10 sky130_fd_pr FETs inside
+# Q_VP, and each carries all four texts. A count that drifts off 10 means the
+# fixture moved or the overlay stopped covering every device — both worth a red.
+
+set Q_SCH  [file join $repo sky130A xschem_libs sky130_tests_ase test_nmos \
+                      schematic test_nmos.sch]
+set Q_SKYROOT [file join $repo sky130A]
+set Q_FDPR    [file join $repo sky130A xschem_libs sky130_fd_pr]
+set Q_GFPR    [file join $repo gf180mcuD xschem_libs gf180mcu_pr]
+## Viewport for the 10-argument `xschem print` form: {w h x1 y1 x2 y2}.
+set Q_VP   {1800 1200 100 -700 1800 -100}
+
+## The three annotation records, matched WHOLE and anchored on BOTH the text
+## group's prefix and the record's attribute group. `[^\}]*` crosses newlines,
+## which is what lets the ONE two-line vgs/vds record be matched as one record;
+## `[^\{]*` is the geometry, which never contains a brace. The capture is the
+## ATTRIBUTE group, so this scanner reads the same bytes before and after the
+## edit — a per-line pass could not (issue: the vgs record's attribute group
+## lives at the end of its SECOND line).
+set ::Q_RE(id)  {\nT \{id=@spice_get_node[^\}]*\}[^\{]*\{([^\}]*)\}}
+set ::Q_RE(gm)  {\nT \{gm=@spice_get_node[^\}]*\}[^\{]*\{([^\}]*)\}}
+set ::Q_RE(vgs) {\nT \{vgs=expr\([^\}]*\}[^\{]*\{([^\}]*)\}}
+
+## -> flat list of {basename kind attrgroup} for every annotation record in the
+## sky130_fd_pr symbol tree. NEVER raises: a tree that lost its symbols must red
+## one row, not abort the section.
+proc opa_q_records {} {
+  global Q_FDPR
+  set out {}
+  foreach f [lsort [glob -nocomplain [file join $Q_FDPR * symbol *.sym]]] {
+    if {[catch {open $f r} fd]} continue
+    set t \n[read $fd] ; close $fd
+    foreach k {id gm vgs} {
+      foreach {whole attr} [regexp -all -inline $::Q_RE($k) $t] {
+        lappend out [list [file tail $f] $k $attr]
+      }
+    }
+  }
+  return $out
+}
+## An attribute group is a whitespace/newline separated token list — `get_tok_value`
+## treats `{layer=17 hide=op}` and `{layer=17\nhide=op}` alike, so the scan must too.
+proc opa_q_attrtok {attr} { return [split [string map [list \n { } \t { }] $attr] { }] }
+
+## -> {nid ngm nvgs total} counting only records whose ATTRIBUTE group carries
+## the token asked for.
+proc opa_q_class {tok} {
+  array set n {id 0 gm 0 vgs 0}
+  foreach r [opa_q_records] {
+    lassign $r f k attr
+    if {[lsearch -exact [opa_q_attrtok $attr] $tok] >= 0} { incr n($k) }
+  }
+  return [list $n(id) $n(gm) $n(vgs) [expr {$n(id) + $n(gm) + $n(vgs)}]]
+}
+## The busiest attribute group: how many hide= tokens the most-decorated
+## annotation record carries. 0 before S10, 1 after, 2 if the editing script ran
+## twice or was not idempotent.
+proc opa_q_maxhide {} {
+  set mx 0
+  foreach r [opa_q_records] {
+    set c 0
+    foreach t [opa_q_attrtok [lindex $r 2]] { if {[string match hide=* $t]} { incr c } }
+    if {$c > $mx} { set mx $c }
+  }
+  return $mx
+}
+## Every *.sym under <root>, recursively.
+proc opa_q_symfiles {root} {
+  set out {}
+  foreach f [lsort [glob -nocomplain -directory $root *]] {
+    if {[file isdirectory $f]} {
+      foreach g [opa_q_symfiles $f] { lappend out $g }
+    } elseif {[string match *.sym $f]} { lappend out $f }
+  }
+  return $out
+}
+## -> {nop ninstance ntrue nvoltage nother} over every *.sym below <root>.
+## A FULL census, not a spot check: a stray token landing on an unrelated record
+## has to show up somewhere, and this is the somewhere.
+proc opa_q_hideinv {root} {
+  array set n {op 0 instance 0 true 0 voltage 0 other 0}
+  foreach f [opa_q_symfiles $root] {
+    if {[catch {open $f r} fd]} continue
+    set d [read $fd] ; close $fd
+    foreach m [regexp -all -inline {hide=[A-Za-z0-9_]+} $d] {
+      set v [string range $m 5 end]
+      if {[info exists n($v)]} { incr n($v) } else { incr n(other) }
+    }
+  }
+  return [list $n(op) $n(instance) $n(true) $n(voltage) $n(other)]
+}
+
+## The RENDERED text of an SVG export, as a list of strings. Both the symbol
+## texts and the overlay rows are plain `>...</text>` nodes and xschem writes no
+## structural `id="..."` attribute, so a prefix match on a text NODE is exact
+## where a raw `regexp id=` on the file would not be.
+proc opa_q_texts {s} {
+  set o {}
+  foreach m [regexp -all -inline {>[^<]*</text>} $s] { lappend o [string range $m 1 end-7] }
+  return $o
+}
+proc opa_q_n {s pfx} {
+  set n 0
+  foreach t [opa_q_texts $s] { if {[string first $pfx $t] == 0} { incr n } }
+  return $n
+}
+## The four SYMBOL spellings, in order. `id=` cannot match the overlay's
+## `id    =`, and `gm=` cannot match either `gm    =` or `gm/id =`, because the
+## match is anchored at the start of the text node.
+proc opa_q_sym {s} {
+  set o {} ; foreach p {id= gm= vgs= vds=} { lappend o [opa_q_n $s $p] } ; return $o
+}
+## The OVERLAY spellings, padded to the 5-wide label column S5 builds.
+proc opa_q_ovl {s} {
+  set o {}
+  foreach p [list {id    =} {gm    =} {vth   =} {gds   =} {vdsat =} {ft    =} {gm/id =}] {
+    lappend o [opa_q_n $s $p]
+  }
+  return $o
+}
+
+if {[catch {
+
+set XSCHEM_LIBRARY_PATH $P_SKY_LIBS
+opa_source [file join $repo sky130A sky130_procs.tcl]
+xschem load $Q_SCH
+
+# ===========================================================================
+# Q0 — CONTROL: the fixture is the one the goldens were counted on
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW EVERY ROW BELOW DEGRADES INTO A HOLLOW PASS. A schematic
+# that failed to load, or a sky130 descriptor an earlier section left overridden
+# with a probe, would make the overlay counts 0 and the symbol counts 0 — which
+# is precisely the shape Q3/Q4/Q6/Q7 are asking for. This row is green before
+# and after S10 by design; it exists so a broken fixture reds ONE legible row.
+set q_ndev [llength [opa_q_records]]
+check {Q0 CONTROL the fixture loads, the sky130 nmos descriptor is live, and the 40-symbol corpus is present} \
+  [list [expr {[file tail [xschem get schname]] eq {test_nmos.sch}}] \
+        [expr {[op_annot::descriptor nmos] ne {}}] \
+        $q_ndev] {1 1 119}
+
+# ===========================================================================
+# Q1 — THE INVENTORY: 119 records, every one of them classed
+# ===========================================================================
+# ⚠ THE SPLIT {40 40 39} IS THE ASSERTION, NOT THE TOTAL. A script that walked
+# lines instead of records would either double-add on the vgs/vds pair (giving
+# 40/40/78) or miss it entirely (40/40/0); a script that assumed 3 records in
+# every file would trip over nfet_20v0_iso, which has 2.
+# The trailing 0 is the REJECTED token, pinned: the plan asked for hide=op and
+# the table above refutes it, so a later pass that "restores the plan" reds here
+# as well as at Q4/Q6.
+check {Q1 S10 INVENTORY: all 119 sky130_fd_pr annotation records carry hide=true, split 40 id / 40 gm / 39 vgs+vds, and none carries hide=op} \
+  [concat [opa_q_class hide=true] [lindex [opa_q_class hide=op] 3]] {40 40 39 119 0}
+
+# ===========================================================================
+# Q2 — NO COLLATERAL, NO DOUBLE-ADD: the whole sky130A hide= census
+# ===========================================================================
+# The last term is the busiest attribute group. It is 0 today, must be 1 after
+# S10, and is 2 if the editing script is not idempotent — which is the one
+# failure mode a per-file record count cannot see.
+check {Q2 NO COLLATERAL: the sky130A hide= census is 0 op / 1 instance / 119 true / 0 voltage, at most one token per record} \
+  [concat [opa_q_hideinv $Q_SKYROOT] [list [opa_q_maxhide]]] {0 1 119 0 0 1}
+
+# ===========================================================================
+# Q8 — gf180 UNTOUCHED: the file-level half of invariant I7
+# ===========================================================================
+# ⚠ GREEN BEFORE S10 AND IT MUST STAY GREEN. This is a tripwire, not a claim
+# about S10: the step plan's own S10 section asks for gf180's 19 symbols to be
+# converted too, and I7 forbids it. Its render-level companion is L22.
+set q_gf [opa_q_hideinv $Q_GFPR]
+set q_gfn 0
+foreach f [opa_q_symfiles $Q_GFPR] {
+  set fd [open $f r] ; set d [read $fd] ; close $fd
+  if {[string first hide=true $d] >= 0} { incr q_gfn }
+}
+check {Q8 I7 TRIPWIRE: gf180mcu_pr still holds 38 hide=true records in 19 files and no hide=op} \
+  [list [lindex $q_gf 2] [lindex $q_gf 0] $q_gfn] {38 0 19}
+
+# ===========================================================================
+# Q3 — MASK 0: THE RESTING SCHEMATIC
+# ===========================================================================
+# ⚠ THIS ROW IS THE STEP'S USER-VISIBLE CHANGE, STATED AS A NUMBER. Today the
+# four texts render at EVERY mask (measured: byte-identical exports at
+# annot_show 0, 1 and 3 as far as they are concerned) because they carry no
+# hide= token at all and answer to no knob. After S10 they are hidden, and a
+# stock schematic gets emptier — that is decision D9 and the ledger's E
+# question, not a regression to hide. What the user keeps is row Q7's escape
+# hatch; what the user gains, once the PDK procs are sourced, is Q4's superset.
+opa_l_annot 0 ; opa_l_sht 0
+set q_s0 [opa_l_print2 svg [file join $scratch q_00.svg] $Q_VP]
+check {Q3 MASK 0: the four shipped sky130 symbol texts are gone from a resting export} \
+  [opa_q_sym $q_s0] {0 0 0 0}
+
+# ===========================================================================
+# Q4 — MASK 1: THE DEDUPLICATION, WHICH IS THE WHOLE POINT OF S10
+# ===========================================================================
+# ⚠ THE ROW THE STEP EXISTS FOR, AND THE ONE THIS FILE PREDICTS hide=op CANNOT
+# SATISFY — see this section's header table. Today each of id/gm/vgs/vds is
+# painted TWICE on every FET: once by the symbol's own text and once by the
+# overlay row. The overlay's ten rows are a strict SUPERSET of the shipped four,
+# so the symbol's copy is the one that must go.
+opa_l_annot 1
+set q_s1 [opa_l_print2 svg [file join $scratch q_10.svg] $Q_VP]
+check {Q4 MASK 1: each label is painted ONCE per FET -- the symbol texts are gone and the overlay covers all 10 devices} \
+  [concat [list [opa_q_sym $q_s1]] [lrange [opa_q_ovl $q_s1] 0 2]] \
+  {{0 0 0 0} 10 10 10}
+
+# ===========================================================================
+# Q5 — NON-VACUITY
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW Q3/Q4/Q6/Q7 WOULD ALL PASS ON AN EXPORTER THAT DREW
+# NOTHING. Green before and after S10, deliberately.
+check {Q5 NON-VACUITY: the mask-1 export is strictly longer than the mask-0 one and carries the overlay-only rows} \
+  [concat [list [expr {[string length $q_s1] > [string length $q_s0]}]] \
+          [lrange [opa_q_ovl $q_s1] 3 6]] {1 10 10 10 10}
+
+# ===========================================================================
+# Q6 — MASK 3: THE hide=voltage TRAP, MADE EXECUTABLE
+# ===========================================================================
+# ⚠ WHY A SEPARATE MASK. `vgs` and `vds` ARE node voltages, so hide=voltage
+# looks like the tidier token for that one record — but get_annot_overlay gates
+# the WHOLE block, vgs and vds rows included, on bit0 alone (actions.c:1475,
+# decision D2). Tokening them hide=voltage therefore restores the duplication at
+# mask 3 and nowhere else, i.e. at exactly the state nobody would think to test.
+opa_l_annot 3
+set q_s3 [opa_l_print2 svg [file join $scratch q_30.svg] $Q_VP]
+check {Q6 MASK 3: turning the voltage class on as well does not bring the symbol texts back} \
+  [opa_q_sym $q_s3] {0 0 0 0}
+
+# ===========================================================================
+# Q7 — THE ESCAPE HATCH, AND THE hide=op / hide=true DISCRIMINATOR
+# ===========================================================================
+# ⚠ THIS IS THE ROW THAT MOVED, AND IT IS THE RULING. It was written to assert
+# that show_hidden_texts CANNOT resurrect the four texts — true of hide=op, and
+# the counterpart of Q4/Q6, which hide=op cannot satisfy (header table). The step
+# ruled for hide=true, so this row now asserts the behaviour that token actually
+# has, and it still discriminates the two: under hide=op the four counts here are
+# {0 0 0 0} and this row reds.
+#
+# WHY THE MOVE IS A GAIN AND NOT A CONCESSION. S10 makes 40 shipped sky130 FET
+# symbols annotation-silent at the DEFAULT mask, and for a user whose rc never
+# sources sky130_procs.tcl no overlay ever fires to replace them (decision D9,
+# the ledger's E question). With hide=true those numbers are one stock menu item
+# away — View > Show hidden texts, xschem.tcl:15050 — instead of unreachable, and
+# sky130 now behaves exactly as gf180's 19 already-hide=true symbols do, which is
+# what row L22 pins.
+#
+# THE SECOND HALF IS THE ONE THAT MATTERS: the overlay stays OFF here. The two
+# sources are never both painted at the default mask, so revealing the legacy
+# texts cannot re-create the double-printing S10 exists to remove. (At mask 1 AND
+# show_hidden_texts 1 both do appear — that state is the explicit "show me
+# everything, including what is hidden" debug mode, and it is what gf180 has
+# always done too.)
+opa_l_annot 0 ; opa_l_sht 1
+set q_s0h [opa_l_print2 svg [file join $scratch q_01.svg] $Q_VP]
+check {Q7 ESCAPE HATCH: show_hidden_texts 1 at mask 0 returns the four legacy texts and leaves the overlay off} \
+  [concat [opa_q_sym $q_s0h] [lrange [opa_q_ovl $q_s0h] 0 1]] {10 10 10 10 0 0}
+
+opa_l_sht 0 ; opa_l_annot 0
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+} qerr]} {
+  puts "UNEXPECTED ERROR (section Q): $qerr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

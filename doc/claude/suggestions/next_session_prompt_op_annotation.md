@@ -1621,31 +1621,129 @@ than compiled-in constants whose only escape is per-instance
 this. Related and also unratified: `annot_show` still defaults to 0 (issue 0457).
 
 
-## S10 — per-PDK symbol text cleanup
+## S10 ✅(E) — per-PDK symbol text cleanup — **LANDED AS S10b, AND THE TOKEN IS `hide=true`**
 
-Script a pass over `sky130A/xschem_libs/sky130_fd_pr/*/symbol/*.sym` (~40 FET
-symbols) marking their existing `id=`/`gm=`/`vgs=`/`vds=` texts `hide=op`, so the
-overlay is the single source. gf180 already sets `hide=true` on its two; ihp
-symbols carry currents only.
+~~Script a pass over `sky130A/xschem_libs/sky130_fd_pr/*/symbol/*.sym` (~40 FET
+symbols) marking their existing `id=`/`gm=`/`vgs=`/`vds=` texts `hide=op`~~ —
+**done, but with `hide=true`, not `hide=op`. See note 1 below: `hide=op` was
+implemented on all 40 real files, measured, and refuted.** Issue **0475** carries
+the measured inventory, the ruling table, the editing script forward *and*
+reverse, and the E question; issue **0476** carries what was deliberately left
+ungated.
 
-**Acceptance:** with `annot_show 0`, a sky130 schematic looks exactly as it did
-before this whole plan started.
+**What actually shipped:** 119 T records in **40** files gained
+`{layer=NN` → `{layer=NN\nhide=true}` in their **attribute** brace group. gf180's
+38 records, IHP's 3, and `xschem_library/devices`' 30 were **not touched**.
 
-⚠ **THAT ACCEPTANCE IS NOW FALSE AS WRITTEN, AND S10 IS A USER-VISIBLE DEFAULT
-CHANGE, NOT A CLEANUP** (measured by S7). `annot_show` defaults to **0**, and
-sky130's `id=`/`gm=` texts carry **no `hide=` token today**, so they are on
-permanently. Marking them `hide=op` moves them from *always on* to *off unless
-bit0* — a sky130 schematic at `annot_show 0` would look **emptier**, not
-identical. The same applies to gf180's 19 `hide=true` FET symbols, which move
-from "on with `show_hidden_texts`" to "off unless bit0", and to the two IHP
-carriers, which carry no token and are unconditionally always-on. Restate the
-acceptance against the *intended* resting state before scripting anything, and
-settle decision **D2** first — if `annot_show` ends up defaulting to 1 this step
-is nearly a no-op for the user, and if it stays 0 this step turns four PDKs'
-annotations off by default and needs its own ratification.
+~~**Acceptance:** with `annot_show 0`, a sky130 schematic looks exactly as it did
+before this whole plan started.~~ **Unsatisfiable by construction — replaced.**
+At `annot_show 0` those texts render *today* (measured 77134 bytes, 10× each on
+`sky130_tests_ase/test_nmos`), so any `hide=` token makes mask 0 strictly
+emptier — that *is* the change. The ⚠ block that used to stand here was right,
+and the two runnable substitutes are now test rows: **Q3** (at mask 0 the four
+symbol spellings go 10,10,10,10 → 0,0,0,0, with **Q5** proving the exporter still
+drew) and **Q4** (at mask 1 each label is painted **once** per FET where it was
+painted twice). Verify-C additionally ran the symmetric before/after export diff
+against a `git show HEAD:` mirror of the 40 originals: at `show_hidden_texts 0`
+the *only* difference at masks 0, 1 and 3 is the removal of those four texts, and
+the non-text SVG line count is identical (579 vs 579) — no geometry, no bbox moved.
 
-**Risk:** ~~medium blast radius, zero logic~~ — **medium blast radius and a
-default-state change.** Separate commit per PDK.
+**Risk as executed:** medium blast radius, zero logic. Data + one test file +
+docs; **no build** — `src/xschem` is byte-identical.
+
+### What S10b learned that binds later steps
+
+1. **⚠ `hide=op` CANNOT DEDUPLICATE, AND THIS IS A DESIGN FACT, NOT A DETAIL OF
+   S10.** `text_hidden()` (`actions.c:1194`) renders a `hide=op` TEXT *iff*
+   `annot_show` bit0, and `get_annot_overlay()` (`actions.c:1475`, S9b's D2) gates
+   the **whole overlay** on the *same* bit. So a symbol text tokened `hide=op`
+   becomes visible **exactly when the overlay meant to replace it does**. Measured
+   on all 40 shipped files, 10 FETs in the viewport, `sym` = the four symbol
+   spellings / `ovl` = the overlay's rows:
+
+   | token | mask0 sht0 | mask1 sht0 | mask3 sht0 | mask0 sht1 | mask1 sht1 |
+   |---|---|---|---|---|---|
+   | (pre-S10) | sym10 ovl 0 | sym10 ovl10 **(!)** | sym10 ovl10 | sym10 ovl 0 | sym10 ovl10 |
+   | `hide=op` | sym 0 ovl 0 | sym10 ovl10 **(!)** | sym10 ovl10 | sym 0 ovl 0 | sym10 ovl10 |
+   | **`hide=true`** | sym 0 ovl 0 | **sym 0 ovl10** | **sym 0 ovl10** | sym10 ovl 0 | sym10 ovl10 **(!)** |
+
+   `hide=op` removes the double-printing only at the mask where nothing is drawn
+   at all. Ruled by **ladder L1 / invariant I1** (one builder; drift fails
+   silently — the symbol text is a *third* builder, and issue **0428** is that
+   drift already realised). **Consequence for anyone later: the `hide=op` class as
+   it stands means "text that appears *together with* the overlay", not "text
+   superseded *by* it".** If a future step wants the latter meaning it is a C
+   change to `text_hidden()`/`get_annot_overlay()`, it moves section L's goldens,
+   and it undoes S7 decision D3 (classes tested ahead of `show_hidden_texts`) which
+   was ratified deliberately. Do not do it as a side effect.
+
+2. **THE DUPLICATION RETURNS IN FULL AT `annot_show 1` + `show_hidden_texts 1`** —
+   see the `(!)` in the bottom-right cell above, measured with a real raw:
+   `id=12.34u` *and* `id    = 12.34u` on the same device. **No test row covers
+   that state** (Q7 exercises mask 0 + sht 1 only), and issue 0475 §3's phrase
+   "the two builders are never both painting" is false there. It is still strictly
+   better than `hide=op`, which double-paints in the *common* case (mask 1, sht 0).
+   Whoever adds coverage should add the mask1+sht1 cell rather than re-litigating
+   the token.
+
+3. **⚠ THE E QUESTION IS WIDER THAN "a user whose rc never sources
+   `sky130_procs.tcl`".** `op_annot::_matches` tests the descriptor's
+   `match {*sky130_fd_pr/*}` against **`cell::name`, not the file's real location**.
+   Measured: a byte-copy of the edited `nfet_01v8.sym` instanced from a user
+   library renders **nothing** at mask 0 *and* mask 1 with a raw loaded, and
+   `_matches` returns 0 for `myfoundry/nfet_01v8` reached through a differently
+   named library alias. So a user who **does** source the PDK procs still loses the
+   numbers if they vendored or aliased the symbol. Any evaluation of option (b) of
+   0475 §7 (a built-in fallback registration) must be sized against **this** blast
+   radius, not the rc-only one.
+
+4. **THE `hide=` CENSUS CHECK IS COUNT-CONSERVING AND HAS A BLIND SPOT.** Row Q2
+   counts `hide=…` occurrences over whole **file text**, so a token that *migrates*
+   from a record's attribute group into that same record's text group is invisible
+   to it — sabotage variant SAB-6 read Q2 dead on its golden while 39 records were
+   corrupt. Q2's own comment overclaims. The mis-anchoring is still caught 4× by
+   Q1/Q3/Q4/Q6, but **anyone extending this edit to another PDK must anchor on the
+   whole record, never per line** — the vgs/vds record is ONE `T` record spanning
+   TWO lines with its attribute group at the end of the **second**.
+
+5. **ISSUE 0428 IS NOW HARDER TO SEE, NOT FIXED.** `pfet_g5v0d16v0_nf`'s `id=`/`gm=`
+   text still ships the wrong inner-device name and now renders only at
+   `show_hidden_texts 1`, where it appears as a **blank beside the overlay's
+   correct number** — a contradictory pair rather than an obvious blank. It was
+   tokened like every other record and otherwise left alone, because row P7's
+   golden names the file and S10 is the wrong step to move a golden in.
+
+6. **gf180 AND IHP WERE NOT CONVERTED, AND THAT REJECTS THIS SECTION'S OWN
+   ORIGINAL INSTRUCTION.** Converting gf180's 19 symbols from `hide=true` to
+   `hide=op` breaches **I7** and destroys row **L22**, which is the tree's *only
+   non-vacuous* fixture for I7's `hide=true` half — sabotage variant SAB-5 collapsed
+   all five of its terms at once. IHP's two inductor `@spice_get_current` texts and
+   its `annotate_fet_params` carrier are excluded on an *independent* ground: no
+   descriptor covers `type=inductor`, so gating them would remove a number with
+   nothing to replace it — **pure loss, not deduplication**. Same for the 30 ungated
+   records in `xschem_library/devices` (sky130's `match` provably never covers them).
+   All recorded in **0476**. **The old counts in this section were also wrong**:
+   gf180 is 19 files × 2 = **38** records, not "two"; sky130 is **119** records,
+   not 160, because `vgs=` and `vds=` share one record.
+
+7. **FOR S11/S12: `annot_show` STILL DEFAULTS TO 0 AND MUST STAY THERE UNTIL 0469
+   IS CLOSED** (S9b note 13 — the overlay resolves a device by *name*, so a renamed
+   instance renders another device's numbers). S10b did not change the default and
+   did not create an off-ramp; issue **0457**'s residual is untouched and now
+   sharper — it applies to 40 shipped FET symbols in every sky130 design, not to a
+   carrier nobody has placed.
+
+**⚠ THE E QUESTION (ladder L3, verbatim — issue 0475 §7):** *"S10 makes 40 shipped
+sky130 FET symbols annotation-silent unless View > Show hidden texts is on. For a
+user whose rc never sources `sky130_procs.tcl` the overlay never fires, so at every
+`annot_show` value this is pure subtraction unless they find that menu item. Ratify
+one of: (a) ship as implemented and accept `show_hidden_texts` as the escape hatch —
+the state gf180's 19 symbols have shipped in all along; (b) have `op_annot` ship a
+built-in fallback registration for `sky130_fd_pr` so the overlay fires without
+`cadence_style_rc`; (c) default `annot_show` to 1, which S8 decision D9 explicitly
+rejected."* **S10b implemented (a)**, and note 3 above widens who (b) would have to
+cover. The `hide=true` ruling is what *creates* the escape hatch — under the planned
+`hide=op` there would have been none.
 
 ---
 
@@ -1712,19 +1810,32 @@ end of this file: the next free number is **0455**.)*
 | **S7 ✅** | C, **10** sites → **one** helper | the real three-state toggle |
 | S8 | rc only | the three keys (now a real toggle, not a crude one) |
 | S9 ❌ | C, draw + exports | press `6`, every device lights up — **attempt 1 reverted, issue 0466** |
-| S10 | bulk `.sym` | no duplication |
+| **S10 ✅(E)** | bulk `.sym`, **40 files / 119 records** | no duplication — but the token is **`hide=true`**, not `hide=op` (0475 §3) |
 | S11 | C, one arm | timepoint OP with no graph |
 
 **Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
-`doc/claude/issues/0466-attempt-1-reverted.patch`**. S5 and S6 both landed without S3/S4 by reading a raw
+`doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw
 produced from a hand-written deck — neither the formatter nor the carrier needed
 the generator. S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6)
 rather than closing them, and pinned each with a green check that asserts the
 current wrong behaviour, so the eventual fix reds a named line; S7 did the same
 for 0452.
 
-**S8 is next**, and it is small — the mask it drives now exists. Read items 2–4
+**S10b landed** the sky130 cleanup as `hide=true` after measuring `hide=op` and
+refuting it — read the seven numbered notes in the S10 section before touching any
+`hide=` token, especially note 1 (the class cannot supersede the overlay because
+both answer to bit0) and note 3 (the loss also hits vendored/aliased symbols, not
+just users without the PDK rc). New from S10b: issues **0475**, **0476**; tiers
+209 → **218** headless and 214 → **223** xvfb on `test_op_annot`, T1 and T2
+unmoved. Sabotage 7 variants / 7 detected, with one stale prediction (SAB-1/Q7,
+because the ruling inverted Q7's direction) and one genuine blind spot (SAB-6/Q2,
+note 4).
+
+**S3+S4 remain the blocker for anything looking good** — every overlay row still
+renders BLANK on a real PDK raw.
+
+~~**S8 is next**~~ (landed), and it was small — the mask it drives now exists. Read items 2–4
 of "what S7 learned" before writing `cadence::annot_mode`: the mask is an
 **integer** (`set annot_show true` silently means *off*), S8 must use
 `xschem set annot_show N` rather than a bare Tcl `set`, and the
@@ -1737,7 +1848,8 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0455**.
+Number new issues from **0477**. *(0475 and 0476 were taken by S10b; the
+brief's "0417 is the highest" was stale. 0418/0419 stay reserved for S12.)*
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.
