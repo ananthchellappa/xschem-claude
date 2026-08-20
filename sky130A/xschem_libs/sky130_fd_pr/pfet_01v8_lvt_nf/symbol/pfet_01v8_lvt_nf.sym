@@ -67,7 +67,10 @@ T {W} -22.5 10 0 1 0.1 0.1 {}
 T {@model} 30 -8.75 2 1 0.2 0.2 {}
 T {@mult x @W / @L} 31.25 13.75 0 0 0.2 0.2 { layer=13}
 T {nf=@nf} 31.25 1.25 0 0 0.2 0.2 { layer=13}
-T {id=@spice_get_node i(\\@m.@path@spiceprefix@name\\.msky130_fd_pr__@model\\[id])} 30 -30 0 0 0.15 0.15 {layer=17}
-T {gm=@spice_get_node \\@m.@path@spiceprefix@name\\.msky130_fd_pr__@model\\[gm]} 30 -10 0 0 0.15 0.15 {layer=15}
+T {id=@spice_get_node i(\\@m.@path@spiceprefix@name\\.msky130_fd_pr__@model\\[id])} 30 -30 0 0 0.15 0.15 {layer=17
+hide=true}
+T {gm=@spice_get_node \\@m.@path@spiceprefix@name\\.msky130_fd_pr__@model\\[gm]} 30 -10 0 0 0.15 0.15 {layer=15
+hide=true}
 T {vgs=expr(@#1:spice_get_voltage - @#2:spice_get_voltage )
-vds=expr(@#0:spice_get_voltage - @#2:spice_get_voltage )} 5 17.5 0 1 0.07 0.07 {layer=15}
+vds=expr(@#0:spice_get_voltage - @#2:spice_get_voltage )} 5 17.5 0 1 0.07 0.07 {layer=15
+hide=true}
