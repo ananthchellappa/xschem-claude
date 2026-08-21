@@ -45,7 +45,7 @@
 ## Numbering rule for `fluid-editing` — **0500+ only** (ruled 2026-08-19)
 
 **Every new issue filed on this branch takes the next free number at or above
-0500.** Highest in use here is **0518**, so the next one is **0519**.
+0500.** Highest in use here is **0520**, so the next one is **0521**.
 
 Why, in one line each:
 
@@ -153,6 +153,21 @@ touching anything that creates, moves, deletes or reroutes wires.
 | **0005** | replayable selection needs stable object referents. **Deferred by design** — captured so the constraint is not rediscovered. |
 | **0008** | log graphical text property edits replayably. Design ratified, not built. |
 | **0078** | `select_at` replay fidelity for split wires. Known limitation, explicit non-goal of its parent. |
+
+## Filed 2026-08-20 — the command-channel design pass
+
+Both came out of `doc/claude/suggestions/voice_control_natural_language_plan.md`
+while measuring what it would take to drive xschem from outside. Neither is
+parked: neither is scheduled. **0519 is the one to read first** — one of its
+three defects needs no socket at all.
+
+| issue | one line |
+|---|---|
+| **0519** | ⚠ the TCP command server kills the editor three ways and every one answers like success: a nested event loop destroys `puts` and wedges the channel permanently, a 4096-byte action-log line SIGABRTs, `xschem exit` returns `0` from behind a modal. **One of the three needs no socket** — the 4 KB overflow is in `log_action()` (`src/util.c:508`), so Shift+B, paste 4 KB, OK core-dumps a stock GUI xschem. Fix V2 is one line of C; V1 is 0004's mitigation (1), still unapplied. |
+| **0520** | `xschem select` cannot read the handle `xschem object` hands out. `@<id>` is `atoi`'d to index **0** and the verb answers `1`; for `instance`/`pin` it answers `0` and leaves the **previous** selection armed, so the next `delete` takes the wrong object. The same bare `atoi` is in eight `setprop`/`getprop` arms and needs no sigil — `setprop wire OUTI lab ZAP` renames wire 0 under rc 0. Fix (a): route every arm through the selector block `object` already has. |
+
+0519's V1 is the mitigation already listed under **0004** below; the two want
+fixing together.
 
 ## Longer-parked infrastructure
 
