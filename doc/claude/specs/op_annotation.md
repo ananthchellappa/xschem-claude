@@ -4,10 +4,24 @@
 parameters — on the schematic, under three keys, with the displayed parameter
 list editable by the user and portable across PDKs.*
 
-Status: **S1, S2, S5, S6, S7, S8, S9b, S10b and S11 landed; S3 refuted and
-reverted three times (S9 once), S4 deferred with it; S12 not implemented.**
-Branch `annotate`. *(This line was stale through S9b and S10b; corrected by the
-S11 write-up.)*
+> ⚠ **THERE IS STILL NO SAVE-CARD GENERATOR.** S3 failed three times (issues
+> **0436**, **0442**, **0443**) and S4 is deferred with it, so the feature
+> cannot put real device numbers on a schematic without a hand-written deck:
+> every annotation row and every overlay block renders **blank** on any raw a
+> user produces today. This is the single most important fact about the current
+> state of this feature. Proven at file level: `src/op_annot.tcl` defines 17
+> procs and `op_annot::save_cards` is **absent** — the only occurrence of the
+> name is the comment at `src/op_annot.tcl:61` telling a future author what to
+> read before adding it.
+
+Status: **S1, S2, S5, S6b, S7, S8, S9b, S10b and S11 landed; S3 refuted and
+reverted three times (S9 once), S4 deferred with it; S12 attempted 2026-08-21
+and NOT completed** — its implement agent produced no change at all, and only
+its write-up survived (issues **0484**/**0485** filed, plan numbering
+reconciled, this block). Branch `annotate`. *(This line was stale through S9b
+and S10b; corrected by the S11 write-up, then by the S12 write-up. "S6b" is the
+commit's own spelling — `1f1b8125` — and is now used throughout in preference
+to the earlier "S6".)*
 Plan of atomic steps: `doc/claude/suggestions/next_session_prompt_op_annotation.md`.
 
 **S1** (2026-08-16) delivered `src/op_annot.tcl` — the namespace, `register` /
@@ -1107,6 +1121,41 @@ own step (and runs into issue 0478).
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:11958`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. |
 | **I7** | `hide=true` **and `hide=instance`** semantics are unchanged for every existing symbol in every library. **⚠ RESTATED BY S7 — the original wording named only `hide=true`, and `hide=instance` is the one that was actually at risk.** Counted across all tracked `.sym`/`.sch`: `hide=instance` **630 occurrences / 244 files**, `hide=true` **166 / 62** (47 / 22 before S10b, plus the 119 sky130 records in 40 files that S10b added — issue 0475; gf180's 38 are unchanged **by design**, and row L22 is the tree's only non-vacuous fixture for this half of I7), `hide=op` **2** (the twin `annotate_params.sym`), `hide=voltage` **0** — no other `hide=` value exists anywhere, so the acceptance sweep is a bounded, nameable list rather than a spot check. The threat was never the class bits; it was collapsing ten visibility tests that mask **two different things** into one fixed mask (§2.4). **HELD AT S7**, verified three independent ways: rows L11–L14 and L19–L22 of `test_op_annot.tcl`; the adversary's own fixtures (all 57 `xschem_library/devices/*.sym` carrying `hide=instance`, and the 19 gf180mcu FETs carrying `hide=true`, exported to SVG at `annot_show` 0 vs 3 at both `show_hidden_texts` states — byte-identical, and **non-vacuous** because the same corpus does differ between `show_hidden_texts` 0 and 1); and a re-run of the pre-S7 before-state script, whose `hide=true` (0 at `sht=0`, 158 at `sht=1`) and `hide=instance` (0 on a symbol, visible at top level) numbers came back byte-for-byte. ⚠ **PS byte-comparison is unsound** until issue **0454** is fixed — `xschem print ps` ends every page with an uninitialised RGB triple that changes between exports of identical content; L20/L22 compare a normalised copy (`opa_l_normps`) and L21 keeps that normalisation non-vacuous. |
 
+
+### 5.1 Shipped and unratified — the questions this run owes a human
+
+Collected here, in one place, so they can be answered in one sitting. **NINE
+rows, one per issue file** — a reader can check the list is complete by that
+count. Every file named below was verified to exist on disk by the S12 write-up
+agent (2026-08-21).
+
+The heading is deliberately **not** "open questions". Three of these are not
+questions at all in their own headers: 0429 and 0444 are marked **FIXED/RULED**
+and still owe a ratification, and 0424 is an **owed action** (a `./configure`
+run) rather than a decision. The honest framing is *shipped, and nobody with
+authority has signed it off*.
+
+| # | kind | the question |
+|---|---|---|
+| **0424** | owed action | `make install` ships an `xschem.tcl` that sources an **uninstalled** `op_annot.tcl`, and the installed binary then SEGFAULTs at startup. The fix is a `./configure` + install-rule change — a build action no agent in an unattended crew may run. |
+| **0429** | ratification | sky130 saves `cgso`/`cgdo`, which ngspice-42 rejects, and **one** rejected `.save` card suppresses the **entire** raw. Ruled and fixed in S3b; the ruling itself was never ratified. |
+| **0444** | ratification | a registered `pinexpr` whose @-token abuts `)` can never produce a number. Fixed in the two shipped descriptors; the C tokenisation is unchanged. *(Note: this is the **swallowed closing paren** — the "stray space" is the symptom in §4.4's symbol text, not the defect.)* |
+| **0446** | ratification | a pin expression fabricates **`0`** when one terminal is GND and the other net is absent from the raw — an I3 fabrication reachable from a flat schematic and the wrong `.raw`. Accepted in writing by S6b (decision D5) and pinned by row **K16**, which asserts the wrong behaviour on purpose. |
+| **0447** | ratification | `op_annot::text` **raises** on a malformed descriptor list while its own header says it never does. Accepted alongside 0446 by S6b (decision D6). |
+| **0457** | ratification | `annot_show` has no stock, non-`cadence_style_rc` control — a user not on that profile has no shipped way to reach the mask. S8's E question. |
+| **0475** | ratification | the 40 shipped sky130 FET symbols' annotation texts are gated behind **`hide=true`** rather than `hide=op`. S10b measured `hide=op` and **refuted** it (both `hide=op` and the overlay answer to `annot_show` bit 0, so a `hide=op` text becomes visible exactly when its replacement does), then shipped `hide=true`. S10b's E question. |
+| **0476** | ratification | annotation texts **outside** sky130 that answer to no visibility knob at all — including the `annotate_params.sym` carrier's IHP ancestor. |
+| **0479** | ratification | a cursor placed **outside** the data holds the endpoint and says nothing. S11 deliberately kept the graphless path identical to the graph path (invariant I1) rather than blanking, because no row compares the two. S11's E question. |
+
+**Why these accumulated rather than blocking.** Every one of them was found by a
+step that had already shipped its behaviour, under decision-ladder rung **L3**:
+implement the least-surprising option, then hand the user the exact question.
+Nine such questions in one feature is itself a signal — this feature changes
+what a schematic *shows*, so almost every choice is user-visible.
+
+*(Collected by the S12 write-up agent. The S12 implement agent produced no
+change; see the S12 block of the plan for what else that step still owes.)*
+
 ---
 
 ## 6. Landmines
@@ -1292,8 +1341,11 @@ own step (and runs into issue 0478).
 * Xyce and Vacask device-parameter naming. The descriptor can express them, but
   no descriptor is written here and none is tested.
 * Implementing the dead `@spice_get_modelparam_<p>(<dev>)` /
-  `@spice_get_modelvoltage_<p>(<dev>)` token branch (`token.c:5023`). File it;
-  this design does not need it.
+  `@spice_get_modelvoltage_<p>(<dev>)` token branch. **Filed as issue 0484**
+  by S12 (and its element-letter twin as **0485**); this design does not need
+  either. ⚠ The anchor this bullet used to carry, `token.c:5023`, was stale —
+  the branch that consumes all three token families is **`token.c:4996`**,
+  guarded by the regex at `token.c:4646`.
 * Removing the PDK symbols' own OP texts. A one-time scripted edit per PDK,
   sequenced after the overlay, not a prerequisite for it.
 * Annotation of AC / noise / sweep results.

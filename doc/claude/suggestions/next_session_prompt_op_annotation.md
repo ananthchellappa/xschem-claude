@@ -25,8 +25,10 @@ Also read, before touching anything:
   it up, including the "place annotator pre-filled from selection" idiom.
 - `doc/claude/code_analysis/waveform_subsystem_reference.md` §6.
 
-Branch is `annotate`. Number new issues from **0475** (0474 is the highest taken
-after S9b; the plan originally said 0418).
+Branch is `annotate`. **Number new issues from 0486.** *(Authoritative as of
+S12, 2026-08-21 — S12 consumed 0484 and 0485. Every other "number from N" line
+in this file is historical provenance and is marked as such; this is the only
+live one.)*
 
 ---
 
@@ -1819,7 +1821,7 @@ paths**, so it would have reddened nothing.
 | D6 | L2 | the helper self-gates on `sch_waves_loaded()` | relying on the inner gate — the public entry fires `annot_data_changed()` and the user's `$cursor_2_hook` **before** its own test (rows T19/T20) |
 | D7 | L1 / I4 | carry `if(floaters) set_modify(-2);` into the new branch verbatim | dropping it (floater caches would keep the previous timepoint). ⚠ **untested** — see 0481 §3 |
 | D8 | L2 | leave the `cursor1_x` twin `#if 0`'d and do **not** touch `utils/annot_mode.tcl` | symmetry for cursor A (nothing reads a cursor-A annotation); giving `6`/`Alt-6` a timepoint prompt (a new user interaction = a later step) |
-| D9 | L2 | number new issues from **0477** | the brief's 0418 — stale on this branch (0475/0476 taken by S10b; 0418/0419 reserved **by name** for S12) |
+| D9 | L2 | number new issues from **0477** *(historical — S11's decision; superseded, see the head of this file: number from **0486**)* | the brief's 0418 — stale on this branch (0475/0476 taken by S10b; 0418/0419 reserved **by name** for S12) |
 | D10 | L3 | ship the user-visible change and take status **E** | none; the blast radius (below) is the feature, the unratified part is D3 |
 
 ### THE SABOTAGE MATRIX — 5 of 8 caught exactly, 2 supersets, **3 misses** (issue 0481)
@@ -1896,7 +1898,9 @@ rows while `raw value -1` reports the new value.
    header from 8 variables to 4), then used the hand-written raw anyway.
 
 8. **New issues: 0477, 0478, 0479 (the E question), 0480, 0481, 0482, 0483.
-   Number the next one from 0484.** 0418/0419 stay reserved by name for S12.
+   Number the next one from 0484.** *(Superseded — S12 consumed 0484 and 0485;
+   number from **0486**. The 0418/0419 reservation was never used: see the S12
+   section below.)*
 
 ### STILL OPEN (the S11 adversary's residual risks — none refuted the step)
 
@@ -1930,21 +1934,97 @@ rows while `raw value -1` reports the new value.
 
 ---
 
-## S12 — documentation and issues
+## S12 — documentation and issues — ❌ **ATTEMPTED 2026-08-21, NOT COMPLETED**
 
-- ~~Fix `doc/claude/code_analysis/waveform_subsystem_reference.md` §6~~ ✅ **DONE
-  by S7** (that file, line 411): hiding comes from the `hide=` attribute, not
-  the layer; sky130's symbols set no token; and the note now also records the
-  `hide=op`/`hide=voltage` classes and the single `text_hidden()` predicate.
-- File **0418**: `@spice_get_modelparam_<p>(<dev>)` and
+**Read this block before re-running S12. Deliverables (2) and (3) are done,
+(4) is half done, (1) is not started — and the run that was supposed to do all
+four produced no commit at all.**
+
+The S12 implement agent returned "no code change — documentation step" and
+changed **nothing**: `git diff HEAD` was empty, HEAD stayed at `734456be`, and
+none of the six planned files was touched. All three verifiers caught it
+(Verify-A non-delivery, Verify-B `trustworthy=false` with 0 of 8 sabotage
+variants executable, Verify-C `refuted=true`). The step's write-up agent then
+filed the two issues below, because a measured-and-unfixed defect must not be
+left unfiled, and reconciled the numbering. Everything else is still owed.
+
+### Done by the S12 write-up agent
+
+- ✅ **Issue 0484 filed** — `@spice_get_modelparam_<p>(<dev>)` and
   `@spice_get_modelvoltage_<p>(<dev>)` are matched by the regex at
-  `token.c:4646` and then silently produce nothing (`token.c:5023` handles only
-  the `@spice_get_current` variants). Reserved-but-dead token forms.
-- File **0419**: the generic `@spice_get_modelparam_<p>` bare tokens build
-  `i(@x…[i])` for any `spiceprefix=X` device, i.e. for every sky130 / gf180 /
-  IHP device — `get_fqdevice()` switches on the *element letter*, which for a
-  subcircuit-wrapped PDK device is always `x`.
-- Update `doc/claude/specs/op_annotation.md` status as steps land.
+  `token.c:4646`, consumed by the branch at `token.c:4996`, and produce
+  **zero characters**. Supersedes the 0418 reservation.
+- ✅ **Issue 0485 filed** — `get_fqdevice()` (`token.c:4514`) switches on the
+  element letter (`prefix=dev[0]`, `token.c:4536`). Supersedes the 0419
+  reservation.
+- ✅ Numbering reconciled: **number new issues from 0486**, one live statement,
+  the other four marked historical in place.
+
+### STILL OWED — what a re-run of S12 must do
+
+1. **Fix `waveform_subsystem_reference.md` §6 — but NOT the sentence the S12
+   brief names.** ⚠ **The brief's premise is stale and cost this crew a
+   scout pass.** "Op text is layer-15 (hidden unless `show_hidden_texts=1`)" no
+   longer exists — S7 (commit `8ac98756`) already corrected it at lines 420-423,
+   which is why the old version of this very bullet was struck through as DONE.
+   The sentence that is **false now** is the one S7 wrote immediately after, at
+   **lines 424-425**:
+
+       gf180's OP texts carry `hide=true` and so obey `show_hidden_texts`;
+       sky130's carry no `hide=` token at all and are on permanently.
+
+   S10b (commit `09c4a2cd`) put `hide=true` on **119 T records across 40**
+   `sky130_fd_pr/*/symbol/*.sym` files — re-counted by the S12 write-up agent
+   on HEAD. So the doc is wrong in the same place, in the inverted direction.
+   Also stale in that file, each occurring exactly once: `annotate_op`
+   (`scheduler.c` ~1995 → **`scheduler.c:2339`**), `update_op` (`save.c` ~1465 →
+   **`save.c:2015`**), `backannotate_at_cursor_b_pos` (`callback.c` ~404 →
+   **`callback.c:1531`**, and a second `~425` spelling at §5 line 368),
+   `@spice_get_voltage` (`token.c` ~4685 → **`token.c:4821`** bare /
+   **`token.c:4912`** parenthesised; `:4685` is the tokenizer state machine),
+   and `text_hidden()` (unlined → **`actions.c:1195`**). §6 also mentions none
+   of `src/op_annot.tcl`, `get_annot_overlay()` (`actions.c:1456`),
+   `annot_overlay_flushes`, `annot_show`, or the `6`/`Ctrl-6`/`Alt-6` keys.
+   **Every replacement anchor in this bullet was re-verified line-by-line on
+   HEAD `734456be` by the S12 write-up agent** (`scheduler.c:2339` =
+   `else if(!strcmp(argv[1], "annotate_op"))`; `save.c:2015` = `int
+   update_op()`; `callback.c:1531` = `void backannotate_at_cursor_b_pos(...)`;
+   `actions.c:1195` = `int text_hidden(int flags, int ctx)`; `actions.c:1456` =
+   `int get_annot_overlay(...)`; `token.c:4821` / `:4912` = the bare and
+   parenthesised `@spice_get_voltage` cases) — they can be used without
+   re-measuring.
+2. ~~Update the spec's status block and collect the unratified E questions~~
+   ✅ **DONE by the S12 write-up agent**: the spec now leads with the
+   no-save-card-generator blocker, spells its status line **S6b** (the commit
+   `1f1b8125`'s own spelling) rather than S6, and carries
+   **§5.1 "Shipped and unratified"** — the canonical **nine** rows (0424, 0429,
+   0444, 0446, 0447, 0457, 0475, 0476, 0479), each verified to exist on disk.
+   ⚠ The S12 brief said "SIX" and then listed seven; the true count is nine —
+   it omitted **0447**, and 0475/0476 are two files, not one. Use the spec's
+   table, not the brief's parenthetical.
+   **Still owed on this item:** nothing in the spec; this plan file's own head
+   still describes the pre-S12 world above the fold.
+3. **The test rows.** ⚠ **The S12 plan's chosen `D1`…`D20` prefix WOULD HAVE
+   COLLIDED**: `tests/headless/test_op_annot.tcl` already contains `D1`–`D9`
+   vector-builder rows from an earlier step (e.g. `D1 GOLDEN vector M1 gm 1`,
+   `D8 I1 CROSS-CHECK`). Pick an unused prefix before writing the section.
+
+### Learned this run, binding on later steps
+
+- **0485's blast radius is wider than the plan recorded, and an x-only fix is
+  wrong.** The S12 write-up agent measured `get_fqdevice N1 gm 1` →
+  `i(@n1[i])`: the param-discarding `else` at `token.c:4560` swallows **every**
+  unrecognised element letter, not just `x`. Surviving letters are `v`/`e`,
+  `q`, `d`, `m`, `i` — so IHP's `n`-prefixed psp103/OSDI devices fail exactly
+  as the `x` case does, while `q` and `d` come through. Anyone fixing this must
+  not copy the brief's "always `x`" framing.
+- **The brief's mechanism for 0485 is also wrong in a second way:** `instname`
+  does **not** carry `spiceprefix`. A sky130 `M1` with `spiceprefix=X` is handed
+  `"M1"`, so it takes the `m` arm and yields a plausible top-level `@m1[gm]` —
+  a *different* failure from the `x` collapse. Both are in 0485.
+- **0484 is an I3 violation; 0485 is not.** The modelparam/modelvoltage token
+  renders `len=0` while the same branch renders `-` for an absent device; the
+  0485 path renders `-`. That line is what keeps the two issues distinct.
 
 **Added by S11 (2026-08-20) — the first item is the most valuable thing on this
 list, because it is the only one that protects a shipped design decision:**
@@ -1966,8 +2046,9 @@ list, because it is the only one that protects a shipped design decision:**
 - Issues **0465** (this suite is in no runner), **0482** and **0483** are the
   other measured-and-unfixed items S11 leaves behind.
 
-Already filed by the S1 crew, and **0418/0419 are still free for S12 as
-described above** — nothing was numbered into them:
+Already filed by the S1 crew. **0418/0419 were never used** — no file was ever
+created under either number — and S12 filed its two issues as **0484/0485**
+instead, each recording that it supersedes the reservation:
 
 | # | what |
 |---|---|
@@ -2020,7 +2101,7 @@ end of this file: the next free number is **0455**.)*
 **Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
 `doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)** ·
-**S11 ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw
+**S11 ✅(E)** · **S12 ❌ not completed** (implement agent produced no change; its write-up filed 0484/0485 and reconciled the numbering — the remaining deliverables are listed in the S12 block). S5 and S6 both landed without S3/S4 by reading a raw
 produced from a hand-written deck — neither the formatter nor the carrier needed
 the generator. S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6)
 rather than closing them, and pinned each with a green check that asserts the
@@ -2065,9 +2146,10 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0484**. *(0475/0476 were taken by S10b and 0477–0483
-by S11; the brief's "0417 is the highest" was stale. 0418/0419 stay reserved,
-by name, for S12.)*
+Number new issues from **0486**. *(Updated by S12, 2026-08-21: 0484/0485 were
+consumed by S12's two issue filings. The 0418/0419 reservation was never used —
+no file was ever created under either number — and is now permanently
+superseded; see the S12 section.)*
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.
