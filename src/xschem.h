@@ -2706,6 +2706,12 @@ extern void leave_shape_draw_for(const char *what);
  * carrying both facts (issue 0241). See callback.c. */
 extern const char *abort_click_mode(void);
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
+/* S11: resolve cursor B against xctx->raw with NO graph object involved, so
+ * `xschem set cursor2_x <t>` annotates on a schematic with nothing plotted.
+ * Returns 1 if it annotated, 0 if there was no data and the call was a no-op.
+ * See callback.c for why the rect is synthetic and the Graph_ctx is a stack
+ * local carrying an explicit whole-sweep window. */
+extern int backannotate_at_cursor_b_nograph(void);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
 extern int callback(const char *win_path, int event, int mx, int my, KeySym key,

@@ -1747,14 +1747,186 @@ cover. The `hide=true` ruling is what *creates* the escape hatch — under the p
 
 ---
 
-## S11 — timepoint annotation without a graph (optional)
+## S11 ✅(E) — timepoint annotation without a graph — **LANDED 2026-08-20**
 
-`xschem set cursor2_x <t>` currently annotates only when a graph rect exists on
-the canvas and cursor B is on (`scheduler.c:11802`). Add the direct path:
-interpolate from `xctx->raw` at `x = t` with no graph involved. Then the `6`/
-`Alt-6` keys work on a transient raw with nothing plotted.
+~~`xschem set cursor2_x <t>` currently annotates only when a graph rect exists on
+the canvas and cursor B is on (`scheduler.c:11802`).~~ **The anchor was wrong by
+45 lines** — `:11802` is the `cadgrid` self-log; the arm is **`scheduler.c:11847`**.
+Everything else in the sentence was correct, and the three gates it hides are
+*independent*, which the plan did not say: `rects[GRIDLAYER] > 0`, then
+`rect[GRIDLAYER][**0**].flags & 1` (rect **zero**, hard-coded), then
+`graph_flags & 4`. Each was measured failing on its own — see 0477 and 0478.
 
-**Risk:** low, one arm.
+**What shipped:** three C files, **~12 lines of executable code**, zero Tcl.
+
+* `src/callback.c` — a new non-static `backannotate_at_cursor_b_nograph(void)`
+  under ~65 lines of rationale. It self-gates on `sch_waves_loaded() >= 0`, then
+  hands a **synthetic zeroed `xRect`** and a **stack-local `Graph_ctx` carrying
+  an explicit whole-sweep window** (`gx1 = -HUGE_VAL`, `gx2 = HUGE_VAL`) to the
+  shipped public entry `backannotate_at_cursor_b_pos()`. No interpolation is
+  written; `backannotate_cursor_b_in_db()` stays `static`.
+* `src/xschem.h` — the declaration.
+* `src/scheduler.c` — the gate flips from `rects[GRIDLAYER] > 0` to a **scan**
+  for any rect with `flags & 1`; where a graph exists the shipped block runs
+  byte-identically, and only "no graph object anywhere" reaches the new
+  `else if(backannotate_at_cursor_b_nograph()) { if(floaters) set_modify(-2); }`.
+
+**Zero Tcl change was needed and that is the point of the seam**: `op_annot.tcl`
+already reads through `xschem raw value <v> -1`, which is the array the new arm
+writes, so the feature arrives at op_annot, at the S9b overlay, at every
+`@spice_get_voltage` symbol text, **and at the IHP prototype's own
+`sg13g2_raw_or_double`**, with no edit to any of them.
+
+**Measured, no graph on the sheet, same script before and after:**
+
+    S11BEFORE A3 set cursor2_x 3e-9   : get cursor2_x=3e-09  raw annot={0 0 -1}  v(d)=0  gm=0
+    S11AFTER  A3 set cursor2_x 3e-9   : get cursor2_x=3e-09  raw annot={2 3e-09 0}  v(d)=3  gm=0.00030000001
+
+    S11BEFORE B1 NO GRAPH  text M1 @ t=3e-9 : "gm  = 0 | gds ="     (identical at 1e-9 and 4e-9)
+    S11AFTER  B1 op_annot::text M1 @3e-9    : "gm  = 300u | gds ="  (100u at 1e-9, 400u at 4e-9)
+
+and the regression clause, graph present, **byte-identical** before and after
+(`C1`–`C4`, `D1`–`D3`, `E1`, `F1`–`F3` of the transcript; the two wrong states
+are pinned deliberately — see 0480 and 0477).
+
+**Tiers:** `test_op_annot` **218 → 241** headless and **223 → 246** on the
+display leg (same +23, no row is display-only). The four cursor suites that are
+the real regression oracle came back at exactly their baselines —
+`test_wave_cursor_crossdb` 93, `test_backannotate_digital` 81,
+`test_wave_viewer` 57, `test_wave_crossdb_trace` 56, plus `test_wave_markers`
+437. T1 3 FAIL-at-eol (the same two pre-existing red suites, 0420/0421), T2
+`HARNESS: PASS` 6/6.
+
+**Status E — the question owed to a human** (issue **0479**): *a cursor parked
+outside the loaded sweep now silently moves every annotated number on a
+graphless sheet to the last sample (RULING D4-4's endpoint hold, identical to
+the graph path). Is the silent hold right, or should **both** paths gain a seam
+or status-line note naming the condition?* S11's brief asked for out-of-range to
+be "handled honestly rather than clamping silently"; the crew resolved that
+**against the brief** and in favour of the ratified ruling, by invariant I1 —
+diverging would give one cursor two behaviours and **no row compares the two
+paths**, so it would have reddened nothing.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | L2 | trigger = "no rect on GRIDLAYER carries `flags & 1`" | `rects[GRIDLAYER]==0` (a plain rect would block the graphless path — row **T21**); "any of the three gates false" (silently repairs 0477+0478, i.e. moves graph-present behaviour) |
+| D2 | L1 / I3 | local `Graph_ctx`, explicit `[-HUGE_VAL, +HUGE_VAL]` window | the memset-0 ctx — **refuted by measurement**, see note 2 below; `&xctx->graph_struct` (`save.c`'s rule: live inside `draw_graph()`); a `use_window` argument on a shipped signature |
+| D3 | L1 / I1 | out-of-range **holds the endpoint**, identically on both paths | blanking or `annot_p=-1` on the direct path only → two behaviours for one cursor. **This is the E question, issue 0479** |
+| D4 | L1 / I3 | go through the **public** `backannotate_at_cursor_b_pos()` | de-static'ing `backannotate_cursor_b_in_db()` — it skips `annot_data_changed()` and the `$cursor_2_hook`, which is the I3 breach that reverted S9 attempt 1 (0466) |
+| D5 | L2 | the direct arm neither **requires** nor **sets** `graph_flags & 4` | requiring it (the keys never enable cursor B, and `xschem cursor 2 1` resets the position — 0478); setting it (a cursor-drawing flag on a canvas with no graph) |
+| D6 | L2 | the helper self-gates on `sch_waves_loaded()` | relying on the inner gate — the public entry fires `annot_data_changed()` and the user's `$cursor_2_hook` **before** its own test (rows T19/T20) |
+| D7 | L1 / I4 | carry `if(floaters) set_modify(-2);` into the new branch verbatim | dropping it (floater caches would keep the previous timepoint). ⚠ **untested** — see 0481 §3 |
+| D8 | L2 | leave the `cursor1_x` twin `#if 0`'d and do **not** touch `utils/annot_mode.tcl` | symmetry for cursor A (nothing reads a cursor-A annotation); giving `6`/`Alt-6` a timepoint prompt (a new user interaction = a later step) |
+| D9 | L2 | number new issues from **0477** | the brief's 0418 — stale on this branch (0475/0476 taken by S10b; 0418/0419 reserved **by name** for S12) |
+| D10 | L3 | ship the user-visible change and take status **E** | none; the blast radius (below) is the feature, the unratified part is D3 |
+
+### THE SABOTAGE MATRIX — 5 of 8 caught exactly, 2 supersets, **3 misses** (issue 0481)
+
+| variant | predicted | observed |
+|---|---|---|
+| SAB-1 helper neutered | 12 rows | 14 (superset) ✅ |
+| SAB-2 memset-0 window (the rejected design) | 10 rows | 12 (superset) ✅ — `T2 -> {1} (exp {3})` |
+| **SAB-3 bypass the public entry** | T9 T10 T22 | **0 — suite stayed ALL PASS** ❌ |
+| SAB-4 `has_graph` = `rects>0` | T21 | T21 ✅ |
+| SAB-5 direct arm fires with a graph too | T13 T14 T15 | T13 T14 T15 ✅ |
+| SAB-6 drop the `sch_waves_loaded()` gate | T19 T20 | T19 T20 ✅ |
+| **SAB-7 delete RULING D4-4's clamp** | T16 T17 T18 + XCW4/5/6 | T13 T17 + XC16 XC31 XC33 XC74 XCW6 — **4 predicted missing** ❌ |
+| **SAB-8 drop `set_modify(-2)`** | T22 | **0** ❌ |
+
+All three misses are **test** defects, filed as **0481** with the exact repair
+recipes; the shipped build passes every probe that the missing rows would have
+made. SAB-3 is the important one: the step's own central safety argument (D4) is
+uncovered because every row moves the cursor **across** a segment boundary,
+where `raw_annot_p` flushes the overlay regardless of `data_seq`. A
+**within-segment** move (3.2 ns → 3.6 ns on the section's fixture) discriminates
+it: shipped gives flush delta 1 and new numbers, SAB-3 gives delta 0 and *stale*
+rows while `raw value -1` reports the new value.
+
+### ⚠ WHAT S11 LEARNED THAT BINDS LATER STEPS — READ BEFORE S12
+
+1. **`scheduler.c:11802` is the wrong anchor** (it is `cadgrid`); the cursor arm
+   is `:11847`. More generally: two of this plan's anchors have now been off by
+   tens of lines. Re-grep before quoting one.
+
+2. **A zeroed `Graph_ctx` is NOT a neutral one, and the scout report said it
+   was.** RULING D4-7's `rescan_no_window` looks like it makes `memset`-0 safe;
+   it does not, because the degenerate window `[0,0]` **admits** the t = 0 sample
+   that every transient raw has, so `first` is 0 rather than −1, the rescan never
+   fires, and `interpolate_yval` returns **point 1's value for every t past the
+   second sample**. Built as SAB-2 and measured: 12 red rows, plausible wrong
+   numbers throughout. Anyone standing up a `Graph_ctx` outside `draw_graph()`
+   must set an explicit window. Issue **0480** records the same defect where it
+   is *not* fixed — the graph path, which borrows the shared struct.
+
+3. **The keys still do not move the cursor.** `utils/annot_mode.tcl` contains no
+   `xschem cursor` and no `set cursor2_x`; decision D8 left it that way. So the
+   brief's framing ("then the `6`/`Alt-6` keys work on a transient raw with
+   nothing plotted") is **half delivered**: the mechanism exists and is reachable
+   from the console, an rc, or any script, but no key path uses it. Wiring a
+   timepoint into the keys is a **new user interaction** and needs its own step
+   and its own ratification — and it will run straight into issue **0478**
+   (`xschem cursor 2 1` resets the very position being set).
+
+4. **The blast radius is wider than op_annot, by design.** `@spice_get_voltage`
+   (`token.c`) reads `cursor_b_val[]` directly, so every `lab_pin` / `ipin` /
+   `opin` / `vdd` / probe text and every `pinexpr` row on a **graphless** sheet
+   now follows the cursor. The regression oracle for anything touching this arm
+   is therefore the four cursor suites (93 / 81 / 57 / 56), **not**
+   `test_op_annot` alone. Do not add rows to those four — their integers are the
+   oracle.
+
+5. **`test_op_annot` is still in no runner (issue 0465).** T1 and T2 cannot see
+   an op_annot regression; the suite runs only when named. That is now 241
+   headless / 246 display-leg checks invisible to the tiers.
+
+6. **Two agents building one checkout is a measurement hazard, and it bit this
+   run.** A concurrent sabotage build made `open_close` report 120 `FATAL`s
+   (all `exit 126`, ETXTBSY on `exec src/xschem`) in a tier pass that had nothing
+   to do with it. Take every number under an **md5 guard on the binary before
+   and after**, and re-measure against a private copy if the tree is live.
+   (Spec §6 landmine 12 already says this; it is now measured twice.)
+
+7. **Fixture technique, unchanged and still cheaper than ngspice**: a
+   hand-written ASCII raw with `Plotname: Transient Analysis`, `No. Points: N`
+   and one value block per point. S11 re-measured spec §3's R2 and R3 against
+   `/usr/local/bin/ngspice` on a real `.tran` deck and both held (device params
+   **are** sampled per timestep; deleting the single `.save all` line dropped the
+   header from 8 variables to 4), then used the hand-written raw anyway.
+
+8. **New issues: 0477, 0478, 0479 (the E question), 0480, 0481, 0482, 0483.
+   Number the next one from 0484.** 0418/0419 stay reserved by name for S12.
+
+### STILL OPEN (the S11 adversary's residual risks — none refuted the step)
+
+* **0479** — the E question above. The adversary agrees the clause is *not met
+  as worded* and agrees with the resolution; the honesty half is genuinely
+  absent. Measured: `t = 4 ns`, `t = 99 ns` and `t = 1e6` render the identical
+  block with nothing on the status line.
+* **0482** — `annotate_op` does not re-read a raw already loaded from that path,
+  so a re-simulated design annotates the **previous run's** numbers, and S11 now
+  lets the user scrub time through them. Invariant I3's third clause, reproduced
+  twice.
+* **0483** — with a digital database current, one graphless cursor move
+  correctly unpublishes `ngspice::ngspice_data` (D5-3) and `raw switch_back`
+  does **not** restore it, leaving `op_annot` rows showing numbers while every
+  `lab_pin` text shows `?`.
+* **0481** — the three uncovered sabotage variants.
+* **0480 §"a second window divergence"** — a graph zoomed to a **subrange**
+  answers a different number from the graphless path for the same cursor
+  (`gm = 300u` vs `400u` at t = 4.5 ns with the graph windowed 0–2 ns). Row T18
+  compares only against a fully zoomed graph, so nothing covers it.
+* **Two databases, one cursor, two times.** After a graphless cursor move,
+  `raw switch_back` leaves the other database still annotated at *its* old point
+  (measured; same on the graph path, so not a divergence — but before S11 a
+  graphless sheet had both frozen consistently).
+* **Silent coercion** — `xschem set cursor2_x abc` and `{}` succeed, mean t = 0,
+  and now re-annotate a graphless sheet at t = 0, overwriting the operating point
+  the user just loaded. Recorded in 0479.
+* **Redundant invalidation** — setting `cursor2_x` to the value it already holds
+  still bumps `annot_data_changed()` and re-fires `$cursor_2_hook` (flush delta
+  1). Cheap here; a GUI slider emitting repeats pays for every repeat.
 
 ---
 
@@ -1773,6 +1945,26 @@ interpolate from `xctx->raw` at `x = t` with no graph involved. Then the `6`/
   IHP device — `get_fqdevice()` switches on the *element letter*, which for a
   subcircuit-wrapped PDK device is always `x`.
 - Update `doc/claude/specs/op_annotation.md` status as steps land.
+
+**Added by S11 (2026-08-20) — the first item is the most valuable thing on this
+list, because it is the only one that protects a shipped design decision:**
+
+- **Repair the three non-discriminating rows of `test_op_annot.tcl` section T —
+  issue 0481.** All three recipes are in that file. (a) add a **within-segment**
+  cursor move (3.2 ns → 3.6 ns on the section fixture) asserting both the flush
+  delta and the rendered block, so bypassing the public entry (S11 decision D4,
+  the S9-attempt-1 breach) reds a row instead of nothing; (b) give row T22 the
+  `xschem floaters_from_selected_inst` step the plan specified, so
+  `if(floaters) set_modify(-2)` is actually exercised — `xschem get texts` is 0
+  on its fixture today, so the guarded call never runs; (c) document that T18 is
+  a divergence test, not a clamp test, and add a real upper-clamp row (deleting
+  RULING D4-4's clamp leaves T16 and XCW4/XCW5 green — the "holds the last
+  sample" behaviour comes from the `(p + 1 < ofs_end)` guard, not the clamp).
+- Consider **wiring a timepoint into the `6` / `Alt-6` keys** — S11 built the
+  mechanism and deliberately did not use it (D8). This is a **new user
+  interaction**, so it needs its own step, and it runs straight into issue 0478.
+- Issues **0465** (this suite is in no runner), **0482** and **0483** are the
+  other measured-and-unfixed items S11 leaves behind.
 
 Already filed by the S1 crew, and **0418/0419 are still free for S12 as
 described above** — nothing was numbered into them:
@@ -1795,6 +1987,18 @@ Filed by the **S7** crew, all measured and all deliberately unfixed:
 | 0453 | `show_hidden_texts`' pull cache is stale in the export paths (first SVG/PS export after any Tcl-side change uses the old value, both directions, both formats) and one toggle behind in `update_all_sym_bboxes; redraw`. `annot_show` deliberately routes around it rather than inheriting it |
 | 0454 | `xschem print ps` ends every page with an **uninitialised RGB triple** that changes between exports of identical content, so PS export is not byte-reproducible and byte-level PS regression tests silently cannot work |
 
+Filed by the **S11** crew (2026-08-20), all measured, all deliberately unfixed:
+
+| # | what |
+|---|---|
+| 0477 | `set cursor2_x` hard-codes `rect[GRIDLAYER][**0**]`, so a plain rect at index 0 hides a real graph at index 1. Pinned by row **T14** |
+| 0478 | annotation needs `graph_flags & 4`, a **drawing** flag, whose only setter `xschem cursor 2 1` **resets** `graph_cursor2_x`. A graph makes timepoint annotation *harder* to reach than no graph. Pinned by row **T15** |
+| 0479 | **the S11 status-E question** — an out-of-range cursor holds the endpoint on both paths and says nothing |
+| 0480 | the graph path resolves the cursor against the **shared** `graph_struct`, so an undrawn graph uses a degenerate `[0,0]` window and returns the second sample for every t. Pinned by row **T13** |
+| 0481 | three of S11's eight sabotage variants reddened **nothing** — the rows naming the invalidation contract (SAB-3) and the floater refresh (SAB-8) do not discriminate; the upper clamp (SAB-7) has no behavioural coverage anywhere |
+| 0482 | `annotate_op <path>` does not re-read a raw already loaded from that path — a re-simulated design annotates the **previous run's** numbers (invariant I3's third clause) |
+| 0483 | a graphless cursor move with a digital DB current unpublishes `ngspice::ngspice_data`, and `raw switch_back` does not restore it — `op_annot` rows show numbers while every `lab_pin` shows `?` |
+
 Number new issues from **0427**. *(Superseded — see the Progress note at the
 end of this file: the next free number is **0455**.)*
 
@@ -1811,11 +2015,12 @@ end of this file: the next free number is **0455**.)*
 | S8 | rc only | the three keys (now a real toggle, not a crude one) |
 | S9 ❌ | C, draw + exports | press `6`, every device lights up — **attempt 1 reverted, issue 0466** |
 | **S10 ✅(E)** | bulk `.sym`, **40 files / 119 records** | no duplication — but the token is **`hide=true`**, not `hide=op` (0475 §3) |
-| S11 | C, one arm | timepoint OP with no graph |
+| **S11 ✅(E)** | C, one arm + a 12-line helper | timepoint OP **with nothing plotted** — every annotated value follows the cursor |
 
 **Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
-`doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw
+`doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)** ·
+**S11 ✅(E)**. S5 and S6 both landed without S3/S4 by reading a raw
 produced from a hand-written deck — neither the formatter nor the carrier needed
 the generator. S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6)
 rather than closing them, and pinned each with a green check that asserts the
@@ -1831,6 +2036,18 @@ just users without the PDK rc). New from S10b: issues **0475**, **0476**; tiers
 unmoved. Sabotage 7 variants / 7 detected, with one stale prediction (SAB-1/Q7,
 because the ruling inverted Q7's direction) and one genuine blind spot (SAB-6/Q2,
 note 4).
+
+**S11 landed** the graphless cursor arm: `xschem set cursor2_x <t>` now
+annotates a schematic with **nothing plotted**, so every device row, the S9b
+overlay and every `@spice_get_voltage` text follow the timepoint. Three C files,
+~12 lines of executable code, **zero Tcl** — `op_annot` and the IHP prototype
+both already read `xschem raw value <v> -1`, which is the array the new arm
+writes. New issues **0477–0483**; tiers 218 → **241** headless and 223 → **246**
+display-leg on `test_op_annot`, the four cursor suites unmoved at 93/81/57/56,
+T1 and T2 unmoved. Read S11 note 2 before ever standing up a `Graph_ctx` outside
+`draw_graph()` (a zeroed one is a **degenerate window**, not a neutral one — it
+ships plausible wrong numbers), and note 3 before assuming the `6`/`Alt-6` keys
+can reach the new path: they still cannot.
 
 **S3+S4 remain the blocker for anything looking good** — every overlay row still
 renders BLANK on a real PDK raw.
@@ -1848,8 +2065,9 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0477**. *(0475 and 0476 were taken by S10b; the
-brief's "0417 is the highest" was stale. 0418/0419 stay reserved for S12.)*
+Number new issues from **0484**. *(0475/0476 were taken by S10b and 0477–0483
+by S11; the brief's "0417 is the highest" was stale. 0418/0419 stay reserved,
+by name, for S12.)*
 
 S3+S4 are worth landing on their own even if nothing else follows: they are the
 difference between annotation that shows `-` and annotation that shows numbers.

@@ -400,6 +400,16 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 - `backannotate_at_cursor_b_pos` (`callback.c` ~404): on cursor-B move,
   interpolates each var at the cursor's sweep position into `cursor_b_val[]`,
   runs `$cursor_2_hook`, redraws. Live cross-probe.
+- `backannotate_at_cursor_b_nograph` (`callback.c`, **added 2026-08-20 by S11 of
+  `doc/claude/specs/op_annotation.md` §4.7**): the same thing **without a graph**.
+  `xschem set cursor2_x <t>` (`scheduler.c:11847`) used to require a rect on
+  GRIDLAYER *and* `rect[GRIDLAYER][0].flags & 1` *and* `graph_flags & 4`; when no
+  rect on GRIDLAYER is a graph it now hands a synthetic zeroed `xRect` and a
+  **stack-local** `Graph_ctx` with an explicit whole-sweep window
+  (`±HUGE_VAL`) to the public entry above. ⚠ Two traps recorded there: never
+  pass `&xctx->graph_struct` (live inside `draw_graph()`), and never pass a
+  `memset`-0 `Graph_ctx` — `[0,0]` is a degenerate *window*, not "no window", and
+  it silently returns point 1's value for every t past the second sample.
 - Display: `translate()` `@spice_get_voltage` case (`token.c` ~4685) — for a
   **1-pin** instance (`no_of_pins==1`), resolves net → fq lowercased node →
   `get_raw_index` → substitutes `cursor_b_val[idx]` (eng-formatted); `0`/`GND`

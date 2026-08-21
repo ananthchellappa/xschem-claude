@@ -5331,6 +5331,794 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
   incr fail
 }
 
+# =============================================================================
+# SECTION T — S11 of doc/claude/specs/op_annotation.md: TIMEPOINT ANNOTATION
+#             WITH NO GRAPH OBJECT ON THE SCHEMATIC
+# =============================================================================
+# S5 made the block readable, S9b made it drawable and cacheable, S10b cleared
+# the duplicate symbol texts out of the way. All three read ONE array —
+# `xctx->raw->cursor_b_val[]`, reached as `xschem raw value <v> -1`
+# (scheduler.c:10358) — and until S11 the only thing that could ever move that
+# array off `update_op()`'s point 0 was a GRAPH.
+#
+#   `xschem set cursor2_x <t>`   scheduler.c:11847 (⚠ NOT :11802, which is the
+#                                `cadgrid` self-log — the step brief's anchor is
+#                                45 lines off and the arm is the one below)
+#
+#      11847  else if(!strcmp(argv[2], "cursor2_x")) {
+#      11848    int floaters = there_are_floaters();
+#      11849    xctx->graph_cursor2_x = atof_spice(argv[3]);
+#      11851    if(xctx->rects[GRIDLAYER] > 0) {          <- gate 1
+#      11852      Graph_ctx *gr = &xctx->graph_struct;
+#      11853      xRect *r = &xctx->rect[GRIDLAYER][0];
+#      11854      if(r->flags & 1) {                      <- gate 2 (rect ZERO)
+#      11855        if(xctx->graph_flags & 4) {           <- gate 3
+#      11856          backannotate_at_cursor_b_pos(r, gr);
+#      11857          if(floaters) set_modify(-2);
+#
+# With any gate false the call moves a global NOBODY READS: measured on this
+# tree, `xschem raw annot` stays `0 0 -1` (annot_p is still update_op's point 0,
+# annot_x was never written, sweep_idx was never resolved) and every
+# `xschem raw value <v> -1` still answers point 0. S11 adds the direct arm:
+# with no graph OBJECT anywhere, resolve the cursor against `xctx->raw` itself.
+#
+# ============================================================================
+# WHAT THIS SECTION IS FOR, IN ONE SENTENCE
+# ============================================================================
+# A user who presses 6 / Alt-6 on a schematic with nothing plotted gets a raw
+# and a mask; before S11 every annotated number on that sheet is frozen at
+# t = the first timestep, forever, and no key or command can move it.
+#
+# ============================================================================
+# ⚠ THE BLAST RADIUS IS WIDER THAN op_annot, AND ROW T22 IS WHY IT IS PINNED
+# ============================================================================
+# `@spice_get_voltage` (token.c:4315 for the `@#n:` form, token.c:4821 for the
+# bare one) reads `xctx->raw->cursor_b_val[]` DIRECTLY under
+# `live_cursor2_backannotate && sch_waves_loaded() >= 0 && annot_p >= 0`. So the
+# same seam moves every lab_pin / ipin / opin / iopin / vdd / ngspice_probe /
+# scope text on the sheet, and every `pinexpr` row of every block. That is the
+# feature, not a side effect — but it means the graph-path regression rows
+# below (T12-T15) and the four shipped cursor suites
+# (test_wave_cursor_crossdb 93, test_backannotate_digital 81,
+# test_wave_viewer 57, test_wave_crossdb_trace 56 — all green today) are the
+# real regression oracle, not this section alone.
+#
+# ============================================================================
+# ⚠ WHICH ROWS ARE RED BEFORE S11 AND WHICH ARE GREEN CONTROLS — OUT LOUD
+# ============================================================================
+# RED before (14): T1 T2 T3 T4 T5 T6 T8 T9 T10 T16 T17 T18 T21 T22
+# GREEN before AND after (9), every one of them load-bearing and NONE of them
+# evidence that S11 happened:
+#   T0  the fixture control. Without it every row below degrades into a hollow
+#       pass — a raw that failed to load answers 0 for everything, which is
+#       exactly the shape T1-T8 are asking about.
+#   T7  the I3 rider. `gds` is deliberately ABSENT from the fixture raw, so a
+#       new value source that fabricates a 0 for a missing vector reds here and
+#       nowhere else. Green today because nothing reads at all.
+#   T11 invariant I4. Read BEFORE any save — the S9 lesson: the row that named
+#       itself the I4 row saved first and was vacuous.
+#   T12 T13 T14 T15  THE GRAPH-PATH REGRESSION. The step brief says this matters
+#       MORE than the new path. T13 and T14/T15 pin behaviour that is WRONG
+#       today (issues 0480 / 0477 / 0478) precisely so that a later change to
+#       the graph arm reds a NAMED line instead of passing unnoticed.
+#   T19 T20  the helper's own `sch_waves_loaded() >= 0` self-gate. Green before
+#       (nothing happens) and green after (nothing may happen). They exist to
+#       red the variant that drops the gate and starts firing the user's
+#       `$cursor_2_hook` and the S9b flush counter on sheets with no data.
+#
+# ============================================================================
+# ⚠ THE TWO GRAPH-PRESENT STATES ARE DIFFERENT AND BOTH ARE PINNED (T12/T13)
+# ============================================================================
+# Headless, `xctx->graph_struct` is never populated by a draw — draw()'s whole
+# body is inside `if(has_x)` (draw.c:10377) — so a graph rect that has never
+# been `fullyzoom`'d leaves the shared ctx at the degenerate window [0,0].
+# Measured on this tree: the SAME `xschem set cursor2_x 3e-9` yields
+#   fullyzoom'd  -> annot_p 2, v(d) 3      (correct)
+#   never zoomed -> annot_p 0, v(d) 1      (a PLAUSIBLE WRONG NUMBER)
+# A section that covered only the first could not see the second move. T13
+# asserts the wrong one deliberately; issue 0480 carries the finding.
+#
+# ============================================================================
+# ⚠ THE FIXTURE: A HAND-WRITTEN ASCII TRANSIENT RAW, NO NGSPICE
+# ============================================================================
+# The same technique this file already uses for the operating-point fixtures
+# (:1377 / :1408), extended to transient verbatim: `Plotname: Transient
+# Analysis`, `No. Points: 5`, one value block per point, point index first.
+# Five points at 0/1/2/3/4 ns with ROUND values, so every golden below is an
+# exact string and an interpolation at 2.5 ns is exactly 2.5:
+#
+#   time                                     0     1n    2n    3n    4n
+#   i(@m.xm1.msky130_fd_pr__nfet_01v8[id])   0     10u   20u   30u   40u
+#   @m.xm1.msky130_fd_pr__nfet_01v8[gm]      0     100u  200u  300u  400u
+#   v(@m.xm1.msky130_fd_pr__nfet_01v8[vth])  0.7   0.7   0.7   0.7   0.7
+#   v(d)                                     0     1     2     3     4
+#   v(g)                                     0.9   0.9   0.9   0.9   0.9
+#
+# ⚠ `[gds]` IS DELIBERATELY ABSENT. The descriptor asks for it, so every block
+# below carries a `gds =` row with NOTHING after the `=` — invariant I3 riding
+# along on every single golden, not just row T7's.
+#
+# ⚠ THE THREE VECTOR SHAPES ARE THE R3 / get_fqdevice CONVENTION (spec §3),
+# re-measured on /usr/local/bin/ngspice against a `.tran` deck for this step:
+# with `.save all` + `.save @m1[gm]` + `.save v(@m1[vth])` the header carries
+# `@m1[gm]` BARE (kind 1) and `v(@m1[vth])` v()-wrapped (kind 2), sampled at
+# every timestep — so a transient raw really is a valid carrier for device
+# parameters, and this 5-point file is a faithful miniature of one.
+#
+# ============================================================================
+# ⚠ TWO PIECES OF PROCESS STATE SURVIVE `xschem load` AND WILL CONTAMINATE
+#    EVERY SCENARIO BELOW IF THEY ARE NOT RESET. MEASURED, NOT ASSUMED.
+# ============================================================================
+# (a) THE PUBLISHED ANNOTATION. `xschem annotate_op <same-file>` does NOT
+#     re-publish if that raw is already loaded, so a `cursor2_x` written by an
+#     EARLIER scenario is still sitting in annot_x when the next one starts —
+#     measured: a gate-2 scenario that should read `0 0 -1` read `0 3e-09 0`
+#     because the scenario before it had annotated at 3 ns. `xschem raw clear`
+#     (scheduler.c) before every `annotate_op` is what makes each scenario
+#     start from `0 0 -1`, and opa_t_arm below is the only way in.
+# (b) `graph_flags`. `xschem load` does NOT clear it — measured, bit 4 survives
+#     a load — so a scenario that means "cursor B was never enabled" (T15) has
+#     to say `xschem cursor 2 0` out loud. And ⚠ its only setter,
+#     `xschem cursor 2 1` (scheduler.c:3103), RESETS graph_cursor2_x to 0.0 as
+#     a side effect (scheduler.c:3108): in every graph row below it therefore
+#     comes BEFORE `xschem set cursor2_x`, never after.
+#
+# ============================================================================
+# ⚠ WHAT THIS SECTION DOES NOT MEASURE
+# ============================================================================
+# * NO PIXELS. T10 and T22 read SVG exports, which is the same back end the
+#   screen uses for the overlay text but is not the screen. The `6` / `Alt-6`
+#   keys are NOT exercised: utils/annot_mode.tcl contains no `xschem cursor`
+#   and no `set cursor2_x` at all, so after S11 those keys still land the user
+#   on point 0 until something moves cursor B. That gap is the step's, not this
+#   file's, and it is recorded in the spec rather than papered over here.
+# * NOTHING HERE RUNS ngspice.
+# * ⚠ ONE GOLDEN IS ARM-DEPENDENT — row T13 leg 2, and deliberately so; see that
+#   row. Every other row here answers the same headless and under a display, so
+#   the section moves this file by the SAME delta on both legs.
+
+set T_DEV   {@m.xm1.msky130_fd_pr__nfet_01v8}
+set T_GM    "${T_DEV}\[gm\]"
+set T_ID    "i(${T_DEV}\[id\])"
+set T_GDS   "${T_DEV}\[gds\]"
+set T_RAW   [file join $scratch s11_tran.raw]
+set T_PARAMS {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2}}
+## Viewport for the 10-argument `xschem print` form: {w h x1 y1 x2 y2}. Wide
+## enough for M1, its four lab_pins and the overlay block at 0,0.
+set T_VP    {1200 900 -300 -400 400 400}
+
+## The block op_annot::text builds from that descriptor, at each timepoint. The
+## label column is 3 wide (`gds` / `vth`), and the `gds` row is BLANK — the
+## vector is not in the raw. Written out rather than computed: a formatter drift
+## must red here, not agree with itself.
+set T_TXT_P0  "id  = 0\ngm  = 0\ngds =\nvth = 0.7\n"
+set T_TXT_P1  "id  = 10u\ngm  = 100u\ngds =\nvth = 0.7\n"
+set T_TXT_P3  "id  = 30u\ngm  = 300u\ngds =\nvth = 0.7\n"
+set T_TXT_P4  "id  = 40u\ngm  = 400u\ngds =\nvth = 0.7\n"
+set T_TXT_P25 "id  = 25u\ngm  = 250u\ngds =\nvth = 0.7\n"
+## The same four rows as the RENDERED overlay reads back out of an SVG export.
+set T_ROWS_P0 {{id  = 0} {gm  = 0} {gds =} {vth = 0.7}}
+set T_ROWS_P1 {{id  = 10u} {gm  = 100u} {gds =} {vth = 0.7}}
+set T_ROWS_P3 {{id  = 30u} {gm  = 300u} {gds =} {vth = 0.7}}
+
+## `xschem raw annot` -> {annot_p annot_x annot_sweep_idx}, or a marker. NEVER a
+## bare catch: with no raw loaded it RAISES "No raw file loaded", and a caught
+## raise reported as {} would make "nothing was published" and "the accessor is
+## broken" the same answer.
+proc opa_t_annot {} {
+  set r [rcall {xschem raw annot}]
+  if {[lindex $r 0] != 0} { return "RAISED:[lindex $r 1]" }
+  return [lindex $r 1]
+}
+## THE value accessor under test, read exactly as op_annot::raw_or_blank and the
+## IHP prototype's sg13g2_raw_or_double (:436) read it: point -1, which falls
+## through to xctx->raw->cursor_b_val[idx] (scheduler.c:10358).
+proc opa_t_v {v} {
+  set r [rcall [list xschem raw value $v -1]]
+  if {[lindex $r 0] != 0} { return "RAISED:[lindex $r 1]" }
+  return [lindex $r 1]
+}
+## ...and the same value as the user SEES it. The read-back is single precision
+## (`3e-4` returns 0.00030000001), so the to_eng rendering is the stable golden —
+## the same reason section S's goldens are `100u` and not a float literal.
+proc opa_t_eng {v} { return [op_annot::eng_or_blank [op_annot::raw_or_blank $v]] }
+## {annot_p v(d) gm} — the triple row T18 compares between the two paths.
+proc opa_t_trip {} {
+  set a [opa_t_annot]
+  if {[llength $a] != 3} { return $a }
+  return [list [lindex $a 0] [opa_t_v {v(d)}] [opa_t_eng $::T_GM]]
+}
+## THE ONLY WAY A SCENARIO BELOW STARTS. See trap (a) in this section's header:
+## without the `raw clear` the previous scenario's annot_x is still published.
+## Returns the annotate_op rc so a broken fixture reds its own row.
+proc opa_t_arm {sch} {
+  catch {xschem raw clear}
+  xschem load $sch
+  catch {xschem cursor 2 0}
+  return [lindex [rcall [list xschem annotate_op $::T_RAW]] 0]
+}
+## One graph rect on GRIDLAYER plotting v(d), optionally given a real window.
+## ⚠ WITHOUT `fullyzoom` THE SHARED Graph_ctx STAYS AT [0,0] HEADLESS — that is
+## row T13's whole subject, not an oversight.
+proc opa_t_graph {zoom} {
+  xschem set rectcolor 2
+  xschem rect 0 -400 800 0 -1 {flags=graph} 0
+  xschem setprop rect 2 0 node {v(d)}
+  if {$zoom} {
+    foreach {k v} [list x1 0 x2 5e-9 y1 -1 y2 5] { xschem setprop rect 2 0 $k $v }
+    xschem setprop rect 2 0 fullyzoom
+  }
+}
+## The four OVERLAY rows of an SVG export, in document order. Anchored on
+## `<label><spaces>=` so it cannot match the sky130 symbol's own `id=` /`gm=`
+## texts (no space before the `=`), which S10b hid but which show_hidden_texts
+## can still bring back.
+proc opa_t_rows {svg} {
+  set o {}
+  foreach t [opa_q_texts $svg] { if {[regexp {^(id|gm|gds|vth) +=} $t]} { lappend o $t } }
+  return $o
+}
+## The voltage lab_pin `d` is printing, i.e. the text node immediately after the
+## label — lab_pin.sym carries `T {@lab}` then `T {@spice_get_voltage}`
+## (lab_pin.sym:32) and the export preserves that order. This is the
+## `@spice_get_voltage` half of the blast radius, and it is a CACHED floater
+## string, not a live translate: the marker matters because the value alone
+## (`0`, `3`) is far too generic to search for.
+proc opa_t_vd {svg} {
+  set t [opa_q_texts $svg]
+  set i [lsearch -exact $t d]
+  if {$i < 0} { return "NO-LABEL" }
+  return [lindex $t [expr {$i + 1}]]
+}
+
+if {[catch {
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+# --- the transient fixture, written fresh ------------------------------------
+set f [open $T_RAW w]
+puts -nonewline $f "Title: s11 tran fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 6
+No. Points: 5
+Variables:
+\t0\ttime\ttime
+\t1\t${T_ID}\tcurrent
+\t2\t${T_GM}\tadmittance
+\t3\tv(${T_DEV}\[vth\])\tvoltage
+\t4\tv(d)\tvoltage
+\t5\tv(g)\tvoltage
+Values:
+0\t0
+\t0.0
+\t0.0
+\t0.7
+\t0.0
+\t0.9
+1\t1e-09
+\t10e-6
+\t100e-6
+\t0.7
+\t1.0
+\t0.9
+2\t2e-09
+\t20e-6
+\t200e-6
+\t0.7
+\t2.0
+\t0.9
+3\t3e-09
+\t30e-6
+\t300e-6
+\t0.7
+\t3.0
+\t0.9
+4\t4e-09
+\t40e-6
+\t400e-6
+\t0.7
+\t4.0
+\t0.9
+"
+close $f
+
+## Section Q left sky130_procs.tcl's own `nmos` descriptor live. Replace it with
+## the four-parameter one this section's goldens are counted on (B3: register
+## REPLACES, it does not merge), so no row here depends on what a PDK file
+## happens to ship today.
+catch {op_annot::register nmos [list devpath $TMPL_AT params $T_PARAMS]}
+
+# ===========================================================================
+# T0 — CONTROL: THE PREMISE. GREEN BEFORE AND AFTER, AND LOAD-BEARING
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW EVERY ROW BELOW DEGRADES INTO A HOLLOW PASS. A raw that
+# failed to load, a descriptor an earlier section left overridden, or a
+# schematic that did not resolve all answer `0` / `{}` — which is precisely the
+# shape T1-T8 ask about. Four separate claims, all measured today:
+#   * there is NO graph object on the canvas (`xschem get rects 2` == 0), so the
+#     new arm's own trigger condition genuinely holds;
+#   * cursor B was never enabled (graph_flags == 0) — decision D5 says the
+#     direct path must neither REQUIRE nor SET bit 4, and this is the state that
+#     makes T1's claim the strong one;
+#   * annotate_op published point 0 (`0 0 -1`: annot_p 0, annot_x never written,
+#     sweep_idx never resolved);
+#   * and the block really does read that point.
+set t0_rc [opa_t_arm [file join $lib s5_flat.sch]]
+check {T0 CONTROL: a tran raw annotated on a sheet with NO graph object and cursor B never enabled, resting on point 0} \
+  [list $t0_rc [xschem get rects 2] [xschem get graph_flags] [opa_t_annot] \
+        [op_annot::type M1] [rcall {op_annot::text M1}]] \
+  [list 0 0 0 {0 0 -1} nmos [list 0 $T_TXT_P0]]
+
+# ===========================================================================
+# T1 — THE STEP: THE CURSOR IS RESOLVED WITH NO GRAPH IN THE PICTURE
+# ===========================================================================
+# ⚠ ALL THREE FIELDS MOVE, AND EACH ONE NAMES A DIFFERENT HALF OF THE FAILURE.
+# Today the answer is `0 0 -1` and every field is wrong for its own reason:
+# annot_p is still update_op()'s point 0, annot_x was NEVER WRITTEN (the
+# requested time is not even recorded), and annot_sweep_idx was never resolved
+# to a sweep column. A partial implementation that wrote annot_x and stopped
+# would still read point 0 everywhere, and this row is what says so.
+# annot_p 2 (not 3) is the LEFT index of the segment the cursor lands in; the
+# value is interpolated within it, which is why t = 3 ns returns exactly point
+# 3's data. It is the same number the graph path returns for the same t (T12).
+xschem set cursor2_x 3e-9
+check {T1 with NO graph object, `set cursor2_x 3e-9` resolves annot_p, records the requested annot_x and resolves the sweep} \
+  [opa_t_annot] {2 3e-09 0}
+
+# ===========================================================================
+# T2 — ...AND THE ONE VALUE ACCESSOR MOVED WITH IT
+# ===========================================================================
+# `xschem raw value <v> -1` (scheduler.c:10343, the `point < 0` fall-through at
+# :10358) is THE read seam: op_annot::raw_or_blank (op_annot.tcl:522), the S9b
+# overlay, every `@spice_get_voltage` text, and the IHP prototype's own
+# sg13g2_raw_or_double (sg13g2_procs.tcl:436) are all the same call. S11 must
+# move what it reads WITHOUT changing what `-1` means. v(d) is exactly 3.0 at
+# point 3, so this golden is exact in single precision and needs no to_eng.
+check {T2 the -1 accessor now answers the value AT THE CURSOR, not at point 0} \
+  [opa_t_v {v(d)}] 3
+
+# ===========================================================================
+# T3 — A DEVICE PARAMETER VECTOR MOVED TOO, NOT JUST A NODE VOLTAGE
+# ===========================================================================
+# ⚠ THE NODE-VOLTAGE HALF IS THE EASY HALF. `v(d)` is a plain sweep column; the
+# device vectors are the ones this whole feature exists for, and they are the
+# ones spec §3 R1 says only exist because the deck saved them explicitly. Both
+# shapes are read here: kind 1 (bare) for gm and kind 0 (`i(...)`) for id.
+check {T3 the DEVICE vectors follow the cursor as well -- kind 1 bare and kind 0 i() alike} \
+  [list [opa_t_eng $T_GM] [opa_t_eng $T_ID]] {300u 30u}
+
+# ===========================================================================
+# T4 — THE WINDOW DISCRIMINATOR: THE ONE ROW A ZEROED Graph_ctx CANNOT PASS
+# ===========================================================================
+# ⚠ THIS IS THE STEP'S SHARPEST IMPLEMENTATION TRAP AND IT LOOKS LIKE A
+# NON-ISSUE. The direct path has to hand the shipped cursor arithmetic a local
+# Graph_ctx (save.c:1279-1288's rule: NEVER xctx->graph_struct, it is live
+# inside draw_graph()). A `memset(&gr, 0, sizeof(gr))` one is the obvious
+# choice, and RULING D4-7's `rescan_no_window` (callback.c:1454) looks like it
+# makes that safe. It does not: a zeroed ctx is the window [0,0], EVERY
+# transient raw has a sample at exactly t=0, that sample PASSES the window
+# filter, so `first` comes back 0 instead of -1, the D4-7 rescan never fires,
+# and interpolate_yval's frac clamp (callback.c:1305, RULING D4-4) then walks
+# ONE segment forward and returns POINT 1's value for every t past the second
+# sample. Measured on the graph path today with an un-zoomed rect: v(d) = 1 at
+# t = 3 ns where the truth is 3.0 (row T13 pins that state deliberately).
+# So: a whole-sweep window, and this row — two timepoints that a [0,0] window
+# collapses onto the SAME wrong answer {1 0} — is the only thing between the
+# feature and a plausible wrong number on a schematic (I3 / save.c RULING D5-1).
+xschem set cursor2_x 3e-9
+set t4a [list [opa_t_v {v(d)}] [lindex [opa_t_annot] 0]]
+xschem set cursor2_x 4e-9
+set t4b [list [opa_t_v {v(d)}] [lindex [opa_t_annot] 0]]
+check {T4 two timepoints a degenerate [0,0] window would collapse onto point 1 both answer their OWN sample} \
+  [list $t4a $t4b] {{3 2} {4 3}}
+
+# ===========================================================================
+# T5 — NOT A ONE-SHOT: THE CURSOR MOVES, REPEATEDLY, IN BOTH DIRECTIONS
+# ===========================================================================
+# ⚠ A ONE-SHOT IS A REAL FAILURE SHAPE HERE, not a paranoid one: the arm resolves
+# a point index and writes it into raw->annot_p, and an implementation that
+# resolved once and then short-circuited on "annot_p is already set" would pass
+# T1-T4 and freeze on the second move. Forward, then backward, then forward.
+set t5 {}
+foreach t {1e-9 4e-9 1e-9} {
+  xschem set cursor2_x $t
+  lappend t5 [list [opa_t_v {v(d)}] [opa_t_eng $T_GM]]
+}
+check {T5 three consecutive moves, forward and back, each land on their own timepoint} \
+  $t5 {{1 100u} {4 400u} {1 100u}}
+
+# ===========================================================================
+# T6 — BETWEEN SAMPLES: THE SHIPPED INTERPOLATION, NOT A NEAREST-SAMPLE SNAP
+# ===========================================================================
+# ⚠ THE ROW THAT SAYS THE ARITHMETIC WAS REACHED, NOT REWRITTEN. 2.5 ns is
+# exactly half way between two round samples, so a nearest-sample or
+# floor-to-sample implementation answers 2 or 3 and reds here while passing
+# every row above. The numbers are the ones the GRAPH path returns for the same
+# t on the same raw (measured), which is invariant I1 stated as a value.
+xschem set cursor2_x 2.5e-9
+check {T6 a cursor BETWEEN two samples interpolates -- 2.5 ns is 2.5 V and 250u, not a snap to 2 or 3} \
+  [list [opa_t_v {v(d)}] [opa_t_eng $T_GM] [rcall {op_annot::text M1}]] \
+  [list 2.5 250u [list 0 $T_TXT_P25]]
+
+# ===========================================================================
+# T7 — I3 RIDER: A MISSING VECTOR STAYS BLANK AT EVERY TIMEPOINT
+# ===========================================================================
+# ⚠ GREEN BEFORE THE CHANGE TOO — SAY SO. Today nothing reads at all, so of
+# course `gds` is blank. This row is not evidence the feature works; it is the
+# tripwire for the way a NEW value source breaks I3: `[gds]` is absent from the
+# fixture raw, and an arm that seeded cursor_b_val for every index, or that
+# treated "vector not found" as index 0, would print a number here — a
+# fabricated value wearing a real device's label, which is the one thing
+# invariant I3 and save.c RULING D5-1 forbid outright.
+set t7 {}
+foreach t {1e-9 3e-9 99e-9} {
+  xschem set cursor2_x $t
+  lappend t7 [rcall {op_annot::raw_or_blank $::T_GDS}]
+}
+check {T7 I3 the vector ABSENT from the raw renders BLANK at every timepoint, in range and out} \
+  $t7 {{0 {}} {0 {}} {0 {}}}
+
+# ===========================================================================
+# T8 — THE USER-VISIBLE POINT, AS THE FORMATTED BLOCK
+# ===========================================================================
+# ⚠ THE ROW THE STEP EXISTS FOR. Measured before the change: these three calls
+# returned the IDENTICAL `id  = 0 / gm  = 0 / gds = / vth = 0.7` block at every
+# timepoint, while the same three calls WITH a graph on the canvas already
+# returned 100u / 300u / 400u. This row closes exactly that gap, and it is the
+# whole block rather than one row so that a value source which moved `gm` while
+# leaving `id` frozen cannot pass.
+set t8 {}
+foreach t {3e-9 1e-9 4e-9} {
+  xschem set cursor2_x $t
+  lappend t8 [rcall {op_annot::text M1}]
+}
+check {T8 op_annot::text on a GRAPHLESS sheet is a different, correct block at each of three timepoints} \
+  $t8 [list [list 0 $T_TXT_P3] [list 0 $T_TXT_P1] [list 0 $T_TXT_P4]]
+
+# ===========================================================================
+# T9 — S9b INVALIDATION: THE CACHE IS TOLD, AND ONLY WHEN THERE IS NEWS
+# ===========================================================================
+# ⚠ THIS IS THE ROW A REFACTOR ONE STEP AWAY WOULD DEFEAT SILENTLY. The S9b
+# epoch (actions.c:1283, 14 fields) sees a cursor move ONLY through `data_seq`
+# — a move WITHIN one segment changes cursor_b_val and nothing else, not
+# modify_seq, not the raw pointer, not annot_p. `data_seq` is bumped by
+# annot_data_changed() at callback.c:1533, which sits inside
+# backannotate_at_cursor_b_pos() and NOT inside the static
+# backannotate_cursor_b_in_db() that holds the arithmetic. An implementation
+# that de-statics the inner function and calls it directly moves every value in
+# T1-T8 and leaves the overlay rendering the PREVIOUS timepoint — the exact I3
+# breach that got S9 attempt 1 reverted.
+# ⚠ BOTH HALVES. `{1 0}`: the cursor move invalidates exactly once, and a
+# following redraw with no news invalidates NOT AT ALL. Without the second half
+# the row is satisfied by flushing every frame, i.e. by deleting the cache.
+# ⚠ HEADLESS-VALID: annot_overlay_sync() sits ABOVE draw()'s `if(has_x)`.
+# ⚠ NOT annot_overlay_count — it stays 0 headless (S9b lesson 5); T10 is the
+# row that reads what was actually rendered.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set cursor2_x 1e-9
+xschem redraw ; xschem redraw
+set t9a [opa_o_fdelta {xschem set cursor2_x 3e-9 ; xschem redraw}]
+set t9b [opa_o_fdelta {xschem redraw}]
+check {T9 SEAM a graphless cursor move invalidates the overlay cache exactly ONCE, and a quiet redraw not at all} \
+  [list $t9a $t9b] {1 0}
+
+# ===========================================================================
+# T10 — ...AND WHAT IS RENDERED AFTERWARDS IS THE NEW TIMEPOINT
+# ===========================================================================
+# ⚠ T9 AND T10 ARE NOT THE SAME ROW. T9 reads the flush COUNTER; T10 reads the
+# BYTES the overlay back end produced, through get_annot_overlay()'s cache
+# (actions.c:1456) rather than through op_annot::text — which is the only way a
+# stale C cache can be told apart from a correct formatter. The three exports
+# are one sequence in one process: point 0 (which fills the cache), then 3 ns,
+# then back to 1 ns.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 1
+set t10a [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl0.svg] $T_VP]]
+xschem set cursor2_x 3e-9
+set t10b [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl3.svg] $T_VP]]
+xschem set cursor2_x 1e-9
+set t10c [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl1.svg] $T_VP]]
+opa_l_annot 0
+check {T10 the RENDERED overlay block follows the graphless cursor -- point 0, then 3 ns, then back to 1 ns} \
+  [list $t10a $t10b $t10c] [list $T_ROWS_P0 $T_ROWS_P3 $T_ROWS_P1]
+
+# ===========================================================================
+# T11 — INVARIANT I4: THE SHEET IS READ, NEVER WRITTEN
+# ===========================================================================
+# ⚠ GREEN BEFORE AND AFTER, AND READ BEFORE ANY SAVE. The S9 lesson: the row
+# that named itself the I4 row saved the schematic first and was therefore
+# vacuous. `set_modify(-2)` (which the new arm carries into its branch, so the
+# floaters of row T22 refresh) is in set_modify's derived-cache block but NOT
+# in its modify_seq/dirty block (actions.c:200/238-256) — so five cursor moves
+# and a redraw must leave `modified` at 0 and the instance count untouched. An
+# arm that reached for `set_modify(1)` to force a repaint reds here.
+opa_t_arm [file join $lib s5_flat.sch]
+set t11n [xschem get instances]
+foreach t {1e-9 2e-9 3e-9 4e-9 2.5e-9} { xschem set cursor2_x $t }
+xschem redraw
+check {T11 I4 five graphless cursor moves and a redraw leave the schematic UNmodified and unchanged} \
+  [list [xschem get modified] [xschem get instances] $t11n] {0 5 5}
+
+# ===========================================================================
+# T12 — REGRESSION: A GRAPH THAT HAS BEEN DRAWN. BYTE-FOR-BYTE AS TODAY
+# ===========================================================================
+# ⚠ THE STEP BRIEF SAYS THIS MATTERS MORE THAN THE NEW PATH, and it is green
+# before AND after by construction. `xschem cursor 2 1` comes first because it
+# RESETS graph_cursor2_x (trap (b) in this section's header); `fullyzoom` comes
+# before that because without it the shared Graph_ctx is the degenerate window
+# T13 pins.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_t_graph 1
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+check {T12 REGRESSION a fullyzoom'd graph with cursor B on answers exactly what it answers today} \
+  [list [xschem get rects 2] [opa_t_annot] [opa_t_v {v(d)}] [opa_t_eng $T_GM]] \
+  {1 {2 3e-09 0} 3 300u}
+
+# ===========================================================================
+# T13 — REGRESSION: THE UN-DRAWN GRAPH, AND WHOSE WINDOW IT ACTUALLY USES
+#       (issue 0480)
+# ===========================================================================
+# ⚠ THIS ROW ASSERTS TODAY'S BEHAVIOUR ON PURPOSE, AND TODAY'S BEHAVIOUR IS A
+# STALE READ. scheduler.c:11852 hands the cursor the SHARED
+# `xctx->graph_struct`, which only `setup_graph_data()` (draw.c:4571) ever
+# fills — from `draw_graph()`, whose whole body is inside `if(has_x)`
+# (draw.c:10377), or from a `fullyzoom`. So a graph rect that has never been
+# drawn does NOT resolve against its own `x1`/`x2` tokens at all. The three legs
+# below are one measured sequence and each is a different claim:
+#
+#   leg 1  a FULL-SWEEP graph, fullyzoom'd     -> annot_p 2, v(d) 3   (correct)
+#   leg 2  a NEW sheet, a NEW graph rect whose OWN window is [0, 1e-9],
+#          never zoomed                        -> ⚠ THE ARM DECIDES, see below
+#   leg 3  the SAME rect, now fullyzoom'd into the shared struct
+#                                              -> annot_p 1, v(d) 2
+#          i.e. the narrow window really does change the answer, once it is the
+#          one being read. Without leg 3, leg 2 would be satisfied by a window
+#          that simply never matters.
+#
+# ⚠ LEG 2 IS THE ONLY ARM-DEPENDENT GOLDEN IN THIS SECTION, AND ITS BEING SO IS
+# THE FINDING. Measured on this tree, same script, same schematic, same command:
+#     --nogui        annot_p 2, v(d) 3   the rect's window is IGNORED and leg 1's
+#                                        window — belonging to a schematic that
+#                                        is no longer loaded — is what answers
+#     DISPLAY=:99    annot_p 1, v(d) 2   a frame got painted, draw_graph() ran
+#                                        setup_graph_data() on THIS rect, and the
+#                                        rect's own window answers
+# and in a FRESH process where nothing has ever painted or zoomed, the same leg
+# reads the degenerate window [0,0] and answers v(d) = 1 — a third number. One
+# `set cursor2_x`, one schematic, three answers, selected by whether and when a
+# frame was drawn. That is issue 0480 stated as completely as this file can state
+# it, and it is the reason the S11 direct arm carries its own stack-local
+# whole-sweep window (row T4) instead of borrowing this global. NOT S11's to fix:
+# repairing it would move graph-present behaviour, which the acceptance forbids.
+# The discriminator is `has_x`, the same flag rows M1/M2/O14 self-skip on and the
+# same one opa_o_printpasses uses — not an environment guess.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_t_graph 1
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set t13a [list [opa_t_annot] [opa_t_v {v(d)}]]
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set rectcolor 2
+xschem rect 0 -400 800 0 -1 {flags=graph} 0
+xschem setprop rect 2 0 node {v(d)}
+foreach {k v} [list x1 0 x2 1e-9 y1 -1 y2 5] { xschem setprop rect 2 0 $k $v }
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set t13b [list [opa_t_annot] [opa_t_v {v(d)}] [xschem getprop rect 2 0 x2]]
+xschem setprop rect 2 0 fullyzoom
+xschem set cursor2_x 3e-9
+set t13c [list [opa_t_annot] [opa_t_v {v(d)}]]
+if {[info exists ::has_x]} {
+  set t13b_exp {{1 3e-09 0} 2 1e-9}
+} else {
+  set t13b_exp {{2 3e-09 0} 3 1e-9}
+}
+check {T13 REGRESSION 0480 which window an un-drawn graph rect resolves against depends on whether a frame was painted} \
+  [list $t13a $t13b $t13c] \
+  [list {{2 3e-09 0} 3} $t13b_exp {{1 3e-09 0} 2}]
+
+# ===========================================================================
+# T14 — REGRESSION: GATE 2, THE RECT-ZERO HARD-CODE (issue 0477)
+# ===========================================================================
+# ⚠ THE DIRECT PATH MUST NOT RESCUE THIS. scheduler.c:11853 indexes
+# `xctx->rect[GRIDLAYER][0]` specifically, so a plain non-graph rectangle
+# sitting at index 0 blocks annotation outright even with a real, windowed,
+# cursor-B-enabled graph at index 1 — measured, `xschem raw annot` stays
+# `0 0 -1`. Decision D1 keys the new arm on "no rect on GRIDLAYER carries
+# flags&1", i.e. this sheet HAS a graph and takes the old path unchanged; a
+# fallback keyed on "any of the three gates false" would silently repair 0477
+# as a side effect and change graph-present behaviour, which the acceptance
+# forbids. Filed, not fixed.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set rectcolor 2
+xschem rect 0 -900 100 -800 -1 {} 0
+xschem rect 0 -400 800 0 -1 {flags=graph} 0
+xschem setprop rect 2 1 node {v(d)}
+foreach {k v} [list x1 0 x2 5e-9 y1 -1 y2 5] { xschem setprop rect 2 1 $k $v }
+xschem setprop rect 2 1 fullyzoom
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+check {T14 REGRESSION 0477 a plain rect at GRIDLAYER index 0 still blocks a real graph at index 1 -- the direct path does NOT rescue it} \
+  [list [xschem get rects 2] [xschem getprop rect 2 0 flags] \
+        [xschem getprop rect 2 1 flags] [opa_t_annot] [opa_t_v {v(d)}]] \
+  [list 2 {} graph {0 0 -1} 0]
+
+# ===========================================================================
+# T15 — REGRESSION: GATE 3, `graph_flags & 4` (issue 0478)
+# ===========================================================================
+# ⚠ A GRAPH MAKES TIMEPOINT ANNOTATION HARDER THAN NO GRAPH, AND THAT STAYS
+# TRUE AFTER S11. A real, windowed graph whose cursor B was never enabled
+# annotates nothing — bit 4 is a DRAWING flag and its only setter,
+# `xschem cursor 2 1`, resets the cursor position as a side effect. Decision D5
+# says the direct arm neither requires nor sets that bit; this row says the
+# direct arm must not fire BEHIND a graph either.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_t_graph 1
+xschem set cursor2_x 3e-9
+check {T15 REGRESSION 0478 a fullyzoom'd graph with cursor B never enabled still annotates nothing} \
+  [list [xschem get graph_flags] [opa_t_annot] [opa_t_v {v(d)}]] {0 {0 0 -1} 0}
+
+# ===========================================================================
+# T16 — OUT OF RANGE, PAST THE END: THE ENDPOINT IS HELD, AND SAID SO
+# ===========================================================================
+# ⚠ THE STEP'S ONE OPEN DESIGN QUESTION, PINNED AS BEHAVIOUR (issue 0479).
+# The brief asks for an out-of-range t to be "handled honestly rather than
+# clamping silently". Measured on the GRAPH path today, on this binary: t = 99 ns
+# against a raw ending at 4 ns gives annot_p 4 and v(d) = 4 — the last sample
+# HELD, never extrapolated. That is RULING D4-4 (callback.c:1305-1306), ratified
+# and pinned by rows XCW4/XCW5/XCW6 of test_wave_cursor_crossdb, which
+# explicitly REJECTED resetting annot_p to -1.
+# Reading the invariants in order: I3 forbids fabricating a number for a MISSING
+# vector (that is row T7, and it still blanks); an endpoint hold is a REAL
+# measured sample of a PRESENT vector, so I3 does not reach it. I1 then settles
+# it: two behaviours for one cursor is exactly the silent drift I1 exists to
+# prevent, so the direct path must clamp identically — which row T18 is the
+# proof of.
+# ⚠ THE THIRD ELEMENT IS THE HONEST HALF THAT ALREADY EXISTS: annot_x reports
+# the REQUESTED 9.9e-08 beside the clamped annot_p 4, so a caller can detect the
+# condition. Nothing says so on a status line, and there is no "cursor is outside
+# the data" seam — that is 0479's question, for BOTH paths or neither.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set cursor2_x 99e-9
+check {T16 0479 a graphless cursor PAST THE END holds the last sample and still reports the requested time} \
+  [list [opa_t_annot] [opa_t_v {v(d)}] [opa_t_eng $T_GM]] \
+  {{4 9.9e-08 0} 4 400u}
+
+# ===========================================================================
+# T17 — OUT OF RANGE, BEFORE THE START
+# ===========================================================================
+# ⚠ A WEAK ROW, NAMED AS ONE. It is green under a degenerate [0,0] window too
+# (frac clamps to 0 at that end as well), so it cannot substitute for T4 and
+# must not be read as covering the window choice. Its only element that moves
+# today is annot_x — the requested time being recorded at all.
+xschem set cursor2_x -5e-9
+check {T17 a graphless cursor BEFORE THE START holds the first sample -- weak, see T4 for the window claim} \
+  [list [opa_t_annot] [opa_t_v {v(d)}] [opa_t_eng $T_GM]] \
+  {{0 -5e-09 0} 0 0}
+
+# ===========================================================================
+# T18 — INVARIANT I1: THE TWO PATHS ARE ONE BEHAVIOUR, NOT TWO
+# ===========================================================================
+# ⚠ THE ANTI-DRIFT ROW, AND NOTHING ELSE IN THE TREE MEASURES IT. No existing
+# suite compares the graphless answer with the graph answer, so a direct arm
+# that blanked out of range, or snapped instead of interpolating, or resolved a
+# different annot_p, would red NOTHING today. Same process, same raw, same
+# instance: read the {annot_p, v(d), gm} triple with no graph, then add a real
+# windowed graph with cursor B on and read it again at the same two times. One
+# of them is out of range and one is between samples — the two places the paths
+# could most plausibly disagree.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set cursor2_x 99e-9
+set t18d1 [opa_t_trip]
+xschem set cursor2_x 2.5e-9
+set t18d2 [opa_t_trip]
+opa_t_graph 1
+xschem cursor 2 1
+xschem set cursor2_x 99e-9
+set t18g1 [opa_t_trip]
+xschem set cursor2_x 2.5e-9
+set t18g2 [opa_t_trip]
+check {T18 I1 the graphless path and the graph path return the IDENTICAL triple, out of range and between samples} \
+  [list [expr {$t18d1 eq $t18g1}] [expr {$t18d2 eq $t18g2}] $t18g1 $t18g2] \
+  {1 1 {4 4 400u} {2 2.5 250u}}
+
+# ===========================================================================
+# T19 — NO DATA: A BYTE-EXACT NO-OP, INCLUDING THE USER'S OWN HOOK
+# ===========================================================================
+# ⚠ GREEN BEFORE AND AFTER; IT GUARDS THE HELPER'S SELF-GATE, NOT THE FEATURE.
+# backannotate_at_cursor_b_pos() fires annot_data_changed() AND
+# `catch {eval $cursor_2_hook}` (callback.c:1533/1537) BEFORE its own
+# sch_waves_loaded() test — so a direct arm that called it unconditionally would
+# start firing a user hook that has been graph-only since it was written, and
+# would move the very S9b flush counter that exists to detect over-flushing, on
+# every sheet with no data. Decision D6 puts the gate in the helper. Both seams,
+# one script.
+opa_t_arm [file join $lib s5_flat.sch]
+catch {xschem raw clear}
+set ::t19hook 0
+set ::cursor_2_hook {incr ::t19hook}
+xschem redraw ; xschem redraw
+set t19f [opa_o_fdelta {xschem set cursor2_x 3e-9 ; xschem redraw}]
+set ::cursor_2_hook {}
+check {T19 with NO raw loaded a graphless `set cursor2_x` flushes nothing and fires no cursor_2_hook} \
+  [list [rcall {xschem raw loaded}] $t19f $::t19hook] {{0 -1} 0 0}
+
+# ===========================================================================
+# T20 — LANDMINE 4: ABOVE THE LEVEL THE WAVES WERE LOADED AT
+# ===========================================================================
+# ⚠ THE DEGRADATION MUST BE THE SAME ONE THE GRAPH PATH HAS. sch_waves_loaded()
+# (draw.c:2825) binds the data to `raw->schname` and walks currsch DOWNWARDS, so
+# DESCENDING keeps the annotation alive (measured: `raw loaded` is still 0 one
+# level down) and ASCENDING out of the annotated level is what loses it — the
+# same asymmetry rows S17/S18 record. Annotate INSIDE x1, go back up, and the
+# direct path must be as silent as the graph path is.
+opa_t_arm [file join $lib s5_flat.sch]
+catch {xschem raw clear}
+xschem load [file join $lib s5_top.sch]
+xschem select instance 0
+xschem descend 1 2
+set t20rc [lindex [rcall [list xschem annotate_op $T_RAW]] 0]
+set t20in [rcall {xschem raw loaded}]
+xschem go_back
+set ::t20hook 0
+set ::cursor_2_hook {incr ::t20hook}
+xschem redraw ; xschem redraw
+set t20f [opa_o_fdelta {xschem set cursor2_x 3e-9 ; xschem redraw}]
+set ::cursor_2_hook {}
+check {T20 landmine 4 after ascending ABOVE the annotated level a graphless cursor move is a no-op, hook included} \
+  [list $t20rc $t20in [rcall {xschem raw loaded}] $t20f $::t20hook] \
+  {0 {0 1} {0 -1} 0 0}
+
+# ===========================================================================
+# T21 — THE TRIGGER IS A SCAN FOR A GRAPH, NOT A RECT COUNT (decision D1)
+# ===========================================================================
+# ⚠ THE ONE ROW THAT SEPARATES D1 FROM THE OBVIOUS `rects[GRIDLAYER] == 0`.
+# GRIDLAYER carries ordinary rectangles too — layer 2 is a normal drawing layer
+# — so a schematic with a plain box on it and NOTHING plotted is exactly the
+# situation S11 exists for, and a count-based trigger would refuse it while
+# looking correct on every other row in this section.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem set rectcolor 2
+xschem rect 0 -900 100 -800 -1 {} 0
+xschem set cursor2_x 3e-9
+check {T21 D1 a plain non-graph rect on GRIDLAYER with no graph anywhere still reaches the direct path} \
+  [list [xschem get rects 2] [xschem getprop rect 2 0 flags] [opa_t_annot] \
+        [opa_t_v {v(d)}]] \
+  [list 1 {} {2 3e-09 0} 3]
+
+# ===========================================================================
+# T22 — THE BLAST RADIUS, AND THE ONLY ROW `set_modify(-2)` ANSWERS TO
+# ===========================================================================
+# ⚠ NOT AN op_annot ROW AT ALL, AND THAT IS THE POINT. lab_pin.sym:32 carries
+# `T {@spice_get_voltage}`; translate expands it out of cursor_b_val[]
+# (token.c:4821) and the RESULT IS CACHED as a floater string. So the arm's
+# `if(floaters) set_modify(-2);` is load-bearing: without it the values move in
+# the raw and the schematic keeps painting the previous timepoint. Measured
+# today, graphless, at the DEFAULT mask: the two exports are byte-identical and
+# both print `d 0`; with a graph the same pair moves `d 1` -> `d 3`.
+# ⚠ THE FIRST ELEMENT IS THE NON-VACUITY GUARD. `0` proves the floater renders
+# at all at point 0 — without it a fixture where the text never appeared would
+# satisfy "the two exports differ" by accident.
+opa_t_arm [file join $lib s5_flat.sch]
+set t22a [opa_t_vd [opa_l_print2 svg [file join $scratch t_flt0.svg] $T_VP]]
+xschem set cursor2_x 3e-9
+set t22b [opa_t_vd [opa_l_print2 svg [file join $scratch t_flt3.svg] $T_VP]]
+check {T22 the lab_pin @spice_get_voltage floater follows a GRAPHLESS cursor -- the wider blast radius, and set_modify(-2)} \
+  [list $t22a $t22b] {0 3}
+
+catch {xschem raw clear}
+catch {xschem cursor 2 0}
+opa_l_annot 0
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+} terr]} {
+  puts "UNEXPECTED ERROR (section T): $terr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

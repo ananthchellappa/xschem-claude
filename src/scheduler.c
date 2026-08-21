@@ -11846,9 +11846,27 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           else if(!strcmp(argv[2], "cursor2_x")) { /* set graph cursor2 position */
             int floaters = there_are_floaters();
+            int i, has_graph = 0;
             xctx->graph_cursor2_x = atof_spice(argv[3]);
 
-            if(xctx->rects[GRIDLAYER] > 0) {
+            /* S11 (doc/claude/specs/op_annotation.md) -- THE TRIGGER IS A SCAN FOR A
+             * GRAPH OBJECT, NOT A RECT COUNT. GRIDLAYER is an ordinary drawing layer
+             * too, so `rects[GRIDLAYER] > 0` is true for a schematic carrying a plain
+             * rectangle and nothing plotted -- which is exactly the situation the
+             * direct arm below exists for. Only `flags & 1` means "this is a graph".
+             * Decision D1: this changes NO graph-present behaviour. Where any graph
+             * rect exists the shipped block runs byte-identically, including its two
+             * known defects, which are FILED rather than repaired here because the
+             * step's acceptance requires graph-present behaviour to be unchanged:
+             * issue 0477 (rect ZERO is hard-coded, so a plain rect at index 0 hides a
+             * real graph at index 1) and issue 0478 (`graph_flags & 4` is a DRAWING
+             * flag, and its only setter `xschem cursor 2 1` resets this very
+             * position). Rows T12-T15 and T21 of tests/headless/test_op_annot.tcl pin
+             * all of it. */
+            for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
+              if(xctx->rect[GRIDLAYER][i].flags & 1) { has_graph = 1; break; }
+            }
+            if(has_graph) {
               Graph_ctx *gr = &xctx->graph_struct;
               xRect *r = &xctx->rect[GRIDLAYER][0];
               if(r->flags & 1) {
@@ -11857,6 +11875,15 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
                   if(floaters) set_modify(-2); /* update floater caches to reflect actual backannotation */
                 }
               }
+            }
+            /* S11: no graph anywhere -- resolve the cursor straight against
+             * xctx->raw. The helper self-gates on sch_waves_loaded() and answers 0
+             * when there is nothing to annotate, so a sheet with no data stays a
+             * byte-exact no-op down to the user's $cursor_2_hook (rows T19/T20).
+             * Decision D5: this arm neither requires nor sets `graph_flags & 4` --
+             * bit 4 draws a cursor for a graph that does not exist here. */
+            else if(backannotate_at_cursor_b_nograph()) {
+              if(floaters) set_modify(-2); /* update floater caches to reflect actual backannotation */
             }
           }
           else if(!strcmp(argv[2], "draw_window")) { /* set drawing to window (1 or 0) */

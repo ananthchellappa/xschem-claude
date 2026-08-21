@@ -1572,6 +1572,84 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
   }
 }
 
+/* S11 -- THE SAME CURSOR, WITH NO GRAPH IN THE PICTURE.
+ * doc/claude/specs/op_annotation.md step S11; issues 0477-0480.
+ *
+ * `xschem set cursor2_x <t>` used to annotate ONLY when a graph rect sat on
+ * GRIDLAYER with cursor B enabled (scheduler.c), so a schematic with a
+ * transient raw loaded and NOTHING plotted -- the ordinary state for the
+ * op_annot `6` / `Alt-6` keys -- moved a global nobody read while every
+ * annotated value stayed frozen at update_op()'s point 0 (save.c). This
+ * resolves cursor B directly against xctx->raw instead.
+ *
+ * NOTHING IS REIMPLEMENTED HERE. The sample scan, RULING D4-7's window rescan,
+ * RULING D4-4's clamp and RULING D4-1's per-database fan-out are all reached
+ * through the shipped public entry below, with a synthetic rect and a
+ * stack-local Graph_ctx standing in for the graph that is not there. Invariant
+ * I1 -- one behaviour, never two builders that drift: an out-of-range t
+ * therefore HOLDS the endpoint here exactly as it does on the graph path, and a
+ * vector missing from the raw still renders blank (I3), because both answers
+ * come out of the same code rather than out of a private copy of it.
+ *
+ * THE ZEROED xRect IS A CORRECT ONE, and that was verified in the callees, not
+ * assumed. backannotate_cursor_b_in_db() reads only two things out of the rect:
+ * the `sweep` token -- and get_tok_value() returns "" for a NULL prop_ptr
+ * (token.c), so sweep_idx falls back to 0, the time column -- and `flags & 4`
+ * (private_cursor), clear, so the position is xctx->graph_cursor2_x.
+ * graph_cursor_dbs() (draw.c) has an explicit non-graph arm,
+ * `if(!(r->flags & 1)) goto cursor_dbs_done;`, that yields the current database
+ * and nothing else: no `%` parse, no extra_rawfile() switch.
+ *
+ * THE Graph_ctx IS A STACK LOCAL AND CARRIES AN EXPLICIT WHOLE-SWEEP WINDOW.
+ * Both halves of that are load-bearing:
+ *
+ *   - A STACK LOCAL, NEVER &xctx->graph_struct. save.c's raw_read() already
+ *     does exactly this, for exactly this reason: the shared struct is live
+ *     inside draw_graph(), which calls raw_read(). Writing into it from here
+ *     would corrupt an in-progress draw. There is also no rect 0 to
+ *     setup_graph_data() from -- that function indexes
+ *     xctx->rect[GRIDLAYER][i] on its first line.
+ *
+ *   - [-HUGE_VAL, +HUGE_VAL], NOT a memset-0 window, and this is the step's
+ *     sharpest trap because the zeroed one looks safe. A zeroed Graph_ctx is
+ *     the degenerate window [0,0], and EVERY transient raw has a sample at
+ *     exactly t = 0, which passes the scan's `xx >= start && xx <= end`. So
+ *     `first` becomes 0 rather than -1, D4-7's rescan_no_window never fires,
+ *     the scan exits with p = first = 0, and interpolate_yval() then clamps
+ *     frac to 1 and walks one segment forward: POINT 1's value for every t past
+ *     the second sample. Measured, v(d) = 1 at t = 3 ns on a raw whose point 3
+ *     holds 3.0 -- a plausible wrong number on a schematic, which is precisely
+ *     what invariant I3 and save.c RULING D5-1 forbid. The wide window admits
+ *     every sample and reproduces the no-window answer exactly (nearest sample,
+ *     clamped at both ends, never extrapolated) without touching the shipped
+ *     scan. Row T4 of tests/headless/test_op_annot.tcl is the discriminator,
+ *     and issue 0480 records the same defect where it is NOT fixed: the graph
+ *     path, which borrows the shared struct and can therefore answer from a
+ *     window belonging to a schematic that is no longer loaded.
+ *
+ * THE sch_waves_loaded() GATE IS HERE, AHEAD OF THE CALL, rather than left to
+ * the one inside backannotate_at_cursor_b_pos(). That function fires
+ * annot_data_changed() and `catch {eval $cursor_2_hook}` BEFORE its own test,
+ * so calling it unconditionally would fire a user hook that has been graph-only
+ * since it was written, and would move the very S9b flush counter that exists
+ * to detect over-flushing, on every sheet with no data (rows T19/T20).
+ *
+ * Returns 1 when it annotated, so the caller knows whether the floater caches
+ * need refreshing; 0 when there is nothing to annotate against and the call was
+ * a byte-exact no-op. */
+int backannotate_at_cursor_b_nograph(void)
+{
+  xRect r;
+  Graph_ctx gr;
+  if(!xctx || sch_waves_loaded() < 0) return 0;
+  memset(&r, 0, sizeof(r));
+  memset(&gr, 0, sizeof(gr));
+  gr.gx1 = -HUGE_VAL;
+  gr.gx2 = HUGE_VAL;
+  backannotate_at_cursor_b_pos(&r, &gr);
+  return 1;
+}
+
 /* ---------------------------------------------------------------------------
  * Waveform-marker gestures (doc/claude/specs/graph_markers.md).
  *
