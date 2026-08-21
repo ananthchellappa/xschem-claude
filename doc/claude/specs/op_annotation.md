@@ -5,20 +5,32 @@ parameters — on the schematic, under three keys, with the displayed parameter
 list editable by the user and portable across PDKs.*
 
 > ⚠ **THERE IS STILL NO SAVE-CARD GENERATOR.** S3 failed three times (issues
-> **0436**, **0442**, **0443**) and S4 is deferred with it, so the feature
+> **0436**, **0442**, **0443** — ⚠ 0443 is a claimed number carried by
+> `doc/claude/issues/0443-attempt-3-interrupted.patch` alone, with no issue
+> `.md`; see issue **0487**) and S4 is deferred with it, so the feature
 > cannot put real device numbers on a schematic without a hand-written deck:
-> every annotation row and every overlay block renders **blank** on any raw a
-> user produces today. This is the single most important fact about the current
-> state of this feature. Proven at file level: `src/op_annot.tcl` defines 17
-> procs and `op_annot::save_cards` is **absent** — the only occurrence of the
-> name is the comment at `src/op_annot.tcl:61` telling a future author what to
-> read before adding it.
+> on a raw produced without hand-written `.save` cards, every `params` row and
+> every `derived` row that depends on one renders **blank**. This is the single
+> most important fact about the current state of this feature. Proven at file
+> level: `src/op_annot.tcl` defines 17 procs and `op_annot::save_cards` is
+> **absent** — the only occurrence of the name is the comment at
+> `src/op_annot.tcl:61` telling a future author what to read before adding it.
+>
+> ⚠ **Not *every* row — corrected 2026-08-21 by S12b**, whose adversary refuted
+> the earlier blanket wording here and in `waveform_subsystem_reference.md` §6.
+> `pinexpr` rows are pin **voltages**, which the implicit save-everything already
+> carries (§4.2: "quantities that need no save card at all"; `op_annot.tcl:696`),
+> so they render on an ordinary raw with no cards written by anyone. Measured on
+> a one-FET fixture with a node-voltages-only raw: **2 of 10 rows populated**
+> (`vgs`, `vds`), eight blank. Overstating the blocker is the same class of
+> error as understating it — and it hides the one thing that works today.
 
 Status: **S1, S2, S5, S6b, S7, S8, S9b, S10b and S11 landed; S3 refuted and
 reverted three times (S9 once), S4 deferred with it; S12 attempted 2026-08-21
-and NOT completed** — its implement agent produced no change at all, and only
-its write-up survived (issues **0484**/**0485** filed, plan numbering
-reconciled, this block). Branch `annotate`. *(This line was stale through S9b
+and NOT completed, S12b (2026-08-21) completed its remaining deliverable** —
+S12's implement agent produced no change at all and only its write-up survived
+(issues **0484**/**0485** filed, plan numbering reconciled, this block); S12b
+rewrote `waveform_subsystem_reference.md` §6 and corrected this spec. Branch `annotate`. *(This line was stale through S9b
 and S10b; corrected by the S11 write-up, then by the S12 write-up. "S6b" is the
 commit's own spelling — `1f1b8125` — and is now used throughout in preference
 to the earlier "S6".)*
@@ -133,7 +145,10 @@ rect on GRIDLAYER carries `flags & 1`, the cursor is resolved **directly against
 xschem raw value <vector-name> -1     ;# value at the current annotation point
 ```
 
-(`scheduler.c:10312` — with point `-1` it falls through to `cursor_b_val[idx]`,
+(**`scheduler.c:10344`** — ⚠ *re-measured by S12b on HEAD `479be885`; this line
+asserted `:10312` through S11, which is an `extra_rawfile(3, …)` call in the
+`raw loaded` neighbourhood, not the value accessor* — with point `-1` it falls
+through to `cursor_b_val[idx]`,
 i.e. the OP point or the cursor-B point, whichever is current.) `get_raw_index()`
 already tries the name as-is, uppercased, lowercased, and `v(...)`-wrapped.
 
@@ -197,7 +212,9 @@ Tcl), gating texts whose attribute is `hide=true` (`HIDE_TEXT`, set in
 >   `(HIDE_TEXT | HIDE_TEXT_INSTANTIATED)` — `draw.c:868`, `draw.c:1131`,
 >   `draw.c:10266`, `svgdraw.c:923`, `psprint.c:1205`, `select.c:709`.
 > * **Four** iterate the *schematic's own* `xctx->text[i]` and mask `HIDE_TEXT`
->   alone — `draw.c:10556`, `svgdraw.c:1290`, `psprint.c:1664`, `actions.c:4422`.
+>   alone — `draw.c:10616`, `svgdraw.c:1326`, `psprint.c:1698`, `actions.c:4796`
+>   *(re-measured on HEAD `479be885` by S12b; the numbers this line carried
+>   through S11 — 10556 / 1290 / 1664 / 4422 — have all drifted).*
 >   The last carries `/* | HIDE_TEXT_INSTANTIATED */` commented out **in place**,
 >   so the difference is deliberate and someone already thought about it.
 >
@@ -221,14 +238,21 @@ and the overlay is gated on the same bit, so it does not deduplicate.
 > `doc/claude/code_analysis/waveform_subsystem_reference.md` §6 said "Op text is
 > layer-15 (hidden unless `show_hidden_texts=1`)". That was wrong — hiding comes
 > from the attribute, not the layer — and **S7 corrected it in place** (that file
-> line 411), as this section asked.
+> §6), as this section asked. S12b then rewrote that whole section against
+> HEAD `479be885`; it now carries the layer census, the `annot_show` bits, the
+> overlay and the no-save-card-generator blocker. Cite it by **section**, never by
+> line.
 
 ---
 
 ## 3. The measured constraint: ngspice saves nothing by default
 
 Measured with the installed `ngspice` on throwaway decks (`.op` on a
-subckt-wrapped MOS, mirroring the PDK device shape):
+subckt-wrapped MOS, mirroring the PDK device shape). **Re-measured 2026-08-21 by
+S12b with `ngspice-46+` — R1 and R2 both hold** (`.save all` on a `.op` deck gave
+exactly `v(d) v(g) i(vd) i(vg)` and no `@m1[gm]`; `.save all @m1[gm]` gave all
+five; `.save v(d)` alone reduced the raw to two vectors, `v(g)`/`i(vd)`/`i(vg)`
+gone):
 
 | deck | vectors in the raw |
 |---|---|
@@ -245,7 +269,12 @@ Three rules follow, and they are load-bearing for everything below:
 * **R2.** Any explicit `save` **cancels the implicit save-everything**. A deck
   that adds device saves must also carry `.save all`, or the node voltages
   disappear. (The shipped sky130 examples already pair them; a generated block
-  must not assume the user did.)
+  must not assume the user did.) ⚠ **S12b sharpened the stake on this**: the node
+  voltages R2 is about are exactly what the `pinexpr` rows read, and those rows
+  are the only ones that render today. So a generated block that omits `.save
+  all` does not merely fail to add the `params` rows — it **deletes the two rows
+  that already work**. S3 must be tested against that regression, not only
+  against the rows it adds.
 
   **⚠ The spelling is the DOT-card `.save all`.** Corrected by S3 after three
   independent measurements on **both** binaries now on this box

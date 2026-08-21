@@ -1934,11 +1934,14 @@ rows while `raw value -1` reports the new value.
 
 ---
 
-## S12 — documentation and issues — ❌ **ATTEMPTED 2026-08-21, NOT COMPLETED**
+## S12 — documentation and issues — ⚠ **ATTEMPT 1 (2026-08-21) NOT COMPLETED; FINISHED BY S12b THE SAME DAY**
 
-**Read this block before re-running S12. Deliverables (2) and (3) are done,
-(4) is half done, (1) is not started — and the run that was supposed to do all
-four produced no commit at all.**
+**Read this block for the history; read the S12b block below for what actually
+landed.** Attempt 1 did deliverables (2), (3) and half of (4) and produced no
+code commit; **S12b (status E) completed deliverable (1)** — the
+`waveform_subsystem_reference.md` §6 rewrite — and corrected this spec and this
+plan with it. Nothing in "STILL OWED" below is owed any more except where a
+line says so.
 
 The S12 implement agent returned "no code change — documentation step" and
 changed **nothing**: `git diff HEAD` was empty, HEAD stayed at `734456be`, and
@@ -1962,7 +1965,9 @@ left unfiled, and reconciled the numbering. Everything else is still owed.
 
 ### STILL OWED — what a re-run of S12 must do
 
-1. **Fix `waveform_subsystem_reference.md` §6 — but NOT the sentence the S12
+1. ✅ **DONE BY S12b (2026-08-21, commit below).** Kept here because every
+   anchor in it was re-verified twice and is reusable.
+   **Fix `waveform_subsystem_reference.md` §6 — but NOT the sentence the S12
    brief names.** ⚠ **The brief's premise is stale and cost this crew a
    scout pass.** "Op text is layer-15 (hidden unless `show_hidden_texts=1`)" no
    longer exists — S7 (commit `8ac98756`) already corrected it at lines 420-423,
@@ -2085,6 +2090,125 @@ end of this file: the next free number is **0455**.)*
 
 ---
 
+## S12b ✅(E) — `waveform_subsystem_reference.md` §6 — **LANDED 2026-08-21**
+
+Status **E**: it is committed, the suite did not move (241 headless / 246 display,
+both integers unchanged), and **a human read of §6 is the only remaining oracle** —
+see STILL OPEN. The adversary refuted the first draft of the section; the write-up
+agent corrected the refuted claims before committing and says so below rather than
+claiming a clean pass.
+
+### What was measured BEFORE
+
+    $ sed -n '424,425p' doc/claude/code_analysis/waveform_subsystem_reference.md
+      gf180's OP texts carry `hide=true` and so obey `show_hidden_texts`; sky130's
+      carry no `hide=` token at all and are on permanently.
+
+    $ grep -rl 'hide=true' sky130A/xschem_libs/sky130_fd_pr/*/symbol/*.sym | wc -l
+    40                    # 119 records, added by S10b commit 09c4a2cd
+
+    $ for a in scheduler.c:1995 save.c:1465 callback.c:404 token.c:4685; do ...
+    doc cites scheduler.c:1995 -> * made the invariant unassertable: place_symbol()...
+    doc cites save.c:1465      -> xctx->extra_idx = i;
+    doc cites callback.c:404   -> /* No `xctx->last_command &&` conjunct here (0243 F3)
+    doc cites token.c:4685     -> )
+
+    grep counts inside the old §6: op_annot.tcl 0, overlay 0, save_cards 0,
+    descriptor 0, ANNOT_SHOW 0, annotate_params.sym 0, Ctrl-6 0.
+
+### What landed
+
+§6 replaced wholesale (39 lines → ~310) with a date-stamped preamble and six
+subsections: 6.1 the C value pipeline (five stale anchors corrected), 6.2
+`src/op_annot.tcl`, 6.3 visibility, 6.4 the S9b overlay, 6.5 **the missing save-card
+generator**, 6.6 cross-references. Plus a `src/op_annot.tcl` row in §1's file map and
+an `op_annotation.md` bullet in §14. The spec's inbound pointer was reworded from
+"(that file line 411)" — which sat *inside* the rewritten span — to "(that file §6)".
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | L2 | rewrite §6 wholesale | sentence-level surgery — leaves the section false by omission (grep count 0 for everything S1–S11 shipped) |
+| D2 | L2 | **do NOT re-fix the layer/attribute conflation** — S7 already fixed it | following the S12b brief literally, which asserts the conflation survives; it does not, and re-fixing churns a paid-for correction |
+| D3 | L1 (I7) | write **ten** visibility sites and keep the 6-instance/4-schematic split | the brief's "nine" — would regress a correction the doc already carried |
+| D4 | L2 | **no test rows** | a markdown-contains-string row cannot detect the real failure mode, and any added row moves the pinned 241/246 |
+| D5 | L2 | file **0486** for §5's six drifted `callback.c` anchors rather than fixing one of six | sweeping all six (out of scope) or fixing one (makes §5 *look* swept) |
+| D6 | L2 | date-stamp §6 (`HEAD 479be885`, 2026-08-21) | silently mixing exact and approximate anchors — which is how §5 got into its state |
+| D7 | L1 (I3) | §6 names the open defects (0469, 0463, 0464#2, 0446, 0430) rather than reading as "this works" | a clean-sounding section, the same error class as the sentence being fixed |
+| D8 | L2 | **write-up agent corrected the four refuted claims and committed**, status E | reverting per the F rule — would reinstate a sentence *proven false on this branch* and discard five correct fixes; and claiming **x**, which the refutation forbids |
+
+### THE SABOTAGE MATRIX — 4 variants, **0 committed checks moved by any of them**
+
+| variant | committed reds | scratch reds |
+|---|---|---|
+| sky130 `hide=` sentence restored | **0** | 4 (author) / 3 (independent) |
+| §6.5 save-card blocker deleted | **0** | 8 / 6 |
+| five anchors reverted | **0** | 14 / 5 |
+| ten sites regressed to nine | **0** | 4 / 16 |
+
+⚠ **Predicted red that did NOT appear:** W48 (`para_has "blank" "save"`) stayed green
+when §6.5 was deleted, because the *preamble* 190 lines above satisfies the same
+predicate — a row named for the blocker was satisfied by a one-liner elsewhere. And
+nothing, in either detector, notices that deleting §6.5 leaves the preamble's "(§6.5)"
+cross-reference dangling.
+
+### STILL OPEN
+
+- **A human must read §6.** That is not a formality: all four sabotage variants moved
+  **zero** committed checks, the two detectors were uncommitted scratch scripts that no
+  longer exist, and the section's first draft shipped a false blanket claim that only
+  the adversary caught. §6 has **no** regression protection.
+- 0486 (§5's six drifted anchors), 0487 (0443 has no issue `.md`).
+- `lessons_census_before_design.md:240` cites `waveform_subsystem_reference.md:1447`,
+  already stale before this step and now further out of date.
+
+### ⚠ WHAT S12b LEARNED THAT BINDS LATER STEPS — READ BEFORE S3/S4
+
+1. **"Everything renders blank without save cards" is FALSE, and both this plan's
+   spec header and the reference doc said it.** Measured 2026-08-21 on a one-FET
+   fixture and a node-voltages-only raw (exactly what ngspice gives when nobody writes
+   cards): **2 of 10 rows populated** — `vgs` and `vds`. `pinexpr` rows are pin
+   voltages, which the implicit save-everything already carries
+   (`op_annot.tcl:696`; spec §4.2 "need no save card at all"). **S3's acceptance must
+   not be "all blank before, all populated after"** — the before state is 2/10, and a
+   test asserting 0/10 will pass today and mislead tomorrow.
+2. **R2 now has teeth: a generated block without `.save all` DELETES the two rows that
+   work today.** Re-measured with `ngspice-46+`: `.save v(d)` alone reduced a `.op` raw
+   to two vectors — `v(g)`, `i(vd)`, `i(vg)` gone. So an S3 block that emits bare
+   `.save` cards does not merely fail to add `params` rows, it regresses `pinexpr`.
+   Test S3 for that regression explicitly. (R1 also re-confirmed: `.save all` on the
+   same deck gave `v(d) v(g) i(vd) i(vg)` and **no** `@m1[gm]`.)
+3. **S3 must not copy the prototype's prefix lookup.** Issue **0430**: the prototypes
+   read `xschem getprop instance … spiceprefix`, which is empty when `spiceprefix=X`
+   lives in the symbol `template=` — three shipped sky130 cells have exactly that
+   shape, and the emitted card then names nothing, which per landmine 9 makes ngspice
+   fabricate a `0.0` column rather than blank. `op_annot::devpath` (via
+   `xschem translate`) already resolves it correctly; use it.
+4. **Invariant I1 is narrower than it reads.** `op_annot::vector` is the only builder
+   *in the PDK-neutral layer*; three others exist and are not going away — 54
+   raw-vector names hand-written into the 40 sky130 symbols' text records, the two
+   prototype emitters, and `get_fqdevice()` (`token.c:4514`). S3 must call
+   `op_annot::vector`, not become the fourth.
+5. **Anchors re-verified on HEAD `479be885`** and usable without re-measuring:
+   `annotate_op` `scheduler.c:2339` · `update_op` `save.c:2015` ·
+   `backannotate_at_cursor_b_pos` `callback.c:1531` · `..._nograph` `callback.c:1640` ·
+   `@spice_get_voltage` `token.c:4821` bare / `:4912` parenthesised · `text_hidden`
+   `actions.c:1195` · `get_annot_overlay` `actions.c:1456` · **`xschem raw value` is
+   `scheduler.c:10344`, NOT the `:10312` the spec and every brief quote** ·
+   `get sim_sch_path` `scheduler.c:5178` · the flush bump is `actions.c:1413` (`:1412`
+   is the `annot_overlay_flush()` call above it) · `annot_show_sync_cache` has **eight**
+   call sites, not one per frame, because `svg_draw()`/`create_ps()`/`symbol_bbox()`
+   never go through `draw()`.
+6. **A documentation step has no executable oracle, so give its adversary something to
+   run.** The three sabotage variants that "passed" proved only that no suite can see a
+   `.md`. What actually found the defect was an adversary *running the binary* against
+   the claim the prose made. Any future doc step should be verified the same way:
+   execute the sentence, do not grep it.
+7. **Number new issues from 0488.**
+
+---
+
 ## Landing order and what each step buys
 
 | step | changes | buys |
@@ -2101,7 +2225,7 @@ end of this file: the next free number is **0455**.)*
 **Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
 `doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)** ·
-**S11 ✅(E)** · **S12 ❌ not completed** (implement agent produced no change; its write-up filed 0484/0485 and reconciled the numbering — the remaining deliverables are listed in the S12 block). S5 and S6 both landed without S3/S4 by reading a raw
+**S11 ✅(E)** · **S12 ⚠ attempt 1 not completed** (implement agent produced no change; its write-up filed 0484/0485 and reconciled the numbering) · **S12b ✅(E)** (§6 rewritten, spec corrected, 0486/0487 filed). S5 and S6 both landed without S3/S4 by reading a raw
 produced from a hand-written deck — neither the formatter nor the carrier needed
 the generator. S6 decided 0446 and 0447 by **accepting both in writing** (D5/D6)
 rather than closing them, and pinned each with a green check that asserts the
@@ -2146,7 +2270,8 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0486**. *(Updated by S12, 2026-08-21: 0484/0485 were
+Number new issues from **0488**. *(Updated by S12b, 2026-08-21: it filed 0486
+and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were
 consumed by S12's two issue filings. The 0418/0419 reservation was never used —
 no file was ever created under either number — and is now permanently
 superseded; see the S12 section.)*

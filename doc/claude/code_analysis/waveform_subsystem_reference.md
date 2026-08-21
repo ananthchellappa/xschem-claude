@@ -51,6 +51,7 @@ is recomputed each draw. Nothing waveform-specific exists in the file format.
 | `src/wave_viewer.tcl` | **ASE Waveform Viewer** — a real read-only editor window driven by a pure-Tcl model. See §8 and the spec. |
 | `src/xschem.tcl` | Sim launch (`simulate`, `execute`), `sim()` array + simconf dialog, native graph editor `graph_edit_properties`, `graph_add_nodes_from_list`, `load_raw`/`waves`. |
 | `src/ngspice_backannotate.tcl` | Legacy pure-Tcl `.raw` op reader → `ngspice::ngspice_data`. Largely vestigial; `update_op` writes the same array. |
+| `src/op_annot.tcl` | **PDK-neutral OP annotation** (§6.2): the descriptor registry (`op_annot::register`), the single vector-name builder (`op_annot::vector`), the display formatter (`op_annot::text`), `place_annotator`. There is deliberately **no** `op_annot::save_cards` — the save-card generator (S3) never landed, see §6.5. |
 | `src/create_graph.tcl` | Standalone scripted graph recipe (non-ASE). |
 | `src/rawtovcd.c` | **Standalone binary** (own `main`), not linked in. `.raw`→VCD for gtkwave. Has its *own* independent parser. |
 | `src/gtkwave_server.tcl` | Optional TCP server (port 2022) for gtkwave→xschem command push. |
@@ -392,40 +393,313 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 
 ## 6. Back-annotation (numbers on the schematic)
 
-- `annotate_op` (`scheduler.c` ~1995): loads op→dc→tran section via
-  `extra_rawfile`, **forces `live_cursor2_backannotate=1`** (side effect),
-  calls `update_op`.
-- `update_op` (`save.c` ~1465): copies point 0 of each var into
-  `cursor_b_val[]` **and** into Tcl `ngspice::ngspice_data`.
-- `backannotate_at_cursor_b_pos` (`callback.c` ~404): on cursor-B move,
-  interpolates each var at the cursor's sweep position into `cursor_b_val[]`,
-  runs `$cursor_2_hook`, redraws. Live cross-probe.
-- `backannotate_at_cursor_b_nograph` (`callback.c`, **added 2026-08-20 by S11 of
+*Anchors in **this** section were re-verified line by line on HEAD `479be885`,
+2026-08-21. The rest of this file is still dated ~`cf57955c` / 2026-07-22 per the
+header above, so read §6's numbers as exact and the others as approximate — and still
+grep the symbol.*
+
+Four layers stack up here: a **C value pipeline** that fills `cursor_b_val[]` from a
+`.raw`; a **PDK-neutral Tcl layer** that turns an instance name into vector names and
+a formatted block of text; a **visibility mask** with its own `hide=` classes; and a
+**draw-time overlay** that paints that block beside a device without touching the
+schematic. What the stack does **not** have is a save-card generator (§6.5) — so on a
+raw produced without hand-written `.save` cards, every `params` and `derived` row
+below renders blank, while `pinexpr` rows (pin voltages) still render.
+
+### 6.1 The value pipeline (C)
+
+- `annotate_op` (`scheduler.c:2339`): loads the op→dc→tran section via
+  `extra_rawfile`, **forces `live_cursor2_backannotate=1`** (side effect), calls
+  `update_op`.
+- `update_op` (`save.c:2015`): copies point 0 of each var into `cursor_b_val[]`
+  **and** into Tcl `ngspice::ngspice_data`; bumps the overlay epoch through
+  `annot_data_changed()` (`save.c:2026`).
+- `backannotate_at_cursor_b_pos` (`callback.c:1531`): on cursor-B move, interpolates
+  each var at the cursor's sweep position into `cursor_b_val[]`, runs
+  `$cursor_2_hook`, redraws. Live cross-probe; bumps the epoch at `callback.c:1536`.
+- `backannotate_at_cursor_b_nograph` (`callback.c:1640`, **added 2026-08-20 by S11 of
   `doc/claude/specs/op_annotation.md` §4.7**): the same thing **without a graph**.
-  `xschem set cursor2_x <t>` (`scheduler.c:11847`) used to require a rect on
-  GRIDLAYER *and* `rect[GRIDLAYER][0].flags & 1` *and* `graph_flags & 4`; when no
-  rect on GRIDLAYER is a graph it now hands a synthetic zeroed `xRect` and a
-  **stack-local** `Graph_ctx` with an explicit whole-sweep window
-  (`±HUGE_VAL`) to the public entry above. ⚠ Two traps recorded there: never
-  pass `&xctx->graph_struct` (live inside `draw_graph()`), and never pass a
-  `memset`-0 `Graph_ctx` — `[0,0]` is a degenerate *window*, not "no window", and
-  it silently returns point 1's value for every t past the second sample.
-- Display: `translate()` `@spice_get_voltage` case (`token.c` ~4685) — for a
-  **1-pin** instance (`no_of_pins==1`), resolves net → fq lowercased node →
-  `get_raw_index` → substitutes `cursor_b_val[idx]` (eng-formatted); `0`/`GND`
-  →0, unknown→`-`. Gated by `live_cursor2_backannotate` &&
-  `sch_waves_loaded()>=0`. `@spice_get_node`/currents go via
-  `ngspice::get_current/get_node` reading `ngspice_data`.
+  `xschem set cursor2_x <t>` (the arm at `scheduler.c:11847`, calling it at
+  `scheduler.c:11885`) used to require a rect on GRIDLAYER *and*
+  `rect[GRIDLAYER][0].flags & 1` *and* `graph_flags & 4`; when no rect on GRIDLAYER is
+  a graph it now hands a synthetic zeroed `xRect` and a **stack-local** `Graph_ctx`
+  with an explicit whole-sweep window (`±HUGE_VAL`) to the public entry above.
+  ⚠ Two traps recorded there: never pass `&xctx->graph_struct` (live inside
+  `draw_graph()`), and never pass a `memset`-0 `Graph_ctx` — `[0,0]` is a degenerate
+  *window*, not "no window", and it silently returns point 1's value for every t past
+  the second sample.
+- Display: `translate()` `@spice_get_voltage` case (`token.c:4821` bare form,
+  `token.c:4912` parenthesised form) — for a **1-pin** instance (`no_of_pins==1`),
+  resolves net → fq lowercased node → `get_raw_index` → substitutes
+  `cursor_b_val[idx]` (eng-formatted); `0`/`GND`→0, unknown→`-`. Gated by
+  `live_cursor2_backannotate` && `sch_waves_loaded()>=0`. `@spice_get_node`/currents
+  go via `ngspice::get_current/get_node` reading `ngspice_data`.
+- **THE value accessor is `xschem raw value <vector> -1`** (`scheduler.c:10344`),
+  which falls through to `cursor_b_val[idx]` — the OP point, or the cursor-B point
+  when a cursor is live. Everything in §6.2 reads through this one verb.
+  ⚠ `doc/claude/specs/op_annotation.md` §2.1 cites `scheduler.c:10312` for it; that is
+  the `raw loaded` neighbourhood and is **wrong**.
+- `xschem get sim_sch_path` (`scheduler.c:5178`) returns the hierarchy path **relative
+  to the level the raw was loaded at**, not to the netlist entry point. That
+  distinction is the whole of §6.5's unsolved problem.
 - **Two engines coexist** (C `update_op`/`cursor_b_val` + Tcl
-  `ngspice::read_raw`/`ngspice_data`); `update_op` writes both. Op text is
-  layer-15, and hiding comes from the text's **`hide=` attribute, not the
-  layer** — layer 15 is drawn like any other. *(Corrected 2026-08-19 by S7 of
-  `doc/claude/specs/op_annotation.md`, which flagged the original claim.)*
-  gf180's OP texts carry `hide=true` and so obey `show_hidden_texts`; sky130's
-  carry no `hide=` token at all and are on permanently. Since S7 the attribute
-  also has the classes `hide=op` / `hide=voltage`, gated by the `annot_show`
-  mask and **not** by `show_hidden_texts`; one predicate `text_hidden()`
-  (`actions.c`) now decides all ten former visibility sites.
+  `ngspice::read_raw`/`ngspice_data`); `update_op` writes both.
+
+### 6.2 The PDK-neutral Tcl layer (`src/op_annot.tcl`)
+
+Added by S1–S6 of `doc/claude/specs/op_annotation.md`, generalised from the
+single-PDK prototype in `ihp-sg13g2/sg13g2_procs.tcl`. 17 procs; the load-bearing
+ones:
+
+| Proc | Line | Role |
+|---|---|---|
+| `op_annot::register` | `:238` | a PDK — or a user's own rc — registers a **descriptor** for a device type |
+| `op_annot::descriptor` | `:261` | look one up |
+| `op_annot::type` | `:278` | instance name → registered type, via the descriptor's `match` key |
+| `op_annot::devpath` | `:373` | instance name → the SPICE device path the raw uses |
+| `op_annot::vector` | `:427` | **the single vector-name builder** |
+| `op_annot::raw_or_blank` | `:522` | read one vector, or blank |
+| `op_annot::eng_or_blank` | `:541` | eng-format one value, or blank |
+| `op_annot::text` | `:664` | the display formatter: descriptor + instance → the rendered block |
+| `op_annot::place_annotator` | `:786` | Simulation ▸ Graphs ▸ Add device OP annotator |
+
+- **Invariant I1 — one name builder, two consumers.** `op_annot::vector` is the only
+  place **the PDK-neutral layer** assembles a vector name. Display goes through it
+  today; the save cards of §6.5 must go through the same proc when they land. Two
+  independent builders drift **silently** — the card writes one name, the display asks
+  for another, and the screen shows blanks with no error anywhere. ⚠ I1 binds *this
+  layer only*, and three other builders exist outside it: 54 raw-vector names written
+  by hand into the 40 sky130 device symbols' own text records (e.g.
+  `i(\\@m.@path@spiceprefix@name\\.msky130_fd_pr__@model\\[id])`, `nfet3_01v8.sym:63`),
+  the two prototype emitters of §6.5, and `get_fqdevice()` in C (`token.c:4514`).
+  They predate the generic layer; I1 stops the drift spreading, it has not undone it.
+- **Invariant I3 — a missing vector renders blank.** `op_annot::eng_or_blank` returns
+  `{}` where the prototype's `sg13g2_to_eng_safe` returned the string `NaN`. That one
+  substitution *is* I3 in shipped code: not 0, not `NaN` on screen, not the previous
+  run's number. Precedent: `save.c` RULING D5-1 — a plausible wrong number on a
+  schematic is worse than no number.
+- **Invariant I5 — the user's descriptor wins.** Descriptors are pure data (`params`,
+  `pinexpr`, `derived`), registered per PDK from each `*_procs.tcl`. An
+  `op_annot::register` in the user's own rc overrides the PDK's and takes effect **on
+  redraw** — no restart, no rebuild. What makes that true is the generation counter
+  `::op_annot::gen` (`op_annot.tcl:218`, bumped at `:254`), which the overlay epoch
+  compares as `desc_gen` (§6.4).
+- **The carrier symbol** is `xschem_library/devices/annotate_params.sym` (plus a
+  byte-identical nested twin under the newsym tree): one text record,
+  `T {tcleval([op_annot::text @ref ])}`, with `ref=` naming the device to report on.
+  ⚠ The **space before `]`** is load-bearing — `SPACE(c)` (`token.c:24`) does not
+  include `]`, so without it every row renders `?`.
+
+### 6.3 Visibility: the classes, the mask, one predicate
+
+Op text is **not** simply "layer 15". Hiding comes from the text's **`hide=`
+attribute, not the layer** — layer 15 is drawn like any other. *(Corrected 2026-08-19
+by S7 of `doc/claude/specs/op_annotation.md`, which flagged the original claim.)* The
+layer reading is also a false generalisation of the data: of the 119 annotation
+records sky130 now hides, **79 sit on `layer=15` and 40 on `layer=17`** — each file's
+`id=` row is one of the layer-17 ones — while gf180's 38 are all `layer=15`, and the
+overlay of §6.4 paints on layer 15 (`ANNOT_OVERLAY_LAYER`, `actions.c:1256`). The
+layer tells you nothing about whether a record is annotation.
+
+**Both PDK families now gate their OP texts on `hide=true`.** gf180's always have: 38
+records across 19 `gf180mcuD/xschem_libs/gf180mcu_pr/*/symbol/*.sym` files. sky130's
+did not until 2026-08-20, when S10b (commit `09c4a2cd`, *"40 files changed, 238
+insertions(+), 119 deletions(-)"*) added `hide=true` to **119 records across 40**
+`sky130A/xschem_libs/sky130_fd_pr/*/symbol/*.sym` files, so the two families now
+behave alike. ⚠ Revisions of this section before 2026-08-21 asserted the reverse for
+sky130. That was true until S10b landed and is false now. ⚠ "Both families" means
+gf180 and sky130: IHP `sg13g2` is a third shipped PDK carrying **no** `hide=true`
+anywhere in its libraries (measured: 0 files), because its annotation lives in placed
+carrier symbols (`annotate_fet_params` / `annotate_bip_params`), which the mask of
+§6.3 does not reach.
+
+Since S7 the attribute also carries two **annotation classes**, gated by their own
+mask and **not** by `show_hidden_texts`:
+
+| Token | Flag (`xschem.h:397-401`) | Rendered when |
+|---|---|---|
+| `hide=op` | `HIDE_TEXT_OP` 64 | `annot_show` **bit 0** (`ANNOT_SHOW_OP`) — device operating-point info |
+| `hide=voltage` | `HIDE_TEXT_VOLTAGE` 128 | `annot_show` **bit 1** (`ANNOT_SHOW_VOLTAGE`) — node voltages |
+
+`int annot_show` (`xschem.h:2195`) is MIRRORED IN TCL as `::annot_show`.
+`xschem set annot_show N` (`scheduler.c:11738`) writes **both** sides; `xschem get
+annot_show` reads it (`scheduler.c:4128`); `annot_show_sync_cache()`
+(`actions.c:1186`) refreshes the C-side copy at **every bulk visibility evaluation**,
+not merely in `draw()` — eight call sites (`draw.c:10470`, `svgdraw.c:1094`,
+`psprint.c:1366`, `actions.c:4698`, `scheduler.c:9818`/`13703`,
+`xinit.c:3671`/`3801`), because `svg_draw()`, `create_ps()` and `symbol_bbox()` never
+go through `draw()`. That is deliberate: `show_hidden_texts`' own pull cache is
+refreshed at only three sites and *is* measurably stale in exactly those export paths
+(issue 0453). It **defaults to 0**, and
+must stay 0 until issue 0469 closes (issue 0457). The keys, bound in
+`src/cadence_style_rc:307-309` to `cadence::annot_mode` (body in
+`utils/annot_mode.tcl`): `6` = op, **`Ctrl-6`** = none, `Alt-6` = op + voltage.
+
+One predicate, `text_hidden(int flags, int ctx)` (`actions.c:1195`), now decides all
+ten former visibility sites. They were never ten copies of one test — they are **two**
+tests, and that difference *is* `hide=instance` (hidden through an instance, visible
+while editing the symbol itself), which invariant I7 freezes for every existing symbol
+in every library:
+
+- **six** `TEXT_CTX_INSTANCE` sites, iterating a *symbol's* text, masking
+  `(HIDE_TEXT | HIDE_TEXT_INSTANTIATED)` — `draw.c:868`, `draw.c:1131`,
+  `draw.c:10266`, `svgdraw.c:923`, `psprint.c:1205`, `select.c:709`;
+- **four** `TEXT_CTX_SCHEMATIC` sites, iterating the *schematic's own* text, masking
+  `HIDE_TEXT` alone — `draw.c:10616`, `svgdraw.c:1326`, `psprint.c:1698`,
+  `actions.c:4796`.
+
+⚠ It is **ten**, not nine, and the 6/4 split is the point: collapsing it erases
+invariant I7's rationale. The four schematic line numbers quoted in
+`op_annotation.md` (10556 / 1290 / 1664 / 4422) have all drifted; the ones above are
+what HEAD holds.
+
+### 6.4 The draw-time overlay (S9b)
+
+The overlay paints a device's OP block beside the device with **no carrier symbol
+involved**. It **never modifies the schematic**: no instance placed, no `set_modify`,
+nothing written to the `.sch` (invariant I4). It is computed at draw time and thrown
+away.
+
+- `get_annot_overlay()` (`actions.c:1456`) yields block *n* — its text, position, size
+  and layer. Layout constants at `actions.c:1255-1258`: `ANNOT_OVERLAY_SIZE` 0.2,
+  `ANNOT_OVERLAY_LAYER` 15, `DX` 5.0, `DY` 0.0. The font is `ANNOT_OVERLAY_FONT`
+  ("Monospace", `xschem.h:406`), lifted from the carrier so carrier and overlay look
+  identical side by side.
+- Its own gate is the mask through the **same** predicate as everything else:
+  `text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)` at `actions.c:1475`. S7's ten copies
+  were not quietly put back.
+- Three back ends, one source: `draw_annot_overlay` (`draw.c:10394`),
+  `svg_draw_annot_overlay` (`svgdraw.c:1016`), `ps_draw_annot_overlay`
+  (`psprint.c:1306`).
+
+**Cache invalidation is an epoch, not a dirty flag.** `annot_overlay_sync()`
+(`actions.c:1357`) rebuilds an `Annot_epoch` (`actions.c:1283`) once per frame and
+compares **thirteen** terms against the stored one; any mismatch flushes the cache.
+The struct carries 14 fields — the 14th, `valid`, gates rather than compares. The
+thirteen: `xctx`, the `raw` pointer, `raw->level`, `raw->nvars`, `raw->annot_p`,
+`instances`, `currsch`, `annot_show`, `str_hash()` of the current sch path,
+`modify_seq`, `data_seq`, `desc_gen`, `live_annot`.
+
+Three of those are not obvious, and each answers a measured failure:
+
+- **`data_seq`** — re-running the same deck republishes into the *same* `Raw`
+  allocation with identical `level`/`nvars`/`annot_p`, so nothing else in the epoch
+  moves. Without this term the screen keeps the previous run's numbers, exactly what
+  invariant I3 forbids. `annot_data_changed()` bumps it from `actions.c:255`
+  (`set_modify`), `actions.c:923` (`remove_symbols`), `actions.c:2321`
+  (`clear_drawing`), `save.c:1200`/`1331`/`1357`
+  (`raw_add_vector`/`raw_renamevar`/`raw_deletevar`) and `scheduler.c:10490`
+  (`xschem raw set`). `prepare_netlist_structs` brackets a burst of these with
+  `annot_invalidate_hold(1)` (`netlist.c:1805`).
+- **`desc_gen`** — invariant I5 demands a user's re-`register` take effect on redraw,
+  and nothing in C can otherwise observe a Tcl proc being redefined. It reads
+  `::op_annot::gen`.
+- **`live_annot`** — `op_annot::_annotated` gates on the Tcl global
+  `live_cursor2_backannotate` *first*, so the shipped "Live annotate" checkbutton
+  flips every row between its value and blank while moving nothing else: not
+  `modify_seq`, not the raw, not `::op_annot::gen`, not any field of `xctx`.
+
+Test seams: `xschem get annot_overlay_count` (`scheduler.c:4136`) and
+`xschem get annot_overlay_flushes` (`scheduler.c:4148`); the flush counter is
+`actions.c:1274`, bumped only inside the sync (`actions.c:1413`, right after the
+`annot_overlay_flush()` at `:1412`).
+
+⚠ **Do not read the above as "this works".** Three defects are shipped and open:
+
+- **0469** — the overlay resolves a device by **name**, and `get_instance()` reads an
+  all-digit name as an *index*, so an instance called `1`, or a duplicated name,
+  renders **another device's numbers** in all three back ends. That is invariant I3's
+  forbidden case, and it is why `annot_show` defaults to 0.
+- **0463** — blocks are drawn deliberately outside `symbol_bbox()`, so zoom-full and
+  the auto-viewport print path clip the rightmost ones.
+- **0464 residual #2** — the `annot_overlay_busy` re-entrancy window is narrowed by
+  the guard at the top of the sync, not closed.
+
+### 6.5 ⚠ There is still no save-card generator
+
+**`op_annot::save_cards` does not exist.** The only occurrence of that name in
+`src/op_annot.tcl` is the comment at line 61, telling a future author what to read
+first. Every `proc op_annot::save_cards` text in the tree is documentation of a failed
+attempt, never shipped code — the three reverted patches
+`doc/claude/issues/0436-attempt-1-reverted.patch`, `0442-attempt-2-reverted.patch` and
+`0443-attempt-3-interrupted.patch`, plus the issue
+`0438-op-annot-save-cards-is-not-re-entrant.md`. S3 was attempted and reverted **three times**
+(0436, 0442, 0443 — note 0443 is a claimed number carried by that patch alone, with no
+issue `.md`), and **S4** — write the `.save` file out and present it to the user — is
+deferred behind it.
+
+The consequence, stated plainly because a reader of §6.1–§6.4 will otherwise assume
+the pipeline is whole: descriptors, the name builder, the formatter, the carrier, the
+mask, the keys and the overlay all shipped PDK-neutral and all work — and on a raw
+produced without hand-written `.save` cards, every `params` row and every `derived`
+row that depends on one renders **blank**.
+
+⚠ Not *every* row, and the difference matters both ways. `pinexpr` rows are pin
+**voltages**, which the implicit save-everything already carries, so they render on an
+ordinary raw with no cards written by anyone — `op_annot.tcl:696` says so, and issue
+0446 exists precisely to protect "the legitimate no-save-cards case pinexpr exists
+FOR" (`op_annot.tcl:491`). Measured 2026-08-21 on a one-FET fixture with a
+node-voltages-only raw: **2 of 10 rows populated** (`vgs`, `vds`), the other eight
+blank. A revision of this section written earlier that day claimed all ten were blank;
+that was over-correction in the opposite direction from the defect this section exists
+to fix.
+
+Why hand-writing is needed at all (the ngspice rules of `op_annotation.md` §3,
+**re-measured for this section on 2026-08-21 with ngspice-46+ on throwaway decks**,
+not merely quoted):
+
+- **R1 — confirmed.** `gm`/`gds`/`vth`/`vdsat`/`cgg` are in the raw **only** if the
+  deck saved them explicitly, one card per device per parameter. Observed: a `.op`
+  deck with `.save all` produced exactly `v(d) v(g) i(vd) i(vg)` — no `@m1[gm]`;
+  adding `.save all @m1[gm]` produced all five. `save all` does *not* include model
+  parameters.
+- **R2 / invariant I2 — confirmed.** Any explicit `save` **cancels** the implicit
+  save-everything. Observed: the same deck with `.save v(d)` produced a two-vector raw
+  — `v(g)`, `i(vd)` and `i(vg)` were gone. So a generated block must *also* carry
+  `save all` or every node voltage disappears — and with it the `pinexpr` rows that
+  are the one thing working today. Neither prototype emits such a line, so
+  byte-equality with the prototypes and invariant I2 are mutually exclusive.
+
+The only emitters that exist at all are per-PDK prototypes: `sg13g2_write_save_lines`
+(`ihp-sg13g2/sg13g2_procs.tcl:304` — 10 cards per FET, 13 per NPN) and
+`sky130A/sky130_procs.tcl:72` with `sky130_save_fet_params` at `:174`. gf180 has none,
+and `gf180mcuD/gf180_procs.tcl:57` says so in as many words. ⚠ Do not read "exists" as
+"correct" either: **issue 0430** measured the sky130 emitter reading its prefix with
+`getprop instance … spiceprefix`, which is empty when `spiceprefix=X` lives in the
+symbol `template=`, so on three shipped sky130 test cells it emits
+`.save @m.m1.…[gm]` against a deck holding `xm1` — and per `op_annotation.md` §6
+landmine 9 a name that names nothing does not blank for a kind-1 parameter: ngspice
+fabricates a `0.0` column, which is invariant I3's forbidden case again.
+
+**The unsolved problem, in one sentence:** a save card needs a **deck-absolute**
+(entry-relative) path basis, while `xschem get sim_sch_path` (`scheduler.c:5178`) is
+**raw-relative**. The prototype papers over the gap with `startpath` string arithmetic
+against `xschem get sch_path` (`sg13g2_procs.tcl:350` and `:369`). That is issue 0436,
+and it is what reverted S3 three times.
+
+The prototype's hierarchy walk (`sg13g2_sch_expand`, `sg13g2_procs.tcl:345`, and
+`sg13g2_hier_sch_expand`, `:366`) is the reference *shape* but does **not** satisfy
+invariant I6: it restores `no_draw`/`no_undo`/`keep_symbols` on the normal path only,
+with no `catch`, so a raise leaves `no_draw=1 keep_symbols=1` (issue 0431) — and
+`no_undo` cannot be restored to its entry value at all, because `xschem get no_undo`
+does not exist (issue 0432).
+
+Also open on the display side: **0446** (a `pinexpr` with one terminal on GND
+fabricates `0` where I3 demands blank), 0447, **0484**
+(`@spice_get_modelparam_<p>` / `@spice_get_modelvoltage_<p>` are matched by the regex
+compiled at `token.c:4646` and consumed at `token.c:4996`, then produce zero
+characters — another I3 violation), and **0485** (`get_fqdevice()`, `token.c:4514`,
+switches on the element letter at `:4536`; the param-discarding `else` at `:4560`
+swallows every unrecognised letter, not just `x`).
+
+### 6.6 Where the rest of it is written down
+
+The full design — descriptor format, the measured simulator rules, invariants I1–I7,
+and the shipped-but-unratified questions collected in its §5.1 — is
+`doc/claude/specs/op_annotation.md`. The step ledger is
+`doc/claude/suggestions/next_session_prompt_op_annotation.md`. The suite is
+`tests/headless/test_op_annot.tcl` (241 checks headless, 246 under a display); it is
+in **no** runner (issue 0465), so name it explicitly or it will not run.
 
 ---
 
@@ -2698,6 +2972,10 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   family and the C→Tcl push hook. The worked example for "a new durable
   per-graph annotation" (§10) and the origin of landmines 35-40, the correction
   to landmine 19 and the fix for backlog item 3 (landmine 1).
+- `doc/claude/specs/op_annotation.md` — PDK-neutral **operating-point annotation**: the
+  device descriptor format, the measured ngspice save rules, invariants I1-I7, the
+  `hide=op`/`hide=voltage` classes and the `annot_show` mask, and the draw-time overlay.
+  Its as-shipped state is summarised in §6, blocker included.
 - `waveform_display_explained.md` (this folder) — the plain-English tour.
 - Memory: `ase-l-plan`, `scheduler-letter-dispatch`, `green-but-hollow`,
   `gesture-test-full-sequence`, `wslg-dialog-open-repaint`.
