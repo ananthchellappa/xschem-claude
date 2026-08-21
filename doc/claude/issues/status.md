@@ -45,7 +45,7 @@
 ## Numbering rule for `fluid-editing` — **0500+ only** (ruled 2026-08-19)
 
 **Every new issue filed on this branch takes the next free number at or above
-0500.** Highest in use here is **0516**, so the next one is **0517**.
+0500.** Highest in use here is **0518**, so the next one is **0519**.
 
 Why, in one line each:
 
@@ -112,6 +112,21 @@ The 10-item viewer plan is complete and every item eyeballed; 0151, 0167, 0168,
 | issue | one line |
 |---|---|
 | **0172** | viewer buffer hijacked by pristine-untitled reuse. Pre-existing, filed 2026-07-29. The only OPEN issue left in this area. |
+
+## Calculator / ASE-L results thread
+
+The results batch closed 10 of 10 (`doc/claude/results_batch/LEDGER.md`) and the
+Calculator batch is complete to PLAN phase 1 (`doc/claude/calculator_batch/LEDGER.md`).
+Three issues are open across the seam between them:
+
+| issue | one line |
+|---|---|
+| **0516** | a result selected through `Results ▸ Select…`'s `here` arm is invisible to the Calculator. **RULED 2026-08-20 by the user** (U13, the ASE-L session owns the result) — OPEN, awaiting implementation. Rework, not a patch. |
+| **0517** | four ASE-L result sentences overflow the Calculator's status entry — 731–1855 px into 609 px of usable width, each cut mid-word exactly where its point is; the other 283 strings the widget can hold all fit. Three live, `browse_inert` latent. `no_result_msg` is U7's ruled text, so shortening it needs the user. |
+| **0518** | the Calculator's Results Dir row goes stale when the ASE-L session or its waveform viewer closes. A published snapshot with four publishers, none of them teardown — against W05's "R705 binds: a live query, never a cached value" — and the only gesture that reveals the error (Evaluate) is the one that repairs it. |
+
+The 0516 rework will WRITE new status sentences, so 0517's budget wants ruling
+before it starts.
 
 ## Fluid / wiring backlog — parked deliberately
 
