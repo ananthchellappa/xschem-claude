@@ -1,6 +1,12 @@
 # 0447 — op_annot::text RAISES on a malformed descriptor list, and its own header says it never does
 
-STATUS: open, measured, NOT fixed. Found by the S5 adversary (Verify-C), independently
+STATUS: **OPEN — RULED BY THE USER 2026-08-22, not yet implemented.** Direction:
+**validate at registration, REPORT rather than raise, plus a read-side catch.**
+Re-measured live today, unchanged. See "RULING" at the bottom. Unlike 0444 and
+0446 — the other two S5-era ledger questions, both of which evaporated under D9 —
+this one was fully alive and was answered on its merits.
+
+Found by the S5 adversary (Verify-C), independently
 re-confirmed by the S5 write-up agent before the step was committed.
 BLOCKS: S6 must not land the PDK-neutral carrier symbol until this is closed or accepted.
 SEE ALSO: 0446 (the other confirmed I3 hole in the same proc), 0425, 0444.
@@ -151,3 +157,100 @@ specifies, not merely inverted.
 > descriptor, or must `op_annot::register` reject it loudly at rc-source time?
 
 S6's status is **E** for this question among others.
+
+
+---
+
+# RULING — the user, 2026-08-22
+
+## Re-measured first, on the committed tree
+
+Unchanged from the S5 transcript. All three list-valued keys, one unbalanced
+open brace:
+
+```
+params  : register rc=0 | text rc=1 err='unmatched open brace in list'
+pinexpr : register rc=0 | text rc=1 err='unmatched open brace in list'
+derived : register rc=0 | text rc=1 err='unmatched open brace in list'
+through translate/tcleval -> |?|
+```
+
+## THE COST OF OPTION 1, WHICH THIS FILE NEVER WEIGHED
+
+Option 1 above — *"VALIDATE AT REGISTRATION, loudly … PREFERRED by both the
+adversary and this write-up"* — was measured before being put to the user. A
+user's own rc, three lines, one bad `register` in the middle:
+
+```
+RC: line 1 ran
+source rc=1  err='op_annot::register: descriptor for symbol type "nmos" is not a well-for…'
+max_rows ended at: 6  (she asked for 8)
+```
+
+**The raise aborts the rest of her rc.** Line 3 never ran; `::op_annot_max_rows`
+stayed at its default though she had asked for 8. She gets one message about the
+descriptor and **nothing at all** about the settings that silently did not apply.
+
+So option 1 as written does not remove a silent failure — it moves one. It trades
+a silent *draw-time* failure for a silent *configuration* failure, and the second
+is harder to notice because nothing on screen changes.
+
+## The decision
+
+**Validate at registration, REPORT rather than raise, and keep a read-side catch.**
+Concretely, three parts:
+
+1. `op_annot::register` checks that `params`, `pinexpr` and `derived` each parse
+   as a well-formed list (and that each row carries the arity its key needs).
+2. On failure it **reports** — through the 0604 / invariant **I8** warn-once
+   channel, naming the symbol type *and the key* — and **still returns rc=0**, so
+   the rest of the user's rc runs to completion.
+3. The three `foreach`es in `op_annot::text` (`src/op_annot.tcl:652`, `:672`,
+   `:689`) gain a catch so a malformed key degrades to *no rows from this key*
+   and the block still renders whatever is well-formed. This is defence in depth,
+   and it is required because **I5** lets a descriptor be replaced at any time
+   from any rc — validation at register cannot be the only line.
+
+This is the shape `op_annot::_matches` already uses for a malformed `match` list
+in the same file. The asymmetry this issue names as the defect is closed by
+carrying that discipline into `text`, not by inventing a new one.
+
+## Why this and not the other three
+
+* **vs option 1 (raise):** measured above — it silently drops the remainder of the
+  rc. The message lands at the typo either way; only this version does so without
+  taking the user's other settings with it.
+* **vs option 2 (catch only):** the typo stays completely silent. Fewer rows, no
+  reason given. That is the same class of defect, one layer down.
+* **vs accepting `?`:** the trigger is one brace in the only interface the feature
+  has. Not a corner case — the reason it has not bitten is that almost nobody has
+  written a custom descriptor yet.
+
+## THIS IS THE THIRD RIDER ON 0604
+
+0444 (warn on a mis-tokenised `@`-token), 0446 (the picker blocker, whose second
+half needs `op_annot::dropped` surfaced) and now this one all resolve to the same
+mechanism: **the tool says out loud what it was asked for and did not deliver.**
+Recorded as a requirement on 0604. No new issue number was minted.
+
+Building three warn-once mechanisms with three dedup keys is the I1 drift shape
+the subsystem exists to prevent — which is now the strongest argument in the tree
+that **0604 is the next implementation step**, not a nice-to-have.
+
+## TEST WORK OWED WHEN THIS LANDS — assistant's, not the user's
+
+* Per-key rows, one each for `params` / `pinexpr` / `derived`: register reports
+  and returns rc=0, `text` returns rc=0 with the malformed key's rows absent and
+  the rest intact. The S5 measurement shows all three fail independently, so a
+  single row leaves two uncovered.
+* **Row K17 must be REPLACED, not inverted.** S6's sabotage pass found it passes
+  vacuously under variant SB1 (the `@ref])` no-space spelling), which also renders
+  `?`. Any breakage yielding `?` satisfies it.
+* **Close the coverage hole at the same time** (Verify-B, probes EXTRA-A/EXTRA-B):
+  deleting `op_annot::text`'s descriptor guard, or its type guard, reds nothing.
+  All three early returns are mutually redundant; rows S19/S20 claim to cover them
+  but are caught by an earlier guard and never reach the one they name.
+* The existing `match` row stays green either way — it is the precedent, not the
+  subject.
+
+`owed.sh clear rule 0447` — answered, 2026-08-22.
