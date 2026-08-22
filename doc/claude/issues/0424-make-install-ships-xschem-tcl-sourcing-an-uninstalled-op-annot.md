@@ -1,6 +1,7 @@
 # 0424 — `make install` ships an `xschem.tcl` that sources an uninstalled `op_annot.tcl`, and the installed binary then SEGFAULTS at startup
 
-Status: **open — measured, not fixed.** Found by the S1 Verify-A agent of the
+Status: **CLOSED — fixed and measured 2026-08-22 (see Resolution at the bottom).**
+Originally: open — measured, not fixed. Found by the S1 Verify-A agent of the
 op-annotation run (2026-08-16) on branch `annotate`, re-measured by the write-up
 agent. Not fixed here because the fix is `./configure`, a **build action**, and
 this crew's hard rules bar every agent but Implement from running one.
@@ -98,3 +99,84 @@ the same session or file a note like this.
 A cheaper structural fix, if someone wants one: give `src/Makefile` a
 regeneration rule keyed on `Makefile.in`, so `make` notices the staleness
 itself. That is a scconfig change and is out of scope here.
+
+
+---
+
+## Resolution — 2026-08-22
+
+The user ratified E-question 1 (`may a crew run ./configure?`) as **yes, when and
+only when the step edited `Makefile.in`**, and authorised the run. Executed from
+the repo root:
+
+```sh
+./configure && cd src && make
+```
+
+`./configure` rc=0, `make` rc=0 with **zero warnings**, full rebuild (`config.h`
+regenerated, so every object recompiled). `Makefile.conf` came back byte-equivalent
+in the fields that matter — `PREFIX=/usr/local`, same `CFLAGS`, same `LDFLAGS`, same
+feature set (`cairo: yes`, `libjpeg: yes`, `xcb: no`) — so the regeneration restored
+the install list without moving the build configuration.
+
+The receipt this issue is about:
+
+```
+before:  op_annot.tcl lines in src/Makefile: 0
+after:   op_annot.tcl lines in src/Makefile: 2
+  225:   $(SCCBOX) install -f op_annot.tcl  "$(XSHAREDIR)"/op_annot.tcl
+  286:   $(SCCBOX) rm "$(XSHAREDIR)"/op_annot.tcl
+```
+
+install **and** uninstall, matching the eight sibling helpers.
+
+### Proved against a real installed tree, not just the Makefile text
+
+`make install DESTDIR=<scratch>/pkg` (rc=0) then launching the **installed** binary
+against the **installed** share dir:
+
+```
+$ XSCHEM_SHAREDIR=<pkg>/usr/local/share/xschem <pkg>/usr/local/bin/xschem \
+      --nogui --pipe -q --nolog --script probe.tcl
+PROBE-ALIVE
+op_annot-ns: 1
+op_annot-text-proc: 1
+undo_type: disk
+EXIT=0
+```
+
+27 `.tcl` helpers installed, `op_annot.tcl` among them at 42173 bytes.
+
+### The negative control — the probe can fail
+
+Per issue 0499's lesson (a check count is not evidence), the same probe was re-run
+with the installed helper hidden:
+
+```
+$ mv <pkg>/…/op_annot.tcl <scratch>/op_annot.hidden && <same command>
+Tcl_AppInit() error: can not execute …/xschem.tcl, please fix:
+couldn't read file "…/op_annot.tcl": no such file or directory
+Segmentation fault (core dumped)
+EXIT_WITHOUT_FILE=139
+```
+
+139 without the file, 0 with it. That is also a verbatim confirmation of **0423**'s
+mechanism: `Tcl_AppInit()` reports the failure and then continues into
+`alloc_xschem_data()` anyway. The file was restored immediately.
+
+### No regression from the full rebuild
+
+* `tests/headless/test_op_annot.tcl` — **ALL PASS (241 checks)**, unchanged.
+* `tests/headless/run.sh` — 6/6 PASS, `== HARNESS: PASS ==`.
+
+### What was changed so it does not recur
+
+Rule **2b** in `doc/claude/ledger/crew_annotate.js`: the Implement agent must run
+`./configure` and rebuild whenever the step edited `src/Makefile.in`, must not
+otherwise, and must quote the before/after `grep -c <newfile> src/Makefile` in its
+notes. The Implement brief's "a new `.c` needs an OBJ entry AND a compile rule" line
+was corrected to name `Makefile.in`, not the generated `Makefile`. A matching note
+was added to `CLAUDE.md`.
+
+**0423 remains open**, and it is the deeper defect: a missing sourced helper should
+print and exit, not segfault. Fixing 0424 closes this instance only.

@@ -29,6 +29,16 @@ cd src && ./xschem   # run directly from the source tree, no install needed
   means adding it to `OBJ` and adding an explicit compile rule (or regenerate from
   `Makefile.in`).
 - A `CMakeLists.txt` exists as an alternative build but the Makefile path is canonical.
+- **Editing `src/Makefile.in` obliges you to re-run `./configure`.** `src/Makefile`
+  and `config.h` are generated, gitignored, and have **no self-regeneration rule**, so
+  a corrected `Makefile.in` sits happily next to a stale `Makefile` and `make` never
+  notices. The trap is invisible in-tree — `XSCHEM_SHAREDIR` resolves to `src/`, so a
+  helper that was never added to the install list is still found — and fatal once
+  installed: `make install` then ships an `xschem.tcl` that sources a file it did not
+  install, and the installed binary **segfaults at startup** (exit 139, via issue 0423,
+  where `Tcl_AppInit()` continues after a failed `source`). Issue 0424 is the measured
+  case: 275 in-tree checks green, installed binary dead. Verify with
+  `grep -c <newfile> src/Makefile` — expect 2, an install line and an uninstall line.
 
 ### Generated parsers (do not hand-edit the .c)
 - `expandlabel.c`/`expandlabel.h` ← bison from `expandlabel.y` (bus/label expansion)
