@@ -1,6 +1,24 @@
 # 0605 — the OP-annotation overlay lands on top of the symbol's own texts, and the block is partly unreadable
 
-STATUS: **OPEN — seen, 2026-08-22.** Found by eye, in the first genuine
+STATUS: **OPEN, DEFERRED BY THE USER 2026-08-22 — direction chosen, timing later.**
+
+> *"Not an issue for now. Later, as we continue building, we will provide a means
+> for the user to select such annotation and move it. Good that it was caught."*
+
+So the fix is **not** a cleverer automatic anchor. It is to make an annotation
+block a thing the user can **select and drag**, and the auto-placement only has
+to be a reasonable starting point. That rules out the "measure the symbol's own
+text extents" direction below as the primary answer, and it makes issue **0468**
+(the overlay's anchor/size/layer/offset are compiled-in constants) part of the
+same piece of work.
+
+⚠ Note the asymmetry this exposes between the two carriers of §4.4. The
+`annotate_params` **symbol** is an ordinary instance and is already selectable
+and movable today; the draw-time **overlay** is painted by C and is not
+selectable at all. Whatever ships has to give the overlay that property, or make
+the symbol carrier the route for anyone who wants to move blocks.
+
+Originally: **OPEN — seen, 2026-08-22.** Found by eye, in the first genuine
 end-to-end run of the whole feature: a shipped sky130 bench, netlisted by xschem,
 simulated by real ngspice-42, annotated from the real `.raw`.
 Related: 0468 (the overlay's constants are compiled in), 0475/0476, ruling D9/D9b.
