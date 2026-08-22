@@ -291,6 +291,31 @@ for vacuity.
    **REJECTED:** leaving `no_undo` authoritative over the netlister (keeps both
    the SIGSEGV and the silent document swap).
 
+   > ### RULED BY THE USER 2026-08-22 — accepted, and the cost is now issue 0611
+   >
+   > **The shield is ratified.** A global netlist under a leaked or deliberate
+   > `no_undo=1` pushes one undo slot and keeps the user's document, at a measured
+   > ~17 ms on a 75-instance cell.
+   >
+   > **The user declined both horns of the question as framed.** It was put as
+   > *who pays* — accept the cost on `no_undo` runs, or make the netlister refuse
+   > to run. The ruling instead recorded that the walk's save/restore should not
+   > be going through the **user-facing undo path at all**: nothing can ever undo
+   > *to* that slot (`pop_undo(2, 0)` consumes it in the same call), so forking
+   > `gzip` for it (`src/save.c:4744`) is waste.
+   >
+   > **And the framing understated the scope.** The row above reads as a
+   > `no_undo`-only regression, but its own third measurement says otherwise:
+   > correct runs were 206 ms before and 192 ms after — **unchanged, because they
+   > were already paying the gzip.** X0498 did not add that cost; it removed the
+   > one escape hatch that skipped it. The tax is on *every* global netlist anyone
+   > has ever run, and it scales with cell size.
+   >
+   > Filed as **0611**. Whatever replaces the push/pop pair must stay immune to an
+   > editing flag — the property is what X0498 ruled on, not the mechanism.
+   >
+   > `owed.sh clear rule X0498` — answered, 2026-08-22.
+
 ---
 
 ## The sabotage matrix
