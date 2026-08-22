@@ -1,8 +1,17 @@
 # 0446 — a pin expression fabricates `0` when one terminal is GND and the other net is absent from the raw
 
-STATUS: OPEN — measured, not fixed. Filed by the S5 RED agent of the
-operating-point annotation run (doc/claude/specs/op_annotation.md).
-Pinned by row S17 of tests/headless/test_op_annot.tcl.
+STATUS: **OPEN — RE-SCOPED AND RE-AIMED BY THE USER, 2026-08-22.** The C
+fabrication is unchanged and was re-measured today. What changed is its
+reachability: ruling **D9** deleted the `pinexpr` rows from both shipped
+descriptors, so **no shipped PDK can reach this any more**. It is now a
+**blocker on issue 0603** (the first-class parameter picker), which is the thing
+that will make it reachable again. The old ledger question — *"ship the carrier
+or hold it"* — was closed as **superseded**, not answered. See "2026-08-22" at
+the bottom.
+
+Filed by the S5 RED agent of the operating-point annotation run
+(doc/claude/specs/op_annotation.md). Pinned by row S17 of
+tests/headless/test_op_annot.tcl.
 
 ## Symptom
 
@@ -215,3 +224,111 @@ existed.
 > (`token.c:4364` / `:5441`) lands?
 
 S6's status is **E** for this question among others.
+
+
+---
+
+# 2026-08-22 — RE-MEASURED, RE-SCOPED, AND MADE A BLOCKER ON 0603
+
+## The shipped path is clean, on all three PDKs
+
+Ruling **D9** replaced the `pinexpr` rows with real BSIM4 instance parameters
+(`vgs`/`vds`, kind 2) in both descriptors that had them. `grep -rn
+spice_get_voltage sky130A/*.tcl gf180mcuD/*.tcl ihp-sg13g2/*.tcl` returns
+**nothing**. The same deletion that made 0444's ratification moot made this one
+moot too — both were riders on the same two lines.
+
+Measured on the shipped sky130 descriptor, flat schematic, one `nfet_01v8` with
+source and bulk on GND, annotated against a raw belonging to an unrelated
+circuit (`v(zzz)`, `v(yyy)` only):
+
+```
+--- A: SHIPPED descriptor (no pinexpr), foreign raw ---
+id  =        gm  =        gds =        vgs =        vth =        vds =
+```
+
+**Six rows, all correctly blank. No fabrication.** This is precisely the
+scenario the RE-SCOPED section above calls *"the first thing a user will do
+wrong"*, and it now behaves.
+
+## The C defect itself is untouched
+
+Same fixture, same raw, with one hand-written `pinexpr` row added the way
+invariant **I5** intends (`op_annot::register` from a user's rc), and
+`::op_annot_max_rows` raised so the row renders:
+
+```
+annotate_op -> 0
+  @#0 -> |- |         (drain, absent from the raw)
+  @#1 -> |- |         (gate,  absent from the raw)
+  @#2 -> |0.0 |       (source, on GND -- HARDCODED, no raw consulted)
+  @#3 -> |0.0 |       (bulk,   on GND -- same)
+  expr -> |0|   string is double -strict = 1
+
+--- B: + a USER-WRITTEN pinexpr row ---
+id  =   gm  =   gds =   vgs =   vth =   vds =   vgs_pe = 0
+```
+
+`token.c:4364` and `token.c:5441` are exactly as filed. Nothing was fixed; the
+route was removed.
+
+## A SECOND gate, found while measuring, and it is not in this file above
+
+The **six-row cap** (ruling D9b) truncates an appended `pinexpr` row before it
+ever renders. Same fixture, same user-written row, cap left at its default:
+
+```
+default cap (6): the vgs_pe row DOES NOT APPEAR AT ALL
+max_rows = 0   : vgs_pe = 0
+```
+
+So reaching the fabrication today needs **two** deliberate hand edits of Tcl —
+write the descriptor **and** raise the cap — on top of the two ordinary mistakes
+(wrong raw, grounded terminal). That is what makes it pathological *today* and
+not *in principle*.
+
+It is also a usability defect in its own right and it belongs to **0604**: a user
+adds a row, and it silently does not appear. Spec §4.2b already anticipated this
+— *"a silent truncation is precisely the class of thing invariant I8 exists to
+make audible"* — and `op_annot::dropped` is the seam. Nothing surfaces it yet.
+
+## RULING (the user, 2026-08-22) — keep open, and gate 0603 on it
+
+Three options were put: keep open as a blocker on 0603; fix the C now; or close
+it as a documented residual.
+
+**Chosen: keep it open and make it an explicit blocker on issue 0603.**
+
+### The requirement this places on 0603
+
+**The parameter picker must not offer `pinexpr` rows to a user until this issue
+is fixed, or until the mis-tokenised/absent case is warned about.** 0603 removes
+both of today's barriers at once — it is *for* choosing rows without editing a
+PDK file, and a picker that respects a six-row cap it does not let you raise
+would be a poor picker. The moment it ships, a user can reach `vgs = 0` on a
+FET by clicking.
+
+### Why not fix the C now
+
+The narrow fix — refuse the `expr()` pass at `token.c:5441` when the expansion
+contains the missing-net `-` marker — is small by construction, since any
+template it changes was already producing garbage. But it needs a build, an
+audit of every `@#N:spice_get_*` consumer, and it flips test rows **K16** and
+**S17b** from green to red on purpose. That is a step, not a rider, and nothing
+today is at risk while it waits.
+
+### Why not close it
+
+A residual buried in an issue file has already failed once in this exact family:
+0444's *"Residual, NOT fixed here"* sat unread from S5 until 2026-08-22, and was
+only found because someone went looking. The tripwire belongs where the danger
+arrives, which is 0603.
+
+`owed.sh clear rule 0446` — closed as superseded, 2026-08-22.
+
+## Test rows are unchanged and still green ON PURPOSE
+
+**K16** (the carrier, flat) and **S17b** (one level down) still assert `vgs = 0`
+/ `vds = 0`. Both use the *section's own* descriptor, which carries a `pinexpr`
+— not the shipped one — so they continue to pin the C defect exactly as before.
+Do not "repair" them; update them in the same change that fixes the C.
