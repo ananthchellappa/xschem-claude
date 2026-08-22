@@ -577,6 +577,22 @@ proc opa_card_diff {prototext} {
   return [list [llength $p] [llength $g] 0 $first]
 }
 
+## -> {nproto ngen nmissing missing}. The D9 counterpart of opa_card_diff: the
+## generated block is now a SUBSET of the prototype's cards, not an equal set,
+## because the descriptor carries six of the prototype's ten parameters. Byte
+## equality was the right acceptance for a NAME BUILDER (that is what it proved:
+## the generalized builder spells every device exactly as the prototype does);
+## it stopped being the right acceptance the moment a ruling deliberately
+## changed WHICH parameters are asked for. Membership still proves the names,
+## and the counts are in the golden so an empty-vs-empty run cannot pass green.
+proc opa_card_subset {prototext} {
+  set p [opa_proto_cards $prototext]
+  set g [opa_gen_cards]
+  set missing {}
+  foreach c $g { if {[lsearch -exact $p $c] < 0} { lappend missing $c } }
+  return [list [llength $p] [llength $g] [llength $missing] $missing]
+}
+
 ## ⚠ THE I1 CROSS-CHECK AGAINST 40 SHIPPED SYMBOLS. Every sky130 FET symbol
 ## already spells its own inner device in a `gm=@spice_get_node …` text, and that
 ## text IS the third name builder op_annot replaces. This walks all of them and
@@ -729,23 +745,33 @@ proc opa_sky_probe_devpath {instname model path spiceprefix} {
 # asserts its order and membership. P25's `not-a-param:` scan is the third
 # guard and needs no edit — it goes red on its own if `ft` is left referencing
 # a $cgso that params no longer carries.
-set P_SKY_PARAMS {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
-                  {cgg cgg 1}}
-set P_SKY_PNAMES {id gm gds vth vdsat cgg}
+## ⚠ RULING D9 (2026-08-22) — THE DEFAULT SIX. Spec §4.2a. Every SHIPPED MOS
+## descriptor is now exactly `id gm gds vgs vth vds` and carries no `derived` and
+## no `pinexpr`: "too many parameters displayed is just clutter". vgs/vds became
+## ordinary params because they are real BSIM4 instance parameters — measured
+## savable on ngspice-42 AND 46+, on sky130 AND gf180, one card per parameter,
+## checkvalid=0 and a raw written every time. That measurement is also the
+## ngspice-side check issue 0429 said was owed and missing.
+set P_SKY_PARAMS {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2}
+                  {vds vds 2}}
+set P_SKY_PNAMES {id gm gds vgs vth vds}
 # The prototype's exact seven, for the byte-for-byte card diff only. ⚠ NOT
 # touched by D8: row P3 temporarily overrides `params` with this list to diff
 # against sky130_save_fet_params, and the PROTOTYPE still emits cgso/cgdo. When
 # S5 deletes the prototype this list goes with it.
 set P_SKY_P7     {{gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
                   {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}
-set P_GF_PARAMS  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
+set P_GF_PARAMS  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2}
+                  {vds vds 2}}
 # D4: sg13g2_write_save_lines:310-319 and :331-339, in that ORDER. Kinds are
 # sg13g2_display_fet_params:461-470 and _bip_params:524-536, the only authority
 # for kind in the tree — a wrong kind makes the save card succeed and the read
 # silently miss.
-set P_IHP_FET_PARAMS {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
-                      {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1}
-                      {cgdol cgdol 1}}
+## ⚠ THE LABEL IS `id`, THE PARAMETER IS STILL `ids` — IHP spells the current
+## `ids` where BSIM4 spells it `id`, and D9 keeps ONE display vocabulary across
+## all three PDKs. The {label param kind} triple exists for exactly this.
+set P_IHP_FET_PARAMS {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2}
+                      {vds vds 2}}
 set P_IHP_NPN_PARAMS {{gm gm 1} {go go 1} {gmu gmu 1} {gpi gpi 1} {gx gx 1}
                       {vbe vbe 2} {vbc vbc 2} {ib ib 0} {ic ic 0} {cbe cbe 1}
                       {cbc cbc 1} {cbep cbep 1} {cbcp cbcp 1}}
@@ -779,13 +805,19 @@ set P_MATCHACC [list [list sky130:nmos      {*sky130_fd_pr/*}] \
 # under the label `cgg` while also reading the raw param `cgg`, which makes
 # `$cgg` ambiguous inside a derived expr. Empty third field = no shadowed label
 # and no derived-on-derived reference.
-set P_DERIVEDACC [list [list sky130:nmos      {ft gm/id}         {}] \
-                       [list sky130:pmos      {ft gm/id}         {}] \
-                       [list gf180:nmos       {gm/id}            {}] \
-                       [list gf180:pmos       {gm/id}            {}] \
-                       [list ihp:nmos         {cgg_tot ft gm/id} {}] \
-                       [list ihp:pmos         {cgg_tot ft gm/id} {}] \
-                       [list ihp:vertical_npn {rin vce ft}       {}]]
+## ⚠ D9: the six MOS descriptors have NO derived rows at all. ft and gm/id are
+## gone from every PDK — and note WHAT that means: no simulator computes either
+## one. `show <dev> : all` on ngspice-46+ publishes 50 BSIM4 instance parameters
+## and neither `ft` nor `gm/id` is among them; both were Tcl arithmetic in the
+## PDK procs files, twice, with two different formulas. vertical_npn is
+## untouched by D9 — the six are MOS quantities and an HBT has no vgs.
+set P_DERIVEDACC [list [list sky130:nmos      {}           {}] \
+                       [list sky130:pmos      {}           {}] \
+                       [list gf180:nmos       {}           {}] \
+                       [list gf180:pmos       {}           {}] \
+                       [list ihp:nmos         {}           {}] \
+                       [list ihp:pmos         {}           {}] \
+                       [list ihp:vertical_npn {rin vce ft} {}]]
 
 set P_SKY_LIBS ":[file join $repo sky130A xschem_libs]:[file join $repo xschem_library devices]"
 set P_GF_LIBS  ":[file join $repo gf180mcuD xschem_libs]:[file join $repo xschem_library devices]"
@@ -910,12 +942,28 @@ check {P9 sky130 param order: `id` the prototype never saves (0427), no cgso/cgd
 # behind. Before 0444 this was ` - `, and the difference is precisely the token
 # that used to be swallowed — so a revert of the space reds here as well as at
 # S28/S29.
-check {P10 sky130 pinexpr round-trips verbatim and is non-numeric with no raw} \
-  [rcall {set e [lindex [lindex [dict get [op_annot::descriptor nmos] pinexpr] 0] 1]
-          list [opa_norm [dict get [op_annot::descriptor nmos] pinexpr]] \
+# ⚠ INVERTED BY RULING D9, AND THE INVERSION IS THE SUBSTANCE OF THE RULING.
+# This row used to assert that sky130 shipped the two pinexpr strings. It now
+# asserts that it ships NONE — vgs and vds are ordinary `params` of kind 2,
+# read from the raw like every other number — and it keeps measuring the
+# tokeniser fact on a LITERAL string, so issue 0444 stays a live measurement
+# even though no shipped descriptor can reach it any more. That literal really
+# does translate to ` -  ` with two trailing spaces (one from the expression's
+# own separator before `)`, one left by the unresolved `@#2:spice_get_voltage `
+# token), and it really is not a double — which is why a user who writes a
+# pinexpr still needs §4.2a's warning about the space.
+check {P10 D9 sky130 ships NO pinexpr; vgs/vds are kind-2 params, and 0444 is still live} \
+  [rcall {set e [lindex [lindex $::P_PINEXPR 0] 1]
+          list [dict exists [op_annot::descriptor nmos] pinexpr] \
+               [dict exists [op_annot::descriptor nmos] derived] \
+               [op_annot::vector M2 vgs 2] \
+               [op_annot::vector M2 vds 2] \
                [xschem translate M2 $e] \
                [string is double -strict [xschem translate M2 $e]]}] \
-  [list 0 [list [opa_norm $P_PINEXPR] { -  } 0]]
+  [list 0 [list 0 0 \
+                "v(@m.xm2.msky130_fd_pr__nfet_01v8\[vgs\])" \
+                "v(@m.xm2.msky130_fd_pr__nfet_01v8\[vds\])" \
+                { -  } 0]]
 
 # ===========================================================================
 # P — gf180mcu
@@ -975,18 +1023,23 @@ check {P18 IHP registers nmos, pmos AND vertical_npn} \
   [list 0 [list {\@n.@path@spiceprefix@name\.n@model} \
                 {\@n.@path@spiceprefix@name\.n@model} sg13g2_op_npn_devpath]]
 
-# ⚠ THE STEP'S HEADLINE ACCEPTANCE: byte-for-byte against
-# sg13g2_write_save_lines. An empty diff here is the proof the generalization
-# lost nothing. Counts are in the golden so an empty-vs-empty run cannot pass.
+# ⚠ WAS BYTE-FOR-BYTE AGAINST sg13g2_write_save_lines; IS NOW A SUBSET, BY
+# RULING D9. The prototype saves ten parameters per FET and the descriptor now
+# asks for six, so an equal-set assertion would red for the one reason that is
+# not a defect. What the row still proves is the thing the byte diff existed to
+# prove — that the generalized builder spells each device EXACTLY as the
+# prototype does — plus the counts, so an empty-vs-empty run cannot pass green.
+# The six-of-ten shape is asserted in the golden, so a descriptor that silently
+# grew or shrank reds here.
 xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_lv_nmos \
                        schematic dc_lv_nmos.sch]
-check {P19 ACCEPTANCE IHP dc_lv_nmos: 10 bare cards == sg13g2_save_params} \
-  [rcall {opa_card_diff [sg13g2_save_params]}] {0 {10 10 1 {}}}
+check {P19 ACCEPTANCE IHP dc_lv_nmos: the 6 generated cards are a subset of the prototype's 10} \
+  [rcall {opa_card_subset [sg13g2_save_params]}] {0 {10 6 0 {}}}
 
 xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_lv_pmos \
                        schematic dc_lv_pmos.sch]
-check {P20 ACCEPTANCE IHP dc_lv_pmos: 10 bare cards == sg13g2_save_params} \
-  [rcall {opa_card_diff [sg13g2_save_params]}] {0 {10 10 1 {}}}
+check {P20 ACCEPTANCE IHP dc_lv_pmos: the 6 generated cards are a subset of the prototype's 10} \
+  [rcall {opa_card_subset [sg13g2_save_params]}] {0 {10 6 0 {}}}
 
 # 26 = 13 params x two HBTs, npn13G2 and npn13G2_5t, both collapsing to qnpn13g2.
 xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_hbt_13g2_5t \
@@ -1097,6 +1150,81 @@ catch {op_annot::register nmos [list devpath {\@n.@path@spiceprefix@name\.n@mode
                                      params {{gm gm 1}} match {*sg13g2_pr/*}]}
 check {P30 0425(2) a cross-PDK overwrite degrades to BLANK, not a wrong name} \
   [rcall {op_annot::devpath M1}] {0 {}}
+
+# ===========================================================================
+# P31 — RULING D9 END TO END: THE SHIPPED SIX, READ OUT OF A REAL RAW
+# ===========================================================================
+# ⚠ THE ONE ROW THAT TESTS WHAT D9 ACTUALLY CHANGED FOR A USER. Every other row
+# in this section compares our strings against our strings; this one puts the
+# six vectors into a raw in the R3 shapes ngspice really writes and asserts the
+# block a schematic shows.
+#
+# The decisive half is `vgs` and `vds`. Before D9 they were `pinexpr` rows
+# computed from pin voltages, which is why issue 0446 could fabricate `vgs = 0`
+# on a GND source. Here they come from the raw like every other number — a wrong
+# raw blanks them instead of inventing them — and the vector names are exactly
+# what ngspice emits: measured `v(@m.xm1.msky130_fd_pr__nfet_01v8[vgs])`, kind 2.
+#
+# ⚠ THE LABEL COLUMN IS 3 WIDE, not 5. The block pads to its longest label and
+# the six top out at three characters, so `id  = ` has TWO spaces. A golden
+# copied from the pre-D9 block would be wrong in every line.
+set XSCHEM_LIBRARY_PATH $P_SKY_LIBS
+opa_clear_store
+opa_source [file join $repo sky130A sky130_procs.tcl]
+xschem load [file join $repo sky130A xschem_libs sky130_tests test_nmos \
+                       schematic test_nmos.sch]
+set P_D9_DEV {@m.xm2.msky130_fd_pr__nfet_01v8}
+set f [open [file join $scratch p_d9.raw] w]
+puts -nonewline $f "Title: D9 six-parameter fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 6
+No. Points: 1
+Variables:
+\t0\ti(${P_D9_DEV}\[id\])\tcurrent
+\t1\t${P_D9_DEV}\[gm\]\tadmittance
+\t2\t${P_D9_DEV}\[gds\]\tadmittance
+\t3\tv(${P_D9_DEV}\[vgs\])\tvoltage
+\t4\tv(${P_D9_DEV}\[vth\])\tvoltage
+\t5\tv(${P_D9_DEV}\[vds\])\tvoltage
+Values:
+0\t1e-05
+\t1e-04
+\t1e-06
+\t0.9
+\t0.7
+\t1.8
+"
+close $f
+set p31_ann [rcall {xschem annotate_op [file join $scratch p_d9.raw] 0}]
+check {P31 D9 the shipped six render REAL numbers from a raw, vgs and vds included} \
+  [list [lindex $p31_ann 0] [rcall {op_annot::text M2}]] \
+  [list 0 [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\nvgs = 0.9\nvth = 0.7\nvds = 1.8\n"]]
+
+# ⚠ NON-VACUITY FOR P31, AND FOR I3 ON THE TWO ROWS THAT USED TO BE pinexpr.
+# The same instance against a raw that carries only `id` must blank the other
+# five — including vgs and vds, which BEFORE D9 would have printed a fabricated
+# `0` here (issue 0446: the source is GND, token.c:4364 hardcodes it to 0.0, and
+# translate's eval_expr pass reads `expr(- - 0.0 )` as 0). A green P31 with this
+# row red would mean the formatter is echoing the descriptor, not reading a raw.
+set f [open [file join $scratch p_d9_thin.raw] w]
+puts -nonewline $f "Title: D9 one-parameter fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 1
+No. Points: 1
+Variables:
+\t0\ti(${P_D9_DEV}\[id\])\tcurrent
+Values:
+0\t1e-05
+"
+close $f
+set p32_ann [rcall {xschem annotate_op [file join $scratch p_d9_thin.raw] 0}]
+check {P32 I3 with only id in the raw the other five BLANK — vgs/vds no longer fabricate 0} \
+  [list [lindex $p32_ann 0] [rcall {op_annot::text M2}]] \
+  [list 0 [list 0 "id  = 10u\ngm  =\ngds =\nvgs =\nvth =\nvds =\n"]]
 
 } perr]} {
   puts "UNEXPECTED ERROR (section P): $perr"
@@ -1217,6 +1345,35 @@ gm/id = 10
 ## descriptor is later re-registered.
 set S_VGS_OK {expr(@#1:spice_get_voltage - @#2:spice_get_voltage )}
 set S_VGS_NO {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}
+set S_VDS_OK {expr(@#0:spice_get_voltage - @#2:spice_get_voltage )}
+
+# ============================================================================
+# ⚠ RULING D9 (2026-08-22) — WHY THIS SECTION REGISTERS ITS OWN DESCRIPTOR
+# ============================================================================
+# D9 cut every SHIPPED descriptor to six params — id gm gds vgs vth vds — and
+# removed every `pinexpr`, because vgs/vds are real BSIM4 instance parameters
+# and were only ever computed from pin voltages because the prototypes did it
+# that way. Spec §4.2a.
+#
+# Section S is the FORMATTER's test, not the PDKs'. Its goldens are counted on a
+# ten-row block that exercises params AND pinexpr AND derived together, the
+# label-column padding across a 5-char label, a derived row over a division, and
+# — decisively — rows S17b and S29, the guardians for issues 0446 (a pinexpr
+# fabricates `vgs = 0` when the source is GND and the other net is absent) and
+# 0444 (the load-bearing space before `)`). BOTH C defects are STILL OPEN and are
+# now reachable only through a user-written pinexpr. Deleting their guardians
+# because no shipped descriptor triggers them any more would be the exact move
+# issue 0499 is about: a test that cannot fail is not a test.
+#
+# So this section registers the PRE-D9 sky130 shape itself and owns it. Rows
+# that assert what the PDKs SHIP live in sections P, O and Q, and those goldens
+# moved to the six.
+set S_NMOS_LEGACY [list \
+  devproc sky130_op_devpath \
+  match   {*sky130_fd_pr/*} \
+  params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2} {cgg cgg 1}} \
+  pinexpr [list [list vgs $S_VGS_OK] [list vds $S_VDS_OK]] \
+  derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id {$gm/$id}}}]
 
 ## Every line of a block, with the trailing empty element dropped.
 proc opa_s5_lines {b} {
@@ -1319,13 +1476,31 @@ if {[catch {
 set XSCHEM_LIBRARY_PATH $P_GF_LIBS
 opa_clear_store
 opa_source [file join $repo gf180mcuD gf180_procs.tcl]
-set s_gf_pin [opa_norm [dict get [op_annot::descriptor nmos] pinexpr]]
+set s_gf_pin [dict exists [op_annot::descriptor nmos] pinexpr]
 set XSCHEM_LIBRARY_PATH $P_SKY_LIBS
 opa_clear_store
 opa_source [file join $repo sky130A sky130_procs.tcl]
-set s_sky_pin [opa_norm [dict get [op_annot::descriptor nmos] pinexpr]]
-check {S28 0444 sky130 AND gf180 pinexpr carry the space token.c:24 needs} \
-  [list $s_sky_pin $s_gf_pin] [list [opa_norm $P_PINEXPR] [opa_norm $P_PINEXPR]]
+set s_sky_pin [dict exists [op_annot::descriptor nmos] pinexpr]
+
+# ⚠ INVERTED BY D9, AND THE INVERSION IS THE POINT. This row used to assert that
+# the two shipped pinexpr strings carried the space token.c:24 needs. Under D9
+# there IS no shipped pinexpr on any PDK — vgs/vds are ordinary `params` read
+# from the raw — which is what takes issues 0444 and 0446 off the shipped path
+# without either C defect being fixed. The row now asserts THAT, so re-adding a
+# pinexpr to a PDK file (the "align with the prototype" move) reds here and the
+# author is sent to §4.2a before their users meet the tokeniser.
+check {S28 D9 NO shipped descriptor carries a pinexpr — 0444/0446 are off the stock path} \
+  [list $s_sky_pin $s_gf_pin] [list 0 0]
+
+# The rest of section S runs on the pre-D9 shape, registered here and owned here.
+# ⚠ THE SPELLING GUARD MOVES WITH IT: this asserts that what `register` STORED
+# is the spelling with the space, so a later tidy-up of S_VGS_OK reds here
+# rather than silently blanking two rows for every user who writes a pinexpr.
+op_annot::register nmos $S_NMOS_LEGACY
+check {S28b the section's own descriptor stored the 0444 spelling verbatim} \
+  [list [opa_norm [dict get [op_annot::descriptor nmos] pinexpr]] \
+        [llength [dict get [op_annot::descriptor nmos] params]]] \
+  [list [opa_norm [list [list vgs $S_VGS_OK] [list vds $S_VDS_OK]]] 6]
 
 # ===========================================================================
 # FIXTURE — a flat sky130 nfet with its three terminals on named nets
@@ -4181,10 +4356,16 @@ opa_l_annot 0
 set o17a [opa_l_print2 svg [file join $scratch o_bg0.svg] $O_VP_BG]
 opa_l_annot 1
 set o17d [opa_o_delta {set o17b [opa_l_print svg [file join $scratch o_bg1.svg] $O_VP_BG]}]
+# ⚠ THE OVERLAY-ONLY PROBE MOVED FROM `vdsat` TO `gds` — RULING D9. The probe
+# has to be a label the OVERLAY paints and the shipped symbol texts do NOT, or
+# the row cannot tell the two apart. sky130's FET symbols print id/gm/vgs/vds;
+# under D9 the overlay's six are id gm gds vgs vth vds, so `gds` (and `vth`) are
+# what remains overlay-only. `vdsat` is no longer painted by anything, which
+# would have left this row asserting 0-then-0 — green, and hollow.
 check {O17 ACCEPTANCE sky130_tests_ase/bandgap_opamp: 13 devices annotate, all rows blank, nothing modified} \
-  [list $o17n [opa_l_seen $o17a {vdsat}] [opa_l_seen $o17b {vdsat}] $o17d \
+  [list $o17n [opa_l_seen $o17a {gds}] [opa_l_seen $o17b {gds}] $o17d \
         [xschem get modified] [opa_s5_allblank [op_annot::text $o17i]]] \
-  [list 13 0 1 [expr {13 * $o_pp}] 0 {10 {}}]
+  [list 13 0 1 [expr {13 * $o_pp}] 0 {6 {}}]
 
 # ⚠ THE PLAN'S OWN ACCEPTANCE CELL, PINNED AS THE COUNTEREXAMPLE. Its FETs are
 # one level down; `6` here correctly shows nothing even after S9 lands. Without
@@ -5178,9 +5359,14 @@ proc opa_q_sym {s} {
   set o {} ; foreach p {id= gm= vgs= vds=} { lappend o [opa_q_n $s $p] } ; return $o
 }
 ## The OVERLAY spellings, padded to the 5-wide label column S5 builds.
+## ⚠ THE PADDING CHANGED WITH RULING D9 AND IT IS PART OF THE PROBE. The label
+## column pads to the longest label IN THE BLOCK: pre-D9 that was 5 (`vdsat`,
+## `gm/id`) and the probes read `id    =`; the six are id gm gds vgs vth vds, so
+## the longest is 3 and the probes read `id  =`. A probe left at the old width
+## matches nothing and the rows below go silently green at zero.
 proc opa_q_ovl {s} {
   set o {}
-  foreach p [list {id    =} {gm    =} {vth   =} {gds   =} {vdsat =} {ft    =} {gm/id =}] {
+  foreach p [list {id  =} {gm  =} {gds =} {vgs =} {vth =} {vds =}] {
     lappend o [opa_q_n $s $p]
   }
   return $o
@@ -5264,8 +5450,9 @@ check {Q3 MASK 0: the four shipped sky130 symbol texts are gone from a resting e
 # ⚠ THE ROW THE STEP EXISTS FOR, AND THE ONE THIS FILE PREDICTS hide=op CANNOT
 # SATISFY — see this section's header table. Today each of id/gm/vgs/vds is
 # painted TWICE on every FET: once by the symbol's own text and once by the
-# overlay row. The overlay's ten rows are a strict SUPERSET of the shipped four,
-# so the symbol's copy is the one that must go.
+# overlay row. The overlay's rows are a strict SUPERSET of the shipped four —
+# still true under ruling D9, whose six are id gm gds vgs vth vds against the
+# symbols' id/gm/vgs/vds — so the symbol's copy is the one that must go.
 opa_l_annot 1
 set q_s1 [opa_l_print2 svg [file join $scratch q_10.svg] $Q_VP]
 check {Q4 MASK 1: each label is painted ONCE per FET -- the symbol texts are gone and the overlay covers all 10 devices} \
@@ -5279,7 +5466,7 @@ check {Q4 MASK 1: each label is painted ONCE per FET -- the symbol texts are gon
 # NOTHING. Green before and after S10, deliberately.
 check {Q5 NON-VACUITY: the mask-1 export is strictly longer than the mask-0 one and carries the overlay-only rows} \
   [concat [list [expr {[string length $q_s1] > [string length $q_s0]}]] \
-          [lrange [opa_q_ovl $q_s1] 3 6]] {1 10 10 10 10}
+          [lrange [opa_q_ovl $q_s1] 3 5]] {1 10 10 10}
 
 # ===========================================================================
 # Q6 — MASK 3: THE hide=voltage TRAP, MADE EXECUTABLE

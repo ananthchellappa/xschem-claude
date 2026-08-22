@@ -75,24 +75,36 @@ if {[info commands ::op_annot::register] ne {}} {
   # index, not the prototypes' `[pn]mos` regexp).
   # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, IHP and
   # xschem_library/devices/nmos.sym.
-  # ⚠ THE SPACE BEFORE EACH CLOSING `)` IS LOAD-BEARING — ISSUE 0444, DO NOT
-  # TIDY IT AWAY. `xschem translate` tokenises on SPACE(c) = {\n, space, \t,
-  # \0, ;} only (token.c:24), so `)` does NOT terminate an @-token: without the
-  # space the second token is `@#2:spice_get_voltage)`, misses get_tok_value()
-  # and appends NOTHING. Measured live on one instance with an annotated raw:
-  #     …spice_get_voltage)   -> `0.9 - `   string is double -strict = 0 -> BLANK
-  #     …spice_get_voltage )  -> `0.9`      string is double -strict = 1
-  # Every SHIPPED symbol in the tree already spells it with the space
-  # (sky130_fd_pr/nfet_01v8.sym:65-66, xschem_library/devices/nmos4.sym:56-57).
-  # Guarded by rows S28/S29 of tests/headless/test_op_annot.tcl.
+  # ⚠ THE DEFAULT SIX — RULING D9 (the user, 2026-08-22). Spec §4.2a.
+  #     id  gm  gds  vgs  vth  vds        and nothing else, on every PDK.
+  # GONE from this descriptor: vdsat, and the derived row gm/id. "Too many
+  # parameters displayed is just clutter."
+  #
+  # ⚠ vgs/vds ARE NOW params, NOT pinexpr, so this descriptor carries no pinexpr
+  # at all and the load-bearing-space trap (issue 0444) and the fabricated
+  # `vgs = 0` on a GND source (issue 0446) are OFF THE SHIPPED PATH. Neither C
+  # defect is fixed; both remain reachable by a user-written pinexpr, and their
+  # guardians live on test-local descriptors in test_op_annot.tcl.
+  #
+  # ⚠ MEASURED ON GF180 ITSELF, not inherited from the sky130 measurement —
+  # nfet_03v3, models/design.ngspice + sm141064.ngspice typical, one deck, both
+  # ngspice binaries, `.control … write … .endc`:
+  #     rc=0 checkvalid=0 raw written on BOTH, with vectors
+  #       i(@m.xm1.m0[id])  @m.xm1.m0[gm]  @m.xm1.m0[gds]
+  #       v(@m.xm1.m0[vgs]) v(@m.xm1.m0[vth]) v(@m.xm1.m0[vds])
+  # i.e. exactly the 0/1/2 kind convention already in the descriptor.
+  #
+  # RECOVERY for the old rows is one round-trip in a --script rc (invariant I5):
+  #     set d [op_annot::descriptor nmos]
+  #     dict set d params [concat [dict get $d params] {{vdsat vdsat 2}}]
+  #     dict set d derived {{gm/id {$gm/$id}}}
+  #     op_annot::register nmos $d
+  # A first-class means for a user to choose her own set is OWED and TBD.
   foreach _gf180_op_type {nmos pmos} {
     op_annot::register $_gf180_op_type {
       devpath {\@m.@path@spiceprefix@name\.m0}
       match   {*gf180mcu_pr/*}
-      params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
-      derived {{gm/id {$gm/$id}}}
-      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage )}}
-               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage )}}}
+      params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
     }
   }
   unset _gf180_op_type

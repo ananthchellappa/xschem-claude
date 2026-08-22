@@ -543,13 +543,8 @@ foreach t {nmos pmos} {
   op_annot::register $t {
     devproc sky130_op_devpath
     match   {*sky130_fd_pr/*}
-    params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
-             {cgg cgg 1} {cgso cgso 1} {cgdo cgdo 1}}   ;# ⚠ cgso/cgdo: issue 0429
-    derived {{ft    {$gm/(2*3.141592654*($cgg + $cgdo + $cgso))}}
-             {gm/id {$gm/$id}}}
-    pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
-             {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
-  }
+    params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+  }                                        ;# THE DEFAULT SIX — ruling D9, §4.2a
 }
 
 # --- gf180mcu -------------------------------------------------------------
@@ -558,11 +553,8 @@ foreach t {nmos pmos} {
   op_annot::register $t {
     devpath {\@m.@path@spiceprefix@name\.m0}
     match   {*gf180mcu_pr/*}
-    params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}}
-    derived {{gm/id {$gm/$id}}}
-    pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage)}}
-             {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage)}}}
-  }
+    params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+  }                                        ;# THE DEFAULT SIX — ruling D9, §4.2a
 }
 
 # --- IHP sg13g2 (psp103 via OSDI: element letter `n`, inner device n<model>) --
@@ -570,12 +562,9 @@ foreach t {nmos pmos} {
   op_annot::register $t {
     devpath {\@n.@path@spiceprefix@name\.n@model}
     match   {*sg13g2_pr/*}
-    params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
-             {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}
-    derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
-             {ft      {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}}
-             {gm/id   {$gm/$ids}}}
-  }
+    params  {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+  }             ;# THE DEFAULT SIX — ruling D9. IHP spells the current `ids`; the
+                ;# LABEL is `id` so one display vocabulary covers all three PDKs.
 }
 op_annot::register vertical_npn {
   devproc sg13g2_op_npn_devpath   ;# strips `_5t`, then @q.<path><X><name>.q<model>
@@ -661,6 +650,114 @@ a fix, not a regression. Issue **0430**.
 **What the user edits** is the `params` list — one line in their own rc, which
 overrides the PDK's registration. No symbol is touched, no C is rebuilt, and the
 change takes effect on the next redraw.
+
+### 4.2a The default display set — RULING D9 (the user, 2026-08-22)
+
+**A MOS device shows six rows, in this order:**
+
+```
+id  gm  gds  vgs  vth  vds
+```
+
+Nothing else, on any PDK. The reason is stated as plainly as it was given:
+**too many parameters displayed is just clutter.** An annotation block sits on
+top of the schematic the designer is reading; every row that is not being looked
+at costs screen and costs attention.
+
+This **supersedes the E-question in issue 0429** rather than answering it. That
+question was "keep `cgso`/`cgdo`, or drop them and lose two display rows" — under
+D9 neither capacitance is in the default set at all, so there is nothing to
+ratify. `cgs`/`cgd` are not substituted for anything (the refuted sketch in 0429),
+and the two rows are reachable the same way any other non-default row is: by
+overriding the descriptor.
+
+**What leaves the default, and it must be said out loud rather than discovered:**
+
+| leaves | was on | note |
+|---|---|---|
+| `vdsat` | sky130, gf180 | |
+| `cgg`, `cgso`, `cgdo` | sky130 | |
+| `cgg`, `cgsol`, `cgdol`, `vdss` | IHP | |
+| `ft` | sky130, IHP | falls out with `cgg`; **no simulator computes it** (below) |
+| `gm/id` | all three | |
+| `cgg_tot` | IHP | |
+
+The IHP `vertical_npn` descriptor is **untouched** — D9's six are MOS quantities
+and an HBT has no `vgs`. Whether a bipolar default set wants the same treatment
+is open, and deliberately not decided here.
+
+#### Why this is not a loss of simulator data
+
+Measured, `show m.xm1.msky130_fd_pr__nfet_01v8 : all` on ngspice-46+ with real
+sky130 `tt` models. **ngspice exposes no `ft` and no `gm/id`** — not for BSIM4,
+not for psp103. Both were arithmetic performed in Tcl by each PDK's own
+`*_procs.tcl`, independently, with two different formulas
+(`gm/2/pi/(cgg+cgdo+cgso)` on sky130, `gm/(2*pi*(cgg+cgsol+cgdol))` on IHP).
+Dropping them removes a computation the tool was doing, not a measurement the
+simulator was providing. The `derived` key stays in the grammar for the user who
+wants it back.
+
+#### All six are measured savable, on both ngspice generations, on two PDKs
+
+This is the check issue 0429 said was **owed and missing** — assert against
+ngspice, not against our own strings. One card per parameter, real models, the
+`.control … write … .endc` idiom every shipped bench uses:
+
+```
+sky130 nfet_01v8   /usr/bin/ngspice (42)    id gm gds vgs vth vds -> RAW, checkvalid=0
+                   /usr/local/bin (46+)     id gm gds vgs vth vds -> RAW, checkvalid=0
+gf180  nfet_03v3   both binaries            id gm gds vgs vth vds -> RAW, checkvalid=0
+```
+
+and the vector shapes come back exactly on the `kind` convention already in the
+descriptor — `i(@m.…[id])` = 0, bare `@m.…[gm]` / `[gds]` = 1,
+`v(@m.…[vgs])` / `[vth]` / `[vds]` = 2:
+
+```
+0  v(d)                        4  v(@m.xm1.m0[vds])     voltage
+1  @m.xm1.m0[gds]  admittance  5  v(@m.xm1.m0[vgs])     voltage
+2  @m.xm1.m0[gm]   admittance  6  v(@m.xm1.m0[vth])     voltage
+3  i(@m.xm1.m0[id])   current  7  v(g)
+```
+
+**So no default row can suppress a raw file on any supported ngspice** — which is
+the whole of what 0429 was about.
+
+#### The consequence nobody asked for and everybody wants: `pinexpr` leaves the default path
+
+`vgs` and `vds` are **real BSIM4 instance parameters** (`vgs 0.896512`,
+`vds 1.79302` in the `show` dump above), savable on both binaries. sky130 and
+gf180 were computing them from pin voltages with a `pinexpr` because the
+prototypes did. Under D9 they are ordinary `params` rows, read from the raw like
+every other number, and **no shipped descriptor carries a `pinexpr` any more.**
+
+Two open defects therefore leave the shipped path, without either being fixed:
+
+* **0446** — the pin expression that fabricates `vgs = 0` / `vds = 0` when the
+  source is on GND and the other net is absent from the raw. The C defect
+  (`token.c:4364`, `token.c:5441`) is untouched and still reachable by any
+  user-written `pinexpr`; its guardian must move to a **test-local** descriptor
+  so the pin on the wrong behaviour survives.
+* **0444** — the load-bearing space before `)`. Same status: the tokenisation is
+  unchanged, the trap is real for anyone writing a `pinexpr`, and it no longer
+  sits between a stock user and their numbers.
+
+`pinexpr` stays in the grammar, keeps its landmine notes, and is now what it
+should always have been: the escape hatch for a quantity the simulator does not
+save, rather than the mechanism for two that it does.
+
+#### What is owed, and is NOT part of D9
+
+1. **A means for the user to choose her own set. TBD, and named as TBD** — the
+   default is six because six is the right default, not because six is all
+   anyone may have. Today the only route is `op_annot::register` in a `--script`
+   rc (invariant **I5**), which is three lines of Tcl and is not a user
+   interface. Whatever ships must be reachable without editing a PDK file.
+2. **A mismatch warning — approved in principle by the same ruling.** When the
+   descriptor asks for a parameter and the raw does not deliver it, the row
+   still renders **blank** (invariant **I3** is unchanged), and the tool
+   **additionally reports it once** — in the CIW and in the logfile — instead of
+   saying nothing. See invariant **I8**.
 
 ### 4.3 The two consumers
 
@@ -1223,11 +1320,12 @@ own step (and runs into issue 0478).
 | **I6** | The hierarchy walk restores `no_draw`, `no_undo`, `keep_symbols` and the original `sch_path` on every exit path, including error paths. The IHP prototype's `go_back 2` pairing is the reference for the **descend/ascend shape only — ⚠ it does NOT satisfy this invariant.** Measured: `sky130_save_fet_params` on `sky130_tests/test_generators` raises `Symbol not found` and leaves `no_draw=1 keep_symbols=1` set, because the restore is on the normal path and there is no `catch`/`finally`. S3 must wrap the walk body in `catch`, restore unconditionally, then re-raise — and must force a raise in its test rather than asserting only on the happy path. Issue **0431**. **S3 addenda, all measured:** the unwind is bounded by the **entry** level, not by 0 (`src/xschem.tcl:3857`'s `while {[xschem get currsch]} …` would ascend past a caller that was already descended); the restore must also pop the `log_action -suppress` scope it pushed, since an unpopped one silences the user's action log for the rest of the session; and **`no_undo` cannot be restored to its entry value because `xschem get no_undo` does not exist** (setter only, `scheduler.c:12030`; returns `{}` whether the flag is 0 or 1). 0 is the only restorable value, so a caller who wraps the walk in its own `no_undo 1` scope has it **silently disarmed** — measured `{3 2 2}` before, `{3 2 3}` after. Issue **0432**. **⚠ AMENDED BY S3d — I6 IS A MEMORY-SAFETY BOUNDARY, NOT A TIDINESS RULE.** A sabotage variant that deleted the restore crashed xschem deterministically, 3 legs of 3: `propagate_hilights(): .ptr<0, unbound symbol: inst 0, name=MP1 sch=w_bare.sch` → `FATAL: signal 11`. Issue **0498**. **⚠ CORRECTED AND LARGELY CLOSED BY X0498 (2026-08-22) — read this before writing a walk.** Two things this cell asserted are **measured false**. (a) It is **not** “carried across a schematic load”: three consecutive `xschem load` calls with the flags leaked survive cleanly, because `scheduler.c:7611`'s `keep_symbols` is the local **`-keep_symbols` argument**, not the Tcl global. The carrier is **`xschem netlist`**. (b) **`keep_symbols` alone is harmless**; `keep_symbols=1` and `no_undo=1` are **jointly** necessary — measured matrix: `1/0`→SURVIVED, `0/1`→SURVIVED (symbol table silently emptied), `1/1`→SIGSEGV. The real mechanism is that every C hierarchy walk (the five `global_*_netlist` drivers and `hier_psprint`) restores the user's document by **exactly one mechanism** — its own `push_undo`/`pop_undo` pair — and `no_undo` silently no-ops **both halves**, so the walk descends and never comes back. X0498 fixed that in the C: `undo_shield_push()`/`undo_shield_pop()` (`src/netlist.c`) park `no_undo` at 0 across each walk's own pair and restore the caller's value on **every** exit path including the `fopen` error return, and `INST_UNBOUND()` (`src/xschem.h`) guards the four unbound-instance dereferences that faulted (`hilight.c`, and the three guard-after-deref sites `draw.c`/`psprint.c`/`svgdraw.c`). **Consequence for S3 and for every later walk: a leaked `no_undo` can no longer corrupt or crash the netlisters.** I6 remains binding — a leak still leaves `no_draw=1` (a dead screen), still leaves the hierarchy where it stopped, and still silences an unpopped `log_action -suppress` scope — but an I6 slip now presents as a **diagnosable wrong answer, not a segfault**, which is exactly what the four reverted S3 attempts needed. **Anchor correction, applied above:** `xschem get no_undo` still does not exist and the setter is at **`scheduler.c:12030`** — every revision of this cell before 2026-08-22 said `11958`, which had drifted. Probe `no_undo` **by effect**, never by a getter. **Class narrowed, not eliminated:** `xctx->sym[xctx->inst[i].ptr]` is still dereferenced unguarded in `move.c` (12 sites), `editprop.c` (6), `save.c:4328`, `netlist.c` and `select.c:1507`, and `go_back` has its own `pop_undo`-shaped restore that X0498 did **not** shield. |
 | **I7** | `hide=true` **and `hide=instance`** semantics are unchanged for every existing symbol in every library. **⚠ RESTATED BY S7 — the original wording named only `hide=true`, and `hide=instance` is the one that was actually at risk.** Counted across all tracked `.sym`/`.sch`: `hide=instance` **630 occurrences / 244 files**, `hide=true` **166 / 62** (47 / 22 before S10b, plus the 119 sky130 records in 40 files that S10b added — issue 0475; gf180's 38 are unchanged **by design**, and row L22 is the tree's only non-vacuous fixture for this half of I7), `hide=op` **2** (the twin `annotate_params.sym`), `hide=voltage` **0** — no other `hide=` value exists anywhere, so the acceptance sweep is a bounded, nameable list rather than a spot check. The threat was never the class bits; it was collapsing ten visibility tests that mask **two different things** into one fixed mask (§2.4). **HELD AT S7**, verified three independent ways: rows L11–L14 and L19–L22 of `test_op_annot.tcl`; the adversary's own fixtures (all 57 `xschem_library/devices/*.sym` carrying `hide=instance`, and the 19 gf180mcu FETs carrying `hide=true`, exported to SVG at `annot_show` 0 vs 3 at both `show_hidden_texts` states — byte-identical, and **non-vacuous** because the same corpus does differ between `show_hidden_texts` 0 and 1); and a re-run of the pre-S7 before-state script, whose `hide=true` (0 at `sht=0`, 158 at `sht=1`) and `hide=instance` (0 on a symbol, visible at top level) numbers came back byte-for-byte. ⚠ **PS byte-comparison is unsound** until issue **0454** is fixed — `xschem print ps` ends every page with an uninitialised RGB triple that changes between exports of identical content; L20/L22 compare a normalised copy (`opa_l_normps`) and L21 keeps that normalisation non-vacuous. |
 
+| **I8** | **A parameter the descriptor asked for and the raw did not deliver is REPORTED, not merely blank.** Added by ruling **D9** (2026-08-22). I3 governs what the *schematic* shows and is unchanged — the row stays blank, and no number is ever fabricated. I8 governs what the *tool* says: the mismatch between what was requested and what arrived goes to the **CIW and to the logfile**, once per (device, parameter) per annotate pass, never per redraw. The motivating measurement is issue **0429**: ngspice-42 rejects a `.save` card by exiting **0** with no raw file at all, and the only trace is a single `Warning from checkvalid:` line in a log the user is not reading. A blank row cannot distinguish *"this device is off"* from *"your simulator does not know that parameter"* from *"your raw file was never written"*, and the user needs the second and third said out loud. **Not yet implemented** — the requirement is ratified, the mechanism (where CIW output goes, how the once-per-pass dedup is keyed, what a wholly-absent raw reports as distinct from a single absent vector) is the owed step. |
 
 ### 5.1 Shipped and unratified — the questions this run owes a human
 
 Collected here, in one place, so they can be answered in one sitting. **NINE
-rows, one per issue file** — a reader can check the list is complete by that
+rows, one per issue file** — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
 count. Every file named below was verified to exist on disk by the S12 write-up
 agent (2026-08-21).
 
@@ -1239,10 +1337,10 @@ authority has signed it off*.
 
 | # | kind | the question |
 |---|---|---|
-| **0424** | owed action | `make install` ships an `xschem.tcl` that sources an **uninstalled** `op_annot.tcl`, and the installed binary then SEGFAULTs at startup. The fix is a `./configure` + install-rule change — a build action no agent in an unattended crew may run. |
-| **0429** | ratification | sky130 saves `cgso`/`cgdo`, which ngspice-42 rejects, and **one** rejected `.save` card suppresses the **entire** raw. Ruled and fixed in S3b; the ruling itself was never ratified. |
-| **0444** | ratification | a registered `pinexpr` whose @-token abuts `)` can never produce a number. Fixed in the two shipped descriptors; the C tokenisation is unchanged. *(Note: this is the **swallowed closing paren** — the "stray space" is the symptom in §4.4's symbol text, not the defect.)* |
-| **0446** | ratification | a pin expression fabricates **`0`** when one terminal is GND and the other net is absent from the raw — an I3 fabrication reachable from a flat schematic and the wrong `.raw`. Accepted in writing by S6b (decision D5) and pinned by row **K16**, which asserts the wrong behaviour on purpose. |
+| **0424** | ~~owed action~~ **CLOSED 2026-08-22** | `make install` shipped an `xschem.tcl` sourcing an **uninstalled** `op_annot.tcl`; the installed binary SEGFAULTed at startup. `./configure` + rebuild ran with the user's authority: install lines 0 -> 2, staged `make install DESTDIR=` launches at EXIT=0, and the negative control (helper hidden) still gives 139. Encoded as crew rule 2b and a `CLAUDE.md` bullet. **0423 stays open** — a missing sourced helper should print and exit, not segfault. |
+| **0429** | ~~ratification~~ **SUPERSEDED 2026-08-22** | ruling **D9** cuts the MOS default to `id gm gds vgs vth vds`, so neither capacitance is in the default set and there is nothing left to ratify. `cgs`/`cgd` are not substituted for anything. All six defaults are measured savable on ngspice-42 **and** 46+, on sky130 **and** gf180 — the ngspice-side check 0429 said was owed. See §4.2a. |
+| **0444** | ratification, **narrowed by D9** | a registered `pinexpr` whose @-token abuts `)` can never produce a number. The C tokenisation is unchanged — but under D9 **no shipped descriptor carries a `pinexpr`**, so this is now a trap for a user writing her own, not something between a stock user and her numbers. *(Note: this is the **swallowed closing paren** — the "stray space" is the symptom in §4.4's symbol text, not the defect.)* |
+| **0446** | ratification, **off the shipped path by D9** | a pin expression fabricates **`0`** when one terminal is GND and the other net is absent from the raw — an I3 fabrication reachable from a flat schematic and the wrong `.raw`. Accepted in writing by S6b (decision D5) and pinned by row **K16**, which asserts the wrong behaviour on purpose. |
 | **0447** | ratification | `op_annot::text` **raises** on a malformed descriptor list while its own header says it never does. Accepted alongside 0446 by S6b (decision D6). |
 | **0457** | ratification | `annot_show` has no stock, non-`cadence_style_rc` control — a user not on that profile has no shipped way to reach the mask. S8's E question. |
 | **0475** | ratification | the 40 shipped sky130 FET symbols' annotation texts are gated behind **`hide=true`** rather than `hide=op`. S10b measured `hide=op` and **refuted** it (both `hide=op` and the overlay answer to `annot_show` bit 0, so a `hide=op` text becomes visible exactly when its replacement does), then shipped `hide=true`. S10b's E question. |

@@ -8,6 +8,44 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ⚠ RULING D9 (the user, 2026-08-22) — READ THIS BEFORE ANY STEP BELOW
+
+**The MOS annotation default is six rows, on every PDK:**
+
+```
+id  gm  gds  vgs  vth  vds
+```
+
+*"Too many parameters displayed is just clutter."* Spec **§4.2a** is the record.
+Landed already, in all three PDK descriptor files, with `test_op_annot` at
+**244 ALL PASS** and its D9 rows proved non-vacuous.
+
+What this changes for the steps that have not landed:
+
+* **Every count of "ten rows" / "eight params" in the cells below is stale.**
+  sky130 and gf180 lost `vdsat`, `cgg`, `ft`, `gm/id`; IHP lost `vdss`, `cgg`,
+  `cgsol`, `cgdol`, `cgg_tot`, `ft`, `gm/id`. `vertical_npn` is untouched.
+* **S3 (`op_annot::save_cards`) gets easier, not harder.** Six cards per FET
+  instead of eight or ten, and — the part that matters — **no default parameter
+  can suppress a raw on any supported ngspice**. Measured, one card per
+  parameter, both binaries, sky130 *and* gf180: `id gm gds vgs vth vds` all give
+  `RAW written, checkvalid=0`. The 0429 hazard S3's brief kept warning about is
+  gone from the default path. S3's byte-diff-against-the-prototype acceptance is
+  **dead** — the descriptor is now deliberately a *subset* of what the prototype
+  saves; rows P19/P20 were restated as a subset check for exactly this reason.
+* **No shipped descriptor carries a `pinexpr` any more**, because `vgs`/`vds`
+  are real BSIM4 instance parameters. Issues **0444** and **0446** are therefore
+  off the stock path *without being fixed* — still live for a user-written
+  `pinexpr`, and their guardians moved to test-local descriptors (S28b, S29,
+  S17b, P10). Do not delete those rows because "nothing ships a pinexpr".
+* **Two new owed items**, neither part of D9 itself: issue **0603** (a
+  first-class means for the user to choose her own set — the TBD the ruling
+  names) and issue **0604** / invariant **I8** (report a requested-but-
+  undelivered vector in the CIW and the logfile, once per device+parameter per
+  annotate pass; the row still renders blank, I3 is unchanged).
+
+---
+
 Implement `doc/claude/specs/op_annotation.md`. **Read that spec in full first** —
 especially §3 (the three measured ngspice rules), §4.2 (the PDK descriptor),
 §5 (invariants I1–I7) and §6 (landmines).

@@ -701,22 +701,45 @@ if {[info commands ::op_annot::register] ne {}} {
   # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, gf180 and
   # xschem_library/devices/nmos.sym.
   # ⚠ NO pinexpr: vgs and vds are saved DEVICE parameters on this PDK, so they
-  # are already rows in `params` and need no pin-voltage expression.
-  # ⚠ derived rows are SELF-CONTAINED: `ft` inlines the capacitance sum instead
-  # of referencing the derived label `cgg_tot`, so S5 needs no evaluation order.
-  # And the sum is `cgg_tot`, NOT a second `cgg` — the prototype prints the sum
-  # under the label `cgg` (:486) while also reading the raw param `cgg`, which
-  # would make `$cgg` ambiguous inside a derived expr.
+  # are already rows in `params` and need no pin-voltage expression. Since
+  # ruling D9 that is true of sky130 and gf180 too — BSIM4 publishes vgs/vds as
+  # instance parameters — so NO shipped descriptor carries a pinexpr any more.
+  #
+  # ⚠ THE DEFAULT SIX — RULING D9 (the user, 2026-08-22). Spec §4.2a.
+  #     id  gm  gds  vgs  vth  vds        and nothing else, on every PDK.
+  # "Too many parameters displayed is just clutter." GONE from this descriptor:
+  # vdss, cgg, cgsol, cgdol, and the three derived rows cgg_tot, ft and gm/id.
+  # No simulator computes ft or gm/id — they were Tcl arithmetic here and, with
+  # a DIFFERENT formula, in sky130's procs file.
+  #
+  # ⚠ THE LABEL IS `id`, THE PARAMETER IS STILL `ids`. IHP spells the current
+  # `ids` where BSIM4 spells it `id`; the descriptor's {label param kind} triple
+  # exists for exactly this, and one display vocabulary across all three PDKs is
+  # worth more than matching the raw's spelling on screen.
+  #
+  # ⚠ UNMEASURED ON THIS BOX, AND SAY SO: psp103 runs through OSDI and the
+  # vendored ihp-sg13g2/osdi/psp103.osdi targets OSDI v0.4 while ngspice-42 here
+  # supports v0.3, so `pre_osdi` fails and NO IHP parameter name can be checked
+  # against a real raw here. The six are carried over from the prototype's own
+  # list (which already had ids/gm/gds/vth/vgs/vds), so this is a SUBSET of names
+  # the prototype used, not new ones — but it is inference, not measurement.
+  #
+  # RECOVERY for the old rows is one round-trip in a --script rc (invariant I5):
+  #     set d [op_annot::descriptor nmos]
+  #     dict set d params [concat [dict get $d params] \
+  #        {{vdss vdss 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}]
+  #     dict set d derived {{cgg_tot {$cgg + $cgsol + $cgdol}} \
+  #        {ft {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}} {gm/id {$gm/$id}}}
+  #     op_annot::register nmos $d
+  # A first-class means for a user to choose her own set is OWED and TBD.
+  #
+  # ⚠ vertical_npn BELOW IS UNTOUCHED BY D9 — the six are MOS quantities and an
+  # HBT has no vgs. Whether a bipolar default wants the same trim is OPEN.
   foreach _sg13g2_op_type {nmos pmos} {
     op_annot::register $_sg13g2_op_type {
       devpath {\@n.@path@spiceprefix@name\.n@model}
       match   {*sg13g2_pr/*}
-      params  {{ids ids 0} {gm gm 1} {gds gds 1} {vth vth 2} {vgs vgs 2}
-               {vdss vdss 2} {vds vds 2} {cgg cgg 1} {cgsol cgsol 1}
-               {cgdol cgdol 1}}
-      derived {{cgg_tot {$cgg + $cgsol + $cgdol}}
-               {ft      {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}}
-               {gm/id   {$gm/$ids}}}
+      params  {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
     }
   }
   unset _sg13g2_op_type

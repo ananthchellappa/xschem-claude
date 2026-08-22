@@ -322,70 +322,57 @@ if {[info commands ::op_annot::register] ne {}} {
   # shipped sky130 FET symbol displays `id=@spice_get_node i(…[id])`. Issue 0427.
   # ⚠ `match`: issue 0425 — `type=nmos` is shared with gf180, IHP and
   # xschem_library/devices/nmos.sym.
-  # ⚠ pinexpr uses the SHIPPED spelling (nfet_01v8.sym:65-66), not §4.2's
-  # `{@#1 - @#2}` shorthand, which has no evaluator anywhere in the tree.
-  # Pin order measured from the B records: D=0 G=1 S=2 B=3.
-  # ⚠ derived rows are SELF-CONTAINED — `ft` inlines its own capacitance sum
-  # rather than referencing a derived label, so S5 needs no evaluation order.
   #
   # ==========================================================================
-  # ⚠ cgso AND cgdo ARE DELIBERATELY ABSENT — ISSUE 0429, RULING D8 (status E)
+  # ⚠ THE DEFAULT SIX — RULING D9 (the user, 2026-08-22). Spec §4.2a.
   # ==========================================================================
-  # The prototype `sky130_write_save_lines` saves them and this descriptor used
-  # to inherit them. RE-MEASURED on BOTH ngspice binaries installed here, one
-  # parameter per throwaway deck, real sky130 tt models, under the
-  # `.control … write … .endc` idiom every shipped PDK bench uses:
+  #     id  gm  gds  vgs  vth  vds        and nothing else, on every PDK.
+  # "Too many parameters displayed is just clutter." A block sits on top of the
+  # schematic the designer is reading, so every row nobody looks at costs screen
+  # and attention. GONE with this ruling: vdsat, cgg, cgso, cgdo, and the two
+  # DERIVED rows ft and gm/id.
   #
-  #   /usr/bin/ngspice (42)        gm cgg cgs cgd -> raw written, 0 warnings
-  #                                cgso cgdo      -> exit 0, ONE `checkvalid`
-  #                                                  line, and NO RAW FILE AT ALL
-  #   /usr/local/bin/ngspice (46+) cgso cgdo      -> raw written, real values
-  #                                                  (2.463135e-16 each)
+  # ⚠ ft AND gm/id ARE NOT SIMULATOR DATA. Measured, `show <dev> : all` on
+  # ngspice-46+ with real tt models: BSIM4 publishes gmbs gm gds vdsat vth id
+  # ibd ibs gbd gbs isub igidl igisl igs igd igb igcs igcd vbs vgs vds cgg cgs
+  # cgd c[bdsg][bdsg] capbd capbs qg qb qd qs qinv qdef gcrg gtau vgsteff vdseff
+  # cgso cgdo cgbo weff leff — and NO ft, NO gm/id. Both were Tcl arithmetic in
+  # this file (and, with a different formula, in IHP's). Dropping them removes a
+  # computation, not a measurement.
   #
-  # So on 42 a single unknown model parameter suppresses the WHOLE raw while the
-  # exit status stays 0 — silent, total waveform loss. S3 ships the first
-  # PDK-neutral `Create device OP .save file` menu item, i.e. the first time this
-  # descriptor is handed to every PDK's users as a generated deck, and a feature
-  # that destroys the data it exists to display is not shippable. The two rows
-  # go, and `ft` becomes gm/(2*pi*cgg).
+  # ⚠ THIS SUPERSEDES ISSUE 0429 RATHER THAN ANSWERING IT. cgso/cgdo are not in
+  # the default set at all, so the "keep them or lose two rows" question is moot;
+  # cgs/cgd are NOT substituted for anything (0429's own sketch, refuted by
+  # arithmetic — cgs is NEGATIVE, and the swap made ft ~6x wrong).
   #
-  # RECOVERY for a 46+ user who wants them back is one `op_annot::register`
-  # round-trip in their own rc (I5) — no rebuild, no restart:
+  # ⚠ ALL SIX ARE MEASURED SAVABLE ON BOTH ngspice GENERATIONS — the check 0429
+  # said was owed, asserted against ngspice instead of against our own strings.
+  # One card per parameter, real sky130 tt models, `.control … write … .endc`:
+  #     /usr/bin/ngspice (42)     id gm gds vgs vth vds -> RAW, checkvalid=0
+  #     /usr/local/bin (46+)      id gm gds vgs vth vds -> RAW, checkvalid=0
+  # So no DEFAULT row can suppress a raw file on any supported ngspice.
+  #
+  # ⚠ AND vgs/vds ARE NOW params, NOT pinexpr. They are real BSIM4 instance
+  # parameters (`vgs 0.896512`, `vds 1.79302` in the same show dump) and come
+  # back as v(@m.…[vgs]) / v(@m.…[vds]) — kind 2, the existing convention. This
+  # descriptor no longer carries a pinexpr at all, which takes issue 0446 (the
+  # fabricated `vgs = 0` on a GND source) and issue 0444 (the load-bearing space
+  # before `)`) OFF THE SHIPPED PATH. Neither C defect is fixed; both remain
+  # reachable by a user who writes her own pinexpr, and their guardians live in
+  # tests/headless/test_op_annot.tcl on test-local descriptors.
+  #
+  # RECOVERY for anyone who wants the old rows back is one round-trip in a
+  # --script rc (invariant I5) — no rebuild, no restart, live on next redraw:
   #     set d [op_annot::descriptor nmos]
-  #     dict set d params [concat [dict get $d params] {{cgso cgso 1} {cgdo cgdo 1}}]
+  #     dict set d params [concat [dict get $d params] {{vdsat vdsat 2} {cgg cgg 1}}]
+  #     dict set d derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id {$gm/$id}}}
   #     op_annot::register nmos $d
-  #
-  # REJECTED (a): keep them — correct on 46+, catastrophic on 42, and the
-  # generated deck cannot know which ngspice will run it.
-  # REJECTED (b): issue 0429's OWN fix sketch, relabelling to `cgs`/`cgd`.
-  # Refuted by arithmetic: cgs measures NEGATIVE (-5.52e-16) and cgd is three
-  # orders down (6.04e-19), so ft's denominator would go from
-  # cgg+cgdo+cgso = 1.254e-15 to cgg+cgd+cgs = 2.097e-16 — a silently ~6x wrong
-  # fT on every sky130 FET on EVERY ngspice, i.e. exactly I3's
-  # plausible-wrong-number arriving from a "fix".
-  # REJECTED (c): a per-parameter descriptor guard plus a simulator-version
-  # probe — new descriptor grammar, policy back inside the emitter, and the
-  # probe cannot know which ngspice will run the generated deck. Filed forward.
-  # ⚠ THE SPACE BEFORE EACH CLOSING `)` IS LOAD-BEARING — ISSUE 0444, DO NOT
-  # TIDY IT AWAY. `xschem translate` tokenises on SPACE(c) = {\n, space, \t,
-  # \0, ;} only (token.c:24), so `)` does NOT terminate an @-token: without the
-  # space the second token is `@#2:spice_get_voltage)`, misses get_tok_value()
-  # and appends NOTHING. Measured live on one instance with an annotated raw:
-  #     …spice_get_voltage)   -> `0.9 - `   string is double -strict = 0 -> BLANK
-  #     …spice_get_voltage )  -> `0.9`      string is double -strict = 1
-  # Every SHIPPED symbol in the tree already spells it with the space
-  # (sky130_fd_pr/nfet_01v8.sym:65-66, xschem_library/devices/nmos4.sym:56-57).
-  # Guarded by rows S28/S29 of tests/headless/test_op_annot.tcl.
+  # A first-class means for a user to choose her own set is OWED and TBD.
   foreach _sky130_op_type {nmos pmos} {
     op_annot::register $_sky130_op_type {
       devproc sky130_op_devpath
       match   {*sky130_fd_pr/*}
-      params  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2}
-               {cgg cgg 1}}
-      derived {{ft    {$gm/(2*3.141592654*$cgg)}}
-               {gm/id {$gm/$id}}}
-      pinexpr {{vgs {expr(@#1:spice_get_voltage - @#2:spice_get_voltage )}}
-               {vds {expr(@#0:spice_get_voltage - @#2:spice_get_voltage )}}}
+      params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
     }
   }
   unset _sky130_op_type

@@ -1,6 +1,12 @@
 # 0429 — sky130 saves `cgso` and `cgdo`, which ngspice-42 rejects, and ONE rejected `.save` card suppresses the ENTIRE raw file
 
-Status: **RULED AND FIXED IN S3b (2026-08-16), ruling D8 — the ratification
+Status: **CLOSED 2026-08-22 — SUPERSEDED BY RULING D9, not answered.** The
+ratification question at the bottom of this file is moot: the user cut the MOS
+annotation default to `id gm gds vgs vth vds`, so neither `cgso` nor `cgdo` is
+in the shipped set at all, and neither is `cgg` or the `ft` that consumed them.
+See the D9 block at the very bottom, and spec §4.2a.
+
+Previously: **RULED AND FIXED IN S3b (2026-08-16), ruling D8 — the ratification
 question is at the bottom of this file.** The two rows are gone from
 `sky130A/sky130_procs.tcl` and `ft` is now `gm/(2*pi*cgg)`. Read the RULING
 section before the historical sections below it: **one of this file's own
@@ -252,3 +258,68 @@ option that loses two display rows on 46+ is three lines in an rc.
 > two `cgso`/`cgdo` DISPLAY rows for ngspice-46+ users: accept the loss (they
 > are recoverable with a three-line `op_annot::register` in a user rc), or
 > reinstate them behind a per-descriptor simulator guard (issue 0440)?
+
+
+# ============================================================================
+# RULING D9 (the user, 2026-08-22) — THIS ISSUE IS SUPERSEDED
+# ============================================================================
+
+The user, reading the ratification question, did not pick either option. The
+instruction was:
+
+> Change (spec) display default to only display id, gm, gds, vgs, vth, vds. We
+> will provide a means (TBD) for user to update to what she wants. Too many
+> parameters displayed is just clutter.
+> We don't mess with cgs/cgdo. We can report a mismatch between expectation and
+> actual delivery from ngspice as a warning in CIW and logfile.
+
+So:
+
+* **`cgso`/`cgdo` are not in the default set**, and neither is `cgg`. There is no
+  "keep them or lose two rows" trade left to ratify.
+* **`cgs`/`cgd` are not substituted for anything** — this issue's own fix sketch,
+  already refuted by arithmetic above, stays refuted and unused.
+* **`ft` leaves with `cgg`.** Worth restating because it was the whole subject of
+  the D8 argument: no simulator computes fT. `show m.xm1.msky130_fd_pr__nfet_01v8
+  : all` on ngspice-46+ lists 50 BSIM4 instance parameters and neither `ft` nor
+  `gm/id` is among them. Both were Tcl arithmetic in the PDK procs files — twice,
+  with two different formulas. D8's correction (`gm/(2*pi*cgg)`, fixing a ~40%
+  double-count) was right and is simply no longer reachable from the default.
+
+## What D9 closed that D8 could not
+
+This file's own §"Fix sketch" item 3 said the missing check was **an assertion
+against ngspice, not against our own strings**, and named S4 as its owner. That
+check now exists, and it was run as part of D9:
+
+```
+sky130 nfet_01v8   /usr/bin/ngspice (42)   id gm gds vgs vth vds -> RAW, checkvalid=0
+                   /usr/local/bin (46+)    id gm gds vgs vth vds -> RAW, checkvalid=0
+gf180  nfet_03v3   both binaries           id gm gds vgs vth vds -> RAW, checkvalid=0
+```
+
+one card per parameter, real models, the `.control … write … .endc` idiom every
+shipped bench uses. **No default row can suppress a raw file on any supported
+ngspice** — which is what this issue was ultimately about.
+
+IHP is still unmeasurable on this box (`pre_osdi psp103.osdi` needs OSDI v0.4,
+ngspice-42 here supports v0.3), and its six are a **subset of the names its own
+prototype already used**, so that PDK's exposure is reduced by inference rather
+than by measurement. Said plainly in `sg13g2_procs.tcl` rather than left implicit.
+
+## And a defect class that left the shipped path as a side effect
+
+`vgs` and `vds` are real BSIM4 instance parameters (`vgs 0.896512`,
+`vds 1.79302`), savable on both binaries as `v(@m.…[vgs])`. Under D9 they are
+ordinary `params` rows, so **no shipped descriptor carries a `pinexpr` any more**
+— which takes issue **0446** (a pin expression fabricating `vgs = 0` on a GND
+source) and issue **0444** (the load-bearing space before `)`) off the stock
+path. Neither C defect is fixed. Both remain reachable by a user-written
+`pinexpr`, and their guardians moved to test-local descriptors
+(`test_op_annot.tcl` rows S28b, S29, S17b, P10) so they can still fail.
+
+## The half of the instruction that is NOT done
+
+*"We can report a mismatch between expectation and actual delivery from ngspice
+as a warning in CIW and logfile"* is approved in principle and filed as invariant
+**I8** plus issue **0604**. *"We will provide a means (TBD)"* is issue **0603**.
