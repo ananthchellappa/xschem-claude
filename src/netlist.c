@@ -37,6 +37,38 @@ static int print_erc = 0;
  * removed one per-short Tcl call from this function for exactly this reason. Refreshed beside
  * netlist_lvs_ignore in prepare_netlist_structs(). */
 static int erc_incr_hilight = 0;
+
+/* issue 0498: the undo shield.
+ *
+ * Every hierarchy walk in this program (the five global_*_netlist drivers and hier_psprint)
+ * restores the user's document by exactly ONE mechanism: its own xctx->push_undo() at the
+ * top paired with xctx->pop_undo(2, 0) / xctx->pop_undo(4, 0) after the descent. That pair
+ * is NOT editing undo -- it is the walk's save/restore. xctx->no_undo makes BOTH halves
+ * silent no-ops (save.c push_undo()/pop_undo(), in_memory_undo.c mem_push_undo()/
+ * mem_pop_undo()), so a caller that leaks `xschem set no_undo 1` -- and the shipped PDK
+ * walks do leak it on any raise, see issue 0431 -- makes the walk descend and never come
+ * back. Measured consequences: the top-level buffer is silently replaced by a sub-sheet
+ * under the original cell's name (75 instances -> 13, rc=0, no warning), and when the
+ * sub-sheet holds MORE instances than the top, the stored_flags restore loop reads past
+ * its allocation and draw_hilight_net() dereferences xctx->sym[-1] -> SIGSEGV.
+ *
+ * So the walk shields its own pair: clear no_undo for the duration, restore the caller's
+ * value on every exit path including the early error returns (invariant I6, spec
+ * doc/claude/specs/op_annotation.md section 5). With no_undo already 0 -- every normal run --
+ * both functions are assignments of the same value and no code path changes.
+ */
+int undo_shield_push(void)
+{
+  int saved = xctx->no_undo;
+  xctx->no_undo = 0;
+  return saved;
+}
+
+void undo_shield_pop(int saved)
+{
+  xctx->no_undo = saved;
+}
+
 static void instdelete(int n, int x, int y)
 {
   Instentry *saveptr, **prevptr, *ptr;

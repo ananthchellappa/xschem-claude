@@ -3606,7 +3606,7 @@ set ::live_cursor2_backannotate $n_live_saved
 # ============================================================================
 # ⚠ THE FIXTURE SYMBOL CARRIES NO T RECORD, DELIBERATELY
 # ============================================================================
-# draw.c:10500 and hilight.c:4188 guard the layer `cadlayers-1` text pass with
+# draw.c:10564 and hilight.c:4198 guard the layer `cadlayers-1` text pass with
 # `((c == cadlayers-1) && symptr->texts)`; svgdraw.c:1239 and psprint.c:1612
 # have no such guard. An overlay hung inside draw_symbol() therefore renders in
 # SVG and PS and NOT on screen for a texts-free symbol — a silent screen/export
@@ -4873,7 +4873,7 @@ set o14b [opa_o_delta {xschem redraw}]
 ## `((c == cadlayers-1) && symptr->texts)` guard renders in SVG and PS (O1/O3
 ## green) and NOT here. Decision D3 puts the call in the instance loop instead.
 ## ⚠ AND THE GOLDEN IS EXACTLY 2, NOT "at least 2", ON PURPOSE. Two devices,
-## one frame, one block each. A 4 here is not a harmless surplus: hilight.c:4192
+## one frame, one block each. A 4 here is not a harmless surplus: hilight.c:4200
 ## calls the same layer `cadlayers-1` text pass a SECOND time for every
 ## highlighted instance, so a block built twice per frame is the named
 ## PERFORMANCE risk arriving quietly — the uncached sweep already costs

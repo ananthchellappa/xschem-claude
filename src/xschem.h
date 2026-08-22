@@ -614,6 +614,13 @@ typedef int Tcl_Size;
 #define IS_LABEL_OR_PIN(type) (!(strcmp(type,"label") && strcmp(type,"ipin") && \
                                  strcmp(type,"opin") && strcmp(type,"iopin")))
 #define IS_PIN(type) (!(strcmp(type,"ipin") && strcmp(type,"opin") && strcmp(type,"iopin")))
+/* issue 0498: instance n has no resolved symbol (xctx->inst[n].ptr < 0), which happens
+ * whenever a load_schematic() with load_symbols=0 (the *_stop=true arm of the netlisters)
+ * or a remove_symbols() leaves the instance array pointing at nothing. Dereferencing
+ * xctx->sym[xctx->inst[n].ptr] then reads xctx->sym[-1] and SEGFAULTS -- measured at
+ * hilight.c draw_hilight_net(). Test the flag BEFORE the deref, never after.
+ * See doc/claude/issues/0498-leaked-keep-symbols-across-a-load-segfaults-the-c-core.md */
+#define INST_UNBOUND(n) (xctx->inst[n].ptr < 0)
 #define XSIGN(x) ( (x) < 0 ? -1 : 1)
 #define XSIGN0(x) ( (x) < 0 ? -1 : (x) > 0 ? 1 : 0)
 
@@ -2909,6 +2916,14 @@ extern void store_poly(int pos, double *x, double *y, int points,
 extern void store_arc(int pos, double x, double y, double r, double a, double b,
                unsigned int rectcolor, unsigned short sel, const char *prop_ptr);
 
+/* issue 0498: the hierarchy walks (the five global_*_netlist drivers and hier_psprint)
+ * save and restore the user's document with their OWN xctx->push_undo()/pop_undo() pair.
+ * That pair is the WALK's save/restore, not editing undo, so it must not be disableable by
+ * xctx->no_undo (which silently no-ops both halves -- save.c, in_memory_undo.c). Take the
+ * shield immediately before push_undo(), drop it on EVERY exit path (spec op_annotation.md
+ * section 5, invariant I6). */
+extern int undo_shield_push(void);
+extern void undo_shield_pop(int saved);
 extern void hier_psprint(char **res, int what);
 extern int global_spice_netlist(int global, int alert);
 extern int global_spectre_netlist(int global, int alert);

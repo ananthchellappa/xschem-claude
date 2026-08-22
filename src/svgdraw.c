@@ -748,9 +748,13 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
   char *textfont;
   int c_for_text;
 
+  /* issue 0498: guard BEFORE the dereference, not after. The `ptr == -1` test that used to
+   * sit below these lines was written to prevent exactly the xctx->sym[-1] read the next
+   * line performs; upstream commit 40fd937d hoisted the `type =` assignment above it and
+   * silently disarmed it. draw.c draw_temp_symbol() is the correct in-tree ordering. */
+  if(INST_UNBOUND(n)) return;
   type = xctx->sym[xctx->inst[n].ptr].type;
   lvs_ignore=tclgetboolvar("lvs_ignore");
-  if(xctx->inst[n].ptr == -1) return;
   if(layer == 0) {
     xctx->inst[n].flags &= ~IGNORE_INST; /* clear bit */
     if( type && strcmp(type, "launcher") && strcmp(type, "logo") &&

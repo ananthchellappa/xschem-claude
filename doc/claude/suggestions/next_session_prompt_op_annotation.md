@@ -25,10 +25,12 @@ Also read, before touching anything:
   it up, including the "place annotator pre-filled from selection" idiom.
 - `doc/claude/code_analysis/waveform_subsystem_reference.md` §6.
 
-Branch is `annotate`. **Number new issues from 0486.** *(Authoritative as of
-S12, 2026-08-21 — S12 consumed 0484 and 0485. Every other "number from N" line
-in this file is historical provenance and is marked as such; this is the only
-live one.)*
+Branch is `annotate`. **Number new issues from 0603, and skip the whole 05xx
+block.** *(Authoritative as of X0498, 2026-08-22 — `0499` was this branch's
+ceiling, **0500–0599 are RESERVED for the fluid-editing branch and must stay
+empty**, and X0498 consumed 0600/0601/0602. Every other "number from N" line in
+this file — including the "from 0486" that stood here until X0498 — is historical
+provenance; this is the only live one.)*
 
 ---
 
@@ -356,7 +358,7 @@ Everything below is what the retry must add to it.
     node voltages R2 is about. The dot-card works on both. Spec §5 I2 has been
     corrected; this bullet is here because the S3 cell's own wording still reads
     "Prepend `save all`" in every older copy of this plan.
-18. **`xschem get no_undo` DOES NOT EXIST** (setter only, `scheduler.c:11958`);
+18. **`xschem get no_undo` DOES NOT EXIST** (setter only, `scheduler.c:12030`);
     it returns `{}` whether the flag is 0 or 1. So a quarter of the S3 acceptance
     row below ("`no_undo` back to its entry value") is **unwritable as a flag
     read** — as `== 0` it fails, as "equals the entry value" it passes vacuously
@@ -409,9 +411,152 @@ Everything below is what the retry must add to it.
 
 ---
 
+## X0498 ✅ — the C core survives a leaked flag (NOT a plan step; it gated S3 attempt 5)
+
+> **STATUS: LANDED 2026-08-22, status E (one question owed to a human, below).**
+> Dispatched ahead of S3 attempt 5 because it changes what an I6 slip *costs*.
+> Full record: `doc/claude/issues/0498-…md`. Suite:
+> `tests/headless/test_undo_link_symbols.tcl` (**6 → 54 checks**).
+
+**⚠ READ THIS BEFORE S3, IT CHANGES THE STEP'S RISK PROFILE.** Four S3 attempts
+have been reverted and I6 has been the standing destructive risk throughout. As
+of X0498 **an I6 slip can no longer take the process down**: a leaked `no_undo`
+carried into `xschem netlist` used to silently replace the user's document with a
+sub-sheet and, when that sub-sheet held more instances than the top, drive
+`draw_hilight_net()` through `xctx->sym[-1]` → SIGSEGV. Both are fixed in the C.
+**An S3 I6 slip now presents as a diagnosable wrong answer, not a segfault.**
+
+### What X0498 measured that CONTRADICTS what this plan and 0498 said
+
+1. **The trigger is `xschem netlist`, NOT `xschem load`.** Three consecutive
+   `xschem load` calls with both flags leaked survive cleanly. `scheduler.c:7611`'s
+   `keep_symbols` is the **local `-keep_symbols` argument** of the load branch, not
+   the Tcl global — a leaked Tcl `keep_symbols` never reaches that
+   `remove_symbols()`. **Do not edit `scheduler.c:7611`**: it would red
+   `test_op_annot` O22/O32 and `test_netlist_log:152-157` and fix nothing.
+2. **`keep_symbols` alone is harmless.** `keep_symbols=1` **and** `no_undo=1` are
+   jointly necessary: `1/0` → SURVIVED, `0/1` → SURVIVED (symbol table silently
+   emptied), `1/1` → SIGSEGV.
+3. **Bullet 18 above is still true and its anchor was wrong.** `xschem get no_undo`
+   does not exist; the setter is `scheduler.c:12030`, **not** `11958` (corrected
+   throughout this file and in spec §5 I6). S3 must still probe `no_undo`
+   **by effect**, never by a getter, and must not let that row pass vacuously.
+4. **Bullet 18's residual is now HARMLESS for the netlisters and only there.**
+   "A caller who wraps the walk in its own `no_undo 1` scope has it silently
+   disarmed" (issue 0432) is unchanged at the **Tcl** level. What changed is that
+   the C walk no longer *depends* on `no_undo` for its own document restore.
+   **S4's `render_deck` is exactly such a caller** — that hazard is unchanged.
+
+### What landed (all C; no Tcl, no PDK file, nothing from S3 touched)
+
+* **Corrective:** `undo_shield_push()` / `undo_shield_pop()` in `src/netlist.c`
+  park `xctx->no_undo` at 0 across each hierarchy walk's **own**
+  `push_undo`/`pop_undo` pair — the five `global_*_netlist` drivers and
+  `hier_psprint` — and restore the caller's value on **every** exit path,
+  including the `fopen`-failure `return 1`. That pair is the walk's save/restore,
+  not editing undo, so an editing flag must not disable it. **I6 applied to the C
+  walk itself.**
+* **Defensive:** `INST_UNBOUND(n)` (`src/xschem.h`) guards `hilight.c:4169` (the
+  crash site) and hoists three pre-existing but *disarmed* guards above the
+  dereference they were written to protect (`draw.c:680`, `psprint.c:992`,
+  `svgdraw.c:755` — upstream `40fd937d` had moved the deref above the guard).
+* **Second defensive layer:** `stored_flags_n` bounds the restore loop in all five
+  netlisters, closing a five-way copy-pasted heap over-read.
+* Stock netlists (nand2, dlatch, flop, bandgap_opamp) are **byte-identical** to
+  the pre-fix binary; every tier is at its measured baseline.
+
+### ⚠ THE ONE THING S3's CREW MUST INHERIT — a predicted red that did not appear
+
+Sabotage **SV1** (shield disabled) predicted the *netlist byte-identity* rows red.
+**They stayed green.** Measured cause: the deck is written **during** the descent,
+so it is genuinely byte-identical even with the restore broken — the damage is
+purely to the **in-memory document afterwards**. Consequences for S3:
+
+* **A netlist-output comparison cannot detect a broken hierarchy-walk restore.**
+  Any S3 row that hopes to catch an I6 slip by diffing the emitted deck is
+  decoration. Probe the **document** after the walk (`xschem get instances`,
+  `xschem get symbols`, `xschem get schname`) — those are the rows that moved.
+* Two further oracles were nominated in X0498's plan and **measured vacuous**:
+  valgrind did *not* catch a reverted `stored_flags` clamp (the over-read sits
+  behind `if(!inst[i].color)` and fresh instances carry `-10000`), and the
+  `draw.c`/`psprint.c`/`svgdraw.c` reorders have **no** behavioural in-suite
+  oracle at all. Both are guarded by **source-text rows only**, and X0498 says so
+  in writing rather than claiming coverage it does not have (issue **0499**).
+* **The crash-survival row's only trustworthy oracle is a child process's exit
+  code**, because the failure kills the process. `test_undo_link_symbols.tcl`'s
+  `exec timeout 45 $xschem … >& $out` idiom is the in-tree precedent, and S3
+  should reuse it rather than an in-process check.
+
+### Numbering, corrected — THIS IS THE LIVE LINE NOW
+
+X0498 consumed **0600, 0601, 0602**. `0499` was the branch ceiling and the whole
+**05xx block is RESERVED for the fluid-editing branch and must stay empty**.
+**Number new issues from 0603.** (The "Number new issues from 0486" line near the
+top of this file is now historical provenance.)
+
+### Filed by X0498, not fixed — three leaking callers and two harness defects
+
+* **0600** — `proc traversal`, `src/xschem.tcl:3572-3598`, in **core** xschem.tcl
+  (not a PDK add-on), leaks `keep_symbols`/`no_draw`/`no_undo` on any raise:
+  normal-path-only restore, no `catch`. **0431's text does not cover it.**
+* **0601** — `tests/headless/test_undo_selection.tcl` deterministically drops
+  `untitled~.sch` in the **repo root**, the exact file class that reds
+  `save_as_cellview` / `untitled_reuse` / `descend_untitled_preserve`. It fired
+  again during X0498's verification. **Any crew running that suite must sweep the
+  repo root afterwards, or three unrelated suites go red.**
+* **0602** — the emergency-save path itself fails during a crash in this state
+  (`rename dir (null) to /tmp/xschem_emergencysave_… failed`), so the handler
+  cannot save the user's work.
+* `sky130A/sky130_procs.tcl:99-108` and `ihp-sg13g2/sg13g2_procs.tcl:351-361`
+  stay on **0431**, deliberately untouched — X0498's scope was the core, not the
+  callers.
+
+### ⚠ STATUS E — the question owed to a human
+
+> A **global** netlist taken while `xschem set no_undo 1` is in force now pushes
+> one undo slot where it previously pushed none. **Measured price, larger than
+> "one slot":** on `bandgap_opamp` (75 instances), 10 netlists — **disk undo
+> 204 ms vs 36 ms (~6×**, one gzip subprocess per push**); memory undo 73 ms vs
+> 31 ms (~2.4×)**. Correct runs (`no_undo=0`) are unchanged. The regression lands
+> precisely on the batch-netlisting workflow that sets `no_undo` *for speed*.
+> **Ratify that, or require the netlister to refuse when `no_undo` is set.**
+
+### Still open after X0498 (adversary residuals — none refuted the step)
+
+* The unbound-instance deref class is **narrowed, not closed**:
+  `xctx->sym[xctx->inst[i].ptr]` is still unguarded in `move.c` (12 sites),
+  `editprop.c` (6), `save.c:4328`, `netlist.c`, `select.c:1507`.
+* **`go_back` has its own `pop_undo`-shaped restore that X0498 did not shield.**
+  If it is disableable the same way, the silent-document-loss class is still open
+  on the verb S3's walk uses most.
+* The shield writes back through the **current** global `xctx` at pop time;
+  untested against a context switch (`xschem new_schematic create|switch` returns
+  rc=1 headless).
+* `push_undo()`'s own popen-failure latch (`xctx->no_undo=1`, "stop trying") is
+  now silently overwritten by the shield's pop.
+* The Measure agent's **stock-cell** corruption transcript (bandgap 75 → 13) could
+  **not** be reproduced by the adversary (75 → 75 on both binaries). The synthetic
+  fixture reproduces both failures cleanly and is what the suite guards; treat the
+  stock-cell number as one transcript, not as fact.
+* **Operational, and it cost this crew three contaminated measurements:** a
+  sabotage agent rebuilding `src/xschem` concurrently with a measuring agent makes
+  every tier in that window meaningless (`couldn't execute …: permission denied`,
+  and `run_regression.tcl:112/:119` races two runs into a duplicated HARNESS line).
+  **Serialize sabotage against measurement, and record the binary's md5 with every
+  tier.**
+
+---
+
 ## S3 — hierarchy walk and save-card generation
 
-> **STATUS: ATTEMPTED TWICE (2026-08-16), REVERTED TWICE, NOT DONE.**
+> **STATUS: ATTEMPTED AND REVERTED FOUR TIMES (attempts 1–2 on 2026-08-16;
+> attempt 4's record is issue 0494, its test-side postmortem is 0499). NOT DONE.**
+> **⚠ Read the X0498 section immediately above before attempting it again** — the
+> C core no longer segfaults on an I6 slip, `xschem netlist` (not `xschem load`)
+> was the crash carrier, `scheduler.c:7611` must not be touched, and a
+> netlist-output diff has been **measured unable** to detect a broken walk
+> restore. Probe the document, not the deck.
+> **(historical, attempts 1–2:)**
 > Attempt 2 was green at **96 checks / 8 sabotage variants / tiers clean** and
 > was refuted by its adversary pass on ONE of its three mandated fixes. Start
 > from **`doc/claude/issues/0442-attempt-2-reverted.patch`** — verified
@@ -545,7 +690,7 @@ New state key `save_op_params`, default `0`, in the same group as
 Add the checkbox to the Save All dialog (`ase_window.tcl:2854`).
 
 > **⚠ CARRIED FROM S3b — `render_deck` IS THE CALLER ISSUE 0432 IS ABOUT.**
-> `xschem get no_undo` does not exist (setter only, `scheduler.c:11958`) and it
+> `xschem get no_undo` does not exist (setter only, `scheduler.c:12030`) and it
 > does not raise — it returns the **empty string** whether the flag is 0 or 1, so
 > a `catch`-based probe cannot detect it. `save_cards` can therefore only restore
 > `no_undo` to **0**. If `render_deck` wraps the call in its own `no_undo 1`

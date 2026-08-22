@@ -52,10 +52,17 @@ void hier_psprint(char **res, int what)  /* netlister driver */
   struct stat buf;
   Str_hashtable subckt_table = {NULL, 0};
   int save_prev_mod = xctx->prev_set_modify;
+  /* issue 0498: caller's xctx->no_undo, parked while this walk owns the undo slot */
+  int undo_saved;
 
   save = xctx->do_copy_area;
   xctx->do_copy_area = 0;
   if((what & 1)  && !ps_draw(1, 1, 0)) return; /* prolog */
+  /* issue 0498: shield this walk's own save/restore pair from a leaked `xschem set no_undo 1`
+   * (see undo_shield_push(), netlist.c). UNCONDITIONAL: hier_psprint always descends, so the
+   * pop_undo(2, 0) / pop_undo(4, 0) below are always owed. The one early return above this
+   * point is before the push, so the tail is the only exit that must drop the shield. */
+  undo_saved = undo_shield_push();
   xctx->push_undo();
   str_hash_init(&subckt_table, HASHSIZE);
   zoom_full(0, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
@@ -134,6 +141,7 @@ void hier_psprint(char **res, int what)  /* netlister driver */
   xctx->pop_undo(4, 0);
   xctx->prev_set_modify = save_prev_mod;
   my_strncpy(xctx->current_name, rel_sym_path(xctx->sch[xctx->currsch]), S(xctx->current_name));
+  undo_shield_pop(undo_saved); /* issue 0498: every exit path, I6 */
   xctx->do_copy_area = save;
   if(what & 1) ps_draw(4, 1, 0); /* trailer */
 }
@@ -257,6 +265,14 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  const char *str_tmp;
  int multip;
  unsigned int *stored_flags;
+ /* issue 0498: stored_flags is sized at the ENTRY instance count but was read back
+  * over the CURRENT one. Nothing but pop_undo() enforces "those two are equal", and
+  * xctx->no_undo silently disables pop_undo -- so a leaked no_undo turned the restore
+  * loop below into a heap over-read that fed garbage into xctx->inst[].color and took
+  * draw_hilight_net() down. Keep the size the loop must respect. */
+ int stored_flags_n;
+ /* issue 0498: caller's xctx->no_undo, parked while this walk owns the undo slot */
+ int undo_saved;
  int i;
  const char *type;
  char *place=NULL;
@@ -287,6 +303,10 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  exit_code = 0; /* reset exit code */
  split_f = tclgetboolvar("split_files");
  dbg(1, "global_spice_netlist(): invoking push_undo()\n");
+ /* issue 0498: shield this walk's own save/restore pair from a leaked
+  * `xschem set no_undo 1` (see undo_shield_push(), netlist.c). Gated on `global`:
+  * a non-global run owes no pop_undo, so it must not be made to push either. */
+ undo_saved = global ? undo_shield_push() : xctx->no_undo;
  xctx->push_undo();
  xctx->netlist_unconn_cnt=0; /* unique count of unconnected pins while netlisting */
  statusmsg("",2);  /* clear infowindow */
@@ -307,6 +327,7 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  fd=fopen(netl_filename, "w");
  if(fd==NULL) {
    dbg(0, "global_spice_netlist(): problems opening netlist file\n");
+   undo_shield_pop(undo_saved); /* issue 0498: every exit path, I6 */
    return 1;
  }
  fprintf(fd, "** sch_path: %s\n", xctx->sch[xctx->currsch]);
@@ -435,8 +456,9 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  /* warning if two symbols perfectly overlapped */
  err |= warning_overlapped_symbols(0);
  /* preserve current level instance flags before descending hierarchy for netlisting, restore later */
- stored_flags = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(unsigned int));
- for(i=0;i<xctx->instances; ++i) stored_flags[i] = xctx->inst[i].color;
+ stored_flags_n = xctx->instances;
+ stored_flags = my_calloc(_ALLOC_ID_, stored_flags_n, sizeof(unsigned int));
+ for(i=0;i<stored_flags_n; ++i) stored_flags[i] = xctx->inst[i].color;
 
  if(global)
  {
@@ -536,7 +558,8 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
    my_free(_ALLOC_ID_, &current_dirname_save);
  }
  /* restore hilight flags from errors found analyzing top level before descending hierarchy */
- for(i=0;i<xctx->instances; ++i) if(!xctx->inst[i].color) xctx->inst[i].color = stored_flags[i];
+ for(i=0; i<stored_flags_n && i<xctx->instances; ++i)
+   if(!xctx->inst[i].color) xctx->inst[i].color = stored_flags[i];
  propagate_hilights(1, 0, XINSERT_NOREPLACE);
  draw_hilight_net(1);
  my_free(_ALLOC_ID_, &stored_flags);
@@ -609,6 +632,7 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  xctx->netlist_count = 0;
  tclvareval("show_infotext ", my_itoa(err), NULL); /* critical error: force ERC window showing */
  exit_code = err ? 10 : 0;
+ undo_shield_pop(undo_saved); /* issue 0498: every exit path, I6 */
  return err;
 }
 

@@ -1,0 +1,41 @@
+# 0600 - `proc traversal` (core xschem.tcl) leaks keep_symbols / no_draw / no_undo on a raise
+
+STATUS: OPEN - FILED, NOT FIXED (found during X0498, out of that step's scope)
+
+`src/xschem.tcl:3572-3576` sets `keep_symbols`, `no_draw` and `no_undo` around its hierarchy
+walk and restores them at `:3596-3598` **on the normal path only** - no `catch`, no `finally`.
+Any error raised between those points leaks all three for the rest of the session.
+
+This is the same shape as issue 0431, but 0431's text covers only the two PDK add-ons
+(`sky130A/sky130_procs.tcl:99-108`, `ihp-sg13g2/sg13g2_procs.tcl:351-361`). This one is in
+**core** `xschem.tcl`, so it ships to every user with no PDK installed.
+
+Why it matters after X0498: X0498 made a leaked `no_undo` unable to corrupt or crash the
+netlisters (the undo shield, `src/netlist.c`), so this leak is no longer a data-loss defect -
+but it still leaves `no_draw=1` (a dead screen) and `keep_symbols=1` behind, and violates
+spec `doc/claude/specs/op_annotation.md` section 5 invariant I6.
+
+No menu wiring for `traversal` was found on this tree; it is reachable by name from any rc or
+script.
+
+## Measured
+
+`src/xschem.tcl:3572-3576` sets the three flags; `:3596-3598` restores them. There is no
+`catch` and no `finally` between those points, so the restore is reachable only when the body
+completes normally. Read and confirmed twice during X0498 (Scout and Measure agents,
+independently).
+
+No menu wiring for `traversal` was found on this tree, which is why this is filed rather than
+fixed: the reachable-from-a-click argument that made 0431 urgent does not apply here. It is
+still shipped core Tcl and still violates I6.
+
+## Fix direction
+
+`catch {…} err`, restore all three flags **and** the entry hierarchy level unconditionally,
+then re-raise. `xschem get no_undo` does not exist (setter only, `scheduler.c:12030`), so
+`no_undo` can only be restored to `0` — which is the pre-existing issue **0432** residual, not
+something this fix can close.
+
+## Still open
+
+Whether the same shape exists in the other core-Tcl walks. Only `proc traversal` was audited.

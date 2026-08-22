@@ -4159,6 +4159,14 @@ void draw_hilight_net(int on_window)
        ++i;
        if(i >= xctx->instances) break;
      }
+     /* issue 0498: an instance whose symbol never got linked (.ptr < 0) makes the
+      * symptr assignment below (sym[] indexed by that .ptr) read xctx->sym[-1] and SEGFAULT.
+      * propagate_hilights() above already guards this and only prints; this loop -- the
+      * copy that actually dereferences sym[] -- never got the guard. One int compare,
+      * placed before the color gate so the hash and the linear iteration are both covered
+      * (the color values themselves can be garbage: the netlisters' stored_flags restore
+      * loop can overrun its allocation when the walk left more instances than it found). */
+     if(INST_UNBOUND(i)) continue;
      if(xctx->inst[i].color != -10000)
      {
       int val = xctx->inst[i].color;
