@@ -14,6 +14,91 @@ Newest entries on top.
 
 ---
 
+## Q48. My sky130 transistors used to show `id=` and `gm=` as soon as I loaded a simulation. They stopped. Where did they go, and how do I get them back?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate` @ `df53d254` — issues **0475**, **0476**, **0457**, spec `op_annotation.md` S10.
+
+**They were switched off on purpose, and there is a one-click way back.**
+
+sky130's 40 shipped FET symbols each carried four texts baked into the symbol
+file — `id=`, `gm=`, `vgs=`, `vds=` — 119 records in all. They rendered whenever
+a raw was loaded, with no way to turn them off. The OP-annotation work replaces
+them with one formatted block (six values by default: `id gm gds vgs vth vds`),
+so leaving both on would print two sets of numbers over each other. The 119
+records gained one token, `hide=true`.
+
+### Getting the old texts back
+
+**View > Show hidden texts.** That is the whole escape hatch — the token is
+`hide=true`, which answers to `show_hidden_texts` and *not* to `annot_show`, so
+the four come back at any annotation setting. Scriptable as:
+
+```tcl
+xschem set show_hidden_texts 1 ; set ::show_hidden_texts 1
+xschem update_all_sym_bboxes
+```
+
+Set both halves. The C field is what drawing reads; the Tcl variable is what the
+menu checkbutton and a later pull read, and writing only one leaves them
+disagreeing.
+
+**Permanently, for your own library**, delete the token from the symbol files:
+
+```sh
+find sky130A/xschem_libs/sky130_fd_pr -name '*.sym' \
+  -exec perl -0pi -e 's/\{layer=(15|17)\nhide=true\}/{layer=$1}/g' {} +
+```
+
+Check first with `grep -rc 'hide=true' sky130A/xschem_libs/sky130_fd_pr --include='*.sym'`
+— expect 119 records across 40 files before, 0 after.
+
+### Why this is not simply a loss
+
+Three things, in order of how much they matter:
+
+1. **With no raw loaded the old texts were noise.** They rendered literally as
+   `id=-  gm=-  vgs= -  vds= - ` on every transistor in the schematic. The new
+   block draws nothing at all until there is data.
+2. **The new block shows more, and formats it.** Six values in an aligned
+   monospace column instead of four values in four separately-placed texts, with
+   engineering suffixes and a consistent width.
+3. **It is one keystroke.** `6` turns annotation on, `Ctrl-6` off, `Alt-6`
+   cycles. The old texts had no switch of any kind.
+
+### The honest catch
+
+The new block only fires if XSCHEM has loaded `sky130_procs.tcl`, which happens
+via `sky130A/cadence_style_rc`. **If your rc never sources it, you get neither
+the new block nor the old texts** — that is real subtraction, and it is issue
+0475's whole question. Ratified 2026-08-22: ship it, with *Show hidden texts* as
+the way back. Issue **0457** tracks the missing stock control for the mask, and
+until it lands the `6` key is the only affordance outside the cadence profile.
+
+### What hiding them did NOT fix
+
+Measured on the sky130 `bandgap_opamp` bench, 2026-08-22: the annotation block
+still collides with the symbol's **geometry** text — `pfet_01v8`, `nf=1`,
+`1 x 1 / 6` — and with the `VCC`/`VSS` pin labels, none of which carry a `hide=`
+token or answer to any knob. On a typical instance **4 of the 6 rows are
+unreadable**. Two adjacent devices in that schematic, `M2` and `M18`, show it
+cleanly: identical code, one perfectly legible, one destroyed, purely by where
+the block landed. That is issue **0605**, ruled 2026-08-22 as "the overlay's
+position, size, layer, font and anchor will all become user-controllable —
+later, after basic functionality."
+
+So: hiding `id=`/`gm=` bought **no space**. It removed the duplicate, which was
+its actual job.
+
+### Not sky130
+
+gf180's 38 records have shipped with `hide=true` all along. **IHP is the one PDK
+whose annotation texts still answer to no knob at all** (2 inductor records plus
+`annotate_fet_params`), as do 30 records in `xschem_library/devices/*.sym` —
+issue **0476** records that as a deliberate omission, not an oversight.
+
+---
+
 ## Q46. `xschem move_objects END` did nothing and my test still passed. Is a typo'd sub-verb an error now, and how far does the check reach?
 
 - **Asked:** 2026-08-12

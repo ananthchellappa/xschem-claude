@@ -95,3 +95,27 @@ three scripts that build them (`step1_netlist.tcl`, `step2_annot.tcl`,
 `step4_zoom.tcl`) are the whole recipe and are ~25 lines each. The only manual
 step was adding one `.lib …/sky130.lib.spice tt` line to the netlist, because the
 bench expects `$::SKYWATER_MODELS` from the workarea rc.
+
+---
+
+## RULING (the user, 2026-08-22)
+
+**Yes — the overlay's size, layer, font and anchor WILL be user-controllable.**
+Position too: the earlier deferral already set that direction ("provide a means
+for the user to select such annotation and move it").
+
+**Not now.** Verbatim: *"we don't worry about that for now. For now, we are
+concerned with basic functionality - which we will tweak later."*
+
+So this is settled in DIRECTION and deferred in EXECUTION. Nothing here blocks
+the current work, and no step should spend effort making these constants
+configurable until basic functionality is done. When it is picked up it lands
+together with the selectable/movable work and 0606 (the bbox refresh that is a
+prerequisite for clicking the block at all).
+
+What the sky130 `bandgap_opamp` look measured, and what the eventual fix must
+beat: on a typical instance **4 of the 6 rows are unreadable**, shredded by the
+symbol's own geometry text (`pfet_01v8`, `nf=1`, `1 x 1 / 6`) and the VCC/VSS
+pin labels — NOT by the `id=`/`gm=` texts S10b hid. Adjacent devices `M2` and
+`M18` in the same schematic show it cleanly: identical code, one readable, one
+destroyed, purely by where the block landed. Images in `~/op_annot_demo/`.

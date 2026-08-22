@@ -403,3 +403,44 @@ Measured by the adversary pass and deliberately not fixed here.
     `git diff -- sky130A | md5sum` — every number here was taken with that stable at
     `6ab928dcee2d6321a73cdbb09d97577a` and `git status --short --untracked-files=no`
     at exactly 42 files.
+
+---
+
+## 10. RULING (the user, 2026-08-22) — **(a), ship as implemented**
+
+Verbatim: *"Yes, we move to the new regime. Our local repo sky130 turns off that
+noise... We are always going to improve things."*
+
+So option **(a)**: the 119 `hide=true` records stay, `View > Show hidden texts`
+is the way back, and no built-in `sky130_fd_pr` fallback registration (b) and no
+`annot_show` default change (c) are wanted. This matches the state gf180's 38
+records have shipped in all along.
+
+**Documented for the user in `doc/claude/FAQ.md` Q48**, which is the deliverable
+the ruling asked for: what disappeared, the one-click way back
+(`show_hidden_texts`, and note it must be set in BOTH the C field and the Tcl
+var), a verified permanent revert for a private library, and why the change is
+not simply a loss.
+
+The revert one-liner in Q48 was measured on a copy of the real library before
+shipping: 119 records across 40 files -> 0, with the `{layer=15}` / `{layer=17}`
+tails restored to 79 / 40 exactly, i.e. byte-identical to the pre-S10b files.
+
+### One argument the crew that implemented (a) did not have
+
+Hiding the four texts was supposed to stop them colliding with the overlay.
+Measured on the sky130 `bandgap_opamp` bench 2026-08-22, **it bought no space at
+all**: the overlay collides with the symbol's *geometry* text (`pfet_01v8`,
+`nf=1`, `1 x 1 / 6`) and the `VCC`/`VSS` pin labels, none of which carry a
+`hide=` token. 4 of 6 rows unreadable on a typical instance. The `hide=true`
+edit did the job it actually had — removing a DUPLICATE — and none of the job it
+was thought to have. That belongs to 0605, ruled the same day.
+
+### Still open, and NOT settled by this ruling
+
+* **0457** — outside the cadence profile there is still no stock affordance for
+  `annot_show`; the `6` key is the only one. The FAQ says so plainly.
+* **0476** — IHP's 2 inductor records, `annotate_fet_params`, and 30 records in
+  `xschem_library/devices/*.sym` still answer to no knob at all. The user's
+  "we are always going to improve things" points at fixing those the same way,
+  but that is a change to make, not a question to answer.
