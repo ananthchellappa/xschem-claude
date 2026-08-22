@@ -20,23 +20,43 @@
 #
 # THE ONE RULE THIS FILE EXISTS TO PROTECT
 #
-# There are TWO lists and they are not interchangeable:
+# There are THREE lists. Two of them are the USER'S QUEUE and one is not, and no
+# code path converts any into another:
 #
-#            suite debt                     look debt
-#   pays     a script                       the USER
-#   verdict  PASS/FAIL                      judgment
-#   clears   itself, on a pass              ONLY `owed.sh clear look <id>`
+#            rule debt              look debt              suite debt
+#   pays     the USER               the USER               a script
+#   asks for a ruling, in words     a judgment, on pixels  a :0 run
+#   verdict  a decision             judgment               PASS/FAIL
+#   clears   ONLY `clear rule <id>` ONLY `clear look <id>` itself, on a pass
 #
-# No code path here converts one into the other, and `drain` does not so much as
-# read the look list. A ledger that cleared an eyeball because a suite went
-# green would be precisely the defect the eyeball rule was written about.
+# `drain` reads the SUITE list and nothing else -- it does not so much as open
+# the other two. A ledger that cleared an eyeball because a suite went green
+# would be precisely the defect the eyeball rule was written about, and a ledger
+# that closed a RULING that way would be the same defect wearing a tie.
+#
+# WHY `rule` WAS ADDED (2026-08-22, at the user's instruction)
+#
+# The E questions a driver run emits -- "ratify this user-visible change, or
+# revert it" -- are owed by the user exactly as a look is, and were living in a
+# markdown table in doc/claude/ledger/ purely because that is where the run's
+# own table happened to be. Two queues in two files, both waiting on one person,
+# who then has to know which file each lives in. Worse, the split does not even
+# cut cleanly: four of the nine open rulings on the OP-annotation branch (0457,
+# 0458, 0468, 0475) cannot be decided WITHOUT looking at pixels. So a rule entry
+# can carry the `eyes` tag, and `list`/`show` say so.
+#
+# A rule entry is a POINTER, not a copy. The question's option set (a/b/c), its
+# measurements and its history stay in doc/claude/issues/NNNN-*.md, which `add`
+# resolves automatically from the id and records as `ref:`. Flattening a
+# three-option ruling into one ledger line is how the options get lost.
 #
 # Spec: doc/claude/specs/owed.md
 #
 # USAGE
-#   owed.sh add suite <name> [why]      owed.sh list [suite|look]
-#   owed.sh add look <what> [why]       owed.sh show
-#   owed.sh drain [--display :0]        owed.sh clear <suite|look> <id>
+#   owed.sh add rule  <id> [why] [--eyes] [--ref <path>]
+#   owed.sh add look  <what> [why]      owed.sh list [rule|look|suite]
+#   owed.sh add suite <name> [why]      owed.sh show
+#   owed.sh drain [--display :0]        owed.sh clear <rule|look|suite> <id>
 #   owed.sh count
 #
 #   XSCHEM_OWED_DIR   state dir, default $HOME/.claude/xschem_owed
@@ -64,11 +84,16 @@ _slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-64; }
 # status propagate and let the caller die.
 _kind_dir() {
   case "$1" in
-    suite|look) _dir "$1" ;;
+    rule|suite|look) _dir "$1" ;;
     *) return 2 ;;
   esac
 }
-_bad_kind() { _die "unknown kind '$1' -- expected 'suite' or 'look'" 2; }
+_bad_kind() { _die "unknown kind '$1' -- expected 'rule', 'look' or 'suite'" 2; }
+
+# The order the two READING commands walk the lists: the user's own queue
+# first, the self-clearing one last. `count` prints them in this order too, so
+# a caller can never pick the wrong field by position.
+KINDS="rule look suite"
 
 # Read an entry, or fail. A hand-edited or truncated file must not be fatal to
 # the rest of the ledger, and must not be silently skipped either.
@@ -88,11 +113,53 @@ _age_days() {  # $1 epoch
   echo $(( (now - $1) / 86400 ))
 }
 
+# OPTIONAL FIELDS live on lines 2+ as `key:value`, NOT as extra tab-separated
+# columns on line 1. _read_entry splits line 1 on tabs and hands everything
+# after the second tab to `reason`, so a fourth column would silently appear
+# glued to the end of every reason string in every existing reader. Line 1 is
+# frozen; growth happens downward.
+_entry_field() {  # $1 path, $2 key -> prints value, empty if absent
+  sed -n "2,\$ s/^$2://p" "$1" 2>/dev/null | head -1
+}
+
+# doc/claude/issues/NNNN-*.md for a bare issue id, so a rule debt points at the
+# file holding its option set instead of trying to restate it. Silent when it
+# resolves to nothing: an id with no issue file yet is a normal early state, and
+# an invented path would be worse than none.
+_issue_ref() {  # $1 id -> prints repo-relative path, or nothing
+  local n="$1" root f
+  case "$n" in [0-9][0-9][0-9][0-9]) ;; *) return 0 ;; esac
+  root=$(cd "$HERE/../.." 2>/dev/null && pwd) || return 0
+  for f in "$root/doc/claude/issues/$n"-*.md; do
+    [ -e "$f" ] || return 0
+    printf '%s' "${f#$root/}"
+    return 0
+  done
+}
+
 # ---------------------------------------------------------------------------
 cmd_add() {
-  local kind="${1:-}" subject="${2:-}" why="${3:-}"
-  [ -n "$kind" ] && [ -n "$subject" ] || _die "usage: $0 add <suite|look> <what> [why]" 2
+  local kind="" subject="" why="" eyes=0 ref="" positional=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --eyes) eyes=1 ;;
+      --ref)  shift; ref="${1:-}"; [ -n "$ref" ] || _die "--ref needs a value" 2 ;;
+      --*)    _die "unknown option '$1'" 2 ;;
+      *)      positional=$((positional + 1))
+              case "$positional" in
+                1) kind="$1" ;;
+                2) subject="$1" ;;
+                3) why="$1" ;;
+                *) _die "too many arguments -- quote the reason as ONE word" 2 ;;
+              esac ;;
+    esac
+    shift
+  done
+  [ -n "$kind" ] && [ -n "$subject" ] \
+    || _die "usage: $0 add <rule|look|suite> <what> [why] [--eyes] [--ref <path>]" 2
   local d; d=$(_kind_dir "$kind") || _bad_kind "$kind"
+  [ "$eyes" = 1 ] && [ "$kind" != rule ] \
+    && _die "--eyes is a RULE tag: a look debt already needs eyes, and a suite debt never does" 2
   mkdir -p "$d" || _die "cannot create $d" 3
 
   local id
@@ -102,6 +169,14 @@ cmd_add() {
       # the newer reason is the informative one.
       id=$(_slug "$subject")
       ;;
+    rule)
+      # DEDUPED by id, for the same reason and a stronger one: a ruling IS its
+      # issue number. Re-adding 0444 is a re-statement of one open question, not
+      # a second question, and two 0444 entries would let the user answer one
+      # and still see the other standing.
+      id=$(_slug "$subject")
+      [ -n "$ref" ] || ref=$(_issue_ref "$subject")
+      ;;
     look)
       # NEVER deduped. Two different things can carry the same description
       # ("the marker callout"), and merging them would silently drop one -- the
@@ -110,14 +185,17 @@ cmd_add() {
       ;;
   esac
   printf '%s\t%s\t%s\n' "$(date +%s)" "$subject" "$why" > "$d/$id"
+  [ "$eyes" = 1 ] && printf 'eyes:1\n' >> "$d/$id"
+  [ -n "$ref" ]   && printf 'ref:%s\n' "$ref" >> "$d/$id"
   _say "recorded $kind debt: $subject"
+  return 0
 }
 
 cmd_list() {
   local want="${1:-}"
-  case "$want" in ''|suite|look) ;; *) _die "unknown kind '$want'" 2 ;; esac
-  local total=0 k d f line epoch subject reason
-  for k in suite look; do
+  case "$want" in ''|rule|suite|look) ;; *) _die "unknown kind '$want'" 2 ;; esac
+  local total=0 k d f line epoch subject reason tag ref
+  for k in $KINDS; do
     [ -n "$want" ] && [ "$want" != "$k" ] && continue
     d=$(_dir "$k")
     local n=0
@@ -129,14 +207,19 @@ cmd_list() {
       fi
       if [ "$n" -eq 0 ]; then
         case "$k" in
-          suite) echo "SUITE debts — a :0 run each; cleared automatically when one passes" ;;
+          rule)  echo "RULE debts — need YOUR ruling; cleared only by 'owed.sh clear rule <id>'" ;;
           look)  echo "LOOK debts — need YOUR eyes; cleared only by 'owed.sh clear look <id>'" ;;
+          suite) echo "SUITE debts — a :0 run each; cleared automatically when one passes" ;;
         esac
       fi
       n=$((n + 1)); total=$((total + 1))
       epoch=${line%%	*}; line=${line#*	}
       subject=${line%%	*}; reason=${line#*	}
-      printf '  [%s] %-34s %3sd  %s\n' "$(basename "$f")" "$subject" "$(_age_days "$epoch")" "$reason"
+      tag=""
+      [ "$(_entry_field "$f" eyes)" = 1 ] && tag=" [needs eyes]"
+      printf '  [%s] %-34s %3sd  %s%s\n' "$(basename "$f")" "$subject" "$(_age_days "$epoch")" "$reason" "$tag"
+      ref=$(_entry_field "$f" ref)
+      [ -n "$ref" ] && printf '  %-37s      read: %s\n' "" "$ref"
     done
     [ "$n" -gt 0 ] && echo
   done
@@ -144,39 +227,62 @@ cmd_list() {
   return 0
 }
 
+_count_kind() { ls -1 "$(_dir "$1")" 2>/dev/null | wc -l | tr -d ' '; }
+
+# Prints in $KINDS order, and every consumer must SELECT BY NAME. The previous
+# consumer was `count | sed 's/.*, //'` inside drain, meaning "the last field
+# is the look count" -- true only while there were exactly two fields, and
+# silently reporting the RULE count the moment a third arrived.
 cmd_count() {
-  local s l
-  s=$(ls -1 "$(_dir suite)" 2>/dev/null | wc -l | tr -d ' ')
-  l=$(ls -1 "$(_dir look)"  2>/dev/null | wc -l | tr -d ' ')
-  echo "$s suite, $l look"
+  local k out=""
+  for k in $KINDS; do
+    [ -n "$out" ] && out="$out, "
+    out="$out$(_count_kind "$k") $k"
+  done
+  echo "$out"
 }
 
+# `show` is the USER'S QUEUE, read aloud: rule debts and look debts together,
+# because from where the user sits they are one queue -- both are owed by them,
+# both are cleared only by them, and four of the OP-annotation rulings need a
+# look before they can be ruled on anyway. Suite debts stay out: nobody needs to
+# be told about work a script will do.
 cmd_show() {
-  local d f line epoch subject reason n=0
-  d=$(_dir look)
-  for f in "$d"/*; do
-    [ -e "$f" ] || continue
-    line=$(_read_entry "$f") || { _warn "skipping unreadable entry $f"; continue; }
-    if [ "$n" -eq 0 ]; then
-      echo "These need a HUMAN. No suite can discharge them — that is the point:"
-      echo "a green suite is a precondition for asking you to look, never an answer."
-      echo
-    fi
-    n=$((n + 1))
-    epoch=${line%%	*}; line=${line#*	}
-    subject=${line%%	*}; reason=${line#*	}
-    printf '  %s\n' "$subject"
-    [ -n "$reason" ] && printf '      why: %s\n' "$reason"
-    printf '      waiting %s day(s)   clear with: %s clear look %s\n\n' \
-           "$(_age_days "$epoch")" "$0" "$(basename "$f")"
+  local k d f line epoch subject reason n=0 ref
+  for k in rule look; do
+    d=$(_dir "$k")
+    for f in "$d"/*; do
+      [ -e "$f" ] || continue
+      line=$(_read_entry "$f") || { _warn "skipping unreadable entry $f"; continue; }
+      if [ "$n" -eq 0 ]; then
+        echo "These need a HUMAN. No suite can discharge them — that is the point:"
+        echo "a green suite is a precondition for asking you, never an answer."
+        echo
+      fi
+      n=$((n + 1))
+      epoch=${line%%	*}; line=${line#*	}
+      subject=${line%%	*}; reason=${line#*	}
+      if [ "$k" = rule ] && [ "$(_entry_field "$f" eyes)" = 1 ]; then
+        printf '  %s   (a RULING — and one you must LOOK to make)\n' "$subject"
+      elif [ "$k" = rule ]; then
+        printf '  %s   (a RULING)\n' "$subject"
+      else
+        printf '  %s\n' "$subject"
+      fi
+      [ -n "$reason" ] && printf '      why: %s\n' "$reason"
+      ref=$(_entry_field "$f" ref)
+      [ -n "$ref" ] && printf '      the options are in: %s\n' "$ref"
+      printf '      waiting %s day(s)   clear with: %s clear %s %s\n\n' \
+             "$(_age_days "$epoch")" "$0" "$k" "$(basename "$f")"
+    done
   done
   if [ "$n" -eq 0 ]; then
-    echo "no look debts."
+    echo "nothing owed by you."
     return 0
   fi
-  echo "To serve these: tests/headless/devdisplay.sh view   (a VNC window onto the"
-  echo "test display — your attention is what is scarce here, not the screen), or"
-  echo "DISPLAY=:0 if the point IS how WSLg itself renders it."
+  echo "To serve the looks: tests/headless/devdisplay.sh view   (a VNC window onto"
+  echo "the test display — your attention is what is scarce here, not the screen),"
+  echo "or DISPLAY=:0 if the point IS how WSLg itself renders it."
 }
 
 cmd_clear() {
@@ -269,7 +375,7 @@ cmd_drain() {
 
   if [ "${#names[@]}" -eq 0 ]; then
     echo "no suite debts to drain."
-    echo "(look debts are untouched by drain, by design: $0 show)"
+    echo "(rule and look debts are untouched by drain, by design: $0 show)"
     return 0
   fi
 
@@ -323,11 +429,21 @@ cmd_drain() {
 
   echo
   echo "drained: $ran run, $passed passed, $failed failed, $((ran - passed)) still owed"
-  echo "look debts untouched: $($0 count | sed 's/.*, //')"
+  # BY NAME, not by position -- see cmd_count. And BOTH user-owed lists are
+  # named: an unmentioned list is one a reader can believe was drained.
+  echo "look debts untouched: $(_count_kind look)"
+  echo "rule debts untouched: $(_count_kind rule)"
   [ "$failed" -eq 0 ]
 }
 
-cmd_help() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
+# The comment block this prints now runs past line 45 (the `rule` rationale),
+# so the window is found rather than hard-coded: from line 2 to the last line
+# that still begins with `#`.
+cmd_help() {
+  local last
+  last=$(awk 'NR>1 && !/^#/ {print NR-1; exit}' "$0")
+  sed -n "2,${last}p" "$0" | sed 's/^# \{0,1\}//'
+}
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-list}" in

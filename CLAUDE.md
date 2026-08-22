@@ -138,28 +138,38 @@ false; and `xdpyinfo` against a dead display **hangs** on the TCP fallback rathe
 than failing — check the listen state before probing.
 
 ### The owed ledger (`tests/headless/owed.sh`)
-Two debts still cost the user's attention, and both used to arrive scattered —
-one at a time, whenever a feature happened to finish. Record them instead, pay
-them in one batch:
+Three debts still cost the user's attention, and they used to arrive scattered —
+one at a time, whenever a feature happened to finish, and out of *two different
+files*. Record them instead, pay them in one batch:
 
 ```sh
-owed.sh add suite <name> [why]   # owes a :0 run  ("run a GUI feature's suite on
-                                 #   :0 once before calling it done")
-owed.sh add look  <what> [why]   # owes the USER's eyes (pixel deliverables)
-owed.sh list | count | show
-owed.sh drain                    # runs the SUITE debts, one batch, gate live
+owed.sh add rule  <id> [why] [--eyes]  # owes the USER a RULING (a driver run's
+                                       #   E questions; --eyes if it cannot be
+                                       #   decided without looking at pixels)
+owed.sh add look  <what> [why]         # owes the USER's eyes (pixel deliverables)
+owed.sh add suite <name> [why]         # owes a :0 run ("run a GUI feature's
+                                       #   suite on :0 once before calling it done")
+owed.sh list | count | show            # `show` = the user's queue: rule + look
+owed.sh drain                          # runs the SUITE debts, one batch, gate live
 ```
 
-**The two lists are not interchangeable and no command converts one into the
-other.** A suite debt clears itself on a pass; a **look debt clears only when
-the user says so** (`owed.sh clear look <id>`). `drain` does not read the look
-list at all. A ledger that discharged an eyeball because a suite went green
-would be exactly the defect that rule was written about — two defects shipped
-past 28 passing checks. Spec: `doc/claude/specs/owed.md`.
+**`rule` and `look` are the user's queue; `suite` is not.** A suite debt clears
+itself on a pass. A **rule or look debt clears only when the user says so**
+(`clear rule <id>` / `clear look <id>`), and no command converts one kind into
+another — `drain` does not so much as open the other two lists. A ledger that
+discharged an eyeball because a suite went green would be exactly the defect
+that rule was written about (two defects shipped past 28 passing checks), and
+one that closed a *ruling* that way would be the same defect wearing a tie.
+
+**A rule entry is a pointer, not a copy.** The option set stays in
+`doc/claude/issues/NNNN-*.md`; `add rule` resolves the path from the id. Spec:
+`doc/claude/specs/owed.md` (§6 for why `rule` exists).
 
 Assistant: `add` at the moment the debt is incurred; it costs nothing and is the
 only thing that makes the batching possible. Never report a pixel deliverable
 "done" on a green suite — record a `look` and say "suites green, please look".
+Never leave a step's unratified user-visible decision in a write-up only —
+record a `rule`, or the user never sees it was theirs to make.
 
 ### The display arm: Xvfb by default (`tests/headless/xvfb_arm.sh`)
 `full_audit.sh`, `run_suites.sh`, `gated_xschem.sh` and the 7 window-mapping
