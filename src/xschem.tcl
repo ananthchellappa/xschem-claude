@@ -3564,7 +3564,54 @@ proc traversal_setlabels {w parent_sch instname inst_sch sym_sch default_sch
 }
 
 # This proc traverses the hierarchy and prints all instances in design.
+#
+# Issue 0600. The body sets keep_symbols / no_draw / no_undo and restores them on its
+# NORMAL path only, so any raise in between leaked all three for the rest of the
+# session (dead screen, undo silently a no-op, symbols pinned in memory). The cheapest
+# raise needs no error injection: `toplevel .trav` raises
+#   window name ".trav" already exists in parent
+# whenever a previous traversal window is still up, and .trav is destroyed only by its
+# <Escape> binding, by the Upd button, or by the WM -- none of which a second scripted
+# call performs. This wrapper restores all three unconditionally, unwinds any hierarchy
+# level the walk was still inside, and re-raises the body's error with its original
+# errorInfo (an eaten error would be a worse defect than the leak).
+#
+# Wrapper + _body rather than reindenting the body into a catch, exactly as
+# hi_descend_do (xschem.tcl:6118) -- it keeps the diff off every line of a proc that
+# lives in an actively-edited file. The body's own in-place restore stays where it is:
+# moving it to the end would put its final `update` under no_draw=1 and suppress the
+# window's first paint, and it makes the wrapper's restore an idempotent no-op on the
+# normal path.
+#
+# no_draw/no_undo go back to a hardcoded 0, which is what the body's normal-path restore
+# already did. `xschem get no_undo` does not exist (scheduler.c:12030 is a setter only),
+# so a true save/restore of that one is impossible from Tcl and remains issue 0432's
+# residual. Guardian: tests/headless/test_traversal_flag_leak.tcl.
 proc traversal {{only_subckts 1} {all_hierarchy 1}} {
+  global keep_symbols
+  set save_keep $keep_symbols
+  set save_level [xschem get currsch]
+  set rc [catch {traversal_body $only_subckts $all_hierarchy} res opts]
+  # keep_symbols first: it is a plain Tcl variable and cannot raise, so it is restored
+  # even if the `xschem set` calls below fail (they can only fail with no xctx, in which
+  # case there is no C-side flag left to restore anyway).
+  set keep_symbols $save_keep
+  set rrc [catch {
+    xschem set no_draw 0
+    xschem set no_undo 0
+    # BOUNDED: `xschem go_back` is a silent no-op while xctx->semaphore != 0
+    # (scheduler.c:5907), so an unbounded while would spin forever on a raise taken
+    # under the semaphore. CADMAXHIER is the real ceiling; 64 is comfortably above it.
+    set guard 0
+    while {[xschem get currsch] > $save_level && [incr guard] <= 64} { xschem go_back 2 }
+  } rres ropts]
+  # The body's error wins: a failure to restore must not replace it.
+  if {$rc} { return -options $opts $res }
+  if {$rrc} { return -options $ropts $rres }
+  return $res
+}
+
+proc traversal_body {only_subckts all_hierarchy} {
   global traversal keep_symbols
   set traversal(only_subckts) $only_subckts
   set traversal(all_hierarchy) $all_hierarchy

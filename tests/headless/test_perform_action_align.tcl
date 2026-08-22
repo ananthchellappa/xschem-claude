@@ -46,6 +46,16 @@ proc check {name ok {info {}}} {
 # registers this in logdir_tests so LOG is always set in the real run; the guard
 # keeps a bare invocation from erroring. (deferred, NOT "skipped: no X" -- the
 # token full_audit's is_skip matches -- because the effect is X-independent.)
+# Issue 0601: this suite edits the startup UNTITLED buffer, and set_modify(1) ->
+# write_backup() (src/actions.c:208 -> src/save.c:4149) then writes `untitled~.sch` into
+# the cwd captured at STARTUP (pwd_dir, src/xinit.c:2952) -- the repo root for a hand run,
+# tests/ under run_regression.tcl. Nothing here descends or recovers, so suppress it:
+# write_backup() returns early when autosave_backup is off (src/save.c:4156). See
+# tests/headless/test_undo_selection.tcl for the full note; guarded by
+# tests/headless/test_no_untitled_litter.tcl.
+set ::saved_autosave_0601 $::autosave_backup
+set ::autosave_backup 0
+
 set LOG [xschem get actionlog_filename]
 if {$LOG eq {}} {
   puts "deferred (no --logdir; the perform_action log site needs an open action log)"
@@ -195,6 +205,7 @@ check "(e) 'xschem align' does NOT emit 'xschem trim_wires' (sub-step stays on r
 
 catch {destroy .ciw}; update
 
+set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 puts ""
 puts [expr {$::fails == 0 ? "RESULT: ALL PASS" : "RESULT: $::fails FAILED"}]
 flush stdout
