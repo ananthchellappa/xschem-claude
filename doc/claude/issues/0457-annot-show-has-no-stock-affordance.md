@@ -2,7 +2,8 @@
 
 Status: **BOTH QUESTIONS RULED BY THE USER 2026-08-22.** (a) the resting value
 stays **0**; (b) the control is a **View-menu checkbutton pair**, which needs no C
-action and no build. Implementation owed. See "RULING" at the bottom.
+action and no build — **(b) IMPLEMENTED the same day**, see "IMPLEMENTATION" at
+the bottom. See "RULING" for both decisions.
 Found: S8 of doc/claude/specs/op_annotation.md.
 
 S7 gave `hide=op` / `hide=opvolt` teeth behind the `annot_show` mask and left the
@@ -137,3 +138,81 @@ mask on" is refused, and the fallback-registration alternative can be taken up o
 its own merits.
 
 `owed.sh clear rule 0457` — both halves answered, 2026-08-22.
+
+
+---
+
+# IMPLEMENTATION of (b) — 2026-08-22, Tcl only, no build
+
+`View > Show >`, the two entries directly under *Show hidden texts* — the entry
+FAQ **Q48** already sends users to when their sky130 `id=`/`gm=` texts vanish.
+The two questions arrive together, so the answers sit together.
+
+```
+Show device OP annotation      -> annot_show bit0 (ANNOT_SHOW_OP)
+Show node voltage annotation   -> annot_show bit1 (ANNOT_SHOW_VOLTAGE)
+```
+
+`src/xschem.tcl`, +61/−1:
+
+* `annot_show_menu_sync` — **PULL**, mask → the two derived booleans.
+* `annot_show_menu_apply` — **PUSH**, booleans → mask, then
+  `update_all_sym_bboxes` + `redraw`.
+* the submenu gains `-postcommand annot_show_menu_sync`.
+* `set_ne annot_show_op` / `annot_show_voltage`, seeded from the mask.
+
+### Three decisions worth recording
+
+**PULL is a `-postcommand`, not a call planted next to every writer.** There are
+four writers today — the two `Op Annotate` items and the three cadence chords
+(`utils/annot_mode.tcl`) — and invariant **I5** lets a user's own rc add more. A
+design that needed every writer to remember the menu would drift out of sync the
+first time someone wrote one that did not.
+
+**PULL reads `xschem get annot_show`, not `$::annot_show`.** The mask is
+per-context (`xctx->annot_show`), so under the tabbed interface the Tcl mirror
+describes whichever window last wrote it, not the one whose menu is opening.
+
+**The pair can reach mask 2** — node voltages with device OP info off — which
+none of the three chords produces (they emit 0, 1 and 3 only). `text_hidden()`
+gates the two classes on separate bits, so the state is coherent. A checkbox pair
+that silently refused one of its four combinations would be the worse bug. It does
+mean menu and chords are not in 1:1 correspondence.
+
+## Guardian — `tests/headless/test_annot_show_menu.tcl`, 24 checks
+
+Needs a DISPLAY (the subject is Tk menu entries); must not run under `--nogui`.
+Rows cover presence, **placement** (both sit at `Show hidden texts` + 1 and + 2 —
+the placement is part of the ruling), entry type, which variable each drives, the
+`-postcommand` wiring, PULL for all four masks, PUSH for all four boolean
+combinations, INT normalisation of a Tk-truthy `true`, and the source contract
+(writes through `xschem set`, no bare `set ::annot_show`, runs the bbox pass).
+
+Two rows carry the point of the whole issue:
+
+```
+A13b unticking it turns annotation OFF (the off-ramp)
+A14  mask 2 is reachable from the menu (chords cannot make it)
+```
+
+**Non-vacuous, measured both ways.** A no-op PULL reds 5 rows; an apply that
+ignores bit1 reds a different 5.
+
+## `test_op_annot` row N22 moved 2 → 3, and was made less fragile
+
+N22 counted `xschem set annot_show` in `src/xschem.tcl` and expected **2**. The
+new push half is a legitimate third writer, so the count moved — but a bare
+whole-file count reds for *every* legitimate writer, which is a fragile shape. The
+row now names all three and asserts them **structurally** (N22b) plus the pull
+half's use of `xschem get` (N22c). A fourth writer added without listing it here
+still reds, which is the guard the row exists to be.
+
+## STILL OWED
+
+* **A look debt** — `annot_show View>Show checkbutton pair (0457b)`. 24 headless
+  checks say the *mask* moves; nobody has seen whether the labels read right, sit
+  in the right place, or whether the redraw is clean.
+* **A suite debt** — `test_annot_show_menu` has only run under Xvfb `:99`.
+* **Not done, and not refused:** registering the three chords as C actions in
+  `keybindings.csv` so they are remappable and visible to `xschem bindings dump`
+  (S8 decision D10). That needs a build. The menu pair does not conflict with it.
