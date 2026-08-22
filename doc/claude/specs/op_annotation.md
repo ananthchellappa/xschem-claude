@@ -759,6 +759,77 @@ save, rather than the mechanism for two that it does.
    **additionally reports it once** — in the CIW and in the logfile — instead of
    saying nothing. See invariant **I8**.
 
+### 4.2b The six-row cap — RULING D9b (the user, 2026-08-22)
+
+> *"For ANY PDK, ANY device, only display max of six parameters UNLESS there is a
+> setting to do otherwise. We can't have BJT (NPN, PNP) causing clutter."*
+
+§4.2a decided **which** six a MOS shows. This decides that **six is a ceiling for
+everything**, and it is enforced in the formatter rather than by editing
+descriptors one at a time:
+
+```tcl
+op_annot::text      # builds params, then pinexpr, then derived, then TRUNCATES
+op_annot::max_rows  # -> the effective cap: 6 by default, 0 = no limit
+op_annot::dropped   # -> rows the last text() call dropped, the I8 seam
+```
+
+**Why in the formatter and not in the descriptors.** A descriptor is data that a
+PDK, or a user, writes. There will always be one more PDK than there are
+descriptor files anyone has edited, and a rule that only holds for the three in
+this tree is not the rule that was asked for. The cap holds for a PDK shipped
+next year by somebody who never read this document.
+
+**The setting, which exists today.** `::op_annot_max_rows` — an ordinary Tcl
+variable, settable from any `--script` rc or the console, live on the next redraw
+(invariant **I5**):
+
+```tcl
+set ::op_annot_max_rows 0     ;# no limit — show everything a descriptor carries
+set ::op_annot_max_rows 10    ;# or any other ceiling
+```
+
+`0`, a negative number, or anything that is not an integer all mean **no limit** —
+a typo must not silently hide rows. Issue **0603** is the friendlier means; this
+is the mechanism that means will drive.
+
+**Three properties of where the truncation sits**, each measured by a test row:
+
+* **After all three row classes are built**, so the kept rows are the first N in
+  the descriptor's own declared order — `params`, then `pinexpr`, then `derived`.
+  A PDK author controls what survives by ordering the list.
+* **Before the width pass**, so the label column pads to the longest label
+  *actually shown*. A dropped 7-character label must not leave six rows padded
+  to 7.
+* **Recorded, not silent.** `op_annot::dropped` reports how many rows the last
+  call dropped. Without it, "the cap works" and "the formatter returned nothing"
+  are the same observation — and a silent truncation is precisely the class of
+  thing invariant **I8** exists to make audible. The reporter of **0604** reads
+  this seam.
+
+#### A cap chooses how many; a descriptor still has to choose which
+
+IHP's `vertical_npn` shipped **sixteen** rows — thirteen `params` and three
+`derived` — and is the case that prompted the ruling. Left untrimmed it would not
+have painted sixteen; it would have painted the first six in declared order,
+`gm go gmu gpi gx vbe`: five internal small-signal conductances and no current at
+all. So it was reordered and trimmed, to mirror the MOS six as closely as a
+bipolar allows:
+
+```
+MOS   id   —    gm  gds  vgs  vds
+BJT   ic   ib   gm  go   vbe  vbc
+```
+
+**`vce` is absent, and that is a consequence of the cap rather than an
+oversight.** psp103 publishes `vbe` and `vbc`, not `vce`; the prototype showed
+`vce` as a *derived* row over both. A derived row may only reference labels that
+are themselves displayed rows, so `vce` costs three rows to show one number —
+seven in total, one over the cap, and the cap would then drop `vce` itself as the
+last row. `vbe` and `vbc` carry the same information (`vce = vbe - vbc`) inside
+the budget. Getting the derived row back is two lines and a raised cap, recorded
+in `sg13g2_procs.tcl`.
+
 ### 4.3 The two consumers
 
 **`op_annot::save_cards {}`** — walk the hierarchy (the `sg13g2_sch_expand`

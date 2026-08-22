@@ -44,6 +44,28 @@ What this changes for the steps that have not landed:
   undelivered vector in the CIW and the logfile, once per device+parameter per
   annotate pass; the row still renders blank, I3 is unchanged).
 
+**RULING D9b, the same day: six is a CEILING for every device class, not just
+MOS.** *"For ANY PDK, ANY device, only display max of six parameters UNLESS there
+is a setting to do otherwise. We can't have BJT (NPN,PNP) causing clutter."*
+Spec **§4.2b**.
+
+* Enforced in `op_annot::text`, not by trimming descriptors — a descriptor is
+  data a PDK or a user writes, and there is always one more PDK than there are
+  files anyone has edited. `op_annot::max_rows` is the cap, `op_annot::dropped`
+  is the seam 0604's reporter will read.
+* **The setting exists today**: `set ::op_annot_max_rows 0` (no limit) or any
+  other integer, live on the next redraw. A non-integer or negative value means
+  NO LIMIT, deliberately — a typo must not silently hide rows.
+* Truncation happens **after** all three row classes are built (so declared
+  order decides what survives) and **before** the width pass (so the label
+  column pads to the longest label actually shown).
+* IHP's `vertical_npn` was 16 rows and is now 6 — `ic ib gm go vbe vbc`,
+  reordered as well as trimmed, because the cap alone would have kept
+  `gm go gmu gpi gx vbe`. `vce` costs three rows to show one number and is
+  recoverable with two lines and a raised cap.
+* New test section **R** (8 rows) plus a shipped-descriptor sweep, R8, that a
+  fourth PDK or a fifth device class has to pass.
+
 ---
 
 Implement `doc/claude/specs/op_annotation.md`. **Read that spec in full first** —

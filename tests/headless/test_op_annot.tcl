@@ -772,9 +772,15 @@ set P_GF_PARAMS  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2}
 ## all three PDKs. The {label param kind} triple exists for exactly this.
 set P_IHP_FET_PARAMS {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2}
                       {vds vds 2}}
-set P_IHP_NPN_PARAMS {{gm gm 1} {go go 1} {gmu gmu 1} {gpi gpi 1} {gx gx 1}
-                      {vbe vbe 2} {vbc vbc 2} {ib ib 0} {ic ic 0} {cbe cbe 1}
-                      {cbc cbc 1} {cbep cbep 1} {cbcp cbcp 1}}
+## ⚠ RULING D9b — the HBT is capped at six too, and REORDERED, not merely cut.
+## It shipped sixteen rows; the cap alone would have kept the first six in
+## declared order, `gm go gmu gpi gx vbe` — five internal conductances and no
+## current. A cap chooses how many, a descriptor still chooses which. These six
+## mirror the MOS six: ic/ib currents, gm/go conductances, vbe/vbc junctions.
+## `vce` is gone because it was DERIVED over vbe and vbc and a derived row can
+## only reference DISPLAYED labels — showing it costs three rows for one number.
+set P_IHP_NPN_PARAMS {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2}
+                      {vbc vbc 2}}
 # D6: the SHIPPED spelling (nfet_01v8.sym:65-66), not §4.2's `{@#1 - @#2}`
 # shorthand — the shorthand has no evaluator anywhere in the tree and would force
 # S5 to invent a second expansion convention, which is the I1 drift shape.
@@ -817,7 +823,7 @@ set P_DERIVEDACC [list [list sky130:nmos      {}           {}] \
                        [list gf180:pmos       {}           {}] \
                        [list ihp:nmos         {}           {}] \
                        [list ihp:pmos         {}           {}] \
-                       [list ihp:vertical_npn {rin vce ft} {}]]
+                       [list ihp:vertical_npn {}           {}]]
 
 set P_SKY_LIBS ":[file join $repo sky130A xschem_libs]:[file join $repo xschem_library devices]"
 set P_GF_LIBS  ":[file join $repo gf180mcuD xschem_libs]:[file join $repo xschem_library devices]"
@@ -1041,11 +1047,13 @@ xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_lv_pmos \
 check {P20 ACCEPTANCE IHP dc_lv_pmos: the 6 generated cards are a subset of the prototype's 10} \
   [rcall {opa_card_subset [sg13g2_save_params]}] {0 {10 6 0 {}}}
 
-# 26 = 13 params x two HBTs, npn13G2 and npn13G2_5t, both collapsing to qnpn13g2.
+# The prototype still writes 26 (13 params x two HBTs); the descriptor asks for 12.
 xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_hbt_13g2_5t \
                        schematic dc_hbt_13g2_5t.sch]
-check {P21 ACCEPTANCE IHP dc_hbt_13g2_5t: 26 bare cards == sg13g2_save_params} \
-  [rcall {opa_card_diff [sg13g2_save_params]}] {0 {26 26 1 {}}}
+# ⚠ 12 = 6 params x two HBTs, npn13G2 and npn13G2_5t, both collapsing to
+# qnpn13g2. Was 26 (13 x 2) before ruling D9b trimmed the descriptor to six.
+check {P21 ACCEPTANCE IHP dc_hbt_13g2_5t: the 12 generated cards are a subset of the prototype's 26} \
+  [rcall {opa_card_subset [sg13g2_save_params]}] {0 {26 12 0 {}}}
 
 # ⚠ THE ENTIRE JUSTIFICATION FOR THE `devproc` KEY, isolated from the card diff.
 # `xschem translate` has no regsub, so sg13g2_procs.tcl:321-324's `_5t` strip
@@ -1466,6 +1474,20 @@ set ::opa_s5_tripped 0
 proc opa_s5_tripwire {} { set ::opa_s5_tripped 1 ; return 1e-6 }
 
 if {[catch {
+
+# ⚠ RULING D9b — SECTIONS S AND K RUN WITH THE CAP LIFTED, DELIBERATELY.
+# op_annot::text now shows at most six rows (spec §4.2b, `::op_annot_max_rows`).
+# These two sections are the FORMATTER's and the CARRIER's tests: their goldens
+# are the ten-row block that exercises params AND pinexpr AND derived together,
+# the label column padding to a 5-char label, and — decisively — the 0446/0444
+# guardians, whose rows are the 7th and 8th in declared order and would be the
+# first the cap discards. Capping them would not test the cap; it would delete
+# the only coverage two open C defects have.
+#
+# The cap itself is tested on its own terms in section R, and the DEFAULT is
+# what sections P, O, Q and T measure. Restored immediately after section K.
+set ::op_annot_max_rows 0
+
 
 # ===========================================================================
 # S28 — ISSUE 0444, THE STORED STRINGS (before any fixture, both PDKs)
@@ -2474,6 +2496,139 @@ catch {op_annot::register nmos $k17_good}
 
 } kerr]} {
   puts "UNEXPECTED ERROR (section K): $kerr"
+  incr fail
+}
+
+## ⚠ RESTORE THE D9b DEFAULT. Everything after this point — L, N, O, Q, T — must
+## see what a user sees. A stray `0` here would make every later row measure an
+## uncapped formatter and the cap would be untested from row L1 onward.
+set ::op_annot_max_rows 6
+check {R1 D9b the cap is back to its shipped default after the two lifted sections} \
+  [list $::op_annot_max_rows [op_annot::max_rows]] {6 6}
+
+
+# =============================================================================
+# SECTION R — RULING D9b: THE SIX-ROW CAP, spec §4.2b
+# =============================================================================
+# "For ANY PDK, ANY device, only display max of six parameters UNLESS there is a
+# setting to do otherwise. We can't have BJT (NPN,PNP) causing clutter."
+#
+# ⚠ WHY THE CAP IS IN THE FORMATTER AND NOT IN THE DESCRIPTORS, stated as the
+# thing this section can actually prove: a descriptor is data a PDK or a user
+# writes, and there will always be one more PDK than there are descriptor files
+# anybody has edited. So the rows below register a TEN-row descriptor of their
+# own — the shape of a PDK nobody here has met — and assert it renders six.
+#
+# All rows run with NO raw loaded. Every value is blank, which is exactly right:
+# the claims here are about HOW MANY rows exist, in WHAT order, and how wide the
+# label column is. Values are section S's subject.
+if {[catch {
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+xschem load [file join $lib s5_flat.sch]
+
+## Ten rows across all three classes, with a deliberately LONG label in the part
+## that will be dropped (`gm/id_long`, 10 chars) so row R5 can prove the width
+## pass runs on the survivors.
+set R_TEN [list \
+  devproc sky130_op_devpath \
+  match   {*sky130_fd_pr/*} \
+  params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}
+           {vdsat vdsat 2} {cgg cgg 1}} \
+  derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id_long {$gm/$id}}}]
+proc opa_r_labels {b} {
+  set o {}
+  foreach l [opa_s5_lines $b] { lappend o [string trim [lindex [split $l =] 0]] }
+  return $o
+}
+
+op_annot::register nmos $R_TEN
+check {R2 a ten-row descriptor renders SIX rows — the first six in declared order} \
+  [rcall {opa_r_labels [op_annot::text M1]}] \
+  {0 {id gm gds vgs vth vds}}
+
+# ⚠ THE SEAM, AND THE REASON IT EXISTS. Without op_annot::dropped, "the cap
+# works" and "the formatter returned fewer rows for some other reason" are the
+# same observation, and a silent truncation is the class of thing invariant I8
+# exists to make audible. Issue 0604's reporter reads exactly this.
+check {R3 op_annot::dropped reports the four rows the cap discarded} \
+  [rcall {list [op_annot::text M1] [op_annot::dropped]}] \
+  [list 0 [list "id  =\ngm  =\ngds =\nvgs =\nvth =\nvds =\n" 4]]
+
+# ⚠ THE SETTING THE RULING NAMES. Live on the next call, no restart, no rebuild
+# — invariant I5's property, kept.
+set ::op_annot_max_rows 0
+check {R4 the setting: 0 means NO LIMIT and all ten rows come back} \
+  [rcall {list [llength [opa_r_labels [op_annot::text M1]]] \
+               [op_annot::dropped] \
+               [lindex [opa_r_labels [op_annot::text M1]] end]}] \
+  {0 {10 0 gm/id_long}}
+
+# ⚠ THE WIDTH PASS RUNS ON THE SURVIVORS, NOT ON THE DECLARED LIST. Uncapped,
+# the longest label is `gm/id_long` (10) and every row pads to 10. Capped, the
+# longest SHOWN label is 3 and the rows pad to 3. A cap applied after the width
+# pass would leave six rows in a ten-wide column — legal, and ugly on a
+# schematic, and invisible to any row that only counts lines.
+set r5_wide [rcall {lindex [opa_s5_lines [op_annot::text M1]] 0}]
+set ::op_annot_max_rows 6
+set r5_narrow [rcall {lindex [opa_s5_lines [op_annot::text M1]] 0}]
+check {R5 the label column pads to the longest SHOWN label, not the dropped one} \
+  [list $r5_wide $r5_narrow] {{0 {id         =}} {0 {id  =}}}
+
+# ⚠ A TYPO MUST NOT SILENTLY HIDE ROWS. Anything that is not a non-negative
+# integer means NO LIMIT, deliberately — falling back to the default 6 would
+# make `set ::op_annot_max_rows twelve` quietly do the opposite of what the user
+# asked for, and they would have no way to tell.
+set ::op_annot_max_rows twelve
+set r6_a [op_annot::max_rows]
+set ::op_annot_max_rows -3
+set r6_b [op_annot::max_rows]
+set ::op_annot_max_rows 2
+set r6_c [rcall {opa_r_labels [op_annot::text M1]}]
+set ::op_annot_max_rows 6
+check {R6 a non-integer or negative setting means NO LIMIT; a small one is honoured} \
+  [list $r6_a $r6_b $r6_c] {0 0 {0 {id gm}}}
+
+# ⚠ THE DEVICE CLASS THAT PROMPTED THE RULING. IHP's vertical_npn shipped
+# SIXTEEN rows. The cap alone would have kept the first six in declared order —
+# `gm go gmu gpi gx vbe`, five internal conductances and no current at all — so
+# the descriptor was reordered and trimmed too. This row asserts BOTH halves:
+# six rows, and dropped == 0, i.e. the descriptor fits the budget on its own and
+# is not being silently rescued by the cap.
+set XSCHEM_LIBRARY_PATH $P_IHP_LIBS
+opa_clear_store
+opa_source [file join $repo ihp-sg13g2 sg13g2_procs.tcl]
+xschem load [file join $repo ihp-sg13g2 xschem_libs sg13g2_tests dc_hbt_13g2_5t \
+                       schematic dc_hbt_13g2_5t.sch]
+check {R7 D9b the HBT is six rows BY DESCRIPTOR — reordered, not merely truncated} \
+  [rcall {list [opa_r_labels [op_annot::text Q1]] [op_annot::dropped]}] \
+  {0 {{ic ib gm go vbe vbc} 0}}
+
+# ⚠ AND THE SAME CLAIM FOR EVERY SHIPPED DESCRIPTOR, counted rather than spot
+# checked: no registration in any of the three PDK files may exceed six rows.
+# This is the row a fourth PDK, or a fifth device class, has to pass.
+set r8 {}
+foreach _pdk [list [list sky130A sky130_procs.tcl $P_SKY_LIBS] \
+                   [list gf180mcuD gf180_procs.tcl $P_GF_LIBS] \
+                   [list ihp-sg13g2 sg13g2_procs.tcl $P_IHP_LIBS]] {
+  set XSCHEM_LIBRARY_PATH [lindex $_pdk 2]
+  opa_clear_store
+  opa_source [file join $repo [lindex $_pdk 0] [lindex $_pdk 1]]
+  foreach _t {nmos pmos vertical_npn} {
+    set _d [op_annot::descriptor $_t]
+    if {$_d eq {}} { continue }
+    set _n 0
+    foreach _k {params pinexpr derived} {
+      if {[dict exists $_d $_k]} { incr _n [llength [dict get $_d $_k]] }
+    }
+    if {$_n > 6} { lappend r8 [list [lindex $_pdk 0] $_t $_n] }
+  }
+}
+check {R8 D9b NO shipped descriptor on ANY PDK declares more than six rows} \
+  [list $r8 [llength $r8]] {{} 0}
+
+} rerr]} {
+  puts "UNEXPECTED ERROR (section R): $rerr"
   incr fail
 }
 

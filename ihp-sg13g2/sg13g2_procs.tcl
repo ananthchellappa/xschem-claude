@@ -747,15 +747,49 @@ if {[info commands ::op_annot::register] ne {}} {
   # ⚠ THIRTEEN params, in sg13g2_write_save_lines:327-339's order. Spec §4.2
   # shows six ({ic ib gm go vbe vbc}); that list silently drops gmu gpi gx cbe
   # cbc cbep cbcp, and with them the prototype's `rin` and `ft`.
+  # ⚠ RULING D9b (the user, 2026-08-22): "For ANY PDK, ANY device, only display
+  # max of six parameters UNLESS there is a setting to do otherwise. We can't
+  # have BJT (NPN,PNP) causing clutter." This descriptor shipped SIXTEEN rows —
+  # thirteen params and three derived — and is the case that prompted the rule.
+  #
+  # The cap itself is enforced in op_annot::text (spec §4.2b), so an untrimmed
+  # descriptor would not actually paint sixteen rows. It would paint the first
+  # six IN DECLARED ORDER, which here was `gm go gmu gpi gx vbe` — the internal
+  # small-signal conductances and no current at all. A cap chooses how MANY; a
+  # descriptor still has to choose WHICH, so this list is reordered and trimmed
+  # rather than left to be truncated.
+  #
+  # The six mirror the MOS six as closely as a bipolar allows: output current,
+  # input current, transconductance, output conductance, and the two junction
+  # voltages.
+  #     MOS   id   —    gm  gds  vgs  vds
+  #     BJT   ic   ib   gm  go   vbe  vbc
+  #
+  # ⚠ `vce` IS NOT HERE, AND THAT IS A CONSEQUENCE OF THE CAP, NOT AN OVERSIGHT.
+  # psp103 publishes vbe and vbc, not vce; the prototype showed vce as a DERIVED
+  # row over both. A derived row can only reference labels that are THEMSELVES
+  # displayed rows, so `vce` costs three rows (vbe, vbc, vce) to show one number
+  # — seven in total, one over the cap, and the cap would then drop `vce` itself
+  # as the last row. Showing vbe and vbc directly gives the reader the same
+  # information (vce = vbe - vbc) inside the budget. To get the derived row back:
+  #     set d [op_annot::descriptor vertical_npn]
+  #     dict set d derived {{vce {$vbe - $vbc}}}
+  #     set ::op_annot_max_rows 7
+  #
+  # GONE, and recoverable in one round-trip in a --script rc (invariant I5):
+  # gmu gpi gx cbe cbc cbep cbcp, and the derived rin, vce and ft.
+  #     set d [op_annot::descriptor vertical_npn]
+  #     dict set d params [concat [dict get $d params] \
+  #        {{gmu gmu 1} {gpi gpi 1} {gx gx 1} {cbe cbe 1} {cbc cbc 1}}]
+  #     dict set d derived [concat [dict get $d derived] \
+  #        {{rin {1.0/$gx + 1.0/($gmu + $gpi)}}}]
+  #     set ::op_annot_max_rows 0
+  # ⚠ NOTE THE LAST LINE. Adding rows is not enough — the cap must be lifted too,
+  # or the extra rows are built and then dropped.
   op_annot::register vertical_npn {
     devproc sg13g2_op_npn_devpath
     match   {*sg13g2_pr/*}
-    params  {{gm gm 1} {go go 1} {gmu gmu 1} {gpi gpi 1} {gx gx 1}
-             {vbe vbe 2} {vbc vbc 2} {ib ib 0} {ic ic 0} {cbe cbe 1}
-             {cbc cbc 1} {cbep cbep 1} {cbcp cbcp 1}}
-    derived {{rin {1.0/$gx + 1.0/($gmu + $gpi)}}
-             {vce {$vbe - $vbc}}
-             {ft  {$gm/(2*3.141592654*($cbe + $cbc + $cbep + $cbcp))}}}
+    params  {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2} {vbc vbc 2}}
   }
 } else {
   puts stderr {sg13g2_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}

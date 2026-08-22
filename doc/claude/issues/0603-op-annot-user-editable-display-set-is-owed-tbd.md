@@ -3,7 +3,14 @@
 STATUS: **OPEN — owed, mechanism TBD.** Opened 2026-08-22 alongside ruling **D9**
 (spec §4.2a), which cut the shipped MOS annotation to six rows.
 Related: 0429 (superseded by D9), 0457/0458 (`annot_show` has no stock control
-either), invariant **I5**.
+either), invariant **I5**, and **ruling D9b** — which landed half of what this
+issue asks for.
+
+**⚠ PARTIALLY ANSWERED 2026-08-22 BY D9b.** The *count* half now has a setting:
+`::op_annot_max_rows` (default 6, `0` = no limit), read live by
+`op_annot::text`, settable from any `--script` rc or the console. What is still
+owed is the *which* half — choosing the parameters themselves — and a means that
+is not Tcl.
 
 ---
 

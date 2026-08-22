@@ -217,6 +217,46 @@ namespace eval op_annot {
   ## without them a cross-frame cache silently defeats I5.
   variable gen
   if {![info exists gen]} { set gen 0 }
+
+  ## RULING D9b (the user, 2026-08-22) — THE SIX-ROW CAP, spec §4.2b.
+  ## "For ANY PDK, ANY device, only display max of six parameters UNLESS there
+  ## is a setting to do otherwise. We can't have BJT (NPN,PNP) causing clutter."
+  ##
+  ## The cap is enforced HERE, in the one formatter, rather than by trimming
+  ## each descriptor: a descriptor is data a PDK or a user writes, and there
+  ## will always be one more PDK than there are descriptors we have edited.
+  ## IHP's vertical_npn shipped SIXTEEN rows, which is the case that prompted it.
+  ##
+  ## 0 (or any non-integer) means NO LIMIT — that is the "setting to do
+  ## otherwise", available today from any --script rc or the console:
+  ##     set ::op_annot_max_rows 0      ;# show everything a descriptor carries
+  ##     set ::op_annot_max_rows 10     ;# or any other ceiling
+  ## Issue 0603 is the friendlier means; this is the mechanism it will drive.
+  if {![info exists ::op_annot_max_rows]} { set ::op_annot_max_rows 6 }
+
+  ## The seam for invariant I8 / issue 0604: how many rows the LAST op_annot::text
+  ## dropped to honour the cap. Without it "the cap works" and "the formatter
+  ## returned nothing" are the same observation, and a silent truncation is
+  ## exactly the class of thing I8 exists to make audible.
+  variable dropped
+  if {![info exists dropped]} { set dropped 0 }
+}
+
+## The effective row cap: a positive integer, or 0 for no limit. Anything the
+## user set that is not a non-negative integer is treated as NO LIMIT rather
+## than as the default — a typo must not silently hide rows.
+proc op_annot::max_rows {} {
+  if {![info exists ::op_annot_max_rows]} { return 6 }
+  set v $::op_annot_max_rows
+  if {![string is integer -strict $v] || $v < 0} { return 0 }
+  return $v
+}
+
+## Rows the last op_annot::text call dropped to honour the cap. 0 when nothing
+## was dropped. Read by tests today, by the I8 reporter when it lands.
+proc op_annot::dropped {} {
+  variable dropped
+  return $dropped
 }
 
 ## op_annot::register <symbol-type> <dict>
@@ -727,6 +767,20 @@ proc op_annot::text {instname} {
 
   ## A descriptor with a devpath but nothing to show draws no empty frame.
   if {![llength $rows]} { return {} }
+
+  ## RULING D9b — THE CAP. Applied AFTER all three row classes are built, so the
+  ## kept rows are the first N in the descriptor's own declared order (params,
+  ## then pinexpr, then derived) and a PDK author controls what survives by
+  ## ordering the list. Applied BEFORE the width pass, so the label column pads
+  ## to the longest label ACTUALLY SHOWN — a dropped 7-char label must not leave
+  ## six rows padded to 7.
+  variable dropped
+  set dropped 0
+  set cap [::op_annot::max_rows]
+  if {$cap > 0 && [llength $rows] > $cap} {
+    set dropped [expr {[llength $rows] - $cap}]
+    set rows [lrange $rows 0 [expr {$cap - 1}]]
+  }
 
   ## The label column pads to the longest label IN THIS BLOCK — the prototypes
   ## hardcode `ids   = ` / `gm    = `, which cannot fit the 5-char `gm/id` or
