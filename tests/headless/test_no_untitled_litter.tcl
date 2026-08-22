@@ -61,6 +61,7 @@ set guarded {
   test_statusmsg_hold_0248   1
   test_instance_update       1
   test_traversal_flag_leak   1
+  test_annot_show_menu       1
   test_placement_wire_gate   0
   test_shape_draw_gate       0
 }

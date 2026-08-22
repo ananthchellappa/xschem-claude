@@ -3523,6 +3523,10 @@ if {[catch {
 set N_SRC   [file join $repo utils annot_mode.tcl]
 set N_RC    [file join $repo src cadence_style_rc]
 set N_TCL   [file join $repo src xschem.tcl]
+## issue 0457(b): rows N22b/N22c assert WHERE each writer lives, not merely how
+## many there are, so the guard survives a legitimate fourth writer being added.
+set N_TCL_SRC {}
+if {![catch {open $N_TCL r} _nfh]} { set N_TCL_SRC [read $_nfh] ; close $_nfh }
 
 # ===========================================================================
 # N — THE SURFACE, AND THE THREE SOURCE GREPS. No fixture, nothing loaded.
@@ -3586,8 +3590,25 @@ check {N21 the mask is written through `xschem set annot_show`, never a bare `se
 # measured, that path yields a loaded raw and a carrier bbox of 29x22, i.e. a
 # still-dark annotator. The cascade never runs headless, so this is a K15-style
 # source guard.
-check {N22 both shipped Annotate-OP menu bodies now write the mask too (decision D8)} \
-  [opa_n_grep $N_TCL {xschem set annot_show}] 2
+# ⚠ THE COUNT MOVED 2 -> 3 ON 2026-08-22, and it is a legitimate writer, not a
+# leak. Issue 0457(b): `annot_show_menu_apply` is the View > Show checkbutton
+# pair's push half. Before it, BOTH writers in the stock tree set the mask to 1
+# and nothing anywhere cleared it, so a user who clicked either Annotate-OP item
+# could not undo it without editing xschemrc and restarting.
+#
+# A bare whole-file count is a fragile shape -- it reds for every legitimate
+# writer -- so the row now names all three and asserts them STRUCTURALLY as well
+# as by count. Adding a fourth writer without listing it here still reds, which is
+# the guard this row exists to be.
+check {N22 the three shipped writers of the mask, by count} \
+  [opa_n_grep $N_TCL {xschem set annot_show}] 3
+check {N22b ...and each one is where it is supposed to be} \
+  [list [regexp {Op Annotate.*?xschem set annot_show 1} $N_TCL_SRC] \
+        [regexp {Annotate Operating Point into schematic.*?xschem set annot_show 1} $N_TCL_SRC] \
+        [regexp {proc annot_show_menu_apply.*?xschem set annot_show} $N_TCL_SRC]] \
+  {1 1 1}
+check {N22c the pair's PULL half reads the mask through `xschem get`, not the Tcl mirror} \
+  [regexp {proc annot_show_menu_sync.*?xschem get annot_show} $N_TCL_SRC] 1
 
 # ===========================================================================
 # FIXTURE — one annotatable device, the SHIPPED carrier, its hide=true twin

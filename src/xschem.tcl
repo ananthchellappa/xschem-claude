@@ -14685,6 +14685,51 @@ proc fluid_trace_menu_update {m} {
   catch {$m entryconfigure {*FLUID trace} -label $lab}
 }
 
+## doc/claude/specs/op_annotation.md step S8 / issue 0457(b), ruled by the user
+## 2026-08-22: `annot_show` gets a stock View-menu control. Until this landed the
+## only writers in the stock tree were the two `Op Annotate` items, and BOTH of
+## them set the mask to 1 -- there was no off-ramp short of editing xschemrc and
+## restarting. The three chords do turn it off but live in cadence_style_rc, which
+## ships commented out at src/xschemrc:767.
+##
+## `annot_show` is a BITMASK (ANNOT_SHOW_OP 1, ANNOT_SHOW_VOLTAGE 2, xschem.h:400)
+## and a Tk checkbutton wants a boolean, so the pair rides on two derived vars.
+##
+## PULL is a -postcommand on the submenu, NOT a call planted next to every writer.
+## There are four writers today -- the two menu items and the three cadence chords
+## (utils/annot_mode.tcl) -- and invariant I5 lets a user's own rc add more, so a
+## design that needs every writer to remember the menu would drift out of sync the
+## first time someone wrote one.
+##
+## Reading through `xschem get` rather than $::annot_show is deliberate: the mask
+## is PER-CONTEXT (xctx->annot_show), so under the tabbed interface the Tcl mirror
+## describes whichever window last wrote it, not the one whose menu is opening.
+proc annot_show_menu_sync {} {
+  if {[catch {xschem get annot_show} m]} { return }
+  if {![string is integer -strict $m]} { return }
+  set ::annot_show_op      [expr {($m & 1) ? 1 : 0}]
+  set ::annot_show_voltage [expr {($m & 2) ? 1 : 0}]
+}
+
+## PUSH. Writes THROUGH `xschem set` (S7 decision D4): a bare `set ::annot_show`
+## leaves the C field stale until the next bulk sync, and the mask is an INT, so a
+## Tk boolean must be normalised to 1/0 rather than passed as `true`/`on`.
+##
+## The bbox pass is not optional -- an annotation block changes the instance's own
+## bbox (measured 16 wide blank vs 186 wide populated, select.c:709), the same
+## reason the `Show hidden texts` neighbour carries it.
+##
+## NOTE the pair can reach mask 2 -- node voltages with device OP info OFF -- which
+## none of the three chords produces (they emit 0, 1 and 3 only). text_hidden()
+## gates the two classes on separate bits, so the state is coherent; a checkbox
+## pair that silently refused one of its four combinations would be the worse bug.
+proc annot_show_menu_apply {} {
+  xschem set annot_show \
+    [expr {($::annot_show_op ? 1 : 0) | ($::annot_show_voltage ? 2 : 0)}]
+  xschem update_all_sym_bboxes
+  xschem redraw
+}
+
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
   global XSCHEM_SHAREDIR tabbed_interface simulate_bg OS sim
@@ -15071,7 +15116,8 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar.view add cascade -label "Show / Hide" \
        -menu $topwin.menubar.view.show
-  menu $topwin.menubar.view.show -tearoff 0 -takefocus 0
+  menu $topwin.menubar.view.show -tearoff 0 -takefocus 0 \
+     -postcommand annot_show_menu_sync ;# issue 0457(b)
 
   $topwin.menubar.view.show add checkbutton -label "Show ERC Info window" \
     -selectcolor $selectcolor -variable show_infowindow -command {
@@ -15096,6 +15142,15 @@ proc build_widgets { {topwin {} } } {
      "
   $topwin.menubar.view.show add checkbutton -label "Show hidden texts"  -variable show_hidden_texts \
          -selectcolor $selectcolor -command {xschem update_all_sym_bboxes; xschem redraw}
+  # issue 0457(b): the stock control for the annot_show mask. Placed here, next to
+  # `Show hidden texts`, because that is the entry FAQ Q48 already sends users to
+  # when their sky130 id=/gm= texts vanish -- the two questions arrive together.
+  $topwin.menubar.view.show add checkbutton -label "Show device OP annotation" \
+         -variable annot_show_op \
+         -selectcolor $selectcolor -command {annot_show_menu_apply}
+  $topwin.menubar.view.show add checkbutton -label "Show node voltage annotation" \
+         -variable annot_show_voltage \
+         -selectcolor $selectcolor -command {annot_show_menu_apply}
   $topwin.menubar.view.show add checkbutton -label "Draw grid axes"  -variable draw_grid_axes \
          -selectcolor $selectcolor -command {xschem redraw}
   $topwin.menubar.prop add command -label "Edit" -command "xschem edit_prop" -accelerator Q
@@ -16026,6 +16081,11 @@ set_ne show_hidden_texts 0
 ## doc/claude/specs/op_annotation.md. Default 0 = annotations off at rest; put
 ## `set annot_show 1` in ~/.xschem/xschemrc to have them on from startup.
 set_ne annot_show 0
+## issue 0457(b): the View > Show checkbutton pair's derived booleans. Seeded from
+## the mask so an rc that sets `annot_show 1` opens with the box already ticked;
+## the submenu's -postcommand re-derives them on every open thereafter.
+set_ne annot_show_op      [expr {($annot_show & 1) ? 1 : 0}]
+set_ne annot_show_voltage [expr {($annot_show & 2) ? 1 : 0}]
 set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0
