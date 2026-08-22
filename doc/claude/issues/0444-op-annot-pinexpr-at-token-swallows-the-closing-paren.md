@@ -1,7 +1,10 @@
 # 0444 — a registered `pinexpr` whose @-token abuts `)` can never produce a number
 
-Status: FIXED in the two shipped descriptors (S5). The underlying C tokenisation
-is UNCHANGED and still bites any template written the natural way.
+Status: **RATIFICATION SUPERSEDED, C DIRECTION RULED (the user, 2026-08-22).**
+The out-of-cell edit this issue owed a ratification for NO LONGER EXISTS -- ruling
+D9 deleted the whole `pinexpr` entry it lived on. The underlying C tokenisation is
+UNCHANGED and still bites any template written the natural way; the user has ruled
+on what to do about that. See "RULING" at the bottom.
 Found: S5 (the display formatter), doc/claude/specs/op_annotation.md.
 Related: 0422 (the same SPACE(c) rule, for `devpath` templates), 0446.
 
@@ -62,8 +65,68 @@ change. Options if it is ever taken up: terminate an @-token on `)` as well as
 SPACE(c); or have `translate` warn once when an @-token misses `get_tok_value()`
 and ends in a bracket. Both are user-visible and neither is ratified.
 
-## Ratification owed
+## Ratification owed -- SUPERSEDED, not answered
 
 S5 edited two PDK procs files outside its declared Files cell (`src/op_annot.tcl`)
-to make its own acceptance honest. Ratify the out-of-cell edit, or revert it and
-ship `vgs`/`vds` permanently blank on sky130 and gf180.
+to make its own acceptance honest, and owed a ratification for it.
+
+**That edit is gone.** Measured 2026-08-22:
+
+```
+9fe40128  (S5)  added `…spice_get_voltage )`   -- the load-bearing space
+8534eb11  (D9)  removed the whole pinexpr entry the space lived on
+```
+
+`grep -rn spice_get_voltage sky130A/*.tcl gf180mcuD/*.tcl ihp-sg13g2/*.tcl`
+returns **nothing**. Both MOS descriptors now read:
+
+```tcl
+params {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+```
+
+So there is no out-of-cell edit left to bless. The alternative the debt offered --
+*"revert it and ship `vgs`/`vds` permanently blank"* -- is also false now: under D9
+those are real BSIM4 instance parameters read straight from the raw (kind 2), not
+`pinexpr` output, so a revert would not blank them.
+
+`owed.sh clear rule 0444` -- closed as superseded, 2026-08-22.
+
+---
+
+## RULING (the user, 2026-08-22) -- warn once, do NOT change the parsing
+
+The question put to the user, in plain terms: a user writes `(@a - @b)` the
+natural way in her own descriptor or symbol; XSCHEM reads the second name as
+`b)`, finds nothing, substitutes nothing, and the line silently comes out short.
+Three options were offered -- warn once; add `)` to `SPACE(c)`; document only.
+
+**Chosen: warn once, leave `token.c:24` alone.**
+
+When an @-token finds no value AND ends in a bracket, say so -- once, in the CIW
+and in the logfile.
+
+### Why this and not the parser change
+
+Adding `)` to `SPACE(c)` fixes the *cause* rather than reporting it, which is
+normally the better instinct. It was not chosen because that macro governs
+**every** @-token in the tree -- symbols, templates, the netlist backends,
+`devpath` strings -- so any place a `)` is today part of a token or of a value
+changes meaning at once. That is an audit, not a fix, and it is not what this
+issue is sized for. The user's decision leaves that door open; it does not shut it.
+
+### This is the SAME mechanism as I8, and must be built with it
+
+Issue **0604** (invariant **I8**, ratified by D9) already owes exactly this shape:
+*a thing the tool was asked for and did not get is REPORTED, not merely blank*.
+Both need the same three answers -- where the on-screen half goes, how the
+once-per-pass dedup is keyed, and how a single miss reads differently from a
+wholesale one. Building them separately would produce two warn-once mechanisms
+with two dedup keys, which is the I1 drift shape.
+
+**The bracket case generalises the I8 one and should be folded into it**: I8 as
+filed covers *the raw did not deliver this vector*; this adds *the substitution
+never asked for it, because the name was mis-tokenised*. From the user's chair
+both are "the number is blank and nothing told me why", and the second is worse,
+because her descriptor never even reached the simulator.
+
+Recorded as a requirement on 0604. No separate issue number was minted.

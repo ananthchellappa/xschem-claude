@@ -3,7 +3,9 @@
 STATUS: **OPEN — approved in principle 2026-08-22, mechanism owed.** This is
 invariant **I8**, added to `doc/claude/specs/op_annotation.md` by ruling **D9**.
 Related: 0429 (the measurement that motivates it), **I3** (what the schematic
-shows), 0482 (a resident raw is not re-read).
+shows), 0482 (a resident raw is not re-read), **0444** (a second reporter, ruled
+into this one 2026-08-22 — see "The bracket case" below), 0607 (65 of 78 vectors
+lost in silence: the sharpest argument that this must be built).
 
 ---
 
@@ -57,6 +59,39 @@ case 1 on screen.
 * **Whether an unannotated schematic says anything at all.** A user who has not
   simulated yet must not be nagged.
 
+
+## The bracket case — ruled into this issue 2026-08-22
+
+Issue **0444**: `xschem translate` tokenises on `SPACE(c)` (`src/token.c:24`),
+which does not include `)`. A user who writes the natural
+
+```
+expr(@#1:spice_get_voltage - @#2:spice_get_voltage)
+```
+
+gets the second token read as `@#2:spice_get_voltage)`, which misses
+`get_tok_value()` and appends **nothing** — no error, no warning, the line comes
+out short and the row renders blank. Measured still live 2026-08-22:
+
+```
+no-space  -> | - |
+space     -> | -  |
+```
+
+The user ruled: **warn once; do not change `SPACE(c)`.** Changing the macro
+governs every @-token in the tree and is an audit, not a fix.
+
+**That warning belongs here, not in its own mechanism.** I8 as filed covers *the
+raw did not deliver this vector*; the bracket case adds *the substitution never
+asked for it, because the name was mis-tokenised*. From the user's chair both are
+"the number is blank and nothing told me why" — and the second is worse, because
+her descriptor never reached the simulator at all. Two warn-once mechanisms with
+two dedup keys would be the I1 drift shape.
+
+**Concrete requirement:** when an @-token finds no value **and** ends in a
+bracket, report it once — CIW and logfile — through the same seam and the same
+dedup key as the missing-vector case. The bracket test is what keeps it quiet: an
+@-token that simply resolves to empty is ordinary and must stay silent.
 ## Not urgent, and say why
 
 Under D9 no *default* row can provoke case 2 or 3: all six defaults are measured
