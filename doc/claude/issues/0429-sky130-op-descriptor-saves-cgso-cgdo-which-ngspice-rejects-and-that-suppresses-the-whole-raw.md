@@ -302,10 +302,32 @@ one card per parameter, real models, the `.control … write … .endc` idiom ev
 shipped bench uses. **No default row can suppress a raw file on any supported
 ngspice** — which is what this issue was ultimately about.
 
-IHP is still unmeasurable on this box (`pre_osdi psp103.osdi` needs OSDI v0.4,
-ngspice-42 here supports v0.3), and its six are a **subset of the names its own
-prototype already used**, so that PDK's exposure is reduced by inference rather
-than by measurement. Said plainly in `sg13g2_procs.tcl` rather than left implicit.
+**⚠ CORRECTION, 2026-08-22 — IHP IS MEASURABLE HERE, AND NOW MEASURED.** This
+paragraph first said IHP was "unmeasurable on this box". That was wrong: it was
+measured against `/usr/bin/ngspice` (42) only, and the box carries a second
+binary. `/usr/local/bin/ngspice` (46+) loads `psp103.osdi` without complaint —
+the v0.3-vs-v0.4 OSDI mismatch is a **ngspice-42** limitation, not a machine one.
+
+Re-run on 46+, `sg13g2_tests/dc_lv_nmos` with the six as its `.save` file:
+**rc=0, zero checkvalid warnings**, and every vector present in the predicted
+shapes:
+
+```
+i(@n.xm1.nsg13_lv_nmos[ids])
+  @n.xm1.nsg13_lv_nmos[gm]   @n.xm1.nsg13_lv_nmos[gds]
+v(@n.xm1.nsg13_lv_nmos[vgs])  v(…[vth])  v(…[vds])
+```
+
+then annotated onto the schematic:
+
+```
+id  = 259.1u   gm = 464u    gds = 17.78u
+vgs = 1.2      vth = 0.2966 vds = 1.5
+```
+
+So all three PDKs' defaults are now **measured against a real raw**, not
+inferred. What remains true is narrower and worth keeping: **an IHP bench needs
+ngspice-46+**, because on 42 it does not simulate at all.
 
 ## And a defect class that left the shipped path as a side effect
 

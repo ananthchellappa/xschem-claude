@@ -717,12 +717,28 @@ if {[info commands ::op_annot::register] ne {}} {
   # exists for exactly this, and one display vocabulary across all three PDKs is
   # worth more than matching the raw's spelling on screen.
   #
-  # ⚠ UNMEASURED ON THIS BOX, AND SAY SO: psp103 runs through OSDI and the
-  # vendored ihp-sg13g2/osdi/psp103.osdi targets OSDI v0.4 while ngspice-42 here
-  # supports v0.3, so `pre_osdi` fails and NO IHP parameter name can be checked
-  # against a real raw here. The six are carried over from the prototype's own
-  # list (which already had ids/gm/gds/vth/vgs/vds), so this is a SUBSET of names
-  # the prototype used, not new ones — but it is inference, not measurement.
+  # ✅ MEASURED ON A REAL RAW, 2026-08-22 — and the claim this comment used to
+  # make ("no IHP parameter name can be checked against a real raw here") was
+  # WRONG, not merely cautious. It was measured against /usr/bin/ngspice (42),
+  # which supports OSDI v0.3 while the vendored psp103.osdi targets v0.4, and
+  # then generalised to "this box". THE BOX HAS TWO ngspice BINARIES:
+  #
+  #     /usr/bin/ngspice       (42)    pre_osdi psp103.osdi -> "couldn't be
+  #                                    loaded ... only supports OSDI v0.3"
+  #     /usr/local/bin/ngspice (46+)   pre_osdi psp103.osdi -> loads, and the
+  #                                    bench runs
+  #
+  # On 46+, sg13g2_tests/dc_lv_nmos with these six as its `.save` file: rc=0,
+  # ZERO checkvalid warnings, and every vector present in the shapes the `kind`
+  # convention predicts --
+  #     i(@n.xm1.nsg13_lv_nmos[ids])   @n.xm1.nsg13_lv_nmos[gm] / [gds]
+  #     v(@n.xm1.nsg13_lv_nmos[vgs]) / [vth] / [vds]
+  # then annotated live: ids 259.1u, gm 464u, gds 17.78u, vgs 1.2, vth 0.2966,
+  # vds 1.5. So this PDK's six are MEASURED, exactly like sky130's and gf180's,
+  # not inferred from being a subset of the prototype's list.
+  #
+  # ⚠ WHAT IS STILL TRUE: an IHP bench needs ngspice-46+. On 42 it does not fail
+  # in the annotation path, it fails to simulate at all.
   #
   # RECOVERY for the old rows is one round-trip in a --script rc (invariant I5):
   #     set d [op_annot::descriptor nmos]

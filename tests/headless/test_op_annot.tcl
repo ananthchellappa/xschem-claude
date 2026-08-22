@@ -462,11 +462,18 @@ check {C4 at top level the hierarchy prefix vanishes (no caching)} \
 # builds `[devpath][param]`, and I1 still holds because devpath is the one shared
 # builder.
 #
-# ⚠ NO NGSPICE RUNS HERE. IHP cannot be simulated on this box at all — measured:
-# ngspice-42 supports OSDI v0.3 while ihp-sg13g2/osdi/psp103.osdi targets v0.4,
-# so `ngspice -b` aborts with "Simulation interrupted due to error". The
-# raw-header assertions (the names are real, the values are not all zero, no
-# `unrecognized variable` on stderr) are S4's and must be built on sky130/gf180.
+# ⚠ NO NGSPICE RUNS HERE — a suite-design choice, NOT a platform limit, and an
+# earlier revision of this comment claimed the latter. It said "IHP cannot be
+# simulated on this box at all", generalising from /usr/bin/ngspice (42), which
+# supports OSDI v0.3 while ihp-sg13g2/osdi/psp103.osdi targets v0.4. The box also
+# has /usr/local/bin/ngspice (46+), which loads that .osdi and runs the bench:
+# measured 2026-08-22, sg13g2_tests/dc_lv_nmos with the D9 six as its .save file
+# gives rc=0, zero checkvalid warnings, all six vectors present, and annotates to
+# ids 259.1u / gm 464u / gds 17.78u / vgs 1.2 / vth 0.2966 / vds 1.5.
+#
+# What is true is that an IHP bench needs 46+, and that S4's raw-header
+# assertions (the names are real, the values are not all zero, no `unrecognized
+# variable` on stderr) still have to decide which binary they pin.
 #
 # ⚠ SPEC §4.2's WORKED DESCRIPTORS ARE INCOMPLETE — three measured departures,
 # each pinned by a row here so a later "simplify back to the spec text" edit reds

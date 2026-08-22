@@ -697,7 +697,7 @@ Dropping them removes a computation the tool was doing, not a measurement the
 simulator was providing. The `derived` key stays in the grammar for the user who
 wants it back.
 
-#### All six are measured savable, on both ngspice generations, on two PDKs
+#### All six are measured savable — on both ngspice generations, on all three PDKs
 
 This is the check issue 0429 said was **owed and missing** — assert against
 ngspice, not against our own strings. One card per parameter, real models, the
@@ -707,7 +707,22 @@ ngspice, not against our own strings. One card per parameter, real models, the
 sky130 nfet_01v8   /usr/bin/ngspice (42)    id gm gds vgs vth vds -> RAW, checkvalid=0
                    /usr/local/bin (46+)     id gm gds vgs vth vds -> RAW, checkvalid=0
 gf180  nfet_03v3   both binaries            id gm gds vgs vth vds -> RAW, checkvalid=0
+IHP    sg13_lv_nmos  46+ only               id gm gds vgs vth vds -> RAW, checkvalid=0
 ```
+
+**⚠ IHP needs ngspice-46+, and that is the only asterisk.** An earlier revision of
+this spec said IHP "cannot be simulated on this box"; that was measured against
+`/usr/bin/ngspice` (42), which supports OSDI v0.3 while the vendored
+`psp103.osdi` targets v0.4, and then over-generalised. `/usr/local/bin/ngspice`
+(46+) loads it and runs the bench. Measured 2026-08-22 on
+`sg13g2_tests/dc_lv_nmos`, annotated live:
+
+```
+id  = 259.1u   gm  = 464u      gds = 17.78u
+vgs = 1.2      vth = 0.2966    vds = 1.5
+```
+
+so all three PDKs' defaults rest on a real raw rather than on inference.
 
 and the vector shapes come back exactly on the `kind` convention already in the
 descriptor — `i(@m.…[id])` = 0, bare `@m.…[gm]` / `[gds]` = 1,

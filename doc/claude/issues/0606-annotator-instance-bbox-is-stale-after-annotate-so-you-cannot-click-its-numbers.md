@@ -1,6 +1,10 @@
 # 0606 — the annotator's instance bbox is stale after `annotate_op`, so you cannot click the numbers it prints
 
-STATUS: **OPEN — measured 2026-08-22**, on the shipped `devices/annotate_params`
+STATUS: **OPEN, DEFERRED BY THE USER 2026-08-22** — *"not an issue for now …
+will be dealt with later"*, alongside 0605, whose selectable/movable annotation
+work this is a prerequisite for. Recorded so the two are picked up together.
+
+Originally: **OPEN — measured 2026-08-22**, on the shipped `devices/annotate_params`
 carrier with a real ngspice raw. Found while paying the `annotate_params_on_tb_bandgap`
 look debt. Related: **0605** (the user's direction is "select such annotation and
 move it"), 0468, spec §4.4 (Carrier 1).
