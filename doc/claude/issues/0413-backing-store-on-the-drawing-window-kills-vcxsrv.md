@@ -1,5 +1,24 @@
 # 0413 — `backing_store = WhenMapped` on the drawing window lets XSCHEM kill the X server
 
+> ## ⚠ `AUDIT_DISPLAY=:0` CANNOT PAY THIS ISSUE'S LOOK DEBT
+>
+> Measured 2026-08-22 with `xdpyinfo`: **three X servers run here at once.**
+>
+> | display | vendor string | what it is |
+> |---|---|---|
+> | `:0` | `Microsoft Corporation` | Xwayland, WSLg's own server |
+> | `$DISPLAY` | `HC-Consult` | the Windows X server the user looks at, over TCP |
+> | `:99` | `The X.Org Foundation` | Xvfb, the dev display |
+>
+> `AUDIT_DISPLAY=:0` exports the **literal** string `:0`
+> (`tests/headless/xvfb_arm.sh:140`), so it targets **Xwayland** — not the server
+> this issue is named after. A `backing_store` behaviour is a property of the X
+> server implementation, so testing it on the wrong one proves nothing.
+>
+> Pay the look debt with `AUDIT_DISPLAY=$DISPLAY`, or by hand from a terminal.
+> See CLAUDE.md, "THERE ARE THREE X SERVERS HERE".
+
+
 Status: **FIXED** — root-caused by A/B measurement against a real VcXsrv, fixed in
 `src/xinit.c`, regressed by `tests/headless/test_backing_store_0413.tcl`.
 Reported by the user as "**Ctrl-B in the waveform viewer kills the X server**".

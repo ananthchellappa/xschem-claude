@@ -124,8 +124,43 @@ display does not survive a reboot**; re-run `start`.
 The arm (below) **attaches** to it when it is up, so every entry point lands on
 one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the
 right way round — the only thing that still needs it is reproducing
-WSLg-specific defects. Side wins: immune to the WSLg Xwayland aborts that kill
-`:0` clients ~3×/session, and no per-run Xvfb spawn.
+Xwayland-specific defects. Side wins: immune to the WSLg Xwayland aborts that
+kill `:0` clients ~3×/session, and no per-run Xvfb spawn.
+
+### ⚠ THERE ARE THREE X SERVERS HERE, AND `:0` IS NOT THE USER'S SCREEN
+
+Measured 2026-08-22 with `xdpyinfo`, all three live at once:
+
+| display | vendor string | what it is |
+|---|---|---|
+| `:0` | `Microsoft Corporation` | **Xwayland**, WSLg's own server |
+| `$DISPLAY` = `<win-ip>:0` | `HC-Consult` | the **Windows X server** the user actually looks at, over TCP |
+| `:99` | `The X.Org Foundation` | Xvfb, the persistent dev display |
+
+`$DISPLAY` comes from `~/.profile:48` (`export DISPLAY="$WINDOWS_IP:0"`). Note
+`~/.bashrc:152-153` would override it to `:0` when `WAYLAND_DISPLAY` is set — and
+it *is* set — but bashrc returns early for non-interactive shells, so a tool shell
+keeps the TCP display and an interactive terminal may not. **Check `$DISPLAY`
+rather than assuming.**
+
+**This matters because `AUDIT_DISPLAY=:0` exports the LITERAL string `:0`**
+(`tests/headless/xvfb_arm.sh:140`), not `$DISPLAY`. So:
+
+* every `:0` measurement recorded below — the flake rates, the 3-vs-1
+  `<Configure>` traffic, the Calculator phase-0 failures, `test_wave_modes` at
+  6.2–45.6 s — was taken against **Xwayland**, and the WSLg attributions in this
+  section are correct;
+* a **bare** `./src/xschem --script …` inherits `$DISPLAY` and therefore lands on
+  the **user's real screen**, a different server from the one the suites call
+  `:0`. That is the reason for the "never a bare run on a live `:0`" rule above,
+  and it is a sharper reason than it sounds: the two are not the same X server;
+* **"run a GUI feature's suite on `:0`" means Xwayland**, not the user's screen.
+  A look debt that says "on the real VcXsrv screen" — issue 0413's does — is
+  asking for something `AUDIT_DISPLAY=:0` **cannot** provide. Pay that one with
+  `AUDIT_DISPLAY=$DISPLAY`, or by hand from a terminal.
+
+Do not "correct" WSLg to VcXsrv in this file. Both are here; they are different
+displays; the distinction is the load-bearing part.
 
 `_gate_enabled` returns false on the dev display, deliberately: an invisible
 display would otherwise arm the gate and `_gate_attention` would relaunch the
@@ -179,7 +214,8 @@ borrow the screen they were launched from. That is the routine arm because it is
 measured better, not merely quieter: 30/30 soak with identical check counts where
 the same suites on `:0` flake 4-in-10 / 2-in-3 / 1-in-5, a full audit reproducing
 the recorded `:0` fail list exactly, and `test_wave_modes` at 2.3 s against
-6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (real screen), `=none` (no DISPLAY, GUI
+6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (Xwayland — **not** the user's screen,
+see the three-server table above; use `=$DISPLAY` for that), `=none` (no DISPLAY, GUI
 legs self-skip), `AUDIT_SCREEN=WxHxD` (default `1920x1080x24` — **pin it**, and
 never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at).
 
@@ -195,7 +231,7 @@ not reparent and silently no-ops `wm iconify`; with openbox both work — and on
 iconify openbox is *more* faithful than WSLg, which doesn't honour it either.
 So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
 
-**Xvfb is still not a substitute for `:0`** for a human eyeball, or for WSLg's
+**Xvfb is still not a substitute for `:0`** for a human eyeball, or for Xwayland's
 own quirks. The sharpest of those is **event traffic**: one `wm geometry`
 request yields 3 `<Configure>` events on `:0` against 1 under Xvfb with or
 without a WM, and Calculator phase 0 passed 49/49 under Xvfb while failing 3
