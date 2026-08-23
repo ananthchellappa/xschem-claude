@@ -14,7 +14,9 @@
 #          quick-field round trip + D6 rejection; Setup Design (View list
 #          filtered to schematic views) round trip; Model Files list dialog
 #          add/delete; Save All -> save_all_i + Save Options column + deck
-#          line + disabled Levels; Simulation Options add/delete; Save-As
+#          line + disabled Levels; the S4 `save_op_params` third blanket
+#          (G5b widget paths + grid rows survive the shift, G5c commits 1 and
+#          writes `{}` -- never `0` -- back off); Simulation Options add/delete; Save-As
 #          prefill / new-view create / same-target clean save; read-only
 #          same-target confirm gate; Load State browser (opens defaulted to
 #          the session's own Library/Cell with the View column filled and no
@@ -48,6 +50,16 @@ proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 
 # --- helpers copied verbatim from tests/headless/test_ase_window.tcl ---------
 # (each test is its own process — helpers are copied, not shared-sourced)
+
+# the grid row a widget sits in, or -1 when it is not gridded at all (S4's
+# Save All row shift: the third checkbox pushes Levels and the button bar down
+# by one, and the existing rows drive those two by PATH)
+proc ase_grid_row {w} {
+  if {![winfo exists $w]} { return -1 }
+  set gi [grid info $w]
+  if {[dict exists $gi -row]} { return [dict get $gi -row] }
+  return -1
+}
 
 # the treeview item whose $col cell equals $val, or {}
 proc tv_find {tv col val} {
@@ -431,6 +443,57 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "G5 deck gains .options savecurrents" \
     [regexp -line {^\.options savecurrents$} $deck5]
 
+  # G5b/G5c: Outputs > Save All gains the THIRD blanket — `save_op_params`,
+  # the gate that lets ase::netlist capture op_annot::save_cards and
+  # render_deck carry it into the deck (plan step S4 / issue 0617).
+  # ⚠ THE ROW NUMBERS IN save_all_dialog ARE HARDCODED: opparams takes grid row
+  # 2, so `dialog_row $w 2 Levels: levels` must move to 3 and
+  # `dialog_buttons $w 3` to 4. The widget PATHS `.allv` `.alli` `.levels`
+  # `.btns.proceed` are what G5 and GE10 drive, so they must survive verbatim.
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  check_true "G5b Save All dialog reopens" [winfo exists $top.saveall]
+  check "G5b the opparams checkbutton exists" \
+    [winfo exists $top.saveall.opparams] 1
+  check "G5b allv/alli/levels/proceed paths survive the row shift" \
+    [list [winfo exists $top.saveall.allv] [winfo exists $top.saveall.alli] \
+          [winfo exists $top.saveall.levels] \
+          [winfo exists $top.saveall.btns.proceed]] {1 1 1 1}
+  check "G5b Levels is still the inert disabled v1 field" \
+    [$top.saveall.levels cget -state] disabled
+  check "G5b opparams sits between alli and Levels in the grid" \
+    [list [ase_grid_row $top.saveall.alli] [ase_grid_row $top.saveall.opparams] \
+          [ase_grid_row $top.saveall.levels] [ase_grid_row $top.saveall.btns]] \
+    {1 2 3 4}
+
+  # G5c: the checkbox actually reaches the state, and OFF is `{}` and not `0`.
+  # `{}` is what keeps the key out of ase::state_serialize, which is what keeps
+  # the 104 committed .state files byte-identical (F3/G3/R4/V4/R2).
+  check "G5c opparams starts unticked (the gate defaults off)" \
+    [expr {[info exists ::ase::ui::dlg($key,opparams)]
+             ? $::ase::ui::dlg($key,opparams) : {<no record>}}] 0
+  catch {$top.saveall.opparams invoke}
+  $top.saveall.btns.proceed invoke
+  update
+  check "G5c ticking opparams writes save_op_params 1" \
+    [ase::state_get [ase::session_state $key] save_op_params] 1
+  check_true "G5c a ticked gate IS serialized" \
+    [expr {[string first "save_op_params 1" \
+       [ase::state_serialize [ase::session_state $key]]] >= 0}]
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  check "G5c reopening preloads the ticked state" \
+    [expr {[info exists ::ase::ui::dlg($key,opparams)]
+             ? $::ase::ui::dlg($key,opparams) : {<no record>}}] 1
+  catch {$top.saveall.opparams invoke}
+  $top.saveall.btns.proceed invoke
+  update
+  check "G5c un-ticking writes {} back, never 0" \
+    [ase::state_get [ase::session_state $key] save_op_params <absent>] {}
+  check "G5c an off gate is OMITTED from the serialized state again" \
+    [expr {[string first "save_op_params" \
+       [ase::state_serialize [ase::session_state $key]]] >= 0}] 0
+
   # G6: Simulation > Options — name/value row add + delete (immediate
   # commit, D15)
   $top.mb.sim invoke "Options\u2026"
@@ -809,12 +872,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check_true "GE10 Save All dialog up" [winfo exists $top.saveall]
   $top.saveall.alli invoke
+  catch {$top.saveall.opparams invoke}   ;# S4's third blanket, same contract
   send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
   check_true "GE10 ESC dismisses Save All" \
     [expr {![winfo exists $top.saveall]}]
-  check "GE10 allv/alli records cleaned" \
+  check "GE10 allv/alli/opparams records cleaned" \
     [list [info exists ::ase::ui::dlg($key,allv)] \
-          [info exists ::ase::ui::dlg($key,alli)]] {0 0}
+          [info exists ::ase::ui::dlg($key,alli)] \
+          [info exists ::ase::ui::dlg($key,opparams)]] {0 0 0}
   check "GE10 state unchanged" \
     [ase::state_serialize [ase::session_state $key]] $snap
 

@@ -38,6 +38,7 @@ namespace eval ase {
   # digital artifacts, which are DERIVED from the netlist at run time.
   variable schema_keys {version simulator design rundir temperature models
                         variables analyses outputs save_all_v save_all_i
+                        save_op_params
                         options includes pre_commands cosim viewer}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
@@ -46,7 +47,14 @@ namespace eval ase {
   # round-tripping byte-identically (which two committed-golden tests assert,
   # and which is what keeps a `git diff` of a state view meaningful). Empty
   # carries no information here: `cosim {}` means exactly "every default".
-  variable omit_if_empty {cosim}
+  # `save_op_params` (plan step S4 / issue 0617) is the THIRD Save-All blanket:
+  # the gate that lets ase::netlist capture op_annot::save_cards and render_deck
+  # carry the device operating-point `.save` cards into the deck. It joins
+  # `cosim` here for exactly the same reason and it MUST default to `{}` rather
+  # than `0`: state_serialize writes every non-empty schema key, so a `0`
+  # default would land in all 104 committed .state files and break the five
+  # load->save byte-identity rows (F3/G3/R4/V4/R2). `{}` = off, `1` = on.
+  variable omit_if_empty {cosim save_op_params}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -238,6 +246,7 @@ proc ase::state_default {} {
     outputs   {} \
     save_all_v 0 \
     save_all_i 0 \
+    save_op_params {} \
     options   {} \
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
@@ -412,6 +421,166 @@ proc ase::rundir {state} {
   return [set_netlist_dir 0]
 }
 
+# --- The op_annot device-OP save cards: capture at netlist, consume at render -
+#
+# doc/claude/specs/op_annotation.md section 3 + plan step S4, issue 0617. The
+# user's report: enable ONLY the OP analysis, Netlist and Run, press 6 -> six
+# blank rows. The raw was correct; the DECK never asked. `save all` does not
+# include gm/gds/vth/vdsat/cgg (rule R1) — one explicit card per device per
+# parameter is the only way, and `op_annot::save_cards` (src/op_annot.tcl)
+# already builds exactly that block. Nothing carried it into the deck.
+#
+# ⚠ WHY THE CARDS ARE BUILT AT NETLIST TIME AND NOT INSIDE render_deck.
+# Every card op_annot emits is ENTRY-RELATIVE: `deck`-based, rooted at the cell
+# you are standing in (ruling D2 / issue 0436). `ase::netlist` is the ONE path
+# whose context guard proves the design IS the current schematic, so it is the
+# one place that precondition holds. Measured on this tree: standing in
+# `bandgap_opamp` and calling save_cards yields 103 cards rooted at the WRONG
+# cell, which name nothing in a `tb_bandgap` deck — and a card that names
+# nothing fails SILENTLY (rc=0, raw written, zero device vectors, empty stderr:
+# spec landmine 2). A user pressing Run would get a green run and blank rows,
+# which is issue 0617 again with the feature nominally on. Building here also
+# keeps the hierarchy walk out of render_deck entirely, so the many suites that
+# call render_deck directly with a fixture string can never trigger one.
+#
+# The cache is keyed on the EXACT netlist text, not on a path + mtime: exact,
+# no 1-second-mtime hazard, no path arithmetic inside the backend, and it makes
+# the whole feature inert for a hand-written fixture string.
+#
+#   ase::run             -> ase::netlist -> capture -> render_deck : always a HIT
+#   ase::run_existing    -> no netlist; HIT iff the artifact's text is still the
+#                           one that was captured (Netlist > Recreate then Run),
+#                           MISS + a reported error otherwise. run_existing has
+#                           no current-schematic guard and is documented to work
+#                           with the design window closed, so emitting there
+#                           unconditionally is the silent-wrong-basis defect
+#                           above.
+#
+# {netlist <exact artifact text> block <the save block>}; empty = nothing held.
+namespace eval ase { variable op_cards [dict create] }
+
+# Empty the slot. Called first on EVERY capture so a previous cell's block can
+# never leak into another design's deck.
+proc ase::op_cards_clear {} {
+  variable op_cards
+  set op_cards [dict create]
+}
+
+# The priming seam (also what the tests drive directly).
+proc ase::op_cards_put {netlist_text block} {
+  variable op_cards
+  set op_cards [dict create netlist $netlist_text block $block]
+}
+
+# 1 iff the slot holds a record built from EXACTLY this netlist text. This is
+# the staleness guard, and it is separate from op_cards_for because a HIT whose
+# block is EMPTY ("nothing below this cell is annotatable") and a MISS ("this
+# artifact is not the one that was captured — re-netlist") are different user
+# situations that need different sentences.
+proc ase::op_cards_hit {netlist_text} {
+  variable op_cards
+  if {![dict exists $op_cards netlist]} { return 0 }
+  return [expr {[dict get $op_cards netlist] eq $netlist_text ? 1 : 0}]
+}
+
+# The block captured for exactly this netlist text; {} on a miss.
+proc ase::op_cards_for {netlist_text} {
+  variable op_cards
+  if {![ase::op_cards_hit $netlist_text]} { return {} }
+  return [dict get $op_cards block]
+}
+
+# Does the design buffer carry unsaved edits? Exactly `xschem get modified`,
+# normalised to 1/0 and safe when the command is unavailable.
+proc ase::design_is_dirty {} {
+  if {[catch {xschem get modified} m]} { return 0 }
+  if {$m eq {} || $m eq {0}} { return 0 }
+  return 1
+}
+
+# Does this state enable an `op` analysis? (The discoverability nudge fires on
+# exactly the configuration issue 0617 was reported from; a tran/ac/digital
+# user never sees it.)
+proc ase::op_analysis_enabled {state} {
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a type] eq {op} && [ase::state_get $a enabled 0] eq {1}} {
+      return 1
+    }
+  }
+  return 0
+}
+
+# ALL the policy lives here. Called from ase::netlist right AFTER the artifact
+# is written. Never raises: an annotation extra may not break Netlist-and-Run
+# (ase_window.tcl:3806/:3818 turn any raise into a red session status, so a
+# propagated op_annot refusal would break the run itself for an opt-in feature).
+# Every degraded path is REPORTED through ase::echo — under-emission in silence
+# is the exact failure class this whole feature exists to delete.
+proc ase::op_cards_capture {state netlistpath} {
+  ase::op_cards_clear
+  set have [expr {[info commands ::op_annot::save_cards] ne {}}]
+  if {[ase::state_get $state save_op_params 0] ne {1}} {
+    # THE GATE DEFAULTS OFF, so it has to be discoverable. 468 cards on a
+    # 31-FET bench (~3000 on a 500-device block, issue 0620) is a real deck
+    # cost, and two committed byte-exact deck goldens would redden on an
+    # unconditional emit. One line, only when an `op` analysis is enabled.
+    if {$have && [ase::op_analysis_enabled $state]} {
+      ase::echo "ASE: device operating-point parameters (gm, gds, vth, ...) were\
+ NOT saved in this deck. Tick Outputs > Save All > Save device OP parameters to\
+ annotate them (issue 0617)."
+    }
+    return {}
+  }
+  if {!$have} {
+    ase::echo "ASE: save_op_params is on but op_annot::save_cards is not\
+ available in this session; no device OP save cards were added to the deck." error
+    return {}
+  }
+  # ⚠ THE PROVISIONAL 0632 REFUSAL. On a DIRTY entry buffer the op_annot walk
+  # rewrites the `~.sch` autosave backups of ancestor cells the user never
+  # touched (issue 0632) — and over a stale one it silently drops cards (0628).
+  # That ruling is with the user and is not this step's to make, so the ASE path
+  # takes the SAFE side: it does not walk, and it says why. Recorded as
+  # provisional in doc/claude/issues/0633-*.md.
+  if {[ase::design_is_dirty]} {
+    ase::echo "ASE: no device OP save cards were added — this schematic has\
+ unsaved edits, and walking a dirty sheet rewrites the `~` autosave backups of\
+ ancestor cells you never touched (issue 0632, ruling pending). Save the\
+ schematic, then netlist again." error
+    return {}
+  }
+  if {[catch {::op_annot::save_cards} block]} {
+    ase::echo "ASE: no device OP save cards were added — $block" error
+    return {}
+  }
+  # The under-emission channel: op_annot counts what it could not name and only
+  # write_save_file ever consumed it. An ASE deck needs it more, not less.
+  if {[info commands ::op_annot::last_warnings] ne {}} {
+    foreach w [::op_annot::last_warnings] {
+      ase::echo "ASE op cards: [string map [list \n { } \r { }] $w]" error
+    }
+  }
+  ## The record is stored even when the block is EMPTY. An empty block is a
+  ## real answer — "nothing below this cell is annotatable" — and it is not the
+  ## same situation as "this deck was rendered from an artifact nobody
+  ## captured". render_deck must be able to tell them apart to report them
+  ## apart, and op_cards_hit is what lets it.
+  set f [open $netlistpath r]
+  set text [read $f]
+  close $f
+  ase::op_cards_put $text $block
+  if {$block eq {}} {
+    ase::echo "ASE: no device below this cell produced an OP save card — no\
+ registered op_annot PDK descriptor matched, or nothing below it is\
+ annotatable. The deck asks for no device parameters." error
+    return {}
+  }
+  set n 0
+  foreach l [split $block "\n"] { if {[string match {.save @*} $l]} { incr n } }
+  ase::echo "ASE: $n device OP save card(s) added to the deck."
+  return $block
+}
+
 # --- Netlist ----------------------------------------------------------------
 
 # Netlist the state's design cellview -> <rundir>/<cell>.spice; returns the
@@ -456,6 +625,14 @@ proc ase::netlist {state} {
   if {![file isfile $nl]} {
     return -code error "ase: netlist not produced: $nl"
   }
+  ## THE OP-CARD CAPTURE, HERE AND ONLY HERE (plan step S4 / issue 0617).
+  ## AFTER the artifact is written, so the oracle's own forced netlist settings
+  ## (op_annot.tcl:1294-1362) cannot perturb the deck the user is about to
+  ## simulate; and inside the guard above, which is what proves the design IS
+  ## the current schematic — the precondition the entry-relative card basis
+  ## needs. Never raises (op_cards_capture catches everything), so an
+  ## annotation extra can never break Netlist-and-Run.
+  catch {ase::op_cards_capture $state $nl}
   return $nl
 }
 
@@ -3165,6 +3342,51 @@ namespace eval ase::backend::ngspice {
       if {[ase::state_get $o save 0] eq {1}} {
         lappend lines ".save [dict get $o expr]"
       }
+    }
+    # --- the op_annot device operating-point save cards (plan step S4) -------
+    # A PURE CONSUMER: the block was built by op_annot::save_cards at netlist
+    # time (ase::op_cards_capture) and is appended VERBATIM here.
+    #
+    # ⚠ DECK LEVEL, IMMEDIATELY ABOVE `.control`, AND NOT ONE LINE LOWER.
+    # Inside a .control block a dot-card is `save: no such command available`
+    # at rc 0 (op_annot.tcl:2112-2118) — it would fail silently.
+    #
+    # ⚠ THE BLOCK'S OWN `.save all` LEADER IS LOAD-BEARING; DO NOT TIDY IT AWAY
+    # AS A DUPLICATE. Any explicit `save` cancels ngspice's implicit
+    # save-everything (rule R2 / invariant I2), and the `.save all` at :3161
+    # above is emitted ONLY when save_all_v is 1 — the schema default is 0.
+    # Measured on the committed save_all_v=0 sky130_tests/test_nfet_final
+    # state: block WITH the leader -> 13 vectors, 6 device parameters, 5 node
+    # v(); block WITHOUT it -> 7 vectors, 6 device parameters, ZERO node v().
+    # Two `.save all` lines in one deck were re-measured harmless.
+    #
+    # ⚠ AND THE CARDS GO THROUGH BARE. `.save @m.x1.xm4.m<model>[id]`, never
+    # `.save i(@...)` — the wrapper is the READ shape (op_annot::vector), and a
+    # wrapped card produces no vector and no diagnostic (rule R4 / spec
+    # landmine 1 / issue 0607). One name builder, two consumers (invariant I1):
+    # nothing here rebuilds, re-wraps, sorts or dedupes a card.
+    if {[ase::state_get $state save_op_params 0] eq {1}} {
+      set opblk [ase::op_cards_for $netlist_text]
+      if {$opblk ne {}} {
+        lappend lines \
+          "* op_annot device operating-point save cards (Outputs > Save All)"
+        foreach opl [split [string trimright $opblk "\n"] "\n"] {
+          lappend lines $opl
+        }
+      } elseif {![ase::op_cards_hit $netlist_text]} {
+        # No record for THIS netlist text: the artifact is one this session
+        # never netlisted, or one edited since (the ase::run_existing shape).
+        # Emitting the held block anyway would name devices that may not be in
+        # this deck, and a wrong name fails SILENTLY — a green run with blank
+        # rows (spec landmine 2). So: no cards, and say so.
+        ase::echo "ASE: this deck was rendered from a netlist artifact that\
+ carries no captured OP save cards, so device operating-point parameters were\
+ NOT saved. Use Simulation > Netlist and Run to regenerate both together." \
+          error
+      }
+      # else: a HIT whose block is empty — nothing below this cell is
+      # annotatable. op_cards_capture already reported that, in its own words;
+      # repeating it here as a staleness complaint would be a lie.
     }
     lappend lines ".control"
     # `pre_*` first, before anything that could need the modules they load.

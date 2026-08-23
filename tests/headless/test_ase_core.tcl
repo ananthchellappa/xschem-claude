@@ -8,6 +8,10 @@
 #                   Save-All blankets (save_all_v -> `.save all` before the
 #                   per-output saves, save_all_i -> `.options savecurrents`,
 #                   nothing while both flags are 0)
+#   C* op cards:    the save_op_params gate key ({} = off, omitted from the
+#                   serialized form), the op-cards capture/consume seam, and
+#                   render_deck appending op_annot::save_cards VERBATIM above
+#                   `.control` on a cache hit (plan step S4 / issue 0617)
 #   N* netlist:     ase::netlist on a scratch lib/cell/view fixture, rundir
 #                   defaulting to $netlist_dir
 #   E* run:         real ngspice batch end-to-end (Id ~ 4.096837e-04, leg
@@ -95,13 +99,37 @@ set d [ase::state_default]
 # ase::omit_if_empty, so an empty one is NOT serialized and every state file
 # written before it existed still round-trips byte-identically — F3/G3 in
 # test_ase_final{,_gf180} are the golden files that assert exactly that.
-check "R1 default has exactly the 16 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes pre_commands cosim viewer}]
+check "R1 default has exactly the 17 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params options includes pre_commands cosim viewer}]
 check "R1 cosim defaults to empty and is omitted from the serialized form" \
   [list [dict get $d cosim] [expr {[string first "cosim" [ase::state_serialize $d]] >= 0}]] {{} 0}
 check "R1 a NON-empty cosim IS serialized" \
   [expr {[string first "cosim {build never}" \
      [ase::state_serialize [dict replace $d cosim {build never}]]] >= 0}] 1
+# --- C2/C3: the save_op_params gate key (plan step S4) -----------------------
+# doc/claude/suggestions/next_session_prompt_op_annotation.md S4 + the S4 plan's
+# first decision. The gate key MUST default to `{}` and MUST join
+# ase::omit_if_empty, NOT default to `0`: ase::state_serialize (ase.tcl:344)
+# writes every non-empty schema key, so a `0` default lands in all 104 committed
+# .state files and reddens five load->save byte-identity rows (F3 in
+# test_ase_final, G3 in test_ase_final_gf180, R4 below, V4 in test_ase_view,
+# R2 in test_ase_persist). `cosim` is the precedent this copies.
+#   {} = off (the default), 1 = on.
+# sentinel default: a MISSING key must read as `<absent>`, never as the `{}`
+# the row is asserting, or the check would pass vacuously on a tree without it
+check "C2 save_op_params defaults to empty (= off)" \
+  [ase::state_get $d save_op_params <absent>] {}
+check "C2 save_op_params is OMITTED from the serialized default state" \
+  [expr {[string first "save_op_params" [ase::state_serialize $d]] >= 0}] 0
+check "C2 save_op_params sits right after save_all_i in the canonical order" \
+  [lsearch -exact $ase::schema_keys save_op_params] \
+  [expr {[lsearch -exact $ase::schema_keys save_all_i] + 1}]
+check "C2 save_op_params is in ase::omit_if_empty" \
+  [expr {[lsearch -exact $ase::omit_if_empty save_op_params] >= 0}] 1
+check "C3 save_op_params 1 IS serialized (the key is not write-only)" \
+  [expr {[string first "save_op_params 1" \
+     [ase::state_serialize [dict replace $d save_op_params 1]]] >= 0}] 1
+
 check "R1 version is 1" [dict get $d version] 1
 check "R1 temperature default 27" [dict get $d temperature] 27
 check "R1 save_all_v and save_all_i default 0" \
@@ -261,6 +289,278 @@ set deck5offi [$render $st $netlist_text]
 check_true "D5 blankets off leave no blanket lines" \
   [expr {![regexp -line {^\.save all$} $deck5off] &&
          ![regexp -line {^\.options savecurrents$} $deck5offi]}]
+
+# --- C0-C12: op_annot device OP save cards into the deck (plan step S4) ------
+# doc/claude/specs/op_annotation.md S4 / issue 0617. `op_annot::save_cards`
+# (src/op_annot.tcl:2144) already emits a correct block; nothing carried it into
+# the deck ngspice runs, so a user who ran an OP analysis and pressed 6 got six
+# blank rows. The seam these rows pin:
+#
+#   ase::op_cards_capture {state netlistpath}
+#       ALL the policy. Called from ase::netlist right AFTER the artifact is
+#       written -- that is the one path whose guard proves the design IS the
+#       current schematic, which is the precondition the ENTRY-RELATIVE card
+#       basis needs (ruling D2 / issue 0436). Clears the slot first; then, iff
+#       the gate is on AND the sheet is clean AND op_annot::save_cards exists,
+#       catch-calls it and stores {netlist <exact artifact text> block <block>}.
+#       Reports every degraded path through ase::echo.
+#   ase::op_cards_for {netlist_text} -> the stored block, iff the stored netlist
+#       text is `eq` this render's text; {} otherwise.
+#   ase::op_cards_put {netlist_text block}   the priming seam these rows use.
+#   ase::op_cards_clear {}                   empty the slot.
+#   ase::design_is_dirty {} -> exactly `xschem get modified`.
+#
+# render_deck is a pure CONSUMER: on a gate-on cache hit it appends one marker
+# comment line matching `^\* op_annot .*Save All` and then the block VERBATIM --
+# leader included, nothing stripped, nothing re-wrapped -- immediately above
+# `.control`.
+#
+# THREE CONTRACTS THAT ARE MEASUREMENTS, NOT PREFERENCES:
+#  * C8 -- the block's own `.save all` leader is LOAD-BEARING. ase.tcl:3161
+#    emits `.save all` only when save_all_v is 1 and the schema default is 0, so
+#    on this fixture the deck has none of its own. Measured on the committed
+#    sky130_tests/test_nfet_final state: block WITH the leader -> 13 vectors,
+#    6 device parameters, 5 node v(); block WITHOUT it -> 7 vectors, 6 device
+#    parameters, ZERO node v(). "Tidying the duplicate away" deletes every node
+#    voltage on the DEFAULT configuration. Invariant I2 / rule R2.
+#  * C9 -- a save card is BARE. `.save @dev[p]`, never `.save i(@dev[p])`, which
+#    ngspice drops silently (rule R4 / spec landmine 1 / issue 0607).
+#  * C6 -- deck level, above `.control`. Inside `.control` a dot-card is
+#    `save: no such command` (op_annot.tcl:2112-2118).
+#
+# C10 vs C7 is the distinction that keeps the reporting honest: a cache HIT
+# whose block is EMPTY ("nothing below this cell is annotatable") must NOT be
+# reported as a stale/absent cache ("re-netlist"). They need different
+# sentences, so op_cards_for's `{}` return may not be render_deck's only signal.
+#
+# Every new-API call is catch-wrapped (`cx`), so on a tree where the seam does
+# not exist yet each row goes red on its own with `ERR: invalid command name
+# ...` instead of aborting the suite at the first missing proc.
+proc cx {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+  return $r
+}
+proc c_echo_arm {} {
+  set ::c_echo {}
+  if {[info commands ::c_saved_ciw_echo] eq {}} {
+    if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::c_saved_ciw_echo }
+    proc ::ciw_echo {msg {tag {}}} { lappend ::c_echo [list $tag $msg] }
+  }
+}
+proc c_echo_disarm {} {
+  if {[info commands ::c_saved_ciw_echo] ne {}} {
+    catch {rename ::ciw_echo {}}
+    rename ::c_saved_ciw_echo ::ciw_echo
+  }
+}
+proc c_echoed {pat {tag {}}} {
+  foreach e $::c_echo {
+    if {$tag ne {} && [lindex $e 0] ne $tag} continue
+    if {[string match -nocase $pat [lindex $e 1]]} { return 1 }
+  }
+  return 0
+}
+proc c_cards {deck} {
+  set n {}
+  foreach l [split $deck "\n"] { if {[regexp {^\.save @} $l]} { lappend n $l } }
+  return $n
+}
+proc c_marker {deck} {
+  set n 0
+  foreach l [split $deck "\n"] { if {[regexp {^\* op_annot .*Save All} $l]} { incr n } }
+  return $n
+}
+proc c_count {deck pat} {
+  set n 0
+  foreach l [split $deck "\n"] { if {[regexp $pat $l]} { incr n } }
+  return $n
+}
+# a synthetic block in exactly op_annot::_block's shape (leader + BARE cards)
+set c_block {.save all
+.save @m.xm1.mfake_nfet[id]
+.save @m.xm1.mfake_nfet[gm]
+.save @m.xm1.mfake_nfet[vth]
+}
+set c_blines [lrange [split $c_block "\n"] 0 end-1]
+
+# C0: the seam exists at all. Every row below reads as `ERR: invalid command
+# name ...` until it does, so this row names the cause once.
+set c_missing {}
+foreach c {::ase::op_cards_capture ::ase::op_cards_for ::ase::op_cards_put
+           ::ase::op_cards_clear ::ase::design_is_dirty} {
+  if {[info commands $c] eq {}} { lappend c_missing $c }
+}
+check "C0 the S4 op-cards seam exists" $c_missing {}
+
+# C4: nothing cached -> the deck is byte-identical to the D1 golden. The feature
+# is inert when it has nothing to say. (Already green before S4 lands; it is the
+# regression guard for the two committed byte-exact deck goldens.)
+cx {ase::op_cards_clear}
+set deckC4 [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
+check_true "C4 empty cache leaves the D1 golden deck byte-identical" \
+  [string equal $deckC4 $expected_deck]
+
+# C5: gate OFF + a PRIMED cache -> still nothing. The gate, not the cache,
+# decides. This is the row that catches "gate ignored, always emit": D1/C4 stay
+# GREEN under that sabotage because their cache is empty.
+cx {ase::op_cards_clear}
+cx {ase::op_cards_put $netlist_text $c_block}
+set stC [nfet_state /models/sky130.lib.spice {}]
+set deckC5 [$render $stC $netlist_text]
+check "C5 gate off emits no device save cards" [llength [c_cards $deckC5]] 0
+check "C5 gate off emits no op_annot marker line" [c_marker $deckC5] 0
+check_true "C5 gate off is byte-identical to the D1 golden" \
+  [string equal $deckC5 $expected_deck]
+
+# C6: gate ON + a hit -> the block VERBATIM, in its own order, immediately above
+# `.control`, behind exactly one marker line.
+set stC [nfet_state /models/sky130.lib.spice {}]
+dict set stC save_op_params 1
+set deckC6 [$render $stC $netlist_text]
+set dl [split [string trimright $deckC6 "\n"] "\n"]
+set ci [lsearch -exact $dl {.control}]
+set nb [llength $c_blines]
+check_true "C6 the deck still has a .control line" [expr {$ci > 0}]
+check "C6 exactly one op_annot marker line" [c_marker $deckC6] 1
+check "C6 the block sits VERBATIM in the lines immediately above .control" \
+  [expr {$ci > $nb ? [lrange $dl [expr {$ci - $nb}] [expr {$ci - 1}]] : {}}] \
+  $c_blines
+check "C6 the marker line is the line immediately above the block" \
+  [expr {$ci > $nb && [regexp {^\* op_annot .*Save All} \
+      [lindex $dl [expr {$ci - $nb - 1}]]] ? 1 : 0}] 1
+check "C6 all three cards land ABOVE .control (deck level)" \
+  [expr {[llength [c_cards $deckC6]] == 3 &&
+         [lsearch -glob $dl {.save @*}] >= 0 &&
+         [lsearch -exact $dl [lindex $c_blines end]] < $ci ? 1 : 0}] 1
+check "C6 the per-output .save row is still emitted, ahead of the block" \
+  [expr {[lsearch -exact $dl {.save -i(v1)}] >= 0 &&
+         [lsearch -exact $dl {.save -i(v1)}] < [expr {$ci - $nb}] ? 1 : 0}] 1
+
+# C7: gate ON + a cache primed with a DIFFERENT netlist text -- the run_existing
+# shape: an artifact this session never netlisted, or one hand-edited since.
+# No cards at all, and an error naming the remedy. Measured hazard: standing in
+# `bandgap_opamp`, save_cards builds 103 entry-relative cards that name nothing
+# in a tb_bandgap deck, and a wrong-named card is SILENTLY inert (rc=0, raw
+# written, zero device vectors, empty stderr). A green run with blank rows is
+# issue 0617 again, with the feature nominally on.
+cx {ase::op_cards_clear}
+cx {ase::op_cards_put "* some OTHER netlist\n.end\n" $c_block}
+c_echo_arm
+set deckC7 [$render $stC $netlist_text]
+check "C7 a stale/absent cache emits no device save cards" \
+  [llength [c_cards $deckC7]] 0
+check "C7 a stale/absent cache emits no marker line" [c_marker $deckC7] 0
+check "C7 the miss is REPORTED as an error naming Netlist and Run" \
+  [c_echoed {*Netlist and Run*} error] 1
+c_echo_disarm
+
+# C8: the block's own `.save all` leader survives into the deck -- exactly one
+# more than the same state rendered with the gate off, and ahead of the cards.
+cx {ase::op_cards_clear}
+cx {ase::op_cards_put $netlist_text $c_block}
+set deckC8on  [$render $stC $netlist_text]
+set deckC8off [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
+check "C8 gate on adds exactly one .save all line (I2 / rule R2)" \
+  [expr {[c_count $deckC8on {^\.save all$}] - [c_count $deckC8off {^\.save all$}]}] 1
+set on_l [split [string trimright $deckC8on "\n"] "\n"]
+check "C8 that .save all precedes the first device card" \
+  [expr {[lsearch -exact $on_l {.save all}] >= 0 &&
+         [lsearch -glob $on_l {.save @*}] >= 0 &&
+         [lsearch -exact $on_l {.save all}] <
+         [lsearch -glob $on_l {.save @*}] ? 1 : 0}] 1
+
+# C9: rule R4 / spec landmine 1 -- the card is BARE on the way through.
+# `.save i(@dev[p])` produces no vector and no diagnostic (issue 0607).
+# (Vacuously green while no card is emitted at all; C6 is its non-vacuity
+# control -- it is only meaningful once three cards actually appear.)
+check "C9 no emitted card wears an i()/v() wrapper" \
+  [c_count $deckC8on {^\.save\s+[iv]\(@}] 0
+
+# C10: a cache HIT whose block is EMPTY -> nothing appended, and the report says
+# NO DEVICE PRODUCED A CARD, not "re-netlist". save_cards returns {} (never a
+# lone `.save all`) for a walk that matched nothing -- no PDK descriptor
+# registered, or nothing below this cell is annotatable.
+set c10_nl [file join $scratch c10.spice]
+set f [open $c10_nl w]; puts -nonewline $f $netlist_text; close $f
+rename ::op_annot::save_cards ::op_annot::c_real_save_cards
+proc ::op_annot::save_cards {} { return {} }
+cx {ase::op_cards_clear}
+c_echo_arm
+cx {ase::op_cards_capture $stC $c10_nl}
+check "C10 an empty walk is REPORTED (no device produced a card)" \
+  [expr {[c_echoed {*no device*}] || [c_echoed {*matched no*}] ? 1 : 0}] 1
+set ::c_echo {}
+set deckC10 [$render $stC $netlist_text]
+check "C10 an empty block appends nothing" [llength [c_cards $deckC10]] 0
+check "C10 an empty block appends no marker line" [c_marker $deckC10] 0
+check "C10 an empty HIT is NOT reported as a stale cache" \
+  [c_echoed {*Netlist and Run*}] 0
+c_echo_disarm
+rename ::op_annot::save_cards {}
+rename ::op_annot::c_real_save_cards ::op_annot::save_cards
+
+# C11: ase::design_is_dirty is the real predicate, not a stub. Driven in BOTH
+# directions so C12 cannot pass on a constant.
+# ⚠ `autosave_backup` is PARKED across the set_modify pair. set_modify(1)
+# calls write_backup() (actions.c:207), and on the startup untitled buffer that
+# drops an `untitled~.sch` into the repo ROOT -- issue 0609, the leak that turns
+# three unrelated suites red. Parked, not deleted afterwards: the write happens
+# inside the C call, so there is no window in which a cleanup could be racing it.
+set c11_ab_had [info exists ::autosave_backup]
+if {$c11_ab_had} { set c11_ab_val $::autosave_backup }
+set ::autosave_backup 0
+check "C11 design_is_dirty agrees with xschem get modified (clean)" \
+  [list [cx {ase::design_is_dirty}] [xschem get modified]] {0 0}
+xschem set_modify 1
+check "C11 design_is_dirty agrees with xschem get modified (dirty)" \
+  [list [cx {ase::design_is_dirty}] [xschem get modified]] {1 1}
+xschem set_modify 0
+check "C11 design_is_dirty back to 0" [cx {ase::design_is_dirty}] 0
+if {$c11_ab_had} { set ::autosave_backup $c11_ab_val } else { unset ::autosave_backup }
+check "C11 no untitled~.sch was dropped in the repo root (issue 0609)" \
+  [file exists [file join $repo untitled~.sch]] 0
+
+# C12: THE PROVISIONAL 0632 REFUSAL. With unsaved edits on the sheet the ASE
+# path emits no cards AT ALL and says so -- it does not walk. On a dirty entry
+# buffer the S3 walk rewrites the `~.sch` autosave backups of ancestor cells the
+# user never touched (issue 0632); that ruling is with the user, and adopting
+# either disputed behaviour silently would manufacture it. Safe choice = refuse.
+# `design_is_dirty` is STUBBED rather than the buffer really dirtied, so the row
+# tests the contract (capture consults the predicate and honours it) and stays
+# independent of what a real dirty buffer would do.
+set c12_swapped 0
+if {[info commands ::ase::design_is_dirty] ne {}} {
+  rename ::ase::design_is_dirty ::ase::c_real_design_is_dirty
+  proc ::ase::design_is_dirty {} { return 1 }
+  set c12_swapped 1
+}
+set ::c12_called 0
+rename ::op_annot::save_cards ::op_annot::c_real_save_cards
+proc ::op_annot::save_cards {} {
+  set ::c12_called 1
+  return ".save all\n.save @m.xm1.mfake_nfet\[id\]\n"
+}
+cx {ase::op_cards_clear}
+c_echo_arm
+cx {ase::op_cards_capture $stC $c10_nl}
+check "C12 a dirty sheet never reaches op_annot::save_cards" $::c12_called 0
+check "C12 a dirty sheet leaves the cache empty" \
+  [cx {ase::op_cards_for $netlist_text}] {}
+check "C12 the refusal is reported and names the unsaved edits" \
+  [c_echoed {*unsaved*}] 1
+check "C12 the refusal points at the open ruling (issue 0632)" \
+  [c_echoed {*0632*}] 1
+set deckC12 [$render $stC $netlist_text]
+check "C12 the deck carries no device cards after a refusal" \
+  [llength [c_cards $deckC12]] 0
+c_echo_disarm
+rename ::op_annot::save_cards {}
+rename ::op_annot::c_real_save_cards ::op_annot::save_cards
+if {$c12_swapped} {
+  rename ::ase::design_is_dirty {}
+  rename ::ase::c_real_design_is_dirty ::ase::design_is_dirty
+}
+cx {ase::op_cards_clear}
 
 # --- D6: pre_commands -> the head of the .control block ----------------------
 # ngspice's `pre_*` family runs BEFORE the netlist is parsed — the only way to

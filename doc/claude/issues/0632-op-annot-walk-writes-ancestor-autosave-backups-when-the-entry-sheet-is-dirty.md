@@ -186,3 +186,29 @@ a crew that can carry a guardian with it.
 8. The menu item added at `src/xschem.tcl:15476` is X-only and was exercised in
    this step only through `op_annot::write_save_file` directly. Its `alert_` and
    `textwindow` arms are unmeasured. A `look`/`suite` debt is in the ledger.
+
+---
+
+## 2026-08-23 — what S4 did about this, and what it did NOT do
+
+The ASE path (`ase::op_cards_capture`, src/ase.tcl) **refuses** to build the OP
+save cards whenever `ase::design_is_dirty` (= `xschem get modified`) is true, and
+reports both the unsaved edits and this issue number. So the one-click
+Netlist-and-Run route into the disputed behaviour is closed for now.
+
+Two things this did NOT do, deliberately:
+
+* it did **not** change `op_annot::_assert_saveable` or any op_annot policy. That
+  gate refuses only `modified=1 + autosave_backup=0`; this issue's live hazard is
+  `modified=1 + autosave_backup=1`, the shipped default. Tightening it would also
+  silently change the shipped *Create device OP .save file* menu item and redden
+  test_op_annot W31.
+* it did **not** settle this issue. The refusal is PROVISIONAL and is filed as
+  its own question in **0633**; if the ruling lands on "walk anyway", the row to
+  rewrite is `test_ase_core.tcl` C12.
+
+**Correction to still-open item 6 of this issue, measured:** it claims
+`render_deck` wraps `save_cards` in its own `no_undo 1` scope and would be
+silently disarmed by the restore. `grep` finds no `no_undo`, `no_draw` or
+`keep_symbols` anywhere in `src/ase.tcl` or `src/ase_window.tcl`, and S4 adds no
+such scope. There is nothing to defend against on this tree.

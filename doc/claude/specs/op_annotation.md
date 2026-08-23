@@ -427,6 +427,32 @@ resolves through a caller's `extra=` override that the netlister's shared
 and the fixture a fix owes. It is *not* the all-bogus case: the raw is written,
 890 of 892 vectors are good, and the node voltages survive.
 
+### 3.2 R6 — under the ASE deck idiom the failure is SILENT, not a missing raw (S4)
+
+Re-measured when S4 landed, and it amends the sentence above for one specific
+caller. R5's "no raw at all" case needs the deck to have **nothing writable
+left**. An ASE-rendered deck always has: the block prepends its own `.save all`
+(R2), and a testbench schematic usually contributes its own `.save v(...)` cards
+as well. So when every device card names a device that is not in this deck —
+the wrong-hierarchy-basis case, e.g. cards built while standing in a
+sub-block — ngspice exits **0**, **writes** the raw, emits **no** `checkvalid`
+and **no** `unrecognized variable`, leaves stderr **empty**, and the raw simply
+carries the card-less baseline vector set. Measured on `tb_bandgap`: 468
+wrong-basis cards → 423 variables, the exact number the deck has with no cards
+at all, zero device-parameter vectors.
+
+Consequences, and they are binding on any acceptance test for this path:
+
+* "the raw is missing" is **not** a usable detector here. Neither is a stderr
+  scan, nor a zero-column scan (an `op` raw has `No. Points: 1` and carries no
+  `dims=0` marker at all — that marker is tran-only).
+* the only working detectors are a **name-set diff of the emitted cards against
+  the raw header** and a **real-number assertion on the rendered rows**. Both,
+  not either.
+* which is why S4 refuses to emit at all rather than emit on an unverified
+  basis: a wrong basis here is indistinguishable from the feature being off,
+  and it looks like a successful run.
+
 ---
 
 ## 4. Design
@@ -918,11 +944,17 @@ respected). For each instance whose symbol `type` has a registration, emit one
 save for those). Returns the block as text. **Always prepend `save all`** (rule
 R2).
 
-**⚠ FOUR ATTEMPTS, FOUR REVERTS — S3a/0436, S3b/0442, S3c/0443, S3d/0494.**
-`save_cards` is **not on the tree**. Read `doc/claude/issues/0494-...md` before
-starting a fifth; the preserved patch `0494-attempt-4-reverted.patch` applies
-clean (`rc=0`) at `d56283ec` and is the right starting point. What attempt 4
-**settled, and what a fifth should carry forward rather than re-derive**:
+**✅ LANDED AT ATTEMPT 5 (S3, 2026-08-22, commit `7088e8a8`).** `op_annot::save_cards`
+**is** on the tree, in `src/op_annot.tcl`, and S4 (2026-08-23) carries its block
+into the ASE deck — see **§4.3a**. The history below is kept because every one of
+its bullets is still binding on anyone who touches the emitter; only the "not on
+the tree" status line has changed.
+
+**⚠ FOUR ATTEMPTS, FOUR REVERTS BEFORE THAT — S3a/0436, S3b/0442, S3c/0443,
+S3d/0494.** Read `doc/claude/issues/0494-...md` before touching the walk; the
+preserved patch `0494-attempt-4-reverted.patch` applies clean (`rc=0`) at
+`d56283ec`. What attempt 4 **settled, and what attempt 5 carried forward rather
+than re-derived**:
 
 * **THE NETLISTER IS THE ORACLE — RUN IT AND READ IT, NEVER MIRROR IT.** This is
   the one decision that survived every attack, and it is what the paragraph above
@@ -1013,6 +1045,81 @@ verbatim apart from the name. What S5 settled that this section did not specify:
   nested `xschem translate` calls on IHP's 13-param NPN while the outer
   `translate`'s `static char *result` (`token.c:4604`) is live. Guarded by a row
   asserting `[_wrap [devpath …] $p $kind] eq [vector … $p]` for every params row.
+
+### 4.3a How the block reaches the deck ✅ LANDED (S4, 2026-08-23)
+
+The §4.1 diagram draws one arrow labelled *"into the deck"* and never said who
+carries it. Until S4 nobody did: `ase::render_deck` emitted `.save all` plus one
+card per configured output row, so a user could run a perfect OP analysis and get
+six blank rows (issue **0617**). This is the design of record for that arrow.
+
+**One gate, defaulting off.** A new ASE state key `save_op_params` — `{}` = off,
+`1` = on — surfaced as *Outputs → Save All → Save device OP parameters*. It
+**must** default to `{}` and live in `ase::omit_if_empty`, never `0`:
+`state_serialize` writes every non-empty schema key, so a `0` default lands in
+all 104 committed `.state` files and breaks five load→save byte-identity rows.
+Off by default because the cost is real — 468 cards on a 31-FET bench, ~3000 at
+500 devices (issue 0620) — and because two committed byte-exact deck goldens
+would redden on an unconditional emit.
+
+**Built at NETLIST time, consumed at RENDER time.** `ase::op_cards_capture` runs
+from `ase::netlist` immediately after the artifact is written and caches
+`{netlist <exact artifact text> block <block>}`; `ase::render_deck` is a pure
+consumer that appends the cached block only when the stored text is `eq` this
+render's `$netlist_text`. The split is forced by the basis rule in §4.3: every
+card is **entry-relative**, and `ase::netlist` is the only path whose guard
+proves the design IS the current schematic. Measured: standing in
+`bandgap_opamp`, `save_cards` builds 103 cards rooted at the wrong cell that name
+nothing in a `tb_bandgap` deck — and by **R6** that failure is completely silent.
+Keying on the netlist *text* (not path+mtime) is exact, has no 1-second-mtime
+hazard, and makes the feature inert for the suites that call `render_deck`
+directly with a fixture string.
+
+Consequences per user path, and they are the contract:
+
+| path | cards? |
+|---|---|
+| *Netlist and Run* (`ase::run`) | always — capture then render in one pass |
+| *Netlist → Recreate*, then *Run* (`ase::run_existing`) | yes **iff** the artifact text is still the captured one |
+| *Run* on an artifact this session never netlisted, or edited since, or after a restart | **no**, plus a reported error naming *Netlist and Run* |
+
+**Appended VERBATIM, at deck level, immediately above `.control`.** Not one line
+lower: inside a `.control` block a dot-card is `save: no such command available`
+at rc 0. Not stripped of its own `.save all` leader: by **R2** any explicit save
+cancels the implicit save-everything, and `render_deck`'s own `.save all` is
+emitted **only** when `save_all_v` is 1 while the schema default is 0. Measured
+on a committed `save_all_v 0` state — block WITH the leader → 13 vectors, 6
+device parameters, **5** node `v()`; WITHOUT → 7, 6, **0**. Two `.save all` lines
+in one deck are harmless. And nothing rewrites, re-wraps, sorts or dedupes a card
+on the way through: the card is **bare** (**R4**, invariant **I1**), the wrapper
+is the read shape.
+
+**Every degraded path is reported** through `ase::echo`, which feeds both the ASE
+pane and `Xschem.log`: the card count on success; every `op_annot::last_warnings`
+entry as an error (they previously reached only `write_save_file`); an error when
+nothing below the cell produced a card; an error when `save_cards` raised — it is
+**caught**, never propagated, because `ase_window.tcl` turns a raise into a red
+session status and an opt-in annotation extra may not break *Netlist and Run*;
+an error on a render-time cache miss; and, when the gate is off and an `op`
+analysis is enabled, one line naming the checkbox. That last one is 0617's
+report-what-was-not-delivered channel at the emit end. ⚠ Three defects in this
+reporting are filed and **not** fixed: **0635** (a refusal reports two
+contradictory sentences), **0636** (the nudge has no opt-out), **0637** (a
+truthy-not-`1` gate is silently off; the count assumes an `@` prefix).
+
+**On a DIRTY sheet the ASE path emits nothing and says so** — provisional,
+pending the 0628/**0632** ruling, filed as **0633**. This is deliberately *not*
+`op_annot::_assert_saveable`, which refuses only `modified=1 +
+autosave_backup=0` while 0632's live hazard is `modified=1 + autosave_backup=1`,
+the shipped default.
+
+**Acceptance for this arrow is end-to-end or it is nothing.** `.save` lines
+appearing in a file proves nothing (landmine 2: a wrong name yields no vector and
+no diagnostic), a missing raw proves nothing (**R6**), and a `dims=0` scan proves
+nothing on an `op` raw (that marker is tran-only). The two detectors that work
+are a **name-set diff of the emitted cards against the raw header** and a
+**real-number assertion on the rendered rows** — `tests/headless/test_ase_final.tcl`
+rows F10a–F20, with F18 as the gate-off control that keeps them non-vacuous.
 
 ### 4.4 Getting the block onto the screen — two carriers
 
@@ -1709,10 +1816,13 @@ authority has signed it off*.
 | **0627** | ratification | **where the new `Create device OP .save file` item lives.** S3 put it in **Simulation > Graphs**, immediately after `Add device OP annotator`, so the three op_annot items sit together (src/xschem.tcl, after the `Add device OP annotator` command). The alternatives — a top-level `Simulation` item, or the `Netlist` cascade — are larger diffs with no measured advantage, and the item *is* a netlist-adjacent generator, not a graph. **Graphs cascade, or top-level Simulation?** — S3's first E question. |
 | **0628** | ratification | **`op_annot::save_cards` REFUSES on a sheet with unsaved edits when `autosave_backup` is off** (issue 0626). The measured alternative is that the walk's `descend` + `go_back` round trip **silently reverts those edits** while still reporting `modified=1` — 73 instances → edit → 72 → descend → go_back → **73**, measured on a byte-copy of `sky130_tests_ase/bandgap_opamp`. A refusal the user can act on (save, or turn autosave back on) was chosen over silent data loss, per save.c RULING D5-1. **Refuse, or walk it and accept the revert?** — S3's second E question. **⚠ ANSWER THE WHOLE MATRIX, NOT HALF OF IT.** The *other* half — `modified=1` with autosave **on** — is currently **walked**, and issue **0632** measures what that costs: the walk rewrites the `<cell>~.sch` of ancestor levels the user never touched, and over a genuinely stale one it under-emits at `rc=0` while saying *“normal for such cells”*. If the ruling is *refuse*, the cheapest correct shape is to refuse **any** modified entry buffer and drop the autosave condition entirely; if it is *walk it*, 0632's park-below-the-entry fix becomes mandatory. |
 
+| **0633** | ratification, **provisional** | **with unsaved edits on the sheet, the ASE path emits NO device OP save cards at all** — not even in the `modified=1 + autosave_backup=1` case that `op_annot::save_cards` itself walks today. S4 took the safe side of the 0628/0632 matrix rather than manufacturing its ruling, and reports the refusal. **Refuse as shipped, or walk anyway and accept the ancestor-`~` rewrite (0632)?** — S4's E question, and it should be answered *together with* 0628/0632, not separately. |
+| **0636** | ratification | the gate-off nudge — one `ase::echo` line naming *Outputs → Save All → Save device OP parameters* — fires on **every** `op` netlist for **every** user, with no opt-out, including designs where nothing is annotatable. It is 0617's report-what-was-not-delivered channel, and it is also a new line in every existing OP user's pane and log. **Keep it unconditional, latch it once per session, or give it an `xschemrc` off switch?** |
+
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:
 implement the least-surprising option, then hand the user the exact question.
-Nine such questions in one feature is itself a signal — this feature changes
+Eleven such questions in one feature is itself a signal — this feature changes
 what a schematic *shows*, so almost every choice is user-visible.
 
 *(Collected by the S12 write-up agent. The S12 implement agent produced no

@@ -2851,11 +2851,16 @@ proc ase::ui::listdlg_delete {key which} {
 
 # --- (d) Outputs > Save All --------------------------------------------------
 
-# Outputs > Save All…: the two blanket checkboxes writing save_all_v /
-# save_all_i (deck mapping in ase.tcl: allv -> `.save all`, alli ->
-# `.options savecurrents`); the Levels entry is present-but-DISABLED and
-# backed by NO state key (D11 — a schema addition would ripple into the
-# protected byte-identity fixture).
+# Outputs > Save All…: the THREE blanket checkboxes writing save_all_v /
+# save_all_i / save_op_params (deck mapping in ase.tcl: allv -> `.save all`,
+# alli -> `.options savecurrents`, opparams -> the op_annot device
+# operating-point `.save` card block, plan step S4 / issue 0617); the Levels
+# entry is present-but-DISABLED and backed by NO state key (D11 — a schema
+# addition would ripple into the protected byte-identity fixture).
+#
+# ⚠ THE GRID ROWS ARE HARDCODED. opparams takes row 2, so Levels moved to 3
+# and the button bar to 4. The widget PATHS (.allv .alli .levels
+# .btns.proceed) are what the dialog suites drive, and they are unchanged.
 proc ase::ui::save_all_dialog {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
@@ -2863,14 +2868,19 @@ proc ase::ui::save_all_dialog {key} {
   set st [ase::session_state $key]
   set dlg($key,allv) [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}]
   set dlg($key,alli) [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}]
+  set dlg($key,opparams) \
+    [expr {[ase::state_get $st save_op_params 0] eq {1} ? 1 : 0}]
   checkbutton $w.allv -text {Save all voltages} \
     -variable ::ase::ui::dlg($key,allv)
   checkbutton $w.alli -text {Save all terminal currents} \
     -variable ::ase::ui::dlg($key,alli)
+  checkbutton $w.opparams -text {Save device OP parameters (gm, gds, vth, ...)} \
+    -variable ::ase::ui::dlg($key,opparams)
   grid $w.allv -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   grid $w.alli -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
-  set le [ase::ui::dialog_row $w 2 Levels: levels]
-  ase::ui::dialog_buttons $w 3 [list ase::ui::save_all_ok $key] \
+  grid $w.opparams -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  set le [ase::ui::dialog_row $w 3 Levels: levels]
+  ase::ui::dialog_buttons $w 4 [list ase::ui::save_all_ok $key] \
     [list ase::ui::save_all_cancel $key]
   bind $w <Return> [list ase::ui::save_all_ok $key]
   ase::ui::apply_theme $w
@@ -2887,6 +2897,15 @@ proc ase::ui::save_all_ok {key} {
     [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}]
   dict set st save_all_i \
     [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}]
+  ## OFF IS `{}`, NEVER `0`. `save_op_params` is in ase::omit_if_empty, and an
+  ## empty value is what keeps the key OUT of ase::state_serialize — which is
+  ## what keeps the 104 committed .state files byte-identical (F3/G3/R4/V4/R2).
+  ## A literal 0 here would write the key into every state a user ever saves.
+  if {[info exists dlg($key,opparams)] && $dlg($key,opparams)} {
+    dict set st save_op_params 1
+  } else {
+    dict set st save_op_params {}
+  }
   ase::session_update $key $st
   ase::ui::populate $key    ;# the Save Options auto-cells react (item 06)
   ase::ui::save_all_cancel $key
@@ -2896,6 +2915,7 @@ proc ase::ui::save_all_cancel {key} {
   variable wins; variable dlg
   array unset dlg $key,allv
   array unset dlg $key,alli
+  array unset dlg $key,opparams
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveall}
   }

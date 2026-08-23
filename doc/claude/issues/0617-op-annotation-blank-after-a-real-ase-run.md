@@ -1,5 +1,36 @@
 # 0617 — a successful OP run annotates nothing, and the tool does not say why
 
+STATUS: **EMIT HALF CLOSED 2026-08-23 — S4 landed.** `ase::netlist` now captures
+`op_annot::save_cards` and `ase::render_deck` carries the block VERBATIM into the
+deck, immediately above `.control`, when the new `save_op_params` gate is on
+(*Outputs → Save All → Save device OP parameters*). Proved end to end on a real
+`/usr/local/bin/ngspice` run in `tests/headless/test_ase_final.tcl` rows
+F10a–F20: the raw's device-parameter vector set is EXACTLY `op_annot::vector` of
+the emitted cards, the node voltages survive in the same raw (invariant I2), and
+`op_annot::text M1` renders six real numbers — against the pinned before-state
+(F18) where the same cell with the gate off has zero device vectors and
+`gm/gds/vgs/vth/vds` all blank.
+
+**What is still open in this issue:**
+* **The gate defaults OFF**, so the user's exact sequence needs the checkbox
+  ticked once. The emit-side *report-what-was-not-delivered* channel fires for
+  that (row F19: one `ase::echo` line naming *Outputs > Save All > Save device OP
+  parameters*, only when an `op` analysis is enabled). `op_annot::last_warnings`
+  now reach the ASE pane too — previously only `write_save_file` consumed them.
+* **The DISPLAY half (invariant I8) is untouched.** Pressing `6` on a blank row
+  still says nothing about *why* it is blank. That is a display-path change,
+  outside S4's Files cell, and this issue stays OPEN for it.
+* **With unsaved edits on the sheet, ASE emits no cards at all** and says so —
+  a PROVISIONAL choice pending the 0628/0632 ruling, filed as **0633**.
+* **Three defects IN THIS CHANNEL, measured by the S4 adversary and not fixed:**
+  **0635** — every *refusal* path reports two sentences and the second
+  contradicts the first; **0636** — the gate-off nudge fires on every `op`
+  netlist for every user with no opt-out; **0637** — a truthy-but-not-`1` gate
+  value is silently off, and the reported card count assumes an `@` prefix. A
+  report channel that gives contradictory advice is only marginally better than
+  one that says nothing, which is what this issue was filed about.
+
+
 STATUS: **HALF CLOSED 2026-08-22 — S3 landed, S4 has not.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. `op_annot::save_cards` on the user's own `sky130_tests_ase/tb_bandgap` now emits **469 lines (1 × `.save all` + 468 cards)** in 244 ms, of which **468 of 468 materialise as real vectors** in an ngspice 46+ raw, and all 78 cards of the hand-written demo golden are a byte-exact subset. **The user's six blank rows are still blank until S4 carries the block into `ase::render_deck`** (or the user runs the new *Simulation → Graphs → Create device OP .save file* menu item and `.include`s the result). The **I8** half of this issue — the tool saying *why* a row is blank — is untouched and still open.
 
 Original filing follows.

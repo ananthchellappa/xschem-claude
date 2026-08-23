@@ -119,7 +119,7 @@ classifier and the colour.
    paper) and a correction to **0457** (its "mask 2 is menu-only" claim is now
    false).
 
-10. **NUMBER NEW ISSUES FROM 0626.** This item consumed 0621–0625.
+10. **NUMBER NEW ISSUES FROM 0638.** *(Live line as of 2026-08-23: the 0614+0615 item consumed 0621–0625, S3 filed 0626–0632, and S4 filed 0633–0637.)*
 
 ---
 
@@ -200,8 +200,9 @@ Also read, before touching anything:
   it up, including the "place annotator pre-filled from selection" idiom.
 - `doc/claude/code_analysis/waveform_subsystem_reference.md` §6.
 
-Branch is `annotate`. **Number new issues from 0626, and skip the whole 05xx
-block.** *(Live line as of 2026-08-22: the eyes-on batch took 0613–0618, X0619/0620
+Branch is `annotate`. **Number new issues from 0638, and skip the whole 05xx
+block.** *(Live line as of 2026-08-23: S3 filed 0626–0632 and S4 filed 0633–0637.)*
+*(2026-08-22: the eyes-on batch took 0613–0618, X0619/0620
 followed, and 0614+0615's implementation filed 0621–0625. The "from 0603" that
 stood here is now historical provenance.)* *(Authoritative as of X0498, 2026-08-22 — `0499` was this branch's
 ceiling, **0500–0599 are RESERVED for the fluid-editing branch and must stay
@@ -1200,6 +1201,178 @@ test in this plan.
 > for the right reason if you forget it.
 
 **Risk:** low. **Unblocks:** real numbers on tb_bandgap.
+
+> ### ✅ S4 LANDED. WHAT IT ACTUALLY DID, AND WHERE IT DEPARTED FROM THIS CELL
+>
+> **Green end to end on a real simulator run**: `test_ase_final` F10a–F20 netlist
+> the committed `sky130_tests/test_nfet_final`, run `/usr/local/bin/ngspice`,
+> read the raw header back and require `op_annot::text M1` to render six REAL
+> numbers, none of them blank/0/0.0/nan/inf, with the node voltages still
+> present in the same raw. `test_ase_core` C0–C12 pin the seam; `test_ase_dialogs`
+> G5b/G5c/GE10 pin the checkbox.
+>
+> **1. The key defaults to `{}`, NOT `0`, and joined `ase::omit_if_empty`.**
+> `state_serialize` writes every non-empty schema key, so a `0` default lands in
+> all 104 committed `.state` files and breaks five load→save byte-identity rows
+> (F3/G3/R4/V4/R2). `cosim` is the precedent. `{}` = off, `1` = on.
+>
+> **2. THE CARDS ARE BUILT AT NETLIST TIME, NOT INSIDE `render_deck`.**
+> `ase::op_cards_capture` runs from `ase::netlist` immediately after the artifact
+> is written and caches `{netlist <exact text> block <block>}`; `render_deck` is a
+> pure consumer that appends the cached block only when the stored text is `eq`
+> this render's `$netlist_text`. Reason, measured: every card is ENTRY-RELATIVE
+> (ruling D2), and `ase::netlist` is the only path whose guard proves the design
+> IS the current schematic. `ase::run_existing` has no such guard — standing in
+> `bandgap_opamp` it builds 103 cards rooted at the wrong cell that name nothing
+> in a `tb_bandgap` deck, and a wrong-named card fails SILENTLY under this
+> idiom. Consequence for the user: Netlist-and-Run always gets cards;
+> Netlist > Recreate then Run gets them iff the artifact is still the captured
+> one; anything else gets none plus an echoed error naming *Netlist and Run*.
+>
+> **3. The insertion point is IMMEDIATELY ABOVE `.control`, not "after the
+> `.save all` line".** That line is emitted only when `save_all_v` is 1 and the
+> schema default is 0, so on a default state there is no such anchor. The block
+> keeps its own `.save all` leader: measured on this committed `save_all_v 0`
+> state, block WITH the leader → 13 vectors / 6 device parameters / 5 node
+> `v()`; WITHOUT → 7 / 6 / **0**. Stripping the "duplicate" deletes every node
+> voltage (rule R2 / invariant I2). Two `.save all` lines re-measured harmless.
+>
+> **4. This cell's `no_undo` warning is FALSE on this tree and stays false.**
+> `grep` finds no `no_undo`, `no_draw` or `keep_symbols` anywhere in `ase.tcl` or
+> `ase_window.tcl`; S4 wraps the call in no such scope, so there is nothing to
+> re-arm (issue 0632 still-open item 6).
+>
+> **5. THE 0632 GATE IS A REFUSAL, AND IT IS PROVISIONAL — issue 0633.** This
+> cell suggests gating on `op_annot::_assert_saveable`; that gate refuses only
+> `modified=1 + autosave_backup=0`, while 0632's live hazard is `modified=1 +
+> autosave_backup=1`, the shipped default. S4 added `ase::design_is_dirty` in
+> `ase.tcl` instead (leaving op_annot's own policy and the shipped menu item
+> untouched) and REFUSES on any dirty sheet, reporting both the unsaved edits and
+> the open ruling. Filed as **0633** with the exact question; do not treat the
+> refusal as ratified.
+>
+> **6. A raise from `save_cards` is CAUGHT and the run continues card-less.**
+> `render_deck` has no catch and `ase_window.tcl:3806/:3818` turn any raise into
+> a red session status, so an unsaved-edits refusal would otherwise break
+> Netlist-and-Run itself for an opt-in extra.
+>
+> **7. The gate defaults OFF and is therefore made discoverable.** When it is off
+> and an `op` analysis is enabled, `ase::netlist` echoes exactly one line naming
+> *Outputs > Save All > Save device OP parameters* — 0617's
+> report-what-was-not-delivered channel at the emit end (row F19). Gated on `op`
+> so a tran/ac/digital user never sees it. `op_annot::last_warnings` are echoed
+> as errors too; they previously reached only `write_save_file`.
+>
+> **8. Issue 0631 is inherited unchanged.** The deck carries `save_cards`' output
+> verbatim, so it carries its two orphan cards too. Under `.op` those produce NO
+> vector (blank, I3-correct), not a `dims=0` zeros column — so F14 uses
+> `test_nfet_final`, a single FET with no passgate `extra=`/`format=` mismatch,
+> and can assert EXACT name-set equality rather than tolerating a shortfall.
+>
+> **9. Correction to the acceptance cell above.** "The tell is that the raw is
+> missing, not that a column is zero" does NOT hold for the ASE idiom: an ASE
+> deck always carries writable vectors (the block's own `.save all` plus the
+> schematic's own node cards), so `write` always succeeds and a wrong-basis card
+> set gives rc=0, a written raw, and zero device vectors with empty stderr. The
+> only working detector here is the NAME-SET diff (F14) plus a real-number
+> assertion on the rendered rows (F16/F17).
+>
+> ---
+>
+> **SABOTAGE MATRIX — 8 variants, 8 detected, and the three blind spots it
+> exposed.** (`x/y` = predicted red rows / observed red rows.)
+>
+> | variant | predicted | observed | note |
+> |---|---|---|---|
+> | `capture_never_calls_save_cards` | 8 | 6 (9 check lines) | **C6/C8/C9 stayed green** — see blind spot 1. F15 fired unpredicted: an empty block loses the `.save all` leader too, so the node voltages vanish (the I2 mechanism). |
+> | `render_deck_drops_the_block` | 7 | 7 (14 lines) | F15 unpredicted extra; C9 vacuous. |
+> | `strip_the_save_all_leader` | 2 | 4 | C8 + F15 as predicted, plus C6 (block no longer verbatim) and F12. |
+> | `rewrap_cards_with_i` | 5 | 7 | C9/F12/F14/F16/F17 as predicted, plus C6/C8. **Landmine 2 confirmed on the shipped path**: a wrapped card yields no vector, so the rows render blank. |
+> | `stale_cache_accepted` | 1 | 1 | C7, all three lines. |
+> | `gate_ignored_always_emit` | 1 | 2 | C5 as predicted (incl. the D1 byte-identity line), plus C8. **C4/D1 stayed green — which is exactly why C5 exists.** |
+> | `dirty_sheet_walked` | 1 | 1 | C12, all five lines. |
+> | `checkbox_writes_nothing` | 2 | 1 | G5c only. **GE10 stayed green** — see blind spot 3. |
+>
+> **Blind spot 1 — C5–C9 cannot see a capture-side defect at all.** They prime
+> the cache directly with `ase::op_cards_put`, so they exercise only the render
+> seam. Capture is covered instead by F11/F12/F14/F16/F17, which need a real PDK
+> and a real ngspice. Anyone who trims the F-rows for speed deletes the only
+> coverage of `ase::op_cards_capture`.
+>
+> **Blind spot 2 — C9 is vacuously green whenever no card is emitted.** It counts
+> `i()`/`v()`-wrapped cards, which is 0 when the count is 0. Its non-vacuity
+> control is C6; keep them together.
+>
+> **Blind spot 3 — GE10 cannot see a broken commit.** It dismisses the dialog
+> with ESC, which runs `save_all_cancel`, never `save_all_ok`. The commit path is
+> G5c's alone.
+>
+> ---
+>
+> **STILL OPEN AFTER S4 — read before touching this path.**
+>
+> 1. **0633** — the dirty-sheet refusal is PROVISIONAL and owes a user ruling.
+>    If it lands on *walk anyway*, the rows to rewrite are `test_ase_core` C11/C12
+>    and the `ase::design_is_dirty` arm of `ase::op_cards_capture`. A ledger
+>    `rule` debt is recorded.
+> 2. **0635** — every REFUSAL path reports two sentences and the second
+>    contradicts the first ("save and netlist again" / "use Netlist and Run").
+>    Cause: a refusal leaves no cache record, so `render_deck`'s stale arm fires
+>    too. The empty-block case was handled the other way on purpose (C10). One
+>    line to fix; it owes a row beside C10.
+> 3. **0636** — the gate-off nudge fires on EVERY `op` netlist for EVERY user
+>    with no opt-out, including designs with nothing annotatable, because
+>    `op_annot.tcl` is sourced unconditionally (`xschem.tcl:14600`) so its `have`
+>    guard is always true.
+> 4. **0637** — three silent edges: `save_op_params true` is silently OFF (the
+>    `annot_show true` bug again, in a new place); the echo's card count assumes
+>    an `@`-prefixed devpath while the append loop is verbatim; and a cache hit is
+>    analysis-independent, so OP cards can ride into a TRAN deck after an analysis
+>    switch + Run.
+> 5. **0631** is inherited verbatim (item 8 above). **0628/0632** are unchanged.
+> 6. **The cache is in-memory only.** Quit, reopen, press *Run* on a perfectly
+>    good artifact → MISS, no cards, reported through `ase::echo` and nowhere
+>    else. This is the safe side of the trade, not a defect, but it is a surprise.
+> 7. **Cost, measured on the user's 31-FET `tb_bandgap`:** netlist 155 ms with the
+>    gate off, 550 ms with it on, for 468 cards. Both the walk and the deck scale
+>    with device count (0620: ~3000 cards at 500 devices).
+>
+> ---
+>
+> **WHAT S4 CHANGES FOR LATER STEPS — the propagation, and it is the point of
+> this note.**
+>
+> * **Any later step that wants real numbers on screen now has a one-line recipe,
+>   and it is no longer "hand-write a deck".** Tick *Outputs → Save All → Save
+>   device OP parameters*, *Simulation → Netlist and Run*, then
+>   `xschem annotate_op <raw> 0 op` and descend. That is how **S9**'s overlay demo
+>   should be driven — the S9 section's warning that "S9's demo cannot look good
+>   until S3/S4 land" is now **discharged**, with the single caveat that the gate
+>   is off by default so the demo must tick it.
+> * **The DISPLAY half of 0617 (invariant I8) is still open and is now the only
+>   half.** The emit side reports what it did not deliver through `ase::echo`;
+>   whoever builds the display side must NOT build a second channel that
+>   contradicts it — 0635 is already an instance of exactly that failure inside
+>   one channel.
+> * **Any future ASE state key must default to `{}` and join
+>   `ase::omit_if_empty`.** `state_serialize` writes every non-empty schema key,
+>   so a `0` default lands in all 104 committed `.state` files and reds five
+>   load→save byte-identity rows (F3/G3/R4/V4/R2). And note there are **TWO**
+>   literal schema-key lists in the suites, not one: `test_ase_core.tcl:98` and
+>   `test_ase_persist.tcl:144`. The plan's S4 Files cell named only the first, and
+>   the second reddened unconditionally until it was found.
+> * **Any acceptance row for generated save cards must be a NAME-SET DIFF plus a
+>   real-number assertion.** Not "a `.save` line appears in the file" (passes on a
+>   wrong basis), not "the raw is missing" (spec §3.2 R6: it is not), not a
+>   `dims=0` scan (tran-only; an `op` raw has `No. Points: 1` and no such marker).
+> * **`render_deck` is now a consumer of session state, not a pure function of
+>   `(state, netlist_text)` alone.** Any later step that re-renders a deck without
+>   going through `ase::netlist` gets no cards and an echoed error. If a step
+>   needs cards on such a path, it must call `ase::op_cards_capture` itself —
+>   from a context where the design IS the current schematic, which is the whole
+>   reason capture lives where it does.
+> * **A GUI eyeball is still owed** on the third Save-All checkbox and on the ASE
+>   pane wording; every S4 measurement above is headless or on `:99`.
 
 ---
 
@@ -2821,7 +2994,7 @@ cross-reference dangling.
 |---|---|---|
 | S1–S2 | Tcl only | the name builder, three PDKs described |
 | **S3 ✅(E)** | Tcl only | **the SUPPLY half** — 469 correct cards on the user's own `tb_bandgap`, 468/468 materialised in a real raw |
-| **S4** | ASE | the cards ride into the deck automatically — **read S3's binding list first, especially 0632** |
+| **S4 ✅(E)** | ASE, Tcl only | **the LAST MILE** — the cards ride into the deck automatically behind one gate; real numbers on the user's own bench through a real ngspice run |
 | S5–S6 ✅ | Tcl + one symbol | a user-placeable annotator, all PDKs, no C |
 | **S7 ✅** | C, **10** sites → **one** helper | the real three-state toggle |
 | S8 | rc only | the three keys (now a real toggle, not a crude one) |
@@ -2829,7 +3002,7 @@ cross-reference dangling.
 | **S10 ✅(E)** | bulk `.sym`, **40 files / 119 records** | no duplication — but the token is **`hide=true`**, not `hide=op` (0475 §3) |
 | **S11 ✅(E)** | C, one arm + a 12-line helper | timepoint OP **with nothing plotted** — every annotated value follows the cursor |
 
-**Progress:** S1 ✅ · S2 ✅(E) · **S3 ✅(E) landed 2026-08-22 at attempt 5** (attempts 1–2, 4 reverted), S4 next · S5 ✅(E) ·
+**Progress:** S1 ✅ · S2 ✅(E) · **S3 ✅(E) landed 2026-08-22 at attempt 5** (attempts 1–2, 4 reverted) · **S4 ✅(E) landed 2026-08-23** · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
 `doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)** ·
 **S11 ✅(E)** · **S12 ⚠ attempt 1 not completed** (implement agent produced no change; its write-up filed 0484/0485 and reconciled the numbering) · **S12b ✅(E)** (§6 rewritten, spec corrected, 0486/0487 filed). S5 and S6 both landed without S3/S4 by reading a raw
@@ -2873,15 +3046,29 @@ T1 and T2 unmoved. Read S11 note 2 before ever standing up a `Graph_ctx` outside
 ships plausible wrong numbers), and note 3 before assuming the `6`/`Alt-6` keys
 can reach the new path: they still cannot.
 
-**S3+S4 remain the blocker for anything looking good** — every overlay row still
-renders BLANK on a real PDK raw.
+~~**S3+S4 remain the blocker for anything looking good**~~ — **both have landed.**
+**S4 closed the emit half of 0617 on 2026-08-23**: a new `save_op_params` state
+key (default `{}`, in `ase::omit_if_empty`) lets `ase::netlist` capture
+`op_annot::save_cards` and `ase::render_deck` carry the block VERBATIM into the
+deck immediately above `.control`. Proved end to end on a real
+`/usr/local/bin/ngspice` run — the raw's device-parameter vector set is EXACTLY
+`op_annot::vector` of the emitted cards, the node voltages survive in the same
+raw (I2), and on the user's own `tb_bandgap` `op_annot::text M4` renders
+`id = 4.944u / gm = 7.749u / gds = 9.592u / vgs = 1.805 / vth = 1.017 /
+vds = 0.3404` where before it rendered six empty rows. `test_ase_core` 74 →
+**109**, `test_ase_final` 28 → **49**, `test_ase_dialogs` (`:99`) 147 → **158**;
+`test_op_annot` unmoved at 330/336, T1 and T2 unmoved. New issues
+**0633–0637**. **⚠ Status E: the dirty-sheet refusal (0633) is PROVISIONAL and
+the gate defaults OFF — read the S4 landing note's *STILL OPEN* list and its
+propagation list before touching this path.** The DISPLAY half of 0617 (I8 — the
+tool saying *why* a row is blank) is untouched and is now the only half.
 
 **Off-plan, 2026-08-22: issues 0614 + 0615 landed** (status E) — the chords became
 two additive setters and one clear-all, `annot_show` bit1 acquired real producers
 via a content-derived text class, and node voltages moved to layer 9. See the
 0614+0615 block at the top of this file for the ten things it binds, spec **§4.8**
 for the design, and issue **0621** for its E question. `test_op_annot` 279 → **287
-ALL PASS**. **Number new issues from 0626.**
+ALL PASS**. ~~**Number new issues from 0626.**~~ *(superseded — from **0638**, see the head of this file)*
 
 ~~**S8 is next**~~ (landed), and it was small — the mask it drives now exists. Read items 2–4
 of "what S7 learned" before writing `cadence::annot_mode`: the mask is an
@@ -2896,7 +3083,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0626**. *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0638**. *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were
