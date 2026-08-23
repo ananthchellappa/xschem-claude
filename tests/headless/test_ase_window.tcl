@@ -23,7 +23,22 @@
 #          the design (v1-bug regression gate); Netlist Recreate/Display via
 #          the menu; Netlist-and-Run with the live-log TOPLEVEL + status
 #          segment + `.temp` in the deck + the id row's Value cell filled
-#          from the parsed results; Run (existing netlist) must NOT
+#          from the parsed results; W6m Netlist-and-Run pressed from a
+#          FOREIGN context (a decoy tab) must NOT unmap the design toplevel
+#          (issue 0616) while still making it current and still running --
+#          the discriminating assertion is a private-bindtag <Unmap>
+#          COUNTER on `.`, because `winfo ismapped`/`wm state` read
+#          normal/1 with the defect live; W6m5 pins the OTHER half --
+#          the design is deliberately LOWERED under the ASE window before
+#          the press and must end up above it, because "still mapped but
+#          still buried under the waveform viewer" is the same symptom
+#          from the user's seat; W6m6/W6m7 pin the always-raise
+#          default (Session > Design Window) and the hidden-window
+#          recovery. W6m5/W6m6/W6m7 skip only after probing the
+#          MECHANISM directly (can this X session restack / re-map at
+#          all?), never after a blind retry -- a blind retry-then-skip is
+#          why W4 degrades to SKIP instead of red on a real never-raise
+#          regression. Run (existing netlist) must NOT
 #          re-netlist (hand-edit sentinel proof); log-window Ctrl-W close +
 #          Simulation > Log reopen; Stop (status red); W7v Tools > Waveform
 #          Viewer (opens this session's viewer, second invoke raises the same
@@ -926,6 +941,235 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       }
       check "W6 id row Value filled after run" $vok 1
       if {!$vok} { puts "  W6 Value cell: '$vcell'" }
+
+      # --- W6m: Netlist and Run must NOT unmap the design window (issue 0616)
+      # The user's report, verbatim: "when I press Netlist and Run, the
+      # schematic window disappears. I have to do Session > Design window to
+      # get it back."  Measured cause: do_run's guard (ase_window.tcl, "is the
+      # design the CURRENT schematic?") tests the xschem CONTEXT, not
+      # visibility, and when it fires it routes through ase::ui::design_window
+      # -> raise_design_editor -> raise_window_entry -> raise_activate_toplevel
+      # (xschem.tcl), whose WSLg-safe raise is a `wm withdraw` + `wm deiconify`
+      # RE-MAP of the whole main toplevel. The user's state carries
+      # `viewer {open 1 ...}`, so viewer_restore leaves the context on the
+      # viewer canvas while the design window is fully visible and front — the
+      # press then re-maps a window that needed nothing, and WSLg is documented
+      # (see the W4 comment above) to DROP a re-map outright, which is exactly a
+      # schematic window that vanished. Session > Design Window brings it back
+      # because an ALREADY-withdrawn toplevel takes the helper's other arm (a
+      # bare deiconify, no withdraw first).
+      #
+      # WHY A COUNTER AND NOT `winfo ismapped` / `wm state`: issue 0616's own
+      # acceptance wording names those two, and MEASURED they read normal/1
+      # both BEFORE and AFTER a press that demonstrably withdrew the toplevel —
+      # the deiconify completes inside the same `update`. That assertion is
+      # GREEN with the defect live, so it is kept below only as the weak row.
+      # The load-bearing assertion counts <Unmap> events: `wm withdraw` unmaps
+      # at the core-X level, so the count is exact with or without a
+      # reparenting WM (openbox is not installed on every box, so the Xvfb arm
+      # can be WM-less — see issue 0645).
+      #
+      # The counter rides its OWN bindtag rather than `bind . <Unmap> {+...}`,
+      # for two measured reasons: (a) a toplevel is a bindtag of EVERY
+      # descendant, so an unfiltered counter reads 56, not 1; a private tag on
+      # `.` alone sees only `.`'s own events (the `%W` guard is kept as
+      # documentation of that trap); (b) the product's own
+      # `bind $topwin <Unmap> "wm withdraw .infotext; ..."` shares this event
+      # and, appended to, would abort the whole concatenated script before the
+      # counter ran if `.infotext` did not exist. The private tag is inserted
+      # FIRST so it counts regardless.
+      set decoy [file join $scratch decoy_0616.sch]
+      set f [open $decoy w]
+      puts -nonewline $f "v {xschem version=3.4.7RC file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nN 0 0 100 0 {}\n"
+      close $f
+      set pre_nwin [llength [xschem windows]]
+      set designwin [xschem get current_win_path]
+      catch {xschem new_schematic create {} $decoy}
+      update
+      set decoywin [xschem get current_win_path]
+      check_true "W6m0 decoy tab makes the design NOT the current schematic" \
+        [expr {[file normalize [xschem get schname]] ne $schpath}]
+
+      set ::w6m_unmap 0
+      if {[lsearch -exact [bindtags .] W6mUnmap] < 0} {
+        bindtags . [linsert [bindtags .] 0 W6mUnmap]
+      }
+      bind W6mUnmap <Unmap> {if {"%W" eq "."} {incr ::w6m_unmap}}
+
+      # relative stacking of the design toplevel vs the ASE window
+      proc w6m_relorder {top} {
+        set so [wm stackorder .]
+        set di [lsearch -exact $so .]
+        set ai [lsearch -exact $so $top]
+        if {$di < 0 || $ai < 0} { return "unknown ($so)" }
+        return [expr {$di > $ai ? {design-above-ase} : {design-below-ase}}]
+      }
+      # let the event loop drain so a LATE withdraw is still counted
+      proc w6m_settle {{ms 500}} {
+        for {set i 0} {$i < $ms/25} {incr i} { update; after 25 }
+      }
+      # PRECONDITION for the whole leg: the design toplevel must actually be
+      # mapped when the press happens, otherwise `ifhidden` correctly re-maps it
+      # and the counter scores a legitimate unmap. Measured: 1 run in 5 on a
+      # WM-less Xvfb arrived here with `.` unmapped and reported a false W6m1.
+      proc w6m_ensure_mapped {} {
+        for {set i 0} {$i < 60} {incr i} {
+          if {[winfo ismapped .]} { return 1 }
+          catch {wm deiconify .}; update; after 25
+        }
+        return [winfo ismapped .]
+      }
+      set w6m_mapped [w6m_ensure_mapped]
+      if {!$w6m_mapped} {
+        puts "SKIPPED: W6m1/W6m5 (design toplevel could not be mapped in this session)"
+      }
+      # Reproduce the user's shape deliberately: the design window is MAPPED but
+      # BURIED (their restored waveform viewer opens pixel-coincident on top of
+      # it). The run must bring it back to the front WITHOUT unmapping it -- the
+      # first cut of the 0616 fix skipped the raise entirely and was refuted
+      # exactly here: 0 unmaps, but the schematic still not on screen.
+      lower .
+      w6m_settle 300
+      set relpre [w6m_relorder $top]
+      set ::w6m_unmap 0
+
+      $top.mb.sim invoke {Netlist and Run}
+      set id6m [ase::session_getattr $key run_id]
+      set ec6m [expr {[string is integer -strict $id6m] ? [ase::wait $id6m] : -1}]
+      w6m_settle
+      set relpost [w6m_relorder $top]
+
+      if {$w6m_mapped} {
+        check "W6m1 Netlist and Run does NOT unmap the design toplevel" \
+          $::w6m_unmap 0
+      }
+      check "W6m2 the run still made the design the current schematic" \
+        [file normalize [xschem get schname]] $schpath
+      check_true "W6m3 the run started from a foreign context (integer id)" \
+        [string is integer -strict $id6m]
+      check "W6m3 the run from a foreign context exited 0" $ec6m 0
+      # issue 0616's LITERAL acceptance row — kept, but it is the WEAK one: it
+      # is green with the defect live on a synchronous WM (see above).
+      check "W6m4 design toplevel still mapped/normal after the run (weak row)" \
+        [list [winfo ismapped .] [wm state .]] {1 normal}
+      # W6m5: the OTHER half of the acceptance -- "still mapped" is worthless if
+      # the schematic is still not on screen. The press started with the design
+      # deliberately lowered under the ASE window; it must end above it. A plain
+      # `raise` is free (no unmap, W6m1 covers that) and is an inert no-op on
+      # WSLg (issue 0054), so keeping it cannot bring the vanish back.
+      if {$w6m_mapped} {
+        if {$relpost eq {design-above-ase}} {
+          check "W6m5 the run brings the BURIED design window back to the front" \
+            $relpost design-above-ase
+        } else {
+          # Distinguish "the product did not raise" (a REGRESSION, red) from
+          # "this X session cannot restack a mapped window at all" (WSLg's
+          # documented raise no-op, skip). Probe the MECHANISM directly rather
+          # than retrying blindly -- a blind retry-then-skip is why W4 degrades
+          # to SKIP on a real never-raise regression (see the W4 comment).
+          raise .
+          w6m_settle 300
+          if {[w6m_relorder $top] eq {design-above-ase}} {
+            check "W6m5 the run brings the BURIED design window back to the front" \
+              $relpost design-above-ase
+          } else {
+            puts "SKIPPED: W6m5 raise assertion (a direct `raise .` does not restack\
+                  a mapped window on this display -- WSLg no-op, issue 0054).\
+                  relpre=$relpre relpost=$relpost"
+          }
+        }
+      }
+
+      # W6m6: the DEFAULT stays always-raise. Session > Design Window IS the
+      # user's documented recovery for this bug and must keep re-mapping — this
+      # is the row that catches a blanket default flip.
+      if {[winfo ismapped .]} {
+        set ::w6m_unmap 0
+        $top.mb.session invoke {Design Window}
+        w6m_settle
+        if {$::w6m_unmap >= 1} {
+          check_true "W6m6 Session > Design Window still re-maps the design toplevel" 1
+        } else {
+          # Same discriminator as W6m5: is the re-map MECHANISM alive in this X
+          # session at all? Call the helper the product path calls, directly. If
+          # it too scores no unmap, the session cannot re-map and the row is
+          # unmeasurable (measured: 1 run in 4 on xfwm4 arrives in this state,
+          # and W4 self-SKIPs in the same run). If it CAN re-map, the product
+          # failed to ask -- that is the default-flip regression, and it is red.
+          set ::w6m_unmap 0
+          raise_activate_toplevel .
+          w6m_settle
+          if {$::w6m_unmap >= 1} {
+            check_true "W6m6 Session > Design Window still re-maps the design toplevel" 0
+          } else {
+            puts "SKIPPED: W6m6 (the withdraw/deiconify re-map path is not\
+                  functional on this display in this session -- see W4)"
+          }
+        }
+      } else {
+        puts "SKIPPED: W6m6 (design toplevel not mapped)"
+      }
+
+      # W6m7: a HIDDEN design toplevel is still restored. Skipping the re-map
+      # must never strand a user who minimised the window (or who already lost
+      # it to a dropped WSLg re-map) with no window and no clue — that would
+      # re-arm the very menu detour this issue is about.
+      wm withdraw .
+      w6m_settle 200
+      set e6m {}
+      catch {ase::ui::design_window $key ifhidden} e6m
+      set back 0
+      for {set i 0} {$i < 100} {incr i} {
+        update
+        if {[winfo ismapped .]} { set back 1; break }
+        after 20
+      }
+      if {$back} {
+        check "W6m7 a HIDDEN design toplevel is still re-mapped" $back 1
+      } else {
+        puts "  W6m7 ase::ui::design_window returned: '$e6m'"
+        # mechanism probe, as W6m5/W6m6: can ANYTHING map this toplevel now?
+        raise_activate_toplevel .
+        set direct 0
+        for {set i 0} {$i < 100} {incr i} {
+          update
+          if {[winfo ismapped .]} { set direct 1; break }
+          after 20
+        }
+        if {$direct} {
+          # the session can map it; the product routing did not -- a regression
+          check "W6m7 a HIDDEN design toplevel is still re-mapped" $back 1
+        } else {
+          puts "SKIPPED: W6m7 (a direct re-map does not restore a withdrawn\
+                toplevel on this display in this session -- see W4)"
+        }
+      }
+      # never leave the suite with the main toplevel withdrawn: nudge through
+      # the product recovery path, then force it
+      if {![winfo ismapped .]} {
+        catch {$top.mb.session invoke {Design Window}}
+        w6m_settle
+        for {set i 0} {$i < 100 && ![winfo ismapped .]} {incr i} {
+          catch {wm deiconify .}; update; after 20
+        }
+      }
+
+      # W6m8: teardown — drop the decoy tab so W6b/W6c/W7 see the same world
+      # they see today. The decoy lives in $scratch, never the repo root (an
+      # untitled*.sch there turns three other suites red). `new_schematic
+      # destroy` refuses a tab you are not standing in ("must be in this tab to
+      # destroy"), so switch in, destroy, switch back to the design.
+      catch {xschem new_schematic switch $decoywin}
+      update
+      catch {xschem new_schematic destroy $decoywin}
+      update
+      catch {xschem new_schematic switch $designwin}
+      update
+      check "W6m8 decoy tab torn down, design current, window list back to pre-leg" \
+        [list [llength [xschem windows]] \
+              [expr {[file normalize [xschem get schname]] eq $schpath}]] \
+        [list $pre_nwin 1]
+      catch {file delete $decoy}
 
       # W6b: Run (existing netlist) must NOT re-netlist — hand-edit sentinel
       # in the circuit netlist survives and reaches the deck

@@ -189,6 +189,57 @@ deck      : <deckpath>
 * Known cost, filed as **0641**: the launch-time header truncates the previous run's
   log, and `ase::ui::show_log` shows a header-only file mid-run when it has no run_id.
 
+### Netlist and Run must not RE-MAP the design window (issue 0616, 2026-08-23)
+
+`do_run`'s guard `[file normalize [xschem get schname]] ne $dpath` asks whether the
+design is the **current xschem context**, because that is what `ase::netlist`'s own
+guard requires. It does **not** ask whether the design window is visible — and the
+two are routinely different: a session whose state carries `viewer {open 1 …}` has
+`viewer_restore` leave the context on the viewer canvas while the design window is
+fully visible and front. So the guard fires on a window that needs nothing.
+
+Routing that through `ase::ui::design_window` reached `raise_activate_toplevel`
+(`src/xschem.tcl`), whose WSLg-safe raise is **`wm withdraw` + `wm deiconify`** — a
+re-MAP of the whole main toplevel (`tabbed_interface` defaults to 1, so the "design
+window" is a tab of `.`). That WM is documented to **drop** a re-map outright and to
+cost ~32px of NW creep per raise, which is the user's report: *"when I press Netlist
+and Run, the schematic window disappears; I have to do Session > Design window to get
+it back"*.
+
+**The contract now:** `design_window` → `raise_design_editor` → `raise_window_entry`
+take an optional trailing `raise_mode`.
+
+| `raise_mode` | context switch (`new_schematic switch`) | `raise` + `activate_window` | `wm withdraw`+`wm deiconify` re-map |
+|---|---|---|---|
+| `always` (default — Session menu, `select_on_design`/`direct_plot`, `browser_descend_to`, the post-load re-scan) | yes | yes | yes |
+| `ifhidden` (`do_run` only) | yes | yes | **only when the toplevel is not mapped** |
+
+Three things are load-bearing and must not be "simplified":
+
+* **The context switch stays unconditional.** Drop it and `ase::netlist`'s "design is
+  not the current schematic" error comes back. It is also the *only* half covered by
+  a test anywhere in the tree (`test_ase_window` W6m2/W6m3) — `test_ase_plot` P9 and
+  `test_ase_hier_plot_0168` HL23-HL25 all stay green with it no-op'd.
+* **The cheap half of the raise stays in the `ifhidden` arm.** Dropping it was the
+  first cut and it was refuted by measurement: the restored viewer opens
+  pixel-coincident *over* the design (issue **0647**), so "still mapped" left the
+  schematic still invisible — the reported symptom with a new mechanism. A bare
+  `raise` costs 0 unmaps and is an inert no-op on WSLg (issue 0054), so it cannot
+  bring the vanish back.
+* **Anything that is not literally `ifhidden` means `always`.** A typo must degrade
+  to raising, never to silently disabling every raise in the program.
+
+`raise_activate_toplevel` itself is **not** to be changed for this: 11 call sites, and
+issue 0054 records that the user ratified raise-with-creep as the price of a working
+WSLg raise. Fix the caller.
+
+**Still broken on this button, filed not fixed:** issue **0643** — pressed while the
+user is *descended* into the design, the guard fires, `raise_design_editor`'s
+issue-0168 stack loop matches the descended window and returns 1 **without
+ascending**, so `do_run`'s post-check refuses the run: `Status: Error`, red, `run_id`
+empty, no simulation. That is exactly where the OP-annotation *run → descend → press
+6* workflow stands.
+
 ### Window numbering
 
 `notify_window_active`: CIW=1 (src/ciw.tcl:106), LibMgr=2

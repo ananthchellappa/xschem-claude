@@ -533,6 +533,23 @@ recompile (decision: pure-Tcl `.drw` bind, defer device-pin terminal currents).
     `direct_plot`/`select_on_design` skips `design_window` entirely on the Ctrl-4
     path (also sidesteps any `raise_design_editor` path-mismatch duplicate-window
     open). The menu path keeps `do_raise 1`.
+  - *(2026-08-23, issue **0616**) the same helper bit again, harder.* The same user
+    reported the design window **disappearing** on *Netlist and Run*. Same chain, same
+    `wm withdraw` + `wm deiconify`: `do_run`'s guard tests the xschem CONTEXT, and a
+    restored viewer leaves the context on the viewer canvas, so the guard fires while
+    the design window is fully visible — then re-maps it, and WSLg sometimes drops the
+    re-map. `do_run` now passes a third mode, `ifhidden`, through
+    `design_window`/`raise_design_editor`/`raise_window_entry`: context switch always,
+    the cheap `raise` + `activate_window` always, the **withdraw/deiconify re-map only
+    when the toplevel is not mapped**. Ctrl-4's `do_raise 0` semantics were explicitly
+    rejected for it (never touching the toplevel would strand a user whose window is
+    minimised or already lost). Contract table: `doc/claude/specs/ase_l.md`.
+  - **The viewer is a placement hazard for the design window (issue 0647).** Measured
+    on `tb_bandgap/ngspice_state1`, whose state carries `viewer {open 1 …}`:
+    `viewer_restore` opens `.x1` at **1000x800+13+89** while the design toplevel is
+    **1000x800+13+90**, and above it in the stacking order. One pixel apart, viewer on
+    top, schematic not on screen — a second way for a user to report "the schematic
+    disappeared". It is also why 0616's fix has to keep the `raise`.
 - **Tests**: `tests/headless/test_ase_plot.tcl` PH5 (pure: proc + statusbar-slot
   mapping) and P9/P10 (GUI: entry proc arms Direct Plot, CANVAS holds focus so ESC
   fires [sabotage-verified], prompt shows/returns via pump/clears, no-session honest

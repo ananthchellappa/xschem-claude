@@ -91,6 +91,85 @@ a 5-second race).
 
 ---
 
+## ✅ 0616 — LANDED 2026-08-23 (status **E**). THE RUN BUTTON NO LONGER HIDES THE SCHEMATIC
+
+**Not a plan step**, but it is the *first two seconds* of this feature's workflow
+(*run, then descend and press 6*), so every later step inherits it.
+
+**The user's report:** *"when I press Netlist and Run, the schematic window
+disappears. I have to do Session > Design window to get it back."*
+
+**The cause was an explicit `wm withdraw`, and issue 0616's own text told the crew
+that was already eliminated.** The grep it quoted (`src/ase.tcl` has no `withdraw`)
+is correct; the *inference* was wrong, because the run path leaves that file:
+`do_run` (`ase_window.tcl`) → `design_window` → `raise_design_editor` →
+`raise_window_entry` → `raise_activate_toplevel` (`xschem.tcl:5676`) = **`wm
+withdraw .` + `wm deiconify .`**. `tabbed_interface` defaults to 1, so that is the
+**whole main window**. WSLg is documented to drop a re-map outright — that is the
+vanish — and Session > Design Window brings it back because the same proc's other
+arm does a bare `deiconify` on an already-withdrawn window.
+
+**Fixed** by giving `design_window`/`raise_design_editor`/`raise_window_entry` an
+optional trailing `raise_mode`; `do_run` passes `ifhidden`, everything else keeps
+`always`. Contract table: `doc/claude/specs/ase_l.md`, full record: issue **0616**.
+
+### ⚠ SIX THINGS THIS BINDS FOR EVERY LATER STEP
+
+1. **`Netlist and Run` while DESCENDED is still REFUSED — issue 0643, and it is the
+   position this feature's workflow puts the user in.** Measured: `Status: Error`,
+   red, `run_id` empty, **no simulation**. `raise_design_editor`'s issue-0168 stack
+   loop matches the descended window and returns 1 *without ascending*, so
+   `do_run`'s post-check still fails. **If a later step's test descends and then
+   runs, it will get no raw at all** — and every device row will then be correctly
+   blank per **I3**. Read `sim_sch_path` and `run_id` before blaming the annotator.
+   Not fixed with 0616 on purpose: ascending would move `currsch` immediately before
+   a run, which is **0608**'s ordering trap.
+2. **A green suite is NOT the deliverable for anything window-related.** No display
+   on this box can reproduce a WSLg dropped re-map. Record a `look`, say "suites
+   green, please look".
+3. **`winfo ismapped` / `wm state` are USELESS as an unmap assertion.** Measured
+   `normal`/`1` before *and* after a press that demonstrably withdrew the toplevel —
+   the `deiconify` lands inside the same `update`. Use a `%W`-filtered `<Unmap>`
+   **counter** on `.` instead (an unfiltered one reads **56**, because a toplevel is
+   a bindtag of every descendant). `test_ase_window` W6m1 is the worked example.
+4. **`openbox` IS NOT INSTALLED on this box** (issue **0645**), so
+   `xvfb_arm.sh`'s documented `AUDIT_WM` default silently degrades to **WM-less**
+   and `devdisplay.sh status` on `:99` reports `wm: none`. Plain `xfwm4` dies on a
+   GLX `BadValue`; the only working reparenting WM here is
+   `xfwm4 --compositor=off`, and `AUDIT_WM` takes a bare name with **no room for a
+   flag**. A run "armed the documented way" is not evidence for window mapping.
+5. **A blind retry-then-SKIP in a test hides the regression it was written for**
+   (issue **0646**): `test_ase_window` W4 **skipped** rather than failed under two
+   deliberate never-raise sabotages, on a *reparenting, non-WSLg* WM — falsifying
+   its own in-file claim. If a row must skip, probe the **mechanism** directly
+   (does a bare `raise`/`raise_activate_toplevel` work in this session at all?) and
+   skip only then. Sabotage V7 proved the probe still reds a real regression.
+6. **The restored waveform viewer opens pixel-coincident ON TOP OF the design
+   window** (issue **0647**): `.x1` at 1000x800+13+89 vs the design at
+   1000x800+13+90, viewer above. A saved session can come up with the schematic
+   already invisible, and it is why 0616's fix must keep a `raise`. It also leaves
+   the xschem **context** on the viewer canvas, which is what makes `do_run`'s guard
+   fire in the first place — worth knowing for any step that reads
+   `current_win_path`.
+
+### ⚠ THE METHOD LESSON, worth more than the fix
+
+The first cut of this fix skipped the raise **entirely** on the visible arm. Tiers
+were green, the sabotage matrix was exact — and the adversary pass then measured
+that the schematic was still not on screen, because it was under the viewer the
+whole time. *"Still mapped"* is not *"still visible"*, and the issue's own
+acceptance wording only asked for the first. **When an acceptance row names a
+proxy (`ismapped`) for a user-visible property (`the user can see it`), measure the
+property.**
+
+New issues filed by that crew: **0643** (Netlist and Run refused when descended),
+**0644** (`bind $topwin <Unmap>` has no `%W` filter — any child unmap withdraws
+`.infotext` and clears `show_infowindow`), **0645** (`AUDIT_WM` default not
+installed), **0646** (W4's self-SKIP masks a never-raise regression), **0647** (the
+viewer restores over the design window).
+
+---
+
 ## ✅ 0614 + 0615 — LANDED 2026-08-22 (status **E**). READ THIS BEFORE ANY STEP BELOW
 
 **Not a plan step.** These are two issues from the 2026-08-22 human eyes-on
@@ -202,7 +281,7 @@ classifier and the colour.
    paper) and a correction to **0457** (its "mask 2 is menu-only" claim is now
    false).
 
-10. **NUMBER NEW ISSUES FROM 0638.** *(Live line as of 2026-08-23: the 0614+0615 item consumed 0621–0625, S3 filed 0626–0632, and S4 filed 0633–0637.)*
+10. **NUMBER NEW ISSUES FROM 0648.** *(Live line as of 2026-08-23: the 0614+0615 item consumed 0621–0625, S3 filed 0626–0632, S4 filed 0633–0637, the 0617+0618 crew filed 0638–0642, and the 0616 crew filed 0643–0647.)*
 
 ---
 

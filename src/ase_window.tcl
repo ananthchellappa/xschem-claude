@@ -3452,17 +3452,17 @@ proc ase::ui::design_path {key} {
 # descended window is now matched on any level of it. Exact `current_name`
 # matches still WIN (first loop): a window actually showing the design is the
 # better answer, and that ordering keeps the shipped behavior byte for byte.
-proc ase::ui::raise_design_editor {dpath} {
+proc ase::ui::raise_design_editor {dpath {raise_mode always}} {
   set wins [xschem windows]
   foreach e $wins {
     if {[file normalize [lindex $e 4]] eq $dpath} {
-      return [ase::ui::raise_window_entry $e]
+      return [ase::ui::raise_window_entry $e $raise_mode]
     }
   }
   foreach e $wins {
     foreach s [lindex $e 6] {
       if {$s ne {} && [file normalize $s] eq $dpath} {
-        return [ase::ui::raise_window_entry $e]
+        return [ase::ui::raise_window_entry $e $raise_mode]
       }
     }
   }
@@ -3471,11 +3471,49 @@ proc ase::ui::raise_design_editor {dpath} {
 
 # Make the window described by an `xschem windows` entry current + frontmost.
 # Always returns 1 (the caller has already decided this window is the one).
-proc ase::ui::raise_window_entry {e} {
+#
+# TWO JOBS, and callers need them separately (issue 0616). Job 1 is the CONTEXT
+# switch -- `xschem new_schematic switch` -- which is what makes ase::netlist's
+# own "the design must BE the current schematic" guard (ase.tcl) pass. Job 2 is
+# bringing the owning TOPLEVEL to the front, which on WSLg can only be done by
+# re-MAPping it (raise_activate_toplevel = wm withdraw + wm deiconify, see its
+# header and issue 0054). Job 2 is not free: that WM is documented to DROP a
+# re-map outright, and each one costs a ~32px NW creep -- so a caller that only
+# wants job 1 must not be made to pay for job 2. `raise_mode ifhidden` does job
+# 1 always and job 2 only when the toplevel is NOT currently mapped, so a
+# minimised (or already-lost) window is still brought back while a visible one
+# is left exactly where the user put it. Anything that is not literally
+# `ifhidden` means `always` -- the shipped behaviour -- so a typo or a future
+# third mode degrades to raising rather than silently disabling every raise in
+# the program. `vis` defaults to 0 so the headless path (no winfo) takes the
+# always arm and raise_activate_toplevel's own has_x guard no-ops it, exactly
+# as today.
+#
+# `ifhidden` on an ALREADY-MAPPED toplevel still does the CHEAP half of the
+# raise -- a plain `raise` + `xschem activate_window`, the tail of
+# raise_activate_toplevel (xschem.tcl) with only the withdraw/deiconify re-map
+# ahead of it dropped. Measured (issue 0616): a bare `raise .` restacked the
+# design above a pixel-coincident waveform viewer with Unmap/Map = 0/0, and
+# issue 0054 records that a plain raise is an inert NO-OP on WSLg once a window
+# is mapped -- so it cannot bring back the vanish, and it is what keeps
+# "the design window is still VISIBLE after a run" true on every other X server
+# (including the user's own, which is a Windows X server over TCP, not WSLg).
+# Dropping it too was the first cut of this fix and it was REFUTED by
+# measurement: the run left the schematic underneath the viewer that
+# viewer_restore had opened over it, i.e. the reported symptom with a different
+# mechanism. Do not "simplify" these two lines away.
+proc ase::ui::raise_window_entry {e {raise_mode always}} {
   xschem new_schematic switch [lindex $e 0]
   set tp [lindex $e 1]
   if {$tp eq {}} { set tp . }
-  raise_activate_toplevel $tp
+  set vis 0
+  catch {set vis [winfo ismapped $tp]}
+  if {$raise_mode ne {ifhidden} || !$vis} {
+    raise_activate_toplevel $tp
+  } else {
+    catch {raise $tp}
+    catch {xschem activate_window [winfo id $tp]}
+  }
   catch {focus $tp}
   return 1
 }
@@ -3486,13 +3524,20 @@ proc ase::ui::raise_window_entry {e} {
 # v1 bug was loading into a stacked-under main window and never raising it,
 # so nothing visibly happened. Returns 1 on success, 0 when the design does
 # not resolve.
-proc ase::ui::design_window {key} {
+#
+# `raise_mode` is forwarded to the already-open arm only (issue 0616): Session >
+# Design Window, select_on_design/direct_plot and wave_viewer's browser descend
+# all pass nothing and keep the shipped always-raise -- the Session menu item in
+# particular IS the user's documented recovery when a window has gone missing,
+# so it must keep re-mapping. do_run passes `ifhidden`. The post-load re-scan
+# below always raises, for the v1 reason above.
+proc ase::ui::design_window {key {raise_mode always}} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
     catch {::ase::echo "ase: cannot resolve the session's design cellview" error}
     return 0
   }
-  if {[ase::ui::raise_design_editor $dpath]} { return 1 }
+  if {[ase::ui::raise_design_editor $dpath $raise_mode]} { return 1 }
   # not open anywhere: interactive open (reuses a pristine untitled window,
   # else opens a new one — load_window_routing), action-log dedup-gated
   xschem log_action -reset
@@ -3813,9 +3858,19 @@ proc ase::ui::do_run {key} {
     return
   }
   # ase::netlist's GUI guard requires the design to BE the current schematic:
-  # route through Design Window first when it is not
+  # route through Design Window first when it is not. `ifhidden`, NOT the
+  # default: this guard tests the xschem CONTEXT, not visibility, so it fires
+  # routinely while the design window is fully visible and front (a restored
+  # waveform viewer leaves the context on the viewer canvas -- the user's
+  # reported case). The default arm would then withdraw+deiconify the whole main
+  # toplevel for no reason, and on WSLg a dropped re-map is a schematic window
+  # that simply vanished -- issue 0616, "when I press Netlist and Run, the
+  # schematic window disappears". `ifhidden` still restores a design window that
+  # really IS hidden, and still `raise`s a visible one to the front (the cheap
+  # half of the raise -- see raise_window_entry), so the schematic ends up on
+  # screen either way and no user is left hunting the Session menu.
   if {[file normalize [xschem get schname]] ne $dpath} {
-    ase::ui::design_window $key
+    ase::ui::design_window $key ifhidden
     update
     if {[file normalize [xschem get schname]] ne $dpath} {
       catch {::ase::echo "ase: design is not the current schematic; open it via Session > Design Window first" error}

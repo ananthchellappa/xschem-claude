@@ -2068,6 +2068,36 @@ change; see the S12 block of the plan for what else that step still owes.)*
     against a per-file `-1` stub; only an **exact-call count** (`2 2 2`) plus a
     **render oracle per back end** catches it. Proven in-tree by sabotage SB-C.
 
+17. **⚠ THE WORKFLOW'S FIRST TWO STEPS — *run*, then *descend* — ARE BOTH
+    DAMAGED BY THE SAME BUTTON, AND NEITHER IS AN ANNOTATION BUG.** Added by the
+    0616 crew, 2026-08-23, measured on the user's own bench. Anyone testing this
+    feature end to end will hit them and may misattribute them:
+
+    * **`Netlist and Run` used to withdraw and re-map the whole main window**
+      (`tabbed_interface` defaults to 1, so the "design window" is a tab of `.`).
+      On WSLg that re-map is sometimes dropped outright, i.e. the schematic
+      simply vanishes and the user reaches for Session > Design Window. Fixed —
+      issue **0616**, contract table in `doc/claude/specs/ase_l.md`. The trigger
+      was not visibility but *context*: a restored waveform viewer leaves the
+      xschem context on the viewer canvas, so the run's guard fired on a design
+      window that needed nothing.
+    * **Pressed while DESCENDED — where `press 6` happens — the run is REFUSED
+      outright**: `Status: Error`, red, `run_id` empty, *no simulation*. Still
+      open, issue **0643**. It is not fixed together with 0616 on purpose: making
+      the guard pass by *ascending* would change `currsch` immediately before a
+      run, which is issue **0608**'s ordering trap (read the raw at the TOP, then
+      descend). So the sequence *descend, then press Netlist and Run* produces no
+      raw at all, and every device row is then correctly blank per **I3** — a
+      blank sheet here is the annotator obeying its invariant, not failing.
+    * A third, cosmetic-looking one that produces the same complaint: the
+      restored viewer opens **pixel-coincident on top of** the design window
+      (issue **0647**), so a saved session can come up with the schematic
+      invisible before anything has been pressed.
+
+    None of these touch `op_annot::vector`, the save cards or the formatter. Rule
+    of thumb when the sheet is blank after a run: check `xschem get sim_sch_path`
+    and whether a run actually happened (`run_id`) **before** suspecting I1/I3.
+
 ---
 
 ## 7. Out of scope (named, so it is not accidentally assumed)
