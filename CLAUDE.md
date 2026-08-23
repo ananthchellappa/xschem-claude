@@ -227,9 +227,21 @@ invisible display, for every session sharing the control dir. Xvfb without
 
 **A window manager runs inside the virtual session** (`AUDIT_WM`, default
 `openbox`; `none` for the old empty-Xvfb behaviour). Measured: empty Xvfb does
-not reparent and silently no-ops `wm iconify`; with openbox both work — and on
-iconify openbox is *more* faithful than WSLg, which doesn't honour it either.
+not reparent and silently no-ops `wm iconify`; with a WM both work — and on
+iconify a real WM is *more* faithful than WSLg, which doesn't honour it either.
 So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
+
+⚠ **BUT `openbox` IS NOT INSTALLED ON THIS BOX** (measured 2026-08-23, issue
+0645). `xvfb_arm.sh:154` still defaults to it and `:156` falls back to
+**WM-less** with a warning on stderr — so every suite that believed it had a
+window manager has in fact been running with none, and the paragraph above
+described a configuration that was never live here. `xfwm4` *is* installed
+(`/usr/bin/xfwm4`). Until the default is changed, a suite whose subject is
+reparenting, iconify, stacking or raise **must** pass `AUDIT_WM=xfwm4`
+explicitly (issue 0616's did: `xfwm4 --compositor=off`) and **must say in its
+report which WM was live** — otherwise it is a bare-Xvfb measurement wearing a
+window manager's name, and it will pass while the bug is live. Do not read the
+warning line as cosmetic; it is the difference between evidence and nothing.
 
 **Xvfb is still not a substitute for `:0`** for a human eyeball, or for Xwayland's
 own quirks. The sharpest of those is **event traffic**: one `wm geometry`
