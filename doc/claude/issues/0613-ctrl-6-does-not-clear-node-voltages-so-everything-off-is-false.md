@@ -1,6 +1,9 @@
 # 0613 — `Ctrl-6` clears the OP blocks but not the node voltages, so "everything off" is false
 
-STATUS: **OPEN — reported and reproduced 2026-08-22.** Found by the user in the
+STATUS: **RULED 2026-08-22 — superseded by [0614](0614-annot-chords-must-own-node-voltages.md).**
+The user chose option 1: the chords take authority over the node voltages. This
+file keeps the measurement; 0614 carries the work.
+Originally reported and reproduced 2026-08-22. Found by the user in the
 first eyes-on session for OP annotation. Related: 0457 (the mask's controls),
 S8/S9b, `utils/annot_mode.tcl`.
 
