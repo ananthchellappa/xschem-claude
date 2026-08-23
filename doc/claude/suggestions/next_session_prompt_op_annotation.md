@@ -8,6 +8,89 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ⚠ 0617 (display half) — ATTEMPTED, REFUTED, REVERTED 2026-08-23. READ BEFORE RETRYING IT
+
+**Not a plan step.** 0618 and the riders 0635/0636 from the same crew **landed**;
+0617's display half did not, and the reason is a measured simulator fact that will
+defeat the obvious retry too.
+
+### The one thing to inherit: `.options savecurrents` defeats an ANY-test
+
+The attempt built the three-cause taxonomy the brief asked for — *no raw* / *raw
+loaded but no device-parameter vectors* / *raw loaded but this instance absent* — and
+decided the last two with "is **any** of this instance's descriptor `params` vectors
+in the raw?". End to end on the **committed** `sky130_tests/test_nfet_final` state
+with a real `/usr/local/bin/ngspice` run:
+
+```
+raw list = i(v1) | i(@m.xm1.msky130_fd_pr__nfet_01v8[id])
+text M1  = |id = 409.7u / gm  = / gds = / vgs = / vth = / vds = |   <- 5 of 6 BLANK
+CAUSE    = ||
+MSG      = OP annotation ON (device OP info) -- raw already loaded   <- the SHIPPED sentence
+```
+
+`.options savecurrents` hands the raw **one free device vector per device**
+(`i(@dev[id])`) with no `.save` card anywhere; the ANY-test sees it and declares the
+sheet healthy. Recorded as rule **R7** in `doc/claude/specs/op_annotation.md` §3.3.
+**35 of the 104 committed `.state` files carry `savecurrents`, including
+`sky130_tests_ase/tb_bandgap_opamp` — the bench 0617 was reported from.**
+
+**Binding on the retry:**
+
+1. **Four causes, not three.** Add `partial` — *N of the M parameters these devices
+   want are here*. It is the common case, and neither of the other two is a true
+   sentence for it.
+2. **No ANY-test, and no exit-at-first-instance.** One incidental `[id]` silenced a
+   whole sheet.
+3. **Cost becomes real.** An ALL-test is `instances × params` linear `get_raw_index`
+   lookups on the failing path; measure it on a 500-device sheet. The attempt's shape
+   was fast because it was wrong.
+4. **At least one row must run a real deck with `savecurrents` on.** Every fixture raw
+   the attempt wrote was all-or-nothing, which is how 341 green checks sat on top of a
+   defect visible on the first real bench.
+5. **The 255-char seam is a design constraint, not a detail.** `statusmsg_text[256]`
+   (`xschem.h:1653`) truncates at 255 and the shipped worst-case line is already 241.
+   The attempt bought room by shortening the raw **path**, which silently rewrote the
+   case-(a) message the brief had pinned as unchanged. Whether path or symbol-type list
+   is sacrificed is unratified — issue **0639**.
+6. **Guards need coverage.** The attempt's two mutual-exclusion guards were both
+   deletable with **all 341 checks still green**; exclusion was actually being enforced
+   by the length-budget fallback. If the retry writes a guard, sabotage it before
+   believing it.
+
+The reverted code is kept **out of the tree** at
+`/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_0617+0618/REVERTED_annot_mode.tcl`
+(+ `REVERTED_test_op_annot.tcl`). Read it for the message wording and the once/held
+plumbing; do not copy the membership test.
+
+### What DID land from that crew (do not redo it)
+
+| item | where | status |
+|---|---|---|
+| **0618** — sim log provenance: header at launch, footer with exit + elapsed, output region byte-identical | `src/ase.tcl` `run_deck`/`run_done`, spec `ase_l.md` | ✅ landed, **E** |
+| **0635** — one refusal sentence, not two contradictory ones | `ase::op_cards_note_refusal` | ✅ landed |
+| **0636** — the gate-off nudge, once per session per cellview, `::ase_op_card_nudge` | `ase::op_cards_nudge_ok` | ✅ landed, **E** (ruling owed) |
+
+Three cross-cutting facts from that work that bind anything touching ASE:
+
+* **`ase::run_done`'s 4th parameter must stay DEFAULTED** — `test_ase_cosim` calls it
+  with three arguments at six sites and dies with `wrong # args` otherwise. That suite
+  is 341 checks and is **not** in most briefs' must-stay-green lists. Add it.
+* **`string is integer -strict` is a 32-bit test** and answers **0** for
+  `clock milliseconds`. A guard of that shape around a clock value silently degrades
+  to the default — here it printed `0.00 s` for every run, and a regexp-shaped test
+  would have passed it forever.
+* **`test_ase_log_seam_0207` must be run with `--logdir <dir>`, not `--nolog`** — with
+  `--nolog` it reports 16 failures for an unrelated "action log not open" reason.
+
+New issues filed by that crew: **0638** (the two stock Annotate-OP menu items say
+nothing at all), **0639** (the types clause is unbudgeted against the 255-char seam),
+**0640** (0635's record silences `run_existing`'s stale complaint), **0641** (the
+launch-time header truncates the previous run's log), **0642** (`test_ase_window` W7 is
+a 5-second race).
+
+---
+
 ## ✅ 0614 + 0615 — LANDED 2026-08-22 (status **E**). READ THIS BEFORE ANY STEP BELOW
 
 **Not a plan step.** These are two issues from the 2026-08-22 human eyes-on

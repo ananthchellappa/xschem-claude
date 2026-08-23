@@ -1,5 +1,56 @@
 # 0636 — the gate-off OP-card nudge fires on EVERY `op` netlist, for everyone, with no opt-out
 
+Status: **FIXED 2026-08-23** by the 0617+0618 crew — **status E, a ratification is
+owed** (the question is at the bottom of this section).
+
+## BEFORE (Measure agent, verbatim)
+
+```
+[] ASE: device operating-point parameters (gm, gds, vth, ...) were NOT saved in this
+   deck. Tick Outputs > Save All > Save device OP parameters to annotate them (issue 0617).
+have op_annot::save_cards in a bare session: 1
+nudge #1 / nudge #2 / nudge #3  ->  TOTAL NUDGES IN ONE SESSION, SAME CELL: 3
+```
+
+## AFTER
+
+`TOTAL NUDGES IN ONE SESSION, SAME CELL: 1`.
+
+## Decision D6 (L3 — user-visible, ratification owed)
+
+Implemented as this issue's own "cheapest defensible fix": `set_ne
+ase_op_card_nudge 1` beside the `ase_eng_notation` precedent, a once-per-session latch
+keyed on the design `lib/cell/view` via `ase::op_cards_nudge_ok`, and
+`ase::op_cards_nudge_reset` as the test seam.
+
+Two shapes matter and are pinned by tests:
+
+* the latch is consulted **last and only** where the nudge is about to be echoed, so a
+  state that fails the `op`-analysis gate does not silently consume its cellview's one
+  turn (the two gates are **nested**, not `&&`-ed) — row **F19e**;
+* it is keyed **per cellview**, not globally — a different cell still nudges.
+
+`test_ase_final`'s F19 had to be reshaped: measured, `ase::netlist` fires three times
+in one session on that cell (F6, F9's `ase::run`, and F19's own call) and F19 armed its
+collector around the **third**. It now resets the latch first. F19b (a second netlist
+nudges 0), F19c (`::ase_op_card_nudge 0` nudges 0), F19d (the default is 1) and F19e
+are new siblings. Sabotage: forcing `op_cards_nudge_ok` to return 1 reds exactly F19b
+and F19c, as predicted.
+
+*Rejected:* every-netlist (shipped — no opt-out, advertising an opt-in feature the user
+may have deliberately declined). *Rejected:* removing it (re-opens 0617 in silence).
+
+### ⚠ THE QUESTION OWED TO A HUMAN
+
+> Should the gate-off OP-card nudge fire **once per session per cellview** (what now
+> ships), on **every netlist** (what shipped before — measured at three identical lines
+> in one session about one cell, into a pane and a log people diff), or **not at all**
+> unless asked?
+
+---
+
+## Original filing follows
+
 Status: **OPEN — measured, not fixed. A ratification is arguably owed.**
 Filed by the S4 write-up agent, 2026-08-23. Found by the S4 adversary (Verify-C),
 re-measured independently before filing.

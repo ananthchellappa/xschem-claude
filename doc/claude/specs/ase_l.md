@@ -149,6 +149,46 @@ Recon (2026-07-20):
   save_as_form.tcl:47/71. Extend all three: type `ngspice_state1` →
   `.state` seeded with the default state dict (not empty — must parse).
 
+### The simulation log file is FRAMED (issue 0618, 2026-08-23)
+
+The log on disk is no longer the simulator's stdout and nothing else. `ase::run_deck`
+writes a **header** at launch (mode `w`, immediately before `eval execute`) and
+`ase::run_done` rewrites the whole file as header + delimiter + output + **footer**:
+
+```
+=== ase run <cell> <timestamp> ===
+simulator : <backend>
+command   : <the exact argument list handed to execute, 2>@1 included>
+directory : <rundir>
+deck      : <deckpath>
+--- simulator output ---
+<the simulator's stdout, byte for byte>
+=== exit <N> after <X.XX> s ===
+```
+
+**Binding constraints on anyone touching this**:
+
+* **The output region is byte-identical to `$::execute(data,last)`, and must stay so.**
+  `$data` is never mutated. `ase::run_done`'s result parsing, the `result_probe`
+  backend hook (an anchored per-line regexp, `ase.tcl:3510`) and `ase::run_diagnostics`
+  all read `$data` **in memory**, not the file — the framing is added to the FILE only.
+  Row `E1g` in `test_ase_core` pins it.
+* **`ase::run_done {logpath state callback {meta {}}}` — the 4th parameter is
+  DEFAULTED and must stay defaulted.** `test_ase_cosim` calls it with three arguments
+  at six sites (`:1019 :1036 :1049 :1056 :1061 :1067`); a required parameter kills 341
+  checks with `wrong # args`. With an empty `meta` the file is written unframed,
+  byte-identical to the pre-0618 behaviour.
+* **The framing owns the newline before the footer.** Relying on `$data`'s trailing
+  newline breaks for a simulator whose last line has none, and cannot express an empty
+  output region.
+* **Elapsed time is stamped in `run_deck` and carried**, never recomputed in the
+  callback — `run_done` fires from `execute_fileevent` on EOF, which measures the wrong
+  interval. Do **not** guard a `clock milliseconds` value with
+  `string is integer -strict`: it is a wide integer and that test answers 0, which
+  silently prints `0.00 s` forever.
+* Known cost, filed as **0641**: the launch-time header truncates the previous run's
+  log, and `ase::ui::show_log` shows a header-only file mid-run when it has no run_id.
+
 ### Window numbering
 
 `notify_window_active`: CIW=1 (src/ciw.tcl:106), LibMgr=2

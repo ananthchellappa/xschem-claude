@@ -562,6 +562,98 @@ if {$c12_swapped} {
 }
 cx {ase::op_cards_clear}
 
+# --- C13: 0635 -- a refusal must say ONE thing, not two contradictory ones ----
+# MEASURED ON THIS EXACT FIXTURE BEFORE THE FIX: a refusal echoes TWO sentences
+# and the second contradicts the first.
+#   capture -> "ASE: no device OP save cards were added -- this schematic has
+#               unsaved edits ... Save the schematic, then netlist again."
+#   render  -> "ASE: this deck was rendered from a netlist artifact that carries
+#               no captured OP save cards ... Use Simulation > Netlist and Run
+#               to regenerate both together."
+# The user is told to netlist again AND that netlisting again is the wrong verb,
+# in one pass, about an artifact THIS SESSION JUST WROTE. The mechanism is the
+# three record-less refusal returns in ase::op_cards_capture: none of them calls
+# ase::op_cards_put, so ase::op_cards_hit reads 0 and render_deck's stale arm --
+# which exists for a genuinely FOREIGN artifact (the run_existing shape) -- fires
+# on a local one.
+#
+# ⚠ C7 MUST STAY GREEN, AND C13d IS THE ROW THAT SAYS SO. Recording the refusal
+# may only silence the stale sentence for THIS netlist text; a genuinely
+# different one must still be reported, or the fix has traded a contradiction
+# for a silence.
+# ⚠ C12's TWO CLAIMS MUST ALSO SURVIVE: the cache still yields {} for this text
+# (an empty BLOCK is not a HIT-less cache) and the deck still carries no cards.
+proc c_echoed_n {pat {tag {}}} {
+  set n 0
+  foreach e $::c_echo {
+    if {$tag ne {} && [lindex $e 0] ne $tag} continue
+    if {[string match -nocase $pat [lindex $e 1]]} { incr n }
+  }
+  return $n
+}
+set c13_swapped 0
+if {[info commands ::ase::design_is_dirty] ne {}} {
+  rename ::ase::design_is_dirty ::ase::c_real_design_is_dirty
+  proc ::ase::design_is_dirty {} { return 1 }
+  set c13_swapped 1
+}
+cx {ase::op_cards_clear}
+c_echo_arm
+cx {ase::op_cards_capture $stC $c10_nl}
+set deckC13 [$render $stC $netlist_text]
+check "C13 0635 the dirty refusal still names the unsaved edits" \
+  [c_echoed {*unsaved*}] 1
+check "C13 0635 and NO contradicting Netlist-and-Run sentence follows it" \
+  [c_echoed {*Netlist and Run*}] 0
+check "C13 0635 exactly ONE save-card sentence reaches the user" \
+  [c_echoed_n {*save card*}] 1
+check "C13b 0635 the refusal leaves a HIT for this netlist text" \
+  [cx {ase::op_cards_hit $netlist_text}] 1
+check "C13b ...whose block is still EMPTY (C12's claim survives)" \
+  [cx {ase::op_cards_for $netlist_text}] {}
+check "C13 the deck still carries no device cards after a refusal" \
+  [llength [c_cards $deckC13]] 0
+c_echo_disarm
+if {$c13_swapped} {
+  rename ::ase::design_is_dirty {}
+  rename ::ase::c_real_design_is_dirty ::ase::design_is_dirty
+}
+
+# C13c: the THIRD refusal return -- op_annot::save_cards itself raising. Same
+# defect, same fix site: the record has to be stored before the early return.
+# (design_is_dirty is the REAL one again here, and C11 left the buffer clean, so
+# this path genuinely reaches save_cards.)
+rename ::op_annot::save_cards ::op_annot::c_real_save_cards
+proc ::op_annot::save_cards {} { error "zzc13 synthetic walk failure" }
+cx {ase::op_cards_clear}
+c_echo_arm
+cx {ase::op_cards_capture $stC $c10_nl}
+set deckC13c [$render $stC $netlist_text]
+check "C13c 0635 a save_cards RAISE is reported, naming the failure" \
+  [c_echoed {*zzc13*}] 1
+check "C13c 0635 a save_cards RAISE also leaves a HIT" \
+  [cx {ase::op_cards_hit $netlist_text}] 1
+check "C13c 0635 and no contradicting Netlist-and-Run sentence follows it" \
+  [c_echoed {*Netlist and Run*}] 0
+check "C13c exactly ONE save-card sentence reaches the user" \
+  [c_echoed_n {*save card*}] 1
+c_echo_disarm
+rename ::op_annot::save_cards {}
+rename ::op_annot::c_real_save_cards ::op_annot::save_cards
+
+# C13d: NON-VACUITY, and it is C7's claim re-asserted in the one session state
+# that could have swallowed it. A refusal record was just stored for
+# $netlist_text; a DIFFERENT artifact must still be reported as one nobody
+# captured. Green before the change (there is no record at all) and green after
+# (the record is for another text) -- the row exists so a fix that silences the
+# stale arm WHOLESALE cannot pass.
+c_echo_arm
+set deckC13d [$render $stC "* a genuinely DIFFERENT netlist artifact\n.end\n"]
+check "C13d 0635 NON-VACUITY a DIFFERENT netlist text is still reported (C7 stands)" \
+  [c_echoed {*Netlist and Run*} error] 1
+c_echo_disarm
+cx {ase::op_cards_clear}
+
 # --- D6: pre_commands -> the head of the .control block ----------------------
 # ngspice's `pre_*` family runs BEFORE the netlist is parsed — the only way to
 # load a compiled Verilog-A module (`pre_osdi x.osdi`; there is no `.osdi`
@@ -662,6 +754,64 @@ set stn [ase::state_default]
 check "N2 empty rundir falls back to netlist_dir" [ase::rundir $stn] [file join $scratch simdefault]
 check_true "N2 default rundir was created" [file isdirectory [file join $scratch simdefault]]
 
+# --- 0618: the simulation log's provenance framing ---------------------------
+# MEASURED BEFORE THE FIX: `string equal $logtext $::execute(data,last)` is 1 --
+# the log file IS the simulator's stdout and nothing else. It carries no command
+# line, no working directory, no deck path, no exit code and no elapsed time,
+# and four of those five are LOCALS in ase::run_deck that are simply thrown away
+# (deckpath, logpath, cmd, and the `cd $rd` directory); only elapsed needs a new
+# stamp, taken before `eval execute` and CARRIED, because run_done fires from
+# execute_fileevent on EOF and a stamp taken there measures the wrong interval.
+#
+# ⚠ THE LANDMINE THAT MATTERS MOST IS E1g. `ase::run_done` parses $data for
+# results and the `result_probe` backend hook reads it; the framing goes in the
+# FILE and the simulator's own region must stay BYTE-IDENTICAL. E1c is the
+# before/after pin the issue demands (id within 1e-3 of 4.096837e-04) and it is
+# already in this file, unchanged, immediately above.
+#
+# ⚠ AND THE HEADER MUST SURVIVE A RUN THAT PRODUCES NOTHING -- that is where it
+# is most wanted. Measured, the failure splits in two: (i) `execute` returns -1
+# (missing binary) and run_done NEVER FIRES, so today no log file is created at
+# all (row E2b); (ii) the simulator launches and fails silently, run_done fires
+# and today writes a ZERO-BYTE log (row E4). Only a header written in run_deck
+# covers (i).
+
+## The value of `<key> :` in the log header, or MISSING-FIELD. Stops at the
+## delimiter so a simulator line of the same shape cannot answer for the header.
+proc e_hdrfield {logtext key} {
+  foreach l [split $logtext "\n"] {
+    if {[string match {--- simulator output ---*} $l]} break
+    if {[regexp "^\\s*$key\\s*:\\s*(.*)\$" $l -> v]} { return [string trim $v] }
+  }
+  return MISSING-FIELD
+}
+## The bytes between the `--- simulator output ---` delimiter line and the
+## `=== exit ` footer: the region 0618 says must stay byte-identical to the
+## simulator's own stdout. NO-DELIM / NO-FOOTER rather than a silent {} so a
+## missing frame reds as itself instead of as a data mismatch.
+proc e_logbody {logtext} {
+  set d "--- simulator output ---\n"
+  set i [string first $d $logtext]
+  if {$i < 0} { return NO-DELIM }
+  set rest [string range $logtext [expr {$i + [string length $d]}] end]
+  set j [string last "\n=== exit " $rest]
+  if {$j < 0} { return NO-FOOTER }
+  ## ⚠ $j-1, NOT $j: the newline the search anchors on belongs to the FRAMING,
+  ## not to the simulator. Measured while implementing — with `0 $j` this helper
+  ## can never return {} for any input (index 0 already yields one character), so
+  ## E1g ("the region is byte-identical to execute(data,last)") and E4 ("the
+  ## region is EMPTY, not absent") were mutually unsatisfiable, and a simulator
+  ## whose last line carried no newline read as NO-FOOTER. The framing therefore
+  ## always writes its own \n before `=== exit `, and this excludes it.
+  return [string range $rest 0 [expr {$j - 1}]]
+}
+## Read a whole file, or {} when it is not there.
+proc e_slurp {p} {
+  if {![file isfile $p]} { return {} }
+  set f [open $p r] ; set d [read $f] ; close $f
+  return $d
+}
+
 # --- E1: real ngspice end-to-end (guarded leg) -------------------------------
 if {[auto_execok ngspice] eq {}} {
   puts "SKIPPED: E1 end-to-end leg (ngspice not found)"
@@ -686,6 +836,38 @@ if {[auto_execok ngspice] eq {}} {
   check_true "E1c parsed Id within 1e-3 of 4.096837e-04" $idok
   if {!$idok} { puts "  E1c last_result: $res" }
   check "E1d user callback fired" $::e1_callback_fired 1
+
+  # E1e/E1f/E1g -- 0618. The five facts, and the region that must not move.
+  set e1_deck [file join $rundir nfet_clean_ase.spice]
+  set e1_cmd  [list ngspice -b $e1_deck 2>@1]
+  set e1_lines [split [string trimright $logtext "\n"] "\n"]
+  check_true "E1e the log opens with a run banner naming the cell" \
+    [regexp {^=== ase run nfet_clean [^=]+ ===$} [lindex $e1_lines 0]]
+  # ⚠ THE EXACT ARGUMENT LIST HANDED TO `execute`, `2>@1` INCLUDED AND NOTHING
+  # RESOLVED. A header that auto_execok-resolved argv0 would be a SECOND source
+  # of truth about which binary ran, computed at a different instant.
+  check "E1e the header carries simulator, command, directory and deck" \
+    [list [e_hdrfield $logtext simulator] [e_hdrfield $logtext command] \
+          [e_hdrfield $logtext directory] [e_hdrfield $logtext deck]] \
+    [list ngspice $e1_cmd $rundir $e1_deck]
+  set e1_foot [lindex $e1_lines end]
+  set e1_secs {}
+  regexp {^=== exit 0 after ([0-9]+\.[0-9]+) s ===$} $e1_foot -> e1_secs
+  check "E1f the log closes with the exit code and the elapsed seconds" \
+    [list [regexp {^=== exit 0 after [0-9]+\.[0-9]+ s ===$} $e1_foot] \
+          [expr {[string is double -strict $e1_secs] && $e1_secs >= 0 ? 1 : 0}]] \
+    {1 1}
+  # ⚠ THE ONE THAT PROTECTS EVERY DOWNSTREAM READER. result_probe (an anchored
+  # per-line regexp) and run_diagnostics both read $data IN MEMORY, so they
+  # cannot see the framing at all -- but ase::ui::show_log and every test that
+  # greps the FILE can, and the issue's first landmine is that the simulator's
+  # own region stays byte-identical.
+  check_true "E1g the simulator's region is BYTE-IDENTICAL to execute(data,last)" \
+    [string equal [e_logbody $logtext] $::execute(data,last)]
+  if {![string equal [e_logbody $logtext] $::execute(data,last)]} {
+    puts "  E1g body [string length [e_logbody $logtext]] bytes,\
+ execute(data,last) [string length $::execute(data,last)] bytes"
+  }
 }
 
 # --- E2: missing simulator binary -> clean error (public backend seam) -------
@@ -698,11 +880,32 @@ ase::register_backend fakesim [dict create \
   log_file     [ase::backend_hook ngspice log_file] \
   result_probe [ase::backend_hook ngspice result_probe] \
   raw_file     [ase::backend_hook ngspice raw_file]]
-set st [nfet_state $models $rundir]
+# ⚠ ITS OWN RUNDIR. The ngspice log_file hook is <rundir>/<cell>_ase.log, so
+# with E1's rundir this leg writes E1's log path -- harmless while the log is
+# only ever written on completion, and a silent clobber the moment run_deck
+# starts writing a header before the launch. E2b is about that header.
+set e2dir [file normalize [file join $scratch run_e2]]
+set st [nfet_state $models $e2dir]
 dict set st simulator fakesim
 set caught [catch {ase::run $st} err]
 check "E2 missing binary raises an error" $caught 1
 check_true "E2 error is the clean ase message" [string match "ase:*" $err]
+
+# E2b -- 0618, the FAILED LAUNCH. Measured before the fix: `execute` returns -1,
+# ase::run_deck raises, ase::run_done never fires and NO log file is written at
+# all, so the record of what was attempted is lost in exactly the case a user
+# debugs. The header belongs in run_deck, before the launch, for this row.
+set e2_log [file join $e2dir nfet_clean_ase.log]
+set e2_txt [e_slurp $e2_log]
+check "E2b 0618 a failed LAUNCH still leaves a log, and it is header-only" \
+  [list [file isfile $e2_log] \
+        [expr {[regexp {^=== ase run nfet_clean [^=]+ ===$} \
+                 [lindex [split $e2_txt "\n"] 0]] ? 1 : 0}] \
+        [e_hdrfield $e2_txt command] \
+        [expr {[string first {--- simulator output ---} $e2_txt] >= 0 ? 1 : 0}] \
+        [expr {[string first {=== exit } $e2_txt] >= 0 ? 1 : 0}]] \
+  [list 1 1 [list ase_definitely_missing_binary_xyz -b \
+               [file join $e2dir nfet_clean_ase.spice] 2>@1] 0 0]
 
 # --- E3: unknown simulator -> error naming it --------------------------------
 set st [nfet_state $models $rundir]
@@ -710,6 +913,61 @@ dict set st simulator nosuchsim
 set caught [catch {ase::run $st} err]
 check "E3 unknown simulator raises an error" $caught 1
 check_true "E3 error mentions nosuchsim" [string match "*nosuchsim*" $err]
+
+# --- E4: 0618, the run that LAUNCHES and produces nothing --------------------
+# "The log is opened `w`, so a failed run's log is the whole record -- the
+# header must be written even when the simulator produces no output at all.
+# That is precisely the case where it is most wanted." Measured on this tree:
+# with /bin/false as the simulator, run_done DOES fire and writes a ZERO-BYTE
+# log. /bin/false rather than the plan's `sh -c {exit 3}` because this exact
+# shape was measured through execute()/execute_fileevent already; the exit code
+# is 1, which is still distinct from E1f's 0, so the footer cannot be a constant.
+if {![file executable /bin/false]} {
+  puts "SKIPPED: E4 empty-output leg (/bin/false not executable)"
+} else {
+  proc ase_test_false_run_cmd {state deckpath} { return [list /bin/false 2>@1] }
+  ase::register_backend failsim [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      ase_test_false_run_cmd \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+  set e4dir [file normalize [file join $scratch run_e4]]
+  set st [nfet_state $models $e4dir]
+  dict set st simulator failsim
+  set e4id [ase::run $st]
+  set e4ec [ase::wait $e4id]
+  set e4_log [file join $e4dir nfet_clean_ase.log]
+  set e4_txt [e_slurp $e4_log]
+  check "E4 the empty run exits non-zero" $e4ec 1
+  check "E4 0618 a run with NO output still has a header, a delimiter and a footer" \
+    [list [file isfile $e4_log] \
+          [expr {[regexp {^=== ase run nfet_clean [^=]+ ===$} \
+                   [lindex [split $e4_txt "\n"] 0]] ? 1 : 0}] \
+          [e_hdrfield $e4_txt command] \
+          [expr {[string first {--- simulator output ---} $e4_txt] >= 0 ? 1 : 0}] \
+          [expr {[regexp -line {^=== exit 1 after [0-9]+\.[0-9]+ s ===$} $e4_txt] ? 1 : 0}]] \
+    [list 1 1 {/bin/false 2>@1} 1 1]
+  check "E4 0618 and the simulator's own region is EMPTY, not absent" \
+    [e_logbody $e4_txt] {}
+}
+
+# --- E4b: 0618, the THREE-ARGUMENT run_done shape ----------------------------
+# tests/headless/test_ase_cosim.tcl calls `ase::run_done <logpath> <state> {}`
+# directly at SIX sites (:1019 :1036 :1049 :1056 :1061 :1067) and that suite is
+# 341 green checks. A new run_done parameter MUST default, or every one of them
+# dies with `wrong # args`; and with no metadata to frame with, the file must be
+# the simulator's data verbatim -- byte-identical to today, no header invented
+# from `execute(cmd,last)`, which is a process-global belonging to whatever ran
+# most recently.
+set e4b_log [file join $scratch e4b.log]
+set ::execute(data,last) "zzE4B synthetic simulator output\nNo. of Data Rows : 1\n"
+set ::execute(exitcode,last) 0
+set e4b_rc [catch {ase::run_done $e4b_log [nfet_state $models $rundir] {}} e4b_err]
+check "E4b 0618 run_done still accepts THREE arguments (test_ase_cosim's shape)" \
+  [list $e4b_rc $e4b_err] {0 {}}
+check_true "E4b 0618 with no metadata the file is execute(data,last), byte for byte" \
+  [string equal [e_slurp $e4b_log] $::execute(data,last)]
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

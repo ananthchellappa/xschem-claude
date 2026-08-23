@@ -1,5 +1,52 @@
 # 0635 — every OP-card REFUSAL reports two sentences, and the second contradicts the first
 
+Status: **CLOSED 2026-08-23** by the 0617+0618 crew.
+
+## BEFORE (Measure agent, verbatim)
+
+```
+sentence 1 (capture): [error] ASE: no device OP save cards were added - this
+  schematic has unsaved edits ... Save the schematic, then netlist again.
+sentence 2 (render, same deck): [error] ASE: this deck was rendered from a netlist
+  artifact that carries no captured OP save cards ... Use Simulation > Netlist and
+  Run to regenerate both together.
+op_cards_hit after refusal: 0   /   CARDS IN DECK: 0
+```
+
+## AFTER
+
+Capture still says the "unsaved edits ... Save the schematic, then netlist again."
+sentence; the render echo is now **empty**; `op_cards_hit after refusal: 1` (was 0);
+`CARDS IN DECK: 0`, unchanged. **Exactly one sentence.**
+
+## Decision D7 (L2) — fix at the CAPTURE end
+
+All three refusal returns in `ase::op_cards_capture` now call
+`ase::op_cards_note_refusal`, which catch-reads the artifact and stores
+`ase::op_cards_put $text {}` — a record whose block is empty. That is the truth
+("this session saw this artifact and it produced no cards"), and it is a state both
+readers already understand: `op_cards_for` still answers `{}` for a hit with an empty
+block, so nothing is appended to the deck and **C12 stays green**, while
+`op_cards_hit` answers 1, so the staleness complaint stays silent.
+
+*Rejected:* suppressing `render_deck`'s stale arm with a "capture already spoke this
+pass" flag — a second piece of cross-proc state, and C7's **genuine** stale-artifact
+sentence must keep firing. The record-based fix preserves that structurally: a
+different netlist text still misses and is still reported (row **C13d** asserts it).
+
+Sabotage: neutering `ase::op_cards_note_refusal` to a no-op reds C13, C13b and C13c
+(6 checks) and correctly leaves C13d green.
+
+## Still open — a silence this fix introduced
+
+**0640** — after a dirty refusal, `ase::run_existing` on that same artifact renders a
+card-less deck and now says **nothing**, where before it emitted the stale-artifact
+error. The capture sentence was spoken earlier in the session, possibly much earlier.
+
+---
+
+## Original filing follows
+
 Status: **OPEN — measured, not fixed.** Filed by the S4 write-up agent, 2026-08-23.
 Found by the S4 adversary (Verify-C) and re-measured independently before filing.
 Related: **0617** (the report channel this defect is *in*), **0633** (the refusal

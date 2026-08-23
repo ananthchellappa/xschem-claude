@@ -1,5 +1,88 @@
 # 0617 — a successful OP run annotates nothing, and the tool does not say why
 
+STATUS: **DISPLAY HALF STILL OPEN — an attempt was made 2026-08-23, REFUTED on the
+committed sky130 bench, and REVERTED.** The emit half stays closed (S3+S4, below).
+Nothing of the attempt is in the tree; what it *measured* is below and is binding on
+the retry.
+
+## ⚠ THE RETRY'S ONE HARD CONSTRAINT — `.options savecurrents` defeats an ANY-test
+
+The attempt built the three-cause taxonomy the brief asked for — (a) no raw, (b) raw
+loaded but no device-parameter vectors, (c) raw loaded but this instance absent — and
+decided (b) vs (c) with a membership test: *is ANY of this instance's descriptor
+`params` vectors in the loaded raw?* That test is **wrong on the user's own bench**,
+and the crew's adversary caught it end to end with a real `/usr/local/bin/ngspice`
+run on `sky130A/xschem_libs/sky130_tests/test_nfet_final` with its **committed**
+state (`save_op_params 0`, `options {{name savecurrents value 1}}`). Re-measured
+independently by the write-up agent before reverting:
+
+```
+== A savecurrents ON (the COMMITTED state)  exit=0
+   raw list = i(v1) | i(@m.xm1.msky130_fd_pr__nfet_01v8[id])
+   text M1  = |id  = 409.7u / gm  = / gds = / vgs = / vth = / vds = / |
+   in_raw   = 1
+   CAUSE    = ||
+   MSG      = OP annotation ON (device OP info) -- raw already loaded
+== B savecurrents OFF (same deck otherwise)  exit=0
+   raw list = i(v1) | i(all)
+   text M1  = |id  = / gm  = / gds = / vgs = / vth = / vds = / |
+   in_raw   = 0
+   CAUSE    = |nodevvec|
+   MSG      = ... -- this raw has NO device parameter vectors: the deck saved no
+              per-device `.save` cards, so re-netlist with Outputs > Save All ...
+```
+
+**Five of six rows blank, and the tool emits the byte-identical shipped sentence.**
+That is this issue's exact symptom, surviving the fix, on a shipped bench. Leg B
+nails causation: `.options savecurrents` hands the raw **one free device vector per
+device** (`i(@dev[id])`), the ANY-test sees it, declares the sheet healthy, and the
+channel goes silent. Recorded in the spec as **R7** (§3.3).
+
+**This is not a corner case.** `grep -rl savecurrents --include=*.state` counts
+**35 of the 104 committed state files**, and the list includes
+`sky130A/xschem_libs/sky130_tests_ase/tb_bandgap_opamp/ngspice_state1/tb_bandgap_opamp.state`
+— *the very bench the user reported this issue from*.
+
+### What the retry must therefore do
+
+* **A fourth cause, `partial`, is mandatory**, and it is the common one: *this raw
+  carries only N of the M parameters these devices want*. Neither (b) nor (c) is a
+  true sentence for it — (b)'s "re-netlist" happens to be the right advice, but the
+  reason it gives is false, and a false reason in a diagnostic is how the next
+  session's crew gets sent to the wrong file.
+* **`_annot_in_raw` must not be an ANY test**, and `_annot_cause` must not exit at
+  the first instance found in the raw — one incidental `[id]` silenced a whole sheet.
+* **Cost is now a live concern**: an ALL-test over every instance × every param is
+  `instances × params` linear `get_raw_index` lookups on the failing path. The
+  attempt's ANY/exit-early shape was fast precisely because it was wrong. Measure it
+  on a 500-device sheet before shipping.
+* The **whole `.state` corpus is the test fixture** the attempt lacked: every new
+  fixture raw it wrote was all-or-nothing, which is why 341 checks passed over a
+  defect visible on the first real bench. **At least one row must run a real deck
+  with `savecurrents` on.**
+
+### Two more things the attempt measured, both kept
+
+* **Collateral, and it is why the revert was whole-file**: to fit the new sentence
+  under the 255-char `statusmsg_text` seam the attempt budgeted the *path*, so on a
+  realistic testbench sheet the pinned case-(a) line changed from
+  `NO RAW FILE: /home/analog/.../tb_bandgap_ase.raw` (full path, type list clipped by
+  C at 255) to `NO RAW FILE: tb_bandgap_ase.raw` (basename, full type list). The
+  brief said case (a) must be **unchanged**; it was not. Which of path or type list
+  should be sacrificed is a user-visible choice nobody has ratified — see **0639**.
+* **The mutual-exclusion guards written for decision D3 had ZERO test coverage.** The
+  crew's sabotage agent deleted *both* of them and all 341 checks stayed green;
+  deleting a third guard too still left the target row green. Exclusion was in fact
+  being enforced by the length-budget fallback, not by either guard written for it.
+  A retry that re-introduces those guards must red a check when they are removed.
+
+**Kept out of the tree, for the retry to read**:
+`/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_0617+0618/REVERTED_annot_mode.tcl`
+and `REVERTED_test_op_annot.tcl` (scratch, not committed — the design is described
+above, and the ANY-test is the part that must not be copied).
+
+---
+
 STATUS: **EMIT HALF CLOSED 2026-08-23 — S4 landed.** `ase::netlist` now captures
 `op_annot::save_cards` and `ase::render_deck` carries the block VERBATIM into the
 deck, immediately above `.control`, when the new `save_op_params` gate is on

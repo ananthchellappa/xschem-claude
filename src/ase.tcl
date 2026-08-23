@@ -176,6 +176,14 @@ proc ase::expand_path {p} {
 # to %g; non-numeric input (expressions, blanks) is returned verbatim.
 set_ne ase_eng_notation 1
 
+# The gate-off OP-card nudge (ase::op_cards_capture): 1 = say it once per design
+# cellview per session, 0 = never. Issue 0636 — measured, the shipped version
+# fired on EVERY op netlist with no opt-out: three identical lines into the CIW
+# pane and the action log, in one session, about one cell, advertising an opt-in
+# feature the user may have deliberately declined. On by default, because a user
+# who has NOT declined it is the one issue 0617 was filed by.
+set_ne ase_op_card_nudge 1
+
 proc ase::format_value {v} {
   if {![string is double -strict $v]} { return $v }
   if {![info exists ::ase_eng_notation] || !$::ase_eng_notation} { return $v }
@@ -490,6 +498,70 @@ proc ase::op_cards_for {netlist_text} {
   return [dict get $op_cards block]
 }
 
+# --- 0635: a refusal must leave a RECORD -------------------------------------
+# MEASURED: a refusal echoed TWO sentences and the second contradicted the first
+# — capture said "Save the schematic, then netlist again." and render_deck then
+# said "Use Simulation > Netlist and Run to regenerate both together.", about an
+# artifact THIS SESSION had just written. The mechanism is that every refusal
+# returned WITHOUT calling op_cards_put, so `op_cards_hit` read 0 and
+# render_deck's stale arm — which exists for a genuinely FOREIGN artifact, the
+# ase::run_existing shape — fired on a local one.
+#
+# THE FIX IS AT THE CAPTURE END, and it is one call before each early return: a
+# record for exactly this netlist text with an EMPTY block. That is the truth —
+# "this artifact was seen by this session and produced no cards" — and it is
+# already a state both readers understand: op_cards_for still answers {} for a
+# HIT whose block is empty (so nothing is appended to the deck), while
+# op_cards_hit answers 1 (so the staleness complaint stays silent). A genuinely
+# DIFFERENT artifact still misses and is still reported, which is what keeps the
+# stale arm meaningful rather than merely quiet.
+#
+# Never raises: the artifact may be unreadable, and a refusal path is the last
+# place that should turn into an error.
+proc ase::op_cards_note_refusal {netlistpath} {
+  if {[catch {open $netlistpath r} f]} { return 0 }
+  if {[catch {read $f} text]} { catch {close $f} ; return 0 }
+  catch {close $f}
+  ase::op_cards_put $text {}
+  return 1
+}
+
+# --- 0636: the gate-off nudge fires ONCE per design cellview per session ------
+# The latch, keyed on lib/cell/view. `ase::netlist` is called by the netlist
+# action, by ase::run, and by anything that re-netlists — measured at three
+# times in one session on one cell — and the nudge has nothing new to say the
+# second time.
+namespace eval ase { variable op_nudged [dict create] }
+
+# The test seam, and the honest way to re-arm it for a user who wants reminding:
+# forget every cellview already nudged.
+proc ase::op_cards_nudge_reset {} {
+  variable op_nudged
+  set op_nudged [dict create]
+}
+
+# 1 iff this state's design cellview may be nudged NOW — and if so the latch is
+# taken, so the answer is 1 exactly once per cellview per session. Called ONLY
+# where the nudge is actually about to be echoed (never as one term of a wider
+# condition), so a state that fails an earlier gate does not silently consume
+# its one turn.
+proc ase::op_cards_nudge_ok {state} {
+  variable op_nudged
+  if {[info exists ::ase_op_card_nudge]} {
+    if {[catch {expr {$::ase_op_card_nudge ? 1 : 0}} on]} { set on 1 }
+    if {!$on} { return 0 }
+  }
+  set k {}
+  catch {
+    set d [ase::state_get $state design]
+    set k [list [ase::state_get $d lib] [ase::state_get $d cell] \
+                [ase::state_get $d view]]
+  }
+  if {[dict exists $op_nudged $k]} { return 0 }
+  dict set op_nudged $k 1
+  return 1
+}
+
 # Does the design buffer carry unsaved edits? Exactly `xschem get modified`,
 # normalised to 1/0 and safe when the command is unavailable.
 proc ase::design_is_dirty {} {
@@ -524,14 +596,20 @@ proc ase::op_cards_capture {state netlistpath} {
     # 31-FET bench (~3000 on a 500-device block, issue 0620) is a real deck
     # cost, and two committed byte-exact deck goldens would redden on an
     # unconditional emit. One line, only when an `op` analysis is enabled.
+    ## ⚠ THE LATCH IS CONSULTED LAST AND ONLY HERE (issue 0636). A state that
+    ## fails the `op`-analysis gate must not consume its cellview's one turn,
+    ## so the two gates are NESTED rather than &&-ed into one condition.
     if {$have && [ase::op_analysis_enabled $state]} {
-      ase::echo "ASE: device operating-point parameters (gm, gds, vth, ...) were\
+      if {[ase::op_cards_nudge_ok $state]} {
+        ase::echo "ASE: device operating-point parameters (gm, gds, vth, ...) were\
  NOT saved in this deck. Tick Outputs > Save All > Save device OP parameters to\
  annotate them (issue 0617)."
+      }
     }
     return {}
   }
   if {!$have} {
+    ase::op_cards_note_refusal $netlistpath   ;# 0635: ONE sentence, not two
     ase::echo "ASE: save_op_params is on but op_annot::save_cards is not\
  available in this session; no device OP save cards were added to the deck." error
     return {}
@@ -543,6 +621,7 @@ proc ase::op_cards_capture {state netlistpath} {
   # takes the SAFE side: it does not walk, and it says why. Recorded as
   # provisional in doc/claude/issues/0633-*.md.
   if {[ase::design_is_dirty]} {
+    ase::op_cards_note_refusal $netlistpath   ;# 0635: ONE sentence, not two
     ase::echo "ASE: no device OP save cards were added — this schematic has\
  unsaved edits, and walking a dirty sheet rewrites the `~` autosave backups of\
  ancestor cells you never touched (issue 0632, ruling pending). Save the\
@@ -550,6 +629,7 @@ proc ase::op_cards_capture {state netlistpath} {
     return {}
   }
   if {[catch {::op_annot::save_cards} block]} {
+    ase::op_cards_note_refusal $netlistpath   ;# 0635: ONE sentence, not two
     ase::echo "ASE: no device OP save cards were added — $block" error
     return {}
   }
@@ -746,7 +826,34 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set logpath [$log_file $state]
   set cmd [$run_cmd $state $deckpath]
 
-  set ::execute(callback) [list ase::run_done $logpath $state $callback]
+  ## --- 0618: the log's provenance ------------------------------------------
+  ## MEASURED BEFORE THE CHANGE: `string equal $logtext $::execute(data,last)`
+  ## was 1 — the log file WAS the simulator's stdout and nothing else, and a
+  ## user reading it a week later could not tell which command produced it,
+  ## from which directory, over which deck, with what exit code, or how long it
+  ## took. FOUR of those five are already in hand right here (deckpath, logpath,
+  ## cmd, and the `cd $rd` directory) and were simply thrown away; only the
+  ## elapsed time needs a new stamp, and it MUST be taken here and CARRIED —
+  ## ase::run_done fires from execute_fileevent on EOF, so a stamp taken there
+  ## measures the wrong interval entirely.
+  ##
+  ## ⚠ THE HEADER IS WRITTEN HERE, BEFORE THE LAUNCH, AND THAT IS THE POINT.
+  ## Measured, a failed run splits in two: a failed LAUNCH (`execute` returns
+  ## -1, a missing binary) raises out of this proc and run_done NEVER FIRES, so
+  ## the old code left NO log file at all — in precisely the case a user
+  ## debugs. run_done then REWRITES the whole file (mode `w`, unchanged
+  ## truncation semantics), so nothing accumulates.
+  ##
+  ## ⚠ THE COMMAND IS RECORDED AS THE EXACT ARGUMENT LIST HANDED TO `execute`,
+  ## `2>@1` included and argv0 unresolved. auto_execok-resolving it would be a
+  ## SECOND source of truth about which binary ran, computed at a different
+  ## instant from the exec that ran it.
+  set meta [dict create cell $cell simulator $sim cmd $cmd dir $rd \
+                        deck $deckpath started [clock seconds] \
+                        t0 [clock milliseconds]]
+  catch {ase::run_log_write $logpath $meta {} {}}
+
+  set ::execute(callback) [list ase::run_done $logpath $state $callback $meta]
   set save [pwd]
   cd $rd
   set id [eval execute 0 $cmd]   ;# simulate-proc precedent (xschem.tcl)
@@ -760,19 +867,109 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   return $id
 }
 
+# --- 0618: the simulation log's framing --------------------------------------
+# A header before the simulator's output and a footer after it, both clearly
+# delimited, so the log is a record of the RUN and not merely of the run's
+# chatter. Split into three tiny procs because each is a separate claim a test
+# can pin, and because ase::run_log_body is the one that must never do anything.
+
+# The five facts, as the file's opening block. Ends with the delimiter line, so
+# a caller that has nothing else to write (the pre-launch call) still produces a
+# file that reads as a complete header.
+proc ase::run_log_header {meta} {
+  set when {}
+  catch {set when [clock format [ase::state_get $meta started [clock seconds]]]}
+  set out "=== ase run [ase::state_get $meta cell] $when ===\n"
+  append out "simulator : [ase::state_get $meta simulator]\n"
+  append out "command   : [ase::state_get $meta cmd]\n"
+  append out "directory : [ase::state_get $meta dir]\n"
+  append out "deck      : [ase::state_get $meta deck]\n"
+  return $out
+}
+
+# ⚠ THE SIMULATOR'S OWN REGION, AND IT IS THE LANDMINE THAT MATTERS MOST IN
+# 0618. ase::run_done parses $data for results and the `result_probe` backend
+# hook reads it; the framing goes in the FILE and the simulator's bytes must
+# come through UNTOUCHED. No trim, no re-wrap, no line ending fixed up, no
+# "helpful" blank-line collapse. This proc exists so that requirement has a
+# name, one call site and a test row of its own.
+proc ase::run_log_body {data} {
+  return $data
+}
+
+# The footer. The framing owns the newline that ENDS the simulator's region:
+# `$data` may end with a newline or not, and may be empty, and in all three
+# cases the footer must start its own line while the region above it stays
+# byte-exact.
+#
+# ⚠ SECONDS TO TWO DECIMALS, not one. A simulator that gives up in 40 ms is the
+# signal a user is looking for when they open this file, and `%.1f` renders it
+# as `0.0 s`. Elapsed is measured from the stamp run_deck took immediately
+# before `eval execute`, never recomputed here: run_done fires on EOF.
+proc ase::run_log_footer {meta exitcode} {
+  ## ⚠ NO `string is integer` GUARD HERE, and that is not laziness. Measured
+  ## while implementing: `clock milliseconds` is a WIDE integer (1.7e12) and
+  ## `string is integer -strict` is a 32-bit test that answers 0 for it, so a
+  ## guarded version silently printed `0.00 s` for every run — an elapsed time
+  ## that is always zero is a fabricated number, not a missing one (I3's shape).
+  ## The catch is the guard: a missing or non-numeric stamp raises out of `expr`
+  ## and leaves 0.0, which is the only case where zero is the truth.
+  set secs 0.0
+  catch {
+    set secs [expr {([clock milliseconds] - [ase::state_get $meta t0]) / 1000.0}]
+    if {$secs < 0} { set secs 0.0 }
+  }
+  return [format "\n=== exit %s after %.2f s ===\n" $exitcode $secs]
+}
+
+# Write the log. `w` in every case, so a run's log is that run's whole record
+# and nothing accumulates across the two calls (header-only before the launch,
+# then the complete file on completion).
+#
+# ⚠ AN EMPTY <meta> WRITES $data WITH NO FRAMING AT ALL, byte-identical to what
+# this proc's ancestor wrote. That is what keeps the three-argument
+# `ase::run_done` shape (tests/headless/test_ase_cosim.tcl drives it at six
+# sites) meaningful: with no metadata there is nothing truthful to frame with,
+# and synthesising a header from `$::execute(cmd,last)` would stamp whatever ran
+# most recently onto this file.
+# <exitcode> {} means "the run has not finished": header only.
+proc ase::run_log_write {logpath meta data exitcode} {
+  if {[catch {open $logpath w} f]} { return 0 }
+  if {[catch {
+    if {[llength $meta]} {
+      puts -nonewline $f [ase::run_log_header $meta]
+      if {$exitcode ne {}} {
+        puts -nonewline $f "--- simulator output ---\n"
+        puts -nonewline $f [ase::run_log_body $data]
+        puts -nonewline $f [ase::run_log_footer $meta $exitcode]
+      }
+    } else {
+      puts -nonewline $f [ase::run_log_body $data]
+    }
+  } e]} {
+    catch {close $f}
+    return 0
+  }
+  catch {close $f}
+  return 1
+}
+
 # Completion hook (runs from execute_fileevent on EOF). execute(data,last) /
 # execute(exitcode,last) are written immediately before the callback in the
 # same event dispatch, so reading them here is race-free.
-proc ase::run_done {logpath state callback} {
+# ⚠ <meta> IS DEFAULTED, AND IT HAS TO BE. tests/headless/test_ase_cosim.tcl
+# calls `ase::run_done <logpath> <state> {}` DIRECTLY at six sites; a required
+# fourth parameter kills that suite's 341 checks with `wrong # args`. With no
+# metadata the file is written exactly as it always was (see run_log_write).
+proc ase::run_done {logpath state callback {meta {}}} {
   variable last_run
   set data {}
   if {[info exists ::execute(data,last)]} { set data $::execute(data,last) }
   set exitcode -1
   if {[info exists ::execute(exitcode,last)]} { set exitcode $::execute(exitcode,last) }
-  if {![catch {open $logpath w} f]} {
-    puts -nonewline $f $data
-    close $f
-  }
+  ## 0618: the framing goes in the FILE. $data itself is never touched — every
+  ## consumer below (result_probe, run_diagnostics) reads it in memory.
+  ase::run_log_write $logpath $meta $data $exitcode
   set results [dict create]
   catch {
     set sim [ase::state_get $state simulator]

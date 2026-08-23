@@ -1,5 +1,30 @@
 # 0625 — a missing vector renders `-`, not blank, which contradicts invariant I3 — and 0615 just made it WHITE
 
+## ⚠ 2026-08-23 — LEFT OPEN DELIBERATELY by the 0617+0618 crew, and here is the evidence
+
+The 0617+0618 brief asked this crew to decide and record whether its work closes 0625
+or leaves it. **It leaves it, and the two are not even the same file.** Measured
+directly rather than reasoned about:
+
+* the hyphen is **C-side**: `xschem translate -1 {@spice_get_node absent_net}` returns
+  `-` (`token.c:4478`, plus the same literal at `:4366 :4866 :4968 :5072 :5140 :5279`
+  for the voltage / current / modelparam variants) — and it returns `-` **with no raw
+  loaded** as well as with a raw whose vector is absent. So what this issue calls
+  "blank when no raw is loaded" is **draw-time text suppression**, not a blank return
+  value;
+* the device OP block is **Tcl** and renders truly blank: `op_annot::raw_or_blank` and
+  `op_annot::eng_or_blank` both return the empty string on a loaded raw with the vector
+  absent, and `op_annot::text` renders `id  =\ngm  =\ngds =\n`.
+
+The 0617 work touched neither `token.c` nor `op_annot::text` — and in the end it was
+reverted entirely (see 0617), so **nothing this crew landed goes near this issue**.
+Closing 0625 needs either a C change to the `@spice_get_*` family or a spec §5 I3
+rewording, both outside that brief. What 0617's *retry* will supply is the half this
+issue calls "the other half" — the report that says **why** — and that is compatible
+with either resolution here.
+
+---
+
 STATUS: **OPEN — measured, NOT fixed. Pre-existing `translate()` behaviour, newly
 prominent.** Found by the adversary leg of the crew that implemented
 [0614](0614-annot-chords-must-own-node-voltages.md) /

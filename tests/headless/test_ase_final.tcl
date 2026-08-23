@@ -274,23 +274,93 @@ set f_expect_vecs_bare [lsort $f_expect_vecs_bare]
 # 0617's report-what-was-not-delivered channel at the emit end: one line, on
 # exactly the configuration the user reported from (an `op` analysis enabled and
 # the gate off). Gated on `op` so a tran/ac/digital user never sees it.
+#
+# ============================================================================
+# ⚠ ISSUE 0636 RESHAPED THIS ROW, AND THE MEASUREMENT IS WHY
+# ============================================================================
+# `ase::netlist` fires this nudge on EVERY op netlist with no opt-out. Measured
+# on this very cell: F6 netlists, F9's `ase::run` netlists again, and F19's own
+# call is the THIRD -- three identical lines into the CIW pane and the action
+# log, in ONE session, about ONE cell, for a feature the user may have decided
+# not to use. The fix is a once-per-session latch keyed on the design cellview
+# plus a `::ase_op_card_nudge` off switch beside the `::ase_eng_notation`
+# precedent (ase.tcl:177), with `ase::op_cards_nudge_reset` as the test seam.
+#
+# That latch would make THIS row read 0, because it collects around the third
+# netlist of the session. So F19 keeps its claim -- one netlist, one nudge --
+# and takes the reset that makes the claim meaningful; F19b is the row the
+# latch actually earns. F19 and F19e are GREEN BEFORE THE CHANGE (controls):
+# `cx` keeps the not-yet-existing reset inert, and the `op`-analysis gate is
+# already shipped.
+
+## One netlist, with the CIW collector armed: -> how many nudges it produced.
+## Restores ::ciw_echo on every exit path, including a raising ase::netlist.
+proc f_nudges {state} {
+  set ::f_echo {}
+  if {[info commands ::f_saved_ciw_echo] eq {}} {
+    if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::f_saved_ciw_echo }
+    proc ::ciw_echo {msg {tag {}}} { lappend ::f_echo $msg }
+  }
+  set rc [catch {ase::netlist $state} e]
+  if {[info commands ::f_saved_ciw_echo] ne {}} {
+    catch {rename ::ciw_echo {}}
+    rename ::f_saved_ciw_echo ::ciw_echo
+  }
+  if {$rc} { return "ERR: $e" }
+  set n 0
+  foreach m $::f_echo { if {[string match {*Outputs*Save All*} $m]} { incr n } }
+  return $n
+}
+
+# ⚠ READ BEFORE ANYTHING TOUCHES IT. F19c sets this variable, so the default has
+# to be sampled first or the row is asserting its own assignment. The `set_ne`
+# idiom is F0's in test_ase_core: on by default, so nobody LOSES the nudge.
+set f19d_default [expr {[info exists ::ase_op_card_nudge] ? $::ase_op_card_nudge : {NO-VAR}}]
+check "F19d 0636 ::ase_op_card_nudge defaults to 1 at ase.tcl source time" \
+  $f19d_default 1
+
 set f_offdir [file normalize [file join $scratch runoff]]
 set stoff [ase::state_load $statefile]
 dict set stoff rundir $f_offdir
-set ::f_echo {}
-if {[info commands ::f_saved_ciw_echo] eq {}} {
-  if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::f_saved_ciw_echo }
-  proc ::ciw_echo {msg {tag {}}} { lappend ::f_echo $msg }
-}
-set nloff [ase::netlist $stoff]
-set f19_hits 0
-foreach m $::f_echo { if {[string match {*Outputs*Save All*} $m]} { incr f19_hits } }
-if {[info commands ::f_saved_ciw_echo] ne {}} {
-  catch {rename ::ciw_echo {}}
-  rename ::f_saved_ciw_echo ::ciw_echo
-}
+cx {ase::op_cards_nudge_reset}
 check "F19 gate off + op enabled nudges ONCE, naming Outputs > Save All" \
-  $f19_hits 1
+  [f_nudges $stoff] 1
+
+# ⚠ THE ROW THE LATCH EARNS. Same cell, same session, no reset: silence. Today
+# this reads 1 -- the third of the three lines the measurement above counted.
+check "F19b 0636 a SECOND netlist of the same cell in the same session nudges 0 times" \
+  [f_nudges $stoff] 0
+
+# ⚠ AND AN OFF SWITCH, because a user who has decided not to use the feature
+# should be able to stop being advertised at. Parked and restored: every row
+# after this one expects the shipped default.
+set f19c_had [info exists ::ase_op_card_nudge]
+if {$f19c_had} { set f19c_val $::ase_op_card_nudge }
+set ::ase_op_card_nudge 0
+cx {ase::op_cards_nudge_reset}
+set f19c_dir [file normalize [file join $scratch runoff_c]]
+set st19c [ase::state_load $statefile]
+dict set st19c rundir $f19c_dir
+check "F19c 0636 ::ase_op_card_nudge 0 silences it even with the latch reset" \
+  [f_nudges $st19c] 0
+if {$f19c_had} { set ::ase_op_card_nudge $f19c_val } else { unset ::ase_op_card_nudge }
+
+# ⚠ GREEN BEFORE AND AFTER -- the PRE-EXISTING gate must not be lost to the new
+# one. A tran/ac/digital user never asked for device OP parameters and must
+# never see this line, latch or no latch.
+cx {ase::op_cards_nudge_reset}
+set f19e_dir [file normalize [file join $scratch runoff_e]]
+set st19e [ase::state_load $statefile]
+dict set st19e rundir $f19e_dir
+set f19e_an {}
+foreach a [ase::state_get $st19e analyses] {
+  if {[ase::state_get $a type] eq {op}} { dict set a enabled 0 }
+  lappend f19e_an $a
+}
+dict set st19e analyses $f19e_an
+check "F19e 0636 a state with `op` DISABLED still nudges 0 times (the shipped gate)" \
+  [list [ase::op_analysis_enabled $st19e] [f_nudges $st19e]] {0 0}
+cx {ase::op_cards_nudge_reset}
 
 # --- F18: the BEFORE state, pinned exactly (the non-vacuity control) ---------
 if {[auto_execok ngspice] eq {}} {
