@@ -14,6 +14,103 @@ Newest entries on top.
 
 ---
 
+## Q50. My node voltages disappeared. I load a raw and the nets are bare until I press something. What changed?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate`, issues **0613**/**0614**/**0615**/**0621**, spec `op_annotation.md` §4.8.
+
+**They are now behind the annotation switch, on purpose — and the resting value
+of that switch is `0`, which is the part nobody has ratified yet (issue 0621).**
+
+Before this change, `@spice_get_voltage` texts on `lab_pin` / `ipin` / `opin` /
+`vdd` / `lab_wire` / `ngspice_probe` — and the branch currents on `ammeter` /
+`capa` / `ind` / `diode` / `isource` / `bsource` / `cccs` — appeared the moment a
+raw was loaded, whatever the annotation mask said. That was the complaint in 0613
+("node voltages are already displayed without asking for them") **and** the reason
+`Ctrl-6` did not mean "everything off": it cleared the device OP blocks and left
+every node voltage painted. Both halves are the same defect, and fixing it means
+the voltages now follow `annot_show` bit 1.
+
+### Three ways to get them back
+
+```tcl
+# 1. the chord, in a cadence_style_rc session
+Alt-6                    ;# adds node voltages; press 6 as well for device OP blocks
+
+# 2. the stock menu, no profile needed
+View > Show node voltage / branch current annotation
+
+# 3. permanently, in ~/.xschem/xschemrc
+set annot_show 2         ;# voltages + currents on from startup
+set annot_show 3         ;# ... and device OP blocks too
+```
+
+### The chords are ADDITIVE now, which is not how they used to work
+
+| chord | what it does | what it does NOT do |
+|---|---|---|
+| `6` | `annot_show \|= 1` — adds device OP blocks | never removes node voltages; **not a toggle** — press it twice and nothing changes |
+| `Alt-6` | `annot_show \|= 2` — adds node voltages | never removes OP blocks |
+| `Ctrl-6` | `annot_show = 0` | — this is the **only** off switch |
+
+So `Ctrl-6` then `Alt-6` gives you node voltages **alone**, which the old
+three-state cascade could not produce.
+
+### And they are a different colour now
+
+Node voltages moved to **layer 9** — white on the default dark palette, teal
+(`#00aaaa`) on the light one — so you can tell them apart from the six-row device
+OP block, which stays layer 15 (`#ff7777`). Branch currents keep layer 17
+(`#00ffcc`). Remap or disable in one line:
+
+```tcl
+set annot_voltage_layer 4     ;# any layer index
+set annot_voltage_layer -1    ;# off: fall back to each text's own layer=
+```
+
+⚠ Two gotchas worth knowing. **Disabling layer 9 in the Layers menu silently
+removes every node voltage** — it looks exactly like the feature being broken.
+And on a sheet built from the generic `devices/nmos4` / `pmos4` symbols, the
+`vgs=` / `vds=` rows are a single composite text that the switch does **not**
+reach, so they survive `Ctrl-6` in the OP block's colour (issue **0623**).
+
+---
+
+## Q49. Why is `@spice_get_current<n>` not handled anywhere, when the source mentions it?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate`, issue **0614**, spec `op_annotation.md` §4.8.
+
+**Because it does not exist.** It has no branch in `token.c` and never had one.
+Its **only** appearance anywhere in the tree is a stale comment at
+`save.c:5743` — `/* @spice_get_current or @spice_get_current<n> */` — and that
+comment is where every later list of "the annotation token spellings" was
+transcribed from, including issue 0614's own five-item list. A text spelled that
+way renders nothing.
+
+The real set is **six**, all verified live against a two-vector OP raw:
+
+| spelling | handler | renders |
+|---|---|---|
+| `@spice_get_voltage` | `token.c:4821` | the net's voltage |
+| `@spice_get_voltage(<net>)` | `token.c:4912` | ditto, named net — and the LCC rewrite at `save.c:5722` builds the **dotted-path** form `@spice_get_voltage(x1.inv.vout)` |
+| `@#<pin>:spice_get_voltage` | `token.c:4315` | the pin's net voltage. The pin may be a **name** (`@#A:`) or an index (`@#0:`), and it may carry a bus range (`@#A[3:0]:`) |
+| `@spice_get_diff_voltage` | `token.c:5094` | the two-pin difference |
+| `@spice_get_current` | `token.c:5163` | the device branch current |
+| `@spice_get_current_<param>(…)` | `token.c:4989` | a named device current |
+
+`@spice_get_modelparam_<p>` and `@spice_get_modelvoltage_<p>` **are** matched (by
+the regex at `token.c:4646`) and then silently produce nothing — issue **0418**.
+That is why the annotation classifier deliberately does not classify them.
+
+If you are writing a classifier over these, match the **whole string** (after
+truncating at the first `(` when `)` is the last character), never a substring:
+the tree ships 119 `@spice_get_node` records and 158 `vgs=…@#1:spice_get_voltage
+- @#2:spice_get_voltage` composites that a substring match sweeps up, and they are
+device OP info, not node voltages.
+
+---
+
 ## Q48. My sky130 transistors used to show `id=` and `gm=` as soon as I loaded a simulation. They stopped. Where did they go, and how do I get them back?
 
 - **Asked:** 2026-08-22

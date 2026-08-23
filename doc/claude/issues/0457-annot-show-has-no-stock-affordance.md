@@ -179,6 +179,15 @@ gates the two classes on separate bits, so the state is coherent. A checkbox pai
 that silently refused one of its four combinations would be the worse bug. It does
 mean menu and chords are not in 1:1 correspondence.
 
+> **CORRECTION, 2026-08-22 (0614 landed).** The paragraph above is no longer true
+> of the chords. Under 0614's ruling they are two *additive* setters and one
+> clear-all — `6` `|= 1`, `Alt-6` `|= 2`, `Ctrl-6` `= 0` — so `Ctrl-6` followed by
+> `Alt-6` produces **mask 2** and the chords reach all four states. Menu and chords
+> ARE in correspondence now. The same stale claim was carried in a comment at
+> `src/xschem.tcl` above `annot_show_menu_apply` and was rewritten in the same
+> commit. Everything else in this issue stands; ruling (a) — the resting value
+> stays 0 — is what issue **0621** re-opens, because 0614 gave that 0 a new meaning.
+
 ## Guardian — `tests/headless/test_annot_show_menu.tcl`, 24 checks
 
 Needs a DISPLAY (the subject is Tk menu entries); must not run under `--nogui`.

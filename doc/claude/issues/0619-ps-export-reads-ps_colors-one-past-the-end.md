@@ -106,3 +106,23 @@ which of the two is the real intent; they are independent defects that happen to
 `/tmp/.../scratch_0614+0615/ps_overread.tcl` (throwaway). Any `xschem print ps` of a
 schematic containing at least one symbol text reproduces it; grep the output for an `RGB`
 line with a component greater than 1.0.
+
+---
+
+## NOTE added 2026-08-22 by the 0614+0615 crew — the over-read's REACH just widened, on paper
+
+0615 gave classified node-voltage texts a layer override (`annot_voltage_layer`,
+default 9) applied at `psprint.c:1213-1224`. That change adds **no new
+`set_ps_colors` call** and only moves the value of `textlayer` before the existing
+push at `:1224` and the asymmetric pop at `:1258` — so on the **shipped corpus the
+frequency of this over-read is unchanged**, because every shipped voltage carrier
+already spells `layer=15` and therefore already took the push.
+
+What is new: a text that previously **could not** reach the push now can. A
+classified voltage text with **no explicit `layer=`** used to clamp to
+`c_for_text` (no push, no pop); it now gets layer 9 and takes both. No shipped
+symbol has that shape — a **user-written** symbol carrying a bare
+`@spice_get_voltage` and no `layer=` does.
+
+Nothing here was fixed, deliberately (the 0614+0615 brief forbade it). Recorded so
+the eventual fix knows the entry set grew.

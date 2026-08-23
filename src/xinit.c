@@ -939,6 +939,10 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->case_insensitive = 0;
   xctx->show_hidden_texts = 0;
   xctx->annot_show = 0; /* S7: annotation classes off by default (decision D2) */
+  /* 0615: the layer CONTENT-classified node voltages paint in. 9 is #ffffff on the
+   * default dark palette -- the user's ratified choice. Per-context, exactly like
+   * annot_show, and mirrored in Tcl (src/xschem.tcl set_ne + tctx::global_list). */
+  xctx->annot_voltage_layer = 9;
   xctx->x_strcmp = strcmp;
   xctx->fill_pattern = 1;
   xctx->draw_window = 0;

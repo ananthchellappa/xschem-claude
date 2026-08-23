@@ -933,9 +933,12 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         get_sym_text_layer(n, j, &lay);
+        /* 0615: see the identical site in draw.c -- the override must reach all three
+         * back ends or screen and exported SVG/PDF disagree. */
         if(lay != -1) textlayer = lay;
+        else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
         else textlayer = symptr->text[j].layer;
       }
       if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
@@ -1326,8 +1329,11 @@ void svg_draw(void)
 
   for(i=0;i<xctx->texts; ++i)
   {
+    int alay;
     textlayer = xctx->text[i].layer;
     if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+    /* 0615: the schematic-own-text mirror of the instance-text site above. */
+    if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
     if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
     my_snprintf(svg_font_family, S(svg_font_family), tclgetvar("svg_font_name"));
     my_snprintf(svg_font_style, S(svg_font_style), "normal");

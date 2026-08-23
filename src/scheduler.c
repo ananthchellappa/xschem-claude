@@ -4129,6 +4129,14 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
           }
+          /* (xschem get annot_voltage_layer) the layer a CONTENT-classified node
+           * voltage renders in, overriding the text's own layer= (issue 0615).
+           * Default 9. Out of [1, cadlayers) means no override. See the shared
+           * annotation-colour helper in actions.c. */
+          else if(!strcmp(argv[2], "annot_voltage_layer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->annot_voltage_layer), TCL_VOLATILE);
+          }
           /* (xschem get annot_overlay_count) monotonic count of OP-annotation
            * blocks the shared reader approved (S9). draw()'s entire body is inside
            * if(has_x), so this is the only seam a headless or scripted check can
@@ -11739,6 +11747,18 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->annot_show = atoi(argv[3]);
             tclsetintvar("annot_show", xctx->annot_show);
+          }
+          /* set annot_voltage_layer <n> (issue 0615): the layer a CONTENT-classified
+           * node voltage renders in. Writes BOTH the C field and the Tcl mirror, for
+           * the same reason annot_show does -- and note the pull in
+           * annot_show_sync_cache() would otherwise undo a C-only write at the next
+           * export. The value is stored AS GIVEN; the shared colour helper in
+           * actions.c is what treats anything outside [1, cadlayers) as "no
+           * override" (decision D7), so a `get` reads back exactly what was `set`. */
+          else if(!strcmp(argv[2], "annot_voltage_layer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->annot_voltage_layer = atoi(argv[3]);
+            tclsetintvar("annot_voltage_layer", xctx->annot_voltage_layer);
           }
           else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

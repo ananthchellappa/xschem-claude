@@ -396,6 +396,31 @@ typedef int Tcl_Size;
  * semantics are unchanged for every existing symbol (invariant I7). */
 #define HIDE_TEXT_OP 64        /* hide=op      : device operating-point info */
 #define HIDE_TEXT_VOLTAGE 128  /* hide=voltage : node voltages */
+/* THE IMPLICIT ANNOTATION CLASS (issues 0614/0615). set_text_flags() classifies a
+ * text by its CONTENT -- a whole-string `@spice_get_voltage` /
+ * `@#<pin>:spice_get_voltage` / `@spice_get_diff_voltage` /
+ * `@spice_get_current[_<param>]`, with or without a trailing (...) argument -- and
+ * sets one of these two bits, so the annot_show mask owns the node voltages and
+ * branch currents XSCHEM's native OP back-annotation paints. Before 0614 bit1 gated
+ * `hide=voltage` and NOTHING ELSE (that token appears in zero shipped .sym/.sch), so
+ * `6` and `Alt-6` rendered byte-identically and `Ctrl-6` still painted every voltage.
+ *
+ * THEY ARE A SECOND NAMESPACE, NOT A REUSE OF HIDE_TEXT_VOLTAGE, and that is
+ * load-bearing twice over:
+ *   - text_hidden() exempts a SCHEMATIC-OWN NON-FLOATER from the implicit class only
+ *     (invariant I7: measured, `T {@spice_get_voltage} ... {layer=15}` renders the
+ *     LITERAL token today and must keep doing so), while an author's explicit
+ *     `hide=voltage` on the same record must still follow bit1;
+ *   - the COLOUR override (0615) applies to TEXT_ANNOT_VOLTAGE only: a text whose
+ *     author typed `hide=voltage` chose its own `layer=` and keeps it.
+ * TEXT_ANNOT_CURRENT joins the voltage SWITCH (0613 lists branch currents among what
+ * survives Ctrl-6) but takes NO colour override -- layer 17 `#00ffcc` in both
+ * palettes, 84 shipped records. That is decision D4, written down as 0615 demands.
+ * The implicit class is set ONLY when the `hide=` chain set no bit at all, so the
+ * nine tracked records carrying BOTH hide=true and a bare token keep answering
+ * show_hidden_texts alone (invariant I7). */
+#define TEXT_ANNOT_VOLTAGE 256 /* content-classified node voltage  (visibility + colour) */
+#define TEXT_ANNOT_CURRENT 512 /* content-classified branch current (visibility only)   */
 /* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
 #define ANNOT_SHOW_OP 1
 #define ANNOT_SHOW_VOLTAGE 2
@@ -855,7 +880,13 @@ typedef struct
               * bit 5 : HIDE_TEXT_INSTANTIATED
               * bit 6 : HIDE_TEXT_OP        (annotation class, gated by annot_show)
               * bit 7 : HIDE_TEXT_VOLTAGE   (annotation class, gated by annot_show)
-              * recomputed by set_text_flags() from prop_ptr, never serialised */
+              * bit 8 : TEXT_ANNOT_VOLTAGE  (implicit content class: node voltage,
+              *                              gated by annot_show, painted in
+              *                              annot_voltage_layer -- issues 0614/0615)
+              * bit 9 : TEXT_ANNOT_CURRENT  (implicit content class: branch current,
+              *                              gated by annot_show, keeps its own layer)
+              * recomputed by set_text_flags() from prop_ptr AND from txt_ptr (bits 8/9
+              * carry the implicit content class, issue 0614), never serialised */
   unsigned int id; /* session-stable identity, stamped at birth in store.c
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
@@ -2202,6 +2233,15 @@ typedef struct {
   int annot_show; /* annotation-class visibility mask: bit0 device OP info (hide=op),
                    * bit1 node voltages (hide=voltage). Independent of show_hidden_texts
                    * (decision D3). See text_hidden() in actions.c MIRRORED IN TCL*/
+  int annot_voltage_layer; /* 0615: the layer a CONTENT-classified node voltage renders
+                   * in, overriding the symbol text's own layer=. Default 9 (#ffffff on
+                   * the default dark palette, which is what the user asked for; #00aaaa
+                   * on the default light one -- a layer INDEX travels through the
+                   * per-layer colour machinery, a hard #ffffff would not). Any index
+                   * outside [1, cadlayers) means NO OVERRIDE: that is the documented,
+                   * rebuild-free off switch AND it keeps 0 == BACKLAYER from painting
+                   * the annotation in the background colour (decision D7).
+                   * See annot_text_layer() in actions.c MIRRORED IN TCL*/
   int en_pin_select; /* enable selecting individual instance pins (click on pin) MIRRORED IN TCL*/
   int (*x_strcmp)(const char *, const char *);
   Lcc hier_attr[CADMAXHIER]; /* hierarchical recursive attribute substitution when descending */
@@ -3165,6 +3205,9 @@ extern int pin_name_visible(const char *prop);
 extern void pin_names_sync_cache(void);
 /* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7). */
 extern int text_hidden(int flags, int ctx);
+/* THE single annotation-colour override, shared by the same three back ends (0615).
+ * -1 == "no override, use the layer you already computed". */
+extern int annot_text_layer(int flags, int ctx);
 extern void annot_show_sync_cache(void);
 /* ---------------------------------------------------------------------------
  * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).

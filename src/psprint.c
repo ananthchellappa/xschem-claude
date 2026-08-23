@@ -1215,9 +1215,16 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         get_sym_text_layer(n, j, &lay);
+        /* 0615: see the identical site in draw.c. THIS BACK END IS THE ONE A PARTIAL
+         * FIX LEAVES OUT (0615's sharpest landmine: "an override in draw.c alone means
+         * the schematic on screen and the exported PDF disagree"). Only the VALUE of
+         * `textlayer` moves -- no new set_ps_colors call is added, so the existing
+         * push below and its asymmetric pop (issue 0619) are neither fixed nor
+         * deepened here. */
         if(lay != -1) textlayer = lay;
+        else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
         else textlayer = symptr->text[j].layer;
       }
       if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
@@ -1698,8 +1705,13 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
 
     for(i=0;i<xctx->texts; ++i)
     {
+      int alay;
       textlayer = xctx->text[i].layer;
       if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+      /* 0615: the schematic-own-text mirror of the instance-text site above. The
+       * colour itself is applied inside ps_draw_string_line() (psprint.c:748), so
+       * moving `textlayer` here is the whole override. */
+      if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
       if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
 
       my_snprintf(ps_font_family, S(ps_font_name), "Helvetica");

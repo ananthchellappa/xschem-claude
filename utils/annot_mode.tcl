@@ -3,9 +3,17 @@
 #  Operating-point annotation MODE — the writer of the `annot_show` mask, and the
 #  target of the three chords bound in src/cadence_style_rc:
 #
-#      6        -> cadence::annot_mode op       annot_show 1  device OP info
-#      Ctrl-6   -> cadence::annot_mode none     annot_show 0  everything off
-#      Alt-6    -> cadence::annot_mode opvolt   annot_show 3  + node voltages
+#      6        -> cadence::annot_mode op      annot_show |= 1  ADD device OP info
+#      Alt-6    -> cadence::annot_mode opvolt  annot_show |= 2  ADD node voltages
+#      Ctrl-6   -> cadence::annot_mode none    annot_show  = 0  clear BOTH
+#
+#  ⚠ TWO ADDITIVE SETTERS AND ONE CLEAR-ALL — issue 0614, RULED by the user
+#  2026-08-22, and it is NOT the obvious reading. `6` NEVER turns anything off and
+#  is NOT a toggle: pressing it twice leaves the mask unchanged, and pressing it
+#  while voltages are on leaves them on. `Alt-6` is NO LONGER mask 3 — it ORs bit1
+#  in and leaves bit0 exactly as it found it, so from a clean start it gives mask
+#  2, voltages ALONE, a state the old three-state cascade could not reach. `Ctrl-6`
+#  is the ONLY off switch.
 #
 #  Step S8 of doc/claude/specs/op_annotation.md. S7 gave `hide=op` teeth behind
 #  the `annot_show` bitmask (bit0 device OP info, bit1 node voltages; see
@@ -79,24 +87,36 @@
 
 namespace eval cadence {}
 
-## The three modes, as the INTEGER bitmask xctx->annot_show wants.
-##   none   0   nothing
-##   op     1   bit0, device OP info      (hide=op)
-##   opvolt 3   bit0|bit1, + node voltages (hide=op plus hide=opvolt)
-## `opvolt` is a SUPERSET of `op`, never a replacement: every block a `6` shows
-## an `Alt-6` shows too. Dropping bit0 from it is the exact drift the spec's
-## three-state table forbids.
+## The three modes, as the INTEGER bitmask xctx->annot_show wants, applied to the
+## mask that is ALREADY set:
+##   none   -> 0          the ONLY off switch, clears BOTH bits
+##   op     -> cur | 1    ADD device OP info      (bit0; bit1 UNTOUCHED)
+##   opvolt -> cur | 2    ADD node voltages       (bit1; bit0 UNTOUCHED)
+## Issue 0614's ruling. `opvolt` from a clean start is 2, NOT 3 — voltages alone.
+## `op` applied twice is idempotent, and `op` applied to mask 2 gives 3: it can
+## never take the voltages away. Only `none` clears anything.
+##
+## ⚠ IT IS A PURE FUNCTION AND MUST STAY ONE. The live mask arrives as an
+## ARGUMENT (default 0) and is never read here; `cadence::annot_mode` does the
+## `xschem get annot_show` and hands it over. A version that read the mask itself
+## would make the table depend on session state and leave the sequence rows as its
+## only guard.
 ##
 ## An unknown spelling RAISES, and names the three that work. op_annot's own
 ## discipline is the opposite for DATA (a missing vector renders BLANK, I3) —
 ## but a mode spelling is not data, it is a bind body or a script getting the
 ## call wrong, and a caller bug that renders as "annotation quietly stayed off"
 ## is the failure mode this whole step exists to kill.
-proc cadence::_annot_mask {mode} {
+##
+## THE SPELLINGS none/op/opvolt ARE KEPT while their semantics change: a user rc
+## that calls `cadence::annot_mode opvolt` must keep working (invariant I5), and
+## renaming would buy cosmetics only.
+proc cadence::_annot_mask {mode {cur 0}} {
+  if {![string is integer -strict $cur]} { set cur 0 }
   switch -exact -- $mode {
     none   { return 0 }
-    op     { return 1 }
-    opvolt { return 3 }
+    op     { return [expr {$cur | 1}] }
+    opvolt { return [expr {$cur | 2}] }
   }
   error "cadence::annot_mode: unknown mode \"$mode\": use none, op or opvolt"
 }
@@ -194,11 +214,23 @@ proc cadence::_annot_scan {} {
 ## clause is omitted when the sheet carries no candidate device at all, because
 ## "no OP descriptor for symbol type(s):" with nothing after it says less than
 ## silence.
-proc cadence::_annot_msg {mode state path types} {
-  switch -exact -- $mode {
-    none   { set m "OP annotation OFF" }
-    op     { set m "OP annotation ON (device OP info)" }
-    opvolt { set m "OP annotation ON (device OP info + node voltages)" }
+## ⚠ WORDED OFF THE RESULTING MASK, NOT OFF THE MODE — issue 0614. Under additive
+## semantics a mode-worded line LIES: `Alt-6` from a clean start produces mask 2
+## and a mode switch would still announce "device OP info + node voltages" while
+## showing voltages alone. It also had no wording at all for mask 2, the state the
+## ruling just created. The first argument is therefore the MASK.
+##
+## ⚠ THE WORDING IS DELIBERATELY TERSER THAN THE View MENU'S. The checkbutton is
+## the discoverable surface and names bit1's whole domain ("Show node voltage /
+## branch current annotation"); this line is transient and says "node voltages",
+## which is what every committed golden string already says.
+proc cadence::_annot_msg {mask state path types} {
+  if {![string is integer -strict $mask]} { set mask 0 }
+  switch -exact -- [expr {$mask & 3}] {
+    0 { set m "OP annotation OFF" }
+    1 { set m "OP annotation ON (device OP info)" }
+    2 { set m "OP annotation ON (node voltages)" }
+    3 { set m "OP annotation ON (device OP info + node voltages)" }
     default { set m "OP annotation" }
   }
   switch -exact -- $state {
@@ -227,7 +259,15 @@ proc cadence::_annot_msg {mode state path types} {
 
 ## cadence::annot_mode none|op|opvolt — the bind target. See the file header.
 proc cadence::annot_mode {mode} {
-  set mask [cadence::_annot_mask $mode]      ;# raises on an unknown spelling
+  ## THE CURRENT MASK IS PULLED THROUGH `xschem get`, never $::annot_show: the
+  ## mask is PER-CONTEXT (xctx->annot_show), so under the tabbed interface the Tcl
+  ## mirror belongs to whichever context wrote it last. A read that fails for any
+  ## reason degrades to 0, which makes `op`/`opvolt` behave like the old hard set
+  ## rather than doing something unpredictable.
+  set cur 0
+  catch {set cur [xschem get annot_show]}
+  if {![string is integer -strict $cur]} { set cur 0 }
+  set mask [cadence::_annot_mask $mode $cur] ;# raises on an unknown spelling
   xschem set annot_show $mask
 
   set state off
@@ -299,6 +339,6 @@ proc cadence::annot_mode {mode} {
   catch {xschem redraw}
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot.
-  catch {xschem statusmsg -hold [cadence::_annot_msg $mode $state $path $types]}
+  catch {xschem statusmsg -hold [cadence::_annot_msg $mask $state $path $types]}
   return
 }

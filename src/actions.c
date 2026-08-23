@@ -1116,6 +1116,129 @@ int set_inst_flags(xInstance *inst)
   return 0;
 }
 
+/* ----------------------------------------------------------------------------
+ * 0614 -- THE IMPLICIT ANNOTATION CLASS, DERIVED FROM THE TEXT'S CONTENT
+ *
+ * The user RULED (issue 0614, superseding 0613): the three OP chords own the node
+ * voltages too. `6` |= bit0 (device OP blocks), `Alt-6` |= bit1 (node voltages and
+ * branch currents), `Ctrl-6` = 0 -- two additive setters and one clear-all. Before
+ * this, bit1 gated `hide=voltage` and NOTHING ELSE: measured, that token appears in
+ * zero shipped .sym/.sch files, so masks 1 and 3 rendered byte-identically (the
+ * user's own 169897 == 169897 on bandgap_opamp) and `Ctrl-6` still painted every
+ * voltage. Node voltages arrive by a different road entirely: a symbol text
+ * `T {@spice_get_voltage} ... {layer=15}` expanded by translate() out of
+ * xctx->raw->cursor_b_val[], which never consults annot_show.
+ *
+ * 0614's option B, taken: classify by CONTENT, so the ONE predicate text_hidden()
+ * answers for those texts too and no tenth visibility test is added anywhere.
+ *
+ * IS, NOT CONTAINS -- and that is 158 shipped records. sky130 ships 119 `hide=true`
+ * `@spice_get_node` annotations at layers 15/17 and 39
+ * `vgs=expr(@#1:spice_get_voltage - @#2:spice_get_voltage)` records, and
+ * devices/nmos4.sym:56-57 / pmos4.sym:60-61 carry
+ * `tcleval(vgs=[to_eng {@#1:spice_get_voltage ...}])` at layer 15 with NO hide token.
+ * Those are DEVICE OP info, not node voltages; a substring match would both re-gate
+ * and re-colour every one of them, and would delete the shipped prose floater
+ * `Power: @spice_get_voltage(power)\W` (xschem_library/examples/cmos_example.sch:194)
+ * that a user typed on purpose.
+ *
+ * SIX SPELLINGS, NOT THE FIVE 0614 PRINTS (decision D5). ADDED:
+ * `@#<pin>:spice_get_voltage` (get_pin_attr, token.c:4315) -- 0615's own example,
+ * devices/bus_tap.sym:37, carries exactly that form; and `@spice_get_diff_voltage`
+ * (token.c:5094). DROPPED: `@spice_get_current<n>`, which has no branch anywhere in
+ * token.c and whose only appearance in the tree is a stale comment at save.c:5743,
+ * where 0614's list was copied from. `@spice_get_modelparam*` /
+ * `@spice_get_modelvoltage*` are deliberately NOT classified: token.c:5163 matches
+ * them and they then silently produce nothing (issue 0418), and they are device OP
+ * info, i.e. bit0's business.
+ *
+ * THE `@#<pin>:` SPLIT MIRRORS get_pin_and_attr() (token.c:412) EXACTLY -- track
+ * `[`/`]` and cut at the first UNBRACKETED ':' -- so `@#A[3:0]:spice_get_voltage`
+ * classifies. Any stricter pin scan drops it, and the two rules must not drift.
+ *
+ * AN ARGUMENT LIST IS ACCEPTED ONLY WHEN ')' IS THE LAST CHARACTER, and the match is
+ * then made on the text LEFT of the first '('. That is what survives save.c:5722/5744,
+ * which rewrite an LCC-embedded `@spice_get_voltage` into
+ * `@spice_get_voltage(<parentpath><lab>)` BEFORE set_text_flags runs at save.c:5780 --
+ * the path component contains DOTS, so a classifier that validated the argument as an
+ * identifier would silently drop every LCC annotation.
+ *
+ * INVARIANT I7 IS THE WHOLE REASON FOR annot_class_free(). text_hidden() tests the
+ * CLASS bits BEFORE show_hidden_texts, so an implicit class set on top of an explicit
+ * `hide=` would silently move that text from the View > Show hidden texts switch to
+ * the annotation mask. Nine tracked records do carry both -- xschem_library/pcb/
+ * pcb_current_protection_embed.sch:174,441,456 and its xschem_libraries_oa/ and
+ * xschem_libs_newsym/ mirrors, `hide=true` on a bare @spice_get_voltage /
+ * @spice_get_current. The implicit class is therefore added ONLY when the `hide=`
+ * chain set no bit at all.
+ * ------------------------------------------------------------------------- */
+
+#define ANNOT_CONTENT_NONE    0
+#define ANNOT_CONTENT_VOLTAGE 1
+#define ANNOT_CONTENT_CURRENT 2
+
+/* 1 == the `hide=` token set NO bit, so an implicit class may be added on top. */
+static int annot_class_free(int flags)
+{
+  return !(flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED | HIDE_TEXT_OP | HIDE_TEXT_VOLTAGE));
+}
+
+static int annot_ident_char(int c)
+{
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+/* ANNOT_CONTENT_NONE / _VOLTAGE / _CURRENT for the WHOLE trimmed string. */
+static int annot_content_class(const char *txt)
+{
+  const char *s, *e, *p, *colon, *op;
+  int bracket;
+  size_t len;
+
+  if(!txt) return ANNOT_CONTENT_NONE;
+  s = txt;
+  while(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+  if(s[0] != '@') return ANNOT_CONTENT_NONE;
+  e = s + strlen(s);
+  while(e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\n' || e[-1] == '\r')) --e;
+  if(e > s && e[-1] == ')') {
+    op = NULL;
+    for(p = s; p < e; ++p) if(*p == '(') { op = p; break; }
+    if(!op) return ANNOT_CONTENT_NONE;
+    e = op;                     /* the (...) argument is not part of the token itself */
+  } else {
+    /* a stray parenthesis anywhere means this is not a bare token */
+    for(p = s; p < e; ++p) if(*p == '(' || *p == ')') return ANNOT_CONTENT_NONE;
+  }
+  /* @#<pin>:spice_get_voltage -- the pin-indexed/pin-named form. The scan is
+   * get_pin_and_attr()'s (token.c:412): bracketed ':' belongs to a bus range. */
+  if(e - s > 2 && s[1] == '#') {
+    colon = NULL;
+    bracket = 0;
+    for(p = s + 2; p < e; ++p) {
+      if(*p == '[') { bracket = 1; continue; }
+      if(*p == ']') { bracket = 0; continue; }
+      if(*p == ':' && !bracket) { colon = p; break; }
+    }
+    if(!colon || colon == s + 2) return ANNOT_CONTENT_NONE;
+    len = (size_t)(e - (colon + 1));
+    if(len == 17 && !strncmp(colon + 1, "spice_get_voltage", 17)) return ANNOT_CONTENT_VOLTAGE;
+    return ANNOT_CONTENT_NONE;
+  }
+  len = (size_t)(e - s);
+  if(len == 18 && !strncmp(s, "@spice_get_voltage", 18)) return ANNOT_CONTENT_VOLTAGE;
+  if(len == 23 && !strncmp(s, "@spice_get_diff_voltage", 23)) return ANNOT_CONTENT_VOLTAGE;
+  if(len >= 18 && !strncmp(s, "@spice_get_current", 18)) {
+    if(len == 18) return ANNOT_CONTENT_CURRENT;         /* @spice_get_current */
+    if(s[18] != '_' || len == 19) return ANNOT_CONTENT_NONE;
+    for(p = s + 19; p < e; ++p) {                       /* @spice_get_current_<param> */
+      if(!annot_ident_char((unsigned char)*p)) return ANNOT_CONTENT_NONE;
+    }
+    return ANNOT_CONTENT_CURRENT;
+  }
+  return ANNOT_CONTENT_NONE;
+}
+
 int set_text_flags(xText *t)
 {
   const char *str;
@@ -1155,6 +1278,18 @@ int set_text_flags(xText *t)
     t->flags |= xctx->tok_size ? TEXT_FLOATER : 0;
     my_strdup2(_ALLOC_ID_, &t->floater_instname, str);
   }
+  /* 0614: the IMPLICIT class, from the content. OUTSIDE the if(t->prop_ptr) block so a
+   * text with no property string at all is classified too. `hide=` always wins:
+   * annot_class_free() is false the moment the chain above set any bit (invariant I7).
+   * Computed HERE, once, rather than inside text_hidden(): the predicate is evaluated
+   * per text per instance per frame and has no access to the string, `flags` rides the
+   * whole-struct copies in copy_symbol()/in_memory_undo/copy_objects() for free, and the
+   * six colour sites get the answer without being handed the string too. */
+  if(annot_class_free(t->flags)) {
+    int cls = annot_content_class(t->txt_ptr);
+    if(cls == ANNOT_CONTENT_VOLTAGE)      t->flags |= TEXT_ANNOT_VOLTAGE;
+    else if(cls == ANNOT_CONTENT_CURRENT) t->flags |= TEXT_ANNOT_CURRENT;
+  }
   return 0;
 }
 
@@ -1185,8 +1320,60 @@ int set_text_flags(xText *t)
  * is issue 0453 and is deliberately NOT fixed here. */
 void annot_show_sync_cache(void)
 {
+  const char *s;
   if(!xctx) return;
   xctx->annot_show = tclgetintvar("annot_show");
+  /* 0615: annot_voltage_layer rides the SAME pull, deliberately -- this function is
+   * already called at all EIGHT bulk-evaluation entry points (draw.c:10504,
+   * svgdraw.c:1098, psprint.c:1370, scheduler.c x2, xinit.c x2, actions.c:4698), which
+   * is exactly the staleness trap show_hidden_texts fell into (issue 0453: refreshed at
+   * three sites, none of them an export entry, so its FIRST export after a Tcl-side
+   * change renders the old value).
+   * NOT tclgetintvar(): on a missing variable it returns 0 AND dbg(0)-logs, and 0 is
+   * BACKLAYER -- the annotation would silently paint in the background colour. */
+  s = tclgetvar("annot_voltage_layer");
+  if(s && s[0]) xctx->annot_voltage_layer = atoi(s);
+}
+
+/* 0615 -- THE COLOUR HALF, ONE helper for all SIX colour sites (draw.c x2,
+ * svgdraw.c x2, psprint.c x2), the same three-back-end fan-out text_hidden() has.
+ * Returns -1 for "no override", so every caller is one `else if` and nothing else
+ * moves. An override in draw.c alone would mean the schematic on screen and the
+ * exported PDF disagree -- 0615's sharpest landmine.
+ *
+ * THE REQUEST WAS "for node voltage display, use white, not same color as the OP
+ * info". There is no layer that is white in BOTH palettes -- layer 9 is #ffffff on
+ * the default dark one and #00aaaa on the default light one -- so a hard #ffffff
+ * would satisfy the request on the user's setup and silently delete the annotation
+ * for a light-palette user. A dedicated layer INDEX travels through the existing
+ * per-layer colour machinery instead: white out of the box, a real colour on light,
+ * remappable in one line of xschemrc with no rebuild. Layer 9 is the user's own
+ * ratification ("Go with layer 9 for node voltages", issue 0615).
+ *
+ * PRECEDENCE, deliberately: the override LOSES to a per-instance `text_layer_<n>=`
+ * token (get_sym_text_layer), to only_probes, to disabled==1/2 and to a highlighted
+ * instance (inst.color != -10000); it WINS over the text's own `layer=`, which it has
+ * to -- every shipped node-voltage carrier spells layer=15 explicitly, so respecting
+ * it would make 0615 a no-op.
+ *
+ * BRANCH CURRENTS ARE NOT HERE (decision D4): TEXT_ANNOT_CURRENT joins the voltage
+ * SWITCH and keeps layer 17, `#00ffcc` in both palettes across 84 shipped records --
+ * a distinction the user already has, and folding it away would be a loss, not a fix.
+ *
+ * THE ctx GUARD IS INVARIANT I7's, and it is the same one text_hidden() applies:
+ * a schematic-own NON-FLOATER bare token is a literal string the user typed, not an
+ * annotation, so it neither hides nor recolours. */
+int annot_text_layer(int flags, int ctx)
+{
+  if(!xctx) return -1;
+  if(!(flags & TEXT_ANNOT_VOLTAGE)) return -1;
+  if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return -1;
+  /* Any index outside [1, cadlayers) means NO OVERRIDE (decision D7). The documented
+   * off switch (-1) therefore also covers 0 == BACKLAYER and any atoi garbage, so a
+   * typo in xschemrc cannot make annotations invisible in a way indistinguishable
+   * from the feature being broken. */
+  if(xctx->annot_voltage_layer <= 0 || xctx->annot_voltage_layer >= cadlayers) return -1;
+  return xctx->annot_voltage_layer;
 }
 
 /* 1 == this text must not be drawn. ctx is TEXT_CTX_INSTANCE when iterating a
@@ -1194,6 +1381,23 @@ void annot_show_sync_cache(void)
  * schematic's own xctx->text[]. */
 int text_hidden(int flags, int ctx)
 {
+  /* 0614: the IMPLICIT content class, tested FIRST and never both with an explicit
+   * one (set_text_flags only adds it when the `hide=` chain set no bit).
+   *
+   * ⚠ THE ctx TERM IS INVARIANT I7 AND IT IS NOT COSMETIC. Measured on this tree with
+   * no raw loaded: a SYMBOL text `@spice_get_voltage` emits no element at all, so
+   * classifying it costs literally nothing -- but a SCHEMATIC-OWN NON-FLOATER
+   * `T {@spice_get_voltage} ... {layer=15}` renders the LITERAL STRING, because
+   * get_text_floater() translates only floaters. That literal is a string the user
+   * typed and is not an annotation; blanking it at mask 0 would be a text that has
+   * sat on their sheet for years vanishing because of a mask they never touched.
+   * The exemption is for the IMPLICIT class ONLY -- an author who typed
+   * `hide=voltage` on a top-level text declared a class explicitly and still follows
+   * bit1, which is why the two classes need two different bits. */
+  if(flags & (TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT)) {
+    if(ctx == TEXT_CTX_INSTANCE || (flags & TEXT_FLOATER))
+      return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
+  }
   if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
   if(flags & HIDE_TEXT_VOLTAGE) return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
   if(xctx->show_hidden_texts) return 0;

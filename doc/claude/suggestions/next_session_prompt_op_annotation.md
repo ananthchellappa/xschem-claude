@@ -8,6 +8,121 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅ 0614 + 0615 — LANDED 2026-08-22 (status **E**). READ THIS BEFORE ANY STEP BELOW
+
+**Not a plan step.** These are two issues from the 2026-08-22 human eyes-on
+session (batch 0613–0618), implemented in one pass because they share one
+predicate and one draw pass. They change things every remaining step touches.
+
+### What changed, in one table
+
+| | before | after |
+|---|---|---|
+| `6` | `annot_show = 1` (hard set) | `annot_show \|= 1` — **additive, never turns anything off, not a toggle** |
+| `Alt-6` | `annot_show = 3` | `annot_show \|= 2` — **bit0 untouched; from a clean start it yields mask 2** |
+| `Ctrl-6` | `annot_show = 0` | unchanged — the **only** off switch |
+| bit1 (`ANNOT_SHOW_VOLTAGE`) | gated **nothing** (`hide=voltage` = 0 files in the tree) | gates a **content-derived implicit class** on `@spice_get_voltage` / `@spice_get_current*` texts |
+| node voltage colour | layer 15 — **identical to the OP block** | layer **9** via the new config var `annot_voltage_layer` (`#ffffff` dark, `#00aaaa` light) |
+| branch currents | layer 17, ungated | layer 17 (**kept**), now gated by bit1 |
+| Waves > Op Annotate menu | `xschem set annot_show 1` | `3` (a **hard set** — its semantics differ from the chords, deliberately) |
+| `xschem get/set annot_voltage_layer` | rc=0, silently did nothing | real, per-context, mirrored in Tcl |
+
+`tests/headless/test_op_annot.tcl` **279 → 287 checks, ALL PASS** (15 reds
+cleared); `test_launch_context.tcl` 13 → 15 ALL PASS; `test_annot_show_menu.tcl`
+4 FAILED → 25 ALL PASS. T1 and T2 unmoved.
+
+Full record: issues **0614** and **0615** (implementation sections at the bottom
+of each) and spec **§4.8**, which is new and is the design of record for the
+classifier and the colour.
+
+### ⚠ WHAT THIS BINDS FOR EVERY LATER STEP
+
+1. **NEVER WRITE `annot_show` AS A HARD SET FROM A CHORD-LIKE SURFACE AGAIN.**
+   `cadence::_annot_mask {mode {cur 0}}` is now **additive and pure** — it takes
+   the current mask and ORs. `cadence::annot_mode` pulls the live value with
+   `xschem get annot_show`, never `$::annot_show` (the mask is per-context; the
+   Tcl mirror describes whichever window last wrote it). The mode **spellings**
+   `none`/`op`/`opvolt` are unchanged on purpose — a user's own rc calls them
+   (invariant **I5**) — so a step that greps for the spellings still passes while
+   the semantics underneath have moved. **Grepping the spelling proves nothing
+   about the arithmetic.**
+
+2. **THE STATUS LINE IS WORDED OFF THE RESULTING MASK, NOT THE MODE**, and mask 2
+   has its own line (`OP annotation ON (node voltages)`). Any step that adds a
+   message must key on the integer. A mode-worded line **lies** under additive
+   semantics — that is measured, not hypothetical.
+
+3. **A TEXT'S CLASS IS NOW A FUNCTION OF ITS CONTENT, NOT ONLY ITS `hide=`
+   TOKEN.** Two new `xText.flags` bits, `TEXT_ANNOT_VOLTAGE` (256) and
+   `TEXT_ANNOT_CURRENT` (512), computed in `set_text_flags()` and tested in
+   `text_hidden()`. Consequences a later step will trip over:
+   * the match is **whole-string (IS, not CONTAINS)** and there are **SIX**
+     spellings — `@spice_get_current<n>` **does not exist** (the only tree hit is
+     a stale comment at `save.c:5743`), while `@#<pin>:spice_get_voltage` and
+     `@spice_get_diff_voltage` are real and were missing from every list;
+   * the implicit class is added **only when the `hide=` chain set no bit**, and
+     a **schematic-own** text is classified **only when it is a floater**. Both
+     guards are invariant **I7**; removing either regresses a non-annotating user;
+   * `editprop.c` now re-runs `set_text_flags()` on a **content-only** edit. Any
+     new path that rewrites `txt_ptr` must do the same or the class goes stale.
+
+4. **THE COLOUR OVERRIDE HAS EXACTLY SIX SITES AND A FILE-SET GREP CANNOT SEE
+   THEM.** `annot_text_layer(` occurs **2× in each** of `draw.c`, `svgdraw.c`,
+   `psprint.c`. The prior-art patch covered four of six (no `psprint.c`) **while
+   its own comment claimed six**, and the file-set row stays green against a
+   per-file stub. Assert the **exact call count** and add a **render oracle per
+   back end** — SVG fill, PS `RGB` statement, PNG pixel. Note **psprint uses the
+   LIGHT palette**: a PS expectation must be written against `light_colors`.
+
+5. **`annot_show` NOW PERTURBS THE INSTANCE BBOX.** `select.c:709` skips a
+   class-hidden text, so `symbol_bbox` shrinks and a **fullzoom** export is no
+   longer mask-independent: 59 of 822 shipped sheets reframe and two flip symbol
+   level-of-detail. At a **fixed viewport** 820/822 are byte-identical and no
+   `<text>` is ever gained or lost. **Every byte-count acceptance from here on
+   must pin an explicit viewport** (`xschem print svg f.svg W H x1 y1 x2 y2`).
+   Issue **0622**.
+
+6. **"`Ctrl-6` → nothing" IS STILL FALSE ON A GENERIC-DEVICE SHEET.**
+   `devices/nmos4.sym:56-57` / `pmos4.sym:60-61` carry a `tcleval(vgs=… vds=…)`
+   composite at `layer=15` with no `hide=` — not a whole-string match, so bit1
+   does not gate it, and it wears the OP block's exact colour. **50 shipped
+   sheets, including `examples/cmos_example.sch`.** sky130's own symbols are safe
+   (`hide=true`, S10b), which is why the eyes-on session never showed it. The fix
+   is S10b's job done for `xschem_library/devices/` — issue **0623**. **S12 and
+   any later per-PDK cleanup should pick this up.**
+
+7. **THE MASK'S RESTING VALUE NOW DECIDES WHETHER STOCK LIVE BACK-ANNOTATION
+   APPEARS AT ALL** — it is shipped at 0, and issue **0621** is the ratification.
+   ⚠ The value a user experiences is the **`set_ne` line in `src/xschem.tcl`**,
+   not `xinit.c:941`: a new tab inherits from the Tcl mirror, so the C
+   initialiser only ever applies to the **first** context of a session. A step
+   that changes a default must change the `set_ne` line **and** add the var to
+   `tctx::global_list`, or it reverts on a tab switch.
+
+8. **ANCHOR CORRECTIONS, measured on this tree** — three of the four anchors the
+   0614 brief carried had drifted: the chord comment table is
+   `cadence_style_rc:286-288` (not `:283-285`); `case '6'` is `callback.c:7354`
+   (`:7272` is `handle_key_press`'s signature line); `text_hidden()` has **TEN**
+   call sites, not nine — the tenth is `actions.c:1475`, the S9b overlay's own
+   mask gate, which passes a **literal** `HIDE_TEXT_OP` and must never get a
+   colour override. `annot_show_sync_cache()` has **eight** callers
+   (`actions.c:4698`, `draw.c:10504`, `svgdraw.c:1098`, `psprint.c:1370`,
+   `scheduler.c:9818`, `scheduler.c:13703`, `xinit.c:3671`, `xinit.c:3801`) — the
+   new layer mirror rides all eight.
+
+9. **THREE MEASURED-NOT-FIXED DEFECTS AND ONE COVERAGE HOLE were filed:** **0622**
+   (bbox/fullzoom + symbol LOD), **0623** (generic `nmos4`/`pmos4` composites),
+   **0624** (the explicit-`hide=voltage` colour half has no guardian — sabotage
+   SB-G's missing red), **0625** (a missing vector renders `-`, not blank, which
+   contradicts invariant **I3** as written, and 0615 just made those hyphens
+   white). A note was added to **0619** (its PS over-read's entry set grew on
+   paper) and a correction to **0457** (its "mask 2 is menu-only" claim is now
+   false).
+
+10. **NUMBER NEW ISSUES FROM 0626.** This item consumed 0621–0625.
+
+---
+
 ## ⚠ RULING D9 (the user, 2026-08-22) — READ THIS BEFORE ANY STEP BELOW
 
 **The MOS annotation default is six rows, on every PDK:**
@@ -85,8 +200,10 @@ Also read, before touching anything:
   it up, including the "place annotator pre-filled from selection" idiom.
 - `doc/claude/code_analysis/waveform_subsystem_reference.md` §6.
 
-Branch is `annotate`. **Number new issues from 0603, and skip the whole 05xx
-block.** *(Authoritative as of X0498, 2026-08-22 — `0499` was this branch's
+Branch is `annotate`. **Number new issues from 0626, and skip the whole 05xx
+block.** *(Live line as of 2026-08-22: the eyes-on batch took 0613–0618, X0619/0620
+followed, and 0614+0615's implementation filed 0621–0625. The "from 0603" that
+stood here is now historical provenance.)* *(Authoritative as of X0498, 2026-08-22 — `0499` was this branch's
 ceiling, **0500–0599 are RESERVED for the fluid-editing branch and must stay
 empty**, and X0498 consumed 0600/0601/0602. Every other "number from N" line in
 this file — including the "from 0486" that stood here until X0498 — is historical
@@ -2462,6 +2579,13 @@ can reach the new path: they still cannot.
 **S3+S4 remain the blocker for anything looking good** — every overlay row still
 renders BLANK on a real PDK raw.
 
+**Off-plan, 2026-08-22: issues 0614 + 0615 landed** (status E) — the chords became
+two additive setters and one clear-all, `annot_show` bit1 acquired real producers
+via a content-derived text class, and node voltages moved to layer 9. See the
+0614+0615 block at the top of this file for the ten things it binds, spec **§4.8**
+for the design, and issue **0621** for its E question. `test_op_annot` 279 → **287
+ALL PASS**. **Number new issues from 0626.**
+
 ~~**S8 is next**~~ (landed), and it was small — the mask it drives now exists. Read items 2–4
 of "what S7 learned" before writing `cadence::annot_mode`: the mask is an
 **integer** (`set annot_show true` silently means *off*), S8 must use
@@ -2475,7 +2599,9 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0488**. *(Updated by S12b, 2026-08-21: it filed 0486
+Number new issues from **0626**. *(Updated by the 0614+0615 crew, 2026-08-22: the
+eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
+*(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were
 consumed by S12's two issue filings. The 0418/0419 reservation was never used —
 no file was ever created under either number — and is now permanently

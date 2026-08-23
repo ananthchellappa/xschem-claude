@@ -279,13 +279,19 @@ bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
 bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # 6 / Ctrl-6 / Alt-6 : OPERATING-POINT ANNOTATION MODE (doc/claude/specs/op_annotation.md
-# step S8). These write xctx->annot_show, the bitmask text_hidden() (src/actions.c)
-# gates `hide=op` / `hide=opvolt` texts on -- so device OP numbers appear on the
-# schematic without the annotator symbol being moved, edited or placed (invariant
-# I4: the overlay never modifies the .sch).
-#   6       device OP info on            (mask 1)
-#   Alt-6   device OP info + node voltages (mask 3 -- a SUPERSET of 6, not a swap)
-#   Ctrl-6  everything off               (mask 0)
+# step S8, issue 0614). These write xctx->annot_show, the bitmask text_hidden()
+# (src/actions.c) gates the annotation classes on -- so device OP numbers and node
+# voltages appear on the schematic without the annotator symbol being moved, edited
+# or placed (invariant I4: the overlay never modifies the .sch).
+#
+# TWO ADDITIVE SETTERS AND ONE CLEAR-ALL. Ruled by the user 2026-08-22 (issue 0614);
+# this table replaced a three-state cascade whose two lower rows were wrong:
+#   6       annot_show |= 1   ADD device OP info      (bit1 untouched)
+#   Alt-6   annot_show |= 2   ADD node voltages and branch currents (bit0 untouched)
+#   Ctrl-6  annot_show  = 0   clear BOTH -- the ONLY off switch
+# So `6` never turns anything off and is not a toggle (press it twice, nothing
+# moves; press it with voltages on, they stay on), and `Alt-6` from a clean start
+# gives mask 2 -- voltages ALONE, which the old cascade could not reach.
 # Each press also loads the cell's raw if nothing is annotated yet (ASE session
 # first, else $netlist_dir/<cell>.raw) and SAYS WHAT HAPPENED on the status line,
 # held -- "no raw file" and "no OP descriptor for this symbol type" are the two

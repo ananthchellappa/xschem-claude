@@ -52,17 +52,32 @@ proc entry_index {m label} {
   }
   return -1
 }
+## ⚠ A MISSING ENTRY MUST RED ONE ROW, NOT ABORT THE FILE. `$M type -1` raises
+## `bad menu entry index "-1"`, and under --pipe that stops Tcl_AppInit dead:
+## measured, a single renamed label took A7 out and rows A8-A18 never ran at
+## all, so a one-word change read as a total collapse. These two return a marker
+## instead, and the rows below name it in their goldens.
+proc entry_type {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m type $i] }
+proc entry_var  {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m entrycget $i -variable] }
+# ⚠ THE SECOND LABEL CHANGED WITH ISSUE 0614, AND THE LABEL IS THE POINT.
+# Bit 1 used to gate `hide=voltage` and nothing else -- a token no shipped symbol
+# carried, so the box governed an empty set. Under 0614 it owns the CONTENT-
+# classified annotations: every `@spice_get_voltage` / `@#n:spice_get_voltage` /
+# `@spice_get_diff_voltage` node voltage AND every `@spice_get_current*` branch
+# current. A control must name what it governs, so the label says both. (Decision
+# D4 of that pass: the currents share this SWITCH and keep their own layer-17
+# COLOUR -- see tests/headless/test_op_annot.tcl row U17.)
 set i_hid [entry_index $M "Show hidden texts"]
 set i_op  [entry_index $M "Show device OP annotation"]
-set i_v   [entry_index $M "Show node voltage annotation"]
+set i_v   [entry_index $M "Show node voltage / branch current annotation"]
 check "A4 'Show device OP annotation' entry exists"    [expr {$i_op >= 0}] 1
-check "A5 'Show node voltage annotation' entry exists"  [expr {$i_v  >= 0}] 1
+check "A5 'Show node voltage / branch current annotation' entry exists"  [expr {$i_v  >= 0}] 1
 check "A6 both sit directly under 'Show hidden texts'" \
       [list [expr {$i_op - $i_hid}] [expr {$i_v - $i_hid}]] {1 2}
 check "A7 both are checkbuttons, not commands" \
-      [list [$M type $i_op] [$M type $i_v]] {checkbutton checkbutton}
+      [list [entry_type $M $i_op] [entry_type $M $i_v]] {checkbutton checkbutton}
 check "A8 they drive the derived vars, not the mask directly" \
-      [list [$M entrycget $i_op -variable] [$M entrycget $i_v -variable]] \
+      [list [entry_var $M $i_op] [entry_var $M $i_v]] \
       {annot_show_op annot_show_voltage}
 check "A9 the submenu re-derives on open (-postcommand)" \
       [string match {*annot_show_menu_sync*} [$M cget -postcommand]] 1
@@ -109,6 +124,26 @@ set ::annot_show_op 0 ; set ::annot_show_voltage 1
 annot_show_menu_apply
 check "A14 mask 2 is reachable from the menu (chords cannot make it)" \
       [xschem get annot_show] 2
+
+# ------------------------------------------- 0614: THE THREE CHORDS, FROM HERE
+# ⚠ GREEN BEFORE AND AFTER 0614 -- the plumbing is 0457(b)'s and it already
+# works. This row is here because 0614's acceptance names it out loud ("the
+# 0457(b) View-menu pair drives the same three states"), and because after 0614
+# those three masks MEAN something they did not mean before:
+#   op=1 v=0 -> 1  device OP blocks only, node voltages and branch currents OFF
+#   op=1 v=1 -> 3  both
+#   op=0 v=0 -> 0  neither
+# i.e. the stock menu pair reaches every state `6` / `Alt-6` / `Ctrl-6` reach,
+# for the vast majority of users whose xschemrc never sources cadence_style_rc
+# (it ships commented out at src/xschemrc:767). The RENDER half of the same
+# claim is test_op_annot.tcl rows U1-U6; this file owns the control surface.
+set a18 {}
+foreach {op v} {1 0   1 1   0 0} {
+  set ::annot_show_op $op ; set ::annot_show_voltage $v
+  annot_show_menu_apply
+  lappend a18 [xschem get annot_show]
+}
+check "A18 0614 the View pair reaches the three chord states (6 / Alt-6 / Ctrl-6)" $a18 {1 3 0}
 
 # ------------------------------------------------------------- source contract
 set fh [open [file join [file dirname [info script]] .. .. src xschem.tcl] r]

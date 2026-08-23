@@ -877,11 +877,16 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         if(xctx->only_probes) textlayer = GRIDLAYER;
         else {
           get_sym_text_layer(n, j, &lay);
+          /* 0615: a CONTENT-classified node voltage paints in annot_voltage_layer
+           * instead of the symbol text's own layer=, so it stops wearing the OP
+           * block's colour. AFTER get_sym_text_layer() so a per-instance
+           * `text_layer_<n>=` still wins. */
           if(lay != -1) textlayer = lay;
+          else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
           else textlayer = symptr->text[j].layer;
         }
       }
@@ -10646,8 +10651,11 @@ void draw(void)
     for(i=0;i<xctx->texts; ++i)
     {
       const char *txt_ptr;
+      int alay;
       textlayer = xctx->text[i].layer;
       if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+      /* 0615: the schematic-own-text mirror of the instance-text site above. */
+      if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
       if(xctx->only_probes) textlayer = GRIDLAYER;
       else if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
       #if HAS_CAIRO==1

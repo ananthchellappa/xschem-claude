@@ -14036,7 +14036,7 @@ set tctx::global_list {
  preserve_unchanged_attrs prev_symbol ps_colors
  ps_paper_size rainbow_colors rotated_text search_case search_exact
  search_found search_schematic search_select search_value select_touch
- show_hidden_texts annot_show show_infowindow show_infowindow_after_netlist simconf_default_geometry
+ show_hidden_texts annot_show annot_voltage_layer show_infowindow show_infowindow_after_netlist simconf_default_geometry
  simconf_vpos simulate_bg snap_cursor snap_cursor_size spiceprefix split_files svg_colors
  svg_font_name sym_txt symbol symbol_width tabstop tclcmd_txt tclstop
  tctx::colors tctx::delay_flag tctx::hsize tctx::recentfile tctx::recentdirs
@@ -14719,10 +14719,13 @@ proc annot_show_menu_sync {} {
 ## bbox (measured 16 wide blank vs 186 wide populated, select.c:709), the same
 ## reason the `Show hidden texts` neighbour carries it.
 ##
-## NOTE the pair can reach mask 2 -- node voltages with device OP info OFF -- which
-## none of the three chords produces (they emit 0, 1 and 3 only). text_hidden()
-## gates the two classes on separate bits, so the state is coherent; a checkbox
-## pair that silently refused one of its four combinations would be the worse bug.
+## NOTE the pair reaches all four masks, and so do the chords -- since 0614 the
+## three chords are two ADDITIVE setters and one clear-all (`6` |= 1, `Alt-6` |= 2,
+## `Ctrl-6` = 0), so `Ctrl-6` then `Alt-6` produces mask 2 (node voltages with
+## device OP info OFF) too. This comment used to say mask 2 was menu-only, which
+## was true only while `Alt-6` force-set bit0. text_hidden() gates the two classes
+## on separate bits, so every one of the four states is coherent; a checkbox pair
+## that silently refused one of its four combinations would be the worse bug.
 proc annot_show_menu_apply {} {
   xschem set annot_show \
     [expr {($::annot_show_op ? 1 : 0) | ($::annot_show_voltage ? 2 : 0)}]
@@ -15035,11 +15038,17 @@ proc build_widgets { {topwin {} } } {
        # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
        # show_hidden_texts entirely (its decision D3), so this item used to
        # produce a loaded raw and a STILL-DARK annotator -- measured, the
-       # carrier's bbox never grew. Mask 1 = device OP info; deliberately NOT 3,
-       # which would silently start meaning "node voltages too" the moment bit1
-       # gets producers. The cadence profile's 6 / Ctrl-6 / Alt-6 chords
-       # (utils/annot_mode.tcl) are the only other writers of this mask.
-       xschem set annot_show 1
+       # carrier's bbox never grew.
+       # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+       # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+       # voltage and branch current XSCHEM's native OP back-annotation paints. An
+       # "Op Annotate" that loaded the raw and then hid the voltages it had just
+       # resolved would be a worse first run than the dark annotator this line was
+       # written to fix. Deliberately a HARD SET and not an OR: this item is a
+       # one-click "annotate this cell", not one of the two additive chords. The
+       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and the
+       # View > Show pair are the other writers of this mask.
+       xschem set annot_show 3
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
        } else {
@@ -15148,7 +15157,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.view.show add checkbutton -label "Show device OP annotation" \
          -variable annot_show_op \
          -selectcolor $selectcolor -command {annot_show_menu_apply}
-  $topwin.menubar.view.show add checkbutton -label "Show node voltage annotation" \
+  $topwin.menubar.view.show add checkbutton -label "Show node voltage / branch current annotation" \
          -variable annot_show_voltage \
          -selectcolor $selectcolor -command {annot_show_menu_apply}
   $topwin.menubar.view.show add checkbutton -label "Draw grid axes"  -variable draw_grid_axes \
@@ -15436,11 +15445,17 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
        # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
        # show_hidden_texts entirely (its decision D3), so this item used to
        # produce a loaded raw and a STILL-DARK annotator -- measured, the
-       # carrier's bbox never grew. Mask 1 = device OP info; deliberately NOT 3,
-       # which would silently start meaning "node voltages too" the moment bit1
-       # gets producers. The cadence profile's 6 / Ctrl-6 / Alt-6 chords
-       # (utils/annot_mode.tcl) are the only other writers of this mask.
-       xschem set annot_show 1
+       # carrier's bbox never grew.
+       # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+       # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+       # voltage and branch current XSCHEM's native OP back-annotation paints. An
+       # "Op Annotate" that loaded the raw and then hid the voltages it had just
+       # resolved would be a worse first run than the dark annotator this line was
+       # written to fix. Deliberately a HARD SET and not an OR: this item is a
+       # one-click "annotate this cell", not one of the two additive chords. The
+       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and the
+       # View > Show pair are the other writers of this mask.
+       xschem set annot_show 3
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
        } else {
@@ -16081,6 +16096,15 @@ set_ne show_hidden_texts 0
 ## doc/claude/specs/op_annotation.md. Default 0 = annotations off at rest; put
 ## `set annot_show 1` in ~/.xschem/xschemrc to have them on from startup.
 set_ne annot_show 0
+## issue 0615: the layer a CONTENT-classified node voltage renders in, overriding the
+## symbol text's own layer= so node voltages stop wearing the device OP block's colour.
+## MIRRORED IN C as xctx->annot_voltage_layer; see annot_text_layer() in src/actions.c.
+## 9 is #ffffff on the default dark palette (the user's ratified choice) and #00aaaa on
+## the default light one -- a layer INDEX, so it travels through the per-layer colour
+## machinery instead of hard-coding a white that a light-palette user cannot see.
+## Any index outside [1, cadlayers) is the documented off switch: put
+## `set annot_voltage_layer -1` in ~/.xschem/xschemrc for the pre-0615 look.
+set_ne annot_voltage_layer 9
 ## issue 0457(b): the View > Show checkbutton pair's derived booleans. Seeded from
 ## the mask so an rc that sets `annot_show 1` opens with the box already ticked;
 ## the submenu's -postcommand re-derives them on every open thereafter.
