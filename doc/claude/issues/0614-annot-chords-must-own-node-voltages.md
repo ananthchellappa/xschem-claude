@@ -7,22 +7,42 @@ node voltages.** Related: 0457 (the mask's menu controls), 0615 (colour), S7/S8.
 
 ---
 
-## The ruling, verbatim
+## The ruling, verbatim — READ THIS, IT IS NOT THE OBVIOUS READING
+
+First message (2026-08-22):
 
 > "Fix Ctrl-6 - yes - must clear node voltage display and the Alt-6 and 6 doing
 > the same thing issue. 6 is for OP info."
 
-So the contract `src/cadence_style_rc:283-285` already documents becomes true:
+Second message, **correcting a wrong first reading of the above**:
 
-| chord | mask | on screen |
+> "No, 6 for OP info will NOT suppress node-voltages. 6 for OP info is ONLY to
+> ADD device OP info to the annotation. ... Alt-6 is ONLY to ADD node voltage
+> display to the annotation."
+
+So the three chords are **two additive setters and one clear-all**, not a
+three-state cascade:
+
+| chord | effect on the mask | on screen |
 |---|---|---|
-| `6` | 1 | device OP blocks **only** — node voltages OFF |
-| `Alt-6` | 3 | device OP blocks **+** node voltages |
-| `Ctrl-6` | 0 | **nothing** — blocks gone AND node voltages gone |
+| `6` | `annot_show |= ANNOT_SHOW_OP` — **bit1 untouched** | adds device OP blocks |
+| `Alt-6` | `annot_show |= ANNOT_SHOW_VOLTAGE` — **bit0 untouched** | adds node voltages |
+| `Ctrl-6` | `annot_show = 0` | clears **both** |
 
-Note `6` gets *stricter*, not just `Ctrl-6`. Today `6` shows voltages because
-nothing suppresses them; under the ruling `6` must actively turn them off, or
-`Alt-6` still cannot be told apart from it.
+Consequences a reader will get wrong if they skim:
+
+- **`6` never turns anything off.** Pressing it with voltages already on leaves
+  them on. It is not a toggle either — pressing it twice leaves OP info on.
+  `Ctrl-6` is the *only* off switch.
+- **`Alt-6` is no longer mask 3.** Today `cadence::_annot_mask` returns 3 for
+  `opvolt`, i.e. it force-sets bit0 as well. Under the ruling it must set bit1
+  and leave bit0 exactly as it found it. Pressing `Alt-6` from a clean start
+  therefore gives **mask 2** — voltages alone, no OP blocks — which is a state
+  the chords could not reach before.
+- Both chords still need the raw loaded, and still SAY on the held status line
+  what happened. That behaviour is unchanged.
+- The `cadence_style_rc:283-285` comment block is now **wrong in two of its three
+  lines** and must be rewritten with the table above, not patched.
 
 ## Why it is broken today (measured, 0613)
 
@@ -82,8 +102,13 @@ Option B *adds* an implicit class, it does not replace the explicit one.
 
 ## Acceptance
 
-- With a raw loaded: `6` shows blocks and **no** node voltages; `Alt-6` shows
-  both; `Ctrl-6` shows neither. Three renders, three distinct byte counts.
+- From `Ctrl-6` (mask 0) with a raw loaded, four renders with four distinct byte
+  counts: `Ctrl-6` -> nothing; `6` -> blocks only; `Alt-6` -> blocks **and**
+  voltages (bit0 survived); `Ctrl-6` then `Alt-6` -> **voltages only, no blocks**
+  (mask 2 — the state the old cascade could not produce, and the sharpest check
+  that `Alt-6` stopped force-setting bit0).
+- `6` pressed twice in a row leaves the mask unchanged; `6` pressed while
+  voltages are on does not remove them.
 - The 0457(b) View-menu pair (`::annot_show_op` / `::annot_show_voltage`) drives
   the same three states — unticking "node voltages" hides them.
 - With **no** raw loaded and `annot_show` 0, every existing schematic renders

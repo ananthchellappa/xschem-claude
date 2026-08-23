@@ -40,12 +40,14 @@ White text on the light palette's white background is **invisible**. So a hard
 annotation for anyone on light. Options, in the order the decision ladder ranks
 them:
 
-1. **A dedicated layer index, default 9, exposed as a config var**
+1. **RATIFIED BY THE USER 2026-08-22 — "Go with layer 9 for node voltages."**
+   A dedicated layer index, default 9, exposed as a config var
    (`annot_voltage_layer`, mirrored in Tcl like its siblings). White on dark out
    of the box — which is what was asked for — remappable in one line, and it
    travels through the existing per-layer colour machinery, so a user who
    switches to the light palette gets layer 9's light entry rather than a hole.
-   **Recommended (L2: smallest blast radius, nothing else changes).**
+   **This is the decision. Options 2 and 3 below are recorded only so nobody
+   re-opens them.**
 2. Hard-code white at the draw site for the VOLTAGE class. Satisfies the letter
    of the request; breaks the light palette. Only acceptable with an explicit
    background-luminance fallback, which is more machinery than option 1.
