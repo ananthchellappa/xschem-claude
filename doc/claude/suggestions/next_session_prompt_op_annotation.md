@@ -724,10 +724,16 @@ top of this file is now historical provenance.)
 
 ---
 
-## S3 — hierarchy walk and save-card generation
+## S3 ✅(E) — hierarchy walk and save-card generation — **LANDED 2026-08-22 (attempt 5)**
 
-> **STATUS: ATTEMPTED AND REVERTED FOUR TIMES (attempts 1–2 on 2026-08-16;
-> attempt 4's record is issue 0494, its test-side postmortem is 0499). NOT DONE.**
+> **STATUS: DONE at attempt 5, status E.** Attempts 1–2 (2026-08-16), attempt 4
+> (record: issue **0494**, test-side postmortem **0499**) were all reverted. The
+> landed record — what was measured before, what changed, the decisions, the
+> sabotage matrix and what is still open — is the
+> **[S3 LANDED](#s3-landed--what-attempt-5-measured-decided-and-left-open)**
+> section at the end of this step. **Everything below this line until that
+> section is the pre-landing brief, kept for its measurements; where it and the
+> landed record disagree, the landed record won by measurement.**
 > **⚠ Read the X0498 section immediately above before attempting it again** — the
 > C core no longer segfaults on an I6 slip, `xschem netlist` (not `xschem load`)
 > was the crash carrier, `scheduler.c:7611` must not be touched, and a
@@ -839,10 +845,13 @@ still lacks, and the one that decides attempt 3:** a **hierarchical** fixture
 whose subcircuits carry `spice_stop`, `spice_sym_def`, `default_schematic=ignore`
 and an empty `format`, cross-checked against `xschem netlist` (issue 0442).
 
-**Menu anchor, corrected and re-verified:** "Annotate Operating Point into
-schematic" is `src/xschem.tcl:15315`; the new item goes after `:15324`. Earlier
-revisions of this plan and of issue 0436 cited `14943`, which is **stale** and
-lands the item in the wrong cascade. The cascade choice (Simulation → Graphs)
+**Menu anchor — ⚠ THIS PARAGRAPH WAS ITSELF STALE, corrected at landing.**
+"Annotate Operating Point into schematic" is **`src/xschem.tcl:15440`**, not
+`15315`; "Add device OP annotator" is **`:15474`**, not `15324`; the landed
+`Create device OP .save file` item sits at **`:15476`**. `14943` (issue 0436) and
+`15315`/`15324` (this plan, two revisions running) are both stale and both land
+the item in the wrong cascade. **Re-grep the menu string before trusting any
+line number on this page.** The cascade choice (Simulation → Graphs)
 was never ratified and rides in the same status-E row as D8.
 
 **Risk:** medium — the walk is the only destructive thing in S1–S6. **Measured
@@ -856,6 +865,271 @@ this step has failed every time.
 
 ---
 
+### S3 LANDED — what attempt 5 measured, decided, and left open
+
+**Landed 2026-08-22 on `annotate`, on top of `4853cbd2`. Status E** — two
+user-visible decisions were taken under ladder rung **L3** and a third question
+arrived with the adversary's refutation. Pure Tcl and Markdown: **no `.c`/`.h`/
+`.y`/`.l` changed, `src/Makefile.in` untouched, no `make`, no `./configure`**
+(receipt: `grep -c op_annot.tcl src/Makefile` = 2 before and after — install line
+225, uninstall line 286).
+
+#### What was measured BEFORE
+
+```
+$ ./src/xschem --nogui --pipe -q --nolog --script s3_repro.tcl
+procs=19  save_cards=ABSENT  write_save_file=ABSENT  devpath_args={instname}
+call save_cards -> rc=1 msg=invalid command name "op_annot::save_cards"
+B4 devpath M2 absolute -> rc=1 msg=wrong # args: should be "op_annot::devpath instname"
+C2| id  =            C2| gm  =            C2| gds =            ...   # THE USER'S SIX BLANK ROWS, headless
+```
+
+The user was **not** mistaken. The supply half was absent, and the tree said so
+itself: the only occurrence of the string `save_cards` anywhere under `src/` was
+a comment at `op_annot.tcl:61` — *"Read this before adding op_annot::save_cards
+(S3) to this file"*.
+
+#### What landed
+
+`src/op_annot.tcl` **847 → 2282 lines**, appended after `place_annotator`:
+
+* `op_annot::devpath {instname {basis read} {root {}}}` — the basis argument
+  landmine 14 demanded, with five named seams (`_check_basis`, `_root`,
+  `_pathfor`, `_subst_path`, `_devproc_call`). **The default stays `read`**, so
+  all 287 pre-existing checks and the one external caller
+  (`utils/annot_mode.tcl:201`) are byte-unchanged; only the emitter passes
+  `deck <entry sch_path>`.
+* **The oracle**: `xschem netlist -keep_symbols -noalert` into op_annot's own
+  dir, read back, deleted, with a **six-entry** env snapshot that must include
+  `netlist_name` (the verb sets it at `scheduler.c:8796` and clears it at
+  `:8869`).
+* **The 0496 fix**: `_deck_index` returns `{top elems callee schpath}` keyed on
+  the **`.subckt` NAME**, with the instance→block edge read off the element line
+  (**last token before the first token containing `=`**, after joining `+`
+  continuations). `_here_block` and per-instance `_normkey` are gone; the walk
+  threads the callee block down the recursion.
+* `_block_is_here` pays for the name key: after every descend the callee block's
+  `** sch_path:` is compared to `xschem get schname`; a mismatch suppresses the
+  subtree and warns.
+* `_park_backup` / `_assert_saveable` / `_restore` for I4+I6, `_cards_for` for
+  the bare card, `last_counts` for 0497's three named counters.
+
+`src/xschem.tcl`: the `Create device OP .save file` item in Simulation → Graphs
+at **`:15476`**. `src/ase.tcl` **untouched — `render_deck` is S4's.**
+
+#### THE RESULT THAT MATTERS — the user's own bench, first time ever
+
+`op_annot::save_cards` on `sky130_tests_ase/tb_bandgap`: **rc=0, 469 lines
+(1 × `.save all` + 468 cards), 244 ms**, counts `{0 0 0}`, `modified 0 → 0`,
+`currsch 0`. **All 78 cards of the hand-written demo golden
+`~/op_annot_demo/bandgap_bare.save` are a byte-exact subset** (`comm -23` = 0
+lines); the golden only ever walked `x1.x1` (13 FETs) while the walk covers all
+78 devices. Zero cards carry an `i()`/`v()` wrapper (**R4**); exactly one
+`.save all`, and it is the first line (**I2/R2**).
+
+**And it simulates.** The demo deck with its own device cards stripped and the
+generated block spliced in, ngspice 46+ `tran 10n 40u`: rc=0, **28.9 MB raw, 892
+vectors, 468 of 468 cards materialised**, zero stderr matches for
+warn/error/`no writable vector`, and `v(vbg)`/`v(vcc)`/`i(vcc)` all still
+present.
+
+#### DECISIONS (ladder rung, and the rejected alternative)
+
+* **D1 (L2)** start from `0494-attempt-4-reverted.patch` via `git apply --3way`.
+  *Rejected:* re-deriving from 0442/0436 (0442 cannot even 3-way merge — missing
+  blob) or a clean sheet.
+* **D2 (L1, I2b)** the deck index is keyed on the **`.subckt` name** and the
+  instance→block edge comes from the instance's **own element line**.
+  *Rejected:* attempt 4's `** sch_path:` key (measured merge of
+  `passgate`+`passgate_1`), and patching `_descendable` to use
+  `get_sch_from_sym`'s fallback (fixes the miss, keeps the merge).
+* **D2b (L1, I3)** the name key is paid for by comparing the callee block's
+  `** sch_path:` against `xschem get schname` after every descend.
+  *Rejected:* trusting the name key alone — the netlister dedups blocks on
+  `get_cell()` (`spice_netlist.c:98-104`), so two same-basename cells from
+  different libraries share one block.
+* **D3 (L1, I4)** park `::autosave_backup` at 0 **when the entry buffer is
+  clean**, restore unconditionally, and **refuse** modified + autosave-off.
+  *Rejected:* `xschem set_modify <entry>` as the restore (it would flag a buffer
+  now holding the **backup's** content as clean — the plausible-wrong-state
+  RULING D5-1 forbids); a C fix to `go_back` (blast radius = every descend user).
+  **⚠ This decision is the one the adversary refuted — see STILL OPEN.**
+* **D5 (L1, I1)** **0620 answered in writing in spec §3.1: option A (save cards)
+  is PRIMARY; option B (`show`) is a named operating-point-only fast path for a
+  later step.** New evidence 0620 does not carry, measured by this crew:
+  **`show` publishes `von` where the save card publishes `vth`**
+  (`grep -cw vth show.txt` = 0, `grep -cw von` = 1), so B needs a per-model
+  show-name → descriptor-name map — **the second name builder I1 forbids by
+  name**. Plus 0620's own rows: no timepoints (S11 already ships cursor-following
+  device rows on a **tran** raw) and it never reaches the raw.
+  *Rejected:* B as a replacement; A+B now (needs a text ingest path that does not
+  exist and is outside S3's Files cell).
+* **D6 (L2)** the emitter iterates **all** `params`, not the six-row display cap:
+  RULING D9b's cap is applied inside `op_annot::text` *after* the three row
+  classes are assembled, so it is a **display** decision, and a user who raises
+  `::op_annot_max_rows` would otherwise get blanks with no way to re-simulate.
+  *Rejected:* emitting only the capped set (fewer cards per R5).
+* **D7 (L3)** the menu item goes in **Simulation → Graphs** after `Add device OP
+  annotator`. *Rejected:* a top-level Simulation item and a Netlist-cascade item.
+  → the E question, issue **0627**.
+* **D8 (L2)** 0488 stays **mitigated** by `_prefix_ok`, not fixed: 0 of 533
+  shipped `type=subcircuit` symbols carry `spiceprefix`. *Rejected:* threading
+  the deck element path into `devpath` as a third basis — that puts prefix
+  construction back in the **walk**, which is landmine 14's second builder.
+* **D9 (L2)** 0497's single aggregate splits into three named counters and
+  **only `dropped_by_rule` may say "normal for such cells"**. *Rejected:* an
+  alert per cell (`mips_cpu/controller` alone fires twice on a healthy design).
+
+#### THE SABOTAGE MATRIX — 8 variants, all red, **2 predicted reds did not appear**
+
+| variant | predicted | observed |
+|---|---|---|
+| `basis_ignored` | W5 W6 W7 W8 X5 | **exact** (X5 is row `XR5` — the suite renamed X1–X5 to XR1–XR5, sections A..U already use bare `X<n>`) |
+| `index_keyed_on_sch_path` | W30 | **exact** — 31 → 19 card devices, 0 under `@m.x6.`/`@m.x3.x6.` |
+| `save_gate_off` | W31 | **exact**, and non-vacuous: the modified sheet came back reverted |
+| `autosave_not_parked` | W19a W19b | **exact** |
+| `wrapped_card` | W2 W4 XR1 XR2 XR3 | 24 red; **XR1 did NOT** |
+| `no_save_all` | W3 XR1 XR4 | 11 red (superset) |
+| `restore_skipped` | W19a/b W20 W21 W22 W23 | 32 red (superset) |
+| `descendable_aliases_netlisted` | W11 W12 W13 W14 W15 W32 | 5 red; **W11 and W15 did NOT** |
+
+**⚠ Spec landmine 11 says a predicted red that does not appear is a fixture
+defect. All three were chased, and all three are PREDICTION defects, not fixture
+defects — this is the reasoning a later crew should copy rather than repeat:**
+
+* **`wrapped_card` → XR1.** XR1 asserts only that the block is 13 lines, that the
+  raw exists, and that stderr carries no `no writable vector`. A wrapped card is
+  still one line and **ngspice ignores it in total silence** — that is the
+  measured **R4** fact itself. **XR3** is the row that catches it (`opa_w_devs`
+  requires the line to end in `]`: 12 devices → 0).
+* **`descendable_aliases_netlisted` → W11.** W11's own first leg asserts `xnofmt`
+  is **not** in the expanded deck. An empty `format=` removes the instance from
+  the deck **entirely**, so `_netlisted` already answers 0 and aliasing
+  `_descendable` to it cannot leak the descend. **W11 covers the 0442
+  deck-membership rule, not the `_descendable`/`_netlisted` split its header
+  claims** — worth renaming.
+* **`descendable_aliases_netlisted` → W15.** W15 is a two-directional **set**
+  cross-check. A leaked child recurses with `callee={}`, falls back to the deck
+  **top's** element list, matches nothing, and so produces no orphan card;
+  duplicate cards from a re-visited level are invisible to a set comparison.
+  **W32's line-level uniqueness leg is what catches that, and it did go red.**
+
+#### ONE TEST-SIDE DEFECT FOUND AND FIXED (issue 0630)
+
+Row **W32**'s uniqueness leg compared `opa_w_devs` (device paths) and expected 1
+occurrence each. **Unsatisfiable**: section W's descriptors carry two params, so
+every device legitimately appears in two cards. It read green only while
+`save_cards` **raised** and the list was empty — 0499's vacuous-guardian class,
+inside the step written to close it. Fixed by one token
+(`opa_w_devs` → `opa_w_lines`), which is the row's own stated claim.
+
+#### STILL OPEN — read these before S4
+
+1. **⚠ ISSUE 0632 — I4 IS HELD ON THE CLEAN PATH AND OPEN ON THE DIRTY ONE, AND
+   THIS IS WHY S3 IS NOT AN `x`.** `modified=1` + `autosave_backup=1` (the
+   shipped default) passes **both** `_assert_saveable` and `_park_backup`, so the
+   walk runs with autosave live and every `go_back` goes through
+   `load_backup_as` → `set_modify(1)` → `write_backup()`. Re-measured and
+   narrowed by the write-up agent: a **clean** walk over `tb_bandgap` leaves a
+   full recursive signature of `sky130_tests_ase` **identical**
+   (`DISK IDENTICAL = 1`), while the same walk from a one-instance-dirty entry
+   rewrites `bandgap_opamp~.sch` — an **ancestor two levels down, in a cell the
+   user never touched**. Today that loses nothing only because the shipped backup
+   is byte-identical to its `.sch`. Over a genuinely stale one the walk continues
+   in the **backup's** content while the deck index describes the **disk**
+   content and under-emits at `rc=0` saying *"normal for such cells"*. The fix is
+   to **park below the entry only**, and it owes a guardian that plants a `~` on
+   an **intermediate** level — W19a/W19b only ever plant one beside the entry,
+   which is exactly why they missed it.
+2. **ISSUE 0631 — the editor's model and the deck's model genuinely disagree, and
+   it is not a walk bug.** On the user's own bench 466 of 468 cards are perfect
+   and **12 come back `dims=0`**. `bandgap.sch`'s `x5`/`x6` carry
+   `modelp=pfet_01v8_lvt`, `passgate.sch`'s `M2` is `model=@modelp`, and
+   **`passgate.sym` declares `modelp` in `extra=` but NOT in `format=`** — so the
+   netlister writes one shared `.subckt passgate` with the **default non-lvt**
+   PFET while `xschem translate M2 @model` in the descended cell resolves the
+   caller's override. `devpath` follows the schematic; the raw follows the deck.
+   Not fixed: the only available fix (a deck-model cross-check) would be **inert
+   on every existing fixture**, i.e. exactly the green-check-certifying-nothing
+   that reverted this step four times.
+3. **ISSUE 0629 (harness, pre-existing)** — `run_regression.tcl:117` tests
+   `regexp -line {^OVERALL: ok$}`, an **anchored** sentinel, so the **passing**
+   `test_pdk_launcher` is reported FAIL purely because it is the only suite that
+   prints its check count. That is 1 of T1's 3 FAIL lines; the other 2 are
+   `test_ihp_sg13g2_libmgr` fixture drift (`sg13g2_tests_ase` is a tracked
+   library now and the suite's expected list still names 9).
+4. **`_restore` resets `no_undo` to 0 unconditionally**, not to its entry value
+   (issue 0432, no getter). **`render_deck` is that caller** — see S4 below.
+5. `_wrap` kind 1 and `_cards_for` spell the bracket join twice. They agree today
+   (78 devices, 0 mismatches) and the device **path** still has one builder, so
+   this is not an I1 breach — but `_wrap $dev $param 1` removes the drift shape
+   at zero cost.
+6. `write_save_file` writes to `$netlist_dir`, not to where `local_netlist_dir`
+   would put the user's own deck, so the `.save` file and the deck it is meant to
+   be `.include`d from can land in different trees.
+7. **Unreproduced, recorded not claimed:** one run in ~14 of a 30-trip
+   forced-raise sweep left `no_draw=1 keep_symbols=1 _busy=1` — `_restore`
+   apparently never ran — after which the `_busy` latch legitimately refuses every
+   later call. Not reproduced in 13 further runs. A `_busy` self-heal is worth
+   more than a hunt.
+8. The menu item is **X-only** and was exercised here only through
+   `op_annot::write_save_file` directly; its `alert_`/`textwindow` arms are
+   unmeasured. A `look` and a `suite` debt are in the ledger.
+
+#### ⚠ WHAT S3 LEARNED THAT BINDS LATER STEPS — READ BEFORE S4
+
+1. **THE ANCHORS ON THIS PAGE ROT FASTER THAN THE PLAN IS REVISED. Re-grep every
+   one.** Corrected at landing, all verified: menu items **15440** / **15474**
+   (not 15315/15324); `sim_sch_path` **scheduler.c:5186** (not 5150); `set
+   no_undo` **scheduler.c:12050** (not 12030 — and this page's *own correction*
+   had itself drifted); `log_action -suppress` **scheduler.c:7831** (not 7795);
+   `skip_instance` **netlist.c:1277** (not 1245); `sch_waves_loaded`
+   **draw.c:2834**; `annotate_op` **scheduler.c:2339**; `raw value`
+   **scheduler.c:10352**; `update_op` **save.c:2015**; descend class-1/class-2
+   split **actions.c:4628-4640** (not 4055-4065); descend/go_back self-log
+   **actions.c:4650-4651 / :4806-4807** (not 4073/4229); `set_modify` verb
+   **scheduler.c:12212**.
+2. **`op_annot::save_cards` RETURNS `{}` FOR AN EMPTY WALK, NOT A LONE
+   `.save all`** — S4 must append nothing in that case, and must surface
+   `op_annot::last_warnings` when it does, because that is the only path where
+   the user gets no file and no explanation (0497).
+3. **THE BLOCK IS SELF-SUFFICIENT DOT-CARDS AND CARRIES ITS OWN `.save all`.**
+   Appending it after ASE's existing `.save all` line means **two** — measured
+   harmless. Do not "tidy" the leader away without re-measuring, and **never** the
+   bare `save all` spelling (no raw file is written at all, on 42 and on 46+).
+4. **`save_cards` SILENTLY DISARMS A CALLER'S `no_undo 1`** (still-open item 4).
+   `render_deck` must set it again after the call, or fix 0432 first.
+5. **S4 INHERITS 0632.** `render_deck` calls `save_cards` from whatever state the
+   user's sheet is in, and a user who just edited and hit Netlist is **exactly**
+   the dirty-entry case. Until 0632 is fixed, S4 must not add a *second*
+   one-click path into it — either fix 0632 first, or gate the new
+   `save_op_params` key behind the same `_assert_saveable` refusal.
+6. **THE ORACLE IS THE NETLISTER, AND THAT IS SETTLED.** Four attempts converged
+   on `xschem netlist -keep_symbols -noalert` + read the deck. A Tcl mirror or a
+   `skip_instance` export **cannot** work: `skip_instance` (`netlist.c:1277`) sees
+   only the ignore/short/lvs bit flags, while empty `format`
+   (`spice_netlist.c:663`), `default_schematic=ignore` (`:668`), `spice_sym_def`
+   (`:689`) and `spice_stop` (`:659`) live in `spice_block_netlist` and are
+   invisible to it. The netlist verb is already asserted **silent** in the action
+   log by `test_netlist_log.tcl:150-157`.
+7. **RE-KEYING THE INDEX WAS NECESSARY AND NOT SUFFICIENT FOR 0496.** The
+   specialisation is carried by an instance attribute `schematic=passgate_1`, and
+   `get_sch_from_sym` resolves it to a path that does not exist; the "Descend into
+   base schematic?" fallback (`actions.c:4176`) is gated by `has_x && fallback`
+   and the `xschem descend` **verb passes fallback=0**, so the prompt is
+   unreachable from Tcl on **either** display. Feeding `hi_descend_view_path`
+   (`actions.c:4139`) from the callee block's own `** sch_path:` is what gets past
+   the class-2 refusal.
+8. **THREE OF THE SUITES THIS FEATURE OWNS DO NOT RUN UNDER `--nogui` AT ALL** —
+   `test_annot_show_menu`, `test_launch_context`, `test_traversal_flag_leak` each
+   SKIP or raise `invalid command name "wm"`. A headless-only pass proves nothing
+   about them. And `test_op_annot` itself has **three** surfaces: 330 checks under
+   `--nogui --nolog`, **336** with a display (+W29 menu, +M1/M2, +O14/O36/O38),
+   **337** under `--logdir` (+W23, the log-suppress row, which is **dark** under
+   `--nolog`). Ship all three invocations or a row is decoration.
+
+---
+
 ## S4 — ASE carries the cards into the deck
 
 **Files:** `src/ase.tcl` (state schema + `render_deck`), `src/ase_window.tcl`
@@ -866,8 +1140,18 @@ New state key `save_op_params`, default `0`, in the same group as
 `op_annot::save_cards` output after the `.save all` line (`ase.tcl:3162`).
 Add the checkbox to the Save All dialog (`ase_window.tcl:2854`).
 
+> **⚠ S3 HAS LANDED — READ ITS "WHAT S3 LEARNED THAT BINDS LATER STEPS" LIST
+> ABOVE BEFORE TOUCHING `render_deck`. The two rows that change this step most:
+> `save_cards` returns `{}` for an empty walk (append nothing, and surface
+> `op_annot::last_warnings`), and issue 0632 — the walk writes ancestor `~`
+> backups when the entry sheet has unsaved edits, which is EXACTLY the state of a
+> user who edits and then hits Netlist. Fix 0632 first, or gate `save_op_params`
+> behind the same `op_annot::_assert_saveable` refusal; do not add a second
+> one-click path into it.**
+>
 > **⚠ CARRIED FROM S3b — `render_deck` IS THE CALLER ISSUE 0432 IS ABOUT.**
-> `xschem get no_undo` does not exist (setter only, `scheduler.c:12030`) and it
+> `xschem get no_undo` does not exist (setter only, **`scheduler.c:12050`** — the
+> `12030` this page carried for three revisions is stale) and it
 > does not raise — it returns the **empty string** whether the flag is 0 or 1, so
 > a `catch`-based probe cannot detect it. `save_cards` can therefore only restore
 > `no_undo` to **0**. If `render_deck` wraps the call in its own `no_undo 1`
@@ -2536,7 +2820,8 @@ cross-reference dangling.
 | step | changes | buys |
 |---|---|---|
 | S1–S2 | Tcl only | the name builder, three PDKs described |
-| **S3–S4** | Tcl + ASE | **numbers instead of `-`** — the blocker cleared |
+| **S3 ✅(E)** | Tcl only | **the SUPPLY half** — 469 correct cards on the user's own `tb_bandgap`, 468/468 materialised in a real raw |
+| **S4** | ASE | the cards ride into the deck automatically — **read S3's binding list first, especially 0632** |
 | S5–S6 ✅ | Tcl + one symbol | a user-placeable annotator, all PDKs, no C |
 | **S7 ✅** | C, **10** sites → **one** helper | the real three-state toggle |
 | S8 | rc only | the three keys (now a real toggle, not a crude one) |
@@ -2544,7 +2829,7 @@ cross-reference dangling.
 | **S10 ✅(E)** | bulk `.sym`, **40 files / 119 records** | no duplication — but the token is **`hide=true`**, not `hide=op` (0475 §3) |
 | **S11 ✅(E)** | C, one arm + a 12-line helper | timepoint OP **with nothing plotted** — every annotated value follows the cursor |
 
-**Progress:** S1 ✅ · S2 ✅(E) · S3 ❌ reverted ×3, S4 deferred with it · S5 ✅(E) ·
+**Progress:** S1 ✅ · S2 ✅(E) · **S3 ✅(E) landed 2026-08-22 at attempt 5** (attempts 1–2, 4 reverted), S4 next · S5 ✅(E) ·
 S6 ✅(E) · S7 ✅(E) · S8 ✅(E) · **S9 ❌ reverted, attempt preserved as
 `doc/claude/issues/0466-attempt-1-reverted.patch`** · **S9b ✅(E)** · **S10b ✅(E)** ·
 **S11 ✅(E)** · **S12 ⚠ attempt 1 not completed** (implement agent produced no change; its write-up filed 0484/0485 and reconciled the numbering) · **S12b ✅(E)** (§6 rewritten, spec corrected, 0486/0487 filed). S5 and S6 both landed without S3/S4 by reading a raw
@@ -2563,6 +2848,18 @@ just users without the PDK rc). New from S10b: issues **0475**, **0476**; tiers
 unmoved. Sabotage 7 variants / 7 detected, with one stale prediction (SAB-1/Q7,
 because the ruling inverted Q7's direction) and one genuine blind spot (SAB-6/Q2,
 note 4).
+
+**S3 landed at attempt 5** what four attempts could not: the emitter, the
+PDK-neutral walk and the menu item. The two refutations that reverted attempt 4
+were fixed by measurement — **0496** by re-keying the deck index on the `.subckt`
+**name** with the instance→block edge read off the element line (31/31 FETs on
+`tb_bandgap_opamp`, where attempt 4 dropped 12 and called it normal), and
+**0495** by parking `::autosave_backup` for a clean walk. `test_op_annot`
+**287 → 330** headless / **336** with a display / **337** under `--logdir`; T1 and
+T2 byte-identical. New issues **0626–0632**. **⚠ It is status E and one reason is
+a refutation that stood: issue 0632 — I4 is held on the clean path and open on
+the dirty one.** Read S3's *STILL OPEN* list before S4, and item 5 of its binding
+list before touching `render_deck`.
 
 **S11 landed** the graphless cursor arm: `xschem set cursor2_x <t>` now
 annotates a schematic with **nothing plotted**, so every device row, the S9b

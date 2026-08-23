@@ -15473,6 +15473,38 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
   # `if {[info exists has_x]}` and --nogui never enters it.
   $topwin.menubar.simulation.graph add command -label {Add device OP annotator} \
     -command {op_annot::place_annotator}
+  # doc/claude/specs/op_annotation.md step S3. The other half of the feature:
+  # nothing puts the device vectors INTO the raw, so on an ordinary bench run
+  # every `params` row of the annotator above renders blank (issue 0617 is the
+  # user-visible report: six blank rows after a real ASE run). This item walks
+  # the hierarchy below the current cell and writes one `.save` card per
+  # descriptor parameter per NETLISTED device, with `.save all` first (rule R2 —
+  # any explicit save cancels the implicit save-everything, so without it every
+  # node voltage disappears from the raw). `.include` the file from your
+  # testbench.
+  #
+  # Modelled on IHP's `Create FET and BIP .save file` (ihp-sg13g2/
+  # sg13g2_procs.tcl:602-606), generalized off that PDK: the walk is
+  # descriptor-driven and the device filter is asked of the netlister rather
+  # than mirrored from it.
+  #
+  # ⚠ IT RUNS A NETLIST, so it can refuse (a pending placement or paste — the
+  # netlister tears those down, issue 0263; or unsaved edits with autosave off,
+  # issue 0626) and it can raise (a broken oracle). Both must reach the user as
+  # text, not as a silent no-op: an empty .save file would kill the very
+  # simulation it was generated for. Everything that can go wrong lives in
+  # op_annot::write_save_file (src/op_annot.tcl) where
+  # tests/headless/test_op_annot.tcl row W26 drives it; what stays here is a
+  # label, a call and the one thing only this layer can do — show the message.
+  $topwin.menubar.simulation.graph add command -label {Create device OP .save file} \
+    -command {
+       if {[catch {op_annot::write_save_file} tctx::retval]} {
+         alert_ "$tctx::retval"
+       } elseif {$tctx::retval eq {}} {
+         alert_ "No operating-point save cards: no device below this cell has an\
+ op_annot descriptor, or none of them is in the netlist. Nothing written."
+       }
+    }
   $topwin.menubar.simulation.graph add checkbutton -label "Live annotate probes with 'b' cursor" \
      -selectcolor $selectcolor -variable live_cursor2_backannotate
   $topwin.menubar.simulation.graph add checkbutton -label "Hide graphs if no spice data loaded" \

@@ -47,19 +47,34 @@
 #   op_annot::register <symbol-type> <dict>    store/override a PDK descriptor
 #   op_annot::descriptor <symbol-type>         -> the dict, or {} if unregistered
 #   op_annot::type <instname>                  -> the symbol K-record `type=` token
-#   op_annot::devpath <instname>               -> "@m.x1.xm1.msky130_fd_pr__nfet_01v8"
+#   op_annot::devpath <instname> ?basis? ?root?
+#                                              -> "@m.x1.xm1.msky130_fd_pr__nfet_01v8"
+#                                                 basis `read` (default, the
+#                                                 raw-relative DISPLAY name) or
+#                                                 `deck` (the entry-relative
+#                                                 SAVE-CARD name)          (S3)
 #   op_annot::vector <instname> <param> ?kind? -> "i(…[id])" / "…[gm]" / "v(…[vth])"
 #   op_annot::raw_or_blank <vector>            -> the value at the annotation
 #                                                 point, or {}          (S5)
 #   op_annot::eng_or_blank <value>             -> to_eng of it, or {}   (S5)
 #   op_annot::text <instname>                  -> the `label = value` block for
 #                                                 one device, or {}     (S5)
+#   op_annot::save_cards {}                    -> the `.save` block for the
+#                                                 hierarchy below the current
+#                                                 cell, or {}           (S3)
+#   op_annot::write_save_file {}               -> writes it to
+#                                                 $netlist_dir/<cell>.save (S3)
+#   op_annot::last_warnings {}                 -> what the last walk could not
+#                                                 do, as a list         (S3)
+#   op_annot::last_counts {}                   -> {dropped_by_rule N not_found N
+#                                                  name_failed N}       (S3)
 #
 # ============================================================================
 # ⚠ A SAVE CARD IS BARE. `vector` IS THE READ SHAPE ONLY.  (spec §3 rule R4)
 # ============================================================================
-# Read this before adding op_annot::save_cards (S3) to this file. Measured on
-# ngspice-42, one card per throwaway deck so no card could mask another:
+# op_annot::save_cards (S3, at the bottom of this file) writes the BARE form and
+# has its own guardian rows. Measured on ngspice-42, one card per throwaway deck
+# so no card could mask another, and re-measured on 46+ when S3 landed:
 #
 #     .save @m.xm1.m1[id]      -> raw contains  i(@m.xm1.m1[id])
 #     .save i(@m.xm1.m1[id])   -> raw contains  NOTHING. no vector, no message.
@@ -240,6 +255,29 @@ namespace eval op_annot {
   ## exactly the class of thing I8 exists to make audible.
   variable dropped
   if {![info exists dropped]} { set dropped 0 }
+
+  ## S3's hierarchy walk. All of these are namespace state and not proc locals
+  ## because the walk RECURSES and its restore runs from a sibling proc.
+  ##   _acc        the accumulating card list
+  ##   warnings    what the walk could not do, read back by op_annot::last_warnings
+  ##   _busy       the re-entrancy latch (issue 0438); cleared in _restore, which
+  ##               runs on the error path too, so a raise cannot wedge the feature
+  ##   _c_rule     issue 0497 counter: the NETLISTER dropped it. Expected.
+  ##   _c_notfound issue 0497 counter: the deck HAS it and the walk could not
+  ##               reach it. THE 0496 CLASS. Never normal.
+  ##   _c_name     issue 0497 counter: no name could be built for it.
+  variable _acc
+  if {![info exists _acc]} { set _acc {} }
+  variable warnings
+  if {![info exists warnings]} { set warnings {} }
+  variable _busy
+  if {![info exists _busy]} { set _busy 0 }
+  variable _c_rule
+  if {![info exists _c_rule]} { set _c_rule 0 }
+  variable _c_notfound
+  if {![info exists _c_notfound]} { set _c_notfound 0 }
+  variable _c_name
+  if {![info exists _c_name]} { set _c_name 0 }
 }
 
 ## The effective row cap: a positive integer, or 0 for no limit. Anything the
@@ -403,14 +441,144 @@ proc op_annot::_kind {instname param} {
  descriptor for symbol type \"$t\" (pass an explicit kind, or add it to params)"
 }
 
-## op_annot::devpath <instname> -> the lowercased raw-file device path, without
-## the `[param]` suffix; {} for every data condition.
+## ============================================================================
+## THE TWO BASES — S3, AND WHAT REVERTED ATTEMPT 1 (issue 0436)
+## ============================================================================
+## `devpath` has TWO consumers and they measure the hierarchy from two different
+## places:
 ##
-##   op_annot::devpath M1   ->  @m.x1.xm1.msky130_fd_pr__nfet_01v8
+##   read (default)  `xschem get sim_sch_path` (scheduler.c:5186) — the .sch path
+##                   with the RAW-LOAD levels stripped. Correct for READING a
+##                   vector out of a raw that is loaded right now, which is what
+##                   S5's formatter and S9's overlay do.
+##   deck            `xschem get sch_path` minus the WALK-ENTRY root. Correct for
+##                   WRITING a save card into a deck nobody has simulated yet.
+##
+## Attempt 1 built save cards on the `read` basis. Measured on the S3 fixture,
+## with a raw loaded one level down and the walk run from the top:
+##
+##     no raw        xok1 -> @m.xok1.mp1.dp     xok2 -> @m.xok2.mp1.dp
+##     raw at lvl 1  xok1 -> @m.mp1.dp          xok2 -> @m.mp1.dp    <- COLLAPSED
+##
+## Two instances of one subcell, ONE device name, no warning anywhere — and a
+## card naming a device the deck does not contain is not cosmetic: under the
+## `.control … write … .endc` idiom every shipped PDK bench uses it writes a
+## column of zeros marked `dims=0`, and if EVERY device card is bogus ngspice
+## writes no raw at all.
+##
+## The fix is a BASIS on the ONE builder, not path arithmetic in the walk — that
+## would be the second name builder invariant I1 forbids.
+
+## Validate the basis/root pair. THE ONLY RAISER in the basis machinery: a
+## caller that asked for the wrong shape must hear about it even when the
+## instance would have answered blank anyway.
+proc op_annot::_check_basis {basis root} {
+  if {$basis eq {read}} {
+    if {[string trim $root] ne {}} {
+      return -code error \
+        "op_annot::devpath: a \"root\" argument is meaningless with basis\
+ \"read\" — the read name is measured from the level the RAW was loaded at, not\
+ from a walk entry. Pass basis \"deck\" to root a name at a walk entry."
+    }
+    return read
+  }
+  if {$basis ne {deck}} {
+    return -code error \
+      "op_annot::devpath: unknown basis \"$basis\" — expected \"read\" (the\
+ raw-relative name a LOADED raw uses, for display) or \"deck\" (the\
+ entry-relative name an UNSIMULATED deck uses, for save cards)."
+  }
+  ## deck: the root is the walk's entry `sch_path` and must still be a prefix of
+  ## where we now stand. A root from a different walk is a caller bug, and a
+  ## blank answer would be worse than a raise: `string range` over a mismatched
+  ## prefix yields a plausible truncation, and a wrong device name does NOT
+  ## blank at read time — under the dot-card idiom it removes the whole raw.
+  if {[catch {xschem get sch_path} p]} { return deck }
+  set r [::op_annot::_root $root]
+  if {[string first $r $p] != 0} {
+    return -code error \
+      "op_annot::devpath: root \"$r\" is not a prefix of the current hierarchy\
+ path \"$p\" — the root must be the sch_path of the level the walk started from."
+  }
+  return deck
+}
+
+## The walk-entry root, defaulted. `.` is level 0, i.e. `xschem get sch_path` at
+## the top, which is what makes `deck` with no root mean "rooted at the top".
+proc op_annot::_root {root} {
+  if {[string trim $root] eq {}} { return {.} }
+  return $root
+}
+
+## THE ONE PREFIX SEAM. Every name this file builds — template arm and devproc
+## arm alike — takes its hierarchy prefix from here. Both answers include the
+## trailing `.`, which is what makes `@m.` + prefix + spiceprefix + name + `.` +
+## inner-device concatenate.
+##
+## Never cached and never memoised — caching would pass every golden and produce
+## the wrong path the moment the walk descends (landmine 4).
+##
+## ⚠ NO RAISE. Validation lives in _check_basis; this proc must stay usable from
+## the draw path, so a mismatched root here degrades to a blank prefix.
+proc op_annot::_pathfor {basis root} {
+  if {$basis ne {deck}} { return [::op_annot::_simpath] }
+  if {[catch {xschem get sch_path} p]} { return {} }
+  set r [::op_annot::_root $root]
+  if {[string first $r $p] != 0} { return {} }
+  return [string range $p [string length $r] end]
+}
+
+## Substitute the prefix into a devpath TEMPLATE, before `xschem translate` runs.
+##
+## ⚠ BOTH SPELLINGS ARE MAPPED, AND `@path` IS THE WHOLE POINT. `$path` is spec
+## §4.2's spelling; `@path` is translate-native — and translate resolves it with
+## a byte-for-byte copy of sim_sch_path's stripping loop (token.c:4719), i.e.
+## RAW-RELATIVELY. Leaving `@path` to translate would leave gf180's and IHP's
+## descriptors (both `@path` templates) raw-relative in the `deck` basis while
+## every sky130 row — sky130 registers a devproc — still passed. Two arms, two
+## bugs, one of them in the C.
+##
+## For basis `read` the two routes are measurably identical (token.c:4719 and
+## scheduler.c:5186 are the same loop over the same data), so mapping it here
+## costs nothing and keeps ONE code path.
+##
+## ⚠ `string map`, NEVER `subst`: a template is user data and `subst` would
+## execute any `[...]` inside it. Documented consequence, unchanged: a literal
+## `$pathological` / `@pathological` is also rewritten.
+proc op_annot::_subst_path {tmpl dp} {
+  return [string map [list {$path} $dp {@path} $dp] $tmpl]
+}
+
+## Call a descriptor's `devproc`, handing it the SAME prefix the template arm
+## substitutes. The devproc contract is unchanged:
+##     <proc> <instname> <model> <path> <spiceprefix>
+## ⚠ `uplevel #0` so a PDK proc that reaches for a global finds one.
+proc op_annot::_devproc_call {p instname model dp pfx} {
+  return [uplevel #0 [list $p $instname $model $dp $pfx]]
+}
+
+## op_annot::devpath <instname> ?basis? ?root? -> the lowercased raw-file device
+## path, without the `[param]` suffix; {} for every data condition.
+##
+##   op_annot::devpath M1            ->  @m.x1.xm1.msky130_fd_pr__nfet_01v8
+##   op_annot::devpath M1 deck .     ->  the same string with the hierarchy
+##                                       rooted at `.`, and no loaded raw able
+##                                       to move a single character of it
+##
+## `basis` is `read` (the default, the raw-relative DISPLAY name) or `deck` (the
+## entry-relative SAVE-CARD name); `root` is the walk-entry `sch_path` and is
+## legal only with `deck`. See the two-bases block above.
+##
+## ⚠ THE DEFAULT MUST STAY `read`. Every S5/S6/S9 consumer calls this from a
+## draw path with one argument; if the default became `deck` the on-screen
+## display would silently change basis.
 ##
 ## I4: this reads context, it never moves in it. No descend, no set_modify, no
 ## write to the .sch.
-proc op_annot::devpath {instname} {
+proc op_annot::devpath {instname {basis read} {root {}}} {
+  ## Loud FIRST: a caller that asked for the wrong shape must hear about it even
+  ## when the instance would have answered blank anyway.
+  set basis [::op_annot::_check_basis $basis $root]
   set t [::op_annot::type $instname]
   if {$t eq {}} { return {} }
   set d [::op_annot::descriptor $t]
@@ -418,6 +586,9 @@ proc op_annot::devpath {instname} {
   ## Issue 0425: the type key is shared by every PDK and by the generic
   ## devices/*.sym. A descriptor only builds a name for a cell it claims.
   if {![::op_annot::_matches $instname $d]} { return {} }
+
+  ## THE ONE PREFIX, for whichever arm follows.
+  set dp [::op_annot::_pathfor $basis $root]
 
   ## devproc wins over devpath when a descriptor carries both: a PDK that needed
   ## the escape hatch needs it for every device of that type.
@@ -432,8 +603,9 @@ proc op_annot::devpath {instname} {
     ## line; ported verbatim the device path silently loses its `x`.
     if {[catch {xschem translate $instname @model} model]} { return {} }
     if {[catch {xschem translate $instname @spiceprefix} pfx]} { set pfx {} }
-    if {[catch {uplevel #0 [list $p $instname $model \
-                                 [::op_annot::_simpath] $pfx]} r]} { return {} }
+    if {[catch {::op_annot::_devproc_call $p $instname $model $dp $pfx} r]} {
+      return {}
+    }
     if {$r eq {}} { return {} }
     return [::op_annot::_lower $r]
   }
@@ -441,11 +613,7 @@ proc op_annot::devpath {instname} {
   if {![dict exists $d devpath]} { return {} }
   set tmpl [dict get $d devpath]
   if {$tmpl eq {}} { return {} }
-  ## `$path` is spec §4.2's spelling and is substituted here; `@path` is
-  ## translate-native and costs nothing, so it is the canonical one. NEVER subst.
-  if {[string first {$path} $tmpl] >= 0} {
-    set tmpl [string map [list {$path} [::op_annot::_simpath]] $tmpl]
-  }
+  set tmpl [::op_annot::_subst_path $tmpl $dp]
   if {[catch {xschem translate $instname $tmpl} r]} { return {} }
   if {$r eq {}} { return {} }
   return [::op_annot::_lower $r]
@@ -844,4 +1012,1271 @@ proc op_annot::place_annotator {} {
   } else {
     xschem place_symbol devices/annotate_params
   }
+}
+
+# ============================================================================
+# S3 — THE HIERARCHY WALK AND THE SAVE-CARD GENERATOR
+# ============================================================================
+#   op_annot::save_cards {}       -> the `.save` block for the whole hierarchy
+#                                    below the CURRENT cell, as text; {} when
+#                                    no device produced a card
+#   op_annot::write_save_file {}  -> writes it to $netlist_dir/<cell>.save and
+#                                    returns the path; {} when nothing to save
+#   op_annot::last_warnings {}    -> what the walk could not do, as a list
+#   op_annot::last_counts {}      -> {dropped_by_rule N not_found N name_failed N}
+#
+# PORTED FROM ihp-sg13g2/sg13g2_procs.tcl, the single-PDK prototype, whose twin
+# sky130A/sky130_procs.tcl:72-146 is byte-for-byte the same design:
+#   * sg13g2_sch_expand (:345-363) contributes the ENTRY SHAPE — accumulator
+#     reset, keep_symbols save/set, unselect_all, no_draw 1, no_undo 1, recurse,
+#     restore — and op_annot::save_cards keeps that ordering.
+#   * sg13g2_hier_sch_expand (:366-421) contributes the RECURSION — instance
+#     loop, emit-before-descend, vector-member count through `xschem
+#     expandlabel`, select + descend, change_sch_path for members 2..N, go_back
+#     at the last member.
+#   * sg13g2_save_params (:425-432) contributes the BLOCK ASSEMBLER, minus its
+#     two-pass `{npn}` / `{[pn]mos}` call: one descriptor-driven pass replaces it.
+#   * the menu item (:602-606) contributes write_save_file, `file mkdir
+#     $netlist_dir` included — which sky130A/sky130_procs.tcl:235 lacks.
+#
+# DELIBERATELY NOT PORTED, each for a MEASURED reason:
+#   * `sg13g2_write_save_lines` (:304-341) itself. Its FET arm is 10 hardcoded
+#     `.save` lines and its HBT arm 13, both already lifted into S2's `params`
+#     lists; with them die the `[pn]mos`/`vertical_npn` regexp dispatch, the
+#     `@n.`/`@q.` element letters and the `_5t` strip (which is the entire
+#     justification for the descriptor's `devproc` key).
+#   * `startpath` (:350, `[string length [xschem get sch_path]]`, consumed at
+#     :369). That is a SECOND name builder, which invariant I1 forbids. The basis
+#     lives on op_annot::devpath instead — see the two-bases block above.
+#   * `xschem getprop symbol <cell> type` (:377). MEASURED: it RAISES for
+#     generator cells — 6 of the 14 instances of
+#     xschem_library/generators/test_generators.sch — while `getprop instance
+#     <n> cell::type` raises 0 times. op_annot::type is the index form (0431).
+#   * `xschem getprop instance $i spiceprefix` (:375). getprop reads
+#     inst->prop_ptr only and is EMPTY when the token lives in the symbol
+#     `template=`, which is why both prototypes lose the leading `x` on 3 of 45
+#     shipped sky130 cells (issue 0430). `xschem translate … @spiceprefix` is
+#     the form that answers.
+#   * `if {$res} … else {xschem go_back 2}` (:400-408). `xschem descend` returns
+#     0 in TWO classes and the unconditional go_back pops a level it never
+#     pushed for the class-1 refusal, corrupting sch_path for the rest of the
+#     walk (issue 0433). op_annot::_descended is the replacement.
+#   * the straight-line restore (:358-362). It is on the NORMAL path with no
+#     catch, so a raise below entry — `sky130_save_fet_params` on
+#     `sky130_tests/test_generators` is the measured case — returns with
+#     no_draw=1 and keep_symbols=1 still set (issue 0431). op_annot::_restore
+#     runs unconditionally, on the shape of core `proc traversal`
+#     (src/xschem.tcl:3590-3612, issue 0600) plus the log-suppress pop and the
+#     autosave park.
+#   * the `nolist_libs` regexp skip (:381-387) and the `regexp $pattern $symbol`
+#     device filter (:388-390). Neither is the netlister's rule. The descriptor
+#     `match` globs answer "is this annotatable" and the DECK answers "is this
+#     in the netlist" — see the oracle block below.
+#   * NEITHER PROTOTYPE EMITS `.save all` (sky130_procs.tcl:80-87 -> :177,
+#     sg13g2_procs.tcl:310-339 -> :425-432). That is a live I2/R2 breach in the
+#     tree (plan landmine 7): an explicit save cancels the implicit
+#     save-everything and every node voltage disappears from the raw.
+#     op_annot::_block carries the leader; the prototypes are left alone
+#     because S2 still uses them as its card-NAME oracle.
+#
+# ============================================================================
+# ⚠ THE FILTER IS NOT MIRRORED, IT IS ASKED. (issue 0442)
+# ============================================================================
+# A save card naming a device that is not in the deck damages the simulation it
+# was generated for. Measured on /usr/local/bin/ngspice 46+ under the
+# `.control … write … .endc` idiom every shipped PDK bench uses:
+#
+#   good cards + ONE bogus card  -> rc 0, RAW WRITTEN, a column under exactly the
+#                                   requested name marked `dims=0`, stderr EMPTY
+#   EVERY device card bogus      -> rc 0, NO RAW AT ALL, and then it warns
+#
+# So "which instances are in the deck?" must be answered exactly. The SPICE
+# netlister drops instances in SEVEN classes, in two different files:
+#
+#   spice_netlist.c:188/:209  skip_instance(i,1,lvs_ignore)  spice_ignore=true
+#   spice_netlist.c:188/:209  skip_instance(i,1,lvs_ignore)  spice_ignore=short
+#   spice_netlist.c:216       only_toplevel, gated on netlist_count
+#   spice_netlist.c:663       an empty or absent symbol `format`
+#   spice_netlist.c:668       default_schematic=ignore
+#   spice_netlist.c:689       spice_sym_def
+#   spice_netlist.c:659/:695  spice_stop=true
+#
+# Attempt 2 hand-mirrored these and implemented THREE — the first three, all in
+# skip_instance (netlist.c:1277); the four SYMBOL-level ones it missed are
+# reachable on ordinary PDK symbols. A hand-maintained mirror of another
+# module's rules is wrong by construction and had already drifted twice.
+#
+# SO THE NETLISTER IS THE ORACLE: run the netlist the design would actually
+# simulate, read back which instances appear, emit cards only for those.
+# lvs_ignore comes free, because the oracle runs under the user's own setting
+# rather than a copy of it.
+#
+# ============================================================================
+# ⚠ THE INDEX IS KEYED ON THE `.subckt` NAME, NOT ON `** sch_path:` (issue 0496)
+# ============================================================================
+# Attempt 4 keyed the deck index on each block's `** sch_path:` comment and
+# resolved an instance's block with `xschem get_sch_from_sym`. MEASURED on
+# sky130_tests_ase/tb_bandgap_opamp, the only shipped design with
+# parameter-specialised subcircuits: the netlister synthesises `passgate_1` and
+# `gain_stage2` (get_additional_symbols, actions.c:3729) and writes them as
+# SEPARATE blocks that carry the SAME `** sch_path:` as `passgate` and
+# `gain_stage`. The key merged each pair, 12 of the deck's 39 FETs got no card,
+# and the tool reported success.
+#
+# So the key is the block NAME and the instance -> block edge is read off the
+# instance's OWN element line in the deck: after joining `+` continuations, the
+# callee is the last token BEFORE the first token containing `=`
+# (`XM1 d g s b sky130_fd_pr__nfet_01v8 L=0.15 W=1` -> `sky130_fd_pr__nfet_01v8`;
+# `x6 a b c passgate_1` -> `passgate_1`). Only the netlister's own call graph
+# knows which block an instance calls (invariant I2b).
+#
+# ⚠ AND THE NAME KEY IS PAID FOR BY A GUARD. The netlister dedups blocks on
+# get_cell() (spice_netlist.c:98-104), so two same-basename cells from different
+# libraries share one block name. After every descend the callee block's
+# recorded `** sch_path:` is compared with `xschem get schname`; a mismatch
+# SUPPRESSES the subtree and warns, because over-emission is the raw-destroying
+# direction (save.c RULING D5-1: a plausible wrong answer is worse than none).
+#
+# ⚠ AND IT NEEDS ONE MORE THING, MEASURED: re-keying is NECESSARY AND NOT
+# SUFFICIENT. `schematic=passgate_1` makes `xschem descend` a CLASS-2 refusal
+# (currsch already incremented, descend_error=load-failed) because the
+# synthesised name resolves to a path that does not exist, and the
+# "Descend into base schematic?" fallback (actions.c:4176) is gated by
+# `has_x && fallback` while the descend VERB passes fallback=0. The deck already
+# names the file exactly — the callee block's `** sch_path:` — so the walk hands
+# it to the one-shot `hi_descend_view_path` override (actions.c:4139) that
+# resolves THIS descend into THAT view without rewriting the instance.
+#
+# ============================================================================
+# ⚠ TWO QUESTIONS, NOT ONE: `_netlisted` AND `_descendable` ARE NOT ALIASES
+# ============================================================================
+# Three of the seven classes drop the SUBTREE while the instance CALL survives
+# in the deck. Measured on the S3 fixture, one deck, all seven visible:
+#
+#   class                       instance line   its .subckt block     descend?
+#   spice_ignore=true           absent          -                     no
+#   spice_ignore=short          absent          -                     no
+#   only_toplevel=true (below)  absent          -                     no
+#   empty/absent `format`       ABSENT          none at all           no
+#   default_schematic=ignore    present         NO BLOCK AT ALL       no
+#   spice_sym_def               present         a block, but NO
+#                                               `** sch_path:`        no
+#   spice_stop=true             present         `.subckt`/`.ends`,
+#                                               EMPTY                 no
+#
+# "May I emit a card for this instance?" and "may I walk into it?" therefore
+# have different answers on the same instance. Attempt 2 aliased them, and its
+# own sabotage variant for that reddened nothing — on a FLAT fixture that could
+# not reach the divergence. Per spec landmine 11 a predicted red that does not
+# appear is a fixture defect, and that tell was ignored.
+#
+# ============================================================================
+# ⚠ THE ORACLE'S NETLIST HAS SIDE EFFECTS, AND ONE OF THEM DELETES USER WORK
+# ============================================================================
+# `xschem netlist` calls leave_placement_for("Netlist") and
+# leave_merge_for("Netlist") (scheduler.c:8848-8849) whose teardown IS a
+# delete() (issue 0263), and neither is suppressible from Tcl. A read-only
+# annotation menu item that ran a netlist would destroy the symbol the user is
+# carrying on the cursor, or the paste they have not dropped. _assert_idle
+# refuses instead.
+#
+# It also destroys the SELECTION (measured 1 -> 0), which is why the oracle runs
+# ONCE at entry and never inside the walk: the walk drives descend by selection.
+# And it sets xctx->netlist_name from the filename (scheduler.c:8796) and clears
+# it at :8869, so a user's custom netlist name dies in any oracle run unless it
+# is snapshotted — which is why _netlist_env covers what the run CHANGES rather
+# than what we deliberately force.
+#
+# ============================================================================
+# ⚠ I4, go_back AND THE AUTOSAVE BACKUP (issues 0495, 0626)
+# ============================================================================
+# `go_back` (actions.c:4766) calls `load_backup_as` (save.c:4191) whenever a
+# `<cell>~.sch` sits beside the cell, and that function ends in `set_modify(1)`
+# (save.c:4207). MEASURED on the SHIPPED sky130_tests_ase/bandgap_opamp, which
+# ships with exactly such a `~`:
+#
+#     descend x1 ; go_back  ->  modified 0 -> 1     (autosave_backup 1)
+#     descend x1 ; go_back  ->  modified 0 -> 0     (autosave_backup 0)
+#
+# and with a `~` whose CONTENT differs, a clean 73-instance buffer comes back as
+# a 72-instance one. A read-only walk may not do that, so a CLEAN entry buffer is
+# walked with `::autosave_backup` parked at 0 and the park is given back
+# unconditionally in _restore (the same idiom wave_viewer.tcl:1467-1473 uses).
+#
+# ⚠ AND PARKING IS ONLY SAFE WHILE THE BUFFER IS CLEAN. Measured, same bench:
+# with autosave_backup 0 and a genuinely MODIFIED parent, descend + go_back
+# silently REVERTS the unsaved edit and still reports modified=1. That is issue
+# 0626 — not op_annot's invention (`proc traversal`, both PDK prototypes and
+# hierarchy_close all reach it) but this step's menu item is a new one-click way
+# in, so save_cards REFUSES that combination rather than walking it.
+#
+# ============================================================================
+# ⚠ I6, AND WHY EVERY EXIT PATH MEANS EVERY EXIT PATH
+# ============================================================================
+# The walk sets no_draw 1, no_undo 1, keep_symbols 1 and descends the REAL
+# design. no_undo has no getter (issue 0432), so 0 is the only restorable value
+# and a caller that wrapped this in its own `no_undo 1` is silently disarmed.
+# The unwind is bounded by the ENTRY currsch and not by 0: `while {[xschem get
+# currsch]} {xschem go_back}` (src/xschem.tcl's own idiom) would ascend past a
+# caller who was already descended, and S4's render_deck is exactly such a
+# caller.
+
+## op_annot::last_warnings -> what the last save_cards could not do, as a list
+## of one-line strings. Empty after a clean walk.
+##
+## ⚠ IT EXISTS BECAUSE SILENT UNDER-EMISSION IS THE FAILURE THAT SURVIVED 85 AND
+## THEN 96 AND THEN 275 GREEN CHECKS. An alert per cell would be intolerable on
+## a real sheet — mips_cpu/controller alone would fire twice — so the walk counts
+## instead, and write_save_file puts the counts where the user is already looking.
+proc op_annot::last_warnings {} {
+  variable warnings
+  return $warnings
+}
+
+## op_annot::last_counts -> what the last walk did NOT emit, as three named
+## integers (issue 0497).
+##
+##   dropped_by_rule  a NETLISTER rule dropped it: spice_ignore, only_toplevel,
+##                    lvs_ignore, an empty `format`, default_schematic=ignore,
+##                    spice_sym_def, spice_stop. EXPECTED, and the only one of
+##                    the three that may ever be called "normal for such cells".
+##   not_found        the deck DOES contain the instance and the walk could not
+##                    reach its block. THE 0496 CLASS. Never normal.
+##   name_failed      devpath/devproc could not build a name: a raising devproc,
+##                    a blank template, or the 0488 prefix guard.
+##
+## ⚠ THE SPLIT IS THE WHOLE POINT. Attempt 4 shipped ONE aggregate whose sentence
+## ended `- normal for such cells`; on tb_bandgap_opamp it fired twice, the tool
+## reported success, and 12 of 39 FETs had no card. A defect wearing the word
+## "normal" is worse than no report at all.
+proc op_annot::last_counts {} {
+  variable _c_rule
+  variable _c_notfound
+  variable _c_name
+  return [list dropped_by_rule $_c_rule not_found $_c_notfound \
+               name_failed $_c_name]
+}
+
+## ============================================================================
+## THE ORACLE SEAMS. EACH ONE IS A PROC BECAUSE EACH ONE CAN BE WRONG ON ITS OWN.
+## ============================================================================
+
+## Where the throwaway deck is written. A NAME, so a test can prove no temp file
+## survives and can force the "no deck was written" path without a broken PDK.
+##
+## op_annot's OWN directory, never `$netlist_dir`: the user's netlist directory
+## holds the deck they are about to simulate and a read-only menu item may not
+## put a file next to it — nor may it inherit `local_netlist_dir`, which sends
+## every write into `<design dir>/simulation/` (src/xschem.tcl:9008, measured).
+proc op_annot::_oracle_dir {} {
+  if {[info exists ::USER_CONF_DIR] && [string trim $::USER_CONF_DIR] ne {}} {
+    return [file join $::USER_CONF_DIR op_annot]
+  }
+  if {[info exists ::env(HOME)] && [string trim $::env(HOME)] ne {}} {
+    return [file join $::env(HOME) .xschem op_annot]
+  }
+  return [file join [pwd] .op_annot]
+}
+
+## Snapshot of every netlist global the oracle forces OR PERTURBS, INCLUDING
+## whether it existed at all. Six entries of {name existed value}: four Tcl
+## globals, then two pieces of C-side state read and written through
+## `xschem get/set`.
+##
+## ⚠ `netlist_name` IS IN THIS LIST ALTHOUGH THE ORACLE NEVER FORCES IT, AND
+## THAT IS THE POINT. `xschem netlist <file>` SETS xctx->netlist_name from the
+## filename it was handed (scheduler.c:8796) and then, with erc==0 — which the
+## oracle's netlist always is — CLEARS it (scheduler.c:8869). MEASURED: a user
+## who typed a custom netlist name lost it to a read-only annotation click. A
+## snapshot list covering only what we deliberately force is the wrong list —
+## what matters is what the run CHANGES. I4's read-only discipline covers editor
+## state and not only the .sch.
+proc op_annot::_netlist_env {} {
+  set snap {}
+  foreach v {netlist_dir local_netlist_dir flat_netlist split_files} {
+    if {[info exists ::$v]} {
+      lappend snap [list $v 1 [set ::$v]]
+    } else {
+      lappend snap [list $v 0 {}]
+    }
+  }
+  foreach v {netlist_type netlist_name} {
+    if {[catch {xschem get $v} cv]} {
+      lappend snap [list $v 0 {}]
+    } else {
+      lappend snap [list $v 1 $cv]
+    }
+  }
+  return $snap
+}
+
+## Force the deck SHAPE the parser can read, and only that.
+##
+##   netlist_type spice   skip_instance() branches on xctx->netlist_type
+##                        (netlist.c:1277) and a verilog/spectre deck has no
+##                        `.subckt` blocks at all.
+##   flat_netlist 0       flatten.awk (src/xschem.tcl:2274) rewrites the deck
+##                        with NO `.subckt` and every device renamed and
+##                        UPPERCASED, so a block index of it is meaningless.
+##   split_files 0        sub-blocks would go to separate per-cell files.
+##   local_netlist_dir 0  otherwise set_netlist_dir(1,dir) throws the requested
+##                        directory away and writes into the DESIGN tree.
+##
+## ⚠ `lvs_ignore` IS DELIBERATELY NOT HERE. It is different in kind: it changes
+## which devices the user's OWN run will contain, so forcing it would emit cards
+## for devices their deck drops. Read it, never write it — and the oracle reads
+## it for free by simply running the netlist under the user's own setting.
+proc op_annot::_force_netlist_env {dir} {
+  set ::netlist_dir $dir
+  set ::local_netlist_dir 0
+  set ::flat_netlist 0
+  set ::split_files 0
+  catch {xschem set netlist_type spice}
+  return {}
+}
+
+## THE ONE RESTORER of the forced netlist environment, on every path out of the
+## oracle — including the one where the netlist could not be written at all.
+proc op_annot::_restore_netlist_env {snap} {
+  foreach row $snap {
+    set v   [lindex $row 0]
+    set had [lindex $row 1]
+    set val [lindex $row 2]
+    ## The C-side pair. `xschem set netlist_name {}` is a real restore, not a
+    ## no-op: an EMPTY name is the tree's own "use the default" state and a
+    ## restore that skipped it would fabricate a name the user never typed.
+    if {$v eq {netlist_type} || $v eq {netlist_name}} {
+      if {$had} { catch {xschem set $v $val} }
+      continue
+    }
+    if {$had} {
+      catch {set ::$v $val}
+    } else {
+      catch {unset ::$v}
+    }
+  }
+  return {}
+}
+
+## Can this directory hold the throwaway deck at all?  A NAMED SEAM, and it is
+## checked BEFORE `xschem netlist` is ever issued.
+##
+## ⚠ THE REASON IS A MODAL DIALOG NO FLAG REACHES. `xschem netlist <path>` with
+## a slash in it goes through set_netlist_dir(1, <dirname>), and a failing
+## `file mkdir` THERE pops a raw `tk_messageBox` (src/xschem.tcl:9039, and :9001
+## for the what==0 arm) that `-noalert` does not touch and that names a
+## directory the USER NEVER CHOSE.
+##
+## `file writable` on the DIRECTORY, not a probe write: a probe would leave a
+## file behind on the path where the whole point is that nothing is left behind.
+proc op_annot::_oracle_dir_ready {dir} {
+  catch {file mkdir $dir}
+  if {![file isdirectory $dir]} { return 0 }
+  if {![file writable $dir]}    { return 0 }
+  return 1
+}
+
+## THE ONE PLACE the oracle's netlist is issued. A proc of its own so the "the
+## netlist ran and wrote nothing" branch below stays reachable from a test.
+##
+## `-keep_symbols` for the same reason xschem.tcl's own machinery passes it:
+## this netlist is a READ, not the user's netlist verb. It also keeps the branch
+## from self-logging (scheduler.c:8887), a seam this module DEPENDS ON and does
+## NOT OWN — its guardians are tests/headless/test_netlist_log.tcl:150-157.
+##
+## `-noalert` because this netlist is INVISIBLE to the user.
+##
+## ⚠ NEVER RAISES, AND ITS RETURN VALUE IS NOT A FAILURE SIGNAL. Measured, the
+## verb answers 1 for an unconnected net and for a `spice_sym_def` with no
+## matching `.subckt`, both of which still write a complete deck. The ONLY
+## failure test is whether a deck file exists, which is the caller's.
+proc op_annot::_oracle_run {out} {
+  if {[catch {xschem netlist -keep_symbols -noalert $out} nres]} {
+    set nres "raised: $nres"
+  }
+  return $nres
+}
+
+## Run the netlist the design would actually simulate FROM WHERE WE STAND, and
+## return the deck as text. RAISES when no deck was written.
+##
+## ⚠ IT NEVER RETURNS {} ON FAILURE. An empty answer would build an empty index,
+## find no instance in it, emit zero cards and report success — indistinguishable
+## from "no PDK descriptor claims anything here".
+proc op_annot::_oracle_deck {} {
+  set dir [::op_annot::_oracle_dir]
+  set out [file join $dir "op_annot_oracle_[pid].spice"]
+  set snap [::op_annot::_netlist_env]
+  set body {}
+  set rc [catch {
+    ## ⚠ PRE-CHECKED, NOT ATTEMPTED. An unwritable/unmakeable oracle directory
+    ## must reach the user as THIS proc's named diagnostic, not as
+    ## `can't create directory …: not a directory` from a Tcl primitive three
+    ## frames down and NOT as set_netlist_dir's modal tk_messageBox naming a
+    ## directory the user never chose (see _oracle_dir_ready).
+    if {![::op_annot::_oracle_dir_ready $dir]} {
+      error "op_annot: the netlist ORACLE has nowhere to write. \"$dir\" is not\
+ a writable directory. The save block is not generated rather than generated\
+ empty: a card for a device the deck does not contain makes ngspice write no\
+ raw file at all."
+    }
+    catch {file delete -force $out}
+    ::op_annot::_force_netlist_env $dir
+    ## THE NETLIST, through its own named seam (see _oracle_run above).
+    set nres [::op_annot::_oracle_run $out]
+    if {![file isfile $out]} {
+      error "op_annot: the netlist ORACLE wrote no deck to \"$out\"\
+ (xschem netlist answered \"$nres\"). The save block is not generated rather\
+ than generated empty: a card for a device the deck does not contain makes\
+ ngspice write no raw file at all."
+    }
+    set fh [open $out r]
+    set body [read $fh]
+    close $fh
+  } res opts]
+  catch {file delete -force $out}
+  ::op_annot::_restore_netlist_env $snap
+  if {$rc} { return -options $opts $res }
+  return $body
+}
+
+## THE ONE PATH NORMALIZER, used on BOTH sides of every comparison.
+##
+## `regsub {\(.*}` then `abs_sym_path` is the Tcl twin of the C's
+## sanitized_abs_sym_path (actions.c:473) — a generator cell is spelled
+## `foo(a,b)` and its path is `foo`. `file normalize` on top of it is not
+## belt-and-braces: measured, a symbol placed as `../lib/psub.sym` resolves to
+## `…/lib/../lib/psub.sch` while the deck's `** sch_path:` says `…/lib/psub.sch`,
+## and abs_sym_path alone does NOT collapse the `..`.
+##
+## ⚠ MEMOISED, AND THE MEMO IS CLEARED AT save_cards ENTRY (issue 0493). The
+## memo may NOT outlive one walk: XSCHEM_LIBRARY_PATH is user state and
+## abs_sym_path resolves against it, so a memo that survived would serve a stale
+## absolute path after a library-path change. Row W33 is the guardian.
+proc op_annot::_normkey {p} {
+  variable _nkmemo
+  if {[string trim $p] eq {}} { return {} }
+  if {[info exists _nkmemo($p)]} { return $_nkmemo($p) }
+  regsub {\(.*} [string trim $p] {} q
+  if {[catch {abs_sym_path $q {}} r]} { set r $q }
+  if {[string trim $r] eq {}} { set r $q }
+  if {[catch {file normalize $r} n]} { set n $r }
+  set _nkmemo($p) $n
+  return $n
+}
+
+## The parser's ONE hand-written rule, kept in its own proc so it can be named
+## in a sabotage variant: is the parser inside the deck's user-architecture
+## region after this line?
+##
+## ⚠ ITS FALSE-POSITIVE DIRECTION IS THE DANGEROUS ONE, AND IT IS MEASURED. A
+## `code_shown` / `netlist_commands` symbol puts the user's own literal text
+## INSIDE the enclosing block, between `**** begin user architecture code` and
+## `**** end user architecture code`. A symbol whose value is the line
+## `MGHOST net1 net2 net3 net4 nch` would otherwise be read as proof that an
+## instance named MGHOST — carrying `spice_ignore=true` and nowhere in the deck
+## — is present, and the walk would emit cards for it.
+##
+## ⚠ THE PATTERNS ARE ANCHORED AND THE `*`s ARE ESCAPED. Written as
+## `string match {****begin*}` every `*` is a WILDCARD, so the pattern means
+## "any line containing begin" and the `end` twin then swallows `.ends`, leaving
+## the previous block open.
+proc op_annot::_deck_user_region {line inside} {
+  if {[string match {\*\*\*\* begin user architecture*} $line]} { return 1 }
+  if {[string match {\*\*\*\* end user architecture*} $line]}   { return 0 }
+  return $inside
+}
+
+## The callee of one deck ELEMENT LINE: the last token BEFORE the first token
+## containing `=`, after `+` continuations have been joined by the caller.
+##
+##   x6 a b c passgate_1                       -> passgate_1
+##   XM1 d g s b sky130_fd_pr__nfet_01v8 L=1 W=2  -> sky130_fd_pr__nfet_01v8
+##   MT0 net1 net2 net3 net4 nch               -> nch
+##
+## ⚠ IT IS NOT "THE LAST TOKEN". Every PDK element line ends in a parameter
+## assignment, which is why attempt 4's oracle could not read a real deck's call
+## graph at all and had to ask `get_sch_from_sym` instead — the question that
+## issue 0496 answered wrong.
+proc op_annot::_line_callee {toks} {
+  set callee {}
+  for {set i 1} {$i < [llength $toks]} {incr i} {
+    if {[string first {=} [lindex $toks $i]] >= 0} { break }
+    set callee [lindex $toks $i]
+  }
+  return [string tolower $callee]
+}
+
+## The deck, as a dict with four keys:
+##   top      the deck's FIRST `.subckt` name — the netlister always writes the
+##            block for the cell you netlisted first (spice_netlist.c:369-372),
+##            `**`-prefixed when top_is_subckt is 0
+##   elems    block -> list of lowercased element names, in deck order
+##   callee   block -> (element -> the block that element calls)
+##   schpath  block -> its `** sch_path:` comment, {} when it has none
+##
+## A block that exists and is EMPTY is a key with an empty list — that is how
+## `spice_stop` shows up. A block with elements and NO `** sch_path:` is how
+## `spice_sym_def` shows up (the body is attribute TEXT, not an expanded cell).
+## Both are "the deck holds the call and not the body".
+##
+## Line classes, all measured on real decks: `* expanding   symbol:` resets the
+## pending sch_path, `**`-prefixed top-block delimiters are the same
+## `.subckt`/`.ends` after the marker is stripped, `*` comments and `.` dot-cards
+## are not elements, and `+` continuations are JOINED onto the previous line
+## before anything else (break.awk splits element lines over 130 chars, and an
+## unjoined continuation would hide the `=` that stops _line_callee).
+proc op_annot::_deck_index {text} {
+  set elems   {}
+  set callee  {}
+  set schpath {}
+  set top     {}
+  set cur     {}
+  set pending {}
+  set inuser  0
+  ## Join `+` continuations first — the callee rule reads a whole element line.
+  set lines {}
+  foreach raw [split $text "\n"] {
+    set t [string trim $raw]
+    if {$t eq {}} { continue }
+    if {[string index $t 0] eq {+} && [llength $lines]} {
+      lset lines end "[lindex $lines end] [string trim [string range $t 1 end]]"
+      continue
+    }
+    lappend lines $t
+  }
+  foreach t $lines {
+    set inuser [::op_annot::_deck_user_region $t $inuser]
+    ## ⚠ THE REGION TEST RUNS BEFORE THE `.subckt`/`.ends` TESTS, NOT AFTER
+    ## THEM. A `code_shown` / `netlist_commands` symbol may put a COMPLETE
+    ## `.subckt`/`.ends` pair inside the user-architecture region — a helper
+    ## subcircuit is ordinary practice — and with this line below the delimiter
+    ## tests that inner `.ends` ran `set cur {}` and EVERY ELEMENT AFTER IT IN
+    ## THE ENCLOSING BLOCK was silently dropped.
+    ##
+    ## REJECTED: a `.subckt` nesting-depth counter. A `.subckt` inside a user
+    ## region is not nesting, it is opaque user text the netlister never
+    ## expands, so a depth model would be modelling a structure that does not
+    ## exist.
+    if {$inuser} { continue }
+    if {[regexp {^\*\* sch_path:[ \t]*(.*)$} $t -> p]} {
+      set pending [string trim $p]
+      continue
+    }
+    if {[string match {\* expanding*} $t]} { set pending {} ; set cur {} ; continue }
+    ## the deck top is `**.subckt` / `**.ends`; everything below it is bare.
+    set d $t
+    if {[string range $d 0 1] eq {**}} { set d [string trim [string range $d 2 end]] }
+    if {[regexp -nocase {^\.subckt[ \t]+([^ \t]+)} $d -> nm]} {
+      set cur [string tolower $nm]
+      if {$top eq {}} { set top $cur }
+      if {![dict exists $elems $cur]} { dict set elems $cur {} }
+      if {![dict exists $callee $cur]} { dict set callee $cur {} }
+      dict set schpath $cur $pending
+      set pending {}
+      continue
+    }
+    if {[regexp -nocase {^\.ends} $d]} { set cur {} ; set pending {} ; continue }
+    if {$cur eq {}} { continue }
+    set c [string index $t 0]
+    if {$c eq {*} || $c eq {.}} { continue }
+    ## ⚠ split/foreach, NOT `lindex`: a deck line is not a Tcl list and an
+    ## unbalanced brace or quote in a parameter would make lindex raise mid-parse.
+    set toks {}
+    foreach w [split $t] { if {$w ne {}} { lappend toks $w } }
+    if {![llength $toks]} { continue }
+    set nm [string tolower [lindex $toks 0]]
+    dict lappend elems $cur $nm
+    set m [dict get $callee $cur]
+    dict set m $nm [::op_annot::_line_callee $toks]
+    dict set callee $cur $m
+  }
+  return [dict create top $top elems $elems callee $callee schpath $schpath]
+}
+
+## The deck block the walk is standing in when it has not been told — the deck's
+## own top. Every recursive call threads the callee block down instead, which is
+## what makes the index name-keyed rather than path-keyed (issue 0496).
+proc op_annot::_block_or_top {idx block} {
+  if {[string trim $block] ne {}} { return $block }
+  if {[catch {dict get $idx top} t]} { return {} }
+  return $t
+}
+
+## The instance's identity IN THE DECK: `@spiceprefix@name`, lowercased.
+##
+## ⚠ `xschem translate`, NEVER `getprop instance <n> spiceprefix`. getprop reads
+## inst->prop_ptr only, so it is EMPTY whenever the token lives in the symbol
+## `template=` — issue 0430, and the reason both PDK prototypes lose the leading
+## `x` on 3 of 45 shipped sky130 cells.
+##
+## These are the same two tokens every descriptor's devpath already
+## concatenates, which is what makes the membership test and the CARD agree by
+## construction.
+proc op_annot::_element {instname} {
+  if {[catch {xschem translate $instname {@spiceprefix@name}} e]} { return {} }
+  return [string tolower [string trim $e]]
+}
+
+## Every element name ONE instance can appear under in the deck.
+##
+## ⚠ A VECTOR INSTANCE IS THE ORACLE'S FIRST TRAP. The netlister writes one
+## element line PER MEMBER (`x2[1]`, `x2[0]`) while the instance's own name is
+## the bracketed RANGE `x2[1:0]`, which appears in the deck nowhere. A bare
+## comparison answers 0 for every vector instance and the walk then refuses to
+## descend into it — a plausible-looking short block with nothing to say so.
+proc op_annot::_elements {instname} {
+  set e [::op_annot::_element $instname]
+  if {$e eq {}} { return {} }
+  if {[string first {[} $e] < 0} { return [list $e] }
+  if {[catch {xschem expandlabel $e} x]} { return [list $e] }
+  set names [lindex [split $x { }] 0]
+  set out {}
+  foreach n [split $names {,}] {
+    if {[string trim $n] ne {}} { lappend out [string tolower [string trim $n]] }
+  }
+  if {[llength $out] == 0} { return [list $e] }
+  return $out
+}
+
+## Is instance <i> in the deck, i.e. may it have a save card?
+## <idx> is op_annot::_deck_index's answer, passed as a VALUE rather than read
+## from a hidden armed variable so a test can put the truth table on the page.
+## <block> is the deck block the walk is standing in; {} means the deck's top.
+proc op_annot::_netlisted {i idx {block {}}} {
+  if {[catch {xschem getprop instance $i name} nm]} { return 0 }
+  set b [::op_annot::_block_or_top $idx $block]
+  if {$b eq {}} { return 0 }
+  if {[catch {dict get $idx elems} el]} { return 0 }
+  if {![dict exists $el $b]} { return 0 }
+  set have [dict get $el $b]
+  foreach e [::op_annot::_elements $nm] {
+    if {[lsearch -exact $have $e] >= 0} { return 1 }
+  }
+  return 0
+}
+
+## Which deck block does instance <i> CALL?  Read off its own element line, not
+## re-derived from the symbol — see the name-key block in this section's header.
+## {} when the instance is not in the deck or its callee is not a block.
+proc op_annot::_callee {i idx {block {}}} {
+  if {[catch {xschem getprop instance $i name} nm]} { return {} }
+  set b [::op_annot::_block_or_top $idx $block]
+  if {$b eq {}} { return {} }
+  if {[catch {dict get $idx callee} cm]} { return {} }
+  if {![dict exists $cm $b]} { return {} }
+  set m [dict get $cm $b]
+  if {[catch {dict get $idx elems} el]} { return {} }
+  foreach e [::op_annot::_elements $nm] {
+    if {![dict exists $m $e]} { continue }
+    set c [dict get $m $e]
+    if {$c eq {}} { continue }
+    if {[dict exists $el $c]} { return $c }
+  }
+  return {}
+}
+
+## May the walk DESCEND into instance <i>?  NOT an alias of _netlisted — see the
+## two-questions block in this section's header.
+##
+## Three things must all hold: the instance is in the deck, its callee names a
+## block, and that block is one the netlister EXPANDED — non-empty AND carrying
+## its own `** sch_path:`. `spice_stop` fails the first half (a real block,
+## emitted empty) and `spice_sym_def` the second (attribute text, `** sym_path:`
+## only), and both are measured in the table above.
+proc op_annot::_descendable {i idx {block {}}} {
+  if {![::op_annot::_netlisted $i $idx $block]} { return 0 }
+  set c [::op_annot::_callee $i $idx $block]
+  if {$c eq {}} { return 0 }
+  if {[catch {dict get $idx elems} el]} { return 0 }
+  if {![dict exists $el $c]} { return 0 }
+  if {[llength [dict get $el $c]] == 0} { return 0 }
+  if {[catch {dict get $idx schpath} sp]} { return 0 }
+  if {![dict exists $sp $c]} { return 0 }
+  if {[string trim [dict get $sp $c]] eq {}} { return 0 }
+  return 1
+}
+
+## The last component of `xschem get sch_path`, lowercased — the string the deck
+## basis will really put in front of every card built below this level. Shared
+## by _prefix_ok and by its warning so the two cannot disagree about what was
+## compared.
+proc op_annot::_pathseg {} {
+  if {[catch {xschem get sch_path} p]} { return {} }
+  set seg [string trimright $p {.}]
+  set i [string last {.} $seg]
+  if {$i >= 0} { set seg [string range $seg [expr {$i + 1}] end] }
+  return [string tolower $seg]
+}
+
+## Does the hierarchy path we now stand on still SPELL this instance the way the
+## deck does?  (issue 0488)
+##
+## ⚠ MEASURED, AND IT IS THE RAW-DESTROYING SHAPE. `sch_path`, `sim_sch_path`
+## and translate's `@path` all carry the instance NAME ONLY and DROP
+## `spiceprefix`. With `name=SUB1 spiceprefix=X` on a subcircuit symbol the deck
+## writes `XSUB1` while all three path sources answer `SUB1.`, so every card
+## below would say `@m.sub1.<inner>` against a raw holding `@m.xsub1.<inner>` —
+## EVERY card in that subtree bogus, which is the all-bogus case that makes
+## ngspice write no raw file at all.
+##
+## So the subtree is SUPPRESSED and named, not emitted and hoped for: save.c
+## RULING D5-1 — a plausible wrong number on a schematic is worse than none —
+## and a plausible wrong CARD is worse still, because it takes the whole raw
+## with it. Mitigation and not a fix, hence issue 0488: zero of the 533 shipped
+## `type=subcircuit` symbols carry spiceprefix.
+##
+## ⚠ IT TAKES THE ELEMENT LIST, IT DOES NOT LOOK IT UP. By the time this runs
+## the hierarchy has ALREADY moved, and `xschem translate SUB1 @spiceprefix@name`
+## in the CHILD cell has no instance called SUB1 to translate. The caller reads
+## `_elements` BEFORE descending and threads it down.
+proc op_annot::_prefix_ok {els} {
+  if {[llength $els] == 0} { return 1 }
+  set seg [::op_annot::_pathseg]
+  if {$seg eq {}} { return 1 }
+  return [expr {[lsearch -exact $els $seg] >= 0}]
+}
+
+## Refuse while a modal gesture is pending (I4).
+##
+## ⚠ THIS IS THE SHARPEST SEAM OF THE ORACLE INVERSION. `xschem netlist` calls
+## leave_placement_for("Netlist") and leave_merge_for("Netlist")
+## (scheduler.c:8848-8849) whose teardown IS a delete() (issue 0263), and
+## neither is suppressible from Tcl. Masks are
+## START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT (25600) and STARTMERGE (256), i.e.
+## exactly leave_placement_for()'s and leave_merge_for()'s own tests
+## (callback.c:706, :433). Numeric literals are this tree's established Tcl
+## idiom for ui_state (src/xschem.tcl:6558/11000/11394, create_instance.tcl:38).
+proc op_annot::_assert_idle {} {
+  if {[catch {xschem get ui_state} st]} { return {} }
+  if {![string is integer -strict $st]} { return {} }
+  if {$st & 25600} {
+    return -code error "op_annot::save_cards: a symbol/text PLACEMENT is\
+ pending. This walk runs a netlist to find out which devices are in the deck,\
+ and the netlister tears a pending placement down (issue 0263). Drop or cancel\
+ it (Esc) first."
+  }
+  if {$st & 256} {
+    return -code error "op_annot::save_cards: a PASTE/merge is pending. This\
+ walk runs a netlist to find out which devices are in the deck, and the\
+ netlister tears a pending paste down (issue 0263). Drop or cancel it (Esc)\
+ first."
+  }
+  return {}
+}
+
+## Refuse to walk a sheet whose UNSAVED edits the walk would silently revert
+## (issue 0626). MEASURED on sky130_tests_ase/bandgap_opamp:
+##
+##   autosave_backup 1, modified 1 : descend + go_back keeps the edit
+##   autosave_backup 0, modified 1 : descend + go_back REVERTS it, and the
+##                                   buffer still reports modified 1
+##
+## The revert is silent and it is data loss, so this is a refusal and not a
+## warning: the user can save (or turn autosave_backup back on) and click again,
+## and nothing in the annotation feature is worth an unsaved edit.
+proc op_annot::_assert_saveable {} {
+  if {[catch {xschem get modified} m]} { return {} }
+  if {![string is integer -strict $m] || !$m} { return {} }
+  set ab 1
+  if {[info exists ::autosave_backup]} { set ab $::autosave_backup }
+  if {[string is integer -strict $ab] && !$ab} {
+    return -code error "op_annot::save_cards: this schematic has UNSAVED edits\
+ and `autosave_backup` is off. The walk descends and returns, and with no\
+ autosave backup to come back to that round trip silently REVERTS unsaved edits\
+ (issue 0626). Save the schematic, or turn Options > Autosave backup on, and\
+ click again."
+  }
+  return {}
+}
+
+## Park `::autosave_backup` for the walk and return the snapshot _restore needs.
+##
+## THE WALK IS READ-ONLY (I4) AND go_back IS NOT. With a `<cell>~.sch` beside the
+## cell, go_back loads the BACKUP's content into the parent buffer and flags it
+## modified (save.c:4191-4207) — measured on the shipped bandgap_opamp, where a
+## clean 73-instance buffer came back as a 72-instance one. Parking the flag at 0
+## makes load_backup_as return early (save.c:4197) and the ascent a plain reload
+## of the on-disk cell.
+##
+## ⚠ ONLY WHEN THE ENTRY BUFFER IS CLEAN. On a modified buffer the `~` is where
+## the unsaved edits LIVE, and parking would throw them away — which is why
+## _assert_saveable refuses that combination outright rather than parking it.
+proc op_annot::_park_backup {} {
+  set had 0
+  set val {}
+  if {[info exists ::autosave_backup]} { set had 1 ; set val $::autosave_backup }
+  if {[catch {xschem get modified} m]} { set m 1 }
+  if {[string is integer -strict $m] && !$m} { set ::autosave_backup 0 }
+  return [list $had $val]
+}
+
+## Is this instance one a descriptor CLAIMS?  i.e. would a card be owed if the
+## netlister had kept it?  Used only to decide whether a drop is worth counting:
+## a wire, a pin or an unregistered symbol type is not an under-emission.
+proc op_annot::_claims {instname} {
+  set t [::op_annot::type $instname]
+  if {$t eq {}} { return 0 }
+  set d [::op_annot::descriptor $t]
+  if {$d eq {}} { return 0 }
+  if {![dict exists $d params]} { return 0 }
+  if {![llength [dict get $d params]]} { return 0 }
+  return [::op_annot::_matches $instname $d]
+}
+
+## The cards for ONE instance, or {} when it contributes none.
+##
+## ⚠ THE 0425 CONSUMER CONTRACT (see the header): skip on a blank DEVPATH, never
+## on a blank DESCRIPTOR. A descriptor whose `match` globs do not claim this
+## cell is still fully registered; emitting its params against an empty device
+## name would write `.save [id]` cards.
+##
+## ⚠ `deck` BASIS, ALWAYS (issue 0436). The root is threaded from save_cards'
+## entry level; nothing here does path arithmetic of its own.
+##
+## ⚠ THE CARD IS BARE — `[devpath][param]`, never op_annot::vector (rule R4).
+## Re-measured on ngspice 46+: `.save i(@m.xm1.m1[id])` puts NOTHING in the raw
+## and says nothing, because ngspice applies the i()/v() wrapper ITSELF from the
+## parameter's own type. `vector` is the READ shape and belongs to S5.
+##
+## ⚠ NO CATCH. devpath returns {} for every DATA condition, so anything that
+## raises in here is a caller bug or a broken PDK three levels down, and I6's
+## whole point is that such a raise reaches save_cards' restore.
+##
+## ⚠ ALL `params`, NOT THE SIX-ROW DISPLAY CAP (RULING D9b, spec §4.2b). The cap
+## is applied inside op_annot::text AFTER the three row classes are assembled,
+## i.e. it is a DISPLAY decision; a user who raises ::op_annot_max_rows would
+## otherwise get blank rows with no way to re-simulate for them. On every shipped
+## descriptor the two sets coincide.
+##
+## `derived` and `pinexpr` are not iterated: neither has a vector in any raw
+## (spec §4.3). `derived` is computed from params after they are read, `pinexpr`
+## is an expression over pin voltages, which `save all` already carries.
+proc op_annot::_cards_for {instname root} {
+  set t [::op_annot::type $instname]
+  if {$t eq {}} { return {} }
+  set d [::op_annot::descriptor $t]
+  if {![dict exists $d params]} { return {} }
+  set dev [::op_annot::devpath $instname deck $root]
+  if {$dev eq {}} { return {} }
+  set out {}
+  foreach row [dict get $d params] {
+    lappend out ".save ${dev}\[[lindex $row 1]\]"
+  }
+  return $out
+}
+
+## Did the descend just issued actually land us in a USABLE child?
+## <c0> is `xschem get currsch` from immediately BEFORE the descend.
+##
+## THIS IS THE CLASS SPLIT OF ISSUE 0433. The return value of `xschem descend`
+## is deliberately not consulted: it is 0 for both classes.
+##   currsch unchanged  -> class 1, nothing was pushed. NO go_back — the
+##                         prototypes' unconditional one pops a caller's level
+##                         and the walk then re-visits levels, emitting
+##                         duplicate cards.
+##   currsch advanced, descend_error set -> class 2 (`load-failed`,
+##                         actions.c:4636, which returns AFTER the increment at
+##                         :4628): the hierarchy ALREADY advanced, so this one
+##                         DOES owe a go_back before the walk can continue.
+##   currsch advanced, descend_error empty -> success.
+proc op_annot::_descended {c0} {
+  if {[catch {xschem get currsch} c1]} { return 0 }
+  if {$c1 <= $c0} { return 0 }
+  if {[catch {xschem get descend_error} derr]} { set derr {} }
+  if {$derr eq {}} { return 1 }
+  catch {xschem go_back 2}
+  return 0
+}
+
+## Descend into instance <i>, resolving the target from the DECK rather than from
+## the symbol's `schematic=` attribute (issue 0496).
+##
+## ⚠ WHY THE OVERRIDE. `get_additional_symbols` (actions.c:3729) synthesises
+## `passgate_1` / `gain_stage2` for parameter-specialised instances and the deck
+## block carries the BASE cell's `** sch_path:`. `xschem descend` on such an
+## instance is a CLASS-2 refusal — currsch already incremented,
+## descend_error=load-failed — because the synthesised name resolves to a file
+## that does not exist, and the "Descend into base schematic?" fallback
+## (actions.c:4176) is unreachable from the verb (fallback=0). The deck already
+## names the file; `hi_descend_view_path` (actions.c:4139) is the tree's own
+## one-shot seam for exactly this, and it does NOT rewrite or dirty the instance.
+##
+## ⚠ ONE-SHOT AND ALWAYS CLEARED. get_sch_from_sym blanks it on use, but a
+## descend that never reaches that call would leave it armed for the NEXT one —
+## which is a wrong-cell descend with no error anywhere.
+proc op_annot::_descend_to {i n view} {
+  ## `xschem select instance <i>` TOGGLES, and go_back leaves the instance we
+  ## came from selected — so unselect first or the next descend refuses with
+  ## `no-selection` / picks the wrong target. `fast nodraw` is
+  ## src/xschem.tcl:3717's cheaper form: no status traffic, no selection draw.
+  catch {xschem unselect_all}
+  catch {xschem select instance $i fast nodraw}
+  if {[string trim $view] ne {}} { catch {set ::hi_descend_view_path $view} }
+  set rc [catch {xschem descend $n 2} res opts]
+  catch {set ::hi_descend_view_path {}}
+  if {$rc} { return -options $opts $res }
+  return $res
+}
+
+## Is the cell we just descended into the one the deck block says it is?  (D2b)
+##
+## The netlister dedups blocks on get_cell() (spice_netlist.c:98-104), so two
+## same-basename cells from different libraries share ONE block name and a
+## name-keyed index alone would attribute one cell's devices to the other. This
+## is the guard that pays for the name key: both sides normalized through the one
+## `_normkey`, and a mismatch suppresses rather than emits.
+proc op_annot::_block_is_here {idx callee} {
+  if {[catch {dict get $idx schpath} sp]} { return 1 }
+  if {![dict exists $sp $callee]} { return 1 }
+  set want [string trim [dict get $sp $callee]]
+  if {$want eq {}} { return 1 }
+  if {[catch {xschem get schname} here]} { return 1 }
+  if {[string trim $here] eq {}} { return 1 }
+  return [expr {[::op_annot::_normkey $want] eq [::op_annot::_normkey $here]}]
+}
+
+## The recursion. Ported from sg13g2_hier_sch_expand (sg13g2_procs.tcl:366-421).
+## Appends to the namespace accumulator; a raise anywhere inside it is caught
+## exactly once, by save_cards.
+##
+## <root>  is the walk's ENTRY sch_path, threaded down unchanged: it is the basis
+##         every card is rooted at.
+## <idx>   is the deck index, built ONCE by save_cards — one netlist per call,
+##         never one per instance.
+## <block> is the DECK BLOCK this level corresponds to, threaded down from each
+##         instance's own element line. That thread is issue 0496's fix: nothing
+##         here re-derives a block from a cell path.
+proc op_annot::_walk {root idx block} {
+  variable _acc
+  variable warnings
+  variable _c_rule
+  variable _c_notfound
+  variable _c_name
+  set ninstances [xschem get instances]
+  for {set i 0} {$i < $ninstances} {incr i} {
+    set instname [xschem getprop instance $i name]
+    ## ⚠ `getprop instance <n> cell::type`, NOT `getprop symbol <cell> type`.
+    ## The symbol form RAISES for generator cells (measured: 6 of the 14
+    ## instances of xschem_library/generators/test_generators.sch) and is the
+    ## literal trigger of issue 0431. The index form resolves for a vector
+    ## instance name too.
+    set type [::op_annot::type $i]
+    set netl [::op_annot::_netlisted $i $idx $block]
+
+    ## Emit BEFORE descending: depth-first, parents before children. Order is
+    ## part of this step's golden. A device the deck does not contain gets no
+    ## card and is COUNTED — silence there is how two attempts shipped.
+    if {$netl} {
+      if {[::op_annot::_claims $instname]} {
+        set cards [::op_annot::_cards_for $instname $root]
+        if {[llength $cards]} {
+          foreach c $cards { lappend _acc $c }
+        } else {
+          incr _c_name
+          ::op_annot::_warn "no device name could be built for $instname (its\
+ descriptor claims the cell but devpath/devproc answered nothing); no cards\
+ emitted for it"
+        }
+      }
+    } elseif {[::op_annot::_claims $instname]} {
+      incr _c_rule
+    }
+
+    if {$type ne {subcircuit}} { continue }
+
+    ## The deck may hold the CALL and not the body (spice_stop, spice_sym_def,
+    ## default_schematic=ignore), and it may not hold the instance at all
+    ## (spice_ignore, only_toplevel, an empty format). Both are "do not walk in",
+    ## and both are a NETLISTER RULE, not a defect (issue 0497).
+    if {![::op_annot::_descendable $i $idx $block]} { incr _c_rule ; continue }
+    set callee [::op_annot::_callee $i $idx $block]
+
+    ## ⚠ READ BEFORE DESCENDING. Once the walk is in the child, `xschem
+    ## translate <instname> …` has no such instance to resolve (see _prefix_ok).
+    set els [::op_annot::_elements $instname]
+    set view {}
+    if {![catch {dict get $idx schpath} sp]} {
+      if {[dict exists $sp $callee]} { set view [string trim [dict get $sp $callee]] }
+    }
+
+    ## Vector instances: `expandlabel x2[1:0]` -> `x2[1],x2[0] 2` (never raises,
+    ## answers `x1 1` for a scalar). Descend ONCE, then walk the members with
+    ## change_sch_path, then go_back ONCE.
+    set ninst [lindex [split [xschem expandlabel $instname] { }] 1]
+    for {set n 1} {$n <= $ninst} {incr n} {
+      if {$n == 1} {
+        set c0 [xschem get currsch]
+        ::op_annot::_descend_to $i $n $view
+        if {[catch {xschem get descend_error} derr]} { set derr {} }
+        if {![::op_annot::_descended $c0]} {
+          ## The deck HAS this block and the walk could not reach it. That is
+          ## the 0496 class and it is never "normal" (issue 0497).
+          incr _c_notfound
+          ::op_annot::_warn "the netlist expands $instname into block\
+ \"$callee\" but the walk could not descend into it ($derr); no cards emitted\
+ below it"
+          break
+        }
+        ## The name key is only safe with this guard — see _block_is_here.
+        if {![::op_annot::_block_is_here $idx $callee]} {
+          incr _c_notfound
+          ::op_annot::_warn "the cell reached through $instname is not the one\
+ the deck block \"$callee\" was written from (two same-named cells from\
+ different libraries share one .subckt block); no cards emitted below it"
+          catch {xschem go_back 2}
+          break
+        }
+      }
+      if {$n > 1} { xschem change_sch_path $n }
+      ## ⚠ THE PREFIX GUARD (issue 0488) SITS BETWEEN THE DESCEND AND THE
+      ## RECURSION, INSIDE THE go_back PAIRING. Suppressing the subtree may not
+      ## also suppress the ascent: an early `break` here would leave the walk a
+      ## level down for every remaining instance of the parent.
+      if {[::op_annot::_prefix_ok $els]} {
+        ::op_annot::_walk $root $idx $callee
+      } else {
+        incr _c_name
+        ::op_annot::_warn "cannot name the subtree of $instname: the hierarchy\
+ path spells it \"[::op_annot::_pathseg]\" but the netlist element is\
+ \"[join $els {, }]\" (sch_path does not carry spiceprefix - issue 0488). No\
+ cards emitted below it."
+      }
+      if {$n == $ninst} { xschem go_back 2 }
+    }
+  }
+  return 1
+}
+
+## Append a warning, once. A 500-device block would otherwise repeat one cell's
+## sentence per instance and bury the others.
+proc op_annot::_warn {w} {
+  variable warnings
+  if {[lsearch -exact $warnings $w] < 0} { lappend warnings $w }
+  return {}
+}
+
+## Ascend back to the level the walk started from — and NO FURTHER.
+##
+## Bounded by the ENTRY currsch, not by 0 (see I6 in this section's header). The
+## guards are because this runs on an unattended error path: a go_back that
+## refuses to move must break the loop rather than spin it forever.
+proc op_annot::_unwind {entry} {
+  set target [lindex $entry 0]
+  set guard 0
+  while {1} {
+    if {[catch {xschem get currsch} c]} { break }
+    if {$c <= $target} { break }
+    if {[catch {xschem go_back 2}]} { break }
+    if {[catch {xschem get currsch} c2]} { break }
+    if {$c2 >= $c} { break }
+    if {[incr guard] > 64} { break }
+  }
+}
+
+## THE UNCONDITIONAL RESTORE (I6). Every line is individually catch-wrapped so
+## one failure cannot skip the rest — the prototypes' straight-line reset is
+## simply not reached when the walk raises, which is issue 0431. The shape is
+## core `proc traversal`'s (src/xschem.tcl:3590-3612, issue 0600) plus two things
+## it does not need: the log-suppress pop and the autosave park.
+##
+## ⚠ THE UNWIND RUNS FIRST, WHILE THE PARK IS STILL IN FORCE. Restoring
+## `autosave_backup` before ascending would put the go_back-loads-the-backup
+## behaviour back exactly where the walk still has levels to pop, which is the
+## defect the park exists to prevent (issue 0495).
+##
+## <rc> is the catch code of the walk. It is deliberately NOT branched on: the
+## whole point is that this block runs identically on both paths. The netlist
+## environment is NOT restored here — the oracle gives it back itself, before
+## the walk ever starts, so it is already the user's during the walk.
+proc op_annot::_restore {entry rc} {
+  variable _busy
+  catch {::op_annot::_unwind $entry}
+  ## no_undo has no getter (issue 0432), so 0 is the only restorable value.
+  catch {xschem set no_undo 0}
+  catch {xschem set no_draw [lindex $entry 2]}
+  catch {set ::keep_symbols [lindex $entry 3]}
+  set park [lindex $entry 4]
+  if {[lindex $park 0]} {
+    catch {set ::autosave_backup [lindex $park 1]}
+  } else {
+    catch {unset ::autosave_backup}
+  }
+  catch {set ::hi_descend_view_path {}}
+  catch {xschem log_action -suppress pop}
+  set _busy 0
+}
+
+## `.save all` first (I2 / rule R2), then the cards.
+##
+## ⚠ THE DOT-CARD, AND IT IS NOT A SPELLING NICETY. Re-measured on ngspice 46+:
+## a bare deck-level `save all` is parsed as an `s`-prefixed SWITCH instance and
+## the run dies with `Unable to find definition of model`, writing NO RAW AT ALL
+## — strictly worse than omitting it. `.save all` is the form that works. And
+## inside a `.control` block it is the other way round: there the dot form is
+## `save: no such command available` at rc 0, so this block belongs at DECK
+## level, which is where write_save_file's `.include` puts it.
+##
+## An empty walk returns {} and NOT a lone `.save all`: a file whose entire
+## content is a header says nothing while reporting success.
+proc op_annot::_block {cards} {
+  if {[llength $cards] == 0} { return {} }
+  return "[join [linsert $cards 0 {.save all}] \n]\n"
+}
+
+## op_annot::save_cards -> the `.save` block for the whole hierarchy below the
+## CURRENT cell, as text; {} when no device produced a card.
+##
+## The block is rooted HERE: every card is `deck`-based with this level's
+## `sch_path` as its root, so the file is a save block for a deck of the cell
+## you are standing in, and no loaded raw can move a single name (issue 0436).
+## It names ONLY devices the netlister itself put in that deck (issue 0442).
+##
+## ⚠ IT RE-RAISES. A partial block silently returned is the raw-destroying card
+## wearing a different hat: the devices the walk never reached are missing, and
+## the ones it did reach are not necessarily complete. Callers must call this
+## inside a catch.
+##
+## I4: reads context, never writes it. No instance placed, no set_modify,
+## nothing written to the .sch — and it refuses outright rather than let the
+## oracle's netlist eat a pending gesture (0263) or let go_back revert an
+## unsaved edit (0626).
+proc op_annot::save_cards {} {
+  variable _acc
+  variable warnings
+  variable _busy
+  variable _c_rule
+  variable _c_notfound
+  variable _c_name
+  variable _nkmemo
+
+  ## FIRST, and before any state is touched: a nested call would overwrite the
+  ## outer walk's accumulator and its idea of the user's netlist settings, then
+  ## "restore" the forced ones (issue 0438).
+  if {[info exists _busy] && $_busy} {
+    return -code error "op_annot::save_cards: already running — the walk is not\
+ re-entrant (issue 0438). A nested call would overwrite the outer walk's cards\
+ and restore the netlist settings it forced."
+  }
+  ## SECOND: refuse on a pending gesture, before the oracle's netlist can eat it.
+  ::op_annot::_assert_idle
+  ## THIRD: refuse when the ascent would silently revert unsaved edits (0626).
+  ::op_annot::_assert_saveable
+
+  set _acc {}
+  set warnings {}
+  set _c_rule 0
+  set _c_notfound 0
+  set _c_name 0
+  ## Issue 0493: the path memo may not outlive one walk — abs_sym_path resolves
+  ## against XSCHEM_LIBRARY_PATH, which is user state.
+  catch {array unset _nkmemo}
+  set kd 0
+  if {[info exists ::keep_symbols]} { set kd $::keep_symbols }
+  ## The park is taken BEFORE the entry list so _restore always has it, even
+  ## when the walk raises on its very first line.
+  set park [::op_annot::_park_backup]
+  set entry [list [xschem get currsch] [xschem get sch_path] \
+                  [xschem get no_draw] $kd $park]
+  ## THE ROOT OF THIS BLOCK. Read once, before anything moves.
+  set root [lindex $entry 1]
+  ## ⚠ THE LATCH IS SET AFTER THE ENTRY SNAPSHOT, NOT BEFORE IT. _restore is the
+  ## only thing that clears it and it runs only from below this line, so a raise
+  ## while READING the entry state would otherwise leave _busy set and wedge the
+  ## feature for the rest of the session (issue 0438) with no walk ever having
+  ## started. Everything above this line is a read or a reset.
+  set _busy 1
+  ## Pushed OUTSIDE the catch and popped inside _restore, so the pair survives a
+  ## raise. descend and go_back self-log (actions.c:4650-4651, :4806-4807) and
+  ## the oracle's netlist would too but for `-keep_symbols` (scheduler.c:8887); a
+  ## walk over a real design would otherwise flood a log whose contract is
+  ## REPLAYABLE USER EDITS.
+  catch {xschem log_action -suppress push}
+  set rc [catch {
+    ## THE ORACLE, ONCE, FIRST, AND AT THE ENTRY LEVEL — the deck the user would
+    ## simulate from here is the one whose devices these cards must name.
+    ## Before no_undo/no_draw/keep_symbols: the netlister does its own
+    ## push_undo/pop_undo round trip.
+    set idx [::op_annot::_deck_index [::op_annot::_oracle_deck]]
+    set ::keep_symbols 1
+    ## The prototype's entry unselect_all, kept: descend acts on the selection,
+    ## so this is a real precondition. The selection is NOT saved and restored —
+    ## `xschem selected_set` answers instance NAMES only, so a "restore" would
+    ## silently drop every wire and text the user had selected, which is more
+    ## surprising than clearing it. (The oracle's own netlist has already
+    ## cleared it: global_spice_netlist calls unselect_all.)
+    xschem unselect_all
+    xschem set no_draw 1
+    xschem set no_undo 1
+    ::op_annot::_walk $root $idx {}
+  } res opts]
+  ::op_annot::_restore $entry $rc
+  if {$rc} { return -options $opts $res }
+  ## The aggregate, appended after the walk's own per-cell sentences and emitted
+  ## only when non-zero: a clean walk says nothing.
+  ##
+  ## ⚠ ONLY `dropped_by_rule` MAY SAY "normal for such cells" (issue 0497).
+  ## Attempt 4's single aggregate carried that phrase over BOTH classes and told
+  ## the user that 12 missing FETs on tb_bandgap_opamp were expected behaviour.
+  if {$_c_rule > 0} {
+    lappend warnings "$_c_rule instance(s) were dropped by a netlister rule and\
+ got no cards (spice_ignore, only_toplevel, lvs_ignore, an empty format,\
+ default_schematic=ignore, spice_sym_def, spice_stop, or a behavioural cell with\
+ an empty block) - normal for such cells"
+  }
+  if {$_c_notfound > 0} {
+    lappend warnings "$_c_notfound instance(s) ARE in the netlist and the walk\
+ could not reach the block the netlist expanded them into. This is a DEFECT, not\
+ a normality: those devices have no save cards and will render blank."
+  }
+  if {$_c_name > 0} {
+    lappend warnings "$_c_name instance(s) got no cards because no raw-file\
+ device name could be built for them (a devproc that failed, a blank devpath\
+ template, or a spiceprefix'd subcircuit - issue 0488)."
+  }
+  return [::op_annot::_block $_acc]
+}
+
+## op_annot::write_save_file -> writes the block to
+## $netlist_dir/<current cell>.save and returns the path; {} when there was
+## nothing to save (and then NO file is written — a .save file containing only a
+## header says nothing while reporting success).
+##
+## ⚠ THE FILENAME AGREES WITH THE BODY, and only because the cards are
+## entry-relative: `<current cell>.save` describes a deck whose top IS the
+## current cell, which is also the cell `xschem netlist` would write from here.
+##
+## Modelled on IHP's `Create FET and BIP .save file` menu command
+## (ihp-sg13g2/sg13g2_procs.tcl:602-606), including its `file mkdir
+## $netlist_dir`, which sky130A/sky130_procs.tcl:235 lacks. The textwindow is
+## X-only: under --nogui / --pipe there is no Tk and `textwindow` would raise.
+proc op_annot::write_save_file {} {
+  global netlist_dir
+  set block [::op_annot::save_cards]
+  if {$block eq {}} { return {} }
+  file mkdir $netlist_dir
+  set path [file join $netlist_dir \
+    "[file rootname [file tail [xschem get current_name]]].save"]
+  ## THE WARNINGS REACH THE USER HERE, AND NOWHERE ELSE.
+  ##
+  ## The three counters and the per-cell sentences exist because a filter that
+  ## UNDER-emits IN SILENCE is exactly the failure that survived 85, then 96,
+  ## then 275 green checks. The textwindow this proc already opens is the
+  ## channel, at zero new UI.
+  ##
+  ## REJECTED: an `alert_` on success. X-only, untestable headless, and it would
+  ## fire on healthy designs. REJECTED also: leaving them computed and discarded,
+  ## which reproduces at the UI layer the very silence this step deletes.
+  ##
+  ## ⚠ ONE LINE PER WARNING, NEWLINES FLATTENED. A note that wrapped would put a
+  ## continuation line with no leading `*` into a file a SPICE parser reads, and
+  ## the parser would take it for a card.
+  set notes {}
+  foreach w [::op_annot::last_warnings] {
+    append notes "* NOTE: [string map [list \n { } \r { }] $w]\n"
+  }
+  ## ASCII only: these lines go into a file a SPICE parser reads.
+  write_data "* operating-point .save cards - .include this file in your testbench\n$notes\n$block" $path
+  if {[info exists ::has_x] && $::has_x} { catch {textwindow $path} }
+  return $path
 }

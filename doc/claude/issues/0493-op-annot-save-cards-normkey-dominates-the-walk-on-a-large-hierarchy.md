@@ -1,5 +1,9 @@
 # 0493 — `op_annot::save_cards` spends 5.2 s in `_normkey` on a 97-block hierarchy
 
+**Status:** **ADDRESSED BY S3 (2026-08-22).** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. `_here_block` and the per-instance `_normkey` call the profile is about are **deleted**: the walk threads the callee block name down the recursion instead (0496's fix), so the dominant cost is gone by construction rather than by memoisation. The one surviving `_normkey` runs **once per descend**, as `_block_is_here`'s cross-check. Any memo is cleared at `save_cards` entry (`catch {array unset _nkmemo}`) because `abs_sym_path` resolves against `XSCHEM_LIBRARY_PATH`, which is user state — row **W33**. Measured: **244 ms** for 469 lines over 78 devices on `sky130_tests_ase/tb_bandgap`.
+
+Original filing follows.
+
 **Status:** open, measured. The code it profiles is **not on the tree**: S3
 attempt 4 was reverted (0494) and `op_annot::save_cards` lives only in
 `0494-attempt-4-reverted.patch`. The measurement stands and binds attempt 5.

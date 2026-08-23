@@ -1,5 +1,9 @@
 # 0497 — three silent or misreported under-emission channels in the S3 walk
 
+STATUS: **FIXED BY S3 (2026-08-22), WITH ONE BLIND SPOT LEFT — 0632 item 2.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. The single *"- normal for such cells"* aggregate splits into **three named counters** (`dropped_by_rule` / `not_found` / `name_failed`, via `op_annot::last_counts`), **only `dropped_by_rule` may say "normal for such cells"**, a raising devproc counts as `name_failed` rather than vanishing, and `write_save_file`'s caller surfaces `op_annot::last_warnings` when the block is empty and no file is written. ⚠ **The counters cannot distinguish *the netlister dropped it* from *the walk was standing in the wrong cell content***: under 0632's dirty-entry path devices vanish while `not_found` stays 0 and the warning still reads *normal for such cells*. A cross-check of the emitted card device set against the deck's own element set for the block being walked would catch it, and `_walk` already holds `idx` and `block` at that point.
+
+Original filing follows.
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3d, 2026-08-21, at
 `d56283ec`. Found by the adversary pass; see 0494.
 Related: 0494, 0496 (the warning that is false), 0488 (`_prefix_ok`),

@@ -1,5 +1,9 @@
 # 0494 — op_annot S3 attempt 4: reverted, and the two claims that refuted it
 
+STATUS: **SUPERSEDED 2026-08-22 — attempt 5 landed from this patch.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. `git apply --3way` of the preserved patch was the starting point (D1): `src/xschem.tcl` applied clean, `src/op_annot.tcl` and the suite needed conflict resolution. Attempt 4's decisions **D2** (run and read the netlister, never mirror it), **D4** (`_netlisted` and `_descendable` are not aliases), **D5** (the deck basis is ENTRY-relative), **D6** (`_prefix_ok` suppresses), **D7** (`dims=0` is the acceptance detector) and **D10** (warnings as `* NOTE:` lines) all survived unchanged. Its **D3** (the `** sch_path:` key) was refuted and replaced — see **0496**.
+
+Original filing follows.
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3d, 2026-08-21, at
 baseline commit `d56283ec`. **This is the record of the fourth reverted attempt
 at `op_annot::save_cards`.** Preserved patch: `0494-attempt-4-reverted.patch`

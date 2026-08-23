@@ -1,5 +1,9 @@
 # 0488 — the deck hierarchy prefix carries the instance NAME only and drops `spiceprefix`
 
+**Status:** **OPEN, AND NOW MITIGATED ON THE TREE — decision D8 of S3 (2026-08-22).** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. `op_annot::_prefix_ok` suppresses the subtree and names the cell in `op_annot::last_warnings`, and the ascent still happens (row **W18**). Deliberately mitigated rather than fixed, ladder rung **L2**: **0 of 533 shipped `type=subcircuit` symbols carry `spiceprefix`**, so the defect is user-reachable and not shipped-reachable. *Rejected:* threading the accumulated deck element path into `devpath` as a third basis — 0496's fix now makes that path available inside the walk, but using it would put prefix construction back in the **walk**, which is precisely landmine 14's second name builder. That is the now-cheap future fix, and it belongs in `devpath`.
+
+Original filing follows.
+
 **Status:** open, UNMITIGATED on the tree. A guard (`op_annot::_prefix_ok`) was
 written for S3 attempt 4 and **reverted with it** — see 0494; the guard survives
 only in `0494-attempt-4-reverted.patch`.

@@ -1,5 +1,9 @@
 # 0496 — the sch_path-keyed deck index cannot see parameter-specialised subcircuits
 
+STATUS: **FIXED BY S3 (2026-08-22).** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. The deck index is re-keyed on the **`.subckt` NAME**, and the instance→block edge is read off the instance's own deck **element line** (the last token before the first token containing `=`, after joining `+` continuations); `_here_block` and per-instance `_normkey` are deleted and the walk threads the callee block down the recursion. The name key is paid for by `_block_is_here`, which compares the callee block's `** sch_path:` against `xschem get schname` after every descend. **⚠ Re-keying alone was necessary and NOT sufficient**: the specialisation rides on an instance attribute `schematic=passgate_1` that `get_sch_from_sym` resolves to a nonexistent path, and the base-schematic fallback (`actions.c:4176`) is gated by `has_x && fallback` while the `xschem descend` verb passes `fallback=0` — so `hi_descend_view_path` (`actions.c:4139`) has to be fed from the callee block's own `** sch_path:` to get past the class-2 refusal. Measured on the bench that refuted attempt 4 (`sky130_tests_ase/tb_bandgap_opamp`, row **W30**): **31 distinct card devices == the deck's 31 FET leaves, both directions**, 12 cards under `@m.x6.` and 12 under `@m.x3.x6.`, counts `{0 0 0}`, no *"normal for such cells"* anywhere. The sabotage variant `index_keyed_on_sch_path` reddens W30 and degrades it to 19 devices.
+
+Original filing follows.
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3d, 2026-08-21, at
 `d56283ec`. Refuted attempt 4's central claim; see 0494.
 Related: 0494, 0442 (the drop-class predecessor), 0497 (the misreporting).

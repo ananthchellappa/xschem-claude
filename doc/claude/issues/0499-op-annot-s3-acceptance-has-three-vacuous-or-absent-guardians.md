@@ -1,5 +1,9 @@
 # 0499 — three guardians in the S3 acceptance cannot fail, or are absent
 
+STATUS: **THREE OF FOUR CLOSED BY S3 (2026-08-22); THE FOURTH RECURRED AND IS 0632.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. (a) the I4 row now runs on the **shipped** `sky130_tests_ase/bandgap_opamp` and controls for the `~` backup (**W19a**/**W19b**); (b) row **XR5** descends one level **with the raw loaded** and re-runs `save_cards`, asserting the block is byte-identical, so `basis_ignored` is red end-to-end and not only against a string golden; (c) rows **W11–W14** and **W32** assert *no descend* as well as *no card*, over a fixture where a drop-class symbol shares a `.sch` with a normally-netlisted instance, and **W32** carries a class-1 descend refusal in the same walk. **Landmine 11 was applied rather than footnoted**: three predicted reds did not appear and all three were chased to PREDICTION defects, not fixture defects (see the S3 sabotage matrix). ⚠ **And this issue's own class recurred twice inside the step written to close it**: row **W32**'s uniqueness leg was **unsatisfiable** and read green only because `save_cards` raised (issue **0630**), and rows W19a/W19b plant a `~` only beside the **entry** cell, which is why they cannot see issue **0632**.
+
+Original filing follows.
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3d, 2026-08-21, at
 `d56283ec`. This is the test-side record of why attempt 4 was green at 275
 checks while two of its claims were false in the field. See 0494.

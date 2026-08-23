@@ -1,5 +1,9 @@
 # 0495 — `xschem go_back` dirties the parent, so any hierarchy walk violates I4
 
+STATUS: **FIXED FOR THE CLEAN PATH BY S3 (2026-08-22); THE DIRTY PATH IS ISSUE 0632.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. The mechanism is **narrower than this filing**: `go_back` dirties the parent only when a `<cell>~.sch` exists beside it, because `load_backup_as` (`save.c:4191`) returns early unless `autosave_backup` is set and ends in `set_modify(1)` (`:4207`). `op_annot::_park_backup` parks `::autosave_backup` at 0 for a **clean** entry buffer and `_restore` gives it back unconditionally after the unwind. Measured on the SHIPPED `bandgap_opamp`: `modified 0 → 0`, 73 instances, every byte in the cell directory unchanged (rows **W19a**/**W19b**). ⚠ With unsaved edits the park is unsafe and the walk is **not** guarded — see **0632**.
+
+Original filing follows.
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3d, 2026-08-21, at
 `d56283ec`. Refuted attempt 4's I4 claim; see 0494.
 Related: 0494 (the reverted attempt), 0499 (the guardian that cannot fail),

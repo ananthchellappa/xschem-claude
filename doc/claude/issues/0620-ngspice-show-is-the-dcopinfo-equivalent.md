@@ -1,5 +1,9 @@
 # 0620 — ngspice already has a Spectre-`dcOpInfo` equivalent (`show`), and S3/S4 should decide about it before emitting 78 save cards
 
+STATUS: **DECIDED 2026-08-22 by S3, written into spec §3.1 — option A (save cards) is PRIMARY, option B (`show`) is a named operating-point-only fast path for a later step, A+B is not implemented.** New evidence this issue does not carry, measured by the S3 crew and decisive on its own: **`show` publishes `von` where the save card publishes `vth`** (`grep -cw vth show.txt` = 0, `grep -cw von show.txt` = 1), so option B needs a per-model show-name → descriptor-name map — **the second name builder invariant I1 forbids by name**, and its drift would be silent. Plus this issue's own decisive rows: `show` has no timepoints (S11 already ships cursor-following device rows on a **tran** raw) and it never reaches the raw, which is the only channel `xschem raw value` reads.
+
+Original filing follows.
+
 STATUS: **OPEN — measured 2026-08-22** while answering the user's question
 "does ngspice need to be updated to support what we want (like spectre)?".
 Directly informs plan steps **S3** (`op_annot::save_cards`) and **S4**.

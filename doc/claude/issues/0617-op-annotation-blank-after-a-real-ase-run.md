@@ -1,5 +1,9 @@
 # 0617 — a successful OP run annotates nothing, and the tool does not say why
 
+STATUS: **HALF CLOSED 2026-08-22 — S3 landed, S4 has not.** **Addressed by S3 (attempt 5), landed 2026-08-22** — see the *S3 LANDED* section of `doc/claude/suggestions/next_session_prompt_op_annotation.md`. `op_annot::save_cards` on the user's own `sky130_tests_ase/tb_bandgap` now emits **469 lines (1 × `.save all` + 468 cards)** in 244 ms, of which **468 of 468 materialise as real vectors** in an ngspice 46+ raw, and all 78 cards of the hand-written demo golden are a byte-exact subset. **The user's six blank rows are still blank until S4 carries the block into `ase::render_deck`** (or the user runs the new *Simulation → Graphs → Create device OP .save file* menu item and `.include`s the result). The **I8** half of this issue — the tool saying *why* a row is blank — is untouched and still open.
+
+Original filing follows.
+
 STATUS: **OPEN — reported by the user 2026-08-22**, second eyes-on session.
 The *cause* is that plan steps **S3 and S4 were never implemented**; this issue
 is the user-visible half that stands even after they land. Rider on
