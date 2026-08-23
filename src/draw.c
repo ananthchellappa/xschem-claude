@@ -10410,14 +10410,44 @@ static void draw_annot_overlay(int n)
   if(!xctx->enable_layer[layer]) return;
   if(size * FONTWIDTH * xctx->mooz < 1) return;   /* zoom-cull, as the texts loop */
   #if HAS_CAIRO==1
-  xctx->cairo_font = cairo_toy_font_face_create(ANNOT_OVERLAY_FONT,
-    CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-  cairo_save(xctx->cairo_ctx);
-  cairo_save(xctx->cairo_save_ctx);
-  cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
-  cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
-  cairo_font_face_destroy(xctx->cairo_font);
-  didfont = 1;
+  /* The face is created ONCE PER PROCESS rather than once per instance per frame.
+   * This function runs for every annotated instance on every redraw, so the
+   * original create/destroy pair ran ~13x per frame on a 13-FET sheet.
+   *
+   * ⚠ HYGIENE, NOT A FIX FOR ISSUE 0612, AND THE MEASUREMENT SAYS SO. It was
+   * made while hunting 0612 (an OP-annotation session kills VcXsrv) on the
+   * theory that destroying the face invalidated cairo's server-side glyph set.
+   * A/B on Xvfb over 100 annotated redraws, and again over 60 zoom in/out
+   * cycles, moved nothing: 100 vs 110 XCreatePixmap, 27 vs 27 glyph sets.
+   * cairo_toy_font_face_create() hits cairo's own toy-face cache, so the
+   * original pair was already nearly free. Kept because strictly less work per
+   * frame is still less work -- NOT because it closes 0612.
+   *
+   * What 0612 actually measured, on a real VcXsrv session that ended with the X
+   * SERVER dying (LD_PRELOAD counter, tools/debug/xcount.c):
+   *   XCreatePixmap 2795  XFreePixmap 2761  outstanding 34  (i.e. NO leak)
+   *   XRenderCreatePicture 3050   XRenderCreateGlyphSet 137 (27 on Xvfb)
+   *   XSCHEM's own resetwin() asked for 5 of those 2795.
+   * The client is balanced; the churn is cairo compensating for a limited Render
+   * implementation, and only on that server. Nothing on Xvfb reproduces it.
+   *
+   * The face is immutable and depends on nothing per-call: ANNOT_OVERLAY_FONT is
+   * a compile-time constant and slant/weight never vary. Size is applied
+   * separately by draw_string() -> cairo_set_font_size() (draw.c:475) and is
+   * unaffected. Never destroyed: one face for the life of the process is the
+   * point, and cairo owns it. */
+  {
+    static cairo_font_face_t *annot_face = NULL;
+    if(!annot_face) {
+      annot_face = cairo_toy_font_face_create(ANNOT_OVERLAY_FONT,
+        CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    }
+    cairo_save(xctx->cairo_ctx);
+    cairo_save(xctx->cairo_save_ctx);
+    cairo_set_font_face(xctx->cairo_ctx, annot_face);
+    cairo_set_font_face(xctx->cairo_save_ctx, annot_face);
+    didfont = 1;
+  }
   #endif
   /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
   draw_string(layer, ADD, txt, 0, 0, 0, 0, x, y, size, size);

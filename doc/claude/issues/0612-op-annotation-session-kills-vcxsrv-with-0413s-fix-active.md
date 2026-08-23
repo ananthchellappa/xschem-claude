@@ -195,3 +195,90 @@ Two experiments, one variable at a time, both user-side:
 If `-nowgl` stops it, the bug is a VcXsrv/driver interaction and XSCHEM's only
 duty is to document it. If neither helps, the next instrument is a request-level
 trace (`xtrace` is not installed here) or `-logfile` with a debug VcXsrv build.
+
+
+---
+
+# ROUND 3 — the allocator is IDENTIFIED, and it is not XSCHEM
+
+A crash-proof counter (`tools/debug/xcount.c`, dumping continuously to a per-PID
+file so the totals survive the process dying with its server) run against the
+real VcXsrv through a full crashing session:
+
+```
+XCreatePixmap          2795      XSCHEM's own resetwin() asked for 5 of these
+XFreePixmap            2761
+outstanding              34      <- identical to the value at startup
+XCreateWindow           204
+XRenderCreatePicture   3050      freed 3048
+XRenderCreateGlyphSet   137      (27 on Xvfb)
+VcXsrv: 682 CreateDIBSection failures
+```
+
+**XSCHEM does not leak.** Outstanding was 34 at startup and 34 at death. The
+client is balanced. What kills the server is **churn**: ~2800 pixmap
+create/destroy cycles and ~3050 Render pictures in one session. Windows frees DIB
+sections lazily, so that rate fragments the GDI heap until `CreateDIBSection()`
+begins failing and VcXsrv exits.
+
+**The allocator is cairo, not XSCHEM.** 2790 of the 2795 pixmaps were requested
+by the cairo Xlib backend, not by any XSCHEM call.
+
+## The server-side comparison that matters
+
+```
+                        Xvfb (:99)        VcXsrv
+startup                 ~106 pixmaps      367 pixmaps
+full session            ~110 pixmaps      2795 pixmaps
+glyph sets                27              137
+```
+
+Startup alone on VcXsrv allocates more than an entire storm does on Xvfb. That is
+the signature of a **rendering fallback**: cairo compensating for a Render
+implementation that cannot serve an operation natively, by building intermediate
+surfaces. Xvfb's Render is complete, so the fallback never engages there — which
+is exactly why no scripted reproduction on `:99` has ever worked, and why
+`AUDIT_DISPLAY=:0` (Xwayland, a third server) would not reproduce it either.
+
+## A HYPOTHESIS THAT WAS WRONG, recorded so it is not re-tried
+
+`draw_annot_overlay()` created and destroyed a cairo toy font face **per
+annotated instance per frame** (~13x/frame on this sheet). The theory was that
+`cairo_font_face_destroy()` dropped the last reference, invalidating the
+server-side glyph set and forcing continuous re-upload — which fitted the 27 ->
+137 glyph-set rise, the annotation-only trigger, and the correlation with motion.
+
+**Measured false.** A/B on Xvfb, 100 annotated redraws: 100 vs 110
+`XCreatePixmap`, **27 vs 27 glyph sets**. Again over 60 zoom in/out cycles (to
+catch the zoom-dependent font size at `draw.c:475`): 35 with annotation on, 33
+with it off. `cairo_toy_font_face_create()` hits cairo's own toy-face cache, so
+the original pair was already nearly free.
+
+The hoist was kept as hygiene — strictly less work per frame — and `src/draw.c`
+says in terms that it does **not** close this issue.
+
+## Also eliminated this round
+
+* **`-nowgl`.** The user restarted VcXsrv without native WGL (verified: GL startup
+  lines 20 -> 3, `DRISWRAST` instead of `Win32 native WGL`). Crashed anyway, 1319
+  failures against 7 XSCHEM pixmap recreations.
+* **`draw_crosshair`.** It is the last XSCHEM call in *both* crash logs and ran
+  1259 times against 1319 failures — a compelling correlation. It allocates
+  nothing: `erase_crosshair()` uses `MyXCopyArea` from `save_pixmap`. It
+  correlates with motion because everything does.
+
+## What is left, and it is no longer an XSCHEM bug hunt
+
+The remaining question is **which Render operation cairo cannot do natively on
+VcXsrv**, and that is answerable only against that server. Options:
+
+1. `-multiwindow` off — the one startup flag not yet varied. 204 X windows were
+   created in the measured session, and in multiwindow mode each becomes a
+   Windows window with its own DIB.
+2. A different Windows X server (X410, MobaXterm, or WSLg's own `:0`) — if the
+   churn does not kill those, the defect is VcXsrv's.
+3. Build XSCHEM with `HAS_CAIRO=0` — removes the allocator entirely, at the cost
+   of anti-aliased text. A diagnostic, not a shipping answer.
+
+**XSCHEM's own duty is discharged**: no leak, balanced allocation, and its direct
+requests (5 pixmaps) are three orders of magnitude below the failure count.
