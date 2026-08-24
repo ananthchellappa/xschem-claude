@@ -101,7 +101,7 @@ namespace eval ase {
 # under --nogui), not the command's absence. Those guards are gone: the pane half
 # stays a no-op headless, the file half now runs, which is what makes this
 # testable under `--nogui --logdir`. The existence check is a cheap belt: ciw.tcl is
-# sourced 37 lines AFTER this file (xschem.tcl:14273 vs 14312), so a future SOURCE-TIME
+# sourced 52 lines AFTER this file (xschem.tcl:14854 vs :14802), so a future SOURCE-TIME
 # ASE notice would otherwise lose its pane half silently.
 # It is also the rename-able spy point ASE's tests stub -- they stub ::ciw_echo,
 # which this resolves by NAME at call time, so they still intercept. Measured: 5
@@ -135,20 +135,27 @@ namespace eval ase {
 # Everything above still describes the BODY -- it just lives in
 # `xschem::notify` (src/ciw.tcl) now, moved verbatim, because the channel had
 # TWO byte-identical builders before this step (this proc and wviewer::echo,
-# src/wave_viewer.tcl:735) and invariant I1 forbids exactly that. ase::echo
+# src/wave_viewer.tcl:750) and invariant I1 forbids exactly that. ase::echo
 # keeps its name, its `{msg {tag {}}}` signature and its 61+ call sites; the
 # remedy fields (-menu/-command), the short form and the state-keyed latch are
 # reached by calling ::xschem::notify DIRECTLY at the sites that have something
 # to say with them (ase::op_cards_capture is the first).
 #
-# ⚠ ciw.tcl is sourced AFTER this file (src/xschem.tcl:14648 vs :14606), so this
+# ⚠ ciw.tcl is sourced AFTER this file (src/xschem.tcl:14854 vs :14802), so this
 # resolves ::xschem::notify at CALL time and a SOURCE-TIME ase::echo would fail.
 # No call site makes one. Catch'd for the same reason both halves always were:
-# a broken message may never break a pick or a netlist.
-proc ase::echo {msg {tag {}}} {
-  if {[catch {::xschem::notify $msg -tag $tag} r]} { return 0 }
-  return $r
-}
+# a broken message may never break a pick or a netlist -- see 0658 below for
+# what that catch was quietly costing.
+## ⚠ 0658: the catch that used to live here HID the defect. `::xschem::notify`
+## lives in src/ciw.tcl, which src/xschem.tcl sources AFTER this file, so one
+## unavailable proc in another file turned every call site into a silent no-op
+## -- the durable log line included, and that line had been INLINE here before
+## 0650. The body is now `::xschem::notify_safe` (src/xschem.tcl, defined before
+## every caller): it still never propagates -- a notice may not break a pick or
+## a netlist -- but a raise now falls back to the degraded bootstrap channel
+## instead of returning a silent, untrue 0. ONE delegate body, shared with
+## wviewer::echo, which is what invariant I1 asks for.
+proc ase::echo {msg {tag {}}} { return [::xschem::notify_safe $msg $tag] }
 
 # dict get with a default (states are open dicts: keys may be absent).
 proc ase::state_get {state key {dflt {}}} {

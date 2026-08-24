@@ -737,11 +737,17 @@ namespace eval wviewer {
 # prohibition, and a drift between them would have failed SILENTLY. The body now
 # lives once, in `xschem::notify` (src/ciw.tcl). Name, signature and every call
 # site here are unchanged; ::xschem::notify is resolved at CALL time because
-# ciw.tcl is sourced after this file (src/xschem.tcl:14648 vs :14610).
-proc wviewer::echo {msg {tag {}}} {
-  if {[catch {::xschem::notify $msg -tag $tag} r]} { return 0 }
-  return $r
-}
+# ciw.tcl is sourced after this file (src/xschem.tcl:14854 vs :14806).
+## ⚠ 0658: the catch that used to live here HID the defect. `::xschem::notify`
+## lives in src/ciw.tcl, which src/xschem.tcl sources AFTER this file, so one
+## unavailable proc in another file turned every call site into a silent no-op
+## -- the durable log line included, and that line had been INLINE here before
+## 0650. The body is now `::xschem::notify_safe` (src/xschem.tcl, defined before
+## every caller): it still never propagates -- a notice may not break a pick or
+## a netlist -- but a raise now falls back to the degraded bootstrap channel
+## instead of returning a silent, untrue 0. ONE delegate body, shared with
+## wviewer::echo, which is what invariant I1 asks for.
+proc wviewer::echo {msg {tag {}}} { return [::xschem::notify_safe $msg $tag] }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
 # the session state's design dict, falling back to the token's cell segment

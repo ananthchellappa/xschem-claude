@@ -162,13 +162,13 @@ against one working tree measures a tree that is changing under it.
 |---|---|---|
 | **0656** | a whitespace-only notice **blanked** a parked `.statusbar.12` notice (and could blank a live `*BUSY*`) — the moved body lost `ase::echo`'s second early return | **FIXED** in the write-up pass |
 | **0657** | `sinks` claimed `log` with **no log file open** — `log_action` never reports a closed log, so the witness lied | **FIXED** in the write-up pass |
-| **0658** | a missing `::xschem::notify` silences `ase::echo` **completely, the durable log included** — measured `sinks reached = ''`. Before 0650 the log write was inline and had no cross-file dependency | OPEN — the inline-duplicate fix would re-create the I1 breach 0650 just deleted |
+| **0658** | a missing `::xschem::notify` silences `ase::echo` **completely, the durable log included** — measured `sinks reached = ''`. Before 0650 the log write was inline and had no cross-file dependency | **FIXED 2026-08-24** (status E) — see the 0658 block below. The inline-duplicate fix stayed rejected: the log writer was **extracted** to `xschem::notify_log` instead |
 | **0659** | mapped-but-occluded CIW → zero visible sinks | OPEN |
 | **0660** | the fallback is **last-writer-wins** (3 notices → only the last survives; the per-device under-emission warnings can never reach it) and its short form carries **no remedy** | OPEN |
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0662.**
+**Number the next issue from 0668.** (0662-0667 were taken by the 0658 crew.)
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -176,6 +176,136 @@ against one working tree measures a tree that is changing under it.
 :99** and `which openbox` resolves. CLAUDE.md and MEMORY.md still say it is not
 installed and the arm runs WM-less; commit `0c288551` already records that it was
 installed since. Every `:99` number in this block was taken with openbox live.
+
+---
+
+## ✅⚠ 0658 — LANDED 2026-08-24 (status **E**). THE NOTICE BOOTSTRAP, AND A STARTUP SEGFAULT NOBODY HAD SEEN
+
+**Not a plan step** — an eyes-on batch item, and the direct sequel to 0650. Read
+this before any step that sources a new `.tcl` file from `src/xschem.tcl`, and
+before any step that adds a notice.
+
+### What was measured BEFORE
+
+`rename ::xschem::notify ::v_saved_notify`, then `ase::echo`, under
+`--nogui --pipe -q --logdir` — asserting on the **file**, not on a return value:
+
+```
+CONTROL  ase::echo      rc=0 res=1 log 251->291
+R1/R2 DEGRADED ase::echo      rc=0 res=0 log 330->330
+R2    DEGRADED wviewer::echo  rc=0 res=0 log 330->330
+```
+
+Zero sinks, nothing raised, and the durable line — the sink 0650's own table
+calls *"the one that survives a shut window"* — was never written. Before 0650
+that write was **inline** in `ase::echo`.
+
+### What landed
+
+A **deliberately degraded bootstrap channel** in `src/xschem.tcl` at `:14595`,
+before every caller; `src/ciw.tcl` still redefines the real four-sink channel on
+top of it. The durable-log write was **extracted** into `xschem::notify_log` and
+is now called by *both* `ciw.tcl`'s sink 2 and the bootstrap — one builder, two
+consumers, which is how the fix stayed inside **I1** instead of re-creating the
+breach 0650 had just deleted. `ase::echo` and `wviewer::echo` share one delegate
+body, `xschem::notify_safe`.
+
+### ⚠⚠ THE THING THE NEXT CREW MUST TAKE FROM THIS BLOCK
+
+**`src/xschem.tcl` sources its helpers with a BARE `source`, and a Tcl error in
+any one of them SEGFAULTS STARTUP — exit 139, script never runs.** Measured three
+ways (error at the top of the helper, error at the end, file absent). The raise
+propagates *out of* `xschem.tcl`, `source_tcl_file()` (`src/xinit.c:1513`) merely
+prints it and returns, `Tcl_AppInit` ignores that return (`src/xinit.c:3406`) and
+walks on into `tclgetdoublevar("cairo_font_line_spacing")` against variables the
+rest of the file never set.
+
+Three consequences that bind later steps:
+
+1. **This is the 0423/0424 signature, and it is reachable without an install.**
+   0424 was "the install list lost `op_annot.tcl`". The same crash arrives from a
+   *syntax error* in any helper — which is one bad edit on any pure-Tcl step in
+   this plan. If a step you are on adds or edits a sourced `.tcl`, a smoke launch
+   (`./src/xschem --nogui --pipe -q --script /dev/null; echo $?`) is worth more
+   than it costs.
+2. **Issue 0658 fixed this for `ciw.tcl` only** (its `source` at `:14854` is now
+   caught and announces; `ciw_create` at `:16919` is guarded). Every *other* late
+   source — `op_annot.tcl`, `ase.tcl`, `ase_window.tcl`, `wave_viewer.tcl`,
+   `cmdmode.tcl`, `calculator.tcl`, `property_form.tcl`, `create_instance.tcl`,
+   `action_registry.tcl` … — is **still bare**. Filed as **0663**.
+3. **A bootstrap-style fix is inert without the catch.** Issue 0658's own
+   reachability sentence was false, and sabotage variant **D** is the receipt:
+   revert just the catch and the degraded child goes from exit 0 back to
+   `CHILDKILLED SIGSEGV`.
+
+### Anchors this crew re-measured (the old ones had all drifted)
+
+| cited as | actually |
+|---|---|
+| `xschem.tcl:14648` (ciw source) | **`:14854`** — and it is no longer bare |
+| `xschem.tcl:14606` (ase source) | **`:14802`**; wave_viewer **`:14806`**; op_annot **`:14796`** |
+| `xschem.tcl:16705` (`ciw_create`) | **`:16919`** — and it is now guarded |
+| `ciw.tcl:53` (`WM_DELETE_WINDOW`) | **`:384`** |
+| `ciw.tcl:120-121` (`ciw_echo`) | **`:450`** |
+| `wave_viewer.tcl:735` (`wviewer::echo`) | **`:750`** |
+| `test_ase_locked_wire_pick_0160:126` | **`:175`** — the live one-notice fence |
+
+### New harness the next crew can reuse
+
+**`tests/headless/sharefarm.tcl`** — builds a throw-away `XSCHEM_SHAREDIR` as a
+symlink farm over `src/` with named files replaced, then launches a **child**
+xschem against it with a private `--logdir` and normalises `exec`'s failure
+reporting (`0` vs `CHILDKILLED SIGSEGV`). This is the only honest way to
+reproduce "a whole file failed to load": an in-process `rename` removes one proc,
+at the wrong time. It also closes the harness gap the Scout found — there is **no
+`full_audit.sh` arm that combines `--nogui` with `--logdir`**, and the
+child-process idiom sidesteps it entirely.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+Ten of them, in `doc/claude/issues/0658-*.md`. The three that bind later work:
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L3** | catch the `ciw.tcl` source; a broken helper yields a degraded-but-alive session | bootstrap only — the item's headline claim would be false in the configuration it is sold on |
+| D2 | **L1 (I1)** | **extract** the shared writer rather than duplicate it | two copies of the log block in two files |
+| D8/D9 | L2 | stderr is a **last resort only**, sits behind the durable log, and is **never counted as a sink** | claiming `sinks {stderr}` — it would make a caller believe the user was told |
+
+### THE SABOTAGE MATRIX — 8 variants, 2 exact, 5 supersets, **1 coverage hole**
+
+`D` and `G` were exact; `A`, `B`, `C`, `E`, `F` were supersets. **`H` reddened
+nothing**: the `ciw_create` guard at `src/xschem.tcl:16919` is **unfalsifiable by
+any committed row**. Removing it does not kill the child — `Tcl_AppInit` prints
+`invalid command name "ciw_create"` and continues — but it **aborts the remaining
+117 lines of `xschem.tcl`**, silently losing the stdin REPL, the user colour
+file, `setup_tcp_*` and four variable traces. The one-line close is in the issue:
+add `[info commands ::stdin_repl_setup]` (measured **0** without the guard, **1**
+with) as a fifth field of PS27's tuple.
+
+⚠ The driver brief's own prediction for variant **C** — *"move the bootstrap
+after 14648 → R1 must redden"* — **did not hold**, and the reason is worth
+carrying: relocating the block does not delete `notify_bootstrap`, so the
+delegate fallback still writes the durable line. Variant C targets **R3**, not
+R1. A predicted red that does not appear is not automatically a hole.
+
+### STILL OPEN — the fix introduced four defects, all filed
+
+| issue | what | why it was not fixed here |
+|---|---|---|
+| **0664** | the degradation announcement claims LOG-ONLY **without measuring it** — a `ciw.tcl` erroring on its *last* line leaves the full channel live and still writes the claim into `Xschem.log` | 0652's class, in the artifact 0658 protects. Fix is a one-line `info body` test |
+| **0665** | **one notice, two durable lines** when the channel raises after sink 2 — `notify_safe` re-makes a notice sink 2 already wrote | needs a progress flag in the channel |
+| **0666** | `ase::echo`/`wviewer::echo` **can now raise into their caller** (`rc=1` where HEAD gave `rc=0`) — the catch moved into the callee and the outermost link is uncaught | the brief said *"a notice must never break its caller"*; unreachable outside a test's own sabotage, but it is 0658's shape moved up one file. Two-line fix, written out in the issue |
+| **0667** | the **degraded GUI user sees nothing on screen** — `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it | 0658's brief mandated no statusbar sink (it would copy `notify_statusbar`). Wants a ruling **together with 0654/0655/0660** |
+| **0662** | `sinks` claims `ciw` vacuously | why every 0658 row asserts on the log **file**, never the witness field |
+| **0663** | the bare-`source` segfault **class** | only `ciw.tcl` is caught |
+
+### The E question this owes the user
+
+> **Should a broken or absent `src/ciw.tcl` let xschem START in a degraded,
+> log-only notice mode — announced once on stderr and once in the durable log —
+> instead of today's SIGSEGV at startup (exit 139)?**
+
+Implemented as **yes**. Recorded in `owed.sh` as a `rule` debt against 0658.
 
 ---
 

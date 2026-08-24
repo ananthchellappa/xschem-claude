@@ -42,12 +42,17 @@ proc check {name got exp} {
   else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
 }
 proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
+## non-asserting evidence line (the test_ase_log_seam_0207.tcl idiom)
+proc note {name got} { puts "note: $name = {$got}"; flush stdout }
 
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
 source [file join $here scratch.tcl]
+## issue 0658: a throw-away XSCHEM_SHAREDIR + a CHILD xschem launched against it,
+## the only honest reproduction of "src/ciw.tcl failed to load" (NTD1-NTD7).
+source [file join $here sharefarm.tcl]
 set scratch [test_scratch ase_core]
 
 # --- scratch lib/cell/view fixture + registry --------------------------------
@@ -1096,14 +1101,25 @@ check "NT0 0650 the ::xschem NAMESPACE and the `xschem` COMMAND coexist" \
 # Invariant I1. Each sink and each policy fragment is a NAMED proc so a
 # sabotage leg can neutralize exactly one of them (SAB-N1/N2/N3/N4/N5/N8) and
 # see exactly which rows notice.
+#
+# ⚠ ISSUE 0658 EXTENDED THIS LIST BY FOUR, and the four live in a DIFFERENT
+# FILE on purpose (src/xschem.tcl, sourced before every caller) -- see the
+# NT16-NT21 and NTD1-NTD7 block below. `notify_bootstrap` is the degraded
+# channel, `notify_safe` the ONE delegate body behind ase::echo and
+# wviewer::echo, `notify_log` the ONE durable-log writer both the full channel
+# and the bootstrap consume (invariant I1: extracting it is what keeps the
+# bootstrap from being a second copy of ciw.tcl's sink 2), and
+# `notify_degraded_once` the one-time degraded-state announcement.
 set nt1_missing {}
 foreach p {::xschem::notify ::xschem::notify_ciw_visible ::xschem::notify_statusbar
            ::xschem::notify_popup ::xschem::notify_short ::xschem::notify_record
            ::xschem::notify_latch_ok ::xschem::notify_latch_rearm
-           ::xschem::notify_latch_reset} {
+           ::xschem::notify_latch_reset
+           ::xschem::notify_bootstrap ::xschem::notify_safe
+           ::xschem::notify_log ::xschem::notify_degraded_once} {
   if {[info commands $p] eq {}} { lappend nt1_missing $p }
 }
-check "NT1 0650 xschem::notify and every named callee exist" $nt1_missing {}
+check "NT1 0650+0658 xschem::notify and every named callee exist" $nt1_missing {}
 
 # --- NT2: R-0653-a, the ruled default ----------------------------------------
 # `set ::notify_style {ciw|popup}`, default `ciw`. The `set_ne` idiom
@@ -1277,6 +1293,337 @@ check "NT15 0650 a notice leaves `xschem get statusmsg` and statusmsg_hold\
  untouched (the rejected .statusbar.1 sink stays rejected)" \
   [list [llength $nt15_seen] [xschem get statusmsg] [xschem get statusmsg_hold]] \
   [list 1 {NT15 SENTINEL} $nt15_hold0]
+
+
+# ============================================================================
+# NT16-NT21 / NTD1-NTD7 -- ISSUE 0658: A MISSING CHANNEL MUST NOT SILENCE THE
+# DURABLE LOG
+# ============================================================================
+# Measured at HEAD, twice independently, and the driver reproduced it a third
+# time: with `rename ::xschem::notify ::v_saved_notify` in place, under
+# `--nogui --pipe -q --logdir`,
+#
+#     CONTROL  ase::echo      rc=0 res=1 log 251->291
+#     DEGRADED ase::echo      rc=0 res=0 log 330->330
+#     DEGRADED wviewer::echo  rc=0 res=0 log 330->330
+#
+# Zero sinks, nothing raised, and the DURABLE LOG LINE -- the sink 0650's own
+# table calls "the one that survives a shut window" -- was NOT written. Before
+# 0650 that write was INLINE in ase::echo with no cross-file dependency, so this
+# is a regression 0650 introduced. src/xschem.tcl sources op_annot (:14600),
+# cmdmode, ase (:14606), ase_window, wave_viewer (:14610) and calculator BEFORE
+# ciw.tcl (:14648), so the channel loads after every one of its callers and
+# lives in the very file whose failure is the hazard.
+#
+# ⚠ AND 0658's OWN REACHABILITY SENTENCE IS FALSE. It says "any Tcl error
+# anywhere in src/ciw.tcl kills the whole file, and xschem.tcl continues past a
+# failed source." Measured false, three ways (error at the top of ciw.tcl, error
+# at the end, file absent): src/xschem.tcl:14648 is a BARE `source`, the raise
+# propagates OUT of xschem.tcl, source_tcl_file() (src/xinit.c:1513) merely
+# prints and returns, and Tcl_AppInit walks on into
+# `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The
+# process SIGSEGVs at startup -- exit 139, the 0423/0424 signature -- and the
+# bootstrap never gets to speak. It is Tcl_AppInit that continues past a failed
+# source of *xschem.tcl*, not xschem.tcl past a failed source of *ciw.tcl*.
+# So NTD2's headline assertion is "the child EXITS 0", and at HEAD it is
+# `CHILDKILLED SIGSEGV`. Catching :14648 is what makes the degraded state real;
+# the bootstrap is what makes it survivable.
+#
+# THE CONTRACT THESE ROWS DEFINE (red-first; the implementation must match the
+# names and the marker string, they are golden here):
+#
+#   ::xschem::notify_log {line tag}
+#       THE ONE durable-log writer. ciw.tcl's sink 2 and the bootstrap both call
+#       it -- extracting it is exactly what keeps the bootstrap from being a
+#       second copy of the trimright / trailing-backslash pad / empty guard /
+#       actionlog_filename block (invariant I1, and 0658's own rejected
+#       alternative #1). Returns 1 only when the line reached an OPEN log.
+#   ::xschem::notify_bootstrap {msg args}
+#       the DELIBERATELY DEGRADED channel: -tag (and -cause) parsed, every other
+#       option IGNORED and never a raise, ONE durable line, the honest sink count
+#       returned. NO short form, NO 28-char clipping, NO statusbar, NO popup, NO
+#       latch, NO remedy rendering -- NT19 fences all of that on the body.
+#   ::xschem::notify_degraded_once {cause}
+#       the one-time announcement, carrying the literal marker
+#       `NOTICE CHANNEL DEGRADED` and the cause. ONCE per session, not per
+#       notice (0497 rule 1: count per pass, never alert per item) -- NTD4.
+#   ::xschem::notify_safe {msg {tag {}}}
+#       THE ONE delegate body behind ase::echo AND wviewer::echo. Tries the
+#       channel; on ANY raise falls back to the bootstrap; never propagates.
+#       That is the answer to "the catch that hid it": the catch is not deleted
+#       (a notice must never break a pick or a netlist) and it no longer
+#       silently returns 0 -- NT21.
+#   ::xschem::notify_latch_{ok,rearm,reset}
+#       DEGENERATE versions in the bootstrap (ok always 1, rearm/reset no-ops),
+#       redefined by ciw.tcl. Not optional: ase.tcl:619 and ase.tcl:550 call
+#       them UNCAUGHT, ase.tcl:795's catch swallows the raise, and the whole
+#       OP-card block -- the user's actually-reported message -- dies with it.
+#       NTD5 owns that; NT20 is the fence that ciw.tcl's real latch still wins.
+#
+# ⚠ ASSERT ON THE FILE OR ON THE WITNESS, NEVER ON `sinks` ALONE FOR `ciw`.
+# ciw.tcl:271-274 counts sink 1 whenever ::ciw_echo merely fails to raise, and
+# ciw_echo (ciw.tcl:451) returns silently with no Tk -- measured under --nogui,
+# `notify_last sinks` reported `ciw log` with zero sinks actually reached. That
+# is 0657's lie, fixed for `log` and still live for `ciw` (filed as 0662).
+#
+# ⚠ AND `notify_last` GOES STALE IN THE DEGRADED CASE AT HEAD. Nothing updates
+# it, so a degraded call leaves the PREVIOUS notice's dict standing (measured:
+# `sinks = ciw log` after a call that reached zero sinks). NT17/NT18/NT21 assert
+# the witness is FRESH FOR THIS CALL, which is why they use a message longer
+# than the 28-char short-form budget: the full channel would record a CLIPPED
+# `short`, the bootstrap records `{}`.
+
+## Run $body with ::xschem::notify RENAMED AWAY, restoring it on every exit path
+## including a raising body. This is the driver's own reproduction, in-process.
+proc nt_no_notify {body} {
+  set had [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had} { rename ::xschem::notify ::nt_saved_notify }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify {}}
+    catch {rename ::nt_saved_notify ::xschem::notify}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+
+## Run $body with ::xschem::notify replaced by one that RAISES -- a genuine bug
+## INSIDE the channel, which is the only thing the delegates' catch can still
+## fire on once the bootstrap guarantees the command exists.
+proc nt_raising_notify {body} {
+  set had [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had} { rename ::xschem::notify ::nt_saved_notify2 }
+  proc ::xschem::notify {args} {
+    return -code error {NT21 a simulated bug inside the channel itself}
+  }
+  set rc [catch {uplevel 1 $body} e]
+  catch {rename ::xschem::notify {}}
+  if {$had} { catch {rename ::nt_saved_notify2 ::xschem::notify} }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+
+# --- NT16: R3 -- the bootstrap is OVERRIDDEN, NOT winning --------------------
+# "A bootstrap that silently wins in the normal case would delete every visible
+# sink and pass a naive test." So the discriminator is never `info commands`:
+# the LIVE ::xschem::notify must RAISE on an unknown option (ciw.tcl:257) and
+# carry -menu/-command as SEPARATE witness fields, its body must name the two Tk
+# sinks, and it must NOT be the bootstrap's body. Nothing here CALLS the
+# bootstrap -- a direct call would fire the once-latch and make NTD4/PS23 read
+# their own side effect.
+set nt16_boot_body {} ; catch {set nt16_boot_body [info body ::xschem::notify_bootstrap]}
+set nt16_full_body {} ; catch {set nt16_full_body [info body ::xschem::notify]}
+set nt16_raise [catch {::xschem::notify {NT16 unknown option probe} -no_such_option x}]
+set nt16_menu {Outputs > Save All… > Save device OP parameters}
+nt_capture [list ::xschem::notify {NT16 remedy probe} -menu $nt16_menu -command {puts hi}]
+check "NT16 0658 R3 the LIVE ::xschem::notify is the FOUR-SINK one, not the\
+ bootstrap: it raises on an unknown option, names both Tk sinks in its body,\
+ keeps -menu/-command as distinct fields, and its body differs from\
+ notify_bootstrap's" \
+  [list [expr {[info commands ::xschem::notify_bootstrap] ne {} ? 1 : 0}] \
+        $nt16_raise \
+        [expr {[string first notify_statusbar $nt16_full_body] >= 0 ? 1 : 0}] \
+        [expr {[string first notify_popup     $nt16_full_body] >= 0 ? 1 : 0}] \
+        [expr {($nt16_boot_body ne {} && $nt16_boot_body eq $nt16_full_body) ? 1 : 0}] \
+        [nt_field menu] [nt_field command]] \
+  [list 1 1 1 1 0 $nt16_menu {puts hi}]
+
+# --- NT17: R1/R2 mechanism -- the channel is gone and the notice is STILL made
+# The driver's own reproduction. At HEAD ase::echo catches, returns 0, and
+# ::xschem::notify_last keeps the PREVIOUS notice's dict -- so this row asserts
+# the witness is FRESH FOR THIS CALL. `short {}` is the second discriminator:
+# the message is 71 characters, so the full channel would record a 28-char
+# clipped short form and only the bootstrap records {}.
+set NT_LONG_A {NT17 the notification channel is gone and this notice must still be made}
+set nt17_rc [catch {nt_no_notify {::ase::echo $::NT_LONG_A error}} nt17_r]
+check "NT17 0658 R1/R2 with ::xschem::notify RENAMED AWAY, ase::echo still\
+ reaches the bootstrap: it does not raise, and notify_last is FRESH FOR THIS\
+ CALL with no short form, no remedy and an HONEST (empty, --nolog) sink list" \
+  [list $nt17_rc [nt_field msg] [nt_field tag] [nt_field short] \
+        [nt_field menu] [nt_field command] [nt_field sinks] \
+        [expr {[string length $NT_LONG_A] > 28 ? 1 : 0}]] \
+  [list 0 $NT_LONG_A error {} {} {} {} 1]
+
+# --- NT18: the same row for wviewer::echo -----------------------------------
+# Separate row on purpose: the two delegates were byte-identical copies before
+# 0650 and must not now pass on each other's evidence.
+set NT_LONG_B {NT18 the waveform viewer delegate must reach the durable log too}
+set nt18_rc [catch {nt_no_notify {::wviewer::echo $::NT_LONG_B error}} nt18_r]
+check "NT18 0658 R2 with the channel gone wviewer::echo reaches the bootstrap\
+ too, with its own fresh witness" \
+  [list $nt18_rc [nt_field msg] [nt_field tag] [nt_field short] [nt_field sinks]] \
+  [list 0 $NT_LONG_B error {} {}]
+
+# --- NT19: the I1 fences -- the bootstrap is SMALLER, and there is ONE delegate
+# "If you find yourself copying the trimright / trailing-backslash pad /
+# empty-guard block out of ciw.tcl, STOP -- that is the I1 breach." The
+# degraded mode must be visibly smaller than the channel and must not mention
+# any of the things it deliberately does not have.
+set nt19_bb {} ; catch {set nt19_bb [info body ::xschem::notify_bootstrap]}
+set nt19_nb {} ; catch {set nt19_nb [info body ::xschem::notify]}
+set nt19_forbidden {}
+foreach t {notify_statusbar notify_popup notify_short notify_ciw_visible
+           notify_style notify_latch_ok ciw_echo} {
+  if {[string first $t $nt19_bb] >= 0} { lappend nt19_forbidden $t }
+}
+set nt19_ase {} ; catch {set nt19_ase [info body ::ase::echo]}
+set nt19_wv  {} ; catch {set nt19_wv  [info body ::wviewer::echo]}
+check "NT19 0658 I1: notify_bootstrap is STRICTLY SMALLER than notify and names\
+ none of the sinks/policies it deliberately lacks, and BOTH delegates call the\
+ ONE shared notify_safe body" \
+  [list [expr {($nt19_bb ne {} && $nt19_nb ne {} && \
+                [string length $nt19_bb] < [string length $nt19_nb]) ? 1 : 0}] \
+        $nt19_forbidden \
+        [expr {[string first notify_safe $nt19_ase] >= 0 ? 1 : 0}] \
+        [expr {[string first notify_safe $nt19_wv]  >= 0 ? 1 : 0}]] \
+  [list 1 {} 1 1]
+
+# --- NT20: the DEGENERATE latch trio is overridden too -----------------------
+# ⚠ GREEN BEFORE THE CHANGE, deliberately -- a control, not evidence, in the
+# PS16/PS17/PS19 sense. It exists to STAY green: the bootstrap's
+# notify_latch_ok always returns 1, so if the block is ever placed AFTER
+# ciw.tcl (sabotage C) every -once notice in the product speaks on every call
+# and 0636's three-identical-lines-per-session defect comes straight back.
+nt_cx {::xschem::notify_latch_reset NT20}
+check "NT20 0658 the REAL state-keyed latch still wins over the bootstrap's\
+ degenerate always-1 one (a second identical (subject,state) is suppressed)" \
+  [list [nt_cx {::xschem::notify_latch_ok NT20 s1}] \
+        [nt_cx {::xschem::notify_latch_ok NT20 s1}] \
+        [nt_cx {::xschem::notify_latch_ok NT20 s2}]] \
+  {1 0 1}
+
+# --- NT21: the catch that hid it, answered ----------------------------------
+# With the bootstrap in place ::xschem::notify ALWAYS exists, so the delegates'
+# catch can now only fire on a GENUINE BUG INSIDE notify -- and silently
+# returning 0 for that is how this whole class of defect survives. It must not
+# propagate (a notice may never break a pick or a netlist) and it must not lie
+# (0652: a report that lies). So: rc 0, the notice re-made through the
+# bootstrap, and the witness naming THIS message.
+set NT_LONG_C {NT21 the channel itself is broken and the notice must survive that}
+set nt21_rc [catch {nt_raising_notify {::ase::echo $::NT_LONG_C error}} nt21_r]
+check "NT21 0658 a channel that RAISES (a real bug inside notify) is caught,\
+ falls back to the bootstrap, never propagates, and records THIS notice" \
+  [list $nt21_rc [nt_field msg] [nt_field tag] [nt_field short]] \
+  [list 0 $NT_LONG_C error {}]
+
+# ---------------------------------------------------------------------------
+# NTD1-NTD7 -- THE REAL DEGRADED STATE, IN A CHILD PROCESS
+# ---------------------------------------------------------------------------
+# A rename removes ONE proc. A failed `source` removes a whole FILE, at startup,
+# before any test script exists to do the renaming -- which is the state 0658 is
+# actually about. The only honest reproduction is a second xschem whose
+# XSCHEM_SHAREDIR is a symlink farm carrying a broken ciw.tcl
+# (tests/headless/sharefarm.tcl). These rows also need a REAL durable log, and
+# util.c:351 (`if(!has_x && !cli_opt_logdir[0]) return;`) means that requires
+# `--logdir` -- which no full_audit arm combines with --nogui, so the child
+# idiom (test_descend_log_absorb.tcl:48, test_ciw_actionlog_output.tcl:36) is
+# how these rows exist at all.
+set ntd_farm_ok  [share_farm $repo [file join $scratch farm_ok]]
+set ntd_farm_bad [share_farm $repo [file join $scratch farm_bad] \
+  [list ciw.tcl "error {0658 deliberate failure at the TOP of ciw.tcl}\n"]]
+
+set NTD_ASE {NTD-0658 an ASE refusal the user must see}
+set NTD_WV  {NTD-0658 a waveform-viewer refusal the user must see}
+set ntd_inner {
+  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
+  ntd_mark notify   [expr {[info commands ::xschem::notify] ne {} ? 1 : 0}]
+  ntd_mark ciw_echo [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]
+  ntd_mark boot     [expr {[info commands ::xschem::notify_bootstrap] ne {} ? 1 : 0}]
+  catch {::ase::echo {NTD-0658 an ASE refusal the user must see} error} r
+  ntd_mark ase $r
+  catch {::wviewer::echo {NTD-0658 a waveform-viewer refusal the user must see} error} r
+  ntd_mark wv $r
+  ## R4: five MORE notices, so "announced ONCE, not per notice" is measurable
+  for {set i 1} {$i <= 5} {incr i} { catch {::ase::echo "NTD-0658 volume notice $i" error} }
+  ## ase.tcl:619 / ase.tcl:550 call these UNCAUGHT
+  ntd_mark latch_ok    [list [catch {::xschem::notify_latch_ok ntd s1} e] $e]
+  ntd_mark latch_rearm [catch {::xschem::notify_latch_rearm ntd s1}]
+  ntd_mark latch_reset [catch {::xschem::notify_latch_reset ntd}]
+  exit 0
+}
+proc ntd_get {out k} {
+  foreach l [split $out \n] {
+    if {[regexp "^NTD-MARK $k=(.*)\$" [string trim $l] -> v]} { return $v }
+  }
+  return NO-MARK
+}
+set ntd_ok  [share_farm_child $ntd_farm_ok  [file join $scratch ntd_ok]  $ntd_inner]
+set ntd_bad [share_farm_child $ntd_farm_bad [file join $scratch ntd_bad] $ntd_inner]
+note "NTD ok  status"  [dict get $ntd_ok  -status]
+note "NTD bad status"  [dict get $ntd_bad -status]
+
+# --- NTD1: the NORMAL configuration, so the broken one means something -------
+# ⚠ GREEN BEFORE THE CHANGE. A control: it proves the farm, the child and the
+# log reader all work, so NTD2's red is about ciw.tcl and nothing else.
+check "NTD1 0658 a child on a NORMAL share farm exits 0, its durable log\
+ carries the notice, and it announces NO degradation" \
+  [list [dict get $ntd_ok -status] \
+        [share_farm_count [dict get $ntd_ok -log] $NTD_ASE] \
+        [share_farm_count [dict get $ntd_ok -log] {NOTICE CHANNEL DEGRADED}]] \
+  [list 0 1 0]
+
+# --- NTD7: non-vacuity -- the broken farm really IS degraded -----------------
+# Without this, NTD2 could be measuring a perfectly healthy run.
+check "NTD7 0658 the broken farm really loses ciw.tcl (::ciw_echo present on\
+ the normal farm, ABSENT on the broken one)" \
+  [list [ntd_get [dict get $ntd_ok -out] ciw_echo] \
+        [ntd_get [dict get $ntd_bad -out] ciw_echo]] \
+  {1 0}
+
+# --- NTD2: THE HEADLINE ROW ---------------------------------------------------
+# RED AT HEAD, and not in the way 0658 predicted: the child does not run
+# degraded, it SIGSEGVs (`CHILDKILLED SIGSEGV`, exit 139) because :14648 is a
+# bare `source`. Both halves are asserted here because either alone is a lie:
+# a survivable startup with no log line, or a log line from a process that
+# never reached the degraded state.
+check "NTD2 0658 R1 a child whose ciw.tcl FAILS TO SOURCE still starts (exit 0,\
+ not SIGSEGV) and ase::echo's line IS in the durable log" \
+  [list [dict get $ntd_bad -status] \
+        [share_farm_count [dict get $ntd_bad -log] $NTD_ASE]] \
+  [list 0 1]
+
+# --- NTD3: the other delegate, same state ------------------------------------
+check "NTD3 0658 R2 the same degraded child writes wviewer::echo's line to the\
+ durable log too" \
+  [share_farm_count [dict get $ntd_bad -log] $NTD_WV] 1
+
+# --- NTD4: R4 -- announced ONCE, not per notice ------------------------------
+# 0497 rule 1: count per pass, never alert per item. Seven notices go through
+# the bootstrap in that child; the log must carry all seven and exactly ONE
+# announcement. The volume count is the non-vacuity half -- one announcement
+# and no notices would also read as "exactly 1".
+check "NTD4 0658 R4 the degraded-state announcement appears EXACTLY ONCE in the\
+ whole log, while all five volume notices are still logged" \
+  [list [share_farm_count [dict get $ntd_bad -log] {NOTICE CHANNEL DEGRADED}] \
+        [share_farm_count [dict get $ntd_bad -log] {NTD-0658 volume notice}]] \
+  {1 5}
+
+# --- NTD5: the degenerate latch trio ------------------------------------------
+# ase::op_cards_nudge_ok (ase.tcl:619) and _reset (ase.tcl:550) call these
+# UNCAUGHT; measured, they RAISE `invalid command name
+# "::xschem::notify_latch_ok"` when the channel is gone, and ase.tcl:795's catch
+# swallows the whole OP-card block with no message and no log line. A bootstrap
+# that defined only `notify` would turn NTD2/NTD3 green while the user's
+# actually-reported gate-off nudge stayed dead.
+check "NTD5 0658 in the degraded child notify_latch_ok answers 1 and\
+ rearm/reset do not raise, so ase::op_cards_nudge_* survives" \
+  [list [ntd_get [dict get $ntd_bad -out] latch_ok] \
+        [ntd_get [dict get $ntd_bad -out] latch_rearm] \
+        [ntd_get [dict get $ntd_bad -out] latch_reset]] \
+  {{0 1} 0 0}
+
+# --- NTD6: the failure is REPORTED, not swallowed -----------------------------
+# 0423's standing objection to catching a source is "a silent continue hides the
+# problem". The announcement is the answer: it names the cause, once, on stderr
+# and in the durable log.
+set ntd6_out [dict get $ntd_bad -out]
+check "NTD6 0658 the degraded child SAYS SO and names ciw.tcl as the cause\
+ (a caught source is not a silent continue)" \
+  [list [expr {[string first {NOTICE CHANNEL DEGRADED} $ntd6_out] >= 0 ? 1 : 0}] \
+        [expr {[string first {ciw.tcl} $ntd6_out] >= 0 ? 1 : 0}] \
+        [expr {[string first {NOTICE CHANNEL DEGRADED} \
+                 [join [dict get $ntd_bad -log] "\n"]] >= 0 ? 1 : 0}]] \
+  {1 1 1}
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

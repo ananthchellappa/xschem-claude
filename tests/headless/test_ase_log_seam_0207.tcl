@@ -72,6 +72,10 @@ set no_recent_files 1                       ;# issue 0119: keep Open Recent clea
 set here    [file normalize [file dirname [info script]]]
 set repo    [file normalize [file join $here .. ..]]
 source [file join $here scratch.tcl]
+## issue 0658: a throw-away XSCHEM_SHAREDIR + a CHILD xschem launched against it
+## (PS27 -- the GUI user's degraded startup, the only row that reaches the
+## ciw_create guard at src/xschem.tcl:16705)
+source [file join $here sharefarm.tcl]
 set scratch [test_scratch ase_log_seam_0207]
 
 proc wfile {p body} { set f [open $p w]; puts $f $body; close $f }
@@ -468,6 +472,288 @@ check "PS18 0653 R-0653-b ::notify_style popup: ONE reusable non-blocking\
   [list $ps18_rc1 $ps18_up1 $ps18_rc2 $ps18_up2 $ps18_both $ps18_sb $ps18_gone] \
   [list 0 1 0 1 1 PS18-SENTINEL 1]
 if {$ps18_rc1} { note "PS18 first notify error" $ps18_e1 }
+
+
+# ============================================================================
+# PS20-PS27 -- ISSUE 0658: THE DURABLE LOG MUST SURVIVE A MISSING CHANNEL
+# ============================================================================
+# The driver reproduced it: `rename ::xschem::notify ::v_saved_notify`, then
+# `ase::echo "ASE: a refusal the user must see" error`, and the log file did not
+# grow by one byte. Zero sinks, nothing raised, and the sink 0650's own table
+# calls "the one that survives a shut window" was not written. This suite is the
+# only one with BOTH a real CIW pane and a real durable log, so it owns the
+# file-level assertions (PS21/PS22) and the R6 cross-product (PS24-PS26).
+#
+# The channel (src/ciw.tcl:246) loads at src/xschem.tcl:14648, AFTER op_annot
+# (:14600), ase (:14606) and wave_viewer (:14610) -- after every one of its
+# callers, and inside the very file whose failure is the hazard. The fix is a
+# minimal, deliberately degraded bootstrap defined in src/xschem.tcl BEFORE
+# :14600 and REDEFINED by ciw.tcl; the full contract, and the golden marker
+# string `NOTICE CHANNEL DEGRADED`, are written out at the head of the
+# NT16-NT21 / NTD1-NTD7 block in tests/headless/test_ase_core.tcl.
+#
+# GREEN BEFORE THE CHANGE, deliberately (controls, not evidence, in PS16/PS17's
+# sense): PS24, PS25 and PS26 -- the 0650 cross-product {withdrawn, iconified,
+# never-created} x {ciw, popup}, which was an ad-hoc adversary measurement in
+# the 0650 crew and has NO committed rows. The brief says "you must not regress
+# it"; with no green number on disk to diff, the only way to honour that is to
+# commit the rows. PS24's iconify half is also the row that must REDDEN rather
+# than self-skip if the live WM refuses iconify (issue 0646) -- so it reports
+# which WM was live rather than shrugging.
+
+## one field of the ::xschem::notify_last witness, with a speaking placeholder
+proc ps_field {k} {
+  if {![info exists ::xschem::notify_last]} { return NO-notify_last }
+  if {[catch {dict get $::xschem::notify_last $k} v]} { return NO-KEY-$k }
+  return $v
+}
+## run $body with ::xschem::notify RENAMED AWAY -- the driver's reproduction --
+## restoring it on every exit path including a raising body
+proc ps_no_notify {body} {
+  set had [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had} { rename ::xschem::notify ::ps_saved_notify }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify {}}
+    catch {rename ::ps_saved_notify ::xschem::notify}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+## count whole-log lines containing $s
+proc ps_logcount {s} {
+  set n 0
+  foreach l [loglines] { if {[string first $s $l] >= 0} { incr n } }
+  return $n
+}
+## Which window manager is actually running on this display? Issue 0645: the
+## Xvfb arm's default AUDIT_WM=openbox was not installed on this box for a
+## while and the arm fell back to WM-LESS with only a stderr warning, so a suite
+## whose subject is iconify/mapping MUST say what was live or it is a bare-Xvfb
+## measurement wearing a window manager's name.
+proc ps_wm_name {} {
+  set n {}
+  catch {
+    set r [exec xprop -root -notype _NET_SUPPORTING_WM_CHECK]
+    if {[regexp {window id # (0x[0-9a-fA-F]+)} $r -> id]} {
+      regexp {= "(.*)"} [exec xprop -id $id -notype _NET_WM_NAME] -> n
+    }
+  }
+  if {$n eq {}} {
+    if {[info exists ::env(AUDIT_WM)]} { return "NONE-REPORTED (AUDIT_WM=$::env(AUDIT_WM))" }
+    return {NONE (no _NET_SUPPORTING_WM_CHECK -- bare X server, no WM)}
+  }
+  return $n
+}
+note "PS20-PS27 live window manager" [ps_wm_name]
+note "PS20-PS27 DISPLAY" [expr {[info exists ::env(DISPLAY)] ? $::env(DISPLAY) : {NONE}}]
+
+# --- PS20: R3 -- the bootstrap is OVERRIDDEN, in the REAL configuration ------
+# "Assert the live xschem::notify is the four-sink one, NOT merely that the proc
+# exists. A bootstrap that silently wins in the normal case would delete every
+# visible sink and pass a naive test." Behavioural discriminators only: the full
+# channel RAISES on an unknown option (src/ciw.tcl:257) and keeps -menu/-command
+# as distinct witness fields. Nothing here CALLS the bootstrap -- a direct call
+# would fire the once-latch and make PS23 read its own side effect.
+set ps20_n0 [llength [loglines]]
+set ps20_raise [catch {::xschem::notify {PS20 unknown option probe} -no_such_option x}]
+::xschem::notify {PS20 an ordinary notice in the normal configuration} \
+  -menu {Outputs > Save All…} -command {puts hi}
+update idletasks
+check "PS20 0658 R3 with everything loaded normally the LIVE channel is the\
+ four-sink one (raises on an unknown option, keeps the remedy as fields) and a\
+ notice announces NO degradation" \
+  [list [expr {[info commands ::xschem::notify_bootstrap] ne {} ? 1 : 0}] \
+        $ps20_raise [ps_field menu] [ps_field command] \
+        [expr {[has [newlines $ps20_n0] {NOTICE CHANNEL DEGRADED}] ? 1 : 0}]] \
+  [list 1 1 {Outputs > Save All…} {puts hi} 0]
+
+# --- PS21: R1 ASSERTED ON THE FILE -- the row that is red at HEAD ------------
+# Measured at HEAD: log 330 -> 330 bytes, and the file itself carried the two
+# control lines and NEITHER degraded line. `sinks` is NOT the witness here:
+# ciw.tcl:271-274 claims `ciw` whenever ::ciw_echo merely fails to raise, even
+# with no pane to write to (issue 0662), and with the channel gone notify_last
+# does not update at all, so it reports the PREVIOUS notice's dict.
+set ps21_msg {PS21-0658 a refusal the user must see with the channel gone}
+set ps21_n0  [llength [loglines]]
+set ps21_rc  [catch {ps_no_notify {ase::echo $::ps21_msg error}} ps21_r]
+set ps21_new [newlines $ps21_n0]
+check "PS21 0658 R1 with ::xschem::notify RENAMED AWAY, ase::echo still writes\
+ the DURABLE LOG LINE -- asserted on the FILE, as a `#! ` error line" \
+  [list $ps21_rc [expr {[has $ps21_new "#! $ps21_msg"] ? 1 : 0}]] {0 1}
+note "PS21 new log lines" $ps21_new
+
+# --- PS22: R2 -- the other delegate, same file assertion ---------------------
+set ps22_msg {PS22-0658 the waveform viewer delegate must reach the log too}
+set ps22_n0  [llength [loglines]]
+set ps22_rc  [catch {ps_no_notify {wviewer::echo $::ps22_msg error}} ps22_r]
+check "PS22 0658 R2 with the channel still gone wviewer::echo writes its own\
+ durable `#! ` line" \
+  [list $ps22_rc [expr {[has [newlines $ps22_n0] "#! $ps22_msg"] ? 1 : 0}]] {0 1}
+
+# --- PS23: R4 -- announced ONCE for the whole session, not per notice --------
+# 0497 rule 1: count per pass, never alert per item. Three MORE degraded
+# notices; all three must be logged, and the whole file must still carry exactly
+# ONE `NOTICE CHANNEL DEGRADED` line -- the one PS21 already provoked. The
+# restore is verified in the same row so a later PS cannot inherit a broken
+# channel silently.
+set ps23_n0 [llength [loglines]]
+ps_no_notify {
+  foreach i {1 2 3} { catch {ase::echo "PS23-0658 further degraded notice $i" error} }
+}
+set ps23_new [newlines $ps23_n0]
+set ps23_cnt 0
+foreach l $ps23_new {
+  if {[string first {PS23-0658 further degraded notice} $l] >= 0} { incr ps23_cnt }
+}
+set ps23_back [catch {::xschem::notify {PS23 the channel is back} -short PS23BACK}]
+check "PS23 0658 R4 the degraded-state announcement fires ONCE for the whole\
+ session while every degraded notice is still logged, and the channel restores" \
+  [list [ps_logcount {NOTICE CHANNEL DEGRADED}] $ps23_cnt $ps23_back [ps_field short]] \
+  [list 1 3 0 PS23BACK]
+
+# --- PS24: R6 -- ICONIFIED x ciw --------------------------------------------
+# GREEN BEFORE THE CHANGE. The 0650 cross-product has no committed rows at all;
+# "you must not regress it" is unmeasurable without them. ⚠ NEVER A SELF-SKIP:
+# if the live WM refuses `wm iconify` this row REDDENS (issue 0646 -- a raise
+# self-skip masked a never-raise regression), and the note above names the WM.
+sbar_set PS24-SENTINEL
+ciw_show
+catch {wm iconify .ciw}
+for {set i 0} {$i < 100} {incr i} {
+  update idletasks ; update
+  if {![winfo ismapped .ciw]} break
+  after 20
+}
+set ps24_unmapped [expr {[winfo ismapped .ciw] ? 0 : 1}]
+ase::echo $PS_LONG error
+update idletasks
+set ps24_sb [sbar_text]
+check "PS24 0650/0658 R6 with the CIW ICONIFIED (not withdrawn) a notice still\
+ reaches [sbar_path]" \
+  [list $ps24_unmapped \
+        [expr {($ps24_sb ne {PS24-SENTINEL} && $ps24_sb ne {} && \
+                $ps24_sb ne {NO-WIDGET} && $ps24_sb ne {NO-TEXT}) ? 1 : 0}]] \
+  {1 1}
+note "PS24 statusbar text" $ps24_sb
+
+# --- PS25: R6 -- NEVER-CREATED x ciw ----------------------------------------
+# GREEN BEFORE THE CHANGE. The --nolog / never-created leg: `.ciw` does not
+# exist at all (src/xschem.tcl:16705 skips ciw_create), which is a DIFFERENT
+# predicate from withdrawn (PS14) and iconified (PS24). Destroy is the closest
+# reachable equivalent inside a live session.
+sbar_set PS25-SENTINEL
+catch {destroy .ciw}
+update idletasks ; update
+set ps25_gone [expr {[winfo exists .ciw] ? 0 : 1}]
+ase::echo $PS_LONG error
+update idletasks
+set ps25_sb [sbar_text]
+catch {ciw_create}
+update idletasks ; update
+check "PS25 0650/0658 R6 with NO .ciw AT ALL a notice still reaches the\
+ statusbar, and ciw_create brings the pane back for everything downstream" \
+  [list $ps25_gone \
+        [expr {($ps25_sb ne {PS25-SENTINEL} && $ps25_sb ne {} && \
+                $ps25_sb ne {NO-WIDGET} && $ps25_sb ne {NO-TEXT}) ? 1 : 0}] \
+        [expr {[winfo exists .ciw] ? 1 : 0}]] \
+  {1 1 1}
+
+# --- PS26: R6 -- NEVER-CREATED x popup --------------------------------------
+# GREEN BEFORE THE CHANGE. withdrawn x popup is PS18's; iconified x popup takes
+# the identical `$style eq {popup}` branch (src/ciw.tcl, the style test precedes
+# the CIW-visibility test) and is stated here rather than re-rowed.
+set ps26_had [info exists ::notify_style]
+if {$ps26_had} { set ps26_old $::notify_style }
+catch {destroy .xschem_notify}
+catch {destroy .ciw}
+update idletasks ; update
+sbar_set PS26-SENTINEL
+set ::notify_style popup
+set ps26_rc [catch {::xschem::notify {PS26 a notice with no CIW in existence}} ps26_e]
+update idletasks ; update
+set ps26_up [expr {[winfo exists .xschem_notify] ? 1 : 0}]
+set ps26_body [subtree_text .xschem_notify]
+set ps26_sb [sbar_text]
+if {$ps26_had} { set ::notify_style $ps26_old } else { unset -nocomplain ::notify_style }
+catch {destroy .xschem_notify}
+catch {ciw_create}
+update idletasks ; update
+check "PS26 0650/0658 R6 with NO .ciw and ::notify_style popup the notice\
+ raises the popup and leaves the shared statusbar ALONE" \
+  [list $ps26_rc $ps26_up \
+        [expr {[string first {PS26 a notice with no CIW in existence} $ps26_body] >= 0 ? 1 : 0}] \
+        $ps26_sb] \
+  [list 0 1 1 PS26-SENTINEL]
+
+# --- PS26b: R6 -- ICONIFIED x popup, so the cross-product is 6/6 committed ---
+# GREEN BEFORE THE CHANGE. The sixth cell. It takes the same `$style eq {popup}`
+# branch as PS26, but the brief's cross-product is {withdrawn, iconified,
+# never-created} x {ciw, popup} and an argued-equivalent cell is not a measured
+# one -- 0650's whole lesson is that a sentence about a mechanism can be false.
+set ps26b_had [info exists ::notify_style]
+if {$ps26b_had} { set ps26b_old $::notify_style }
+catch {destroy .xschem_notify}
+ciw_show
+catch {wm iconify .ciw}
+for {set i 0} {$i < 100} {incr i} {
+  update idletasks ; update
+  if {![winfo ismapped .ciw]} break
+  after 20
+}
+set ps26b_unmapped [expr {[winfo ismapped .ciw] ? 0 : 1}]
+sbar_set PS26B-SENTINEL
+set ::notify_style popup
+set ps26b_rc [catch {::xschem::notify {PS26b a notice with the CIW iconified}} ps26b_e]
+update idletasks ; update
+set ps26b_up [expr {[winfo exists .xschem_notify] ? 1 : 0}]
+set ps26b_body [subtree_text .xschem_notify]
+set ps26b_sb [sbar_text]
+if {$ps26b_had} { set ::notify_style $ps26b_old } else { unset -nocomplain ::notify_style }
+catch {destroy .xschem_notify}
+check "PS26b 0650/0658 R6 with the CIW ICONIFIED and ::notify_style popup the\
+ notice raises the popup and leaves the shared statusbar ALONE" \
+  [list $ps26b_unmapped $ps26b_rc $ps26b_up \
+        [expr {[string first {PS26b a notice with the CIW iconified} $ps26b_body] >= 0 ? 1 : 0}] \
+        $ps26b_sb] \
+  [list 1 0 1 1 PS26B-SENTINEL]
+
+# --- PS27: THE GUI USER'S DEGRADED STARTUP ----------------------------------
+# The user in this batch was never in a headless session. This is the only row
+# that reaches the `ciw_create` call at src/xschem.tcl:16705, which runs ONLY
+# under `[info exists has_x]` -- so an X child is the only way to prove that a
+# dead ciw.tcl does not take the GUI startup down with it.
+#
+# ⚠ RED AT HEAD AND NOT IN THE WAY 0658 PREDICTED. 0658 says xschem.tcl
+# "continues past a failed source"; measured, :14648 is a BARE `source`, the
+# raise propagates out of xschem.tcl, and Tcl_AppInit walks on into
+# `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The child
+# SIGSEGVs -- `CHILDKILLED SIGSEGV`, the 0423/0424 exit-139 signature.
+if {![info exists ::env(DISPLAY)] || $::env(DISPLAY) eq {}} {
+  check "PS27 0658 the GUI user's degraded startup needs a DISPLAY" NO-DISPLAY 0
+} else {
+  set ps27_msg {PS27-0658 an ASE refusal in a degraded GUI session}
+  set ps27_farm [share_farm $repo [file join $scratch farm_bad_gui] \
+    [list ciw.tcl "error {0658 deliberate failure at the TOP of ciw.tcl}\n"]]
+  set ps27_inner [string map [list @MSG@ $ps27_msg] {
+    puts "PS27-MARK notify=[expr {[info commands ::xschem::notify] ne {} ? 1 : 0}]"
+    puts "PS27-MARK ciw_echo=[expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]"
+    catch {::ase::echo {@MSG@} error} r
+    puts "PS27-MARK ase=$r"
+    flush stdout
+    exit 0
+  }]
+  set ps27 [share_farm_child $ps27_farm [file join $scratch c_gui] $ps27_inner {--pipe -q}]
+  note "PS27 child status" [dict get $ps27 -status]
+  check "PS27 0658 an X child whose ciw.tcl FAILS TO SOURCE still STARTS (exit\
+ 0, not SIGSEGV), writes the notice to its durable log, and names ciw.tcl as\
+ the cause" \
+    [list [dict get $ps27 -status] \
+          [share_farm_count [dict get $ps27 -log] $ps27_msg] \
+          [expr {[string first {NOTICE CHANNEL DEGRADED} [dict get $ps27 -out]] >= 0 ? 1 : 0}] \
+          [expr {[string first {ciw.tcl} [dict get $ps27 -out]] >= 0 ? 1 : 0}]] \
+    [list 0 1 1 1]
+}
 
 # leave the session as we found it: CIW visible, status field clear
 sbar_set {}

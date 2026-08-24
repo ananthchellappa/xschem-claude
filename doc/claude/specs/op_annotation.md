@@ -1135,7 +1135,13 @@ is the read shape.
 
 **Every degraded path is reported** through `ase::echo` — which, since issue
 **0650** (2026-08-23), is a one-line delegate to **`xschem::notify`**
-(`src/ciw.tcl`), the one notification builder. ⚠ The sentence that stood here
+(`src/ciw.tcl`), the one notification builder — reached since issue **0658**
+(2026-08-24) through the shared delegate body `xschem::notify_safe`, with a
+deliberately degraded **bootstrap** channel defined in `src/xschem.tcl` *before*
+every caller so that a `ciw.tcl` that fails to load costs the visible sinks and
+**not** the durable log line. The durable-log write itself lives once, as
+`xschem::notify_log` (`src/xschem.tcl`), and is called by both `ciw.tcl`'s sink 2
+and the bootstrap: one builder, two consumers, invariant **I1**. ⚠ The sentence that stood here
 before was wrong in a way that mattered: `ase::echo` does **not** feed the ASE
 session window (`grep -c ciw_echo src/ase_window.tcl` = **0**, against 61 lines
 that call `ase::echo`). It fed the **CIW** pane and `Xschem.log`, and with the
@@ -1158,12 +1164,17 @@ longer *hardcodes* the checkbox prose: the path is composed from
 (`src/ase_window.tcl:2878-2880`), the same three constants the live menu entry and
 the live dialog checkbutton are built from, and it carries a **pasteable**
 `ase::ui::save_op_params_on <key>` that commits through the *same* writer the
-menu's OK button commits through (`ase::ui::save_all_apply`). ⚠ Defects in this
+menu's OK button commits through (`ase::ui::save_all_apply`). ⚠ **0658** — a missing `xschem::notify` silenced every one of these lines, the
+durable log line included — is **FIXED** (2026-08-24), and the fix carried a
+correction the rest of this spec depends on: `src/xschem.tcl` sources its helpers
+with a **bare** `source`, so a Tcl error in any one of them propagates out,
+`Tcl_AppInit` walks on into unset variables, and startup **SIGSEGVs** (exit 139,
+the 0423/0424 signature — measured three ways). Only `ciw.tcl`'s source is caught
+today; the class is issue **0663**. ⚠ Defects in this
 reporting that are filed and **not** fixed: **0635** (a refusal reports two
 contradictory sentences), **0636** (the nudge has no opt-out), **0637** (a
 truthy-not-`1` gate is silently off; the count assumes an `@` prefix),
-**0658** (a missing `xschem::notify` silences every one of these lines, the
-durable log line included), **0660** (the statusbar fallback is last-writer-wins,
+**0660** (the statusbar fallback is last-writer-wins,
 so the per-device `last_warnings` lines can never survive to it, and its short
 form carries no remedy) and **0661** (`save_all_report_discard` still prints
 hardcoded, drifted menu prose).
@@ -1850,8 +1861,8 @@ wins, **I8/0604's report is the other half** — the hyphen says *which*, the re
 
 ### 5.1 Shipped and unratified — the questions this run owes a human
 
-Collected here, in one place, so they can be answered in one sitting. **THIRTEEN
-rows, one per issue file** *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
+Collected here, in one place, so they can be answered in one sitting. **FOURTEEN
+rows, one per issue file** *(0658 added 2026-08-24 by the 0658 crew)* *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
 count. Every file named below was verified to exist on disk by the S12 write-up
 agent (2026-08-21).
 
@@ -1882,10 +1893,12 @@ authority has signed it off*.
 
 | **0650** | ratification | **`xschem::notify` writes a red, 28-character short form into the DRAWING window's `.statusbar.12` whenever the CIW is not visible.** That field is shared with `*BUSY*` (`hilight.c:2201`), is cleared **unconditionally** by `propagate_logic()` (`hilight.c:2305`), is red for *every* tag including a plain success line, and is last-writer-wins (issue 0654, issue 0660). Two rulings are wanted. **(a)** Is the drawing window's statusbar the right can't-miss fallback, or should it be a permanent notice segment in the **ASE session window** the user is actually looking at when they press *Netlist and Run* (issue **0655** — not built, because `ase::echo` carries no session target)? **(b)** Should `::notify_style` ship **`ciw`** (implemented, per R-0653-a) or **`popup`**? Implemented as ruled pending the answer. |
 
+| **0658** | ratification | **a broken or absent `src/ciw.tcl` now lets xschem START, in a degraded log-only notice mode, instead of SIGSEGV-ing at startup.** `src/xschem.tcl:14854` was a bare `source`; a Tcl error inside the helper propagated out, `source_tcl_file()` (`src/xinit.c:1513`) printed and returned, `Tcl_AppInit` walked on into `tclgetdoublevar("cairo_font_line_spacing")` and the process died — exit **139**, measured three ways (error at the top of the helper, error at the end, file absent). It is now caught, and the failure is **announced once** on stderr and once in the durable log rather than swallowed (which is 0423's standing objection to catching a `source`). Two rulings are wanted. **(a)** Is a degraded-but-alive session the right trade against a hard, obvious crash — and should the other ~12 bare helper sources get the same treatment (issue **0663**)? **(b)** In that degraded state the GUI user sees **nothing on screen**: `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it, because copying `notify_statusbar` out of the dead file is the I1 breach the whole item avoided (issue **0667** — answer it with 0654/0655/0660). Implemented as ruled pending the answer. |
+
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:
 implement the least-surprising option, then hand the user the exact question.
-Eleven such questions in one feature is itself a signal — this feature changes
+Twelve such questions in one feature is itself a signal — this feature changes
 what a schematic *shows*, so almost every choice is user-visible.
 
 *(Collected by the S12 write-up agent. The S12 implement agent produced no

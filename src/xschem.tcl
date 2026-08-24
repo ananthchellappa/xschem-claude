@@ -14592,6 +14592,202 @@ source $XSCHEM_SHAREDIR/copy_form.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+
+# --- THE NOTICE BOOTSTRAP (issue 0658) ---------------------------------------
+#
+# THE MEASURED DEFECT. `ase::echo` (src/ase.tcl) and `wviewer::echo`
+# (src/wave_viewer.tcl) are one-line delegates onto `::xschem::notify`, and that
+# channel lives in src/ciw.tcl -- which THIS FILE sources at :14648, i.e. AFTER
+# op_annot (:14600), cmdmode (:14604), ase (:14606), ase_window (:14608),
+# wave_viewer (:14610) and calculator (:14613). The channel therefore loads
+# after every one of its callers and lives in the very file whose failure is the
+# hazard. Measured under `--nogui --pipe -q --logdir`, with the channel renamed
+# away: both delegates returned 0, raised nothing, and the DURABLE LOG LINE --
+# the sink 0650's own table calls "the one that survives a shut window" -- was
+# NOT written. Before 0650 that write was INLINE in ase::echo and had no
+# cross-file dependency, so this is a regression 0650 introduced, not a
+# pre-existing limitation.
+#
+# THE FIX IS IN TWO HALVES, because measurement showed one half is not enough:
+#
+#  1. A MINIMAL BOOTSTRAP CHANNEL, here, BEFORE every caller. src/ciw.tcl
+#     REDEFINES `xschem::notify` (and the latch trio) with the full four-sink
+#     implementation exactly as before, so in a healthy session nothing below is
+#     ever reached. When ciw.tcl does not load, these survive and every notice
+#     still reaches the durable log.
+#
+#  2. A CATCH AROUND `source .../ciw.tcl` (:14648) AND AROUND `ciw_create`
+#     (:16705). ⚠ 0658's own reachability sentence -- "any Tcl error anywhere in
+#     src/ciw.tcl kills the whole file, and xschem.tcl continues past a failed
+#     source" -- IS FALSE, measured three ways by two agents (error at the top
+#     of ciw.tcl, error at the end, file absent): :14648 was a BARE `source`, the
+#     raise propagated OUT of xschem.tcl, source_tcl_file() (src/xinit.c:1513)
+#     merely printed and returned, and Tcl_AppInit walked on into
+#     `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The
+#     process SIGSEGV'd at startup -- exit 139, the 0423/0424 signature -- and
+#     the bootstrap never got to speak. It is Tcl_AppInit that continues past a
+#     failed source of *xschem.tcl*, NOT xschem.tcl past a failed source of
+#     *ciw.tcl*. Catching the source is what makes the degraded state REAL; the
+#     bootstrap is what makes it SURVIVABLE. This is not 0423's "a silent
+#     continue hides the problem": the catch site ANNOUNCES, once, on stderr and
+#     in the durable log.
+#
+# THE BOOTSTRAP IS A DELIBERATELY DEGRADED MODE, NOT A SECOND COPY OF THE
+# CHANNEL (invariant I1). It has NO short form, NO 28-char clipping, NO
+# statusbar, NO popup, NO latch, NO remedy rendering. The one thing it shares
+# with ciw.tcl's sink 2 -- the durable-log write -- is EXTRACTED into
+# `xschem::notify_log` below and CONSUMED BY BOTH, which is precisely what stops
+# the trimright / trailing-backslash pad / empty-guard block from existing
+# twice. Duplicating it is 0658's own rejected alternative #1, and it would
+# re-create the two-byte-identical-builders situation 0650 had just deleted.
+#
+# WHY NOT A NEW src/notify.tcl (the driver floated it and WITHDREW it): a new
+# helper needs a src/Makefile.in edit plus a ./configure re-run, which is
+# CLAUDE.md's issue-0424 trap -- a helper missing from the install list ships a
+# binary that SEGFAULTS at startup while the in-tree tree stays green -- and it
+# does not even solve the problem, because notify.tcl could itself fail to load.
+# The bootstrap covers the failure of ANY file except xschem.tcl, and if
+# xschem.tcl fails nothing works anyway.
+#
+# SCOPE LIMITS, written down here rather than discovered later:
+#   * under `--nolog` (or `--nogui` with no `--logdir`) there is NO action log at
+#     all (src/util.c:351), so a degraded notice survives only as the stderr line
+#     of last resort. That is honest -- the user asked for no log.
+#   * degraded notices carry no remedy and no short form: the remedy contract
+#     (R-0653-d) is about the VISIBLE channel, which by definition is not there.
+#   * stderr is NEVER counted as a sink. 0650's sink table does not contain it
+#     and a GUI user reached nothing by it, so `sinks` stays {} and the return
+#     value stays 0 in that case (0652/0657: a report must not lie). It also sits
+#     BEHIND the durable log, never in front of it, which is what keeps it from
+#     being 0658's rejected alternative #2 (`ihp-sg13g2/sg13g2_procs.tcl:811` is
+#     the standing example of a `puts stderr` no GUI user ever sees).
+namespace eval xschem {
+  ## 1 once the degraded-state announcement has been made. A latch AND a
+  ## deliberate test seam: 0497 rule 1 is "count per pass, never alert per
+  ## item", so the announcement fires ONCE per session, never once per notice.
+  variable notify_degraded 0
+}
+
+## THE ONE DURABLE-LOG WRITER, consumed by ciw.tcl's sink 2 AND by the bootstrap
+## below (invariant I1). The body is ciw.tcl's sink 2, moved verbatim.
+##
+## `#= ` / `#! ` COMMENT lines via log_output() in src/util.c, keyed off the same
+## tag the pane got. Comments keep the log source-able, and log_output prefixes
+## every embedded newline (a hand-built `# ase: $msg` would not, so a multi-line
+## message would become live Tcl on replay). Two replay landmines are guarded:
+##   * an EMPTY message logs NOTHING -- `xschem log_action -result` with a
+##     missing value fell through the dispatcher's argc gates and wrote the
+##     literal line `-result` into Xschem.log, aborting a replay `source`;
+##   * a TRAILING BACKSLASH makes the logged line continue onto the NEXT one and
+##     swallow it, so it is padded. trimright comes FIRST: log_output emits no
+##     prefix after a final newline, so "foo\\\n" also lands as `#= foo\`.
+##
+## ⚠ `xschem log_action` NEVER REPORTS A CLOSED LOG (src/scheduler.c:7806ff;
+## log_output() silently no-ops on a NULL actionlog_fp), so the catch proves only
+## that the CALL was well formed. The `log` claim is therefore gated on the file
+## really being open -- issue 0657, where notify_last reported `sinks = ciw log`
+## under --nolog with no log at all. Returns 1 only when the line really landed.
+proc xschem::notify_log {line tag} {
+  set lmsg [string trimright $line "\n"]   ;# log_output supplies the terminator
+  if {$lmsg eq {}} { return 0 }
+  if {[string index $lmsg end] eq "\\"} { append lmsg { } }
+  set logopen [expr {![catch {xschem get actionlog_filename} lf] && $lf ne {}}]
+  if {$tag eq {error}} {
+    if {[catch {xschem log_action -error $lmsg}]}  { return 0 }
+  } else {
+    if {[catch {xschem log_action -result $lmsg}]} { return 0 }
+  }
+  return [expr {$logopen ? 1 : 0}]
+}
+
+## THE DEGRADED STATE ANNOUNCES ITSELF -- ONCE PER SESSION, NOT PER NOTICE.
+## Anything the bootstrap writes is by definition evidence of degradation, so the
+## user is told once, plainly, with the likely cause named (a caught `source` is
+## reported, never swallowed). Returns 1 the one time it actually spoke.
+proc xschem::notify_degraded_once {cause} {
+  variable notify_degraded
+  if {$notify_degraded} { return 0 }
+  set notify_degraded 1
+  set l "NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW\
+ pane, no status field, no popup, no remedy). Cause: $cause"
+  catch {puts stderr "xschem: $l" ; flush stderr}
+  catch {xschem::notify_log $l error}
+  return 1
+}
+
+## THE DEGRADED CHANNEL. Signature-compatible with xschem::notify so a caller
+## needs no knowledge of which one it reached, but deliberately SMALLER: -tag
+## (and -cause, which only the delegate fallback passes) are honoured, EVERY
+## other option is accepted and IGNORED, and nothing here ever raises. One
+## durable line, the honest sink count returned.
+##
+## Ignoring unknown options rather than mirroring ciw.tcl:257's strict switch is
+## deliberate twice over: copying the option table would copy the channel (I1),
+## and "the live notify RAISES on -no_such_option" is the sharpest behavioural
+## discriminator a test has for proving the bootstrap was OVERRIDDEN rather than
+## silently winning (test_ase_core NT16, test_ase_log_seam_0207 PS20).
+proc xschem::notify_bootstrap {msg args} {
+  set tag {} ; set cause {}
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -tag   { set tag $v }
+      -cause { set cause $v }
+    }
+  }
+  if {$cause eq {}} {
+    set cause {the notice channel is unavailable (src/ciw.tcl failed to source?)}
+  }
+  xschem::notify_degraded_once $cause
+  set sinks {}
+  if {[xschem::notify_log $msg $tag]} { lappend sinks log }
+  ## LAST RESORT ONLY, and never claimed as a sink: with no log open there is
+  ## nowhere else at all for this to go.
+  if {$sinks eq {} && $msg ne {}} { catch {puts stderr "xschem: $msg" ; flush stderr} }
+  ## the witness, when it exists (it lives in ciw.tcl, which may be the very
+  ## file that failed) -- degraded mode records no short form and no remedy
+  catch {xschem::notify_record $tag $msg $msg {} {} {} $sinks}
+  return [llength $sinks]
+}
+
+## The channel EXISTS from this line on. src/ciw.tcl REDEFINES it with the full
+## four-sink implementation; every caller between here and :14648 resolves the
+## name at CALL time, so in a healthy session this wrapper is never entered.
+proc xschem::notify {msg args} {
+  return [xschem::notify_bootstrap $msg {*}$args]
+}
+
+## DEGENERATE LATCH TRIO, redefined by ciw.tcl with the real state-keyed one.
+## NOT optional, and not decoration: src/ase.tcl:619 and src/ase.tcl:550 call
+## ::xschem::notify_latch_ok / _reset UNCAUGHT, they RAISE `invalid command
+## name` when the family is missing, and ase.tcl:795's `catch` swallows the raise
+## along with the ENTIRE OP-card block -- so a bootstrap that defined only
+## `notify` would turn the log rows green while the user's actually-reported
+## gate-off nudge stayed dead. Degraded mode keeps no state, so every subject
+## gets its turn: noisier than the real latch, and visible, which is the right
+## way round when the visible sinks are already gone.
+proc xschem::notify_latch_ok {subject {state {}}} { return 1 }
+proc xschem::notify_latch_rearm {subject {state {}}} { return }
+proc xschem::notify_latch_reset {subject} { return }
+
+## THE ONE DELEGATE BODY behind ase::echo AND wviewer::echo (invariant I1: those
+## two were byte-identical eight-line copies before 0650 and must not become two
+## copies again). It answers "the catch that hid it", in scope for 0658:
+##
+##   * the catch is NOT deleted -- a notice may never break a pick or a netlist;
+##   * with the bootstrap in place ::xschem::notify ALWAYS exists, so the catch
+##     can now only fire on a GENUINE BUG INSIDE notify, and silently returning 0
+##     for that is exactly how this class of defect survives. So the raise
+##     becomes the CAUSE of the one-time degradation announcement and the notice
+##     is re-made through the bootstrap;
+##   * what it returns is TRUE (0652 is about a report that LIES): the value is
+##     the bootstrap's honest sink count, never a 0 that merely means "I did not
+##     check". 0 from the full channel still means "the latch suppressed it",
+##     and 0 from here still means "nothing was delivered" -- both are true.
+proc xschem::notify_safe {msg {tag {}}} {
+  if {![catch {::xschem::notify $msg -tag $tag} r]} { return $r }
+  if {[catch {::xschem::notify_bootstrap $msg -tag $tag -cause $r} b]} { return 0 }
+  return $b
+}
 # Operating-point annotation: the ONE raw-vector name builder (op_annot::vector) that
 # the save-card emitter and the on-screen display must share -- invariant I1 of
 # doc/claude/specs/op_annotation.md. Proc definitions only at source time; nothing is
@@ -14645,7 +14841,19 @@ foreach row $action_table {
 # CIW (Command Interpreter Window): live action-log pane + command entry
 # (doc/claude/specs/action_logging.md section 3). Auto-opened for interactive sessions
 # in the build-widgets block below.
-source $XSCHEM_SHAREDIR/ciw.tcl
+## ⚠ CAUGHT, DELIBERATELY (issue 0658). This was a BARE `source`, and a bare
+## source here is not survivable: a Tcl error anywhere in ciw.tcl (or an absent
+## file -- the pure issue-0424 shape) propagates OUT of xschem.tcl,
+## source_tcl_file() (src/xinit.c:1513) merely prints it and returns, and
+## Tcl_AppInit walks on into `tclgetdoublevar(cairo_font_line_spacing)` against
+## variables the rest of this file never got to set. Measured three ways: exit
+## 139, SIGSEGV at startup, script never runs. Catching it turns that into a
+## degraded-but-alive session in which the bootstrap channel above still carries
+## every notice to the durable log. NOT a silent continue (0423's standing
+## objection): notify_degraded_once announces it, ONCE, on stderr and in the log.
+if {[catch {source $XSCHEM_SHAREDIR/ciw.tcl} ciw_source_err]} {
+  xschem::notify_degraded_once "src/ciw.tcl failed to source: $ciw_source_err"
+}
 
 # issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir
 # and hands the path to the C side (`xschem fluid_trace start <path>`), then reports it in the CIW so
@@ -16702,7 +16910,16 @@ if { ( $OS== "Windows" || [string length [lindex [array get env DISPLAY] 1] ] > 
   # (doc/claude/specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
   # so short-lived windows don't leak WSLg ghost frames); closing it merely
   # withdraws the window
-  if {![info exists cli_opt_nolog] || !$cli_opt_nolog} { ciw_create }
+  ## issue 0658: guarded for the same reason the `source` of ciw.tcl is. This
+  ## is the ONLY startup use of a ciw.tcl proc, it runs solely under
+  ## [info exists has_x] -- i.e. in exactly the GUI session the user was in --
+  ## and an uncaught `invalid command name "ciw_create"` here would take the
+  ## whole startup down after the caught source had already saved it.
+  if {![info exists cli_opt_nolog] || !$cli_opt_nolog} {
+    if {[catch {ciw_create} ciw_create_err]} {
+      xschem::notify_degraded_once "ciw_create failed: $ciw_create_err"
+    }
+  }
 
   # update
   # xschem windowid . ;# set icon for window

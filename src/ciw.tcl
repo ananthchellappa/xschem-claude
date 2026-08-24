@@ -26,7 +26,7 @@
 #
 # ⚠ 0650's AND 0653's OWN MECHANISM SENTENCE IS FALSE, AND IT CHANGES THE FIX.
 # 0650's sink table says ciw_echo "No-ops silently when shut
-# (src/ciw.tcl:120-121)"; 0653 says "The CIW is a closable toplevel. Closed ->
+# (src/ciw.tcl:450)"; 0653 says "The CIW is a closable toplevel. Closed ->
 # silent no-op." Both are wrong. `wm protocol .ciw WM_DELETE_WINDOW
 # {wm withdraw .ciw}` (in ciw_create below) means a close WITHDRAWS: `.ciw` and
 # `.ciw.l.t` still EXIST, `winfo ismapped .ciw` is 0, and ciw_echo happily writes
@@ -45,18 +45,28 @@
 # ceremony wrong. REJECTED for the same reason: src/ase.tcl (the channel must
 # not live inside its first consumer).
 #
-# ⚠ CONSEQUENCE OF LIVING HERE: this file is sourced at src/xschem.tcl:14648,
-# AFTER ase.tcl (:14606), ase_window.tcl (:14608) and wave_viewer.tcl (:14610).
+# ⚠ CONSEQUENCE OF LIVING HERE: this file is sourced at src/xschem.tcl:14854,
+# AFTER ase.tcl (:14802), ase_window.tcl (:14804) and wave_viewer.tcl (:14806).
 # A SOURCE-TIME notify call from any of those files would fail. Runtime calls are
 # fine, which is all any consumer makes. (No Tcl home would help an xschemrc
-# either -- the rc is read before all of these; see the note at xschem.tcl:14599.)
+# either -- the rc is read before all of these; see the note at xschem.tcl:14795.)
+#
+# ⚠ AND THAT CONSEQUENCE HAD A SHARPER EDGE THAN THIS PARAGRAPH ADMITTED
+# (issue 0658): if THIS FILE fails to load, every consumer above loses the
+# channel entirely -- the durable log line included, which before 0650 was
+# inline in ase::echo and had no cross-file dependency at all. src/xschem.tcl
+# now defines a deliberately degraded BOOTSTRAP channel before :14796 (and
+# CATCHES the source at :14854, which used to be bare and SEGFAULTED startup),
+# so a dead ciw.tcl costs the visible sinks and nothing else. The durable-log
+# writer itself lives there too, as xschem::notify_log, and sink 2 below CALLS
+# it: one builder, two consumers (invariant I1).
 #
 # ⚠ DO NOT TEE INSIDE ciw_echo. It has ~190 direct call sites (wave_viewer 129,
 # xschem.tcl 35, ciw.tcl 13, ase.tcl 11, alt2_toggle_view 5, property_form 3,
 # cmdmode 2, calculator 1, action_registry 1) and it is also the sink the C
 # action-log mirror calls for lines ALREADY in the file. Teeing there would route
 # every one of them to the statusbar and DOUBLE every asserted notice count
-# (test_ase_locked_wire_pick_0160:126 and test_sod_pick_no_select_0204:138/295
+# (test_ase_locked_wire_pick_0160:175 and test_sod_pick_no_select_0204:138/295
 # assert `llength $::notices == 1`). Add a sink; do not reroute.
 
 namespace eval xschem {
@@ -229,7 +239,7 @@ proc xschem::notify_record {tag msg line short menu command sinks} {
 #     continues onto the next one and swallows it on replay). The pane copy stays
 #     byte-identical to the argument;
 #   * ONE notify produces EXACTLY ONE ::ciw_echo call. A short form AND a long
-#     form to the pane would redden test_ase_locked_wire_pick_0160:126 and
+#     form to the pane would redden test_ase_locked_wire_pick_0160:175 and
 #     test_sod_pick_no_select_0204:138/295 from a distance.
 #
 # R-0653-d: -menu and -command are DISTINCT FIELDS, not prose baked into the
@@ -281,30 +291,19 @@ proc xschem::notify {msg args} {
     return 1
   }
 
-  ## SINK 2 -- the action log FILE, via log_output() in src/util.c: `#= ` / `#! `
-  ## COMMENT lines, keyed off the same tag the pane got. Comments keep the log
-  ## source-able, and log_output prefixes every embedded newline (a hand-built
-  ## `# ase: $msg` would not, so a multi-line message would become live Tcl on
-  ## replay).
+  ## SINK 2 -- the action log FILE.
   ##
-  ## ⚠ `xschem log_action` NEVER REPORTS A CLOSED LOG (src/scheduler.c:7806ff;
-  ## log_output() in src/util.c silently no-ops on a NULL actionlog_fp), so the
-  ## catch below proves only that the CALL was well formed. Claiming `log` on
-  ## that alone made the witness LIE: measured under `--nolog`,
-  ## `actionlog_filename` was '' while notify_last reported `sinks = ciw log`.
-  ## The claim is therefore gated on the file really being open, which is what
-  ## `sinks` promises. (Write-up pass, issue 0657.)
-  set lmsg [string trimright $line "\n"]   ;# log_output supplies the terminator
-  if {$lmsg ne {}} {
-    ## a TRAILING BACKSLASH makes the logged `#= ` line swallow the NEXT one
-    if {[string index $lmsg end] eq "\\"} { append lmsg { } }
-    set logopen [expr {![catch {xschem get actionlog_filename} lf] && $lf ne {}}]
-    if {$tag eq {error}} {
-      if {![catch {xschem log_action -error $lmsg}]  && $logopen} { lappend sinks log }
-    } else {
-      if {![catch {xschem log_action -result $lmsg}] && $logopen} { lappend sinks log }
-    }
-  }
+  ## ⚠ THE BODY NO LONGER LIVES HERE (issue 0658). It is `xschem::notify_log`,
+  ## defined in src/xschem.tcl BEFORE this file is sourced, because the degraded
+  ## bootstrap channel there must write the SAME durable line and invariant I1
+  ## forbids two builders of it: the trimright, the trailing-backslash pad, the
+  ## empty-message guard and 0657's actionlog_filename honesty gate would
+  ## otherwise exist twice, in two files, drifting silently. ONE builder, TWO
+  ## consumers -- this sink and the bootstrap. Everything the old comment here
+  ## recorded (the `#= `/`#! ` comment form, the replay landmines, why a closed
+  ## log cannot be detected from the return of `xschem log_action`) is on
+  ## notify_log itself.
+  if {[xschem::notify_log $line $tag]} { lappend sinks log }
 
   ## SINK 3/4 -- style-selected, and the style is read HERE, at call time (I5).
   ##
