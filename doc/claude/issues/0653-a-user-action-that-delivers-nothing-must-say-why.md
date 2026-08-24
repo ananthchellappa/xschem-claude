@@ -1,6 +1,6 @@
 # 0653 — a user action that delivers nothing must say why, through a channel that cannot itself go silent
 
-**Status:** open, unratified (rc setting name + default are the user's call)
+**Status:** open, RATIFIED 2026-08-23 (all four rulings answered by the user)
 **Branch:** annotate
 **Filed:** 2026-08-23
 **Related:** 0497 (the write-side precedent), 0625 (missing vector renders `-` not blank),
@@ -152,27 +152,68 @@ places to forget a sink.
 * **Never fires on an action that legitimately delivered nothing** — e.g. `6` pressed
   on a sheet with no devices at all. Requested-count zero is not a failure.
 
-## Open rulings (the user's, not mine)
+## Rulings — ANSWERED by the user, 2026-08-23
 
-**R-0653-a — rc setting name and default.**
-Proposed: `set ::notify_style {ciw|popup}` , default `ciw`.
-Recommendation: default `ciw`, because a pop-up on every unremarkable blank is the
-kind of thing that gets a feature switched off permanently. The statusbar fallback
-means `ciw` is never actually silent.
+User: *"proceed as ou recommend"* — a, b and c below carry the recommendation as the
+ruling. Then, on the remedy question: *"for whether notice should offer to fix, I say
+: Yes, it should say where it could be fixed (menu location) and give a command the
+user can enter into CIW entry field to achieve the same effect."*
 
-**R-0653-b — does the pop-up apply to all notices or only annotation ones?**
-Recommendation: all — one channel, one setting. A per-subsystem matrix is a
-configuration surface nobody will read.
+**R-0653-a — rc setting name and default. RULED: `set ::notify_style {ciw|popup}`,
+default `ciw`.** A pop-up on every unremarkable blank is how a feature gets switched
+off permanently. The statusbar fallback is what makes `ciw` never actually silent.
 
-**R-0653-c — repeat suppression.**
-Pressing `6` five times on the same unchanged state should not produce five identical
-dialogs. Recommendation: suppress an identical notice while the underlying state is
-unchanged, and re-arm when it changes — **the same "per state, not per event" shape
-0648 landed for the OP-card nudge**, and the same shape the withdrawn 0636
-recommendation needed. Reuse that latch rather than inventing a second one.
+**R-0653-b — pop-up scope. RULED: global, all notices, one setting.** A per-subsystem
+matrix is configuration surface nobody reads.
 
-## Not yet decided, deliberately
+**R-0653-c — repeat suppression. RULED: suppress an identical notice while the
+underlying state is unchanged; re-arm when it changes.** Reuse the latch 0648 landed
+for the OP-card nudge (`ase::op_cards_nudge_ok` / `op_cards_nudge_reset`), do not
+build a second one. This is also the shape the withdrawn 0636 recommendation needed:
+once per subject PER STATE, never per event.
 
-Whether a notice should offer to *perform* the remedy (a "Enable device OP save
-cards and re-run" button). That is a second feature and a second failure mode; keep
-this one to naming the cause and the control.
+**R-0653-d — the remedy affordance. RULED: name the place, print the command, do NOT
+act.** Every notice carries (i) the menu location where the setting lives and (ii) a
+command the user can paste into the CIW entry field to achieve the same effect. No
+button that performs the remedy — that would need state knowledge, an undo story, and
+can act wrongly; a path plus a string adds no new action surface at all. Side benefit:
+the user learns the scriptable form at the moment they need it.
+
+### R-0653-d has three requirements, and without them the remedy becomes a lie
+
+`ciw_exec` (`src/ciw.tcl:250`) runs `uplevel #0 $cmd` — arbitrary Tcl at global scope,
+result echoed, outcome logged. **The printed string IS the contract.** Therefore:
+
+1. **The test must EXECUTE the printed command, never string-compare it.** The trap is
+   already in the tree, `src/ase_window.tcl:2912`: "OFF IS `{}`, NEVER `0`.
+   `save_op_params` is in `ase::omit_if_empty`". A remedy printing
+   `save_op_params 0` looks right and is wrong. Only execution catches that class.
+2. **The menu path must be derived from the live menu, or asserted against it — never
+   hardcoded prose.** Real labels carry ellipses: `Save All\u2026`, `Choose\u2026`,
+   `Design\u2026` (`src/ase_window.tcl:470-502`). A hardcoded "Outputs > Save All"
+   that drops the ellipsis or misses a cascade level is a wrong direction printed with
+   authority, which is worse than printing none.
+3. **The command must invoke THE SAME PROC THE MENU INVOKES**, not poke the state
+   underneath it. `save_op_params` is "read as a gate in THREE places"
+   (`src/ase.tcl:544`) and the menu path also invalidates the deck. A command that
+   sets state directly half-works: the user follows correct-looking advice and still
+   sees blanks — the worst outcome this whole issue exists to prevent.
+
+## Build order — TWO crews, not one
+
+**0650 first: the channel.** Build `xschem::notify` with its four sinks (log always,
+CIW when open, `.statusbar.12` fallback, opt-in modal), the `::notify_style` rc
+setting, and the state-keyed suppression latch. Rewire `ase::echo` onto it — that
+closes 0650, and gives the channel a real consumer and real tests before anything
+depends on it.
+
+**0653 second: the annotation consumer.** The six causes in `op_annot::text`, the
+per-pass tally, the cause-specific remedy strings, and the R-0653-d menu path +
+command for each.
+
+Doing 0653 first would mean writing the sink logic twice and having two places to
+forget a sink.
+
+## Still out of scope, deliberately
+
+A notice that PERFORMS the remedy. Ruled out by R-0653-d.

@@ -2,7 +2,7 @@
 
 STATUS: **OPEN — measured 2026-08-23** by the adversary leg of the 0648 crew,
 which flagged it as the reason 0648's fix may be invisible to the very user who
-reported it. Related: 0617, 0633, 0635, 0636, 0648, 0649.
+reported it. Related: 0617, 0633, 0635, 0636, 0648, 0649, **0653**.
 
 ---
 
@@ -55,6 +55,64 @@ wrong** — `src/ase.tcl` has echoed `ASE: $n device OP save card(s) added to th
 deck.` since commit `44f52f9a`, twelve hours before 0648 was filed. The message
 existed; it was *unreachable*. The defect was never the missing sentence, it was
 the missing sink. 0648's Outcome section records the refutation.
+
+## SCOPE ENLARGED 2026-08-23 — this issue now builds the general channel (0653)
+
+0653 asked for the same thing from the other end: an OP annotation that renders blank
+must say *why*, on a channel that cannot itself go silent. Its rulings are answered
+and its build order puts the channel here, in 0650, because 0650 already has a real
+consumer (`ase::echo`) and real suites to prove it with. Building the sinks inside
+0653 would mean writing them twice and having two places to forget one.
+
+**So this crew delivers `xschem::notify`, and rewires `ase::echo` onto it.** It does
+NOT deliver the annotation accounting — that is 0653's own crew, second.
+
+### The four sinks, behind one call
+
+| sink | when | why |
+|---|---|---|
+| `xschem log_action` | **always** | durable, greppable, survives a shut window. Makes a notice auditable after the fact. Already what `ase::echo` does. |
+| `ciw_echo` | when the CIW exists | the right channel for a live session. **No-ops silently when shut** (`src/ciw.tcl:120-121`) — which is precisely why it may not be the only visible sink. |
+| `.statusbar.12` in the drawing window | when the CIW is shut **and** `::notify_style` is not `popup` | the can't-miss fallback. Precedent: `src/hilight.c:2201` already writes `*BUSY*` there. Short form plus "see CIW / log". |
+| modal dialog, OK / ESC | `::notify_style eq {popup}` | opt-in, ruled global in 0653 R-0653-b. |
+
+Without row 3 there is a reachable state — CIW shut, pop-up off — where the tool has
+diagnosed a problem perfectly and told nobody. **That state must not exist**, and it
+is the whole reason this issue is not just "add a text widget to the ASE window".
+
+### Ruled behaviour inherited from 0653
+
+* **`set ::notify_style {ciw|popup}`, default `ciw`** (R-0653-a). Read at call time,
+  not cached — a user rc may set it after the proc is defined (invariant I5).
+* **Global, one setting, all notices** (R-0653-b). No per-subsystem matrix.
+* **Suppress an identical notice while the underlying state is unchanged; re-arm on
+  change** (R-0653-c). **Reuse the latch 0648 just landed**
+  (`ase::op_cards_nudge_ok` / `ase::op_cards_nudge_reset`) — generalise it, do not
+  write a second one. One builder, two consumers (invariant I1); the 0648 sabotage
+  leg proved that shape holds.
+* **Every notice may carry a remedy: a menu location and a pasteable CIW command;
+  never a button that acts** (R-0653-d). The signature must carry them as distinct
+  fields, not baked into the message string, or the tests cannot execute the command
+  separately from rendering the text.
+
+### R-0653-d's three requirements are ACCEPTANCE ITEMS, not advice
+
+1. **A test EXECUTES the printed command; it never string-compares it.** Trap already
+   in the tree, `src/ase_window.tcl:2912`: "OFF IS `{}`, NEVER `0`". A remedy printing
+   `save_op_params 0` looks right and is wrong; only execution catches it.
+2. **The menu path is derived from the live menu or asserted against it.** Labels
+   carry `\u2026` (`src/ase_window.tcl:470-502`). A hardcoded path missing a cascade
+   level is a wrong direction printed with authority.
+3. **The command invokes the same proc the menu invokes**, never the state underneath.
+   `save_op_params` is "read as a gate in THREE places" (`src/ase.tcl:544`) and the
+   menu path also invalidates the deck. Advice that half-works is the worst outcome
+   available here.
+
+### Headless
+
+Under `--nogui` there is no Tk. The log sink must still fire, and **no sink may
+raise**. `ciw_echo` already guards on `info commands winfo`; the statusbar and modal
+sinks must guard equivalently, or every headless suite dies at the first notice.
 
 ## What to do
 
