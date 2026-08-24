@@ -254,6 +254,22 @@ proc xschem::notify_record {tag msg line short menu command sinks} {
 # anything at all -- and the alternative would make `grep` on Xschem.log disagree
 # with what the user was told.
 proc xschem::notify {msg args} {
+  ## THE FIRST STATEMENT, and it must stay first (issues 0664/0665). `sinks` was
+  ## a LOCAL and died with any raise, so xschem::notify_safe had no way to know
+  ## what this call had already delivered and re-made the whole notice -- a
+  ## second durable line, and a "notices are LOG-ONLY from here on" claim
+  ## asserted while every sink below was alive. The record is
+  ## ::xschem::notify_progress, a NAMESPACE variable declared in src/xschem.tcl
+  ## (never here: the degraded state it serves is the one where this file is
+  ## absent), and `sinks` is now nothing but its snapshot -- ONE account of one
+  ## fact, invariant I1.
+  ##
+  ## ⚠ NOT DOWN WHERE `set sinks {}` USED TO SIT, after option parsing and after
+  ## the notify_latch_ok gate. A raise in EITHER of those would then leave the
+  ## PREVIOUS call's record standing, and notify_safe -- reading `log` from a
+  ## notice that succeeded minutes ago -- would skip a durable write that never
+  ## happened. That is a G1 regression wearing a 0665 fix (test_ase_core NT23).
+  set sinks [xschem::notify_mark_reset]
   set tag {} ; set short {} ; set menu {} ; set command {}
   set once {} ; set state {}
   foreach {o v} $args {
@@ -278,12 +294,10 @@ proc xschem::notify {msg args} {
     if {$command ne {}} { append line " CIW command: $command" }
   }
 
-  set sinks {}
-
   ## SINK 1 -- the CIW pane. First, unconditional, catch'd, and resolved by NAME
   ## at call time (that is the rename-able spy point every ASE suite stubs).
   if {[info commands ::ciw_echo] ne {}} {
-    if {![catch {::ciw_echo $line $tag}]} { lappend sinks ciw }
+    if {![catch {::ciw_echo $line $tag}]} { set sinks [xschem::notify_mark ciw] }
   }
 
   if {$msg eq {}} {
@@ -303,7 +317,7 @@ proc xschem::notify {msg args} {
   ## recorded (the `#= `/`#! ` comment form, the replay landmines, why a closed
   ## log cannot be detected from the return of `xschem log_action`) is on
   ## notify_log itself.
-  if {[xschem::notify_log $line $tag]} { lappend sinks log }
+  if {[xschem::notify_log $line $tag]} { set sinks [xschem::notify_mark log] }
 
   ## SINK 3/4 -- style-selected, and the style is read HERE, at call time (I5).
   ##
@@ -323,7 +337,7 @@ proc xschem::notify {msg args} {
     return 1
   }
   if {$style eq {popup}} {
-    if {[xschem::notify_popup $line $tag]} { lappend sinks popup }
+    if {[xschem::notify_popup $line $tag]} { set sinks [xschem::notify_mark popup] }
   } elseif {![xschem::notify_ciw_visible]} {
     ## the CIW is not in front of the user -- withdrawn, iconified, never
     ## created (--nolog), or absent (--nogui). Fall back to the drawing window's
@@ -336,7 +350,7 @@ proc xschem::notify {msg args} {
     ## is open but STACKED BEHIND the design window, so that ordinary
     ## arrangement still reaches zero visible sinks (issue 0659); the short form
     ## carries no remedy and the field is last-writer-wins (issue 0660).
-    if {[xschem::notify_statusbar $shortform $tag]} { lappend sinks statusbar }
+    if {[xschem::notify_statusbar $shortform $tag]} { set sinks [xschem::notify_mark statusbar] }
   }
 
   xschem::notify_record $tag $msg $line $shortform $menu $command $sinks

@@ -155,7 +155,35 @@ namespace eval ase {
 ## a netlist -- but a raise now falls back to the degraded bootstrap channel
 ## instead of returning a silent, untrue 0. ONE delegate body, shared with
 ## wviewer::echo, which is what invariant I1 asks for.
-proc ase::echo {msg {tag {}}} { return [::xschem::notify_safe $msg $tag] }
+##
+## ⚠ ISSUE 0666: THE GUARANTEE IS BACK IN THIS BODY. 0658's brief said "a notice
+## must never break its caller"; the catch was not deleted, it MOVED into the
+## callee, and this line became a bare one-liner that raises `invalid command
+## name "::xschem::notify_safe"` straight into a pick or a netlist the moment
+## the delegate body is not there.
+##
+## REACHABILITY, MEASURED, AND NARROWER THAN 0666 CLAIMED: the FILE-LOAD path is
+## CLOSED by issue 0663 (src/xinit.c:3571 -- a partially loaded xschem.tcl now
+## exits 1 with an announced STARTUP ABORTED), and notify_safe is defined before
+## this file is sourced, so no ordering can leave the delegate without it. What
+## IS live is a RUNTIME `namespace delete ::xschem`: it succeeds, takes the
+## namespace from 13 procs to 0, leaves the C `xschem` command working, and is
+## reachable from ciw_exec's `uplevel #0 $cmd` (src/ciw.tcl:557) and from any
+## --script. Hence a two-line guard here, and NOT a loader-level one.
+##
+## The guard is INLINE in each delegate on purpose, four lines duplicated
+## deliberately: extracting it into a shared proc would put it in the very
+## namespace whose absence it exists to survive (0666: "a guard is not a
+## builder"). What it returns is TRUE (0652): nothing reached any sink, and
+## stderr is never counted as one (0658 D9), so 0 is the honest answer -- never
+## a 0 that merely means "I did not check".
+proc ase::echo {msg {tag {}}} {
+  if {[catch {::xschem::notify_safe $msg $tag} r]} {
+    catch {puts stderr "xschem: notice channel unavailable: $r" ; flush stderr}
+    return 0
+  }
+  return $r
+}
 
 # dict get with a default (states are open dicts: keys may be absent).
 proc ase::state_get {state key {dflt {}}} {
@@ -689,9 +717,21 @@ proc ase::op_cards_capture {state netlistpath} {
         if {$opk ne {}} { set opcmd [list ase::ui::save_op_params_on $opk] }
         set opmenu {}
         catch { set opmenu [ase::ui::remedy_op_params_menu] }
-        ::xschem::notify "ASE: device operating-point parameters (gm, gds, vth,\
- ...) were NOT saved in this deck (issue 0617)." \
-          -short {no OP params saved} -menu $opmenu -command $opcmd
+        ## ⚠ CAUGHT (issues 0664/0665, decision D10). This is a DIRECT call
+        ## on the channel, not a delegate call, so notify_safe's guarantee does
+        ## not cover it -- and src/ase.tcl:802's `catch {ase::op_cards_capture
+        ## ...}` would swallow a raise here TOGETHER WITH THE ENTIRE OP-CARD
+        ## BLOCK, silently killing the user's actually-reported 0617 nudge.
+        ## 0665's fix adds a statement to the channel's ENTRY, so the hazard is
+        ## one this change creates. notify_safe is NOT the answer here: it drops
+        ## -short/-menu/-command, which R-0653-d keeps as distinct fields. The
+        ## general class (every direct ::xschem::notify site carrying a remedy
+        ## has no safe wrapper) is issue 0674.
+        catch {
+          ::xschem::notify "ASE: device operating-point parameters (gm, gds,\
+ vth, ...) were NOT saved in this deck (issue 0617)." \
+            -short {no OP params saved} -menu $opmenu -command $opcmd
+        }
       }
     }
     return {}

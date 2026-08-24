@@ -181,8 +181,15 @@ Cost: one crew. C change plus a sharedir-farm suite that is already written.
 
 ### Then, in order
 
-1. **0664 + 0665 + 0666 as one crew** — all three live in `notify_safe`, one proc.
-   Clean the channel before anything else is built on it.
+1. ~~**0664 + 0665 + 0666 as one crew**~~ — **DONE 2026-08-24** (status E).
+   0665 and 0666 FIXED; **0664 only PARTIALLY** — its replacement sentence was
+   refuted by the crew's own adversary leg and corrected in the write-up, and
+   the real fix is **issue 0675**: `notify_channel_degraded` measures **proc
+   identity, not sink reachability**, so a `ciw.tcl` failing between `notify`
+   (`:256`) and `ciw_echo` (`:464`) is announced as a *fault* while the pane is
+   dead for the session. **Fold 0675 into the 0655+0659+0667 crew below** — it
+   is the same question ("where does a notice actually land") and fixing it
+   around them would be wasted work. Also filed: 0674, 0676, 0677.
 2. **0655 + 0659 + 0667 as one crew** — all three are "where does a notice land
    when the CIW cannot take it". Needs your 0655 ruling first (recommendation:
    an ASE session-window notice segment; the statusbar demotes to a pointer).
@@ -205,9 +212,14 @@ Worth stating, because the issue count hides it.
 * ngspice does **not** need modifying. A bare `show` in a `.control` block dumps
   every OP parameter of every device (spec §3.1, rule R5); save cards stay
   primary because `show` is operating-point only.
-* Tiers at HEAD: `test_ase_core` 159 · `test_ase_final` 67 · `test_ase_dialogs`
+* Tiers at HEAD: `test_ase_core` **172** · `test_ase_log_seam_0207` **48** ·
+  `test_startup_guard_0663` 22 · `test_ase_final` 67 · `test_ase_dialogs`
   166 · `test_ase_window` 182 · `test_ase_cosim` 341 · `test_op_annot` 330/336 ·
-  T2 6/6. T1's 3 FAIL are pre-existing and unrelated.
+  T2 6/6. T1's 3 FAIL are pre-existing and unrelated, as is `test_ciw`'s 1
+  (issue 0670). (`test_ase_core` 159→172 and the seam 41→48 on 2026-08-24, the
+  0664+0665+0666 crew.) ⚠ `test_ase_core`'s NTD block reads spawned children's
+  `Xschem.log` and flaked **once in 20 runs** — issue **0676**, a harness
+  fragility, not a product defect.
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

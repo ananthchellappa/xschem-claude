@@ -1148,7 +1148,31 @@ deliberately degraded **bootstrap** channel defined in `src/xschem.tcl` *before*
 every caller so that a `ciw.tcl` that fails to load costs the visible sinks and
 **not** the durable log line. The durable-log write itself lives once, as
 `xschem::notify_log` (`src/xschem.tcl`), and is called by both `ciw.tcl`'s sink 2
-and the bootstrap: one builder, two consumers, invariant **I1**. ⚠ The sentence that stood here
+and the bootstrap: one builder, two consumers, invariant **I1**.
+
+⚠ **Since issues 0664/0665/0666 (2026-08-24) the channel RECORDS WHAT IT
+ACTUALLY DID, and `notify_safe` READS that record instead of assuming.**
+`::xschem::notify_progress` is a **namespace** variable declared in
+`src/xschem.tcl` — namespace-scoped so it survives the raise it exists to
+witness, and in `xschem.tcl` because the degraded state it serves is precisely
+the state where `ciw.tcl` is absent. `xschem::notify_mark` / `notify_mark_reset`
+are its only appender and only reset (**I1** again); `ciw.tcl`'s local `sinks`
+is now `notify_mark`'s return value, so record and witness cannot drift. The
+reset is `xschem::notify`'s **first** statement, ahead of option parsing and the
+latch gate. On a raise `notify_safe` **completes** the notice — writing only the
+missing witness — rather than re-making it, which is what stops one notice
+becoming two durable lines; it never retries sinks 1/3/4.
+
+The degradation announcement is likewise a **measurement**:
+`xschem::notify_channel_degraded` decides which sentence is true before either
+is said, a live channel that raises is announced as a `NOTICE CHANNEL FAULT` on
+its **own** one-shot latch, and the genuine `NOTICE CHANNEL DEGRADED` latch can
+no longer be burnt by a false positive. ⚠ **That discriminator measures PROC
+IDENTITY, not SINK REACHABILITY** — so a `ciw.tcl` that fails between `notify`
+(`:256`) and `ciw_echo` (`:464`) leaves the pane dead for the session while the
+announcement calls it a fault. Neither sentence may claim anything about where
+**later** notices land; an earlier revision did, was measured false for any
+persistent cause, and the clause was removed. Issue **0675** carries the fix. ⚠ The sentence that stood here
 before was wrong in a way that mattered: `ase::echo` does **not** feed the ASE
 session window (`grep -c ciw_echo src/ase_window.tcl` = **0**, against 61 lines
 that call `ase::echo`). It fed the **CIW** pane and `Xschem.log`, and with the
@@ -1912,6 +1936,7 @@ authority has signed it off*.
 
 | **0658** | ratification | **a broken or absent `src/ciw.tcl` now lets xschem START, in a degraded log-only notice mode, instead of SIGSEGV-ing at startup.** `src/xschem.tcl:14854` was a bare `source`; a Tcl error inside the helper propagated out, `source_tcl_file()` (`src/xinit.c:1513`) printed and returned, `Tcl_AppInit` walked on into `tclgetdoublevar("cairo_font_line_spacing")` and the process died — exit **139**, measured three ways (error at the top of the helper, error at the end, file absent). It is now caught, and the failure is **announced once** on stderr and once in the durable log rather than swallowed (which is 0423's standing objection to catching a `source`). Two rulings are wanted. **(a)** Is a degraded-but-alive session the right trade against a hard, obvious crash — and should the other ~12 bare helper sources get the same treatment (issue **0663**)? ⚠ **The second half of (a) was ANSWERED on 2026-08-24: NO.** 0663 fixed the class in C as announce-and-**abort**; the other fifteen sources stay bare and uncaught, and `ciw.tcl` alone keeps the alive-and-degraded behaviour. So (a) now asks only whether that *asymmetry* is right — see 0663's own row below. **(b)** In that degraded state the GUI user sees **nothing on screen**: `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it, because copying `notify_statusbar` out of the dead file is the I1 breach the whole item avoided (issue **0667** — answer it with 0654/0655/0660). Implemented as ruled pending the answer. |
 | **0663** | ratification | **when one of xschem's OWN fifteen shipped Tcl helpers fails to source, xschem now REFUSES TO START** — it names the failing file in one line on stderr and in the durable action log (`STARTUP ABORTED: … Failing file: <helper> line N. Cause: …`) and exits **1**. Before: SIGSEGV, exit **139**, and the `error {...}` shape named the helper *nowhere*. Fixed in C at one call site, `src/xinit.c:3571`; `src/xschem.tcl` untouched. The ruling wanted: **(a)** announce-and-**continue**, giving a degraded editor with `cadlayers=0`, `undo_type` NULL, no colours, no menus, no bindings and no undo — that can still be told to SAVE a schematic (issue **0619** is already open in exactly that state); or **(b)** announce-and-**abort**, which is what shipped, deliberately against the driver's recommendation because a subtly wrong tool is worse than a refusal. ⚠ Two scope facts a ruling needs: a broken **PDK helper / `xschemrc`** is UNAFFECTED and still exits 0 (only the one `xschem.tcl` call site is guarded), and (a) is not reachable from C at all — it would have to be a Tcl-side fix, which `status_annotate.md` §5 forbade. Implemented as (b) pending the answer. |
+| **0664+0665+0666** | ratification | **a notice channel failure now speaks TWO different sentences, and the choice is measured.** When the live `::xschem::notify` IS the log-only bootstrap the user gets the golden `NOTICE CHANNEL DEGRADED` line; when it is the full channel and merely *raised*, the user gets a **new** `NOTICE CHANNEL FAULT` line on its own one-shot latch, so a fault can never eat the announcement that belongs to a real degradation (at HEAD it did: the false positive burnt the latch and the genuine degradation announced nothing). Two rulings are wanted. **(a)** Is a second marker right, or should a live-channel raise be **silent** (0423's standing objection says no: a silent continue hides the problem) or re-use the DEGRADED marker (rejected — `NTD1`/`PS20` assert its absence in the healthy case and `NTD4`/`PS23` count exactly one, so re-use breaks four committed rows and re-tells 0664's lie in a new voice)? **(b)** With **no durable log open** (`--nolog`, or `--nogui` with no `--logdir`) the DEGRADED sentence now says *"no durable log is open … so notices reach STDERR ONLY from here on"* instead of *"notices are LOG-ONLY"* — is naming stderr right, when stderr is deliberately **not** counted as a sink (0658 D9)? ⚠ One scope fact a ruling needs: the discriminator measures **proc identity, not sink reachability**, so a `ciw.tcl` failing between `:256` and `:464` is announced as a FAULT while the CIW pane is dead for the whole session (issue **0675**). Implemented as ruled pending the answer. |
 
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:

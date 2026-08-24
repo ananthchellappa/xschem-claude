@@ -759,6 +759,254 @@ if {![info exists ::env(DISPLAY)] || $::env(DISPLAY) eq {}} {
     [list 0 1 1 1]
 }
 
+# ============================================================================
+# PS28-PS34 -- ISSUES 0664/0665: ONE NOTICE, ONE DURABLE LINE, AND A CLAIM THAT
+# IS TRUE AT THE MOMENT IT IS SAID
+# ============================================================================
+# All three of 0664/0665/0666 were introduced by 0658's own fix and live in ONE
+# proc, `xschem::notify_safe` (src/xschem.tcl:14786), which treats ANY raise
+# from the channel as "the channel is dead, re-make the whole notice". But sink
+# 2 IS the durable log, and notify_short, notify_popup, notify_ciw_visible,
+# notify_statusbar and notify_record all run AFTER it -- so a raise in any of
+# them re-makes a notice whose durable line is already on disk.
+#
+# THIS SUITE IS WHERE THAT IS COUNTABLE. It is the only one with BOTH a real
+# CIW pane and a real durable log, exactly as it owns PS21/PS22 and the R6
+# cross-product. test_ase_core's NT22-NT29 own the mechanism (the record, its
+# reset point, the measurement, the two latches); NTD8-NTD12 there own the
+# child-process counts. These rows own the file-and-pane pair:
+#
+#   PS28  0665 R1 -- a raise at the LAST statement leaves ONE `#! ` line, not two
+#   PS29  0664 R2 -- and makes NO degradation claim, only a FAULT
+#   PS30  0664    -- the claim is TRUE at the moment it is said (measured INSIDE
+#                   the seam, with it still installed)
+#   PS31  0665    -- the SECOND doubling shape: the whitespace-only exit, which
+#                   is reached AFTER sink 2 has already written
+#   PS32  0664 R3b-- the OTHER seam: the FULL channel raises BEFORE sink 2
+#   PS33  0658/0664 R3a -- the channel is ABSENT: the LOG-ONLY sentence is true,
+#                   and PROVED on the very next notice
+#   PS34  0650 G2 -- sink SELECTION is unchanged by the accounting rewrite
+#
+# ⚠ THESE ROWS ASSERT CONTENT IN A WINDOW OF NEW LOG LINES, NEVER A SESSION
+# COUNT. PS23 owns "exactly once for the whole session" and runs BEFORE them;
+# each row here re-arms both latches first, so what it measures is its own call
+# and not PS21's leftovers. Getting that backwards would make PS23 and these
+# rows fight over one latch.
+#
+# GOLDEN STRINGS, same standing as `NOTICE CHANNEL DEGRADED` has since 0658:
+# `NOTICE CHANNEL FAULT` (the live-channel marker -- it must NOT contain the
+# DEGRADED substring, or PS20's absence row and PS23's count of exactly one both
+# break) and `notice channel unavailable` (the delegates' last resort).
+
+## `nt_cx`'s shape, here: a raise becomes a value, so one missing proc reddens
+## one row instead of aborting every row after it.
+proc ps_cx {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+  return $r
+}
+## Run $body with ::xschem::notify_record RENAMED AWAY -- the channel then
+## raises at its LAST statement, with the durable line ALREADY on disk. That is
+## the driver's reproduction and the only shape that can double it. Restores on
+## every exit path, including a raising body.
+proc ps_no_record {body} {
+  set had [expr {[info commands ::xschem::notify_record] ne {}}]
+  if {$had} { rename ::xschem::notify_record ::ps_saved_record }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify_record {}}
+    catch {rename ::ps_saved_record ::xschem::notify_record}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+## Run $body with ::xschem::notify replaced by one that RAISES AT ITS FIRST
+## STATEMENT -- a bug inside the channel BEFORE any sink has fired (NT21's stub,
+## and R3b's subject).
+proc ps_raising_notify {body} {
+  set had [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had} { rename ::xschem::notify ::ps_saved_notify2 }
+  proc ::xschem::notify {args} {
+    return -code error {PS32 a simulated bug inside the channel itself}
+  }
+  set rc [catch {uplevel 1 $body} e]
+  catch {rename ::xschem::notify {}}
+  if {$had} { catch {rename ::ps_saved_notify2 ::xschem::notify} }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+## Re-arm BOTH announcement latches (see the ⚠ above).
+proc ps_rearm_latches {} {
+  catch {set ::xschem::notify_degraded 0}
+  catch {set ::xschem::notify_fault 0}
+}
+## how many of the log lines added since $n0 carry $s
+proc ps_newcount {n0 s} {
+  set n 0
+  foreach l [newlines $n0] { if {[string first $s $l] >= 0} { incr n } }
+  return $n
+}
+
+# --- PS28/PS29/PS30: ONE SEAM, THREE ROWS -----------------------------------
+# One `ase::echo` through a channel that raises at its LAST statement. Three
+# separate facts about it, so a fix that gets one right and another wrong cannot
+# hide: the FILE grew by one line (not two), the announcement was a FAULT and
+# not the LOG-ONLY claim, and the claim's premise was measured while the seam
+# was still installed rather than reconstructed afterwards.
+ciw_show
+sbar_set {}
+set PS28_MSG {PS28-0665 one notice must leave ONE durable line}
+ps_rearm_latches
+set ps28_n0    [llength [loglines]]
+set ps28_pane0 [pane_count $PS28_MSG]
+set ps28_seam [ps_no_record {
+  set ::ps28_r      [ase::echo $::PS28_MSG error]
+  set ::ps30_deg    [ps_cx {::xschem::notify_channel_degraded}]
+  set ::ps30_live   [expr {[info commands ::xschem::notify] ne {} ? 1 : 0}]
+  set ::ps28_done   1
+}]
+update idletasks
+note "PS28 ase::echo returned" [expr {[info exists ::ps28_r] ? $::ps28_r : {NO-RETURN}}]
+note "PS28 new log lines"      [newlines $ps28_n0]
+# The fourth element is R4's other half: what a delegate RETURNS must be TRUE
+# (0652). The count it hands back must be the count of sinks that ACTUALLY
+# fired -- which is exactly what the surviving record holds, so the two are
+# asserted against each other rather than against a number typed here.
+check "PS28 0665 R1 WITH A REAL PANE AND A REAL LOG: the channel raises at its\
+ LAST statement, after sink 2 has already written -- ONE `#! ` line for one\
+ notice, the pane still shows it exactly once, and what ase::echo returns is\
+ the count of sinks that really fired" \
+  [list $ps28_seam [ps_newcount $ps28_n0 "#! $PS28_MSG"] \
+        [expr {[pane_count $PS28_MSG] - $ps28_pane0}] \
+        [expr {([info exists ::ps28_r] && [info exists ::xschem::notify_progress] && \
+                $::ps28_r == [llength $::xschem::notify_progress]) ? 1 : 0}]] \
+  [list 1 1 1 1]
+
+check "PS29 0664 R2 the same call makes NO degradation claim -- the live\
+ ::xschem::notify was demonstrably the full channel, not the fallback -- and\
+ announces the late raise as a FAULT instead (what the FAULT sentence may NOT\
+ claim, because nothing here measures it, is where LATER notices land: 0675)" \
+  [list [ps_newcount $ps28_n0 {NOTICE CHANNEL DEGRADED}] \
+        [ps_newcount $ps28_n0 {NOTICE CHANNEL FAULT}]] \
+  [list 0 1]
+
+# 0664 is issue 0652's defect class: a report that LIES. Whatever the line says
+# after this fix, a row must prove it TRUE at the moment it is said -- so the
+# premise is measured INSIDE the seam, with the raise still armed, not
+# reconstructed from a healthy session afterwards.
+check "PS30 0664 THE CLAIM IS TRUE AT THE MOMENT IT IS SAID: measured INSIDE\
+ the PS28/PS29 seam, ::xschem::notify is present and the channel measures NOT\
+ degraded -- which is the whole of what the FAULT sentence asserts" \
+  [list [expr {[info exists ::ps30_live] ? $::ps30_live : {NO-MEASUREMENT}}] \
+        [expr {[info exists ::ps30_deg]  ? $::ps30_deg  : {NO-MEASUREMENT}}]] \
+  [list 1 0]
+
+# --- PS31: THE SECOND DOUBLING SHAPE, AT THE WHITESPACE EXIT ----------------
+# src/ciw.tcl's notify has THREE exits that each call notify_record and return
+# 1, and the fix must cover all three. The whitespace-only exit is reached AFTER
+# sink 2 has written -- notify_log only trims "\n", so a message of spaces still
+# lands as a durable `#!    ` line -- and it doubles exactly like the normal
+# one. Measured at HEAD in a fresh session: two.
+# Counted as "new lines that are NOT an announcement", because a whitespace line
+# cannot be grepped for by content.
+ps_rearm_latches
+set ps31_n0 [llength [loglines]]
+set ps31_seam [ps_no_record { set ::ps31_r [ase::echo "   " error] ; set ::ps31_done 1 }]
+update idletasks
+set ps31_body 0
+foreach l [newlines $ps31_n0] {
+  if {[string first {NOTICE CHANNEL} $l] < 0} { incr ps31_body }
+}
+note "PS31 new log lines" [newlines $ps31_n0]
+check "PS31 0665 AT THE WHITESPACE EXIT (reached AFTER sink 2 has written): a\
+ whitespace-only notice also leaves EXACTLY ONE durable line" \
+  [list $ps31_seam $ps31_body] [list 1 1]
+
+# --- PS32: R3b -- THE FULL CHANNEL RAISES BEFORE SINK 2 ---------------------
+# The brief's R3 says "raise at the FIRST statement -> the bootstrap DOES write
+# the durable line, exactly once, and the degradation claim is TRUE". That
+# splits, and this row is the half the brief's sentence gets wrong: when the
+# raise comes from the FULL channel, the live ::xschem::notify is NOT the
+# log-only fallback, so "notices are LOG-ONLY from here on" is FALSE -- the very
+# next notice reaches all four sinks. PS33 is the other half (R3a), where the
+# channel really is absent and the same sentence is TRUE.
+set PS32_MSG {PS32-0664 the channel raised BEFORE any sink fired}
+ps_rearm_latches
+set ps32_n0 [llength [loglines]]
+set ps32_seam [ps_raising_notify { set ::ps32_r [ase::echo $::PS32_MSG error] ; set ::ps32_done 1 }]
+update idletasks
+note "PS32 new log lines" [newlines $ps32_n0]
+check "PS32 0664 R3b the OTHER seam -- the FULL channel raises BEFORE sink 2.\
+ The bootstrap writes THE one durable line, and the announcement is still a\
+ FAULT: the LOG-ONLY sentence would be false, because the live channel is the\
+ four-sink one" \
+  [list $ps32_seam [ps_newcount $ps32_n0 "#! $PS32_MSG"] \
+        [ps_newcount $ps32_n0 {NOTICE CHANNEL DEGRADED}] \
+        [ps_newcount $ps32_n0 {NOTICE CHANNEL FAULT}]] \
+  [list 1 1 0 1]
+
+# --- PS33: R3a -- AND WHEN IT IS TRUE, IT IS PROVED --------------------------
+# ⚠ GREEN BEFORE THE CHANGE, deliberately -- a control in PS16/PS17's sense, and
+# the reason 0664 is a claim defect and not a channel defect: this path already
+# works. It is committed so that the fix cannot buy PS29/PS32 by weakening the
+# announcement into uselessness.
+# The second half is the sentence's CONSEQUENCE CLAUSE, measured: with the
+# channel still gone, the NEXT notice must reach the durable log and NOTHING
+# else -- no pane growth, the shared statusbar still reading its sentinel, no
+# popup. That is what "notices are LOG-ONLY from here on" means to a user, and
+# it is asserted rather than assumed (decision D7: the sentence is a claim about
+# what happens next, never an inventory of which widgets exist).
+set PS33_A {PS33-0658 the channel is genuinely gone and the log must still have it}
+set PS33_B {PS33-0664 and the LOG-ONLY claim is TRUE for the very next notice}
+ps_rearm_latches
+set ps33_n0 [llength [loglines]]
+ps_no_notify {ase::echo $::PS33_A error}
+update idletasks
+set ps33_a_lines [ps_newcount $ps33_n0 "#! $PS33_A"]
+set ps33_a_deg   [ps_newcount $ps33_n0 {NOTICE CHANNEL DEGRADED}]
+ciw_show
+sbar_set PS33-SENTINEL
+catch {destroy .xschem_notify}
+update idletasks
+set ps33_pane0 [llength [pane_lines]]
+set ps33_n1    [llength [loglines]]
+ps_no_notify {ase::echo $::PS33_B error}
+update idletasks
+check "PS33 0658/0664 R3a with the channel ABSENT: one durable line and ONE\
+ LOG-ONLY announcement -- and the claim is then PROVED on the very next notice\
+ (the log grows, the pane does not, the shared statusbar keeps its sentinel,\
+ no popup appears)" \
+  [list $ps33_a_lines $ps33_a_deg [ps_newcount $ps33_n1 "#! $PS33_B"] \
+        [expr {[llength [pane_lines]] - $ps33_pane0}] [sbar_text] \
+        [expr {[winfo exists .xschem_notify] ? 1 : 0}]] \
+  [list 1 1 1 0 PS33-SENTINEL 0]
+
+# --- PS34: G2 -- SINK SELECTION IS UNCHANGED --------------------------------
+# ⚠ GREEN BEFORE THE CHANGE, deliberately. The fix rewrites how the channel
+# ACCOUNTS for its sinks; it must not touch which sink a notice PICKS. PS14/PS16
+# already own the mapped-vs-closed discriminator, and this row re-asserts it
+# AFTER every seam above has been installed and torn down again -- the cheapest
+# possible guard against a restore that did not restore.
+sbar_set PS34-SENTINEL
+set ps34_shown [ciw_show]
+set PS34_M {PS34-0650 sink selection is unchanged by the accounting rewrite}
+ase::echo $PS34_M error
+update idletasks
+set ps34_mapped_sb [sbar_text]
+set ps34_pane      [pane_count $PS34_M]
+set ps34_closed    [ciw_close_via_wm]
+sbar_set PS34-SENTINEL2
+ase::echo $PS_LONG error
+update idletasks
+set ps34_closed_sb [sbar_text]
+ciw_show
+check "PS34 0650 G2 NON-REGRESSION OF SINK SELECTION: with the CIW MAPPED the\
+ notice reaches the pane exactly once and leaves the shared statusbar ALONE;\
+ with it CLOSED the identical notice reaches the statusbar" \
+  [list $ps34_shown $ps34_mapped_sb $ps34_pane $ps34_closed \
+        [expr {($ps34_closed_sb ne {PS34-SENTINEL2} && $ps34_closed_sb ne {} && \
+                $ps34_closed_sb ne {NO-WIDGET} && $ps34_closed_sb ne {NO-TEXT}) ? 1 : 0}]] \
+  [list 1 PS34-SENTINEL 1 1 1]
+
 # leave the session as we found it: CIW visible, status field clear
 sbar_set {}
 ciw_show

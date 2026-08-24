@@ -1110,16 +1110,27 @@ check "NT0 0650 the ::xschem NAMESPACE and the `xschem` COMMAND coexist" \
 # and the bootstrap consume (invariant I1: extracting it is what keeps the
 # bootstrap from being a second copy of ciw.tcl's sink 2), and
 # `notify_degraded_once` the one-time degraded-state announcement.
+#
+# ⚠ ISSUES 0664/0665 ADD THREE MORE, and they are the whole of that fix's
+# mechanism -- see the NT22-NT29 block below. `notify_mark` and
+# `notify_mark_reset` are the ONE appender and the ONE reset of the sinks-fired
+# record (`::xschem::notify_progress`, a NAMESPACE variable, so it survives the
+# unwind that a raise inside the channel causes), and
+# `notify_channel_degraded` is the MEASUREMENT that turns the degradation
+# announcement from a hard-coded claim into a fact. Renaming or removing any of
+# them reddens this row; adding a proc never does.
 set nt1_missing {}
 foreach p {::xschem::notify ::xschem::notify_ciw_visible ::xschem::notify_statusbar
            ::xschem::notify_popup ::xschem::notify_short ::xschem::notify_record
            ::xschem::notify_latch_ok ::xschem::notify_latch_rearm
            ::xschem::notify_latch_reset
            ::xschem::notify_bootstrap ::xschem::notify_safe
-           ::xschem::notify_log ::xschem::notify_degraded_once} {
+           ::xschem::notify_log ::xschem::notify_degraded_once
+           ::xschem::notify_mark ::xschem::notify_mark_reset
+           ::xschem::notify_channel_degraded} {
   if {[info commands $p] eq {}} { lappend nt1_missing $p }
 }
-check "NT1 0650+0658 xschem::notify and every named callee exist" $nt1_missing {}
+check "NT1 0650+0658+0665 xschem::notify and every named callee exist" $nt1_missing {}
 
 # --- NT2: R-0653-a, the ruled default ----------------------------------------
 # `set ::notify_style {ciw|popup}`, default `ciw`. The `set_ne` idiom
@@ -1514,6 +1525,268 @@ check "NT21 0658 a channel that RAISES (a real bug inside notify) is caught,\
   [list $nt21_rc [nt_field msg] [nt_field tag] [nt_field short]] \
   [list 0 $NT_LONG_C error {}]
 
+
+# ============================================================================
+# NT22-NT29 / NTD8-NTD12 -- ISSUES 0664 / 0665 / 0666: THE CHANNEL MUST RECORD
+# WHAT IT ACTUALLY DID, AND THE DELEGATE MUST READ THAT RECORD
+# ============================================================================
+# All three defects were INTRODUCED BY 0658'S OWN FIX, found by its adversary
+# leg, and reproduced by the driver before they reached the user. They are ONE
+# root cause living in ONE proc, `xschem::notify_safe` (src/xschem.tcl:14786),
+# which treats ANY raise as "the channel is dead, re-make the whole notice".
+#
+# But src/ciw.tcl's SINK 2 is the DURABLE LOG, and five live calls come AFTER
+# it -- notify_short, notify_popup, notify_ciw_visible, notify_statusbar and
+# notify_record. A raise in any of them happens with the durable line ALREADY
+# ON DISK, so re-making the notice produces:
+#
+#   * TWO durable lines for one notice                                   (0665)
+#   * a `NOTICE CHANNEL DEGRADED` claim -- "notices are LOG-ONLY from here on,
+#     no CIW pane, no status field, no popup" -- asserted while the four-sink
+#     channel was demonstrably ALIVE                                     (0664)
+#   * and, because that announcement is a ONE-SHOT LATCH, the false positive
+#     BURNS IT: the genuine degradation that follows announces NOTHING. The
+#     announcement fires for the healthy case and stays silent for the sick one.
+#
+# MEASURED AT HEAD, in a child with a real --logdir (the driver's own numbers,
+# reproduced twice more by this crew). Xschem.log, lines 4-7, IN ORDER:
+#     4:#! DRIVERMARK-B
+#     5:#! NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on ... Cause:
+#          invalid command name "xschem::notify_record"
+#     6:#! DRIVERMARK-B            <- the duplicate (0665)
+#     7:#! DRIVERMARK-A            <- the notice made when the channel really WAS
+#                                     gone, with NO announcement after it (0664)
+#
+# THE CONTRACT THESE ROWS DEFINE (red-first; the names and the marker strings
+# are GOLDEN here, exactly as 0658's were):
+#
+#   ::xschem::notify_progress
+#       A NAMESPACE VARIABLE in src/xschem.tcl's bootstrap block, beside
+#       `notify_degraded`. THE record of which sinks actually fired. It must be
+#       a namespace variable and NOT a local: a record that unwinds with the
+#       error is useless, and the case that produced the double line is a raise
+#       at the channel's LAST statement, not its first (NT22).
+#       ⚠ It lives in src/xschem.tcl, never in src/ciw.tcl -- the degraded state
+#       it exists to serve is the one state where ciw.tcl is absent.
+#   ::xschem::notify_mark {sink} / ::xschem::notify_mark_reset {}
+#       the ONE appender and the ONE reset (invariant I1). ciw.tcl's local
+#       `sinks` becomes the appender's RETURN VALUE, so the record and the
+#       witness cannot drift into two accounts of one fact (NT29).
+#       ⚠ The reset belongs at the channel's FIRST statement, before option
+#       parsing and before the latch gate -- resetting where `set sinks {}` sits
+#       today would leave the PREVIOUS call's record standing after a raise in
+#       option parsing, and notify_safe would then skip a durable write that
+#       never happened. That is a G1 regression wearing a 0665 fix (NT23).
+#   ::xschem::notify_channel_degraded {}
+#       THE MEASUREMENT behind the announcement. 1 when ::xschem::notify is
+#       absent, when `info body` on it raises, or when its body names
+#       notify_bootstrap; 0 otherwise. 0664 is issue 0652's defect class -- a
+#       report that LIES -- and the whole feature exists to be believed, so
+#       whatever the line says must be TRUE at the moment it is said (NT24).
+#   `NOTICE CHANNEL FAULT`
+#       the SECOND marker, on its OWN one-shot latch (`notify_fault`), for a
+#       raise out of a channel that measures LIVE. It must NOT contain the
+#       substring `NOTICE CHANNEL DEGRADED`: NTD1/PS20 assert that marker's
+#       ABSENCE in the healthy case and NTD4/PS23 count exactly one of it, so a
+#       second use of the golden string would break four committed rows and
+#       re-tell 0664's lie (NT25, NT26, NTD11, NTD12).
+#   ase::echo / wviewer::echo
+#       each keeps the 0658 guarantee IN ITSELF -- a catch, a last-resort
+#       `notice channel unavailable` line on stderr, and an HONEST `return 0`
+#       (nothing reached any sink; stderr is never a sink, 0658 D9). 0666's
+#       reachability is NARROWER than the issue claims and still REAL: the
+#       FILE-LOAD path is closed by issue 0663 (src/xinit.c:3571 -- a partially
+#       loaded xschem.tcl exits 1, announced), but a RUNTIME
+#       `namespace delete ::xschem` succeeds, takes ::xschem from 13 procs to 0,
+#       leaves the C `xschem` command working, and is reachable from ciw_exec's
+#       `uplevel #0 $cmd` (src/ciw.tcl:557) and from any --script (NT27, NTD10).
+#
+# ⚠ WHAT THESE IN-PROCESS ROWS CANNOT DO. test_ase_core runs --nogui with NO
+# --logdir, so there is no action log at all: `notify_log` returns 0 and the
+# record reads `ciw`, never `ciw log`. Every DURABLE-LINE COUNT therefore lives
+# in a child (NTD8-NTD12) or in test_ase_log_seam_0207.tcl (PS28-PS34), and the
+# rows here assert the MECHANISM: the record, its reset point, the
+# measurement, the two latches and the delegates' guarantee.
+
+## The sinks-fired record, with a SPEAKING placeholder when it does not exist --
+## a bare read reports "can't read ...: no such variable", which names the wrong
+## defect (the nt_field idiom).
+proc nt_progress {} {
+  if {![info exists ::xschem::notify_progress]} { return NO-RECORD }
+  return $::xschem::notify_progress
+}
+
+## Run $body with ::xschem::notify_record RENAMED AWAY. The channel then raises
+## at its LAST statement -- AFTER sink 1, sink 2 and sinks 3/4 have all already
+## fired -- which is the shape the driver reproduced and the ONLY one that can
+## produce a second durable line. Restores on every exit path.
+proc nt_no_record {body} {
+  set had [expr {[info commands ::xschem::notify_record] ne {}}]
+  if {$had} { rename ::xschem::notify_record ::nt_saved_record }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify_record {}}
+    catch {rename ::nt_saved_record ::xschem::notify_record}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+
+## Run $body with ::xschem::notify_safe RENAMED AWAY -- 0666's reachable
+## runtime shape, narrowed to one proc so the row names one defect.
+proc nt_no_safe {body} {
+  set had [expr {[info commands ::xschem::notify_safe] ne {}}]
+  if {$had} { rename ::xschem::notify_safe ::nt_saved_safe }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify_safe {}}
+    catch {rename ::nt_saved_safe ::xschem::notify_safe}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+
+## Re-arm BOTH announcement latches. These in-process rows assert CONTENT and
+## STATE, never a session count -- NTD4 and PS23 own "exactly once per session",
+## in children and in a suite that has a log -- so each row starts from a known
+## state instead of inheriting NT17/NT21's.
+proc nt_rearm_latches {} {
+  catch {set ::xschem::notify_degraded 0}
+  catch {set ::xschem::notify_fault 0}
+}
+
+# --- NT22: THE RECORD MUST SURVIVE THE RAISE ---------------------------------
+# The brief's hard requirement: "a record kept in a local that unwinds with the
+# error is useless. Prove it survives with a test that raises at the LAST
+# statement of the channel, not the first -- that is the case that produced the
+# double line." A DIRECT ::xschem::notify call, so nothing downstream can write
+# the record afterwards and this row measures the channel alone.
+set NT22_MSG {NT22 the sinks-fired record must survive the unwind}
+nt_no_record {set ::nt22_rc [catch {::xschem::notify $::NT22_MSG -tag error} ::nt22_e]}
+check "NT22 0665 the channel RECORDS WHAT IT DID in a namespace variable that\
+ SURVIVES the unwind: with notify_record gone it raises at its LAST statement\
+ and the record still names the sink that had already fired" \
+  [list $nt22_rc [expr {[info exists ::xschem::notify_progress] ? 1 : 0}] \
+        [expr {[lsearch -exact [nt_progress] ciw] >= 0 ? 1 : 0}] \
+        [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]] \
+  [list 1 1 1 1]
+note "NT22 record after the raise" [nt_progress]
+note "NT22 raise message"          [expr {[info exists ::nt22_e] ? $::nt22_e : {NO-RAISE}}]
+
+# --- NT23: THE RESET IS AT THE CHANNEL'S FIRST STATEMENT ---------------------
+# The landmine, stated as a row. If the reset is put where `set sinks {}` sits
+# today (after option parsing and after the notify_latch_ok gate), a raise in
+# EITHER of those leaves the PREVIOUS call's record standing -- and notify_safe,
+# reading `log` from a notice that succeeded minutes ago, then skips a durable
+# write that never happened. That is a G1 regression, not a 0665 fix.
+::xschem::notify {NT23 a healthy notice fills the record}
+set nt23_filled [expr {([nt_progress] ne {NO-RECORD} && [llength [nt_progress]] > 0) ? 1 : 0}]
+set nt23_optrc  [catch {::xschem::notify {NT23 option probe} -no_such_option x}]
+check "NT23 0665 the record is RESET at notify's FIRST statement, before option\
+ parsing and before the latch gate: a raise in OPTION PARSING leaves an EMPTY\
+ record, never the previous call's" \
+  [list $nt23_filled $nt23_optrc [nt_progress]] [list 1 1 {}]
+
+# --- NT24: THE DISCRIMINATOR -- the claim becomes a MEASUREMENT --------------
+# Issue 0664: "the degradation line says notices are LOG-ONLY from here on.
+# Today it says that without checking." Three states, one proc: the live
+# channel, the channel ABSENT (PS21/NT17's shape, where `info body` itself
+# raises), and the bootstrap wrapper INSTALLED. The bootstrap wrapper is
+# installed and measured but NEVER CALLED -- a call would burn the once-latch
+# and make NTD4/PS23 read their own side effect (NT16's rule).
+set nt24_normal [nt_cx {::xschem::notify_channel_degraded}]
+set nt24_gone   [nt_no_notify {nt_cx {::xschem::notify_channel_degraded}}]
+set nt24_boot NO-RUN
+if {[info commands ::xschem::notify] ne {}} {
+  rename ::xschem::notify ::nt_saved_notify3
+  proc ::xschem::notify {msg args} { return [xschem::notify_bootstrap $msg {*}$args] }
+  set nt24_boot [nt_cx {::xschem::notify_channel_degraded}]
+  catch {rename ::xschem::notify {}}
+  catch {rename ::nt_saved_notify3 ::xschem::notify}
+}
+check "NT24 0664 the degradation claim is a MEASUREMENT, not an assumption: the\
+ LIVE four-sink channel reads 0, an ABSENT ::xschem::notify reads 1, and the\
+ bootstrap wrapper INSTALLED (never called) reads 1" \
+  [list $nt24_normal $nt24_gone $nt24_boot] {0 1 1}
+
+# --- NT25: 0664 -- NO FALSE DEGRADATION -------------------------------------
+# The headline. A raise AFTER the sinks have fired is a FAULT inside a channel
+# that is demonstrably alive; it is NOT "notices are LOG-ONLY from here on". The
+# genuine `notify_degraded` latch must be left UNBURNT -- that is what NT26 then
+# needs.
+#
+# ⚠ WHAT THIS ROW DOES NOT PROVE, and an earlier revision wrongly claimed it
+# did: that the NEXT notice reaches every sink. It does not, for a persistent
+# cause -- measured, issue 0675 -- and the FAULT sentence no longer says so.
+nt_rearm_latches
+set NT25_MSG {NT25 the channel raised AFTER delivering and that is not a degradation}
+set nt25_rc [catch {nt_no_record {::ase::echo $::NT25_MSG error}} nt25_r]
+check "NT25 0664 a raise AFTER the sinks fired is a FAULT, not a degradation:\
+ the LOG-ONLY claim is NOT made while the four-sink channel is alive, and the\
+ degraded latch is left unburnt for the state that really needs it" \
+  [list $nt25_rc \
+        [expr {[info exists ::xschem::notify_degraded] ? $::xschem::notify_degraded : {NO-VAR}}] \
+        [expr {[info exists ::xschem::notify_fault] ? $::xschem::notify_fault : {NO-VAR}}]] \
+  [list 0 0 1]
+
+# --- NT26: 0664 SECOND ORDER -- THE FALSE POSITIVE ATE THE REAL ONE ----------
+# Worse than the issue states, and no committed row catches it: NTD4/PS23 count
+# "exactly 1" and pass whichever announcement it is. Immediately after NT25's
+# fault the channel is lost FOR REAL, and the genuine degradation must still be
+# announced. At HEAD the pair reads {1 1} -- the latch was already burnt by the
+# false positive and the real state is announced NOWHERE.
+set nt26_before [expr {[info exists ::xschem::notify_degraded] ? $::xschem::notify_degraded : {NO-VAR}}]
+nt_no_notify {::ase::echo {NT26 the channel is genuinely gone and must say so} error}
+check "NT26 0664 the GENUINE degradation still announces itself after NT25's\
+ fault -- a false positive must never eat the real announcement" \
+  [list $nt26_before \
+        [expr {[info exists ::xschem::notify_degraded] ? $::xschem::notify_degraded : {NO-VAR}}]] \
+  {0 1}
+
+# --- NT27: 0666 -- THE DELEGATES DO NOT RAISE INTO THEIR CALLER --------------
+# 0658's brief said "a notice must never break its caller". The catch was not
+# deleted, it MOVED into the callee, leaving both delegates bare one-liners that
+# raise `invalid command name "::xschem::notify_safe"` when notify_safe is gone
+# -- 61+ ASE call sites and wave_viewer's, every one of them able to raise into
+# a pick or a netlist. And what they return must be TRUE (0652): a delegate that
+# returns 0 without having checked is the same defect. Nothing reached any sink
+# here, so 0 is honest, and the witness is untouched to prove it.
+set nt27_last0 [expr {[info exists ::xschem::notify_last] ? $::xschem::notify_last : {NO-WITNESS}}]
+set nt27_ase [nt_no_safe {list [catch {::ase::echo {NT27 an ASE notice with the delegate body gone} error} e] $e}]
+set nt27_wv  [nt_no_safe {list [catch {::wviewer::echo {NT27 a viewer notice with the delegate body gone} error} e] $e}]
+set nt27_last1 [expr {[info exists ::xschem::notify_last] ? $::xschem::notify_last : {NO-WITNESS}}]
+check "NT27 0666 neither delegate RAISES INTO ITS CALLER when notify_safe is\
+ gone, and the 0 they return is TRUE -- the witness is byte-identical before\
+ and after, so nothing was delivered and nothing pretends it was" \
+  [list $nt27_ase $nt27_wv [expr {$nt27_last1 eq $nt27_last0 ? 1 : 0}]] \
+  [list {0 0} {0 0} 1]
+
+# --- NT28: the guarantee is IN the delegates -------------------------------
+# NT19's idiom, on the behaviour NT27 measures: a bare one-liner cannot keep a
+# promise about a callee that is gone. The guard is INLINE in each delegate on
+# purpose -- extracting it into a shared proc would put it in the very namespace
+# whose absence it exists to survive (0666: "a guard is not a builder").
+set nt28_ase {} ; catch {set nt28_ase [info body ::ase::echo]}
+set nt28_wv  {} ; catch {set nt28_wv  [info body ::wviewer::echo]}
+check "NT28 0666 BOTH delegates carry the guarantee in their own body (a catch\
+ and a last-resort stderr line), not merely by NT27's grace" \
+  [list [expr {[string first catch  $nt28_ase] >= 0 ? 1 : 0}] \
+        [expr {[string first stderr $nt28_ase] >= 0 ? 1 : 0}] \
+        [expr {[string first catch  $nt28_wv]  >= 0 ? 1 : 0}] \
+        [expr {[string first stderr $nt28_wv]  >= 0 ? 1 : 0}]] \
+  {1 1 1 1}
+
+# --- NT29: I1 -- ONE ACCOUNT, NOT TWO ---------------------------------------
+# Invariant I1 applied to the record itself. The rejected alternative was to
+# keep ciw.tcl's local `sinks` and MIRROR each lappend into a namespace list:
+# two accounts of one fact, whose drift is SILENT. This row reddens the moment
+# they can differ.
+::xschem::notify {NT29 one healthy notice, one account}
+set nt29_sinks [nt_field sinks]
+check "NT29 0665 I1 ONE ACCOUNT: after a healthy notice the surviving record IS\
+ the witness's own `sinks` list, so the two cannot drift" \
+  [list [nt_progress] [expr {$nt29_sinks ne {} ? 1 : 0}]] \
+  [list $nt29_sinks 1]
 # ---------------------------------------------------------------------------
 # NTD1-NTD7 -- THE REAL DEGRADED STATE, IN A CHILD PROCESS
 # ---------------------------------------------------------------------------
@@ -1634,6 +1907,198 @@ check "NTD6 0658 the degraded child SAYS SO and names ciw.tcl as the cause\
         [expr {[string first {NOTICE CHANNEL DEGRADED} \
                  [join [dict get $ntd_bad -log] "\n"]] >= 0 ? 1 : 0}]] \
   {1 1 1}
+
+# ---------------------------------------------------------------------------
+# NTD8-NTD12 -- 0664/0665/0666 WHERE THEY CAN BE COUNTED: A CHILD WITH A LOG
+# ---------------------------------------------------------------------------
+# The rows above assert the MECHANISM in-process. They cannot assert a DURABLE
+# LINE COUNT, because this suite runs --nogui with no --logdir and has no action
+# log at all (src/util.c:351). 0665 IS a durable line count -- "one notice, two
+# lines" -- so it has to be measured where a log exists: a child with a private
+# --logdir, the same idiom NTD1-NTD7 use.
+#
+# ⚠ THE FARM HERE IS THE **NORMAL** ONE for NTD8-NTD10. These are not degraded
+# sessions: the whole point of 0664/0665 is that they fire while the four-sink
+# channel is ALIVE, so `boot=0` and `ciw_echo=1` are asserted as non-vacuity in
+# the same row. NTD11/NTD12 use a THIRD farm -- the REAL ciw.tcl with a trailing
+# `error`, i.e. a file that defines every proc and then fails at its LAST line.
+# That is the shape 0664 was actually measured in, and it is the one a naive
+# "did the source raise?" test reads exactly backwards.
+
+## the first log line carrying $s, so a row can assert WHAT an announcement
+## named and not merely that one exists
+proc ntd_line_with {lines s} {
+  foreach l $lines { if {[string first $s $l] >= 0} { return $l } }
+  return {}
+}
+
+set NTD_B {NTD-0665 DRIVERMARK-B one notice must leave ONE durable line}
+set NTD_A {NTD-0665 DRIVERMARK-A the channel is entirely gone}
+set ntd_inner_dbl [string map [list @B@ $NTD_B @A@ $NTD_A] {
+  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
+  ## non-vacuity FIRST: this child is NOT degraded. `boot` is 1 only if the
+  ## live ::xschem::notify is the bootstrap wrapper (its body names
+  ## notify_bootstrap) -- the same discriminator NT16/PS20 use.
+  ntd_mark boot     [expr {[string match {*notify_bootstrap*} [info body ::xschem::notify]] ? 1 : 0}]
+  ntd_mark ciw_echo [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]
+  ## THE DRIVER'S OWN REPRODUCTION. notify_record is the channel's LAST
+  ## statement, so this raise happens with the durable line already on disk.
+  rename ::xschem::notify_record ::ntd_saved_record
+  catch {::ase::echo {@B@} error} r
+  catch {rename ::ntd_saved_record ::xschem::notify_record}
+  ntd_mark echo_b $r
+  ## and now the channel really IS gone -- 0658's shipped guarantee (G1), which
+  ## this fix must not move by one line.
+  rename ::xschem::notify ::ntd_saved_notify
+  catch {::ase::echo {@A@} error} r2
+  catch {rename ::ntd_saved_notify ::xschem::notify}
+  ntd_mark echo_a $r2
+  exit 0
+}]
+set ntd_dbl [share_farm_child $ntd_farm_ok [file join $scratch ntd_dbl] $ntd_inner_dbl]
+note "NTD8 child status" [dict get $ntd_dbl -status]
+
+# --- NTD8: R1 -- THE DRIVER'S REPRODUCTION, COMMITTED ------------------------
+# Measured at HEAD: 2. The log carries the real line, then the false degradation
+# announcement, then the SAME line again -- sink 2 wrote, notify_safe declared
+# the channel dead, and the bootstrap re-made a notice that had already been
+# delivered.
+check "NTD8 0665 R1 with notify_record renamed away the channel raises at its\
+ LAST statement, after every sink -- and ONE ase::echo leaves EXACTLY ONE\
+ durable line in a session whose channel is demonstrably ALIVE" \
+  [list [dict get $ntd_dbl -status] \
+        [ntd_get [dict get $ntd_dbl -out] boot] \
+        [ntd_get [dict get $ntd_dbl -out] ciw_echo] \
+        [share_farm_count [dict get $ntd_dbl -log] $NTD_B]] \
+  [list 0 0 1 1]
+
+# --- NTD9: R2 + G1 + G5, in the same child -----------------------------------
+# THREE things at once, because separating them would let one pass on another's
+# evidence: (G1) the notice made with the channel ENTIRELY gone still leaves its
+# one durable line -- 0658's guarantee, driver-verified, and the row that must
+# not move; (0664) exactly ONE `NOTICE CHANNEL DEGRADED` line and it names the
+# MISSING COMMAND, not a healthy channel; (G5) the late raise is announced, but
+# as a FAULT, so the two states are distinguishable in the log a user reads.
+# At HEAD the DEGRADED line names `"xschem::notify_record"` -- the healthy
+# channel's own last statement -- and there is no FAULT line at all.
+set ntd9_log [dict get $ntd_dbl -log]
+check "NTD9 0664/0665 G1+G5 the notice made with the channel ENTIRELY GONE\
+ still leaves exactly one durable line, exactly ONE degradation is announced\
+ and it names the MISSING COMMAND, and the late raise is announced separately\
+ as a FAULT" \
+  [list [share_farm_count $ntd9_log $NTD_A] \
+        [share_farm_count $ntd9_log {NOTICE CHANNEL DEGRADED}] \
+        [expr {[string first {"::xschem::notify"} \
+                 [ntd_line_with $ntd9_log {NOTICE CHANNEL DEGRADED}]] >= 0 ? 1 : 0}] \
+        [share_farm_count $ntd9_log {NOTICE CHANNEL FAULT}]] \
+  [list 1 1 1 1]
+note "NTD9 the DEGRADED line" [ntd_line_with $ntd9_log {NOTICE CHANNEL DEGRADED}]
+note "NTD9 the FAULT line"    [ntd_line_with $ntd9_log {NOTICE CHANNEL FAULT}]
+
+# --- NTD10: 0666's REACHABLE RUNTIME PATH ------------------------------------
+# The brief ordered this measured rather than assumed, and it changed the answer.
+# The FILE-LOAD path 0666 was written about is CLOSED by issue 0663: a
+# partially-loaded xschem.tcl now exits 1 with an announced STARTUP ABORTED, so
+# no delegate can exist without notify_safe (notify_safe is defined at
+# src/xschem.tcl:14786, ase.tcl is sourced at :14802, wave_viewer at :14806, and
+# xschemrc is read BEFORE xschem.tcl). What IS live is this: `namespace delete
+# ::xschem` succeeds at runtime, takes the namespace from 13 procs to 0, leaves
+# the C `xschem` command working -- and is reachable from ciw_exec's
+# `uplevel #0 $cmd` (src/ciw.tcl:557) and from any --script or user helper. So
+# the fix is a two-line guard per delegate, and 0666's "unreachable outside a
+# test's own sabotage" sentence is too strong and is corrected in writing.
+set NTD_NS_A {NTD-0666 an ASE notice with the whole ::xschem namespace deleted}
+set NTD_NS_W {NTD-0666 a viewer notice with the whole ::xschem namespace deleted}
+set ntd_inner_ns [string map [list @A@ $NTD_NS_A @W@ $NTD_NS_W] {
+  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
+  namespace delete ::xschem
+  ntd_mark procs [llength [info procs ::xschem::*]]
+  ntd_mark ase [list [catch {::ase::echo {@A@} error} e]  $e]
+  ntd_mark wv  [list [catch {::wviewer::echo {@W@} error} e2] $e2]
+  ## the C dispatcher is a COMMAND, not a member of the namespace -- the session
+  ## keeps running, which is exactly why those 61+ call sites matter
+  ntd_mark cmd [catch {xschem get current_name}]
+  exit 0
+}]
+set ntd_ns [share_farm_child $ntd_farm_ok [file join $scratch ntd_ns] $ntd_inner_ns]
+check "NTD10 0666 with the WHOLE ::xschem namespace deleted at RUNTIME neither\
+ delegate raises into its caller: the child exits 0, the session survives, both\
+ answer {0 0} -- rc 0 and an honest 0 sinks -- and the last resort says so on\
+ stderr" \
+  [list [dict get $ntd_ns -status] \
+        [ntd_get [dict get $ntd_ns -out] procs] \
+        [ntd_get [dict get $ntd_ns -out] ase] \
+        [ntd_get [dict get $ntd_ns -out] wv] \
+        [ntd_get [dict get $ntd_ns -out] cmd] \
+        [expr {[string first {notice channel unavailable} \
+                 [dict get $ntd_ns -out]] >= 0 ? 1 : 0}]] \
+  [list 0 0 {0 0} {0 0} 0 1]
+
+# --- NTD11: 0664's OWN MEASUREMENT, COMMITTED --------------------------------
+# THE FARM THAT MATTERS. A ciw.tcl that fails at its LAST line has already
+# defined every proc in it: `::xschem::notify` is the four-sink channel,
+# `::ciw_echo` exists, notices reach the pane and the log. src/xschem.tcl:14855
+# nonetheless announces `NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here
+# on (no CIW pane, no status field, no popup, no remedy)` -- measured verbatim
+# in this exact configuration, with notify_is_bootstrap=0 and ciw_echo=1 in the
+# same run. Every clause of that sentence is false, and the whole feature exists
+# to be believed (0652's class). The failure must still be REPORTED -- 0423's
+# standing objection is that a silent continue hides the problem -- so it is
+# announced as a FAULT that names ciw.tcl.
+set ntd_ciw_body {}
+set ntd_fd [open [file join $repo src ciw.tcl] r]
+set ntd_ciw_body [read $ntd_fd]
+close $ntd_fd
+set ntd_farm_end [share_farm $repo [file join $scratch farm_end] \
+  [list ciw.tcl "$ntd_ciw_body\nerror {0664 deliberate failure at the END of ciw.tcl}\n"]]
+set NTD_LIVE {NTD-0664 a notice made while the channel is FULLY LIVE}
+set NTD_GONE {NTD-0664 a notice made after the channel is genuinely gone}
+set ntd_inner_end [string map [list @L@ $NTD_LIVE @G@ $NTD_GONE] {
+  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
+  ntd_mark boot     [expr {[string match {*notify_bootstrap*} [info body ::xschem::notify]] ? 1 : 0}]
+  ntd_mark ciw_echo [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]
+  catch {::ase::echo {@L@} error} r
+  ntd_mark live $r
+  ## and NOW lose it for real, in the same session -- G5's subject
+  rename ::xschem::notify ::ntd_saved_notify
+  catch {::ase::echo {@G@} error} r2
+  catch {rename ::ntd_saved_notify ::xschem::notify}
+  ntd_mark gone $r2
+  exit 0
+}]
+set ntd_end [share_farm_child $ntd_farm_end [file join $scratch ntd_end] $ntd_inner_end]
+set ntd11_log [dict get $ntd_end -log]
+note "NTD11 child status" [dict get $ntd_end -status]
+check "NTD11 0664 a ciw.tcl that fails at its END leaves the channel FULLY\
+ LIVE: the four-sink notify and ::ciw_echo are both there, the notice reaches\
+ the durable log, and the startup failure is announced as a FAULT NAMING\
+ ciw.tcl -- never as the LOG-ONLY degradation claim, which would be false in\
+ every clause" \
+  [list [dict get $ntd_end -status] \
+        [ntd_get [dict get $ntd_end -out] boot] \
+        [ntd_get [dict get $ntd_end -out] ciw_echo] \
+        [share_farm_count $ntd11_log $NTD_LIVE] \
+        [share_farm_count $ntd11_log {NOTICE CHANNEL FAULT}] \
+        [expr {[string first {ciw.tcl} \
+                 [ntd_line_with $ntd11_log {NOTICE CHANNEL FAULT}]] >= 0 ? 1 : 0}]] \
+  [list 0 0 1 1 1 1]
+
+# --- NTD12: G5 -- A FAULT MUST NOT BURN THE DEGRADED LATCH -------------------
+# 0497 rule 1 is "count per pass, never alert per item", and the announcement is
+# a one-shot latch because of it. That makes WHICH event burns it load-bearing:
+# at HEAD the startup false positive burns it at line 4 of the log, and when
+# this same child then loses the channel for real the user is told NOTHING. The
+# count stays 1 either way, so NTD4/PS23 cannot see it -- this row can.
+check "NTD12 0664 G5 the FAULT does NOT burn the degraded latch: when the same\
+ child then loses the channel for real, the LOG-ONLY announcement fires exactly\
+ once and names the MISSING COMMAND" \
+  [list [share_farm_count $ntd11_log $NTD_GONE] \
+        [share_farm_count $ntd11_log {NOTICE CHANNEL DEGRADED}] \
+        [expr {[string first {"::xschem::notify"} \
+                 [ntd_line_with $ntd11_log {NOTICE CHANNEL DEGRADED}]] >= 0 ? 1 : 0}]] \
+  [list 1 1 1]
+note "NTD12 the DEGRADED line" [ntd_line_with $ntd11_log {NOTICE CHANNEL DEGRADED}]
+note "NTD12 the FAULT line"    [ntd_line_with $ntd11_log {NOTICE CHANNEL FAULT}]
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

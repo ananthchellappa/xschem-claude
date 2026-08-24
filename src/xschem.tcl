@@ -14666,6 +14666,67 @@ namespace eval xschem {
   ## deliberate test seam: 0497 rule 1 is "count per pass, never alert per
   ## item", so the announcement fires ONCE per session, never once per notice.
   variable notify_degraded 0
+
+  ## 1 once the CHANNEL-FAULT announcement has been made. A SECOND, SEPARATE
+  ## one-shot latch, and the separation is the whole of issue 0664's fix: a
+  ## raise out of a channel that is still fully alive is a FAULT, not a
+  ## degradation, and it must not burn the latch that belongs to the state
+  ## where the user really has lost every visible sink. At HEAD the false
+  ## positive burnt it and the genuine degradation that followed announced
+  ## NOTHING -- measured, in the log the driver read.
+  variable notify_fault 0
+
+  ## THE SINKS-FIRED RECORD (issues 0664/0665). Which sinks a single notice has
+  ## ACTUALLY reached, appended to as each one succeeds and reset at the
+  ## channel's first statement.
+  ##
+  ## ⚠ IT IS A NAMESPACE VARIABLE ON PURPOSE, and that is the only reason the
+  ## mechanism works: ciw.tcl's `sinks` was a LOCAL, so it unwound with the very
+  ## raise the record exists to survive. The case that produced 0665's double
+  ## durable line is a raise at the channel's LAST statement -- after sink 2 has
+  ## already written -- and a record that dies with the error cannot tell
+  ## notify_safe that.
+  ##
+  ## ⚠ IT LIVES HERE, IN src/xschem.tcl, never in src/ciw.tcl. The degraded
+  ## state it exists to serve is precisely the state where ciw.tcl is absent.
+  variable notify_progress {}
+}
+
+## THE ONE APPENDER AND THE ONE RESET of that record (invariant I1). ciw.tcl's
+## local `sinks` becomes notify_mark's RETURN VALUE rather than a second list
+## kept in step by hand -- one account of one fact, so the record and the
+## `::xschem::notify_last` witness cannot drift apart silently (the rejected
+## alternative was mirroring every `lappend` into a namespace list, which is two
+## accounts and exactly the I1 breach 0658's D2 had just deleted).
+proc xschem::notify_mark {sink} {
+  variable notify_progress
+  lappend notify_progress $sink
+  return $notify_progress
+}
+proc xschem::notify_mark_reset {} {
+  variable notify_progress
+  set notify_progress {}
+  return {}
+}
+
+## IS THE LIVE NOTICE CHANNEL THE LOG-ONLY FALLBACK? -- the MEASUREMENT behind
+## the announcement (issue 0664, which is 0652's defect class: a report that
+## LIES). The old announcement asserted "notices are LOG-ONLY from here on (no
+## CIW pane, no status field, no popup)" without ever checking, and was measured
+## saying it in a session where `info body ::xschem::notify` was the four-sink
+## channel and `::ciw_echo` was alive. The whole feature exists to be believed.
+##
+## Degraded means exactly one thing: the name `::xschem::notify` resolves to the
+## bootstrap below rather than to ciw.tcl's channel. Three states answer that --
+## the command is GONE (PS21/NT17's shape, where `info body` itself raises), it
+## is not a proc at all, or its body names notify_bootstrap. That last is the
+## same discriminator test_ase_core NT16 and test_ase_log_seam_0207 PS20 already
+## use to prove the bootstrap was OVERRIDDEN, so the product and the tests now
+## measure the identical fact.
+proc xschem::notify_channel_degraded {} {
+  if {[info commands ::xschem::notify] eq {}} { return 1 }
+  if {[catch {info body ::xschem::notify} b]}  { return 1 }
+  return [expr {[string first notify_bootstrap $b] >= 0 ? 1 : 0}]
 }
 
 ## THE ONE DURABLE-LOG WRITER, consumed by ciw.tcl's sink 2 AND by the bootstrap
@@ -14700,16 +14761,74 @@ proc xschem::notify_log {line tag} {
   return [expr {$logopen ? 1 : 0}]
 }
 
-## THE DEGRADED STATE ANNOUNCES ITSELF -- ONCE PER SESSION, NOT PER NOTICE.
-## Anything the bootstrap writes is by definition evidence of degradation, so the
-## user is told once, plainly, with the likely cause named (a caught `source` is
-## reported, never swallowed). Returns 1 the one time it actually spoke.
+## A CHANNEL FAILURE ANNOUNCES ITSELF -- ONCE PER SESSION, NOT PER NOTICE
+## (0497 rule 1: count per pass, never alert per item), AND IT SAYS ONLY WHAT IT
+## HAS MEASURED (issue 0664).
+##
+## ⚠ THE NAME IS HISTORICAL AND THE PROC NOW SPEAKS TWO SENTENCES. It kept its
+## name and its {cause} signature because test_ase_core NT1 enumerates it and
+## three call sites (:14855's caught ciw.tcl source, :16920's ciw_create guard,
+## and notify_safe) would have moved for cosmetics; what changed is that it asks
+## notify_channel_degraded which sentence is TRUE before saying either:
+##
+##   * DEGRADED -- the live channel IS the log-only bootstrap. The consequence
+##     clause is a claim about what happens to the user's NEXT notice, not an
+##     inventory of which widgets exist (decision D7): under --nogui there are
+##     none to inventory, and what matters is where the next notice lands. It is
+##     proved rather than asserted by test_ase_log_seam_0207 PS33, which emits a
+##     notice immediately afterwards and checks the pane did not grow, the
+##     shared statusbar still reads its sentinel, no popup exists and only the
+##     log gained a line.
+##   * FAULT -- something raised, but the live ::xschem::notify is still the
+##     full channel and not the fallback. Announced (0423's standing objection:
+##     a silent continue hides the problem) but on its OWN latch, so it can
+##     never eat the announcement that belongs to a real degradation.
+##
+##     ⚠ THIS SENTENCE DELIBERATELY CLAIMS NOTHING ABOUT LATER NOTICES, and an
+##     earlier revision of it did -- "the next notice still reaches every sink".
+##     That was 0664's own defect wearing the new marker, and it was MEASURED
+##     false twice (issue 0675): with a PERSISTENT post-sink-2 raiser
+##     (notify_short renamed away, :99, notify_style popup) notice 2 reached
+##     {ciw log} while the control reached {ciw log popup} and created
+##     .xschem_notify; and with a ciw.tcl that fails BETWEEN notify (:256) and
+##     ciw_echo (:464) the pane is dead for the whole session. What this proc
+##     measures is PROC IDENTITY, never sink reachability, so reachability is
+##     the one thing it must not assert. Issue 0675 carries the real fix.
+##
+## ⚠ THE FAULT SENTENCE MUST NOT CONTAIN THE SUBSTRING `NOTICE CHANNEL
+## DEGRADED`. That marker is golden: NTD1/PS20 assert its ABSENCE in the healthy
+## case and NTD4/PS23/NTD6/PS27 count exactly one of it, so re-using it here
+## would break four committed rows and re-tell 0664's lie in a new voice.
+##
+## Returns 1 the one time it actually spoke.
 proc xschem::notify_degraded_once {cause} {
   variable notify_degraded
+  variable notify_fault
+  if {![xschem::notify_channel_degraded]} {
+    if {$notify_fault} { return 0 }
+    set notify_fault 1
+    set l "NOTICE CHANNEL FAULT: $cause. Measured: the live xschem::notify is\
+ the full channel, not the log-only fallback. NOT measured, and therefore NOT\
+ claimed: which sinks any later notice reaches -- if this cause persists, later\
+ notices can keep missing a sink with no further word."
+    catch {puts stderr "xschem: $l" ; flush stderr}
+    catch {xschem::notify_log $l error}
+    return 1
+  }
   if {$notify_degraded} { return 0 }
   set notify_degraded 1
-  set l "NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW\
+  ## 0657's honesty gate, reused: with `--nolog` (or `--nogui` and no
+  ## `--logdir`) there is no action log AT ALL (src/util.c:351), so "notices are
+  ## LOG-ONLY from here on" would be false in exactly the way 0657's
+  ## `sinks = log` with no log open was false. Say where they really go.
+  if {![catch {xschem get actionlog_filename} lf] && $lf ne {}} {
+    set l "NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW\
  pane, no status field, no popup, no remedy). Cause: $cause"
+  } else {
+    set l "NOTICE CHANNEL DEGRADED: no durable log is open (--nolog, or --nogui\
+ with no --logdir), so notices reach STDERR ONLY from here on (no CIW pane, no\
+ status field, no popup, no remedy). Cause: $cause"
+  }
   catch {puts stderr "xschem: $l" ; flush stderr}
   catch {xschem::notify_log $l error}
   return 1
@@ -14738,8 +14857,10 @@ proc xschem::notify_bootstrap {msg args} {
     set cause {the notice channel is unavailable (src/ciw.tcl failed to source?)}
   }
   xschem::notify_degraded_once $cause
-  set sinks {}
-  if {[xschem::notify_log $msg $tag]} { lappend sinks log }
+  ## the SAME one account the full channel keeps, so notify_safe reads an
+  ## honest record whichever channel was live (issue 0665)
+  set sinks [xschem::notify_mark_reset]
+  if {[xschem::notify_log $msg $tag]} { set sinks [xschem::notify_mark log] }
   ## LAST RESORT ONLY, and never claimed as a sink: with no log open there is
   ## nowhere else at all for this to go.
   if {$sinks eq {} && $msg ne {}} { catch {puts stderr "xschem: $msg" ; flush stderr} }
@@ -14783,8 +14904,36 @@ proc xschem::notify_latch_reset {subject} { return }
 ##     the bootstrap's honest sink count, never a 0 that merely means "I did not
 ##     check". 0 from the full channel still means "the latch suppressed it",
 ##     and 0 from here still means "nothing was delivered" -- both are true.
+##
+## ⚠ ISSUES 0664/0665: IT READS WHAT THE CHANNEL DID, IT NO LONGER ASSUMES.
+## The three-line version above treated ANY raise as "the channel is dead,
+## re-make the whole notice". But src/ciw.tcl's SINK 2 is the durable log, and
+## notify_short, notify_popup, notify_ciw_visible, notify_statusbar and
+## notify_record all run AFTER it -- so a raise in any of them re-made a notice
+## whose durable line was already on disk. Measured, in one Xschem.log, in this
+## order: the real line, a `NOTICE CHANNEL DEGRADED` claim made while the
+## four-sink channel was demonstrably alive, the SAME line a second time.
+##
+## So: on a raise, COMPLETE the notice, never RE-MAKE it. If the record says the
+## durable sink already fired, the only thing genuinely missing is the witness;
+## write that and announce the raise as a FAULT. Sinks 1/3/4 are NEVER retried
+## -- "exactly one ::ciw_echo per notify" is a committed fence (PS8/PS19,
+## test_ase_locked_wire_pick_0160:175, test_sod_pick_no_select_0204:138/295) and
+## the sink that just raised is the least safe call in the program to repeat.
 proc xschem::notify_safe {msg {tag {}}} {
+  variable notify_progress
+  ## A FRESH record for THIS call, before anything can consult it. Without this
+  ## a delegate whose ::xschem::notify is ABSENT would inherit whatever a direct
+  ## call left behind and skip a durable write that never happened.
+  xschem::notify_mark_reset
   if {![catch {::xschem::notify $msg -tag $tag} r]} { return $r }
+  set done $notify_progress   ;# a namespace variable: it SURVIVED the unwind
+  if {[lsearch -exact $done log] >= 0} {
+    catch {xschem::notify_record $tag $msg $msg {} {} {} $done}
+    xschem::notify_degraded_once "xschem::notify raised AFTER delivering to\
+ [list $done]: $r"
+    return [llength $done]
+  }
   if {[catch {::xschem::notify_bootstrap $msg -tag $tag -cause $r} b]} { return 0 }
   return $b
 }

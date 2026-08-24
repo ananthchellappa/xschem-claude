@@ -325,7 +325,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0674.** (0662-0667 were taken by the 0658 crew; **0668-0673 by the 0663 crew**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0678.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -461,9 +461,9 @@ R1. A predicted red that does not appear is not automatically a hole.
 
 | issue | what | why it was not fixed here |
 |---|---|---|
-| **0664** | the degradation announcement claims LOG-ONLY **without measuring it** — a `ciw.tcl` erroring on its *last* line leaves the full channel live and still writes the claim into `Xschem.log` | 0652's class, in the artifact 0658 protects. Fix is a one-line `info body` test |
-| **0665** | **one notice, two durable lines** when the channel raises after sink 2 — `notify_safe` re-makes a notice sink 2 already wrote | needs a progress flag in the channel |
-| **0666** | `ase::echo`/`wviewer::echo` **can now raise into their caller** (`rc=1` where HEAD gave `rc=0`) — the catch moved into the callee and the outermost link is uncaught | the brief said *"a notice must never break its caller"*; unreachable outside a test's own sabotage, but it is 0658's shape moved up one file. Two-line fix, written out in the issue |
+| **0664** | the degradation announcement claims LOG-ONLY **without measuring it** — a `ciw.tcl` erroring on its *last* line leaves the full channel live and still writes the claim into `Xschem.log` | ⚠ **PARTIALLY FIXED 2026-08-24, STILL OPEN.** The false claim and the latch inversion are gone. The replacement sentence was **refuted by our own adversary leg**, corrected in the write-up, and the real fix is **issue 0675** — see the block below |
+| **0665** | **one notice, two durable lines** when the channel raises after sink 2 — `notify_safe` re-makes a notice sink 2 already wrote | **FIXED 2026-08-24.** A namespace-scoped sinks-fired record that survives the raise; `notify_safe` COMPLETES instead of re-making |
+| **0666** | `ase::echo`/`wviewer::echo` **can now raise into their caller** (`rc=1` where HEAD gave `rc=0`) — the catch moved into the callee and the outermost link is uncaught | **FIXED 2026-08-24.** ⚠ The *"unreachable outside a test's own sabotage"* clause was **wrong and is withdrawn** — a runtime `namespace delete ::xschem` is reachable from `ciw_exec`'s `uplevel #0`. Measured; the fix was scaled to it |
 | **0667** | the **degraded GUI user sees nothing on screen** — `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it | 0658's brief mandated no statusbar sink (it would copy `notify_statusbar`). Wants a ruling **together with 0654/0655/0660** |
 | **0662** | `sinks` claims `ciw` vacuously | why every 0658 row asserts on the log **file**, never the witness field |
 | **0663** | the bare-`source` segfault **class** | only `ciw.tcl` is caught |
@@ -475,6 +475,115 @@ R1. A predicted red that does not appear is not automatically a hole.
 > instead of today's SIGSEGV at startup (exit 139)?**
 
 Implemented as **yes**. Recorded in `owed.sh` as a `rule` debt against 0658.
+
+---
+
+
+## ✅⚠ 0664 + 0665 + 0666 — LANDED 2026-08-24 (status **E**). THE NOTICE CHANNEL NOW RECORDS WHAT IT DID
+
+**0665 FIXED · 0666 FIXED · 0664 PARTIALLY FIXED and still open (issue 0675).**
+Pure Tcl — `src/xschem.tcl`, `src/ciw.tcl`, `src/ase.tcl`, `src/wave_viewer.tcl`.
+No `make`, no `./configure`: no `.c/.h/.y/.l` touched and `src/Makefile.in`
+untouched, so rule 2b's receipt is not owed.
+
+### The one mechanism, and the one line of it that binds every later step
+
+`notify_safe` used to treat **any** raise as "the channel is dead, re-make the
+whole notice". But `ciw.tcl`'s sink 2 (the durable log) is followed by four more
+live calls, so a late raise wrote the durable line **twice** and claimed a
+degradation that had not happened. The channel now **records what it actually
+did** and `notify_safe` **reads the record**:
+
+* `variable ::xschem::notify_progress` in the `src/xschem.tcl` bootstrap block.
+  **It must be a NAMESPACE variable and it must live in `xschem.tcl`.** A local
+  unwinds with the very raise it exists to survive; and the degraded state it
+  serves is precisely the state where `ciw.tcl` is absent.
+* `xschem::notify_mark` / `notify_mark_reset` are the ONE appender and the ONE
+  reset (I1). `ciw.tcl`'s local `sinks` is now `notify_mark`'s **return value**,
+  so the record and the `notify_last` witness cannot drift.
+* **The reset is `ciw.tcl`'s FIRST statement (`:257`)**, before option parsing
+  and before the `notify_latch_ok` gate — *not* where `set sinks {}` used to sit.
+  Reset it at `:281` instead and a raise during option parsing leaves the
+  previous call's record standing, so `notify_safe` skips a durable write that
+  never happened: **a G1 regression wearing a 0665 fix.**
+* On a raise `notify_safe` **completes** — writes only the missing witness — and
+  **never retries sinks 1/3/4**. "Exactly one `ciw_echo` per notify" is a fence
+  committed in three suites.
+
+### ⚠ WHAT BINDS A LATER CREW, IN ORDER OF HOW MUCH IT WILL COST YOU
+
+1. **`xschem::notify_channel_degraded` MEASURES PROC IDENTITY, NOT SINK
+   REACHABILITY — and the two sentences it gates talk about sinks.** This is
+   **issue 0675** and it is the reason 0664 is not closed. `ciw.tcl` defines the
+   channel at `:256` and its first sink at `:464`, so *which sentence the user
+   is told is decided by which line of `ciw.tcl` failed*. Any crew touching
+   0655/0659/0667 (the "where does a notice land" cluster) is touching exactly
+   this and should fix it there rather than around it.
+2. **Do not put a forward-looking claim in either sentence.** We did, and our own
+   adversary leg refuted it — *"the next notice still reaches every sink"* is
+   false for any **persistent** cause, which is the shape of the driver's own
+   repro. The clause was deleted in the write-up. 0664's rule applies to 0664's
+   own replacement: **a row must prove every clause TRUE at the moment it is
+   said.**
+3. **`NOTICE CHANNEL DEGRADED` is a GOLDEN substring.** `NTD4`/`NTD6`/`PS23`/
+   `PS27` grep it literally and `NTD1`/`PS20` assert its **absence** in the
+   healthy case. The new `NOTICE CHANNEL FAULT` marker exists precisely so a
+   live-channel raise does not re-use it. A new sentence must not contain it
+   unless it means it.
+4. **`NT19` is a hard fence**: `notify_bootstrap`'s body must stay strictly
+   shorter than `notify`'s and must contain none of `notify_statusbar`,
+   `notify_popup`, `notify_short`, `notify_ciw_visible`, `notify_style`,
+   `notify_latch_ok`, `ciw_echo`. Sink-completion logic in the bootstrap must
+   avoid those seven literals.
+5. **`test_ase_core` runs `--nogui --nolog`, so `notify_log` legitimately returns
+   0 and `log` can NEVER enter the record there.** The completion branch is
+   unreachable in that suite **by construction** — R1/R2/R3's durable-line counts
+   need `test_ase_log_seam_0207` or a `share_farm_child` with `--logdir`. Four
+   sabotage variants failed to redden `NT17`/`NT18`/`NT21`/`NT29` for exactly
+   this reason; do not read those greens as coverage.
+6. **0666's "unreachable outside a test's own sabotage" was WRONG.** The
+   file-load path is closed by 0663 (`xinit.c:3571`), but a **runtime**
+   `namespace delete ::xschem` takes the namespace from 13 procs to 0, leaves
+   the C `xschem` command working, and is reachable from `ciw_exec`'s
+   `uplevel #0 $cmd` (`src/ciw.tcl:557`) and any `--script`.
+7. **The 0665 net is exactly three rows.** SAB-E (this defect re-introduced
+   verbatim) reddens `NTD8`, `PS28`, `PS31` and nothing else. Adequate — both
+   post-sink-2 exits, two suites — but thin. Do not weaken any of the three.
+8. **`ciw.tcl`'s notify has THREE exits, not one** (`:289` empty, `:322`
+   whitespace, `:342` normal) and the whitespace exit is reached **after** sink 2
+   has written, because `notify_log` trims only `\n`. It doubled too. Any change
+   to the channel's exits must count all three.
+
+### The four-line log excerpt, before and after
+
+```
+BEFORE                                   AFTER
+4:#! DRIVERMARK-B                        4:#! DRIVERMARK-B
+5:#! NOTICE CHANNEL DEGRADED: …          5:#! NOTICE CHANNEL FAULT: … (live channel)
+6:#! DRIVERMARK-B      <- the duplicate  6:#! NOTICE CHANNEL DEGRADED: … (the GENUINE one)
+7:#! DRIVERMARK-A                        7:#! DRIVERMARK-A
+```
+
+At HEAD the announcement fired for the healthy case and stayed **silent for the
+sick one**, because the false positive burnt the one-shot latch. There are now
+two latches.
+
+### Tiers
+
+`test_ase_core` 159 → **172** · `test_ase_log_seam_0207` 41 → **48** ·
+`test_startup_guard_0663` 22 · `test_ase_final` 67 · `test_op_annot` 330/336 ·
+`test_ase_dialogs` 166 · `test_ase_window` 182 · `test_ase_cosim` 341 · T1 3
+FAIL/3 NOGOLD pre-existing · T2 6/6 · `test_ciw` 1 FAIL pre-existing (0670).
+
+### Filed, not fixed
+
+**0674** (direct `::xschem::notify` sites carrying `-short`/`-menu`/`-command`
+have no safe delegate) · **0675** (the discriminator, above) · **0676** (a
+`share_farm_child` flake: it reads only action-log slot 0, so a stale
+`Xschem.log` sends the child's real log to `Xschem.log.1` and nine content rows
+go red while the child looks healthy) · **0677** (`notify_safe`'s completion
+branch: an uncaught announce that turns a delivered notice into `return 0`, a
+fabricated `short` in the witness, no reentrancy guard).
 
 ---
 
