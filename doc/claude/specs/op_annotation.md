@@ -712,7 +712,14 @@ absent. Measured: a raise inside a PDK procs file prints
 `Tcl_AppInit() error: can not execute <rc>`, **abandons the rest of the workarea
 rc** (the PDK menu, `user_startup_commands`, the library-manager autostart) and
 still exits 0 — and issue 0424 makes `invalid command name` a live possibility in
-an installed tree. `register`'s own malformed-dict raise is deliberately **not**
+an installed tree. ⚠ **This paragraph became load-bearing on 2026-08-24 and was
+re-measured then: it is still exactly true.** Issue 0663 made a failed source of
+`xschem.tcl` ABORT, and deliberately guarded **only that one call site** — the
+six xschemrc-side `source_tcl_file()` callers
+(`src/xinit.c:3249/3256/3263/3279/3288/3294`) are untouched, precisely so that a
+raise in a PDK procs file keeps the behaviour described here. Anyone tempted to
+"harden the other callers too" would turn this documented-survivable case fatal
+and break every workarea rc that half-loads. `register`'s own malformed-dict raise is deliberately **not**
 caught: that is an rc typo and must stay loud.
 
 **Five things the earlier hand-written block got wrong. All measured.**
@@ -1169,8 +1176,18 @@ durable log line included — is **FIXED** (2026-08-24), and the fix carried a
 correction the rest of this spec depends on: `src/xschem.tcl` sources its helpers
 with a **bare** `source`, so a Tcl error in any one of them propagates out,
 `Tcl_AppInit` walks on into unset variables, and startup **SIGSEGVs** (exit 139,
-the 0423/0424 signature — measured three ways). Only `ciw.tcl`'s source is caught
-today; the class is issue **0663**. ⚠ Defects in this
+the 0423/0424 signature — measured three ways). ⚠ **THE CLASS (issue 0663) IS
+FIXED IN C, 2026-08-24.** `Tcl_AppInit` now checks `source_tcl_file()`'s return
+(`src/xinit.c:3571`) and, on a failure, prints ONE line naming the failing helper
+to stderr **and** the durable action log, then exits **1** — never 139, never a
+walk into unset variables. That covers all fifteen bare sources and any added
+later; `src/xschem.tcl` was deliberately **not** touched, so do not wrap the
+sources in `catch`. 0658's `ciw.tcl` catch stays and is measured **not**
+redundant — it is the only thing keeping a broken `ciw.tcl` alive-and-degraded
+instead of clean-aborting, which makes `ciw.tcl` the one helper of the sixteen
+with different shipped semantics. ⚠ Not fully closed: a **non-error** early
+`return` still segfaults (issue **0671**), and the plain interactive GUI launch
+still hangs on a modal instead (issue **0669**). ⚠ Defects in this
 reporting that are filed and **not** fixed: **0635** (a refusal reports two
 contradictory sentences), **0636** (the nudge has no opt-out), **0637** (a
 truthy-not-`1` gate is silently off; the count assumes an `@` prefix),
@@ -1861,8 +1878,8 @@ wins, **I8/0604's report is the other half** — the hyphen says *which*, the re
 
 ### 5.1 Shipped and unratified — the questions this run owes a human
 
-Collected here, in one place, so they can be answered in one sitting. **FOURTEEN
-rows, one per issue file** *(0658 added 2026-08-24 by the 0658 crew)* *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
+Collected here, in one place, so they can be answered in one sitting. **FIFTEEN
+rows, one per issue file** *(0663 added 2026-08-24 by the 0663 crew)* *(0658 added 2026-08-24 by the 0658 crew)* *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
 count. Every file named below was verified to exist on disk by the S12 write-up
 agent (2026-08-21).
 
@@ -1893,7 +1910,8 @@ authority has signed it off*.
 
 | **0650** | ratification | **`xschem::notify` writes a red, 28-character short form into the DRAWING window's `.statusbar.12` whenever the CIW is not visible.** That field is shared with `*BUSY*` (`hilight.c:2201`), is cleared **unconditionally** by `propagate_logic()` (`hilight.c:2305`), is red for *every* tag including a plain success line, and is last-writer-wins (issue 0654, issue 0660). Two rulings are wanted. **(a)** Is the drawing window's statusbar the right can't-miss fallback, or should it be a permanent notice segment in the **ASE session window** the user is actually looking at when they press *Netlist and Run* (issue **0655** — not built, because `ase::echo` carries no session target)? **(b)** Should `::notify_style` ship **`ciw`** (implemented, per R-0653-a) or **`popup`**? Implemented as ruled pending the answer. |
 
-| **0658** | ratification | **a broken or absent `src/ciw.tcl` now lets xschem START, in a degraded log-only notice mode, instead of SIGSEGV-ing at startup.** `src/xschem.tcl:14854` was a bare `source`; a Tcl error inside the helper propagated out, `source_tcl_file()` (`src/xinit.c:1513`) printed and returned, `Tcl_AppInit` walked on into `tclgetdoublevar("cairo_font_line_spacing")` and the process died — exit **139**, measured three ways (error at the top of the helper, error at the end, file absent). It is now caught, and the failure is **announced once** on stderr and once in the durable log rather than swallowed (which is 0423's standing objection to catching a `source`). Two rulings are wanted. **(a)** Is a degraded-but-alive session the right trade against a hard, obvious crash — and should the other ~12 bare helper sources get the same treatment (issue **0663**)? **(b)** In that degraded state the GUI user sees **nothing on screen**: `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it, because copying `notify_statusbar` out of the dead file is the I1 breach the whole item avoided (issue **0667** — answer it with 0654/0655/0660). Implemented as ruled pending the answer. |
+| **0658** | ratification | **a broken or absent `src/ciw.tcl` now lets xschem START, in a degraded log-only notice mode, instead of SIGSEGV-ing at startup.** `src/xschem.tcl:14854` was a bare `source`; a Tcl error inside the helper propagated out, `source_tcl_file()` (`src/xinit.c:1513`) printed and returned, `Tcl_AppInit` walked on into `tclgetdoublevar("cairo_font_line_spacing")` and the process died — exit **139**, measured three ways (error at the top of the helper, error at the end, file absent). It is now caught, and the failure is **announced once** on stderr and once in the durable log rather than swallowed (which is 0423's standing objection to catching a `source`). Two rulings are wanted. **(a)** Is a degraded-but-alive session the right trade against a hard, obvious crash — and should the other ~12 bare helper sources get the same treatment (issue **0663**)? ⚠ **The second half of (a) was ANSWERED on 2026-08-24: NO.** 0663 fixed the class in C as announce-and-**abort**; the other fifteen sources stay bare and uncaught, and `ciw.tcl` alone keeps the alive-and-degraded behaviour. So (a) now asks only whether that *asymmetry* is right — see 0663's own row below. **(b)** In that degraded state the GUI user sees **nothing on screen**: `.statusbar.12` exists and is writable and the bootstrap deliberately writes nothing to it, because copying `notify_statusbar` out of the dead file is the I1 breach the whole item avoided (issue **0667** — answer it with 0654/0655/0660). Implemented as ruled pending the answer. |
+| **0663** | ratification | **when one of xschem's OWN fifteen shipped Tcl helpers fails to source, xschem now REFUSES TO START** — it names the failing file in one line on stderr and in the durable action log (`STARTUP ABORTED: … Failing file: <helper> line N. Cause: …`) and exits **1**. Before: SIGSEGV, exit **139**, and the `error {...}` shape named the helper *nowhere*. Fixed in C at one call site, `src/xinit.c:3571`; `src/xschem.tcl` untouched. The ruling wanted: **(a)** announce-and-**continue**, giving a degraded editor with `cadlayers=0`, `undo_type` NULL, no colours, no menus, no bindings and no undo — that can still be told to SAVE a schematic (issue **0619** is already open in exactly that state); or **(b)** announce-and-**abort**, which is what shipped, deliberately against the driver's recommendation because a subtly wrong tool is worse than a refusal. ⚠ Two scope facts a ruling needs: a broken **PDK helper / `xschemrc`** is UNAFFECTED and still exits 0 (only the one `xschem.tcl` call site is guarded), and (a) is not reachable from C at all — it would have to be a Tcl-side fix, which `status_annotate.md` §5 forbade. Implemented as (b) pending the answer. |
 
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:
@@ -2001,9 +2019,17 @@ change; see the S12 block of the plan for what else that step still owes.)*
 10. **A new `.tcl` helper is not installed until `./configure` is re-run.**
    `src/Makefile` is generated from `Makefile.in`, gitignored, and has no
    regeneration rule, so adding a file to `install_shares` leaves `make install`
-   stale — and a `source` line for a file that is not installed is a **startup
-   SIGSEGV**, not a missing feature (issues 0424 and 0423). Invisible in-tree,
-   because `XSCHEM_SHAREDIR` resolves to `src/` there.
+   stale — and a `source` line for a file that is not installed **used to be a
+   startup SIGSEGV**, not a missing feature (issues 0424 and 0423). Invisible
+   in-tree, because `XSCHEM_SHAREDIR` resolves to `src/` there.
+   ⚠ **AMENDED 2026-08-24 by issue 0663.** The crash is gone: the installed
+   binary now exits **1** and writes one `STARTUP ABORTED: … Failing file:
+   <helper>` line to stderr and to `Xschem.log`, so this mistake is finally
+   *diagnosable* instead of a bare exit 139. **The mistake itself is not
+   prevented** — re-running `./configure` after editing `Makefile.in` is still
+   mandatory (crew rule 2b), and the in-tree suite is still structurally blind
+   to it. What changed is that the first person to run the installed binary is
+   now told which file is missing.
 11. **⚠ A CORRECT ORACLE ASKED THE WRONG FIXTURE PROVES NOTHING — this is how
    BOTH S3 attempts shipped a refuted deliverable past a green suite.** Attempt 1
    passed 85 checks and 11 sabotage variants while missing two defects, because

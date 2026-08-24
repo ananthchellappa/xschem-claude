@@ -1310,24 +1310,32 @@ check "NT15 0650 a notice leaves `xschem get statusmsg` and statusmsg_hold\
 # Zero sinks, nothing raised, and the DURABLE LOG LINE -- the sink 0650's own
 # table calls "the one that survives a shut window" -- was NOT written. Before
 # 0650 that write was INLINE in ase::echo with no cross-file dependency, so this
-# is a regression 0650 introduced. src/xschem.tcl sources op_annot (:14600),
-# cmdmode, ase (:14606), ase_window, wave_viewer (:14610) and calculator BEFORE
-# ciw.tcl (:14648), so the channel loads after every one of its callers and
+# is a regression 0650 introduced. src/xschem.tcl sources op_annot (:14796),
+# cmdmode, ase (:14802), ase_window, wave_viewer (:14806) and calculator BEFORE
+# ciw.tcl (:14854), so the channel loads after every one of its callers and
 # lives in the very file whose failure is the hazard.
 #
-# ⚠ AND 0658's OWN REACHABILITY SENTENCE IS FALSE. It says "any Tcl error
+# ⚠ AND 0658's OWN REACHABILITY SENTENCE WAS FALSE. It says "any Tcl error
 # anywhere in src/ciw.tcl kills the whole file, and xschem.tcl continues past a
 # failed source." Measured false, three ways (error at the top of ciw.tcl, error
-# at the end, file absent): src/xschem.tcl:14648 is a BARE `source`, the raise
-# propagates OUT of xschem.tcl, source_tcl_file() (src/xinit.c:1513) merely
-# prints and returns, and Tcl_AppInit walks on into
-# `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The
-# process SIGSEGVs at startup -- exit 139, the 0423/0424 signature -- and the
-# bootstrap never gets to speak. It is Tcl_AppInit that continues past a failed
-# source of *xschem.tcl*, not xschem.tcl past a failed source of *ciw.tcl*.
-# So NTD2's headline assertion is "the child EXITS 0", and at HEAD it is
-# `CHILDKILLED SIGSEGV`. Catching :14648 is what makes the degraded state real;
-# the bootstrap is what makes it survivable.
+# at the end, file absent): src/xschem.tcl:14854 is the ciw.tcl source line and
+# it was a BARE `source`, so the raise propagated OUT of xschem.tcl,
+# source_tcl_file() (src/xinit.c:1513) merely printed and returned, and
+# Tcl_AppInit walked on into `tclgetdoublevar(cairo_font_line_spacing)` against
+# unset variables. The process SIGSEGVed at startup -- exit 139, the 0423/0424
+# signature -- and the bootstrap never got to speak. It was Tcl_AppInit that
+# continued past a failed source of *xschem.tcl*, not xschem.tcl past a failed
+# source of *ciw.tcl*.
+#
+# BOTH HALVES ARE NOW CLOSED, and NTD2 rests on the FIRST of them. Catching
+# :14854 (0658) is what makes the degraded state real and reachable, so NTD2's
+# headline assertion is "the child EXITS 0" and the bootstrap is what makes it
+# survivable. Separately, issue 0663 fixed the CLASS in C: Tcl_AppInit now
+# checks source_tcl_file()'s return and, for any of the other fifteen BARE
+# sources, announces the failing file (one `STARTUP ABORTED: ...` line, stderr
+# AND durable log) and exits 1 instead of walking on. `CHILDKILLED SIGSEGV` is
+# therefore no longer reachable from a broken farm at all -- see
+# tests/headless/test_startup_guard_0663.tcl, which owns that contract.
 #
 # THE CONTRACT THESE ROWS DEFINE (red-first; the implementation must match the
 # names and the marker string, they are golden here):
@@ -1571,9 +1579,11 @@ check "NTD7 0658 the broken farm really loses ciw.tcl (::ciw_echo present on\
   {1 0}
 
 # --- NTD2: THE HEADLINE ROW ---------------------------------------------------
-# RED AT HEAD, and not in the way 0658 predicted: the child does not run
-# degraded, it SIGSEGVs (`CHILDKILLED SIGSEGV`, exit 139) because :14648 is a
-# bare `source`. Both halves are asserted here because either alone is a lie:
+# Originally RED, and not in the way 0658 predicted: the child did not run
+# degraded, it SIGSEGVed (`CHILDKILLED SIGSEGV`, exit 139) because the ciw.tcl
+# source at :14854 was bare. 0658's catch there is what makes exit 0 the answer;
+# issue 0663 removed the SIGSEGV for every OTHER helper, in C.
+# Both halves are asserted here because either alone is a lie:
 # a survivable startup with no log line, or a log line from a process that
 # never reached the degraded state.
 check "NTD2 0658 R1 a child whose ciw.tcl FAILS TO SOURCE still starts (exit 0,\

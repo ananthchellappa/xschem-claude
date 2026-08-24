@@ -484,11 +484,11 @@ if {$ps18_rc1} { note "PS18 first notify error" $ps18_e1 }
 # only one with BOTH a real CIW pane and a real durable log, so it owns the
 # file-level assertions (PS21/PS22) and the R6 cross-product (PS24-PS26).
 #
-# The channel (src/ciw.tcl:246) loads at src/xschem.tcl:14648, AFTER op_annot
-# (:14600), ase (:14606) and wave_viewer (:14610) -- after every one of its
+# The channel (src/ciw.tcl:246) loads at src/xschem.tcl:14854, AFTER op_annot
+# (:14796), ase (:14802) and wave_viewer (:14806) -- after every one of its
 # callers, and inside the very file whose failure is the hazard. The fix is a
 # minimal, deliberately degraded bootstrap defined in src/xschem.tcl BEFORE
-# :14600 and REDEFINED by ciw.tcl; the full contract, and the golden marker
+# :14796 and REDEFINED by ciw.tcl; the full contract, and the golden marker
 # string `NOTICE CHANNEL DEGRADED`, are written out at the head of the
 # NT16-NT21 / NTD1-NTD7 block in tests/headless/test_ase_core.tcl.
 #
@@ -724,11 +724,15 @@ check "PS26b 0650/0658 R6 with the CIW ICONIFIED and ::notify_style popup the\
 # under `[info exists has_x]` -- so an X child is the only way to prove that a
 # dead ciw.tcl does not take the GUI startup down with it.
 #
-# ⚠ RED AT HEAD AND NOT IN THE WAY 0658 PREDICTED. 0658 says xschem.tcl
-# "continues past a failed source"; measured, :14648 is a BARE `source`, the
-# raise propagates out of xschem.tcl, and Tcl_AppInit walks on into
-# `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The child
-# SIGSEGVs -- `CHILDKILLED SIGSEGV`, the 0423/0424 exit-139 signature.
+# ⚠ ORIGINALLY RED, AND NOT IN THE WAY 0658 PREDICTED. 0658 said xschem.tcl
+# "continues past a failed source"; measured, the ciw.tcl source (:14854 on this
+# tree) was a BARE `source`, the raise propagated out of xschem.tcl, and
+# Tcl_AppInit walked on into `tclgetdoublevar(cairo_font_line_spacing)` against
+# unset variables. The child SIGSEGVed -- `CHILDKILLED SIGSEGV`, the 0423/0424
+# exit-139 signature. 0658's catch at :14854 is what makes THIS child exit 0;
+# issue 0663 separately fixed the class in C, so a failed source of any OTHER
+# helper now announces one `STARTUP ABORTED: ...` line and exits 1 rather than
+# faulting (tests/headless/test_startup_guard_0663.tcl).
 if {![info exists ::env(DISPLAY)] || $::env(DISPLAY) eq {}} {
   check "PS27 0658 the GUI user's degraded startup needs a DISPLAY" NO-DISPLAY 0
 } else {

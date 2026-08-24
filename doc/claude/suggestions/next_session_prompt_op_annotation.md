@@ -8,6 +8,163 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0663 — LANDED 2026-08-24 (status **E**). THE STARTUP SEGFAULT IS DEAD AS A CLASS, IN C
+
+**Not a plan step** — the eyes-on batch's first item, and `status_annotate.md` §5's
+recommended first action. Read this before **any** step that adds or edits a
+sourced `.tcl`, because the failure mode that used to eat such a mistake is gone
+and a *different* one is now the live risk.
+
+### What was measured BEFORE
+
+A sharedir farm over `src/` with one entry replaced, at HEAD `ac30edf0`:
+
+```
+### R1_opannot_err     [nogui] EXIT=139  ALIVE=0  LOGLINES=3
+### R3_opannot_absent  [nogui] EXIT=139  ALIVE=0  LOGLINES=3
+### R2_early_actionregistry [nogui] EXIT=139  ALIVE=0  LOGLINES=3
+### R2_late_alt2toggle      [nogui] EXIT=139  ALIVE=0  LOGLINES=3
+```
+
+— same in both `--nogui` and `:99`, `LOGLINES=3` being the header only, i.e. **no
+announcement anywhere**, and the `error {...}` shape naming the failing helper
+**nowhere** (stderr said only `can not execute .../xschem.tcl` + `Line No: 14796`).
+
+### What landed
+
+`src/xinit.c` only: four C89 file-statics plus **one changed line**.
+
+```c
+- source_tcl_file(name);
++ if(source_tcl_file(name) != TCL_OK) xschem_startup_abort(name);
+```
+
+`139 → 1`, the ten `no such variable` reads → **0**, and one line — to stderr AND
+the durable log — naming the file:
+
+```
+#! STARTUP ABORTED: <...>/xschem.tcl did not finish. Failing file:
+<...>/op_annot.tcl line 1. Cause: <the error>. The rest of it -- layers, colours,
+menus, key bindings, undo, the statusbar -- was never set up, so xschem is
+exiting instead of running structurally invalid. See doc/claude/issues/0663.
+```
+
+New suite `tests/headless/test_startup_guard_0663.tcl` — **17** checks `--nogui`
+(GUI legs self-SKIP with a printed reason), **22** on `:99`.
+
+### ⚠ SIX THINGS THIS BINDS FOR EVERY LATER STEP
+
+1. **A broken helper now KILLS the launch instead of crashing it — including
+   yours.** The design question was answered **(b) announce-and-abort**, against
+   the driver's recommended (a). If your step's `.tcl` raises at source time,
+   xschem exits 1 and says so; it does not start degraded. The smoke launch the
+   0658 block recommends is now *more* useful, not less:
+   `./src/xschem --nogui --pipe -q --script /dev/null; echo $?` — expect 0.
+2. **`src/xschem.tcl` was NOT touched, and must not be "tidied".** All fifteen
+   bare `source` lines are still bare *on purpose* — the C backstop covers them
+   and any sixteenth added later, so **do not add `catch` wrappers**. Measured:
+   wrapping all fifteen still leaves 2/16 at exit 139, because `:14569`
+   `load_action_table` and `:16873` `wviewer::rawhist_load` are bare top-level
+   CALLS that escape a source-only catch.
+3. **0658's `ciw.tcl` catch at `:14854` is NOT redundant — do not remove it.**
+   Measured both modes: with `ciw.tcl` broken, `xschem.tcl` *succeeds*, so the C
+   path never fires; that wrapper is the only thing keeping a broken `ciw.tcl` in
+   the **alive-and-degraded** class instead of the clean-abort class. Removing it
+   is a behaviour regression. ⚠ It also makes `ciw.tcl` **the one helper of the
+   sixteen with different shipped semantics** — deliberate, and load-bearing.
+4. **A broken `xschemrc` / PDK procs file is UNAFFECTED and still exits 0.** Only
+   the one `xschem.tcl` call site is guarded; the six xschemrc-side
+   `source_tcl_file()` callers (`xinit.c:3249/3256/3263/3279/3288/3294`) are
+   untouched, preserving what `specs/op_annotation.md` documents. Any later step
+   tempted to "harden them too" would turn a documented-survivable case fatal.
+5. **The classifier literal is now load-bearing in two directions.** The new line
+   deliberately starts `xschem: STARTUP ABORTED`, NOT `Tcl_AppInit() error` or
+   `FATAL: signal`, because `full_audit.sh:316` `classify()` scores a whole suite
+   **CRASH** on those two anchors and `test_audit_classifier` (50 checks) pins
+   them. Never print a startup diagnostic at column 0 with either prefix.
+6. **⚠ THE CLASS IS NOT 100% CLOSED — issue 0671.** The guard tests the **return
+   code**, so a *non-error* early exit still segfaults. Measured on the shipped
+   binary, all three at `EXIT=139 ANNOUNCE=0 NOSUCHVAR=10`: a helper containing
+   `return -code return`; one containing `return -level 2`; and **a top-level
+   early `return` in `xschem.tcl` itself** — which is an ordinary thing to write.
+   **If a later step adds a guard around a block in `xschem.tcl`, do not write it
+   as a top-level `return`** — it silently restores the whole 0663 class. The
+   one-term fix (also check `cadlayers` is set) is written out in 0671.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | L3 | **(b) announce and abort**, exit 1 | (a) at the C level: every var `Tcl_AppInit` reads is set *after* the bare-source block, so continuing means `cadlayers=0`, `undo_type` NULL, no menus/bindings/undo — **and that session can still SAVE a schematic**, with 0619 already open in exactly that state |
+| D2 | L2 | no `src/xschem.tcl` change at all | an `xschem::source_helper` proc — the `uplevel #0` landmine turns every helper's top-level `set` into a LOCAL; 7 of 15 sources precede `notify_log`; and routing a non-`ciw` helper through `notify_degraded_once` is **0666's exact shape** |
+| D3 | L2 | change only the one call site | hardening `source_tcl_file()` itself — turns the documented-survivable `xschemrc` case fatal |
+| D6 | L2 | first `(file …)` frame **plus first line only** of `tclresult()` | dumping `::errorInfo` whole — `log_output` prefixes every physical line with `#! `, so one failure writes 6+ durable lines: **0665's shape** |
+| D7 | **L1 (I1)** | keep 0658's catch; record the redundancy verdict, act separately | a general guarded `source` in C — would change 0658's announced cause string and risk a doubled durable line |
+| D8 | L2 | do **not** NULL-guard `xinit.c:658` here | belt-and-braces — it would mask the class and blur SAB-A. Filed as 0668 |
+
+### THE SABOTAGE MATRIX — 5 variants, **every predicted red appeared**, 4 supersets
+
+| variant | predicted | observed |
+|---|---|---|
+| A revert the return check | 12 | **14** (SG1 back to `CHILDKILLED SIGSEGV`) |
+| B suppress the announcement | 11 | **12** (SG1/SG5/SG6 green **by design** — abort and announcement are pinned by disjoint rows) |
+| C announce unconditionally | 5 hard | **9** |
+| D stop naming the file | 4 | **6** (SG8/SG16 green — Tcl's own result names an ABSENT file) |
+| E dump `errorInfo` whole (0665's shape) | 1 | **1**, exactly SG20 |
+
+**No predicted red was missing.** One predicted row did not *move* — SG21 under
+SAB-C — and that is correct, not a hole: SG21 guards the `^Tcl_AppInit() error`
+classifier count, and SAB-C's spurious line uses the other prefix. SG4 catches
+the doubling.
+
+### ⚠ TWO PROCESS FACTS WORTH MORE THAN THE FIX
+
+* **Two Claude sessions were live in this repo at once**, and the second rebuilt
+  `src/xinit.c` twice *during* the verification legs (12:30:15, 12:33:20) — once
+  while SAB-A residue was in the tree. The adversary caught it only because it
+  **pinned a copy of the binary** before measuring. Any tier number recorded in
+  those windows was taken against an unknown build. **Pin the binary, or re-check
+  `md5sum src/xinit.c` and `grep -rn SABOTAGE src/` at the moment you commit.**
+* **`git status` is blind to one litter class.** `test_wave_markers` drops
+  `untitled~.sch` in the repo root; `.gitignore:75` (`*~.sch`) hides it, and it
+  then reddens `test_ase_core`'s C11 guard on a *later* run in the same tree —
+  which reads as "`test_ase_core` is flaky". The tree-hygiene check every crew is
+  told to run cannot see it. Filed as **0673**; use
+  `git status --porcelain --ignored=matching -- ':(glob)untitled*'`.
+
+### STILL OPEN — six filed, two of them inside 0663's own fix
+
+| id | what |
+|---|---|
+| **0671** | ⚠ the guard is CODE-based, not STATE-based — a non-error early `return` still gives exit 139 with **zero** announcement. **The sharpest one; read it before editing `xschem.tcl`** |
+| **0672** | `Failing file:` can name a file that never failed (a `(file "…")` inside the error *message*, or the standard `-errorinfo` re-raise idiom, wins over the real frame). Plus a 512-byte cause buffer that truncates with no marker |
+| **0668** | `sig_handler` double-faults on a half-initialised `xctx` — why the code was 139, not `exit(1)`. `xinit.c:658`'s NULL `strcmp` is deliberately still unguarded (D8) |
+| **0669** | **the mode the human actually uses is untouched**: a plain interactive GUI launch (no `--pipe`/`-q`) hangs forever on `source_tcl_file`'s modal. Measured EXIT 124 at 15 s, announcement count **0** in both sinks |
+| **0670** | `test_ciw.tcl:131` RED at HEAD *and* after — the CIW error echo reaches the durable log. **Not** 0663 fallout; do not misread it as such |
+| **0673** | the gitignored `untitled~.sch` litter above |
+
+Also true and not a defect: R4's durable half needs a log open — `--nolog`, and
+`--nogui` without `--logdir` (`util.c:351`), give stderr only, so `full_audit`'s
+`--nolog` arm can never witness it.
+
+### The E question this owes the user
+
+> When one of xschem's **own shipped** Tcl helpers fails to load at startup,
+> should xschem **(a)** start anyway with an unlayered, unbound, un-undoable
+> editor that can still save, or **(b)** refuse to start, naming the file, with
+> exit 1? **Implemented as (b).** A broken PDK helper sourced from an `xschemrc`
+> is unaffected either way — it still survives and exits 0.
+
+Recorded in `owed.sh` as a `rule` debt against 0663.
+
+⚠ **Do not cite this block to reject a Tcl-side (a).** "Continuing is unsafe" is
+true of a *C-level* continue. The scout measured 14 of 16 helpers surviving fine
+when wrapped in Tcl `catch` (`cadlayers=22`). The honest statement is: **(a) is
+safe but is a Tcl-side fix, which `status_annotate.md` §5 forbade; C can only do
+(b).**
+
+---
+
 ## ✅⚠ 0650 — LANDED 2026-08-23 (status **E**, and the adversary landed six hits). THE ONE NOTIFICATION CHANNEL
 
 **Not a plan step** — an eyes-on batch item. Read this before any step that has
@@ -168,7 +325,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0668.** (0662-0667 were taken by the 0658 crew.)
+**Number the next issue from 0674.** (0662-0667 were taken by the 0658 crew; **0668-0673 by the 0663 crew**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -212,6 +369,13 @@ body, `xschem::notify_safe`.
 
 ### ⚠⚠ THE THING THE NEXT CREW MUST TAKE FROM THIS BLOCK
 
+> ⚠ **SUPERSEDED 2026-08-24 by 0663 — read the 0663 block at the top of this
+> file first.** The class described below was fixed in C: a failed helper source
+> now announces the failing file and exits **1**, not 139. What is preserved here
+> is the *mechanism* and the reachability argument, both still accurate. Two
+> statements below are now WRONG and are marked inline. And the class is not
+> 100% closed — a *non-error* early `return` still segfaults (issue **0671**).
+
 **`src/xschem.tcl` sources its helpers with a BARE `source`, and a Tcl error in
 any one of them SEGFAULTS STARTUP — exit 139, script never runs.** Measured three
 ways (error at the top of the helper, error at the end, file absent). The raise
@@ -233,6 +397,11 @@ Three consequences that bind later steps:
    source — `op_annot.tcl`, `ase.tcl`, `ase_window.tcl`, `wave_viewer.tcl`,
    `cmdmode.tcl`, `calculator.tcl`, `property_form.tcl`, `create_instance.tcl`,
    `action_registry.tcl` … — is **still bare**. Filed as **0663**.
+   ⚠ **STALE as of 2026-08-24.** They are all still bare and that is now
+   *deliberate*: 0663's C backstop covers every one of them plus any added later,
+   so **do not wrap them in `catch`**. 0658's `ciw.tcl` catch stays — measured NOT
+   redundant, and the only thing keeping a broken `ciw.tcl` alive-and-degraded
+   rather than clean-aborting.
 3. **A bootstrap-style fix is inert without the catch.** Issue 0658's own
    reachability sentence was false, and sabotage variant **D** is the receipt:
    revert just the catch and the degraded child goes from exit 0 back to

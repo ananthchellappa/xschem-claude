@@ -51,13 +51,26 @@ So the sentence "a lot of things are broken" is true of roughly **nine items**
 
 ## 3. Class B — structural, and one of them is in a different league
 
-### 0663 is the only item here that stops the tool from starting
+### 0663 ✅ FIXED 2026-08-24 — it was the only item here that stopped the tool from starting
 
 ```
-error at the TOP of any late-sourced helper  -> SIGSEGV, exit 139
-error at the END of it                       -> SIGSEGV, exit 139
-the file ABSENT (the pure 0424 shape)        -> SIGSEGV, exit 139
+BEFORE                                          AFTER (src/xinit.c:3571)
+error at the TOP of any late-sourced helper  -> exit 139  ->  exit 1, file named
+error at the END of it                       -> exit 139  ->  exit 1, file named
+the file ABSENT (the pure 0424 shape)        -> exit 139  ->  exit 1, file named
 ```
+
+One line, to stderr **and** the durable log, once per failure:
+`STARTUP ABORTED: <sourced> did not finish. Failing file: <helper> line N.
+Cause: <the error>. …` — where before, the durable log got **nothing** and the
+`error {...}` shape named the helper nowhere at all.
+
+Fixed in C at **one call site**, covering all fifteen bare sources and any added
+later. `src/xschem.tcl` was deliberately not touched. Answered as **(b)
+announce-and-abort**, against the driver's recommended (a) — status **E**, the
+ruling is in `owed.sh`. ⚠ **Not 100% closed**: a *non-error* early `return` still
+segfaults (**0671**), the announcement can name the wrong file (**0672**), and a
+plain interactive GUI launch still hangs on a modal instead (**0669**).
 
 `src/xschem.tcl` sources sixteen helpers with a **bare `source`**. An error inside
 one propagates out of `xschem.tcl`, so the rest of that file never runs — no
@@ -69,8 +82,9 @@ against variables nobody set. That is the crash.
 **This is the root cause of issue 0424, not a relative of it.** 0424 lost
 `op_annot.tcl` from the install list; 275 in-tree checks stayed green and the
 *installed* binary was dead on arrival. The fix then was to add the file back to
-the install list. The crash mechanism was never touched, and `op_annot.tcl` is
-still one of the sixteen bare sources today.
+the install list. The crash mechanism was never touched, and `op_annot.tcl` was
+still one of the sixteen bare sources until 0663 landed. It still is — that is
+now deliberate: the C backstop covers it, so **do not add `catch` wrappers**.
 
 The test suite is **structurally blind** to it: in-tree, `XSCHEM_SHAREDIR`
 resolves to `src/`, so a file missing from the install list is still found. Only
@@ -116,7 +130,31 @@ important gap on this branch, and it is what 0653 was ratified to close.
 
 ---
 
-## 5. RECOMMENDED FIRST ACTION — fix 0663 as a class, in C
+## 5. ~~RECOMMENDED FIRST ACTION~~ ✅ DONE 2026-08-24 — 0663 was fixed as a class, in C
+
+**This section's recommendation was carried out.** It is kept, not deleted,
+because its reasoning is what the crew was measured against and points 1-5 below
+all held up. **The new first action is item 1 of "Then, in order".**
+
+What landed: `if(source_tcl_file(name) != TCL_OK) xschem_startup_abort(name);` at
+`src/xinit.c:3571`, plus four C89 statics. Not `ciw.tcl` again; not sixteen
+`catch` wrappers — and the crew *measured* why the wrappers would not have
+worked: with all fifteen sources wrapped, **2 of 16 still exit 139**, because
+`src/xschem.tcl:14569` `load_action_table` and `:16873` `wviewer::rawhist_load`
+are bare top-level **calls** that escape a source-only catch. Point 3 below was
+therefore an understatement.
+
+⚠ **Point 4 below turned out to be wrong on one clause.** It predicted 0658's
+per-file `catch` "becomes redundant". Measured: it is **not** redundant. Under
+the (b)-shaped fix that wrapper is the only thing keeping a broken `ciw.tcl`
+alive-and-degraded rather than clean-aborting, so removing it is a behaviour
+regression. The ruling did **not** generalise for free either — it changed shape:
+0663's question is now "should xschem's own helpers abort or continue", and
+`ciw.tcl` is the deliberate exception.
+
+New issues filed by that crew: **0668-0673**. Number the next from **0674**.
+
+The original text follows.
 
 Not `ciw.tcl` again. Not sixteen `catch` wrappers. Fix
 `Tcl_AppInit` / `source_tcl_file` so a failed helper source cannot walk on into

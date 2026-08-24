@@ -11,11 +11,20 @@
 ## So: a directory of SYMLINKS to every entry of the repo's src/, with named
 ## files REPLACED by literal content. XSCHEM_SHAREDIR is priority 1 in the share
 ## dir search (src/xinit.c:2985), so the child picks the farm up with no other
-## plumbing. Measured at HEAD, 2026-08-24: a farm whose ciw.tcl is a one-line
-## `error` makes the child SIGSEGV at startup (exit 139) -- src/xschem.tcl:14648
-## is a BARE `source`, the raise propagates out of xschem.tcl, source_tcl_file()
-## (src/xinit.c:1513) prints and returns, and Tcl_AppInit walks on into
-## `tclgetdoublevar(cairo_font_line_spacing)` against unset variables.
+## plumbing.
+##
+## WHAT A BROKEN FARM ENTRY DOES NOW (issue 0663, measured 2026-08-24). A farm
+## whose ciw.tcl is a one-line `error` starts NORMALLY and exits 0: that one
+## source is CAUGHT (src/xschem.tcl:14854, issue 0658) and the failure is
+## announced on the notify channel. Any OTHER helper is still a BARE `source`,
+## so a raise there propagates out of xschem.tcl -- but Tcl_AppInit no longer
+## walks on into `tclgetdoublevar(cairo_font_line_spacing)` against unset
+## variables and SIGSEGVs (the old exit-139 signature 0423/0424 measured).
+## src/xinit.c now checks source_tcl_file()'s return, announces the FAILING FILE
+## on stderr and in the durable log as one `STARTUP ABORTED: ...` line, and
+## exits 1. So a farm child's status is 0 (clean or caught) or CHILDSTATUS 1
+## (announced abort); CHILDKILLED SIGSEGV is a regression.
+## tests/headless/test_startup_guard_0663.tcl owns that contract.
 ##
 ## The child idiom itself (a private --logdir, then read Xschem.log) is
 ## test_descend_log_absorb.tcl:48 and test_ciw_actionlog_output.tcl:36; this file

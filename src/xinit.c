@@ -2926,6 +2926,168 @@ void tclmainloop(void)
   while(1) Tcl_DoOneEvent(TCL_ALL_EVENTS);
 }
 
+/* ---------------------------------------------------------------------------
+ * issue 0663: a failed `source` of xschem.tcl must not walk on into unset
+ * variables.
+ *
+ * THE CLASS. src/xschem.tcl sources fifteen helpers with a BARE `source`
+ * (:14568 action_registry ... :14815 alt2_toggle_view) plus one guarded by
+ * issue 0658 (:14854 ciw.tcl), and it also makes bare top-level CALLS into
+ * helper namespaces (:14569 load_action_table, :16873 wviewer::rawhist_load).
+ * A Tcl error anywhere in that file propagates OUT of xschem.tcl, so the REST
+ * of the file -- the statusbar widgets, build_widgets, ciw_create, the colour
+ * and layer setup -- never runs. source_tcl_file() below then merely PRINTS the
+ * error and returns TCL_ERROR, and until this fix Tcl_AppInit DISCARDED that
+ * return and walked on into tclgetdoublevar("cairo_font_line_spacing") and its
+ * siblings against variables that were never set, then into
+ * alloc_xschem_data(), whose strcmp(tclgetvar("undo_type"), "disk") was handed
+ * a NULL. SIGSEGV -- and main.c's handler then derefs xctx->sch[xctx->currsch]
+ * on a half-initialised xctx and double-faults, which is why the code was 139
+ * and not the handler's own exit(1).
+ *
+ * This is the root cause of issue 0424 (op_annot.tcl lost from the install
+ * list: 275 in-tree checks green, the INSTALLED binary dead on arrival), not a
+ * relative of it -- 0424 put the file back on the list and left the mechanism
+ * alone.
+ *
+ * THE ANSWER IS (b) ANNOUNCE AND ABORT, not announce-and-continue, and it is a
+ * measurement not a preference: src/xschem.tcl sets line_width, undo_type,
+ * cairo_font_scale, cairo_font_line_spacing and cadlayers AFTER the bare-source
+ * block, and src/xschemrc ships `set undo_type`/`set cadlayers` commented out.
+ * So "stop crashing and continue" is a session with cadlayers=0, line_width=0,
+ * undo_type NULL, no colour lists, no menus and no bindings -- that can still
+ * be told to load and SAVE a schematic, with issue 0619 (ps_colors[cadlayers]
+ * over-read) already open in exactly that state. A subtly wrong tool is worse
+ * than a refusal. Continuing is also unreachable from C: only running the REST
+ * of xschem.tcl sets those defaults, and C cannot resume an aborted
+ * Tcl_EvalFile.
+ *
+ * WHICHEVER OPTION, IT ANNOUNCES (issue 0423's standing objection: a caught
+ * failure that is not announced is worse than the crash). The announcement
+ * names the FAILING FILE, on stderr and in the durable action log, in ONE line,
+ * once. It deliberately calls no Tcl proc: seven of the fifteen helpers are
+ * sourced BEFORE ::xschem::notify_log exists, so a Tcl-routed announcement
+ * would be silent for exactly the earliest failures.
+ *
+ * Scope: ONLY the xschem.tcl call site is guarded. The six xschemrc-side
+ * source_tcl_file() callers keep their measured, survivable behaviour (a broken
+ * xschemrc still exits 0 -- doc/claude/specs/op_annotation.md documents that for
+ * PDK procs files), and source_tcl_file() itself is unchanged so its
+ * `Tcl_AppInit() error:` block, which tests/headless/full_audit.sh classify()
+ * anchors on, stays byte-for-byte.
+ *
+ * Tests: tests/headless/test_startup_guard_0663.tcl (rows SG0-SG21).
+ * --------------------------------------------------------------------------- */
+
+/* Copy s up to (but not including) its first newline into dest[n].
+ * THE SEAM that keeps one failure to ONE durable line: log_output()
+ * (src/util.c) prefixes EVERY physical line with "#! ", so an announcement
+ * carrying a multi-line ::errorInfo would write six-plus durable lines from one
+ * failure -- issue 0665's exact shape, which 0663 R5 forbids. */
+static void xschem_first_line(const char *s, char *dest, int n)
+{
+  int i = 0;
+  if(n <= 0) return;
+  if(s) {
+    while(s[i] && s[i] != '\n' && i < n - 1) {
+      dest[i] = s[i];
+      ++i;
+    }
+  }
+  dest[i] = '\0';
+  if(i > 0 && dest[i - 1] == '\r') dest[i - 1] = '\0'; /* a CRLF-terminated helper */
+}
+
+/* Write the INNERMOST `(file "F" line N)` frame of ::errorInfo into dest as
+ * `F line N`. Measured with tclsh: a helper that RAISES puts the HELPER in that
+ * first frame; a helper that is ABSENT never opens, so the first frame is the
+ * OUTER file and the helper is named in the error RESULT instead. Carrying both
+ * this and the first line of tclresult() is what makes both shapes name the
+ * failing file. Falls back to `fallback` plus the interpreter's error line when
+ * ::errorInfo carries no file frame at all. */
+static void xschem_failed_source_origin(char *dest, int n, const char *fallback)
+{
+  const char *info, *p, *eol, *q;
+  char num[64];
+  int flen;
+
+  if(n <= 0) return;
+  dest[0] = '\0';
+  info = Tcl_GetVar(interp, "errorInfo", TCL_GLOBAL_ONLY);
+  p = info ? strstr(info, "(file \"") : NULL;
+  if(p) {
+    p += 7;                                    /* first char of the file name */
+    eol = strchr(p, '\n');
+    if(!eol) eol = p + strlen(p);
+    q = p;
+    while(q < eol && *q != '"') ++q;           /* closing quote of the name */
+    if(q < eol) {
+      const char *ln = q + 1;                  /* what is left is ` line N)` */
+      int k = 0;
+      num[0] = '\0';
+      while(ln < eol && *ln == ' ') ++ln;
+      if(eol - ln > 5 && !strncmp(ln, "line ", 5)) {
+        ln += 5;
+        while(ln < eol && *ln != ')' && k < (int)sizeof(num) - 1) num[k++] = *ln++;
+      }
+      num[k] = '\0';
+      flen = (int)(q - p);
+      if(flen > n - 1) flen = n - 1;
+      memcpy(dest, p, (size_t)flen);
+      dest[flen] = '\0';
+      if(num[0]) {
+        char joined[PATH_MAX + 128];
+        my_snprintf(joined, S(joined), "%s line %s", dest, num);
+        my_strncpy(dest, joined, (size_t)n);
+      }
+      return;
+    }
+  }
+  #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6)
+  my_snprintf(dest, (size_t)n, "%s line %d", fallback ? fallback : "?",
+              Tcl_GetErrorLine(interp));
+  #else
+  my_snprintf(dest, (size_t)n, "%s", fallback ? fallback : "?");
+  #endif
+}
+
+/* ONE line, to BOTH sinks: stderr and the durable action log. The log is
+ * already open here -- init_action_log() runs from main() BEFORE Tcl_AppInit,
+ * and even the segfaulting runs wrote its header. The literal deliberately does
+ * NOT begin with "Tcl_AppInit() error" or "FATAL: signal": full_audit.sh's
+ * classify() scores a whole suite CRASH on those two line anchors. */
+static void xschem_startup_announce(const char *sourced)
+{
+  char origin[PATH_MAX + 128];
+  char cause[512];
+  char line[2 * PATH_MAX + 900];
+
+  xschem_failed_source_origin(origin, (int)S(origin), sourced);
+  xschem_first_line(tclresult(), cause, (int)S(cause));
+  my_snprintf(line, S(line),
+    "STARTUP ABORTED: %s did not finish. Failing file: %s. Cause: %s. "
+    "The rest of it -- layers, colours, menus, key bindings, undo, the "
+    "statusbar -- was never set up, so xschem is exiting instead of running "
+    "structurally invalid. See doc/claude/issues/0663.",
+    sourced ? sourced : "?", origin, cause);
+  fprintf(errfp, "xschem: %s\n", line);
+  log_output(1, line);
+}
+
+/* Announce, then leave. EXIT_FAILURE matches the sibling interactive-GUI path
+ * inside source_tcl_file(), so both halves of the same failure agree. Tcl_Exit
+ * runs the exit handler registered in Tcl_AppInit, which no-ops because
+ * init_done is still 0, so nothing touches the half-built context. Returning
+ * TCL_ERROR from Tcl_AppInit would NOT do: Tcl_MainEx prints
+ * "application-specific initialization failed" and walks on into the script
+ * with xctx unallocated, and the detach path in main.c discards it entirely. */
+static void xschem_startup_abort(const char *sourced)
+{
+  xschem_startup_announce(sourced);
+  fflush(NULL);
+  Tcl_Exit(EXIT_FAILURE);
+}
+
 int Tcl_AppInit(Tcl_Interp *inter)
 {
  char fname[PATH_MAX];
@@ -3403,7 +3565,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
    return TCL_ERROR;
  }
  dbg(1, "Tcl_AppInit(): sourcing %s\n", name);
- source_tcl_file(name);
+ /* issue 0663: a failed source of xschem.tcl leaves every config variable this
+  * function is about to read UNSET. Never walk on -- announce, naming the file
+  * that failed, and leave. xschem_startup_abort() does not return. */
+ if(source_tcl_file(name) != TCL_OK) xschem_startup_abort(name);
  dbg(1, "Tcl_AppInit(): done executing xschem.tcl\n");
  /*                                */
  /*  END EXECUTE xschem.tcl        */
