@@ -231,17 +231,21 @@ not reparent and silently no-ops `wm iconify`; with a WM both work — and on
 iconify a real WM is *more* faithful than WSLg, which doesn't honour it either.
 So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
 
-⚠ **BUT `openbox` IS NOT INSTALLED ON THIS BOX** (measured 2026-08-23, issue
-0645). `xvfb_arm.sh:154` still defaults to it and `:156` falls back to
-**WM-less** with a warning on stderr — so every suite that believed it had a
-window manager has in fact been running with none, and the paragraph above
-described a configuration that was never live here. `xfwm4` *is* installed
-(`/usr/bin/xfwm4`). Until the default is changed, a suite whose subject is
-reparenting, iconify, stacking or raise **must** pass `AUDIT_WM=xfwm4`
-explicitly (issue 0616's did: `xfwm4 --compositor=off`) and **must say in its
-report which WM was live** — otherwise it is a bare-Xvfb measurement wearing a
-window manager's name, and it will pass while the bug is live. Do not read the
-warning line as cosmetic; it is the difference between evidence and nothing.
+⚠ **`openbox` WAS MISSING UNTIL 2026-08-23** (issue 0645). It is installed now
+(`/usr/bin/openbox`, Openbox 3.6.1, verified), so `xvfb_arm.sh:154`'s default
+finally resolves and a WM really is live. But **every WM-dependent measurement
+recorded before that date was taken WM-less** — `:156` falls back to no WM with
+only a stderr warning, so suites that believed they had a window manager did not.
+Re-measure rather than trusting an older number.
+
+The fallback path is still real (another box, a stripped container), so the rule
+stands: a suite whose subject is reparenting, iconify, stacking or raise **must
+say in its report which WM was actually live**, and if it needs to be certain it
+should name one explicitly — `AUDIT_WM=openbox`, or `AUDIT_WM=xfwm4` as issue
+0616's did (`xfwm4 --compositor=off`; `/usr/bin/xfwm4` is also present). A report
+that omits the WM is a bare-Xvfb measurement wearing a window manager's name, and
+it will pass while the bug is live. The warning line is not cosmetic; it is the
+difference between evidence and nothing.
 
 **Xvfb is still not a substitute for `:0`** for a human eyeball, or for Xwayland's
 own quirks. The sharpest of those is **event traffic**: one `wm geometry`
