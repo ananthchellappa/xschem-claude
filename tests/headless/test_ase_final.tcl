@@ -362,6 +362,199 @@ check "F19e 0636 a state with `op` DISABLED still nudges 0 times (the shipped ga
   [list [ase::op_analysis_enabled $st19e] [f_nudges $st19e]] {0 0}
 cx {ase::op_cards_nudge_reset}
 
+# ============================================================================
+# F19f-F19m -- ISSUE 0648: THE NUDGE GOES SILENT ON THE RE-RUN THE USER MAKES
+#                          AFTER ACTING ON IT
+# ============================================================================
+# The user's verbatim sequence, 2026-08-23, on sky130_test_ase/tb_bandgap:
+# "No OP info is available with key 6 ... Then, I went to Outputs > Save and
+# checked the 'Save device OP parameters'. I re-ran the sim and still don't get
+# OP info." Re-measured at HEAD on that exact cell: run 1 (gate off) emitted the
+# nudge, run 2 (gate STILL off, because the tick never committed) emitted
+# NOTHING. `ase::op_nudged` (ase.tcl:534) is keyed on lib/cell/view ALONE, is
+# taken at ase.tcl:561 and is released NOWHERE in src/ -- `grep -rn
+# op_cards_nudge_reset src/` returns exactly one line, the proc definition, and
+# its only callers anywhere are the four `cx` lines above. So the one message
+# whose whole job is to report the gate being off is suppressed on precisely
+# the run where the user has already tried to turn it on and needs to be told
+# they failed.
+#
+# ⚠ THE ISSUE'S OWN FIRST SUGGESTION -- "key it on cellview AND gate state" --
+# DOES NOT SATISFY ITS OWN ACCEPTANCE ROW. In the user's sequence the gate is
+# OFF on BOTH runs, so (cell, off) is the same key twice and run 2 is still
+# silent. The re-arm trigger has to be the user's ACT, not the gate's value:
+# a save_op_params CHANGE seen by ase::session_update (F19g/F19i), and -- the
+# GUI half, in test_ase_dialogs GE10f -- an opparams tick DISCARDED by the
+# Save All dialog.
+#
+# F19h and F19m are the 0636 guard rails: the re-arm must fire on a CHANGE and
+# on nothing else (session_update fires on every pane mutation), and it must
+# not become a new writer of `save_op_params` -- OFF stays `{}`, never `0`, or
+# the key lands in all 104 committed .state files.
+#
+# GREEN BEFORE THE CHANGE, and deliberately so (controls, not evidence):
+# F19h (the latch is held today, so "does not re-arm" is trivially true),
+# F19m (nothing writes the key today), F19k and F19l (the success line already
+# exists at ase.tcl:660, landed in 44f52f9a -- issue 0648 section 3 is REFUTED;
+# these two rows PIN it, they do not ask for it, and they are what SAB-F reds).
+
+## One netlist with the CIW collector armed -> the RAW list of echoed messages.
+## Same park/restore engine as f_nudges, which counts one pattern only; the
+## success-line rows need the whole transcript to prove "exactly once".
+proc f_echo_run {state} {
+  set ::f_echo {}
+  if {[info commands ::f_saved_ciw_echo] eq {}} {
+    if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::f_saved_ciw_echo }
+    proc ::ciw_echo {msg {tag {}}} { lappend ::f_echo $msg }
+  }
+  set rc [catch {ase::netlist $state} e]
+  if {[info commands ::f_saved_ciw_echo] ne {}} {
+    catch {rename ::ciw_echo {}}
+    rename ::f_saved_ciw_echo ::ciw_echo
+  }
+  if {$rc} { return [list "ERR: $e"] }
+  return $::f_echo
+}
+proc f_matches {msgs pat} {
+  set h {}
+  foreach m $msgs { if {[string match $pat $m]} { lappend h $m } }
+  return $h
+}
+
+# --- F19f: ONE latch-key builder (invariant I1) ------------------------------
+# ase.tcl:555-558 builds the key inline inside op_cards_nudge_ok, so the re-arm
+# would have to rebuild it independently -- the exact two-builders shape I1
+# forbids, and the drift would be SILENT (a re-arm that unsets a key nobody
+# ever takes looks like a working fix and nudges nothing).
+set f19f_design [ase::state_get $stoff design]
+check "F19f 0648 op_cards_nudge_key returns the DESIGN cellview {lib cell view}" \
+  [cx {ase::op_cards_nudge_key $stoff}] \
+  [list [ase::state_get $f19f_design lib] [ase::state_get $f19f_design cell] \
+        [ase::state_get $f19f_design view]]
+
+# --- F19n: the latch is PER CELLVIEW, asserted BEHAVIOURALLY -----------------
+# Verify-B's finding, 2026-08-23: under SAB-H (op_cards_nudge_key collapsed to
+# {}) F19f went red but F19g and GE10f stayed GREEN, because the take and the
+# re-arm share the one builder and a uniformly-wrong key is self-consistent.
+# That is invariant I1 working -- and it means NO row observed the key's SCOPE.
+# Nothing in either suite ever nudged two cellviews in one process, so a
+# wrongly-scoped key would let cellview A's nudge permanently eat cellview B's:
+# the exact class of user-visible silence 0648 was filed about, caught only by
+# a return-value equality. This row makes it behavioural.
+cx {ase::op_cards_nudge_reset}
+set f19n_b $stoff
+set f19n_d [ase::state_get $f19n_b design]
+dict set f19n_d cell f19n_a_different_cell
+dict set f19n_b design $f19n_d
+check "F19n 0648 the latch is PER CELLVIEW: taking it for one cell does NOT\
+ silence a DIFFERENT cell (take, hold, other cell still speaks)" \
+  [list [cx {ase::op_cards_nudge_ok $stoff}] \
+        [cx {ase::op_cards_nudge_ok $stoff}] \
+        [cx {ase::op_cards_nudge_ok $f19n_b}]] \
+  {1 0 1}
+
+# --- F19g: THE USER'S SEQUENCE, HEADLESS -------------------------------------
+# Session registry only -- nothing is written to the committed .state file (no
+# session_save anywhere in this block; F3's byte-identity row is upstream of it
+# and stays green).
+cx {ase::op_cards_nudge_reset}
+set f19g_key [ase::session_key f19 latch rearm]
+ase::session_open $f19g_key $statefile
+set f19g_st [ase::session_state $f19g_key]
+set f19g_take [list [cx {ase::op_cards_nudge_ok $f19g_st}] \
+                    [cx {ase::op_cards_nudge_ok $f19g_st}]]
+dict set f19g_st save_op_params 1
+ase::session_update $f19g_key $f19g_st
+check "F19g 0648 THE ACCEPTANCE ROW: a session_update that turns save_op_params\
+ ON RE-ARMS the nudge (take, hold, then speak again)" \
+  [list $f19g_take [cx {ase::op_cards_nudge_ok [ase::session_state $f19g_key]}]] \
+  {{1 0} 1}
+
+# --- F19h: the 0636 noise guard ----------------------------------------------
+# session_update is called by toggle_flag, the variables/outputs/analyses
+# editors and the temperature field. An UNCONDITIONAL clear there re-creates
+# exactly the three-identical-lines-per-session defect 0636 was filed about.
+# (F19g's own check consumed the re-armed turn, so the latch is held again.)
+set f19h_st [ase::session_state $f19g_key]
+dict set f19h_st temperature 42
+ase::session_update $f19g_key $f19h_st
+check "F19h 0636 NOISE GUARD: a session_update that leaves save_op_params alone\
+ does NOT re-arm" \
+  [cx {ase::op_cards_nudge_ok [ase::session_state $f19g_key]}] 0
+
+# --- F19i: the reverse edge ---------------------------------------------------
+# Turning the gate back OFF is just as much "the user acted on this setting".
+set f19i_st [ase::session_state $f19g_key]
+dict set f19i_st save_op_params {}
+ase::session_update $f19g_key $f19i_st
+check "F19i 0648 the reverse edge re-arms too: save_op_params 1 -> {} through\
+ session_update" \
+  [cx {ase::op_cards_nudge_ok [ase::session_state $f19g_key]}] 1
+
+# --- F19j: the change detector normalises exactly like the capture gate -------
+# ase.tcl:594 reads `ne {1}` and ase.tcl:3565 reads `eq {1}`, independently.
+# Truthy-not-1 is OFF at both (issue 0637's subject, whose ruling is NOT this
+# step's) and the detector must agree with them, not improve on them.
+check "F19j 0648 op_cards_gate_changed normalises exactly like the capture gate\
+ (truthy-not-1 stays OFF, 0637 unchanged)" \
+  [list [cx {ase::op_cards_gate_changed {} 0}] \
+        [cx {ase::op_cards_gate_changed {} 1}] \
+        [cx {ase::op_cards_gate_changed 1 1}] \
+        [cx {ase::op_cards_gate_changed 0 {}}] \
+        [cx {ase::op_cards_gate_changed yes {}}] \
+        [cx {ase::op_cards_gate_changed 1 {}}]] \
+  {0 1 0 0 0 1}
+
+# --- F19m: the re-arm never writes the state ----------------------------------
+# The landmine that shapes the whole design: `save_op_params` is in
+# ase::omit_if_empty, OFF must stay `{}` and never `0`, or the key lands in
+# every .state a user saves and the 104 committed byte-identical fixtures
+# redden. GREEN BEFORE THE CHANGE -- it exists to stay green.
+check "F19m 0648 the re-arm hook writes NOTHING into the state (an off gate is\
+ still OMITTED from the serialization)" \
+  [expr {[string first save_op_params \
+     [ase::state_serialize [ase::session_state $f19g_key]]] >= 0}] 0
+ase::session_close $f19g_key
+
+# --- F19k/F19l: the success line, pinned (issue 0648 section 3 is REFUTED) ----
+# 0648 says "There is NO message for cards actually emitted". There is, at
+# ase.tcl:657-660, since commit 44f52f9a (2026-08-23 06:28) -- twelve hours
+# before 0648 was committed at 7bc7b61c 18:27 -- and it had ZERO test coverage:
+# `grep -rn "card(s) added" tests/` returned nothing. These two rows are that
+# coverage. They are GREEN BEFORE THE CHANGE; SAB-F (op_cards_count returns 0)
+# is what they exist to catch.
+cx {ase::op_cards_nudge_reset}
+set f19k_dir [file normalize [file join $scratch runon_k]]
+set st19k [ase::state_load $statefile]
+dict set st19k rundir $f19k_dir
+dict set st19k save_op_params 1
+set f19k_msgs  [f_echo_run $st19k]
+set f19k_hits  [f_matches $f19k_msgs {*device OP save card(s) added*}]
+set f19k_n {}
+if {[llength $f19k_hits] == 1} {
+  regexp {(\d+) device OP save card\(s\) added} [lindex $f19k_hits 0] -> f19k_n
+}
+set f19k_text {}
+catch {
+  set fh [open [file join $f19k_dir test_nfet_final.spice] r]
+  set f19k_text [read $fh]; close $fh
+}
+set f19k_cards [llength [f_cards [cx {ase::op_cards_for $f19k_text}]]]
+check "F19k 0648 a gate-ON netlist SAYS how many device OP save cards it added,\
+ exactly once, with the TRUE count" \
+  [list [llength $f19k_hits] $f19k_n [expr {$f19k_cards > 0}]] \
+  [list 1 $f19k_cards 1]
+
+cx {ase::op_cards_nudge_reset}
+set f19l_dir [file normalize [file join $scratch runoff_l]]
+set st19l [ase::state_load $statefile]
+dict set st19l rundir $f19l_dir
+set f19l_msgs [f_echo_run $st19l]
+check "F19l 0648 NON-VACUITY CONTROL: a gate-OFF netlist says nothing about\
+ cards added" \
+  [llength [f_matches $f19l_msgs {*card(s) added*}]] 0
+cx {ase::op_cards_nudge_reset}
+
 # --- F18: the BEFORE state, pinned exactly (the non-vacuity control) ---------
 if {[auto_execok ngspice] eq {}} {
   puts "SKIPPED: F11-F18/F20 run legs (ngspice not found)"

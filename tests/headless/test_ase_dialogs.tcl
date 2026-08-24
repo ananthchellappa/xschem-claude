@@ -169,6 +169,41 @@ proc tv_dblclick_cell {tv item col} {
   return 1
 }
 
+# --- issue 0648 helpers ------------------------------------------------------
+# Every new-API call is catch-wrapped, so on a tree where the seam does not
+# exist yet each row goes red on its own with `ERR: invalid command name ...`
+# instead of aborting the whole GUI leg at the first missing proc.
+# (Copied verbatim from tests/headless/test_ase_core.tcl, house style: each
+# test is its own process, so helpers are copied and not shared-sourced.)
+proc cx {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+  return $r
+}
+# the ase::echo pane sink, parked and collected (test_ase_core's c_echo_arm).
+# ase::echo (ase.tcl:134) calls ::ciw_echo unconditionally when it exists, so
+# renaming it is how every ASE suite captures a notice.
+proc d_echo_arm {} {
+  set ::d_echo {}
+  if {[info commands ::d_saved_ciw_echo] eq {}} {
+    if {[info commands ::ciw_echo] ne {}} { rename ::ciw_echo ::d_saved_ciw_echo }
+    proc ::ciw_echo {msg {tag {}}} { lappend ::d_echo [list $tag $msg] }
+  }
+}
+proc d_echo_disarm {} {
+  if {[info commands ::d_saved_ciw_echo] ne {}} {
+    catch {rename ::ciw_echo {}}
+    rename ::d_saved_ciw_echo ::ciw_echo
+  }
+}
+# how many collected messages match $pat -- a COUNT, not a boolean: "the
+# discard is stated" and "the discard is stated ONCE" are different claims and
+# a duplicated sentence is its own defect (issue 0635's subject).
+proc d_echoed_n {pat} {
+  set n 0
+  foreach e $::d_echo { if {[string match -nocase $pat [lindex $e 1]]} { incr n } }
+  return $n
+}
+
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
@@ -882,6 +917,111 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [info exists ::ase::ui::dlg($key,opparams)]] {0 0 0}
   check "GE10 state unchanged" \
     [ase::state_serialize [ase::session_state $key]] $snap
+
+  # =========================================================================
+  # GE10b-GE10h -- ISSUE 0648: THE TICK THAT VANISHES WITHOUT A WORD
+  # =========================================================================
+  # The user, verbatim, 2026-08-23: "I went to Outputs > Save and checked the
+  # 'Save device OP parameters'. I re-ran the sim and still don't get OP info."
+  # Measured at HEAD under a real WM on :99: ticking the box sets
+  # dlg($key,opparams)=1 and the checkbutton is visibly ON, while
+  # `save_op_params` stays `{}`; ESC destroys the dialog and says NOTHING; and
+  # `wm protocol $top.saveall WM_DELETE_WINDOW` is EMPTY -- ase::ui::dialog_frame
+  # (:1350) registers no handler, the only WM_DELETE_WINDOW in ase_window.tcl
+  # is :277 for the session toplevel -- so a window-manager close destroys the
+  # toplevel WITHOUT running save_all_cancel at all (proof: after the close the
+  # dlg record still EXISTS, which save_all_cancel would have unset). Issue
+  # 0648's sentence "Cancel, ESC via bind_dialog_esc, and the window-manager
+  # close all reach save_all_cancel" is WRONG on its third clause, and a
+  # "changes were discarded" notice placed only in save_all_cancel would be
+  # silent on exactly the path the user's window manager offers.
+  #
+  # The dialog's whole content is three checkboxes, so a user who ticks one has
+  # expressed the entire intent and a visibly-toggled checkbutton reads as
+  # applied. These rows pin the answer chosen in decision D1: KEEP OK-commit
+  # (GE10h -- the GE1-GE16 zero-state-mutation contract survives) and STATE the
+  # discard, name the dropped box, and RE-ARM the OP-card nudge so the user's
+  # next run is not silent too (GE10f, the GUI half of the acceptance row).
+  #
+  # GREEN BEFORE THE CHANGE, and deliberately so (controls, not evidence):
+  # GE10e (nothing is ever said today, so "says nothing" is trivially true) and
+  # both GE10h rows (nothing commits today either -- they exist to stay green,
+  # and they are what a live-commit design would have reddened).
+  set snap [ase::state_serialize [ase::session_state $key]]
+
+  # GE10b: the WM close is wired AT ALL, and to the cancel path -- reads '' at
+  # HEAD.  GE10e rides its teardown: an untouched dialog must stay silent.
+  d_echo_arm
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  check "GE10b 0648 Save All registers a WM_DELETE_WINDOW handler on its cancel\
+ path" \
+    [cx {wm protocol $top.saveall WM_DELETE_WINDOW}] \
+    [list ase::ui::save_all_cancel $key]
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  d_echo_disarm
+  check "GE10e 0648 NON-VACUITY CONTROL: dismissing an UNTOUCHED Save All says\
+ nothing" [d_echoed_n {*NOT applied*}] 0
+
+  # GE10c/GE10d: a DISCARDED tick is stated, once, and names the dropped box.
+  d_echo_arm
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  catch {$top.saveall.opparams invoke}
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  d_echo_disarm
+  check "GE10c 0648 a ticked box dropped by ESC is REPORTED, exactly once" \
+    [d_echoed_n {*Save All*NOT applied*}] 1
+  check "GE10d 0648 the report NAMES the box that was dropped" \
+    [d_echoed_n {*Save device OP parameters*}] 1
+  check "GE10h 0648 ZERO STATE MUTATION survives the fix: tick + ESC still\
+ leaves the state byte-identical (the GE1-GE16 contract, decision D1)" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE10f: THE ACCEPTANCE ROW, GUI SIDE. The user's exact sequence: the nudge
+  # has already fired for this cellview (take, then hold), the user ticks the
+  # box, the tick is discarded -- and the tool must be able to speak again on
+  # the next card-less run instead of going silent, which is the whole defect.
+  cx {ase::op_cards_nudge_reset}
+  set ge10f_st [ase::session_state $key]
+  set ge10f_take [list [cx {ase::op_cards_nudge_ok $ge10f_st}] \
+                       [cx {ase::op_cards_nudge_ok $ge10f_st}]]
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  catch {$top.saveall.opparams invoke}
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  check "GE10f 0648 THE ACCEPTANCE ROW: a DISCARDED opparams tick RE-ARMS the\
+ OP-card nudge (take, hold, then speak again)" \
+    [list $ge10f_take [cx {ase::op_cards_nudge_ok [ase::session_state $key]}]] \
+    {{1 0} 1}
+
+  # GE10g: the window-manager close now behaves exactly as ESC does. Driven by
+  # RUNNING the registered protocol command, which is what a real WM close
+  # invokes -- and which is literally nothing at HEAD, so the dialog survives.
+  d_echo_arm
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  catch {$top.saveall.opparams invoke}
+  set ge10g_cmd [cx {wm protocol $top.saveall WM_DELETE_WINDOW}]
+  catch {uplevel #0 $ge10g_cmd}
+  update
+  d_echo_disarm
+  check "GE10g 0648 a WM close destroys the dialog, cleans all three dlg\
+ records AND reports the discard" \
+    [list [winfo exists $top.saveall] \
+          [info exists ::ase::ui::dlg($key,allv)] \
+          [info exists ::ase::ui::dlg($key,alli)] \
+          [info exists ::ase::ui::dlg($key,opparams)] \
+          [d_echoed_n {*Save All*NOT applied*}]] {0 0 0 0 1}
+  check "GE10h 0648 ZERO STATE MUTATION survives the fix: tick + WM close still\
+ leaves the state byte-identical" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+  # leave no half-open dialog behind on a tree where GE10g could not close it
+  catch {destroy $top.saveall}
+  foreach ge10_r {allv alli opparams} {
+    catch {array unset ::ase::ui::dlg $key,$ge10_r}
+  }
+  update
 
   # GE11: Load State browser (no records)
   set snap [ase::state_serialize [ase::session_state $key]]

@@ -540,26 +540,84 @@ proc ase::op_cards_nudge_reset {} {
   set op_nudged [dict create]
 }
 
-# 1 iff this state's design cellview may be nudged NOW — and if so the latch is
-# taken, so the answer is 1 exactly once per cellview per session. Called ONLY
-# where the nudge is actually about to be echoed (never as one term of a wider
-# condition), so a state that fails an earlier gate does not silently consume
-# its one turn.
-proc ase::op_cards_nudge_ok {state} {
-  variable op_nudged
-  if {[info exists ::ase_op_card_nudge]} {
-    if {[catch {expr {$::ase_op_card_nudge ? 1 : 0}} on]} { set on 1 }
-    if {!$on} { return 0 }
-  }
+# --- 0648: ONE gate normaliser, ONE latch-key builder ------------------------
+# `save_op_params` is read as a gate in THREE places — op_cards_capture's
+# `ne {1}`, render_deck's `eq {1}` and (new) the change detector below. Two
+# independent normalisations of one key already existed and drift between them
+# fails SILENTLY; issue 0637 is the standing proof it bites here. Invariant I1
+# (one builder, many consumers) applied to a gate rather than a vector name.
+#
+# ⚠ 1 IFF THE VALUE IS LITERALLY `1`. `0`, `{}`, absent and truthy-not-1
+# (`yes`, `true`, `2`) all read OFF — exactly as both existing call sites read
+# today. Do NOT "improve" this to accept truthy values: that would silently
+# decide issue 0637, whose ruling is with the user, and it would flip the gate
+# for any state hand-edited to `save_op_params yes`.
+proc ase::op_gate_on {v} {
+  return [expr {$v eq {1} ? 1 : 0}]
+}
+
+# The latch key: this state's DESIGN cellview, {lib cell view}. Lifted out of
+# op_cards_nudge_ok so the re-arm below cannot rebuild it independently — a
+# re-arm that unsets a key nobody ever takes looks like a working fix and
+# nudges nothing (I1 again, and the drift would be silent).
+proc ase::op_cards_nudge_key {state} {
   set k {}
   catch {
     set d [ase::state_get $state design]
     set k [list [ase::state_get $d lib] [ase::state_get $d cell] \
                 [ase::state_get $d view]]
   }
+  return $k
+}
+
+# Give this state's cellview its turn back. Never raises, idempotent, and it is
+# NOT op_cards_nudge_reset — that forgets EVERY cellview and stays the test
+# seam. Writes nothing into the state (the `{}`-never-`0` landmine).
+proc ase::op_cards_nudge_rearm {state} {
+  variable op_nudged
+  catch { dict unset op_nudged [ase::op_cards_nudge_key $state] }
+  return
+}
+
+# Did the user actually move the OP-card gate? Its own proc so the guard is
+# independently testable and neutralizable — session_update fires on EVERY
+# pane mutation (toggle_flag, variables, outputs, analyses, temperature) and an
+# unconditional re-arm there re-creates 0636's three-lines-per-session noise.
+proc ase::op_cards_gate_changed {old new} {
+  return [expr {[ase::op_gate_on $old] != [ase::op_gate_on $new]}]
+}
+
+# 1 iff this state's design cellview may be nudged NOW — and if so the latch is
+# taken, so the answer is 1 exactly once per cellview per session. Called ONLY
+# where the nudge is actually about to be echoed (never as one term of a wider
+# condition), so a state that fails an earlier gate does not silently consume
+# its one turn.
+#
+# ⚠ 0648: "once per cellview per SESSION" is not the whole rule any more. The
+# turn is given back when the user ACTS on the setting — a save_op_params
+# change through ase::session_update, or an opparams tick DISCARDED by the Save
+# All dialog. The gate's VALUE cannot be the trigger: in the user's reported
+# sequence the gate is OFF on both runs (the tick never committed), so
+# (cellview, off) would be the same key twice and run 2 would still be silent.
+proc ase::op_cards_nudge_ok {state} {
+  variable op_nudged
+  if {[info exists ::ase_op_card_nudge]} {
+    if {[catch {expr {$::ase_op_card_nudge ? 1 : 0}} on]} { set on 1 }
+    if {!$on} { return 0 }
+  }
+  set k [ase::op_cards_nudge_key $state]
   if {[dict exists $op_nudged $k]} { return 0 }
   dict set op_nudged $k 1
   return 1
+}
+
+# How many device OP save cards a block carries. Named callee so the success
+# sentence at the bottom of op_cards_capture has something a sabotage can
+# neutralize — the count is the only part of that line that can lie.
+proc ase::op_cards_count {block} {
+  set n 0
+  foreach l [split $block "\n"] { if {[string match {.save @*} $l]} { incr n } }
+  return $n
 }
 
 # Does the design buffer carry unsaved edits? Exactly `xschem get modified`,
@@ -591,7 +649,7 @@ proc ase::op_analysis_enabled {state} {
 proc ase::op_cards_capture {state netlistpath} {
   ase::op_cards_clear
   set have [expr {[info commands ::op_annot::save_cards] ne {}}]
-  if {[ase::state_get $state save_op_params 0] ne {1}} {
+  if {![ase::op_gate_on [ase::state_get $state save_op_params {}]]} {
     # THE GATE DEFAULTS OFF, so it has to be discoverable. 468 cards on a
     # 31-FET bench (~3000 on a 500-device block, issue 0620) is a real deck
     # cost, and two committed byte-exact deck goldens would redden on an
@@ -655,9 +713,8 @@ proc ase::op_cards_capture {state netlistpath} {
  annotatable. The deck asks for no device parameters." error
     return {}
   }
-  set n 0
-  foreach l [split $block "\n"] { if {[string match {.save @*} $l]} { incr n } }
-  ase::echo "ASE: $n device OP save card(s) added to the deck."
+  ase::echo "ASE: [ase::op_cards_count $block] device OP save card(s) added to\
+ the deck."
   return $block
 }
 
@@ -2517,6 +2574,19 @@ proc ase::session_state {key} {
 proc ase::session_update {key newstate} {
   variable sessions
   if {![dict exists $sessions $key]} { return 0 }
+  ## 0648: THE USER ACTED ON THE OP-CARD GATE -> give the nudge its turn back.
+  ## Compared OLD vs NEW and never cleared unconditionally: this proc is the
+  ## write path for every pane mutation (toggle_flag, the variables/outputs/
+  ## analyses editors, the temperature field) and an unconditional clear here
+  ## re-creates the three-identical-lines-per-session defect of issue 0636.
+  ## Under `catch` because a session write must never fail on an extra.
+  catch {
+    if {[ase::op_cards_gate_changed \
+           [ase::state_get [dict get $sessions $key state] save_op_params {}] \
+           [ase::state_get $newstate save_op_params {}]]} {
+      ase::op_cards_nudge_rearm $newstate
+    }
+  }
   dict set sessions $key state $newstate
   ase::session_notify_fire $key
   return 1
@@ -3562,7 +3632,7 @@ namespace eval ase::backend::ngspice {
     # wrapped card produces no vector and no diagnostic (rule R4 / spec
     # landmine 1 / issue 0607). One name builder, two consumers (invariant I1):
     # nothing here rebuilds, re-wraps, sorts or dedupes a card.
-    if {[ase::state_get $state save_op_params 0] eq {1}} {
+    if {[ase::op_gate_on [ase::state_get $state save_op_params {}]]} {
       set opblk [ase::op_cards_for $netlist_text]
       if {$opblk ne {}} {
         lappend lines \

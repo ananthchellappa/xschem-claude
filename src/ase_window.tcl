@@ -2865,11 +2865,13 @@ proc ase::ui::save_all_dialog {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   set w [ase::ui::dialog_frame [dict get $wins $key].saveall {Save All}]
-  set st [ase::session_state $key]
-  set dlg($key,allv) [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}]
-  set dlg($key,alli) [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}]
-  set dlg($key,opparams) \
-    [expr {[ase::state_get $st save_op_params 0] eq {1} ? 1 : 0}]
+  ## 0648: initialised from the SAME normaliser save_all_cancel diffs against.
+  ## Two independent readings of the three blankets would report a phantom
+  ## discard for a box the user never touched (invariant I1).
+  set cur [ase::ui::save_all_current $key]
+  set dlg($key,allv)     [dict get $cur allv]
+  set dlg($key,alli)     [dict get $cur alli]
+  set dlg($key,opparams) [dict get $cur opparams]
   checkbutton $w.allv -text {Save all voltages} \
     -variable ::ase::ui::dlg($key,allv)
   checkbutton $w.alli -text {Save all terminal currents} \
@@ -2883,6 +2885,16 @@ proc ase::ui::save_all_dialog {key} {
   ase::ui::dialog_buttons $w 4 [list ase::ui::save_all_ok $key] \
     [list ase::ui::save_all_cancel $key]
   bind $w <Return> [list ase::ui::save_all_ok $key]
+  ## ⚠ 0648: WITHOUT THIS, A WINDOW-MANAGER CLOSE NEVER RUNS save_all_cancel.
+  ## Measured at HEAD under a real WM: `wm protocol $w WM_DELETE_WINDOW` is ''
+  ## for every ASE dialog (the only WM_DELETE_WINDOW in this file is :277, the
+  ## session toplevel), so Tk's built-in default destroys the toplevel, the
+  ## cancel path never runs and the ticked box vanishes with its dlg record
+  ## still set. Issue 0648's own text says the WM close "reaches
+  ## save_all_cancel"; it does not. Registered HERE and NOT in the shared
+  ## ase::ui::dialog_frame — that would change WM-close semantics for ~8
+  ## dialogs at once, none of them covered by a test (filed as issue 0651).
+  ase::ui::dialog_close_protocol $w [list ase::ui::save_all_cancel $key]
   ase::ui::apply_theme $w
   $le configure -state disabled       ;# after theming: inert v1 field
   return $w
@@ -2908,10 +2920,32 @@ proc ase::ui::save_all_ok {key} {
   }
   ase::session_update $key $st
   ase::ui::populate $key    ;# the Save Options auto-cells react (item 06)
-  ase::ui::save_all_cancel $key
+  ## 0648: the CLOSE half, never save_all_cancel. The OK path must not be able
+  ## to emit a discard notice by accident, and "the diff happens to be empty by
+  ## now" is not a thing to depend on.
+  ase::ui::save_all_close $key
 }
 
-proc ase::ui::save_all_cancel {key} {
+# --- 0648: the three blankets AS THE STATE HOLDS THEM, normalised to 0/1 -----
+# ONE normaliser, TWO consumers (invariant I1): save_all_dialog seeds the
+# checkbuttons from it, save_all_cancel diffs the pending records against it.
+proc ase::ui::save_all_current {key} {
+  set st [ase::session_state $key]
+  return [list \
+    allv     [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}] \
+    alli     [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}] \
+    opparams [ase::op_gate_on [ase::state_get $st save_op_params {}]]]
+}
+
+# One-line registrar for a dialog's window-manager close button. Called ONLY
+# from save_all_dialog (see the comment there for why not from dialog_frame).
+proc ase::ui::dialog_close_protocol {w cmd} {
+  catch {wm protocol $w WM_DELETE_WINDOW $cmd}
+}
+
+# The pure teardown: drop the dialog's records and destroy it. Shared by the
+# OK path and the cancel path; it says nothing and decides nothing.
+proc ase::ui::save_all_close {key} {
   variable wins; variable dlg
   array unset dlg $key,allv
   array unset dlg $key,alli
@@ -2919,6 +2953,55 @@ proc ase::ui::save_all_cancel {key} {
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveall}
   }
+}
+
+# 0648: SAY SO WHEN A TICK IS THROWN AWAY. This dialog's entire content is
+# three checkboxes, so a user who ticks one has expressed the whole intent and
+# a visibly-toggled checkbutton reads as applied — the user's 2026-08-23 report
+# is exactly that trap ("I went to Outputs > Save and checked the 'Save device
+# OP parameters'. I re-ran the sim and still don't get OP info."). Plain tag,
+# not `error`: a deliberate ESC is not an error. Precedent for both the wording
+# and the tag: ase::ui::close's "closed $key with unsaved state edits
+# (discarded)".
+proc ase::ui::save_all_report_discard {key pending} {
+  set names {}
+  foreach {f label} {allv     {Save all voltages}
+                     alli     {Save all terminal currents}
+                     opparams {Save device OP parameters}} {
+    if {[lsearch -exact $pending $f] >= 0} { lappend names '$label' }
+  }
+  if {$names eq {}} { return }
+  set verb [expr {[llength $names] > 1 ? {were} : {was}}]
+  ase::echo "ASE: Save All was closed without OK — [join $names {, }] $verb NOT applied. Reopen Outputs > Save All and press OK."
+}
+
+# The cancel path — ESC, the Cancel button, and (0648) the window-manager close
+# button. It DIFFS the pending checkbutton records against the state before
+# tearing them down: a change the user made and lost is stated, and a discarded
+# OP-card tick gives the gate-off nudge its turn back so the user's NEXT
+# card-less run is not silent too (that silence is the whole of issue 0648).
+# Keeps its name and its one-argument signature: dialog_buttons wires ESC and
+# the Cancel button to it centrally.
+proc ase::ui::save_all_cancel {key} {
+  variable dlg
+  set pending {}
+  catch {
+    set cur [ase::ui::save_all_current $key]
+    foreach f {allv alli opparams} {
+      if {![info exists dlg($key,$f)]} { continue }
+      if {$dlg($key,$f) ne [dict get $cur $f]} { lappend pending $f }
+    }
+  }
+  ## D6: only the OP-card box re-arms the nudge. A discarded allv/alli tick is
+  ## reported but must not re-nudge — the nudge is about this gate and nothing
+  ## else, and re-nudging for an unrelated blanket is 0636 noise for nothing.
+  if {[lsearch -exact $pending opparams] >= 0} {
+    catch {ase::op_cards_nudge_rearm [ase::session_state $key]}
+  }
+  if {$pending ne {}} {
+    catch {ase::ui::save_all_report_discard $key $pending}
+  }
+  ase::ui::save_all_close $key
 }
 
 # --- (e) Session > Load State ------------------------------------------------
